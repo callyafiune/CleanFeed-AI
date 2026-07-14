@@ -1,7 +1,11 @@
 import { DEFAULT_SETTINGS, MAX_PLATFORM_ID_LENGTH } from "@/shared/constants";
 import { CleanFeedError } from "@/shared/errors";
 import type { PlatformSettings, UserSettings } from "@/shared/settings-types";
-import { assertUserSettings } from "@/storage/settings";
+import {
+  assertUserSettings,
+  incrementSettingsVersion,
+  SettingsRepository,
+} from "@/storage/settings";
 import type { StorageArea } from "@/storage/storage-area";
 
 export const PLATFORM_SETTINGS_STORAGE_KEY = "cleanfeed.platform-settings.v1";
@@ -29,6 +33,12 @@ function hasValidPlatformId(value: unknown): value is string {
   );
 }
 
+function getOverrides(settings: PlatformSettings): Partial<UserSettings> {
+  return Object.fromEntries(
+    Object.entries(settings).filter(([key]) => key !== "platformId"),
+  ) as Partial<UserSettings>;
+}
+
 function isValidPlatformSettings(value: unknown): value is PlatformSettings {
   if (!isRecord(value) || !hasValidPlatformId(value.platformId)) {
     return false;
@@ -41,9 +51,10 @@ function isValidPlatformSettings(value: unknown): value is PlatformSettings {
   }
 
   try {
-    const overrides = { ...value };
-    delete overrides.platformId;
-    assertUserSettings({ ...DEFAULT_SETTINGS, ...overrides } as UserSettings);
+    assertUserSettings({
+      ...DEFAULT_SETTINGS,
+      ...getOverrides(value as unknown as PlatformSettings),
+    });
   } catch {
     return false;
   }
@@ -80,7 +91,9 @@ export class PlatformSettingsRepository {
       return undefined;
     }
 
-    return persisted.platforms[platformId];
+    return Object.hasOwn(persisted.platforms, platformId)
+      ? persisted.platforms[platformId]
+      : undefined;
   }
 
   async save(settings: PlatformSettings): Promise<PlatformSettings> {
@@ -88,11 +101,15 @@ export class PlatformSettingsRepository {
       invalidSettings();
     }
 
+    const overrides = getOverrides(settings);
+    const globalSettings = await new SettingsRepository(this.storage).get();
+    assertUserSettings({ ...globalSettings, ...overrides });
+
     const persisted = await this.storage.get<unknown>(this.storageKey);
     const previous = isPersistedPlatformSettings(persisted)
       ? persisted
       : { schemaVersion: SCHEMA_VERSION, settingsVersion: 0, platforms: {} };
-    const settingsVersion = previous.settingsVersion + 1;
+    const settingsVersion = incrementSettingsVersion(previous.settingsVersion);
 
     await this.storage.set(this.storageKey, {
       schemaVersion: SCHEMA_VERSION,
@@ -107,7 +124,7 @@ export class PlatformSettingsRepository {
     const persisted = await this.storage.get<unknown>(this.storageKey);
     if (
       !isPersistedPlatformSettings(persisted) ||
-      !(platformId in persisted.platforms)
+      !Object.hasOwn(persisted.platforms, platformId)
     ) {
       return;
     }
@@ -116,7 +133,7 @@ export class PlatformSettingsRepository {
     delete platforms[platformId];
     await this.storage.set(this.storageKey, {
       schemaVersion: SCHEMA_VERSION,
-      settingsVersion: persisted.settingsVersion + 1,
+      settingsVersion: incrementSettingsVersion(persisted.settingsVersion),
       platforms,
     } satisfies PersistedPlatformSettings);
   }

@@ -146,6 +146,18 @@ export function assertUserSettings(
   }
 }
 
+export function incrementSettingsVersion(settingsVersion: number): number {
+  if (
+    !Number.isSafeInteger(settingsVersion) ||
+    settingsVersion < 0 ||
+    settingsVersion >= Number.MAX_SAFE_INTEGER
+  ) {
+    throw new CleanFeedError("STORAGE_ERROR", "STORAGE_VERSION_OVERFLOW");
+  }
+
+  return settingsVersion + 1;
+}
+
 export class SettingsRepository {
   constructor(
     private readonly storage: StorageArea,
@@ -178,7 +190,7 @@ export class SettingsRepository {
     const settingsVersion =
       previous && settingsAreEqual(previous.settings, settings)
         ? previous.settingsVersion
-        : (previous?.settingsVersion ?? 0) + 1;
+        : incrementSettingsVersion(previous?.settingsVersion ?? 0);
 
     await this.storage.set(this.storageKey, {
       schemaVersion: SCHEMA_VERSION,

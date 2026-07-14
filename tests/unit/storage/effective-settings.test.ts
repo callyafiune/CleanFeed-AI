@@ -2,7 +2,11 @@ import { describe, expect, it } from "vitest";
 
 import { DEFAULT_SETTINGS } from "@/shared/constants";
 import { resolveEffectiveSettings } from "@/storage/effective-settings";
-import { PlatformSettingsRepository } from "@/storage/platform-settings";
+import {
+  PLATFORM_SETTINGS_STORAGE_KEY,
+  PlatformSettingsRepository,
+} from "@/storage/platform-settings";
+import { SettingsRepository } from "@/storage/settings";
 import type { StorageArea } from "@/storage/storage-area";
 
 class MemoryStorageArea implements StorageArea {
@@ -68,5 +72,53 @@ describe("PlatformSettingsRepository", () => {
     await expect(
       repository.save({ platformId: "linkedin", maximumQueueSize: 0 }),
     ).rejects.toThrowError("INVALID_SETTINGS");
+  });
+
+  it("rejects an override that conflicts with the persisted global thresholds", async () => {
+    const storage = new MemoryStorageArea();
+    const globalRepository = new SettingsRepository(storage);
+    const platformRepository = new PlatformSettingsRepository(storage);
+    const global = { ...DEFAULT_SETTINGS, markingThreshold: 0.9 };
+    await globalRepository.save(global);
+
+    await expect(
+      platformRepository.save({ platformId: "linkedin", blurThreshold: 0.85 }),
+    ).rejects.toThrowError("INVALID_SETTINGS");
+    await expect(platformRepository.get("linkedin")).resolves.toBeUndefined();
+    expect(resolveEffectiveSettings({ global })).toEqual(global);
+  });
+
+  it("does not return or remove inherited platform-map properties", async () => {
+    const storage = new MemoryStorageArea();
+    const persisted = {
+      schemaVersion: 1,
+      settingsVersion: 1,
+      platforms: {},
+    };
+    await storage.set(PLATFORM_SETTINGS_STORAGE_KEY, persisted);
+    const repository = new PlatformSettingsRepository(storage);
+
+    await expect(repository.get("constructor")).resolves.toBeUndefined();
+    await expect(repository.get("toString")).resolves.toBeUndefined();
+    await repository.remove("constructor");
+    await repository.remove("toString");
+
+    await expect(storage.get(PLATFORM_SETTINGS_STORAGE_KEY)).resolves.toBe(
+      persisted,
+    );
+  });
+
+  it("rejects a platform update when its version would overflow", async () => {
+    const storage = new MemoryStorageArea();
+    await storage.set(PLATFORM_SETTINGS_STORAGE_KEY, {
+      schemaVersion: 1,
+      settingsVersion: Number.MAX_SAFE_INTEGER,
+      platforms: {},
+    });
+    const repository = new PlatformSettingsRepository(storage);
+
+    await expect(
+      repository.save({ platformId: "linkedin", minimumWordCount: 150 }),
+    ).rejects.toThrowError("STORAGE_VERSION_OVERFLOW");
   });
 });

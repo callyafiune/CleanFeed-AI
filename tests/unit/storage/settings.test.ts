@@ -2,8 +2,35 @@ import { beforeEach, describe, expect, it } from "vitest";
 
 import { DEFAULT_SETTINGS } from "@/shared/constants";
 import { SettingsRepository } from "@/storage/settings";
+import type { StorageArea } from "@/storage/storage-area";
 import { ChromeStorageArea } from "@/storage/storage-area";
 import { installChromeStorageMock } from "../../setup/chrome";
+
+class MemoryStorageArea implements StorageArea {
+  private readonly values = new Map<string, unknown>();
+
+  async get<T>(key: string): Promise<T | undefined> {
+    return this.values.get(key) as T | undefined;
+  }
+
+  async set<T>(key: string, value: T): Promise<void> {
+    this.values.set(key, value);
+  }
+
+  async remove(keys: string | string[]): Promise<void> {
+    for (const key of typeof keys === "string" ? [keys] : keys) {
+      this.values.delete(key);
+    }
+  }
+
+  async getMany<T>(keys: string[]): Promise<Record<string, T>> {
+    return Object.fromEntries(
+      keys
+        .filter((key) => this.values.has(key))
+        .map((key) => [key, this.values.get(key) as T]),
+    );
+  }
+}
 
 describe("SettingsRepository", () => {
   let storage: ReturnType<typeof installChromeStorageMock>;
@@ -81,5 +108,19 @@ describe("SettingsRepository", () => {
       settingsVersion: 2,
       settings: DEFAULT_SETTINGS,
     });
+  });
+
+  it("rejects a changed value when incrementing its version would overflow", async () => {
+    const storage = new MemoryStorageArea();
+    await storage.set("cleanfeed.settings.v1", {
+      schemaVersion: 1,
+      settingsVersion: Number.MAX_SAFE_INTEGER,
+      settings: DEFAULT_SETTINGS,
+    });
+    const overflowRepository = new SettingsRepository(storage);
+
+    await expect(
+      overflowRepository.save({ ...DEFAULT_SETTINGS, minimumWordCount: 150 }),
+    ).rejects.toThrowError("STORAGE_VERSION_OVERFLOW");
   });
 });
