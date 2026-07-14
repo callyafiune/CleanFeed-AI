@@ -6,14 +6,15 @@ import {
 import { CleanFeedError } from "@/shared/errors";
 import type { ExtensionContext, ExtensionMessage } from "@/shared/messages";
 
-const contexts = new Set<ExtensionContext>([
+const contextValues = [
   "content",
   "popup",
   "options",
   "background",
   "offscreen",
   "worker",
-]);
+] as const;
+const contexts = new Set<ExtensionContext>(contextValues);
 
 const messageTypeValues = [
   "CLASSIFY_TEXT",
@@ -34,9 +35,114 @@ const messageTypeValues = [
   "WORKER_STATUS",
   "ERROR",
 ] as const;
-const messageTypes = new Set(messageTypeValues);
+type MessageType = (typeof messageTypeValues)[number];
+const messageTypes = new Set<MessageType>(messageTypeValues);
 
-const emptyPayloadMessageTypes = new Set<string>([
+const errorCodes = new Set<string>([
+  "MODEL_LOAD_FAILED",
+  "TOKENIZATION_FAILED",
+  "INFERENCE_FAILED",
+  "INFERENCE_TIMEOUT",
+  "WORKER_UNAVAILABLE",
+  "WEBGPU_UNAVAILABLE",
+  "CACHE_ERROR",
+  "STORAGE_ERROR",
+  "INVALID_SETTINGS",
+  "INVALID_MESSAGE",
+  "PLATFORM_EXTRACTION_FAILED",
+]);
+const classificationStatuses = new Set<string>([
+  "probably_human",
+  "inconclusive",
+  "possibly_ai",
+  "strong_ai_indication",
+  "insufficient_evidence",
+  "classification_failed",
+]);
+const confidences = new Set<string>(["low", "medium", "high"]);
+const backends = new Set<string>(["mock", "wasm", "webgpu"]);
+const presentationModes = new Set<string>([
+  "indicator",
+  "blur",
+  "collapse",
+  "hide",
+]);
+const reasonCodes = new Set<string>([
+  "HIGH_CHUNK_CONSISTENCY",
+  "MOST_CHUNKS_ABOVE_THRESHOLD",
+  "HIGH_AVERAGE_SCORE",
+  "HIGH_MEDIAN_SCORE",
+  "FORMULAIC_STRUCTURE",
+  "LOW_SENTENCE_LENGTH_VARIATION",
+  "REPETITIVE_TRANSITIONS",
+  "LISTICLE_PATTERN",
+  "EXCESSIVE_HASHTAGS",
+  "CUSTOM_KEYWORD_RULE",
+  "INSUFFICIENT_EVIDENCE",
+  "LOW_MODEL_CONFIDENCE",
+  "CHUNK_DISAGREEMENT",
+]);
+const modelStates = new Set<string>([
+  "unavailable",
+  "initializing",
+  "ready",
+  "disposing",
+  "error",
+]);
+
+type Route = readonly [ExtensionContext, ExtensionContext];
+const allowedRoutes: Record<MessageType, readonly Route[]> = {
+  CLASSIFY_TEXT: [["content", "background"]],
+  CLASSIFICATION_RESULT: [["background", "content"]],
+  CANCEL_CLASSIFICATION: [["content", "background"]],
+  GET_PAGE_STATS: [["popup", "content"]],
+  PAGE_STATS_RESULT: [["content", "popup"]],
+  UPDATE_SETTINGS: [
+    ["popup", "background"],
+    ["options", "background"],
+  ],
+  CLEAR_PAGE_PRESENTATION: [["popup", "content"]],
+  MODEL_STATUS_REQUEST: [
+    ["popup", "background"],
+    ["options", "background"],
+  ],
+  MODEL_STATUS_RESULT: [
+    ["background", "popup"],
+    ["background", "options"],
+  ],
+  GET_SETTINGS: [
+    ["content", "background"],
+    ["popup", "background"],
+    ["options", "background"],
+  ],
+  SETTINGS_RESULT: [
+    ["background", "content"],
+    ["background", "popup"],
+    ["background", "options"],
+  ],
+  CACHE_CLEAR: [
+    ["popup", "background"],
+    ["options", "background"],
+  ],
+  METRICS_CLEAR: [
+    ["popup", "background"],
+    ["options", "background"],
+  ],
+  OFFSCREEN_CLASSIFY: [["background", "offscreen"]],
+  OFFSCREEN_RESULT: [["offscreen", "background"]],
+  WORKER_STATUS: [["worker", "offscreen"]],
+  ERROR: [
+    ["content", "background"],
+    ["background", "content"],
+    ["background", "popup"],
+    ["background", "options"],
+    ["background", "offscreen"],
+    ["offscreen", "background"],
+    ["worker", "offscreen"],
+  ],
+};
+
+const emptyPayloadMessageTypes = new Set<MessageType>([
   "CANCEL_CLASSIFICATION",
   "GET_PAGE_STATS",
   "CLEAR_PAGE_PRESENTATION",
@@ -45,19 +151,49 @@ const emptyPayloadMessageTypes = new Set<string>([
   "CACHE_CLEAR",
   "METRICS_CLEAR",
 ]);
-
-const requestMessageTypes = new Set<string>([
+const requestMessageTypes = new Set<MessageType>([
   "CLASSIFY_TEXT",
   "OFFSCREEN_CLASSIFY",
   "CLASSIFICATION_RESULT",
   "OFFSCREEN_RESULT",
   "CANCEL_CLASSIFICATION",
 ]);
-
 const dangerousKeys = new Set(["__proto__", "prototype", "constructor"]);
-const maximumObjectDepth = 8;
-const maximumObjectKeys = 200;
-const maximumStringLength = MAX_CLASSIFICATION_TEXT_LENGTH;
+const maximumCollectionLength = 200;
+
+const userSettingKeys = [
+  "enabled",
+  "minimumWordCount",
+  "languageMode",
+  "presentationMode",
+  "markingThreshold",
+  "blurThreshold",
+  "collapseThreshold",
+  "hideThreshold",
+  "processVisibleOnly",
+  "experimentalShortTextDetection",
+  "manualAnalysisEnabled",
+  "showScore",
+  "showExplanation",
+  "backendPreference",
+  "webGpuEnabled",
+  "wasmEnabled",
+  "wasmConcurrency",
+  "webGpuConcurrency",
+  "maximumQueueSize",
+  "maximumPostsPerMinute",
+  "batchingEnabled",
+  "chunkSizeTokens",
+  "chunkOverlapTokens",
+  "maximumTokens",
+  "inferenceTimeoutMs",
+  "cacheMaximumEntries",
+  "cacheTtlMs",
+  "historyEnabled",
+  "historyRetentionDays",
+  "storeFullText",
+] as const;
+const userSettingKeySet = new Set<string>(userSettingKeys);
 
 export function parseExtensionMessage(value: unknown): ExtensionMessage {
   if (!isSafeRecord(value)) {
@@ -65,12 +201,10 @@ export function parseExtensionMessage(value: unknown): ExtensionMessage {
   }
 
   if (
-    !isBoundedString(value.source, 32) ||
-    !contexts.has(value.source as ExtensionContext) ||
-    !isBoundedString(value.target, 32) ||
-    !contexts.has(value.target as ExtensionContext) ||
-    !isBoundedString(value.type, 64) ||
-    !messageTypes.has(value.type as (typeof messageTypeValues)[number])
+    !isExtensionContext(value.source) ||
+    !isExtensionContext(value.target) ||
+    !isMessageType(value.type) ||
+    !hasAllowedRoute(value.type, value.source, value.target)
   ) {
     invalidMessage();
   }
@@ -103,23 +237,47 @@ export function parseExtensionMessage(value: unknown): ExtensionMessage {
   return value as unknown as ExtensionMessage;
 }
 
-function isValidPayload(type: string, payload: unknown): boolean {
+function hasAllowedRoute(
+  type: MessageType,
+  source: ExtensionContext,
+  target: ExtensionContext,
+): boolean {
+  return allowedRoutes[type].some(
+    ([allowedSource, allowedTarget]) =>
+      source === allowedSource && target === allowedTarget,
+  );
+}
+
+function isValidPayload(type: MessageType, payload: unknown): boolean {
   if (emptyPayloadMessageTypes.has(type)) {
     return payload === undefined;
   }
 
-  if (type === "CLASSIFY_TEXT" || type === "OFFSCREEN_CLASSIFY") {
-    return isClassificationRequest(payload);
+  switch (type) {
+    case "CLASSIFY_TEXT":
+    case "OFFSCREEN_CLASSIFY":
+      return isClassificationRequest(payload);
+    case "CLASSIFICATION_RESULT":
+    case "OFFSCREEN_RESULT":
+      return isClassificationResult(payload);
+    case "PAGE_STATS_RESULT":
+      return isPageStats(payload);
+    case "UPDATE_SETTINGS":
+      return isSettings(payload, false);
+    case "MODEL_STATUS_RESULT":
+    case "WORKER_STATUS":
+      return isModelStatus(payload);
+    case "SETTINGS_RESULT":
+      return isSettings(payload, true);
+    case "ERROR":
+      return isErrorPayload(payload);
+    default:
+      return false;
   }
-
-  return isBoundedSafeValue(payload);
 }
 
 function isClassificationRequest(value: unknown): boolean {
-  if (
-    !isSafeRecord(value) ||
-    !hasOnlyKeys(value, ["text", "platform", "manual"])
-  ) {
+  if (!hasExactKeys(value, ["text", "platform", "manual"])) {
     return false;
   }
 
@@ -130,57 +288,345 @@ function isClassificationRequest(value: unknown): boolean {
   );
 }
 
-function isBoundedSafeValue(
-  value: unknown,
-  depth = 0,
-  seen = new WeakSet<object>(),
-): boolean {
-  if (typeof value === "string") {
-    return value.length <= maximumStringLength;
+function isClassificationResult(value: unknown): boolean {
+  const requiredKeys = [
+    "aiScore",
+    "humanScore",
+    "confidence",
+    "status",
+    "wordCount",
+    "tokenCount",
+    "modelVersion",
+    "modelId",
+    "backend",
+    "processingTimeMs",
+    "demo",
+  ];
+  const optionalKeys = [
+    "language",
+    "chunks",
+    "aggregation",
+    "explanation",
+    "decision",
+    "errorCode",
+  ];
+
+  if (!hasOnlyAllowedKeys(value, requiredKeys, optionalKeys)) {
+    return false;
   }
 
-  if (typeof value === "number") {
-    return Number.isFinite(value);
-  }
+  return (
+    isScore(value.aiScore) &&
+    isScore(value.humanScore) &&
+    isStringInSet(value.confidence, confidences) &&
+    isStringInSet(value.status, classificationStatuses) &&
+    isNonNegativeInteger(value.wordCount) &&
+    isNonNegativeInteger(value.tokenCount) &&
+    isBoundedString(value.modelVersion, 128) &&
+    isBoundedString(value.modelId, 128) &&
+    isStringInSet(value.backend, backends) &&
+    isNonNegativeFinite(value.processingTimeMs) &&
+    typeof value.demo === "boolean" &&
+    isOptional(value.language, (item) => isBoundedString(item, 32)) &&
+    isOptional(value.chunks, isChunkResults) &&
+    isOptional(value.aggregation, isAggregationResult) &&
+    isOptional(value.explanation, isClassificationExplanation) &&
+    isOptional(value.decision, isDecisionOutcome) &&
+    isOptional(value.errorCode, isErrorCode)
+  );
+}
 
-  if (typeof value === "boolean" || value === null || value === undefined) {
-    return true;
-  }
+function isChunkResults(value: unknown): boolean {
+  return (
+    Array.isArray(value) &&
+    value.length <= maximumCollectionLength &&
+    value.every(
+      (item) =>
+        hasExactKeys(item, [
+          "index",
+          "startToken",
+          "endToken",
+          "aiScore",
+          "humanScore",
+          "processingTimeMs",
+        ]) &&
+        isNonNegativeInteger(item.index) &&
+        isNonNegativeInteger(item.startToken) &&
+        isNonNegativeInteger(item.endToken) &&
+        item.startToken <= item.endToken &&
+        isScore(item.aiScore) &&
+        isScore(item.humanScore) &&
+        isNonNegativeFinite(item.processingTimeMs),
+    )
+  );
+}
 
+function isAggregationResult(value: unknown): boolean {
+  const keys = [
+    "finalScore",
+    "weightedMean",
+    "median",
+    "maximum",
+    "minimum",
+    "standardDeviation",
+    "highScoreRatio",
+    "chunkAgreement",
+  ];
+
+  return (
+    hasExactKeys(value, keys) &&
+    isScore(value.finalScore) &&
+    isScore(value.weightedMean) &&
+    isScore(value.median) &&
+    isScore(value.maximum) &&
+    isScore(value.minimum) &&
+    isNonNegativeFinite(value.standardDeviation) &&
+    isScore(value.highScoreRatio) &&
+    isScore(value.chunkAgreement)
+  );
+}
+
+function isClassificationExplanation(value: unknown): boolean {
+  const requiredKeys = [
+    "reasonCodes",
+    "modelScore",
+    "calibratedScore",
+    "calibrationProfile",
+  ];
+  const optionalKeys = [
+    "chunkAgreement",
+    "chunksAboveThreshold",
+    "totalChunks",
+    "ruleScore",
+  ];
+
+  return (
+    hasOnlyAllowedKeys(value, requiredKeys, optionalKeys) &&
+    isReasonCodeList(value.reasonCodes) &&
+    isScore(value.modelScore) &&
+    isScore(value.calibratedScore) &&
+    isBoundedString(value.calibrationProfile, 128) &&
+    isOptional(value.chunkAgreement, isScore) &&
+    isOptional(value.chunksAboveThreshold, isNonNegativeInteger) &&
+    isOptional(value.totalChunks, isNonNegativeInteger) &&
+    isOptional(value.ruleScore, isScore)
+  );
+}
+
+function isDecisionOutcome(value: unknown): boolean {
+  return (
+    hasExactKeys(value, [
+      "status",
+      "calibratedScore",
+      "actionCeiling",
+      "abstained",
+      "reasonCodes",
+    ]) &&
+    isStringInSet(value.status, classificationStatuses) &&
+    isScore(value.calibratedScore) &&
+    isStringInSet(value.actionCeiling, presentationModes) &&
+    typeof value.abstained === "boolean" &&
+    isReasonCodeList(value.reasonCodes)
+  );
+}
+
+function isReasonCodeList(value: unknown): boolean {
+  return (
+    Array.isArray(value) &&
+    value.length <= maximumCollectionLength &&
+    value.every((item) => typeof item === "string" && reasonCodes.has(item))
+  );
+}
+
+function isPageStats(value: unknown): boolean {
+  const keys = [
+    "platform",
+    "postsFound",
+    "analyzed",
+    "skippedByLength",
+    "skippedByLanguage",
+    "marked",
+    "blurred",
+    "collapsed",
+    "hidden",
+    "restored",
+    "averageInferenceMs",
+    "queueSize",
+  ];
+
+  return (
+    hasExactKeys(value, keys) &&
+    (value.platform === null ||
+      isBoundedString(value.platform, MAX_PLATFORM_ID_LENGTH)) &&
+    [
+      value.postsFound,
+      value.analyzed,
+      value.skippedByLength,
+      value.skippedByLanguage,
+      value.marked,
+      value.blurred,
+      value.collapsed,
+      value.hidden,
+      value.restored,
+      value.queueSize,
+    ].every(isNonNegativeInteger) &&
+    isNonNegativeFinite(value.averageInferenceMs)
+  );
+}
+
+function isModelStatus(value: unknown): boolean {
+  return (
+    hasOnlyAllowedKeys(
+      value,
+      ["state", "classifierId", "modelVersion", "backend"],
+      ["fallbackFrom", "errorCode", "initializedAt"],
+    ) &&
+    isStringInSet(value.state, modelStates) &&
+    isBoundedString(value.classifierId, 128) &&
+    isBoundedString(value.modelVersion, 128) &&
+    isStringInSet(value.backend, backends) &&
+    isOptional(value.fallbackFrom, (item) => item === "webgpu") &&
+    isOptional(value.errorCode, isErrorCode) &&
+    isOptional(value.initializedAt, isNonNegativeFinite)
+  );
+}
+
+function isErrorPayload(value: unknown): boolean {
+  return (
+    hasExactKeys(value, ["code", "recoverable"]) &&
+    isErrorCode(value.code) &&
+    typeof value.recoverable === "boolean"
+  );
+}
+
+function isSettings(value: unknown, complete: boolean): boolean {
   if (
-    depth >= maximumObjectDepth ||
-    typeof value !== "object" ||
-    value === null ||
-    seen.has(value)
+    !isSafeRecord(value) ||
+    (complete
+      ? !hasExactKeys(value, userSettingKeys)
+      : !Object.keys(value).every((key) => userSettingKeySet.has(key)))
   ) {
     return false;
   }
 
-  seen.add(value);
+  return (
+    Object.entries(value).every(([key, settingValue]) =>
+      isSettingValue(key, settingValue),
+    ) && arePresentThresholdsOrdered(value)
+  );
+}
 
-  if (Array.isArray(value)) {
-    return (
-      value.length <= maximumObjectKeys &&
-      value.every((nestedValue) =>
-        isBoundedSafeValue(nestedValue, depth + 1, seen),
-      )
-    );
+function arePresentThresholdsOrdered(value: Record<string, unknown>): boolean {
+  return (
+    isOrderedPair(value.markingThreshold, value.blurThreshold) &&
+    isOrderedPair(value.blurThreshold, value.collapseThreshold) &&
+    isOrderedPair(value.collapseThreshold, value.hideThreshold)
+  );
+}
+
+function isOrderedPair(lower: unknown, upper: unknown): boolean {
+  if (lower === undefined || upper === undefined) {
+    return true;
   }
 
+  return isScore(lower) && isScore(upper) && lower <= upper;
+}
+
+function isSettingValue(key: string, value: unknown): boolean {
+  switch (key) {
+    case "enabled":
+    case "processVisibleOnly":
+    case "experimentalShortTextDetection":
+    case "manualAnalysisEnabled":
+    case "showScore":
+    case "showExplanation":
+    case "webGpuEnabled":
+    case "wasmEnabled":
+    case "batchingEnabled":
+    case "historyEnabled":
+    case "storeFullText":
+      return typeof value === "boolean";
+    case "languageMode":
+      return (
+        value === "portuguese_only" ||
+        value === "model_supported" ||
+        value === "experimental_any"
+      );
+    case "presentationMode":
+      return isStringInSet(value, presentationModes);
+    case "backendPreference":
+      return value === "auto" || value === "wasm" || value === "webgpu";
+    case "markingThreshold":
+    case "blurThreshold":
+    case "collapseThreshold":
+    case "hideThreshold":
+      return isScore(value);
+    default:
+      return isNonNegativeInteger(value);
+  }
+}
+
+function hasExactKeys(
+  value: unknown,
+  keys: readonly string[],
+): value is Record<string, unknown> {
+  return hasOnlyAllowedKeys(value, keys, []);
+}
+
+function hasOnlyAllowedKeys(
+  value: unknown,
+  requiredKeys: readonly string[],
+  optionalKeys: readonly string[],
+): value is Record<string, unknown> {
   if (!isSafeRecord(value)) {
     return false;
   }
 
-  const entries = Object.entries(value);
+  const allowedKeys = new Set([...requiredKeys, ...optionalKeys]);
   return (
-    entries.length <= maximumObjectKeys &&
-    entries.every(
-      ([key, nestedValue]) =>
-        isBoundedString(key, 128) &&
-        !dangerousKeys.has(key) &&
-        isBoundedSafeValue(nestedValue, depth + 1, seen),
-    )
+    requiredKeys.every((key) => Object.hasOwn(value, key)) &&
+    Object.keys(value).every((key) => allowedKeys.has(key))
   );
+}
+
+function isOptional(
+  value: unknown,
+  predicate: (item: unknown) => boolean,
+): boolean {
+  return value === undefined || predicate(value);
+}
+
+function isScore(value: unknown): value is number {
+  return (
+    typeof value === "number" &&
+    Number.isFinite(value) &&
+    value >= 0 &&
+    value <= 1
+  );
+}
+
+function isNonNegativeFinite(value: unknown): value is number {
+  return typeof value === "number" && Number.isFinite(value) && value >= 0;
+}
+
+function isNonNegativeInteger(value: unknown): value is number {
+  return isNonNegativeFinite(value) && Number.isInteger(value);
+}
+
+function isErrorCode(value: unknown): boolean {
+  return isStringInSet(value, errorCodes);
+}
+
+function isStringInSet(value: unknown, values: ReadonlySet<string>): boolean {
+  return typeof value === "string" && values.has(value);
+}
+
+function isExtensionContext(value: unknown): value is ExtensionContext {
+  return isBoundedString(value, 32) && contexts.has(value as ExtensionContext);
+}
+
+function isMessageType(value: unknown): value is MessageType {
+  return isBoundedString(value, 64) && messageTypes.has(value as MessageType);
 }
 
 function isSafeRecord(value: unknown): value is Record<string, unknown> {
@@ -194,13 +640,6 @@ function isSafeRecord(value: unknown): value is Record<string, unknown> {
   }
 
   return Object.keys(value).every((key) => !dangerousKeys.has(key));
-}
-
-function hasOnlyKeys(value: Record<string, unknown>, keys: string[]): boolean {
-  const ownKeys = Object.keys(value);
-  return (
-    ownKeys.length === keys.length && ownKeys.every((key) => keys.includes(key))
-  );
 }
 
 function isBoundedString(
