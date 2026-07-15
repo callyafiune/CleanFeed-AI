@@ -1,0 +1,135 @@
+<!doctype html>
+<html lang="pt-BR">
+  <body>
+    <main data-test-root="feed">
+      <article data-test-post="short" data-urn="urn:li:activity:short">
+        <div class="update-components-text">Texto curto e humano.</div>
+        <div data-test-actions><button>Curtir</button></div>
+      </article>
+      <article
+        data-test-post="hundred-words"
+        data-urn="urn:li:activity:hundred"
+      >
+        <div class="update-components-text">
+          Este texto tem palavras suficientes para representar uma publicação de
+          aproximadamente cem palavras, com contexto profissional, exemplos
+          concretos, uma reflexão sobre aprendizado, equipe, metas, clientes,
+          produto, qualidade, comunicação, disciplina, rotina, confiança,
+          pesquisa, resultados, decisões, colaboração, melhorias, experiências,
+          desafios, planejamento, execução, análise, cuidado, tempo, energia,
+          foco, propósito, autonomia, responsabilidade, ética, prática, revisão,
+          clareza, método, escuta, curiosidade, adaptação, consistência,
+          atenção, presença, conversa, respeito, oportunidade, entrega, valor,
+          impacto, conhecimento, trabalho, pessoas, projeto, caminho, escolha,
+          desenvolvimento, feedback, processo, prioridade, agenda, compromisso,
+          descoberta, validação, hipótese, solução, organização, comunidade,
+          iniciativa, aprendizado contínuo, repertório, liderança,
+          transparência, segurança, parceria, acompanhamento, mudança, resultado
+          sustentável, visão, ação, melhoria contínua, paciência, abertura,
+          resultado, próximo passo, construção coletiva.
+        </div>
+        <div data-test-actions><button>Curtir</button></div>
+      </article>
+      <article data-test-post="long" data-urn="urn:li:activity:long">
+        <header data-test-node="author">
+          <a href="/in/pessoa">Autora do post</a>
+        </header>
+        <div class="update-components-text">
+          <p>Este é o parágrafo principal da publicação.</p>
+          <p>O segundo parágrafo traz uma experiência prática.</p>
+          <button>ver mais</button>
+        </div>
+        <div data-test-actions data-test-node="buttons">
+          <button>Curtir</button><button>Comentar</button
+          ><button>Compartilhar</button><button>Enviar</button
+          ><span data-test-node="counters">123 comentários</span>
+        </div>
+        <div data-test-node="comment">
+          Comentário que não faz parte do post.
+        </div>
+      </article>
+      <article
+        data-test-post="paragraphs"
+        data-urn="urn:li:activity:paragraphs"
+      >
+        <div class="update-components-text">
+          <p>Primeiro parágrafo.</p>
+          <p>Segundo parágrafo.</p>
+          <p>Terceiro parágrafo.</p>
+        </div>
+        <div data-test-actions><button>Curtir</button></div>
+      </article>
+      <article data-test-post="emoji" data-urn="urn:li:activity:emoji">
+        <div class="update-components-text">
+          <p>Celebramos uma conquista importante 🎉</p>
+        </div>
+        <div data-test-actions><button>Curtir</button></div>
+      </article>
+      <article data-test-post="links" data-urn="urn:li:activity:links">
+        <div class="update-components-text">
+          <p>
+            Leia a pesquisa em
+            <a href="https://example.test/report">https://example.test/report</a
+            >.
+          </p>
+        </div>
+        <div data-test-actions><button>Curtir</button></div>
+      </article>
+      <article data-test-post="sponsored" data-urn="urn:li:activity:sponsored">
+        <span>Patrocinado</span>
+        <div data-test-id="main-feed-activity-card__commentary">
+          <p>Uma publicação patrocinada ainda possui conteúdo editorial.</p>
+        </div>
+        <div data-test-actions><button>Curtir</button></div>
+      </article>
+      <article data-test-post="repost" data-urn="urn:li:activity:repost">
+        <div class="update-components-text">
+          <p>Meu comentário sobre esta publicação republicada.</p>
+          <p>Conteúdo original citado não deve duplicar o comentário.</p>
+        </div>
+        <div data-test-actions><button>Compartilhar</button></div>
+      </article>
+      <article data-test-post="expanded" data-urn="urn:li:activity:expanded">
+        <div class="update-components-text">
+          <p>Texto expandido com detalhes adicionais.</p>
+          <button>ver menos</button>
+        </div>
+        <div data-test-actions><button>Curtir</button></div>
+      </article>
+      <article
+        data-test-post="removed-reinserted"
+        data-urn="urn:li:activity:reinserted"
+      >
+        <div class="update-components-text">
+          <p>Post que pode ser removido e reinserido pela rolagem virtual.</p>
+        </div>
+        <div data-test-actions><button>Curtir</button></div>
+      </article>
+      <article
+        data-test-post="stylistic-false-positive"
+        data-urn="urn:li:activity:style"
+      >
+        <div class="update-components-text">
+          <p>
+            Em síntese, a estrutura formal deste comunicado não prova qualquer
+            autoria automatizada.
+          </p>
+        </div>
+        <div data-test-actions><button>Curtir</button></div>
+      </article>
+      <article data-test-post="formal-human" data-urn="urn:li:activity:formal">
+        <div class="update-components-text">
+          <p>
+            Prezadas pessoas, encaminho o relatório solicitado para análise
+            técnica.
+          </p>
+        </div>
+        <div data-test-actions><button>Curtir</button></div>
+      </article>
+      <div data-test-node="menu" role="menu">Menu de opções</div>
+      <div data-test-node="error-banner" role="alert">
+        Não foi possível carregar o feed.
+      </div>
+    </main>
+  </body>
+</html>
