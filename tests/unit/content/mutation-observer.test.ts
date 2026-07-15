@@ -64,6 +64,26 @@ describe("createFeedMutationObserver", () => {
     expect(onCandidates).toHaveBeenCalledWith([post]);
   });
 
+  it("ignores nodes inserted inside CleanFeed-owned UI", async () => {
+    vi.useFakeTimers();
+    vi.stubGlobal("MutationObserver", MockMutationObserver);
+    const root = document.createElement("main");
+    const post = document.createElement("article");
+    const cleanFeedPanel = document.createElement("aside");
+    const panelChild = document.createElement("button");
+    cleanFeedPanel.setAttribute(CLEANFEED_ATTRIBUTES.owned, "true");
+    cleanFeedPanel.append(panelChild);
+    const onCandidates = vi.fn();
+    const observer = createFeedMutationObserver(root, onCandidates, {
+      debounceMs: 50,
+    });
+
+    observer.handle([mutationWith(post), mutationWith(panelChild)]);
+    await vi.advanceTimersByTimeAsync(50);
+
+    expect(onCandidates).toHaveBeenCalledWith([post]);
+  });
+
   it("clears pending callbacks when disconnected", async () => {
     vi.useFakeTimers();
     vi.stubGlobal("MutationObserver", MockMutationObserver);

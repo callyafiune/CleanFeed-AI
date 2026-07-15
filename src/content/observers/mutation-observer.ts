@@ -30,7 +30,7 @@ export function createFeedMutationObserver(
       for (const node of record.addedNodes) {
         if (
           node instanceof HTMLElement &&
-          !node.hasAttribute(CLEANFEED_ATTRIBUTES.owned)
+          !node.closest(`[${CLEANFEED_ATTRIBUTES.owned}]`)
         ) {
           candidates.add(node);
         }
