@@ -8,7 +8,8 @@ import type {
   MessageEnvelope,
 } from "@/shared/messages";
 import { normalizeText } from "@/shared/text-normalization";
-import type { ClassificationResult } from "@/shared/types";
+import type { UserSettings } from "@/shared/settings-types";
+import type { ClassificationResult, ModelStatus } from "@/shared/types";
 import { buildCacheKey, type ClassificationCache } from "@/storage/cache";
 import type { MetricRecord } from "@/storage/metrics";
 
@@ -24,12 +25,19 @@ export interface MetricsRecorder {
   record(record: MetricRecord): Promise<void>;
 }
 
+export interface SettingsStore {
+  get(): Promise<UserSettings>;
+  save(settings: UserSettings): Promise<UserSettings>;
+}
+
 export interface BackgroundMessageRouterOptions {
   cache: Pick<ClassificationCache, "get" | "set">;
   metrics: MetricsRecorder;
   offscreenClient: OffscreenClient;
   modelKey: string;
   settingsFingerprint: string | ((platformId: string) => Promise<string>);
+  settings?: SettingsStore;
+  modelStatus?: () => Promise<ModelStatus>;
 }
 
 type ClassifyTextMessage = MessageEnvelope<
@@ -52,18 +60,36 @@ export class BackgroundMessageRouter {
   ): Promise<ExtensionMessage | undefined> {
     void sender;
     const message = parseExtensionMessage(rawMessage);
-    if (message.target !== "background" || message.type !== "CLASSIFY_TEXT") {
+    if (message.target !== "background") {
       return undefined;
     }
 
-    const classificationMessage = message as ClassifyTextMessage;
     try {
-      return await this.handleClassification(classificationMessage);
+      switch (message.type) {
+        case "CLASSIFY_TEXT":
+          return await this.handleClassification(
+            message as ClassifyTextMessage,
+          );
+        case "GET_SETTINGS":
+          return await this.handleGetSettings(
+            message as MessageEnvelope<"GET_SETTINGS", undefined>,
+          );
+        case "UPDATE_SETTINGS":
+          return await this.handleUpdateSettings(
+            message as MessageEnvelope<
+              "UPDATE_SETTINGS",
+              Partial<UserSettings>
+            >,
+          );
+        case "MODEL_STATUS_REQUEST":
+          return this.handleModelStatus(
+            message as MessageEnvelope<"MODEL_STATUS_REQUEST", undefined>,
+          );
+        default:
+          return undefined;
+      }
     } catch (error) {
-      return classificationErrorMessage(
-        classificationMessage,
-        toCleanFeedError(error),
-      );
+      return errorMessage(message, toCleanFeedError(error));
     }
   }
 
@@ -110,6 +136,59 @@ export class BackgroundMessageRouter {
         ? settingsFingerprint
         : settingsFingerprint(platformId),
     );
+  }
+
+  private async handleGetSettings(
+    request: MessageEnvelope<"GET_SETTINGS", undefined>,
+  ): Promise<ExtensionMessage> {
+    const settings = await this.settingsStore().get();
+    return {
+      source: "background",
+      target: request.source,
+      type: "SETTINGS_RESULT",
+      payload: settings,
+    };
+  }
+
+  private async handleUpdateSettings(
+    request: MessageEnvelope<"UPDATE_SETTINGS", Partial<UserSettings>>,
+  ): Promise<ExtensionMessage> {
+    const store = this.settingsStore();
+    const settings = await store.save({
+      ...(await store.get()),
+      ...request.payload,
+    });
+    return {
+      source: "background",
+      target: request.source,
+      type: "SETTINGS_RESULT",
+      payload: settings,
+    };
+  }
+
+  private async handleModelStatus(
+    request: MessageEnvelope<"MODEL_STATUS_REQUEST", undefined>,
+  ): Promise<ExtensionMessage> {
+    const status = await (this.options.modelStatus?.() ??
+      Promise.resolve({
+        state: "unavailable" as const,
+        classifierId: "mock",
+        modelVersion: this.options.modelKey,
+        backend: "mock" as const,
+      }));
+    return {
+      source: "background",
+      target: request.source,
+      type: "MODEL_STATUS_RESULT",
+      payload: status,
+    };
+  }
+
+  private settingsStore(): SettingsStore {
+    if (this.options.settings === undefined) {
+      throw new CleanFeedError("STORAGE_ERROR", "SETTINGS_UNAVAILABLE");
+    }
+    return this.options.settings;
   }
 }
 
@@ -170,6 +249,21 @@ export function classificationErrorMessage(
       code: error.code,
       recoverable: error.recoverable,
     },
+  };
+}
+
+function errorMessage(
+  request: MessageEnvelope<string, unknown>,
+  error: CleanFeedError,
+): ExtensionMessage {
+  return {
+    source: "background",
+    target: request.source,
+    type: "ERROR",
+    ...(request.requestId === undefined
+      ? {}
+      : { requestId: request.requestId }),
+    payload: { code: error.code, recoverable: error.recoverable },
   };
 }
 

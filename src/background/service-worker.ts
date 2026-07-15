@@ -28,6 +28,13 @@ const router = new BackgroundMessageRouter({
   metrics: new MetricsRepository(storage),
   offscreenClient: new RuntimeOffscreenClient(),
   modelKey: "mock:1.0.0",
+  settings,
+  modelStatus: async () => ({
+    state: "ready",
+    classifierId: "mock",
+    modelVersion: "1.0.0",
+    backend: "mock",
+  }),
   settingsFingerprint: createSettingsFingerprintProvider(
     settings,
     platformSettings,
