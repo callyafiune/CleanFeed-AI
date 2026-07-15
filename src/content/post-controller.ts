@@ -38,6 +38,7 @@ type PostState =
 interface PostRuntimeState {
   state: PostState;
   cancelled: boolean;
+  presentationApplied: boolean;
   hash?: string;
 }
 
@@ -68,6 +69,7 @@ export class PostController {
   private observer: PostIntersectionObserver | undefined;
   private mutationObserver: FeedMutationObserver | undefined;
   private requestSequence = 0;
+  private running = false;
 
   constructor(private readonly options: PostControllerOptions) {
     this.document = options.document ?? document;
@@ -83,6 +85,7 @@ export class PostController {
 
   start(): void {
     if (this.observer !== undefined) return;
+    this.running = true;
     this.observer = this.createIntersectionObserver((changes) => {
       changes.forEach((change) => this.handleViewportChange(change));
     });
@@ -96,6 +99,15 @@ export class PostController {
   }
 
   stop(): void {
+    this.running = false;
+    for (const element of this.observed) {
+      const state = this.states.get(element);
+      if (state?.state !== "queued" && state?.state !== "classifying") continue;
+      state.cancelled = true;
+      if (state.state === "queued") this.stats.dequeued();
+      state.state = "cancelled";
+      element.dataset.cleanfeedState = "cancelled";
+    }
     this.observer?.disconnect();
     this.observer = undefined;
     this.mutationObserver?.disconnect();
@@ -107,7 +119,11 @@ export class PostController {
     for (const element of this.options.adapter.findPostElements(root)) {
       if (this.observed.has(element)) continue;
       this.observed.add(element);
-      this.states.set(element, { state: "observed", cancelled: false });
+      this.states.set(element, {
+        state: "observed",
+        cancelled: false,
+        presentationApplied: false,
+      });
       element.dataset.cleanfeedState = "observed";
       this.stats.postFound();
       this.observer?.observe(element);
@@ -116,7 +132,10 @@ export class PostController {
 
   clearPresentation(): void {
     for (const element of this.observed) {
+      const state = this.states.get(element);
+      if (state?.presentationApplied !== true) continue;
       this.options.adapter.restorePresentation(element);
+      state.presentationApplied = false;
       this.stats.restored();
     }
   }
@@ -148,7 +167,7 @@ export class PostController {
     element: HTMLElement,
     state: PostRuntimeState,
   ): Promise<void> {
-    if (state.cancelled || state.state !== "queued") return;
+    if (!this.running || state.cancelled || state.state !== "queued") return;
     state.state = "classifying";
     this.stats.dequeued();
     element.dataset.cleanfeedState = "classifying";
@@ -156,6 +175,8 @@ export class PostController {
     const extracted = this.options.adapter.extractPost(element);
     const text = extracted === null ? "" : normalizeText(extracted.text);
     const hash = text.length === 0 ? undefined : await this.hashText(text);
+    if (!this.running || state.cancelled || state.state !== "classifying")
+      return;
     const eligibility = evaluateEligibility({
       text,
       enabled: this.options.settings.enabled,
@@ -178,7 +199,13 @@ export class PostController {
         this.stats.skippedByLanguage();
       return;
     }
-    if (hash === undefined || state.cancelled || !element.isConnected) return;
+    if (
+      hash === undefined ||
+      !this.running ||
+      state.cancelled ||
+      !element.isConnected
+    )
+      return;
 
     state.hash = hash;
     this.session.remember(hash);
@@ -193,16 +220,18 @@ export class PostController {
       const result = classificationResult(response);
       if (result === null || !(await this.isCurrent(element, state))) return;
 
+      const mode = appliedMode(result, this.options.settings);
       this.options.adapter.applyPresentation(
         element,
         result,
         this.options.settings,
       );
+      state.presentationApplied = mode !== null;
       state.state = "classified";
       element.dataset.cleanfeedState = "classified";
-      this.stats.classified(result, appliedMode(result, this.options.settings));
+      this.stats.classified(result, mode);
     } catch {
-      if (element.isConnected && !state.cancelled) {
+      if (this.running && element.isConnected && !state.cancelled) {
         state.state = "failed";
         element.dataset.cleanfeedState = "classification-failed";
       }
@@ -213,7 +242,12 @@ export class PostController {
     element: HTMLElement,
     state: PostRuntimeState,
   ): Promise<boolean> {
-    if (!element.isConnected || state.cancelled || state.hash === undefined)
+    if (
+      !this.running ||
+      !element.isConnected ||
+      state.cancelled ||
+      state.hash === undefined
+    )
       return false;
     const current = this.options.adapter.extractPost(element);
     if (current === null) return false;
