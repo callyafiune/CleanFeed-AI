@@ -98,6 +98,28 @@ describe("LinkedInAdapter", () => {
     expect(adapter.isPostElement(wrapper)).toBe(false);
     expect(adapter.extractPost(wrapper)).toBeNull();
   });
+
+  it("does not include excluded nested content inside otherwise valid commentary", () => {
+    const document = new DOMParser().parseFromString(
+      `<article data-urn="urn:li:activity:valid">
+        <div class="update-components-text">
+          Texto editorial que deve permanecer.
+          <div role="comment">Comentário aninhado que deve sumir.</div>
+          <div data-test-node="quoted">Citação aninhada que deve sumir.</div>
+          <div role="menu">Menu aninhado que deve sumir.</div>
+        </div>
+        <div data-test-actions><button>Curtir</button></div>
+      </article>`,
+      "text/html",
+    );
+    const post = document.querySelector<HTMLElement>("article")!;
+
+    const extracted = adapter.extractPost(post);
+    expect(extracted?.text).toContain("Texto editorial que deve permanecer.");
+    expect(extracted?.text).not.toContain("Comentário aninhado");
+    expect(extracted?.text).not.toContain("Citação aninhada");
+    expect(extracted?.text).not.toContain("Menu aninhado");
+  });
 });
 
 describe("LinkedInAdapter presentation", () => {

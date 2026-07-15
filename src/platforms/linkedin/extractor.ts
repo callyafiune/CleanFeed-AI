@@ -60,6 +60,7 @@ function cleanCommentary(commentary: HTMLElement): string {
   const clone = commentary.cloneNode(true) as HTMLElement;
   const removable = [
     ...LINKEDIN_SELECTORS.uiNoise,
+    ...LINKEDIN_SELECTORS.excludedAncestors,
     "a[href^='/in/']",
     "a[href*='linkedin.com/in/']",
   ].join(",");
