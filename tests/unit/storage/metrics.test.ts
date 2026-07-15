@@ -89,6 +89,58 @@ describe("MetricsRepository", () => {
     await expect(storage.get("cleanfeed.metrics.v1")).resolves.toBeUndefined();
   });
 
+  it("discards persisted latency aggregates inconsistent with their samples", async () => {
+    const storage = new MemoryStorageArea();
+    await storage.set("cleanfeed.metrics.v1", {
+      schemaVersion: 1,
+      metrics: {
+        postsDetected: 0,
+        postsAnalyzed: 0,
+        postsSkipped: 0,
+        skippedByLength: 0,
+        skippedByLanguage: 0,
+        cacheHits: 0,
+        cacheMisses: 0,
+        inferenceFailures: 0,
+        cancelledTasks: 0,
+        revealedPosts: 0,
+        averageInferenceMs: 0,
+        medianInferenceMs: 0,
+        resultsByStatus: {
+          probably_human: 0,
+          inconclusive: 0,
+          possibly_ai: 0,
+          strong_ai_indication: 0,
+          insufficient_evidence: 0,
+          classification_failed: 0,
+        },
+        backendUsage: {},
+      },
+      latencySamples: [100],
+    });
+    const metrics = new MetricsRepository(storage);
+
+    expect((await metrics.get()).averageInferenceMs).toBe(0);
+    await expect(storage.get("cleanfeed.metrics.v1")).resolves.toBeUndefined();
+  });
+
+  it("does not let corrupt recovery from get erase a concurrent record", async () => {
+    const storage = new InterleavingStorageArea();
+    const metrics = new MetricsRepository(storage);
+
+    const recovery = metrics.get();
+    const recording = metrics.record({ postsDetected: 1 });
+    await Promise.resolve();
+    await Promise.resolve();
+    await Promise.resolve();
+    await Promise.resolve();
+    storage.releaseRemoval();
+
+    await Promise.all([recovery, recording]);
+
+    expect((await metrics.get()).postsDetected).toBe(1);
+  });
+
   it("clears aggregate metrics", async () => {
     const storage = new MemoryStorageArea();
     const metrics = new MetricsRepository(storage);
@@ -100,3 +152,38 @@ describe("MetricsRepository", () => {
     expect((await metrics.get()).postsDetected).toBe(0);
   });
 });
+
+class InterleavingStorageArea implements StorageArea {
+  private value: unknown = { corrupt: true };
+  private getCalls = 0;
+  private release?: () => void;
+  private readonly removalGate = new Promise<void>((resolve) => {
+    this.release = resolve;
+  });
+
+  async get<T>(key: string): Promise<T | undefined> {
+    void key;
+    this.getCalls += 1;
+    return (this.getCalls === 2 ? undefined : this.value) as T | undefined;
+  }
+
+  async set<T>(key: string, value: T): Promise<void> {
+    void key;
+    this.value = value;
+  }
+
+  async remove(keys: string | string[]): Promise<void> {
+    void keys;
+    await this.removalGate;
+    this.value = undefined;
+  }
+
+  async getMany<T>(keys: string[]): Promise<Record<string, T>> {
+    void keys;
+    return {};
+  }
+
+  releaseRemoval(): void {
+    this.release?.();
+  }
+}

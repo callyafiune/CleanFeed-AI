@@ -88,9 +88,11 @@ export class MetricsRepository {
     });
   }
 
-  async get(): Promise<AggregateMetrics> {
-    const persisted = await this.readPersisted();
-    return cloneMetrics(persisted.metrics);
+  get(): Promise<AggregateMetrics> {
+    return this.runMutation(async () => {
+      const persisted = await this.readPersisted();
+      return cloneMetrics(persisted.metrics);
+    });
   }
 
   clear(): Promise<void> {
@@ -186,7 +188,8 @@ function isPersistedMetrics(value: unknown): value is PersistedMetrics {
     isAggregateMetrics(value.metrics) &&
     Array.isArray(value.latencySamples) &&
     value.latencySamples.length <= MAX_LATENCY_SAMPLES &&
-    value.latencySamples.every(isNonNegativeFinite)
+    value.latencySamples.every(isNonNegativeFinite) &&
+    hasConsistentLatencySummary(value.metrics, value.latencySamples)
   );
 }
 
@@ -237,8 +240,27 @@ function summarizeLatencies(
   metrics: AggregateMetrics,
   latencySamples: number[],
 ): AggregateMetrics {
+  const { average, median } = summarizeLatencySamples(latencySamples);
+  return { ...metrics, averageInferenceMs: average, medianInferenceMs: median };
+}
+
+function hasConsistentLatencySummary(
+  metrics: AggregateMetrics,
+  latencySamples: number[],
+): boolean {
+  const { average, median } = summarizeLatencySamples(latencySamples);
+  return (
+    areNearlyEqual(metrics.averageInferenceMs, average) &&
+    areNearlyEqual(metrics.medianInferenceMs, median)
+  );
+}
+
+function summarizeLatencySamples(latencySamples: number[]): {
+  average: number;
+  median: number;
+} {
   if (latencySamples.length === 0) {
-    return metrics;
+    return { average: 0, median: 0 };
   }
 
   const sorted = [...latencySamples].sort((left, right) => left - right);
@@ -251,7 +273,13 @@ function summarizeLatencies(
     latencySamples.reduce((sum, latency) => sum + latency, 0) /
     latencySamples.length;
 
-  return { ...metrics, averageInferenceMs: average, medianInferenceMs: median };
+  return { average, median };
+}
+
+function areNearlyEqual(left: number, right: number): boolean {
+  return (
+    Math.abs(left - right) <= Number.EPSILON * Math.max(1, left, right) * 4
+  );
 }
 
 function cloneMetrics(metrics: AggregateMetrics): AggregateMetrics {
