@@ -4,6 +4,13 @@ export const MAX_CLASSIFICATION_TEXT_LENGTH = 100_000;
 export const MAX_REQUEST_ID_LENGTH = 128;
 export const MAX_PLATFORM_ID_LENGTH = 128;
 
+export const CLEANFEED_ATTRIBUTES = {
+  state: "data-cleanfeed-state",
+  hash: "data-cleanfeed-hash",
+  version: "data-cleanfeed-version",
+  owned: "data-cleanfeed-owned",
+} as const;
+
 export const SETTINGS_STORAGE_KEYS = {
   global: "cleanfeed.settings.v1",
   platform: "cleanfeed.platform-settings.v1",
