@@ -9,6 +9,7 @@ interface PresentationSnapshot {
 }
 
 const originals = new WeakMap<HTMLElement, PresentationSnapshot>();
+const indicators = new WeakMap<HTMLElement, HTMLElement>();
 
 export function applyLinkedInPresentation(
   element: HTMLElement,
@@ -75,17 +76,21 @@ function appendIndicator(
   element: HTMLElement,
   result: ClassificationResult,
 ): void {
+  if (element.parentNode === null) return;
+
   const indicator = element.ownerDocument.createElement("div");
   indicator.dataset.cleanfeedIndicator = "true";
   indicator.setAttribute("role", "status");
   indicator.textContent = `CleanFeed: ${result.status}`;
-  element.prepend(indicator);
+  // Keep extension UI outside the article so it does not change post content
+  // or its reading order. The WeakMap gives the exact post-to-widget binding.
+  element.parentNode.insertBefore(indicator, element);
+  indicators.set(element, indicator);
 }
 
 function removeIndicator(element: HTMLElement): void {
-  element
-    .querySelectorAll<HTMLElement>("[data-cleanfeed-indicator='true']")
-    .forEach((indicator) => indicator.remove());
+  indicators.get(element)?.remove();
+  indicators.delete(element);
 }
 
 function ceiling(

@@ -1,6 +1,6 @@
 import { readFile } from "node:fs/promises";
 import { resolve } from "node:path";
-import { describe, expect, it, beforeAll } from "vitest";
+import { afterEach, beforeAll, describe, expect, it } from "vitest";
 import { DEFAULT_SETTINGS } from "@/shared/constants";
 import type { ClassificationResult, PresentationMode } from "@/shared/types";
 import { LinkedInAdapter } from "@/platforms/linkedin/linkedin-adapter";
@@ -125,6 +125,16 @@ describe("LinkedInAdapter", () => {
 describe("LinkedInAdapter presentation", () => {
   const adapter = new LinkedInAdapter();
 
+  afterEach(() => {
+    document.body.replaceChildren();
+  });
+
+  function createPost(): HTMLElement {
+    const element = document.createElement("article");
+    document.body.append(element);
+    return element;
+  }
+
   function result(aiScore: number): ClassificationResult {
     return {
       aiScore,
@@ -146,18 +156,24 @@ describe("LinkedInAdapter presentation", () => {
   }
 
   it("is idempotent when presentation is applied repeatedly", () => {
-    const element = document.createElement("article");
+    const element = createPost();
     adapter.applyPresentation(element, result(0.9), settings("blur"));
     adapter.applyPresentation(element, result(0.9), settings("blur"));
 
     expect(element.style.filter).toBe("blur(5px)");
     expect(
-      element.querySelectorAll("[data-cleanfeed-indicator='true']"),
+      document.querySelectorAll("[data-cleanfeed-indicator='true']"),
     ).toHaveLength(1);
+    expect(
+      element.querySelector("[data-cleanfeed-indicator='true']"),
+    ).toBeNull();
+    expect(
+      element.previousElementSibling?.getAttribute("data-cleanfeed-indicator"),
+    ).toBe("true");
   });
 
   it("reconciles every style while transitioning presentation modes", () => {
-    const element = document.createElement("article");
+    const element = createPost();
     element.style.filter = "brightness(0.9)";
     element.style.maxHeight = "12rem";
     element.style.overflow = "auto";
@@ -178,7 +194,7 @@ describe("LinkedInAdapter presentation", () => {
   });
 
   it("restores a previously presented post when its score stops qualifying", () => {
-    const element = document.createElement("article");
+    const element = createPost();
     element.style.display = "grid";
     element.style.filter = "contrast(1.1)";
 
@@ -189,7 +205,7 @@ describe("LinkedInAdapter presentation", () => {
     expect(element.style.filter).toBe("contrast(1.1)");
     expect(element.dataset.cleanfeedStatus).toBeUndefined();
     expect(
-      element.querySelector("[data-cleanfeed-indicator='true']"),
+      document.querySelector("[data-cleanfeed-indicator='true']"),
     ).toBeNull();
   });
 });
