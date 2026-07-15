@@ -29,7 +29,8 @@ type PendingRequest = {
 
 /** Bridges the offscreen document to its one dedicated inference worker. */
 export class WorkerHost implements WorkerClassifierClient {
-  private readonly worker: WorkerLike;
+  private worker: WorkerLike;
+  private workerAvailable = true;
   private readonly pending = new Map<string, PendingRequest>();
 
   constructor(
@@ -40,12 +41,16 @@ export class WorkerHost implements WorkerClassifierClient {
   ) {
     this.worker = createWorker();
     this.worker.onmessage = (event) => this.handleMessage(event.data);
-    this.worker.onerror = () => this.rejectAll();
+    this.worker.onerror = () => this.failWorker();
   }
 
   classify(
     request: WorkerClassificationRequest,
   ): Promise<ClassificationResult> {
+    if (!this.workerAvailable) {
+      return Promise.reject(workerUnavailableError());
+    }
+
     if (this.pending.has(request.requestId)) {
       return Promise.reject(
         new CleanFeedError("INVALID_MESSAGE", "DUPLICATE_WORKER_REQUEST"),
@@ -73,7 +78,10 @@ export class WorkerHost implements WorkerClassifierClient {
 
   dispose(): void {
     this.rejectAll();
-    this.worker.terminate();
+    if (this.workerAvailable) {
+      this.workerAvailable = false;
+      this.worker.terminate();
+    }
   }
 
   private handleMessage(rawMessage: unknown): void {
@@ -81,7 +89,7 @@ export class WorkerHost implements WorkerClassifierClient {
     try {
       message = parseWorkerResponse(rawMessage);
     } catch (error) {
-      this.rejectAll(error);
+      this.failWorker(error);
       return;
     }
 
@@ -110,6 +118,14 @@ export class WorkerHost implements WorkerClassifierClient {
       pending.reject(reason);
     }
     this.pending.clear();
+  }
+
+  private failWorker(reason: unknown = workerUnavailableError()): void {
+    if (this.workerAvailable) {
+      this.workerAvailable = false;
+      this.worker.terminate();
+    }
+    this.rejectAll(reason);
   }
 }
 

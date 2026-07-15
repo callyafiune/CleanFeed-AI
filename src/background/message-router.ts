@@ -37,6 +37,11 @@ type ClassifyTextMessage = MessageEnvelope<
   ClassificationRequest
 > & { requestId: string };
 
+type ClassificationErrorMessage = MessageEnvelope<
+  "ERROR",
+  { code: CleanFeedError["code"]; recoverable: boolean }
+> & { requestId: string };
+
 /** Validates and routes background-bound requests without trusting page inputs. */
 export class BackgroundMessageRouter {
   constructor(private readonly options: BackgroundMessageRouterOptions) {}
@@ -51,7 +56,15 @@ export class BackgroundMessageRouter {
       return undefined;
     }
 
-    return this.handleClassification(message as ClassifyTextMessage);
+    const classificationMessage = message as ClassifyTextMessage;
+    try {
+      return await this.handleClassification(classificationMessage);
+    } catch (error) {
+      return classificationErrorMessage(
+        classificationMessage,
+        toCleanFeedError(error),
+      );
+    }
   }
 
   private async handleClassification(
@@ -117,6 +130,19 @@ export class RuntimeOffscreenClient implements OffscreenClient {
     });
     const message = parseExtensionMessage(response);
     if (
+      message.type === "ERROR" &&
+      message.source === "offscreen" &&
+      message.target === "background" &&
+      message.requestId === request.requestId
+    ) {
+      throw new CleanFeedError(
+        message.payload.code,
+        message.payload.code,
+        message.payload.recoverable,
+      );
+    }
+
+    if (
       message.type !== "OFFSCREEN_RESULT" ||
       message.source !== "offscreen" ||
       message.target !== "background" ||
@@ -127,6 +153,30 @@ export class RuntimeOffscreenClient implements OffscreenClient {
 
     return message.payload;
   }
+}
+
+export function classificationErrorMessage(
+  request: ClassifyTextMessage,
+  error: CleanFeedError,
+): ClassificationErrorMessage {
+  return {
+    source: "background",
+    target: request.source,
+    type: "ERROR",
+    requestId: request.requestId,
+    payload: {
+      code: error.code,
+      recoverable: error.recoverable,
+    },
+  };
+}
+
+function toCleanFeedError(error: unknown): CleanFeedError {
+  if (error instanceof CleanFeedError) {
+    return error;
+  }
+
+  return new CleanFeedError("INFERENCE_FAILED", "INFERENCE_FAILED");
 }
 
 function classificationResultMessage(

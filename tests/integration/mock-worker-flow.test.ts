@@ -1,7 +1,11 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import type { ClassificationResult, StorageArea } from "@/shared/types";
-import { BackgroundMessageRouter } from "@/background/message-router";
+import {
+  BackgroundMessageRouter,
+  RuntimeOffscreenClient,
+} from "@/background/message-router";
+import { CleanFeedError } from "@/shared/errors";
 import { ClassificationCache } from "@/storage/cache";
 
 const cachedResult: ClassificationResult = {
@@ -157,6 +161,61 @@ describe("mock worker flow", () => {
     expect(classify).toHaveBeenCalledWith({
       requestId: "request-1",
       ...classifyMessage.payload,
+    });
+  });
+
+  it("propagates a typed offscreen error back to content", async () => {
+    const cache = new ClassificationCache(
+      new MemoryStorage(),
+      { now: () => 1_000 },
+      { maximumEntries: 10, ttlMs: 60_000 },
+    );
+    const { router } = createRouter(
+      cache,
+      vi
+        .fn()
+        .mockRejectedValue(
+          new CleanFeedError("INFERENCE_TIMEOUT", "timed out", false),
+        ),
+    );
+
+    await expect(router.handle(classifyMessage)).resolves.toMatchObject({
+      source: "background",
+      target: "content",
+      type: "ERROR",
+      requestId: "request-1",
+      payload: { code: "INFERENCE_TIMEOUT", recoverable: false },
+    });
+  });
+
+  it("turns a directed offscreen ERROR into its original CleanFeedError", async () => {
+    const chromeMock = {
+      runtime: {
+        getURL: vi.fn((path: string) => `chrome-extension://cleanfeed/${path}`),
+        getContexts: vi
+          .fn()
+          .mockResolvedValue([{ contextType: "OFFSCREEN_DOCUMENT" }]),
+        sendMessage: vi.fn().mockResolvedValue({
+          source: "offscreen",
+          target: "background",
+          type: "ERROR",
+          requestId: "request-1",
+          payload: { code: "INFERENCE_TIMEOUT", recoverable: false },
+        }),
+      },
+      offscreen: {
+        Reason: { WORKERS: "WORKERS" },
+        createDocument: vi.fn(),
+      },
+    };
+    vi.stubGlobal("chrome", chromeMock);
+    const client = new RuntimeOffscreenClient();
+
+    await expect(
+      client.classify({ ...classifyMessage.payload, requestId: "request-1" }),
+    ).rejects.toMatchObject({
+      code: "INFERENCE_TIMEOUT",
+      recoverable: false,
     });
   });
 });
