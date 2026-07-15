@@ -68,6 +68,7 @@ export class PostController {
   private readonly observed = new Set<HTMLElement>();
   private observer: PostIntersectionObserver | undefined;
   private mutationObserver: FeedMutationObserver | undefined;
+  private rootObserver: MutationObserver | undefined;
   private requestSequence = 0;
   private running = false;
 
@@ -89,13 +90,7 @@ export class PostController {
     this.observer = this.createIntersectionObserver((changes) => {
       changes.forEach((change) => this.handleViewportChange(change));
     });
-    const root = this.options.adapter.findFeedRoot(this.document);
-    if (root !== null) {
-      this.observeCandidates(root);
-      this.mutationObserver = createFeedMutationObserver(root, (candidates) => {
-        candidates.forEach((candidate) => this.observeCandidates(candidate));
-      });
-    }
+    if (!this.attachFeedRoot()) this.observeFeedRootArrival();
   }
 
   stop(): void {
@@ -112,6 +107,8 @@ export class PostController {
     this.observer = undefined;
     this.mutationObserver?.disconnect();
     this.mutationObserver = undefined;
+    this.rootObserver?.disconnect();
+    this.rootObserver = undefined;
     this.observed.clear();
   }
 
@@ -138,6 +135,31 @@ export class PostController {
       state.presentationApplied = false;
       this.stats.restored();
     }
+  }
+
+  private attachFeedRoot(): boolean {
+    if (this.mutationObserver !== undefined) return true;
+    const root = this.options.adapter.findFeedRoot(this.document);
+    if (root === null) return false;
+
+    this.observeCandidates(root);
+    this.mutationObserver = createFeedMutationObserver(root, (candidates) => {
+      candidates.forEach((candidate) => this.observeCandidates(candidate));
+    });
+    this.rootObserver?.disconnect();
+    this.rootObserver = undefined;
+    return true;
+  }
+
+  private observeFeedRootArrival(): void {
+    this.rootObserver?.disconnect();
+    this.rootObserver = new MutationObserver(() => {
+      if (this.running) this.attachFeedRoot();
+    });
+    this.rootObserver.observe(this.document, {
+      childList: true,
+      subtree: true,
+    });
   }
 
   private handleViewportChange({

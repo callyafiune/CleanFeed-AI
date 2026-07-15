@@ -176,6 +176,43 @@ describe("content classification pipeline", () => {
     expect(sendMessage).not.toHaveBeenCalled();
   });
 
+  it("attaches to a LinkedIn feed root added after the controller starts", async () => {
+    let intersection: FakeIntersectionObserver | undefined;
+    const sendMessage = vi.fn().mockResolvedValue({
+      source: "background",
+      target: "content",
+      type: "CLASSIFICATION_RESULT",
+      requestId: "request-1",
+      payload: createResult(),
+    });
+    const controller = new PostController({
+      adapter: new LinkedInAdapter(),
+      document,
+      settings: DEFAULT_SETTINGS,
+      createIntersectionObserver: (callback) => {
+        intersection = new FakeIntersectionObserver(callback);
+        return intersection;
+      },
+      sendMessage,
+      hashText: async () => "delayed-feed-post",
+    });
+
+    controller.start();
+    const root = document.createElement("main");
+    const eligiblePost = post(
+      Array.from({ length: 120 }, () => "conteúdo").join(" "),
+    );
+    root.append(eligiblePost);
+    document.body.append(root);
+    await flushPromises();
+
+    intersection?.emit(eligiblePost, true);
+    await flushPromises();
+
+    expect(sendMessage).toHaveBeenCalledTimes(1);
+    expect(eligiblePost.dataset.cleanfeedState).toBe("classified");
+  });
+
   it("cancels queued work when stopped before its microtask can classify", async () => {
     const root = document.createElement("main");
     const eligiblePost = post(
