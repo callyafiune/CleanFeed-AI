@@ -16,4 +16,21 @@ describe("getTextLengthInfo", () => {
       wordCount: 0,
     });
   });
+
+  it("falls back to Unicode word matching when Intl.Segmenter is unavailable", () => {
+    const originalSegmenter = Intl.Segmenter;
+    Object.defineProperty(Intl, "Segmenter", {
+      configurable: true,
+      value: undefined,
+    });
+
+    try {
+      expect(getTextLengthInfo("d'água não-é 2026").wordCount).toBe(3);
+    } finally {
+      Object.defineProperty(Intl, "Segmenter", {
+        configurable: true,
+        value: originalSegmenter,
+      });
+    }
+  });
 });

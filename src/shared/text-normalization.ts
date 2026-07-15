@@ -4,7 +4,7 @@
  */
 export function normalizeText(text: string): string {
   return text
-    .replace(/[\u200B-\u200D\u2060\uFEFF]/gu, "")
+    .replace(/[\u200B-\u200C\u2060\uFEFF]/gu, "")
     .replace(/\r\n?/gu, "\n")
     .split("\n")
     .map((line) => line.replace(/[\t ]+/gu, " ").trim())

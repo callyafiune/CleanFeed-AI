@@ -57,6 +57,36 @@ describe("evaluateEligibility", () => {
     ).toBe(true);
   });
 
+  it("respects an explicit minimum of 80 outside experimental mode", () => {
+    expect(
+      evaluateEligibility({
+        ...baseInput("texto ".repeat(80)),
+        minimumWordCount: 80,
+      }),
+    ).toEqual({ eligible: true, reason: "ELIGIBLE" });
+  });
+
+  it("does not lower an explicit minimum in experimental mode", () => {
+    expect(
+      evaluateEligibility({
+        ...baseInput("texto ".repeat(100)),
+        experimentalShortTextDetection: true,
+        minimumWordCount: 150,
+      }),
+    ).toEqual({ eligible: false, reason: "BELOW_MINIMUM_LENGTH" });
+  });
+
+  it("recognizes composed emojis as mostly emoji content", () => {
+    const text = ["👍🏽", "🇧🇷", "1️⃣", "👨‍👩‍👧‍👦"]
+      .flatMap((emoji) => Array.from({ length: 25 }, () => emoji))
+      .join(" ");
+
+    expect(evaluateEligibility(baseInput(text))).toEqual({
+      eligible: false,
+      reason: "MOSTLY_EMOJIS",
+    });
+  });
+
   it.each([
     ["enabled", false, "EXTENSION_DISABLED"],
     ["domainEnabled", false, "DOMAIN_DISABLED"],

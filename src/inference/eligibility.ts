@@ -6,8 +6,8 @@ const EXPERIMENTAL_MINIMUM_WORD_COUNT = 50;
 const MOSTLY_CONTENT_THRESHOLD = 0.6;
 const URL_PATTERN = /^(?:https?:\/\/|www\.)\S+$/iu;
 const HASHTAG_PATTERN = /^#[\p{L}\p{N}_]+$/u;
-const EMOJI_PATTERN =
-  /^\p{Extended_Pictographic}(?:\uFE0F|\u200D\p{Extended_Pictographic})*$/u;
+const EMOJI_SEQUENCE_PATTERN =
+  /(?:\p{Regional_Indicator}{2}|[#*0-9]\uFE0F?\u20E3|\p{Extended_Pictographic}\p{Emoji_Modifier}?)(?:\uFE0F|\u200D(?:\p{Extended_Pictographic}\p{Emoji_Modifier}?))*/gu;
 const TITLE_CASE_NAME_PATTERN =
   /^(?:\p{Lu}\p{Ll}*)(?:[ '-](?:\p{Lu}\p{Ll}*))*$/u;
 const SENTENCE_PUNCTUATION_PATTERN = /[.!?;:]/u;
@@ -20,6 +20,10 @@ export interface EligibilityInput {
   extractionSucceeded: boolean;
   duplicateContent: boolean;
   experimentalShortTextDetection: boolean;
+  /**
+   * Explicit user preference. When omitted, the mode default is 100 words or
+   * 50 words for experimental short-text detection.
+   */
   minimumWordCount?: number;
 }
 
@@ -49,7 +53,7 @@ function getContentComposition(text: string): ContentComposition {
     } else if (HASHTAG_PATTERN.test(token)) {
       composition.meaningfulTokens += 1;
       composition.hashtags += 1;
-    } else if (EMOJI_PATTERN.test(token)) {
+    } else if (isEmojiOnly(token)) {
       composition.meaningfulTokens += 1;
       composition.emojis += 1;
     } else if (/[\p{L}\p{N}]/u.test(token)) {
@@ -62,6 +66,10 @@ function getContentComposition(text: string): ContentComposition {
 
 function isMostly(count: number, total: number): boolean {
   return total > 0 && count / total >= MOSTLY_CONTENT_THRESHOLD;
+}
+
+function isEmojiOnly(token: string): boolean {
+  return token.length > 0 && token.replace(EMOJI_SEQUENCE_PATTERN, "") === "";
 }
 
 function isNameList(text: string): boolean {
@@ -120,11 +128,11 @@ export function evaluateEligibility(
     return ineligible("INSUFFICIENT_CONTENT");
   }
 
-  const configuredMinimum =
-    input.minimumWordCount ?? DEFAULT_MINIMUM_WORD_COUNT;
-  const minimumWordCount = input.experimentalShortTextDetection
-    ? Math.min(configuredMinimum, EXPERIMENTAL_MINIMUM_WORD_COUNT)
-    : Math.max(configuredMinimum, DEFAULT_MINIMUM_WORD_COUNT);
+  const minimumWordCount =
+    input.minimumWordCount ??
+    (input.experimentalShortTextDetection
+      ? EXPERIMENTAL_MINIMUM_WORD_COUNT
+      : DEFAULT_MINIMUM_WORD_COUNT);
   if (getTextLengthInfo(input.text).wordCount < minimumWordCount) {
     return ineligible("BELOW_MINIMUM_LENGTH");
   }

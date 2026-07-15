@@ -16,4 +16,8 @@ describe("normalizeText", () => {
       "primeira\n\nsegunda",
     );
   });
+
+  it("preserves zero-width joiners used to compose emojis", () => {
+    expect(normalizeText("família 👨‍👩‍👧‍👦")).toBe("família 👨‍👩‍👧‍👦");
+  });
 });
