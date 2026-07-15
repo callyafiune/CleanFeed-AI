@@ -251,7 +251,14 @@ export class PostController {
       return false;
     const current = this.options.adapter.extractPost(element);
     if (current === null) return false;
-    return (await this.hashText(normalizeText(current.text))) === state.hash;
+    const currentHash = await this.hashText(normalizeText(current.text));
+    return (
+      this.running &&
+      element.isConnected &&
+      !state.cancelled &&
+      state.state === "classifying" &&
+      currentHash === state.hash
+    );
   }
 }
 

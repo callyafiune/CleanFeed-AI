@@ -210,6 +210,57 @@ describe("content classification pipeline", () => {
     ).toBeNull();
   });
 
+  it("does not present a result when stopped while verifying post identity", async () => {
+    const root = document.createElement("main");
+    const eligiblePost = post(
+      Array.from({ length: 120 }, () => "conteúdo").join(" "),
+    );
+    root.append(eligiblePost);
+    document.body.append(root);
+    let intersection: FakeIntersectionObserver | undefined;
+    let resolveCurrentHash: ((hash: string) => void) | undefined;
+    const currentHash = new Promise<string>((resolve) => {
+      resolveCurrentHash = resolve;
+    });
+    const sendMessage = vi.fn().mockResolvedValue({
+      source: "background",
+      target: "content",
+      type: "CLASSIFICATION_RESULT",
+      requestId: "request-1",
+      payload: createResult(),
+    });
+    const hashText = vi
+      .fn()
+      .mockResolvedValueOnce("eligible-post")
+      .mockImplementationOnce(() => currentHash);
+    const controller = new PostController({
+      adapter: new LinkedInAdapter(),
+      document,
+      settings: DEFAULT_SETTINGS,
+      createIntersectionObserver: (callback) => {
+        intersection = new FakeIntersectionObserver(callback);
+        return intersection;
+      },
+      sendMessage,
+      hashText,
+    });
+
+    controller.start();
+    intersection?.emit(eligiblePost, true);
+    await vi.waitFor(() => expect(hashText).toHaveBeenCalledTimes(2));
+    controller.stop();
+    resolveCurrentHash?.("eligible-post");
+    await flushPromises();
+
+    expect(
+      eligiblePost.parentElement?.querySelector(
+        "[data-cleanfeed-owned='badge']",
+      ),
+    ).toBeNull();
+    expect(eligiblePost.dataset.cleanfeedState).toBe("cancelled");
+    expect(controller.stats.snapshot().analyzed).toBe(0);
+  });
+
   it("does not restore or count posts that never received presentation", () => {
     const root = document.createElement("main");
     const unpresentedPost = post("Ainda não entrou no viewport.");
