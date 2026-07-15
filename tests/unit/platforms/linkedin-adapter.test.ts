@@ -1,6 +1,8 @@
 import { readFile } from "node:fs/promises";
 import { resolve } from "node:path";
 import { describe, expect, it, beforeAll } from "vitest";
+import { DEFAULT_SETTINGS } from "@/shared/constants";
+import type { ClassificationResult, PresentationMode } from "@/shared/types";
 import { LinkedInAdapter } from "@/platforms/linkedin/linkedin-adapter";
 import { PlatformRegistry } from "@/platforms/registry";
 
@@ -79,5 +81,93 @@ describe("LinkedInAdapter", () => {
       adapter,
     );
     expect(registry.match(new URL("https://example.com/feed/"))).toBeNull();
+  });
+
+  it("rejects a wrapper whose only commentary and actions belong to a comment", () => {
+    const document = new DOMParser().parseFromString(
+      `<article data-urn="urn:li:activity:wrapper">
+        <div role="comment">
+          <div class="update-components-text">Texto de comentário.</div>
+          <div data-test-actions><button>Curtir</button></div>
+        </div>
+      </article>`,
+      "text/html",
+    );
+    const wrapper = document.querySelector<HTMLElement>("article")!;
+
+    expect(adapter.isPostElement(wrapper)).toBe(false);
+    expect(adapter.extractPost(wrapper)).toBeNull();
+  });
+});
+
+describe("LinkedInAdapter presentation", () => {
+  const adapter = new LinkedInAdapter();
+
+  function result(aiScore: number): ClassificationResult {
+    return {
+      aiScore,
+      humanScore: 1 - aiScore,
+      confidence: "medium",
+      status: "possibly_ai",
+      wordCount: 100,
+      tokenCount: 100,
+      modelVersion: "test",
+      modelId: "test",
+      backend: "mock",
+      processingTimeMs: 1,
+      demo: true,
+    };
+  }
+
+  function settings(presentationMode: PresentationMode) {
+    return { ...DEFAULT_SETTINGS, presentationMode, markingThreshold: 0.8 };
+  }
+
+  it("is idempotent when presentation is applied repeatedly", () => {
+    const element = document.createElement("article");
+    adapter.applyPresentation(element, result(0.9), settings("blur"));
+    adapter.applyPresentation(element, result(0.9), settings("blur"));
+
+    expect(element.style.filter).toBe("blur(5px)");
+    expect(
+      element.querySelectorAll("[data-cleanfeed-indicator='true']"),
+    ).toHaveLength(1);
+  });
+
+  it("reconciles every style while transitioning presentation modes", () => {
+    const element = document.createElement("article");
+    element.style.filter = "brightness(0.9)";
+    element.style.maxHeight = "12rem";
+    element.style.overflow = "auto";
+
+    adapter.applyPresentation(element, result(0.9), settings("blur"));
+    adapter.applyPresentation(element, result(0.9), settings("collapse"));
+    expect(element.style.filter).toBe("brightness(0.9)");
+    expect(element.style.maxHeight).toBe("6rem");
+    expect(element.style.overflow).toBe("hidden");
+
+    adapter.applyPresentation(element, result(0.9), settings("indicator"));
+    expect(element.style.maxHeight).toBe("12rem");
+    expect(element.style.overflow).toBe("auto");
+
+    adapter.applyPresentation(element, result(0.9), settings("hide"));
+    expect(element.style.display).toBe("none");
+    expect(element.style.filter).toBe("brightness(0.9)");
+  });
+
+  it("restores a previously presented post when its score stops qualifying", () => {
+    const element = document.createElement("article");
+    element.style.display = "grid";
+    element.style.filter = "contrast(1.1)";
+
+    adapter.applyPresentation(element, result(0.9), settings("blur"));
+    adapter.applyPresentation(element, result(0.2), settings("blur"));
+
+    expect(element.style.display).toBe("grid");
+    expect(element.style.filter).toBe("contrast(1.1)");
+    expect(element.dataset.cleanfeedStatus).toBeUndefined();
+    expect(
+      element.querySelector("[data-cleanfeed-indicator='true']"),
+    ).toBeNull();
   });
 });

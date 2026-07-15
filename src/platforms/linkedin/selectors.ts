@@ -27,7 +27,11 @@ export const LINKEDIN_SELECTORS = {
     "[role='menu']",
     "[role='comment']",
     ".comments-comment-item",
+    ".feed-shared-article",
+    ".update-components-article",
     "[data-test-node='comment']",
     "[data-test-node='menu']",
+    "[data-test-node='quoted']",
+    "[data-quoted-post]",
   ],
 } as const;

@@ -27,11 +27,33 @@ export function extractLinkedInPost(
 
 export function findCommentary(element: HTMLElement): HTMLElement | null {
   for (const selector of LINKEDIN_SELECTORS.commentary) {
-    const commentary = element.querySelector<HTMLElement>(selector);
-    if (commentary !== null) return commentary;
+    const commentary = [
+      ...element.querySelectorAll<HTMLElement>(selector),
+    ].find((candidate) => isLinkedInPostDescendant(element, candidate));
+    if (commentary !== undefined) return commentary;
   }
 
   return null;
+}
+
+/** Returns whether a DOM signal belongs to this post rather than a nested UI. */
+export function isLinkedInPostDescendant(
+  post: HTMLElement,
+  candidate: HTMLElement,
+): boolean {
+  if (candidate.closest(LINKEDIN_SELECTORS.posts.join(",")) !== post) {
+    return false;
+  }
+
+  let current: HTMLElement | null = candidate;
+  while (current !== null && current !== post) {
+    if (current.matches(LINKEDIN_SELECTORS.excludedAncestors.join(","))) {
+      return false;
+    }
+    current = current.parentElement;
+  }
+
+  return current === post;
 }
 
 function cleanCommentary(commentary: HTMLElement): string {

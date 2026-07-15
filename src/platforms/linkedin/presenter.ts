@@ -15,9 +15,13 @@ export function applyLinkedInPresentation(
   result: ClassificationResult,
   settings: EffectiveSettings,
 ): void {
-  if (result.aiScore < settings.markingThreshold) return;
+  if (result.aiScore < settings.markingThreshold) {
+    restoreLinkedInPresentation(element);
+    return;
+  }
 
   remember(element);
+  restoreStyles(element);
   removeIndicator(element);
   element.dataset.cleanfeedStatus = result.status;
   element.dataset.cleanfeedScore = result.aiScore.toFixed(3);
@@ -40,15 +44,21 @@ export function applyLinkedInPresentation(
 export function restoreLinkedInPresentation(element: HTMLElement): void {
   const original = originals.get(element);
   if (original !== undefined) {
-    element.style.display = original.display;
-    element.style.filter = original.filter;
-    element.style.maxHeight = original.maxHeight;
-    element.style.overflow = original.overflow;
+    restoreStyles(element);
     originals.delete(element);
   }
   delete element.dataset.cleanfeedStatus;
   delete element.dataset.cleanfeedScore;
   removeIndicator(element);
+}
+
+function restoreStyles(element: HTMLElement): void {
+  const original = originals.get(element);
+  if (original === undefined) return;
+  element.style.display = original.display;
+  element.style.filter = original.filter;
+  element.style.maxHeight = original.maxHeight;
+  element.style.overflow = original.overflow;
 }
 
 function remember(element: HTMLElement): void {

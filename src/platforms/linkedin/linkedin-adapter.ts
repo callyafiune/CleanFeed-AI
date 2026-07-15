@@ -1,6 +1,7 @@
 import {
   extractLinkedInPost,
   findCommentary,
+  isLinkedInPostDescendant,
 } from "@/platforms/linkedin/extractor";
 import {
   applyLinkedInPresentation,
@@ -73,7 +74,9 @@ function isExcluded(element: HTMLElement): boolean {
 }
 
 function hasActionRegion(element: HTMLElement): boolean {
-  return (
-    element.querySelector(LINKEDIN_SELECTORS.actionRegions.join(",")) !== null
-  );
+  return [
+    ...element.querySelectorAll<HTMLElement>(
+      LINKEDIN_SELECTORS.actionRegions.join(","),
+    ),
+  ].some((actionRegion) => isLinkedInPostDescendant(element, actionRegion));
 }
