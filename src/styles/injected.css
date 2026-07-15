@@ -1,0 +1,33 @@
+.cleanfeed-badge {
+  align-items: center;
+  background: #f3f6f8;
+  border: 1px solid #576f7c;
+  border-radius: 999px;
+  color: #21313c;
+  cursor: pointer;
+  display: inline-flex;
+  font: inherit;
+  gap: 0.25rem;
+  margin: 0.5rem 0;
+  padding: 0.25rem 0.65rem;
+}
+
+.cleanfeed-badge:hover {
+  background: #e2edf2;
+}
+
+.cleanfeed-badge:focus-visible {
+  outline: 3px solid #0a66c2;
+  outline-offset: 2px;
+}
+
+.cleanfeed-badge__icon {
+  font-size: 1.1em;
+  line-height: 1;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .cleanfeed-badge {
+    transition: none;
+  }
+}

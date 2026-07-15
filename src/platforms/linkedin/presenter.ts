@@ -1,15 +1,11 @@
+import { applyBadge } from "@/content/presentation/badge";
+import {
+  rememberPresentation,
+  resetPresentation,
+  restorePresentation,
+} from "@/content/presentation/restore";
 import type { EffectiveSettings } from "@/shared/settings-types";
 import type { ClassificationResult, PresentationMode } from "@/shared/types";
-
-interface PresentationSnapshot {
-  display: string;
-  filter: string;
-  maxHeight: string;
-  overflow: string;
-}
-
-const originals = new WeakMap<HTMLElement, PresentationSnapshot>();
-const indicators = new WeakMap<HTMLElement, HTMLElement>();
 
 export function applyLinkedInPresentation(
   element: HTMLElement,
@@ -21,12 +17,11 @@ export function applyLinkedInPresentation(
     return;
   }
 
-  remember(element);
-  restoreStyles(element);
-  removeIndicator(element);
+  rememberPresentation(element);
+  resetPresentation(element);
   element.dataset.cleanfeedStatus = result.status;
   element.dataset.cleanfeedScore = result.aiScore.toFixed(3);
-  appendIndicator(element, result);
+  applyBadge(element, result, settings);
 
   const mode = ceiling(
     settings.presentationMode,
@@ -43,54 +38,7 @@ export function applyLinkedInPresentation(
 }
 
 export function restoreLinkedInPresentation(element: HTMLElement): void {
-  const original = originals.get(element);
-  if (original !== undefined) {
-    restoreStyles(element);
-    originals.delete(element);
-  }
-  delete element.dataset.cleanfeedStatus;
-  delete element.dataset.cleanfeedScore;
-  removeIndicator(element);
-}
-
-function restoreStyles(element: HTMLElement): void {
-  const original = originals.get(element);
-  if (original === undefined) return;
-  element.style.display = original.display;
-  element.style.filter = original.filter;
-  element.style.maxHeight = original.maxHeight;
-  element.style.overflow = original.overflow;
-}
-
-function remember(element: HTMLElement): void {
-  if (originals.has(element)) return;
-  originals.set(element, {
-    display: element.style.display,
-    filter: element.style.filter,
-    maxHeight: element.style.maxHeight,
-    overflow: element.style.overflow,
-  });
-}
-
-function appendIndicator(
-  element: HTMLElement,
-  result: ClassificationResult,
-): void {
-  if (element.parentNode === null) return;
-
-  const indicator = element.ownerDocument.createElement("div");
-  indicator.dataset.cleanfeedIndicator = "true";
-  indicator.setAttribute("role", "status");
-  indicator.textContent = `CleanFeed: ${result.status}`;
-  // Keep extension UI outside the article so it does not change post content
-  // or its reading order. The WeakMap gives the exact post-to-widget binding.
-  element.parentNode.insertBefore(indicator, element);
-  indicators.set(element, indicator);
-}
-
-function removeIndicator(element: HTMLElement): void {
-  indicators.get(element)?.remove();
-  indicators.delete(element);
+  restorePresentation(element);
 }
 
 function ceiling(
