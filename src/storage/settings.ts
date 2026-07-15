@@ -1,10 +1,15 @@
-import { DEFAULT_SETTINGS } from "@/shared/constants";
+import {
+  DEFAULT_SETTINGS,
+  SETTINGS_LIMITS,
+  SETTINGS_STORAGE_KEYS,
+} from "@/shared/constants";
 import { CleanFeedError } from "@/shared/errors";
 import type { BackendPreference, UserSettings } from "@/shared/settings-types";
 import { validateThresholds } from "@/shared/validation";
+import { runWithSettingsMutationLock } from "@/storage/settings-lock";
 import type { StorageArea } from "@/storage/storage-area";
 
-export const SETTINGS_STORAGE_KEY = "cleanfeed.settings.v1";
+export const SETTINGS_STORAGE_KEY = SETTINGS_STORAGE_KEYS.global;
 const SCHEMA_VERSION = 1;
 
 interface PersistedSettings {
@@ -25,19 +30,6 @@ const booleanKeys = [
   "batchingEnabled",
   "historyEnabled",
   "storeFullText",
-] as const;
-
-const positiveIntegerKeys = [
-  "wasmConcurrency",
-  "webGpuConcurrency",
-  "maximumQueueSize",
-  "maximumPostsPerMinute",
-  "chunkSizeTokens",
-  "maximumTokens",
-  "inferenceTimeoutMs",
-  "cacheMaximumEntries",
-  "cacheTtlMs",
-  "historyRetentionDays",
 ] as const;
 
 function invalidSettings(): never {
@@ -75,7 +67,11 @@ function isUserSettings(value: unknown): value is UserSettings {
   }
 
   if (
-    !isFiniteIntegerInRange(value.minimumWordCount, 50, 5_000) ||
+    !isFiniteIntegerInRange(
+      value.minimumWordCount,
+      SETTINGS_LIMITS.minimumWordCount.minimum,
+      SETTINGS_LIMITS.minimumWordCount.maximum,
+    ) ||
     !["portuguese_only", "model_supported", "experimental_any"].includes(
       value.languageMode as string,
     ) ||
@@ -93,16 +89,59 @@ function isUserSettings(value: unknown): value is UserSettings {
     return false;
   }
 
-  const chunkSizeTokens = value.chunkSizeTokens;
-  const chunkOverlapTokens = value.chunkOverlapTokens;
-  const maximumTokens = value.maximumTokens;
+  const { chunkSizeTokens, chunkOverlapTokens, maximumTokens } = value;
   if (
-    !positiveIntegerKeys.every((key) =>
-      isFiniteIntegerInRange(value[key], 1, Number.MAX_SAFE_INTEGER),
+    !isFiniteIntegerInRange(
+      value.wasmConcurrency,
+      SETTINGS_LIMITS.wasmConcurrency.minimum,
+      SETTINGS_LIMITS.wasmConcurrency.maximum,
     ) ||
-    !isFiniteIntegerInRange(chunkOverlapTokens, 0, Number.MAX_SAFE_INTEGER) ||
-    !isFiniteIntegerInRange(chunkSizeTokens, 1, Number.MAX_SAFE_INTEGER) ||
-    !isFiniteIntegerInRange(maximumTokens, 1, Number.MAX_SAFE_INTEGER) ||
+    !isFiniteIntegerInRange(
+      value.webGpuConcurrency,
+      SETTINGS_LIMITS.webGpuConcurrency.minimum,
+      SETTINGS_LIMITS.webGpuConcurrency.maximum,
+    ) ||
+    !isFiniteIntegerInRange(
+      value.maximumQueueSize,
+      SETTINGS_LIMITS.maximumQueueSize.minimum,
+      SETTINGS_LIMITS.maximumQueueSize.maximum,
+    ) ||
+    !isFiniteIntegerInRange(
+      value.maximumPostsPerMinute,
+      SETTINGS_LIMITS.maximumPostsPerMinute.minimum,
+      SETTINGS_LIMITS.maximumPostsPerMinute.maximum,
+    ) ||
+    !isFiniteIntegerInRange(
+      chunkSizeTokens,
+      SETTINGS_LIMITS.chunkSizeTokens.minimum,
+      SETTINGS_LIMITS.chunkSizeTokens.maximum,
+    ) ||
+    !isFiniteIntegerInRange(
+      maximumTokens,
+      SETTINGS_LIMITS.maximumTokens.minimum,
+      SETTINGS_LIMITS.maximumTokens.maximum,
+    ) ||
+    !isFiniteIntegerInRange(
+      value.inferenceTimeoutMs,
+      SETTINGS_LIMITS.inferenceTimeoutMs.minimum,
+      SETTINGS_LIMITS.inferenceTimeoutMs.maximum,
+    ) ||
+    !isFiniteIntegerInRange(
+      value.cacheMaximumEntries,
+      SETTINGS_LIMITS.cacheMaximumEntries.minimum,
+      SETTINGS_LIMITS.cacheMaximumEntries.maximum,
+    ) ||
+    !isFiniteIntegerInRange(
+      value.cacheTtlMs,
+      SETTINGS_LIMITS.cacheTtlMs.minimum,
+      SETTINGS_LIMITS.cacheTtlMs.maximum,
+    ) ||
+    !isFiniteIntegerInRange(
+      value.historyRetentionDays,
+      SETTINGS_LIMITS.historyRetentionDays.minimum,
+      SETTINGS_LIMITS.historyRetentionDays.maximum,
+    ) ||
+    !isFiniteIntegerInRange(chunkOverlapTokens, 0, chunkSizeTokens - 1) ||
     chunkOverlapTokens >= chunkSizeTokens ||
     maximumTokens < chunkSizeTokens
   ) {
@@ -138,6 +177,64 @@ function settingsAreEqual(left: UserSettings, right: UserSettings): boolean {
   );
 }
 
+function getPlatformOverrides(
+  value: Record<string, unknown>,
+): Record<string, unknown> {
+  return Object.fromEntries(
+    Object.entries(value).filter(([key]) => key !== "platformId"),
+  );
+}
+
+async function validatePlatformOverridesForGlobal(
+  storage: StorageArea,
+  settings: UserSettings,
+): Promise<void> {
+  const persisted = await storage.get<unknown>(SETTINGS_STORAGE_KEYS.platform);
+  if (persisted === undefined) {
+    return;
+  }
+
+  if (
+    !isRecord(persisted) ||
+    persisted.schemaVersion !== SCHEMA_VERSION ||
+    !isFiniteIntegerInRange(
+      persisted.settingsVersion,
+      0,
+      Number.MAX_SAFE_INTEGER,
+    ) ||
+    !isRecord(persisted.platforms)
+  ) {
+    await storage.remove(SETTINGS_STORAGE_KEYS.platform);
+    return;
+  }
+
+  const allowedKeys = new Set(["platformId", ...Object.keys(DEFAULT_SETTINGS)]);
+  for (const [platformId, rawOverrides] of Object.entries(
+    persisted.platforms,
+  )) {
+    if (
+      !isRecord(rawOverrides) ||
+      rawOverrides.platformId !== platformId ||
+      !Object.keys(rawOverrides).every((key) => allowedKeys.has(key))
+    ) {
+      await storage.remove(SETTINGS_STORAGE_KEYS.platform);
+      return;
+    }
+
+    try {
+      assertUserSettings({
+        ...DEFAULT_SETTINGS,
+        ...getPlatformOverrides(rawOverrides),
+      });
+    } catch {
+      await storage.remove(SETTINGS_STORAGE_KEYS.platform);
+      return;
+    }
+
+    assertUserSettings({ ...settings, ...getPlatformOverrides(rawOverrides) });
+  }
+}
+
 export function assertUserSettings(
   value: unknown,
 ): asserts value is UserSettings {
@@ -158,6 +255,31 @@ export function incrementSettingsVersion(settingsVersion: number): number {
   return settingsVersion + 1;
 }
 
+export async function readSettingsForMutation(
+  storage: StorageArea,
+  storageKey = SETTINGS_STORAGE_KEY,
+): Promise<UserSettings> {
+  const persisted = await storage.get<unknown>(storageKey);
+  if (isPersistedSettings(persisted)) {
+    return persisted.settings;
+  }
+
+  if (isUserSettings(persisted)) {
+    await storage.set(storageKey, {
+      schemaVersion: SCHEMA_VERSION,
+      settingsVersion: 1,
+      settings: persisted,
+    } satisfies PersistedSettings);
+    return persisted;
+  }
+
+  if (persisted !== undefined) {
+    await storage.remove(storageKey);
+  }
+
+  return DEFAULT_SETTINGS;
+}
+
 export class SettingsRepository {
   constructor(
     private readonly storage: StorageArea,
@@ -165,40 +287,32 @@ export class SettingsRepository {
   ) {}
 
   async get(): Promise<UserSettings> {
-    const persisted = await this.storage.get<unknown>(this.storageKey);
-    if (isPersistedSettings(persisted)) {
-      return persisted.settings;
-    }
-
-    if (isUserSettings(persisted)) {
-      await this.storage.set(this.storageKey, {
-        schemaVersion: SCHEMA_VERSION,
-        settingsVersion: 1,
-        settings: persisted,
-      } satisfies PersistedSettings);
-      return persisted;
-    }
-
-    return DEFAULT_SETTINGS;
+    return runWithSettingsMutationLock(() =>
+      readSettingsForMutation(this.storage, this.storageKey),
+    );
   }
 
   async save(settings: UserSettings): Promise<UserSettings> {
     assertUserSettings(settings);
 
-    const persisted = await this.storage.get<unknown>(this.storageKey);
-    const previous = isPersistedSettings(persisted) ? persisted : undefined;
-    const settingsVersion =
-      previous && settingsAreEqual(previous.settings, settings)
-        ? previous.settingsVersion
-        : incrementSettingsVersion(previous?.settingsVersion ?? 0);
+    return runWithSettingsMutationLock(async () => {
+      await validatePlatformOverridesForGlobal(this.storage, settings);
 
-    await this.storage.set(this.storageKey, {
-      schemaVersion: SCHEMA_VERSION,
-      settingsVersion,
-      settings,
-    } satisfies PersistedSettings);
+      const persisted = await this.storage.get<unknown>(this.storageKey);
+      const previous = isPersistedSettings(persisted) ? persisted : undefined;
+      const settingsVersion =
+        previous && settingsAreEqual(previous.settings, settings)
+          ? previous.settingsVersion
+          : incrementSettingsVersion(previous?.settingsVersion ?? 0);
 
-    return settings;
+      await this.storage.set(this.storageKey, {
+        schemaVersion: SCHEMA_VERSION,
+        settingsVersion,
+        settings,
+      } satisfies PersistedSettings);
+
+      return settings;
+    });
   }
 
   async reset(): Promise<UserSettings> {

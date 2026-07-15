@@ -1,14 +1,19 @@
-import { DEFAULT_SETTINGS, MAX_PLATFORM_ID_LENGTH } from "@/shared/constants";
+import {
+  DEFAULT_SETTINGS,
+  MAX_PLATFORM_ID_LENGTH,
+  SETTINGS_STORAGE_KEYS,
+} from "@/shared/constants";
 import { CleanFeedError } from "@/shared/errors";
 import type { PlatformSettings, UserSettings } from "@/shared/settings-types";
 import {
   assertUserSettings,
   incrementSettingsVersion,
-  SettingsRepository,
+  readSettingsForMutation,
 } from "@/storage/settings";
+import { runWithSettingsMutationLock } from "@/storage/settings-lock";
 import type { StorageArea } from "@/storage/storage-area";
 
-export const PLATFORM_SETTINGS_STORAGE_KEY = "cleanfeed.platform-settings.v1";
+export const PLATFORM_SETTINGS_STORAGE_KEY = SETTINGS_STORAGE_KEYS.platform;
 const SCHEMA_VERSION = 1;
 
 interface PersistedPlatformSettings {
@@ -79,6 +84,39 @@ function isPersistedPlatformSettings(
   );
 }
 
+function platformSettingsAreEqual(
+  left: PlatformSettings,
+  right: PlatformSettings,
+): boolean {
+  const leftKeys = Object.keys(left);
+  const rightKeys = Object.keys(right);
+  return (
+    leftKeys.length === rightKeys.length &&
+    leftKeys.every(
+      (key) =>
+        Object.hasOwn(right, key) &&
+        left[key as keyof PlatformSettings] ===
+          right[key as keyof PlatformSettings],
+    )
+  );
+}
+
+async function readPlatformSettingsForMutation(
+  storage: StorageArea,
+  storageKey: string,
+): Promise<PersistedPlatformSettings | undefined> {
+  const persisted = await storage.get<unknown>(storageKey);
+  if (isPersistedPlatformSettings(persisted)) {
+    return persisted;
+  }
+
+  if (persisted !== undefined) {
+    await storage.remove(storageKey);
+  }
+
+  return undefined;
+}
+
 export class PlatformSettingsRepository {
   constructor(
     private readonly storage: StorageArea,
@@ -86,14 +124,15 @@ export class PlatformSettingsRepository {
   ) {}
 
   async get(platformId: string): Promise<PlatformSettings | undefined> {
-    const persisted = await this.storage.get<unknown>(this.storageKey);
-    if (!isPersistedPlatformSettings(persisted)) {
-      return undefined;
-    }
-
-    return Object.hasOwn(persisted.platforms, platformId)
-      ? persisted.platforms[platformId]
-      : undefined;
+    return runWithSettingsMutationLock(async () => {
+      const persisted = await readPlatformSettingsForMutation(
+        this.storage,
+        this.storageKey,
+      );
+      return persisted && Object.hasOwn(persisted.platforms, platformId)
+        ? persisted.platforms[platformId]
+        : undefined;
+    });
   }
 
   async save(settings: PlatformSettings): Promise<PlatformSettings> {
@@ -101,40 +140,52 @@ export class PlatformSettingsRepository {
       invalidSettings();
     }
 
-    const overrides = getOverrides(settings);
-    const globalSettings = await new SettingsRepository(this.storage).get();
-    assertUserSettings({ ...globalSettings, ...overrides });
+    return runWithSettingsMutationLock(async () => {
+      const overrides = getOverrides(settings);
+      const globalSettings = await readSettingsForMutation(this.storage);
+      assertUserSettings({ ...globalSettings, ...overrides });
 
-    const persisted = await this.storage.get<unknown>(this.storageKey);
-    const previous = isPersistedPlatformSettings(persisted)
-      ? persisted
-      : { schemaVersion: SCHEMA_VERSION, settingsVersion: 0, platforms: {} };
-    const settingsVersion = incrementSettingsVersion(previous.settingsVersion);
+      const persisted = await readPlatformSettingsForMutation(
+        this.storage,
+        this.storageKey,
+      );
+      const previous = persisted ?? {
+        schemaVersion: SCHEMA_VERSION,
+        settingsVersion: 0,
+        platforms: {},
+      };
+      const existing = previous.platforms[settings.platformId];
+      if (existing && platformSettingsAreEqual(existing, settings)) {
+        return settings;
+      }
 
-    await this.storage.set(this.storageKey, {
-      schemaVersion: SCHEMA_VERSION,
-      settingsVersion,
-      platforms: { ...previous.platforms, [settings.platformId]: settings },
-    } satisfies PersistedPlatformSettings);
+      await this.storage.set(this.storageKey, {
+        schemaVersion: SCHEMA_VERSION,
+        settingsVersion: incrementSettingsVersion(previous.settingsVersion),
+        platforms: { ...previous.platforms, [settings.platformId]: settings },
+      } satisfies PersistedPlatformSettings);
 
-    return settings;
+      return settings;
+    });
   }
 
   async remove(platformId: string): Promise<void> {
-    const persisted = await this.storage.get<unknown>(this.storageKey);
-    if (
-      !isPersistedPlatformSettings(persisted) ||
-      !Object.hasOwn(persisted.platforms, platformId)
-    ) {
-      return;
-    }
+    await runWithSettingsMutationLock(async () => {
+      const persisted = await readPlatformSettingsForMutation(
+        this.storage,
+        this.storageKey,
+      );
+      if (!persisted || !Object.hasOwn(persisted.platforms, platformId)) {
+        return;
+      }
 
-    const platforms = { ...persisted.platforms };
-    delete platforms[platformId];
-    await this.storage.set(this.storageKey, {
-      schemaVersion: SCHEMA_VERSION,
-      settingsVersion: incrementSettingsVersion(persisted.settingsVersion),
-      platforms,
-    } satisfies PersistedPlatformSettings);
+      const platforms = { ...persisted.platforms };
+      delete platforms[platformId];
+      await this.storage.set(this.storageKey, {
+        schemaVersion: SCHEMA_VERSION,
+        settingsVersion: incrementSettingsVersion(persisted.settingsVersion),
+        platforms,
+      } satisfies PersistedPlatformSettings);
+    });
   }
 }

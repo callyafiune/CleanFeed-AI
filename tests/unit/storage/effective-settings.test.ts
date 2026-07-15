@@ -12,11 +12,14 @@ import type { StorageArea } from "@/storage/storage-area";
 class MemoryStorageArea implements StorageArea {
   private readonly values = new Map<string, unknown>();
 
+  setCalls = 0;
+
   async get<T>(key: string): Promise<T | undefined> {
     return this.values.get(key) as T | undefined;
   }
 
   async set<T>(key: string, value: T): Promise<void> {
+    this.setCalls += 1;
     this.values.set(key, value);
   }
 
@@ -108,6 +111,23 @@ describe("PlatformSettingsRepository", () => {
     );
   });
 
+  it("removes a corrupt platform settings record during recovery", async () => {
+    const storage = new MemoryStorageArea();
+    await storage.set(PLATFORM_SETTINGS_STORAGE_KEY, {
+      schemaVersion: 1,
+      settingsVersion: 1,
+      platforms: {
+        linkedin: { platformId: "linkedin", maximumTokens: 257 },
+      },
+    });
+    const repository = new PlatformSettingsRepository(storage);
+
+    await expect(repository.get("linkedin")).resolves.toBeUndefined();
+    await expect(
+      storage.get(PLATFORM_SETTINGS_STORAGE_KEY),
+    ).resolves.toBeUndefined();
+  });
+
   it("rejects a platform update when its version would overflow", async () => {
     const storage = new MemoryStorageArea();
     await storage.set(PLATFORM_SETTINGS_STORAGE_KEY, {
@@ -120,5 +140,45 @@ describe("PlatformSettingsRepository", () => {
     await expect(
       repository.save({ platformId: "linkedin", minimumWordCount: 150 }),
     ).rejects.toThrowError("STORAGE_VERSION_OVERFLOW");
+  });
+
+  it("serializes concurrent platform saves without dropping either override", async () => {
+    const storage = new MemoryStorageArea();
+    const firstRepository = new PlatformSettingsRepository(storage);
+    const secondRepository = new PlatformSettingsRepository(storage);
+
+    await Promise.all([
+      firstRepository.save({ platformId: "linkedin", minimumWordCount: 150 }),
+      secondRepository.save({
+        platformId: "example",
+        presentationMode: "hide",
+      }),
+    ]);
+
+    await expect(storage.get(PLATFORM_SETTINGS_STORAGE_KEY)).resolves.toEqual({
+      schemaVersion: 1,
+      settingsVersion: 2,
+      platforms: {
+        linkedin: { platformId: "linkedin", minimumWordCount: 150 },
+        example: { platformId: "example", presentationMode: "hide" },
+      },
+    });
+  });
+
+  it("does not write or increment the version for an identical override", async () => {
+    const storage = new MemoryStorageArea();
+    const repository = new PlatformSettingsRepository(storage);
+    const override = { platformId: "linkedin", minimumWordCount: 150 };
+
+    await repository.save(override);
+    const writesAfterFirstSave = storage.setCalls;
+    await repository.save(override);
+
+    expect(storage.setCalls).toBe(writesAfterFirstSave);
+    await expect(storage.get(PLATFORM_SETTINGS_STORAGE_KEY)).resolves.toEqual({
+      schemaVersion: 1,
+      settingsVersion: 1,
+      platforms: { linkedin: override },
+    });
   });
 });
