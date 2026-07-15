@@ -135,6 +135,15 @@ export class PlatformSettingsRepository {
     });
   }
 
+  async getVersion(): Promise<number> {
+    return runWithSettingsMutationLock(async () => {
+      return (
+        (await readPlatformSettingsForMutation(this.storage, this.storageKey))
+          ?.settingsVersion ?? 0
+      );
+    });
+  }
+
   async save(settings: PlatformSettings): Promise<PlatformSettings> {
     if (!isValidPlatformSettings(settings)) {
       invalidSettings();

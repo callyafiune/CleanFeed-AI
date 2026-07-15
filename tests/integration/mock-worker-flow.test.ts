@@ -5,8 +5,12 @@ import {
   BackgroundMessageRouter,
   RuntimeOffscreenClient,
 } from "@/background/message-router";
+import { createSettingsFingerprintProvider } from "@/background/settings-fingerprint";
 import { CleanFeedError } from "@/shared/errors";
+import { DEFAULT_SETTINGS } from "@/shared/constants";
 import { ClassificationCache } from "@/storage/cache";
+import { PlatformSettingsRepository } from "@/storage/platform-settings";
+import { SettingsRepository } from "@/storage/settings";
 
 const cachedResult: ClassificationResult = {
   aiScore: 0.8,
@@ -60,14 +64,19 @@ const classifyMessage = {
   },
 };
 
-function createRouter(cache: ClassificationCache, classify = vi.fn()) {
+function createRouter(
+  cache: ClassificationCache,
+  classify = vi.fn(),
+  settingsFingerprint:
+    string | ((platform: string) => Promise<string>) = "settings-v1",
+) {
   return {
     classify,
     router: new BackgroundMessageRouter({
       cache,
       metrics: { record: vi.fn().mockResolvedValue(undefined) },
       offscreenClient: { classify },
-      settingsFingerprint: "settings-v1",
+      settingsFingerprint,
       modelKey: "mock:1.0.0",
     }),
   };
@@ -162,6 +171,40 @@ describe("mock worker flow", () => {
       requestId: "request-1",
       ...classifyMessage.payload,
     });
+  });
+
+  it("misses the cache after persisted global or platform settings change", async () => {
+    const storage = new MemoryStorage();
+    const cache = new ClassificationCache(
+      storage,
+      { now: () => 1_000 },
+      { maximumEntries: 10, ttlMs: 60_000 },
+    );
+    const globalSettings = new SettingsRepository(storage);
+    const platformSettings = new PlatformSettingsRepository(storage);
+    const { router, classify } = createRouter(
+      cache,
+      vi.fn().mockResolvedValue(cachedResult),
+      createSettingsFingerprintProvider(globalSettings, platformSettings),
+    );
+
+    await router.handle(classifyMessage);
+    await router.handle(classifyMessage);
+    expect(classify).toHaveBeenCalledTimes(1);
+
+    await globalSettings.save({
+      ...DEFAULT_SETTINGS,
+      minimumWordCount: DEFAULT_SETTINGS.minimumWordCount + 1,
+    });
+    await router.handle(classifyMessage);
+    expect(classify).toHaveBeenCalledTimes(2);
+
+    await platformSettings.save({
+      platformId: "linkedin",
+      minimumWordCount: DEFAULT_SETTINGS.minimumWordCount + 2,
+    });
+    await router.handle(classifyMessage);
+    expect(classify).toHaveBeenCalledTimes(3);
   });
 
   it("propagates a typed offscreen error back to content", async () => {

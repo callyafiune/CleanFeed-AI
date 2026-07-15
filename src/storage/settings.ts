@@ -258,29 +258,40 @@ export function incrementSettingsVersion(settingsVersion: number): number {
   return settingsVersion + 1;
 }
 
-export async function readSettingsForMutation(
+async function readPersistedSettingsForMutation(
   storage: StorageArea,
   storageKey = SETTINGS_STORAGE_KEY,
-): Promise<UserSettings> {
+): Promise<PersistedSettings | undefined> {
   const persisted = await storage.get<unknown>(storageKey);
   if (isPersistedSettings(persisted)) {
-    return persisted.settings;
+    return persisted;
   }
 
   if (isUserSettings(persisted)) {
-    await storage.set(storageKey, {
+    const migrated = {
       schemaVersion: SCHEMA_VERSION,
       settingsVersion: 1,
       settings: persisted,
-    } satisfies PersistedSettings);
-    return persisted;
+    } satisfies PersistedSettings;
+    await storage.set(storageKey, migrated);
+    return migrated;
   }
 
   if (persisted !== undefined) {
     await storage.remove(storageKey);
   }
 
-  return DEFAULT_SETTINGS;
+  return undefined;
+}
+
+export async function readSettingsForMutation(
+  storage: StorageArea,
+  storageKey = SETTINGS_STORAGE_KEY,
+): Promise<UserSettings> {
+  return (
+    (await readPersistedSettingsForMutation(storage, storageKey))?.settings ??
+    DEFAULT_SETTINGS
+  );
 }
 
 export class SettingsRepository {
@@ -293,6 +304,15 @@ export class SettingsRepository {
     return runWithSettingsMutationLock(() =>
       readSettingsForMutation(this.storage, this.storageKey),
     );
+  }
+
+  async getVersion(): Promise<number> {
+    return runWithSettingsMutationLock(async () => {
+      return (
+        (await readPersistedSettingsForMutation(this.storage, this.storageKey))
+          ?.settingsVersion ?? 0
+      );
+    });
   }
 
   async save(settings: UserSettings): Promise<UserSettings> {

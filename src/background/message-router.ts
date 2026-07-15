@@ -29,7 +29,7 @@ export interface BackgroundMessageRouterOptions {
   metrics: MetricsRecorder;
   offscreenClient: OffscreenClient;
   modelKey: string;
-  settingsFingerprint: string | (() => Promise<string>);
+  settingsFingerprint: string | ((platformId: string) => Promise<string>);
 }
 
 type ClassifyTextMessage = MessageEnvelope<
@@ -72,7 +72,9 @@ export class BackgroundMessageRouter {
   ): Promise<ExtensionMessage> {
     const normalizedText = normalizeText(message.payload.text);
     const textHash = await sha256(normalizedText);
-    const settingsFingerprint = await this.getSettingsFingerprint();
+    const settingsFingerprint = await this.getSettingsFingerprint(
+      message.payload.platform,
+    );
     const key = buildCacheKey(
       message.payload.platform,
       this.options.modelKey,
@@ -101,12 +103,12 @@ export class BackgroundMessageRouter {
     return classificationResultMessage(message, result);
   }
 
-  private getSettingsFingerprint(): Promise<string> {
+  private getSettingsFingerprint(platformId: string): Promise<string> {
     const { settingsFingerprint } = this.options;
     return Promise.resolve(
       typeof settingsFingerprint === "string"
         ? settingsFingerprint
-        : settingsFingerprint(),
+        : settingsFingerprint(platformId),
     );
   }
 }

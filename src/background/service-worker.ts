@@ -3,14 +3,19 @@ import {
   RuntimeOffscreenClient,
   classificationErrorMessage,
 } from "@/background/message-router";
+import { createSettingsFingerprintProvider } from "@/background/settings-fingerprint";
 import { DEFAULT_SETTINGS } from "@/shared/constants";
 import { CleanFeedError } from "@/shared/errors";
 import { parseExtensionMessage } from "@/shared/message-validation";
 import { ClassificationCache } from "@/storage/cache";
 import { MetricsRepository } from "@/storage/metrics";
+import { PlatformSettingsRepository } from "@/storage/platform-settings";
+import { SettingsRepository } from "@/storage/settings";
 import { ChromeStorageArea } from "@/storage/storage-area";
 
 const storage = new ChromeStorageArea();
+const settings = new SettingsRepository(storage);
+const platformSettings = new PlatformSettingsRepository(storage);
 const router = new BackgroundMessageRouter({
   cache: new ClassificationCache(
     storage,
@@ -23,7 +28,10 @@ const router = new BackgroundMessageRouter({
   metrics: new MetricsRepository(storage),
   offscreenClient: new RuntimeOffscreenClient(),
   modelKey: "mock:1.0.0",
-  settingsFingerprint: "settings-v1",
+  settingsFingerprint: createSettingsFingerprintProvider(
+    settings,
+    platformSettings,
+  ),
 });
 
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
