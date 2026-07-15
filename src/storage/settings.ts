@@ -1,5 +1,6 @@
 import {
   DEFAULT_SETTINGS,
+  MAX_PLATFORM_ID_LENGTH,
   SETTINGS_LIMITS,
   SETTINGS_STORAGE_KEYS,
 } from "@/shared/constants";
@@ -214,6 +215,8 @@ async function validatePlatformOverridesForGlobal(
   )) {
     if (
       !isRecord(rawOverrides) ||
+      platformId.length === 0 ||
+      platformId.length > MAX_PLATFORM_ID_LENGTH ||
       rawOverrides.platformId !== platformId ||
       !Object.keys(rawOverrides).every((key) => allowedKeys.has(key))
     ) {

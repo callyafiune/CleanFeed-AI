@@ -159,6 +159,29 @@ describe("SettingsRepository", () => {
     await expect(repository.get()).resolves.toEqual(DEFAULT_SETTINGS);
   });
 
+  it("removes a platform envelope with an invalid platform identifier", async () => {
+    const storage = new MemoryStorageArea();
+    const invalidPlatformId = "a".repeat(129);
+    await storage.set(PLATFORM_SETTINGS_STORAGE_KEY, {
+      schemaVersion: 1,
+      settingsVersion: 1,
+      platforms: {
+        [invalidPlatformId]: {
+          platformId: invalidPlatformId,
+          minimumWordCount: 150,
+        },
+      },
+    });
+    const repository = new SettingsRepository(storage);
+
+    await expect(repository.save(DEFAULT_SETTINGS)).resolves.toEqual(
+      DEFAULT_SETTINGS,
+    );
+    await expect(
+      storage.get(PLATFORM_SETTINGS_STORAGE_KEY),
+    ).resolves.toBeUndefined();
+  });
+
   it("serializes concurrent global saves and preserves their version order", async () => {
     const storage = new MemoryStorageArea();
     const firstRepository = new SettingsRepository(storage);
