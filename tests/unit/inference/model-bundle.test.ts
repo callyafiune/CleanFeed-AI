@@ -29,6 +29,18 @@ describe("model bundles", () => {
     );
   });
 
+  it("rejects a checksum array even when its string coercion is a valid digest", () => {
+    expect(() =>
+      parseModelManifest({
+        ...validManifest,
+        sha256: {
+          ...validManifest.sha256,
+          model: [validManifest.sha256.model],
+        },
+      }),
+    ).toThrowError("MODEL_LOAD_FAILED");
+  });
+
   it("verifies each bundle file below its extension-local model directory", async () => {
     const fetchImpl = vi.fn(async (input: string) => {
       const body = input.endsWith("model.onnx")
@@ -64,6 +76,54 @@ describe("model bundles", () => {
       ),
     ).rejects.toThrowError("MODEL_LOAD_FAILED");
     expect(fetchImpl).not.toHaveBeenCalled();
+  });
+
+  it("rejects a fetched artifact whose checksum differs from its manifest", async () => {
+    const fetchImpl = vi.fn(
+      async () => new Response("tampered", { status: 200 }),
+    );
+
+    await expect(
+      verifyModelBundle(
+        parseModelManifest(validManifest),
+        "chrome-extension://cleanfeed/models/",
+        fetchImpl,
+      ),
+    ).rejects.toThrowError("MODEL_LOAD_FAILED");
+  });
+
+  it("rejects a redirected local artifact response", async () => {
+    const fetchImpl = vi.fn(async () => ({
+      ok: true,
+      redirected: true,
+      url: "",
+      arrayBuffer: () => new Response("model").arrayBuffer(),
+    }));
+
+    await expect(
+      verifyModelBundle(
+        parseModelManifest(validManifest),
+        "chrome-extension://cleanfeed/models/",
+        fetchImpl,
+      ),
+    ).rejects.toThrowError("MODEL_LOAD_FAILED");
+  });
+
+  it("rejects a nonempty final URL outside the expected extension origin", async () => {
+    const fetchImpl = vi.fn(async () => ({
+      ok: true,
+      redirected: false,
+      url: "chrome-extension://another-extension/models/cleanfeed-detector-v1/model.onnx",
+      arrayBuffer: () => new Response("model").arrayBuffer(),
+    }));
+
+    await expect(
+      verifyModelBundle(
+        parseModelManifest(validManifest),
+        "chrome-extension://cleanfeed/models/",
+        fetchImpl,
+      ),
+    ).rejects.toThrowError("MODEL_LOAD_FAILED");
   });
 
   it("indexes only validated local manifests by id", () => {

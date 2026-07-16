@@ -235,10 +235,14 @@ function hasSha256(
 ): value is Record<"model" | "tokenizer" | "config", string> {
   return (
     isExactRecord(value, ["model", "tokenizer", "config"]) &&
-    sha256Hex.test(value.model as string) &&
-    sha256Hex.test(value.tokenizer as string) &&
-    sha256Hex.test(value.config as string)
+    isSha256(value.model) &&
+    isSha256(value.tokenizer) &&
+    isSha256(value.config)
   );
+}
+
+function isSha256(value: unknown): value is string {
+  return typeof value === "string" && sha256Hex.test(value);
 }
 
 function modelLoadFailed(): never {
