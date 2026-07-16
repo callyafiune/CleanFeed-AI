@@ -1,0 +1,24 @@
+{
+  "schemaVersion": 1,
+  "id": "invalid-model",
+  "name": "Invalid model fixture",
+  "version": "1.0.0",
+  "task": "ai_text_detection",
+  "architecture": "distilbert",
+  "modelPath": "../model.onnx",
+  "tokenizerPath": "tokenizer.json",
+  "configPath": "config.json",
+  "supportedLanguages": [],
+  "maximumTokens": 256,
+  "quantization": "int8",
+  "labels": { "human": 1, "ai": 1 },
+  "output": { "name": "logits", "kind": "logits" },
+  "license": "",
+  "source": "https://example.invalid/cleanfeed-detector",
+  "calibrationVersion": "1.0.0",
+  "sha256": {
+    "model": "not-a-hash",
+    "tokenizer": "not-a-hash",
+    "config": "not-a-hash"
+  }
+}
