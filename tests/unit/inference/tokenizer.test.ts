@@ -57,4 +57,21 @@ describe("HeuristicTokenizer", () => {
       name: "AbortError",
     });
   });
+
+  it("checks for aborts again after every 256 matches", async () => {
+    let abortChecks = 0;
+    const signal = {
+      get aborted() {
+        abortChecks += 1;
+        return abortChecks === 3;
+      },
+    } as AbortSignal;
+
+    await expect(
+      tokenizer.encode("token ".repeat(257), signal),
+    ).rejects.toMatchObject({
+      name: "AbortError",
+    });
+    expect(abortChecks).toBe(3);
+  });
 });
