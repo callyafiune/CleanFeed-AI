@@ -183,6 +183,17 @@ const validMessages = [
 ];
 
 describe("parseExtensionMessage", () => {
+  it("accepts INSUFFICIENT_EVIDENCE as an observable error code", () => {
+    expect(
+      parseExtensionMessage({
+        source: "background",
+        target: "content",
+        type: "ERROR",
+        payload: { code: "INSUFFICIENT_EVIDENCE", recoverable: true },
+      }).type,
+    ).toBe("ERROR");
+  });
+
   it("accepts a bounded classify request", () => {
     expect(
       parseExtensionMessage({

@@ -41,6 +41,7 @@ const messageTypes = new Set<MessageType>(messageTypeValues);
 const errorCodes = new Set<string>([
   "MODEL_LOAD_FAILED",
   "TOKENIZATION_FAILED",
+  "INSUFFICIENT_EVIDENCE",
   "INFERENCE_FAILED",
   "INFERENCE_TIMEOUT",
   "WORKER_UNAVAILABLE",

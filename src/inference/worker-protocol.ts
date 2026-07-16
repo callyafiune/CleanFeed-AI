@@ -33,6 +33,7 @@ export type WorkerResponse = WorkerResultResponse | WorkerErrorResponse;
 const errorCodes = new Set<ErrorCode>([
   "MODEL_LOAD_FAILED",
   "TOKENIZATION_FAILED",
+  "INSUFFICIENT_EVIDENCE",
   "INFERENCE_FAILED",
   "INFERENCE_TIMEOUT",
   "WORKER_UNAVAILABLE",

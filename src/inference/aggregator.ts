@@ -6,7 +6,7 @@ export function aggregateChunkResults(
   highThreshold: number,
 ): AggregationResult {
   if (chunks.length === 0) {
-    throw new CleanFeedError("INFERENCE_FAILED", "INSUFFICIENT_EVIDENCE");
+    throw new CleanFeedError("INSUFFICIENT_EVIDENCE", "INSUFFICIENT_EVIDENCE");
   }
 
   if (

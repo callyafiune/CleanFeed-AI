@@ -47,6 +47,15 @@ describe("aggregateChunkResults", () => {
     expect(result.finalScore).toBeLessThan(0.4);
   });
 
+  it("weights the high-score ratio by each chunk's effective token length", () => {
+    const result = aggregateChunkResults(
+      [chunk(0.1, 192), chunk(0.99, 8, 192, 1)],
+      0.8,
+    );
+
+    expect(result.highScoreRatio).toBeCloseTo(8 / 200, 8);
+  });
+
   it("uses the specified formula", () => {
     const result = aggregateChunkResults(makeChunks([0.8, 0.9]), 0.8);
 
@@ -69,8 +78,8 @@ describe("aggregateChunkResults", () => {
   });
 
   it("rejects empty chunk results as insufficient evidence", () => {
-    expect(() => aggregateChunkResults([], 0.8)).toThrow(
-      "INSUFFICIENT_EVIDENCE",
+    expect(() => aggregateChunkResults([], 0.8)).toThrowError(
+      expect.objectContaining({ code: "INSUFFICIENT_EVIDENCE" }),
     );
   });
 
