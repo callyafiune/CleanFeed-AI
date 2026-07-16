@@ -132,6 +132,8 @@ export class TransformersJsModelGateway implements TransformersModelGateway {
  */
 export class OnnxTextClassifier implements TextClassifier {
   private initialized = false;
+  private gatewayLoaded = false;
+  private generation = 0;
   private initialization: Promise<void> | undefined;
   private disposal: Promise<void> | undefined;
 
@@ -143,15 +145,22 @@ export class OnnxTextClassifier implements TextClassifier {
 
   async initialize(): Promise<void> {
     if (this.initialization !== undefined) return this.initialization;
+    if (this.disposal !== undefined) {
+      await this.disposal;
+      return this.initialize();
+    }
 
-    this.initialization = this.gateway.load(this.manifest, this.backend).then(
-      () => {
-        this.initialized = true;
-      },
-      (error: unknown) => {
-        this.initialization = undefined;
-        throw error;
-      },
+    const generation = this.generation;
+    const initialization = this.gateway
+      .load(this.manifest, this.backend)
+      .then(() => {
+        this.gatewayLoaded = true;
+        if (this.generation === generation) this.initialized = true;
+      });
+    this.initialization = initialization;
+    void initialization.then(
+      () => this.clearInitialization(initialization),
+      () => this.clearInitialization(initialization),
     );
     return this.initialization;
   }
@@ -204,11 +213,27 @@ export class OnnxTextClassifier implements TextClassifier {
   async dispose(): Promise<void> {
     if (this.disposal !== undefined) return this.disposal;
 
-    this.disposal = (async () => {
-      if (this.initialized) await this.gateway.dispose();
-      this.initialized = false;
+    this.generation += 1;
+    this.initialized = false;
+    const initialization = this.initialization;
+    const disposal = (async () => {
+      try {
+        await initialization;
+      } catch {
+        // A failed load has no usable session, but disposal remains idempotent.
+      }
+
+      if (this.gatewayLoaded) {
+        await this.gateway.dispose();
+        this.gatewayLoaded = false;
+      }
     })();
-    return this.disposal;
+    this.disposal = disposal;
+    void disposal.then(
+      () => this.clearDisposal(disposal),
+      () => this.clearDisposal(disposal),
+    );
+    return disposal;
   }
 
   getMetadata(): ClassifierMetadata {
@@ -222,6 +247,16 @@ export class OnnxTextClassifier implements TextClassifier {
       maximumTokens: this.manifest.maximumTokens,
       supportsBatching: false,
     };
+  }
+
+  private clearInitialization(initialization: Promise<void>): void {
+    if (this.initialization === initialization) {
+      this.initialization = undefined;
+    }
+  }
+
+  private clearDisposal(disposal: Promise<void>): void {
+    if (this.disposal === disposal) this.disposal = undefined;
   }
 }
 

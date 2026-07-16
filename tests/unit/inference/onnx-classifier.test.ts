@@ -127,6 +127,30 @@ describe("OnnxTextClassifier", () => {
 
     expect(gateway.dispose).toHaveBeenCalledTimes(1);
   });
+
+  it("cleans a pending initialization and can initialize a new session afterward", async () => {
+    const firstLoad = deferred<undefined>();
+    const gateway = new FakeGateway({ logits: [[-1, 2]] });
+    gateway.load.mockImplementationOnce(() => firstLoad.promise);
+    const classifier = new OnnxTextClassifier(manifest(), gateway, "wasm");
+
+    const initializing = classifier.initialize();
+    const disposing = classifier.dispose();
+    firstLoad.resolve(undefined);
+    await Promise.all([initializing, disposing]);
+
+    expect(gateway.dispose).toHaveBeenCalledTimes(1);
+    await expect(classifier.classify(PORTUGUESE_TEXT)).rejects.toMatchObject({
+      code: "INFERENCE_FAILED",
+    });
+
+    await classifier.initialize();
+
+    expect(gateway.load).toHaveBeenCalledTimes(2);
+    await expect(classifier.classify(PORTUGUESE_TEXT)).resolves.toMatchObject({
+      aiScore: expect.any(Number),
+    });
+  });
 });
 
 class FakeGateway implements TransformersModelGateway {
@@ -162,4 +186,12 @@ function createClassifier({
 
 function manifest(): CleanFeedModelManifest {
   return structuredClone(validManifest) as CleanFeedModelManifest;
+}
+
+function deferred<T>() {
+  let resolve!: (value: T) => void;
+  const promise = new Promise<T>((resolvePromise) => {
+    resolve = resolvePromise;
+  });
+  return { promise, resolve };
 }

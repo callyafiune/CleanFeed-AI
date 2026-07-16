@@ -50,13 +50,46 @@ export class TransformersTokenizer implements Tokenizer {
       throw new Error("The model tokenizer returned an invalid token count.");
     }
 
-    return { spans: [], tokenCount, exact: true };
+    return {
+      spans: spansForExactCount(text, tokenCount),
+      tokenCount,
+      exact: true,
+    };
   }
 }
 
 const TOKEN_PATTERN =
   /\p{Extended_Pictographic}(?:\uFE0F|\p{Emoji_Modifier}|\u200D\p{Extended_Pictographic}\uFE0F?)*|[\p{L}\p{M}\p{N}_]+|[^\s\p{L}\p{M}\p{N}_]/gu;
 const ABORT_CHECK_INTERVAL = 256;
+
+/**
+ * The model tokenizer yields exact counts but not source offsets. Map its
+ * positions over the non-whitespace source spans so downstream chunking still
+ * produces slices of the original text. These IDs are offsets only, never
+ * model-vocabulary IDs.
+ */
+function spansForExactCount(text: string, tokenCount: number): TokenSpan[] {
+  if (tokenCount === 0) return [];
+
+  const sourceSpans = Array.from(text.matchAll(TOKEN_PATTERN)).map((match) => {
+    const start = match.index!;
+    return { start, end: start + match[0].length };
+  });
+  if (sourceSpans.length === 0) {
+    throw new Error("The model tokenizer counted tokens without source text.");
+  }
+
+  return Array.from({ length: tokenCount }, (_, index) => {
+    const first = Math.floor((index * sourceSpans.length) / tokenCount);
+    const last = Math.max(
+      first,
+      Math.ceil(((index + 1) * sourceSpans.length) / tokenCount) - 1,
+    );
+    const start = sourceSpans[first]!.start;
+    const end = sourceSpans[last]!.end;
+    return { id: fnv1a(text.slice(start, end)), start, end };
+  });
+}
 
 /**
  * A replaceable approximation for model tokenization. It preserves source

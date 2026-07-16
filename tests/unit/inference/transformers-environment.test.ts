@@ -59,7 +59,7 @@ describe("Transformers environment", () => {
       wasmBaseUrl: "chrome-extension://test/vendor/transformers-wasm/",
     });
     const fetchLocalArtifact = vi.fn(async (input: string) => {
-      const body = input.endsWith("model.onnx")
+      const body = input.endsWith("model_int8.onnx")
         ? "model"
         : input.endsWith("tokenizer.json")
           ? "tokenizer"
@@ -77,6 +77,9 @@ describe("Transformers environment", () => {
     expect(fromPretrained).toHaveBeenCalledWith("cleanfeed-detector-v1", {
       local_files_only: true,
       device: "wasm",
+      model_file_name: "model",
+      subfolder: "",
+      dtype: "int8",
     });
     expect(fetchLocalArtifact).toHaveBeenCalledTimes(3);
   });
@@ -99,6 +102,71 @@ describe("Transformers environment", () => {
       ),
     ).rejects.toThrow("MODEL_LOAD_FAILED");
     expect(deniedNetwork).toHaveBeenCalledTimes(3);
+    expect(fromPretrained).not.toHaveBeenCalled();
+  });
+
+  it("uses a manifest root model path instead of Transformers' default artifact", async () => {
+    fromPretrained.mockResolvedValue({ id: "loaded-model" });
+    configureTransformersEnvironment({
+      modelBaseUrl: "chrome-extension://test/models/",
+      wasmBaseUrl: "chrome-extension://test/vendor/transformers-wasm/",
+    });
+    const fetchLocalArtifact = vi.fn(
+      async (input: string) =>
+        new Response(
+          input.endsWith("model_int8.onnx")
+            ? "model"
+            : input.endsWith("tokenizer.json")
+              ? "tokenizer"
+              : "config",
+        ),
+    );
+
+    await loadLocalSequenceClassifier(
+      validManifest as CleanFeedModelManifest,
+      "wasm",
+      fetchLocalArtifact,
+    );
+
+    expect(fetchLocalArtifact).toHaveBeenCalledWith(
+      "chrome-extension://test/models/cleanfeed-detector-v1/model_int8.onnx",
+      { redirect: "error" },
+    );
+    expect(fromPretrained).toHaveBeenCalledWith("cleanfeed-detector-v1", {
+      local_files_only: true,
+      device: "wasm",
+      model_file_name: "model",
+      subfolder: "",
+      dtype: "int8",
+    });
+  });
+
+  it("rejects a runtime model path that would load a different artifact", async () => {
+    configureTransformersEnvironment({
+      modelBaseUrl: "chrome-extension://test/models/",
+      wasmBaseUrl: "chrome-extension://test/vendor/transformers-wasm/",
+    });
+    const mismatchedManifest = {
+      ...validManifest,
+      modelPath: "onnx/model_quantized.onnx",
+    } as CleanFeedModelManifest;
+
+    await expect(
+      loadLocalSequenceClassifier(
+        mismatchedManifest,
+        "wasm",
+        vi.fn(
+          async (input: string) =>
+            new Response(
+              input.endsWith("model_quantized.onnx")
+                ? "model"
+                : input.endsWith("tokenizer.json")
+                  ? "tokenizer"
+                  : "config",
+            ),
+        ),
+      ),
+    ).rejects.toMatchObject({ code: "MODEL_LOAD_FAILED" });
     expect(fromPretrained).not.toHaveBeenCalled();
   });
 });

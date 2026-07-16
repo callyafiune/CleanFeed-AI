@@ -43,7 +43,7 @@ describe("model bundles", () => {
 
   it("verifies each bundle file below its extension-local model directory", async () => {
     const fetchImpl = vi.fn(async (input: string) => {
-      const body = input.endsWith("model.onnx")
+      const body = input.endsWith(validManifest.modelPath)
         ? "model"
         : input.endsWith("tokenizer.json")
           ? "tokenizer"
@@ -60,7 +60,7 @@ describe("model bundles", () => {
     ).resolves.toEqual(parseModelManifest(validManifest));
 
     expect(fetchImpl).toHaveBeenCalledWith(
-      "chrome-extension://cleanfeed/models/cleanfeed-detector-v1/model.onnx",
+      `chrome-extension://cleanfeed/models/cleanfeed-detector-v1/${validManifest.modelPath}`,
       { redirect: "error" },
     );
   });

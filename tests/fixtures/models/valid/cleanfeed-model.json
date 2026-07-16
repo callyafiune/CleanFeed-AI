@@ -5,7 +5,7 @@
   "version": "1.0.0",
   "task": "ai_text_detection",
   "architecture": "distilbert",
-  "modelPath": "model.onnx",
+  "modelPath": "model_int8.onnx",
   "tokenizerPath": "tokenizer.json",
   "configPath": "config.json",
   "supportedLanguages": ["pt", "en"],
