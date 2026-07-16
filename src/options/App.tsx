@@ -11,7 +11,9 @@ export interface OptionsApi {
   updateSettings(update: Partial<UserSettings>): Promise<UserSettings>;
 }
 
-export function App({ api = createChromeOptionsApi() }: { api?: OptionsApi }) {
+const defaultOptionsApi = createChromeOptionsApi();
+
+export function App({ api = defaultOptionsApi }: { api?: OptionsApi }) {
   const [settings, setSettings] = useState<UserSettings>(DEFAULT_SETTINGS);
   const [error, setError] = useState<string | null>(null);
 

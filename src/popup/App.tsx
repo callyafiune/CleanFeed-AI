@@ -13,7 +13,9 @@ export interface PopupApi {
   openOptions(): Promise<void>;
 }
 
-export function App({ api = createChromePopupApi() }: { api?: PopupApi }) {
+const defaultPopupApi = createChromePopupApi();
+
+export function App({ api = defaultPopupApi }: { api?: PopupApi }) {
   const [stats, setStats] = useState<PageStats | null>(null);
   const [status, setStatus] = useState<ModelStatus | null>(null);
   const [host, setHost] = useState<string | null>(null);
