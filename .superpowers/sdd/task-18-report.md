@@ -213,3 +213,57 @@ npm run build
 git diff --check
 # exit 0
 ```
+
+## Shared-batch inference-fallback completion
+
+### TDD evidence
+
+#### RED
+
+Added a controlled worker integration test where the one same-language
+`classifyBatch` call rejects, individual classification fails for `broken`, and
+the individual retry succeeds for `healthy`.
+
+```powershell
+npm test -- --run tests/integration/inference-pipeline.test.ts
+```
+
+Before the fallback, the new test failed with the expected broadcast symptom:
+both `broken` and `healthy` received `ERROR` after the shared batch rejection.
+
+#### GREEN
+
+When a multi-item same-language batch invocation rejects, the runner now retries
+each still-active prepared request directly through `classifier.classify`, using
+that request's signal. Each retry settles independently; a cancelled member is
+checked before retry and again before completing, so it is not retried or later
+emitted as a result. The successful shared-batch path is unchanged and still
+makes one batch call.
+
+The focused integration command passed with 13 tests across the two worker
+pipeline/cancellation files. The added regression verifies exactly one initial
+batch call, `ERROR` only for the individually failing request, and `RESULT` for
+the healthy sibling.
+
+### Final verification
+
+```text
+npm test -- --run
+# Test Files  37 passed (37)
+# Tests       263 passed (263)
+
+npm run typecheck
+# exit 0
+
+npm run lint
+# exit 0; 0 errors, 2 pre-existing react-refresh warnings
+
+npm run format:check
+# All matched files use Prettier code style!
+
+npm run build
+# ✓ built in 204ms
+
+git diff --check
+# exit 0
+```

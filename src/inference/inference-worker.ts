@@ -268,6 +268,14 @@ export class PipelineRunner {
       classified =
         inputs.length === 0 ? [] : await this.classifyChunks(inputs, options);
     } catch (error) {
+      if (active.length > 1 && this.supportsBatching()) {
+        await Promise.all(
+          active.map((entry) =>
+            this.retryPreparedRequest(entry, settings, startedAt, outcomes),
+          ),
+        );
+        return;
+      }
       for (const { index, item } of active) {
         outcomes[index] = outcomeForError(error, item.signal);
       }
@@ -299,6 +307,51 @@ export class PipelineRunner {
       } catch (error) {
         outcomes[entry.index] = outcomeForError(error, entry.item.signal);
       }
+    }
+  }
+
+  private async retryPreparedRequest(
+    entry: {
+      index: number;
+      item: PipelineBatchItem;
+      prepared: PreparedRequest;
+    },
+    settings: UserSettings,
+    startedAt: number,
+    outcomes: (PipelineBatchOutcome | undefined)[],
+  ): Promise<void> {
+    if (entry.item.signal?.aborted) {
+      outcomes[entry.index] = { kind: "cancelled" };
+      return;
+    }
+    const options: ClassificationOptions = {
+      ...(entry.item.signal === undefined ? {} : { signal: entry.item.signal }),
+      language: entry.prepared.language,
+      platform: entry.item.request.platform,
+    };
+    const inferenceStartedAt = performance.now();
+    try {
+      const classified = await Promise.all(
+        entry.prepared.chunks.map((chunk) =>
+          this.classifier.classify(chunk.text, options),
+        ),
+      );
+      if (entry.item.signal?.aborted) {
+        outcomes[entry.index] = { kind: "cancelled" };
+        return;
+      }
+      outcomes[entry.index] = {
+        kind: "result",
+        result: completePreparedRequest(
+          entry.prepared,
+          classified,
+          settings,
+          startedAt,
+          performance.now() - inferenceStartedAt,
+        ),
+      };
+    } catch (error) {
+      outcomes[entry.index] = outcomeForError(error, entry.item.signal);
     }
   }
 

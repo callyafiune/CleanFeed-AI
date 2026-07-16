@@ -286,4 +286,57 @@ describe("inference pipeline", () => {
       expect.objectContaining({ type: "ERROR", requestId: "healthy" }),
     );
   });
+
+  it("retries a rejected shared batch per active request", async () => {
+    const batchClassifier = classifier(true);
+    (
+      batchClassifier.classifyBatch as ReturnType<typeof vi.fn>
+    ).mockRejectedValue(new Error("shared batch failed"));
+    (batchClassifier.classify as ReturnType<typeof vi.fn>).mockImplementation(
+      async (text: string, options?: ClassificationOptions) => {
+        if (text.startsWith("broken ")) {
+          throw new Error("individual inference failed");
+        }
+        return result(text, options);
+      },
+    );
+    const tokenizer: Tokenizer = {
+      id: "test",
+      encode: vi.fn(async (text) => ({
+        spans: [{ id: 1, start: 0, end: text.length }],
+        tokenCount: 1,
+        exact: false,
+      })),
+    };
+    const scope = workerScope();
+    installInferenceWorker(
+      scope,
+      () => new PipelineRunner({ classifier: batchClassifier, tokenizer }),
+    );
+
+    scope.dispatch(
+      workerBatch([
+        { requestId: "broken", text: `broken ${PORTUGUESE_LONG_TEXT}` },
+        { requestId: "healthy", text: PORTUGUESE_LONG_TEXT },
+      ]),
+    );
+
+    await waitForWorkerMessage(
+      scope,
+      (message) =>
+        (message as { type?: string; requestId?: string }).type === "ERROR" &&
+        (message as { requestId?: string }).requestId === "broken",
+    );
+    expect(scope.messages).toContainEqual(
+      expect.objectContaining({ type: "RESULT", requestId: "healthy" }),
+    );
+    expect(scope.messages).not.toContainEqual(
+      expect.objectContaining({ type: "ERROR", requestId: "healthy" }),
+    );
+    expect(batchClassifier.classifyBatch).toHaveBeenCalledOnce();
+    expect(batchClassifier.classify).toHaveBeenCalledWith(
+      expect.any(String),
+      expect.objectContaining({ signal: expect.any(AbortSignal) }),
+    );
+  });
 });
