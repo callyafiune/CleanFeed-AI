@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 
 import { calibrateResult } from "@/inference/calibration";
 import { buildExplanation } from "@/inference/explanation";
-import type { ClassificationResult } from "@/shared/types";
+import type { ClassificationResult, DecisionOutcome } from "@/shared/types";
 
 function result(): ClassificationResult {
   return {
@@ -32,11 +32,30 @@ function result(): ClassificationResult {
 }
 
 describe("buildExplanation", () => {
-  it("reports only evidence-derived reasons", () => {
+  it("requires result evidence rather than fabricating an explanation from a decision", () => {
     const outcome = calibrateResult(result());
-    const explanation = buildExplanation(outcome);
 
-    expect(explanation.reasonCodes).toEqual(outcome.reasonCodes);
+    expect(() =>
+      (buildExplanation as unknown as (outcome: DecisionOutcome) => unknown)(
+        outcome,
+      ),
+    ).toThrow("ClassificationResult");
+  });
+
+  it("reports the raw model score and reasons derived from the actual result", () => {
+    const classification = result();
+    classification.aiScore = 0.91;
+    classification.aggregation = {
+      ...classification.aggregation!,
+      finalScore: 0.96,
+    };
+    const outcome = {
+      ...calibrateResult(classification),
+      reasonCodes: ["FORMULAIC_STRUCTURE" as const],
+    };
+    const explanation = buildExplanation(classification, outcome);
+
+    expect(explanation.modelScore).toBe(0.91);
     expect(explanation.reasonCodes).toEqual(
       expect.arrayContaining([
         "HIGH_CHUNK_CONSISTENCY",
@@ -45,12 +64,14 @@ describe("buildExplanation", () => {
         "HIGH_MEDIAN_SCORE",
       ]),
     );
+    expect(explanation.reasonCodes).not.toContain("FORMULAIC_STRUCTURE");
   });
 
   it("never invents stylistic reasons", () => {
-    const outcome = calibrateResult(result());
+    const classification = result();
+    const outcome = calibrateResult(classification);
 
-    expect(buildExplanation(outcome).reasonCodes).not.toContain(
+    expect(buildExplanation(classification, outcome).reasonCodes).not.toContain(
       "FORMULAIC_STRUCTURE",
     );
   });
