@@ -86,8 +86,8 @@ const reasonCodes = new Set<string>([
 const modelStates = new Set<string>([
   "unavailable",
   "initializing",
-  "downloading",
   "ready",
+  "disposing",
   "error",
 ]);
 

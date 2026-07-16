@@ -577,6 +577,11 @@ async function handleMessage(
       return;
     }
     if (request.type === "DISPOSE") {
+      scope.postMessage({
+        type: "STATUS",
+        requestId: request.requestId,
+        payload: { ...readyStatus(runner), state: "disposing" },
+      });
       await runner.dispose();
       scope.postMessage({
         type: "STATUS",

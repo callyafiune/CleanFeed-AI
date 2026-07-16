@@ -81,8 +81,8 @@ function modelStateLabel(state: ModelStatus["state"] | undefined): string {
   switch (state) {
     case "initializing":
       return "inicializando";
-    case "downloading":
-      return "baixando modelo";
+    case "disposing":
+      return "liberando modelo";
     case "ready":
       return "pronto";
     case "error":

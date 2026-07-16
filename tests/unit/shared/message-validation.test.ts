@@ -333,8 +333,8 @@ describe("parseExtensionMessage", () => {
     expect(() => parseExtensionMessage(message)).toThrow("INVALID_MESSAGE");
   });
 
-  it("rejects the retired disposing model state", () => {
-    expect(() =>
+  it("accepts the disposing model lifecycle state", () => {
+    expect(
       parseExtensionMessage({
         source: "background",
         target: "popup",
@@ -346,6 +346,6 @@ describe("parseExtensionMessage", () => {
           backend: "mock",
         },
       }),
-    ).toThrow("INVALID_MESSAGE");
+    ).toMatchObject({ type: "MODEL_STATUS_RESULT" });
   });
 });

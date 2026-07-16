@@ -36,6 +36,9 @@ type PendingRequest = {
 export class WorkerHost implements WorkerClassifierClient {
   private worker: WorkerLike;
   private workerAvailable = true;
+  private disposed = false;
+  private lastInitialization:
+    { paths: WorkerInitializePayload; requestId: string } | undefined;
   private modelStatus: ModelStatus = {
     state: "initializing",
     classifierId: "unavailable",
@@ -45,18 +48,27 @@ export class WorkerHost implements WorkerClassifierClient {
   private cancelledTasks = 0;
   private readonly pending = new Map<string, PendingRequest>();
   private readonly batchQueue: WorkerClassificationRequest[] = [];
+  private readonly running = new Set<string>();
   private batchTimer?: ReturnType<typeof setTimeout>;
 
   constructor(
-    createWorker: () => WorkerLike = () =>
+    private readonly createWorker: () => WorkerLike = () =>
       new Worker(new URL("../inference/inference-worker.ts", import.meta.url), {
         type: "module",
       }),
     private supportsBatching = false,
   ) {
-    this.worker = createWorker();
-    this.worker.onmessage = (event) => this.handleMessage(event.data);
-    this.worker.onerror = () => this.failWorker();
+    this.worker = this.createWorker();
+    this.attachWorker(this.worker);
+  }
+
+  private attachWorker(worker: WorkerLike): void {
+    worker.onmessage = (event) => {
+      if (this.worker === worker) this.handleMessage(event.data);
+    };
+    worker.onerror = () => {
+      if (this.worker === worker) this.failWorker();
+    };
   }
 
   classify(
@@ -87,6 +99,7 @@ export class WorkerHost implements WorkerClassifierClient {
     const pending = this.settle(requestId);
     if (pending === undefined) return false;
     this.removeQueued(requestId);
+    this.running.delete(requestId);
     this.cancelledTasks += 1;
     this.postCancel(requestId);
     pending.reject(new DOMException("Inference task cancelled", "AbortError"));
@@ -102,11 +115,18 @@ export class WorkerHost implements WorkerClassifierClient {
     requestId = "worker-initialize",
   ): void {
     if (!this.workerAvailable) return;
+    this.lastInitialization = { paths, requestId };
+    this.postInitialize();
+  }
+
+  private postInitialize(): void {
+    const initialization = this.lastInitialization;
+    if (!this.workerAvailable || initialization === undefined) return;
     try {
       this.worker.postMessage({
         type: "INITIALIZE",
-        requestId,
-        payload: paths,
+        requestId: initialization.requestId,
+        payload: initialization.paths,
       });
     } catch {
       /* worker loss is best-effort */
@@ -123,6 +143,7 @@ export class WorkerHost implements WorkerClassifierClient {
   }
 
   dispose(): void {
+    this.disposed = true;
     this.rejectAll();
     if (this.workerAvailable) {
       this.postControl("DISPOSE", "worker-dispose");
@@ -145,6 +166,7 @@ export class WorkerHost implements WorkerClassifierClient {
       this.modelStatus = message.payload;
     }
     const pending = this.settle(message.requestId);
+    this.running.delete(message.requestId);
     if (pending === undefined) return;
     if (message.type === "RESULT") {
       pending.resolve(message.payload);
@@ -168,8 +190,13 @@ export class WorkerHost implements WorkerClassifierClient {
   }
 
   private timeout(requestId: string): void {
-    const pending = this.settle(requestId);
+    const pending = this.pending.get(requestId);
     if (pending === undefined) return;
+    if (this.running.has(requestId) && this.lastInitialization !== undefined) {
+      this.recoverFromHardTimeout();
+      return;
+    }
+    this.settle(requestId);
     this.removeQueued(requestId);
     this.postCancel(requestId);
     const wordCount = pending.request.text
@@ -258,6 +285,7 @@ export class WorkerHost implements WorkerClassifierClient {
 
   private postClassification(request: WorkerClassificationRequest): void {
     try {
+      this.running.add(request.requestId);
       this.worker.postMessage({
         type: "CLASSIFY",
         requestId: request.requestId,
@@ -271,6 +299,7 @@ export class WorkerHost implements WorkerClassifierClient {
         },
       } as WorkerRequest);
     } catch (error) {
+      this.running.delete(request.requestId);
       const pending = this.settle(request.requestId);
       pending?.reject(error);
     }
@@ -278,6 +307,7 @@ export class WorkerHost implements WorkerClassifierClient {
 
   private postBatch(requests: WorkerClassificationRequest[]): void {
     try {
+      for (const request of requests) this.running.add(request.requestId);
       this.worker.postMessage({
         type: "CLASSIFY",
         requestId: requests[0]!.requestId,
@@ -294,8 +324,10 @@ export class WorkerHost implements WorkerClassifierClient {
         },
       } as WorkerRequest);
     } catch (error) {
-      for (const request of requests)
+      for (const request of requests) {
+        this.running.delete(request.requestId);
         this.settle(request.requestId)?.reject(error);
+      }
     }
   }
 
@@ -304,6 +336,7 @@ export class WorkerHost implements WorkerClassifierClient {
       clearTimeout(pending.timeout);
       pending.reject(reason);
       this.pending.delete(requestId);
+      this.running.delete(requestId);
     }
   }
 
@@ -318,6 +351,25 @@ export class WorkerHost implements WorkerClassifierClient {
       errorCode: "WORKER_UNAVAILABLE",
     };
     this.rejectAll(reason);
+  }
+
+  private recoverFromHardTimeout(): void {
+    if (!this.workerAvailable || this.disposed) return;
+    this.workerAvailable = false;
+    this.worker.terminate();
+    const timeoutError = new CleanFeedError(
+      "INFERENCE_TIMEOUT",
+      "INFERENCE_TIMEOUT",
+    );
+    for (const requestId of this.running) {
+      this.settle(requestId)?.reject(timeoutError);
+    }
+    this.running.clear();
+    this.modelStatus = { ...this.modelStatus, state: "initializing" };
+    this.worker = this.createWorker();
+    this.workerAvailable = true;
+    this.attachWorker(this.worker);
+    this.postInitialize();
   }
 }
 
