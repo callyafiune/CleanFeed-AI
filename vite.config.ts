@@ -8,8 +8,11 @@ function offlineTransformersRuntime() {
   return {
     name: "cleanfeed-offline-transformers-runtime",
     generateBundle(_options, bundle) {
-      for (const output of Object.values(bundle)) {
-        if (output.type !== "chunk") continue;
+      for (const output of Object.values(bundle) as {
+        type: string;
+        code?: string;
+      }[]) {
+        if (output.type !== "chunk" || output.code === undefined) continue;
         output.code = output.code
           .replaceAll("https://huggingface.co", "offline")
           .replaceAll("https://cdn.jsdelivr.net", "offline");
