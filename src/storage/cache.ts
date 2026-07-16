@@ -200,7 +200,8 @@ export class ClassificationCache {
 function withoutDebugTimings(
   result: ClassificationResult,
 ): ClassificationResult {
-  const { stageTimings: _stageTimings, ...cached } = result;
+  const cached = { ...result };
+  delete cached.stageTimings;
   return cached;
 }
 
