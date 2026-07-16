@@ -26,6 +26,7 @@ const booleanKeys = [
   "manualAnalysisEnabled",
   "showScore",
   "showExplanation",
+  "debugMode",
   "webGpuEnabled",
   "wasmEnabled",
   "batchingEnabled",

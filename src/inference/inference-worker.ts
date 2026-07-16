@@ -415,12 +415,16 @@ function completePreparedRequest(
       ...explanation,
       calibrationProfile: `${item.request.platform}:${item.language}:${getLengthBucket(base.wordCount)}`,
     },
-    stageTimings: {
-      ...item.stageTimings,
-      inferenceMs,
-      aggregationMs,
-      calibrationMs,
-    },
+    ...(settings.debugMode
+      ? {
+          stageTimings: {
+            ...item.stageTimings,
+            inferenceMs,
+            aggregationMs,
+            calibrationMs,
+          },
+        }
+      : {}),
   };
 }
 
@@ -547,7 +551,7 @@ async function handleMessage(
       scope.postMessage({
         type: "STATUS",
         requestId: request.requestId,
-        payload: { ...readyStatus(runner), state: "disposing" },
+        payload: { ...readyStatus(runner), state: "unavailable" },
       });
       return;
     }

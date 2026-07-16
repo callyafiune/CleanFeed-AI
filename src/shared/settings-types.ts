@@ -23,6 +23,7 @@ export interface UserSettings {
   manualAnalysisEnabled: boolean;
   showScore: boolean;
   showExplanation: boolean;
+  debugMode: boolean;
   backendPreference: BackendPreference;
   webGpuEnabled: boolean;
   wasmEnabled: boolean;

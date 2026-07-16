@@ -16,6 +16,7 @@ const validSettings = {
   manualAnalysisEnabled: true,
   showScore: false,
   showExplanation: true,
+  debugMode: false,
   backendPreference: "auto",
   webGpuEnabled: true,
   wasmEnabled: true,
@@ -330,5 +331,21 @@ describe("parseExtensionMessage", () => {
     },
   ])("rejects forged route for %s", (message) => {
     expect(() => parseExtensionMessage(message)).toThrow("INVALID_MESSAGE");
+  });
+
+  it("rejects the retired disposing model state", () => {
+    expect(() =>
+      parseExtensionMessage({
+        source: "background",
+        target: "popup",
+        type: "MODEL_STATUS_RESULT",
+        payload: {
+          state: "disposing",
+          classifierId: "mock",
+          modelVersion: "demo-1",
+          backend: "mock",
+        },
+      }),
+    ).toThrow("INVALID_MESSAGE");
   });
 });

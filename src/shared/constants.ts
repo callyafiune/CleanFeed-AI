@@ -44,6 +44,7 @@ export const DEFAULT_SETTINGS: UserSettings = {
   manualAnalysisEnabled: true,
   showScore: false,
   showExplanation: true,
+  debugMode: false,
   backendPreference: "auto",
   webGpuEnabled: true,
   wasmEnabled: true,

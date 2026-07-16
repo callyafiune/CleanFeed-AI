@@ -2,6 +2,7 @@ import type {
   AggregateMetrics,
   Backend,
   ClassificationStatus,
+  PerformanceTrace,
 } from "@/shared/types";
 import type { StorageArea } from "@/storage/storage-area";
 
@@ -86,6 +87,15 @@ export class MetricsRepository {
         latencySamples,
       });
     });
+  }
+
+  /** Persists only aggregate latency and classification metadata. */
+  recordInference(
+    trace: PerformanceTrace,
+    backend: Backend,
+    status: ClassificationStatus,
+  ): Promise<void> {
+    return this.record({ inferenceMs: trace.totalMs, backend, status });
   }
 
   get(): Promise<AggregateMetrics> {

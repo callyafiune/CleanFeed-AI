@@ -87,7 +87,6 @@ const modelStates = new Set<string>([
   "unavailable",
   "initializing",
   "ready",
-  "disposing",
   "error",
 ]);
 
@@ -179,6 +178,7 @@ const userSettingKeys = [
   "manualAnalysisEnabled",
   "showScore",
   "showExplanation",
+  "debugMode",
   "backendPreference",
   "webGpuEnabled",
   "wasmEnabled",
@@ -571,6 +571,7 @@ function isSettingValue(key: string, value: unknown): boolean {
     case "manualAnalysisEnabled":
     case "showScore":
     case "showExplanation":
+    case "debugMode":
     case "webGpuEnabled":
     case "wasmEnabled":
     case "batchingEnabled":

@@ -22,19 +22,23 @@ export function App({ api = defaultPopupApi }: { api?: PopupApi }) {
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
-    void Promise.all([
-      api.getPageStats(),
-      api.getModelStatus(),
-      api.getActiveHost(),
-    ])
-      .then(([pageStats, modelStatus, activeHost]) => {
-        setStats(pageStats);
-        setStatus(modelStatus);
-        setHost(activeHost);
-      })
-      .catch(() =>
-        setError("Não foi possível consultar o estado desta página."),
-      );
+    const refresh = () =>
+      Promise.all([
+        api.getPageStats(),
+        api.getModelStatus(),
+        api.getActiveHost(),
+      ])
+        .then(([pageStats, modelStatus, activeHost]) => {
+          setStats(pageStats);
+          setStatus(modelStatus);
+          setHost(activeHost);
+        })
+        .catch(() =>
+          setError("Não foi possível consultar o estado desta página."),
+        );
+    void refresh();
+    const interval = setInterval(() => void refresh(), 1_000);
+    return () => clearInterval(interval);
   }, [api]);
 
   return (
@@ -48,9 +52,10 @@ export function App({ api = defaultPopupApi }: { api?: PopupApi }) {
         <PageStatsSummary stats={stats} />
       )}
       <p>
-        Modelo: {status?.classifierId ?? "indisponível"} · Backend:{" "}
+        Modelo: {status?.classifierId ?? "indisponível"} · Versão:{" "}
+        {status?.modelVersion ?? "indisponível"} · Backend:{" "}
         {status?.backend ?? "indisponível"} · Estado:{" "}
-        {status?.state ?? "indisponível"}
+        {modelStateLabel(status?.state)}
       </p>
       {error === null ? null : <p role="alert">{error}</p>}
       <button
@@ -70,6 +75,19 @@ export function App({ api = defaultPopupApi }: { api?: PopupApi }) {
       </button>
     </main>
   );
+}
+
+function modelStateLabel(state: ModelStatus["state"] | undefined): string {
+  switch (state) {
+    case "initializing":
+      return "inicializando";
+    case "ready":
+      return "pronto";
+    case "error":
+      return "erro";
+    default:
+      return "indisponível";
+  }
 }
 
 export function createChromePopupApi(): PopupApi {
