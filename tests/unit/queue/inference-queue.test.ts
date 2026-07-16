@@ -86,6 +86,27 @@ describe("InferenceQueue", () => {
     expect(queue.pendingIds()).toEqual(["close", "far"]);
   });
 
+  it("elevates a deduplicated queued task when a manual request joins it", async () => {
+    const runner = createRunner();
+    const queue = new InferenceQueue({ run: runner.run, concurrency: 1 });
+    const blocker = queue.enqueue(task("blocker"));
+    await flushQueue();
+    const deduplicated = queue.enqueue(task("near", { textHash: "shared" }));
+    const visible = queue.enqueue(task("visible", { visibility: "visible" }));
+    queue.enqueue(task("manual", { textHash: "shared", manual: true }));
+
+    runner.resolveNext("blocker-result");
+    await blocker;
+    await flushQueue();
+
+    expect(runner.runCalls.map(({ id }) => id)).toEqual(["blocker", "near"]);
+    runner.resolveNext("shared-result");
+    await expect(deduplicated).resolves.toBe("shared-result");
+    await flushQueue();
+    runner.resolveNext("visible-result");
+    await expect(visible).resolves.toBe("visible-result");
+  });
+
   it("deduplicates by text hash, model, settings and platform and fans out the result", async () => {
     const runner = createRunner();
     const queue = new InferenceQueue({ run: runner.run });
@@ -148,7 +169,7 @@ describe("InferenceQueue", () => {
     expect(runner.activeIds).toEqual(["b"]);
   });
 
-  it("expires pending tasks and rejects queued cancellation with AbortError", async () => {
+  it("keeps expiration distinct from queued cancellation", async () => {
     const runner = createRunner();
     const queue = new InferenceQueue({
       run: runner.run,
@@ -158,12 +179,13 @@ describe("InferenceQueue", () => {
     void queue.enqueue(task("running"));
     const expired = queue.enqueue(task("expired", { expiresAt: 99 }));
     const cancelled = queue.enqueue(task("cancelled"));
+    const expiration = expired.catch((error: unknown) => error);
 
     const cancellation = expect(cancelled).rejects.toMatchObject({
       name: "AbortError",
     });
     expect(queue.cancel("cancelled")).toBe(true);
-    await expect(expired).rejects.toMatchObject({ name: "AbortError" });
+    expect(await expiration).toMatchObject({ name: "TimeoutError" });
     await cancellation;
     expect(queue.stats()).toMatchObject({ expired: 1, cancelled: 1 });
   });
@@ -178,6 +200,72 @@ describe("InferenceQueue", () => {
     expect(queue.cancel("running")).toBe(true);
     expect(cancelRunner).toHaveBeenCalledWith("running");
     await expect(result).rejects.toMatchObject({ name: "AbortError" });
+  });
+
+  it("does not cancel shared running work when only a deduplicated follower cancels", async () => {
+    const runner = createRunner();
+    const cancelRunner = vi.fn();
+    const queue = new InferenceQueue({ run: runner.run, cancelRunner });
+    const first = queue.enqueue(task("runner", { textHash: "shared" }));
+
+    await flushQueue();
+    const follower = queue.enqueue(task("follower", { textHash: "shared" }));
+    queue.cancel("follower");
+
+    await expect(follower).rejects.toMatchObject({ name: "AbortError" });
+    expect(cancelRunner).not.toHaveBeenCalled();
+    expect(queue.has("runner")).toBe(true);
+    expect(queue.stats().running).toBe(1);
+
+    runner.resolveNext("shared-result");
+    await expect(first).resolves.toBe("shared-result");
+  });
+
+  it("uses the runner request id when the final running subscriber cancels", async () => {
+    const runner = createRunner();
+    const cancelRunner = vi.fn();
+    const queue = new InferenceQueue({ run: runner.run, cancelRunner });
+    const first = queue.enqueue(task("runner", { textHash: "shared" }));
+
+    await flushQueue();
+    const follower = queue.enqueue(task("follower", { textHash: "shared" }));
+    queue.cancel("runner");
+    await expect(first).rejects.toMatchObject({ name: "AbortError" });
+    expect(cancelRunner).not.toHaveBeenCalled();
+
+    queue.cancel("follower");
+    await expect(follower).rejects.toMatchObject({ name: "AbortError" });
+    expect(cancelRunner).toHaveBeenCalledWith("runner");
+    runner.resolveNext("ignored-result");
+  });
+
+  it("expires an individual deduplicated subscriber while shared work remains queued", async () => {
+    vi.useFakeTimers();
+    try {
+      const runner = createRunner();
+      const queue = new InferenceQueue({ run: runner.run, concurrency: 1 });
+      const blocker = queue.enqueue(task("blocker"));
+      await flushQueue();
+      const first = queue.enqueue(task("first", { textHash: "shared" }));
+      const expiring = queue.enqueue(
+        task("expiring", {
+          textHash: "shared",
+          manual: true,
+          expiresAt: Date.now() + 100,
+        }),
+      );
+      const expiration = expiring.catch((error: unknown) => error);
+
+      await vi.advanceTimersByTimeAsync(100);
+      expect(await expiration).toMatchObject({ name: "TimeoutError" });
+      runner.resolveNext("blocker-result");
+      await blocker;
+      await flushQueue();
+      runner.resolveNext("shared-result");
+      await expect(first).resolves.toBe("shared-result");
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it("delays a platform after 30 starts in a rolling minute", async () => {
@@ -198,5 +286,138 @@ describe("InferenceQueue", () => {
     await vi.advanceTimersByTimeAsync(60_000);
     expect(runner.runCalls).toHaveLength(31);
     vi.useRealTimers();
+  });
+
+  it("runs an eligible platform instead of waiting behind a rate-limited platform", async () => {
+    vi.useFakeTimers();
+    try {
+      const runner = createRunner();
+      const queue = new InferenceQueue({
+        run: runner.run,
+        concurrency: 32,
+        now: () => Date.now(),
+      });
+
+      for (let index = 0; index < 30; index += 1) {
+        void queue.enqueue(task(`linkedin-${index}`));
+      }
+      await flushQueue();
+      queue.enqueue(task("linkedin-limited", { manual: true }));
+      queue.enqueue(task("other-platform", { platform: "other" }));
+      await flushQueue();
+
+      expect(runner.runCalls).toHaveLength(31);
+      expect(runner.runCalls.at(-1)?.id).toBe("other-platform");
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("expires a rate-limited pending task before the rate timer fires", async () => {
+    vi.useFakeTimers();
+    try {
+      const runner = createRunner();
+      const queue = new InferenceQueue({
+        run: runner.run,
+        concurrency: 31,
+        now: () => Date.now(),
+      });
+
+      for (let index = 0; index < 30; index += 1) {
+        void queue.enqueue(task(`linkedin-${index}`));
+      }
+      await flushQueue();
+      const expiring = queue.enqueue(
+        task("rate-limited", { expiresAt: Date.now() + 100 }),
+      );
+      const expiration = expiring.catch((error: unknown) => error);
+
+      await vi.advanceTimersByTimeAsync(100);
+      expect(await expiration).toMatchObject({ name: "TimeoutError" });
+      expect(queue.stats().expired).toBe(1);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("runs up to two tasks concurrently when configured", async () => {
+    const runner = createRunner();
+    const queue = new InferenceQueue({ run: runner.run, concurrency: 2 });
+
+    void queue.enqueue(task("a"));
+    void queue.enqueue(task("b"));
+    void queue.enqueue(task("c"));
+    await flushQueue();
+
+    expect(runner.activeIds).toEqual(["a", "b"]);
+  });
+
+  it("clears active work, registry entries and stats when disposed", async () => {
+    const runner = createRunner();
+    const cancelRunner = vi.fn();
+    const queue = new InferenceQueue({ run: runner.run, cancelRunner });
+    const running = queue.enqueue(task("running"));
+    const queued = queue.enqueue(task("queued"));
+    const settled = Promise.allSettled([running, queued]);
+
+    await flushQueue();
+    queue.dispose();
+
+    expect(await settled).toEqual([
+      expect.objectContaining({
+        status: "rejected",
+        reason: expect.any(DOMException),
+      }),
+      expect.objectContaining({
+        status: "rejected",
+        reason: expect.any(DOMException),
+      }),
+    ]);
+    expect(cancelRunner).toHaveBeenCalledTimes(1);
+    expect(cancelRunner).toHaveBeenCalledWith("running");
+    expect(queue.size).toBe(0);
+    expect(queue.has("running")).toBe(false);
+    expect(queue.has("queued")).toBe(false);
+    expect(queue.stats()).toEqual({
+      queued: 0,
+      running: 0,
+      completed: 0,
+      cancelled: 0,
+      expired: 0,
+      failed: 0,
+    });
+  });
+
+  it("reuses a request id after its terminal registry record is cleaned", async () => {
+    const runner = createRunner();
+    const queue = new InferenceQueue({ run: runner.run });
+    const first = queue.enqueue(task("reused"));
+
+    await flushQueue();
+    runner.resolveNext("first-result");
+    await expect(first).resolves.toBe("first-result");
+    const second = queue.enqueue(task("reused"));
+    await flushQueue();
+
+    expect(runner.runCalls).toHaveLength(2);
+    runner.resolveNext("second-result");
+    await expect(second).resolves.toBe("second-result");
+  });
+
+  it("starts fresh work when a cancelled running request is retried", async () => {
+    const runner = createRunner();
+    const queue = new InferenceQueue({ run: runner.run });
+    const first = queue.enqueue(task("first", { textHash: "shared" }));
+
+    await flushQueue();
+    queue.cancel("first");
+    await expect(first).rejects.toMatchObject({ name: "AbortError" });
+    const retry = queue.enqueue(task("retry", { textHash: "shared" }));
+    runner.resolveNext("stale-result");
+    await flushQueue();
+
+    expect(runner.runCalls).toHaveLength(2);
+    runner.resolveNext("fresh-result");
+    await expect(retry).resolves.toBe("fresh-result");
   });
 });

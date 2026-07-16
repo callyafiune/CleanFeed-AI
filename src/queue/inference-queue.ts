@@ -38,38 +38,39 @@ interface Deferred<TResult> {
   reject(error: Error): void;
 }
 
-interface WorkItem<TResult> {
+interface Subscriber<TResult> {
   task: InferenceQueueTask;
+  deferred: Deferred<TResult>;
+}
+
+interface WorkItem<TResult> {
+  runnerTask: InferenceQueueTask;
   key: string;
-  listeners: Map<string, Deferred<TResult>>;
-  state: TaskState;
+  subscribers: Map<string, Subscriber<TResult>>;
+  state: "queued" | "running";
+  runnerCancellationRequested: boolean;
 }
 
 const MAXIMUM_POSTS_PER_MINUTE = 30;
 const RATE_WINDOW_MS = 60_000;
+const MAX_TIMER_DELAY_MS = 2_147_483_647;
 
 export class InferenceQueue<TResult> {
   private readonly maximumSize: number;
   private readonly concurrency: number;
   private readonly now: () => number;
   private readonly pending = new PriorityQueue<WorkItem<TResult>>(
-    (left, right) => compareTasks(left.task, right.task),
+    (left, right) => compareWork(left, right),
   );
   private readonly registry = new TaskRegistry<InferenceQueueTask>();
   private readonly workByKey = new Map<string, WorkItem<TResult>>();
   private readonly workByTaskId = new Map<string, WorkItem<TResult>>();
   private readonly running = new Set<WorkItem<TResult>>();
   private readonly startedByPlatform = new Map<string, number[]>();
-  private readonly totals: InferenceQueueStats = {
-    queued: 0,
-    running: 0,
-    completed: 0,
-    cancelled: 0,
-    expired: 0,
-    failed: 0,
-  };
+  private readonly totals: InferenceQueueStats = emptyStats();
   private pumpScheduled = false;
   private rateLimitTimer: ReturnType<typeof setTimeout> | undefined;
+  private expiryTimer: ReturnType<typeof setTimeout> | undefined;
   private disposed = false;
 
   constructor(private readonly options: InferenceQueueOptions<TResult>) {
@@ -98,33 +99,32 @@ export class InferenceQueue<TResult> {
 
     const deferred = createDeferred<TResult>();
     this.registry.add(task);
-
     if (task.expiresAt <= this.now()) {
-      this.registry.setState(task.id, "expired");
-      this.totals.expired += 1;
-      deferred.reject(abortError());
+      this.settleStandalone(task.id, deferred, "expired", expirationError());
       return deferred.promise;
     }
 
     const key = dedupeKey(task);
-    const duplicate = this.workByKey.get(key);
-    if (duplicate) {
-      duplicate.listeners.set(task.id, deferred);
-      this.workByTaskId.set(task.id, duplicate);
+    const existing = this.workByKey.get(key);
+    if (existing) {
+      this.addSubscriber(existing, task, deferred);
+      this.scheduleExpiry();
       this.schedulePump();
       return deferred.promise;
     }
 
     const work: WorkItem<TResult> = {
-      task,
+      runnerTask: task,
       key,
-      listeners: new Map([[task.id, deferred]]),
+      subscribers: new Map(),
       state: "queued",
+      runnerCancellationRequested: false,
     };
+    this.addSubscriber(work, task, deferred);
     this.workByKey.set(key, work);
-    this.workByTaskId.set(task.id, work);
     this.pending.push(work);
     this.enforceMaximumSize();
+    this.scheduleExpiry();
     this.schedulePump();
     return deferred.promise;
   }
@@ -135,27 +135,25 @@ export class InferenceQueue<TResult> {
       return false;
     }
 
-    if (work.state === "queued") {
-      this.cancelListener(work, requestId);
-      if (work.listeners.size === 0) {
+    this.settleSubscriber(work, requestId, "cancelled", abortError());
+    if (work.subscribers.size === 0) {
+      if (work.state === "queued") {
         this.pending.remove((candidate) => candidate === work);
         this.forgetWork(work);
+      } else {
+        this.cancelRunner(work);
+        this.forgetWork(work);
       }
-      this.schedulePump();
-      return true;
     }
-
-    if (work.state === "running") {
-      this.cancelListener(work, requestId);
-      this.options.cancelRunner?.(requestId);
-      return true;
-    }
-
-    return false;
+    this.scheduleExpiry();
+    this.schedulePump();
+    return true;
   }
 
   pendingIds(): string[] {
-    return this.pending.values().flatMap((work) => [...work.listeners.keys()]);
+    return this.pending
+      .values()
+      .flatMap((work) => [...work.subscribers.keys()]);
   }
 
   has(requestId: string): boolean {
@@ -175,21 +173,37 @@ export class InferenceQueue<TResult> {
       return;
     }
     this.disposed = true;
-    if (this.rateLimitTimer) {
-      clearTimeout(this.rateLimitTimer);
-      this.rateLimitTimer = undefined;
+    this.clearTimers();
+
+    const activeWork = new Set([
+      ...this.pending.values(),
+      ...this.running.values(),
+    ]);
+    for (const work of activeWork) {
+      if (work.state === "running") {
+        this.cancelRunner(work);
+      }
+      for (const id of [...work.subscribers.keys()]) {
+        this.settleSubscriber(work, id, "cancelled", abortError());
+      }
     }
 
-    for (const work of [...this.pending.values(), ...this.running]) {
-      for (const id of [...work.listeners.keys()]) {
-        this.cancelListener(work, id);
-        if (work.state === "running") {
-          this.options.cancelRunner?.(id);
-        }
-      }
-      this.forgetWork(work);
-    }
     this.pending.clear();
+    this.running.clear();
+    this.workByKey.clear();
+    this.workByTaskId.clear();
+    this.registry.clear();
+    this.startedByPlatform.clear();
+    Object.assign(this.totals, emptyStats());
+  }
+
+  private addSubscriber(
+    work: WorkItem<TResult>,
+    task: InferenceQueueTask,
+    deferred: Deferred<TResult>,
+  ): void {
+    work.subscribers.set(task.id, { task, deferred });
+    this.workByTaskId.set(task.id, work);
   }
 
   private schedulePump(): void {
@@ -207,55 +221,68 @@ export class InferenceQueue<TResult> {
     if (this.disposed) {
       return;
     }
+    this.expireDueSubscribers();
     while (this.running.size < this.concurrency) {
-      const work = this.nextWork();
+      const work = this.nextEligibleWork();
       if (!work) {
-        return;
-      }
-      const waitMs = this.rateLimitWait(work.task.platform);
-      if (waitMs > 0) {
-        this.pending.push(work);
-        this.scheduleRateLimitPump(waitMs);
         return;
       }
       this.start(work);
     }
   }
 
-  private nextWork(): WorkItem<TResult> | undefined {
-    const candidates: WorkItem<TResult>[] = [];
-    let work: WorkItem<TResult> | undefined;
-    while ((work = this.pending.pop())) {
-      if (work.listeners.size === 0) {
-        continue;
-      }
-      if (work.task.expiresAt <= this.now()) {
-        this.rejectWork(work, "expired", abortError());
-        continue;
-      }
-      candidates.push(work);
-    }
+  private nextEligibleWork(): WorkItem<TResult> | undefined {
+    const candidates = this.drainPending();
     if (candidates.length === 0) {
       return undefined;
     }
 
-    candidates.sort((left, right) =>
-      compareTasks(left.task, right.task, this.now()),
-    );
-    const [next, ...remaining] = candidates;
-    for (const candidate of remaining) {
+    let next: WorkItem<TResult> | undefined;
+    let shortestWait: number | undefined;
+    for (const candidate of candidates) {
+      const wait = this.rateLimitWait(candidate.runnerTask.platform);
+      if (!next && wait === 0) {
+        next = candidate;
+        continue;
+      }
       this.pending.push(candidate);
+      if (wait > 0) {
+        shortestWait = Math.min(shortestWait ?? wait, wait);
+      }
+    }
+    if (shortestWait !== undefined) {
+      this.scheduleRateLimitPump(shortestWait);
     }
     return next;
   }
 
+  private drainPending(): WorkItem<TResult>[] {
+    const candidates: WorkItem<TResult>[] = [];
+    let work: WorkItem<TResult> | undefined;
+    while ((work = this.pending.pop())) {
+      if (work.subscribers.size === 0) {
+        this.forgetWork(work);
+        continue;
+      }
+      this.expireWorkSubscribers(work);
+      if (work.subscribers.size > 0) {
+        candidates.push(work);
+      }
+    }
+    return candidates.sort((left, right) =>
+      compareWork(left, right, this.now()),
+    );
+  }
+
   private start(work: WorkItem<TResult>): void {
-    this.recordStart(work.task.platform);
+    this.recordStart(work.runnerTask.platform);
     work.state = "running";
     this.running.add(work);
-    this.setWorkState(work, "running");
+    for (const id of work.subscribers.keys()) {
+      this.registry.setState(id, "running");
+    }
 
-    void this.options.run(work.task).then(
+    void this.options.run(work.runnerTask).then(
       (result) => this.resolveWork(work, result),
       (error: unknown) =>
         this.rejectWork(
@@ -268,53 +295,107 @@ export class InferenceQueue<TResult> {
 
   private resolveWork(work: WorkItem<TResult>, result: TResult): void {
     this.running.delete(work);
-    if (work.listeners.size > 0) {
-      for (const [id, listener] of work.listeners) {
-        this.registry.setState(id, "completed");
-        listener.resolve(result);
-      }
-      this.totals.completed += work.listeners.size;
+    for (const id of [...work.subscribers.keys()]) {
+      this.resolveSubscriber(work, id, result);
     }
     this.forgetWork(work);
+    this.scheduleExpiry();
     this.schedulePump();
   }
 
   private rejectWork(
     work: WorkItem<TResult>,
-    state: Extract<TaskState, "expired" | "failed">,
+    state: Extract<TaskState, "failed">,
     error: Error,
   ): void {
     this.pending.remove((candidate) => candidate === work);
     this.running.delete(work);
-    for (const [id, listener] of work.listeners) {
-      this.registry.setState(id, state);
-      listener.reject(error);
+    for (const id of [...work.subscribers.keys()]) {
+      this.settleSubscriber(work, id, state, error);
     }
-    this.totals[state] += work.listeners.size;
     this.forgetWork(work);
+    this.scheduleExpiry();
     this.schedulePump();
   }
 
-  private cancelListener(work: WorkItem<TResult>, id: string): void {
-    const listener = work.listeners.get(id);
-    if (!listener) {
+  private resolveSubscriber(
+    work: WorkItem<TResult>,
+    id: string,
+    result: TResult,
+  ): void {
+    const subscriber = work.subscribers.get(id);
+    if (!subscriber) {
       return;
     }
-    work.listeners.delete(id);
+    work.subscribers.delete(id);
     this.workByTaskId.delete(id);
-    this.registry.setState(id, "cancelled");
-    this.totals.cancelled += 1;
-    listener.reject(abortError());
+    this.registry.setState(id, "completed");
+    this.registry.delete(id);
+    this.totals.completed += 1;
+    subscriber.deferred.resolve(result);
+  }
+
+  private settleSubscriber(
+    work: WorkItem<TResult>,
+    id: string,
+    state: Exclude<TaskState, "queued" | "running" | "completed">,
+    error: Error,
+  ): void {
+    const subscriber = work.subscribers.get(id);
+    if (!subscriber) {
+      return;
+    }
+    work.subscribers.delete(id);
+    this.workByTaskId.delete(id);
+    this.registry.setState(id, state);
+    this.registry.delete(id);
+    this.totals[state] += 1;
+    subscriber.deferred.reject(error);
+  }
+
+  private settleStandalone(
+    id: string,
+    deferred: Deferred<TResult>,
+    state: Extract<TaskState, "expired">,
+    error: Error,
+  ): void {
+    this.registry.setState(id, state);
+    this.registry.delete(id);
+    this.totals[state] += 1;
+    deferred.reject(error);
+  }
+
+  private expireDueSubscribers(): void {
+    for (const work of new Set(this.workByKey.values())) {
+      this.expireWorkSubscribers(work);
+    }
+    this.scheduleExpiry();
+  }
+
+  private expireWorkSubscribers(work: WorkItem<TResult>): void {
+    for (const [id, subscriber] of [...work.subscribers]) {
+      if (subscriber.task.expiresAt <= this.now()) {
+        this.settleSubscriber(work, id, "expired", expirationError());
+      }
+    }
+    if (work.subscribers.size !== 0) {
+      return;
+    }
+    if (work.state === "queued") {
+      this.pending.remove((candidate) => candidate === work);
+      this.forgetWork(work);
+    } else {
+      this.cancelRunner(work);
+      this.forgetWork(work);
+    }
   }
 
   private enforceMaximumSize(): void {
     while (this.size > this.maximumSize) {
-      const pending = this.pending.values();
-      const lowest = pending.at(-1);
+      const lowest = this.pending.values().at(-1);
       if (!lowest) {
         return;
       }
-      this.pending.remove((candidate) => candidate === lowest);
       this.rejectWork(lowest, "failed", new Error("Inference queue is full"));
     }
   }
@@ -338,8 +419,16 @@ export class InferenceQueue<TResult> {
     this.startedByPlatform.set(platform, starts);
   }
 
+  private cancelRunner(work: WorkItem<TResult>): void {
+    if (work.runnerCancellationRequested) {
+      return;
+    }
+    work.runnerCancellationRequested = true;
+    this.options.cancelRunner?.(work.runnerTask.id);
+  }
+
   private scheduleRateLimitPump(waitMs: number): void {
-    if (this.rateLimitTimer) {
+    if (this.rateLimitTimer || this.disposed) {
       return;
     }
     this.rateLimitTimer = setTimeout(() => {
@@ -348,33 +437,89 @@ export class InferenceQueue<TResult> {
     }, waitMs);
   }
 
-  private setWorkState(work: WorkItem<TResult>, state: TaskState): void {
-    for (const id of work.listeners.keys()) {
-      this.registry.setState(id, state);
+  private scheduleExpiry(): void {
+    if (this.expiryTimer) {
+      clearTimeout(this.expiryTimer);
+      this.expiryTimer = undefined;
     }
+    if (this.disposed) {
+      return;
+    }
+
+    let nextExpiry: number | undefined;
+    for (const work of this.workByKey.values()) {
+      for (const subscriber of work.subscribers.values()) {
+        nextExpiry = Math.min(
+          nextExpiry ?? subscriber.task.expiresAt,
+          subscriber.task.expiresAt,
+        );
+      }
+    }
+    if (nextExpiry === undefined) {
+      return;
+    }
+    const delay = nextExpiry - this.now();
+    if (delay > MAX_TIMER_DELAY_MS) {
+      return;
+    }
+    this.expiryTimer = setTimeout(
+      () => {
+        this.expiryTimer = undefined;
+        this.expireDueSubscribers();
+        this.schedulePump();
+      },
+      Math.max(0, delay),
+    );
   }
 
   private forgetWork(work: WorkItem<TResult>): void {
-    this.workByKey.delete(work.key);
-    for (const id of work.listeners.keys()) {
+    if (this.workByKey.get(work.key) === work) {
+      this.workByKey.delete(work.key);
+    }
+    for (const id of work.subscribers.keys()) {
       this.workByTaskId.delete(id);
+    }
+  }
+
+  private clearTimers(): void {
+    if (this.rateLimitTimer) {
+      clearTimeout(this.rateLimitTimer);
+      this.rateLimitTimer = undefined;
+    }
+    if (this.expiryTimer) {
+      clearTimeout(this.expiryTimer);
+      this.expiryTimer = undefined;
     }
   }
 }
 
-function compareTasks(
-  left: InferenceQueueTask,
-  right: InferenceQueueTask,
+function compareWork<TResult>(
+  left: WorkItem<TResult>,
+  right: WorkItem<TResult>,
   now = 0,
 ): number {
-  const priorityDifference = priority(right, now) - priority(left, now);
+  const priorityDifference = workPriority(right, now) - workPriority(left, now);
   if (priorityDifference !== 0) {
     return priorityDifference;
   }
-  return left.createdAt - right.createdAt;
+  return oldestCreatedAt(left) - oldestCreatedAt(right);
 }
 
-function priority(task: InferenceQueueTask, now: number): number {
+function workPriority<TResult>(work: WorkItem<TResult>, now: number): number {
+  return Math.max(
+    ...[...work.subscribers.values()].map(({ task }) =>
+      taskPriority(task, now),
+    ),
+  );
+}
+
+function oldestCreatedAt<TResult>(work: WorkItem<TResult>): number {
+  return Math.min(
+    ...[...work.subscribers.values()].map(({ task }) => task.createdAt),
+  );
+}
+
+function taskPriority(task: InferenceQueueTask, now: number): number {
   const base = task.manual ? 1_000 : task.visibility === "visible" ? 100 : 50;
   const aging = Math.floor(Math.max(0, now - task.createdAt) / 1_000);
   const proximity =
@@ -395,6 +540,10 @@ function abortError(): DOMException {
   return new DOMException("Inference task cancelled", "AbortError");
 }
 
+function expirationError(): DOMException {
+  return new DOMException("Inference task expired", "TimeoutError");
+}
+
 function createDeferred<TResult>(): Deferred<TResult> & {
   promise: Promise<TResult>;
 } {
@@ -405,4 +554,15 @@ function createDeferred<TResult>(): Deferred<TResult> & {
     reject = rejectPromise;
   });
   return { promise, resolve, reject };
+}
+
+function emptyStats(): InferenceQueueStats {
+  return {
+    queued: 0,
+    running: 0,
+    completed: 0,
+    cancelled: 0,
+    expired: 0,
+    failed: 0,
+  };
 }

@@ -36,6 +36,10 @@ export class TaskRegistry<T extends { id: string }> {
     this.records.delete(id);
   }
 
+  clear(): void {
+    this.records.clear();
+  }
+
   entries(): IterableIterator<[string, RegisteredTask<T>]> {
     return this.records.entries();
   }
