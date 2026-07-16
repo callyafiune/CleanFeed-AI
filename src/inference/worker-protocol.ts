@@ -171,7 +171,7 @@ function isSettingsSnapshot(value: unknown): value is UserSettings {
 function isModelStatus(value: unknown): value is ModelStatus {
   return (
     isSafeRecord(value) &&
-    ["unavailable", "initializing", "ready", "error"].includes(
+    ["unavailable", "initializing", "downloading", "ready", "error"].includes(
       value.state as string,
     ) &&
     isBoundedString(value.classifierId, 128) &&

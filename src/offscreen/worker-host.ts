@@ -1,7 +1,7 @@
 import { CleanFeedError } from "@/shared/errors";
 import type { ClassificationRequest } from "@/shared/messages";
 import type { UserSettings } from "@/shared/settings-types";
-import type { ClassificationResult } from "@/shared/types";
+import type { ClassificationResult, ModelStatus } from "@/shared/types";
 import {
   parseWorkerResponse,
   type WorkerRequest,
@@ -35,6 +35,12 @@ type PendingRequest = {
 export class WorkerHost implements WorkerClassifierClient {
   private worker: WorkerLike;
   private workerAvailable = true;
+  private modelStatus: ModelStatus = {
+    state: "initializing",
+    classifierId: "unavailable",
+    modelVersion: "unavailable",
+    backend: "mock",
+  };
   private cancelledTasks = 0;
   private readonly pending = new Map<string, PendingRequest>();
   private readonly batchQueue: WorkerClassificationRequest[] = [];
@@ -98,12 +104,18 @@ export class WorkerHost implements WorkerClassifierClient {
     this.postControl("STATUS", requestId);
   }
 
+  getModelStatus(): ModelStatus {
+    this.status(`worker-status-${Date.now()}`);
+    return { ...this.modelStatus };
+  }
+
   dispose(): void {
     this.rejectAll();
     if (this.workerAvailable) {
       this.postControl("DISPOSE", "worker-dispose");
       this.workerAvailable = false;
       this.worker.terminate();
+      this.modelStatus = { ...this.modelStatus, state: "unavailable" };
     }
   }
 
@@ -115,8 +127,10 @@ export class WorkerHost implements WorkerClassifierClient {
       this.failWorker(error);
       return;
     }
-    if (message.type === "STATUS")
+    if (message.type === "STATUS") {
       this.supportsBatching = message.payload.supportsBatching ?? false;
+      this.modelStatus = message.payload;
+    }
     const pending = this.settle(message.requestId);
     if (pending === undefined) return;
     if (message.type === "RESULT") {
@@ -288,6 +302,11 @@ export class WorkerHost implements WorkerClassifierClient {
       this.workerAvailable = false;
       this.worker.terminate();
     }
+    this.modelStatus = {
+      ...this.modelStatus,
+      state: "error",
+      errorCode: "WORKER_UNAVAILABLE",
+    };
     this.rejectAll(reason);
   }
 }

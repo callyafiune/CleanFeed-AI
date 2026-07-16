@@ -17,6 +17,35 @@ const request = {
 };
 
 describe("WorkerHost", () => {
+  it("proxies worker lifecycle transitions and exposes worker loss as an error", () => {
+    const worker = new FakeWorker();
+    const host = new WorkerHost(() => worker);
+
+    expect(host.getModelStatus().state).toBe("initializing");
+    worker.onmessage?.({
+      data: {
+        type: "STATUS",
+        requestId: "worker-status",
+        payload: {
+          state: "ready",
+          classifierId: "local-model",
+          modelVersion: "1.0.0",
+          backend: "wasm",
+        },
+      },
+    } as MessageEvent<unknown>);
+    expect(host.getModelStatus()).toMatchObject({
+      state: "ready",
+      backend: "wasm",
+    });
+
+    worker.onerror?.(new Event("error") as ErrorEvent);
+    expect(host.getModelStatus()).toMatchObject({
+      state: "error",
+      errorCode: "WORKER_UNAVAILABLE",
+    });
+  });
+
   it("rejects pending and later requests after its worker errors", async () => {
     const worker = new FakeWorker();
     const host = new WorkerHost(() => worker);

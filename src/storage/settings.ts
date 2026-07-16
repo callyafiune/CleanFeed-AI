@@ -11,12 +11,21 @@ import { runWithSettingsMutationLock } from "@/storage/settings-lock";
 import type { StorageArea } from "@/storage/storage-area";
 
 export const SETTINGS_STORAGE_KEY = SETTINGS_STORAGE_KEYS.global;
-const SCHEMA_VERSION = 1;
+const SCHEMA_VERSION = 2;
+const PLATFORM_SCHEMA_VERSION = 1;
 
 interface PersistedSettings {
   schemaVersion: typeof SCHEMA_VERSION;
   settingsVersion: number;
   settings: UserSettings;
+}
+
+type V1UserSettings = Omit<UserSettings, "debugMode">;
+
+interface PersistedSettingsV1 {
+  schemaVersion: 1;
+  settingsVersion: number;
+  settings: V1UserSettings;
 }
 
 const booleanKeys = [
@@ -164,12 +173,33 @@ function isUserSettings(value: unknown): value is UserSettings {
   return true;
 }
 
+function isV1UserSettings(value: unknown): value is V1UserSettings {
+  if (!isRecord(value) || Object.hasOwn(value, "debugMode")) return false;
+  const expectedKeys = Object.keys(DEFAULT_SETTINGS).filter(
+    (key) => key !== "debugMode",
+  );
+  return (
+    Object.keys(value).length === expectedKeys.length &&
+    expectedKeys.every((key) => Object.hasOwn(value, key)) &&
+    isUserSettings({ ...value, debugMode: false })
+  );
+}
+
 function isPersistedSettings(value: unknown): value is PersistedSettings {
   return (
     isRecord(value) &&
     value.schemaVersion === SCHEMA_VERSION &&
     isFiniteIntegerInRange(value.settingsVersion, 0, Number.MAX_SAFE_INTEGER) &&
     isUserSettings(value.settings)
+  );
+}
+
+function isPersistedSettingsV1(value: unknown): value is PersistedSettingsV1 {
+  return (
+    isRecord(value) &&
+    value.schemaVersion === 1 &&
+    isFiniteIntegerInRange(value.settingsVersion, 0, Number.MAX_SAFE_INTEGER) &&
+    isV1UserSettings(value.settings)
   );
 }
 
@@ -198,7 +228,7 @@ async function validatePlatformOverridesForGlobal(
 
   if (
     !isRecord(persisted) ||
-    persisted.schemaVersion !== SCHEMA_VERSION ||
+    persisted.schemaVersion !== PLATFORM_SCHEMA_VERSION ||
     !isFiniteIntegerInRange(
       persisted.settingsVersion,
       0,
@@ -266,6 +296,26 @@ async function readPersistedSettingsForMutation(
   const persisted = await storage.get<unknown>(storageKey);
   if (isPersistedSettings(persisted)) {
     return persisted;
+  }
+
+  if (isPersistedSettingsV1(persisted)) {
+    const migrated = {
+      schemaVersion: SCHEMA_VERSION,
+      settingsVersion: persisted.settingsVersion,
+      settings: { ...persisted.settings, debugMode: false },
+    } satisfies PersistedSettings;
+    await storage.set(storageKey, migrated);
+    return migrated;
+  }
+
+  if (isV1UserSettings(persisted)) {
+    const migrated = {
+      schemaVersion: SCHEMA_VERSION,
+      settingsVersion: 1,
+      settings: { ...persisted, debugMode: false },
+    } satisfies PersistedSettings;
+    await storage.set(storageKey, migrated);
+    return migrated;
   }
 
   if (isUserSettings(persisted)) {

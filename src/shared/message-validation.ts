@@ -86,6 +86,7 @@ const reasonCodes = new Set<string>([
 const modelStates = new Set<string>([
   "unavailable",
   "initializing",
+  "downloading",
   "ready",
   "error",
 ]);
@@ -108,10 +109,12 @@ const allowedRoutes: Record<MessageType, readonly Route[]> = {
   MODEL_STATUS_REQUEST: [
     ["popup", "background"],
     ["options", "background"],
+    ["background", "offscreen"],
   ],
   MODEL_STATUS_RESULT: [
     ["background", "popup"],
     ["background", "options"],
+    ["offscreen", "background"],
   ],
   GET_SETTINGS: [
     ["content", "background"],

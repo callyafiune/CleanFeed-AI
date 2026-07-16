@@ -164,7 +164,7 @@ export interface BatchTextClassifier extends TextClassifier {
 }
 
 export interface ModelStatus {
-  state: "unavailable" | "initializing" | "ready" | "error";
+  state: "unavailable" | "initializing" | "downloading" | "ready" | "error";
   classifierId: string;
   modelVersion: string;
   backend: Backend;

@@ -12,7 +12,13 @@ fila com cancelamento e timeout, além de status e controles de desempenho.
 - Métricas persistidas guardam contadores, uso de backend e até 100 amostras de
   latência, das quais são calculadas média e mediana.
 - Timings detalhados só retornam quando a opção de depuração está ativa; texto e
-  traces detalhados não são persistidos.
+  traces detalhados não são persistidos nem mantidos no cache. Entradas legadas
+  também são sanitizadas na leitura.
+- O status exibido pelo popup vem do WorkerHost via documento offscreen; inclui
+  inicialização/download, pronto, indisponível e erro reais, em vez de um valor
+  pronto fixo.
+- A migração da configuração v1 para v2 preserva preferências existentes e
+  adiciona `debugMode: false`.
 
 ## Verificação
 

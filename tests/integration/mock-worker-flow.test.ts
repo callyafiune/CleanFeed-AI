@@ -9,6 +9,7 @@ import { createSettingsFingerprintProvider } from "@/background/settings-fingerp
 import { CleanFeedError } from "@/shared/errors";
 import { DEFAULT_SETTINGS } from "@/shared/constants";
 import { ClassificationCache } from "@/storage/cache";
+import { MetricsRepository } from "@/storage/metrics";
 import { PlatformSettingsRepository } from "@/storage/platform-settings";
 import { SettingsRepository } from "@/storage/settings";
 
@@ -49,6 +50,10 @@ class MemoryStorage implements StorageArea {
         .filter((key) => this.values.has(key))
         .map((key) => [key, this.values.get(key) as T]),
     );
+  }
+
+  dump(): Record<string, unknown> {
+    return Object.fromEntries(this.values);
   }
 }
 
@@ -173,6 +178,65 @@ describe("mock worker flow", () => {
     });
   });
 
+  it("returns debug timings once but caches neither timings nor text", async () => {
+    const storage = new MemoryStorage();
+    const cache = new ClassificationCache(
+      storage,
+      { now: () => 1_000 },
+      { maximumEntries: 10, ttlMs: 60_000 },
+    );
+    const debugResult = {
+      ...cachedResult,
+      stageTimings: {
+        languageMs: 1,
+        tokenizationMs: 2,
+        chunkingMs: 3,
+        inferenceMs: 4,
+        aggregationMs: 5,
+        calibrationMs: 6,
+      },
+    };
+    const { router } = createRouter(
+      cache,
+      vi.fn().mockResolvedValue(debugResult),
+    );
+
+    await expect(router.handle(classifyMessage)).resolves.toMatchObject({
+      payload: { stageTimings: debugResult.stageTimings },
+    });
+    const cachedResponse = await router.handle(classifyMessage);
+    expect(cachedResponse).toMatchObject({ type: "CLASSIFICATION_RESULT" });
+    expect(cachedResponse?.payload).not.toHaveProperty("stageTimings");
+    expect(JSON.stringify(storage.dump())).not.toContain("stageTimings");
+    expect(JSON.stringify(storage.dump())).not.toContain(
+      classifyMessage.payload.text.slice(0, 20),
+    );
+  });
+
+  it("records aggregate-safe inference telemetry through the real router path", async () => {
+    const storage = new MemoryStorage();
+    const cache = new ClassificationCache(
+      storage,
+      { now: () => 1_000 },
+      { maximumEntries: 10, ttlMs: 60_000 },
+    );
+    const metrics = new MetricsRepository(storage);
+    const router = new BackgroundMessageRouter({
+      cache,
+      metrics,
+      offscreenClient: { classify: vi.fn().mockResolvedValue(cachedResult) },
+      settingsFingerprint: "settings-v1",
+      modelKey: "mock:1.0.0",
+    });
+
+    await router.handle(classifyMessage);
+
+    expect((await metrics.get()).averageInferenceMs).toBe(3);
+    expect(
+      JSON.stringify(await storage.get("cleanfeed.metrics.v1")),
+    ).not.toContain(classifyMessage.payload.text.slice(0, 20));
+  });
+
   it("misses the cache after persisted global or platform settings change", async () => {
     const storage = new MemoryStorage();
     const cache = new ClassificationCache(
@@ -259,6 +323,37 @@ describe("mock worker flow", () => {
     ).rejects.toMatchObject({
       code: "INFERENCE_TIMEOUT",
       recoverable: false,
+    });
+  });
+
+  it("proxies the current offscreen model lifecycle status", async () => {
+    const chromeMock = {
+      runtime: {
+        getURL: vi.fn((path: string) => `chrome-extension://cleanfeed/${path}`),
+        getContexts: vi
+          .fn()
+          .mockResolvedValue([{ contextType: "OFFSCREEN_DOCUMENT" }]),
+        sendMessage: vi.fn().mockResolvedValue({
+          source: "offscreen",
+          target: "background",
+          type: "MODEL_STATUS_RESULT",
+          payload: {
+            state: "initializing",
+            classifierId: "local-model",
+            modelVersion: "1.0.0",
+            backend: "wasm",
+          },
+        }),
+      },
+      offscreen: { Reason: { WORKERS: "WORKERS" }, createDocument: vi.fn() },
+    };
+    vi.stubGlobal("chrome", chromeMock);
+
+    await expect(
+      new RuntimeOffscreenClient().getModelStatus(),
+    ).resolves.toMatchObject({
+      state: "initializing",
+      backend: "wasm",
     });
   });
 });

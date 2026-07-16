@@ -14,9 +14,10 @@ classificação, agregação e calibração.
 - `OFFSCREEN_CLASSIFY` leva uma cópia validada das configurações para o
   documento offscreen. O worker não lê `chrome.storage`.
 - O worker responde com resultado, erro serializado, cancelamento ou status.
-  `MODEL_STATUS_REQUEST`/`MODEL_STATUS_RESULT` expõem somente estado
-  (`unavailable`, `initializing`, `ready` ou `error`), versão, backend e
-  capacidades do modelo.
+  O service worker consulta o WorkerHost pelo documento offscreen, em vez de
+  inventar um estado pronto. `MODEL_STATUS_REQUEST`/`MODEL_STATUS_RESULT`
+  expõem `unavailable`, `initializing`, `downloading`, `ready` ou `error`,
+  versão, backend e capacidades do modelo.
 - `GET_PAGE_STATS` retorna apenas contadores da página atual, latência média e
   tamanho da fila. O popup atualiza esses dados, enquanto está aberto, no máximo
   uma vez por segundo.
@@ -37,10 +38,16 @@ tokens, overlap menor que o chunk e cache de 10–5.000 entradas.
 
 `PerformanceTrace` descreve as etapas de extração, normalização, elegibilidade,
 hash, fila, idioma, tokenização, inferência, agregação, apresentação e total.
-Os detalhes de timing da inferência são incluídos na resposta local somente se
-`debugMode` estiver ativo. O armazenamento persistente contém somente contadores
-agregados e uma amostra limitada de latências para média e mediana; não armazena
-texto, URL ou traces detalhados.
+O router constrói um trace seguro a partir do resultado do worker e o repositório
+de métricas persiste somente total, backend, status e amostras limitadas de
+latência. Os detalhes de timing da inferência são incluídos na resposta local
+somente se `debugMode` estiver ativo. Antes de qualquer resultado entrar no
+cache — inclusive entradas legadas lidas do storage — esses timings são
+removidos. Storage não armazena texto, URL ou traces detalhados.
+
+As configurações globais usam um envelope versionado. A migração de v1 para v2
+preserva todas as preferências existentes e adiciona `debugMode: false`, para
+que atualizações não habilitem telemetria detalhada nem descartem preferências.
 
 ## Precisão do pipeline
 

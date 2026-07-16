@@ -23,6 +23,16 @@ chrome.runtime.onMessage.addListener((rawMessage, _sender, sendResponse) => {
     return false;
   }
 
+  if (message.type === "MODEL_STATUS_REQUEST") {
+    sendResponse({
+      source: "offscreen",
+      target: "background",
+      type: "MODEL_STATUS_RESULT",
+      payload: workerHost.getModelStatus(),
+    });
+    return false;
+  }
+
   if (message.type !== "OFFSCREEN_CLASSIFY") return undefined;
 
   void workerHost

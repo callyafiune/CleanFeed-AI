@@ -530,6 +530,11 @@ async function handleMessage(
       : [];
   try {
     if (request.type === "INITIALIZE") {
+      scope.postMessage({
+        type: "STATUS",
+        requestId: request.requestId,
+        payload: { ...readyStatus(runner), state: "initializing" },
+      });
       await runner.initialize();
       scope.postMessage({
         type: "STATUS",

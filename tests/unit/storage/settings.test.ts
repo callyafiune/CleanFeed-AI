@@ -59,9 +59,34 @@ describe("SettingsRepository", () => {
 
     await expect(repository.get()).resolves.toEqual(legacySettings);
     expect(storage.read("cleanfeed.settings.v1")).toEqual({
-      schemaVersion: 1,
+      schemaVersion: 2,
       settingsVersion: 1,
       settings: legacySettings,
+    });
+  });
+
+  it("preserves v1 preferences while adding debug mode disabled", async () => {
+    const v1Settings = { ...DEFAULT_SETTINGS, minimumWordCount: 150 };
+    delete (v1Settings as Partial<typeof v1Settings>).debugMode;
+    storage.seed("cleanfeed.settings.v1", {
+      schemaVersion: 1,
+      settingsVersion: 7,
+      settings: v1Settings,
+    });
+
+    await expect(repository.get()).resolves.toEqual({
+      ...DEFAULT_SETTINGS,
+      minimumWordCount: 150,
+      debugMode: false,
+    });
+    expect(storage.read("cleanfeed.settings.v1")).toEqual({
+      schemaVersion: 2,
+      settingsVersion: 7,
+      settings: {
+        ...DEFAULT_SETTINGS,
+        minimumWordCount: 150,
+        debugMode: false,
+      },
     });
   });
 
@@ -71,14 +96,14 @@ describe("SettingsRepository", () => {
 
     await repository.save(first);
     expect(storage.read("cleanfeed.settings.v1")).toEqual({
-      schemaVersion: 1,
+      schemaVersion: 2,
       settingsVersion: 1,
       settings: first,
     });
 
     await repository.save(second);
     expect(storage.read("cleanfeed.settings.v1")).toEqual({
-      schemaVersion: 1,
+      schemaVersion: 2,
       settingsVersion: 2,
       settings: second,
     });
@@ -122,7 +147,7 @@ describe("SettingsRepository", () => {
 
     await expect(repository.reset()).resolves.toEqual(DEFAULT_SETTINGS);
     expect(storage.read("cleanfeed.settings.v1")).toEqual({
-      schemaVersion: 1,
+      schemaVersion: 2,
       settingsVersion: 2,
       settings: DEFAULT_SETTINGS,
     });
@@ -131,7 +156,7 @@ describe("SettingsRepository", () => {
   it("rejects a changed value when incrementing its version would overflow", async () => {
     const storage = new MemoryStorageArea();
     await storage.set("cleanfeed.settings.v1", {
-      schemaVersion: 1,
+      schemaVersion: 2,
       settingsVersion: Number.MAX_SAFE_INTEGER,
       settings: DEFAULT_SETTINGS,
     });
@@ -195,7 +220,7 @@ describe("SettingsRepository", () => {
     ]);
 
     await expect(storage.get("cleanfeed.settings.v1")).resolves.toEqual({
-      schemaVersion: 1,
+      schemaVersion: 2,
       settingsVersion: 2,
       settings: second,
     });

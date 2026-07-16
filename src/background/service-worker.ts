@@ -16,6 +16,7 @@ import { ChromeStorageArea } from "@/storage/storage-area";
 const storage = new ChromeStorageArea();
 const settings = new SettingsRepository(storage);
 const platformSettings = new PlatformSettingsRepository(storage);
+const offscreenClient = new RuntimeOffscreenClient();
 const router = new BackgroundMessageRouter({
   cache: new ClassificationCache(
     storage,
@@ -26,15 +27,10 @@ const router = new BackgroundMessageRouter({
     },
   ),
   metrics: new MetricsRepository(storage),
-  offscreenClient: new RuntimeOffscreenClient(),
+  offscreenClient,
   modelKey: "mock:1.0.0",
   settings,
-  modelStatus: async () => ({
-    state: "ready",
-    classifierId: "mock",
-    modelVersion: "1.0.0",
-    backend: "mock",
-  }),
+  modelStatus: () => offscreenClient.getModelStatus(),
   settingsFingerprint: createSettingsFingerprintProvider(
     settings,
     platformSettings,

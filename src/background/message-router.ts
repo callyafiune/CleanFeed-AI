@@ -9,13 +9,18 @@ import type {
 } from "@/shared/messages";
 import { normalizeText } from "@/shared/text-normalization";
 import type { UserSettings } from "@/shared/settings-types";
-import type { ClassificationResult, ModelStatus } from "@/shared/types";
+import type {
+  ClassificationResult,
+  ModelStatus,
+  PerformanceTrace,
+} from "@/shared/types";
 import { buildCacheKey, type ClassificationCache } from "@/storage/cache";
 import type { MetricRecord } from "@/storage/metrics";
 
 export interface OffscreenClient {
   classify(request: WorkerClassificationRequest): Promise<ClassificationResult>;
   cancel?(requestId: string): Promise<void>;
+  getModelStatus?(): Promise<ModelStatus>;
 }
 
 export type WorkerClassificationRequest = ClassificationRequest & {
@@ -25,6 +30,11 @@ export type WorkerClassificationRequest = ClassificationRequest & {
 
 export interface MetricsRecorder {
   record(record: MetricRecord): Promise<void>;
+  recordInference?(
+    trace: PerformanceTrace,
+    backend: ClassificationResult["backend"],
+    status: ClassificationResult["status"],
+  ): Promise<void>;
 }
 
 export interface SettingsStore {
@@ -128,11 +138,7 @@ export class BackgroundMessageRouter {
     });
     assertClassificationResult(result);
     await this.options.cache.set(key, result);
-    await this.options.metrics.record({
-      inferenceMs: result.processingTimeMs,
-      status: result.status,
-      backend: result.backend,
-    });
+    await this.recordInference(result);
     return classificationResultMessage(message, result);
   }
 
@@ -143,6 +149,22 @@ export class BackgroundMessageRouter {
         ? settingsFingerprint
         : settingsFingerprint(platformId),
     );
+  }
+
+  private recordInference(result: ClassificationResult): Promise<void> {
+    const trace = inferenceTrace(result);
+    if (this.options.metrics.recordInference !== undefined) {
+      return this.options.metrics.recordInference(
+        trace,
+        result.backend,
+        result.status,
+      );
+    }
+    return this.options.metrics.record({
+      inferenceMs: trace.totalMs,
+      status: result.status,
+      backend: result.backend,
+    });
   }
 
   private async handleGetSettings(
@@ -196,8 +218,54 @@ export class BackgroundMessageRouter {
   }
 }
 
+function inferenceTrace(result: ClassificationResult): PerformanceTrace {
+  const timings = result.stageTimings;
+  return {
+    extractionMs: 0,
+    normalizationMs: 0,
+    eligibilityMs: 0,
+    hashingMs: 0,
+    queueWaitMs: 0,
+    languageDetectionMs: timings?.languageMs ?? 0,
+    tokenizationMs: timings?.tokenizationMs ?? 0,
+    inferenceMs: timings?.inferenceMs ?? result.processingTimeMs,
+    aggregationMs: timings?.aggregationMs ?? 0,
+    presentationMs: 0,
+    totalMs: result.processingTimeMs,
+  };
+}
+
 /** Sends a directed request to the offscreen document after ensuring it exists. */
 export class RuntimeOffscreenClient implements OffscreenClient {
+  async getModelStatus(): Promise<ModelStatus> {
+    try {
+      await ensureOffscreenDocument();
+      const response = await chrome.runtime.sendMessage({
+        source: "background",
+        target: "offscreen",
+        type: "MODEL_STATUS_REQUEST",
+        payload: undefined,
+      });
+      const message = parseExtensionMessage(response);
+      if (
+        message.type === "MODEL_STATUS_RESULT" &&
+        message.source === "offscreen" &&
+        message.target === "background"
+      ) {
+        return message.payload;
+      }
+    } catch {
+      // The status below makes offscreen/worker loss visible without rejecting popup polling.
+    }
+    return {
+      state: "error",
+      classifierId: "unavailable",
+      modelVersion: "unavailable",
+      backend: "mock",
+      errorCode: "WORKER_UNAVAILABLE",
+    };
+  }
+
   async cancel(requestId: string): Promise<void> {
     await ensureOffscreenDocument();
     await chrome.runtime.sendMessage({

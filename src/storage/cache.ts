@@ -69,14 +69,19 @@ export class ClassificationCache {
       }
 
       const lastAccessedAt = this.clock.now();
-      await this.storage.set(entryKey(key), { ...cached, lastAccessedAt });
+      const result = withoutDebugTimings(cached.result);
+      await this.storage.set(entryKey(key), {
+        ...cached,
+        result,
+        lastAccessedAt,
+      });
       await this.writeIndex({
         entries: index.entries.map((entry) =>
           entry.key === key ? { ...entry, lastAccessedAt } : entry,
         ),
       });
 
-      return cached.result;
+      return result;
     });
   }
 
@@ -85,7 +90,7 @@ export class ClassificationCache {
       const now = this.clock.now();
       const index = await this.readIndex();
       const entry: CachedClassification = {
-        result,
+        result: withoutDebugTimings(result),
         createdAt: now,
         lastAccessedAt: now,
         expiresAt: now + this.options.ttlMs,
@@ -189,6 +194,14 @@ export class ClassificationCache {
       await this.writeIndex({ entries: keptEntries });
     }
   }
+}
+
+/** Debug timings are response-only and must never reach persistent storage. */
+function withoutDebugTimings(
+  result: ClassificationResult,
+): ClassificationResult {
+  const { stageTimings: _stageTimings, ...cached } = result;
+  return cached;
 }
 
 function isCacheIndex(value: unknown): value is CacheIndex {

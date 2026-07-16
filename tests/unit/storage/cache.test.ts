@@ -71,6 +71,57 @@ function createCache(
 }
 
 describe("ClassificationCache", () => {
+  it("never retains debug timings in a cached classification", async () => {
+    const { cache, storage } = createCache();
+    const debugResult = {
+      ...result,
+      stageTimings: {
+        languageMs: 1,
+        tokenizationMs: 2,
+        chunkingMs: 3,
+        inferenceMs: 4,
+        aggregationMs: 5,
+        calibrationMs: 6,
+      },
+    };
+
+    await cache.set("debug", debugResult);
+
+    await expect(cache.get("debug")).resolves.toEqual(result);
+    expect(
+      JSON.stringify(await storage.get("cleanfeed.cache.entry.debug")),
+    ).not.toContain("stageTimings");
+  });
+
+  it("removes debug timings from legacy cache entries before returning them", async () => {
+    const { cache, storage } = createCache();
+    const debugResult = {
+      ...result,
+      stageTimings: {
+        languageMs: 1,
+        tokenizationMs: 2,
+        chunkingMs: 3,
+        inferenceMs: 4,
+        aggregationMs: 5,
+        calibrationMs: 6,
+      },
+    };
+    await storage.set("cleanfeed.cache.index.v1", {
+      entries: [{ key: "legacy", lastAccessedAt: 1_000, expiresAt: 2_000 }],
+    });
+    await storage.set("cleanfeed.cache.entry.legacy", {
+      result: debugResult,
+      createdAt: 1_000,
+      lastAccessedAt: 1_000,
+      expiresAt: 2_000,
+    });
+
+    await expect(cache.get("legacy")).resolves.toEqual(result);
+    expect(
+      JSON.stringify(await storage.get("cleanfeed.cache.entry.legacy")),
+    ).not.toContain("stageTimings");
+  });
+
   it("returns a stored entry and updates its recency", async () => {
     const { cache, storage, clock } = createCache();
 
