@@ -260,7 +260,7 @@ export function incrementSettingsVersion(settingsVersion: number): number {
 
 async function readPersistedSettingsForMutation(
   storage: StorageArea,
-  storageKey = SETTINGS_STORAGE_KEY,
+  storageKey: string = SETTINGS_STORAGE_KEY,
 ): Promise<PersistedSettings | undefined> {
   const persisted = await storage.get<unknown>(storageKey);
   if (isPersistedSettings(persisted)) {
@@ -286,12 +286,34 @@ async function readPersistedSettingsForMutation(
 
 export async function readSettingsForMutation(
   storage: StorageArea,
-  storageKey = SETTINGS_STORAGE_KEY,
+  storageKey: string = SETTINGS_STORAGE_KEY,
 ): Promise<UserSettings> {
   return (
     (await readPersistedSettingsForMutation(storage, storageKey))?.settings ??
     DEFAULT_SETTINGS
   );
+}
+
+async function persistSettings(
+  storage: StorageArea,
+  storageKey: string,
+  settings: UserSettings,
+): Promise<UserSettings> {
+  await validatePlatformOverridesForGlobal(storage, settings);
+
+  const previous = await readPersistedSettingsForMutation(storage, storageKey);
+  const settingsVersion =
+    previous && settingsAreEqual(previous.settings, settings)
+      ? previous.settingsVersion
+      : incrementSettingsVersion(previous?.settingsVersion ?? 0);
+
+  await storage.set(storageKey, {
+    schemaVersion: SCHEMA_VERSION,
+    settingsVersion,
+    settings,
+  } satisfies PersistedSettings);
+
+  return settings;
 }
 
 export class SettingsRepository {
@@ -318,23 +340,21 @@ export class SettingsRepository {
   async save(settings: UserSettings): Promise<UserSettings> {
     assertUserSettings(settings);
 
+    return runWithSettingsMutationLock(() =>
+      persistSettings(this.storage, this.storageKey, settings),
+    );
+  }
+
+  /** Atomically applies a validated partial update to the persisted settings. */
+  async patch(update: Partial<UserSettings>): Promise<UserSettings> {
     return runWithSettingsMutationLock(async () => {
-      await validatePlatformOverridesForGlobal(this.storage, settings);
+      const current =
+        (await readPersistedSettingsForMutation(this.storage, this.storageKey))
+          ?.settings ?? DEFAULT_SETTINGS;
+      const settings = { ...current, ...update };
+      assertUserSettings(settings);
 
-      const persisted = await this.storage.get<unknown>(this.storageKey);
-      const previous = isPersistedSettings(persisted) ? persisted : undefined;
-      const settingsVersion =
-        previous && settingsAreEqual(previous.settings, settings)
-          ? previous.settingsVersion
-          : incrementSettingsVersion(previous?.settingsVersion ?? 0);
-
-      await this.storage.set(this.storageKey, {
-        schemaVersion: SCHEMA_VERSION,
-        settingsVersion,
-        settings,
-      } satisfies PersistedSettings);
-
-      return settings;
+      return persistSettings(this.storage, this.storageKey, settings);
     });
   }
 

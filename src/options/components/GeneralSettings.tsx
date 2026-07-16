@@ -1,5 +1,22 @@
 import type { UserSettings } from "@/shared/settings-types";
 
+const languageModes = new Set<string>([
+  "portuguese_only",
+  "model_supported",
+  "experimental_any",
+]);
+const presentationModes = new Set<string>(["indicator", "blur"]);
+
+function isLanguageMode(value: string): value is UserSettings["languageMode"] {
+  return languageModes.has(value);
+}
+
+function isPresentationMode(
+  value: string,
+): value is UserSettings["presentationMode"] {
+  return presentationModes.has(value);
+}
+
 export function GeneralSettings({
   settings,
   onUpdate,
@@ -45,11 +62,12 @@ export function GeneralSettings({
         Idioma
         <select
           value={settings.languageMode}
-          onChange={(event) =>
-            onUpdate({
-              languageMode: event.target.value as UserSettings["languageMode"],
-            })
-          }
+          onChange={(event) => {
+            const languageMode = event.target.value;
+            if (isLanguageMode(languageMode)) {
+              onUpdate({ languageMode });
+            }
+          }}
         >
           <option value="portuguese_only">Apenas português</option>
           <option value="model_supported">
@@ -64,12 +82,12 @@ export function GeneralSettings({
         Apresentação
         <select
           value={settings.presentationMode}
-          onChange={(event) =>
-            onUpdate({
-              presentationMode: event.target
-                .value as UserSettings["presentationMode"],
-            })
-          }
+          onChange={(event) => {
+            const presentationMode = event.target.value;
+            if (isPresentationMode(presentationMode)) {
+              onUpdate({ presentationMode });
+            }
+          }}
         >
           <option value="indicator">Apenas indicador</option>
           <option value="blur">Desfocar</option>

@@ -6,6 +6,9 @@ import {
 } from "@/background/message-router";
 import { DEFAULT_SETTINGS } from "@/shared/constants";
 import type { UserSettings } from "@/shared/settings-types";
+import { SettingsRepository } from "@/storage/settings";
+import { ChromeStorageArea } from "@/storage/storage-area";
+import { installChromeStorageMock } from "../../setup/chrome";
 
 function createRouter(settings: SettingsStore): BackgroundMessageRouter {
   return new BackgroundMessageRouter({
@@ -27,11 +30,11 @@ function createRouter(settings: SettingsStore): BackgroundMessageRouter {
 describe("BackgroundMessageRouter settings bridge", () => {
   it("merges a validated options update and returns the persisted settings", async () => {
     let current: UserSettings = DEFAULT_SETTINGS;
-    const save = vi.fn(async (settings: UserSettings) => {
-      current = settings;
+    const patch = vi.fn(async (update: Partial<UserSettings>) => {
+      current = { ...current, ...update };
       return current;
     });
-    const router = createRouter({ get: async () => current, save });
+    const router = createRouter({ get: async () => current, patch });
 
     const response = await router.handle({
       source: "options",
@@ -40,10 +43,7 @@ describe("BackgroundMessageRouter settings bridge", () => {
       payload: { minimumWordCount: 150 },
     });
 
-    expect(save).toHaveBeenCalledWith({
-      ...DEFAULT_SETTINGS,
-      minimumWordCount: 150,
-    });
+    expect(patch).toHaveBeenCalledWith({ minimumWordCount: 150 });
     expect(response).toMatchObject({
       source: "background",
       target: "options",
@@ -55,7 +55,7 @@ describe("BackgroundMessageRouter settings bridge", () => {
   it("returns the model status without inspecting post content", async () => {
     const router = createRouter({
       get: async () => DEFAULT_SETTINGS,
-      save: async (settings) => settings,
+      patch: async (update) => ({ ...DEFAULT_SETTINGS, ...update }),
     });
 
     await expect(
@@ -70,5 +70,41 @@ describe("BackgroundMessageRouter settings bridge", () => {
       target: "popup",
       payload: { backend: "mock" },
     });
+  });
+
+  it("serializes disjoint concurrent updates without losing either patch", async () => {
+    installChromeStorageMock();
+    const store = new SettingsRepository(new ChromeStorageArea());
+    const router = createRouter(store);
+
+    const [minimumWordCountResponse, presentationResponse] = await Promise.all([
+      router.handle({
+        source: "options",
+        target: "background",
+        type: "UPDATE_SETTINGS",
+        payload: { minimumWordCount: 150 },
+      }),
+      router.handle({
+        source: "options",
+        target: "background",
+        type: "UPDATE_SETTINGS",
+        payload: { presentationMode: "blur" },
+      }),
+    ]);
+
+    expect(minimumWordCountResponse).toMatchObject({
+      type: "SETTINGS_RESULT",
+      payload: { minimumWordCount: 150 },
+    });
+    expect(presentationResponse).toMatchObject({
+      type: "SETTINGS_RESULT",
+      payload: { minimumWordCount: 150, presentationMode: "blur" },
+    });
+    await expect(store.get()).resolves.toEqual({
+      ...DEFAULT_SETTINGS,
+      minimumWordCount: 150,
+      presentationMode: "blur",
+    });
+    await expect(store.getVersion()).resolves.toBe(2);
   });
 });

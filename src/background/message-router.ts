@@ -27,7 +27,7 @@ export interface MetricsRecorder {
 
 export interface SettingsStore {
   get(): Promise<UserSettings>;
-  save(settings: UserSettings): Promise<UserSettings>;
+  patch(update: Partial<UserSettings>): Promise<UserSettings>;
 }
 
 export interface BackgroundMessageRouterOptions {
@@ -154,10 +154,7 @@ export class BackgroundMessageRouter {
     request: MessageEnvelope<"UPDATE_SETTINGS", Partial<UserSettings>>,
   ): Promise<ExtensionMessage> {
     const store = this.settingsStore();
-    const settings = await store.save({
-      ...(await store.get()),
-      ...request.payload,
-    });
+    const settings = await store.patch(request.payload);
     return {
       source: "background",
       target: request.source,

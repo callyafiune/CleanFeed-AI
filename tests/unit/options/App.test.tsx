@@ -26,6 +26,30 @@ describe("options App", () => {
     expect(api.updateSettings).toHaveBeenCalledWith({ minimumWordCount: 150 });
   });
 
+  it("does not submit an unknown language mode", async () => {
+    const api = fakeOptionsApi();
+    render(<OptionsApp api={api} />);
+
+    await screen.findByLabelText("Idioma");
+    fireEvent.change(screen.getByLabelText("Idioma"), {
+      target: { value: "unknown" },
+    });
+
+    expect(api.updateSettings).not.toHaveBeenCalled();
+  });
+
+  it("does not submit an unknown presentation mode", async () => {
+    const api = fakeOptionsApi();
+    render(<OptionsApp api={api} />);
+
+    await screen.findByLabelText("Apresentação");
+    fireEvent.change(screen.getByLabelText("Apresentação"), {
+      target: { value: "unknown" },
+    });
+
+    expect(api.updateSettings).not.toHaveBeenCalled();
+  });
+
   it("contains no definitive authorship claim", async () => {
     render(<OptionsApp api={fakeOptionsApi()} />);
 
