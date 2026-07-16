@@ -1,34 +1,39 @@
 import { CleanFeedError, type ErrorCode } from "@/shared/errors";
 import { parseExtensionMessage } from "@/shared/message-validation";
 import type { ClassificationRequest } from "@/shared/messages";
-import type { ClassificationResult } from "@/shared/types";
+import type { UserSettings } from "@/shared/settings-types";
+import type { ClassificationResult, ModelStatus } from "@/shared/types";
 
-export interface WorkerClassifyRequest {
-  type: "CLASSIFY";
-  requestId: string;
-  payload: ClassificationRequest;
-}
+export type WorkerClassifyPayload = ClassificationRequest & {
+  settings?: UserSettings;
+};
+export type WorkerBatchClassifyPayload = {
+  requests: { requestId: string; payload: WorkerClassifyPayload }[];
+};
+export type WorkerInitializePayload = null;
 
-export interface WorkerResultResponse {
-  type: "RESULT";
-  requestId: string;
-  payload: ClassificationResult;
-}
+export type WorkerRequest =
+  | { type: "INITIALIZE"; requestId: string; payload: WorkerInitializePayload }
+  | {
+      type: "CLASSIFY";
+      requestId: string;
+      payload: WorkerClassifyPayload | WorkerBatchClassifyPayload;
+    }
+  | { type: "CANCEL"; requestId: string; payload: null }
+  | { type: "STATUS"; requestId: string; payload: null }
+  | { type: "DISPOSE"; requestId: string; payload: null };
 
-export interface WorkerErrorResponse {
-  type: "ERROR";
-  requestId: string;
-  payload: SerializedCleanFeedError;
-}
+export type WorkerResponse =
+  | { type: "RESULT"; requestId: string; payload: ClassificationResult }
+  | { type: "STATUS"; requestId: string; payload: ModelStatus }
+  | { type: "CANCELLED"; requestId: string; payload: null }
+  | { type: "ERROR"; requestId: string; payload: SerializedCleanFeedError };
 
 export interface SerializedCleanFeedError {
   code: ErrorCode;
   message: string;
   recoverable: boolean;
 }
-
-export type WorkerRequest = WorkerClassifyRequest;
-export type WorkerResponse = WorkerResultResponse | WorkerErrorResponse;
 
 const errorCodes = new Set<ErrorCode>([
   "MODEL_LOAD_FAILED",
@@ -48,22 +53,50 @@ const errorCodes = new Set<ErrorCode>([
 export function parseWorkerRequest(value: unknown): WorkerRequest {
   if (
     !hasExactKeys(value, ["type", "requestId", "payload"]) ||
-    value.type !== "CLASSIFY" ||
-    !isBoundedString(value.requestId, 128) ||
-    !isClassificationRequest(value.payload)
+    !isBoundedString(value.requestId, 128)
   ) {
     invalidWorkerMessage();
   }
+  if (
+    value.type === "CLASSIFY" &&
+    (isWorkerClassifyPayload(value.payload) ||
+      isWorkerBatchClassifyPayload(value.payload))
+  )
+    return value as unknown as WorkerRequest;
+  if (
+    ["INITIALIZE", "CANCEL", "STATUS", "DISPOSE"].includes(
+      value.type as string,
+    ) &&
+    value.payload === null
+  )
+    return value as unknown as WorkerRequest;
+  invalidWorkerMessage();
+}
 
-  return value as unknown as WorkerClassifyRequest;
+function isWorkerBatchClassifyPayload(
+  value: unknown,
+): value is WorkerBatchClassifyPayload {
+  return (
+    hasExactKeys(value, ["requests"]) &&
+    Array.isArray(value.requests) &&
+    value.requests.length > 0 &&
+    value.requests.length <= 8 &&
+    value.requests.every(
+      (item) =>
+        hasExactKeys(item, ["requestId", "payload"]) &&
+        isBoundedString(item.requestId, 128) &&
+        isWorkerClassifyPayload(item.payload),
+    )
+  );
 }
 
 export function parseWorkerResponse(value: unknown): WorkerResponse {
-  if (!hasExactKeys(value, ["type", "requestId", "payload"])) {
+  if (
+    !hasExactKeys(value, ["type", "requestId", "payload"]) ||
+    !isBoundedString(value.requestId, 128)
+  )
     invalidWorkerMessage();
-  }
-
-  if (value.type === "RESULT" && isBoundedString(value.requestId, 128)) {
+  if (value.type === "RESULT") {
     try {
       parseExtensionMessage({
         source: "offscreen",
@@ -72,32 +105,27 @@ export function parseWorkerResponse(value: unknown): WorkerResponse {
         requestId: value.requestId,
         payload: value.payload,
       });
-      return value as unknown as WorkerResultResponse;
+      return value as unknown as WorkerResponse;
     } catch {
       invalidWorkerMessage();
     }
   }
-
-  if (
-    value.type === "ERROR" &&
-    isBoundedString(value.requestId, 128) &&
-    isSerializedError(value.payload)
-  ) {
-    return value as unknown as WorkerErrorResponse;
-  }
-
+  if (value.type === "STATUS" && isModelStatus(value.payload))
+    return value as unknown as WorkerResponse;
+  if (value.type === "CANCELLED" && value.payload === null)
+    return value as unknown as WorkerResponse;
+  if (value.type === "ERROR" && isSerializedError(value.payload))
+    return value as unknown as WorkerResponse;
   invalidWorkerMessage();
 }
 
 export function serializeWorkerError(error: unknown): SerializedCleanFeedError {
-  if (error instanceof CleanFeedError) {
+  if (error instanceof CleanFeedError)
     return {
       code: error.code,
       message: error.message,
       recoverable: error.recoverable,
     };
-  }
-
   return {
     code: "INFERENCE_FAILED",
     message: "The local worker could not classify this text.",
@@ -105,14 +133,50 @@ export function serializeWorkerError(error: unknown): SerializedCleanFeedError {
   };
 }
 
+function isWorkerClassifyPayload(
+  value: unknown,
+): value is WorkerClassifyPayload {
+  return (
+    isSafeRecord(value) &&
+    hasOnlyKeys(value, ["text", "platform", "manual", "settings"]) &&
+    isClassificationRequest(value) &&
+    (value.settings === undefined || isSettingsSnapshot(value.settings))
+  );
+}
+
 function isClassificationRequest(
   value: unknown,
 ): value is ClassificationRequest {
   return (
-    hasExactKeys(value, ["text", "platform", "manual"]) &&
+    isSafeRecord(value) &&
     isBoundedString(value.text, 100_000) &&
     isBoundedString(value.platform, 128) &&
     typeof value.manual === "boolean"
+  );
+}
+
+function isSettingsSnapshot(value: unknown): value is UserSettings {
+  return (
+    isSafeRecord(value) &&
+    typeof value.languageMode === "string" &&
+    typeof value.markingThreshold === "number" &&
+    Number.isFinite(value.markingThreshold) &&
+    Number.isSafeInteger(value.chunkSizeTokens) &&
+    Number.isSafeInteger(value.chunkOverlapTokens) &&
+    Number.isSafeInteger(value.maximumTokens) &&
+    Number.isSafeInteger(value.inferenceTimeoutMs)
+  );
+}
+
+function isModelStatus(value: unknown): value is ModelStatus {
+  return (
+    isSafeRecord(value) &&
+    ["unavailable", "initializing", "ready", "disposing", "error"].includes(
+      value.state as string,
+    ) &&
+    isBoundedString(value.classifierId, 128) &&
+    isBoundedString(value.modelVersion, 128) &&
+    ["mock", "wasm", "webgpu"].includes(value.backend as string)
   );
 }
 
@@ -130,18 +194,28 @@ function hasExactKeys(
   value: unknown,
   keys: readonly string[],
 ): value is Record<string, unknown> {
-  if (!isSafeRecord(value) || Object.keys(value).length !== keys.length) {
-    return false;
-  }
+  return (
+    isSafeRecord(value) &&
+    Object.keys(value).length === keys.length &&
+    keys.every((key) => Object.hasOwn(value, key))
+  );
+}
 
-  return keys.every((key) => Object.hasOwn(value, key));
+function hasOnlyKeys(
+  value: Record<string, unknown>,
+  keys: readonly string[],
+): boolean {
+  return (
+    keys
+      .filter((key) => key !== "settings")
+      .every((key) => Object.hasOwn(value, key)) &&
+    Object.keys(value).every((key) => keys.includes(key))
+  );
 }
 
 function isSafeRecord(value: unknown): value is Record<string, unknown> {
-  if (typeof value !== "object" || value === null || Array.isArray(value)) {
+  if (typeof value !== "object" || value === null || Array.isArray(value))
     return false;
-  }
-
   const prototype = Object.getPrototypeOf(value);
   return prototype === Object.prototype || prototype === null;
 }

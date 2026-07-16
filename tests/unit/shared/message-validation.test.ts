@@ -154,7 +154,12 @@ const validMessages = [
     target: "offscreen",
     type: "OFFSCREEN_CLASSIFY",
     requestId: "r-1",
-    payload: { text: "texto válido", platform: "linkedin", manual: false },
+    payload: {
+      text: "texto válido",
+      platform: "linkedin",
+      manual: false,
+      settings: validSettings,
+    },
   },
   {
     source: "offscreen",

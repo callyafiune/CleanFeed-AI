@@ -23,12 +23,16 @@ export interface ClassificationRequest {
   manual: boolean;
 }
 
+export type OffscreenClassificationRequest = ClassificationRequest & {
+  settings: UserSettings;
+};
+
 type EmptyPayload = undefined;
 
 export type ExtensionMessage =
   | (MessageEnvelope<
       "CLASSIFY_TEXT" | "OFFSCREEN_CLASSIFY",
-      ClassificationRequest
+      ClassificationRequest | OffscreenClassificationRequest
     > & {
       requestId: string;
     })

@@ -15,10 +15,12 @@ import type { MetricRecord } from "@/storage/metrics";
 
 export interface OffscreenClient {
   classify(request: WorkerClassificationRequest): Promise<ClassificationResult>;
+  cancel?(requestId: string): Promise<void>;
 }
 
 export type WorkerClassificationRequest = ClassificationRequest & {
   requestId: string;
+  settings?: UserSettings;
 };
 
 export interface MetricsRecorder {
@@ -70,6 +72,9 @@ export class BackgroundMessageRouter {
           return await this.handleClassification(
             message as ClassifyTextMessage,
           );
+        case "CANCEL_CLASSIFICATION":
+          await this.options.offscreenClient.cancel?.(message.requestId!);
+          return undefined;
         case "GET_SETTINGS":
           return await this.handleGetSettings(
             message as MessageEnvelope<"GET_SETTINGS", undefined>,
@@ -115,9 +120,11 @@ export class BackgroundMessageRouter {
     }
 
     await this.options.metrics.record({ cacheMisses: 1 });
+    const settings = await this.options.settings?.get();
     const result = await this.options.offscreenClient.classify({
       requestId: message.requestId,
       ...message.payload,
+      ...(settings === undefined ? {} : { settings }),
     });
     assertClassificationResult(result);
     await this.options.cache.set(key, result);
@@ -191,6 +198,17 @@ export class BackgroundMessageRouter {
 
 /** Sends a directed request to the offscreen document after ensuring it exists. */
 export class RuntimeOffscreenClient implements OffscreenClient {
+  async cancel(requestId: string): Promise<void> {
+    await ensureOffscreenDocument();
+    await chrome.runtime.sendMessage({
+      source: "background",
+      target: "offscreen",
+      type: "CANCEL_CLASSIFICATION",
+      requestId,
+      payload: undefined,
+    });
+  }
+
   async classify(
     request: WorkerClassificationRequest,
   ): Promise<ClassificationResult> {
@@ -204,6 +222,9 @@ export class RuntimeOffscreenClient implements OffscreenClient {
         text: request.text,
         platform: request.platform,
         manual: request.manual,
+        ...(request.settings === undefined
+          ? {}
+          : { settings: request.settings }),
       },
     });
     const message = parseExtensionMessage(response);

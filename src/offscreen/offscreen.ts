@@ -3,6 +3,7 @@ import { parseExtensionMessage } from "@/shared/message-validation";
 import { WorkerHost } from "@/offscreen/worker-host";
 
 const workerHost = new WorkerHost();
+workerHost.initialize();
 
 chrome.runtime.onMessage.addListener((rawMessage, _sender, sendResponse) => {
   let message;
@@ -12,9 +13,17 @@ chrome.runtime.onMessage.addListener((rawMessage, _sender, sendResponse) => {
     return undefined;
   }
 
-  if (message.target !== "offscreen" || message.type !== "OFFSCREEN_CLASSIFY") {
+  if (message.target !== "offscreen") {
     return undefined;
   }
+
+  if (message.type === "CANCEL_CLASSIFICATION") {
+    workerHost.cancel(message.requestId!);
+    sendResponse(undefined);
+    return false;
+  }
+
+  if (message.type !== "OFFSCREEN_CLASSIFY") return undefined;
 
   void workerHost
     .classify({ requestId: message.requestId, ...message.payload })

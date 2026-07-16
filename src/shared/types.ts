@@ -117,6 +117,14 @@ export interface ClassificationResult {
   modelId: string;
   backend: Backend;
   processingTimeMs: number;
+  stageTimings?: {
+    languageMs: number;
+    tokenizationMs: number;
+    chunkingMs: number;
+    inferenceMs: number;
+    aggregationMs: number;
+    calibrationMs: number;
+  };
   errorCode?: ErrorCode;
   demo: boolean;
 }
@@ -163,6 +171,7 @@ export interface ModelStatus {
   fallbackFrom?: "webgpu";
   errorCode?: ErrorCode;
   initializedAt?: number;
+  supportsBatching?: boolean;
 }
 
 export interface PerformanceTrace {

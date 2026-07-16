@@ -95,7 +95,10 @@ type Route = readonly [ExtensionContext, ExtensionContext];
 const allowedRoutes: Record<MessageType, readonly Route[]> = {
   CLASSIFY_TEXT: [["content", "background"]],
   CLASSIFICATION_RESULT: [["background", "content"]],
-  CANCEL_CLASSIFICATION: [["content", "background"]],
+  CANCEL_CLASSIFICATION: [
+    ["content", "background"],
+    ["background", "offscreen"],
+  ],
   GET_PAGE_STATS: [["popup", "content"]],
   PAGE_STATS_RESULT: [["content", "popup"]],
   UPDATE_SETTINGS: [
@@ -256,8 +259,9 @@ function isValidPayload(type: MessageType, payload: unknown): boolean {
 
   switch (type) {
     case "CLASSIFY_TEXT":
-    case "OFFSCREEN_CLASSIFY":
       return isClassificationRequest(payload);
+    case "OFFSCREEN_CLASSIFY":
+      return isOffscreenClassificationRequest(payload);
     case "CLASSIFICATION_RESULT":
     case "OFFSCREEN_RESULT":
       return isClassificationResult(payload);
@@ -289,6 +293,16 @@ function isClassificationRequest(value: unknown): boolean {
   );
 }
 
+function isOffscreenClassificationRequest(value: unknown): boolean {
+  return (
+    hasExactKeys(value, ["text", "platform", "manual", "settings"]) &&
+    isBoundedString(value.text, MAX_CLASSIFICATION_TEXT_LENGTH) &&
+    isBoundedString(value.platform, MAX_PLATFORM_ID_LENGTH) &&
+    typeof value.manual === "boolean" &&
+    isSettings(value.settings, true)
+  );
+}
+
 function isClassificationResult(value: unknown): boolean {
   const requiredKeys = [
     "aiScore",
@@ -310,6 +324,7 @@ function isClassificationResult(value: unknown): boolean {
     "explanation",
     "decision",
     "errorCode",
+    "stageTimings",
   ];
 
   if (!hasOnlyAllowedKeys(value, requiredKeys, optionalKeys)) {
@@ -333,7 +348,21 @@ function isClassificationResult(value: unknown): boolean {
     isOptional(value.aggregation, isAggregationResult) &&
     isOptional(value.explanation, isClassificationExplanation) &&
     isOptional(value.decision, isDecisionOutcome) &&
-    isOptional(value.errorCode, isErrorCode)
+    isOptional(value.errorCode, isErrorCode) &&
+    isOptional(value.stageTimings, isStageTimings)
+  );
+}
+
+function isStageTimings(value: unknown): boolean {
+  return (
+    hasExactKeys(value, [
+      "languageMs",
+      "tokenizationMs",
+      "chunkingMs",
+      "inferenceMs",
+      "aggregationMs",
+      "calibrationMs",
+    ]) && Object.values(value).every(isNonNegativeFinite)
   );
 }
 
@@ -480,7 +509,7 @@ function isModelStatus(value: unknown): boolean {
     hasOnlyAllowedKeys(
       value,
       ["state", "classifierId", "modelVersion", "backend"],
-      ["fallbackFrom", "errorCode", "initializedAt"],
+      ["fallbackFrom", "errorCode", "initializedAt", "supportsBatching"],
     ) &&
     isStringInSet(value.state, modelStates) &&
     isBoundedString(value.classifierId, 128) &&
@@ -488,7 +517,8 @@ function isModelStatus(value: unknown): boolean {
     isStringInSet(value.backend, backends) &&
     isOptional(value.fallbackFrom, (item) => item === "webgpu") &&
     isOptional(value.errorCode, isErrorCode) &&
-    isOptional(value.initializedAt, isNonNegativeFinite)
+    isOptional(value.initializedAt, isNonNegativeFinite) &&
+    isOptional(value.supportsBatching, (item) => typeof item === "boolean")
   );
 }
 
