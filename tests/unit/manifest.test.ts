@@ -17,7 +17,7 @@ describe("manifest", () => {
 
   it("packages no remote execution capability", () => {
     expect(manifest.content_security_policy?.extension_pages).toBe(
-      "script-src 'self' 'wasm-unsafe-eval'; object-src 'self'; worker-src 'self'",
+      "script-src 'self' 'wasm-unsafe-eval'; object-src 'self'; worker-src 'self'; connect-src 'self'",
     );
     expect(JSON.stringify(manifest)).not.toContain("http://");
   });

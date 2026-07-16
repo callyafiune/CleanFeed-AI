@@ -7,6 +7,7 @@
     "node": ">=22"
   },
   "scripts": {
+    "prebuild": "node scripts/copy-transformers-assets.mjs",
     "dev": "vite",
     "build": "vite build",
     "test": "vitest",

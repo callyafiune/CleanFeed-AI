@@ -6,6 +6,7 @@ import manifest from "./manifest.config";
 
 export default defineConfig({
   base: "./",
+  assetsInclude: ["**/*.wasm"],
   plugins: [react(), crx({ manifest })],
   resolve: {
     alias: {

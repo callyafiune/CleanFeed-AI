@@ -34,7 +34,7 @@ const manifest = {
   ],
   content_security_policy: {
     extension_pages:
-      "script-src 'self' 'wasm-unsafe-eval'; object-src 'self'; worker-src 'self'",
+      "script-src 'self' 'wasm-unsafe-eval'; object-src 'self'; worker-src 'self'; connect-src 'self'",
   },
 } satisfies chrome.runtime.ManifestV3;
 
