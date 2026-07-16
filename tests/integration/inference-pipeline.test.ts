@@ -1,7 +1,12 @@
 import { describe, expect, it, vi } from "vitest";
 
-import { PipelineRunner } from "@/inference/inference-worker";
+import {
+  installInferenceWorker,
+  PipelineRunner,
+  type InferenceWorkerScope,
+} from "@/inference/inference-worker";
 import { DEFAULT_SETTINGS } from "@/shared/constants";
+import type { Tokenizer } from "@/inference/tokenizer";
 import type {
   BatchTextClassifier,
   ClassificationOptions,
@@ -58,6 +63,55 @@ function classifier(supportsBatching = false): BatchTextClassifier {
     dispose: vi.fn().mockResolvedValue(undefined),
     getMetadata: vi.fn(() => metadata),
   };
+}
+
+function workerScope(): InferenceWorkerScope & {
+  dispatch(message: unknown): void;
+  messages: unknown[];
+} {
+  let listener: ((event: MessageEvent<unknown>) => void) | undefined;
+  const messages: unknown[] = [];
+  return {
+    addEventListener: (_type, registered) => {
+      listener = registered;
+    },
+    postMessage: (message) => {
+      messages.push(message);
+    },
+    dispatch: (message) => {
+      listener?.({ data: message } as MessageEvent<unknown>);
+    },
+    messages,
+  };
+}
+
+function workerBatch(requests: { requestId: string; text: string }[]) {
+  return {
+    type: "CLASSIFY" as const,
+    requestId: requests[0]!.requestId,
+    payload: {
+      requests: requests.map(({ requestId, text }) => ({
+        requestId,
+        payload: {
+          text,
+          platform: "linkedin",
+          manual: false,
+          settings: { ...DEFAULT_SETTINGS, batchingEnabled: true },
+        },
+      })),
+    },
+  };
+}
+
+function waitForWorkerMessage(
+  scope: ReturnType<typeof workerScope>,
+  predicate: (message: unknown) => boolean,
+): Promise<unknown> {
+  return vi.waitFor(() => {
+    const message = scope.messages.find(predicate);
+    expect(message, JSON.stringify(scope.messages)).toBeDefined();
+    return message;
+  });
 }
 
 describe("inference pipeline", () => {
@@ -138,5 +192,98 @@ describe("inference pipeline", () => {
       "pt",
       "und",
     ]);
+  });
+
+  it("settles one cancelled batch request without cancelling its sibling", async () => {
+    const batchClassifier = classifier(true);
+    let resolveBatch: ((results: ClassificationResult[]) => void) | undefined;
+    (
+      batchClassifier.classifyBatch as ReturnType<typeof vi.fn>
+    ).mockImplementation(
+      () =>
+        new Promise<ClassificationResult[]>((resolve) => {
+          resolveBatch = resolve;
+        }),
+    );
+    const scope = workerScope();
+    installInferenceWorker(
+      scope,
+      () => new PipelineRunner({ classifier: batchClassifier }),
+    );
+
+    scope.dispatch(
+      workerBatch([
+        { requestId: "cancel-me", text: PORTUGUESE_LONG_TEXT },
+        { requestId: "finish-me", text: PORTUGUESE_LONG_TEXT },
+      ]),
+    );
+    await vi.waitFor(() =>
+      expect(batchClassifier.classifyBatch).toHaveBeenCalledOnce(),
+    );
+
+    scope.dispatch({ type: "CANCEL", requestId: "cancel-me", payload: null });
+    const inputs = (
+      batchClassifier.classifyBatch as unknown as {
+        mock: { calls: [string[]][] };
+      }
+    ).mock.calls[0]![0];
+    resolveBatch?.(inputs.map((text) => result(text, { language: "pt" })));
+
+    await waitForWorkerMessage(
+      scope,
+      (message) =>
+        (message as { type?: string; requestId?: string }).type === "RESULT" &&
+        (message as { requestId?: string }).requestId === "finish-me",
+    );
+    expect(scope.messages).toContainEqual({
+      type: "CANCELLED",
+      requestId: "cancel-me",
+      payload: null,
+    });
+    expect(scope.messages).not.toContainEqual(
+      expect.objectContaining({ type: "RESULT", requestId: "cancel-me" }),
+    );
+  });
+
+  it("reports a preparation failure only for its batch request", async () => {
+    const batchClassifier = classifier(true);
+    const tokenizer: Tokenizer = {
+      id: "test",
+      encode: vi.fn(async (text) => {
+        if (text.startsWith("broken ")) {
+          throw new Error("tokenizer failed");
+        }
+        return {
+          spans: [{ id: 1, start: 0, end: text.length }],
+          tokenCount: 1,
+          exact: false,
+        };
+      }),
+    };
+    const scope = workerScope();
+    installInferenceWorker(
+      scope,
+      () => new PipelineRunner({ classifier: batchClassifier, tokenizer }),
+    );
+
+    scope.dispatch(
+      workerBatch([
+        { requestId: "broken", text: `broken ${PORTUGUESE_LONG_TEXT}` },
+        { requestId: "healthy", text: PORTUGUESE_LONG_TEXT },
+      ]),
+    );
+
+    await waitForWorkerMessage(
+      scope,
+      (message) =>
+        (message as { type?: string; requestId?: string }).type === "ERROR" &&
+        (message as { requestId?: string }).requestId === "broken",
+    );
+    expect(scope.messages).toContainEqual(
+      expect.objectContaining({ type: "RESULT", requestId: "healthy" }),
+    );
+    expect(scope.messages).not.toContainEqual(
+      expect.objectContaining({ type: "ERROR", requestId: "healthy" }),
+    );
   });
 });

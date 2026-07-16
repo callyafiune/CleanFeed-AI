@@ -42,6 +42,17 @@ export interface PipelineRunnerOptions {
   tokenizer?: Tokenizer;
 }
 
+/** A single request in a worker batch, with cancellation owned by that request. */
+export interface PipelineBatchItem {
+  request: ClassificationRequest;
+  signal?: AbortSignal;
+}
+
+export type PipelineBatchOutcome =
+  | { kind: "result"; result: ClassificationResult }
+  | { kind: "cancelled" }
+  | { kind: "error"; error: unknown };
+
 type PreparedRequest = {
   request: ClassificationRequest;
   language: string;
@@ -77,122 +88,86 @@ export class PipelineRunner {
     settings: UserSettings,
     signal?: AbortSignal,
   ): Promise<ClassificationResult> {
-    await this.initialize();
-    throwIfAborted(signal);
-    const detection = await this.detector.detect(request.text);
-    throwIfAborted(signal);
-    const policy = evaluateLanguagePolicy(
-      detection,
-      settings.languageMode,
-      this.classifier.getMetadata().supportedLanguages,
+    const [outcome] = await this.classifyBatchSettled(
+      [{ request, signal }],
+      settings,
     );
-    throwIfAborted(signal);
-    if (!policy.allowed) {
-      return languageAbstention(request, detection.language, this.classifier);
-    }
-    const [result] = await this.classifyBatch([request], settings, signal);
-    return result!;
+    return unwrapOutcome(outcome!);
   }
 
   async classifyBatch(
     requests: ClassificationRequest[],
     settings: UserSettings,
-    signal?: AbortSignal,
+  ): Promise<ClassificationResult[]>;
+  async classifyBatch(
+    items: PipelineBatchItem[],
+    settings: UserSettings,
+  ): Promise<ClassificationResult[]>;
+  async classifyBatch(
+    requestsOrItems: ClassificationRequest[] | PipelineBatchItem[],
+    settings: UserSettings,
   ): Promise<ClassificationResult[]> {
+    const outcomes = await this.classifyBatchSettled(
+      requestsOrItems.map((item) =>
+        "request" in item ? item : { request: item },
+      ),
+      settings,
+    );
+    return outcomes.map(unwrapOutcome);
+  }
+
+  async classifyBatchSettled(
+    items: PipelineBatchItem[],
+    settings: UserSettings,
+  ): Promise<PipelineBatchOutcome[]> {
     const startedAt = performance.now();
     await this.initialize();
-    const preparedOrEarly = await Promise.all(
-      requests.map((request) => this.prepare(request, settings, signal)),
-    );
-    const prepared = preparedOrEarly.filter(
-      (item): item is PreparedRequest => !("early" in item),
-    );
-    const languageGroups = Map.groupBy(prepared, (item) => item.language);
-    if (languageGroups.size > 1) {
-      const resultsByRequest = new Map<
-        ClassificationRequest,
-        ClassificationResult
-      >();
-      for (const group of languageGroups.values()) {
-        const results = await this.classifyBatch(
-          group.map((item) => item.request),
-          settings,
-          signal,
-        );
-        group.forEach((item, index) =>
-          resultsByRequest.set(item.request, results[index]!),
-        );
-      }
-      return preparedOrEarly.map((item) =>
-        "early" in item ? item.early : resultsByRequest.get(item.request)!,
-      );
-    }
-    const inputs = prepared.flatMap((item) =>
-      item.chunks.map((chunk) => chunk.text),
-    );
-    const options: ClassificationOptions = {
-      signal,
-      language: prepared[0]?.language,
-      platform: prepared[0]?.request.platform,
-    };
-    const inferenceStartedAt = performance.now();
-    const classified =
-      inputs.length === 0 ? [] : await this.classifyChunks(inputs, options);
-    const inferenceMs = performance.now() - inferenceStartedAt;
-    throwIfAborted(signal);
-    let cursor = 0;
-
-    const completed = prepared.map((item) => {
-      const chunkResults = item.chunks.map((chunk) => {
-        const result = classified[cursor++]!;
-        return {
-          index: chunk.index,
-          startToken: chunk.startToken,
-          endToken: chunk.endToken,
-          aiScore: result.aiScore,
-          humanScore: result.humanScore,
-          processingTimeMs: result.processingTimeMs,
-        } satisfies ChunkResult;
-      });
-      const first = classified[cursor - chunkResults.length]!;
-      const aggregationStartedAt = performance.now();
-      const aggregation = aggregateChunkResults(
-        chunkResults,
-        settings.markingThreshold,
-      );
-      const aggregationMs = performance.now() - aggregationStartedAt;
-      const base: ClassificationResult = {
-        ...first,
-        wordCount: getTextLengthInfo(item.request.text).wordCount,
-        tokenCount: item.tokenCount,
-        language: item.language,
-        chunks: chunkResults,
-        aggregation,
-        processingTimeMs: performance.now() - startedAt,
-      };
-      const calibrationStartedAt = performance.now();
-      const decision = calibrateResult(base);
-      const explanation = buildExplanation(base, decision);
-      const calibrationMs = performance.now() - calibrationStartedAt;
-      return {
-        ...base,
-        status: decision.status,
-        decision,
-        explanation: {
-          ...explanation,
-          calibrationProfile: `${item.request.platform}:${item.language}:${getLengthBucket(base.wordCount)}`,
-        },
-        stageTimings: {
-          ...item.stageTimings,
-          inferenceMs,
-          aggregationMs,
-          calibrationMs,
-        },
-      };
+    const outcomes: (PipelineBatchOutcome | undefined)[] = Array.from({
+      length: items.length,
     });
-    let completedIndex = 0;
-    return preparedOrEarly.map((item) =>
-      "early" in item ? item.early : completed[completedIndex++]!,
+    const prepared = await Promise.all(
+      items.map(async (item, index) => {
+        try {
+          const preparedItem = await this.prepare(
+            item.request,
+            settings,
+            item.signal,
+          );
+          if ("early" in preparedItem) {
+            outcomes[index] = { kind: "result", result: preparedItem.early };
+            return undefined;
+          }
+          return { index, item, prepared: preparedItem };
+        } catch (error) {
+          outcomes[index] = outcomeForError(error, item.signal);
+          return undefined;
+        }
+      }),
+    );
+    const preparedItems = prepared.filter(
+      (
+        item,
+      ): item is {
+        index: number;
+        item: PipelineBatchItem;
+        prepared: PreparedRequest;
+      } => item !== undefined,
+    );
+    const languageGroups = Map.groupBy(
+      preparedItems,
+      (item) => item.prepared.language,
+    );
+    await Promise.all(
+      [...languageGroups.values()].map((group) =>
+        this.classifyPreparedGroup(group, settings, startedAt, outcomes),
+      ),
+    );
+    return outcomes.map(
+      (outcome): PipelineBatchOutcome =>
+        outcome ?? {
+          kind: "error",
+          error: new Error("The batch request did not settle."),
+        },
     );
   }
 
@@ -260,6 +235,73 @@ export class PipelineRunner {
     return prepared;
   }
 
+  private async classifyPreparedGroup(
+    group: {
+      index: number;
+      item: PipelineBatchItem;
+      prepared: PreparedRequest;
+    }[],
+    settings: UserSettings,
+    startedAt: number,
+    outcomes: (PipelineBatchOutcome | undefined)[],
+  ): Promise<void> {
+    const active = group.filter(({ item, index }) => {
+      if (!item.signal?.aborted) return true;
+      outcomes[index] = { kind: "cancelled" };
+      return false;
+    });
+    if (active.length === 0) return;
+
+    const inputs = active.flatMap(({ prepared }) =>
+      prepared.chunks.map((chunk) => chunk.text),
+    );
+    const options: ClassificationOptions = {
+      ...(active.length === 1 && active[0]!.item.signal !== undefined
+        ? { signal: active[0]!.item.signal }
+        : {}),
+      language: active[0]!.prepared.language,
+      platform: active[0]!.item.request.platform,
+    };
+    const inferenceStartedAt = performance.now();
+    let classified: ClassificationResult[];
+    try {
+      classified =
+        inputs.length === 0 ? [] : await this.classifyChunks(inputs, options);
+    } catch (error) {
+      for (const { index, item } of active) {
+        outcomes[index] = outcomeForError(error, item.signal);
+      }
+      return;
+    }
+    const inferenceMs = performance.now() - inferenceStartedAt;
+    let cursor = 0;
+    for (const entry of active) {
+      const itemResults = classified.slice(
+        cursor,
+        cursor + entry.prepared.chunks.length,
+      );
+      cursor += entry.prepared.chunks.length;
+      if (entry.item.signal?.aborted) {
+        outcomes[entry.index] = { kind: "cancelled" };
+        continue;
+      }
+      try {
+        outcomes[entry.index] = {
+          kind: "result",
+          result: completePreparedRequest(
+            entry.prepared,
+            itemResults,
+            settings,
+            startedAt,
+            inferenceMs,
+          ),
+        };
+      } catch (error) {
+        outcomes[entry.index] = outcomeForError(error, entry.item.signal);
+      }
+    }
+  }
+
   private async classifyChunks(
     texts: string[],
     options: ClassificationOptions,
@@ -272,6 +314,77 @@ export class PipelineRunner {
       texts.map((text) => this.classifier.classify(text, options)),
     );
   }
+}
+
+function completePreparedRequest(
+  item: PreparedRequest,
+  classified: ClassificationResult[],
+  settings: UserSettings,
+  startedAt: number,
+  inferenceMs: number,
+): ClassificationResult {
+  const chunkResults = item.chunks.map((chunk, index) => {
+    const result = classified[index]!;
+    return {
+      index: chunk.index,
+      startToken: chunk.startToken,
+      endToken: chunk.endToken,
+      aiScore: result.aiScore,
+      humanScore: result.humanScore,
+      processingTimeMs: result.processingTimeMs,
+    } satisfies ChunkResult;
+  });
+  const first = classified[0]!;
+  const aggregationStartedAt = performance.now();
+  const aggregation = aggregateChunkResults(
+    chunkResults,
+    settings.markingThreshold,
+  );
+  const aggregationMs = performance.now() - aggregationStartedAt;
+  const base: ClassificationResult = {
+    ...first,
+    wordCount: getTextLengthInfo(item.request.text).wordCount,
+    tokenCount: item.tokenCount,
+    language: item.language,
+    chunks: chunkResults,
+    aggregation,
+    processingTimeMs: performance.now() - startedAt,
+  };
+  const calibrationStartedAt = performance.now();
+  const decision = calibrateResult(base);
+  const explanation = buildExplanation(base, decision);
+  const calibrationMs = performance.now() - calibrationStartedAt;
+  return {
+    ...base,
+    status: decision.status,
+    decision,
+    explanation: {
+      ...explanation,
+      calibrationProfile: `${item.request.platform}:${item.language}:${getLengthBucket(base.wordCount)}`,
+    },
+    stageTimings: {
+      ...item.stageTimings,
+      inferenceMs,
+      aggregationMs,
+      calibrationMs,
+    },
+  };
+}
+
+function outcomeForError(
+  error: unknown,
+  signal?: AbortSignal,
+): PipelineBatchOutcome {
+  if (signal?.aborted || isAbortError(error)) return { kind: "cancelled" };
+  return { kind: "error", error };
+}
+
+function unwrapOutcome(outcome: PipelineBatchOutcome): ClassificationResult {
+  if (outcome.kind === "result") return outcome.result;
+  if (outcome.kind === "cancelled") {
+    throw new DOMException("The classification was aborted.", "AbortError");
+  }
+  throw outcome.error;
 }
 
 function languageAbstention(
@@ -312,8 +425,11 @@ function languageAbstention(
 }
 
 /** Installs the worker message protocol and keeps cancellation scoped to request IDs. */
-export function installInferenceWorker(scope: InferenceWorkerScope): void {
-  const runner = new PipelineRunner();
+export function installInferenceWorker(
+  scope: InferenceWorkerScope,
+  runnerFactory: () => PipelineRunner = () => new PipelineRunner(),
+): void {
+  const runner = runnerFactory();
   const controllers = new Map<string, AbortController>();
 
   scope.addEventListener("message", (event) => {
@@ -390,26 +506,39 @@ async function handleMessage(
     };
     for (const item of items)
       controllers.set(item.requestId, new AbortController());
-    const results = await runner.classifyBatch(
-      items.map((item) => item.payload),
+    const outcomes = await runner.classifyBatchSettled(
+      items.map((item) => ({
+        request: item.payload,
+        signal: controllers.get(item.requestId)?.signal,
+      })),
       settings,
-      items.length === 1
-        ? controllers.get(items[0]!.requestId)?.signal
-        : undefined,
     );
-    for (const [index, result] of results.entries()) {
-      scope.postMessage({
-        type: "RESULT",
-        requestId: items[index]?.requestId ?? request.requestId,
-        payload: result,
-      });
+    for (const [index, outcome] of outcomes.entries()) {
+      const requestId = items[index]?.requestId ?? request.requestId;
+      if (controllers.get(requestId)?.signal.aborted) continue;
+      if (outcome.kind === "result") {
+        scope.postMessage({
+          type: "RESULT",
+          requestId,
+          payload: outcome.result,
+        });
+      } else if (outcome.kind === "cancelled") {
+        scope.postMessage({ type: "CANCELLED", requestId, payload: null });
+      } else {
+        scope.postMessage({
+          type: "ERROR",
+          requestId,
+          payload: serializeWorkerError(outcome.error),
+        });
+      }
     }
   } catch (error) {
     for (const requestId of batchItems.length === 0
       ? [request.requestId]
       : batchItems.map((item) => item.requestId)) {
+      if (controllers.get(requestId)?.signal.aborted) continue;
       scope.postMessage(
-        error instanceof DOMException && error.name === "AbortError"
+        isAbortError(error)
           ? { type: "CANCELLED", requestId, payload: null }
           : { type: "ERROR", requestId, payload: serializeWorkerError(error) },
       );
@@ -436,6 +565,10 @@ function throwIfAborted(signal?: AbortSignal): void {
   if (signal?.aborted) {
     throw new DOMException("The classification was aborted.", "AbortError");
   }
+}
+
+function isAbortError(error: unknown): boolean {
+  return error instanceof DOMException && error.name === "AbortError";
 }
 
 installInferenceWorker(self as unknown as InferenceWorkerScope);

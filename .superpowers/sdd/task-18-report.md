@@ -134,3 +134,82 @@ npm run build
 # vite build
 # ✓ built in 309ms
 ```
+
+## Batch-isolation completion
+
+### Root cause
+
+`PipelineRunner.classifyBatch` shared one abort signal across every prepared
+request and let an item rejection escape `Promise.all`. The worker then handled
+that single rejection by emitting the same terminal response for every request
+ID in the envelope. A cancelled item could therefore prevent sibling work and a
+preparation/finishing error could be broadcast outside the failing request.
+
+### TDD evidence
+
+#### RED
+
+Added two controlled `installInferenceWorker` integration regressions before
+changing production code, then ran:
+
+```powershell
+npm test -- --run tests/integration/inference-pipeline.test.ts
+```
+
+Observed the expected two failures:
+
+- the batched cancellation test waited for the injected batch classifier, which
+  was never called because the worker had no injection seam;
+- the per-item tokenizer-failure test received no error for the intended
+  request, confirming the old worker path could not exercise isolated item
+  outcomes.
+
+#### GREEN
+
+- Added the minimal optional `runnerFactory` parameter to
+  `installInferenceWorker` for integration-only controlled runners.
+- `PipelineRunner.classifyBatch` now accepts request-owned batch items, and the
+  worker uses `classifyBatchSettled` to retain an outcome for every request.
+- Preparation is caught per request; requests are then grouped once by detected
+  language. A same-language active group still invokes the classifier batch
+  once, without passing a member's signal to that shared model invocation.
+- After that safe boundary, cancellation is checked before aggregation,
+  calibration, and explanation. Those finishing stages are caught per request,
+  so their errors cannot poison another item or language group.
+- The worker posts only the outcome for each non-cancelled request ID; `CANCEL`
+  settles the targeted ID immediately and later batch completion skips it.
+
+Focused green verification:
+
+```text
+Test Files  2 passed (2)
+Tests       12 passed (12)
+```
+
+The new regressions cover one real worker batch envelope where cancelling
+`cancel-me` yields only `CANCELLED` while `finish-me` receives `RESULT`, and a
+tokenizer failure for `broken` yields only that ID's `ERROR` while `healthy`
+receives `RESULT`.
+
+### Final verification
+
+```text
+npm test -- --run
+# Test Files  37 passed (37)
+# Tests       262 passed (262)
+
+npm run typecheck
+# exit 0
+
+npm run lint
+# exit 0; 0 errors, 2 pre-existing react-refresh warnings
+
+npm run format:check
+# All matched files use Prettier code style!
+
+npm run build
+# ✓ built in 170ms
+
+git diff --check
+# exit 0
+```
