@@ -18,6 +18,42 @@ export interface Tokenizer {
   encode(text: string, signal?: AbortSignal): Promise<TokenizedText>;
 }
 
+interface ExactTokenGateway {
+  tokenize(text: string): Promise<{
+    inputIds: readonly number[];
+    specialTokenCount: number;
+  }>;
+}
+
+/** Uses the model's own tokenizer for exact chunk-planning token counts. */
+export class TransformersTokenizer implements Tokenizer {
+  readonly id: string;
+
+  constructor(
+    modelId: string,
+    private readonly gateway: ExactTokenGateway,
+  ) {
+    this.id = `transformers-${modelId}`;
+  }
+
+  async encode(text: string, signal?: AbortSignal): Promise<TokenizedText> {
+    throwIfAborted(signal);
+    const tokens = await this.gateway.tokenize(text);
+    throwIfAborted(signal);
+
+    const tokenCount = tokens.inputIds.length - tokens.specialTokenCount;
+    if (
+      !Number.isSafeInteger(tokens.specialTokenCount) ||
+      tokens.specialTokenCount < 0 ||
+      tokenCount < 0
+    ) {
+      throw new Error("The model tokenizer returned an invalid token count.");
+    }
+
+    return { spans: [], tokenCount, exact: true };
+  }
+}
+
 const TOKEN_PATTERN =
   /\p{Extended_Pictographic}(?:\uFE0F|\p{Emoji_Modifier}|\u200D\p{Extended_Pictographic}\uFE0F?)*|[\p{L}\p{M}\p{N}_]+|[^\s\p{L}\p{M}\p{N}_]/gu;
 const ABORT_CHECK_INTERVAL = 256;
