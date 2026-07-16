@@ -53,6 +53,7 @@ describe("popup App", () => {
       ),
     ).toBeTruthy();
     expect(screen.getByText(/2 analisadas/u)).toBeTruthy();
+    expect(screen.getByText("Plataforma: LinkedIn")).toBeTruthy();
     expect(screen.getByText("www.linkedin.com")).toBeTruthy();
   });
 
