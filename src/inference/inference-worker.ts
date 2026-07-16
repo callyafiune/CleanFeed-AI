@@ -18,6 +18,7 @@ import {
 } from "@/inference/worker-protocol";
 import { getTextLengthInfo } from "@/shared/word-count";
 import { DEFAULT_SETTINGS } from "@/shared/constants";
+import { CleanFeedError } from "@/shared/errors";
 import type { ClassificationRequest } from "@/shared/messages";
 import type { UserSettings } from "@/shared/settings-types";
 import type {
@@ -498,6 +499,7 @@ export function installInferenceWorker(
 ): void {
   const runner = runnerFactory();
   const controllers = new Map<string, AbortController>();
+  let runtimeInitialization: Promise<void> | undefined;
 
   scope.addEventListener("message", (event) => {
     let request: WorkerRequest;
@@ -522,7 +524,18 @@ export function installInferenceWorker(
       return;
     }
 
-    void handleMessage(request, runner, controllers, scope, configureRuntime);
+    if (request.type === "INITIALIZE") {
+      runtimeInitialization ??= Promise.resolve(
+        configureRuntime(request.payload),
+      );
+    }
+    void handleMessage(
+      request,
+      runner,
+      controllers,
+      scope,
+      runtimeInitialization,
+    );
   });
 }
 
@@ -531,7 +544,7 @@ async function handleMessage(
   runner: PipelineRunner,
   controllers: Map<string, AbortController>,
   scope: InferenceWorkerScope,
-  configureRuntime: RuntimeConfigurator,
+  runtimeInitialization: Promise<void> | undefined,
 ): Promise<void> {
   const batchItems =
     request.type === "CLASSIFY"
@@ -541,7 +554,7 @@ async function handleMessage(
       : [];
   try {
     if (request.type === "INITIALIZE") {
-      await configureRuntime(request.payload);
+      await runtimeInitialization;
       scope.postMessage({
         type: "STATUS",
         requestId: request.requestId,
@@ -571,6 +584,13 @@ async function handleMessage(
         payload: { ...readyStatus(runner), state: "unavailable" },
       });
       return;
+    }
+
+    if (request.type === "CLASSIFY") {
+      if (runtimeInitialization === undefined) {
+        throw new CleanFeedError("MODEL_LOAD_FAILED", "MODEL_LOAD_FAILED");
+      }
+      await runtimeInitialization;
     }
 
     const items = batchItems;

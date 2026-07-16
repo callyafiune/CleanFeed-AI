@@ -104,11 +104,34 @@ describe("mock worker flow", () => {
           onMessage = listener;
         },
       ),
-      postMessage: vi.fn((message: unknown) => resolveResponse(message)),
+      postMessage: vi.fn((message: unknown) => {
+        if ((message as { type?: string }).type === "RESULT")
+          resolveResponse(message);
+      }),
     };
     vi.stubGlobal("self", workerScope);
 
     await import("@/inference/inference-worker");
+
+    onMessage?.({
+      data: {
+        type: "INITIALIZE",
+        requestId: "worker-initialize",
+        payload: {
+          modelBaseUrl: "chrome-extension://test/models/",
+          wasmBaseUrl: "chrome-extension://test/vendor/transformers-wasm/",
+        },
+      },
+    } as MessageEvent<unknown>);
+    await vi.waitFor(() =>
+      expect(workerScope.postMessage).toHaveBeenCalledWith(
+        expect.objectContaining({
+          type: "STATUS",
+          requestId: "worker-initialize",
+          payload: expect.objectContaining({ state: "ready" }),
+        }),
+      ),
+    );
 
     onMessage?.({
       data: {

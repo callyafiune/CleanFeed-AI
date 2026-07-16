@@ -114,6 +114,24 @@ function waitForWorkerMessage(
   });
 }
 
+async function initializeWorker(scope: ReturnType<typeof workerScope>) {
+  scope.dispatch({
+    type: "INITIALIZE",
+    requestId: "worker-initialize",
+    payload: {
+      modelBaseUrl: "chrome-extension://test/models/",
+      wasmBaseUrl: "chrome-extension://test/vendor/transformers-wasm/",
+    },
+  });
+  await waitForWorkerMessage(
+    scope,
+    (message) =>
+      (message as { type?: string; requestId?: string }).type === "STATUS" &&
+      (message as { requestId?: string }).requestId === "worker-initialize" &&
+      (message as { payload?: { state?: string } }).payload?.state === "ready",
+  );
+}
+
 describe("inference pipeline", () => {
   it("configures extension-local Transformer assets before worker initialization", async () => {
     const runner = new PipelineRunner({ classifier: classifier() });
@@ -143,6 +161,51 @@ describe("inference pipeline", () => {
       modelBaseUrl: "chrome-extension://test/models/",
       wasmBaseUrl: "chrome-extension://test/vendor/transformers-wasm/",
     });
+    expect(configure.mock.invocationCallOrder[0]).toBeLessThan(
+      initialize.mock.invocationCallOrder[0]!,
+    );
+  });
+
+  it("waits for asynchronous runtime configuration before immediate classification", async () => {
+    const runner = new PipelineRunner({ classifier: classifier() });
+    let finishConfiguration: (() => void) | undefined;
+    const configure = vi.fn(
+      () =>
+        new Promise<void>((resolve) => {
+          finishConfiguration = resolve;
+        }),
+    );
+    const initialize = vi.spyOn(runner, "initialize");
+    const scope = workerScope();
+    installInferenceWorker(scope, () => runner, configure);
+
+    scope.dispatch({
+      type: "INITIALIZE",
+      requestId: "worker-initialize",
+      payload: {
+        modelBaseUrl: "chrome-extension://test/models/",
+        wasmBaseUrl: "chrome-extension://test/vendor/transformers-wasm/",
+      },
+    });
+    scope.dispatch({
+      type: "CLASSIFY",
+      requestId: "queued-until-ready",
+      payload: {
+        text: PORTUGUESE_LONG_TEXT,
+        platform: "linkedin",
+        manual: false,
+      },
+    });
+
+    await Promise.resolve();
+    expect(initialize).not.toHaveBeenCalled();
+    finishConfiguration?.();
+    await waitForWorkerMessage(
+      scope,
+      (message) =>
+        (message as { type?: string; requestId?: string }).type === "RESULT" &&
+        (message as { requestId?: string }).requestId === "queued-until-ready",
+    );
     expect(configure.mock.invocationCallOrder[0]).toBeLessThan(
       initialize.mock.invocationCallOrder[0]!,
     );
@@ -243,6 +306,7 @@ describe("inference pipeline", () => {
       scope,
       () => new PipelineRunner({ classifier: batchClassifier }),
     );
+    await initializeWorker(scope);
 
     scope.dispatch(
       workerBatch([
@@ -298,6 +362,7 @@ describe("inference pipeline", () => {
       scope,
       () => new PipelineRunner({ classifier: batchClassifier, tokenizer }),
     );
+    await initializeWorker(scope);
 
     scope.dispatch(
       workerBatch([
@@ -346,6 +411,7 @@ describe("inference pipeline", () => {
       scope,
       () => new PipelineRunner({ classifier: batchClassifier, tokenizer }),
     );
+    await initializeWorker(scope);
 
     scope.dispatch(
       workerBatch([
