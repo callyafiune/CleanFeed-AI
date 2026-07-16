@@ -22,6 +22,7 @@ interface ExactTokenGateway {
   tokenize(text: string): Promise<{
     inputIds: readonly number[];
     specialTokenCount: number;
+    tokenOffsets: readonly { start: number; end: number }[];
   }>;
 }
 
@@ -51,7 +52,7 @@ export class TransformersTokenizer implements Tokenizer {
     }
 
     return {
-      spans: spansForExactCount(text, tokenCount),
+      spans: spansFromModelOffsets(text, tokens.tokenOffsets, tokenCount),
       tokenCount,
       exact: true,
     };
@@ -62,33 +63,34 @@ const TOKEN_PATTERN =
   /\p{Extended_Pictographic}(?:\uFE0F|\p{Emoji_Modifier}|\u200D\p{Extended_Pictographic}\uFE0F?)*|[\p{L}\p{M}\p{N}_]+|[^\s\p{L}\p{M}\p{N}_]/gu;
 const ABORT_CHECK_INTERVAL = 256;
 
-/**
- * The model tokenizer yields exact counts but not source offsets. Map its
- * positions over the non-whitespace source spans so downstream chunking still
- * produces slices of the original text. These IDs are offsets only, never
- * model-vocabulary IDs.
- */
-function spansForExactCount(text: string, tokenCount: number): TokenSpan[] {
-  if (tokenCount === 0) return [];
-
-  const sourceSpans = Array.from(text.matchAll(TOKEN_PATTERN)).map((match) => {
-    const start = match.index!;
-    return { start, end: start + match[0].length };
-  });
-  if (sourceSpans.length === 0) {
-    throw new Error("The model tokenizer counted tokens without source text.");
+function spansFromModelOffsets(
+  text: string,
+  offsets: readonly { start: number; end: number }[],
+  tokenCount: number,
+): TokenSpan[] {
+  if (!Array.isArray(offsets) || offsets.length !== tokenCount) {
+    tokenOffsetsUnavailable();
   }
 
-  return Array.from({ length: tokenCount }, (_, index) => {
-    const first = Math.floor((index * sourceSpans.length) / tokenCount);
-    const last = Math.max(
-      first,
-      Math.ceil(((index + 1) * sourceSpans.length) / tokenCount) - 1,
-    );
-    const start = sourceSpans[first]!.start;
-    const end = sourceSpans[last]!.end;
+  let previousEnd = 0;
+  return offsets.map(({ start, end }) => {
+    if (
+      !Number.isSafeInteger(start) ||
+      !Number.isSafeInteger(end) ||
+      start < previousEnd ||
+      start < 0 ||
+      end <= start ||
+      end > text.length
+    ) {
+      tokenOffsetsUnavailable();
+    }
+    previousEnd = end;
     return { id: fnv1a(text.slice(start, end)), start, end };
   });
+}
+
+function tokenOffsetsUnavailable(): never {
+  throw new Error("MODEL_TOKEN_OFFSETS_UNAVAILABLE");
 }
 
 /**

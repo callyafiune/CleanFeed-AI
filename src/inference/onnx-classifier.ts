@@ -14,8 +14,15 @@ export interface ModelTokens {
   inputIds: readonly number[];
   /** Number of special tokens included in inputIds. */
   specialTokenCount: number;
+  /** UTF-16 source ranges for each non-special model token. */
+  tokenOffsets: readonly ModelTokenOffset[];
   /** Opaque model inputs owned by the concrete gateway. */
   inputs?: Record<string, unknown>;
+}
+
+export interface ModelTokenOffset {
+  start: number;
+  end: number;
 }
 
 export interface TransformersModelGateway {
@@ -28,10 +35,10 @@ export interface TransformersModelGateway {
   dispose(): Promise<void>;
 }
 
-type LocalTokenizer = (
-  text: string,
-  options: TokenizerOptions,
-) => TokenizerOutput;
+interface LocalTokenizer {
+  (text: string, options: TokenizerOptions): TokenizerOutput;
+  decode(tokenIds: readonly number[], options: DecodeOptions): string;
+}
 
 interface TokenizerOptions {
   add_special_tokens: boolean;
@@ -44,6 +51,11 @@ interface TokenizerOutput {
   input_ids: unknown;
   attention_mask?: unknown;
   token_type_ids?: unknown;
+}
+
+interface DecodeOptions {
+  clean_up_tokenization_spaces: false;
+  skip_special_tokens: true;
 }
 
 type LocalSequenceClassifier = {
@@ -89,11 +101,12 @@ export class TransformersJsModelGateway implements TransformersModelGateway {
       truncation: false,
     });
     const inputIds = tokenIds(modelInputs.input_ids);
-    const plainTokenCount = tokenIds(unadorned.input_ids).length;
+    const plainTokenIds = tokenIds(unadorned.input_ids);
 
     return {
       inputIds,
-      specialTokenCount: inputIds.length - plainTokenCount,
+      specialTokenCount: inputIds.length - plainTokenIds.length,
+      tokenOffsets: offsetsFromDecodedPrefixes(text, plainTokenIds, tokenizer),
       inputs: compactInputs(modelInputs),
     };
   }
@@ -144,11 +157,11 @@ export class OnnxTextClassifier implements TextClassifier {
   ) {}
 
   async initialize(): Promise<void> {
-    if (this.initialization !== undefined) return this.initialization;
     if (this.disposal !== undefined) {
       await this.disposal;
       return this.initialize();
     }
+    if (this.initialization !== undefined) return this.initialization;
 
     const generation = this.generation;
     const initialization = this.gateway
@@ -270,6 +283,35 @@ function compactInputs(output: TokenizerOutput): Record<string, unknown> {
       ? {}
       : { token_type_ids: output.token_type_ids }),
   };
+}
+
+function offsetsFromDecodedPrefixes(
+  text: string,
+  tokenIds: readonly number[],
+  tokenizer: LocalTokenizer,
+): ModelTokenOffset[] {
+  let previousEnd = 0;
+
+  return tokenIds.map((_, index) => {
+    const decoded = tokenizer.decode(tokenIds.slice(0, index + 1), {
+      clean_up_tokenization_spaces: false,
+      skip_special_tokens: true,
+    });
+    if (
+      !text.startsWith(decoded) ||
+      decoded.length <= previousEnd ||
+      decoded.length > text.length
+    ) {
+      throw new CleanFeedError(
+        "TOKENIZATION_FAILED",
+        "MODEL_TOKEN_OFFSETS_UNAVAILABLE",
+      );
+    }
+
+    const offset = { start: previousEnd, end: decoded.length };
+    previousEnd = offset.end;
+    return offset;
+  });
 }
 
 function tokenIds(value: unknown): number[] {

@@ -9,6 +9,7 @@ export type {
 export {
   OnnxTextClassifier,
   TransformersJsModelGateway,
+  type ModelTokenOffset,
   type ModelTokens,
   type TransformersModelGateway,
 } from "@/inference/onnx-classifier";

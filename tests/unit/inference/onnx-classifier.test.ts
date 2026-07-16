@@ -75,6 +75,7 @@ describe("OnnxTextClassifier", () => {
       tokens: {
         inputIds: Array.from({ length: 257 }, (_, index) => index),
         specialTokenCount: 2,
+        tokenOffsets: [],
       },
     });
     await classifier.initialize();
@@ -101,7 +102,11 @@ describe("OnnxTextClassifier", () => {
     const beforeSession = new AbortController();
     gateway.tokenize.mockImplementationOnce(async () => {
       beforeSession.abort();
-      return { inputIds: [101, 1, 102], specialTokenCount: 2 };
+      return {
+        inputIds: [101, 1, 102],
+        specialTokenCount: 2,
+        tokenOffsets: [{ start: 0, end: 1 }],
+      };
     });
     await expect(
       classifier.classify(PORTUGUESE_TEXT, { signal: beforeSession.signal }),
@@ -151,6 +156,37 @@ describe("OnnxTextClassifier", () => {
       aiScore: expect.any(Number),
     });
   });
+
+  it("waits for disposal and a live reload before resolving a concurrent initialize", async () => {
+    const firstLoad = deferred<undefined>();
+    const secondLoad = deferred<undefined>();
+    const gateway = new FakeGateway({ logits: [[-1, 2]] });
+    gateway.load
+      .mockImplementationOnce(() => firstLoad.promise)
+      .mockImplementationOnce(() => secondLoad.promise);
+    const classifier = new OnnxTextClassifier(manifest(), gateway, "wasm");
+
+    const firstInitialize = classifier.initialize();
+    const disposing = classifier.dispose();
+    const secondInitialize = classifier.initialize();
+    let secondResolved = false;
+    void secondInitialize.then(() => {
+      secondResolved = true;
+    });
+
+    firstLoad.resolve(undefined);
+    await Promise.all([firstInitialize, disposing]);
+
+    expect(secondResolved).toBe(false);
+    expect(gateway.load).toHaveBeenCalledTimes(2);
+    secondLoad.resolve(undefined);
+    await secondInitialize;
+
+    expect(secondResolved).toBe(true);
+    await expect(classifier.classify(PORTUGUESE_TEXT)).resolves.toMatchObject({
+      aiScore: expect.any(Number),
+    });
+  });
 });
 
 class FakeGateway implements TransformersModelGateway {
@@ -164,6 +200,10 @@ class FakeGateway implements TransformersModelGateway {
     private readonly tokens: ModelTokens = {
       inputIds: [101, 11, 12, 102],
       specialTokenCount: 2,
+      tokenOffsets: [
+        { start: 0, end: 1 },
+        { start: 1, end: 2 },
+      ],
     },
   ) {}
 }
