@@ -459,16 +459,13 @@ export class InferenceQueue<TResult> {
       return;
     }
     const delay = nextExpiry - this.now();
-    if (delay > MAX_TIMER_DELAY_MS) {
-      return;
-    }
     this.expiryTimer = setTimeout(
       () => {
         this.expiryTimer = undefined;
         this.expireDueSubscribers();
         this.schedulePump();
       },
-      Math.max(0, delay),
+      Math.min(MAX_TIMER_DELAY_MS, Math.max(0, delay)),
     );
   }
 

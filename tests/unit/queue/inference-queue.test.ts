@@ -340,6 +340,30 @@ describe("InferenceQueue", () => {
     }
   });
 
+  it("rechecks expiries that are farther away than the maximum timer delay", async () => {
+    vi.useFakeTimers();
+    try {
+      const runner = createRunner();
+      const queue = new InferenceQueue({ run: runner.run, concurrency: 1 });
+      let settled: unknown = "pending";
+      const expiresAt = Date.now() + 2_147_483_647 + 100;
+      const expiring = queue.enqueue(task("far-future", { expiresAt }));
+      void expiring.catch((error: unknown) => {
+        settled = error;
+      });
+
+      await vi.advanceTimersByTimeAsync(2_147_483_647);
+      await flushQueue();
+      expect(settled).toBe("pending");
+
+      await vi.advanceTimersByTimeAsync(100);
+      await flushQueue();
+      expect(settled).toMatchObject({ name: "TimeoutError" });
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it("runs up to two tasks concurrently when configured", async () => {
     const runner = createRunner();
     const queue = new InferenceQueue({ run: runner.run, concurrency: 2 });
