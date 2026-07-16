@@ -10,6 +10,7 @@
     "prebuild": "node scripts/copy-transformers-assets.mjs",
     "dev": "vite",
     "build": "vite build",
+    "postbuild": "node scripts/sanitize-offline-bundle.mjs",
     "test": "vitest",
     "test:e2e": "playwright test",
     "lint": "eslint .",

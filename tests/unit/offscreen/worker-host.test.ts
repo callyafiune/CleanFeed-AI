@@ -17,6 +17,25 @@ const request = {
 };
 
 describe("WorkerHost", () => {
+  it("sends extension-local model and WASM paths when initializing", () => {
+    const worker = new FakeWorker();
+    const host = new WorkerHost(() => worker);
+
+    host.initialize({
+      modelBaseUrl: "chrome-extension://test/models/",
+      wasmBaseUrl: "chrome-extension://test/vendor/transformers-wasm/",
+    });
+
+    expect(worker.postMessage).toHaveBeenCalledWith({
+      type: "INITIALIZE",
+      requestId: "worker-initialize",
+      payload: {
+        modelBaseUrl: "chrome-extension://test/models/",
+        wasmBaseUrl: "chrome-extension://test/vendor/transformers-wasm/",
+      },
+    });
+  });
+
   it("proxies worker lifecycle transitions and exposes worker loss as an error", () => {
     const worker = new FakeWorker();
     const host = new WorkerHost(() => worker);

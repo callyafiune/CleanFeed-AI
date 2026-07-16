@@ -7,6 +7,8 @@ export interface TransformerAssetPaths {
   wasmBaseUrl: string;
 }
 
+let configuredPaths: TransformerAssetPaths | undefined;
+
 /** Configures Transformers.js to resolve every artifact from this extension. */
 export function configureTransformersEnvironment(
   paths: TransformerAssetPaths,
@@ -20,6 +22,12 @@ export function configureTransformersEnvironment(
   const wasm = env.backends.onnx.wasm;
   if (wasm === undefined) modelLoadFailed();
   wasm.wasmPaths = paths.wasmBaseUrl;
+  configuredPaths = { ...paths };
+}
+
+export function getConfiguredTransformerAssetPaths(): TransformerAssetPaths {
+  if (configuredPaths === undefined) modelLoadFailed();
+  return { ...configuredPaths };
 }
 
 function assertExtensionUrl(value: string, pathname: string): void {

@@ -10,7 +10,10 @@ export type WorkerClassifyPayload = ClassificationRequest & {
 export type WorkerBatchClassifyPayload = {
   requests: { requestId: string; payload: WorkerClassifyPayload }[];
 };
-export type WorkerInitializePayload = null;
+export type WorkerInitializePayload = {
+  modelBaseUrl: string;
+  wasmBaseUrl: string;
+};
 
 export type WorkerRequest =
   | { type: "INITIALIZE"; requestId: string; payload: WorkerInitializePayload }
@@ -63,14 +66,40 @@ export function parseWorkerRequest(value: unknown): WorkerRequest {
       isWorkerBatchClassifyPayload(value.payload))
   )
     return value as unknown as WorkerRequest;
+  if (value.type === "INITIALIZE" && isWorkerInitializePayload(value.payload))
+    return value as unknown as WorkerRequest;
   if (
-    ["INITIALIZE", "CANCEL", "STATUS", "DISPOSE"].includes(
-      value.type as string,
-    ) &&
+    ["CANCEL", "STATUS", "DISPOSE"].includes(value.type as string) &&
     value.payload === null
   )
     return value as unknown as WorkerRequest;
   invalidWorkerMessage();
+}
+
+function isWorkerInitializePayload(
+  value: unknown,
+): value is WorkerInitializePayload {
+  return (
+    hasExactKeys(value, ["modelBaseUrl", "wasmBaseUrl"]) &&
+    isExtensionAssetUrl(value.modelBaseUrl, "/models/") &&
+    isExtensionAssetUrl(value.wasmBaseUrl, "/vendor/transformers-wasm/")
+  );
+}
+
+function isExtensionAssetUrl(value: unknown, pathname: string): boolean {
+  if (!isBoundedString(value, 1_000)) return false;
+  try {
+    const url = new URL(value);
+    return (
+      url.protocol === "chrome-extension:" &&
+      url.hostname !== "" &&
+      url.pathname === pathname &&
+      url.search === "" &&
+      url.hash === ""
+    );
+  } catch {
+    return false;
+  }
 }
 
 function isWorkerBatchClassifyPayload(

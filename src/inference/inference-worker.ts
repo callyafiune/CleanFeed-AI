@@ -12,6 +12,7 @@ import { HeuristicTokenizer, type Tokenizer } from "@/inference/tokenizer";
 import {
   parseWorkerRequest,
   serializeWorkerError,
+  type WorkerInitializePayload,
   type WorkerRequest,
   type WorkerResponse,
 } from "@/inference/worker-protocol";
@@ -41,6 +42,10 @@ export interface PipelineRunnerOptions {
   detector?: LanguageDetector;
   tokenizer?: Tokenizer;
 }
+
+type RuntimeConfigurator = (
+  paths: WorkerInitializePayload,
+) => void | Promise<void>;
 
 /** A single request in a worker batch, with cancellation owned by that request. */
 export interface PipelineBatchItem {
@@ -485,6 +490,11 @@ function languageAbstention(
 export function installInferenceWorker(
   scope: InferenceWorkerScope,
   runnerFactory: () => PipelineRunner = () => new PipelineRunner(),
+  configureRuntime: RuntimeConfigurator = async (paths) => {
+    const { configureTransformersEnvironment } =
+      await import("@/inference/transformers-environment");
+    configureTransformersEnvironment(paths);
+  },
 ): void {
   const runner = runnerFactory();
   const controllers = new Map<string, AbortController>();
@@ -512,7 +522,7 @@ export function installInferenceWorker(
       return;
     }
 
-    void handleMessage(request, runner, controllers, scope);
+    void handleMessage(request, runner, controllers, scope, configureRuntime);
   });
 }
 
@@ -521,6 +531,7 @@ async function handleMessage(
   runner: PipelineRunner,
   controllers: Map<string, AbortController>,
   scope: InferenceWorkerScope,
+  configureRuntime: RuntimeConfigurator,
 ): Promise<void> {
   const batchItems =
     request.type === "CLASSIFY"
@@ -530,6 +541,7 @@ async function handleMessage(
       : [];
   try {
     if (request.type === "INITIALIZE") {
+      await configureRuntime(request.payload);
       scope.postMessage({
         type: "STATUS",
         requestId: request.requestId,

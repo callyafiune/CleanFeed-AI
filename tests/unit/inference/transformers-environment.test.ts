@@ -4,6 +4,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { configureTransformersEnvironment } from "@/inference/transformers-environment";
 import type { CleanFeedModelManifest } from "@/inference/model-bundle";
 import { loadLocalSequenceClassifier } from "@/inference/model-loader";
+import validManifest from "../../fixtures/models/valid/cleanfeed-model.json";
 
 const fromPretrained = vi.hoisted(() => vi.fn());
 
@@ -20,6 +21,7 @@ const originalEnvironment = {
 };
 
 afterEach(() => {
+  fromPretrained.mockReset();
   env.allowRemoteModels = originalEnvironment.allowRemoteModels;
   env.allowLocalModels = originalEnvironment.allowLocalModels;
   env.localModelPath = originalEnvironment.localModelPath;
@@ -50,17 +52,54 @@ describe("Transformers environment", () => {
     ).toThrow("MODEL_LOAD_FAILED");
   });
 
-  it("loads its manifest id through the selected local backend", async () => {
+  it("verifies the local model bundle before it reaches Transformers", async () => {
     fromPretrained.mockResolvedValue({ id: "loaded-model" });
-    const manifest = { id: "cleanfeed-detector-v1" } as CleanFeedModelManifest;
+    configureTransformersEnvironment({
+      modelBaseUrl: "chrome-extension://test/models/",
+      wasmBaseUrl: "chrome-extension://test/vendor/transformers-wasm/",
+    });
+    const fetchLocalArtifact = vi.fn(async (input: string) => {
+      const body = input.endsWith("model.onnx")
+        ? "model"
+        : input.endsWith("tokenizer.json")
+          ? "tokenizer"
+          : "config";
+      return new Response(body, { status: 200 });
+    });
 
     await expect(
-      loadLocalSequenceClassifier(manifest, "wasm"),
+      loadLocalSequenceClassifier(
+        validManifest as CleanFeedModelManifest,
+        "wasm",
+        fetchLocalArtifact,
+      ),
     ).resolves.toEqual({ id: "loaded-model" });
     expect(fromPretrained).toHaveBeenCalledWith("cleanfeed-detector-v1", {
       local_files_only: true,
       device: "wasm",
     });
+    expect(fetchLocalArtifact).toHaveBeenCalledTimes(3);
+  });
+
+  it("fails closed when local bundle verification cannot fetch an artifact", async () => {
+    fromPretrained.mockResolvedValue({ id: "must-not-load" });
+    configureTransformersEnvironment({
+      modelBaseUrl: "chrome-extension://test/models/",
+      wasmBaseUrl: "chrome-extension://test/vendor/transformers-wasm/",
+    });
+    const deniedNetwork = vi.fn(async () => {
+      throw new Error("network access denied");
+    });
+
+    await expect(
+      loadLocalSequenceClassifier(
+        validManifest as CleanFeedModelManifest,
+        "wasm",
+        deniedNetwork,
+      ),
+    ).rejects.toThrow("MODEL_LOAD_FAILED");
+    expect(deniedNetwork).toHaveBeenCalledTimes(3);
+    expect(fromPretrained).not.toHaveBeenCalled();
   });
 });
 

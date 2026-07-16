@@ -115,6 +115,39 @@ function waitForWorkerMessage(
 }
 
 describe("inference pipeline", () => {
+  it("configures extension-local Transformer assets before worker initialization", async () => {
+    const runner = new PipelineRunner({ classifier: classifier() });
+    const configure = vi.fn();
+    const scope = workerScope();
+    const initialize = vi.spyOn(runner, "initialize");
+    installInferenceWorker(scope, () => runner, configure);
+
+    scope.dispatch({
+      type: "INITIALIZE",
+      requestId: "worker-initialize",
+      payload: {
+        modelBaseUrl: "chrome-extension://test/models/",
+        wasmBaseUrl: "chrome-extension://test/vendor/transformers-wasm/",
+      },
+    });
+
+    await waitForWorkerMessage(
+      scope,
+      (message) =>
+        (message as { type?: string; requestId?: string }).type === "STATUS" &&
+        (message as { requestId?: string }).requestId === "worker-initialize" &&
+        (message as { payload?: { state?: string } }).payload?.state ===
+          "ready",
+    );
+    expect(configure).toHaveBeenCalledWith({
+      modelBaseUrl: "chrome-extension://test/models/",
+      wasmBaseUrl: "chrome-extension://test/vendor/transformers-wasm/",
+    });
+    expect(configure.mock.invocationCallOrder[0]).toBeLessThan(
+      initialize.mock.invocationCallOrder[0]!,
+    );
+  });
+
   it("runs language, tokenization, chunks, classification, aggregation and calibration", async () => {
     const runner = new PipelineRunner({ classifier: classifier() });
 

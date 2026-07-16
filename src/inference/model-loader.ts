@@ -1,4 +1,9 @@
-import type { CleanFeedModelManifest } from "@/inference/model-bundle";
+import {
+  verifyModelBundle,
+  type BundleFetch,
+  type CleanFeedModelManifest,
+} from "@/inference/model-bundle";
+import { getConfiguredTransformerAssetPaths } from "@/inference/transformers-environment";
 
 export type LocalInferenceBackend = "wasm" | "webgpu";
 
@@ -6,7 +11,10 @@ export type LocalInferenceBackend = "wasm" | "webgpu";
 export async function loadLocalSequenceClassifier(
   manifest: CleanFeedModelManifest,
   backend: LocalInferenceBackend,
+  fetchImpl: BundleFetch = fetch,
 ) {
+  const paths = getConfiguredTransformerAssetPaths();
+  await verifyModelBundle(manifest, paths.modelBaseUrl, fetchImpl);
   const { AutoModelForSequenceClassification } =
     await import("@huggingface/transformers");
   return AutoModelForSequenceClassification.from_pretrained(manifest.id, {

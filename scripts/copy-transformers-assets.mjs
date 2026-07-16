@@ -5,10 +5,6 @@ import { argv } from "node:process";
 import { fileURLToPath } from "node:url";
 
 const runtimeDirectory = dirname(fileURLToPath(import.meta.url));
-const REQUIRED_ASSETS = [
-  "ort-wasm-simd-threaded.mjs",
-  "ort-wasm-simd-threaded.wasm",
-];
 const ASSET_MANIFEST = "assets-manifest.json";
 const assetName = /^[a-z0-9][a-z0-9.-]*\.(?:mjs|wasm)$/u;
 const sha256 = /^[a-f0-9]{64}$/u;
@@ -18,16 +14,23 @@ export async function copyTransformersAssets({
     runtimeDirectory,
     "../node_modules/onnxruntime-web/dist",
   ),
+  transformersDistDirectory = resolve(
+    runtimeDirectory,
+    "../node_modules/@huggingface/transformers/dist",
+  ),
   outputDirectory = resolve(
     runtimeDirectory,
     "../public/vendor/transformers-wasm",
   ),
 } = {}) {
+  const requiredAssets = await resolveTransformersWasmAssets(
+    transformersDistDirectory,
+  );
   await rm(outputDirectory, { recursive: true, force: true });
   await mkdir(outputDirectory, { recursive: true });
 
   const assets = [];
-  for (const file of REQUIRED_ASSETS) {
+  for (const file of requiredAssets) {
     if (!assetName.test(file)) modelLoadFailed();
     const source = join(sourceDirectory, file);
     const destination = join(outputDirectory, file);
@@ -41,16 +44,54 @@ export async function copyTransformersAssets({
     assets.push({ file, sha256: hash(contents) });
   }
 
-  const manifest = { version: 1, assets };
+  const manifest = {
+    version: 1,
+    runtime: {
+      transformers: await packageVersion(
+        join(transformersDistDirectory, "../package.json"),
+      ),
+      onnxruntimeWeb: await packageVersion(
+        join(sourceDirectory, "../package.json"),
+      ),
+    },
+    assets,
+  };
   await writeFile(
     join(outputDirectory, ASSET_MANIFEST),
     `${JSON.stringify(manifest, null, 2)}\n`,
   );
-  await assertOfflineAssetInventory(outputDirectory);
+  await assertOfflineAssetInventory(outputDirectory, requiredAssets);
   return manifest;
 }
 
-export async function assertOfflineAssetInventory(assetDirectory) {
+export async function resolveTransformersWasmAssets(transformersDistDirectory) {
+  let runtime;
+  try {
+    runtime = await readFile(
+      join(transformersDistDirectory, "transformers.web.js"),
+      "utf8",
+    );
+  } catch {
+    modelLoadFailed();
+  }
+  const assets = [
+    ...new Set(
+      runtime.match(/ort-wasm-simd-threaded[\w.-]*\.(?:mjs|wasm)/gu) ?? [],
+    ),
+  ].sort();
+  if (assets.length === 0 || assets.some((asset) => !assetName.test(asset))) {
+    modelLoadFailed();
+  }
+  return assets;
+}
+
+export async function assertOfflineAssetInventory(
+  assetDirectory,
+  requiredAssets,
+) {
+  requiredAssets ??= await resolveTransformersWasmAssets(
+    resolve(runtimeDirectory, "../node_modules/@huggingface/transformers/dist"),
+  );
   let manifest;
   let files;
   try {
@@ -67,12 +108,12 @@ export async function assertOfflineAssetInventory(assetDirectory) {
     manifest.assets
       .map(({ file }) => file)
       .sort()
-      .join("\n") !== [...REQUIRED_ASSETS].sort().join("\n") ||
+      .join("\n") !== [...requiredAssets].sort().join("\n") ||
     files.some((file) => !file.isFile()) ||
     files
       .map((file) => file.name)
       .sort()
-      .join("\n") !== [...REQUIRED_ASSETS, ASSET_MANIFEST].sort().join("\n")
+      .join("\n") !== [...requiredAssets, ASSET_MANIFEST].sort().join("\n")
   ) {
     modelLoadFailed();
   }
@@ -94,8 +135,9 @@ function isManifest(value) {
     value !== null &&
     typeof value === "object" &&
     value.version === 1 &&
+    isRuntimeProvenance(value.runtime) &&
     Array.isArray(value.assets) &&
-    value.assets.length === REQUIRED_ASSETS.length &&
+    value.assets.length > 0 &&
     value.assets.every(
       (asset) =>
         asset !== null &&
@@ -107,6 +149,36 @@ function isManifest(value) {
         sha256.test(asset.sha256),
     )
   );
+}
+
+function isRuntimeProvenance(value) {
+  return (
+    value !== null &&
+    typeof value === "object" &&
+    Object.keys(value).length === 2 &&
+    typeof value.transformers === "string" &&
+    value.transformers.length > 0 &&
+    typeof value.onnxruntimeWeb === "string" &&
+    value.onnxruntimeWeb.length > 0
+  );
+}
+
+async function packageVersion(packageJsonPath) {
+  let value;
+  try {
+    value = JSON.parse(await readFile(packageJsonPath, "utf8"));
+  } catch {
+    modelLoadFailed();
+  }
+  if (
+    value === null ||
+    typeof value !== "object" ||
+    typeof value.version !== "string" ||
+    value.version.length === 0
+  ) {
+    modelLoadFailed();
+  }
+  return value.version;
 }
 
 function hash(contents) {

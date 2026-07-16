@@ -4,6 +4,7 @@ import type { UserSettings } from "@/shared/settings-types";
 import type { ClassificationResult, ModelStatus } from "@/shared/types";
 import {
   parseWorkerResponse,
+  type WorkerInitializePayload,
   type WorkerRequest,
   type WorkerResponse,
 } from "@/inference/worker-protocol";
@@ -96,8 +97,20 @@ export class WorkerHost implements WorkerClassifierClient {
     return { cancelledTasks: this.cancelledTasks };
   }
 
-  initialize(requestId = "worker-initialize"): void {
-    this.postControl("INITIALIZE", requestId);
+  initialize(
+    paths: WorkerInitializePayload,
+    requestId = "worker-initialize",
+  ): void {
+    if (!this.workerAvailable) return;
+    try {
+      this.worker.postMessage({
+        type: "INITIALIZE",
+        requestId,
+        payload: paths,
+      });
+    } catch {
+      /* worker loss is best-effort */
+    }
   }
 
   status(requestId = "worker-status"): void {
@@ -197,10 +210,7 @@ export class WorkerHost implements WorkerClassifierClient {
     }
   }
 
-  private postControl(
-    type: "INITIALIZE" | "STATUS" | "DISPOSE",
-    requestId: string,
-  ): void {
+  private postControl(type: "STATUS" | "DISPOSE", requestId: string): void {
     if (!this.workerAvailable) return;
     try {
       this.worker.postMessage({ type, requestId, payload: null });

@@ -3,7 +3,10 @@ import { parseExtensionMessage } from "@/shared/message-validation";
 import { WorkerHost } from "@/offscreen/worker-host";
 
 const workerHost = new WorkerHost();
-workerHost.initialize();
+workerHost.initialize({
+  modelBaseUrl: chrome.runtime.getURL("models/"),
+  wasmBaseUrl: chrome.runtime.getURL("vendor/transformers-wasm/"),
+});
 
 chrome.runtime.onMessage.addListener((rawMessage, _sender, sendResponse) => {
   let message;

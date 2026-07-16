@@ -5,11 +5,16 @@ export interface OfflineAsset {
 
 export interface OfflineAssetManifest {
   version: 1;
+  runtime: {
+    transformers: string;
+    onnxruntimeWeb: string;
+  };
   assets: OfflineAsset[];
 }
 
 export interface CopyTransformersAssetsOptions {
   sourceDirectory?: string;
+  transformersDistDirectory?: string;
   outputDirectory?: string;
 }
 
@@ -19,4 +24,9 @@ export function copyTransformersAssets(
 
 export function assertOfflineAssetInventory(
   assetDirectory: string,
+  requiredAssets?: string[],
 ): Promise<OfflineAssetManifest>;
+
+export function resolveTransformersWasmAssets(
+  transformersDistDirectory: string,
+): Promise<string[]>;

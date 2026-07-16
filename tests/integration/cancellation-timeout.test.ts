@@ -132,13 +132,22 @@ describe("worker cancellation and timeout", () => {
   it("emits worker lifecycle protocol controls", () => {
     const worker = workerThatNeverResponds();
     const host = new WorkerHost(() => worker);
-    host.initialize("initialize");
+    host.initialize(
+      {
+        modelBaseUrl: "chrome-extension://test/models/",
+        wasmBaseUrl: "chrome-extension://test/vendor/transformers-wasm/",
+      },
+      "initialize",
+    );
     host.status("status");
     host.dispose();
     expect(worker.postMessage).toHaveBeenCalledWith({
       type: "INITIALIZE",
       requestId: "initialize",
-      payload: null,
+      payload: {
+        modelBaseUrl: "chrome-extension://test/models/",
+        wasmBaseUrl: "chrome-extension://test/vendor/transformers-wasm/",
+      },
     });
     expect(worker.postMessage).toHaveBeenCalledWith({
       type: "STATUS",

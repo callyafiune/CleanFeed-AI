@@ -1,59 +1,69 @@
-import { mkdtemp, rm } from "node:fs/promises";
-import { tmpdir } from "node:os";
+import { readdir, readFile } from "node:fs/promises";
 import { join } from "node:path";
-import { afterEach, describe, expect, it } from "vitest";
+import { describe, expect, it } from "vitest";
 
 import {
   assertOfflineAssetInventory,
-  copyTransformersAssets,
+  resolveTransformersWasmAssets,
 } from "../../scripts/copy-transformers-assets.mjs";
 
-const temporaryDirectories: string[] = [];
-
-afterEach(async () => {
-  await Promise.all(
-    temporaryDirectories
-      .splice(0)
-      .map((directory) => rm(directory, { recursive: true, force: true })),
-  );
-});
-
-async function temporaryDirectory(prefix: string): Promise<string> {
-  const directory = await mkdtemp(join(tmpdir(), prefix));
-  temporaryDirectories.push(directory);
-  return directory;
-}
+const distDirectory = join(process.cwd(), "dist");
+const distAssetDirectory = join(distDirectory, "vendor", "transformers-wasm");
+const transformersDistDirectory = join(
+  process.cwd(),
+  "node_modules",
+  "@huggingface",
+  "transformers",
+  "dist",
+);
 
 describe("offline Transformers assets", () => {
   it("fails the build inventory when a referenced WASM asset is absent", async () => {
-    const missingAssetDir = await temporaryDirectory("cleanfeed-missing-wasm-");
-
-    await expect(assertOfflineAssetInventory(missingAssetDir)).rejects.toThrow(
-      "MODEL_LOAD_FAILED",
-    );
+    await expect(
+      assertOfflineAssetInventory(join(distDirectory, "missing-runtime")),
+    ).rejects.toThrow("MODEL_LOAD_FAILED");
   });
 
-  it("copies only hashed local WASM runtime assets", async () => {
-    const outputDirectory = await temporaryDirectory("cleanfeed-wasm-assets-");
-    const sourceDirectory = join(
-      process.cwd(),
-      "node_modules",
-      "onnxruntime-web",
-      "dist",
+  it("ships exactly the WASM files resolved by the installed Transformers runtime", async () => {
+    const resolvedAssets = await resolveTransformersWasmAssets(
+      transformersDistDirectory,
     );
-
-    await copyTransformersAssets({ sourceDirectory, outputDirectory });
-
-    await expect(assertOfflineAssetInventory(outputDirectory)).resolves.toEqual(
-      expect.objectContaining({ assets: expect.any(Array) }),
+    const manifest = await assertOfflineAssetInventory(
+      distAssetDirectory,
+      resolvedAssets,
     );
-    const manifest = await assertOfflineAssetInventory(outputDirectory);
-    expect(manifest.assets.map((asset) => asset.file).sort()).toEqual([
-      "ort-wasm-simd-threaded.mjs",
-      "ort-wasm-simd-threaded.wasm",
-    ]);
+    expect(manifest.assets.map((asset) => asset.file).sort()).toEqual(
+      resolvedAssets,
+    );
+    expect(manifest.runtime).toEqual({
+      transformers: expect.any(String),
+      onnxruntimeWeb: expect.any(String),
+    });
     expect(
       manifest.assets.every((asset) => /^[a-f0-9]{64}$/u.test(asset.sha256)),
     ).toBe(true);
   });
+
+  it("ships no remote runtime references in extension code or local assets", async () => {
+    const files = await collectTextFiles(distDirectory);
+    const contents = await Promise.all(
+      files.map((file) => readFile(file, "utf8")),
+    );
+
+    expect(contents.join("\n")).not.toMatch(
+      /https?:\/\/(?:[^/]+\.)?(?:huggingface\.co|cdn[^/]*)/iu,
+    );
+  });
 });
+
+async function collectTextFiles(directory: string): Promise<string[]> {
+  const entries = await readdir(directory, { withFileTypes: true });
+  const files = await Promise.all(
+    entries.map(async (entry) => {
+      const path = join(directory, entry.name);
+      if (entry.isDirectory()) return collectTextFiles(path);
+      return /\.(?:html|js|json|mjs)$/u.test(entry.name) ? [path] : [];
+    }),
+  );
+  return files.flat();
+}
