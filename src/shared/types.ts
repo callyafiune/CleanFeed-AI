@@ -301,3 +301,39 @@ export interface StorageArea {
 export interface Clock {
   now(): number;
 }
+
+/** How a history row was produced: AI classification or a personal rule. */
+export type HistoryOrigin = "ai" | "rule";
+
+/** The user's local, non-identifying verdict recorded alongside a history row. */
+export type HistoryFeedbackVerdict = "human" | "ai" | "unknown";
+
+/**
+ * One row of the optional local history. It carries only a content hash plus the
+ * minimal metadata needed to render a diagnostics list. It MUST never hold the
+ * post's text, author or URL. Opted-in full text (only when the user enables it)
+ * is stored under a separate storage key and is never part of a row.
+ */
+export interface HistoryEntry {
+  textHash: string;
+  platform: string;
+  status: ClassificationStatus;
+  score: number;
+  timestamp: number;
+  origin?: HistoryOrigin;
+  action?: PresentationMode;
+  revealed?: boolean;
+  feedback?: HistoryFeedbackVerdict;
+}
+
+/**
+ * The MVP personalization boundary. Feedback is collect-only: it never adjusts
+ * thresholds nor trains a classifier. The named future stages
+ * (`threshold_adjustment` for 20–99 samples, `auxiliary_classifier` for 100+)
+ * remain disabled until a dedicated spec and an explicit opt-in exist.
+ */
+export interface PersonalizationStage {
+  stage: "collect_only" | "threshold_adjustment" | "auxiliary_classifier";
+  appliesThresholdAdjustment: boolean;
+  trainsAuxiliaryClassifier: boolean;
+}

@@ -19,9 +19,14 @@ import type { EffectiveSettings } from "@/shared/settings-types";
 import { sha256 } from "@/shared/hashing";
 import { parseExtensionMessage } from "@/shared/message-validation";
 import { normalizeText } from "@/shared/text-normalization";
-import type { ClassificationResult, PlatformAdapter } from "@/shared/types";
+import type {
+  ClassificationResult,
+  PlatformAdapter,
+  PresentationMode,
+} from "@/shared/types";
 import type { RuleMatchResult } from "@/rules/rule-engine";
 import { FeedbackRepository, type FeedbackVerdict } from "@/storage/feedback";
+import { HistoryRepository } from "@/storage/history";
 import { ChromeStorageArea } from "@/storage/storage-area";
 
 /**
@@ -91,6 +96,13 @@ export interface PostControllerOptions {
    * surfaced as its own origin and never changes the AI status.
    */
   ruleMatcher?: RuleMatcher;
+  /**
+   * Optional local, opt-in history store. When present, each successful
+   * classification (and any later feedback) is recorded, honoring the user's
+   * `historyEnabled` / `storeFullText` settings. It is off by default, keeps no
+   * text unless explicitly opted in, and never records author or URL.
+   */
+  history?: HistoryRepository;
   now?: () => number;
 }
 
@@ -107,6 +119,7 @@ export class PostController {
   private readonly hashText: (text: string) => Promise<string>;
   private readonly feedback: FeedbackRepository;
   private readonly ruleMatcher: RuleMatcher | undefined;
+  private readonly history: HistoryRepository;
   private readonly now: () => number;
   private readonly states = new WeakMap<HTMLElement, PostRuntimeState>();
   private readonly observed = new Set<HTMLElement>();
@@ -131,6 +144,8 @@ export class PostController {
     this.feedback =
       options.feedback ?? new FeedbackRepository(new ChromeStorageArea());
     this.ruleMatcher = options.ruleMatcher;
+    this.history =
+      options.history ?? new HistoryRepository(new ChromeStorageArea());
     this.now = options.now ?? (() => Date.now());
   }
 
@@ -412,6 +427,7 @@ export class PostController {
       state.state = "classified";
       element.dataset.cleanfeedState = "classified";
       this.stats.classified(result, mode);
+      void this.recordHistory(hash, result, mode, text);
     } catch {
       if (this.running && element.isConnected && !state.cancelled) {
         state.state = "failed";
@@ -460,12 +476,18 @@ export class PostController {
     });
   }
 
-  /** Stores a local, non-identifying verdict; storage failures are ignored. */
+  /**
+   * Stores a local, non-identifying verdict; storage failures are ignored. The
+   * verdict is also mirrored into the opt-in history (updating the row for the
+   * same hash), but feedback lives in its OWN repository and never changes the
+   * model or thresholds: it is collect-only in the MVP.
+   */
   private recordFeedback(
     hash: string,
     result: ClassificationResult,
     verdict: FeedbackVerdict,
   ): Promise<void> {
+    void this.recordHistory(hash, result, null, undefined, verdict);
     return this.feedback
       .add({
         textHash: hash,
@@ -476,6 +498,42 @@ export class PostController {
         platform: this.options.adapter.id,
         createdAt: this.now(),
       })
+      .catch(() => undefined);
+  }
+
+  /**
+   * Records (or, by hash, updates) one history row, honoring the user's
+   * `historyEnabled` / `storeFullText` settings. Off by default, it writes
+   * nothing unless enabled; text is passed only when the user opted in and is
+   * persisted separately by the repository. Author and URL are never recorded.
+   * Failures are swallowed so history can never disturb classification.
+   */
+  private recordHistory(
+    hash: string,
+    result: ClassificationResult,
+    mode: PresentationMode | null,
+    text: string | undefined,
+    feedback?: FeedbackVerdict,
+  ): Promise<void> {
+    return this.history
+      .add(
+        {
+          textHash: hash,
+          platform: this.options.adapter.id,
+          status: result.status,
+          score: result.decision?.calibratedScore ?? result.aiScore,
+          timestamp: this.now(),
+          origin: "ai",
+          ...(mode !== null ? { action: mode } : {}),
+          ...(feedback !== undefined ? { feedback } : {}),
+        },
+        {
+          historyEnabled: this.options.settings.historyEnabled,
+          storeFullText: this.options.settings.storeFullText,
+          retentionDays: this.options.settings.historyRetentionDays,
+          text,
+        },
+      )
       .catch(() => undefined);
   }
 

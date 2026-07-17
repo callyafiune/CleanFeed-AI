@@ -64,6 +64,14 @@ export interface FeedbackRepositoryOptions {
  * A bounded, local-only store of classification feedback keyed by content hash.
  * Mirrors the other storage repositories: a single serialized value guarded by
  * an allowlist validator, a serialized mutation queue and versioned recovery.
+ *
+ * Feedback is COLLECT-ONLY in the MVP: this repository only records verdicts. It
+ * never adjusts thresholds nor trains any classifier, and it stays wholly
+ * separate from the history store — the personalization boundary
+ * (`getPersonalizationStage`) always resolves to `collect_only`. When feedback
+ * is given, the caller may also update the opt-in history row for the same
+ * `textHash`, but that coordination lives in the caller and never flows back to
+ * mutate the model here.
  */
 export class FeedbackRepository {
   private mutation = Promise.resolve();
