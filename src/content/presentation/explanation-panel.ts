@@ -8,6 +8,17 @@ export interface ExplanationPanelCallbacks {
   onFeedback: (verdict: FeedbackVerdict) => void | Promise<void>;
   /** Invoked when the user dismisses the panel via its close control. */
   onClose?: () => void;
+  /**
+   * Whether the experimental personal-rules feature is enabled. Only then does
+   * the panel offer a control to create a rule for the current post.
+   */
+  personalRulesEnabled?: boolean;
+  /**
+   * Opens the rule editor for this post. The panel never sees the post text, so
+   * it cannot (and must not) prefill the pattern; the editor opens with an empty
+   * pattern and the platform prefilled.
+   */
+  onCreateRule?: () => void;
 }
 
 const HEADING = "Indícios observados";
@@ -19,6 +30,7 @@ const FEEDBACK_QUESTION = "Este resultado parece correto?";
 const FEEDBACK_CONFIRMATION =
   "Recebemos seu feedback. Ele fica apenas neste navegador.";
 const CLOSE_LABEL = "Fechar";
+const CREATE_RULE_LABEL = "Adicionar regra para este post";
 
 /** Static, probabilistic phrasing for every reason code the pipeline emits. */
 const REASON_PHRASES: Record<ReasonCode, string> = {
@@ -234,6 +246,20 @@ function buildFooter(
 ): HTMLElement {
   const footer = doc.createElement("div");
   footer.className = "cleanfeed-explanation__footer";
+
+  // Only surface the personal-rule action when the experimental feature is on.
+  // The panel intentionally cannot copy the post into the pattern: it never
+  // receives the post text, so the editor opens with an empty pattern.
+  if (callbacks.personalRulesEnabled === true) {
+    const createRule = doc.createElement("button");
+    createRule.type = "button";
+    createRule.className = "cleanfeed-explanation__create-rule";
+    createRule.textContent = CREATE_RULE_LABEL;
+    createRule.addEventListener("click", () => {
+      callbacks.onCreateRule?.();
+    });
+    footer.append(createRule);
+  }
 
   const close = doc.createElement("button");
   close.type = "button";

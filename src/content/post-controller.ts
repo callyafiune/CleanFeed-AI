@@ -20,8 +20,19 @@ import { sha256 } from "@/shared/hashing";
 import { parseExtensionMessage } from "@/shared/message-validation";
 import { normalizeText } from "@/shared/text-normalization";
 import type { ClassificationResult, PlatformAdapter } from "@/shared/types";
+import type { RuleMatchResult } from "@/rules/rule-engine";
 import { FeedbackRepository, type FeedbackVerdict } from "@/storage/feedback";
 import { ChromeStorageArea } from "@/storage/storage-area";
+
+/**
+ * Evaluates the page's personal keyword rules for one post. It is a separate
+ * seam from AI classification: it takes only the normalized text and platform,
+ * and returns a rule outcome that never carries a classification score.
+ */
+export type RuleMatcher = (
+  text: string,
+  platform: string,
+) => Promise<RuleMatchResult>;
 
 export type IntersectionObserverFactory = (
   callback: (changes: PostViewportChange[]) => void,
@@ -44,6 +55,11 @@ interface PostRuntimeState {
   presentationApplied: boolean;
   hash?: string;
   result?: ClassificationResult;
+  /**
+   * Outcome of the personal-rule evaluation for this post, kept strictly apart
+   * from {@link result} so a rule match never mutates the AI classification.
+   */
+  ruleResult?: RuleMatchResult;
   /**
    * Set when the user explicitly re-requests analysis of an already-classified
    * post, so its own remembered hash does not make it skip as duplicate content.
@@ -69,6 +85,12 @@ export interface PostControllerOptions {
   modelAvailable?: () => boolean;
   hashText?: (text: string) => Promise<string>;
   feedback?: FeedbackRepository;
+  /**
+   * Optional personal-rule evaluator. When provided, each post's normalized text
+   * is checked against the user's rules alongside AI classification; a match is
+   * surfaced as its own origin and never changes the AI status.
+   */
+  ruleMatcher?: RuleMatcher;
   now?: () => number;
 }
 
@@ -84,6 +106,7 @@ export class PostController {
   private domainEnabled: boolean;
   private readonly hashText: (text: string) => Promise<string>;
   private readonly feedback: FeedbackRepository;
+  private readonly ruleMatcher: RuleMatcher | undefined;
   private readonly now: () => number;
   private readonly states = new WeakMap<HTMLElement, PostRuntimeState>();
   private readonly observed = new Set<HTMLElement>();
@@ -107,6 +130,7 @@ export class PostController {
     this.hashText = options.hashText ?? sha256;
     this.feedback =
       options.feedback ?? new FeedbackRepository(new ChromeStorageArea());
+    this.ruleMatcher = options.ruleMatcher;
     this.now = options.now ?? (() => Date.now());
   }
 
@@ -325,6 +349,11 @@ export class PostController {
     // A user-initiated re-analysis must not skip on its own remembered hash.
     const skipDedup = state.manualRun === true;
     state.manualRun = false;
+    if (this.ruleMatcher !== undefined) {
+      await this.evaluateRules(element, state, text);
+      if (!this.running || state.cancelled || state.state !== "classifying")
+        return;
+    }
     const eligibility = evaluateEligibility({
       text,
       enabled: this.options.settings.enabled,
@@ -388,6 +417,33 @@ export class PostController {
         state.state = "failed";
         element.dataset.cleanfeedState = "classification-failed";
       }
+    }
+  }
+
+  /**
+   * Evaluates the personal keyword rules for this post and, on a match, marks
+   * the element with a dedicated `data-cleanfeed-rule` origin. This is strictly
+   * separate from AI classification: it never writes {@link PostRuntimeState.result}
+   * or the `data-cleanfeed-state` attribute, so a rule cannot mutate AI status.
+   * A rule failure (including a worker timeout) is swallowed so it can never
+   * block or alter classification.
+   */
+  private async evaluateRules(
+    element: HTMLElement,
+    state: PostRuntimeState,
+    text: string,
+  ): Promise<void> {
+    if (this.ruleMatcher === undefined || text.length === 0) return;
+    try {
+      const ruleResult = await this.ruleMatcher(text, this.options.adapter.id);
+      if (!this.running || state.cancelled || !element.isConnected) return;
+      state.ruleResult = ruleResult;
+      if (ruleResult.matched) {
+        element.dataset.cleanfeedRule = ruleResult.action ?? "label";
+      }
+    } catch {
+      // Personal rules are best-effort and strictly separate from AI; a failure
+      // must never surface or interrupt classification.
     }
   }
 
