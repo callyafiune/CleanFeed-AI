@@ -206,6 +206,20 @@ export interface AggregateMetrics {
   backendUsage: Record<string, number>;
 }
 
+/**
+ * The aggregate metrics `MetricsRepository.get()` exposes: every field of
+ * {@link AggregateMetrics} plus the approximate high percentiles, the largest
+ * observed queue size and the per-model usage tally. None of these can carry
+ * post text, hashes or URLs. Declared here (beside its base) so the `shared`
+ * layer stays self-contained and storage/diagnostics import it, not vice versa.
+ */
+export interface AggregateMetricsSnapshot extends AggregateMetrics {
+  p90InferenceMs: number;
+  p95InferenceMs: number;
+  maximumQueueSize: number;
+  modelUsage: Record<string, number>;
+}
+
 export interface CachedClassification {
   result: ClassificationResult;
   createdAt: number;

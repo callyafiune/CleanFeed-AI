@@ -56,7 +56,12 @@ describe("MetricsRepository", () => {
       cancelledTasks: 0,
       revealedPosts: 0,
       averageInferenceMs: 30,
-      medianInferenceMs: 30,
+      // Percentiles are approximated from bounded histogram buckets (capped at
+      // the observed maximum), not computed from retained raw samples.
+      medianInferenceMs: 36,
+      p90InferenceMs: 36,
+      p95InferenceMs: 36,
+      maximumQueueSize: 0,
       resultsByStatus: {
         probably_human: 1,
         inconclusive: 0,
@@ -66,6 +71,7 @@ describe("MetricsRepository", () => {
         classification_failed: 0,
       },
       backendUsage: { mock: 1 },
+      modelUsage: {},
     });
   });
 
