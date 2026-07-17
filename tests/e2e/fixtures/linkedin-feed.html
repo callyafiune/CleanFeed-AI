@@ -1,0 +1,56 @@
+<!doctype html>
+<html lang="pt-BR">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Mock LinkedIn feed</title>
+    <style>
+      body {
+        margin: 0;
+        font-family: system-ui, sans-serif;
+      }
+      main {
+        max-width: 640px;
+        margin: 0 auto;
+        padding: 16px;
+      }
+      article {
+        border: 1px solid #ccc;
+        border-radius: 8px;
+        margin: 400px 0;
+        padding: 16px;
+      }
+      .spacer {
+        height: 1200px;
+      }
+    </style>
+  </head>
+  <body>
+    <main data-test-root="feed">
+      <article data-test-post="short" data-urn="urn:li:activity:short">
+        <div class="update-components-text">
+          Texto curto e humano de exemplo.
+        </div>
+        <div data-test-actions><button type="button">Curtir</button></div>
+      </article>
+      <div class="spacer"></div>
+      <article
+        data-testid="long-post"
+        data-test-post="long"
+        data-urn="urn:li:activity:strong"
+      >
+        <header data-test-node="author"><a href="/in/pessoa">Autora</a></header>
+        <!-- prettier-ignore -->
+        <!-- The commentary text is kept on a single line so its extracted, normalized text is byte-for-byte the string the mock pipeline scores as strong_ai_indication (verified against the real PipelineRunner). -->
+        <!-- prettier-ignore -->
+        <div class="update-components-text"><p>Compartilho hoje uma reflexão profissional sobre a importância da disciplina, do aprendizado contínuo e de processos claros dentro de qualquer equipe madura. Ao longo dos últimos anos percebi que os resultados sustentáveis nascem de rotinas simples, de comunicação honesta e da revisão constante das nossas decisões. Cada projeto que entregamos trouxe lições práticas sobre prioridade, foco, colaboração e respeito ao tempo das pessoas envolvidas. Acredito que a transparência gera confiança, e que a confiança acelera qualquer iniciativa coletiva. Registro também que o planejamento cuidadoso, a execução paciente e a análise honesta dos erros formam a base de toda a melhoria contínua que buscamos alcançar juntos, com método, clareza e propósito, em cada etapa dessa jornada compartilhada de evolução profissional. Observação número 85 para registro interno.</p></div>
+        <div data-test-actions data-test-node="buttons">
+          <button type="button">Curtir</button
+          ><button type="button">Comentar</button
+          ><button type="button">Compartilhar</button>
+        </div>
+      </article>
+      <div class="spacer"></div>
+    </main>
+  </body>
+</html>

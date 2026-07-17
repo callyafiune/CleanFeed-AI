@@ -15,6 +15,43 @@ versionada e ferramenta de benchmark — mas permanece inativa até que um artef
 treinado e um dataset auditável passem pelo portão de modelo. Um modelo sem
 calibração de benchmark só pode indicar, nunca ocultar.
 
+## Experiência de filtragem
+
+Toda apresentação é reversível e nunca remove permanentemente o post do DOM:
+
+- **Indicador**: um selo (`role="button"`) irmão do post, navegável por teclado,
+  que abre o painel "Indícios observados".
+- **Desfoque / recolher / ocultar**: aplicados apenas a `possibly_ai` e
+  `strong_ai_indication` acima do limiar de marcação, e sempre limitados pelo
+  teto de ação (`actionCeiling`) da calibração. Cada modo expõe um controle
+  imediato de "mostrar" e um `restore` que devolve o post ao estado original.
+- **Resultados humanos, inconclusivos e abstidos nunca são filtrados**,
+  independentemente da pontuação.
+- **Explicações** usam apenas os sinais calculados (frases estáticas por
+  `ReasonCode`, contagens e perfil de calibração) e linguagem probabilística;
+  nunca afirmam autoria.
+- **Feedback local** ("Era humano", "Era IA", "Não sei") é guardado apenas neste
+  navegador, vinculado ao hash do texto — nunca ao texto, autor ou URL.
+
+Consulte as [limitações](docs/limitations.md) e a
+[análise manual](docs/manual-analysis.md).
+
+## Análise manual em qualquer site
+
+Sob um gesto explícito do usuário (menu de contexto sobre uma seleção), a
+extensão injeta um painel isolado em Shadow DOM via `activeTab`/`scripting`,
+sem host permission global e sem alterar a página além do próprio painel.
+Detalhes em [docs/manual-analysis.md](docs/manual-analysis.md).
+
+## Acessibilidade
+
+Os selos e o painel de explicação são operáveis por teclado: o selo é um botão
+com `aria-expanded`/`aria-controls`, abrir move o foco ao título do painel e
+fechar devolve o foco ao selo. O texto do painel é declarado como `pt-BR`. Os
+modos visuais respeitam `prefers-reduced-motion` e usam borda/texto além de cor.
+As raízes próprias (popup, opções, painel manual e apresentação) são auditadas
+com `axe-core` no portão E2E, sem violações graves ou críticas.
+
 ## Instalação
 
 ```powershell
@@ -34,7 +71,19 @@ npm run lint
 npm run typecheck
 npm run format:check
 npm run build
+npm run test:e2e
 ```
+
+Os testes unitários e de integração rodam com Vitest. O `npm run test:e2e`
+(Playwright) carrega a extensão empacotada de `dist` em um contexto Chromium
+persistente e navega até um feed-mock servido localmente, **sem acesso à
+internet** (o fixture é endereçado como `www.linkedin.com` via
+`--host-resolver-rules`, mapeado para o servidor local, para que o guard de host
+do content script rode inalterado). Em um Chrome real ele verifica que um post
+recebe um selo acessível, que Enter abre e fecha o painel "Indícios observados",
+que **nenhuma requisição externa** ocorre, que `axe-core` não acusa violações
+graves/críticas no feed, popup e opções, e que o processamento de um feed grande
+não gera long task acima de 50 ms. Rode `npm run build` antes do E2E.
 
 ## Benchmark científico
 

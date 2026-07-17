@@ -6,5 +6,11 @@
     "allowSyntheticDefaultImports": true,
     "skipLibCheck": true
   },
-  "include": ["manifest.config.ts", "vite.config.ts", "vitest.config.ts"]
+  "include": [
+    "manifest.config.ts",
+    "vite.config.ts",
+    "vite.manual-analysis.config.ts",
+    "vitest.config.ts",
+    "playwright.config.ts"
+  ]
 }
