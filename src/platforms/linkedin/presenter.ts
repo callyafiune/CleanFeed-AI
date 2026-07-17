@@ -1,18 +1,20 @@
 import { applyBadge } from "@/content/presentation/badge";
+import { resolveMode } from "@/content/presentation/presentation-controller";
 import {
   rememberPresentation,
   resetPresentation,
   restorePresentation,
 } from "@/content/presentation/restore";
 import type { EffectiveSettings } from "@/shared/settings-types";
-import type { ClassificationResult, PresentationMode } from "@/shared/types";
+import type { ClassificationResult } from "@/shared/types";
 
 export function applyLinkedInPresentation(
   element: HTMLElement,
   result: ClassificationResult,
   settings: EffectiveSettings,
 ): void {
-  if (result.aiScore < settings.markingThreshold) {
+  const mode = resolveMode(result, settings);
+  if (mode === null) {
     restoreLinkedInPresentation(element);
     return;
   }
@@ -21,12 +23,8 @@ export function applyLinkedInPresentation(
   resetPresentation(element);
   element.dataset.cleanfeedStatus = result.status;
   element.dataset.cleanfeedScore = result.aiScore.toFixed(3);
-  applyBadge(element, result, settings);
+  applyBadge(element, result, settings, mode);
 
-  const mode = ceiling(
-    settings.presentationMode,
-    result.decision?.actionCeiling,
-  );
   if (mode === "blur") {
     element.style.filter = "blur(5px)";
   } else if (mode === "collapse") {
@@ -39,19 +37,4 @@ export function applyLinkedInPresentation(
 
 export function restoreLinkedInPresentation(element: HTMLElement): void {
   restorePresentation(element);
-}
-
-function ceiling(
-  configured: PresentationMode,
-  maximum: PresentationMode | undefined,
-): PresentationMode {
-  if (maximum === undefined) return configured;
-
-  const ranks: Record<PresentationMode, number> = {
-    indicator: 0,
-    blur: 1,
-    collapse: 2,
-    hide: 3,
-  };
-  return ranks[configured] <= ranks[maximum] ? configured : maximum;
 }

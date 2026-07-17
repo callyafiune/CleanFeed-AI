@@ -1,4 +1,15 @@
 import { removeBadge } from "@/content/presentation/badge";
+import type { PresentationMode } from "@/shared/types";
+
+/** CSS classes the PresentationController toggles on an owned post element. */
+export const PRESENTATION_MODE_CLASSES: Record<
+  Exclude<PresentationMode, "indicator">,
+  string
+> = {
+  blur: "cleanfeed-blurred",
+  collapse: "cleanfeed-collapsed",
+  hide: "cleanfeed-hidden",
+};
 
 interface PresentationSnapshot {
   display: string;
@@ -19,6 +30,13 @@ export function rememberPresentation(element: HTMLElement): void {
   });
 }
 
+/** Removes only the CleanFeed mode classes; safe when none are present. */
+export function removePresentationClasses(element: HTMLElement): void {
+  for (const className of Object.values(PRESENTATION_MODE_CLASSES)) {
+    element.classList.remove(className);
+  }
+}
+
 /** Resets a currently presented element but keeps its original snapshot. */
 export function resetPresentation(element: HTMLElement): void {
   const original = originals.get(element);
@@ -28,8 +46,10 @@ export function resetPresentation(element: HTMLElement): void {
     element.style.maxHeight = original.maxHeight;
     element.style.overflow = original.overflow;
   }
+  removePresentationClasses(element);
   delete element.dataset.cleanfeedStatus;
   delete element.dataset.cleanfeedScore;
+  delete element.dataset.cleanfeedRevealed;
   removeBadge(element);
 }
 

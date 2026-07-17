@@ -1,5 +1,5 @@
 import type { EffectiveSettings } from "@/shared/settings-types";
-import type { ClassificationResult } from "@/shared/types";
+import type { ClassificationResult, PresentationMode } from "@/shared/types";
 
 const badges = new WeakMap<HTMLElement, HTMLButtonElement>();
 
@@ -17,6 +17,7 @@ export function applyBadge(
   element: HTMLElement,
   result: ClassificationResult,
   settings: EffectiveSettings,
+  mode?: PresentationMode,
 ): void {
   removeBadge(element);
   if (element.parentNode === null) return;
@@ -28,6 +29,7 @@ export function applyBadge(
   badge.dataset.cleanfeedOwned = "badge";
   // Kept temporarily for CSS and existing integrations that used this marker.
   badge.dataset.cleanfeedIndicator = "true";
+  if (mode !== undefined) badge.dataset.cleanfeedMode = mode;
   badge.setAttribute("aria-label", `CleanFeed: ${text}`);
   badge.title = "Ver explicação do CleanFeed";
 
@@ -48,6 +50,10 @@ export function applyBadge(
   // the platform's own reading order. Future tasks attach its explanation UI.
   element.parentNode.insertBefore(badge, element);
   badges.set(element, badge);
+}
+
+export function getBadge(element: HTMLElement): HTMLButtonElement | undefined {
+  return badges.get(element);
 }
 
 export function removeBadge(element: HTMLElement): void {

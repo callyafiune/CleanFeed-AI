@@ -1,4 +1,5 @@
 import { PageStatsStore } from "@/content/page-stats";
+import { resolveMode } from "@/content/presentation/presentation-controller";
 import { SessionState } from "@/content/session-state";
 import {
   createPostIntersectionObserver,
@@ -14,11 +15,7 @@ import type { EffectiveSettings } from "@/shared/settings-types";
 import { sha256 } from "@/shared/hashing";
 import { parseExtensionMessage } from "@/shared/message-validation";
 import { normalizeText } from "@/shared/text-normalization";
-import type {
-  ClassificationResult,
-  PlatformAdapter,
-  PresentationMode,
-} from "@/shared/types";
+import type { ClassificationResult, PlatformAdapter } from "@/shared/types";
 
 export type IntersectionObserverFactory = (
   callback: (changes: PostViewportChange[]) => void,
@@ -242,7 +239,7 @@ export class PostController {
       const result = classificationResult(response);
       if (result === null || !(await this.isCurrent(element, state))) return;
 
-      const mode = appliedMode(result, this.options.settings);
+      const mode = resolveMode(result, this.options.settings);
       this.options.adapter.applyPresentation(
         element,
         result,
@@ -294,22 +291,4 @@ function classificationResult(response: unknown): ClassificationResult | null {
   } catch {
     return null;
   }
-}
-
-function appliedMode(
-  result: ClassificationResult,
-  settings: EffectiveSettings,
-): PresentationMode | null {
-  if (result.aiScore < settings.markingThreshold) return null;
-  const ceiling = result.decision?.actionCeiling;
-  if (ceiling === undefined) return settings.presentationMode;
-  const ranks: Record<PresentationMode, number> = {
-    indicator: 0,
-    blur: 1,
-    collapse: 2,
-    hide: 3,
-  };
-  return ranks[settings.presentationMode] <= ranks[ceiling]
-    ? settings.presentationMode
-    : ceiling;
 }

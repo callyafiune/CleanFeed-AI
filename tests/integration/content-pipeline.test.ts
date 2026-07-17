@@ -318,4 +318,51 @@ describe("content classification pipeline", () => {
     expect(restorePresentation).not.toHaveBeenCalled();
     expect(controller.stats.snapshot().restored).toBe(0);
   });
+
+  it("counts a non-filterable high-score result as analyzed but never marked or presented", async () => {
+    const root = document.createElement("main");
+    const eligiblePost = post(
+      Array.from({ length: 120 }, () => "conteúdo").join(" "),
+    );
+    root.append(eligiblePost);
+    document.body.append(root);
+    let intersection: FakeIntersectionObserver | undefined;
+    const sendMessage = vi.fn().mockResolvedValue({
+      source: "background",
+      target: "content",
+      type: "CLASSIFICATION_RESULT",
+      requestId: "request-1",
+      payload: {
+        ...createResult(),
+        status: "inconclusive",
+        aiScore: 0.95,
+        humanScore: 0.05,
+      },
+    });
+    const controller = new PostController({
+      adapter: new LinkedInAdapter(),
+      document,
+      settings: DEFAULT_SETTINGS,
+      createIntersectionObserver: (callback) => {
+        intersection = new FakeIntersectionObserver(callback);
+        return intersection;
+      },
+      sendMessage,
+      hashText: async () => "inconclusive-post",
+    });
+
+    controller.start();
+    intersection?.emit(eligiblePost, true);
+    await flushPromises();
+
+    expect(sendMessage).toHaveBeenCalledTimes(1);
+    expect(
+      eligiblePost.parentElement?.querySelector(
+        "[data-cleanfeed-owned='badge']",
+      ),
+    ).toBeNull();
+    const snapshot = controller.stats.snapshot();
+    expect(snapshot.analyzed).toBe(1);
+    expect(snapshot.marked).toBe(0);
+  });
 });

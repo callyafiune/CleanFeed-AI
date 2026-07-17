@@ -26,6 +26,24 @@
   line-height: 1;
 }
 
+/*
+ * Visual backing for the class-based PresentationController modes, matching the
+ * inline values the LinkedIn presenter applies. Task 27 refines the reveal
+ * affordance, reduced-motion, and high-contrast handling.
+ */
+.cleanfeed-blurred {
+  filter: blur(5px);
+}
+
+.cleanfeed-collapsed {
+  max-height: 6rem;
+  overflow: hidden;
+}
+
+.cleanfeed-hidden {
+  display: none;
+}
+
 @media (prefers-reduced-motion: reduce) {
   .cleanfeed-badge {
     transition: none;
