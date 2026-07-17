@@ -348,4 +348,39 @@ describe("parseExtensionMessage", () => {
       }),
     ).toMatchObject({ type: "MODEL_STATUS_RESULT" });
   });
+
+  it("accepts a model status carrying the WebGPU fallback warning", () => {
+    expect(
+      parseExtensionMessage({
+        source: "background",
+        target: "popup",
+        type: "MODEL_STATUS_RESULT",
+        payload: {
+          state: "ready",
+          classifierId: "local-model",
+          modelVersion: "1.0.0",
+          backend: "wasm",
+          fallbackFrom: "webgpu",
+          warning: "WEBGPU_FALLBACK",
+        },
+      }),
+    ).toMatchObject({ type: "MODEL_STATUS_RESULT" });
+  });
+
+  it("rejects a model status with an unknown warning value", () => {
+    expect(() =>
+      parseExtensionMessage({
+        source: "background",
+        target: "popup",
+        type: "MODEL_STATUS_RESULT",
+        payload: {
+          state: "ready",
+          classifierId: "local-model",
+          modelVersion: "1.0.0",
+          backend: "wasm",
+          warning: "SOMETHING_ELSE",
+        },
+      }),
+    ).toThrow("INVALID_MESSAGE");
+  });
 });

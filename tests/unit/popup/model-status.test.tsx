@@ -44,6 +44,7 @@ describe("popup model status", () => {
     expect(screen.getByText(/Vers.o: 1.0.0/u)).toBeTruthy();
     expect(screen.getByText(/Backend: mock/u)).toBeTruthy();
     expect(screen.getByText(/Estado: pronto/u)).toBeTruthy();
+    expect(screen.queryByRole("status")).toBeNull();
   });
 
   it("surfaces the explicit WebGPU fallback warning", async () => {
@@ -58,7 +59,9 @@ describe("popup model status", () => {
     });
     render(<App api={api} />);
 
-    expect((await screen.findByRole("status")).textContent).toContain("WebGPU");
+    expect((await screen.findByRole("status")).textContent).toBe(
+      "WebGPU indisponível; usando WASM local.",
+    );
   });
 
   it("polls status at most once per second and stops on unmount", async () => {

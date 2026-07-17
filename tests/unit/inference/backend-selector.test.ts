@@ -106,6 +106,7 @@ describe("BackendSelector", () => {
     expect(factory.wasm).toHaveBeenCalledTimes(1);
     expect(failed.dispose).toHaveBeenCalledOnce();
     expect(result).toMatchObject({ backend: "wasm", fallbackFrom: "webgpu" });
+    expect(result.warning).toBeUndefined();
   });
 
   it("reports unavailable when both backends fail", async () => {

@@ -396,6 +396,87 @@ describe("inference pipeline", () => {
     });
   });
 
+  it("drains an in-flight classification before disposing its classifier", async () => {
+    const local = localClassifier("wasm");
+    let releaseClassification: (() => void) | undefined;
+    const gate = new Promise<void>((resolve) => {
+      releaseClassification = resolve;
+    });
+    vi.mocked(local.classify).mockImplementation(async (text, options) => {
+      await gate;
+      return result(text, options);
+    });
+    const scope = workerScope();
+    installInferenceWorker(scope, () => new PipelineRunner(), vi.fn(), {
+      hasWebGpu: () => false,
+      backendFactory: () => ({
+        webgpu: vi.fn(() => local),
+        wasm: vi.fn(() => local),
+      }),
+    });
+
+    scope.dispatch({
+      type: "INITIALIZE",
+      requestId: "init-inflight",
+      payload: {
+        modelBaseUrl: "chrome-extension://test/models/",
+        wasmBaseUrl: "chrome-extension://test/vendor/transformers-wasm/",
+        modelManifest: localManifest,
+        settings: {
+          backendPreference: "wasm",
+          webGpuEnabled: false,
+          wasmEnabled: true,
+        },
+      },
+    });
+    await waitForWorkerMessage(
+      scope,
+      (message) =>
+        (message as { type?: string; requestId?: string }).type === "STATUS" &&
+        (message as { requestId?: string }).requestId === "init-inflight" &&
+        (message as { payload?: { state?: string } }).payload?.state ===
+          "ready",
+    );
+
+    scope.dispatch({
+      type: "CLASSIFY",
+      requestId: "inflight-classify",
+      payload: {
+        text: PORTUGUESE_LONG_TEXT,
+        platform: "linkedin",
+        manual: false,
+      },
+    });
+    await vi.waitFor(() =>
+      expect(vi.mocked(local.classify)).toHaveBeenCalled(),
+    );
+
+    scope.dispatch({
+      type: "DISPOSE",
+      requestId: "dispose-inflight",
+      payload: null,
+    });
+    for (let turn = 0; turn < 10; turn += 1) await Promise.resolve();
+    expect(local.dispose).not.toHaveBeenCalled();
+
+    releaseClassification?.();
+    await waitForWorkerMessage(
+      scope,
+      (message) =>
+        (message as { type?: string; requestId?: string }).type === "STATUS" &&
+        (message as { requestId?: string }).requestId === "dispose-inflight" &&
+        (message as { payload?: { state?: string } }).payload?.state ===
+          "unavailable",
+    );
+    expect(local.dispose).toHaveBeenCalledOnce();
+    expect(scope.messages).not.toContainEqual(
+      expect.objectContaining({
+        type: "ERROR",
+        requestId: "inflight-classify",
+      }),
+    );
+  });
+
   it("runs language, tokenization, chunks, classification, aggregation and calibration", async () => {
     const runner = new PipelineRunner({ classifier: classifier() });
 

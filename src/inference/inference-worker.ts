@@ -628,12 +628,14 @@ async function handleMessage(
     };
     for (const item of items)
       controllers.set(item.requestId, new AbortController());
-    const outcomes = await runtime.getRunner().classifyBatchSettled(
-      items.map((item) => ({
-        request: item.payload,
-        signal: controllers.get(item.requestId)?.signal,
-      })),
-      settings,
+    const outcomes = await runtime.runClassification((runner) =>
+      runner.classifyBatchSettled(
+        items.map((item) => ({
+          request: item.payload,
+          signal: controllers.get(item.requestId)?.signal,
+        })),
+        settings,
+      ),
     );
     for (const [index, outcome] of outcomes.entries()) {
       const requestId = items[index]?.requestId ?? request.requestId;
@@ -684,6 +686,7 @@ class WorkerRuntime {
   private lifecycle: ClassifierLifecycleManager | undefined;
   private status: ModelStatus;
   private operation = Promise.resolve();
+  private readonly inflight = new Set<Promise<unknown>>();
 
   constructor(
     private readonly runnerFactory: () => PipelineRunner,
@@ -700,6 +703,7 @@ class WorkerRuntime {
     return this.serialize(async () => {
       this.status = unavailableStatus("initializing");
       try {
+        if (this.inflight.size > 0) await this.drainInflight();
         await configureRuntime(payload);
         const manifest = payload.modelManifest;
         if (manifest === undefined) {
@@ -738,6 +742,7 @@ class WorkerRuntime {
     return this.serialize(async () => {
       this.status = unavailableStatus("disposing");
       try {
+        if (this.inflight.size > 0) await this.drainInflight();
         const releasedLifecycle = await this.disposeLifecycle();
         if (!releasedLifecycle) await this.runner.dispose();
         this.runner = this.runnerFactory();
@@ -749,12 +754,25 @@ class WorkerRuntime {
     });
   }
 
-  getRunner(): PipelineRunner {
-    return this.runner;
+  runClassification<T>(
+    work: (runner: PipelineRunner) => Promise<T>,
+  ): Promise<T> {
+    const active = work(this.runner);
+    this.inflight.add(active);
+    const settle = (): void => {
+      this.inflight.delete(active);
+    };
+    active.then(settle, settle);
+    return active;
   }
 
   getStatus(): ModelStatus {
     return { ...this.status };
+  }
+
+  private async drainInflight(): Promise<void> {
+    if (this.inflight.size === 0) return;
+    await Promise.allSettled([...this.inflight]);
   }
 
   private async disposeLifecycle(): Promise<boolean> {
