@@ -9,6 +9,12 @@ apresentação reversível. Ele não afirma autoria e não é um detector defini
 Esta fase usa um classificador **mock** determinístico. Nenhum modelo real está
 em uso; qualquer resultado é somente uma demonstração do fluxo local.
 
+A infraestrutura para um modelo real local já está pronta — carregador ONNX
+verificado, empacotamento offline, seleção WebGPU/WASM com fallback, calibração
+versionada e ferramenta de benchmark — mas permanece inativa até que um artefato
+treinado e um dataset auditável passem pelo portão de modelo. Um modelo sem
+calibração de benchmark só pode indicar, nunca ocultar.
+
 ## Instalação
 
 ```powershell
@@ -29,6 +35,22 @@ npm run typecheck
 npm run format:check
 npm run build
 ```
+
+## Benchmark científico
+
+A validação de qualidade de um modelo real vive fora do bundle da extensão, em
+[`benchmark/`](benchmark/README.md). Ela usa split por autor/período (sem
+vazamento) e reporta a precisão entre bloqueados como métrica principal — nunca a
+acurácia isolada.
+
+```powershell
+npm run benchmark -- --split group-time --input benchmark/data/dataset.jsonl --output benchmark/out
+```
+
+O dataset nunca entra no Git (`benchmark/data/*` é ignorado, exceto `.gitkeep`) e
+precisa ser licenciado e pseudonimizado. Sem um modelo real e um dataset aprovado,
+o detector permanece no mock e o relatório de benchmark não habilita decisões de
+lançamento.
 
 ## Permissões
 

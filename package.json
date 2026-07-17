@@ -13,6 +13,7 @@
     "postbuild": "node scripts/sanitize-offline-bundle.mjs",
     "test": "vitest",
     "test:e2e": "playwright test",
+    "benchmark": "node benchmark/cli.ts",
     "lint": "eslint .",
     "typecheck": "tsc --noEmit && tsc --noEmit --project tsconfig.node.json",
     "format": "prettier --write . --ignore-unknown",

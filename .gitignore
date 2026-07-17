@@ -6,3 +6,7 @@ playwright-report/
 test-results/
 *.log
 *.tsbuildinfo
+
+# Benchmark datasets are auditable but private; they never enter Git.
+benchmark/data/*
+!benchmark/data/.gitkeep
