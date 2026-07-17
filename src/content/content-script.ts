@@ -12,6 +12,11 @@ interface ContentController {
   clearPresentation(): void;
 }
 
+/** The slice of the controller the right-click tracker needs. */
+export interface ContextTrackingController {
+  noteContextTarget(node: EventTarget | null): void;
+}
+
 export type ContentMessageListener = (
   message: unknown,
   sender: unknown,
@@ -75,6 +80,24 @@ export function createContentMessageListener(
   };
 }
 
+/**
+ * Records the post under a right-click so the background's current-post menu
+ * actions can target it. It captures only the event target (the controller
+ * resolves it to an owned post element and keeps a WeakRef); no author or URL
+ * is read or stored. Returns a detach function.
+ */
+export function attachContextMenuTracking(
+  target: Document = document,
+  getController: () => ContextTrackingController | undefined = () =>
+    activeController,
+): () => void {
+  const listener = (event: Event): void => {
+    getController()?.noteContextTarget(event.target);
+  };
+  target.addEventListener("contextmenu", listener, true);
+  return () => target.removeEventListener("contextmenu", listener, true);
+}
+
 export async function startContentScript(
   options: ContentScriptOptions = {},
 ): Promise<PostController | undefined> {
@@ -95,6 +118,7 @@ export async function startContentScript(
   (options.runtime ?? chrome.runtime).onMessage.addListener(
     createContentMessageListener(),
   );
+  attachContextMenuTracking(contentDocument);
   return activeController;
 }
 

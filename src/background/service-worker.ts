@@ -1,4 +1,12 @@
 import {
+  createContextMenuClickHandler,
+  createContextMenus,
+} from "@/background/context-menu";
+import {
+  ManualAnalysisController,
+  isManualPanelMessage,
+} from "@/background/manual-analysis-controller";
+import {
   BackgroundMessageRouter,
   RuntimeOffscreenClient,
   classificationErrorMessage,
@@ -16,6 +24,7 @@ import { ChromeStorageArea } from "@/storage/storage-area";
 const storage = new ChromeStorageArea();
 const settings = new SettingsRepository(storage);
 const platformSettings = new PlatformSettingsRepository(storage);
+const metrics = new MetricsRepository(storage);
 const offscreenClient = new RuntimeOffscreenClient();
 const router = new BackgroundMessageRouter({
   cache: new ClassificationCache(
@@ -26,7 +35,7 @@ const router = new BackgroundMessageRouter({
       ttlMs: DEFAULT_SETTINGS.cacheTtlMs,
     },
   ),
-  metrics: new MetricsRepository(storage),
+  metrics,
   offscreenClient,
   modelKey: "mock:1.0.0",
   settings,
@@ -37,7 +46,34 @@ const router = new BackgroundMessageRouter({
   ),
 });
 
+/**
+ * Coordinates the on-demand manual analysis panel. Injection happens only under
+ * the user's context-menu gesture (activeTab/scripting). The panel classifies
+ * over the standard CLASSIFY_TEXT path, which already records the anonymous
+ * inference metric in the router, so the MANUAL_ANALYSIS_RESULT echo is not
+ * recorded again here (doing so would double-count every manual analysis).
+ */
+const manualAnalysis = new ManualAnalysisController({
+  scripting: {
+    executeScript: (injection) => chrome.scripting.executeScript(injection),
+  },
+  messenger: {
+    sendMessage: (tabId, message) => chrome.tabs.sendMessage(tabId, message),
+  },
+  minimumWordCount: async () => (await settings.get()).minimumWordCount,
+});
+
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
+  // The router returns undefined for MANUAL_ANALYSIS_* panel messages; route
+  // those to the controller instead while leaving all other routing intact.
+  if (isManualPanelMessage(message)) {
+    void manualAnalysis
+      .handleMessage(message, sender)
+      .catch(() => undefined)
+      .finally(() => sendResponse(undefined));
+    return true;
+  }
+
   void router
     .handle(message, sender)
     .then((response) => sendResponse(response))
@@ -64,8 +100,74 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   return true;
 });
 
+const handleContextMenuClick = createContextMenuClickHandler({
+  manual: manualAnalysis,
+  analyzeCurrentPost: (tabId) =>
+    sendCurrentPostCommand(tabId, "ANALYZE_CURRENT_POST"),
+  reportWrongPost: (tabId) =>
+    sendCurrentPostCommand(tabId, "REPORT_CURRENT_POST"),
+  recordMissedReport: () => {
+    // NOTE(integrator): a dedicated local "missed report" metric counter is not
+    // yet defined in MetricsRepository (src/storage/metrics.ts). Wire this to
+    // that counter once it exists; report-missed still opens manual analysis.
+  },
+  pauseDomain: () => {
+    // NOTE(integrator): a per-domain session/pause store does not exist yet
+    // (arrives with the popup's "Pausar neste site" control in Task 31). Wire
+    // this to that store once available; it must persist only the hostname.
+  },
+  openOptions: () => {
+    void chrome.runtime.openOptionsPage();
+  },
+});
+
+chrome.contextMenus.onClicked.addListener((info, tab) => {
+  void handleContextMenuClick(info, tab);
+});
+
+chrome.runtime.onInstalled.addListener(() => {
+  createContextMenus();
+});
+
+// Drop any pending manual selection once its tab closes or navigates away, so
+// no per-tab state outlives the gesture that created it.
+chrome.tabs.onRemoved.addListener((tabId) => {
+  manualAnalysis.forget(tabId);
+});
+chrome.tabs.onUpdated.addListener((tabId, changeInfo) => {
+  if (changeInfo.status === "loading") {
+    manualAnalysis.forget(tabId);
+  }
+});
+
 function isClassifyTextMessage(
   message: ReturnType<typeof parseExtensionMessage>,
 ): message is Parameters<typeof classificationErrorMessage>[0] {
   return message.target === "background" && message.type === "CLASSIFY_TEXT";
+}
+
+/**
+ * Sends a current-post command to the LinkedIn tab under the user's gesture.
+ *
+ * NOTE(integrator): the `ANALYZE_CURRENT_POST` / `REPORT_CURRENT_POST` envelopes
+ * are not yet part of the validated runtime contract (src/shared/messages.ts +
+ * src/shared/message-validation.ts) and the content script does not yet route
+ * them. Add those `background -> content` routes and a content listener branch
+ * calling `PostController.analyzeContextPost()` / `reportContextFeedback()` to
+ * complete the flow; the content side already tracks the right-clicked post.
+ */
+async function sendCurrentPostCommand(
+  tabId: number,
+  type: string,
+): Promise<void> {
+  try {
+    await chrome.tabs.sendMessage(tabId, {
+      source: "background",
+      target: "content",
+      type,
+      payload: undefined,
+    });
+  } catch {
+    // The content script may be absent on this tab; ignore.
+  }
 }

@@ -118,3 +118,25 @@ function showMessage(request: ManualAnalysisRequest) {
     payload: request,
   } as const;
 }
+
+/** Message types a panel sends back to the background for this controller. */
+const MANUAL_PANEL_MESSAGE_TYPES = new Set([
+  "MANUAL_ANALYSIS_READY",
+  "MANUAL_ANALYSIS_RESULT",
+]);
+
+/**
+ * True for the panel-originated messages the `BackgroundMessageRouter` leaves
+ * unhandled (it returns `undefined` for them). The service worker uses this to
+ * route those messages to `ManualAnalysisController.handleMessage` instead. It
+ * only peeks at the type; `handleMessage` still fully validates the envelope.
+ */
+export function isManualPanelMessage(message: unknown): boolean {
+  return (
+    typeof message === "object" &&
+    message !== null &&
+    "type" in message &&
+    typeof (message as { type: unknown }).type === "string" &&
+    MANUAL_PANEL_MESSAGE_TYPES.has((message as { type: string }).type)
+  );
+}

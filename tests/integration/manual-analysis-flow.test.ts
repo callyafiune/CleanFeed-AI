@@ -4,6 +4,7 @@ import {
   MANUAL_ANALYSIS_ENTRY,
   MAX_MANUAL_SELECTION_LENGTH,
   ManualAnalysisController,
+  isManualPanelMessage,
 } from "@/background/manual-analysis-controller";
 import { parseExtensionMessage } from "@/shared/message-validation";
 import type { ClassificationResult } from "@/shared/types";
@@ -138,6 +139,45 @@ describe("manual analysis background flow", () => {
     );
 
     expect(sendMessage).not.toHaveBeenCalled();
+  });
+});
+
+describe("isManualPanelMessage", () => {
+  it("recognizes panel-originated ready and result messages the router ignores", () => {
+    expect(
+      isManualPanelMessage({
+        source: "manual",
+        target: "background",
+        type: "MANUAL_ANALYSIS_READY",
+        payload: undefined,
+      }),
+    ).toBe(true);
+    expect(
+      isManualPanelMessage({
+        source: "manual",
+        target: "background",
+        type: "MANUAL_ANALYSIS_RESULT",
+        payload: CLASSIFICATION,
+      }),
+    ).toBe(true);
+  });
+
+  it("does not claim classification or unrelated messages", () => {
+    expect(
+      isManualPanelMessage({
+        source: "content",
+        target: "background",
+        type: "CLASSIFY_TEXT",
+        requestId: "r-1",
+        payload: {
+          text: PORTUGUESE_LONG_TEXT,
+          platform: "manual",
+          manual: true,
+        },
+      }),
+    ).toBe(false);
+    expect(isManualPanelMessage(undefined)).toBe(false);
+    expect(isManualPanelMessage({ type: 42 })).toBe(false);
   });
 });
 

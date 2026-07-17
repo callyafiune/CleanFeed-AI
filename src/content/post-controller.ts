@@ -43,6 +43,13 @@ interface PostRuntimeState {
   cancelled: boolean;
   presentationApplied: boolean;
   hash?: string;
+  result?: ClassificationResult;
+  /**
+   * Set when the user explicitly re-requests analysis of an already-classified
+   * post, so its own remembered hash does not make it skip as duplicate content.
+   * Consumed on the next classification run.
+   */
+  manualRun?: boolean;
 }
 
 export interface PostControllerOptions {
@@ -73,6 +80,7 @@ export class PostController {
   private readonly now: () => number;
   private readonly states = new WeakMap<HTMLElement, PostRuntimeState>();
   private readonly observed = new Set<HTMLElement>();
+  private contextTarget: WeakRef<HTMLElement> | undefined;
   private observer: PostIntersectionObserver | undefined;
   private mutationObserver: FeedMutationObserver | undefined;
   private rootObserver: MutationObserver | undefined;
@@ -105,6 +113,7 @@ export class PostController {
 
   stop(): void {
     this.running = false;
+    this.contextTarget = undefined;
     for (const element of this.observed) {
       const state = this.states.get(element);
       if (state?.state !== "queued" && state?.state !== "classifying") continue;
@@ -145,6 +154,90 @@ export class PostController {
       state.presentationApplied = false;
       this.stats.restored();
     }
+  }
+
+  /**
+   * Remembers, in memory only, the owned post element under a right-click. It
+   * stores a `WeakRef` to the element and nothing else: no author, no URL, no
+   * text. A node that is not inside a tracked post clears the reference.
+   */
+  noteContextTarget(node: EventTarget | null): void {
+    const element = this.resolveObservedPost(node);
+    this.contextTarget =
+      element === undefined ? undefined : new WeakRef(element);
+  }
+
+  /** The still-connected, still-tracked post last right-clicked, if any. */
+  getContextPost(): HTMLElement | undefined {
+    const element = this.contextTarget?.deref();
+    if (
+      element === undefined ||
+      !element.isConnected ||
+      !this.observed.has(element)
+    ) {
+      this.contextTarget = undefined;
+      return undefined;
+    }
+    return element;
+  }
+
+  /**
+   * Records a local, hash-keyed verdict for the right-clicked post. Resolves to
+   * `false` when no classified post is remembered. Never stores text or author.
+   */
+  async reportContextFeedback(verdict: FeedbackVerdict): Promise<boolean> {
+    const element = this.getContextPost();
+    if (element === undefined) return false;
+    const state = this.states.get(element);
+    // Require a currently-classified post so the hash and result are the
+    // consistent successful pair; a re-analysis in flight (or a failed run)
+    // could otherwise pair a hash with a stale or mismatched result.
+    if (
+      state?.state !== "classified" ||
+      state.hash === undefined ||
+      state.result === undefined
+    ) {
+      return false;
+    }
+    await this.recordFeedback(state.hash, state.result, verdict);
+    return true;
+  }
+
+  /**
+   * Re-queues the right-clicked post for a fresh classification under the
+   * user's gesture. Resolves to `false` when nothing is remembered or the post
+   * is already in flight.
+   */
+  analyzeContextPost(): boolean {
+    const element = this.getContextPost();
+    if (element === undefined) return false;
+    const state = this.states.get(element);
+    if (
+      state === undefined ||
+      state.state === "queued" ||
+      state.state === "classifying"
+    ) {
+      return false;
+    }
+    state.state = "observed";
+    state.cancelled = false;
+    state.manualRun = true;
+    element.dataset.cleanfeedState = "observed";
+    this.handleViewportChange({ element, nearViewport: true });
+    return true;
+  }
+
+  private resolveObservedPost(
+    node: EventTarget | null,
+  ): HTMLElement | undefined {
+    let current: Node | null = node instanceof Node ? node : null;
+    while (current !== null) {
+      if (current instanceof HTMLElement && this.observed.has(current)) {
+        return current;
+      }
+      current = current.parentNode;
+    }
+    return undefined;
   }
 
   private attachFeedRoot(): boolean {
@@ -209,13 +302,17 @@ export class PostController {
     const hash = text.length === 0 ? undefined : await this.hashText(text);
     if (!this.running || state.cancelled || state.state !== "classifying")
       return;
+    // A user-initiated re-analysis must not skip on its own remembered hash.
+    const skipDedup = state.manualRun === true;
+    state.manualRun = false;
     const eligibility = evaluateEligibility({
       text,
       enabled: this.options.settings.enabled,
       domainEnabled: true,
       modelAvailable: this.modelAvailable(),
       extractionSucceeded: extracted !== null,
-      duplicateContent: hash !== undefined && this.session.hasSeen(hash),
+      duplicateContent:
+        !skipDedup && hash !== undefined && this.session.hasSeen(hash),
       experimentalShortTextDetection:
         this.options.settings.experimentalShortTextDetection,
       minimumWordCount: this.options.settings.minimumWordCount,
@@ -262,6 +359,7 @@ export class PostController {
         this.attachExplanation(element, result, hash);
       }
       state.presentationApplied = mode !== null;
+      state.result = result;
       state.state = "classified";
       element.dataset.cleanfeedState = "classified";
       this.stats.classified(result, mode);
