@@ -38,7 +38,18 @@ function hasValidPlatformId(value: unknown): value is string {
   );
 }
 
-function getOverrides(settings: PlatformSettings): Partial<UserSettings> {
+/**
+ * Extracts the validated setting overrides from a platform record, dropping the
+ * `platformId` discriminator. Shared with the effective-settings resolver so the
+ * platform layer is applied through one definition of "the overriding fields".
+ */
+export function platformSettingsOverrides(
+  settings: PlatformSettings | undefined,
+): Partial<UserSettings> {
+  if (settings === undefined) {
+    return {};
+  }
+
   return Object.fromEntries(
     Object.entries(settings).filter(([key]) => key !== "platformId"),
   ) as Partial<UserSettings>;
@@ -58,7 +69,7 @@ function isValidPlatformSettings(value: unknown): value is PlatformSettings {
   try {
     assertUserSettings({
       ...DEFAULT_SETTINGS,
-      ...getOverrides(value as unknown as PlatformSettings),
+      ...platformSettingsOverrides(value as unknown as PlatformSettings),
     });
   } catch {
     return false;
@@ -150,7 +161,7 @@ export class PlatformSettingsRepository {
     }
 
     return runWithSettingsMutationLock(async () => {
-      const overrides = getOverrides(settings);
+      const overrides = platformSettingsOverrides(settings);
       const globalSettings = await readSettingsForMutation(this.storage);
       assertUserSettings({ ...globalSettings, ...overrides });
 

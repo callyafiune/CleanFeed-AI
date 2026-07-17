@@ -48,4 +48,27 @@ export interface PlatformSettings extends Partial<UserSettings> {
   platformId: string;
 }
 
-export type EffectiveSettings = UserSettings;
+/**
+ * A single site override. It carries only the normalized hostname plus the
+ * handful of settings a domain may change; it must never hold a full URL, path,
+ * query string or any post content. A one-hour pause is expressed as an absolute
+ * `pausedUntil` timestamp so expiry is a pure comparison against the clock.
+ */
+export interface DomainSettings {
+  hostname: string;
+  disabled?: boolean;
+  pausedUntil?: number;
+  presentationMode?: PresentationMode;
+}
+
+/** Which configuration layer a resolved value ultimately came from. */
+export type SettingsSource =
+  "default" | "global" | "platform" | "domain" | "session";
+
+/** Debug-only map explaining the origin of every resolved setting. */
+export type SettingsSourceMap = Record<keyof UserSettings, SettingsSource>;
+
+export type EffectiveSettings = UserSettings & {
+  /** Present only in debug mode: the layer each resolved value came from. */
+  sourceMap?: SettingsSourceMap;
+};

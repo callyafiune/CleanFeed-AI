@@ -43,7 +43,12 @@ export interface SettingsStore {
   patch(update: Partial<UserSettings>): Promise<UserSettings>;
 }
 
-/** The hostname-only pause store the popup's "Pausar neste site" control drives. */
+/**
+ * The persistent, hostname-only pause store the popup's "Pausar neste site"
+ * control drives. It records nothing but the normalized hostname. A page-session
+ * pause — which must expire when the tab's content script goes away — lives in
+ * that tab's in-memory SessionState and never reaches this store.
+ */
 export interface DomainPauseStore {
   pause(hostname: string): Promise<void>;
   resume(hostname: string): Promise<void>;
