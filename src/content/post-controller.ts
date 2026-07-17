@@ -1,4 +1,8 @@
 import { PageStatsStore } from "@/content/page-stats";
+import {
+  attachExplanationDisclosure,
+  getBadge,
+} from "@/content/presentation/badge";
 import { resolveMode } from "@/content/presentation/presentation-controller";
 import { SessionState } from "@/content/session-state";
 import {
@@ -16,6 +20,8 @@ import { sha256 } from "@/shared/hashing";
 import { parseExtensionMessage } from "@/shared/message-validation";
 import { normalizeText } from "@/shared/text-normalization";
 import type { ClassificationResult, PlatformAdapter } from "@/shared/types";
+import { FeedbackRepository, type FeedbackVerdict } from "@/storage/feedback";
+import { ChromeStorageArea } from "@/storage/storage-area";
 
 export type IntersectionObserverFactory = (
   callback: (changes: PostViewportChange[]) => void,
@@ -49,6 +55,8 @@ export interface PostControllerOptions {
   stats?: PageStatsStore;
   modelAvailable?: () => boolean;
   hashText?: (text: string) => Promise<string>;
+  feedback?: FeedbackRepository;
+  now?: () => number;
 }
 
 /** Coordinates one page's visible posts without retaining their source text. */
@@ -61,6 +69,8 @@ export class PostController {
   private readonly session: SessionState;
   private readonly modelAvailable: () => boolean;
   private readonly hashText: (text: string) => Promise<string>;
+  private readonly feedback: FeedbackRepository;
+  private readonly now: () => number;
   private readonly states = new WeakMap<HTMLElement, PostRuntimeState>();
   private readonly observed = new Set<HTMLElement>();
   private observer: PostIntersectionObserver | undefined;
@@ -79,6 +89,9 @@ export class PostController {
     this.stats = options.stats ?? new PageStatsStore(options.adapter.id);
     this.modelAvailable = options.modelAvailable ?? (() => true);
     this.hashText = options.hashText ?? sha256;
+    this.feedback =
+      options.feedback ?? new FeedbackRepository(new ChromeStorageArea());
+    this.now = options.now ?? (() => Date.now());
   }
 
   start(): void {
@@ -245,6 +258,9 @@ export class PostController {
         result,
         this.options.settings,
       );
+      if (mode !== null && this.options.settings.showExplanation) {
+        this.attachExplanation(element, result, hash);
+      }
       state.presentationApplied = mode !== null;
       state.state = "classified";
       element.dataset.cleanfeedState = "classified";
@@ -255,6 +271,38 @@ export class PostController {
         element.dataset.cleanfeedState = "classification-failed";
       }
     }
+  }
+
+  /** Wires the badge disclosure and routes verdicts to hash-keyed feedback. */
+  private attachExplanation(
+    element: HTMLElement,
+    result: ClassificationResult,
+    hash: string,
+  ): void {
+    const badge = getBadge(element);
+    if (badge === undefined) return;
+    attachExplanationDisclosure(element, badge, result, {
+      onFeedback: (verdict) => this.recordFeedback(hash, result, verdict),
+    });
+  }
+
+  /** Stores a local, non-identifying verdict; storage failures are ignored. */
+  private recordFeedback(
+    hash: string,
+    result: ClassificationResult,
+    verdict: FeedbackVerdict,
+  ): Promise<void> {
+    return this.feedback
+      .add({
+        textHash: hash,
+        predictedScore: result.decision?.calibratedScore ?? result.aiScore,
+        predictedStatus: result.status,
+        feedback: verdict,
+        modelVersion: result.modelVersion,
+        platform: this.options.adapter.id,
+        createdAt: this.now(),
+      })
+      .catch(() => undefined);
   }
 
   private async isCurrent(

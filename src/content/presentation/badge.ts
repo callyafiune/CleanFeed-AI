@@ -1,7 +1,14 @@
+import {
+  createExplanationPanel,
+  type ExplanationPanelCallbacks,
+} from "@/content/presentation/explanation-panel";
+import { registerOwnedArtifact } from "@/content/presentation/restore";
 import type { EffectiveSettings } from "@/shared/settings-types";
 import type { ClassificationResult, PresentationMode } from "@/shared/types";
 
 const badges = new WeakMap<HTMLElement, HTMLButtonElement>();
+
+let panelSequence = 0;
 
 const COPY: Record<ClassificationResult["status"], string> = {
   probably_human: "Provavelmente escrito por uma pessoa",
@@ -54,6 +61,58 @@ export function applyBadge(
 
 export function getBadge(element: HTMLElement): HTMLButtonElement | undefined {
   return badges.get(element);
+}
+
+/**
+ * Turns the badge into a disclosure that toggles the explanation panel. Opening
+ * inserts the panel as an owned sibling and moves focus to its heading; closing
+ * removes the panel and returns focus to the badge, so restore/reveal still
+ * clear every CleanFeed node. Idempotent per badge.
+ */
+export function attachExplanationDisclosure(
+  post: HTMLElement,
+  badge: HTMLButtonElement,
+  result: ClassificationResult,
+  callbacks: Pick<ExplanationPanelCallbacks, "onFeedback">,
+): void {
+  if (badge.dataset.cleanfeedExplains === "true") return;
+  badge.dataset.cleanfeedExplains = "true";
+
+  const panelId = `${(badge.id ||= `cleanfeed-badge-${++panelSequence}`)}-panel`;
+  badge.setAttribute("aria-expanded", "false");
+  // Declare the owned region up front. A collapsed disclosure legitimately has
+  // no rendered panel yet; opening mints the element with exactly this id.
+  badge.setAttribute("aria-controls", panelId);
+
+  let panel: HTMLElement | null = null;
+
+  const close = (): void => {
+    if (panel === null) return;
+    panel.remove();
+    panel = null;
+    badge.setAttribute("aria-expanded", "false");
+    badge.focus();
+  };
+
+  const open = (): void => {
+    if (panel !== null) return;
+    panel = createExplanationPanel(result, {
+      onFeedback: callbacks.onFeedback,
+      onClose: close,
+    });
+    panel.id = panelId;
+    badge.setAttribute("aria-expanded", "true");
+    badge.after(panel);
+    registerOwnedArtifact(post, panel);
+    panel
+      .querySelector<HTMLElement>(".cleanfeed-explanation__heading")
+      ?.focus();
+  };
+
+  badge.addEventListener("click", () => {
+    if (panel === null) open();
+    else close();
+  });
 }
 
 export function removeBadge(element: HTMLElement): void {
