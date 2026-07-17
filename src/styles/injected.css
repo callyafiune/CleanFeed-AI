@@ -27,12 +27,14 @@
 }
 
 /*
- * Visual backing for the class-based PresentationController modes, matching the
- * inline values the LinkedIn presenter applies. Task 27 refines the reveal
- * affordance, reduced-motion, and high-contrast handling.
+ * Visual backing for the class-based PresentationController modes. Blur keeps
+ * the content in place (never opacity: 0) but stops interaction with it; the
+ * reveal toolbar/placeholder are separate owned nodes and stay interactive.
  */
 .cleanfeed-blurred {
   filter: blur(5px);
+  pointer-events: none;
+  user-select: none;
 }
 
 .cleanfeed-collapsed {
@@ -44,8 +46,76 @@
   display: none;
 }
 
+/* Non-blurred reveal toolbar shown above a blurred post. */
+.cleanfeed-blur-toolbar {
+  display: flex;
+  justify-content: center;
+  margin: 0.5rem 0;
+  pointer-events: auto;
+}
+
+/* Placeholder announcing a collapsed/hidden post. */
+.cleanfeed-placeholder {
+  align-items: flex-start;
+  background: #f3f6f8;
+  border: 1px solid #576f7c;
+  border-radius: 8px;
+  color: #21313c;
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+  margin: 0.5rem 0;
+  padding: 0.75rem 1rem;
+}
+
+.cleanfeed-placeholder__message {
+  margin: 0;
+}
+
+.cleanfeed-reveal {
+  background: #0a66c2;
+  border: 1px solid #0a66c2;
+  border-radius: 999px;
+  color: #ffffff;
+  cursor: pointer;
+  font: inherit;
+  padding: 0.35rem 0.9rem;
+  pointer-events: auto;
+  transition: background-color 120ms ease;
+}
+
+.cleanfeed-reveal:hover {
+  background: #08529b;
+}
+
+.cleanfeed-reveal:focus-visible {
+  outline: 2px solid #0a66c2;
+  outline-offset: 2px;
+}
+
 @media (prefers-reduced-motion: reduce) {
-  .cleanfeed-badge {
+  .cleanfeed-badge,
+  .cleanfeed-reveal {
     transition: none;
+  }
+}
+
+/*
+ * High-contrast / forced-colors: convey state with borders and system colors,
+ * never colour alone, and keep focus indicators visible.
+ */
+@media (forced-colors: active) {
+  .cleanfeed-placeholder,
+  .cleanfeed-blur-toolbar {
+    border: 1px solid CanvasText;
+  }
+
+  .cleanfeed-reveal {
+    border: 1px solid ButtonText;
+    color: ButtonText;
+  }
+
+  .cleanfeed-reveal:focus-visible {
+    outline: 2px solid Highlight;
   }
 }

@@ -256,6 +256,23 @@ describe("PresentationController", () => {
     expect(document.querySelector("[data-cleanfeed-owned]")).toBeNull();
   });
 
+  it("cleans owned siblings of an individually-detached post on the next apply", () => {
+    const secondContainer = document.createElement("div");
+    const secondPost = document.createElement("article");
+    secondContainer.append(secondPost);
+    document.body.append(secondContainer);
+
+    controller.apply(post, aiResult, hideSettings);
+    expect(document.querySelectorAll("[data-cleanfeed-owned]")).toHaveLength(2);
+
+    // Detach only the first article; its badge + placeholder siblings remain.
+    post.remove();
+
+    // The next apply runs prune(), which must remove the orphaned siblings.
+    controller.apply(secondPost, aiResult, hideSettings);
+    expect(document.querySelectorAll("[data-cleanfeed-owned]")).toHaveLength(2);
+  });
+
   it("refreshes a stale badge label and score when the decision changes at the same mode", () => {
     controller.apply(
       post,

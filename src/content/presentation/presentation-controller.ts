@@ -1,10 +1,12 @@
 import { applyBadge, getBadge } from "@/content/presentation/badge";
+import { applyBlur } from "@/content/presentation/blur";
+import { applyCollapse } from "@/content/presentation/collapse";
+import { applyHide } from "@/content/presentation/hide";
 import {
-  PRESENTATION_MODE_CLASSES,
   rememberPresentation,
-  removePresentationClasses,
   resetPresentation,
   restorePresentation,
+  revealPost,
 } from "@/content/presentation/restore";
 import { SessionState } from "@/content/session-state";
 import type { EffectiveSettings } from "@/shared/settings-types";
@@ -142,10 +144,19 @@ export class PresentationController {
     const current = this.states.get(element);
     if (current === undefined || current.kind !== "presented") return;
 
-    removePresentationClasses(element);
+    // The reveal control lives inside the scaffolding revealPost is about to
+    // remove; note whether it currently holds focus so we can move focus to the
+    // badge afterwards instead of dropping it to <body>.
+    const active = element.ownerDocument.activeElement;
+    const revealControlHadFocus =
+      active instanceof HTMLElement &&
+      active.classList.contains("cleanfeed-reveal");
+
+    revealPost(element);
     element.dataset.cleanfeedRevealed = "true";
     const badge = getBadge(element);
     if (badge !== undefined) badge.dataset.cleanfeedRevealed = "true";
+    if (revealControlHadFocus) badge?.focus();
 
     this.states.set(element, {
       kind: "revealed",
@@ -201,14 +212,22 @@ export class PresentationController {
     element.dataset.cleanfeedStatus = result.status;
     element.dataset.cleanfeedScore = result.aiScore.toFixed(3);
     applyBadge(element, result, settings, mode);
-    if (mode !== "indicator") {
-      element.classList.add(PRESENTATION_MODE_CLASSES[mode]);
-    }
+    const reveal = () => this.reveal(element);
+    if (mode === "blur") applyBlur(element, reveal);
+    else if (mode === "collapse") applyCollapse(element, reveal);
+    else if (mode === "hide") applyHide(element, reveal);
+    // indicator: badge only, nothing to reveal.
   }
 
   private prune(): void {
     for (const element of [...this.tracked]) {
-      if (!element.isConnected) this.tracked.delete(element);
+      if (element.isConnected) continue;
+      // The post node is gone but its owned siblings (badge, placeholder,
+      // toolbar) may still be connected. Restore removes them via the WeakMaps
+      // before we drop our only strong reference to the detached element.
+      restorePresentation(element);
+      this.states.set(element, CLEAN);
+      this.tracked.delete(element);
     }
   }
 }
