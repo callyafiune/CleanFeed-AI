@@ -1,4 +1,9 @@
 import { aggregateChunkResults } from "@/inference/aggregator";
+import {
+  BackendSelector,
+  ClassifierLifecycleManager,
+  type BackendFactory,
+} from "@/inference/backend-selector";
 import { buildExplanation } from "@/inference/explanation";
 import { calibrateResult, getLengthBucket } from "@/inference/calibration";
 import { createTextChunks } from "@/inference/chunker";
@@ -8,11 +13,17 @@ import {
   type LanguageDetector,
 } from "@/inference/language-detector";
 import { MockClassifier } from "@/inference/mock-classifier";
+import type { CleanFeedModelManifest } from "@/inference/model-bundle";
+import {
+  OnnxTextClassifier,
+  TransformersJsModelGateway,
+} from "@/inference/onnx-classifier";
 import { HeuristicTokenizer, type Tokenizer } from "@/inference/tokenizer";
 import {
   parseWorkerRequest,
   serializeWorkerError,
   type WorkerInitializePayload,
+  type WorkerBackendSettings,
   type WorkerRequest,
   type WorkerResponse,
 } from "@/inference/worker-protocol";
@@ -26,6 +37,7 @@ import type {
   ChunkResult,
   ClassificationOptions,
   ClassificationResult,
+  ModelStatus,
   ReasonCode,
   TextClassifier,
 } from "@/shared/types";
@@ -42,11 +54,17 @@ export interface PipelineRunnerOptions {
   classifier?: TextClassifier;
   detector?: LanguageDetector;
   tokenizer?: Tokenizer;
+  initialized?: boolean;
 }
 
 type RuntimeConfigurator = (
   paths: WorkerInitializePayload,
 ) => void | Promise<void>;
+
+export interface InferenceWorkerRuntimeOptions {
+  hasWebGpu?: () => boolean;
+  backendFactory?: (manifest: CleanFeedModelManifest) => BackendFactory;
+}
 
 /** A single request in a worker batch, with cancellation owned by that request. */
 export interface PipelineBatchItem {
@@ -82,6 +100,7 @@ export class PipelineRunner {
     this.classifier = options.classifier ?? new MockClassifier();
     this.detector = options.detector ?? new HeuristicPortugueseDetector();
     this.tokenizer = options.tokenizer ?? new HeuristicTokenizer();
+    if (options.initialized) this.initialized = Promise.resolve();
   }
 
   async initialize(): Promise<void> {
@@ -496,8 +515,9 @@ export function installInferenceWorker(
       await import("@/inference/transformers-environment");
     configureTransformersEnvironment(paths);
   },
+  options: InferenceWorkerRuntimeOptions = {},
 ): void {
-  const runner = runnerFactory();
+  const runtime = new WorkerRuntime(runnerFactory, options);
   const controllers = new Map<string, AbortController>();
   let runtimeInitialization: Promise<void> | undefined;
 
@@ -525,13 +545,15 @@ export function installInferenceWorker(
     }
 
     if (request.type === "INITIALIZE") {
-      runtimeInitialization ??= Promise.resolve(
-        configureRuntime(request.payload),
+      runtimeInitialization = initializeRuntime(
+        runtime,
+        request.payload,
+        configureRuntime,
       );
     }
     void handleMessage(
       request,
-      runner,
+      runtime,
       controllers,
       scope,
       runtimeInitialization,
@@ -541,7 +563,7 @@ export function installInferenceWorker(
 
 async function handleMessage(
   request: Exclude<WorkerRequest, { type: "CANCEL" }>,
-  runner: PipelineRunner,
+  runtime: WorkerRuntime,
   controllers: Map<string, AbortController>,
   scope: InferenceWorkerScope,
   runtimeInitialization: Promise<void> | undefined,
@@ -554,17 +576,16 @@ async function handleMessage(
       : [];
   try {
     if (request.type === "INITIALIZE") {
+      scope.postMessage({
+        type: "STATUS",
+        requestId: request.requestId,
+        payload: { ...runtime.getStatus(), state: "initializing" },
+      });
       await runtimeInitialization;
       scope.postMessage({
         type: "STATUS",
         requestId: request.requestId,
-        payload: { ...readyStatus(runner), state: "initializing" },
-      });
-      await runner.initialize();
-      scope.postMessage({
-        type: "STATUS",
-        requestId: request.requestId,
-        payload: readyStatus(runner),
+        payload: runtime.getStatus(),
       });
       return;
     }
@@ -572,7 +593,7 @@ async function handleMessage(
       scope.postMessage({
         type: "STATUS",
         requestId: request.requestId,
-        payload: readyStatus(runner),
+        payload: runtime.getStatus(),
       });
       return;
     }
@@ -580,13 +601,13 @@ async function handleMessage(
       scope.postMessage({
         type: "STATUS",
         requestId: request.requestId,
-        payload: { ...readyStatus(runner), state: "disposing" },
+        payload: { ...runtime.getStatus(), state: "disposing" },
       });
-      await runner.dispose();
+      await runtime.dispose();
       scope.postMessage({
         type: "STATUS",
         requestId: request.requestId,
-        payload: { ...readyStatus(runner), state: "unavailable" },
+        payload: runtime.getStatus(),
       });
       return;
     }
@@ -605,7 +626,7 @@ async function handleMessage(
     };
     for (const item of items)
       controllers.set(item.requestId, new AbortController());
-    const outcomes = await runner.classifyBatchSettled(
+    const outcomes = await runtime.getRunner().classifyBatchSettled(
       items.map((item) => ({
         request: item.payload,
         signal: controllers.get(item.requestId)?.signal,
@@ -632,6 +653,13 @@ async function handleMessage(
       }
     }
   } catch (error) {
+    if (request.type === "INITIALIZE") {
+      scope.postMessage({
+        type: "STATUS",
+        requestId: request.requestId,
+        payload: runtime.getStatus(),
+      });
+    }
     for (const requestId of batchItems.length === 0
       ? [request.requestId]
       : batchItems.map((item) => item.requestId)) {
@@ -649,7 +677,137 @@ async function handleMessage(
   }
 }
 
-function readyStatus(runner: PipelineRunner) {
+class WorkerRuntime {
+  private runner: PipelineRunner;
+  private lifecycle: ClassifierLifecycleManager | undefined;
+  private inactiveStatus: ModelStatus | undefined;
+
+  constructor(
+    private readonly runnerFactory: () => PipelineRunner,
+    private readonly options: InferenceWorkerRuntimeOptions,
+  ) {
+    this.runner = runnerFactory();
+  }
+
+  async initialize(payload: WorkerInitializePayload): Promise<void> {
+    const manifest = payload.modelManifest;
+    if (manifest === undefined) {
+      await this.disposeLifecycle();
+      await this.runner.initialize();
+      this.inactiveStatus = undefined;
+      return;
+    }
+
+    await this.disposeLifecycle();
+    const selector = new BackendSelector(
+      (this.options.backendFactory ?? createLocalBackendFactory)(manifest),
+    );
+    const lifecycle = new ClassifierLifecycleManager(selector);
+    this.lifecycle = lifecycle;
+    this.inactiveStatus = undefined;
+    const settings = backendSettings(payload.settings);
+    const selection = await lifecycle.initialize({
+      preference: settings.backendPreference,
+      webGpuEnabled: settings.webGpuEnabled,
+      wasmEnabled: settings.wasmEnabled,
+      hasWebGpu: (this.options.hasWebGpu ?? hasWebGpu)(),
+    });
+    this.runner = new PipelineRunner({
+      classifier: selection.classifier,
+      initialized: true,
+    });
+  }
+
+  async dispose(): Promise<void> {
+    if (this.lifecycle !== undefined) {
+      await this.lifecycle.dispose();
+      this.inactiveStatus = this.lifecycle.getStatus();
+      this.lifecycle = undefined;
+      this.runner = this.runnerFactory();
+      return;
+    }
+    await this.runner.dispose();
+    this.inactiveStatus = unavailableStatus();
+  }
+
+  getRunner(): PipelineRunner {
+    return this.runner;
+  }
+
+  getStatus(): ModelStatus {
+    return (
+      this.lifecycle?.getStatus() ??
+      this.inactiveStatus ??
+      readyStatus(this.runner)
+    );
+  }
+
+  private async disposeLifecycle(): Promise<void> {
+    if (this.lifecycle === undefined) return;
+    await this.lifecycle.dispose();
+    this.inactiveStatus = this.lifecycle.getStatus();
+    this.lifecycle = undefined;
+    this.runner = this.runnerFactory();
+  }
+}
+
+async function initializeRuntime(
+  runtime: WorkerRuntime,
+  payload: WorkerInitializePayload,
+  configureRuntime: RuntimeConfigurator,
+): Promise<void> {
+  await configureRuntime(payload);
+  await runtime.initialize(payload);
+}
+
+function backendSettings(
+  settings: WorkerBackendSettings | undefined,
+): WorkerBackendSettings {
+  return (
+    settings ?? {
+      backendPreference: "auto",
+      webGpuEnabled: true,
+      wasmEnabled: true,
+    }
+  );
+}
+
+function createLocalBackendFactory(
+  manifest: CleanFeedModelManifest,
+): BackendFactory {
+  return {
+    wasm: () =>
+      new OnnxTextClassifier(
+        manifest,
+        new TransformersJsModelGateway(),
+        "wasm",
+      ),
+    webgpu: () =>
+      new OnnxTextClassifier(
+        manifest,
+        new TransformersJsModelGateway(),
+        "webgpu",
+      ),
+  };
+}
+
+function hasWebGpu(): boolean {
+  return (
+    typeof navigator !== "undefined" &&
+    (navigator as Navigator & { gpu?: unknown }).gpu !== undefined
+  );
+}
+
+function unavailableStatus(): ModelStatus {
+  return {
+    state: "unavailable",
+    classifierId: "unavailable",
+    modelVersion: "unavailable",
+    backend: "mock",
+  };
+}
+
+function readyStatus(runner: PipelineRunner): ModelStatus {
   const metadata = runner.getMetadata();
   return {
     state: "ready" as const,

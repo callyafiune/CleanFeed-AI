@@ -9,6 +9,8 @@ export type ModelLifecycleState =
 export interface BackendSelectionOptions {
   preference: BackendPreference;
   hasWebGpu: boolean;
+  webGpuEnabled?: boolean;
+  wasmEnabled?: boolean;
 }
 
 export interface BackendFactory {
@@ -45,10 +47,13 @@ export async function selectBackend(
   selectorOptions: BackendSelectorOptions = {},
 ): Promise<BackendSelection> {
   if (options.preference === "wasm") {
-    return { backend: "wasm", classifier: await initialize(factory, "wasm") };
+    return {
+      backend: "wasm",
+      classifier: await initializeEnabledBackend(factory, "wasm", options),
+    };
   }
 
-  const shouldTryWebGpu = options.hasWebGpu;
+  const shouldTryWebGpu = options.hasWebGpu && options.webGpuEnabled !== false;
   if (shouldTryWebGpu) {
     try {
       return {
@@ -60,7 +65,7 @@ export async function selectBackend(
       try {
         return {
           backend: "wasm",
-          classifier: await initialize(factory, "wasm"),
+          classifier: await initializeEnabledBackend(factory, "wasm", options),
           fallbackFrom: "webgpu",
           ...(options.preference === "webgpu"
             ? { warning: "WEBGPU_FALLBACK" as const }
@@ -77,7 +82,7 @@ export async function selectBackend(
     if (fallback) selectorOptions.onFallback?.();
     return {
       backend: "wasm",
-      classifier: await initialize(factory, "wasm"),
+      classifier: await initializeEnabledBackend(factory, "wasm", options),
       ...(fallback
         ? {
             fallbackFrom: "webgpu" as const,
@@ -94,24 +99,15 @@ export async function selectBackend(
 export class ClassifierLifecycleManager {
   private active: BackendSelection | undefined;
   private operation = Promise.resolve();
-  private status: ModelStatus = {
-    state: "unavailable",
-    classifierId: "unavailable",
-    modelVersion: "unavailable",
-    backend: "mock",
-  };
+  private status: ModelStatus = inactiveStatus("unavailable");
 
   constructor(private readonly selector: BackendSelector) {}
 
   initialize(options: BackendSelectionOptions): Promise<BackendSelection> {
     return this.serialize(async () => {
-      this.status = {
-        ...this.status,
-        state: "initializing",
-        errorCode: undefined,
-      };
-      await this.disposeActive();
+      this.status = inactiveStatus("initializing");
       try {
+        await this.disposeActive();
         const selection = await this.selector.initialize(options);
         this.active = selection;
         const metadata = selection.classifier.getMetadata();
@@ -128,11 +124,7 @@ export class ClassifierLifecycleManager {
         };
         return selection;
       } catch (error) {
-        this.status = {
-          ...this.status,
-          state: "error",
-          errorCode: errorCode(error),
-        };
+        this.status = inactiveStatus("error", errorCode(error));
         throw error;
       }
     });
@@ -140,15 +132,14 @@ export class ClassifierLifecycleManager {
 
   dispose(): Promise<void> {
     return this.serialize(async () => {
-      this.status = { ...this.status, state: "disposing" };
-      await this.disposeActive();
-      this.status = {
-        ...this.status,
-        state: "unavailable",
-        initializedAt: undefined,
-        fallbackFrom: undefined,
-        errorCode: undefined,
-      };
+      this.status = inactiveStatus("disposing");
+      try {
+        await this.disposeActive();
+        this.status = inactiveStatus("unavailable");
+      } catch (error) {
+        this.status = inactiveStatus("error", errorCode(error));
+        throw error;
+      }
     });
   }
 
@@ -191,6 +182,21 @@ async function initialize(
   }
 }
 
+async function initializeEnabledBackend(
+  factory: BackendFactory,
+  backend: InferenceBackend,
+  options: BackendSelectionOptions,
+): Promise<TextClassifier> {
+  if (backend === "wasm" && options.wasmEnabled === false) {
+    throw modelLoadFailed(undefined);
+  }
+  try {
+    return await initialize(factory, backend);
+  } catch (error) {
+    throw modelLoadFailed(error);
+  }
+}
+
 function modelLoadFailed(cause: unknown): CleanFeedError {
   if (cause instanceof CleanFeedError && cause.code === "MODEL_LOAD_FAILED") {
     return cause;
@@ -200,4 +206,17 @@ function modelLoadFailed(cause: unknown): CleanFeedError {
 
 function errorCode(error: unknown): ErrorCode {
   return error instanceof CleanFeedError ? error.code : "MODEL_LOAD_FAILED";
+}
+
+function inactiveStatus(
+  state: Exclude<ModelLifecycleState, "ready">,
+  errorCode?: ErrorCode,
+): ModelStatus {
+  return {
+    state,
+    classifierId: "unavailable",
+    modelVersion: "unavailable",
+    backend: "mock",
+    ...(errorCode === undefined ? {} : { errorCode }),
+  };
 }

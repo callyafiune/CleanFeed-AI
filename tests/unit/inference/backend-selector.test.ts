@@ -47,6 +47,32 @@ describe("BackendSelector", () => {
     expect(factory.wasm).toHaveBeenCalledOnce();
   });
 
+  it("honors a WebGPU opt-out even when the runtime exposes it", async () => {
+    const factory = { wasm: vi.fn(() => classifier("wasm")), webgpu: vi.fn() };
+    const result = await new BackendSelector(factory).initialize({
+      preference: "auto",
+      hasWebGpu: true,
+      webGpuEnabled: false,
+      wasmEnabled: true,
+    });
+
+    expect(result.backend).toBe("wasm");
+    expect(factory.webgpu).not.toHaveBeenCalled();
+  });
+
+  it("refuses a WASM fallback when settings disable WASM", async () => {
+    const factory = { wasm: vi.fn(() => classifier("wasm")), webgpu: vi.fn() };
+
+    await expect(
+      new BackendSelector(factory).initialize({
+        preference: "auto",
+        hasWebGpu: false,
+        wasmEnabled: false,
+      }),
+    ).rejects.toMatchObject({ code: "MODEL_LOAD_FAILED" });
+    expect(factory.wasm).not.toHaveBeenCalled();
+  });
+
   it("warns when an explicit WebGPU selection must use WASM", async () => {
     const factory = { wasm: vi.fn(() => classifier("wasm")), webgpu: vi.fn() };
     const result = await new BackendSelector(factory).initialize({
@@ -118,6 +144,50 @@ describe("BackendSelector", () => {
     expect(lifecycle.getStatus()).toMatchObject({
       state: "ready",
       backend: "wasm",
+    });
+  });
+
+  it("clears active metadata when the lifecycle is disposed", async () => {
+    const lifecycle = new ClassifierLifecycleManager(
+      new BackendSelector({
+        wasm: vi.fn(() => classifier("wasm")),
+        webgpu: vi.fn(() => classifier("webgpu")),
+      }),
+    );
+
+    await lifecycle.initialize({ preference: "wasm", hasWebGpu: false });
+    await lifecycle.dispose();
+
+    expect(lifecycle.getStatus()).toEqual({
+      state: "unavailable",
+      classifierId: "unavailable",
+      modelVersion: "unavailable",
+      backend: "mock",
+    });
+  });
+
+  it("does not retain a replaced classifier's metadata after initialization fails", async () => {
+    const ready = classifier("wasm");
+    const failed = classifier("wasm");
+    vi.mocked(failed.initialize).mockRejectedValue(new Error("bundle failed"));
+    const lifecycle = new ClassifierLifecycleManager(
+      new BackendSelector({
+        wasm: vi.fn().mockReturnValueOnce(ready).mockReturnValueOnce(failed),
+        webgpu: vi.fn(() => classifier("webgpu")),
+      }),
+    );
+
+    await lifecycle.initialize({ preference: "wasm", hasWebGpu: false });
+    await expect(
+      lifecycle.initialize({ preference: "wasm", hasWebGpu: false }),
+    ).rejects.toMatchObject({ code: "MODEL_LOAD_FAILED" });
+
+    expect(lifecycle.getStatus()).toEqual({
+      state: "error",
+      classifierId: "unavailable",
+      modelVersion: "unavailable",
+      backend: "mock",
+      errorCode: "MODEL_LOAD_FAILED",
     });
   });
 });

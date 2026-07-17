@@ -1,7 +1,11 @@
 import { CleanFeedError, type ErrorCode } from "@/shared/errors";
+import {
+  parseModelManifest,
+  type CleanFeedModelManifest,
+} from "@/inference/model-bundle";
 import { parseExtensionMessage } from "@/shared/message-validation";
 import type { ClassificationRequest } from "@/shared/messages";
-import type { UserSettings } from "@/shared/settings-types";
+import type { BackendPreference, UserSettings } from "@/shared/settings-types";
 import type { ClassificationResult, ModelStatus } from "@/shared/types";
 
 export type WorkerClassifyPayload = ClassificationRequest & {
@@ -13,6 +17,14 @@ export type WorkerBatchClassifyPayload = {
 export type WorkerInitializePayload = {
   modelBaseUrl: string;
   wasmBaseUrl: string;
+  settings?: WorkerBackendSettings;
+  modelManifest?: CleanFeedModelManifest;
+};
+
+export type WorkerBackendSettings = {
+  backendPreference: BackendPreference;
+  webGpuEnabled: boolean;
+  wasmEnabled: boolean;
 };
 
 export type WorkerRequest =
@@ -80,10 +92,44 @@ function isWorkerInitializePayload(
   value: unknown,
 ): value is WorkerInitializePayload {
   return (
-    hasExactKeys(value, ["modelBaseUrl", "wasmBaseUrl"]) &&
+    isSafeRecord(value) &&
+    hasNoUnexpectedKeys(value, [
+      "modelBaseUrl",
+      "wasmBaseUrl",
+      "settings",
+      "modelManifest",
+    ]) &&
+    Object.hasOwn(value, "modelBaseUrl") &&
+    Object.hasOwn(value, "wasmBaseUrl") &&
     isExtensionAssetUrl(value.modelBaseUrl, "/models/") &&
-    isExtensionAssetUrl(value.wasmBaseUrl, "/vendor/transformers-wasm/")
+    isExtensionAssetUrl(value.wasmBaseUrl, "/vendor/transformers-wasm/") &&
+    (value.settings === undefined || isWorkerBackendSettings(value.settings)) &&
+    (value.modelManifest === undefined || isModelManifest(value.modelManifest))
   );
+}
+
+function isWorkerBackendSettings(
+  value: unknown,
+): value is WorkerBackendSettings {
+  return (
+    hasExactKeys(value, [
+      "backendPreference",
+      "webGpuEnabled",
+      "wasmEnabled",
+    ]) &&
+    ["auto", "wasm", "webgpu"].includes(value.backendPreference as string) &&
+    typeof value.webGpuEnabled === "boolean" &&
+    typeof value.wasmEnabled === "boolean"
+  );
+}
+
+function isModelManifest(value: unknown): value is CleanFeedModelManifest {
+  try {
+    parseModelManifest(value);
+    return true;
+  } catch {
+    return false;
+  }
 }
 
 function isExtensionAssetUrl(value: unknown, pathname: string): boolean {
@@ -240,6 +286,13 @@ function hasOnlyKeys(
       .every((key) => Object.hasOwn(value, key)) &&
     Object.keys(value).every((key) => keys.includes(key))
   );
+}
+
+function hasNoUnexpectedKeys(
+  value: Record<string, unknown>,
+  keys: readonly string[],
+): boolean {
+  return Object.keys(value).every((key) => keys.includes(key));
 }
 
 function isSafeRecord(value: unknown): value is Record<string, unknown> {

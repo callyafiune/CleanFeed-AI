@@ -7,11 +7,13 @@ import {
 } from "@/inference/inference-worker";
 import { DEFAULT_SETTINGS } from "@/shared/constants";
 import type { Tokenizer } from "@/inference/tokenizer";
+import type { CleanFeedModelManifest } from "@/inference/model-bundle";
 import type {
   BatchTextClassifier,
   ClassificationOptions,
   ClassificationResult,
   ClassifierMetadata,
+  TextClassifier,
 } from "@/shared/types";
 
 const PORTUGUESE_LONG_TEXT = Array.from(
@@ -62,6 +64,47 @@ function classifier(supportsBatching = false): BatchTextClassifier {
     ),
     dispose: vi.fn().mockResolvedValue(undefined),
     getMetadata: vi.fn(() => metadata),
+  };
+}
+
+const localManifest: CleanFeedModelManifest = {
+  schemaVersion: 1,
+  id: "cleanfeed-local-v1",
+  name: "CleanFeed local model",
+  version: "1.0.0",
+  task: "ai_text_detection",
+  architecture: "bert",
+  modelPath: "onnx/model_int8.onnx",
+  tokenizerPath: "tokenizer.json",
+  configPath: "config.json",
+  supportedLanguages: ["pt"],
+  maximumTokens: 256,
+  quantization: "int8",
+  labels: { human: 0, ai: 1 },
+  output: { name: "logits", kind: "logits" },
+  license: "Apache-2.0",
+  source: "local fixture",
+  calibrationVersion: "1",
+  sha256: {
+    model: "a".repeat(64),
+    tokenizer: "b".repeat(64),
+    config: "c".repeat(64),
+  },
+};
+
+function localClassifier(backend: "wasm" | "webgpu"): TextClassifier {
+  return {
+    ...classifier(),
+    getMetadata: () => ({
+      id: localManifest.id,
+      name: localManifest.name,
+      version: localManifest.version,
+      backend,
+      quantization: localManifest.quantization,
+      supportedLanguages: localManifest.supportedLanguages,
+      maximumTokens: localManifest.maximumTokens,
+      supportsBatching: false,
+    }),
   };
 }
 
@@ -163,6 +206,61 @@ describe("inference pipeline", () => {
     });
     expect(configure.mock.invocationCallOrder[0]).toBeLessThan(
       initialize.mock.invocationCallOrder[0]!,
+    );
+  });
+
+  it("selects a local WASM classifier after WebGPU fallback and reports its real lifecycle status", async () => {
+    const gpu = localClassifier("webgpu");
+    vi.mocked(gpu.initialize).mockRejectedValue(new Error("GPU unavailable"));
+    const wasm = localClassifier("wasm");
+    const scope = workerScope();
+    const configure = vi.fn();
+    installInferenceWorker(scope, () => new PipelineRunner(), configure, {
+      hasWebGpu: () => true,
+      backendFactory: () => ({
+        webgpu: vi.fn(() => gpu),
+        wasm: vi.fn(() => wasm),
+      }),
+    });
+
+    scope.dispatch({
+      type: "INITIALIZE",
+      requestId: "select-local-model",
+      payload: {
+        modelBaseUrl: "chrome-extension://test/models/",
+        wasmBaseUrl: "chrome-extension://test/vendor/transformers-wasm/",
+        modelManifest: localManifest,
+        settings: {
+          backendPreference: "auto",
+          webGpuEnabled: true,
+          wasmEnabled: true,
+        },
+      },
+    });
+
+    await waitForWorkerMessage(
+      scope,
+      (message) =>
+        (message as { type?: string; requestId?: string }).type === "STATUS" &&
+        (message as { requestId?: string }).requestId ===
+          "select-local-model" &&
+        (message as { payload?: { state?: string } }).payload?.state ===
+          "ready",
+    );
+    expect(gpu.dispose).toHaveBeenCalledOnce();
+    expect(scope.messages).toContainEqual({
+      type: "STATUS",
+      requestId: "select-local-model",
+      payload: expect.objectContaining({
+        state: "ready",
+        classifierId: localManifest.id,
+        modelVersion: localManifest.version,
+        backend: "wasm",
+        fallbackFrom: "webgpu",
+      }),
+    });
+    expect(configure).toHaveBeenCalledWith(
+      expect.objectContaining({ modelManifest: localManifest }),
     );
   });
 
