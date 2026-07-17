@@ -35,7 +35,7 @@ export function PerformanceSettings({
 
   return (
     <section aria-labelledby="performance-settings-heading">
-      <h2 id="performance-settings-heading">Desempenho local</h2>
+      <h2 id="performance-settings-heading">Desempenho</h2>
       <label>
         Tamanho máximo da fila
         <input

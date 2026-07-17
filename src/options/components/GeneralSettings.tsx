@@ -26,7 +26,7 @@ export function GeneralSettings({
 }) {
   return (
     <section aria-labelledby="general-settings-heading">
-      <h2 id="general-settings-heading">Configurações gerais</h2>
+      <h3 id="general-settings-heading">Configurações gerais</h3>
       <label>
         <input
           checked={settings.enabled}

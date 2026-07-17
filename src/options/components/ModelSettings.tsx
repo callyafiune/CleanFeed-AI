@@ -30,7 +30,7 @@ export function ModelSettings({
 
   return (
     <section aria-labelledby="model-settings-heading">
-      <h2 id="model-settings-heading">Modelo e calibração</h2>
+      <h3 id="model-settings-heading">Modelo e calibração</h3>
       <dl>
         <dt>Modelo</dt>
         <dd>{active.modelId}</dd>
