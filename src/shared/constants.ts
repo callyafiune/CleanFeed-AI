@@ -3,6 +3,8 @@ import type { UserSettings } from "@/shared/settings-types";
 export const MAX_CLASSIFICATION_TEXT_LENGTH = 100_000;
 export const MAX_REQUEST_ID_LENGTH = 128;
 export const MAX_PLATFORM_ID_LENGTH = 128;
+/** RFC 1035 caps a hostname at 253 characters; nothing longer is a hostname. */
+export const MAX_HOSTNAME_LENGTH = 253;
 
 export const CLEANFEED_ATTRIBUTES = {
   state: "data-cleanfeed-state",

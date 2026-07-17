@@ -1,13 +1,16 @@
+import "@testing-library/jest-dom/vitest";
+
 import { cleanup, render, screen } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { App, type PopupApi } from "@/popup/App";
+import { DEFAULT_SETTINGS } from "@/shared/constants";
 import type { PageStats } from "@/shared/types";
 
 const stats: PageStats = {
   platform: "linkedin",
-  postsFound: 3,
-  analyzed: 2,
+  postsFound: 5,
+  analyzed: 4,
   skippedByLength: 0,
   skippedByLanguage: 0,
   marked: 1,
@@ -26,12 +29,24 @@ function fakePopupApi(): PopupApi {
       state: "ready",
       classifierId: "mock",
       modelVersion: "1.0.0",
-      backend: "mock",
+      backend: "wasm",
     }),
+    getSettings: vi.fn().mockResolvedValue(DEFAULT_SETTINGS),
     getActiveHost: vi.fn().mockResolvedValue("www.linkedin.com"),
-    clearPresentation: vi.fn().mockResolvedValue(undefined),
+    isDomainPaused: vi.fn().mockResolvedValue(false),
+    setEnabled: vi.fn().mockResolvedValue(undefined),
+    pauseDomain: vi.fn().mockResolvedValue(undefined),
+    resumeDomain: vi.fn().mockResolvedValue(undefined),
+    clearPagePresentation: vi.fn().mockResolvedValue(undefined),
     openOptions: vi.fn().mockResolvedValue(undefined),
   };
+}
+
+function valueFor(label: string): string | undefined {
+  return screen
+    .getByText(label)
+    .parentElement?.querySelector("dd")
+    ?.textContent?.trim();
 }
 
 describe("popup model status", () => {
@@ -40,10 +55,11 @@ describe("popup model status", () => {
   it("shows queue size, model version, backend and readiness", async () => {
     render(<App api={fakePopupApi()} />);
 
-    expect(await screen.findByText(/Fila: 3/u)).toBeTruthy();
-    expect(screen.getByText(/Vers.o: 1.0.0/u)).toBeTruthy();
-    expect(screen.getByText(/Backend: mock/u)).toBeTruthy();
-    expect(screen.getByText(/Estado: pronto/u)).toBeTruthy();
+    expect(await screen.findByText("Estado")).toBeVisible();
+    expect(valueFor("Fila")).toBe("3");
+    expect(valueFor("Versão")).toBe("1.0.0");
+    expect(valueFor("Backend")).toBe("wasm");
+    expect(valueFor("Estado")).toBe("pronto");
     expect(screen.queryByRole("status")).toBeNull();
   });
 

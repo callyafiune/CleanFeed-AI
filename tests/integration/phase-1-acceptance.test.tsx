@@ -30,8 +30,13 @@ describe("Phase 1 acceptance", () => {
         modelVersion: "1.0.0",
         backend: "mock",
       }),
+      getSettings: vi.fn().mockResolvedValue(DEFAULT_SETTINGS),
       getActiveHost: vi.fn().mockResolvedValue("www.linkedin.com"),
-      clearPresentation: vi.fn().mockResolvedValue(undefined),
+      isDomainPaused: vi.fn().mockResolvedValue(false),
+      setEnabled: vi.fn().mockResolvedValue(undefined),
+      pauseDomain: vi.fn().mockResolvedValue(undefined),
+      resumeDomain: vi.fn().mockResolvedValue(undefined),
+      clearPagePresentation: vi.fn().mockResolvedValue(undefined),
       openOptions: vi.fn().mockResolvedValue(undefined),
     };
     const optionsApi: OptionsApi = {

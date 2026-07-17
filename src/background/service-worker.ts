@@ -16,6 +16,7 @@ import { DEFAULT_SETTINGS } from "@/shared/constants";
 import { CleanFeedError } from "@/shared/errors";
 import { parseExtensionMessage } from "@/shared/message-validation";
 import { ClassificationCache } from "@/storage/cache";
+import { DomainPauseRepository } from "@/storage/domain-pause";
 import { MetricsRepository } from "@/storage/metrics";
 import { PlatformSettingsRepository } from "@/storage/platform-settings";
 import { SettingsRepository } from "@/storage/settings";
@@ -25,6 +26,7 @@ const storage = new ChromeStorageArea();
 const settings = new SettingsRepository(storage);
 const platformSettings = new PlatformSettingsRepository(storage);
 const metrics = new MetricsRepository(storage);
+const domainPause = new DomainPauseRepository(storage);
 const offscreenClient = new RuntimeOffscreenClient();
 const router = new BackgroundMessageRouter({
   cache: new ClassificationCache(
@@ -39,6 +41,7 @@ const router = new BackgroundMessageRouter({
   offscreenClient,
   modelKey: "mock:1.0.0",
   settings,
+  domainPause,
   modelStatus: () => offscreenClient.getModelStatus(),
   settingsFingerprint: createSettingsFingerprintProvider(
     settings,
@@ -111,11 +114,7 @@ const handleContextMenuClick = createContextMenuClickHandler({
     // yet defined in MetricsRepository (src/storage/metrics.ts). Wire this to
     // that counter once it exists; report-missed still opens manual analysis.
   },
-  pauseDomain: () => {
-    // NOTE(integrator): a per-domain session/pause store does not exist yet
-    // (arrives with the popup's "Pausar neste site" control in Task 31). Wire
-    // this to that store once available; it must persist only the hostname.
-  },
+  pauseDomain: (hostname) => domainPause.pause(hostname),
   openOptions: () => {
     void chrome.runtime.openOptionsPage();
   },

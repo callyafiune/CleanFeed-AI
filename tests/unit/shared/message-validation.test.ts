@@ -187,6 +187,12 @@ const validMessages = [
     type: "ERROR",
     payload: { code: "INFERENCE_FAILED", recoverable: true },
   },
+  {
+    source: "popup",
+    target: "background",
+    type: "PAUSE_DOMAIN",
+    payload: { hostname: "www.linkedin.com", paused: true },
+  },
 ];
 
 describe("parseExtensionMessage", () => {
@@ -332,6 +338,28 @@ describe("parseExtensionMessage", () => {
     },
   ])("rejects forged route for %s", (message) => {
     expect(() => parseExtensionMessage(message)).toThrow("INVALID_MESSAGE");
+  });
+
+  it("rejects a pause request whose hostname carries a path", () => {
+    expect(() =>
+      parseExtensionMessage({
+        source: "popup",
+        target: "background",
+        type: "PAUSE_DOMAIN",
+        payload: { hostname: "www.linkedin.com/feed/update/1", paused: true },
+      }),
+    ).toThrow("INVALID_MESSAGE");
+  });
+
+  it("rejects a pause request forged from the content script", () => {
+    expect(() =>
+      parseExtensionMessage({
+        source: "content",
+        target: "background",
+        type: "PAUSE_DOMAIN",
+        payload: { hostname: "www.linkedin.com", paused: true },
+      }),
+    ).toThrow("INVALID_MESSAGE");
   });
 
   it("accepts the disposing model lifecycle state", () => {

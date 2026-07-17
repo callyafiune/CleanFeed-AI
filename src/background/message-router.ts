@@ -4,6 +4,7 @@ import { sha256 } from "@/shared/hashing";
 import { parseExtensionMessage } from "@/shared/message-validation";
 import type {
   ClassificationRequest,
+  DomainPauseRequest,
   ExtensionMessage,
   MessageEnvelope,
 } from "@/shared/messages";
@@ -42,6 +43,12 @@ export interface SettingsStore {
   patch(update: Partial<UserSettings>): Promise<UserSettings>;
 }
 
+/** The hostname-only pause store the popup's "Pausar neste site" control drives. */
+export interface DomainPauseStore {
+  pause(hostname: string): Promise<void>;
+  resume(hostname: string): Promise<void>;
+}
+
 export interface BackgroundMessageRouterOptions {
   cache: Pick<ClassificationCache, "get" | "set">;
   metrics: MetricsRecorder;
@@ -49,6 +56,7 @@ export interface BackgroundMessageRouterOptions {
   modelKey: string;
   settingsFingerprint: string | ((platformId: string) => Promise<string>);
   settings?: SettingsStore;
+  domainPause?: DomainPauseStore;
   modelStatus?: () => Promise<ModelStatus>;
 }
 
@@ -100,6 +108,11 @@ export class BackgroundMessageRouter {
           return this.handleModelStatus(
             message as MessageEnvelope<"MODEL_STATUS_REQUEST", undefined>,
           );
+        case "PAUSE_DOMAIN":
+          await this.handlePauseDomain(
+            message as MessageEnvelope<"PAUSE_DOMAIN", DomainPauseRequest>,
+          );
+          return undefined;
         default:
           return undefined;
       }
@@ -210,11 +223,34 @@ export class BackgroundMessageRouter {
     };
   }
 
+  /**
+   * Pauses or resumes CleanFeed for a single hostname. Only the hostname the
+   * validator already accepted crosses into the store; no path, query or text
+   * is ever touched.
+   */
+  private async handlePauseDomain(
+    request: MessageEnvelope<"PAUSE_DOMAIN", DomainPauseRequest>,
+  ): Promise<void> {
+    const store = this.domainPauseStore();
+    if (request.payload.paused) {
+      await store.pause(request.payload.hostname);
+    } else {
+      await store.resume(request.payload.hostname);
+    }
+  }
+
   private settingsStore(): SettingsStore {
     if (this.options.settings === undefined) {
       throw new CleanFeedError("STORAGE_ERROR", "SETTINGS_UNAVAILABLE");
     }
     return this.options.settings;
+  }
+
+  private domainPauseStore(): DomainPauseStore {
+    if (this.options.domainPause === undefined) {
+      throw new CleanFeedError("STORAGE_ERROR", "DOMAIN_PAUSE_UNAVAILABLE");
+    }
+    return this.options.domainPause;
   }
 }
 

@@ -1,3 +1,5 @@
+import "@testing-library/jest-dom/vitest";
+
 import {
   cleanup,
   fireEvent,
@@ -8,6 +10,7 @@ import {
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { App, type PopupApi } from "@/popup/App";
+import { DEFAULT_SETTINGS } from "@/shared/constants";
 import type { PageStats } from "@/shared/types";
 
 const pageStats: PageStats = {
@@ -34,11 +37,23 @@ function fakePopupApi(overrides: Partial<PopupApi> = {}): PopupApi {
       modelVersion: "1.0.0",
       backend: "mock",
     }),
+    getSettings: vi.fn().mockResolvedValue(DEFAULT_SETTINGS),
     getActiveHost: vi.fn().mockResolvedValue("www.linkedin.com"),
-    clearPresentation: vi.fn().mockResolvedValue(undefined),
+    isDomainPaused: vi.fn().mockResolvedValue(false),
+    setEnabled: vi.fn().mockResolvedValue(undefined),
+    pauseDomain: vi.fn().mockResolvedValue(undefined),
+    resumeDomain: vi.fn().mockResolvedValue(undefined),
+    clearPagePresentation: vi.fn().mockResolvedValue(undefined),
     openOptions: vi.fn().mockResolvedValue(undefined),
     ...overrides,
   };
+}
+
+function valueFor(label: string): string | undefined {
+  return screen
+    .getByText(label)
+    .parentElement?.querySelector("dd")
+    ?.textContent?.trim();
 }
 
 describe("popup App", () => {
@@ -51,20 +66,23 @@ describe("popup App", () => {
       await screen.findByText(
         "Modo de demonstração: nenhum modelo real está sendo utilizado.",
       ),
-    ).toBeTruthy();
-    expect(screen.getByText(/2 analisadas/u)).toBeTruthy();
-    expect(screen.getByText("Plataforma: LinkedIn")).toBeTruthy();
-    expect(screen.getByText("www.linkedin.com")).toBeTruthy();
+    ).toBeVisible();
+    expect(valueFor("Analisados")).toBe("2");
+    expect(screen.getByText("Plataforma: LinkedIn")).toBeVisible();
+    expect(screen.getByText("www.linkedin.com")).toBeVisible();
   });
 
   it("clears presentation without exposing the page text", async () => {
     const api = fakePopupApi();
     render(<App api={api} />);
 
-    await screen.findByText(/2 analisadas/u);
-    fireEvent.click(screen.getByRole("button", { name: "Restaurar posts" }));
+    fireEvent.click(
+      await screen.findByRole("button", { name: "Limpar resultados visuais" }),
+    );
 
-    await waitFor(() => expect(api.clearPresentation).toHaveBeenCalledOnce());
+    await waitFor(() =>
+      expect(api.clearPagePresentation).toHaveBeenCalledOnce(),
+    );
     expect(document.body.textContent).not.toMatch(/texto do post/u);
   });
 });

@@ -55,6 +55,12 @@ interface PostRuntimeState {
 export interface PostControllerOptions {
   adapter: PlatformAdapter;
   settings: EffectiveSettings;
+  /**
+   * Whether CleanFeed is active on this page's domain. Defaults to true; the
+   * content script sets it to false when the user has paused this hostname, so
+   * eligibility short-circuits with DOMAIN_DISABLED and nothing is classified.
+   */
+  domainEnabled?: boolean;
   document?: Document;
   createIntersectionObserver?: IntersectionObserverFactory;
   sendMessage?: RuntimeMessageSender;
@@ -75,6 +81,7 @@ export class PostController {
   private readonly sendMessage: RuntimeMessageSender;
   private readonly session: SessionState;
   private readonly modelAvailable: () => boolean;
+  private domainEnabled: boolean;
   private readonly hashText: (text: string) => Promise<string>;
   private readonly feedback: FeedbackRepository;
   private readonly now: () => number;
@@ -96,6 +103,7 @@ export class PostController {
     this.session = options.session ?? new SessionState();
     this.stats = options.stats ?? new PageStatsStore(options.adapter.id);
     this.modelAvailable = options.modelAvailable ?? (() => true);
+    this.domainEnabled = options.domainEnabled ?? true;
     this.hashText = options.hashText ?? sha256;
     this.feedback =
       options.feedback ?? new FeedbackRepository(new ChromeStorageArea());
@@ -154,6 +162,18 @@ export class PostController {
       state.presentationApplied = false;
       this.stats.restored();
     }
+  }
+
+  /**
+   * Live-toggles whether this domain is active, so pausing (or resuming) from
+   * the popup takes effect on the already-open tab instead of only on reload.
+   * Pausing restores any current presentation and short-circuits further
+   * classification (process() reports DOMAIN_DISABLED while paused).
+   */
+  setDomainEnabled(enabled: boolean): void {
+    if (this.domainEnabled === enabled) return;
+    this.domainEnabled = enabled;
+    if (!enabled) this.clearPresentation();
   }
 
   /**
@@ -308,7 +328,7 @@ export class PostController {
     const eligibility = evaluateEligibility({
       text,
       enabled: this.options.settings.enabled,
-      domainEnabled: true,
+      domainEnabled: this.domainEnabled,
       modelAvailable: this.modelAvailable(),
       extractionSucceeded: extracted !== null,
       duplicateContent:

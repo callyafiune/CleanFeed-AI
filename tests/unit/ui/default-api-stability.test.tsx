@@ -37,29 +37,43 @@ describe("default Chrome APIs", () => {
       type: "PAGE_STATS_RESULT",
       payload: pageStats,
     });
-    const sendToRuntime = vi.fn().mockResolvedValue({
-      source: "background",
-      target: "popup",
-      type: "MODEL_STATUS_RESULT",
-      payload: {
-        state: "ready",
-        classifierId: "mock",
-        modelVersion: "1.0.0",
-        backend: "mock",
-      },
-    });
+    // The default popup API asks the background for both the model status and
+    // the current settings, so it responds by request type.
+    const sendToRuntime = vi.fn(async (message: { type: string }) =>
+      message.type === "GET_SETTINGS"
+        ? {
+            source: "background",
+            target: "popup",
+            type: "SETTINGS_RESULT",
+            payload: { ...DEFAULT_SETTINGS },
+          }
+        : {
+            source: "background",
+            target: "popup",
+            type: "MODEL_STATUS_RESULT",
+            payload: {
+              state: "ready",
+              classifierId: "mock",
+              modelVersion: "1.0.0",
+              backend: "mock",
+            },
+          },
+    );
 
     vi.stubGlobal("chrome", {
       tabs: { query, sendMessage: sendToTab },
       runtime: { sendMessage: sendToRuntime, openOptionsPage: vi.fn() },
+      storage: { local: { get: vi.fn().mockResolvedValue({}) } },
     });
 
     render(<PopupApp />);
 
-    await screen.findByText(/1 analisada/u);
+    await screen.findByText("Analisados");
     await new Promise((resolve) => setTimeout(resolve, 20));
 
-    expect(sendToRuntime).toHaveBeenCalledTimes(1);
+    // One refresh cycle: model status + settings over runtime, page stats over
+    // the tab, and two active-tab lookups (page stats and hostname).
+    expect(sendToRuntime).toHaveBeenCalledTimes(2);
     expect(sendToTab).toHaveBeenCalledTimes(1);
     expect(query).toHaveBeenCalledTimes(2);
   });

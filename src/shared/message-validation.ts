@@ -4,6 +4,7 @@ import {
   MAX_REQUEST_ID_LENGTH,
 } from "@/shared/constants";
 import { CleanFeedError } from "@/shared/errors";
+import { isHostname } from "@/shared/hostname";
 import type { ExtensionContext, ExtensionMessage } from "@/shared/messages";
 
 const contextValues = [
@@ -34,6 +35,7 @@ const messageTypeValues = [
   "SHOW_MANUAL_ANALYSIS",
   "MANUAL_ANALYSIS_READY",
   "MANUAL_ANALYSIS_RESULT",
+  "PAUSE_DOMAIN",
   "OFFSCREEN_CLASSIFY",
   "OFFSCREEN_RESULT",
   "WORKER_STATUS",
@@ -147,6 +149,7 @@ const allowedRoutes: Record<MessageType, readonly Route[]> = {
   SHOW_MANUAL_ANALYSIS: [["background", "manual"]],
   MANUAL_ANALYSIS_READY: [["manual", "background"]],
   MANUAL_ANALYSIS_RESULT: [["manual", "background"]],
+  PAUSE_DOMAIN: [["popup", "background"]],
   OFFSCREEN_CLASSIFY: [["background", "offscreen"]],
   OFFSCREEN_RESULT: [["offscreen", "background"]],
   WORKER_STATUS: [["worker", "offscreen"]],
@@ -295,6 +298,8 @@ function isValidPayload(type: MessageType, payload: unknown): boolean {
       return isSettings(payload, true);
     case "SHOW_MANUAL_ANALYSIS":
       return isManualAnalysisRequest(payload);
+    case "PAUSE_DOMAIN":
+      return isDomainPauseRequest(payload);
     case "MANUAL_ANALYSIS_RESULT":
       return isClassificationResult(payload);
     case "ERROR":
@@ -321,6 +326,14 @@ function isManualAnalysisRequest(value: unknown): boolean {
     hasExactKeys(value, ["selectedText", "minimumWordCount"]) &&
     isBoundedString(value.selectedText, MAX_CLASSIFICATION_TEXT_LENGTH) &&
     isNonNegativeInteger(value.minimumWordCount)
+  );
+}
+
+function isDomainPauseRequest(value: unknown): boolean {
+  return (
+    hasExactKeys(value, ["hostname", "paused"]) &&
+    isHostname(value.hostname) &&
+    typeof value.paused === "boolean"
   );
 }
 

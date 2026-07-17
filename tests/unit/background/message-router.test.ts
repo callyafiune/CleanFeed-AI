@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from "vitest";
 
 import {
   BackgroundMessageRouter,
+  type DomainPauseStore,
   type SettingsStore,
 } from "@/background/message-router";
 import { DEFAULT_SETTINGS } from "@/shared/constants";
@@ -10,7 +11,10 @@ import { SettingsRepository } from "@/storage/settings";
 import { ChromeStorageArea } from "@/storage/storage-area";
 import { installChromeStorageMock } from "../../setup/chrome";
 
-function createRouter(settings: SettingsStore): BackgroundMessageRouter {
+function createRouter(
+  settings: SettingsStore,
+  domainPause?: DomainPauseStore,
+): BackgroundMessageRouter {
   return new BackgroundMessageRouter({
     cache: { get: vi.fn(), set: vi.fn() },
     metrics: { record: vi.fn().mockResolvedValue(undefined) },
@@ -18,6 +22,7 @@ function createRouter(settings: SettingsStore): BackgroundMessageRouter {
     modelKey: "mock:1.0.0",
     settingsFingerprint: "settings",
     settings,
+    ...(domainPause === undefined ? {} : { domainPause }),
     modelStatus: vi.fn().mockResolvedValue({
       state: "ready",
       classifierId: "mock",
@@ -70,6 +75,50 @@ describe("BackgroundMessageRouter settings bridge", () => {
       target: "popup",
       payload: { backend: "mock" },
     });
+  });
+
+  it("persists only the hostname when the popup pauses the current site", async () => {
+    const pause = vi.fn().mockResolvedValue(undefined);
+    const resume = vi.fn().mockResolvedValue(undefined);
+    const router = createRouter(
+      {
+        get: async () => DEFAULT_SETTINGS,
+        patch: async () => DEFAULT_SETTINGS,
+      },
+      { pause, resume },
+    );
+
+    await router.handle({
+      source: "popup",
+      target: "background",
+      type: "PAUSE_DOMAIN",
+      payload: { hostname: "www.linkedin.com", paused: true },
+    });
+
+    expect(pause).toHaveBeenCalledWith("www.linkedin.com");
+    expect(resume).not.toHaveBeenCalled();
+  });
+
+  it("resumes a site when the popup unpauses it", async () => {
+    const pause = vi.fn().mockResolvedValue(undefined);
+    const resume = vi.fn().mockResolvedValue(undefined);
+    const router = createRouter(
+      {
+        get: async () => DEFAULT_SETTINGS,
+        patch: async () => DEFAULT_SETTINGS,
+      },
+      { pause, resume },
+    );
+
+    await router.handle({
+      source: "popup",
+      target: "background",
+      type: "PAUSE_DOMAIN",
+      payload: { hostname: "www.linkedin.com", paused: false },
+    });
+
+    expect(resume).toHaveBeenCalledWith("www.linkedin.com");
+    expect(pause).not.toHaveBeenCalled();
   });
 
   it("serializes disjoint concurrent updates without losing either patch", async () => {

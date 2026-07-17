@@ -44,6 +44,16 @@ export interface ManualAnalysisRequest {
   minimumWordCount: number;
 }
 
+/**
+ * A request to pause or resume CleanFeed on a single site. It carries only the
+ * site's hostname (never a path, query or post text) so the background can keep
+ * a hostname-only pause store.
+ */
+export interface DomainPauseRequest {
+  hostname: string;
+  paused: boolean;
+}
+
 type EmptyPayload = undefined;
 
 export type ExtensionMessage =
@@ -75,6 +85,7 @@ export type ExtensionMessage =
   | MessageEnvelope<"SHOW_MANUAL_ANALYSIS", ManualAnalysisRequest>
   | MessageEnvelope<"MANUAL_ANALYSIS_READY", EmptyPayload>
   | MessageEnvelope<"MANUAL_ANALYSIS_RESULT", ClassificationResult>
+  | MessageEnvelope<"PAUSE_DOMAIN", DomainPauseRequest>
   | MessageEnvelope<
       "ERROR",
       { code: CleanFeedError["code"]; recoverable: boolean }
