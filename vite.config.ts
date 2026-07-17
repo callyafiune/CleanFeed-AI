@@ -40,3 +40,9 @@ export default defineConfig({
     },
   },
 });
+
+// The on-demand manual-analysis panel is injected via chrome.scripting under a
+// user gesture and is NOT a content script. chrome.scripting.executeScript runs
+// the file as a classic (non-module) script, so it cannot be one of the ES
+// module chunks this crxjs build emits. It is built separately, as a single
+// self-contained IIFE, by vite.manual-analysis.config.ts into dist/manual-analysis.js.

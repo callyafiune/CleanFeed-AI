@@ -7,7 +7,13 @@ import type {
 } from "@/shared/types";
 
 export type ExtensionContext =
-  "content" | "popup" | "options" | "background" | "offscreen" | "worker";
+  | "content"
+  | "popup"
+  | "options"
+  | "background"
+  | "offscreen"
+  | "worker"
+  | "manual";
 
 export interface MessageEnvelope<TType extends string, TPayload> {
   source: ExtensionContext;
@@ -26,6 +32,17 @@ export interface ClassificationRequest {
 export type OffscreenClassificationRequest = ClassificationRequest & {
   settings: UserSettings;
 };
+
+/**
+ * The selection the service worker hands to a freshly injected manual analysis
+ * panel. It carries only extension-owned data: the user-selected text (already
+ * bounded to the classification limit) and the configured minimum word count so
+ * the panel can explain a too-short selection without a round trip.
+ */
+export interface ManualAnalysisRequest {
+  selectedText: string;
+  minimumWordCount: number;
+}
 
 type EmptyPayload = undefined;
 
@@ -55,6 +72,9 @@ export type ExtensionMessage =
       EmptyPayload
     >
   | MessageEnvelope<"SETTINGS_RESULT", UserSettings>
+  | MessageEnvelope<"SHOW_MANUAL_ANALYSIS", ManualAnalysisRequest>
+  | MessageEnvelope<"MANUAL_ANALYSIS_READY", EmptyPayload>
+  | MessageEnvelope<"MANUAL_ANALYSIS_RESULT", ClassificationResult>
   | MessageEnvelope<
       "ERROR",
       { code: CleanFeedError["code"]; recoverable: boolean }

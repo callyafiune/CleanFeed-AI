@@ -13,6 +13,7 @@ const contextValues = [
   "background",
   "offscreen",
   "worker",
+  "manual",
 ] as const;
 const contexts = new Set<ExtensionContext>(contextValues);
 
@@ -30,6 +31,9 @@ const messageTypeValues = [
   "SETTINGS_RESULT",
   "CACHE_CLEAR",
   "METRICS_CLEAR",
+  "SHOW_MANUAL_ANALYSIS",
+  "MANUAL_ANALYSIS_READY",
+  "MANUAL_ANALYSIS_RESULT",
   "OFFSCREEN_CLASSIFY",
   "OFFSCREEN_RESULT",
   "WORKER_STATUS",
@@ -93,8 +97,14 @@ const modelStates = new Set<string>([
 
 type Route = readonly [ExtensionContext, ExtensionContext];
 const allowedRoutes: Record<MessageType, readonly Route[]> = {
-  CLASSIFY_TEXT: [["content", "background"]],
-  CLASSIFICATION_RESULT: [["background", "content"]],
+  CLASSIFY_TEXT: [
+    ["content", "background"],
+    ["manual", "background"],
+  ],
+  CLASSIFICATION_RESULT: [
+    ["background", "content"],
+    ["background", "manual"],
+  ],
   CANCEL_CLASSIFICATION: [
     ["content", "background"],
     ["background", "offscreen"],
@@ -134,6 +144,9 @@ const allowedRoutes: Record<MessageType, readonly Route[]> = {
     ["popup", "background"],
     ["options", "background"],
   ],
+  SHOW_MANUAL_ANALYSIS: [["background", "manual"]],
+  MANUAL_ANALYSIS_READY: [["manual", "background"]],
+  MANUAL_ANALYSIS_RESULT: [["manual", "background"]],
   OFFSCREEN_CLASSIFY: [["background", "offscreen"]],
   OFFSCREEN_RESULT: [["offscreen", "background"]],
   WORKER_STATUS: [["worker", "offscreen"]],
@@ -143,6 +156,7 @@ const allowedRoutes: Record<MessageType, readonly Route[]> = {
     ["background", "popup"],
     ["background", "options"],
     ["background", "offscreen"],
+    ["background", "manual"],
     ["offscreen", "background"],
     ["worker", "offscreen"],
   ],
@@ -156,6 +170,7 @@ const emptyPayloadMessageTypes = new Set<MessageType>([
   "GET_SETTINGS",
   "CACHE_CLEAR",
   "METRICS_CLEAR",
+  "MANUAL_ANALYSIS_READY",
 ]);
 const requestMessageTypes = new Set<MessageType>([
   "CLASSIFY_TEXT",
@@ -278,6 +293,10 @@ function isValidPayload(type: MessageType, payload: unknown): boolean {
       return isModelStatus(payload);
     case "SETTINGS_RESULT":
       return isSettings(payload, true);
+    case "SHOW_MANUAL_ANALYSIS":
+      return isManualAnalysisRequest(payload);
+    case "MANUAL_ANALYSIS_RESULT":
+      return isClassificationResult(payload);
     case "ERROR":
       return isErrorPayload(payload);
     default:
@@ -294,6 +313,14 @@ function isClassificationRequest(value: unknown): boolean {
     isBoundedString(value.text, MAX_CLASSIFICATION_TEXT_LENGTH) &&
     isBoundedString(value.platform, MAX_PLATFORM_ID_LENGTH) &&
     typeof value.manual === "boolean"
+  );
+}
+
+function isManualAnalysisRequest(value: unknown): boolean {
+  return (
+    hasExactKeys(value, ["selectedText", "minimumWordCount"]) &&
+    isBoundedString(value.selectedText, MAX_CLASSIFICATION_TEXT_LENGTH) &&
+    isNonNegativeInteger(value.minimumWordCount)
   );
 }
 
