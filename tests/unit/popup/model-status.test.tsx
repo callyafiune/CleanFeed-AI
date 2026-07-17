@@ -46,6 +46,21 @@ describe("popup model status", () => {
     expect(screen.getByText(/Estado: pronto/u)).toBeTruthy();
   });
 
+  it("surfaces the explicit WebGPU fallback warning", async () => {
+    const api = fakePopupApi();
+    vi.mocked(api.getModelStatus).mockResolvedValue({
+      state: "ready",
+      classifierId: "local-model",
+      modelVersion: "1.0.0",
+      backend: "wasm",
+      fallbackFrom: "webgpu",
+      warning: "WEBGPU_FALLBACK",
+    });
+    render(<App api={api} />);
+
+    expect((await screen.findByRole("status")).textContent).toContain("WebGPU");
+  });
+
   it("polls status at most once per second and stops on unmount", async () => {
     vi.useFakeTimers();
     const api = fakePopupApi();

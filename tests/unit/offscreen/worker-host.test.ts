@@ -62,7 +62,52 @@ describe("WorkerHost", () => {
     expect(host.getModelStatus()).toMatchObject({
       state: "error",
       errorCode: "WORKER_UNAVAILABLE",
+      classifierId: "unavailable",
+      modelVersion: "unavailable",
+      backend: "mock",
     });
+  });
+
+  it("drops stale model metadata from inactive and transitional worker statuses", () => {
+    const worker = new FakeWorker();
+    const host = new WorkerHost(() => worker);
+    worker.onmessage?.({
+      data: {
+        type: "STATUS",
+        requestId: "ready",
+        payload: {
+          state: "ready",
+          classifierId: "previous-model",
+          modelVersion: "1.0.0",
+          backend: "wasm",
+          fallbackFrom: "webgpu",
+          supportsBatching: true,
+        },
+      },
+    } as MessageEvent<unknown>);
+    worker.onmessage?.({
+      data: {
+        type: "STATUS",
+        requestId: "disposing",
+        payload: {
+          state: "disposing",
+          classifierId: "previous-model",
+          modelVersion: "1.0.0",
+          backend: "wasm",
+          fallbackFrom: "webgpu",
+          supportsBatching: true,
+        },
+      },
+    } as MessageEvent<unknown>);
+
+    expect(host.getModelStatus()).toMatchObject({
+      state: "disposing",
+      classifierId: "unavailable",
+      modelVersion: "unavailable",
+      backend: "mock",
+    });
+    expect(host.getModelStatus()).not.toHaveProperty("fallbackFrom");
+    expect(host.getModelStatus()).not.toHaveProperty("supportsBatching");
   });
 
   it("rejects pending and later requests after its worker errors", async () => {

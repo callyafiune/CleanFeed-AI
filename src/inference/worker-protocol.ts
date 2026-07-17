@@ -251,7 +251,8 @@ function isModelStatus(value: unknown): value is ModelStatus {
     ) &&
     isBoundedString(value.classifierId, 128) &&
     isBoundedString(value.modelVersion, 128) &&
-    ["mock", "wasm", "webgpu"].includes(value.backend as string)
+    ["mock", "wasm", "webgpu"].includes(value.backend as string) &&
+    (value.warning === undefined || value.warning === "WEBGPU_FALLBACK")
   );
 }
 

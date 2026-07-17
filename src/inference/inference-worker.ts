@@ -545,8 +545,7 @@ export function installInferenceWorker(
     }
 
     if (request.type === "INITIALIZE") {
-      runtimeInitialization = initializeRuntime(
-        runtime,
+      runtimeInitialization = runtime.initialize(
         request.payload,
         configureRuntime,
       );
@@ -579,7 +578,7 @@ async function handleMessage(
       scope.postMessage({
         type: "STATUS",
         requestId: request.requestId,
-        payload: { ...runtime.getStatus(), state: "initializing" },
+        payload: unavailableStatus("initializing"),
       });
       await runtimeInitialization;
       scope.postMessage({
@@ -601,7 +600,7 @@ async function handleMessage(
       scope.postMessage({
         type: "STATUS",
         requestId: request.requestId,
-        payload: { ...runtime.getStatus(), state: "disposing" },
+        payload: unavailableStatus("disposing"),
       });
       await runtime.dispose();
       scope.postMessage({
@@ -617,6 +616,9 @@ async function handleMessage(
         throw new CleanFeedError("MODEL_LOAD_FAILED", "MODEL_LOAD_FAILED");
       }
       await runtimeInitialization;
+      if (runtime.getStatus().state !== "ready") {
+        throw new CleanFeedError("MODEL_LOAD_FAILED", "MODEL_LOAD_FAILED");
+      }
     }
 
     const items = batchItems;
@@ -680,54 +682,71 @@ async function handleMessage(
 class WorkerRuntime {
   private runner: PipelineRunner;
   private lifecycle: ClassifierLifecycleManager | undefined;
-  private inactiveStatus: ModelStatus | undefined;
+  private status: ModelStatus;
+  private operation = Promise.resolve();
 
   constructor(
     private readonly runnerFactory: () => PipelineRunner,
     private readonly options: InferenceWorkerRuntimeOptions,
   ) {
     this.runner = runnerFactory();
+    this.status = readyStatus(this.runner);
   }
 
-  async initialize(payload: WorkerInitializePayload): Promise<void> {
-    const manifest = payload.modelManifest;
-    if (manifest === undefined) {
-      await this.disposeLifecycle();
-      await this.runner.initialize();
-      this.inactiveStatus = undefined;
-      return;
-    }
+  initialize(
+    payload: WorkerInitializePayload,
+    configureRuntime: RuntimeConfigurator,
+  ): Promise<void> {
+    return this.serialize(async () => {
+      this.status = unavailableStatus("initializing");
+      try {
+        await configureRuntime(payload);
+        const manifest = payload.modelManifest;
+        if (manifest === undefined) {
+          if (await this.disposeLifecycle()) this.runner = this.runnerFactory();
+          await this.runner.initialize();
+          this.status = readyStatus(this.runner);
+          return;
+        }
 
-    await this.disposeLifecycle();
-    const selector = new BackendSelector(
-      (this.options.backendFactory ?? createLocalBackendFactory)(manifest),
-    );
-    const lifecycle = new ClassifierLifecycleManager(selector);
-    this.lifecycle = lifecycle;
-    this.inactiveStatus = undefined;
-    const settings = backendSettings(payload.settings);
-    const selection = await lifecycle.initialize({
-      preference: settings.backendPreference,
-      webGpuEnabled: settings.webGpuEnabled,
-      wasmEnabled: settings.wasmEnabled,
-      hasWebGpu: (this.options.hasWebGpu ?? hasWebGpu)(),
-    });
-    this.runner = new PipelineRunner({
-      classifier: selection.classifier,
-      initialized: true,
+        await this.disposeLifecycle();
+        const selector = new BackendSelector(
+          (this.options.backendFactory ?? createLocalBackendFactory)(manifest),
+        );
+        const lifecycle = new ClassifierLifecycleManager(selector);
+        this.lifecycle = lifecycle;
+        const settings = backendSettings(payload.settings);
+        const selection = await lifecycle.initialize({
+          preference: settings.backendPreference,
+          webGpuEnabled: settings.webGpuEnabled,
+          wasmEnabled: settings.wasmEnabled,
+          hasWebGpu: (this.options.hasWebGpu ?? hasWebGpu)(),
+        });
+        this.runner = new PipelineRunner({
+          classifier: selection.classifier,
+          initialized: true,
+        });
+        this.status = lifecycle.getStatus();
+      } catch (error) {
+        this.status = unavailableStatus("error", modelErrorCode(error));
+        throw error;
+      }
     });
   }
 
-  async dispose(): Promise<void> {
-    if (this.lifecycle !== undefined) {
-      await this.lifecycle.dispose();
-      this.inactiveStatus = this.lifecycle.getStatus();
-      this.lifecycle = undefined;
-      this.runner = this.runnerFactory();
-      return;
-    }
-    await this.runner.dispose();
-    this.inactiveStatus = unavailableStatus();
+  dispose(): Promise<void> {
+    return this.serialize(async () => {
+      this.status = unavailableStatus("disposing");
+      try {
+        const releasedLifecycle = await this.disposeLifecycle();
+        if (!releasedLifecycle) await this.runner.dispose();
+        this.runner = this.runnerFactory();
+        this.status = unavailableStatus("unavailable");
+      } catch (error) {
+        this.status = unavailableStatus("error", modelErrorCode(error));
+        throw error;
+      }
+    });
   }
 
   getRunner(): PipelineRunner {
@@ -735,29 +754,24 @@ class WorkerRuntime {
   }
 
   getStatus(): ModelStatus {
-    return (
-      this.lifecycle?.getStatus() ??
-      this.inactiveStatus ??
-      readyStatus(this.runner)
-    );
+    return { ...this.status };
   }
 
-  private async disposeLifecycle(): Promise<void> {
-    if (this.lifecycle === undefined) return;
+  private async disposeLifecycle(): Promise<boolean> {
+    if (this.lifecycle === undefined) return false;
     await this.lifecycle.dispose();
-    this.inactiveStatus = this.lifecycle.getStatus();
     this.lifecycle = undefined;
-    this.runner = this.runnerFactory();
+    return true;
   }
-}
 
-async function initializeRuntime(
-  runtime: WorkerRuntime,
-  payload: WorkerInitializePayload,
-  configureRuntime: RuntimeConfigurator,
-): Promise<void> {
-  await configureRuntime(payload);
-  await runtime.initialize(payload);
+  private serialize<T>(work: () => Promise<T>): Promise<T> {
+    const next = this.operation.then(work, work);
+    this.operation = next.then(
+      () => undefined,
+      () => undefined,
+    );
+    return next;
+  }
 }
 
 function backendSettings(
@@ -798,13 +812,21 @@ function hasWebGpu(): boolean {
   );
 }
 
-function unavailableStatus(): ModelStatus {
+function unavailableStatus(
+  state: Exclude<ModelStatus["state"], "ready"> = "unavailable",
+  errorCode?: ModelStatus["errorCode"],
+): ModelStatus {
   return {
-    state: "unavailable",
+    state,
     classifierId: "unavailable",
     modelVersion: "unavailable",
     backend: "mock",
+    ...(errorCode === undefined ? {} : { errorCode }),
   };
+}
+
+function modelErrorCode(error: unknown): ModelStatus["errorCode"] {
+  return error instanceof CleanFeedError ? error.code : "MODEL_LOAD_FAILED";
 }
 
 function readyStatus(runner: PipelineRunner): ModelStatus {

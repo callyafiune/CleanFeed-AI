@@ -149,7 +149,7 @@ export class WorkerHost implements WorkerClassifierClient {
       this.postControl("DISPOSE", "worker-dispose");
       this.workerAvailable = false;
       this.worker.terminate();
-      this.modelStatus = { ...this.modelStatus, state: "unavailable" };
+      this.modelStatus = inactiveModelStatus("unavailable");
     }
   }
 
@@ -162,8 +162,11 @@ export class WorkerHost implements WorkerClassifierClient {
       return;
     }
     if (message.type === "STATUS") {
-      this.supportsBatching = message.payload.supportsBatching ?? false;
-      this.modelStatus = message.payload;
+      this.supportsBatching =
+        message.payload.state === "ready"
+          ? (message.payload.supportsBatching ?? false)
+          : false;
+      this.modelStatus = normalizeModelStatus(message.payload);
     }
     const pending = this.settle(message.requestId);
     this.running.delete(message.requestId);
@@ -345,11 +348,7 @@ export class WorkerHost implements WorkerClassifierClient {
       this.workerAvailable = false;
       this.worker.terminate();
     }
-    this.modelStatus = {
-      ...this.modelStatus,
-      state: "error",
-      errorCode: "WORKER_UNAVAILABLE",
-    };
+    this.modelStatus = inactiveModelStatus("error", "WORKER_UNAVAILABLE");
     this.rejectAll(reason);
   }
 
@@ -365,7 +364,7 @@ export class WorkerHost implements WorkerClassifierClient {
       this.settle(requestId)?.reject(timeoutError);
     }
     this.running.clear();
-    this.modelStatus = { ...this.modelStatus, state: "initializing" };
+    this.modelStatus = inactiveModelStatus("initializing");
     this.worker = this.createWorker();
     this.workerAvailable = true;
     this.attachWorker(this.worker);
@@ -375,4 +374,23 @@ export class WorkerHost implements WorkerClassifierClient {
 
 function workerUnavailableError(): CleanFeedError {
   return new CleanFeedError("WORKER_UNAVAILABLE", "WORKER_UNAVAILABLE");
+}
+
+function normalizeModelStatus(status: ModelStatus): ModelStatus {
+  return status.state === "ready"
+    ? { ...status }
+    : inactiveModelStatus(status.state, status.errorCode);
+}
+
+function inactiveModelStatus(
+  state: Exclude<ModelStatus["state"], "ready">,
+  errorCode?: ModelStatus["errorCode"],
+): ModelStatus {
+  return {
+    state,
+    classifierId: "unavailable",
+    modelVersion: "unavailable",
+    backend: "mock",
+    ...(errorCode === undefined ? {} : { errorCode }),
+  };
 }

@@ -231,7 +231,7 @@ describe("inference pipeline", () => {
         wasmBaseUrl: "chrome-extension://test/vendor/transformers-wasm/",
         modelManifest: localManifest,
         settings: {
-          backendPreference: "auto",
+          backendPreference: "webgpu",
           webGpuEnabled: true,
           wasmEnabled: true,
         },
@@ -257,6 +257,7 @@ describe("inference pipeline", () => {
         modelVersion: localManifest.version,
         backend: "wasm",
         fallbackFrom: "webgpu",
+        warning: "WEBGPU_FALLBACK",
       }),
     });
     expect(configure).toHaveBeenCalledWith(
@@ -307,6 +308,92 @@ describe("inference pipeline", () => {
     expect(configure.mock.invocationCallOrder[0]).toBeLessThan(
       initialize.mock.invocationCallOrder[0]!,
     );
+  });
+
+  it("leaves no active runner when disposal is requested during configuration", async () => {
+    const activeClassifier = classifier();
+    const runner = new PipelineRunner({ classifier: activeClassifier });
+    let finishConfiguration: (() => void) | undefined;
+    const configure = vi.fn(
+      () =>
+        new Promise<void>((resolve) => {
+          finishConfiguration = resolve;
+        }),
+    );
+    const scope = workerScope();
+    installInferenceWorker(scope, () => runner, configure);
+
+    scope.dispatch({
+      type: "INITIALIZE",
+      requestId: "initialization-to-dispose",
+      payload: {
+        modelBaseUrl: "chrome-extension://test/models/",
+        wasmBaseUrl: "chrome-extension://test/vendor/transformers-wasm/",
+      },
+    });
+    scope.dispatch({
+      type: "DISPOSE",
+      requestId: "dispose-during-init",
+      payload: null,
+    });
+    await vi.waitFor(() => expect(configure).toHaveBeenCalledOnce());
+    finishConfiguration?.();
+
+    await waitForWorkerMessage(
+      scope,
+      (message) =>
+        (message as { type?: string; requestId?: string }).type === "STATUS" &&
+        (message as { requestId?: string }).requestId ===
+          "dispose-during-init" &&
+        (message as { payload?: { state?: string } }).payload?.state ===
+          "unavailable",
+    );
+    expect(activeClassifier.dispose).toHaveBeenCalledOnce();
+    scope.dispatch({
+      type: "CLASSIFY",
+      requestId: "classify-after-dispose",
+      payload: {
+        text: PORTUGUESE_LONG_TEXT,
+        platform: "linkedin",
+        manual: false,
+      },
+    });
+    await waitForWorkerMessage(
+      scope,
+      (message) =>
+        (message as { type?: string; requestId?: string }).type === "ERROR" &&
+        (message as { requestId?: string }).requestId ===
+          "classify-after-dispose" &&
+        (message as { payload?: { code?: string } }).payload?.code ===
+          "MODEL_LOAD_FAILED",
+    );
+  });
+
+  it("publishes canonical metadata while a previously-ready worker is transitioning", async () => {
+    const runner = new PipelineRunner({ classifier: classifier() });
+    const scope = workerScope();
+    installInferenceWorker(scope, () => runner);
+    await initializeWorker(scope);
+
+    scope.dispatch({
+      type: "INITIALIZE",
+      requestId: "replace-ready-worker",
+      payload: {
+        modelBaseUrl: "chrome-extension://test/models/",
+        wasmBaseUrl: "chrome-extension://test/vendor/transformers-wasm/",
+      },
+    });
+
+    expect(scope.messages).toContainEqual({
+      type: "STATUS",
+      requestId: "replace-ready-worker",
+      payload: {
+        state: "initializing",
+        classifierId: "unavailable",
+        modelVersion: "unavailable",
+        backend: "mock",
+      },
+    });
   });
 
   it("runs language, tokenization, chunks, classification, aggregation and calibration", async () => {

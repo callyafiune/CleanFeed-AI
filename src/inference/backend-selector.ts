@@ -119,6 +119,9 @@ export class ClassifierLifecycleManager {
           ...(selection.fallbackFrom === undefined
             ? {}
             : { fallbackFrom: selection.fallbackFrom }),
+          ...(selection.warning === undefined
+            ? {}
+            : { warning: selection.warning }),
           initializedAt: Date.now(),
           supportsBatching: metadata.supportsBatching,
         };

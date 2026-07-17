@@ -46,6 +46,12 @@ describe("worker hard timeout recovery", () => {
       requestId: "worker-initialize",
       payload: paths,
     });
+    expect(host.getModelStatus()).toEqual({
+      state: "initializing",
+      classifierId: "unavailable",
+      modelVersion: "unavailable",
+      backend: "mock",
+    });
     vi.useRealTimers();
   });
 });

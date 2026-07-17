@@ -57,6 +57,9 @@ export function App({ api = defaultPopupApi }: { api?: PopupApi }) {
         {status?.backend ?? "indisponível"} · Estado:{" "}
         {modelStateLabel(status?.state)}
       </p>
+      {status?.warning === "WEBGPU_FALLBACK" ? (
+        <p role="status">WebGPU indisponível; usando WASM local.</p>
+      ) : null}
       {error === null ? null : <p role="alert">{error}</p>}
       <button
         type="button"

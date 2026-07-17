@@ -512,13 +512,20 @@ function isModelStatus(value: unknown): boolean {
     hasOnlyAllowedKeys(
       value,
       ["state", "classifierId", "modelVersion", "backend"],
-      ["fallbackFrom", "errorCode", "initializedAt", "supportsBatching"],
+      [
+        "fallbackFrom",
+        "warning",
+        "errorCode",
+        "initializedAt",
+        "supportsBatching",
+      ],
     ) &&
     isStringInSet(value.state, modelStates) &&
     isBoundedString(value.classifierId, 128) &&
     isBoundedString(value.modelVersion, 128) &&
     isStringInSet(value.backend, backends) &&
     isOptional(value.fallbackFrom, (item) => item === "webgpu") &&
+    isOptional(value.warning, (item) => item === "WEBGPU_FALLBACK") &&
     isOptional(value.errorCode, isErrorCode) &&
     isOptional(value.initializedAt, isNonNegativeFinite) &&
     isOptional(value.supportsBatching, (item) => typeof item === "boolean")

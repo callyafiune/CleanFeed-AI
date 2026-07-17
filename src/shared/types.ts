@@ -169,6 +169,7 @@ export interface ModelStatus {
   modelVersion: string;
   backend: Backend;
   fallbackFrom?: "webgpu";
+  warning?: "WEBGPU_FALLBACK";
   errorCode?: ErrorCode;
   initializedAt?: number;
   supportsBatching?: boolean;
