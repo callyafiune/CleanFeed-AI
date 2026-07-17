@@ -12,6 +12,25 @@
 - O filtro automático desta fase está limitado ao LinkedIn. Outros adaptadores
   dependem do mesmo contrato, mas ainda não foram implementados.
 
+## Fatores que degradam a detecção
+
+Estas quatro dimensões limitam qualquer resultado e são tratadas como riscos no
+[registro de riscos](risks.md):
+
+- **DOM**: o adaptador depende da estrutura atual do site. Uma mudança de markup
+  pode impedir a detecção ou a extração até que os seletores isolados sejam
+  revisados. Fixtures determinísticas cobrem os formatos conhecidos, mas não o
+  site ao vivo.
+- **Idioma**: o suporte declarado é para português. Textos em outros idiomas
+  podem produzir distribuições de score sem sentido e tendem a ser abstidos; a
+  calibração é por idioma e não vale para idiomas não suportados.
+- **Tamanho**: textos abaixo do mínimo configurado são ignorados para evitar
+  conclusões frágeis; textos muito longos são divididos em chunks com limite. A
+  calibração é por faixa de tamanho e define o teto de ação de cada faixa.
+- **Drift do modelo**: a calibração é vinculada ao artefato exato que a produziu.
+  Se o modelo ativo não corresponder à calibração registrada, o resultado cai em
+  um perfil conservador não calibrado, que só pode indicar.
+
 ## Apresentação e explicações
 
 - Apenas `possibly_ai` e `strong_ai_indication` acima do limiar de marcação

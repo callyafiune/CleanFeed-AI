@@ -1,16 +1,62 @@
-# IntegraÃ§Ã£o de modelos locais
+# Integração de modelos locais
 
-O CleanFeed AI aceita somente bundles locais abaixo de
-`chrome-extension://<id>/models/<model-id>/`. O manifesto `cleanfeed-model.json`
-declara o contrato do classificador, os labels binÃ¡rios, a licenÃ§a, a origem de
-proveniÃªncia, a versÃ£o de calibraÃ§Ã£o e os checksums SHA-256 de cada artefato.
+O CleanFeed AI aceita somente bundles **locais** abaixo de
+`chrome-extension://<id>/models/<model-id>/`. O manifesto do modelo (JSON)
+declara o contrato do classificador: os labels binários, a licença, a origem de
+proveniência (`source`), a versão de calibração e os checksums SHA-256 de cada
+artefato.
 
 Antes de carregar qualquer modelo, o offscreen passa a URL base local ao
-verificador. Ele rejeita manifestos com schema desconhecido, caminhos relativos
-inseguros, labels ambÃ­guos, respostas redirecionadas ou de outra origem e hashes
-incompatÃ­veis. Nenhuma etapa consulta rede HTTP(S).
+verificador (`parseModelManifest` / `verifyModelBundle`). Ele rejeita manifestos
+com schema desconhecido, caminhos relativos inseguros, labels ambíguos, respostas
+redirecionadas ou de outra origem e hashes incompatíveis. Nenhuma etapa consulta
+rede HTTP(S).
 
-O diretÃ³rio `public/models/` fica vazio atÃ© que um candidato licenciado e
-calibrado seja fornecido. Enquanto isso, o classificador ativo permanece
-`mock-v1`; a presenÃ§a deste contrato nÃ£o afirma a disponibilidade de um detector
-real.
+O diretório `public/models/` fica vazio até que um candidato licenciado e
+calibrado seja fornecido. Enquanto isso, o classificador ativo permanece o mock;
+a presença deste contrato **não** afirma a disponibilidade de um detector real.
+
+## Como integrar um modelo (passo a passo)
+
+Nenhum destes passos habilita ações agressivas sozinho: o portão de modelo exige
+todos eles satisfeitos. Enquanto isso, o backend ativo continua sendo o mock.
+
+1. **Manifesto do modelo.** Escreva o manifesto JSON validado por
+   `parseModelManifest` (`src/inference/model-bundle.ts`). Ele é um schema
+   fechado — chaves extras ou ausentes reprovam. Os campos obrigatórios incluem:
+
+   - `schemaVersion` (`1`), `id`, `name`, `version`;
+   - `task` (`"ai_text_detection"`), `architecture`, `quantization`
+     (`none` | `int8` | `int4`);
+   - `modelPath`, `tokenizerPath`, `configPath` (caminhos relativos seguros);
+   - `supportedLanguages`, `maximumTokens`;
+   - `labels` binários (`{ human, ai }` mapeados para `0`/`1`);
+   - `output` (`{ name, kind: "logits" | "probabilities" }`);
+   - `license` e `source` (proveniência auditável);
+   - `calibrationVersion`;
+   - `sha256` para `model`, `tokenizer` e `config`.
+
+2. **Assets locais.** Coloque os artefatos referenciados sob
+   `public/models/<model-id>/` para que sejam empacotados e servidos apenas via
+   `chrome-extension://`. Nada é buscado remotamente; `connect-src 'self'`
+   permanece.
+
+3. **Checksums.** Gere o SHA-256 de cada artefato e registre-o no manifesto. No
+   carregamento, cada arquivo é lido localmente e seu digest é conferido; um hash
+   divergente reprova o bundle (`MODEL_LOAD_FAILED`).
+
+4. **Calibração versionada.** Registre um perfil de calibração vinculado ao
+   artefato exato pelas cinco coordenadas (`modelId`, `modelVersion`, `platform`,
+   `language`, `lengthBucket`). Sem correspondência, o resultado cai no perfil
+   conservador não calibrado, cujo teto de ação é `"indicator"`. Veja
+   [model-validation.md](model-validation.md).
+
+5. **Benchmark.** Rode a validação científica fora do bundle
+   ([benchmark/README.md](../benchmark/README.md)) com split por autor/período e
+   reporte a precisão entre bloqueados. Um relatório versionado com esse split é
+   pré-requisito para qualquer decisão de lançamento.
+
+Só quando manifesto, assets, checksums, calibração e benchmark estiverem
+satisfeitos o modelo é integrado. Até lá, tanto a interface quanto os relatórios
+deixam explícito que o backend ativo é o mock. Nenhuma métrica de precisão ou
+acurácia é publicada aqui.

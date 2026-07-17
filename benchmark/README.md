@@ -99,3 +99,13 @@ científico: o backend ativo continua sendo o mock.
 
 Datasets nunca entram no Git: `benchmark/data/*` é ignorado, exceto `.gitkeep`.
 Os grupos de autor são pseudonimizados e cada registro carrega uma licença.
+
+## Ver também
+
+- Como um artefato aprovado é integrado à extensão:
+  [../docs/model-integration.md](../docs/model-integration.md).
+- O contrato de calibração e gating que impede ação agressiva sem benchmark:
+  [../docs/model-validation.md](../docs/model-validation.md).
+
+Sem um modelo real e um dataset aprovado, nenhum número de precisão ou acurácia é
+publicado, e o backend ativo da extensão permanece o mock.

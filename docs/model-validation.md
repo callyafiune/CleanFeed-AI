@@ -91,3 +91,17 @@ Um artefato só é integrado quando o portão de entrada está satisfeito: bundl
 licenciado, checksums SHA-256 conferidos, labels validados e uma calibração de
 benchmark registrada. Enquanto isso não ocorre, o modelo ativo permanece o mock,
 e tanto a interface quanto os relatórios deixam esse estado explícito.
+
+## Ver também
+
+- O passo a passo de integração (manifesto, assets, checksums, calibração e
+  benchmark) está em [model-integration.md](model-integration.md).
+- O benchmark científico e a métrica principal (precisão entre bloqueados) estão
+  em [benchmark/README.md](../benchmark/README.md).
+- A decisão de projeto por trás da abstenção e do teto de ação está em
+  [decisions.md](decisions.md) (ADR-004) e o risco de drift em
+  [risks.md](risks.md).
+
+Nenhum número de precisão ou acurácia é publicado enquanto o backend ativo for o
+mock; a calibração garante que um detector real só possa agir de forma agressiva
+depois de uma calibração de benchmark comprovada.

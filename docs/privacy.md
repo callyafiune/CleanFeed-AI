@@ -37,5 +37,29 @@
 - As mensagens de runtime são validadas por um contrato allowlist; mensagens
   forjadas de origem/rota inválida são rejeitadas com `INVALID_MESSAGE`.
 
-O MVP não implementa histórico de posts nem coleta dados para treinamento; o
-feedback local não treina o modelo.
+O MVP não coleta dados para treinamento; o feedback local não treina o modelo.
+
+## Histórico, regras e configurações por site
+
+- **Histórico**: desligado por padrão. Uma escrita com o histórico desabilitado
+  não toca no armazenamento. Quando habilitado, cada linha é sanitizada para uma
+  allowlist fixa (hash do texto, plataforma, status, score, timestamp e, quando
+  houver, origem/ação/feedback) — nunca o texto, o autor ou a URL. O texto
+  completo só é persistido sob opt-in explícito, em uma chave **separada** e
+  independentemente apagável, e nunca entra em nenhum export.
+- **Regras de palavra-chave**: os padrões do usuário são avaliados localmente;
+  padrões `regex` só compilam em um worker descartável após passar por um
+  validador de segurança. Uma regra não guarda conteúdo de post.
+- **Configurações por domínio**: "pausar neste site" e desativar por site gravam
+  apenas o hostname normalizado — nunca o path, a query, o autor ou o texto.
+- **Import/export de dados locais**: a importação mostra uma pré-visualização e
+  exige confirmação antes de aplicar qualquer mudança; um export genérico nunca
+  carrega o texto completo do histórico.
+
+## Diagnóstico compartilhável
+
+O relatório de diagnóstico é montado copiando apenas campos em allowlist para um
+objeto novo: versão, ambiente (Chrome/SO), **permissões da API** (padrões de
+host e qualquer token em forma de URL são removidos), métricas agregadas, status
+do modelo e um resumo das configurações. Ele não contém hosts, URLs, texto,
+autor nem qualquer PII.
