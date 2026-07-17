@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 
 import { GeneralSettings } from "@/options/components/GeneralSettings";
+import { ModelSettings } from "@/options/components/ModelSettings";
 import { PerformanceSettings } from "@/options/components/PerformanceSettings";
 import { PrivacyNotice } from "@/options/components/PrivacyNotice";
 import { DEFAULT_SETTINGS } from "@/shared/constants";
@@ -39,6 +40,7 @@ export function App({ api = defaultOptionsApi }: { api?: OptionsApi }) {
     <main>
       <h1>CleanFeed AI</h1>
       <GeneralSettings settings={settings} onUpdate={update} />
+      <ModelSettings settings={settings} onUpdate={update} />
       <PerformanceSettings settings={settings} onUpdate={update} />
       <PrivacyNotice />
       {error === null ? null : <p role="alert">{error}</p>}

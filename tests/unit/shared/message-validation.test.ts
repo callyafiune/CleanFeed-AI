@@ -20,6 +20,7 @@ const validSettings = {
   backendPreference: "auto",
   webGpuEnabled: true,
   wasmEnabled: true,
+  useMockModel: false,
   wasmConcurrency: 1,
   webGpuConcurrency: 2,
   maximumQueueSize: 50,

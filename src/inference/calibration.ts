@@ -1,4 +1,8 @@
 import type {
+  CalibrationQuery,
+  CalibrationRegistry,
+} from "@/inference/calibration-registry";
+import type {
   CalibrationProfile,
   ClassificationResult,
   ClassificationStatus,
@@ -131,6 +135,44 @@ export function calibrateResult(result: ClassificationResult): DecisionOutcome {
     abstained: false,
     reasonCodes,
   };
+}
+
+export interface RegistryCalibrationOptions {
+  platform?: string;
+}
+
+/**
+ * Additive, registry-aware wrapper around {@link calibrateResult}. The base
+ * decision is computed exactly as before; the registry only decides whether a
+ * real model has earned the right to act beyond an indicator. An uncalibrated
+ * real model keeps its debug score/status but is capped to
+ * `actionCeiling: "indicator"` so it can never blur, collapse, or hide a post.
+ * The mock/demo path is intentionally left untouched.
+ */
+export function calibrateWithRegistry(
+  result: ClassificationResult,
+  registry: CalibrationRegistry,
+  options: RegistryCalibrationOptions = {},
+): DecisionOutcome {
+  const outcome = calibrateResult(result);
+
+  if (result.backend === "mock") {
+    return outcome;
+  }
+
+  const query: CalibrationQuery = {
+    modelId: result.modelId,
+    modelVersion: result.modelVersion,
+    platform: options.platform ?? "default",
+    language: result.language ?? "und",
+    lengthBucket: getLengthBucket(result.wordCount),
+  };
+
+  if (registry.get(query).calibrated) {
+    return outcome;
+  }
+
+  return { ...outcome, actionCeiling: "indicator" };
 }
 
 function getEvidenceReasons(

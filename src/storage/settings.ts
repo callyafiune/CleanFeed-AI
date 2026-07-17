@@ -11,7 +11,7 @@ import { runWithSettingsMutationLock } from "@/storage/settings-lock";
 import type { StorageArea } from "@/storage/storage-area";
 
 export const SETTINGS_STORAGE_KEY = SETTINGS_STORAGE_KEYS.global;
-const SCHEMA_VERSION = 2;
+const SCHEMA_VERSION = 3;
 const PLATFORM_SCHEMA_VERSION = 1;
 
 interface PersistedSettings {
@@ -20,7 +20,14 @@ interface PersistedSettings {
   settings: UserSettings;
 }
 
-type V1UserSettings = Omit<UserSettings, "debugMode">;
+type V2UserSettings = Omit<UserSettings, "useMockModel">;
+type V1UserSettings = Omit<UserSettings, "debugMode" | "useMockModel">;
+
+interface PersistedSettingsV2 {
+  schemaVersion: 2;
+  settingsVersion: number;
+  settings: V2UserSettings;
+}
 
 interface PersistedSettingsV1 {
   schemaVersion: 1;
@@ -38,6 +45,7 @@ const booleanKeys = [
   "debugMode",
   "webGpuEnabled",
   "wasmEnabled",
+  "useMockModel",
   "batchingEnabled",
   "historyEnabled",
   "storeFullText",
@@ -173,15 +181,33 @@ function isUserSettings(value: unknown): value is UserSettings {
   return true;
 }
 
-function isV1UserSettings(value: unknown): value is V1UserSettings {
-  if (!isRecord(value) || Object.hasOwn(value, "debugMode")) return false;
+function isV2UserSettings(value: unknown): value is V2UserSettings {
+  if (!isRecord(value) || Object.hasOwn(value, "useMockModel")) return false;
   const expectedKeys = Object.keys(DEFAULT_SETTINGS).filter(
-    (key) => key !== "debugMode",
+    (key) => key !== "useMockModel",
   );
   return (
     Object.keys(value).length === expectedKeys.length &&
     expectedKeys.every((key) => Object.hasOwn(value, key)) &&
-    isUserSettings({ ...value, debugMode: false })
+    isUserSettings({ ...value, useMockModel: false })
+  );
+}
+
+function isV1UserSettings(value: unknown): value is V1UserSettings {
+  if (
+    !isRecord(value) ||
+    Object.hasOwn(value, "debugMode") ||
+    Object.hasOwn(value, "useMockModel")
+  ) {
+    return false;
+  }
+  const expectedKeys = Object.keys(DEFAULT_SETTINGS).filter(
+    (key) => key !== "debugMode" && key !== "useMockModel",
+  );
+  return (
+    Object.keys(value).length === expectedKeys.length &&
+    expectedKeys.every((key) => Object.hasOwn(value, key)) &&
+    isUserSettings({ ...value, debugMode: false, useMockModel: false })
   );
 }
 
@@ -191,6 +217,15 @@ function isPersistedSettings(value: unknown): value is PersistedSettings {
     value.schemaVersion === SCHEMA_VERSION &&
     isFiniteIntegerInRange(value.settingsVersion, 0, Number.MAX_SAFE_INTEGER) &&
     isUserSettings(value.settings)
+  );
+}
+
+function isPersistedSettingsV2(value: unknown): value is PersistedSettingsV2 {
+  return (
+    isRecord(value) &&
+    value.schemaVersion === 2 &&
+    isFiniteIntegerInRange(value.settingsVersion, 0, Number.MAX_SAFE_INTEGER) &&
+    isV2UserSettings(value.settings)
   );
 }
 
@@ -298,11 +333,35 @@ async function readPersistedSettingsForMutation(
     return persisted;
   }
 
+  if (isPersistedSettingsV2(persisted)) {
+    const migrated = {
+      schemaVersion: SCHEMA_VERSION,
+      settingsVersion: persisted.settingsVersion,
+      settings: { ...persisted.settings, useMockModel: false },
+    } satisfies PersistedSettings;
+    await storage.set(storageKey, migrated);
+    return migrated;
+  }
+
   if (isPersistedSettingsV1(persisted)) {
     const migrated = {
       schemaVersion: SCHEMA_VERSION,
       settingsVersion: persisted.settingsVersion,
-      settings: { ...persisted.settings, debugMode: false },
+      settings: {
+        ...persisted.settings,
+        debugMode: false,
+        useMockModel: false,
+      },
+    } satisfies PersistedSettings;
+    await storage.set(storageKey, migrated);
+    return migrated;
+  }
+
+  if (isV2UserSettings(persisted)) {
+    const migrated = {
+      schemaVersion: SCHEMA_VERSION,
+      settingsVersion: 1,
+      settings: { ...persisted, useMockModel: false },
     } satisfies PersistedSettings;
     await storage.set(storageKey, migrated);
     return migrated;
@@ -312,7 +371,7 @@ async function readPersistedSettingsForMutation(
     const migrated = {
       schemaVersion: SCHEMA_VERSION,
       settingsVersion: 1,
-      settings: { ...persisted, debugMode: false },
+      settings: { ...persisted, debugMode: false, useMockModel: false },
     } satisfies PersistedSettings;
     await storage.set(storageKey, migrated);
     return migrated;

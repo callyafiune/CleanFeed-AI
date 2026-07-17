@@ -27,6 +27,7 @@ export interface UserSettings {
   backendPreference: BackendPreference;
   webGpuEnabled: boolean;
   wasmEnabled: boolean;
+  useMockModel: boolean;
   wasmConcurrency: number;
   webGpuConcurrency: number;
   maximumQueueSize: number;

@@ -185,6 +185,7 @@ const userSettingKeys = [
   "backendPreference",
   "webGpuEnabled",
   "wasmEnabled",
+  "useMockModel",
   "wasmConcurrency",
   "webGpuConcurrency",
   "maximumQueueSize",
@@ -584,6 +585,7 @@ function isSettingValue(key: string, value: unknown): boolean {
     case "debugMode":
     case "webGpuEnabled":
     case "wasmEnabled":
+    case "useMockModel":
     case "batchingEnabled":
     case "historyEnabled":
     case "storeFullText":
