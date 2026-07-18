@@ -6,6 +6,7 @@ import { describe, expect, it } from "vitest";
 import { MockClassifier } from "@/inference/mock-classifier";
 import {
   MOCK_MODEL_PROFILE,
+  STYLOMETRIC_MODEL_PROFILE,
   profileClassifier,
   resolveActiveModelProfile,
 } from "@/inference/model-profile";
@@ -135,8 +136,17 @@ describe("resolveActiveModelProfile", () => {
     backend: "wasm",
   };
 
-  it("falls back to the mock when no model status is available", () => {
-    expect(resolveActiveModelProfile()).toEqual(MOCK_MODEL_PROFILE);
+  // Adjusted after the honesty review: with no status, the identity that will
+  // actually serve results is the worker's stylometric fallback, not the hash
+  // mock — Options must never display "mock / text hash" semantics while
+  // stylometric-v1 results are being produced.
+  it("falls back to the stylometric heuristic when no model status is available", () => {
+    expect(resolveActiveModelProfile()).toEqual(STYLOMETRIC_MODEL_PROFILE);
+    expect(STYLOMETRIC_MODEL_PROFILE).toMatchObject({
+      modelId: "stylometric-v1",
+      calibrated: false,
+      isMock: true,
+    });
   });
 
   it("honours the mock fallback even when a real model is ready", () => {
@@ -145,6 +155,29 @@ describe("resolveActiveModelProfile", () => {
         useMockModel: true,
         status: readyStatus,
         calibrated: true,
+      }),
+    ).toEqual(MOCK_MODEL_PROFILE);
+  });
+
+  it("distinguishes the hash mock from the stylometric fallback by identity", () => {
+    expect(
+      resolveActiveModelProfile({
+        status: {
+          state: "ready",
+          classifierId: "stylometric-v1",
+          modelVersion: "1.0.0",
+          backend: "mock",
+        },
+      }),
+    ).toEqual(STYLOMETRIC_MODEL_PROFILE);
+    expect(
+      resolveActiveModelProfile({
+        status: {
+          state: "ready",
+          classifierId: "mock",
+          modelVersion: "1.0.0",
+          backend: "mock",
+        },
       }),
     ).toEqual(MOCK_MODEL_PROFILE);
   });

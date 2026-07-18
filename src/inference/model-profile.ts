@@ -23,12 +23,28 @@ export interface ModelProfile {
 }
 
 /**
- * The demonstration classifier that ships in the MVP. It is deliberately
- * reported as uncalibrated: its scores are derived from a text hash and must
- * never be presented as a real detection.
+ * The deterministic hash-based demonstration classifier (`MockClassifier`).
+ * It is deliberately reported as uncalibrated: its scores are derived from a
+ * text hash and must never be presented as a real detection. It is only
+ * active when the user forces the mock fallback in Options.
  */
 export const MOCK_MODEL_PROFILE: ModelProfile = {
   modelId: "mock",
+  modelVersion: "1.0.0",
+  backend: "mock",
+  calibrated: false,
+  isMock: true,
+};
+
+/**
+ * The transparent stylometric heuristic that actually serves classifications
+ * in the MVP (`StylometricClassifier`). Its scores are explainable text
+ * statistics — not a text hash and not a validated detection. It is reported
+ * as uncalibrated, so presentation stays at the indicator-only ceiling, and
+ * it remains demonstration-grade (`isMock`): never evidence of authorship.
+ */
+export const STYLOMETRIC_MODEL_PROFILE: ModelProfile = {
+  modelId: "stylometric-v1",
   modelVersion: "1.0.0",
   backend: "mock",
   calibrated: false,
@@ -46,9 +62,11 @@ export interface ActiveModelProfileInput {
 }
 
 /**
- * Resolves the profile the UI should display. In the MVP no real bundle ships,
- * so the mock is the active model unless a verified model status is supplied.
- * The mock fallback and any missing/mock status always resolve to the mock.
+ * Resolves the profile the UI should display. In the MVP no real bundle
+ * ships, so the stylometric heuristic is the active model unless a verified
+ * model status is supplied. A "mock"-backend status is disambiguated by the
+ * classifier id/version it reports: the hash mock keeps the mock profile,
+ * everything else (the worker's actual fallback) is the stylometric profile.
  */
 export function resolveActiveModelProfile(
   input: ActiveModelProfileInput = {},
@@ -60,8 +78,19 @@ export function resolveActiveModelProfile(
     calibrationVersion,
   } = input;
 
-  if (useMockModel || status === null || status.backend === "mock") {
+  if (useMockModel) {
     return MOCK_MODEL_PROFILE;
+  }
+
+  if (status === null) {
+    return STYLOMETRIC_MODEL_PROFILE;
+  }
+
+  if (status.backend === "mock") {
+    return status.classifierId === MOCK_MODEL_PROFILE.modelId &&
+      status.modelVersion === MOCK_MODEL_PROFILE.modelVersion
+      ? MOCK_MODEL_PROFILE
+      : STYLOMETRIC_MODEL_PROFILE;
   }
 
   return {

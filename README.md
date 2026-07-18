@@ -28,11 +28,16 @@ detalhes, o diagrama e o contrato de mensagens estão em
 
 ## Estado atual
 
-Esta fase usa um classificador **mock** determinístico (`MockClassifier`).
-Nenhum modelo real está em uso; qualquer resultado é somente uma demonstração do
-fluxo local. **O MockClassifier não é um detector real**: sua saída deriva de um
-hash do texto e não é evidência de que um conteúdo foi escrito por uma pessoa ou
-por IA. Nenhuma métrica de qualidade de detecção é afirmada neste estágio.
+Esta fase usa um classificador **heurístico estilométrico** transparente
+(`stylometric-v1`). Ele calcula sinais explicáveis do próprio texto — variação
+do comprimento das frases, transições repetitivas no início das frases, padrão
+de lista, estrutura formulaica e densidade de hashtags — e combina esses sinais
+em um escore ponderado com pesos documentados no código. **Não é um detector
+validado**: os sinais são indícios estilísticos probabilísticos, não evidência
+de autoria; nenhuma métrica de qualidade de detecção é afirmada; o classificador
+permanece não calibrado, sempre com confiança baixa e limitado ao teto de ação
+"indicator" (só pode indicar, nunca ocultar). O `MockClassifier` determinístico
+continua disponível para testes e demonstrações do fluxo.
 
 A infraestrutura para um modelo real local já existe — carregador com verificação
 de manifesto/checksum, empacotamento offline, seleção WebGPU/WASM com fallback,
@@ -178,9 +183,13 @@ calibração/gating em [docs/model-validation.md](docs/model-validation.md).
 
 ## Mock vs. modelo real
 
-O classificador ativo é o `MockClassifier` determinístico, marcado como
-demonstração em toda a interface. **O MockClassifier não é um detector real** e
-nenhum número de precisão ou acurácia é publicado enquanto ele estiver ativo.
+O classificador ativo é a heurística estilométrica `stylometric-v1` descrita em
+[Estado atual](#estado-atual), marcada como demonstração em toda a interface e
+limitada ao teto de ação "indicator". O `MockClassifier` determinístico (escores
+derivados de um hash do texto) permanece disponível para testes e demonstrações
+do fluxo. **O MockClassifier não é um detector real**, a heurística
+estilométrica tampouco é um detector validado, e nenhum número de precisão ou
+acurácia é publicado enquanto qualquer um deles estiver ativo.
 
 Um modelo real só é integrado quando o portão de entrada estiver satisfeito:
 bundle licenciado, checksums conferidos, labels validados e uma calibração de

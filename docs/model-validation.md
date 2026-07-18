@@ -35,19 +35,24 @@ A função aditiva `calibrateWithRegistry(result, registry, options?)`
 contrato:
 
 1. A decisão base é calculada exatamente como antes por `calibrateResult`.
-2. O caminho do mock/demo (`backend === "mock"`) é preservado sem alterações e
-   mantém a capacidade de desfoque de demonstração.
-3. Para um modelo real, o registro é consultado. Se o modelo estiver calibrado,
-   a decisão base é mantida. Se **não** estiver calibrado, o `actionCeiling` é
-   rebaixado para `"indicator"`.
+2. O registro é consultado para **todo** resultado. Se houver uma calibração
+   verificada para as cinco coordenadas exatas do modelo, a decisão base é
+   mantida.
+3. Sem calibração verificada — o que inclui, por definição, o mock de
+   demonstração e a heurística estilométrica, já que o registro recusa perfis
+   não calibrados — o `actionCeiling` é rebaixado para `"indicator"`.
 
-Ou seja, um modelo real não calibrado ainda pode expor um score e um status
-(úteis em modo debug), mas **nunca** desfoca, recolhe ou oculta um post. Só a
-indicação é permitida.
+Ou seja, um classificador não calibrado (real, mock ou heurístico) ainda pode
+expor um score e um status (úteis em modo debug), mas **nunca** desfoca,
+recolhe ou oculta um post. Só a indicação é permitida. O pipeline de inferência
+(`completePreparedRequest` em `src/inference/inference-worker.ts`) aplica esse
+gating em todos os resultados que produz.
 
-O mock permanece explicitamente identificado como demonstração e é reportado
-como não calibrado na página de opções: seus scores derivam de um hash de texto
-e não são evidência de autoria humana ou por IA.
+O mock e a heurística estilométrica permanecem explicitamente identificados
+como demonstração e reportados como não calibrados na página de opções: os
+scores do mock derivam de um hash de texto, os da heurística são estatísticas
+de estilo transparentes, e nenhum dos dois é evidência de autoria humana ou por
+IA.
 
 ## Procedimento de smoke do modelo real
 
@@ -60,11 +65,13 @@ ambiente `CLEANFEED_TEST_MODEL_DIR`.
 Sem `CLEANFEED_TEST_MODEL_DIR`, o bloco de smoke real é **pulado** com
 `describe.skipIf`, exibindo a razão "real model artifact not supplied". Isso é
 uma lacuna documentada, e não um PASS científico. O diretório `public/models/`
-permanece vazio e o modelo ativo continua sendo o mock.
+permanece vazio e o classificador ativo continua sendo a heurística
+estilométrica de demonstração (`stylometric-v1`).
 
 O harness de profiling (`profileClassifier`) e o resolvedor de modelo ativo
-(`resolveActiveModelProfile`) continuam sendo exercitados com o mock, de modo que
-a mecânica de medição é validada mesmo sem um artefato real.
+(`resolveActiveModelProfile`) continuam sendo exercitados com os classificadores
+de demonstração, de modo que a mecânica de medição é validada mesmo sem um
+artefato real.
 
 ### Com artefato
 
@@ -89,8 +96,9 @@ Defina `CLEANFEED_TEST_MODEL_DIR` apontando para um diretório local que contenh
 
 Um artefato só é integrado quando o portão de entrada está satisfeito: bundle
 licenciado, checksums SHA-256 conferidos, labels validados e uma calibração de
-benchmark registrada. Enquanto isso não ocorre, o modelo ativo permanece o mock,
-e tanto a interface quanto os relatórios deixam esse estado explícito.
+benchmark registrada. Enquanto isso não ocorre, o classificador ativo permanece
+a heurística estilométrica de demonstração, e tanto a interface quanto os
+relatórios deixam esse estado explícito.
 
 ## Ver também
 

@@ -5,3 +5,5 @@ playwright-report/
 test-results/
 .superpowers/
 docs/
+# Third-party model bundles must stay byte-exact (sha256-verified against upstream).
+public/models/

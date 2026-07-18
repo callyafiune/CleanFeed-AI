@@ -174,7 +174,13 @@ describe("calibrateWithRegistry", () => {
     expect(outcome.status).toBe("strong_ai_indication");
   });
 
-  it("leaves the mock demo path unchanged", () => {
+  // Adjusted after the honesty review: this test previously asserted that the
+  // mock/demo path kept its aggressive length-bucket ceiling ("blur"), which
+  // contradicted the documented invariant that an UNCALIBRATED classifier may
+  // only indicate (README, docs/model-validation.md, docs/decisions.md). The
+  // demo mock and the stylometric heuristic are uncalibrated by definition
+  // (the registry refuses uncalibrated profiles), so they too are capped.
+  it("caps the uncalibrated mock demo path to the indicator ceiling", () => {
     const mock = realResult({
       backend: "mock",
       demo: true,
@@ -192,7 +198,9 @@ describe("calibrateWithRegistry", () => {
 
     const outcome = calibrateWithRegistry(mock, registry);
 
-    expect(outcome.actionCeiling).toBe("blur");
+    expect(outcome.actionCeiling).toBe("indicator");
+    // The demo score and status stay visible; only the ceiling is capped.
+    expect(outcome.status).toBe("strong_ai_indication");
     expect(outcome.abstained).toBe(false);
   });
 });

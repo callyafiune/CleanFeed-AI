@@ -144,10 +144,13 @@ export interface RegistryCalibrationOptions {
 /**
  * Additive, registry-aware wrapper around {@link calibrateResult}. The base
  * decision is computed exactly as before; the registry only decides whether a
- * real model has earned the right to act beyond an indicator. An uncalibrated
- * real model keeps its debug score/status but is capped to
- * `actionCeiling: "indicator"` so it can never blur, collapse, or hide a post.
- * The mock/demo path is intentionally left untouched.
+ * classifier has earned the right to act beyond an indicator. Any classifier
+ * without a benchmark-verified calibration for its exact coordinates —
+ * including the demo mock and the stylometric heuristic, which can never be
+ * registered because the registry refuses uncalibrated profiles — keeps its
+ * score/status but is capped to `actionCeiling: "indicator"` so it can never
+ * blur, collapse, or hide a post. This is the documented honesty invariant:
+ * an uncalibrated model may only indicate.
  */
 export function calibrateWithRegistry(
   result: ClassificationResult,
@@ -155,10 +158,6 @@ export function calibrateWithRegistry(
   options: RegistryCalibrationOptions = {},
 ): DecisionOutcome {
   const outcome = calibrateResult(result);
-
-  if (result.backend === "mock") {
-    return outcome;
-  }
 
   const query: CalibrationQuery = {
     modelId: result.modelId,
@@ -172,7 +171,9 @@ export function calibrateWithRegistry(
     return outcome;
   }
 
-  return { ...outcome, actionCeiling: "indicator" };
+  return outcome.actionCeiling === "indicator"
+    ? outcome
+    : { ...outcome, actionCeiling: "indicator" };
 }
 
 function getEvidenceReasons(

@@ -103,7 +103,11 @@ function scoreFromHash(hashBlock: string): number {
   return Number.parseInt(hashBlock, 16) / MAX_UINT32;
 }
 
-function statusFromScore(score: number): ClassificationStatus {
+/**
+ * Shared uncalibrated status banding for demo-grade classifiers. Exported so
+ * the stylometric heuristic derives its status exactly like the mock does.
+ */
+export function statusFromScore(score: number): ClassificationStatus {
   if (score < 0.4) {
     return "probably_human";
   }

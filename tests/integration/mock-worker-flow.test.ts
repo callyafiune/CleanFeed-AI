@@ -145,7 +145,8 @@ describe("mock worker flow", () => {
       type: "RESULT",
       requestId: "worker-request-1",
       payload: {
-        modelId: "mock",
+        // The fallback backend is now the transparent stylometric heuristic.
+        modelId: "stylometric-v1",
         backend: "mock",
         demo: true,
       },

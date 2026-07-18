@@ -2,9 +2,11 @@
 
 - O adaptador MVP depende da estrutura atual do DOM do LinkedIn; mudanças no
   site podem impedir a detecção ou extração até que os seletores sejam revisados.
-- A classificação é mock e determinística nesta fase. Ela não mede autoria,
-  qualidade, intenção ou veracidade e não deve ser usada para decisões sobre
-  pessoas.
+- A classificação nesta fase usa uma heurística estilométrica transparente
+  (`stylometric-v1`): sinais calculados e explicáveis, porém sem calibração e
+  sem qualquer validação de acurácia. O resultado é probabilístico e serve
+  apenas como indício; ele não mede autoria, qualidade, intenção ou veracidade
+  e não deve ser usado para decisões sobre pessoas.
 - Mesmo quando houver modelo real, classificações serão probabilísticas e podem
   produzir falsos positivos e falsos negativos.
 - Textos abaixo do mínimo configurado são ignorados por padrão para evitar

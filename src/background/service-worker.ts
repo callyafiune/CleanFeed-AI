@@ -12,6 +12,7 @@ import {
   classificationErrorMessage,
 } from "@/background/message-router";
 import { createSettingsFingerprintProvider } from "@/background/settings-fingerprint";
+import { STYLOMETRIC_MODEL_KEY } from "@/inference/stylometric-classifier";
 import { DEFAULT_SETTINGS } from "@/shared/constants";
 import { CleanFeedError } from "@/shared/errors";
 import { parseExtensionMessage } from "@/shared/message-validation";
@@ -39,7 +40,10 @@ const router = new BackgroundMessageRouter({
   ),
   metrics,
   offscreenClient,
-  modelKey: "mock:1.0.0",
+  // Derived from the active fallback classifier's metadata: cache entries are
+  // keyed by the model that produced them, so results from a previous
+  // classifier (the hash mock) can never be served as stylometric results.
+  modelKey: STYLOMETRIC_MODEL_KEY,
   settings,
   domainPause,
   modelStatus: () => offscreenClient.getModelStatus(),

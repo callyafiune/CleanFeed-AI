@@ -10,3 +10,7 @@ test-results/
 # Benchmark datasets are auditable but private; they never enter Git.
 benchmark/data/*
 !benchmark/data/.gitkeep
+
+# Model bundles are downloaded artifacts (large, sha256-verified); never in Git.
+public/models/*
+!public/models/.gitkeep

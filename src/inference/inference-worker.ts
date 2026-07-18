@@ -5,19 +5,23 @@ import {
   type BackendFactory,
 } from "@/inference/backend-selector";
 import { buildExplanation } from "@/inference/explanation";
-import { calibrateResult, getLengthBucket } from "@/inference/calibration";
+import {
+  calibrateWithRegistry,
+  getLengthBucket,
+} from "@/inference/calibration";
+import { CalibrationRegistry } from "@/inference/calibration-registry";
 import { createTextChunks } from "@/inference/chunker";
 import {
   evaluateLanguagePolicy,
   HeuristicPortugueseDetector,
   type LanguageDetector,
 } from "@/inference/language-detector";
-import { MockClassifier } from "@/inference/mock-classifier";
 import type { CleanFeedModelManifest } from "@/inference/model-bundle";
 import {
   OnnxTextClassifier,
   TransformersJsModelGateway,
 } from "@/inference/onnx-classifier";
+import { StylometricClassifier } from "@/inference/stylometric-classifier";
 import { HeuristicTokenizer, type Tokenizer } from "@/inference/tokenizer";
 import {
   parseWorkerRequest,
@@ -55,6 +59,12 @@ export interface PipelineRunnerOptions {
   detector?: LanguageDetector;
   tokenizer?: Tokenizer;
   initialized?: boolean;
+  /**
+   * Benchmark-verified calibrations. The default is EMPTY on purpose: no
+   * shipped classifier is calibrated, so every decision is capped to the
+   * indicator-only action ceiling until a verified profile is registered.
+   */
+  calibration?: CalibrationRegistry;
 }
 
 type RuntimeConfigurator = (
@@ -94,12 +104,19 @@ export class PipelineRunner {
   private readonly classifier: TextClassifier;
   private readonly detector: LanguageDetector;
   private readonly tokenizer: Tokenizer;
+  private readonly calibration: CalibrationRegistry;
   private initialized?: Promise<void>;
 
   constructor(options: PipelineRunnerOptions = {}) {
-    this.classifier = options.classifier ?? new MockClassifier();
+    // The fallback backend is the transparent stylometric heuristic: real,
+    // explainable signals, but still an uncalibrated indicator — never a
+    // validated detector.
+    this.classifier = options.classifier ?? new StylometricClassifier();
     this.detector = options.detector ?? new HeuristicPortugueseDetector();
     this.tokenizer = options.tokenizer ?? new HeuristicTokenizer();
+    // Empty by default: with no verified calibration registered, every
+    // decision leaves this pipeline with actionCeiling "indicator".
+    this.calibration = options.calibration ?? new CalibrationRegistry();
     if (options.initialized) this.initialized = Promise.resolve();
   }
 
@@ -327,6 +344,7 @@ export class PipelineRunner {
             settings,
             startedAt,
             inferenceMs,
+            this.calibration,
           ),
         };
       } catch (error) {
@@ -373,6 +391,7 @@ export class PipelineRunner {
           settings,
           startedAt,
           performance.now() - inferenceStartedAt,
+          this.calibration,
         ),
       };
     } catch (error) {
@@ -400,6 +419,7 @@ function completePreparedRequest(
   settings: UserSettings,
   startedAt: number,
   inferenceMs: number,
+  calibration: CalibrationRegistry,
 ): ClassificationResult {
   const chunkResults = item.chunks.map((chunk, index) => {
     const result = classified[index]!;
@@ -429,8 +449,15 @@ function completePreparedRequest(
     processingTimeMs: performance.now() - startedAt,
   };
   const calibrationStartedAt = performance.now();
-  const decision = calibrateResult(base);
+  // Registry-aware calibration is the pipeline's honesty gate: any classifier
+  // without a benchmark-verified calibration (the stylometric heuristic, the
+  // demo mock, an unbenchmarked real model) is capped to the indicator-only
+  // action ceiling here, regardless of score, word count or user settings.
+  const decision = calibrateWithRegistry(base, calibration, {
+    platform: item.request.platform,
+  });
   const explanation = buildExplanation(base, decision);
+  const classifierEvidence = collectClassifierReasonCodes(classified);
   const calibrationMs = performance.now() - calibrationStartedAt;
   return {
     ...base,
@@ -438,6 +465,9 @@ function completePreparedRequest(
     decision,
     explanation: {
       ...explanation,
+      reasonCodes: [
+        ...new Set([...explanation.reasonCodes, ...classifierEvidence]),
+      ],
       calibrationProfile: `${item.request.platform}:${item.language}:${getLengthBucket(base.wordCount)}`,
     },
     ...(settings.debugMode
@@ -451,6 +481,29 @@ function completePreparedRequest(
         }
       : {}),
   };
+}
+
+/**
+ * Evidence the classifier itself computed for the chunks of one request (for
+ * example the stylometric signal codes). The pipeline only relays codes a
+ * backend actually calculated; it never invents stylistic reasons on its own.
+ * A code must fire on at least half of the chunks (rounded up) to be relayed:
+ * the final explanation speaks about the whole post, so a signal observed on
+ * a single chunk of a long post is a chunk-local artifact, not evidence.
+ */
+function collectClassifierReasonCodes(
+  classified: ClassificationResult[],
+): ReasonCode[] {
+  const chunkQuorum = Math.ceil(classified.length / 2);
+  const codeCounts = new Map<ReasonCode, number>();
+  for (const result of classified) {
+    for (const code of new Set(result.explanation?.reasonCodes ?? [])) {
+      codeCounts.set(code, (codeCounts.get(code) ?? 0) + 1);
+    }
+  }
+  return [...codeCounts.entries()]
+    .filter(([, count]) => count >= chunkQuorum)
+    .map(([code]) => code);
 }
 
 function outcomeForError(
