@@ -19,6 +19,11 @@ interface AdvancedSettingsProps {
   onUpdate: (update: Partial<UserSettings>) => void;
   onSave: (update: Partial<UserSettings>) => void;
   onReset: () => void;
+  /**
+   * Downloads the sanitized diagnostic report. Optional so the section still
+   * renders when the diagnostics service is not wired (e.g. in tests).
+   */
+  onDownloadDiagnostics?: () => void;
 }
 
 function thresholdDraft(settings: UserSettings): ThresholdDraft {
@@ -51,6 +56,7 @@ export function AdvancedSettings({
   onUpdate,
   onSave,
   onReset,
+  onDownloadDiagnostics,
 }: AdvancedSettingsProps) {
   const [draft, setDraft] = useState<ThresholdDraft>(() =>
     thresholdDraft(settings),
@@ -129,6 +135,24 @@ export function AdvancedSettings({
         Salvar
       </button>
       {thresholdError === null ? null : <p role="alert">{thresholdError}</p>}
+
+      {onDownloadDiagnostics === undefined ? null : (
+        <>
+          <h3 id="diagnostics-heading">Diagnóstico</h3>
+          <p>
+            Gera um relatório local e sanitizado (versão, permissões, métricas
+            agregadas e um resumo das configurações). Ele nunca inclui texto de
+            posts, autores, URLs, hashes ou histórico.
+          </p>
+          <button
+            aria-describedby="diagnostics-heading"
+            type="button"
+            onClick={onDownloadDiagnostics}
+          >
+            Baixar diagnóstico
+          </button>
+        </>
+      )}
 
       <h3 id="reset-heading">Restaurar configurações</h3>
       {resetArmed ? (

@@ -1,19 +1,39 @@
 import { useEffect, useState } from "react";
 
+import type {
+  DiagnosticsApi,
+  HistoryApi,
+  ImportExportApi,
+  KeywordRulesApi,
+  SettingsApi,
+} from "@/options/api-types";
 import { AdvancedSettings } from "@/options/components/AdvancedSettings";
 import { DangerZone } from "@/options/components/DangerZone";
 import { GeneralSettings } from "@/options/components/GeneralSettings";
+import { HistorySettings } from "@/options/components/HistorySettings";
+import { ImportExportSettings } from "@/options/components/ImportExportSettings";
+import { KeywordRulesSettings } from "@/options/components/KeywordRulesSettings";
 import { PerformanceSettings } from "@/options/components/PerformanceSettings";
 import { PlatformSettings } from "@/options/components/PlatformSettings";
 import { PrivacyNotice } from "@/options/components/PrivacyNotice";
+import { downloadJson } from "@/options/download";
+import type { KeywordRule } from "@/rules/rule-engine";
 import { DEFAULT_SETTINGS } from "@/shared/constants";
+import type { DiagnosticEnvironment } from "@/storage/diagnostics";
 import { parseExtensionMessage } from "@/shared/message-validation";
 import type {
   PlatformSettings as PlatformSettingsValue,
   UserSettings,
 } from "@/shared/settings-types";
 import { ClassificationCache } from "@/storage/cache";
+import { DiagnosticsRepository } from "@/storage/diagnostics";
 import { FeedbackRepository } from "@/storage/feedback";
+import { HISTORY_TEXT_KEY, HistoryRepository } from "@/storage/history";
+import { createImportExport } from "@/storage/import-export";
+import {
+  KeywordRuleRepository,
+  KNOWN_PLATFORM_IDS,
+} from "@/storage/keyword-rules";
 import { MetricsRepository } from "@/storage/metrics";
 import { PlatformSettingsRepository } from "@/storage/platform-settings";
 import { ChromeStorageArea } from "@/storage/storage-area";
@@ -35,6 +55,16 @@ export interface OptionsApi {
     settings: PlatformSettingsValue,
   ): Promise<PlatformSettingsValue>;
   resetPlatformSettings?(platformId: string): Promise<void>;
+  /** Namespaced settings persistence used by the sensitive history toggles. */
+  settings?: SettingsApi;
+  /** Personal keyword rules. */
+  rules?: KeywordRulesApi;
+  /** Local classification history (text-free rows). */
+  history?: HistoryApi;
+  /** Versioned import/export surface. */
+  importExport?: ImportExportApi;
+  /** Sanitized diagnostics report. */
+  diagnostics?: DiagnosticsApi;
 }
 
 const defaultOptionsApi = createChromeOptionsApi();
@@ -142,6 +172,27 @@ export function App({ api = defaultOptionsApi }: { api?: OptionsApi }) {
       .catch(() => setError(SAVE_ERROR));
   };
 
+  // Persist a history-related settings change through the namespaced settings
+  // API so the sensitive full-text toggle has a distinct, guarded save path.
+  const saveHistorySettings = (change: Partial<UserSettings>) => {
+    if (api.settings === undefined) return;
+    void api.settings
+      .save({ ...settings, ...change })
+      .then((updated) => {
+        setSettings(updated);
+        setError(null);
+      })
+      .catch(() => setError(SAVE_ERROR));
+  };
+
+  const downloadDiagnostics = () => {
+    if (api.diagnostics === undefined) return;
+    void api.diagnostics
+      .buildReport()
+      .then((report) => downloadJson("cleanfeed-diagnostics.json", report))
+      .catch(() => setError(CLEAR_ERROR));
+  };
+
   return (
     <main>
       <h1>CleanFeed AI</h1>
@@ -159,6 +210,22 @@ export function App({ api = defaultOptionsApi }: { api?: OptionsApi }) {
 
       <PerformanceSettings settings={settings} onUpdate={update} />
 
+      {api.rules === undefined ? null : (
+        <KeywordRulesSettings api={api.rules} />
+      )}
+
+      {api.history === undefined || api.settings === undefined ? null : (
+        <HistorySettings
+          api={api.history}
+          settings={settings}
+          onSaveSettings={saveHistorySettings}
+        />
+      )}
+
+      {api.importExport === undefined ? null : (
+        <ImportExportSettings api={api.importExport} />
+      )}
+
       <PrivacyNotice>
         <DangerZone
           onClearCache={() => runClear(api.clearCache)}
@@ -169,6 +236,9 @@ export function App({ api = defaultOptionsApi }: { api?: OptionsApi }) {
 
       <AdvancedSettings
         settings={settings}
+        onDownloadDiagnostics={
+          api.diagnostics === undefined ? undefined : downloadDiagnostics
+        }
         onReset={reset}
         onSave={save}
         onUpdate={update}
@@ -192,6 +262,9 @@ export function createChromeOptionsApi(): OptionsApi {
     },
   );
   const platform = new PlatformSettingsRepository(storage);
+  const keywordRules = new KeywordRuleRepository(storage);
+  const history = new HistoryRepository(storage);
+  const importExport = createImportExport({ storage });
 
   const sendSettings = async (
     type: "GET_SETTINGS" | "UPDATE_SETTINGS",
@@ -210,6 +283,21 @@ export function createChromeOptionsApi(): OptionsApi {
     return message.payload;
   };
 
+  const readEnvironment = (): DiagnosticEnvironment => {
+    const manifest = chrome.runtime.getManifest();
+    return {
+      version: manifest.version,
+      manifestPermissions: manifest.permissions ?? [],
+    };
+  };
+
+  const diagnostics = new DiagnosticsRepository({
+    getSettings: () => sendSettings("GET_SETTINGS", undefined),
+    getMetrics: () => metrics.get(),
+    getEnvironment: readEnvironment,
+    getPlatformIds: () => [...KNOWN_PLATFORM_IDS],
+  });
+
   return {
     getSettings: () => sendSettings("GET_SETTINGS", undefined),
     updateSettings: (update) => sendSettings("UPDATE_SETTINGS", update),
@@ -227,5 +315,57 @@ export function createChromeOptionsApi(): OptionsApi {
     },
     savePlatformSettings: (settings) => platform.save(settings),
     resetPlatformSettings: (platformId) => platform.remove(platformId),
+    settings: {
+      save: (settings) => sendSettings("UPDATE_SETTINGS", settings),
+    },
+    rules: {
+      list: () => keywordRules.list(),
+      create: (rule: KeywordRule) => keywordRules.add(rule),
+      update: (rule: KeywordRule) => keywordRules.add(rule),
+      remove: (id: string) => keywordRules.remove(id),
+    },
+    history: {
+      query: (filter) => history.query(filter),
+      export: () => history.export(),
+      clear: () => history.clear(),
+      getTexts: () => readHistoryTexts(storage),
+    },
+    importExport: {
+      buildExport: (selection) => importExport.buildExport(selection),
+      parseImport: (input) => importExport.parseImport(input),
+      previewImport: (parsed) => importExport.previewImport(parsed),
+      applyImport: (preview, options) =>
+        importExport.applyImport(preview, options),
+    },
+    diagnostics: {
+      buildReport: () => diagnostics.buildReport(),
+    },
   };
+}
+
+/**
+ * Reads the opted-in `hash -> text` map directly from its public storage key so
+ * the history table can show full text only when the user enabled that storage.
+ * Returns an empty map for an absent or malformed value.
+ */
+async function readHistoryTexts(
+  storage: ChromeStorageArea,
+): Promise<Record<string, string>> {
+  const value = await storage.get<unknown>(HISTORY_TEXT_KEY);
+  if (
+    typeof value !== "object" ||
+    value === null ||
+    !("texts" in value) ||
+    typeof (value as { texts: unknown }).texts !== "object" ||
+    (value as { texts: unknown }).texts === null
+  ) {
+    return {};
+  }
+  const texts: Record<string, string> = {};
+  for (const [hash, text] of Object.entries(
+    (value as { texts: Record<string, unknown> }).texts,
+  )) {
+    if (typeof text === "string") texts[hash] = text;
+  }
+  return texts;
 }
