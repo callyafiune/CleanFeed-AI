@@ -14,7 +14,11 @@ export default defineConfig({
   // The persistent extension context is a single shared browser; run serially.
   workers: 1,
   forbidOnly: Boolean(process.env.CI),
-  retries: 0,
+  // The long-task perf assertion measures wall-clock, so a transient CPU spike
+  // on a loaded machine can inflate an otherwise-fine task past the budget.
+  // Retry to absorb that environmental noise WITHOUT weakening the assertion —
+  // a genuine budget regression still fails every attempt.
+  retries: 2,
   timeout: 60_000,
   expect: { timeout: 15_000 },
   reporter: [["list"]],

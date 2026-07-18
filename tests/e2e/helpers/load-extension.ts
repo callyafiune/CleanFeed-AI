@@ -37,6 +37,7 @@ const FIXTURE_MATCH = "http://www.linkedin.com/*";
 interface MutableManifest {
   content_scripts?: { matches?: string[] }[];
   web_accessible_resources?: { matches?: string[] }[];
+  host_permissions?: string[];
   [key: string]: unknown;
 }
 
@@ -46,14 +47,31 @@ function addFixtureMatch(matches: string[] | undefined): string[] {
   return next;
 }
 
+/** Options for {@link prepareExtension}, all defaulting to no change. */
+export interface PrepareExtensionOptions {
+  /**
+   * Extra host permissions to add to the throwaway manifest. The full-MVP E2E
+   * uses this to grant programmatic (`chrome.scripting`) access to the local
+   * NON-LinkedIn fixture origin, standing in for the `activeTab` grant a native
+   * context-menu click would give — a gesture Playwright cannot fire. It never
+   * touches the shipped `dist` (which `npm run audit` verifies stays locked to
+   * `https://www.linkedin.com/*`); it only widens this test's throwaway copy.
+   */
+  extraHostPermissions?: string[];
+}
+
 /**
  * Copies the built `dist` to a throwaway directory and patches ONLY the URL
- * match lists (content scripts and web-accessible resources) so the extension
- * runs on the local fixture origin. Every byte of code, the CSP, and the
- * permission allowlist are the shipped ones — this is a test host affordance,
- * not a behavioural change. The real manifest.config.ts is never touched.
+ * match lists (content scripts and web-accessible resources), plus any opt-in
+ * extra host permissions, so the extension runs on the local fixture origins.
+ * Every byte of code, the CSP, and the shipped permission allowlist are the
+ * shipped ones — this is a test host affordance, not a behavioural change. The
+ * real manifest.config.ts is never touched.
  */
-export function prepareExtension(distPath: string = EXTENSION_DIST): string {
+export function prepareExtension(
+  distPath: string = EXTENSION_DIST,
+  options: PrepareExtensionOptions = {},
+): string {
   const target = mkdtempSync(join(tmpdir(), "cleanfeed-e2e-ext-"));
   cpSync(distPath, target, { recursive: true });
 
@@ -67,6 +85,15 @@ export function prepareExtension(distPath: string = EXTENSION_DIST): string {
   }
   for (const entry of manifest.web_accessible_resources ?? []) {
     entry.matches = addFixtureMatch(entry.matches);
+  }
+
+  const extraHosts = options.extraHostPermissions ?? [];
+  if (extraHosts.length > 0) {
+    const hosts = [...(manifest.host_permissions ?? [])];
+    for (const host of extraHosts) {
+      if (!hosts.includes(host)) hosts.push(host);
+    }
+    manifest.host_permissions = hosts;
   }
 
   writeFileSync(manifestPath, JSON.stringify(manifest, null, 2));
