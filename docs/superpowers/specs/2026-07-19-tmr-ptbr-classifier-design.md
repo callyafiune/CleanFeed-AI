@@ -354,7 +354,8 @@ O relatório publica FPR, FNR, recall nos dois orçamentos, precisão observada 
 simulada para prevalências de 1%, 5% e 10%, ROC-AUC, PR-AUC, Brier, ECE,
 cobertura, abstenção, latência, memória e intervalos de confiança. Intervalos de
 proporção usam Wilson unilateral para gates; AUC e calibração usam bootstrap
-clusterizado por autor. Resultados são overall, macro, pior segmento e por
+clusterizado por autor. ECE usa 15 faixas de largura igual em [0,1]. Resultados
+são overall, macro, pior segmento e por
 tamanho, domínio, fonte, gerador visto/não visto, transformação, severidade,
 coorte temporal e proporção mista.
 
