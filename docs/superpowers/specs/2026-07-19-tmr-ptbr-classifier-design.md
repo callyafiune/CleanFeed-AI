@@ -153,7 +153,11 @@ O tokenizer efetivamente carregado para o TMR é a única fonte do orçamento de
 tokens. As configurações deixam de limitar maximumTokens a 256 e passam a
 aceitar a capacidade declarada pelo modelo. Para o candidato TMR, cada janela
 usa até 510 tokens de conteúdo, reserva dois tokens especiais e sobrepõe 64
-tokens com a janela anterior.
+tokens com a janela anterior. O release v1 analisa no máximo oito janelas. Se o
+texto exigir mais, preserva a primeira e a última e distribui as outras seis em
+intervalos uniformes pelo texto; cobertura e truncamento registram exatamente o
+que foi analisado. Tamanho, overlap e limite de janelas fazem parte da versão da
+agregação e não são alteráveis pelo usuário para um perfil calibrado.
 
 Textos que ultrapassarem uma entrada serão divididos em janelas sobrepostas. O
 resultado preserva:
@@ -194,11 +198,12 @@ insuficiente, truncamento, dispersão excessiva entre janelas, entrada dominada
 por links/hashtags/emoji, erro do backend e incompatibilidade de artefato.
 
 Na agregação v2, sufficient exige tokenização exata, cobertura de ao menos 95%,
-conteúdo lexical de ao menos 40%, desvio-padrão entre janelas de no máximo 0,25
-e concordância de ao menos 0,50. Cobertura entre 50% e 95%, conteúdo lexical
-entre 40% e 60% ou divergência acima desses limites produz limited. Cobertura
-abaixo de 50%, tokenizer aproximado no caminho TMR, idioma não PT-BR, menos de
-50 palavras ou erro/integridade inválida produz unsupported. A regra já
+conteúdo lexical de ao menos 60%, desvio-padrão entre janelas de no máximo 0,25
+e concordância de ao menos 0,50. Cobertura entre 50% e menos de 95%, conteúdo
+lexical entre 40% e menos de 60% ou divergência acima desses limites produz
+limited. Cobertura abaixo de 50%, conteúdo lexical abaixo de 40%, tokenizer
+aproximado no caminho TMR, idioma não PT-BR, menos de 50 palavras ou
+erro/integridade inválida produz unsupported. A regra já
 existente que considera links, hashtags ou emojis dominantes a partir de 60%
 continua impedindo ação visual.
 
