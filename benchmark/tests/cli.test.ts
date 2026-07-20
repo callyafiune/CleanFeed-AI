@@ -35,13 +35,13 @@ import type { DatasetSplit } from "../split.ts";
 describe("benchmark CLI parsing and dispatch", () => {
   it("requires a named subcommand", () => {
     expect(() => parseCliArgs([])).toThrow(
-      /expected one of ingest, validate, split, validate-predictions, fit, evaluate, publish-profile, verify-evidence/u,
+      /expected one of ingest, validate, split, validate-predictions, score, fit, evaluate, publish-profile, verify-evidence/u,
     );
   });
 
   it("rejects an unknown subcommand", () => {
-    expect(() => parseCliArgs(["score"])).toThrow(
-      /expected one of ingest, validate, split, validate-predictions, fit, evaluate, publish-profile, verify-evidence/u,
+    expect(() => parseCliArgs(["frobnicate"])).toThrow(
+      /expected one of ingest, validate, split, validate-predictions, score, fit, evaluate, publish-profile, verify-evidence/u,
     );
   });
 
@@ -150,6 +150,74 @@ describe("benchmark CLI partition and ledger flag guards", () => {
         "rp.json",
       ]),
     ).rejects.toThrow(/--ledger|--consumption-id/u);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// score guards: the candidate-only scorer never touches the holdout and never
+// runs the production dist.
+// ---------------------------------------------------------------------------
+
+describe("benchmark CLI score guards", () => {
+  const SCORE_ARGS = [
+    "--dataset-dir",
+    "benchmark/data/ptbr-linkedin-v1",
+    "--split-artifact",
+    "split.json",
+    "--candidate-extension-dir",
+    "dist-model-benchmark",
+    "--output",
+    "out/predictions/development",
+  ];
+
+  it("parses the score subcommand and its flags", () => {
+    const parsed = parseCliArgs([
+      "score",
+      ...SCORE_ARGS,
+      "--partition",
+      "development",
+    ]);
+    expect(parsed.command).toBe("score");
+    expect(parsed.flags.get("candidate-extension-dir")).toBe(
+      "dist-model-benchmark",
+    );
+  });
+
+  it("rejects the test partition with HOLDOUT_REQUIRES_CONSUME_COMMAND", async () => {
+    await expect(
+      runCli(["score", ...SCORE_ARGS, "--partition", "test"]),
+    ).rejects.toThrow(/HOLDOUT_REQUIRES_CONSUME_COMMAND/u);
+  });
+
+  it("rejects the production dist directory", async () => {
+    await expect(
+      runCli([
+        "score",
+        "--dataset-dir",
+        "benchmark/data/ptbr-linkedin-v1",
+        "--split-artifact",
+        "split.json",
+        "--candidate-extension-dir",
+        "dist",
+        "--output",
+        "out/predictions/development",
+        "--partition",
+        "development",
+      ]),
+    ).rejects.toThrow(/production|dist/iu);
+  });
+
+  it("rejects an unknown flag on score", async () => {
+    await expect(
+      runCli([
+        "score",
+        ...SCORE_ARGS,
+        "--partition",
+        "development",
+        "--bogus",
+        "x",
+      ]),
+    ).rejects.toThrow(/unknown flag --bogus/u);
   });
 });
 

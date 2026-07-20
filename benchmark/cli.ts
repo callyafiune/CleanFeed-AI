@@ -24,6 +24,7 @@ import {
   runPublishProfile,
   type PublishProfileOptions,
 } from "./commands/publish-profile.ts";
+import { runScore, type ScoreOptions } from "./commands/score.ts";
 import { runSplit, type SplitOptions } from "./commands/split.ts";
 import { runValidate, type ValidateOptions } from "./commands/validate.ts";
 import {
@@ -41,6 +42,7 @@ export const BENCHMARK_COMMANDS = [
   "validate",
   "split",
   "validate-predictions",
+  "score",
   "fit",
   "evaluate",
   "publish-profile",
@@ -105,6 +107,8 @@ async function dispatch(
       return runSplit(buildSplit(flags));
     case "validate-predictions":
       return runValidatePredictions(buildValidatePredictions(flags));
+    case "score":
+      return runScore(buildScore(flags));
     case "fit":
       return runFit(buildFit(flags));
     case "evaluate":
@@ -244,6 +248,48 @@ function buildValidatePredictions(flags: FlagMap): ValidatePredictionsOptions {
   return options;
 }
 
+function buildScore(flags: FlagMap): ScoreOptions {
+  assertKnownFlags(flags, [
+    "dataset-dir",
+    "split-artifact",
+    "partition",
+    "candidate-extension-dir",
+    "output",
+    "resume",
+  ]);
+  const partition = requireFlag(flags, "partition");
+  if (partition === "test") {
+    // The blocked temporal test is consumed exactly once, and only through the
+    // dedicated holdout consume command — never through routine scoring.
+    throw new CliError(
+      "HOLDOUT_REQUIRES_CONSUME_COMMAND: score reads only development and calibration",
+    );
+  }
+  if (partition !== "development" && partition !== "calibration") {
+    throw new CliError(
+      "--partition must be development or calibration for score",
+    );
+  }
+  const candidateExtensionDir = requireFlag(flags, "candidate-extension-dir");
+  const finalSegment = candidateExtensionDir
+    .split(/[\\/]/)
+    .filter((segment) => segment !== "")
+    .at(-1);
+  if (finalSegment === "dist") {
+    throw new CliError(
+      "PRODUCTION_DIST_FORBIDDEN: score must run the isolated candidate build, not the production dist directory",
+    );
+  }
+  return {
+    datasetDirectory: requireFlag(flags, "dataset-dir"),
+    splitArtifactPath: requireFlag(flags, "split-artifact"),
+    partition,
+    candidateExtensionDir,
+    outputDirectory: requireFlag(flags, "output"),
+    resume: flags.get("resume") === true || flags.get("resume") === "true",
+  };
+}
+
 function buildFit(flags: FlagMap): FitOptions {
   assertKnownFlags(flags, [
     "dataset-dir",
@@ -358,6 +404,8 @@ function usage(): string {
     "  split                --dataset-dir --dataset-audit --output --seed",
     "  validate-predictions --dataset-dir --split-artifact --partition --predictions",
     "                       --runtime-parity [test: --ledger --consumption-id]",
+    "  score                --dataset-dir --split-artifact --partition --candidate-extension-dir",
+    "                       --output [--resume]  (development/calibration only)",
     "  fit                  --dataset-dir --dataset-audit --source-readiness --split-artifact",
     "                       --runtime-parity --development-predictions --calibration-predictions",
     "                       --output --seed",
