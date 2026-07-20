@@ -1,13 +1,10 @@
+import { computeContentComposition } from "../../contracts/content-composition";
 import { getTextLengthInfo } from "@/shared/word-count";
 import type { EligibilityResult } from "@/shared/types";
 
 const DEFAULT_MINIMUM_WORD_COUNT = 100;
 const EXPERIMENTAL_MINIMUM_WORD_COUNT = 50;
 const MOSTLY_CONTENT_THRESHOLD = 0.6;
-const URL_PATTERN = /^(?:https?:\/\/|www\.)\S+$/iu;
-const HASHTAG_PATTERN = /^#[\p{L}\p{N}_]+$/u;
-const EMOJI_SEQUENCE_PATTERN =
-  /(?:\p{Regional_Indicator}{2}|[#*0-9]\uFE0F?\u20E3|\p{Extended_Pictographic}\p{Emoji_Modifier}?)(?:\uFE0F|\u200D(?:\p{Extended_Pictographic}\p{Emoji_Modifier}?))*/gu;
 const TITLE_CASE_NAME_PATTERN =
   /^(?:\p{Lu}\p{Ll}*)(?:[ '-](?:\p{Lu}\p{Ll}*))*$/u;
 const SENTENCE_PUNCTUATION_PATTERN = /[.!?;:]/u;
@@ -27,49 +24,12 @@ export interface EligibilityInput {
   minimumWordCount?: number;
 }
 
-interface ContentComposition {
-  meaningfulTokens: number;
-  links: number;
-  hashtags: number;
-  emojis: number;
-}
-
 function ineligible(reason: EligibilityResult["reason"]): EligibilityResult {
   return { eligible: false, reason };
 }
 
-function getContentComposition(text: string): ContentComposition {
-  const composition: ContentComposition = {
-    meaningfulTokens: 0,
-    links: 0,
-    hashtags: 0,
-    emojis: 0,
-  };
-
-  for (const token of text.match(/\S+/gu) ?? []) {
-    if (URL_PATTERN.test(token)) {
-      composition.meaningfulTokens += 1;
-      composition.links += 1;
-    } else if (HASHTAG_PATTERN.test(token)) {
-      composition.meaningfulTokens += 1;
-      composition.hashtags += 1;
-    } else if (isEmojiOnly(token)) {
-      composition.meaningfulTokens += 1;
-      composition.emojis += 1;
-    } else if (/[\p{L}\p{N}]/u.test(token)) {
-      composition.meaningfulTokens += 1;
-    }
-  }
-
-  return composition;
-}
-
 function isMostly(count: number, total: number): boolean {
   return total > 0 && count / total >= MOSTLY_CONTENT_THRESHOLD;
-}
-
-function isEmojiOnly(token: string): boolean {
-  return token.length > 0 && token.replace(EMOJI_SEQUENCE_PATTERN, "") === "";
 }
 
 function isNameList(text: string): boolean {
@@ -114,14 +74,17 @@ export function evaluateEligibility(
     return ineligible("DUPLICATE_CONTENT");
   }
 
-  const composition = getContentComposition(input.text);
-  if (isMostly(composition.links, composition.meaningfulTokens)) {
+  const composition = computeContentComposition(input.text);
+  // "Meaningful" units are everything except pure punctuation/symbol ("other")
+  // units — matching the pre-contract behaviour exactly.
+  const meaningfulUnits = composition.totalUnits - composition.otherUnits;
+  if (isMostly(composition.urlUnits, meaningfulUnits)) {
     return ineligible("MOSTLY_LINKS");
   }
-  if (isMostly(composition.hashtags, composition.meaningfulTokens)) {
+  if (isMostly(composition.hashtagUnits, meaningfulUnits)) {
     return ineligible("MOSTLY_HASHTAGS");
   }
-  if (isMostly(composition.emojis, composition.meaningfulTokens)) {
+  if (isMostly(composition.emojiUnits, meaningfulUnits)) {
     return ineligible("MOSTLY_EMOJIS");
   }
   if (isNameList(input.text)) {

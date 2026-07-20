@@ -18,7 +18,11 @@ export default tseslint.config(
   js.configs.recommended,
   ...tseslint.configs.recommended,
   {
-    files: ["src/**/*.{ts,tsx}", "tests/**/*.{ts,tsx}"],
+    files: [
+      "src/**/*.{ts,tsx}",
+      "tests/**/*.{ts,tsx}",
+      "contracts/**/*.{ts,tsx}",
+    ],
     plugins: {
       "react-hooks": reactHooks,
       "react-refresh": reactRefresh,
