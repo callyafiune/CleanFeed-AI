@@ -1,5 +1,7 @@
 node_modules/
 dist/
+dist-model-smoke/
+dist-model-benchmark/
 public/vendor/transformers-wasm/
 coverage/
 playwright-report/

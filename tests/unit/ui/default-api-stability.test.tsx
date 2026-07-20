@@ -101,7 +101,7 @@ describe("default Chrome APIs", () => {
 
     render(<OptionsApp />);
 
-    await screen.findByRole("heading", { name: /Configura/u });
+    await screen.findByRole("group", { name: "Geral" });
     await waitFor(() => expect(sendToRuntime).toHaveBeenCalledTimes(1));
     await new Promise((resolve) => setTimeout(resolve, 20));
 

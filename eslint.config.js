@@ -7,6 +7,8 @@ export default tseslint.config(
   {
     ignores: [
       "dist",
+      "dist-model-smoke",
+      "dist-model-benchmark",
       "node_modules",
       "public/vendor/transformers-wasm",
       // Fake unpacked-extension fixtures used only to prove scripts/audit-build.mjs
