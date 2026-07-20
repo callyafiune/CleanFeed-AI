@@ -1,0 +1,44 @@
+{
+  "schemaVersion": 1,
+  "datasetId": "ptbr-linkedin-v1",
+  "version": "1.0.0",
+  "scientificUse": "release",
+  "intendedLanguage": "pt-BR",
+  "intendedDomain": "linkedin",
+  "createdAt": "2026-07-19T00:00:00.000Z",
+  "normalizationVersion": "cleanfeed-text-v1",
+  "annotationProtocolVersion": "annotation-v1",
+  "recordsFile": "records.jsonl",
+  "recordsSha256": "0000000000000000000000000000000000000000000000000000000000000000",
+  "reviewLedgerFile": "private/review-ledger.jsonl",
+  "reviewLedgerSha256": "1111111111111111111111111111111111111111111111111111111111111111",
+  "sourceManifestFile": "private/source-manifest.json",
+  "sourceManifestSha256": "2222222222222222222222222222222222222222222222222222222222222222",
+  "heldOutGeneratorFamilies": ["reserved_family_a"],
+  "licenses": [
+    {
+      "id": "consent-v1",
+      "name": "Authorized contribution v1",
+      "source": "internal://consent-registry/ptbr-linkedin-v1",
+      "evaluationUseApproved": true,
+      "redistribution": "not-published",
+      "notice": "Contributed under explicit consent for internal evaluation; raw text is never redistributed."
+    },
+    {
+      "id": "licensed-corpus-v1",
+      "name": "Compatible PT-BR corpus v1",
+      "source": "internal://license-registry/ptbr-corpus-v1",
+      "evaluationUseApproved": true,
+      "redistribution": "not-published",
+      "notice": "Licensed for internal evaluation only; redistribution of source text is not permitted."
+    },
+    {
+      "id": "generated-v1",
+      "name": "Controlled generation v1",
+      "source": "internal://generation-registry/ptbr-linkedin-v1",
+      "evaluationUseApproved": true,
+      "redistribution": "not-published",
+      "notice": "Synthetic material generated under a documented recipe for internal evaluation."
+    }
+  ]
+}
