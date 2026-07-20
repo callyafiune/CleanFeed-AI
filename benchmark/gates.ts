@@ -32,7 +32,7 @@ export type ReleaseDecision = "pass" | "indicator-only" | "reject";
 export type GateTier = "integrity" | "warning" | "action";
 export type GateScope = "overall" | "slice";
 export type GateBound = "point" | "lower95" | "upper95" | "exact";
-export type GateOperator = "<=" | ">=" | "==";
+export type GateOperator = "<" | "<=" | ">=" | "==";
 
 export interface GateResult {
   id: string;
@@ -249,21 +249,23 @@ function booleanGate(id: string, ok: boolean, detail: string): GateResult {
 
 function errorRateGate(value: number): GateResult {
   const observed = finiteOrNull(value);
-  const passed = observed !== null && observed <= MAX_ERROR_RATE;
+  // The inference error rate must stay STRICTLY below 1%: exactly 0.01 is not
+  // "below 1%" and fails the gate.
+  const passed = observed !== null && observed < MAX_ERROR_RATE;
   return {
     id: "integrity.error-rate",
     tier: "integrity",
     scope: "overall",
     observed,
     bound: "point",
-    operator: "<=",
+    operator: "<",
     required: MAX_ERROR_RATE,
     sampleSize: 0,
     eligible: true,
     passed,
     reasons: passed
       ? []
-      : [`error rate ${show(observed)} exceeds ${MAX_ERROR_RATE}`],
+      : [`error rate ${show(observed)} is not below ${MAX_ERROR_RATE}`],
   };
 }
 

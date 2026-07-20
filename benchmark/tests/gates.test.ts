@@ -505,6 +505,32 @@ describe("integrity tier teeth", () => {
     expect(report.decision).toBe("reject");
     expect(report.failedIntegrity).toContain("integrity.error-rate");
   });
+
+  it("rejects an error rate of exactly 1% (strictly below, not at or below)", () => {
+    // The spec requires the inference error rate to stay BELOW 1%; exactly 0.01
+    // is not below 1% and must fail the gate.
+    const report = evaluateReleaseGates({
+      integrity: integrity(),
+      metrics: metrics({ errorRate: 0.01 }),
+      slices: summary([passingSlice()]),
+    });
+    const gate = gateById(report.gates, "integrity.error-rate");
+    expect(gate.observed).toBeCloseTo(0.01, 10);
+    expect(gate.operator).toBe("<");
+    expect(gate.passed).toBe(false);
+    expect(report.failedIntegrity).toContain("integrity.error-rate");
+    expect(report.decision).toBe("reject");
+  });
+
+  it("passes an error rate just below 1%", () => {
+    const report = evaluateReleaseGates({
+      integrity: integrity(),
+      metrics: metrics({ errorRate: 0.009 }),
+      slices: summary([passingSlice()]),
+    });
+    expect(gateById(report.gates, "integrity.error-rate").passed).toBe(true);
+    expect(report.decision).toBe("pass");
+  });
 });
 
 describe("decision is driven only by gate outcomes", () => {
