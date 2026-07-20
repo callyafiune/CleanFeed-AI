@@ -35,13 +35,13 @@ import type { DatasetSplit } from "../split.ts";
 describe("benchmark CLI parsing and dispatch", () => {
   it("requires a named subcommand", () => {
     expect(() => parseCliArgs([])).toThrow(
-      /expected one of validate, split, validate-predictions, fit, evaluate, publish-profile, verify-evidence/u,
+      /expected one of ingest, validate, split, validate-predictions, fit, evaluate, publish-profile, verify-evidence/u,
     );
   });
 
   it("rejects an unknown subcommand", () => {
     expect(() => parseCliArgs(["score"])).toThrow(
-      /expected one of validate, split, validate-predictions, fit, evaluate, publish-profile, verify-evidence/u,
+      /expected one of ingest, validate, split, validate-predictions, fit, evaluate, publish-profile, verify-evidence/u,
     );
   });
 

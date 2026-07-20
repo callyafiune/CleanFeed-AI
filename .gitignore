@@ -20,6 +20,12 @@ benchmark/work/
 benchmark/data/*
 !benchmark/data/.gitkeep
 
+# Sanitized evidence is versioned only through its .gitkeep placeholder until
+# publication force-allows a closed sanitized file set; raw evidence never enters
+# Git and publication never uses `git add -f` for source data.
+benchmark/evidence/tmr-ptbr-v1/*
+!benchmark/evidence/tmr-ptbr-v1/.gitkeep
+
 # Model bundles are downloaded artifacts (large, sha256-verified); never in Git.
 public/models/*
 !public/models/.gitkeep

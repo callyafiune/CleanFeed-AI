@@ -1,12 +1,13 @@
 // `npm run benchmark -- <subcommand> [flags]` entrypoint.
 //
-// The scientific workflow is a fixed, ordered pipeline of seven subcommands —
-// validate -> split -> validate-predictions -> fit -> evaluate ->
-// publish-profile -> verify-evidence. This module is ONLY the parser and
-// dispatcher: it rejects an unknown/missing subcommand, rejects unknown flags,
-// enforces each command's required flags and the partition/ledger guards, then
-// hands a typed options object to the command module. All scientific work lives
-// in the pure benchmark modules; nothing here reads a dataset or a score.
+// The workflow begins with `ingest` (materialize the canonical dataset
+// directory from authorized local inputs) and then runs the fixed, ordered
+// scientific pipeline — validate -> split -> validate-predictions -> fit ->
+// evaluate -> publish-profile -> verify-evidence. This module is ONLY the parser
+// and dispatcher: it rejects an unknown/missing subcommand, rejects unknown
+// flags, enforces each command's required flags and the partition/ledger guards,
+// then hands a typed options object to the command module. All scientific work
+// lives in the pure benchmark modules; nothing here reads a dataset or a score.
 //
 // Runs under Node's native TypeScript execution (Node >= 22.18), so sibling
 // imports use explicit .ts extensions and no transform-only TypeScript features.
@@ -18,6 +19,7 @@ import { fileURLToPath } from "node:url";
 
 import { runEvaluate, type EvaluateOptions } from "./commands/evaluate.ts";
 import { runFit, type FitOptions } from "./commands/fit.ts";
+import { runIngest, type IngestOptions } from "./commands/ingest.ts";
 import {
   runPublishProfile,
   type PublishProfileOptions,
@@ -35,6 +37,7 @@ import {
 import type { Partition } from "./split.ts";
 
 export const BENCHMARK_COMMANDS = [
+  "ingest",
   "validate",
   "split",
   "validate-predictions",
@@ -94,6 +97,8 @@ async function dispatch(
   flags: FlagMap,
 ): Promise<string> {
   switch (command) {
+    case "ingest":
+      return runIngest(buildIngest(flags));
     case "validate":
       return runValidate(buildValidate(flags));
     case "split":
@@ -164,6 +169,26 @@ function requireNumberFlag(flags: FlagMap, key: string): number {
 }
 
 // --- per-command option builders ------------------------------------------
+
+function buildIngest(flags: FlagMap): IngestOptions {
+  assertKnownFlags(flags, [
+    "input",
+    "review-ledger",
+    "sources",
+    "dataset-manifest-template",
+    "dataset-dir",
+  ]);
+  return {
+    inputRecordsPath: requireFlag(flags, "input"),
+    reviewLedgerPath: requireFlag(flags, "review-ledger"),
+    sourceManifestPath: requireFlag(flags, "sources"),
+    datasetManifestTemplatePath: requireFlag(
+      flags,
+      "dataset-manifest-template",
+    ),
+    datasetDirectory: requireFlag(flags, "dataset-dir"),
+  };
+}
 
 function buildValidate(flags: FlagMap): ValidateOptions {
   assertKnownFlags(flags, ["dataset-dir", "output"]);
@@ -327,6 +352,8 @@ function usage(): string {
     "Usage: npm run benchmark -- <subcommand> [flags]",
     "",
     "Subcommands (run in order):",
+    "  ingest               --input --review-ledger --sources",
+    "                       --dataset-manifest-template --dataset-dir",
     "  validate             --dataset-dir --output",
     "  split                --dataset-dir --dataset-audit --output --seed",
     "  validate-predictions --dataset-dir --split-artifact --partition --predictions",
