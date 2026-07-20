@@ -53,7 +53,7 @@ describe("options App", () => {
   it("contains no definitive authorship claim", async () => {
     render(<OptionsApp api={fakeOptionsApi()} />);
 
-    await screen.findByText("Configurações gerais");
+    await screen.findByRole("group", { name: "Geral" });
     expect(document.body.textContent).not.toMatch(
       /foi escrito por IA|comprovadamente artificial/u,
     );

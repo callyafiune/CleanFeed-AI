@@ -35,7 +35,6 @@ export function GeneralSettings({
 }) {
   return (
     <Fieldset title="Geral">
-      <h3 id="general-settings-heading">Configurações gerais</h3>
       <Field
         label="Ativar filtro"
         description="Ativa ou desativa a análise de posts no seu feed."

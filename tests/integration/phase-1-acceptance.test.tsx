@@ -65,7 +65,7 @@ describe("Phase 1 acceptance", () => {
         "Modo de demonstração: nenhum modelo real está sendo utilizado.",
       ),
     ).toBeTruthy();
-    await screen.findByText("Configurações gerais");
+    await screen.findByRole("group", { name: "Geral" });
     expect(document.body.textContent).not.toMatch(
       /foi escrito por IA|comprovadamente artificial/u,
     );
