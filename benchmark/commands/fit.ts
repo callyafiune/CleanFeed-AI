@@ -22,6 +22,11 @@ import {
   type FitSampleScores,
 } from "../calibration-pipeline.ts";
 import {
+  buildFitReport,
+  runCandidatePreflight,
+  verifyFrozenAgainstPreflight,
+} from "../candidate-preflight.ts";
+import {
   parseDatasetAudit,
   validateDatasetManifest,
 } from "../dataset-manifest.ts";
@@ -53,6 +58,13 @@ export interface FitOptions {
   calibrationPredictionsDirectory: string;
   outputDirectory: string;
   seed: number;
+  /**
+   * Free disk bytes fed to the candidate preflight. The CLI measures the real
+   * figure; programmatic callers that omit it are treated as unconstrained
+   * (`Number.MAX_SAFE_INTEGER`), so the 20 GiB gate is enforced at the CLI
+   * boundary that operators actually use.
+   */
+  freeDiskBytes?: number;
 }
 
 const REPO_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..", "..");
@@ -179,6 +191,45 @@ export async function runFit(options: FitOptions): Promise<string> {
   const sourceManifestBytes = await readTextFile(
     join(options.datasetDirectory, "private", "source-manifest.json"),
   );
+
+  const developmentManifestDigest = await computePredictionManifestDigest(
+    development.manifest,
+  );
+  const calibrationManifestDigest = await computePredictionManifestDigest(
+    calibration.manifest,
+  );
+
+  // The candidate freeze preflight must be READY before any calibration runs:
+  // ready source/dataset/split audits and their exact digests, matching
+  // prediction identities/parity/coverage, verified bundle/license, WASM-only
+  // manifests, no test-prediction input and at least 20 GiB free disk. The
+  // free-disk figure is measured at the CLI boundary and threaded through here.
+  const preflight = runCandidatePreflight({
+    datasetManifest: manifest,
+    datasetAudit,
+    sourceReadiness,
+    runtimeParity,
+    sourceManifestBytes,
+    splitArtifact: artifact,
+    developmentManifest: development.manifest,
+    developmentManifestDigest,
+    calibrationManifest: calibration.manifest,
+    calibrationManifestDigest,
+    developmentPredictionIds: development.predictions.map(
+      (prediction) => prediction.id,
+    ),
+    calibrationPredictionIds: calibration.predictions.map(
+      (prediction) => prediction.id,
+    ),
+    freeDiskBytes: options.freeDiskBytes ?? Number.MAX_SAFE_INTEGER,
+  });
+  if (preflight.status !== "ready") {
+    throw new CommandError(
+      "CANDIDATE_PREFLIGHT_BLOCKED",
+      `candidate preflight is blocked: ${preflight.blockingReasons.join("; ")}`,
+    );
+  }
+
   const evaluatorDigest = await computeEvaluatorDigest(REPO_ROOT);
 
   const frozen = fitFrozenCalibration({
@@ -196,13 +247,9 @@ export async function runFit(options: FitOptions): Promise<string> {
     runtimeParity,
     sourceManifestBytes,
     developmentManifest: development.manifest,
-    developmentManifestDigest: await computePredictionManifestDigest(
-      development.manifest,
-    ),
+    developmentManifestDigest,
     calibrationManifest: calibration.manifest,
-    calibrationManifestDigest: await computePredictionManifestDigest(
-      calibration.manifest,
-    ),
+    calibrationManifestDigest,
   });
 
   // The apply* closures are not serialisable and not part of the sealed artifact.
@@ -210,9 +257,17 @@ export async function runFit(options: FitOptions): Promise<string> {
   void applyDocument;
   void applyLocalized;
 
+  // Fail-closed: the frozen artifact must carry exactly the identities and
+  // digests the preflight cleared — defense-in-depth over validateFitInputs.
+  verifyFrozenAgainstPreflight(artifactFields, preflight);
+
   await writeJsonAtomic(
     join(options.outputDirectory, "frozen-calibration.json"),
     artifactFields,
+  );
+  await writeJsonAtomic(
+    join(options.outputDirectory, "fit-report.json"),
+    buildFitReport(preflight, artifactFields),
   );
   await writeJsonAtomic(
     join(options.outputDirectory, "development-prediction-manifest.json"),

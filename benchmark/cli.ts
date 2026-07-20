@@ -14,7 +14,8 @@
 //
 // Standalone: MUST NOT import from the extension bundle (src/).
 
-import { argv, exit, stderr, stdout } from "node:process";
+import { statfs } from "node:fs/promises";
+import { argv, cwd, exit, stderr, stdout } from "node:process";
 import { fileURLToPath } from "node:url";
 
 import { runEvaluate, type EvaluateOptions } from "./commands/evaluate.ts";
@@ -110,7 +111,7 @@ async function dispatch(
     case "score":
       return runScore(buildScore(flags));
     case "fit":
-      return runFit(buildFit(flags));
+      return runFit(await buildFit(flags));
     case "evaluate":
       return runEvaluate(buildEvaluate(flags));
     case "publish-profile":
@@ -290,7 +291,23 @@ function buildScore(flags: FlagMap): ScoreOptions {
   };
 }
 
-function buildFit(flags: FlagMap): FitOptions {
+// The candidate preflight requires at least 20 GiB free before a freeze. The
+// measurement is an I/O concern, so it lives at this CLI boundary (never in the
+// pure preflight): `bavail * bsize` is the space an unprivileged process may
+// use. A missing dataset directory falls back to the process cwd's volume.
+async function measureFreeDiskBytes(datasetDirectory: string): Promise<number> {
+  for (const target of [datasetDirectory, cwd()]) {
+    try {
+      const stats = await statfs(target);
+      return stats.bavail * stats.bsize;
+    } catch {
+      // Try the next candidate location.
+    }
+  }
+  return 0;
+}
+
+async function buildFit(flags: FlagMap): Promise<FitOptions> {
   assertKnownFlags(flags, [
     "dataset-dir",
     "dataset-audit",
@@ -311,8 +328,9 @@ function buildFit(flags: FlagMap): FitOptions {
   ) {
     throw new CliError("fit accepts only development and calibration");
   }
+  const datasetDirectory = requireFlag(flags, "dataset-dir");
   return {
-    datasetDirectory: requireFlag(flags, "dataset-dir"),
+    datasetDirectory,
     datasetAuditPath: requireFlag(flags, "dataset-audit"),
     sourceReadinessPath: requireFlag(flags, "source-readiness"),
     splitArtifactPath: requireFlag(flags, "split-artifact"),
@@ -327,6 +345,7 @@ function buildFit(flags: FlagMap): FitOptions {
     ),
     outputDirectory: requireFlag(flags, "output"),
     seed: requireNumberFlag(flags, "seed"),
+    freeDiskBytes: await measureFreeDiskBytes(datasetDirectory),
   };
 }
 
