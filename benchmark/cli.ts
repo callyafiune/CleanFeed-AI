@@ -24,7 +24,7 @@ import {
   type SplitStrategy,
 } from "./report.ts";
 import { parseBenchmarkDataset, type BenchmarkRecord } from "./schema.ts";
-import { groupTimeSplit, type DatasetSplit } from "./split.ts";
+import { groupTimeSplit, type GroupTimeSplit } from "./split.ts";
 
 const DEFAULT_BLOCK_THRESHOLD = 0.92;
 const DEFAULT_TARGET_FPR = 0.01;
@@ -158,7 +158,7 @@ export async function main(args: readonly string[]): Promise<void> {
 function splitDataset(
   dataset: readonly BenchmarkRecord[],
   options: CliOptions,
-): DatasetSplit<BenchmarkRecord> {
+): GroupTimeSplit<BenchmarkRecord> {
   if (options.split === "group-time") {
     // The closed v2 record keeps the author under `groups.author`; project it to
     // a top-level `authorGroup` so the group-time splitter (and the leakage
@@ -187,7 +187,7 @@ function splitDataset(
 // Belt-and-suspenders check that the split we are about to report on carries no
 // author or temporal leakage. Only meaningful for group-time; random baselines
 // are already flagged as not release-eligible.
-function assertNoLeakage(split: DatasetSplit<BenchmarkRecord>): void {
+function assertNoLeakage(split: GroupTimeSplit<BenchmarkRecord>): void {
   const authorsOf = (rows: readonly BenchmarkRecord[]): Set<string> =>
     new Set(rows.map((row) => row.authorGroup));
   const train = authorsOf(split.train);
@@ -264,7 +264,7 @@ interface SplitAudit {
 
 function buildAudit(
   dataset: readonly BenchmarkRecord[],
-  split: DatasetSplit<BenchmarkRecord>,
+  split: GroupTimeSplit<BenchmarkRecord>,
   options: CliOptions,
 ): SplitAudit {
   return {

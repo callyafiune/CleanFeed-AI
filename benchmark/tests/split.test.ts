@@ -1,79 +1,411 @@
 import { describe, expect, it } from "vitest";
 
-import { groupTimeSplit } from "../split";
+import { auditBlockedSplit, type SplitAuditPolicy } from "../split-audit.ts";
+import {
+  createBlockedSplit,
+  SplitConstraintError,
+  type BlockedSplitPolicy,
+  type Partition,
+} from "../split.ts";
+import type {
+  BenchmarkLabel,
+  BenchmarkRecord,
+  TransformationKind,
+} from "../schema.ts";
 
-// groupTimeSplit is generic and only reads the group and time keys, so these
-// tests use a minimal local row shape rather than the full closed benchmark
-// record schema (validated in schema.test.ts). This keeps the split contract
-// decoupled from the record schema, which carries its author under groups.*.
-interface SplitRow {
+// The blocked split is exercised through the public API only (no lower-level
+// hooks), so every fixture is a full, self-consistent dataset that the temporal
+// 20/30/50 cut can actually satisfy within tolerance. A record factory keeps the
+// closed schema fields realistic while leaving the axes the splitter reads
+// (label, createdAt, domain, generation.family and every groups.* key) under
+// direct test control.
+const SHA = "a".repeat(64);
+
+interface RecordSpec {
   id: string;
-  authorGroup: string;
+  label: BenchmarkLabel;
   createdAt: number;
+  domain: string;
+  wordCount: number;
+  humanSourceType?: string;
+  hardNegativeFamily?: string;
+  transformationKind?: TransformationKind;
+  family?: string;
+  aiFraction?: number;
+  author: string;
+  source: string;
+  domainSource: string;
+  collectionBatch: string;
+  nearDuplicate: string;
+  derivationRoot: string;
+  generatorVersion?: string;
+  promptTemplate?: string;
 }
 
-function record(overrides: Partial<SplitRow> = {}): SplitRow {
-  return {
-    id: "rec-1",
-    authorGroup: "author-a",
-    createdAt: 1,
-    ...overrides,
+function rec(spec: RecordSpec): BenchmarkRecord {
+  const kind: TransformationKind = spec.transformationKind ?? "none";
+  const record: BenchmarkRecord = {
+    schemaVersion: 2,
+    id: spec.id,
+    text: `texto ${spec.id}`,
+    normalizedTextSha256: SHA,
+    label: spec.label,
+    language: "pt-BR",
+    platform: "linkedin",
+    domain: spec.domain,
+    topic: "carreira",
+    wordCount: spec.wordCount,
+    createdAt: spec.createdAt,
+    provenance: {
+      sourceKind: "licensed-corpus",
+      sourceId: "src",
+      sourceRevision: "rev1",
+      collectedAt: spec.createdAt,
+      licenseId: "cc-by",
+      legalBasis: "license",
+      piiAudit: {
+        status: "passed",
+        method: "manual-and-automated",
+        reviewerId: "rev1",
+        reviewedAt: spec.createdAt,
+      },
+    },
+    annotation: {
+      protocolVersion: "annotation-v1",
+      reviewerIds: ["rev1", "rev2"],
+      agreement: "agree",
+    },
+    transformation: {
+      kind,
+      severity: kind === "none" ? "none" : "medium",
+    },
+    groups: {
+      author: spec.author,
+      source: spec.source,
+      domainSource: spec.domainSource,
+      collectionBatch: spec.collectionBatch,
+      nearDuplicate: spec.nearDuplicate,
+      derivationRoot: spec.derivationRoot,
+    },
   };
+  if (spec.humanSourceType !== undefined) {
+    record.humanSourceType = spec.humanSourceType;
+  }
+  if (spec.hardNegativeFamily !== undefined) {
+    record.hardNegativeFamily = spec.hardNegativeFamily;
+  }
+  if (spec.generatorVersion !== undefined) {
+    record.groups.generatorVersion = spec.generatorVersion;
+  }
+  if (spec.promptTemplate !== undefined) {
+    record.groups.promptTemplate = spec.promptTemplate;
+  }
+  if (spec.family !== undefined) {
+    record.generation = {
+      provider: "acme",
+      family: spec.family,
+      model: `${spec.family}-model`,
+      version: spec.generatorVersion ?? "v1",
+      promptId: "prompt1",
+      promptSha256: SHA,
+      generatedAt: spec.createdAt,
+    };
+  }
+  if (spec.aiFraction !== undefined) {
+    record.mixture = {
+      aiFraction: spec.aiFraction,
+      humanFraction: Number((1 - spec.aiFraction).toFixed(4)),
+      spans: [],
+    };
+  }
+  return record;
 }
 
-// Author groups are temporally clustered, mirroring how a real dataset is
-// captured over time. A correct group-time split must never let one author
-// leak across partitions and must keep every test record strictly newer than
-// every calibration record.
-const DATASET: SplitRow[] = [
-  record({ id: "a1", authorGroup: "author-a", createdAt: 1 }),
-  record({ id: "a2", authorGroup: "author-a", createdAt: 2 }),
-  record({ id: "b1", authorGroup: "author-b", createdAt: 3 }),
-  record({ id: "b2", authorGroup: "author-b", createdAt: 4 }),
-  record({ id: "c1", authorGroup: "author-c", createdAt: 5 }),
-  record({ id: "c2", authorGroup: "author-c", createdAt: 6 }),
-  record({ id: "d1", authorGroup: "author-d", createdAt: 7 }),
-  record({ id: "d2", authorGroup: "author-d", createdAt: 8 }),
-  record({ id: "e1", authorGroup: "author-e", createdAt: 9 }),
-  record({ id: "e2", authorGroup: "author-e", createdAt: 10 }),
-];
+// Even class interleaving across 100 time slots. Because human, ai and mixed are
+// each spread uniformly over time, one global temporal cut lands every class at
+// ~20/30/50, and every (slot, class) shares all eight grouping axes so the audit
+// exercises real — never vacuous — cohesion. Mixed records point their
+// derivationRoot at the slot's human parent, so parent + derivatives cluster.
+// The unseen generator family appears only in the newest slots so it is both
+// held-out-eligible and temporally in test.
+function buildDataset(options: {
+  perHuman: number;
+  perAi: number;
+  perMixed: number;
+  unseenPerSlot: number;
+  unseenFromSlot: number;
+  unseenFamilyFromSlot?: number;
+}): BenchmarkRecord[] {
+  const records: BenchmarkRecord[] = [];
+  const SLOTS = 100;
+  const lengths = [40, 180, 520];
+  const aiKinds: TransformationKind[] = [
+    "paraphrase",
+    "back-translation",
+    "expand",
+  ];
 
-function authors(rows: SplitRow[]): string[] {
-  return [...new Set(rows.map((row) => row.authorGroup))];
+  for (let slot = 1; slot <= SLOTS; slot += 1) {
+    for (let i = 0; i < options.perHuman; i += 1) {
+      records.push(
+        rec({
+          id: `h_${slot}_${i}`,
+          label: "human",
+          createdAt: slot,
+          domain: i % 2 === 0 ? "corporate" : "linkedin",
+          wordCount: lengths[i % 3],
+          humanSourceType: i % 2 === 0 ? "employee-post" : "newsletter",
+          hardNegativeFamily: i % 2 === 0 ? "hn-legal" : "hn-marketing",
+          author: `auth_h_${slot}`,
+          source: `src_h_${slot}`,
+          domainSource: `ds_h_${slot}`,
+          collectionBatch: `cb_h_${slot}`,
+          nearDuplicate: `nd_h_${slot}`,
+          derivationRoot: `h_${slot}_0`,
+        }),
+      );
+    }
+    for (let i = 0; i < options.perAi; i += 1) {
+      records.push(
+        rec({
+          id: `a_${slot}_${i}`,
+          label: "ai",
+          createdAt: slot,
+          domain: i % 2 === 0 ? "corporate" : "linkedin",
+          wordCount: [50, 200, 480][i % 3],
+          transformationKind: aiKinds[i % 3],
+          family: "family-seen",
+          author: `auth_a_${slot}`,
+          source: `src_a_${slot}`,
+          domainSource: `ds_a_${slot}`,
+          collectionBatch: `cb_a_${slot}`,
+          nearDuplicate: `nd_a_${slot}`,
+          derivationRoot: `a_${slot}_0`,
+          generatorVersion: `gv_seen_${slot}`,
+          promptTemplate: `pt_a_${slot}`,
+        }),
+      );
+    }
+    for (let i = 0; i < options.perMixed; i += 1) {
+      records.push(
+        rec({
+          id: `m_${slot}_${i}`,
+          label: "mixed",
+          createdAt: slot,
+          domain: i % 2 === 0 ? "corporate" : "linkedin",
+          wordCount: [60, 220, 500][i % 3],
+          transformationKind: "human-ai-mix",
+          family: "family-seen",
+          aiFraction: i % 2 === 0 ? 0.7 : 0.4,
+          author: `auth_m_${slot}`,
+          source: `src_m_${slot}`,
+          domainSource: `ds_m_${slot}`,
+          collectionBatch: `cb_m_${slot}`,
+          nearDuplicate: `nd_m_${slot}`,
+          derivationRoot: `h_${slot}_0`,
+          promptTemplate: `pt_m_${slot}`,
+        }),
+      );
+    }
+  }
+
+  const unseenStart = options.unseenFamilyFromSlot ?? options.unseenFromSlot;
+  for (let slot = unseenStart; slot <= SLOTS; slot += 1) {
+    for (let i = 0; i < options.unseenPerSlot; i += 1) {
+      records.push(
+        rec({
+          id: `u_${slot}_${i}`,
+          label: "ai",
+          createdAt: slot,
+          domain: "linkedin",
+          wordCount: 300,
+          transformationKind: "paraphrase",
+          family: "family-unseen",
+          author: `auth_u_${slot}_${i}`,
+          source: `src_u_${slot}_${i}`,
+          domainSource: `ds_u_${slot}_${i}`,
+          collectionBatch: `cb_u_${slot}_${i}`,
+          nearDuplicate: `nd_u_${slot}_${i}`,
+          derivationRoot: `u_${slot}_${i}`,
+          generatorVersion: `gv_unseen_${slot}`,
+          promptTemplate: `pt_u_${slot}`,
+        }),
+      );
+    }
+  }
+  return records;
 }
 
-function intersection(a: string[], b: string[]): string[] {
-  const bSet = new Set(b);
-  return a.filter((value) => bSet.has(value));
-}
+const DATASET = buildDataset({
+  perHuman: 6,
+  perAi: 4,
+  perMixed: 3,
+  unseenPerSlot: 1,
+  unseenFromSlot: 96,
+});
 
-describe("groupTimeSplit", () => {
-  it("keeps authors disjoint and test records later than calibration records", () => {
-    const split = groupTimeSplit(DATASET, {
-      groupBy: "authorGroup",
-      timeBy: "createdAt",
+const POLICY: BlockedSplitPolicy = {
+  fractions: { development: 0.2, calibration: 0.3, test: 0.5 },
+  classTolerance: 0.02,
+  heldOutGeneratorFamilies: ["family-unseen"],
+  seed: 712_019,
+};
+
+const RELEASE_AUDIT_POLICY: SplitAuditPolicy = {
+  minimumTestHumanNegatives: 2_000,
+  minimumCriticalFprNegatives: 300,
+  minimumCriticalRecallPositives: 200,
+  classTolerance: 0.02,
+};
+
+const GROUP_AXES = [
+  "author",
+  "source",
+  "domainSource",
+  "generatorVersion",
+  "promptTemplate",
+  "collectionBatch",
+  "nearDuplicate",
+  "derivationRoot",
+] as const;
+
+describe("createBlockedSplit", () => {
+  it("keeps connected groups together and the holdout family in test", () => {
+    const split = createBlockedSplit(DATASET, {
+      fractions: { development: 0.2, calibration: 0.3, test: 0.5 },
+      classTolerance: 0.02,
+      heldOutGeneratorFamilies: ["family-unseen"],
+      seed: 712_019,
     });
-
+    const audit = auditBlockedSplit(DATASET, split, RELEASE_AUDIT_POLICY);
+    expect(audit.leakages).toEqual([]);
     expect(
-      intersection(authors(split.train), authors(split.calibration)),
-    ).toEqual([]);
-    expect(intersection(authors(split.train), authors(split.test))).toEqual([]);
-    expect(
-      intersection(authors(split.calibration), authors(split.test)),
-    ).toEqual([]);
-    expect(Math.min(...split.test.map((row) => row.createdAt))).toBeGreaterThan(
-      Math.max(...split.calibration.map((row) => row.createdAt)),
+      split.test.filter((row) => row.generation?.family === "family-unseen"),
+    ).not.toHaveLength(0);
+    expect([...split.development, ...split.calibration]).not.toContainEqual(
+      expect.objectContaining({
+        generation: expect.objectContaining({ family: "family-unseen" }),
+      }),
     );
   });
 
-  it("assigns every record to exactly one partition", () => {
-    const split = groupTimeSplit(DATASET, {
-      groupBy: "authorGroup",
-      timeBy: "createdAt",
-    });
-    const assigned = [...split.train, ...split.calibration, ...split.test];
+  it("does not collapse every linkedin record or every seen family into one component", () => {
+    const split = createBlockedSplit(DATASET, POLICY);
+    expect(split.development.some((row) => row.domain === "corporate")).toBe(
+      true,
+    );
+    expect(split.test.some((row) => row.domain === "corporate")).toBe(true);
+    expect(
+      split.calibration.some((row) => row.generation?.family === "family-seen"),
+    ).toBe(true);
+    expect(
+      split.test.some((row) => row.generation?.family === "family-seen"),
+    ).toBe(true);
+  });
 
-    expect(assigned).toHaveLength(DATASET.length);
-    expect(new Set(assigned.map((row) => row.id)).size).toBe(DATASET.length);
+  it("confines every grouping axis to a single partition (no leakage on all eight axes)", () => {
+    const split = createBlockedSplit(DATASET, POLICY);
+    const partitions: Array<[Partition, BenchmarkRecord[]]> = [
+      ["development", split.development],
+      ["calibration", split.calibration],
+      ["test", split.test],
+    ];
+    for (const axis of GROUP_AXES) {
+      const partitionsByValue = new Map<string, Set<Partition>>();
+      const recordsByValue = new Map<string, number>();
+      for (const [partition, rows] of partitions) {
+        for (const row of rows) {
+          const value = row.groups[axis];
+          if (value === undefined) continue;
+          const set = partitionsByValue.get(value) ?? new Set<Partition>();
+          set.add(partition);
+          partitionsByValue.set(value, set);
+          recordsByValue.set(value, (recordsByValue.get(value) ?? 0) + 1);
+        }
+      }
+      // No value on this axis may straddle a partition boundary.
+      for (const set of partitionsByValue.values()) {
+        expect([...set]).toHaveLength(1);
+      }
+      // Proves the assertion is non-vacuous: this axis genuinely binds multiple
+      // records into a shared group, and that group stayed together.
+      expect(Math.max(...recordsByValue.values())).toBeGreaterThanOrEqual(2);
+    }
+  });
+
+  it("splits every class 20/30/50 within the two-point tolerance", () => {
+    const split = createBlockedSplit(DATASET, POLICY);
+    const audit = auditBlockedSplit(DATASET, split, RELEASE_AUDIT_POLICY);
+    for (const label of ["human", "ai", "mixed"] as const) {
+      expect(audit.classFractions[label].development).toBeCloseTo(0.2, 1);
+      expect(
+        Math.abs(audit.classFractions[label].development - 0.2),
+      ).toBeLessThanOrEqual(0.02);
+      expect(
+        Math.abs(audit.classFractions[label].calibration - 0.3),
+      ).toBeLessThanOrEqual(0.02);
+      expect(
+        Math.abs(audit.classFractions[label].test - 0.5),
+      ).toBeLessThanOrEqual(0.02);
+    }
+  });
+
+  it("keeps the blocked test strictly newer than calibration and development", () => {
+    const split = createBlockedSplit(DATASET, POLICY);
+    const latestNonTest = Math.max(
+      ...split.development.map((row) => row.createdAt),
+      ...split.calibration.map((row) => row.createdAt),
+    );
+    const earliestTest = Math.min(...split.test.map((row) => row.createdAt));
+    expect(earliestTest).toBeGreaterThan(latestNonTest);
+  });
+
+  it("is deterministic for a fixed seed", () => {
+    const first = createBlockedSplit(DATASET, POLICY);
+    const second = createBlockedSplit(DATASET, POLICY);
+    const ids = (rows: BenchmarkRecord[]): string[] =>
+      rows.map((row) => row.id);
+    expect(ids(first.development)).toEqual(ids(second.development));
+    expect(ids(first.calibration)).toEqual(ids(second.calibration));
+    expect(ids(first.test)).toEqual(ids(second.test));
+  });
+
+  it("throws when a held-out family is not temporally eligible for test", () => {
+    const dataset = buildDataset({
+      perHuman: 6,
+      perAi: 4,
+      perMixed: 3,
+      unseenPerSlot: 1,
+      unseenFromSlot: 96,
+      // Plant the unseen family in an early slot: it can never be test-only
+      // without leaking future data, so the splitter must refuse.
+      unseenFamilyFromSlot: 2,
+    });
+    expect(() => createBlockedSplit(dataset, POLICY)).toThrow(
+      SplitConstraintError,
+    );
+  });
+
+  it("throws when the 20/30/50 target is unreachable within tolerance", () => {
+    // Every record shares one timestamp, so no temporal cut can carve out a
+    // 50% test slice: fail closed rather than relax the grouping or the time.
+    const degenerate = Array.from({ length: 12 }, (_, index) =>
+      rec({
+        id: `d_${index}`,
+        label: "human",
+        createdAt: 1,
+        domain: "corporate",
+        wordCount: 100,
+        author: `auth_${index}`,
+        source: `src_${index}`,
+        domainSource: `ds_${index}`,
+        collectionBatch: `cb_${index}`,
+        nearDuplicate: `nd_${index}`,
+        derivationRoot: `d_${index}`,
+      }),
+    );
+    expect(() => createBlockedSplit(degenerate, POLICY)).toThrow(
+      SplitConstraintError,
+    );
   });
 });
