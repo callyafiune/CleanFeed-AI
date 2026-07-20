@@ -1,8 +1,17 @@
 import { describe, expect, it } from "vitest";
 
 import { DEFAULT_SETTINGS } from "@/shared/constants";
-import type { ClassificationResult, Clock, StorageArea } from "@/shared/types";
-import { buildCacheKey, ClassificationCache } from "@/storage/cache";
+import type {
+  ClassificationResult,
+  Clock,
+  RuntimeModelIdentity,
+  StorageArea,
+} from "@/shared/types";
+import {
+  buildCacheKey,
+  buildRuntimeModelKey,
+  ClassificationCache,
+} from "@/storage/cache";
 
 class MemoryStorageArea implements StorageArea {
   private readonly values = new Map<string, unknown>();
@@ -232,5 +241,213 @@ describe("ClassificationCache", () => {
     expect(buildCacheKey("linkedin", "m1", "s1", "hash")).toBe(
       "linkedin:m1:s1:hash",
     );
+  });
+});
+
+const bundleIdentity: RuntimeModelIdentity = {
+  kind: "bundle",
+  modelId: "tmr-ai-text-detector",
+  modelVersion: "b9aa251e5bcda7e429fcc936767d921435945b60",
+  bundleDigest: "a".repeat(64),
+  tokenizerDigest: "c".repeat(64),
+  aggregationVersion: "tmr-aggregation-v2",
+  contentCompositionVersion: "lexical-content-v1",
+  calibrationSetDigest: "b".repeat(64),
+};
+
+const builtinIdentity: RuntimeModelIdentity = {
+  kind: "builtin",
+  modelId: "stylometric",
+  modelVersion: "1.0.0",
+  implementationVersion: "stylometric-v1",
+};
+
+describe("buildRuntimeModelKey", () => {
+  it("changes when any sealing coordinate of a bundle identity changes", () => {
+    const base = buildRuntimeModelKey(bundleIdentity);
+
+    expect(
+      buildRuntimeModelKey({ ...bundleIdentity, bundleDigest: "0".repeat(64) }),
+    ).not.toBe(base);
+    expect(
+      buildRuntimeModelKey({
+        ...bundleIdentity,
+        tokenizerDigest: "0".repeat(64),
+      }),
+    ).not.toBe(base);
+    expect(
+      buildRuntimeModelKey({
+        ...bundleIdentity,
+        aggregationVersion: "tmr-aggregation-v3",
+      }),
+    ).not.toBe(base);
+    expect(
+      buildRuntimeModelKey({
+        ...bundleIdentity,
+        contentCompositionVersion: "lexical-content-v2",
+      }),
+    ).not.toBe(base);
+    expect(
+      buildRuntimeModelKey({
+        ...bundleIdentity,
+        calibrationSetDigest: "0".repeat(64),
+      }),
+    ).not.toBe(base);
+  });
+
+  it("is stable for the same identity and canonical across key order", () => {
+    expect(buildRuntimeModelKey(bundleIdentity)).toBe(
+      buildRuntimeModelKey({ ...bundleIdentity }),
+    );
+  });
+
+  it("changes when a builtin implementationVersion changes", () => {
+    expect(
+      buildRuntimeModelKey({
+        ...builtinIdentity,
+        implementationVersion: "stylometric-v2",
+      }),
+    ).not.toBe(buildRuntimeModelKey(builtinIdentity));
+  });
+
+  it("never collides a bundle identity with a builtin one", () => {
+    expect(buildRuntimeModelKey(bundleIdentity)).not.toBe(
+      buildRuntimeModelKey(builtinIdentity),
+    );
+  });
+});
+
+describe("ClassificationCache identity-bound lookup", () => {
+  const REALISTIC_NOW = Date.parse("2026-07-19T00:00:00.000Z");
+
+  function identityCache(startAt = REALISTIC_NOW) {
+    const storage = new MemoryStorageArea();
+    const clock = new TestClock(startAt);
+    const cache = new ClassificationCache(storage, clock, {
+      maximumEntries: DEFAULT_SETTINGS.cacheMaximumEntries,
+      ttlMs: DEFAULT_SETTINGS.cacheTtlMs,
+    });
+    return { cache, storage, clock };
+  }
+
+  const bundleResult: ClassificationResult = {
+    ...result,
+    runtimeIdentity: bundleIdentity,
+  };
+
+  function keyFor(identity: RuntimeModelIdentity): string {
+    return buildCacheKey(
+      "linkedin",
+      buildRuntimeModelKey(identity),
+      "settings",
+      "hash",
+    );
+  }
+
+  it("returns a hit when the read identity matches the stored one", async () => {
+    const { cache } = identityCache();
+    const key = keyFor(bundleIdentity);
+
+    await cache.set(key, bundleResult);
+
+    await expect(
+      cache.getCachedClassification(key, REALISTIC_NOW, bundleIdentity),
+    ).resolves.toEqual(bundleResult);
+  });
+
+  it("misses after the calibration set digest changes", async () => {
+    const { cache } = identityCache();
+    await cache.set(keyFor(bundleIdentity), bundleResult);
+
+    const changed: RuntimeModelIdentity = {
+      ...bundleIdentity,
+      calibrationSetDigest: "0".repeat(64),
+    };
+
+    await expect(
+      cache.getCachedClassification(keyFor(changed), REALISTIC_NOW, changed),
+    ).resolves.toBeUndefined();
+  });
+
+  it("rejects a record whose stored identity does not match the read identity", async () => {
+    const { cache, storage } = identityCache();
+    const key = keyFor(bundleIdentity);
+    // The entry is stored under the current key but carries an OLD identity in
+    // its result; the defensive re-comparison on read must reject it.
+    const staleIdentity: RuntimeModelIdentity = {
+      ...bundleIdentity,
+      bundleDigest: "9".repeat(64),
+    };
+    await storage.set("cleanfeed.cache.index.v1", {
+      entries: [
+        {
+          key,
+          lastAccessedAt: REALISTIC_NOW,
+          expiresAt: REALISTIC_NOW + 1_000,
+        },
+      ],
+    });
+    await storage.set(`cleanfeed.cache.entry.${key}`, {
+      result: { ...bundleResult, runtimeIdentity: staleIdentity },
+      createdAt: REALISTIC_NOW,
+      lastAccessedAt: REALISTIC_NOW,
+      expiresAt: REALISTIC_NOW + 1_000,
+    });
+
+    await expect(
+      cache.getCachedClassification(key, REALISTIC_NOW, bundleIdentity),
+    ).resolves.toBeUndefined();
+    await expect(
+      storage.get(`cleanfeed.cache.entry.${key}`),
+    ).resolves.toBeUndefined();
+  });
+
+  it("clamps the stored TTL to the selected profile's expiry", async () => {
+    const { cache } = identityCache();
+    const key = keyFor(bundleIdentity);
+    // The profile expires 10 minutes from now — long before the 7-day TTL.
+    const cacheValidUntil = new Date(REALISTIC_NOW + 600_000).toISOString();
+
+    await cache.set(key, { ...bundleResult, cacheValidUntil });
+
+    // A read just before the profile expiry still hits.
+    await expect(
+      cache.getCachedClassification(
+        key,
+        REALISTIC_NOW + 599_000,
+        bundleIdentity,
+      ),
+    ).resolves.toMatchObject({ runtimeIdentity: bundleIdentity });
+    // A read after the profile expiry — but well within the normal TTL — misses.
+    await expect(
+      cache.getCachedClassification(
+        key,
+        REALISTIC_NOW + 601_000,
+        bundleIdentity,
+      ),
+    ).resolves.toBeUndefined();
+  });
+
+  it("removes a single legacy entry keyed by the old fixed model key", async () => {
+    const { cache, storage } = identityCache();
+    const legacyKey = buildCacheKey(
+      "linkedin",
+      "stylometric-v1:1.0.0",
+      "settings",
+      "hash",
+    );
+    await cache.set(legacyKey, result);
+    await expect(
+      storage.get(`cleanfeed.cache.entry.${legacyKey}`),
+    ).resolves.toBeDefined();
+
+    await cache.remove(legacyKey);
+
+    await expect(
+      storage.get(`cleanfeed.cache.entry.${legacyKey}`),
+    ).resolves.toBeUndefined();
+    await expect(storage.get("cleanfeed.cache.index.v1")).resolves.toEqual({
+      entries: [],
+    });
   });
 });

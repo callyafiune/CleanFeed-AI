@@ -166,6 +166,54 @@ describe("DiagnosticsRepository", () => {
     expect(report.platforms).toEqual(["linkedin"]);
   });
 
+  it("reduces the circuit breaker to bounded, text-free counters and a reason code", async () => {
+    const metrics = new MetricsRepository(new MemoryStorageArea());
+    const diagnostics = new DiagnosticsRepository({
+      getSettings: async () => DEFAULT_SETTINGS,
+      getMetrics: () => metrics.get(),
+      getEnvironment: () => ({
+        version: "0.1.0",
+        manifestPermissions: ["storage"],
+      }),
+      getPlatformIds: () => [],
+      // A far-oversized timestamp list plus a smuggled string prove the report
+      // copies only allowlisted numeric fields and caps the timestamps.
+      getCircuitBreaker: () =>
+        ({
+          open: true,
+          failureCount: 3,
+          failureTimestamps: Array.from({ length: 50 }, (_unused, i) => i),
+          leakedNote: PORTUGUESE_TEXT,
+        }) as unknown as {
+          open: boolean;
+          failureCount: number;
+          failureTimestamps: number[];
+        },
+    });
+
+    const report = await diagnostics.buildReport();
+    expect(report.circuitBreaker).toBeDefined();
+    expect(Object.keys(report.circuitBreaker ?? {}).sort()).toEqual([
+      "failureCount",
+      "open",
+      "reasonCode",
+      "recentFailureTimestamps",
+    ]);
+    expect(report.circuitBreaker?.open).toBe(true);
+    expect(report.circuitBreaker?.reasonCode).toBe("CIRCUIT_BREAKER_OPEN");
+    expect(report.circuitBreaker?.recentFailureTimestamps.length).toBe(16);
+    const serialized = JSON.stringify(report.circuitBreaker);
+    expect(serialized).not.toContain(PORTUGUESE_TEXT.slice(0, 20));
+    expect(serialized).not.toContain("https://");
+  });
+
+  it("omits the circuit breaker entirely when no breaker source is wired", async () => {
+    const diagnostics = await buildRepository();
+    const report = await diagnostics.buildReport();
+    expect(report.circuitBreaker).toBeUndefined();
+    expect(report).not.toHaveProperty("circuitBreaker");
+  });
+
   it("omits model status and runtime when the sources are unavailable", async () => {
     const metrics = new MetricsRepository(new MemoryStorageArea());
     const diagnostics = new DiagnosticsRepository({

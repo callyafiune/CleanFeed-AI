@@ -12,10 +12,16 @@ import { normalizeText } from "@/shared/text-normalization";
 import type { UserSettings } from "@/shared/settings-types";
 import type {
   ClassificationResult,
+  Clock,
   ModelStatus,
   PerformanceTrace,
+  RuntimeModelIdentity,
 } from "@/shared/types";
-import { buildCacheKey, type ClassificationCache } from "@/storage/cache";
+import {
+  buildCacheKey,
+  buildRuntimeModelKey,
+  type ClassificationCache,
+} from "@/storage/cache";
 import type { MetricRecord } from "@/storage/metrics";
 
 export interface OffscreenClient {
@@ -55,14 +61,27 @@ export interface DomainPauseStore {
 }
 
 export interface BackgroundMessageRouterOptions {
-  cache: Pick<ClassificationCache, "get" | "set">;
+  cache: Pick<
+    ClassificationCache,
+    "getCachedClassification" | "set" | "remove"
+  >;
   metrics: MetricsRecorder;
   offscreenClient: OffscreenClient;
+  /**
+   * The legacy fixed model key (`id:version`). It is no longer used to key new
+   * results — those are keyed by full runtime identity — but the router still
+   * purges any entry left under it, migrating pre-identity caches.
+   */
   modelKey: string;
   settingsFingerprint: string | ((platformId: string) => Promise<string>);
   settings?: SettingsStore;
   domainPause?: DomainPauseStore;
   modelStatus?: () => Promise<ModelStatus>;
+  /**
+   * Time source for the cache-read freshness check. It MUST match the clock the
+   * {@link ClassificationCache} writes with; defaults to wall-clock time.
+   */
+  clock?: Clock;
 }
 
 type ClassifyTextMessage = MessageEnvelope<
@@ -129,22 +148,31 @@ export class BackgroundMessageRouter {
   private async handleClassification(
     message: ClassifyTextMessage,
   ): Promise<ExtensionMessage> {
+    const { platform } = message.payload;
     const normalizedText = normalizeText(message.payload.text);
     const textHash = await sha256(normalizedText);
-    const settingsFingerprint = await this.getSettingsFingerprint(
-      message.payload.platform,
-    );
-    const key = buildCacheKey(
-      message.payload.platform,
-      this.options.modelKey,
-      settingsFingerprint,
-      textHash,
-    );
-    const cached = await this.options.cache.get(key);
+    const settingsFingerprint = await this.getSettingsFingerprint(platform);
 
-    if (cached !== undefined) {
-      await this.options.metrics.record({ cacheHits: 1 });
-      return classificationResultMessage(message, cached);
+    // Phase 1 — obtain the ready runtime identity BEFORE the read. With no
+    // ready/degraded identity (e.g. still initializing), the cache is skipped
+    // entirely rather than read under a guessed identity.
+    const readIdentity = await this.readyRuntimeIdentity();
+    if (readIdentity !== undefined) {
+      const readKey = this.identityCacheKey(
+        platform,
+        readIdentity,
+        settingsFingerprint,
+        textHash,
+      );
+      const cached = await this.options.cache.getCachedClassification(
+        readKey,
+        this.options.clock?.now() ?? Date.now(),
+        readIdentity,
+      );
+      if (cached !== undefined) {
+        await this.options.metrics.record({ cacheHits: 1 });
+        return classificationResultMessage(message, cached);
+      }
     }
 
     await this.options.metrics.record({ cacheMisses: 1 });
@@ -155,9 +183,67 @@ export class BackgroundMessageRouter {
       ...(settings === undefined ? {} : { settings }),
     });
     assertClassificationResult(result);
-    await this.options.cache.set(key, result);
+
+    // Phase 2 — recompute the key from the identity that ACTUALLY produced the
+    // result. If the runtime switched (e.g. TMR → stylometric mid-flight), the
+    // result is written under the fallback's identity, never the read one.
+    const writeKey = this.identityCacheKey(
+      platform,
+      result.runtimeIdentity,
+      settingsFingerprint,
+      textHash,
+    );
+    await this.options.cache.set(writeKey, result);
+    await this.migrateLegacyEntry(platform, settingsFingerprint, textHash);
     await this.recordInference(result);
     return classificationResultMessage(message, result);
+  }
+
+  /**
+   * The identity a cache read may use: the loaded model's identity when the set
+   * is `ready` or `degraded`, otherwise undefined so the read is skipped.
+   */
+  private async readyRuntimeIdentity(): Promise<
+    RuntimeModelIdentity | undefined
+  > {
+    const status = await this.options.modelStatus?.();
+    if (
+      status !== undefined &&
+      (status.state === "ready" || status.state === "degraded") &&
+      status.runtimeIdentity !== null
+    ) {
+      return status.runtimeIdentity;
+    }
+    return undefined;
+  }
+
+  private identityCacheKey(
+    platform: string,
+    identity: RuntimeModelIdentity,
+    settingsFingerprint: string,
+    textHash: string,
+  ): string {
+    return buildCacheKey(
+      platform,
+      buildRuntimeModelKey(identity),
+      settingsFingerprint,
+      textHash,
+    );
+  }
+
+  private migrateLegacyEntry(
+    platform: string,
+    settingsFingerprint: string,
+    textHash: string,
+  ): Promise<void> {
+    return this.options.cache.remove(
+      buildCacheKey(
+        platform,
+        this.options.modelKey,
+        settingsFingerprint,
+        textHash,
+      ),
+    );
   }
 
   private getSettingsFingerprint(platformId: string): Promise<string> {

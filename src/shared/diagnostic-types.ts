@@ -20,6 +20,24 @@ export interface DiagnosticReport {
   modelStatus: DiagnosticModelStatus | null;
   platforms: string[];
   settingsSummary: DiagnosticSettingsSummary;
+  /**
+   * The TMR circuit breaker's state, present only when a breaker source is
+   * available. It carries counters, bounded timestamps and a single reason
+   * code — never post text, a URL, a hash or a stack trace.
+   */
+  circuitBreaker?: DiagnosticCircuitBreaker;
+}
+
+/**
+ * A share-safe view of the circuit breaker. By construction it is limited to
+ * numeric counters, a bounded list of failure timestamps and one enumerated
+ * reason code, so it can never leak browsing data.
+ */
+export interface DiagnosticCircuitBreaker {
+  open: boolean;
+  failureCount: number;
+  recentFailureTimestamps: number[];
+  reasonCode: "CIRCUIT_BREAKER_OPEN" | null;
 }
 
 export interface DiagnosticExtensionInfo {

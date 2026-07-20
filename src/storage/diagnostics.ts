@@ -1,4 +1,6 @@
+import type { CircuitBreakerSnapshot } from "@/inference/circuit-breaker";
 import type {
+  DiagnosticCircuitBreaker,
   DiagnosticExtensionInfo,
   DiagnosticModelStatus,
   DiagnosticReport,
@@ -31,7 +33,14 @@ export interface DiagnosticsRepositoryOptions {
   getPlatformIds: () => Promise<readonly string[]> | readonly string[];
   getModelStatus?: () =>
     Promise<ModelStatus | undefined> | ModelStatus | undefined;
+  getCircuitBreaker?: () =>
+    | Promise<CircuitBreakerSnapshot | undefined>
+    | CircuitBreakerSnapshot
+    | undefined;
 }
+
+/** Failure timestamps are capped so a report can never grow unbounded. */
+const MAX_DIAGNOSTIC_FAILURE_TIMESTAMPS = 16;
 
 /** Bare Chrome API permission tokens (e.g. "storage"); never host patterns/URLs. */
 const PERMISSION_TOKEN = /^[a-zA-Z][a-zA-Z0-9_.-]*$/u;
@@ -48,15 +57,17 @@ export class DiagnosticsRepository {
   constructor(private readonly options: DiagnosticsRepositoryOptions) {}
 
   async buildReport(): Promise<DiagnosticReport> {
-    const [settings, metrics, environment, platformIds, modelStatus] =
+    const [settings, metrics, environment, platformIds, modelStatus, breaker] =
       await Promise.all([
         this.options.getSettings(),
         this.options.getMetrics(),
         this.options.getEnvironment(),
         this.options.getPlatformIds(),
         this.options.getModelStatus?.() ?? undefined,
+        this.options.getCircuitBreaker?.() ?? undefined,
       ]);
 
+    const circuitBreaker = sanitizeCircuitBreaker(breaker);
     return {
       extension: buildExtensionInfo(environment),
       manifestPermissions: sanitizePermissions(environment.manifestPermissions),
@@ -64,8 +75,39 @@ export class DiagnosticsRepository {
       modelStatus: sanitizeModelStatus(modelStatus),
       platforms: [...platformIds].sort(),
       settingsSummary: buildSettingsSummary(settings),
+      // Present only when a breaker source is wired in; absent otherwise so the
+      // report's shape is unchanged for callers without one.
+      ...(circuitBreaker === undefined ? {} : { circuitBreaker }),
     };
   }
+}
+
+/**
+ * Reduces a breaker snapshot to counters, bounded timestamps and one reason
+ * code. Only allowlisted numeric fields are copied and the timestamp list is
+ * capped, so no text, URL or hash can ever enter the report.
+ */
+function sanitizeCircuitBreaker(
+  snapshot: CircuitBreakerSnapshot | undefined,
+): DiagnosticCircuitBreaker | undefined {
+  if (snapshot === undefined) {
+    return undefined;
+  }
+
+  return {
+    open: snapshot.open === true,
+    failureCount: sanitizeCount(snapshot.failureCount),
+    recentFailureTimestamps: snapshot.failureTimestamps
+      .filter(
+        (timestamp) => Number.isSafeInteger(timestamp) && timestamp >= 0,
+      )
+      .slice(-MAX_DIAGNOSTIC_FAILURE_TIMESTAMPS),
+    reasonCode: snapshot.open === true ? "CIRCUIT_BREAKER_OPEN" : null,
+  };
+}
+
+function sanitizeCount(value: number): number {
+  return Number.isSafeInteger(value) && value >= 0 ? value : 0;
 }
 
 function buildExtensionInfo(

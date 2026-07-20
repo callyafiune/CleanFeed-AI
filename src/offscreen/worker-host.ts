@@ -3,6 +3,10 @@ import {
   buildBuiltinEvidence,
   buildBuiltinIdentity,
 } from "@/inference/builtin-runtime";
+import {
+  CircuitBreaker,
+  type CircuitBreakerFailureCode,
+} from "@/inference/circuit-breaker";
 import type { ModelRuntime } from "@/inference/model-runtime";
 import { CleanFeedError } from "@/shared/errors";
 import type { ClassificationRequest } from "@/shared/messages";
@@ -432,13 +436,43 @@ export class WorkerHostLifecycle {
   private current: WorkerHostState | undefined;
   private transition: Promise<WorkerHostState> | undefined;
 
-  constructor(private readonly factory: WorkerHostRuntimeFactory) {}
+  constructor(
+    private readonly factory: WorkerHostRuntimeFactory,
+    private readonly breaker: CircuitBreaker = new CircuitBreaker(),
+  ) {}
 
   getState(): WorkerHostState {
     if (this.current === undefined) {
       return { mode: "terminal", phase: "error", reasonCodes: ["BACKEND_ERROR"] };
     }
     return this.current;
+  }
+
+  /**
+   * Records an operational TMR failure against the circuit breaker. The failure
+   * that opens the breaker — three eligible failures inside the moving
+   * ten-minute window — trips the SINGLE Task-7 transition to the stylometric
+   * fallback with a CIRCUIT_BREAKER_OPEN reason, disposing TMR exactly once.
+   * Concurrent failures all receive that one shared promise, so twenty racing
+   * failures still cause exactly one dispose and one fallback initialization.
+   * Non-operational codes never count, and a breaker that opens while already
+   * in fallback or terminal does nothing (there is no path back to TMR here).
+   */
+  recordFailure(
+    code: CircuitBreakerFailureCode,
+    now: number,
+  ): Promise<WorkerHostState> | undefined {
+    this.breaker.recordFailure(code, now);
+    if (this.breaker.canAttempt(now)) {
+      return undefined;
+    }
+    if (this.transition !== undefined) {
+      return this.transition;
+    }
+    if (this.current?.mode !== "primary") {
+      return undefined;
+    }
+    return this.enterFallback(["CIRCUIT_BREAKER_OPEN"]);
   }
 
   async initialize(): Promise<WorkerHostState> {

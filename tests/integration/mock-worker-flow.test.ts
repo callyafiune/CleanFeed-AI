@@ -1,6 +1,10 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 
-import type { ClassificationResult, StorageArea } from "@/shared/types";
+import type {
+  ClassificationResult,
+  ModelStatus,
+  StorageArea,
+} from "@/shared/types";
 import {
   BackgroundMessageRouter,
   RuntimeOffscreenClient,
@@ -92,11 +96,27 @@ const classifyMessage = {
   },
 };
 
+// The two-phase read requires a ready runtime identity. It matches the identity
+// stamped on `cachedResult`, so a hit is only served for the loaded model.
+function readyModelStatus(): ModelStatus {
+  return {
+    state: "ready",
+    backend: "mock",
+    runtimeIdentity: cachedResult.runtimeIdentity,
+    calibrationCoverage: "none",
+    calibrationSetDigest: null,
+    profileCount: 0,
+    earliestExpiry: null,
+    reasonCodes: [],
+  };
+}
+
 function createRouter(
   cache: ClassificationCache,
   classify = vi.fn(),
   settingsFingerprint:
     string | ((platform: string) => Promise<string>) = "settings-v1",
+  modelStatus: () => Promise<ModelStatus> = async () => readyModelStatus(),
 ) {
   return {
     classify,
@@ -106,6 +126,10 @@ function createRouter(
       offscreenClient: { classify },
       settingsFingerprint,
       modelKey: "mock:1.0.0",
+      modelStatus,
+      // Share the cache's fixed clock so the two-phase read's freshness check
+      // agrees with the timestamps `cache.set` writes.
+      clock: { now: () => 1_000 },
     }),
   };
 }
@@ -182,12 +206,19 @@ describe("mock worker flow", () => {
       { now: () => 1_000 },
       { maximumEntries: 10, ttlMs: 60_000 },
     );
-    const { buildCacheKey } = await import("@/storage/cache");
+    const { buildCacheKey, buildRuntimeModelKey } = await import(
+      "@/storage/cache"
+    );
     const { sha256 } = await import("@/shared/hashing");
     const { normalizeText } = await import("@/shared/text-normalization");
     const hash = await sha256(normalizeText(classifyMessage.payload.text));
     await cache.set(
-      buildCacheKey("linkedin", "mock:1.0.0", "settings-v1", hash),
+      buildCacheKey(
+        "linkedin",
+        buildRuntimeModelKey(cachedResult.runtimeIdentity),
+        "settings-v1",
+        hash,
+      ),
       cachedResult,
     );
     const { router, classify } = createRouter(cache);

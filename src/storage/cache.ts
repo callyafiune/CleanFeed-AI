@@ -3,8 +3,10 @@ import type {
   CachedClassification,
   ClassificationResult,
   Clock,
+  RuntimeModelIdentity,
 } from "@/shared/types";
 import type { StorageArea } from "@/storage/storage-area";
+import { canonicalJson } from "../../contracts/canonical-json";
 
 const INDEX_KEY = "cleanfeed.cache.index.v1";
 const entryKey = (key: string): string => `cleanfeed.cache.entry.${key}`;
@@ -31,6 +33,19 @@ export const buildCacheKey = (
   hash: string,
 ): string => `${platform}:${model}:${settings}:${hash}`;
 
+/**
+ * The model component of a cache key: the FULL runtime identity, serialized
+ * canonically. Changing any sealing coordinate — a bundle's bundleDigest,
+ * tokenizerDigest, aggregationVersion, contentCompositionVersion or
+ * calibrationSetDigest, or a builtin's implementationVersion — changes the key,
+ * so a result from one model can never be served as another's. The selected
+ * calibration profile is deliberately absent: it is known only AFTER the lookup,
+ * and its expiry bounds the STORED record's TTL rather than the key. Identity is
+ * never derived from the legacy `modelId`/`modelVersion` fields alone.
+ */
+export const buildRuntimeModelKey = (identity: RuntimeModelIdentity): string =>
+  canonicalJson(identity);
+
 /** A bounded local cache whose keys deliberately include model and settings versions. */
 export class ClassificationCache {
   private mutation = Promise.resolve();
@@ -51,6 +66,29 @@ export class ClassificationCache {
   }
 
   get(key: string): Promise<ClassificationResult | undefined> {
+    return this.lookup(key, this.clock.now(), undefined);
+  }
+
+  /**
+   * The identity-bound read of the two-phase flow: reads under `now`, then
+   * RE-COMPARES the stored result's full runtime identity against `identity`.
+   * A record produced by a different (e.g. superseded) model is rejected and
+   * evicted even though it was found under this key, so a stale identity can
+   * never be served after a bundle, aggregation or calibration change.
+   */
+  getCachedClassification(
+    key: string,
+    now: number,
+    identity: RuntimeModelIdentity,
+  ): Promise<ClassificationResult | undefined> {
+    return this.lookup(key, now, identity);
+  }
+
+  private lookup(
+    key: string,
+    now: number,
+    identity: RuntimeModelIdentity | undefined,
+  ): Promise<ClassificationResult | undefined> {
     return this.runMutation(async () => {
       const index = await this.readIndex();
       const indexed = index.entries.find((entry) => entry.key === key);
@@ -60,15 +98,18 @@ export class ClassificationCache {
 
       const cached = await this.storage.get<unknown>(entryKey(key));
       if (
-        indexed.expiresAt <= this.clock.now() ||
+        indexed.expiresAt <= now ||
         !isCachedClassification(cached) ||
-        cached.expiresAt !== indexed.expiresAt
+        cached.expiresAt !== indexed.expiresAt ||
+        (identity !== undefined &&
+          canonicalJson(cached.result.runtimeIdentity) !==
+            canonicalJson(identity))
       ) {
         await this.removeEntries(index, [key]);
         return undefined;
       }
 
-      const lastAccessedAt = this.clock.now();
+      const lastAccessedAt = now;
       const result = withoutDebugTimings(cached.result);
       await this.storage.set(entryKey(key), {
         ...cached,
@@ -93,7 +134,12 @@ export class ClassificationCache {
         result: withoutDebugTimings(result),
         createdAt: now,
         lastAccessedAt: now,
-        expiresAt: now + this.options.ttlMs,
+        // The selected profile's expiry bounds the record's life: a valid TMR
+        // profile that expires before the normal TTL must not keep serving.
+        expiresAt: clampToProfileExpiry(
+          now + this.options.ttlMs,
+          result.cacheValidUntil,
+        ),
       };
       const entries = index.entries.filter((item) => item.key !== key);
       entries.push({
@@ -115,6 +161,21 @@ export class ClassificationCache {
         index.entries.map((entry) => entryKey(entry.key)),
       );
       await this.storage.remove(INDEX_KEY);
+    });
+  }
+
+  /**
+   * Removes a single entry by key. Used to migrate away a result cached under
+   * the old fixed model key once the same content is written under the new
+   * identity-bound key. A no-op when the key is absent.
+   */
+  remove(key: string): Promise<void> {
+    return this.runMutation(async () => {
+      const index = await this.readIndex();
+      if (!index.entries.some((entry) => entry.key === key)) {
+        return;
+      }
+      await this.removeEntries(index, [key]);
     });
   }
 
@@ -194,6 +255,24 @@ export class ClassificationCache {
       await this.writeIndex({ entries: keptEntries });
     }
   }
+}
+
+/**
+ * Bounds the normal TTL expiry by the selected profile's expiry when present.
+ * A malformed or absent `cacheValidUntil` leaves the normal TTL untouched.
+ */
+function clampToProfileExpiry(
+  ttlExpiresAt: number,
+  cacheValidUntil: string | undefined,
+): number {
+  if (cacheValidUntil === undefined) {
+    return ttlExpiresAt;
+  }
+  const profileExpiresAt = Date.parse(cacheValidUntil);
+  if (Number.isNaN(profileExpiresAt)) {
+    return ttlExpiresAt;
+  }
+  return Math.min(ttlExpiresAt, profileExpiresAt);
 }
 
 /** Debug timings are response-only and must never reach persistent storage. */

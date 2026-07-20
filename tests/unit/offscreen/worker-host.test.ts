@@ -319,6 +319,61 @@ describe("WorkerHostLifecycle", () => {
     expect(factory.fallback).toHaveBeenCalledTimes(1);
     expect(primaryRuntime.classifier.dispose).toHaveBeenCalledTimes(1);
   });
+
+  it("stays primary until the third eligible operational failure", async () => {
+    const factory: WorkerHostRuntimeFactory = {
+      primary: vi.fn().mockResolvedValue(fakeRuntime()),
+      fallback: vi.fn(),
+    };
+    const lifecycle = new WorkerHostLifecycle(factory);
+    await lifecycle.initialize();
+
+    lifecycle.recordFailure("MODEL_INFERENCE_FAILED", 0);
+    lifecycle.recordFailure("MODEL_TIMEOUT", 1);
+
+    expect(lifecycle.getState().mode).toBe("primary");
+    expect(factory.fallback).not.toHaveBeenCalled();
+  });
+
+  it("never counts cancellations toward the breaker threshold", async () => {
+    const factory: WorkerHostRuntimeFactory = {
+      primary: vi.fn().mockResolvedValue(fakeRuntime()),
+      fallback: vi.fn(),
+    };
+    const lifecycle = new WorkerHostLifecycle(factory);
+    await lifecycle.initialize();
+
+    for (let attempt = 0; attempt < 5; attempt += 1) {
+      lifecycle.recordFailure("CANCELLED", attempt);
+    }
+
+    expect(lifecycle.getState().mode).toBe("primary");
+    expect(factory.fallback).not.toHaveBeenCalled();
+  });
+
+  it("opens the breaker exactly once under twenty concurrent operational failures", async () => {
+    const primaryRuntime = fakeRuntime();
+    const fallbackRuntime = fakeRuntime();
+    const factory: WorkerHostRuntimeFactory = {
+      primary: vi.fn().mockResolvedValue(primaryRuntime),
+      fallback: vi.fn().mockResolvedValue(fallbackRuntime),
+    };
+    const lifecycle = new WorkerHostLifecycle(factory);
+    await lifecycle.initialize();
+
+    const transitions = Array.from({ length: 20 }, (_unused, index) =>
+      lifecycle.recordFailure("MODEL_INFERENCE_FAILED", index),
+    );
+    await Promise.all(transitions);
+
+    const state = lifecycle.getState();
+    expect(state.mode).toBe("fallback");
+    if (state.mode === "fallback") {
+      expect(state.reasonCodes).toContain("CIRCUIT_BREAKER_OPEN");
+    }
+    expect(factory.fallback).toHaveBeenCalledTimes(1);
+    expect(primaryRuntime.classifier.dispose).toHaveBeenCalledTimes(1);
+  });
 });
 
 describe("buildRuntimeSetStatus", () => {
