@@ -1,6 +1,9 @@
 import { describe, expect, it } from "vitest";
 
-import { canonicalJson, canonicalSha256 } from "../../../contracts/canonical-json";
+import {
+  canonicalJson,
+  canonicalSha256,
+} from "../../../contracts/canonical-json";
 
 describe("canonicalJson", () => {
   it("sorts object keys recursively and stays compact (sealed fix vector)", () => {
@@ -10,9 +13,12 @@ describe("canonicalJson", () => {
   });
 
   it("preserves array order but canonicalizes nested objects", () => {
-    expect(canonicalJson([{ b: 2, a: 1 }, { d: 4, c: 3 }])).toBe(
-      '[{"a":1,"b":2},{"c":3,"d":4}]',
-    );
+    expect(
+      canonicalJson([
+        { b: 2, a: 1 },
+        { d: 4, c: 3 },
+      ]),
+    ).toBe('[{"a":1,"b":2},{"c":3,"d":4}]');
   });
 
   it("serializes the empty array as []", () => {

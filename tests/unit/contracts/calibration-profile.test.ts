@@ -83,7 +83,10 @@ function baseProfile(): Omit<RuntimeCalibrationProfileV1, "profileDigest"> {
         mixedRecall: gate(0.65, 1200),
       },
       criticalFprSlices: {
-        "topic:tech": { indicatorFpr: gate(0.03, 400), actionFpr: gate(0.01, 400) },
+        "topic:tech": {
+          indicatorFpr: gate(0.03, 400),
+          actionFpr: gate(0.01, 400),
+        },
       },
       criticalRecallSlices: {
         "topic:tech": {
@@ -116,7 +119,9 @@ async function file(
 
 describe("parseCalibrationProfilesFileV1", () => {
   it("accepts a coherent single-profile file", async () => {
-    const parsed = await parseCalibrationProfilesFileV1(await file(baseProfile()));
+    const parsed = await parseCalibrationProfilesFileV1(
+      await file(baseProfile()),
+    );
     expect(parsed.profiles).toHaveLength(1);
     expect(parsed.profiles[0]!.actionCeiling).toBe("hide");
   });
@@ -135,7 +140,11 @@ describe("parseCalibrationProfilesFileV1", () => {
 
   it("rejects an unknown top-level key", async () => {
     await expect(
-      parseCalibrationProfilesFileV1({ schemaVersion: 1, profiles: [], extra: 1 }),
+      parseCalibrationProfilesFileV1({
+        schemaVersion: 1,
+        profiles: [],
+        extra: 1,
+      }),
     ).rejects.toMatchObject({ code: "CALIBRATION_SCHEMA_INVALID" });
   });
 
@@ -149,7 +158,9 @@ describe("parseCalibrationProfilesFileV1", () => {
   it("rejects an expiry that is not issuedAt + 180 days", async () => {
     const profile = await sealProfile({
       ...baseProfile(),
-      expiresAt: new Date(Date.parse(ISSUED_AT) + 179 * 86_400_000).toISOString(),
+      expiresAt: new Date(
+        Date.parse(ISSUED_AT) + 179 * 86_400_000,
+      ).toISOString(),
     });
     await expect(
       parseCalibrationProfilesFileV1({ schemaVersion: 1, profiles: [profile] }),
@@ -157,7 +168,10 @@ describe("parseCalibrationProfilesFileV1", () => {
   });
 
   it("rejects a tampered profileDigest", async () => {
-    const profile = { ...(await sealProfile(baseProfile())), profileDigest: "f".repeat(64) };
+    const profile = {
+      ...(await sealProfile(baseProfile())),
+      profileDigest: "f".repeat(64),
+    };
     await expect(
       parseCalibrationProfilesFileV1({ schemaVersion: 1, profiles: [profile] }),
     ).rejects.toMatchObject({ code: "PROFILE_DIGEST_MISMATCH" });
@@ -165,7 +179,11 @@ describe("parseCalibrationProfilesFileV1", () => {
 
   it("rejects an ECE that is not 15 bins", async () => {
     const base = baseProfile();
-    base.gateEvidence.ece = { value: 0.02, bins: 10 as unknown as 15, sampleSize: 5000 };
+    base.gateEvidence.ece = {
+      value: 0.02,
+      bins: 10 as unknown as 15,
+      sampleSize: 5000,
+    };
     await expect(
       parseCalibrationProfilesFileV1(await file(base)),
     ).rejects.toMatchObject({ code: "ECE_INVALID" });
@@ -181,7 +199,10 @@ describe("parseCalibrationProfilesFileV1", () => {
 
   it("rejects a critical FPR slice below 300", async () => {
     const base = baseProfile();
-    base.gateEvidence.criticalFprSlices["topic:tech"]!.actionFpr = gate(0.01, 299);
+    base.gateEvidence.criticalFprSlices["topic:tech"]!.actionFpr = gate(
+      0.01,
+      299,
+    );
     await expect(
       parseCalibrationProfilesFileV1(await file(base)),
     ).rejects.toMatchObject({ code: "INSUFFICIENT_SLICE_SAMPLE" });
@@ -189,7 +210,10 @@ describe("parseCalibrationProfilesFileV1", () => {
 
   it("rejects a non-null critical recall slice below 200", async () => {
     const base = baseProfile();
-    base.gateEvidence.criticalRecallSlices["topic:tech"]!.actionRecall = gate(0.6, 199);
+    base.gateEvidence.criticalRecallSlices["topic:tech"]!.actionRecall = gate(
+      0.6,
+      199,
+    );
     await expect(
       parseCalibrationProfilesFileV1(await file(base)),
     ).rejects.toMatchObject({ code: "INSUFFICIENT_SLICE_SAMPLE" });
@@ -323,9 +347,8 @@ describe("applyCalibrator", () => {
   });
 
   it("maps platt through a sigmoid", () => {
-    expect(applyCalibrator({ kind: "platt", slope: 0, intercept: 0 }, 0.7)).toBeCloseTo(
-      0.5,
-      10,
-    );
+    expect(
+      applyCalibrator({ kind: "platt", slope: 0, intercept: 0 }, 0.7),
+    ).toBeCloseTo(0.5, 10);
   });
 });

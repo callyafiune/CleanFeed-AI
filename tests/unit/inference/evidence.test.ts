@@ -37,7 +37,11 @@ describe("assessEvidence", () => {
       ["non pt-BR locale", { locale: "en" }, "UNSUPPORTED_LANGUAGE"],
       ["european portuguese", { locale: "pt-PT" }, "UNSUPPORTED_LANGUAGE"],
       ["below 50 words", { wordCount: 49 }, "TEXT_TOO_SHORT"],
-      ["approximate tokenizer", { exactTokenizer: false }, "TOKENIZER_APPROXIMATE"],
+      [
+        "approximate tokenizer",
+        { exactTokenizer: false },
+        "TOKENIZER_APPROXIMATE",
+      ],
     ] as const)("is unsupported for %s", (_label, override, reasonCode) => {
       const assessment = assessEvidence(input(override));
 
@@ -46,7 +50,9 @@ describe("assessEvidence", () => {
     });
 
     it("normalizes bare pt to the pt-BR calibration locale", () => {
-      expect(assessEvidence(input({ locale: "pt" })).quality).toBe("sufficient");
+      expect(assessEvidence(input({ locale: "pt" })).quality).toBe(
+        "sufficient",
+      );
       expect(assessEvidence(input({ locale: "PT-br" })).quality).toBe(
         "sufficient",
       );
@@ -78,9 +84,17 @@ describe("assessEvidence", () => {
   describe("precedence 3: intermediate ranges are limited", () => {
     it.each([
       ["coverage in [0.50, 0.95)", { coverage: 0.9 }, "LOW_COVERAGE"],
-      ["lexical ratio in [0.40, 0.60)", { lexicalRatio: 0.5 }, "NON_LEXICAL_CONTENT"],
+      [
+        "lexical ratio in [0.40, 0.60)",
+        { lexicalRatio: 0.5 },
+        "NON_LEXICAL_CONTENT",
+      ],
       ["stdDev above 0.25", { stdDev: 0.3 }, "CHUNK_DISAGREEMENT"],
-      ["chunk agreement below 0.50", { chunkAgreement: 0.4 }, "CHUNK_DISAGREEMENT"],
+      [
+        "chunk agreement below 0.50",
+        { chunkAgreement: 0.4 },
+        "CHUNK_DISAGREEMENT",
+      ],
     ] as const)("is limited for %s", (_label, override, reasonCode) => {
       const assessment = assessEvidence(input(override));
 
@@ -115,7 +129,10 @@ describe("assessEvidence", () => {
       );
 
       expect(assessment.quality).toBe("limited");
-      expect(assessment.reasonCodes).toEqual(["LOW_COVERAGE", "TRUNCATED_INPUT"]);
+      expect(assessment.reasonCodes).toEqual([
+        "LOW_COVERAGE",
+        "TRUNCATED_INPUT",
+      ]);
     });
   });
 
@@ -123,7 +140,10 @@ describe("assessEvidence", () => {
     const assessment = assessEvidence(input({ coverage: 0.4, stdDev: 0.3 }));
 
     expect(assessment.quality).toBe("unsupported");
-    expect(assessment.reasonCodes).toEqual(["CHUNK_DISAGREEMENT", "LOW_COVERAGE"]);
+    expect(assessment.reasonCodes).toEqual([
+      "CHUNK_DISAGREEMENT",
+      "LOW_COVERAGE",
+    ]);
   });
 
   it("accumulates reason codes in enum order without duplicates", () => {

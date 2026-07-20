@@ -458,11 +458,7 @@ describe("ClassificationCache identity-bound lookup", () => {
     ).resolves.toEqual(bundleResult);
     // (3) The already-expired result was never persisted.
     await expect(
-      cache.getCachedClassification(
-        expiredKey,
-        REALISTIC_NOW,
-        expiredIdentity,
-      ),
+      cache.getCachedClassification(expiredKey, REALISTIC_NOW, expiredIdentity),
     ).resolves.toBeUndefined();
     await expect(
       storage.get(`cleanfeed.cache.entry.${expiredKey}`),

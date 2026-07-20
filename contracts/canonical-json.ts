@@ -42,7 +42,9 @@ function canonicalize(value: unknown): unknown {
 
   if (kind === "number") {
     if (!Number.isFinite(value)) {
-      throw new CanonicalJsonError("non-finite numbers cannot be canonicalized");
+      throw new CanonicalJsonError(
+        "non-finite numbers cannot be canonicalized",
+      );
     }
     return value;
   }

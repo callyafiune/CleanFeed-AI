@@ -31,12 +31,7 @@ export interface ContentComposition {
   lexicalRatio: number;
 }
 
-export type ContentUnitKind =
-  | "url"
-  | "hashtag"
-  | "emoji"
-  | "lexical"
-  | "other";
+export type ContentUnitKind = "url" | "hashtag" | "emoji" | "lexical" | "other";
 
 function isEmojiOnly(token: string): boolean {
   return token.length > 0 && token.replace(EMOJI_SEQUENCE_PATTERN, "") === "";

@@ -7,6 +7,9 @@ test-results/
 *.log
 *.tsbuildinfo
 
+# Serena MCP tool workspace (local dev tooling output, never source).
+.serena/
+
 # Benchmark datasets are auditable but private; they never enter Git.
 benchmark/data/*
 !benchmark/data/.gitkeep

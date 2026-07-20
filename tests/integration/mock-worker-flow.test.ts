@@ -206,9 +206,8 @@ describe("mock worker flow", () => {
       { now: () => 1_000 },
       { maximumEntries: 10, ttlMs: 60_000 },
     );
-    const { buildCacheKey, buildRuntimeModelKey } = await import(
-      "@/storage/cache"
-    );
+    const { buildCacheKey, buildRuntimeModelKey } =
+      await import("@/storage/cache");
     const { sha256 } = await import("@/shared/hashing");
     const { normalizeText } = await import("@/shared/text-normalization");
     const hash = await sha256(normalizeText(classifyMessage.payload.text));

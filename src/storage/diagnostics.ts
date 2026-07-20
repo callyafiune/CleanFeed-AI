@@ -98,9 +98,7 @@ function sanitizeCircuitBreaker(
     open: snapshot.open === true,
     failureCount: sanitizeCount(snapshot.failureCount),
     recentFailureTimestamps: snapshot.failureTimestamps
-      .filter(
-        (timestamp) => Number.isSafeInteger(timestamp) && timestamp >= 0,
-      )
+      .filter((timestamp) => Number.isSafeInteger(timestamp) && timestamp >= 0)
       .slice(-MAX_DIAGNOSTIC_FAILURE_TIMESTAMPS),
     reasonCode: snapshot.open === true ? "CIRCUIT_BREAKER_OPEN" : null,
   };

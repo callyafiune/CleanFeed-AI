@@ -222,13 +222,11 @@ describe("BackgroundMessageRouter two-phase identity cache", () => {
 
     const [removedKey] = cache.remove.mock.calls[0]!;
     expect(removedKey).toContain("stylometric-v1:1.0.0");
-    expect(removedKey.startsWith("linkedin:stylometric-v1:1.0.0:settings:")).toBe(
-      true,
-    );
+    expect(
+      removedKey.startsWith("linkedin:stylometric-v1:1.0.0:settings:"),
+    ).toBe(true);
     // The removed legacy key is exactly the pre-identity buildCacheKey shape.
-    expect(removedKey).not.toContain(
-      buildRuntimeModelKey(stylometricIdentity),
-    );
+    expect(removedKey).not.toContain(buildRuntimeModelKey(stylometricIdentity));
     expect(
       buildCacheKey("linkedin", "stylometric-v1:1.0.0", "settings", "x"),
     ).toBe("linkedin:stylometric-v1:1.0.0:settings:x");

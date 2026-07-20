@@ -114,7 +114,8 @@ function isWorkerInitializePayload(
     (value.settings === undefined || isWorkerBackendSettings(value.settings)) &&
     (value.modelManifest === undefined ||
       isModelManifest(value.modelManifest)) &&
-    (value.descriptor === undefined || isRuntimeDescriptorShape(value.descriptor))
+    (value.descriptor === undefined ||
+      isRuntimeDescriptorShape(value.descriptor))
   );
 }
 

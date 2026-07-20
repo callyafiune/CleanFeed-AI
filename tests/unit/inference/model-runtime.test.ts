@@ -24,7 +24,9 @@ function fakeTokenizer(options: {
   pieces?: Record<string, { ids: number[]; offsets: [number, number][] }>;
 }): LoadedTransformersTokenizer & { calls: unknown[] } {
   const calls: unknown[] = [];
-  const contentIdsFor = (text: string): { ids: number[]; offsets: [number, number][] } =>
+  const contentIdsFor = (
+    text: string,
+  ): { ids: number[]; offsets: [number, number][] } =>
     options.pieces?.[text] ?? {
       ids: text.length === 0 ? [] : [1],
       offsets: text.length === 0 ? [] : [[0, text.length]],
@@ -33,11 +35,17 @@ function fakeTokenizer(options: {
     calls.push({ text, callOptions });
     const content = contentIdsFor(text);
     const inputIds = callOptions.add_special_tokens
-      ? [...options.specialTokens.slice(0, 1), ...content.ids, ...options.specialTokens.slice(1)]
+      ? [
+          ...options.specialTokens.slice(0, 1),
+          ...content.ids,
+          ...options.specialTokens.slice(1),
+        ]
       : content.ids;
     return {
       input_ids: inputIds,
-      ...(callOptions.return_offsets_mapping ? { offset_mapping: content.offsets } : {}),
+      ...(callOptions.return_offsets_mapping
+        ? { offset_mapping: content.offsets }
+        : {}),
     };
   }) as LoadedTransformersTokenizer & { calls: unknown[] };
   tokenizer.calls = calls;
@@ -94,8 +102,12 @@ describe("createTmrChunkPlan", () => {
   });
 
   it("cross-checks contentTokens against the measured special-token count", () => {
-    expect(() => createTmrChunkPlan(bundledModelManifest.windowing, 2)).not.toThrow();
-    expect(() => createTmrChunkPlan(bundledModelManifest.windowing, 3)).toThrow();
+    expect(() =>
+      createTmrChunkPlan(bundledModelManifest.windowing, 2),
+    ).not.toThrow();
+    expect(() =>
+      createTmrChunkPlan(bundledModelManifest.windowing, 3),
+    ).toThrow();
   });
 
   it("rejects inconsistent windowing", () => {
@@ -134,21 +146,27 @@ describe("ExactTokenizer", () => {
     expect(exact.specialTokenCount).toBe(2);
     // Proof it was measured, not hardcoded: both add_special_tokens states ran.
     const probeStates = tokenizer.calls.map(
-      (call) => (call as { callOptions: { add_special_tokens: boolean } }).callOptions.add_special_tokens,
+      (call) =>
+        (call as { callOptions: { add_special_tokens: boolean } }).callOptions
+          .add_special_tokens,
     );
     expect(probeStates).toContain(true);
     expect(probeStates).toContain(false);
   });
 
   it("fails closed when the loaded tokenizer reserves a different count than the manifest", () => {
-    expect(() => ExactTokenizer.create(fakeTokenizer({ specialTokens: [0] }))).toThrow();
+    expect(() =>
+      ExactTokenizer.create(fakeTokenizer({ specialTokens: [0] })),
+    ).toThrow();
     expect(() =>
       ExactTokenizer.create(fakeTokenizer({ specialTokens: [0, 1, 2] })),
     ).toThrow();
   });
 
   it("derives content tokens from modelMaxTokens minus the measured special tokens", () => {
-    const exact = ExactTokenizer.create(fakeTokenizer({ specialTokens: [0, 2] }));
+    const exact = ExactTokenizer.create(
+      fakeTokenizer({ specialTokens: [0, 2] }),
+    );
     expect(512 - exact.specialTokenCount).toBe(510);
   });
 
@@ -156,7 +174,15 @@ describe("ExactTokenizer", () => {
     // Repeated substring: a substring search would map both "ab" tokens to 0..2.
     const tokenizer = fakeTokenizer({
       specialTokens: [0, 2],
-      pieces: { abab: { ids: [11, 11], offsets: [[0, 2], [2, 4]] } },
+      pieces: {
+        abab: {
+          ids: [11, 11],
+          offsets: [
+            [0, 2],
+            [2, 4],
+          ],
+        },
+      },
     });
     const exact = ExactTokenizer.create(tokenizer);
 
@@ -173,7 +199,10 @@ describe("ExactTokenizer", () => {
     expect(encoding.offsets.at(-1)!.end).toBe("abab".length);
     // Native offsets require return_offsets_mapping on the encode call.
     const encodeCall = tokenizer.calls.at(-1) as {
-      callOptions: { return_offsets_mapping?: boolean; add_special_tokens: boolean };
+      callOptions: {
+        return_offsets_mapping?: boolean;
+        add_special_tokens: boolean;
+      };
     };
     expect(encodeCall.callOptions.return_offsets_mapping).toBe(true);
     expect(encodeCall.callOptions.add_special_tokens).toBe(false);

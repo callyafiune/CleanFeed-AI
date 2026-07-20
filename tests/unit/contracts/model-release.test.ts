@@ -43,7 +43,9 @@ describe("parseModelReleaseDescriptorV1", () => {
     const parsed = await parseModelReleaseDescriptorV1(await descriptor());
     expect(parsed.rolloutState).toBe("bundle-verified");
     expect(parsed.gateDecision).toBe("pending");
-    expect(parsed.calibrationSetDigest).toBe(await computeCalibrationSetDigest([]));
+    expect(parsed.calibrationSetDigest).toBe(
+      await computeCalibrationSetDigest([]),
+    );
   });
 
   it("accepts a reject bundle-verified descriptor with evidence and no profiles", async () => {
@@ -129,7 +131,11 @@ describe("parseModelReleaseDescriptorV1", () => {
   it("rejects a reject descriptor with a null evidenceDigest", async () => {
     await expect(
       parseModelReleaseDescriptorV1(
-        await descriptor({ gateDecision: "reject", issuedAt: ISSUED_AT, evidenceDigest: null }),
+        await descriptor({
+          gateDecision: "reject",
+          issuedAt: ISSUED_AT,
+          evidenceDigest: null,
+        }),
       ),
     ).rejects.toMatchObject({ code: "RELEASE_STATE_INVALID" });
   });

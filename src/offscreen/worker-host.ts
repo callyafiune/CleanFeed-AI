@@ -443,7 +443,11 @@ export class WorkerHostLifecycle {
 
   getState(): WorkerHostState {
     if (this.current === undefined) {
-      return { mode: "terminal", phase: "error", reasonCodes: ["BACKEND_ERROR"] };
+      return {
+        mode: "terminal",
+        phase: "error",
+        reasonCodes: ["BACKEND_ERROR"],
+      };
     }
     return this.current;
   }

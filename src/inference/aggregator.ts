@@ -40,8 +40,8 @@ export function aggregateWindowsV2(
   }
 
   const selection = selectDistributedWindows(windows, MAX_AGGREGATION_WINDOWS);
-  const selected = selection.selectedIndices.map(
-    (index) => windows.find((window) => window.index === index)!,
+  const selected = selection.selectedIndices.map((index) =>
+    windows.find((window) => window.index === index)!,
   );
 
   if (

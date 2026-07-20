@@ -336,7 +336,9 @@ const SOURCE_LOCK_KEYS = [
 ] as const;
 
 /** Closed parser for the sealed schemaVersion-2 runtime manifest. */
-export function parseBundledRuntimeManifest(value: unknown): BundledModelManifest {
+export function parseBundledRuntimeManifest(
+  value: unknown,
+): BundledModelManifest {
   if (!isExactRecord(value, MANIFEST_V2_KEYS)) runtimeManifestInvalid();
   if (
     value.schemaVersion !== 2 ||
@@ -477,7 +479,10 @@ export async function crossValidateRuntimeDescriptor(
       "a promoted rollout requires at least one calibration profile",
     );
   }
-  if (release.rolloutState === "bundle-verified" && profiles.profiles.length !== 0) {
+  if (
+    release.rolloutState === "bundle-verified" &&
+    profiles.profiles.length !== 0
+  ) {
     throw new RuntimeDescriptorError(
       "BUNDLE_VERIFIED_WITH_PROFILES",
       "a bundle-verified release carries no calibration profiles",

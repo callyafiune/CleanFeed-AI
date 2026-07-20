@@ -102,7 +102,10 @@ describe("TransformersTokenizer", () => {
       run: vi.fn(async () => ({})),
       dispose: vi.fn(async () => undefined),
     } as unknown as TransformersModelGateway;
-    const tokenizer = new TransformersTokenizer("cleanfeed-detector-v1", gateway);
+    const tokenizer = new TransformersTokenizer(
+      "cleanfeed-detector-v1",
+      gateway,
+    );
 
     const tokenized = await tokenizer.encode("abab");
 

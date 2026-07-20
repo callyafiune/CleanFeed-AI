@@ -6,7 +6,8 @@ import { computeCalibrationSetDigest } from "./calibration-profile";
 
 const SHA256_PATTERN = /^[a-f0-9]{64}$/u;
 
-export type RolloutState = "bundle-verified" | "shadow" | "indicator" | "actions";
+export type RolloutState =
+  "bundle-verified" | "shadow" | "indicator" | "actions";
 export type GateDecision = "pending" | "reject" | "indicator-only" | "pass";
 
 export interface ModelReleaseDescriptorV1 {
@@ -47,7 +48,10 @@ function isPlainObject(value: unknown): value is Record<string, unknown> {
   return prototype === Object.prototype || prototype === null;
 }
 
-function hasExactKeys(value: unknown, keys: readonly string[]): value is Record<string, unknown> {
+function hasExactKeys(
+  value: unknown,
+  keys: readonly string[],
+): value is Record<string, unknown> {
   return (
     isPlainObject(value) &&
     Object.keys(value).length === keys.length &&
@@ -108,16 +112,28 @@ export async function parseModelReleaseDescriptorV1(
     !isNonEmptyString(value.aggregationVersion) ||
     !isNonEmptyString(value.contentCompositionVersion)
   ) {
-    fail("RELEASE_FIELD_INVALID", "descriptor identity strings must be non-empty");
+    fail(
+      "RELEASE_FIELD_INVALID",
+      "descriptor identity strings must be non-empty",
+    );
   }
   if (!isSha256(value.bundleDigest) || !isSha256(value.tokenizerDigest)) {
-    fail("RELEASE_FIELD_INVALID", "bundle/tokenizer digests must be sha256 hex");
+    fail(
+      "RELEASE_FIELD_INVALID",
+      "bundle/tokenizer digests must be sha256 hex",
+    );
   }
   if (!isSha256(value.calibrationSetDigest)) {
     fail("RELEASE_FIELD_INVALID", "calibrationSetDigest must be sha256 hex");
   }
-  if (!Array.isArray(value.profileDigests) || !value.profileDigests.every(isSha256)) {
-    fail("RELEASE_FIELD_INVALID", "profileDigests must be an array of sha256 hex");
+  if (
+    !Array.isArray(value.profileDigests) ||
+    !value.profileDigests.every(isSha256)
+  ) {
+    fail(
+      "RELEASE_FIELD_INVALID",
+      "profileDigests must be an array of sha256 hex",
+    );
   }
   if (!ROLLOUT_STATES.includes(value.rolloutState as RolloutState)) {
     fail("RELEASE_FIELD_INVALID", "unknown rolloutState");
@@ -126,8 +142,14 @@ export async function parseModelReleaseDescriptorV1(
     fail("RELEASE_FIELD_INVALID", "unknown gateDecision");
   }
   if (value.issuedAt !== null) {
-    if (!isNonEmptyString(value.issuedAt) || !Number.isFinite(Date.parse(value.issuedAt))) {
-      fail("RELEASE_FIELD_INVALID", "issuedAt must be null or a valid timestamp");
+    if (
+      !isNonEmptyString(value.issuedAt) ||
+      !Number.isFinite(Date.parse(value.issuedAt))
+    ) {
+      fail(
+        "RELEASE_FIELD_INVALID",
+        "issuedAt must be null or a valid timestamp",
+      );
     }
   }
   if (value.evidenceDigest !== null && !isSha256(value.evidenceDigest)) {
@@ -150,8 +172,13 @@ export async function parseModelReleaseDescriptorV1(
 }
 
 function assertRolloutInvariants(descriptor: ModelReleaseDescriptorV1): void {
-  const { rolloutState, gateDecision, profileDigests, issuedAt, evidenceDigest } =
-    descriptor;
+  const {
+    rolloutState,
+    gateDecision,
+    profileDigests,
+    issuedAt,
+    evidenceDigest,
+  } = descriptor;
 
   switch (rolloutState) {
     case "bundle-verified":
@@ -189,13 +216,22 @@ function assertRolloutInvariants(descriptor: ModelReleaseDescriptorV1): void {
       break;
     case "indicator":
       if (gateDecision !== "indicator-only" && gateDecision !== "pass") {
-        fail("RELEASE_STATE_INVALID", "indicator rollout requires indicator-only or pass");
+        fail(
+          "RELEASE_STATE_INVALID",
+          "indicator rollout requires indicator-only or pass",
+        );
       }
       if (profileDigests.length === 0) {
-        fail("RELEASE_STATE_INVALID", "indicator rollout requires at least one profile");
+        fail(
+          "RELEASE_STATE_INVALID",
+          "indicator rollout requires at least one profile",
+        );
       }
       if (issuedAt === null || evidenceDigest === null) {
-        fail("RELEASE_STATE_INVALID", "a promoted release requires issuedAt and evidence");
+        fail(
+          "RELEASE_STATE_INVALID",
+          "a promoted release requires issuedAt and evidence",
+        );
       }
       break;
     case "actions":
@@ -203,10 +239,16 @@ function assertRolloutInvariants(descriptor: ModelReleaseDescriptorV1): void {
         fail("RELEASE_STATE_INVALID", "actions rollout requires a pass gate");
       }
       if (profileDigests.length === 0) {
-        fail("RELEASE_STATE_INVALID", "actions rollout requires at least one profile");
+        fail(
+          "RELEASE_STATE_INVALID",
+          "actions rollout requires at least one profile",
+        );
       }
       if (issuedAt === null || evidenceDigest === null) {
-        fail("RELEASE_STATE_INVALID", "a promoted release requires issuedAt and evidence");
+        fail(
+          "RELEASE_STATE_INVALID",
+          "a promoted release requires issuedAt and evidence",
+        );
       }
       break;
     default:

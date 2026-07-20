@@ -78,7 +78,10 @@ export interface RuntimeCalibrationProfileV1 {
     };
     criticalFprSlices: Record<
       string,
-      { indicatorFpr: ProportionGateEvidenceV1; actionFpr: ProportionGateEvidenceV1 }
+      {
+        indicatorFpr: ProportionGateEvidenceV1;
+        actionFpr: ProportionGateEvidenceV1;
+      }
     >;
     criticalRecallSlices: Record<
       string,
@@ -119,7 +122,10 @@ function isPlainObject(value: unknown): value is Record<string, unknown> {
   return prototype === Object.prototype || prototype === null;
 }
 
-function hasExactKeys(value: unknown, keys: readonly string[]): value is Record<string, unknown> {
+function hasExactKeys(
+  value: unknown,
+  keys: readonly string[],
+): value is Record<string, unknown> {
   return (
     isPlainObject(value) &&
     Object.keys(value).length === keys.length &&
@@ -136,7 +142,12 @@ function isNonEmptyString(value: unknown): value is string {
 }
 
 function isUnitInterval(value: unknown): value is number {
-  return typeof value === "number" && Number.isFinite(value) && value >= 0 && value <= 1;
+  return (
+    typeof value === "number" &&
+    Number.isFinite(value) &&
+    value >= 0 &&
+    value <= 1
+  );
 }
 
 function isPositiveInteger(value: unknown): value is number {
@@ -150,9 +161,15 @@ function isUtcTimestamp(value: unknown): value is string {
   return Number.isFinite(Date.parse(value));
 }
 
-function parseCalibrator(value: unknown, where: string): SerializedCalibratorV1 {
+function parseCalibrator(
+  value: unknown,
+  where: string,
+): SerializedCalibratorV1 {
   if (!isPlainObject(value) || typeof value.kind !== "string") {
-    fail("CALIBRATOR_INVALID", `${where} calibrator must be an object with a kind`);
+    fail(
+      "CALIBRATOR_INVALID",
+      `${where} calibrator must be an object with a kind`,
+    );
   }
   if (value.kind === "platt") {
     if (
@@ -194,7 +211,10 @@ function parseCalibrator(value: unknown, where: string): SerializedCalibratorV1 
         !isUnitInterval(knot.rawScore) ||
         !isUnitInterval(knot.calibratedScore)
       ) {
-        fail("CALIBRATOR_INVALID", `${where} isotonic knot is out of [0,1] or malformed`);
+        fail(
+          "CALIBRATOR_INVALID",
+          `${where} isotonic knot is out of [0,1] or malformed`,
+        );
       }
       if (!((knot.rawScore as number) > previousRaw)) {
         fail(
@@ -209,9 +229,17 @@ function parseCalibrator(value: unknown, where: string): SerializedCalibratorV1 
   fail("CALIBRATOR_INVALID", `${where} calibrator has an unknown kind`);
 }
 
-function parseGateEvidence(value: unknown, where: string): ProportionGateEvidenceV1 {
+function parseGateEvidence(
+  value: unknown,
+  where: string,
+): ProportionGateEvidenceV1 {
   if (
-    !hasExactKeys(value, ["estimate", "lowerBound95", "upperBound95", "sampleSize"]) ||
+    !hasExactKeys(value, [
+      "estimate",
+      "lowerBound95",
+      "upperBound95",
+      "sampleSize",
+    ]) ||
     !isUnitInterval(value.estimate) ||
     !isUnitInterval(value.lowerBound95) ||
     !isUnitInterval(value.upperBound95) ||
@@ -224,9 +252,15 @@ function parseGateEvidence(value: unknown, where: string): ProportionGateEvidenc
   return value as unknown as ProportionGateEvidenceV1;
 }
 
-function parseThresholds(value: unknown): RuntimeCalibrationProfileV1["thresholds"] {
+function parseThresholds(
+  value: unknown,
+): RuntimeCalibrationProfileV1["thresholds"] {
   if (
-    !hasExactKeys(value, ["documentIndicator", "localizedIndicator", "documentAction"]) ||
+    !hasExactKeys(value, [
+      "documentIndicator",
+      "localizedIndicator",
+      "documentAction",
+    ]) ||
     !isUnitInterval(value.documentIndicator) ||
     !isUnitInterval(value.localizedIndicator) ||
     !isUnitInterval(value.documentAction)
@@ -236,7 +270,9 @@ function parseThresholds(value: unknown): RuntimeCalibrationProfileV1["threshold
   return value as unknown as RuntimeCalibrationProfileV1["thresholds"];
 }
 
-function parseEvidencePolicy(value: unknown): RuntimeCalibrationProfileV1["evidencePolicy"] {
+function parseEvidencePolicy(
+  value: unknown,
+): RuntimeCalibrationProfileV1["evidencePolicy"] {
   if (
     !hasExactKeys(value, [
       "minimumCoverage",
@@ -273,7 +309,9 @@ function parseSliceRecord(
   }
 }
 
-function parseGateEvidenceBlock(value: unknown): RuntimeCalibrationProfileV1["gateEvidence"] {
+function parseGateEvidenceBlock(
+  value: unknown,
+): RuntimeCalibrationProfileV1["gateEvidence"] {
   if (
     !hasExactKeys(value, [
       "decision",
@@ -287,10 +325,16 @@ function parseGateEvidenceBlock(value: unknown): RuntimeCalibrationProfileV1["ga
     fail("GATE_EVIDENCE_INVALID", "gateEvidence has unexpected keys");
   }
   if (value.decision !== "indicator-only" && value.decision !== "pass") {
-    fail("GATE_EVIDENCE_INVALID", "gateEvidence.decision must be indicator-only or pass");
+    fail(
+      "GATE_EVIDENCE_INVALID",
+      "gateEvidence.decision must be indicator-only or pass",
+    );
   }
   if (value.intervalMethod !== "wilson-one-sided-95") {
-    fail("GATE_EVIDENCE_INVALID", "gateEvidence.intervalMethod must be wilson-one-sided-95");
+    fail(
+      "GATE_EVIDENCE_INVALID",
+      "gateEvidence.intervalMethod must be wilson-one-sided-95",
+    );
   }
   if (
     !hasExactKeys(value.ece, ["value", "bins", "sampleSize"]) ||
@@ -300,7 +344,10 @@ function parseGateEvidenceBlock(value: unknown): RuntimeCalibrationProfileV1["ga
     value.ece.bins !== ECE_BINS ||
     !isPositiveInteger(value.ece.sampleSize)
   ) {
-    fail("ECE_INVALID", "ece must have exactly 15 bins and a finite non-negative value");
+    fail(
+      "ECE_INVALID",
+      "ece must have exactly 15 bins and a finite non-negative value",
+    );
   }
 
   const overall = value.overall;
@@ -316,7 +363,10 @@ function parseGateEvidenceBlock(value: unknown): RuntimeCalibrationProfileV1["ga
   ) {
     fail("GATE_EVIDENCE_INVALID", "gateEvidence.overall has unexpected keys");
   }
-  const indicatorFpr = parseGateEvidence(overall.indicatorFpr, "overall.indicatorFpr");
+  const indicatorFpr = parseGateEvidence(
+    overall.indicatorFpr,
+    "overall.indicatorFpr",
+  );
   parseGateEvidence(overall.indicatorRecall, "overall.indicatorRecall");
   const actionFpr = parseGateEvidence(overall.actionFpr, "overall.actionFpr");
   parseGateEvidence(overall.actionRecall, "overall.actionRecall");
@@ -417,7 +467,11 @@ const PROFILE_KEYS = [
   "profileDigest",
 ] as const;
 
-const LENGTH_BUCKETS: readonly LengthBucketV1[] = ["50-79", "80-199", "200-plus"];
+const LENGTH_BUCKETS: readonly LengthBucketV1[] = [
+  "50-79",
+  "80-199",
+  "200-plus",
+];
 
 /** SHA-256 of the canonical profile with `profileDigest` excluded. */
 export async function computeCalibrationProfileDigest(
@@ -428,7 +482,9 @@ export async function computeCalibrationProfileDigest(
   return canonicalSha256(rest);
 }
 
-async function parseProfile(value: unknown): Promise<RuntimeCalibrationProfileV1> {
+async function parseProfile(
+  value: unknown,
+): Promise<RuntimeCalibrationProfileV1> {
   if (!hasExactKeys(value, PROFILE_KEYS)) {
     fail("PROFILE_SCHEMA_INVALID", "profile has missing or unexpected keys");
   }
@@ -462,14 +518,26 @@ async function parseProfile(value: unknown): Promise<RuntimeCalibrationProfileV1
     fail("PROFILE_FIELD_INVALID", "profile lengthBucket is unknown");
   }
   if (!isUtcTimestamp(value.issuedAt) || !isUtcTimestamp(value.expiresAt)) {
-    fail("PROFILE_FIELD_INVALID", "issuedAt/expiresAt must be valid timestamps");
+    fail(
+      "PROFILE_FIELD_INVALID",
+      "issuedAt/expiresAt must be valid timestamps",
+    );
   }
-  if (Date.parse(value.expiresAt) - Date.parse(value.issuedAt) !== ONE_HUNDRED_EIGHTY_DAYS_MS) {
-    fail("PROFILE_EXPIRY_INVALID", "expiresAt must be exactly issuedAt + 180 days");
+  if (
+    Date.parse(value.expiresAt) - Date.parse(value.issuedAt) !==
+    ONE_HUNDRED_EIGHTY_DAYS_MS
+  ) {
+    fail(
+      "PROFILE_EXPIRY_INVALID",
+      "expiresAt must be exactly issuedAt + 180 days",
+    );
   }
 
   if (!hasExactKeys(value.calibrators, ["document", "localized"])) {
-    fail("CALIBRATOR_INVALID", "calibrators must have exactly document and localized");
+    fail(
+      "CALIBRATOR_INVALID",
+      "calibrators must have exactly document and localized",
+    );
   }
   parseCalibrator(value.calibrators.document, "document");
   parseCalibrator(value.calibrators.localized, "localized");
@@ -485,10 +553,16 @@ async function parseProfile(value: unknown): Promise<RuntimeCalibrationProfileV1
   // Cross-field policy invariants.
   if (gateEvidence.decision === "indicator-only") {
     if (value.actionCeiling !== "indicator") {
-      fail("POLICY_INVALID", "indicator-only decision requires actionCeiling indicator");
+      fail(
+        "POLICY_INVALID",
+        "indicator-only decision requires actionCeiling indicator",
+      );
     }
     if (thresholds.documentAction !== 1) {
-      fail("POLICY_INVALID", "indicator-only decision requires documentAction === 1");
+      fail(
+        "POLICY_INVALID",
+        "indicator-only decision requires documentAction === 1",
+      );
     }
   }
   if (value.lengthBucket === "50-79" && value.actionCeiling !== "indicator") {
@@ -501,7 +575,10 @@ async function parseProfile(value: unknown): Promise<RuntimeCalibrationProfileV1
   const profile = value as unknown as RuntimeCalibrationProfileV1;
   const expectedDigest = await computeCalibrationProfileDigest(profile);
   if (expectedDigest !== profile.profileDigest) {
-    fail("PROFILE_DIGEST_MISMATCH", "profileDigest does not match the canonical digest");
+    fail(
+      "PROFILE_DIGEST_MISMATCH",
+      "profileDigest does not match the canonical digest",
+    );
   }
   return profile;
 }

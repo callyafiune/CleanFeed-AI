@@ -43,7 +43,10 @@ interface PersistedSettings {
   settings: UserSettings;
 }
 
-type LegacyThresholdRecord = Record<(typeof LEGACY_THRESHOLD_KEYS)[number], number>;
+type LegacyThresholdRecord = Record<
+  (typeof LEGACY_THRESHOLD_KEYS)[number],
+  number
+>;
 /** The v3 (pre-removal) settings shape: v4 settings plus the four thresholds. */
 type V3UserSettings = UserSettings & LegacyThresholdRecord;
 type V2UserSettings = Omit<V3UserSettings, "useMockModel">;
@@ -188,9 +191,7 @@ function isUserSettings(value: unknown): value is UserSettings {
 function hasOrderedLegacyThresholds(value: Record<string, unknown>): boolean {
   const values = LEGACY_THRESHOLD_KEYS.map((key) => value[key]);
   if (
-    !values.every(
-      (item) => typeof item === "number" && item >= 0 && item <= 1,
-    )
+    !values.every((item) => typeof item === "number" && item >= 0 && item <= 1)
   ) {
     return false;
   }
@@ -249,7 +250,11 @@ function isPersistedSettings(value: unknown): value is PersistedSettings {
 function hasVersionedEnvelope(
   value: unknown,
   schemaVersion: number,
-): value is { schemaVersion: number; settingsVersion: number; settings: unknown } {
+): value is {
+  schemaVersion: number;
+  settingsVersion: number;
+  settings: unknown;
+} {
   return (
     isRecord(value) &&
     value.schemaVersion === schemaVersion &&
@@ -377,7 +382,10 @@ async function readPersistedSettingsForMutation(
   }
 
   // Versioned v3 envelope: validate the whole v3 shape, then drop the thresholds.
-  if (hasVersionedEnvelope(persisted, 3) && isV3UserSettings(persisted.settings)) {
+  if (
+    hasVersionedEnvelope(persisted, 3) &&
+    isV3UserSettings(persisted.settings)
+  ) {
     return storeMigrated(
       storage,
       storageKey,
@@ -386,7 +394,10 @@ async function readPersistedSettingsForMutation(
     );
   }
 
-  if (hasVersionedEnvelope(persisted, 2) && isV2UserSettings(persisted.settings)) {
+  if (
+    hasVersionedEnvelope(persisted, 2) &&
+    isV2UserSettings(persisted.settings)
+  ) {
     return storeMigrated(
       storage,
       storageKey,
@@ -398,7 +409,10 @@ async function readPersistedSettingsForMutation(
     );
   }
 
-  if (hasVersionedEnvelope(persisted, 1) && isV1UserSettings(persisted.settings)) {
+  if (
+    hasVersionedEnvelope(persisted, 1) &&
+    isV1UserSettings(persisted.settings)
+  ) {
     return storeMigrated(
       storage,
       storageKey,

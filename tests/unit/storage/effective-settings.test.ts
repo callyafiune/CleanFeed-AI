@@ -85,7 +85,10 @@ describe("PlatformSettingsRepository", () => {
     await globalRepository.save(global);
 
     await expect(
-      platformRepository.save({ platformId: "linkedin", chunkOverlapTokens: 200 }),
+      platformRepository.save({
+        platformId: "linkedin",
+        chunkOverlapTokens: 200,
+      }),
     ).rejects.toThrowError("INVALID_SETTINGS");
     await expect(platformRepository.get("linkedin")).resolves.toBeUndefined();
     expect(resolveEffectiveSettings({ global })).toEqual(global);

@@ -527,7 +527,12 @@ function completePreparedRequest(
   // heuristics (stylometric/mock) are uncalibrated and can only ever indicate.
   const decision =
     base.runtimeIdentity.kind === "bundle"
-      ? decideBundle(base, base.runtimeIdentity, item.request.platform, calibration)
+      ? decideBundle(
+          base,
+          base.runtimeIdentity,
+          item.request.platform,
+          calibration,
+        )
       : capToIndicator(calibrateResult(base));
   const explanation = buildExplanation(base, decision);
   const classifierEvidence = collectClassifierReasonCodes(classified);

@@ -26,8 +26,7 @@ export type IgnoredFailureCode =
   | "UI_FAILURE";
 
 export type CircuitBreakerFailureCode =
-  | OperationalFailureCode
-  | IgnoredFailureCode;
+  OperationalFailureCode | IgnoredFailureCode;
 
 /**
  * A share-safe diagnostic view of the breaker: counters and bounded timestamps

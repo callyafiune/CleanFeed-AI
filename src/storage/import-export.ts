@@ -16,7 +16,10 @@ import {
   historyPageKey,
 } from "@/storage/history";
 import { KeywordRuleRepository } from "@/storage/keyword-rules";
-import { SettingsRepository, withoutLegacyThresholds } from "@/storage/settings";
+import {
+  SettingsRepository,
+  withoutLegacyThresholds,
+} from "@/storage/settings";
 import type { KeywordRule } from "@/rules/rule-engine";
 
 /**

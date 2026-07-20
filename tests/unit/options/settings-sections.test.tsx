@@ -83,7 +83,9 @@ describe("options settings sections", () => {
     fireEvent.change(await screen.findByLabelText("Apresentação"), {
       target: { value: "hide" },
     });
-    expect(api.updateSettings).toHaveBeenCalledWith({ presentationMode: "hide" });
+    expect(api.updateSettings).toHaveBeenCalledWith({
+      presentationMode: "hide",
+    });
   });
 
   it("requires explicit confirmation before clearing feedback", async () => {

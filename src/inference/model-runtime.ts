@@ -4,7 +4,10 @@
 // identity and the windowing plan. The tokenizer is never the heuristic on this
 // path, and the window limits come from the manifest — never from user settings.
 
-import type { BundledModelManifest, BundledWindowingConfig } from "@/inference/bundled-model-metadata";
+import type {
+  BundledModelManifest,
+  BundledWindowingConfig,
+} from "@/inference/bundled-model-metadata";
 import { CleanFeedError } from "@/shared/errors";
 import type { RuntimeModelIdentity, TextClassifier } from "@/shared/types";
 
@@ -108,7 +111,8 @@ export function createTmrChunkPlan(
   windowing: BundledWindowingConfig,
   specialTokenCount?: number,
 ): TmrChunkPlan {
-  const { modelMaxTokens, contentTokens, overlapTokens, maxWindows } = windowing;
+  const { modelMaxTokens, contentTokens, overlapTokens, maxWindows } =
+    windowing;
   const consistentWithTokenizer =
     specialTokenCount === undefined ||
     (Number.isSafeInteger(specialTokenCount) &&
@@ -189,7 +193,11 @@ export class ExactTokenizer {
       truncation: false,
     });
     const inputIds = toTokenIdArray(output.input_ids);
-    const offsets = toOffsets(output.offset_mapping, inputIds.length, text.length);
+    const offsets = toOffsets(
+      output.offset_mapping,
+      inputIds.length,
+      text.length,
+    );
     return { inputIds, offsets, specialTokenCount: this.specialTokenCount };
   }
 }
@@ -209,7 +217,10 @@ export async function createModelRuntime(
     assets.tokenizer,
     options.requiredSpecialTokenCount,
   );
-  const chunkPlan = createTmrChunkPlan(manifest.windowing, tokenizer.specialTokenCount);
+  const chunkPlan = createTmrChunkPlan(
+    manifest.windowing,
+    tokenizer.specialTokenCount,
+  );
   const identity = buildBundleIdentity(
     manifest,
     options.calibrationSetDigest ?? EMPTY_CALIBRATION_SET_DIGEST,
@@ -252,7 +263,9 @@ function toTokenIdArray(value: unknown): number[] {
     ) {
       return Number(id);
     }
-    throw tokenizationFailed("The loaded tokenizer emitted an invalid token id.");
+    throw tokenizationFailed(
+      "The loaded tokenizer emitted an invalid token id.",
+    );
   });
 }
 
@@ -270,7 +283,9 @@ function arrayValues(value: unknown): unknown[] {
       (value as { data: ArrayLike<unknown> }).data as ArrayLike<unknown>,
     );
   }
-  throw tokenizationFailed("The loaded tokenizer produced an invalid input_ids shape.");
+  throw tokenizationFailed(
+    "The loaded tokenizer produced an invalid input_ids shape.",
+  );
 }
 
 function toOffsets(
@@ -329,7 +344,10 @@ function normalizePair(pair: unknown): [number, number] {
 }
 
 function offsetsUnavailable(): CleanFeedError {
-  return new CleanFeedError("TOKENIZATION_FAILED", "MODEL_TOKEN_OFFSETS_UNAVAILABLE");
+  return new CleanFeedError(
+    "TOKENIZATION_FAILED",
+    "MODEL_TOKEN_OFFSETS_UNAVAILABLE",
+  );
 }
 
 function tokenizationFailed(message: string): CleanFeedError {

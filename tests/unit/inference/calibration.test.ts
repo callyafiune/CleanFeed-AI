@@ -117,7 +117,10 @@ function evidence(
   };
 }
 
-function agg(documentRawScore: number, localizedRawScore: number): AggregationResultV2 {
+function agg(
+  documentRawScore: number,
+  localizedRawScore: number,
+): AggregationResultV2 {
   return { ...aggregation, documentRawScore, localizedRawScore };
 }
 
@@ -177,10 +180,9 @@ describe("calibrateResult (builtin heuristic path)", () => {
 describe("applySerializedCalibrator", () => {
   it("reproduces the shared isotonic vector (0.25/-1/2)", () => {
     for (const { rawScore, expected } of ISOTONIC_VECTORS) {
-      expect(applySerializedCalibrator(ISOTONIC_CALIBRATOR, rawScore)).toBeCloseTo(
-        expected,
-        10,
-      );
+      expect(
+        applySerializedCalibrator(ISOTONIC_CALIBRATOR, rawScore),
+      ).toBeCloseTo(expected, 10);
     }
   });
 
@@ -206,7 +208,10 @@ describe("applySerializedCalibrator", () => {
 describe("decideWithProfile", () => {
   it("abstains without presentation when evidence is unsupported, even at score 1", () => {
     const outcome = decideWithProfile(
-      decideInput({ aggregation: agg(1, 1), evidence: evidence("unsupported") }),
+      decideInput({
+        aggregation: agg(1, 1),
+        evidence: evidence("unsupported"),
+      }),
     );
     expect(outcome.abstained).toBe(true);
     expect(outcome.presentationAllowed).toBe(false);
@@ -232,7 +237,9 @@ describe("decideWithProfile", () => {
   );
 
   it("produces no trigger and no presentation when both signals are below threshold", () => {
-    const outcome = decideWithProfile(decideInput({ aggregation: agg(0.5, 0.5) }));
+    const outcome = decideWithProfile(
+      decideInput({ aggregation: agg(0.5, 0.5) }),
+    );
     expect(outcome.triggers).toEqual([]);
     expect(outcome.presentationAllowed).toBe(false);
     expect(outcome.abstained).toBe(false);
@@ -241,7 +248,9 @@ describe("decideWithProfile", () => {
   });
 
   it("fires the document trigger alone (calibratedScore = document)", () => {
-    const outcome = decideWithProfile(decideInput({ aggregation: agg(0.85, 0.5) }));
+    const outcome = decideWithProfile(
+      decideInput({ aggregation: agg(0.85, 0.5) }),
+    );
     expect(outcome.triggers).toEqual(["document"]);
     expect(outcome.calibratedScore).toBeCloseTo(0.85, 10);
     expect(outcome.actionCeiling).toBe("indicator");
@@ -250,7 +259,9 @@ describe("decideWithProfile", () => {
   });
 
   it("fires the localized trigger alone and caps at indicator", () => {
-    const outcome = decideWithProfile(decideInput({ aggregation: agg(0.5, 0.85) }));
+    const outcome = decideWithProfile(
+      decideInput({ aggregation: agg(0.5, 0.85) }),
+    );
     expect(outcome.triggers).toEqual(["localized"]);
     expect(outcome.calibratedScore).toBeCloseTo(0.85, 10);
     expect(outcome.actionCeiling).toBe("indicator");
@@ -258,13 +269,17 @@ describe("decideWithProfile", () => {
   });
 
   it("fires both triggers in canonical order and takes the max calibrated score", () => {
-    const outcome = decideWithProfile(decideInput({ aggregation: agg(0.95, 0.85) }));
+    const outcome = decideWithProfile(
+      decideInput({ aggregation: agg(0.95, 0.85) }),
+    );
     expect(outcome.triggers).toEqual(["document", "localized"]);
     expect(outcome.calibratedScore).toBeCloseTo(0.95, 10);
   });
 
   it("authorizes a hide ceiling only with a document action under an actions rollout", () => {
-    const outcome = decideWithProfile(decideInput({ aggregation: agg(0.95, 0.85) }));
+    const outcome = decideWithProfile(
+      decideInput({ aggregation: agg(0.95, 0.85) }),
+    );
     expect(outcome.actionCeiling).toBe("hide");
     expect(outcome.status).toBe("strong_ai_indication");
     expect(outcome.presentationAllowed).toBe(true);
@@ -272,7 +287,10 @@ describe("decideWithProfile", () => {
 
   it("caps at indicator when evidence is only limited", () => {
     const outcome = decideWithProfile(
-      decideInput({ aggregation: agg(0.95, 0.5), evidence: evidence("limited") }),
+      decideInput({
+        aggregation: agg(0.95, 0.5),
+        evidence: evidence("limited"),
+      }),
     );
     expect(outcome.actionCeiling).toBe("indicator");
     expect(outcome.reasonCodes).toContain("LIMITED_EVIDENCE");

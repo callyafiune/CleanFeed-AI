@@ -192,7 +192,10 @@ describe("primary/fallback lifecycle transitions", () => {
     const wasm = backendClassifier("wasm");
     vi.mocked(gpu.initialize).mockRejectedValue(new Error("gpu"));
     vi.mocked(wasm.initialize).mockRejectedValue(new Error("wasm"));
-    const backendFactory = { webgpu: vi.fn(() => gpu), wasm: vi.fn(() => wasm) };
+    const backendFactory = {
+      webgpu: vi.fn(() => gpu),
+      wasm: vi.fn(() => wasm),
+    };
     const stylometric = backendClassifier("wasm");
     const fallback = vi.fn(async () => runtimeFor(stylometric));
     const factory: WorkerHostRuntimeFactory = {

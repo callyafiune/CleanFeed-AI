@@ -73,7 +73,9 @@ export interface BuiltinDecisionInput {
  * always `"indicator"`. `presentationAllowed` mirrors current behaviour: a
  * non-abstained result is presentable at its ceiling.
  */
-export function buildBuiltinDecision(input: BuiltinDecisionInput): DecisionOutcome {
+export function buildBuiltinDecision(
+  input: BuiltinDecisionInput,
+): DecisionOutcome {
   const abstained = input.abstained ?? false;
   return {
     status: input.status,

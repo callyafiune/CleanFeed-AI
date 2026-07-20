@@ -62,7 +62,10 @@ describe("aggregateWindowsV2", () => {
     // Union of [0,100) and [50,150) is tokens 0..149 = 150 unique of 200.
     expect(result.coverage).toBeCloseTo(150 / 200, 12);
     // Unique weights [100, 50] discount the overlap exactly once.
-    expect(result.documentRawScore).toBeCloseTo((0.4 * 100 + 0.6 * 50) / 150, 12);
+    expect(result.documentRawScore).toBeCloseTo(
+      (0.4 * 100 + 0.6 * 50) / 150,
+      12,
+    );
   });
 
   it("selects at most eight windows, preserving the first and last", () => {

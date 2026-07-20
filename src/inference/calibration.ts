@@ -102,7 +102,8 @@ export function resolveCalibrationProfile(
 export function calibrateResult(result: ClassificationResult): DecisionOutcome {
   const bucket = getLengthBucket(result.wordCount);
   const marking = LENGTH_THRESHOLDS[bucket].marking;
-  const calibratedScore = result.aggregation?.documentRawScore ?? result.aiScore;
+  const calibratedScore =
+    result.aggregation?.documentRawScore ?? result.aiScore;
   const reasonCodes = getEvidenceReasons(result, marking);
 
   if (mustAbstain(result, calibratedScore)) {
@@ -169,15 +170,14 @@ export interface DecideWithProfileInput {
  *      an actions rollout;
  *   9. bundle-verified/shadow never present; indicator rollout caps at indicator.
  */
-export function decideWithProfile(input: DecideWithProfileInput): DecisionOutcome {
+export function decideWithProfile(
+  input: DecideWithProfileInput,
+): DecisionOutcome {
   const { lookup, aggregation, evidence, rolloutState, wordCount } = input;
 
   // (1) Unsupported evidence abstains regardless of score.
   if (evidence.quality === "unsupported") {
-    return abstain([
-      "INSUFFICIENT_EVIDENCE",
-      ...evidence.reasonCodes,
-    ]);
+    return abstain(["INSUFFICIENT_EVIDENCE", ...evidence.reasonCodes]);
   }
 
   // (2) No exact, in-release, unexpired profile: the TMR abstains fail-closed.
@@ -245,7 +245,9 @@ export function decideWithProfile(input: DecideWithProfileInput): DecisionOutcom
     profile.gateEvidence.decision === "pass" &&
     profile.actionCeiling === "hide" &&
     rolloutState === "actions";
-  const actionCeiling: PresentationMode = actionAuthorized ? "hide" : "indicator";
+  const actionCeiling: PresentationMode = actionAuthorized
+    ? "hide"
+    : "indicator";
 
   // (9) Rollout gates presentation. Only indicator/actions ever present; a
   // bundle-verified or shadow release never shows a TMR result.
