@@ -15,7 +15,7 @@
 // serve local bytes and prove no real network is ever touched.
 
 import { createHash, randomUUID as nodeRandomUUID } from "node:crypto";
-import { mkdir, rename, rm, stat, writeFile } from "node:fs/promises";
+import { cp, mkdir, rename, rm, stat, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { argv } from "node:process";
 import { fileURLToPath } from "node:url";
@@ -23,10 +23,16 @@ import { fileURLToPath } from "node:url";
 import {
   ModelLockError,
   readSourceLock,
+  replaceDirectoryAtomically,
   verifyStagedAssets,
 } from "./model-lock.mjs";
+import {
+  MATERIALIZED_METADATA,
+  verifyMaterializedBundle,
+} from "./verify-model-bundle.mjs";
 
 const STAGING_PREFIX = ".tmr-ai-text-detector.source-";
+const MATERIALIZED_PREFIX = ".tmr-ai-text-detector.materialized-";
 
 /** Real filesystem adapter used when no injectable fs is supplied. */
 const nodeFs = {
@@ -81,7 +87,10 @@ async function downloadArtifact(fetchImpl, url, artifact) {
       if (done) break;
       total += value.byteLength;
       if (total > artifact.bytes) {
-        fail("SIZE_MISMATCH", `${artifact.path} exceeds ${artifact.bytes} bytes`);
+        fail(
+          "SIZE_MISMATCH",
+          `${artifact.path} exceeds ${artifact.bytes} bytes`,
+        );
       }
       hash.update(value);
       chunks.push(Buffer.from(value));
@@ -136,15 +145,62 @@ export async function acquireModelSourceAssets({
   return { fileCount, stagingDirectory };
 }
 
+/**
+ * Materializes the closed ten-file bundle and promotes it atomically to
+ * `target`. It copies the seven verified source assets from `sourceStaging`
+ * plus the three versioned metadata/legal files from `versionedDir` into a
+ * FRESH materialized staging (a sibling of `target`), runs the exact-ten
+ * verifier, and only then replaces `target`. It never mixes files with an
+ * existing target. In `finally` it deletes only the materialized staging it
+ * created — a validated sibling — which is a no-op once the atomic rename has
+ * consumed it.
+ */
+export async function materializeModelBundle({
+  sourceStaging,
+  versionedDir,
+  target,
+  lock,
+  dependencies = {},
+}) {
+  const uuid = dependencies.randomUUID ?? nodeRandomUUID;
+  const fs = dependencies.fs ?? nodeFs;
+  const copyFile = dependencies.cp ?? cp;
+
+  const materialized = join(dirname(target), `${MATERIALIZED_PREFIX}${uuid()}`);
+
+  try {
+    await copyFile(sourceStaging, materialized, { recursive: true });
+    for (const name of MATERIALIZED_METADATA) {
+      await copyFile(join(versionedDir, name), join(materialized, name));
+    }
+    await verifyMaterializedBundle(materialized, { lock });
+    await replaceDirectoryAtomically(materialized, target, fs);
+    return { fileCount: 10, target };
+  } finally {
+    await fs.remove(materialized);
+  }
+}
+
 if (argv[1] === fileURLToPath(import.meta.url)) {
   const scriptDir = dirname(fileURLToPath(import.meta.url));
-  const lockPath = join(
-    scriptDir,
-    "..",
-    "models",
-    "tmr-ai-text-detector",
-    "source-lock.json",
-  );
+  const versionedDir = join(scriptDir, "..", "models", "tmr-ai-text-detector");
+  const lockPath = join(versionedDir, "source-lock.json");
   const stagingParent = join(scriptDir, "..", "public", "models");
-  await acquireModelSourceAssets({ lockPath, stagingParent });
+  const target = join(stagingParent, "tmr-ai-text-detector");
+
+  const lock = await readSourceLock(lockPath);
+  const { stagingDirectory } = await acquireModelSourceAssets({
+    lockPath,
+    stagingParent,
+  });
+  try {
+    await materializeModelBundle({
+      sourceStaging: stagingDirectory,
+      versionedDir,
+      target,
+      lock,
+    });
+  } finally {
+    await rm(stagingDirectory, { recursive: true, force: true });
+  }
 }

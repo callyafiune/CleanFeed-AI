@@ -18,8 +18,12 @@
 
 import console from "node:console";
 import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
-import { join, relative } from "node:path";
-import { argv, exit } from "node:process";
+import { dirname, join, relative } from "node:path";
+import { argv, env, exit } from "node:process";
+import { fileURLToPath } from "node:url";
+
+import { readSourceLock } from "./model-lock.mjs";
+import { verifyMaterializedBundle } from "./verify-model-bundle.mjs";
 
 /** The exact allowlists the shipped extension is locked to. */
 const ALLOWED_PERMISSIONS = new Set([
@@ -293,7 +297,59 @@ function auditFiles(distPath, reasons) {
   }
 }
 
-function main() {
+/**
+ * Model-bundle gate, keyed on CLEANFEED_MODEL_RELEASE_MODE. Absent: a normal
+ * build, no model checks. `reject`: the scientific reject release must omit the
+ * TMR bundle entirely, so its directory must be absent from dist. `package`:
+ * an indicator/actions release must ship the intact ten-file bundle, so the
+ * directory must exist and pass the closed verifier. Any other value fails.
+ */
+async function auditModelRelease(distPath, reasons) {
+  const mode = env.CLEANFEED_MODEL_RELEASE_MODE;
+  if (mode === undefined || mode === "") return;
+
+  const tmrDir = join(distPath, "models", "tmr-ai-text-detector");
+
+  if (mode === "reject") {
+    if (existsSync(tmrDir)) {
+      reasons.push(
+        "reject release must not ship the TMR bundle: models/tmr-ai-text-detector is present",
+      );
+    }
+    return;
+  }
+
+  if (mode === "package") {
+    if (!existsSync(tmrDir)) {
+      reasons.push(
+        "package release requires the TMR bundle at models/tmr-ai-text-detector",
+      );
+      return;
+    }
+    try {
+      const scriptDir = dirname(fileURLToPath(import.meta.url));
+      const lock = await readSourceLock(
+        join(
+          scriptDir,
+          "..",
+          "models",
+          "tmr-ai-text-detector",
+          "source-lock.json",
+        ),
+      );
+      await verifyMaterializedBundle(tmrDir, { lock });
+    } catch (error) {
+      reasons.push(
+        `TMR bundle failed verification: ${error.code ?? "ERROR"} — ${error.message ?? error}`,
+      );
+    }
+    return;
+  }
+
+  reasons.push(`unknown CLEANFEED_MODEL_RELEASE_MODE: ${mode}`);
+}
+
+async function main() {
   const distPath = argv[2];
   if (distPath === undefined) {
     console.error("usage: node scripts/audit-build.mjs <dist>");
@@ -307,6 +363,7 @@ function main() {
   const reasons = [];
   auditManifest(distPath, reasons);
   auditFiles(distPath, reasons);
+  await auditModelRelease(distPath, reasons);
 
   if (reasons.length > 0) {
     console.error(
@@ -320,4 +377,7 @@ function main() {
   exit(0);
 }
 
-main();
+main().catch((error) => {
+  console.error(`audit FAILED — ${error.message ?? error}`);
+  exit(1);
+});

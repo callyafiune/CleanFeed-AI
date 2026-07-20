@@ -1,4 +1,4 @@
-import type { AtomicDirectoryFs } from "./model-lock.mjs";
+import type { AtomicDirectoryFs, SourceLock } from "./model-lock.mjs";
 
 export interface AcquireDependencies {
   fetch: typeof globalThis.fetch;
@@ -15,3 +15,25 @@ export interface AcquireModelSourceAssetsOptions {
 export declare function acquireModelSourceAssets(
   options: AcquireModelSourceAssetsOptions,
 ): Promise<{ fileCount: 7; stagingDirectory: string }>;
+
+export interface MaterializeDependencies {
+  randomUUID(): string;
+  fs: AtomicDirectoryFs;
+  cp(
+    source: string,
+    destination: string,
+    options?: { recursive?: boolean },
+  ): Promise<void>;
+}
+
+export interface MaterializeModelBundleOptions {
+  sourceStaging: string;
+  versionedDir: string;
+  target: string;
+  lock: Pick<SourceLock, "artifacts">;
+  dependencies?: Partial<MaterializeDependencies>;
+}
+
+export declare function materializeModelBundle(
+  options: MaterializeModelBundleOptions,
+): Promise<{ fileCount: 10; target: string }>;
