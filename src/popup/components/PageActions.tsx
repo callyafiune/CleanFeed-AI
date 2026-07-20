@@ -28,7 +28,7 @@ export function PageActions({
   onOpenOptions,
 }: PageActionsProps) {
   return (
-    <section aria-label="Ações desta página">
+    <section aria-label="Ações desta página" className="card actions">
       <button
         type="button"
         onClick={paused ? onResume : onPause}

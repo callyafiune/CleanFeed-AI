@@ -1,4 +1,8 @@
 import type { UserSettings } from "@/shared/settings-types";
+import { Field } from "./Form/Field";
+import { Fieldset } from "./Form/Fieldset";
+import { Input } from "./Form/Input";
+import { Switch } from "./Form/Switch";
 
 type NumericSetting =
   | "maximumQueueSize"
@@ -34,11 +38,12 @@ export function PerformanceSettings({
   };
 
   return (
-    <section aria-labelledby="performance-settings-heading">
-      <h2 id="performance-settings-heading">Desempenho</h2>
-      <label>
-        Tamanho máximo da fila
-        <input
+    <Fieldset title="Desempenho">
+      <Field
+        label="Tamanho máximo da fila"
+        description="Número de posts que podem aguardar na fila para análise."
+      >
+        <Input
           aria-label="Tamanho máximo da fila"
           max={500}
           min={1}
@@ -48,19 +53,23 @@ export function PerformanceSettings({
             updateInteger("maximumQueueSize", event.target.value, 1, 500)
           }
         />
-      </label>
-      <label>
-        Concorrência WASM
-        <input
+      </Field>
+      <Field
+        label="Concorrência WASM"
+        description="Número de threads para inferência em WASM."
+      >
+        <Input
           aria-label="Concorrência WASM"
           disabled
           type="number"
           value={1}
         />
-      </label>
-      <label>
-        Concorrência WebGPU
-        <input
+      </Field>
+      <Field
+        label="Concorrência WebGPU"
+        description="Número de threads para inferência em WebGPU."
+      >
+        <Input
           aria-label="Concorrência WebGPU"
           max={4}
           min={1}
@@ -70,10 +79,12 @@ export function PerformanceSettings({
             updateInteger("webGpuConcurrency", event.target.value, 1, 4)
           }
         />
-      </label>
-      <label>
-        Timeout de inferência (ms)
-        <input
+      </Field>
+      <Field
+        label="Timeout de inferência (ms)"
+        description="Tempo máximo para uma análise antes de ser descartada."
+      >
+        <Input
           aria-label="Timeout de inferência (ms)"
           max={120_000}
           min={1_000}
@@ -88,10 +99,12 @@ export function PerformanceSettings({
             )
           }
         />
-      </label>
-      <label>
-        Tamanho do chunk
-        <input
+      </Field>
+      <Field
+        label="Tamanho do chunk"
+        description="Tamanho de cada pedaço de texto enviado para análise."
+      >
+        <Input
           aria-label="Tamanho do chunk"
           max={512}
           min={32}
@@ -101,10 +114,12 @@ export function PerformanceSettings({
             updateInteger("chunkSizeTokens", event.target.value, 32, 512)
           }
         />
-      </label>
-      <label>
-        Sobreposição de chunks
-        <input
+      </Field>
+      <Field
+        label="Sobreposição de chunks"
+        description="Quanto cada pedaço de texto se sobrepõe ao anterior para manter o contexto."
+      >
+        <Input
           aria-label="Sobreposição de chunks"
           max={settings.chunkSizeTokens - 1}
           min={0}
@@ -119,10 +134,12 @@ export function PerformanceSettings({
             )
           }
         />
-      </label>
-      <label>
-        Entradas máximas no cache
-        <input
+      </Field>
+      <Field
+        label="Entradas máximas no cache"
+        description="Número máximo de análises a serem mantidas no cache."
+      >
+        <Input
           aria-label="Entradas máximas no cache"
           max={5_000}
           min={10}
@@ -132,16 +149,17 @@ export function PerformanceSettings({
             updateInteger("cacheMaximumEntries", event.target.value, 10, 5_000)
           }
         />
-      </label>
-      <label>
-        <input
+      </Field>
+      <Field
+        label="Incluir rastreamentos de depuração"
+        description="Adiciona rastreamentos de depuração na resposta local da análise."
+      >
+        <Switch
           aria-label="Incluir rastreamentos de depuração"
           checked={settings.debugMode}
-          type="checkbox"
-          onChange={(event) => onUpdate({ debugMode: event.target.checked })}
+          onChange={(debugMode) => onUpdate({ debugMode })}
         />
-        Incluir rastreamentos de depuração na resposta local
-      </label>
-    </section>
+      </Field>
+    </Fieldset>
   );
 }

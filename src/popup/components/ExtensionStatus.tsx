@@ -18,9 +18,9 @@ export function ExtensionStatus({
   onToggleEnabled,
 }: ExtensionStatusProps) {
   return (
-    <section aria-label="Estado da extensão">
-      <p>{host ?? "Página atual indisponível"}</p>
-      <p>
+    <section aria-label="Estado da extensão" className="card">
+      <p className="status-host">{host ?? "Página atual indisponível"}</p>
+      <p className="status-state">
         {enabled
           ? paused
             ? "Pausado neste site"

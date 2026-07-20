@@ -1,5 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 
+import { Field } from "./Form/Field";
+
 type ClearTarget = "feedback" | "cache" | "metrics";
 
 interface ClearAction {
@@ -78,7 +80,7 @@ export function DangerZone({
   }, [armed]);
 
   return (
-    <section aria-labelledby="danger-zone-heading">
+    <>
       <h3 id="danger-zone-heading">Dados locais</h3>
       <p>
         Estas ações apagam dados armazenados apenas neste navegador e não podem
@@ -87,37 +89,40 @@ export function DangerZone({
       <ul>
         {CLEAR_ACTIONS.map((action) => (
           <li key={action.id}>
-            <p>{action.description}</p>
-            {armed === action.id ? (
-              <>
-                <button
-                  ref={confirmRef}
-                  type="button"
-                  onClick={() => {
-                    handlers[action.id]();
-                    setArmed(null);
-                  }}
-                >
-                  {action.confirm}
-                </button>
-                <button type="button" onClick={() => setArmed(null)}>
-                  {action.cancel}
-                </button>
-              </>
-            ) : (
-              <button
-                ref={(element) => {
-                  triggerRefs.current.set(action.id, element);
-                }}
-                type="button"
-                onClick={() => setArmed(action.id)}
-              >
-                {action.label}
-              </button>
-            )}
+            <Field label={action.label} description={action.description}>
+              {armed === action.id ? (
+                <div className="button-group">
+                  <button
+                    ref={confirmRef}
+                    type="button"
+                    onClick={() => {
+                      handlers[action.id]();
+                      setArmed(null);
+                    }}
+                  >
+                    {action.confirm}
+                  </button>
+                  <button type="button" onClick={() => setArmed(null)}>
+                    {action.cancel}
+                  </button>
+                </div>
+              ) : (
+                <div className="button-group">
+                  <button
+                    ref={(element) => {
+                      triggerRefs.current.set(action.id, element);
+                    }}
+                    type="button"
+                    onClick={() => setArmed(action.id)}
+                  >
+                    {action.label}
+                  </button>
+                </div>
+              )}
+            </Field>
           </li>
         ))}
       </ul>
-    </section>
+    </>
   );
 }

@@ -4,6 +4,8 @@ import {
 } from "@/inference/model-profile";
 import type { Backend } from "@/shared/types";
 import type { UserSettings } from "@/shared/settings-types";
+import { Field } from "./Form/Field";
+import { Switch } from "./Form/Switch";
 
 const backendLabels: Record<Backend, string> = {
   mock: "mock (demonstração)",
@@ -29,7 +31,7 @@ export function ModelSettings({
     resolveActiveModelProfile({ useMockModel: settings.useMockModel });
 
   return (
-    <section aria-labelledby="model-settings-heading">
+    <>
       <h3 id="model-settings-heading">Modelo e calibração</h3>
       <dl>
         <dt>Modelo</dt>
@@ -52,14 +54,13 @@ export function ModelSettings({
           recolhem ou ocultam posts.
         </p>
       )}
-      <label>
-        <input
+      <Field label="Usar modelo mock (demonstração)">
+        <Switch
+          aria-label="Usar modelo mock (demonstração)"
           checked={settings.useMockModel}
-          type="checkbox"
-          onChange={(event) => onUpdate({ useMockModel: event.target.checked })}
+          onChange={(useMockModel) => onUpdate({ useMockModel })}
         />
-        Usar modelo mock (demonstração)
-      </label>
-    </section>
+      </Field>
+    </>
   );
 }

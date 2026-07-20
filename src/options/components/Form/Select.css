@@ -1,0 +1,30 @@
+.select-wrapper {
+  position: relative;
+  display: inline-block;
+}
+
+.select {
+  appearance: none;
+  -webkit-appearance: none;
+  -moz-appearance: none;
+  background-color: #f5f6f7;
+  border: 1px solid #ccd0d5;
+  border-radius: 6px;
+  padding: 8px 32px 8px 12px;
+  font-size: 14px;
+  line-height: 1.5;
+  color: #1c1e21;
+  cursor: pointer;
+  min-width: 150px;
+}
+
+.select-wrapper::after {
+  content: "▼";
+  font-size: 12px;
+  color: #606770;
+  position: absolute;
+  right: 12px;
+  top: 50%;
+  transform: translateY(-50%);
+  pointer-events: none;
+}

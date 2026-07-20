@@ -1,5 +1,7 @@
 import { useEffect, useState } from "react";
 
+import "./options.css";
+
 import type {
   DiagnosticsApi,
   HistoryApi,
@@ -188,10 +190,7 @@ export function App({ api = defaultOptionsApi }: { api?: OptionsApi }) {
     <main>
       <h1>CleanFeed AI</h1>
 
-      <section aria-labelledby="general-section-heading">
-        <h2 id="general-section-heading">Geral</h2>
-        <GeneralSettings settings={settings} onUpdate={update} />
-      </section>
+      <GeneralSettings settings={settings} onUpdate={update} />
 
       <PlatformSettings
         platform={platform}

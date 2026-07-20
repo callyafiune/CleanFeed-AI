@@ -1,4 +1,8 @@
 import type { UserSettings } from "@/shared/settings-types";
+import { Field } from "./Form/Field";
+import { Fieldset } from "./Form/Fieldset";
+import { Select } from "./Form/Select";
+import { Switch } from "./Form/Switch";
 
 const languageModes = new Set<string>([
   "portuguese_only",
@@ -30,19 +34,23 @@ export function GeneralSettings({
   onUpdate: (update: Partial<UserSettings>) => void;
 }) {
   return (
-    <section aria-labelledby="general-settings-heading">
+    <Fieldset title="Geral">
       <h3 id="general-settings-heading">Configurações gerais</h3>
-      <label>
-        <input
+      <Field
+        label="Ativar filtro"
+        description="Ativa ou desativa a análise de posts no seu feed."
+      >
+        <Switch
+          aria-label="Ativar filtro"
           checked={settings.enabled}
-          type="checkbox"
-          onChange={(event) => onUpdate({ enabled: event.target.checked })}
+          onChange={(enabled) => onUpdate({ enabled })}
         />
-        Ativar filtro
-      </label>
-      <label>
-        Mínimo de palavras
-        <select
+      </Field>
+      <Field
+        label="Mínimo de palavras"
+        description="Posts com menos palavras que o valor selecionado não serão analisados."
+      >
+        <Select
           aria-label="Mínimo de palavras"
           value={settings.minimumWordCount}
           onChange={(event) => {
@@ -61,11 +69,14 @@ export function GeneralSettings({
               {value}
             </option>
           ))}
-        </select>
-      </label>
-      <label>
-        Idioma
-        <select
+        </Select>
+      </Field>
+      <Field
+        label="Idioma"
+        description="Idiomas considerados ao decidir se um post deve ser analisado."
+      >
+        <Select
+          aria-label="Idioma"
           value={settings.languageMode}
           onChange={(event) => {
             const languageMode = event.target.value;
@@ -81,11 +92,14 @@ export function GeneralSettings({
           <option value="experimental_any">
             Qualquer idioma (experimental)
           </option>
-        </select>
-      </label>
-      <label>
-        Apresentação
-        <select
+        </Select>
+      </Field>
+      <Field
+        label="Apresentação"
+        description="Como um resultado autorizado é apresentado no feed."
+      >
+        <Select
+          aria-label="Apresentação"
           value={settings.presentationMode}
           onChange={(event) => {
             const presentationMode = event.target.value;
@@ -98,12 +112,12 @@ export function GeneralSettings({
           <option value="blur">Desfocar</option>
           <option value="collapse">Recolher</option>
           <option value="hide">Ocultar</option>
-        </select>
-      </label>
+        </Select>
+      </Field>
       <p>
         A escolha define somente como apresentar um resultado autorizado. O
         perfil calibrado pode reduzir esta ação, nunca aumentá-la.
       </p>
-    </section>
+    </Fieldset>
   );
 }

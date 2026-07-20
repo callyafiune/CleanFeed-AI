@@ -2,6 +2,7 @@ import { useState } from "react";
 
 import { ModelSettings } from "@/options/components/ModelSettings";
 import type { UserSettings } from "@/shared/settings-types";
+import { Fieldset } from "./Form/Fieldset";
 
 interface AdvancedSettingsProps {
   settings: UserSettings;
@@ -30,9 +31,7 @@ export function AdvancedSettings({
   const [resetArmed, setResetArmed] = useState(false);
 
   return (
-    <section aria-labelledby="advanced-settings-heading">
-      <h2 id="advanced-settings-heading">Avançado</h2>
-
+    <Fieldset title="Avançado">
       <ModelSettings settings={settings} onUpdate={onUpdate} />
 
       {onDownloadDiagnostics === undefined ? null : (
@@ -43,13 +42,15 @@ export function AdvancedSettings({
             agregadas e um resumo das configurações). Ele nunca inclui texto de
             posts, autores, URLs, hashes ou histórico.
           </p>
-          <button
-            aria-describedby="diagnostics-heading"
-            type="button"
-            onClick={onDownloadDiagnostics}
-          >
-            Baixar diagnóstico
-          </button>
+          <div className="button-group">
+            <button
+              aria-describedby="diagnostics-heading"
+              type="button"
+              onClick={onDownloadDiagnostics}
+            >
+              Baixar diagnóstico
+            </button>
+          </div>
         </>
       )}
 
@@ -59,24 +60,28 @@ export function AdvancedSettings({
           <p role="status">
             Isto substituirá todas as configurações gerais pelos valores padrão.
           </p>
-          <button
-            type="button"
-            onClick={() => {
-              setResetArmed(false);
-              onReset();
-            }}
-          >
-            Confirmar restauração
-          </button>
-          <button type="button" onClick={() => setResetArmed(false)}>
-            Cancelar restauração
-          </button>
+          <div className="button-group">
+            <button
+              type="button"
+              onClick={() => {
+                setResetArmed(false);
+                onReset();
+              }}
+            >
+              Confirmar restauração
+            </button>
+            <button type="button" onClick={() => setResetArmed(false)}>
+              Cancelar restauração
+            </button>
+          </div>
         </>
       ) : (
-        <button type="button" onClick={() => setResetArmed(true)}>
-          Restaurar configurações padrão
-        </button>
+        <div className="button-group">
+          <button type="button" onClick={() => setResetArmed(true)}>
+            Restaurar configurações padrão
+          </button>
+        </div>
       )}
-    </section>
+    </Fieldset>
   );
 }

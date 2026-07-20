@@ -1,4 +1,7 @@
 import type { PlatformSettings as PlatformSettingsValue } from "@/shared/settings-types";
+import { Field } from "./Form/Field";
+import { Fieldset } from "./Form/Fieldset";
+import { Switch } from "./Form/Switch";
 
 interface PlatformSettingsProps {
   platform: PlatformSettingsValue | null;
@@ -23,21 +26,18 @@ export function PlatformSettings({
     Object.keys(platform).some((key) => key !== "platformId");
 
   return (
-    <section aria-labelledby="platform-settings-heading">
-      <h2 id="platform-settings-heading">Plataformas</h2>
+    <Fieldset title="Plataformas">
       <p>
         Ajustes por plataforma substituem a configuração geral apenas onde forem
         definidos.
       </p>
-      <h3 id="linkedin-platform-heading">LinkedIn</h3>
-      <label>
-        <input
+      <Field label="Ativar o CleanFeed AI no LinkedIn">
+        <Switch
+          aria-label="Ativar o CleanFeed AI no LinkedIn"
           checked={linkedInEnabled}
-          type="checkbox"
-          onChange={(event) => onToggleEnabled(event.target.checked)}
+          onChange={(enabled) => onToggleEnabled(enabled)}
         />
-        Ativar o CleanFeed AI no LinkedIn
-      </label>
+      </Field>
       <button
         aria-describedby="linkedin-platform-heading"
         disabled={!hasOverride}
@@ -46,6 +46,6 @@ export function PlatformSettings({
       >
         Restaurar padrões do LinkedIn
       </button>
-    </section>
+    </Fieldset>
   );
 }

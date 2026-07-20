@@ -1,9 +1,9 @@
 import type { ReactNode } from "react";
+import { Fieldset } from "./Form/Fieldset";
 
 export function PrivacyNotice({ children }: { children?: ReactNode }) {
   return (
-    <section aria-labelledby="privacy-heading">
-      <h2 id="privacy-heading">Privacidade</h2>
+    <Fieldset title="Privacidade">
       <p>
         A análise é local. A extensão não envia texto, autor, URL ou conteúdo da
         página para servidores externos.
@@ -17,6 +17,6 @@ export function PrivacyNotice({ children }: { children?: ReactNode }) {
         por padrão.
       </p>
       {children}
-    </section>
+    </Fieldset>
   );
 }

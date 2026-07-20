@@ -16,7 +16,7 @@ export function PageStatsSummary({ stats }: { stats: PageStats }) {
   ];
 
   return (
-    <section aria-label="Resumo da página">
+    <section aria-label="Resumo da página" className="card">
       <h2>Resumo desta página</h2>
       <p>Plataforma: {platformLabel(stats.platform)}</p>
       <dl>

@@ -9,7 +9,7 @@ export function ModelStatusCard({ status }: { status: ModelStatus | null }) {
   ];
 
   return (
-    <section aria-label="Estado do modelo">
+    <section aria-label="Estado do modelo" className="card">
       <h2>Modelo local</h2>
       <dl>
         {items.map(([label, value]) => (

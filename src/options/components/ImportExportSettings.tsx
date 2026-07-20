@@ -10,6 +10,9 @@ import type {
   ImportMode,
   ImportPreview as ImportPreviewData,
 } from "@/storage/import-export";
+import { Field } from "./Form/Field";
+import { Fieldset } from "./Form/Fieldset";
+import { Switch } from "./Form/Switch";
 
 const CATEGORY_ORDER: readonly ImportCategory[] = [
   "settings",
@@ -93,69 +96,67 @@ export function ImportExportSettings({ api }: { api: ImportExportApi }) {
   };
 
   return (
-    <section aria-labelledby="import-export-heading">
-      <h2 id="import-export-heading">Importar e exportar</h2>
+    <Fieldset title="Importar e exportar">
+      <p>
+        Use esta seção para fazer backup das suas configurações e regras, ou
+        para restaurá-las em outro navegador.
+      </p>
 
-      <h3 id="export-heading">Exportar dados</h3>
+      <h3>Exportar dados</h3>
       <p>
         Selecione o que incluir. Feedback e histórico são dados sensíveis e
         ficam desmarcados por padrão.
       </p>
-      <label>
-        <input
+      <Field label="Configurações">
+        <Switch
+          aria-label="Incluir configurações na exportação"
           checked={includeSettings}
-          type="checkbox"
-          onChange={(event) => setIncludeSettings(event.target.checked)}
+          onChange={setIncludeSettings}
         />
-        Incluir configurações na exportação
-      </label>
-      <label>
-        <input
+      </Field>
+      <Field label="Ajustes por plataforma">
+        <Switch
+          aria-label="Incluir ajustes por plataforma na exportação"
           checked={includePlatformSettings}
-          type="checkbox"
-          onChange={(event) => setIncludePlatformSettings(event.target.checked)}
+          onChange={setIncludePlatformSettings}
         />
-        Incluir ajustes por plataforma na exportação
-      </label>
-      <label>
-        <input
+      </Field>
+      <Field label="Regras">
+        <Switch
+          aria-label="Incluir regras na exportação"
           checked={includeKeywordRules}
-          type="checkbox"
-          onChange={(event) => setIncludeKeywordRules(event.target.checked)}
+          onChange={setIncludeKeywordRules}
         />
-        Incluir regras na exportação
-      </label>
-      <label>
-        <input
+      </Field>
+      <Field label="Feedback">
+        <Switch
+          aria-label="Incluir feedback na exportação"
           checked={includeFeedback}
-          type="checkbox"
-          onChange={(event) => setIncludeFeedback(event.target.checked)}
+          onChange={setIncludeFeedback}
         />
-        Incluir feedback na exportação
-      </label>
-      <label>
-        <input
+      </Field>
+      <Field label="Histórico">
+        <Switch
+          aria-label="Incluir histórico na exportação"
           checked={includeHistory}
-          type="checkbox"
-          onChange={(event) => setIncludeHistory(event.target.checked)}
+          onChange={setIncludeHistory}
         />
-        Incluir histórico na exportação
-      </label>
-      <label>
-        <input
+      </Field>
+      <Field label="Métricas">
+        <Switch
+          aria-label="Incluir métricas na exportação"
           checked={includeMetrics}
-          type="checkbox"
-          onChange={(event) => setIncludeMetrics(event.target.checked)}
+          onChange={setIncludeMetrics}
         />
-        Incluir métricas na exportação
-      </label>
-      <button type="button" onClick={exportData}>
-        Exportar dados
-      </button>
+      </Field>
+      <div className="button-group">
+        <button type="button" onClick={exportData}>
+          Exportar dados
+        </button>
+      </div>
 
-      <h3 id="import-heading">Importar dados</h3>
-      <label>
-        Arquivo de importação
+      <h3>Importar dados</h3>
+      <Field label="Arquivo de importação">
         <input
           accept="application/json"
           aria-label="Arquivo de importação"
@@ -165,7 +166,7 @@ export function ImportExportSettings({ api }: { api: ImportExportApi }) {
             if (file !== undefined) void readFile(file);
           }}
         />
-      </label>
+      </Field>
 
       {error === null ? null : <p role="alert">{error}</p>}
       {status === null ? null : <p role="status">{status}</p>}
@@ -174,13 +175,15 @@ export function ImportExportSettings({ api }: { api: ImportExportApi }) {
         <ImportPreview mode={mode} preview={preview} onModeChange={setMode} />
       )}
 
-      <button
-        disabled={preview === null}
-        type="button"
-        onClick={() => setApplyDialogOpen(true)}
-      >
-        Aplicar importação
-      </button>
+      <div className="button-group">
+        <button
+          disabled={preview === null}
+          type="button"
+          onClick={() => setApplyDialogOpen(true)}
+        >
+          Aplicar importação
+        </button>
+      </div>
 
       {applyDialogOpen && preview !== null ? (
         <ConfirmDialog
@@ -197,6 +200,6 @@ export function ImportExportSettings({ api }: { api: ImportExportApi }) {
           </p>
         </ConfirmDialog>
       ) : null}
-    </section>
+    </Fieldset>
   );
 }

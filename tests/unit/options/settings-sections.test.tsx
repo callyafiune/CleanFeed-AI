@@ -28,6 +28,8 @@ describe("options settings sections", () => {
   it("organizes the requested settings into accessible sections", async () => {
     render(<OptionsApp api={fakeOptionsApi()} />);
 
+    // Each region is a labelled fieldset (legend = accessible group name),
+    // giving the same navigable structure the old section headings provided.
     for (const name of [
       "Geral",
       "Plataformas",
@@ -35,14 +37,14 @@ describe("options settings sections", () => {
       "Privacidade",
       "Avançado",
     ]) {
-      expect(await screen.findByRole("heading", { name })).toBeVisible();
+      expect(await screen.findByRole("group", { name })).toBeVisible();
     }
   });
 
   it("still shows the local, probabilistic disclosures", async () => {
     render(<OptionsApp api={fakeOptionsApi()} />);
 
-    await screen.findByRole("heading", { name: "Privacidade" });
+    await screen.findByRole("group", { name: "Privacidade" });
     expect(document.body.textContent).not.toMatch(
       /foi escrito por IA|comprovadamente artificial/u,
     );

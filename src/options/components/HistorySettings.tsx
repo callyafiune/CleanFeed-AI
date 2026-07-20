@@ -10,6 +10,11 @@ import {
   DEFAULT_HISTORY_MAXIMUM_ENTRIES,
   HISTORY_MAXIMUM_ENTRIES_RANGE,
 } from "@/storage/history";
+import { Field } from "./Form/Field";
+import { Fieldset } from "./Form/Fieldset";
+import { Switch } from "./Form/Switch";
+import { Select } from "./Form/Select";
+import { Input } from "./Form/Input";
 
 interface HistorySettingsProps {
   settings: UserSettings;
@@ -154,36 +159,39 @@ export function HistorySettings({
   };
 
   return (
-    <section aria-labelledby="history-heading">
-      <h2 id="history-heading">Histórico local</h2>
+    <Fieldset title="Histórico local">
       <p>
         O histórico é local e desativado por padrão. As linhas nunca guardam o
         texto, o autor ou a URL do post.
       </p>
 
-      <label>
-        <input
+      <Field
+        label="Registrar histórico local"
+        description="Ativa ou desativa o registro de posts analisados no histórico."
+      >
+        <Switch
+          aria-label="Registrar histórico local"
           checked={settings.historyEnabled}
-          type="checkbox"
-          onChange={(event) =>
-            onSaveSettings({ historyEnabled: event.target.checked })
-          }
+          onChange={(checked) => onSaveSettings({ historyEnabled: checked })}
         />
-        Registrar histórico local
-      </label>
+      </Field>
 
-      <label>
-        <input
+      <Field
+        label="Armazenar texto integral"
+        description="Guarda o texto completo dos posts analisados. Requer mais espaço de armazenamento."
+      >
+        <Switch
+          aria-label="Armazenar texto integral"
           checked={settings.storeFullText}
-          type="checkbox"
-          onChange={(event) => handleFullTextToggle(event.target.checked)}
+          onChange={(checked) => handleFullTextToggle(checked)}
         />
-        Armazenar texto integral
-      </label>
+      </Field>
 
-      <label>
-        Retenção (dias)
-        <select
+      <Field
+        label="Retenção (dias)"
+        description="Tempo de armazenamento dos registros do histórico."
+      >
+        <Select
           aria-label="Retenção (dias)"
           value={settings.historyRetentionDays}
           onChange={(event) =>
@@ -195,12 +203,14 @@ export function HistorySettings({
               {value}
             </option>
           ))}
-        </select>
-      </label>
+        </Select>
+      </Field>
 
-      <label>
-        Máximo de registros exibidos
-        <input
+      <Field
+        label="Máximo de registros exibidos"
+        description="Número máximo de entradas visíveis no histórico."
+      >
+        <Input
           aria-label="Máximo de registros exibidos"
           max={HISTORY_MAXIMUM_ENTRIES_RANGE.maximum}
           min={HISTORY_MAXIMUM_ENTRIES_RANGE.minimum}
@@ -211,11 +221,13 @@ export function HistorySettings({
             if (Number.isSafeInteger(value) && value >= 1) setMaxEntries(value);
           }}
         />
-      </label>
+      </Field>
 
-      <label>
-        Filtrar por plataforma
-        <select
+      <Field
+        label="Filtrar por plataforma"
+        description="Exibe apenas registros de uma plataforma específica."
+      >
+        <Select
           aria-label="Filtrar por plataforma"
           value={platform}
           onChange={(event) => setPlatform(event.target.value)}
@@ -223,12 +235,14 @@ export function HistorySettings({
           <option value="">Todas</option>
           <option value="linkedin">LinkedIn</option>
           <option value="manual">Análise manual</option>
-        </select>
-      </label>
+        </Select>
+      </Field>
 
-      <label>
-        Filtrar por resultado
-        <select
+      <Field
+        label="Filtrar por resultado"
+        description="Exibe apenas registros com um resultado de classificação específico."
+      >
+        <Select
           aria-label="Filtrar por resultado"
           value={status}
           onChange={(event) =>
@@ -243,15 +257,17 @@ export function HistorySettings({
               {option.label}
             </option>
           ))}
-        </select>
-      </label>
+        </Select>
+      </Field>
 
-      <button type="button" onClick={exportHistory}>
-        Exportar histórico
-      </button>
-      <button type="button" onClick={() => setClearDialogOpen(true)}>
-        Limpar histórico
-      </button>
+      <div className="button-group">
+        <button type="button" onClick={exportHistory}>
+          Exportar histórico
+        </button>
+        <button type="button" onClick={() => setClearDialogOpen(true)}>
+          Limpar histórico
+        </button>
+      </div>
 
       {error === null ? null : <p role="alert">{error}</p>}
 
@@ -261,7 +277,7 @@ export function HistorySettings({
         texts={texts}
       />
 
-      <nav aria-label="Paginação do histórico">
+      <nav aria-label="Paginação do histórico" className="pagination-nav">
         <button
           disabled={safePage <= 0}
           type="button"
@@ -312,6 +328,6 @@ export function HistorySettings({
           </p>
         </ConfirmDialog>
       ) : null}
-    </section>
+    </Fieldset>
   );
 }

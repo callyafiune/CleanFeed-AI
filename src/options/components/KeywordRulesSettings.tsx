@@ -4,6 +4,7 @@ import type { KeywordRulesApi } from "@/options/api-types";
 import { KeywordRuleEditor } from "@/options/components/KeywordRuleEditor";
 import { validateRegexPattern } from "@/rules/regex-safety";
 import type { KeywordRule, KeywordRuleAction } from "@/rules/rule-engine";
+import { Fieldset } from "./Form/Fieldset";
 
 const MATCH_LABELS: Record<string, string> = {
   contains: "Contém",
@@ -108,17 +109,18 @@ export function KeywordRulesSettings({ api }: { api: KeywordRulesApi }) {
   };
 
   return (
-    <section aria-labelledby="keyword-rules-heading">
-      <h2 id="keyword-rules-heading">Regras personalizadas</h2>
+    <Fieldset title="Regras personalizadas">
       <p>
         Regras aplicam uma ação com base no texto do post. Elas são separadas da
         detecção por IA e nunca alteram a pontuação do modelo.
       </p>
 
       {editor.mode === "closed" ? (
-        <button type="button" onClick={() => setEditor({ mode: "create" })}>
-          Criar regra
-        </button>
+        <div className="button-group">
+          <button type="button" onClick={() => setEditor({ mode: "create" })}>
+            Criar regra
+          </button>
+        </div>
       ) : (
         <KeywordRuleEditor
           initialRule={editor.mode === "edit" ? editor.rule : null}
@@ -164,39 +166,41 @@ export function KeywordRulesSettings({ api }: { api: KeywordRulesApi }) {
                   <td>{ACTION_LABELS[rule.action]}</td>
                   <td>{rule.enabled ? "Ativa" : "Desativada"}</td>
                   <td>
-                    <button
-                      type="button"
-                      onClick={() => setEditor({ mode: "edit", rule })}
-                    >
-                      Editar regra: {rule.pattern}
-                    </button>
-                    <button type="button" onClick={() => toggleEnabled(rule)}>
-                      {rule.enabled ? "Desativar" : "Ativar"} regra:{" "}
-                      {rule.pattern}
-                    </button>
-                    {pendingDelete === rule.id ? (
-                      <>
-                        <button
-                          type="button"
-                          onClick={() => confirmDelete(rule.id)}
-                        >
-                          Confirmar exclusão
-                        </button>
-                        <button
-                          type="button"
-                          onClick={() => setPendingDelete(null)}
-                        >
-                          Cancelar exclusão
-                        </button>
-                      </>
-                    ) : (
+                    <div className="table-actions">
                       <button
                         type="button"
-                        onClick={() => setPendingDelete(rule.id)}
+                        onClick={() => setEditor({ mode: "edit", rule })}
                       >
-                        Excluir regra: {rule.pattern}
+                        Editar regra: {rule.pattern}
                       </button>
-                    )}
+                      <button type="button" onClick={() => toggleEnabled(rule)}>
+                        {rule.enabled ? "Desativar" : "Ativar"} regra:{" "}
+                        {rule.pattern}
+                      </button>
+                      {pendingDelete === rule.id ? (
+                        <>
+                          <button
+                            type="button"
+                            onClick={() => confirmDelete(rule.id)}
+                          >
+                            Confirmar exclusão
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => setPendingDelete(null)}
+                          >
+                            Cancelar exclusão
+                          </button>
+                        </>
+                      ) : (
+                        <button
+                          type="button"
+                          onClick={() => setPendingDelete(rule.id)}
+                        >
+                          Excluir regra: {rule.pattern}
+                        </button>
+                      )}
+                    </div>
                   </td>
                 </tr>
               );
@@ -204,6 +208,6 @@ export function KeywordRulesSettings({ api }: { api: KeywordRulesApi }) {
           )}
         </tbody>
       </table>
-    </section>
+    </Fieldset>
   );
 }
