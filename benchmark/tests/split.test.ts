@@ -386,9 +386,9 @@ describe("createBlockedSplit", () => {
     );
   });
 
-  it("throws when the 20/30/50 target is unreachable within tolerance", () => {
-    // Every record shares one timestamp, so no temporal cut can carve out a
-    // 50% test slice: fail closed rather than relax the grouping or the time.
+  it("throws when no temporal cut exists at all (single timestamp)", () => {
+    // Every record shares one timestamp, so no legal (calibrationCut < testCut)
+    // pair exists: fail closed at the no-cut branch rather than relax anything.
     const degenerate = Array.from({ length: 12 }, (_, index) =>
       rec({
         id: `d_${index}`,
@@ -405,7 +405,54 @@ describe("createBlockedSplit", () => {
       }),
     );
     expect(() => createBlockedSplit(degenerate, POLICY)).toThrow(
-      SplitConstraintError,
+      /no temporal cut can realise/,
+    );
+  });
+
+  it("throws the class-fraction error when 20/30/50 is unreachable within tolerance", () => {
+    // Human lives entirely in the oldest half of the timeline, AI entirely in
+    // the newest half. Candidate cuts exist (many distinct timestamps), the
+    // search finds its best pair, but NO single global cut can put ~50% of both
+    // classes in test — so the per-class ±2pp guard must throw, exercising the
+    // class-fraction path (not the no-cut branch).
+    const skewed: BenchmarkRecord[] = [];
+    for (let slot = 1; slot <= 10; slot += 1) {
+      skewed.push(
+        rec({
+          id: `hh_${slot}`,
+          label: "human",
+          createdAt: slot,
+          domain: "corporate",
+          wordCount: 100,
+          author: `auth_hh_${slot}`,
+          source: `src_hh_${slot}`,
+          domainSource: `ds_hh_${slot}`,
+          collectionBatch: `cb_hh_${slot}`,
+          nearDuplicate: `nd_hh_${slot}`,
+          derivationRoot: `hh_${slot}`,
+        }),
+      );
+    }
+    for (let slot = 11; slot <= 20; slot += 1) {
+      skewed.push(
+        rec({
+          id: `aa_${slot}`,
+          label: "ai",
+          createdAt: slot,
+          domain: "linkedin",
+          wordCount: 100,
+          family: "family-seen",
+          author: `auth_aa_${slot}`,
+          source: `src_aa_${slot}`,
+          domainSource: `ds_aa_${slot}`,
+          collectionBatch: `cb_aa_${slot}`,
+          nearDuplicate: `nd_aa_${slot}`,
+          derivationRoot: `aa_${slot}`,
+        }),
+      );
+    }
+    expect(() => createBlockedSplit(skewed, POLICY)).toThrow(
+      /fractions unreachable within tolerance/,
     );
   });
 });

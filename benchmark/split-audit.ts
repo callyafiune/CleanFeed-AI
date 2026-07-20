@@ -15,7 +15,11 @@
 // import from the extension bundle (src/).
 
 import type { BenchmarkLabel, BenchmarkRecord } from "./schema.ts";
-import { GROUP_KEYS, type Partition } from "./split.ts";
+import {
+  connectedComponentRoots,
+  GROUP_KEYS,
+  type Partition,
+} from "./split.ts";
 
 export interface SplitAuditPolicy {
   minimumTestHumanNegatives: 2_000;
@@ -91,7 +95,7 @@ export function auditBlockedSplit(
   const sizes = auditSizes(byPartition);
   const classFractions = auditClassFractions(records, byPartition);
   const cutoffs = auditCutoffs(byPartition);
-  const leakages = auditLeakages(byPartition);
+  const leakages = auditLeakages(records, byPartition);
 
   const heldOutGeneratorFamilies = deriveHeldOutFamilies(byPartition);
   const criticalSliceSamples = auditCriticalSlices(
@@ -171,9 +175,12 @@ function auditCutoffs(
 }
 
 function auditLeakages(
+  records: readonly BenchmarkRecord[],
   byPartition: Record<Partition, readonly BenchmarkRecord[]>,
 ): SplitAudit["leakages"] {
   const leakages: SplitAudit["leakages"] = [];
+
+  // Per-value checks on each of the eight grouping axes.
   for (const axis of GROUP_KEYS) {
     const partitionsByValue = new Map<string, Set<Partition>>();
     for (const partition of PARTITIONS) {
@@ -193,6 +200,43 @@ function auditLeakages(
           partitions: PARTITIONS.filter((partition) => set.has(partition)),
         });
       }
+    }
+  }
+
+  // Full-connectivity check. Re-derive the exact connected components the
+  // splitter builds — value-axes AND the parent/derivative chain linkage — and
+  // flag any component whose records straddle partitions. This catches a
+  // depth->=2 derivation chain (child in test, parent in development) that no
+  // single value-axis reveals, because grandparent and grandchild never share a
+  // derivationRoot value directly.
+  const roots = connectedComponentRoots(records);
+  const partitionOfId = new Map<string, Partition>();
+  for (const partition of PARTITIONS) {
+    for (const record of byPartition[partition]) {
+      partitionOfId.set(record.id, partition);
+    }
+  }
+  const spanByRoot = new Map<string, Set<Partition>>();
+  const labelIdByRoot = new Map<string, string>();
+  for (const record of records) {
+    const root = roots.get(record.id);
+    const partition = partitionOfId.get(record.id);
+    if (root === undefined || partition === undefined) continue;
+    const set = spanByRoot.get(root) ?? new Set<Partition>();
+    set.add(partition);
+    spanByRoot.set(root, set);
+    const smallest = labelIdByRoot.get(root);
+    if (smallest === undefined || record.id < smallest) {
+      labelIdByRoot.set(root, record.id);
+    }
+  }
+  for (const [root, set] of spanByRoot) {
+    if (set.size > 1) {
+      leakages.push({
+        axis: "connectedComponent",
+        value: labelIdByRoot.get(root) ?? root,
+        partitions: PARTITIONS.filter((partition) => set.has(partition)),
+      });
     }
   }
   return leakages;
@@ -338,9 +382,20 @@ function collectReasons(
     byPartition.test.length === 0 ||
     byPartition.development.length === 0 ||
     cutoffs.earliestTest > cutoffs.latestDevelopment;
-  if (!testAfterCalibration || !testAfterDevelopment) {
+  // Complete the temporal chain development < calibration < test, so a
+  // grouping-glued spanning component cannot silently leave a development record
+  // newer than a calibration record.
+  const calibrationAfterDevelopment =
+    byPartition.calibration.length === 0 ||
+    byPartition.development.length === 0 ||
+    cutoffs.latestCalibration > cutoffs.latestDevelopment;
+  if (
+    !testAfterCalibration ||
+    !testAfterDevelopment ||
+    !calibrationAfterDevelopment
+  ) {
     reasons.push(
-      "temporal leakage: a blocked-test record is not strictly newer than every development/calibration record",
+      "temporal leakage: the blocked split is not strictly ordered development < calibration < test in time",
     );
   }
 

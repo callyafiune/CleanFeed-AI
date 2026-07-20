@@ -324,6 +324,71 @@ describe("auditBlockedSplit", () => {
     expect(audit.reasons.some((reason) => /leak/i.test(reason))).toBe(true);
   });
 
+  it("rejects a depth-2 derivation chain that straddles partitions (teeth on parent linkage)", () => {
+    // A <- B <- C. A and B are self/child on ROOTAAA (share a derivationRoot
+    // value); C is a child of B, so it only ever names B's id — never ROOTAAA.
+    // No single value-axis reveals that C is a derivative of A's family. Put the
+    // grandparent chain in development and the grandchild in test.
+    const a = rec({
+      id: "ROOTAAA",
+      label: "human",
+      createdAt: 1,
+      domain: "corporate",
+      wordCount: 100,
+      author: "auth_a",
+      source: "src_a",
+      domainSource: "ds_a",
+      collectionBatch: "cb_a",
+      nearDuplicate: "nd_a",
+      derivationRoot: "ROOTAAA",
+    });
+    const b = rec({
+      id: "MIDBBBB",
+      label: "human",
+      createdAt: 2,
+      domain: "corporate",
+      wordCount: 100,
+      author: "auth_b",
+      source: "src_b",
+      domainSource: "ds_b",
+      collectionBatch: "cb_b",
+      nearDuplicate: "nd_b",
+      derivationRoot: "ROOTAAA",
+    });
+    const c = rec({
+      id: "LEAFCCC",
+      label: "ai",
+      createdAt: 3,
+      domain: "corporate",
+      wordCount: 100,
+      family: "family-seen",
+      author: "auth_c",
+      source: "src_c",
+      domainSource: "ds_c",
+      collectionBatch: "cb_c",
+      nearDuplicate: "nd_c",
+      derivationRoot: "MIDBBBB",
+    });
+    const records = [a, b, c];
+    const split: DatasetSplit<BenchmarkRecord> = {
+      development: [a, b],
+      calibration: [],
+      test: [c],
+    };
+    const audit = auditBlockedSplit(records, split, AUDIT_POLICY);
+
+    // No single grouping value-axis catches it...
+    expect(
+      audit.leakages.some((entry) => entry.axis === "derivationRoot"),
+    ).toBe(false);
+    // ...but the shared connectivity check (parent linkage) does.
+    expect(
+      audit.leakages.some((entry) => entry.axis === "connectedComponent"),
+    ).toBe(true);
+    expect(audit.passed).toBe(false);
+    expect(audit.reasons.some((reason) => /leak/i.test(reason))).toBe(true);
+  });
+
   it("rejects a temporally leaking split even without group leakage (teeth on time)", () => {
     // Unique groups everywhere, so the only defect is a test record older than a
     // calibration record. The audit must still refuse it.

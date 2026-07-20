@@ -284,11 +284,15 @@ export function createBlockedSplit(
   return split;
 }
 
-function buildComponents(
+// The single source of connectivity truth. Both the splitter and the audit
+// MUST enumerate identical connected components, so they call THIS function:
+// union-find over every value-axis in GROUP_KEYS PLUS the parent/derivative
+// linkage (a record whose derivationRoot names another record's id joins that
+// parent, so a depth-N derivation chain collapses into one component). Returns
+// each record id mapped to its component root, an opaque but stable key.
+export function connectedComponentRoots(
   records: readonly BenchmarkRecord[],
-  heldOutFamilies: ReadonlySet<string>,
-  seed: number,
-): Component[] {
+): Map<string, string> {
   const disjoint = new DisjointSet();
   for (const record of records) disjoint.add(record.id);
 
@@ -306,8 +310,8 @@ function buildComponents(
     }
   }
 
-  // Parent linkage: a record whose derivationRoot names another record's id
-  // joins that parent, so parent + derivatives cluster even across a chain.
+  // Parent linkage: joins a derivative to its parent record even across a chain,
+  // so A <- B <- C become one component regardless of intermediate depth.
   const ids = new Set(records.map((record) => record.id));
   for (const record of records) {
     const root = record.groups.derivationRoot;
@@ -316,9 +320,21 @@ function buildComponents(
     }
   }
 
+  const roots = new Map<string, string>();
+  for (const record of records) roots.set(record.id, disjoint.find(record.id));
+  return roots;
+}
+
+function buildComponents(
+  records: readonly BenchmarkRecord[],
+  heldOutFamilies: ReadonlySet<string>,
+  seed: number,
+): Component[] {
+  const roots = connectedComponentRoots(records);
+
   const byRoot = new Map<string, Component>();
   for (const record of records) {
-    const root = disjoint.find(record.id);
+    const root = roots.get(record.id) as string;
     let component = byRoot.get(root);
     if (component === undefined) {
       component = {
