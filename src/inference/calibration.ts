@@ -102,7 +102,10 @@ export function resolveCalibrationProfile(
 
 export function calibrateResult(result: ClassificationResult): DecisionOutcome {
   const profile = resolveCalibrationProfile(result);
-  const calibratedScore = result.aggregation?.finalScore ?? result.aiScore;
+  // The document-level raw score is the calibrated decision signal; the
+  // localized single-window score is never blended into it. The
+  // profile-driven document/localized decision policy lands in Task 6.
+  const calibratedScore = result.aggregation?.documentRawScore ?? result.aiScore;
   const reasonCodes = getEvidenceReasons(result, profile);
 
   if (mustAbstain(result, calibratedScore)) {
@@ -240,7 +243,7 @@ function hasChunkDisagreement(result: ClassificationResult): boolean {
   return (
     aggregation !== undefined &&
     (aggregation.chunkAgreement < MINIMUM_CHUNK_AGREEMENT ||
-      aggregation.standardDeviation > MAXIMUM_STANDARD_DEVIATION)
+      aggregation.stdDev > MAXIMUM_STANDARD_DEVIATION)
   );
 }
 

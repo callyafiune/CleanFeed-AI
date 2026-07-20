@@ -138,15 +138,29 @@ export interface ChunkResult {
   processingTimeMs: number;
 }
 
-export interface AggregationResult {
-  finalScore: number;
+/**
+ * The distributed aggregation of a document's window scores. It keeps the two
+ * decision signals STRICTLY separate — `documentRawScore` (the token-weighted
+ * mean over selected windows) and `localizedRawScore` (the highest valid single
+ * window) — and never blends them into one number. Every other numeric field
+ * (`median`, `min`, `max`, `stdDev`, `highScoreRatio`) is DIAGNOSTIC only and
+ * MUST never enter a decision formula.
+ */
+export interface AggregationResultV2 {
+  version: "tmr-aggregation-v2";
+  documentRawScore: number;
+  localizedRawScore: number;
+  coverage: number;
+  truncated: boolean;
   weightedMean: number;
   median: number;
-  maximum: number;
-  minimum: number;
-  standardDeviation: number;
+  min: number;
+  max: number;
+  stdDev: number;
   highScoreRatio: number;
   chunkAgreement: number;
+  candidateWindowCount: number;
+  selectedWindowIndices: number[];
 }
 
 export interface ClassificationExplanation {
@@ -188,7 +202,7 @@ export interface ClassificationResult {
   tokenCount: number;
   language?: string;
   chunks?: ChunkResult[];
-  aggregation?: AggregationResult;
+  aggregation?: AggregationResultV2;
   explanation?: ClassificationExplanation;
   /** Full identity of the model that produced this result. */
   runtimeIdentity: RuntimeModelIdentity;

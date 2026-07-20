@@ -536,26 +536,39 @@ function isChunkResults(value: unknown): boolean {
 
 function isAggregationResult(value: unknown): boolean {
   const keys = [
-    "finalScore",
+    "version",
+    "documentRawScore",
+    "localizedRawScore",
+    "coverage",
+    "truncated",
     "weightedMean",
     "median",
-    "maximum",
-    "minimum",
-    "standardDeviation",
+    "min",
+    "max",
+    "stdDev",
     "highScoreRatio",
     "chunkAgreement",
+    "candidateWindowCount",
+    "selectedWindowIndices",
   ];
 
   return (
     hasExactKeys(value, keys) &&
-    isScore(value.finalScore) &&
+    value.version === "tmr-aggregation-v2" &&
+    isScore(value.documentRawScore) &&
+    isScore(value.localizedRawScore) &&
+    isScore(value.coverage) &&
+    typeof value.truncated === "boolean" &&
     isScore(value.weightedMean) &&
     isScore(value.median) &&
-    isScore(value.maximum) &&
-    isScore(value.minimum) &&
-    isNonNegativeFinite(value.standardDeviation) &&
+    isScore(value.min) &&
+    isScore(value.max) &&
+    isNonNegativeFinite(value.stdDev) &&
     isScore(value.highScoreRatio) &&
-    isScore(value.chunkAgreement)
+    isScore(value.chunkAgreement) &&
+    isNonNegativeInteger(value.candidateWindowCount) &&
+    Array.isArray(value.selectedWindowIndices) &&
+    value.selectedWindowIndices.every(isNonNegativeInteger)
   );
 }
 

@@ -56,10 +56,7 @@ function getEvidenceReasons(
     return reasonCodes;
   }
 
-  if (
-    aggregation.chunkAgreement < 0.5 ||
-    aggregation.standardDeviation > 0.25
-  ) {
+  if (aggregation.chunkAgreement < 0.5 || aggregation.stdDev > 0.25) {
     reasonCodes.push("CHUNK_DISAGREEMENT");
   }
 

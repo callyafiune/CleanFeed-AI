@@ -5,22 +5,28 @@ import {
   getLengthBucket,
   resolveCalibrationProfile,
 } from "@/inference/calibration";
-import type { AggregationResult, ClassificationResult } from "@/shared/types";
+import type { AggregationResultV2, ClassificationResult } from "@/shared/types";
 import {
   createBundleRuntimeIdentity,
   createDecisionOutcome,
   createEvidenceAssessment,
 } from "../../helpers/model-fixtures";
 
-const aggregation: AggregationResult = {
-  finalScore: 0.95,
+const aggregation: AggregationResultV2 = {
+  version: "tmr-aggregation-v2",
+  documentRawScore: 0.95,
+  localizedRawScore: 0.96,
+  coverage: 1,
+  truncated: false,
   weightedMean: 0.95,
   median: 0.95,
-  maximum: 0.96,
-  minimum: 0.94,
-  standardDeviation: 0.02,
+  min: 0.94,
+  max: 0.96,
+  stdDev: 0.02,
   highScoreRatio: 1,
   chunkAgreement: 0.96,
+  candidateWindowCount: 3,
+  selectedWindowIndices: [0, 1, 2],
 };
 
 function baseResult(
@@ -91,7 +97,7 @@ describe("calibration", () => {
         language: "und",
         aggregation: {
           ...aggregation,
-          standardDeviation: 0.4,
+          stdDev: 0.4,
           chunkAgreement: 0.2,
         },
       }),

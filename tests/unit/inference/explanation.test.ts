@@ -19,14 +19,20 @@ function result(): ClassificationResult {
     tokenCount: 200,
     language: "pt",
     aggregation: {
-      finalScore: 0.96,
+      version: "tmr-aggregation-v2",
+      documentRawScore: 0.96,
+      localizedRawScore: 0.98,
+      coverage: 1,
+      truncated: false,
       weightedMean: 0.96,
       median: 0.95,
-      maximum: 0.98,
-      minimum: 0.92,
-      standardDeviation: 0.02,
+      min: 0.92,
+      max: 0.98,
+      stdDev: 0.02,
       highScoreRatio: 0.9,
       chunkAgreement: 0.96,
+      candidateWindowCount: 3,
+      selectedWindowIndices: [0, 1, 2],
     },
     runtimeIdentity: createBundleRuntimeIdentity(),
     evidence: createEvidenceAssessment(),
@@ -55,7 +61,7 @@ describe("buildExplanation", () => {
     classification.aiScore = 0.91;
     classification.aggregation = {
       ...classification.aggregation!,
-      finalScore: 0.96,
+      documentRawScore: 0.96,
     };
     const outcome = {
       ...calibrateResult(classification),

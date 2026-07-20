@@ -1,6 +1,10 @@
 import { describe, expect, it } from "vitest";
 
-import { createTextChunks } from "@/inference/chunker";
+import {
+  createTextChunks,
+  distributedIndices,
+  selectDistributedWindows,
+} from "@/inference/chunker";
 import type { TokenizedText } from "@/inference/tokenizer";
 
 const options = {
@@ -123,5 +127,71 @@ describe("createTextChunks", () => {
     expect(() =>
       createTextChunks("x", tokens(1), { ...options, overlapTokens: 192 }),
     ).toThrow("INVALID_SETTINGS");
+  });
+});
+
+describe("distributedIndices", () => {
+  it("returns no indices for an empty window set", () => {
+    expect(distributedIndices(0, 8)).toEqual([]);
+  });
+
+  it("returns every index when the candidate count fits under the limit", () => {
+    expect(distributedIndices(3, 8)).toEqual([0, 1, 2]);
+  });
+
+  it("spreads eight windows across twenty candidates, preserving first and last", () => {
+    expect(distributedIndices(20, 8)).toEqual([0, 3, 5, 8, 11, 14, 16, 19]);
+  });
+
+  it("keeps only the sole window when there is one candidate", () => {
+    expect(distributedIndices(1, 8)).toEqual([0]);
+  });
+});
+
+describe("selectDistributedWindows", () => {
+  function windowsOf(count: number) {
+    return Array.from({ length: count }, (_, index) => ({
+      index,
+      tokenStart: index * 446,
+      tokenEnd: index * 446 + 510,
+    }));
+  }
+
+  it("keeps every window and reports no truncation under the limit", () => {
+    const selection = selectDistributedWindows(windowsOf(3), 8);
+
+    expect(selection).toEqual({
+      candidateWindowCount: 3,
+      selectedWindowCount: 3,
+      selectedIndices: [0, 1, 2],
+      coveredIntervals: [
+        { start: 0, end: 510 },
+        { start: 446, end: 956 },
+        { start: 892, end: 1_402 },
+      ],
+      truncated: false,
+    });
+  });
+
+  it("truncates to the first, last and evenly distributed windows", () => {
+    const selection = selectDistributedWindows(windowsOf(20), 8);
+
+    expect(selection.candidateWindowCount).toBe(20);
+    expect(selection.selectedWindowCount).toBe(8);
+    expect(selection.selectedIndices).toEqual([0, 3, 5, 8, 11, 14, 16, 19]);
+    expect(selection.truncated).toBe(true);
+    // First and last candidate windows are always preserved.
+    expect(selection.selectedIndices[0]).toBe(0);
+    expect(selection.selectedIndices.at(-1)).toBe(19);
+  });
+
+  it("returns an empty selection for no windows", () => {
+    expect(selectDistributedWindows([], 8)).toEqual({
+      candidateWindowCount: 0,
+      selectedWindowCount: 0,
+      selectedIndices: [],
+      coveredIntervals: [],
+      truncated: false,
+    });
   });
 });

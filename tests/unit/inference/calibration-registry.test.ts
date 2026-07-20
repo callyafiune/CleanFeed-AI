@@ -7,7 +7,7 @@ import {
   type CalibrationQuery,
   type VersionedCalibrationProfile,
 } from "@/inference/calibration-registry";
-import type { AggregationResult, ClassificationResult } from "@/shared/types";
+import type { AggregationResultV2, ClassificationResult } from "@/shared/types";
 import {
   createBundleRuntimeIdentity,
   createDecisionOutcome,
@@ -45,15 +45,21 @@ function query(overrides: Partial<CalibrationQuery> = {}): CalibrationQuery {
   };
 }
 
-const aggregation: AggregationResult = {
-  finalScore: 0.95,
+const aggregation: AggregationResultV2 = {
+  version: "tmr-aggregation-v2",
+  documentRawScore: 0.95,
+  localizedRawScore: 0.96,
+  coverage: 1,
+  truncated: false,
   weightedMean: 0.95,
   median: 0.95,
-  maximum: 0.96,
-  minimum: 0.94,
-  standardDeviation: 0.02,
+  min: 0.94,
+  max: 0.96,
+  stdDev: 0.02,
   highScoreRatio: 1,
   chunkAgreement: 0.96,
+  candidateWindowCount: 3,
+  selectedWindowIndices: [0, 1, 2],
 };
 
 function realResult(
@@ -198,7 +204,7 @@ describe("calibrateWithRegistry", () => {
       humanScore: 0.001,
       aggregation: {
         ...aggregation,
-        finalScore: 0.999,
+        documentRawScore: 0.999,
         weightedMean: 0.999,
         median: 0.999,
       },

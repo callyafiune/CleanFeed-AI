@@ -1,4 +1,4 @@
-import { aggregateChunkResults } from "@/inference/aggregator";
+import { aggregateWindowsV2 } from "@/inference/aggregator";
 import {
   BackendSelector,
   ClassifierLifecycleManager,
@@ -17,7 +17,9 @@ import {
 import { bundledModelManifest } from "@/inference/bundled-model-metadata";
 import { CalibrationRegistry } from "@/inference/calibration-registry";
 import { createTextChunks, type TextChunkOptions } from "@/inference/chunker";
+import { assessEvidence } from "@/inference/evidence";
 import { createTmrChunkPlan } from "@/inference/model-runtime";
+import { computeContentComposition } from "../../contracts/content-composition";
 import {
   evaluateLanguagePolicy,
   HeuristicPortugueseDetector,
@@ -106,6 +108,8 @@ type PreparedRequest = {
   request: ClassificationRequest;
   language: string;
   tokenCount: number;
+  /** Whether the tokenizer produced exact native offsets (TMR) or an estimate. */
+  exact: boolean;
   chunks: ReturnType<typeof createTextChunks>;
   stageTimings: Pick<
     NonNullable<ClassificationResult["stageTimings"]>,
@@ -296,6 +300,7 @@ export class PipelineRunner {
       request,
       language: detection.language,
       tokenCount: tokenized.tokenCount,
+      exact: tokenized.exact,
       chunks,
       stageTimings: {
         languageMs,
@@ -464,18 +469,45 @@ function completePreparedRequest(
   });
   const first = classified[0]!;
   const aggregationStartedAt = performance.now();
-  const aggregation = aggregateChunkResults(
-    chunkResults,
-    settings.markingThreshold,
+  const aggregation = aggregateWindowsV2(
+    chunkResults.map((chunk) => ({
+      index: chunk.index,
+      tokenStart: chunk.startToken,
+      tokenEnd: chunk.endToken,
+      rawScore: chunk.aiScore,
+    })),
+    item.tokenCount,
   );
   const aggregationMs = performance.now() - aggregationStartedAt;
+  const wordCount = getTextLengthInfo(item.request.text).wordCount;
+  // The calibrated TMR (bundle) path derives its evidence from the shared,
+  // pure assessor; the demonstration builtins keep their own conservative
+  // `limited` evidence. Real exact-tokenizer wiring for the bundle path lands
+  // in Task 7, so today the bundle path is fail-closed (approximate tokenizer).
+  const evidence =
+    first.runtimeIdentity.kind === "bundle"
+      ? assessEvidence({
+          locale: item.language,
+          wordCount,
+          coverage: aggregation.coverage,
+          lexicalRatio: computeContentComposition(item.request.text)
+            .lexicalRatio,
+          stdDev: aggregation.stdDev,
+          chunkAgreement: aggregation.chunkAgreement,
+          truncated: aggregation.truncated,
+          exactTokenizer: item.exact,
+          backendError: false,
+          artifactMismatch: false,
+        })
+      : first.evidence;
   const base: ClassificationResult = {
     ...first,
-    wordCount: getTextLengthInfo(item.request.text).wordCount,
+    wordCount,
     tokenCount: item.tokenCount,
     language: item.language,
     chunks: chunkResults,
     aggregation,
+    evidence,
     processingTimeMs: performance.now() - startedAt,
   };
   const calibrationStartedAt = performance.now();
