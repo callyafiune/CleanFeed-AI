@@ -1,20 +1,22 @@
 import { describe, expect, it } from "vitest";
 
-import type { BenchmarkRecord } from "../schema";
-import { validateBenchmarkRecord } from "../schema";
 import { groupTimeSplit } from "../split";
 
-function record(overrides: Partial<BenchmarkRecord> = {}): BenchmarkRecord {
+// groupTimeSplit is generic and only reads the group and time keys, so these
+// tests use a minimal local row shape rather than the full closed benchmark
+// record schema (validated in schema.test.ts). This keeps the split contract
+// decoupled from the record schema, which carries its author under groups.*.
+interface SplitRow {
+  id: string;
+  authorGroup: string;
+  createdAt: number;
+}
+
+function record(overrides: Partial<SplitRow> = {}): SplitRow {
   return {
     id: "rec-1",
-    text: "Texto de exemplo para avaliar o índice de detecção na versão atual.",
-    label: "human",
     authorGroup: "author-a",
     createdAt: 1,
-    platform: "linkedin",
-    language: "pt",
-    topic: "carreira",
-    license: "CC-BY-4.0",
     ...overrides,
   };
 }
@@ -23,7 +25,7 @@ function record(overrides: Partial<BenchmarkRecord> = {}): BenchmarkRecord {
 // captured over time. A correct group-time split must never let one author
 // leak across partitions and must keep every test record strictly newer than
 // every calibration record.
-const DATASET: BenchmarkRecord[] = [
+const DATASET: SplitRow[] = [
   record({ id: "a1", authorGroup: "author-a", createdAt: 1 }),
   record({ id: "a2", authorGroup: "author-a", createdAt: 2 }),
   record({ id: "b1", authorGroup: "author-b", createdAt: 3 }),
@@ -36,7 +38,7 @@ const DATASET: BenchmarkRecord[] = [
   record({ id: "e2", authorGroup: "author-e", createdAt: 10 }),
 ];
 
-function authors(rows: BenchmarkRecord[]): string[] {
+function authors(rows: SplitRow[]): string[] {
   return [...new Set(rows.map((row) => row.authorGroup))];
 }
 
@@ -73,45 +75,5 @@ describe("groupTimeSplit", () => {
 
     expect(assigned).toHaveLength(DATASET.length);
     expect(new Set(assigned.map((row) => row.id)).size).toBe(DATASET.length);
-  });
-});
-
-describe("validateBenchmarkRecord", () => {
-  it("accepts a licensed, pseudonymised record", () => {
-    expect(validateBenchmarkRecord(record())).toMatchObject({
-      id: "rec-1",
-      label: "human",
-      authorGroup: "author-a",
-      license: "CC-BY-4.0",
-    });
-  });
-
-  it("rejects a record without a license", () => {
-    const withoutLicense: Record<string, unknown> = { ...record() };
-    delete withoutLicense.license;
-    expect(() => validateBenchmarkRecord(withoutLicense)).toThrow();
-  });
-
-  it("rejects author groups that are not pseudonymised", () => {
-    expect(() =>
-      validateBenchmarkRecord(
-        record({ authorGroup: "maria.silva@example.com" }),
-      ),
-    ).toThrow();
-    expect(() =>
-      validateBenchmarkRecord(record({ authorGroup: "Maria Silva" })),
-    ).toThrow();
-  });
-
-  it("rejects an unknown label", () => {
-    expect(() =>
-      validateBenchmarkRecord({ ...record(), label: "robot" }),
-    ).toThrow();
-  });
-
-  it("rejects a non-finite createdAt", () => {
-    expect(() =>
-      validateBenchmarkRecord({ ...record(), createdAt: Number.NaN }),
-    ).toThrow();
   });
 });

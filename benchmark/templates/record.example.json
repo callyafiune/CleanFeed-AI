@@ -1,0 +1,44 @@
+{
+  "schemaVersion": 2,
+  "id": "human-0001",
+  "text": "palavra0 palavra1 palavra2 palavra3 palavra4 palavra5 palavra6 palavra7 palavra8 palavra9 palavra10 palavra11 palavra12 palavra13 palavra14 palavra15 palavra16 palavra17 palavra18 palavra19 palavra20 palavra21 palavra22 palavra23 palavra24 palavra25 palavra26 palavra27 palavra28 palavra29 palavra30 palavra31 palavra32 palavra33 palavra34 palavra35 palavra36 palavra37 palavra38 palavra39 palavra40 palavra41 palavra42 palavra43 palavra44 palavra45 palavra46 palavra47 palavra48 palavra49 palavra50 palavra51 palavra52 palavra53 palavra54 palavra55 palavra56 palavra57 palavra58 palavra59 palavra60 palavra61 palavra62 palavra63 palavra64 palavra65 palavra66 palavra67 palavra68 palavra69 palavra70 palavra71 palavra72 palavra73 palavra74 palavra75 palavra76 palavra77 palavra78 palavra79 palavra80 palavra81 palavra82 palavra83 palavra84 palavra85 palavra86 palavra87 palavra88 palavra89 palavra90 palavra91 palavra92 palavra93 palavra94 palavra95 palavra96 palavra97 palavra98 palavra99",
+  "normalizedTextSha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+  "label": "human",
+  "language": "pt-BR",
+  "platform": "linkedin",
+  "domain": "corporate",
+  "topic": "career",
+  "humanSourceType": "broetry",
+  "hardNegativeFamily": "formulaic",
+  "wordCount": 100,
+  "createdAt": 1735689600000,
+  "provenance": {
+    "sourceKind": "authorized-contribution",
+    "sourceId": "source_001",
+    "sourceRevision": "rev_001",
+    "collectedAt": 1735689600000,
+    "licenseId": "consent-v1",
+    "legalBasis": "consent",
+    "consentId": "consent_001",
+    "piiAudit": {
+      "status": "passed",
+      "method": "manual-and-automated",
+      "reviewerId": "reviewer_01",
+      "reviewedAt": 1735689600000
+    }
+  },
+  "annotation": {
+    "protocolVersion": "annotation-v1",
+    "reviewerIds": ["reviewer_01", "reviewer_02"],
+    "agreement": "agree"
+  },
+  "transformation": { "kind": "none", "severity": "none" },
+  "groups": {
+    "author": "author_001",
+    "source": "source_001",
+    "domainSource": "linkedin_contribution_batch_01",
+    "collectionBatch": "batch_001",
+    "nearDuplicate": "near_pending_001",
+    "derivationRoot": "human-0001"
+  }
+}

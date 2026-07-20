@@ -12,17 +12,60 @@ interface RecordOverrides {
   createdAt: number;
 }
 
+// A distinct, deterministic 64-char lowercase hex per id, so the closed schema
+// accepts each record and parseBenchmarkDataset never sees a duplicate content
+// hash.
+function hexFromId(id: string): string {
+  let hex = "";
+  for (const ch of id) hex += ch.charCodeAt(0).toString(16).padStart(2, "0");
+  return hex.padEnd(64, "0").slice(0, 64);
+}
+
+// A valid closed v2 benchmark record. The CLI only exercises the id, author
+// grouping, timestamp and simple audit tallies, so the remaining provenance and
+// annotation fields are fixed valid placeholders.
 function record({ id, authorGroup, createdAt }: RecordOverrides) {
   return {
+    schemaVersion: 2,
     id,
     text: "Um texto de exemplo suficientemente longo para o registro.",
+    normalizedTextSha256: hexFromId(id),
     label: "human" as const,
-    authorGroup,
-    createdAt,
+    language: "pt-BR",
     platform: "linkedin",
-    language: "pt",
+    domain: "corporate",
     topic: "geral",
-    license: "CC-BY-4.0",
+    wordCount: 9,
+    createdAt,
+    provenance: {
+      sourceKind: "authorized-contribution" as const,
+      sourceId: authorGroup,
+      sourceRevision: "rev_001",
+      collectedAt: createdAt,
+      licenseId: "consent-v1",
+      legalBasis: "consent" as const,
+      consentId: "consent_001",
+      piiAudit: {
+        status: "passed" as const,
+        method: "manual-and-automated" as const,
+        reviewerId: "reviewer_01",
+        reviewedAt: createdAt,
+      },
+    },
+    annotation: {
+      protocolVersion: "annotation-v1" as const,
+      reviewerIds: ["reviewer_01", "reviewer_02"],
+      agreement: "agree" as const,
+    },
+    transformation: { kind: "none" as const, severity: "none" as const },
+    groups: {
+      author: authorGroup,
+      source: authorGroup,
+      domainSource: "linkedin_batch_01",
+      collectionBatch: "batch_001",
+      nearDuplicate: `nd_${id}`,
+      derivationRoot: id,
+    },
   };
 }
 
