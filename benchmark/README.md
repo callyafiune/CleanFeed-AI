@@ -65,6 +65,32 @@ Datasets, labels privados e textos nunca entram no Git: `benchmark/data/*`,
 `benchmark/out/` e `benchmark/work/` são ignorados (exceto `benchmark/data/.gitkeep`).
 Os grupos de autor são pseudonimizados e cada registro carrega uma licença.
 
+## Governança de fontes e a fronteira de aquisição
+
+Os protocolos normativos `protocols/collection-v1.md` e
+`protocols/generation-v1.md` (ao lado de `annotation-v1`, `pii-review-v1` e
+`corpus-v1` da Fase 2) definem os únicos caminhos autorizados de aquisição. O
+`source-manifest.ts` é o manifesto de fontes revisado, fechado: chaves
+desconhecidas (incluindo qualquer URL, nome, handle ou recibo bruto de
+consentimento), uma fonte licenciada sem `licenseId`, uma fonte de
+consentimento sem `consentReceiptDigest`, uma receita de geração incompleta,
+revisores legais não distintos ou um `sourceManifestDigest` divergente são
+falhas duras. O `corpus-source-audit.ts` é o **único produtor** do
+`CorpusSourceReadinessReport` da Fase 2 (`auditCorpusSources` +
+`assertCorpusSourcesReady`): ele consome — sem redefinir — o contrato puro de
+`contracts/source-readiness.ts` e emite apenas os nove códigos de bloqueio; a
+saída é determinística (permutar registros produz bytes idênticos) e nunca
+carrega texto, URL, prompt, grupo de autor, recibo de consentimento ou hash de
+conteúdo. O `sourceManifestDigest` é o auto-digest canônico do manifesto
+(distinto do SHA-256 bruto do arquivo, que fica no `DatasetManifest`).
+
+**Fronteira de aquisição:** concluir este código **não** implica que o corpus
+exista ou esteja disponível. A prontidão só pode ser satisfeita por entradas
+locais autorizadas — contribuição consentida ou fonte licenciada aprovada,
+sob os protocolos acima. A coleta real, a geração, a pontuação e a publicação
+de evidências permanecem uma etapa de operador diferida; nada aqui coleta,
+gera ou baixa dados.
+
 ## Smoke de escala
 
 `tests/helpers/generate-synthetic-release-corpus.ts` gera de forma determinística
