@@ -25,9 +25,18 @@ function createRouter(
     ...(domainPause === undefined ? {} : { domainPause }),
     modelStatus: vi.fn().mockResolvedValue({
       state: "ready",
-      classifierId: "mock",
-      modelVersion: "1.0.0",
       backend: "mock",
+      runtimeIdentity: {
+        kind: "builtin",
+        modelId: "mock",
+        modelVersion: "1.0.0",
+        implementationVersion: "mock",
+      },
+      calibrationCoverage: "none",
+      calibrationSetDigest: null,
+      profileCount: 0,
+      earliestExpiry: null,
+      reasonCodes: [],
     }),
   });
 }

@@ -14,6 +14,11 @@ import type {
   ClassificationResult,
   ReasonCode,
 } from "@/shared/types";
+import {
+  createBuiltinRuntimeIdentity,
+  createDecisionOutcome,
+  createEvidenceAssessment,
+} from "../../helpers/model-fixtures";
 
 function makeResult(
   overrides: Partial<ClassificationResult> = {},
@@ -25,6 +30,9 @@ function makeResult(
     status: "possibly_ai",
     wordCount: 140,
     tokenCount: 150,
+    runtimeIdentity: createBuiltinRuntimeIdentity(),
+    evidence: createEvidenceAssessment(),
+    decision: createDecisionOutcome(),
     modelVersion: "mock-v1",
     modelId: "mock-detector",
     backend: "mock",
@@ -148,6 +156,8 @@ describe("createExplanationPanel", () => {
           calibratedScore: 0.9,
           actionCeiling: "blur",
           abstained: false,
+          presentationAllowed: true,
+          triggers: [],
           reasonCodes: ["HIGH_AVERAGE_SCORE"],
         },
       }),

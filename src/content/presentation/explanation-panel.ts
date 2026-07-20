@@ -1,5 +1,9 @@
 import type { FeedbackVerdict } from "@/storage/feedback";
-import type { ClassificationResult, ReasonCode } from "@/shared/types";
+import type {
+  ClassificationResult,
+  DecisionReasonCode,
+  ReasonCode,
+} from "@/shared/types";
 
 export type { FeedbackVerdict } from "@/storage/feedback";
 
@@ -117,8 +121,11 @@ function buildEvidence(
   const list = doc.createElement("ul");
   list.className = "cleanfeed-explanation__evidence";
 
-  const reasonCodes =
-    result.explanation?.reasonCodes ?? result.decision?.reasonCodes ?? [];
+  const rawReasonCodes: DecisionReasonCode[] =
+    result.explanation?.reasonCodes ?? result.decision.reasonCodes;
+  const reasonCodes = rawReasonCodes.filter(
+    (code): code is ReasonCode => code in REASON_PHRASES,
+  );
   const phrases =
     reasonCodes.length > 0
       ? reasonCodes.map((code) => REASON_PHRASES[code])

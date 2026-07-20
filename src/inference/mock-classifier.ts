@@ -5,6 +5,11 @@ import type {
   ClassifierMetadata,
   TextClassifier,
 } from "@/shared/types";
+import {
+  buildBuiltinDecision,
+  buildBuiltinEvidence,
+  buildBuiltinIdentity,
+} from "@/inference/builtin-runtime";
 import { CleanFeedError } from "@/shared/errors";
 import { sha256 } from "@/shared/hashing";
 import { normalizeText } from "@/shared/text-normalization";
@@ -70,15 +75,19 @@ export class MockClassifier implements TextClassifier {
 
     const aiScore = scoreFromHash(hash.slice(0, 8));
     const length = getTextLengthInfo(normalizedText);
+    const status = statusFromScore(aiScore);
 
     return {
       aiScore,
       humanScore: 1 - aiScore,
       confidence: "low",
-      status: statusFromScore(aiScore),
+      status,
       wordCount: length.wordCount,
       tokenCount: length.wordCount,
       ...(options.language === undefined ? {} : { language: options.language }),
+      runtimeIdentity: buildBuiltinIdentity(metadata),
+      evidence: buildBuiltinEvidence(normalizedText),
+      decision: buildBuiltinDecision({ status, calibratedScore: aiScore }),
       modelVersion: metadata.version,
       modelId: metadata.id,
       backend: metadata.backend,

@@ -8,6 +8,11 @@ import {
   type VersionedCalibrationProfile,
 } from "@/inference/calibration-registry";
 import type { AggregationResult, ClassificationResult } from "@/shared/types";
+import {
+  createBundleRuntimeIdentity,
+  createDecisionOutcome,
+  createEvidenceAssessment,
+} from "../../helpers/model-fixtures";
 
 function profile(
   overrides: Partial<VersionedCalibrationProfile> = {},
@@ -63,6 +68,9 @@ function realResult(
     tokenCount: 180,
     language: "pt",
     aggregation,
+    runtimeIdentity: createBundleRuntimeIdentity(),
+    evidence: createEvidenceAssessment(),
+    decision: createDecisionOutcome(),
     modelVersion: "1.0.0",
     modelId: "candidate",
     backend: "wasm",

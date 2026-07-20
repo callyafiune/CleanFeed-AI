@@ -34,6 +34,29 @@ function result(
     wordCount: text.split(/\s+/u).length,
     tokenCount: text.split(/\s+/u).length,
     language: options?.language,
+    runtimeIdentity: {
+      kind: "builtin",
+      modelId: "stylometric",
+      modelVersion: "1.0.0",
+      implementationVersion: "stylometric-v1",
+    },
+    evidence: {
+      quality: "limited",
+      coverage: 1,
+      lexicalRatio: 1,
+      truncated: false,
+      exactTokenizer: false,
+      reasonCodes: [],
+    },
+    decision: {
+      status: "possibly_ai",
+      calibratedScore: 0.86,
+      actionCeiling: "hide",
+      abstained: false,
+      presentationAllowed: true,
+      triggers: [],
+      reasonCodes: [],
+    },
     modelVersion: "test",
     modelId: "test",
     backend: "mock",
@@ -253,11 +276,16 @@ describe("inference pipeline", () => {
       requestId: "select-local-model",
       payload: expect.objectContaining({
         state: "ready",
-        classifierId: localManifest.id,
-        modelVersion: localManifest.version,
         backend: "wasm",
-        fallbackFrom: "webgpu",
-        warning: "WEBGPU_FALLBACK",
+        // The test's local classifier is a fake without a bundle identity, so
+        // the pipeline reports a builtin identity carrying the manifest's
+        // version/id. The behavioural point is that the local model's
+        // coordinates and the WebGPU fallback both surface on the status.
+        runtimeIdentity: expect.objectContaining({
+          modelVersion: localManifest.version,
+          implementationVersion: localManifest.id,
+        }),
+        reasonCodes: ["WEBGPU_FALLBACK"],
       }),
     });
     expect(configure).toHaveBeenCalledWith(
@@ -389,9 +417,13 @@ describe("inference pipeline", () => {
       requestId: "replace-ready-worker",
       payload: {
         state: "initializing",
-        classifierId: "unavailable",
-        modelVersion: "unavailable",
         backend: "mock",
+        runtimeIdentity: null,
+        calibrationCoverage: "none",
+        calibrationSetDigest: null,
+        profileCount: 0,
+        earliestExpiry: null,
+        reasonCodes: [],
       },
     });
   });

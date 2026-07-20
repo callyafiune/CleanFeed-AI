@@ -93,9 +93,38 @@ const modelStates = new Set<string>([
   "unavailable",
   "initializing",
   "ready",
+  "degraded",
   "disposing",
   "error",
 ]);
+// Superset reason codes valid on an evidence assessment, a decision or a model
+// status: every legacy reason code plus the model-evidence codes and the
+// WebGPU-fallback status signal.
+const decisionReasonCodes = new Set<string>([
+  ...reasonCodes,
+  "LOCALIZED_SIGNAL",
+  "LIMITED_EVIDENCE",
+  "UNSUPPORTED_LANGUAGE",
+  "TEXT_TOO_SHORT",
+  "LOW_COVERAGE",
+  "TRUNCATED_INPUT",
+  "TOKENIZER_APPROXIMATE",
+  "NON_LEXICAL_CONTENT",
+  "MODEL_PROFILE_MISSING",
+  "MODEL_PROFILE_MISMATCH",
+  "PROFILE_EXPIRED",
+  "BACKEND_ERROR",
+  "ARTIFACT_MISMATCH",
+  "DOCUMENT_EVIDENCE_PENDING",
+  "CIRCUIT_BREAKER_OPEN",
+  "WEBGPU_FALLBACK",
+]);
+const evidenceQualities = new Set<string>([
+  "sufficient",
+  "limited",
+  "unsupported",
+]);
+const calibrationCoverages = new Set<string>(["none", "partial", "complete"]);
 
 type Route = readonly [ExtensionContext, ExtensionContext];
 const allowedRoutes: Record<MessageType, readonly Route[]> = {
@@ -355,6 +384,9 @@ function isClassificationResult(value: unknown): boolean {
     "status",
     "wordCount",
     "tokenCount",
+    "runtimeIdentity",
+    "evidence",
+    "decision",
     "modelVersion",
     "modelId",
     "backend",
@@ -366,7 +398,8 @@ function isClassificationResult(value: unknown): boolean {
     "chunks",
     "aggregation",
     "explanation",
-    "decision",
+    "selectedProfileDigest",
+    "cacheValidUntil",
     "errorCode",
     "stageTimings",
   ];
@@ -382,6 +415,9 @@ function isClassificationResult(value: unknown): boolean {
     isStringInSet(value.status, classificationStatuses) &&
     isNonNegativeInteger(value.wordCount) &&
     isNonNegativeInteger(value.tokenCount) &&
+    isRuntimeIdentity(value.runtimeIdentity) &&
+    isEvidenceAssessment(value.evidence) &&
+    isDecisionOutcome(value.decision) &&
     isBoundedString(value.modelVersion, 128) &&
     isBoundedString(value.modelId, 128) &&
     isStringInSet(value.backend, backends) &&
@@ -391,9 +427,72 @@ function isClassificationResult(value: unknown): boolean {
     isOptional(value.chunks, isChunkResults) &&
     isOptional(value.aggregation, isAggregationResult) &&
     isOptional(value.explanation, isClassificationExplanation) &&
-    isOptional(value.decision, isDecisionOutcome) &&
+    isOptional(value.selectedProfileDigest, (item) =>
+      isBoundedString(item, 128),
+    ) &&
+    isOptional(value.cacheValidUntil, (item) => isBoundedString(item, 64)) &&
     isOptional(value.errorCode, isErrorCode) &&
     isOptional(value.stageTimings, isStageTimings)
+  );
+}
+
+function isRuntimeIdentity(value: unknown): boolean {
+  if (!isSafeRecord(value)) {
+    return false;
+  }
+  if (value.kind === "builtin") {
+    return (
+      hasExactKeys(value, [
+        "kind",
+        "modelId",
+        "modelVersion",
+        "implementationVersion",
+      ]) &&
+      (value.modelId === "mock" || value.modelId === "stylometric") &&
+      isBoundedString(value.modelVersion, 128) &&
+      isBoundedString(value.implementationVersion, 128)
+    );
+  }
+  if (value.kind === "bundle") {
+    return (
+      hasExactKeys(value, [
+        "kind",
+        "modelId",
+        "modelVersion",
+        "bundleDigest",
+        "tokenizerDigest",
+        "aggregationVersion",
+        "contentCompositionVersion",
+        "calibrationSetDigest",
+      ]) &&
+      isBoundedString(value.modelId, 128) &&
+      isBoundedString(value.modelVersion, 128) &&
+      isBoundedString(value.bundleDigest, 128) &&
+      isBoundedString(value.tokenizerDigest, 128) &&
+      isBoundedString(value.aggregationVersion, 128) &&
+      isBoundedString(value.contentCompositionVersion, 128) &&
+      isBoundedString(value.calibrationSetDigest, 128)
+    );
+  }
+  return false;
+}
+
+function isEvidenceAssessment(value: unknown): boolean {
+  return (
+    hasExactKeys(value, [
+      "quality",
+      "coverage",
+      "lexicalRatio",
+      "truncated",
+      "exactTokenizer",
+      "reasonCodes",
+    ]) &&
+    isStringInSet(value.quality, evidenceQualities) &&
+    isScore(value.coverage) &&
+    isScore(value.lexicalRatio) &&
+    typeof value.truncated === "boolean" &&
+    typeof value.exactTokenizer === "boolean" &&
+    isDecisionReasonCodeList(value.reasonCodes)
   );
 }
 
@@ -494,14 +593,46 @@ function isDecisionOutcome(value: unknown): boolean {
       "calibratedScore",
       "actionCeiling",
       "abstained",
+      "presentationAllowed",
+      "triggers",
       "reasonCodes",
     ]) &&
     isStringInSet(value.status, classificationStatuses) &&
     isScore(value.calibratedScore) &&
     isStringInSet(value.actionCeiling, presentationModes) &&
     typeof value.abstained === "boolean" &&
-    isReasonCodeList(value.reasonCodes)
+    typeof value.presentationAllowed === "boolean" &&
+    isTriggerList(value.triggers) &&
+    isDecisionReasonCodeList(value.reasonCodes)
   );
+}
+
+/**
+ * Decision triggers: 0-2 unique entries in canonical order (`document` before
+ * `localized`). Duplicates or a `localized`-before-`document` ordering are
+ * rejected so the protocol accepts exactly one canonical encoding.
+ */
+function isTriggerList(value: unknown): boolean {
+  if (!Array.isArray(value) || value.length > 2) {
+    return false;
+  }
+  const rank: Record<string, number> = { document: 0, localized: 1 };
+  const seen = new Set<string>();
+  let previousRank = -1;
+  for (const item of value) {
+    if (typeof item !== "string" || !(item in rank)) {
+      return false;
+    }
+    if (seen.has(item)) {
+      return false;
+    }
+    seen.add(item);
+    if (rank[item]! < previousRank) {
+      return false;
+    }
+    previousRank = rank[item]!;
+  }
+  return true;
 }
 
 function isReasonCodeList(value: unknown): boolean {
@@ -509,6 +640,16 @@ function isReasonCodeList(value: unknown): boolean {
     Array.isArray(value) &&
     value.length <= maximumCollectionLength &&
     value.every((item) => typeof item === "string" && reasonCodes.has(item))
+  );
+}
+
+function isDecisionReasonCodeList(value: unknown): boolean {
+  return (
+    Array.isArray(value) &&
+    value.length <= maximumCollectionLength &&
+    value.every(
+      (item) => typeof item === "string" && decisionReasonCodes.has(item),
+    )
   );
 }
 
@@ -552,22 +693,29 @@ function isModelStatus(value: unknown): boolean {
   return (
     hasOnlyAllowedKeys(
       value,
-      ["state", "classifierId", "modelVersion", "backend"],
       [
-        "fallbackFrom",
-        "warning",
-        "errorCode",
-        "initializedAt",
-        "supportsBatching",
+        "state",
+        "backend",
+        "runtimeIdentity",
+        "calibrationCoverage",
+        "calibrationSetDigest",
+        "profileCount",
+        "earliestExpiry",
+        "reasonCodes",
       ],
+      ["initializedAt", "supportsBatching"],
     ) &&
     isStringInSet(value.state, modelStates) &&
-    isBoundedString(value.classifierId, 128) &&
-    isBoundedString(value.modelVersion, 128) &&
     isStringInSet(value.backend, backends) &&
-    isOptional(value.fallbackFrom, (item) => item === "webgpu") &&
-    isOptional(value.warning, (item) => item === "WEBGPU_FALLBACK") &&
-    isOptional(value.errorCode, isErrorCode) &&
+    (value.runtimeIdentity === null ||
+      isRuntimeIdentity(value.runtimeIdentity)) &&
+    isStringInSet(value.calibrationCoverage, calibrationCoverages) &&
+    (value.calibrationSetDigest === null ||
+      isBoundedString(value.calibrationSetDigest, 128)) &&
+    isNonNegativeInteger(value.profileCount) &&
+    (value.earliestExpiry === null ||
+      isBoundedString(value.earliestExpiry, 64)) &&
+    isDecisionReasonCodeList(value.reasonCodes) &&
     isOptional(value.initializedAt, isNonNegativeFinite) &&
     isOptional(value.supportsBatching, (item) => typeof item === "boolean")
   );

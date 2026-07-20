@@ -6,8 +6,17 @@ import type {
 } from "@/inference/classifier-types";
 import { loadLocalSequenceClassifier } from "@/inference/model-loader";
 import type { CleanFeedModelManifest } from "@/inference/model-bundle";
+import {
+  CONTENT_COMPOSITION_VERSION,
+  computeContentComposition,
+} from "../../contracts/content-composition";
 import { CleanFeedError } from "@/shared/errors";
 import { getTextLengthInfo } from "@/shared/word-count";
+import type { RuntimeModelIdentity } from "@/shared/types";
+
+/** Canonical digest of the empty calibration set (SHA-256 of "[]"). */
+const EMPTY_CALIBRATION_SET_DIGEST =
+  "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945";
 
 export interface ModelTokens {
   /** Model input IDs, including the model-specific special tokens. */
@@ -198,9 +207,10 @@ export class OnnxTextClassifier implements TextClassifier {
       throwIfAborted(options.signal);
       const scores = parseScores(output, this.manifest);
       const tokenCount = tokens.inputIds.length - tokens.specialTokenCount;
+      const aiScore = scores[this.manifest.labels.ai]!;
 
       return {
-        aiScore: scores[this.manifest.labels.ai]!,
+        aiScore,
         humanScore: scores[this.manifest.labels.human]!,
         confidence: "low",
         // Calibration and presentation policy are deliberately outside the
@@ -211,6 +221,26 @@ export class OnnxTextClassifier implements TextClassifier {
         ...(options.language === undefined
           ? {}
           : { language: options.language }),
+        runtimeIdentity: this.getRuntimeIdentity(),
+        evidence: {
+          quality: "limited",
+          coverage: 1,
+          lexicalRatio: computeContentComposition(text).lexicalRatio,
+          truncated: false,
+          exactTokenizer: true,
+          reasonCodes: [],
+        },
+        // Placeholder decision: the worker replaces it with the calibrated
+        // outcome. Kept at the conservative indicator ceiling until then.
+        decision: {
+          status: "inconclusive",
+          calibratedScore: aiScore,
+          actionCeiling: "indicator",
+          abstained: false,
+          presentationAllowed: true,
+          triggers: [],
+          reasonCodes: [],
+        },
         modelVersion: this.manifest.version,
         modelId: this.manifest.id,
         backend: this.backend,
@@ -259,6 +289,26 @@ export class OnnxTextClassifier implements TextClassifier {
       supportedLanguages: [...this.manifest.supportedLanguages],
       maximumTokens: this.manifest.maximumTokens,
       supportsBatching: false,
+    };
+  }
+
+  /**
+   * Bundle identity for this model. The MVP runtime manifest (schemaVersion 1)
+   * does not yet carry the v2 aggregation coordinate, so it is sourced
+   * conservatively from the manifest here; wiring it from the sealed v2 bundle
+   * manifest is a later task. No real bundle ships in the MVP, so this path is
+   * inert today.
+   */
+  getRuntimeIdentity(): RuntimeModelIdentity {
+    return {
+      kind: "bundle",
+      modelId: this.manifest.id,
+      modelVersion: this.manifest.version,
+      bundleDigest: this.manifest.sha256.model,
+      tokenizerDigest: this.manifest.sha256.tokenizer,
+      aggregationVersion: this.manifest.calibrationVersion,
+      contentCompositionVersion: CONTENT_COMPOSITION_VERSION,
+      calibrationSetDigest: EMPTY_CALIBRATION_SET_DIGEST,
     };
   }
 

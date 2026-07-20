@@ -47,9 +47,23 @@ describe("WorkerHost", () => {
         requestId: "worker-status",
         payload: {
           state: "ready",
-          classifierId: "local-model",
-          modelVersion: "1.0.0",
           backend: "wasm",
+          runtimeIdentity: {
+            kind: "bundle",
+            modelId: "local-model",
+            modelVersion: "1.0.0",
+            bundleDigest: "a".repeat(64),
+            tokenizerDigest: "b".repeat(64),
+            aggregationVersion: "tmr-aggregation-v2",
+            contentCompositionVersion: "lexical-content-v1",
+            calibrationSetDigest:
+              "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+          },
+          calibrationCoverage: "none",
+          calibrationSetDigest: null,
+          profileCount: 0,
+          earliestExpiry: null,
+          reasonCodes: [],
         },
       },
     } as MessageEvent<unknown>);
@@ -61,10 +75,9 @@ describe("WorkerHost", () => {
     worker.onerror?.(new Event("error") as ErrorEvent);
     expect(host.getModelStatus()).toMatchObject({
       state: "error",
-      errorCode: "WORKER_UNAVAILABLE",
-      classifierId: "unavailable",
-      modelVersion: "unavailable",
       backend: "mock",
+      runtimeIdentity: null,
+      reasonCodes: ["BACKEND_ERROR"],
     });
   });
 
@@ -77,10 +90,23 @@ describe("WorkerHost", () => {
         requestId: "ready",
         payload: {
           state: "ready",
-          classifierId: "previous-model",
-          modelVersion: "1.0.0",
           backend: "wasm",
-          fallbackFrom: "webgpu",
+          runtimeIdentity: {
+            kind: "bundle",
+            modelId: "previous-model",
+            modelVersion: "1.0.0",
+            bundleDigest: "a".repeat(64),
+            tokenizerDigest: "b".repeat(64),
+            aggregationVersion: "tmr-aggregation-v2",
+            contentCompositionVersion: "lexical-content-v1",
+            calibrationSetDigest:
+              "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+          },
+          calibrationCoverage: "none",
+          calibrationSetDigest: null,
+          profileCount: 0,
+          earliestExpiry: null,
+          reasonCodes: ["WEBGPU_FALLBACK"],
           supportsBatching: true,
         },
       },
@@ -91,22 +117,34 @@ describe("WorkerHost", () => {
         requestId: "disposing",
         payload: {
           state: "disposing",
-          classifierId: "previous-model",
-          modelVersion: "1.0.0",
           backend: "wasm",
-          fallbackFrom: "webgpu",
+          runtimeIdentity: {
+            kind: "bundle",
+            modelId: "previous-model",
+            modelVersion: "1.0.0",
+            bundleDigest: "a".repeat(64),
+            tokenizerDigest: "b".repeat(64),
+            aggregationVersion: "tmr-aggregation-v2",
+            contentCompositionVersion: "lexical-content-v1",
+            calibrationSetDigest:
+              "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+          },
+          calibrationCoverage: "none",
+          calibrationSetDigest: null,
+          profileCount: 0,
+          earliestExpiry: null,
+          reasonCodes: ["WEBGPU_FALLBACK"],
           supportsBatching: true,
         },
       },
     } as MessageEvent<unknown>);
 
+    // A non-ready status drops the model identity and batching capability.
     expect(host.getModelStatus()).toMatchObject({
       state: "disposing",
-      classifierId: "unavailable",
-      modelVersion: "unavailable",
       backend: "mock",
+      runtimeIdentity: null,
     });
-    expect(host.getModelStatus()).not.toHaveProperty("fallbackFrom");
     expect(host.getModelStatus()).not.toHaveProperty("supportsBatching");
   });
 

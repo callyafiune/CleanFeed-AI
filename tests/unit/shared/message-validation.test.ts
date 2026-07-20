@@ -44,11 +44,50 @@ const validClassificationResult = {
   status: "possibly_ai",
   wordCount: 100,
   tokenCount: 128,
+  runtimeIdentity: {
+    kind: "builtin",
+    modelId: "stylometric",
+    modelVersion: "1.0.0",
+    implementationVersion: "stylometric-v1",
+  },
+  evidence: {
+    quality: "limited",
+    coverage: 1,
+    lexicalRatio: 1,
+    truncated: false,
+    exactTokenizer: false,
+    reasonCodes: [],
+  },
+  decision: {
+    status: "possibly_ai",
+    calibratedScore: 0.8,
+    actionCeiling: "indicator",
+    abstained: false,
+    presentationAllowed: true,
+    triggers: [],
+    reasonCodes: [],
+  },
   modelVersion: "demo-1",
   modelId: "mock",
   backend: "mock",
   processingTimeMs: 10,
   demo: true,
+};
+
+const validModelStatus = {
+  state: "ready",
+  backend: "mock",
+  runtimeIdentity: {
+    kind: "builtin",
+    modelId: "mock",
+    modelVersion: "demo-1",
+    implementationVersion: "mock",
+  },
+  calibrationCoverage: "none",
+  calibrationSetDigest: null,
+  profileCount: 0,
+  earliestExpiry: null,
+  reasonCodes: [],
 };
 
 const validMessages = [
@@ -120,12 +159,7 @@ const validMessages = [
     source: "background",
     target: "popup",
     type: "MODEL_STATUS_RESULT",
-    payload: {
-      state: "ready",
-      classifierId: "mock",
-      modelVersion: "demo-1",
-      backend: "mock",
-    },
+    payload: validModelStatus,
   },
   {
     source: "content",
@@ -174,12 +208,7 @@ const validMessages = [
     source: "worker",
     target: "offscreen",
     type: "WORKER_STATUS",
-    payload: {
-      state: "ready",
-      classifierId: "mock",
-      modelVersion: "demo-1",
-      backend: "mock",
-    },
+    payload: validModelStatus,
   },
   {
     source: "background",
@@ -368,47 +397,48 @@ describe("parseExtensionMessage", () => {
         source: "background",
         target: "popup",
         type: "MODEL_STATUS_RESULT",
-        payload: {
-          state: "disposing",
-          classifierId: "mock",
-          modelVersion: "demo-1",
-          backend: "mock",
-        },
+        payload: { ...validModelStatus, state: "disposing" },
       }),
     ).toMatchObject({ type: "MODEL_STATUS_RESULT" });
   });
 
-  it("accepts a model status carrying the WebGPU fallback warning", () => {
+  it("accepts a model status carrying the WebGPU fallback reason code", () => {
     expect(
       parseExtensionMessage({
         source: "background",
         target: "popup",
         type: "MODEL_STATUS_RESULT",
         payload: {
-          state: "ready",
-          classifierId: "local-model",
-          modelVersion: "1.0.0",
+          ...validModelStatus,
           backend: "wasm",
-          fallbackFrom: "webgpu",
-          warning: "WEBGPU_FALLBACK",
+          reasonCodes: ["WEBGPU_FALLBACK"],
         },
       }),
     ).toMatchObject({ type: "MODEL_STATUS_RESULT" });
   });
 
-  it("rejects a model status with an unknown warning value", () => {
+  it("rejects a model status with an unknown reason code", () => {
     expect(() =>
       parseExtensionMessage({
         source: "background",
         target: "popup",
         type: "MODEL_STATUS_RESULT",
         payload: {
-          state: "ready",
-          classifierId: "local-model",
-          modelVersion: "1.0.0",
+          ...validModelStatus,
           backend: "wasm",
-          warning: "SOMETHING_ELSE",
+          reasonCodes: ["SOMETHING_ELSE"],
         },
+      }),
+    ).toThrow("INVALID_MESSAGE");
+  });
+
+  it("rejects a model status carrying a removed legacy field", () => {
+    expect(() =>
+      parseExtensionMessage({
+        source: "background",
+        target: "popup",
+        type: "MODEL_STATUS_RESULT",
+        payload: { ...validModelStatus, warning: "WEBGPU_FALLBACK" },
       }),
     ).toThrow("INVALID_MESSAGE");
   });

@@ -18,8 +18,125 @@ import type {
   ModelManifestV2,
   ReleaseDescriptorV1,
 } from "../../scripts/verify-model-bundle.mjs";
+import type {
+  ClassificationResult,
+  DecisionOutcome,
+  EvidenceAssessment,
+  ModelStatus,
+  RuntimeModelIdentity,
+} from "@/shared/types";
 
 const PINNED_REVISION = "b9aa251e5bcda7e429fcc936767d921435945b60";
+/** SHA-256 of the canonical empty calibration set ("[]"). */
+const EMPTY_SET_DIGEST =
+  "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945";
+
+type BuiltinIdentity = Extract<RuntimeModelIdentity, { kind: "builtin" }>;
+type BundleIdentity = Extract<RuntimeModelIdentity, { kind: "bundle" }>;
+
+/** A builtin runtime identity (defaults to the stylometric fallback). */
+export function createBuiltinRuntimeIdentity(
+  overrides: Partial<BuiltinIdentity> = {},
+): RuntimeModelIdentity {
+  return {
+    kind: "builtin",
+    modelId: "stylometric",
+    modelVersion: "1.0.0",
+    implementationVersion: "stylometric-v1",
+    ...overrides,
+  };
+}
+
+/** A bundle runtime identity for the pinned TMR detector. */
+export function createBundleRuntimeIdentity(
+  overrides: Partial<BundleIdentity> = {},
+): RuntimeModelIdentity {
+  return {
+    kind: "bundle",
+    modelId: "tmr-ai-text-detector",
+    modelVersion: PINNED_REVISION,
+    bundleDigest: "a".repeat(64),
+    tokenizerDigest: "b".repeat(64),
+    aggregationVersion: "tmr-aggregation-v2",
+    contentCompositionVersion: "lexical-content-v1",
+    calibrationSetDigest: EMPTY_SET_DIGEST,
+    ...overrides,
+  };
+}
+
+/** A conservative `limited` evidence assessment. */
+export function createEvidenceAssessment(
+  overrides: Partial<EvidenceAssessment> = {},
+): EvidenceAssessment {
+  return {
+    quality: "limited",
+    coverage: 1,
+    lexicalRatio: 1,
+    truncated: false,
+    exactTokenizer: false,
+    reasonCodes: [],
+    ...overrides,
+  };
+}
+
+/** A conservative, presentable, indicator-ceiling decision. */
+export function createDecisionOutcome(
+  overrides: Partial<DecisionOutcome> = {},
+): DecisionOutcome {
+  return {
+    status: "possibly_ai",
+    calibratedScore: 0.5,
+    actionCeiling: "indicator",
+    abstained: false,
+    presentationAllowed: true,
+    triggers: [],
+    reasonCodes: [],
+    ...overrides,
+  };
+}
+
+/**
+ * A complete builtin `ClassificationResult`. Deep overrides win, and the
+ * nested identity/evidence/decision default to the conservative builtin shape.
+ */
+export function createClassificationResult(
+  overrides: Partial<ClassificationResult> = {},
+): ClassificationResult {
+  return {
+    aiScore: 0.5,
+    humanScore: 0.5,
+    confidence: "low",
+    status: "possibly_ai",
+    wordCount: 120,
+    tokenCount: 120,
+    runtimeIdentity: createBuiltinRuntimeIdentity(),
+    evidence: createEvidenceAssessment(),
+    decision: createDecisionOutcome(),
+    modelVersion: "1.0.0",
+    modelId: "stylometric-v1",
+    backend: "mock",
+    processingTimeMs: 1,
+    demo: true,
+    ...overrides,
+  };
+}
+
+/** A ready `ModelStatus` with no calibration coverage (the MVP default). */
+export function createModelStatus(
+  overrides: Partial<ModelStatus> = {},
+): ModelStatus {
+  return {
+    state: "ready",
+    backend: "mock",
+    runtimeIdentity: createBuiltinRuntimeIdentity(),
+    calibrationCoverage: "none",
+    calibrationSetDigest: null,
+    profileCount: 0,
+    earliestExpiry: null,
+    reasonCodes: [],
+    ...overrides,
+  };
+}
 
 /** A fresh, mutable copy of the seven pinned upstream records. */
 export function createSourceArtifacts(): ArtifactRecord[] {

@@ -3,6 +3,11 @@ import { describe, expect, it } from "vitest";
 import { calibrateResult } from "@/inference/calibration";
 import { buildExplanation } from "@/inference/explanation";
 import type { ClassificationResult, DecisionOutcome } from "@/shared/types";
+import {
+  createBundleRuntimeIdentity,
+  createDecisionOutcome,
+  createEvidenceAssessment,
+} from "../../helpers/model-fixtures";
 
 function result(): ClassificationResult {
   return {
@@ -23,6 +28,9 @@ function result(): ClassificationResult {
       highScoreRatio: 0.9,
       chunkAgreement: 0.96,
     },
+    runtimeIdentity: createBundleRuntimeIdentity(),
+    evidence: createEvidenceAssessment(),
+    decision: createDecisionOutcome(),
     modelVersion: "test",
     modelId: "test-model",
     backend: "wasm",

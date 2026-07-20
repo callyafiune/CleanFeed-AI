@@ -32,6 +32,73 @@ export type ReasonCode =
   | "LOW_MODEL_CONFIDENCE"
   | "CHUNK_DISAGREEMENT";
 
+/**
+ * Full runtime identity of the model that produced a result. A `bundle`
+ * identity seals every coordinate that invalidates a calibration profile; a
+ * `builtin` identity names the two demonstration-grade classifiers. The
+ * `builtin.modelId` union is deliberately closed to `"mock" | "stylometric"`.
+ */
+export type RuntimeModelIdentity =
+  | {
+      kind: "bundle";
+      modelId: string;
+      modelVersion: string;
+      bundleDigest: string;
+      tokenizerDigest: string;
+      aggregationVersion: string;
+      contentCompositionVersion: string;
+      calibrationSetDigest: string;
+    }
+  | {
+      kind: "builtin";
+      modelId: "mock" | "stylometric";
+      modelVersion: string;
+      implementationVersion: string;
+    };
+
+export type EvidenceQuality = "sufficient" | "limited" | "unsupported";
+export type DecisionTrigger = "document" | "localized";
+
+/**
+ * Reason codes attached to an evidence assessment or a decision. This is a
+ * SUPERSET: it enumerates every legacy {@link ReasonCode} (so the existing
+ * calibration engine's codes remain valid) plus the model-evidence codes the
+ * TMR runtime introduces and `WEBGPU_FALLBACK`, which surfaces a WebGPU→WASM
+ * fallback on a {@link ModelStatus}.
+ */
+export type DecisionReasonCode =
+  | ReasonCode
+  | "LOCALIZED_SIGNAL"
+  | "LIMITED_EVIDENCE"
+  | "UNSUPPORTED_LANGUAGE"
+  | "TEXT_TOO_SHORT"
+  | "LOW_COVERAGE"
+  | "TRUNCATED_INPUT"
+  | "TOKENIZER_APPROXIMATE"
+  | "NON_LEXICAL_CONTENT"
+  | "MODEL_PROFILE_MISSING"
+  | "MODEL_PROFILE_MISMATCH"
+  | "PROFILE_EXPIRED"
+  | "BACKEND_ERROR"
+  | "ARTIFACT_MISMATCH"
+  | "DOCUMENT_EVIDENCE_PENDING"
+  | "CIRCUIT_BREAKER_OPEN"
+  | "WEBGPU_FALLBACK";
+
+/**
+ * The evidence quality behind a decision. The REAL distributed assessment
+ * (coverage/agreement over windows, OOD) lands in a later task; builtins
+ * report a conservative `limited` assessment today.
+ */
+export interface EvidenceAssessment {
+  quality: EvidenceQuality;
+  coverage: number;
+  lexicalRatio: number;
+  truncated: boolean;
+  exactTokenizer: boolean;
+  reasonCodes: DecisionReasonCode[];
+}
+
 export interface TextLengthInfo {
   characterCount: number;
   wordCount: number;
@@ -98,7 +165,18 @@ export interface DecisionOutcome {
   calibratedScore: number;
   actionCeiling: PresentationMode;
   abstained: boolean;
-  reasonCodes: ReasonCode[];
+  /**
+   * Whether the decision permits presenting a result at all. Mirrors current
+   * behaviour: a non-abstained decision is presentable (at its ceiling). The
+   * profile-driven presentation gate is a later task.
+   */
+  presentationAllowed: boolean;
+  /**
+   * Which aggregation paths fired (document/localized). The distributed
+   * aggregation that populates this lands in a later task; today it is empty.
+   */
+  triggers: DecisionTrigger[];
+  reasonCodes: DecisionReasonCode[];
 }
 
 export interface ClassificationResult {
@@ -112,7 +190,16 @@ export interface ClassificationResult {
   chunks?: ChunkResult[];
   aggregation?: AggregationResult;
   explanation?: ClassificationExplanation;
-  decision?: DecisionOutcome;
+  /** Full identity of the model that produced this result. */
+  runtimeIdentity: RuntimeModelIdentity;
+  /** The evidence behind the decision (conservative for builtins today). */
+  evidence: EvidenceAssessment;
+  /** The final decision. Required: every result carries an explicit outcome. */
+  decision: DecisionOutcome;
+  /** Digest of the calibration profile used for THIS request only (never global). */
+  selectedProfileDigest?: string;
+  /** Upper bound on cache validity, set from the selected profile's expiry. */
+  cacheValidUntil?: string;
   modelVersion: string;
   modelId: string;
   backend: Backend;
@@ -154,6 +241,12 @@ export interface TextClassifier {
   ): Promise<ClassificationResult>;
   dispose(): Promise<void>;
   getMetadata(): ClassifierMetadata;
+  /**
+   * Full runtime identity of this classifier. Optional: builtin classifiers
+   * are identified from their metadata via a shared helper; a bundle-backed
+   * classifier (ONNX) overrides this to expose its sealed bundle identity.
+   */
+  getRuntimeIdentity?(): RuntimeModelIdentity;
 }
 
 export interface BatchTextClassifier extends TextClassifier {
@@ -164,13 +257,23 @@ export interface BatchTextClassifier extends TextClassifier {
 }
 
 export interface ModelStatus {
-  state: "unavailable" | "initializing" | "ready" | "disposing" | "error";
-  classifierId: string;
-  modelVersion: string;
+  state:
+    | "unavailable"
+    | "initializing"
+    | "ready"
+    | "degraded"
+    | "disposing"
+    | "error";
   backend: Backend;
-  fallbackFrom?: "webgpu";
-  warning?: "WEBGPU_FALLBACK";
-  errorCode?: ErrorCode;
+  /** Identity of the loaded model, or null before one is initialized. */
+  runtimeIdentity: RuntimeModelIdentity | null;
+  /** Coverage of the declared release coordinates by valid profiles. */
+  calibrationCoverage: "none" | "partial" | "complete";
+  calibrationSetDigest: string | null;
+  profileCount: number;
+  earliestExpiry: string | null;
+  /** Status-level reason codes (e.g. WEBGPU_FALLBACK, a backend error code). */
+  reasonCodes: DecisionReasonCode[];
   initializedAt?: number;
   supportsBatching?: boolean;
 }

@@ -53,9 +53,18 @@ describe("default Chrome APIs", () => {
             type: "MODEL_STATUS_RESULT",
             payload: {
               state: "ready",
-              classifierId: "mock",
-              modelVersion: "1.0.0",
               backend: "mock",
+              runtimeIdentity: {
+                kind: "builtin",
+                modelId: "mock",
+                modelVersion: "1.0.0",
+                implementationVersion: "mock",
+              },
+              calibrationCoverage: "none",
+              calibrationSetDigest: null,
+              profileCount: 0,
+              earliestExpiry: null,
+              reasonCodes: [],
             },
           },
     );

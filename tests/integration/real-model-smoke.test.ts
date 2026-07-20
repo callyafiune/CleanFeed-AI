@@ -131,9 +131,23 @@ describe("model profiling harness", () => {
 describe("resolveActiveModelProfile", () => {
   const readyStatus: ModelStatus = {
     state: "ready",
-    classifierId: "candidate",
-    modelVersion: "1.0.0",
     backend: "wasm",
+    runtimeIdentity: {
+      kind: "bundle",
+      modelId: "candidate",
+      modelVersion: "1.0.0",
+      bundleDigest: "a".repeat(64),
+      tokenizerDigest: "b".repeat(64),
+      aggregationVersion: "tmr-aggregation-v2",
+      contentCompositionVersion: "lexical-content-v1",
+      calibrationSetDigest:
+        "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+    },
+    calibrationCoverage: "none",
+    calibrationSetDigest: null,
+    profileCount: 0,
+    earliestExpiry: null,
+    reasonCodes: [],
   };
 
   // Adjusted after the honesty review: with no status, the identity that will
@@ -164,9 +178,18 @@ describe("resolveActiveModelProfile", () => {
       resolveActiveModelProfile({
         status: {
           state: "ready",
-          classifierId: "stylometric-v1",
-          modelVersion: "1.0.0",
           backend: "mock",
+          runtimeIdentity: {
+            kind: "builtin",
+            modelId: "stylometric",
+            modelVersion: "1.0.0",
+            implementationVersion: "stylometric-v1",
+          },
+          calibrationCoverage: "none",
+          calibrationSetDigest: null,
+          profileCount: 0,
+          earliestExpiry: null,
+          reasonCodes: [],
         },
       }),
     ).toEqual(STYLOMETRIC_MODEL_PROFILE);
@@ -174,9 +197,18 @@ describe("resolveActiveModelProfile", () => {
       resolveActiveModelProfile({
         status: {
           state: "ready",
-          classifierId: "mock",
-          modelVersion: "1.0.0",
           backend: "mock",
+          runtimeIdentity: {
+            kind: "builtin",
+            modelId: "mock",
+            modelVersion: "1.0.0",
+            implementationVersion: "mock",
+          },
+          calibrationCoverage: "none",
+          calibrationSetDigest: null,
+          profileCount: 0,
+          earliestExpiry: null,
+          reasonCodes: [],
         },
       }),
     ).toEqual(MOCK_MODEL_PROFILE);

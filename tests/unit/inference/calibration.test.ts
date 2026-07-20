@@ -6,6 +6,11 @@ import {
   resolveCalibrationProfile,
 } from "@/inference/calibration";
 import type { AggregationResult, ClassificationResult } from "@/shared/types";
+import {
+  createBundleRuntimeIdentity,
+  createDecisionOutcome,
+  createEvidenceAssessment,
+} from "../../helpers/model-fixtures";
 
 const aggregation: AggregationResult = {
   finalScore: 0.95,
@@ -30,6 +35,9 @@ function baseResult(
     tokenCount: 180,
     language: "pt",
     aggregation,
+    runtimeIdentity: createBundleRuntimeIdentity(),
+    evidence: createEvidenceAssessment(),
+    decision: createDecisionOutcome(),
     modelVersion: "test",
     modelId: "test-model",
     backend: "wasm",

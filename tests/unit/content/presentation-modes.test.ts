@@ -14,6 +14,11 @@ import {
 import { DEFAULT_SETTINGS } from "@/shared/constants";
 import type { EffectiveSettings } from "@/shared/settings-types";
 import type { ClassificationResult, PresentationMode } from "@/shared/types";
+import {
+  createBuiltinRuntimeIdentity,
+  createDecisionOutcome,
+  createEvidenceAssessment,
+} from "../../helpers/model-fixtures";
 
 const COLLAPSE_COPY =
   "Publicação recolhida por apresentar fortes indícios de geração por IA.";
@@ -39,6 +44,13 @@ function strongAiResult(): ClassificationResult {
     status: "strong_ai_indication",
     wordCount: 140,
     tokenCount: 150,
+    runtimeIdentity: createBuiltinRuntimeIdentity(),
+    evidence: createEvidenceAssessment(),
+    decision: createDecisionOutcome({
+      status: "strong_ai_indication",
+      actionCeiling: "hide",
+      calibratedScore: 0.98,
+    }),
     modelVersion: "mock-v1",
     modelId: "mock",
     backend: "mock",

@@ -4,6 +4,11 @@ import { applyBadge } from "@/content/presentation/badge";
 import { restorePresentation } from "@/content/presentation/restore";
 import { DEFAULT_SETTINGS } from "@/shared/constants";
 import type { ClassificationResult } from "@/shared/types";
+import {
+  createBuiltinRuntimeIdentity,
+  createDecisionOutcome,
+  createEvidenceAssessment,
+} from "../../helpers/model-fixtures";
 
 function result(status: ClassificationResult["status"]): ClassificationResult {
   return {
@@ -13,6 +18,9 @@ function result(status: ClassificationResult["status"]): ClassificationResult {
     status,
     wordCount: 140,
     tokenCount: 150,
+    runtimeIdentity: createBuiltinRuntimeIdentity(),
+    evidence: createEvidenceAssessment(),
+    decision: createDecisionOutcome({ status }),
     modelVersion: "test",
     modelId: "test",
     backend: "mock",

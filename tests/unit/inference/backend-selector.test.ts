@@ -161,9 +161,13 @@ describe("BackendSelector", () => {
 
     expect(lifecycle.getStatus()).toEqual({
       state: "unavailable",
-      classifierId: "unavailable",
-      modelVersion: "unavailable",
       backend: "mock",
+      runtimeIdentity: null,
+      calibrationCoverage: "none",
+      calibrationSetDigest: null,
+      profileCount: 0,
+      earliestExpiry: null,
+      reasonCodes: [],
     });
   });
 
@@ -185,10 +189,13 @@ describe("BackendSelector", () => {
 
     expect(lifecycle.getStatus()).toEqual({
       state: "error",
-      classifierId: "unavailable",
-      modelVersion: "unavailable",
       backend: "mock",
-      errorCode: "MODEL_LOAD_FAILED",
+      runtimeIdentity: null,
+      calibrationCoverage: "none",
+      calibrationSetDigest: null,
+      profileCount: 0,
+      earliestExpiry: null,
+      reasonCodes: ["BACKEND_ERROR"],
     });
   });
 });

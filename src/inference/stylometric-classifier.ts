@@ -1,3 +1,8 @@
+import {
+  buildBuiltinDecision,
+  buildBuiltinEvidence,
+  buildBuiltinIdentity,
+} from "@/inference/builtin-runtime";
 import { statusFromScore } from "@/inference/mock-classifier";
 import {
   extractStylometricFeatures,
@@ -107,16 +112,20 @@ export class StylometricClassifier implements TextClassifier {
     const aiScore = scoreFromContributions(features.contributions);
     const reasonCodes = getStylometricReasonCodes(features);
     const length = getTextLengthInfo(normalizedText);
+    const status = statusFromScore(aiScore);
 
     return {
       aiScore,
       humanScore: 1 - aiScore,
       // Heuristic style evidence never earns more than low confidence.
       confidence: "low",
-      status: statusFromScore(aiScore),
+      status,
       wordCount: length.wordCount,
       tokenCount: length.wordCount,
       ...(options.language === undefined ? {} : { language: options.language }),
+      runtimeIdentity: buildBuiltinIdentity(metadata),
+      evidence: buildBuiltinEvidence(normalizedText),
+      decision: buildBuiltinDecision({ status, calibratedScore: aiScore }),
       // The computed signal codes travel with the result so the pipeline can
       // surface them; it must never invent stylistic reasons on its own.
       explanation: {

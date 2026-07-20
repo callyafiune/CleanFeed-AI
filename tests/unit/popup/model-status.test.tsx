@@ -6,6 +6,10 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { App, type PopupApi } from "@/popup/App";
 import { DEFAULT_SETTINGS } from "@/shared/constants";
 import type { PageStats } from "@/shared/types";
+import {
+  createBundleRuntimeIdentity,
+  createModelStatus,
+} from "../../helpers/model-fixtures";
 
 const stats: PageStats = {
   platform: "linkedin",
@@ -25,12 +29,15 @@ const stats: PageStats = {
 function fakePopupApi(): PopupApi {
   return {
     getPageStats: vi.fn().mockResolvedValue(stats),
-    getModelStatus: vi.fn().mockResolvedValue({
-      state: "ready",
-      classifierId: "mock",
-      modelVersion: "1.0.0",
-      backend: "wasm",
-    }),
+    getModelStatus: vi.fn().mockResolvedValue(
+      createModelStatus({
+        backend: "wasm",
+        runtimeIdentity: createBundleRuntimeIdentity({
+          modelId: "mock",
+          modelVersion: "1.0.0",
+        }),
+      }),
+    ),
     getSettings: vi.fn().mockResolvedValue(DEFAULT_SETTINGS),
     getActiveHost: vi.fn().mockResolvedValue("www.linkedin.com"),
     isDomainPaused: vi.fn().mockResolvedValue(false),
@@ -63,16 +70,18 @@ describe("popup model status", () => {
     expect(screen.queryByRole("status")).toBeNull();
   });
 
-  it("surfaces the explicit WebGPU fallback warning", async () => {
+  it("surfaces the WebGPU fallback via a status reason code", async () => {
     const api = fakePopupApi();
-    vi.mocked(api.getModelStatus).mockResolvedValue({
-      state: "ready",
-      classifierId: "local-model",
-      modelVersion: "1.0.0",
-      backend: "wasm",
-      fallbackFrom: "webgpu",
-      warning: "WEBGPU_FALLBACK",
-    });
+    vi.mocked(api.getModelStatus).mockResolvedValue(
+      createModelStatus({
+        backend: "wasm",
+        runtimeIdentity: createBundleRuntimeIdentity({
+          modelId: "local-model",
+          modelVersion: "1.0.0",
+        }),
+        reasonCodes: ["WEBGPU_FALLBACK"],
+      }),
+    );
     render(<App api={api} />);
 
     expect((await screen.findByRole("status")).textContent).toBe(

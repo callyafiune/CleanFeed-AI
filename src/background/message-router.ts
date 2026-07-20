@@ -214,11 +214,15 @@ export class BackgroundMessageRouter {
     request: MessageEnvelope<"MODEL_STATUS_REQUEST", undefined>,
   ): Promise<ExtensionMessage> {
     const status = await (this.options.modelStatus?.() ??
-      Promise.resolve({
-        state: "unavailable" as const,
-        classifierId: "mock",
-        modelVersion: this.options.modelKey,
-        backend: "mock" as const,
+      Promise.resolve<ModelStatus>({
+        state: "unavailable",
+        backend: "mock",
+        runtimeIdentity: null,
+        calibrationCoverage: "none",
+        calibrationSetDigest: null,
+        profileCount: 0,
+        earliestExpiry: null,
+        reasonCodes: [],
       }));
     return {
       source: "background",
@@ -300,10 +304,13 @@ export class RuntimeOffscreenClient implements OffscreenClient {
     }
     return {
       state: "error",
-      classifierId: "unavailable",
-      modelVersion: "unavailable",
       backend: "mock",
-      errorCode: "WORKER_UNAVAILABLE",
+      runtimeIdentity: null,
+      calibrationCoverage: "none",
+      calibrationSetDigest: null,
+      profileCount: 0,
+      earliestExpiry: null,
+      reasonCodes: ["BACKEND_ERROR"],
     };
   }
 

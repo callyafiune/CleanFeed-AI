@@ -6,6 +6,11 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { App, type ManualAnalysisApi } from "@/manual-analysis/App";
 import type { ClassificationRequest } from "@/shared/messages";
 import type { ClassificationResult } from "@/shared/types";
+import {
+  createBuiltinRuntimeIdentity,
+  createDecisionOutcome,
+  createEvidenceAssessment,
+} from "../../helpers/model-fixtures";
 
 const PORTUGUESE_LONG_TEXT = Array.from({ length: 120 }, () => "conteúdo").join(
   " ",
@@ -21,6 +26,9 @@ function result(
     status: "possibly_ai",
     wordCount: 120,
     tokenCount: 150,
+    runtimeIdentity: createBuiltinRuntimeIdentity(),
+    evidence: createEvidenceAssessment(),
+    decision: createDecisionOutcome(),
     modelVersion: "mock-v1",
     modelId: "mock",
     backend: "mock",

@@ -2,8 +2,8 @@ import type { ModelStatus } from "@/shared/types";
 
 export function ModelStatusCard({ status }: { status: ModelStatus | null }) {
   const items: [label: string, value: string][] = [
-    ["Modelo", status?.classifierId ?? "indisponível"],
-    ["Versão", status?.modelVersion ?? "indisponível"],
+    ["Modelo", status?.runtimeIdentity?.modelId ?? "indisponível"],
+    ["Versão", status?.runtimeIdentity?.modelVersion ?? "indisponível"],
     ["Backend", status?.backend ?? "indisponível"],
     ["Estado", modelStateLabel(status?.state)],
   ];
@@ -19,7 +19,7 @@ export function ModelStatusCard({ status }: { status: ModelStatus | null }) {
           </div>
         ))}
       </dl>
-      {status?.warning === "WEBGPU_FALLBACK" ? (
+      {status?.reasonCodes.includes("WEBGPU_FALLBACK") ? (
         <p role="status">WebGPU indisponível; usando WASM local.</p>
       ) : null}
     </section>
@@ -34,6 +34,8 @@ function modelStateLabel(state: ModelStatus["state"] | undefined): string {
       return "liberando modelo";
     case "ready":
       return "pronto";
+    case "degraded":
+      return "degradado";
     case "error":
       return "erro";
     default:

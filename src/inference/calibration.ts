@@ -124,6 +124,10 @@ export function calibrateResult(result: ClassificationResult): DecisionOutcome {
       calibratedScore: isScore(calibratedScore) ? calibratedScore : 0,
       actionCeiling: "indicator",
       abstained: true,
+      // An abstention is not presented; the distributed trigger set is empty
+      // until the aggregation-v2 work lands.
+      presentationAllowed: false,
+      triggers: [],
       reasonCodes: uniqueReasonCodes(abstentionReasons),
     };
   }
@@ -133,6 +137,10 @@ export function calibrateResult(result: ClassificationResult): DecisionOutcome {
     calibratedScore,
     actionCeiling: getActionCeiling(profile.lengthBucket),
     abstained: false,
+    // A non-abstained decision is presentable at its ceiling (mirrors the
+    // pre-migration behaviour); trigger attribution is a later task.
+    presentationAllowed: true,
+    triggers: [],
     reasonCodes,
   };
 }

@@ -1,7 +1,16 @@
+import {
+  buildBuiltinDecision,
+  buildBuiltinEvidence,
+  buildBuiltinIdentity,
+} from "@/inference/builtin-runtime";
 import { CleanFeedError } from "@/shared/errors";
 import type { ClassificationRequest } from "@/shared/messages";
 import type { UserSettings } from "@/shared/settings-types";
-import type { ClassificationResult, ModelStatus } from "@/shared/types";
+import type {
+  ClassificationResult,
+  DecisionReasonCode,
+  ModelStatus,
+} from "@/shared/types";
 import {
   parseWorkerResponse,
   type WorkerInitializePayload,
@@ -39,12 +48,7 @@ export class WorkerHost implements WorkerClassifierClient {
   private disposed = false;
   private lastInitialization:
     { paths: WorkerInitializePayload; requestId: string } | undefined;
-  private modelStatus: ModelStatus = {
-    state: "initializing",
-    classifierId: "unavailable",
-    modelVersion: "unavailable",
-    backend: "mock",
-  };
+  private modelStatus: ModelStatus = inactiveModelStatus("initializing");
   private cancelledTasks = 0;
   private readonly pending = new Map<string, PendingRequest>();
   private readonly batchQueue: WorkerClassificationRequest[] = [];
@@ -213,6 +217,23 @@ export class WorkerHost implements WorkerClassifierClient {
       status: "classification_failed",
       wordCount,
       tokenCount: 0,
+      // No classifier produced this result; carry the active fallback builtin's
+      // identity (spec's conservative choice for a no-output timeout/error).
+      runtimeIdentity: buildBuiltinIdentity({
+        id: "stylometric-v1",
+        version: "unavailable",
+      }),
+      evidence: buildBuiltinEvidence(pending.request.text, {
+        quality: "unsupported",
+        coverage: 0,
+        reasonCodes: ["BACKEND_ERROR"],
+      }),
+      decision: buildBuiltinDecision({
+        status: "classification_failed",
+        calibratedScore: 0,
+        abstained: true,
+        reasonCodes: ["BACKEND_ERROR"],
+      }),
       modelVersion: "unavailable",
       modelId: "unavailable",
       backend: "mock",
@@ -348,7 +369,7 @@ export class WorkerHost implements WorkerClassifierClient {
       this.workerAvailable = false;
       this.worker.terminate();
     }
-    this.modelStatus = inactiveModelStatus("error", "WORKER_UNAVAILABLE");
+    this.modelStatus = inactiveModelStatus("error", ["BACKEND_ERROR"]);
     this.rejectAll(reason);
   }
 
@@ -379,18 +400,21 @@ function workerUnavailableError(): CleanFeedError {
 function normalizeModelStatus(status: ModelStatus): ModelStatus {
   return status.state === "ready"
     ? { ...status }
-    : inactiveModelStatus(status.state, status.errorCode);
+    : inactiveModelStatus(status.state, status.reasonCodes);
 }
 
 function inactiveModelStatus(
   state: Exclude<ModelStatus["state"], "ready">,
-  errorCode?: ModelStatus["errorCode"],
+  reasonCodes: DecisionReasonCode[] = [],
 ): ModelStatus {
   return {
     state,
-    classifierId: "unavailable",
-    modelVersion: "unavailable",
     backend: "mock",
-    ...(errorCode === undefined ? {} : { errorCode }),
+    runtimeIdentity: null,
+    calibrationCoverage: "none",
+    calibrationSetDigest: null,
+    profileCount: 0,
+    earliestExpiry: null,
+    reasonCodes,
   };
 }

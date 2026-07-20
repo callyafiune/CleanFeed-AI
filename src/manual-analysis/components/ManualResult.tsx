@@ -1,6 +1,7 @@
 import type {
   ClassificationResult,
   Confidence,
+  DecisionReasonCode,
   ReasonCode,
 } from "@/shared/types";
 
@@ -61,8 +62,14 @@ export function ManualResult({
   onRetry,
   busy = false,
 }: ManualResultProps) {
-  const reasonCodes =
-    result.explanation?.reasonCodes ?? result.decision?.reasonCodes ?? [];
+  // The explanation carries the human-facing signal codes. The decision may
+  // additionally carry model-evidence codes without a display phrase, so the
+  // fallback is filtered to codes this panel knows how to phrase.
+  const rawReasonCodes: DecisionReasonCode[] =
+    result.explanation?.reasonCodes ?? result.decision.reasonCodes;
+  const reasonCodes = rawReasonCodes.filter(
+    (code): code is ReasonCode => code in REASON_PHRASES,
+  );
 
   return (
     <div className="cleanfeed-manual__result">

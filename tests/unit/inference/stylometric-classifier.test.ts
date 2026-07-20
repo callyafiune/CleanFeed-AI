@@ -16,6 +16,11 @@ import type {
   ReasonCode,
   TextClassifier,
 } from "@/shared/types";
+import {
+  createBuiltinRuntimeIdentity,
+  createDecisionOutcome,
+  createEvidenceAssessment,
+} from "../../helpers/model-fixtures";
 
 const STYLOMETRIC_CODES: ReasonCode[] = [
   "FORMULAIC_STRUCTURE",
@@ -410,6 +415,9 @@ describe("multi-chunk reason-code relay", () => {
       status: "inconclusive",
       wordCount: 50,
       tokenCount: 50,
+      runtimeIdentity: createBuiltinRuntimeIdentity(),
+      evidence: createEvidenceAssessment(),
+      decision: createDecisionOutcome({ status: "inconclusive" }),
       modelVersion: "stub",
       modelId: "stub",
       backend: "mock",

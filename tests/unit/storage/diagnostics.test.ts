@@ -38,12 +38,23 @@ class MemoryStorageArea implements StorageArea {
 function fullModelStatus(): ModelStatus {
   return {
     state: "ready",
-    classifierId: "onnx-classifier",
-    modelVersion: "mock-v1",
     backend: "mock",
-    fallbackFrom: "webgpu",
-    warning: "WEBGPU_FALLBACK",
-    errorCode: "INFERENCE_FAILED",
+    runtimeIdentity: {
+      kind: "bundle",
+      modelId: "onnx-classifier",
+      modelVersion: "mock-v1",
+      bundleDigest: "a".repeat(64),
+      tokenizerDigest: "b".repeat(64),
+      aggregationVersion: "tmr-aggregation-v2",
+      contentCompositionVersion: "lexical-content-v1",
+      calibrationSetDigest:
+        "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+    },
+    calibrationCoverage: "none",
+    calibrationSetDigest: null,
+    profileCount: 0,
+    earliestExpiry: null,
+    reasonCodes: ["WEBGPU_FALLBACK"],
     initializedAt: 1_700_000_000_000,
     supportsBatching: true,
   };

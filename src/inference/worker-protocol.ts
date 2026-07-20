@@ -246,13 +246,25 @@ function isSettingsSnapshot(value: unknown): value is UserSettings {
 function isModelStatus(value: unknown): value is ModelStatus {
   return (
     isSafeRecord(value) &&
-    ["unavailable", "initializing", "ready", "disposing", "error"].includes(
-      value.state as string,
-    ) &&
-    isBoundedString(value.classifierId, 128) &&
-    isBoundedString(value.modelVersion, 128) &&
+    [
+      "unavailable",
+      "initializing",
+      "ready",
+      "degraded",
+      "disposing",
+      "error",
+    ].includes(value.state as string) &&
     ["mock", "wasm", "webgpu"].includes(value.backend as string) &&
-    (value.warning === undefined || value.warning === "WEBGPU_FALLBACK")
+    (value.runtimeIdentity === null || isSafeRecord(value.runtimeIdentity)) &&
+    ["none", "partial", "complete"].includes(
+      value.calibrationCoverage as string,
+    ) &&
+    (value.calibrationSetDigest === null ||
+      typeof value.calibrationSetDigest === "string") &&
+    typeof value.profileCount === "number" &&
+    (value.earliestExpiry === null ||
+      typeof value.earliestExpiry === "string") &&
+    Array.isArray(value.reasonCodes)
   );
 }
 

@@ -11,12 +11,18 @@ import type {
   DecisionOutcome,
   PresentationMode,
 } from "@/shared/types";
+import {
+  createBuiltinRuntimeIdentity,
+  createEvidenceAssessment,
+} from "../../helpers/model-fixtures";
 
 const decision: DecisionOutcome = {
   status: "strong_ai_indication",
   calibratedScore: 0.97,
   actionCeiling: "hide",
   abstained: false,
+  presentationAllowed: true,
+  triggers: [],
   reasonCodes: ["HIGH_AVERAGE_SCORE"],
 };
 
@@ -38,6 +44,9 @@ function result(
     status,
     wordCount: 140,
     tokenCount: 150,
+    runtimeIdentity: createBuiltinRuntimeIdentity(),
+    evidence: createEvidenceAssessment(),
+    decision,
     modelVersion: "mock-v1",
     modelId: "mock",
     backend: "mock",

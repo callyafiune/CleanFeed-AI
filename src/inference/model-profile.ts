@@ -86,16 +86,20 @@ export function resolveActiveModelProfile(
     return STYLOMETRIC_MODEL_PROFILE;
   }
 
+  const identity = status.runtimeIdentity;
+  if (identity === null) {
+    return STYLOMETRIC_MODEL_PROFILE;
+  }
+
   if (status.backend === "mock") {
-    return status.classifierId === MOCK_MODEL_PROFILE.modelId &&
-      status.modelVersion === MOCK_MODEL_PROFILE.modelVersion
+    return identity.kind === "builtin" && identity.modelId === "mock"
       ? MOCK_MODEL_PROFILE
       : STYLOMETRIC_MODEL_PROFILE;
   }
 
   return {
-    modelId: status.classifierId,
-    modelVersion: status.modelVersion,
+    modelId: identity.modelId,
+    modelVersion: identity.modelVersion,
     backend: status.backend,
     calibrated,
     ...(calibrationVersion === undefined ? {} : { calibrationVersion }),

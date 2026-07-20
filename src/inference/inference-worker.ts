@@ -4,6 +4,11 @@ import {
   ClassifierLifecycleManager,
   type BackendFactory,
 } from "@/inference/backend-selector";
+import {
+  buildBuiltinDecision,
+  buildBuiltinEvidence,
+  buildBuiltinIdentity,
+} from "@/inference/builtin-runtime";
 import { buildExplanation } from "@/inference/explanation";
 import {
   calibrateWithRegistry,
@@ -41,8 +46,10 @@ import type {
   ChunkResult,
   ClassificationOptions,
   ClassificationResult,
+  DecisionReasonCode,
   ModelStatus,
   ReasonCode,
+  RuntimeModelIdentity,
   TextClassifier,
 } from "@/shared/types";
 
@@ -229,6 +236,13 @@ export class PipelineRunner {
     ? Metadata
     : never {
     return this.classifier.getMetadata();
+  }
+
+  getRuntimeIdentity(): RuntimeModelIdentity {
+    return (
+      this.classifier.getRuntimeIdentity?.() ??
+      buildBuiltinIdentity(this.classifier.getMetadata())
+    );
   }
 
   private async prepare(
@@ -529,29 +543,35 @@ function languageAbstention(
 ): ClassificationResult {
   const wordCount = getTextLengthInfo(request.text).wordCount;
   const metadata = classifier.getMetadata();
-  const decision = {
-    status: "insufficient_evidence" as const,
-    calibratedScore: 0,
-    actionCeiling: "indicator" as const,
-    abstained: true,
-    reasonCodes: ["INSUFFICIENT_EVIDENCE"] satisfies ReasonCode[],
-  };
+  const identity =
+    classifier.getRuntimeIdentity?.() ?? buildBuiltinIdentity(metadata);
   return {
     aiScore: 0,
     humanScore: 0,
     confidence: "low",
-    status: decision.status,
+    status: "insufficient_evidence",
     wordCount,
     tokenCount: 0,
     language,
+    runtimeIdentity: identity,
+    evidence: buildBuiltinEvidence(request.text, {
+      quality: "unsupported",
+      coverage: 0,
+      reasonCodes: ["UNSUPPORTED_LANGUAGE"],
+    }),
+    decision: buildBuiltinDecision({
+      status: "insufficient_evidence",
+      calibratedScore: 0,
+      abstained: true,
+      reasonCodes: ["INSUFFICIENT_EVIDENCE"],
+    }),
     modelVersion: metadata.version,
     modelId: metadata.id,
     backend: metadata.backend,
     processingTimeMs: 0,
     demo: metadata.backend === "mock",
-    decision,
     explanation: {
-      reasonCodes: [...decision.reasonCodes],
+      reasonCodes: ["INSUFFICIENT_EVIDENCE"] satisfies ReasonCode[],
       modelScore: 0,
       calibratedScore: 0,
       calibrationProfile: `${request.platform}:${language}:policy`,
@@ -785,7 +805,7 @@ class WorkerRuntime {
         });
         this.status = lifecycle.getStatus();
       } catch (error) {
-        this.status = unavailableStatus("error", modelErrorCode(error));
+        this.status = unavailableStatus("error", ["BACKEND_ERROR"]);
         throw error;
       }
     });
@@ -801,7 +821,7 @@ class WorkerRuntime {
         this.runner = this.runnerFactory();
         this.status = unavailableStatus("unavailable");
       } catch (error) {
-        this.status = unavailableStatus("error", modelErrorCode(error));
+        this.status = unavailableStatus("error", ["BACKEND_ERROR"]);
         throw error;
       }
     });
@@ -885,28 +905,32 @@ function hasWebGpu(): boolean {
 
 function unavailableStatus(
   state: Exclude<ModelStatus["state"], "ready"> = "unavailable",
-  errorCode?: ModelStatus["errorCode"],
+  reasonCodes: DecisionReasonCode[] = [],
 ): ModelStatus {
   return {
     state,
-    classifierId: "unavailable",
-    modelVersion: "unavailable",
     backend: "mock",
-    ...(errorCode === undefined ? {} : { errorCode }),
+    runtimeIdentity: null,
+    calibrationCoverage: "none",
+    calibrationSetDigest: null,
+    profileCount: 0,
+    earliestExpiry: null,
+    reasonCodes,
   };
-}
-
-function modelErrorCode(error: unknown): ModelStatus["errorCode"] {
-  return error instanceof CleanFeedError ? error.code : "MODEL_LOAD_FAILED";
 }
 
 function readyStatus(runner: PipelineRunner): ModelStatus {
   const metadata = runner.getMetadata();
   return {
     state: "ready" as const,
-    classifierId: metadata.id,
-    modelVersion: metadata.version,
     backend: metadata.backend,
+    runtimeIdentity: runner.getRuntimeIdentity(),
+    // No verified calibration ships in the MVP, so no coordinates are covered.
+    calibrationCoverage: "none",
+    calibrationSetDigest: null,
+    profileCount: 0,
+    earliestExpiry: null,
+    reasonCodes: [],
     supportsBatching: runner.supportsBatching(),
   };
 }

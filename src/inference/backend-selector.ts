@@ -1,5 +1,11 @@
-import { CleanFeedError, type ErrorCode } from "@/shared/errors";
-import type { Backend, ModelStatus, TextClassifier } from "@/shared/types";
+import { buildBuiltinIdentity } from "@/inference/builtin-runtime";
+import { CleanFeedError } from "@/shared/errors";
+import type {
+  Backend,
+  DecisionReasonCode,
+  ModelStatus,
+  TextClassifier,
+} from "@/shared/types";
 import type { BackendPreference } from "@/shared/settings-types";
 
 export type InferenceBackend = Exclude<Backend, "mock">;
@@ -113,21 +119,25 @@ export class ClassifierLifecycleManager {
         const metadata = selection.classifier.getMetadata();
         this.status = {
           state: "ready",
-          classifierId: metadata.id,
-          modelVersion: metadata.version,
           backend: selection.backend,
-          ...(selection.fallbackFrom === undefined
-            ? {}
-            : { fallbackFrom: selection.fallbackFrom }),
-          ...(selection.warning === undefined
-            ? {}
-            : { warning: selection.warning }),
+          runtimeIdentity:
+            selection.classifier.getRuntimeIdentity?.() ??
+            buildBuiltinIdentity(metadata),
+          calibrationCoverage: "none",
+          calibrationSetDigest: null,
+          profileCount: 0,
+          earliestExpiry: null,
+          // The WebGPU→WASM fallback signal (previously `warning`) now travels
+          // as a status reason code. Authoritative degraded semantics is a
+          // later task; the state is left as the current logic produced it.
+          reasonCodes:
+            selection.fallbackFrom === "webgpu" ? ["WEBGPU_FALLBACK"] : [],
           initializedAt: Date.now(),
           supportsBatching: metadata.supportsBatching,
         };
         return selection;
       } catch (error) {
-        this.status = inactiveStatus("error", errorCode(error));
+        this.status = inactiveStatus("error", ["BACKEND_ERROR"]);
         throw error;
       }
     });
@@ -140,7 +150,7 @@ export class ClassifierLifecycleManager {
         await this.disposeActive();
         this.status = inactiveStatus("unavailable");
       } catch (error) {
-        this.status = inactiveStatus("error", errorCode(error));
+        this.status = inactiveStatus("error", ["BACKEND_ERROR"]);
         throw error;
       }
     });
@@ -207,19 +217,18 @@ function modelLoadFailed(cause: unknown): CleanFeedError {
   return new CleanFeedError("MODEL_LOAD_FAILED", "MODEL_LOAD_FAILED");
 }
 
-function errorCode(error: unknown): ErrorCode {
-  return error instanceof CleanFeedError ? error.code : "MODEL_LOAD_FAILED";
-}
-
 function inactiveStatus(
   state: Exclude<ModelLifecycleState, "ready">,
-  errorCode?: ErrorCode,
+  reasonCodes: DecisionReasonCode[] = [],
 ): ModelStatus {
   return {
     state,
-    classifierId: "unavailable",
-    modelVersion: "unavailable",
     backend: "mock",
-    ...(errorCode === undefined ? {} : { errorCode }),
+    runtimeIdentity: null,
+    calibrationCoverage: "none",
+    calibrationSetDigest: null,
+    profileCount: 0,
+    earliestExpiry: null,
+    reasonCodes,
   };
 }

@@ -101,8 +101,8 @@ function sanitizeModelStatus(
   return {
     state: status.state,
     backend: status.backend,
-    modelVersion: status.modelVersion,
-    classifierId: status.classifierId,
+    modelVersion: status.runtimeIdentity?.modelVersion ?? "unavailable",
+    classifierId: status.runtimeIdentity?.modelId ?? "unavailable",
     supportsBatching: status.supportsBatching ?? false,
   };
 }
