@@ -86,6 +86,34 @@ describe("TransformersTokenizer", () => {
     expect(reTokenized.every(({ tokenCount }) => tokenCount <= 2)).toBe(true);
   });
 
+  it("uses the model offsets verbatim for a repeated substring", async () => {
+    // A substring search for "ab" would map both tokens to 0..2; the exact
+    // path must instead honour the offsets the model tokenizer emitted.
+    const gateway = {
+      load: vi.fn(async () => undefined),
+      tokenize: vi.fn(async () => ({
+        inputIds: [101, 11, 11, 102],
+        specialTokenCount: 2,
+        tokenOffsets: [
+          { start: 0, end: 2 },
+          { start: 2, end: 4 },
+        ],
+      })),
+      run: vi.fn(async () => ({})),
+      dispose: vi.fn(async () => undefined),
+    } as unknown as TransformersModelGateway;
+    const tokenizer = new TransformersTokenizer("cleanfeed-detector-v1", gateway);
+
+    const tokenized = await tokenizer.encode("abab");
+
+    expect(tokenized.tokenCount).toBe(2);
+    expect(tokenized.spans).toEqual([
+      expect.objectContaining({ start: 0, end: 2 }),
+      expect.objectContaining({ start: 2, end: 4 }),
+    ]);
+    expect(tokenized.spans.at(-1)!.end).toBe("abab".length);
+  });
+
   it("rejects exact chunking when the model gateway cannot provide offsets", async () => {
     const gateway = fakeGateway([101, 1, 2, 102]);
     const tokenizer = new TransformersTokenizer(

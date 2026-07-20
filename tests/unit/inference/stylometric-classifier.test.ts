@@ -458,12 +458,22 @@ describe("multi-chunk reason-code relay", () => {
     LLM_STYLED_POST,
   ].join(" ");
 
+  // The relay seam is about splitting a post across several windows, not about
+  // the model's 512-token budget; a small editable window keeps the tripled
+  // post at three-plus chunks so the majority rule is actually exercised.
+  const MULTI_CHUNK_SETTINGS = {
+    ...DEFAULT_SETTINGS,
+    chunkSizeTokens: 192,
+    chunkOverlapTokens: 32,
+    maximumTokens: 256,
+  };
+
   it("relays codes that fire on at least half of the chunks", async () => {
     const runner = new PipelineRunner();
 
     const result = await runner.classify(
       { text: LONG_MULTI_CHUNK_TEXT, platform: "linkedin", manual: false },
-      DEFAULT_SETTINGS,
+      MULTI_CHUNK_SETTINGS,
     );
 
     // The relay seam must actually be exercised across several chunks.
@@ -488,7 +498,7 @@ describe("multi-chunk reason-code relay", () => {
 
     const result = await runner.classify(
       { text: LONG_MULTI_CHUNK_TEXT, platform: "linkedin", manual: false },
-      DEFAULT_SETTINGS,
+      MULTI_CHUNK_SETTINGS,
     );
 
     expect(result.chunks!.length).toBeGreaterThanOrEqual(3);

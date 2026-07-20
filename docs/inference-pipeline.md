@@ -31,8 +31,12 @@ cancelamento no worker. Cada solicitação também tem timeout; seu vencimento g
 um resultado recuperável com `INFERENCE_TIMEOUT`, sem deixar promises pendentes.
 
 Os limites aplicados às configurações são: fila de 1–500, concorrência WASM fixa
-em 1, concorrência WebGPU de 1–4, timeout de 1.000–120.000 ms, chunks de 32–256
-tokens, overlap menor que o chunk e cache de 10–5.000 entradas.
+em 1, concorrência WebGPU de 1–4, timeout de 1.000–120.000 ms, chunks de 32–512
+tokens (padrão 510 de conteúdo com overlap 64), overlap menor que o chunk e cache
+de 10–5.000 entradas. Esses campos de janela só valem para runtimes
+experimentais/builtin: o caminho TMR calibrado ignora as configurações editáveis
+e usa sempre o plano de janela selado do manifesto (510 de conteúdo, 64 de
+overlap, 512 no total, com os dois tokens especiais medidos no tokenizer).
 
 ## Telemetria e privacidade
 
@@ -53,7 +57,17 @@ que atualizações não habilitem telemetria detalhada nem descartem preferênci
 
 Nesta fase, `HeuristicTokenizer` segmenta Unicode e marca seus tokens como
 aproximados (`exact: false`). O classificador mock também é local e produz
-resultados de demonstração; ele não representa uma inferência de modelo real. Um
-tokenizador de modelo futuro pode fornecer tokens exatos sem alterar o contrato
-de chunks, que trabalha com offsets. O fallback sem `navigator.gpu` mantém o
-pipeline offline usando o backend mock.
+resultados de demonstração; ele não representa uma inferência de modelo real. O
+contrato de chunks trabalha com offsets, então um tokenizador exato entra sem
+alterá-lo. O caminho TMR usa `ExactTokenizer` (em `model-runtime.ts`): ele carrega
+o tokenizer real junto com o backend na mesma materialização de assets, mede uma
+única vez os tokens especiais com um probe `add_special_tokens` ligado/desligado
+(exigindo 2 neste manifesto) e devolve offsets nativos via
+`return_offsets_mapping`, sem reconstruí-los por busca de substrings nem recorrer
+ao tokenizador heurístico. O fallback sem `navigator.gpu` mantém o pipeline
+offline usando o backend mock.
+
+A localidade de calibração é normalizada por `normalizeCalibrationLocale` antes de
+decidir suporte ou formar a chave de perfil: apenas `pt` e `pt-BR` (qualquer
+caixa) resolvem para o `pt-BR` canônico; `pt-PT`, `en` e tags desconhecidas
+permanecem sem suporte.

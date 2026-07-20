@@ -1,6 +1,6 @@
 import type { TokenizedText } from "@/inference/tokenizer";
-import { CleanFeedError } from "@/shared/errors";
 import type { TextChunk } from "@/shared/types";
+import { validateChunkWindow } from "@/shared/validation";
 
 export interface TextChunkOptions {
   chunkSizeTokens: number;
@@ -13,7 +13,7 @@ export function createTextChunks(
   tokenized: TokenizedText,
   options: TextChunkOptions,
 ): TextChunk[] {
-  assertValidOptions(options);
+  validateChunkWindow(options);
 
   const { spans } = tokenized;
   if (spans.length === 0) {
@@ -42,21 +42,4 @@ export function createTextChunks(
   }
 
   return chunks;
-}
-
-function assertValidOptions(options: TextChunkOptions): void {
-  const { chunkSizeTokens, overlapTokens, maximumTokens } = options;
-  const valid =
-    Number.isSafeInteger(chunkSizeTokens) &&
-    Number.isSafeInteger(overlapTokens) &&
-    Number.isSafeInteger(maximumTokens) &&
-    chunkSizeTokens >= 1 &&
-    chunkSizeTokens <= maximumTokens &&
-    maximumTokens <= 256 &&
-    overlapTokens >= 0 &&
-    overlapTokens < chunkSizeTokens;
-
-  if (!valid) {
-    throw new CleanFeedError("INVALID_SETTINGS", "INVALID_SETTINGS");
-  }
 }

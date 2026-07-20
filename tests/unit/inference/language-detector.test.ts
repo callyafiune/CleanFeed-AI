@@ -76,6 +76,32 @@ describe("evaluateLanguagePolicy", () => {
     });
   });
 
+  it("normalizes the detected locale before deciding pt-BR support", () => {
+    for (const language of ["pt", "pt-BR", "PT", "pt-br"]) {
+      expect(
+        evaluateLanguagePolicy(
+          { language, confidence: 0.9, supported: true },
+          "portuguese_only",
+          ["pt"],
+        ),
+      ).toEqual({ allowed: true, abstain: false });
+    }
+
+    for (const language of ["pt-PT", "en", "es", "und"]) {
+      expect(
+        evaluateLanguagePolicy(
+          { language, confidence: 0.9, supported: true },
+          "portuguese_only",
+          ["pt"],
+        ),
+      ).toEqual({
+        allowed: false,
+        abstain: true,
+        reason: "UNSUPPORTED_LANGUAGE",
+      });
+    }
+  });
+
   it("requires a supported, confident language in model-supported mode", () => {
     expect(
       evaluateLanguagePolicy(

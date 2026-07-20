@@ -33,6 +33,12 @@ export interface UserSettings {
   maximumQueueSize: number;
   maximumPostsPerMinute: number;
   batchingEnabled: boolean;
+  /**
+   * Window plan for the experimental/builtin runtimes. The calibrated TMR path
+   * IGNORES these three fields and always uses the sealed manifest window plan
+   * (510 content tokens, 64 overlap, 512 total); they exist only so a compatible
+   * experimental runtime can be tuned.
+   */
   chunkSizeTokens: number;
   chunkOverlapTokens: number;
   maximumTokens: number;

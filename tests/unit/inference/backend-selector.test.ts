@@ -17,7 +17,7 @@ function classifier(backend: "wasm" | "webgpu"): TextClassifier {
       version: "1.0.0",
       backend,
       supportedLanguages: ["pt"],
-      maximumTokens: 256,
+      maximumTokens: 512,
       supportsBatching: false,
     }),
   };

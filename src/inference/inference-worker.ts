@@ -14,8 +14,10 @@ import {
   calibrateWithRegistry,
   getLengthBucket,
 } from "@/inference/calibration";
+import { bundledModelManifest } from "@/inference/bundled-model-metadata";
 import { CalibrationRegistry } from "@/inference/calibration-registry";
-import { createTextChunks } from "@/inference/chunker";
+import { createTextChunks, type TextChunkOptions } from "@/inference/chunker";
+import { createTmrChunkPlan } from "@/inference/model-runtime";
 import {
   evaluateLanguagePolicy,
   HeuristicPortugueseDetector,
@@ -72,6 +74,12 @@ export interface PipelineRunnerOptions {
    * indicator-only action ceiling until a verified profile is registered.
    */
   calibration?: CalibrationRegistry;
+  /**
+   * Fixed window plan for the calibrated bundle (TMR) path. When present,
+   * chunking uses it and IGNORES the editable `settings.chunk*` fields; the
+   * builtin/experimental runtimes leave it undefined and chunk from settings.
+   */
+  chunkPlan?: TextChunkOptions;
 }
 
 type RuntimeConfigurator = (
@@ -112,6 +120,7 @@ export class PipelineRunner {
   private readonly detector: LanguageDetector;
   private readonly tokenizer: Tokenizer;
   private readonly calibration: CalibrationRegistry;
+  private readonly chunkPlan: TextChunkOptions | undefined;
   private initialized?: Promise<void>;
 
   constructor(options: PipelineRunnerOptions = {}) {
@@ -124,6 +133,7 @@ export class PipelineRunner {
     // Empty by default: with no verified calibration registered, every
     // decision leaves this pipeline with actionCeiling "indicator".
     this.calibration = options.calibration ?? new CalibrationRegistry();
+    this.chunkPlan = options.chunkPlan;
     if (options.initialized) this.initialized = Promise.resolve();
   }
 
@@ -271,11 +281,17 @@ export class PipelineRunner {
     throwIfAborted(signal);
     const tokenizationMs = performance.now() - tokenizationStartedAt;
     const chunkingStartedAt = performance.now();
-    const chunks = createTextChunks(request.text, tokenized, {
-      chunkSizeTokens: settings.chunkSizeTokens,
-      overlapTokens: settings.chunkOverlapTokens,
-      maximumTokens: settings.maximumTokens,
-    });
+    // The calibrated bundle path uses the sealed window plan; the builtin path
+    // uses the editable settings.
+    const chunks = createTextChunks(
+      request.text,
+      tokenized,
+      this.chunkPlan ?? {
+        chunkSizeTokens: settings.chunkSizeTokens,
+        overlapTokens: settings.chunkOverlapTokens,
+        maximumTokens: settings.maximumTokens,
+      },
+    );
     const prepared = {
       request,
       language: detection.language,
@@ -802,6 +818,10 @@ class WorkerRuntime {
         this.runner = new PipelineRunner({
           classifier: selection.classifier,
           initialized: true,
+          // A bundle runtime is the sealed TMR model: chunk with its manifest
+          // window plan (510 content / 64 overlap / 512 total), never the
+          // editable settings fields.
+          chunkPlan: tmrChunkOptions(),
         });
         this.status = lifecycle.getStatus();
       } catch (error) {
@@ -875,6 +895,20 @@ function backendSettings(
       wasmEnabled: true,
     }
   );
+}
+
+/**
+ * The sealed TMR window plan expressed as chunker options. `contentTokens` is
+ * the per-window chunk size; the two special tokens raise it to the model's
+ * `modelMaxTokens` budget. These are pinned by the manifest, not user settings.
+ */
+function tmrChunkOptions(): TextChunkOptions {
+  const plan = createTmrChunkPlan(bundledModelManifest.windowing);
+  return {
+    chunkSizeTokens: plan.contentTokens,
+    overlapTokens: plan.overlapTokens,
+    maximumTokens: plan.modelMaxTokens,
+  };
 }
 
 function createLocalBackendFactory(

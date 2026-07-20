@@ -93,12 +93,12 @@ export function PerformanceSettings({
         Tamanho do chunk
         <input
           aria-label="Tamanho do chunk"
-          max={256}
+          max={512}
           min={32}
           type="number"
           value={settings.chunkSizeTokens}
           onChange={(event) =>
-            updateInteger("chunkSizeTokens", event.target.value, 32, 256)
+            updateInteger("chunkSizeTokens", event.target.value, 32, 512)
           }
         />
       </label>

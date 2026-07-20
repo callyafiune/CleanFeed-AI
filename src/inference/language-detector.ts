@@ -1,3 +1,4 @@
+import { normalizeCalibrationLocale } from "@/inference/model-runtime";
 import { getTextLengthInfo } from "@/shared/word-count";
 import type { LanguageDetectionResult, LanguageMode } from "@/shared/types";
 
@@ -201,7 +202,9 @@ export function evaluateLanguagePolicy(
   }
 
   if (mode === "portuguese_only") {
-    if (detection.language !== "pt") {
+    // Normalize the detected tag BEFORE deciding support: only `pt`/`pt-BR`
+    // resolve to the calibrated pt-BR locale; `pt-PT`, `en` and unknown do not.
+    if (normalizeCalibrationLocale(detection.language) === null) {
       return abstain("UNSUPPORTED_LANGUAGE");
     }
 

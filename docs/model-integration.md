@@ -29,7 +29,7 @@ todos eles satisfeitos. Enquanto isso, o backend ativo continua sendo o mock.
    - `task` (`"ai_text_detection"`), `architecture`, `quantization`
      (`none` | `int8` | `int4`);
    - `modelPath`, `tokenizerPath`, `configPath` (caminhos relativos seguros);
-   - `supportedLanguages`, `maximumTokens`;
+   - `supportedLanguages`, `maximumTokens` (até 512, a capacidade do modelo TMR);
    - `labels` binários (`{ human, ai }` mapeados para `0`/`1`);
    - `output` (`{ name, kind: "logits" | "probabilities" }`);
    - `license` e `source` (proveniência auditável);
@@ -44,6 +44,14 @@ todos eles satisfeitos. Enquanto isso, o backend ativo continua sendo o mock.
 3. **Checksums.** Gere o SHA-256 de cada artefato e registre-o no manifesto. No
    carregamento, cada arquivo é lido localmente e seu digest é conferido; um hash
    divergente reprova o bundle (`MODEL_LOAD_FAILED`).
+
+   O runtime coeso (`ModelRuntime`, em `src/inference/model-runtime.ts`) liga em
+   uma única carga de assets o classificador, o `ExactTokenizer` e o plano de
+   janela (`createTmrChunkPlan`). O `ExactTokenizer` mede os tokens especiais uma
+   vez na inicialização e usa offsets nativos (`return_offsets_mapping`); o plano
+   de janela selado do manifesto (`windowing`: 512 total, 510 de conteúdo, 64 de
+   overlap, no máximo 8 janelas) sempre prevalece sobre as configurações
+   editáveis no caminho TMR.
 
 4. **Calibração versionada.** Registre um perfil de calibração vinculado ao
    artefato exato pelas cinco coordenadas (`modelId`, `modelVersion`, `platform`,

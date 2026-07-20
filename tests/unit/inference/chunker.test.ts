@@ -84,6 +84,28 @@ describe("createTextChunks", () => {
     ]);
   });
 
+  it("chunks with the sealed TMR window plan (510 content / 64 overlap)", () => {
+    const text = textOfTokens(1_100);
+    const chunks = createTextChunks(text, tokens(1_100), {
+      chunkSizeTokens: 510,
+      overlapTokens: 64,
+      maximumTokens: 512,
+    });
+
+    expect(
+      chunks.map(({ startToken, endToken }) => [startToken, endToken]),
+    ).toEqual([
+      [0, 510],
+      [446, 956],
+      [892, 1_100],
+    ]);
+    // First chunk opens at token 0; the last closes on the final token — the
+    // sliding window never cuts a token off the end.
+    expect(chunks[0]!.startToken).toBe(0);
+    expect(chunks.at(-1)!.endToken).toBe(1_100);
+    expect(chunks.every((chunk) => chunk.text.length > 0)).toBe(true);
+  });
+
   it("rejects invalid chunk settings", () => {
     expect(() =>
       createTextChunks("x", tokens(1), { ...options, chunkSizeTokens: 0 }),
@@ -91,8 +113,9 @@ describe("createTextChunks", () => {
     expect(() =>
       createTextChunks("x", tokens(1), { ...options, chunkSizeTokens: 257 }),
     ).toThrow("INVALID_SETTINGS");
+    // The token budget may not exceed the model capacity of 512.
     expect(() =>
-      createTextChunks("x", tokens(1), { ...options, maximumTokens: 257 }),
+      createTextChunks("x", tokens(1), { ...options, maximumTokens: 513 }),
     ).toThrow("INVALID_SETTINGS");
     expect(() =>
       createTextChunks("x", tokens(1), { ...options, overlapTokens: -1 }),
