@@ -1,0 +1,119 @@
+// SHA-256 digests over benchmark evidence. Every structured value is serialized
+// through the Phase 1 shared canonical-json contract (contracts/canonical-json.ts)
+// BEFORE it is hashed, so a digest computed here is byte-identical to one computed
+// by the runtime. This module NEVER redefines canonicalization: it only adds the
+// Node-side byte hasher and the domain-specific digest recipes (dataset identity
+// and evaluator-code identity).
+//
+// Standalone benchmark module: MUST NOT import from the extension bundle (src/).
+// Node-only (node:crypto, node:fs): it runs in the benchmark/build tooling, never
+// in the browser. There is no Date and no randomness anywhere in this module — a
+// sealed digest is a pure function of the bytes it is fed, and seeds live in the
+// split policy rather than here.
+
+import { createHash } from "node:crypto";
+import { readFile } from "node:fs/promises";
+import { resolve } from "node:path";
+
+import { canonicalJson } from "../contracts/canonical-json.ts";
+import type { DatasetManifest } from "./dataset-manifest.ts";
+import type { BenchmarkRecord } from "./schema.ts";
+
+/**
+ * SHA-256 (lowercase hex) of raw bytes. This is the ONLY place node:crypto hashes
+ * concatenated/streamed bytes directly; every structured value passes through the
+ * shared `canonicalJson` first, so the bytes fed here are always canonical.
+ */
+export function sha256BytesHex(bytes: Uint8Array): string {
+  return createHash("sha256").update(bytes).digest("hex");
+}
+
+/**
+ * Digest of the whole dataset: the canonical manifest followed by every record in
+ * ascending id order, one canonical-JSON line each, with a trailing newline.
+ * Sorting by id makes the digest permutation-invariant — the physical order of the
+ * record file cannot change it — while any changed scientific byte does: a record
+ * field, or a manifest hash that `sealDataset` already tied to the real file bytes
+ * (so a merely declared hash cannot pass unchecked).
+ */
+export async function computeDatasetDigest(
+  manifest: DatasetManifest,
+  records: readonly BenchmarkRecord[],
+): Promise<string> {
+  const sortedRecords = [...records].sort((a, b) => a.id.localeCompare(b.id));
+  const payload = `${canonicalJson(manifest)}\n${sortedRecords
+    .map((record) => canonicalJson(record))
+    .join("\n")}\n`;
+  return sha256BytesHex(new TextEncoder().encode(payload));
+}
+
+// The closed set of files that constitute the evaluator's identity: the shared
+// contracts, the runtime-parity inventory and every benchmark module that shapes a
+// score or a gate, plus the exact dependency lockfile. A benchmark report is bound
+// to the digest of THESE bytes, so a later code change can never masquerade as the
+// same evaluator.
+export const EVALUATOR_FILES = [
+  "contracts/canonical-json.ts",
+  "contracts/content-composition.ts",
+  "contracts/calibration-profile.ts",
+  "contracts/model-release.ts",
+  "contracts/source-readiness.ts",
+  "contracts/runtime-parity.ts",
+  "scripts/runtime-parity.mjs",
+  "benchmark/schema.ts",
+  "benchmark/dataset-manifest.ts",
+  "benchmark/prediction-schema.ts",
+  "benchmark/near-duplicates.ts",
+  "benchmark/split.ts",
+  "benchmark/split-audit.ts",
+  "benchmark/digests.ts",
+  "benchmark/split-artifact.ts",
+  "benchmark/intervals.ts",
+  "benchmark/bootstrap.ts",
+  "benchmark/calibrators.ts",
+  "benchmark/cross-validation.ts",
+  "benchmark/calibration-pipeline.ts",
+  "benchmark/metrics.ts",
+  "benchmark/slices.ts",
+  "benchmark/gates.ts",
+  "benchmark/report.ts",
+  "benchmark/profile-artifact.ts",
+  "package-lock.json",
+] as const;
+
+/**
+ * Digest of the evaluator's own code. For every file in EVALUATOR_FILES, taken in
+ * lexicographic path order, hash the relative path, a NUL separator, then the
+ * file's raw bytes. The NUL delimiter keeps a path change and a content change
+ * distinct, and the fixed lexicographic order makes the digest independent of any
+ * declaration order. Reads the real bytes on disk — a declared-but-absent file is
+ * a hard failure, never trusted.
+ */
+export async function computeEvaluatorDigest(root: string): Promise<string> {
+  const ordered = [...EVALUATOR_FILES].sort((a, b) =>
+    a < b ? -1 : a > b ? 1 : 0,
+  );
+  const encoder = new TextEncoder();
+  const chunks: Uint8Array[] = [];
+  for (const relativePath of ordered) {
+    const bytes = await readFile(resolve(root, relativePath));
+    chunks.push(encoder.encode(relativePath));
+    chunks.push(Uint8Array.of(0));
+    chunks.push(
+      new Uint8Array(bytes.buffer, bytes.byteOffset, bytes.byteLength),
+    );
+  }
+  return sha256BytesHex(concatBytes(chunks));
+}
+
+function concatBytes(chunks: readonly Uint8Array[]): Uint8Array {
+  let total = 0;
+  for (const chunk of chunks) total += chunk.length;
+  const merged = new Uint8Array(total);
+  let offset = 0;
+  for (const chunk of chunks) {
+    merged.set(chunk, offset);
+    offset += chunk.length;
+  }
+  return merged;
+}

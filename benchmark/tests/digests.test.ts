@@ -1,0 +1,227 @@
+import { afterAll, describe, expect, it } from "vitest";
+
+import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { dirname, join } from "node:path";
+
+import {
+  canonicalJson,
+  canonicalSha256,
+} from "../../contracts/canonical-json.ts";
+import {
+  computeDatasetDigest,
+  computeEvaluatorDigest,
+  EVALUATOR_FILES,
+  sha256BytesHex,
+} from "../digests.ts";
+import type { DatasetManifest } from "../dataset-manifest.ts";
+import type { BenchmarkLabel, BenchmarkRecord } from "../schema.ts";
+
+const SHA = "a".repeat(64);
+
+const manifest: DatasetManifest = {
+  schemaVersion: 1,
+  datasetId: "ptbr-linkedin-v1",
+  version: "1.0.0",
+  scientificUse: "infrastructure-only",
+  intendedLanguage: "pt-BR",
+  intendedDomain: "linkedin",
+  createdAt: "2026-07-19T00:00:00.000Z",
+  normalizationVersion: "cleanfeed-text-v1",
+  annotationProtocolVersion: "annotation-v1",
+  recordsFile: "records.jsonl",
+  recordsSha256: "1".repeat(64),
+  reviewLedgerFile: "private/review-ledger.jsonl",
+  reviewLedgerSha256: "2".repeat(64),
+  sourceManifestFile: "private/source-manifest.json",
+  sourceManifestSha256: "3".repeat(64),
+  heldOutGeneratorFamilies: ["family-unseen"],
+  licenses: [
+    {
+      id: "cc-by",
+      name: "CC BY",
+      source: "fixture://license",
+      evaluationUseApproved: true,
+      redistribution: "allowed",
+      notice: "fixture-only",
+    },
+  ],
+};
+
+function makeRecord(id: string, label: BenchmarkLabel): BenchmarkRecord {
+  return {
+    schemaVersion: 2,
+    id,
+    text: `texto ${id}`,
+    normalizedTextSha256: SHA,
+    label,
+    language: "pt-BR",
+    platform: "linkedin",
+    domain: "corporate",
+    topic: "carreira",
+    wordCount: 100,
+    createdAt: 1,
+    provenance: {
+      sourceKind: "licensed-corpus",
+      sourceId: "src",
+      sourceRevision: "rev1",
+      collectedAt: 1,
+      licenseId: "cc-by",
+      legalBasis: "license",
+      piiAudit: {
+        status: "passed",
+        method: "manual-and-automated",
+        reviewerId: "rev1",
+        reviewedAt: 1,
+      },
+    },
+    annotation: {
+      protocolVersion: "annotation-v1",
+      reviewerIds: ["rev1", "rev2"],
+      agreement: "agree",
+    },
+    transformation: { kind: "none", severity: "none" },
+    groups: {
+      author: `author_${id}`,
+      source: `source_${id}`,
+      domainSource: `ds_${id}`,
+      collectionBatch: `cb_${id}`,
+      nearDuplicate: `nd_${id}`,
+      derivationRoot: id,
+    },
+  };
+}
+
+const record = makeRecord("h_0001", "human");
+const records = [
+  makeRecord("h_0001", "human"),
+  makeRecord("a_0001", "ai"),
+  makeRecord("m_0001", "mixed"),
+];
+
+describe("canonical evidence", () => {
+  it("sorts object keys while preserving array order", () => {
+    expect(canonicalJson({ z: 1, a: [3, { y: 2, x: 1 }] })).toBe(
+      '{"a":[3,{"x":1,"y":2}],"z":1}',
+    );
+  });
+
+  it("rejects non-finite numbers", () => {
+    expect(() => canonicalJson({ value: Number.NaN })).toThrow(/non-finite/);
+  });
+
+  it("changes the dataset digest when one record changes", async () => {
+    const first = await computeDatasetDigest(manifest, [record]);
+    const second = await computeDatasetDigest(manifest, [
+      { ...record, text: `${record.text}!` },
+    ]);
+    expect(first).not.toBe(second);
+  });
+});
+
+describe("computeDatasetDigest", () => {
+  it("reuses Phase 1 canonicalization with no drift", async () => {
+    // The Phase 1 sealed empty-set vector: the benchmark byte hasher must land on
+    // the exact same digest as the shared canonicalSha256, proving no drift.
+    expect(sha256BytesHex(new TextEncoder().encode(canonicalJson([])))).toBe(
+      "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+    );
+    const value = { z: 1, a: [3, { y: 2, x: 1 }] };
+    expect(sha256BytesHex(new TextEncoder().encode(canonicalJson(value)))).toBe(
+      await canonicalSha256(value),
+    );
+  });
+
+  it("is deterministic and permutation-invariant across record order", async () => {
+    const forward = await computeDatasetDigest(manifest, records);
+    const again = await computeDatasetDigest(manifest, records);
+    const reversed = await computeDatasetDigest(
+      manifest,
+      [...records].reverse(),
+    );
+    expect(again).toBe(forward);
+    expect(reversed).toBe(forward);
+  });
+
+  it("changes when only the manifest reviewLedgerSha256 changes", async () => {
+    const base = await computeDatasetDigest(manifest, records);
+    const drifted = await computeDatasetDigest(
+      { ...manifest, reviewLedgerSha256: "9".repeat(64) },
+      records,
+    );
+    expect(drifted).not.toBe(base);
+  });
+
+  it("changes when only the manifest sourceManifestSha256 changes", async () => {
+    const base = await computeDatasetDigest(manifest, records);
+    const drifted = await computeDatasetDigest(
+      { ...manifest, sourceManifestSha256: "9".repeat(64) },
+      records,
+    );
+    expect(drifted).not.toBe(base);
+  });
+});
+
+// computeEvaluatorDigest reads the real evaluator source tree; several listed
+// modules belong to later Phase 2 tasks and do not exist yet, so the digest is
+// exercised against controlled temporary trees rather than the live repo.
+const tempRoots: string[] = [];
+
+async function makeRoot(): Promise<string> {
+  const root = await mkdtemp(join(tmpdir(), "cleanfeed-evaluator-"));
+  tempRoots.push(root);
+  return root;
+}
+
+async function writeEvaluatorFixture(
+  root: string,
+  mutate?: (relativePath: string, content: string) => string,
+): Promise<void> {
+  for (const relativePath of EVALUATOR_FILES) {
+    const absolute = join(root, relativePath);
+    await mkdir(dirname(absolute), { recursive: true });
+    const base = `// fixture content for ${relativePath}\n`;
+    await writeFile(
+      absolute,
+      mutate ? mutate(relativePath, base) : base,
+      "utf8",
+    );
+  }
+}
+
+afterAll(async () => {
+  await Promise.all(
+    tempRoots.map((root) => rm(root, { recursive: true, force: true })),
+  );
+});
+
+describe("computeEvaluatorDigest", () => {
+  it("is deterministic for two identical evaluator trees", async () => {
+    const first = await makeRoot();
+    const second = await makeRoot();
+    await writeEvaluatorFixture(first);
+    await writeEvaluatorFixture(second);
+    expect(await computeEvaluatorDigest(first)).toBe(
+      await computeEvaluatorDigest(second),
+    );
+  });
+
+  it("changes when a single evaluator byte changes", async () => {
+    const clean = await makeRoot();
+    const tampered = await makeRoot();
+    await writeEvaluatorFixture(clean);
+    await writeEvaluatorFixture(tampered, (relativePath, content) =>
+      relativePath === "benchmark/split.ts" ? `${content}// drift\n` : content,
+    );
+    expect(await computeEvaluatorDigest(tampered)).not.toBe(
+      await computeEvaluatorDigest(clean),
+    );
+  });
+
+  it("refuses a declared-but-absent evaluator file", async () => {
+    const root = await makeRoot();
+    await writeEvaluatorFixture(root);
+    await rm(join(root, "package-lock.json"));
+    await expect(computeEvaluatorDigest(root)).rejects.toThrow();
+  });
+});
