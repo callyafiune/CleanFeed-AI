@@ -1,5 +1,13 @@
 import { createHash } from "node:crypto";
-import { mkdir, mkdtemp, readdir, rename, rm, stat, writeFile } from "node:fs/promises";
+import {
+  mkdir,
+  mkdtemp,
+  readdir,
+  rename,
+  rm,
+  stat,
+  writeFile,
+} from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -150,7 +158,10 @@ describe("acquireModelSourceAssets", () => {
     const files = await listFilesRecursive(result.stagingDirectory);
     expect(files).toHaveLength(7);
     await expect(
-      verifyStagedAssets(result.stagingDirectory, await readSourceLock(lockPath)),
+      verifyStagedAssets(
+        result.stagingDirectory,
+        await readSourceLock(lockPath),
+      ),
     ).resolves.toEqual({ fileCount: 7 });
     expect(calls).toHaveLength(7);
     expect(calls.every((call) => call.redirect === "error")).toBe(true);
@@ -172,9 +183,7 @@ describe("acquireModelSourceAssets", () => {
     await expect(
       stat(join(stagingParent, "tmr-ai-text-detector")),
     ).rejects.toThrow();
-    expect(result.stagingDirectory).toContain(
-      ".tmr-ai-text-detector.source-",
-    );
+    expect(result.stagingDirectory).toContain(".tmr-ai-text-detector.source-");
   });
 
   it("fails closed when the fake fetch is asked for an unregistered URL", async () => {
@@ -201,7 +210,9 @@ describe("acquireModelSourceAssets", () => {
     const stagingParent = join(workDir, "public-models");
     await mkdir(stagingParent, { recursive: true });
     const notFound = (async () =>
-      new Response(null, { status: 404 })) as unknown as typeof globalThis.fetch;
+      new Response(null, {
+        status: 404,
+      })) as unknown as typeof globalThis.fetch;
 
     await expect(
       acquireModelSourceAssets({

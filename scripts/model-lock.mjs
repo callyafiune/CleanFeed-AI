@@ -207,7 +207,10 @@ export async function readSourceLock(lockPath) {
     if (!Number.isInteger(entry.bytes) || entry.bytes <= 0) {
       fail("INVALID_SIZE", `artifact "${entry.path}" has invalid bytes`);
     }
-    if (typeof entry.sha256 !== "string" || !SHA256_PATTERN.test(entry.sha256)) {
+    if (
+      typeof entry.sha256 !== "string" ||
+      !SHA256_PATTERN.test(entry.sha256)
+    ) {
       fail("INVALID_HASH", `artifact "${entry.path}" has invalid sha256`);
     }
     const normalized = posix.normalize(entry.path);
@@ -254,7 +257,10 @@ async function listRelativePosixFiles(directory, prefix = "") {
     const relative = prefix ? `${prefix}/${entry.name}` : entry.name;
     if (entry.isDirectory()) {
       files.push(
-        ...(await listRelativePosixFiles(join(directory, entry.name), relative)),
+        ...(await listRelativePosixFiles(
+          join(directory, entry.name),
+          relative,
+        )),
       );
     } else {
       files.push(relative);

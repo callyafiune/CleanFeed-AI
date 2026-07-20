@@ -135,7 +135,10 @@ afterEach(async () => {
 });
 
 async function writeLock(object: unknown): Promise<string> {
-  const lockPath = join(workDir, `lock-${Math.random().toString(36).slice(2)}.json`);
+  const lockPath = join(
+    workDir,
+    `lock-${Math.random().toString(36).slice(2)}.json`,
+  );
   await writeFile(lockPath, JSON.stringify(object, null, 2));
   return lockPath;
 }

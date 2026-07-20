@@ -14,11 +14,12 @@
 // All effectful dependencies (fetch, randomUUID, fs) are injectable so tests can
 // serve local bytes and prove no real network is ever touched.
 
+import { Buffer } from "node:buffer";
 import { createHash, randomUUID as nodeRandomUUID } from "node:crypto";
 import { cp, mkdir, rename, rm, stat, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { argv } from "node:process";
-import { fileURLToPath } from "node:url";
+import { fileURLToPath, URL } from "node:url";
 
 import {
   ModelLockError,
