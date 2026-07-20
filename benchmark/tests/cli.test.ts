@@ -153,3 +153,113 @@ describe("benchmark CLI split gating", () => {
     ).rejects.toThrow(/comparison-only/u);
   });
 });
+
+// Ten distinct authors with monotonic timestamps: the group-time split assigns
+// the two latest (r9, r10) to the temporal test partition, giving a known,
+// non-empty holdout to prove strict prediction completeness against.
+const MANY_AUTHORS = Array.from({ length: 10 }, (_, index) => {
+  const n = index + 1;
+  return record({ id: `r${n}`, authorGroup: `a${n}`, createdAt: n });
+});
+
+function predictionLine(
+  id: string,
+  overrides: Record<string, unknown> = {},
+): string {
+  return JSON.stringify({
+    schemaVersion: 2,
+    id,
+    status: "scored",
+    documentRawScore: 0.4,
+    localizedRawScore: 0.5,
+    evidenceQuality: "sufficient",
+    reasonCode: "SCORED",
+    coverage: 1,
+    latencyMs: 42,
+    memoryBytes: 1000,
+    ...overrides,
+  });
+}
+
+describe("benchmark CLI strict prediction completeness", () => {
+  const created: string[] = [];
+
+  afterEach(async () => {
+    await Promise.all(
+      created.map((dir) => rm(dir, { recursive: true, force: true })),
+    );
+    created.length = 0;
+  });
+
+  async function workspaceWithPredictions(
+    records: unknown[],
+    predictionLines: string[],
+  ): Promise<{ input: string; output: string; predictions: string }> {
+    const dir = await mkdtemp(join(tmpdir(), "cf-bench-pred-"));
+    created.push(dir);
+    const input = join(dir, "dataset.jsonl");
+    const output = join(dir, "out");
+    const predictions = join(dir, "predictions.jsonl");
+    await writeFile(
+      input,
+      records.map((row) => JSON.stringify(row)).join("\n"),
+    );
+    await writeFile(predictions, predictionLines.join("\n"));
+    return { input, output, predictions };
+  }
+
+  async function run(
+    records: unknown[],
+    predictionLines: string[],
+  ): Promise<void> {
+    const { input, output, predictions } = await workspaceWithPredictions(
+      records,
+      predictionLines,
+    );
+    await main([
+      "--input",
+      input,
+      "--output",
+      output,
+      "--split",
+      "group-time",
+      "--predictions",
+      predictions,
+    ]);
+  }
+
+  it("fails when a holdout prediction is missing", async () => {
+    await expect(run(MANY_AUTHORS, [predictionLine("r9")])).rejects.toThrow(
+      /missing=r10/,
+    );
+  });
+
+  it("fails when an extra prediction is present", async () => {
+    await expect(
+      run(MANY_AUTHORS, [
+        predictionLine("r9"),
+        predictionLine("r10"),
+        predictionLine("r99"),
+      ]),
+    ).rejects.toThrow(/extra=r99/);
+  });
+
+  it("fails on a duplicate prediction id instead of overwriting", async () => {
+    await expect(
+      run(MANY_AUTHORS, [
+        predictionLine("r9"),
+        predictionLine("r9"),
+        predictionLine("r10"),
+      ]),
+    ).rejects.toThrow(/duplicate prediction id r9/);
+  });
+
+  it("fails on a prediction score outside the probability range", async () => {
+    await expect(
+      run(MANY_AUTHORS, [
+        predictionLine("r9", { documentRawScore: 1.4 }),
+        predictionLine("r10"),
+      ]),
+    ).rejects.toThrow(/documentRawScore must be between 0 and 1/);
+  });
+});

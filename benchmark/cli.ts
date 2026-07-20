@@ -13,6 +13,11 @@ import { fileURLToPath } from "node:url";
 
 import { type BinaryMetrics, type SegmentMetrics } from "./metrics.ts";
 import {
+  assertPredictionCompleteness,
+  parsePredictions,
+  type StrictPredictionV2,
+} from "./prediction-schema.ts";
+import {
   buildBenchmarkReport,
   type BenchmarkReport,
   type ScoredRecord,
@@ -32,13 +37,6 @@ interface CliOptions {
   predictions?: string;
   blockThreshold: number;
   targetFpr: number;
-}
-
-interface ScoreLine {
-  id: string;
-  aiScore: number;
-  latencyMs?: number;
-  memoryBytes?: number;
 }
 
 export function parseCliArgs(args: readonly string[]): CliOptions {
@@ -112,12 +110,12 @@ export async function main(args: readonly string[]): Promise<void> {
 
   await mkdir(options.output, { recursive: true });
 
-  const scores =
+  const predictions =
     options.predictions === undefined
       ? undefined
-      : await loadScores(options.predictions);
+      : parsePredictions(await readFile(options.predictions, "utf8"));
 
-  if (scores === undefined) {
+  if (predictions === undefined) {
     const audit = buildAudit(dataset, split, options);
     await writeAudit(options.output, audit);
     stdout.write(
@@ -127,16 +125,19 @@ export async function main(args: readonly string[]): Promise<void> {
     return;
   }
 
-  const scored = joinScores(split.test, scores);
+  // Strict completeness: every holdout record has exactly one prediction, and
+  // there are no extras. A missing/extra/duplicate id or an out-of-range score
+  // has already been rejected as a hard failure, never skipped.
+  const scored = joinCompletePredictions(split.test, predictions);
   const report = buildBenchmarkReport({
     datasetName: options.input,
-    modelId: scores.modelId,
-    modelVersion: scores.modelVersion,
+    modelId: "unknown",
+    modelVersion: "unknown",
     splitStrategy: options.split,
     comparisonOnly: options.comparisonOnly,
     blockThreshold: options.blockThreshold,
     targetFpr: options.targetFpr,
-    scored: scored.records,
+    scored,
     splitSizes: {
       train: split.train.length,
       calibration: split.calibration.length,
@@ -150,10 +151,7 @@ export async function main(args: readonly string[]): Promise<void> {
       `${format(report.headline.value)}` +
       (report.split.releaseDecisionEligible
         ? ".\n"
-        : " (NOT release-decision-eligible).\n") +
-      (scored.missing > 0
-        ? `Warning: ${scored.missing} test record(s) had no prediction and were skipped.\n`
-        : ""),
+        : " (NOT release-decision-eligible).\n"),
   );
 }
 
@@ -162,7 +160,14 @@ function splitDataset(
   options: CliOptions,
 ): DatasetSplit<BenchmarkRecord> {
   if (options.split === "group-time") {
-    return groupTimeSplit(dataset, {
+    // The closed v2 record keeps the author under `groups.author`; project it to
+    // a top-level `authorGroup` so the group-time splitter (and the leakage
+    // assertion below, which reads `authorGroup`) cluster by the real author.
+    const grouped = dataset.map((record) => ({
+      ...record,
+      authorGroup: record.groups.author,
+    }));
+    return groupTimeSplit(grouped, {
       groupBy: "authorGroup",
       timeBy: "createdAt",
     });
@@ -217,80 +222,33 @@ function assertNoLeakage(split: DatasetSplit<BenchmarkRecord>): void {
   }
 }
 
-interface LoadedScores {
-  modelId: string;
-  modelVersion: string;
-  byId: Map<string, ScoreLine>;
-}
-
-async function loadScores(path: string): Promise<LoadedScores> {
-  const contents = await readFile(path, "utf8");
-  const byId = new Map<string, ScoreLine>();
-  let modelId = "unknown";
-  let modelVersion = "unknown";
-
-  contents.split(/\r?\n/).forEach((line, index) => {
-    const trimmed = line.trim();
-    if (trimmed === "") return;
-    let parsed: unknown;
-    try {
-      parsed = JSON.parse(trimmed);
-    } catch {
-      throw new CliError(`predictions line ${index + 1} is not valid JSON`);
-    }
-    if (!isRecord(parsed)) {
-      throw new CliError(`predictions line ${index + 1} is not an object`);
-    }
-    if (typeof parsed.modelId === "string") modelId = parsed.modelId;
-    if (typeof parsed.modelVersion === "string") {
-      modelVersion = parsed.modelVersion;
-    }
-    if (parsed.id === undefined && parsed.aiScore === undefined) return;
-
-    if (typeof parsed.id !== "string" || parsed.id === "") {
-      throw new CliError(
-        `predictions line ${index + 1} is missing a string id`,
-      );
-    }
-    if (
-      typeof parsed.aiScore !== "number" ||
-      !Number.isFinite(parsed.aiScore)
-    ) {
-      throw new CliError(
-        `predictions line ${index + 1} is missing a finite aiScore`,
-      );
-    }
-    byId.set(parsed.id, {
-      id: parsed.id,
-      aiScore: parsed.aiScore,
-      latencyMs: numberOrUndefined(parsed.latencyMs),
-      memoryBytes: numberOrUndefined(parsed.memoryBytes),
-    });
-  });
-
-  return { modelId, modelVersion, byId };
-}
-
-function joinScores(
-  test: readonly BenchmarkRecord[],
-  scores: LoadedScores,
-): { records: ScoredRecord[]; missing: number } {
-  const records: ScoredRecord[] = [];
-  let missing = 0;
-  for (const record of test) {
-    const score = scores.byId.get(record.id);
-    if (score === undefined) {
-      missing += 1;
-      continue;
-    }
-    records.push({
+function joinCompletePredictions(
+  records: readonly BenchmarkRecord[],
+  predictions: readonly StrictPredictionV2[],
+): ScoredRecord[] {
+  assertPredictionCompleteness(
+    records.map((record) => record.id),
+    predictions,
+  );
+  const byId = new Map(
+    predictions.map((prediction) => [prediction.id, prediction] as const),
+  );
+  return records.map((record) => {
+    // Safe: assertPredictionCompleteness proved every record id has exactly one
+    // prediction, so this lookup can never be undefined.
+    const prediction = byId.get(record.id)!;
+    const scored: ScoredRecord = {
       record,
-      aiScore: score.aiScore,
-      latencyMs: score.latencyMs,
-      memoryBytes: score.memoryBytes,
-    });
-  }
-  return { records, missing };
+      // Legacy binary report path: the document raw score is the AI score; an
+      // abstained/error row (null score) contributes as a non-AI observation.
+      aiScore: prediction.documentRawScore ?? 0,
+    };
+    if (prediction.memoryBytes !== null) {
+      scored.memoryBytes = prediction.memoryBytes;
+    }
+    scored.latencyMs = prediction.latencyMs;
+    return scored;
+  });
 }
 
 interface SplitAudit {
@@ -508,16 +466,6 @@ function numberFlag(
     throw new CliError(`flag --${key} must be a finite number`);
   }
   return parsed;
-}
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === "object" && value !== null && !Array.isArray(value);
-}
-
-function numberOrUndefined(value: unknown): number | undefined {
-  return typeof value === "number" && Number.isFinite(value)
-    ? value
-    : undefined;
 }
 
 // Only run when invoked directly (`node benchmark/cli.ts`), not when imported.
