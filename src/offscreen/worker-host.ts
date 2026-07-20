@@ -3,13 +3,16 @@ import {
   buildBuiltinEvidence,
   buildBuiltinIdentity,
 } from "@/inference/builtin-runtime";
+import type { ModelRuntime } from "@/inference/model-runtime";
 import { CleanFeedError } from "@/shared/errors";
 import type { ClassificationRequest } from "@/shared/messages";
 import type { UserSettings } from "@/shared/settings-types";
 import type {
+  Backend,
   ClassificationResult,
   DecisionReasonCode,
   ModelStatus,
+  RuntimeModelIdentity,
 } from "@/shared/types";
 import {
   parseWorkerResponse,
@@ -391,6 +394,190 @@ export class WorkerHost implements WorkerClassifierClient {
     this.attachWorker(this.worker);
     this.postInitialize();
   }
+}
+
+// ---------------------------------------------------------------------------
+// Primary/fallback lifecycle state machine.
+//
+// The host runs the TMR primary until it can no longer produce a decision; then
+// it makes AT MOST ONE immediate switch to the indicative stylometric fallback.
+// The fallback failing is terminal — there is NO automatic path back to TMR, and
+// no sequence restarts TMR or oscillates. Concurrent transition requests share
+// ONE promise so the fallback is built exactly once.
+// ---------------------------------------------------------------------------
+
+export type WorkerHostState =
+  | { mode: "primary"; phase: "initializing" | "ready"; runtime: ModelRuntime }
+  | {
+      mode: "fallback";
+      phase: "initializing" | "ready";
+      runtime: ModelRuntime;
+      reasonCodes: DecisionReasonCode[];
+    }
+  | { mode: "terminal"; phase: "error"; reasonCodes: DecisionReasonCode[] };
+
+/** Builds the primary (TMR) and fallback (stylometric) runtimes on demand. */
+export interface WorkerHostRuntimeFactory {
+  primary(): Promise<ModelRuntime>;
+  fallback(): Promise<ModelRuntime>;
+}
+
+/**
+ * Drives the primary→fallback→terminal transitions. The primary factory owns
+ * the WebGPU→WASM attempt internally (via the backend selector), so a backend
+ * fallback WITHIN TMR keeps the host in `primary`. Only a TMR that cannot
+ * initialize — or a TMR worker death — triggers the single switch to fallback.
+ */
+export class WorkerHostLifecycle {
+  private current: WorkerHostState | undefined;
+  private transition: Promise<WorkerHostState> | undefined;
+
+  constructor(private readonly factory: WorkerHostRuntimeFactory) {}
+
+  getState(): WorkerHostState {
+    if (this.current === undefined) {
+      return { mode: "terminal", phase: "error", reasonCodes: ["BACKEND_ERROR"] };
+    }
+    return this.current;
+  }
+
+  async initialize(): Promise<WorkerHostState> {
+    try {
+      const runtime = await this.factory.primary();
+      this.current = { mode: "primary", phase: "ready", runtime };
+      return this.current;
+    } catch {
+      return this.enterFallback(["BACKEND_ERROR"]);
+    }
+  }
+
+  /**
+   * Reports a TMR worker death (or an init failure). Transitions to the
+   * stylometric fallback exactly once; a death already in fallback is terminal.
+   */
+  reportWorkerDeath(
+    reasonCodes: DecisionReasonCode[] = ["BACKEND_ERROR"],
+  ): Promise<WorkerHostState> {
+    return this.enterFallback(reasonCodes);
+  }
+
+  private enterFallback(
+    reasonCodes: DecisionReasonCode[],
+  ): Promise<WorkerHostState> {
+    if (this.transition !== undefined) {
+      return this.transition;
+    }
+    if (this.current?.mode === "terminal") {
+      return Promise.resolve(this.current);
+    }
+    if (this.current?.mode === "fallback") {
+      this.current = { mode: "terminal", phase: "error", reasonCodes };
+      return Promise.resolve(this.current);
+    }
+
+    const previous = this.current;
+    const done = (async (): Promise<WorkerHostState> => {
+      if (previous?.mode === "primary") {
+        this.current = {
+          mode: "fallback",
+          phase: "initializing",
+          runtime: previous.runtime,
+          reasonCodes,
+        };
+      }
+      try {
+        const runtime = await this.factory.fallback();
+        if (previous?.mode === "primary") {
+          await disposeRuntime(previous.runtime);
+        }
+        this.current = {
+          mode: "fallback",
+          phase: "ready",
+          runtime,
+          reasonCodes,
+        };
+      } catch {
+        if (previous?.mode === "primary") {
+          await disposeRuntime(previous.runtime);
+        }
+        this.current = {
+          mode: "terminal",
+          phase: "error",
+          reasonCodes: [...reasonCodes, "BACKEND_ERROR"],
+        };
+      }
+      return this.current;
+    })();
+
+    this.transition = done;
+    void done.finally(() => {
+      if (this.transition === done) this.transition = undefined;
+    });
+    return done;
+  }
+}
+
+async function disposeRuntime(runtime: ModelRuntime): Promise<void> {
+  try {
+    await runtime.classifier.dispose();
+  } catch {
+    // Disposal is best-effort; a partial session must never block the switch.
+  }
+}
+
+/** Coordinates the published ModelStatus of the whole runtime SET. */
+export interface RuntimeSetStatusInput {
+  calibrationCoverage: "none" | "partial" | "complete";
+  calibrationSetDigest: string | null;
+  profileCount: number;
+  earliestExpiry: string | null;
+  identity: RuntimeModelIdentity | null;
+  backend: Backend;
+  supportsBatching?: boolean;
+}
+
+/**
+ * Publishes the ModelStatus of the SET. `degraded` means the fallback is active
+ * OR calibration coverage is partial. A selected calibration profile is NEVER
+ * part of the status — only the set-level coverage/digest/count/expiry.
+ */
+export function buildRuntimeSetStatus(
+  state: WorkerHostState,
+  input: RuntimeSetStatusInput,
+): ModelStatus {
+  const set = {
+    calibrationCoverage: input.calibrationCoverage,
+    calibrationSetDigest: input.calibrationSetDigest,
+    profileCount: input.profileCount,
+    earliestExpiry: input.earliestExpiry,
+  };
+  if (state.mode === "terminal") {
+    return {
+      state: "error",
+      backend: "mock",
+      runtimeIdentity: null,
+      ...set,
+      reasonCodes: state.reasonCodes,
+    };
+  }
+  const partial = input.calibrationCoverage === "partial";
+  const degraded = state.mode === "fallback" || partial;
+  const baseState =
+    state.phase === "initializing"
+      ? "initializing"
+      : degraded
+        ? "degraded"
+        : "ready";
+  return {
+    state: baseState,
+    backend: input.backend,
+    runtimeIdentity: input.identity,
+    ...set,
+    reasonCodes: state.mode === "fallback" ? state.reasonCodes : [],
+    ...(input.supportsBatching === undefined
+      ? {}
+      : { supportsBatching: input.supportsBatching }),
+  };
 }
 
 function workerUnavailableError(): CleanFeedError {

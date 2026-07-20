@@ -11,6 +11,7 @@
 import calibrationProfilesJson from "../../models/tmr-ai-text-detector/calibration-profiles.json";
 import cleanfeedModelJson from "../../models/tmr-ai-text-detector/cleanfeed-model.json";
 import releaseDescriptorJson from "../../models/tmr-ai-text-detector/release.json";
+import sourceLockJson from "../../models/tmr-ai-text-detector/source-lock.json";
 
 /** A single pinned upstream artifact: its bundle-relative path, byte length and SHA-256. */
 export interface BundledArtifactRecord {
@@ -49,14 +50,35 @@ export interface BundledCalibrationProfilesFile {
   readonly profiles: readonly unknown[];
 }
 
-/** The versioned release/promotion descriptor (schemaVersion 1). */
+/** The pinned upstream source lock: the authoritative artifact inventory. */
+export interface BundledSourceLock {
+  readonly schemaVersion: 1;
+  readonly modelId: string;
+  readonly revision: string;
+  readonly baseUrl: string;
+  readonly artifacts: readonly BundledArtifactRecord[];
+}
+
+/**
+ * The versioned release/promotion descriptor (schemaVersion 1). It re-declares
+ * the sealed bundle identity so {@link crossValidateRuntimeDescriptor} can prove
+ * the manifest, the release and every calibration profile agree BEFORE any
+ * WorkerHost or ONNX session is built. This mirrors the closed
+ * `ModelReleaseDescriptorV1` contract exactly.
+ */
 export interface BundledReleaseDescriptor {
   readonly schemaVersion: 1;
   readonly modelId: string;
+  readonly modelVersion: string;
+  readonly bundleDigest: string;
+  readonly tokenizerDigest: string;
+  readonly aggregationVersion: string;
+  readonly contentCompositionVersion: string;
+  readonly calibrationSetDigest: string;
+  readonly profileDigests: readonly string[];
   readonly rolloutState: string;
   readonly gateDecision: string;
-  readonly profileDigests: readonly string[];
-  readonly calibrationSetDigest: string;
+  readonly issuedAt: string | null;
   readonly evidenceDigest: string | null;
 }
 
@@ -71,3 +93,7 @@ export const bundledCalibrationProfiles: BundledCalibrationProfilesFile =
 /** The versioned release descriptor, inlined at build time. */
 export const bundledReleaseDescriptor: BundledReleaseDescriptor =
   releaseDescriptorJson as BundledReleaseDescriptor;
+
+/** The pinned upstream source lock, inlined at build time. */
+export const bundledSourceLock: BundledSourceLock =
+  sourceLockJson as BundledSourceLock;

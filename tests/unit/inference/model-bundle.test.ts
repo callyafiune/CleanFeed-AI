@@ -1,11 +1,36 @@
 import { describe, expect, it, vi } from "vitest";
 
 import {
+  createValidatedRuntimeHost,
+  crossValidateRuntimeDescriptor,
+  loadRuntimeDescriptor,
   parseModelManifest,
   verifyModelBundle,
+  type RuntimeDescriptor,
+  type RuntimeDescriptorSources,
 } from "@/inference/model-bundle";
-import { ModelCatalog } from "@/inference/model-catalog";
+import {
+  buildCatalogCandidates,
+  ModelCatalog,
+  selectCatalogRuntime,
+} from "@/inference/model-catalog";
+import { computeCalibrationSetDigest } from "../../../contracts/calibration-profile";
 import validManifest from "../../fixtures/models/valid/cleanfeed-model.json";
+import bundledManifest from "../../../models/tmr-ai-text-detector/cleanfeed-model.json";
+import bundledRelease from "../../../models/tmr-ai-text-detector/release.json";
+import bundledProfiles from "../../../models/tmr-ai-text-detector/calibration-profiles.json";
+import bundledSourceLock from "../../../models/tmr-ai-text-detector/source-lock.json";
+
+const NOW = Date.parse("2026-07-20T00:00:00.000Z");
+
+function validSources(): RuntimeDescriptorSources {
+  return structuredClone({
+    manifest: bundledManifest,
+    release: bundledRelease,
+    profiles: bundledProfiles,
+    sourceLock: bundledSourceLock,
+  });
+}
 
 describe("model bundles", () => {
   it("accepts an explicit binary AI/human manifest", () => {
@@ -135,5 +160,199 @@ describe("model bundles", () => {
     expect(() =>
       catalog.add({ ...validManifest, id: "../../escape" }),
     ).toThrowError("MODEL_LOAD_FAILED");
+  });
+});
+
+describe("runtime descriptor cross-validation", () => {
+  it("loads and jointly validates the sealed bundle-verified descriptor", async () => {
+    const descriptor = await loadRuntimeDescriptor(validSources());
+
+    await expect(
+      crossValidateRuntimeDescriptor(descriptor, NOW),
+    ).resolves.toBeUndefined();
+    expect(descriptor.release.rolloutState).toBe("bundle-verified");
+    expect(descriptor.profiles.profiles).toHaveLength(0);
+  });
+
+  it("never constructs the host when the descriptor JSON is invalid", async () => {
+    const createWorkerHost = vi.fn();
+    const sources = validSources();
+    (sources.manifest as { bundleDigest: unknown }).bundleDigest = "not-a-sha";
+
+    await expect(
+      createValidatedRuntimeHost(createWorkerHost, sources, NOW),
+    ).rejects.toBeDefined();
+    expect(createWorkerHost).not.toHaveBeenCalled();
+  });
+
+  it("never constructs the host when the manifest and release digests diverge", async () => {
+    const createWorkerHost = vi.fn();
+    const sources = validSources();
+    (sources.release as { bundleDigest: string }).bundleDigest = "f".repeat(64);
+
+    await expect(
+      createValidatedRuntimeHost(createWorkerHost, sources, NOW),
+    ).rejects.toBeDefined();
+    expect(createWorkerHost).not.toHaveBeenCalled();
+  });
+
+  it("never constructs the host when the manifest carries an artifact absent from the source lock", async () => {
+    const createWorkerHost = vi.fn();
+    const sources = validSources();
+    (sources.manifest as { artifacts: unknown[] }).artifacts.push({
+      path: "extra.bin",
+      bytes: 1,
+      sha256: "a".repeat(64),
+    });
+
+    await expect(
+      createValidatedRuntimeHost(createWorkerHost, sources, NOW),
+    ).rejects.toBeDefined();
+    expect(createWorkerHost).not.toHaveBeenCalled();
+  });
+
+  it("never constructs the host when a listed profile is already expired at init", async () => {
+    const createWorkerHost = vi.fn();
+    const profileDigest = "a".repeat(64);
+    const setDigest = await computeCalibrationSetDigest([profileDigest]);
+    const manifest = bundledManifest;
+    const descriptor = {
+      manifest: structuredClone(manifest),
+      sourceLock: structuredClone(bundledSourceLock),
+      release: {
+        ...structuredClone(bundledRelease),
+        rolloutState: "indicator",
+        gateDecision: "pass",
+        profileDigests: [profileDigest],
+        calibrationSetDigest: setDigest,
+        issuedAt: "2026-01-01T00:00:00.000Z",
+        evidenceDigest: "b".repeat(64),
+      },
+      profiles: {
+        schemaVersion: 1,
+        profiles: [
+          {
+            profileId: "expired",
+            modelId: manifest.modelId,
+            modelVersion: manifest.modelVersion,
+            bundleDigest: manifest.bundleDigest,
+            tokenizerDigest: manifest.tokenizerDigest,
+            aggregationVersion: manifest.aggregationVersion,
+            contentCompositionVersion: manifest.contentCompositionVersion,
+            profileDigest,
+            expiresAt: "2020-01-01T00:00:00.000Z",
+          },
+        ],
+      },
+    } as unknown as RuntimeDescriptor;
+
+    await expect(
+      createValidatedRuntimeHost(
+        createWorkerHost,
+        undefined,
+        NOW,
+        async () => descriptor,
+      ),
+    ).rejects.toBeDefined();
+    expect(createWorkerHost).not.toHaveBeenCalled();
+  });
+});
+
+describe("selectCatalogRuntime", () => {
+  it.each([
+    {
+      rolloutState: "bundle-verified",
+      validProfileCount: 0,
+      buildMode: "production",
+      primary: "stylometric",
+      shadowTmr: false,
+    },
+    {
+      rolloutState: "shadow",
+      validProfileCount: 1,
+      buildMode: "development",
+      primary: "stylometric",
+      shadowTmr: true,
+    },
+    {
+      rolloutState: "shadow",
+      validProfileCount: 1,
+      buildMode: "production",
+      primary: "stylometric",
+      shadowTmr: false,
+    },
+    {
+      rolloutState: "indicator",
+      validProfileCount: 1,
+      buildMode: "production",
+      primary: "tmr",
+      shadowTmr: false,
+    },
+    {
+      rolloutState: "actions",
+      validProfileCount: 1,
+      buildMode: "development",
+      primary: "tmr",
+      shadowTmr: false,
+    },
+    {
+      rolloutState: "indicator",
+      validProfileCount: 0,
+      buildMode: "production",
+      primary: "stylometric",
+      shadowTmr: false,
+    },
+    {
+      rolloutState: "actions",
+      validProfileCount: 0,
+      buildMode: "production",
+      primary: "stylometric",
+      shadowTmr: false,
+    },
+  ] as const)(
+    "maps $rolloutState/$validProfileCount/$buildMode to $primary (shadowTmr=$shadowTmr)",
+    ({ rolloutState, validProfileCount, buildMode, primary, shadowTmr }) => {
+      const selection = selectCatalogRuntime({
+        rolloutState,
+        validProfileCount,
+        buildMode,
+      });
+
+      expect(selection.primary).toBe(primary);
+      expect(selection.shadowTmr).toBe(shadowTmr);
+    },
+  );
+
+  it("never uses the string 'fallback' as a release state and flags a promoted release with no usable profile", () => {
+    const selection = selectCatalogRuntime({
+      rolloutState: "indicator",
+      validProfileCount: 0,
+      buildMode: "production",
+    });
+
+    expect(selection.primary).toBe("stylometric");
+    expect(selection.reasonCodes).toContain("MODEL_PROFILE_MISSING");
+  });
+
+  it("keeps the TMR candidate and the stylometric builtin as distinct identities", async () => {
+    const descriptor = await loadRuntimeDescriptor(validSources());
+    const candidates = buildCatalogCandidates(descriptor, {
+      id: "stylometric-v1",
+      version: "1.0.0",
+    });
+
+    expect(candidates.tmr).toMatchObject({
+      kind: "bundle",
+      modelId: descriptor.manifest.modelId,
+      bundleDigest: descriptor.manifest.bundleDigest,
+    });
+    expect(candidates.stylometric).toEqual({
+      kind: "builtin",
+      modelId: "stylometric",
+      modelVersion: "1.0.0",
+      implementationVersion: "stylometric-v1",
+    });
+    expect(candidates.stylometric).not.toHaveProperty("bundleDigest");
+    expect(candidates.stylometric).not.toHaveProperty("calibrationSetDigest");
   });
 });

@@ -1,6 +1,46 @@
 import { describe, expect, it, vi } from "vitest";
 
-import { WorkerHost } from "@/offscreen/worker-host";
+import {
+  buildRuntimeSetStatus,
+  WorkerHost,
+  WorkerHostLifecycle,
+  type WorkerHostRuntimeFactory,
+} from "@/offscreen/worker-host";
+import type { ModelRuntime } from "@/inference/model-runtime";
+import type { TextClassifier } from "@/shared/types";
+
+function fakeRuntime(): ModelRuntime {
+  const classifier: TextClassifier = {
+    initialize: vi.fn().mockResolvedValue(undefined),
+    classify: vi.fn(),
+    dispose: vi.fn().mockResolvedValue(undefined),
+    getMetadata: () => ({
+      id: "stylometric-v1",
+      name: "Stylometric",
+      version: "1.0.0",
+      backend: "wasm",
+      supportedLanguages: ["pt"],
+      maximumTokens: 512,
+      supportsBatching: false,
+    }),
+  };
+  return {
+    classifier,
+    tokenizer: {} as ModelRuntime["tokenizer"],
+    identity: {
+      kind: "builtin",
+      modelId: "stylometric",
+      modelVersion: "1.0.0",
+      implementationVersion: "stylometric-v1",
+    },
+    chunkPlan: {
+      modelMaxTokens: 512,
+      contentTokens: 510,
+      overlapTokens: 64,
+      maxWindows: 8,
+    },
+  };
+}
 
 class FakeWorker {
   readonly postMessage = vi.fn();
@@ -179,5 +219,149 @@ describe("WorkerHost", () => {
     await expect(
       host.classify({ ...request, requestId: "worker-request-3" }),
     ).rejects.toMatchObject({ code: "WORKER_UNAVAILABLE" });
+  });
+});
+
+describe("WorkerHostLifecycle", () => {
+  it("stays primary when the TMR runtime initializes", async () => {
+    const primaryRuntime = fakeRuntime();
+    const factory: WorkerHostRuntimeFactory = {
+      primary: vi.fn().mockResolvedValue(primaryRuntime),
+      fallback: vi.fn(),
+    };
+    const lifecycle = new WorkerHostLifecycle(factory);
+
+    const state = await lifecycle.initialize();
+
+    expect(state).toMatchObject({ mode: "primary", phase: "ready" });
+    expect(factory.primary).toHaveBeenCalledTimes(1);
+    expect(factory.fallback).not.toHaveBeenCalled();
+  });
+
+  it("switches to the stylometric fallback exactly once when both TMR backends fail", async () => {
+    const fallbackRuntime = fakeRuntime();
+    const factory: WorkerHostRuntimeFactory = {
+      primary: vi.fn().mockRejectedValue(new Error("no backend")),
+      fallback: vi.fn().mockResolvedValue(fallbackRuntime),
+    };
+    const lifecycle = new WorkerHostLifecycle(factory);
+
+    const state = await lifecycle.initialize();
+
+    expect(state.mode).toBe("fallback");
+    expect(factory.primary).toHaveBeenCalledTimes(1);
+    expect(factory.fallback).toHaveBeenCalledTimes(1);
+  });
+
+  it("initializes the fallback once when the TMR worker dies after becoming ready", async () => {
+    const primaryRuntime = fakeRuntime();
+    const fallbackRuntime = fakeRuntime();
+    const factory: WorkerHostRuntimeFactory = {
+      primary: vi.fn().mockResolvedValue(primaryRuntime),
+      fallback: vi.fn().mockResolvedValue(fallbackRuntime),
+    };
+    const lifecycle = new WorkerHostLifecycle(factory);
+    await lifecycle.initialize();
+
+    const state = await lifecycle.reportWorkerDeath(["BACKEND_ERROR"]);
+
+    expect(state.mode).toBe("fallback");
+    expect(factory.primary).toHaveBeenCalledTimes(1);
+    expect(factory.fallback).toHaveBeenCalledTimes(1);
+    expect(primaryRuntime.classifier.dispose).toHaveBeenCalledTimes(1);
+  });
+
+  it("goes terminal when the stylometric fallback also fails", async () => {
+    const factory: WorkerHostRuntimeFactory = {
+      primary: vi.fn().mockResolvedValue(fakeRuntime()),
+      fallback: vi.fn().mockRejectedValue(new Error("stylometric failed")),
+    };
+    const lifecycle = new WorkerHostLifecycle(factory);
+    await lifecycle.initialize();
+
+    const state = await lifecycle.reportWorkerDeath(["BACKEND_ERROR"]);
+
+    expect(state).toMatchObject({ mode: "terminal", phase: "error" });
+    expect(factory.fallback).toHaveBeenCalledTimes(1);
+  });
+
+  it("goes terminal, with no path back to TMR, when the worker dies already in fallback", async () => {
+    const factory: WorkerHostRuntimeFactory = {
+      primary: vi.fn().mockRejectedValue(new Error("no backend")),
+      fallback: vi.fn().mockResolvedValue(fakeRuntime()),
+    };
+    const lifecycle = new WorkerHostLifecycle(factory);
+    await lifecycle.initialize();
+    expect(lifecycle.getState().mode).toBe("fallback");
+
+    const state = await lifecycle.reportWorkerDeath(["BACKEND_ERROR"]);
+
+    expect(state.mode).toBe("terminal");
+    expect(factory.primary).toHaveBeenCalledTimes(1);
+    expect(factory.fallback).toHaveBeenCalledTimes(1);
+  });
+
+  it("shares one transition promise across concurrent worker-death reports", async () => {
+    const primaryRuntime = fakeRuntime();
+    const fallbackRuntime = fakeRuntime();
+    const factory: WorkerHostRuntimeFactory = {
+      primary: vi.fn().mockResolvedValue(primaryRuntime),
+      fallback: vi.fn().mockResolvedValue(fallbackRuntime),
+    };
+    const lifecycle = new WorkerHostLifecycle(factory);
+    await lifecycle.initialize();
+
+    const first = lifecycle.reportWorkerDeath(["BACKEND_ERROR"]);
+    const second = lifecycle.reportWorkerDeath(["BACKEND_ERROR"]);
+
+    expect(first).toBe(second);
+    await Promise.all([first, second]);
+    expect(factory.fallback).toHaveBeenCalledTimes(1);
+    expect(primaryRuntime.classifier.dispose).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe("buildRuntimeSetStatus", () => {
+  const setInput = {
+    calibrationCoverage: "partial" as const,
+    calibrationSetDigest: "d".repeat(64),
+    profileCount: 1,
+    earliestExpiry: "2026-12-31T00:00:00.000Z",
+    identity: {
+      kind: "builtin" as const,
+      modelId: "stylometric" as const,
+      modelVersion: "1.0.0",
+      implementationVersion: "stylometric-v1",
+    },
+    backend: "wasm" as const,
+  };
+
+  it("publishes a degraded set status in fallback and never a selected profile", () => {
+    const status = buildRuntimeSetStatus(
+      {
+        mode: "fallback",
+        phase: "ready",
+        runtime: fakeRuntime(),
+        reasonCodes: ["BACKEND_ERROR"],
+      },
+      setInput,
+    );
+
+    expect(status.state).toBe("degraded");
+    expect(status.calibrationCoverage).toBe("partial");
+    expect(status.calibrationSetDigest).toBe("d".repeat(64));
+    expect(status.reasonCodes).toContain("BACKEND_ERROR");
+    expect(status).not.toHaveProperty("selectedProfileDigest");
+  });
+
+  it("marks partial coverage as degraded even on the primary runtime", () => {
+    const status = buildRuntimeSetStatus(
+      { mode: "primary", phase: "ready", runtime: fakeRuntime() },
+      setInput,
+    );
+
+    expect(status.state).toBe("degraded");
+    expect(status.reasonCodes).toEqual([]);
+    expect(status).not.toHaveProperty("selectedProfileDigest");
   });
 });

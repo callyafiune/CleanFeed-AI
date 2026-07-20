@@ -1,3 +1,21 @@
+import {
+  bundledCalibrationProfiles,
+  bundledModelManifest,
+  bundledReleaseDescriptor,
+  bundledSourceLock,
+  type BundledArtifactRecord,
+  type BundledModelManifest,
+  type BundledSourceLock,
+} from "@/inference/bundled-model-metadata";
+import {
+  computeCalibrationSetDigest,
+  parseCalibrationProfilesFileV1,
+  type CalibrationProfilesFileV1,
+} from "../../contracts/calibration-profile";
+import {
+  parseModelReleaseDescriptorV1,
+  type ModelReleaseDescriptorV1,
+} from "../../contracts/model-release";
 import { CleanFeedError } from "@/shared/errors";
 
 export interface CleanFeedModelManifest {
@@ -247,4 +265,299 @@ function isSha256(value: unknown): value is string {
 
 function modelLoadFailed(): never {
   throw new CleanFeedError("MODEL_LOAD_FAILED", "MODEL_LOAD_FAILED");
+}
+
+// ---------------------------------------------------------------------------
+// Verified runtime descriptor: manifest + release + profiles + source lock.
+//
+// `loadRuntimeDescriptor` CLONES the immutable bundled imports (so nothing can
+// mutate the sealed identity), runs the three closed parsers and returns the
+// parsed descriptor. `crossValidateRuntimeDescriptor` then proves the three
+// levels agree BEFORE any WorkerHost or ONNX session is built. Any drift fails
+// closed with a coded `RuntimeDescriptorError`.
+// ---------------------------------------------------------------------------
+
+/** The three versioned descriptors plus the pinned source lock, all parsed. */
+export interface RuntimeDescriptor {
+  manifest: BundledModelManifest;
+  release: ModelReleaseDescriptorV1;
+  profiles: CalibrationProfilesFileV1;
+  sourceLock: BundledSourceLock;
+}
+
+/** Raw, unparsed JSON inputs for {@link loadRuntimeDescriptor}. */
+export interface RuntimeDescriptorSources {
+  manifest: unknown;
+  release: unknown;
+  profiles: unknown;
+  sourceLock: unknown;
+}
+
+/** Coded, fail-closed error thrown by the joint cross-validation. */
+export class RuntimeDescriptorError extends Error {
+  readonly code: string;
+  constructor(code: string, message: string) {
+    super(message);
+    this.name = "RuntimeDescriptorError";
+    this.code = code;
+  }
+}
+
+const RUNTIME_IDENTITY_KEYS = [
+  "modelId",
+  "modelVersion",
+  "bundleDigest",
+  "tokenizerDigest",
+  "aggregationVersion",
+  "contentCompositionVersion",
+] as const;
+
+const MANIFEST_V2_KEYS = [
+  "schemaVersion",
+  "modelId",
+  "modelVersion",
+  "task",
+  "backend",
+  "modelFile",
+  "aggregationVersion",
+  "contentCompositionVersion",
+  "tokenizerDigest",
+  "windowing",
+  "artifacts",
+  "bundleDigest",
+] as const;
+
+const SOURCE_LOCK_KEYS = [
+  "schemaVersion",
+  "modelId",
+  "revision",
+  "baseUrl",
+  "artifacts",
+] as const;
+
+/** Closed parser for the sealed schemaVersion-2 runtime manifest. */
+export function parseBundledRuntimeManifest(value: unknown): BundledModelManifest {
+  if (!isExactRecord(value, MANIFEST_V2_KEYS)) runtimeManifestInvalid();
+  if (
+    value.schemaVersion !== 2 ||
+    !isNonEmptyString(value.modelId) ||
+    !isNonEmptyString(value.modelVersion) ||
+    !isNonEmptyString(value.task) ||
+    !isNonEmptyString(value.backend) ||
+    !isSafePath(value.modelFile) ||
+    !isNonEmptyString(value.aggregationVersion) ||
+    !isNonEmptyString(value.contentCompositionVersion) ||
+    !isSha256(value.tokenizerDigest) ||
+    !isWindowing(value.windowing) ||
+    !isArtifactArray(value.artifacts) ||
+    !isSha256(value.bundleDigest)
+  ) {
+    runtimeManifestInvalid();
+  }
+  return value as unknown as BundledModelManifest;
+}
+
+/** Closed parser for the pinned upstream source lock. */
+export function parseBundledSourceLock(value: unknown): BundledSourceLock {
+  if (!isExactRecord(value, SOURCE_LOCK_KEYS)) sourceLockInvalid();
+  if (
+    value.schemaVersion !== 1 ||
+    !isNonEmptyString(value.modelId) ||
+    !isNonEmptyString(value.revision) ||
+    !isNonEmptyString(value.baseUrl) ||
+    !isArtifactArray(value.artifacts)
+  ) {
+    sourceLockInvalid();
+  }
+  return value as unknown as BundledSourceLock;
+}
+
+function defaultRuntimeDescriptorSources(): RuntimeDescriptorSources {
+  return {
+    manifest: bundledModelManifest,
+    release: bundledReleaseDescriptor,
+    profiles: bundledCalibrationProfiles,
+    sourceLock: bundledSourceLock,
+  };
+}
+
+/**
+ * Clones the immutable bundled imports, runs the closed parsers and returns the
+ * parsed descriptor. It performs NO cross-level check — call
+ * {@link crossValidateRuntimeDescriptor} before constructing any WorkerHost.
+ */
+export async function loadRuntimeDescriptor(
+  sources: RuntimeDescriptorSources = defaultRuntimeDescriptorSources(),
+): Promise<RuntimeDescriptor> {
+  const cloned = structuredClone(sources);
+  const manifest = parseBundledRuntimeManifest(cloned.manifest);
+  const release = await parseModelReleaseDescriptorV1(cloned.release);
+  const profiles = await parseCalibrationProfilesFileV1(cloned.profiles);
+  const sourceLock = parseBundledSourceLock(cloned.sourceLock);
+  return { manifest, release, profiles, sourceLock };
+}
+
+/**
+ * Proves the manifest, the release and every calibration profile agree, that
+ * the manifest artifacts equal the source lock, that the calibration set digest
+ * is coherent, and that no listed profile is already expired at `now`.
+ */
+export async function crossValidateRuntimeDescriptor(
+  descriptor: RuntimeDescriptor,
+  now: number = Date.now(),
+): Promise<void> {
+  const { manifest, release, profiles, sourceLock } = descriptor;
+
+  if (!artifactsEqual(manifest.artifacts, sourceLock.artifacts)) {
+    throw new RuntimeDescriptorError(
+      "ARTIFACT_MISMATCH",
+      "manifest artifacts do not exactly equal the embedded source lock",
+    );
+  }
+
+  for (const key of RUNTIME_IDENTITY_KEYS) {
+    if (manifest[key] !== release[key]) {
+      throw new RuntimeDescriptorError(
+        "RELEASE_IDENTITY_MISMATCH",
+        `release.${key} does not match the manifest`,
+      );
+    }
+  }
+
+  const fileDigests: string[] = [];
+  for (const profile of profiles.profiles) {
+    for (const key of RUNTIME_IDENTITY_KEYS) {
+      if (profile[key] !== manifest[key]) {
+        throw new RuntimeDescriptorError(
+          "PROFILE_IDENTITY_MISMATCH",
+          `profile ${profile.profileId} disagrees with the manifest on ${key}`,
+        );
+      }
+    }
+    if (Date.parse(profile.expiresAt) <= now) {
+      throw new RuntimeDescriptorError(
+        "PROFILE_EXPIRED",
+        `profile ${profile.profileId} is already expired at init`,
+      );
+    }
+    fileDigests.push(profile.profileDigest);
+  }
+
+  if (new Set(fileDigests).size !== fileDigests.length) {
+    throw new RuntimeDescriptorError(
+      "DUPLICATE_PROFILE",
+      "two profiles share the same digest",
+    );
+  }
+  const releaseSet = new Set(release.profileDigests);
+  const fileSet = new Set(fileDigests);
+  if (
+    releaseSet.size !== fileSet.size ||
+    [...releaseSet].some((digest) => !fileSet.has(digest))
+  ) {
+    throw new RuntimeDescriptorError(
+      "PROFILE_SET_MISMATCH",
+      "release profileDigests and the profiles file are not the same set",
+    );
+  }
+
+  const expectedSetDigest = await computeCalibrationSetDigest(fileDigests);
+  if (release.calibrationSetDigest !== expectedSetDigest) {
+    throw new RuntimeDescriptorError(
+      "CALIBRATION_SET_MISMATCH",
+      "calibrationSetDigest does not match the ordered/unique profile digests",
+    );
+  }
+
+  const promoted =
+    release.rolloutState === "indicator" || release.rolloutState === "actions";
+  if (promoted && profiles.profiles.length === 0) {
+    throw new RuntimeDescriptorError(
+      "ROLLOUT_WITHOUT_PROFILES",
+      "a promoted rollout requires at least one calibration profile",
+    );
+  }
+  if (release.rolloutState === "bundle-verified" && profiles.profiles.length !== 0) {
+    throw new RuntimeDescriptorError(
+      "BUNDLE_VERIFIED_WITH_PROFILES",
+      "a bundle-verified release carries no calibration profiles",
+    );
+  }
+}
+
+/**
+ * Loads + cross-validates the descriptor and ONLY THEN calls the injected
+ * `createWorkerHost` factory. On any parse or cross-validation failure the
+ * factory is never invoked (no WorkerHost, no ONNX session is constructed).
+ */
+export async function createValidatedRuntimeHost<T>(
+  createWorkerHost: (descriptor: RuntimeDescriptor) => T | Promise<T>,
+  sources?: RuntimeDescriptorSources,
+  now: number = Date.now(),
+  load: (
+    sources?: RuntimeDescriptorSources,
+  ) => Promise<RuntimeDescriptor> = loadRuntimeDescriptor,
+): Promise<T> {
+  const descriptor = await load(sources);
+  await crossValidateRuntimeDescriptor(descriptor, now);
+  return createWorkerHost(descriptor);
+}
+
+function artifactsEqual(
+  left: readonly BundledArtifactRecord[],
+  right: readonly BundledArtifactRecord[],
+): boolean {
+  if (left.length !== right.length) return false;
+  return left.every((record, index) => {
+    const other = right[index]!;
+    return (
+      record.path === other.path &&
+      record.bytes === other.bytes &&
+      record.sha256 === other.sha256
+    );
+  });
+}
+
+function isWindowing(value: unknown): boolean {
+  return (
+    isExactRecord(value, [
+      "modelMaxTokens",
+      "contentTokens",
+      "overlapTokens",
+      "maxWindows",
+    ]) &&
+    Number.isSafeInteger(value.modelMaxTokens) &&
+    Number.isSafeInteger(value.contentTokens) &&
+    Number.isSafeInteger(value.overlapTokens) &&
+    Number.isSafeInteger(value.maxWindows)
+  );
+}
+
+function isArtifactArray(value: unknown): value is BundledArtifactRecord[] {
+  return (
+    Array.isArray(value) &&
+    value.length > 0 &&
+    value.every(
+      (record) =>
+        isExactRecord(record, ["path", "bytes", "sha256"]) &&
+        isSafePath(record.path) &&
+        Number.isSafeInteger(record.bytes) &&
+        (record.bytes as number) >= 0 &&
+        isSha256(record.sha256),
+    )
+  );
+}
+
+function runtimeManifestInvalid(): never {
+  throw new RuntimeDescriptorError(
+    "MANIFEST_SCHEMA_INVALID",
+    "the sealed runtime manifest is malformed",
+  );
+}
+
+function sourceLockInvalid(): never {
+  throw new RuntimeDescriptorError(
+    "SOURCE_LOCK_INVALID",
+    "the pinned source lock is malformed",
+  );
 }

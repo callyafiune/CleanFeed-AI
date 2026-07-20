@@ -2,6 +2,7 @@ import { CleanFeedError, type ErrorCode } from "@/shared/errors";
 import {
   parseModelManifest,
   type CleanFeedModelManifest,
+  type RuntimeDescriptor,
 } from "@/inference/model-bundle";
 import { parseExtensionMessage } from "@/shared/message-validation";
 import type { ClassificationRequest } from "@/shared/messages";
@@ -19,6 +20,12 @@ export type WorkerInitializePayload = {
   wasmBaseUrl: string;
   settings?: WorkerBackendSettings;
   modelManifest?: CleanFeedModelManifest;
+  /**
+   * The already-parsed, cross-validated runtime descriptor. The offscreen
+   * document validates it BEFORE creating the WorkerHost; the worker STILL
+   * revalidates its digests as a trust boundary before opening any asset.
+   */
+  descriptor?: RuntimeDescriptor;
 };
 
 export type WorkerBackendSettings = {
@@ -98,13 +105,38 @@ function isWorkerInitializePayload(
       "wasmBaseUrl",
       "settings",
       "modelManifest",
+      "descriptor",
     ]) &&
     Object.hasOwn(value, "modelBaseUrl") &&
     Object.hasOwn(value, "wasmBaseUrl") &&
     isExtensionAssetUrl(value.modelBaseUrl, "/models/") &&
     isExtensionAssetUrl(value.wasmBaseUrl, "/vendor/transformers-wasm/") &&
     (value.settings === undefined || isWorkerBackendSettings(value.settings)) &&
-    (value.modelManifest === undefined || isModelManifest(value.modelManifest))
+    (value.modelManifest === undefined ||
+      isModelManifest(value.modelManifest)) &&
+    (value.descriptor === undefined || isRuntimeDescriptorShape(value.descriptor))
+  );
+}
+
+/**
+ * Structural gate for the transported descriptor: it must carry the three
+ * parsed sub-descriptors and nothing unexpected. This is only a transport
+ * shape check — the worker runs the full digest cross-validation as its trust
+ * boundary before opening any asset.
+ */
+function isRuntimeDescriptorShape(value: unknown): value is RuntimeDescriptor {
+  return (
+    isSafeRecord(value) &&
+    hasNoUnexpectedKeys(value, [
+      "manifest",
+      "release",
+      "profiles",
+      "sourceLock",
+    ]) &&
+    isSafeRecord(value.manifest) &&
+    isSafeRecord(value.release) &&
+    isSafeRecord(value.profiles) &&
+    (value.sourceLock === undefined || isSafeRecord(value.sourceLock))
   );
 }
 

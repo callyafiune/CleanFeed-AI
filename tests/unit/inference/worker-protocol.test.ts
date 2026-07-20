@@ -21,6 +21,39 @@ describe("worker error protocol", () => {
     ).toMatchObject({ type: "INITIALIZE" });
   });
 
+  it("accepts INITIALIZE carrying an already-parsed runtime descriptor", () => {
+    expect(
+      parseWorkerRequest({
+        type: "INITIALIZE",
+        requestId: "worker-initialize",
+        payload: {
+          modelBaseUrl: "chrome-extension://test/models/",
+          wasmBaseUrl: "chrome-extension://test/vendor/transformers-wasm/",
+          descriptor: {
+            manifest: { modelId: "tmr-ai-text-detector" },
+            release: { rolloutState: "bundle-verified" },
+            profiles: { schemaVersion: 1, profiles: [] },
+            sourceLock: { modelId: "tmr-ai-text-detector" },
+          },
+        },
+      }),
+    ).toMatchObject({ type: "INITIALIZE" });
+  });
+
+  it("rejects an INITIALIZE payload with an unknown key", () => {
+    expect(() =>
+      parseWorkerRequest({
+        type: "INITIALIZE",
+        requestId: "worker-initialize",
+        payload: {
+          modelBaseUrl: "chrome-extension://test/models/",
+          wasmBaseUrl: "chrome-extension://test/vendor/transformers-wasm/",
+          bogus: 1,
+        },
+      }),
+    ).toThrowError("INVALID_WORKER_MESSAGE");
+  });
+
   it("accepts a CLASSIFY request whose settings snapshot carries no thresholds", () => {
     const request = parseWorkerRequest({
       type: "CLASSIFY",

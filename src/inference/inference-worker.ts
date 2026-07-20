@@ -31,7 +31,10 @@ import {
   HeuristicPortugueseDetector,
   type LanguageDetector,
 } from "@/inference/language-detector";
-import type { CleanFeedModelManifest } from "@/inference/model-bundle";
+import {
+  crossValidateRuntimeDescriptor,
+  type CleanFeedModelManifest,
+} from "@/inference/model-bundle";
 import {
   OnnxTextClassifier,
   TransformersJsModelGateway,
@@ -614,6 +617,49 @@ function capToIndicator(outcome: DecisionOutcome): DecisionOutcome {
     : { ...outcome, actionCeiling: "indicator" };
 }
 
+/** The TMR abstentions that a per-request stylometric fallback answers once. */
+const PROFILE_ABSTENTION_CODES: ReadonlySet<DecisionReasonCode> = new Set([
+  "MODEL_PROFILE_MISSING",
+  "MODEL_PROFILE_MISMATCH",
+  "PROFILE_EXPIRED",
+]);
+
+/**
+ * Applies the single per-request fallback: when the TMR (bundle) path abstains
+ * because the EXACT profile is missing/expired/incompatible, run the stylometric
+ * builtin ONCE to produce a NEW indicative result (builtin identity), preserving
+ * the original TMR abstention reason in the decision diagnostic. Every other
+ * outcome — a real TMR decision, or a content-unsupported abstention — is
+ * returned unchanged (it never triggers the fallback and stays abstained).
+ */
+export async function classifyWithFallback(
+  primary: ClassificationResult,
+  runFallback: () => Promise<ClassificationResult>,
+): Promise<ClassificationResult> {
+  const abstainedOverProfile =
+    primary.runtimeIdentity.kind === "bundle" &&
+    primary.decision.abstained &&
+    primary.decision.reasonCodes.some((code) =>
+      PROFILE_ABSTENTION_CODES.has(code),
+    );
+  if (!abstainedOverProfile) {
+    return primary;
+  }
+  const fallback = await runFallback();
+  const preserved = primary.decision.reasonCodes.filter((code) =>
+    PROFILE_ABSTENTION_CODES.has(code),
+  );
+  return {
+    ...fallback,
+    decision: {
+      ...fallback.decision,
+      reasonCodes: [
+        ...new Set([...fallback.decision.reasonCodes, ...preserved]),
+      ],
+    },
+  };
+}
+
 /**
  * Evidence the classifier itself computed for the chunks of one request (for
  * example the stylometric signal codes). The pipeline only relays codes a
@@ -894,6 +940,12 @@ class WorkerRuntime {
       this.status = unavailableStatus("initializing");
       try {
         if (this.inflight.size > 0) await this.drainInflight();
+        // Trust boundary: even though the offscreen document already validated
+        // the descriptor, the worker revalidates its digests before opening any
+        // asset. A divergent descriptor fails closed here.
+        if (payload.descriptor !== undefined) {
+          await crossValidateRuntimeDescriptor(payload.descriptor);
+        }
         await configureRuntime(payload);
         const manifest = payload.modelManifest;
         if (manifest === undefined) {
