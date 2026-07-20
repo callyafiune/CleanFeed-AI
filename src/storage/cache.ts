@@ -129,17 +129,27 @@ export class ClassificationCache {
   set(key: string, result: ClassificationResult): Promise<void> {
     return this.runMutation(async () => {
       const now = this.clock.now();
+      // The selected profile's expiry bounds the record's life: a valid TMR
+      // profile that expires before the normal TTL must not keep serving.
+      const expiresAt = clampToProfileExpiry(
+        now + this.options.ttlMs,
+        result.cacheValidUntil,
+      );
+      // An already-lapsed profile expiry (a past `cacheValidUntil`, or clock
+      // skew across classification latency) would store a dead entry whose
+      // `expiresAt < lastAccessedAt`; the very next `readIndex` would then judge
+      // the ENTIRE index corrupt and wipe it, orphaning every other entry.
+      // Decline to cache instead — the result is still returned to the caller,
+      // it is simply never persisted.
+      if (expiresAt <= now) {
+        return;
+      }
       const index = await this.readIndex();
       const entry: CachedClassification = {
         result: withoutDebugTimings(result),
         createdAt: now,
         lastAccessedAt: now,
-        // The selected profile's expiry bounds the record's life: a valid TMR
-        // profile that expires before the normal TTL must not keep serving.
-        expiresAt: clampToProfileExpiry(
-          now + this.options.ttlMs,
-          result.cacheValidUntil,
-        ),
+        expiresAt,
       };
       const entries = index.entries.filter((item) => item.key !== key);
       entries.push({

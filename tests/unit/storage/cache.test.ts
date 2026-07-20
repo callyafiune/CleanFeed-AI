@@ -428,6 +428,47 @@ describe("ClassificationCache identity-bound lookup", () => {
     ).resolves.toBeUndefined();
   });
 
+  it("declines to cache an already-expired profile result without wiping the index", async () => {
+    const { cache, storage } = identityCache();
+    const goodKey = keyFor(bundleIdentity);
+    await cache.set(goodKey, bundleResult);
+    await expect(
+      cache.getCachedClassification(goodKey, REALISTIC_NOW, bundleIdentity),
+    ).resolves.toEqual(bundleResult);
+
+    // A different model whose selected profile already lapsed BEFORE write time.
+    const expiredIdentity: RuntimeModelIdentity = {
+      ...bundleIdentity,
+      calibrationSetDigest: "e".repeat(64),
+    };
+    const expiredKey = keyFor(expiredIdentity);
+    await cache.set(expiredKey, {
+      ...bundleResult,
+      runtimeIdentity: expiredIdentity,
+      cacheValidUntil: new Date(REALISTIC_NOW - 5_000).toISOString(),
+    });
+
+    // (1) The index is intact — caching the lapsed result never wiped it.
+    await expect(
+      storage.get("cleanfeed.cache.index.v1"),
+    ).resolves.toBeDefined();
+    // (2) The previously-good entry STILL hits.
+    await expect(
+      cache.getCachedClassification(goodKey, REALISTIC_NOW, bundleIdentity),
+    ).resolves.toEqual(bundleResult);
+    // (3) The already-expired result was never persisted.
+    await expect(
+      cache.getCachedClassification(
+        expiredKey,
+        REALISTIC_NOW,
+        expiredIdentity,
+      ),
+    ).resolves.toBeUndefined();
+    await expect(
+      storage.get(`cleanfeed.cache.entry.${expiredKey}`),
+    ).resolves.toBeUndefined();
+  });
+
   it("removes a single legacy entry keyed by the old fixed model key", async () => {
     const { cache, storage } = identityCache();
     const legacyKey = buildCacheKey(
