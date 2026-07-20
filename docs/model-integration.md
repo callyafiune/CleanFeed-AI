@@ -64,7 +64,18 @@ todos eles satisfeitos. Enquanto isso, o backend ativo continua sendo o mock.
    reporte a precisão entre bloqueados. Um relatório versionado com esse split é
    pré-requisito para qualquer decisão de lançamento.
 
-Só quando manifesto, assets, checksums, calibração e benchmark estiverem
-satisfeitos o modelo é integrado. Até lá, tanto a interface quanto os relatórios
-deixam explícito que o backend ativo é o mock. Nenhuma métrica de precisão ou
-acurácia é publicada aqui.
+6. **Smoke real em Chrome.** Depois de materializar os dez arquivos do bundle,
+   rode `npm run test:model:smoke`. O runner
+   ([run-real-model-tests.mjs](../scripts/run-real-model-tests.mjs)) constrói uma
+   extensão de smoke **isolada** (`dist-model-smoke/`, nunca a produção) e executa
+   o runtime real no Chromium empacotado, provando carga offline, tokenizer
+   exato, janelas 510/64/8 e agregação v2. Enquanto o binário ONNX não é
+   adquirido, o runner falha fechado com `MODEL_ARTIFACT_MISSING`; o portão de
+   release (`npm run test:model:release`) permanece fechado com
+   `MODEL_RELEASE_NOT_PROMOTED` até a decisão ser promovida. Detalhes e o contrato
+   do `ModelSmokeReport` estão em [model-validation.md](model-validation.md).
+
+Só quando manifesto, assets, checksums, calibração, benchmark e o smoke real em
+Chrome estiverem satisfeitos o modelo é integrado. Até lá, tanto a interface
+quanto os relatórios deixam explícito que o backend ativo é o mock. Nenhuma
+métrica de precisão ou acurácia é publicada aqui.

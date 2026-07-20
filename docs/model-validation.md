@@ -56,49 +56,61 @@ IA.
 
 ## Procedimento de smoke do modelo real
 
-O teste `tests/integration/real-model-smoke.test.ts` valida um artefato
-candidato **sem afirmar ground truth**. Ele é condicionado à variável de
-ambiente `CLEANFEED_TEST_MODEL_DIR`.
+O smoke real é a **única** prova de que o modelo TMR executa de verdade. Ele
+**não** é um teste Vitest: nenhum teste Vitest pode ser o portão do modelo real.
+São duas camadas complementares.
 
-### Sem artefato
+### Camada 1 — orquestração (Vitest, não é o portão)
 
-Sem `CLEANFEED_TEST_MODEL_DIR`, o bloco de smoke real é **pulado** com
-`describe.skipIf`, exibindo a razão "real model artifact not supplied". Isso é
-uma lacuna documentada, e não um PASS científico. O diretório `public/models/`
-permanece vazio e o classificador ativo continua sendo a heurística
-estilométrica de demonstração (`stylometric-v1`).
+`tests/integration/real-model-smoke.test.ts` exercita somente a **orquestração**
+ao redor do classificador — parsing de manifesto a partir de arquivo temporário,
+o harness de profiling (`profileClassifier`) e o resolvedor de modelo ativo
+(`resolveActiveModelProfile`) — com um **gateway injetado em memória**. Ele
+**não** carrega Transformers.js nem ONNX e um verde ali **não** prova que o
+modelo real roda. É deliberadamente rápido, offline e determinístico.
 
-O harness de profiling (`profileClassifier`) e o resolvedor de modelo ativo
-(`resolveActiveModelProfile`) continuam sendo exercitados com os classificadores
-de demonstração, de modo que a mecânica de medição é validada mesmo sem um
-artefato real.
+### Camada 2 — smoke real em Chrome (o portão)
 
-### Com artefato
+A prova real vive em `../tests/e2e/real-model-smoke.spec.ts`, dirigida por
+`npm run test:model:smoke` (modo candidate). O runner
+`../scripts/run-real-model-tests.mjs`:
 
-Defina `CLEANFEED_TEST_MODEL_DIR` apontando para um diretório local que contenha
-`manifest.json` e os arquivos referenciados. O smoke então verifica:
+1. falha fechado com `MODEL_ARTIFACT_MISSING` enquanto o binário ONNX selado não
+   foi adquirido — nunca um PASS falso, nunca um skip silencioso;
+2. quando o binário existe, roda `model:verify`, constrói a extensão de smoke
+   isolada (`build:model-smoke` → `dist-model-smoke/`, jamais a produção) e
+   executa o Playwright no Chromium empacotado e pinado;
+3. qualquer teste `skipped` ou a ausência do spec esperado vira
+   `MODEL_SMOKE_SKIPPED`.
 
-- **Carga offline**: o manifesto passa pelo parser fechado
-  (`parseModelManifest`) e todos os arquivos referenciados existem no disco.
-  Zero requisições para origem HTTP(S).
-- **Labels**: os labels são binários (`{human, ai}` mapeados para `0` e `1`).
-- **Idioma**: há ao menos um idioma suportado declarado.
-- **Textos de sanidade**: cinco textos em português são classificados e cada
-  distribuição soma aproximadamente `1` (`aiScore + humanScore ≈ 1`). Nenhuma
-  afirmação é feita sobre o rótulo correto de cada texto.
-- **Latência**: `profileClassifier` mede a latência fria (primeira execução) e
-  quente (mediana das execuções seguintes).
-- **Memória**: quando `performance.measureUserAgentSpecificMemory` existe, uma
-  estimativa aproximada de memória é registrada; caso contrário, o valor é
-  `null` e o relatório degrada de forma controlada.
+A página `model-smoke.html` inicializa o runtime coeso via
+`createModelRuntime`/`ExactTokenizer` (offsets nativos por
+`return_offsets_mapping`, `specialTokenCount` **medido**, nunca reconstruído por
+substring), roda duas inferências fixas e não sensíveis e publica em
+`window.__cleanfeedModelSmoke` um `ModelSmokeReport` **sem texto, tokens, URL da
+página ou scores por amostra**. O spec exige, com o bundle presente:
 
-### Portão de integração
+- identidade `bundle` com os digests esperados;
+- `exactTokenizer === true` e `specialTokenCount === 2` medido;
+- no máximo oito janelas e agregação v2;
+- `documentRawScore` e `localizedRawScore` finitos em `[0, 1]`;
+- cold start e warm inference finitos e positivos, apenas **registrados** (os
+  orçamentos 10 s / 2 s / 512 MiB pertencem só à lane de referência da Fase 4);
+- memória via CDP `Performance.getMetrics` quando disponível, senão `null`;
+- rede zero: qualquer requisição `http:`/`https:` reprova o smoke;
+- cenário de asset corrompido: uma única troca para o fallback builtin
+  **indicador** (`errorCode: "MODEL_ASSET_CORRUPTED"`), sem loop.
+
+### Portão de integração e release
 
 Um artefato só é integrado quando o portão de entrada está satisfeito: bundle
 licenciado, checksums SHA-256 conferidos, labels validados e uma calibração de
-benchmark registrada. Enquanto isso não ocorre, o classificador ativo permanece
-a heurística estilométrica de demonstração, e tanto a interface quanto os
-relatórios deixam esse estado explícito.
+benchmark registrada. O portão de release (`npm run test:model:release`) falha
+fechado com `MODEL_RELEASE_NOT_PROMOTED` enquanto a decisão está `pending`;
+quando promovido, delega a `build:release` (que roda o smoke exato do candidato,
+o build do modo e a auditoria) e depois o E2E normal. Enquanto isso não ocorre, o
+classificador ativo permanece a heurística estilométrica de demonstração, e tanto
+a interface quanto os relatórios deixam esse estado explícito.
 
 ## Ver também
 

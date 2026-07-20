@@ -10,8 +10,11 @@
     "manifest.config.ts",
     "vite.config.ts",
     "vite.manual-analysis.config.ts",
+    "vite.model-smoke.config.ts",
     "vitest.config.ts",
     "playwright.config.ts",
+    "playwright.model-smoke.config.ts",
+    "tests/e2e/model-smoke-manifest.ts",
     "scripts/**/*.d.mts"
   ]
 }

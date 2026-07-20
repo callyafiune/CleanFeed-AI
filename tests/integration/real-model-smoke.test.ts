@@ -1,25 +1,41 @@
-import { existsSync } from "node:fs";
-import { readFile } from "node:fs/promises";
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it } from "vitest";
 
 import { MockClassifier } from "@/inference/mock-classifier";
+import {
+  parseModelManifest,
+  type CleanFeedModelManifest,
+} from "@/inference/model-bundle";
 import {
   MOCK_MODEL_PROFILE,
   STYLOMETRIC_MODEL_PROFILE,
   profileClassifier,
   resolveActiveModelProfile,
 } from "@/inference/model-profile";
-import type { ModelStatus, TextClassifier } from "@/shared/types";
+import {
+  OnnxTextClassifier,
+  type ModelTokens,
+  type TransformersModelGateway,
+} from "@/inference/onnx-classifier";
+import { CleanFeedError } from "@/shared/errors";
+import type { ModelStatus } from "@/shared/types";
 
-const modelDir = process.env.CLEANFEED_TEST_MODEL_DIR;
-const hasModel =
-  typeof modelDir === "string" && modelDir.length > 0 && existsSync(modelDir);
+// IMPORTANT: nothing in THIS Vitest file is the real-model gate. These cases
+// exercise only the ORCHESTRATION around the classifier — manifest parsing from
+// a temp file, the profiling harness and the active-model resolver — with an
+// INJECTED gateway. They deliberately do NOT load Transformers.js or ONNX, and a
+// green run here is NOT evidence that the real model runs. The real gate is the
+// offline Chrome smoke in tests/e2e/real-model-smoke.spec.ts, driven by
+// `npm run test:model:smoke`. See docs/model-validation.md.
+
+const HEX64 = "a".repeat(64);
 
 /**
- * Five Portuguese sanity texts. The smoke only checks that the model runs
- * offline and produces a well-formed distribution; it never asserts ground
- * truth about whether any of these were written by a person or an AI.
+ * Five Portuguese sanity texts. The orchestration only checks that the pipeline
+ * produces a well-formed distribution; it never asserts ground truth about
+ * whether any of these were written by a person or an AI.
  */
 const SANITY_TEXTS: readonly string[] = [
   "A adoção de inteligência artificial no mercado brasileiro cresceu de forma acelerada nos últimos anos, exigindo novas competências das equipes.",
@@ -29,78 +45,133 @@ const SANITY_TEXTS: readonly string[] = [
   "Participei de um evento sobre privacidade de dados e saí convencido de que transparência com o usuário deixou de ser diferencial e passou a ser requisito.",
 ];
 
-async function createSmokeClassifier(
-  directory: string,
-): Promise<TextClassifier> {
-  const { parseModelManifest } = await import("@/inference/model-bundle");
-  const { OnnxTextClassifier, TransformersJsModelGateway } =
-    await import("@/inference/onnx-classifier");
-  const manifest = parseModelManifest(
-    JSON.parse(await readFile(join(directory, "manifest.json"), "utf8")),
-  );
-  return new OnnxTextClassifier(
-    manifest,
-    new TransformersJsModelGateway(),
-    "wasm",
-  );
+/** A minimal, valid v1 manifest object, written to a temp file per test. */
+function manifestObject(): Record<string, unknown> {
+  return {
+    schemaVersion: 1,
+    id: "orchestration-fixture",
+    name: "Orchestration Fixture",
+    version: "1.0.0",
+    task: "ai_text_detection",
+    architecture: "roberta",
+    modelPath: "onnx/model_int8.onnx",
+    tokenizerPath: "tokenizer.json",
+    configPath: "config.json",
+    supportedLanguages: ["pt", "pt-BR"],
+    maximumTokens: 512,
+    quantization: "int8",
+    labels: { human: 0, ai: 1 },
+    output: { name: "logits", kind: "logits" },
+    license: "MIT",
+    source: "local-fixture",
+    calibrationVersion: "tmr-aggregation-v2",
+    sha256: { model: HEX64, tokenizer: HEX64, config: HEX64 },
+  };
 }
 
-// Skipped, not failed, when no artifact is supplied: this is a documented gap,
-// never a scientific PASS. See docs/model-validation.md for the full procedure.
-describe.skipIf(!hasModel)(
-  "real model smoke — skipped: real model artifact not supplied (set CLEANFEED_TEST_MODEL_DIR)",
-  () => {
-    it("validates the candidate manifest and binary labels offline", async () => {
-      const { parseModelManifest } = await import("@/inference/model-bundle");
-      const manifest = parseModelManifest(
-        JSON.parse(await readFile(join(modelDir!, "manifest.json"), "utf8")),
-      );
+/**
+ * A deterministic in-memory gateway. It NEVER loads Transformers.js or ONNX: it
+ * fabricates one token id per word plus two special tokens and returns fixed
+ * logits, so the orchestration around it can be exercised offline. Using it is
+ * the whole point — a green run does not prove the real model runs.
+ */
+class InMemoryGateway implements TransformersModelGateway {
+  loadCount = 0;
+  disposeCount = 0;
 
-      expect([manifest.labels.human, manifest.labels.ai].sort()).toEqual([
-        0, 1,
-      ]);
-      expect(manifest.supportedLanguages.length).toBeGreaterThan(0);
-    });
+  async load(): Promise<void> {
+    this.loadCount += 1;
+  }
 
-    it("ships every referenced file locally with no remote source", async () => {
-      const { parseModelManifest } = await import("@/inference/model-bundle");
-      const manifest = parseModelManifest(
-        JSON.parse(await readFile(join(modelDir!, "manifest.json"), "utf8")),
-      );
+  async tokenize(text: string): Promise<ModelTokens> {
+    const words = text.trim().split(/\s+/u).filter(Boolean);
+    const contentIds = words.map((_, index) => index + 5);
+    const inputIds = [0, ...contentIds, 2];
+    return {
+      inputIds,
+      specialTokenCount: 2,
+      tokenOffsets: [],
+      inputs: { input_ids: [inputIds] },
+    };
+  }
 
-      for (const path of [
-        manifest.modelPath,
-        manifest.tokenizerPath,
-        manifest.configPath,
-      ]) {
-        expect(existsSync(join(modelDir!, path))).toBe(true);
+  async run(tokens: ModelTokens): Promise<Record<string, unknown>> {
+    const content = tokens.inputIds.length - tokens.specialTokenCount;
+    // A stable, content-length-dependent logit pair; softmax keeps it in (0,1).
+    const aiLogit = 0.25 + (content % 7) * 0.1;
+    return { logits: [[0.4, aiLogit]] };
+  }
+
+  async dispose(): Promise<void> {
+    this.disposeCount += 1;
+  }
+}
+
+/** A gateway whose load fails, standing in for a broken/absent local bundle. */
+class FailingGateway extends InMemoryGateway {
+  override async load(): Promise<void> {
+    throw new CleanFeedError("MODEL_LOAD_FAILED", "MODEL_LOAD_FAILED");
+  }
+}
+
+const tempDirs: string[] = [];
+
+function writeTempManifest(): CleanFeedModelManifest {
+  const dir = mkdtempSync(join(tmpdir(), "cleanfeed-smoke-orch-"));
+  tempDirs.push(dir);
+  const manifestPath = join(dir, "manifest.json");
+  writeFileSync(manifestPath, JSON.stringify(manifestObject()));
+  return parseModelManifest(JSON.parse(readFileSync(manifestPath, "utf8")));
+}
+
+afterEach(() => {
+  while (tempDirs.length > 0) {
+    rmSync(tempDirs.pop()!, { recursive: true, force: true });
+  }
+});
+
+describe("real-model smoke ORCHESTRATION — injected gateway, no real Transformers/ONNX", () => {
+  it("parses a temp manifest and profiles the classifier through the injected gateway", async () => {
+    const manifest = writeTempManifest();
+    const gateway = new InMemoryGateway();
+    const classifier = new OnnxTextClassifier(manifest, gateway, "wasm");
+
+    try {
+      const profile = await profileClassifier(classifier, SANITY_TEXTS, {
+        language: "pt",
+      });
+
+      expect(gateway.loadCount).toBe(1);
+      expect(profile.results).toHaveLength(SANITY_TEXTS.length);
+      for (const result of profile.results) {
+        expect(result.aiScore + result.humanScore).toBeCloseTo(1, 3);
+        // The injected gateway reports the wasm backend, never the mock.
+        expect(result.backend).not.toBe("mock");
       }
-      expect(/^https?:/iu.test(manifest.source)).toBe(false);
-    });
+      expect(profile.latency.coldMs).toBeGreaterThanOrEqual(0);
+      expect(profile.latency.warmMs).toBeGreaterThanOrEqual(0);
+      // jsdom does not expose measureUserAgentSpecificMemory.
+      expect(profile.memory.bytes).toBeNull();
+    } finally {
+      await classifier.dispose();
+    }
+    expect(gateway.disposeCount).toBe(1);
+  });
 
-    it("classifies Portuguese sanity texts and records warm/cold latency", async () => {
-      const classifier = await createSmokeClassifier(modelDir!);
-      try {
-        const profile = await profileClassifier(classifier, SANITY_TEXTS, {
-          language: "pt",
-        });
+  it("surfaces a structured MODEL_LOAD_FAILED when the injected gateway load fails", async () => {
+    const manifest = writeTempManifest();
+    const classifier = new OnnxTextClassifier(
+      manifest,
+      new FailingGateway(),
+      "wasm",
+    );
 
-        expect(profile.results).toHaveLength(SANITY_TEXTS.length);
-        for (const result of profile.results) {
-          expect(result.aiScore + result.humanScore).toBeCloseTo(1, 3);
-          expect(result.backend).not.toBe("mock");
-        }
-        expect(profile.latency.coldMs).toBeGreaterThanOrEqual(0);
-        expect(profile.latency.warmMs).toBeGreaterThanOrEqual(0);
-        expect(profile.memory.bytes === null || profile.memory.bytes > 0).toBe(
-          true,
-        );
-      } finally {
-        await classifier.dispose();
-      }
-    });
-  },
-);
+    await expect(
+      profileClassifier(classifier, SANITY_TEXTS, { language: "pt" }),
+    ).rejects.toBeInstanceOf(CleanFeedError);
+    await classifier.dispose();
+  });
+});
 
 // Always runs: proves the profiling harness and the active-model resolver used
 // by the smoke and by Options are correct without needing a real artifact.
