@@ -63,7 +63,7 @@ export interface BenchmarkReport {
     generatorModel: SegmentMetrics[];
     transformation: SegmentMetrics[];
   };
-  excludedHybridCount: number;
+  excludedMixedCount: number;
   notes: string[];
 }
 
@@ -78,11 +78,11 @@ export function buildBenchmarkReport(
   };
 
   // Binary metrics only cover unambiguous human/ai ground truth. Records
-  // labelled "hybrid" are counted but excluded from the confusion matrix.
+  // labelled "mixed" are counted but excluded from the confusion matrix.
   const binaryScored = input.scored.filter(
-    (item) => item.record.label !== "hybrid",
+    (item) => item.record.label !== "mixed",
   );
-  const excludedHybridCount = input.scored.length - binaryScored.length;
+  const excludedMixedCount = input.scored.length - binaryScored.length;
 
   const overall = computeBinaryMetrics(
     binaryScored.map((item) => toPrediction(item)),
@@ -114,19 +114,19 @@ export function buildBenchmarkReport(
       generatorModel: segment(
         binaryScored,
         options,
-        (item) => item.record.generatorModel ?? "unknown",
+        (item) => item.record.generation?.model ?? "unknown",
       ),
       transformation: segment(
         binaryScored,
         options,
-        (item) => item.record.transformation ?? "none",
+        (item) => item.record.transformation.kind,
       ),
     },
-    excludedHybridCount,
+    excludedMixedCount,
     notes: buildNotes(
       input.splitStrategy,
       releaseDecisionEligible,
-      excludedHybridCount,
+      excludedMixedCount,
     ),
   };
 }
@@ -151,7 +151,7 @@ function toPrediction(item: ScoredRecord): Prediction {
 function buildNotes(
   splitStrategy: SplitStrategy,
   releaseDecisionEligible: boolean,
-  excludedHybridCount: number,
+  excludedMixedCount: number,
 ): string[] {
   const notes: string[] = [];
 
@@ -163,9 +163,9 @@ function buildNotes(
     );
   }
 
-  if (excludedHybridCount > 0) {
+  if (excludedMixedCount > 0) {
     notes.push(
-      `${excludedHybridCount} registro(s) rotulados como "hybrid" ficaram fora da matriz binária.`,
+      `${excludedMixedCount} registro(s) rotulados como "mixed" ficaram fora da matriz binária.`,
     );
   }
 
