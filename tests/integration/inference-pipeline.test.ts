@@ -5,6 +5,7 @@ import {
   PipelineRunner,
   type InferenceWorkerScope,
 } from "@/inference/inference-worker";
+import { CalibrationRegistry } from "@/inference/calibration-registry";
 import { DEFAULT_SETTINGS } from "@/shared/constants";
 import type { Tokenizer } from "@/inference/tokenizer";
 import type { CleanFeedModelManifest } from "@/inference/model-bundle";
@@ -13,8 +14,14 @@ import type {
   ClassificationOptions,
   ClassificationResult,
   ClassifierMetadata,
+  RuntimeModelIdentity,
   TextClassifier,
 } from "@/shared/types";
+import {
+  computeCalibrationProfileDigest,
+  computeCalibrationSetDigest,
+  type RuntimeCalibrationProfileV1,
+} from "../../contracts/calibration-profile";
 
 const PORTUGUESE_LONG_TEXT = Array.from(
   { length: 260 },
@@ -735,5 +742,266 @@ describe("inference pipeline", () => {
       expect.any(String),
       expect.objectContaining({ signal: expect.any(AbortSignal) }),
     );
+  });
+});
+
+// The pinned TMR revision and sealing coordinates a found profile must match.
+const TMR_MODEL_VERSION = "b9aa251e5bcda7e429fcc936767d921435945b60";
+const DAY_MS = 24 * 60 * 60 * 1000;
+// Issued yesterday, so the profile is comfortably unexpired at Date.now().
+const PROFILE_ISSUED_AT = new Date(Date.now() - DAY_MS).toISOString();
+const PROFILE_EXPIRES_AT = new Date(
+  Date.parse(PROFILE_ISSUED_AT) + 180 * DAY_MS,
+).toISOString();
+
+const TMR_IDENTITY: RuntimeModelIdentity = {
+  kind: "bundle",
+  modelId: "tmr-ai-text-detector",
+  modelVersion: TMR_MODEL_VERSION,
+  bundleDigest: "a".repeat(64),
+  tokenizerDigest: "b".repeat(64),
+  aggregationVersion: "tmr-aggregation-v2",
+  contentCompositionVersion: "lexical-content-v1",
+  calibrationSetDigest: "d".repeat(64),
+};
+
+function bundleResult(
+  text: string,
+  options?: ClassificationOptions,
+): ClassificationResult {
+  return {
+    aiScore: 0.95,
+    humanScore: 0.05,
+    confidence: "high",
+    status: "possibly_ai",
+    wordCount: text.split(/\s+/u).length,
+    tokenCount: text.split(/\s+/u).length,
+    language: options?.language,
+    runtimeIdentity: TMR_IDENTITY,
+    evidence: {
+      quality: "limited",
+      coverage: 1,
+      lexicalRatio: 1,
+      truncated: false,
+      exactTokenizer: true,
+      reasonCodes: [],
+    },
+    decision: {
+      status: "possibly_ai",
+      calibratedScore: 0.95,
+      actionCeiling: "indicator",
+      abstained: false,
+      presentationAllowed: true,
+      triggers: [],
+      reasonCodes: [],
+    },
+    modelVersion: TMR_MODEL_VERSION,
+    modelId: "tmr-ai-text-detector",
+    backend: "wasm",
+    processingTimeMs: 1,
+    demo: false,
+  };
+}
+
+/** A bundle-identity classifier whose chunk scores clear the document trigger. */
+function bundleClassifier(): BatchTextClassifier {
+  const metadata: ClassifierMetadata = {
+    id: "tmr-ai-text-detector",
+    name: "TMR detector",
+    version: TMR_MODEL_VERSION,
+    backend: "wasm",
+    supportedLanguages: ["pt"],
+    maximumTokens: 512,
+    supportsBatching: true,
+  };
+  return {
+    initialize: vi.fn().mockResolvedValue(undefined),
+    classify: vi.fn(async (text: string, options?: ClassificationOptions) =>
+      bundleResult(text, options),
+    ),
+    classifyBatch: vi.fn(
+      async (texts: string[], options?: ClassificationOptions) =>
+        texts.map((text) => bundleResult(text, options)),
+    ),
+    dispose: vi.fn().mockResolvedValue(undefined),
+    getMetadata: vi.fn(() => metadata),
+    getRuntimeIdentity: () => TMR_IDENTITY,
+  };
+}
+
+/**
+ * A tokenizer that reports EXACT native offsets in a single span, so the bundle
+ * path's evidence is not fail-closed and one window covers the whole document
+ * (coverage 1.0). This is what lets a real profile be applied end-to-end.
+ */
+const exactTokenizer: Tokenizer = {
+  id: "exact-test",
+  encode: vi.fn(async (text: string) => ({
+    spans: [{ id: 1, start: 0, end: text.length }],
+    tokenCount: 1,
+    exact: true,
+  })),
+};
+
+/** A fully-valid pass/hide profile for the linkedin pt-BR 200-plus bucket. */
+function bundleProfile(): Omit<RuntimeCalibrationProfileV1, "profileDigest"> {
+  const gate = (estimate: number, sampleSize: number) => ({
+    estimate,
+    lowerBound95: Math.max(0, estimate - 0.01),
+    upperBound95: Math.min(1, estimate + 0.01),
+    sampleSize,
+  });
+  return {
+    schemaVersion: 1,
+    profileId: "linkedin-200plus",
+    modelId: "tmr-ai-text-detector",
+    modelVersion: TMR_MODEL_VERSION,
+    bundleDigest: "a".repeat(64),
+    tokenizerDigest: "b".repeat(64),
+    platform: "linkedin",
+    locale: "pt-BR",
+    lengthBucket: "200-plus",
+    aggregationVersion: "tmr-aggregation-v2",
+    contentCompositionVersion: "lexical-content-v1",
+    datasetDigest: "c".repeat(64),
+    splitDigest: "d".repeat(64),
+    evaluatorDigest: "e".repeat(64),
+    issuedAt: PROFILE_ISSUED_AT,
+    expiresAt: PROFILE_EXPIRES_AT,
+    calibrators: {
+      document: {
+        kind: "isotonic",
+        interpolation: "linear",
+        clamp: true,
+        knots: [
+          { rawScore: 0, calibratedScore: 0 },
+          { rawScore: 0.5, calibratedScore: 0.4 },
+          { rawScore: 1, calibratedScore: 1 },
+        ],
+      },
+      localized: { kind: "platt", slope: 1.2, intercept: -0.3 },
+    },
+    thresholds: {
+      documentIndicator: 0.8,
+      localizedIndicator: 0.82,
+      documentAction: 0.9,
+    },
+    evidencePolicy: {
+      minimumCoverage: 0.95,
+      minimumLexicalRatio: 0.6,
+      maximumStdDev: 0.25,
+      minimumChunkAgreement: 0.5,
+      exactTokenizerRequired: true,
+    },
+    gateEvidence: {
+      decision: "pass",
+      intervalMethod: "wilson-one-sided-95",
+      ece: { value: 0.02, bins: 15, sampleSize: 5000 },
+      overall: {
+        indicatorFpr: gate(0.03, 2500),
+        indicatorRecall: gate(0.7, 1200),
+        actionFpr: gate(0.01, 2500),
+        actionRecall: gate(0.6, 1200),
+        coverage: gate(0.97, 3000),
+        mixedRecall: gate(0.65, 1200),
+      },
+      criticalFprSlices: {
+        "topic:tech": {
+          indicatorFpr: gate(0.03, 400),
+          actionFpr: gate(0.01, 400),
+        },
+      },
+      criticalRecallSlices: {
+        "topic:tech": {
+          indicatorRecall: gate(0.7, 300),
+          actionRecall: gate(0.6, 300),
+        },
+      },
+    },
+    actionCeiling: "hide",
+  };
+}
+
+async function bundleRegistry(): Promise<{
+  registry: CalibrationRegistry;
+  profileDigest: string;
+}> {
+  const draft = {
+    ...bundleProfile(),
+    profileDigest: "",
+  } as RuntimeCalibrationProfileV1;
+  draft.profileDigest = await computeCalibrationProfileDigest(draft);
+  const registry = await CalibrationRegistry.load(
+    {
+      schemaVersion: 1,
+      modelId: "tmr-ai-text-detector",
+      modelVersion: TMR_MODEL_VERSION,
+      bundleDigest: "a".repeat(64),
+      tokenizerDigest: "b".repeat(64),
+      aggregationVersion: "tmr-aggregation-v2",
+      contentCompositionVersion: "lexical-content-v1",
+      calibrationSetDigest: await computeCalibrationSetDigest([
+        draft.profileDigest,
+      ]),
+      profileDigests: [draft.profileDigest],
+      rolloutState: "actions",
+      gateDecision: "pass",
+      issuedAt: PROFILE_ISSUED_AT,
+      evidenceDigest: "f".repeat(64),
+    },
+    { schemaVersion: 1, profiles: [draft] },
+  );
+  return { registry, profileDigest: draft.profileDigest };
+}
+
+describe("bundle calibration profile binding", () => {
+  it("binds the applied profile's digest and expiry onto a found-profile bundle result", async () => {
+    const { registry, profileDigest } = await bundleRegistry();
+    const runner = new PipelineRunner({
+      classifier: bundleClassifier(),
+      tokenizer: exactTokenizer,
+      calibration: registry,
+    });
+
+    const classified = await runner.classify(
+      { text: PORTUGUESE_LONG_TEXT, platform: "linkedin", manual: false },
+      DEFAULT_SETTINGS,
+    );
+
+    // The verdict rode on a real profile, so its audit digest and cache bound
+    // are emitted — the fields plan line 868 declares but src never produced.
+    expect(classified.decision.abstained).toBe(false);
+    expect(classified.selectedProfileDigest).toBe(profileDigest);
+    expect(classified.cacheValidUntil).toBe(PROFILE_EXPIRES_AT);
+  });
+
+  it("leaves both fields undefined when the bundle path abstains for a missing profile", async () => {
+    // No calibration registry: the TMR lookup misses and abstains fail-closed.
+    const runner = new PipelineRunner({
+      classifier: bundleClassifier(),
+      tokenizer: exactTokenizer,
+    });
+
+    const classified = await runner.classify(
+      { text: PORTUGUESE_LONG_TEXT, platform: "linkedin", manual: false },
+      DEFAULT_SETTINGS,
+    );
+
+    expect(classified.decision.abstained).toBe(true);
+    expect(classified.selectedProfileDigest).toBeUndefined();
+    expect(classified.cacheValidUntil).toBeUndefined();
+  });
+
+  it("leaves both fields undefined for an uncalibrated builtin result", async () => {
+    const runner = new PipelineRunner({ classifier: classifier() });
+
+    const classified = await runner.classify(
+      { text: PORTUGUESE_LONG_TEXT, platform: "linkedin", manual: false },
+      DEFAULT_SETTINGS,
+    );
+
+    expect(classified.runtimeIdentity.kind).toBe("builtin");
+    expect(classified.selectedProfileDigest).toBeUndefined();
+    expect(classified.cacheValidUntil).toBeUndefined();
   });
 });

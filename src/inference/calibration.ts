@@ -156,6 +156,27 @@ export interface DecideWithProfileInput {
   wordCount: number;
 }
 
+/** The audit digest and cache-validity bound of a profile that was applied. */
+export interface AppliedProfile {
+  /** Digest of the profile used for THIS request only — never a global. */
+  profileDigest: string;
+  /** The profile's expiry; upper-bounds the cached record's TTL. */
+  expiresAt: string;
+}
+
+/**
+ * The calibrated decision plus, ONLY when an exact/in-release/unexpired profile
+ * was actually applied, that profile's audit identity. `appliedProfile` is
+ * deliberately absent for every abstention — unsupported evidence or a
+ * missing/expired/incompatible profile — so the caller emits
+ * `selectedProfileDigest`/`cacheValidUntil` if and only if a verdict truly rode
+ * on a profile.
+ */
+export interface ProfileDecision {
+  outcome: DecisionOutcome;
+  appliedProfile?: AppliedProfile;
+}
+
 /**
  * The authoritative calibrated (TMR) decision policy. It applies the exact
  * profile, never a heuristic, and follows a fixed order:
@@ -172,20 +193,29 @@ export interface DecideWithProfileInput {
  */
 export function decideWithProfile(
   input: DecideWithProfileInput,
-): DecisionOutcome {
+): ProfileDecision {
   const { lookup, aggregation, evidence, rolloutState, wordCount } = input;
 
-  // (1) Unsupported evidence abstains regardless of score.
+  // (1) Unsupported evidence abstains regardless of score. No profile is
+  // applied here even if one was found, so no audit digest is emitted.
   if (evidence.quality === "unsupported") {
-    return abstain(["INSUFFICIENT_EVIDENCE", ...evidence.reasonCodes]);
+    return {
+      outcome: abstain(["INSUFFICIENT_EVIDENCE", ...evidence.reasonCodes]),
+    };
   }
 
   // (2) No exact, in-release, unexpired profile: the TMR abstains fail-closed.
   if (lookup.status !== "found") {
-    return abstain([lookup.reason]);
+    return { outcome: abstain([lookup.reason]) };
   }
 
   const { profile } = lookup;
+  // From here the exact profile is genuinely applied, so its audit digest and
+  // expiry ride with every outcome this function returns below.
+  const appliedProfile: AppliedProfile = {
+    profileDigest: profile.profileDigest,
+    expiresAt: profile.expiresAt,
+  };
 
   // (3) Calibrate the two signals independently — never blended.
   const documentScore = applyCalibrator(
@@ -216,16 +246,20 @@ export function decideWithProfile(
   const calibratedScore =
     triggeredScores.length > 0 ? Math.max(...triggeredScores) : documentScore;
 
-  // (6) No trigger fired: not AI-indicated, so nothing is presented.
+  // (6) No trigger fired: not AI-indicated, so nothing is presented. The
+  // profile was still applied, so its audit digest and expiry still ride along.
   if (triggers.length === 0) {
     return {
-      status: "probably_human",
-      calibratedScore,
-      actionCeiling: "indicator",
-      abstained: false,
-      presentationAllowed: false,
-      triggers: [],
-      reasonCodes: [],
+      outcome: {
+        status: "probably_human",
+        calibratedScore,
+        actionCeiling: "indicator",
+        abstained: false,
+        presentationAllowed: false,
+        triggers: [],
+        reasonCodes: [],
+      },
+      appliedProfile,
     };
   }
 
@@ -259,13 +293,16 @@ export function decideWithProfile(
   if (evidence.quality === "limited") reasonCodes.push("LIMITED_EVIDENCE");
 
   return {
-    status: actionCeiling === "hide" ? "strong_ai_indication" : "possibly_ai",
-    calibratedScore,
-    actionCeiling,
-    abstained: false,
-    presentationAllowed,
-    triggers,
-    reasonCodes,
+    outcome: {
+      status: actionCeiling === "hide" ? "strong_ai_indication" : "possibly_ai",
+      calibratedScore,
+      actionCeiling,
+      abstained: false,
+      presentationAllowed,
+      triggers,
+      reasonCodes,
+    },
+    appliedProfile,
   };
 }
 

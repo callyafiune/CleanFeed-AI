@@ -403,12 +403,21 @@ describe("ClassificationCache identity-bound lookup", () => {
   });
 
   it("clamps the stored TTL to the selected profile's expiry", async () => {
-    const { cache } = identityCache();
+    const { cache, storage } = identityCache();
     const key = keyFor(bundleIdentity);
     // The profile expires 10 minutes from now — long before the 7-day TTL.
     const cacheValidUntil = new Date(REALISTIC_NOW + 600_000).toISOString();
 
     await cache.set(key, { ...bundleResult, cacheValidUntil });
+
+    // The persisted record's expiry is the profile expiry, not the normal TTL:
+    // this is what a real bundle verdict's `cacheValidUntil` now clamps to.
+    expect(REALISTIC_NOW + 600_000).toBeLessThan(
+      REALISTIC_NOW + DEFAULT_SETTINGS.cacheTtlMs,
+    );
+    await expect(
+      storage.get(`cleanfeed.cache.entry.${key}`),
+    ).resolves.toMatchObject({ expiresAt: REALISTIC_NOW + 600_000 });
 
     // A read just before the profile expiry still hits.
     await expect(

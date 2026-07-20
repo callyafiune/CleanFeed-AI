@@ -15,6 +15,7 @@ import {
   contractLengthBucket,
   decideWithProfile,
   getLengthBucket,
+  type ProfileDecision,
 } from "@/inference/calibration";
 import { bundledModelManifest } from "@/inference/bundled-model-metadata";
 import type {
@@ -525,7 +526,7 @@ function completePreparedRequest(
   // The decision is authoritative. The calibrated bundle (TMR) path applies the
   // EXACT profile via the release-bound registry or fails closed; the builtin
   // heuristics (stylometric/mock) are uncalibrated and can only ever indicate.
-  const decision =
+  const profileDecision: ProfileDecision =
     base.runtimeIdentity.kind === "bundle"
       ? decideBundle(
           base,
@@ -533,7 +534,8 @@ function completePreparedRequest(
           item.request.platform,
           calibration,
         )
-      : capToIndicator(calibrateResult(base));
+      : { outcome: capToIndicator(calibrateResult(base)) };
+  const decision = profileDecision.outcome;
   const explanation = buildExplanation(base, decision);
   const classifierEvidence = collectClassifierReasonCodes(classified);
   const calibrationMs = performance.now() - calibrationStartedAt;
@@ -541,6 +543,16 @@ function completePreparedRequest(
     ...base,
     status: decision.status,
     decision,
+    // The applied profile's digest and expiry are emitted ONLY when a real TMR
+    // profile actually drove this verdict, so a cached positive verdict can
+    // never outlive the calibration it rode on. Abstentions and the
+    // uncalibrated builtins leave both fields undefined.
+    ...(profileDecision.appliedProfile
+      ? {
+          selectedProfileDigest: profileDecision.appliedProfile.profileDigest,
+          cacheValidUntil: profileDecision.appliedProfile.expiresAt,
+        }
+      : {}),
     explanation: {
       ...explanation,
       reasonCodes: [
@@ -573,7 +585,7 @@ function decideBundle(
   identity: BundleIdentity,
   platform: string,
   registry: CalibrationRegistry | undefined,
-): DecisionOutcome {
+): ProfileDecision {
   const aggregation = base.aggregation ?? {
     version: "tmr-aggregation-v2" as const,
     documentRawScore: base.aiScore,

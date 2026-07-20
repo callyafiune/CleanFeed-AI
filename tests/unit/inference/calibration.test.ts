@@ -83,14 +83,21 @@ const IDENTITY: SerializedCalibratorV1 = {
   ],
 };
 
+const PROFILE_DIGEST = "a".repeat(64);
+const PROFILE_EXPIRES_AT = "2026-06-30T00:00:00.000Z";
+
 /**
  * A found-profile lookup with identity calibrators, so `calibratedScore` equals
- * the raw score and each threshold test isolates one branch of the policy.
+ * the raw score and each threshold test isolates one branch of the policy. It
+ * also carries a `profileDigest`/`expiresAt` so the applied-profile binding can
+ * be asserted.
  */
 function foundLookup(
   overrides: Partial<RuntimeCalibrationProfileV1> = {},
 ): ProfileLookup {
   const profile = {
+    profileDigest: PROFILE_DIGEST,
+    expiresAt: PROFILE_EXPIRES_AT,
     calibrators: { document: IDENTITY, localized: IDENTITY },
     thresholds: {
       documentIndicator: 0.8,
@@ -207,7 +214,7 @@ describe("applySerializedCalibrator", () => {
 
 describe("decideWithProfile", () => {
   it("abstains without presentation when evidence is unsupported, even at score 1", () => {
-    const outcome = decideWithProfile(
+    const { outcome } = decideWithProfile(
       decideInput({
         aggregation: agg(1, 1),
         evidence: evidence("unsupported"),
@@ -227,7 +234,7 @@ describe("decideWithProfile", () => {
     "abstains with a specific reason when the profile is %s",
     (status, reason) => {
       const lookup = { status, reason } as ProfileLookup;
-      const outcome = decideWithProfile(
+      const { outcome } = decideWithProfile(
         decideInput({ lookup, aggregation: agg(1, 1) }),
       );
       expect(outcome.abstained).toBe(true);
@@ -237,7 +244,7 @@ describe("decideWithProfile", () => {
   );
 
   it("produces no trigger and no presentation when both signals are below threshold", () => {
-    const outcome = decideWithProfile(
+    const { outcome } = decideWithProfile(
       decideInput({ aggregation: agg(0.5, 0.5) }),
     );
     expect(outcome.triggers).toEqual([]);
@@ -248,7 +255,7 @@ describe("decideWithProfile", () => {
   });
 
   it("fires the document trigger alone (calibratedScore = document)", () => {
-    const outcome = decideWithProfile(
+    const { outcome } = decideWithProfile(
       decideInput({ aggregation: agg(0.85, 0.5) }),
     );
     expect(outcome.triggers).toEqual(["document"]);
@@ -259,7 +266,7 @@ describe("decideWithProfile", () => {
   });
 
   it("fires the localized trigger alone and caps at indicator", () => {
-    const outcome = decideWithProfile(
+    const { outcome } = decideWithProfile(
       decideInput({ aggregation: agg(0.5, 0.85) }),
     );
     expect(outcome.triggers).toEqual(["localized"]);
@@ -269,7 +276,7 @@ describe("decideWithProfile", () => {
   });
 
   it("fires both triggers in canonical order and takes the max calibrated score", () => {
-    const outcome = decideWithProfile(
+    const { outcome } = decideWithProfile(
       decideInput({ aggregation: agg(0.95, 0.85) }),
     );
     expect(outcome.triggers).toEqual(["document", "localized"]);
@@ -277,7 +284,7 @@ describe("decideWithProfile", () => {
   });
 
   it("authorizes a hide ceiling only with a document action under an actions rollout", () => {
-    const outcome = decideWithProfile(
+    const { outcome } = decideWithProfile(
       decideInput({ aggregation: agg(0.95, 0.85) }),
     );
     expect(outcome.actionCeiling).toBe("hide");
@@ -286,7 +293,7 @@ describe("decideWithProfile", () => {
   });
 
   it("caps at indicator when evidence is only limited", () => {
-    const outcome = decideWithProfile(
+    const { outcome } = decideWithProfile(
       decideInput({
         aggregation: agg(0.95, 0.5),
         evidence: evidence("limited"),
@@ -297,14 +304,14 @@ describe("decideWithProfile", () => {
   });
 
   it("caps at indicator for the 50-79 word bucket", () => {
-    const outcome = decideWithProfile(
+    const { outcome } = decideWithProfile(
       decideInput({ aggregation: agg(0.95, 0.5), wordCount: 60 }),
     );
     expect(outcome.actionCeiling).toBe("indicator");
   });
 
   it("caps at indicator under an indicator rollout even when the action gate passes", () => {
-    const outcome = decideWithProfile(
+    const { outcome } = decideWithProfile(
       decideInput({ aggregation: agg(0.95, 0.85), rolloutState: "indicator" }),
     );
     expect(outcome.actionCeiling).toBe("indicator");
@@ -314,10 +321,59 @@ describe("decideWithProfile", () => {
   it.each(["bundle-verified", "shadow"] as const)(
     "never permits presentation under a %s rollout",
     (rolloutState) => {
-      const outcome = decideWithProfile(
+      const { outcome } = decideWithProfile(
         decideInput({ aggregation: agg(0.95, 0.85), rolloutState }),
       );
       expect(outcome.presentationAllowed).toBe(false);
+    },
+  );
+});
+
+describe("decideWithProfile applied-profile binding", () => {
+  it("surfaces the applied profile's digest and expiry when a trigger fires", () => {
+    const { outcome, appliedProfile } = decideWithProfile(
+      decideInput({ aggregation: agg(0.85, 0.5) }),
+    );
+    expect(outcome.triggers).toEqual(["document"]);
+    expect(appliedProfile).toEqual({
+      profileDigest: PROFILE_DIGEST,
+      expiresAt: PROFILE_EXPIRES_AT,
+    });
+  });
+
+  it("still surfaces the applied profile when no trigger fires (probably_human)", () => {
+    const { outcome, appliedProfile } = decideWithProfile(
+      decideInput({ aggregation: agg(0.5, 0.5) }),
+    );
+    expect(outcome.status).toBe("probably_human");
+    expect(appliedProfile).toEqual({
+      profileDigest: PROFILE_DIGEST,
+      expiresAt: PROFILE_EXPIRES_AT,
+    });
+  });
+
+  it("omits the applied profile when evidence is unsupported, even with a found profile", () => {
+    const { appliedProfile } = decideWithProfile(
+      decideInput({
+        aggregation: agg(1, 1),
+        evidence: evidence("unsupported"),
+      }),
+    );
+    expect(appliedProfile).toBeUndefined();
+  });
+
+  it.each([
+    ["missing", "MODEL_PROFILE_MISSING"],
+    ["expired", "PROFILE_EXPIRED"],
+    ["out-of-release", "MODEL_PROFILE_MISMATCH"],
+  ] as const)(
+    "omits the applied profile when the profile is %s",
+    (status, reason) => {
+      const lookup = { status, reason } as ProfileLookup;
+      const { appliedProfile } = decideWithProfile(
+        decideInput({ lookup, aggregation: agg(1, 1) }),
+      );
+      expect(appliedProfile).toBeUndefined();
     },
   );
 });
