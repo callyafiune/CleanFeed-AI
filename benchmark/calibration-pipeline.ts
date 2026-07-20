@@ -63,6 +63,17 @@ export interface FitFrozenCalibrationInput {
   samples: readonly FitSampleScores[];
   /** AI / mixed positives (label 1) whose recall the thresholds maximize. */
   positives: readonly FitSampleScores[];
+  /**
+   * OPTIONAL scored-only negatives used to FIT the calibrators (the set fed to
+   * selectCalibrator / CV via toGroupedSamples). When omitted it falls back to
+   * `samples`. Threshold selection ALWAYS runs over `samples`, so a caller can
+   * restrict calibrator fitting to `status === "scored"` records — mirroring
+   * metrics.ts `scoredBinary` — without perturbing the false-positive
+   * denominator that stays symmetric with evaluate's decision metrics.
+   */
+  calibratorSamples?: readonly FitSampleScores[];
+  /** OPTIONAL scored-only positives for calibrator fitting; defaults to `positives`. */
+  calibratorPositives?: readonly FitSampleScores[];
   /** Ids assigned to the blocked test partition by the split artifact. */
   testIds: readonly string[];
   evaluatorDigest: string;
@@ -617,19 +628,20 @@ function selectVisualThreshold(
 }
 
 function toGroupedSamples(
-  input: FitFrozenCalibrationInput,
+  samples: readonly FitSampleScores[],
+  positives: readonly FitSampleScores[],
   path: "document" | "localized",
 ): GroupedCalibrationSample[] {
   const read = (sample: FitSampleScores): number =>
     path === "document" ? sample.documentRawScore : sample.localizedRawScore;
   return [
-    ...input.samples.map((sample) => ({
+    ...samples.map((sample) => ({
       id: sample.id,
       authorGroup: sample.authorGroup,
       rawScore: read(sample),
       label: 0 as const,
     })),
-    ...input.positives.map((sample) => ({
+    ...positives.map((sample) => ({
       id: sample.id,
       authorGroup: sample.authorGroup,
       rawScore: read(sample),
@@ -670,12 +682,17 @@ export function fitFrozenCalibration(
 ): FrozenCalibrationResult {
   const identity = validateFitInputs(input);
 
+  // Calibrator fitting runs over the scored-only subset when the caller supplies
+  // it; threshold selection below still runs over the full `samples`/`positives`.
+  const calibratorSamples = input.calibratorSamples ?? input.samples;
+  const calibratorPositives = input.calibratorPositives ?? input.positives;
+
   const documentSelection = selectCalibrator(
-    toGroupedSamples(input, "document"),
+    toGroupedSamples(calibratorSamples, calibratorPositives, "document"),
     input.fitSeed,
   );
   const localizedSelection = selectCalibrator(
-    toGroupedSamples(input, "localized"),
+    toGroupedSamples(calibratorSamples, calibratorPositives, "localized"),
     input.fitSeed,
   );
 

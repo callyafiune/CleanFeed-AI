@@ -254,6 +254,27 @@ describe("buildSlices gate eligibility", () => {
     const options = { bootstrapSeed: 99, heldOutGeneratorFamilies: [] };
     expect(buildSlices(items, options)).toEqual(buildSlices(items, options));
   });
+
+  it("orders slice keys by unicode codepoint, never host locale collation", () => {
+    const items = [
+      item({ author: "a1", label: "human", domain: "alpha" }),
+      item({ author: "a2", label: "human", domain: "alpha" }),
+      item({ author: "b1", label: "human", domain: "Beta" }),
+      item({ author: "b2", label: "ai", domain: "Beta" }),
+    ];
+    const slices = buildSlices(items, {
+      bootstrapSeed: 7,
+      heldOutGeneratorFamilies: [],
+    });
+    const domainKeys = slices
+      .filter((slice) => slice.axis === "domain")
+      .map((slice) => slice.key);
+    // Codepoint order puts uppercase "Beta" (U+0042) before lowercase "alpha"
+    // (U+0061); a locale collation would instead yield ["alpha","Beta"]. Slice
+    // key order flows into the gate array order and reportDigest, so it must be
+    // locale-independent — matching benchmark/split-audit.ts's codepoint sort.
+    expect(domainKeys).toEqual(["Beta", "alpha"]);
+  });
 });
 
 // --- summarizeSlices (pure over hand-built slice results) -----------------

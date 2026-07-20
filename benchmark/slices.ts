@@ -150,7 +150,9 @@ export function buildSlices(
       if (bucket === undefined) buckets.set(key, [item]);
       else bucket.push(item);
     }
-    const keys = [...buckets.keys()].sort((a, b) => a.localeCompare(b));
+    const keys = [...buckets.keys()].sort((a, b) =>
+      a < b ? -1 : a > b ? 1 : 0,
+    );
     for (const key of keys) {
       const bucket = buckets.get(key) as EvaluationItem[];
       const positives = bucket.filter((item) =>

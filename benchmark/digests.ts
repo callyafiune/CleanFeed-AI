@@ -40,7 +40,9 @@ export async function computeDatasetDigest(
   manifest: DatasetManifest,
   records: readonly BenchmarkRecord[],
 ): Promise<string> {
-  const sortedRecords = [...records].sort((a, b) => a.id.localeCompare(b.id));
+  const sortedRecords = [...records].sort((a, b) =>
+    a.id < b.id ? -1 : a.id > b.id ? 1 : 0,
+  );
   const payload = `${canonicalJson(manifest)}\n${sortedRecords
     .map((record) => canonicalJson(record))
     .join("\n")}\n`;
@@ -78,6 +80,19 @@ export const EVALUATOR_FILES = [
   "benchmark/gates.ts",
   "benchmark/report.ts",
   "benchmark/profile-artifact.ts",
+  // Task-13 orchestration layer: the CLI, the holdout ledger and every
+  // subcommand build the IntegrityEvidence and apply the calibration that
+  // produce the gate decision, so they are part of the evaluator's identity.
+  "benchmark/cli.ts",
+  "benchmark/commands/evaluate.ts",
+  "benchmark/commands/fit.ts",
+  "benchmark/commands/io.ts",
+  "benchmark/commands/publish-profile.ts",
+  "benchmark/commands/split.ts",
+  "benchmark/commands/validate-predictions.ts",
+  "benchmark/commands/validate.ts",
+  "benchmark/commands/verify-evidence.ts",
+  "benchmark/holdout-ledger.ts",
   "package-lock.json",
 ] as const;
 

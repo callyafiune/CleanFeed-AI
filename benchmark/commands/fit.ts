@@ -26,7 +26,10 @@ import {
   validateDatasetManifest,
 } from "../dataset-manifest.ts";
 import { computeEvaluatorDigest } from "../digests.ts";
-import { computePredictionManifestDigest } from "../prediction-schema.ts";
+import {
+  assertPredictionCompleteness,
+  computePredictionManifestDigest,
+} from "../prediction-schema.ts";
 import { parseBenchmarkDataset, type BenchmarkRecord } from "../schema.ts";
 import {
   validateSplitArtifact,
@@ -99,14 +102,55 @@ export async function runFit(options: FitOptions): Promise<string> {
   );
 
   const recordsById = new Map(records.map((record) => [record.id, record]));
+
+  // Fail closed on prediction completeness, exactly like validate-predictions
+  // (assertPredictionCompleteness) and evaluate (assertTestCoverage): the union
+  // of the development and calibration prediction ids must cover EXACTLY the set
+  // of non-test split-assigned ids — one row per id (ANY status counts for
+  // coverage), no missing, no extra, and no duplicate/cross-artifact id
+  // collision — so the sealed thresholds are never fit over a denominator that
+  // diverges from the frozen split.
+  const nonTestIds = artifact.assignments
+    .filter((assignment) => assignment.partition !== "test")
+    .map((assignment) => assignment.id);
+  const combinedPredictions = [
+    ...development.predictions,
+    ...calibration.predictions,
+  ];
+  const seenPredictionIds = new Set<string>();
+  for (const prediction of combinedPredictions) {
+    if (seenPredictionIds.has(prediction.id)) {
+      throw new CommandError(
+        "FIT_PREDICTION_COLLISION",
+        `prediction id "${prediction.id}" appears in both the development and calibration artifacts`,
+      );
+    }
+    seenPredictionIds.add(prediction.id);
+  }
+  try {
+    assertPredictionCompleteness(nonTestIds, combinedPredictions);
+  } catch (error) {
+    throw new CommandError(
+      "FIT_PREDICTIONS_INCOMPLETE",
+      error instanceof Error ? error.message : String(error),
+    );
+  }
+
   const scoreById = new Map(
-    [...development.predictions, ...calibration.predictions].map(
+    combinedPredictions.map(
       (prediction) => [prediction.id, prediction] as const,
     ),
   );
 
+  // Threshold selection consumes ALL non-test records with null raw scores
+  // coerced to 0, staying symmetric with evaluate.ts's decision metrics.
+  // Calibrator fitting consumes ONLY status === "scored" records, mirroring
+  // metrics.ts `scoredBinary`, so an abstained/errored raw-0 never contaminates
+  // the calibration curve.
   const samples: FitSampleScores[] = [];
   const positives: FitSampleScores[] = [];
+  const calibratorSamples: FitSampleScores[] = [];
+  const calibratorPositives: FitSampleScores[] = [];
   const testIds: string[] = [];
   for (const assignment of artifact.assignments) {
     if (assignment.partition === "test") {
@@ -122,8 +166,14 @@ export async function runFit(options: FitOptions): Promise<string> {
       documentRawScore: prediction.documentRawScore ?? 0,
       localizedRawScore: prediction.localizedRawScore ?? 0,
     };
-    if (isPositive(record)) positives.push(scores);
-    else if (record.label === "human") samples.push(scores);
+    const scored = prediction.status === "scored";
+    if (isPositive(record)) {
+      positives.push(scores);
+      if (scored) calibratorPositives.push(scores);
+    } else if (record.label === "human") {
+      samples.push(scores);
+      if (scored) calibratorSamples.push(scores);
+    }
   }
 
   const sourceManifestBytes = await readTextFile(
@@ -136,6 +186,8 @@ export async function runFit(options: FitOptions): Promise<string> {
     fitSeed: options.seed,
     samples,
     positives,
+    calibratorSamples,
+    calibratorPositives,
     testIds,
     evaluatorDigest,
     datasetManifest: manifest,

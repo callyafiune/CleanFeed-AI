@@ -143,6 +143,36 @@ describe("computeDatasetDigest", () => {
     expect(reversed).toBe(forward);
   });
 
+  it("orders records by unicode codepoint, never host locale collation", async () => {
+    // Uppercase "B" (U+0042) sorts BEFORE lowercase "a" (U+0061) by codepoint,
+    // whereas a locale-aware collation orders ["a","B"]. The digest must be a
+    // pure function of the bytes, so it must land on the codepoint order on any
+    // host regardless of the ICU tables installed there.
+    const recordA = makeRecord("a", "human");
+    const recordB = makeRecord("B", "ai");
+    const codepointPayload = `${canonicalJson(manifest)}\n${canonicalJson(
+      recordB,
+    )}\n${canonicalJson(recordA)}\n`;
+    const collationPayload = `${canonicalJson(manifest)}\n${canonicalJson(
+      recordA,
+    )}\n${canonicalJson(recordB)}\n`;
+    const codepointDigest = sha256BytesHex(
+      new TextEncoder().encode(codepointPayload),
+    );
+    const collationDigest = sha256BytesHex(
+      new TextEncoder().encode(collationPayload),
+    );
+    expect(codepointDigest).not.toBe(collationDigest);
+
+    const digest = await computeDatasetDigest(manifest, [recordA, recordB]);
+    expect(digest).toBe(codepointDigest);
+    expect(digest).not.toBe(collationDigest);
+    // Independent of insertion order.
+    expect(await computeDatasetDigest(manifest, [recordB, recordA])).toBe(
+      codepointDigest,
+    );
+  });
+
   it("changes when only the manifest reviewLedgerSha256 changes", async () => {
     const base = await computeDatasetDigest(manifest, records);
     const drifted = await computeDatasetDigest(
@@ -196,6 +226,28 @@ afterAll(async () => {
 });
 
 describe("computeEvaluatorDigest", () => {
+  it("binds the Task-13 orchestration layer into the evaluator identity", () => {
+    const files = new Set<string>(EVALUATOR_FILES);
+    // The layer that builds the IntegrityEvidence and applies the calibration
+    // to produce the gate decision must be inside the closed inventory, so a
+    // change to it cannot masquerade as the same evaluator.
+    expect(files.has("benchmark/commands/evaluate.ts")).toBe(true);
+    expect(files.has("benchmark/cli.ts")).toBe(true);
+    expect(files.has("benchmark/holdout-ledger.ts")).toBe(true);
+    for (const command of [
+      "validate",
+      "split",
+      "validate-predictions",
+      "fit",
+      "evaluate",
+      "publish-profile",
+      "verify-evidence",
+      "io",
+    ]) {
+      expect(files.has(`benchmark/commands/${command}.ts`)).toBe(true);
+    }
+  });
+
   it("is deterministic for two identical evaluator trees", async () => {
     const first = await makeRoot();
     const second = await makeRoot();
