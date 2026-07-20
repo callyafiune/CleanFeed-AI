@@ -3,7 +3,7 @@
 // NO coercion and rejects unknown keys: a profile is either byte-exact and
 // statistically sound, or it is refused.
 
-import { canonicalSha256 } from "./canonical-json";
+import { canonicalSha256 } from "./canonical-json.ts";
 
 const SHA256_PATTERN = /^[a-f0-9]{64}$/u;
 const ONE_HUNDRED_EIGHTY_DAYS_MS = 180 * 24 * 60 * 60 * 1000;

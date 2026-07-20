@@ -10,6 +10,10 @@ test-results/
 # Serena MCP tool workspace (local dev tooling output, never source).
 .serena/
 
+# Benchmark scientific outputs and scratch space are generated, never source.
+benchmark/out/
+benchmark/work/
+
 # Benchmark datasets are auditable but private; they never enter Git.
 benchmark/data/*
 !benchmark/data/.gitkeep

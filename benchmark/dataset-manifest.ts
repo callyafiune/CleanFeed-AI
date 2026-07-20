@@ -331,12 +331,16 @@ export function validateDatasetManifest(value: unknown): DatasetManifest {
       licenseObj.notice,
       `licenses[${index}].notice`,
     );
+    // After the guard above, redistribution is one of the two allowed literals;
+    // narrow it explicitly so the returned union type is exact.
+    const redistribution: "allowed" | "not-published" =
+      licenseObj.redistribution === "allowed" ? "allowed" : "not-published";
     return {
       id,
       name,
       source,
       evaluationUseApproved: true as const,
-      redistribution: licenseObj.redistribution,
+      redistribution,
       notice,
     };
   });

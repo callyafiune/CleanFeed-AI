@@ -14,7 +14,7 @@
 // SHA lives on DatasetManifest/DatasetAudit; `fit` verifies both to bridge the
 // readiness decision to the sealed bytes.
 
-import { canonicalSha256 } from "./canonical-json";
+import { canonicalSha256 } from "./canonical-json.ts";
 
 /** The closed, ordered set of the nine corpus source blocking codes. */
 export const CORPUS_SOURCE_BLOCKING_CODES = [

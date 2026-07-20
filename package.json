@@ -4,7 +4,7 @@
   "private": true,
   "type": "module",
   "engines": {
-    "node": ">=22"
+    "node": ">=22.18"
   },
   "scripts": {
     "prebuild": "node scripts/copy-transformers-assets.mjs",
@@ -28,7 +28,8 @@
     "verify:build": "node scripts/verify-reproducible-build.mjs",
     "verify": "npm run format:check && npm run lint && npm run typecheck && vitest run && npm run build && npm run audit && npm run test:e2e",
     "lint": "eslint .",
-    "typecheck": "tsc --noEmit && tsc --noEmit --project tsconfig.node.json",
+    "typecheck:benchmark": "tsc --noEmit --project tsconfig.benchmark.json",
+    "typecheck": "tsc --noEmit && tsc --noEmit --project tsconfig.node.json && npm run typecheck:benchmark",
     "format": "prettier --write . --ignore-unknown",
     "format:check": "prettier --check . --ignore-unknown"
   },
@@ -45,6 +46,7 @@
     "@testing-library/jest-dom": "^6.9.1",
     "@testing-library/react": "^16.3.2",
     "@types/chrome": "^0.2.2",
+    "@types/node": "^26.1.1",
     "@types/react": "^19.2.17",
     "@types/react-dom": "^19.2.3",
     "@vitejs/plugin-react": "^6.0.3",

@@ -11,7 +11,7 @@
 // from repository bytes; this contract only defines the shape, seals the digest,
 // and is consumed — never redeclared — by later phases.
 
-import { canonicalSha256 } from "./canonical-json";
+import { canonicalSha256 } from "./canonical-json.ts";
 
 export interface RuntimeParityManifestV1 {
   schemaVersion: 1;

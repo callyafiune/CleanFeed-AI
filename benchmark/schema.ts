@@ -661,7 +661,9 @@ function pseudonym(
   obj: Record<string, unknown>,
   key: string,
   path: string,
-  id: string,
+  // Optional because the record id itself is validated by this helper BEFORE an
+  // id is known (the first call passes none); every other call passes the id.
+  id?: string,
 ): string {
   const value = obj[key];
   if (typeof value !== "string" || !PSEUDONYM.test(value)) {

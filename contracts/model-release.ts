@@ -2,7 +2,7 @@
 // and its calibration set; it carries NO runtime state and NO fallback field.
 // The parser does no coercion and rejects unknown keys.
 
-import { computeCalibrationSetDigest } from "./calibration-profile";
+import { computeCalibrationSetDigest } from "./calibration-profile.ts";
 
 const SHA256_PATTERN = /^[a-f0-9]{64}$/u;
 

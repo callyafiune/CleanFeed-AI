@@ -337,7 +337,12 @@ describe("fitFrozenCalibration", () => {
 
   it("rejects a test partition in fit input", () => {
     expect(() =>
-      fitFrozenCalibration({ ...calibrationFixture, partition: "test" }),
+      // The test partition value is deliberately illegal at the type level; the
+      // guard rejects it at runtime.
+      fitFrozenCalibration({
+        ...calibrationFixture,
+        partition: "test" as unknown as "calibration",
+      }),
     ).toThrow(/test partition is forbidden during fit/);
   });
 
@@ -476,7 +481,7 @@ describe("fitFrozenCalibration governance guards", () => {
   it("refuses an unsealed dataset audit", async () => {
     const audit = await buildAudit({});
     const input = await buildBaseInput(calibrationScores, {
-      datasetAudit: { ...audit, sealed: false } as DatasetAudit,
+      datasetAudit: { ...audit, sealed: false } as unknown as DatasetAudit,
     });
     expect(() => fitFrozenCalibration(input)).toThrow(/sealed/);
   });

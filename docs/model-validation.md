@@ -112,6 +112,34 @@ o build do modo e a auditoria) e depois o E2E normal. Enquanto isso não ocorre,
 classificador ativo permanece a heurística estilométrica de demonstração, e tanto
 a interface quanto os relatórios deixam esse estado explícito.
 
+## Estatística do benchmark e consumo do holdout (Fase 2)
+
+O benchmark científico (`../benchmark/`, ver [benchmark/README.md](../benchmark/README.md))
+produz a calibração e a decisão de release com rigor estatístico auditável:
+
+- **Wilson unilateral.** Os gates de FPR e de recall usam o intervalo de Wilson
+  de 95% unilateral com o valor crítico exato `z = 1.6448536269514722` (fixado
+  como literal para reprodutibilidade byte a byte). Aviso: limite superior do FPR
+  ≤ 5%; ação visual: ≤ 2%; recall de aviso ≥ 60% e de ação ≥ 35% pelos limites
+  inferiores.
+- **Bootstrap clusterizado por autor.** ROC-AUC, PR-AUC, Brier e ECE-15 recebem
+  intervalos por 2.000 réplicas de bootstrap reamostradas por **autor inteiro**
+  (nunca por registro), com seed registrado; a unidade de reamostragem é o
+  cluster para não subestimar a largura do intervalo.
+- **Seleção de calibrador.** Platt, beta e isotônica competem por validação
+  cruzada de cinco folds agrupada por autor. Entre candidatos com ECE-15 ≤ 0,05
+  vence o menor Brier; diferença de Brier menor que 0,002 favorece Platt. Os
+  caminhos `documentRawScore` e `localizedRawScore` têm calibradores próprios; o
+  aviso é a união dos dois sob um único orçamento de 5% e a ação usa somente o
+  documento sob 2%.
+- **Holdout consumido uma única vez.** O teste temporal bloqueado só é pontuado
+  dentro de uma sessão atômica registrada no ledger append-only
+  (`benchmark/holdout-ledger.ts`). A lease é de mão única: o primeiro evento
+  `started` consome a tupla científica mesmo em caso de crash; apenas o mesmo
+  `consumptionId` com digests idênticos pode retomar; `completed` e `failed` são
+  terminais e permanecem consumidos. `evaluate` consome o holdout mesmo quando os
+  gates reprovam, e `fit` nunca lê rótulos de teste.
+
 ## Ver também
 
 - O passo a passo de integração (manifesto, assets, checksums, calibração e

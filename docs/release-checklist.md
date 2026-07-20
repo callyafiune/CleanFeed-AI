@@ -93,3 +93,17 @@ testes, build, auditoria e E2E) e `npm run verify:build` (build reproduzível).
 
 - [ ] `npm run verify:build` sai com código 0 (dois builds limpos idênticos por
       SHA-256 e conjunto de nomes de arquivo).
+
+## 13. Evidência científica do benchmark (Fase 2)
+
+Aplicável apenas quando um perfil de release é emitido a partir de um corpus real
+e das previsões TMR da Fase 3; a infraestrutura pode estar verde sem que nenhuma
+decisão científica exista.
+
+- [ ] dataset/dataset-audit/source/review/source-readiness/split/evaluator/model/runtime-parity/report digests conferem
+- [ ] prediction completeness é 100%; nenhuma linha extra ou duplicada
+- [ ] manifests development/calibration/test estão ligados ao freeze/report e usam backend WASM
+- [ ] holdout foi consumido uma única vez
+- [ ] pass/indicator-only publicam perfis; reject publica arquivo de perfis vazio e descritor bundle-verified
+- [ ] perfil expira em 180 dias e possui identidade exata do bundle/tokenizer/agregação/composição
+- [ ] nenhum dataset, label privado ou texto entrou no Git

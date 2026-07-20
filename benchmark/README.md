@@ -1,111 +1,78 @@
 # Benchmark científico do CleanFeed AI
 
-Ferramenta independente para avaliar um classificador de texto AI/humano com
-rigor estatístico. Ela vive **fora** do bundle da extensão: nenhum módulo aqui
-importa de `src/`, e nada aqui é embarcado na extensão.
+Ferramenta independente para validar dados e previsões, congelar um split
+temporal sem vazamento, ajustar calibradores sem consultar o holdout, emitir
+`pass | indicator-only | reject` e publicar perfis imutáveis. Ela vive **fora**
+do bundle da extensão: nenhum módulo aqui importa de `src/`, e nada aqui é
+embarcado na extensão. Ela consome apenas os contratos puros de `contracts/`.
 
-O objetivo é responder, com honestidade, a uma pergunta operacional: **entre os
-posts que a extensão bloquearia, quantos eram de fato gerados por IA?** Essa é a
-métrica principal (`precisionAmongBlocked`). "Acurácia" nunca é usada como
-headline, porque um detector com muitos falsos positivos é inaceitável mesmo
-que "acerte" a maioria.
+Executa sob a execução nativa de TypeScript do Node (Node ≥ 22.18), é
+determinística (sem `Date.now`, sem `Math.random` nos artefatos científicos) e
+falha fechada: qualquer campo desconhecido, id/hash repetido, score fora de
+`[0,1]`, metadado contraditório, previsão ausente ou digest divergente é uma
+falha dura — nunca `last-write-wins` nem exclusão silenciosa.
 
-## Módulos
+## Fluxo obrigatório (sete subcomandos)
 
-| Arquivo      | Responsabilidade                                                      |
-| ------------ | --------------------------------------------------------------------- |
-| `schema.ts`  | `BenchmarkRecord` e `validateBenchmarkRecord` (licença + pseudônimo). |
-| `split.ts`   | `groupTimeSplit`: split sem vazamento por autor e por tempo.          |
-| `metrics.ts` | `computeBinaryMetrics` e segmentação; matriz de confusão e curvas.    |
-| `report.ts`  | `buildBenchmarkReport`: relatório com métrica principal e segmentos.  |
-| `cli.ts`     | Entrada `npm run benchmark`.                                          |
-| `data/`      | Datasets locais. Git-ignorados (exceto `.gitkeep`).                   |
-
-## Registro (`BenchmarkRecord`)
-
-```ts
-interface BenchmarkRecord {
-  id: string;
-  text: string;
-  label: "human" | "ai" | "hybrid";
-  authorGroup: string; // pseudônimo: [A-Za-z0-9_-], nunca PII
-  createdAt: number; // timestamp para o corte temporal
-  platform: string;
-  language: string;
-  topic: string;
-  generatorModel?: string;
-  transformation?: "none" | "humanized" | "translated" | "edited";
-  license: string; // obrigatório: datasets precisam ser auditáveis
-}
+```text
+validate -> split -> validate-predictions -> fit -> evaluate -> publish-profile -> verify-evidence
 ```
 
-`validateBenchmarkRecord` rejeita registros sem licença, com `authorGroup` que
-pareça PII (espaços, `@`, `.`), rótulo desconhecido, `createdAt` não finito ou
-campos ausentes.
+O scoring real das previsões (development/calibration e o holdout) pertence à
+**Fase 3**, que orquestra o browser scorer em shards de 100 registros e chama os
+primitives de ledger/validação deste pacote. A Fase 2 nunca executa inferência.
 
-## Split sem vazamento (`groupTimeSplit`)
+| Subcomando             | Faz                                                                                                                                                                                                      | Flags                                                                                                                                                    |
+| ---------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `validate`             | Sela o corpus (4k/4k/2k) e emite `dataset-audit.json` + `source-readiness.json`.                                                                                                                         | `--dataset-dir --output`                                                                                                                                 |
+| `split`                | Congela o split 20/30/50 sem vazamento e a auditoria em `split-artifact.json`; escreve `development.jsonl`, `calibration.jsonl`, `test-input.jsonl` (sem labels) e `private/test-labels.jsonl` separado. | `--dataset-dir --dataset-audit --output --seed`                                                                                                          |
+| `validate-predictions` | Verifica completude exata + shards + paridade de runtime.                                                                                                                                                | `--dataset-dir --split-artifact --partition --predictions --runtime-parity` (para `test` também `--ledger --consumption-id`)                             |
+| `fit`                  | Ajusta calibradores e limiares (5%/2%) **sem ler o teste**; emite `frozen-calibration.json`.                                                                                                             | `--dataset-dir --dataset-audit --source-readiness --split-artifact --runtime-parity --development-predictions --calibration-predictions --output --seed` |
+| `evaluate`             | Etapa final interna de uma sessão de holdout já aberta; computa métricas/gates e sela `benchmark-report.{json,md}` + `gate-report.json`.                                                                 | `--dataset-dir --split-artifact --frozen-calibration --test-predictions --test-labels --ledger --consumption-id --output --bootstrap-seed`               |
+| `publish-profile`      | Escreve `calibration-profiles.json` + `release.json` (vazio + `bundle-verified` em `reject`).                                                                                                            | `--report --frozen-calibration --issued-at --model-dir`                                                                                                  |
+| `verify-evidence`      | Reexecuta os parsers da Fase 1 e confere todos os digests report/perfis/release.                                                                                                                         | `--report --frozen-calibration --model-dir`                                                                                                              |
 
-Dois vazamentos inflam qualquer benchmark de detecção e ambos são bloqueados:
+`npm run benchmark -- --help` imprime o resumo acima.
 
-1. **Autor**: o mesmo `authorGroup` nunca aparece em mais de uma partição, para
-   o modelo não memorizar o estilo de um autor.
-2. **Tempo**: todo registro de teste é estritamente mais novo que qualquer
-   registro de calibração, para a calibração não "espiar" o futuro.
+## Separação de labels e o holdout
 
-Grupos inteiros são atribuídos a uma única partição. Um grupo só entra em
-`test`/`calibration` quando todos os seus registros caem do lado correto do
-corte temporal; grupos que atravessam a fronteira caem em `train`, mantendo o
-corte calibração/teste estrito.
+- `split` escreve `test-input.jsonl` **sem rótulos** para o scorer da Fase 3 e um
+  `private/test-labels.jsonl` separado com a verdade de campo.
+- `fit` recebe apenas previsões de development/calibration e recusa qualquer id
+  do teste; ele nunca lê rótulos de teste.
+- `evaluate` é a etapa final interna de uma sessão `consume-holdout` **já aberta**
+  pela Fase 3; ele não abre a sessão nem inicia o scoring. O holdout só pode ser
+  pontuado dentro dessa sessão atômica, registrada no ledger append-only
+  (`holdout-ledger.ts`), cuja lease é de mão única: o primeiro `started` consome a
+  tupla científica mesmo em caso de crash; só o mesmo `consumptionId` com digests
+  idênticos retoma; `completed`/`failed` são terminais. `evaluate` consome o
+  holdout **mesmo quando reprova**.
 
-## Métricas (`computeBinaryMetrics`)
+## Gates (`pass | indicator-only | reject`)
 
-- Matriz de confusão: TP, FP, TN, FN.
-- `precisionAmongBlocked` (principal), precision, recall, F1.
-- FPR, FNR.
-- ROC-AUC por integração trapezoidal; PR-AUC por average precision.
-- Recall a um FPR-alvo configurável (`--target-fpr`).
-- Latência (p50/p95/máx) e memória quando as amostras trazem esses dados.
+- Um gate de **integridade** ou de **aviso** reprovado ⇒ `reject`.
+- Todos os avisos passam mas um gate de **ação** falha ⇒ `indicator-only`.
+- Todos os gates de aviso e ação passam ⇒ `pass`.
 
-Segmentos sempre reportam o tamanho da amostra e cobrem: tamanho em palavras
-(`50_79`, `80_99`, ...), idioma, plataforma, `generatorModel` e
-`transformation`. Registros `hybrid` ficam fora da matriz binária e são
-contabilizados à parte.
-
-## CLI
-
-```powershell
-npm run benchmark -- --input benchmark/data/dataset.jsonl --output benchmark/out --split group-time
-```
-
-Flags:
-
-- `--input <jsonl>` (obrigatório): dataset JSONL de `BenchmarkRecord`.
-- `--output <dir>` (obrigatório): diretório de saída.
-- `--split group-time` (obrigatório para decisões de lançamento).
-- `--split random --comparison-only`: baseline de comparação; o relatório é
-  marcado como **não apto** a decisões de lançamento. `--split random` sem
-  `--comparison-only` é recusado.
-- `--predictions <jsonl>` (opcional): linhas `{ "id", "aiScore", "latencyMs"?,
-"memoryBytes"?, "modelId"?, "modelVersion"? }` com a saída do modelo para a
-  partição de teste.
-- `--block-threshold <n>` (padrão `0.92`), `--target-fpr <n>` (padrão `0.01`).
-
-Sem `--predictions` (nenhum modelo real fornecido), a CLI valida o dataset,
-gera o split, confirma a ausência de vazamento e escreve apenas um
-`split-audit.json`. Isso é um passo de infraestrutura, não um resultado
-científico: o backend ativo continua sendo o mock.
+Wilson unilateral usa `z = 1.6448536269514722`; AUC/calibração usam 2.000
+réplicas de bootstrap clusterizadas por autor. Detalhes da estatística, dos
+calibradores e do holdout em
+[../docs/model-validation.md](../docs/model-validation.md).
 
 ## Privacidade dos dados
 
-Datasets nunca entram no Git: `benchmark/data/*` é ignorado, exceto `.gitkeep`.
+Datasets, labels privados e textos nunca entram no Git: `benchmark/data/*`,
+`benchmark/out/` e `benchmark/work/` são ignorados (exceto `benchmark/data/.gitkeep`).
 Os grupos de autor são pseudonimizados e cada registro carrega uma licença.
+
+## Smoke de escala
+
+`tests/helpers/generate-synthetic-release-corpus.ts` gera de forma determinística
+10.000 registros sintéticos (`scientificUse: "infrastructure-only"`, nunca release
+eligible) sob `benchmark/work/` para exercitar `validate` + `split` em escala.
 
 ## Ver também
 
 - Como um artefato aprovado é integrado à extensão:
   [../docs/model-integration.md](../docs/model-integration.md).
-- O contrato de calibração e gating que impede ação agressiva sem benchmark:
-  [../docs/model-validation.md](../docs/model-validation.md).
-
-Sem um modelo real e um dataset aprovado, nenhum número de precisão ou acurácia é
-publicado, e o backend ativo da extensão permanece o mock.
+- O contrato de calibração e gating: [../docs/model-validation.md](../docs/model-validation.md).
