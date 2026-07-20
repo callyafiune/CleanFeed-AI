@@ -48,32 +48,42 @@ describe("options settings sections", () => {
     );
   });
 
-  it("blocks inconsistent thresholds before persistence", async () => {
-    const api = fakeOptionsApi();
-    render(<OptionsApp api={api} />);
+  it("offers the four presentation modes and never a threshold label", async () => {
+    render(<OptionsApp api={fakeOptionsApi()} />);
 
-    fireEvent.change(await screen.findByLabelText("Limiar de desfoque"), {
-      target: { value: "0.70" },
-    });
-    fireEvent.click(screen.getByRole("button", { name: "Salvar" }));
-
-    expect(screen.getByRole("alert")).toHaveTextContent(/ordem dos limiares/u);
-    expect(api.save).not.toHaveBeenCalled();
+    const select = await screen.findByLabelText("Apresentação");
+    const labels = Array.from(
+      select.querySelectorAll("option"),
+      (option) => option.textContent,
+    );
+    expect(labels).toEqual([
+      "Apenas indicador",
+      "Desfocar",
+      "Recolher",
+      "Ocultar",
+    ]);
+    expect(screen.queryByLabelText(/Limiar/u)).toBeNull();
   });
 
-  it("persists an ordered threshold set atomically on save", async () => {
+  it("shows the ceiling-only presentation note", async () => {
+    render(<OptionsApp api={fakeOptionsApi()} />);
+
+    await screen.findByLabelText("Apresentação");
+    expect(
+      screen.getByText(
+        "A escolha define somente como apresentar um resultado autorizado. O perfil calibrado pode reduzir esta ação, nunca aumentá-la.",
+      ),
+    ).toBeVisible();
+  });
+
+  it("submits a chosen presentation mode through updateSettings", async () => {
     const api = fakeOptionsApi();
     render(<OptionsApp api={api} />);
 
-    fireEvent.change(await screen.findByLabelText("Limiar de desfoque"), {
-      target: { value: "0.93" },
+    fireEvent.change(await screen.findByLabelText("Apresentação"), {
+      target: { value: "hide" },
     });
-    fireEvent.click(screen.getByRole("button", { name: "Salvar" }));
-
-    expect(api.save).toHaveBeenCalledTimes(1);
-    expect(api.save).toHaveBeenCalledWith(
-      expect.objectContaining({ blurThreshold: 0.93 }),
-    );
+    expect(api.updateSettings).toHaveBeenCalledWith({ presentationMode: "hide" });
   });
 
   it("requires explicit confirmation before clearing feedback", async () => {

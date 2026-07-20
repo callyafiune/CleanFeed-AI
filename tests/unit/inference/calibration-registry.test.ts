@@ -1,220 +1,273 @@
-import { beforeEach, describe, expect, it } from "vitest";
+import { describe, expect, it } from "vitest";
 
-import { calibrateWithRegistry } from "@/inference/calibration";
 import {
   CalibrationRegistry,
-  CONSERVATIVE_UNCALIBRATED_PROFILE,
-  type CalibrationQuery,
-  type VersionedCalibrationProfile,
+  type CalibrationCoordinates,
 } from "@/inference/calibration-registry";
-import type { AggregationResultV2, ClassificationResult } from "@/shared/types";
 import {
-  createBundleRuntimeIdentity,
-  createDecisionOutcome,
-  createEvidenceAssessment,
-} from "../../helpers/model-fixtures";
+  computeCalibrationProfileDigest,
+  computeCalibrationSetDigest,
+  type RuntimeCalibrationProfileV1,
+} from "../../../contracts/calibration-profile";
 
-function profile(
-  overrides: Partial<VersionedCalibrationProfile> = {},
-): VersionedCalibrationProfile {
+const ISSUED_AT = "2026-01-01T00:00:00.000Z";
+const EXPIRES_AT = new Date(
+  Date.parse(ISSUED_AT) + 180 * 24 * 60 * 60 * 1000,
+).toISOString();
+const BEFORE_EXPIRY = Date.parse(ISSUED_AT) + 24 * 60 * 60 * 1000;
+const AT_EXPIRY = Date.parse(EXPIRES_AT);
+const AFTER_EXPIRY = AT_EXPIRY + 1;
+
+function gate(estimate: number, sampleSize: number) {
   return {
-    id: "candidate-pt-150_299",
-    modelId: "candidate",
-    modelVersion: "1.0.0",
+    estimate,
+    lowerBound95: Math.max(0, estimate - 0.01),
+    upperBound95: Math.min(1, estimate + 0.01),
+    sampleSize,
+  };
+}
+
+/** A fully valid `pass`/`hide` profile for the linkedin 200-plus bucket. */
+function baseProfile(
+  overrides: Partial<Omit<RuntimeCalibrationProfileV1, "profileDigest">> = {},
+): Omit<RuntimeCalibrationProfileV1, "profileDigest"> {
+  return {
+    schemaVersion: 1,
+    profileId: "linkedin-200plus",
+    modelId: "tmr-ai-text-detector",
+    modelVersion: "b9aa251e5bcda7e429fcc936767d921435945b60",
+    bundleDigest: "a".repeat(64),
+    tokenizerDigest: "b".repeat(64),
     platform: "linkedin",
-    language: "pt",
-    lengthBucket: "150_299",
-    markingThreshold: 0.8,
-    blurThreshold: 0.92,
-    collapseThreshold: 0.96,
-    hideThreshold: 0.99,
-    calibrated: true,
+    locale: "pt-BR",
+    lengthBucket: "200-plus",
+    aggregationVersion: "tmr-aggregation-v2",
+    contentCompositionVersion: "lexical-content-v1",
+    datasetDigest: "c".repeat(64),
+    splitDigest: "d".repeat(64),
+    evaluatorDigest: "e".repeat(64),
+    issuedAt: ISSUED_AT,
+    expiresAt: EXPIRES_AT,
+    calibrators: {
+      document: {
+        kind: "isotonic",
+        interpolation: "linear",
+        clamp: true,
+        knots: [
+          { rawScore: 0, calibratedScore: 0 },
+          { rawScore: 0.5, calibratedScore: 0.4 },
+          { rawScore: 1, calibratedScore: 1 },
+        ],
+      },
+      localized: { kind: "platt", slope: 1.2, intercept: -0.3 },
+    },
+    thresholds: {
+      documentIndicator: 0.8,
+      localizedIndicator: 0.82,
+      documentAction: 0.9,
+    },
+    evidencePolicy: {
+      minimumCoverage: 0.95,
+      minimumLexicalRatio: 0.6,
+      maximumStdDev: 0.25,
+      minimumChunkAgreement: 0.5,
+      exactTokenizerRequired: true,
+    },
+    gateEvidence: {
+      decision: "pass",
+      intervalMethod: "wilson-one-sided-95",
+      ece: { value: 0.02, bins: 15, sampleSize: 5000 },
+      overall: {
+        indicatorFpr: gate(0.03, 2500),
+        indicatorRecall: gate(0.7, 1200),
+        actionFpr: gate(0.01, 2500),
+        actionRecall: gate(0.6, 1200),
+        coverage: gate(0.97, 3000),
+        mixedRecall: gate(0.65, 1200),
+      },
+      criticalFprSlices: {
+        "topic:tech": {
+          indicatorFpr: gate(0.03, 400),
+          actionFpr: gate(0.01, 400),
+        },
+      },
+      criticalRecallSlices: {
+        "topic:tech": {
+          indicatorRecall: gate(0.7, 300),
+          actionRecall: gate(0.6, 300),
+        },
+      },
+    },
     actionCeiling: "hide",
     ...overrides,
   };
 }
 
-function query(overrides: Partial<CalibrationQuery> = {}): CalibrationQuery {
+async function sealProfile(
+  base: Omit<RuntimeCalibrationProfileV1, "profileDigest">,
+): Promise<RuntimeCalibrationProfileV1> {
+  const draft = { ...base, profileDigest: "" } as RuntimeCalibrationProfileV1;
+  draft.profileDigest = await computeCalibrationProfileDigest(draft);
+  return draft;
+}
+
+async function releaseFor(
+  profileDigests: string[],
+  overrides: Record<string, unknown> = {},
+): Promise<Record<string, unknown>> {
   return {
-    modelId: "candidate",
-    modelVersion: "1.0.0",
+    schemaVersion: 1,
+    modelId: "tmr-ai-text-detector",
+    modelVersion: "b9aa251e5bcda7e429fcc936767d921435945b60",
+    bundleDigest: "a".repeat(64),
+    tokenizerDigest: "b".repeat(64),
+    aggregationVersion: "tmr-aggregation-v2",
+    contentCompositionVersion: "lexical-content-v1",
+    calibrationSetDigest: await computeCalibrationSetDigest(profileDigests),
+    profileDigests,
+    rolloutState: "actions",
+    gateDecision: "pass",
+    issuedAt: ISSUED_AT,
+    evidenceDigest: "f".repeat(64),
+    ...overrides,
+  };
+}
+
+/** Coordinates that exactly match {@link baseProfile}. */
+function coordinates(
+  overrides: Partial<CalibrationCoordinates> = {},
+): CalibrationCoordinates {
+  return {
+    modelId: "tmr-ai-text-detector",
+    modelVersion: "b9aa251e5bcda7e429fcc936767d921435945b60",
+    bundleDigest: "a".repeat(64),
+    tokenizerDigest: "b".repeat(64),
     platform: "linkedin",
-    language: "pt",
-    lengthBucket: "150_299",
+    locale: "pt",
+    lengthBucket: "200-plus",
+    aggregationVersion: "tmr-aggregation-v2",
+    contentCompositionVersion: "lexical-content-v1",
     ...overrides,
   };
 }
 
-const aggregation: AggregationResultV2 = {
-  version: "tmr-aggregation-v2",
-  documentRawScore: 0.95,
-  localizedRawScore: 0.96,
-  coverage: 1,
-  truncated: false,
-  weightedMean: 0.95,
-  median: 0.95,
-  min: 0.94,
-  max: 0.96,
-  stdDev: 0.02,
-  highScoreRatio: 1,
-  chunkAgreement: 0.96,
-  candidateWindowCount: 3,
-  selectedWindowIndices: [0, 1, 2],
-};
-
-function realResult(
-  overrides: Partial<ClassificationResult> = {},
-): ClassificationResult {
-  return {
-    aiScore: 0.95,
-    humanScore: 0.05,
-    confidence: "high",
-    status: "possibly_ai",
-    wordCount: 160,
-    tokenCount: 180,
-    language: "pt",
-    aggregation,
-    runtimeIdentity: createBundleRuntimeIdentity(),
-    evidence: createEvidenceAssessment(),
-    decision: createDecisionOutcome(),
-    modelVersion: "1.0.0",
-    modelId: "candidate",
-    backend: "wasm",
-    processingTimeMs: 1,
-    demo: false,
-    ...overrides,
-  };
+async function registryWithBaseProfile(): Promise<CalibrationRegistry> {
+  const sealed = await sealProfile(baseProfile());
+  return CalibrationRegistry.load(await releaseFor([sealed.profileDigest]), {
+    schemaVersion: 1,
+    profiles: [sealed],
+  });
 }
 
-describe("CalibrationRegistry", () => {
-  let registry: CalibrationRegistry;
-
-  beforeEach(() => {
-    registry = new CalibrationRegistry();
+describe("CalibrationRegistry.findExact", () => {
+  it("returns the exact profile for a fully matching coordinate (locale normalized)", async () => {
+    const registry = await registryWithBaseProfile();
+    const lookup = registry.findExact(coordinates(), BEFORE_EXPIRY);
+    expect(lookup.status).toBe("found");
+    if (lookup.status === "found") {
+      expect(lookup.profile.profileId).toBe("linkedin-200plus");
+    }
   });
 
-  it("returns the calibrated profile for an exact-match query", () => {
-    const added = profile({
-      id: "candidate-pt-150_299",
-      markingThreshold: 0.83,
-    });
-    registry.add(added);
+  it.each([
+    ["modelId", { modelId: "other-model" }],
+    ["modelVersion", { modelVersion: "0.0.0" }],
+    ["bundleDigest", { bundleDigest: "0".repeat(64) }],
+    ["tokenizerDigest", { tokenizerDigest: "0".repeat(64) }],
+    ["platform", { platform: "twitter" }],
+    ["locale", { locale: "en" }],
+    ["lengthBucket", { lengthBucket: "50-79" as const }],
+    ["aggregationVersion", { aggregationVersion: "tmr-aggregation-v3" }],
+    ["contentCompositionVersion", { contentCompositionVersion: "v2" }],
+  ])(
+    "misses when %s diverges in isolation and never returns the closest profile",
+    async (_name, override) => {
+      const registry = await registryWithBaseProfile();
+      const lookup = registry.findExact(
+        coordinates(override as Partial<CalibrationCoordinates>),
+        BEFORE_EXPIRY,
+      );
+      expect(lookup.status).toBe("missing");
+      if (lookup.status === "missing") {
+        expect(lookup.reason).toBe("MODEL_PROFILE_MISSING");
+      }
+    },
+  );
 
-    expect(registry.get(query())).toEqual(added);
+  it("rejects a profile whose digest is outside the release set", async () => {
+    const sealed = await sealProfile(baseProfile());
+    // The release references a DIFFERENT digest, so the indexed profile is not
+    // part of the promoted calibration set.
+    const registry = await CalibrationRegistry.load(
+      await releaseFor(["9".repeat(64)]),
+      { schemaVersion: 1, profiles: [sealed] },
+    );
+    const lookup = registry.findExact(coordinates(), BEFORE_EXPIRY);
+    expect(lookup.status).toBe("out-of-release");
+    if (lookup.status === "out-of-release") {
+      expect(lookup.reason).toBe("MODEL_PROFILE_MISMATCH");
+    }
   });
 
-  it("never reuses calibration from a different model version", () => {
-    registry.add(
-      profile({
-        modelId: "candidate",
-        modelVersion: "1.0.0",
-        markingThreshold: 0.8,
+  it("treats now === expiresAt as expired", async () => {
+    const registry = await registryWithBaseProfile();
+    const lookup = registry.findExact(coordinates(), AT_EXPIRY);
+    expect(lookup.status).toBe("expired");
+    if (lookup.status === "expired") {
+      expect(lookup.reason).toBe("PROFILE_EXPIRED");
+    }
+  });
+
+  it("reports an expired profile after its expiry", async () => {
+    const registry = await registryWithBaseProfile();
+    expect(registry.findExact(coordinates(), AFTER_EXPIRY).status).toBe(
+      "expired",
+    );
+  });
+
+  it("misses when there is no profile at all", async () => {
+    const registry = await CalibrationRegistry.load(
+      await releaseFor([], {
+        rolloutState: "bundle-verified",
+        gateDecision: "pending",
+        issuedAt: null,
+        evidenceDigest: null,
       }),
+      { schemaVersion: 1, profiles: [] },
     );
-
-    expect(registry.get(query({ modelVersion: "1.0.1" }))).toEqual(
-      CONSERVATIVE_UNCALIBRATED_PROFILE,
-    );
-  });
-
-  it("never reuses calibration from a different model id", () => {
-    registry.add(profile());
-
-    expect(registry.get(query({ modelId: "other-model" }))).toEqual(
-      CONSERVATIVE_UNCALIBRATED_PROFILE,
+    expect(registry.findExact(coordinates(), BEFORE_EXPIRY).status).toBe(
+      "missing",
     );
   });
 
-  it("misses on a different platform, language, or length bucket", () => {
-    registry.add(profile());
-
-    expect(registry.get(query({ platform: "twitter" }))).toEqual(
-      CONSERVATIVE_UNCALIBRATED_PROFILE,
-    );
-    expect(registry.get(query({ language: "en" }))).toEqual(
-      CONSERVATIVE_UNCALIBRATED_PROFILE,
-    );
-    expect(registry.get(query({ lengthBucket: "50_79" }))).toEqual(
-      CONSERVATIVE_UNCALIBRATED_PROFILE,
-    );
+  it("rejects a duplicate coordinate key at construction", async () => {
+    const first = await sealProfile(baseProfile());
+    const second = await sealProfile(baseProfile({ profileId: "duplicate" }));
+    await expect(
+      CalibrationRegistry.load(
+        await releaseFor([first.profileDigest, second.profileDigest]),
+        { schemaVersion: 1, profiles: [first, second] },
+      ),
+    ).rejects.toThrow();
   });
 
-  it("marks missing benchmark calibration as uncalibrated", () => {
-    expect(registry.get(query({ modelId: "new-model" })).calibrated).toBe(
-      false,
-    );
+  it("rejects an unknown key in the release descriptor", async () => {
+    const sealed = await sealProfile(baseProfile());
+    await expect(
+      CalibrationRegistry.load(
+        await releaseFor([sealed.profileDigest], { rogue: true }),
+        { schemaVersion: 1, profiles: [sealed] },
+      ),
+    ).rejects.toThrow();
   });
 
-  it("exposes the conservative fallback as an indicator-only miss", () => {
-    expect(CONSERVATIVE_UNCALIBRATED_PROFILE.calibrated).toBe(false);
-    expect(CONSERVATIVE_UNCALIBRATED_PROFILE.actionCeiling).toBe("indicator");
-  });
-
-  it("refuses to store an uncalibrated profile", () => {
-    expect(() => registry.add(profile({ calibrated: false }))).toThrow();
-  });
-});
-
-describe("calibrateWithRegistry", () => {
-  let registry: CalibrationRegistry;
-
-  beforeEach(() => {
-    registry = new CalibrationRegistry();
-  });
-
-  it("caps an uncalibrated real model to an indicator without hiding score", () => {
-    const outcome = calibrateWithRegistry(realResult(), registry);
-
-    expect(outcome.actionCeiling).toBe("indicator");
-    expect(outcome.status).toBe("strong_ai_indication");
-    expect(outcome.calibratedScore).toBeCloseTo(0.95);
-  });
-
-  it("keeps the aggressive ceiling once a matching calibration is verified", () => {
-    registry.add(
-      profile({
-        id: "candidate-default-150_299",
-        platform: "default",
-        modelId: "candidate",
-        modelVersion: "1.0.0",
-        language: "pt",
-        lengthBucket: "150_299",
+  it("rejects an unknown key inside a profile", async () => {
+    const sealed = await sealProfile(baseProfile());
+    await expect(
+      CalibrationRegistry.load(await releaseFor([sealed.profileDigest]), {
+        schemaVersion: 1,
+        profiles: [{ ...sealed, rogue: true }],
       }),
-    );
-
-    const outcome = calibrateWithRegistry(realResult(), registry);
-
-    expect(outcome.actionCeiling).toBe("hide");
-    expect(outcome.status).toBe("strong_ai_indication");
-  });
-
-  // Adjusted after the honesty review: this test previously asserted that the
-  // mock/demo path kept its aggressive length-bucket ceiling ("blur"), which
-  // contradicted the documented invariant that an UNCALIBRATED classifier may
-  // only indicate (README, docs/model-validation.md, docs/decisions.md). The
-  // demo mock and the stylometric heuristic are uncalibrated by definition
-  // (the registry refuses uncalibrated profiles), so they too are capped.
-  it("caps the uncalibrated mock demo path to the indicator ceiling", () => {
-    const mock = realResult({
-      backend: "mock",
-      demo: true,
-      confidence: "low",
-      wordCount: 120,
-      aiScore: 0.999,
-      humanScore: 0.001,
-      aggregation: {
-        ...aggregation,
-        documentRawScore: 0.999,
-        weightedMean: 0.999,
-        median: 0.999,
-      },
-    });
-
-    const outcome = calibrateWithRegistry(mock, registry);
-
-    expect(outcome.actionCeiling).toBe("indicator");
-    // The demo score and status stay visible; only the ceiling is capped.
-    expect(outcome.status).toBe("strong_ai_indication");
-    expect(outcome.abstained).toBe(false);
+    ).rejects.toThrow();
   });
 });

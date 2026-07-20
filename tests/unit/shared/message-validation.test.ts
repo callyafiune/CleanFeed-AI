@@ -7,10 +7,6 @@ const validSettings = {
   minimumWordCount: 100,
   languageMode: "portuguese_only",
   presentationMode: "indicator",
-  markingThreshold: 0.8,
-  blurThreshold: 0.92,
-  collapseThreshold: 0.96,
-  hideThreshold: 0.99,
   processVisibleOnly: true,
   experimentalShortTextDetection: false,
   manualAnalysisEnabled: true,
@@ -328,13 +324,13 @@ describe("parseExtensionMessage", () => {
     ).toThrow("INVALID_MESSAGE");
   });
 
-  it("rejects unordered threshold fields in a settings update", () => {
+  it("rejects a settings update carrying a removed legacy threshold key", () => {
     expect(() =>
       parseExtensionMessage({
         source: "options",
         target: "background",
         type: "UPDATE_SETTINGS",
-        payload: { markingThreshold: 0.9, blurThreshold: 0.8 },
+        payload: { markingThreshold: 0.9 },
       }),
     ).toThrow("INVALID_MESSAGE");
   });

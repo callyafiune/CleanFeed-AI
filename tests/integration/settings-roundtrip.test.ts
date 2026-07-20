@@ -11,7 +11,6 @@ import {
 import { afterEach, describe, expect, it } from "vitest";
 
 import { App as OptionsApp, type OptionsApi } from "@/options/App";
-import { DEFAULT_SETTINGS } from "@/shared/constants";
 import type { StorageArea } from "@/shared/types";
 import { ClassificationCache } from "@/storage/cache";
 import { FeedbackRepository, type FeedbackRecord } from "@/storage/feedback";
@@ -114,32 +113,16 @@ describe("options settings round-trip", () => {
     );
   });
 
-  it("persists an ordered threshold set atomically through save", async () => {
+  it("persists the presentation mode chosen in Geral through the repository", async () => {
     const { api, settings } = createHarness();
     render(createElement(OptionsApp, { api }));
 
-    fireEvent.change(await screen.findByLabelText("Limiar de desfoque"), {
-      target: { value: "0.93" },
+    fireEvent.change(await screen.findByLabelText("Apresentação"), {
+      target: { value: "collapse" },
     });
-    fireEvent.click(screen.getByRole("button", { name: "Salvar" }));
 
     await waitFor(async () =>
-      expect((await settings.get()).blurThreshold).toBe(0.93),
-    );
-  });
-
-  it("rejects an out-of-order threshold change without mutating storage", async () => {
-    const { api, settings } = createHarness();
-    render(createElement(OptionsApp, { api }));
-
-    fireEvent.change(await screen.findByLabelText("Limiar de desfoque"), {
-      target: { value: "0.70" },
-    });
-    fireEvent.click(screen.getByRole("button", { name: "Salvar" }));
-
-    expect(screen.getByRole("alert")).toHaveTextContent(/ordem dos limiares/u);
-    expect((await settings.get()).blurThreshold).toBe(
-      DEFAULT_SETTINGS.blurThreshold,
+      expect((await settings.get()).presentationMode).toBe("collapse"),
     );
   });
 

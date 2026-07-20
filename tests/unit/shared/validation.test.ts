@@ -1,26 +1,33 @@
 import { expect, it } from "vitest";
 
-import { validateThresholds } from "@/shared/validation";
+import { validateChunkWindow } from "@/shared/validation";
 
-it("accepts ordered thresholds in the inclusive unit interval", () => {
+it("accepts a window plan within the model capacity", () => {
   expect(
-    validateThresholds({ marking: 0.8, blur: 0.92, collapse: 0.96, hide: 1 }),
+    validateChunkWindow({
+      chunkSizeTokens: 192,
+      overlapTokens: 32,
+      maximumTokens: 256,
+    }),
   ).toBeUndefined();
 });
 
-it("rejects unordered thresholds", () => {
+it("rejects an overlap that is not a proper prefix of the chunk", () => {
   expect(() =>
-    validateThresholds({ marking: 0.8, blur: 0.7, collapse: 0.9, hide: 1 }),
+    validateChunkWindow({
+      chunkSizeTokens: 100,
+      overlapTokens: 100,
+      maximumTokens: 256,
+    }),
   ).toThrowError("INVALID_SETTINGS");
 });
 
-it("rejects a threshold outside the unit interval", () => {
+it("rejects a budget beyond the model capacity", () => {
   expect(() =>
-    validateThresholds({
-      marking: 0.8,
-      blur: 0.92,
-      collapse: 0.96,
-      hide: 1.01,
+    validateChunkWindow({
+      chunkSizeTokens: 192,
+      overlapTokens: 32,
+      maximumTokens: 513,
     }),
   ).toThrowError("INVALID_SETTINGS");
 });

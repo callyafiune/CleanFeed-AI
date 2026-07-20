@@ -58,10 +58,6 @@ export interface DiagnosticSettingsSummary {
   presentationMode: PresentationMode;
   backendPreference: BackendPreference;
   minimumWordCount: number;
-  markingThreshold: number;
-  blurThreshold: number;
-  collapseThreshold: number;
-  hideThreshold: number;
   wasmConcurrency: number;
   webGpuConcurrency: number;
   maximumQueueSize: number;

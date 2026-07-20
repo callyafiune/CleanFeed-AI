@@ -1,134 +1,126 @@
+import type { ProfileLookup } from "@/inference/calibration-registry";
+import {
+  applyCalibrator,
+  type LengthBucketV1,
+  type SerializedCalibratorV1,
+} from "../../contracts/calibration-profile";
+import type { RolloutState } from "../../contracts/model-release";
 import type {
-  CalibrationQuery,
-  CalibrationRegistry,
-} from "@/inference/calibration-registry";
-import type {
-  CalibrationProfile,
+  AggregationResultV2,
   ClassificationResult,
   ClassificationStatus,
   DecisionOutcome,
+  DecisionReasonCode,
+  DecisionTrigger,
+  EvidenceAssessment,
   LengthBucket,
   PresentationMode,
   ReasonCode,
 } from "@/shared/types";
 
+/**
+ * Internal, hand-tuned decision bands for the UNCALIBRATED builtin heuristic
+ * path (mock/stylometric). These are NOT user settings and NOT the scientific
+ * calibration profile — they only shape the builtin's own status/reason codes,
+ * and the builtin is always capped to the indicator ceiling. The calibrated TMR
+ * path ignores them entirely and reads {@link RuntimeCalibrationProfileV1}.
+ */
 const LENGTH_THRESHOLDS = {
-  "50_79": {
-    marking: 0.92,
-    blur: 0.97,
-    collapse: 1,
-    hide: 1,
-    actionCeiling: "indicator",
-  },
-  "80_99": {
-    marking: 0.88,
-    blur: 0.95,
-    collapse: 1,
-    hide: 1,
-    actionCeiling: "blur",
-  },
-  "100_149": {
-    marking: 0.8,
-    blur: 0.92,
-    collapse: 1,
-    hide: 1,
-    actionCeiling: "blur",
-  },
-  "150_299": {
-    marking: 0.8,
-    blur: 0.92,
-    collapse: 0.96,
-    hide: 0.99,
-    actionCeiling: "hide",
-  },
-  "300_PLUS": {
-    marking: 0.8,
-    blur: 0.92,
-    collapse: 0.96,
-    hide: 0.99,
-    actionCeiling: "hide",
-  },
+  "50_79": { marking: 0.92, blur: 0.97, actionCeiling: "indicator" },
+  "80_99": { marking: 0.88, blur: 0.95, actionCeiling: "blur" },
+  "100_149": { marking: 0.8, blur: 0.92, actionCeiling: "blur" },
+  "150_299": { marking: 0.8, blur: 0.92, actionCeiling: "hide" },
+  "300_PLUS": { marking: 0.8, blur: 0.92, actionCeiling: "hide" },
 } as const satisfies Record<
   LengthBucket,
-  {
-    marking: number;
-    blur: number;
-    collapse: number;
-    hide: number;
-    actionCeiling: PresentationMode;
-  }
+  { marking: number; blur: number; actionCeiling: PresentationMode }
 >;
 
 const MINIMUM_CHUNK_AGREEMENT = 0.5;
 const MAXIMUM_STANDARD_DEVIATION = 0.25;
 const MINIMUM_SCORE_MARGIN = 0.1;
 
+/** The 50-79 word bucket keeps an indicator ceiling on every path (spec §5.5). */
+const SHORT_BUCKET_MINIMUM_WORDS = 50;
+const SHORT_BUCKET_MAXIMUM_WORDS = 79;
+
 type CalibrationInput = Pick<ClassificationResult, "wordCount" | "language">;
+
+/** Identity of the conservative builtin profile for a result (no thresholds). */
+export interface BuiltinProfileLabel {
+  id: string;
+  platform: string;
+  language: string;
+  lengthBucket: LengthBucket;
+}
 
 export function getLengthBucket(wordCount: number): LengthBucket {
   if (wordCount < 80) {
     return "50_79";
   }
-
   if (wordCount < 100) {
     return "80_99";
   }
-
   if (wordCount < 150) {
     return "100_149";
   }
-
   return wordCount < 300 ? "150_299" : "300_PLUS";
+}
+
+/** The builtin marking band for a word count (diagnostics/explanation only). */
+export function getMarkingBand(wordCount: number): number {
+  return LENGTH_THRESHOLDS[getLengthBucket(wordCount)].marking;
+}
+
+/** Maps a word count to the contract length bucket used as a profile coordinate. */
+export function contractLengthBucket(wordCount: number): LengthBucketV1 {
+  if (wordCount < 80) {
+    return "50-79";
+  }
+  return wordCount < 200 ? "80-199" : "200-plus";
 }
 
 export function resolveCalibrationProfile(
   result: CalibrationInput,
-): CalibrationProfile {
+): BuiltinProfileLabel {
   const lengthBucket = getLengthBucket(result.wordCount);
-  const thresholds = LENGTH_THRESHOLDS[lengthBucket];
   const language = result.language ?? "und";
-
   return {
     id: `default-${language}-${lengthBucket}`,
     platform: "default",
     language,
     lengthBucket,
-    markingThreshold: thresholds.marking,
-    blurThreshold: thresholds.blur,
-    collapseThreshold: thresholds.collapse,
-    hideThreshold: thresholds.hide,
   };
 }
 
+/**
+ * The UNCALIBRATED builtin heuristic decision. It abstains conservatively and,
+ * when it does present, is always capped to the indicator ceiling by the caller
+ * (an uncalibrated model may only indicate). Kept score-based on purpose: it is
+ * the transparent stylometric fallback, never a validated detector.
+ */
 export function calibrateResult(result: ClassificationResult): DecisionOutcome {
-  const profile = resolveCalibrationProfile(result);
-  // The document-level raw score is the calibrated decision signal; the
-  // localized single-window score is never blended into it. The
-  // profile-driven document/localized decision policy lands in Task 6.
+  const bucket = getLengthBucket(result.wordCount);
+  const marking = LENGTH_THRESHOLDS[bucket].marking;
   const calibratedScore = result.aggregation?.documentRawScore ?? result.aiScore;
-  const reasonCodes = getEvidenceReasons(result, profile);
+  const reasonCodes = getEvidenceReasons(result, marking);
 
   if (mustAbstain(result, calibratedScore)) {
     const abstentionReasons: ReasonCode[] = [
       "INSUFFICIENT_EVIDENCE",
       ...reasonCodes,
     ];
-
     if (result.confidence === "low") {
       abstentionReasons.push("LOW_MODEL_CONFIDENCE");
     }
-
     if (hasChunkDisagreement(result)) {
       abstentionReasons.push("CHUNK_DISAGREEMENT");
     }
-
     return {
       status: "insufficient_evidence",
       calibratedScore: isScore(calibratedScore) ? calibratedScore : 0,
       actionCeiling: "indicator",
       abstained: true,
-      // An abstention is not presented; the distributed trigger set is empty
-      // until the aggregation-v2 work lands.
       presentationAllowed: false,
       triggers: [],
       reasonCodes: uniqueReasonCodes(abstentionReasons),
@@ -136,89 +128,181 @@ export function calibrateResult(result: ClassificationResult): DecisionOutcome {
   }
 
   return {
-    status: getStatus(calibratedScore, profile),
+    status: getBuiltinStatus(calibratedScore, bucket),
     calibratedScore,
-    actionCeiling: getActionCeiling(profile.lengthBucket),
+    actionCeiling: LENGTH_THRESHOLDS[bucket].actionCeiling,
     abstained: false,
-    // A non-abstained decision is presentable at its ceiling (mirrors the
-    // pre-migration behaviour); trigger attribution is a later task.
     presentationAllowed: true,
     triggers: [],
     reasonCodes,
   };
 }
 
-export interface RegistryCalibrationOptions {
-  platform?: string;
+/** Wraps the contract's calibrator math; the runtime never re-implements it. */
+export function applySerializedCalibrator(
+  calibrator: SerializedCalibratorV1,
+  score: number,
+): number {
+  return applyCalibrator(calibrator, score);
+}
+
+export interface DecideWithProfileInput {
+  /** The exact-match lookup from {@link CalibrationRegistry.findExact}. */
+  lookup: ProfileLookup;
+  aggregation: AggregationResultV2;
+  evidence: EvidenceAssessment;
+  rolloutState: RolloutState;
+  wordCount: number;
 }
 
 /**
- * Additive, registry-aware wrapper around {@link calibrateResult}. The base
- * decision is computed exactly as before; the registry only decides whether a
- * classifier has earned the right to act beyond an indicator. Any classifier
- * without a benchmark-verified calibration for its exact coordinates —
- * including the demo mock and the stylometric heuristic, which can never be
- * registered because the registry refuses uncalibrated profiles — keeps its
- * score/status but is capped to `actionCeiling: "indicator"` so it can never
- * blur, collapse, or hide a post. This is the documented honesty invariant:
- * an uncalibrated model may only indicate.
+ * The authoritative calibrated (TMR) decision policy. It applies the exact
+ * profile, never a heuristic, and follows a fixed order:
+ *   1. unsupported evidence            → abstain, no presentation;
+ *   2. missing/expired/incompatible    → TMR abstains with a specific reason;
+ *   3. calibrate document + localized separately;
+ *   4. triggers in canonical order (document, then localized);
+ *   5. calibratedScore = max over triggers, else the document calibrated score;
+ *   6. no trigger                      → no presentation;
+ *   7. localized-only / limited / 50-79 words → indicator ceiling;
+ *   8. hide requires a document action, sufficient evidence, a pass profile and
+ *      an actions rollout;
+ *   9. bundle-verified/shadow never present; indicator rollout caps at indicator.
  */
-export function calibrateWithRegistry(
-  result: ClassificationResult,
-  registry: CalibrationRegistry,
-  options: RegistryCalibrationOptions = {},
-): DecisionOutcome {
-  const outcome = calibrateResult(result);
+export function decideWithProfile(input: DecideWithProfileInput): DecisionOutcome {
+  const { lookup, aggregation, evidence, rolloutState, wordCount } = input;
 
-  const query: CalibrationQuery = {
-    modelId: result.modelId,
-    modelVersion: result.modelVersion,
-    platform: options.platform ?? "default",
-    language: result.language ?? "und",
-    lengthBucket: getLengthBucket(result.wordCount),
-  };
-
-  if (registry.get(query).calibrated) {
-    return outcome;
+  // (1) Unsupported evidence abstains regardless of score.
+  if (evidence.quality === "unsupported") {
+    return abstain([
+      "INSUFFICIENT_EVIDENCE",
+      ...evidence.reasonCodes,
+    ]);
   }
 
-  return outcome.actionCeiling === "indicator"
-    ? outcome
-    : { ...outcome, actionCeiling: "indicator" };
+  // (2) No exact, in-release, unexpired profile: the TMR abstains fail-closed.
+  if (lookup.status !== "found") {
+    return abstain([lookup.reason]);
+  }
+
+  const { profile } = lookup;
+
+  // (3) Calibrate the two signals independently — never blended.
+  const documentScore = applyCalibrator(
+    profile.calibrators.document,
+    aggregation.documentRawScore,
+  );
+  const localizedScore = applyCalibrator(
+    profile.calibrators.localized,
+    aggregation.localizedRawScore,
+  );
+
+  // (4) Canonical trigger order: document before localized.
+  const triggers: DecisionTrigger[] = [];
+  if (documentScore >= profile.thresholds.documentIndicator) {
+    triggers.push("document");
+  }
+  if (localizedScore >= profile.thresholds.localizedIndicator) {
+    triggers.push("localized");
+  }
+
+  const documentTrigger = triggers.includes("document");
+  const localizedTrigger = triggers.includes("localized");
+
+  // (5) calibratedScore = max over the fired triggers, else document.
+  const triggeredScores: number[] = [];
+  if (documentTrigger) triggeredScores.push(documentScore);
+  if (localizedTrigger) triggeredScores.push(localizedScore);
+  const calibratedScore =
+    triggeredScores.length > 0 ? Math.max(...triggeredScores) : documentScore;
+
+  // (6) No trigger fired: not AI-indicated, so nothing is presented.
+  if (triggers.length === 0) {
+    return {
+      status: "probably_human",
+      calibratedScore,
+      actionCeiling: "indicator",
+      abstained: false,
+      presentationAllowed: false,
+      triggers: [],
+      reasonCodes: [],
+    };
+  }
+
+  // (7)/(8) Determine the action ceiling.
+  const shortBucket =
+    wordCount >= SHORT_BUCKET_MINIMUM_WORDS &&
+    wordCount <= SHORT_BUCKET_MAXIMUM_WORDS;
+  const localizedOnly = triggers.length === 1 && localizedTrigger;
+  const forceIndicator =
+    localizedOnly || evidence.quality !== "sufficient" || shortBucket;
+
+  const actionAuthorized =
+    !forceIndicator &&
+    documentTrigger &&
+    documentScore >= profile.thresholds.documentAction &&
+    evidence.quality === "sufficient" &&
+    profile.gateEvidence.decision === "pass" &&
+    profile.actionCeiling === "hide" &&
+    rolloutState === "actions";
+  const actionCeiling: PresentationMode = actionAuthorized ? "hide" : "indicator";
+
+  // (9) Rollout gates presentation. Only indicator/actions ever present; a
+  // bundle-verified or shadow release never shows a TMR result.
+  const presentationAllowed =
+    rolloutState === "indicator" || rolloutState === "actions";
+
+  const reasonCodes: DecisionReasonCode[] = [];
+  if (localizedTrigger) reasonCodes.push("LOCALIZED_SIGNAL");
+  if (evidence.quality === "limited") reasonCodes.push("LIMITED_EVIDENCE");
+
+  return {
+    status: actionCeiling === "hide" ? "strong_ai_indication" : "possibly_ai",
+    calibratedScore,
+    actionCeiling,
+    abstained: false,
+    presentationAllowed,
+    triggers,
+    reasonCodes,
+  };
+}
+
+function abstain(reasonCodes: DecisionReasonCode[]): DecisionOutcome {
+  return {
+    status: "insufficient_evidence",
+    calibratedScore: 0,
+    actionCeiling: "indicator",
+    abstained: true,
+    presentationAllowed: false,
+    triggers: [],
+    reasonCodes: [...new Set(reasonCodes)],
+  };
 }
 
 function getEvidenceReasons(
   result: ClassificationResult,
-  profile: CalibrationProfile,
+  marking: number,
 ): ReasonCode[] {
   const aggregation = result.aggregation;
-
   if (!aggregation) {
     return [];
   }
-
   const reasonCodes: ReasonCode[] = [];
-
   if (aggregation.chunkAgreement >= 0.75) {
     reasonCodes.push("HIGH_CHUNK_CONSISTENCY");
   }
-
   if (aggregation.highScoreRatio >= 0.5) {
     reasonCodes.push("MOST_CHUNKS_ABOVE_THRESHOLD");
   }
-
-  if (aggregation.weightedMean >= profile.markingThreshold) {
+  if (aggregation.weightedMean >= marking) {
     reasonCodes.push("HIGH_AVERAGE_SCORE");
   }
-
-  if (aggregation.median >= profile.markingThreshold) {
+  if (aggregation.median >= marking) {
     reasonCodes.push("HIGH_MEDIAN_SCORE");
   }
-
   if (hasChunkDisagreement(result)) {
     reasonCodes.push("CHUNK_DISAGREEMENT");
   }
-
   return uniqueReasonCodes(reasonCodes);
 }
 
@@ -239,7 +323,6 @@ function mustAbstain(
 
 function hasChunkDisagreement(result: ClassificationResult): boolean {
   const aggregation = result.aggregation;
-
   return (
     aggregation !== undefined &&
     (aggregation.chunkAgreement < MINIMUM_CHUNK_AGREEMENT ||
@@ -251,21 +334,15 @@ function isDemoMock(result: ClassificationResult): boolean {
   return result.backend === "mock" && result.demo;
 }
 
-function getStatus(
+function getBuiltinStatus(
   calibratedScore: number,
-  profile: CalibrationProfile,
+  bucket: LengthBucket,
 ): ClassificationStatus {
-  if (calibratedScore >= profile.blurThreshold) {
+  const { marking, blur } = LENGTH_THRESHOLDS[bucket];
+  if (calibratedScore >= blur) {
     return "strong_ai_indication";
   }
-
-  return calibratedScore >= profile.markingThreshold
-    ? "possibly_ai"
-    : "probably_human";
-}
-
-function getActionCeiling(lengthBucket: LengthBucket): PresentationMode {
-  return LENGTH_THRESHOLDS[lengthBucket].actionCeiling;
+  return calibratedScore >= marking ? "possibly_ai" : "probably_human";
 }
 
 function uniqueReasonCodes(reasonCodes: ReasonCode[]): ReasonCode[] {

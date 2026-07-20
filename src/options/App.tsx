@@ -116,15 +116,6 @@ export function App({ api = defaultOptionsApi }: { api?: OptionsApi }) {
       .catch(() => setError(SAVE_ERROR));
   };
 
-  const save = (change: Partial<UserSettings>) => {
-    void persist({ ...settings, ...change })
-      .then((updated) => {
-        setSettings(updated);
-        setError(null);
-      })
-      .catch(() => setError(SAVE_ERROR));
-  };
-
   const reset = () => {
     const run =
       api.resetSettings !== undefined
@@ -240,7 +231,6 @@ export function App({ api = defaultOptionsApi }: { api?: OptionsApi }) {
           api.diagnostics === undefined ? undefined : downloadDiagnostics
         }
         onReset={reset}
-        onSave={save}
         onUpdate={update}
       />
 

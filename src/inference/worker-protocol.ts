@@ -234,8 +234,7 @@ function isSettingsSnapshot(value: unknown): value is UserSettings {
   return (
     isSafeRecord(value) &&
     typeof value.languageMode === "string" &&
-    typeof value.markingThreshold === "number" &&
-    Number.isFinite(value.markingThreshold) &&
+    typeof value.presentationMode === "string" &&
     Number.isSafeInteger(value.chunkSizeTokens) &&
     Number.isSafeInteger(value.chunkOverlapTokens) &&
     Number.isSafeInteger(value.maximumTokens) &&

@@ -77,15 +77,15 @@ describe("PlatformSettingsRepository", () => {
     ).rejects.toThrowError("INVALID_SETTINGS");
   });
 
-  it("rejects an override that conflicts with the persisted global thresholds", async () => {
+  it("rejects an override that conflicts with the persisted global window", async () => {
     const storage = new MemoryStorageArea();
     const globalRepository = new SettingsRepository(storage);
     const platformRepository = new PlatformSettingsRepository(storage);
-    const global = { ...DEFAULT_SETTINGS, markingThreshold: 0.9 };
+    const global = { ...DEFAULT_SETTINGS, chunkSizeTokens: 100 };
     await globalRepository.save(global);
 
     await expect(
-      platformRepository.save({ platformId: "linkedin", blurThreshold: 0.85 }),
+      platformRepository.save({ platformId: "linkedin", chunkOverlapTokens: 200 }),
     ).rejects.toThrowError("INVALID_SETTINGS");
     await expect(platformRepository.get("linkedin")).resolves.toBeUndefined();
     expect(resolveEffectiveSettings({ global })).toEqual(global);

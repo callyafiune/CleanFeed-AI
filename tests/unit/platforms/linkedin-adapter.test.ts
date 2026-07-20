@@ -175,7 +175,7 @@ describe("LinkedInAdapter presentation", () => {
   }
 
   function settings(presentationMode: PresentationMode) {
-    return { ...DEFAULT_SETTINGS, presentationMode, markingThreshold: 0.8 };
+    return { ...DEFAULT_SETTINGS, presentationMode };
   }
 
   it("is idempotent when presentation is applied repeatedly", () => {
@@ -216,13 +216,18 @@ describe("LinkedInAdapter presentation", () => {
     expect(element.style.filter).toBe("brightness(0.9)");
   });
 
-  it("restores a previously presented post when its score stops qualifying", () => {
+  it("restores a previously presented post when the decision stops authorizing", () => {
     const element = createPost();
     element.style.display = "grid";
     element.style.filter = "contrast(1.1)";
 
     adapter.applyPresentation(element, result(0.9), settings("blur"));
-    adapter.applyPresentation(element, result(0.2), settings("blur"));
+    // Fail-closed: presentation follows the decision, not the score. A decision
+    // that no longer authorizes presentation restores the post even at a high
+    // raw score.
+    const withdrawn = result(0.9);
+    withdrawn.decision.presentationAllowed = false;
+    adapter.applyPresentation(element, withdrawn, settings("blur"));
 
     expect(element.style.display).toBe("grid");
     expect(element.style.filter).toBe("contrast(1.1)");

@@ -350,17 +350,6 @@ export interface LanguageDetectionResult {
   supported: boolean;
 }
 
-export interface CalibrationProfile {
-  id: string;
-  platform: string;
-  language: string;
-  lengthBucket: LengthBucket;
-  markingThreshold: number;
-  blurThreshold: number;
-  collapseThreshold: number;
-  hideThreshold: number;
-}
-
 export interface InferenceTask {
   id: string;
   textHash: string;

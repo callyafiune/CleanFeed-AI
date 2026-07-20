@@ -4,10 +4,17 @@ import type { FeedbackRecord } from "@/storage/feedback";
 import type { KeywordRule } from "@/rules/rule-engine";
 
 /**
- * The only export schema version this build understands. A file carrying any
- * other value is rejected rather than guessed at.
+ * The export schema version this build WRITES. Reading additionally accepts the
+ * previous v1 (its settings are normalized on import — the legacy decision
+ * thresholds are dropped), but a file carrying any other value is rejected
+ * rather than guessed at.
  */
-export const EXPORT_SCHEMA_VERSION = 1;
+export const EXPORT_SCHEMA_VERSION = 2;
+
+/** Every export schema version this build can READ (v1 is normalized on apply). */
+export const SUPPORTED_IMPORT_SCHEMA_VERSIONS: ReadonlySet<number> = new Set([
+  1, 2,
+]);
 
 /** Hard cap on the raw import size, enforced BEFORE `JSON.parse`. */
 export const MAX_IMPORT_BYTES = 5 * 1024 * 1024;
@@ -107,7 +114,10 @@ export function validateExportInput(input: string): ExportValidationResult {
     return fail(structureReason);
   }
 
-  if (parsed.schemaVersion !== EXPORT_SCHEMA_VERSION) {
+  if (
+    typeof parsed.schemaVersion !== "number" ||
+    !SUPPORTED_IMPORT_SCHEMA_VERSIONS.has(parsed.schemaVersion)
+  ) {
     return fail("unsupported schemaVersion");
   }
 

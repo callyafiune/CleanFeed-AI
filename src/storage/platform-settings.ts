@@ -9,6 +9,7 @@ import {
   assertUserSettings,
   incrementSettingsVersion,
   readSettingsForMutation,
+  withoutLegacyThresholds,
 } from "@/storage/settings";
 import { runWithSettingsMutationLock } from "@/storage/settings-lock";
 import type { StorageArea } from "@/storage/storage-area";
@@ -112,13 +113,46 @@ function platformSettingsAreEqual(
   );
 }
 
+/**
+ * Drops legacy threshold keys from every persisted platform override, keeping
+ * the surviving overrides (presentationMode, minimumWordCount, …) intact.
+ * Returns `undefined` when the blob is not a platform envelope.
+ */
+function stripLegacyPlatformThresholds(
+  value: unknown,
+): { value: Record<string, unknown>; changed: boolean } | undefined {
+  if (!isRecord(value) || !isRecord(value.platforms)) {
+    return undefined;
+  }
+  let changed = false;
+  const platforms: Record<string, unknown> = {};
+  for (const [platformId, override] of Object.entries(value.platforms)) {
+    if (!isRecord(override)) {
+      platforms[platformId] = override;
+      continue;
+    }
+    const cleaned = withoutLegacyThresholds(override);
+    if (Object.keys(cleaned).length !== Object.keys(override).length) {
+      changed = true;
+    }
+    platforms[platformId] = cleaned;
+  }
+  return { value: { ...value, platforms }, changed };
+}
+
 async function readPlatformSettingsForMutation(
   storage: StorageArea,
   storageKey: string,
 ): Promise<PersistedPlatformSettings | undefined> {
   const persisted = await storage.get<unknown>(storageKey);
-  if (isPersistedPlatformSettings(persisted)) {
-    return persisted;
+  const stripped = stripLegacyPlatformThresholds(persisted);
+  const candidate = stripped?.value ?? persisted;
+
+  if (isPersistedPlatformSettings(candidate)) {
+    if (stripped?.changed) {
+      await storage.set(storageKey, candidate);
+    }
+    return candidate;
   }
 
   if (persisted !== undefined) {

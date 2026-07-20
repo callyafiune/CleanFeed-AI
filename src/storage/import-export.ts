@@ -16,7 +16,7 @@ import {
   historyPageKey,
 } from "@/storage/history";
 import { KeywordRuleRepository } from "@/storage/keyword-rules";
-import { SettingsRepository } from "@/storage/settings";
+import { SettingsRepository, withoutLegacyThresholds } from "@/storage/settings";
 import type { KeywordRule } from "@/rules/rule-engine";
 
 /**
@@ -345,9 +345,13 @@ async function applySettings(
   if (settings === undefined) {
     return;
   }
-  // A full settings object; merge and replace are equivalent. `save` asserts
-  // domain validity and rejects an ill-formed object, aborting the transaction.
-  await new SettingsRepository(storage).save(settings);
+  // A full settings object; merge and replace are equivalent. A v1 export still
+  // carries the legacy decision thresholds, so they are dropped here before the
+  // repository asserts the v4 shape. `save` rejects an ill-formed object,
+  // aborting the transaction.
+  await new SettingsRepository(storage).save(
+    withoutLegacyThresholds(settings) as unknown as UserSettings,
+  );
 }
 
 async function applyPlatformSettings(

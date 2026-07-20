@@ -11,11 +11,17 @@ import {
 } from "@/inference/builtin-runtime";
 import { buildExplanation } from "@/inference/explanation";
 import {
-  calibrateWithRegistry,
+  calibrateResult,
+  contractLengthBucket,
+  decideWithProfile,
   getLengthBucket,
 } from "@/inference/calibration";
 import { bundledModelManifest } from "@/inference/bundled-model-metadata";
-import { CalibrationRegistry } from "@/inference/calibration-registry";
+import type {
+  CalibrationCoordinates,
+  CalibrationRegistry,
+  ProfileLookup,
+} from "@/inference/calibration-registry";
 import { createTextChunks, type TextChunkOptions } from "@/inference/chunker";
 import { assessEvidence } from "@/inference/evidence";
 import { createTmrChunkPlan } from "@/inference/model-runtime";
@@ -50,6 +56,7 @@ import type {
   ChunkResult,
   ClassificationOptions,
   ClassificationResult,
+  DecisionOutcome,
   DecisionReasonCode,
   ModelStatus,
   ReasonCode,
@@ -123,7 +130,7 @@ export class PipelineRunner {
   private readonly classifier: TextClassifier;
   private readonly detector: LanguageDetector;
   private readonly tokenizer: Tokenizer;
-  private readonly calibration: CalibrationRegistry;
+  private readonly calibration: CalibrationRegistry | undefined;
   private readonly chunkPlan: TextChunkOptions | undefined;
   private initialized?: Promise<void>;
 
@@ -134,9 +141,10 @@ export class PipelineRunner {
     this.classifier = options.classifier ?? new StylometricClassifier();
     this.detector = options.detector ?? new HeuristicPortugueseDetector();
     this.tokenizer = options.tokenizer ?? new HeuristicTokenizer();
-    // Empty by default: with no verified calibration registered, every
-    // decision leaves this pipeline with actionCeiling "indicator".
-    this.calibration = options.calibration ?? new CalibrationRegistry();
+    // Undefined by default: with no verified calibration release loaded, the
+    // calibrated TMR path fails closed (abstains) and builtins may only
+    // indicate — every decision leaves this pipeline unable to act on the feed.
+    this.calibration = options.calibration;
     this.chunkPlan = options.chunkPlan;
     if (options.initialized) this.initialized = Promise.resolve();
   }
@@ -454,7 +462,7 @@ function completePreparedRequest(
   settings: UserSettings,
   startedAt: number,
   inferenceMs: number,
-  calibration: CalibrationRegistry,
+  calibration: CalibrationRegistry | undefined,
 ): ClassificationResult {
   const chunkResults = item.chunks.map((chunk, index) => {
     const result = classified[index]!;
@@ -511,13 +519,13 @@ function completePreparedRequest(
     processingTimeMs: performance.now() - startedAt,
   };
   const calibrationStartedAt = performance.now();
-  // Registry-aware calibration is the pipeline's honesty gate: any classifier
-  // without a benchmark-verified calibration (the stylometric heuristic, the
-  // demo mock, an unbenchmarked real model) is capped to the indicator-only
-  // action ceiling here, regardless of score, word count or user settings.
-  const decision = calibrateWithRegistry(base, calibration, {
-    platform: item.request.platform,
-  });
+  // The decision is authoritative. The calibrated bundle (TMR) path applies the
+  // EXACT profile via the release-bound registry or fails closed; the builtin
+  // heuristics (stylometric/mock) are uncalibrated and can only ever indicate.
+  const decision =
+    base.runtimeIdentity.kind === "bundle"
+      ? decideBundle(base, base.runtimeIdentity, item.request.platform, calibration)
+      : capToIndicator(calibrateResult(base));
   const explanation = buildExplanation(base, decision);
   const classifierEvidence = collectClassifierReasonCodes(classified);
   const calibrationMs = performance.now() - calibrationStartedAt;
@@ -543,6 +551,67 @@ function completePreparedRequest(
         }
       : {}),
   };
+}
+
+type BundleIdentity = Extract<RuntimeModelIdentity, { kind: "bundle" }>;
+
+/**
+ * Resolves the calibrated (TMR) decision. Without a loaded, release-bound
+ * registry the profile lookup is a typed miss and the rollout is treated as
+ * `bundle-verified`, so {@link decideWithProfile} fails closed and abstains.
+ */
+function decideBundle(
+  base: ClassificationResult,
+  identity: BundleIdentity,
+  platform: string,
+  registry: CalibrationRegistry | undefined,
+): DecisionOutcome {
+  const aggregation = base.aggregation ?? {
+    version: "tmr-aggregation-v2" as const,
+    documentRawScore: base.aiScore,
+    localizedRawScore: base.aiScore,
+    coverage: 0,
+    truncated: false,
+    weightedMean: base.aiScore,
+    median: base.aiScore,
+    min: base.aiScore,
+    max: base.aiScore,
+    stdDev: 0,
+    highScoreRatio: 0,
+    chunkAgreement: 1,
+    candidateWindowCount: 0,
+    selectedWindowIndices: [],
+  };
+  const coordinates: CalibrationCoordinates = {
+    modelId: identity.modelId,
+    modelVersion: identity.modelVersion,
+    bundleDigest: identity.bundleDigest,
+    tokenizerDigest: identity.tokenizerDigest,
+    platform,
+    locale: base.language,
+    lengthBucket: contractLengthBucket(base.wordCount),
+    aggregationVersion: identity.aggregationVersion,
+    contentCompositionVersion: identity.contentCompositionVersion,
+  };
+  const lookup: ProfileLookup =
+    registry === undefined
+      ? { status: "missing", reason: "MODEL_PROFILE_MISSING" }
+      : registry.findExact(coordinates, Date.now());
+  const rolloutState = registry?.release.rolloutState ?? "bundle-verified";
+  return decideWithProfile({
+    lookup,
+    aggregation,
+    evidence: base.evidence,
+    rolloutState,
+    wordCount: base.wordCount,
+  });
+}
+
+/** Uncalibrated builtins may only indicate: cap any stronger ceiling. */
+function capToIndicator(outcome: DecisionOutcome): DecisionOutcome {
+  return outcome.actionCeiling === "indicator"
+    ? outcome
+    : { ...outcome, actionCeiling: "indicator" };
 }
 
 /**

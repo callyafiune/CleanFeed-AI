@@ -60,18 +60,43 @@ describe("PlatformSettingsRepository", () => {
     ).rejects.toThrowError("INVALID_SETTINGS");
   });
 
-  it("rejects an override that conflicts with persisted global thresholds", async () => {
+  it("rejects an override that conflicts with the persisted global window", async () => {
     const storage = new MemoryStorageArea();
     await new SettingsRepository(storage).save({
       ...DEFAULT_SETTINGS,
-      markingThreshold: 0.9,
+      chunkSizeTokens: 100,
     });
     const repository = new PlatformSettingsRepository(storage);
 
+    // A 200-token overlap cannot fit the 100-token global chunk window.
     await expect(
-      repository.save({ platformId: "linkedin", blurThreshold: 0.85 }),
+      repository.save({ platformId: "linkedin", chunkOverlapTokens: 200 }),
     ).rejects.toThrowError("INVALID_SETTINGS");
     await expect(repository.get("linkedin")).resolves.toBeUndefined();
+  });
+
+  it("drops legacy threshold keys from a persisted override, keeping the rest", async () => {
+    const storage = new MemoryStorageArea();
+    await storage.set(PLATFORM_SETTINGS_STORAGE_KEY, {
+      schemaVersion: 1,
+      settingsVersion: 1,
+      platforms: {
+        linkedin: {
+          platformId: "linkedin",
+          minimumWordCount: 150,
+          presentationMode: "blur",
+          markingThreshold: 0.9,
+          blurThreshold: 0.95,
+        },
+      },
+    });
+    const repository = new PlatformSettingsRepository(storage);
+
+    await expect(repository.get("linkedin")).resolves.toEqual({
+      platformId: "linkedin",
+      minimumWordCount: 150,
+      presentationMode: "blur",
+    });
   });
 
   it("removes a corrupt platform record during recovery", async () => {

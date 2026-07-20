@@ -21,6 +21,28 @@ describe("worker error protocol", () => {
     ).toMatchObject({ type: "INITIALIZE" });
   });
 
+  it("accepts a CLASSIFY request whose settings snapshot carries no thresholds", () => {
+    const request = parseWorkerRequest({
+      type: "CLASSIFY",
+      requestId: "classify-1",
+      payload: {
+        text: "texto de publicação",
+        platform: "linkedin",
+        manual: false,
+        settings: {
+          languageMode: "portuguese_only",
+          presentationMode: "indicator",
+          chunkSizeTokens: 510,
+          chunkOverlapTokens: 64,
+          maximumTokens: 512,
+          inferenceTimeoutMs: 20_000,
+        },
+      },
+    });
+
+    expect(request).toMatchObject({ type: "CLASSIFY" });
+  });
+
   it("serializes and accepts INSUFFICIENT_EVIDENCE error responses", () => {
     const payload = serializeWorkerError(
       new CleanFeedError("INSUFFICIENT_EVIDENCE", "INSUFFICIENT_EVIDENCE"),

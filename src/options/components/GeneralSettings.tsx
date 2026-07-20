@@ -5,7 +5,12 @@ const languageModes = new Set<string>([
   "model_supported",
   "experimental_any",
 ]);
-const presentationModes = new Set<string>(["indicator", "blur"]);
+const presentationModes = new Set<string>([
+  "indicator",
+  "blur",
+  "collapse",
+  "hide",
+]);
 
 function isLanguageMode(value: string): value is UserSettings["languageMode"] {
   return languageModes.has(value);
@@ -91,8 +96,14 @@ export function GeneralSettings({
         >
           <option value="indicator">Apenas indicador</option>
           <option value="blur">Desfocar</option>
+          <option value="collapse">Recolher</option>
+          <option value="hide">Ocultar</option>
         </select>
       </label>
+      <p>
+        A escolha define somente como apresentar um resultado autorizado. O
+        perfil calibrado pode reduzir esta ação, nunca aumentá-la.
+      </p>
     </section>
   );
 }

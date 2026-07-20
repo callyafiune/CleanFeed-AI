@@ -6,13 +6,36 @@ import {
 } from "@/shared/constants";
 import { CleanFeedError } from "@/shared/errors";
 import type { BackendPreference, UserSettings } from "@/shared/settings-types";
-import { validateThresholds } from "@/shared/validation";
 import { runWithSettingsMutationLock } from "@/storage/settings-lock";
 import type { StorageArea } from "@/storage/storage-area";
 
 export const SETTINGS_STORAGE_KEY = SETTINGS_STORAGE_KEYS.global;
-const SCHEMA_VERSION = 3;
+const SCHEMA_VERSION = 4;
 const PLATFORM_SCHEMA_VERSION = 1;
+
+/**
+ * The four decision-threshold keys removed in schema v4. Scientific thresholds
+ * now live ONLY in the calibration profile; the user settings surface never
+ * carries them. This closed list drives both the v3→v4 migration and the
+ * stripping of legacy platform overrides — it is the single source of truth.
+ */
+export const LEGACY_THRESHOLD_KEYS = [
+  "markingThreshold",
+  "blurThreshold",
+  "collapseThreshold",
+  "hideThreshold",
+] as const;
+
+/** Removes the legacy threshold keys from a settings-shaped record. */
+export function withoutLegacyThresholds(
+  value: object,
+): Record<string, unknown> {
+  const result: Record<string, unknown> = { ...value };
+  for (const key of LEGACY_THRESHOLD_KEYS) {
+    delete result[key];
+  }
+  return result;
+}
 
 interface PersistedSettings {
   schemaVersion: typeof SCHEMA_VERSION;
@@ -20,20 +43,11 @@ interface PersistedSettings {
   settings: UserSettings;
 }
 
-type V2UserSettings = Omit<UserSettings, "useMockModel">;
-type V1UserSettings = Omit<UserSettings, "debugMode" | "useMockModel">;
-
-interface PersistedSettingsV2 {
-  schemaVersion: 2;
-  settingsVersion: number;
-  settings: V2UserSettings;
-}
-
-interface PersistedSettingsV1 {
-  schemaVersion: 1;
-  settingsVersion: number;
-  settings: V1UserSettings;
-}
+type LegacyThresholdRecord = Record<(typeof LEGACY_THRESHOLD_KEYS)[number], number>;
+/** The v3 (pre-removal) settings shape: v4 settings plus the four thresholds. */
+type V3UserSettings = UserSettings & LegacyThresholdRecord;
+type V2UserSettings = Omit<V3UserSettings, "useMockModel">;
+type V1UserSettings = Omit<V3UserSettings, "debugMode" | "useMockModel">;
 
 const booleanKeys = [
   "enabled",
@@ -167,30 +181,49 @@ function isUserSettings(value: unknown): value is UserSettings {
     return false;
   }
 
-  try {
-    validateThresholds({
-      marking: value.markingThreshold as number,
-      blur: value.blurThreshold as number,
-      collapse: value.collapseThreshold as number,
-      hide: value.hideThreshold as number,
-    });
-  } catch {
-    return false;
-  }
-
   return true;
 }
 
-function isV2UserSettings(value: unknown): value is V2UserSettings {
-  if (!isRecord(value) || Object.hasOwn(value, "useMockModel")) return false;
-  const expectedKeys = Object.keys(DEFAULT_SETTINGS).filter(
-    (key) => key !== "useMockModel",
-  );
+/** The four legacy thresholds must be finite, within [0,1] and non-decreasing. */
+function hasOrderedLegacyThresholds(value: Record<string, unknown>): boolean {
+  const values = LEGACY_THRESHOLD_KEYS.map((key) => value[key]);
+  if (
+    !values.every(
+      (item) => typeof item === "number" && item >= 0 && item <= 1,
+    )
+  ) {
+    return false;
+  }
+  const [marking, blur, collapse, hide] = values as number[];
+  return marking! <= blur! && blur! <= collapse! && collapse! <= hide!;
+}
+
+/** Validates the FULL v3 shape (v4 keys plus the four ordered thresholds). */
+function isV3UserSettings(value: unknown): value is V3UserSettings {
+  if (!isRecord(value)) {
+    return false;
+  }
+  const expected = new Set<string>([
+    ...Object.keys(DEFAULT_SETTINGS),
+    ...LEGACY_THRESHOLD_KEYS,
+  ]);
+  if (
+    Object.keys(value).length !== expected.size ||
+    ![...expected].every((key) => Object.hasOwn(value, key))
+  ) {
+    return false;
+  }
   return (
-    Object.keys(value).length === expectedKeys.length &&
-    expectedKeys.every((key) => Object.hasOwn(value, key)) &&
-    isUserSettings({ ...value, useMockModel: false })
+    hasOrderedLegacyThresholds(value) &&
+    isUserSettings(withoutLegacyThresholds(value))
   );
+}
+
+function isV2UserSettings(value: unknown): value is V2UserSettings {
+  if (!isRecord(value) || Object.hasOwn(value, "useMockModel")) {
+    return false;
+  }
+  return isV3UserSettings({ ...value, useMockModel: false });
 }
 
 function isV1UserSettings(value: unknown): value is V1UserSettings {
@@ -201,14 +234,7 @@ function isV1UserSettings(value: unknown): value is V1UserSettings {
   ) {
     return false;
   }
-  const expectedKeys = Object.keys(DEFAULT_SETTINGS).filter(
-    (key) => key !== "debugMode" && key !== "useMockModel",
-  );
-  return (
-    Object.keys(value).length === expectedKeys.length &&
-    expectedKeys.every((key) => Object.hasOwn(value, key)) &&
-    isUserSettings({ ...value, debugMode: false, useMockModel: false })
-  );
+  return isV3UserSettings({ ...value, debugMode: false, useMockModel: false });
 }
 
 function isPersistedSettings(value: unknown): value is PersistedSettings {
@@ -220,21 +246,14 @@ function isPersistedSettings(value: unknown): value is PersistedSettings {
   );
 }
 
-function isPersistedSettingsV2(value: unknown): value is PersistedSettingsV2 {
+function hasVersionedEnvelope(
+  value: unknown,
+  schemaVersion: number,
+): value is { schemaVersion: number; settingsVersion: number; settings: unknown } {
   return (
     isRecord(value) &&
-    value.schemaVersion === 2 &&
-    isFiniteIntegerInRange(value.settingsVersion, 0, Number.MAX_SAFE_INTEGER) &&
-    isV2UserSettings(value.settings)
-  );
-}
-
-function isPersistedSettingsV1(value: unknown): value is PersistedSettingsV1 {
-  return (
-    isRecord(value) &&
-    value.schemaVersion === 1 &&
-    isFiniteIntegerInRange(value.settingsVersion, 0, Number.MAX_SAFE_INTEGER) &&
-    isV1UserSettings(value.settings)
+    value.schemaVersion === schemaVersion &&
+    isFiniteIntegerInRange(value.settingsVersion, 0, Number.MAX_SAFE_INTEGER)
   );
 }
 
@@ -244,11 +263,14 @@ function settingsAreEqual(left: UserSettings, right: UserSettings): boolean {
   );
 }
 
+/** The overriding fields of a platform record: no platformId, no legacy thresholds. */
 function getPlatformOverrides(
   value: Record<string, unknown>,
 ): Record<string, unknown> {
-  return Object.fromEntries(
-    Object.entries(value).filter(([key]) => key !== "platformId"),
+  return withoutLegacyThresholds(
+    Object.fromEntries(
+      Object.entries(value).filter(([key]) => key !== "platformId"),
+    ),
   );
 }
 
@@ -275,7 +297,13 @@ async function validatePlatformOverridesForGlobal(
     return;
   }
 
-  const allowedKeys = new Set(["platformId", ...Object.keys(DEFAULT_SETTINGS)]);
+  // Legacy thresholds are strippable, not "unknown": a platform record may still
+  // carry them from v3 and its surviving overrides stay valid.
+  const allowedKeys = new Set([
+    "platformId",
+    ...Object.keys(DEFAULT_SETTINGS),
+    ...LEGACY_THRESHOLD_KEYS,
+  ]);
   for (const [platformId, rawOverrides] of Object.entries(
     persisted.platforms,
   )) {
@@ -324,6 +352,21 @@ export function incrementSettingsVersion(settingsVersion: number): number {
   return settingsVersion + 1;
 }
 
+async function storeMigrated(
+  storage: StorageArea,
+  storageKey: string,
+  settingsVersion: number,
+  settings: UserSettings,
+): Promise<PersistedSettings> {
+  const migrated = {
+    schemaVersion: SCHEMA_VERSION,
+    settingsVersion,
+    settings,
+  } satisfies PersistedSettings;
+  await storage.set(storageKey, migrated);
+  return migrated;
+}
+
 async function readPersistedSettingsForMutation(
   storage: StorageArea,
   storageKey: string = SETTINGS_STORAGE_KEY,
@@ -333,58 +376,78 @@ async function readPersistedSettingsForMutation(
     return persisted;
   }
 
-  if (isPersistedSettingsV2(persisted)) {
-    const migrated = {
-      schemaVersion: SCHEMA_VERSION,
-      settingsVersion: persisted.settingsVersion,
-      settings: { ...persisted.settings, useMockModel: false },
-    } satisfies PersistedSettings;
-    await storage.set(storageKey, migrated);
-    return migrated;
+  // Versioned v3 envelope: validate the whole v3 shape, then drop the thresholds.
+  if (hasVersionedEnvelope(persisted, 3) && isV3UserSettings(persisted.settings)) {
+    return storeMigrated(
+      storage,
+      storageKey,
+      persisted.settingsVersion,
+      withoutLegacyThresholds(persisted.settings) as unknown as UserSettings,
+    );
   }
 
-  if (isPersistedSettingsV1(persisted)) {
-    const migrated = {
-      schemaVersion: SCHEMA_VERSION,
-      settingsVersion: persisted.settingsVersion,
-      settings: {
+  if (hasVersionedEnvelope(persisted, 2) && isV2UserSettings(persisted.settings)) {
+    return storeMigrated(
+      storage,
+      storageKey,
+      persisted.settingsVersion,
+      withoutLegacyThresholds({
+        ...persisted.settings,
+        useMockModel: false,
+      }) as unknown as UserSettings,
+    );
+  }
+
+  if (hasVersionedEnvelope(persisted, 1) && isV1UserSettings(persisted.settings)) {
+    return storeMigrated(
+      storage,
+      storageKey,
+      persisted.settingsVersion,
+      withoutLegacyThresholds({
         ...persisted.settings,
         debugMode: false,
         useMockModel: false,
-      },
-    } satisfies PersistedSettings;
-    await storage.set(storageKey, migrated);
-    return migrated;
+      }) as unknown as UserSettings,
+    );
+  }
+
+  // Bare (un-enveloped) legacy objects.
+  if (isV3UserSettings(persisted)) {
+    return storeMigrated(
+      storage,
+      storageKey,
+      1,
+      withoutLegacyThresholds(persisted) as unknown as UserSettings,
+    );
   }
 
   if (isV2UserSettings(persisted)) {
-    const migrated = {
-      schemaVersion: SCHEMA_VERSION,
-      settingsVersion: 1,
-      settings: { ...persisted, useMockModel: false },
-    } satisfies PersistedSettings;
-    await storage.set(storageKey, migrated);
-    return migrated;
+    return storeMigrated(
+      storage,
+      storageKey,
+      1,
+      withoutLegacyThresholds({
+        ...persisted,
+        useMockModel: false,
+      }) as unknown as UserSettings,
+    );
   }
 
   if (isV1UserSettings(persisted)) {
-    const migrated = {
-      schemaVersion: SCHEMA_VERSION,
-      settingsVersion: 1,
-      settings: { ...persisted, debugMode: false, useMockModel: false },
-    } satisfies PersistedSettings;
-    await storage.set(storageKey, migrated);
-    return migrated;
+    return storeMigrated(
+      storage,
+      storageKey,
+      1,
+      withoutLegacyThresholds({
+        ...persisted,
+        debugMode: false,
+        useMockModel: false,
+      }) as unknown as UserSettings,
+    );
   }
 
   if (isUserSettings(persisted)) {
-    const migrated = {
-      schemaVersion: SCHEMA_VERSION,
-      settingsVersion: 1,
-      settings: persisted,
-    } satisfies PersistedSettings;
-    await storage.set(storageKey, migrated);
-    return migrated;
+    return storeMigrated(storage, storageKey, 1, persisted);
   }
 
   if (persisted !== undefined) {

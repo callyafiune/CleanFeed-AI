@@ -57,7 +57,7 @@ function result(
 }
 
 function settingsFor(mode: PresentationMode): EffectiveSettings {
-  return { ...DEFAULT_SETTINGS, presentationMode: mode, markingThreshold: 0.8 };
+  return { ...DEFAULT_SETTINGS, presentationMode: mode };
 }
 
 function snapshotAttributes(element: HTMLElement): Record<string, string> {
@@ -125,6 +125,40 @@ describe("PresentationController", () => {
     );
     expect(post).not.toHaveClass(...MODE_CLASSES);
     expect(document.querySelector("[data-cleanfeed-owned='badge']")).toBeNull();
+  });
+
+  it("never presents a decision that did not authorize presentation, even at score 1", () => {
+    controller.apply(
+      post,
+      result({
+        aiScore: 1,
+        decision: { ...decision, presentationAllowed: false },
+      }),
+      hideSettings,
+    );
+    expect(post).not.toHaveClass(...MODE_CLASSES);
+    expect(document.querySelector("[data-cleanfeed-owned='badge']")).toBeNull();
+  });
+
+  it("never presents a non-filterable status, even at score 1", () => {
+    controller.apply(
+      post,
+      result({ status: "probably_human", aiScore: 1 }),
+      hideSettings,
+    );
+    expect(post).not.toHaveClass(...MODE_CLASSES);
+    expect(document.querySelector("[data-cleanfeed-owned='badge']")).toBeNull();
+  });
+
+  it("presents at the ceiling regardless of a low raw score once authorized", () => {
+    // resolveMode never reads aiScore: a low score with an authorizing, hide
+    // ceiling decision still presents at the least-aggressive chosen mode.
+    controller.apply(
+      post,
+      result({ status: "possibly_ai", aiScore: 0.01 }),
+      settingsFor("blur"),
+    );
+    expect(post).toHaveClass("cleanfeed-blurred");
   });
 
   it("applies the least aggressive mode allowed by calibration", () => {

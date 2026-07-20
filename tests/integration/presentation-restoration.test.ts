@@ -62,7 +62,7 @@ function strongAiResult(): ClassificationResult {
 }
 
 function settingsFor(mode: PresentationMode): EffectiveSettings {
-  return { ...DEFAULT_SETTINGS, presentationMode: mode, markingThreshold: 0.8 };
+  return { ...DEFAULT_SETTINGS, presentationMode: mode };
 }
 
 function snapshotAttributes(element: HTMLElement): Record<string, string> {

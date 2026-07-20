@@ -219,10 +219,6 @@ const userSettingKeys = [
   "minimumWordCount",
   "languageMode",
   "presentationMode",
-  "markingThreshold",
-  "blurThreshold",
-  "collapseThreshold",
-  "hideThreshold",
   "processVisibleOnly",
   "experimentalShortTextDetection",
   "manualAnalysisEnabled",
@@ -752,27 +748,9 @@ function isSettings(value: unknown, complete: boolean): boolean {
     return false;
   }
 
-  return (
-    Object.entries(value).every(([key, settingValue]) =>
-      isSettingValue(key, settingValue),
-    ) && arePresentThresholdsOrdered(value)
+  return Object.entries(value).every(([key, settingValue]) =>
+    isSettingValue(key, settingValue),
   );
-}
-
-function arePresentThresholdsOrdered(value: Record<string, unknown>): boolean {
-  return (
-    isOrderedPair(value.markingThreshold, value.blurThreshold) &&
-    isOrderedPair(value.blurThreshold, value.collapseThreshold) &&
-    isOrderedPair(value.collapseThreshold, value.hideThreshold)
-  );
-}
-
-function isOrderedPair(lower: unknown, upper: unknown): boolean {
-  if (lower === undefined || upper === undefined) {
-    return true;
-  }
-
-  return isScore(lower) && isScore(upper) && lower <= upper;
 }
 
 function isSettingValue(key: string, value: unknown): boolean {
@@ -801,11 +779,6 @@ function isSettingValue(key: string, value: unknown): boolean {
       return isStringInSet(value, presentationModes);
     case "backendPreference":
       return value === "auto" || value === "wasm" || value === "webgpu";
-    case "markingThreshold":
-    case "blurThreshold":
-    case "collapseThreshold":
-    case "hideThreshold":
-      return isScore(value);
     default:
       return isNonNegativeInteger(value);
   }

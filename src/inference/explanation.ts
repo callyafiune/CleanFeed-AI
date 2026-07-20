@@ -1,4 +1,7 @@
-import { resolveCalibrationProfile } from "@/inference/calibration";
+import {
+  getMarkingBand,
+  resolveCalibrationProfile,
+} from "@/inference/calibration";
 import type {
   ClassificationExplanation,
   ClassificationResult,
@@ -19,8 +22,9 @@ export function buildExplanation(
   }
 
   const profile = resolveCalibrationProfile(result);
+  const marking = getMarkingBand(result.wordCount);
   const chunksAboveThreshold = result.chunks?.filter(
-    (chunk) => chunk.aiScore >= profile.markingThreshold,
+    (chunk) => chunk.aiScore >= marking,
   ).length;
 
   return {
@@ -42,7 +46,7 @@ function getEvidenceReasons(
 ): ReasonCode[] {
   const reasonCodes: ReasonCode[] = [];
   const aggregation = result.aggregation;
-  const profile = resolveCalibrationProfile(result);
+  const marking = getMarkingBand(result.wordCount);
 
   if (outcome.abstained) {
     reasonCodes.push("INSUFFICIENT_EVIDENCE");
@@ -68,11 +72,11 @@ function getEvidenceReasons(
     reasonCodes.push("MOST_CHUNKS_ABOVE_THRESHOLD");
   }
 
-  if (aggregation.weightedMean >= profile.markingThreshold) {
+  if (aggregation.weightedMean >= marking) {
     reasonCodes.push("HIGH_AVERAGE_SCORE");
   }
 
-  if (aggregation.median >= profile.markingThreshold) {
+  if (aggregation.median >= marking) {
     reasonCodes.push("HIGH_MEDIAN_SCORE");
   }
 

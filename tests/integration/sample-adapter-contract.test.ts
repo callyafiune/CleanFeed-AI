@@ -151,7 +151,6 @@ describe("sample adapter contract", () => {
     const settings: EffectiveSettings = {
       ...DEFAULT_SETTINGS,
       presentationMode: "blur",
-      markingThreshold: 0.8,
     };
 
     adapter.applyPresentation(post, strongAiResult(), settings);

@@ -1,9 +1,5 @@
 import { describe, expect, it } from "vitest";
 
-import {
-  CalibrationRegistry,
-  CONSERVATIVE_UNCALIBRATED_PROFILE,
-} from "@/inference/calibration-registry";
 import { PipelineRunner } from "@/inference/inference-worker";
 import {
   STYLOMETRIC_MODEL_KEY,
@@ -272,20 +268,16 @@ describe("StylometricClassifier", () => {
     expect(STYLOMETRIC_MODEL_KEY).toBe(`${metadata.id}:${metadata.version}`);
   });
 
-  it("falls back to the conservative uncalibrated calibration profile", () => {
-    const registry = new CalibrationRegistry();
+  it("caps the uncalibrated stylometric decision at the indicator ceiling", async () => {
+    const runner = new PipelineRunner();
 
-    const profile = registry.get({
-      modelId: "stylometric-v1",
-      modelVersion: "1.0.0",
-      platform: "linkedin",
-      language: "pt",
-      lengthBucket: "150_299",
-    });
+    const result = await runner.classify(
+      { text: LLM_STYLED_POST, platform: "linkedin", manual: false },
+      { ...DEFAULT_SETTINGS, languageMode: "experimental_any" },
+    );
 
-    expect(profile).toBe(CONSERVATIVE_UNCALIBRATED_PROFILE);
-    expect(profile.calibrated).toBe(false);
-    expect(profile.actionCeiling).toBe("indicator");
+    expect(result.runtimeIdentity.kind).toBe("builtin");
+    expect(result.decision.actionCeiling).toBe("indicator");
   });
 });
 

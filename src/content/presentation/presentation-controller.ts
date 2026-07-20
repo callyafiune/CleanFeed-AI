@@ -39,30 +39,36 @@ const FILTERABLE_STATUSES: ReadonlySet<ClassificationStatus> = new Set([
 const CLEAN: PresentationState = { kind: "clean" };
 
 /**
- * True only for non-abstained decisions whose status indicates AI. Human,
- * inconclusive, insufficient-evidence, failed and abstained results are never
- * filtered, regardless of score.
+ * Fail-closed presentability. A result is shown ONLY when its decision both
+ * authorizes presentation and did not abstain, AND its status is filterable.
+ * The score, calibrated score, isolated status, word range and any legacy
+ * threshold are irrelevant here: a decision that did not authorize presentation
+ * is never presented, however high the raw score.
  */
 export function isPresentable(result: ClassificationResult): boolean {
-  if (result.decision?.abstained === true) return false;
-  return FILTERABLE_STATUSES.has(result.status);
+  const { decision } = result;
+  return (
+    decision.presentationAllowed === true &&
+    decision.abstained === false &&
+    FILTERABLE_STATUSES.has(result.status)
+  );
 }
 
 /**
- * Resolves the least-aggressive mode allowed by the score and settings, never
- * exceeding the decision's action ceiling. Returns `null` when nothing should
- * be shown.
+ * Resolves the presentation mode as the LEAST-aggressive rank between the user's
+ * preference and the decision's action ceiling. It reads ONLY
+ * `settings.presentationMode` and `decision.actionCeiling` — never a score, an
+ * isolated status, a word range or a legacy threshold. Returns `null` when the
+ * decision does not authorize presentation.
  */
 export function resolveMode(
   result: ClassificationResult,
   settings: EffectiveSettings,
 ): PresentationMode | null {
   if (!isPresentable(result)) return null;
-  if (result.aiScore < settings.markingThreshold) return null;
 
   const configured = settings.presentationMode;
-  const ceiling = result.decision?.actionCeiling;
-  if (ceiling === undefined) return configured;
+  const ceiling = result.decision.actionCeiling;
   return MODE_RANK[configured] <= MODE_RANK[ceiling] ? configured : ceiling;
 }
 
