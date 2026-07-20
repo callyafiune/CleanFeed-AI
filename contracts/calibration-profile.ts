@@ -169,8 +169,8 @@ function parseCalibrator(value: unknown, where: string): SerializedCalibratorV1 
       !hasExactKeys(value, ["kind", "alpha", "beta", "intercept"]) ||
       typeof value.alpha !== "number" ||
       typeof value.beta !== "number" ||
-      !(value.alpha > 0) ||
-      !(value.beta > 0) ||
+      !(value.alpha >= 0) ||
+      !(value.beta >= 0) ||
       !Number.isFinite(value.intercept)
     ) {
       fail("CALIBRATOR_INVALID", `${where} beta calibrator is malformed`);
@@ -566,7 +566,7 @@ export function applyCalibrator(
     return clampUnit(sigmoid(calibrator.slope * raw + calibrator.intercept));
   }
   if (calibrator.kind === "beta") {
-    const epsilon = 1e-12;
+    const epsilon = 1e-6;
     const bounded = Math.min(1 - epsilon, Math.max(epsilon, raw));
     const logit =
       calibrator.intercept +
