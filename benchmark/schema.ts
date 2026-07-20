@@ -44,9 +44,7 @@ export interface BenchmarkRecord {
   createdAt: number;
   provenance: {
     sourceKind:
-      | "authorized-contribution"
-      | "licensed-corpus"
-      | "controlled-generation";
+      "authorized-contribution" | "licensed-corpus" | "controlled-generation";
     sourceId: string;
     sourceRevision: string;
     collectedAt: number;
@@ -234,7 +232,12 @@ export function validateBenchmarkRecord(value: unknown): BenchmarkRecord {
   const platform = nonEmptyString(root, "platform", "", id);
   const domain = nonEmptyString(root, "domain", "", id);
   const topic = nonEmptyString(root, "topic", "", id);
-  const humanSourceType = optionalNonEmptyString(root, "humanSourceType", "", id);
+  const humanSourceType = optionalNonEmptyString(
+    root,
+    "humanSourceType",
+    "",
+    id,
+  );
   const hardNegativeFamily = optionalNonEmptyString(
     root,
     "hardNegativeFamily",
@@ -247,7 +250,7 @@ export function validateBenchmarkRecord(value: unknown): BenchmarkRecord {
   const provenance = validateProvenance(root.provenance, id);
   const annotation = validateAnnotation(root.annotation, id);
   const generation = validateGeneration(root.generation, id);
-  const mixture = validateMixture(root.mixture, id);
+  const mixture = validateMixture(root.mixture, id, text.length);
   const transformation = validateTransformation(root.transformation, id);
   const groups = validateGroups(root.groups, id);
 
@@ -367,13 +370,30 @@ function validateProvenance(
   id: string,
 ): BenchmarkRecord["provenance"] {
   const obj = assertClosedObject(value, "provenance", PROVENANCE_KEYS, id);
-  const sourceKind = enumValue(obj, "sourceKind", "provenance", SOURCE_KINDS, id);
+  const sourceKind = enumValue(
+    obj,
+    "sourceKind",
+    "provenance",
+    SOURCE_KINDS,
+    id,
+  );
   const sourceId = pseudonym(obj, "sourceId", "provenance", id);
   const sourceRevision = pseudonym(obj, "sourceRevision", "provenance", id);
   const collectedAt = finiteNumber(obj, "collectedAt", "provenance", id);
   const licenseId = nonEmptyString(obj, "licenseId", "provenance", id);
-  const licenseUrl = optionalNonEmptyString(obj, "licenseUrl", "provenance", id);
-  const legalBasis = enumValue(obj, "legalBasis", "provenance", LEGAL_BASES, id);
+  const licenseUrl = optionalNonEmptyString(
+    obj,
+    "licenseUrl",
+    "provenance",
+    id,
+  );
+  const legalBasis = enumValue(
+    obj,
+    "legalBasis",
+    "provenance",
+    LEGAL_BASES,
+    id,
+  );
   const consentId = optionalPseudonym(obj, "consentId", "provenance", id);
 
   const auditObj = assertClosedObject(
@@ -436,7 +456,12 @@ function validateAnnotation(
     return reviewer;
   }) as [string, string, ...string[]];
 
-  const adjudicatorId = optionalPseudonym(obj, "adjudicatorId", "annotation", id);
+  const adjudicatorId = optionalPseudonym(
+    obj,
+    "adjudicatorId",
+    "annotation",
+    id,
+  );
 
   const annotation: BenchmarkRecord["annotation"] = {
     protocolVersion: "annotation-v1",
@@ -462,7 +487,12 @@ function validateGeneration(
     promptSha256: sha256Hex(obj, "promptSha256", "generation", id),
     generatedAt: finiteNumber(obj, "generatedAt", "generation", id),
   };
-  const temperature = optionalFiniteNumber(obj, "temperature", "generation", id);
+  const temperature = optionalFiniteNumber(
+    obj,
+    "temperature",
+    "generation",
+    id,
+  );
   if (temperature !== undefined) generation.temperature = temperature;
   const seed = optionalNonEmptyString(obj, "seed", "generation", id);
   if (seed !== undefined) generation.seed = seed;
@@ -472,6 +502,7 @@ function validateGeneration(
 function validateMixture(
   value: unknown,
   id: string,
+  textLength: number,
 ): BenchmarkRecord["mixture"] {
   if (value === undefined) return undefined;
   const obj = assertClosedObject(value, "mixture", MIXTURE_KEYS, id);
@@ -491,9 +522,18 @@ function validateMixture(
     );
     const start = finiteNumber(spanObj, "start", `mixture.spans[${index}]`, id);
     const end = finiteNumber(spanObj, "end", `mixture.spans[${index}]`, id);
-    if (start < 0 || end < start) {
+    // Spans are integer character offsets into the record text. Reject anything
+    // that is not a whole offset or that runs outside 0..text.length, so an
+    // annotated span can never point past the content it claims to cover.
+    if (
+      !Number.isInteger(start) ||
+      !Number.isInteger(end) ||
+      start < 0 ||
+      end < start ||
+      end > textLength
+    ) {
       throw new BenchmarkRecordError(
-        `mixture.spans[${index}] must satisfy 0 <= start <= end`,
+        `mixture.spans[${index}] out of text bounds: require integer 0 <= start <= end <= ${textLength}`,
         id,
       );
     }
@@ -545,7 +585,12 @@ function validateGroups(value: unknown, id: string): BenchmarkRecord["groups"] {
     nearDuplicate: pseudonym(obj, "nearDuplicate", "groups", id),
     derivationRoot: pseudonym(obj, "derivationRoot", "groups", id),
   };
-  const generatorFamily = optionalPseudonym(obj, "generatorFamily", "groups", id);
+  const generatorFamily = optionalPseudonym(
+    obj,
+    "generatorFamily",
+    "groups",
+    id,
+  );
   if (generatorFamily !== undefined) groups.generatorFamily = generatorFamily;
   const generatorVersion = optionalPseudonym(
     obj,
@@ -553,7 +598,8 @@ function validateGroups(value: unknown, id: string): BenchmarkRecord["groups"] {
     "groups",
     id,
   );
-  if (generatorVersion !== undefined) groups.generatorVersion = generatorVersion;
+  if (generatorVersion !== undefined)
+    groups.generatorVersion = generatorVersion;
   const promptTemplate = optionalPseudonym(obj, "promptTemplate", "groups", id);
   if (promptTemplate !== undefined) groups.promptTemplate = promptTemplate;
   return groups;

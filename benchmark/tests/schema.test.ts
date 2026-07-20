@@ -2,7 +2,10 @@ import { describe, expect, it } from "vitest";
 
 import { parseBenchmarkDataset, validateBenchmarkRecord } from "../schema.ts";
 
-const HUMAN_TEXT = Array.from({ length: 100 }, (_, index) => `palavra${index}`).join(" ");
+const HUMAN_TEXT = Array.from(
+  { length: 100 },
+  (_, index) => `palavra${index}`,
+).join(" ");
 
 const human = {
   schemaVersion: 2,
@@ -58,7 +61,10 @@ describe("validateBenchmarkRecord", () => {
     expect(() =>
       validateBenchmarkRecord({
         ...human,
-        provenance: { ...human.provenance, rawProfileUrl: "https://example.test" },
+        provenance: {
+          ...human.provenance,
+          rawProfileUrl: "https://example.test",
+        },
       }),
     ).toThrow(/unknown field provenance\.rawProfileUrl/);
   });
@@ -81,6 +87,39 @@ describe("validateBenchmarkRecord", () => {
 
   it("rejects duplicate ids and normalized content hashes", () => {
     const jsonl = `${JSON.stringify(human)}\n${JSON.stringify({ ...human, id: "human-0002" })}`;
-    expect(() => parseBenchmarkDataset(jsonl)).toThrow(/duplicate normalizedTextSha256/);
+    expect(() => parseBenchmarkDataset(jsonl)).toThrow(
+      /duplicate normalizedTextSha256/,
+    );
+  });
+
+  it("rejects a mixed span that ends beyond the record text", () => {
+    expect(() =>
+      validateBenchmarkRecord({
+        ...human,
+        label: "mixed",
+        mixture: {
+          aiFraction: 0.5,
+          humanFraction: 0.5,
+          spans: [{ start: 0, end: 100_000, origin: "ai" }],
+        },
+        groups: { ...human.groups, derivationRoot: "human-parent-0001" },
+      }),
+    ).toThrow(/mixture\.spans\[0\] out of text bounds/);
+  });
+
+  it("accepts a mixed record whose spans stay within the text", () => {
+    const record = validateBenchmarkRecord({
+      ...human,
+      label: "mixed",
+      mixture: {
+        aiFraction: 0.5,
+        humanFraction: 0.5,
+        spans: [{ start: 0, end: 10, origin: "ai" }],
+      },
+      groups: { ...human.groups, derivationRoot: "human-parent-0001" },
+    });
+    expect(record.label).toBe("mixed");
+    expect(record.mixture?.spans).toHaveLength(1);
+    expect(record.mixture?.spans[0]?.end).toBe(10);
   });
 });
