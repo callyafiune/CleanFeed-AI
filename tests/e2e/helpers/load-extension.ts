@@ -1,4 +1,10 @@
-import { cpSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
+import {
+  cpSync,
+  existsSync,
+  mkdtempSync,
+  readFileSync,
+  writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -143,6 +149,78 @@ export async function launchExtension(
       ...secureArgs,
     ],
   });
+}
+
+/** Options for {@link launchReferenceExtension}. */
+export interface ReferenceLaunchOptions {
+  /** The insecure fixture origin to treat as secure (as {@link LaunchExtensionOptions}). */
+  secureOrigin?: string;
+  /** A specific user-data dir; when omitted a throwaway profile is created. */
+  userDataDirectory?: string;
+}
+
+/** A launched reference context plus its DevTools (CDP) loopback endpoint. */
+export interface ReferenceLaunch {
+  context: BrowserContext;
+  /** `ws://127.0.0.1:<port><path>` read from the profile's DevToolsActivePort. */
+  cdpEndpoint: string;
+  userDataDirectory: string;
+}
+
+/**
+ * Reads the CDP WebSocket endpoint Chrome writes into `DevToolsActivePort`
+ * (line 1 = port, line 2 = ws path) once the process has bound its debugging
+ * port. Polls briefly; the loopback channel is harness control only and never a
+ * content request.
+ */
+async function readDevToolsEndpoint(
+  userDataDirectory: string,
+): Promise<string> {
+  const portFile = join(userDataDirectory, "DevToolsActivePort");
+  for (let attempt = 0; attempt < 200; attempt += 1) {
+    if (existsSync(portFile)) {
+      const [port, path] = readFileSync(portFile, "utf8").split("\n");
+      if (port !== undefined && path !== undefined && path.length > 0) {
+        return `ws://127.0.0.1:${port.trim()}${path.trim()}`;
+      }
+    }
+    await new Promise((resolve) => setTimeout(resolve, 50));
+  }
+  throw new Error("DEVTOOLS_ENDPOINT_UNAVAILABLE");
+}
+
+/**
+ * Launches the REFERENCE lane's persistent context from the PINNED Chrome for
+ * Testing executable (no `channel`), with a temporary user-data dir and
+ * `--remote-debugging-port=0`, then resolves its CDP loopback endpoint. The
+ * other E2E specs keep using the bundled Chromium via {@link launchExtension};
+ * this launcher is the ONLY one bound to the pinned executable path.
+ */
+export async function launchReferenceExtension(
+  executablePath: string,
+  options: ReferenceLaunchOptions = {},
+): Promise<ReferenceLaunch> {
+  const extensionPath = prepareExtension();
+  const userDataDirectory =
+    options.userDataDirectory ??
+    mkdtempSync(join(tmpdir(), "cleanfeed-ref-profile-"));
+  const secureArgs =
+    options.secureOrigin === undefined
+      ? []
+      : [`--unsafely-treat-insecure-origin-as-secure=${options.secureOrigin}`];
+  const context = await chromium.launchPersistentContext(userDataDirectory, {
+    headless: true,
+    executablePath,
+    args: [
+      `--disable-extensions-except=${extensionPath}`,
+      `--load-extension=${extensionPath}`,
+      "--host-resolver-rules=MAP www.linkedin.com 127.0.0.1, EXCLUDE localhost",
+      "--remote-debugging-port=0",
+      ...secureArgs,
+    ],
+  });
+  const cdpEndpoint = await readDevToolsEndpoint(userDataDirectory);
+  return { context, cdpEndpoint, userDataDirectory };
 }
 
 /** The service worker backing the loaded extension, once it has started. */

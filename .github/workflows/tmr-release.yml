@@ -32,3 +32,63 @@ jobs:
           name: tmr-functional-browser
           path: test-results/tmr-functional-browser.json
           if-no-files-found: error
+
+  # The REAL performance measurement runs ONLY on the pinned reference hardware
+  # (Windows 11 / 4 logical CPUs / 8 GiB / WASM) with Chrome for Testing
+  # 150.0.7871.129. The `cleanfeed-reference` label is a condition of
+  # publication: a missing, cancelled or runner-less job never authorizes upload.
+  reference-performance:
+    needs: verify-release
+    runs-on: [self-hosted, Windows, X64, cleanfeed-reference]
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22.18.0"
+          cache: npm
+      - run: npm ci
+      - run: npm run browser:install:test
+      - run: npm run model:fetch
+      - run: npm run model:verify
+      - run: npm run test:performance:release
+      - uses: actions/upload-artifact@v4
+        with:
+          name: tmr-release-performance
+          path: test-results/tmr-release-performance.json
+          if-no-files-found: error
+
+  # The ONLY job that uploads `dist`. It rebuilds and re-audits the canonical
+  # descriptor, then re-enforces the budget gate against the downloaded report
+  # (recomputing the local browser SHA-256) before any package artifact leaves.
+  publish-package:
+    needs: [verify-release, reference-performance]
+    runs-on: windows-latest
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22.18.0"
+          cache: npm
+      - run: npm ci
+      - run: npx playwright install chromium
+      - run: npm run browser:install:test
+      - run: npm run model:fetch
+      - run: npm run model:verify
+      - run: npm run test:model:release
+      - run: npm run build:release
+      - run: npm run audit
+      - run: npm run audit:model
+      - run: npm run verify:build
+      - uses: actions/download-artifact@v4
+        with:
+          name: tmr-release-performance
+          path: test-results
+      - run: node scripts/assert-performance-report.mjs test-results/tmr-release-performance.json --release models/tmr-ai-text-detector/release.json --parity dist/runtime-parity.json --browser-lock tests/browser-lock.json
+      - run: npm run release:assert-publishable
+      - uses: actions/upload-artifact@v4
+        with:
+          name: cleanfeed-extension
+          path: dist
+          if-no-files-found: error
