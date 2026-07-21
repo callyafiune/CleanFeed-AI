@@ -8,6 +8,11 @@ import {
 } from "@/content/presentation/badge";
 import { createExplanationPanel } from "@/content/presentation/explanation-panel";
 import { restorePresentation } from "@/content/presentation/restore";
+import {
+  FEEDBACK_COPY,
+  PROBABILISTIC_DISCLOSURE,
+  TECHNICAL_SCORE_DISCLAIMER,
+} from "@/shared/classification-copy";
 import { DEFAULT_SETTINGS } from "@/shared/constants";
 import type {
   ClassificationExplanation,
@@ -16,9 +21,12 @@ import type {
 } from "@/shared/types";
 import {
   createBuiltinRuntimeIdentity,
+  createBundleRuntimeIdentity,
   createDecisionOutcome,
   createEvidenceAssessment,
 } from "../../helpers/model-fixtures";
+
+const PROFILE_DIGEST = "d".repeat(64);
 
 function makeResult(
   overrides: Partial<ClassificationResult> = {},
@@ -40,6 +48,19 @@ function makeResult(
     demo: true,
     ...overrides,
   };
+}
+
+/** A bundle-backed result with a selected profile: the only shape that may
+ * ever surface the calibrated score in the advanced diagnostic. */
+function bundleResult(
+  overrides: Partial<ClassificationResult> = {},
+): ClassificationResult {
+  return makeResult({
+    runtimeIdentity: createBundleRuntimeIdentity(),
+    selectedProfileDigest: PROFILE_DIGEST,
+    decision: createDecisionOutcome({ calibratedScore: 0.84321 }),
+    ...overrides,
+  });
 }
 
 function withReasons(
@@ -73,6 +94,33 @@ describe("createExplanationPanel", () => {
     ).toBeVisible();
     expect(screen.getByText(/pontuação média/u)).toBeVisible();
     expect(document.body.textContent).not.toMatch(/provas|foi escrito por IA/u);
+  });
+
+  it("shows the mandatory probabilistic disclosure verbatim and claims no authorship", () => {
+    const panel = createExplanationPanel(withReasons(["HIGH_AVERAGE_SCORE"]), {
+      onFeedback: vi.fn(),
+    });
+    document.body.append(panel);
+
+    expect(panel).toHaveTextContent(PROBABILISTIC_DISCLOSURE);
+    expect(panel).toHaveTextContent(
+      "Este texto apresenta padrões compatíveis com conteúdo gerado ou " +
+        "editado por IA. Isso não comprova sua origem.",
+    );
+    expect(panel.textContent).not.toMatch(
+      /foi escrito por IA|comprovadamente artificial|autoria confirmada/u,
+    );
+  });
+
+  it("omits the calibrated score entirely when no options are passed", () => {
+    const panel = createExplanationPanel(bundleResult(), {
+      onFeedback: vi.fn(),
+    });
+    document.body.append(panel);
+
+    expect(panel).not.toHaveTextContent(/Score calibrado/u);
+    expect(panel).not.toHaveTextContent(/Diagnóstico avançado/u);
+    expect(panel.textContent).not.toMatch(/0[.,]843|84%/u);
   });
 
   it("maps every present reason code to a distinct probabilistic phrase", () => {
@@ -177,7 +225,7 @@ describe("createExplanationPanel", () => {
     });
     document.body.append(panel);
 
-    fireEvent.click(screen.getByRole("button", { name: "Era humano" }));
+    fireEvent.click(screen.getByRole("button", { name: FEEDBACK_COPY.human }));
     expect(onFeedback).toHaveBeenCalledWith("human");
 
     const aiPanel = createExplanationPanel(
@@ -187,7 +235,9 @@ describe("createExplanationPanel", () => {
       },
     );
     document.body.append(aiPanel);
-    fireEvent.click(screen.getAllByRole("button", { name: "Era IA" })[1]);
+    fireEvent.click(
+      screen.getAllByRole("button", { name: FEEDBACK_COPY.ai })[1],
+    );
     expect(onFeedback).toHaveBeenCalledWith("ai");
 
     const unknownPanel = createExplanationPanel(
@@ -195,8 +245,25 @@ describe("createExplanationPanel", () => {
       { onFeedback },
     );
     document.body.append(unknownPanel);
-    fireEvent.click(screen.getAllByRole("button", { name: "Não sei" })[2]);
+    fireEvent.click(
+      screen.getAllByRole("button", { name: FEEDBACK_COPY.unknown })[2],
+    );
     expect(onFeedback).toHaveBeenCalledWith("unknown");
+  });
+
+  it("uses the neutral feedback labels and never the old authorship verdicts", () => {
+    const panel = createExplanationPanel(withReasons(["HIGH_AVERAGE_SCORE"]), {
+      onFeedback: vi.fn(),
+    });
+    document.body.append(panel);
+
+    expect(
+      screen.getByRole("button", { name: "Não deveria ter sido marcado" }),
+    ).toBeVisible();
+    expect(
+      screen.getByRole("button", { name: "A marcação parece correta" }),
+    ).toBeVisible();
+    expect(panel.textContent).not.toMatch(/Era humano|Era IA/u);
   });
 
   it("confirms feedback locally without claiming the model was trained", () => {
@@ -205,7 +272,7 @@ describe("createExplanationPanel", () => {
     });
     document.body.append(panel);
 
-    fireEvent.click(screen.getByRole("button", { name: "Era humano" }));
+    fireEvent.click(screen.getByRole("button", { name: FEEDBACK_COPY.human }));
 
     const status = panel.querySelector("[role='status']");
     expect(status?.textContent ?? "").not.toBe("");
@@ -240,6 +307,78 @@ describe("createExplanationPanel", () => {
 
     fireEvent.click(screen.getByRole("button", { name: "Fechar" }));
     expect(onClose).toHaveBeenCalledOnce();
+  });
+});
+
+describe("createExplanationPanel advanced diagnostic (opt-in score)", () => {
+  afterEach(() => {
+    document.body.replaceChildren();
+  });
+
+  it("exposes the calibrated score with its authorship caveat, never a percentage", () => {
+    const panel = createExplanationPanel(
+      bundleResult(),
+      { onFeedback: vi.fn() },
+      { showTechnicalScore: true },
+    );
+    document.body.append(panel);
+
+    expect(panel).toHaveTextContent("Score calibrado do modelo: 0,843");
+    expect(panel).toHaveTextContent(TECHNICAL_SCORE_DISCLAIMER);
+    expect(panel).toHaveTextContent(
+      "Este score não equivale à probabilidade real de autoria por IA.",
+    );
+    expect(panel).not.toHaveTextContent("84%");
+  });
+
+  it("hides the diagnostic when showTechnicalScore is false", () => {
+    const panel = createExplanationPanel(
+      bundleResult(),
+      { onFeedback: vi.fn() },
+      { showTechnicalScore: false },
+    );
+    document.body.append(panel);
+
+    expect(panel).not.toHaveTextContent(/Score calibrado/u);
+    expect(panel).not.toHaveTextContent(/Diagnóstico avançado/u);
+  });
+
+  it("hides the diagnostic for a builtin/stylometric identity even when opted in", () => {
+    const panel = createExplanationPanel(
+      bundleResult({ runtimeIdentity: createBuiltinRuntimeIdentity() }),
+      { onFeedback: vi.fn() },
+      { showTechnicalScore: true },
+    );
+    document.body.append(panel);
+
+    expect(panel).not.toHaveTextContent(/Score calibrado/u);
+  });
+
+  it("hides the diagnostic when no calibration profile was selected", () => {
+    const panel = createExplanationPanel(
+      bundleResult({ selectedProfileDigest: undefined }),
+      { onFeedback: vi.fn() },
+      { showTechnicalScore: true },
+    );
+    document.body.append(panel);
+
+    expect(panel).not.toHaveTextContent(/Score calibrado/u);
+  });
+
+  it("hides the diagnostic when the decision abstained", () => {
+    const panel = createExplanationPanel(
+      bundleResult({
+        decision: createDecisionOutcome({
+          calibratedScore: 0.84321,
+          abstained: true,
+        }),
+      }),
+      { onFeedback: vi.fn() },
+      { showTechnicalScore: true },
+    );
+    document.body.append(panel);
+
+    expect(panel).not.toHaveTextContent(/Score calibrado/u);
   });
 });
 
@@ -293,6 +432,37 @@ describe("attachExplanationDisclosure", () => {
     expect(
       document.querySelector("[data-cleanfeed-owned='explanation']"),
     ).toBeNull();
+  });
+
+  it("forwards the technical-score option to the opened panel", () => {
+    const { post, badge } = presentedPost();
+
+    attachExplanationDisclosure(post, badge, bundleResult(), {
+      onFeedback: vi.fn(),
+      showTechnicalScore: true,
+    });
+
+    fireEvent.click(badge);
+    const panel = document.querySelector<HTMLElement>(
+      "[data-cleanfeed-owned='explanation']",
+    );
+    expect(panel).not.toBeNull();
+    expect(panel).toHaveTextContent("Score calibrado do modelo: 0,843");
+    expect(panel).not.toHaveTextContent("84%");
+  });
+
+  it("keeps the panel score-free when the technical-score option is off", () => {
+    const { post, badge } = presentedPost();
+
+    attachExplanationDisclosure(post, badge, bundleResult(), {
+      onFeedback: vi.fn(),
+    });
+
+    fireEvent.click(badge);
+    const panel = document.querySelector<HTMLElement>(
+      "[data-cleanfeed-owned='explanation']",
+    );
+    expect(panel).not.toHaveTextContent(/Score calibrado/u);
   });
 
   it("moves focus to the heading on open and back to the badge on close", () => {

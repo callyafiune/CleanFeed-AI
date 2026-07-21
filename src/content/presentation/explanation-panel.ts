@@ -1,6 +1,12 @@
+import {
+  FEEDBACK_COPY,
+  PROBABILISTIC_DISCLOSURE,
+  TECHNICAL_SCORE_DISCLAIMER,
+} from "@/shared/classification-copy";
 import type { FeedbackVerdict } from "@/storage/feedback";
 import type {
   ClassificationResult,
+  DecisionOutcome,
   DecisionReasonCode,
   ReasonCode,
 } from "@/shared/types";
@@ -25,9 +31,18 @@ export interface ExplanationPanelCallbacks {
   onCreateRule?: () => void;
 }
 
+export interface ExplanationPanelOptions {
+  /**
+   * Opt-in flag for the advanced technical diagnostic. Off by default: the
+   * calibrated score is rendered ONLY when this is true AND the result comes
+   * from a bundle runtime with a selected calibration profile and a decision
+   * that did not abstain. It is always shown as the calibrated model score with
+   * the caveat that it is not the real probability of authorship.
+   */
+  showTechnicalScore?: boolean;
+}
+
 const HEADING = "Indícios observados";
-const INTRO =
-  "Esta avaliação é probabilística, baseada apenas nos sinais calculados abaixo, e pode conter erros.";
 const FALLBACK_EVIDENCE =
   "Nenhum indício específico foi registrado para esta avaliação.";
 const FEEDBACK_QUESTION = "Este resultado parece correto?";
@@ -35,6 +50,8 @@ const FEEDBACK_CONFIRMATION =
   "Recebemos seu feedback. Ele fica apenas neste navegador.";
 const CLOSE_LABEL = "Fechar";
 const CREATE_RULE_LABEL = "Adicionar regra para este post";
+const TECHNICAL_DIAGNOSTICS_LABEL = "Diagnóstico avançado";
+const TECHNICAL_SCORE_PREFIX = "Score calibrado do modelo: ";
 
 /** Static, probabilistic phrasing for every reason code the pipeline emits. */
 const REASON_PHRASES: Record<ReasonCode, string> = {
@@ -60,9 +77,9 @@ const REASON_PHRASES: Record<ReasonCode, string> = {
 };
 
 const FEEDBACK_OPTIONS: { verdict: FeedbackVerdict; label: string }[] = [
-  { verdict: "human", label: "Era humano" },
-  { verdict: "ai", label: "Era IA" },
-  { verdict: "unknown", label: "Não sei" },
+  { verdict: "human", label: FEEDBACK_COPY.human },
+  { verdict: "ai", label: FEEDBACK_COPY.ai },
+  { verdict: "unknown", label: FEEDBACK_COPY.unknown },
 ];
 
 let panelSequence = 0;
@@ -76,6 +93,7 @@ let panelSequence = 0;
 export function createExplanationPanel(
   result: ClassificationResult,
   callbacks: ExplanationPanelCallbacks,
+  options: ExplanationPanelOptions = {},
 ): HTMLElement {
   const doc = document;
   const id = `cleanfeed-explanation-${++panelSequence}`;
@@ -98,20 +116,67 @@ export function createExplanationPanel(
   heading.tabIndex = -1;
   heading.textContent = HEADING;
 
-  const intro = doc.createElement("p");
-  intro.className = "cleanfeed-explanation__intro";
-  intro.textContent = INTRO;
+  // The mandatory §7 disclosure: probabilistic phrasing, never an authorship
+  // claim. It is the single shared string, so no other surface duplicates it.
+  const disclosure = doc.createElement("p");
+  disclosure.className = "cleanfeed-explanation__disclosure";
+  disclosure.textContent = PROBABILISTIC_DISCLOSURE;
 
   panel.append(
     heading,
-    intro,
+    disclosure,
     buildEvidence(doc, result),
     buildMeta(doc, result),
   );
+
+  // The calibrated score is advanced-diagnostic only, never in the feed. It is
+  // shown solely for a bundle runtime with a selected profile whose decision did
+  // not abstain: a builtin/stylometric result or an abstention never qualifies.
+  if (
+    options.showTechnicalScore === true &&
+    result.runtimeIdentity.kind === "bundle" &&
+    result.selectedProfileDigest !== undefined &&
+    !result.decision.abstained
+  ) {
+    panel.append(buildTechnicalDiagnostics(doc, result.decision));
+  }
+
   panel.append(buildFeedback(doc, feedbackLabelId, callbacks));
   panel.append(buildFooter(doc, callbacks));
 
   return panel;
+}
+
+/**
+ * Builds the collapsible advanced diagnostic. It presents the calibrated model
+ * score to three pt-BR decimal places, always paired with the caveat that it is
+ * NOT the real probability of authorship. It is never a percentage.
+ */
+function buildTechnicalDiagnostics(
+  doc: Document,
+  decision: DecisionOutcome,
+): HTMLElement {
+  const details = doc.createElement("details");
+  details.className = "cleanfeed-explanation__diagnostics";
+
+  const summary = doc.createElement("summary");
+  summary.textContent = TECHNICAL_DIAGNOSTICS_LABEL;
+
+  const score = doc.createElement("p");
+  score.className = "cleanfeed-explanation__score";
+  score.textContent =
+    TECHNICAL_SCORE_PREFIX +
+    decision.calibratedScore.toLocaleString("pt-BR", {
+      minimumFractionDigits: 3,
+      maximumFractionDigits: 3,
+    });
+
+  const warning = doc.createElement("p");
+  warning.className = "cleanfeed-explanation__score-caveat";
+  warning.textContent = TECHNICAL_SCORE_DISCLAIMER;
+
+  details.append(summary, score, warning);
+  return details;
 }
 
 function buildEvidence(

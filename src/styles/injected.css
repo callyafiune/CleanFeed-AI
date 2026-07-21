@@ -48,10 +48,18 @@
 
 /* Non-blurred reveal toolbar shown above a blurred post. */
 .cleanfeed-blur-toolbar {
+  align-items: center;
   display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
   justify-content: center;
   margin: 0.5rem 0;
   pointer-events: auto;
+}
+
+.cleanfeed-blur-toolbar__message {
+  margin: 0;
+  text-align: center;
 }
 
 /* Placeholder announcing a collapsed/hidden post. */

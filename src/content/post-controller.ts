@@ -473,6 +473,9 @@ export class PostController {
     if (badge === undefined) return;
     attachExplanationDisclosure(element, badge, result, {
       onFeedback: (verdict) => this.recordFeedback(hash, result, verdict),
+      // The calibrated score stays out of the feed: it appears only inside the
+      // panel's advanced diagnostic, and only when the user opted in.
+      showTechnicalScore: this.options.settings.showScore,
     });
   }
 

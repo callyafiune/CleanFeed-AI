@@ -1,7 +1,10 @@
+import "@testing-library/jest-dom/vitest";
+import { screen } from "@testing-library/react";
 import { afterEach, describe, expect, it } from "vitest";
 
 import { applyBadge } from "@/content/presentation/badge";
 import { restorePresentation } from "@/content/presentation/restore";
+import { CLASSIFICATION_STATUS_COPY } from "@/shared/classification-copy";
 import { DEFAULT_SETTINGS } from "@/shared/constants";
 import type { ClassificationResult } from "@/shared/types";
 import {
@@ -34,22 +37,46 @@ describe("applyBadge", () => {
     document.body.replaceChildren();
   });
 
-  it("adds an accessible, score-free badge next to the post", () => {
+  it("shows only the qualitative band and never a score, whatever showScore is", () => {
     const post = document.createElement("article");
     post.textContent = "Conteúdo original";
     document.body.append(post);
 
-    applyBadge(post, result("possibly_ai"), DEFAULT_SETTINGS);
+    // The raw/calibrated score must never leak into the feed, even when the
+    // advanced diagnostic toggle is on: the badge is purely qualitative.
+    for (const showScore of [false, true]) {
+      applyBadge(post, result("possibly_ai"), {
+        ...DEFAULT_SETTINGS,
+        showScore,
+      });
+      const badge = screen.getByRole("button");
+      expect(badge.textContent).toBe(
+        `◌ ${CLASSIFICATION_STATUS_COPY.possibly_ai}`,
+      );
+      expect(badge.textContent).toBe("◌ Sinais detectados");
+      expect(badge.textContent).not.toMatch(/%|0[.,]9/u);
+      expect(badge.getAttribute("aria-label")).toBe(
+        `CleanFeed: ${CLASSIFICATION_STATUS_COPY.possibly_ai}`,
+      );
+    }
+  });
 
-    const badge = document.querySelector<HTMLButtonElement>(
-      "[data-cleanfeed-owned='badge']",
+  it("labels a stronger indication with the qualitative band, still score-free", () => {
+    const post = document.createElement("article");
+    post.textContent = "Conteúdo original";
+    document.body.append(post);
+
+    applyBadge(post, result("strong_ai_indication"), {
+      ...DEFAULT_SETTINGS,
+      showScore: true,
+    });
+
+    const badge = screen.getByRole("button");
+    expect(badge.textContent).toBe(
+      `◌ ${CLASSIFICATION_STATUS_COPY.strong_ai_indication}`,
     );
-    expect(badge?.tagName).toBe("BUTTON");
-    expect(badge?.textContent).toContain("Possivelmente gerado por IA");
-    expect(badge?.textContent).not.toContain("90%");
-    expect(badge?.getAttribute("aria-label")).toContain("Possivelmente");
-    expect(badge?.previousElementSibling).toBeNull();
-    expect(badge?.nextElementSibling).toBe(post);
+    expect(badge.textContent).toBe("◌ Sinais mais fortes");
+    expect(badge.textContent).not.toMatch(/%|0[.,]9/u);
   });
 
   it("restores only CleanFeed-owned nodes and is idempotent", () => {

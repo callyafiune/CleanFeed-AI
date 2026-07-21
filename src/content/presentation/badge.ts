@@ -1,8 +1,10 @@
 import {
   createExplanationPanel,
   type ExplanationPanelCallbacks,
+  type ExplanationPanelOptions,
 } from "@/content/presentation/explanation-panel";
 import { registerOwnedArtifact } from "@/content/presentation/restore";
+import { CLASSIFICATION_STATUS_COPY } from "@/shared/classification-copy";
 import type { EffectiveSettings } from "@/shared/settings-types";
 import type { ClassificationResult, PresentationMode } from "@/shared/types";
 
@@ -10,26 +12,22 @@ const badges = new WeakMap<HTMLElement, HTMLButtonElement>();
 
 let panelSequence = 0;
 
-const COPY: Record<ClassificationResult["status"], string> = {
-  probably_human: "Provavelmente escrito por uma pessoa",
-  inconclusive: "Resultado inconclusivo",
-  possibly_ai: "Possivelmente gerado por IA",
-  strong_ai_indication: "Fortes indícios de IA",
-  insufficient_evidence: "Resultado inconclusivo",
-  classification_failed: "Resultado inconclusivo",
-};
-
-/** Adds the extension's reversible, keyboard-accessible status control. */
+/**
+ * Adds the extension's reversible, keyboard-accessible status control. The badge
+ * is strictly qualitative: it shows the shared band label and never the raw or
+ * calibrated score, regardless of any setting. The calibrated score is reachable
+ * only from the advanced diagnostic inside the explanation panel.
+ */
 export function applyBadge(
   element: HTMLElement,
   result: ClassificationResult,
-  settings: EffectiveSettings,
+  _settings: EffectiveSettings,
   mode?: PresentationMode,
 ): void {
   removeBadge(element);
   if (element.parentNode === null) return;
 
-  const text = COPY[result.status];
+  const text = CLASSIFICATION_STATUS_COPY[result.status];
   const badge = element.ownerDocument.createElement("button");
   badge.type = "button";
   badge.className = "cleanfeed-badge";
@@ -45,13 +43,6 @@ export function applyBadge(
   icon.setAttribute("aria-hidden", "true");
   icon.textContent = "◌";
   badge.append(icon, element.ownerDocument.createTextNode(` ${text}`));
-  if (settings.showScore) {
-    badge.append(
-      element.ownerDocument.createTextNode(
-        ` (${Math.round(result.aiScore * 100)}%)`,
-      ),
-    );
-  }
 
   // The control is intentionally a sibling: it never alters post content or
   // the platform's own reading order. Future tasks attach its explanation UI.
@@ -73,7 +64,8 @@ export function attachExplanationDisclosure(
   post: HTMLElement,
   badge: HTMLButtonElement,
   result: ClassificationResult,
-  callbacks: Pick<ExplanationPanelCallbacks, "onFeedback">,
+  callbacks: Pick<ExplanationPanelCallbacks, "onFeedback"> &
+    ExplanationPanelOptions,
 ): void {
   if (badge.dataset.cleanfeedExplains === "true") return;
   badge.dataset.cleanfeedExplains = "true";
@@ -96,10 +88,14 @@ export function attachExplanationDisclosure(
 
   const open = (): void => {
     if (panel !== null) return;
-    panel = createExplanationPanel(result, {
-      onFeedback: callbacks.onFeedback,
-      onClose: close,
-    });
+    panel = createExplanationPanel(
+      result,
+      {
+        onFeedback: callbacks.onFeedback,
+        onClose: close,
+      },
+      { showTechnicalScore: callbacks.showTechnicalScore },
+    );
     panel.id = panelId;
     badge.setAttribute("aria-expanded", "true");
     badge.after(panel);

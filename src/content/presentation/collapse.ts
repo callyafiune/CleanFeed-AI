@@ -2,11 +2,11 @@ import {
   insertRevealPlaceholder,
   PRESENTATION_MODE_CLASSES,
 } from "@/content/presentation/restore";
+import { PRESENTATION_COPY } from "@/shared/classification-copy";
 
 const COLLAPSE_CLASS = PRESENTATION_MODE_CLASSES.collapse;
-const COLLAPSE_MESSAGE =
-  "Publicação recolhida por apresentar fortes indícios de geração por IA.";
-const REVEAL_LABEL = "Mostrar conteúdo";
+const COLLAPSE_MESSAGE = PRESENTATION_COPY.collapse.message;
+const REVEAL_LABEL = PRESENTATION_COPY.collapse.reveal;
 
 /**
  * Collapses the post behind an accessible placeholder without touching its

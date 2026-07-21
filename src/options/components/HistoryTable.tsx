@@ -40,9 +40,11 @@ function formatDate(timestamp: number): string {
 }
 
 /**
- * Renders the (always text-free) history rows. The "Texto integral" column is
- * rendered ONLY when the user opted into full-text storage; while the opt-in is
- * off, no text column exists at all, so no opted-out text can ever be shown.
+ * Renders the (always text-free) history rows. The raw/calibrated score is never
+ * shown — there is no score column and `row.score` (kept only for storage
+ * migration and cache identity) is never rendered. The "Texto integral" column
+ * is rendered ONLY when the user opted into full-text storage; while the opt-in
+ * is off, no text column exists at all, so no opted-out text can ever be shown.
  */
 export function HistoryTable({
   entries,
@@ -56,7 +58,6 @@ export function HistoryTable({
           <th scope="col">Data</th>
           <th scope="col">Plataforma</th>
           <th scope="col">Resultado</th>
-          <th scope="col">Pontuação</th>
           <th scope="col">Ação</th>
           <th scope="col">Origem</th>
           {storeFullText ? <th scope="col">Texto integral</th> : null}
@@ -65,7 +66,7 @@ export function HistoryTable({
       <tbody>
         {entries.length === 0 ? (
           <tr>
-            <td colSpan={storeFullText ? 7 : 6}>
+            <td colSpan={storeFullText ? 6 : 5}>
               Nenhum registro no histórico.
             </td>
           </tr>
@@ -75,11 +76,10 @@ export function HistoryTable({
               <td>{formatDate(row.timestamp)}</td>
               <td>{row.platform}</td>
               <td>{STATUS_LABELS[row.status]}</td>
-              <td>{row.score.toFixed(2)}</td>
               <td>
                 {row.action === undefined ? "—" : ACTION_LABELS[row.action]}
               </td>
-              <td>{row.origin === "rule" ? "Regra" : "IA"}</td>
+              <td>{row.origin === "rule" ? "Regra" : "Modelo"}</td>
               {storeFullText ? (
                 <td>
                   <span style={TEXT_STYLE} title={texts[row.textHash] ?? ""}>

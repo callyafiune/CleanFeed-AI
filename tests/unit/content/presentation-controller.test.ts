@@ -3,6 +3,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { PresentationController } from "@/content/presentation/presentation-controller";
 import { SessionState } from "@/content/session-state";
+import { CLASSIFICATION_STATUS_COPY } from "@/shared/classification-copy";
 import { DEFAULT_SETTINGS } from "@/shared/constants";
 import type { EffectiveSettings } from "@/shared/settings-types";
 import type {
@@ -330,8 +331,12 @@ describe("PresentationController", () => {
 
     const badges = document.querySelectorAll("[data-cleanfeed-owned='badge']");
     expect(badges).toHaveLength(1);
-    expect(badges[0]?.textContent).toContain("Fortes indícios de IA");
+    expect(badges[0]?.textContent).toContain(
+      CLASSIFICATION_STATUS_COPY.strong_ai_indication,
+    );
     expect(post.dataset.cleanfeedStatus).toBe("strong_ai_indication");
+    // The score stays out of the badge but remains as a data attribute for
+    // cache/debug identity — never rendered to the user.
     expect(post.dataset.cleanfeedScore).toBe("0.990");
   });
 });

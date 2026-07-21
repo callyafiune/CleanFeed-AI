@@ -1,24 +1,13 @@
+import {
+  CLASSIFICATION_STATUS_COPY,
+  EVIDENCE_QUALITY_COPY,
+  PROBABILISTIC_DISCLOSURE,
+} from "@/shared/classification-copy";
 import type {
   ClassificationResult,
-  Confidence,
   DecisionReasonCode,
   ReasonCode,
 } from "@/shared/types";
-
-const STATUS_COPY: Record<ClassificationResult["status"], string> = {
-  probably_human: "Provavelmente escrito por uma pessoa",
-  inconclusive: "Resultado inconclusivo",
-  possibly_ai: "Possivelmente gerado por IA",
-  strong_ai_indication: "Fortes indícios de IA",
-  insufficient_evidence: "Resultado inconclusivo",
-  classification_failed: "Resultado inconclusivo",
-};
-
-const CONFIDENCE_COPY: Record<Confidence, string> = {
-  low: "baixa",
-  medium: "média",
-  high: "alta",
-};
 
 /** Static, probabilistic phrasing for every reason code the pipeline emits. */
 const REASON_PHRASES: Record<ReasonCode, string> = {
@@ -73,7 +62,9 @@ export function ManualResult({
 
   return (
     <div className="cleanfeed-manual__result">
-      <h2 className="cleanfeed-manual__status">{STATUS_COPY[result.status]}</h2>
+      <h2 className="cleanfeed-manual__status">
+        {CLASSIFICATION_STATUS_COPY[result.status]}
+      </h2>
       {result.demo ? (
         <p className="cleanfeed-manual__demo" role="note">
           {DEMO_WARNING}
@@ -82,9 +73,10 @@ export function ManualResult({
       <p className="cleanfeed-manual__count">
         {result.wordCount} palavras · {result.tokenCount} tokens
       </p>
-      <p className="cleanfeed-manual__confidence">
-        Confiança: {CONFIDENCE_COPY[result.confidence]}
+      <p className="cleanfeed-manual__evidence-quality">
+        {EVIDENCE_QUALITY_COPY[result.evidence.quality]}
       </p>
+      <p className="cleanfeed-manual__disclosure">{PROBABILISTIC_DISCLOSURE}</p>
       {reasonCodes.length > 0 ? (
         <section className="cleanfeed-manual__evidence">
           <h3>Indícios observados</h3>

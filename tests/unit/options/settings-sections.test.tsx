@@ -50,6 +50,32 @@ describe("options settings sections", () => {
     );
   });
 
+  it("exposes an opt-in, off-by-default technical score toggle in Avançado", async () => {
+    const api = fakeOptionsApi();
+    render(<OptionsApp api={api} />);
+
+    await screen.findByRole("group", { name: "Avançado" });
+    const toggle = screen.getByLabelText(
+      "Exibir score técnico no diagnóstico avançado",
+    );
+    // DEFAULT_SETTINGS.showScore is false: the diagnostic score is opt-in.
+    expect(toggle).not.toBeChecked();
+
+    fireEvent.click(toggle);
+    expect(api.updateSettings).toHaveBeenCalledWith({ showScore: true });
+  });
+
+  it("clarifies the technical score never enters the feed and is not authorship probability", async () => {
+    render(<OptionsApp api={fakeOptionsApi()} />);
+
+    await screen.findByRole("group", { name: "Avançado" });
+    expect(
+      screen.getByText(
+        /não aparece no selo.*não equivale à probabilidade real de autoria/su,
+      ),
+    ).toBeVisible();
+  });
+
   it("offers the four presentation modes and never a threshold label", async () => {
     render(<OptionsApp api={fakeOptionsApi()} />);
 

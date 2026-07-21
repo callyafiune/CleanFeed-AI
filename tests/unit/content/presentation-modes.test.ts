@@ -11,6 +11,7 @@ import {
   resetPlaceholderAnnouncement,
   revealPost,
 } from "@/content/presentation/restore";
+import { PRESENTATION_COPY } from "@/shared/classification-copy";
 import { DEFAULT_SETTINGS } from "@/shared/constants";
 import type { EffectiveSettings } from "@/shared/settings-types";
 import type { ClassificationResult, PresentationMode } from "@/shared/types";
@@ -20,9 +21,9 @@ import {
   createEvidenceAssessment,
 } from "../../helpers/model-fixtures";
 
-const COLLAPSE_COPY =
-  "Publicação recolhida por apresentar fortes indícios de geração por IA.";
-const HIDE_COPY = "Uma publicação foi ocultada pelo filtro.";
+const REVEAL_LABEL = "Mostrar texto";
+const COLLAPSE_COPY = PRESENTATION_COPY.collapse.message;
+const HIDE_COPY = PRESENTATION_COPY.hide.message;
 
 function makePost(): HTMLElement {
   const container = document.createElement("div");
@@ -82,7 +83,7 @@ describe("presentation modes", () => {
   });
 
   describe("blur", () => {
-    it("blur leaves content in place and exposes an immediate reveal button", () => {
+    it("blur leaves content in place and exposes an immediate, probabilistic reveal control", () => {
       const post = makePost();
       const onReveal = vi.fn();
 
@@ -92,7 +93,8 @@ describe("presentation modes", () => {
       expect(post.querySelector("[data-host-node]")?.textContent).toBe(
         "conteúdo original",
       );
-      const button = screen.getByRole("button", { name: "Mostrar publicação" });
+      expect(screen.getByText(PRESENTATION_COPY.blur.message)).toBeVisible();
+      const button = screen.getByRole("button", { name: REVEAL_LABEL });
       expect(button.tagName).toBe("BUTTON");
       fireEvent.click(button);
       expect(onReveal).toHaveBeenCalledOnce();
@@ -103,7 +105,7 @@ describe("presentation modes", () => {
 
       applyBlur(post, vi.fn());
 
-      const button = screen.getByRole("button", { name: "Mostrar publicação" });
+      const button = screen.getByRole("button", { name: REVEAL_LABEL });
       expect(post.contains(button)).toBe(false);
     });
 
@@ -115,9 +117,7 @@ describe("presentation modes", () => {
       cleanup();
 
       expect(post).not.toHaveClass("cleanfeed-blurred");
-      expect(
-        screen.queryByRole("button", { name: "Mostrar publicação" }),
-      ).toBeNull();
+      expect(screen.queryByRole("button", { name: REVEAL_LABEL })).toBeNull();
     });
   });
 
@@ -137,9 +137,7 @@ describe("presentation modes", () => {
       // accessibility tree, so no descendant is focusable inside aria-hidden.
       expect(post.getAttribute("inert")).toBe("");
       expect(screen.getByText(copy)).toBeVisible();
-      expect(
-        screen.getByRole("button", { name: "Mostrar conteúdo" }),
-      ).toBeVisible();
+      expect(screen.getByRole("button", { name: REVEAL_LABEL })).toBeVisible();
     });
 
     it("inserts the placeholder as an owned sibling immediately before the post", () => {
@@ -159,7 +157,7 @@ describe("presentation modes", () => {
       const onReveal = vi.fn();
 
       applyMode(post, onReveal);
-      fireEvent.click(screen.getByRole("button", { name: "Mostrar conteúdo" }));
+      fireEvent.click(screen.getByRole("button", { name: REVEAL_LABEL }));
 
       expect(onReveal).toHaveBeenCalledOnce();
     });
@@ -232,7 +230,7 @@ describe("presentation modes", () => {
         expect(post).toBeInTheDocument();
         expect(screen.getByText(copy)).toBeVisible();
         expect(
-          screen.getByRole("button", { name: "Mostrar conteúdo" }),
+          screen.getByRole("button", { name: REVEAL_LABEL }),
         ).toBeVisible();
       },
     );

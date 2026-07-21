@@ -2,13 +2,15 @@ import {
   PRESENTATION_MODE_CLASSES,
   registerOwnedArtifact,
 } from "@/content/presentation/restore";
+import { PRESENTATION_COPY } from "@/shared/classification-copy";
 
 const BLUR_CLASS = PRESENTATION_MODE_CLASSES.blur;
-const REVEAL_LABEL = "Mostrar publicação";
+const BLUR_COPY = PRESENTATION_COPY.blur;
 
 /**
  * Blurs the post in place and adds a non-blurred reveal toolbar as an owned
  * sibling (kept outside the filtered element so it stays sharp and clickable).
+ * The toolbar carries the probabilistic reason and the "Mostrar texto" control.
  * The content is never removed. Returns an idempotent cleanup that removes the
  * class and the toolbar.
  */
@@ -23,14 +25,18 @@ export function applyBlur(
   toolbar.className = "cleanfeed-blur-toolbar";
   toolbar.dataset.cleanfeedOwned = "blur-toolbar";
 
+  const message = doc.createElement("p");
+  message.className = "cleanfeed-blur-toolbar__message";
+  message.textContent = BLUR_COPY.message;
+
   const button = doc.createElement("button");
   button.type = "button";
   button.className = "cleanfeed-reveal";
-  button.textContent = REVEAL_LABEL;
+  button.textContent = BLUR_COPY.reveal;
   button.addEventListener("click", () => {
     onReveal();
   });
-  toolbar.append(button);
+  toolbar.append(message, button);
 
   element.parentNode?.insertBefore(toolbar, element);
   registerOwnedArtifact(element, toolbar);

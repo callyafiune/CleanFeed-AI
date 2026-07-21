@@ -2,7 +2,9 @@ import { useState } from "react";
 
 import { ModelSettings } from "@/options/components/ModelSettings";
 import type { UserSettings } from "@/shared/settings-types";
+import { Field } from "./Form/Field";
 import { Fieldset } from "./Form/Fieldset";
+import { Switch } from "./Form/Switch";
 
 interface AdvancedSettingsProps {
   settings: UserSettings;
@@ -33,6 +35,17 @@ export function AdvancedSettings({
   return (
     <Fieldset title="Avançado">
       <ModelSettings settings={settings} onUpdate={onUpdate} />
+
+      <Field
+        label="Exibir score técnico no diagnóstico avançado"
+        description="O score técnico não aparece no selo do feed e não equivale à probabilidade real de autoria por IA; ele fica somente no diagnóstico avançado da explicação."
+      >
+        <Switch
+          aria-label="Exibir score técnico no diagnóstico avançado"
+          checked={settings.showScore}
+          onChange={(showScore) => onUpdate({ showScore })}
+        />
+      </Field>
 
       {onDownloadDiagnostics === undefined ? null : (
         <>

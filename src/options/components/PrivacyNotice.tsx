@@ -1,4 +1,6 @@
 import type { ReactNode } from "react";
+
+import { PROBABILISTIC_DISCLOSURE } from "@/shared/classification-copy";
 import { Fieldset } from "./Form/Fieldset";
 
 export function PrivacyNotice({ children }: { children?: ReactNode }) {
@@ -8,10 +10,10 @@ export function PrivacyNotice({ children }: { children?: ReactNode }) {
         A análise é local. A extensão não envia texto, autor, URL ou conteúdo da
         página para servidores externos.
       </p>
-      <p>
-        Textos curtos são ignorados por padrão. Resultados são probabilísticos e
-        podem gerar falsos positivos ou falsos negativos.
-      </p>
+      <p>Textos curtos são ignorados por padrão.</p>
+      {/* The single shared §7 disclosure: probabilistic, never an authorship
+          claim. It is the same string the feed and manual analysis surface. */}
+      <p>{PROBABILISTIC_DISCLOSURE}</p>
       <p>
         O histórico permanece desativado e nenhum texto integral é armazenado
         por padrão.

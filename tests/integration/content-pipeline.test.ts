@@ -4,6 +4,7 @@ import {
   PostController,
   type IntersectionObserverFactory,
 } from "@/content/post-controller";
+import { CLASSIFICATION_STATUS_COPY } from "@/shared/classification-copy";
 import { DEFAULT_SETTINGS } from "@/shared/constants";
 import type { ClassificationResult } from "@/shared/types";
 import { LinkedInAdapter } from "@/platforms/linkedin/linkedin-adapter";
@@ -135,7 +136,12 @@ describe("content classification pipeline", () => {
         "[data-cleanfeed-owned='badge']",
       )?.textContent,
     ).toMatch(
-      /Provavelmente escrito por uma pessoa|Resultado inconclusivo|Possivelmente gerado por IA|Fortes indícios/u,
+      new RegExp(
+        Object.values(CLASSIFICATION_STATUS_COPY)
+          .map((label) => label.replace(/[.*+?^${}()|[\]\\]/gu, "\\$&"))
+          .join("|"),
+        "u",
+      ),
     );
     expect(eligiblePost.getAttribute("data-cleanfeed-state")).toBe(
       "classified",

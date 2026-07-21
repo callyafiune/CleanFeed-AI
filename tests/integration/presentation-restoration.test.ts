@@ -133,7 +133,7 @@ describe("reversible presentation restoration", () => {
     expect(post.getAttribute("aria-hidden")).toBe("true");
 
     const revealButton = screen.getByRole("button", {
-      name: "Mostrar conteúdo",
+      name: "Mostrar texto",
     });
     expect(revealButton.tagName).toBe("BUTTON");
     fireEvent.click(revealButton);
@@ -157,7 +157,7 @@ describe("reversible presentation restoration", () => {
 
     controller.apply(post, strongAiResult(), settingsFor("hide"));
     const revealButton = screen.getByRole("button", {
-      name: "Mostrar conteúdo",
+      name: "Mostrar texto",
     });
     revealButton.focus();
     expect(document.activeElement).toBe(revealButton);
@@ -175,7 +175,7 @@ describe("reversible presentation restoration", () => {
     controller.apply(post, strongAiResult(), settingsFor("blur"));
     expect(post).toHaveClass("cleanfeed-blurred");
 
-    fireEvent.click(screen.getByRole("button", { name: "Mostrar publicação" }));
+    fireEvent.click(screen.getByRole("button", { name: "Mostrar texto" }));
 
     expect(post).not.toHaveClass("cleanfeed-blurred");
     expect(post.dataset.cleanfeedRevealed).toBe("true");

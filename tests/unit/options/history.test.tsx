@@ -111,6 +111,29 @@ describe("options history", () => {
     ).not.toBeInTheDocument();
   });
 
+  it("never renders a raw score or percentage and labels model origin as Modelo", async () => {
+    const api = fakeApi({ ...DEFAULT_SETTINGS, historyEnabled: true }, [
+      entry({ score: 0.999, origin: "ai" }),
+    ]);
+    render(<OptionsApp api={api} />);
+
+    await screen.findByRole("table", { name: "Histórico de classificações" });
+
+    // The score column and value are gone entirely: no percentage, no raw
+    // decimal, and no "Pontuação"/"Score"/"Confiança" wording anywhere.
+    expect(
+      screen.queryByRole("columnheader", { name: "Pontuação" }),
+    ).not.toBeInTheDocument();
+    expect(
+      screen.queryByRole("columnheader", { name: /Score/iu }),
+    ).not.toBeInTheDocument();
+    expect(document.body.textContent).not.toMatch(
+      /0[.,]999|99[.,]9\s*%|Confiança/u,
+    );
+    // Origin is now expressed as the neutral "Modelo", never "IA".
+    expect(screen.getByRole("cell", { name: "Modelo" })).toBeVisible();
+  });
+
   it("shows the text column when full text is enabled", async () => {
     const api = fakeApi(
       { ...DEFAULT_SETTINGS, historyEnabled: true, storeFullText: true },

@@ -2,10 +2,11 @@ import {
   insertRevealPlaceholder,
   PRESENTATION_MODE_CLASSES,
 } from "@/content/presentation/restore";
+import { PRESENTATION_COPY } from "@/shared/classification-copy";
 
 const HIDE_CLASS = PRESENTATION_MODE_CLASSES.hide;
-const HIDE_MESSAGE = "Uma publicação foi ocultada pelo filtro.";
-const REVEAL_LABEL = "Mostrar conteúdo";
+const HIDE_MESSAGE = PRESENTATION_COPY.hide.message;
+const REVEAL_LABEL = PRESENTATION_COPY.hide.reveal;
 
 /**
  * Hides the post behind an accessible placeholder without removing it from the

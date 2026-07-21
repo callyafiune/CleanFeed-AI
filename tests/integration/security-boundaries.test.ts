@@ -111,6 +111,94 @@ describe("security boundaries", () => {
     });
   });
 
+  describe("presentation copy never claims authorship or shows a feed score", () => {
+    // Fail-closed presentation: the UI states probabilistic signals, never that
+    // a text "is AI", and never renders the raw/calibrated score in the feed.
+    // These are the exact phrasings retired when copy was centralized.
+    const FORBIDDEN_COPY: { name: string; expression: RegExp }[] = [
+      { name: "Possivelmente gerado", expression: /Possivelmente gerado/u },
+      { name: "Fortes indícios de IA", expression: /Fortes indícios de IA/u },
+      { name: "Era humano", expression: /Era humano/u },
+      { name: "Era IA", expression: /Era IA/u },
+      {
+        name: "Math.round(result.aiScore",
+        expression: /Math\.round\(result\.aiScore/u,
+      },
+      { name: "foi escrito por IA", expression: /foi escrito por IA/u },
+      {
+        name: "comprovadamente artificial",
+        expression: /comprovadamente artificial/u,
+      },
+    ];
+
+    it("has no definitive authorship claim or feed score anywhere in src/", () => {
+      const offences: string[] = [];
+      for (const file of collectSourceFiles(SRC_ROOT)) {
+        const lines = readFileSync(file, "utf8").split(/\r?\n/u);
+        lines.forEach((line, index) => {
+          for (const pattern of FORBIDDEN_COPY) {
+            if (pattern.expression.test(line)) {
+              offences.push(`${file}:${index + 1} → ${pattern.name}`);
+            }
+          }
+        });
+      }
+      expect(offences).toEqual([]);
+    });
+
+    it("surfaces the calibrated score only in the advanced diagnostic, with its caveat and no percentage", () => {
+      const bundle = makeResult({
+        runtimeIdentity: {
+          kind: "bundle",
+          modelId: "tmr-ai-text-detector",
+          modelVersion: "b9aa251e5bcda7e429fcc936767d921435945b60",
+          bundleDigest: "a".repeat(64),
+          tokenizerDigest: "b".repeat(64),
+          aggregationVersion: "tmr-aggregation-v2",
+          contentCompositionVersion: "lexical-content-v1",
+          calibrationSetDigest: "c".repeat(64),
+        },
+        selectedProfileDigest: "d".repeat(64),
+        decision: {
+          status: "strong_ai_indication",
+          calibratedScore: 0.84321,
+          actionCeiling: "hide",
+          abstained: false,
+          presentationAllowed: true,
+          triggers: [],
+          reasonCodes: [],
+        },
+      });
+
+      // Feed default (no options): no score, no authorship claim.
+      const feedPanel = createExplanationPanel(bundle, {
+        onFeedback: () => undefined,
+      });
+      expect(feedPanel.textContent).not.toMatch(
+        /Score calibrado|0[.,]843|84%/u,
+      );
+      expect(feedPanel.textContent).not.toMatch(
+        /foi escrito por IA|comprovadamente artificial/u,
+      );
+
+      // Advanced diagnostic (opt-in): calibrated score with its caveat, never %.
+      const advancedPanel = createExplanationPanel(
+        bundle,
+        { onFeedback: () => undefined },
+        { showTechnicalScore: true },
+      );
+      expect(advancedPanel.textContent).toContain(
+        "Score calibrado do modelo: 0,843",
+      );
+      expect(advancedPanel.textContent).toContain(
+        "Este score não equivale à probabilidade real de autoria por IA.",
+      );
+      expect(advancedPanel.textContent).not.toMatch(/84%/u);
+
+      document.body.replaceChildren();
+    });
+  });
+
   describe("manifest hardening", () => {
     it("locks the CSP to self plus wasm, with no raw eval or inline execution", () => {
       const csp = manifest.content_security_policy?.extension_pages ?? "";

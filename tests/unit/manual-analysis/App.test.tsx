@@ -4,6 +4,11 @@ import { cleanup, fireEvent, render, screen } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { App, type ManualAnalysisApi } from "@/manual-analysis/App";
+import {
+  CLASSIFICATION_STATUS_COPY,
+  EVIDENCE_QUALITY_COPY,
+  PROBABILISTIC_DISCLOSURE,
+} from "@/shared/classification-copy";
 import type { ClassificationRequest } from "@/shared/messages";
 import type { ClassificationResult } from "@/shared/types";
 import {
@@ -90,20 +95,30 @@ describe("manual analysis App", () => {
       expect.objectContaining({ manual: true }),
     );
     expect(
-      await screen.findByText(/Resultado inconclusivo|Possivelmente/u),
+      await screen.findByText(
+        new RegExp(
+          `Resultado inconclusivo|${CLASSIFICATION_STATUS_COPY.possibly_ai}`,
+          "u",
+        ),
+      ),
     ).toBeVisible();
   });
 
-  it("reports word count, confidence and calculated reasons in the result", async () => {
+  it("reports the qualitative band, evidence quality, disclosure and reasons, never a confidence score", async () => {
     render(<App api={fakeApi()} selectedText={PORTUGUESE_LONG_TEXT} />);
 
     fireEvent.click(screen.getByRole("button", { name: "Analisar seleção" }));
 
     expect(
-      await screen.findByText("Possivelmente gerado por IA"),
+      await screen.findByText(CLASSIFICATION_STATUS_COPY.possibly_ai),
     ).toBeVisible();
+    expect(await screen.findByText("Sinais detectados")).toBeVisible();
     expect(screen.getByText(/120 palavras/u)).toBeVisible();
-    expect(screen.getByText("Confiança: alta")).toBeVisible();
+    // The old numeric-flavoured "Confiança" line is gone: the manual panel now
+    // states evidence quality plus the mandatory probabilistic disclosure.
+    expect(screen.queryByText(/Confiança/u)).toBeNull();
+    expect(screen.getByText(EVIDENCE_QUALITY_COPY.limited)).toBeVisible();
+    expect(screen.getByText(PROBABILISTIC_DISCLOSURE)).toBeVisible();
     expect(
       screen.getByText("A pontuação média dos trechos ficou alta."),
     ).toBeVisible();
@@ -126,7 +141,7 @@ describe("manual analysis App", () => {
     render(<App api={api} selectedText={PORTUGUESE_LONG_TEXT} />);
 
     fireEvent.click(screen.getByRole("button", { name: "Analisar seleção" }));
-    await screen.findByText("Possivelmente gerado por IA");
+    await screen.findByText(CLASSIFICATION_STATUS_COPY.possibly_ai);
 
     fireEvent.click(screen.getByRole("button", { name: "Analisar novamente" }));
 
@@ -161,7 +176,7 @@ describe("manual analysis App", () => {
     );
 
     fireEvent.click(screen.getByRole("button", { name: "Analisar seleção" }));
-    await screen.findByText("Possivelmente gerado por IA");
+    await screen.findByText(CLASSIFICATION_STATUS_COPY.possibly_ai);
 
     expect(reportResult).toHaveBeenCalledWith(
       expect.objectContaining({ status: "possibly_ai" }),
