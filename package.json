@@ -32,6 +32,7 @@
     "audit": "node scripts/audit-build.mjs dist",
     "verify:build": "node scripts/verify-reproducible-build.mjs",
     "verify": "npm run format:check && npm run lint && npm run typecheck && vitest run && npm run build && npm run audit && npm run test:e2e",
+    "verify:release:base": "npm run format:check && npm run lint && npm run typecheck && vitest run && npm run model:evidence:verify && npm run model:verify && npm run test:model:release && npm run build:release && npm run audit && npm run audit:model && npm run verify:build && npm run docs:check",
     "lint": "eslint .",
     "typecheck:benchmark": "tsc --noEmit --project tsconfig.benchmark.json",
     "typecheck": "tsc --noEmit && tsc --noEmit --project tsconfig.node.json && npm run typecheck:benchmark",
