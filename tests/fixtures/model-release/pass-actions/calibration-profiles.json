@@ -1,0 +1,191 @@
+{
+  "schemaVersion": 1,
+  "profiles": [
+    {
+      "schemaVersion": 1,
+      "profileId": "pass-200-plus",
+      "modelId": "tmr-ai-text-detector",
+      "modelVersion": "b9aa251e5bcda7e429fcc936767d921435945b60",
+      "bundleDigest": "32cb58e1984a5c3da5745ad1c1c7fa7355e6f04f49c93f822b326511d9e3565c",
+      "tokenizerDigest": "8be427eee79ac58671ae5570f75806fc3d9edc2f2d727ca9e261c2d4b85d37a9",
+      "platform": "windows-x64",
+      "locale": "pt-BR",
+      "lengthBucket": "200-plus",
+      "aggregationVersion": "tmr-aggregation-v2",
+      "contentCompositionVersion": "lexical-content-v1",
+      "datasetDigest": "1111111111111111111111111111111111111111111111111111111111111111",
+      "splitDigest": "2222222222222222222222222222222222222222222222222222222222222222",
+      "evaluatorDigest": "3333333333333333333333333333333333333333333333333333333333333333",
+      "issuedAt": "2026-07-01T00:00:00.000Z",
+      "expiresAt": "2026-12-28T00:00:00.000Z",
+      "calibrators": {
+        "document": {
+          "kind": "platt",
+          "slope": 1.2,
+          "intercept": -0.3
+        },
+        "localized": {
+          "kind": "platt",
+          "slope": 1.1,
+          "intercept": -0.2
+        }
+      },
+      "thresholds": {
+        "documentIndicator": 0.5,
+        "localizedIndicator": 0.6,
+        "documentAction": 0.9
+      },
+      "evidencePolicy": {
+        "minimumCoverage": 0.8,
+        "minimumLexicalRatio": 0.5,
+        "maximumStdDev": 0.2,
+        "minimumChunkAgreement": 0.6,
+        "exactTokenizerRequired": true
+      },
+      "gateEvidence": {
+        "decision": "pass",
+        "intervalMethod": "wilson-one-sided-95",
+        "ece": {
+          "value": 0.03,
+          "bins": 15,
+          "sampleSize": 4000
+        },
+        "overall": {
+          "indicatorFpr": {
+            "estimate": 0.02,
+            "lowerBound95": 0,
+            "upperBound95": 0.04,
+            "sampleSize": 4000
+          },
+          "indicatorRecall": {
+            "estimate": 0.8,
+            "lowerBound95": 0.78,
+            "upperBound95": 0.8200000000000001,
+            "sampleSize": 4000
+          },
+          "actionFpr": {
+            "estimate": 0.01,
+            "lowerBound95": 0,
+            "upperBound95": 0.03,
+            "sampleSize": 4000
+          },
+          "actionRecall": {
+            "estimate": 0.7,
+            "lowerBound95": 0.6799999999999999,
+            "upperBound95": 0.72,
+            "sampleSize": 4000
+          },
+          "coverage": {
+            "estimate": 0.95,
+            "lowerBound95": 0.9299999999999999,
+            "upperBound95": 0.97,
+            "sampleSize": 4000
+          },
+          "mixedRecall": {
+            "estimate": 0.75,
+            "lowerBound95": 0.73,
+            "upperBound95": 0.77,
+            "sampleSize": 4000
+          }
+        },
+        "criticalFprSlices": {},
+        "criticalRecallSlices": {}
+      },
+      "actionCeiling": "hide",
+      "profileDigest": "ef7cab9bf1e952064faf646c356e7241c61a99c5dbe516ba25b5af1ae0d4e831"
+    },
+    {
+      "schemaVersion": 1,
+      "profileId": "pass-50-79",
+      "modelId": "tmr-ai-text-detector",
+      "modelVersion": "b9aa251e5bcda7e429fcc936767d921435945b60",
+      "bundleDigest": "32cb58e1984a5c3da5745ad1c1c7fa7355e6f04f49c93f822b326511d9e3565c",
+      "tokenizerDigest": "8be427eee79ac58671ae5570f75806fc3d9edc2f2d727ca9e261c2d4b85d37a9",
+      "platform": "windows-x64",
+      "locale": "pt-BR",
+      "lengthBucket": "50-79",
+      "aggregationVersion": "tmr-aggregation-v2",
+      "contentCompositionVersion": "lexical-content-v1",
+      "datasetDigest": "1111111111111111111111111111111111111111111111111111111111111111",
+      "splitDigest": "2222222222222222222222222222222222222222222222222222222222222222",
+      "evaluatorDigest": "3333333333333333333333333333333333333333333333333333333333333333",
+      "issuedAt": "2026-07-01T00:00:00.000Z",
+      "expiresAt": "2026-12-28T00:00:00.000Z",
+      "calibrators": {
+        "document": {
+          "kind": "platt",
+          "slope": 1.2,
+          "intercept": -0.3
+        },
+        "localized": {
+          "kind": "platt",
+          "slope": 1.1,
+          "intercept": -0.2
+        }
+      },
+      "thresholds": {
+        "documentIndicator": 0.5,
+        "localizedIndicator": 0.6,
+        "documentAction": 0.9
+      },
+      "evidencePolicy": {
+        "minimumCoverage": 0.8,
+        "minimumLexicalRatio": 0.5,
+        "maximumStdDev": 0.2,
+        "minimumChunkAgreement": 0.6,
+        "exactTokenizerRequired": true
+      },
+      "gateEvidence": {
+        "decision": "pass",
+        "intervalMethod": "wilson-one-sided-95",
+        "ece": {
+          "value": 0.03,
+          "bins": 15,
+          "sampleSize": 4000
+        },
+        "overall": {
+          "indicatorFpr": {
+            "estimate": 0.02,
+            "lowerBound95": 0,
+            "upperBound95": 0.04,
+            "sampleSize": 4000
+          },
+          "indicatorRecall": {
+            "estimate": 0.8,
+            "lowerBound95": 0.78,
+            "upperBound95": 0.8200000000000001,
+            "sampleSize": 4000
+          },
+          "actionFpr": {
+            "estimate": 0.01,
+            "lowerBound95": 0,
+            "upperBound95": 0.03,
+            "sampleSize": 4000
+          },
+          "actionRecall": {
+            "estimate": 0.7,
+            "lowerBound95": 0.6799999999999999,
+            "upperBound95": 0.72,
+            "sampleSize": 4000
+          },
+          "coverage": {
+            "estimate": 0.95,
+            "lowerBound95": 0.9299999999999999,
+            "upperBound95": 0.97,
+            "sampleSize": 4000
+          },
+          "mixedRecall": {
+            "estimate": 0.75,
+            "lowerBound95": 0.73,
+            "upperBound95": 0.77,
+            "sampleSize": 4000
+          }
+        },
+        "criticalFprSlices": {},
+        "criticalRecallSlices": {}
+      },
+      "actionCeiling": "indicator",
+      "profileDigest": "cbb5445f254d3b2c5bd091e4107538ff83bb978511129688b802dc1a8aa047e2"
+    }
+  ]
+}

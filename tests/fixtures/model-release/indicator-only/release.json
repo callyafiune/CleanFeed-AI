@@ -1,0 +1,17 @@
+{
+  "schemaVersion": 1,
+  "modelId": "tmr-ai-text-detector",
+  "modelVersion": "b9aa251e5bcda7e429fcc936767d921435945b60",
+  "bundleDigest": "32cb58e1984a5c3da5745ad1c1c7fa7355e6f04f49c93f822b326511d9e3565c",
+  "tokenizerDigest": "8be427eee79ac58671ae5570f75806fc3d9edc2f2d727ca9e261c2d4b85d37a9",
+  "aggregationVersion": "tmr-aggregation-v2",
+  "contentCompositionVersion": "lexical-content-v1",
+  "calibrationSetDigest": "4e2f1480b339ea17ac7a055b7ca73403f533932f8cf745ac9f29fa6e1ced6a4f",
+  "profileDigests": [
+    "e08a92a12a1e6e4362563c600f80bbdcc49cf20a2b534e382981a3f191a81184"
+  ],
+  "rolloutState": "indicator",
+  "gateDecision": "indicator-only",
+  "issuedAt": "2026-07-01T00:00:00.000Z",
+  "evidenceDigest": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+}

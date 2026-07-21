@@ -11,8 +11,10 @@ import {
   computeBundleDigest,
   computeCalibrationSetDigest,
   computeTokenizerDigest,
+  RELEASE_INVENTORY,
   verifyMaterializedBundle,
   verifyModelMetadata,
+  verifyReleaseModelDirectory,
 } from "../../../scripts/verify-model-bundle.mjs";
 import type { ArtifactRecord } from "../../../scripts/verify-model-bundle.mjs";
 import {
@@ -41,6 +43,24 @@ const TEN_FILE_INVENTORY = [
   "tokenizer_config.json",
   "vocab.json",
 ] as const;
+
+const TWELVE_FILE_INVENTORY = [
+  "LICENSE",
+  "NOTICE.md",
+  "calibration-profiles.json",
+  "cleanfeed-model.json",
+  "config.json",
+  "merges.txt",
+  "onnx/model_int8.onnx",
+  "release.json",
+  "special_tokens_map.json",
+  "tokenizer.json",
+  "tokenizer_config.json",
+  "vocab.json",
+] as const;
+
+const RELEASE_JSON_BYTES = '{ "release": "descriptor" }\n';
+const PROFILES_JSON_BYTES = '{ "schemaVersion": 1, "profiles": [] }\n';
 
 function sha256(buffer: Buffer): string {
   return createHash("sha256").update(buffer).digest("hex");
@@ -329,6 +349,136 @@ describe("verifyMaterializedBundle (exact ten-file inventory)", () => {
       verifyMaterializedBundle(root, { lock: syntheticLock }),
     );
     expect(["SIZE_MISMATCH", "HASH_MISMATCH"]).toContain(code);
+  });
+});
+
+describe("verifyReleaseModelDirectory (exact twelve-file package)", () => {
+  let workDir: string;
+
+  beforeEach(async () => {
+    workDir = await mkdtemp(join(tmpdir(), "cleanfeed-release-dir-"));
+  });
+
+  afterEach(async () => {
+    await rm(workDir, { recursive: true, force: true });
+  });
+
+  /**
+   * Writes a synthetic twelve-file release package plus a versioned metadata
+   * dir whose release.json / calibration-profiles.json are byte-equal to the
+   * packaged copies.
+   */
+  async function writeReleasePackage(): Promise<{
+    target: string;
+    metadataDir: string;
+    lock: { artifacts: ArtifactRecord[] };
+  }> {
+    const target = join(workDir, "dist", "models", "tmr-ai-text-detector");
+    const metadataDir = join(workDir, "models");
+    await mkdir(target, { recursive: true });
+    await mkdir(metadataDir, { recursive: true });
+
+    const contents: Record<string, Buffer> = {};
+    for (const artifact of createSourceArtifacts()) {
+      contents[artifact.path] = Buffer.from(`synthetic :: ${artifact.path}`);
+    }
+    const artifacts: ArtifactRecord[] = createSourceArtifacts().map(
+      (artifact) => ({
+        path: artifact.path,
+        bytes: contents[artifact.path].length,
+        sha256: sha256(contents[artifact.path]),
+      }),
+    );
+    const manifest = createModelManifestV2({ artifacts });
+    for (const [path, buffer] of Object.entries(contents)) {
+      const filePath = join(target, ...path.split("/"));
+      await mkdir(dirname(filePath), { recursive: true });
+      await writeFile(filePath, buffer);
+    }
+    await writeFile(
+      join(target, "cleanfeed-model.json"),
+      JSON.stringify(manifest, null, 2),
+    );
+    await writeFile(join(target, "LICENSE"), "MIT synthetic\n");
+    await writeFile(join(target, "NOTICE.md"), "# synthetic notice\n");
+    await writeFile(join(target, "release.json"), RELEASE_JSON_BYTES);
+    await writeFile(
+      join(target, "calibration-profiles.json"),
+      PROFILES_JSON_BYTES,
+    );
+
+    await writeFile(join(metadataDir, "release.json"), RELEASE_JSON_BYTES);
+    await writeFile(
+      join(metadataDir, "calibration-profiles.json"),
+      PROFILES_JSON_BYTES,
+    );
+    return { target, metadataDir, lock: { artifacts } };
+  }
+
+  it("accepts exactly the twelve packaged paths", async () => {
+    const {
+      target,
+      metadataDir,
+      lock: syntheticLock,
+    } = await writeReleasePackage();
+    const result = await verifyReleaseModelDirectory(target, {
+      lock: syntheticLock,
+      metadataDir,
+    });
+    expect(result.paths).toEqual([...TWELVE_FILE_INVENTORY]);
+    expect(result.fileCount).toBe(12);
+    expect([...RELEASE_INVENTORY]).toEqual([...TWELVE_FILE_INVENTORY]);
+  });
+
+  it("rejects a package missing calibration-profiles.json", async () => {
+    const {
+      target,
+      metadataDir,
+      lock: syntheticLock,
+    } = await writeReleasePackage();
+    await rm(join(target, "calibration-profiles.json"));
+    expect(
+      await catchCodeAsync(() =>
+        verifyReleaseModelDirectory(target, {
+          lock: syntheticLock,
+          metadataDir,
+        }),
+      ),
+    ).toBe("RELEASE_SET_MISMATCH");
+  });
+
+  it("rejects a package that leaked a benchmark report", async () => {
+    const {
+      target,
+      metadataDir,
+      lock: syntheticLock,
+    } = await writeReleasePackage();
+    await writeFile(join(target, "benchmark-report.json"), "{}\n");
+    expect(
+      await catchCodeAsync(() =>
+        verifyReleaseModelDirectory(target, {
+          lock: syntheticLock,
+          metadataDir,
+        }),
+      ),
+    ).toBe("RELEASE_SET_MISMATCH");
+  });
+
+  it("rejects a packaged release.json that is not byte-equal to the versioned source", async () => {
+    const {
+      target,
+      metadataDir,
+      lock: syntheticLock,
+    } = await writeReleasePackage();
+    await writeFile(join(target, "release.json"), '{ "tampered": true }\n');
+    expect(
+      await catchCodeAsync(() =>
+        verifyReleaseModelDirectory(target, {
+          lock: syntheticLock,
+          metadataDir,
+        }),
+      ),
+    ).toBe("RELEASE_METADATA_DRIFT");
   });
 });
 

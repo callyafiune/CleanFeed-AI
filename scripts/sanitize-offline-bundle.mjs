@@ -17,7 +17,11 @@ import { join, resolve } from "node:path";
 import { argv, env, exit } from "node:process";
 import { fileURLToPath } from "node:url";
 
-const textFile = /\.(?:html|js|json|mjs)$/u;
+// Only executable/style text is rewritten for the offline host. Provenance
+// JSON (e.g. the materialized release.json / calibration-profiles.json and the
+// offline asset manifest) is NEVER rewritten, so the package audit can compare
+// it byte-for-byte against the versioned source.
+const textFile = /\.(?:js|mjs|cjs|html|css)$/u;
 
 async function sanitizeText(directory) {
   for (const entry of await readdir(directory, { withFileTypes: true })) {

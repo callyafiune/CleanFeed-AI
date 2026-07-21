@@ -23,6 +23,7 @@ import { argv, env, exit } from "node:process";
 import { fileURLToPath } from "node:url";
 
 import { readSourceLock } from "./model-lock.mjs";
+import { computeRuntimeParityDigest } from "./runtime-parity.mjs";
 import { verifyMaterializedBundle } from "./verify-model-bundle.mjs";
 
 /** The exact allowlists the shipped extension is locked to. */
@@ -349,6 +350,44 @@ async function auditModelRelease(distPath, reasons) {
   reasons.push(`unknown CLEANFEED_MODEL_RELEASE_MODE: ${mode}`);
 }
 
+/**
+ * When present, `dist/runtime-parity.json` is an AUTHORIZED root artifact and
+ * must be closed and self-consistent: exactly the sealed identity fields plus a
+ * `runtimeParityDigest` that recomputes over them. A release build materializes
+ * it and the package audit binds it to the benchmark report; here we only prove
+ * the shipped file has not been tampered with. Absence is fine (a normal build
+ * ships none), so this never widens the required set for a non-release build.
+ */
+function auditRuntimeParity(distPath, reasons) {
+  const parityPath = join(distPath, "runtime-parity.json");
+  if (!existsSync(parityPath)) return;
+
+  let parity;
+  try {
+    parity = JSON.parse(readFileSync(parityPath, "utf8"));
+  } catch (error) {
+    reasons.push(`runtime-parity.json is not valid JSON: ${String(error)}`);
+    return;
+  }
+  if (parity === null || typeof parity !== "object") {
+    reasons.push("runtime-parity.json is not an object");
+    return;
+  }
+  const { runtimeParityDigest, ...fields } = parity;
+  let recomputed;
+  try {
+    recomputed = computeRuntimeParityDigest(fields);
+  } catch (error) {
+    reasons.push(`runtime-parity.json is malformed: ${String(error)}`);
+    return;
+  }
+  if (recomputed !== runtimeParityDigest) {
+    reasons.push(
+      "runtime-parity.json self-digest does not recompute (tampered or malformed)",
+    );
+  }
+}
+
 async function main() {
   const distPath = argv[2];
   if (distPath === undefined) {
@@ -363,6 +402,7 @@ async function main() {
   const reasons = [];
   auditManifest(distPath, reasons);
   auditFiles(distPath, reasons);
+  auditRuntimeParity(distPath, reasons);
   await auditModelRelease(distPath, reasons);
 
   if (reasons.length > 0) {

@@ -72,6 +72,7 @@ export declare class ModelBundleError extends Error {
 
 export declare const MATERIALIZED_INVENTORY: readonly string[];
 export declare const MATERIALIZED_METADATA: readonly string[];
+export declare const RELEASE_INVENTORY: readonly string[];
 
 export declare function computeBundleDigest(
   artifacts: ReadonlyArray<ArtifactRecord>,
@@ -92,4 +93,9 @@ export declare function verifyModelMetadata(
 export declare function verifyMaterializedBundle(
   bundleDir: string,
   input: { lock: SourceLockLike },
+): Promise<MaterializedVerification>;
+
+export declare function verifyReleaseModelDirectory(
+  bundleDir: string,
+  input: { lock: SourceLockLike; metadataDir: string },
 ): Promise<MaterializedVerification>;

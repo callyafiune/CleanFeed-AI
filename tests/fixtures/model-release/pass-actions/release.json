@@ -1,0 +1,18 @@
+{
+  "schemaVersion": 1,
+  "modelId": "tmr-ai-text-detector",
+  "modelVersion": "b9aa251e5bcda7e429fcc936767d921435945b60",
+  "bundleDigest": "32cb58e1984a5c3da5745ad1c1c7fa7355e6f04f49c93f822b326511d9e3565c",
+  "tokenizerDigest": "8be427eee79ac58671ae5570f75806fc3d9edc2f2d727ca9e261c2d4b85d37a9",
+  "aggregationVersion": "tmr-aggregation-v2",
+  "contentCompositionVersion": "lexical-content-v1",
+  "calibrationSetDigest": "b4f0a5b1090e16ff069dcd8e3dd3f4a781b35a7cbe80a858147e9885a227000d",
+  "profileDigests": [
+    "ef7cab9bf1e952064faf646c356e7241c61a99c5dbe516ba25b5af1ae0d4e831",
+    "cbb5445f254d3b2c5bd091e4107538ff83bb978511129688b802dc1a8aa047e2"
+  ],
+  "rolloutState": "actions",
+  "gateDecision": "pass",
+  "issuedAt": "2026-07-01T00:00:00.000Z",
+  "evidenceDigest": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+}

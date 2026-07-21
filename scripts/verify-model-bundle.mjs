@@ -73,6 +73,34 @@ export const MATERIALIZED_INVENTORY = Object.freeze([
   "vocab.json",
 ]);
 
+/**
+ * The exact TWELVE-file closed inventory of a materialized RELEASE package: the
+ * ten acquisition files plus the two versioned canonical descriptors copied
+ * beside them (`calibration-profiles.json`, `release.json`), in directory-sort
+ * order. Only the release build materializes these two extra files, and only
+ * ever inside `dist`.
+ */
+export const RELEASE_INVENTORY = Object.freeze([
+  "LICENSE",
+  "NOTICE.md",
+  "calibration-profiles.json",
+  "cleanfeed-model.json",
+  "config.json",
+  "merges.txt",
+  "onnx/model_int8.onnx",
+  "release.json",
+  "special_tokens_map.json",
+  "tokenizer.json",
+  "tokenizer_config.json",
+  "vocab.json",
+]);
+
+/** The two versioned canonical descriptors materialized into the package. */
+const RELEASE_CANONICAL_METADATA = Object.freeze([
+  "calibration-profiles.json",
+  "release.json",
+]);
+
 /** Fixed manifest fields whose exact literal values seal the bundle identity. */
 const EXPECTED_MANIFEST_FIELDS = Object.freeze({
   task: "text-classification",
@@ -395,6 +423,76 @@ export async function verifyMaterializedBundle(bundleDir, { lock }) {
   verifyModelMetadata({ manifest, lock });
 
   return { fileCount: MATERIALIZED_INVENTORY.length, paths: actual };
+}
+
+/**
+ * Verifies a materialized RELEASE package directory: exactly the closed
+ * twelve-file inventory, the seven upstream assets intact, the in-bundle
+ * manifest coherent, AND the two canonical descriptors (`release.json`,
+ * `calibration-profiles.json`) byte-identical to the versioned sources under
+ * `metadataDir`. Any extra, missing or drifted file fails closed. Returns
+ * { fileCount, paths }.
+ */
+export async function verifyReleaseModelDirectory(
+  bundleDir,
+  { lock, metadataDir },
+) {
+  const actual = (await listRelativePosixFiles(bundleDir)).sort((a, b) =>
+    a < b ? -1 : a > b ? 1 : 0,
+  );
+  const allowed = new Set(RELEASE_INVENTORY);
+  for (const file of actual) {
+    if (!allowed.has(file)) {
+      fail(
+        "RELEASE_SET_MISMATCH",
+        `release package contains an unexpected file: "${file}"`,
+      );
+    }
+  }
+  const present = new Set(actual);
+  for (const file of RELEASE_INVENTORY) {
+    if (!present.has(file)) {
+      fail(
+        "RELEASE_SET_MISMATCH",
+        `release package is missing a required file: "${file}"`,
+      );
+    }
+  }
+
+  await verifyRequiredAssets(bundleDir, lock);
+
+  let manifest;
+  try {
+    manifest = JSON.parse(
+      await readFile(join(bundleDir, MANIFEST_FILENAME), "utf8"),
+    );
+  } catch (error) {
+    fail("MANIFEST_UNREADABLE", `cannot read in-bundle manifest: ${error}`);
+  }
+  verifyModelMetadata({ manifest, lock });
+
+  // The two canonical descriptors must be byte-for-byte the versioned sources.
+  for (const name of RELEASE_CANONICAL_METADATA) {
+    let packaged;
+    let versioned;
+    try {
+      packaged = await readFile(join(bundleDir, name));
+      versioned = await readFile(join(metadataDir, name));
+    } catch (error) {
+      fail(
+        "RELEASE_METADATA_DRIFT",
+        `cannot read canonical descriptor "${name}": ${error}`,
+      );
+    }
+    if (!packaged.equals(versioned)) {
+      fail(
+        "RELEASE_METADATA_DRIFT",
+        `packaged "${name}" is not byte-identical to the versioned source`,
+      );
+    }
+  }
+
+  return { fileCount: RELEASE_INVENTORY.length, paths: actual };
 }
 
 export { MATERIALIZED_METADATA };

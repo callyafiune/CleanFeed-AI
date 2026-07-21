@@ -1,5 +1,13 @@
 import { spawnSync } from "node:child_process";
-import { cp, mkdir, mkdtemp, rm, stat, writeFile } from "node:fs/promises";
+import {
+  cp,
+  mkdir,
+  mkdtemp,
+  readFile,
+  rm,
+  stat,
+  writeFile,
+} from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -7,218 +15,181 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
 import { runReleaseBuild } from "../../scripts/run-release-build.mjs";
 import type { ReleaseRunnerDependencies } from "../../scripts/run-release-build.mjs";
-import {
-  createModelManifestV2,
-  createReleaseDescriptorV1,
-  createSourceArtifacts,
-} from "../helpers/model-fixtures";
+import type {
+  ReleasePolicyDescriptor,
+  ReleasePolicyProfilesFile,
+} from "../../scripts/release-policy.mjs";
 
 const repoRoot = process.cwd();
-const HEX64 = "a".repeat(64);
+const FIXTURE_ROOT = join(repoRoot, "tests", "fixtures", "model-release");
+const FUTURE = Date.parse("2026-08-01T00:00:00.000Z");
 
-interface RunnerCall {
-  command: string;
-  args: string[];
-  env?: Record<string, string | undefined>;
+interface Fixture {
+  release: ReleasePolicyDescriptor;
+  profilesFile: ReleasePolicyProfilesFile;
 }
 
-/** Records every runNode invocation so tests can prove order and env. */
-function makeRunner(): {
-  runNode: NonNullable<ReleaseRunnerDependencies["runNode"]>;
-  calls: RunnerCall[];
-} {
-  const calls: RunnerCall[] = [];
-  const runNode: NonNullable<ReleaseRunnerDependencies["runNode"]> = async (
-    command,
-    args,
-    options = {},
-  ) => {
-    calls.push({ command, args, env: options.env });
+async function readFixture(branch: string): Promise<Fixture> {
+  const release = JSON.parse(
+    await readFile(join(FIXTURE_ROOT, branch, "release.json"), "utf8"),
+  );
+  const profilesFile = JSON.parse(
+    await readFile(
+      join(FIXTURE_ROOT, branch, "calibration-profiles.json"),
+      "utf8",
+    ),
+  );
+  return { release, profilesFile };
+}
+
+/**
+ * Builds an injected dependency set whose every side-effecting step records its
+ * name into `order`. resolveReleasePolicy and assertDistributionLicense are left
+ * to their real defaults so the policy matrix and the license gate get teeth.
+ */
+async function makeDeps(options: {
+  branch: string;
+  licenseStatus?: "approved" | "pending";
+  variantMetadataDir?: string;
+}): Promise<{
+  dependencies: ReleaseRunnerDependencies;
+  order: string[];
+}> {
+  const { release, profilesFile } = await readFixture(options.branch);
+  const order: string[] = [];
+  const record = (name: string) => async (): Promise<void> => {
+    order.push(name);
   };
-  return { runNode, calls };
-}
 
-function baseDeps(
-  overrides: Partial<ReleaseRunnerDependencies> = {},
-): ReleaseRunnerDependencies {
-  return {
-    execPath: "/fake/node",
-    npmExecPath: "/fake/npm-cli.js",
-    verifyBundle: async () => {},
-    ...overrides,
+  const dependencies: ReleaseRunnerDependencies = {
+    loadReleaseMetadata: async () => {
+      order.push("loadMetadata");
+      return {
+        release,
+        profilesFile,
+        licenseReview: { status: options.licenseStatus ?? "approved" },
+        sourceLock: { artifacts: [] },
+        publicModelDirectory: "public/models/tmr-ai-text-detector",
+        modelsDirectory: "models/tmr-ai-text-detector",
+        evidenceDirectory: "benchmark/evidence/tmr-ptbr-v1",
+        modelManifestPath: "models/tmr-ai-text-detector/cleanfeed-model.json",
+        benchmarkReportPath:
+          "benchmark/evidence/tmr-ptbr-v1/benchmark-report.json",
+      };
+    },
+    verifySanitizedEvidence: record("evidence"),
+    verifyBundle: record("verifyBundle"),
+    runSmoke: record("smoke"),
+    runViteBuild: record("vite"),
+    buildParity: async () => {
+      order.push("buildParity");
+      return { runtimeParityDigest: "x" };
+    },
+    writeParity: record("writeParity"),
+    assertParity: record("assertParity"),
+    materializeMetadata: record("materialize"),
+    verifyReleaseDir: record("verifyReleaseDir"),
+    removePath: record("rm"),
+    listPackagedFiles: async () => {
+      order.push("listFiles");
+      return [];
+    },
+    variantMetadataDir: options.variantMetadataDir,
   };
+  return { dependencies, order };
 }
 
-const lock = { artifacts: createSourceArtifacts() };
-const manifest = createModelManifestV2();
+async function build(dependencies: ReleaseRunnerDependencies) {
+  return runReleaseBuild({
+    repositoryRoot: repoRoot,
+    publicDirectory: join(repoRoot, "public"),
+    distDirectory: join(repoRoot, "dist"),
+    now: FUTURE,
+    dependencies,
+  });
+}
 
-describe("runReleaseBuild gate", () => {
-  it("refuses a pending gate even with an approved license", async () => {
-    const { runNode, calls } = makeRunner();
-    const result = await runReleaseBuild({
-      release: createReleaseDescriptorV1({ gateDecision: "pending" }),
-      licenseReview: { status: "approved" },
-      manifest,
-      lock,
-      bundleDir: "public/models/tmr-ai-text-detector",
-      dependencies: baseDeps({ runNode }),
-    });
-    expect(result).toEqual({ ok: false, code: "MODEL_RELEASE_NOT_PROMOTED" });
-    expect(calls).toEqual([]);
+describe("runReleaseBuild — policy-driven staging", () => {
+  it("fails closed on a pending descriptor before any build step", async () => {
+    const { dependencies, order } = await makeDeps({ branch: "pending" });
+    await expect(build(dependencies)).rejects.toThrow(
+      "RELEASE_DECISION_PENDING",
+    );
+    expect(order).toEqual(["loadMetadata"]);
   });
 
-  it("refuses an indicator gate whose license review is still pending", async () => {
-    const { runNode, calls } = makeRunner();
-    const result = await runReleaseBuild({
-      release: createReleaseDescriptorV1({
-        gateDecision: "indicator",
-        profileDigests: ["d".repeat(64)],
-      }),
-      licenseReview: { status: "pending" },
-      manifest,
-      lock,
-      bundleDir: "public/models/tmr-ai-text-detector",
-      dependencies: baseDeps({ runNode }),
-    });
-    expect(result).toEqual({ ok: false, code: "MODEL_LICENSE_NOT_APPROVED" });
-    expect(calls).toEqual([]);
+  it("packages nothing and removes the TMR directory for a reject decision", async () => {
+    const { dependencies, order } = await makeDeps({ branch: "reject" });
+    const result = await build(dependencies);
+    expect(result.includeTmr).toBe(false);
+    expect(result.activeRuntimeKind).toBe("builtin");
+    expect(result.maximumActionCeiling).toBe("indicator");
+    expect(order).toContain("rm");
+    expect(order).not.toContain("materialize");
+    // The mandatory pre-build order: verify bundle -> smoke -> Vite -> stage.
+    expect(order.indexOf("verifyBundle")).toBeLessThan(order.indexOf("smoke"));
+    expect(order.indexOf("smoke")).toBeLessThan(order.indexOf("vite"));
+    expect(order.indexOf("vite")).toBeLessThan(order.indexOf("rm"));
   });
 
-  it("fails closed with NPM_EXEC_PATH_MISSING for a well-formed reject", async () => {
-    const { runNode, calls } = makeRunner();
-    const result = await runReleaseBuild({
-      release: createReleaseDescriptorV1({
-        gateDecision: "reject",
-        evidenceDigest: HEX64,
-      }),
-      licenseReview: { status: "approved" },
-      manifest,
-      lock,
-      bundleDir: "public/models/tmr-ai-text-detector",
-      dependencies: baseDeps({ runNode, npmExecPath: undefined }),
+  it("materializes the intact bundle for an approved indicator-only decision", async () => {
+    const { dependencies, order } = await makeDeps({
+      branch: "indicator-only",
     });
-    expect(result).toEqual({ ok: false, code: "NPM_EXEC_PATH_MISSING" });
-    expect(calls).toEqual([]);
+    const result = await build(dependencies);
+    expect(result.includeTmr).toBe(true);
+    expect(result.activeRuntimeKind).toBe("bundle");
+    expect(result.maximumActionCeiling).toBe("indicator");
+    expect(order).toContain("materialize");
+    expect(order).toContain("verifyReleaseDir");
+    expect(order).not.toContain("rm");
+    expect(order.indexOf("smoke")).toBeLessThan(order.indexOf("vite"));
+    expect(order.indexOf("vite")).toBeLessThan(order.indexOf("materialize"));
   });
 
-  it("rejects a reject descriptor with a null evidenceDigest", async () => {
-    const { runNode } = makeRunner();
-    const result = await runReleaseBuild({
-      release: createReleaseDescriptorV1({
-        gateDecision: "reject",
-        evidenceDigest: null,
-      }),
-      licenseReview: { status: "approved" },
-      manifest,
-      lock,
-      bundleDir: "public/models/tmr-ai-text-detector",
-      dependencies: baseDeps({ runNode }),
-    });
-    expect(result).toEqual({
-      ok: false,
-      code: "MODEL_RELEASE_DESCRIPTOR_INVALID",
-    });
+  it("lifts the ceiling to hide for a pass/actions decision", async () => {
+    const { dependencies } = await makeDeps({ branch: "pass-actions" });
+    const result = await build(dependencies);
+    expect(result.includeTmr).toBe(true);
+    expect(result.maximumActionCeiling).toBe("hide");
   });
 
-  it("rejects a reject descriptor that still carries profiles", async () => {
-    const { runNode } = makeRunner();
-    const result = await runReleaseBuild({
-      release: createReleaseDescriptorV1({
-        gateDecision: "reject",
-        evidenceDigest: HEX64,
-        profileDigests: ["d".repeat(64)],
-      }),
-      licenseReview: { status: "approved" },
-      manifest,
-      lock,
-      bundleDir: "public/models/tmr-ai-text-detector",
-      dependencies: baseDeps({ runNode }),
+  it("blocks an indicator-only decision when the license is not approved", async () => {
+    const { dependencies, order } = await makeDeps({
+      branch: "indicator-only",
+      licenseStatus: "pending",
     });
-    expect(result).toEqual({
-      ok: false,
-      code: "MODEL_RELEASE_DESCRIPTOR_INVALID",
-    });
+    await expect(build(dependencies)).rejects.toThrow(
+      "MODEL_LICENSE_NOT_APPROVED",
+    );
+    expect(order).not.toContain("smoke");
+    expect(order).not.toContain("vite");
   });
 
-  it("rejects an indicator descriptor with no profiles", async () => {
-    const { runNode } = makeRunner();
-    const result = await runReleaseBuild({
-      release: createReleaseDescriptorV1({
-        gateDecision: "indicator",
-        profileDigests: [],
-      }),
-      licenseReview: { status: "approved" },
-      manifest,
-      lock,
-      bundleDir: "public/models/tmr-ai-text-detector",
-      dependencies: baseDeps({ runNode }),
+  it("still builds the reject fallback even when the license is not approved", async () => {
+    const { dependencies, order } = await makeDeps({
+      branch: "reject",
+      licenseStatus: "pending",
     });
-    expect(result).toEqual({
-      ok: false,
-      code: "MODEL_RELEASE_DESCRIPTOR_INVALID",
-    });
+    const result = await build(dependencies);
+    expect(result.includeTmr).toBe(false);
+    expect(order).toContain("rm");
+    expect(order).toContain("smoke");
   });
 
-  it("runs smoke, then a reject-mode build, then a reject-mode audit for a well-formed reject", async () => {
-    const { runNode, calls } = makeRunner();
-    const result = await runReleaseBuild({
-      release: createReleaseDescriptorV1({
-        gateDecision: "reject",
-        evidenceDigest: HEX64,
-      }),
-      licenseReview: { status: "approved" },
-      manifest,
-      lock,
-      bundleDir: "public/models/tmr-ai-text-detector",
-      dependencies: baseDeps({ runNode }),
+  it("refuses to build when release-test variant metadata is present", async () => {
+    const { dependencies, order } = await makeDeps({
+      branch: "indicator-only",
+      variantMetadataDir: "/tmp/variant-metadata",
     });
-    expect(result).toEqual({
-      ok: true,
-      code: "RELEASE_COMPLETED",
-      mode: "reject",
-    });
-    expect(calls).toHaveLength(3);
-    // Smoke first, without a release-mode env — proves the candidate is smoked
-    // before anything is built.
-    expect(calls[0].args).toEqual([
-      "/fake/npm-cli.js",
-      "run",
-      "test:model:smoke",
-    ]);
-    expect(calls[0].env).toBeUndefined();
-    expect(calls[1].args).toEqual(["/fake/npm-cli.js", "run", "build"]);
-    expect(calls[1].env?.CLEANFEED_MODEL_RELEASE_MODE).toBe("reject");
-    expect(calls[2].args).toEqual(["/fake/npm-cli.js", "run", "audit"]);
-    expect(calls[2].env?.CLEANFEED_MODEL_RELEASE_MODE).toBe("reject");
-  });
-
-  it("verifies the bundle then builds+audits in package mode for an approved indicator gate", async () => {
-    const { runNode, calls } = makeRunner();
-    let verifiedDir: string | undefined;
-    const result = await runReleaseBuild({
-      release: createReleaseDescriptorV1({
-        gateDecision: "indicator",
-        profileDigests: ["d".repeat(64)],
-      }),
-      licenseReview: { status: "approved" },
-      manifest,
-      lock,
-      bundleDir: "public/models/tmr-ai-text-detector",
-      dependencies: baseDeps({
-        runNode,
-        verifyBundle: async (dir: string) => {
-          verifiedDir = dir;
-        },
-      }),
-    });
-    expect(verifiedDir).toBe("public/models/tmr-ai-text-detector");
-    expect(result).toEqual({
-      ok: true,
-      code: "RELEASE_COMPLETED",
-      mode: "package",
-    });
-    expect(calls[1].env?.CLEANFEED_MODEL_RELEASE_MODE).toBe("package");
-    expect(calls[2].env?.CLEANFEED_MODEL_RELEASE_MODE).toBe("package");
+    await expect(build(dependencies)).rejects.toThrow(
+      "RELEASE_TEST_METADATA_FORBIDDEN",
+    );
+    // The forbidden metadata is caught after the bundle is verified but before
+    // anything is smoked or built.
+    expect(order).toContain("verifyBundle");
+    expect(order).not.toContain("smoke");
+    expect(order).not.toContain("vite");
   });
 });
 
