@@ -9,6 +9,10 @@ test-results/
 *.log
 *.tsbuildinfo
 
+# Linked git worktrees (e.g. .worktrees/cleanfeed-mvp) are registered checkouts,
+# never source; git already auto-excludes them, kept explicit for clarity.
+.worktrees/
+
 # Serena MCP tool workspace (local dev tooling output, never source).
 .serena/
 
