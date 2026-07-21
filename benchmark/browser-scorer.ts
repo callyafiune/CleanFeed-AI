@@ -286,6 +286,74 @@ export async function runBrowserScore(
 }
 
 /**
+ * The scientific identity a holdout test-partition run scores under. Every field
+ * is copied from the FROZEN calibration and the split artifact, so the test
+ * prediction manifest is byte-consistent with the frozen seal by construction
+ * and the candidate page's embedded status is verified against it before any
+ * corpus text is sent.
+ */
+export interface HoldoutTestScoreIdentity {
+  datasetDigest: string;
+  splitDigest: string;
+  modelId: string;
+  modelVersion: string;
+  bundleDigest: string;
+  aggregationVersion: string;
+  contentCompositionVersion: string;
+  tokenizerDigest: string;
+  runtimeParityDigest: string;
+  extensionBuildDigest: string;
+}
+
+export interface RunHoldoutTestScoreInput {
+  /** The active Phase 2 lease; its id becomes both the runId and holdoutConsumptionId. */
+  consumption: HoldoutConsumption;
+  identity: HoldoutTestScoreIdentity;
+  page: BenchmarkPage;
+  store: PredictionShardStore;
+  items: readonly BenchmarkScoreItem[];
+}
+
+/**
+ * The INTERNAL test-partition entry point. It forces `partition: "test"` and
+ * binds `runId`/`holdoutConsumptionId` to the active consumption id, so the
+ * lease guard admits it ONLY under that live session — the public `score`
+ * subcommand still rejects the test partition at CLI parse time. Everything else
+ * is the same fail-closed `runBrowserScore` path (identity/parity verification,
+ * atomic sharding, no recomputation).
+ */
+export async function runHoldoutTestScore(
+  input: RunHoldoutTestScoreInput,
+): Promise<PredictionManifestV1> {
+  const run: BrowserScoreRun = {
+    schemaVersion: 1,
+    runId: input.consumption.consumptionId,
+    datasetDigest: input.identity.datasetDigest,
+    splitDigest: input.identity.splitDigest,
+    partition: "test",
+    modelId: input.identity.modelId,
+    modelVersion: input.identity.modelVersion,
+    bundleDigest: input.identity.bundleDigest,
+    aggregationVersion: input.identity.aggregationVersion,
+    contentCompositionVersion: input.identity.contentCompositionVersion,
+    tokenizerDigest: input.identity.tokenizerDigest,
+    runtimeParityDigest: input.identity.runtimeParityDigest,
+    extensionBuildDigest: input.identity.extensionBuildDigest,
+    chromeVersion: RELEASE_CHROME_VERSION,
+    backend: "wasm",
+    holdoutConsumptionId: input.consumption.consumptionId,
+    shardSize: 100,
+  };
+  return runBrowserScore({
+    run,
+    page: input.page,
+    store: input.store,
+    items: input.items,
+    consumption: input.consumption,
+  });
+}
+
+/**
  * Hashes the closed built-directory inventory into the `extensionBuildDigest`:
  * every file under `directory`, in lexicographic relative-posix order, hashed as
  * `relPath` + NUL + raw bytes. This is distinct from the runtime-parity digest —

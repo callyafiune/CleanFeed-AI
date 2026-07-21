@@ -51,13 +51,13 @@ import type { DatasetSplit } from "../split.ts";
 describe("benchmark CLI parsing and dispatch", () => {
   it("requires a named subcommand", () => {
     expect(() => parseCliArgs([])).toThrow(
-      /expected one of ingest, validate, split, validate-predictions, score, fit, evaluate, publish-profile, verify-evidence/u,
+      /expected one of ingest, validate, split, validate-predictions, score, fit, evaluate, consume-holdout, publish-profile, verify-evidence/u,
     );
   });
 
   it("rejects an unknown subcommand", () => {
     expect(() => parseCliArgs(["frobnicate"])).toThrow(
-      /expected one of ingest, validate, split, validate-predictions, score, fit, evaluate, publish-profile, verify-evidence/u,
+      /expected one of ingest, validate, split, validate-predictions, score, fit, evaluate, consume-holdout, publish-profile, verify-evidence/u,
     );
   });
 
@@ -230,6 +230,49 @@ describe("benchmark CLI score guards", () => {
         ...SCORE_ARGS,
         "--partition",
         "development",
+        "--bogus",
+        "x",
+      ]),
+    ).rejects.toThrow(/unknown flag --bogus/u);
+  });
+});
+
+describe("benchmark CLI consume-holdout parsing", () => {
+  const CONSUME_ARGS = [
+    "consume-holdout",
+    "--dataset-dir",
+    "benchmark/data/ptbr-linkedin-v1",
+    "--split-artifact",
+    "benchmark/out/ptbr-v1/split/split-artifact.json",
+    "--frozen-calibration",
+    "benchmark/out/ptbr-v1/fit/frozen-calibration.json",
+    "--ledger",
+    "benchmark/data/ptbr-linkedin-v1/private/holdout-ledger.jsonl",
+    "--candidate-extension-dir",
+    "dist-model-benchmark",
+    "--work-dir",
+    "benchmark/work/holdout",
+    "--output",
+    "benchmark/out/ptbr-v1/evaluate",
+    "--bootstrap-seed",
+    "712019",
+  ];
+
+  it("recognizes the consume-holdout subcommand", () => {
+    const parsed = parseCliArgs(CONSUME_ARGS);
+    expect(parsed.command).toBe("consume-holdout");
+  });
+
+  it("rejects a fresh run without --confirm-split-digest or --resume-consumption", async () => {
+    await expect(runCli(CONSUME_ARGS)).rejects.toThrow(/confirm-split-digest/u);
+  });
+
+  it("rejects an unknown flag on consume-holdout", async () => {
+    await expect(
+      runCli([
+        ...CONSUME_ARGS,
+        "--confirm-split-digest",
+        "abc",
         "--bogus",
         "x",
       ]),

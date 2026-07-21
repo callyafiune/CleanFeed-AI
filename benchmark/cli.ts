@@ -15,9 +15,14 @@
 // Standalone: MUST NOT import from the extension bundle (src/).
 
 import { statfs } from "node:fs/promises";
+import { join } from "node:path";
 import { argv, cwd, exit, stderr, stdout } from "node:process";
 import { fileURLToPath } from "node:url";
 
+import {
+  runConsumeHoldout,
+  type ConsumeHoldoutOptions,
+} from "./commands/consume-holdout.ts";
 import { runEvaluate, type EvaluateOptions } from "./commands/evaluate.ts";
 import { runFit, type FitOptions } from "./commands/fit.ts";
 import { runIngest, type IngestOptions } from "./commands/ingest.ts";
@@ -46,6 +51,7 @@ export const BENCHMARK_COMMANDS = [
   "score",
   "fit",
   "evaluate",
+  "consume-holdout",
   "publish-profile",
   "verify-evidence",
 ] as const;
@@ -114,6 +120,8 @@ async function dispatch(
       return runFit(await buildFit(flags));
     case "evaluate":
       return runEvaluate(buildEvaluate(flags));
+    case "consume-holdout":
+      return runConsumeHoldout(buildConsumeHoldout(flags));
     case "publish-profile":
       return runPublishProfile(buildPublishProfile(flags));
     case "verify-evidence":
@@ -374,6 +382,58 @@ function buildEvaluate(flags: FlagMap): EvaluateOptions {
   };
 }
 
+// consume-holdout opens the one-way holdout lease. A fresh run MUST carry
+// --confirm-split-digest; a crashed run reopens the SAME session with
+// --resume-consumption (never a new id). The sealed test input and labels
+// default to the dataset's private directory.
+function buildConsumeHoldout(flags: FlagMap): ConsumeHoldoutOptions {
+  assertKnownFlags(flags, [
+    "dataset-dir",
+    "split-artifact",
+    "frozen-calibration",
+    "ledger",
+    "candidate-extension-dir",
+    "work-dir",
+    "output",
+    "bootstrap-seed",
+    "confirm-split-digest",
+    "resume-consumption",
+    "test-input",
+    "test-labels",
+  ]);
+  const datasetDirectory = requireFlag(flags, "dataset-dir");
+  const confirmSplitDigest = optionalFlag(flags, "confirm-split-digest");
+  const resumeConsumptionId = optionalFlag(flags, "resume-consumption");
+  if (confirmSplitDigest === undefined && resumeConsumptionId === undefined) {
+    throw new CliError(
+      "consume-holdout requires --confirm-split-digest (or --resume-consumption to reopen a crashed session)",
+    );
+  }
+  const options: ConsumeHoldoutOptions = {
+    datasetDirectory,
+    splitArtifactPath: requireFlag(flags, "split-artifact"),
+    frozenCalibrationPath: requireFlag(flags, "frozen-calibration"),
+    ledgerPath: requireFlag(flags, "ledger"),
+    candidateExtensionDir: requireFlag(flags, "candidate-extension-dir"),
+    workDirectory: requireFlag(flags, "work-dir"),
+    outputDirectory: requireFlag(flags, "output"),
+    bootstrapSeed: requireNumberFlag(flags, "bootstrap-seed"),
+    testInputPath:
+      optionalFlag(flags, "test-input") ??
+      join(datasetDirectory, "private", "test-input.jsonl"),
+    testLabelsPath:
+      optionalFlag(flags, "test-labels") ??
+      join(datasetDirectory, "private", "test-labels.jsonl"),
+  };
+  if (confirmSplitDigest !== undefined) {
+    options.confirmSplitDigest = confirmSplitDigest;
+  }
+  if (resumeConsumptionId !== undefined) {
+    options.resumeConsumptionId = resumeConsumptionId;
+  }
+  return options;
+}
+
 function buildPublishProfile(flags: FlagMap): PublishProfileOptions {
   assertKnownFlags(flags, [
     "report",
@@ -430,6 +490,9 @@ function usage(): string {
     "                       --output --seed",
     "  evaluate             --dataset-dir --split-artifact --frozen-calibration --test-predictions",
     "                       --test-labels --ledger --consumption-id --output --bootstrap-seed",
+    "  consume-holdout      --dataset-dir --split-artifact --frozen-calibration --ledger",
+    "                       --candidate-extension-dir --work-dir --output --bootstrap-seed",
+    "                       (--confirm-split-digest | --resume-consumption <id>)",
     "  publish-profile      --report --frozen-calibration --issued-at --model-dir",
     "  verify-evidence      --report --frozen-calibration --model-dir",
     "",
