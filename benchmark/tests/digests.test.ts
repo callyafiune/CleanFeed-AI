@@ -248,6 +248,24 @@ describe("computeEvaluatorDigest", () => {
     }
   });
 
+  it("binds the Phase-3 scoring/holdout orchestration into the evaluator identity", () => {
+    const files = new Set<string>(EVALUATOR_FILES);
+    // Every module that shapes a scored prediction, the frozen-calibration
+    // freeze precondition or the release/source-readiness gate verdict must be
+    // inside the closed inventory, so a post-freeze edit to any of them cannot
+    // masquerade as the same evaluator. A future removal regresses this test.
+    for (const relativePath of [
+      "benchmark/browser-scorer.ts",
+      "benchmark/prediction-shards.ts",
+      "benchmark/candidate-preflight.ts",
+      "benchmark/commands/score.ts",
+      "benchmark/commands/consume-holdout.ts",
+      "benchmark/corpus-source-audit.ts",
+    ]) {
+      expect(files.has(relativePath)).toBe(true);
+    }
+  });
+
   it("is deterministic for two identical evaluator trees", async () => {
     const first = await makeRoot();
     const second = await makeRoot();
@@ -264,6 +282,24 @@ describe("computeEvaluatorDigest", () => {
     await writeEvaluatorFixture(clean);
     await writeEvaluatorFixture(tampered, (relativePath, content) =>
       relativePath === "benchmark/split.ts" ? `${content}// drift\n` : content,
+    );
+    expect(await computeEvaluatorDigest(tampered)).not.toBe(
+      await computeEvaluatorDigest(clean),
+    );
+  });
+
+  it("changes when a Phase-3 scoring byte changes (browser-scorer.ts)", async () => {
+    // Load-bearing proof that the newly-bound scoring module is inside the
+    // hashed set: tampering browser-scorer.ts must move the evaluator digest.
+    // Before this file was added to EVALUATOR_FILES the fixture never wrote it
+    // and the mutation was invisible, so the two digests were equal.
+    const clean = await makeRoot();
+    const tampered = await makeRoot();
+    await writeEvaluatorFixture(clean);
+    await writeEvaluatorFixture(tampered, (relativePath, content) =>
+      relativePath === "benchmark/browser-scorer.ts"
+        ? `${content}// clamp\n`
+        : content,
     );
     expect(await computeEvaluatorDigest(tampered)).not.toBe(
       await computeEvaluatorDigest(clean),

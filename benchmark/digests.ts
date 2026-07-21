@@ -93,6 +93,18 @@ export const EVALUATOR_FILES = [
   "benchmark/commands/validate.ts",
   "benchmark/commands/verify-evidence.ts",
   "benchmark/holdout-ledger.ts",
+  // Phase 3 scoring and holdout orchestration: the browser scorer maps every
+  // page response to a prediction row, the shard store persists those rows, the
+  // score/consume-holdout commands drive them, and the corpus-source audit and
+  // candidate preflight are the source-readiness / freeze gates the report keys
+  // on. A post-freeze edit to any of these reshapes a scored prediction or a gate
+  // verdict, so each must live inside the evaluator's identity.
+  "benchmark/browser-scorer.ts",
+  "benchmark/candidate-preflight.ts",
+  "benchmark/commands/consume-holdout.ts",
+  "benchmark/commands/score.ts",
+  "benchmark/corpus-source-audit.ts",
+  "benchmark/prediction-shards.ts",
   "package-lock.json",
 ] as const;
 
