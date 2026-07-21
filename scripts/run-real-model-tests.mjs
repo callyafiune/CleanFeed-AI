@@ -167,6 +167,12 @@ export async function runRealModelTests({ mode, dependencies = {} }) {
     [
       npmExecPath,
       "exec",
+      // The `--` separator is mandatory: without it npm consumes
+      // `--config playwright.model-smoke.config.ts` as its own option and
+      // Playwright runs under the default config, which does not match the
+      // smoke spec and reports "No tests found" (surfaced as
+      // MODEL_SMOKE_SKIPPED). Everything after `--` is the child command.
+      "--",
       "playwright",
       "test",
       "--config",
