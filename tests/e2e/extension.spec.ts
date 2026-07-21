@@ -2,7 +2,9 @@ import AxeBuilder from "@axe-core/playwright";
 
 import { expect, test } from "./helpers/load-extension";
 
-const BADGE_NAME = /indícios|inconclusivo|pessoa/u;
+// The badge's accessible name is always "CleanFeed: <qualitative band>"; match
+// the stable prefix so the assertion is independent of the exact band copy.
+const BADGE_NAME = /^CleanFeed:/u;
 
 test("loads unpacked, classifies the fixture offline and restores with the keyboard", async ({
   context,

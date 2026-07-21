@@ -10,6 +10,10 @@ import { defineConfig } from "@playwright/test";
 export default defineConfig({
   testDir: "./tests/e2e",
   testMatch: /.*\.spec\.ts$/,
+  // Scope Playwright's managed output to a subdirectory so it does NOT wipe the
+  // sibling `test-results/release-variants` (the pre-built TMR variant dists) or
+  // `test-results/tmr-functional-browser.json` when a run starts.
+  outputDir: "./test-results/playwright",
   fullyParallel: false,
   // The persistent extension context is a single shared browser; run serially.
   workers: 1,
@@ -19,7 +23,10 @@ export default defineConfig({
   // Retry to absorb that environmental noise WITHOUT weakening the assertion —
   // a genuine budget regression still fails every attempt.
   retries: 2,
-  timeout: 60_000,
+  // The TMR release variants drive the REAL calibrated runtime (ONNX cold start
+  // <= 10s) across several page launches per test, so allow more wall-clock than
+  // the pending-fallback specs need. A genuine hang still fails.
+  timeout: 120_000,
   expect: { timeout: 15_000 },
   reporter: [["list"]],
   use: {

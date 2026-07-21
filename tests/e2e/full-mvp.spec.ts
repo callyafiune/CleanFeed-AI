@@ -46,7 +46,9 @@ import {
  *    result is real mock output, never faked.
  */
 
-const BADGE_NAME = /indícios|inconclusivo|pessoa/u;
+// The badge's accessible name is always "CleanFeed: <qualitative band>"; match
+// the stable prefix so the assertion is independent of the exact band copy.
+const BADGE_NAME = /^CleanFeed:/u;
 const DEMO_NOTE =
   "Modo de demonstração: nenhum modelo real está sendo utilizado.";
 
@@ -100,7 +102,11 @@ test("all MVP acceptance criteria work in one offline session", async ({
       timeout: 20_000,
     });
 
-    // ---- 2. Switch presentation mode to blur via the shipped options path ---
+    // ---- 2. Even the strongest preference stays capped at indicator --------
+    // The shipped `pending`/`bundle-verified` state runs the UNCALIBRATED builtin
+    // fallback, whose `actionCeiling` is always `indicator` (spec §5.5). So the
+    // most aggressive preference (`hide`) must still resolve to an indicator-only
+    // badge: no blur, no collapse, no hide — fail-closed end to end.
     const options = await context.newPage();
     await options.goto(
       `chrome-extension://${extensionId}/src/options/options.html`,
@@ -110,27 +116,28 @@ test("all MVP acceptance criteria work in one offline session", async ({
         source: "options",
         target: "background",
         type: "UPDATE_SETTINGS",
-        payload: { presentationMode: "blur" },
+        payload: { presentationMode: "hide" },
       })) as
         { type?: string; payload?: { presentationMode?: string } } | undefined;
       return response?.payload?.presentationMode ?? null;
     });
-    expect(applied).toBe("blur");
+    expect(applied).toBe("hide");
     await options.close();
 
-    // Reclassify the visible post under the new mode by reloading the tab.
+    // Reclassify the visible post under the new preference by reloading the tab.
     await feed.reload();
     const longPost = feed.getByTestId("long-post");
     await longPost.scrollIntoViewIfNeeded();
-    await expect(feed.getByRole("button", { name: BADGE_NAME })).toBeVisible({
-      timeout: 20_000,
-    });
-    // Blur is reflected: the shipped presenter carries a blur-mode badge and the
-    // post element itself is visually blurred.
-    await expect(
-      feed.locator("button.cleanfeed-badge[data-cleanfeed-mode='blur']"),
-    ).toBeVisible();
-    await expect(longPost).toHaveCSS("filter", /blur/u);
+    const badge = feed.locator(
+      "button.cleanfeed-badge[data-cleanfeed-mode='indicator']",
+    );
+    await expect(badge).toBeVisible({ timeout: 20_000 });
+    // The preference was `hide`, yet the uncalibrated ceiling caps to indicator:
+    // the post keeps its content, unblurred, uncollapsed and unhidden.
+    await expect(longPost).not.toHaveClass(
+      /cleanfeed-(blurred|collapsed|hidden)/u,
+    );
+    await expect(longPost).toHaveCSS("filter", "none");
 
     // ---- 3. Reveal the post back to its original text ----------------------
     await serviceWorker.evaluate(async () => {
@@ -150,7 +157,7 @@ test("all MVP acceptance criteria work in one offline session", async ({
     await expect(longPost).toHaveCSS("filter", "none");
     await expect(feed.locator("[data-cleanfeed-owned='badge']")).toHaveCount(0);
     await expect(longPost).toBeVisible();
-    await expect(longPost).toContainText("Compartilho hoje uma reflexão");
+    await expect(longPost).toContainText("a inovação transforma o mercado");
 
     // ---- 4. Manual analysis on a NON-LinkedIn page -------------------------
     const generic = await context.newPage();

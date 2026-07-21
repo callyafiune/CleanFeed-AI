@@ -100,6 +100,48 @@ export function prepareExtension(
   return target;
 }
 
+/** Options for {@link launchExtension}. */
+export interface LaunchExtensionOptions {
+  /**
+   * The insecure fixture origin to treat as a secure context, so the shipped
+   * content script's Web Crypto hashing works over http exactly as on https.
+   * The offline fixture is served as `http://www.linkedin.com:<port>`; passing it
+   * here mirrors the shared harness. When omitted the flag is not added.
+   */
+  secureOrigin?: string;
+}
+
+/**
+ * Launches a persistent Chromium context with the unpacked extension at
+ * `distPath`. The launch shape is exactly the one verified for this environment
+ * (headless, the "chromium" channel, the two extension flags and the LinkedIn
+ * host-resolver mapping); an empty `userDataDirectory` yields a throwaway
+ * profile, while a real directory lets a later relaunch restore its state. The
+ * optional `secureOrigin` adds the same insecure-origin-as-secure flag the
+ * shared harness uses so Web Crypto works over the http fixture.
+ */
+export async function launchExtension(
+  distPath: string,
+  userDataDirectory: string = "",
+  options: LaunchExtensionOptions = {},
+): Promise<BrowserContext> {
+  const extensionPath = prepareExtension(distPath);
+  const secureArgs =
+    options.secureOrigin === undefined
+      ? []
+      : [`--unsafely-treat-insecure-origin-as-secure=${options.secureOrigin}`];
+  return chromium.launchPersistentContext(userDataDirectory, {
+    headless: true,
+    channel: "chromium",
+    args: [
+      `--disable-extensions-except=${extensionPath}`,
+      `--load-extension=${extensionPath}`,
+      "--host-resolver-rules=MAP www.linkedin.com 127.0.0.1, EXCLUDE localhost",
+      ...secureArgs,
+    ],
+  });
+}
+
 /** The service worker backing the loaded extension, once it has started. */
 export async function getExtensionServiceWorker(
   context: BrowserContext,

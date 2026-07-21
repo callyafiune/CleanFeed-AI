@@ -9,6 +9,9 @@ export default tseslint.config(
       "dist",
       "dist-model-smoke",
       "dist-model-benchmark",
+      // Built artifacts and the test-only rollout-variant dists written by
+      // scripts/build-e2e-release-variants.mjs; never source.
+      "test-results",
       "node_modules",
       "public/vendor/transformers-wasm",
       // Fake unpacked-extension fixtures used only to prove scripts/audit-build.mjs

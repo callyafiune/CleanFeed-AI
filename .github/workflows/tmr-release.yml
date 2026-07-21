@@ -22,4 +22,13 @@ jobs:
       - run: npm ci
       - run: npx playwright install chromium
       - run: npm run model:fetch
-      - run: npm run verify:release:base
+      # The full release verification now also builds the TEST-ONLY rollout
+      # variants and runs the functional MV3 E2E over them on the machine of
+      # reference; still no package upload.
+      - run: npm run verify:release
+      # Publish ONLY the technical browser receipt (no package artifact).
+      - uses: actions/upload-artifact@v4
+        with:
+          name: tmr-functional-browser
+          path: test-results/tmr-functional-browser.json
+          if-no-files-found: error

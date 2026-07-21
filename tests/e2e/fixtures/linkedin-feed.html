@@ -35,15 +35,41 @@
       </article>
       <div class="spacer"></div>
       <article
+        data-testid="short-qualified-post"
+        data-test-post="short-qualified"
+        data-urn="urn:li:activity:short-qualified"
+      >
+        <header data-test-node="author"><a href="/in/pessoa">Autora</a></header>
+        <!-- prettier-ignore -->
+        <!-- A ~70-word PT-BR lexical post: it lands in the contract 50-79 length bucket, whose profile ceiling is always indicator, so even a promoted `pass` release may only badge it (never blur/collapse/hide). -->
+        <!-- prettier-ignore -->
+        <div class="update-components-text"><p>Escrevo este comentário breve para compartilhar uma observação simples sobre o trabalho em equipe e a rotina diária que mantemos juntos nesta empresa. Percebo que pequenas atitudes constroem confiança ao longo do tempo, especialmente quando ouvimos com atenção genuína e respondemos sempre com honestidade transparente. Valorizo muito a clareza nas conversas, o respeito aos prazos combinados e a disposição sincera de aprender com cada erro cometido durante os nossos projetos recentes deste semestre.</p></div>
+        <div data-test-actions><button type="button">Curtir</button></div>
+      </article>
+      <div class="spacer"></div>
+      <article
+        data-testid="long-linkfree-post"
+        data-test-post="long-linkfree"
+        data-urn="urn:li:activity:long-linkfree"
+      >
+        <header data-test-node="author"><a href="/in/pessoa">Autora</a></header>
+        <!-- prettier-ignore -->
+        <!-- A ~150-word PT-BR long post with NO dominant links: it lands in the 80-199 bucket, so a promoted `pass` release with a valid profile and the matching user preference may apply blur/collapse/hide. -->
+        <!-- prettier-ignore -->
+        <div class="update-components-text"><p>Registro nesta publicação uma reflexão mais extensa sobre a maneira como conduzimos projetos longos e mantemos a qualidade das entregas ao longo de vários meses de trabalho contínuo e colaborativo. Aprendi, com o passar dos anos, que a consistência nasce de hábitos simples, repetidos com disciplina diária, e que a comunicação transparente evita a maior parte dos conflitos desnecessários entre pessoas de áreas bastante diferentes. Sempre que revisamos as nossas decisões com honestidade, encontramos oportunidades reais de melhorar processos, reduzir desperdício e valorizar o tempo de cada colega envolvido no esforço comum. Acredito, com serena convicção, que a confiança construída dia após dia sustenta qualquer iniciativa coletiva, especialmente quando reconhecemos publicamente os acertos e tratamos os erros como aprendizado compartilhado. Prefiro registrar tudo com paciência, método, clareza e propósito, em absolutamente todas as etapas dessa jornada profissional que seguimos construindo com dedicação constante e vontade honesta de evoluir sempre juntos.</p></div>
+        <div data-test-actions><button type="button">Curtir</button></div>
+      </article>
+      <div class="spacer"></div>
+      <article
         data-testid="long-post"
         data-test-post="long"
         data-urn="urn:li:activity:strong"
       >
         <header data-test-node="author"><a href="/in/pessoa">Autora</a></header>
         <!-- prettier-ignore -->
-        <!-- The commentary text is kept on a single line so its extracted, normalized text is byte-for-byte the string the mock pipeline scores as strong_ai_indication (verified against the real PipelineRunner). -->
+        <!-- A ~120-word (contract 80-199 bucket) PT-BR post with maximal AI-like signals — highly repetitive, formulaic sentences with no length variation, plus hashtags. The SHIPPED stylometric fallback scores it `possibly_ai` (indicator band), so a `pending` build badges it but the UNCALIBRATED ceiling caps to indicator (no action). A promoted `pass` variant matches the 80-199 profile and may apply blur/collapse/hide. Kept on one line so the extracted, normalized text is byte-stable. -->
         <!-- prettier-ignore -->
-        <div class="update-components-text"><p>Compartilho hoje uma reflexão profissional sobre a importância da disciplina, do aprendizado contínuo e de processos claros dentro de qualquer equipe madura. Ao longo dos últimos anos percebi que os resultados sustentáveis nascem de rotinas simples, de comunicação honesta e da revisão constante das nossas decisões. Cada projeto que entregamos trouxe lições práticas sobre prioridade, foco, colaboração e respeito ao tempo das pessoas envolvidas. Acredito que a transparência gera confiança, e que a confiança acelera qualquer iniciativa coletiva. Registro também que o planejamento cuidadoso, a execução paciente e a análise honesta dos erros formam a base de toda a melhoria contínua que buscamos alcançar juntos, com método, clareza e propósito, em cada etapa dessa jornada compartilhada de evolução profissional. Observação número 85 para registro interno.</p></div>
+        <div class="update-components-text"><p>Além disso, a inovação transforma o mercado hoje. Além disso, a inovação transforma o mercado hoje. Além disso, a inovação transforma o mercado hoje. Além disso, a inovação transforma o mercado hoje. Além disso, a inovação transforma o mercado hoje. Além disso, a inovação transforma o mercado hoje. Além disso, a inovação transforma o mercado hoje. Além disso, a inovação transforma o mercado hoje. Além disso, a inovação transforma o mercado hoje. Além disso, a inovação transforma o mercado hoje. Além disso, a inovação transforma o mercado hoje. Além disso, a inovação transforma o mercado hoje. Além disso, a inovação transforma o mercado hoje. Além disso, a inovação transforma o mercado hoje. #inovacao #mercado #gestao #negocios #estrategia #lideranca #sucesso #futuro</p></div>
         <div data-test-actions data-test-node="buttons">
           <button type="button">Curtir</button
           ><button type="button">Comentar</button

@@ -2,6 +2,8 @@ import react from "@vitejs/plugin-react";
 import { fileURLToPath, URL } from "node:url";
 import { defineConfig } from "vite";
 
+import { e2eReleaseMetadataPlugin } from "./vite.config";
+
 /**
  * Separate build for the on-demand manual-analysis panel.
  *
@@ -13,9 +15,9 @@ import { defineConfig } from "vite";
  * its dependencies into one file; `emptyOutDir: false` keeps the crxjs output
  * intact (this build must run after `vite build`).
  */
-export default defineConfig({
+export default defineConfig(({ mode }) => ({
   base: "./",
-  plugins: [react()],
+  plugins: [react(), e2eReleaseMetadataPlugin(mode)],
   resolve: {
     alias: {
       "@": fileURLToPath(new URL("./src", import.meta.url)),
@@ -35,4 +37,4 @@ export default defineConfig({
       },
     },
   },
-});
+}));

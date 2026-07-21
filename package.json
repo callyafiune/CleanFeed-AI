@@ -28,6 +28,8 @@
     "release:activate": "node scripts/activate-model-release.mjs --release models/tmr-ai-text-detector/release.json --profiles models/tmr-ai-text-detector/calibration-profiles.json --evidence-dir benchmark/evidence/tmr-ptbr-v1",
     "audit:model": "node scripts/audit-model-package.mjs --dist dist --metadata models/tmr-ai-text-detector --evidence benchmark/evidence/tmr-ptbr-v1",
     "build:release": "node scripts/run-release-build.mjs",
+    "test:e2e:release": "node scripts/build-e2e-release-variants.mjs && playwright test tests/e2e/tmr-release.spec.ts",
+    "verify:release": "npm run verify:release:base && npm run test:e2e:release",
     "docs:check": "node scripts/check-doc-links.mjs",
     "audit": "node scripts/audit-build.mjs dist",
     "verify:build": "node scripts/verify-reproducible-build.mjs",
