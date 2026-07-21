@@ -24,7 +24,7 @@ h1 {
   font-weight: 600;
   margin-bottom: 1.5rem;
   text-align: center;
-  color: #1877f2;
+  color: #0a66c2;
 }
 
 h2,
@@ -68,7 +68,7 @@ input[type="checkbox"] {
 }
 
 button {
-  background-color: #1877f2;
+  background-color: #0a66c2;
   color: #fff;
   border: none;
   border-radius: 6px;
@@ -80,7 +80,7 @@ button {
 }
 
 button:hover {
-  background-color: #166fe5;
+  background-color: #08498f;
 }
 
 button:disabled {

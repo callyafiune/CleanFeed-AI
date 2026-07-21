@@ -43,6 +43,7 @@ import {
 import {
   crossValidateRuntimeDescriptor,
   type CleanFeedModelManifest,
+  type RuntimeDescriptor,
 } from "@/inference/model-bundle";
 import {
   OnnxTextClassifier,
@@ -1051,7 +1052,20 @@ class WorkerRuntime {
               }
             : {}),
         });
-        this.status = lifecycle.getStatus();
+        // When the calibrated TMR primary is active, the published SET status
+        // reflects that active promoted runtime: the sealed bundle identity the
+        // calibrated decision rides on, plus the loaded calibration set's
+        // coverage/digest/count/expiry. It never carries a per-post selected
+        // profile. The builtin/experimental paths keep the lifecycle status
+        // (builtin identity, no coverage) unchanged, so the fallback stays honest.
+        this.status =
+          calibrated !== undefined && payload.descriptor !== undefined
+            ? {
+                ...lifecycle.getStatus(),
+                runtimeIdentity: calibrated.identity,
+                ...summarizeCalibrationSet(payload.descriptor),
+              }
+            : lifecycle.getStatus();
       } catch (error) {
         this.status = unavailableStatus("error", ["BACKEND_ERROR"]);
         throw error;
@@ -1194,6 +1208,41 @@ function unavailableStatus(
     profileCount: 0,
     earliestExpiry: null,
     reasonCodes,
+  };
+}
+
+/**
+ * The SET-level calibration facts for an ACTIVE promoted (TMR) runtime, derived
+ * from the already cross-validated descriptor. A promoted release ships its full
+ * catalog of unexpired, in-release profiles, so a loaded set is `complete`; the
+ * digest, count and earliest expiry come straight from the sealed descriptor.
+ * Per-post applicability (a missing bucket → abstain) is a decision concern and
+ * is never conflated with the set status, and no selected profile is exposed.
+ */
+function summarizeCalibrationSet(
+  descriptor: RuntimeDescriptor,
+): Pick<
+  ModelStatus,
+  | "calibrationCoverage"
+  | "calibrationSetDigest"
+  | "profileCount"
+  | "earliestExpiry"
+> {
+  const profiles = descriptor.profiles.profiles;
+  let earliestExpiry: string | null = null;
+  for (const profile of profiles) {
+    if (
+      earliestExpiry === null ||
+      Date.parse(profile.expiresAt) < Date.parse(earliestExpiry)
+    ) {
+      earliestExpiry = profile.expiresAt;
+    }
+  }
+  return {
+    calibrationCoverage: profiles.length > 0 ? "complete" : "none",
+    calibrationSetDigest: descriptor.release.calibrationSetDigest,
+    profileCount: profiles.length,
+    earliestExpiry,
   };
 }
 

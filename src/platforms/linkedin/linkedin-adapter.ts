@@ -1,12 +1,9 @@
+import { PresentationController } from "@/content/presentation/presentation-controller";
 import {
   extractLinkedInPost,
   findCommentary,
   isLinkedInPostDescendant,
 } from "@/platforms/linkedin/extractor";
-import {
-  applyLinkedInPresentation,
-  restoreLinkedInPresentation,
-} from "@/platforms/linkedin/presenter";
 import { LINKEDIN_SELECTORS } from "@/platforms/linkedin/selectors";
 import type { EffectiveSettings } from "@/shared/settings-types";
 import type {
@@ -15,8 +12,25 @@ import type {
   PlatformAdapter,
 } from "@/shared/types";
 
+/**
+ * LinkedIn adapter. Site-specific DOM knowledge (selectors, extraction) lives
+ * here; the reversible visual treatment is NOT reimplemented — it is delegated
+ * to the shared {@link PresentationController}, exactly as
+ * docs/platform-adapters.md requires. The controller owns the class + accessible
+ * placeholder, the reveal affordance and the byte-for-byte restore, so a
+ * promoted decision that authorizes an action actually blurs/collapses/hides the
+ * post (and a fail-closed decision presents nothing).
+ */
 export class LinkedInAdapter implements PlatformAdapter {
   readonly id = "linkedin";
+
+  private readonly presentation: PresentationController;
+
+  constructor(
+    presentation: PresentationController = new PresentationController(),
+  ) {
+    this.presentation = presentation;
+  }
 
   matches(url: URL): boolean {
     const host = url.hostname.toLowerCase();
@@ -52,11 +66,15 @@ export class LinkedInAdapter implements PlatformAdapter {
     result: ClassificationResult,
     settings: EffectiveSettings,
   ): void {
-    applyLinkedInPresentation(element, result, settings);
+    // The shared controller owns the reversible marking: it resolves the mode
+    // from the decision's action ceiling and the user preference, applies the
+    // class + accessible placeholder for blur/collapse/hide, and restores a post
+    // whose decision no longer authorizes presentation (fail-closed).
+    this.presentation.apply(element, result, settings);
   }
 
   restorePresentation(element: HTMLElement): void {
-    restoreLinkedInPresentation(element);
+    this.presentation.restore(element);
   }
 
   isPostElement(element: HTMLElement): boolean {

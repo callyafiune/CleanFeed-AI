@@ -12,8 +12,10 @@ import {
   classificationErrorMessage,
 } from "@/background/message-router";
 import { createSettingsFingerprintProvider } from "@/background/settings-fingerprint";
+import { loadRuntimeDescriptor } from "@/inference/model-bundle";
 import { STYLOMETRIC_MODEL_KEY } from "@/inference/stylometric-classifier";
 import { DEFAULT_SETTINGS } from "@/shared/constants";
+import type { DiagnosticReleaseStatus } from "@/shared/diagnostic-types";
 import { CleanFeedError } from "@/shared/errors";
 import { parseExtensionMessage } from "@/shared/message-validation";
 import { ClassificationCache } from "@/storage/cache";
@@ -29,6 +31,28 @@ const platformSettings = new PlatformSettingsRepository(storage);
 const metrics = new MetricsRepository(storage);
 const domainPause = new DomainPauseRepository(storage);
 const offscreenClient = new RuntimeOffscreenClient();
+
+/** The fail-closed rollout coordinates reported if the descriptor cannot be read. */
+const FALLBACK_RELEASE_STATUS: DiagnosticReleaseStatus = {
+  gateDecision: "pending",
+  rolloutState: "bundle-verified",
+};
+
+/**
+ * The immutable release descriptor's rollout coordinates, parsed once from the
+ * closed compile-time bundle (the same sealed `release.json` the offscreen loads).
+ * Only `gateDecision`/`rolloutState` are surfaced — the evidence stage — so the
+ * popup/options diagnostics reflect a promoted release instead of the fail-closed
+ * default. The ACTIVE runtime status travels separately, from the worker. A parse
+ * failure degrades to the fail-closed default rather than rejecting popup polling.
+ */
+const releaseStatus: Promise<DiagnosticReleaseStatus> = loadRuntimeDescriptor()
+  .then((descriptor) => ({
+    gateDecision: descriptor.release.gateDecision,
+    rolloutState: descriptor.release.rolloutState,
+  }))
+  .catch(() => FALLBACK_RELEASE_STATUS);
+
 const router = new BackgroundMessageRouter({
   cache: new ClassificationCache(
     storage,
@@ -47,6 +71,7 @@ const router = new BackgroundMessageRouter({
   settings,
   domainPause,
   modelStatus: () => offscreenClient.getModelStatus(),
+  modelRelease: () => releaseStatus,
   settingsFingerprint: createSettingsFingerprintProvider(
     settings,
     platformSettings,

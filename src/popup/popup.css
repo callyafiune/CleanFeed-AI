@@ -1,5 +1,5 @@
 /* src/popup/popup.css
- * Shares the options design tokens (accent #1877f2, #f0f2f5 canvas, white
+ * Shares the options design tokens (accent #0a66c2, #f0f2f5 canvas, white
  * cards) so the popup reads as the same product. The popup gets a fixed,
  * comfortable width because Chrome otherwise auto-sizes it far too narrow. */
 body {
@@ -28,7 +28,7 @@ h1 {
   font-weight: 600;
   margin: 0;
   text-align: center;
-  color: #1877f2;
+  color: #0a66c2;
 }
 
 h2 {
@@ -100,7 +100,7 @@ button {
   display: block;
   width: 100%;
   box-sizing: border-box;
-  background-color: #1877f2;
+  background-color: #0a66c2;
   color: #fff;
   border: none;
   border-radius: 6px;
@@ -112,7 +112,7 @@ button {
 }
 
 button:hover:not(:disabled) {
-  background-color: #166fe5;
+  background-color: #08498f;
 }
 
 button:disabled {
@@ -142,6 +142,6 @@ button:disabled {
 /* Transient, recoverable status messages. */
 [role="status"] {
   margin: 0.5rem 0 0;
-  color: #1877f2;
+  color: #0a66c2;
   font-size: 13px;
 }

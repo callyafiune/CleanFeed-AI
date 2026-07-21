@@ -87,14 +87,17 @@ export function prepareExtension(
     entry.matches = addFixtureMatch(entry.matches);
   }
 
-  const extraHosts = options.extraHostPermissions ?? [];
-  if (extraHosts.length > 0) {
-    const hosts = [...(manifest.host_permissions ?? [])];
-    for (const host of extraHosts) {
-      if (!hosts.includes(host)) hosts.push(host);
-    }
-    manifest.host_permissions = hosts;
+  // Grant the http fixture host permission too (the shipped manifest lists only
+  // https). Without it, a background `chrome.tabs.query({url})` cannot see the
+  // http fixture tab, so SW-driven flows (e.g. CLEAR_PAGE_PRESENTATION) can't
+  // target it. This only widens the throwaway copy; `npm run audit` still checks
+  // the shipped dist stays locked to https://www.linkedin.com/*.
+  const extraHosts = [FIXTURE_MATCH, ...(options.extraHostPermissions ?? [])];
+  const hosts = [...(manifest.host_permissions ?? [])];
+  for (const host of extraHosts) {
+    if (!hosts.includes(host)) hosts.push(host);
   }
+  manifest.host_permissions = hosts;
 
   writeFileSync(manifestPath, JSON.stringify(manifest, null, 2));
   return target;

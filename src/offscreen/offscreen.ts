@@ -1,4 +1,7 @@
-import { createValidatedRuntimeHost } from "@/inference/model-bundle";
+import {
+  crossValidateRuntimeDescriptor,
+  loadRuntimeDescriptor,
+} from "@/inference/model-bundle";
 import { buildWorkerInitializePayload } from "@/inference/runtime-activation";
 import { CleanFeedError } from "@/shared/errors";
 import { parseExtensionMessage } from "@/shared/message-validation";
@@ -9,26 +12,32 @@ const modelBaseUrl = chrome.runtime.getURL("models/");
 const wasmBaseUrl = chrome.runtime.getURL("vendor/transformers-wasm/");
 
 // Parse and JOINTLY cross-validate the sealed descriptor (manifest + release +
-// profiles + source lock) BEFORE any WorkerHost is constructed. Only a valid
-// descriptor reaches `createWorkerHost`, and the INITIALIZE payload then carries
-// the already-parsed descriptor to the worker (which revalidates it as a trust
-// boundary before opening any asset). The sealed v1 modelManifest is included
-// ONLY when the descriptor authorizes the calibrated TMR primary (a promoted
-// release with usable profiles); a pending/bundle-verified release omits it, so
-// the worker keeps the indicative stylometric fallback.
-const workerHostReady: Promise<WorkerHost> = createValidatedRuntimeHost(
-  (descriptor) => {
-    const host = new WorkerHost();
+// profiles + source lock) BEFORE the WorkerHost is initialized. A VALID descriptor
+// carries the already-parsed descriptor to the worker (which revalidates it as a
+// trust boundary before opening any asset), and the sealed v1 modelManifest is
+// included ONLY when the descriptor authorizes the calibrated TMR primary (a
+// promoted release with usable profiles); a pending/bundle-verified release omits
+// it, so the worker keeps the indicative stylometric fallback.
+//
+// A descriptor that is absent, malformed, rejected, or carries an expired profile
+// must NOT leave the extension without a model: the WorkerHost is still created
+// and initialized WITHOUT a manifest, so the worker runs the indicative
+// stylometric builtin (builtin identity, no calibration coverage). This keeps the
+// Phase-1 fail-closed default active and lets the popup report the honest
+// "Fallback estilométrico ativo" state instead of an unavailable/null runtime.
+const workerHostReady: Promise<WorkerHost> = (async () => {
+  const host = new WorkerHost();
+  try {
+    const descriptor = await loadRuntimeDescriptor();
+    await crossValidateRuntimeDescriptor(descriptor);
     host.initialize(
       buildWorkerInitializePayload({ modelBaseUrl, wasmBaseUrl, descriptor }),
     );
-    return host;
-  },
-);
-
-// A rejected descriptor validation must not surface as an unhandled rejection;
-// the message handlers below fall back to an unavailable status.
-void workerHostReady.catch(() => undefined);
+  } catch {
+    host.initialize({ modelBaseUrl, wasmBaseUrl });
+  }
+  return host;
+})();
 
 function unavailableStatus(
   reasonCodes: DecisionReasonCode[] = ["ARTIFACT_MISMATCH"],

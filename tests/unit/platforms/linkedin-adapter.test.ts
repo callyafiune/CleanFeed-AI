@@ -178,41 +178,40 @@ describe("LinkedInAdapter presentation", () => {
     return { ...DEFAULT_SETTINGS, presentationMode };
   }
 
-  it("is idempotent when presentation is applied repeatedly", () => {
+  it("delegates to the shared controller and applies the class-based marking idempotently", () => {
     const element = createPost();
     adapter.applyPresentation(element, result(0.9), settings("blur"));
     adapter.applyPresentation(element, result(0.9), settings("blur"));
 
-    expect(element.style.filter).toBe("blur(5px)");
+    // The reversible marking is a CSS class on the post (never an inline style).
+    expect(element.classList.contains("cleanfeed-blurred")).toBe(true);
+    expect(element.dataset.cleanfeedStatus).toBe("possibly_ai");
+    // Exactly one owned badge, kept OUTSIDE the post as a sibling.
     expect(
-      document.querySelectorAll("[data-cleanfeed-indicator='true']"),
+      document.querySelectorAll("[data-cleanfeed-owned='badge']"),
     ).toHaveLength(1);
+    expect(element.querySelector("[data-cleanfeed-owned]")).toBeNull();
     expect(
-      element.querySelector("[data-cleanfeed-indicator='true']"),
-    ).toBeNull();
-    expect(
-      element.previousElementSibling?.getAttribute("data-cleanfeed-indicator"),
-    ).toBe("true");
+      element.previousElementSibling?.getAttribute("data-cleanfeed-owned"),
+    ).not.toBeNull();
   });
 
-  it("reconciles every style while transitioning presentation modes", () => {
+  it("swaps the class-based mode as the preference changes, over a preserved original style", () => {
     const element = createPost();
     element.style.filter = "brightness(0.9)";
-    element.style.maxHeight = "12rem";
-    element.style.overflow = "auto";
 
     adapter.applyPresentation(element, result(0.9), settings("blur"));
-    adapter.applyPresentation(element, result(0.9), settings("collapse"));
-    expect(element.style.filter).toBe("brightness(0.9)");
-    expect(element.style.maxHeight).toBe("6rem");
-    expect(element.style.overflow).toBe("hidden");
+    expect(element.classList.contains("cleanfeed-blurred")).toBe(true);
 
-    adapter.applyPresentation(element, result(0.9), settings("indicator"));
-    expect(element.style.maxHeight).toBe("12rem");
-    expect(element.style.overflow).toBe("auto");
+    adapter.applyPresentation(element, result(0.9), settings("collapse"));
+    expect(element.classList.contains("cleanfeed-blurred")).toBe(false);
+    expect(element.classList.contains("cleanfeed-collapsed")).toBe(true);
 
     adapter.applyPresentation(element, result(0.9), settings("hide"));
-    expect(element.style.display).toBe("none");
+    expect(element.classList.contains("cleanfeed-collapsed")).toBe(false);
+    expect(element.classList.contains("cleanfeed-hidden")).toBe(true);
+
+    // The original inline style survives beneath the reversible marking.
     expect(element.style.filter).toBe("brightness(0.9)");
   });
 
@@ -222,6 +221,8 @@ describe("LinkedInAdapter presentation", () => {
     element.style.filter = "contrast(1.1)";
 
     adapter.applyPresentation(element, result(0.9), settings("blur"));
+    expect(element.classList.contains("cleanfeed-blurred")).toBe(true);
+
     // Fail-closed: presentation follows the decision, not the score. A decision
     // that no longer authorizes presentation restores the post even at a high
     // raw score.
@@ -229,11 +230,10 @@ describe("LinkedInAdapter presentation", () => {
     withdrawn.decision.presentationAllowed = false;
     adapter.applyPresentation(element, withdrawn, settings("blur"));
 
+    expect(element.classList.contains("cleanfeed-blurred")).toBe(false);
     expect(element.style.display).toBe("grid");
     expect(element.style.filter).toBe("contrast(1.1)");
     expect(element.dataset.cleanfeedStatus).toBeUndefined();
-    expect(
-      document.querySelector("[data-cleanfeed-indicator='true']"),
-    ).toBeNull();
+    expect(document.querySelector("[data-cleanfeed-owned='badge']")).toBeNull();
   });
 });
