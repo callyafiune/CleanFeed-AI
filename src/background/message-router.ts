@@ -1,4 +1,5 @@
 import { ensureOffscreenDocument } from "@/background/offscreen-manager";
+import type { DiagnosticReleaseStatus } from "@/shared/diagnostic-types";
 import { CleanFeedError } from "@/shared/errors";
 import { sha256 } from "@/shared/hashing";
 import { parseExtensionMessage } from "@/shared/message-validation";
@@ -22,6 +23,7 @@ import {
   buildRuntimeModelKey,
   type ClassificationCache,
 } from "@/storage/cache";
+import { sanitizeModelDiagnostics } from "@/storage/diagnostics";
 import type { MetricRecord } from "@/storage/metrics";
 
 export interface OffscreenClient {
@@ -78,6 +80,13 @@ export interface BackgroundMessageRouterOptions {
   domainPause?: DomainPauseStore;
   modelStatus?: () => Promise<ModelStatus>;
   /**
+   * The rollout coordinates of the immutable release descriptor. Only
+   * `gateDecision`/`rolloutState` are consumed; when absent the router reports
+   * the fail-closed default (`pending` / `bundle-verified`).
+   */
+  modelRelease?: () =>
+    Promise<DiagnosticReleaseStatus> | DiagnosticReleaseStatus;
+  /**
    * Time source for the cache-read freshness check. It MUST match the clock the
    * {@link ClassificationCache} writes with; defaults to wall-clock time.
    */
@@ -93,6 +102,24 @@ type ClassificationErrorMessage = MessageEnvelope<
   "ERROR",
   { code: CleanFeedError["code"]; recoverable: boolean }
 > & { requestId: string };
+
+/** The fail-closed status reported when no runtime source is wired. */
+const INACTIVE_MODEL_STATUS: ModelStatus = {
+  state: "unavailable",
+  backend: "mock",
+  runtimeIdentity: null,
+  calibrationCoverage: "none",
+  calibrationSetDigest: null,
+  profileCount: 0,
+  earliestExpiry: null,
+  reasonCodes: [],
+};
+
+/** The fail-closed rollout reported when no descriptor source is wired. */
+const DEFAULT_RELEASE_STATUS: DiagnosticReleaseStatus = {
+  gateDecision: "pending",
+  rolloutState: "bundle-verified",
+};
 
 /** Validates and routes background-bound requests without trusting page inputs. */
 export class BackgroundMessageRouter {
@@ -131,6 +158,10 @@ export class BackgroundMessageRouter {
         case "MODEL_STATUS_REQUEST":
           return this.handleModelStatus(
             message as MessageEnvelope<"MODEL_STATUS_REQUEST", undefined>,
+          );
+        case "MODEL_DIAGNOSTICS_REQUEST":
+          return this.handleModelDiagnostics(
+            message as MessageEnvelope<"MODEL_DIAGNOSTICS_REQUEST", undefined>,
           );
         case "PAUSE_DOMAIN":
           await this.handlePauseDomain(
@@ -299,23 +330,40 @@ export class BackgroundMessageRouter {
   private async handleModelStatus(
     request: MessageEnvelope<"MODEL_STATUS_REQUEST", undefined>,
   ): Promise<ExtensionMessage> {
-    const status = await (this.options.modelStatus?.() ??
-      Promise.resolve<ModelStatus>({
-        state: "unavailable",
-        backend: "mock",
-        runtimeIdentity: null,
-        calibrationCoverage: "none",
-        calibrationSetDigest: null,
-        profileCount: 0,
-        earliestExpiry: null,
-        reasonCodes: [],
-      }));
+    const status = await this.resolveModelStatus();
     return {
       source: "background",
       target: request.source,
       type: "MODEL_STATUS_RESULT",
       payload: status,
     };
+  }
+
+  /**
+   * Combines the active {@link ModelStatus} with ONLY the descriptor's rollout
+   * coordinates and sanitizes the pair before responding. The active runtime is
+   * never confused with the descriptor's evidence stage: they travel as distinct
+   * fields, and no per-result field crosses into the view.
+   */
+  private async handleModelDiagnostics(
+    request: MessageEnvelope<"MODEL_DIAGNOSTICS_REQUEST", undefined>,
+  ): Promise<ExtensionMessage> {
+    const [status, release] = await Promise.all([
+      this.resolveModelStatus(),
+      Promise.resolve(this.options.modelRelease?.() ?? DEFAULT_RELEASE_STATUS),
+    ]);
+    return {
+      source: "background",
+      target: request.source,
+      type: "MODEL_DIAGNOSTICS_RESULT",
+      payload: sanitizeModelDiagnostics({ status, release }),
+    };
+  }
+
+  private resolveModelStatus(): Promise<ModelStatus> {
+    return Promise.resolve(
+      this.options.modelStatus?.() ?? INACTIVE_MODEL_STATUS,
+    );
   }
 
   /**

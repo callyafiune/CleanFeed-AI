@@ -1,11 +1,23 @@
 import { describe, expect, it } from "vitest";
 
 import { DEFAULT_SETTINGS } from "@/shared/constants";
+import type {
+  ModelDiagnosticsSource,
+  ModelDiagnosticsView,
+} from "@/shared/diagnostic-types";
 import type { ModelStatus, StorageArea } from "@/shared/types";
 import { DiagnosticsRepository } from "@/storage/diagnostics";
 import { MetricsRepository } from "@/storage/metrics";
 
 const HASH = "a".repeat(64);
+const BUNDLE_DIGEST = "b".repeat(64);
+const TOKENIZER_DIGEST =
+  "8be427eee79ac58671ae5570f75806fc3d9edc2f2d727ca9e261c2d4b85d37a9";
+const CALIBRATION_SET_DIGEST = "c".repeat(64);
+const PROFILE_DIGEST = "d".repeat(64);
+/** A content hash distinct from every technical digest above, so the
+ * not-contained assertion has teeth (a technical digest is allowed to appear). */
+const CONTENT_HASH = "e".repeat(64);
 const PORTUGUESE_TEXT =
   "Este é um texto de publicação em português que jamais deveria vazar num relatório de diagnóstico.";
 
@@ -84,14 +96,54 @@ async function buildRepository(): Promise<DiagnosticsRepository> {
         HASH,
       ],
     }),
-    // A rogue field carrying post text is smuggled onto the model-status
-    // source to prove buildReport copies ONLY the allowlisted fields and never
-    // spreads the whole source object — this gives the "no post text" assertion
-    // real teeth against a shallow-copy regression.
-    getModelStatus: () =>
-      ({ ...fullModelStatus(), leakedNote: PORTUGUESE_TEXT }) as ModelStatus,
+    // Rogue fields carrying post text are smuggled onto the model-diagnostics
+    // source — on the runtime status AND at the top level — to prove buildReport
+    // copies ONLY the allowlisted fields and never spreads the whole source
+    // object. This gives the "no post text" assertion real teeth against a
+    // shallow-copy regression.
+    getModelDiagnostics: () =>
+      ({
+        status: { ...fullModelStatus(), leakedNote: PORTUGUESE_TEXT },
+        release: { gateDecision: "pending", rolloutState: "bundle-verified" },
+        leakedTop: PORTUGUESE_TEXT,
+      }) as unknown as ModelDiagnosticsSource,
     getPlatformIds: () => ["linkedin"],
   });
+}
+
+/** A repository whose only model-diagnostics source is the hostile object. */
+function diagnosticsWithStatus(
+  source: ModelDiagnosticsSource,
+): DiagnosticsRepository {
+  const metrics = new MetricsRepository(new MemoryStorageArea());
+  return new DiagnosticsRepository({
+    getSettings: async () => DEFAULT_SETTINGS,
+    getMetrics: () => metrics.get(),
+    getEnvironment: () => ({
+      version: "0.1.0",
+      manifestPermissions: ["storage"],
+    }),
+    getPlatformIds: () => [],
+    getModelDiagnostics: () => source,
+  });
+}
+
+function fullReleaseDescriptor() {
+  return {
+    schemaVersion: 1 as const,
+    modelId: "tmr-ai-text-detector",
+    modelVersion: "b9aa251e5bcda7e429fcc936767d921435945b60",
+    bundleDigest: BUNDLE_DIGEST,
+    tokenizerDigest: TOKENIZER_DIGEST,
+    aggregationVersion: "tmr-aggregation-v2",
+    contentCompositionVersion: "lexical-content-v1",
+    calibrationSetDigest: CALIBRATION_SET_DIGEST,
+    profileDigests: [PROFILE_DIGEST],
+    rolloutState: "indicator" as const,
+    gateDecision: "indicator-only" as const,
+    issuedAt: "2026-01-01T00:00:00.000Z",
+    evidenceDigest: "f".repeat(64),
+  };
 }
 
 describe("DiagnosticsRepository", () => {
@@ -109,9 +161,11 @@ describe("DiagnosticsRepository", () => {
     ]);
 
     const serialized = JSON.stringify(report);
-    expect(serialized).not.toMatch(/[a-f0-9]{64}/u);
-    expect(serialized).not.toContain("https://");
+    // Technical digests (bundle, tokenizer, calibration set) are allowed; post
+    // text, URLs and smuggled rogue fields are not.
     expect(serialized).not.toContain(PORTUGUESE_TEXT.slice(0, 20));
+    expect(serialized).not.toContain("https://");
+    expect(serialized).not.toMatch(/leakedNote|leakedTop/u);
   });
 
   it("excludes manifest host patterns and hashes from the permission list", async () => {
@@ -127,18 +181,106 @@ describe("DiagnosticsRepository", () => {
     ]);
   });
 
-  it("reduces model status to a sanitized, url-free allowlist", async () => {
+  it("reduces model status to a sanitized runtime + release view", async () => {
     const diagnostics = await buildRepository();
 
     const report = await diagnostics.buildReport();
     expect(report.modelStatus).not.toBeNull();
     expect(Object.keys(report.modelStatus ?? {}).sort()).toEqual([
+      "release",
+      "status",
+    ]);
+    const view = report.modelStatus as ModelDiagnosticsView;
+    expect(Object.keys(view.status).sort()).toEqual([
       "backend",
-      "classifierId",
-      "modelVersion",
+      "calibrationCoverage",
+      "calibrationSetDigest",
+      "earliestExpiry",
+      "initializedAt",
+      "profileCount",
+      "reasonCodes",
+      "runtimeIdentity",
       "state",
       "supportsBatching",
     ]);
+    expect(Object.keys(view.release).sort()).toEqual([
+      "gateDecision",
+      "rolloutState",
+    ]);
+    expect(view.status.runtimeIdentity).not.toHaveProperty("leakedNote");
+  });
+
+  it("copies only the closed allowlist and strips every rogue field", async () => {
+    const source = {
+      status: {
+        ...fullModelStatus(),
+        state: "ready" as const,
+        backend: "wasm" as const,
+        runtimeIdentity: {
+          kind: "bundle" as const,
+          modelId: "tmr-ai-text-detector",
+          modelVersion: "b9aa251e5bcda7e429fcc936767d921435945b60",
+          bundleDigest: BUNDLE_DIGEST,
+          tokenizerDigest: TOKENIZER_DIGEST,
+          aggregationVersion: "tmr-aggregation-v2",
+          contentCompositionVersion: "lexical-content-v1",
+          calibrationSetDigest: CALIBRATION_SET_DIGEST,
+        },
+        calibrationCoverage: "partial" as const,
+        calibrationSetDigest: CALIBRATION_SET_DIGEST,
+        profileCount: 3,
+        earliestExpiry: "2027-01-15T00:00:00.000Z",
+        reasonCodes: [],
+        initializedAt: 1_784_000_000_000,
+        supportsBatching: true,
+        selectedProfileDigest: PROFILE_DIGEST,
+        cacheValidUntil: "2026-08-01T00:00:00.000Z",
+      },
+      release: fullReleaseDescriptor(),
+      aiScore: 0.97,
+      calibratedScore: 0.96,
+      postText: PORTUGUESE_TEXT,
+      author: "Pessoa",
+      url: "https://www.linkedin.com/in/pessoa",
+      contentHash: CONTENT_HASH,
+    };
+
+    const report = await diagnosticsWithStatus(
+      source as unknown as ModelDiagnosticsSource,
+    ).buildReport();
+    expect(report.modelStatus).toEqual({
+      status: {
+        state: "ready",
+        backend: "wasm",
+        runtimeIdentity: {
+          kind: "bundle",
+          modelId: "tmr-ai-text-detector",
+          modelVersion: "b9aa251e5bcda7e429fcc936767d921435945b60",
+          bundleDigest: BUNDLE_DIGEST,
+          tokenizerDigest: TOKENIZER_DIGEST,
+          aggregationVersion: "tmr-aggregation-v2",
+          contentCompositionVersion: "lexical-content-v1",
+          calibrationSetDigest: CALIBRATION_SET_DIGEST,
+        },
+        calibrationCoverage: "partial",
+        calibrationSetDigest: CALIBRATION_SET_DIGEST,
+        profileCount: 3,
+        earliestExpiry: "2027-01-15T00:00:00.000Z",
+        reasonCodes: [],
+        initializedAt: 1_784_000_000_000,
+        supportsBatching: true,
+      },
+      release: {
+        gateDecision: "indicator-only",
+        rolloutState: "indicator",
+      },
+    });
+    const serialized = JSON.stringify(report);
+    expect(serialized).not.toMatch(
+      /aiScore|calibratedScore|selectedProfileDigest|cacheValidUntil|postText|author|https:\/\//u,
+    );
+    expect(serialized).not.toContain(CONTENT_HASH);
+    expect(serialized).not.toContain(PORTUGUESE_TEXT.slice(0, 20));
   });
 
   it("summarizes settings as booleans, limits and modes only", async () => {

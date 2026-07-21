@@ -5,6 +5,26 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { App as OptionsApp, type OptionsApi } from "@/options/App";
 import { DEFAULT_SETTINGS } from "@/shared/constants";
+import type { ModelDiagnosticsView } from "@/shared/diagnostic-types";
+import {
+  createBuiltinRuntimeIdentity,
+  createBundleRuntimeIdentity,
+  createModelStatus,
+} from "../../helpers/model-fixtures";
+
+const CALIBRATION_SET_DIGEST = "9".repeat(64);
+
+const bundleView: ModelDiagnosticsView = {
+  status: createModelStatus({
+    backend: "wasm",
+    runtimeIdentity: createBundleRuntimeIdentity({ modelVersion: "1.0.0" }),
+    calibrationCoverage: "partial",
+    calibrationSetDigest: CALIBRATION_SET_DIGEST,
+    profileCount: 2,
+    earliestExpiry: "2027-01-15T00:00:00.000Z",
+  }),
+  release: { gateDecision: "indicator-only", rolloutState: "indicator" },
+};
 
 function fakeOptionsApi(overrides: Partial<OptionsApi> = {}): OptionsApi {
   return {
@@ -166,5 +186,110 @@ describe("options settings sections", () => {
       screen.getByRole("button", { name: "Confirmar limpeza de métricas" }),
     );
     expect(api.clearMetrics).toHaveBeenCalledTimes(1);
+  });
+
+  it("surfaces the scientific decision, rollout and calibration coverage in the model card", async () => {
+    const api = fakeOptionsApi({
+      getModelDiagnostics: vi.fn().mockResolvedValue(bundleView),
+    });
+    render(<OptionsApp api={api} />);
+
+    // Rollout state (from the descriptor) is distinct from the gate decision.
+    expect(await screen.findByText("Avisos autorizados")).toBeVisible();
+    expect(screen.getByText("Autorizado somente para avisos")).toBeVisible();
+    expect(screen.getByText("Cobertura parcial de calibração")).toBeVisible();
+  });
+
+  it("formats the earliest profile expiry in pt-BR and never leaks the calibration digest", async () => {
+    const api = fakeOptionsApi({
+      getModelDiagnostics: vi.fn().mockResolvedValue(bundleView),
+    });
+    render(<OptionsApp api={api} />);
+
+    const expectedExpiry = new Intl.DateTimeFormat("pt-BR", {
+      dateStyle: "medium",
+      timeZone: "UTC",
+    }).format(new Date("2027-01-15T00:00:00.000Z"));
+    expect(await screen.findByText(expectedExpiry)).toBeVisible();
+    // The set digest is a technical field for the advanced diagnostic export,
+    // never a value on the read-only cards.
+    expect(document.body.textContent).not.toContain(CALIBRATION_SET_DIGEST);
+  });
+
+  it("shows an empty-profile expiry as a plain-language note", async () => {
+    const api = fakeOptionsApi({
+      getModelDiagnostics: vi.fn().mockResolvedValue({
+        status: createModelStatus({
+          calibrationCoverage: "none",
+          earliestExpiry: null,
+        }),
+        release: { gateDecision: "pending", rolloutState: "bundle-verified" },
+      } satisfies ModelDiagnosticsView),
+    });
+    render(<OptionsApp api={api} />);
+
+    expect(await screen.findByText("Nenhum perfil aplicável")).toBeVisible();
+    expect(
+      screen.getByText(
+        "Sem perfil aplicável; o TMR se abstém e o fallback local pode apenas indicar.",
+      ),
+    ).toBeVisible();
+  });
+
+  it("distinguishes the stylometric fallback from the descriptor rollout", async () => {
+    const api = fakeOptionsApi({
+      getModelDiagnostics: vi.fn().mockResolvedValue({
+        status: createModelStatus({
+          runtimeIdentity: createBuiltinRuntimeIdentity({
+            modelId: "stylometric",
+          }),
+          calibrationCoverage: "none",
+        }),
+        release: { gateDecision: "reject", rolloutState: "bundle-verified" },
+      } satisfies ModelDiagnosticsView),
+    });
+    render(<OptionsApp api={api} />);
+
+    expect(
+      await screen.findByText("Fallback estilométrico ativo"),
+    ).toBeVisible();
+    expect(
+      screen.getByText("Bundle verificado; inativo no feed"),
+    ).toBeVisible();
+  });
+
+  it("surfaces the circuit-breaker degraded state in the model card", async () => {
+    const api = fakeOptionsApi({
+      getModelDiagnostics: vi.fn().mockResolvedValue({
+        status: createModelStatus({
+          reasonCodes: ["CIRCUIT_BREAKER_OPEN"],
+        }),
+        release: { gateDecision: "pass", rolloutState: "actions" },
+      } satisfies ModelDiagnosticsView),
+    });
+    render(<OptionsApp api={api} />);
+
+    expect(
+      await screen.findByText(
+        "TMR temporariamente desativado; usando fallback local.",
+      ),
+    ).toBeVisible();
+  });
+
+  it("still renders the settings sections when the diagnostics view fails to load", async () => {
+    const api = fakeOptionsApi({
+      getModelDiagnostics: vi.fn().mockRejectedValue(new Error("offline")),
+    });
+    render(<OptionsApp api={api} />);
+
+    // A diagnostics failure must not block editing settings.
+    expect(
+      await screen.findByRole("group", { name: "Avançado" }),
+    ).toBeVisible();
+    const toggle = screen.getByLabelText(
+      "Exibir score técnico no diagnóstico avançado",
+    );
+    fireEvent.click(toggle);
+    expect(api.updateSettings).toHaveBeenCalledWith({ showScore: true });
   });
 });

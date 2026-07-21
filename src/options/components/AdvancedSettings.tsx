@@ -1,6 +1,7 @@
 import { useState } from "react";
 
 import { ModelSettings } from "@/options/components/ModelSettings";
+import type { ModelDiagnosticsView } from "@/shared/diagnostic-types";
 import type { UserSettings } from "@/shared/settings-types";
 import { Field } from "./Form/Field";
 import { Fieldset } from "./Form/Fieldset";
@@ -15,6 +16,8 @@ interface AdvancedSettingsProps {
    * renders when the diagnostics service is not wired (e.g. in tests).
    */
   onDownloadDiagnostics?: () => void;
+  /** The sanitized runtime + rollout view surfaced on the model card. */
+  diagnostics?: ModelDiagnosticsView | null;
 }
 
 /**
@@ -29,12 +32,17 @@ export function AdvancedSettings({
   onUpdate,
   onReset,
   onDownloadDiagnostics,
+  diagnostics,
 }: AdvancedSettingsProps) {
   const [resetArmed, setResetArmed] = useState(false);
 
   return (
     <Fieldset title="Avançado">
-      <ModelSettings settings={settings} onUpdate={onUpdate} />
+      <ModelSettings
+        settings={settings}
+        onUpdate={onUpdate}
+        diagnostics={diagnostics}
+      />
 
       <Field
         label="Exibir score técnico no diagnóstico avançado"

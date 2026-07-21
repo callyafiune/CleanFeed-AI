@@ -1,4 +1,5 @@
 import type { CleanFeedError } from "@/shared/errors";
+import type { ModelDiagnosticsView } from "@/shared/diagnostic-types";
 import type { UserSettings } from "@/shared/settings-types";
 import type {
   ClassificationResult,
@@ -77,6 +78,8 @@ export type ExtensionMessage =
   | MessageEnvelope<"UPDATE_SETTINGS", Partial<UserSettings>>
   | MessageEnvelope<"MODEL_STATUS_REQUEST", EmptyPayload>
   | MessageEnvelope<"MODEL_STATUS_RESULT" | "WORKER_STATUS", ModelStatus>
+  | MessageEnvelope<"MODEL_DIAGNOSTICS_REQUEST", EmptyPayload>
+  | MessageEnvelope<"MODEL_DIAGNOSTICS_RESULT", ModelDiagnosticsView>
   | MessageEnvelope<
       "GET_SETTINGS" | "CACHE_CLEAR" | "METRICS_CLEAR",
       EmptyPayload

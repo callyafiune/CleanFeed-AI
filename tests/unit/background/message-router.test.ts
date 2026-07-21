@@ -358,3 +358,75 @@ describe("BackgroundMessageRouter settings bridge", () => {
     await expect(store.getVersion()).resolves.toBe(2);
   });
 });
+
+describe("BackgroundMessageRouter model diagnostics", () => {
+  function diagnosticsRouter(
+    status: ModelStatus,
+    release: { gateDecision: string; rolloutState: string },
+  ): BackgroundMessageRouter {
+    return new BackgroundMessageRouter({
+      cache: {
+        getCachedClassification: vi.fn().mockResolvedValue(undefined),
+        set: vi.fn().mockResolvedValue(undefined),
+        remove: vi.fn().mockResolvedValue(undefined),
+      },
+      metrics: { record: vi.fn().mockResolvedValue(undefined) },
+      offscreenClient: { classify: vi.fn() },
+      modelKey: "mock:1.0.0",
+      settingsFingerprint: "settings",
+      modelStatus: vi.fn().mockResolvedValue(status),
+      modelRelease: vi
+        .fn()
+        .mockResolvedValue(
+          release as { gateDecision: string; rolloutState: string },
+        ),
+    });
+  }
+
+  it("combines the active status with the descriptor rollout into a sanitized view", async () => {
+    const router = diagnosticsRouter(readyStatus(tmrIdentity), {
+      gateDecision: "indicator-only",
+      rolloutState: "indicator",
+    });
+
+    const response = await router.handle({
+      source: "options",
+      target: "background",
+      type: "MODEL_DIAGNOSTICS_REQUEST",
+      payload: undefined,
+    });
+
+    expect(response).toMatchObject({
+      type: "MODEL_DIAGNOSTICS_RESULT",
+      source: "background",
+      target: "options",
+      payload: {
+        status: { state: "ready", runtimeIdentity: tmrIdentity },
+        release: { gateDecision: "indicator-only", rolloutState: "indicator" },
+      },
+    });
+  });
+
+  it("never carries individual scores or a rogue field into the diagnostics view", async () => {
+    const hostileStatus = {
+      ...readyStatus(tmrIdentity),
+      leakedNote: "texto de post que jamais pode vazar",
+      selectedProfileDigest: "d".repeat(64),
+    } as unknown as ModelStatus;
+    const router = diagnosticsRouter(hostileStatus, {
+      gateDecision: "pass",
+      rolloutState: "actions",
+    });
+
+    const response = await router.handle({
+      source: "popup",
+      target: "background",
+      type: "MODEL_DIAGNOSTICS_REQUEST",
+      payload: undefined,
+    });
+
+    const serialized = JSON.stringify(response);
+    expect(serialized).not.toContain("texto de post");
+    expect(serialized).not.toMatch(/leakedNote|selectedProfileDigest/u);
+  });
+});

@@ -88,12 +88,39 @@ describe("default Chrome APIs", () => {
   });
 
   it("loads options once after its default API updates state", async () => {
-    const sendToRuntime = vi.fn().mockResolvedValue({
-      source: "background",
-      target: "options",
-      type: "SETTINGS_RESULT",
-      payload: { ...DEFAULT_SETTINGS },
-    });
+    // The default options API asks the background for the settings and, in
+    // parallel, the sanitized model-diagnostics view, so it makes two runtime
+    // round-trips on the initial load and then settles.
+    const sendToRuntime = vi.fn(async (message: { type: string }) =>
+      message.type === "MODEL_DIAGNOSTICS_REQUEST"
+        ? {
+            source: "background",
+            target: "options",
+            type: "MODEL_DIAGNOSTICS_RESULT",
+            payload: {
+              status: {
+                state: "unavailable",
+                backend: "mock",
+                runtimeIdentity: null,
+                calibrationCoverage: "none",
+                calibrationSetDigest: null,
+                profileCount: 0,
+                earliestExpiry: null,
+                reasonCodes: [],
+              },
+              release: {
+                gateDecision: "pending",
+                rolloutState: "bundle-verified",
+              },
+            },
+          }
+        : {
+            source: "background",
+            target: "options",
+            type: "SETTINGS_RESULT",
+            payload: { ...DEFAULT_SETTINGS },
+          },
+    );
 
     vi.stubGlobal("chrome", {
       runtime: { sendMessage: sendToRuntime },
@@ -102,9 +129,9 @@ describe("default Chrome APIs", () => {
     render(<OptionsApp />);
 
     await screen.findByRole("group", { name: "Geral" });
-    await waitFor(() => expect(sendToRuntime).toHaveBeenCalledTimes(1));
+    await waitFor(() => expect(sendToRuntime).toHaveBeenCalledTimes(2));
     await new Promise((resolve) => setTimeout(resolve, 20));
 
-    expect(sendToRuntime).toHaveBeenCalledTimes(1);
+    expect(sendToRuntime).toHaveBeenCalledTimes(2);
   });
 });

@@ -11,9 +11,14 @@ import {
 import { MockClassifier } from "@/inference/mock-classifier";
 import { LinkedInAdapter } from "@/platforms/linkedin/linkedin-adapter";
 import { DEFAULT_SETTINGS } from "@/shared/constants";
+import type {
+  ModelDiagnosticsSource,
+  ModelDiagnosticsView,
+} from "@/shared/diagnostic-types";
 import type { EffectiveSettings } from "@/shared/settings-types";
 import type { ClassificationResult, Clock } from "@/shared/types";
 import { buildCacheKey, ClassificationCache } from "@/storage/cache";
+import { DiagnosticsRepository } from "@/storage/diagnostics";
 import { FeedbackRepository } from "@/storage/feedback";
 import { HistoryRepository } from "@/storage/history";
 import { MetricsRepository } from "@/storage/metrics";
@@ -309,5 +314,74 @@ describe("storage privacy audit", () => {
     expect(rows).toHaveLength(1);
     expect(rows[0]!.textHash).toBe(POST_HASH);
     expect(rows.every((row) => !("text" in row))).toBe(true);
+  });
+
+  it("exports a sanitized rollout diagnostic that leaks no text, url, author, hash or score", async () => {
+    const CONTENT_HASH = "e".repeat(64);
+    const metrics = new MetricsRepository(new MemoryStorageArea());
+    const diagnostics = new DiagnosticsRepository({
+      getSettings: async () => DEFAULT_SETTINGS,
+      getMetrics: () => metrics.get(),
+      getEnvironment: () => ({
+        version: "0.1.0",
+        manifestPermissions: ["storage"],
+      }),
+      getPlatformIds: () => ["linkedin"],
+      // Every field a rogue caller might smuggle onto the combined source is
+      // present here so the export is proven to copy only the closed allowlist.
+      getModelDiagnostics: () =>
+        ({
+          status: {
+            state: "ready",
+            backend: "wasm",
+            runtimeIdentity: {
+              kind: "bundle",
+              modelId: "tmr-ai-text-detector",
+              modelVersion: "b9aa251e5bcda7e429fcc936767d921435945b60",
+              bundleDigest: "b".repeat(64),
+              tokenizerDigest: "c".repeat(64),
+              aggregationVersion: "tmr-aggregation-v2",
+              contentCompositionVersion: "lexical-content-v1",
+              calibrationSetDigest: "a".repeat(64),
+            },
+            calibrationCoverage: "partial",
+            calibrationSetDigest: "a".repeat(64),
+            profileCount: 2,
+            earliestExpiry: "2027-01-15T00:00:00.000Z",
+            reasonCodes: [],
+            aiScore: 0.97,
+            calibratedScore: 0.96,
+            postText: PORTUGUESE_LONG_TEXT,
+            author: AUTHOR_NAME,
+            profileUrl: PROFILE_URL,
+            contentHash: CONTENT_HASH,
+            selectedProfileDigest: "d".repeat(64),
+            cacheValidUntil: "2026-08-01T00:00:00.000Z",
+          },
+          release: {
+            gateDecision: "indicator-only",
+            rolloutState: "indicator",
+          },
+        }) as unknown as ModelDiagnosticsSource,
+    });
+
+    const report = await diagnostics.buildReport();
+    // The rollout is surfaced (proves the view is wired end-to-end).
+    expect(report.modelStatus).not.toBeNull();
+    const view = report.modelStatus as ModelDiagnosticsView;
+    expect(view.release).toEqual({
+      gateDecision: "indicator-only",
+      rolloutState: "indicator",
+    });
+    expect(view.status.calibrationCoverage).toBe("partial");
+
+    const serialized = JSON.stringify(report);
+    expect(serialized).not.toContain(AUTHOR_NAME);
+    expect(serialized).not.toContain(PROFILE_URL);
+    expect(serialized).not.toContain(PORTUGUESE_LONG_TEXT.slice(0, 50));
+    expect(serialized).not.toContain(CONTENT_HASH);
+    expect(serialized).not.toMatch(
+      /aiScore|calibratedScore|postText|author|selectedProfileDigest|cacheValidUntil|https:\/\//u,
+    );
   });
 });

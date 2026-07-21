@@ -2,12 +2,18 @@ import type { CircuitBreakerSnapshot } from "@/inference/circuit-breaker";
 import type {
   DiagnosticCircuitBreaker,
   DiagnosticExtensionInfo,
-  DiagnosticModelStatus,
-  DiagnosticReport,
+  DiagnosticRuntimeStatus,
   DiagnosticSettingsSummary,
+  DiagnosticReport,
+  ModelDiagnosticsSource,
+  ModelDiagnosticsView,
 } from "@/shared/diagnostic-types";
 import type { UserSettings } from "@/shared/settings-types";
-import type { AggregateMetricsSnapshot, ModelStatus } from "@/shared/types";
+import type {
+  AggregateMetricsSnapshot,
+  ModelStatus,
+  RuntimeModelIdentity,
+} from "@/shared/types";
 
 /**
  * Environment facts the report can safely surface. `manifestPermissions` must be
@@ -31,8 +37,15 @@ export interface DiagnosticsRepositoryOptions {
     Promise<AggregateMetricsSnapshot> | AggregateMetricsSnapshot;
   getEnvironment: () => Promise<DiagnosticEnvironment> | DiagnosticEnvironment;
   getPlatformIds: () => Promise<readonly string[]> | readonly string[];
-  getModelStatus?: () =>
-    Promise<ModelStatus | undefined> | ModelStatus | undefined;
+  /**
+   * The combined runtime status + release descriptor. It is sanitized through
+   * {@link sanitizeModelDiagnostics} on the way into the report, so callers may
+   * hand over a fuller object without leaking anything beyond the allowlist.
+   */
+  getModelDiagnostics?: () =>
+    | Promise<ModelDiagnosticsSource | undefined>
+    | ModelDiagnosticsSource
+    | undefined;
   getCircuitBreaker?: () =>
     | Promise<CircuitBreakerSnapshot | undefined>
     | CircuitBreakerSnapshot
@@ -57,22 +70,31 @@ export class DiagnosticsRepository {
   constructor(private readonly options: DiagnosticsRepositoryOptions) {}
 
   async buildReport(): Promise<DiagnosticReport> {
-    const [settings, metrics, environment, platformIds, modelStatus, breaker] =
-      await Promise.all([
-        this.options.getSettings(),
-        this.options.getMetrics(),
-        this.options.getEnvironment(),
-        this.options.getPlatformIds(),
-        this.options.getModelStatus?.() ?? undefined,
-        this.options.getCircuitBreaker?.() ?? undefined,
-      ]);
+    const [
+      settings,
+      metrics,
+      environment,
+      platformIds,
+      modelDiagnostics,
+      breaker,
+    ] = await Promise.all([
+      this.options.getSettings(),
+      this.options.getMetrics(),
+      this.options.getEnvironment(),
+      this.options.getPlatformIds(),
+      this.options.getModelDiagnostics?.() ?? undefined,
+      this.options.getCircuitBreaker?.() ?? undefined,
+    ]);
 
     const circuitBreaker = sanitizeCircuitBreaker(breaker);
     return {
       extension: buildExtensionInfo(environment),
       manifestPermissions: sanitizePermissions(environment.manifestPermissions),
       metrics,
-      modelStatus: sanitizeModelStatus(modelStatus),
+      modelStatus:
+        modelDiagnostics === undefined
+          ? null
+          : sanitizeModelDiagnostics(modelDiagnostics),
       platforms: [...platformIds].sort(),
       settingsSummary: buildSettingsSummary(settings),
       // Present only when a breaker source is wired in; absent otherwise so the
@@ -131,19 +153,68 @@ function sanitizePermissions(permissions: readonly string[]): string[] {
   return [...new Set(tokens)].sort();
 }
 
-function sanitizeModelStatus(
-  status: ModelStatus | undefined,
-): DiagnosticModelStatus | null {
-  if (status === undefined) {
-    return null;
-  }
+/**
+ * Reduces the combined runtime status + release descriptor to the closed
+ * {@link ModelDiagnosticsView} allowlist. Every field is copied explicitly and
+ * the runtime identity is discriminated by `kind` before its fields are copied —
+ * the source objects are never spread — so a smuggled `aiScore`, `postText`,
+ * `author`, URL, content hash, `selectedProfileDigest` or `cacheValidUntil` can
+ * never survive into a diagnostic report.
+ */
+export function sanitizeModelDiagnostics(
+  source: ModelDiagnosticsSource,
+): ModelDiagnosticsView {
+  return {
+    status: sanitizeRuntimeStatus(source.status),
+    release: {
+      gateDecision: source.release.gateDecision,
+      rolloutState: source.release.rolloutState,
+    },
+  };
+}
 
+function sanitizeRuntimeStatus(status: ModelStatus): DiagnosticRuntimeStatus {
   return {
     state: status.state,
     backend: status.backend,
-    modelVersion: status.runtimeIdentity?.modelVersion ?? "unavailable",
-    classifierId: status.runtimeIdentity?.modelId ?? "unavailable",
-    supportsBatching: status.supportsBatching ?? false,
+    runtimeIdentity: sanitizeRuntimeIdentity(status.runtimeIdentity),
+    calibrationCoverage: status.calibrationCoverage,
+    calibrationSetDigest: status.calibrationSetDigest,
+    profileCount: sanitizeCount(status.profileCount),
+    earliestExpiry: status.earliestExpiry,
+    reasonCodes: [...status.reasonCodes],
+    ...(status.initializedAt === undefined
+      ? {}
+      : { initializedAt: status.initializedAt }),
+    ...(status.supportsBatching === undefined
+      ? {}
+      : { supportsBatching: status.supportsBatching }),
+  };
+}
+
+function sanitizeRuntimeIdentity(
+  identity: RuntimeModelIdentity | null,
+): RuntimeModelIdentity | null {
+  if (identity === null) {
+    return null;
+  }
+  if (identity.kind === "builtin") {
+    return {
+      kind: "builtin",
+      modelId: identity.modelId,
+      modelVersion: identity.modelVersion,
+      implementationVersion: identity.implementationVersion,
+    };
+  }
+  return {
+    kind: "bundle",
+    modelId: identity.modelId,
+    modelVersion: identity.modelVersion,
+    bundleDigest: identity.bundleDigest,
+    tokenizerDigest: identity.tokenizerDigest,
+    aggregationVersion: identity.aggregationVersion,
+    contentCompositionVersion: identity.contentCompositionVersion,
+    calibrationSetDigest: identity.calibrationSetDigest,
   };
 }
 

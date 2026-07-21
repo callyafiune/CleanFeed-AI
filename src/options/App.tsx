@@ -21,8 +21,10 @@ import { PrivacyNotice } from "@/options/components/PrivacyNotice";
 import { downloadJson } from "@/options/download";
 import type { KeywordRule } from "@/rules/rule-engine";
 import { DEFAULT_SETTINGS } from "@/shared/constants";
+import type { ModelDiagnosticsView } from "@/shared/diagnostic-types";
 import type { DiagnosticEnvironment } from "@/storage/diagnostics";
 import { parseExtensionMessage } from "@/shared/message-validation";
+import { requestModelDiagnostics } from "@/shared/model-diagnostics-client";
 import type {
   PlatformSettings as PlatformSettingsValue,
   UserSettings,
@@ -67,6 +69,11 @@ export interface OptionsApi {
   importExport?: ImportExportApi;
   /** Sanitized diagnostics report. */
   diagnostics?: DiagnosticsApi;
+  /**
+   * The sanitized diagnostics view (runtime status + descriptor rollout) shown
+   * on the model card. Optional so a load failure never blocks editing settings.
+   */
+  getModelDiagnostics?(): Promise<ModelDiagnosticsView | null>;
 }
 
 const defaultOptionsApi = createChromeOptionsApi();
@@ -78,26 +85,43 @@ const CLEAR_ERROR = "Não foi possível concluir a limpeza solicitada.";
 export function App({ api = defaultOptionsApi }: { api?: OptionsApi }) {
   const [settings, setSettings] = useState<UserSettings>(DEFAULT_SETTINGS);
   const [platform, setPlatform] = useState<PlatformSettingsValue | null>(null);
+  const [diagnostics, setDiagnostics] = useState<ModelDiagnosticsView | null>(
+    null,
+  );
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
     let active = true;
+    // Settings, per-platform overrides and the diagnostics view load in
+    // parallel. Only a settings failure is fatal; per-platform overrides and the
+    // diagnostics view degrade silently so a diagnostics failure never blocks
+    // editing settings.
     void (async () => {
-      try {
-        const loaded = await api.getSettings();
-        if (active) setSettings(loaded);
-      } catch {
-        if (active) setError(LOAD_ERROR);
+      const [settingsResult, platformResult, diagnosticsResult] =
+        await Promise.allSettled([
+          Promise.resolve(api.getSettings()),
+          Promise.resolve(api.getPlatformSettings?.(LINKEDIN_PLATFORM_ID)),
+          Promise.resolve(api.getModelDiagnostics?.() ?? null),
+        ]);
+      if (!active) return;
+
+      if (settingsResult.status === "fulfilled") {
+        setSettings(settingsResult.value);
+      } else {
+        setError(LOAD_ERROR);
         return;
       }
-      try {
-        const loadedPlatform =
-          await api.getPlatformSettings?.(LINKEDIN_PLATFORM_ID);
-        if (active && loadedPlatform !== undefined) {
-          setPlatform(loadedPlatform);
-        }
-      } catch {
-        // Per-platform overrides are optional; a load failure is not fatal.
+      if (
+        platformResult.status === "fulfilled" &&
+        platformResult.value !== undefined
+      ) {
+        setPlatform(platformResult.value);
+      }
+      if (
+        diagnosticsResult.status === "fulfilled" &&
+        diagnosticsResult.value != null
+      ) {
+        setDiagnostics(diagnosticsResult.value);
       }
     })();
     return () => {
@@ -226,6 +250,7 @@ export function App({ api = defaultOptionsApi }: { api?: OptionsApi }) {
 
       <AdvancedSettings
         settings={settings}
+        diagnostics={diagnostics}
         onDownloadDiagnostics={
           api.diagnostics === undefined ? undefined : downloadDiagnostics
         }
@@ -285,6 +310,9 @@ export function createChromeOptionsApi(): OptionsApi {
     getMetrics: () => metrics.get(),
     getEnvironment: readEnvironment,
     getPlatformIds: () => [...KNOWN_PLATFORM_IDS],
+    // The same closed round-trip the UI uses; buildReport re-sanitizes it.
+    getModelDiagnostics: async () =>
+      (await requestModelDiagnostics("options")) ?? undefined,
   });
 
   return {
@@ -328,6 +356,13 @@ export function createChromeOptionsApi(): OptionsApi {
     },
     diagnostics: {
       buildReport: () => diagnostics.buildReport(),
+    },
+    async getModelDiagnostics() {
+      try {
+        return await requestModelDiagnostics("options");
+      } catch {
+        return null;
+      }
     },
   };
 }

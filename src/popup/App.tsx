@@ -5,7 +5,9 @@ import { ExtensionStatus } from "@/popup/components/ExtensionStatus";
 import { ModelStatusCard } from "@/popup/components/ModelStatusCard";
 import { PageActions } from "@/popup/components/PageActions";
 import { PageStatsSummary } from "@/popup/components/PageStatsSummary";
+import type { ModelDiagnosticsView } from "@/shared/diagnostic-types";
 import { parseExtensionMessage } from "@/shared/message-validation";
+import { requestModelDiagnostics } from "@/shared/model-diagnostics-client";
 import type { UserSettings } from "@/shared/settings-types";
 import type { ModelStatus, PageStats } from "@/shared/types";
 import { DomainPauseRepository } from "@/storage/domain-pause";
@@ -14,6 +16,12 @@ import { ChromeStorageArea } from "@/storage/storage-area";
 export interface PopupApi {
   getPageStats(): Promise<PageStats | null>;
   getModelStatus(): Promise<ModelStatus | null>;
+  /**
+   * The sanitized diagnostics view (runtime status + descriptor rollout). It
+   * drives the model card. Optional so the popup degrades to an empty card when
+   * the background cannot answer.
+   */
+  getModelDiagnostics?(): Promise<ModelDiagnosticsView | null>;
   getSettings(): Promise<UserSettings | null>;
   getActiveHost(): Promise<string | null>;
   isDomainPaused(hostname: string): Promise<boolean>;
@@ -30,7 +38,9 @@ const REFRESH_INTERVAL_MS = 1_000;
 
 export function App({ api = defaultPopupApi }: { api?: PopupApi }) {
   const [stats, setStats] = useState<PageStats | null>(null);
-  const [status, setStatus] = useState<ModelStatus | null>(null);
+  const [diagnostics, setDiagnostics] = useState<ModelDiagnosticsView | null>(
+    null,
+  );
   const [settings, setSettings] = useState<UserSettings | null>(null);
   const [host, setHost] = useState<string | null>(null);
   const [paused, setPaused] = useState(false);
@@ -42,16 +52,16 @@ export function App({ api = defaultPopupApi }: { api?: PopupApi }) {
     let active = true;
     const refresh = async () => {
       try {
-        const [pageStats, modelStatus, userSettings, activeHost] =
+        const [pageStats, modelDiagnostics, userSettings, activeHost] =
           await Promise.all([
             api.getPageStats(),
-            api.getModelStatus(),
+            api.getModelDiagnostics?.() ?? Promise.resolve(null),
             api.getSettings(),
             api.getActiveHost(),
           ]);
         if (!active) return;
         setStats(pageStats);
-        setStatus(modelStatus);
+        setDiagnostics(modelDiagnostics);
         setSettings(userSettings);
         setHost(activeHost);
         const domainPaused =
@@ -112,7 +122,7 @@ export function App({ api = defaultPopupApi }: { api?: PopupApi }) {
       ) : loaded ? (
         <p>Plataforma não suportada</p>
       ) : null}
-      <ModelStatusCard status={status} />
+      <ModelStatusCard diagnostics={diagnostics} />
       <PageActions
         host={host}
         paused={paused}
@@ -182,6 +192,13 @@ export function createChromePopupApi(): PopupApi {
         });
         const message = parseExtensionMessage(response);
         return message.type === "MODEL_STATUS_RESULT" ? message.payload : null;
+      } catch {
+        return null;
+      }
+    },
+    async getModelDiagnostics() {
+      try {
+        return await requestModelDiagnostics("popup");
       } catch {
         return null;
       }

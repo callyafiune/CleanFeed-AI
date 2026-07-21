@@ -28,6 +28,8 @@ const messageTypeValues = [
   "CLEAR_PAGE_PRESENTATION",
   "MODEL_STATUS_REQUEST",
   "MODEL_STATUS_RESULT",
+  "MODEL_DIAGNOSTICS_REQUEST",
+  "MODEL_DIAGNOSTICS_RESULT",
   "GET_SETTINGS",
   "SETTINGS_RESULT",
   "CACHE_CLEAR",
@@ -125,6 +127,18 @@ const evidenceQualities = new Set<string>([
   "unsupported",
 ]);
 const calibrationCoverages = new Set<string>(["none", "partial", "complete"]);
+const gateDecisions = new Set<string>([
+  "pending",
+  "reject",
+  "indicator-only",
+  "pass",
+]);
+const rolloutStates = new Set<string>([
+  "bundle-verified",
+  "shadow",
+  "indicator",
+  "actions",
+]);
 
 type Route = readonly [ExtensionContext, ExtensionContext];
 const allowedRoutes: Record<MessageType, readonly Route[]> = {
@@ -156,6 +170,14 @@ const allowedRoutes: Record<MessageType, readonly Route[]> = {
     ["background", "popup"],
     ["background", "options"],
     ["offscreen", "background"],
+  ],
+  MODEL_DIAGNOSTICS_REQUEST: [
+    ["popup", "background"],
+    ["options", "background"],
+  ],
+  MODEL_DIAGNOSTICS_RESULT: [
+    ["background", "popup"],
+    ["background", "options"],
   ],
   GET_SETTINGS: [
     ["content", "background"],
@@ -199,6 +221,7 @@ const emptyPayloadMessageTypes = new Set<MessageType>([
   "GET_PAGE_STATS",
   "CLEAR_PAGE_PRESENTATION",
   "MODEL_STATUS_REQUEST",
+  "MODEL_DIAGNOSTICS_REQUEST",
   "GET_SETTINGS",
   "CACHE_CLEAR",
   "METRICS_CLEAR",
@@ -319,6 +342,8 @@ function isValidPayload(type: MessageType, payload: unknown): boolean {
     case "MODEL_STATUS_RESULT":
     case "WORKER_STATUS":
       return isModelStatus(payload);
+    case "MODEL_DIAGNOSTICS_RESULT":
+      return isModelDiagnosticsView(payload);
     case "SETTINGS_RESULT":
       return isSettings(payload, true);
     case "SHOW_MANUAL_ANALYSIS":
@@ -727,6 +752,28 @@ function isModelStatus(value: unknown): boolean {
     isDecisionReasonCodeList(value.reasonCodes) &&
     isOptional(value.initializedAt, isNonNegativeFinite) &&
     isOptional(value.supportsBatching, (item) => typeof item === "boolean")
+  );
+}
+
+/**
+ * A sanitized diagnostics view: the runtime status (validated by the closed
+ * {@link isModelStatus} allowlist) plus exactly the descriptor's `gateDecision`
+ * and `rolloutState`. No per-result field (score, `selectedProfileDigest`,
+ * `cacheValidUntil`) is accepted.
+ */
+function isModelDiagnosticsView(value: unknown): boolean {
+  return (
+    hasExactKeys(value, ["status", "release"]) &&
+    isModelStatus(value.status) &&
+    isDiagnosticReleaseStatus(value.release)
+  );
+}
+
+function isDiagnosticReleaseStatus(value: unknown): boolean {
+  return (
+    hasExactKeys(value, ["gateDecision", "rolloutState"]) &&
+    isStringInSet(value.gateDecision, gateDecisions) &&
+    isStringInSet(value.rolloutState, rolloutStates)
   );
 }
 
