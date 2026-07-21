@@ -113,6 +113,31 @@ describe("options settings sections", () => {
     expect(screen.queryByLabelText(/Limiar/u)).toBeNull();
   });
 
+  it("reveals the experimental marking threshold ONLY when the preview is enabled", async () => {
+    // Off by default: the calibrated/normal surface never exposes a threshold.
+    const { unmount } = render(<OptionsApp api={fakeOptionsApi()} />);
+    await screen.findByRole("group", { name: "Avançado" });
+    expect(
+      screen.queryByLabelText("Limiar de marcação experimental (%)"),
+    ).toBeNull();
+    unmount();
+
+    // Enabled: the field appears so the user can tune the provisional cut.
+    render(
+      <OptionsApp
+        api={fakeOptionsApi({
+          getSettings: vi.fn().mockResolvedValue({
+            ...DEFAULT_SETTINGS,
+            experimentalUncalibratedTmr: true,
+          }),
+        })}
+      />,
+    );
+    expect(
+      await screen.findByLabelText("Limiar de marcação experimental (%)"),
+    ).toBeVisible();
+  });
+
   it("shows the ceiling-only presentation note", async () => {
     render(<OptionsApp api={fakeOptionsApi()} />);
 

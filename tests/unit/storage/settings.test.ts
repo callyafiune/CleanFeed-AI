@@ -17,13 +17,22 @@ const LEGACY_THRESHOLDS = {
 } as const;
 
 /**
- * DEFAULT_SETTINGS as it existed at schema v4, before the v5 experimental flag.
- * Historical envelopes (v1–v4) never carried `experimentalUncalibratedTmr`, so a
- * faithful seed omits it; the migration adds it back with its default.
+ * DEFAULT_SETTINGS as it existed at schema v4, before every post-v4 field
+ * (v5 `experimentalUncalibratedTmr`, v6 `experimentalMarkingThresholdPercent`).
+ * Historical envelopes (v1–v4) never carried them, so a faithful seed omits them;
+ * the migration fills each with its default.
  */
 const V4_DEFAULTS = (() => {
   const base = { ...DEFAULT_SETTINGS } as Record<string, unknown>;
   delete base.experimentalUncalibratedTmr;
+  delete base.experimentalMarkingThresholdPercent;
+  return base;
+})();
+
+/** DEFAULT_SETTINGS as it existed at schema v5: v4 plus only the v5 flag. */
+const V5_DEFAULTS = (() => {
+  const base = { ...DEFAULT_SETTINGS } as Record<string, unknown>;
+  delete base.experimentalMarkingThresholdPercent;
   return base;
 })();
 
@@ -73,7 +82,7 @@ describe("SettingsRepository", () => {
     expect(storage.read("cleanfeed.settings.v1")).toBeUndefined();
   });
 
-  it("migrates a bare v3 object (with thresholds) into a v5 envelope", async () => {
+  it("migrates a bare v3 object (with thresholds) into a v6 envelope", async () => {
     storage.seed("cleanfeed.settings.v1", {
       ...V4_DEFAULTS,
       ...LEGACY_THRESHOLDS,
@@ -85,13 +94,13 @@ describe("SettingsRepository", () => {
       minimumWordCount: 150,
     });
     expect(storage.read("cleanfeed.settings.v1")).toEqual({
-      schemaVersion: 5,
+      schemaVersion: 6,
       settingsVersion: 1,
       settings: { ...DEFAULT_SETTINGS, minimumWordCount: 150 },
     });
   });
 
-  it("migrates a persisted v3 envelope to v5, dropping the four thresholds", async () => {
+  it("migrates a persisted v3 envelope to v6, dropping the four thresholds", async () => {
     storage.seed("cleanfeed.settings.v1", {
       schemaVersion: 3,
       settingsVersion: 9,
@@ -106,7 +115,7 @@ describe("SettingsRepository", () => {
     expect(settings).toEqual({ ...DEFAULT_SETTINGS, minimumWordCount: 200 });
     expect(settings).not.toHaveProperty("markingThreshold");
     expect(storage.read("cleanfeed.settings.v1")).toEqual({
-      schemaVersion: 5,
+      schemaVersion: 6,
       settingsVersion: 9,
       settings: { ...DEFAULT_SETTINGS, minimumWordCount: 200 },
     });
@@ -133,7 +142,7 @@ describe("SettingsRepository", () => {
       useMockModel: false,
     });
     expect(storage.read("cleanfeed.settings.v1")).toEqual({
-      schemaVersion: 5,
+      schemaVersion: 6,
       settingsVersion: 7,
       settings: {
         ...DEFAULT_SETTINGS,
@@ -163,7 +172,7 @@ describe("SettingsRepository", () => {
       useMockModel: false,
     });
     expect(storage.read("cleanfeed.settings.v1")).toEqual({
-      schemaVersion: 5,
+      schemaVersion: 6,
       settingsVersion: 4,
       settings: {
         ...DEFAULT_SETTINGS,
@@ -173,7 +182,7 @@ describe("SettingsRepository", () => {
     });
   });
 
-  it("migrates a v4 envelope to v5, adding the experimental flag default", async () => {
+  it("migrates a v4 envelope to v6, filling every post-v4 default", async () => {
     storage.seed("cleanfeed.settings.v1", {
       schemaVersion: 4,
       settingsVersion: 3,
@@ -183,10 +192,30 @@ describe("SettingsRepository", () => {
     const settings = await repository.get();
     expect(settings).toEqual({ ...DEFAULT_SETTINGS, minimumWordCount: 175 });
     expect(settings.experimentalUncalibratedTmr).toBe(false);
+    expect(settings.experimentalMarkingThresholdPercent).toBe(70);
     expect(storage.read("cleanfeed.settings.v1")).toEqual({
-      schemaVersion: 5,
+      schemaVersion: 6,
       settingsVersion: 3,
       settings: { ...DEFAULT_SETTINGS, minimumWordCount: 175 },
+    });
+  });
+
+  it("migrates a v5 envelope to v6, preserving v5 prefs and adding the threshold", async () => {
+    // A v5 envelope carried the experimental flag but not the threshold. The
+    // migration must KEEP the user's opted-in flag and only fill the v6 default.
+    storage.seed("cleanfeed.settings.v1", {
+      schemaVersion: 5,
+      settingsVersion: 8,
+      settings: { ...V5_DEFAULTS, experimentalUncalibratedTmr: true },
+    });
+
+    const settings = await repository.get();
+    expect(settings.experimentalUncalibratedTmr).toBe(true);
+    expect(settings.experimentalMarkingThresholdPercent).toBe(70);
+    expect(storage.read("cleanfeed.settings.v1")).toEqual({
+      schemaVersion: 6,
+      settingsVersion: 8,
+      settings: { ...DEFAULT_SETTINGS, experimentalUncalibratedTmr: true },
     });
   });
 
@@ -196,14 +225,14 @@ describe("SettingsRepository", () => {
 
     await repository.save(first);
     expect(storage.read("cleanfeed.settings.v1")).toEqual({
-      schemaVersion: 5,
+      schemaVersion: 6,
       settingsVersion: 1,
       settings: first,
     });
 
     await repository.save(second);
     expect(storage.read("cleanfeed.settings.v1")).toEqual({
-      schemaVersion: 5,
+      schemaVersion: 6,
       settingsVersion: 2,
       settings: second,
     });
@@ -244,7 +273,7 @@ describe("SettingsRepository", () => {
 
     await expect(repository.reset()).resolves.toEqual(DEFAULT_SETTINGS);
     expect(storage.read("cleanfeed.settings.v1")).toEqual({
-      schemaVersion: 5,
+      schemaVersion: 6,
       settingsVersion: 2,
       settings: DEFAULT_SETTINGS,
     });
@@ -253,7 +282,7 @@ describe("SettingsRepository", () => {
   it("rejects a changed value when incrementing its version would overflow", async () => {
     const storage = new MemoryStorageArea();
     await storage.set("cleanfeed.settings.v1", {
-      schemaVersion: 5,
+      schemaVersion: 6,
       settingsVersion: Number.MAX_SAFE_INTEGER,
       settings: DEFAULT_SETTINGS,
     });
@@ -318,7 +347,7 @@ describe("SettingsRepository", () => {
     ]);
 
     await expect(storage.get("cleanfeed.settings.v1")).resolves.toEqual({
-      schemaVersion: 5,
+      schemaVersion: 6,
       settingsVersion: 2,
       settings: second,
     });

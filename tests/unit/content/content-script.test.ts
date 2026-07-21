@@ -2,9 +2,11 @@ import { describe, expect, it, vi } from "vitest";
 
 import {
   createContentMessageListener,
+  effectiveSettingsEqual,
   resolveContentSettings,
+  touchesContentSettings,
 } from "@/content/content-script";
-import { DEFAULT_SETTINGS } from "@/shared/constants";
+import { DEFAULT_SETTINGS, SETTINGS_STORAGE_KEYS } from "@/shared/constants";
 import type { StorageArea } from "@/storage/storage-area";
 import { PlatformSettingsRepository } from "@/storage/platform-settings";
 import { SettingsRepository } from "@/storage/settings";
@@ -53,6 +55,46 @@ describe("content script runtime bridge", () => {
       minimumWordCount: 150,
       presentationMode: "blur",
     });
+  });
+
+  it("reacts live only to settings/pause storage keys, not metrics or cache", () => {
+    // Drives the gate that decides whether a storage change re-resolves the
+    // controller, so a live settings edit reflects on the open tab while a
+    // metrics/cache write during a classification storm is ignored.
+    expect(touchesContentSettings([SETTINGS_STORAGE_KEYS.global])).toBe(true);
+    expect(touchesContentSettings([SETTINGS_STORAGE_KEYS.platform])).toBe(true);
+    expect(touchesContentSettings(["cleanfeed.domain-pause.v1"])).toBe(true);
+    expect(touchesContentSettings(["cleanfeed.metrics.v1"])).toBe(false);
+    expect(
+      touchesContentSettings(["cleanfeed.cache.v1", "cleanfeed.history.v1"]),
+    ).toBe(false);
+    // Unknown (a test-injected subscription with no key info) reacts anyway.
+    expect(touchesContentSettings(undefined)).toBe(true);
+  });
+
+  it("detects a changed user-facing setting for a live controller rebuild", () => {
+    expect(
+      effectiveSettingsEqual(DEFAULT_SETTINGS, { ...DEFAULT_SETTINGS }),
+    ).toBe(true);
+    expect(
+      effectiveSettingsEqual(DEFAULT_SETTINGS, {
+        ...DEFAULT_SETTINGS,
+        experimentalUncalibratedTmr: true,
+      }),
+    ).toBe(false);
+    expect(
+      effectiveSettingsEqual(DEFAULT_SETTINGS, {
+        ...DEFAULT_SETTINGS,
+        experimentalMarkingThresholdPercent: 55,
+      }),
+    ).toBe(false);
+    // A debug-only sourceMap annotation is not a user-facing change.
+    expect(
+      effectiveSettingsEqual(DEFAULT_SETTINGS, {
+        ...DEFAULT_SETTINGS,
+        sourceMap: undefined,
+      }),
+    ).toBe(true);
   });
 
   it("returns the page stats snapshot for a validated popup request", () => {

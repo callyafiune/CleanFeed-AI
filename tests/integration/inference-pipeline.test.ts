@@ -1025,6 +1025,38 @@ describe("bundle calibration profile binding", () => {
     expect(classified.cacheValidUntil).toBeUndefined();
   });
 
+  it("honors the configurable experimental marking threshold", async () => {
+    // The bundle classifier scores 0.95. A threshold above that surfaces nothing
+    // (still tagged experimental, but not presentable); a low threshold marks.
+    const runner = new PipelineRunner({
+      classifier: bundleClassifier(),
+      tokenizer: exactTokenizer,
+    });
+
+    const strict = await runner.classify(
+      { text: PORTUGUESE_LONG_TEXT, platform: "linkedin", manual: false },
+      {
+        ...DEFAULT_SETTINGS,
+        experimentalUncalibratedTmr: true,
+        experimentalMarkingThresholdPercent: 99,
+      },
+    );
+    expect(strict.decision.presentationAllowed).toBe(false);
+    expect(strict.decision.reasonCodes).toContain(
+      "TMR_EXPERIMENTAL_UNCALIBRATED",
+    );
+
+    const lenient = await runner.classify(
+      { text: PORTUGUESE_LONG_TEXT, platform: "linkedin", manual: false },
+      {
+        ...DEFAULT_SETTINGS,
+        experimentalUncalibratedTmr: true,
+        experimentalMarkingThresholdPercent: 50,
+      },
+    );
+    expect(lenient.decision.presentationAllowed).toBe(true);
+  });
+
   it("leaves both fields undefined for an uncalibrated builtin result", async () => {
     const runner = new PipelineRunner({ classifier: classifier() });
 

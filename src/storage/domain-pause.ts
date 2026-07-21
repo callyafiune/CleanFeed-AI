@@ -1,7 +1,7 @@
 import { normalizeHostname } from "@/shared/hostname";
 import type { StorageArea } from "@/storage/storage-area";
 
-const DOMAIN_PAUSE_KEY = "cleanfeed.domain-pause.v1";
+export const DOMAIN_PAUSE_KEY = "cleanfeed.domain-pause.v1";
 const SCHEMA_VERSION = 1;
 const DEFAULT_MAX_HOSTNAMES = 1_000;
 

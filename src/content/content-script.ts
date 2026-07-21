@@ -1,12 +1,27 @@
 import { PostController } from "@/content/post-controller";
 import { LinkedInAdapter } from "@/platforms/linkedin/linkedin-adapter";
-import { DomainPauseRepository } from "@/storage/domain-pause";
+import { DEFAULT_SETTINGS, SETTINGS_STORAGE_KEYS } from "@/shared/constants";
+import {
+  DOMAIN_PAUSE_KEY,
+  DomainPauseRepository,
+} from "@/storage/domain-pause";
 import { resolveEffectiveSettings } from "@/storage/effective-settings";
 import { PlatformSettingsRepository } from "@/storage/platform-settings";
 import { SettingsRepository } from "@/storage/settings";
 import { ChromeStorageArea, type StorageArea } from "@/storage/storage-area";
 import { parseExtensionMessage } from "@/shared/message-validation";
+import type { EffectiveSettings, UserSettings } from "@/shared/settings-types";
 import type { PageStats, PlatformAdapter } from "@/shared/types";
+
+/** Whether two resolved settings agree on every user-facing field (ignores sourceMap). */
+export function effectiveSettingsEqual(
+  a: EffectiveSettings,
+  b: EffectiveSettings,
+): boolean {
+  return (Object.keys(DEFAULT_SETTINGS) as Array<keyof UserSettings>).every(
+    (key) => a[key] === b[key],
+  );
+}
 
 interface ContentController {
   readonly stats: { snapshot(): PageStats };
@@ -30,7 +45,29 @@ export interface ContentRuntime {
 
 /** Minimal subscription to storage mutations, so the tab can react live. */
 export interface StorageChangeSubscription {
-  addListener(listener: () => void): void;
+  /**
+   * Registers a listener. It receives the changed storage keys when the source
+   * can supply them, so the content tab can ignore unrelated writes
+   * (metrics/history/cache). An undefined list means "unknown — react anyway".
+   */
+  addListener(listener: (changedKeys?: readonly string[]) => void): void;
+}
+
+/** The storage keys whose change must re-resolve the content controller. */
+const CONTENT_RELEVANT_KEYS: ReadonlySet<string> = new Set([
+  SETTINGS_STORAGE_KEYS.global,
+  SETTINGS_STORAGE_KEYS.platform,
+  DOMAIN_PAUSE_KEY,
+]);
+
+export function touchesContentSettings(
+  changedKeys?: readonly string[],
+): boolean {
+  // Unknown keys (e.g. a test-injected subscription) conservatively react.
+  return (
+    changedKeys === undefined ||
+    changedKeys.some((key) => CONTENT_RELEVANT_KEYS.has(key))
+  );
 }
 
 export interface ContentScriptOptions {
@@ -50,8 +87,10 @@ function defaultStorageChanges(): StorageChangeSubscription | undefined {
   }
   return {
     addListener: (listener) =>
-      chrome.storage.onChanged.addListener(() => {
-        listener();
+      chrome.storage.onChanged.addListener((changes, areaName) => {
+        // Settings, platform overrides and domain pause all live in local.
+        if (areaName !== "local") return;
+        listener(Object.keys(changes));
       }),
   };
 }
@@ -140,35 +179,62 @@ export async function startContentScript(
     return undefined;
 
   const storage = options.storage ?? new ChromeStorageArea();
-  const [settings, paused] = await Promise.all([
-    resolveContentSettings(adapter.id, storage),
-    resolveDomainPaused(
-      new URL(contentDocument.location.href).hostname,
-      storage,
-    ),
-  ]);
-  activeController?.stop();
-  activeController = new PostController({
-    adapter,
-    document: contentDocument,
-    settings,
-    domainEnabled: !paused,
-  });
-  activeController.start();
+  const hostname = new URL(contentDocument.location.href).hostname;
+  let currentSettings = await resolveContentSettings(adapter.id, storage);
+  let paused = await resolveDomainPaused(hostname, storage);
+
+  // (Re)builds the controller for the given settings, REUSING the shared adapter
+  // (and thus its PresentationController) so presentation state stays coherent
+  // across a live rebuild — apply/restore remain idempotent per element.
+  const buildController = (
+    settings: EffectiveSettings,
+    domainEnabled: boolean,
+  ): PostController => {
+    activeController?.clearPresentation();
+    activeController?.stop();
+    activeController = new PostController({
+      adapter,
+      document: contentDocument,
+      settings,
+      domainEnabled,
+    });
+    activeController.start();
+    return activeController;
+  };
+
+  buildController(currentSettings, !paused);
   (options.runtime ?? chrome.runtime).onMessage.addListener(
     createContentMessageListener(),
   );
   attachContextMenuTracking(contentDocument);
 
-  // React to a pause toggled from the popup so it takes effect on this open tab
-  // (not only on the next load). Re-reads the hostname-keyed pause store on any
-  // storage change and flips the live domain gate.
-  const hostname = new URL(contentDocument.location.href).hostname;
+  // React to a live edit on the ALREADY-open tab (not only on the next load).
+  // A pause toggle flips the domain gate; a settings edit (presentation mode,
+  // experimental preview, marking threshold, …) rebuilds the controller so the
+  // visible posts are re-presented and re-classified under the new config. The
+  // fresh decision comes from the background's fresh settings and a
+  // fingerprint-invalidated cache; the offscreen reloads/unloads the TMR on its
+  // own storage listener. Storage writes that leave the effective settings
+  // unchanged (metrics/history/cache) never rebuild.
   const storageChanges = options.storageChanges ?? defaultStorageChanges();
-  storageChanges?.addListener(() => {
-    void resolveDomainPaused(hostname, storage).then((paused) => {
-      activeController?.setDomainEnabled(!paused);
-    });
+  storageChanges?.addListener((changedKeys) => {
+    if (!touchesContentSettings(changedKeys)) return;
+    void (async () => {
+      const [nextSettings, nextPaused] = await Promise.all([
+        resolveContentSettings(adapter.id, storage),
+        resolveDomainPaused(hostname, storage),
+      ]);
+      if (!effectiveSettingsEqual(currentSettings, nextSettings)) {
+        currentSettings = nextSettings;
+        paused = nextPaused;
+        buildController(nextSettings, !nextPaused);
+        return;
+      }
+      if (nextPaused !== paused) {
+        paused = nextPaused;
+        activeController?.setDomainEnabled(!nextPaused);
+      }
+    })();
   });
 
   return activeController;

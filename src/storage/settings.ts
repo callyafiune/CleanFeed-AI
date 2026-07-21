@@ -10,7 +10,7 @@ import { runWithSettingsMutationLock } from "@/storage/settings-lock";
 import type { StorageArea } from "@/storage/storage-area";
 
 export const SETTINGS_STORAGE_KEY = SETTINGS_STORAGE_KEYS.global;
-const SCHEMA_VERSION = 5;
+const SCHEMA_VERSION = 6;
 const PLATFORM_SCHEMA_VERSION = 1;
 
 /**
@@ -38,22 +38,29 @@ export function withoutLegacyThresholds(
 }
 
 /**
- * Fields introduced in schema v5. Every pre-v5 record lacks them and gains their
- * default on migration. The historical shape checks anchor on the FIXED pre-v5
- * key set below (never the mutable DEFAULT_SETTINGS), so adding more fields later
- * cannot silently invalidate a genuine v1–v4 record.
+ * Settings fields added AFTER the schema-v4 "no thresholds" shape, grouped by the
+ * schema version that introduced each. The historical shape checks anchor on the
+ * FIXED v4 key set below (never the mutable DEFAULT_SETTINGS), so adding fields
+ * never invalidates a genuine v1–v5 record; every older envelope is completed to
+ * the current shape by filling ONLY its missing added keys with their defaults.
  */
 const V5_ADDED_KEYS = ["experimentalUncalibratedTmr"] as const;
-const V5_ADDED_DEFAULTS = Object.fromEntries(
-  V5_ADDED_KEYS.map((key) => [key, DEFAULT_SETTINGS[key]]),
-) as Pick<UserSettings, (typeof V5_ADDED_KEYS)[number]>;
-const PRE_V5_SETTING_KEYS = (
+const V6_ADDED_KEYS = ["experimentalMarkingThresholdPercent"] as const;
+const POST_V4_KEYS = [...V5_ADDED_KEYS, ...V6_ADDED_KEYS] as const;
+const POST_V4_DEFAULTS = Object.fromEntries(
+  POST_V4_KEYS.map((key) => [key, DEFAULT_SETTINGS[key]]),
+) as Pick<UserSettings, (typeof POST_V4_KEYS)[number]>;
+const V4_SETTING_KEYS = (
   Object.keys(DEFAULT_SETTINGS) as Array<keyof UserSettings>
-).filter((key) => !(V5_ADDED_KEYS as readonly string[]).includes(key));
+).filter((key) => !(POST_V4_KEYS as readonly string[]).includes(key));
 
-/** Completes a schema-v4-shaped record to the current shape with v5 defaults. */
-function completeToCurrent(v4Shaped: Record<string, unknown>): UserSettings {
-  return { ...v4Shaped, ...V5_ADDED_DEFAULTS } as unknown as UserSettings;
+/** Completes a record from any schema >= v4 shape to current, filling only gaps. */
+function completeToCurrent(older: Record<string, unknown>): UserSettings {
+  const out: Record<string, unknown> = { ...older };
+  for (const key of POST_V4_KEYS) {
+    if (!Object.hasOwn(out, key)) out[key] = POST_V4_DEFAULTS[key];
+  }
+  return out as unknown as UserSettings;
 }
 
 interface PersistedSettings {
@@ -66,8 +73,10 @@ type LegacyThresholdRecord = Record<
   (typeof LEGACY_THRESHOLD_KEYS)[number],
   number
 >;
-/** The schema-v4 settings shape: the current settings minus the v5 additions. */
-type V4UserSettings = Omit<UserSettings, (typeof V5_ADDED_KEYS)[number]>;
+/** The schema-v4 settings shape: the current settings minus every post-v4 field. */
+type V4UserSettings = Omit<UserSettings, (typeof POST_V4_KEYS)[number]>;
+/** The schema-v5 settings shape: the current settings minus only the v6 additions. */
+type V5UserSettings = Omit<UserSettings, (typeof V6_ADDED_KEYS)[number]>;
 /** The v3 (pre-threshold-removal) shape: v4 settings plus the four thresholds. */
 type V3UserSettings = V4UserSettings & LegacyThresholdRecord;
 type V2UserSettings = Omit<V3UserSettings, "useMockModel">;
@@ -199,6 +208,11 @@ function isUserSettings(value: unknown): value is UserSettings {
       SETTINGS_LIMITS.historyRetentionDays.minimum,
       SETTINGS_LIMITS.historyRetentionDays.maximum,
     ) ||
+    !isFiniteIntegerInRange(
+      value.experimentalMarkingThresholdPercent,
+      SETTINGS_LIMITS.experimentalMarkingThresholdPercent.minimum,
+      SETTINGS_LIMITS.experimentalMarkingThresholdPercent.maximum,
+    ) ||
     !isFiniteIntegerInRange(chunkOverlapTokens, 0, chunkSizeTokens - 1) ||
     chunkOverlapTokens >= chunkSizeTokens ||
     maximumTokens < chunkSizeTokens
@@ -222,17 +236,35 @@ function hasOrderedLegacyThresholds(value: Record<string, unknown>): boolean {
 }
 
 /**
- * A schema-v4 record: the current settings minus the v5 additions. Recognized by
- * the ABSENCE of every v5 key plus validity once the v5 defaults are filled in.
+ * A schema-v4 record: the current settings minus EVERY post-v4 field. Recognized
+ * by the ABSENCE of all post-v4 keys plus validity once the defaults are filled.
  */
 function isV4UserSettings(value: unknown): value is V4UserSettings {
   if (!isRecord(value)) {
     return false;
   }
-  if (V5_ADDED_KEYS.some((key) => Object.hasOwn(value, key))) {
+  if (POST_V4_KEYS.some((key) => Object.hasOwn(value, key))) {
     return false;
   }
-  return isUserSettings({ ...value, ...V5_ADDED_DEFAULTS });
+  return isUserSettings(completeToCurrent(value));
+}
+
+/**
+ * A schema-v5 record: it carries the v5 keys but NONE of the v6 additions, and is
+ * valid once the missing v6 defaults are filled. Used to migrate the v5 envelope
+ * without discarding the user's v5 preferences.
+ */
+function isV5UserSettings(value: unknown): value is V5UserSettings {
+  if (!isRecord(value)) {
+    return false;
+  }
+  if (!V5_ADDED_KEYS.every((key) => Object.hasOwn(value, key))) {
+    return false;
+  }
+  if (V6_ADDED_KEYS.some((key) => Object.hasOwn(value, key))) {
+    return false;
+  }
+  return isUserSettings(completeToCurrent(value));
 }
 
 /** Validates the FULL v3 shape (v4 keys plus the four ordered thresholds). */
@@ -241,7 +273,7 @@ function isV3UserSettings(value: unknown): value is V3UserSettings {
     return false;
   }
   const expected = new Set<string>([
-    ...PRE_V5_SETTING_KEYS,
+    ...V4_SETTING_KEYS,
     ...LEGACY_THRESHOLD_KEYS,
   ]);
   if (
@@ -417,7 +449,21 @@ async function readPersistedSettingsForMutation(
     return persisted;
   }
 
-  // Versioned v4 envelope (the immediate predecessor): fill the v5 defaults.
+  // Versioned v5 envelope (the immediate predecessor): keep the user's v5
+  // preferences and fill only the v6 defaults.
+  if (
+    hasVersionedEnvelope(persisted, 5) &&
+    isV5UserSettings(persisted.settings)
+  ) {
+    return storeMigrated(
+      storage,
+      storageKey,
+      persisted.settingsVersion,
+      completeToCurrent(persisted.settings),
+    );
+  }
+
+  // Versioned v4 envelope: fill every post-v4 default.
   if (
     hasVersionedEnvelope(persisted, 4) &&
     isV4UserSettings(persisted.settings)
@@ -517,7 +563,12 @@ async function readPersistedSettingsForMutation(
     );
   }
 
-  // Bare schema-v4 object (current keys minus the v5 additions).
+  // Bare schema-v5 object (v5 keys, no v6 additions).
+  if (isV5UserSettings(persisted)) {
+    return storeMigrated(storage, storageKey, 1, completeToCurrent(persisted));
+  }
+
+  // Bare schema-v4 object (current keys minus every post-v4 addition).
   if (isV4UserSettings(persisted)) {
     return storeMigrated(storage, storageKey, 1, completeToCurrent(persisted));
   }

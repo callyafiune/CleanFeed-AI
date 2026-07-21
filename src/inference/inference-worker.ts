@@ -568,7 +568,12 @@ function completePreparedRequest(
     base.runtimeIdentity.kind === "bundle"
       ? calibration === undefined &&
         settings.experimentalUncalibratedTmr === true
-        ? { outcome: decideExperimentalUncalibrated(base) }
+        ? {
+            outcome: decideExperimentalUncalibrated(
+              base,
+              settings.experimentalMarkingThresholdPercent / 100,
+            ),
+          }
         : decideBundle(
             base,
             base.runtimeIdentity,
@@ -675,10 +680,11 @@ function capToIndicator(outcome: DecisionOutcome): DecisionOutcome {
     : { ...outcome, actionCeiling: "indicator" };
 }
 
-// The provisional raw-score thresholds for the opt-in experimental preview. They
-// are an explicit, documented GUESS — the calibrated path replaces them with the
-// profile's measured operating points once a scientific decision exists.
-const EXPERIMENTAL_MARKING_THRESHOLD = 0.7;
+// The provisional raw-score floor above which the experimental preview reports
+// the STRONGER band. The MARKING cut is the user's configurable
+// `experimentalMarkingThresholdPercent`; "strong" never falls below marking, so
+// the effective strong cut is max(marking, this). Both are an explicit GUESS —
+// the calibrated path replaces them with the profile's measured operating points.
 const EXPERIMENTAL_STRONG_THRESHOLD = 0.9;
 
 /**
@@ -694,6 +700,7 @@ const EXPERIMENTAL_STRONG_THRESHOLD = 0.9;
  */
 function decideExperimentalUncalibrated(
   base: ClassificationResult,
+  markingThreshold: number,
 ): DecisionOutcome {
   const rawScore = base.aggregation?.documentRawScore ?? base.aiScore;
   const reasonCodes: DecisionReasonCode[] = ["TMR_EXPERIMENTAL_UNCALIBRATED"];
@@ -713,8 +720,10 @@ function decideExperimentalUncalibrated(
       ],
     };
   }
-  const positive = rawScore >= EXPERIMENTAL_MARKING_THRESHOLD;
-  const strong = rawScore >= EXPERIMENTAL_STRONG_THRESHOLD;
+  const positive = rawScore >= markingThreshold;
+  // "Strong" never falls below the (possibly raised) marking cut.
+  const strong =
+    rawScore >= Math.max(markingThreshold, EXPERIMENTAL_STRONG_THRESHOLD);
   const shortText = getLengthBucket(base.wordCount) === "50_79";
   return {
     status: strong

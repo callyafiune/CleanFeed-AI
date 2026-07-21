@@ -246,6 +246,7 @@ const userSettingKeys = [
   "processVisibleOnly",
   "experimentalShortTextDetection",
   "experimentalUncalibratedTmr",
+  "experimentalMarkingThresholdPercent",
   "manualAnalysisEnabled",
   "showScore",
   "showExplanation",

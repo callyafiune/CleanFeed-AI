@@ -10,6 +10,7 @@ const validSettings = {
   processVisibleOnly: true,
   experimentalShortTextDetection: false,
   experimentalUncalibratedTmr: false,
+  experimentalMarkingThresholdPercent: 70,
   manualAnalysisEnabled: true,
   showScore: false,
   showExplanation: true,
