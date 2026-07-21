@@ -104,6 +104,31 @@ describe("buildWorkerInitializePayload", () => {
     });
     expect(payload.modelManifest).toBeUndefined();
     expect(payload.descriptor).toBeDefined();
+    expect(payload.experimentalUncalibratedTmr).toBeUndefined();
+  });
+
+  it("loads the manifest UNCALIBRATED when the user opts into the experimental preview", () => {
+    const payload = buildWorkerInitializePayload({
+      ...BASE_URLS,
+      descriptor: descriptorWith("bundle-verified", 0),
+      experimentalUncalibratedTmr: true,
+    });
+    // The sealed model IS loaded, but the worker is told it is uncalibrated.
+    expect(payload.modelManifest).toEqual(buildBundledRuntimeManifest());
+    expect(payload.experimentalUncalibratedTmr).toBe(true);
+  });
+
+  it("prefers the CALIBRATED primary over the experimental flag for a promoted release", async () => {
+    const { descriptor } = await promotedDescriptor();
+    const payload = buildWorkerInitializePayload({
+      ...BASE_URLS,
+      descriptor,
+      experimentalUncalibratedTmr: true,
+    });
+    // A promoted release is calibrated: the manifest loads, but it is NOT flagged
+    // experimental (the calibrated registry, not the provisional mapping, decides).
+    expect(payload.modelManifest).toEqual(buildBundledRuntimeManifest());
+    expect(payload.experimentalUncalibratedTmr).toBeUndefined();
   });
 });
 

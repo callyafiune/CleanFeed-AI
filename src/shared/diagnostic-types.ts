@@ -112,6 +112,7 @@ export interface DiagnosticSettingsSummary {
   enabled: boolean;
   processVisibleOnly: boolean;
   experimentalShortTextDetection: boolean;
+  experimentalUncalibratedTmr: boolean;
   manualAnalysisEnabled: boolean;
   showScore: boolean;
   showExplanation: boolean;

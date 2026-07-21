@@ -120,6 +120,7 @@ const decisionReasonCodes = new Set<string>([
   "DOCUMENT_EVIDENCE_PENDING",
   "CIRCUIT_BREAKER_OPEN",
   "WEBGPU_FALLBACK",
+  "TMR_EXPERIMENTAL_UNCALIBRATED",
 ]);
 const evidenceQualities = new Set<string>([
   "sufficient",
@@ -244,6 +245,7 @@ const userSettingKeys = [
   "presentationMode",
   "processVisibleOnly",
   "experimentalShortTextDetection",
+  "experimentalUncalibratedTmr",
   "manualAnalysisEnabled",
   "showScore",
   "showExplanation",
@@ -805,6 +807,7 @@ function isSettingValue(key: string, value: unknown): boolean {
     case "enabled":
     case "processVisibleOnly":
     case "experimentalShortTextDetection":
+    case "experimentalUncalibratedTmr":
     case "manualAnalysisEnabled":
     case "showScore":
     case "showExplanation":

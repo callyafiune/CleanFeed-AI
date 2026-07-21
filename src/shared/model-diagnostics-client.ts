@@ -72,6 +72,10 @@ export const BUILTIN_FALLBACK_COPY = "Fallback estilométrico ativo";
 export const CIRCUIT_BREAKER_COPY =
   "TMR temporariamente desativado; usando fallback local.";
 
+/** Shown when the opt-in uncalibrated experimental TMR preview is the active runtime. */
+export const EXPERIMENTAL_UNCALIBRATED_COPY =
+  "Detector experimental ativo (preview / não calibrado): resultados são apenas indicativos, sem decisão científica. Pode errar.";
+
 /** Shown for a null `earliestExpiry` (no applicable profile). */
 export const NO_PROFILE_EXPIRY_COPY = "Nenhum perfil aplicável";
 

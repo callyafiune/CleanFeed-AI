@@ -9,6 +9,16 @@ export interface UserSettings {
   presentationMode: PresentationMode;
   processVisibleOnly: boolean;
   experimentalShortTextDetection: boolean;
+  /**
+   * Opt-in "preview experimental / não calibrado" mode. When true AND the sealed
+   * TMR bundle is present, the TMR runs as the feed classifier even though NO
+   * scientific holdout decision or calibration profile exists yet. Its output is
+   * UNCALIBRATED: results carry the experimental reason code, the release stays
+   * `pending`, and the calibrated path (a promoted release with a profile) always
+   * takes precedence over it. Default false — the fail-closed stylometric builtin
+   * stays primary until the user explicitly enables this.
+   */
+  experimentalUncalibratedTmr: boolean;
   manualAnalysisEnabled: boolean;
   showScore: boolean;
   showExplanation: boolean;

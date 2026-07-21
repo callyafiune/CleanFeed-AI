@@ -998,6 +998,33 @@ describe("bundle calibration profile binding", () => {
     expect(classified.cacheValidUntil).toBeUndefined();
   });
 
+  it("produces an UNCALIBRATED experimental verdict instead of failing closed when the user opted in", async () => {
+    // Same bundle runtime with NO calibration registry as the case above, but the
+    // user enabled the experimental preview: instead of a fail-closed abstention
+    // the pipeline maps the raw score to a verdict tagged
+    // TMR_EXPERIMENTAL_UNCALIBRATED, reaching the `hide` ceiling so the user's
+    // presentationMode governs blur/collapse/hide. It never claims calibration.
+    const runner = new PipelineRunner({
+      classifier: bundleClassifier(),
+      tokenizer: exactTokenizer,
+    });
+
+    const classified = await runner.classify(
+      { text: PORTUGUESE_LONG_TEXT, platform: "linkedin", manual: false },
+      { ...DEFAULT_SETTINGS, experimentalUncalibratedTmr: true },
+    );
+
+    expect(classified.runtimeIdentity.kind).toBe("bundle");
+    expect(classified.decision.abstained).toBe(false);
+    expect(classified.decision.presentationAllowed).toBe(true);
+    expect(classified.decision.actionCeiling).toBe("hide");
+    expect(classified.decision.reasonCodes).toContain(
+      "TMR_EXPERIMENTAL_UNCALIBRATED",
+    );
+    expect(classified.selectedProfileDigest).toBeUndefined();
+    expect(classified.cacheValidUntil).toBeUndefined();
+  });
+
   it("leaves both fields undefined for an uncalibrated builtin result", async () => {
     const runner = new PipelineRunner({ classifier: classifier() });
 

@@ -26,6 +26,13 @@ export type WorkerInitializePayload = {
    * revalidates its digests as a trust boundary before opening any asset.
    */
   descriptor?: RuntimeDescriptor;
+  /**
+   * True only when the loaded manifest is the opt-in "preview experimental / não
+   * calibrado" TMR (release NOT promoted). It tells the worker to disclose the
+   * uncalibrated state on its status; a promoted (calibrated) primary never sets
+   * it. Absent/false keeps the ordinary fallback status untouched.
+   */
+  experimentalUncalibratedTmr?: boolean;
 };
 
 export type WorkerBackendSettings = {
@@ -106,6 +113,7 @@ function isWorkerInitializePayload(
       "settings",
       "modelManifest",
       "descriptor",
+      "experimentalUncalibratedTmr",
     ]) &&
     Object.hasOwn(value, "modelBaseUrl") &&
     Object.hasOwn(value, "wasmBaseUrl") &&
@@ -115,7 +123,9 @@ function isWorkerInitializePayload(
     (value.modelManifest === undefined ||
       isModelManifest(value.modelManifest)) &&
     (value.descriptor === undefined ||
-      isRuntimeDescriptorShape(value.descriptor))
+      isRuntimeDescriptorShape(value.descriptor)) &&
+    (value.experimentalUncalibratedTmr === undefined ||
+      typeof value.experimentalUncalibratedTmr === "boolean")
   );
 }
 

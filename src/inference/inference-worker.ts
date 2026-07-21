@@ -561,14 +561,20 @@ function completePreparedRequest(
   // The decision is authoritative. The calibrated bundle (TMR) path applies the
   // EXACT profile via the release-bound registry or fails closed; the builtin
   // heuristics (stylometric/mock) are uncalibrated and can only ever indicate.
+  // When the user opted into the uncalibrated experimental preview, the sealed
+  // TMR ran WITHOUT a release-bound registry, so the decision comes from the
+  // provisional experimental mapping instead of the fail-closed profile miss.
   const profileDecision: ProfileDecision =
     base.runtimeIdentity.kind === "bundle"
-      ? decideBundle(
-          base,
-          base.runtimeIdentity,
-          item.request.platform,
-          calibration,
-        )
+      ? calibration === undefined &&
+        settings.experimentalUncalibratedTmr === true
+        ? { outcome: decideExperimentalUncalibrated(base) }
+        : decideBundle(
+            base,
+            base.runtimeIdentity,
+            item.request.platform,
+            calibration,
+          )
       : { outcome: capToIndicator(calibrateResult(base)) };
   const decision = profileDecision.outcome;
   const explanation = buildExplanation(base, decision);
@@ -667,6 +673,62 @@ function capToIndicator(outcome: DecisionOutcome): DecisionOutcome {
   return outcome.actionCeiling === "indicator"
     ? outcome
     : { ...outcome, actionCeiling: "indicator" };
+}
+
+// The provisional raw-score thresholds for the opt-in experimental preview. They
+// are an explicit, documented GUESS — the calibrated path replaces them with the
+// profile's measured operating points once a scientific decision exists.
+const EXPERIMENTAL_MARKING_THRESHOLD = 0.7;
+const EXPERIMENTAL_STRONG_THRESHOLD = 0.9;
+
+/**
+ * The "preview experimental / não calibrado" decision: the sealed TMR ran with NO
+ * calibration profile, so its RAW document score is mapped to a verdict with the
+ * provisional thresholds above and the result is ALWAYS tagged
+ * `TMR_EXPERIMENTAL_UNCALIBRATED`. It fails closed on unsupported evidence exactly
+ * like the calibrated path. The ceiling reaches `hide` so the user's
+ * `presentationMode` governs blur/collapse/hide, EXCEPT the 50–79 word bucket
+ * which stays at the indicator ceiling (spec §5.5). It never claims calibration:
+ * no profile digest/expiry is emitted, so a positive verdict is never cached
+ * beyond the request that produced it.
+ */
+function decideExperimentalUncalibrated(
+  base: ClassificationResult,
+): DecisionOutcome {
+  const rawScore = base.aggregation?.documentRawScore ?? base.aiScore;
+  const reasonCodes: DecisionReasonCode[] = ["TMR_EXPERIMENTAL_UNCALIBRATED"];
+  if (base.evidence.quality === "unsupported") {
+    return {
+      status: "insufficient_evidence",
+      calibratedScore: rawScore,
+      actionCeiling: "indicator",
+      abstained: true,
+      presentationAllowed: false,
+      triggers: [],
+      reasonCodes: [
+        ...new Set<DecisionReasonCode>([
+          ...reasonCodes,
+          ...base.evidence.reasonCodes,
+        ]),
+      ],
+    };
+  }
+  const positive = rawScore >= EXPERIMENTAL_MARKING_THRESHOLD;
+  const strong = rawScore >= EXPERIMENTAL_STRONG_THRESHOLD;
+  const shortText = getLengthBucket(base.wordCount) === "50_79";
+  return {
+    status: strong
+      ? "strong_ai_indication"
+      : positive
+        ? "possibly_ai"
+        : "probably_human",
+    calibratedScore: rawScore,
+    actionCeiling: shortText ? "indicator" : "hide",
+    abstained: false,
+    presentationAllowed: positive,
+    triggers: positive ? ["document"] : [],
+    reasonCodes,
+  };
 }
 
 /** The TMR abstentions that a per-request stylometric fallback answers once. */
@@ -1058,14 +1120,30 @@ class WorkerRuntime {
         // coverage/digest/count/expiry. It never carries a per-post selected
         // profile. The builtin/experimental paths keep the lifecycle status
         // (builtin identity, no coverage) unchanged, so the fallback stays honest.
+        // A manifest was loaded in this branch. Either the descriptor authorized
+        // the CALIBRATED primary — publish the promoted runtime and calibration
+        // set — or the user opted into the uncalibrated experimental preview, in
+        // which case the status keeps the loaded-model view plus the experimental
+        // reason code so the popup and options always disclose the pending state.
+        const lifecycleStatus = lifecycle.getStatus();
         this.status =
           calibrated !== undefined && payload.descriptor !== undefined
             ? {
-                ...lifecycle.getStatus(),
+                ...lifecycleStatus,
                 runtimeIdentity: calibrated.identity,
                 ...summarizeCalibrationSet(payload.descriptor),
               }
-            : lifecycle.getStatus();
+            : payload.experimentalUncalibratedTmr === true
+              ? {
+                  ...lifecycleStatus,
+                  reasonCodes: [
+                    ...new Set<DecisionReasonCode>([
+                      ...lifecycleStatus.reasonCodes,
+                      "TMR_EXPERIMENTAL_UNCALIBRATED",
+                    ]),
+                  ],
+                }
+              : lifecycleStatus;
       } catch (error) {
         this.status = unavailableStatus("error", ["BACKEND_ERROR"]);
         throw error;

@@ -2,6 +2,7 @@ import type { ModelDiagnosticsView } from "@/shared/diagnostic-types";
 import {
   BUILTIN_FALLBACK_COPY,
   CIRCUIT_BREAKER_COPY,
+  EXPERIMENTAL_UNCALIBRATED_COPY,
   formatEarliestExpiry,
   modelCalibrationLabel,
   modelGateLabel,
@@ -47,6 +48,8 @@ export function ModelStatusCard({
     status?.reasonCodes.includes("CIRCUIT_BREAKER_OPEN") ?? false;
   const webGpuFallback =
     status?.reasonCodes.includes("WEBGPU_FALLBACK") ?? false;
+  const experimentalUncalibrated =
+    status?.reasonCodes.includes("TMR_EXPERIMENTAL_UNCALIBRATED") ?? false;
 
   return (
     <section aria-label="Estado do modelo" className="card">
@@ -63,6 +66,9 @@ export function ModelStatusCard({
         <p role="note">{modelCalibrationLabel(diagnostics.status)}</p>
       ) : null}
       {isBuiltinFallback ? <p role="note">{BUILTIN_FALLBACK_COPY}</p> : null}
+      {experimentalUncalibrated ? (
+        <p role="status">{EXPERIMENTAL_UNCALIBRATED_COPY}</p>
+      ) : null}
       {circuitBreakerOpen ? <p role="status">{CIRCUIT_BREAKER_COPY}</p> : null}
       {webGpuFallback ? (
         <p role="status">WebGPU indisponível; usando WASM local.</p>

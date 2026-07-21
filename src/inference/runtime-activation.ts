@@ -100,23 +100,37 @@ function artifactSha(path: string): string {
   return record.sha256;
 }
 
-/** Assembles the INITIALIZE payload, carrying the manifest ONLY when authorized. */
+/**
+ * Assembles the INITIALIZE payload. The manifest — which is what makes the worker
+ * load the sealed TMR — is carried when the descriptor authorizes the CALIBRATED
+ * primary, OR when the user opted into the "preview experimental / não calibrado"
+ * mode. In the experimental case the release is still `pending`, so the worker
+ * loads the model but runs it UNCALIBRATED; a promoted release always outranks the
+ * experimental flag (it produces a calibrated registry, this does not).
+ */
 export function buildWorkerInitializePayload(params: {
   modelBaseUrl: string;
   wasmBaseUrl: string;
   descriptor: RuntimeDescriptor;
   settings?: WorkerInitializePayload["settings"];
   buildMode?: CatalogSelectionInput["buildMode"];
+  experimentalUncalibratedTmr?: boolean;
 }): WorkerInitializePayload {
   const { modelBaseUrl, wasmBaseUrl, descriptor, settings, buildMode } = params;
+  const calibrated = authorizesTmrPrimary(descriptor, buildMode);
+  // Experimental only when the flag is on AND the release is NOT promoted: a
+  // promoted release is calibrated, never experimental.
+  const experimental =
+    !calibrated && params.experimentalUncalibratedTmr === true;
   return {
     modelBaseUrl,
     wasmBaseUrl,
     descriptor,
     ...(settings === undefined ? {} : { settings }),
-    ...(authorizesTmrPrimary(descriptor, buildMode)
+    ...(calibrated || experimental
       ? { modelManifest: buildBundledRuntimeManifest() }
       : {}),
+    ...(experimental ? { experimentalUncalibratedTmr: true } : {}),
   };
 }
 

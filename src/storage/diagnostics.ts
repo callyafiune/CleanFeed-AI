@@ -225,6 +225,7 @@ function buildSettingsSummary(
     enabled: settings.enabled,
     processVisibleOnly: settings.processVisibleOnly,
     experimentalShortTextDetection: settings.experimentalShortTextDetection,
+    experimentalUncalibratedTmr: settings.experimentalUncalibratedTmr,
     manualAnalysisEnabled: settings.manualAnalysisEnabled,
     showScore: settings.showScore,
     showExplanation: settings.showExplanation,

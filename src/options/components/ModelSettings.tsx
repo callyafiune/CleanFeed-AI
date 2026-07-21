@@ -6,6 +6,7 @@ import type { ModelDiagnosticsView } from "@/shared/diagnostic-types";
 import {
   BUILTIN_FALLBACK_COPY,
   CIRCUIT_BREAKER_COPY,
+  EXPERIMENTAL_UNCALIBRATED_COPY,
   formatEarliestExpiry,
   modelCalibrationLabel,
   modelGateLabel,
@@ -49,6 +50,8 @@ export function ModelSettings({
   const isBuiltinFallback = view?.status.runtimeIdentity?.kind === "builtin";
   const circuitBreakerOpen =
     view?.status.reasonCodes.includes("CIRCUIT_BREAKER_OPEN") ?? false;
+  const experimentalActive =
+    view?.status.reasonCodes.includes("TMR_EXPERIMENTAL_UNCALIBRATED") ?? false;
 
   return (
     <>
@@ -86,13 +89,32 @@ export function ModelSettings({
         <p role="note">{modelCalibrationLabel(view.status)}</p>
       )}
       {isBuiltinFallback ? <p role="note">{BUILTIN_FALLBACK_COPY}</p> : null}
+      {experimentalActive ? (
+        <p role="status">{EXPERIMENTAL_UNCALIBRATED_COPY}</p>
+      ) : null}
       {circuitBreakerOpen ? <p role="status">{CIRCUIT_BREAKER_COPY}</p> : null}
-      {active.calibrated ? null : (
+      {!active.calibrated && !experimentalActive ? (
         <p role="note">
           Modelos sem calibração verificada apenas indicam: nunca desfocam,
           recolhem ou ocultam posts.
         </p>
-      )}
+      ) : null}
+      <Field label="Detector experimental (preview / não calibrado)">
+        <Switch
+          aria-label="Ativar detector experimental (preview / não calibrado)"
+          checked={settings.experimentalUncalibratedTmr}
+          onChange={(experimentalUncalibratedTmr) =>
+            onUpdate({ experimentalUncalibratedTmr })
+          }
+        />
+      </Field>
+      <p role="note">
+        Liga o modelo TMR mesmo sem a decisão científica. É um preview
+        experimental, ainda não calibrado para PT-BR: os resultados são apenas
+        indicativos e podem errar. As ações visuais (desfocar, recolher,
+        ocultar) seguem a sua escolha em “Modo de apresentação”; enquanto
+        desligado, permanece o fallback estilométrico.
+      </p>
       <Field label="Usar modelo mock (demonstração)">
         <Switch
           aria-label="Usar modelo mock (demonstração)"

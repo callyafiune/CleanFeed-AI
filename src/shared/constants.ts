@@ -48,6 +48,7 @@ export const DEFAULT_SETTINGS: UserSettings = {
   presentationMode: "indicator",
   processVisibleOnly: true,
   experimentalShortTextDetection: false,
+  experimentalUncalibratedTmr: false,
   manualAnalysisEnabled: true,
   showScore: false,
   showExplanation: true,

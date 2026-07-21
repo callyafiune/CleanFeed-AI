@@ -1,5 +1,6 @@
 import classificationCopy from "@/shared/classification-copy.json";
 import type {
+  ClassificationResult,
   ClassificationStatus,
   EvidenceQuality,
   PresentationMode,
@@ -25,6 +26,26 @@ export const PROBABILISTIC_DISCLOSURE: string =
 /** The mandatory caveat that must accompany the calibrated score. */
 export const TECHNICAL_SCORE_DISCLAIMER: string =
   classificationCopy.technicalScoreDisclaimer;
+
+/** Short tag appended wherever an uncalibrated experimental-preview verdict shows. */
+export const EXPERIMENTAL_UNCALIBRATED_LABEL: string =
+  classificationCopy.experimentalUncalibratedLabel;
+
+/** The fuller disclosure shown for the experimental preview (panels, banners). */
+export const EXPERIMENTAL_UNCALIBRATED_DISCLOSURE: string =
+  classificationCopy.experimentalUncalibratedDisclosure;
+
+/**
+ * Whether a result came from the opt-in "preview experimental / não calibrado"
+ * path: it carries {@link DecisionReasonCode} `TMR_EXPERIMENTAL_UNCALIBRATED`.
+ * Every surface keys its uncalibrated disclosure off this, never off a runtime
+ * identity or rollout guess.
+ */
+export function isExperimentalUncalibrated(
+  result: ClassificationResult,
+): boolean {
+  return result.decision.reasonCodes.includes("TMR_EXPERIMENTAL_UNCALIBRATED");
+}
 
 /** Qualitative band label for each decision status — never a percentage. */
 export const CLASSIFICATION_STATUS_COPY: Record<ClassificationStatus, string> =

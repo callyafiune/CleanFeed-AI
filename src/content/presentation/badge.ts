@@ -4,7 +4,11 @@ import {
   type ExplanationPanelOptions,
 } from "@/content/presentation/explanation-panel";
 import { registerOwnedArtifact } from "@/content/presentation/restore";
-import { CLASSIFICATION_STATUS_COPY } from "@/shared/classification-copy";
+import {
+  CLASSIFICATION_STATUS_COPY,
+  EXPERIMENTAL_UNCALIBRATED_LABEL,
+  isExperimentalUncalibrated,
+} from "@/shared/classification-copy";
 import type { EffectiveSettings } from "@/shared/settings-types";
 import type { ClassificationResult, PresentationMode } from "@/shared/types";
 
@@ -27,7 +31,14 @@ export function applyBadge(
   removeBadge(element);
   if (element.parentNode === null) return;
 
-  const text = CLASSIFICATION_STATUS_COPY[result.status];
+  const status = CLASSIFICATION_STATUS_COPY[result.status];
+  // The uncalibrated experimental preview always discloses its nature on the
+  // badge itself, so a verdict from the unpromoted TMR can never read as a
+  // validated one.
+  const experimental = isExperimentalUncalibrated(result);
+  const text = experimental
+    ? `${status} · ${EXPERIMENTAL_UNCALIBRATED_LABEL}`
+    : status;
   const badge = element.ownerDocument.createElement("button");
   badge.type = "button";
   badge.className = "cleanfeed-badge";
@@ -35,6 +46,7 @@ export function applyBadge(
   // Kept temporarily for CSS and existing integrations that used this marker.
   badge.dataset.cleanfeedIndicator = "true";
   if (mode !== undefined) badge.dataset.cleanfeedMode = mode;
+  if (experimental) badge.dataset.cleanfeedExperimental = "true";
   badge.setAttribute("aria-label", `CleanFeed: ${text}`);
   badge.title = "Ver explicação do CleanFeed";
 

@@ -16,6 +16,17 @@ const LEGACY_THRESHOLDS = {
   hideThreshold: 0.99,
 } as const;
 
+/**
+ * DEFAULT_SETTINGS as it existed at schema v4, before the v5 experimental flag.
+ * Historical envelopes (v1–v4) never carried `experimentalUncalibratedTmr`, so a
+ * faithful seed omits it; the migration adds it back with its default.
+ */
+const V4_DEFAULTS = (() => {
+  const base = { ...DEFAULT_SETTINGS } as Record<string, unknown>;
+  delete base.experimentalUncalibratedTmr;
+  return base;
+})();
+
 class MemoryStorageArea implements StorageArea {
   private readonly values = new Map<string, unknown>();
 
@@ -62,9 +73,9 @@ describe("SettingsRepository", () => {
     expect(storage.read("cleanfeed.settings.v1")).toBeUndefined();
   });
 
-  it("migrates a bare v3 object (with thresholds) into a v4 envelope", async () => {
+  it("migrates a bare v3 object (with thresholds) into a v5 envelope", async () => {
     storage.seed("cleanfeed.settings.v1", {
-      ...DEFAULT_SETTINGS,
+      ...V4_DEFAULTS,
       ...LEGACY_THRESHOLDS,
       minimumWordCount: 150,
     });
@@ -74,18 +85,18 @@ describe("SettingsRepository", () => {
       minimumWordCount: 150,
     });
     expect(storage.read("cleanfeed.settings.v1")).toEqual({
-      schemaVersion: 4,
+      schemaVersion: 5,
       settingsVersion: 1,
       settings: { ...DEFAULT_SETTINGS, minimumWordCount: 150 },
     });
   });
 
-  it("migrates a persisted v3 envelope to v4, dropping the four thresholds", async () => {
+  it("migrates a persisted v3 envelope to v5, dropping the four thresholds", async () => {
     storage.seed("cleanfeed.settings.v1", {
       schemaVersion: 3,
       settingsVersion: 9,
       settings: {
-        ...DEFAULT_SETTINGS,
+        ...V4_DEFAULTS,
         ...LEGACY_THRESHOLDS,
         minimumWordCount: 200,
       },
@@ -95,7 +106,7 @@ describe("SettingsRepository", () => {
     expect(settings).toEqual({ ...DEFAULT_SETTINGS, minimumWordCount: 200 });
     expect(settings).not.toHaveProperty("markingThreshold");
     expect(storage.read("cleanfeed.settings.v1")).toEqual({
-      schemaVersion: 4,
+      schemaVersion: 5,
       settingsVersion: 9,
       settings: { ...DEFAULT_SETTINGS, minimumWordCount: 200 },
     });
@@ -103,7 +114,7 @@ describe("SettingsRepository", () => {
 
   it("preserves v1 preferences while adding new defaults and dropping thresholds", async () => {
     const v1Settings = {
-      ...DEFAULT_SETTINGS,
+      ...V4_DEFAULTS,
       ...LEGACY_THRESHOLDS,
       minimumWordCount: 150,
     } as Record<string, unknown>;
@@ -122,7 +133,7 @@ describe("SettingsRepository", () => {
       useMockModel: false,
     });
     expect(storage.read("cleanfeed.settings.v1")).toEqual({
-      schemaVersion: 4,
+      schemaVersion: 5,
       settingsVersion: 7,
       settings: {
         ...DEFAULT_SETTINGS,
@@ -135,7 +146,7 @@ describe("SettingsRepository", () => {
 
   it("preserves v2 preferences while adding mock fallback and dropping thresholds", async () => {
     const v2Settings = {
-      ...DEFAULT_SETTINGS,
+      ...V4_DEFAULTS,
       ...LEGACY_THRESHOLDS,
       minimumWordCount: 150,
     } as Record<string, unknown>;
@@ -152,7 +163,7 @@ describe("SettingsRepository", () => {
       useMockModel: false,
     });
     expect(storage.read("cleanfeed.settings.v1")).toEqual({
-      schemaVersion: 4,
+      schemaVersion: 5,
       settingsVersion: 4,
       settings: {
         ...DEFAULT_SETTINGS,
@@ -162,20 +173,37 @@ describe("SettingsRepository", () => {
     });
   });
 
+  it("migrates a v4 envelope to v5, adding the experimental flag default", async () => {
+    storage.seed("cleanfeed.settings.v1", {
+      schemaVersion: 4,
+      settingsVersion: 3,
+      settings: { ...V4_DEFAULTS, minimumWordCount: 175 },
+    });
+
+    const settings = await repository.get();
+    expect(settings).toEqual({ ...DEFAULT_SETTINGS, minimumWordCount: 175 });
+    expect(settings.experimentalUncalibratedTmr).toBe(false);
+    expect(storage.read("cleanfeed.settings.v1")).toEqual({
+      schemaVersion: 5,
+      settingsVersion: 3,
+      settings: { ...DEFAULT_SETTINGS, minimumWordCount: 175 },
+    });
+  });
+
   it("stores a versioned envelope and increments its version after each change", async () => {
     const first = { ...DEFAULT_SETTINGS, minimumWordCount: 150 };
     const second = { ...first, presentationMode: "blur" as const };
 
     await repository.save(first);
     expect(storage.read("cleanfeed.settings.v1")).toEqual({
-      schemaVersion: 4,
+      schemaVersion: 5,
       settingsVersion: 1,
       settings: first,
     });
 
     await repository.save(second);
     expect(storage.read("cleanfeed.settings.v1")).toEqual({
-      schemaVersion: 4,
+      schemaVersion: 5,
       settingsVersion: 2,
       settings: second,
     });
@@ -216,7 +244,7 @@ describe("SettingsRepository", () => {
 
     await expect(repository.reset()).resolves.toEqual(DEFAULT_SETTINGS);
     expect(storage.read("cleanfeed.settings.v1")).toEqual({
-      schemaVersion: 4,
+      schemaVersion: 5,
       settingsVersion: 2,
       settings: DEFAULT_SETTINGS,
     });
@@ -225,7 +253,7 @@ describe("SettingsRepository", () => {
   it("rejects a changed value when incrementing its version would overflow", async () => {
     const storage = new MemoryStorageArea();
     await storage.set("cleanfeed.settings.v1", {
-      schemaVersion: 4,
+      schemaVersion: 5,
       settingsVersion: Number.MAX_SAFE_INTEGER,
       settings: DEFAULT_SETTINGS,
     });
@@ -290,7 +318,7 @@ describe("SettingsRepository", () => {
     ]);
 
     await expect(storage.get("cleanfeed.settings.v1")).resolves.toEqual({
-      schemaVersion: 4,
+      schemaVersion: 5,
       settingsVersion: 2,
       settings: second,
     });

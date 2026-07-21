@@ -1,5 +1,7 @@
 import {
+  EXPERIMENTAL_UNCALIBRATED_DISCLOSURE,
   FEEDBACK_COPY,
+  isExperimentalUncalibrated,
   PROBABILISTIC_DISCLOSURE,
   TECHNICAL_SCORE_DISCLAIMER,
 } from "@/shared/classification-copy";
@@ -122,12 +124,19 @@ export function createExplanationPanel(
   disclosure.className = "cleanfeed-explanation__disclosure";
   disclosure.textContent = PROBABILISTIC_DISCLOSURE;
 
-  panel.append(
-    heading,
-    disclosure,
-    buildEvidence(doc, result),
-    buildMeta(doc, result),
-  );
+  panel.append(heading, disclosure);
+
+  // A verdict from the opt-in uncalibrated preview always carries its own extra
+  // disclosure right below the mandatory one, so the panel can never present an
+  // unpromoted, uncalibrated verdict as a validated result.
+  if (isExperimentalUncalibrated(result)) {
+    const experimental = doc.createElement("p");
+    experimental.className = "cleanfeed-explanation__experimental";
+    experimental.textContent = EXPERIMENTAL_UNCALIBRATED_DISCLOSURE;
+    panel.append(experimental);
+  }
+
+  panel.append(buildEvidence(doc, result), buildMeta(doc, result));
 
   // The calibrated score is advanced-diagnostic only, never in the feed. It is
   // shown solely for a bundle runtime with a selected profile whose decision did

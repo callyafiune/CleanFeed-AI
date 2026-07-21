@@ -9,6 +9,7 @@ const validSettings = {
   presentationMode: "indicator",
   processVisibleOnly: true,
   experimentalShortTextDetection: false,
+  experimentalUncalibratedTmr: false,
   manualAnalysisEnabled: true,
   showScore: false,
   showExplanation: true,

@@ -10,7 +10,7 @@ import { runWithSettingsMutationLock } from "@/storage/settings-lock";
 import type { StorageArea } from "@/storage/storage-area";
 
 export const SETTINGS_STORAGE_KEY = SETTINGS_STORAGE_KEYS.global;
-const SCHEMA_VERSION = 4;
+const SCHEMA_VERSION = 5;
 const PLATFORM_SCHEMA_VERSION = 1;
 
 /**
@@ -37,6 +37,25 @@ export function withoutLegacyThresholds(
   return result;
 }
 
+/**
+ * Fields introduced in schema v5. Every pre-v5 record lacks them and gains their
+ * default on migration. The historical shape checks anchor on the FIXED pre-v5
+ * key set below (never the mutable DEFAULT_SETTINGS), so adding more fields later
+ * cannot silently invalidate a genuine v1–v4 record.
+ */
+const V5_ADDED_KEYS = ["experimentalUncalibratedTmr"] as const;
+const V5_ADDED_DEFAULTS = Object.fromEntries(
+  V5_ADDED_KEYS.map((key) => [key, DEFAULT_SETTINGS[key]]),
+) as Pick<UserSettings, (typeof V5_ADDED_KEYS)[number]>;
+const PRE_V5_SETTING_KEYS = (
+  Object.keys(DEFAULT_SETTINGS) as Array<keyof UserSettings>
+).filter((key) => !(V5_ADDED_KEYS as readonly string[]).includes(key));
+
+/** Completes a schema-v4-shaped record to the current shape with v5 defaults. */
+function completeToCurrent(v4Shaped: Record<string, unknown>): UserSettings {
+  return { ...v4Shaped, ...V5_ADDED_DEFAULTS } as unknown as UserSettings;
+}
+
 interface PersistedSettings {
   schemaVersion: typeof SCHEMA_VERSION;
   settingsVersion: number;
@@ -47,8 +66,10 @@ type LegacyThresholdRecord = Record<
   (typeof LEGACY_THRESHOLD_KEYS)[number],
   number
 >;
-/** The v3 (pre-removal) settings shape: v4 settings plus the four thresholds. */
-type V3UserSettings = UserSettings & LegacyThresholdRecord;
+/** The schema-v4 settings shape: the current settings minus the v5 additions. */
+type V4UserSettings = Omit<UserSettings, (typeof V5_ADDED_KEYS)[number]>;
+/** The v3 (pre-threshold-removal) shape: v4 settings plus the four thresholds. */
+type V3UserSettings = V4UserSettings & LegacyThresholdRecord;
 type V2UserSettings = Omit<V3UserSettings, "useMockModel">;
 type V1UserSettings = Omit<V3UserSettings, "debugMode" | "useMockModel">;
 
@@ -56,6 +77,7 @@ const booleanKeys = [
   "enabled",
   "processVisibleOnly",
   "experimentalShortTextDetection",
+  "experimentalUncalibratedTmr",
   "manualAnalysisEnabled",
   "showScore",
   "showExplanation",
@@ -199,13 +221,27 @@ function hasOrderedLegacyThresholds(value: Record<string, unknown>): boolean {
   return marking! <= blur! && blur! <= collapse! && collapse! <= hide!;
 }
 
+/**
+ * A schema-v4 record: the current settings minus the v5 additions. Recognized by
+ * the ABSENCE of every v5 key plus validity once the v5 defaults are filled in.
+ */
+function isV4UserSettings(value: unknown): value is V4UserSettings {
+  if (!isRecord(value)) {
+    return false;
+  }
+  if (V5_ADDED_KEYS.some((key) => Object.hasOwn(value, key))) {
+    return false;
+  }
+  return isUserSettings({ ...value, ...V5_ADDED_DEFAULTS });
+}
+
 /** Validates the FULL v3 shape (v4 keys plus the four ordered thresholds). */
 function isV3UserSettings(value: unknown): value is V3UserSettings {
   if (!isRecord(value)) {
     return false;
   }
   const expected = new Set<string>([
-    ...Object.keys(DEFAULT_SETTINGS),
+    ...PRE_V5_SETTING_KEYS,
     ...LEGACY_THRESHOLD_KEYS,
   ]);
   if (
@@ -216,7 +252,7 @@ function isV3UserSettings(value: unknown): value is V3UserSettings {
   }
   return (
     hasOrderedLegacyThresholds(value) &&
-    isUserSettings(withoutLegacyThresholds(value))
+    isV4UserSettings(withoutLegacyThresholds(value))
   );
 }
 
@@ -381,6 +417,19 @@ async function readPersistedSettingsForMutation(
     return persisted;
   }
 
+  // Versioned v4 envelope (the immediate predecessor): fill the v5 defaults.
+  if (
+    hasVersionedEnvelope(persisted, 4) &&
+    isV4UserSettings(persisted.settings)
+  ) {
+    return storeMigrated(
+      storage,
+      storageKey,
+      persisted.settingsVersion,
+      completeToCurrent(persisted.settings),
+    );
+  }
+
   // Versioned v3 envelope: validate the whole v3 shape, then drop the thresholds.
   if (
     hasVersionedEnvelope(persisted, 3) &&
@@ -390,7 +439,7 @@ async function readPersistedSettingsForMutation(
       storage,
       storageKey,
       persisted.settingsVersion,
-      withoutLegacyThresholds(persisted.settings) as unknown as UserSettings,
+      completeToCurrent(withoutLegacyThresholds(persisted.settings)),
     );
   }
 
@@ -402,10 +451,12 @@ async function readPersistedSettingsForMutation(
       storage,
       storageKey,
       persisted.settingsVersion,
-      withoutLegacyThresholds({
-        ...persisted.settings,
-        useMockModel: false,
-      }) as unknown as UserSettings,
+      completeToCurrent(
+        withoutLegacyThresholds({
+          ...persisted.settings,
+          useMockModel: false,
+        }),
+      ),
     );
   }
 
@@ -417,11 +468,13 @@ async function readPersistedSettingsForMutation(
       storage,
       storageKey,
       persisted.settingsVersion,
-      withoutLegacyThresholds({
-        ...persisted.settings,
-        debugMode: false,
-        useMockModel: false,
-      }) as unknown as UserSettings,
+      completeToCurrent(
+        withoutLegacyThresholds({
+          ...persisted.settings,
+          debugMode: false,
+          useMockModel: false,
+        }),
+      ),
     );
   }
 
@@ -431,7 +484,7 @@ async function readPersistedSettingsForMutation(
       storage,
       storageKey,
       1,
-      withoutLegacyThresholds(persisted) as unknown as UserSettings,
+      completeToCurrent(withoutLegacyThresholds(persisted)),
     );
   }
 
@@ -440,10 +493,12 @@ async function readPersistedSettingsForMutation(
       storage,
       storageKey,
       1,
-      withoutLegacyThresholds({
-        ...persisted,
-        useMockModel: false,
-      }) as unknown as UserSettings,
+      completeToCurrent(
+        withoutLegacyThresholds({
+          ...persisted,
+          useMockModel: false,
+        }),
+      ),
     );
   }
 
@@ -452,12 +507,19 @@ async function readPersistedSettingsForMutation(
       storage,
       storageKey,
       1,
-      withoutLegacyThresholds({
-        ...persisted,
-        debugMode: false,
-        useMockModel: false,
-      }) as unknown as UserSettings,
+      completeToCurrent(
+        withoutLegacyThresholds({
+          ...persisted,
+          debugMode: false,
+          useMockModel: false,
+        }),
+      ),
     );
+  }
+
+  // Bare schema-v4 object (current keys minus the v5 additions).
+  if (isV4UserSettings(persisted)) {
+    return storeMigrated(storage, storageKey, 1, completeToCurrent(persisted));
   }
 
   if (isUserSettings(persisted)) {

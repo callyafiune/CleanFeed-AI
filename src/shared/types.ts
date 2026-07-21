@@ -83,7 +83,14 @@ export type DecisionReasonCode =
   | "ARTIFACT_MISMATCH"
   | "DOCUMENT_EVIDENCE_PENDING"
   | "CIRCUIT_BREAKER_OPEN"
-  | "WEBGPU_FALLBACK";
+  | "WEBGPU_FALLBACK"
+  /**
+   * The result came from the opt-in "preview experimental / não calibrado" TMR
+   * mode: the sealed model ran with NO scientific calibration profile. Surfaced
+   * on the decision, the status reason codes and the model status so the UI can
+   * always disclose the uncalibrated, pending nature of the verdict.
+   */
+  | "TMR_EXPERIMENTAL_UNCALIBRATED";
 
 /**
  * The evidence quality behind a decision. The REAL distributed assessment
