@@ -4,7 +4,6 @@ import {
   type RuntimeDescriptor,
 } from "@/inference/model-bundle";
 import { buildWorkerInitializePayload } from "@/inference/runtime-activation";
-import { SETTINGS_STORAGE_KEYS } from "@/shared/constants";
 import { CleanFeedError } from "@/shared/errors";
 import { parseExtensionMessage } from "@/shared/message-validation";
 import { WorkerHost } from "@/offscreen/worker-host";
@@ -14,25 +13,18 @@ const modelBaseUrl = chrome.runtime.getURL("models/");
 const wasmBaseUrl = chrome.runtime.getURL("vendor/transformers-wasm/");
 
 /**
- * Best-effort, side-effect-free read of the opt-in "preview experimental / não
- * calibrado" flag. It NEVER migrates or writes settings (that is the service
- * worker's job); any unreadable or legacy shape defaults to false, so the
- * experimental TMR stays OFF unless the user explicitly enabled it — fail closed.
+ * The opt-in "preview experimental / não calibrado" flag as it arrives ON a
+ * classify request. The background injects the FRESH per-request settings, so the
+ * offscreen learns the current opt-in from the work it is asked to do and never
+ * depends on chrome.storage inside the offscreen document (unavailable/unreliable
+ * there). Anything but an explicit `true` is fail-closed OFF.
  */
-async function readExperimentalFlag(): Promise<boolean> {
-  try {
-    const key = SETTINGS_STORAGE_KEYS.global;
-    const stored = await chrome.storage.local.get(key);
-    const envelope = stored[key] as
-      { settings?: Record<string, unknown> } | undefined;
-    const settings = envelope?.settings ?? envelope;
-    return (
-      (settings as Record<string, unknown> | undefined)
-        ?.experimentalUncalibratedTmr === true
-    );
-  } catch {
-    return false;
-  }
+export function resolveExperimentalUncalibratedMode(payload: unknown): boolean {
+  const settings = (
+    payload as
+      { settings?: { experimentalUncalibratedTmr?: unknown } } | undefined
+  )?.settings;
+  return settings?.experimentalUncalibratedTmr === true;
 }
 
 // Load and JOINTLY cross-validate the sealed descriptor (manifest + release +
@@ -50,8 +42,8 @@ const descriptorReady: Promise<RuntimeDescriptor | undefined> = (async () => {
   }
 })();
 
-// The experimental flag the worker was last initialized with, so a storage change
-// only re-initializes when the flag actually flips.
+// The experimental mode the worker was last initialized with, so a classify only
+// re-initializes when the opt-in actually flips. `undefined` until the first init.
 let activeExperimental: boolean | undefined;
 
 // Initializes (or re-initializes) the worker for the current opt-in. The sealed v1
@@ -79,26 +71,25 @@ async function configureHost(
   );
 }
 
+// The worker starts in the fail-closed fallback; the first classify that opts into
+// the experimental preview re-initializes it to load the sealed TMR.
 const workerHostReady: Promise<WorkerHost> = (async () => {
   const host = new WorkerHost();
-  await configureHost(host, await readExperimentalFlag());
+  await configureHost(host, false);
   return host;
 })();
 
-// Re-initialize the worker when the user toggles the experimental preview, so the
-// sealed TMR is loaded/unloaded to match the opt-in without an extension reload.
-// Every other settings change leaves the runtime untouched.
-chrome.storage?.onChanged?.addListener((changes, area) => {
-  if (area !== "local" || changes[SETTINGS_STORAGE_KEYS.global] === undefined) {
-    return;
-  }
-  void (async () => {
-    const experimental = await readExperimentalFlag();
-    if (experimental === activeExperimental) return;
-    const host = await workerHostReady;
-    await configureHost(host, experimental);
-  })();
-});
+// Re-initializes the worker ONLY when the requested experimental mode differs from
+// the one it was last initialized with. `configureHost` sets `activeExperimental`
+// synchronously (before its first await), so concurrent requests re-init exactly
+// once, and the INITIALIZE is always posted before the CLASSIFY that follows.
+async function ensureExperimentalMode(
+  host: WorkerHost,
+  experimental: boolean,
+): Promise<void> {
+  if (experimental === activeExperimental) return;
+  await configureHost(host, experimental);
+}
 
 function unavailableStatus(
   reasonCodes: DecisionReasonCode[] = ["ARTIFACT_MISMATCH"],
@@ -153,10 +144,17 @@ chrome.runtime.onMessage.addListener((rawMessage, _sender, sendResponse) => {
 
   if (message.type !== "OFFSCREEN_CLASSIFY") return undefined;
 
+  // The classify payload carries the fresh per-request settings, so the opt-in is
+  // read here and the worker is (re)loaded to match BEFORE the text is scored.
+  const experimental = resolveExperimentalUncalibratedMode(message.payload);
   void workerHostReady
-    .then((host) =>
-      host.classify({ requestId: message.requestId, ...message.payload }),
-    )
+    .then(async (host) => {
+      await ensureExperimentalMode(host, experimental);
+      return host.classify({
+        requestId: message.requestId,
+        ...message.payload,
+      });
+    })
     .then((result) =>
       sendResponse({
         source: "offscreen",
