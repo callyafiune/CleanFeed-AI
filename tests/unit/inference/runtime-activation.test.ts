@@ -156,4 +156,51 @@ describe("buildCalibratedRuntimeParts", () => {
     expect(tokenized.spans[0]!.start).toBe(0);
     expect(tokenized.spans.at(-1)!.end).toBe("adoção".length);
   });
+
+  it("encodes a post whose emoji and accented pt-BR bytes SPLIT across ByteLevel tokens without throwing", async () => {
+    // ByteLevel-BPE virtually always splits a 4-byte emoji, and can split a
+    // 2-byte accented pt-BR char whose byte-pair merge is absent. The producer
+    // (deriveByteLevelOffsets) rounds each covering token OUTWARD to the full
+    // char, yielding a legitimate shared/overlapping boundary (non-monotonic
+    // START). The consumer (spansFromModelOffsets) must ACCEPT that instead of
+    // throwing MODEL_TOKEN_OFFSETS_UNAVAILABLE — otherwise the whole post becomes
+    // a hard classify error rather than a graceful chunk-planning input.
+    const { descriptor } = await promotedDescriptor();
+    const parts = await buildCalibratedRuntimeParts({
+      classifier: fakeClassifier(),
+      descriptor,
+      loadTokenizer: async () => fakeByteLevelTokenizer(),
+    });
+
+    const text = "Olá 😀 coração";
+
+    // The full buildCalibratedRuntimeParts → encode → spans path does NOT throw.
+    const tokenized = await parts.tokenizer.encode(text);
+
+    // Sane, coverage-clean spans: exact, tiling from 0 to the string length with a
+    // non-decreasing END, every span well-formed and on code-point boundaries.
+    expect(tokenized.exact).toBe(true);
+    expect(tokenized.spans.length).toBeGreaterThan(0);
+    expect(tokenized.spans[0]!.start).toBe(0);
+    expect(tokenized.spans.at(-1)!.end).toBe(text.length);
+    let previousEnd = 0;
+    for (const { start, end } of tokenized.spans) {
+      expect(start).toBeGreaterThanOrEqual(0);
+      expect(end).toBeGreaterThan(start);
+      expect(end).toBeLessThanOrEqual(text.length);
+      expect(end).toBeGreaterThanOrEqual(previousEnd); // non-decreasing END
+      // A well-formed (non-mid-codepoint) slice round-trips through UTF-16.
+      const slice = text.slice(start, end);
+      expect(slice).toBe(
+        String.fromCodePoint(...Array.from(slice, (c) => c.codePointAt(0)!)),
+      );
+      previousEnd = end;
+    }
+    // The union of the (possibly overlapping) spans covers the whole document.
+    const covered = new Set<number>();
+    for (const { start, end } of tokenized.spans) {
+      for (let index = start; index < end; index += 1) covered.add(index);
+    }
+    expect(covered.size).toBe(text.length);
+  });
 });

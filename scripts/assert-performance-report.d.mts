@@ -40,6 +40,13 @@ export interface PerformanceReportExpectations {
   browserExecutableSha256?: string;
 }
 
+/** The CLI paths from which the optional cross-check expectations are derived. */
+export interface DeriveExpectationsOptions {
+  releasePath?: string;
+  parityPath?: string;
+  browserLockPath?: string;
+}
+
 export interface ReleasePerformanceEvidenceContext {
   descriptorDigest: string;
   gateDecision: "pending" | "reject" | "indicator-only" | "pass";
@@ -73,3 +80,12 @@ export declare function assertReleasePerformanceEvidence(
   value: unknown,
   context: ReleasePerformanceEvidenceContext,
 ): void;
+
+/**
+ * Derives the optional cross-check expectations from the CLI paths, including the
+ * release-descriptor digest bound from `--release` (canonicalSha256 of the parsed
+ * release.json, matching the report producer).
+ */
+export declare function deriveExpectations(
+  options: DeriveExpectationsOptions,
+): Promise<PerformanceReportExpectations>;

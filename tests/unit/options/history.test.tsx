@@ -4,6 +4,7 @@ import { cleanup, fireEvent, render, screen } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { App as OptionsApp, type OptionsApi } from "@/options/App";
+import { CLASSIFICATION_STATUS_COPY } from "@/shared/classification-copy";
 import { DEFAULT_SETTINGS } from "@/shared/constants";
 import type { UserSettings } from "@/shared/settings-types";
 import type { HistoryEntry } from "@/shared/types";
@@ -108,6 +109,29 @@ describe("options history", () => {
     await screen.findByRole("table", { name: "Histórico de classificações" });
     expect(
       screen.queryByRole("columnheader", { name: "Texto integral" }),
+    ).not.toBeInTheDocument();
+  });
+
+  it("labels the result with the centralized neutral band copy, not the old assertive wording", async () => {
+    const api = fakeApi({ ...DEFAULT_SETTINGS, historyEnabled: true }, [
+      entry({ status: "possibly_ai" }),
+    ]);
+    render(<OptionsApp api={api} />);
+
+    await screen.findByRole("table", { name: "Histórico de classificações" });
+
+    // The history row's result cell renders the neutral band from the single
+    // source of truth ...
+    expect(
+      screen.getByRole("cell", {
+        name: CLASSIFICATION_STATUS_COPY.possibly_ai,
+      }),
+    ).toBeVisible();
+    // ... and no history cell carries the pre-P4-T1 assertive wording (the local
+    // STATUS_LABELS map is gone). Scoped to cells so the HistorySettings filter
+    // dropdown — a separate surface — is not implicated.
+    expect(
+      screen.queryByRole("cell", { name: "Possivelmente IA" }),
     ).not.toBeInTheDocument();
   });
 

@@ -1,5 +1,10 @@
-import { describe, expect, it } from "vitest";
+import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 
+import { afterAll, describe, expect, it } from "vitest";
+
+import { canonicalSha256 } from "../../../contracts/canonical-json";
 import {
   assertReferenceEnvironment,
   referenceBrowserLockDigest as environmentLockDigest,
@@ -7,6 +12,7 @@ import {
 import {
   assertPerformanceReport,
   assertReleasePerformanceEvidence,
+  deriveExpectations,
   referenceBrowserLockDigest,
 } from "../../../scripts/assert-performance-report.mjs";
 
@@ -67,6 +73,14 @@ function codeOf(run: () => unknown): string | undefined {
     return (error as { code?: string }).code;
   }
 }
+
+const temporaryDirs: string[] = [];
+
+afterAll(() => {
+  for (const dir of temporaryDirs) {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
 
 describe("assert-performance-report.mjs (CI mirror)", () => {
   it("agrees with the TS parser on the closed-lock digest", () => {
@@ -168,6 +182,55 @@ describe("assert-performance-report.mjs (CI mirror)", () => {
         }),
       ),
     ).toBe("BROWSER_LOCK_DIGEST_MISMATCH");
+  });
+
+  it("binds the --release descriptor digest so a divergent report is reprovado", async () => {
+    // A stand-in release descriptor; the digest is canonicalSha256 of the WHOLE
+    // parsed descriptor, exactly as the report producer computes it.
+    const release = {
+      schemaVersion: 1,
+      modelId: "tmr-ai-text-detector",
+      modelVersion: "b9aa251e5bcda7e429fcc936767d921435945b60",
+      bundleDigest: "3".repeat(64),
+      tokenizerDigest:
+        "8be427eee79ac58671ae5570f75806fc3d9edc2f2d727ca9e261c2d4b85d37a9",
+      aggregationVersion: "tmr-aggregation-v2",
+      contentCompositionVersion: "lexical-content-v1",
+      calibrationSetDigest: "4".repeat(64),
+      profileDigests: ["a".repeat(64)],
+      rolloutState: "actions",
+      gateDecision: "pass",
+      issuedAt: "2026-07-19T12:00:00.000Z",
+      evidenceDigest: "f".repeat(64),
+    };
+    const dir = mkdtempSync(join(tmpdir(), "cleanfeed-release-"));
+    temporaryDirs.push(dir);
+    const releasePath = join(dir, "release.json");
+    writeFileSync(releasePath, JSON.stringify(release), "utf8");
+
+    const digest = await canonicalSha256(release);
+    const expectations = await deriveExpectations({ releasePath });
+
+    // The CLI now actually derives the descriptor digest from --release ...
+    expect(expectations.releaseDescriptorDigest).toBe(digest);
+
+    // ... so a report whose digest matches the supplied release.json passes ...
+    expect(() =>
+      assertPerformanceReport(
+        { ...validReport(), releaseDescriptorDigest: digest },
+        expectations,
+      ),
+    ).not.toThrow();
+
+    // ... and one that diverges from it is reprovado (the pre-fix CLI no-op).
+    expect(
+      codeOf(() =>
+        assertPerformanceReport(
+          { ...validReport(), releaseDescriptorDigest: "9".repeat(64) },
+          expectations,
+        ),
+      ),
+    ).toBe("RELEASE_DESCRIPTOR_DIGEST_MISMATCH");
   });
 
   it("cross-checks descriptor, parity and executable expectations", () => {

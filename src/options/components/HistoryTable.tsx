@@ -1,20 +1,12 @@
+import { CLASSIFICATION_STATUS_COPY } from "@/shared/classification-copy";
 import type { HistoryEntry } from "@/shared/types";
-import type { ClassificationStatus, PresentationMode } from "@/shared/types";
+import type { PresentationMode } from "@/shared/types";
 
 interface HistoryTableProps {
   entries: HistoryEntry[];
   storeFullText: boolean;
   texts: Record<string, string>;
 }
-
-const STATUS_LABELS: Record<ClassificationStatus, string> = {
-  probably_human: "Provavelmente humano",
-  inconclusive: "Inconclusivo",
-  possibly_ai: "Possivelmente IA",
-  strong_ai_indication: "Forte indício de IA",
-  insufficient_evidence: "Evidência insuficiente",
-  classification_failed: "Falha na classificação",
-};
 
 const ACTION_LABELS: Record<PresentationMode, string> = {
   indicator: "Indicador",
@@ -75,7 +67,7 @@ export function HistoryTable({
             <tr key={row.textHash}>
               <td>{formatDate(row.timestamp)}</td>
               <td>{row.platform}</td>
-              <td>{STATUS_LABELS[row.status]}</td>
+              <td>{CLASSIFICATION_STATUS_COPY[row.status]}</td>
               <td>
                 {row.action === undefined ? "—" : ACTION_LABELS[row.action]}
               </td>

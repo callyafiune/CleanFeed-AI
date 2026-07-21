@@ -393,8 +393,25 @@ function parseCliArgs(args) {
   return { reportPath, ...options };
 }
 
-async function deriveExpectations(options) {
+/**
+ * Derives the optional cross-check expectations from the CLI paths. When
+ * `--release` is supplied, the release descriptor is parsed and hashed EXACTLY as
+ * the report producer hashes it (`canonicalSha256` of the whole descriptor, per
+ * tests/e2e/tmr-performance.spec.ts), so a report whose `releaseDescriptorDigest`
+ * diverges from the supplied release.json is reprovado with
+ * RELEASE_DESCRIPTOR_DIGEST_MISMATCH — closing the CLI no-op where the descriptor
+ * cross-check never ran (plan line 1364).
+ */
+export async function deriveExpectations(options) {
   const expectations = {};
+  if (options.releasePath !== undefined) {
+    const release = readJson(
+      options.releasePath,
+      "RELEASE_DESCRIPTOR_UNREADABLE",
+    );
+    const { canonicalSha256 } = await import("../contracts/canonical-json.ts");
+    expectations.releaseDescriptorDigest = await canonicalSha256(release);
+  }
   if (options.parityPath !== undefined) {
     const parity = readJson(options.parityPath, "RUNTIME_PARITY_UNREADABLE");
     if (!isHex64(parity.runtimeParityDigest)) {

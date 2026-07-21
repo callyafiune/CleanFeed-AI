@@ -72,15 +72,24 @@ function spansFromModelOffsets(
     tokenOffsetsUnavailable();
   }
 
+  // A legitimate ByteLevel offset stream can REVISIT a character boundary: when a
+  // multi-byte character's UTF-8 bytes split across adjacent BPE tokens (an emoji
+  // or an accented pt-BR letter whose byte-pair merge is absent), the producer
+  // rounds every covering token OUTWARD to that character's FULL span, so two
+  // consecutive tokens legitimately SHARE the same span — a non-monotonic START.
+  // That overlap is sound: chunk spans and coverage take the union. So we TOLERATE
+  // a shared boundary (`start <= previousEnd`) and instead enforce a non-decreasing
+  // END, still rejecting genuinely-broken offsets (a backward END, an empty/inverted
+  // span, an out-of-range index, or a non-integer).
   let previousEnd = 0;
   return offsets.map(({ start, end }) => {
     if (
       !Number.isSafeInteger(start) ||
       !Number.isSafeInteger(end) ||
-      start < previousEnd ||
       start < 0 ||
       end <= start ||
-      end > text.length
+      end > text.length ||
+      end < previousEnd
     ) {
       tokenOffsetsUnavailable();
     }

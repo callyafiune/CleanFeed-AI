@@ -168,24 +168,28 @@ export async function promotedDescriptor(): Promise<{
 
 /**
  * A raw ByteLevel-BPE fake tokenizer: it reserves two special tokens (measured
- * by the exact tokenizer's probe) and segments text one code point per token,
- * rendering each to its byte-alphabet surface form so the derived offsets tile
- * the source exactly. No model, no network — enough to drive the calibrated path.
+ * by the exact tokenizer's probe) and models REAL byte-level segmentation —
+ * one token per source UTF-8 BYTE, each rendered to its byte-alphabet surface
+ * form. A single-byte (ASCII) char is one token, exactly as before, but a
+ * multi-byte char (an accented pt-BR letter — 2 bytes — or an emoji — 4 bytes)
+ * genuinely SPLITS across adjacent tokens, so the derived offsets round each
+ * covering token outward to that char's full span (a shared/overlapping
+ * boundary). The `tokenize` surface and the callable `input_ids` are built from
+ * the SAME byte stream, so their lengths always agree. No model, no network —
+ * enough to drive the calibrated path through a real splitting case.
  */
 export function fakeByteLevelTokenizer(): LoadedTransformersTokenizer {
   const byteToChar = byteToCharMap();
   const utf8 = new TextEncoder();
-  const surface = (piece: string): string =>
-    Array.from(utf8.encode(piece), (byte) => byteToChar.get(byte)).join("");
-  const contentTokens = (text: string): string[] => Array.from(text);
+  const byteSurfaceTokens = (text: string): string[] =>
+    Array.from(utf8.encode(text), (byte) => byteToChar.get(byte)!);
   const tokenizer = ((text: string, options) => {
-    const ids = contentTokens(text).map((_, index) => index + 10);
+    const ids = byteSurfaceTokens(text).map((_, index) => index + 10);
     return {
       input_ids: options.add_special_tokens ? [0, ...ids, 2] : ids,
     };
   }) as LoadedTransformersTokenizer;
-  tokenizer.tokenize = (text: string) =>
-    contentTokens(text).map((char) => surface(char));
+  tokenizer.tokenize = (text: string) => byteSurfaceTokens(text);
   return tokenizer;
 }
 
