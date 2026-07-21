@@ -12,10 +12,11 @@ falha fechada: qualquer campo desconhecido, id/hash repetido, score fora de
 `[0,1]`, metadado contraditório, previsão ausente ou digest divergente é uma
 falha dura — nunca `last-write-wins` nem exclusão silenciosa.
 
-## Fluxo obrigatório (sete subcomandos)
+## Fluxo obrigatório (nove subcomandos)
 
 ```text
-validate -> split -> validate-predictions -> fit -> evaluate -> publish-profile -> verify-evidence
+validate -> split -> validate-predictions -> fit -> evaluate -> publish-profile
+  -> verify-evidence -> publish-evidence -> verify-published-evidence
 ```
 
 O scoring real das previsões (development/calibration e o holdout) pertence à
@@ -32,7 +33,29 @@ primitives de ledger/validação deste pacote. A Fase 2 nunca executa inferênci
 | `publish-profile`      | Escreve `calibration-profiles.json` + `release.json` (vazio + `bundle-verified` em `reject`).                                                                                                            | `--report --frozen-calibration --issued-at --model-dir`                                                                                                  |
 | `verify-evidence`      | Reexecuta os parsers da Fase 1 e confere todos os digests report/perfis/release.                                                                                                                         | `--report --frozen-calibration --model-dir`                                                                                                              |
 
+| `publish-evidence` | Emite o conjunto FECHADO de sete arquivos sanitizados; recusa ledger não concluído, digest divergente, licença de modelo não aprovada ou relatório ausente. Reaproveita `publish-profile`/`verify-evidence` e nunca reconstrói release/perfis. | `--source-readiness --dataset-audit --split-artifact --frozen-calibration --fit-report --report --ledger --consumption-id --model-dir --output` |
+| `verify-published-evidence` | Revalida um clone limpo usando só a evidência versionada + metadados do modelo (sem `benchmark/out`); aceita a promoção monotônica `pass/indicator -> pass/actions`. | `--evidence-dir --model-dir` |
+
 `npm run benchmark -- --help` imprime o resumo acima.
+
+## Evidência pública sanitizada (`benchmark/evidence/tmr-ptbr-v1`)
+
+`publish-evidence` escreve APENAS sete arquivos com esquema fechado —
+`dataset-summary.json`, `split-summary.json`, `fit-summary.json`,
+`benchmark-report.json`, `benchmark-report.md`, `decision.json` e
+`evidence-digest.json`. Nenhum registro, linha de previsão, caminho de shard/raw
+ou array com ≥ 100 ids escalares entra na evidência; chaves de nível de registro
+(`text`, `url`, `author`, `prompt`, `contentSha256`, `consentReceiptDigest`,
+`sourceIdentifier`, `records`, `recordIds`, `predictionRows`, `predictions`) são
+recusadas. Agregados seguros como `predictionManifestDigests` são preservados.
+`evidence-digest.json` sela `scientificEvidenceDigest`
+(== `release.evidenceDigest` == `benchmark-report.reportDigest`), o inventário
+canônico ordenado dos outros seis arquivos, o `calibrationSetDigest` e
+`publicationDigest = sha256(canonicalJson({schemaVersion: 1, files}))`.
+
+A publicação real da decisão/evidência e do descritor autorizado (os passos 4–6
+do plano) é uma etapa de operador DIFERIDA: exige uma execução de holdout real
+concluída. O `.gitkeep` só é removido quando essa evidência real for publicada.
 
 ## Separação de labels e o holdout
 

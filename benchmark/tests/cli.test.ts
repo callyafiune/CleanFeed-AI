@@ -280,6 +280,85 @@ describe("benchmark CLI consume-holdout parsing", () => {
   });
 });
 
+describe("benchmark CLI evidence-publication parsing", () => {
+  const PUBLISH_EVIDENCE_ARGS = [
+    "publish-evidence",
+    "--source-readiness",
+    "sr.json",
+    "--dataset-audit",
+    "da.json",
+    "--split-artifact",
+    "split.json",
+    "--frozen-calibration",
+    "frozen.json",
+    "--fit-report",
+    "fit.json",
+    "--report",
+    "report.json",
+    "--ledger",
+    "ledger.jsonl",
+    "--consumption-id",
+    "consume-0001",
+    "--model-dir",
+    "models/tmr-ai-text-detector",
+    "--output",
+    "benchmark/evidence/tmr-ptbr-v1",
+  ];
+
+  it("recognizes publish-evidence and verify-published-evidence", () => {
+    expect(parseCliArgs(PUBLISH_EVIDENCE_ARGS).command).toBe(
+      "publish-evidence",
+    );
+    expect(
+      parseCliArgs([
+        "verify-published-evidence",
+        "--evidence-dir",
+        "benchmark/evidence/tmr-ptbr-v1",
+        "--model-dir",
+        "models/tmr-ai-text-detector",
+      ]).command,
+    ).toBe("verify-published-evidence");
+  });
+
+  it("still lists the Phase 2 subcommands in the dispatch error", () => {
+    expect(() => parseCliArgs(["frobnicate"])).toThrow(
+      /expected one of ingest, validate, split, validate-predictions, score, fit, evaluate, consume-holdout, publish-profile, verify-evidence/u,
+    );
+  });
+
+  it("rejects an unknown flag on publish-evidence", async () => {
+    await expect(
+      runCli([...PUBLISH_EVIDENCE_ARGS, "--bogus", "x"]),
+    ).rejects.toThrow(/unknown flag --bogus/u);
+  });
+
+  it("requires publish-evidence's mandatory flags", async () => {
+    await expect(
+      runCli(["publish-evidence", "--report", "report.json"]),
+    ).rejects.toThrow(/--source-readiness|--dataset-audit|--output/u);
+  });
+
+  it("requires verify-published-evidence's mandatory flags", async () => {
+    await expect(
+      runCli(["verify-published-evidence", "--evidence-dir", "e"]),
+    ).rejects.toThrow(/--model-dir/u);
+  });
+
+  it("rejects an unknown flag on verify-published-evidence", async () => {
+    await expect(
+      runCli([
+        "verify-published-evidence",
+        "--evidence-dir",
+        "e",
+        "--model-dir",
+        "m",
+        "--bogus",
+        "x",
+      ]),
+    ).rejects.toThrow(/unknown flag --bogus/u);
+  });
+});
+
 // ---------------------------------------------------------------------------
 // Full holdout consumption flow driven through the evaluate subcommand.
 //

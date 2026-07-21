@@ -27,6 +27,10 @@ import { runEvaluate, type EvaluateOptions } from "./commands/evaluate.ts";
 import { runFit, type FitOptions } from "./commands/fit.ts";
 import { runIngest, type IngestOptions } from "./commands/ingest.ts";
 import {
+  runPublishEvidence,
+  type PublishEvidenceOptions,
+} from "./commands/publish-evidence.ts";
+import {
   runPublishProfile,
   type PublishProfileOptions,
 } from "./commands/publish-profile.ts";
@@ -41,6 +45,10 @@ import {
   runVerifyEvidence,
   type VerifyEvidenceOptions,
 } from "./commands/verify-evidence.ts";
+import {
+  runVerifyPublishedEvidence,
+  type VerifyPublishedEvidenceOptions,
+} from "./commands/verify-published-evidence.ts";
 import type { Partition } from "./split.ts";
 
 export const BENCHMARK_COMMANDS = [
@@ -54,6 +62,8 @@ export const BENCHMARK_COMMANDS = [
   "consume-holdout",
   "publish-profile",
   "verify-evidence",
+  "publish-evidence",
+  "verify-published-evidence",
 ] as const;
 
 export type BenchmarkCommand = (typeof BENCHMARK_COMMANDS)[number];
@@ -126,6 +136,10 @@ async function dispatch(
       return runPublishProfile(buildPublishProfile(flags));
     case "verify-evidence":
       return runVerifyEvidence(buildVerifyEvidence(flags));
+    case "publish-evidence":
+      return runPublishEvidence(buildPublishEvidence(flags));
+    case "verify-published-evidence":
+      return runVerifyPublishedEvidence(buildVerifyPublishedEvidence(flags));
   }
 }
 
@@ -458,6 +472,43 @@ function buildVerifyEvidence(flags: FlagMap): VerifyEvidenceOptions {
   };
 }
 
+function buildPublishEvidence(flags: FlagMap): PublishEvidenceOptions {
+  assertKnownFlags(flags, [
+    "source-readiness",
+    "dataset-audit",
+    "split-artifact",
+    "frozen-calibration",
+    "fit-report",
+    "report",
+    "ledger",
+    "consumption-id",
+    "model-dir",
+    "output",
+  ]);
+  return {
+    sourceReadinessPath: requireFlag(flags, "source-readiness"),
+    datasetAuditPath: requireFlag(flags, "dataset-audit"),
+    splitArtifactPath: requireFlag(flags, "split-artifact"),
+    frozenCalibrationPath: requireFlag(flags, "frozen-calibration"),
+    fitReportPath: requireFlag(flags, "fit-report"),
+    reportPath: requireFlag(flags, "report"),
+    ledgerPath: requireFlag(flags, "ledger"),
+    consumptionId: requireFlag(flags, "consumption-id"),
+    modelDirectory: requireFlag(flags, "model-dir"),
+    outputDirectory: requireFlag(flags, "output"),
+  };
+}
+
+function buildVerifyPublishedEvidence(
+  flags: FlagMap,
+): VerifyPublishedEvidenceOptions {
+  assertKnownFlags(flags, ["evidence-dir", "model-dir"]);
+  return {
+    evidenceDirectory: requireFlag(flags, "evidence-dir"),
+    modelDirectory: requireFlag(flags, "model-dir"),
+  };
+}
+
 function requirePartition(flags: FlagMap): Partition {
   const partition = requireFlag(flags, "partition");
   if (
@@ -495,6 +546,9 @@ function usage(): string {
     "                       (--confirm-split-digest | --resume-consumption <id>)",
     "  publish-profile      --report --frozen-calibration --issued-at --model-dir",
     "  verify-evidence      --report --frozen-calibration --model-dir",
+    "  publish-evidence     --source-readiness --dataset-audit --split-artifact --frozen-calibration",
+    "                       --fit-report --report --ledger --consumption-id --model-dir --output",
+    "  verify-published-evidence  --evidence-dir --model-dir",
     "",
     "The benchmark is standalone (never imports src/) and deterministic.",
     "Scoring the holdout belongs to Phase 3, under a single consume-holdout session.",
