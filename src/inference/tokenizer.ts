@@ -18,7 +18,7 @@ export interface Tokenizer {
   encode(text: string, signal?: AbortSignal): Promise<TokenizedText>;
 }
 
-interface ExactTokenGateway {
+export interface ExactTokenGateway {
   tokenize(text: string): Promise<{
     inputIds: readonly number[];
     specialTokenCount: number;

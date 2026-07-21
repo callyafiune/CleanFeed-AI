@@ -10,30 +10,91 @@ import {
   type LoadedTransformersTokenizer,
 } from "@/inference/model-runtime";
 import { configureTransformersEnvironment } from "@/inference/transformers-environment";
+import { CleanFeedError } from "@/shared/errors";
 import type { ClassifierMetadata, TextClassifier } from "@/shared/types";
 
+/** Asserts `run` throws a CleanFeedError carrying `code`. */
+function expectCode(run: () => unknown, code: string): void {
+  let error: unknown;
+  try {
+    run();
+  } catch (thrown) {
+    error = thrown;
+  }
+  expect(error).toBeInstanceOf(CleanFeedError);
+  expect((error as CleanFeedError).code).toBe(code);
+}
+
 /**
- * A minimal stand-in for a loaded Transformers.js tokenizer. `specialTokens`
- * are the ids the tokenizer wraps around content when `add_special_tokens` is
- * on; `pieces` maps a text to its content token ids and native char offsets.
- * The double records how it was called so a test can prove the exact tokenizer
- * measured the count instead of hardcoding it.
+ * The GPT-2/RoBERTa ByteLevel byte→char map, so a fake can emit the SAME surface
+ * tokens the real tokenizer produces (e.g. `"Ġado"`, `"Ã§"`). Each source byte
+ * renders to exactly one printable code point.
+ */
+function byteToCharMap(): Map<number, string> {
+  const bs: number[] = [];
+  for (let b = 0x21; b <= 0x7e; b += 1) bs.push(b);
+  for (let b = 0xa1; b <= 0xac; b += 1) bs.push(b);
+  for (let b = 0xae; b <= 0xff; b += 1) bs.push(b);
+  const cs = bs.slice();
+  let next = 0;
+  for (let b = 0; b < 256; b += 1) {
+    if (!bs.includes(b)) {
+      bs.push(b);
+      cs.push(256 + next);
+      next += 1;
+    }
+  }
+  const map = new Map<number, string>();
+  for (let i = 0; i < bs.length; i += 1) {
+    map.set(bs[i]!, String.fromCharCode(cs[i]!));
+  }
+  return map;
+}
+
+const BYTE_TO_CHAR = byteToCharMap();
+const UTF8 = new TextEncoder();
+
+/** The ByteLevel surface token for a UTF-16 char range of `text`. */
+function byteLevelToken(text: string, start: number, end: number): string {
+  return Array.from(UTF8.encode(text.slice(start, end)), (byte) =>
+    BYTE_TO_CHAR.get(byte),
+  ).join("");
+}
+
+/**
+ * A minimal stand-in for a loaded Transformers.js tokenizer. `specialTokens` are
+ * the ids the tokenizer wraps around content when `add_special_tokens` is on;
+ * `pieces` maps a text to its content token ids and a ByteLevel SEGMENTATION
+ * expressed as UTF-16 char ranges — the fake renders those ranges to real
+ * byte-alphabet surface tokens via `tokenize`, exactly as the model tokenizer
+ * does, so the exact tokenizer must derive offsets from that segmentation. The
+ * double records how it was called so a test can prove the special-token count
+ * was measured instead of hardcoded.
  */
 function fakeTokenizer(options: {
   specialTokens: number[];
-  pieces?: Record<string, { ids: number[]; offsets: [number, number][] }>;
+  pieces?: Record<string, { ids: number[]; segments?: [number, number][] }>;
+  tokensFor?: (text: string) => string[];
 }): LoadedTransformersTokenizer & { calls: unknown[] } {
   const calls: unknown[] = [];
-  const contentIdsFor = (
+  const pieceFor = (
     text: string,
-  ): { ids: number[]; offsets: [number, number][] } =>
-    options.pieces?.[text] ?? {
+  ): { ids: number[]; segments: [number, number][] } => {
+    const piece = options.pieces?.[text];
+    if (piece !== undefined) {
+      return {
+        ids: piece.ids,
+        segments: piece.segments ?? [],
+      };
+    }
+    return {
       ids: text.length === 0 ? [] : [1],
-      offsets: text.length === 0 ? [] : [[0, text.length]],
+      segments: text.length === 0 ? [] : [[0, text.length]],
     };
+  };
   const tokenizer = ((text: string, callOptions) => {
     calls.push({ text, callOptions });
-    const content = contentIdsFor(text);
+    const content = pieceFor(text);
     const inputIds = callOptions.add_special_tokens
       ? [
           ...options.specialTokens.slice(0, 1),
@@ -41,13 +102,13 @@ function fakeTokenizer(options: {
           ...options.specialTokens.slice(1),
         ]
       : content.ids;
-    return {
-      input_ids: inputIds,
-      ...(callOptions.return_offsets_mapping
-        ? { offset_mapping: content.offsets }
-        : {}),
-    };
+    return { input_ids: inputIds };
   }) as LoadedTransformersTokenizer & { calls: unknown[] };
+  tokenizer.tokenize = (text: string) => {
+    if (options.tokensFor) return options.tokensFor(text);
+    const { segments } = pieceFor(text);
+    return segments.map(([start, end]) => byteLevelToken(text, start, end));
+  };
   tokenizer.calls = calls;
   return tokenizer;
 }
@@ -170,14 +231,16 @@ describe("ExactTokenizer", () => {
     expect(512 - exact.specialTokenCount).toBe(510);
   });
 
-  it("returns native offsets without substring reconstruction", () => {
-    // Repeated substring: a substring search would map both "ab" tokens to 0..2.
+  it("derives native offsets from the ByteLevel segmentation, not a substring search", () => {
+    // Repeated substring: an indexOf/substring search would map both "ab"
+    // tokens to 0..2. Byte-level tiling advances the cursor, so they are
+    // distinct.
     const tokenizer = fakeTokenizer({
       specialTokens: [0, 2],
       pieces: {
         abab: {
           ids: [11, 11],
-          offsets: [
+          segments: [
             [0, 2],
             [2, 4],
           ],
@@ -186,7 +249,15 @@ describe("ExactTokenizer", () => {
     });
     const exact = ExactTokenizer.create(tokenizer);
 
-    const encoding = exact.encodeWithOffsets("abab");
+    const indexOf = vi.spyOn(String.prototype, "indexOf");
+    const lastIndexOf = vi.spyOn(String.prototype, "lastIndexOf");
+    let encoding;
+    try {
+      encoding = exact.encodeWithOffsets("abab");
+    } finally {
+      indexOf.mockRestore();
+      lastIndexOf.mockRestore();
+    }
 
     expect(encoding.specialTokenCount).toBe(2);
     expect(encoding.inputIds).toEqual([11, 11]);
@@ -197,28 +268,107 @@ describe("ExactTokenizer", () => {
     // First offset starts at 0, last offset ends at the string length, no gap.
     expect(encoding.offsets[0]!.start).toBe(0);
     expect(encoding.offsets.at(-1)!.end).toBe("abab".length);
-    // Native offsets require return_offsets_mapping on the encode call.
+    // The offsets were NOT found by scanning the text for the token.
+    expect(indexOf).not.toHaveBeenCalled();
+    expect(lastIndexOf).not.toHaveBeenCalled();
+    // The encode call is content-only; offsets come from `tokenize`.
     const encodeCall = tokenizer.calls.at(-1) as {
-      callOptions: {
-        return_offsets_mapping?: boolean;
-        add_special_tokens: boolean;
-      };
+      callOptions: { add_special_tokens: boolean };
     };
-    expect(encodeCall.callOptions.return_offsets_mapping).toBe(true);
     expect(encodeCall.callOptions.add_special_tokens).toBe(false);
+  });
+
+  it("keeps pt-BR multi-byte accents (adoção, análise) on full-character boundaries", () => {
+    // Real ByteLevel segmentation of this text (add_prefix_space:false): the
+    // leading-space token carries its space, and each accented character (ç, ã,
+    // á — two UTF-8 bytes each) stays within a token boundary.
+    const text = "A adoção de análise";
+    const tokenizer = fakeTokenizer({
+      specialTokens: [0, 2],
+      pieces: {
+        [text]: {
+          ids: [250, 42672, 3381, 4214, 263, 41, 1526, 462],
+          // A | Ġado | ç | ão | Ġde | Ġan | á | lise
+          segments: [
+            [0, 1],
+            [1, 5],
+            [5, 6],
+            [6, 8],
+            [8, 11],
+            [11, 14],
+            [14, 15],
+            [15, 19],
+          ],
+        },
+      },
+    });
+    const exact = ExactTokenizer.create(tokenizer);
+
+    const { offsets } = exact.encodeWithOffsets(text);
+
+    // Offsets tile the text with no gaps and land on code-point boundaries.
+    expect(offsets[0]!.start).toBe(0);
+    expect(offsets.at(-1)!.end).toBe(text.length);
+    let previousEnd = 0;
+    for (const { start, end } of offsets) {
+      expect(start).toBeGreaterThanOrEqual(previousEnd); // monotonic, contiguous
+      expect(end).toBeGreaterThan(start);
+      // A well-formed (non-mid-codepoint) slice round-trips through UTF-16.
+      const slice = text.slice(start, end);
+      expect(slice).toBe(
+        String.fromCodePoint(...Array.from(slice, (c) => c.codePointAt(0)!)),
+      );
+      previousEnd = end;
+    }
+    // The 'ç' token maps to exactly the single 'ç' character.
+    expect(text.slice(offsets[2]!.start, offsets[2]!.end)).toBe("ç");
+  });
+
+  it("rounds a multi-byte character split across BPE tokens outward to the full character", () => {
+    // 'ç' is C3 A7; here the tokenizer split it into two byte-alphabet tokens
+    // ("Ã" then "§"). Each covering token must map to the whole 'ç', never a
+    // mid-codepoint index.
+    const text = "aça";
+    const tokenizer = fakeTokenizer({
+      specialTokens: [0, 2],
+      pieces: {
+        [text]: { ids: [1, 2, 3, 4] },
+      },
+      tokensFor: () => [
+        byteLevelToken("a", 0, 1), // "a"    -> byte 0
+        "Ã", // first byte of ç (0xC3)
+        "§", // second byte of ç (0xA7)
+        byteLevelToken("a", 0, 1), // "a"    -> last byte
+      ],
+    });
+    const exact = ExactTokenizer.create(tokenizer);
+
+    const { offsets } = exact.encodeWithOffsets(text);
+
+    expect(offsets).toEqual([
+      { start: 0, end: 1 }, // "a"
+      { start: 1, end: 2 }, // ç (rounded outward)
+      { start: 1, end: 2 }, // ç (rounded outward)
+      { start: 2, end: 3 }, // "a"
+    ]);
+    // No offset ever lands mid-codepoint.
+    for (const { start, end } of offsets) {
+      expect(text.slice(start, end).length).toBeGreaterThan(0);
+    }
   });
 
   it("keeps multi-token Unicode offsets aligned to the original UTF-16 string", () => {
     const text = "Olá 😀 mundo";
+    // "Olá" | " 😀" | " mundo" — the emoji is a surrogate pair (4 UTF-8 bytes).
     const tokenizer = fakeTokenizer({
       specialTokens: [0, 2],
       pieces: {
         [text]: {
           ids: [5, 6, 7],
-          offsets: [
+          segments: [
             [0, 3],
-            [4, 6],
-            [7, text.length],
+            [3, 6],
+            [6, text.length],
           ],
         },
       },
@@ -229,21 +379,35 @@ describe("ExactTokenizer", () => {
 
     expect(encoding.offsets).toEqual([
       { start: 0, end: 3 },
-      { start: 4, end: 6 },
-      { start: 7, end: text.length },
+      { start: 3, end: 6 },
+      { start: 6, end: text.length },
     ]);
     expect(encoding.offsets.at(-1)!.end).toBe(text.length);
+    // The emoji window slices to the intact surrogate pair.
+    expect(text.slice(3, 6)).toContain("😀");
   });
 
-  it("rejects an encode when the loaded tokenizer cannot provide offsets", () => {
-    const tokenizer = ((text: string, callOptions) => ({
-      input_ids: callOptions.add_special_tokens ? [0, 1, 2] : [1],
-    })) as LoadedTransformersTokenizer;
+  it("fails closed when the token and id streams disagree in length", () => {
+    const tokenizer = fakeTokenizer({
+      specialTokens: [0, 2],
+      pieces: { texto: { ids: [1, 2], segments: [[0, 5]] } },
+    });
     const exact = ExactTokenizer.create(tokenizer);
 
-    expect(() => exact.encodeWithOffsets("texto")).toThrow(
-      "MODEL_TOKEN_OFFSETS_UNAVAILABLE",
-    );
+    expectCode(() => exact.encodeWithOffsets("texto"), "TOKENIZATION_FAILED");
+  });
+
+  it("fails closed when a surface token is not a ByteLevel character", () => {
+    const tokenizer = fakeTokenizer({
+      specialTokens: [0, 2],
+      pieces: { texto: { ids: [1], segments: [[0, 5]] } },
+      // "中" is outside the 256-entry byte alphabet, so it can never map to a
+      // run of source bytes; the derivation must reject it.
+      tokensFor: () => ["中"],
+    });
+    const exact = ExactTokenizer.create(tokenizer);
+
+    expectCode(() => exact.encodeWithOffsets("texto"), "TOKENIZATION_FAILED");
   });
 });
 

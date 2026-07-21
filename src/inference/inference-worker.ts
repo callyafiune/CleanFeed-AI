@@ -25,7 +25,15 @@ import type {
 } from "@/inference/calibration-registry";
 import { createTextChunks, type TextChunkOptions } from "@/inference/chunker";
 import { assessEvidence } from "@/inference/evidence";
-import { createTmrChunkPlan } from "@/inference/model-runtime";
+import {
+  createTmrChunkPlan,
+  type LoadedTransformersTokenizer,
+} from "@/inference/model-runtime";
+import {
+  authorizesTmrPrimary,
+  buildCalibratedRuntimeParts,
+  type TokenizerLoader,
+} from "@/inference/runtime-activation";
 import { computeContentComposition } from "../../contracts/content-composition";
 import {
   evaluateLanguagePolicy,
@@ -93,6 +101,15 @@ export interface PipelineRunnerOptions {
    * builtin/experimental runtimes leave it undefined and chunk from settings.
    */
   chunkPlan?: TextChunkOptions;
+  /**
+   * The authoritative SEALED bundle identity for the calibrated (TMR) path.
+   * When present it OVERRIDES the classifier's self-reported identity so the
+   * calibration coordinates, the emitted `runtimeIdentity` and the cache key all
+   * use the v2 bundle digests the profiles were measured against — the ONNX
+   * classifier only knows its v1 manifest. The builtin/stylometric runtimes
+   * leave it undefined and keep their own identity.
+   */
+  identity?: RuntimeModelIdentity;
 }
 
 type RuntimeConfigurator = (
@@ -102,6 +119,12 @@ type RuntimeConfigurator = (
 export interface InferenceWorkerRuntimeOptions {
   hasWebGpu?: () => boolean;
   backendFactory?: (manifest: CleanFeedModelManifest) => BackendFactory;
+  /**
+   * How the calibrated TMR path loads the raw Transformers.js tokenizer for its
+   * ExactTokenizer. Defaults to the offline `AutoTokenizer` loader; tests inject
+   * a fake so the calibrated wiring can be exercised without the real bundle.
+   */
+  loadTokenizer?: TokenizerLoader;
 }
 
 /** A single request in a worker batch, with cancellation owned by that request. */
@@ -136,6 +159,7 @@ export class PipelineRunner {
   private readonly tokenizer: Tokenizer;
   private readonly calibration: CalibrationRegistry | undefined;
   private readonly chunkPlan: TextChunkOptions | undefined;
+  private readonly identity: RuntimeModelIdentity | undefined;
   private initialized?: Promise<void>;
 
   constructor(options: PipelineRunnerOptions = {}) {
@@ -150,6 +174,8 @@ export class PipelineRunner {
     // indicate — every decision leaves this pipeline unable to act on the feed.
     this.calibration = options.calibration;
     this.chunkPlan = options.chunkPlan;
+    // The sealed bundle identity, present only for the calibrated TMR primary.
+    this.identity = options.identity;
     if (options.initialized) this.initialized = Promise.resolve();
   }
 
@@ -266,6 +292,7 @@ export class PipelineRunner {
 
   getRuntimeIdentity(): RuntimeModelIdentity {
     return (
+      this.identity ??
       this.classifier.getRuntimeIdentity?.() ??
       buildBuiltinIdentity(this.classifier.getMetadata())
     );
@@ -392,6 +419,7 @@ export class PipelineRunner {
             startedAt,
             inferenceMs,
             this.calibration,
+            this.identity,
           ),
         };
       } catch (error) {
@@ -439,6 +467,7 @@ export class PipelineRunner {
           startedAt,
           performance.now() - inferenceStartedAt,
           this.calibration,
+          this.identity,
         ),
       };
     } catch (error) {
@@ -467,6 +496,7 @@ function completePreparedRequest(
   startedAt: number,
   inferenceMs: number,
   calibration: CalibrationRegistry | undefined,
+  identity: RuntimeModelIdentity | undefined,
 ): ClassificationResult {
   const chunkResults = item.chunks.map((chunk, index) => {
     const result = classified[index]!;
@@ -480,6 +510,10 @@ function completePreparedRequest(
     } satisfies ChunkResult;
   });
   const first = classified[0]!;
+  // The calibrated TMR path stamps the SEALED bundle identity over the ONNX
+  // classifier's v1 self-report, so evidence, decision coordinates and the
+  // emitted identity all agree with the profiles' measured coordinates.
+  const runtimeIdentity = identity ?? first.runtimeIdentity;
   const aggregationStartedAt = performance.now();
   const aggregation = aggregateWindowsV2(
     chunkResults.map((chunk) => ({
@@ -492,12 +526,11 @@ function completePreparedRequest(
   );
   const aggregationMs = performance.now() - aggregationStartedAt;
   const wordCount = getTextLengthInfo(item.request.text).wordCount;
-  // The calibrated TMR (bundle) path derives its evidence from the shared,
-  // pure assessor; the demonstration builtins keep their own conservative
-  // `limited` evidence. Real exact-tokenizer wiring for the bundle path lands
-  // in Task 7, so today the bundle path is fail-closed (approximate tokenizer).
+  // The calibrated TMR (bundle) path derives its evidence from the shared, pure
+  // assessor over the EXACT native-offset tokenization (`item.exact`); the
+  // demonstration builtins keep their own conservative `limited` evidence.
   const evidence =
-    first.runtimeIdentity.kind === "bundle"
+    runtimeIdentity.kind === "bundle"
       ? assessEvidence({
           locale: item.language,
           wordCount,
@@ -514,6 +547,7 @@ function completePreparedRequest(
       : first.evidence;
   const base: ClassificationResult = {
     ...first,
+    runtimeIdentity,
     wordCount,
     tokenCount: item.tokenCount,
     language: item.language,
@@ -985,6 +1019,23 @@ class WorkerRuntime {
           wasmEnabled: settings.wasmEnabled,
           hasWebGpu: (this.options.hasWebGpu ?? hasWebGpu)(),
         });
+        // Activate the calibrated TMR primary ONLY when the cross-validated
+        // descriptor authorizes it (a promoted release with usable profiles).
+        // That builds the ExactTokenizer-based ModelRuntime (native offsets +
+        // sealed identity) and the release-bound CalibrationRegistry, so the
+        // bundle path routes through `decideWithProfile`. Otherwise the pipeline
+        // keeps the heuristic tokenizer and no registry, and the bundle decision
+        // fails closed to the indicative stylometric fallback.
+        const calibrated =
+          payload.descriptor !== undefined &&
+          authorizesTmrPrimary(payload.descriptor)
+            ? await buildCalibratedRuntimeParts({
+                classifier: selection.classifier,
+                descriptor: payload.descriptor,
+                loadTokenizer:
+                  this.options.loadTokenizer ?? loadTransformersTokenizer,
+              })
+            : undefined;
         this.runner = new PipelineRunner({
           classifier: selection.classifier,
           initialized: true,
@@ -992,6 +1043,13 @@ class WorkerRuntime {
           // window plan (510 content / 64 overlap / 512 total), never the
           // editable settings fields.
           chunkPlan: tmrChunkOptions(),
+          ...(calibrated
+            ? {
+                tokenizer: calibrated.tokenizer,
+                calibration: calibrated.calibration,
+                identity: calibrated.identity,
+              }
+            : {}),
         });
         this.status = lifecycle.getStatus();
       } catch (error) {
@@ -1079,6 +1137,22 @@ function tmrChunkOptions(): TextChunkOptions {
     overlapTokens: plan.overlapTokens,
     maximumTokens: plan.modelMaxTokens,
   };
+}
+
+/**
+ * The offline default {@link TokenizerLoader}: loads the model's own
+ * Transformers.js tokenizer from the extension-local bundle (never the network;
+ * `configureTransformersEnvironment` has already pinned `local_files_only` and
+ * disabled remote models before this runs).
+ */
+async function loadTransformersTokenizer(
+  modelId: string,
+): Promise<LoadedTransformersTokenizer> {
+  const { AutoTokenizer } = await import("@huggingface/transformers");
+  const tokenizer = await AutoTokenizer.from_pretrained(modelId, {
+    local_files_only: true,
+  });
+  return tokenizer as unknown as LoadedTransformersTokenizer;
 }
 
 function createLocalBackendFactory(

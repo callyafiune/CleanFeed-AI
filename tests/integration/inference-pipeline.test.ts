@@ -6,9 +6,15 @@ import {
   type InferenceWorkerScope,
 } from "@/inference/inference-worker";
 import { CalibrationRegistry } from "@/inference/calibration-registry";
+import { bundledModelManifest } from "@/inference/bundled-model-metadata";
+import { buildBundledRuntimeManifest } from "@/inference/runtime-activation";
 import { DEFAULT_SETTINGS } from "@/shared/constants";
 import type { Tokenizer } from "@/inference/tokenizer";
 import type { CleanFeedModelManifest } from "@/inference/model-bundle";
+import {
+  fakeByteLevelTokenizer,
+  promotedDescriptor,
+} from "../helpers/promoted-descriptor";
 import type {
   BatchTextClassifier,
   ClassificationOptions,
@@ -1003,5 +1009,138 @@ describe("bundle calibration profile binding", () => {
     expect(classified.runtimeIdentity.kind).toBe("builtin");
     expect(classified.selectedProfileDigest).toBeUndefined();
     expect(classified.cacheValidUntil).toBeUndefined();
+  });
+});
+
+// The live activation of the calibrated TMR primary inside the real worker: a
+// promoted descriptor + the sealed manifest builds the ExactTokenizer runtime,
+// the CalibrationRegistry and the sealed identity, and the bundle path routes
+// through decideWithProfile. A pending descriptor (no manifest) stays on the
+// indicative stylometric fallback.
+describe("worker calibrated TMR activation", () => {
+  const paths = {
+    modelBaseUrl: "chrome-extension://test/models/",
+    wasmBaseUrl: "chrome-extension://test/vendor/transformers-wasm/",
+  };
+  // ~240 words → the 200-plus bucket, yet short enough that the sealed window
+  // plan fully covers it (coverage 1.0) under the char-per-token fake, so the
+  // evidence is not fail-closed on coverage.
+  const PORTUGUESE_MEDIUM_TEXT = Array.from(
+    { length: 20 },
+    () =>
+      "O conteúdo da publicação explica como as pessoas podem colaborar com atenção.",
+  ).join(" ");
+
+  it("activates the calibrated profile path for a promoted descriptor + manifest", async () => {
+    const { descriptor, profileDigest } = await promotedDescriptor();
+    const scope = workerScope();
+    installInferenceWorker(scope, () => new PipelineRunner(), vi.fn(), {
+      hasWebGpu: () => false,
+      backendFactory: () => ({
+        wasm: () => bundleClassifier(),
+        webgpu: () => bundleClassifier(),
+      }),
+      loadTokenizer: async () => fakeByteLevelTokenizer(),
+    });
+
+    scope.dispatch({
+      type: "INITIALIZE",
+      requestId: "tmr-init",
+      payload: {
+        ...paths,
+        modelManifest: buildBundledRuntimeManifest(),
+        descriptor,
+      },
+    });
+    await waitForWorkerMessage(
+      scope,
+      (message) =>
+        (message as { type?: string; requestId?: string }).type === "STATUS" &&
+        (message as { requestId?: string }).requestId === "tmr-init" &&
+        (message as { payload?: { state?: string } }).payload?.state ===
+          "ready",
+    );
+
+    scope.dispatch({
+      type: "CLASSIFY",
+      requestId: "tmr-classify",
+      payload: {
+        text: PORTUGUESE_MEDIUM_TEXT,
+        platform: "linkedin",
+        manual: false,
+      },
+    });
+    const message = (await waitForWorkerMessage(
+      scope,
+      (candidate) =>
+        (candidate as { type?: string; requestId?: string }).type ===
+          "RESULT" &&
+        (candidate as { requestId?: string }).requestId === "tmr-classify",
+    )) as { payload: ClassificationResult };
+    const payload = message.payload;
+
+    // The verdict is calibrated (decideWithProfile applied the sealed profile),
+    // carries the SEALED bundle identity, and is not a fail-closed abstention.
+    expect(payload.runtimeIdentity.kind).toBe("bundle");
+    if (payload.runtimeIdentity.kind === "bundle") {
+      expect(payload.runtimeIdentity.bundleDigest).toBe(
+        bundledModelManifest.bundleDigest,
+      );
+      expect(payload.runtimeIdentity.tokenizerDigest).toBe(
+        bundledModelManifest.tokenizerDigest,
+      );
+    }
+    expect(payload.decision.abstained).toBe(false);
+    expect(payload.selectedProfileDigest).toBe(profileDigest);
+  });
+
+  it("keeps the stylometric fallback when the descriptor authorizes no manifest", async () => {
+    const { descriptor } = await promotedDescriptor();
+    const scope = workerScope();
+    installInferenceWorker(scope, () => new PipelineRunner(), vi.fn(), {
+      hasWebGpu: () => false,
+      backendFactory: () => ({
+        wasm: () => bundleClassifier(),
+        webgpu: () => bundleClassifier(),
+      }),
+      loadTokenizer: async () => fakeByteLevelTokenizer(),
+    });
+
+    // The offscreen document would omit the manifest for a non-promoted release;
+    // here we send the (still-validated) descriptor with NO manifest.
+    scope.dispatch({
+      type: "INITIALIZE",
+      requestId: "styl-init",
+      payload: { ...paths, descriptor },
+    });
+    await waitForWorkerMessage(
+      scope,
+      (message) =>
+        (message as { type?: string; requestId?: string }).type === "STATUS" &&
+        (message as { requestId?: string }).requestId === "styl-init" &&
+        (message as { payload?: { state?: string } }).payload?.state ===
+          "ready",
+    );
+
+    scope.dispatch({
+      type: "CLASSIFY",
+      requestId: "styl-classify",
+      payload: {
+        text: PORTUGUESE_LONG_TEXT,
+        platform: "linkedin",
+        manual: false,
+      },
+    });
+    const message = (await waitForWorkerMessage(
+      scope,
+      (candidate) =>
+        (candidate as { type?: string; requestId?: string }).type ===
+          "RESULT" &&
+        (candidate as { requestId?: string }).requestId === "styl-classify",
+    )) as { payload: ClassificationResult };
+
+    // No manifest → indicative stylometric builtin, never a calibrated profile.
+    expect(message.payload.runtimeIdentity.kind).toBe("builtin");
+    expect(message.payload.selectedProfileDigest).toBeUndefined();
   });
 });

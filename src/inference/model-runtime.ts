@@ -36,25 +36,35 @@ export interface ExactTokenEncoding {
   specialTokenCount: number;
 }
 
-/** Options passed to the loaded Transformers.js tokenizer. */
+/** Options passed to the loaded Transformers.js tokenizer's callable form. */
 export interface TokenizerCallOptions {
   add_special_tokens: boolean;
-  return_offsets_mapping?: boolean;
   padding: false;
   truncation: false;
 }
 
-/** The raw tokenizer output shape the runtime reads. */
+/** The raw tokenizer output shape the runtime reads (content token ids only). */
 export interface TokenizerCallResult {
   input_ids: unknown;
-  offset_mapping?: unknown;
 }
 
-/** The minimal surface of an effectively-loaded Transformers.js tokenizer. */
-export type LoadedTransformersTokenizer = (
-  text: string,
-  options: TokenizerCallOptions,
-) => TokenizerCallResult;
+/** Options passed to the tokenizer's `tokenize` surface (byte-level tokens). */
+export interface TokenizeOptions {
+  add_special_tokens: boolean;
+}
+
+/**
+ * The minimal surface of an effectively-loaded Transformers.js tokenizer. It is
+ * both callable (yielding content token ids) and exposes `tokenize`, which
+ * returns the ByteLevel-BPE surface tokens (e.g. `"Ġado"`, `"Ã§"`). The exact
+ * tokenizer derives NATIVE char offsets from those tokens' ByteLevel
+ * segmentation — never `return_offsets_mapping` (this tokenizer never emits it)
+ * and never a substring search over the source text.
+ */
+export interface LoadedTransformersTokenizer {
+  (text: string, options: TokenizerCallOptions): TokenizerCallResult;
+  tokenize(text: string, options: TokenizeOptions): string[];
+}
 
 /** The cohesive runtime seam: one asset load, four sealed coordinates. */
 export interface ModelRuntime {
@@ -143,9 +153,12 @@ export function createTmrChunkPlan(
  * The exact tokenizer for the TMR path. It wraps the effectively-loaded
  * Transformers.js tokenizer, measures the special-token budget ONCE at
  * construction with an `add_special_tokens` on/off probe (never a hardcoded
- * literal), and returns NATIVE char offsets from `return_offsets_mapping`. It
- * never reconstructs offsets by substring search and never uses the heuristic
- * tokenizer.
+ * literal), and returns NATIVE char offsets derived from the tokenizer's own
+ * ByteLevel-BPE segmentation: each surface token is a run of byte-alphabet
+ * characters that maps back to a contiguous run of the source text's UTF-8
+ * bytes, and those byte spans are converted to full-character UTF-16 offsets.
+ * It never reconstructs offsets by substring search (no `indexOf`/`slice`
+ * scanning) and never uses the heuristic tokenizer.
  */
 export class ExactTokenizer {
   private constructor(
@@ -188,16 +201,20 @@ export class ExactTokenizer {
   encodeWithOffsets(text: string): ExactTokenEncoding {
     const output = this.tokenizer(text, {
       add_special_tokens: false,
-      return_offsets_mapping: true,
       padding: false,
       truncation: false,
     });
     const inputIds = toTokenIdArray(output.input_ids);
-    const offsets = toOffsets(
-      output.offset_mapping,
-      inputIds.length,
-      text.length,
-    );
+    // The ByteLevel surface tokens (content only) whose byte runs tile the text.
+    const tokens = this.tokenizer.tokenize(text, {
+      add_special_tokens: false,
+    });
+    if (!Array.isArray(tokens) || tokens.length !== inputIds.length) {
+      throw tokenizationFailed(
+        "The loaded tokenizer's token and id streams disagree.",
+      );
+    }
+    const offsets = deriveByteLevelOffsets(text, tokens);
     return { inputIds, offsets, specialTokenCount: this.specialTokenCount };
   }
 }
@@ -288,66 +305,99 @@ function arrayValues(value: unknown): unknown[] {
   );
 }
 
-function toOffsets(
-  offsetMapping: unknown,
-  tokenCount: number,
-  textLength: number,
-): { start: number; end: number }[] {
-  if (!Array.isArray(offsetMapping)) {
-    throw offsetsUnavailable();
-  }
-  // Allow a one-level batch nesting: [[ [s,e], ... ]].
-  const pairs =
-    offsetMapping.length === 1 &&
-    Array.isArray(offsetMapping[0]) &&
-    Array.isArray((offsetMapping[0] as unknown[])[0])
-      ? (offsetMapping[0] as unknown[])
-      : offsetMapping;
+/**
+ * The GPT-2/RoBERTa ByteLevel byte-alphabet: the 256 characters the ByteLevel
+ * pre-tokenizer uses to render each raw byte as a printable code point (0x20 →
+ * `Ġ`, 0xC3 → `Ã`, …). It is the SAME alphabet the loaded tokenizer emits in its
+ * surface tokens, so each surface-token character corresponds to exactly one
+ * source byte. Built once and frozen.
+ */
+const BYTE_LEVEL_ALPHABET: ReadonlySet<string> = buildByteLevelAlphabet();
 
-  if (pairs.length !== tokenCount) {
-    throw offsetsUnavailable();
-  }
-
-  let previousEnd = 0;
-  return pairs.map((pair) => {
-    const [start, end] = normalizePair(pair);
-    if (
-      !Number.isSafeInteger(start) ||
-      !Number.isSafeInteger(end) ||
-      start < previousEnd ||
-      end < start ||
-      end > textLength
-    ) {
-      throw offsetsUnavailable();
+function buildByteLevelAlphabet(): ReadonlySet<string> {
+  const printable: number[] = [];
+  for (let byte = 0x21; byte <= 0x7e; byte += 1) printable.push(byte);
+  for (let byte = 0xa1; byte <= 0xac; byte += 1) printable.push(byte);
+  for (let byte = 0xae; byte <= 0xff; byte += 1) printable.push(byte);
+  const codePoints = new Set(printable);
+  let next = 0;
+  for (let byte = 0; byte < 256; byte += 1) {
+    if (!printable.includes(byte)) {
+      codePoints.add(256 + next);
+      next += 1;
     }
-    previousEnd = end;
-    return { start, end };
-  });
+  }
+  return new Set([...codePoints].map((code) => String.fromCharCode(code)));
 }
 
-function normalizePair(pair: unknown): [number, number] {
-  if (Array.isArray(pair) && pair.length === 2) {
-    return [Number(pair[0]), Number(pair[1])];
+/**
+ * Derives NATIVE per-token char offsets from the ByteLevel surface tokens. Each
+ * token is a run of byte-alphabet characters mapping 1:1 to source UTF-8 bytes,
+ * so the token stream tiles the text's bytes contiguously; each token's byte run
+ * is converted to the enclosing FULL-character UTF-16 range (rounding outward so
+ * a multi-byte character split across BPE tokens never yields a mid-codepoint
+ * index). No substring search is performed. Fails closed if the byte run does
+ * not tile the text exactly (e.g. an unexpected prefix-space tokenizer).
+ */
+function deriveByteLevelOffsets(
+  text: string,
+  tokens: string[],
+): { start: number; end: number }[] {
+  const encoder = new TextEncoder();
+  const totalBytes = encoder.encode(text).length;
+  // For every source byte, the UTF-16 start and end of the character owning it.
+  const byteCharStart = new Int32Array(totalBytes);
+  const byteCharEnd = new Int32Array(totalBytes);
+  let bytePos = 0;
+  let unitPos = 0;
+  for (const char of text) {
+    const unitLength = char.length;
+    const byteLength = encoder.encode(char).length;
+    for (let offset = 0; offset < byteLength; offset += 1) {
+      byteCharStart[bytePos + offset] = unitPos;
+      byteCharEnd[bytePos + offset] = unitPos + unitLength;
+    }
+    bytePos += byteLength;
+    unitPos += unitLength;
   }
-  if (
-    typeof pair === "object" &&
-    pair !== null &&
-    "start" in pair &&
-    "end" in pair
-  ) {
-    return [
-      Number((pair as { start: unknown }).start),
-      Number((pair as { end: unknown }).end),
-    ];
+
+  const offsets: { start: number; end: number }[] = [];
+  let cursor = 0;
+  for (const token of tokens) {
+    const tokenBytes = tokenByteLength(token);
+    const byteStart = cursor;
+    const byteEnd = cursor + tokenBytes;
+    cursor = byteEnd;
+    if (tokenBytes <= 0 || byteEnd > totalBytes) {
+      throw tokenizationFailed(
+        "A ByteLevel token does not fit the source byte layout.",
+      );
+    }
+    offsets.push({
+      start: byteCharStart[byteStart]!,
+      end: byteCharEnd[byteEnd - 1]!,
+    });
   }
-  throw offsetsUnavailable();
+  if (cursor !== totalBytes) {
+    throw tokenizationFailed(
+      "The ByteLevel token stream did not tile the source text.",
+    );
+  }
+  return offsets;
 }
 
-function offsetsUnavailable(): CleanFeedError {
-  return new CleanFeedError(
-    "TOKENIZATION_FAILED",
-    "MODEL_TOKEN_OFFSETS_UNAVAILABLE",
-  );
+/** Counts a ByteLevel token's source bytes (one per byte-alphabet character). */
+function tokenByteLength(token: string): number {
+  let bytes = 0;
+  for (const char of token) {
+    if (!BYTE_LEVEL_ALPHABET.has(char)) {
+      throw tokenizationFailed(
+        "A tokenizer surface token used a non-ByteLevel character.",
+      );
+    }
+    bytes += 1;
+  }
+  return bytes;
 }
 
 function tokenizationFailed(message: string): CleanFeedError {

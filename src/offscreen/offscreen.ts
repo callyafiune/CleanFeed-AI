@@ -1,4 +1,5 @@
 import { createValidatedRuntimeHost } from "@/inference/model-bundle";
+import { buildWorkerInitializePayload } from "@/inference/runtime-activation";
 import { CleanFeedError } from "@/shared/errors";
 import { parseExtensionMessage } from "@/shared/message-validation";
 import { WorkerHost } from "@/offscreen/worker-host";
@@ -11,11 +12,16 @@ const wasmBaseUrl = chrome.runtime.getURL("vendor/transformers-wasm/");
 // profiles + source lock) BEFORE any WorkerHost is constructed. Only a valid
 // descriptor reaches `createWorkerHost`, and the INITIALIZE payload then carries
 // the already-parsed descriptor to the worker (which revalidates it as a trust
-// boundary before opening any asset).
+// boundary before opening any asset). The sealed v1 modelManifest is included
+// ONLY when the descriptor authorizes the calibrated TMR primary (a promoted
+// release with usable profiles); a pending/bundle-verified release omits it, so
+// the worker keeps the indicative stylometric fallback.
 const workerHostReady: Promise<WorkerHost> = createValidatedRuntimeHost(
   (descriptor) => {
     const host = new WorkerHost();
-    host.initialize({ modelBaseUrl, wasmBaseUrl, descriptor });
+    host.initialize(
+      buildWorkerInitializePayload({ modelBaseUrl, wasmBaseUrl, descriptor }),
+    );
     return host;
   },
 );
