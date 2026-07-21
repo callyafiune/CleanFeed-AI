@@ -92,3 +92,29 @@ aparecer.
 **Consequências.** Adaptadores de plataforma são proibidos de preencher campos de
 autor (veja [platform-adapters.md](platform-adapters.md)). Nenhuma decisão sobre
 pessoas deve ser tomada com base na saída da extensão.
+
+## ADR-006 — Rollout do TMR governado por decisão selada e gate que falha fechado
+
+**Status:** aceito (candidato `bundle-verified`/`pending`).
+
+**Contexto.** O candidato de modelo real (**TMR**, PT-BR/LinkedIn) pode existir e
+passar no smoke muito antes de haver evidência científica que autorize ação
+visual. Confundir "o ONNX roda" com "o classificador foi validado" é o risco
+central desta fase.
+
+**Decisão.** O `rolloutState` e o `gateDecision` do descritor versionado governam
+o que o pacote contém e até onde um resultado pode agir; nada é derivado de
+entrada do usuário. A evidência de release é **gerada** por
+`npm run release:evidence` (nunca redigida à mão) e o gate final
+`npm run release:assert-publishable` (`assert-release-gates.mjs --publication`)
+compõe as condições reais de release e **falha fechado** enquanto a decisão está
+`pending` (`RELEASE_DECISION_PENDING`), recusando também `pass/indicator` como
+estágio pré-ativação (`RELEASE_NOT_ACTIVATED`).
+
+**Consequências.** Enquanto não houver decisão selada, o runtime ativo é o
+fallback estilométrico e nenhuma alegação de acurácia do TMR é publicada. O corpus
+PT-BR/LinkedIn, o consumo único do holdout e a medição de desempenho na máquina de
+referência são passos de operador deferidos. Somente `reject/bundle-verified`,
+`indicator-only/indicator` e `pass/actions` são publicáveis; veja
+[releases/tmr-ptbr-v1.md](releases/tmr-ptbr-v1.md) e
+[release-checklist.md](release-checklist.md).

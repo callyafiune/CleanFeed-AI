@@ -88,3 +88,45 @@ export interface AssertReleaseInputsOptions {
 export declare function assertReleaseInputs(
   options: AssertReleaseInputsOptions,
 ): Promise<ReleasePackagingPolicy>;
+
+export declare function assertPublicationDescriptor(
+  release: ReleasePolicyDescriptor,
+): void;
+
+export interface AssertPublicationLicenseDependencies {
+  readFile?: (path: string, encoding: "utf8") => Promise<string>;
+  stat?: (path: string) => Promise<StatLike>;
+}
+
+export declare function assertPublicationLicense(
+  metadataDirectory: string,
+  policy: ReleasePackagingPolicy,
+  dependencies?: AssertPublicationLicenseDependencies,
+): Promise<void>;
+
+export interface AssertPublicationManifestDependencies {
+  readFile?: (path: string, encoding: "utf8") => Promise<string>;
+}
+
+export declare function assertPublicationManifest(
+  distDirectory: string,
+  dependencies?: AssertPublicationManifestDependencies,
+): Promise<void>;
+
+export interface AssertPublicationInputsDependencies extends AssertReleaseInputsDependencies {
+  readFile?: (path: string, encoding: "utf8") => Promise<string>;
+  stat?: (path: string) => Promise<StatLike>;
+}
+
+export interface AssertPublicationInputsOptions {
+  modelDirectory: string;
+  metadataDirectory: string;
+  distDirectory: string;
+  evidenceDirectory?: string;
+  now?: number;
+  dependencies?: AssertPublicationInputsDependencies;
+}
+
+export declare function assertPublicationInputs(
+  options: AssertPublicationInputsOptions,
+): Promise<ReleasePackagingPolicy>;

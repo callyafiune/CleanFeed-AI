@@ -1,14 +1,26 @@
-import { cpSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import {
+  cpSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  rmSync,
+  writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 import { afterEach, describe, expect, it } from "vitest";
 
 import {
+  assertPublicationDescriptor,
+  assertPublicationInputs,
+  assertPublicationLicense,
+  assertPublicationManifest,
   assertRealModelFiles,
   assertReleaseInputs,
   assertReleaseScriptOwners,
 } from "../../../scripts/assert-release-gates.mjs";
+import type { ReleasePolicyDescriptor } from "../../../scripts/release-policy.mjs";
 import { runRealModelTests } from "../../../scripts/run-real-model-tests.mjs";
 
 const REPO_ROOT = process.cwd();
@@ -40,6 +52,43 @@ function modelDirWithOnnx(): string {
   const dir = makeTempDir("model");
   mkdirSync(join(dir, "onnx"), { recursive: true });
   writeFileSync(join(dir, "onnx", "model_int8.onnx"), "fake-but-nonempty");
+  return dir;
+}
+
+/** Reads a fixture branch's parsed release descriptor for the pure guards. */
+function fixtureRelease(branch: string): ReleasePolicyDescriptor {
+  return JSON.parse(
+    readFileSync(join(FIXTURE_ROOT, branch, "release.json"), "utf8"),
+  ) as ReleasePolicyDescriptor;
+}
+
+/**
+ * A metadata dir for a publishable branch: the two descriptors plus an APPROVED
+ * licence review and the redistribution notices.
+ */
+function publishableMetadataDir(branch: string): string {
+  const dir = metadataDirFor(branch);
+  writeFileSync(
+    join(dir, "license-review.json"),
+    JSON.stringify({ schemaVersion: 1, status: "approved" }),
+  );
+  writeFileSync(join(dir, "LICENSE"), "MIT license text");
+  writeFileSync(join(dir, "NOTICE.md"), "# NOTICE\nredistribution notice");
+  return dir;
+}
+
+/** A built `dist` whose manifest keeps the locked network/permission posture. */
+function publishableDistDir(): string {
+  const dir = makeTempDir("dist");
+  writeFileSync(
+    join(dir, "manifest.json"),
+    JSON.stringify({
+      content_security_policy: {
+        extension_pages:
+          "script-src 'self' 'wasm-unsafe-eval'; object-src 'self'; worker-src 'self'; connect-src 'self'",
+      },
+    }),
+  );
   return dir;
 }
 
@@ -216,5 +265,173 @@ describe("release lane fails closed while the release is pending", () => {
       },
     });
     expect(result).toEqual({ ok: false, code: "MODEL_RELEASE_NOT_PROMOTED" });
+  });
+});
+
+describe("assertPublicationDescriptor — pass/indicator is the pre-activation stage", () => {
+  it("blocks a pass release that has not been activated to actions", () => {
+    expect(() =>
+      assertPublicationDescriptor(fixtureRelease("pass-indicator")),
+    ).toThrow("RELEASE_NOT_ACTIVATED");
+  });
+
+  it("accepts an activated pass release", () => {
+    expect(() =>
+      assertPublicationDescriptor(fixtureRelease("pass-actions")),
+    ).not.toThrow();
+  });
+
+  it("accepts indicator-only and reject", () => {
+    expect(() =>
+      assertPublicationDescriptor(fixtureRelease("indicator-only")),
+    ).not.toThrow();
+    expect(() =>
+      assertPublicationDescriptor(fixtureRelease("reject")),
+    ).not.toThrow();
+  });
+});
+
+describe("assertPublicationLicense — approved licence and notices for a packaged release", () => {
+  const packagedPolicy = {
+    includeTmr: true,
+    activeRuntimeKind: "bundle" as const,
+    maximumActionCeiling: "indicator" as const,
+  };
+  const fallbackPolicy = {
+    includeTmr: false,
+    activeRuntimeKind: "builtin" as const,
+    maximumActionCeiling: "indicator" as const,
+  };
+
+  it("accepts an approved review with LICENSE and NOTICE present", async () => {
+    const dir = publishableMetadataDir("indicator-only");
+    await expect(
+      assertPublicationLicense(dir, packagedPolicy),
+    ).resolves.toBeUndefined();
+  });
+
+  it("blocks a packaged release whose licence review is not approved", async () => {
+    const dir = publishableMetadataDir("indicator-only");
+    writeFileSync(
+      join(dir, "license-review.json"),
+      JSON.stringify({ schemaVersion: 1, status: "pending" }),
+    );
+    await expect(assertPublicationLicense(dir, packagedPolicy)).rejects.toThrow(
+      "PUBLICATION_LICENSE_NOT_APPROVED",
+    );
+  });
+
+  it("blocks a packaged release missing a redistribution notice", async () => {
+    const dir = publishableMetadataDir("indicator-only");
+    rmSync(join(dir, "NOTICE.md"));
+    await expect(assertPublicationLicense(dir, packagedPolicy)).rejects.toThrow(
+      "PUBLICATION_NOTICE_MISSING",
+    );
+  });
+
+  it("does not require the bundle licence for a fallback (reject) package", async () => {
+    const dir = metadataDirFor("reject");
+    await expect(
+      assertPublicationLicense(dir, fallbackPolicy),
+    ).resolves.toBeUndefined();
+  });
+});
+
+describe("assertPublicationManifest — the shipped network/permission posture", () => {
+  it("accepts a manifest that keeps connect-src 'self' and no optional grants", async () => {
+    await expect(
+      assertPublicationManifest(publishableDistDir()),
+    ).resolves.toBeUndefined();
+  });
+
+  it("blocks a widened connect-src (new network origin)", async () => {
+    const dir = makeTempDir("dist-net");
+    writeFileSync(
+      join(dir, "manifest.json"),
+      JSON.stringify({
+        content_security_policy: {
+          extension_pages: "connect-src 'self' https://example.com",
+        },
+      }),
+    );
+    await expect(assertPublicationManifest(dir)).rejects.toThrow(
+      "PUBLICATION_NETWORK_ORIGIN_ADDED",
+    );
+  });
+
+  it("blocks an added optional permission", async () => {
+    const dir = publishableDistDir();
+    writeFileSync(
+      join(dir, "manifest.json"),
+      JSON.stringify({
+        content_security_policy: { extension_pages: "connect-src 'self'" },
+        optional_permissions: ["tabs"],
+      }),
+    );
+    await expect(assertPublicationManifest(dir)).rejects.toThrow(
+      "PUBLICATION_PERMISSION_ADDED",
+    );
+  });
+});
+
+describe("assertPublicationInputs — the final publication gate", () => {
+  it("fails closed on a pending descriptor before any publication check", async () => {
+    const metadataDirectory = publishableMetadataDir("pending");
+    const distDirectory = publishableDistDir();
+    const modelDirectory = modelDirWithOnnx();
+
+    await expect(
+      assertPublicationInputs({
+        modelDirectory,
+        metadataDirectory,
+        distDirectory,
+        now: FUTURE,
+        dependencies: {
+          verifyModelBundle: async () => {},
+          auditModelPackage: async () => {},
+        },
+      }),
+    ).rejects.toThrow("RELEASE_DECISION_PENDING");
+  });
+
+  it("blocks a pass release still at the pre-activation indicator stage", async () => {
+    const metadataDirectory = publishableMetadataDir("pass-indicator");
+    const distDirectory = publishableDistDir();
+    const modelDirectory = modelDirWithOnnx();
+
+    await expect(
+      assertPublicationInputs({
+        modelDirectory,
+        metadataDirectory,
+        distDirectory,
+        now: FUTURE,
+        dependencies: {
+          verifyModelBundle: async () => {},
+          auditModelPackage: async () => {},
+        },
+      }),
+    ).rejects.toThrow("RELEASE_NOT_ACTIVATED");
+  });
+
+  it("passes an activated pass release with approved notices and locked posture", async () => {
+    const metadataDirectory = publishableMetadataDir("pass-actions");
+    const distDirectory = publishableDistDir();
+    const modelDirectory = modelDirWithOnnx();
+
+    const policy = await assertPublicationInputs({
+      modelDirectory,
+      metadataDirectory,
+      distDirectory,
+      now: FUTURE,
+      dependencies: {
+        verifyModelBundle: async () => {},
+        auditModelPackage: async () => {},
+      },
+    });
+    expect(policy).toEqual({
+      includeTmr: true,
+      activeRuntimeKind: "bundle",
+      maximumActionCeiling: "hide",
+    });
   });
 });

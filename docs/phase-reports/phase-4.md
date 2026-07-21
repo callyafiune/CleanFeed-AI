@@ -83,10 +83,35 @@ Playwright — build chromium-1228 / Chrome 149 headless), todos com exit 0:
   críticas de acessibilidade (axe-core no feed, popup e opções) e nenhuma long
   task acima de 50 ms ao processar ~400 posts injetados.
 
+## Rollout e release do TMR (evidência e gate final)
+
+A trilha de rollout/release do TMR PT-BR estende esta fase com a superfície de
+evidência versionada e o gate final de publicação:
+
+- **Evidência gerada, não redigida:** `npm run release:evidence`
+  (`scripts/render-release-evidence.mjs`) produz deterministicamente
+  [../releases/tmr-ptbr-v1.md](../releases/tmr-ptbr-v1.md) a partir do descritor,
+  do relatório sanitizado, do manifesto de evidência, dos perfis e do recibo de
+  desempenho — sem corpus, previsões, autores, hashes de conteúdo ou scores
+  individuais. `--check` reprova qualquer divergência do documento comprometido.
+- **Gate final de publicação:** `npm run release:assert-publishable`
+  (`scripts/assert-release-gates.mjs --publication`) compõe as condições reais de
+  release (licença aprovada + avisos; nenhum hash/previsão ausente; nenhum
+  segmento crítico abaixo da amostra mínima; a11y sem serious/critical; nenhuma
+  nova origem de rede/permissão; pacote auditado offline em Chrome real; smoke
+  real obrigatório) e **falha fechado** em `pending` (`RELEASE_DECISION_PENDING`),
+  recusando `pass/indicator` como pré-ativação (`RELEASE_NOT_ACTIVATED`).
+- **Estado atual:** `gateDecision: pending`, `rolloutState: bundle-verified`. O
+  runtime ativo é o fallback estilométrico; nenhum número de acurácia do TMR é
+  publicado. O corpus PT-BR/LinkedIn (~10k), o consumo único do holdout e a
+  medição de desempenho na máquina de referência pinada são **passos de operador
+  deferidos**.
+
 ## Limitações conhecidas
 
-- O backend ativo continua sendo o mock determinístico; nenhuma métrica de
-  qualidade de detecção é afirmada.
+- O backend ativo é o fallback estilométrico transparente; o candidato TMR está
+  `bundle-verified`/`pending` e nenhuma métrica de qualidade de detecção é
+  afirmada. O `MockClassifier` serve apenas a testes e demonstrações.
 - O E2E patcheia apenas as listas de `matches` de uma cópia do `dist` para servir
   o fixture em `http://127.0.0.1`; é uma conveniência de teste, não uma mudança de
   comportamento do artefato publicado.

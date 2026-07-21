@@ -1,109 +1,149 @@
-# Checklist de release — CleanFeed AI (MVP)
+# Checklist de release — CleanFeed AI (TMR PT-BR v1)
 
-Lista de verificação a ser executada antes de empacotar/publicar uma versão do
-CleanFeed AI. Cada item deve ter evidência (comando, print ou observação) antes
-de marcar. O portão automatizado é `npm run verify` (formato, lint, typecheck,
-testes, build, auditoria e E2E) e `npm run verify:build` (build reproduzível).
+Lista de verificação executável antes de empacotar/publicar o CleanFeed AI. Cada
+item automatizado **referencia o comando que o prova**; itens manuais exigem
+assinatura (nome + data) e **não** podem ser pré-marcados. O portão agregado é
+`npm run verify:release` seguido de `npm run test:performance:release` na máquina
+de referência e do gate final `npm run release:assert-publishable`.
 
-## 1. Compatibilidade de navegador (Chrome)
+Estado atual: `gateDecision: pending`, `rolloutState: bundle-verified`. Sem uma
+decisão científica selada, os gates abaixo **falham fechados** e nada é
+publicável. A evidência versionada é gerada por `npm run release:evidence` em
+[releases/tmr-ptbr-v1.md](releases/tmr-ptbr-v1.md).
 
-- [ ] `manifest.json` declara `minimum_chrome_version: "116"` e `manifest_version: 3`.
-- [ ] Testado em Chrome/Chromium estável recente (o gate E2E roda no Chromium do
-      Playwright, headless).
-- [ ] Service worker de módulo, offscreen document e `chrome.scripting` disponíveis
-      na versão mínima suportada.
+## 1. Decisão e digests da Fase 3
 
-## 2. Diferença de permissões (permission diff)
+- [ ] `npm run model:evidence:verify` sai 0: dataset/dataset-audit/source/review/
+      source-readiness/split/evaluator/model/runtime-parity/report digests
+      conferem e a `gateDecision` do descritor bate com a evidência publicada.
+- [ ] Prediction completeness é 100%; nenhum hash ou previsão ausente, nenhuma
+      linha extra ou duplicada.
+- [ ] Nenhum segmento crítico abaixo da amostra mínima (parser fechado
+      `parseCalibrationProfilesFileV1` → `INSUFFICIENT_SLICE_SAMPLE`).
+- [ ] Holdout consumido uma única vez (ledger append-only).
 
-- [ ] `permissions` ⊆ `{ storage, contextMenus, activeTab, scripting, offscreen }`.
-- [ ] `host_permissions` = `["https://www.linkedin.com/*"]` (nenhum host global).
+## 2. Paridade de runtime (sem confundir build digests)
+
+- [ ] `runtimeParityDigest` é idêntico entre
+      `dist-model-benchmark/runtime-parity.json`, o relatório sanitizado
+      (`benchmark/evidence/tmr-ptbr-v1/benchmark-report.json`) e
+      `dist/runtime-parity.json`; `npm run audit:model` reprova
+      `RUNTIME_PARITY_MISMATCH` em qualquer divergência.
+
+## 3. Licença e avisos
+
+- [ ] `models/tmr-ai-text-detector/license-review.json` está `approved` e
+      `LICENSE` + `NOTICE.md` acompanham o bundle (gate `--publication`:
+      `PUBLICATION_LICENSE_NOT_APPROVED` / `PUBLICATION_NOTICE_MISSING`).
+
+## 4. Perfis: expiração e teto
+
+- [ ] Cada perfil expira exatamente 180 dias após `issuedAt` e carrega a
+      identidade exata de bundle/tokenizer/agregação/composição.
+- [ ] Faixa `50–79` permanece `indicator` mesmo em `pass`; score localizado nunca
+      libera blur/collapse/hide (`SHORT_TEXT_ACTION_BYPASS`).
+
+## 5. Smoke real (todas as decisões, inclusive reject)
+
+- [ ] `npm run test:model:release` sai 0 e o Playwright de
+      `tests/e2e/real-model-smoke.spec.ts` roda **sem skip** — inclusive para
+      reject; ausência do ONNX ou teste pulado reprova (`MODEL_SMOKE_SKIPPED`,
+      `MODEL_ARTIFACT_MISSING`). Enquanto `pending`: `MODEL_RELEASE_NOT_PROMOTED`.
+
+## 6. Pacote exato (ou ausência do TMR em reject)
+
+- [ ] `npm run audit:model` sai 0: em `indicator-only`/`pass`, exatamente os doze
+      arquivos autorizados, íntegros e com os dois descritores byte-idênticos aos
+      versionados; em `reject`, o diretório `dist/models/tmr-ai-text-detector`
+      está **inteiramente ausente**.
+
+## 7. Diferença de permissões (permission/CSP diff)
+
+- [ ] `permissions` ⊆ `{ storage, contextMenus, activeTab, scripting, offscreen }`
+      e `host_permissions` = `["https://www.linkedin.com/*"]`.
 - [ ] CSP travada: `script-src 'self' 'wasm-unsafe-eval'; object-src 'self';
-      worker-src 'self'; connect-src 'self'` (sem `'unsafe-eval'`, sem origem
-      remota).
-- [ ] `npm run audit` sai com código 0 sobre o `dist` empacotado (rejeita
-      qualquer widening de permissão/host/CSP e qualquer import/fetch/`new URL`
-      remoto, `eval`, `new Function` de primeira parte, sourcemap externo ou
-      artefato de código-fonte vazado).
+      worker-src 'self'; connect-src 'self'`.
+- [ ] `npm run audit` sai 0 sobre o `dist` (rejeita qualquer widening de
+      permissão/host/CSP, import/fetch/`new URL` remoto, `eval`, `new Function` de
+      primeira parte, sourcemap externo ou artefato de código-fonte vazado).
+- [ ] O gate final confirma nenhuma nova origem de rede nem permissão opcional
+      (`PUBLICATION_NETWORK_ORIGIN_ADDED` / `PUBLICATION_PERMISSION_ADDED`).
 
-## 3. Operação offline
+## 8. Operação offline nas duas lanes de browser
 
-- [ ] Nenhuma requisição externa durante uso normal (verificado no E2E, que
-      monitora página, service worker e offscreen e exige lista vazia).
+- [ ] Nenhuma requisição externa em uso normal (E2E monitora página, service
+      worker e offscreen e exige lista vazia).
 - [ ] Bundle offline: `scripts/sanitize-offline-bundle.mjs` neutraliza referências
-      a `huggingface.co`/`cdn.jsdelivr.net`; assets do runtime WASM vêm de
-      `vendor/transformers-wasm/` local.
-- [ ] Classificação, análise manual e apresentação funcionam sem rede.
+      a CDNs; assets WASM vêm de `vendor/transformers-wasm/` local.
+- [ ] Classificação, análise manual e apresentação funcionam sem rede em **ambas**
+      as lanes de browser.
 
-## 4. Status de modelo / mock
+## 9. Lanes de browser identificadas sem mistura
 
-- [ ] Backend ativo no MVP é o **mock determinístico** (`demo: true`,
-      `backend: "mock"`); o popup e o painel manual exibem o aviso de demonstração.
-- [ ] Nenhuma métrica de qualidade de detecção é afirmada na UI ou nas docs.
-- [ ] Nenhum modelo/dataset sem licença entrou no repositório (`dist/models/`
-      contém apenas `.gitkeep`).
-- [ ] Pipeline "real-ready": se um modelo calibrado for fornecido, o seletor de
-      backend o usa; sem calibração registrada, o teto de ação é `indicator`.
+- [ ] Lane funcional MV3 roda no **Chromium empacotado pelo Playwright**
+      (`channel: "chromium"`), verificada pelo recibo
+      `test-results/tmr-functional-browser.json` (por causa das restrições atuais
+      de sideload do Chrome branded).
+- [ ] Lane científica/performance roda no **Chrome for Testing Stable
+      `150.0.7871.129`** pinado por `tests/browser-lock.json`. Uma lane nunca é
+      rotulada como a outra.
 
-## 5. Acessibilidade
+## 10. Acessibilidade
 
-- [ ] axe-core sem violações graves/críticas no feed, popup e página de opções
-      (E2E `extension.spec.ts`).
+- [ ] `npm run test:e2e:release` (axe-core) sem violações graves/críticas no feed,
+      popup e opções dos roots da extensão.
 - [ ] Selo, painel de explicação e painel manual operáveis por teclado, com foco
-      gerenciado e regiões `role`/`aria-*` corretas.
-- [ ] Suporte a `prefers-reduced-motion` e `forced-colors`.
+      gerenciado e regiões `role`/`aria-*` corretas; `prefers-reduced-motion` e
+      `forced-colors` suportados.
 
-## 6. Limpeza de dados (data clear)
+## 11. Desempenho na máquina de referência
 
-- [ ] Opções permitem limpar cache (`CACHE_CLEAR`), métricas (`METRICS_CLEAR`),
-      histórico e texto do histórico de forma independente e atômica.
-- [ ] Após limpar, o dump de armazenamento não retém entradas órfãs.
+- [ ] `npm run test:performance:release` seguido de
+      `node scripts/assert-performance-report.mjs …` sai 0 na referência
+      (Windows 11 / 4 CPUs lógicas / 8 GiB / Chrome for Testing `150.0.7871.129` /
+      WASM): cold ≤ 10 s, warm p95 ≤ 2 s, memória incremental ≤ 512 MiB, erro
+      < 1%, maior tarefa da thread principal ≤ 50 ms.
+- [ ] Em `reject`, a evidência de desempenho é `not-applicable` (candidato ausente
+      do pacote), sem números artificiais.
 
-## 7. Import/export e rollback
+## 12. Rollback local e circuit breaker
 
-- [ ] Export valida o schema; import mostra preview, exige confirmação e faz
-      rollback atômico em caso de erro (`tests/integration/import-atomicity.test.ts`).
-- [ ] Export genérico nunca inclui texto completo (apenas linhas sem texto).
+- [ ] Perfil ausente, expirado ou incompatível, OOD, artifact mismatch ou circuit
+      breaker fazem o TMR se abster; o fallback estilométrico só pode indicar.
+- [ ] Rollback é local (integridade, circuit breaker, atualização da extensão);
+      não há kill switch remoto. O estado degradado é visível em opções e
+      diagnósticos.
 
-## 8. Versão de cache
+## 13. Build reproduzível e transição monotônica
 
-- [ ] Chave de cache inclui `platform:model:settingsFingerprint:hash`, de modo que
-      trocar modelo ou configuração invalida entradas antigas sem colisão.
-- [ ] TTL e limite de entradas dentro dos limites configuráveis.
+- [ ] `npm run verify:build` sai 0 (dois builds limpos idênticos por SHA-256 e
+      conjunto de nomes de arquivo).
+- [ ] A única mutação pós-gate permitida é `pass/indicator -> pass/actions`
+      (`npm run release:activate`); indicator-only e reject não alteram byte algum.
 
-## 9. Prints e textos (store listing)
+## 14. Evidência gerada e gate final
 
-- [ ] Prints do selo, do painel de explicação, do popup e das opções atualizados.
-- [ ] Textos da store deixam claro que é um filtro **probabilístico** e não um
-      detector definitivo; sem promessas de acurácia.
+- [ ] `npm run release:evidence` gera [releases/tmr-ptbr-v1.md](releases/tmr-ptbr-v1.md)
+      e `npm run release:evidence:check` confirma que o documento comprometido não
+      diverge (uma segunda geração não altera bytes).
+- [ ] `npm run release:assert-publishable` sai 0 **somente** para
+      `reject/bundle-verified`, `indicator-only/indicator` ou `pass/actions`;
+      `pending`, `shadow`, `indicator-only/bundle-verified`, `pass/bundle-verified`
+      e `pass/indicator` não são publicáveis.
 
-## 10. Ausência de preferência de autor
+## 15. Ausência de dados de autor e limpeza de dados
 
-- [ ] Nenhuma configuração ou armazenamento guarda nome de autor, id de autor ou
-      URL de perfil (verificado em `tests/integration/storage-privacy-audit.test.ts`
-      e `security-boundaries.test.ts`).
-- [ ] Overrides por domínio guardam apenas o hostname normalizado, nunca URL,
-      caminho ou query.
+- [ ] Nenhuma configuração ou armazenamento guarda nome/id de autor ou URL de
+      perfil (`tests/integration/storage-privacy-audit.test.ts`,
+      `security-boundaries.test.ts`).
+- [ ] Overrides por domínio guardam apenas o hostname normalizado.
+- [ ] Cache, métricas, histórico e texto do histórico limpáveis de forma
+      independente e atômica, sem entradas órfãs.
 
-## 11. Limitações conhecidas
+## 16. Aprovação do responsável pelo release (manual)
 
-- [ ] As limitações do release estão documentadas e refletidas na store
-      (ver `docs/phase-reports/phase-5.md` e `docs/limitations.md`).
-
-## 12. Build reproduzível
-
-- [ ] `npm run verify:build` sai com código 0 (dois builds limpos idênticos por
-      SHA-256 e conjunto de nomes de arquivo).
-
-## 13. Evidência científica do benchmark (Fase 2)
-
-Aplicável apenas quando um perfil de release é emitido a partir de um corpus real
-e das previsões TMR da Fase 3; a infraestrutura pode estar verde sem que nenhuma
-decisão científica exista.
-
-- [ ] dataset/dataset-audit/source/review/source-readiness/split/evaluator/model/runtime-parity/report digests conferem
-- [ ] prediction completeness é 100%; nenhuma linha extra ou duplicada
-- [ ] manifests development/calibration/test estão ligados ao freeze/report e usam backend WASM
-- [ ] holdout foi consumido uma única vez
-- [ ] pass/indicator-only publicam perfis; reject publica arquivo de perfis vazio e descritor bundle-verified
-- [ ] perfil expira em 180 dias e possui identidade exata do bundle/tokenizer/agregação/composição
-- [ ] nenhum dataset, label privado ou texto entrou no Git
+- [ ] Prints do selo, painel de explicação, popup e opções atualizados; textos da
+      store falam em filtro **probabilístico** e **sinais compatíveis**, sem
+      promessa de acurácia.
+- [ ] Limitações do release documentadas ([limitations.md](limitations.md)).
+- [ ] **Assinatura do responsável pelo release:** ____________________ (nome/data)

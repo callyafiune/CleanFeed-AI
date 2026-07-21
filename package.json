@@ -32,6 +32,8 @@
     "verify:release": "npm run verify:release:base && npm run test:e2e:release",
     "test:performance:release": "node scripts/run-release-performance.mjs --release models/tmr-ai-text-detector/release.json --output test-results/tmr-release-performance.json",
     "release:assert-publishable": "node scripts/assert-release-gates.mjs --publication --model public/models/tmr-ai-text-detector --metadata models/tmr-ai-text-detector --evidence benchmark/evidence/tmr-ptbr-v1 --dist dist",
+    "release:evidence": "node scripts/render-release-evidence.mjs",
+    "release:evidence:check": "node scripts/render-release-evidence.mjs --check",
     "docs:check": "node scripts/check-doc-links.mjs",
     "audit": "node scripts/audit-build.mjs dist",
     "verify:build": "node scripts/verify-reproducible-build.mjs",

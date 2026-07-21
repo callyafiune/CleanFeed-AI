@@ -44,6 +44,9 @@ const REAL_SMOKE_OWNER = "scripts/run-real-model-tests.mjs";
 /** The sealed, int8 ONNX binary that every release candidate must carry. */
 const ONNX_RELATIVE = join("onnx", "model_int8.onnx");
 
+/** The redistribution notices a packaged release must carry alongside the model. */
+const REQUIRED_NOTICES = Object.freeze(["LICENSE", "NOTICE.md"]);
+
 /** The repo-relative defaults the CLI uses when a flag is omitted. */
 const DEFAULT_MODEL_DIR = join("public", "models", "tmr-ai-text-detector");
 const DEFAULT_METADATA_DIR = join("models", "tmr-ai-text-detector");
@@ -242,6 +245,167 @@ export async function assertReleaseInputs({
   return policy;
 }
 
+/**
+ * The DESCRIPTOR-level publication decision from the plan's final release table.
+ * `assertReleaseInputs`/`resolveReleasePolicy` already fail closed on `pending`
+ * and reject every invalid rollout pairing, but they still ACCEPT `pass` at the
+ * pre-activation `indicator` stage (its runtime ceiling is `indicator`). That
+ * stage is explicitly NOT publishable — a `pass` candidate is only publishable
+ * once the single monotonic `pass/indicator -> pass/actions` transition has been
+ * applied. This is the added publication tooth over the base packaging policy.
+ */
+export function assertPublicationDescriptor(release) {
+  if (release.gateDecision === "pass" && release.rolloutState !== "actions") {
+    throw coded(
+      "RELEASE_NOT_ACTIVATED",
+      `a pass release is only publishable at rolloutState "actions"; pass/${String(release.rolloutState)} is the pre-activation engineering stage`,
+    );
+  }
+}
+
+/**
+ * A packaged release (indicator-only or pass) may only be published with an
+ * APPROVED licence review and the redistribution notices present. A reject
+ * release ships the fallback package WITHOUT the model bundle, so the upstream
+ * bundle licence is not a publication blocker for it (mirrors the packaging
+ * policy's `includeTmr`).
+ */
+export async function assertPublicationLicense(
+  metadataDirectory,
+  policy,
+  dependencies = {},
+) {
+  if (!policy.includeTmr) return;
+  const readFile = dependencies.readFile ?? nodeReadFile;
+  const stat = dependencies.stat ?? nodeStat;
+
+  let review;
+  try {
+    review = JSON.parse(
+      await readFile(join(metadataDirectory, "license-review.json"), "utf8"),
+    );
+  } catch (error) {
+    throw coded(
+      "PUBLICATION_LICENSE_NOT_APPROVED",
+      `cannot read license-review.json in ${metadataDirectory}: ${error}`,
+    );
+  }
+  if (review?.status !== "approved") {
+    throw coded(
+      "PUBLICATION_LICENSE_NOT_APPROVED",
+      `a packaged release requires an approved licence review (found "${String(review?.status)}")`,
+    );
+  }
+
+  for (const notice of REQUIRED_NOTICES) {
+    try {
+      const noticeStat = await stat(join(metadataDirectory, notice));
+      if (!noticeStat.isFile() || noticeStat.size <= 0) {
+        throw coded(
+          "PUBLICATION_NOTICE_MISSING",
+          `redistribution notice ${notice} is empty`,
+        );
+      }
+    } catch (error) {
+      if (error.code === "PUBLICATION_NOTICE_MISSING") throw error;
+      throw coded(
+        "PUBLICATION_NOTICE_MISSING",
+        `redistribution notice ${notice} is missing from ${metadataDirectory}`,
+      );
+    }
+  }
+}
+
+/** The single connect-src value declared by the built manifest's CSP. */
+function connectSrcValue(csp) {
+  const match = /connect-src([^;]*)(?:;|$)/u.exec(csp ?? "");
+  return match === undefined || match === null ? undefined : match[1].trim();
+}
+
+/**
+ * Confirms the BUILT extension does not widen the network or permission surface
+ * at publish time: the CSP `connect-src` must stay exactly `'self'` (no new
+ * network origin) and no optional permissions/hosts may be declared (no new
+ * permission). This is the capstone posture check; the exhaustive static
+ * permission/host/CSP allowlist audit is owned by `npm run audit`.
+ */
+export async function assertPublicationManifest(
+  distDirectory,
+  dependencies = {},
+) {
+  const readFile = dependencies.readFile ?? nodeReadFile;
+  let manifest;
+  try {
+    manifest = JSON.parse(
+      await readFile(join(distDirectory, "manifest.json"), "utf8"),
+    );
+  } catch (error) {
+    throw coded(
+      "PUBLICATION_MANIFEST_UNREADABLE",
+      `cannot read manifest.json in ${distDirectory}: ${error}`,
+    );
+  }
+
+  const connect = connectSrcValue(
+    manifest?.content_security_policy?.extension_pages,
+  );
+  if (connect !== "'self'") {
+    throw coded(
+      "PUBLICATION_NETWORK_ORIGIN_ADDED",
+      `the shipped CSP connect-src must remain 'self'; found ${connect ?? "(absent)"}`,
+    );
+  }
+
+  for (const key of ["optional_permissions", "optional_host_permissions"]) {
+    const declared = manifest?.[key];
+    if (Array.isArray(declared) && declared.length > 0) {
+      throw coded(
+        "PUBLICATION_PERMISSION_ADDED",
+        `${key} widens the shipped surface: ${declared.join(", ")}`,
+      );
+    }
+  }
+}
+
+/**
+ * The FINAL publication gate. Composes the base release inputs (which fail
+ * closed on `pending` and prove the audited offline package, the exact evidence
+ * chain and the undersized-slice guard via the closed parsers) with the
+ * publication-only conditions: the pass activation stage, the approved licence
+ * plus notices, and the unwidened network/permission posture. Returns the
+ * resolved packaging policy.
+ */
+export async function assertPublicationInputs({
+  modelDirectory,
+  metadataDirectory,
+  distDirectory,
+  evidenceDirectory = DEFAULT_EVIDENCE_DIR,
+  now = Date.now(),
+  dependencies = {},
+}) {
+  const loadReleaseMetadata =
+    dependencies.loadReleaseMetadata ??
+    ((directory) => assertReleaseMetadata(directory));
+
+  // Fail closed FIRST: a pending descriptor never reaches the publication-only
+  // checks, and the real model / bundle / offline-package audit run here.
+  const policy = await assertReleaseInputs({
+    modelDirectory,
+    metadataDirectory,
+    distDirectory,
+    evidenceDirectory,
+    now,
+    dependencies,
+  });
+
+  const { release } = await loadReleaseMetadata(metadataDirectory);
+  assertPublicationDescriptor(release);
+  await assertPublicationLicense(metadataDirectory, policy, dependencies);
+  await assertPublicationManifest(distDirectory, dependencies);
+
+  return policy;
+}
+
 function parseCliArgs(args) {
   const options = {};
   for (let index = 0; index < args.length; index += 1) {
@@ -253,7 +417,8 @@ function parseCliArgs(args) {
       options[key] = value;
       index += 1;
     };
-    if (flag === "--model") assign("modelDirectory");
+    if (flag === "--publication") options.publication = true;
+    else if (flag === "--model") assign("modelDirectory");
     else if (flag === "--metadata") assign("metadataDirectory");
     else if (flag === "--evidence") assign("evidenceDirectory");
     else if (flag === "--dist") assign("distDirectory");
@@ -299,21 +464,35 @@ async function runCli() {
     assertReleaseScriptOwners(packageJson);
   });
   await collect(async () => {
-    await assertReleaseInputs({
-      modelDirectory,
-      metadataDirectory,
-      distDirectory,
-      evidenceDirectory,
-    });
+    if (options.publication) {
+      await assertPublicationInputs({
+        modelDirectory,
+        metadataDirectory,
+        distDirectory,
+        evidenceDirectory,
+      });
+    } else {
+      await assertReleaseInputs({
+        modelDirectory,
+        metadataDirectory,
+        distDirectory,
+        evidenceDirectory,
+      });
+    }
   });
 
   if (reasons.length > 0) {
+    const label = options.publication ? "publication gate" : "release gate";
     for (const reason of reasons) {
-      console.error(`release gate BLOCKED — ${reason}`);
+      console.error(`${label} BLOCKED — ${reason}`);
     }
     exit(1);
   }
-  console.log("release gates OK — real model present and package audited.");
+  console.log(
+    options.publication
+      ? "publication gates OK — decision publishable, package audited, notices and posture verified."
+      : "release gates OK — real model present and package audited.",
+  );
 }
 
 if (argv[1] === fileURLToPath(import.meta.url)) {

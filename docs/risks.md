@@ -16,6 +16,9 @@ de modelo.
 | Falsos negativos                  | Dono do produto         | Conteúdo de IA não marcado.                                                               | Aceito por design: o produto prefere errar para o lado de não agir; linguagem probabilística; recall reportado à parte. |
 | ReDoS em regras regex do usuário  | Mantenedor de regras    | Regra regex trava a avaliação; uso de CPU alto.                                            | Validador estático rejeita formas perigosas; compilação em worker descartável com kill-switch; flags restritas.        |
 | Cota de armazenamento             | Mantenedor de storage   | `chrome.storage.local` perto do limite; escritas falham.                                  | Cache e histórico com teto de entradas e retenção; paginação; `clear()` determinístico; texto completo só sob opt-in.  |
+| Novos geradores e paráfrase       | Dono do modelo          | Textos de geradores recentes ou parafraseados escapam ao TMR; recall cai após drift.       | TMR é candidato PT-BR/LinkedIn revalidado por novo holdout temporal; perfis expiram em 180 dias; fallback só indica.    |
+| Texto misto (humano + IA)         | Dono do modelo          | Trechos localizados de IA em post majoritariamente humano; sinal global do documento fraco. | Faixa `50–79` e trigger apenas localizado permanecem indicator; ação exige sinal global do documento e ≥ 80 palavras.  |
+| TMR tratado como validado         | Dono do release         | Bundle roda no smoke e é confundido com detector aprovado antes da evidência.               | Rollout governado por decisão selada; gate de publicação falha fechado em `pending`; nenhuma acurácia publicada.        |
 
 ## Riscos aceitos explicitamente
 

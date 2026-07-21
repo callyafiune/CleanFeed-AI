@@ -65,7 +65,15 @@ o tokenizer real junto com o backend na mesma materialização de assets, mede u
 (exigindo 2 neste manifesto) e devolve offsets nativos via
 `return_offsets_mapping`, sem reconstruí-los por busca de substrings nem recorrer
 ao tokenizador heurístico. O fallback sem `navigator.gpu` mantém o pipeline
-offline usando o backend mock.
+offline usando o backend WASM.
+
+O caminho TMR só se torna runtime primário por uma decisão científica selada.
+Hoje ele está `bundle-verified`/`pending`: o classificador ativo é o fallback
+estilométrico e nenhum número de acurácia do TMR é publicado — a evidência, quando
+existir, vem só de [releases/tmr-ptbr-v1.md](releases/tmr-ptbr-v1.md)
+via `npm run release:evidence`. Quando o TMR se abstém, o estilométrico pode emitir
+um resultado **separado**, sempre limitado a indicador; os dois nunca somam um
+score único.
 
 A localidade de calibração é normalizada por `normalizeCalibrationLocale` antes de
 decidir suporte ou formar a chave de perfil: apenas `pt` e `pt-BR` (qualquer

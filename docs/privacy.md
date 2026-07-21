@@ -63,3 +63,10 @@ objeto novo: versão, ambiente (Chrome/SO), **permissões da API** (padrões de
 host e qualquer token em forma de URL são removidos), métricas agregadas, status
 do modelo e um resumo das configurações. Ele não contém hosts, URLs, texto,
 autor nem qualquer PII.
+
+A evidência de release ([releases/tmr-ptbr-v1.md](releases/tmr-ptbr-v1.md),
+gerada por `npm run release:evidence`) segue a mesma disciplina: só metadados
+técnicos e métricas agregadas — nunca texto, URL, autor, hash de conteúdo, score
+individual, histórico ou feedback. Todo o runtime permanece offline
+(`connect-src 'self'`), e o gate final de publicação recusa qualquer nova origem
+de rede ou permissão.

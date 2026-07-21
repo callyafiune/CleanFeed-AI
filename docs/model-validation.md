@@ -140,10 +140,43 @@ produz a calibração e a decisão de release com rigor estatístico auditável:
   terminais e permanecem consumidos. `evaluate` consome o holdout mesmo quando os
   gates reprovam, e `fit` nunca lê rótulos de teste.
 
+## Superfície de evidência e gate final de release (Fase 4)
+
+A evidência de release é gerada, não redigida à mão: `npm run release:evidence`
+(`scripts/render-release-evidence.mjs`) produz deterministicamente
+[releases/tmr-ptbr-v1.md](releases/tmr-ptbr-v1.md) a partir do descritor
+versionado, do relatório sanitizado, do manifesto de evidência, dos perfis
+publicados e do recibo de desempenho — e de nada além disso. Ele exige que
+`release.evidenceDigest`, `evidence-digest.scientificEvidenceDigest` e
+`benchmark-report.reportDigest` coincidam, chama o verificador publicado da Fase 3
+para validar o `publicationDigest`, e nunca emite corpus, previsões, autores,
+hashes de conteúdo ou scores individuais. `npm run release:evidence:check` reprova
+se o documento comprometido divergir do descritor canônico.
+
+O gate final de publicação `npm run release:assert-publishable`
+(`scripts/assert-release-gates.mjs --publication`) compõe as condições reais de
+release do §11.4/§12 do design: licença aprovada e avisos incluídos; nenhum hash
+ou previsão ausente; nenhum segmento crítico abaixo da amostra mínima; zero
+violações graves/críticas de acessibilidade nos roots da extensão; nenhuma nova
+origem de rede ou permissão; pacote auditado e executado offline em Chrome real; e
+o smoke real obrigatório. Ele **falha fechado** enquanto a decisão está `pending`
+(`RELEASE_DECISION_PENDING`) e recusa também `pass/indicator` como estágio
+pré-ativação (`RELEASE_NOT_ACTIVATED`): somente `reject/bundle-verified`,
+`indicator-only/indicator` e `pass/actions` são publicáveis.
+
+Estado atual: `gateDecision: pending`, `rolloutState: bundle-verified`. Os passos
+reais que faltam — corpus PT-BR/LinkedIn (~10k), consumo único do **holdout** e
+medição de desempenho na máquina de referência pinada — são passos de operador
+**deferidos**; nenhuma decisão científica existe ainda e nenhum número de acurácia
+é publicado.
+
 ## Ver também
 
 - O passo a passo de integração (manifesto, assets, checksums, calibração e
   benchmark) está em [model-integration.md](model-integration.md).
+- A evidência versionada e a matriz de publicação estão em
+  [releases/tmr-ptbr-v1.md](releases/tmr-ptbr-v1.md) e
+  [release-checklist.md](release-checklist.md).
 - O benchmark científico e a métrica principal (precisão entre bloqueados) estão
   em [benchmark/README.md](../benchmark/README.md).
 - A decisão de projeto por trás da abstenção e do teto de ação está em

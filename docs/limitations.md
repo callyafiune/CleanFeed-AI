@@ -9,6 +9,16 @@
   e não deve ser usado para decisões sobre pessoas.
 - Mesmo quando houver modelo real, classificações serão probabilísticas e podem
   produzir falsos positivos e falsos negativos.
+- O candidato de modelo real (**TMR**, `tmr-ai-text-detector`) é um classificador
+  local para **português/LinkedIn**, não um detector universal, e está
+  `bundle-verified`/`pending`: nenhuma decisão científica foi emitida, então ele
+  não classifica o feed e nenhum número de acurácia é publicado (a evidência, se
+  existir, virá de [releases/tmr-ptbr-v1.md](releases/tmr-ptbr-v1.md)). Novos
+  geradores, paráfrase, textos mistos (humano + IA), drift do modelo e mudanças do
+  DOM permanecem riscos que degradam qualquer detecção.
+- Reddit, X/Twitter, Facebook, Instagram, Medium, fóruns, artigos e comentários
+  genéricos permanecem apenas como adaptadores futuros; hoje só o LinkedIn tem
+  adaptador com apresentação visual.
 - Textos abaixo do mínimo configurado são ignorados por padrão para evitar
   conclusões frágeis.
 - O filtro automático desta fase está limitado ao LinkedIn. Outros adaptadores

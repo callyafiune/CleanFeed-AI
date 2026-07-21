@@ -13,8 +13,17 @@ redirecionadas ou de outra origem e hashes incompatíveis. Nenhuma etapa consult
 rede HTTP(S).
 
 O diretório `public/models/` fica vazio até que um candidato licenciado e
-calibrado seja fornecido. Enquanto isso, o classificador ativo permanece o mock;
-a presença deste contrato **não** afirma a disponibilidade de um detector real.
+calibrado seja fornecido. Enquanto isso, o classificador ativo permanece o
+fallback estilométrico transparente; a presença deste contrato **não** afirma a
+disponibilidade de um detector real.
+
+O candidato integrável é o **TMR** (`tmr-ai-text-detector`), um classificador
+local para **português/LinkedIn** — não um detector universal. Ele está
+`bundle-verified`/`pending`: o bundle é verificado e passa pelo smoke real, mas
+sem uma decisão científica selada ele nunca vira runtime primário. A evidência de
+qualquer decisão, quando existir, vive apenas no relatório versionado em
+[releases/tmr-ptbr-v1.md](releases/tmr-ptbr-v1.md); este guia não publica número
+de acurácia algum.
 
 ## Como integrar um modelo (passo a passo)
 

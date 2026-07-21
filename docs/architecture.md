@@ -21,8 +21,14 @@ aplica/restaura a apresentação. O `PostController` não classifica posts fora 
 viewport, curtos, duplicados ou já cancelados. A mensagem para o background é
 validada em ambas as pontas e só aceita rotas conhecidas.
 
-O worker atual é mock. A troca futura por ONNX/WASM/WebGPU preservará o contrato
-de classificação e continuará sem chamadas de rede para conteúdo de posts.
+O classificador ativo é o fallback estilométrico transparente; o `MockClassifier`
+serve apenas a testes e demonstrações. O candidato de modelo real ONNX/WASM/WebGPU
+(**TMR**, PT-BR/LinkedIn) está `bundle-verified`/`pending` e preserva o mesmo
+contrato de classificação, sem chamadas de rede para conteúdo de posts. A troca de
+runtime só ocorre por uma decisão científica selada; o gate final de publicação
+(`npm run release:assert-publishable`) e a evidência versionada
+([releases/tmr-ptbr-v1.md](releases/tmr-ptbr-v1.md)) falham fechados enquanto a
+decisão está `pending`.
 
 ## Extensibilidade: registro de plataformas
 

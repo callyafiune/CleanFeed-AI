@@ -46,6 +46,20 @@ um artefato treinado e um dataset auditável passem pelo portão de modelo. Um
 modelo sem calibração de benchmark só pode indicar, nunca ocultar. Consulte
 [Mock vs. modelo real](#mock-vs-modelo-real).
 
+O candidato de modelo real é o **TMR** (`tmr-ai-text-detector`), um classificador
+local para **português/LinkedIn** — não um detector universal. Ele está em
+`rolloutState: bundle-verified` com `gateDecision: pending`: integração e smoke
+real em Chrome estão verdes, mas **nenhuma decisão científica foi emitida**, então
+o runtime ativo continua sendo o fallback estilométrico e o TMR não classifica o
+feed. A store e este README falam apenas em **sinais compatíveis** com conteúdo
+gerado por IA e **não publicam nenhum número de acurácia**: qualquer métrica, se e
+quando existir, virá exclusivamente do relatório versionado em
+[docs/releases/tmr-ptbr-v1.md](docs/releases/tmr-ptbr-v1.md), gerado por
+`npm run release:evidence`. Os passos reais que faltam — corpus PT-BR/LinkedIn,
+consumo do holdout e medição de desempenho na máquina de referência — são passos
+de operador ainda deferidos; até lá a lane de release **falha fechada** em
+`pending`.
+
 ## Requisitos
 
 - Node.js **>= 22** (veja `engines` em `package.json`).
@@ -197,6 +211,11 @@ benchmark registrada. Mesmo então, a classificação continua probabilística e
 pode produzir **falsos positivos** e **falsos negativos**; um modelo não
 calibrado só pode indicar, nunca desfocar, recolher ou ocultar.
 
+O fallback estilométrico é **explicativo**, não um voto somado ao TMR: quando o
+TMR se abstém (perfil ausente, expirado, incompatível, OOD, `bundle-verified`,
+circuit breaker ou erro) o estilométrico pode emitir um resultado **separado**,
+sempre limitado a indicador. Os dois nunca são combinados em um único score.
+
 ## Benchmark científico
 
 A validação de qualidade de um modelo real vive fora do bundle da extensão, em
@@ -222,6 +241,8 @@ decisões de lançamento.
 - [Guia de adaptadores de plataforma](docs/platform-adapters.md)
 - [Integração de modelos locais](docs/model-integration.md)
 - [Validação e calibração de modelo](docs/model-validation.md)
+- [Evidência de release do TMR PT-BR v1](docs/releases/tmr-ptbr-v1.md)
+- [Checklist de release](docs/release-checklist.md)
 - [Benchmark científico](benchmark/README.md)
 - [Decisões de arquitetura (ADRs)](docs/decisions.md)
 - [Registro de riscos](docs/risks.md)
