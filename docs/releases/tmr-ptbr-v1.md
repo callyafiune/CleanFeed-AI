@@ -36,6 +36,11 @@ foram executados neste worktree e cujos artefatos nunca entram no Git:
    CPUs lógicas, 8 GiB, Chrome for Testing `150.0.7871.129`, backend WASM);
 4. revisar e **aprovar** a licença do bundle e emitir o descritor/perfis.
 
+O passo-a-passo exato — composição/cobertura do corpus, schema por registro, os
+arquivos de governança e a sequência de comandos do pipeline (`ingest` →
+`consume-holdout` → `publish-profile`) — está no
+[runbook de coleta do corpus](../corpus-collection-runbook.md).
+
 Enquanto esses passos não produzirem um descritor decidido, a lane de release
 **falha fechada** em `pending`:
 
