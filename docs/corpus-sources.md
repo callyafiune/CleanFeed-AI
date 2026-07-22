@@ -32,6 +32,7 @@ Consentimento individual só é exigido pela rota `linkedin-contribution`
 | `src_empresa` | Blog/comunicados corporativos próprios pré-nov/2022 | Autorização interna escrita → `autorizacao-interna-v1` | Corporativo — match com o feed | não | avaliação + treino |
 | `src_proprio` | Textos do próprio operador | Autoria própria → `autoria-propria-v1` | Variado | não | avaliação + treino |
 | `src_atos_oficiais` | Leis/decisões/atos (Diário Oficial, LexML) | Lei 9.610, art. 8º, I (não protegidos) → `lei9610-art8` | Formal | não | lastro de treino apenas (nunca dominar a distribuição) |
+| `src_carolina` | **Corpus Carolina** Ada 1.2 (USP/LaViHD/C4AI — download aberto) | CC BY-**NC**-SA 4.0 no header; **licença POR DOCUMENTO nos metadados TEI** → `cc-by-nc-sa-4.0` | Variado (1970–2021 = pré-ChatGPT por construção), proveniência por documento | sim — utilizável | treino/volume + fatias informais |
 | `src_b2w_reviews` *(opcional)* | B2W-Reviews01 (reviews pt-BR) | CC BY-**NC**-SA 4.0 → `cc-by-nc-sa-4.0` | Curto, informal, opinativo | sim — **utilizável** | avaliação + treino |
 
 **Regra NC (atualizada 2026-07-22):** o operador declarou que o projeto será
@@ -46,6 +47,24 @@ publicação sustenta o rótulo `human` — registre-a como `collectedAt`/metada
 fonte. Nunca usar raspagem de plataformas com ToS restritivo (LinkedIn, X,
 Reddit, Instagram) nem derivados de Common Crawl (copyright subjacente não
 licenciado — abaixo do nosso padrão de governança).
+
+### Fontes avaliadas e REJEITADAS (governança de rejeição)
+
+- **BrWaC (UFRGS)** — rejeitado 2026-07-22: distribuído "solely for academic
+  research purposes" (sem licença formal detalhada), e o copyright dos textos
+  subjacentes (web crawleada) nunca foi licenciado — o mesmo problema do Common
+  Crawl. O projeto não está formalizado como pesquisa acadêmica (operador é
+  pós-graduando na FIAP, mas o projeto é **pesquisa independente não-comercial**
+  — a categoria "pesquisa acadêmica" exige vínculo institucional: projeto
+  registrado/TCC/orientação, não apenas matrícula). Substituto direto:
+  **Corpus Carolina**. Caminho de destravamento futuro: formalizar como TCC na
+  FIAP e/ou publicar resultados (PROPOR/STIL/arXiv) — aí o formulário de acesso
+  do BrWaC pode ser preenchido com o vínculo real e a concessão dos mantenedores
+  vira o documento de autorização.
+- **Common Crawl / OSCAR / mC4 / CC-100** — copyright subjacente não licenciado.
+
+**Trio FECHADO para volume (2026-07-22): Stack Exchange PT + Wikimedia
+(CC BY-SA) + Carolina (CC BY-NC-SA).**
 
 ## Blocos prontos para o `ingest`
 
@@ -149,6 +168,16 @@ licenciado — abaixo do nosso padrão de governança).
     "consentReceiptDigest": null,
     "collectionProtocolVersion": "collection-v1",
     "legalReviewerIds": ["legal_a", "legal_b"]
+  },
+  {
+    "sourceId": "src_carolina",
+    "sourceType": "licensed-corpus",
+    "acquisition": "licensed",
+    "evaluationUseApproved": true,
+    "licenseId": "cc-by-nc-sa-4.0",
+    "consentReceiptDigest": null,
+    "collectionProtocolVersion": "collection-v1",
+    "legalReviewerIds": ["legal_a", "legal_b"]
   }
 ]
 ```
@@ -165,7 +194,13 @@ revisaram **a licença da fonte** (não cada texto) — minutos por fonte. Subst
   pseudônimo); registrar data de criação.
 - **Wikipédia PT**: dump XML oficial; extrair parágrafos corridos de artigos
   (excluir listas, infobox, referências); PII irrelevante na prática, scrub
-  mesmo assim.
+  mesmo assim. **Obrigatório snapshot pré-nov/2022**: `pages-articles` contém
+  só a revisão corrente, e a Wikipédia de hoje já tem edições assistidas por IA
+  — um dump atual contaminaria o rótulo `human`.
+- **Carolina**: zips TEI por tipologia; ler a licença POR DOCUMENTO no header
+  TEI e filtrar as compatíveis; **excluir a tipologia de wikis** (near-dup com a
+  Wikipédia direta — escolher um canal só por conteúdo); registrar a tipologia
+  como `domainSource`.
 - **Conteúdo corporativo**: exportar do CMS com a autorização arquivada; scrub
   de nomes de funcionários/clientes.
 - **Atos oficiais**: LexML/Planalto; usar trechos dispositivos corridos.
@@ -173,6 +208,34 @@ revisaram **a licença da fonte** (não cada texto) — minutos por fonte. Subst
   por IA sobre o mesmo tema → `ai` (pareada por tópico, evita o classificador
   aprender "antigo vs novo"); edição por IA com spans capturados por diff →
   `mixed`.
+
+## Divisão de trabalho — downloads manuais × automação
+
+O ambiente de automação não tem rede para arquivos grandes; os dumps são
+baixados **manualmente pelo operador** para `benchmark/data/raw-sources/`
+(gitignored — dado nunca entra no Git). Todo o resto é automatizável.
+
+### Downloads manuais (operador)
+
+| # | Fonte | Onde baixar | Arquivo | Destino local |
+| --- | --- | --- | --- | --- |
+| 1 | Stack Exchange PT | archive.org → item "Stack Exchange Data Dump", **snapshot ≤ set/2022** (evita os termos de acesso de 2024) | `pt.stackoverflow.com.7z` (centenas de MB); extrair `Posts.xml` com 7-Zip | `benchmark/data/raw-sources/stackexchange/Posts.xml` |
+| 2 | Wikipédia PT | espelhos de dumps no archive.org (buscar `ptwiki` de ~2022-03 a 2022-09) | `ptwiki-2022XXXX-pages-articles.xml.bz2` (~2–3 GB; **não extrair** — o extrator lê .bz2 em streaming) | `benchmark/data/raw-sources/wikipedia/` |
+| 3 | Carolina Ada 1.2 | sites.usp.br/corpuscarolina/corpus/ ou HuggingFace `carolina-c4ai/corpus-carolina` | zips TEI por tipologia (**pular wikis**) | `benchmark/data/raw-sources/carolina/` |
+
+Nota de defesa em profundidade: o extrator corta por data
+(`< 2022-11-30`, pré-ChatGPT) independentemente do vintage do dump — mas para a
+Wikipédia o snapshot antigo é obrigatório mesmo assim (ver procedimento acima).
+
+### Automatizado (sessão)
+
+Extratores streaming (Python-bancada, só stdlib: `bz2`/`xml.sax`/`zipfile`),
+corte temporal, filtro ≥ 50 palavras, limpeza de markup/código, PII-scrub,
+montagem do JSONL no formato exato do `ingest` + scaffold do review-ledger,
+fixtures de teste dos parsers, e a execução/verificação de ponta a ponta assim
+que os arquivos estiverem no destino. Fase seguinte (classes `ai`/`mixed`):
+scripts de geração multi-API com receitas registradas — as **chaves de API são
+do operador**.
 
 ## Implicações de disponibilizar o projeto como aberto e não-comercial
 
