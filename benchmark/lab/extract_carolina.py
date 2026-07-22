@@ -1,0 +1,165 @@
+"""Streams Corpus Carolina TEI zips into human-text candidates.
+
+Reads every `Corpus/<typology>/**.xml` member EXCEPT the wikis typology (we
+ingest Wikipedia directly; taking both would create cross-source near-dups).
+For each <TEI> document it reads the CAROLINA-level availability (license) and
+the `<date type="Download">` — the download date anchors the pre-ChatGPT
+guarantee per document, which is what makes the v2.0 (Bea) package usable — and
+keeps only documents whose license is in the allowlist. Only the body text and
+non-identifying metadata (typology) are extracted; header names/authors are
+never read. Stdlib only; memory-safe via iterparse + clearing.
+
+Usage:
+  python benchmark/lab/extract_carolina.py \
+    --input <archive.zip> --output benchmark/data/candidates/carolina.jsonl \
+    [--limit 4000] [--sample-rate 1]
+"""
+
+from __future__ import annotations
+
+import argparse
+import re
+import xml.etree.ElementTree as ET
+import zipfile
+from pathlib import Path
+
+from common import CandidateWriter, parse_iso_date
+
+SOURCE_ID = "src_carolina"
+TEI_NS = "{http://www.tei-c.org/ns/1.0}"
+EXCLUDED_TYPOLOGY_DIRS = {"wikis"}
+
+# Carolina availability license -> our inventory licenseId. Fail-closed: a
+# license outside this map drops the document (counted as drop_license).
+LICENSE_MAP = {
+    "cc by-nc-sa 4.0": "cc-by-nc-sa-4.0",
+    "cc by-sa 4.0": "cc-by-sa-4.0",
+    "cc by 4.0": "cc-by-4.0",
+    "public domain": "public-domain",
+}
+
+
+def typology_dir(member_name: str) -> str:
+    parts = member_name.split("/")
+    return parts[1] if len(parts) > 2 else ""
+
+
+def slug(value: str) -> str:
+    return re.sub(r"[^a-z0-9]+", "_", value.lower()).strip("_")
+
+
+def parse_document(element: ET.Element) -> tuple[str | None, str | None, str]:
+    """Returns (license_key, download_date_text, body_text) for one <TEI>."""
+    license_key: str | None = None
+    download_date: str | None = None
+
+    header = element.find(f"{TEI_NS}teiHeader")
+    if header is not None:
+        file_desc = header.find(f"{TEI_NS}fileDesc")
+        publication = (
+            file_desc.find(f"{TEI_NS}publicationStmt") if file_desc is not None else None
+        )
+        if publication is not None:
+            for date in publication.findall(f"{TEI_NS}date"):
+                if date.get("type") == "Download" and date.text:
+                    download_date = date.text
+            availability = publication.find(f"{TEI_NS}availability")
+            license_el = (
+                availability.find(f"{TEI_NS}licence")
+                if availability is not None
+                else None
+            )
+            if license_el is None and availability is not None:
+                license_el = availability.find(f"{TEI_NS}license")
+            if license_el is not None and (license_el.text or "").strip():
+                license_key = license_el.text.strip().lower()
+
+    body = element.find(f"{TEI_NS}text/{TEI_NS}body")
+    paragraphs = (
+        ["".join(p.itertext()) for p in body.iter(f"{TEI_NS}p")] if body is not None else []
+    )
+    return license_key, download_date, "\n\n".join(paragraphs)
+
+
+def extract(
+    input_path: Path,
+    writer: CandidateWriter,
+    per_typology_limit: int | None = None,
+) -> None:
+    """Fills candidates per typology (capped) so no typology monopolizes the
+    overall limit just for coming first in the archive order."""
+    with zipfile.ZipFile(str(input_path)) as archive:
+        members = [
+            info
+            for info in archive.infolist()
+            if not info.is_dir()
+            and info.filename.endswith(".xml")
+            and typology_dir(info.filename) not in EXCLUDED_TYPOLOGY_DIRS
+        ]
+        kept_by_typology: dict[str, int] = {}
+        for info in members:
+            typology = slug(typology_dir(info.filename)) or "unknown"
+            if (
+                per_typology_limit is not None
+                and kept_by_typology.get(typology, 0) >= per_typology_limit
+            ):
+                continue
+            with archive.open(info) as stream:
+                sequence = 0
+                for _, element in ET.iterparse(stream, events=("end",)):
+                    if element.tag != f"{TEI_NS}TEI":
+                        continue
+                    sequence += 1
+                    kept_before = writer.stats.kept
+                    license_key, download_date, text = parse_document(element)
+                    license_id = LICENSE_MAP.get(license_key or "")
+                    if license_id is None:
+                        writer.stats.scanned += 1
+                        writer.stats.drop_license += 1
+                    else:
+                        writer.offer(
+                            natural_key=f"carolina:{info.filename}:{sequence}",
+                            license_id=license_id,
+                            created_at=parse_iso_date(download_date or ""),
+                            raw_text=text,
+                            domain_source=f"carolina_{typology}",
+                            meta={"typology": typology},
+                        )
+                    if writer.stats.kept > kept_before:
+                        kept_by_typology[typology] = (
+                            kept_by_typology.get(typology, 0) + 1
+                        )
+                    element.clear()
+                    if writer.full:
+                        return
+                    if (
+                        per_typology_limit is not None
+                        and kept_by_typology.get(typology, 0) >= per_typology_limit
+                    ):
+                        break
+
+
+def main() -> None:
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--input", required=True, type=Path)
+    parser.add_argument("--output", required=True, type=Path)
+    parser.add_argument("--limit", type=int, default=4000)
+    parser.add_argument("--sample-rate", type=int, default=1)
+    parser.add_argument("--per-typology-limit", type=int, default=None)
+    args = parser.parse_args()
+
+    writer = CandidateWriter(
+        args.output,
+        source_id=SOURCE_ID,
+        limit=args.limit,
+        sample_rate=args.sample_rate,
+    )
+    try:
+        extract(args.input, writer, per_typology_limit=args.per_typology_limit)
+    finally:
+        writer.close()
+    print(f"{SOURCE_ID}: kept={writer.stats.kept} scanned={writer.stats.scanned}")
+
+
+if __name__ == "__main__":
+    main()

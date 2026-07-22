@@ -229,7 +229,8 @@ Wikipédia o snapshot antigo é obrigatório mesmo assim (ver procedimento acima
 
 ### Automatizado (sessão)
 
-Extratores streaming (Python-bancada, só stdlib: `bz2`/`xml.sax`/`zipfile`),
+**Implementado em [benchmark/lab/](../benchmark/lab/README.md)** — extratores
+streaming (Python-bancada, só stdlib: `bz2`/`xml.sax`/`zipfile`),
 corte temporal, filtro ≥ 50 palavras, limpeza de markup/código, PII-scrub,
 montagem do JSONL no formato exato do `ingest` + scaffold do review-ledger,
 fixtures de teste dos parsers, e a execução/verificação de ponta a ponta assim
