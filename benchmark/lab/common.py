@@ -194,8 +194,12 @@ class CandidateWriter:
             stats.drop_sampled_out += 1
             return
         self._sequence += 1
+        # STABLE id: derived from the natural key, so re-extraction with wider
+        # limits/sample-rates keeps every previously-issued id unchanged (pair
+        # references and hash-partition splits survive corpus growth).
+        stable = hashlib.sha1(natural_key.encode("utf-8")).hexdigest()[:12]
         candidate = Candidate(
-            candidate_id=f"{self.source_id}_{self._sequence:06d}",
+            candidate_id=f"{self.source_id}_{stable}",
             source_id=self.source_id,
             license_id=license_id,
             created_at_ms=int(created_at.timestamp() * 1000),

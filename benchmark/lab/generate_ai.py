@@ -39,16 +39,70 @@ from common import CandidateWriter, keep_sample
 
 LICENSE_ID = "geracao-propria-v1"
 
-PROMPT_TEMPLATE = (
-    "Escreva um texto original em português do Brasil sobre o mesmo assunto do "
-    "texto de referência abaixo, com aproximadamente {words} palavras. Não copie "
-    "frases nem a estrutura do texto de referência; produza um texto novo, seu, "
-    "sobre o mesmo tema. Responda apenas com o texto, sem título e sem "
-    "comentários.\n\n=== TEXTO DE REFERÊNCIA ===\n{reference}"
-)
-PROMPT_TEMPLATE_DIGEST = hashlib.sha256(
-    PROMPT_TEMPLATE.encode("utf-8")
-).hexdigest()
+# The V2 plan's recipe mix. `parafrase` is a deliberate near-dup of its parent
+# (hard positive for TRAINING ONLY — the sealed eval assembly's cross-lineage
+# near-dup refusal would reject it, by design). `humanizado` measures robustness
+# to "make it sound human" prompting. Weights sum to 10 (deterministic buckets).
+RECIPES: dict[str, dict] = {
+    "original": {
+        "weight": 5,
+        "template": (
+            "Escreva um texto original em português do Brasil sobre o mesmo "
+            "assunto do texto de referência abaixo, com aproximadamente {words} "
+            "palavras. Não copie frases nem a estrutura do texto de referência; "
+            "produza um texto novo, seu, sobre o mesmo tema. Responda apenas com "
+            "o texto, sem título e sem comentários.\n\n"
+            "=== TEXTO DE REFERÊNCIA ===\n{reference}"
+        ),
+    },
+    "parafrase": {
+        "weight": 2,
+        "template": (
+            "Reescreva o texto abaixo em português do Brasil com as suas "
+            "próprias palavras, mantendo o mesmo significado e aproximadamente "
+            "{words} palavras. Responda apenas com o texto reescrito, sem título "
+            "e sem comentários.\n\n=== TEXTO ===\n{reference}"
+        ),
+    },
+    "social": {
+        "weight": 2,
+        "template": (
+            "Escreva um post de rede social profissional em português do Brasil "
+            "sobre o tema central do texto de referência abaixo, com "
+            "aproximadamente {words} palavras. Tom de publicação de feed "
+            "(parágrafos curtos), sem hashtags inventadas em excesso, sem "
+            "título. Não copie frases da referência. Responda apenas com o "
+            "post.\n\n=== TEXTO DE REFERÊNCIA ===\n{reference}"
+        ),
+    },
+    "humanizado": {
+        "weight": 1,
+        "template": (
+            "Escreva um texto casual e espontâneo em português do Brasil sobre "
+            "o mesmo assunto do texto de referência abaixo, com aproximadamente "
+            "{words} palavras, como uma pessoa comum escreveria rapidamente — "
+            "natural, direto, com leve informalidade, sem parecer redação "
+            "polida. Não copie frases da referência. Responda apenas com o "
+            "texto.\n\n=== TEXTO DE REFERÊNCIA ===\n{reference}"
+        ),
+    },
+}
+
+
+def recipe_for(provider: str, candidate_id: str) -> str:
+    """Deterministic recipe assignment honoring the weight mix (buckets of 10)."""
+    digest = hashlib.sha256(f"recipe:{provider}:{candidate_id}".encode()).digest()
+    bucket = digest[0] % 10
+    cursor = 0
+    for name, spec in RECIPES.items():
+        cursor += spec["weight"]
+        if bucket < cursor:
+            return name
+    return "original"
+
+
+def template_digest(recipe: str) -> str:
+    return hashlib.sha256(RECIPES[recipe]["template"].encode("utf-8")).hexdigest()
 
 DEFAULT_MODELS = {
     "openai": "gpt-4o-mini",
@@ -222,8 +276,9 @@ def main() -> None:
     batch_path = args.output.with_suffix(".batch.json")
     try:
         for index, row in enumerate(pairs, start=1):
+            recipe = recipe_for(provider, row["candidateId"])
             target_words = max(60, min(int(row["wordCount"]), 350))
-            prompt = PROMPT_TEMPLATE.format(
+            prompt = RECIPES[recipe]["template"].format(
                 words=target_words, reference=row["text"][:6000]
             )
             seed = (
@@ -248,12 +303,13 @@ def main() -> None:
                     "family": model,
                     "model": model,
                     "version": model,
+                    "recipe": recipe,
                     "temperature": str(TEMPERATURE),
                     "seed": str(seed) if seed is not None else "",
                     "seedNullReason": "" if seed is not None else SEED_NULL_REASON,
-                    "promptId": f"pair_{row['candidateId']}",
+                    "promptId": f"{recipe}_{row['candidateId']}",
                     "promptSha256": hashlib.sha256(prompt.encode("utf-8")).hexdigest(),
-                    "promptTemplateDigest": PROMPT_TEMPLATE_DIGEST,
+                    "promptTemplateDigest": template_digest(recipe),
                     "generatedAt": generated_at.isoformat(),
                     "pairedWith": row["candidateId"],
                     "pairedDomainSource": row["domainSource"],
@@ -274,7 +330,7 @@ def main() -> None:
                     "family": model,
                     "model": model,
                     "version": model,
-                    "promptTemplateDigest": PROMPT_TEMPLATE_DIGEST,
+                    "recipes": {name: template_digest(name) for name in RECIPES},
                     "temperature": TEMPERATURE,
                     "seedPolicy": (
                         "per-record deterministic seed"

@@ -73,6 +73,28 @@ class CommonTests(unittest.TestCase):
         self.assertLess(parsed, CHATGPT_CUTOFF)
         self.assertGreaterEqual(parse_iso_date("2023-01-01"), CHATGPT_CUTOFF)
 
+    def test_candidate_ids_are_stable_across_extractions(self) -> None:
+        # The id derives from the natural key: a re-extraction with different
+        # limits/sample-rates must issue the SAME id for the same source item.
+        with tempfile.TemporaryDirectory() as raw:
+            def one(name: str) -> str:
+                rows, _ = run_writer(
+                    Path(raw),
+                    name,
+                    lambda w: w.offer(
+                        natural_key="ptso:42",
+                        license_id="l",
+                        created_at=parse_iso_date("2021-01-01"),
+                        raw_text=PROSE_60,
+                        domain_source="d",
+                    ),
+                )
+                return rows[0]["candidateId"]
+
+            first = one("a")
+            second = one("b")
+        self.assertEqual(first.split("_", 2)[-1], second.split("_", 2)[-1])
+
     def test_writer_drops_by_date_words_and_pii(self) -> None:
         with tempfile.TemporaryDirectory() as raw:
             def fn(writer: CandidateWriter) -> None:
@@ -273,15 +295,22 @@ class GenerateAiTests(unittest.TestCase):
         resumed = select_pairs(self.humans(), "anthropic", 10, done)
         self.assertFalse(done & {r["candidateId"] for r in resumed})
 
-    def test_prompt_template_digest_is_sha256_of_template(self) -> None:
-        import hashlib
+    def test_recipe_assignment_is_deterministic_and_weighted(self) -> None:
+        from collections import Counter
 
-        from generate_ai import PROMPT_TEMPLATE, PROMPT_TEMPLATE_DIGEST
+        from generate_ai import RECIPES, recipe_for, template_digest
 
-        self.assertEqual(
-            PROMPT_TEMPLATE_DIGEST,
-            hashlib.sha256(PROMPT_TEMPLATE.encode("utf-8")).hexdigest(),
-        )
+        ids = [f"src_x_{i:06d}" for i in range(2000)]
+        first = [recipe_for("openai", cid) for cid in ids]
+        second = [recipe_for("openai", cid) for cid in ids]
+        self.assertEqual(first, second)
+        counts = Counter(first)
+        # Weights 5/2/2/1 over deterministic buckets of 10.
+        self.assertGreater(counts["original"], counts["parafrase"])
+        self.assertGreater(counts["parafrase"], counts["humanizado"])
+        for name in RECIPES:
+            self.assertIn(name, counts)
+            self.assertEqual(len(template_digest(name)), 64)
 
     def test_writer_without_cutoff_accepts_current_dates(self) -> None:
         from datetime import datetime, timezone
