@@ -32,7 +32,7 @@ Consentimento individual só é exigido pela rota `linkedin-contribution`
 | `src_empresa` | Blog/comunicados corporativos próprios pré-nov/2022 | Autorização interna escrita → `autorizacao-interna-v1` | Corporativo — match com o feed | não | avaliação + treino |
 | `src_proprio` | Textos do próprio operador | Autoria própria → `autoria-propria-v1` | Variado | não | avaliação + treino |
 | `src_atos_oficiais` | Leis/decisões/atos (Diário Oficial, LexML) | Lei 9.610, art. 8º, I (não protegidos) → `lei9610-art8` | Formal | não | lastro de treino apenas (nunca dominar a distribuição) |
-| `src_carolina` | **Corpus Carolina** Ada 1.3 (USP/LaViHD/C4AI — download aberto; também no HuggingFace e Portulan) | CC BY-**NC**-SA 4.0 no header; **licença POR DOCUMENTO nos metadados TEI** → `cc-by-nc-sa-4.0` | Variado, proveniência por documento. ⚠️ A 1.3 (2024) pode conter textos pós-nov/2022 → **corte temporal por documento é OBRIGATÓRIO** (data do header TEI < 2022-11-30) para sustentar o rótulo `human` | sim — utilizável | treino/volume + fatias informais |
+| `src_carolina` | **Corpus Carolina — versão preferida: Ada 1.1 (22/07/2022, Portulan)**; alternativas: Ada 1.0 no HuggingFace (08/04/2022) ou Ada 1.3 | CC BY-**NC**-SA 4.0 no header; **licença POR DOCUMENTO nos metadados TEI** → `cc-by-nc-sa-4.0` | Variado, proveniência por documento. Ada 1.1/1.0 são **inteiramente pré-ChatGPT por construção** (release < nov/2022) — mesma garantia dos snapshots SE/ptwiki. ⚠️ Se usar a 1.3 (2024): corte por data do header TEI (< 2022-11-30) vira OBRIGATÓRIO | sim — utilizável | treino/volume + fatias informais |
 | `src_b2w_reviews` *(opcional)* | B2W-Reviews01 (reviews pt-BR) | CC BY-**NC**-SA 4.0 → `cc-by-nc-sa-4.0` | Curto, informal, opinativo | sim — **utilizável** | avaliação + treino |
 
 **Regra NC (atualizada 2026-07-22):** o operador declarou que o projeto será
@@ -221,7 +221,7 @@ baixados **manualmente pelo operador** para `benchmark/data/raw-sources/`
 | --- | --- | --- | --- | --- |
 | 1 | Stack Exchange PT | archive.org → item "Stack Exchange Data Dump", **snapshot ≤ set/2022** (evita os termos de acesso de 2024) | `pt.stackoverflow.com.7z` (centenas de MB); extrair `Posts.xml` com 7-Zip | `benchmark/data/raw-sources/stackexchange/Posts.xml` |
 | 2 | Wikipédia PT | espelhos de dumps no archive.org (buscar `ptwiki` de ~2022-03 a 2022-09) | `ptwiki-2022XXXX-pages-articles.xml.bz2` (~2–3 GB; **não extrair** — o extrator lê .bz2 em streaming) | `benchmark/data/raw-sources/wikipedia/` |
-| 3 | Carolina **Ada 1.3** | sites.usp.br/corpuscarolina/corpus/ ou HuggingFace `carolina-c4ai/corpus-carolina` (Portulan também espelha) | zips TEI por tipologia (**pular wikis**); o extrator filtra POR DOCUMENTO a data (< 2022-11-30) e a licença do header TEI | `benchmark/data/raw-sources/carolina/` |
+| 3 | Carolina **Ada 1.1 (22/07/2022)** — preferida por ser inteiramente pré-ChatGPT | **Portulan CLARIN** (espelho da 1.1); alternativas: HuggingFace `carolina-c4ai/corpus-carolina` em revisão antiga (Ada 1.0, 08/04/2022) ou site USP (1.3, exige corte por data) | zips TEI por tipologia (**pular wikis**); o extrator ainda filtra data + licença do header TEI como defesa em profundidade | `benchmark/data/raw-sources/carolina/` |
 
 Nota de defesa em profundidade: o extrator corta por data
 (`< 2022-11-30`, pré-ChatGPT) independentemente do vintage do dump — mas para a
