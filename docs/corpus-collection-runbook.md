@@ -247,6 +247,11 @@ derivados (o ingest os gera: `recordsFile`, `recordsSha256`, `reviewLedgerFile`,
 }
 ```
 
+> **Fontes sem consentimento individual** (licenciadas/domínio público/atos
+> oficiais), com inventário pronto, blocos `licenses[]`/source-manifest no
+> formato exato do `ingest`, política de zero-PII e as implicações do projeto
+> aberto não-comercial: ver [corpus-sources.md](corpus-sources.md).
+
 ### 3.5 Relatório de source-readiness — [CorpusSourceReadinessReport](../contracts/source-readiness.ts)
 
 Produzido pela governança da Fase 3, consumido pelo `fit`. `status: "ready"` exige
