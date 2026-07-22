@@ -137,15 +137,25 @@ class CandidateWriter:
         source_id: str,
         limit: int,
         sample_rate: int,
+        date_cutoff: datetime | None = CHATGPT_CUTOFF,
+        append: bool = False,
+        start_sequence: int = 0,
     ) -> None:
         self.output = output
         self.source_id = source_id
         self.limit = limit
         self.sample_rate = sample_rate
+        # HUMAN candidates require pre-ChatGPT provenance; GENERATED (ai-class)
+        # candidates are created now, so their writer passes date_cutoff=None.
+        self.date_cutoff = date_cutoff
         self.stats = Stats()
-        self._sequence = 0
+        # Resume support: an appending writer continues the id sequence so
+        # candidate ids stay unique across runs.
+        self._sequence = start_sequence
         output.parent.mkdir(parents=True, exist_ok=True)
-        self._handle = output.open("w", encoding="utf-8", newline="\n")
+        self._handle = output.open(
+            "a" if append else "w", encoding="utf-8", newline="\n"
+        )
 
     @property
     def full(self) -> bool:
@@ -166,7 +176,9 @@ class CandidateWriter:
         stats.scanned += 1
         if self.full:
             return
-        if created_at is None or created_at >= CHATGPT_CUTOFF:
+        if created_at is None or (
+            self.date_cutoff is not None and created_at >= self.date_cutoff
+        ):
             stats.drop_date += 1
             return
         text = normalize_text(raw_text)

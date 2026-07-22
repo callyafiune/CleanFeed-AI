@@ -32,3 +32,26 @@ não é prosa); Wikipédia usa só a seção-lede de artigos ns=0 sem redirect;
 Carolina lê licença + `<date type="Download">` POR DOCUMENTO (o que torna o
 pacote v2.0 utilizável), exclui a tipologia `wikis` e nunca lê os campos de
 nomes/autores dos headers.
+
+## Classe IA — `generate_ai.py` (pareada por tópico)
+
+Gera a contraparte IA de candidatos humanos amostrados deterministicamente:
+"escreva um texto ORIGINAL sobre o mesmo assunto, extensão semelhante" — o
+pareamento por tópico impede o classificador de aprender tópico/era em vez de
+autoria, e pedir texto novo (nunca reescrita) evita near-dups com o pai. Sem
+truques de estilo: o estilo default do modelo É o sinal a detectar. Cada saída
+carrega a receita completa do schema (provider/family/model/temperature/seed ou
+seedNullReason/promptId/promptSha256/generatedAt + `pairedWith`) e um
+`.batch.json` para o source-manifest. Retries com backoff; resume por
+`pairedWith`; o corte pré-ChatGPT fica DESLIGADO (gerados agora).
+
+Chaves só por variável de ambiente (nunca impressas/gravadas):
+`OPENAI_API_KEY`, `ANTHROPIC_API_KEY`, `GEMINI_API_KEY` (ou `GOOGLE_API_KEY`).
+
+```bash
+python generate_ai.py --provider anthropic \
+  --humans ../data/candidates/ptso.jsonl ../data/candidates/carolina.jsonl \
+           ../data/candidates/wikipedia.jsonl \
+  --output ../data/candidates/ai_anthropic.jsonl --per-provider 60
+# idem --provider openai | gemini; --dry-run mostra o plano sem chamar API
+```

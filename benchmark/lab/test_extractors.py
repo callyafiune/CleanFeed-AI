@@ -253,5 +253,54 @@ class CarolinaTests(unittest.TestCase):
         self.assertEqual(stats["drop_date"], 1)
 
 
+class GenerateAiTests(unittest.TestCase):
+    def humans(self) -> list[dict]:
+        return [
+            {"candidateId": f"src_x_{i:06d}", "wordCount": 80, "text": PROSE_60,
+             "domainSource": "d"}
+            for i in range(1, 41)
+        ]
+
+    def test_select_pairs_is_deterministic_and_resume_skips(self) -> None:
+        from generate_ai import select_pairs
+
+        first = select_pairs(self.humans(), "anthropic", 10, set())
+        second = select_pairs(self.humans(), "anthropic", 10, set())
+        self.assertEqual(
+            [r["candidateId"] for r in first], [r["candidateId"] for r in second]
+        )
+        done = {first[0]["candidateId"], first[1]["candidateId"]}
+        resumed = select_pairs(self.humans(), "anthropic", 10, done)
+        self.assertFalse(done & {r["candidateId"] for r in resumed})
+
+    def test_prompt_template_digest_is_sha256_of_template(self) -> None:
+        import hashlib
+
+        from generate_ai import PROMPT_TEMPLATE, PROMPT_TEMPLATE_DIGEST
+
+        self.assertEqual(
+            PROMPT_TEMPLATE_DIGEST,
+            hashlib.sha256(PROMPT_TEMPLATE.encode("utf-8")).hexdigest(),
+        )
+
+    def test_writer_without_cutoff_accepts_current_dates(self) -> None:
+        from datetime import datetime, timezone
+
+        with tempfile.TemporaryDirectory() as raw:
+            output = Path(raw) / "ai.jsonl"
+            writer = CandidateWriter(
+                output, source_id="src_ai", limit=10, sample_rate=1,
+                date_cutoff=None,
+            )
+            writer.offer(
+                natural_key="k", license_id="geracao-propria-v1",
+                created_at=datetime.now(timezone.utc), raw_text=PROSE_60,
+                domain_source="ai_test",
+            )
+            writer.close()
+            rows = output.read_text(encoding="utf-8").splitlines()
+        self.assertEqual(len(rows), 1)
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)
