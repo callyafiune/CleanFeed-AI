@@ -25,9 +25,11 @@ export function ModelStatusCard({
   const status = diagnostics?.status ?? null;
   const identity = status?.runtimeIdentity ?? null;
 
+  // The model version is the sealed revision SHA (64 hex) — too long for the
+  // popup and not decision-relevant, so it is shown only in the options
+  // diagnostics, never on this compact card.
   const items: [label: string, value: string][] = [
     ["Modelo", identity?.modelId ?? "indisponível"],
-    ["Versão", identity?.modelVersion ?? "indisponível"],
     ["Backend", status?.backend ?? "indisponível"],
     ["Estado", modelOperationLabel(status?.state)],
   ];
@@ -62,7 +64,7 @@ export function ModelStatusCard({
           </div>
         ))}
       </dl>
-      {diagnostics !== null ? (
+      {diagnostics !== null && !experimentalUncalibrated ? (
         <p role="note">{modelCalibrationLabel(diagnostics.status)}</p>
       ) : null}
       {isBuiltinFallback ? <p role="note">{BUILTIN_FALLBACK_COPY}</p> : null}

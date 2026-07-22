@@ -340,9 +340,10 @@ function offsetsFromDecodedPrefixes(
   tokenIds: readonly number[],
   tokenizer: LocalTokenizer,
 ): ModelTokenOffset[] {
+  const offsets: ModelTokenOffset[] = [];
   let previousEnd = 0;
 
-  return tokenIds.map((_, index) => {
+  for (let index = 0; index < tokenIds.length; index += 1) {
     const decoded = tokenizer.decode(tokenIds.slice(0, index + 1), {
       clean_up_tokenization_spaces: false,
       skip_special_tokens: true,
@@ -352,16 +353,22 @@ function offsetsFromDecodedPrefixes(
       decoded.length <= previousEnd ||
       decoded.length > text.length
     ) {
-      throw new CleanFeedError(
-        "TOKENIZATION_FAILED",
-        "MODEL_TOKEN_OFFSETS_UNAVAILABLE",
-      );
+      // The incremental decoded-prefix heuristic is FRAGILE on real text: a token
+      // that carries only the first byte(s) of a multi-byte character (emoji,
+      // some accents) decodes to a replacement character or an empty growth, and
+      // partial re-normalization can make the prefix stop matching. These offsets
+      // are NOT used to SCORE — chunk planning uses the ExactTokenizer's native
+      // ByteLevel offsets — so a break here must degrade to a coarse whole-text
+      // span rather than fail the WHOLE post's classification. Every span is
+      // `[0, text.length]`, which the consumer accepts (in range, non-decreasing
+      // end); precise localized offsets simply aren't available for this input.
+      return tokenIds.map(() => ({ start: 0, end: text.length }));
     }
+    offsets.push({ start: previousEnd, end: decoded.length });
+    previousEnd = decoded.length;
+  }
 
-    const offset = { start: previousEnd, end: decoded.length };
-    previousEnd = offset.end;
-    return offset;
-  });
+  return offsets;
 }
 
 function tokenIds(value: unknown): number[] {

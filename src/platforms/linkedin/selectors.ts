@@ -32,6 +32,10 @@ export const LINKEDIN_SELECTORS = {
     "[componentkey^='feed-commentary_']",
     "[data-test-id='main-feed-activity-card__commentary']",
     ".update-components-text",
+    // Current SDUI expandable body, as a fallback when the wrapper above is
+    // absent. Comment bodies use the same testid but live under an excluded
+    // comment subtree, so `isLinkedInPostDescendant` still rejects them.
+    "[data-testid='expandable-text-box']",
   ],
   uiNoise: [
     "button",

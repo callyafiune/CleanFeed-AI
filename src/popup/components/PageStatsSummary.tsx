@@ -1,9 +1,23 @@
 import type { PageStats } from "@/shared/types";
 
 export function PageStatsSummary({ stats }: { stats: PageStats }) {
+  // Every detected post lands in exactly one bucket; the ones not yet analyzed
+  // (scrolled past before reaching the viewport, recycled by the feed's
+  // virtualization, or filtered by a rule other than length/language) are the
+  // difference, surfaced so "Encontrados" reconciles instead of looking like a
+  // silent failure.
+  const pending = Math.max(
+    0,
+    stats.postsFound -
+      stats.analyzed -
+      stats.skippedByLength -
+      stats.skippedByLanguage -
+      stats.queueSize,
+  );
   const items: [label: string, value: string | number][] = [
     ["Encontrados", stats.postsFound],
     ["Analisados", stats.analyzed],
+    ["Não analisados (rolagem/filtros)", pending],
     ["Ignorados por tamanho", stats.skippedByLength],
     ["Ignorados por idioma", stats.skippedByLanguage],
     ["Marcados", stats.marked],

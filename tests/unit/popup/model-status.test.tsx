@@ -72,12 +72,14 @@ function valueFor(label: string): string | undefined {
 describe("popup model status", () => {
   afterEach(cleanup);
 
-  it("shows queue size, model version, backend and readiness", async () => {
+  it("shows queue size, backend and readiness (the version SHA is not on the card)", async () => {
     render(<App api={fakePopupApi()} />);
 
     expect(await screen.findByText("Estado")).toBeVisible();
     expect(valueFor("Fila")).toBe("3");
-    expect(valueFor("Versão")).toBe("1.0.0");
+    // The version is the sealed revision SHA — too long for the compact popup, so
+    // it is intentionally omitted here (shown only in the options diagnostics).
+    expect(screen.queryByText("Versão")).toBeNull();
     expect(valueFor("Backend")).toBe("wasm");
     expect(valueFor("Estado")).toBe("pronto");
     expect(screen.queryByRole("status")).toBeNull();

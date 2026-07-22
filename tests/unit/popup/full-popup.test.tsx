@@ -77,13 +77,15 @@ describe("full popup", () => {
       "Restaurados",
       "Latência média",
       "Fila",
+      "Não analisados (rolagem/filtros)",
       "Modelo",
-      "Versão",
       "Backend",
       "Estado",
     ]) {
       expect(await screen.findByText(label)).toBeVisible();
     }
+    // The long revision SHA is intentionally not shown on the compact card.
+    expect(screen.queryByText("Versão")).toBeNull();
   });
 
   it("pauses only the current hostname and can clear page presentation", async () => {

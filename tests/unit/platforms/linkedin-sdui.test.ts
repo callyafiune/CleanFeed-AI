@@ -70,4 +70,43 @@ describe("LinkedInAdapter — SDUI feed", () => {
     expect(comment).not.toBeNull();
     expect(adapter.isPostElement(comment!)).toBe(false);
   });
+
+  // A faithful slice of a REAL current-SDUI expandable post: the body is an
+  // `expandable-text-box` with <br><br> paragraph breaks, an emoji, an inline
+  // #hashtag link, an @mention profile link, and the "… mais" (see-more) button
+  // that LinkedIn renders INSIDE the body.
+  const SDUI_EXPANDABLE_POST = `
+<main id="workspace">
+  <div role="list" data-testid="mainFeed">
+    <div role="listitem" componentkey="expZZFeedType_MAIN_FEED_RELEVANCE">
+      <a href="https://www.linkedin.com/in/autor-exemplo/"><span>Autor Exemplo</span></a>
+      <p componentkey="feed-commentary_uuid-9"><span data-testid="expandable-text-box">Hoje descobri que vibe coding funciona. 😂<br><br>Segundo paragrafo citando <a href="/in/mencionado/"><strong>Pessoa Mencionada</strong></a> com mais texto util.<br><br><a href="https://www.linkedin.com/search/results/all/?keywords=%23VibeCoding"><span><strong>#VibeCoding</strong></span></a><button type="button" data-testid="expandable-text-button"><span><span>…</span><span> mais</span></span></button></span></p>
+      <button type="button" aria-label="Comentar"><span>3</span></button>
+    </div>
+  </div>
+</main>`;
+
+  it("extracts an expandable post: full text + emoji kept, see-more button and <br> handled", () => {
+    const adapter = new LinkedInAdapter();
+    const post = adapter.findPostElements(render(SDUI_EXPANDABLE_POST))[0]!;
+    const extracted = adapter.extractPost(post);
+
+    expect(extracted).not.toBeNull();
+    const text = extracted!.text;
+
+    expect(text).toContain("Hoje descobri que vibe coding funciona");
+    expect(text).toContain("mais texto util");
+    expect(text).toContain("#VibeCoding");
+    // Emojis are preserved: they carry no AI-authorship signal but must never
+    // break extraction (the runtime tolerates them end-to-end).
+    expect(text).toContain("😂");
+    // The "… mais" expand button is UI noise stripped by the `button` selector,
+    // so its ellipsis never enters the classified text.
+    expect(text).not.toContain("…");
+    // <br><br> becomes a paragraph break, never a literal tag.
+    expect(text).not.toContain("<br>");
+    expect(text).toContain("\n\n");
+    // The inline @mention profile name is not captured.
+    expect(text).not.toContain("Pessoa Mencionada");
+  });
 });

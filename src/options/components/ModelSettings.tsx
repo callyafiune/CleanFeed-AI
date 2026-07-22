@@ -89,7 +89,7 @@ export function ModelSettings({
           <dd>{formatEarliestExpiry(view.status.earliestExpiry)}</dd>
         </dl>
       )}
-      {view === null ? null : (
+      {view === null || experimentalActive ? null : (
         <p role="note">{modelCalibrationLabel(view.status)}</p>
       )}
       {isBuiltinFallback ? <p role="note">{BUILTIN_FALLBACK_COPY}</p> : null}

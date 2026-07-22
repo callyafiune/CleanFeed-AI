@@ -99,11 +99,16 @@ export function App({ api = defaultPopupApi }: { api?: PopupApi }) {
 
   const enabled = settings?.enabled ?? true;
   const supported = stats !== null;
+  // The demo banner is for the demonstration-grade builtins (mock/stylometric).
+  // When a REAL model (the sealed TMR bundle) is the active runtime — calibrated
+  // OR experimental preview — it is a real model, so the banner would be false.
+  const realModelActive =
+    diagnostics?.status.runtimeIdentity?.kind === "bundle";
 
   return (
     <main>
       <h1>CleanFeed AI</h1>
-      <DemoWarning />
+      {realModelActive ? null : <DemoWarning />}
       <ExtensionStatus
         host={host}
         enabled={enabled}
