@@ -1091,21 +1091,30 @@ class WorkerRuntime {
           wasmEnabled: settings.wasmEnabled,
           hasWebGpu: (this.options.hasWebGpu ?? hasWebGpu)(),
         });
-        // Activate the calibrated TMR primary ONLY when the cross-validated
-        // descriptor authorizes it (a promoted release with usable profiles).
-        // That builds the ExactTokenizer-based ModelRuntime (native offsets +
-        // sealed identity) and the release-bound CalibrationRegistry, so the
-        // bundle path routes through `decideWithProfile`. Otherwise the pipeline
-        // keeps the heuristic tokenizer and no registry, and the bundle decision
-        // fails closed to the indicative stylometric fallback.
+        // The sealed TMR runs as the bundle primary when the cross-validated
+        // descriptor authorizes the CALIBRATED path (a promoted release with
+        // usable profiles) OR the user opted into the uncalibrated experimental
+        // preview. BOTH build the ExactTokenizer-based ModelRuntime (native
+        // offsets + sealed identity + an EXACT tokenizer, so evidence is never
+        // spuriously "unsupported"); ONLY the calibrated case binds the release
+        // CalibrationRegistry, so the experimental case keeps `calibration`
+        // undefined and the bundle decision routes through the provisional
+        // experimental mapping. Neither → the heuristic stylometric fallback.
         const calibrated =
           payload.descriptor !== undefined &&
-          authorizesTmrPrimary(payload.descriptor)
+          authorizesTmrPrimary(payload.descriptor);
+        const experimental =
+          !calibrated &&
+          payload.descriptor !== undefined &&
+          payload.experimentalUncalibratedTmr === true;
+        const parts =
+          (calibrated || experimental) && payload.descriptor !== undefined
             ? await buildCalibratedRuntimeParts({
                 classifier: selection.classifier,
                 descriptor: payload.descriptor,
                 loadTokenizer:
                   this.options.loadTokenizer ?? loadTransformersTokenizer,
+                calibrated,
               })
             : undefined;
         this.runner = new PipelineRunner({
@@ -1115,36 +1124,31 @@ class WorkerRuntime {
           // window plan (510 content / 64 overlap / 512 total), never the
           // editable settings fields.
           chunkPlan: tmrChunkOptions(),
-          ...(calibrated
+          ...(parts
             ? {
-                tokenizer: calibrated.tokenizer,
-                calibration: calibrated.calibration,
-                identity: calibrated.identity,
+                tokenizer: parts.tokenizer,
+                calibration: parts.calibration,
+                identity: parts.identity,
               }
             : {}),
         });
-        // When the calibrated TMR primary is active, the published SET status
-        // reflects that active promoted runtime: the sealed bundle identity the
-        // calibrated decision rides on, plus the loaded calibration set's
-        // coverage/digest/count/expiry. It never carries a per-post selected
-        // profile. The builtin/experimental paths keep the lifecycle status
-        // (builtin identity, no coverage) unchanged, so the fallback stays honest.
-        // A manifest was loaded in this branch. Either the descriptor authorized
-        // the CALIBRATED primary — publish the promoted runtime and calibration
-        // set — or the user opted into the uncalibrated experimental preview, in
-        // which case the status keeps the loaded-model view plus the experimental
-        // reason code so the popup and options always disclose the pending state.
+        // The published SET status reflects the active runtime: the sealed bundle
+        // identity for both the calibrated primary (plus its calibration set) and
+        // the experimental preview (plus the experimental reason code, so the
+        // popup/options always disclose the pending, uncalibrated state). Neither
+        // → the lifecycle (builtin) status is kept, so the fallback stays honest.
         const lifecycleStatus = lifecycle.getStatus();
         this.status =
-          calibrated !== undefined && payload.descriptor !== undefined
-            ? {
-                ...lifecycleStatus,
-                runtimeIdentity: calibrated.identity,
-                ...summarizeCalibrationSet(payload.descriptor),
-              }
-            : payload.experimentalUncalibratedTmr === true
+          parts !== undefined && payload.descriptor !== undefined
+            ? calibrated
               ? {
                   ...lifecycleStatus,
+                  runtimeIdentity: parts.identity,
+                  ...summarizeCalibrationSet(payload.descriptor),
+                }
+              : {
+                  ...lifecycleStatus,
+                  runtimeIdentity: parts.identity,
                   reasonCodes: [
                     ...new Set<DecisionReasonCode>([
                       ...lifecycleStatus.reasonCodes,
@@ -1152,7 +1156,7 @@ class WorkerRuntime {
                     ]),
                   ],
                 }
-              : lifecycleStatus;
+            : lifecycleStatus;
       } catch (error) {
         this.status = unavailableStatus("error", ["BACKEND_ERROR"]);
         throw error;

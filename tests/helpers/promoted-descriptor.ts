@@ -167,6 +167,37 @@ export async function promotedDescriptor(): Promise<{
 }
 
 /**
+ * A cross-validation-clean BUNDLE-VERIFIED (pending, zero-profile) descriptor:
+ * the real sealed manifest and source lock, plus a non-promoted release whose
+ * empty profile set matches an empty calibration-set digest. `authorizesTmrPrimary`
+ * is false for it, so with the experimental opt-in the worker runs the UNCALIBRATED
+ * experimental preview (no registry) rather than the calibrated profile path.
+ */
+export async function bundleVerifiedDescriptor(): Promise<RuntimeDescriptor> {
+  const release = {
+    schemaVersion: 1,
+    modelId: bundledModelManifest.modelId,
+    modelVersion: bundledModelManifest.modelVersion,
+    bundleDigest: bundledModelManifest.bundleDigest,
+    tokenizerDigest: bundledModelManifest.tokenizerDigest,
+    aggregationVersion: bundledModelManifest.aggregationVersion,
+    contentCompositionVersion: bundledModelManifest.contentCompositionVersion,
+    calibrationSetDigest: await computeCalibrationSetDigest([]),
+    profileDigests: [],
+    rolloutState: "bundle-verified",
+    gateDecision: "pending",
+    issuedAt: null,
+    evidenceDigest: null,
+  } as unknown as ModelReleaseDescriptorV1;
+  return {
+    manifest: bundledModelManifest,
+    release,
+    profiles: { schemaVersion: 1, profiles: [] },
+    sourceLock: bundledSourceLock,
+  };
+}
+
+/**
  * A raw ByteLevel-BPE fake tokenizer: it reserves two special tokens (measured
  * by the exact tokenizer's probe) and models REAL byte-level segmentation —
  * one token per source UTF-8 BYTE, each rendered to its byte-alphabet surface

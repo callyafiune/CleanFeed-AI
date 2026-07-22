@@ -169,7 +169,9 @@ describe("buildCalibratedRuntimeParts", () => {
       aggregationVersion: identity.aggregationVersion,
       contentCompositionVersion: identity.contentCompositionVersion,
     };
-    const lookup = parts.calibration.findExact(coordinates, Date.now());
+    // The calibrated build (default) binds the release registry.
+    expect(parts.calibration).toBeDefined();
+    const lookup = parts.calibration!.findExact(coordinates, Date.now());
     expect(lookup.status).toBe("found");
     if (lookup.status === "found") {
       expect(lookup.profile.profileDigest).toBe(profileDigest);
@@ -180,6 +182,26 @@ describe("buildCalibratedRuntimeParts", () => {
     expect(tokenized.exact).toBe(true);
     expect(tokenized.spans[0]!.start).toBe(0);
     expect(tokenized.spans.at(-1)!.end).toBe("adoção".length);
+  });
+
+  it("omits the registry for the experimental preview but keeps the EXACT tokenizer + identity", async () => {
+    // The experimental (uncalibrated) preview builds the SAME exact tokenizer and
+    // sealed identity as the calibrated path — without a registry. This is the
+    // fix for 'nothing marked in the live feed': without the exact tokenizer the
+    // pipeline reports an approximate tokenizer, assessEvidence returns
+    // "unsupported", and the experimental decision abstains on every post.
+    const { descriptor } = await promotedDescriptor();
+    const parts = await buildCalibratedRuntimeParts({
+      classifier: fakeClassifier(),
+      descriptor,
+      loadTokenizer: async () => fakeByteLevelTokenizer(),
+      calibrated: false,
+    });
+
+    expect(parts.calibration).toBeUndefined();
+    expect(parts.identity.kind).toBe("bundle");
+    const tokenized = await parts.tokenizer.encode("adoção");
+    expect(tokenized.exact).toBe(true);
   });
 
   it("encodes a post whose emoji and accented pt-BR bytes SPLIT across ByteLevel tokens without throwing", async () => {

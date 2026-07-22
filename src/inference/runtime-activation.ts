@@ -139,31 +139,40 @@ export type TokenizerLoader = (
   modelId: string,
 ) => Promise<LoadedTransformersTokenizer>;
 
-/** The calibrated parts the worker plugs into its pipeline for the TMR primary. */
+/** The TMR runtime parts the worker plugs into its pipeline for the bundle path. */
 export interface CalibratedRuntimeParts {
   /** Exact, native-offset tokenizer bound to the sealed window plan. */
   tokenizer: Tokenizer;
-  /** The release-bound registry; every miss is a typed, fail-closed abstention. */
-  calibration: CalibrationRegistry;
+  /**
+   * The release-bound registry; every miss is a typed, fail-closed abstention.
+   * UNDEFINED in the uncalibrated experimental preview, so the worker routes the
+   * decision through the provisional experimental mapping instead of the
+   * profile lookup — while STILL using the exact tokenizer below.
+   */
+  calibration: CalibrationRegistry | undefined;
   /** The sealed v2 bundle identity the calibrated decision and cache key ride on. */
   identity: RuntimeModelIdentity;
 }
 
 /**
- * Builds the calibrated TMR runtime parts from a promoted descriptor and the
- * already-selected classifier. It assembles the cohesive {@link createModelRuntime}
- * seam (ExactTokenizer + sealed window plan + authoritative identity), adapts the
+ * Builds the TMR runtime parts from a descriptor and the already-selected
+ * classifier. It assembles the cohesive {@link createModelRuntime} seam
+ * (ExactTokenizer + sealed window plan + authoritative identity) and adapts the
  * ExactTokenizer to the pipeline's {@link Tokenizer} via {@link TransformersTokenizer}
- * (so chunk planning uses NATIVE offsets), and binds the {@link CalibrationRegistry}
- * to the release + profiles. The caller routes bundle-path classification through
- * `decideWithProfile` by passing these to the pipeline.
+ * (so chunk planning uses NATIVE offsets AND evidence sees an EXACT tokenizer).
+ * When `calibrated` (default), it also binds the {@link CalibrationRegistry} to the
+ * release + profiles (the calibrated `decideWithProfile` path); the experimental
+ * preview passes `calibrated: false` so no registry is built and the pipeline uses
+ * the provisional experimental decision — but on the SAME exact tokenizer, so
+ * evidence is not spuriously "unsupported".
  */
 export async function buildCalibratedRuntimeParts(params: {
   classifier: TextClassifier;
   descriptor: RuntimeDescriptor;
   loadTokenizer: TokenizerLoader;
+  calibrated?: boolean;
 }): Promise<CalibratedRuntimeParts> {
-  const { classifier, descriptor, loadTokenizer } = params;
+  const { classifier, descriptor, loadTokenizer, calibrated = true } = params;
   const runtime = await createModelRuntime(
     async () => ({
       classifier,
@@ -187,10 +196,9 @@ export async function buildCalibratedRuntimeParts(params: {
   };
   return {
     tokenizer: new TransformersTokenizer(descriptor.manifest.modelId, gateway),
-    calibration: new CalibrationRegistry(
-      descriptor.release,
-      descriptor.profiles,
-    ),
+    calibration: calibrated
+      ? new CalibrationRegistry(descriptor.release, descriptor.profiles)
+      : undefined,
     identity: runtime.identity,
   };
 }

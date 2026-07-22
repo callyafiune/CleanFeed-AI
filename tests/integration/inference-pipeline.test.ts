@@ -12,6 +12,7 @@ import { DEFAULT_SETTINGS } from "@/shared/constants";
 import type { Tokenizer } from "@/inference/tokenizer";
 import type { CleanFeedModelManifest } from "@/inference/model-bundle";
 import {
+  bundleVerifiedDescriptor,
   fakeByteLevelTokenizer,
   promotedDescriptor,
 } from "../helpers/promoted-descriptor";
@@ -1151,6 +1152,74 @@ describe("worker calibrated TMR activation", () => {
     }
     expect(payload.decision.abstained).toBe(false);
     expect(payload.selectedProfileDigest).toBe(profileDigest);
+  });
+
+  it("activates the UNCALIBRATED experimental TMR (exact tokenizer, no profile) on opt-in", async () => {
+    // Regression guard for 'nothing marked in the live feed': the worker must
+    // build the EXACT tokenizer for the experimental preview too (not just the
+    // calibrated path). Without it the pipeline reports an approximate tokenizer,
+    // assessEvidence returns "unsupported", and the experimental decision abstains
+    // on EVERY post — even one the model scores high.
+    const descriptor = await bundleVerifiedDescriptor();
+    const scope = workerScope();
+    installInferenceWorker(scope, () => new PipelineRunner(), vi.fn(), {
+      hasWebGpu: () => false,
+      backendFactory: () => ({
+        wasm: () => bundleClassifier(),
+        webgpu: () => bundleClassifier(),
+      }),
+      loadTokenizer: async () => fakeByteLevelTokenizer(),
+    });
+
+    // Non-promoted descriptor + manifest + the opt-in flag: the offscreen loads
+    // the sealed TMR uncalibrated.
+    scope.dispatch({
+      type: "INITIALIZE",
+      requestId: "exp-init",
+      payload: {
+        ...paths,
+        modelManifest: buildBundledRuntimeManifest(),
+        descriptor,
+        experimentalUncalibratedTmr: true,
+      },
+    });
+    await waitForWorkerMessage(
+      scope,
+      (message) =>
+        (message as { type?: string; requestId?: string }).type === "STATUS" &&
+        (message as { requestId?: string }).requestId === "exp-init" &&
+        (message as { payload?: { state?: string } }).payload?.state ===
+          "ready",
+    );
+
+    scope.dispatch({
+      type: "CLASSIFY",
+      requestId: "exp-classify",
+      payload: {
+        text: PORTUGUESE_MEDIUM_TEXT,
+        platform: "linkedin",
+        manual: false,
+        settings: { ...DEFAULT_SETTINGS, experimentalUncalibratedTmr: true },
+      },
+    });
+    const message = (await waitForWorkerMessage(
+      scope,
+      (candidate) =>
+        (candidate as { type?: string; requestId?: string }).type ===
+          "RESULT" &&
+        (candidate as { requestId?: string }).requestId === "exp-classify",
+    )) as { payload: ClassificationResult };
+    const payload = message.payload;
+
+    // The sealed bundle ran uncalibrated: a presentable experimental verdict, NOT
+    // a fail-closed abstention, tagged experimental, with no profile bound.
+    expect(payload.runtimeIdentity.kind).toBe("bundle");
+    expect(payload.decision.abstained).toBe(false);
+    expect(payload.decision.presentationAllowed).toBe(true);
+    expect(payload.decision.reasonCodes).toContain(
+      "TMR_EXPERIMENTAL_UNCALIBRATED",
+    );
+    expect(payload.selectedProfileDigest).toBeUndefined();
   });
 
   it("keeps the stylometric fallback when the descriptor authorizes no manifest", async () => {
