@@ -14,13 +14,9 @@ import {
   modelRolloutLabel,
 } from "@/shared/model-diagnostics-client";
 import type { Backend } from "@/shared/types";
-import { SETTINGS_LIMITS } from "@/shared/constants";
 import type { UserSettings } from "@/shared/settings-types";
 import { Field } from "./Form/Field";
-import { Input } from "./Form/Input";
 import { Switch } from "./Form/Switch";
-
-const THRESHOLD_LIMITS = SETTINGS_LIMITS.experimentalMarkingThresholdPercent;
 
 const backendLabels: Record<Backend, string> = {
   mock: "mock (demonstração)",
@@ -119,30 +115,6 @@ export function ModelSettings({
         ocultar) seguem a sua escolha em “Modo de apresentação”; enquanto
         desligado, permanece o fallback estilométrico.
       </p>
-      {settings.experimentalUncalibratedTmr ? (
-        <Field
-          label="Limiar de marcação experimental (%)"
-          description="Pontuação mínima do modelo para marcar um post no modo experimental. Menor = mais sensível (marca mais, erra mais). Sem efeito no caminho calibrado."
-        >
-          <Input
-            aria-label="Limiar de marcação experimental (%)"
-            type="number"
-            min={THRESHOLD_LIMITS.minimum}
-            max={THRESHOLD_LIMITS.maximum}
-            value={settings.experimentalMarkingThresholdPercent}
-            onChange={(event) => {
-              const next = Number(event.target.value);
-              if (
-                Number.isSafeInteger(next) &&
-                next >= THRESHOLD_LIMITS.minimum &&
-                next <= THRESHOLD_LIMITS.maximum
-              ) {
-                onUpdate({ experimentalMarkingThresholdPercent: next });
-              }
-            }}
-          />
-        </Field>
-      ) : null}
       <Field label="Usar modelo mock (demonstração)">
         <Switch
           aria-label="Usar modelo mock (demonstração)"

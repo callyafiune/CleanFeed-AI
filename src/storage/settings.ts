@@ -10,7 +10,7 @@ import { runWithSettingsMutationLock } from "@/storage/settings-lock";
 import type { StorageArea } from "@/storage/storage-area";
 
 export const SETTINGS_STORAGE_KEY = SETTINGS_STORAGE_KEYS.global;
-const SCHEMA_VERSION = 6;
+const SCHEMA_VERSION = 7;
 const PLATFORM_SCHEMA_VERSION = 1;
 
 /**
@@ -38,14 +38,36 @@ export function withoutLegacyThresholds(
 }
 
 /**
- * Settings fields added AFTER the schema-v4 "no thresholds" shape, grouped by the
- * schema version that introduced each. The historical shape checks anchor on the
- * FIXED v4 key set below (never the mutable DEFAULT_SETTINGS), so adding fields
- * never invalidates a genuine v1–v5 record; every older envelope is completed to
- * the current shape by filling ONLY its missing added keys with their defaults.
+ * The user-facing marking threshold removed in schema v7. A score cut is a
+ * scientific decision, not a preference: the experimental preview now marks at a
+ * FIXED code-defined cut and the calibrated path takes its operating points from
+ * the sealed profile — settings never expose a threshold. This closed list drives
+ * both the v6→v7 migration and the stripping of any lingering platform override,
+ * mirroring {@link LEGACY_THRESHOLD_KEYS}.
+ */
+const REMOVED_IN_V7 = ["experimentalMarkingThresholdPercent"] as const;
+
+/** Removes the v7-removed keys from a settings-shaped record. */
+function withoutV7RemovedKeys(value: object): Record<string, unknown> {
+  const result: Record<string, unknown> = { ...value };
+  for (const key of REMOVED_IN_V7) {
+    delete result[key];
+  }
+  return result;
+}
+
+/**
+ * Settings fields added AFTER the schema-v4 "no thresholds" shape and still
+ * present in the current shape, grouped by the schema version that introduced
+ * each. v6 added `experimentalMarkingThresholdPercent`, but v7 removed it again
+ * (see {@link REMOVED_IN_V7}), so NO v6 addition survives to current. The
+ * historical shape checks anchor on the FIXED v4 key set below (never the mutable
+ * DEFAULT_SETTINGS), so adding fields never invalidates a genuine v1–v6 record;
+ * every older envelope is completed to the current shape by filling ONLY its
+ * missing added keys with their defaults.
  */
 const V5_ADDED_KEYS = ["experimentalUncalibratedTmr"] as const;
-const V6_ADDED_KEYS = ["experimentalMarkingThresholdPercent"] as const;
+const V6_ADDED_KEYS = [] as const;
 const POST_V4_KEYS = [...V5_ADDED_KEYS, ...V6_ADDED_KEYS] as const;
 const POST_V4_DEFAULTS = Object.fromEntries(
   POST_V4_KEYS.map((key) => [key, DEFAULT_SETTINGS[key]]),
@@ -73,10 +95,16 @@ type LegacyThresholdRecord = Record<
   (typeof LEGACY_THRESHOLD_KEYS)[number],
   number
 >;
+type RemovedV7Record = Record<(typeof REMOVED_IN_V7)[number], number>;
 /** The schema-v4 settings shape: the current settings minus every post-v4 field. */
 type V4UserSettings = Omit<UserSettings, (typeof POST_V4_KEYS)[number]>;
-/** The schema-v5 settings shape: the current settings minus only the v6 additions. */
+/**
+ * The schema-v5 settings shape. v5 added `experimentalUncalibratedTmr` and v6's
+ * addition was later removed, so the v5 shape is identical to the current one.
+ */
 type V5UserSettings = Omit<UserSettings, (typeof V6_ADDED_KEYS)[number]>;
+/** The schema-v6 shape: the current settings plus the key removed in v7. */
+type V6UserSettings = UserSettings & RemovedV7Record;
 /** The v3 (pre-threshold-removal) shape: v4 settings plus the four thresholds. */
 type V3UserSettings = V4UserSettings & LegacyThresholdRecord;
 type V2UserSettings = Omit<V3UserSettings, "useMockModel">;
@@ -208,11 +236,6 @@ function isUserSettings(value: unknown): value is UserSettings {
       SETTINGS_LIMITS.historyRetentionDays.minimum,
       SETTINGS_LIMITS.historyRetentionDays.maximum,
     ) ||
-    !isFiniteIntegerInRange(
-      value.experimentalMarkingThresholdPercent,
-      SETTINGS_LIMITS.experimentalMarkingThresholdPercent.minimum,
-      SETTINGS_LIMITS.experimentalMarkingThresholdPercent.maximum,
-    ) ||
     !isFiniteIntegerInRange(chunkOverlapTokens, 0, chunkSizeTokens - 1) ||
     chunkOverlapTokens >= chunkSizeTokens ||
     maximumTokens < chunkSizeTokens
@@ -235,6 +258,13 @@ function hasOrderedLegacyThresholds(value: Record<string, unknown>): boolean {
   return marking! <= blur! && blur! <= collapse! && collapse! <= hide!;
 }
 
+/** The v6 marking threshold must be a finite integer in its old [1,100] range. */
+function hasValidRemovedV7Keys(value: Record<string, unknown>): boolean {
+  return REMOVED_IN_V7.every((key) =>
+    isFiniteIntegerInRange(value[key], 1, 100),
+  );
+}
+
 /**
  * A schema-v4 record: the current settings minus EVERY post-v4 field. Recognized
  * by the ABSENCE of all post-v4 keys plus validity once the defaults are filled.
@@ -250,9 +280,9 @@ function isV4UserSettings(value: unknown): value is V4UserSettings {
 }
 
 /**
- * A schema-v5 record: it carries the v5 keys but NONE of the v6 additions, and is
- * valid once the missing v6 defaults are filled. Used to migrate the v5 envelope
- * without discarding the user's v5 preferences.
+ * A schema-v5 record: it carries the v5 keys but NOT the marking threshold that
+ * v6 added and v7 removed, so its shape already matches the current one. Used to
+ * migrate the v5 envelope without discarding the user's v5 preferences.
  */
 function isV5UserSettings(value: unknown): value is V5UserSettings {
   if (!isRecord(value)) {
@@ -261,10 +291,35 @@ function isV5UserSettings(value: unknown): value is V5UserSettings {
   if (!V5_ADDED_KEYS.every((key) => Object.hasOwn(value, key))) {
     return false;
   }
-  if (V6_ADDED_KEYS.some((key) => Object.hasOwn(value, key))) {
+  if (REMOVED_IN_V7.some((key) => Object.hasOwn(value, key))) {
     return false;
   }
   return isUserSettings(completeToCurrent(value));
+}
+
+/**
+ * A schema-v6 record: the current settings PLUS the marking threshold removed in
+ * v7. Recognized by the exact key set and validity once that key is stripped —
+ * the mirror of {@link isV3UserSettings} for the v6→v7 removal, so a v6 envelope
+ * migrates to current without discarding the user's preferences.
+ */
+function isV6UserSettings(value: unknown): value is V6UserSettings {
+  if (!isRecord(value)) {
+    return false;
+  }
+  const expected = new Set<string>([
+    ...Object.keys(DEFAULT_SETTINGS),
+    ...REMOVED_IN_V7,
+  ]);
+  if (
+    Object.keys(value).length !== expected.size ||
+    ![...expected].every((key) => Object.hasOwn(value, key))
+  ) {
+    return false;
+  }
+  return (
+    hasValidRemovedV7Keys(value) && isUserSettings(withoutV7RemovedKeys(value))
+  );
 }
 
 /** Validates the FULL v3 shape (v4 keys plus the four ordered thresholds). */
@@ -336,13 +391,18 @@ function settingsAreEqual(left: UserSettings, right: UserSettings): boolean {
   );
 }
 
-/** The overriding fields of a platform record: no platformId, no legacy thresholds. */
+/**
+ * The overriding fields of a platform record: no platformId, no legacy thresholds
+ * and no v7-removed keys — every strippable field is dropped before validation.
+ */
 function getPlatformOverrides(
   value: Record<string, unknown>,
 ): Record<string, unknown> {
-  return withoutLegacyThresholds(
-    Object.fromEntries(
-      Object.entries(value).filter(([key]) => key !== "platformId"),
+  return withoutV7RemovedKeys(
+    withoutLegacyThresholds(
+      Object.fromEntries(
+        Object.entries(value).filter(([key]) => key !== "platformId"),
+      ),
     ),
   );
 }
@@ -370,12 +430,14 @@ async function validatePlatformOverridesForGlobal(
     return;
   }
 
-  // Legacy thresholds are strippable, not "unknown": a platform record may still
-  // carry them from v3 and its surviving overrides stay valid.
+  // Legacy thresholds and the v7-removed marking threshold are strippable, not
+  // "unknown": a platform record may still carry them from v3/v6 and its surviving
+  // overrides stay valid once they are dropped.
   const allowedKeys = new Set([
     "platformId",
     ...Object.keys(DEFAULT_SETTINGS),
     ...LEGACY_THRESHOLD_KEYS,
+    ...REMOVED_IN_V7,
   ]);
   for (const [platformId, rawOverrides] of Object.entries(
     persisted.platforms,
@@ -449,8 +511,22 @@ async function readPersistedSettingsForMutation(
     return persisted;
   }
 
-  // Versioned v5 envelope (the immediate predecessor): keep the user's v5
-  // preferences and fill only the v6 defaults.
+  // Versioned v6 envelope (the immediate predecessor): keep the user's v6
+  // preferences and STRIP the marking threshold removed in v7.
+  if (
+    hasVersionedEnvelope(persisted, 6) &&
+    isV6UserSettings(persisted.settings)
+  ) {
+    return storeMigrated(
+      storage,
+      storageKey,
+      persisted.settingsVersion,
+      completeToCurrent(withoutV7RemovedKeys(persisted.settings)),
+    );
+  }
+
+  // Versioned v5 envelope: its shape already matches current, so its preferences
+  // are kept as-is (completeToCurrent fills nothing new).
   if (
     hasVersionedEnvelope(persisted, 5) &&
     isV5UserSettings(persisted.settings)
@@ -563,7 +639,17 @@ async function readPersistedSettingsForMutation(
     );
   }
 
-  // Bare schema-v5 object (v5 keys, no v6 additions).
+  // Bare schema-v6 object (current keys plus the removed marking threshold).
+  if (isV6UserSettings(persisted)) {
+    return storeMigrated(
+      storage,
+      storageKey,
+      1,
+      completeToCurrent(withoutV7RemovedKeys(persisted)),
+    );
+  }
+
+  // Bare schema-v5 object (v5 keys, not the marking threshold removed in v7).
   if (isV5UserSettings(persisted)) {
     return storeMigrated(storage, storageKey, 1, completeToCurrent(persisted));
   }

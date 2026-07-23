@@ -569,10 +569,7 @@ function completePreparedRequest(
       ? calibration === undefined &&
         settings.experimentalUncalibratedTmr === true
         ? {
-            outcome: decideExperimentalUncalibrated(
-              base,
-              settings.experimentalMarkingThresholdPercent / 100,
-            ),
+            outcome: decideExperimentalUncalibrated(base),
           }
         : decideBundle(
             base,
@@ -680,17 +677,18 @@ function capToIndicator(outcome: DecisionOutcome): DecisionOutcome {
     : { ...outcome, actionCeiling: "indicator" };
 }
 
-// The provisional raw-score floor above which the experimental preview reports
-// the STRONGER band. The MARKING cut is the user's configurable
-// `experimentalMarkingThresholdPercent`; "strong" never falls below marking, so
-// the effective strong cut is max(marking, this). Both are an explicit GUESS —
-// the calibrated path replaces them with the profile's measured operating points.
+// The provisional raw-score cut the experimental preview marks at. A score
+// threshold is a scientific decision, NOT a user preference, so the preview uses
+// one FIXED conservative cut for BOTH marking and the "strong" band: only
+// high-confidence AI is surfaced, always as `strong_ai_indication`. It is an
+// explicit GUESS — the calibrated path replaces it with the profile's measured
+// operating points (which will live in the sealed profile, never in settings).
 const EXPERIMENTAL_STRONG_THRESHOLD = 0.9;
 
 /**
  * The "preview experimental / não calibrado" decision: the sealed TMR ran with NO
  * calibration profile, so its RAW document score is mapped to a verdict with the
- * provisional thresholds above and the result is ALWAYS tagged
+ * provisional fixed cut above and the result is ALWAYS tagged
  * `TMR_EXPERIMENTAL_UNCALIBRATED`. It fails closed on unsupported evidence exactly
  * like the calibrated path. The ceiling reaches `hide` so the user's
  * `presentationMode` governs blur/collapse/hide, EXCEPT the 50–79 word bucket
@@ -700,7 +698,6 @@ const EXPERIMENTAL_STRONG_THRESHOLD = 0.9;
  */
 function decideExperimentalUncalibrated(
   base: ClassificationResult,
-  markingThreshold: number,
 ): DecisionOutcome {
   const rawScore = base.aggregation?.documentRawScore ?? base.aiScore;
   const reasonCodes: DecisionReasonCode[] = ["TMR_EXPERIMENTAL_UNCALIBRATED"];
@@ -720,10 +717,10 @@ function decideExperimentalUncalibrated(
       ],
     };
   }
-  const positive = rawScore >= markingThreshold;
-  // "Strong" never falls below the (possibly raised) marking cut.
-  const strong =
-    rawScore >= Math.max(markingThreshold, EXPERIMENTAL_STRONG_THRESHOLD);
+  // Marking and "strong" share the single fixed cut, so they coincide: the
+  // preview marks a post only when the model is highly confident it is AI.
+  const positive = rawScore >= EXPERIMENTAL_STRONG_THRESHOLD;
+  const strong = rawScore >= EXPERIMENTAL_STRONG_THRESHOLD;
   const shortText = getLengthBucket(base.wordCount) === "50_79";
   return {
     status: strong

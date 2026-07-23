@@ -85,7 +85,7 @@ describe("content script runtime bridge", () => {
     expect(
       effectiveSettingsEqual(DEFAULT_SETTINGS, {
         ...DEFAULT_SETTINGS,
-        experimentalMarkingThresholdPercent: 55,
+        minimumWordCount: 150,
       }),
     ).toBe(false);
     // A debug-only sourceMap annotation is not a user-facing change.

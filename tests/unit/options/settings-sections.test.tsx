@@ -113,16 +113,10 @@ describe("options settings sections", () => {
     expect(screen.queryByLabelText(/Limiar/u)).toBeNull();
   });
 
-  it("reveals the experimental marking threshold ONLY when the preview is enabled", async () => {
-    // Off by default: the calibrated/normal surface never exposes a threshold.
-    const { unmount } = render(<OptionsApp api={fakeOptionsApi()} />);
-    await screen.findByRole("group", { name: "Avançado" });
-    expect(
-      screen.queryByLabelText("Limiar de marcação experimental (%)"),
-    ).toBeNull();
-    unmount();
-
-    // Enabled: the field appears so the user can tune the provisional cut.
+  it("never reveals a threshold control, even when the experimental preview is enabled", async () => {
+    // A score cut is a scientific decision, not a user preference: the settings
+    // surface exposes NO threshold in any state — the calibrated cuts live in the
+    // sealed profile and the preview marks at a fixed code-defined cut.
     render(
       <OptionsApp
         api={fakeOptionsApi({
@@ -133,9 +127,14 @@ describe("options settings sections", () => {
         })}
       />,
     );
+    await screen.findByRole("group", { name: "Avançado" });
+    // The experimental preview is ON, yet still no threshold field is rendered.
     expect(
-      await screen.findByLabelText("Limiar de marcação experimental (%)"),
-    ).toBeVisible();
+      screen.getByLabelText(
+        "Ativar detector experimental (preview / não calibrado)",
+      ),
+    ).toBeChecked();
+    expect(screen.queryByLabelText(/Limiar/u)).toBeNull();
   });
 
   it("shows the ceiling-only presentation note", async () => {

@@ -836,6 +836,40 @@ function bundleClassifier(): BatchTextClassifier {
   };
 }
 
+/** A bundle-identity classifier whose chunks score a fixed raw AI probability. */
+function bundleClassifierScoring(aiScore: number): BatchTextClassifier {
+  const metadata: ClassifierMetadata = {
+    id: "cleanfeed-ptbr-v1",
+    name: "TMR detector",
+    version: TMR_MODEL_VERSION,
+    backend: "wasm",
+    supportedLanguages: ["pt"],
+    maximumTokens: 512,
+    supportsBatching: true,
+  };
+  const scored = (
+    text: string,
+    options?: ClassificationOptions,
+  ): ClassificationResult => ({
+    ...bundleResult(text, options),
+    aiScore,
+    humanScore: 1 - aiScore,
+  });
+  return {
+    initialize: vi.fn().mockResolvedValue(undefined),
+    classify: vi.fn(async (text: string, options?: ClassificationOptions) =>
+      scored(text, options),
+    ),
+    classifyBatch: vi.fn(
+      async (texts: string[], options?: ClassificationOptions) =>
+        texts.map((text) => scored(text, options)),
+    ),
+    dispose: vi.fn().mockResolvedValue(undefined),
+    getMetadata: vi.fn(() => metadata),
+    getRuntimeIdentity: () => TMR_IDENTITY,
+  };
+}
+
 /**
  * A tokenizer that reports EXACT native offsets in a single span, so the bundle
  * path's evidence is not fail-closed and one window covers the whole document
@@ -1026,36 +1060,35 @@ describe("bundle calibration profile binding", () => {
     expect(classified.cacheValidUntil).toBeUndefined();
   });
 
-  it("honors the configurable experimental marking threshold", async () => {
-    // The bundle classifier scores 0.95. A threshold above that surfaces nothing
-    // (still tagged experimental, but not presentable); a low threshold marks.
-    const runner = new PipelineRunner({
-      classifier: bundleClassifier(),
+  it("marks the experimental preview at a fixed conservative cut, never a settings value", async () => {
+    // A score threshold is a scientific decision, not a user preference: the
+    // preview marks only high-confidence AI (raw >= 0.9). A 0.95 post is marked
+    // strong; a 0.7 post is not marked — no setting can move that cut.
+    const marked = await new PipelineRunner({
+      classifier: bundleClassifierScoring(0.95),
       tokenizer: exactTokenizer,
-    });
-
-    const strict = await runner.classify(
+    }).classify(
       { text: PORTUGUESE_LONG_TEXT, platform: "linkedin", manual: false },
-      {
-        ...DEFAULT_SETTINGS,
-        experimentalUncalibratedTmr: true,
-        experimentalMarkingThresholdPercent: 99,
-      },
+      { ...DEFAULT_SETTINGS, experimentalUncalibratedTmr: true },
     );
-    expect(strict.decision.presentationAllowed).toBe(false);
-    expect(strict.decision.reasonCodes).toContain(
+    expect(marked.decision.presentationAllowed).toBe(true);
+    expect(marked.decision.status).toBe("strong_ai_indication");
+    expect(marked.decision.reasonCodes).toContain(
       "TMR_EXPERIMENTAL_UNCALIBRATED",
     );
 
-    const lenient = await runner.classify(
+    const unmarked = await new PipelineRunner({
+      classifier: bundleClassifierScoring(0.7),
+      tokenizer: exactTokenizer,
+    }).classify(
       { text: PORTUGUESE_LONG_TEXT, platform: "linkedin", manual: false },
-      {
-        ...DEFAULT_SETTINGS,
-        experimentalUncalibratedTmr: true,
-        experimentalMarkingThresholdPercent: 50,
-      },
+      { ...DEFAULT_SETTINGS, experimentalUncalibratedTmr: true },
     );
-    expect(lenient.decision.presentationAllowed).toBe(true);
+    expect(unmarked.decision.presentationAllowed).toBe(false);
+    expect(unmarked.decision.status).toBe("probably_human");
+    expect(unmarked.decision.reasonCodes).toContain(
+      "TMR_EXPERIMENTAL_UNCALIBRATED",
+    );
   });
 
   it("leaves both fields undefined for an uncalibrated builtin result", async () => {

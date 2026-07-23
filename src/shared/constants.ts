@@ -39,7 +39,6 @@ export const SETTINGS_LIMITS = {
   cacheMaximumEntries: { minimum: 10, maximum: 5_000 },
   cacheTtlMs: { minimum: 60_000, maximum: 2_592_000_000 },
   historyRetentionDays: { minimum: 1, maximum: 3_650 },
-  experimentalMarkingThresholdPercent: { minimum: 1, maximum: 100 },
 } as const;
 
 export const DEFAULT_SETTINGS: UserSettings = {
@@ -50,7 +49,6 @@ export const DEFAULT_SETTINGS: UserSettings = {
   processVisibleOnly: true,
   experimentalShortTextDetection: false,
   experimentalUncalibratedTmr: false,
-  experimentalMarkingThresholdPercent: 70,
   manualAnalysisEnabled: true,
   showScore: false,
   showExplanation: true,

@@ -19,14 +19,6 @@ export interface UserSettings {
    * stays primary until the user explicitly enables this.
    */
   experimentalUncalibratedTmr: boolean;
-  /**
-   * Marking threshold (percent, 1–100) for the experimental preview: the raw TMR
-   * document score must reach this to surface a mark. Default 70. Consulted ONLY
-   * when {@link experimentalUncalibratedTmr} is on; the calibrated path ignores it
-   * entirely (its operating points come from the sealed profile). The "strong"
-   * band is derived as max(threshold, 90%), so it never falls below marking.
-   */
-  experimentalMarkingThresholdPercent: number;
   manualAnalysisEnabled: boolean;
   showScore: boolean;
   showExplanation: boolean;
