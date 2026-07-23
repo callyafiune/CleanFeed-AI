@@ -5,6 +5,8 @@ probabilística**. O MVP opera no LinkedIn e marca posts longos elegíveis com u
 apresentação reversível. A classificação é probabilística e local: ela
 **não prova autoria** e não é um detector definitivo.
 
+> **Uso responsável:** este detector INDICA, nunca condena — leia [docs/uso-responsavel.md](docs/uso-responsavel.md) antes de qualquer uso institucional.
+
 ## Objetivo
 
 Dar ao usuário um controle discreto e reversível sobre publicações longas que
