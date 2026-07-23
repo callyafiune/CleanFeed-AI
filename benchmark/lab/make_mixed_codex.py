@@ -12,6 +12,12 @@ Resume-safe by parentId. The recorded model is parsed from the codex banner
 ("model: gpt-5.6-luna"). Stops after --max-failures consecutive errors so a
 dead subscription/limit doesn't burn the whole parent list.
 
+Windows PATH trap: CreateProcess appends ".exe" when resolving a bare
+"codex", which can silently pick an OLD native-app install over the npm CLI
+(shells pick the npm shim instead — same name, different binary, and the
+server rejects outdated clients per model). Pass --codex-bin with the full
+path to the npm vendored codex.exe to pin the right one.
+
 Usage:
   python make_mixed_codex.py --parents codex_parents.jsonl \
     --pairs ../data/candidates/mixed_pairs_codex.jsonl [--target 200]
@@ -31,12 +37,14 @@ from pathlib import Path
 from make_mixed import EDIT_PROMPT, already_done, read_jsonl
 
 
-def run_codex(prompt: str, workdir: Path, model: str | None, timeout: int) -> tuple[str, str]:
+def run_codex(
+    prompt: str, workdir: Path, model: str | None, timeout: int, codex_bin: str
+) -> tuple[str, str]:
     """One codex exec call -> (edited_text, banner_log). Raises on failure."""
     out_file = workdir / "last_message.txt"
     out_file.unlink(missing_ok=True)
     argv = [
-        "codex", "exec",
+        codex_bin, "exec",
         "--sandbox", "read-only",
         "--ephemeral",
         "--skip-git-repo-check",
@@ -72,6 +80,11 @@ def main() -> None:
     parser.add_argument("--target", type=int, default=200)
     parser.add_argument("--model", default=None, help="passa --model ao codex")
     parser.add_argument("--timeout", type=int, default=300)
+    parser.add_argument(
+        "--codex-bin",
+        default="codex",
+        help="caminho do binário codex (evita a armadilha CreateProcess/.exe)",
+    )
     parser.add_argument("--max-failures", type=int, default=3)
     parser.add_argument(
         "--item-retries",
@@ -84,7 +97,9 @@ def main() -> None:
     parser.add_argument("--pace", type=float, default=3.0)
     args = parser.parse_args()
 
-    sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+    sys.stdout.reconfigure(
+        encoding="utf-8", errors="replace", line_buffering=True
+    )
     done = already_done(args.pairs)
     parents = [p for p in read_jsonl(args.parents) if p["id"] not in done]
     parents = parents[: args.target]
@@ -101,7 +116,7 @@ def main() -> None:
             for attempt in range(args.item_retries):
                 try:
                     edited, log = run_codex(
-                        prompt, workdir, args.model, args.timeout
+                        prompt, workdir, args.model, args.timeout, args.codex_bin
                     )
                     break
                 except (RuntimeError, subprocess.TimeoutExpired) as error:
