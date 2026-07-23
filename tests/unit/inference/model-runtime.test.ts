@@ -411,6 +411,157 @@ describe("ExactTokenizer", () => {
   });
 });
 
+/**
+ * A dict-driven WordPiece fake (BERT family): whitespace/punctuation basic
+ * split, then per-word pieces from `wordPieces` (default: one `[UNK]` for the
+ * whole word — WordPiece is all-or-nothing per word). The callable and
+ * `tokenize` are built from the SAME piece stream, and the detection probe
+ * "a b" resolves to `["a", "b"]`, exactly like a real BERT tokenizer.
+ */
+function fakeWordPieceTokenizer(
+  wordPieces: Record<string, string[]>,
+): LoadedTransformersTokenizer {
+  const vocabulary = new Map<string, number>();
+  const idOf = (piece: string): number => {
+    if (!vocabulary.has(piece)) vocabulary.set(piece, 10 + vocabulary.size);
+    return vocabulary.get(piece)!;
+  };
+  const withDefaults: Record<string, string[]> = {
+    a: ["a"],
+    b: ["b"],
+    ...wordPieces,
+  };
+  const piecesFor = (text: string): string[] =>
+    (text.match(/[^\s\p{P}]+|\p{P}/gu) ?? []).flatMap(
+      (word) => withDefaults[word] ?? ["[UNK]"],
+    );
+  const tokenizer = ((text: string, callOptions) => {
+    const ids = piecesFor(text).map(idOf);
+    return {
+      input_ids: callOptions.add_special_tokens ? [101, ...ids, 102] : ids,
+    };
+  }) as LoadedTransformersTokenizer;
+  tokenizer.tokenize = (text: string) => piecesFor(text);
+  return tokenizer;
+}
+
+describe("ExactTokenizer (WordPiece)", () => {
+  it("detects WordPiece and derives exact piece offsets with ## continuations", () => {
+    const exact = ExactTokenizer.create(
+      fakeWordPieceTokenizer({
+        adoção: ["ado", "##ção"],
+        é: ["é"],
+        boa: ["boa"],
+      }),
+    );
+
+    expect(exact.offsetMode).toBe("wordpiece");
+    const { offsets, inputIds } = exact.encodeWithOffsets("adoção é boa");
+    expect(inputIds).toHaveLength(4);
+    expect(offsets).toEqual([
+      { start: 0, end: 3 }, // "ado"
+      { start: 3, end: 6 }, // "##ção" — acentos em fronteiras de caractere cheio
+      { start: 7, end: 8 }, // "é"
+      { start: 9, end: 12 }, // "boa"
+    ]);
+  });
+
+  it("assigns an [UNK] word (emoji) its whole span without disturbing neighbors", () => {
+    const exact = ExactTokenizer.create(
+      fakeWordPieceTokenizer({ boa: ["boa"] }),
+    );
+
+    const text = "boa 😂 boa";
+    const { offsets } = exact.encodeWithOffsets(text);
+    expect(offsets).toEqual([
+      { start: 0, end: 3 },
+      { start: 4, end: 6 }, // o emoji (2 UTF-16 units) vira [UNK] com o span da palavra
+      { start: 7, end: 10 },
+    ]);
+  });
+
+  it("treats punctuation as its own word span", () => {
+    const exact = ExactTokenizer.create(
+      fakeWordPieceTokenizer({ boa: ["boa"], ",": [","] }),
+    );
+
+    const { offsets } = exact.encodeWithOffsets("boa, boa");
+    expect(offsets).toEqual([
+      { start: 0, end: 3 },
+      { start: 3, end: 4 },
+      { start: 5, end: 8 },
+    ]);
+  });
+
+  it("degrades a mismatched word to its word span instead of throwing", () => {
+    const exact = ExactTokenizer.create(
+      // As peças não batem com a superfície da palavra — deve arredondar para
+      // o span da palavra inteira, nunca lançar TOKENIZATION_FAILED.
+      fakeWordPieceTokenizer({ estranho: ["xx", "##yy"], boa: ["boa"] }),
+    );
+
+    const { offsets } = exact.encodeWithOffsets("estranho boa");
+    expect(offsets).toEqual([
+      { start: 0, end: 8 },
+      { start: 0, end: 8 },
+      { start: 9, end: 12 },
+    ]);
+  });
+
+  it("degrades to whole-text spans when the streams misalign globally", () => {
+    const inner = fakeWordPieceTokenizer({ boa: ["boa"] });
+    // Desalinha SOMENTE o texto-alvo (uma peça-fantasma a mais); a sonda de
+    // detecção "a b" continua limpa, então o modo resolve para wordpiece.
+    const padded = ((text: string, callOptions) => {
+      const result = inner(text, callOptions) as { input_ids: number[] };
+      return {
+        input_ids: text.includes("boa")
+          ? [...result.input_ids, 999]
+          : result.input_ids,
+      };
+    }) as LoadedTransformersTokenizer;
+    // Peça-fantasma SEM "##": inicia uma "palavra" que não existe no texto —
+    // só o fallback global cobre.
+    padded.tokenize = (text: string, options) => {
+      const base = inner.tokenize(text, options) as string[];
+      return text.includes("boa") ? [...base, "fantasma"] : base;
+    };
+
+    const exact = ExactTokenizer.create(padded);
+    expect(exact.offsetMode).toBe("wordpiece");
+    const text = "boa boa";
+    const { offsets } = exact.encodeWithOffsets(text);
+    expect(offsets).toHaveLength(3);
+    for (const offset of offsets) {
+      expect(offset).toEqual({ start: 0, end: text.length });
+    }
+  });
+
+  it("attaches a residual ## ghost to the previous word span (local degrade)", () => {
+    const inner = fakeWordPieceTokenizer({ boa: ["boa"] });
+    const padded = ((text: string, callOptions) => {
+      const result = inner(text, callOptions) as { input_ids: number[] };
+      return {
+        input_ids: text.includes("boa")
+          ? [...result.input_ids, 999]
+          : result.input_ids,
+      };
+    }) as LoadedTransformersTokenizer;
+    padded.tokenize = (text: string, options) => {
+      const base = inner.tokenize(text, options) as string[];
+      return text.includes("boa") ? [...base, "##fantasma"] : base;
+    };
+
+    const exact = ExactTokenizer.create(padded);
+    const { offsets } = exact.encodeWithOffsets("boa boa");
+    expect(offsets).toEqual([
+      { start: 0, end: 3 },
+      { start: 4, end: 7 },
+      { start: 4, end: 7 }, // fantasma herda o span da palavra anterior
+    ]);
+  });
+});
+
 describe("createModelRuntime", () => {
   it("binds the classifier and the exact tokenizer to one asset load", async () => {
     const classifier = fakeClassifier();

@@ -149,21 +149,75 @@ export function createTmrChunkPlan(
   return { modelMaxTokens, contentTokens, overlapTokens, maxWindows };
 }
 
+/** How native offsets are derived from the loaded tokenizer's surface tokens. */
+export type OffsetDerivationMode = "byte-level" | "wordpiece";
+
 /**
- * The exact tokenizer for the TMR path. It wraps the effectively-loaded
+ * A fixed probe whose segmentation discriminates the tokenizer family:
+ * ByteLevel-BPE carries the space INSIDE a surface token (`["a", "Ġb"]`, byte
+ * runs tile the probe's UTF-8 length), while WordPiece DROPS it (`["a", "b"]`).
+ */
+const MODE_DETECTION_PROBE = "a b";
+
+/**
+ * Detects the offset-derivation mode ONCE per tokenizer. Defaults to
+ * "byte-level" (the sealed TMR behavior, which fails closed on malformed
+ * streams) unless the probe shows POSITIVE WordPiece evidence — so a broken
+ * tokenizer can never accidentally opt into the more forgiving WordPiece path.
+ */
+function detectOffsetMode(
+  tokenizer: LoadedTransformersTokenizer,
+): OffsetDerivationMode {
+  try {
+    const tokens = tokenizer.tokenize(MODE_DETECTION_PROBE, {
+      add_special_tokens: false,
+    });
+    if (!Array.isArray(tokens) || tokens.length === 0) return "byte-level";
+    try {
+      const tiled = tokens.reduce(
+        (sum, token) => sum + tokenByteLength(String(token)),
+        0,
+      );
+      const probeBytes = new TextEncoder().encode(MODE_DETECTION_PROBE).length;
+      if (tiled === probeBytes) return "byte-level";
+    } catch {
+      // Non-byte-alphabet surface char: definitely not ByteLevel.
+    }
+    const joined = tokens
+      .map((token) =>
+        String(token).startsWith("##") ? String(token).slice(2) : String(token),
+      )
+      .join("");
+    return joined === "ab" ? "wordpiece" : "byte-level";
+  } catch {
+    return "byte-level";
+  }
+}
+
+/**
+ * The exact tokenizer for the bundle path. It wraps the effectively-loaded
  * Transformers.js tokenizer, measures the special-token budget ONCE at
  * construction with an `add_special_tokens` on/off probe (never a hardcoded
- * literal), and returns NATIVE char offsets derived from the tokenizer's own
- * ByteLevel-BPE segmentation: each surface token is a run of byte-alphabet
- * characters that maps back to a contiguous run of the source text's UTF-8
- * bytes, and those byte spans are converted to full-character UTF-16 offsets.
- * It never reconstructs offsets by substring search (no `indexOf`/`slice`
- * scanning) and never uses the heuristic tokenizer.
+ * literal), detects the tokenizer family ONCE from a fixed probe, and returns
+ * NATIVE char offsets derived from the tokenizer's own segmentation:
+ *
+ * - ByteLevel-BPE (TMR/RoBERTa): each surface token is a run of byte-alphabet
+ *   characters mapping to a contiguous run of the source's UTF-8 bytes,
+ *   converted to full-character UTF-16 offsets. Fails closed on malformed
+ *   streams (sealed TMR behavior, unchanged).
+ * - WordPiece (BERTimbau/cleanfeed-ptbr): pieces are matched inside basic-token
+ *   word spans (`##` continuations, `[UNK]` consumes its whole word) and any
+ *   misalignment DEGRADES to the enclosing word span — never a hard failure,
+ *   the lesson of the TMR emoji incident.
+ *
+ * It never reconstructs offsets by substring search over the whole text and
+ * never uses the heuristic tokenizer.
  */
 export class ExactTokenizer {
   private constructor(
     private readonly tokenizer: LoadedTransformersTokenizer,
     readonly specialTokenCount: number,
+    readonly offsetMode: OffsetDerivationMode,
   ) {}
 
   static create(
@@ -195,7 +249,7 @@ export class ExactTokenizer {
         `TMR tokenizer reserves ${measured} special tokens; ${requiredSpecialTokenCount} required.`,
       );
     }
-    return new ExactTokenizer(tokenizer, measured);
+    return new ExactTokenizer(tokenizer, measured, detectOffsetMode(tokenizer));
   }
 
   encodeWithOffsets(text: string): ExactTokenEncoding {
@@ -205,7 +259,7 @@ export class ExactTokenizer {
       truncation: false,
     });
     const inputIds = toTokenIdArray(output.input_ids);
-    // The ByteLevel surface tokens (content only) whose byte runs tile the text.
+    // The surface tokens (content only) the offsets are derived from.
     const tokens = this.tokenizer.tokenize(text, {
       add_special_tokens: false,
     });
@@ -214,7 +268,10 @@ export class ExactTokenizer {
         "The loaded tokenizer's token and id streams disagree.",
       );
     }
-    const offsets = deriveByteLevelOffsets(text, tokens);
+    const offsets =
+      this.offsetMode === "wordpiece"
+        ? deriveWordPieceOffsets(text, tokens as string[])
+        : deriveByteLevelOffsets(text, tokens as string[]);
     return { inputIds, offsets, specialTokenCount: this.specialTokenCount };
   }
 }
@@ -402,4 +459,135 @@ function tokenByteLength(token: string): number {
 
 function tokenizationFailed(message: string): CleanFeedError {
   return new CleanFeedError("TOKENIZATION_FAILED", message);
+}
+
+// --- WordPiece offset derivation (BERT-family tokenizers) --------------------
+
+function isWhitespaceChar(char: string): boolean {
+  return /\s/u.test(char);
+}
+
+/** Mirrors BERT BasicTokenizer punctuation: ASCII symbol ranges + Unicode P*. */
+function isPunctuationChar(char: string): boolean {
+  const code = char.codePointAt(0)!;
+  if (
+    (code >= 33 && code <= 47) ||
+    (code >= 58 && code <= 64) ||
+    (code >= 91 && code <= 96) ||
+    (code >= 123 && code <= 126)
+  ) {
+    return true;
+  }
+  return /\p{P}/u.test(char);
+}
+
+/**
+ * Segments text like BERT's BasicTokenizer: whitespace separates words and
+ * every punctuation character is its own word. UTF-16 spans, full code points.
+ */
+function segmentBasicWords(text: string): { start: number; end: number }[] {
+  const words: { start: number; end: number }[] = [];
+  let index = 0;
+  while (index < text.length) {
+    const char = String.fromCodePoint(text.codePointAt(index)!);
+    if (isWhitespaceChar(char)) {
+      index += char.length;
+      continue;
+    }
+    if (isPunctuationChar(char)) {
+      words.push({ start: index, end: index + char.length });
+      index += char.length;
+      continue;
+    }
+    const start = index;
+    while (index < text.length) {
+      const next = String.fromCodePoint(text.codePointAt(index)!);
+      if (isWhitespaceChar(next) || isPunctuationChar(next)) break;
+      index += next.length;
+    }
+    words.push({ start, end: index });
+  }
+  return words;
+}
+
+/**
+ * Derives NATIVE per-token char offsets from WordPiece surface tokens. Words
+ * come from {@link segmentBasicWords}; within a word, the first piece has no
+ * `##` prefix and continuations do; `[UNK]` consumes its WHOLE word (WordPiece
+ * is all-or-nothing per word, e.g. an emoji word). Any per-word misalignment
+ * (unexpected surface, exhausted pieces) DEGRADES to the enclosing word span,
+ * and any global misalignment degrades to whole-text spans — offsets feed
+ * chunk planning and evidence coverage, so coarse-but-covering ALWAYS beats a
+ * hard failure that would drop the whole post (the TMR emoji lesson).
+ */
+function deriveWordPieceOffsets(
+  text: string,
+  tokens: string[],
+): { start: number; end: number }[] {
+  const coarse = () => tokens.map(() => ({ start: 0, end: text.length }));
+  if (tokens.length === 0 || text.length === 0) return coarse();
+
+  const words = segmentBasicWords(text);
+  const offsets: { start: number; end: number }[] = [];
+  let tokenIndex = 0;
+  for (const word of words) {
+    if (tokenIndex >= tokens.length) break;
+    const wordText = text.slice(word.start, word.end);
+    let cursor = 0;
+    let first = true;
+    while (tokenIndex < tokens.length) {
+      const piece = tokens[tokenIndex]!;
+      const continuation = piece.startsWith("##");
+      if (!first && !continuation) break;
+      const surface = continuation ? piece.slice(2) : piece;
+      if (
+        piece !== "[UNK]" &&
+        surface.length > 0 &&
+        wordText.startsWith(surface, cursor)
+      ) {
+        offsets.push({
+          start: word.start + cursor,
+          end: word.start + cursor + surface.length,
+        });
+        cursor += surface.length;
+      } else {
+        // [UNK] or a surface mismatch: round outward to the whole word.
+        offsets.push({ start: word.start, end: word.end });
+        cursor = wordText.length;
+      }
+      tokenIndex += 1;
+      first = false;
+      if (cursor >= wordText.length) {
+        // Any residual continuations of this word (mismatch cases) also round
+        // to the word span, so the streams stay aligned word by word.
+        while (
+          tokenIndex < tokens.length &&
+          tokens[tokenIndex]!.startsWith("##")
+        ) {
+          offsets.push({ start: word.start, end: word.end });
+          tokenIndex += 1;
+        }
+        break;
+      }
+    }
+  }
+
+  if (tokenIndex !== tokens.length || offsets.length !== tokens.length) {
+    return coarse();
+  }
+  let previousEnd = 0;
+  for (const offset of offsets) {
+    if (
+      !Number.isSafeInteger(offset.start) ||
+      !Number.isSafeInteger(offset.end) ||
+      offset.start < 0 ||
+      offset.end <= offset.start ||
+      offset.end > text.length ||
+      offset.end < previousEnd
+    ) {
+      return coarse();
+    }
+    previousEnd = offset.end;
+  }
+  return offsets;
 }
