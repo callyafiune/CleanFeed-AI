@@ -23,7 +23,7 @@ import { argv, env, execPath, exit } from "node:process";
 import { fileURLToPath } from "node:url";
 
 const REPO_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..");
-const MODELS_DIR = join(REPO_ROOT, "models", "tmr-ai-text-detector");
+const MODELS_DIR = join(REPO_ROOT, "models", "cleanfeed-ptbr-v1");
 const VARIANTS_ROOT = join(REPO_ROOT, "test-results", "release-variants");
 const VITE_BIN = join(REPO_ROOT, "node_modules", "vite", "bin", "vite.js");
 const E2E_MODE = "e2e-release-variant";

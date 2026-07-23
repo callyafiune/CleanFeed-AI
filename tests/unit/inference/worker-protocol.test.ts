@@ -30,10 +30,10 @@ describe("worker error protocol", () => {
           modelBaseUrl: "chrome-extension://test/models/",
           wasmBaseUrl: "chrome-extension://test/vendor/transformers-wasm/",
           descriptor: {
-            manifest: { modelId: "tmr-ai-text-detector" },
+            manifest: { modelId: "cleanfeed-ptbr-v1" },
             release: { rolloutState: "bundle-verified" },
             profiles: { schemaVersion: 1, profiles: [] },
-            sourceLock: { modelId: "tmr-ai-text-detector" },
+            sourceLock: { modelId: "cleanfeed-ptbr-v1" },
           },
         },
       }),

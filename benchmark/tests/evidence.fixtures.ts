@@ -49,7 +49,7 @@ import {
 } from "./profile-artifact.fixtures.ts";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
-const MODEL_DIR = resolve(HERE, "../../models/tmr-ai-text-detector");
+const MODEL_DIR = resolve(HERE, "../../models/cleanfeed-ptbr-v1");
 
 function hex(label: string): string {
   let out = "";
@@ -59,12 +59,12 @@ function hex(label: string): string {
 
 // Identity copied verbatim from the committed release template so the builder's
 // cross-check agrees byte-for-byte.
-const MODEL_ID = "tmr-ai-text-detector";
-const MODEL_VERSION = "b9aa251e5bcda7e429fcc936767d921435945b60";
+const MODEL_ID = "cleanfeed-ptbr-v1";
+const MODEL_VERSION = "d8f77f870fbd35a17add2498b73d906bbc299026";
 const BUNDLE_DIGEST =
-  "32cb58e1984a5c3da5745ad1c1c7fa7355e6f04f49c93f822b326511d9e3565c";
+  "2d47d6f3e0a6f2c7836b03c9a47b1b81f6c34159aa35ae1bdffe3507e4dc25bc";
 const TOKENIZER_DIGEST =
-  "8be427eee79ac58671ae5570f75806fc3d9edc2f2d727ca9e261c2d4b85d37a9";
+  "2e3bc97587671b43d32a68bd134abea67f4a3aaaee8a65f7a1f923449ee13135";
 const AGGREGATION_VERSION = "tmr-aggregation-v2";
 const CONTENT_COMPOSITION_VERSION = "lexical-content-v1";
 
@@ -601,7 +601,7 @@ export async function buildRejectScenario(
   const fitReport = lightFitReport(frozenCalibration);
 
   // Lay everything down on disk.
-  const modelDir = join(root, "models", "tmr-ai-text-detector");
+  const modelDir = join(root, "models", "cleanfeed-ptbr-v1");
   await mkdir(modelDir, { recursive: true });
   await writeFile(
     join(modelDir, "calibration-profiles.json"),

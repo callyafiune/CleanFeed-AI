@@ -4,10 +4,10 @@
     {
       "schemaVersion": 1,
       "profileId": "pass-200-plus",
-      "modelId": "tmr-ai-text-detector",
-      "modelVersion": "b9aa251e5bcda7e429fcc936767d921435945b60",
-      "bundleDigest": "32cb58e1984a5c3da5745ad1c1c7fa7355e6f04f49c93f822b326511d9e3565c",
-      "tokenizerDigest": "8be427eee79ac58671ae5570f75806fc3d9edc2f2d727ca9e261c2d4b85d37a9",
+      "modelId": "cleanfeed-ptbr-v1",
+      "modelVersion": "d8f77f870fbd35a17add2498b73d906bbc299026",
+      "bundleDigest": "2d47d6f3e0a6f2c7836b03c9a47b1b81f6c34159aa35ae1bdffe3507e4dc25bc",
+      "tokenizerDigest": "2e3bc97587671b43d32a68bd134abea67f4a3aaaee8a65f7a1f923449ee13135",
       "platform": "windows-x64",
       "locale": "pt-BR",
       "lengthBucket": "200-plus",
@@ -92,15 +92,15 @@
         "criticalRecallSlices": {}
       },
       "actionCeiling": "hide",
-      "profileDigest": "ef7cab9bf1e952064faf646c356e7241c61a99c5dbe516ba25b5af1ae0d4e831"
+      "profileDigest": "d1cead41007ebf3fcacfb899956b54016e4279141d91e19b618a72b35be672d9"
     },
     {
       "schemaVersion": 1,
       "profileId": "pass-50-79",
-      "modelId": "tmr-ai-text-detector",
-      "modelVersion": "b9aa251e5bcda7e429fcc936767d921435945b60",
-      "bundleDigest": "32cb58e1984a5c3da5745ad1c1c7fa7355e6f04f49c93f822b326511d9e3565c",
-      "tokenizerDigest": "8be427eee79ac58671ae5570f75806fc3d9edc2f2d727ca9e261c2d4b85d37a9",
+      "modelId": "cleanfeed-ptbr-v1",
+      "modelVersion": "d8f77f870fbd35a17add2498b73d906bbc299026",
+      "bundleDigest": "2d47d6f3e0a6f2c7836b03c9a47b1b81f6c34159aa35ae1bdffe3507e4dc25bc",
+      "tokenizerDigest": "2e3bc97587671b43d32a68bd134abea67f4a3aaaee8a65f7a1f923449ee13135",
       "platform": "windows-x64",
       "locale": "pt-BR",
       "lengthBucket": "50-79",
@@ -185,7 +185,7 @@
         "criticalRecallSlices": {}
       },
       "actionCeiling": "indicator",
-      "profileDigest": "cbb5445f254d3b2c5bd091e4107538ff83bb978511129688b802dc1a8aa047e2"
+      "profileDigest": "6960e02a1488df024b2e27156068ab2d5a5888a9cd82918bcb94d951711b98d9"
     }
   ]
 }

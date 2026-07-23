@@ -9,7 +9,8 @@
   e não deve ser usado para decisões sobre pessoas.
 - Mesmo quando houver modelo real, classificações serão probabilísticas e podem
   produzir falsos positivos e falsos negativos.
-- O candidato de modelo real (**TMR**, `tmr-ai-text-detector`) é um classificador
+- O candidato de modelo real (`cleanfeed-ptbr-v1`, BERTimbau fine-tunado; substitui
+  o antigo `tmr-ai-text-detector`) é um classificador
   local para **português/LinkedIn**, não um detector universal, e está
   `bundle-verified`/`pending`: nenhuma decisão científica foi emitida, então ele
   não classifica o feed e nenhum número de acurácia é publicado (a evidência, se

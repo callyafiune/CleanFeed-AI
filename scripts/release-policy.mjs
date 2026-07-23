@@ -12,7 +12,7 @@
 
 /** The one tokenizer digest every promoted artifact must carry, forever. */
 export const LOCKED_TOKENIZER_DIGEST =
-  "8be427eee79ac58671ae5570f75806fc3d9edc2f2d727ca9e261c2d4b85d37a9";
+  "2e3bc97587671b43d32a68bd134abea67f4a3aaaee8a65f7a1f923449ee13135";
 
 function assertTokenizerLocked(tokenizerDigest, where) {
   if (tokenizerDigest !== LOCKED_TOKENIZER_DIGEST) {

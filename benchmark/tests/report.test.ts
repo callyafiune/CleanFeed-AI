@@ -44,7 +44,7 @@ function seal(): GovernanceSeal {
     holdoutConsumptionId: SESSION,
     runtimeParityDigest: PARITY,
     model: {
-      id: "tmr-ai-text-detector",
+      id: "cleanfeed-ptbr-v1",
       version: "1.0.0",
       bundleDigest: BUNDLE,
       tokenizerDigest: TOKENIZER,
@@ -74,7 +74,7 @@ function manifest(
 ): PredictionManifestV1 {
   return {
     schemaVersion: 1,
-    modelId: "tmr-ai-text-detector",
+    modelId: "cleanfeed-ptbr-v1",
     modelVersion: "1.0.0",
     bundleDigest: BUNDLE,
     aggregationVersion: "aggregation-v1",

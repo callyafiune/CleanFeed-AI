@@ -246,8 +246,8 @@ describe("ClassificationCache", () => {
 
 const bundleIdentity: RuntimeModelIdentity = {
   kind: "bundle",
-  modelId: "tmr-ai-text-detector",
-  modelVersion: "b9aa251e5bcda7e429fcc936767d921435945b60",
+  modelId: "cleanfeed-ptbr-v1",
+  modelVersion: "d8f77f870fbd35a17add2498b73d906bbc299026",
   bundleDigest: "a".repeat(64),
   tokenizerDigest: "c".repeat(64),
   aggregationVersion: "tmr-aggregation-v2",

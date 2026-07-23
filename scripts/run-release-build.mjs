@@ -4,7 +4,7 @@
 // gate decision drives it through the pure policy matrix, and only then does it
 // smoke the candidate, run the base Vite build, seal the shared runtime-parity
 // manifest and either strip the model (reject -> fallback) or materialize the
-// twelve-file package (indicator/pass). Every fail-closed guard from Phase 1 is
+// eleven-file package (indicator/pass). Every fail-closed guard from Phase 1 is
 // preserved: pending never builds, an unapproved licence blocks a packaged
 // release, and the real smoke must pass before the Vite build even starts.
 //
@@ -113,7 +113,7 @@ export async function runReleaseBuild({
   const modelsDirectoryDefault = join(
     repositoryRoot,
     "models",
-    "tmr-ai-text-detector",
+    "cleanfeed-ptbr-v1",
   );
   const evidenceDirectoryDefault = join(
     repositoryRoot,
@@ -151,7 +151,7 @@ export async function runReleaseBuild({
         publicModelDirectory: join(
           publicDirectory ?? join(repositoryRoot, "public"),
           "models",
-          "tmr-ai-text-detector",
+          "cleanfeed-ptbr-v1",
         ),
         modelsDirectory: modelsDirectoryDefault,
         evidenceDirectory: evidenceDirectoryDefault,
@@ -278,7 +278,7 @@ export async function runReleaseBuild({
 
   const target = assertChildPath(
     distDirectory,
-    join(distDirectory, "models", "tmr-ai-text-detector"),
+    join(distDirectory, "models", "cleanfeed-ptbr-v1"),
   );
 
   if (!policy.includeTmr) {

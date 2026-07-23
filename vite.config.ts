@@ -73,8 +73,8 @@ function renderVariantMetadataModule(variantDirectory: string): string {
   return [
     `import calibrationProfilesJson from ${JSON.stringify(profilesPath)};`,
     `import releaseDescriptorJson from ${JSON.stringify(releasePath)};`,
-    `import cleanfeedModelJson from "../../models/tmr-ai-text-detector/cleanfeed-model.json";`,
-    `import sourceLockJson from "../../models/tmr-ai-text-detector/source-lock.json";`,
+    `import cleanfeedModelJson from "../../models/cleanfeed-ptbr-v1/cleanfeed-model.json";`,
+    `import sourceLockJson from "../../models/cleanfeed-ptbr-v1/source-lock.json";`,
     ``,
     `export const bundledModelManifest = cleanfeedModelJson;`,
     `export const bundledCalibrationProfiles = calibrationProfilesJson;`,

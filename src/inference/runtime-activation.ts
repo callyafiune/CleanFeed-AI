@@ -60,17 +60,17 @@ export function authorizesTmrPrimary(
 /**
  * Derives the v1 runtime manifest the ONNX backend consumes from the SEALED v2
  * bundle metadata. Every checksum comes from the pinned artifact records; the
- * label map (`{human:0, ai:1}`) and RoBERTa `logits` output are the bundle's
+ * label map (`{human:0, ai:1}`) and BERT `logits` output are the bundle's
  * fixed config. It never reads the network or the filesystem.
  */
 export function buildBundledRuntimeManifest(): CleanFeedModelManifest {
   return {
     schemaVersion: 1,
     id: bundledModelManifest.modelId,
-    name: "TMR AI Text Detector",
+    name: "CleanFeed pt-BR AI Text Detector",
     version: bundledModelManifest.modelVersion,
     task: "ai_text_detection",
-    architecture: "roberta",
+    architecture: "bert",
     modelPath: bundledModelManifest.modelFile,
     tokenizerPath: "tokenizer.json",
     configPath: "config.json",
@@ -79,8 +79,8 @@ export function buildBundledRuntimeManifest(): CleanFeedModelManifest {
     quantization: "int8",
     labels: { human: 0, ai: 1 },
     output: { name: "logits", kind: "logits" },
-    license: "MIT",
-    source: `onnx-community/tmr-ai-text-detector-ONNX@${bundledModelManifest.modelVersion}`,
+    license: "Projeto não-comercial; base BERTimbau (MIT)",
+    source: `self-trained/${bundledModelManifest.modelId}@${bundledModelManifest.modelVersion}`,
     calibrationVersion: bundledModelManifest.aggregationVersion,
     sha256: {
       model: artifactSha(bundledModelManifest.modelFile),

@@ -44,7 +44,7 @@ function hex(label: string): string {
 }
 
 const DATASET_ID = "ptbr-linkedin-v1";
-const MODEL_ID = "tmr-ai-text-detector";
+const MODEL_ID = "cleanfeed-ptbr-v1";
 const MODEL_VERSION = "1.0.0";
 const BUNDLE = hex("bundle");
 const TOKENIZER = hex("tokenizer");

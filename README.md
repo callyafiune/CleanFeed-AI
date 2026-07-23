@@ -46,7 +46,8 @@ um artefato treinado e um dataset auditável passem pelo portão de modelo. Um
 modelo sem calibração de benchmark só pode indicar, nunca ocultar. Consulte
 [Mock vs. modelo real](#mock-vs-modelo-real).
 
-O candidato de modelo real é o **TMR** (`tmr-ai-text-detector`), um classificador
+O candidato de modelo real é o **cleanfeed-ptbr-v1** (BERTimbau fine-tunado pelo
+próprio projeto; substitui o antigo candidato `tmr-ai-text-detector`), um classificador
 local para **português/LinkedIn** — não um detector universal. Ele está em
 `rolloutState: bundle-verified` com `gateDecision: pending`: integração e smoke
 real em Chrome estão verdes, mas **nenhuma decisão científica foi emitida**, então

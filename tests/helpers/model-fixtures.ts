@@ -6,7 +6,11 @@
 // overrides a digest to prove a mismatch is rejected. No factory uses a cast
 // that omits a required field.
 
-import { SOURCE_ARTIFACTS } from "../../scripts/model-lock.mjs";
+import {
+  PINNED_MODEL_ID,
+  PINNED_REVISION,
+  SOURCE_ARTIFACTS,
+} from "../../scripts/model-lock.mjs";
 import {
   computeBundleDigest,
   computeCalibrationSetDigest,
@@ -26,7 +30,6 @@ import type {
   RuntimeModelIdentity,
 } from "@/shared/types";
 
-const PINNED_REVISION = "b9aa251e5bcda7e429fcc936767d921435945b60";
 /** SHA-256 of the canonical empty calibration set ("[]"). */
 const EMPTY_SET_DIGEST =
   "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945";
@@ -47,13 +50,13 @@ export function createBuiltinRuntimeIdentity(
   };
 }
 
-/** A bundle runtime identity for the pinned TMR detector. */
+/** A bundle runtime identity for the pinned sealed detector. */
 export function createBundleRuntimeIdentity(
   overrides: Partial<BundleIdentity> = {},
 ): RuntimeModelIdentity {
   return {
     kind: "bundle",
-    modelId: "tmr-ai-text-detector",
+    modelId: PINNED_MODEL_ID,
     modelVersion: PINNED_REVISION,
     bundleDigest: "a".repeat(64),
     tokenizerDigest: "b".repeat(64),
@@ -138,7 +141,7 @@ export function createModelStatus(
   };
 }
 
-/** A fresh, mutable copy of the seven pinned upstream records. */
+/** A fresh, mutable copy of the six pinned source records. */
 export function createSourceArtifacts(): ArtifactRecord[] {
   return SOURCE_ARTIFACTS.map((artifact) => ({
     path: artifact.path,
@@ -164,7 +167,7 @@ export function createModelManifestV2(
   };
   return {
     schemaVersion: 2,
-    modelId: "tmr-ai-text-detector",
+    modelId: PINNED_MODEL_ID,
     modelVersion: PINNED_REVISION,
     task: "text-classification",
     backend: "transformers-onnx",
@@ -202,7 +205,7 @@ export function createReleaseDescriptorV1(
   const profileDigests = overrides.profileDigests ?? [];
   return {
     schemaVersion: 1,
-    modelId: "tmr-ai-text-detector",
+    modelId: PINNED_MODEL_ID,
     rolloutState: "bundle-verified",
     gateDecision: "pending",
     evidenceDigest: null,

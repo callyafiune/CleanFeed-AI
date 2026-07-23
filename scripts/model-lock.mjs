@@ -1,10 +1,10 @@
 #!/usr/bin/env node
-// Closed source-lock parser and staging verifier for the TMR model bundle.
+// Closed source-lock parser and staging verifier for the sealed model bundle.
 //
 //   node scripts/model-lock.mjs --verify <directory>
 //
-// This module is the single source of truth for WHICH upstream assets the TMR
-// bundle is pinned to and HOW they are verified. It consumes only Node built-ins
+// This module is the single source of truth for WHICH pinned assets the sealed
+// bundle is made of and HOW they are verified. It consumes only Node built-ins
 // (fs, crypto, path) plus fetch (in the acquisition module). It imports NOTHING
 // from the extension runtime, so it can never widen the build's attack surface.
 //
@@ -20,16 +20,20 @@ import { dirname, join, posix } from "node:path";
 import { argv, exit } from "node:process";
 import { fileURLToPath } from "node:url";
 
-/** Immutable upstream revision the whole bundle is pinned to. */
-export const PINNED_REVISION = "b9aa251e5bcda7e429fcc936767d921435945b60";
+/** Immutable revision the whole bundle is pinned to (first 40 hex of the onnx SHA-256). */
+export const PINNED_REVISION = "d8f77f870fbd35a17add2498b73d906bbc299026";
 
-/** The only host/repo/revision base the lock is allowed to reference. */
-export const PINNED_BASE_URL = `https://huggingface.co/onnx-community/tmr-ai-text-detector-ONNX/resolve/${PINNED_REVISION}/`;
-
-export const PINNED_MODEL_ID = "tmr-ai-text-detector";
+export const PINNED_MODEL_ID = "cleanfeed-ptbr-v1";
 
 /**
- * The canonical, closed inventory of the seven upstream assets, with the exact
+ * The only base URL the lock is allowed to reference. The bundle is trained by
+ * the project itself, so there is no upstream to fetch from: the reserved
+ * `.invalid` TLD states that syntactically-URL but unresolvable provenance.
+ */
+export const PINNED_BASE_URL = `https://self-trained.invalid/${PINNED_MODEL_ID}/${PINNED_REVISION}/`;
+
+/**
+ * The canonical, closed inventory of the six pinned assets, with the exact
  * byte length and SHA-256 of each. This mirrors the checked-in source-lock.json
  * and exists so callers can reference the pinned truth from code.
  */
@@ -37,50 +41,44 @@ export const SOURCE_ARTIFACTS = Object.freeze(
   [
     {
       path: "config.json",
-      bytes: 866,
+      bytes: 1006,
       sha256:
-        "d9d45b537b9cf386a0ce958f8b2f840b0529ed846e45c4e26bc53a62dcb06f1f",
-    },
-    {
-      path: "merges.txt",
-      bytes: 456318,
-      sha256:
-        "1ce1664773c50f3e0cc8842619a93edc4624525b728b188a9e0be33b7726adc5",
+        "06d604123f03f6eb6d51149f5b00c42df7d94824425ad9bbbeed08f4b55c67cd",
     },
     {
       path: "onnx/model_int8.onnx",
-      bytes: 125855418,
+      bytes: 109681931,
       sha256:
-        "a1ff8a917090467375ceaf47667459e431217d5691df463c57b7194624f3ff79",
+        "d8f77f870fbd35a17add2498b73d906bbc299026f95582532f47210ef561015b",
     },
     {
       path: "special_tokens_map.json",
-      bytes: 958,
+      bytes: 695,
       sha256:
-        "f23c8e6099631c233c16d9bf8dab198f610826cdd1b358f270f6d55c1863e857",
+        "5d5b662e421ea9fac075174bb0688ee0d9431699900b90662acd44b2a350503a",
     },
     {
       path: "tokenizer.json",
-      bytes: 3558741,
+      bytes: 678043,
       sha256:
-        "1f33749d010b4d63908e5c174c341622cb45039dd73a139dcd95bd74cc7e304b",
+        "d665c8154c740c907a233b29bc5ef681965cbdaffb6eba8bf7ee9740493904b2",
     },
     {
       path: "tokenizer_config.json",
-      bytes: 1354,
+      bytes: 1518,
       sha256:
-        "288b4077af1ffb3beead6d96fccfc93beb2df9b689cbb038c4eb329165efc43a",
+        "82391e0b4e9bae12d0c3bb33393a2d57c8bfa3d885f53771ab65add68cb39706",
     },
     {
-      path: "vocab.json",
-      bytes: 798293,
+      path: "vocab.txt",
+      bytes: 209528,
       sha256:
-        "ed19656ea1707df69134c4af35c8ceda2cc9860bf2c3495026153a133670ab5e",
+        "69c28584c67a0e5018f85ca734aa272cc38e26b5dd0d33fffa28059299f21707",
     },
   ].map((artifact) => Object.freeze({ ...artifact })),
 );
 
-const EXPECTED_ARTIFACT_COUNT = 7;
+const EXPECTED_ARTIFACT_COUNT = 6;
 const LOCK_KEYS = new Set([
   "schemaVersion",
   "modelId",
@@ -147,7 +145,7 @@ function assertSafeRelativePath(path) {
 
 /**
  * Reads and closed-parses a source-lock file. Rejects unknown keys, an off-host
- * or off-revision baseUrl, anything other than exactly seven safe relative
+ * or off-revision baseUrl, anything other than exactly six safe relative
  * POSIX paths, malformed sizes/hashes, and normalized duplicate paths. Byte and
  * hash CONTENT is verified later against staged files by verifyStagedAssets.
  */
@@ -270,9 +268,9 @@ async function listRelativePosixFiles(directory, prefix = "") {
 }
 
 /**
- * Verifies that a SOURCE staging directory contains EXACTLY the seven pinned
+ * Verifies that a SOURCE staging directory contains EXACTLY the six pinned
  * assets and nothing else, each with the declared byte length and SHA-256.
- * Resolves with { fileCount: 7 } or throws a coded ModelLockError.
+ * Resolves with { fileCount: 6 } or throws a coded ModelLockError.
  */
 export async function verifyStagedAssets(directory, lock) {
   const expected = lock.artifacts;
@@ -311,7 +309,7 @@ export async function verifyStagedAssets(directory, lock) {
 }
 
 /**
- * Verifies that the seven pinned assets are present and intact inside a
+ * Verifies that the six pinned assets are present and intact inside a
  * directory that MAY also hold other files (e.g. the materialized bundle's
  * license/notice/manifest). Unlike verifyStagedAssets it does not forbid extra
  * files, so it is safe to run against either a source staging or a bundle.
@@ -389,7 +387,7 @@ async function runVerifyCli(directory) {
       dirname(fileURLToPath(import.meta.url)),
       "..",
       "models",
-      "tmr-ai-text-detector",
+      "cleanfeed-ptbr-v1",
       "source-lock.json",
     ),
   );

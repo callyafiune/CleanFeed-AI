@@ -12,7 +12,7 @@ import {
  * It emits `dist-model-smoke/` — a self-contained MV3 extension whose only page,
  * `model-smoke.html`, imports the REAL TMR runtime and runs it once in Chrome.
  * It copies the verified bundle and the offline WASM by reusing `public/` as the
- * public dir (so the materialized `public/models/tmr-ai-text-detector/` and the
+ * public dir (so the materialized `public/models/cleanfeed-ptbr-v1/` and the
  * `public/vendor/transformers-wasm/` assets travel along), and it rewrites the
  * Transformers.js remote-host constants to `offline` exactly like the production
  * build so nothing can reach the network.

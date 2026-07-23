@@ -1,17 +1,17 @@
 // Compile-time access to the three versioned, closed model descriptors.
 //
-// These JSON files are the single source of truth for the sealed TMR bundle's
+// These JSON files are the single source of truth for the sealed bundle's
 // identity (`cleanfeed-model.json`), its calibration profiles
 // (`calibration-profiles.json`) and its release/promotion state
-// (`release.json`). They live under `models/tmr-ai-text-detector/` — tracked,
+// (`release.json`). They live under `models/cleanfeed-ptbr-v1/` — tracked,
 // small and auditable — and are imported here via `resolveJsonModule` so Vite
 // inlines them into the extension. The runtime therefore never reads them from
 // disk or the network; the closed bundle identity travels inside the code.
 
-import calibrationProfilesJson from "../../models/tmr-ai-text-detector/calibration-profiles.json";
-import cleanfeedModelJson from "../../models/tmr-ai-text-detector/cleanfeed-model.json";
-import releaseDescriptorJson from "../../models/tmr-ai-text-detector/release.json";
-import sourceLockJson from "../../models/tmr-ai-text-detector/source-lock.json";
+import calibrationProfilesJson from "../../models/cleanfeed-ptbr-v1/calibration-profiles.json";
+import cleanfeedModelJson from "../../models/cleanfeed-ptbr-v1/cleanfeed-model.json";
+import releaseDescriptorJson from "../../models/cleanfeed-ptbr-v1/release.json";
+import sourceLockJson from "../../models/cleanfeed-ptbr-v1/source-lock.json";
 
 /** A single pinned upstream artifact: its bundle-relative path, byte length and SHA-256. */
 export interface BundledArtifactRecord {

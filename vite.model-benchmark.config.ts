@@ -15,7 +15,7 @@ import {
  * It emits `dist-model-benchmark/` — a self-contained MV3 extension whose only
  * page, `model-benchmark.html`, assembles the EXACT uncalibrated TMR inference
  * core and exposes a page-local scoring API. It reuses `public/` as the public
- * dir (so the verified `public/models/tmr-ai-text-detector/` bundle and the
+ * dir (so the verified `public/models/cleanfeed-ptbr-v1/` bundle and the
  * offline `public/vendor/transformers-wasm/` assets travel along) and rewrites
  * the Transformers.js remote-host constants to `offline`, exactly like the
  * production build, so nothing reaches the network.
@@ -55,7 +55,7 @@ function readRuntimeParityText(): string {
     throw new Error(
       `runtime-parity manifest missing at ${RUNTIME_PARITY_PATH}; run ` +
         `\`node scripts/runtime-parity.mjs write --model-manifest ` +
-        `models/tmr-ai-text-detector/cleanfeed-model.json --output-dir ` +
+        `models/cleanfeed-ptbr-v1/cleanfeed-model.json --output-dir ` +
         `benchmark/work/model-benchmark\` first`,
     );
   }

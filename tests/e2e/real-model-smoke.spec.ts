@@ -12,7 +12,7 @@ import {
   type Worker,
 } from "@playwright/test";
 
-import cleanfeedModel from "../../models/tmr-ai-text-detector/cleanfeed-model.json" with { type: "json" };
+import cleanfeedModel from "../../models/cleanfeed-ptbr-v1/cleanfeed-model.json" with { type: "json" };
 import type { ModelSmokeReport } from "../../src/model-smoke/main";
 import { MODEL_SMOKE_GLOBAL, MODEL_SMOKE_PAGE } from "./model-smoke-manifest";
 
@@ -201,7 +201,7 @@ test.describe("real TMR model smoke (offline Chrome)", () => {
     const onnxPath = join(
       corruptDir,
       "models",
-      "tmr-ai-text-detector",
+      "cleanfeed-ptbr-v1",
       ...ONNX_RELATIVE.split("/"),
     );
     writeFileSync(onnxPath, "corrupted-not-a-real-onnx-model");

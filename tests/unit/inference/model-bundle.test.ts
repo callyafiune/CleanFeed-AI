@@ -16,10 +16,10 @@ import {
 } from "@/inference/model-catalog";
 import { computeCalibrationSetDigest } from "../../../contracts/calibration-profile";
 import validManifest from "../../fixtures/models/valid/cleanfeed-model.json";
-import bundledManifest from "../../../models/tmr-ai-text-detector/cleanfeed-model.json";
-import bundledRelease from "../../../models/tmr-ai-text-detector/release.json";
-import bundledProfiles from "../../../models/tmr-ai-text-detector/calibration-profiles.json";
-import bundledSourceLock from "../../../models/tmr-ai-text-detector/source-lock.json";
+import bundledManifest from "../../../models/cleanfeed-ptbr-v1/cleanfeed-model.json";
+import bundledRelease from "../../../models/cleanfeed-ptbr-v1/release.json";
+import bundledProfiles from "../../../models/cleanfeed-ptbr-v1/calibration-profiles.json";
+import bundledSourceLock from "../../../models/cleanfeed-ptbr-v1/source-lock.json";
 
 const NOW = Date.parse("2026-07-20T00:00:00.000Z");
 

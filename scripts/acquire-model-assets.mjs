@@ -1,24 +1,33 @@
 #!/usr/bin/env node
-// Fail-closed, no-implicit-network acquisition of the seven pinned TMR assets.
+// Fail-closed, no-implicit-network acquisition of the pinned bundle assets.
 //
 //   node scripts/acquire-model-assets.mjs
 //
-// Every network request is derived strictly from the pinned source-lock: the
-// URL must stay within the locked baseUrl, redirects are refused, only HTTP 200
-// is accepted, the byte budget is enforced while streaming, and the SHA-256 is
-// checked incrementally. Downloads land in a private SOURCE staging directory
-// under stagingParent. This function DELIBERATELY does not promote that staging
-// to the public bundle target — that 7 -> 10 materialization belongs to a later
-// step, after the license/notice/manifest files are added.
+// The CURRENT pinned bundle (cleanfeed-ptbr-v1) is SELF-TRAINED: its
+// source-lock baseUrl uses the reserved `.invalid` TLD, so there is no upstream
+// to fetch from and the CLI below fails closed with SELF_TRAINED_BUNDLE,
+// pointing at `scripts/package-own-model.mjs` (which packages a local
+// checkpoint export into the sealed layout).
+//
+// The acquisition machinery itself is kept intact for any future bundle with a
+// real upstream: every network request is derived strictly from the pinned
+// source-lock, the URL must stay within the locked baseUrl, redirects are
+// refused, only HTTP 200 is accepted, the byte budget is enforced while
+// streaming, and the SHA-256 is checked incrementally. Downloads land in a
+// private SOURCE staging directory under stagingParent. This function
+// DELIBERATELY does not promote that staging to the public bundle target — that
+// 6 -> 9 materialization belongs to a later step, after the
+// license/notice/manifest files are added.
 //
 // All effectful dependencies (fetch, randomUUID, fs) are injectable so tests can
 // serve local bytes and prove no real network is ever touched.
 
 import { Buffer } from "node:buffer";
+import console from "node:console";
 import { createHash, randomUUID as nodeRandomUUID } from "node:crypto";
 import { cp, mkdir, rename, rm, stat, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
-import { argv } from "node:process";
+import { argv, exit } from "node:process";
 import { fileURLToPath, URL } from "node:url";
 
 import {
@@ -32,8 +41,8 @@ import {
   verifyMaterializedBundle,
 } from "./verify-model-bundle.mjs";
 
-const STAGING_PREFIX = ".tmr-ai-text-detector.source-";
-const MATERIALIZED_PREFIX = ".tmr-ai-text-detector.materialized-";
+const STAGING_PREFIX = ".cleanfeed-ptbr-v1.source-";
+const MATERIALIZED_PREFIX = ".cleanfeed-ptbr-v1.materialized-";
 
 /** Real filesystem adapter used when no injectable fs is supplied. */
 const nodeFs = {
@@ -61,6 +70,24 @@ const nodeFs = {
 
 function fail(code, message) {
   throw new ModelLockError(code, message);
+}
+
+/**
+ * Fails closed when the pinned lock describes a SELF-TRAINED bundle (a baseUrl
+ * on the reserved `.invalid` TLD): there is no upstream to fetch from, so any
+ * acquisition attempt must stop BEFORE a single network request is derived.
+ */
+export function assertFetchableLock(lock) {
+  const host = new URL(lock.baseUrl).hostname;
+  if (host === "invalid" || host.endsWith(".invalid")) {
+    fail(
+      "SELF_TRAINED_BUNDLE",
+      `the pinned bundle "${lock.modelId}" is self-trained (baseUrl ${lock.baseUrl}); ` +
+        "there is no upstream to download. Package a local checkpoint export with " +
+        "`node scripts/package-own-model.mjs --artifacts <dir> --model-id " +
+        `${lock.modelId}\` instead of \`npm run model:fetch\`.`,
+    );
+  }
 }
 
 /**
@@ -147,10 +174,10 @@ export async function acquireModelSourceAssets({
 }
 
 /**
- * Materializes the closed ten-file bundle and promotes it atomically to
- * `target`. It copies the seven verified source assets from `sourceStaging`
+ * Materializes the closed nine-file bundle and promotes it atomically to
+ * `target`. It copies the six verified source assets from `sourceStaging`
  * plus the three versioned metadata/legal files from `versionedDir` into a
- * FRESH materialized staging (a sibling of `target`), runs the exact-ten
+ * FRESH materialized staging (a sibling of `target`), runs the exact-nine
  * verifier, and only then replaces `target`. It never mixes files with an
  * existing target. In `finally` it deletes only the materialized staging it
  * created — a validated sibling — which is a no-op once the atomic rename has
@@ -174,9 +201,11 @@ export async function materializeModelBundle({
     for (const name of MATERIALIZED_METADATA) {
       await copyFile(join(versionedDir, name), join(materialized, name));
     }
-    await verifyMaterializedBundle(materialized, { lock });
+    const { fileCount } = await verifyMaterializedBundle(materialized, {
+      lock,
+    });
     await replaceDirectoryAtomically(materialized, target, fs);
-    return { fileCount: 10, target };
+    return { fileCount, target };
   } finally {
     await fs.remove(materialized);
   }
@@ -184,12 +213,22 @@ export async function materializeModelBundle({
 
 if (argv[1] === fileURLToPath(import.meta.url)) {
   const scriptDir = dirname(fileURLToPath(import.meta.url));
-  const versionedDir = join(scriptDir, "..", "models", "tmr-ai-text-detector");
+  const versionedDir = join(scriptDir, "..", "models", "cleanfeed-ptbr-v1");
   const lockPath = join(versionedDir, "source-lock.json");
   const stagingParent = join(scriptDir, "..", "public", "models");
-  const target = join(stagingParent, "tmr-ai-text-detector");
+  const target = join(stagingParent, "cleanfeed-ptbr-v1");
 
   const lock = await readSourceLock(lockPath);
+  try {
+    // The pinned bundle is self-trained: this fails closed BEFORE any network
+    // request is derived, pointing at the packaging script instead.
+    assertFetchableLock(lock);
+  } catch (error) {
+    console.error(
+      `model:fetch FAILED: ${error.code ?? "ERROR"} — ${error.message ?? error}`,
+    );
+    exit(1);
+  }
   const { stagingDirectory } = await acquireModelSourceAssets({
     lockPath,
     stagingParent,

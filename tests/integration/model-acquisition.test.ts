@@ -13,7 +13,10 @@ import { join } from "node:path";
 
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
-import { acquireModelSourceAssets } from "../../scripts/acquire-model-assets.mjs";
+import {
+  acquireModelSourceAssets,
+  assertFetchableLock,
+} from "../../scripts/acquire-model-assets.mjs";
 import {
   readSourceLock,
   replaceDirectoryAtomically,
@@ -21,17 +24,16 @@ import {
 } from "../../scripts/model-lock.mjs";
 import type { AtomicDirectoryFs } from "../../scripts/model-lock.mjs";
 
-const FIXED_REVISION = "b9aa251e5bcda7e429fcc936767d921435945b60";
-const FIXED_BASE_URL = `https://huggingface.co/onnx-community/tmr-ai-text-detector-ONNX/resolve/${FIXED_REVISION}/`;
+const FIXED_REVISION = "d8f77f870fbd35a17add2498b73d906bbc299026";
+const FIXED_BASE_URL = `https://self-trained.invalid/cleanfeed-ptbr-v1/${FIXED_REVISION}/`;
 
-const SEVEN_PATHS = [
+const SIX_PATHS = [
   "config.json",
-  "merges.txt",
   "onnx/model_int8.onnx",
   "special_tokens_map.json",
   "tokenizer.json",
   "tokenizer_config.json",
-  "vocab.json",
+  "vocab.txt",
 ] as const;
 
 function sha256(buffer: Buffer): string {
@@ -40,7 +42,7 @@ function sha256(buffer: Buffer): string {
 
 function syntheticContents(): Record<string, Buffer> {
   const contents: Record<string, Buffer> = {};
-  for (const path of SEVEN_PATHS) {
+  for (const path of SIX_PATHS) {
     contents[path] = Buffer.from(`synthetic upstream bytes :: ${path}`);
   }
   return contents;
@@ -53,10 +55,10 @@ async function writeSyntheticLock(
 ): Promise<string> {
   const lock = {
     schemaVersion: 1,
-    modelId: "tmr-ai-text-detector",
+    modelId: "cleanfeed-ptbr-v1",
     revision: FIXED_REVISION,
     baseUrl: FIXED_BASE_URL,
-    artifacts: SEVEN_PATHS.map((path) => ({
+    artifacts: SIX_PATHS.map((path) => ({
       path,
       bytes: contents[path].length,
       sha256: sha256(contents[path]),
@@ -77,7 +79,7 @@ function makeFetch(contents: Record<string, Buffer>): {
   calls: Array<{ url: string; redirect: unknown }>;
 } {
   const byUrl = new Map<string, Buffer>();
-  for (const path of SEVEN_PATHS) {
+  for (const path of SIX_PATHS) {
     byUrl.set(new URL(path, FIXED_BASE_URL).href, contents[path]);
   }
   const calls: Array<{ url: string; redirect: unknown }> = [];
@@ -138,7 +140,7 @@ afterEach(async () => {
 });
 
 describe("acquireModelSourceAssets", () => {
-  it("stages exactly seven verified assets from injected bytes", async () => {
+  it("stages exactly six verified assets from injected bytes", async () => {
     const contents = syntheticContents();
     const lockPath = await writeSyntheticLock(workDir, contents);
     const stagingParent = join(workDir, "public-models");
@@ -151,19 +153,19 @@ describe("acquireModelSourceAssets", () => {
       dependencies: { fetch: fetchImpl, randomUUID: () => "fixedid" },
     });
 
-    expect(result.fileCount).toBe(7);
+    expect(result.fileCount).toBe(6);
     expect(result.stagingDirectory).toBe(
-      join(stagingParent, ".tmr-ai-text-detector.source-fixedid"),
+      join(stagingParent, ".cleanfeed-ptbr-v1.source-fixedid"),
     );
     const files = await listFilesRecursive(result.stagingDirectory);
-    expect(files).toHaveLength(7);
+    expect(files).toHaveLength(6);
     await expect(
       verifyStagedAssets(
         result.stagingDirectory,
         await readSourceLock(lockPath),
       ),
-    ).resolves.toEqual({ fileCount: 7 });
-    expect(calls).toHaveLength(7);
+    ).resolves.toEqual({ fileCount: 6 });
+    expect(calls).toHaveLength(6);
     expect(calls.every((call) => call.redirect === "error")).toBe(true);
   });
 
@@ -181,9 +183,9 @@ describe("acquireModelSourceAssets", () => {
     });
 
     await expect(
-      stat(join(stagingParent, "tmr-ai-text-detector")),
+      stat(join(stagingParent, "cleanfeed-ptbr-v1")),
     ).rejects.toThrow();
-    expect(result.stagingDirectory).toContain(".tmr-ai-text-detector.source-");
+    expect(result.stagingDirectory).toContain(".cleanfeed-ptbr-v1.source-");
   });
 
   it("fails closed when the fake fetch is asked for an unregistered URL", async () => {
@@ -221,6 +223,31 @@ describe("acquireModelSourceAssets", () => {
         dependencies: { fetch: notFound, randomUUID: () => "fixedid" },
       }),
     ).rejects.toMatchObject({ code: "FETCH_FAILED" });
+  });
+});
+
+describe("assertFetchableLock (self-trained bundle guard)", () => {
+  it("fails closed on the checked-in self-trained lock, pointing at the packaging script", async () => {
+    const lock = await readSourceLock(
+      join(process.cwd(), "models", "cleanfeed-ptbr-v1", "source-lock.json"),
+    );
+    expect(() => assertFetchableLock(lock)).toThrowError(
+      /package-own-model\.mjs/u,
+    );
+    try {
+      assertFetchableLock(lock);
+    } catch (error) {
+      expect((error as { code?: string }).code).toBe("SELF_TRAINED_BUNDLE");
+    }
+  });
+
+  it("accepts a lock whose baseUrl has a real (non-.invalid) host", () => {
+    expect(() =>
+      assertFetchableLock({
+        modelId: "some-upstream-model",
+        baseUrl: "https://huggingface.co/acme/some-upstream-model/resolve/rev/",
+      }),
+    ).not.toThrow();
   });
 });
 

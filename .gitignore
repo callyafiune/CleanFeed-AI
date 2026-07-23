@@ -40,13 +40,13 @@ benchmark/evidence/tmr-ptbr-v1/*
 !benchmark/evidence/tmr-ptbr-v1/decision.json
 !benchmark/evidence/tmr-ptbr-v1/evidence-digest.json
 
-# Model bundles are downloaded artifacts (large, sha256-verified); never in Git.
+# Model bundles are large, sha256-verified artifacts; never in Git.
 public/models/*
 !public/models/.gitkeep
-# The materialized/acquired bundle and any source staging live under public/ and
+# The materialized bundle and any source staging live under public/ and
 # stay out of Git (redundant with the rule above, kept explicit for auditability).
-public/models/tmr-ai-text-detector/
+public/models/cleanfeed-ptbr-v1/
 
 # The model SOURCE metadata (lock, license, notice, review, manifests) lives
 # under models/ and IS tracked — it is small, auditable, and the source of truth.
-!models/tmr-ai-text-detector/
+!models/cleanfeed-ptbr-v1/

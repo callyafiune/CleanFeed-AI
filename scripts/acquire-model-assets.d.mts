@@ -12,9 +12,13 @@ export interface AcquireModelSourceAssetsOptions {
   dependencies?: Partial<AcquireDependencies>;
 }
 
+export declare function assertFetchableLock(
+  lock: Pick<SourceLock, "modelId" | "baseUrl">,
+): void;
+
 export declare function acquireModelSourceAssets(
   options: AcquireModelSourceAssetsOptions,
-): Promise<{ fileCount: 7; stagingDirectory: string }>;
+): Promise<{ fileCount: 6; stagingDirectory: string }>;
 
 export interface MaterializeDependencies {
   randomUUID(): string;
@@ -36,4 +40,4 @@ export interface MaterializeModelBundleOptions {
 
 export declare function materializeModelBundle(
   options: MaterializeModelBundleOptions,
-): Promise<{ fileCount: 10; target: string }>;
+): Promise<{ fileCount: 9; target: string }>;

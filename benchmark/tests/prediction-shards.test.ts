@@ -41,7 +41,7 @@ function devRun(overrides: Partial<BrowserScoreRun> = {}): BrowserScoreRun {
     datasetDigest: hex("dataset"),
     splitDigest: hex("split"),
     partition: "development",
-    modelId: "tmr-ai-text-detector",
+    modelId: "cleanfeed-ptbr-v1",
     modelVersion: "1.0.0",
     bundleDigest: hex("bundle"),
     aggregationVersion: "tmr-aggregation-v2",

@@ -5,7 +5,7 @@
 // value from verified bytes.
 //
 //   node scripts/runtime-parity.mjs write \
-//     --model-manifest models/tmr-ai-text-detector/cleanfeed-model.json \
+//     --model-manifest models/cleanfeed-ptbr-v1/cleanfeed-model.json \
 //     --output-dir benchmark/work/runtime-parity
 //
 // The Phase 3 candidate build and the Phase 4 release build call the SAME
@@ -32,13 +32,12 @@ import { dirname, join } from "node:path";
 import { argv, exit } from "node:process";
 import { fileURLToPath } from "node:url";
 
-/** The five tokenizer assets whose records seal tokenizerDigest, in canonical order. */
+/** The four tokenizer assets whose records seal tokenizerDigest, in canonical order. */
 const TOKENIZER_PATHS = Object.freeze([
-  "merges.txt",
   "special_tokens_map.json",
   "tokenizer.json",
   "tokenizer_config.json",
-  "vocab.json",
+  "vocab.txt",
 ]);
 
 /**

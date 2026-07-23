@@ -9,8 +9,8 @@
 // leave a torn descriptor.
 //
 //   node scripts/activate-model-release.mjs \
-//     --release models/tmr-ai-text-detector/release.json \
-//     --profiles models/tmr-ai-text-detector/calibration-profiles.json \
+//     --release models/cleanfeed-ptbr-v1/release.json \
+//     --profiles models/cleanfeed-ptbr-v1/calibration-profiles.json \
 //     --evidence-dir benchmark/evidence/tmr-ptbr-v1 \
 //     --expected-evidence-digest <digest>
 

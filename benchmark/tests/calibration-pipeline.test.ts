@@ -36,8 +36,8 @@ import {
 // ---------------------------------------------------------------------------
 
 const DATASET_ID = "ptbr-linkedin-v1";
-const MODEL_ID = "tmr-ai-text-detector";
-const MODEL_VERSION = "b9aa251e5bcda7e429fcc936767d921435945b60";
+const MODEL_ID = "cleanfeed-ptbr-v1";
+const MODEL_VERSION = "d8f77f870fbd35a17add2498b73d906bbc299026";
 const BUNDLE_DIGEST = "b".repeat(64);
 const TOKENIZER_DIGEST = "c".repeat(64);
 const EXTENSION_BUILD_DIGEST = "e".repeat(64);

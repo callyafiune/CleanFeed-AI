@@ -23,40 +23,39 @@ import {
   createReleaseDescriptorV1,
   createSourceArtifacts,
 } from "../../helpers/model-fixtures";
+import sealedManifest from "../../../models/cleanfeed-ptbr-v1/cleanfeed-model.json";
 
-const BUNDLE_DIGEST_LITERAL =
-  "32cb58e1984a5c3da5745ad1c1c7fa7355e6f04f49c93f822b326511d9e3565c";
-const TOKENIZER_DIGEST_LITERAL =
-  "8be427eee79ac58671ae5570f75806fc3d9edc2f2d727ca9e261c2d4b85d37a9";
+// The sealed digests come from the checked-in manifest — the single source of
+// truth — so a re-pin regenerates these expectations instead of a hand edit.
+const BUNDLE_DIGEST_LITERAL = sealedManifest.bundleDigest;
+const TOKENIZER_DIGEST_LITERAL = sealedManifest.tokenizerDigest;
 const EMPTY_SET_DIGEST =
   "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945";
 
-const TEN_FILE_INVENTORY = [
+const NINE_FILE_INVENTORY = [
   "LICENSE",
   "NOTICE.md",
   "cleanfeed-model.json",
   "config.json",
-  "merges.txt",
   "onnx/model_int8.onnx",
   "special_tokens_map.json",
   "tokenizer.json",
   "tokenizer_config.json",
-  "vocab.json",
+  "vocab.txt",
 ] as const;
 
-const TWELVE_FILE_INVENTORY = [
+const ELEVEN_FILE_INVENTORY = [
   "LICENSE",
   "NOTICE.md",
   "calibration-profiles.json",
   "cleanfeed-model.json",
   "config.json",
-  "merges.txt",
   "onnx/model_int8.onnx",
   "release.json",
   "special_tokens_map.json",
   "tokenizer.json",
   "tokenizer_config.json",
-  "vocab.json",
+  "vocab.txt",
 ] as const;
 
 const RELEASE_JSON_BYTES = '{ "release": "descriptor" }\n';
@@ -267,7 +266,7 @@ describe("verifyModelMetadata (no local binary required)", () => {
   });
 });
 
-describe("verifyMaterializedBundle (exact ten-file inventory)", () => {
+describe("verifyMaterializedBundle (exact nine-file inventory)", () => {
   let workDir: string;
 
   beforeEach(async () => {
@@ -278,7 +277,7 @@ describe("verifyMaterializedBundle (exact ten-file inventory)", () => {
     await rm(workDir, { recursive: true, force: true });
   });
 
-  /** Writes a synthetic (small) but internally-consistent 10-file bundle. */
+  /** Writes a synthetic (small) but internally-consistent 9-file bundle. */
   async function writeSyntheticBundle(root: string): Promise<{
     lock: { artifacts: ArtifactRecord[] };
   }> {
@@ -309,14 +308,14 @@ describe("verifyMaterializedBundle (exact ten-file inventory)", () => {
     return { lock: { artifacts } };
   }
 
-  it("accepts exactly the ten materialized paths", async () => {
+  it("accepts exactly the nine materialized paths", async () => {
     const root = join(workDir, "bundle");
     const { lock: syntheticLock } = await writeSyntheticBundle(root);
     const result = await verifyMaterializedBundle(root, {
       lock: syntheticLock,
     });
-    expect(result.paths).toEqual([...TEN_FILE_INVENTORY]);
-    expect(result.fileCount).toBe(10);
+    expect(result.paths).toEqual([...NINE_FILE_INVENTORY]);
+    expect(result.fileCount).toBe(9);
   });
 
   it("rejects a bundle missing a legal file", async () => {
@@ -352,7 +351,7 @@ describe("verifyMaterializedBundle (exact ten-file inventory)", () => {
   });
 });
 
-describe("verifyReleaseModelDirectory (exact twelve-file package)", () => {
+describe("verifyReleaseModelDirectory (exact eleven-file package)", () => {
   let workDir: string;
 
   beforeEach(async () => {
@@ -364,7 +363,7 @@ describe("verifyReleaseModelDirectory (exact twelve-file package)", () => {
   });
 
   /**
-   * Writes a synthetic twelve-file release package plus a versioned metadata
+   * Writes a synthetic eleven-file release package plus a versioned metadata
    * dir whose release.json / calibration-profiles.json are byte-equal to the
    * packaged copies.
    */
@@ -373,7 +372,7 @@ describe("verifyReleaseModelDirectory (exact twelve-file package)", () => {
     metadataDir: string;
     lock: { artifacts: ArtifactRecord[] };
   }> {
-    const target = join(workDir, "dist", "models", "tmr-ai-text-detector");
+    const target = join(workDir, "dist", "models", "cleanfeed-ptbr-v1");
     const metadataDir = join(workDir, "models");
     await mkdir(target, { recursive: true });
     await mkdir(metadataDir, { recursive: true });
@@ -415,7 +414,7 @@ describe("verifyReleaseModelDirectory (exact twelve-file package)", () => {
     return { target, metadataDir, lock: { artifacts } };
   }
 
-  it("accepts exactly the twelve packaged paths", async () => {
+  it("accepts exactly the eleven packaged paths", async () => {
     const {
       target,
       metadataDir,
@@ -425,9 +424,9 @@ describe("verifyReleaseModelDirectory (exact twelve-file package)", () => {
       lock: syntheticLock,
       metadataDir,
     });
-    expect(result.paths).toEqual([...TWELVE_FILE_INVENTORY]);
-    expect(result.fileCount).toBe(12);
-    expect([...RELEASE_INVENTORY]).toEqual([...TWELVE_FILE_INVENTORY]);
+    expect(result.paths).toEqual([...ELEVEN_FILE_INVENTORY]);
+    expect(result.fileCount).toBe(11);
+    expect([...RELEASE_INVENTORY]).toEqual([...ELEVEN_FILE_INVENTORY]);
   });
 
   it("rejects a package missing calibration-profiles.json", async () => {
@@ -482,7 +481,7 @@ describe("verifyReleaseModelDirectory (exact twelve-file package)", () => {
   });
 });
 
-describe("materializeModelBundle (seven -> ten promotion)", () => {
+describe("materializeModelBundle (six -> nine promotion)", () => {
   let workDir: string;
 
   beforeEach(async () => {
@@ -493,7 +492,7 @@ describe("materializeModelBundle (seven -> ten promotion)", () => {
     await rm(workDir, { recursive: true, force: true });
   });
 
-  /** Seeds a source staging (seven assets) and a versioned dir (three files). */
+  /** Seeds a source staging (six assets) and a versioned dir (three files). */
   async function seed(
     sourceDir: string,
     versionedDir: string,
@@ -524,10 +523,10 @@ describe("materializeModelBundle (seven -> ten promotion)", () => {
     return { lock: { artifacts } };
   }
 
-  it("promotes exactly the ten verified files into a fresh target", async () => {
+  it("promotes exactly the nine verified files into a fresh target", async () => {
     const sourceDir = join(workDir, "source");
     const versionedDir = join(workDir, "versioned");
-    const target = join(workDir, "public", "tmr-ai-text-detector");
+    const target = join(workDir, "public", "cleanfeed-ptbr-v1");
     await mkdir(dirname(target), { recursive: true });
     const { lock: syntheticLock } = await seed(sourceDir, versionedDir);
 
@@ -538,16 +537,16 @@ describe("materializeModelBundle (seven -> ten promotion)", () => {
       lock: syntheticLock,
     });
 
-    expect(result).toEqual({ fileCount: 10, target });
+    expect(result).toEqual({ fileCount: 9, target });
     const verified = await verifyMaterializedBundle(target, {
       lock: syntheticLock,
     });
-    expect(verified.paths).toEqual([...TEN_FILE_INVENTORY]);
+    expect(verified.paths).toEqual([...NINE_FILE_INVENTORY]);
   });
 
   it("re-acquires from a fresh staging and leaves no staging siblings behind", async () => {
     const versionedDir = join(workDir, "versioned");
-    const target = join(workDir, "public", "tmr-ai-text-detector");
+    const target = join(workDir, "public", "cleanfeed-ptbr-v1");
     await mkdir(dirname(target), { recursive: true });
 
     const firstSource = join(workDir, "source-1");
@@ -569,6 +568,6 @@ describe("materializeModelBundle (seven -> ten promotion)", () => {
     });
 
     const remaining = await readdir(dirname(target));
-    expect(remaining).toEqual(["tmr-ai-text-detector"]);
+    expect(remaining).toEqual(["cleanfeed-ptbr-v1"]);
   });
 });

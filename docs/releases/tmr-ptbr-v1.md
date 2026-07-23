@@ -1,5 +1,10 @@
 # CleanFeed AI — TMR PT-BR v1 release evidence
 
+> **Nota (2026-07):** o bundle candidato foi substituído por `cleanfeed-ptbr-v1`
+> (BERTimbau fine-tunado pelo próprio projeto). Referências históricas a
+> `models/tmr-ai-text-detector/*` neste documento correspondem hoje a
+> `models/cleanfeed-ptbr-v1/*`; o estado de gate segue `pending`/`bundle-verified`.
+
 > Superfície de evidência de release do candidato TMR PT-BR/LinkedIn. Enquanto
 > não houver uma decisão científica selada, este documento é mantido à mão e
 > declara o estado real; a versão **gerada** (com os digests canônicos, os gates

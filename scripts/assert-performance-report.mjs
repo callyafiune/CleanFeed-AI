@@ -9,7 +9,7 @@
 //   50 ms sync · 10 s cold · 2 s warm-p95 · 512 MiB incremental · < 1% error.
 //
 //   node scripts/assert-performance-report.mjs test-results/tmr-release-performance.json \
-//     --release models/tmr-ai-text-detector/release.json \
+//     --release models/cleanfeed-ptbr-v1/release.json \
 //     --parity dist/runtime-parity.json \
 //     --browser-lock tests/browser-lock.json
 

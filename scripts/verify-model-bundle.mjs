@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-// Closed verifier for the sealed TMR model bundle — metadata and materialized
+// Closed verifier for the sealed model bundle — metadata and materialized
 // inventory.
 //
 //   node scripts/verify-model-bundle.mjs --metadata
@@ -9,10 +9,10 @@
 // calibration-profiles.json, release.json) against the pinned source-lock. It
 // needs NO local binary: the bundle/tokenizer digests are recomputed from the
 // lock records themselves, so CI and a developer build can verify identity
-// without the 125MB ONNX artifact ever being present.
+// without the ~110MB ONNX artifact ever being present.
 //
-// `--bundle <dir>` verifies a MATERIALIZED bundle: exactly the closed ten-file
-// inventory, each upstream asset intact by byte length and SHA-256, and the
+// `--bundle <dir>` verifies a MATERIALIZED bundle: exactly the closed nine-file
+// inventory, each pinned asset intact by byte length and SHA-256, and the
 // in-bundle manifest coherent. Any extra, missing, or tampered file fails
 // closed with a coded ModelBundleError.
 //
@@ -37,13 +37,12 @@ import {
 
 const SHA256_PATTERN = /^[a-f0-9]{64}$/u;
 
-/** The five tokenizer assets, in canonical order, hashed into tokenizerDigest. */
+/** The four tokenizer assets, in canonical order, hashed into tokenizerDigest. */
 const TOKENIZER_PATHS = Object.freeze([
-  "merges.txt",
   "special_tokens_map.json",
   "tokenizer.json",
   "tokenizer_config.json",
-  "vocab.json",
+  "vocab.txt",
 ]);
 
 /** The three versioned metadata/legal files copied into the materialized bundle. */
@@ -56,8 +55,8 @@ const MATERIALIZED_METADATA = Object.freeze([
 const MANIFEST_FILENAME = "cleanfeed-model.json";
 
 /**
- * The exact ten-file closed inventory of a materialized bundle: the seven
- * pinned upstream assets plus the manifest and the two legal files. Ordered as
+ * The exact nine-file closed inventory of a materialized bundle: the six
+ * pinned assets plus the manifest and the two legal files. Ordered as
  * a directory sort produces it, which is what verifyMaterializedBundle returns.
  */
 export const MATERIALIZED_INVENTORY = Object.freeze([
@@ -65,17 +64,16 @@ export const MATERIALIZED_INVENTORY = Object.freeze([
   "NOTICE.md",
   "cleanfeed-model.json",
   "config.json",
-  "merges.txt",
   "onnx/model_int8.onnx",
   "special_tokens_map.json",
   "tokenizer.json",
   "tokenizer_config.json",
-  "vocab.json",
+  "vocab.txt",
 ]);
 
 /**
- * The exact TWELVE-file closed inventory of a materialized RELEASE package: the
- * ten acquisition files plus the two versioned canonical descriptors copied
+ * The exact ELEVEN-file closed inventory of a materialized RELEASE package: the
+ * nine bundle files plus the two versioned canonical descriptors copied
  * beside them (`calibration-profiles.json`, `release.json`), in directory-sort
  * order. Only the release build materializes these two extra files, and only
  * ever inside `dist`.
@@ -86,13 +84,12 @@ export const RELEASE_INVENTORY = Object.freeze([
   "calibration-profiles.json",
   "cleanfeed-model.json",
   "config.json",
-  "merges.txt",
   "onnx/model_int8.onnx",
   "release.json",
   "special_tokens_map.json",
   "tokenizer.json",
   "tokenizer_config.json",
-  "vocab.json",
+  "vocab.txt",
 ]);
 
 /** The two versioned canonical descriptors materialized into the package. */
@@ -169,7 +166,7 @@ export function computeBundleDigest(artifacts) {
   return sha256Hex(canonicalize(artifacts));
 }
 
-/** SHA-256 of the canonical JSON of just the five tokenizer records. */
+/** SHA-256 of the canonical JSON of just the four tokenizer records. */
 export function computeTokenizerDigest(artifacts) {
   const subset = artifacts.filter((artifact) =>
     TOKENIZER_PATHS.includes(artifact.path),
@@ -381,8 +378,8 @@ async function listRelativePosixFiles(directory, prefix = "") {
 
 /**
  * Verifies a materialized bundle directory: the file SET must equal the closed
- * ten-file inventory (so a missing legal file, or a leaked license-review.json,
- * fails), the seven upstream assets must be intact by size and hash, and the
+ * nine-file inventory (so a missing legal file, or a leaked license-review.json,
+ * fails), the six pinned assets must be intact by size and hash, and the
  * in-bundle manifest must itself verify. Returns { fileCount, paths }.
  */
 export async function verifyMaterializedBundle(bundleDir, { lock }) {
@@ -408,7 +405,7 @@ export async function verifyMaterializedBundle(bundleDir, { lock }) {
     }
   }
 
-  // Verify the seven upstream assets sequentially (streamed) to bound memory.
+  // Verify the six pinned assets sequentially (streamed) to bound memory.
   await verifyRequiredAssets(bundleDir, lock);
 
   // The copied manifest must itself verify against the pinned lock.
@@ -427,7 +424,7 @@ export async function verifyMaterializedBundle(bundleDir, { lock }) {
 
 /**
  * Verifies a materialized RELEASE package directory: exactly the closed
- * twelve-file inventory, the seven upstream assets intact, the in-bundle
+ * eleven-file inventory, the six pinned assets intact, the in-bundle
  * manifest coherent, AND the two canonical descriptors (`release.json`,
  * `calibration-profiles.json`) byte-identical to the versioned sources under
  * `metadataDir`. Any extra, missing or drifted file fails closed. Returns
@@ -502,7 +499,7 @@ async function runCli() {
     dirname(fileURLToPath(import.meta.url)),
     "..",
     "models",
-    "tmr-ai-text-detector",
+    "cleanfeed-ptbr-v1",
   );
   const lock = await readSourceLock(join(modelsDir, "source-lock.json"));
 

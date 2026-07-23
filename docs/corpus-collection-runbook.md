@@ -345,7 +345,7 @@ npm run benchmark -- publish-profile \
   --report benchmark/work/evaluate/benchmark-report.json \
   --frozen-calibration benchmark/work/fit/frozen-calibration.json \
   --issued-at 2026-08-01T00:00:00.000Z \
-  --model-dir models/tmr-ai-text-detector
+  --model-dir models/cleanfeed-ptbr-v1
 
 # 9) PUBLISH-EVIDENCE — escreve os 7 arquivos sanitizados de evidência versionável
 npm run benchmark -- publish-evidence \
@@ -357,7 +357,7 @@ npm run benchmark -- publish-evidence \
   --report benchmark/work/evaluate/benchmark-report.json \
   --ledger benchmark/data/ptbr-linkedin-v1/private/holdout-ledger.jsonl \
   --consumption-id <id da sessão> \
-  --model-dir models/tmr-ai-text-detector \
+  --model-dir models/cleanfeed-ptbr-v1 \
   --output benchmark/evidence/tmr-ptbr-v1
 
 # 10) VERIFY — confere todos os digests da evidência publicada

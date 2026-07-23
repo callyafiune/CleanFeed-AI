@@ -15,7 +15,7 @@ import { resolveReleasePolicy } from "../../../scripts/release-policy.mjs";
 
 const FIXTURE_ROOT = join(process.cwd(), "tests", "fixtures", "model-release");
 const LOCKED_TOKENIZER =
-  "8be427eee79ac58671ae5570f75806fc3d9edc2f2d727ca9e261c2d4b85d37a9";
+  "2e3bc97587671b43d32a68bd134abea67f4a3aaaee8a65f7a1f923449ee13135";
 const FUTURE = Date.parse("2026-08-01T00:00:00.000Z");
 
 /** Loads and closed-parses a fixture branch (validates the fixture too). */
@@ -185,7 +185,7 @@ describe("resolveReleasePolicy — teeth on every bypass", () => {
 
   it("keeps the locked tokenizer digest addressable to callers", async () => {
     expect(LOCKED_TOKENIZER).toBe(
-      "8be427eee79ac58671ae5570f75806fc3d9edc2f2d727ca9e261c2d4b85d37a9",
+      "2e3bc97587671b43d32a68bd134abea67f4a3aaaee8a65f7a1f923449ee13135",
     );
   });
 });

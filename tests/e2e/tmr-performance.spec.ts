@@ -44,9 +44,9 @@ import {
 
 const DIST = fileURLToPath(new URL("../../dist", import.meta.url));
 const METADATA = fileURLToPath(
-  new URL("../../models/tmr-ai-text-detector", import.meta.url),
+  new URL("../../models/cleanfeed-ptbr-v1", import.meta.url),
 );
-const TMR_DIST_DIR = join(DIST, "models", "tmr-ai-text-detector");
+const TMR_DIST_DIR = join(DIST, "models", "cleanfeed-ptbr-v1");
 
 const EXECUTABLE = env.CLEANFEED_REFERENCE_EXECUTABLE;
 const ENV_FILE = env.CLEANFEED_REFERENCE_ENV_FILE;

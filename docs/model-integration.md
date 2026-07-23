@@ -17,7 +17,8 @@ calibrado seja fornecido. Enquanto isso, o classificador ativo permanece o
 fallback estilométrico transparente; a presença deste contrato **não** afirma a
 disponibilidade de um detector real.
 
-O candidato integrável é o **TMR** (`tmr-ai-text-detector`), um classificador
+O candidato integrável é o **cleanfeed-ptbr-v1** (BERTimbau fine-tunado pelo
+próprio projeto; substitui o antigo candidato `tmr-ai-text-detector`), um classificador
 local para **português/LinkedIn** — não um detector universal. Ele está
 `bundle-verified`/`pending`: o bundle é verificado e passa pelo smoke real, mas
 sem uma decisão científica selada ele nunca vira runtime primário. A evidência de

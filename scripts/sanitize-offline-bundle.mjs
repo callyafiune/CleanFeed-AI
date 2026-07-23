@@ -46,7 +46,7 @@ export async function sanitizeOfflineBundle({ distDir, releaseMode } = {}) {
   if (releaseMode === undefined || releaseMode === "") return;
   if (releaseMode === "reject") {
     // Only ever touches a path INSIDE the resolved dist.
-    const tmrDir = join(dist, "models", "tmr-ai-text-detector");
+    const tmrDir = join(dist, "models", "cleanfeed-ptbr-v1");
     if (existsSync(tmrDir)) await rm(tmrDir, { recursive: true, force: true });
     return;
   }

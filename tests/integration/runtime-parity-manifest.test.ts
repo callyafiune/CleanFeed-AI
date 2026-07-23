@@ -19,7 +19,7 @@ const REPO_ROOT = join(dirname(fileURLToPath(import.meta.url)), "..", "..");
 const REAL_MODEL_MANIFEST = join(
   REPO_ROOT,
   "models",
-  "tmr-ai-text-detector",
+  "cleanfeed-ptbr-v1",
   "cleanfeed-model.json",
 );
 const CANDIDATE_ENTRY = join(REPO_ROOT, "src", "model-benchmark", "main.ts");
@@ -113,7 +113,7 @@ describe("Phase 3 runtime parity manifest binding", () => {
     // The bound parity digest follows the core digest.
     const fields = {
       schemaVersion: 1 as const,
-      modelId: "tmr-ai-text-detector",
+      modelId: "cleanfeed-ptbr-v1",
       modelVersion: "1.0.0",
       bundleDigest: "a".repeat(64),
       aggregationVersion: "tmr-aggregation-v2",

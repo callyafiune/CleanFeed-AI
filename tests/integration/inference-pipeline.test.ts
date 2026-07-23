@@ -753,7 +753,7 @@ describe("inference pipeline", () => {
 });
 
 // The pinned TMR revision and sealing coordinates a found profile must match.
-const TMR_MODEL_VERSION = "b9aa251e5bcda7e429fcc936767d921435945b60";
+const TMR_MODEL_VERSION = "d8f77f870fbd35a17add2498b73d906bbc299026";
 const DAY_MS = 24 * 60 * 60 * 1000;
 // Issued yesterday, so the profile is comfortably unexpired at Date.now().
 const PROFILE_ISSUED_AT = new Date(Date.now() - DAY_MS).toISOString();
@@ -763,7 +763,7 @@ const PROFILE_EXPIRES_AT = new Date(
 
 const TMR_IDENTITY: RuntimeModelIdentity = {
   kind: "bundle",
-  modelId: "tmr-ai-text-detector",
+  modelId: "cleanfeed-ptbr-v1",
   modelVersion: TMR_MODEL_VERSION,
   bundleDigest: "a".repeat(64),
   tokenizerDigest: "b".repeat(64),
@@ -803,7 +803,7 @@ function bundleResult(
       reasonCodes: [],
     },
     modelVersion: TMR_MODEL_VERSION,
-    modelId: "tmr-ai-text-detector",
+    modelId: "cleanfeed-ptbr-v1",
     backend: "wasm",
     processingTimeMs: 1,
     demo: false,
@@ -813,7 +813,7 @@ function bundleResult(
 /** A bundle-identity classifier whose chunk scores clear the document trigger. */
 function bundleClassifier(): BatchTextClassifier {
   const metadata: ClassifierMetadata = {
-    id: "tmr-ai-text-detector",
+    id: "cleanfeed-ptbr-v1",
     name: "TMR detector",
     version: TMR_MODEL_VERSION,
     backend: "wasm",
@@ -861,7 +861,7 @@ function bundleProfile(): Omit<RuntimeCalibrationProfileV1, "profileDigest"> {
   return {
     schemaVersion: 1,
     profileId: "linkedin-200plus",
-    modelId: "tmr-ai-text-detector",
+    modelId: "cleanfeed-ptbr-v1",
     modelVersion: TMR_MODEL_VERSION,
     bundleDigest: "a".repeat(64),
     tokenizerDigest: "b".repeat(64),
@@ -941,7 +941,7 @@ async function bundleRegistry(): Promise<{
   const registry = await CalibrationRegistry.load(
     {
       schemaVersion: 1,
-      modelId: "tmr-ai-text-detector",
+      modelId: "cleanfeed-ptbr-v1",
       modelVersion: TMR_MODEL_VERSION,
       bundleDigest: "a".repeat(64),
       tokenizerDigest: "b".repeat(64),

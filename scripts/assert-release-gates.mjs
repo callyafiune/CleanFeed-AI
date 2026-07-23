@@ -13,8 +13,8 @@
 //   4. the built `dist` is audited against the authorized decision.
 //
 //   node scripts/assert-release-gates.mjs \
-//     --model public/models/tmr-ai-text-detector \
-//     --metadata models/tmr-ai-text-detector \
+//     --model public/models/cleanfeed-ptbr-v1 \
+//     --metadata models/cleanfeed-ptbr-v1 \
 //     --evidence benchmark/evidence/tmr-ptbr-v1 \
 //     --dist dist
 //
@@ -48,8 +48,8 @@ const ONNX_RELATIVE = join("onnx", "model_int8.onnx");
 const REQUIRED_NOTICES = Object.freeze(["LICENSE", "NOTICE.md"]);
 
 /** The repo-relative defaults the CLI uses when a flag is omitted. */
-const DEFAULT_MODEL_DIR = join("public", "models", "tmr-ai-text-detector");
-const DEFAULT_METADATA_DIR = join("models", "tmr-ai-text-detector");
+const DEFAULT_MODEL_DIR = join("public", "models", "cleanfeed-ptbr-v1");
+const DEFAULT_METADATA_DIR = join("models", "cleanfeed-ptbr-v1");
 const DEFAULT_EVIDENCE_DIR = join("benchmark", "evidence", "tmr-ptbr-v1");
 const DEFAULT_DIST_DIR = "dist";
 

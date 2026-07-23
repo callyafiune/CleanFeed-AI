@@ -17,12 +17,12 @@ import type { RuntimeModelIdentity } from "@/shared/types";
 /** The sealed bundle identity of the canonical descriptor under measurement. */
 const identity: Extract<RuntimeModelIdentity, { kind: "bundle" }> = {
   kind: "bundle",
-  modelId: "tmr-ai-text-detector",
-  modelVersion: "b9aa251e5bcda7e429fcc936767d921435945b60",
+  modelId: "cleanfeed-ptbr-v1",
+  modelVersion: "d8f77f870fbd35a17add2498b73d906bbc299026",
   bundleDigest:
-    "32cb58e1984a5c3da5745ad1c1c7fa7355e6f04f49c93f822b326511d9e3565c",
+    "2d47d6f3e0a6f2c7836b03c9a47b1b81f6c34159aa35ae1bdffe3507e4dc25bc",
   tokenizerDigest:
-    "8be427eee79ac58671ae5570f75806fc3d9edc2f2d727ca9e261c2d4b85d37a9",
+    "2e3bc97587671b43d32a68bd134abea67f4a3aaaee8a65f7a1f923449ee13135",
   aggregationVersion: "tmr-aggregation-v2",
   contentCompositionVersion: "lexical-content-v1",
   calibrationSetDigest:

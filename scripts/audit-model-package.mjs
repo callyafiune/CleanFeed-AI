@@ -6,11 +6,11 @@
 // versioned descriptor and checks the real bytes on disk.
 //
 //   node scripts/audit-model-package.mjs \
-//     --dist dist --metadata models/tmr-ai-text-detector \
+//     --dist dist --metadata models/cleanfeed-ptbr-v1 \
 //     --evidence benchmark/evidence/tmr-ptbr-v1
 //
-//   - reject  -> `dist/models/tmr-ai-text-detector` must be entirely absent.
-//   - indicator/pass -> exactly the twelve authorized files, each intact, with
+//   - reject  -> `dist/models/cleanfeed-ptbr-v1` must be entirely absent.
+//   - indicator/pass -> exactly the eleven authorized files, each intact, with
 //     the two canonical descriptors byte-identical to the versioned sources.
 //   Any un-inventoried file fails UNEXPECTED_MODEL_FILE; a runtime-parity digest
 //   that disagrees with the benchmark report fails RUNTIME_PARITY_MISMATCH; a
@@ -195,7 +195,7 @@ export async function auditModelPackage({
   );
 
   const policy = resolveReleasePolicy(release, profilesFile, now);
-  const target = join(distDir, "models", "tmr-ai-text-detector");
+  const target = join(distDir, "models", "cleanfeed-ptbr-v1");
 
   if (!policy.includeTmr) {
     const stray = await listRelativePosixFiles(target);

@@ -18,72 +18,12 @@ import {
   computeTokenizerDigest,
 } from "../../../scripts/verify-model-bundle.mjs";
 
-// A copy of the sealed manifest whose tokenizer/bundle digests the parity
-// script recomputes from the artifact records (never from disk).
-const MODEL_MANIFEST = {
-  schemaVersion: 2,
-  modelId: "tmr-ai-text-detector",
-  modelVersion: "b9aa251e5bcda7e429fcc936767d921435945b60",
-  task: "text-classification",
-  backend: "transformers-onnx",
-  modelFile: "onnx/model_int8.onnx",
-  aggregationVersion: "tmr-aggregation-v2",
-  contentCompositionVersion: "lexical-content-v1",
-  tokenizerDigest:
-    "8be427eee79ac58671ae5570f75806fc3d9edc2f2d727ca9e261c2d4b85d37a9",
-  windowing: {
-    modelMaxTokens: 512,
-    contentTokens: 510,
-    overlapTokens: 64,
-    maxWindows: 8,
-  },
-  artifacts: [
-    {
-      path: "config.json",
-      bytes: 866,
-      sha256:
-        "d9d45b537b9cf386a0ce958f8b2f840b0529ed846e45c4e26bc53a62dcb06f1f",
-    },
-    {
-      path: "merges.txt",
-      bytes: 456318,
-      sha256:
-        "1ce1664773c50f3e0cc8842619a93edc4624525b728b188a9e0be33b7726adc5",
-    },
-    {
-      path: "onnx/model_int8.onnx",
-      bytes: 125855418,
-      sha256:
-        "a1ff8a917090467375ceaf47667459e431217d5691df463c57b7194624f3ff79",
-    },
-    {
-      path: "special_tokens_map.json",
-      bytes: 958,
-      sha256:
-        "f23c8e6099631c233c16d9bf8dab198f610826cdd1b358f270f6d55c1863e857",
-    },
-    {
-      path: "tokenizer.json",
-      bytes: 3558741,
-      sha256:
-        "1f33749d010b4d63908e5c174c341622cb45039dd73a139dcd95bd74cc7e304b",
-    },
-    {
-      path: "tokenizer_config.json",
-      bytes: 1354,
-      sha256:
-        "288b4077af1ffb3beead6d96fccfc93beb2df9b689cbb038c4eb329165efc43a",
-    },
-    {
-      path: "vocab.json",
-      bytes: 798293,
-      sha256:
-        "ed19656ea1707df69134c4af35c8ceda2cc9860bf2c3495026153a133670ab5e",
-    },
-  ],
-  bundleDigest:
-    "32cb58e1984a5c3da5745ad1c1c7fa7355e6f04f49c93f822b326511d9e3565c",
-};
+// The sealed manifest whose tokenizer/bundle digests the parity script
+// recomputes from the artifact records (never from disk). Imported from the
+// checked-in source of truth so a re-pin regenerates these expectations.
+import sealedManifest from "../../../models/cleanfeed-ptbr-v1/cleanfeed-model.json";
+
+const MODEL_MANIFEST = sealedManifest;
 
 const CORE_FILES = [
   "contracts/calibration-profile.ts",
@@ -123,7 +63,7 @@ async function fixtureRepo(
   const modelManifestPath = join(
     repoRoot,
     "models",
-    "tmr-ai-text-detector",
+    "cleanfeed-ptbr-v1",
     "cleanfeed-model.json",
   );
   await mkdir(dirname(modelManifestPath), { recursive: true });
@@ -148,12 +88,8 @@ describe("runtime parity script", () => {
       modelManifestPath,
     });
 
-    expect(manifest.tokenizerDigest).toBe(
-      "8be427eee79ac58671ae5570f75806fc3d9edc2f2d727ca9e261c2d4b85d37a9",
-    );
-    expect(manifest.bundleDigest).toBe(
-      "32cb58e1984a5c3da5745ad1c1c7fa7355e6f04f49c93f822b326511d9e3565c",
-    );
+    expect(manifest.tokenizerDigest).toBe(sealedManifest.tokenizerDigest);
+    expect(manifest.bundleDigest).toBe(sealedManifest.bundleDigest);
     expect(manifest.runtimeParityDigest).toBe(
       await computeRuntimeParityDigest({
         schemaVersion: manifest.schemaVersion,
@@ -220,7 +156,7 @@ describe("runtime parity script", () => {
 
     const tampered = structuredClone(MODEL_MANIFEST);
     tampered.artifacts = tampered.artifacts.map((artifact) =>
-      artifact.path === "vocab.json"
+      artifact.path === "vocab.txt"
         ? { ...artifact, sha256: "9".repeat(64) }
         : artifact,
     );
@@ -291,7 +227,7 @@ describe("runtime parity CLI", () => {
     const args = parseRuntimeParityCliArgs([
       "write",
       "--model-manifest",
-      "models/tmr-ai-text-detector/cleanfeed-model.json",
+      "models/cleanfeed-ptbr-v1/cleanfeed-model.json",
       "--output-dir",
       "benchmark/work/runtime-parity",
     ]);

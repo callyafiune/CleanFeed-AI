@@ -300,7 +300,7 @@ describe("benchmark CLI evidence-publication parsing", () => {
     "--consumption-id",
     "consume-0001",
     "--model-dir",
-    "models/tmr-ai-text-detector",
+    "models/cleanfeed-ptbr-v1",
     "--output",
     "benchmark/evidence/tmr-ptbr-v1",
   ];
@@ -315,7 +315,7 @@ describe("benchmark CLI evidence-publication parsing", () => {
         "--evidence-dir",
         "benchmark/evidence/tmr-ptbr-v1",
         "--model-dir",
-        "models/tmr-ai-text-detector",
+        "models/cleanfeed-ptbr-v1",
       ]).command,
     ).toBe("verify-published-evidence");
   });
@@ -375,7 +375,7 @@ function hex(label: string): string {
   return out.padEnd(64, "0").slice(0, 64);
 }
 
-const MODEL_ID = "tmr-ai-text-detector";
+const MODEL_ID = "cleanfeed-ptbr-v1";
 const MODEL_VERSION = "1.0.0";
 const BUNDLE = hex("bundle");
 const TOKENIZER = hex("tokenizer");

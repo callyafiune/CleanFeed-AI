@@ -12,7 +12,7 @@ import { MetricsRepository } from "@/storage/metrics";
 const HASH = "a".repeat(64);
 const BUNDLE_DIGEST = "b".repeat(64);
 const TOKENIZER_DIGEST =
-  "8be427eee79ac58671ae5570f75806fc3d9edc2f2d727ca9e261c2d4b85d37a9";
+  "2e3bc97587671b43d32a68bd134abea67f4a3aaaee8a65f7a1f923449ee13135";
 const CALIBRATION_SET_DIGEST = "c".repeat(64);
 const PROFILE_DIGEST = "d".repeat(64);
 /** A content hash distinct from every technical digest above, so the
@@ -131,8 +131,8 @@ function diagnosticsWithStatus(
 function fullReleaseDescriptor() {
   return {
     schemaVersion: 1 as const,
-    modelId: "tmr-ai-text-detector",
-    modelVersion: "b9aa251e5bcda7e429fcc936767d921435945b60",
+    modelId: "cleanfeed-ptbr-v1",
+    modelVersion: "d8f77f870fbd35a17add2498b73d906bbc299026",
     bundleDigest: BUNDLE_DIGEST,
     tokenizerDigest: TOKENIZER_DIGEST,
     aggregationVersion: "tmr-aggregation-v2",
@@ -218,8 +218,8 @@ describe("DiagnosticsRepository", () => {
         backend: "wasm" as const,
         runtimeIdentity: {
           kind: "bundle" as const,
-          modelId: "tmr-ai-text-detector",
-          modelVersion: "b9aa251e5bcda7e429fcc936767d921435945b60",
+          modelId: "cleanfeed-ptbr-v1",
+          modelVersion: "d8f77f870fbd35a17add2498b73d906bbc299026",
           bundleDigest: BUNDLE_DIGEST,
           tokenizerDigest: TOKENIZER_DIGEST,
           aggregationVersion: "tmr-aggregation-v2",
@@ -254,8 +254,8 @@ describe("DiagnosticsRepository", () => {
         backend: "wasm",
         runtimeIdentity: {
           kind: "bundle",
-          modelId: "tmr-ai-text-detector",
-          modelVersion: "b9aa251e5bcda7e429fcc936767d921435945b60",
+          modelId: "cleanfeed-ptbr-v1",
+          modelVersion: "d8f77f870fbd35a17add2498b73d906bbc299026",
           bundleDigest: BUNDLE_DIGEST,
           tokenizerDigest: TOKENIZER_DIGEST,
           aggregationVersion: "tmr-aggregation-v2",

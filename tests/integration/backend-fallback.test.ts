@@ -41,7 +41,7 @@ function runtimeFor(classifier: TextClassifier): ModelRuntime {
     tokenizer: {} as ModelRuntime["tokenizer"],
     identity: {
       kind: "bundle",
-      modelId: "tmr-ai-text-detector",
+      modelId: "cleanfeed-ptbr-v1",
       modelVersion: "1.0.0",
       bundleDigest: "a".repeat(64),
       tokenizerDigest: "b".repeat(64),
@@ -71,7 +71,7 @@ function classificationResult(
     tokenCount: 150,
     runtimeIdentity: {
       kind: "bundle",
-      modelId: "tmr-ai-text-detector",
+      modelId: "cleanfeed-ptbr-v1",
       modelVersion: "1.0.0",
       bundleDigest: "a".repeat(64),
       tokenizerDigest: "b".repeat(64),
@@ -98,7 +98,7 @@ function classificationResult(
       reasonCodes: ["MODEL_PROFILE_MISSING"],
     },
     modelVersion: "1.0.0",
-    modelId: "tmr-ai-text-detector",
+    modelId: "cleanfeed-ptbr-v1",
     backend: "wasm",
     processingTimeMs: 5,
     demo: false,

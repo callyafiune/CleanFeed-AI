@@ -11,7 +11,7 @@ import {
   type Worker,
 } from "@playwright/test";
 
-import cleanfeedModel from "../../models/tmr-ai-text-detector/cleanfeed-model.json" with { type: "json" };
+import cleanfeedModel from "../../models/cleanfeed-ptbr-v1/cleanfeed-model.json" with { type: "json" };
 import {
   assertLockedBrowserVersion,
   loadTestBrowserLock,

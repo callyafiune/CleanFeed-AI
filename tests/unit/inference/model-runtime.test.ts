@@ -115,7 +115,7 @@ function fakeTokenizer(options: {
 
 function fakeClassifier(): TextClassifier {
   const metadata: ClassifierMetadata = {
-    id: "tmr-ai-text-detector",
+    id: "cleanfeed-ptbr-v1",
     name: "TMR",
     version: bundledModelManifest.modelVersion,
     backend: "wasm",

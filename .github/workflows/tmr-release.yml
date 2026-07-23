@@ -85,7 +85,7 @@ jobs:
         with:
           name: tmr-release-performance
           path: test-results
-      - run: node scripts/assert-performance-report.mjs test-results/tmr-release-performance.json --release models/tmr-ai-text-detector/release.json --parity dist/runtime-parity.json --browser-lock tests/browser-lock.json
+      - run: node scripts/assert-performance-report.mjs test-results/tmr-release-performance.json --release models/cleanfeed-ptbr-v1/release.json --parity dist/runtime-parity.json --browser-lock tests/browser-lock.json
       - run: npm run release:assert-publishable
       - uses: actions/upload-artifact@v4
         with:

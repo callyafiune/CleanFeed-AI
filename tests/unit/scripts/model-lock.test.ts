@@ -13,23 +13,22 @@ import {
 } from "../../../scripts/model-lock.mjs";
 import type { AtomicDirectoryFs } from "../../../scripts/model-lock.mjs";
 
-const FIXED_REVISION = "b9aa251e5bcda7e429fcc936767d921435945b60";
-const FIXED_BASE_URL = `https://huggingface.co/onnx-community/tmr-ai-text-detector-ONNX/resolve/${FIXED_REVISION}/`;
+const FIXED_REVISION = "d8f77f870fbd35a17add2498b73d906bbc299026";
+const FIXED_BASE_URL = `https://self-trained.invalid/cleanfeed-ptbr-v1/${FIXED_REVISION}/`;
 
-const SEVEN_PATHS = [
+const SIX_PATHS = [
   "config.json",
-  "merges.txt",
   "onnx/model_int8.onnx",
   "special_tokens_map.json",
   "tokenizer.json",
   "tokenizer_config.json",
-  "vocab.json",
+  "vocab.txt",
 ] as const;
 
 const CHECKED_IN_LOCK = join(
   process.cwd(),
   "models",
-  "tmr-ai-text-detector",
+  "cleanfeed-ptbr-v1",
   "source-lock.json",
 );
 
@@ -41,10 +40,10 @@ function sha256(buffer: Buffer): string {
 function baseLock(): Record<string, unknown> {
   return {
     schemaVersion: 1,
-    modelId: "tmr-ai-text-detector",
+    modelId: "cleanfeed-ptbr-v1",
     revision: FIXED_REVISION,
     baseUrl: FIXED_BASE_URL,
-    artifacts: SEVEN_PATHS.map((path, index) => ({
+    artifacts: SIX_PATHS.map((path, index) => ({
       path,
       bytes: 100 + index,
       sha256: "a".repeat(64),
@@ -55,7 +54,7 @@ function baseLock(): Record<string, unknown> {
 /** Synthetic bytes for every upstream asset; small enough to hash in-test. */
 function syntheticContents(): Record<string, Buffer> {
   const contents: Record<string, Buffer> = {};
-  for (const path of SEVEN_PATHS) {
+  for (const path of SIX_PATHS) {
     contents[path] = Buffer.from(`synthetic bytes for ${path}\n`);
   }
   return contents;
@@ -66,7 +65,7 @@ function lockForContents(contents: Record<string, Buffer>): {
   artifacts: Array<{ path: string; bytes: number; sha256: string }>;
 } {
   return {
-    artifacts: SEVEN_PATHS.map((path) => ({
+    artifacts: SIX_PATHS.map((path) => ({
       path,
       bytes: contents[path].length,
       sha256: sha256(contents[path]),
@@ -144,8 +143,8 @@ async function writeLock(object: unknown): Promise<string> {
 }
 
 describe("SOURCE_ARTIFACTS", () => {
-  it("is the canonical seven-asset inventory in order", () => {
-    expect(SOURCE_ARTIFACTS.map((item) => item.path)).toEqual([...SEVEN_PATHS]);
+  it("is the canonical six-asset inventory in order", () => {
+    expect(SOURCE_ARTIFACTS.map((item) => item.path)).toEqual([...SIX_PATHS]);
   });
 
   it("matches the checked-in source-lock.json byte-for-byte", async () => {
@@ -155,16 +154,15 @@ describe("SOURCE_ARTIFACTS", () => {
 });
 
 describe("readSourceLock", () => {
-  it("parses the checked-in lock and lists exactly the seven upstream paths", async () => {
+  it("parses the checked-in lock and lists exactly the six pinned paths", async () => {
     const lock = await readSourceLock(CHECKED_IN_LOCK);
     expect(lock.artifacts.map((item) => item.path)).toEqual([
       "config.json",
-      "merges.txt",
       "onnx/model_int8.onnx",
       "special_tokens_map.json",
       "tokenizer.json",
       "tokenizer_config.json",
-      "vocab.json",
+      "vocab.txt",
     ]);
     expect(lock.revision).toBe(FIXED_REVISION);
     expect(lock.baseUrl).toBe(FIXED_BASE_URL);
@@ -173,7 +171,7 @@ describe("readSourceLock", () => {
   it("accepts a structurally valid lock", async () => {
     const lockPath = await writeLock(baseLock());
     const lock = await readSourceLock(lockPath);
-    expect(lock.artifacts).toHaveLength(7);
+    expect(lock.artifacts).toHaveLength(6);
   });
 
   it("rejects unknown top-level keys", async () => {
@@ -221,12 +219,12 @@ describe("readSourceLock", () => {
 });
 
 describe("verifyStagedAssets", () => {
-  it("resolves with a seven-file count for a pristine staging", async () => {
+  it("resolves with a six-file count for a pristine staging", async () => {
     const contents = syntheticContents();
     await stageContents(workDir, contents);
     await expect(
       verifyStagedAssets(workDir, lockForContents(contents)),
-    ).resolves.toEqual({ fileCount: 7 });
+    ).resolves.toEqual({ fileCount: 6 });
   });
 
   it("rejects when an unexpected file is present", async () => {

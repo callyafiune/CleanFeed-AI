@@ -35,11 +35,11 @@ const PLAYWRIGHT_REPORT = join("test-results", "model-smoke.json");
 const ONNX_PATH = join(
   "public",
   "models",
-  "tmr-ai-text-detector",
+  "cleanfeed-ptbr-v1",
   "onnx",
   "model_int8.onnx",
 );
-const RELEASE_PATH = join("models", "tmr-ai-text-detector", "release.json");
+const RELEASE_PATH = join("models", "cleanfeed-ptbr-v1", "release.json");
 
 /** Spawns `command args`, resolving on exit 0 and rejecting otherwise. */
 function defaultRunNode(command, args, options = {}) {

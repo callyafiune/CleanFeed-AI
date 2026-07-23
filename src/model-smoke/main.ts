@@ -59,8 +59,8 @@ export interface ModelSmokeReport {
   errorCode: string | null;
 }
 
-/** The extension-relative directory of the sealed TMR bundle. */
-const MODEL_DIR = "models/tmr-ai-text-detector";
+/** The extension-relative directory of the sealed model bundle. */
+const MODEL_DIR = "models/cleanfeed-ptbr-v1";
 
 /** The canonical calibration locale the smoke exercises. */
 const PROBE_LOCALE = "pt-BR";
@@ -122,10 +122,10 @@ function buildRuntimeManifest(): CleanFeedModelManifest {
   return {
     schemaVersion: 1,
     id: bundledModelManifest.modelId,
-    name: "TMR AI Text Detector",
+    name: "CleanFeed pt-BR AI Text Detector",
     version: bundledModelManifest.modelVersion,
     task: "ai_text_detection",
-    architecture: "roberta",
+    architecture: "bert",
     modelPath: bundledModelManifest.modelFile,
     tokenizerPath: "tokenizer.json",
     configPath: "config.json",
@@ -134,8 +134,8 @@ function buildRuntimeManifest(): CleanFeedModelManifest {
     quantization: "int8",
     labels: { human: 0, ai: 1 },
     output: { name: "logits", kind: "logits" },
-    license: "MIT",
-    source: `onnx-community/tmr-ai-text-detector-ONNX@${bundledModelManifest.modelVersion}`,
+    license: "Projeto não-comercial; base BERTimbau (MIT)",
+    source: `self-trained/${bundledModelManifest.modelId}@${bundledModelManifest.modelVersion}`,
     calibrationVersion: bundledModelManifest.aggregationVersion,
     sha256: {
       model: artifactSha(bundledModelManifest.modelFile),

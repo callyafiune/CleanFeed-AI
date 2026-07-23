@@ -69,10 +69,10 @@ async function makeDeps(options: {
         profilesFile,
         licenseReview: { status: options.licenseStatus ?? "approved" },
         sourceLock: { artifacts: [] },
-        publicModelDirectory: "public/models/tmr-ai-text-detector",
-        modelsDirectory: "models/tmr-ai-text-detector",
+        publicModelDirectory: "public/models/cleanfeed-ptbr-v1",
+        modelsDirectory: "models/cleanfeed-ptbr-v1",
         evidenceDirectory: "benchmark/evidence/tmr-ptbr-v1",
-        modelManifestPath: "models/tmr-ai-text-detector/cleanfeed-model.json",
+        modelManifestPath: "models/cleanfeed-ptbr-v1/cleanfeed-model.json",
         benchmarkReportPath:
           "benchmark/evidence/tmr-ptbr-v1/benchmark-report.json",
       };
@@ -237,16 +237,16 @@ describe("audit-build.mjs reject mode", () => {
     await cp(join(repoRoot, "tests", "fixtures", "secure-dist-min"), distDir, {
       recursive: true,
     });
-    await mkdir(join(distDir, "models", "tmr-ai-text-detector", "onnx"), {
+    await mkdir(join(distDir, "models", "cleanfeed-ptbr-v1", "onnx"), {
       recursive: true,
     });
     await writeFile(
-      join(distDir, "models", "tmr-ai-text-detector", "config.json"),
+      join(distDir, "models", "cleanfeed-ptbr-v1", "config.json"),
       "{}\n",
     );
     const { status, output } = runAudit(distDir, "reject");
     expect(status).toBe(1);
-    expect(output).toContain("tmr-ai-text-detector");
+    expect(output).toContain("cleanfeed-ptbr-v1");
   });
 });
 
@@ -263,11 +263,11 @@ describe("sanitize-offline-bundle.mjs release mode", () => {
 
   async function seedDist(): Promise<string> {
     const distDir = join(workDir, "dist");
-    await mkdir(join(distDir, "models", "tmr-ai-text-detector"), {
+    await mkdir(join(distDir, "models", "cleanfeed-ptbr-v1"), {
       recursive: true,
     });
     await writeFile(
-      join(distDir, "models", "tmr-ai-text-detector", "config.json"),
+      join(distDir, "models", "cleanfeed-ptbr-v1", "config.json"),
       "{}\n",
     );
     return distDir;
@@ -289,7 +289,7 @@ describe("sanitize-offline-bundle.mjs release mode", () => {
     const distDir = await seedDist();
     expect(runSanitize("reject")).toBe(0);
     await expect(
-      stat(join(distDir, "models", "tmr-ai-text-detector")),
+      stat(join(distDir, "models", "cleanfeed-ptbr-v1")),
     ).rejects.toThrow();
   });
 
@@ -297,7 +297,7 @@ describe("sanitize-offline-bundle.mjs release mode", () => {
     const distDir = await seedDist();
     expect(runSanitize("package")).toBe(0);
     await expect(
-      stat(join(distDir, "models", "tmr-ai-text-detector")),
+      stat(join(distDir, "models", "cleanfeed-ptbr-v1")),
     ).resolves.toBeDefined();
   });
 });

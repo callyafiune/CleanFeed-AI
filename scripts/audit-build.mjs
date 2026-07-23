@@ -302,19 +302,19 @@ function auditFiles(distPath, reasons) {
  * Model-bundle gate, keyed on CLEANFEED_MODEL_RELEASE_MODE. Absent: a normal
  * build, no model checks. `reject`: the scientific reject release must omit the
  * TMR bundle entirely, so its directory must be absent from dist. `package`:
- * an indicator/actions release must ship the intact ten-file bundle, so the
+ * an indicator/actions release must ship the intact nine-file bundle, so the
  * directory must exist and pass the closed verifier. Any other value fails.
  */
 async function auditModelRelease(distPath, reasons) {
   const mode = env.CLEANFEED_MODEL_RELEASE_MODE;
   if (mode === undefined || mode === "") return;
 
-  const tmrDir = join(distPath, "models", "tmr-ai-text-detector");
+  const tmrDir = join(distPath, "models", "cleanfeed-ptbr-v1");
 
   if (mode === "reject") {
     if (existsSync(tmrDir)) {
       reasons.push(
-        "reject release must not ship the TMR bundle: models/tmr-ai-text-detector is present",
+        "reject release must not ship the TMR bundle: models/cleanfeed-ptbr-v1 is present",
       );
     }
     return;
@@ -323,7 +323,7 @@ async function auditModelRelease(distPath, reasons) {
   if (mode === "package") {
     if (!existsSync(tmrDir)) {
       reasons.push(
-        "package release requires the TMR bundle at models/tmr-ai-text-detector",
+        "package release requires the TMR bundle at models/cleanfeed-ptbr-v1",
       );
       return;
     }
@@ -334,7 +334,7 @@ async function auditModelRelease(distPath, reasons) {
           scriptDir,
           "..",
           "models",
-          "tmr-ai-text-detector",
+          "cleanfeed-ptbr-v1",
           "source-lock.json",
         ),
       );

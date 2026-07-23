@@ -8,7 +8,7 @@
 // variant ever participates.
 //
 //   node scripts/run-release-performance.mjs \
-//     --release models/tmr-ai-text-detector/release.json \
+//     --release models/cleanfeed-ptbr-v1/release.json \
 //     --output test-results/tmr-release-performance.json
 //
 // NOTE (operator step): the REAL numbers require the pinned Chrome for Testing
@@ -129,7 +129,7 @@ export async function runReleasePerformance(options) {
   const releasePath = resolveRepoPath(options.releasePath);
   const outputPath = resolveRepoPath(options.outputPath);
   const distDir = join(repoRoot(), "dist");
-  const tmrDir = join(distDir, "models", "tmr-ai-text-detector");
+  const tmrDir = join(distDir, "models", "cleanfeed-ptbr-v1");
 
   const release = await readReleaseDescriptor(releasePath);
   const descriptorDigest = await canonicalSha256(release);

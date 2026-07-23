@@ -273,7 +273,7 @@ async function runCli() {
   const resolveRepo = (relativePath) =>
     isAbsolute(relativePath) ? relativePath : join(repoRoot, relativePath);
 
-  const metadataDir = resolveRepo(join("models", "tmr-ai-text-detector"));
+  const metadataDir = resolveRepo(join("models", "cleanfeed-ptbr-v1"));
   const evidenceDir = resolveRepo(join("benchmark", "evidence", "tmr-ptbr-v1"));
   const outputPath = resolveRepo(join("docs", "releases", "tmr-ptbr-v1.md"));
 

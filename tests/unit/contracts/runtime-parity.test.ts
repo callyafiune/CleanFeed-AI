@@ -10,13 +10,13 @@ type ParityFields = Omit<RuntimeParityManifestV1, "runtimeParityDigest">;
 
 const baseFields: ParityFields = {
   schemaVersion: 1,
-  modelId: "tmr-ai-text-detector",
-  modelVersion: "b9aa251e5bcda7e429fcc936767d921435945b60",
+  modelId: "cleanfeed-ptbr-v1",
+  modelVersion: "d8f77f870fbd35a17add2498b73d906bbc299026",
   bundleDigest: "b".repeat(64),
   aggregationVersion: "tmr-aggregation-v2",
   contentCompositionVersion: "lexical-content-v1",
   tokenizerDigest:
-    "8be427eee79ac58671ae5570f75806fc3d9edc2f2d727ca9e261c2d4b85d37a9",
+    "2e3bc97587671b43d32a68bd134abea67f4a3aaaee8a65f7a1f923449ee13135",
   inferenceCoreDigest: "c".repeat(64),
 };
 

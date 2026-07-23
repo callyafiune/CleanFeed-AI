@@ -45,7 +45,7 @@ async function writeBundleToDisk(
 ): Promise<{ evidenceDir: string; modelDir: string }> {
   const root = await newRoot("cf-evidence-verify-");
   const evidenceDir = join(root, "evidence", "tmr-ptbr-v1");
-  const modelDir = join(root, "models", "tmr-ai-text-detector");
+  const modelDir = join(root, "models", "cleanfeed-ptbr-v1");
   await mkdir(evidenceDir, { recursive: true });
   await mkdir(modelDir, { recursive: true });
   for (const file of bundle.files) {
@@ -474,7 +474,7 @@ describe("publish-evidence end-to-end (reject run)", () => {
       `${JSON.stringify(
         {
           schemaVersion: 1,
-          modelId: "tmr-ai-text-detector",
+          modelId: "cleanfeed-ptbr-v1",
           status: "pending",
           declaredLicense: "MIT",
           reviewedAt: null,

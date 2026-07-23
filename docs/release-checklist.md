@@ -32,7 +32,7 @@ publicável. A evidência versionada é gerada por `npm run release:evidence` em
 
 ## 3. Licença e avisos
 
-- [ ] `models/tmr-ai-text-detector/license-review.json` está `approved` e
+- [ ] `models/cleanfeed-ptbr-v1/license-review.json` está `approved` e
       `LICENSE` + `NOTICE.md` acompanham o bundle (gate `--publication`:
       `PUBLICATION_LICENSE_NOT_APPROVED` / `PUBLICATION_NOTICE_MISSING`).
 
@@ -52,9 +52,9 @@ publicável. A evidência versionada é gerada por `npm run release:evidence` em
 
 ## 6. Pacote exato (ou ausência do TMR em reject)
 
-- [ ] `npm run audit:model` sai 0: em `indicator-only`/`pass`, exatamente os doze
+- [ ] `npm run audit:model` sai 0: em `indicator-only`/`pass`, exatamente os onze
       arquivos autorizados, íntegros e com os dois descritores byte-idênticos aos
-      versionados; em `reject`, o diretório `dist/models/tmr-ai-text-detector`
+      versionados; em `reject`, o diretório `dist/models/cleanfeed-ptbr-v1`
       está **inteiramente ausente**.
 
 ## 7. Diferença de permissões (permission/CSP diff)
