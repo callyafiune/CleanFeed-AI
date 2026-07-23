@@ -249,7 +249,12 @@ def main() -> None:
         sys.path.insert(0, str(Path(__file__).parent))
         import os
 
-        from generate_ai import GenerationRefused, call_provider, call_with_retries
+        from generate_ai import (
+            RETRIABLE,
+            GenerationRefused,
+            call_provider,
+            call_with_retries,
+        )
         import urllib.error
 
         keys = {
@@ -299,8 +304,10 @@ def main() -> None:
                             if not models:
                                 return None
                             continue
-                        if error.code != 429:
+                        if error.code not in RETRIABLE:
                             raise
+                        # 429 e 5xx persistentes = bucket/backend deste modelo
+                        # indisponível agora: pula para o próximo.
                         state["i"] += 1
                 dry_rounds += 1
                 if dry_rounds <= args.max_cooldowns:
