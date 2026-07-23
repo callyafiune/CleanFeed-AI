@@ -23,6 +23,23 @@ export default tseslint.config(
   js.configs.recommended,
   ...tseslint.configs.recommended,
   {
+    // Node lab/ops scripts (.mjs): declare the runtime globals so no-undef
+    // reflects reality instead of flagging console/process/URL.
+    files: ["**/*.mjs"],
+    languageOptions: {
+      globals: {
+        console: "readonly",
+        process: "readonly",
+        URL: "readonly",
+        TextEncoder: "readonly",
+        TextDecoder: "readonly",
+        fetch: "readonly",
+        setTimeout: "readonly",
+        globalThis: "readonly",
+      },
+    },
+  },
+  {
     files: [
       "src/**/*.{ts,tsx}",
       "tests/**/*.{ts,tsx}",

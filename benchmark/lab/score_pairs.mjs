@@ -8,8 +8,8 @@
 // Output rows: {id, class: "human"|"ai", family, pairedWith, status,
 //               documentRawScore, reasonCode, words}
 
-import { createReadStream, existsSync, readFileSync, writeFileSync } from "node:fs";
-import { resolve, dirname, join } from "node:path";
+import { readFileSync, writeFileSync } from "node:fs";
+import { resolve, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 import { chromium } from "playwright";
 
@@ -29,7 +29,9 @@ function parseArgs(argv) {
     }
   }
   if (!out.ai.length || !out.humans.length || !out.output) {
-    throw new Error("usage: --ai <files...> --humans <files...> --output <file>");
+    throw new Error(
+      "usage: --ai <files...> --humans <files...> --output <file>",
+    );
   }
   return out;
 }
@@ -79,7 +81,9 @@ async function main() {
       text: row.text,
     });
   }
-  console.log(`a pontuar: ${work.length} textos (${aiRows.length} ai + ${parentIds.size} humanos)`);
+  console.log(
+    `a pontuar: ${work.length} textos (${aiRows.length} ai + ${parentIds.size} humanos)`,
+  );
 
   const context = await chromium.launchPersistentContext("", {
     headless: true,
@@ -112,7 +116,8 @@ async function main() {
     const status = await page.evaluate(
       () => globalThis.__cleanfeedModelBenchmark.status,
     );
-    if (status.state !== "ready") throw new Error(`harness: ${status.errorCode}`);
+    if (status.state !== "ready")
+      throw new Error(`harness: ${status.errorCode}`);
 
     let index = 0;
     for (const item of work) {
