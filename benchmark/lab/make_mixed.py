@@ -28,11 +28,31 @@ import time
 from datetime import datetime, timezone
 from pathlib import Path
 
+# O modo de falha depende do registro do pai: em texto informal o modelo
+# tende a reescrever tudo (aiFraction > 0.7); em texto já polido, a devolver
+# uma cópia idêntica (0.0). Daí o "copie palavra por palavra, sem corrigir" e
+# os dois prompts corretivos usados no nudge retry.
 EDIT_PROMPT = (
-    "Edite levemente o texto abaixo em português do Brasil: melhore a clareza e "
-    "o encadeamento de 2 a 4 trechos, mantendo a MAIOR PARTE do texto original "
-    "intacta (não reescreva tudo), sem mudar o sentido. Responda apenas com o "
-    "texto editado, sem comentários.\n\n=== TEXTO ===\n{parent}"
+    "Reescreva com suas palavras de 2 a 4 frases do texto abaixo, em português "
+    "do Brasil, preservando o sentido. Copie TODAS as outras frases exatamente "
+    "como estão, palavra por palavra, sem corrigir nem melhorar nada nelas — "
+    "mude no máximo um terço do texto. Responda apenas com o texto completo "
+    "resultante, sem comentários.\n\n=== TEXTO ===\n{parent}"
+)
+PROMPT_CHANGE_LESS = (
+    "Reescreva com suas palavras APENAS 2 frases curtas do texto abaixo, em "
+    "português do Brasil, preservando o sentido. Copie todo o resto exatamente "
+    "como está, palavra por palavra, sem corrigir nem melhorar nada — é "
+    "obrigatório que a maior parte do texto fique idêntica ao original. "
+    "Responda apenas com o texto completo resultante, sem comentários."
+    "\n\n=== TEXTO ===\n{parent}"
+)
+PROMPT_CHANGE_MORE = (
+    "Reescreva com suas palavras EXATAMENTE 3 frases do texto abaixo (escolha "
+    "as mais longas), em português do Brasil, preservando o sentido — é "
+    "obrigatório reformular essas 3 frases, não as copie. Copie todas as "
+    "outras frases exatamente como estão, palavra por palavra. Responda apenas "
+    "com o texto completo resultante, sem comentários.\n\n=== TEXTO ===\n{parent}"
 )
 
 
@@ -163,6 +183,13 @@ def main() -> None:
         default=8,
         help="429s consecutivos antes de tratar como cota do dia e parar",
     )
+    parser.add_argument(
+        "--nudge-retries",
+        type=int,
+        default=1,
+        help="novas tentativas com prompt corretivo quando a edição sai da "
+        "faixa mista (0 desliga)",
+    )
     args = parser.parse_args()
 
     sys.stdout.reconfigure(encoding="utf-8", errors="replace")
@@ -235,24 +262,43 @@ def main() -> None:
                     )
                     time.sleep(args.cooldown)
 
+        def in_band(mixture: dict) -> bool:
+            # An edit that rewrote (quase) tudo não é "misto"; idem cópia fiel.
+            return 0.05 <= mixture["aiFraction"] <= 0.7
+
         pending = interleave_by_family(
             [p for p in parents if p["id"] not in done]
         )[: args.target]
         print(f"gerando {len(pending)} mistos (resume-skip={len(done)})")
         kept = 0
         for index, parent in enumerate(pending, start=1):
-            prompt = EDIT_PROMPT.format(parent=parent["text"][:6000])
             try:
-                edited = edit_with_cooldown(prompt)
+                edited = edit_with_cooldown(
+                    EDIT_PROMPT.format(parent=parent["text"][:6000])
+                )
+                mixture = (
+                    compute_mixture(parent["text"], edited) if edited else None
+                )
+                for _ in range(args.nudge_retries):
+                    if edited is None or in_band(mixture):
+                        break
+                    template = (
+                        PROMPT_CHANGE_LESS
+                        if mixture["aiFraction"] > 0.7
+                        else PROMPT_CHANGE_MORE
+                    )
+                    edited = edit_with_cooldown(
+                        template.format(parent=parent["text"][:6000])
+                    )
+                    if edited is not None:
+                        mixture = compute_mixture(parent["text"], edited)
             except GenerationRefused as refused:
                 print(f"  {parent['id']} recusado: {refused}")
                 continue
             if edited is None:
                 print(f"  cota persistente após {kept} — resume automático depois")
                 break
-            mixture = compute_mixture(parent["text"], edited)
-            # An edit that rewrote (quase) tudo não é "misto" — descarta.
-            if not 0.05 <= mixture["aiFraction"] <= 0.7:
+            if not in_band(mixture):
                 print(
                     f"  {parent['id']} fora da faixa mista "
                     f"(aiFraction={mixture['aiFraction']:.2f}) — descartado"
