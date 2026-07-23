@@ -70,6 +70,19 @@
 ## Compromissos do projeto
 
 - Publicar métricas **com** limitações na primeira linha (model card honesto).
+- Publicar a **composição exata da população medida** (tabela por
+  registro/fonte) e as métricas **por fatia de registro** — nunca só um número
+  global. Registros não presentes na tabela não estão validados; a validação de
+  um registro novo se faz por extensão de fatia com o mesmo pipeline (que roda
+  100% local — uma instituição pode medir no próprio dado sem compartilhá-lo).
+- Declarar a **âncora temporal da classe humana** (pré-nov/2022, rótulo puro
+  pela data) e a limitação correspondente: a escrita humana DERIVA — humanos de
+  hoje absorvem estilo de IA ("efeito delve") e escrevem sobre tópicos novos —
+  então o FPR medido pode SUBESTIMAR o real em texto contemporâneo. Mitigações
+  vinculantes: perfis de calibração expiram em 180 dias (re-medição forçada);
+  sonda de deriva com humanos contemporâneos consentidos e autodeclarados
+  ([coleta-doacoes.md](coleta-doacoes.md)); fatias hard-negative de humanos
+  polidos (onde a deriva morde primeiro).
 - Não publicar granularidade por sentença sem corpus misto validado (spans).
 - Manter o corpus sob governança de licença/PII; nunca redistribuir textos.
 - Documentar rejeições e falhas (este repositório registra os experimentos que
