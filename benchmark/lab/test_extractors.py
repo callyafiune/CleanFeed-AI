@@ -333,3 +333,21 @@ class GenerateAiTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main(verbosity=2)
+
+
+class PublicCorpusTests(unittest.TestCase):
+    def test_leak_markers_drop_reasoning_channel_text(self) -> None:
+        from import_public_corpus import looks_contaminated
+
+        self.assertTrue(
+            looks_contaminated("analysisWe need to write a scientific text…")
+        )
+        self.assertTrue(looks_contaminated("The user wants a post about X."))
+        # Legitimate pt-BR prose — including the word "análise" — passes.
+        self.assertFalse(
+            looks_contaminated("A análise dos dados mostra que o mercado cresceu.")
+        )
+        # English quoted deep in the text (past the head window) is fine.
+        self.assertFalse(
+            looks_contaminated("Texto longo em português. " * 20 + "We need to go.")
+        )

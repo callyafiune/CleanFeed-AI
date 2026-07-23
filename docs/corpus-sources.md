@@ -48,6 +48,20 @@ fonte. Nunca usar raspagem de plataformas com ToS restritivo (LinkedIn, X,
 Reddit, Instagram) nem derivados de Common Crawl (copyright subjacente não
 licenciado — abaixo do nosso padrão de governança).
 
+### Fonte de classe IA aprovada — corpus de TREINO (2026-07-22)
+
+- **`src_ai_public_madras`** — [Madras1/corpus-ptbr-v1](https://huggingface.co/datasets/Madras1/corpus-ptbr-v1),
+  **apenas o subset `synthetic`** (1,6M textos pt-BR de modelos abertos
+  modernos 2024-25: Qwen, GPT-OSS, mixes via OpenRouter; 20 estilos incl.
+  posts LinkedIn/Twitter/WhatsApp). Licença **ODC-By 1.0** (atribuição — esta
+  entrada é o registro). O lado "real" do dataset (C4/FineWeb2) **NÃO é usado**
+  (Common Crawl = copyright subjacente; FineWeb2 é pós-ChatGPT). Importador:
+  `benchmark/lab/import_public_corpus.py`, com **filtro de vazamento de canal
+  de raciocínio** (linhas com meta-texto em inglês tipo "analysisWe need to
+  write…" são descartadas — senão o detector aprende o atalho falso
+  "meta-inglês = IA"). Tags de família parciais (`madras:<batch>`); lotes
+  `openrouter*` são mix não identificável — não usar como held-out.
+
 ### Fontes avaliadas e REJEITADAS (governança de rejeição)
 
 - **BrWaC (UFRGS)** — rejeitado 2026-07-22: distribuído "solely for academic
@@ -62,6 +76,11 @@ licenciado — abaixo do nosso padrão de governança).
   do BrWaC pode ser preenchido com o vínculo real e a concessão dos mantenedores
   vira o documento de autorização.
 - **Common Crawl / OSCAR / mC4 / CC-100** — copyright subjacente não licenciado.
+- **cnmoro/Fab1e5-traces-2M-ptbr** — rejeitado 2026-07-22 para o corpus do
+  detector: (1) pt-BR por **tradução automática** do inglês — a assinatura vira
+  do tradutor, não do gerador (treinaria um detector de translationese);
+  (2) registro de chat assistente (turnos user/assistant), não texto de feed;
+  (3) sem licença declarada no card.
 
 **Trio FECHADO para volume (2026-07-22): Stack Exchange PT + Wikimedia
 (CC BY-SA) + Carolina (CC BY-NC-SA).**
