@@ -49,18 +49,65 @@ def main() -> None:
     import torch
     from onnxruntime import InferenceSession
     from onnxruntime.quantization import QuantType, quantize_dynamic
-    from optimum.onnxruntime import ORTModelForSequenceClassification
     from transformers import AutoModelForSequenceClassification, AutoTokenizer
 
     out = args.out
     onnx_dir = out / "onnx"
     onnx_dir.mkdir(parents=True, exist_ok=True)
+    (out / "_fp32").mkdir(parents=True, exist_ok=True)
+    fp32_path = out / "_fp32" / "model.onnx"
 
-    print("1/4 exportando fp32 ONNX (optimum)…")
-    ort_model = ORTModelForSequenceClassification.from_pretrained(
-        str(args.checkpoint), export=True
+    tokenizer = AutoTokenizer.from_pretrained(str(args.checkpoint))
+    torch_model = AutoModelForSequenceClassification.from_pretrained(
+        str(args.checkpoint)
     )
-    ort_model.save_pretrained(out / "_fp32")
+    torch_model.eval()
+
+    print("1/4 exportando fp32 ONNX…")
+    try:
+        from optimum.onnxruntime import ORTModelForSequenceClassification
+
+        ort_model = ORTModelForSequenceClassification.from_pretrained(
+            str(args.checkpoint), export=True
+        )
+        ort_model.save_pretrained(out / "_fp32")
+        print("  via optimum")
+    except ImportError:
+        # Fallback sem optimum: torch.onnx.export com os nomes de entrada/saída
+        # que o Transformers.js espera (input_ids/attention_mask/token_type_ids
+        # -> logits) e eixos dinâmicos de batch/sequência.
+        class LogitsOnly(torch.nn.Module):
+            def __init__(self, inner: torch.nn.Module) -> None:
+                super().__init__()
+                self.inner = inner
+
+            def forward(self, input_ids, attention_mask, token_type_ids):
+                return self.inner(
+                    input_ids=input_ids,
+                    attention_mask=attention_mask,
+                    token_type_ids=token_type_ids,
+                ).logits
+
+        sample = tokenizer("exemplo de exportação", return_tensors="pt")
+        dynamic = {
+            name: {0: "batch", 1: "sequence"}
+            for name in ("input_ids", "attention_mask", "token_type_ids")
+        }
+        dynamic["logits"] = {0: "batch"}
+        torch.onnx.export(
+            LogitsOnly(torch_model),
+            (
+                sample["input_ids"],
+                sample["attention_mask"],
+                sample["token_type_ids"],
+            ),
+            str(fp32_path),
+            input_names=["input_ids", "attention_mask", "token_type_ids"],
+            output_names=["logits"],
+            dynamic_axes=dynamic,
+            opset_version=14,
+        )
+        print("  via torch.onnx.export (fallback sem optimum)")
 
     print("2/4 quantizando int8 (dynamic)…")
     quantize_dynamic(
@@ -70,7 +117,6 @@ def main() -> None:
     )
 
     print("3/4 copiando tokenizer/config…")
-    tokenizer = AutoTokenizer.from_pretrained(str(args.checkpoint))
     tokenizer.save_pretrained(out)
     for name in ("config.json",):
         shutil.copy2(args.checkpoint / name, out / name)
@@ -78,10 +124,6 @@ def main() -> None:
 
     print("4/4 paridade fp32-torch vs int8-onnx…")
     rows = read_jsonl(args.eval, args.parity_samples)
-    torch_model = AutoModelForSequenceClassification.from_pretrained(
-        str(args.checkpoint)
-    )
-    torch_model.eval()
     session = InferenceSession(str(onnx_dir / "model_int8.onnx"))
     input_names = {i.name for i in session.get_inputs()}
 
