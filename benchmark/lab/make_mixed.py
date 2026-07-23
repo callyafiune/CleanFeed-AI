@@ -115,6 +115,14 @@ def compute_mixture(parent: str, edited: str) -> dict:
     }
 
 
+MIXED_BAND = (0.05, 0.7)
+
+
+def in_mixed_band(mixture: dict) -> bool:
+    """An edit that rewrote (quase) tudo não é "misto"; idem cópia fiel."""
+    return MIXED_BAND[0] <= mixture["aiFraction"] <= MIXED_BAND[1]
+
+
 def interleave_by_family(pending: list[dict]) -> list[dict]:
     """Round-robin by family, preserving in-family order.
 
@@ -197,19 +205,31 @@ def main() -> None:
 
     with args.output.open("a", encoding="utf-8", newline="\n") as output:
         if args.from_pairs is not None:
-            emitted = 0
+            emitted = skipped = 0
             for pair in read_jsonl(args.from_pairs):
                 if pair["parentId"] in done:
                     continue
+                mixture = compute_mixture(pair["parentText"], pair["editedText"])
+                if not in_mixed_band(mixture):
+                    print(
+                        f"  {pair['parentId']} fora da faixa mista "
+                        f"(aiFraction={mixture['aiFraction']:.2f}) — descartado"
+                    )
+                    skipped += 1
+                    continue
                 emit(
                     output,
-                    {"id": pair["parentId"], "text": pair["parentText"]},
+                    {
+                        "id": pair["parentId"],
+                        "text": pair["parentText"],
+                        "family": pair.get("family", "?"),
+                    },
                     pair["editedText"],
                     provider=pair.get("provider", "external"),
                     model=pair.get("model", "external"),
                 )
                 emitted += 1
-            print(f"pares importados: {emitted}")
+            print(f"pares importados: {emitted} (fora da faixa: {skipped})")
             return
 
         if not args.generate or args.parents is None:
@@ -262,9 +282,7 @@ def main() -> None:
                     )
                     time.sleep(args.cooldown)
 
-        def in_band(mixture: dict) -> bool:
-            # An edit that rewrote (quase) tudo não é "misto"; idem cópia fiel.
-            return 0.05 <= mixture["aiFraction"] <= 0.7
+        in_band = in_mixed_band
 
         pending = interleave_by_family(
             [p for p in parents if p["id"] not in done]
