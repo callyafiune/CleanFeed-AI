@@ -309,6 +309,10 @@ def main() -> None:
                         # 429 e 5xx persistentes = bucket/backend deste modelo
                         # indisponível agora: pula para o próximo.
                         state["i"] += 1
+                    except OSError:
+                        # Timeout/reset que sobreviveu aos retries: trata o
+                        # modelo como indisponível e roda a rotação.
+                        state["i"] += 1
                 dry_rounds += 1
                 if dry_rounds <= args.max_cooldowns:
                     print(

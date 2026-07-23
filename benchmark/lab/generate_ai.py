@@ -208,7 +208,9 @@ def call_with_retries(transport, *args, attempts: int = 5):
         except urllib.error.HTTPError as error:
             if error.code not in RETRIABLE or attempt == attempts - 1:
                 raise
-        except urllib.error.URLError:
+        except OSError:
+            # URLError, TimeoutError de leitura do socket, ConnectionReset…
+            # (HTTPError já foi tratado acima; GenerationRefused não é OSError)
             if attempt == attempts - 1:
                 raise
         time.sleep(delay)
