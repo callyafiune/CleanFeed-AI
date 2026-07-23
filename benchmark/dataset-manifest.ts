@@ -21,7 +21,7 @@ export interface DatasetManifest {
   version: string;
   scientificUse: "release" | "infrastructure-only";
   intendedLanguage: "pt-BR";
-  intendedDomain: "linkedin";
+  intendedDomain: "generic";
   createdAt: string;
   normalizationVersion: string;
   annotationProtocolVersion: "annotation-v1";
@@ -56,13 +56,18 @@ export interface CorpusPolicy {
 
 export const RELEASE_CORPUS_POLICY: CorpusPolicy = {
   counts: { human: 4_000, ai: 4_000, mixed: 2_000 },
+  // Generic pt-BR pivot: the five human source types map the licensed sources
+  // the sealed corpus is drawn from — Stack Exchange PT (qa-informal),
+  // Wikipedia PT (encyclopedic), Carolina social media/datasets (social-media),
+  // Carolina university (university) and Carolina judicial/legislative
+  // (institutional). Hard-negative families are STYLE families, not platform
+  // families, so they are unchanged by the pivot.
   requiredHumanSourceTypes: [
-    "broetry",
-    "recruiting",
-    "sales",
-    "career",
-    "technology",
-    "formal",
+    "qa-informal",
+    "encyclopedic",
+    "social-media",
+    "university",
+    "institutional",
   ],
   requiredHardNegativeFamilies: [
     "formulaic",
@@ -247,7 +252,7 @@ export function validateDatasetManifest(value: unknown): DatasetManifest {
   }
   const scientificUse = root.scientificUse;
   literal(root.intendedLanguage, "intendedLanguage", "pt-BR");
-  literal(root.intendedDomain, "intendedDomain", "linkedin");
+  literal(root.intendedDomain, "intendedDomain", "generic");
   const createdAt = nonEmptyString(root.createdAt, "createdAt");
   if (!Number.isFinite(Date.parse(createdAt))) {
     fail("DATASET_FIELD_INVALID", "createdAt must be a valid ISO timestamp");
@@ -351,7 +356,7 @@ export function validateDatasetManifest(value: unknown): DatasetManifest {
     version,
     scientificUse,
     intendedLanguage: "pt-BR",
-    intendedDomain: "linkedin",
+    intendedDomain: "generic",
     createdAt,
     normalizationVersion,
     annotationProtocolVersion: "annotation-v1",

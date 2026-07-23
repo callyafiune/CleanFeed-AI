@@ -37,7 +37,7 @@ const REPO_ROOT = resolve(
 );
 const WORK_ROOT = join(REPO_ROOT, "benchmark", "work");
 
-const DATASET_ID = "ptbr-linkedin-synthetic-v1";
+const DATASET_ID = "ptbr-generic-synthetic-v1";
 const LICENSE_ID = "synthetic-consent-v1";
 const HELDOUT_FAMILY = "synthetic-heldout-family";
 
@@ -46,12 +46,11 @@ const CAL_TIME = 2_000;
 const TEST_TIME = 3_000;
 
 const HUMAN_SOURCE_TYPES = [
-  "broetry",
-  "recruiting",
-  "sales",
-  "career",
-  "technology",
-  "formal",
+  "qa-informal",
+  "encyclopedic",
+  "social-media",
+  "university",
+  "institutional",
 ] as const;
 const HARD_NEGATIVE_FAMILIES = [
   "formulaic",
@@ -187,7 +186,7 @@ function humanRecord(
     normalizedTextSha256: sha256Hex(text),
     label: "human",
     language: "pt-BR",
-    platform: "linkedin",
+    platform: "generic",
     domain: "corporate",
     topic: "geral",
     humanSourceType: HUMAN_SOURCE_TYPES[ordinal % HUMAN_SOURCE_TYPES.length],
@@ -222,7 +221,7 @@ function aiRecord(
     normalizedTextSha256: sha256Hex(text),
     label: "ai",
     language: "pt-BR",
-    platform: "linkedin",
+    platform: "generic",
     domain: "corporate",
     topic: "geral",
     wordCount: 60,
@@ -259,7 +258,7 @@ function mixedRecord(
     normalizedTextSha256: sha256Hex(text),
     label: "mixed",
     language: "pt-BR",
-    platform: "linkedin",
+    platform: "generic",
     domain: "corporate",
     topic: "geral",
     wordCount: 60,
@@ -320,7 +319,7 @@ async function writeCorpus(
     version: "1.0.0",
     scientificUse: "infrastructure-only",
     intendedLanguage: "pt-BR",
-    intendedDomain: "linkedin",
+    intendedDomain: "generic",
     createdAt: "2026-07-19T00:00:00.000Z",
     normalizationVersion: "cleanfeed-text-v1",
     annotationProtocolVersion: "annotation-v1",

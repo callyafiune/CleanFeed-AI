@@ -93,7 +93,7 @@ function lightDatasetAudit(report: BenchmarkReport): DatasetAudit {
     releaseEligible: true,
     recordCount: 10_000,
     counts: { human: 4_000, ai: 4_000, mixed: 2_000 },
-    sourceTypes: { broetry: 2_000, recruiting: 2_000 },
+    sourceTypes: { "qa-informal": 2_000, encyclopedic: 2_000 },
     hardNegativeFamilies: { formulaic: 500 },
     generatorFamilies: { acme_family: 4_000 },
     licenses: ["consent-v1"],
@@ -397,12 +397,12 @@ export async function buildRejectScenario(
   const splitDigest = hex("reject-split");
 
   const auditBase: Omit<DatasetAudit, "auditDigest"> = {
-    datasetId: "ptbr-linkedin-v1",
+    datasetId: "ptbr-generic-v1",
     scientificUse: "release",
     releaseEligible: true,
     recordCount: 10_000,
     counts: { human: 4_000, ai: 4_000, mixed: 2_000 },
-    sourceTypes: { broetry: 2_000, recruiting: 2_000 },
+    sourceTypes: { "qa-informal": 2_000, encyclopedic: 2_000 },
     hardNegativeFamilies: { formulaic: 500 },
     generatorFamilies: { acme_family: 4_000 },
     licenses: ["consent-v1"],
@@ -575,7 +575,7 @@ export async function buildRejectScenario(
   const report = await buildBenchmarkReport({
     generatedAt: GENERATED_AT,
     dataset: {
-      id: "ptbr-linkedin-v1",
+      id: "ptbr-generic-v1",
       version: "1.0.0",
       digest: datasetDigest,
     },

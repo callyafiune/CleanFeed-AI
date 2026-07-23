@@ -30,12 +30,12 @@ function gate(estimate: number, sampleSize: number): ProportionGateEvidenceV1 {
 function baseProfile(): Omit<RuntimeCalibrationProfileV1, "profileDigest"> {
   return {
     schemaVersion: 1,
-    profileId: "linkedin-200plus",
+    profileId: "generic-200plus",
     modelId: "cleanfeed-ptbr-v1",
     modelVersion: "d8f77f870fbd35a17add2498b73d906bbc299026",
     bundleDigest: "a".repeat(64),
     tokenizerDigest: "b".repeat(64),
-    platform: "linkedin",
+    platform: "generic",
     locale: "pt-BR",
     lengthBucket: "200-plus",
     aggregationVersion: "tmr-aggregation-v2",

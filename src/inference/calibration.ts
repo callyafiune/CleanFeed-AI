@@ -147,6 +147,20 @@ export function applySerializedCalibrator(
   return applyCalibrator(calibrator, score);
 }
 
+/**
+ * Maps a platform adapter id (e.g. `"linkedin"`) to the platform coordinate of
+ * the calibration-profile lookup. v1 policy: the sealed corpus is generic
+ * pt-BR, so ONE pool of `"generic"` profiles serves every adapter and this
+ * function returns `"generic"` unconditionally. Per-platform profiles remain
+ * possible in the future by publishing profiles under other platform values
+ * and routing adapter ids here — this function is the single seam to change.
+ * Only the CALIBRATION lookup is normalized: the adapter keeps its own id
+ * everywhere else (settings, cache keys, explanation labels).
+ */
+export function normalizeCalibrationPlatform(_adapterId: string): string {
+  return "generic";
+}
+
 export interface DecideWithProfileInput {
   /** The exact-match lookup from {@link CalibrationRegistry.findExact}. */
   lookup: ProfileLookup;

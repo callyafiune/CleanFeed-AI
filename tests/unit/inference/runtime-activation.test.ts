@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 
 import { bundledModelManifest } from "@/inference/bundled-model-metadata";
+import { normalizeCalibrationPlatform } from "@/inference/calibration";
 import type { CalibrationCoordinates } from "@/inference/calibration-registry";
 import type { RuntimeDescriptor } from "@/inference/model-bundle";
 import { parseModelManifest } from "@/inference/model-bundle";
@@ -153,7 +154,9 @@ describe("buildCalibratedRuntimeParts", () => {
       calibrationSetDigest: descriptor.release.calibrationSetDigest,
     });
 
-    // (2) The registry findExact-matches at exactly that identity.
+    // (2) The registry findExact-matches at exactly that identity. The profile
+    // is published for the "generic" pool, so the adapter id ("linkedin") must
+    // FIND it once normalized — exactly what the worker does before the lookup.
     const identity = parts.identity as Extract<
       typeof parts.identity,
       { kind: "bundle" }
@@ -163,7 +166,7 @@ describe("buildCalibratedRuntimeParts", () => {
       modelVersion: identity.modelVersion,
       bundleDigest: identity.bundleDigest,
       tokenizerDigest: identity.tokenizerDigest,
-      platform: "linkedin",
+      platform: normalizeCalibrationPlatform("linkedin"),
       locale: "pt",
       lengthBucket: "200-plus",
       aggregationVersion: identity.aggregationVersion,

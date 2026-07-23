@@ -44,7 +44,7 @@ function rec(spec: RecordSpec): BenchmarkRecord {
     normalizedTextSha256: SHA,
     label: spec.label,
     language: "pt-BR",
-    platform: "linkedin",
+    platform: "generic",
     domain: spec.domain,
     topic: "carreira",
     wordCount: spec.wordCount,

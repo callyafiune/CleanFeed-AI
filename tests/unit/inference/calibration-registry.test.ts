@@ -27,18 +27,18 @@ function gate(estimate: number, sampleSize: number) {
   };
 }
 
-/** A fully valid `pass`/`hide` profile for the linkedin 200-plus bucket. */
+/** A fully valid `pass`/`hide` profile for the generic pt-BR 200-plus bucket. */
 function baseProfile(
   overrides: Partial<Omit<RuntimeCalibrationProfileV1, "profileDigest">> = {},
 ): Omit<RuntimeCalibrationProfileV1, "profileDigest"> {
   return {
     schemaVersion: 1,
-    profileId: "linkedin-200plus",
+    profileId: "generic-200plus",
     modelId: "cleanfeed-ptbr-v1",
     modelVersion: "d8f77f870fbd35a17add2498b73d906bbc299026",
     bundleDigest: "a".repeat(64),
     tokenizerDigest: "b".repeat(64),
-    platform: "linkedin",
+    platform: "generic",
     locale: "pt-BR",
     lengthBucket: "200-plus",
     aggregationVersion: "tmr-aggregation-v2",
@@ -142,7 +142,7 @@ function coordinates(
     modelVersion: "d8f77f870fbd35a17add2498b73d906bbc299026",
     bundleDigest: "a".repeat(64),
     tokenizerDigest: "b".repeat(64),
-    platform: "linkedin",
+    platform: "generic",
     locale: "pt",
     lengthBucket: "200-plus",
     aggregationVersion: "tmr-aggregation-v2",
@@ -165,7 +165,7 @@ describe("CalibrationRegistry.findExact", () => {
     const lookup = registry.findExact(coordinates(), BEFORE_EXPIRY);
     expect(lookup.status).toBe("found");
     if (lookup.status === "found") {
-      expect(lookup.profile.profileId).toBe("linkedin-200plus");
+      expect(lookup.profile.profileId).toBe("generic-200plus");
     }
   });
 
@@ -174,7 +174,9 @@ describe("CalibrationRegistry.findExact", () => {
     ["modelVersion", { modelVersion: "0.0.0" }],
     ["bundleDigest", { bundleDigest: "0".repeat(64) }],
     ["tokenizerDigest", { tokenizerDigest: "0".repeat(64) }],
-    ["platform", { platform: "twitter" }],
+    // A raw adapter id that skipped normalizeCalibrationPlatform must MISS:
+    // the registry stays an exact matcher and never maps platforms itself.
+    ["platform", { platform: "linkedin" }],
     ["locale", { locale: "en" }],
     ["lengthBucket", { lengthBucket: "50-79" as const }],
     ["aggregationVersion", { aggregationVersion: "tmr-aggregation-v3" }],

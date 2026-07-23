@@ -884,7 +884,12 @@ const exactTokenizer: Tokenizer = {
   })),
 };
 
-/** A fully-valid pass/hide profile for the linkedin pt-BR 200-plus bucket. */
+/**
+ * A fully-valid pass/hide profile for the generic pt-BR 200-plus bucket. The
+ * platform is "generic" (the v1 single profile pool); requests still arrive
+ * with the adapter's platform ("linkedin") and the worker normalizes it for
+ * the lookup, so these tests also prove that normalization end-to-end.
+ */
 function bundleProfile(): Omit<RuntimeCalibrationProfileV1, "profileDigest"> {
   const gate = (estimate: number, sampleSize: number) => ({
     estimate,
@@ -894,12 +899,12 @@ function bundleProfile(): Omit<RuntimeCalibrationProfileV1, "profileDigest"> {
   });
   return {
     schemaVersion: 1,
-    profileId: "linkedin-200plus",
+    profileId: "generic-200plus",
     modelId: "cleanfeed-ptbr-v1",
     modelVersion: TMR_MODEL_VERSION,
     bundleDigest: "a".repeat(64),
     tokenizerDigest: "b".repeat(64),
-    platform: "linkedin",
+    platform: "generic",
     locale: "pt-BR",
     lengthBucket: "200-plus",
     aggregationVersion: "tmr-aggregation-v2",

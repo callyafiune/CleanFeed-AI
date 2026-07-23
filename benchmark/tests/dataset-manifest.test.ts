@@ -24,11 +24,11 @@ const validFileDigests: DatasetFileDigests = {
 
 const validManifest: DatasetManifest = {
   schemaVersion: 1,
-  datasetId: "ptbr-linkedin-v1",
+  datasetId: "ptbr-generic-v1",
   version: "1.0.0",
   scientificUse: "infrastructure-only",
   intendedLanguage: "pt-BR",
-  intendedDomain: "linkedin",
+  intendedDomain: "generic",
   createdAt: "2026-07-19T00:00:00.000Z",
   normalizationVersion: "cleanfeed-text-v1",
   annotationProtocolVersion: "annotation-v1",
@@ -71,10 +71,10 @@ const human: BenchmarkRecord = {
   normalizedTextSha256: "a".repeat(64),
   label: "human",
   language: "pt-BR",
-  platform: "linkedin",
+  platform: "generic",
   domain: "corporate",
   topic: "career",
-  humanSourceType: "broetry",
+  humanSourceType: "qa-informal",
   hardNegativeFamily: "formulaic",
   wordCount: 100,
   createdAt: 1_735_689_600_000,
@@ -116,7 +116,7 @@ const ai: BenchmarkRecord = {
   normalizedTextSha256: "b".repeat(64),
   label: "ai",
   language: "pt-BR",
-  platform: "linkedin",
+  platform: "generic",
   domain: "corporate",
   topic: "career",
   wordCount: 100,
@@ -170,7 +170,7 @@ const mixed: BenchmarkRecord = {
   normalizedTextSha256: "c".repeat(64),
   label: "mixed",
   language: "pt-BR",
-  platform: "linkedin",
+  platform: "generic",
   domain: "corporate",
   topic: "career",
   wordCount: 100,
@@ -216,7 +216,7 @@ const mixed: BenchmarkRecord = {
 describe("dataset manifest", () => {
   it("accepts the fully specified infrastructure manifest", () => {
     expect(validateDatasetManifest(validManifest).datasetId).toBe(
-      "ptbr-linkedin-v1",
+      "ptbr-generic-v1",
     );
   });
 
@@ -236,11 +236,11 @@ describe("dataset manifest", () => {
     expect(() =>
       validateDatasetManifest({
         schemaVersion: 1,
-        datasetId: "ptbr-linkedin-v1",
+        datasetId: "ptbr-generic-v1",
         version: "1.0.0",
         scientificUse: "release",
         intendedLanguage: "pt-BR",
-        intendedDomain: "linkedin",
+        intendedDomain: "generic",
         createdAt: "2026-07-19T00:00:00.000Z",
         normalizationVersion: "cleanfeed-text-v1",
         annotationProtocolVersion: "annotation-v1",

@@ -15,6 +15,7 @@ import {
   contractLengthBucket,
   decideWithProfile,
   getLengthBucket,
+  normalizeCalibrationPlatform,
   type ProfileDecision,
 } from "@/inference/calibration";
 import { bundledModelManifest } from "@/inference/bundled-model-metadata";
@@ -650,7 +651,9 @@ function decideBundle(
     modelVersion: identity.modelVersion,
     bundleDigest: identity.bundleDigest,
     tokenizerDigest: identity.tokenizerDigest,
-    platform,
+    // Profiles are published for the generic pt-BR pool, so the adapter id
+    // ("linkedin", ...) is normalized ONLY for this lookup coordinate.
+    platform: normalizeCalibrationPlatform(platform),
     locale: base.language,
     lengthBucket: contractLengthBucket(base.wordCount),
     aggregationVersion: identity.aggregationVersion,

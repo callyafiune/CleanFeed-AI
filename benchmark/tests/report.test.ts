@@ -186,7 +186,7 @@ interface InputOverrides {
 function baseInput(overrides: InputOverrides = {}): BenchmarkReportInput {
   return {
     generatedAt: "2026-07-19T12:00:00.000Z",
-    dataset: { id: "ptbr-linkedin", version: "v1", digest: DATASET_DIGEST },
+    dataset: { id: "ptbr-generic", version: "v1", digest: DATASET_DIGEST },
     split: {
       digest: SPLIT_DIGEST,
       strategy: "blocked-group-time-v1",

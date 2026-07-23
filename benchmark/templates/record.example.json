@@ -5,10 +5,10 @@
   "normalizedTextSha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
   "label": "human",
   "language": "pt-BR",
-  "platform": "linkedin",
+  "platform": "generic",
   "domain": "corporate",
   "topic": "career",
-  "humanSourceType": "broetry",
+  "humanSourceType": "qa-informal",
   "hardNegativeFamily": "formulaic",
   "wordCount": 100,
   "createdAt": 1735689600000,
@@ -36,7 +36,7 @@
   "groups": {
     "author": "author_001",
     "source": "source_001",
-    "domainSource": "linkedin_contribution_batch_01",
+    "domainSource": "generic_contribution_batch_01",
     "collectionBatch": "batch_001",
     "nearDuplicate": "near_pending_001",
     "derivationRoot": "human-0001"

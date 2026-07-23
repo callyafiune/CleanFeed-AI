@@ -33,16 +33,20 @@ function gate(estimate: number, sampleSize: number) {
   };
 }
 
-/** A pass/hide profile whose coordinates match the sealed bundle identity. */
+/**
+ * A pass/hide profile whose coordinates match the sealed bundle identity.
+ * Platform is "generic": v1 publishes ONE generic pt-BR profile pool and the
+ * worker normalizes every adapter id (e.g. "linkedin") to it for the lookup.
+ */
 function baseProfile(): Omit<RuntimeCalibrationProfileV1, "profileDigest"> {
   return {
     schemaVersion: 1,
-    profileId: "linkedin-200plus",
+    profileId: "generic-200plus",
     modelId: bundledModelManifest.modelId,
     modelVersion: bundledModelManifest.modelVersion,
     bundleDigest: bundledModelManifest.bundleDigest,
     tokenizerDigest: bundledModelManifest.tokenizerDigest,
-    platform: "linkedin",
+    platform: "generic",
     locale: "pt-BR",
     lengthBucket: "200-plus",
     aggregationVersion: bundledModelManifest.aggregationVersion,

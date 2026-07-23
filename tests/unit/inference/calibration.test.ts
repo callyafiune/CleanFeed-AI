@@ -5,6 +5,7 @@ import {
   calibrateResult,
   decideWithProfile,
   getLengthBucket,
+  normalizeCalibrationPlatform,
   resolveCalibrationProfile,
   type DecideWithProfileInput,
 } from "@/inference/calibration";
@@ -155,6 +156,18 @@ describe("getLengthBucket", () => {
   ] as const)("maps %i words to %s", (count, bucket) => {
     expect(getLengthBucket(count)).toBe(bucket);
   });
+});
+
+describe("normalizeCalibrationPlatform", () => {
+  it.each(["linkedin", "manual", "any-future-adapter"])(
+    'maps adapter "%s" to the single generic v1 profile pool',
+    (adapterId) => {
+      // v1 policy: calibration profiles are published with platform "generic"
+      // (generic pt-BR corpus), so EVERY adapter id normalizes to that pool
+      // and a "generic" profile is found for a "linkedin" request.
+      expect(normalizeCalibrationPlatform(adapterId)).toBe("generic");
+    },
+  );
 });
 
 describe("resolveCalibrationProfile", () => {

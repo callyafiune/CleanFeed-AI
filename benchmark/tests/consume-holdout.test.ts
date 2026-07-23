@@ -102,7 +102,7 @@ function record(
     normalizedTextSha256: hex(`content-${id}`),
     label,
     language: "pt-BR",
-    platform: "linkedin",
+    platform: "generic",
     domain: "corporate",
     topic: "geral",
     wordCount: 60,
@@ -156,11 +156,11 @@ function datasetManifest(
 ): DatasetManifest {
   return {
     schemaVersion: 1,
-    datasetId: "ptbr-linkedin-v1",
+    datasetId: "ptbr-generic-v1",
     version: "1.0.0",
     scientificUse,
     intendedLanguage: "pt-BR",
-    intendedDomain: "linkedin",
+    intendedDomain: "generic",
     createdAt: FIXED_TIME,
     normalizationVersion: "cleanfeed-text-v1",
     annotationProtocolVersion: "annotation-v1",

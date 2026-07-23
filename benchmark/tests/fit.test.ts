@@ -43,7 +43,7 @@ function hex(label: string): string {
   return out.padEnd(64, "0").slice(0, 64);
 }
 
-const DATASET_ID = "ptbr-linkedin-v1";
+const DATASET_ID = "ptbr-generic-v1";
 const MODEL_ID = "cleanfeed-ptbr-v1";
 const MODEL_VERSION = "1.0.0";
 const BUNDLE = hex("bundle");
@@ -86,7 +86,7 @@ function makeRecord(
     normalizedTextSha256: hex(`content-${id}`),
     label,
     language: "pt-BR",
-    platform: "linkedin",
+    platform: "generic",
     domain: "corporate",
     topic: "geral",
     wordCount: 60,
@@ -246,7 +246,7 @@ function datasetManifest(): DatasetManifest {
     version: "1.0.0",
     scientificUse: "release",
     intendedLanguage: "pt-BR",
-    intendedDomain: "linkedin",
+    intendedDomain: "generic",
     createdAt: "2026-07-19T00:00:00.000Z",
     normalizationVersion: "cleanfeed-text-v1",
     annotationProtocolVersion: "annotation-v1",
@@ -304,7 +304,7 @@ async function buildAudit(): Promise<DatasetAudit> {
     releaseEligible: true,
     recordCount: allRecords.length,
     counts: { human, ai, mixed: 0 },
-    sourceTypes: { broetry: 1 },
+    sourceTypes: { "qa-informal": 1 },
     hardNegativeFamilies: { formulaic: 1 },
     generatorFamilies: { acme_family: ai },
     licenses: ["consent-v1"],

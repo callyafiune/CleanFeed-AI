@@ -177,7 +177,7 @@ describe("benchmark CLI partition and ledger flag guards", () => {
 describe("benchmark CLI score guards", () => {
   const SCORE_ARGS = [
     "--dataset-dir",
-    "benchmark/data/ptbr-linkedin-v1",
+    "benchmark/data/ptbr-generic-v1",
     "--split-artifact",
     "split.json",
     "--candidate-extension-dir",
@@ -210,7 +210,7 @@ describe("benchmark CLI score guards", () => {
       runCli([
         "score",
         "--dataset-dir",
-        "benchmark/data/ptbr-linkedin-v1",
+        "benchmark/data/ptbr-generic-v1",
         "--split-artifact",
         "split.json",
         "--candidate-extension-dir",
@@ -241,13 +241,13 @@ describe("benchmark CLI consume-holdout parsing", () => {
   const CONSUME_ARGS = [
     "consume-holdout",
     "--dataset-dir",
-    "benchmark/data/ptbr-linkedin-v1",
+    "benchmark/data/ptbr-generic-v1",
     "--split-artifact",
     "benchmark/out/ptbr-v1/split/split-artifact.json",
     "--frozen-calibration",
     "benchmark/out/ptbr-v1/fit/frozen-calibration.json",
     "--ledger",
-    "benchmark/data/ptbr-linkedin-v1/private/holdout-ledger.jsonl",
+    "benchmark/data/ptbr-generic-v1/private/holdout-ledger.jsonl",
     "--candidate-extension-dir",
     "dist-model-benchmark",
     "--work-dir",
@@ -402,7 +402,7 @@ function record(
     normalizedTextSha256: hex(`content-${id}`),
     label,
     language: "pt-BR",
-    platform: "linkedin",
+    platform: "generic",
     domain: "corporate",
     topic: "geral",
     wordCount: 60,
@@ -462,11 +462,11 @@ function record(
 function datasetManifest(): DatasetManifest {
   return {
     schemaVersion: 1,
-    datasetId: "ptbr-linkedin-v1",
+    datasetId: "ptbr-generic-v1",
     version: "1.0.0",
     scientificUse: "infrastructure-only",
     intendedLanguage: "pt-BR",
-    intendedDomain: "linkedin",
+    intendedDomain: "generic",
     createdAt: "2026-07-19T00:00:00.000Z",
     normalizationVersion: "cleanfeed-text-v1",
     annotationProtocolVersion: "annotation-v1",
@@ -1044,7 +1044,7 @@ async function buildFitScenario(
   // self-digest (its own field excluded) gates the readiness report.
   const sourceBase = {
     schemaVersion: 1,
-    corpus: "ptbr-linkedin-v1",
+    corpus: "ptbr-generic-v1",
     note: "fixture source manifest",
   };
   const sourceDigest = await canonicalSha256(sourceBase);
@@ -1057,11 +1057,11 @@ async function buildFitScenario(
 
   const manifest: DatasetManifest = {
     schemaVersion: 1,
-    datasetId: "ptbr-linkedin-v1",
+    datasetId: "ptbr-generic-v1",
     version: "1.0.0",
     scientificUse: "infrastructure-only",
     intendedLanguage: "pt-BR",
-    intendedDomain: "linkedin",
+    intendedDomain: "generic",
     createdAt: "2026-07-19T00:00:00.000Z",
     normalizationVersion: "cleanfeed-text-v1",
     annotationProtocolVersion: "annotation-v1",
@@ -1126,12 +1126,12 @@ async function buildFitScenario(
   const humanCount = allRecords.filter((r) => r.label === "human").length;
   const aiCount = allRecords.filter((r) => r.label === "ai").length;
   const auditBase: Omit<DatasetAudit, "auditDigest"> = {
-    datasetId: "ptbr-linkedin-v1",
+    datasetId: "ptbr-generic-v1",
     scientificUse: "infrastructure-only",
     releaseEligible: false,
     recordCount: allRecords.length,
     counts: { human: humanCount, ai: aiCount, mixed: 0 },
-    sourceTypes: { broetry: 1 },
+    sourceTypes: { "qa-informal": 1 },
     hardNegativeFamilies: { formulaic: 1 },
     generatorFamilies: { acme_family: aiCount },
     licenses: ["consent-v1"],

@@ -37,7 +37,7 @@ import type { SplitArtifact } from "../split-artifact.ts";
 // recomputation matches exactly; nothing is a hand-typed hash a caller forges.
 // ---------------------------------------------------------------------------
 
-const DATASET_ID = "ptbr-linkedin-v1";
+const DATASET_ID = "ptbr-generic-v1";
 const MODEL_ID = "cleanfeed-ptbr-v1";
 const MODEL_VERSION = "d8f77f870fbd35a17add2498b73d906bbc299026";
 const BUNDLE_DIGEST = "b".repeat(64);
@@ -73,7 +73,7 @@ const datasetManifest: DatasetManifest = {
   version: "1.0.0",
   scientificUse: "release",
   intendedLanguage: "pt-BR",
-  intendedDomain: "linkedin",
+  intendedDomain: "generic",
   createdAt: "2026-07-19T00:00:00.000Z",
   normalizationVersion: "cleanfeed-text-v1",
   annotationProtocolVersion: "annotation-v1",
@@ -105,7 +105,7 @@ async function buildAudit(
     releaseEligible: true,
     recordCount: 10_000,
     counts: { human: 4_000, ai: 4_000, mixed: 2_000 },
-    sourceTypes: { broetry: 1 },
+    sourceTypes: { "qa-informal": 1 },
     hardNegativeFamilies: { formulaic: 1 },
     generatorFamilies: { acme_family: 1 },
     licenses: ["consent-v1"],

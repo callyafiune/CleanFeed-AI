@@ -1,4 +1,4 @@
-# Runbook — coleta do corpus PT-BR/LinkedIn e execução do pipeline TMR
+# Runbook — coleta do corpus genérico pt-BR e execução do pipeline TMR
 
 > **O que este documento é:** a especificação exata do que coletar e a sequência
 > exata de comandos para transformar um corpus real em uma decisão de release do
@@ -51,8 +51,8 @@ O `sealDataset` só produz um audit se a composição bater **exatamente**:
 | `ai` | **4.000** | contagem exata |
 | `mixed` | **2.000** | contagem exata |
 | Idioma | `pt-BR` (todos) | schema + manifest |
-| Plataforma / domínio | `linkedin` / `corporate` (intended: linkedin) | schema + manifest |
-| Tipos de fonte humana | pelo menos 1 registro de cada: `broetry`, `recruiting`, `sales`, `career`, `technology`, `formal` | `DATASET_COVERAGE_INVALID` |
+| Plataforma / domínio | tokens livres por registro (ex.: `generic`); manifest: `datasetId: "ptbr-generic-v1"`, `intendedDomain: "generic"` | schema + manifest |
+| Tipos de fonte humana | pelo menos 1 registro de cada: `qa-informal` (SE-PT), `encyclopedic` (Wikipédia), `social-media` (Carolina social/datasets), `university` (Carolina university), `institutional` (Carolina judicial/legislative) | `DATASET_COVERAGE_INVALID` |
 | Famílias hard-negative | pelo menos 1 humano de cada: `formulaic`, `motivational`, `highly-polished`, `repetitive`, `non-native`, `corporate-structure` | `DATASET_COVERAGE_INVALID` |
 | Famílias de gerador held-out | cada família em `heldOutGeneratorFamilies` precisa de **≥ 200** positivos elegíveis (`ai`/`mixed`) e **não pode** aparecer em nenhum registro `human` | `DATASET_COVERAGE_INVALID` |
 | Revisores por registro | **≥ 2 distintos**; adjudicador (se `adjudicated`) independente dos dois | `DATASET_REVIEW_INVALID` |
@@ -85,10 +85,10 @@ Um JSON por linha, validado por [validateBenchmarkRecord](../benchmark/schema.ts
   "normalizedTextSha256": "<64 hex>",     // sha256 do texto normalizado; recomputado e conferido no ingest
   "label": "human" | "ai" | "mixed",
   "language": "pt-BR",
-  "platform": "linkedin",
+  "platform": "generic",
   "domain": "corporate",
   "topic": "geral",
-  "humanSourceType": "broetry",           // opcional; use os 6 tipos exigidos p/ cobrir human
+  "humanSourceType": "qa-informal",       // opcional; use os 5 tipos exigidos p/ cobrir human
   "hardNegativeFamily": "formulaic",       // opcional; use as 6 famílias exigidas
   "wordCount": 60,
   "createdAt": 1700000000000,             // número; define o bloco temporal do split
@@ -226,11 +226,11 @@ derivados (o ingest os gera: `recordsFile`, `recordsSha256`, `reviewLedgerFile`,
 ```jsonc
 {
   "schemaVersion": 1,
-  "datasetId": "ptbr-linkedin-v1",       // DEVE ser exatamente isto (DATASET_ID_MISMATCH)
+  "datasetId": "ptbr-generic-v1",        // DEVE ser exatamente isto (DATASET_ID_MISMATCH)
   "version": "1.0.0",
   "scientificUse": "release",            // "release" p/ elegibilidade; "infrastructure-only" nunca promove
   "intendedLanguage": "pt-BR",
-  "intendedDomain": "linkedin",
+  "intendedDomain": "generic",
   "createdAt": "2026-08-01T00:00:00.000Z",  // ISO válido
   "normalizationVersion": "cleanfeed-text-v1",
   "annotationProtocolVersion": "annotation-v1",
@@ -278,35 +278,35 @@ npm run benchmark -- ingest \
   --review-ledger <review-ledger.jsonl> \
   --sources <source-manifest.json> \
   --dataset-manifest-template <template.json> \
-  --dataset-dir benchmark/data/ptbr-linkedin-v1
+  --dataset-dir benchmark/data/ptbr-generic-v1
 
 # 2) VALIDATE — sela o dataset e emite o DatasetAudit
 npm run benchmark -- validate \
-  --dataset-dir benchmark/data/ptbr-linkedin-v1 \
+  --dataset-dir benchmark/data/ptbr-generic-v1 \
   --output benchmark/work/validate
 
 # 3) SPLIT — corte temporal 20/30/50 + auditoria de vazamento (seed fixo)
 npm run benchmark -- split \
-  --dataset-dir benchmark/data/ptbr-linkedin-v1 \
+  --dataset-dir benchmark/data/ptbr-generic-v1 \
   --dataset-audit benchmark/work/validate/dataset-audit.json \
   --output benchmark/work/split \
   --seed 1
 
 # 4) SCORE — pontua no browser SOMENTE development e calibration (nunca test)
 npm run benchmark -- score --partition development \
-  --dataset-dir benchmark/data/ptbr-linkedin-v1 \
+  --dataset-dir benchmark/data/ptbr-generic-v1 \
   --split-artifact benchmark/work/split/split-artifact.json \
   --candidate-extension-dir dist-model-benchmark \
   --output benchmark/work/predictions/development
 npm run benchmark -- score --partition calibration \
-  --dataset-dir benchmark/data/ptbr-linkedin-v1 \
+  --dataset-dir benchmark/data/ptbr-generic-v1 \
   --split-artifact benchmark/work/split/split-artifact.json \
   --candidate-extension-dir dist-model-benchmark \
   --output benchmark/work/predictions/calibration
 
 # 5) VALIDATE-PREDICTIONS — completude/identidade das previsões (dev e cal)
 npm run benchmark -- validate-predictions --partition development \
-  --dataset-dir benchmark/data/ptbr-linkedin-v1 \
+  --dataset-dir benchmark/data/ptbr-generic-v1 \
   --split-artifact benchmark/work/split/split-artifact.json \
   --predictions benchmark/work/predictions/development \
   --runtime-parity <runtime-parity.json>
@@ -314,7 +314,7 @@ npm run benchmark -- validate-predictions --partition development \
 
 # 6) FIT — calibração (Platt/beta/isotônico + CV) e congelamento dos limiares
 npm run benchmark -- fit \
-  --dataset-dir benchmark/data/ptbr-linkedin-v1 \
+  --dataset-dir benchmark/data/ptbr-generic-v1 \
   --dataset-audit benchmark/work/validate/dataset-audit.json \
   --source-readiness <source-readiness.json> \
   --split-artifact benchmark/work/split/split-artifact.json \
@@ -327,10 +327,10 @@ npm run benchmark -- fit \
 # 7) CONSUME-HOLDOUT — ⚠️ IRREVERSÍVEL. Gasta o lease do holdout UMA vez.
 #    Pontua o bloco de teste selado e DELEGA a decisão aos gates da Fase 2.
 npm run benchmark -- consume-holdout \
-  --dataset-dir benchmark/data/ptbr-linkedin-v1 \
+  --dataset-dir benchmark/data/ptbr-generic-v1 \
   --split-artifact benchmark/work/split/split-artifact.json \
   --frozen-calibration benchmark/work/fit/frozen-calibration.json \
-  --ledger benchmark/data/ptbr-linkedin-v1/private/holdout-ledger.jsonl \
+  --ledger benchmark/data/ptbr-generic-v1/private/holdout-ledger.jsonl \
   --candidate-extension-dir dist-model-benchmark \
   --work-dir benchmark/work/holdout \
   --output benchmark/work/evaluate \
@@ -355,7 +355,7 @@ npm run benchmark -- publish-evidence \
   --frozen-calibration benchmark/work/fit/frozen-calibration.json \
   --fit-report benchmark/work/fit/fit-report.json \
   --report benchmark/work/evaluate/benchmark-report.json \
-  --ledger benchmark/data/ptbr-linkedin-v1/private/holdout-ledger.jsonl \
+  --ledger benchmark/data/ptbr-generic-v1/private/holdout-ledger.jsonl \
   --consumption-id <id da sessão> \
   --model-dir models/cleanfeed-ptbr-v1 \
   --output benchmark/evidence/tmr-ptbr-v1

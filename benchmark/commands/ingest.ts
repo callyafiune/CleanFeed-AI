@@ -21,7 +21,7 @@ export interface IngestOptions {
   datasetDirectory: string;
 }
 
-const EXPECTED_DATASET_ID = "ptbr-linkedin-v1" as const;
+const EXPECTED_DATASET_ID = "ptbr-generic-v1" as const;
 
 export async function runIngest(options: IngestOptions): Promise<string> {
   const request: IngestRequest = {

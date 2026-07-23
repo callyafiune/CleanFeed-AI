@@ -283,11 +283,13 @@ uso comercial**. Três consequências práticas:
 
 ## Dependência pendente
 
-O manifesto selado hoje exige `datasetId: "ptbr-linkedin-v1"` e
-`intendedDomain: "linkedin"` (literais nos contratos). O piloto roda FORA do
-pipeline selado e não é afetado; se o pivô de escopo ("modelo genérico +
-avaliação em social curto pt-BR") for confirmado, os literais serão atualizados
-em contrato antes do corpus de release. Ver o
+**RESOLVIDO em 2026-07-23: pivô confirmado, contratos atualizados.** O manifesto
+selado agora exige `datasetId: "ptbr-generic-v1"` e `intendedDomain: "generic"`,
+e a política de release cobre os cinco tipos de fonte humana das fontes deste
+inventário (`qa-informal`, `encyclopedic`, `social-media`, `university`,
+`institutional`). Os perfis de calibração são publicados com platform
+`generic`; o runtime normaliza o id do adapter (ex.: `linkedin`) para esse pool
+único no lookup — o adapter da extensão continua `linkedin`. Ver o
 [runbook de coleta](corpus-collection-runbook.md).
 
 ## Disclaimer

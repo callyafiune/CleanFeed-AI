@@ -69,7 +69,7 @@ interface TemplateLike {
   version: string;
   scientificUse: "release" | "infrastructure-only";
   intendedLanguage: "pt-BR";
-  intendedDomain: "linkedin";
+  intendedDomain: "generic";
   createdAt: string;
   normalizationVersion: string;
   annotationProtocolVersion: "annotation-v1";
@@ -80,11 +80,11 @@ interface TemplateLike {
 function template(overrides: Partial<TemplateLike> = {}): TemplateLike {
   return {
     schemaVersion: 1,
-    datasetId: "ptbr-linkedin-v1",
+    datasetId: "ptbr-generic-v1",
     version: "1.0.0",
     scientificUse: "infrastructure-only",
     intendedLanguage: "pt-BR",
-    intendedDomain: "linkedin",
+    intendedDomain: "generic",
     createdAt: "2026-07-19T00:00:00.000Z",
     normalizationVersion: "cleanfeed-text-v1",
     annotationProtocolVersion: "annotation-v1",
@@ -140,10 +140,10 @@ function humanRecord(
     normalizedTextSha256: corpusContentDigest(text),
     label: "human",
     language: "pt-BR",
-    platform: "linkedin",
+    platform: "generic",
     domain: "corporate",
     topic: "career",
-    humanSourceType: "broetry",
+    humanSourceType: "qa-informal",
     wordCount: 8,
     createdAt: 1000,
     provenance: {
@@ -228,7 +228,7 @@ async function buildRequest(
     `${JSON.stringify(incoming.template, null, 2)}\n`,
     "utf8",
   );
-  const datasetDirectory = join(root, "ptbr-linkedin-v1");
+  const datasetDirectory = join(root, "ptbr-generic-v1");
   return {
     datasetDirectory,
     request: {
@@ -237,7 +237,7 @@ async function buildRequest(
       inputSourceManifestPath: join(inDir, "sources.json"),
       inputDatasetManifestTemplatePath: join(inDir, "template.json"),
       datasetDirectory,
-      expectedDatasetId: "ptbr-linkedin-v1",
+      expectedDatasetId: "ptbr-generic-v1",
     },
   };
 }
@@ -600,10 +600,10 @@ function human(id: string, createdAt: number, batch: string): BenchmarkRecord {
     normalizedTextSha256: corpusContentDigest(text),
     label: "human",
     language: "pt-BR",
-    platform: "linkedin",
+    platform: "generic",
     domain: "corporate",
     topic: "geral",
-    humanSourceType: "broetry",
+    humanSourceType: "qa-informal",
     wordCount: 60,
     createdAt,
     provenance: {
@@ -658,7 +658,7 @@ function ai(
     normalizedTextSha256: corpusContentDigest(text),
     label: "ai",
     language: "pt-BR",
-    platform: "linkedin",
+    platform: "generic",
     domain: "corporate",
     topic: "geral",
     wordCount: 60,
@@ -700,7 +700,7 @@ function mixed(
     normalizedTextSha256: corpusContentDigest(text),
     label: "mixed",
     language: "pt-BR",
-    platform: "linkedin",
+    platform: "generic",
     domain: "corporate",
     topic: "geral",
     wordCount: 60,

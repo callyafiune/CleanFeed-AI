@@ -18,11 +18,11 @@ const SHA = "a".repeat(64);
 
 const MANIFEST: DatasetManifest = {
   schemaVersion: 1,
-  datasetId: "ptbr-linkedin-v1",
+  datasetId: "ptbr-generic-v1",
   version: "1.0.0",
   scientificUse: "infrastructure-only",
   intendedLanguage: "pt-BR",
-  intendedDomain: "linkedin",
+  intendedDomain: "generic",
   createdAt: "2026-07-19T00:00:00.000Z",
   normalizationVersion: "cleanfeed-text-v1",
   annotationProtocolVersion: "annotation-v1",
@@ -75,7 +75,7 @@ function rec(spec: RecordSpec): BenchmarkRecord {
     normalizedTextSha256: SHA,
     label: spec.label,
     language: "pt-BR",
-    platform: "linkedin",
+    platform: "generic",
     domain: spec.domain,
     topic: "carreira",
     wordCount: spec.wordCount,

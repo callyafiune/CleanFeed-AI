@@ -296,7 +296,7 @@ function report(
     schemaVersion: 2,
     generatedAt: ISSUED_AT,
     holdoutConsumptionId: "consume-holdout-0001",
-    dataset: { id: "ptbr-linkedin-v1", version: "1", digest: DATASET_DIGEST },
+    dataset: { id: "ptbr-generic-v1", version: "1", digest: DATASET_DIGEST },
     datasetAuditDigest: "3".repeat(64),
     sourceReadinessDigest: "4".repeat(64),
     split: {

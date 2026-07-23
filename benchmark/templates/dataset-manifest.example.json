@@ -1,10 +1,10 @@
 {
   "schemaVersion": 1,
-  "datasetId": "ptbr-linkedin-v1",
+  "datasetId": "ptbr-generic-v1",
   "version": "1.0.0",
   "scientificUse": "release",
   "intendedLanguage": "pt-BR",
-  "intendedDomain": "linkedin",
+  "intendedDomain": "generic",
   "createdAt": "2026-07-19T00:00:00.000Z",
   "normalizationVersion": "cleanfeed-text-v1",
   "annotationProtocolVersion": "annotation-v1",
@@ -19,7 +19,7 @@
     {
       "id": "consent-v1",
       "name": "Authorized contribution v1",
-      "source": "internal://consent-registry/ptbr-linkedin-v1",
+      "source": "internal://consent-registry/ptbr-generic-v1",
       "evaluationUseApproved": true,
       "redistribution": "not-published",
       "notice": "Contributed under explicit consent for internal evaluation; raw text is never redistributed."
@@ -35,7 +35,7 @@
     {
       "id": "generated-v1",
       "name": "Controlled generation v1",
-      "source": "internal://generation-registry/ptbr-linkedin-v1",
+      "source": "internal://generation-registry/ptbr-generic-v1",
       "evaluationUseApproved": true,
       "redistribution": "not-published",
       "notice": "Synthetic material generated under a documented recipe for internal evaluation."

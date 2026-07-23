@@ -129,7 +129,10 @@ async function buildProfile(
     modelVersion: identity.modelVersion,
     bundleDigest: identity.bundleDigest,
     tokenizerDigest: identity.tokenizerDigest,
-    platform: "linkedin",
+    // Mirrors publish-profile (benchmark/profile-artifact.ts): v1 profiles are
+    // published for the single "generic" pt-BR pool; the worker normalizes the
+    // adapter id ("linkedin") to it before the registry lookup.
+    platform: "generic",
     locale: "pt-BR",
     lengthBucket,
     aggregationVersion: identity.aggregationVersion,

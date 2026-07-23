@@ -57,7 +57,7 @@ export interface IngestRequest {
   inputSourceManifestPath: string;
   inputDatasetManifestTemplatePath: string;
   datasetDirectory: string;
-  expectedDatasetId: "ptbr-linkedin-v1";
+  expectedDatasetId: "ptbr-generic-v1";
 }
 
 export interface IngestRejection {
@@ -305,7 +305,7 @@ function refuseCrossLineageNearDuplicates(
 
 async function loadTemplate(
   path: string,
-  expectedDatasetId: "ptbr-linkedin-v1",
+  expectedDatasetId: "ptbr-generic-v1",
 ): Promise<Omit<DatasetManifest, (typeof DERIVED_MANIFEST_KEYS)[number]>> {
   const value = await readJsonFile(path);
   if (typeof value !== "object" || value === null || Array.isArray(value)) {

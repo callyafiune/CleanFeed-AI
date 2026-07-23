@@ -47,7 +47,13 @@ import { wilsonOneSided } from "./intervals.ts";
 import type { DecisionMetrics, MetricEstimate } from "./metrics.ts";
 import type { BenchmarkReport } from "./report.ts";
 
-const PLATFORM = "linkedin";
+// v1 policy: calibration profiles are published for the single "generic"
+// platform pool — the sealed corpus is generic pt-BR, not platform-specific.
+// The runtime normalizes every adapter id to this same pool before the lookup
+// (src/inference/calibration.ts normalizeCalibrationPlatform), so per-platform
+// profiles remain possible later by emitting other platform values here and
+// changing that normalization.
+const PLATFORM = "generic";
 const LOCALE = "pt-BR" as const;
 const EXPIRY_MS = 180 * 86_400_000;
 
