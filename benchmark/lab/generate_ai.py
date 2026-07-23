@@ -319,6 +319,16 @@ def main() -> None:
             except GenerationRefused as refused:
                 print(f"  item {row['candidateId']} recusado (pulado): {refused}")
                 continue
+            except urllib.error.HTTPError as error:
+                if error.code == 429:
+                    # Quota wall (free tiers): stop CLEANLY; the lane is
+                    # resume-safe and continues on the next run.
+                    print(
+                        f"  cota esgotada apos {writer.stats.kept} mantidos — "
+                        "relance a lane mais tarde (resume automatico)"
+                    )
+                    break
+                raise
             generated_at = datetime.now(timezone.utc)
             writer.offer(
                 natural_key=f"ai:{provider}:{row['candidateId']}",
