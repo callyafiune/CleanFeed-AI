@@ -369,3 +369,53 @@ class CodexBatchTests(unittest.TestCase):
             self.assertLessEqual(len(rows), 20)
             for row in rows:
                 self.assertEqual(recipe_for("openai", row["candidateId"]), recipe)
+
+
+class BuildDatasetTests(unittest.TestCase):
+    def test_pairs_are_atomic_and_buckets_deterministic(self) -> None:
+        import build_dataset as bd
+
+        with tempfile.TemporaryDirectory() as raw:
+            tmp = Path(raw)
+            humans = tmp / "h.jsonl"
+            ais = tmp / "a.jsonl"
+            human_rows = [
+                {"candidateId": f"src_h_{i:04d}", "text": f"{PROSE_60} humano {i}",
+                 "domainSource": "d", "wordCount": 61}
+                for i in range(50)
+            ]
+            humans.write_text(
+                "\n".join(json.dumps(r) for r in human_rows) + "\n", encoding="utf-8"
+            )
+            ai_rows = [
+                {"candidateId": f"src_ai_{i:04d}", "text": f"{PROSE_60} ia {i}",
+                 "domainSource": "ai_x", "wordCount": 61,
+                 "meta": {"pairedWith": f"src_h_{i:04d}", "family": "f", "recipe": "original"}}
+                for i in range(50)
+            ]
+            # one exact duplicate of a human text -> must be dropped
+            ai_rows.append({"candidateId": "src_ai_dup", "text": human_rows[0]["text"],
+                            "domainSource": "ai_x", "wordCount": 61,
+                            "meta": {"pairedWith": "", "family": "f", "recipe": ""}})
+            ais.write_text(
+                "\n".join(json.dumps(r) for r in ai_rows) + "\n", encoding="utf-8"
+            )
+
+            rows = bd.assemble([humans], [ais])
+            dropped = rows.pop("_dropped_dupes")
+            self.assertEqual(dropped, 1)
+            split_of = {}
+            for split, split_rows in rows.items():
+                for row in split_rows:
+                    split_of[row["id"]] = split
+            for i in range(50):
+                self.assertEqual(
+                    split_of[f"src_h_{i:04d}"], split_of[f"src_ai_{i:04d}"],
+                    "par humano/IA deve ficar no MESMO split",
+                )
+            self.assertEqual(
+                split_of["src_h_0000"],
+                bd.split_name(bd.bucket_of("src_h_0000")),
+            )
+            total = sum(len(r) for r in rows.values())
+            self.assertEqual(total, 100)
