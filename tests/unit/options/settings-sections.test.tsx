@@ -256,7 +256,7 @@ describe("options settings sections", () => {
     expect(await screen.findByText("Nenhum perfil aplicável")).toBeVisible();
     expect(
       screen.getByText(
-        "Sem perfil aplicável; o TMR se abstém e o fallback local pode apenas indicar.",
+        "Sem perfil aplicável; o detector se abstém e o fallback local pode apenas indicar.",
       ),
     ).toBeVisible();
   });
@@ -296,7 +296,7 @@ describe("options settings sections", () => {
 
     expect(
       await screen.findByText(
-        "TMR temporariamente desativado; usando fallback local.",
+        "Detector temporariamente desativado; usando fallback local.",
       ),
     ).toBeVisible();
   });

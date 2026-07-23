@@ -130,7 +130,7 @@ describe("popup model status", () => {
   it.each([
     [
       "none",
-      "Sem perfil aplicável; o TMR se abstém e o fallback local pode apenas indicar.",
+      "Sem perfil aplicável; o detector se abstém e o fallback local pode apenas indicar.",
     ],
     ["partial", "Cobertura parcial de calibração"],
     ["complete", "Cobertura completa de calibração"],
@@ -156,7 +156,7 @@ describe("popup model status", () => {
     render(<App api={api} />);
     expect(
       await screen.findByText(
-        "TMR temporariamente desativado; usando fallback local.",
+        "Detector temporariamente desativado; usando fallback local.",
       ),
     ).toBeVisible();
   });

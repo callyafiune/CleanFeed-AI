@@ -209,7 +209,7 @@ test.describe("authorized rollout on the real Chromium MV3 lane", () => {
       // active identity is builtin, and the abstention reason is surfaced.
       expect(card).toContain("Fallback estilométrico ativo");
       expect(card).toContain(
-        "Sem perfil aplicável; o TMR se abstém e o fallback local pode apenas indicar.",
+        "Sem perfil aplicável; o detector se abstém e o fallback local pode apenas indicar.",
       );
       // A promoted decision is still reported as the scientific stage.
       expect(card).toContain("Elegível para ações");

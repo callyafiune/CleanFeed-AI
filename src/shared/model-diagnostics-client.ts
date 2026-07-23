@@ -42,7 +42,7 @@ export const CALIBRATION_COPY: Record<
   ModelStatus["calibrationCoverage"],
   string
 > = {
-  none: "Sem perfil aplicável; o TMR se abstém e o fallback local pode apenas indicar.",
+  none: "Sem perfil aplicável; o detector se abstém e o fallback local pode apenas indicar.",
   partial: "Cobertura parcial de calibração",
   complete: "Cobertura completa de calibração",
 };
@@ -70,7 +70,7 @@ export const BUILTIN_FALLBACK_COPY = "Fallback estilométrico ativo";
 
 /** Shown when the TMR circuit breaker is open and the fallback is serving. */
 export const CIRCUIT_BREAKER_COPY =
-  "TMR temporariamente desativado; usando fallback local.";
+  "Detector temporariamente desativado; usando fallback local.";
 
 /** Shown when the opt-in uncalibrated experimental TMR preview is the active runtime. */
 export const EXPERIMENTAL_UNCALIBRATED_COPY =
