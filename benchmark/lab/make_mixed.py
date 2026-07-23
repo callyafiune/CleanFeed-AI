@@ -131,6 +131,18 @@ def main() -> None:
     parser.add_argument("--target", type=int, default=100)
     parser.add_argument("--sleep", type=float, default=6.0)
     parser.add_argument("--model", default="gemini-flash-lite-latest")
+    parser.add_argument(
+        "--cooldown",
+        type=float,
+        default=70.0,
+        help="segundos de espera quando o 429 persiste (bucket ~1 req/min)",
+    )
+    parser.add_argument(
+        "--max-cooldowns",
+        type=int,
+        default=8,
+        help="429s consecutivos antes de tratar como cota do dia e parar",
+    )
     args = parser.parse_args()
 
     sys.stdout.reconfigure(encoding="utf-8", errors="replace")
@@ -177,23 +189,45 @@ def main() -> None:
             for r in read_jsonl(args.parents)
             if r.get("label") == 0 and 50 <= len(r["text"].split()) <= 450
         ]
+        def edit_with_cooldown(prompt: str) -> str | None:
+            """None = 429 persistiu além do teto (cota do dia): aborta o lote.
+
+            O free tier do Gemini é um token bucket (rajada ~3, recarga
+            ~1 req/min): o backoff curto do call_with_retries não alcança a
+            recarga, então quem espera o bucket é este loop — a lane se
+            auto-regula à cota disponível em vez de morrer no primeiro 429.
+            """
+            streak = 0
+            while True:
+                try:
+                    return call_with_retries(
+                        call_provider, "gemini", args.model, prompt, None, keys
+                    )
+                except urllib.error.HTTPError as error:
+                    if error.code != 429:
+                        raise
+                    streak += 1
+                    if streak > args.max_cooldowns:
+                        return None
+                    print(
+                        f"  429 — cooldown {streak}/{args.max_cooldowns} "
+                        f"({args.cooldown:.0f}s)"
+                    )
+                    time.sleep(args.cooldown)
+
         pending = [p for p in parents if p["id"] not in done][: args.target]
         print(f"gerando {len(pending)} mistos (resume-skip={len(done)})")
         kept = 0
         for index, parent in enumerate(pending, start=1):
             prompt = EDIT_PROMPT.format(parent=parent["text"][:6000])
             try:
-                edited = call_with_retries(
-                    call_provider, "gemini", args.model, prompt, None, keys
-                )
+                edited = edit_with_cooldown(prompt)
             except GenerationRefused as refused:
                 print(f"  {parent['id']} recusado: {refused}")
                 continue
-            except urllib.error.HTTPError as error:
-                if error.code == 429:
-                    print(f"  cota esgotada após {kept} — resume automático depois")
-                    break
-                raise
+            if edited is None:
+                print(f"  cota persistente após {kept} — resume automático depois")
+                break
             mixture = compute_mixture(parent["text"], edited)
             # An edit that rewrote (quase) tudo não é "misto" — descarta.
             if not 0.05 <= mixture["aiFraction"] <= 0.7:
