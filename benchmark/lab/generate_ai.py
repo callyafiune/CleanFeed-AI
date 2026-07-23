@@ -126,6 +126,12 @@ def http_json(url: str, payload: dict, headers: dict[str, str]) -> dict:
         return json.loads(response.read().decode("utf-8"))
 
 
+class GenerationRefused(Exception):
+    """The provider answered without usable content (safety block, empty
+    candidates, truncated shape). Deterministic per item — the caller must SKIP
+    the item, never retry it and never abort the batch."""
+
+
 def call_provider(
     provider: str, model: str, prompt: str, seed: int | None, keys: dict[str, str]
 ) -> str:
@@ -143,7 +149,11 @@ def call_provider(
             payload,
             {"Authorization": f"Bearer {keys['openai']}"},
         )
-        return data["choices"][0]["message"]["content"]
+        choices = data.get("choices") or []
+        content = (choices[0].get("message") or {}).get("content") if choices else None
+        if not content:
+            raise GenerationRefused(f"openai sem conteudo: {str(data)[:160]}")
+        return content
     if provider == "anthropic":
         data = http_json(
             "https://api.anthropic.com/v1/messages",
@@ -155,9 +165,14 @@ def call_provider(
             },
             {"x-api-key": keys["anthropic"], "anthropic-version": "2023-06-01"},
         )
-        return "".join(
-            part.get("text", "") for part in data["content"] if part.get("type") == "text"
+        text = "".join(
+            part.get("text", "")
+            for part in data.get("content") or []
+            if part.get("type") == "text"
         )
+        if not text:
+            raise GenerationRefused(f"anthropic sem conteudo: {str(data)[:160]}")
+        return text
     if provider == "gemini":
         data = http_json(
             "https://generativelanguage.googleapis.com/v1beta/models/"
@@ -171,8 +186,17 @@ def call_provider(
             },
             {},
         )
-        parts = data["candidates"][0]["content"]["parts"]
-        return "".join(part.get("text", "") for part in parts)
+        candidates = data.get("candidates") or []
+        parts = (
+            (candidates[0].get("content") or {}).get("parts") if candidates else None
+        ) or []
+        text = "".join(part.get("text", "") for part in parts)
+        if not text:
+            # Safety block / empty candidate: promptFeedback carries the reason.
+            raise GenerationRefused(
+                f"gemini sem conteudo: {str(data.get('promptFeedback') or data)[:160]}"
+            )
+        return text
     raise ValueError(f"unknown provider {provider}")
 
 
@@ -288,9 +312,13 @@ def main() -> None:
                 if provider in SEEDED_PROVIDERS
                 else None
             )
-            text = call_with_retries(
-                call_provider, provider, model, prompt, seed, keys
-            )
+            try:
+                text = call_with_retries(
+                    call_provider, provider, model, prompt, seed, keys
+                )
+            except GenerationRefused as refused:
+                print(f"  item {row['candidateId']} recusado (pulado): {refused}")
+                continue
             generated_at = datetime.now(timezone.utc)
             writer.offer(
                 natural_key=f"ai:{provider}:{row['candidateId']}",

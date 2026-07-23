@@ -41,6 +41,7 @@ def main() -> None:
     parser.add_argument("--model", required=True)
     parser.add_argument("--prompt-note", required=True)
     parser.add_argument("--mode", default="interactive-session")
+    parser.add_argument("--recipe", default="original")
     args = parser.parse_args()
 
     prompt_digest = hashlib.sha256(args.prompt_note.encode("utf-8")).hexdigest()
@@ -88,6 +89,7 @@ def main() -> None:
                         "generatedAt": generated_at.isoformat(),
                         "pairedWith": paired,
                         "generationMode": args.mode,
+                        "recipe": args.recipe,
                     },
                 )
     finally:
