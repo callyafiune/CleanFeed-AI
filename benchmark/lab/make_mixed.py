@@ -168,6 +168,8 @@ def emit(output, parent_row, edited: str, provider: str, model: str) -> None:
         "parentFamily": parent_row.get("family", "?"),
     }
     output.write(json.dumps(record, ensure_ascii=False) + "\n")
+    # Cada registro custou cota real — nada pode viver só no buffer.
+    output.flush()
 
 
 def main() -> None:
@@ -179,6 +181,13 @@ def main() -> None:
     parser.add_argument("--target", type=int, default=100)
     parser.add_argument("--sleep", type=float, default=6.0)
     parser.add_argument("--model", default="gemini-flash-lite-latest")
+    parser.add_argument(
+        "--models",
+        default=None,
+        help="lista separada por vírgula: rotaciona modelos ao esbarrar em "
+        "429 (buckets de cota são POR MODELO) e remove os que respondem 404; "
+        "sobrepõe --model",
+    )
     parser.add_argument(
         "--cooldown",
         type=float,
@@ -200,7 +209,9 @@ def main() -> None:
     )
     args = parser.parse_args()
 
-    sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+    sys.stdout.reconfigure(
+        encoding="utf-8", errors="replace", line_buffering=True
+    )
     done = already_done(args.output)
 
     with args.output.open("a", encoding="utf-8", newline="\n") as output:
@@ -256,31 +267,49 @@ def main() -> None:
             for r in read_jsonl(args.parents)
             if r.get("label") == 0 and 50 <= len(r["text"].split()) <= 450
         ]
-        def edit_with_cooldown(prompt: str) -> str | None:
-            """None = 429 persistiu além do teto (cota do dia): aborta o lote.
+        models = (
+            [m.strip() for m in args.models.split(",") if m.strip()]
+            if args.models
+            else [args.model]
+        )
+        state = {"i": 0}
 
-            O free tier do Gemini é um token bucket (rajada ~3, recarga
-            ~1 req/min): o backoff curto do call_with_retries não alcança a
-            recarga, então quem espera o bucket é este loop — a lane se
-            auto-regula à cota disponível em vez de morrer no primeiro 429.
+        def edit_with_failover(prompt: str) -> tuple[str, str] | None:
+            """(texto, modelo) — ou None quando TODOS os modelos esgotaram.
+
+            Cotas do free tier são POR MODELO: no 429, pula imediatamente
+            para o próximo bucket (fica "grudado" no que funcionou); só
+            dorme --cooldown quando uma rodada inteira falhou, e desiste
+            após --max-cooldowns rodadas secas. Modelos que respondem 404
+            (descomissionados) saem da rotação.
             """
-            streak = 0
-            while True:
-                try:
-                    return call_with_retries(
-                        call_provider, "gemini", args.model, prompt, None, keys
-                    )
-                except urllib.error.HTTPError as error:
-                    if error.code != 429:
-                        raise
-                    streak += 1
-                    if streak > args.max_cooldowns:
-                        return None
+            dry_rounds = 0
+            while dry_rounds <= args.max_cooldowns:
+                for _ in range(len(models)):
+                    model = models[state["i"] % len(models)]
+                    try:
+                        text = call_with_retries(
+                            call_provider, "gemini", model, prompt, None, keys
+                        )
+                        return text, model
+                    except urllib.error.HTTPError as error:
+                        if error.code == 404:
+                            print(f"  {model} respondeu 404 — fora da rotação")
+                            models.remove(model)
+                            if not models:
+                                return None
+                            continue
+                        if error.code != 429:
+                            raise
+                        state["i"] += 1
+                dry_rounds += 1
+                if dry_rounds <= args.max_cooldowns:
                     print(
-                        f"  429 — cooldown {streak}/{args.max_cooldowns} "
-                        f"({args.cooldown:.0f}s)"
+                        f"  todos os modelos em 429 — cooldown "
+                        f"{dry_rounds}/{args.max_cooldowns} ({args.cooldown:.0f}s)"
                     )
                     time.sleep(args.cooldown)
+            return None
 
         in_band = in_mixed_band
 
@@ -291,29 +320,29 @@ def main() -> None:
         kept = 0
         for index, parent in enumerate(pending, start=1):
             try:
-                edited = edit_with_cooldown(
+                result = edit_with_failover(
                     EDIT_PROMPT.format(parent=parent["text"][:6000])
                 )
                 mixture = (
-                    compute_mixture(parent["text"], edited) if edited else None
+                    compute_mixture(parent["text"], result[0]) if result else None
                 )
                 for _ in range(args.nudge_retries):
-                    if edited is None or in_band(mixture):
+                    if result is None or in_band(mixture):
                         break
                     template = (
                         PROMPT_CHANGE_LESS
-                        if mixture["aiFraction"] > 0.7
+                        if mixture["aiFraction"] > MIXED_BAND[1]
                         else PROMPT_CHANGE_MORE
                     )
-                    edited = edit_with_cooldown(
+                    result = edit_with_failover(
                         template.format(parent=parent["text"][:6000])
                     )
-                    if edited is not None:
-                        mixture = compute_mixture(parent["text"], edited)
+                    if result is not None:
+                        mixture = compute_mixture(parent["text"], result[0])
             except GenerationRefused as refused:
                 print(f"  {parent['id']} recusado: {refused}")
                 continue
-            if edited is None:
+            if result is None:
                 print(f"  cota persistente após {kept} — resume automático depois")
                 break
             if not in_band(mixture):
@@ -322,7 +351,8 @@ def main() -> None:
                     f"(aiFraction={mixture['aiFraction']:.2f}) — descartado"
                 )
                 continue
-            emit(output, parent, edited, provider="gemini", model=args.model)
+            edited, used_model = result
+            emit(output, parent, edited, provider="gemini", model=used_model)
             kept += 1
             if index % 10 == 0:
                 print(f"  {index}/{len(pending)} (kept={kept})")
