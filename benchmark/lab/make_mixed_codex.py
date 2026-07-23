@@ -25,6 +25,7 @@ import re
 import subprocess
 import sys
 import tempfile
+import time
 from pathlib import Path
 
 from make_mixed import EDIT_PROMPT, already_done, read_jsonl
@@ -72,6 +73,15 @@ def main() -> None:
     parser.add_argument("--model", default=None, help="passa --model ao codex")
     parser.add_argument("--timeout", type=int, default=300)
     parser.add_argument("--max-failures", type=int, default=3)
+    parser.add_argument(
+        "--item-retries",
+        type=int,
+        default=3,
+        help="tentativas por pai — o gate de versão do servidor codex é "
+        "intermitente (mesma chamada ora passa, ora leva 400)",
+    )
+    parser.add_argument("--retry-backoff", type=float, default=15.0)
+    parser.add_argument("--pace", type=float, default=3.0)
     args = parser.parse_args()
 
     sys.stdout.reconfigure(encoding="utf-8", errors="replace")
@@ -87,11 +97,23 @@ def main() -> None:
     with args.pairs.open("a", encoding="utf-8", newline="\n") as pairs_out:
         for index, parent in enumerate(parents, start=1):
             prompt = EDIT_PROMPT.format(parent=parent["text"][:6000])
-            try:
-                edited, log = run_codex(prompt, workdir, args.model, args.timeout)
-            except (RuntimeError, subprocess.TimeoutExpired) as error:
+            edited = log = None
+            for attempt in range(args.item_retries):
+                try:
+                    edited, log = run_codex(
+                        prompt, workdir, args.model, args.timeout
+                    )
+                    break
+                except (RuntimeError, subprocess.TimeoutExpired) as error:
+                    last_error = error
+                    if attempt < args.item_retries - 1:
+                        time.sleep(args.retry_backoff)
+            if edited is None:
                 failures += 1
-                print(f"  {parent['id']} falhou ({failures}/{args.max_failures}): {error}")
+                print(
+                    f"  {parent['id']} falhou ({failures}/{args.max_failures}): "
+                    f"{last_error}"
+                )
                 if failures >= args.max_failures:
                     print(f"  falhas consecutivas — parando após {kept} (resume depois)")
                     break
@@ -118,6 +140,7 @@ def main() -> None:
             kept += 1
             if index % 10 == 0:
                 print(f"  {index}/{len(parents)} (kept={kept})")
+            time.sleep(args.pace)
     print(f"pares codex: {kept} -> {args.pairs}")
 
 
