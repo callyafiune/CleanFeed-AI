@@ -419,3 +419,34 @@ class BuildDatasetTests(unittest.TestCase):
             )
             total = sum(len(r) for r in rows.values())
             self.assertEqual(total, 100)
+
+
+class MakeMixedTests(unittest.TestCase):
+    def test_spans_tile_and_fractions_sum(self) -> None:
+        from make_mixed import compute_mixture
+
+        parent = "O mercado de trabalho brasileiro atravessa um período positivo."
+        edited = "O mercado de trabalho brasileiro vive um momento francamente positivo."
+        mixture = compute_mixture(parent, edited)
+        self.assertAlmostEqual(
+            mixture["aiFraction"] + mixture["humanFraction"], 1.0, places=6
+        )
+        spans = mixture["spans"]
+        self.assertEqual(spans[0]["start"], 0)
+        self.assertEqual(spans[-1]["end"], len(edited))
+        for left, right in zip(spans, spans[1:]):
+            self.assertEqual(left["end"], right["start"])  # ladrilham sem furo
+            self.assertNotEqual(left["origin"], right["origin"])  # coalescidos
+        self.assertTrue(any(s["origin"] == "ai" for s in spans))
+        self.assertTrue(any(s["origin"] == "human" for s in spans))
+
+    def test_identical_and_total_rewrite_extremes(self) -> None:
+        from make_mixed import compute_mixture
+
+        same = compute_mixture("texto igual", "texto igual")
+        self.assertEqual(same["aiFraction"], 0.0)
+        self.assertEqual(len(same["spans"]), 1)
+        self.assertEqual(same["spans"][0]["origin"], "human")
+
+        rewrite = compute_mixture("um texto qualquer", "conteúdo completamente novo")
+        self.assertGreater(rewrite["aiFraction"], 0.8)
