@@ -440,6 +440,22 @@ class MakeMixedTests(unittest.TestCase):
         self.assertTrue(any(s["origin"] == "ai" for s in spans))
         self.assertTrue(any(s["origin"] == "human" for s in spans))
 
+    def test_interleave_by_family_round_robin(self) -> None:
+        from make_mixed import interleave_by_family
+
+        pending = [
+            {"id": "a1", "family": "A"},
+            {"id": "a2", "family": "A"},
+            {"id": "a3", "family": "A"},
+            {"id": "b1", "family": "B"},
+            {"id": "b2", "family": "B"},
+            {"id": "c1", "family": "C"},
+        ]
+        order = [p["id"] for p in interleave_by_family(pending)]
+        # Qualquer prefixo cobre o máximo de famílias possível.
+        self.assertEqual(order, ["a1", "b1", "c1", "a2", "b2", "a3"])
+        self.assertEqual(sorted(order), sorted(p["id"] for p in pending))
+
     def test_identical_and_total_rewrite_extremes(self) -> None:
         from make_mixed import compute_mixture
 

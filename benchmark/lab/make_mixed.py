@@ -95,6 +95,26 @@ def compute_mixture(parent: str, edited: str) -> dict:
     }
 
 
+def interleave_by_family(pending: list[dict]) -> list[dict]:
+    """Round-robin by family, preserving in-family order.
+
+    The reserved split is grouped by family; slicing "the first N" would make
+    a single-register mixed class whenever quota stops a batch early. After
+    interleaving, any prefix is close to maximally register-diverse.
+    """
+    by_family: dict[str, list[dict]] = {}
+    for parent in pending:
+        by_family.setdefault(parent.get("family", "?"), []).append(parent)
+    from itertools import zip_longest
+
+    return [
+        parent
+        for group in zip_longest(*by_family.values())
+        for parent in group
+        if parent is not None
+    ]
+
+
 def read_jsonl(path: Path) -> list[dict]:
     with path.open(encoding="utf-8") as handle:
         return [json.loads(line) for line in handle if line.strip()]
@@ -215,7 +235,9 @@ def main() -> None:
                     )
                     time.sleep(args.cooldown)
 
-        pending = [p for p in parents if p["id"] not in done][: args.target]
+        pending = interleave_by_family(
+            [p for p in parents if p["id"] not in done]
+        )[: args.target]
         print(f"gerando {len(pending)} mistos (resume-skip={len(done)})")
         kept = 0
         for index, parent in enumerate(pending, start=1):
