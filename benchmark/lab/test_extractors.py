@@ -351,3 +351,21 @@ class PublicCorpusTests(unittest.TestCase):
         self.assertFalse(
             looks_contaminated("Texto longo em português. " * 20 + "We need to go.")
         )
+
+
+class CodexBatchTests(unittest.TestCase):
+    def test_chunks_are_single_recipe_and_bounded(self) -> None:
+        from codex_batch import chunk_pairs
+        from generate_ai import recipe_for
+
+        pairs = [
+            {"candidateId": f"src_x_{i:06d}", "wordCount": 100, "text": PROSE_60}
+            for i in range(97)
+        ]
+        chunks = chunk_pairs(pairs, "openai", 20)
+        total = sum(len(rows) for _, rows in chunks)
+        self.assertEqual(total, 97)
+        for recipe, rows in chunks:
+            self.assertLessEqual(len(rows), 20)
+            for row in rows:
+                self.assertEqual(recipe_for("openai", row["candidateId"]), recipe)
