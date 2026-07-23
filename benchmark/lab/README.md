@@ -55,3 +55,24 @@ python generate_ai.py --provider anthropic \
   --output ../data/candidates/ai_anthropic.jsonl --per-provider 60
 # idem --provider openai | gemini; --dry-run mostra o plano sem chamar API
 ```
+
+## T4 — treino no Colab (bake-off)
+
+O smoke local (CPU) valida o script; o treino real roda num Colab T4 grátis:
+
+```bash
+# na sua máquina: empacotar o dataset final (após as lanes fecharem)
+tar -czf dataset.tgz -C ../data/dataset train.jsonl dev.jsonl
+
+# no Colab (Runtime > T4 GPU): subir dataset.tgz e train_detector.py, então
+!pip -q install torch transformers scikit-learn
+!tar -xzf dataset.tgz
+!python train_detector.py --train train.jsonl --dev dev.jsonl \
+  --model neuralmind/bert-base-portuguese-cased --outdir bertimbau
+!python train_detector.py --train train.jsonl --dev dev.jsonl \
+  --model xlm-roberta-base --outdir xlmr
+# baixar: {bertimbau,xlmr}/best/ + metrics.json  (o melhor AUC vence o bake-off)
+```
+
+Métrica de decisão: `metrics.json` (AUC dev + FPR@recall>=0,6). O checkpoint
+`best/` do vencedor segue para o T5 (export ONNX int8).
