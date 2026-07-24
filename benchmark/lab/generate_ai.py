@@ -30,6 +30,7 @@ import argparse
 import hashlib
 import json
 import os
+import re
 import shlex
 import shutil
 import subprocess
@@ -49,34 +50,123 @@ LICENSE_ID = "geracao-propria-v1"
 AGY_BIN = os.environ.get(
     "AGY_BIN", str(Path.home() / "AppData" / "Local" / "agy" / "bin" / "agy.exe")
 )
-CLI_PROVIDERS = {"agy", "codex"}
+CLI_PROVIDERS = {"agy", "codex", "gemini_cli"}
+# A 429 the server says is temporary is waited out rather than counted as a
+# wall; anything longer than this is treated as a wall regardless.
+MAX_HONORED_RETRY_SECONDS = 120.0
+MAX_THROTTLE_WAITS = 8
+# Per-item ceiling for the gemini CLI. Kept modest because an unauthenticated
+# CLI blocks forever on its consent prompt, and the lane should say so fast.
+GEMINI_CLI_TIMEOUT = 180.0
+# Banner/telemetry lines the gemini CLI prints around the answer.
+GEMINI_NOISE = re.compile(
+    r"^\s*(\[dotenv|Loaded cached credentials|Data collection|Flushing|"
+    r"MCP STDERR|Opening authentication)",
+    re.IGNORECASE,
+)
+# Substrings that mean the CLI is not logged in. It then prints an interactive
+# prompt instead of an answer, which must never be mistaken for generated text.
+GEMINI_AUTH_HINT = (
+    "gemini CLI nao autenticado (pediu login no navegador). Rode `gemini` uma "
+    "vez e conclua o login, depois relance esta lane (o resume e automatico)."
+)
+GEMINI_AUTH_MARKERS = (
+    "authentication page",
+    "do you want to continue",
+    "please set an auth method",
+    "no auth method",
+    "sign in",
+)
+
+
+def npm_entrypoint(binary: str, package: str) -> list[str] | None:
+    """`node <the JS entry the package declares>`, when resolvable.
+
+    Same lesson as the codex channel: a shim on PATH can reach a stale native
+    build that the server refuses, while the npm entrypoint works. The entry
+    path comes from the package's own `bin` field rather than a guess — codex
+    declares bin/codex.js and gemini-cli declares bundle/gemini.js.
+    """
+    shim = shutil.which(binary)
+    node = shutil.which("node")
+    if not shim or not node:
+        return None
+    root = Path(shim).parent / "node_modules" / Path(package)
+    try:
+        declared = json.loads((root / "package.json").read_text(encoding="utf-8"))["bin"]
+    except (OSError, ValueError, KeyError):
+        return None
+    relative = declared.get(binary) if isinstance(declared, dict) else declared
+    if not isinstance(relative, str):
+        return None
+    entry = root / relative
+    return [node, str(entry)] if entry.exists() else None
 
 
 def codex_command() -> list[str]:
     """The codex CLI as an argv prefix.
 
-    Resolves to `node <npm>/node_modules/@openai/codex/bin/codex.js` when that
-    entrypoint is present, because launching codex any other way here reaches a
-    STALE build: this machine also has a native install under
-    AppData/Local/Programs/OpenAI/Codex whose server-side handshake rejects
-    current models with "The '<model>' model requires a newer version of Codex"
-    even though `codex --version` reports the same 0.145.0. The npm entrypoint
-    accepts the same argv, model flag included.
+    Resolves the npm entrypoint because this machine also has a native install
+    under AppData/Local/Programs/OpenAI/Codex whose server-side handshake
+    rejects current models with "The '<model>' model requires a newer version of
+    Codex" even though `codex --version` reports the same 0.145.0.
 
     Override with CODEX_BIN (split on spaces, so `node C:/path/codex.js` works).
     """
     override = os.environ.get("CODEX_BIN")
     if override:
         return shlex.split(override, posix=False)
-    shim = shutil.which("codex")
-    node = shutil.which("node")
-    if shim and node:
-        entry = (
-            Path(shim).parent / "node_modules" / "@openai" / "codex" / "bin" / "codex.js"
-        )
-        if entry.exists():
-            return [node, str(entry)]
-    return ["codex"]
+    return npm_entrypoint("codex", "@openai/codex") or ["codex"]
+
+
+def gemini_command() -> list[str]:
+    """The gemini CLI as an argv prefix. Override with GEMINI_BIN."""
+    override = os.environ.get("GEMINI_BIN")
+    if override:
+        return shlex.split(override, posix=False)
+    return npm_entrypoint("gemini", "@google/gemini-cli") or ["gemini"]
+
+
+def cli_env_without_keys() -> dict[str, str]:
+    """Child environment with the Gemini API keys REMOVED.
+
+    The CLI silently prefers an API key over the operator's login when one is
+    exported, which would route this channel onto the free-tier REST quota — a
+    different account, a different (exhausted) bucket, and a provenance lie.
+    """
+    return {
+        key: value
+        for key, value in os.environ.items()
+        if key not in ("GEMINI_API_KEY", "GOOGLE_API_KEY")
+    }
+
+
+def gemini_cli_text(payload: str) -> str:
+    """The answer out of `gemini -o json`, or a loud failure.
+
+    Strict on purpose: an unrecognized payload must never flow into a sealed
+    corpus as if it were generated prose, so anything unparseable raises with
+    the head of what arrived instead of being cleaned up and accepted.
+    """
+    try:
+        parsed = json.loads(payload)
+    except ValueError:
+        raise GenerationRefused(
+            f"gemini CLI: saída não é JSON ({payload[:160]!r})"
+        ) from None
+    if isinstance(parsed, str):
+        return parsed.strip()
+    if isinstance(parsed, dict):
+        for key in ("response", "text", "content", "output"):
+            value = parsed.get(key)
+            if isinstance(value, str) and value.strip():
+                return value.strip()
+        if isinstance(parsed.get("error"), (str, dict)):
+            raise GenerationRefused(f"gemini CLI: {str(parsed['error'])[:160]}")
+    raise GenerationRefused(
+        f"gemini CLI: JSON sem campo de texto reconhecido ({payload[:160]!r})"
+    )
+
 
 # The V2 plan's recipe mix. `parafrase` is a deliberate near-dup of its parent
 # (hard positive for TRAINING ONLY — the sealed eval assembly's cross-lineage
@@ -150,6 +240,11 @@ DEFAULT_MODELS = {
     # CLI channels — held-out families via the user's login (no key).
     "agy": "claude-sonnet-4-6",
     "codex": "gpt-5.6-luna",
+    # gemini_cli defaults to the family with a concrete deficit: flash-preview
+    # needs >= 200 positives before it can be DECLARED held-out at all. Rotate
+    # with --models gemini-3-flash-preview,gemini-3.5-flash-lite,... to spread
+    # across the gemini-3.x buckets.
+    "gemini_cli": "gemini-3-flash-preview",
 }
 # Only OpenAI exposes a sampling seed on this API surface.
 SEEDED_PROVIDERS = {"openai"}
@@ -283,25 +378,139 @@ def call_provider(
         if not text:
             raise GenerationRefused("codex saída vazia")
         return text
+    if provider == "gemini_cli":
+        # Headless, read-only, JSON out; the operator's login supplies auth, so
+        # the API keys are stripped from the child env (see cli_env_without_keys).
+        argv = [
+            *gemini_command(), "-p", prompt, "-m", model,
+            "--approval-mode", "plan", "-o", "json",
+        ]
+        try:
+            proc = subprocess.run(
+                argv,
+                stdin=subprocess.DEVNULL,
+                capture_output=True,
+                timeout=GEMINI_CLI_TIMEOUT,
+                env=cli_env_without_keys(),
+            )
+        except subprocess.TimeoutExpired as expired:
+            # Unauthenticated, the CLI prints its consent prompt and then BLOCKS
+            # waiting for a keypress that will never come — closing stdin does
+            # not end it. Read whatever it emitted to name the real cause
+            # instead of reporting a generic timeout.
+            partial = (
+                (expired.stdout or b"").decode("utf-8", errors="replace")
+                + (expired.stderr or b"").decode("utf-8", errors="replace")
+            ).lower()
+            if any(marker in partial for marker in GEMINI_AUTH_MARKERS):
+                raise RuntimeError(GEMINI_AUTH_HINT) from None
+            raise GenerationRefused(
+                f"gemini_cli sem resposta em {GEMINI_CLI_TIMEOUT:.0f}s"
+            ) from None
+        stdout = proc.stdout.decode("utf-8", errors="replace")
+        stderr = proc.stderr.decode("utf-8", errors="replace")
+        combined = f"{stdout}\n{stderr}".lower()
+        if any(marker in combined for marker in GEMINI_AUTH_MARKERS):
+            # Abort the LANE, not the item: unauthenticated means every
+            # remaining item would fail the same way, and the interactive
+            # prompt text must never be captured as generated prose.
+            raise RuntimeError(GEMINI_AUTH_HINT)
+        if proc.returncode != 0:
+            if "quota" in stderr.lower() or "429" in stderr:
+                raise urllib.error.HTTPError(
+                    "gemini_cli", 429, stderr[-200:], {}, None
+                )
+            raise GenerationRefused(f"gemini_cli rc={proc.returncode}: {stderr[-200:]}")
+        payload = "\n".join(
+            line for line in stdout.splitlines() if not GEMINI_NOISE.match(line)
+        ).strip()
+        if not payload:
+            raise GenerationRefused("gemini_cli saída vazia")
+        return gemini_cli_text(payload)
     raise ValueError(f"unknown provider {provider}")
 
 
+def quota_hint(error: urllib.error.HTTPError) -> tuple[float | None, bool]:
+    """(retryDelay in seconds, is-a-per-day-wall) from a 429 body.
+
+    One 429 carries two very different meanings. A per-MINUTE throttle ships a
+    RetryInfo saying exactly how long to wait — waiting is all that is needed.
+    A per-DAY exhaustion is a wall: that model yields nothing else today.
+    Telling them apart is the difference between a lane that keeps producing
+    and one that stops after a handful of records.
+
+    The body can only be read once, so the parse is cached on the exception for
+    whichever handler looks next.
+    """
+    cached = getattr(error, "_quota_hint", None)
+    if cached is not None:
+        return cached
+    try:
+        payload = json.loads(error.read().decode("utf-8", errors="replace"))
+        details = payload["error"].get("details", [])
+    except (ValueError, KeyError, AttributeError, OSError):
+        details = []
+    delay: float | None = None
+    daily = False
+    for detail in details:
+        kind = str(detail.get("@type", ""))
+        if kind.endswith("RetryInfo"):
+            match = re.match(r"([0-9.]+)s?$", str(detail.get("retryDelay", "")))
+            if match:
+                delay = float(match.group(1))
+        elif kind.endswith("QuotaFailure"):
+            for violation in detail.get("violations", []):
+                if "PerDay" in str(violation.get("quotaId", "")):
+                    daily = True
+    hint = (delay, daily)
+    error._quota_hint = hint
+    return hint
+
+
 def call_with_retries(transport, *args, attempts: int = 5):
+    """Retry ladder for transient transport failures.
+
+    A 429 that the server itself says is temporary does NOT consume the ladder:
+    the old behaviour waited 2+4+8+16s and gave up, which is less than the ~41s
+    a free-tier per-minute throttle asks for, so the caller read a throttle as
+    an exhausted bucket and abandoned the lane.
+    """
     delay = 2.0
-    for attempt in range(attempts):
+    attempt = 0
+    throttle_waits = 0
+    while True:
         try:
             return transport(*args)
         except urllib.error.HTTPError as error:
-            if error.code not in RETRIABLE or attempt == attempts - 1:
+            if error.code == 429:
+                hinted, daily = quota_hint(error)
+                if daily:
+                    # Nothing to wait for: this bucket is done for the day, and
+                    # the caller drops the model from the rotation.
+                    raise
+                honor = (
+                    hinted is not None
+                    and hinted <= MAX_HONORED_RETRY_SECONDS
+                    and throttle_waits < MAX_THROTTLE_WAITS
+                )
+                if honor:
+                    throttle_waits += 1
+                    print(
+                        f"  429 por minuto: aguardando {hinted:.0f}s "
+                        f"({throttle_waits}/{MAX_THROTTLE_WAITS})"
+                    )
+                    time.sleep(hinted + 1.0)
+                    continue  # deliberately does not spend an attempt
+            if error.code not in RETRIABLE or attempt >= attempts - 1:
                 raise
         except OSError:
             # URLError, TimeoutError de leitura do socket, ConnectionReset…
             # (HTTPError já foi tratado acima; GenerationRefused não é OSError)
-            if attempt == attempts - 1:
+            if attempt >= attempts - 1:
                 raise
+        attempt += 1
         time.sleep(delay)
         delay = min(delay * 2, 60)
-    raise RuntimeError("unreachable")
 
 
 def load_humans(paths: list[Path]) -> list[dict]:
@@ -420,6 +629,14 @@ def main() -> None:
                     continue
                 if error.code not in RETRIABLE:
                     raise
+                if error.code == 429 and quota_hint(error)[1]:
+                    # Per-day wall: this bucket yields nothing else today, so
+                    # drop the model instead of rotating back onto it later.
+                    print(f"  {active} sem cota diária — fora da rotação")
+                    live.remove(active)
+                    cursor["i"] = 0
+                    walls = 0
+                    continue
                 # 429 e 5xx persistentes (sobreviveram aos retries) = bucket/
                 # backend deste modelo indisponível agora: pula para o próximo.
                 cursor["i"] += 1

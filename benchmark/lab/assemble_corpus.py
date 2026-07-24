@@ -440,9 +440,11 @@ def main() -> None:
     # pools at once (a human and its AI paraphrase is exactly the dangerous
     # case). AI is the scarcest class, so it outranks mixed, which outranks the
     # human surplus.
-    # mixed rows are keyed by parentId (their record id is mix_<parent>); the
-    # other pools carry candidateId.
-    key = lambda r: r.get("candidateId") or r["parentId"]  # noqa: E731
+    def key(row: dict) -> str:
+        # mixed rows are keyed by parentId (their record id is mix_<parent>);
+        # the other pools carry candidateId.
+        return row.get("candidateId") or row["parentId"]
+
     docs = (
         [(key(r), r["text"], 0) for r in ai]
         + [(key(r), r["text"], 1) for r in mixed]
