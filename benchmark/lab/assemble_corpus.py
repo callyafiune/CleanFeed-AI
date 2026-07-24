@@ -269,28 +269,47 @@ def stamp_block(rec: dict, partition: str) -> dict:
 
 
 def assign_partitions(records: list[dict], held_out: set[str]) -> None:
-    """20/30/50 per class; held-out AI generator families forced to test."""
+    """Exact 20/30/50 blocks per class, with held-out families INSIDE the test
+    block rather than on top of it.
+
+    The split imposes two constraints at once: a held-out component whose time
+    reaches development/calibration is refused outright, AND the realized class
+    fractions must land within classTolerance (0.02) of 20/30/50. Forcing
+    held-out records into test on top of an independent 20/30/50 split of the
+    remainder satisfies the first and breaks the second — held-out families
+    reach the mixed class too (a mixing model is a generator), so 714 held-out
+    mixed records would have pushed mixed's test share to 68% and the split
+    would have refused the corpus. So size the test block first, seat the
+    held-out records in it, and top it up from the rest.
+    """
     by_class: dict[str, list[dict]] = {}
     for rec in records:
         by_class.setdefault(rec["label"], []).append(rec)
     for label, recs in by_class.items():
-        # Held-out positives go to test regardless of the ratio.
-        forced_test = [
-            r for r in recs if (r.get("groups") or {}).get("generatorFamily") in held_out
-        ]
-        rest = [r for r in recs if r not in forced_test]
-        for r in forced_test:
-            stamp_block(r, "test")
-        n = len(rest)
+        n = len(recs)
         n_dev = round(n * 0.2)
         n_cal = round(n * 0.3)
+        n_test = n - n_dev - n_cal
+        forced = [
+            r for r in recs if (r.get("groups") or {}).get("generatorFamily") in held_out
+        ]
+        forced_ids = {id(r) for r in forced}
+        rest = [r for r in recs if id(r) not in forced_ids]
+        if len(forced) > n_test:
+            print(
+                f"!! {label}: {len(forced)} registros held-out nao cabem no bloco "
+                f"de teste ({n_test}) — split recusaria por fracao de classe"
+            )
+        for r in forced:
+            stamp_block(r, "test")
+        top_up = max(0, n_test - len(forced))
         for i, r in enumerate(rest):
-            if i < n_dev:
-                stamp_block(r, "development")
-            elif i < n_dev + n_cal:
-                stamp_block(r, "calibration")
-            else:
+            if i < top_up:
                 stamp_block(r, "test")
+            elif i < top_up + n_dev:
+                stamp_block(r, "development")
+            else:
+                stamp_block(r, "calibration")
 
 
 # --- loading + selection -----------------------------------------------------
@@ -334,6 +353,9 @@ def load_ai() -> list[dict]:
         "ai_fresh_gemini",
         "ai_fresh_gemini_multi",
         "ai_fresh_codex",
+        # Top-up lanes closing the 1068-record gap (read_jsonl tolerates absence).
+        "ai_fresh_codex_topup",
+        "ai_fresh_gemini_preview",
     ):
         for r in read_jsonl(CAND / f"{fname}.jsonl"):
             # reserved rows lack candidateId/meta; normalize the shape.
@@ -465,19 +487,50 @@ def main() -> None:
     # positives per DECLARED held-out family (DATASET_COVERAGE_INVALID), so a
     # thin family must NOT be declared — it stays an ordinary AI family instead
     # of making the whole release corpus unvalidatable.
-    positives = Counter(
-        r["groups"].get("generatorFamily")
-        for r in records
-        if r["label"] in ("ai", "mixed") and r["groups"].get("generatorFamily")
+    # Declaring a held-out family is squeezed from two sides. validate demands
+    # >= 200 positives per DECLARED family, while the split demands every record
+    # of one sit after the test cut — so a family only fits if its records fit
+    # in what is left of each class's test block, or the class fraction blows
+    # past classTolerance and the split refuses the corpus. Mixing models count
+    # as generators, so gemini-3.x reaches the mixed class in bulk: declaring
+    # every eligible family needed 1170 of mixed's 1000 test slots.
+    # Declare richest-in-AI-mass first (that mass is what a generalization claim
+    # rests on) and stop when the next family would not fit.
+    per_family: dict[str, Counter] = {}
+    for r in records:
+        family = r["groups"].get("generatorFamily")
+        if family and r["label"] in ("ai", "mixed"):
+            per_family.setdefault(family, Counter())[r["label"]] += 1
+    positives = {f: sum(c.values()) for f, c in per_family.items()}
+    class_size = Counter(r["label"] for r in records)
+    test_capacity = {
+        lab: n - round(n * 0.2) - round(n * 0.3) for lab, n in class_size.items()
+    }
+
+    eligible = sorted(
+        (f for f in per_family if f.startswith("gemini-3")),
+        key=lambda f: (-per_family[f]["ai"], -positives[f], f),
     )
-    candidates_ho = {f for f in positives if f.startswith("gemini-3")}
-    held_out = {f for f in candidates_ho if positives[f] >= HELD_OUT_MINIMUM}
-    demoted = {f: positives[f] for f in candidates_ho - held_out}
-    if demoted:
+    below_floor = {f: positives[f] for f in eligible if positives[f] < HELD_OUT_MINIMUM}
+    held_out: set[str] = set()
+    used: Counter = Counter()
+    declined: dict[str, dict] = {}
+    for family in eligible:
+        if positives[family] < HELD_OUT_MINIMUM:
+            continue
+        need = per_family[family]
+        if all(used[lab] + need[lab] <= test_capacity.get(lab, 0) for lab in need):
+            held_out.add(family)
+            used.update(need)
+        else:
+            declined[family] = dict(need)
+    if below_floor:
         print(
             f"!! nao declaradas held-out (<{HELD_OUT_MINIMUM} positivos, "
-            f"validate exige): {demoted}"
+            f"validate exige): {below_floor}"
         )
+    if declined:
+        print(f"!! nao declaradas held-out (bloco de teste cheio): {declined}")
     assign_partitions(records, held_out)
 
     # Governance inputs for build_governance.ts.
