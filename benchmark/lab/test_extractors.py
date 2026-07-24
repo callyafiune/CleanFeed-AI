@@ -115,6 +115,31 @@ class CommonTests(unittest.TestCase):
         self.assertEqual(stats["drop_words"], 1)
         self.assertEqual(stats["drop_pii"], 1)
 
+    def test_writer_skips_excluded_ids(self) -> None:
+        import hashlib
+
+        excluded_id = "src_t_" + hashlib.sha1(b"a").hexdigest()[:12]
+        with tempfile.TemporaryDirectory() as raw:
+            output = Path(raw) / "t.jsonl"
+            writer = CandidateWriter(
+                output,
+                source_id="src_t",
+                limit=100,
+                sample_rate=1,
+                exclude_ids=frozenset({excluded_id}),
+            )
+            ok = dict(license_id="l", domain_source="d",
+                      created_at=parse_iso_date("2021-01-01"))
+            writer.offer(natural_key="a", raw_text=PROSE_60, **ok)  # excluído
+            writer.offer(natural_key="b", raw_text=PROSE_60, **ok)  # mantido
+            writer.close()
+            rows = [json.loads(x) for x in output.read_text(encoding="utf-8").splitlines()]
+            stats = json.loads(output.with_suffix(".stats.json").read_text(encoding="utf-8"))
+        self.assertEqual(len(rows), 1)
+        self.assertNotEqual(rows[0]["candidateId"], excluded_id)
+        self.assertEqual(stats["kept"], 1)
+        self.assertEqual(stats["drop_excluded"], 1)
+
 
 class StackExchangeTests(unittest.TestCase):
     def test_html_to_text_drops_code_and_breaks_blocks(self) -> None:

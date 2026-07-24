@@ -20,7 +20,7 @@ from html import unescape
 from html.parser import HTMLParser
 from pathlib import Path
 
-from common import CandidateWriter, parse_iso_date
+from common import CandidateWriter, parse_iso_date, read_id_file
 
 SOURCE_ID = "src_ptso"
 LICENSE_ID = "cc-by-sa-4.0"
@@ -101,6 +101,13 @@ def main() -> None:
     parser.add_argument("--output", required=True, type=Path)
     parser.add_argument("--limit", type=int, default=4000)
     parser.add_argument("--sample-rate", type=int, default=1)
+    parser.add_argument(
+        "--exclude",
+        type=Path,
+        default=None,
+        help="arquivo de candidate_ids (um por linha) a pular na emissão — "
+        "extração fresca disjunta do que já foi usado",
+    )
     args = parser.parse_args()
 
     writer = CandidateWriter(
@@ -108,6 +115,7 @@ def main() -> None:
         source_id=SOURCE_ID,
         limit=args.limit,
         sample_rate=args.sample_rate,
+        exclude_ids=read_id_file(args.exclude) if args.exclude else None,
     )
     try:
         extract(args.input, writer)

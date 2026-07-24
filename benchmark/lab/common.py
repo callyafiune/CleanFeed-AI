@@ -68,6 +68,14 @@ def pii_hits(text: str) -> list[str]:
 # --- deterministic sampling ---------------------------------------------------
 
 
+def read_id_file(path) -> frozenset[str]:
+    """Loads a plain-text id-per-line file into a set (blank lines ignored)."""
+    from pathlib import Path
+
+    text = Path(path).read_text(encoding="utf-8")
+    return frozenset(line.strip() for line in text.splitlines() if line.strip())
+
+
 def keep_sample(key: str, rate: int) -> bool:
     """Deterministic 1-in-`rate` sampler keyed on a stable id (no randomness)."""
     if rate <= 1:
@@ -116,6 +124,7 @@ class Stats:
     drop_license: int = 0
     drop_other: int = 0
     drop_sampled_out: int = 0
+    drop_excluded: int = 0
     pii_kinds: dict[str, int] = field(default_factory=dict)
 
     def note_pii(self, kinds: list[str]) -> None:
@@ -140,11 +149,17 @@ class CandidateWriter:
         date_cutoff: datetime | None = CHATGPT_CUTOFF,
         append: bool = False,
         start_sequence: int = 0,
+        exclude_ids: frozenset[str] | None = None,
     ) -> None:
         self.output = output
         self.source_id = source_id
         self.limit = limit
         self.sample_rate = sample_rate
+        # Fresh-extraction disjointness: candidate ids already spent in a prior
+        # split (train/dev/reserved) or as mixed-class parents are skipped on
+        # emit, so a re-run of the SAME dump yields out-of-training material
+        # without touching the stable-id scheme.
+        self.exclude_ids = exclude_ids or frozenset()
         # HUMAN candidates require pre-ChatGPT provenance; GENERATED (ai-class)
         # candidates are created now, so their writer passes date_cutoff=None.
         self.date_cutoff = date_cutoff
@@ -193,13 +208,17 @@ class CandidateWriter:
         if not keep_sample(natural_key, self.sample_rate):
             stats.drop_sampled_out += 1
             return
-        self._sequence += 1
         # STABLE id: derived from the natural key, so re-extraction with wider
         # limits/sample-rates keeps every previously-issued id unchanged (pair
         # references and hash-partition splits survive corpus growth).
         stable = hashlib.sha1(natural_key.encode("utf-8")).hexdigest()[:12]
+        candidate_id = f"{self.source_id}_{stable}"
+        if candidate_id in self.exclude_ids:
+            stats.drop_excluded += 1
+            return
+        self._sequence += 1
         candidate = Candidate(
-            candidate_id=f"{self.source_id}_{stable}",
+            candidate_id=candidate_id,
             source_id=self.source_id,
             license_id=license_id,
             created_at_ms=int(created_at.timestamp() * 1000),

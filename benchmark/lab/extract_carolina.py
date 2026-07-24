@@ -23,7 +23,7 @@ import xml.etree.ElementTree as ET
 import zipfile
 from pathlib import Path
 
-from common import CandidateWriter, parse_iso_date
+from common import CandidateWriter, parse_iso_date, read_id_file
 
 SOURCE_ID = "src_carolina"
 TEI_NS = "{http://www.tei-c.org/ns/1.0}"
@@ -146,6 +146,13 @@ def main() -> None:
     parser.add_argument("--limit", type=int, default=4000)
     parser.add_argument("--sample-rate", type=int, default=1)
     parser.add_argument("--per-typology-limit", type=int, default=None)
+    parser.add_argument(
+        "--exclude",
+        type=Path,
+        default=None,
+        help="arquivo de candidate_ids (um por linha) a pular na emissão — "
+        "extração fresca disjunta do que já foi usado",
+    )
     args = parser.parse_args()
 
     writer = CandidateWriter(
@@ -153,6 +160,7 @@ def main() -> None:
         source_id=SOURCE_ID,
         limit=args.limit,
         sample_rate=args.sample_rate,
+        exclude_ids=read_id_file(args.exclude) if args.exclude else None,
     )
     try:
         extract(args.input, writer, per_typology_limit=args.per_typology_limit)
