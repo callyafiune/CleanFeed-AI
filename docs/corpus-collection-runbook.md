@@ -38,6 +38,12 @@ recusar atalhos:
   registro é `passed`.
 - **Sem alegação de autoria.** A verdade de rótulo vem da *procedência*
   documentada, nunca da opinião de um detector.
+- **O corpus é independente do que treinou o detector.** Nenhum registro pode ser
+  quase-duplicata de nada em `benchmark/data/dataset/{train,dev}.jsonl`.
+  Contaminação aqui não quebra o pipeline — ela **infla a métrica**, e o
+  benchmark passa a parecer melhor do que o detector é. Nenhum gate da esteira
+  audita isso: `validate` e `split` nunca veem o conjunto de treino, então o
+  invariante só existe se for imposto na montagem (ver §1.1).
 
 ## 1. Composição e cobertura do corpus (o "o quê")
 
@@ -57,6 +63,50 @@ O `sealDataset` só produz um audit se a composição bater **exatamente**:
 | Famílias de gerador held-out | cada família em `heldOutGeneratorFamilies` precisa de **≥ 200** positivos elegíveis (`ai`/`mixed`) e **não pode** aparecer em nenhum registro `human` | `DATASET_COVERAGE_INVALID` |
 | Revisores por registro | **≥ 2 distintos**; adjudicador (se `adjudicated`) independente dos dois | `DATASET_REVIEW_INVALID` |
 | Licenças | toda `provenance.licenseId` presente no inventário do manifest | `DATASET_LICENSE_INVALID` |
+
+### 1.1 Independência do conjunto de treino (verificação obrigatória)
+
+O corpus selado mede um detector já treinado. Se um registro do corpus também
+estiver no treino, o modelo foi otimizado justamente naquele texto: ele acerta
+por memorização e a métrica sobe sem que a capacidade real tenha subido. O erro é
+**sempre na direção otimista** — por isso ele não aparece como falha, aparece
+como resultado bom.
+
+**Nenhum gate da esteira pega isso.** O `sealDataset`, o `source-readiness` e o
+`split` operam apenas sobre o corpus e o manifest; o conjunto de treino não é
+entrada de nenhum deles. A auditoria de vazamento do `split` é **entre
+partições** (dev/cal/test), não contra o treino. É uma checagem que só existe se
+alguém a fizer.
+
+**Comparar hash exato não basta.** Os pools humanos re-extraem as mesmas fontes
+de onde o treino foi construído (Wikipédia, Carolina, SE-PT). Uma página
+revisitada em outra revisão volta com pequenas edições: hash diferente, conteúdo
+praticamente idêntico. Medido em 2026-07-24 sobre 36.971 textos de `train`+`dev`,
+a sobreposição por hash exato era **zero** enquanto três registros estavam em
+jaccard **0,931**, **0,897** e **0,855** — todos acima da barra de recusa de 0,82
+usada no resto do pipeline.
+
+**Como é imposto.** `near_dupes.drop_seen()` indexa `train.jsonl` + `dev.jsonl` e
+descarta candidatos com jaccard ≥ 0,82 sob o mesmo contrato do
+`minhash-lsh-jaccard-v1` (shingles de 5 tokens, confirmação exata).
+`assemble_corpus.py` chama essa poda **antes da seleção** e imprime, em toda
+execução:
+
+```
+vazamento vs train+dev: {'seen_texts': 36971, 'checked': 21506, 'dropped': 3,
+                         'highest_similarity_kept': 0.746}
+```
+
+Ler `dropped` e `highest_similarity_kept` faz parte de aceitar a montagem. Se
+`highest_similarity_kept` chegar perto de 0,82, o pool está encostando no limite
+e merece investigação antes de selar.
+
+Descartar não custa cobertura: o pool humano tem ~15 mil candidatos para 4 mil
+vagas, então a poda é absorvida pelo excedente e a composição continua exata.
+
+**Se o conjunto de treino mudar** (novo `train.jsonl`, retreino, fine-tune), a
+verificação precisa ser refeita — um corpus limpo contra um treino não é limpo
+contra outro.
 
 ### Bloqueio temporal (para o split cego 20/30/50)
 
