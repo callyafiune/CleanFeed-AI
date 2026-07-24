@@ -35,6 +35,7 @@ import json
 import re
 import sys
 import unicodedata
+from collections import Counter
 from pathlib import Path
 
 import near_dupes
@@ -86,6 +87,8 @@ HN_REGISTER = {
     "motivational": "qa-informal",
 }
 TARGET = {"human": 4000, "ai": 4000, "mixed": 2000}
+# validate rejects any DECLARED held-out family with fewer positives.
+HELD_OUT_MINIMUM = 200
 
 
 def slug(value: str) -> str:
@@ -458,13 +461,23 @@ def main() -> None:
             if picked >= tag_per:
                 break
 
-    held_out = {
-        (r["groups"].get("generatorFamily"))
+    # Held-out candidates: the gemini-3.x generators. validate enforces >= 200
+    # positives per DECLARED held-out family (DATASET_COVERAGE_INVALID), so a
+    # thin family must NOT be declared — it stays an ordinary AI family instead
+    # of making the whole release corpus unvalidatable.
+    positives = Counter(
+        r["groups"].get("generatorFamily")
         for r in records
-        if r["label"] == "ai"
-        and (r["groups"].get("generatorFamily") or "").startswith("gemini-3")
-    }
-    held_out = {f for f in held_out if f}
+        if r["label"] in ("ai", "mixed") and r["groups"].get("generatorFamily")
+    )
+    candidates_ho = {f for f in positives if f.startswith("gemini-3")}
+    held_out = {f for f in candidates_ho if positives[f] >= HELD_OUT_MINIMUM}
+    demoted = {f: positives[f] for f in candidates_ho - held_out}
+    if demoted:
+        print(
+            f"!! nao declaradas held-out (<{HELD_OUT_MINIMUM} positivos, "
+            f"validate exige): {demoted}"
+        )
     assign_partitions(records, held_out)
 
     # Governance inputs for build_governance.ts.
@@ -518,7 +531,6 @@ def main() -> None:
         json.dumps(governance, ensure_ascii=False, indent=2) + "\n", encoding="utf-8"
     )
 
-    from collections import Counter
     # Report what was REALIZED, not the target: a pool short of its quota is the
     # difference between a sealed 10k corpus and a partial one.
     realized = Counter(r["label"] for r in records)
@@ -533,10 +545,10 @@ def main() -> None:
         for f, n in Counter(
             (r.get("generation") or {}).get("family") for r in records
         ).items()
-        if f in held_out and n < 30
+        if f in held_out and n < HELD_OUT_MINIMUM
     }
     if thin:
-        print("!! held-out families magras (<30 registros):", thin)
+        print(f"!! held-out families magras (<{HELD_OUT_MINIMUM}):", thin)
     print("hard-negatives:", dict(Counter(
         r.get("hardNegativeFamily") for r in records if r.get("hardNegativeFamily"))))
     print(f"escrito em {out}")
