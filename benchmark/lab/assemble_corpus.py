@@ -37,6 +37,8 @@ import sys
 import unicodedata
 from pathlib import Path
 
+import near_dupes
+
 CAND = Path(__file__).resolve().parent.parent / "data" / "candidates"
 DATASET = Path(__file__).resolve().parent.parent / "data" / "dataset"
 
@@ -406,6 +408,29 @@ def main() -> None:
     mixed = dedup(load_mixed(), lambda r: r["text"], seen)
     print(f"pools (dedup): human={len(humans)} ai={len(ai)} mixed={len(mixed)}")
 
+    # Exact-hash dedup is not enough: ingest refuses EVERY member of a
+    # near-duplicate cluster that straddles more than one lineage, and our
+    # derivationRoots are unique per record, so a surviving near-dup pair costs
+    # us both records. Prune to one representative per cluster, across all three
+    # pools at once (a human and its AI paraphrase is exactly the dangerous
+    # case). AI is the scarcest class, so it outranks mixed, which outranks the
+    # human surplus.
+    # mixed rows are keyed by parentId (their record id is mix_<parent>); the
+    # other pools carry candidateId.
+    key = lambda r: r.get("candidateId") or r["parentId"]  # noqa: E731
+    docs = (
+        [(key(r), r["text"], 0) for r in ai]
+        + [(key(r), r["text"], 1) for r in mixed]
+        + [(key(r), r["text"], 2) for r in humans]
+    )
+    dropped, nd_stats = near_dupes.prune(docs)
+    if dropped:
+        humans = [r for r in humans if key(r) not in dropped]
+        ai = [r for r in ai if key(r) not in dropped]
+        mixed = [r for r in mixed if key(r) not in dropped]
+    print(f"near-dup prune: {nd_stats}")
+    print(f"pools (near-dup): human={len(humans)} ai={len(ai)} mixed={len(mixed)}")
+
     human_sel = balanced_humans(humans, counts["human"])
     ai_sel = ai[: counts["ai"]]
     mixed_sel = mixed[: counts["mixed"]]
@@ -494,8 +519,24 @@ def main() -> None:
     )
 
     from collections import Counter
-    print(f"records: {len(records)} (human {counts['human']}, ai {counts['ai']}, mixed {counts['mixed']})")
+    # Report what was REALIZED, not the target: a pool short of its quota is the
+    # difference between a sealed 10k corpus and a partial one.
+    realized = Counter(r["label"] for r in records)
+    parts = " ".join(f"{k} {realized[k]}/{counts[k]}" for k in ("human", "ai", "mixed"))
+    print(f"records: {len(records)}/{sum(counts.values())} ({parts})")
+    short = {k: counts[k] - realized[k] for k in counts if realized[k] < counts[k]}
+    if short:
+        print("!! FALTAM (pool esgotado):", short)
     print("held-out families:", sorted(held_out))
+    thin = {
+        f: n
+        for f, n in Counter(
+            (r.get("generation") or {}).get("family") for r in records
+        ).items()
+        if f in held_out and n < 30
+    }
+    if thin:
+        print("!! held-out families magras (<30 registros):", thin)
     print("hard-negatives:", dict(Counter(
         r.get("hardNegativeFamily") for r in records if r.get("hardNegativeFamily"))))
     print(f"escrito em {out}")
