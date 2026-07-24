@@ -156,12 +156,26 @@ def cli_env_without_keys() -> dict[str, str]:
     }
 
 
+# Warning/error signatures that mean the answer is CUT SHORT rather than merely
+# annotated. Checked against the CLI's own error/warnings channels, never prose.
+GEMINI_INCOMPLETE = re.compile(
+    r"invalid_stream|truncat|incomplete|max.?tokens|cut off|unexpected end",
+    re.IGNORECASE,
+)
+
+
 def gemini_cli_text(payload: str) -> str:
     """The answer out of `gemini -o json`, or a loud failure.
 
-    Strict on purpose: an unrecognized payload must never flow into a sealed
-    corpus as if it were generated prose, so anything unparseable raises with
-    the head of what arrived instead of being cleaned up and accepted.
+    Strict on purpose: this text goes into a sealed corpus, so a partial answer
+    accepted as a whole one is a scientific defect, not a glitch.
+
+    The CLI's JSON formatter is `format(sessionId, response, stats, error,
+    warnings)` — `error` and `warnings` travel ALONGSIDE `response`, and the
+    headless runner fills `error` with an INVALID_STREAM entry while still
+    exiting 0 and still emitting the prose it managed to collect. So the failure
+    channels are read FIRST; taking `response` before looking at them is exactly
+    how a truncated generation would enter the corpus looking complete.
     """
     try:
         parsed = json.loads(payload)
@@ -172,12 +186,20 @@ def gemini_cli_text(payload: str) -> str:
     if isinstance(parsed, str):
         return parsed.strip()
     if isinstance(parsed, dict):
+        reported = parsed.get("error")
+        if reported:
+            raise GenerationRefused(f"gemini CLI reportou erro: {str(reported)[:160]}")
+        warnings = parsed.get("warnings")
+        if warnings:
+            rendered = json.dumps(warnings, ensure_ascii=False)
+            if GEMINI_INCOMPLETE.search(rendered):
+                raise GenerationRefused(
+                    f"gemini CLI: resposta possivelmente truncada {rendered[:160]}"
+                )
         for key in ("response", "text", "content", "output"):
             value = parsed.get(key)
             if isinstance(value, str) and value.strip():
                 return value.strip()
-        if isinstance(parsed.get("error"), (str, dict)):
-            raise GenerationRefused(f"gemini CLI: {str(parsed['error'])[:160]}")
     raise GenerationRefused(
         f"gemini CLI: JSON sem campo de texto reconhecido ({payload[:160]!r})"
     )
