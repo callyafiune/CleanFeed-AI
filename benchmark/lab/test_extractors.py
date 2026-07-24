@@ -24,6 +24,7 @@ from common import (
     pii_hits,
     word_count,
 )
+from extract_b2w import extract as extract_b2w
 from extract_carolina import extract as extract_carolina
 from extract_stackexchange import extract as extract_stackexchange, html_to_text
 from extract_wikipedia import lead_section, strip_templates
@@ -235,6 +236,24 @@ class WikipediaTests(unittest.TestCase):
             )
         self.assertEqual(len(rows), 1)
         self.assertEqual(rows[0]["domainSource"], "ptwiki_lead")
+
+
+class B2WTests(unittest.TestCase):
+    def test_extract_keeps_reviews_drops_empty_and_post_cutoff(self) -> None:
+        header = "submission_date,review_title,review_text,product_id\n"
+        keep = f'2018-03-01 10:00:00,Bom,"{PROSE_60}",p1\n'
+        empty = '2018-03-02 10:00:00,Sem texto,,p2\n'
+        post_cutoff = f'2024-01-01 10:00:00,Novo,"{PROSE_60}",p3\n'
+        csv_text = header + keep + empty + post_cutoff
+        with tempfile.TemporaryDirectory() as raw:
+            tmp = Path(raw)
+            path = tmp / "b2w.csv"
+            path.write_text(csv_text, encoding="utf-8")
+            rows, stats = run_writer(tmp, "b2w", lambda w: extract_b2w(path, w))
+        self.assertEqual(len(rows), 1)
+        self.assertEqual(rows[0]["domainSource"], "b2w_reviews")
+        self.assertEqual(rows[0]["licenseId"], "cc-by-nc-sa-4.0")
+        self.assertEqual(stats["drop_date"], 1)  # o review de 2024
 
 
 class CarolinaTests(unittest.TestCase):
