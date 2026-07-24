@@ -67,16 +67,31 @@ GEMINI_NOISE = re.compile(
 # Substrings that mean the CLI is not logged in. It then prints an interactive
 # prompt instead of an answer, which must never be mistaken for generated text.
 GEMINI_AUTH_HINT = (
-    "gemini CLI nao autenticado (pediu login no navegador). Rode `gemini` uma "
-    "vez e conclua o login, depois relance esta lane (o resume e automatico)."
+    "gemini CLI nao conseguiu autenticar. Rode `gemini` uma vez e conclua o "
+    "login, depois relance a lane (o resume e automatico). ATENCAO: em contas "
+    "individuais este CLI responde IneligibleTierError — o Google encerrou o "
+    "Gemini Code Assist for individuals nele e aponta para o Antigravity. Nesse "
+    "caso use --provider agy, que serve os mesmos modelos gemini-3.x."
 )
+# Phrases the CLI ITSELF emits when it cannot authenticate. Deliberately long
+# and product-specific: these are matched against CLI diagnostics, and a short
+# generic marker like "sign in" would also match the model's own prose about
+# login flows (many seed topics are StackOverflow-pt auth questions) and abort a
+# lane over a perfectly good generation.
 GEMINI_AUTH_MARKERS = (
-    "authentication page",
-    "do you want to continue",
+    "opening authentication page",
+    "error authenticating",
+    "ineligibletiererror",
     "please set an auth method",
-    "no auth method",
-    "sign in",
+    "no auth method configured",
+    "migrate to the antigravity",
+    "please visit the url to log in",
 )
+
+
+def looks_unauthenticated(*streams: str) -> bool:
+    joined = " ".join(streams).lower()
+    return any(marker in joined for marker in GEMINI_AUTH_MARKERS)
 
 
 def npm_entrypoint(binary: str, package: str) -> list[str] | None:
@@ -398,24 +413,23 @@ def call_provider(
             # waiting for a keypress that will never come — closing stdin does
             # not end it. Read whatever it emitted to name the real cause
             # instead of reporting a generic timeout.
-            partial = (
-                (expired.stdout or b"").decode("utf-8", errors="replace")
-                + (expired.stderr or b"").decode("utf-8", errors="replace")
-            ).lower()
-            if any(marker in partial for marker in GEMINI_AUTH_MARKERS):
+            if looks_unauthenticated(
+                (expired.stdout or b"").decode("utf-8", errors="replace"),
+                (expired.stderr or b"").decode("utf-8", errors="replace"),
+            ):
                 raise RuntimeError(GEMINI_AUTH_HINT) from None
             raise GenerationRefused(
                 f"gemini_cli sem resposta em {GEMINI_CLI_TIMEOUT:.0f}s"
             ) from None
         stdout = proc.stdout.decode("utf-8", errors="replace")
         stderr = proc.stderr.decode("utf-8", errors="replace")
-        combined = f"{stdout}\n{stderr}".lower()
-        if any(marker in combined for marker in GEMINI_AUTH_MARKERS):
-            # Abort the LANE, not the item: unauthenticated means every
-            # remaining item would fail the same way, and the interactive
-            # prompt text must never be captured as generated prose.
-            raise RuntimeError(GEMINI_AUTH_HINT)
+        # The auth check runs ONLY on paths where there is no valid answer.
+        # stdout carries the model's prose, and a text about login flows would
+        # otherwise abort the lane; unauthenticated means every remaining item
+        # fails the same way, so it raises to end the lane rather than skip one.
         if proc.returncode != 0:
+            if looks_unauthenticated(stdout, stderr):
+                raise RuntimeError(GEMINI_AUTH_HINT)
             if "quota" in stderr.lower() or "429" in stderr:
                 raise urllib.error.HTTPError(
                     "gemini_cli", 429, stderr[-200:], {}, None
@@ -425,8 +439,17 @@ def call_provider(
             line for line in stdout.splitlines() if not GEMINI_NOISE.match(line)
         ).strip()
         if not payload:
+            if looks_unauthenticated(stdout, stderr):
+                raise RuntimeError(GEMINI_AUTH_HINT)
             raise GenerationRefused("gemini_cli saída vazia")
-        return gemini_cli_text(payload)
+        try:
+            return gemini_cli_text(payload)
+        except GenerationRefused:
+            # Unparseable output plus an auth complaint on stderr is the CLI
+            # refusing to run at all, not one bad generation.
+            if looks_unauthenticated(stderr):
+                raise RuntimeError(GEMINI_AUTH_HINT) from None
+            raise
     raise ValueError(f"unknown provider {provider}")
 
 
