@@ -317,6 +317,13 @@ def main() -> None:
     parser.add_argument("--output", required=True, type=Path)
     parser.add_argument("--per-provider", type=int, default=60)
     parser.add_argument("--model", default=None)
+    parser.add_argument(
+        "--models",
+        default=None,
+        help="lista separada por vírgula: rotaciona modelos ao esbarrar em "
+        "429/5xx (buckets do free tier são POR MODELO) e remove 404; cada "
+        "família held-out vira um gerador distinto. Sobrepõe --model",
+    )
     parser.add_argument("--sleep", type=float, default=1.0)
     parser.add_argument("--dry-run", action="store_true")
     args = parser.parse_args()
@@ -324,7 +331,12 @@ def main() -> None:
     import os
 
     provider = args.provider
-    model = args.model or DEFAULT_MODELS[provider]
+    models = (
+        [m.strip() for m in args.models.split(",") if m.strip()]
+        if args.models
+        else [args.model or DEFAULT_MODELS[provider]]
+    )
+    model = models[0]
     keys = {
         "openai": os.environ.get("OPENAI_API_KEY", ""),
         "anthropic": os.environ.get("ANTHROPIC_API_KEY", ""),
@@ -359,6 +371,34 @@ def main() -> None:
         start_sequence=len(done),
     )
     batch_path = args.output.with_suffix(".batch.json")
+    # Free-tier buckets are per model: on a wall, hop to the next model
+    # (sticking to whichever flows) instead of stopping; drop 404s; the
+    # record records the model that ACTUALLY generated it.
+    live = list(models)
+    cursor = {"i": 0}
+
+    def generate(prompt: str, seed: int | None) -> tuple[str, str] | None:
+        walls = 0  # 429s consecutivos; zera ao primeiro sucesso (via return)
+        while live:
+            active = live[cursor["i"] % len(live)]
+            try:
+                return call_with_retries(
+                    call_provider, provider, active, prompt, seed, keys
+                ), active
+            except urllib.error.HTTPError as error:
+                if error.code == 404:
+                    print(f"  {active} respondeu 404 — fora da rotação")
+                    live.remove(active)
+                    continue
+                if error.code == 429:
+                    cursor["i"] += 1
+                    walls += 1
+                    if walls >= len(live):
+                        return None  # todos os modelos murados de uma vez
+                    continue
+                raise
+        return None
+
     try:
         for index, row in enumerate(pairs, start=1):
             recipe = recipe_for(provider, row["candidateId"])
@@ -374,22 +414,17 @@ def main() -> None:
                 else None
             )
             try:
-                text = call_with_retries(
-                    call_provider, provider, model, prompt, seed, keys
-                )
+                result = generate(prompt, seed)
             except GenerationRefused as refused:
                 print(f"  item {row['candidateId']} recusado (pulado): {refused}")
                 continue
-            except urllib.error.HTTPError as error:
-                if error.code == 429:
-                    # Quota wall (free tiers): stop CLEANLY; the lane is
-                    # resume-safe and continues on the next run.
-                    print(
-                        f"  cota esgotada apos {writer.stats.kept} mantidos — "
-                        "relance a lane mais tarde (resume automatico)"
-                    )
-                    break
-                raise
+            if result is None:
+                print(
+                    f"  cota esgotada apos {writer.stats.kept} mantidos — "
+                    "relance a lane mais tarde (resume automatico)"
+                )
+                break
+            text, model = result
             generated_at = datetime.now(timezone.utc)
             writer.offer(
                 natural_key=f"ai:{provider}:{row['candidateId']}",
@@ -419,16 +454,20 @@ def main() -> None:
             time.sleep(args.sleep)
     finally:
         writer.close()
+        batch_family = ",".join(models)
         batch_path.write_text(
             json.dumps(
                 {
-                    "batchId": f"batch_{provider}_{model}".replace(".", "_"),
+                    "batchId": f"batch_{provider}_{'-'.join(models)}".replace(
+                        ".", "_"
+                    ),
                     "sourceId": f"src_ai_{provider}",
                     "generationProtocolVersion": "generation-v1",
                     "provider": provider,
-                    "family": model,
-                    "model": model,
-                    "version": model,
+                    "family": batch_family,
+                    "model": batch_family,
+                    "version": batch_family,
+                    "models": models,
                     "recipes": {name: template_digest(name) for name in RECIPES},
                     "temperature": TEMPERATURE,
                     "seedPolicy": (
