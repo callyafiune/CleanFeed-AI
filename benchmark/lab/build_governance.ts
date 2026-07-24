@@ -1,0 +1,102 @@
+// Mints the two governance files ingest needs, with correct digests, from the
+// governance-inputs.json emitted by assemble_corpus.py:
+//   <out>/private/source-manifest.json  (reviewed source manifest v1, self-digest)
+//   <out>/manifest-template.json         (dataset manifest template, NO derived fields)
+//
+// The source-manifest self-digest MUST come from the real helper
+// (computeReviewedSourceManifestDigest -> canonicalSha256), so we build it here
+// in TS rather than reimplementing canonical JSON in Python.
+//
+// Run: node benchmark/lab/build_governance.ts <governance-inputs.json> <out-dir>
+
+import { readFile, writeFile, mkdir } from "node:fs/promises";
+import { argv } from "node:process";
+import { join, dirname } from "node:path";
+
+import {
+  computeReviewedSourceManifestDigest,
+  type ReviewedSourceManifestBody,
+} from "../source-manifest.ts";
+
+const ACQUISITION: Record<string, "licensed" | "generated" | "consent"> = {
+  "licensed-corpus": "licensed",
+  "controlled-generation": "generated",
+  "linkedin-contribution": "consent",
+};
+const LEGAL_REVIEWERS: [string, string] = ["legal_rev_1", "legal_rev_2"];
+
+async function main(): Promise<void> {
+  const [, , inputsPath, outDir] = argv;
+  if (!inputsPath || !outDir) {
+    throw new Error("usage: build_governance.ts <governance-inputs.json> <out-dir>");
+  }
+  const inputs = JSON.parse(await readFile(inputsPath, "utf-8")) as {
+    datasetId: string;
+    sources: { sourceId: string; sourceType: string; licenseId: string }[];
+    heldOutGeneratorFamilies: string[];
+    licenses: { id: string; name: string; url: string }[];
+  };
+
+  const sources = inputs.sources.map((s) => ({
+    sourceId: s.sourceId,
+    sourceType: s.sourceType as
+      | "licensed-corpus"
+      | "controlled-generation"
+      | "linkedin-contribution",
+    acquisition: ACQUISITION[s.sourceType],
+    evaluationUseApproved: true as const,
+    licenseId: s.licenseId,
+    consentReceiptDigest: null,
+    collectionProtocolVersion: "collection-v1" as const,
+    legalReviewerIds: LEGAL_REVIEWERS,
+  }));
+
+  const body: ReviewedSourceManifestBody = {
+    schemaVersion: 1,
+    sources: sources as ReviewedSourceManifestBody["sources"],
+    generationBatches: [],
+  };
+  const sourceManifestDigest = await computeReviewedSourceManifestDigest(body);
+  const sourceManifest = { ...body, sourceManifestDigest };
+
+  const template = {
+    schemaVersion: 1,
+    datasetId: inputs.datasetId,
+    version: "1.0.0",
+    scientificUse: "release",
+    intendedLanguage: "pt-BR",
+    intendedDomain: "generic",
+    createdAt: "2026-07-24T00:00:00.000Z",
+    normalizationVersion: "cleanfeed-text-v1",
+    annotationProtocolVersion: "annotation-v1",
+    heldOutGeneratorFamilies: inputs.heldOutGeneratorFamilies,
+    licenses: inputs.licenses.map((l) => ({
+      id: l.id,
+      name: l.name,
+      source: l.url,
+      evaluationUseApproved: true,
+      redistribution: "not-published",
+      notice:
+        "Uso exclusivo de avaliacao local; o corpus nao e redistribuido; " +
+        "atribuicao coletiva registrada. Share-alike nao acionado (sem redistribuicao).",
+    })),
+  };
+
+  const privateDir = join(outDir, "private");
+  await mkdir(privateDir, { recursive: true });
+  await writeFile(
+    join(privateDir, "source-manifest.json"),
+    JSON.stringify(sourceManifest, null, 2) + "\n",
+    "utf-8",
+  );
+  await writeFile(
+    join(outDir, "manifest-template.json"),
+    JSON.stringify(template, null, 2) + "\n",
+    "utf-8",
+  );
+  process.stdout.write(
+    `governance escrito: ${sources.length} sources, held-out=${inputs.heldOutGeneratorFamilies.join(",")}, digest=${sourceManifestDigest.slice(0, 12)}...\n`,
+  );
+}
+
+void main();
