@@ -592,6 +592,24 @@ def main() -> None:
     print(f"near-dup prune: {nd_stats}")
     print(f"pools (near-dup): human={len(humans)} ai={len(ai)} mixed={len(mixed)}")
 
+    # The corpus must be independent of what the detector TRAINED on, which
+    # pruning within the corpus cannot establish. The human pools re-extract the
+    # same upstream sources the training set came from, so a revisited page
+    # reappears with small edits and reads as fresh here while the detector has
+    # effectively already seen it.
+    seen_texts: list[str] = []
+    for split in ("train", "dev"):
+        seen_texts.extend(r["text"] for r in read_jsonl(DATASET / f"{split}.jsonl"))
+    if seen_texts:
+        contaminated, seen_stats = near_dupes.drop_seen(
+            [(key(r), r["text"]) for r in humans + ai + mixed], seen_texts
+        )
+        if contaminated:
+            humans = [r for r in humans if key(r) not in contaminated]
+            ai = [r for r in ai if key(r) not in contaminated]
+            mixed = [r for r in mixed if key(r) not in contaminated]
+        print(f"vazamento vs train+dev: {seen_stats}")
+
     renamed = enforce_unique_keys(
         [(ai, "candidateId"), (mixed, "parentId"), (humans, "candidateId")]
     )

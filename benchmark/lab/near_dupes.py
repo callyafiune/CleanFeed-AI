@@ -86,6 +86,59 @@ class _DisjointSet:
             self.parent[max(a, b)] = min(a, b)
 
 
+def drop_seen(
+    docs: list[tuple[str, str]], seen_texts: list[str]
+) -> tuple[set[str], dict]:
+    """ids in `docs` that are near-duplicates of anything in `seen_texts`.
+
+    WHY: the sealed corpus must be independent of what the detector was trained
+    on, and pruning within the corpus cannot show that — a benchmark text can be
+    unique among its peers while being a near-copy of a training document. The
+    human pools are re-extractions of the same upstream sources used for
+    training, so a page revisited at a different revision reappears with small
+    edits: measured against train+dev, three records landed at jaccard 0.931,
+    0.897 and 0.855, all above the 0.82 refusal bar.
+
+    Same contract as prune(): 5-token shingles, exact Jaccard >= 0.82, candidates
+    proposed by a shared-shingle inverted index over a 1/16 sample.
+    """
+    index: dict[int, list[int]] = {}
+    seen_shingles: list[set[str]] = []
+    for text in seen_texts:
+        shingle_set = shingles_of(tokens_of(text))
+        position = len(seen_shingles)
+        seen_shingles.append(shingle_set)
+        sample_all = len(shingle_set) < SAMPLE_MIN_SHINGLES
+        for shingle in shingle_set:
+            key = crc32(shingle.encode("utf-8"))
+            if sample_all or key % SAMPLE_MOD == 0:
+                index.setdefault(key, []).append(position)
+
+    drop: set[str] = set()
+    worst = 0.0
+    for doc_id, text in docs:
+        shingle_set = shingles_of(tokens_of(text))
+        candidates: set[int] = set()
+        for shingle in shingle_set:
+            bucket = index.get(crc32(shingle.encode("utf-8")))
+            if bucket is not None and len(bucket) <= MAX_BUCKET:
+                candidates.update(bucket)
+        best = 0.0
+        for position in candidates:
+            best = max(best, jaccard(shingle_set, seen_shingles[position]))
+            if best >= JACCARD_THRESHOLD:
+                break
+        worst = max(worst, best if best < JACCARD_THRESHOLD else worst)
+        if best >= JACCARD_THRESHOLD:
+            drop.add(doc_id)
+    return drop, {
+        "seen_texts": len(seen_texts),
+        "checked": len(docs),
+        "dropped": len(drop),
+        "highest_similarity_kept": round(worst, 3),
+    }
+
+
 def prune(docs: list[tuple[str, str, int]]) -> tuple[set[str], dict]:
     """docs: (id, text, priority) — LOWER priority wins when a cluster spans
     several documents (ties broken by input order, so the result is order-stable
