@@ -50,3 +50,9 @@ public/models/cleanfeed-ptbr-v1/
 # The model SOURCE metadata (lock, license, notice, review, manifests) lives
 # under models/ and IS tracked — it is small, auditable, and the source of truth.
 !models/cleanfeed-ptbr-v1/
+
+# Python bytecode and tool caches from benchmark/lab are regenerated per run.
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.ruff_cache/
