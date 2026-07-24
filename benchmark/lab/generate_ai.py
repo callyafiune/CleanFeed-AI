@@ -390,13 +390,23 @@ def main() -> None:
                     print(f"  {active} respondeu 404 — fora da rotação")
                     live.remove(active)
                     continue
-                if error.code == 429:
-                    cursor["i"] += 1
-                    walls += 1
-                    if walls >= len(live):
-                        return None  # todos os modelos murados de uma vez
-                    continue
-                raise
+                if error.code not in RETRIABLE:
+                    raise
+                # 429 e 5xx persistentes (sobreviveram aos retries) = bucket/
+                # backend deste modelo indisponível agora: pula para o próximo.
+                cursor["i"] += 1
+                walls += 1
+                if walls >= len(live):
+                    return None  # todos os modelos murados de uma vez
+                continue
+            except OSError:
+                # Timeout/reset de socket que passou dos retries: trata o
+                # modelo como indisponível e roda a rotação.
+                cursor["i"] += 1
+                walls += 1
+                if walls >= len(live):
+                    return None
+                continue
         return None
 
     try:
