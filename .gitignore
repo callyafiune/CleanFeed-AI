@@ -9,6 +9,10 @@ test-results/
 *.log
 *.tsbuildinfo
 
+# Pinned Chrome-for-Testing build downloaded by scripts/test-browser-lock.mjs
+# (420M, reproducible from tests/browser-lock.json — never source).
+.cache/
+
 # Linked git worktrees (e.g. .worktrees/cleanfeed-mvp) are registered checkouts,
 # never source; git already auto-excludes them, kept explicit for clarity.
 .worktrees/
