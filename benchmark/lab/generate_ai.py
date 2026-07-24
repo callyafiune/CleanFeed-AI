@@ -522,6 +522,30 @@ def load_humans(paths: list[Path]) -> list[dict]:
     return rows
 
 
+def acquire_lane_lock(output: Path) -> Path:
+    """Claim exclusive ownership of an output file, or refuse to start.
+
+    Lanes resume by reading which parents the output file ALREADY contains, so
+    two processes appending to one file each dedupe against the snapshot they
+    saw at startup and then regenerate the same parents — 190 colliding ids in a
+    single afternoon, discovered only when the sealed ingest refused the corpus.
+    O_CREAT|O_EXCL makes the claim atomic, so the second lane fails to start
+    instead of quietly corrupting the first one's output.
+    """
+    lock = output.with_name(output.name + ".lock")
+    try:
+        handle = os.open(str(lock), os.O_CREAT | os.O_EXCL | os.O_WRONLY)
+    except FileExistsError:
+        raise SystemExit(
+            f"já existe uma lane escrevendo em {output.name} (lock {lock.name}). "
+            "Se o processo anterior morreu, apague o lock e relance — o resume "
+            "por pais já gerados é automático."
+        ) from None
+    os.write(handle, str(os.getpid()).encode())
+    os.close(handle)
+    return lock
+
+
 def already_paired(output: Path) -> set[str]:
     done: set[str] = set()
     if output.exists():
@@ -598,6 +622,7 @@ def main() -> None:
             f"defina a variável de ambiente da chave do provedor '{provider}'"
         )
 
+    lock = acquire_lane_lock(args.output)
     writer = CandidateWriter(
         args.output,
         source_id=f"src_ai_{provider}",
@@ -737,6 +762,7 @@ def main() -> None:
             + "\n",
             encoding="utf-8",
         )
+        lock.unlink(missing_ok=True)
     print(
         f"{provider}: kept={writer.stats.kept} pii_dropped={writer.stats.drop_pii} "
         f"words_dropped={writer.stats.drop_words}"

@@ -348,14 +348,18 @@ def load_humans() -> list[dict]:
 
 def load_ai() -> list[dict]:
     rows: list[dict] = []
+    # ORDER IS THE SELECTION PRIORITY: the pool is truncated at the class quota
+    # from the end, so the least reproducible generations come first. The
+    # gemini-3.x lanes carry the held-out families, and two of those models have
+    # since left the provider's roster — those records can never be regenerated.
+    # ai_reserved (madras + luna) is the replaceable bulk, so it absorbs the cut.
     for fname in (
-        "ai_reserved",
+        "ai_fresh_agy",
         "ai_fresh_gemini",
         "ai_fresh_gemini_multi",
         "ai_fresh_codex",
-        # Top-up lanes closing the 1068-record gap (read_jsonl tolerates absence).
         "ai_fresh_codex_topup",
-        "ai_fresh_gemini_preview",
+        "ai_reserved",
     ):
         for r in read_jsonl(CAND / f"{fname}.jsonl"):
             # reserved rows lack candidateId/meta; normalize the shape.
@@ -376,6 +380,41 @@ def load_mixed() -> list[dict]:
         for r in read_jsonl(CAND / f):
             rows.append(r)
     return rows
+
+
+def enforce_unique_keys(pools: list[tuple[list[dict], str]]) -> int:
+    """Make the candidate key unique across ALL pools, in place.
+
+    A candidate id is derived from (provider, parent), so two generation lanes
+    asked for the same parent produce DIFFERENT texts under the SAME id —
+    sibling lanes only dedupe against their own output file, and two lanes
+    appending to one file dedupe against whatever it held when each started.
+
+    The sealed ingest is fail-closed on DUPLICATE_ID, and colliding ids would
+    also collapse the per-record group tokens that keep split components
+    singleton, so the clash is resolved here rather than costing a full ingest
+    run to discover. The suffix is a digest of the record's own text: stable
+    across runs, and it keeps both texts instead of discarding hard-won
+    generations that are only accidentally named alike.
+    """
+    seen: set[str] = set()
+    renamed = 0
+    for rows, field in pools:
+        for row in rows:
+            key = row[field]
+            if key not in seen:
+                seen.add(key)
+                continue
+            _, digest = norm_hash(row["text"])
+            candidate = f"{key}_{digest[:8]}"
+            suffix = 0
+            while candidate in seen:  # digest collision: still must be unique
+                suffix += 1
+                candidate = f"{key}_{digest[:8]}_{suffix}"
+            row[field] = candidate
+            seen.add(candidate)
+            renamed += 1
+    return renamed
 
 
 def dedup(records: list[dict], text_key, seen: set[str]) -> list[dict]:
@@ -457,6 +496,12 @@ def main() -> None:
         mixed = [r for r in mixed if key(r) not in dropped]
     print(f"near-dup prune: {nd_stats}")
     print(f"pools (near-dup): human={len(humans)} ai={len(ai)} mixed={len(mixed)}")
+
+    renamed = enforce_unique_keys(
+        [(ai, "candidateId"), (mixed, "parentId"), (humans, "candidateId")]
+    )
+    if renamed:
+        print(f"ids desambiguados (colisao entre lanes): {renamed}")
 
     human_sel = balanced_humans(humans, counts["human"])
     ai_sel = ai[: counts["ai"]]
