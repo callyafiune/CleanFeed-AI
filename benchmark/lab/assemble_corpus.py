@@ -598,6 +598,26 @@ def main() -> None:
     if renamed:
         print(f"ids desambiguados (colisao entre lanes): {renamed}")
 
+    # Within the reproducibility order, push records whose topic seed is already
+    # taken to the END, so the quota truncation drops them FIRST. Two lanes asked
+    # for the same human parent (sibling lanes only dedupe against their own
+    # output), which repeats a topic inside the AI class without repeating text
+    # — measured jaccard median 0.048, max 0.430, far under the 0.82 refusal bar.
+    # They are kept while the class is short and displaced as soon as it is not.
+    seen_parents: set[str] = set()
+    unique_parent, repeat_parent = [], []
+    for row in ai:
+        parent = (row.get("meta") or {}).get("pairedWith")
+        if parent and parent in seen_parents:
+            repeat_parent.append(row)
+            continue
+        if parent:
+            seen_parents.add(parent)
+        unique_parent.append(row)
+    if repeat_parent:
+        print(f"pais de topico reusados (descartados primeiro): {len(repeat_parent)}")
+    ai = unique_parent + repeat_parent
+
     human_sel = balanced_humans(humans, counts["human"])
     ai_sel = ai[: counts["ai"]]
     mixed_sel = mixed[: counts["mixed"]]
