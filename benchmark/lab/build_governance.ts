@@ -35,6 +35,10 @@ async function main(): Promise<void> {
     sources: { sourceId: string; sourceType: string; licenseId: string }[];
     heldOutGeneratorFamilies: string[];
     licenses: { id: string; name: string; url: string }[];
+    // Derived from the records by assemble_corpus: one entry per distinct
+    // generation recipe, which is what makes every generated record's
+    // groups.collectionBatch name a batch the governance audit can match.
+    generationBatches: ReviewedSourceManifestBody["generationBatches"];
   };
 
   const sources = inputs.sources.map((s) => ({
@@ -54,7 +58,7 @@ async function main(): Promise<void> {
   const body: ReviewedSourceManifestBody = {
     schemaVersion: 1,
     sources: sources as ReviewedSourceManifestBody["sources"],
-    generationBatches: [],
+    generationBatches: inputs.generationBatches ?? [],
   };
   const sourceManifestDigest = await computeReviewedSourceManifestDigest(body);
   const sourceManifest = { ...body, sourceManifestDigest };

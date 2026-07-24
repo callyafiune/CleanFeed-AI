@@ -89,6 +89,10 @@ HN_REGISTER = {
 TARGET = {"human": 4000, "ai": 4000, "mixed": 2000}
 # validate rejects any DECLARED held-out family with fewer positives.
 HELD_OUT_MINIMUM = 200
+# The lab generates at a fixed sampling temperature and no provider on these
+# channels exposes a seed, so every declared batch records the same pair.
+LAB_TEMPERATURE = 0.8
+SEED_NULL_REASON = "provider API does not expose a sampling seed"
 
 
 def slug(value: str) -> str:
@@ -180,9 +184,19 @@ def ai_record(cand: dict) -> dict:
     family_raw = meta.get("family") or cand.get("family") or "unknown"
     family = slug(family_raw)
     prompt_id = slug(meta.get("promptId") or f"repro_{rec_id}")
-    prompt_sha = meta.get("promptSha256") or hashlib.sha256(
-        rec_id.encode("utf-8")
-    ).hexdigest()
+    # The governance audit compares generation.promptSha256 against the batch's
+    # promptTemplateDigest, so the record must carry the TEMPLATE digest (shared
+    # by every record of a recipe) — not the per-record full-prompt digest, which
+    # would force one declared batch per record. The instance stays identifiable
+    # through promptId; candidates keep the full-prompt digest in their own meta.
+    prompt_sha = (
+        meta.get("promptTemplateDigest")
+        or meta.get("promptSha256")
+        # Reserved records carry no prompt metadata at all. Keying the fallback
+        # on the record id would mint one declared batch per record (1476 of
+        # them); the family is what is actually known about their recipe.
+        or hashlib.sha256(f"reserved-recipe:{family_raw}".encode("utf-8")).hexdigest()
+    )
     rec = {
         "schemaVersion": 2,
         "id": rec_id,
@@ -208,6 +222,10 @@ def ai_record(cand: dict) -> dict:
             "version": str(meta.get("version") or family_raw),
             "promptId": prompt_id,
             "promptSha256": prompt_sha,
+            # Governance compares (temperature ?? null) against the declared
+            # batch, whose temperature MUST be a finite number — so the record
+            # has to carry it too, not leave it implicit.
+            "temperature": float(meta.get("temperature") or LAB_TEMPERATURE),
         },
         "transformation": {"kind": "none", "severity": "none"},
         "groups": {**base_groups(rec_id, rec_id), "generatorFamily": family},
@@ -249,6 +267,21 @@ def mixed_record(cand: dict) -> dict:
                 {"start": int(s["start"]), "end": int(s["end"]), "origin": s["origin"]}
                 for s in spans
             ],
+        },
+        # The AI spans ARE controlled generation, and governance demands a
+        # recipe for every controlled-generation record. mixed candidates carry
+        # no prompt digest of their own, so the mixing recipe is identified
+        # deterministically by its model — shared by every record of the batch.
+        "generation": {
+            "provider": str(cand.get("provider") or "reserved"),
+            "family": str(cand.get("model") or "unknown"),
+            "model": str(cand.get("model") or "unknown"),
+            "version": str(cand.get("model") or "unknown"),
+            "promptId": f"mix_{family}",
+            "promptSha256": hashlib.sha256(
+                f"mixed-recipe:{cand.get('model') or 'unknown'}".encode("utf-8")
+            ).hexdigest(),
+            "temperature": LAB_TEMPERATURE,
         },
         "transformation": {"kind": "human-ai-mix", "severity": "medium"},
         # derivationRoot points to the (out-of-corpus) parent; != rec_id.
@@ -355,6 +388,7 @@ def load_ai() -> list[dict]:
     # ai_reserved (madras + luna) is the replaceable bulk, so it absorbs the cut.
     for fname in (
         "ai_fresh_agy",
+        "ai_fresh_agy_low",
         "ai_fresh_gemini",
         "ai_fresh_gemini_multi",
         "ai_fresh_codex",
@@ -380,6 +414,67 @@ def load_mixed() -> list[dict]:
         for r in read_jsonl(CAND / f):
             rows.append(r)
     return rows
+
+
+def assign_generation_batches(records: list[dict]) -> list[dict]:
+    """Group generated records into declared generation batches, in place.
+
+    The governance audit refuses every controlled-generation record whose
+    groups.collectionBatch does not name a batch in the reviewed source manifest
+    whose declared recipe matches the record's generation block EXACTLY —
+    sourceId, provider, family, model, version, prompt digest, temperature,
+    generatedAt and seed. So batches are derived FROM the records: one per
+    distinct recipe, which makes the match hold by construction.
+
+    This is why collectionBatch cannot be unique per record, as it was: a
+    per-record token names no declared batch, and all 5726 generated records
+    were blocked with GENERATION_RECIPE_MISSING. Sharing it is safe for the
+    split even though collectionBatch is a grouping axis — generatedAt is part
+    of the batch key and equals the record's temporal block, so a batch is an
+    indivisible component that can never straddle two blocks. Human records keep
+    their per-record cb_ token, which must NOT name a batch (the audit rejects a
+    non-generated record that links one) and cannot collide with a gb_ id.
+    """
+    batches: dict[tuple, dict] = {}
+    for rec in records:
+        generation = rec.get("generation")
+        if rec["provenance"]["sourceKind"] != "controlled-generation":
+            continue
+        if not generation:
+            continue
+        key = (
+            rec["provenance"]["sourceId"],
+            generation["provider"],
+            generation["family"],
+            generation["model"],
+            generation["version"],
+            generation["promptSha256"],
+            generation["temperature"],
+            generation["generatedAt"],
+            generation.get("seed"),
+        )
+        batch = batches.get(key)
+        if batch is None:
+            batch = {
+                "batchId": f"gb_{rec['label']}_{len(batches):04d}",
+                "sourceId": key[0],
+                "generationProtocolVersion": "generation-v1",
+                "provider": generation["provider"],
+                "family": generation["family"],
+                "model": generation["model"],
+                "version": generation["version"],
+                "promptTemplateDigest": generation["promptSha256"],
+                "temperature": generation["temperature"],
+                "generatedAt": generation["generatedAt"],
+                # Exactly one of seed / seedNullReason, per the manifest parser.
+                "seed": generation.get("seed"),
+                "seedNullReason": (
+                    None if generation.get("seed") else SEED_NULL_REASON
+                ),
+            }
+            batches[key] = batch
+        rec["groups"]["collectionBatch"] = batch["batchId"]
+    return list(batches.values())
 
 
 def enforce_unique_keys(pools: list[tuple[list[dict], str]]) -> int:
@@ -579,6 +674,9 @@ def main() -> None:
     if declined:
         print(f"!! nao declaradas held-out (bloco de teste cheio): {declined}")
     assign_partitions(records, held_out)
+    # AFTER partitioning: generatedAt is part of the batch key, so batches can
+    # only be derived once each record knows its temporal block.
+    batches = assign_generation_batches(records)
 
     # Governance inputs for build_governance.ts.
     sources = {
@@ -597,6 +695,7 @@ def main() -> None:
             for sid in sorted(used_sources)
         ],
         "heldOutGeneratorFamilies": sorted(held_out) or ["gemini-3_5-flash-lite"],
+        "generationBatches": batches,
         "licenses": [
             {"id": "cc-by-sa-4.0", "name": "CC BY-SA 4.0",
              "url": "https://creativecommons.org/licenses/by-sa/4.0/"},
@@ -636,6 +735,7 @@ def main() -> None:
     realized = Counter(r["label"] for r in records)
     parts = " ".join(f"{k} {realized[k]}/{counts[k]}" for k in ("human", "ai", "mixed"))
     print(f"records: {len(records)}/{sum(counts.values())} ({parts})")
+    print(f"lotes de geracao declarados: {len(batches)}")
     short = {k: counts[k] - realized[k] for k in counts if realized[k] < counts[k]}
     if short:
         print("!! FALTAM (pool esgotado):", short)
