@@ -30,6 +30,8 @@ import argparse
 import hashlib
 import json
 import os
+import shlex
+import shutil
 import subprocess
 import time
 import urllib.error
@@ -47,8 +49,34 @@ LICENSE_ID = "geracao-propria-v1"
 AGY_BIN = os.environ.get(
     "AGY_BIN", str(Path.home() / "AppData" / "Local" / "agy" / "bin" / "agy.exe")
 )
-CODEX_BIN = os.environ.get("CODEX_BIN", "codex")
 CLI_PROVIDERS = {"agy", "codex"}
+
+
+def codex_command() -> list[str]:
+    """The codex CLI as an argv prefix.
+
+    Resolves to `node <npm>/node_modules/@openai/codex/bin/codex.js` when that
+    entrypoint is present, because launching codex any other way here reaches a
+    STALE build: this machine also has a native install under
+    AppData/Local/Programs/OpenAI/Codex whose server-side handshake rejects
+    current models with "The '<model>' model requires a newer version of Codex"
+    even though `codex --version` reports the same 0.145.0. The npm entrypoint
+    accepts the same argv, model flag included.
+
+    Override with CODEX_BIN (split on spaces, so `node C:/path/codex.js` works).
+    """
+    override = os.environ.get("CODEX_BIN")
+    if override:
+        return shlex.split(override, posix=False)
+    shim = shutil.which("codex")
+    node = shutil.which("node")
+    if shim and node:
+        entry = (
+            Path(shim).parent / "node_modules" / "@openai" / "codex" / "bin" / "codex.js"
+        )
+        if entry.exists():
+            return [node, str(entry)]
+    return ["codex"]
 
 # The V2 plan's recipe mix. `parafrase` is a deliberate near-dup of its parent
 # (hard positive for TRAINING ONLY — the sealed eval assembly's cross-lineage
@@ -238,7 +266,7 @@ def call_provider(
         out_file = workdir / "msg.txt"
         proc = subprocess.run(
             [
-                CODEX_BIN, "exec", "--sandbox", "read-only", "--ephemeral",
+                *codex_command(), "exec", "--sandbox", "read-only", "--ephemeral",
                 "--skip-git-repo-check", "--cd", str(workdir), "--color", "never",
                 "--model", model, "--output-last-message", str(out_file), "-",
             ],
