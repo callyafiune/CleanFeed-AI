@@ -29,6 +29,8 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
+import os
+import subprocess
 import time
 import urllib.error
 import urllib.request
@@ -38,6 +40,15 @@ from pathlib import Path
 from common import CandidateWriter, keep_sample
 
 LICENSE_ID = "geracao-propria-v1"
+
+# CLI generation channels (no API key — the user's own logged-in subscriptions).
+# These carry the HELD-OUT generator families (models never seen in training):
+# agy serves claude-sonnet-4-6, gpt-oss-120b, gemini-3.x, opus-4-6.
+AGY_BIN = os.environ.get(
+    "AGY_BIN", str(Path.home() / "AppData" / "Local" / "agy" / "bin" / "agy.exe")
+)
+CODEX_BIN = os.environ.get("CODEX_BIN", "codex")
+CLI_PROVIDERS = {"agy", "codex"}
 
 # The V2 plan's recipe mix. `parafrase` is a deliberate near-dup of its parent
 # (hard positive for TRAINING ONLY — the sealed eval assembly's cross-lineage
@@ -108,6 +119,9 @@ DEFAULT_MODELS = {
     "openai": "gpt-4o-mini",
     "anthropic": "claude-haiku-4-5-20251001",
     "gemini": "gemini-2.0-flash",
+    # CLI channels — held-out families via the user's login (no key).
+    "agy": "claude-sonnet-4-6",
+    "codex": "gpt-5.6-luna",
 }
 # Only OpenAI exposes a sampling seed on this API surface.
 SEEDED_PROVIDERS = {"openai"}
@@ -197,6 +211,50 @@ def call_provider(
                 f"gemini sem conteudo: {str(data.get('promptFeedback') or data)[:160]}"
             )
         return text
+    if provider == "agy":
+        # Plan mode = read-only (no tool use); stdin closed or it hangs on
+        # Windows. stdout is the generated text.
+        proc = subprocess.run(
+            [AGY_BIN, "-p", prompt, "--mode", "plan", "--model", model],
+            stdin=subprocess.DEVNULL,
+            capture_output=True,
+            timeout=360,
+        )
+        if proc.returncode != 0:
+            stderr = proc.stderr.decode("utf-8", errors="replace")
+            # Quota wall surfaces on stderr; raise as HTTP 429 so the shared
+            # retry/stop path treats it like an API quota wall.
+            if "quota" in stderr.lower():
+                raise urllib.error.HTTPError(AGY_BIN, 429, stderr[-200:], {}, None)
+            raise GenerationRefused(f"agy rc={proc.returncode}: {stderr[-200:]}")
+        text = proc.stdout.decode("utf-8", errors="replace").strip()
+        if not text:
+            raise GenerationRefused("agy saída vazia")
+        return text
+    if provider == "codex":
+        import tempfile
+
+        workdir = Path(tempfile.mkdtemp(prefix="codex_gen_"))
+        out_file = workdir / "msg.txt"
+        proc = subprocess.run(
+            [
+                CODEX_BIN, "exec", "--sandbox", "read-only", "--ephemeral",
+                "--skip-git-repo-check", "--cd", str(workdir), "--color", "never",
+                "--model", model, "--output-last-message", str(out_file), "-",
+            ],
+            input=prompt.encode("utf-8"),
+            capture_output=True,
+            timeout=360,
+        )
+        if proc.returncode != 0:
+            raise GenerationRefused(
+                f"codex rc={proc.returncode}: "
+                f"{proc.stderr.decode('utf-8', errors='replace')[-200:]}"
+            )
+        text = out_file.read_text(encoding="utf-8").strip() if out_file.exists() else ""
+        if not text:
+            raise GenerationRefused("codex saída vazia")
+        return text
     raise ValueError(f"unknown provider {provider}")
 
 
@@ -285,7 +343,8 @@ def main() -> None:
         for row in pairs[:5]:
             print(f"  seed-topic {row['candidateId']} ({row['wordCount']} palavras)")
         return
-    if not keys[provider]:
+    # CLI channels authenticate via the user's login, not an env key.
+    if provider not in CLI_PROVIDERS and not keys[provider]:
         raise SystemExit(
             f"defina a variável de ambiente da chave do provedor '{provider}'"
         )
