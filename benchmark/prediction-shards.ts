@@ -33,7 +33,12 @@ import {
 
 const SHARD_SIZE = 100;
 const RUN_SIDECAR = "browser-score-run.json";
-const MANIFEST_FILE = "prediction-manifest.json";
+// The ONE name every consumer reads: readPredictionArtifact (and through it
+// validate-predictions, fit, evaluate and consume-holdout) opens
+// `<dir>/manifest.json`. Writing anything else here left the dev/cal artifact
+// unreadable by the whole downstream chain, which consume-holdout had been
+// working around by re-materializing the file itself for the test path only.
+const MANIFEST_FILE = "manifest.json";
 const SHARD_PATTERN = /^(\d{6})\.jsonl$/u;
 
 // Keys that must NEVER appear in a serialized prediction row. The closed row

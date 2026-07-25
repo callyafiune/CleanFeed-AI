@@ -114,9 +114,11 @@ describe("prediction shard store", () => {
     expect(manifest.holdoutConsumptionId).toBeNull();
 
     // The written manifest round-trips through the closed parser, and each shard
-    // digest matches the real bytes on disk.
+    // digest matches the real bytes on disk. The name is `manifest.json` because
+    // that is what readPredictionArtifact — and therefore validate-predictions,
+    // fit, evaluate and consume-holdout — opens.
     const rawManifest = JSON.parse(
-      await readFile(join(dir, "prediction-manifest.json"), "utf8"),
+      await readFile(join(dir, "manifest.json"), "utf8"),
     );
     const parsed = parsePredictionManifest(rawManifest, {
       scientificUse: "release",
