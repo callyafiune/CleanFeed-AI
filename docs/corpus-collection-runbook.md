@@ -108,6 +108,52 @@ vagas, então a poda é absorvida pelo excedente e a composição continua exata
 verificação precisa ser refeita — um corpus limpo contra um treino não é limpo
 contra outro.
 
+**Lacuna conhecida — a guarda é ancorada numa suposição.** A poda compara o corpus
+contra `benchmark/data/dataset/{train,dev}.jsonl`, mas **nada no repositório liga
+esses arquivos ao modelo empacotado**: `models/cleanfeed-ptbr-v1/release.json`
+registra `bundleDigest`, `tokenizerDigest`, `calibrationSetDigest`,
+`profileDigests` e `evidenceDigest` — nenhum campo identifica os dados de treino.
+Enquanto isso não existir, "o corpus é independente do treino" só é verificável
+sob a premissa de que aqueles dois arquivos **são** o treino do ONNX em
+`public/models/cleanfeed-ptbr-v1`. Guardar contra o conjunto errado dá a mesma
+falsa tranquilidade que não guardar. O conserto durável é registrar um digest do
+conjunto de treino no metadado do modelo, para a checagem passar a ser *amarrada*
+em vez de *assumida*.
+
+### 1.2 A alegação de held-out exige versão fixada, nunca alias
+
+`heldOutGeneratorFamilies` afirma que aquele gerador **nunca foi visto no treino**.
+Um alias de modelo (`*-latest`, `*-preview` sem versão, "stable") destrói essa
+alegação, porque o nome não diz qual modelo respondeu — e nem a API nem o
+gerador guardam a resolução:
+
+- o `generate_ai.py` extrai apenas o texto; o campo `modelVersion` que a API
+  devolve **não é persistido**;
+- os arquivos `_session/*.raw` guardam texto já extraído, não corpo HTTP;
+- logs de CLI pertencem a outro canal e não cobrem chamadas REST.
+
+Caso real (2026-07-24): o treino tinha 721 registros de `gemini-flash-lite-latest`
+gerados em 22-23/07, e o corpus declarava `gemini-3.5-flash-lite` e
+`gemini-3.1-flash-lite` como held-out — lanes geradas ~30h depois, mesma API. Sem
+rotação plausível de modelo nesse intervalo, "latest" era provavelmente uma
+delas. Como não havia prova em nenhuma direção e **o ônus é de quem alega**, as
+duas foram rebaixadas a famílias de IA comuns (`HELD_OUT_INELIGIBLE` em
+`assemble_corpus.py`, com o motivo escrito no código).
+
+Regras que evitam a repetição:
+
+1. **Gerar dados de treino sempre com versão fixada.** Um alias no treino
+   contamina toda alegação de held-out feita depois, retroativamente e sem
+   possibilidade de reparo.
+2. **Preferir canal e família distintos** para o held-out. As duas famílias que
+   sobreviveram (`gemini-3.5-flash-low`, `gemini-3.6-flash-low`) vêm do
+   Antigravity e não têm contraparte alguma no treino — é isso que as torna
+   defensáveis.
+3. **Menos famílias defensáveis vale mais que mais famílias duvidosas.** Retirar
+   as duas liberou massa do bloco de teste e permitiu declarar uma segunda
+   família limpa: o corpus terminou com 2 alegações sustentáveis em vez de 3
+   frágeis.
+
 ### Bloqueio temporal (para o split cego 20/30/50)
 
 O `split` corta o corpus por tempo em **development 20% / calibration 30% /
