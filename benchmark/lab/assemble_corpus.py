@@ -89,6 +89,24 @@ HN_REGISTER = {
 TARGET = {"human": 4000, "ai": 4000, "mixed": 2000}
 # validate rejects any DECLARED held-out family with fewer positives.
 HELD_OUT_MINIMUM = 200
+# Families that CANNOT be claimed as unseen by the detector, and therefore must
+# never be declared held-out — a provenance judgment, not something derivable
+# from the corpus.
+#
+# The training set holds 721 records from the ALIAS `gemini-flash-lite-latest`,
+# generated 2026-07-22 22:20 to 2026-07-23 08:43. Nothing on either side records
+# which concrete version that alias resolved to. The benchmark's flash-lite lanes
+# were generated 2026-07-24 13:50-16:48 — some 30 hours later, through the same
+# API and key — and no plausible model rotation happens in 30 hours, so "latest"
+# was in all likelihood one of these very families. It cannot be proven either
+# way (the raw API responses, which carry modelVersion, were never persisted),
+# and the burden of proof belongs to the held-out claim: declaring one of these
+# would measure a "generator never seen in training" that the detector saw 721
+# times, inflating the generalization result in the direction nobody notices.
+#
+# They stay in the corpus as ordinary AI families — no record is discarded, only
+# the claim is withdrawn.
+HELD_OUT_INELIGIBLE = {"gemini-3_5-flash-lite", "gemini-3_1-flash-lite"}
 # The lab generates at a fixed sampling temperature and no provider on these
 # channels exposes a seed, so every declared batch records the same pair.
 LAB_TEMPERATURE = 0.8
@@ -688,9 +706,18 @@ def main() -> None:
     }
 
     eligible = sorted(
-        (f for f in per_family if f.startswith("gemini-3")),
+        (
+            f
+            for f in per_family
+            if f.startswith("gemini-3") and f not in HELD_OUT_INELIGIBLE
+        ),
         key=lambda f: (-per_family[f]["ai"], -positives[f], f),
     )
+    withheld = {
+        f: positives[f] for f in per_family if f in HELD_OUT_INELIGIBLE
+    }
+    if withheld:
+        print(f"!! nao declaradas held-out (vistas no treino via alias): {withheld}")
     below_floor = {f: positives[f] for f in eligible if positives[f] < HELD_OUT_MINIMUM}
     held_out: set[str] = set()
     used: Counter = Counter()
