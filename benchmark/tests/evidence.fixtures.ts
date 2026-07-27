@@ -48,6 +48,7 @@ import {
   passInput,
   rejectInput,
 } from "./profile-artifact.fixtures.ts";
+import { asGeneratorFamily } from "../generator-family.ts";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const MODEL_DIR = resolve(HERE, "../../models/cleanfeed-ptbr-v1");
@@ -136,7 +137,7 @@ function lightSplitArtifact(report: BenchmarkReport): SplitArtifact {
     policy: {
       fractions: { development: 0.2, calibration: 0.3, test: 0.5 },
       classTolerance: 0.02,
-      heldOutGeneratorFamilies: ["heldout_family"],
+      heldOutGeneratorFamilies: [asGeneratorFamily("heldout_family")],
       seed: 712_019,
     },
     assignments: [],
@@ -144,7 +145,7 @@ function lightSplitArtifact(report: BenchmarkReport): SplitArtifact {
     splitDigest: report.split.digest,
     cutoffs: { calibrationCut: 100, testCut: 200 },
     counts: { development: 2_000, calibration: 3_000, test: 5_000 },
-    heldOutGeneratorFamilies: ["heldout_family"],
+    heldOutGeneratorFamilies: [asGeneratorFamily("heldout_family")],
     audit: {
       sizes: { development: 2_000, calibration: 3_000, test: 5_000 },
       classFractions: {
@@ -159,7 +160,7 @@ function lightSplitArtifact(report: BenchmarkReport): SplitArtifact {
       },
       leakages: [],
       criticalSliceSamples: [],
-      heldOutGeneratorFamilies: ["heldout_family"],
+      heldOutGeneratorFamilies: [asGeneratorFamily("heldout_family")],
       passed: true,
       reasons: [],
     },
@@ -556,7 +557,7 @@ export async function buildRejectScenario(
     policy: {
       fractions: { development: 0.2, calibration: 0.3, test: 0.5 },
       classTolerance: 0.02,
-      heldOutGeneratorFamilies: ["heldout_family"],
+      heldOutGeneratorFamilies: [asGeneratorFamily("heldout_family")],
       seed: 712_019,
     },
     assignments: [],
@@ -564,7 +565,7 @@ export async function buildRejectScenario(
     splitDigest,
     cutoffs: { calibrationCut: 100, testCut: 200 },
     counts: { development: 2_000, calibration: 3_000, test: 5_000 },
-    heldOutGeneratorFamilies: ["heldout_family"],
+    heldOutGeneratorFamilies: [asGeneratorFamily("heldout_family")],
     audit: {
       sizes: { development: 2_000, calibration: 3_000, test: 5_000 },
       classFractions: {
@@ -579,7 +580,7 @@ export async function buildRejectScenario(
       },
       leakages: [],
       criticalSliceSamples: [],
-      heldOutGeneratorFamilies: ["heldout_family"],
+      heldOutGeneratorFamilies: [asGeneratorFamily("heldout_family")],
       passed: true,
       reasons: [],
     },
@@ -692,6 +693,7 @@ export async function buildRejectScenario(
     split: {
       digest: splitDigest,
       strategy: "blocked-group-time-v1",
+      heldOutGeneratorFamilies: splitArtifact.heldOutGeneratorFamilies,
       audit: splitArtifact.audit,
     },
     evaluatorDigest: EVALUATOR,

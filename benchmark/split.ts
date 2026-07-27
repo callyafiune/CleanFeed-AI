@@ -14,6 +14,11 @@
 
 import { createHash } from "node:crypto";
 
+import {
+  generatorFamilyOf,
+  sortGeneratorFamilies,
+  type GeneratorFamily,
+} from "./generator-family.ts";
 import type { BenchmarkLabel, BenchmarkRecord } from "./schema.ts";
 
 // --- Legacy MVP group-time split -------------------------------------------
@@ -143,7 +148,10 @@ export interface DatasetSplit<T> {
 export interface BlockedSplitPolicy {
   fractions: { development: 0.2; calibration: 0.3; test: 0.5 };
   classTolerance: 0.02;
-  heldOutGeneratorFamilies: readonly string[];
+  // Canonical families only (benchmark/generator-family.ts). The nominal type is
+  // what makes the old defect — matching this set against `generation.family`,
+  // the provider's dotted label — a compile error instead of a silent no-op.
+  heldOutGeneratorFamilies: readonly GeneratorFamily[];
   seed: number;
 }
 
@@ -203,7 +211,7 @@ export function createBlockedSplit(
   if (records.length === 0) return split;
 
   const heldOutFamilies = new Set(policy.heldOutGeneratorFamilies);
-  const components = buildComponents(records, heldOutFamilies, policy.seed);
+  const { components } = buildComponents(records, heldOutFamilies, policy.seed);
 
   const targets: Record<Partition, number> = {
     development: policy.fractions.development,
@@ -325,12 +333,33 @@ export function connectedComponentRoots(
   return roots;
 }
 
+/**
+ * The declared held-out families that the splitter ACTUALLY marked — i.e. that
+ * set `component.heldOut` on at least one component of this dataset. Exists so
+ * the pipeline can assert exact agreement between what the manifest reserved and
+ * what the split acted on: a reservation the splitter silently ignored used to be
+ * invisible, and was precisely the A4 defect. Derived through the same
+ * `buildComponents` call the splitter uses, never a re-implementation of it.
+ */
+export function markedHeldOutGeneratorFamilies(
+  records: readonly BenchmarkRecord[],
+  policy: BlockedSplitPolicy,
+): GeneratorFamily[] {
+  const { marked } = buildComponents(
+    records,
+    new Set(policy.heldOutGeneratorFamilies),
+    policy.seed,
+  );
+  return sortGeneratorFamilies([...marked]);
+}
+
 function buildComponents(
   records: readonly BenchmarkRecord[],
-  heldOutFamilies: ReadonlySet<string>,
+  heldOutFamilies: ReadonlySet<GeneratorFamily>,
   seed: number,
-): Component[] {
+): { components: Component[]; marked: Set<GeneratorFamily> } {
   const roots = connectedComponentRoots(records);
+  const marked = new Set<GeneratorFamily>();
 
   const byRoot = new Map<string, Component>();
   for (const record of records) {
@@ -356,9 +385,14 @@ function buildComponents(
       record.createdAt,
     );
     if (record.id < component.smallestId) component.smallestId = record.id;
-    const family = record.generation?.family;
+    // The CANONICAL field, read through the single accessor. Reading
+    // `record.generation?.family` here — the provider's dotted label — is what
+    // kept `component.heldOut` permanently false, so the test-only constraint
+    // below never ran and the invariant held only by accident of createdAt.
+    const family = generatorFamilyOf(record);
     if (family !== undefined && heldOutFamilies.has(family)) {
       component.heldOut = true;
+      marked.add(family);
     }
   }
 
@@ -369,7 +403,7 @@ function buildComponents(
       .update(`${seed}:${component.smallestId}`, "utf8")
       .digest("hex");
   }
-  return [...byRoot.values()];
+  return { components: [...byRoot.values()], marked };
 }
 
 function assignPartition(

@@ -28,6 +28,7 @@ import {
   type EvaluationMetrics,
   type EvaluationOptions,
 } from "./metrics.ts";
+import { generatorFamilyOf, type GeneratorFamily } from "./generator-family.ts";
 import type { BenchmarkRecord } from "./schema.ts";
 
 export type SliceAxis =
@@ -91,7 +92,12 @@ export interface SliceSummary {
 export interface SliceOptions extends EvaluationOptions {
   // The generator families reserved to the blocked test as unseen, from the
   // split. A record's generator family is "unseen" when it is in this set.
-  heldOutGeneratorFamilies: readonly string[];
+  // Canonical values only (benchmark/generator-family.ts): the nominal type is
+  // what stops this set from being matched against `generation.family`, the
+  // provider's dotted label — the bug that left this axis with no `unseen`
+  // bucket at all, reporting every record seeded to measure an unseen generator
+  // as seen.
+  heldOutGeneratorFamilies: readonly GeneratorFamily[];
   // Sampling floors. Default to the §6.4 minima of 300 negatives / 200 positives.
   minimumFprNegatives?: number;
   minimumRecallPositives?: number;
@@ -152,12 +158,11 @@ export function buildSlices(
     humanSourceType: (record) => record.humanSourceType,
     temporalCohort: (record) => cohortOf(record.createdAt),
     hardNegativeFamily: (record) => record.hardNegativeFamily,
-    generatorExposure: (record) =>
-      record.generation === undefined
-        ? undefined
-        : heldOut.has(record.generation.family)
-          ? "unseen"
-          : "seen",
+    generatorExposure: (record) => {
+      const family = generatorFamilyOf(record);
+      if (family === undefined) return undefined;
+      return heldOut.has(family) ? "unseen" : "seen";
+    },
     transformation: (record) => record.transformation.kind,
     severity: (record) => record.transformation.severity,
     mixedFraction: (record) =>

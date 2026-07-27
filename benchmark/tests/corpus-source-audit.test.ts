@@ -18,6 +18,7 @@ import {
   type ReviewedSourceManifestV1,
 } from "../source-manifest.ts";
 import type { BenchmarkRecord } from "../schema.ts";
+import { asGeneratorFamily } from "../generator-family.ts";
 
 // --- Reviewed source manifest fixtures -----------------------------------
 
@@ -205,7 +206,7 @@ const aiGenerated: BenchmarkRecord = {
     author: "author_g1",
     source: "src_generated",
     domainSource: "generated_batch",
-    generatorFamily: "acme_family",
+    generatorFamily: asGeneratorFamily("acme_family"),
     generatorVersion: "acme_v2",
     promptTemplate: "template_1",
     collectionBatch: "batch_gen",

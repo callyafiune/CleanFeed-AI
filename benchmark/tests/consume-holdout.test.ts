@@ -37,6 +37,12 @@ import type { BenchmarkRecord } from "../schema.ts";
 import { buildSplitArtifact } from "../split-artifact.ts";
 import type { SplitAudit } from "../split-audit.ts";
 import type { DatasetSplit } from "../split.ts";
+import {
+  asGeneratorFamily,
+  generatorFamilyOf,
+  normalizeGeneratorFamily,
+  type GeneratorFamily,
+} from "../generator-family.ts";
 
 // ---------------------------------------------------------------------------
 // consume-holdout drives the one-way holdout lease end to end: it opens the
@@ -94,6 +100,11 @@ let recordCounter = 0;
 interface RecordOptions {
   textMarker?: string;
   authorMarker?: string;
+  // The provider's family label for a generated record. Test-partition positives
+  // carry the reserved family, so the manifest's reservation names a family the
+  // corpus actually contains — the four-way invariant in
+  // benchmark/generator-family.ts refuses a reservation nothing satisfies.
+  family?: string;
 }
 
 function record(
@@ -150,13 +161,18 @@ function record(
   if (label === "ai") {
     base.generation = {
       provider: "acme",
-      family: "acme_family",
+      family: options.family ?? "acme_family",
       model: "acme-1",
       version: "v1",
       promptId: `prompt_${id}`,
       promptSha256: hex(`prompt-${id}`),
       generatedAt: createdAt,
     };
+    // The canonical field, required by the schema on every generated record and
+    // the only one the split/slices/audit read (benchmark/generator-family.ts).
+    base.groups.generatorFamily = normalizeGeneratorFamily(
+      options.family ?? "acme_family",
+    );
   }
   return base;
 }
@@ -180,7 +196,7 @@ function datasetManifest(
     reviewLedgerSha256: hex("review-ledger"),
     sourceManifestFile: "private/source-manifest.json",
     sourceManifestSha256: hex("source-manifest"),
-    heldOutGeneratorFamilies: ["heldout_family"],
+    heldOutGeneratorFamilies: [asGeneratorFamily("heldout_family")],
     licenses: [
       {
         id: "consent-v1",
@@ -213,10 +229,30 @@ function passingAudit(split: DatasetSplit<BenchmarkRecord>): SplitAudit {
     },
     leakages: [],
     criticalSliceSamples: [],
-    heldOutGeneratorFamilies: [],
+    heldOutGeneratorFamilies: derivedHeldOutFamilies(split),
     passed: true,
     reasons: [],
   };
+}
+
+// The families present in the test partition and absent from development and
+// calibration — derived from the split exactly as benchmark/split-audit.ts derives
+// them, so this stand-in audit cannot claim a reservation the partitions do not
+// show. Hardcoding it was harmless only while nothing compared the four sets.
+function derivedHeldOutFamilies(
+  split: DatasetSplit<BenchmarkRecord>,
+): GeneratorFamily[] {
+  const families = (rows: readonly BenchmarkRecord[]): GeneratorFamily[] =>
+    rows
+      .map((row) => generatorFamilyOf(row))
+      .filter((family): family is GeneratorFamily => family !== undefined);
+  const elsewhere = new Set<GeneratorFamily>([
+    ...families(split.development),
+    ...families(split.calibration),
+  ]);
+  return [...new Set(families(split.test))]
+    .filter((family) => !elsewhere.has(family))
+    .sort((a, b) => (a < b ? -1 : a > b ? 1 : 0));
 }
 
 function predictionManifest(
@@ -359,7 +395,9 @@ async function buildScenario(
   }
   const testPositiveRecords: BenchmarkRecord[] = [];
   for (let i = 0; i < spec.testPositives; i += 1) {
-    testPositiveRecords.push(record("ai", 300, marker));
+    testPositiveRecords.push(
+      record("ai", 300, { ...marker, family: "heldout_family" }),
+    );
   }
   const testRecords = [...testNegativeRecords, ...testPositiveRecords];
   const records = [...dev, ...cal, ...testRecords];
@@ -384,7 +422,7 @@ async function buildScenario(
   const policy = {
     fractions: { development: 0.2, calibration: 0.3, test: 0.5 },
     classTolerance: 0.02,
-    heldOutGeneratorFamilies: ["heldout_family"],
+    heldOutGeneratorFamilies: [asGeneratorFamily("heldout_family")],
     seed: 712019,
   } as const;
   const artifact = await buildSplitArtifact({

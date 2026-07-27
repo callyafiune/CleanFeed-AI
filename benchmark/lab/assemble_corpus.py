@@ -119,6 +119,37 @@ def slug(value: str) -> str:
     return out or "x"
 
 
+def generator_family(value: str) -> str:
+    """A provider label -> THE canonical generator family.
+
+    The single Python-side mirror of normalizeGeneratorFamily in
+    benchmark/generator-family.ts: collapse every run outside [A-Za-z0-9_-] into
+    one "_", strip leading/trailing "_", preserve case. So
+    "gemini-3.5-flash-low" -> "gemini-3_5-flash-low", and the underscore form maps
+    to itself.
+
+    The underscore spelling is canonical because the value has to live in
+    groups.generatorFamily, and every grouping token is validated as a pseudonym
+    (no ".", which is a PII separator) — so the dotted spelling the provider uses
+    cannot be it. generation.family keeps the provider's literal label, because the
+    governance audit matches it byte for byte against the declared batch recipe.
+
+    Unlike slug() this FAILS instead of returning a placeholder: a family we cannot
+    name is a governance problem, not a string to patch over. The TypeScript schema
+    is the real enforcement — validateBenchmarkRecord refuses any record whose
+    groups.generatorFamily is not exactly this function's output for its
+    generation.family — so this function exists to make the assembler write what
+    the schema will accept, not to be a second authority.
+    """
+    out = re.sub(r"[^A-Za-z0-9_-]+", "_", value).strip("_")
+    if not out:
+        raise ValueError(
+            f"generator family {value!r} normalizes to nothing: "
+            "it carries no character of [A-Za-z0-9_-]"
+        )
+    return out
+
+
 def norm_hash(text: str) -> tuple[str, str]:
     """(normalized_text, sha256) matching ingest's normalizeCorpusText: CRLF/CR
     -> LF then NFC."""
@@ -200,7 +231,7 @@ def ai_record(cand: dict) -> dict:
     meta = cand.get("meta") or {}
     rec_id = slug(cand.get("candidateId") or cand["id"])
     family_raw = meta.get("family") or cand.get("family") or "unknown"
-    family = slug(family_raw)
+    family = generator_family(family_raw)
     prompt_id = slug(meta.get("promptId") or f"repro_{rec_id}")
     # The governance audit compares generation.promptSha256 against the batch's
     # promptTemplateDigest, so the record must carry the TEMPLATE digest (shared
@@ -259,7 +290,7 @@ def mixed_record(cand: dict) -> dict:
     total = len(text)
     ai_chars = sum(s["end"] - s["start"] for s in spans if s["origin"] == "ai")
     ai_fraction = ai_chars / total if total else 0.0
-    family = slug(cand.get("model") or "unknown")
+    family = generator_family(cand.get("model") or "unknown")
     rec = {
         "schemaVersion": 2,
         "id": rec_id,

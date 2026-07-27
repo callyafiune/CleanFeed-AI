@@ -43,6 +43,12 @@ import type { BenchmarkRecord } from "../schema.ts";
 import { buildSplitArtifact } from "../split-artifact.ts";
 import type { SplitAudit } from "../split-audit.ts";
 import type { DatasetSplit } from "../split.ts";
+import {
+  asGeneratorFamily,
+  generatorFamilyOf,
+  normalizeGeneratorFamily,
+  type GeneratorFamily,
+} from "../generator-family.ts";
 
 // ---------------------------------------------------------------------------
 // Parsing and dispatch guards (no I/O required).
@@ -392,6 +398,11 @@ let recordCounter = 0;
 function record(
   label: BenchmarkRecord["label"],
   createdAt: number,
+  // The provider's family label for a generated record. Callers pass the reserved
+  // one for rows they place in the test partition, so the manifest's reservation
+  // names a family the corpus actually contains — the four-way invariant in
+  // benchmark/generator-family.ts refuses a reservation nothing satisfies.
+  family = "acme_family",
 ): BenchmarkRecord {
   recordCounter += 1;
   const id = `r${recordCounter}`;
@@ -440,13 +451,16 @@ function record(
   if (label === "ai") {
     base.generation = {
       provider: "acme",
-      family: "acme_family",
+      family,
       model: "acme-1",
       version: "v1",
       promptId: `prompt_${id}`,
       promptSha256: hex(`prompt-${id}`),
       generatedAt: createdAt,
     };
+    // The canonical field, required by the schema on every generated record and
+    // the only one the split/slices/audit read (benchmark/generator-family.ts).
+    base.groups.generatorFamily = normalizeGeneratorFamily(family);
   }
   if (label === "mixed") {
     base.mixture = {
@@ -476,7 +490,7 @@ function datasetManifest(): DatasetManifest {
     reviewLedgerSha256: hex("review-ledger"),
     sourceManifestFile: "private/source-manifest.json",
     sourceManifestSha256: hex("source-manifest"),
-    heldOutGeneratorFamilies: ["heldout_family"],
+    heldOutGeneratorFamilies: [asGeneratorFamily("heldout_family")],
     licenses: [
       {
         id: "consent-v1",
@@ -509,10 +523,30 @@ function passingAudit(split: DatasetSplit<BenchmarkRecord>): SplitAudit {
     },
     leakages: [],
     criticalSliceSamples: [],
-    heldOutGeneratorFamilies: [],
+    heldOutGeneratorFamilies: derivedHeldOutFamilies(split),
     passed: true,
     reasons: [],
   };
+}
+
+// The families present in the test partition and absent from development and
+// calibration — derived from the split exactly as benchmark/split-audit.ts derives
+// them, so this stand-in audit cannot claim a reservation the partitions do not
+// show. Hardcoding it was harmless only while nothing compared the four sets.
+function derivedHeldOutFamilies(
+  split: DatasetSplit<BenchmarkRecord>,
+): GeneratorFamily[] {
+  const families = (rows: readonly BenchmarkRecord[]): GeneratorFamily[] =>
+    rows
+      .map((row) => generatorFamilyOf(row))
+      .filter((family): family is GeneratorFamily => family !== undefined);
+  const elsewhere = new Set<GeneratorFamily>([
+    ...families(split.development),
+    ...families(split.calibration),
+  ]);
+  return [...new Set(families(split.test))]
+    .filter((family) => !elsewhere.has(family))
+    .sort((a, b) => (a < b ? -1 : a > b ? 1 : 0));
 }
 
 const PLATT: SerializedCalibratorV1 = {
@@ -638,7 +672,7 @@ async function buildScenario(root: string): Promise<Scenario> {
     record("mixed", 120),
     record("human", 310),
     record("human", 320),
-    record("ai", 330),
+    record("ai", 330, "heldout_family"),
     record("mixed", 340),
   ];
   const manifest = datasetManifest();
@@ -661,7 +695,7 @@ async function buildScenario(root: string): Promise<Scenario> {
   const policy = {
     fractions: { development: 0.2, calibration: 0.3, test: 0.5 },
     classTolerance: 0.02,
-    heldOutGeneratorFamilies: ["heldout_family"],
+    heldOutGeneratorFamilies: [asGeneratorFamily("heldout_family")],
     seed: 712019,
   } as const;
   const artifact = await buildSplitArtifact({
@@ -1029,8 +1063,8 @@ async function buildFitScenario(
   const testRecords = [
     record("human", 310),
     record("human", 311),
-    record("ai", 320),
-    record("ai", 321),
+    record("ai", 320, "heldout_family"),
+    record("ai", 321, "heldout_family"),
   ];
   const allRecords = [
     ...devHumans,
@@ -1071,7 +1105,7 @@ async function buildFitScenario(
     reviewLedgerSha256: reviewLedgerSha,
     sourceManifestFile: "private/source-manifest.json",
     sourceManifestSha256: sourceSha,
-    heldOutGeneratorFamilies: ["heldout_family"],
+    heldOutGeneratorFamilies: [asGeneratorFamily("heldout_family")],
     licenses: [
       {
         id: "consent-v1",
@@ -1107,7 +1141,7 @@ async function buildFitScenario(
   const policy = {
     fractions: { development: 0.2, calibration: 0.3, test: 0.5 },
     classTolerance: 0.02,
-    heldOutGeneratorFamilies: ["heldout_family"],
+    heldOutGeneratorFamilies: [asGeneratorFamily("heldout_family")],
     seed: 712019,
   } as const;
   const splitArtifact = await buildSplitArtifact({

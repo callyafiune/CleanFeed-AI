@@ -16,6 +16,7 @@ import {
 } from "../digests.ts";
 import type { DatasetManifest } from "../dataset-manifest.ts";
 import type { BenchmarkLabel, BenchmarkRecord } from "../schema.ts";
+import { asGeneratorFamily } from "../generator-family.ts";
 
 const SHA = "a".repeat(64);
 
@@ -35,7 +36,7 @@ const manifest: DatasetManifest = {
   reviewLedgerSha256: "2".repeat(64),
   sourceManifestFile: "private/source-manifest.json",
   sourceManifestSha256: "3".repeat(64),
-  heldOutGeneratorFamilies: ["family-unseen"],
+  heldOutGeneratorFamilies: [asGeneratorFamily("family-unseen")],
   licenses: [
     {
       id: "cc-by",

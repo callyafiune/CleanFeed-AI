@@ -13,6 +13,10 @@ import type {
   BenchmarkRecord,
   TransformationKind,
 } from "../schema.ts";
+import {
+  asGeneratorFamily,
+  normalizeGeneratorFamily,
+} from "../generator-family.ts";
 
 const SHA = "a".repeat(64);
 
@@ -32,7 +36,7 @@ const MANIFEST: DatasetManifest = {
   reviewLedgerSha256: "2".repeat(64),
   sourceManifestFile: "private/source-manifest.json",
   sourceManifestSha256: "3".repeat(64),
-  heldOutGeneratorFamilies: ["family-unseen"],
+  heldOutGeneratorFamilies: [asGeneratorFamily("family-unseen")],
   licenses: [
     {
       id: "cc-by",
@@ -125,6 +129,10 @@ function rec(spec: RecordSpec): BenchmarkRecord {
     record.groups.promptTemplate = spec.promptTemplate;
   }
   if (spec.family !== undefined) {
+    // Both fields, as a valid record carries them: the provider's own label inside
+    // the recipe, and the CANONICAL token in groups — the only field the splitter,
+    // the audit and the slices read (benchmark/generator-family.ts). A fixture that
+    // set only `generation.family` modelled a record the schema now refuses.
     record.generation = {
       provider: "acme",
       family: spec.family,
@@ -134,6 +142,7 @@ function rec(spec: RecordSpec): BenchmarkRecord {
       promptSha256: SHA,
       generatedAt: spec.createdAt,
     };
+    record.groups.generatorFamily = normalizeGeneratorFamily(spec.family);
   }
   if (spec.aiFraction !== undefined) {
     record.mixture = {
@@ -306,7 +315,7 @@ function buildFailingDataset(): BenchmarkRecord[] {
 const POLICY: BlockedSplitPolicy = {
   fractions: { development: 0.2, calibration: 0.3, test: 0.5 },
   classTolerance: 0.02,
-  heldOutGeneratorFamilies: ["family-unseen"],
+  heldOutGeneratorFamilies: [asGeneratorFamily("family-unseen")],
   seed: 712_019,
 };
 

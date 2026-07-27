@@ -1347,6 +1347,85 @@ grafia divergente **falha** em vez de passar silenciosamente.
 **Concluída quando:** o teste acima passa e `grep` não encontra mais nenhuma comparação
 de família contra campo não canônico.
 
+#### A4 — como foi executada
+
+**Forma canônica escolhida: o sublinhado** (`gemini-3_5-flash-low`), não o ponto. O
+motivo não é gosto: o valor canônico tem de caber em `groups.generatorFamily`, e todo
+token de agrupamento é validado como pseudônimo (`/^[A-Za-z0-9_-]+$/` em `schema.ts`)
+exatamente para que nome ou endereço cru nunca se torne chave de agrupamento — `.` é um
+dos separadores que essa regra exclui. A grafia com ponto, portanto, **não podia** ser a
+canônica. `generation.family` continua com o rótulo literal do provedor, porque
+`corpus-source-audit.ts` o compara byte a byte com a receita do lote declarado.
+
+**Novo arquivo `benchmark/generator-family.ts`** (adicionado a `EVALUATOR_FILES`):
+
+- `normalizeGeneratorFamily` é a definição única da forma canônica (colapsa runs fora
+  de `[A-Za-z0-9_-]` em um `_`, apara `_` das pontas, **preserva caixa** — minusculizar
+  fundiria dois rótulos de provedor que só diferem em caixa, o que é perda de fato, não
+  normalização). Falha fechado quando o rótulo não tem conteúdo canônico, em vez de
+  inventar um token de reserva.
+- **Canônico é definido como ponto fixo do normalizador**, não como um segundo regex:
+  `isCanonicalGeneratorFamily(v)` ⟺ `v` é token de pseudônimo e `normalize(v) === v`.
+  Assim idempotência é verdadeira por construção e as duas definições não podem divergir.
+- `GeneratorFamily` é **tipo nominal (branded)**. É isso que torna o defeito original
+  impossível de escrever: `heldOut.has(record.generation.family)` não compila mais, e a
+  conversão do parâmetro `heldOutGeneratorFamilies` em todos os consumidores obrigou 22
+  literais de fixture a passar por `asGeneratorFamily`.
+- `generatorFamilyOf(record)` é o **único** acessor; `slices.ts`, `split.ts` e
+  `split-audit.ts` passaram a usá-lo.
+
+**Schema (`schema.ts`) recusa, não corrige:** `groups.generatorFamily` precisa estar em
+forma canônica, e um registro com `generation` precisa carregá-lo **igual** a
+`normalizeGeneratorFamily(generation.family)`. Três mensagens distintas: campo ausente,
+campo divergente, campo fora da forma canônica.
+
+**Invariante de igualdade exata, em três lugares e com falha dura:**
+
+1. `commands/split.ts` — o único ponto onde os quatro conjuntos existem juntos:
+   declarado (manifesto), **marcado** (novo `markedHeldOutGeneratorFamilies`, que
+   devolve as famílias que de fato ligaram `component.heldOut`, derivado do mesmo
+   `buildComponents` que o splitter usa), derivado (auditoria) e publicado (artefato
+   selado, que é de onde o relatório lê). Divergência → `HELD_OUT_FAMILY_DISAGREEMENT`.
+2. `split-artifact.ts` — onde o artefato reentra tipado a partir de JSON (todo comando o
+   carrega com cast): revalida a forma canônica em runtime e compara declarado × selado ×
+   derivado.
+3. `report.ts` — compara publicado × derivado **antes de qualquer métrica** e passou a
+   **publicar** o conjunto numa seção própria do markdown ("Famílias geradoras retidas"),
+   porque o relatório tinha um bucket `unseen` e nenhuma linha dizendo o que "unseen"
+   significa. `BenchmarkReportInput.split` ganhou `heldOutGeneratorFamilies`; a receita do
+   `reportDigest` **não** foi tocada (o conjunto já está preso pelo `splitDigest`).
+
+**`assemble_corpus.py`** ganhou `generator_family()`, espelho Python do normalizador, nos
+dois lugares que gravavam família (`ai_record`, `mixed_record`). Diferente de `slug()`,
+ele levanta em vez de devolver `"x"`. Havia arquivo de teste Python
+(`benchmark/lab/test_extractors.py`) mas nenhum caso para isso: foram adicionados três
+(`python -m unittest` em `benchmark/lab`: 26 → 29 testes, OK).
+
+**Divergência do plano — fixtures que declaravam uma reserva que nada satisfazia.** O
+invariante reprovou 17 testes existentes por um motivo real: `cli.test.ts`,
+`fit.test.ts` e `consume-holdout.test.ts` declaravam `heldout_family` no manifesto
+(que exige ≥ 1 família) mas nenhum registro do corpus carregava essa família, e o
+`passingAudit` fixo devolvia `[]`. Em vez de afrouxar a checagem (R3), as fixtures
+foram corrigidas: as linhas de IA da partição `test` passaram a carregar a família
+reservada, e os três `passingAudit` passaram a **derivar** o conjunto da partição
+como `split-audit.ts` deriva. Também: `dataset-manifest.test.ts` tinha
+`generation.family = "acme-large"` com `groups.generatorFamily = "acme_family"` — a
+divergência exata que A4 recusa — e ficou coerente; as fábricas de registro de
+`split.test.ts`, `split-audit.ts`, `split-artifact.test.ts`, `slices.test.ts`,
+`corpus-import.test.ts` e do gerador de corpus sintético passaram a gravar o campo
+canônico, porque construíam registros que o schema agora recusa.
+
+**A única comparação legítima que sobrou contra `generation.family`** é
+`corpus-source-audit.ts:206` (`recipeMatchesBatch`): ali os dois lados são o rótulo do
+provedor e a pergunta não é "essa família foi reservada", é "essa receita é a do lote
+revisado". Recebeu comentário dizendo isso.
+
+**Verificação:** suíte 153 arquivos/1714 testes → 154/1735, tudo verde; três projetos
+`tsc` verdes; `eslint` limpo em todos os arquivos tocados. `prettier --check .` acusa
+quatro arquivos (`gates.ts`, `metrics.ts`, `rebuild-v3-policy.ts`,
+`lab/build_governance.ts`), **nenhum** deles tocado por A4 — é estado de HEAD, fora de
+escopo.
+
 ### A5 — Normalização Unicode no caminho de inferência
 
 **Depende de:** nada.

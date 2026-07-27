@@ -471,6 +471,7 @@ function baseInput(overrides: InputOverrides = {}): BenchmarkReportInput {
     split: {
       digest: SPLIT_DIGEST,
       strategy: "blocked-group-time-v1",
+      heldOutGeneratorFamilies: [],
       audit: splitAudit(),
     },
     evaluatorDigest: EVALUATOR,

@@ -11,6 +11,7 @@ import {
   type DatasetManifest,
 } from "../dataset-manifest.ts";
 import type { BenchmarkRecord } from "../schema.ts";
+import { asGeneratorFamily } from "../generator-family.ts";
 
 const RECORDS_SHA = "d".repeat(64);
 const REVIEW_LEDGER_SHA = "e".repeat(64);
@@ -38,7 +39,7 @@ const validManifest: DatasetManifest = {
   reviewLedgerSha256: REVIEW_LEDGER_SHA,
   sourceManifestFile: "private/source-manifest.json",
   sourceManifestSha256: SOURCE_MANIFEST_SHA,
-  heldOutGeneratorFamilies: ["heldout_family"],
+  heldOutGeneratorFamilies: [asGeneratorFamily("heldout_family")],
   licenses: [
     {
       id: "consent-v1",
@@ -154,7 +155,7 @@ const ai: BenchmarkRecord = {
     author: "author_gen_001",
     source: "source_002",
     domainSource: "generated_batch_01",
-    generatorFamily: "acme_family",
+    generatorFamily: asGeneratorFamily("acme-large"),
     generatorVersion: "acme_v2",
     promptTemplate: "template_001",
     collectionBatch: "batch_002",
@@ -204,7 +205,7 @@ const mixed: BenchmarkRecord = {
     author: "author_001",
     source: "source_003",
     domainSource: "mixed_batch_01",
-    generatorFamily: "acme_family",
+    generatorFamily: asGeneratorFamily("acme-large"),
     generatorVersion: "acme_v2",
     promptTemplate: "template_001",
     collectionBatch: "batch_003",

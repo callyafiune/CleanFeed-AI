@@ -14,6 +14,13 @@
 
 import { canonicalSha256 } from "../contracts/canonical-json.ts";
 import { computeDatasetDigest } from "./digests.ts";
+import {
+  GeneratorFamilyError,
+  assertGeneratorFamiliesEqual,
+  isCanonicalGeneratorFamily,
+  sortGeneratorFamilies,
+  type GeneratorFamily,
+} from "./generator-family.ts";
 import type { DatasetManifest } from "./dataset-manifest.ts";
 import type { BenchmarkRecord } from "./schema.ts";
 import type { SplitAudit } from "./split-audit.ts";
@@ -39,7 +46,7 @@ export interface SplitArtifact {
   splitDigest: string;
   cutoffs: { calibrationCut: number; testCut: number };
   counts: Record<Partition, number>;
-  heldOutGeneratorFamilies: string[];
+  heldOutGeneratorFamilies: GeneratorFamily[];
   audit: SplitAudit;
 }
 
@@ -86,8 +93,8 @@ export async function buildSplitArtifact(
     calibration: split.calibration.length,
     test: split.test.length,
   };
-  const heldOutGeneratorFamilies = [...policy.heldOutGeneratorFamilies].sort(
-    (a, b) => (a < b ? -1 : a > b ? 1 : 0),
+  const heldOutGeneratorFamilies = sortGeneratorFamilies(
+    policy.heldOutGeneratorFamilies,
   );
 
   const artifact: SplitArtifact = {
@@ -179,7 +186,68 @@ export async function validateSplitArtifact(
     );
   }
 
+  // This is where a sealed artifact re-enters the typed world from JSON (every
+  // command loads it with a cast), so the canonical form and the set agreement are
+  // re-checked here rather than assumed from the type. Three of the four places
+  // are present: the declared policy, the sealed list, and the audit's derived
+  // list. The splitter's marks are asserted in benchmark/commands/split.ts, where
+  // the splitter itself runs.
+  assertCanonicalFamilies(
+    "policy.heldOutGeneratorFamilies",
+    artifact.policy.heldOutGeneratorFamilies,
+  );
+  assertCanonicalFamilies(
+    "heldOutGeneratorFamilies",
+    artifact.heldOutGeneratorFamilies,
+  );
+  assertCanonicalFamilies(
+    "audit.heldOutGeneratorFamilies",
+    artifact.audit.heldOutGeneratorFamilies,
+  );
+  try {
+    assertGeneratorFamiliesEqual(
+      "declared",
+      artifact.policy.heldOutGeneratorFamilies,
+      "sealed",
+      artifact.heldOutGeneratorFamilies,
+    );
+    assertGeneratorFamiliesEqual(
+      "declared",
+      artifact.policy.heldOutGeneratorFamilies,
+      "derived",
+      artifact.audit.heldOutGeneratorFamilies,
+    );
+  } catch (error) {
+    throw new SplitArtifactError(
+      "SPLIT_ARTIFACT_HELD_OUT_FAMILY_DISAGREEMENT",
+      error instanceof GeneratorFamilyError ? error.message : String(error),
+    );
+  }
+
   return artifact;
+}
+
+// A JSON-loaded artifact is only nominally typed, so the canonical form is a
+// runtime check here: a dotted spelling that slipped into a sealed file must be
+// refused, never silently compared as a plain string.
+function assertCanonicalFamilies(
+  path: string,
+  families: readonly GeneratorFamily[],
+): void {
+  if (!Array.isArray(families)) {
+    throw new SplitArtifactError(
+      "SPLIT_ARTIFACT_HELD_OUT_FAMILY_INVALID",
+      `${path} must be an array of canonical generator families`,
+    );
+  }
+  for (const [index, family] of families.entries()) {
+    if (!isCanonicalGeneratorFamily(family)) {
+      throw new SplitArtifactError(
+        "SPLIT_ARTIFACT_HELD_OUT_FAMILY_INVALID",
+        `${path}[${index}] is not a canonical generator family: ${JSON.stringify(family)}`,
+      );
+    }
+  }
 }
 
 function buildAssignments(

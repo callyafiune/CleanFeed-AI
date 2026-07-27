@@ -10,6 +10,13 @@
 // from a detector's opinion, so the schema only records provenance and never a
 // predicted score.
 
+import {
+  GeneratorFamilyError,
+  isCanonicalGeneratorFamily,
+  normalizeGeneratorFamily,
+  type GeneratorFamily,
+} from "./generator-family.ts";
+
 export type BenchmarkLabel = "human" | "ai" | "mixed";
 
 export type TransformationKind =
@@ -67,6 +74,12 @@ export interface BenchmarkRecord {
   };
   generation?: {
     provider: string;
+    // The PROVIDER's own label for the recipe, kept exactly as the provider
+    // spelled it (dots included) because benchmark/corpus-source-audit.ts matches
+    // it byte for byte against the declared generation batch. It is NOT the
+    // grouping identity and MUST NOT be compared against a declared family set —
+    // `groups.generatorFamily` is the canonical field. See
+    // benchmark/generator-family.ts.
     family: string;
     model: string;
     version: string;
@@ -90,7 +103,10 @@ export interface BenchmarkRecord {
     author: string;
     source: string;
     domainSource: string;
-    generatorFamily?: string;
+    // THE canonical generator-family field: the single source of truth every
+    // consumer (split, slices, audit, manifest, report) compares against. Its
+    // nominal type makes a comparison against any other field a compile error.
+    generatorFamily?: GeneratorFamily;
     generatorVersion?: string;
     promptTemplate?: string;
     collectionBatch: string;
@@ -283,6 +299,37 @@ export function validateBenchmarkRecord(value: unknown): BenchmarkRecord {
     if (groups.derivationRoot === id) {
       throw new BenchmarkRecordError(
         "mixed records require mixture metadata and a parent derivationRoot",
+        id,
+      );
+    }
+  }
+  // One family, one spelling. A generated record must carry the canonical field,
+  // and it must be the canonical form of the recipe's own label. Divergence is
+  // REFUSED rather than reconciled: silent correction is what allowed two
+  // spellings of one family to coexist in the corpus, which left the
+  // `generatorExposure` slice with no `unseen` bucket and the splitter's held-out
+  // mark permanently false.
+  if (generation !== undefined) {
+    let expected: GeneratorFamily;
+    try {
+      expected = normalizeGeneratorFamily(generation.family);
+    } catch (error) {
+      throw new BenchmarkRecordError(
+        `generation.family cannot be normalized into a canonical groups.generatorFamily: ${
+          error instanceof GeneratorFamilyError ? error.message : String(error)
+        }`,
+        id,
+      );
+    }
+    if (groups.generatorFamily === undefined) {
+      throw new BenchmarkRecordError(
+        `groups.generatorFamily is required when generation is present: it is the canonical generator-family field, and generation.family "${generation.family}" normalizes to "${expected}"`,
+        id,
+      );
+    }
+    if (groups.generatorFamily !== expected) {
+      throw new BenchmarkRecordError(
+        `groups.generatorFamily must be the canonical form of generation.family: expected "${expected}", received "${groups.generatorFamily}"`,
         id,
       );
     }
@@ -585,13 +632,18 @@ function validateGroups(value: unknown, id: string): BenchmarkRecord["groups"] {
     nearDuplicate: pseudonym(obj, "nearDuplicate", "groups", id),
     derivationRoot: pseudonym(obj, "derivationRoot", "groups", id),
   };
-  const generatorFamily = optionalPseudonym(
-    obj,
-    "generatorFamily",
-    "groups",
-    id,
-  );
-  if (generatorFamily !== undefined) groups.generatorFamily = generatorFamily;
+  // The canonical field is checked against the ONE normalizer, not against a
+  // second regex, and a non-canonical spelling is refused rather than rewritten.
+  const rawFamily = obj.generatorFamily;
+  if (rawFamily !== undefined) {
+    if (!isCanonicalGeneratorFamily(rawFamily)) {
+      throw new BenchmarkRecordError(
+        `groups.generatorFamily must be a generator family in canonical form (a pseudonymised token, no dots): received ${JSON.stringify(rawFamily)}`,
+        id,
+      );
+    }
+    groups.generatorFamily = rawFamily;
+  }
   const generatorVersion = optionalPseudonym(
     obj,
     "generatorVersion",

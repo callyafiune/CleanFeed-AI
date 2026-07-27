@@ -28,6 +28,10 @@ import { fileURLToPath } from "node:url";
 import { canonicalSha256 } from "../../../contracts/canonical-json.ts";
 import type { DatasetManifest } from "../../dataset-manifest.ts";
 import type { BenchmarkRecord } from "../../schema.ts";
+import {
+  asGeneratorFamily,
+  normalizeGeneratorFamily,
+} from "../../generator-family.ts";
 
 const REPO_ROOT = resolve(
   dirname(fileURLToPath(import.meta.url)),
@@ -213,7 +217,11 @@ function aiRecord(
   heldOut: boolean,
 ): BenchmarkRecord {
   const text = buildText(id, seed, "ai");
+  // The provider's label and the canonical field are the SAME fact written once:
+  // the schema refuses a generated record whose groups.generatorFamily is not the
+  // canonical form of its generation.family.
   const family = heldOut ? HELDOUT_FAMILY : `seen_family_${ordinal % 3}`;
+  const canonicalFamily = normalizeGeneratorFamily(family);
   return {
     schemaVersion: 2,
     id,
@@ -238,7 +246,7 @@ function aiRecord(
       generatedAt: createdAt,
     },
     transformation: { kind: "none", severity: "none" },
-    groups: baseGroups(id),
+    groups: { ...baseGroups(id), generatorFamily: canonicalFamily },
   };
 }
 
@@ -329,7 +337,7 @@ async function writeCorpus(
     reviewLedgerSha256: sha256Hex(reviewLedgerJsonl),
     sourceManifestFile: "private/source-manifest.json",
     sourceManifestSha256: sha256Hex(sourceManifestJson),
-    heldOutGeneratorFamilies: [HELDOUT_FAMILY],
+    heldOutGeneratorFamilies: [asGeneratorFamily(HELDOUT_FAMILY)],
     licenses: [
       {
         id: LICENSE_ID,

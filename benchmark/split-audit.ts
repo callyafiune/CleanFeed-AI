@@ -14,6 +14,11 @@
 // a hand-crafted one) is caught rather than trusted. Standalone module: MUST NOT
 // import from the extension bundle (src/).
 
+import {
+  generatorFamilyOf,
+  sortGeneratorFamilies,
+  type GeneratorFamily,
+} from "./generator-family.ts";
 import type { BenchmarkLabel, BenchmarkRecord } from "./schema.ts";
 import {
   connectedComponentRoots,
@@ -45,7 +50,9 @@ export interface SplitAudit {
     fprGateEligible: boolean;
     recallGateEligible: boolean;
   }>;
-  heldOutGeneratorFamilies: string[];
+  // Read back off the partitions, in canonical form, so it can be compared for
+  // exact equality against the declared, marked and published sets.
+  heldOutGeneratorFamilies: GeneratorFamily[];
   passed: boolean;
   reasons: string[];
 }
@@ -247,21 +254,25 @@ function auditLeakages(
 // external declaration.
 function deriveHeldOutFamilies(
   byPartition: Record<Partition, readonly BenchmarkRecord[]>,
-): string[] {
+): GeneratorFamily[] {
   const inTest = familySet(byPartition.test);
-  const seenElsewhere = new Set<string>([
+  const seenElsewhere = new Set<GeneratorFamily>([
     ...familySet(byPartition.development),
     ...familySet(byPartition.calibration),
   ]);
-  return [...inTest]
-    .filter((family) => !seenElsewhere.has(family))
-    .sort((a, b) => (a < b ? -1 : a > b ? 1 : 0));
+  return sortGeneratorFamilies(
+    [...inTest].filter((family) => !seenElsewhere.has(family)),
+  );
 }
 
-function familySet(rows: readonly BenchmarkRecord[]): Set<string> {
-  const families = new Set<string>();
+// Reads the CANONICAL field through the single accessor. Reading
+// `row.generation?.family` here would derive the provider's dotted labels, which
+// could never equal the underscore-spelled families the manifest declares — so
+// the audit's set and the declared set were incomparable by construction.
+function familySet(rows: readonly BenchmarkRecord[]): Set<GeneratorFamily> {
+  const families = new Set<GeneratorFamily>();
   for (const row of rows) {
-    const family = row.generation?.family;
+    const family = generatorFamilyOf(row);
     if (family !== undefined) families.add(family);
   }
   return families;
@@ -270,7 +281,7 @@ function familySet(rows: readonly BenchmarkRecord[]): Set<string> {
 function auditCriticalSlices(
   records: readonly BenchmarkRecord[],
   test: readonly BenchmarkRecord[],
-  heldOutGeneratorFamilies: readonly string[],
+  heldOutGeneratorFamilies: readonly GeneratorFamily[],
   policy: SplitAuditPolicy,
 ): SplitAudit["criticalSliceSamples"] {
   const held = new Set(heldOutGeneratorFamilies);
@@ -284,12 +295,11 @@ function auditCriticalSlices(
     humanSourceType: (record) => record.humanSourceType,
     temporalCohort: (record) => cohortOf(record.createdAt),
     hardNegativeFamily: (record) => record.hardNegativeFamily,
-    generatorExposure: (record) =>
-      record.generation === undefined
-        ? undefined
-        : held.has(record.generation.family)
-          ? "unseen"
-          : "seen",
+    generatorExposure: (record) => {
+      const family = generatorFamilyOf(record);
+      if (family === undefined) return undefined;
+      return held.has(family) ? "unseen" : "seen";
+    },
     transformation: (record) => record.transformation.kind,
     mixedFractionBucket: (record) =>
       record.mixture === undefined

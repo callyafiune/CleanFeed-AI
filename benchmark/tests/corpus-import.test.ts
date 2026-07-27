@@ -34,6 +34,7 @@ import {
 import { runValidate } from "../commands/validate.ts";
 import { runSplit } from "../commands/split.ts";
 import { validateSplitArtifact } from "../split-artifact.ts";
+import { normalizeGeneratorFamily } from "../generator-family.ts";
 
 // ---------------------------------------------------------------------------
 // Shared fixtures.
@@ -680,7 +681,12 @@ function ai(
     annotation: ANNOTATION,
     generation: generationRecipe(family, createdAt),
     transformation: { kind: "none", severity: "none" },
-    groups: baseGroups(id, batch),
+    // The canonical field must be the canonical form of the recipe's own label, or
+    // the schema refuses the record (benchmark/generator-family.ts).
+    groups: {
+      ...baseGroups(id, batch),
+      generatorFamily: normalizeGeneratorFamily(family),
+    },
   };
 }
 
@@ -693,6 +699,7 @@ function mixed(
   const text = buildText(id);
   const groups = baseGroups(id, batch);
   groups.derivationRoot = parentId;
+  groups.generatorFamily = normalizeGeneratorFamily(SEEN_FAMILY);
   return {
     schemaVersion: 2,
     id,

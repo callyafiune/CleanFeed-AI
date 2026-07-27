@@ -17,10 +17,18 @@ import {
   parseDatasetAudit,
   validateDatasetManifest,
 } from "../dataset-manifest.ts";
+import {
+  GeneratorFamilyError,
+  assertGeneratorFamilyAgreement,
+} from "../generator-family.ts";
 import { parseBenchmarkDataset, type BenchmarkRecord } from "../schema.ts";
 import { buildSplitArtifact } from "../split-artifact.ts";
 import { auditBlockedSplit, type SplitAuditPolicy } from "../split-audit.ts";
-import { createBlockedSplit, type BlockedSplitPolicy } from "../split.ts";
+import {
+  createBlockedSplit,
+  markedHeldOutGeneratorFamilies,
+  type BlockedSplitPolicy,
+} from "../split.ts";
 import {
   CommandError,
   readJsonFile,
@@ -96,6 +104,30 @@ export async function runSplit(options: SplitOptions): Promise<string> {
     policy,
     audit: splitAudit,
   });
+
+  // The exact-equality invariant, at the one place where all four sets exist at
+  // once: what the manifest RESERVED, what the splitter actually MARKED, what the
+  // independent audit DERIVED off the partitions, and what the sealed artifact
+  // PUBLISHES (which is the list the report prints, since report.ts reads it from
+  // this artifact). Hard failure, not a warning: a family the manifest reserved
+  // but the splitter never marked means the "unseen generator" measurement has no
+  // population at all, and a family the audit read back that nobody reserved means
+  // the report would publish a reservation that was never made. Both used to be
+  // silent — the spelling mismatch made every one of these comparisons impossible
+  // to satisfy.
+  try {
+    assertGeneratorFamilyAgreement({
+      declared: manifest.heldOutGeneratorFamilies,
+      marked: markedHeldOutGeneratorFamilies(records, policy),
+      derived: splitAudit.heldOutGeneratorFamilies,
+      published: artifact.heldOutGeneratorFamilies,
+    });
+  } catch (error) {
+    throw new CommandError(
+      "HELD_OUT_FAMILY_DISAGREEMENT",
+      error instanceof GeneratorFamilyError ? error.message : String(error),
+    );
+  }
 
   await writeJsonAtomic(join(outputDirectory, "split-artifact.json"), artifact);
   await writeFileAtomic(

@@ -12,12 +12,18 @@ import type {
   BenchmarkRecord,
   TransformationKind,
 } from "../schema.ts";
+import {
+  asGeneratorFamily,
+  generatorFamilyOf,
+  normalizeGeneratorFamily,
+} from "../generator-family.ts";
 
 // The blocked split is exercised through the public API only (no lower-level
 // hooks), so every fixture is a full, self-consistent dataset that the temporal
 // 20/30/50 cut can actually satisfy within tolerance. A record factory keeps the
 // closed schema fields realistic while leaving the axes the splitter reads
-// (label, createdAt, domain, generation.family and every groups.* key) under
+// (label, createdAt, domain, the canonical generator family and every groups.* key)
+// under
 // direct test control.
 const SHA = "a".repeat(64);
 
@@ -101,6 +107,10 @@ function rec(spec: RecordSpec): BenchmarkRecord {
     record.groups.promptTemplate = spec.promptTemplate;
   }
   if (spec.family !== undefined) {
+    // Both fields, as a valid record carries them: the provider's own label inside
+    // the recipe, and the CANONICAL token in groups — the only field the splitter,
+    // the audit and the slices read (benchmark/generator-family.ts). A fixture that
+    // set only `generation.family` modelled a record the schema now refuses.
     record.generation = {
       provider: "acme",
       family: spec.family,
@@ -110,6 +120,7 @@ function rec(spec: RecordSpec): BenchmarkRecord {
       promptSha256: SHA,
       generatedAt: spec.createdAt,
     };
+    record.groups.generatorFamily = normalizeGeneratorFamily(spec.family);
   }
   if (spec.aiFraction !== undefined) {
     record.mixture = {
@@ -247,7 +258,7 @@ const DATASET = buildDataset({
 const POLICY: BlockedSplitPolicy = {
   fractions: { development: 0.2, calibration: 0.3, test: 0.5 },
   classTolerance: 0.02,
-  heldOutGeneratorFamilies: ["family-unseen"],
+  heldOutGeneratorFamilies: [asGeneratorFamily("family-unseen")],
   seed: 712_019,
 };
 
@@ -274,19 +285,22 @@ describe("createBlockedSplit", () => {
     const split = createBlockedSplit(DATASET, {
       fractions: { development: 0.2, calibration: 0.3, test: 0.5 },
       classTolerance: 0.02,
-      heldOutGeneratorFamilies: ["family-unseen"],
+      heldOutGeneratorFamilies: [asGeneratorFamily("family-unseen")],
       seed: 712_019,
     });
     const audit = auditBlockedSplit(DATASET, split, RELEASE_AUDIT_POLICY);
     expect(audit.leakages).toEqual([]);
+    // Reads the CANONICAL field, like the splitter does. Asserting on
+    // `generation.family` here would keep passing even if the held-out mark stopped
+    // working, because the two spellings coincide in this fixture.
     expect(
-      split.test.filter((row) => row.generation?.family === "family-unseen"),
+      split.test.filter((row) => generatorFamilyOf(row) === "family-unseen"),
     ).not.toHaveLength(0);
-    expect([...split.development, ...split.calibration]).not.toContainEqual(
-      expect.objectContaining({
-        generation: expect.objectContaining({ family: "family-unseen" }),
-      }),
-    );
+    expect(
+      [...split.development, ...split.calibration].filter(
+        (row) => generatorFamilyOf(row) === "family-unseen",
+      ),
+    ).toHaveLength(0);
   });
 
   it("does not collapse every linkedin record or every seen family into one component", () => {
@@ -296,10 +310,10 @@ describe("createBlockedSplit", () => {
     );
     expect(split.test.some((row) => row.domain === "corporate")).toBe(true);
     expect(
-      split.calibration.some((row) => row.generation?.family === "family-seen"),
+      split.calibration.some((row) => generatorFamilyOf(row) === "family-seen"),
     ).toBe(true);
     expect(
-      split.test.some((row) => row.generation?.family === "family-seen"),
+      split.test.some((row) => generatorFamilyOf(row) === "family-seen"),
     ).toBe(true);
   });
 

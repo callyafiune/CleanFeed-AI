@@ -13,6 +13,11 @@
 // last-write-wins.
 
 import { canonicalSha256 } from "../contracts/canonical-json.ts";
+import {
+  GeneratorFamilyError,
+  asGeneratorFamily,
+  type GeneratorFamily,
+} from "./generator-family.ts";
 import { validateBenchmarkRecord, type BenchmarkRecord } from "./schema.ts";
 
 export interface DatasetManifest {
@@ -31,7 +36,10 @@ export interface DatasetManifest {
   reviewLedgerSha256: string;
   sourceManifestFile: "private/source-manifest.json";
   sourceManifestSha256: string;
-  heldOutGeneratorFamilies: [string, ...string[]];
+  // The reservation itself, in canonical form. This is the DECLARED set the split
+  // must mark, the audit must derive and the report must publish — all four
+  // compared for exact equality (benchmark/generator-family.ts).
+  heldOutGeneratorFamilies: [GeneratorFamily, ...GeneratorFamily[]];
   licenses: Array<{
     id: string;
     name: string;
@@ -296,10 +304,26 @@ export function validateDatasetManifest(value: unknown): DatasetManifest {
       "heldOutGeneratorFamilies must list at least one family",
     );
   }
+  // A declared family that is not already canonical is REFUSED, not normalized
+  // into shape: the manifest is the reservation, and a reservation nobody else can
+  // match by exact equality reserves nothing.
   const heldOutGeneratorFamilies = root.heldOutGeneratorFamilies.map(
-    (family, index) =>
-      nonEmptyString(family, `heldOutGeneratorFamilies[${index}]`),
-  ) as [string, ...string[]];
+    (family, index) => {
+      const raw = nonEmptyString(family, `heldOutGeneratorFamilies[${index}]`);
+      try {
+        return asGeneratorFamily(raw);
+      } catch (error) {
+        return fail(
+          "DATASET_FIELD_INVALID",
+          `heldOutGeneratorFamilies[${index}] ${
+            error instanceof GeneratorFamilyError
+              ? error.message
+              : String(error)
+          }`,
+        );
+      }
+    },
+  ) as [GeneratorFamily, ...GeneratorFamily[]];
 
   if (!Array.isArray(root.licenses) || root.licenses.length === 0) {
     fail("DATASET_FIELD_INVALID", "licenses must list at least one license");

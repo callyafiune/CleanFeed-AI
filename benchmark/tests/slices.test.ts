@@ -13,6 +13,10 @@ import {
   type SliceResult,
 } from "../slices.ts";
 import type { BenchmarkRecord } from "../schema.ts";
+import {
+  asGeneratorFamily,
+  normalizeGeneratorFamily,
+} from "../generator-family.ts";
 
 interface RecordFields {
   author: string;
@@ -59,7 +63,12 @@ function record(fields: RecordFields): BenchmarkRecord {
     };
   }
   if (fields.generatorFamily !== undefined) {
+    // Both fields, as a real record carries them: the provider's own label inside
+    // the recipe, and the canonical token in groups — which is the ONLY field the
+    // generatorExposure extractor reads (benchmark/generator-family.ts).
     base.generation = { family: fields.generatorFamily };
+    (base.groups as Record<string, unknown>).generatorFamily =
+      normalizeGeneratorFamily(fields.generatorFamily);
   }
   return base as unknown as BenchmarkRecord;
 }
@@ -120,7 +129,10 @@ function find(
   return slices.find((slice) => slice.axis === axis && slice.key === key);
 }
 
-const SEED = { bootstrapSeed: 424242, heldOutGeneratorFamilies: ["gpt"] };
+const SEED = {
+  bootstrapSeed: 424242,
+  heldOutGeneratorFamilies: [asGeneratorFamily("gpt")],
+};
 
 // A fixture whose buckets are single-class on every axis, so building slices
 // stays cheap while exercising the 300-negative / 200-positive gate floors.

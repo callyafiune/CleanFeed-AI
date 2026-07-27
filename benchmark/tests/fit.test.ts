@@ -25,6 +25,12 @@ import type { BenchmarkRecord } from "../schema.ts";
 import { buildSplitArtifact } from "../split-artifact.ts";
 import type { SplitAudit } from "../split-audit.ts";
 import type { DatasetSplit } from "../split.ts";
+import {
+  asGeneratorFamily,
+  generatorFamilyOf,
+  normalizeGeneratorFamily,
+  type GeneratorFamily,
+} from "../generator-family.ts";
 
 // ---------------------------------------------------------------------------
 // A fully consistent on-disk fit scenario: a sealed-shaped dataset, a frozen
@@ -78,6 +84,11 @@ function makeRecord(
   id: string,
   label: BenchmarkRecord["label"],
   createdAt: number,
+  // The provider's family label. Test-partition rows carry the reserved family, so
+  // the manifest's reservation names a family the corpus actually contains — the
+  // four-way invariant in benchmark/generator-family.ts refuses a reservation
+  // nothing satisfies.
+  family = "acme_family",
 ): BenchmarkRecord {
   const base: BenchmarkRecord = {
     schemaVersion: 2,
@@ -124,13 +135,16 @@ function makeRecord(
   if (label === "ai") {
     base.generation = {
       provider: "acme",
-      family: "acme_family",
+      family,
       model: "acme-1",
       version: "v1",
       promptId: `prompt_${id}`,
       promptSha256: hex(`prompt-${id}`),
       generatedAt: createdAt,
     };
+    // The canonical field, required by the schema on every generated record and
+    // the only one the split/slices/audit read (benchmark/generator-family.ts).
+    base.groups.generatorFamily = normalizeGeneratorFamily(family);
   }
   return base;
 }
@@ -150,8 +164,8 @@ const calAis = Array.from({ length: 10 }, (_unused, i) =>
 const testRecords = [
   makeRecord("test-h-0", "human", 310),
   makeRecord("test-h-1", "human", 311),
-  makeRecord("test-a-0", "ai", 320),
-  makeRecord("test-a-1", "ai", 321),
+  makeRecord("test-a-0", "ai", 320, "heldout_family"),
+  makeRecord("test-a-1", "ai", 321, "heldout_family"),
 ];
 const allRecords = [
   ...devHumans,
@@ -256,7 +270,7 @@ function datasetManifest(): DatasetManifest {
     reviewLedgerSha256: REVIEW_LEDGER_SHA,
     sourceManifestFile: "private/source-manifest.json",
     sourceManifestSha256: SOURCE_MANIFEST_SHA,
-    heldOutGeneratorFamilies: ["heldout_family"],
+    heldOutGeneratorFamilies: [asGeneratorFamily("heldout_family")],
     licenses: [
       {
         id: "consent-v1",
@@ -289,10 +303,30 @@ function passingAudit(split: DatasetSplit<BenchmarkRecord>): SplitAudit {
     },
     leakages: [],
     criticalSliceSamples: [],
-    heldOutGeneratorFamilies: [],
+    heldOutGeneratorFamilies: derivedHeldOutFamilies(split),
     passed: true,
     reasons: [],
   };
+}
+
+// The families present in the test partition and absent from development and
+// calibration — derived from the split exactly as benchmark/split-audit.ts derives
+// them, so this stand-in audit cannot claim a reservation the partitions do not
+// show. Hardcoding it was harmless only while nothing compared the four sets.
+function derivedHeldOutFamilies(
+  split: DatasetSplit<BenchmarkRecord>,
+): GeneratorFamily[] {
+  const families = (rows: readonly BenchmarkRecord[]): GeneratorFamily[] =>
+    rows
+      .map((row) => generatorFamilyOf(row))
+      .filter((family): family is GeneratorFamily => family !== undefined);
+  const elsewhere = new Set<GeneratorFamily>([
+    ...families(split.development),
+    ...families(split.calibration),
+  ]);
+  return [...new Set(families(split.test))]
+    .filter((family) => !elsewhere.has(family))
+    .sort((a, b) => (a < b ? -1 : a > b ? 1 : 0));
 }
 
 async function buildAudit(): Promise<DatasetAudit> {
@@ -443,7 +477,7 @@ async function buildScenario(
   const policy = {
     fractions: { development: 0.2, calibration: 0.3, test: 0.5 },
     classTolerance: 0.02,
-    heldOutGeneratorFamilies: ["heldout_family"],
+    heldOutGeneratorFamilies: [asGeneratorFamily("heldout_family")],
     seed: FIT_SEED,
   } as const;
   const artifact = await buildSplitArtifact({

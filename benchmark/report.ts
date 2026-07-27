@@ -25,6 +25,10 @@
 // for a fixed input (the caller supplies `generatedAt`).
 
 import { canonicalSha256 } from "../contracts/canonical-json.ts";
+import {
+  assertGeneratorFamiliesEqual,
+  type GeneratorFamily,
+} from "./generator-family.ts";
 import type { GateReport, ReleaseDecision } from "./gates.ts";
 import type {
   CalibrationSliceMetrics,
@@ -81,7 +85,16 @@ export interface GovernanceSeal {
 export interface BenchmarkReportInput {
   generatedAt: string;
   dataset: { id: string; version: string; digest: string };
-  split: { digest: string; strategy: SplitStrategy; audit: SplitAudit };
+  split: {
+    digest: string;
+    strategy: SplitStrategy;
+    // The DECLARED reserved families, copied from the sealed split artifact. The
+    // report is the fourth place they have to agree (see
+    // benchmark/generator-family.ts): buildBenchmarkReport refuses to assemble a
+    // report whose published list diverges from the audit's derived one.
+    heldOutGeneratorFamilies: readonly GeneratorFamily[];
+    audit: SplitAudit;
+  };
   evaluatorDigest: string;
   calibrationArtifactDigest: string;
   // Identity sealed at fit/consume time (authoritative).
@@ -107,7 +120,12 @@ export interface BenchmarkReport {
   dataset: { id: string; version: string; digest: string };
   datasetAuditDigest: string;
   sourceReadinessDigest: string;
-  split: { digest: string; strategy: SplitStrategy; audit: SplitAudit };
+  split: {
+    digest: string;
+    strategy: SplitStrategy;
+    heldOutGeneratorFamilies: readonly GeneratorFamily[];
+    audit: SplitAudit;
+  };
   evaluatorDigest: string;
   runtimeParityDigest: string;
   model: {
@@ -143,6 +161,19 @@ export async function buildBenchmarkReport(
   // Governance/session/identity is verified FIRST — before any metric is read —
   // so a divergent evaluation never produces a sealed report.
   assertSealMatches(input.frozen, input.observed);
+
+  // The report is the fourth place the reserved generator families must agree, and
+  // the only one a reader sees. Divergence between the list this report publishes
+  // and the list the independent audit derived off the partitions is a hard
+  // failure here, before any metric is consulted: an `unseen` generator slice
+  // computed over a different set than the one printed beside it is not a
+  // measurement, it is a mislabel.
+  assertGeneratorFamiliesEqual(
+    "published",
+    input.split.heldOutGeneratorFamilies,
+    "derived",
+    input.split.audit.heldOutGeneratorFamilies,
+  );
 
   const predictionManifestDigests = {
     development: await computePredictionManifestDigest(
@@ -312,6 +343,27 @@ export function renderReportMarkdown(report: BenchmarkReport): string {
   lines.push(
     `- Digest de paridade de runtime: \`${report.runtimeParityDigest}\``,
   );
+  lines.push("");
+
+  // The reserved families are PUBLISHED, not implied: the `generatorExposure`
+  // slice below reports an `unseen` bucket, and a reader cannot check what
+  // "unseen" means without seeing the set. buildBenchmarkReport already refused to
+  // assemble this report if the list disagreed with the audit's derived one, so
+  // the two lines below are guaranteed to name the same set.
+  lines.push("## Famílias geradoras retidas (não vistas no treino)");
+  lines.push("");
+  const heldOut = report.split.heldOutGeneratorFamilies;
+  if (heldOut.length === 0) {
+    lines.push(
+      "Nenhuma família geradora foi reservada: a fatia `generatorExposure` não " +
+        "tem bucket `unseen` e nada aqui mede gerador não visto.",
+    );
+  } else {
+    lines.push(`- Declaradas e publicadas: \`${heldOut.join("`, `")}\``);
+    lines.push(
+      `- Derivadas pela auditoria do split: \`${report.split.audit.heldOutGeneratorFamilies.join("`, `")}\``,
+    );
+  }
   lines.push("");
 
   lines.push("## Razões dos gates");

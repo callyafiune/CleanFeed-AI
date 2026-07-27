@@ -31,6 +31,7 @@ import {
   type PredictionManifestV1,
 } from "../prediction-schema.ts";
 import type { SplitArtifact } from "../split-artifact.ts";
+import { asGeneratorFamily } from "../generator-family.ts";
 
 // ---------------------------------------------------------------------------
 // Shared identity fixtures. Every digest is COMPUTED so the preflight's own
@@ -83,7 +84,7 @@ const datasetManifest: DatasetManifest = {
   reviewLedgerSha256: REVIEW_LEDGER_SHA,
   sourceManifestFile: "private/source-manifest.json",
   sourceManifestSha256: SOURCE_MANIFEST_SHA,
-  heldOutGeneratorFamilies: ["heldout_family"],
+  heldOutGeneratorFamilies: [asGeneratorFamily("heldout_family")],
   licenses: [
     {
       id: "consent-v1",

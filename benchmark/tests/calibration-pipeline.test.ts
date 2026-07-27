@@ -28,6 +28,7 @@ import {
   computeRuntimeParityDigest,
   type RuntimeParityManifestV1,
 } from "../../contracts/runtime-parity.ts";
+import { asGeneratorFamily } from "../generator-family.ts";
 
 // ---------------------------------------------------------------------------
 // Shared identity fixtures. Every digest below is COMPUTED so that fit's own
@@ -83,7 +84,7 @@ const datasetManifest: DatasetManifest = {
   reviewLedgerSha256: REVIEW_LEDGER_SHA,
   sourceManifestFile: "private/source-manifest.json",
   sourceManifestSha256: SOURCE_MANIFEST_SHA,
-  heldOutGeneratorFamilies: ["heldout_family"],
+  heldOutGeneratorFamilies: [asGeneratorFamily("heldout_family")],
   licenses: [
     {
       id: "consent-v1",

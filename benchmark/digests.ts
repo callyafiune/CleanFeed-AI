@@ -66,6 +66,12 @@ export const EVALUATOR_FILES = [
   "contracts/runtime-parity.ts",
   "scripts/runtime-parity.mjs",
   "benchmark/schema.ts",
+  // The canonical generator-family contract: one normalization, one nominal type
+  // and the exact-equality invariant over the reserved families. It decides which
+  // records the `generatorExposure` slice calls unseen and which the splitter
+  // forces into the blocked test, so a changed byte here changes what the
+  // evaluator measures.
+  "benchmark/generator-family.ts",
   // The frozen execution contract of the v3 rebuild and its validator. Every
   // budget, epsilon, seed and threshold a gate reads comes from these two files,
   // so a changed byte in either changes the evaluator's identity.

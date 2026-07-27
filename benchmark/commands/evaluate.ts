@@ -230,6 +230,9 @@ export async function runEvaluate(options: EvaluateOptions): Promise<string> {
     split: {
       digest: artifact.splitDigest,
       strategy: SPLIT_STRATEGY,
+      // The same list the slices above were bucketed against, so the report
+      // publishes the set its `unseen` bucket was actually measured over.
+      heldOutGeneratorFamilies: artifact.heldOutGeneratorFamilies,
       audit: artifact.audit,
     },
     evaluatorDigest: frozen.evaluatorDigest,

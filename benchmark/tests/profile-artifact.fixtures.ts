@@ -450,6 +450,7 @@ function report(
     split: {
       digest: SPLIT_DIGEST,
       strategy: "blocked-group-time-v1",
+      heldOutGeneratorFamilies: [],
       audit: {} as BenchmarkReport["split"]["audit"],
     },
     evaluatorDigest: EVALUATOR_DIGEST,

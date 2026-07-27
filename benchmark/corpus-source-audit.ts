@@ -195,6 +195,13 @@ function auditBatches(
   }
 }
 
+// The ONE legitimate comparison against `generation.family`: this is the recipe
+// identity check, matching a record's declared recipe field-for-field against the
+// reviewed generation batch. Both sides are the PROVIDER's own label, kept
+// unnormalized on purpose, and neither is the canonical grouping family — nothing
+// here asks whether a family was reserved as unseen. Any comparison that DOES ask
+// that must go through `generatorFamilyOf` and the canonical field
+// (benchmark/generator-family.ts).
 function recipeMatchesBatch(
   generation: NonNullable<BenchmarkRecord["generation"]>,
   batch: GenerationBatchV1,

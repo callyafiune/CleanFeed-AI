@@ -510,3 +510,53 @@ class MakeMixedTests(unittest.TestCase):
 
         rewrite = compute_mixture("um texto qualquer", "conteúdo completamente novo")
         self.assertGreater(rewrite["aiFraction"], 0.8)
+
+
+class GeneratorFamilyTests(unittest.TestCase):
+    """The assembler's mirror of normalizeGeneratorFamily (A4).
+
+    The TypeScript schema is the real enforcement — validateBenchmarkRecord refuses
+    any record whose groups.generatorFamily is not exactly the canonical form of its
+    generation.family — so these cases pin that the assembler writes what the schema
+    will accept, not a second authority.
+    """
+
+    def test_both_corpus_spellings_converge(self) -> None:
+        from assemble_corpus import generator_family
+
+        self.assertEqual(
+            generator_family("gemini-3.5-flash-low"), "gemini-3_5-flash-low"
+        )
+        self.assertEqual(
+            generator_family("gemini-3_5-flash-low"), "gemini-3_5-flash-low"
+        )
+
+    def test_idempotent_and_case_preserving(self) -> None:
+        from assemble_corpus import generator_family
+
+        for raw in (
+            "gemini-3.5-flash-low",
+            "madras:victory (1)",
+            "gpt-5.6-luna",
+            "  spaced name  ",
+            "Gemini-3.5",
+            "A",
+        ):
+            once = generator_family(raw)
+            self.assertEqual(generator_family(once), once)
+        # Case survives: two provider labels differing only in case stay distinct.
+        self.assertEqual(generator_family("Gemini-3.5"), "Gemini-3_5")
+        self.assertNotEqual(
+            generator_family("Gemini-3.5"), generator_family("gemini-3.5")
+        )
+
+    def test_fails_closed_instead_of_inventing_a_token(self) -> None:
+        from assemble_corpus import generator_family, slug
+
+        # slug() invents "x" for any caller; a generator family must not be named
+        # by a placeholder, so this one raises.
+        self.assertEqual(slug("..."), "x")
+        with self.assertRaises(ValueError):
+            generator_family("...")
+        with self.assertRaises(ValueError):
+            generator_family("")
