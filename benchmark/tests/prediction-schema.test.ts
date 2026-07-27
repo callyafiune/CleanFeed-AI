@@ -90,6 +90,7 @@ describe("predictions", () => {
         localizedRawScore: null,
         evidenceQuality: "unsupported",
         reasonCode: "RUNTIME_FAILURE",
+        failureDetail: "WASM_OOM",
         memoryBytes: null,
       }),
     ].join("\n");
@@ -126,6 +127,94 @@ describe("predictions", () => {
     expect(() =>
       parsePredictions(JSON.stringify({ ...valid, coverage: 1.5 })),
     ).toThrow(/coverage must be between 0 and 1/);
+  });
+});
+
+// The failure detail is what turns 325 opaque INFERENCE_FAILED rows into a
+// diagnosable population. It is optional in the shape so a scored or abstained
+// row never carries it, and REQUIRED the moment a row claims status "error".
+const errorRow = {
+  ...valid,
+  id: "post-err",
+  status: "error",
+  documentRawScore: null,
+  localizedRawScore: null,
+  evidenceQuality: "unsupported",
+  reasonCode: "INFERENCE_FAILED",
+  memoryBytes: null,
+};
+
+describe("prediction failureDetail", () => {
+  it("requires a failure detail on an error row", () => {
+    expect(() => parsePredictions(JSON.stringify(errorRow))).toThrow(
+      /error prediction must carry a failureDetail/,
+    );
+  });
+
+  it("accepts and preserves an allowlisted detail on an error row", () => {
+    const [row] = parsePredictions(
+      JSON.stringify({
+        ...errorRow,
+        failureDetail:
+          "TOKEN_LIMIT_EXCEEDED: Model input exceeds the model token limit.",
+      }),
+    );
+
+    expect(row?.failureDetail).toBe(
+      "TOKEN_LIMIT_EXCEEDED: Model input exceeds the model token limit.",
+    );
+  });
+
+  it("forbids a failure detail on a scored or abstained row", () => {
+    expect(() =>
+      parsePredictions(JSON.stringify({ ...valid, failureDetail: "WASM_OOM" })),
+    ).toThrow(/failureDetail is only allowed when status is error/);
+    expect(() =>
+      parsePredictions(
+        JSON.stringify({
+          ...valid,
+          status: "abstained",
+          documentRawScore: null,
+          localizedRawScore: null,
+          evidenceQuality: "limited",
+          reasonCode: "TEXT_TOO_SHORT",
+          failureDetail: "WASM_OOM",
+        }),
+      ),
+    ).toThrow(/failureDetail is only allowed when status is error/);
+  });
+
+  it("rejects document text smuggled into the failure detail", () => {
+    expect(() =>
+      parsePredictions(
+        JSON.stringify({
+          ...errorRow,
+          failureDetail:
+            "O réu foi absolvido por insuficiência de provas nos autos.",
+        }),
+      ),
+    ).toThrow(/failureDetail must be an allowlisted sanitized detail/);
+  });
+
+  it("rejects a non-string and an over-long failure detail", () => {
+    expect(() =>
+      parsePredictions(JSON.stringify({ ...errorRow, failureDetail: 7 })),
+    ).toThrow(/failureDetail must be an allowlisted sanitized detail/);
+    expect(() =>
+      parsePredictions(
+        JSON.stringify({
+          ...errorRow,
+          failureDetail: `WASM_OOM${"!".repeat(160)}`,
+        }),
+      ),
+    ).toThrow(/failureDetail must be an allowlisted sanitized detail/);
+  });
+
+  it("still parses a scored row that carries no detail at all", () => {
+    const [row] = parsePredictions(JSON.stringify(valid));
+
+    expect(row?.failureDetail).toBeUndefined();
+    expect(Object.hasOwn(row ?? {}, "failureDetail")).toBe(false);
   });
 });
 

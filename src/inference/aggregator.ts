@@ -44,19 +44,27 @@ export function aggregateWindowsV2(
     windows.find((window) => window.index === index)!,
   );
 
-  if (
-    !Number.isFinite(totalTokenCount) ||
-    totalTokenCount <= 0 ||
-    selected.some((window) => !isScore(window.rawScore))
-  ) {
-    throw new CleanFeedError("INFERENCE_FAILED", "INFERENCE_FAILED");
+  // The SAME inputs are rejected as before, but each branch now names itself.
+  // While all four shared the message "INFERENCE_FAILED" the scored artifacts
+  // could not tell a non-finite model score from an empty window, so no
+  // correction could be more than a guess. The message is a code from the shared
+  // failure-detail allowlist (contracts/failure-detail.ts); the ErrorCode stays
+  // INFERENCE_FAILED so existing recovery keeps recognizing the class.
+  if (!Number.isFinite(totalTokenCount) || totalTokenCount <= 0) {
+    throw new CleanFeedError("INFERENCE_FAILED", "INVALID_TOTAL_TOKEN_COUNT");
+  }
+  if (selected.some((window) => !Number.isFinite(window.rawScore))) {
+    throw new CleanFeedError("INFERENCE_FAILED", "NON_FINITE_SCORE");
+  }
+  if (selected.some((window) => !isScore(window.rawScore))) {
+    throw new CleanFeedError("INFERENCE_FAILED", "SCORE_OUT_OF_RANGE");
   }
 
   const uniqueTokens = uniqueTokenWeights(selected);
   const totalUnique = uniqueTokens.reduce((sum, weight) => sum + weight, 0);
 
   if (totalUnique <= 0) {
-    throw new CleanFeedError("INFERENCE_FAILED", "INFERENCE_FAILED");
+    throw new CleanFeedError("INFERENCE_FAILED", "ZERO_UNIQUE_TOKEN_WEIGHT");
   }
 
   // A weighted mean over normalized unique-token weights: each window's score

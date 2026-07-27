@@ -91,17 +91,25 @@ describe("aggregateWindowsV2", () => {
     );
   });
 
-  it.each([Number.NaN, -0.01, 1.01])(
-    "rejects an invalid window score of %s",
-    (rawScore) => {
-      expect(() =>
-        aggregateWindowsV2(
-          [{ index: 0, tokenStart: 0, tokenEnd: 10, rawScore }],
-          10,
-        ),
-      ).toThrow("INFERENCE_FAILED");
-    },
-  );
+  // The rejected inputs are unchanged; only the message changed. Each branch now
+  // names its own cause instead of every one of them reporting "INFERENCE_FAILED",
+  // which is what made a scored error row undiagnosable. The coded error class
+  // stays INFERENCE_FAILED, so existing recovery still recognizes it.
+  it.each([
+    [Number.NaN, "NON_FINITE_SCORE"],
+    [Number.POSITIVE_INFINITY, "NON_FINITE_SCORE"],
+    [-0.01, "SCORE_OUT_OF_RANGE"],
+    [1.01, "SCORE_OUT_OF_RANGE"],
+  ])("rejects an invalid window score of %s as %s", (rawScore, message) => {
+    expect(() =>
+      aggregateWindowsV2(
+        [{ index: 0, tokenStart: 0, tokenEnd: 10, rawScore }],
+        10,
+      ),
+    ).toThrowError(
+      expect.objectContaining({ code: "INFERENCE_FAILED", message }),
+    );
+  });
 
   it("rejects windows with no unique token weight", () => {
     expect(() =>
@@ -109,6 +117,28 @@ describe("aggregateWindowsV2", () => {
         [{ index: 0, tokenStart: 5, tokenEnd: 5, rawScore: 0.5 }],
         10,
       ),
-    ).toThrow("INFERENCE_FAILED");
+    ).toThrowError(
+      expect.objectContaining({
+        code: "INFERENCE_FAILED",
+        message: "ZERO_UNIQUE_TOKEN_WEIGHT",
+      }),
+    );
   });
+
+  it.each([0, -5, Number.NaN])(
+    "rejects a total token count of %s with its own code",
+    (totalTokenCount) => {
+      expect(() =>
+        aggregateWindowsV2(
+          [{ index: 0, tokenStart: 0, tokenEnd: 10, rawScore: 0.5 }],
+          totalTokenCount,
+        ),
+      ).toThrowError(
+        expect.objectContaining({
+          code: "INFERENCE_FAILED",
+          message: "INVALID_TOTAL_TOKEN_COUNT",
+        }),
+      );
+    },
+  );
 });

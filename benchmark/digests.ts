@@ -57,6 +57,9 @@ export async function computeDatasetDigest(
 export const EVALUATOR_FILES = [
   "contracts/canonical-json.ts",
   "contracts/content-composition.ts",
+  // The failure-detail allowlist decides which causes a prediction row may name
+  // and is the parser's validator for that field, so it shapes a scored row.
+  "contracts/failure-detail.ts",
   "contracts/calibration-profile.ts",
   "contracts/model-release.ts",
   "contracts/source-readiness.ts",

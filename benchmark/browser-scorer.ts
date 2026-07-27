@@ -92,6 +92,8 @@ export interface ModelBenchmarkScoreV1 {
   localizedRawScore: number | null;
   evidenceQuality: "sufficient" | "limited" | "unsupported";
   reasonCode: string;
+  /** The sanitized cause, present on every error outcome and on no other. */
+  failureDetail?: string;
   coverage: number;
   latencyMs: number;
   memoryBytes: number | null;
@@ -228,7 +230,9 @@ export function assertBenchmarkStatusMatchesRun(
 /**
  * Maps one page score plus its opaque id to a strict v2 row. It carries ONLY the
  * id and the scoring outcome — never text, spans, author/source, url, prompt or
- * a content hash.
+ * a content hash. `failureDetail` is copied through only when the page produced
+ * one (i.e. for an error outcome), so a scored row keeps its exact key set; the
+ * closed row parser is what enforces both directions.
  */
 export function toPredictionRow(
   id: string,
@@ -245,6 +249,9 @@ export function toPredictionRow(
     coverage: score.coverage,
     latencyMs: score.latencyMs,
     memoryBytes: score.memoryBytes,
+    ...(score.failureDetail === undefined
+      ? {}
+      : { failureDetail: score.failureDetail }),
   };
 }
 

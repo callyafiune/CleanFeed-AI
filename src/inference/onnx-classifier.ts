@@ -249,7 +249,17 @@ export class OnnxTextClassifier implements TextClassifier {
       };
     } catch (error) {
       if (isAbortError(error) || error instanceof CleanFeedError) throw error;
-      throw new CleanFeedError("INFERENCE_FAILED", "ONNX inference failed.");
+      // Keep the underlying failure attached. Discarding it is what made 325
+      // long-document failures undiagnosable: the wrapper's message says only
+      // THAT inference failed. Callers reduce the chain through the shared
+      // failure-detail allowlist, so the cause informs a code without any of
+      // its text ever being stored.
+      throw new CleanFeedError(
+        "INFERENCE_FAILED",
+        "ONNX inference failed.",
+        true,
+        { cause: error },
+      );
     }
   }
 
@@ -401,10 +411,15 @@ function validateTokens(tokens: ModelTokens, maximumTokens: number): void {
     !tokens.inputIds.every(isSafeNumber) ||
     !Number.isSafeInteger(tokens.specialTokenCount) ||
     tokens.specialTokenCount < 0 ||
-    tokens.specialTokenCount > tokens.inputIds.length ||
-    tokens.inputIds.length > maximumTokens
+    tokens.specialTokenCount > tokens.inputIds.length
   ) {
     inferenceFailed("Model input has an invalid length.");
+  }
+  // Split out from the malformed-shape branch on purpose: overflowing the model
+  // budget is the one candidate cause of the long-document failures that has a
+  // mechanical remedy, so it must be separately observable in a scored row.
+  if (tokens.inputIds.length > maximumTokens) {
+    inferenceFailed("Model input exceeds the model token limit.");
   }
 }
 

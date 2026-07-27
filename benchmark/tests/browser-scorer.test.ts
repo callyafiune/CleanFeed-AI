@@ -296,6 +296,22 @@ describe("toPredictionRow", () => {
     expect(row.id).toBe("post-42");
     expect(row.schemaVersion).toBe(2);
   });
+
+  it("carries the sanitized failure detail through for an error outcome", () => {
+    const row = toPredictionRow("post-43", {
+      status: "error",
+      documentRawScore: null,
+      localizedRawScore: null,
+      evidenceQuality: "unsupported",
+      reasonCode: "INFERENCE_FAILED",
+      failureDetail: "WASM_OOM",
+      coverage: 0,
+      latencyMs: 5,
+      memoryBytes: null,
+    });
+
+    expect(row.failureDetail).toBe("WASM_OOM");
+  });
 });
 
 describe("runBrowserScore", () => {

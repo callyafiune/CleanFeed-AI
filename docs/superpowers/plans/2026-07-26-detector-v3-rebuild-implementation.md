@@ -354,6 +354,45 @@ passam.
 **Proibido:** corrigir a falha antes de saber a causa; gravar texto do documento no
 campo de detalhe.
 
+**Executado (2026-07-27).** Implementado como planejado, com quatro registros de
+divergência:
+
+1. **O vocabulário de códigos virou um contrato compartilhado novo,**
+   `contracts/failure-detail.ts`, importado pelo produtor (`src/model-benchmark/main.ts`)
+   e pelo validador (`benchmark/prediction-schema.ts`), e **adicionado a
+   `EVALUATOR_FILES`** (R1) porque decide quais causas uma linha de predição pode nomear.
+   O detalhe **nunca** é uma mensagem livre: é `CÓDIGO` ou `CÓDIGO: <mensagem literal
+   nossa da allowlist>`. Mensagem de runtime alheio (WASM/onnxruntime) casa por padrão e
+   produz **só o código** — o texto é descartado. O validador é o **ponto fixo** do
+   produtor (`isSanitizedFailureDetail(d) ⟺ sanitizeFailureDetail(d) === d`).
+2. **O agregador ganhou quatro códigos, não dois.** O ramo de `aggregator.ts:47-53`
+   confundia três coisas (`totalTokenCount` não finito, `totalTokenCount <= 0`, escore
+   inválido) e o plano previa dois códigos. Ficaram `INVALID_TOTAL_TOKEN_COUNT`,
+   `NON_FINITE_SCORE`, `SCORE_OUT_OF_RANGE` e `ZERO_UNIQUE_TOKEN_WEIGHT` — sem isso A2
+   não distingue `NON_FINITE_SCORE`, que é uma das quatro causas de que a regra
+   mecânica do item 2 de A2 depende. O conjunto de entradas rejeitadas é idêntico;
+   só a mensagem mudou. `ErrorCode` continua `INFERENCE_FAILED`.
+3. **`validateTokens` foi dividido em `onnx-classifier.ts`.** `TOKEN_LIMIT_EXCEEDED`
+   compartilhava a mensagem `"Model input has an invalid length."` com o ramo de forma
+   malformada; separados, porque é exatamente a distinção que autoriza (ou proíbe) A2 a
+   cortar a janela.
+4. **A verificação por `score` NÃO foi executada, e não é executável neste ambiente.**
+   Não é falta de modelo nem de navegador — ambos existem (bundle INT8 de 109.681.931
+   bytes em `dist-model-benchmark/`, Chrome for Testing 150.0.7871.129 em
+   `.cache/chrome-for-testing/`). `node benchmark/cli.ts` **falha ao carregar**, com ou
+   sem argumentos, sob o Node 22.22.3 em modo strip-only:
+   `ERR_UNSUPPORTED_TYPESCRIPT_SYNTAX` em `benchmark/prediction-shards.ts:100`
+   (propriedade de parâmetro de construtor). É defeito pré-existente, fora do escopo de
+   A1. Em substituição, foi usada a alternativa exigida pelo brief: teste unitário
+   cobrindo cada caminho de erro (`tests/unit/inference/failure-detail-propagation.test.ts`),
+   mais o lane E2E real `tests/e2e/benchmark-browser-scorer.spec.ts` reexecutado sobre o
+   candidato **reconstruído**, que prova que a página ainda monta e pontua no Chrome
+   fixado, offline. **Nenhum documento longo real foi pontuado.** Consequência direta
+   para A2: a instrumentação existe, mas a **distribuição medida de códigos não existe**
+   — enquanto ela não for produzida por uma corrida real de `score`, o item 2 de A2 não
+   tem o insumo que a regra mecânica exige, e a saída correta é tarefa não concluída, não
+   uma tentativa especulativa.
+
 ### A2 — Diagnosticar e corrigir a falha em documento longo
 
 **Depende de:** A1.

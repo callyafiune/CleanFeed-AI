@@ -518,6 +518,9 @@ function errorRow(): ModelBenchmarkScoreV1 {
     localizedRawScore: null,
     evidenceQuality: "unsupported",
     reasonCode: "RUNTIME_ERROR",
+    // Every error row must now name a sanitized cause; the closed row parser
+    // rejects an error outcome that reports no diagnosable reason.
+    failureDetail: "WASM_OOM",
     coverage: 0,
     latencyMs: 5,
     memoryBytes: null,

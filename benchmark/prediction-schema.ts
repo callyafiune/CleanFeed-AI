@@ -1,7 +1,8 @@
 // Closed prediction manifest, strict score rows and exact completeness. This
 // module is part of the standalone benchmark package and MUST NOT import from
-// the extension bundle (src/); it reuses ONLY the pure canonical-json digest
-// helper from contracts/.
+// the extension bundle (src/); from contracts/ it reuses ONLY pure helpers — the
+// canonical-json digest and the shared failure-detail allowlist that the
+// candidate page produces details with.
 //
 // "Closed" means every object is validated against an exact key set with no
 // coercion. A missing prediction, an extra prediction, a duplicate id, a score
@@ -12,6 +13,7 @@
 // prompt or content hash — only the identifier and the scoring outcome.
 
 import { canonicalSha256 } from "../contracts/canonical-json.ts";
+import { isSanitizedFailureDetail } from "../contracts/failure-detail.ts";
 
 /** The exact Chrome for Testing Stable build that release-eligible scoring uses. */
 export const RELEASE_CHROME_VERSION = "150.0.7871.129" as const;
@@ -24,6 +26,14 @@ export interface StrictPredictionV2 {
   localizedRawScore: number | null;
   evidenceQuality: "sufficient" | "limited" | "unsupported";
   reasonCode: string;
+  /**
+   * The sanitized cause of an error row. Optional in the SHAPE so a scored or
+   * abstained row does not carry the key at all, but REQUIRED whenever
+   * `status === "error"`: an error row with no readable cause is exactly the
+   * artifact that made 325 inference failures undiagnosable. Its content is
+   * constrained to the shared allowlist, so it can never hold document text.
+   */
+  failureDetail?: string;
   coverage: number;
   latencyMs: number;
   memoryBytes: number | null;
@@ -90,6 +100,11 @@ const PREDICTION_KEYS = [
   "memoryBytes",
 ] as const;
 
+// Keys a row MAY carry. `failureDetail` is optional in the shape so rows written
+// before it existed still parse; `validatePredictionRow` then requires it for
+// exactly the error rows and forbids it everywhere else.
+const PREDICTION_OPTIONAL_KEYS = ["failureDetail"] as const;
+
 const MANIFEST_KEYS = [
   "schemaVersion",
   "modelId",
@@ -127,21 +142,27 @@ function isPlainObject(value: unknown): value is Record<string, unknown> {
   return prototype === Object.prototype || prototype === null;
 }
 
+/**
+ * Closed-object guard: every key must be in `required` ∪ `optional`, and every
+ * key in `required` must be present. Optional keys are declared separately so
+ * "closed" never has to mean "every field is mandatory".
+ */
 function assertClosedObject(
   value: unknown,
   label: string,
-  allowed: readonly string[],
+  required: readonly string[],
+  optional: readonly string[] = [],
 ): Record<string, unknown> {
   if (!isPlainObject(value)) {
     fail(`${label} must be an object`);
   }
-  const allowedSet = new Set(allowed);
+  const allowedSet = new Set([...required, ...optional]);
   for (const key of Object.keys(value)) {
     if (!allowedSet.has(key)) {
       fail(`unknown key "${key}" in ${label}`);
     }
   }
-  for (const key of allowed) {
+  for (const key of required) {
     if (!Object.hasOwn(value, key)) {
       fail(`${label} is missing key "${key}"`);
     }
@@ -203,7 +224,12 @@ function numberOrNull(value: unknown, name: string): number | null {
 
 /** Validates a single prediction row against the closed schema and invariants. */
 export function validatePredictionRow(value: unknown): StrictPredictionV2 {
-  const row = assertClosedObject(value, "prediction", PREDICTION_KEYS);
+  const row = assertClosedObject(
+    value,
+    "prediction",
+    PREDICTION_KEYS,
+    PREDICTION_OPTIONAL_KEYS,
+  );
 
   // The manifest pins the authoritative row version; each row only asserts a
   // recognized version integer (v1 diagnostic or v2 release rows).
@@ -257,6 +283,23 @@ export function validatePredictionRow(value: unknown): StrictPredictionV2 {
   if (status === "error" && evidenceQuality !== "unsupported") {
     fail("error prediction must have unsupported evidence");
   }
+  // An error row without a readable, sanitized cause is the artifact this field
+  // exists to abolish, so it is required here and forbidden anywhere else.
+  const carriesDetail = Object.hasOwn(row, "failureDetail");
+  if (carriesDetail && !isSanitizedFailureDetail(row.failureDetail)) {
+    fail(
+      "failureDetail must be an allowlisted sanitized detail of at most 160 characters",
+    );
+  }
+  if (status === "error" && !carriesDetail) {
+    fail("error prediction must carry a failureDetail");
+  }
+  if (status !== "error" && carriesDetail) {
+    fail("failureDetail is only allowed when status is error");
+  }
+  const failureDetail = carriesDetail
+    ? (row.failureDetail as string)
+    : undefined;
   if (
     memoryBytes !== null &&
     (!Number.isFinite(memoryBytes) || memoryBytes < 0)
@@ -275,6 +318,7 @@ export function validatePredictionRow(value: unknown): StrictPredictionV2 {
     coverage,
     latencyMs,
     memoryBytes,
+    ...(failureDetail === undefined ? {} : { failureDetail }),
   };
 }
 

@@ -40,6 +40,10 @@ import { CleanFeedError } from "@/shared/errors";
 import type { RuntimeModelIdentity } from "@/shared/types";
 
 import { computeContentComposition } from "../../contracts/content-composition";
+import {
+  sanitizeFailureDetail,
+  UNCLASSIFIED_FAILURE_DETAIL_CODE,
+} from "../../contracts/failure-detail";
 import type { RuntimeParityManifestV1 } from "../../contracts/runtime-parity";
 
 /** The runtime-parity manifest, embedded verbatim by the Vite build. */
@@ -68,6 +72,12 @@ export interface ModelBenchmarkScoreV1 {
   localizedRawScore: number | null;
   evidenceQuality: "sufficient" | "limited" | "unsupported";
   reasonCode: string;
+  /**
+   * The sanitized cause, present on EVERY error outcome and on no other. It is
+   * an allowlisted code from `contracts/failure-detail.ts`, optionally followed
+   * by one of our own literal technical messages — never document text.
+   */
+  failureDetail?: string;
   coverage: number;
   latencyMs: number;
   memoryBytes: number | null;
@@ -104,13 +114,32 @@ function failedStatus(errorCode: string): ModelBenchmarkStatusV1 {
   };
 }
 
-function errorScore(reasonCode: string): ModelBenchmarkScoreV1 {
+/**
+ * An error outcome, ALWAYS carrying a non-empty sanitized detail. `cause` is the
+ * thrown value when there is one; the reason code is the fallback, so an
+ * assembly failure with no throwable (a missing artifact, a parity mismatch)
+ * still names itself instead of degrading to the generic code. A cause that the
+ * allowlist cannot classify also falls back, because the reason code is strictly
+ * more informative than "unclassified".
+ */
+function errorScore(
+  reasonCode: string,
+  cause?: unknown,
+): ModelBenchmarkScoreV1 {
+  const fromCause =
+    cause === undefined ? undefined : sanitizeFailureDetail(cause);
+  const failureDetail =
+    fromCause === undefined || fromCause === UNCLASSIFIED_FAILURE_DETAIL_CODE
+      ? sanitizeFailureDetail(reasonCode)
+      : fromCause;
+
   return {
     status: "error",
     documentRawScore: null,
     localizedRawScore: null,
     evidenceQuality: "unsupported",
     reasonCode,
+    failureDetail,
     coverage: 0,
     latencyMs: 0,
     memoryBytes: null,
@@ -355,7 +384,7 @@ async function assemble(): Promise<ModelBenchmarkApi> {
       error instanceof CleanFeedError ? error.code : "MODEL_BENCHMARK_FAILED";
     return {
       status: failedStatus(code),
-      score: () => Promise.resolve(errorScore(code)),
+      score: () => Promise.resolve(errorScore(code, error)),
     };
   }
 
@@ -411,6 +440,7 @@ async function assemble(): Promise<ModelBenchmarkApi> {
           error instanceof CleanFeedError
             ? error.code
             : "MODEL_BENCHMARK_FAILED",
+          error,
         );
       }
     },
@@ -432,7 +462,7 @@ void (async () => {
       error instanceof CleanFeedError ? error.code : "MODEL_BENCHMARK_FAILED";
     api = {
       status: failedStatus(code),
-      score: () => Promise.resolve(errorScore(code)),
+      score: () => Promise.resolve(errorScore(code, error)),
     };
   }
   // Publish only after a terminal assembly outcome, so the scorer never reads a
