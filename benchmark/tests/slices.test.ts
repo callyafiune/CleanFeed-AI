@@ -68,9 +68,29 @@ interface ItemFields extends RecordFields {
   documentScore?: number;
   warned?: boolean;
   visualActioned?: boolean;
+  // Mirrors the helper in benchmark/tests/metrics.test.ts. Without it every
+  // fixture row here is `scored`, and then the end-to-end and the
+  // conditional-on-scored families are numerically identical — which would leave
+  // this file unable to test the one thing A3 is about: what a row that produced
+  // no decision does to a denominator.
+  status?: "scored" | "abstained" | "error";
 }
 
 function item(fields: ItemFields): EvaluationItem {
+  const status = fields.status ?? "scored";
+  if (status !== "scored") {
+    if (fields.documentScore !== undefined || fields.warned !== undefined) {
+      throw new Error(
+        `a ${status} fixture row carries no score and no decision`,
+      );
+    }
+    return {
+      record: record(fields),
+      status,
+      latencyMs: 10,
+      memoryBytes: 1_000,
+    };
+  }
   const positive =
     fields.label === "ai" ||
     (fields.label === "mixed" && (fields.aiFraction ?? 0) >= 0.5);
@@ -163,10 +183,28 @@ describe("buildSlices declared sample size", () => {
     // and the sealed profile's ProportionGateEvidenceV1.sampleSize — must be
     // that same subset. Declaring the raw bucket would advertise statistical
     // power the interval does not have, in the favorable direction.
+    //
+    // The fixture pins the counts against BOTH wrong alternatives at once:
+    //   * the raw bucket (4 human rows) — the pre-correction recount;
+    //   * the conditional-on-scored family (2 human rows) — the family this
+    //     module documents that it never reads, because a slice whose inference
+    //     failed must not look better than one that answered.
+    // Only the end-to-end eligible population gives 3.
     const items = [
       item({ author: "h1", label: "human", domain: "corp", wordCount: 120 }),
       item({ author: "h2", label: "human", domain: "corp", wordCount: 120 }),
-      item({ author: "h3", label: "human", domain: "corp", wordCount: 30 }),
+      // Eligible (pt-BR, 120 words) but its inference failed: it stays in the
+      // end-to-end denominator as an undecided negative, and drops out of the
+      // conditional one.
+      item({
+        author: "h3",
+        label: "human",
+        domain: "corp",
+        wordCount: 120,
+        status: "error",
+      }),
+      // Below the 50-word floor: ineligible, so it is in the raw bucket only.
+      item({ author: "h4", label: "human", domain: "corp", wordCount: 30 }),
       item({ author: "a1", label: "ai", domain: "corp", wordCount: 120 }),
       item({ author: "a2", label: "ai", domain: "corp", wordCount: 20 }),
     ];
@@ -174,11 +212,26 @@ describe("buildSlices declared sample size", () => {
     const corp = find(buildSlices(items, SEED), "domain", "corp");
 
     // sampleSize stays descriptive: every row that landed in the bucket.
-    expect(corp?.sampleSize).toBe(5);
-    expect(corp?.negatives).toBe(2);
+    expect(corp?.sampleSize).toBe(6);
+    expect(corp?.negatives).toBe(3);
     expect(corp?.positives).toBe(1);
     expect(corp?.negatives).toBe(corp?.metrics.warning.endToEnd.negatives);
     expect(corp?.positives).toBe(corp?.metrics.warning.endToEnd.positives);
+    // The declared count is strictly the UNFAVORABLE one: reading the
+    // conditional family instead would drop the errored row and publish a
+    // smaller, flattering denominator.
+    expect(corp?.metrics.warning.conditionalOnScored.negatives).toBe(2);
+    expect(corp?.negatives).toBeGreaterThan(
+      corp?.metrics.warning.conditionalOnScored.negatives ?? 0,
+    );
+    expect(corp?.metrics.warning.endToEnd.undecidedNegatives).toBe(1);
+    // ...and `negatives` is a CLASS count, not the FPR interval's denominator:
+    // falsePositiveRate runs over FP + TN = 2, one row fewer. See the note on
+    // SliceResult in benchmark/slices.ts.
+    const warning = corp?.metrics.warning.endToEnd;
+    expect((warning?.falsePositives ?? 0) + (warning?.trueNegatives ?? 0)).toBe(
+      2,
+    );
   });
 });
 

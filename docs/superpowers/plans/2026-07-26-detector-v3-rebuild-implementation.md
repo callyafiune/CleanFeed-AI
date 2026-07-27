@@ -1152,6 +1152,17 @@ introduzidos pela primeira entrega, ambos no lado favorável, ambos corrigidos:
    `benchmark/tests/metrics.test.ts > "keeps the mixed gate population over every mixed row,
    eligible or not"`. Se a restrição a elegíveis for desejável, ela **não é de A3**: exige
    evidência medida e justificativa escrita aqui (R3), e fica proposta a A6/G2.
+   **São dois eixos, não um.** `isEligible` (`metrics.ts`) é `language === "pt-BR"` **e**
+   `wordCount >= minimumEligibleWords`, então rodar sobre `items` readmite duas populações
+   distintas, cada linha contando como perda contra `MIXED_WARNING_RECALL_MIN`:
+   - o **piso de palavras** — linha mista curta, em que a política manda o runtime abster-se;
+   - o **eixo de idioma** — linha mista com `language !== "pt-BR"`, fora do escopo do
+     detector.
+   As duas direções são conservadoras (denominador maior, numerador igual), logo R3 está
+   satisfeita nos dois casos; mas só a primeira é questão de medição. Cobrar de um detector
+   pt-BR uma linha em outro idioma é o padrão **§4.1 (gate insatisfazível)**, não medida de
+   desempenho. A6/G2 decide cada eixo **separadamente**; o comentário no código nomeia os
+   dois para que ninguém trate "elegível" como uma coisa só.
 8. **`slice.positives` / `slice.negatives` passam a ser lidos da população medida**
    (`benchmark/slices.ts`), isto é, de `slice.metrics.warning.endToEnd`. O item 4 fez a
    matriz de cada fatia ser medida só sobre o subconjunto elegível, mas os contadores da
@@ -1174,6 +1185,60 @@ introduzidos pela primeira entrega, ambos no lado favorável, ambos corrigidos:
    com a contagem crua ela era declarada gateante e reprovava com `observed: null`
    (reprovação espúria), e agora sai como não-gateante. A6/G2 deve confirmar essa leitura.
 
+**Segunda rodada de correção (2026-07-27), depois da revisão de qualidade.** Só
+comentário, teste e plano: **nenhuma mudança de comportamento**, e nenhum número de gate
+se moveu.
+
+9. **O rótulo `family` e os comentários voltaram a dizer a verdade** (`benchmark/metrics.ts`).
+   A reversão do item 7 falsificou duas afirmações escritas dentro de um arquivo de
+   `EVALUATOR_FILES` — o mesmo defeito que o item 7 da varredura corrigiu em `fit.ts`:
+   - o cabeçalho de `mixedAtLeastHalfAi` dizia "the denominator is every **eligible**
+     >=50% AI mixed record". Era verdade quando o call site passava `eligible`; passou a ser
+     falso. Agora diz "eligible or not" e aponta para a nota de R3 no call site.
+   - `mixedByFraction` estampa `family: "end-to-end"` em matrizes cuja população **não** é
+     filtrada por elegibilidade, enquanto o doc de `MetricFamily` definia "end-to-end" como
+     "every **eligible** record, whatever its status". O par de números do próprio teste novo
+     expõe a incoerência: no mesmo relatório, `mixed.byFraction[75_100].warning.positives = 2`
+     e `warning.endToEnd.positives = 1`, ambos rotulados `end-to-end`.
+   **Resolvido pelo lado da definição, não do rótulo:** `MetricFamily` agora diz que o papel
+   nomeia uma regra de **status** (linha sem decisão é não-detecção, nunca remoção), não uma
+   regra de elegibilidade; que a população é escolha do chamador; e que os blocos `mixed`
+   reusam o papel sobre população não filtrada. Fica escrito que ninguém deve inferir
+   denominador do `family` — o denominador é o `sampleSize`/`positives`/`negatives` da própria
+   matriz. Trocar o rótulo em vez da definição exigiria valor novo de `MetricFamily`, que é
+   campo **serializado** no relatório selado e entra no `reportDigest`; seria mudança de
+   contrato sem necessidade de medição.
+10. **A invariante das contagens de fatia ficou com o alcance certo** (`benchmark/slices.ts`).
+    O comentário do item 8 dizia que as contagens são lidas "da população que produziu a
+    estimativa", frase verdadeira para `clearanceRate` (TN/negativos) e `recall`
+    (TP/positivos) e **falsa** para `falsePositiveRate` (FP/(FP+TN)) e `precision`
+    (TP/(TP+FP)), que rodam sobre o subconjunto **decidido**. Logo `slice.negatives` ainda
+    superdeclara o `n` do intervalo de FPR em exatamente `undecidedNegatives`: uma fatia com
+    305 negativos humanos elegíveis dos quais 10 falham publica
+    `criticalFprSlices[...].indicatorFpr` com estimativa sobre 295 e `sampleSize: 305`, e
+    `contracts/calibration-profile.ts` valida esse 305 contra
+    `MINIMUM_CRITICAL_FPR_SAMPLE = 300`. O bloco `overall` (`profile-artifact.ts`) tem a mesma
+    lacuna. **Não é hipotético:** a última rodada de holdout teve 325 falhas de inferência.
+    O comentário agora **delimita** a alegação (contagens de **classe**; FPR e precisão sobre
+    o subconjunto decidido; resíduo nomeado `undecidedNegatives`) em vez de sugerir invariante
+    total. **Decisão em aberto para A6/G2, não de A3:** se a evidência de FPR deve declarar
+    `FP + TN` como o próprio `sampleSize`. Motivo de não ser de A3: o número declarado é
+    contrato do perfil selado e o piso de poder é regra de gate — mexer nele exige a evidência
+    medida e a justificativa que R3 pede, e `profile-artifact.ts` não está entre os arquivos
+    de A3. A direção seria **mais estrita** (menos linhas → mais fácil ficar sem poder), então
+    não há afrouxamento em jogo, só quem assina.
+11. **`benchmark/tests/slices.test.ts` passou a ter linha `error`.** O helper `item()` do
+    arquivo não tinha campo `status`: toda linha era `scored`, e por isso `endToEnd` e
+    `conditionalOnScored` eram numericamente idênticas ali — o arquivo não cobria o caso que
+    o módulo existe para proteger. Mutação demonstrada: trocar as duas leituras de
+    `slices.ts` para `conditionalOnScored` deixava a suíte de fatias, `gates.test.ts` e
+    `profile-artifact.test.ts` **verdes**. O helper agora espelha
+    `benchmark/tests/metrics.test.ts` (linha não escorada não carrega escore nem decisão) e o
+    teste da invariante ganhou um negativo humano **elegível e errado**. A fixture pina as
+    contagens contra as **duas** alternativas erradas de uma vez: bucket cru = 4 negativos,
+    `conditionalOnScored` = 2, e só a população elegível fim-a-fim dá 3. A mutação
+    `conditionalOnScored` agora falha com `expected 2 to be 3`.
+
 **Varredura do avaliador (requisito de A3), com o que ficou de fora:**
 
 - `benchmark/commands/fit.ts:178-179` **mantém** `documentRawScore ?? 0` na amostra de
@@ -1195,6 +1260,16 @@ introduzidos pela primeira entrega, ambos no lado favorável, ambos corrigidos:
   `Number.isFinite` com erro codificado — sem coerção silenciosa.
 - `benchmark/dataset-manifest.ts:375,498,506` e `benchmark/split.ts:398+` usam `?? 0`
   como valor inicial de contador, não como escore.
+
+**Achado fora do escopo de A3, para G5 (registrado, não corrigido):** o repositório não tem
+`.gitattributes` e a máquina do operador tem `core.autocrlf = true`. Um `git checkout` de
+`benchmark/metrics.ts` rematerializa o arquivo com CRLF (medido na revisão: 1076 CRLF,
+37.726 bytes contra 36.650) com `git status` ainda limpo, e `computeEvaluatorDigest`
+(`benchmark/digests.ts`) hasheia os **bytes crus em disco**. Consequência: um clone novo
+calcula `integrity.evaluator-digest` diferente da máquina que selou — a identidade congelada
+de R1/G5 **não é reproduzível entre checkouts**. Antes de congelar a janela
+`fit` → `consume-holdout`, G5 precisa de `.gitattributes` com `* text=auto eol=lf` (ou
+`*.ts eol=lf`). Não é de A3 e não foi mexido.
 
 ### A4 — Identificador canônico de família geradora
 

@@ -380,13 +380,28 @@ export interface MetricEstimate {
 // carries its own role, so no consumer can read a rate without knowing which
 // denominator produced it (R5: metrics come out in pairs, never as "the" FPR).
 //
-//   * "end-to-end"           — every eligible record, whatever its status. A
-//                              record whose inference produced no decision is a
-//                              NON-DETECTION: for a positive a false negative,
-//                              for a negative neither a false positive nor a
-//                              true negative but an explicitly undecided cell.
-//   * "conditional-on-scored" — only the eligible records with
+//   * "end-to-end"           — every record of the population, whatever its
+//                              status. A record whose inference produced no
+//                              decision is a NON-DETECTION: for a positive a
+//                              false negative, for a negative neither a false
+//                              positive nor a true negative but an explicitly
+//                              undecided cell.
+//   * "conditional-on-scored" — only the records of the population with
 //                              `status === "scored"`.
+//
+// The role names a STATUS rule, not an eligibility rule: "end-to-end" means no
+// record is dropped for lacking a decision. WHICH population is handed in is the
+// caller's choice, and it is not the same everywhere in this module:
+//
+//   * `metrics.warning` / `metrics.visualAction` run over the ELIGIBLE subset
+//     (pt-BR and at least `minimumEligibleWords` words);
+//   * the two `metrics.mixed` blocks deliberately run over EVERY mixed record,
+//     eligible or not — see the R3 note above the `mixed:` block in
+//     `computeEvaluationMetrics` — and still carry `family: "end-to-end"`,
+//     because the label describes the status rule they apply.
+//
+// So a consumer must never infer the denominator from `family`: read the
+// matrix's own `sampleSize` / `positives` / `negatives`.
 export type MetricFamily = "end-to-end" | "conditional-on-scored";
 
 // A confusion matrix at one operating point with Wilson one-sided intervals on
@@ -699,6 +714,19 @@ export function computeEvaluationMetrics(
     // sampleSize 0 gates.ts turns the mixed-recall gate into an unconditional
     // pass. Errored and abstained rows are excluded from the NUMERATOR only,
     // inside mixedAtLeastHalfAi / decisionMetrics.
+    //
+    // `isEligible` is TWO conditions, and running over all items re-admits both
+    // kinds of row, each counting as a miss against MIXED_WARNING_RECALL_MIN:
+    //   * the WORD FLOOR — a mixed row under `minimumEligibleWords`, which policy
+    //     tells the runtime to abstain on;
+    //   * the LANGUAGE axis — a mixed row whose `language !== "pt-BR"`, i.e. out
+    //     of this detector's scope entirely.
+    // Both directions are conservative (a larger denominator, same numerator), so
+    // R3 is satisfied either way, but they are two separate populations and only
+    // one of them is a measurement question. Charging an out-of-scope-language row
+    // to a pt-BR detector's gate is the §4.1 unsatisfiable-gate pattern; A3 does
+    // not decide it, and neither restriction may be reintroduced without measured
+    // evidence written into the plan (A6/G2, plan item 7).
     mixed: {
       atLeastHalfAi: mixedAtLeastHalfAi(items),
       byFraction: mixedByFraction(items),
@@ -1012,9 +1040,12 @@ function memoryMetricsAll(items: readonly EvaluationItem[]): MemoryMetrics {
   };
 }
 
-// END-TO-END by construction: the denominator is every eligible >=50% AI mixed
-// record and an undecided one counts as a miss, so an inference failure can
-// never raise this recall.
+// END-TO-END by construction, in the status sense (see MetricFamily): the
+// denominator is every >=50% AI mixed record, ELIGIBLE OR NOT, and an undecided
+// one counts as a miss, so an inference failure can never raise this recall.
+// The population is deliberately not eligibility-filtered — the R3 reason is
+// written above the `mixed:` block in `computeEvaluationMetrics`; do not add an
+// `isEligible` filter here without reading it.
 function mixedAtLeastHalfAi(items: readonly EvaluationItem[]): {
   sampleSize: number;
   warningRecall: number;
@@ -1070,7 +1101,10 @@ function mixedByFraction(
       key,
       sampleSize: bucket.length,
       // A mixed bucket holds no human negatives, so this matrix is a pure recall
-      // block; it is the end-to-end family, like the aggregate above.
+      // block. `family: "end-to-end"` is the STATUS rule (an undecided row is a
+      // miss, never a removal), not an eligibility claim: like the aggregate
+      // above, the bucket holds every mixed record, eligible or not. MetricFamily
+      // documents that distinction.
       warning: decisionMetrics(bucket, (item) => item.warned, "end-to-end"),
     }));
 }

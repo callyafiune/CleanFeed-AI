@@ -5,11 +5,10 @@
 // sampling-floor verdict: an FPR slice can gate a release only with at least 300
 // human negatives; a recall slice only with at least 200 positives. Those floors
 // count the population the matrix was MEASURED over (the eligible subset), not
-// the raw bucket, so a slice is never declared powered on rows its rate never saw.
-// Under-powered
-// slices stay in the report but are flagged non-gating rather than silently
-// dropped, and the worst-slice search considers only gate-eligible slices so a
-// tiny, noisy slice never becomes the reported worst case.
+// the raw bucket, so a slice is never declared powered on rows its rate never
+// saw. Under-powered slices stay in the report but are flagged non-gating rather
+// than silently dropped, and the worst-slice search considers only gate-eligible
+// slices so a tiny, noisy slice never becomes the reported worst case.
 //
 // Every rate this module macro-averages or ranks reads the END-TO-END metric
 // family (benchmark/metrics.ts): a slice whose inference failed must not look
@@ -47,11 +46,24 @@ export interface SliceResult {
   key: string;
   // Every row that fell in this bucket, eligible or not — descriptive only.
   sampleSize: number;
-  // The class counts of the population the decision matrix was MEASURED over
-  // (the eligible subset), so the sampling floors below and every declared
-  // sampleSize downstream match the interval they are paired with. Invariant:
-  // `positives === metrics.warning.endToEnd.positives` and likewise for
-  // `negatives`; pinned by benchmark/tests/slices.test.ts.
+  // The CLASS counts of the population the decision matrix was MEASURED over
+  // (the eligible subset, end-to-end family), so the sampling floors below and
+  // every declared sampleSize downstream match the population behind the
+  // interval. Invariant: `positives === metrics.warning.endToEnd.positives` and
+  // likewise for `negatives`; pinned by benchmark/tests/slices.test.ts.
+  //
+  // NOT every rate's own denominator, and the claim stops here on purpose:
+  //   * `clearanceRate` (TN/negatives) and `recall` (TP/positives) run over
+  //     exactly these two counts;
+  //   * `falsePositiveRate` (FP/(FP+TN)) and `precision` (TP/(TP+FP)) run over
+  //     the DECIDED subset, so `negatives` still over-declares an FPR interval's
+  //     n by `metrics.warning.endToEnd.undecidedNegatives` (and `positives`
+  //     likewise for precision).
+  // Whether the published FPR evidence should declare FP+TN as its own
+  // sampleSize — profile-artifact.ts pairs these counts with
+  // `indicatorFpr`/`actionFpr`, which contracts/calibration-profile.ts checks
+  // against MINIMUM_CRITICAL_FPR_SAMPLE — is A6/G2's call, not A3's; it is
+  // recorded as an open item in the plan (A3 item 9).
   positives: number;
   negatives: number;
   fprGateEligible: boolean;
@@ -169,16 +181,22 @@ export function buildSlices(
     for (const key of keys) {
       const bucket = buckets.get(key) as EvaluationItem[];
       const metrics = computeEvaluationMetrics(bucket, options);
-      // The declared class counts are READ OFF the population that produced the
-      // estimate, never recounted over the raw bucket. `computeEvaluationMetrics`
-      // measures the decision matrix over the eligible subset only, so counting
-      // `bucket.filter(isHumanNegative)` here would publish a denominator larger
-      // than the one behind the interval — advertising statistical power that
-      // does not exist, in the favorable direction — and would let a slice be
-      // declared gate-eligible on rows its FPR was never measured over. These
-      // two numbers are consumed as `GateResult.sampleSize` (benchmark/gates.ts)
-      // and as `ProportionGateEvidenceV1.sampleSize` in the sealed profile
+      // The declared class counts are READ OFF the measured population's own
+      // matrix, never recounted over the raw bucket. See SliceResult above for
+      // exactly how far that claim goes: they are class counts, and the FPR and
+      // precision intervals run over the decided subset of them.
+      // `computeEvaluationMetrics` measures the decision matrix over the eligible
+      // subset only, so counting `bucket.filter(isHumanNegative)` here would
+      // publish a denominator larger than the one behind the interval —
+      // advertising statistical power that does not exist, in the favorable
+      // direction — and would let a slice be declared gate-eligible on rows its
+      // FPR was never measured over. These two numbers are consumed as
+      // `GateResult.sampleSize` (benchmark/gates.ts) and as
+      // `ProportionGateEvidenceV1.sampleSize` in the sealed profile
       // (benchmark/profile-artifact.ts), so they are a contract, not a display.
+      // The end-to-end family is deliberate and pinned by the test: reading
+      // `conditionalOnScored` here would drop the errored rows and shrink the
+      // declared population in the flattering direction.
       const positives = metrics.warning.endToEnd.positives;
       const negatives = metrics.warning.endToEnd.negatives;
       results.push({
