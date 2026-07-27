@@ -1415,16 +1415,44 @@ divergência exata que A4 recusa — e ficou coerente; as fábricas de registro 
 `corpus-import.test.ts` e do gerador de corpus sintético passaram a gravar o campo
 canônico, porque construíam registros que o schema agora recusa.
 
-**A única comparação legítima que sobrou contra `generation.family`** é
-`corpus-source-audit.ts:206` (`recipeMatchesBatch`): ali os dois lados são o rótulo do
-provedor e a pergunta não é "essa família foi reservada", é "essa receita é a do lote
-revisado". Recebeu comentário dizendo isso.
+**A única comparação legítima que sobrou contra `generation.family`** é a de
+`recipeMatchesBatch` (em `benchmark/corpus-source-audit.ts`, cuja explicação está no
+comentário imediatamente acima da função — ponteiro por nome, não por linha, porque a
+linha já se moveu uma vez): ali os dois lados são o rótulo do provedor e a pergunta não é
+"essa família foi reservada", é "essa receita é a do lote revisado".
 
-**Verificação:** suíte 153 arquivos/1714 testes → 154/1735, tudo verde; três projetos
-`tsc` verdes; `eslint` limpo em todos os arquivos tocados. `prettier --check .` acusa
-quatro arquivos (`gates.ts`, `metrics.ts`, `rebuild-v3-policy.ts`,
-`lab/build_governance.ts`), **nenhum** deles tocado por A4 — é estado de HEAD, fora de
-escopo.
+**Verificação:** suíte 153 arquivos/1714 testes → 154/1738, tudo verde (+21 no arquivo
+novo `generator-family.test.ts`, +3 em `report.test.ts`, saldo 0 no reparo de fixtures);
+três projetos `tsc` verdes; `eslint` limpo em todos os arquivos tocados.
+`prettier --check .` acusa quatro arquivos (`gates.ts`, `metrics.ts`,
+`rebuild-v3-policy.ts`, `lab/build_governance.ts`), **nenhum** deles tocado por A4 — é
+estado de HEAD, fora de escopo.
+
+**Rodada de correção de spec — a busca de limpeza tinha sido só em TypeScript.** O
+critério "`grep` não encontra mais nenhuma comparação de família contra campo não
+canônico" foi verificado com `--include=*.ts`, e o arquivo que o próprio brief põe no
+escopo (requisito 5) é Python. Sobrevivia uma comparação da classe exata em
+`assemble_corpus.py`: o aviso de piso `!! held-out families magras` contava
+`generation.family` (rótulo pontuado do provedor) e testava pertinência em `held_out`
+(tokens canônicos sublinhados), logo **nunca podia disparar**, quaisquer que fossem as
+contagens. O contador virou a função testável `thin_held_out_families`, que lê
+`groups.generatorFamily` — o mesmo campo de que `held_out` é construído — e itera
+`held_out` em vez das chaves do `Counter`, para que uma família declarada retida e
+estocada por **nenhum** registro seja reportada como `0` em vez de desaparecer do
+relatório. Ela não substitui o `below_floor` do `main()`: aquele pergunta na declaração,
+esta pergunta aos registros efetivamente escritos, depois do particionamento. Hoje as
+duas concordam por construção (só se declara família que já passa do piso) — o valor é
+pegar qualquer edição futura que descarte registros depois da declaração, ou afrouxe o
+piso, antes de escrever um corpus que o `validate` recusaria com `DATASET_COVERAGE_INVALID`.
+Quatro casos novos em `test_extractors.py` (29 → 33, `OK`), vermelhos em dois estágios
+antes da correção: primeiro `ImportError` (função inexistente) e depois, com a função
+extraída **mantendo a leitura pontuada**, `AssertionError: {} != {'gemini-3_5-flash-low':
+3}` — o defeito real reproduzido, não a ausência do símbolo. A busca foi refeita sobre
+`*.ts`, `*.py`, `*.mjs`, `*.js`, `*.cjs` e `*.mts`; fora de comentários e do
+`recipeMatchesBatch`, os únicos usos executáveis restantes de `generation["family"]` são
+`schema.ts` (onde o campo canônico é derivado e exigido) e `assign_generation_batches` em
+`assemble_corpus.py`, que **grava** a receita do lote — o mesmo rótulo de provedor que o
+`recipeMatchesBatch` compara byte a byte, e nenhum teste de pertinência.
 
 ### A5 — Normalização Unicode no caminho de inferência
 

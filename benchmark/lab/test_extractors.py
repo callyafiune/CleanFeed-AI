@@ -560,3 +560,75 @@ class GeneratorFamilyTests(unittest.TestCase):
             generator_family("...")
         with self.assertRaises(ValueError):
             generator_family("")
+
+
+class HeldOutFloorWarningTests(unittest.TestCase):
+    """The assembler's floor warning must compare canonical against canonical.
+
+    `held_out` is built from groups.generatorFamily (the canonical, underscored
+    token). The warning used to count generation.family — the provider's own dotted
+    label — and test membership in that set, so it could never fire on a real corpus
+    whatever the record counts were. Same defect class as the slice and the split
+    (A4), just in the bench assembler.
+    """
+
+    @staticmethod
+    def _ai_record(family_canonical: str, provider_label: str) -> dict:
+        """A record carrying BOTH spellings, as the real corpus does."""
+        return {
+            "label": "ai",
+            "generation": {"family": provider_label},
+            "groups": {"generatorFamily": family_canonical},
+        }
+
+    def test_reports_a_declared_family_the_corpus_does_not_stock(self) -> None:
+        from assemble_corpus import thin_held_out_families
+
+        records = [
+            self._ai_record("gemini-3_5-flash-low", "gemini-3.5-flash-low")
+            for _ in range(3)
+        ]
+        records.append({"label": "human", "groups": {}})
+        self.assertEqual(
+            thin_held_out_families(records, {"gemini-3_5-flash-low"}, minimum=200),
+            {"gemini-3_5-flash-low": 3},
+        )
+
+    def test_family_at_the_floor_is_not_reported(self) -> None:
+        from assemble_corpus import thin_held_out_families
+
+        records = [
+            self._ai_record("gemini-3_5-flash-low", "gemini-3.5-flash-low")
+            for _ in range(3)
+        ]
+        self.assertEqual(
+            thin_held_out_families(records, {"gemini-3_5-flash-low"}, minimum=3), {}
+        )
+
+    def test_a_family_that_was_not_declared_is_not_reported(self) -> None:
+        from assemble_corpus import thin_held_out_families
+
+        # gpt-5_6-luna is just as thin, but nobody claims the detector never saw it:
+        # an ordinary AI family under the floor is not this check's business.
+        records = [self._ai_record("gpt-5_6-luna", "gpt-5.6-luna")]
+        records += [
+            self._ai_record("gemini-3_5-flash-low", "gemini-3.5-flash-low")
+            for _ in range(3)
+        ]
+        held_out = {"gemini-3_5-flash-low"}
+        self.assertEqual(thin_held_out_families(records, held_out, minimum=3), {})
+        # Non-vacuous: raise the floor and only the DECLARED family is named.
+        self.assertEqual(
+            thin_held_out_families(records, held_out, minimum=4),
+            {"gemini-3_5-flash-low": 3},
+        )
+
+    def test_a_declared_family_with_no_record_at_all_is_reported_as_zero(self) -> None:
+        from assemble_corpus import thin_held_out_families
+
+        # The worst case for a held-out claim, and the one a Counter over the records
+        # cannot see: the family is declared unseen and the corpus stocks none of it.
+        self.assertEqual(
+            thin_held_out_families([], {"gemini-3_5-flash-low"}, minimum=200),
+            {"gemini-3_5-flash-low": 0},
+        )

@@ -350,6 +350,35 @@ def stamp_block(rec: dict, partition: str) -> dict:
     return rec
 
 
+def thin_held_out_families(
+    records: list[dict], held_out: set[str], minimum: int = HELD_OUT_MINIMUM
+) -> dict[str, int]:
+    """Declared held-out families the WRITTEN corpus does not actually stock.
+
+    Counts `groups.generatorFamily` — the SAME canonical field `held_out` is built
+    from. It used to count `generation.family`, the provider's own dotted label
+    (`gemini-3.5-flash-low`), and test membership in a set of canonical underscored
+    tokens (`gemini-3_5-flash-low`): a comparison that could not match whatever the
+    counts were, so this warning was silent by construction. Same defect class as
+    the `generatorExposure` slice and the splitter's held-out mark (A4).
+
+    It also iterates `held_out` rather than the Counter's keys, so a family that is
+    declared unseen and stocked by NO record at all is reported as 0 instead of
+    vanishing from the report — that is the worst case for a held-out claim, not an
+    absence of one.
+
+    Not the same question as `below_floor` in main(), which asks it of the
+    declaration candidates: this one asks it of the records actually written, after
+    partitioning. Today the two agree by construction, because a family is only
+    declared when it already clears the floor; the point is that any later edit
+    which prunes records after the declaration loop, or relaxes the floor, is caught
+    here instead of writing a corpus that `validate` rejects with
+    DATASET_COVERAGE_INVALID.
+    """
+    written = Counter((r.get("groups") or {}).get("generatorFamily") for r in records)
+    return {f: written[f] for f in sorted(held_out) if written[f] < minimum}
+
+
 def assign_partitions(records: list[dict], held_out: set[str]) -> None:
     """Exact 20/30/50 blocks per class, with held-out families INSIDE the test
     block rather than on top of it.
@@ -836,13 +865,7 @@ def main() -> None:
     if short:
         print("!! FALTAM (pool esgotado):", short)
     print("held-out families:", sorted(held_out))
-    thin = {
-        f: n
-        for f, n in Counter(
-            (r.get("generation") or {}).get("family") for r in records
-        ).items()
-        if f in held_out and n < HELD_OUT_MINIMUM
-    }
+    thin = thin_held_out_families(records, held_out)
     if thin:
         print(f"!! held-out families magras (<{HELD_OUT_MINIMUM}):", thin)
     print("hard-negatives:", dict(Counter(
