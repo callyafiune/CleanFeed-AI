@@ -125,15 +125,34 @@ function splitAudit(): SplitAudit {
 
 function gateReport(overrides: Partial<GateReport> = {}): GateReport {
   return {
-    schemaVersion: 1,
+    schemaVersion: 2,
+    multiplicity: {
+      correction: "bonferroni",
+      familyAlpha: 0.05,
+      descriptiveConfidence: 0.95,
+      frozenAt: "G5",
+      declared: 40,
+      observed: 1,
+      gateIds: ["warning.fpr.overall"],
+      perGateAlpha: 0.05 / 40,
+      covers: true,
+    },
     decision: "pass",
     gates: [
       {
         id: "warning.fpr.overall",
         tier: "warning",
         scope: "overall",
+        estimand: "warning.fpr",
+        evidence: "present",
         observed: 0.01,
-        bound: "upper95",
+        bound: "simultaneous-upper",
+        descriptive: {
+          bound: "upper95",
+          value: 0.012,
+          confidence: 0.95,
+          role: "descriptive",
+        },
         operator: "<=",
         required: 0.05,
         sampleSize: 2_000,
@@ -181,6 +200,171 @@ function metrics(): EvaluationMetrics {
       },
     },
     visualAction: null,
+    release: {
+      role: "release",
+      thresholdSource: "frozen-calibration-threshold",
+      warning: {
+        role: "release",
+        decision: "warning",
+        family: "end-to-end",
+        recall: { value: 0.5, lower95: 0.2, method: "wilson-one-sided" },
+        falsePositiveRate: {
+          value: 1 / 3,
+          upper95: 0.6,
+          method: "wilson-one-sided",
+          simultaneous: {
+            correction: "bonferroni",
+            familyAlpha: 0.05,
+            m: 8,
+            alpha: 0.00625,
+            lower: 0,
+            upper: 0.71,
+            method: "wilson-one-sided",
+          },
+        },
+        errorRate: { value: 0.125, method: "point" },
+        conditional: {
+          role: "diagnostic",
+          family: "conditional-on-scored",
+          selectiveFailureSensitive: true,
+          recall: { value: 0.75, lower95: 0.4, method: "wilson-one-sided" },
+          falsePositiveRate: {
+            value: 1 / 3,
+            upper95: 0.6,
+            method: "wilson-one-sided",
+          },
+          errorRate: { value: 0.125, method: "point" },
+        },
+      },
+      visualAction: null,
+    },
+    separability: {
+      role: "diagnostic",
+      purpose: "separability",
+      gates: false,
+      population: "conditional-on-scored",
+      errorRate: { value: 0.125, method: "point" },
+      auroc: {
+        value: 0.9647,
+        lower95: 0.95,
+        upper95: 0.97,
+        method: "author-cluster-percentile",
+      },
+      prAuc: { value: 0.9788, method: "author-cluster-percentile" },
+      tprAtOnePercentFpr: {
+        targetFpr: 0.01,
+        achievedFpr: 0.0098,
+        tpr: 0.4213,
+        threshold: 0.87,
+        sampleSize: 8,
+      },
+    },
+    calibration: {
+      role: "diagnostic",
+      gatedStatistic: "eceEqualMass15",
+      population: "conditional-on-scored",
+      errorRate: { value: 0.125, method: "point" },
+      brier: { value: 0.0812, method: "author-cluster-percentile" },
+      logLoss: 0.2731,
+      intercept: -0.12,
+      slope: 0.71,
+      bins: 15,
+      eceEqualMass15: {
+        value: 0.0819,
+        lower95: 0.0731,
+        upper95: 0.0908,
+        method: "author-cluster-percentile",
+      },
+      reliability: [
+        {
+          index: 0,
+          count: 4,
+          meanProbability: 0.12,
+          positiveRate: 0.25,
+          lowestProbability: 0.1,
+          highestProbability: 0.2,
+        },
+      ],
+      byLengthBucket: [
+        {
+          key: "50_79",
+          count: 3,
+          samplingUnits: 3,
+          samplingUnitAxis: "groups.author",
+          brier: 0.08,
+          logLoss: 0.27,
+          eceEqualMass: 0.09,
+          errorRate: { value: 0.25, method: "point" },
+        },
+      ],
+      bySource: [],
+      byLinguisticStratum: [],
+    },
+    labelBasis: {
+      role: "human-negative-label-evidence",
+      fieldPresent: true,
+      pooledClaimAllowed: false,
+      bases: [
+        {
+          basis: "date-cutoff",
+          count: 900,
+          scored: 890,
+          errored: 10,
+          samplingUnits: 640,
+          samplingUnitAxis: "groups.author",
+          powered: true,
+          powerFloor: 300,
+          evidenceRole: "gating",
+          falsePositiveRate: {
+            value: 0.03,
+            upper95: 0.041,
+            method: "wilson-one-sided",
+          },
+          errorRate: { value: 0.011, method: "wilson-one-sided" },
+          brier: 0.07,
+          logLoss: 0.24,
+          eceEqualMass: 0.06,
+        },
+        {
+          basis: "observed-process",
+          count: 12,
+          scored: 12,
+          errored: 0,
+          samplingUnits: 9,
+          samplingUnitAxis: "groups.author",
+          powered: false,
+          powerFloor: 300,
+          evidenceRole: "supplementary-diagnostic",
+          falsePositiveRate: {
+            value: 0,
+            upper95: 0.221,
+            method: "wilson-one-sided",
+          },
+          errorRate: { value: 0, method: "wilson-one-sided" },
+          brier: 0.03,
+          logLoss: 0.11,
+          eceEqualMass: 0.04,
+        },
+      ],
+    },
+    predictiveValue: {
+      role: "release-context",
+      family: "end-to-end",
+      benchmarkPrevalence: 0.5,
+      byPrevalence: [
+        { prevalence: 0.01, ppv: 0.0151, npv: 0.9949 },
+        { prevalence: 0.05, ppv: 0.0732, npv: 0.9739 },
+        { prevalence: 0.1, ppv: 0.1429, npv: 0.9459 },
+      ],
+    },
+    multiplicity: {
+      correction: "bonferroni",
+      familyAlpha: 0.05,
+      descriptiveConfidence: 0.95,
+      m: 8,
+      perGateAlpha: 0.00625,
+      z: 2.4977,
+    },
     coverage: { value: 0.75, method: "point" },
     abstentionRate: { value: 0.125, method: "point" },
     errorRate: { value: 0.125, method: "point" },
@@ -280,6 +464,18 @@ function baseInput(overrides: InputOverrides = {}): BenchmarkReportInput {
     slices: slices(),
     gates: overrides.gates ?? gateReport(),
   };
+}
+
+// One "## <title>" section of the markdown, up to the next "## ".
+function section(markdown: string, title: string): string {
+  const lines = markdown.split("\n");
+  const start = lines.findIndex(
+    (line) => line.startsWith("## ") && line.includes(title),
+  );
+  if (start < 0) throw new Error(`no section ${title} in the report`);
+  const rest = lines.slice(start + 1);
+  const end = rest.findIndex((line) => line.startsWith("## "));
+  return (end < 0 ? rest : rest.slice(0, end)).join("\n");
 }
 
 // --- sealing --------------------------------------------------------------
@@ -453,8 +649,10 @@ describe("reportDigest seals governance, session and the three executions", () =
               id: "warning.fpr.overall",
               tier: "warning",
               scope: "overall",
+              estimand: "warning.fpr",
+              evidence: "present",
               observed: 0.08,
-              bound: "upper95",
+              bound: "simultaneous-upper",
               operator: "<=",
               required: 0.05,
               sampleSize: 2_000,
@@ -519,3 +717,86 @@ describe("renderReportMarkdown", () => {
     expect(md).toContain("| wikipedia | 4 | 3 | 0 | 1 | 0.7500 | 0.2500 |");
   });
 });
+
+// --- A6: named roles, calibration, label bases, PPV/NPV in the markdown -----
+
+describe("renderReportMarkdown publishes the A6 evidence with its roles named", () => {
+  it("puts TPR@1%FPR beside AUROC and marks both as separability diagnostics", async () => {
+    const markdown = renderReportMarkdown(await buildBenchmarkReport(baseInput()));
+    const separability = section(markdown, "Diagnóstico de separabilidade");
+    expect(separability).toMatch(/AUROC/u);
+    expect(separability).toMatch(/0\.9647/u);
+    expect(separability).toMatch(/TPR@1%FPR/u);
+    expect(separability).toMatch(/0\.4213/u);
+    // The section says out loud that it decides nothing.
+    expect(separability).toMatch(/não decide|nunca decide/u);
+    // And the release section carries recall and FPR at the frozen threshold.
+    const release = section(markdown, "Métrica de release");
+    expect(release).toMatch(/limiar congelado/u);
+    expect(release).toMatch(/Recall/u);
+    expect(release).toMatch(/FPR/u);
+    expect(release).not.toMatch(/AUROC/u);
+  });
+
+  it("declares that the conditional family is sensitive to selective failure, in the body", async () => {
+    const markdown = renderReportMarkdown(await buildBenchmarkReport(baseInput()));
+    expect(markdown).toMatch(/falha seletiva/u);
+    // Every conditional block shows the error rate of the same population.
+    const release = section(markdown, "Métrica de release");
+    expect(release).toMatch(/Taxa de erro/u);
+  });
+
+  it("publishes calibration with both ECEs, the line and the reliability diagram", async () => {
+    const calibration = section(
+      renderReportMarkdown(await buildBenchmarkReport(baseInput())),
+      "Calibração",
+    );
+    expect(calibration).toMatch(/equal-mass/u);
+    expect(calibration).toMatch(/0\.0908/u);
+    expect(calibration).toMatch(/Brier/u);
+    expect(calibration).toMatch(/log-loss/u);
+    expect(calibration).toMatch(/intercept/u);
+    expect(calibration).toMatch(/slope/u);
+    expect(calibration).toMatch(/0\.71/u);
+  });
+
+  it("never hides the count, the sampling units or the interval of one label basis", async () => {
+    const markdown = renderReportMarkdown(await buildBenchmarkReport(baseInput()));
+    const bases = section(markdown, "Bases de rótulo humano");
+    expect(bases).toMatch(/date-cutoff/u);
+    expect(bases).toMatch(/observed-process/u);
+    // Each basis brings its own count, sampling units and upper bound.
+    expect(bases).toMatch(/900/u);
+    expect(bases).toMatch(/640/u);
+    expect(bases).toMatch(/0\.0410/u);
+    expect(bases).toMatch(/12/u);
+    expect(bases).toMatch(/0\.2210/u);
+    // And the under-powered one is labelled supplementary, not pooled away.
+    expect(bases).toMatch(/supplementary-diagnostic/u);
+    expect(bases).toMatch(/não aprova gate/u);
+  });
+
+  it("publishes PPV and NPV beside the benchmark's own prevalence", async () => {
+    const values = section(
+      renderReportMarkdown(await buildBenchmarkReport(baseInput())),
+      "PPV e NPV",
+    );
+    expect(values).toMatch(/PPV/u);
+    expect(values).toMatch(/NPV/u);
+    expect(values).toMatch(/0\.9949/u);
+    // The ~50/50 prior is declared next to the projection, not left implicit.
+    expect(values).toMatch(/prevalência do benchmark/u);
+    expect(values).toMatch(/0\.5000|0\.5/u);
+  });
+
+  it("marks the 95% intervals as descriptive and names the Bonferroni divisor", async () => {
+    const markdown = renderReportMarkdown(await buildBenchmarkReport(baseInput()));
+    const multiplicity = section(markdown, "Multiplicidade");
+    expect(multiplicity).toMatch(/bonferroni/iu);
+    expect(multiplicity).toMatch(/0\.05/u);
+    expect(multiplicity).toMatch(/descritiv/u);
+    // The gate table says which bound decided each gate.
+    expect(section(markdown, "Gates")).toMatch(/simultaneous-upper/u);
+  });
+});
+

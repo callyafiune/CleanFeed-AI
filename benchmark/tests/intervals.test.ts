@@ -1,6 +1,12 @@
 import { describe, expect, it } from "vitest";
 
-import { percentileInterval, wilsonOneSided } from "../intervals.ts";
+import {
+  ONE_SIDED_95_Z,
+  oneSidedZ,
+  percentileInterval,
+  wilsonOneSided,
+  wilsonOneSidedAtAlpha,
+} from "../intervals.ts";
 
 describe("wilsonOneSided", () => {
   it("uses the approved one-sided 95% z score", () => {
@@ -21,6 +27,35 @@ describe("wilsonOneSided", () => {
     expect(() => wilsonOneSided(-1, 300, "upper")).toThrow(RangeError);
     expect(() => wilsonOneSided(4, 3, "upper")).toThrow(RangeError);
     expect(() => wilsonOneSided(0, 0, "upper")).toThrow(RangeError);
+  });
+});
+
+describe("one-sided critical values at an arbitrary alpha", () => {
+  it("reproduces the frozen 95% z to nine digits without replacing it", () => {
+    // The 95% path keeps reading the exact literal; this only proves the
+    // approximation agrees with it, so a Bonferroni bound and a 95% bound are on
+    // the same scale.
+    expect(oneSidedZ(0.05)).toBeCloseTo(ONE_SIDED_95_Z, 8);
+    expect(wilsonOneSided(1, 100, "upper").z).toBe(ONE_SIDED_95_Z);
+  });
+
+  it("matches the published normal quantiles", () => {
+    expect(oneSidedZ(0.025)).toBeCloseTo(1.959963985, 8);
+    expect(oneSidedZ(0.005)).toBeCloseTo(2.575829304, 8);
+  });
+
+  it("is monotone: a smaller alpha is a wider bound", () => {
+    const individual = wilsonOneSidedAtAlpha(5, 200, "upper", 0.05);
+    const simultaneous = wilsonOneSidedAtAlpha(5, 200, "upper", 0.05 / 8);
+    expect(simultaneous.value).toBeGreaterThan(individual.value);
+    expect(simultaneous.alpha).toBeCloseTo(0.00625, 12);
+    expect(simultaneous.z).toBeGreaterThan(individual.z);
+  });
+
+  it("refuses an alpha outside (0, 0.5)", () => {
+    expect(() => oneSidedZ(0)).toThrow(RangeError);
+    expect(() => oneSidedZ(0.5)).toThrow(RangeError);
+    expect(() => wilsonOneSidedAtAlpha(1, 10, "upper", 1)).toThrow(RangeError);
   });
 });
 

@@ -4,8 +4,8 @@
 // EvaluationMetrics and per-slice SliceSummary and emits a fully structured
 // GateReport plus the promotion decision. It is deliberately mechanical: every
 // gate records which tier it belongs to, its scope (overall vs a named slice),
-// the observed statistic, the bound it read (point / lower95 / upper95 / exact),
-// the comparison operator, the required threshold, the sample size behind it,
+// the observed statistic, the bound it read (point / simultaneous / exact), the
+// comparison operator, the required threshold, the sample size behind it,
 // whether it was gate-eligible and whether it passed, with a human-readable
 // reason on every failure. Nothing else — no isolated high score, no model-card
 // metric, no partial result — can move the decision: it is a pure function of
@@ -16,10 +16,13 @@
 //   - all warning gates pass but an ACTION gate fails => indicator-only
 //   - every required warning and action gate passing  => pass
 //
-// The warning and action tiers treat under-powered critical slices asymmetrically
-// and on purpose: an FPR slice below the 300-negative floor never blocks the
+// The warning and action tiers treat under-powered critical cells asymmetrically
+// and on purpose: an FPR cell below the pre-registered floor never blocks the
 // warning budget (it is not gate-eligible), but it also cannot AUTHORIZE visual
 // action, so it fails the action tier and caps the decision at indicator-only.
+// That is the rule for the critical slices and, since A6, for the human-negative
+// label bases too: a handful of `observed-process` rows cannot approve a gate,
+// lift the action ceiling or back a stronger claim about the aggregate.
 //
 // Every operating-point gate reads the END-TO-END metric family
 // (benchmark/metrics.ts): its denominator is the whole eligible set and a record
@@ -27,24 +30,88 @@
 // than the conditional family on recall or clearance. Reading the conditional
 // family here would let a fragile run buy a pass with its own failures.
 //
+// TWO KINDS OF MISSING EVIDENCE FAIL A GATE, AND NEITHER DEGRADES QUIETLY (A6):
+//
+//   * The RESAMPLING PLAN. A Wilson or percentile interval over rows assumes the
+//     rows are exchangeable. The corpus is not: authors, pages, threads, prompts
+//     and generators induce dependence, and the unit of resampling is chosen per
+//     estimand by C4. Until that plan exists and declares a hierarchical or
+//     multiway unit for an estimand, the gate for that estimand FAILS for missing
+//     evidence. It never falls back to treating rows as independent, which is the
+//     silent version of the same decision and the one that inflates confidence.
+//   * The SIMULTANEOUS BOUND. Dozens of one-sided gates share one release
+//     decision, so an individual 95% bound per gate does not control the
+//     family-wise error rate. Each interval gate reads the Bonferroni bound at
+//     `alpha_família / m` that benchmark/metrics.ts publishes on the estimate; the
+//     individual 95% bound stays in the report, marked descriptive, and is never
+//     the verdict. `m` is the caller's PRE-REGISTERED count (frozen in G5), never
+//     derived from the data: if a cell loses power it stays inside `m` and fails,
+//     because a divisor that shrinks with the evidence is not a correction. When
+//     the declared `m` does not cover the mandatory gates this report produced,
+//     every interval gate fails — the alpha is never quietly recomputed.
+//
+// Frozen numbers come from benchmark/rebuild-v3-policy.json through
+// benchmark/rebuild-v3-policy.ts; the FPR budgets, the ECE ceiling and the family
+// alpha are not written down here. The remaining §6.5 thresholds (recall floors,
+// coverage, the mixed-recall floor, the inference error ceiling) are not rows of
+// that frozen table and stay as named constants below.
+//
 // Standalone benchmark module: MUST NOT import from the extension bundle (src/).
-// Pure and deterministic: no Date, no randomness, no I/O.
+// Pure and deterministic: no Date, no randomness, no I/O of its own (the policy
+// module reads its JSON once, at import).
 
-import type { EvaluationMetrics, MetricEstimate } from "./metrics.ts";
+import type {
+  EvaluationMetrics,
+  LabelBasisSlice,
+  MetricEstimate,
+} from "./metrics.ts";
+import { REBUILD_V3_POLICY } from "./rebuild-v3-policy.ts";
+import type { ResamplingUnitKind } from "./rebuild-v3-policy.ts";
 import type { SliceAxis, SliceResult, SliceSummary } from "./slices.ts";
 
 export type ReleaseDecision = "pass" | "indicator-only" | "reject";
 
 export type GateTier = "integrity" | "warning" | "action";
 export type GateScope = "overall" | "slice";
-export type GateBound = "point" | "lower95" | "upper95" | "exact";
+export type GateBound =
+  | "point"
+  | "lower95"
+  | "upper95"
+  | "exact"
+  | "simultaneous-lower"
+  | "simultaneous-upper";
 export type GateOperator = "<" | "<=" | ">=" | "==";
+
+/** Why a gate could or could not read a bound at all. */
+export type GateEvidence =
+  // The bound the verdict needed was there.
+  | "present"
+  // No C4 plan declares a resampling unit for this estimand.
+  | "missing-resampling-plan"
+  // No multiplicity-corrected bound was published for this estimate, or the
+  // declared `m` does not cover this report's mandatory gates.
+  | "missing-simultaneous-interval"
+  // The gate reads no interval (a boolean or an approved point gate), or the cell
+  // has no pre-registered power and therefore no bound was read.
+  | "not-applicable";
+
+/** The individual 95% interval: published, labelled, and never the verdict. */
+export interface DescriptiveBound {
+  bound: "lower95" | "upper95";
+  value: number | null;
+  confidence: 0.95;
+  role: "descriptive";
+}
 
 export interface GateResult {
   id: string;
   tier: GateTier;
   scope: GateScope;
   slice?: { axis: SliceAxis; key: string };
+  // The estimand whose resampling unit C4's plan must declare. Absent on the
+  // boolean integrity gates and on the approved point gates.
+  estimand?: string;
+  evidence: GateEvidence;
   observed: number | null;
   bound: GateBound;
   operator: GateOperator;
@@ -52,13 +119,33 @@ export interface GateResult {
   sampleSize: number;
   eligible: boolean;
   passed: boolean;
+  descriptive?: DescriptiveBound;
+  simultaneous?: { familyAlpha: number; m: number; alpha: number };
   reasons: string[];
 }
 
+/** How the family-wise alpha was split across the mandatory statistical gates. */
+export interface MultiplicityReport {
+  correction: "bonferroni";
+  familyAlpha: number;
+  descriptiveConfidence: number;
+  frozenAt: "G5";
+  // The pre-registered count the metrics were computed with; null when the caller
+  // declared none, in which case no interval gate can read a corrected bound.
+  declared: number | null;
+  // The mandatory interval gates this run produced, under-powered cells included.
+  observed: number;
+  gateIds: string[];
+  perGateAlpha: number | null;
+  // Whether `declared` covers `observed`. False fails every interval gate.
+  covers: boolean;
+}
+
 export interface GateReport {
-  schemaVersion: 1;
+  schemaVersion: 2;
   decision: ReleaseDecision;
   gates: GateResult[];
+  multiplicity: MultiplicityReport;
   failedIntegrity: string[];
   failedWarning: string[];
   failedAction: string[];
@@ -86,24 +173,66 @@ export interface IntegrityEvidence {
   holdoutSessionActive: boolean;
 }
 
+/**
+ * One estimand's resampling unit, as C4 will declare it. `unitAxes` names the
+ * observable dependence axes (author, page, thread, prompt, generator, ...) that
+ * the unit is built from; `replicates` is the declared replicate count, which
+ * must reach the pre-registered pilot floor.
+ */
+export interface ResamplingPlanEntry {
+  estimand: string;
+  unitKind: ResamplingUnitKind;
+  unitAxes: readonly string[];
+  replicates: number;
+}
+
+export interface ResamplingPlan {
+  planId: string;
+  source: string;
+  entries: readonly ResamplingPlanEntry[];
+}
+
 export interface GateInput {
   integrity: IntegrityEvidence;
   metrics: EvaluationMetrics;
   slices: SliceSummary;
+  // C4's plan, or `null` when it does not exist yet. Required, not optional: a
+  // caller must state that it has no plan rather than omit the question.
+  resampling: ResamplingPlan | null;
 }
 
-// §6.5 thresholds, verbatim.
-const WARNING_FPR_MAX = 0.05;
-const ACTION_FPR_MAX = 0.02;
+// §6.5 thresholds that are NOT rows of the frozen rebuild table.
 const WARNING_RECALL_MIN = 0.6;
 const ACTION_RECALL_MIN = 0.35;
 const COVERAGE_MIN = 0.8;
-const ECE_MAX = 0.05;
 const MIXED_WARNING_RECALL_MIN = 0.5;
 const MAX_ERROR_RATE = 0.01;
 
-// The critical FPR axes: only these need the 300-negative floor to gate the
-// warning budget and to authorize visual action. Mirrors benchmark/slices.ts.
+// Frozen rebuild contract.
+const WARNING_FPR_MAX = REBUILD_V3_POLICY.fprBudgets.warning;
+const ACTION_FPR_MAX = REBUILD_V3_POLICY.fprBudgets.visualAction;
+const ECE_MAX = REBUILD_V3_POLICY.calibrationGate.eceMax;
+const ALLOWED_UNIT_KINDS: ReadonlySet<string> = new Set(
+  REBUILD_V3_POLICY.resampling.allowedUnitKinds,
+);
+const MINIMUM_DECLARED_REPLICATES = REBUILD_V3_POLICY.bootstrapReplicates.pilot;
+
+// The estimand names the resampling plan must cover. One per family of gate, not
+// one per cell: the unit of resampling is a property of the estimand, and every
+// critical cell of the same estimand shares it.
+const ESTIMAND_WARNING_FPR = "warning.fpr";
+const ESTIMAND_WARNING_FPR_SLICE = "warning.fpr.slice";
+const ESTIMAND_WARNING_FPR_LABEL_BASIS = "warning.fpr.labelBasis";
+const ESTIMAND_WARNING_RECALL = "warning.recall";
+const ESTIMAND_CALIBRATION_ECE = "calibration.ece";
+const ESTIMAND_ACTION_FPR = "action.fpr";
+const ESTIMAND_ACTION_FPR_SLICE = "action.fpr.slice";
+const ESTIMAND_ACTION_FPR_LABEL_BASIS = "action.fpr.labelBasis";
+const ESTIMAND_ACTION_RECALL = "action.recall";
+
+// The critical FPR axes: only these need the pre-registered negative floor to
+// gate the warning budget and to authorize visual action. Mirrors
+// benchmark/slices.ts.
 const FPR_AXES: ReadonlySet<SliceAxis> = new Set([
   "lengthBucket",
   "domain",
@@ -112,11 +241,64 @@ const FPR_AXES: ReadonlySet<SliceAxis> = new Set([
   "hardNegativeFamily",
 ]);
 
+// --- gate specifications ---------------------------------------------------
+//
+// The gates are built in two passes because `m` is a property of the SET of
+// mandatory gates: pass one describes them, pass two decides them under the
+// alpha that follows from the count.
+
+interface IntervalGateSpec {
+  id: string;
+  tier: "warning" | "action";
+  scope: GateScope;
+  slice?: { axis: SliceAxis; key: string };
+  estimand: string;
+  estimate: MetricEstimate | undefined;
+  direction: "upper" | "lower";
+  threshold: number;
+  sampleSize: number;
+  subject: string;
+  eligible: boolean;
+  // What an ineligible cell means in this tier.
+  ineligible: { passed: boolean; reason: string | null };
+}
+
+interface DecidedContext {
+  plan: ResamplingPlan | null;
+  multiplicity: MultiplicityReport;
+}
+
 export function evaluateReleaseGates(input: GateInput): GateReport {
+  const intervalSpecs = [
+    ...warningIntervalSpecs(input.metrics, input.slices),
+    ...actionIntervalSpecs(input.metrics, input.slices),
+  ];
+
+  const declared = input.metrics.multiplicity;
+  const multiplicity: MultiplicityReport = {
+    correction: "bonferroni",
+    familyAlpha: REBUILD_V3_POLICY.multiplicity.familyAlpha,
+    descriptiveConfidence: REBUILD_V3_POLICY.multiplicity.descriptiveConfidence,
+    frozenAt: REBUILD_V3_POLICY.multiplicity.frozenAt,
+    declared: declared === null ? null : declared.m,
+    observed: intervalSpecs.length,
+    gateIds: intervalSpecs.map((spec) => spec.id),
+    perGateAlpha: declared === null ? null : declared.perGateAlpha,
+    covers: declared !== null && declared.m >= intervalSpecs.length,
+  };
+
+  const context: DecidedContext = { plan: input.resampling, multiplicity };
+
   const gates: GateResult[] = [
     ...integrityGates(input.integrity, input.metrics),
-    ...warningGates(input.metrics, input.slices),
-    ...actionGates(input.metrics, input.slices),
+    ...pointWarningGates(input.metrics),
+    ...intervalSpecs
+      .filter((spec) => spec.tier === "warning")
+      .map((spec) => decideInterval(spec, context)),
+    ...actionAvailabilityGate(input.metrics),
+    ...intervalSpecs
+      .filter((spec) => spec.tier === "action")
+      .map((spec) => decideInterval(spec, context)),
   ];
 
   const failedIntegrity = failedIds(gates, "integrity");
@@ -131,9 +313,10 @@ export function evaluateReleaseGates(input: GateInput): GateReport {
         : "pass";
 
   return {
-    schemaVersion: 1,
+    schemaVersion: 2,
     decision,
     gates,
+    multiplicity,
     failedIntegrity,
     failedWarning,
     failedAction,
@@ -242,6 +425,7 @@ function booleanGate(id: string, ok: boolean, detail: string): GateResult {
     id,
     tier: "integrity",
     scope: "overall",
+    evidence: "not-applicable",
     observed: null,
     bound: "exact",
     operator: "==",
@@ -256,12 +440,14 @@ function booleanGate(id: string, ok: boolean, detail: string): GateResult {
 function errorRateGate(value: number): GateResult {
   const observed = finiteOrNull(value);
   // The inference error rate must stay STRICTLY below 1%: exactly 0.01 is not
-  // "below 1%" and fails the gate.
+  // "below 1%" and fails the gate. An approved POINT gate, so no interval and no
+  // resampling unit is involved.
   const passed = observed !== null && observed < MAX_ERROR_RATE;
   return {
     id: "integrity.error-rate",
     tier: "integrity",
     scope: "overall",
+    evidence: "not-applicable",
     observed,
     bound: "point",
     operator: "<",
@@ -277,39 +463,12 @@ function errorRateGate(value: number): GateResult {
 
 // --- warning ---------------------------------------------------------------
 
-function warningGates(
-  metrics: EvaluationMetrics,
-  slices: SliceSummary,
-): GateResult[] {
-  const gates: GateResult[] = [];
-
-  gates.push(
-    upperGate(
-      "warning.fpr.overall",
-      "warning",
-      metrics.warning.endToEnd.falsePositiveRate,
-      WARNING_FPR_MAX,
-      metrics.warning.endToEnd.negatives,
-      "overall warning FPR",
-    ),
-  );
-
-  for (const critical of criticalFprSlices(slices)) {
-    gates.push(warningSliceFprGate(critical));
-  }
-
-  gates.push(
-    lowerGate(
-      "warning.recall.overall",
-      "warning",
-      metrics.warning.endToEnd.recall,
-      WARNING_RECALL_MIN,
-      metrics.warning.endToEnd.positives,
-      "overall warning recall",
-    ),
-  );
-
-  gates.push(
+// The two approved POINT gates of the warning tier. They read no interval, so
+// there is no interval to correct for multiplicity and no resampling unit to
+// declare; both facts are recorded as `evidence: "not-applicable"` rather than
+// left to inference.
+function pointWarningGates(metrics: EvaluationMetrics): GateResult[] {
+  return [
     pointGate(
       "warning.coverage",
       "warning",
@@ -318,64 +477,116 @@ function warningGates(
       COVERAGE_MIN,
       "coverage without abstention",
     ),
-  );
-
-  gates.push(
-    pointGate(
-      "warning.ece15",
-      "warning",
-      metrics.ece15.value,
-      "<=",
-      ECE_MAX,
-      "ECE-15",
-    ),
-  );
-
-  gates.push(mixedRecallGate(metrics.mixed.atLeastHalfAi));
-
-  return gates;
+    mixedRecallGate(metrics.mixed.atLeastHalfAi),
+  ];
 }
 
-function warningSliceFprGate(slice: SliceResult): GateResult {
-  const id = `warning.fpr.slice.${slice.axis}.${slice.key}`;
-  if (!slice.fprGateEligible) {
-    // Under-powered critical slices never gate the warning budget.
-    return {
-      id,
+function warningIntervalSpecs(
+  metrics: EvaluationMetrics,
+  slices: SliceSummary,
+): IntervalGateSpec[] {
+  const specs: IntervalGateSpec[] = [
+    {
+      id: "warning.fpr.overall",
+      tier: "warning",
+      scope: "overall",
+      estimand: ESTIMAND_WARNING_FPR,
+      estimate: metrics.warning.endToEnd.falsePositiveRate,
+      direction: "upper",
+      threshold: WARNING_FPR_MAX,
+      sampleSize: metrics.warning.endToEnd.negatives,
+      subject: "overall warning FPR",
+      eligible: true,
+      ineligible: { passed: true, reason: null },
+    },
+  ];
+
+  for (const critical of criticalFprSlices(slices)) {
+    specs.push({
+      id: `warning.fpr.slice.${critical.axis}.${critical.key}`,
       tier: "warning",
       scope: "slice",
-      slice: { axis: slice.axis, key: slice.key },
-      observed: null,
-      bound: "upper95",
-      operator: "<=",
-      required: WARNING_FPR_MAX,
-      sampleSize: slice.negatives,
-      eligible: false,
-      passed: true,
-      reasons: [],
-    };
+      slice: { axis: critical.axis, key: critical.key },
+      estimand: ESTIMAND_WARNING_FPR_SLICE,
+      estimate: critical.metrics.warning.endToEnd.falsePositiveRate,
+      direction: "upper",
+      threshold: WARNING_FPR_MAX,
+      sampleSize: critical.negatives,
+      subject: `critical FPR slice ${critical.axis}/${critical.key} warning FPR`,
+      // Under-powered critical slices never gate the warning budget.
+      eligible: critical.fprGateEligible,
+      ineligible: { passed: true, reason: null },
+    });
   }
-  const observed = finiteOrNull(
-    slice.metrics.warning.endToEnd.falsePositiveRate.upper95,
-  );
-  const passed = observed !== null && observed <= WARNING_FPR_MAX;
-  return {
-    id,
+
+  for (const basis of metrics.labelBasis.bases) {
+    specs.push(labelBasisSpec(basis, "warning"));
+  }
+
+  specs.push({
+    id: "warning.recall.overall",
     tier: "warning",
-    scope: "slice",
-    slice: { axis: slice.axis, key: slice.key },
-    observed,
-    bound: "upper95",
-    operator: "<=",
-    required: WARNING_FPR_MAX,
-    sampleSize: slice.negatives,
+    scope: "overall",
+    estimand: ESTIMAND_WARNING_RECALL,
+    estimate: metrics.warning.endToEnd.recall,
+    direction: "lower",
+    threshold: WARNING_RECALL_MIN,
+    sampleSize: metrics.warning.endToEnd.positives,
+    subject: "overall warning recall",
     eligible: true,
-    passed,
-    reasons: passed
-      ? []
-      : [
-          `critical FPR slice ${slice.axis}/${slice.key} warning FPR upper95 ${show(observed)} exceeds ${WARNING_FPR_MAX}`,
-        ],
+    ineligible: { passed: true, reason: null },
+  });
+
+  specs.push({
+    id: "warning.calibration-ece",
+    tier: "warning",
+    scope: "overall",
+    estimand: ESTIMAND_CALIBRATION_ECE,
+    // Equal-mass bins and an INTERVAL: the point estimate of ECE was the one
+    // numeric gate in §6.5 with no bound at all (assessment §4.4).
+    estimate: metrics.calibration.eceEqualMass15,
+    direction: "upper",
+    threshold: ECE_MAX,
+    sampleSize: metrics.warning.endToEnd.sampleSize,
+    subject: `equal-mass ECE-${REBUILD_V3_POLICY.calibrationGate.eceBins}`,
+    eligible: true,
+    ineligible: { passed: true, reason: null },
+  });
+
+  return specs;
+}
+
+// One human-negative label basis as a gate cell. A basis is gate-eligible only
+// when the metrics declared it powered; an under-powered or `unknown` basis is
+// supplementary diagnostic, which means: it cannot approve the warning budget
+// (not gating) and it cannot authorize visual action (fails the action tier).
+function labelBasisSpec(
+  basis: LabelBasisSlice,
+  tier: "warning" | "action",
+): IntervalGateSpec {
+  const warning = tier === "warning";
+  return {
+    id: `${tier}.fpr.labelBasis.${basis.basis}`,
+    tier,
+    scope: "overall",
+    estimand: warning
+      ? ESTIMAND_WARNING_FPR_LABEL_BASIS
+      : ESTIMAND_ACTION_FPR_LABEL_BASIS,
+    estimate: basis.falsePositiveRate,
+    direction: "upper",
+    threshold: warning ? WARNING_FPR_MAX : ACTION_FPR_MAX,
+    sampleSize: basis.count,
+    subject: `label basis ${basis.basis} ${tier} FPR`,
+    eligible: basis.evidenceRole === "gating",
+    ineligible: warning
+      ? { passed: true, reason: null }
+      : {
+          passed: false,
+          reason:
+            `label basis ${basis.basis} is supplementary-diagnostic ` +
+            `(${basis.count} human negatives against a floor of ${basis.powerFloor}): ` +
+            "it cannot authorize visual action",
+        },
   };
 }
 
@@ -392,6 +603,7 @@ function mixedRecallGate(mixed: {
     id: "warning.mixed-recall",
     tier: "warning",
     scope: "overall",
+    evidence: "not-applicable",
     observed,
     bound: "point",
     operator: ">=",
@@ -411,164 +623,258 @@ function mixedRecallGate(mixed: {
 
 // --- action ----------------------------------------------------------------
 
-function actionGates(
-  metrics: EvaluationMetrics,
-  slices: SliceSummary,
-): GateResult[] {
-  const gates: GateResult[] = [];
-
-  const visualAction = metrics.visualAction;
-  const available = visualAction !== null;
-  gates.push({
-    id: "action.available",
-    tier: "action",
-    scope: "overall",
-    observed: null,
-    bound: "exact",
-    operator: "==",
-    required: true,
-    sampleSize: 0,
-    eligible: true,
-    passed: available,
-    reasons: available
-      ? []
-      : ["no visual-action threshold was frozen (visualDocument is null)"],
-  });
-  if (visualAction === null) return gates;
-
-  gates.push(
-    upperGate(
-      "action.fpr.overall",
-      "action",
-      visualAction.endToEnd.falsePositiveRate,
-      ACTION_FPR_MAX,
-      visualAction.endToEnd.negatives,
-      "overall action FPR",
-    ),
-  );
-
-  for (const critical of criticalFprSlices(slices)) {
-    gates.push(actionSliceFprGate(critical));
-  }
-
-  gates.push(
-    lowerGate(
-      "action.recall.overall",
-      "action",
-      visualAction.endToEnd.recall,
-      ACTION_RECALL_MIN,
-      visualAction.endToEnd.positives,
-      "overall action recall",
-    ),
-  );
-
-  return gates;
+function actionAvailabilityGate(metrics: EvaluationMetrics): GateResult[] {
+  const available = metrics.visualAction !== null;
+  return [
+    {
+      id: "action.available",
+      tier: "action",
+      scope: "overall",
+      evidence: "not-applicable",
+      observed: null,
+      bound: "exact",
+      operator: "==",
+      required: true,
+      sampleSize: 0,
+      eligible: true,
+      passed: available,
+      reasons: available
+        ? []
+        : ["no visual-action threshold was frozen (visualDocument is null)"],
+    },
+  ];
 }
 
-function actionSliceFprGate(slice: SliceResult): GateResult {
-  const id = `action.fpr.slice.${slice.axis}.${slice.key}`;
-  if (!slice.fprGateEligible) {
-    // A critical FPR slice below the 300-negative floor cannot authorize visual
-    // action: it fails the action tier and caps the decision at indicator-only.
-    return {
-      id,
+function actionIntervalSpecs(
+  metrics: EvaluationMetrics,
+  slices: SliceSummary,
+): IntervalGateSpec[] {
+  const visualAction = metrics.visualAction;
+  if (visualAction === null) return [];
+
+  const specs: IntervalGateSpec[] = [
+    {
+      id: "action.fpr.overall",
+      tier: "action",
+      scope: "overall",
+      estimand: ESTIMAND_ACTION_FPR,
+      estimate: visualAction.endToEnd.falsePositiveRate,
+      direction: "upper",
+      threshold: ACTION_FPR_MAX,
+      sampleSize: visualAction.endToEnd.negatives,
+      subject: "overall action FPR",
+      eligible: true,
+      ineligible: { passed: true, reason: null },
+    },
+  ];
+
+  for (const critical of criticalFprSlices(slices)) {
+    specs.push({
+      id: `action.fpr.slice.${critical.axis}.${critical.key}`,
       tier: "action",
       scope: "slice",
-      slice: { axis: slice.axis, key: slice.key },
+      slice: { axis: critical.axis, key: critical.key },
+      estimand: ESTIMAND_ACTION_FPR_SLICE,
+      estimate: critical.metrics.visualAction?.endToEnd.falsePositiveRate,
+      direction: "upper",
+      threshold: ACTION_FPR_MAX,
+      sampleSize: critical.negatives,
+      subject: `critical FPR slice ${critical.axis}/${critical.key} action FPR`,
+      eligible: critical.fprGateEligible,
+      ineligible: {
+        // A critical FPR cell below the floor cannot authorize visual action: it
+        // fails the action tier and caps the decision at indicator-only.
+        passed: false,
+        reason:
+          `critical FPR slice ${critical.axis}/${critical.key} has ` +
+          `${critical.negatives} human negatives ` +
+          "(too few to authorize visual action)",
+      },
+    });
+  }
+
+  for (const basis of metrics.labelBasis.bases) {
+    specs.push(labelBasisSpec(basis, "action"));
+  }
+
+  specs.push({
+    id: "action.recall.overall",
+    tier: "action",
+    scope: "overall",
+    estimand: ESTIMAND_ACTION_RECALL,
+    estimate: visualAction.endToEnd.recall,
+    direction: "lower",
+    threshold: ACTION_RECALL_MIN,
+    sampleSize: visualAction.endToEnd.positives,
+    subject: "overall action recall",
+    eligible: true,
+    ineligible: { passed: true, reason: null },
+  });
+
+  return specs;
+}
+
+// --- deciding one interval gate -------------------------------------------
+
+function decideInterval(
+  spec: IntervalGateSpec,
+  context: DecidedContext,
+): GateResult {
+  const bound: GateBound =
+    spec.direction === "upper" ? "simultaneous-upper" : "simultaneous-lower";
+  const descriptive = describe(spec);
+  const base = {
+    id: spec.id,
+    tier: spec.tier,
+    scope: spec.scope,
+    ...(spec.slice === undefined ? {} : { slice: spec.slice }),
+    estimand: spec.estimand,
+    bound,
+    operator: (spec.direction === "upper" ? "<=" : ">=") as GateOperator,
+    required: spec.threshold,
+    sampleSize: spec.sampleSize,
+    descriptive,
+  };
+
+  // 1. No pre-registered power in this cell: nothing was read, and what that
+  //    means is a property of the tier (§6.5), not of the evidence.
+  if (!spec.eligible) {
+    return {
+      ...base,
+      evidence: "not-applicable",
       observed: null,
-      bound: "upper95",
-      operator: "<=",
-      required: ACTION_FPR_MAX,
-      sampleSize: slice.negatives,
       eligible: false,
+      passed: spec.ineligible.passed,
+      reasons:
+        spec.ineligible.reason === null ? [] : [spec.ineligible.reason],
+    };
+  }
+
+  // 2. No declared resampling unit for this estimand: fail, never assume rows.
+  const entry = resamplingEntry(context.plan, spec.estimand);
+  if (entry === null) {
+    return {
+      ...base,
+      evidence: "missing-resampling-plan",
+      observed: null,
+      eligible: true,
       passed: false,
       reasons: [
-        `critical FPR slice ${slice.axis}/${slice.key} has ${slice.negatives} human negatives (< 300 required to authorize visual action)`,
+        `${spec.subject}: nenhum plano de reamostragem hierárquico ou multiway ` +
+          `declara a unidade do estimando ${spec.estimand}; sem essa evidência o ` +
+          "gate reprova e nunca cai para linhas independentes",
       ],
     };
   }
+
+  // 3. No simultaneous bound to read (or a divisor that does not cover this
+  //    report's mandatory gates): fail, never read the 95% bound instead.
+  const simultaneous = spec.estimate?.simultaneous;
+  if (!context.multiplicity.covers || simultaneous === undefined) {
+    return {
+      ...base,
+      evidence: "missing-simultaneous-interval",
+      observed: null,
+      eligible: true,
+      passed: false,
+      reasons: [missingSimultaneousReason(spec, context)],
+    };
+  }
+
   const observed = finiteOrNull(
-    slice.metrics.visualAction?.endToEnd.falsePositiveRate.upper95,
+    spec.direction === "upper" ? simultaneous.upper : simultaneous.lower,
   );
-  const passed = observed !== null && observed <= ACTION_FPR_MAX;
+  const passed =
+    observed !== null &&
+    (spec.direction === "upper"
+      ? observed <= spec.threshold
+      : observed >= spec.threshold);
   return {
-    id,
-    tier: "action",
-    scope: "slice",
-    slice: { axis: slice.axis, key: slice.key },
+    ...base,
+    evidence: "present",
     observed,
-    bound: "upper95",
-    operator: "<=",
-    required: ACTION_FPR_MAX,
-    sampleSize: slice.negatives,
     eligible: true,
     passed,
+    simultaneous: {
+      familyAlpha: simultaneous.familyAlpha,
+      m: simultaneous.m,
+      alpha: simultaneous.alpha,
+    },
     reasons: passed
       ? []
       : [
-          `critical FPR slice ${slice.axis}/${slice.key} action FPR upper95 ${show(observed)} exceeds ${ACTION_FPR_MAX}`,
+          spec.direction === "upper"
+            ? `${spec.subject} simultaneous upper bound ${show(observed)} exceeds ${spec.threshold}`
+            : `${spec.subject} simultaneous lower bound ${show(observed)} is below ${spec.threshold}`,
         ],
   };
+}
+
+function describe(spec: IntervalGateSpec): DescriptiveBound {
+  const value =
+    spec.direction === "upper"
+      ? spec.estimate?.upper95
+      : spec.estimate?.lower95;
+  return {
+    bound: spec.direction === "upper" ? "upper95" : "lower95",
+    value: finiteOrNull(value),
+    confidence: 0.95,
+    role: "descriptive",
+  };
+}
+
+function missingSimultaneousReason(
+  spec: IntervalGateSpec,
+  context: DecidedContext,
+): string {
+  const multiplicity = context.multiplicity;
+  if (multiplicity.declared === null) {
+    return (
+      `${spec.subject}: nenhum m pré-registrado foi declarado, então não há ` +
+      "limite unilateral simultâneo; o intervalo individual de 95% é descritivo " +
+      "e não decide gate"
+    );
+  }
+  if (multiplicity.declared < multiplicity.observed) {
+    return (
+      `${spec.subject}: o m declarado (${multiplicity.declared}) não cobre os ` +
+      `${multiplicity.observed} gates estatísticos obrigatórios deste relatório; ` +
+      "o divisor não é recalculado para caber"
+    );
+  }
+  return (
+    `${spec.subject}: a estimativa não trouxe limite simultâneo (o bootstrap ou ` +
+    "o Wilson corrigido não foi produzido); o ponto não substitui o limite"
+  );
+}
+
+// A plan entry is usable only when it declares one of the two allowed unit kinds,
+// at least one dependence axis and at least the pre-registered pilot replicate
+// count. NOTE: nothing here verifies that the replicate count DECLARED in the plan
+// is the one the metrics actually ran (benchmark/bootstrap.ts still runs a fixed
+// 2000); that reconciliation belongs to C6/G2 and is recorded in the plan.
+function resamplingEntry(
+  plan: ResamplingPlan | null,
+  estimand: string,
+): ResamplingPlanEntry | null {
+  if (plan === null) return null;
+  const entry = plan.entries.find((candidate) => candidate.estimand === estimand);
+  if (entry === undefined) return null;
+  if (!ALLOWED_UNIT_KINDS.has(entry.unitKind)) return null;
+  if (entry.unitAxes.length === 0) return null;
+  if (
+    !Number.isInteger(entry.replicates) ||
+    entry.replicates < MINIMUM_DECLARED_REPLICATES
+  ) {
+    return null;
+  }
+  return entry;
 }
 
 // --- shared gate constructors ---------------------------------------------
 
 function criticalFprSlices(slices: SliceSummary): SliceResult[] {
   return slices.slices.filter((slice) => FPR_AXES.has(slice.axis));
-}
-
-function upperGate(
-  id: string,
-  tier: GateTier,
-  estimate: MetricEstimate,
-  threshold: number,
-  sampleSize: number,
-  subject: string,
-): GateResult {
-  const observed = finiteOrNull(estimate.upper95);
-  const passed = observed !== null && observed <= threshold;
-  return {
-    id,
-    tier,
-    scope: "overall",
-    observed,
-    bound: "upper95",
-    operator: "<=",
-    required: threshold,
-    sampleSize,
-    eligible: true,
-    passed,
-    reasons: passed
-      ? []
-      : [`${subject} upper95 ${show(observed)} exceeds ${threshold}`],
-  };
-}
-
-function lowerGate(
-  id: string,
-  tier: GateTier,
-  estimate: MetricEstimate,
-  threshold: number,
-  sampleSize: number,
-  subject: string,
-): GateResult {
-  const observed = finiteOrNull(estimate.lower95);
-  const passed = observed !== null && observed >= threshold;
-  return {
-    id,
-    tier,
-    scope: "overall",
-    observed,
-    bound: "lower95",
-    operator: ">=",
-    required: threshold,
-    sampleSize,
-    eligible: true,
-    passed,
-    reasons: passed
-      ? []
-      : [`${subject} lower95 ${show(observed)} is below ${threshold}`],
-  };
 }
 
 function pointGate(
@@ -588,6 +894,7 @@ function pointGate(
     id,
     tier,
     scope: "overall",
+    evidence: "not-applicable",
     observed,
     bound: "point",
     operator,

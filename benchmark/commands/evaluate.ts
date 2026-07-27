@@ -200,7 +200,17 @@ export async function runEvaluate(options: EvaluateOptions): Promise<string> {
     runtimeIdentityUnique: true,
     holdoutSessionActive: true,
   };
-  const gates = evaluateReleaseGates({ integrity, metrics, slices });
+  // C4 has not produced a hierarchical/multiway resampling plan yet, and A6's
+  // gate policy refuses to substitute independent rows for one. Passing `null` is
+  // the honest input: every interval gate fails for missing evidence, so a real
+  // corpus run cannot reach `pass` before C4 and G5 land. Do not invent a plan
+  // here to make the decision move.
+  const gates = evaluateReleaseGates({
+    integrity,
+    metrics,
+    slices,
+    resampling: null,
+  });
 
   const frozenSeal = frozenGovernanceSeal(frozen, options.consumptionId);
   const observedSeal = observedGovernanceSeal(

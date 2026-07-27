@@ -1426,6 +1426,102 @@ descolam do comportamento em FPR baixo.
 intervalo, e misturar bases de rótulo deixa de ocultar a contagem e o intervalo de cada
 uma.
 
+#### A6 — como foi executado (2026-07-27)
+
+Concluída. O que divergiu do escrito acima está registrado aqui; o resto saiu como
+planejado.
+
+**Entregue**
+
+- `benchmark/rebuild-v3-policy.json` materializa a tabela congelada em JSON canônico
+  (chaves ordenadas, indentação de dois espaços, uma newline final — propriedade
+  verificada por teste, não por convenção) e `benchmark/rebuild-v3-policy.ts` a valida
+  fechando o conjunto de chaves em cada nível: chave ausente, chave desconhecida, tipo
+  errado, valor fora do domínio e decisão congelada afrouxada são todos erro, com o
+  caminho exato na mensagem. Não há default em nenhum ponto. Ambos entraram em
+  `EVALUATOR_FILES`.
+- Ficaram **fora** do JSON as linhas que são prosa sem consequência mecânica; entraram
+  apenas os gatilhos por trás delas: `productTarget` +
+  `infersAuthorship: false` (alvo do produto), `localization.authorizesVisualAction:
+  false` (localização), `integralPositive` e `materialAssistance` (positivo integral e
+  assistência material), `mixedBelowHalfAiRole` (misto < 50%). Também entraram os
+  hiperparâmetros de treino da tabela e três números **pré-registrados que não são da
+  tabela** mas que o gate precisa ler de algum lugar único: `calibrationGate`
+  (15 bins, equal-mass, limite de bootstrap, teto 0,05) e `powerFloors` (os pisos §6.4
+  de 300 negativos e 200 positivos, mais `samplingUnits: null` — ver "lacunas").
+- Métrica: `ece equal-mass` com o número de bins da política, `logLoss`, reta de
+  calibração (`intercept`/`slope`, ajuste logístico com backtracking; `NaN` quando o
+  ajuste não é identificado, nunca um `1` fabricado), diagrama de confiabilidade,
+  `predictiveValues` (PPV **e** NPV) e `tprAtOnePercentFpr`.
+- Papéis nomeados em `EvaluationMetrics`: `release` (recall e FPR no limiar congelado,
+  fim-a-fim) e `separability` (`auroc`, `prAuc`, `tprAtOnePercentFpr`, com
+  `gates: false` literal). `rocAuc`, `prAuc` e `brier` **saíram do nível de topo** e
+  agora só existem dentro do bloco do seu papel — é por isso que citar o número errado
+  passou a exigir escrever o caminho errado. `ece15` (equal-width) ficou no topo porque
+  é o que o perfil selado ainda publica.
+- Toda métrica condicional carrega a taxa de erro da mesma população, e o relatório
+  afirma no corpo — não em ressalva — que a família condicional é sensível a falha
+  seletiva.
+- `labelBasis` sai por base, com contagem, unidades amostrais, eixo da unidade,
+  intervalo próprio, `powered` e `evidenceRole`. Base sem poder é
+  `supplementary-diagnostic`: no tier de aviso ela não gateia, no tier de ação ela
+  **reprova** (não eleva teto). O campo é lido com tolerância e **nunca inventado**:
+  hoje todo registro cai em `unknown`, porque `labelBasis` só entra no schema em C1.
+- Gate de ECE: passou a ler o **limite** (equal-mass, 15 bins) e não o ponto. Sem
+  intervalo, reprova.
+- Bonferroni: `metrics` publica `simultaneous` em cada estimativa quando o chamador
+  declara `preRegisteredStatisticalGates` (`m`), e `gates` decide por esse limite. Os
+  intervalos individuais de 95% seguem publicados e marcados `role: "descriptive"`.
+  `m` **não** é derivado dos dados; célula sem poder continua em `m` e reprova; `m`
+  declarado menor que os gates obrigatórios observados reprova tudo em vez de recalcular
+  o alpha. Integridade e gates de ponto aprovados (cobertura, recall de misto, taxa de
+  erro) ficam fora de `m` porque não leem intervalo.
+- Evidência de reamostragem: `GateInput.resampling` é **obrigatório** (`ResamplingPlan |
+  null`, nunca omitido). Sem entrada válida para o estimando — plano ausente, unidade
+  fora de `hierarchical`/`multiway`, nenhum eixo declarado, réplicas abaixo do piso
+  piloto — o gate **reprova por evidência ausente**. Nunca cai para linhas i.i.d.
+
+**Divergências**
+
+1. **Arquivos além da lista do plano.** `benchmark/intervals.ts` ganhou `oneSidedZ` e
+   `wilsonOneSidedAtAlpha` (o caminho de 95% continua lendo o literal congelado, bit a
+   bit); `benchmark/bootstrap.ts` ganhou `simultaneousAlpha` opcional, que lê as mesmas
+   réplicas em percentis mais largos; `benchmark/commands/evaluate.ts` passou a declarar
+   `resampling: null`. Sem isso não existiria limite simultâneo para o ECE nem para as
+   proporções, e o gate de Bonferroni seria decorativo.
+2. **A execução real passou a reprovar, e isso é o comportamento pedido.** Como não
+   existe plano de C4 nem `m` pré-registrado (G5), todo gate de intervalo reprova por
+   evidência ausente. Dois testes de integração de `consume-holdout` que esperavam
+   `pass` e `indicator-only` foram reescritos: agora provam que a decisão continua
+   delegada aos gates, que **nenhum** gate substantivo reprovou e que toda reprovação
+   nomeia evidência ausente. Quando C4 e G5 fecharem, é esse teste que volta a `pass`.
+3. **Gate novo, id novo.** `warning.ece15` virou `warning.calibration-ece`.
+   `GateReport.schemaVersion` foi para `2` (o formato ganhou `multiplicity`, e cada gate
+   ganhou `estimand`, `evidence`, `descriptive` e `simultaneous`).
+4. **`unknown` como base de rótulo bloqueia o tier de ação.** Consequência direta de a
+   base ser inelegível: até C1 nenhuma execução real pode autorizar ação visual. É
+   fail-closed e está aqui declarado para que G2/H2 não o descubram como surpresa.
+
+**Lacunas declaradas (não fechadas por A6)**
+
+- `benchmark/bootstrap.ts` ainda executa **2000** réplicas fixas, enquanto a tabela
+  congelada exige 10.000 no piloto e 100.000 no release. O gate confere o número
+  **declarado no plano de reamostragem**, e nada ainda confere o número **executado**
+  contra o declarado. Reconciliação é de C6/G2.
+- `benchmark/slices.ts` mantém suas próprias cópias dos pisos 300/200
+  (`DEFAULT_MINIMUM_FPR_NEGATIVES`/`DEFAULT_MINIMUM_RECALL_POSITIVES`), que agora também
+  vivem em `powerFloors`. A6 não tocou `slices.ts` para não colidir com o item aberto de
+  A3 sobre o denominador de FPR; apontar essas duas constantes para a política é de
+  C4/G2.
+- Nenhum piso de **unidades amostrais** foi pré-registrado. A política grava
+  `powerFloors.samplingUnits: null` e o número é publicado sem virar critério — inventar
+  um piso aqui seria inventar evidência (R4).
+- O perfil selado (`profile-artifact.ts`) continua publicando `ece15` equal-width com
+  `bins: 15`. Trocar o selo para a estatística equal-mass do gate é de G2.
+- `calibration-pipeline.ts` / `cross-validation.ts` seguem com `ECE_MAXIMUM` e o
+  desempate do calibrador como constantes locais; a política já traz `calibrator` e
+  `calibrationGate.eceMax` para eles lerem.
+
 ### A7 — O `fprUpper95` do `fit` é diagnóstico, não garantia
 
 **Depende de:** nada.

@@ -21,6 +21,12 @@ export interface BootstrapOptions<T> {
   iterations: 2_000;
   seed: number;
   statistic: (sample: readonly T[]) => number;
+  // One-sided alpha for a SIMULTANEOUS (Bonferroni-corrected) percentile bound,
+  // taken from the same replicates as the 95% interval. Present only when the
+  // caller declared a pre-registered gate count; absent means no simultaneous
+  // bound is published, and a gate that needs one then fails for missing
+  // evidence instead of reading the 95% bound (benchmark/gates.ts).
+  simultaneousAlpha?: number;
 }
 
 export interface BootstrapInterval {
@@ -31,6 +37,7 @@ export interface BootstrapInterval {
   discardedReplicates: number;
   seed: number;
   method: "author-cluster-percentile";
+  simultaneous?: { alpha: number; lower: number; upper: number };
 }
 
 const MINIMUM_VALID_REPLICATES = 1_000;
@@ -84,7 +91,7 @@ export function clusterBootstrap<T>(
 
   const { lower, upper } = percentileInterval(replicates, 0.025, 0.975);
 
-  return {
+  const interval: BootstrapInterval = {
     lower95: lower,
     upper95: upper,
     requestedReplicates: iterations,
@@ -93,6 +100,26 @@ export function clusterBootstrap<T>(
     seed,
     method: "author-cluster-percentile",
   };
+  const simultaneousAlpha = options.simultaneousAlpha;
+  if (simultaneousAlpha !== undefined) {
+    if (!(simultaneousAlpha > 0 && simultaneousAlpha < 0.5)) {
+      throw new RangeError("a one-sided alpha must lie in (0, 0.5)");
+    }
+    // The same replicates, read at a wider pair of percentiles. Reusing them is
+    // deliberate: a second resample would answer a different question and cost
+    // another 2000 statistic evaluations.
+    const wide = percentileInterval(
+      replicates,
+      simultaneousAlpha,
+      1 - simultaneousAlpha,
+    );
+    interval.simultaneous = {
+      alpha: simultaneousAlpha,
+      lower: wide.lower,
+      upper: wide.upper,
+    };
+  }
+  return interval;
 }
 
 // Deterministic 32-bit xorshift PRNG. Returns a generator producing values in

@@ -22,7 +22,12 @@
 // Deterministic: the only randomness is the caller-supplied bootstrap seed.
 
 import { clusterBootstrap } from "./bootstrap.ts";
-import { wilsonOneSided } from "./intervals.ts";
+import {
+  oneSidedZ,
+  wilsonOneSided,
+  wilsonOneSidedAtAlpha,
+} from "./intervals.ts";
+import { REBUILD_V3_POLICY } from "./rebuild-v3-policy.ts";
 import type { BenchmarkRecord } from "./schema.ts";
 
 export interface Prediction {
@@ -369,11 +374,46 @@ function isFiniteNumber(value: unknown): value is number {
 // A point estimate with an optional interval and the method that produced it,
 // so a report can prove which estimator (Wilson vs author-clustered bootstrap)
 // backs every number.
+//
+// The 95% bounds are INDIVIDUAL and descriptive. `simultaneous` is the same
+// estimator re-evaluated at alpha_family / m (Bonferroni), and it is the only
+// bound a release gate may read: with dozens of one-sided gates, individual 95%
+// bounds do not control the family-wise error rate. It is present only when the
+// caller declared the pre-registered gate count `m`; when it is absent the gate
+// fails for missing evidence rather than reusing the 95% bound as if it were
+// simultaneous (benchmark/gates.ts).
 export interface MetricEstimate {
   value: number;
   lower95?: number;
   upper95?: number;
   method: "point" | "wilson-one-sided" | "author-cluster-percentile";
+  simultaneous?: SimultaneousBound;
+}
+
+export interface SimultaneousBound {
+  correction: "bonferroni";
+  familyAlpha: number;
+  m: number;
+  alpha: number;
+  // The normal critical value, on the Wilson path only: a percentile bootstrap
+  // bound reads percentiles of the replicate distribution and has no z.
+  z?: number;
+  lower: number;
+  upper: number;
+  method: "wilson-one-sided" | "author-cluster-percentile";
+}
+
+// The multiplicity declaration of one evaluation: how many pre-registered
+// mandatory statistical gates share the family-wise alpha, and the per-gate alpha
+// and critical value that follow. `m` is frozen in G5; a cell without power stays
+// inside `m` and fails, it never shrinks the divisor.
+export interface MultiplicityDeclaration {
+  correction: "bonferroni";
+  familyAlpha: number;
+  descriptiveConfidence: number;
+  m: number;
+  perGateAlpha: number;
+  z: number;
 }
 
 // Which population a confusion matrix was measured over. Every DecisionMetrics
@@ -462,6 +502,169 @@ export interface SimulatedPrevalences {
   prevalence10: number;
 }
 
+// --- named roles (A6) ------------------------------------------------------
+//
+// The plan is emphatic about which number decides a release and which one only
+// describes the model, and about the direction never being reversible: recall and
+// FPR AT THE FROZEN THRESHOLD are the release metrics, AUROC and TPR@1%FPR are a
+// separability diagnostic. The two live in separately named blocks so citing the
+// wrong one takes a visible lie rather than a plausible slip: a release claim can
+// only be read out of `EvaluationMetrics.release`, and nothing in there is a
+// ranking statistic.
+
+/** One decision at its frozen threshold: the release metric, end-to-end. */
+export interface FrozenThresholdMetrics {
+  role: "release";
+  decision: "warning" | "visual-action";
+  family: "end-to-end";
+  recall: MetricEstimate;
+  falsePositiveRate: MetricEstimate;
+  // The error rate of the SAME population, published beside the rates because a
+  // rate over the eligible set is uninterpretable without knowing how much of it
+  // produced no decision at all.
+  errorRate: MetricEstimate;
+  // The conditional mirror, kept here and only here: it is a diagnostic, it is
+  // sensitive to selective failure (if the documents that would have scored badly
+  // are exactly the ones that failed, these numbers improve while nothing does),
+  // and it never decides a release on its own.
+  conditional: {
+    role: "diagnostic";
+    family: "conditional-on-scored";
+    selectiveFailureSensitive: true;
+    recall: MetricEstimate;
+    falsePositiveRate: MetricEstimate;
+    errorRate: MetricEstimate;
+  };
+}
+
+export interface ReleaseMetrics {
+  role: "release";
+  thresholdSource: "frozen-calibration-threshold";
+  warning: FrozenThresholdMetrics;
+  visualAction: FrozenThresholdMetrics | null;
+}
+
+/** Highest TPR reachable while the empirical FPR stays at or below the target. */
+export interface TprAtFixedFpr {
+  targetFpr: number;
+  achievedFpr: number;
+  tpr: number;
+  threshold: number;
+  sampleSize: number;
+}
+
+// Separability only: how well the score RANKS, which is precisely the family of
+// numbers that decouples from behaviour at a low FPR budget (assessment §4.6).
+// `gates: false` is a literal so a consumer cannot mistake this block for a gate
+// input, and the error rate travels with it because it is measured over the
+// scored subset.
+export interface SeparabilityDiagnostic {
+  role: "diagnostic";
+  purpose: "separability";
+  gates: false;
+  population: "conditional-on-scored";
+  errorRate: MetricEstimate;
+  auroc: MetricEstimate;
+  prAuc: MetricEstimate;
+  tprAtOnePercentFpr: TprAtFixedFpr;
+}
+
+export interface ReliabilityBin {
+  index: number;
+  count: number;
+  meanProbability: number;
+  positiveRate: number;
+  lowestProbability: number;
+  highestProbability: number;
+}
+
+// Calibration over one slice. `count` is the number of SCORED rows the statistics
+// were computed on; `errorRate` is over the eligible rows of the same slice, so a
+// slice that looks well calibrated because half of it failed is visible.
+export interface CalibrationSliceMetrics {
+  key: string;
+  count: number;
+  samplingUnits: number;
+  samplingUnitAxis: "groups.author";
+  brier: number;
+  logLoss: number;
+  eceEqualMass: number;
+  errorRate: MetricEstimate;
+}
+
+export interface CalibrationDiagnostics {
+  role: "diagnostic";
+  // The one statistic in this block a gate reads, and it reads its interval.
+  gatedStatistic: "eceEqualMass15";
+  population: "conditional-on-scored";
+  errorRate: MetricEstimate;
+  brier: MetricEstimate;
+  logLoss: number;
+  intercept: number;
+  slope: number;
+  bins: number;
+  // Equal-mass bins: the gated calibration statistic. Equal-width ECE stays
+  // published as `EvaluationMetrics.ece15` for continuity, as a diagnostic.
+  eceEqualMass15: MetricEstimate;
+  reliability: ReliabilityBin[];
+  byLengthBucket: CalibrationSliceMetrics[];
+  bySource: CalibrationSliceMetrics[];
+  byLinguisticStratum: CalibrationSliceMetrics[];
+  // The label-basis axis is NOT here: it carries a gating role and a sampling-unit
+  // count of its own, so it lives in `EvaluationMetrics.labelBasis`.
+}
+
+export type LabelBasisKey = "date-cutoff" | "observed-process" | "unknown";
+
+// One evidence basis for the HUMAN negatives, never pooled with another. Counts,
+// sampling units and interval are separate per basis because a handful of
+// `observed-process` rows must not raise the claim of the whole set: below the
+// pre-registered floor the slice is supplementary diagnostic and cannot approve a
+// gate, lift an action ceiling or back a stronger aggregate statement.
+export interface LabelBasisSlice {
+  basis: LabelBasisKey;
+  count: number;
+  scored: number;
+  errored: number;
+  samplingUnits: number;
+  samplingUnitAxis: "groups.author";
+  powered: boolean;
+  powerFloor: number;
+  evidenceRole: "gating" | "supplementary-diagnostic";
+  falsePositiveRate: MetricEstimate;
+  errorRate: MetricEstimate;
+  brier: number;
+  logLoss: number;
+  eceEqualMass: number;
+}
+
+export interface LabelBasisBreakdown {
+  role: "human-negative-label-evidence";
+  // `labelBasis` only enters the closed schema in C1. Until then every row lands
+  // in the `unknown` basis, which is never evidence — the field is read when
+  // present and never invented when absent.
+  fieldPresent: boolean;
+  pooledClaimAllowed: false;
+  bases: LabelBasisSlice[];
+}
+
+export interface PredictiveValueAtPrevalence {
+  prevalence: number;
+  ppv: number;
+  npv: number;
+}
+
+// PPV and NPV projected onto plausible feed prevalences. `benchmarkPrevalence` is
+// published beside them on purpose: the evaluation set is close to 50/50 and a
+// real feed is overwhelmingly human, so a calibrated score under this prior is not
+// the posterior probability that a document was AI-generated.
+export interface PredictiveValueProjection {
+  role: "release-context";
+  family: "end-to-end";
+  benchmarkPrevalence: number;
+  byPrevalence: PredictiveValueAtPrevalence[];
+}
+
 // One mixed-text fraction bucket ("0_24" | "25_49" | "50_74" | "75_100") with
 // the warning decision measured over the >=50% AI records it contains.
 export interface MixedFractionSegment {
@@ -497,9 +700,20 @@ export interface ResolutionBreakdown {
 export interface EvaluationMetrics {
   warning: DecisionFamilies;
   visualAction: DecisionFamilies | null;
-  rocAuc: MetricEstimate;
-  prAuc: MetricEstimate;
-  brier: MetricEstimate;
+  // The release metric, with its role in the field name (A6). Same numbers as
+  // `warning`/`visualAction`, projected under the name that says what they decide.
+  release: ReleaseMetrics;
+  // Ranking quality. AUROC and PR-AUC moved in here from the top level so no
+  // consumer can quote them as if they were the release metric.
+  separability: SeparabilityDiagnostic;
+  calibration: CalibrationDiagnostics;
+  labelBasis: LabelBasisBreakdown;
+  predictiveValue: PredictiveValueProjection;
+  // Null until the caller declares the pre-registered gate count.
+  multiplicity: MultiplicityDeclaration | null;
+  // Equal-WIDTH ECE-15, kept as a diagnostic and as the statistic the sealed
+  // calibration profile still publishes. The GATE reads
+  // `calibration.eceEqualMass15`.
   ece15: MetricEstimate;
   coverage: MetricEstimate;
   abstentionRate: MetricEstimate;
@@ -575,22 +789,43 @@ export interface EvaluationOptions {
   // Whether a visual-action threshold was frozen. When false, visualAction is
   // reported as null rather than a matrix over a threshold that does not exist.
   visualActionAvailable?: boolean;
+  // `m` for the Bonferroni correction: the number of PRE-REGISTERED mandatory
+  // statistical gates that share `alpha_família`. Frozen in G5. When it is
+  // absent no simultaneous bound is published, and benchmark/gates.ts then fails
+  // every interval gate for missing evidence instead of reading a 95% bound as if
+  // it controlled the family.
+  preRegisteredStatisticalGates?: number;
 }
 
-const ECE_BINS = 15;
+// Every threshold below comes from the frozen contract
+// (benchmark/rebuild-v3-policy.json); none of them is a local constant.
+const ECE_BINS = REBUILD_V3_POLICY.calibrationGate.eceBins;
 const BOOTSTRAP_ITERATIONS = 2_000 as const;
-const DEFAULT_MINIMUM_ELIGIBLE_WORDS = 50;
+const DEFAULT_MINIMUM_ELIGIBLE_WORDS = REBUILD_V3_POLICY.wordFloor.abstainBelow;
+const MATERIAL_ASSISTANCE_AI_FRACTION =
+  REBUILD_V3_POLICY.materialAssistance.minimumAiFraction;
+const LABEL_BASIS_POWER_FLOOR =
+  REBUILD_V3_POLICY.powerFloors.criticalFprHumanNegatives;
+// The legacy `simulatedPrecision` trio is the first three policy prevalences; the
+// `predictiveValue` block publishes all of them, with NPV beside every PPV.
+const POLICY_PREVALENCES = REBUILD_V3_POLICY.predictiveValuePrevalences;
 const DEFAULT_PREVALENCES: SimulatedPrevalences = {
-  prevalence01: 0.01,
-  prevalence05: 0.05,
-  prevalence10: 0.1,
+  prevalence01: POLICY_PREVALENCES[0],
+  prevalence05: POLICY_PREVALENCES[1],
+  prevalence10: POLICY_PREVALENCES[2],
 };
+// Log loss clamp: a probability of exactly 0 or 1 would make the statistic
+// infinite and destroy every aggregate it enters. The clamp is declared, not
+// hidden, and it is the only substitution anywhere in this module — it changes a
+// finite-precision score, never a missing one (R5 is about absent scores).
+const LOG_LOSS_EPSILON = 1e-12;
 
-// Warning positives are AI records and mixed records with at least 50% AI.
+// Warning positives are AI records and mixed records at or above the frozen
+// material-assistance AI fraction.
 export function isWarningPositive(record: BenchmarkRecord): boolean {
   if (record.label === "ai") return true;
   if (record.label === "mixed") {
-    return (record.mixture?.aiFraction ?? 0) >= 0.5;
+    return (record.mixture?.aiFraction ?? 0) >= MATERIAL_ASSISTANCE_AI_FRACTION;
   }
   return false;
 }
@@ -651,6 +886,216 @@ export function simulatedPrecision(input: {
   return denominator === 0 ? 0 : truePositives / denominator;
 }
 
+// PPV and NPV at one prevalence. PPV is `simulatedPrecision`; NPV answers the
+// other half of the same question — "if this feed is 99% human, how often is a
+// silent document really human?" — and it is the number a reader needs to see the
+// asymmetry: at a low prevalence PPV collapses while NPV stays near one.
+export function predictiveValues(input: {
+  truePositiveRate: number;
+  falsePositiveRate: number;
+  prevalence: number;
+}): { ppv: number; npv: number } {
+  const trueNegatives = (1 - input.prevalence) * (1 - input.falsePositiveRate);
+  const falseNegatives = input.prevalence * (1 - input.truePositiveRate);
+  const negativeDenominator = trueNegatives + falseNegatives;
+  return {
+    ppv: simulatedPrecision(input),
+    npv: negativeDenominator === 0 ? 0 : trueNegatives / negativeDenominator,
+  };
+}
+
+// Equal-MASS ECE: the points are ordered by probability and split into `bins`
+// groups of (near) equal size, so every bin carries real data. Equal-width bins
+// are sensitive to a grid the scores may never populate and hide conditional
+// error inside one crowded bin (assessment §4.4), which is why the gate reads
+// this one. When the count is not a multiple of `bins` the first
+// `count % bins` groups take one extra point, and no point is ever dropped.
+export function eceEqualMass(
+  points: readonly CalibrationPoint[],
+  bins: number = ECE_BINS,
+): number {
+  if (points.length === 0 || bins < 1) return Number.NaN;
+  let ece = 0;
+  for (const bin of equalMassBins(points, bins)) {
+    let probabilitySum = 0;
+    let positiveSum = 0;
+    for (const point of bin) {
+      probabilitySum += point.probability;
+      positiveSum += point.label;
+    }
+    const meanProbability = probabilitySum / bin.length;
+    const positiveRate = positiveSum / bin.length;
+    ece += (bin.length / points.length) * Math.abs(meanProbability - positiveRate);
+  }
+  return ece;
+}
+
+/** The reliability diagram behind `eceEqualMass`: one row per equal-mass bin. */
+export function reliabilityDiagram(
+  points: readonly CalibrationPoint[],
+  bins: number = ECE_BINS,
+): ReliabilityBin[] {
+  const rows: ReliabilityBin[] = [];
+  let index = 0;
+  for (const bin of equalMassBins(points, bins)) {
+    let probabilitySum = 0;
+    let positiveSum = 0;
+    for (const point of bin) {
+      probabilitySum += point.probability;
+      positiveSum += point.label;
+    }
+    rows.push({
+      index,
+      count: bin.length,
+      meanProbability: probabilitySum / bin.length,
+      positiveRate: positiveSum / bin.length,
+      lowestProbability: bin[0].probability,
+      highestProbability: bin[bin.length - 1].probability,
+    });
+    index += 1;
+  }
+  return rows;
+}
+
+function equalMassBins(
+  points: readonly CalibrationPoint[],
+  bins: number,
+): CalibrationPoint[][] {
+  if (points.length === 0 || bins < 1) return [];
+  const sorted = [...points].sort((a, b) => a.probability - b.probability);
+  const groups: CalibrationPoint[][] = [];
+  const count = Math.min(bins, sorted.length);
+  for (let bin = 0; bin < count; bin += 1) {
+    const start = Math.floor((bin * sorted.length) / count);
+    const end = Math.floor(((bin + 1) * sorted.length) / count);
+    if (end > start) groups.push(sorted.slice(start, end));
+  }
+  return groups;
+}
+
+// Log loss (mean negative log-likelihood). Reported beside Brier because the two
+// disagree about which failure is expensive: Brier is quadratic, log loss punishes
+// a confident miss without bound, which is the failure mode a warning threshold
+// cares about.
+export function logLoss(points: readonly CalibrationPoint[]): number {
+  if (points.length === 0) return Number.NaN;
+  let sum = 0;
+  for (const point of points) {
+    const p = Math.min(
+      1 - LOG_LOSS_EPSILON,
+      Math.max(LOG_LOSS_EPSILON, point.probability),
+    );
+    sum -= point.label === 1 ? Math.log(p) : Math.log(1 - p);
+  }
+  return sum / points.length;
+}
+
+/**
+ * Calibration intercept and slope (the Cox calibration line): the logistic
+ * regression of the observed label on the LOGIT of the reported probability. A
+ * perfectly calibrated score gives intercept 0 and slope 1; a slope below 1 is
+ * overconfidence and an intercept away from 0 is a systematic shift — neither is
+ * visible in a single ECE number.
+ *
+ * Fitted by Newton-Raphson on the two-parameter likelihood. Both values are NaN
+ * when the fit is not identified (fewer than two points, a single class, or no
+ * spread in the logits, where the slope is arbitrary) — never a fabricated 1.
+ */
+export function calibrationInterceptSlope(
+  points: readonly CalibrationPoint[],
+): { intercept: number; slope: number } {
+  const undefinedFit = { intercept: Number.NaN, slope: Number.NaN };
+  if (points.length < 2) return undefinedFit;
+  const xs: number[] = [];
+  const ys: number[] = [];
+  let positives = 0;
+  for (const point of points) {
+    const p = Math.min(
+      1 - LOG_LOSS_EPSILON,
+      Math.max(LOG_LOSS_EPSILON, point.probability),
+    );
+    xs.push(Math.log(p / (1 - p)));
+    ys.push(point.label);
+    positives += point.label;
+  }
+  if (positives === 0 || positives === points.length) return undefinedFit;
+  const spread = Math.max(...xs) - Math.min(...xs);
+  if (!(spread > 0)) return undefinedFit;
+
+  let intercept = 0;
+  let slope = 1;
+  for (let iteration = 0; iteration < 200; iteration += 1) {
+    let g0 = 0;
+    let g1 = 0;
+    let h00 = 0;
+    let h01 = 0;
+    let h11 = 0;
+    for (let i = 0; i < xs.length; i += 1) {
+      const eta = intercept + slope * xs[i];
+      const mu = 1 / (1 + Math.exp(-eta));
+      const residual = ys[i] - mu;
+      const weight = mu * (1 - mu);
+      g0 += residual;
+      g1 += residual * xs[i];
+      h00 += weight;
+      h01 += weight * xs[i];
+      h11 += weight * xs[i] * xs[i];
+    }
+    const determinant = h00 * h11 - h01 * h01;
+    if (!Number.isFinite(determinant) || Math.abs(determinant) < 1e-14) break;
+    const step0 = (h11 * g0 - h01 * g1) / determinant;
+    const step1 = (h00 * g1 - h01 * g0) / determinant;
+    // Backtracking: an undamped Newton step overshoots badly when the logits are
+    // widely spread (it flipped the slope's sign on a deliberately overconfident
+    // fixture), so the step is halved until the log-likelihood stops falling.
+    // Deterministic: a fixed schedule, no randomness, no tuning parameter.
+    const current = logLikelihood(xs, ys, intercept, slope);
+    let scale = 1;
+    let accepted = false;
+    for (let attempt = 0; attempt < 40; attempt += 1) {
+      const nextIntercept = intercept + scale * step0;
+      const nextSlope = slope + scale * step1;
+      if (logLikelihood(xs, ys, nextIntercept, nextSlope) >= current) {
+        intercept = nextIntercept;
+        slope = nextSlope;
+        accepted = true;
+        break;
+      }
+      scale /= 2;
+    }
+    if (!accepted) break;
+    if (
+      Math.abs(scale * step0) < 1e-12 &&
+      Math.abs(scale * step1) < 1e-12
+    ) {
+      break;
+    }
+  }
+  if (!Number.isFinite(intercept) || !Number.isFinite(slope)) {
+    return undefinedFit;
+  }
+  return { intercept, slope };
+}
+
+// Bernoulli log-likelihood of the calibration line, written so overflow cannot
+// turn a large |eta| into a NaN: log(sigma(eta)) = -log1p(exp(-eta)) for eta >= 0
+// and eta - log1p(exp(eta)) otherwise.
+function logLikelihood(
+  xs: readonly number[],
+  ys: readonly number[],
+  intercept: number,
+  slope: number,
+): number {
+  let total = 0;
+  for (let i = 0; i < xs.length; i += 1) {
+    const eta = intercept + slope * xs[i];
+    const logSigma =
+      eta >= 0 ? -Math.log1p(Math.exp(-eta)) : eta - Math.log1p(Math.exp(eta));
+    total += ys[i] === 1 ? logSigma : logSigma - eta;
+  }
+  return total;
+}
+
 // The full v2 report. Deterministic for a fixed bootstrap seed.
 export function computeEvaluationMetrics(
   items: readonly EvaluationItem[],
@@ -662,6 +1107,8 @@ export function computeEvaluationMetrics(
   const visualActionAvailable = options.visualActionAvailable ?? true;
   const seed = options.bootstrapSeed;
 
+  const bonferroni = multiplicityFrom(options.preRegisteredStatisticalGates);
+
   const eligible = items.filter((item) =>
     isEligible(item.record, minimumWords),
   );
@@ -669,9 +1116,9 @@ export function computeEvaluationMetrics(
 
   // Both decision families are measured over the ELIGIBLE set: end-to-end over
   // all of it, conditional over the part of it that produced a score.
-  const warning = decisionFamilies(eligible, (item) => item.warned);
+  const warning = decisionFamilies(eligible, (item) => item.warned, bonferroni);
   const visualAction = visualActionAvailable
-    ? decisionFamilies(eligible, (item) => item.visualActioned)
+    ? decisionFamilies(eligible, (item) => item.visualActioned, bonferroni)
     : null;
 
   // Continuous ranking/calibration metrics run over the scored positive/negative
@@ -682,26 +1129,57 @@ export function computeEvaluationMetrics(
       (item) => isWarningPositive(item.record) || isHumanNegative(item.record),
     );
 
+  const errorRate = proportionEstimate(
+    eligible.filter((item) => item.status === "error").length,
+    eligibleCount,
+    bonferroni,
+  );
+
   return {
     warning,
     visualAction,
-    rocAuc: continuousEstimate(scoredBinary, rocAucFromItems, seed),
-    prAuc: continuousEstimate(scoredBinary, prAucFromItems, seed),
-    brier: continuousEstimate(scoredBinary, sampleBrier, seed),
-    ece15: continuousEstimate(scoredBinary, sampleEce, seed),
+    release: {
+      role: "release",
+      thresholdSource: "frozen-calibration-threshold",
+      warning: frozenThresholdMetrics("warning", warning, errorRate),
+      visualAction:
+        visualAction === null
+          ? null
+          : frozenThresholdMetrics("visual-action", visualAction, errorRate),
+    },
+    separability: {
+      role: "diagnostic",
+      purpose: "separability",
+      gates: false,
+      population: "conditional-on-scored",
+      errorRate,
+      auroc: continuousEstimate(scoredBinary, rocAucFromItems, seed, bonferroni),
+      prAuc: continuousEstimate(scoredBinary, prAucFromItems, seed, bonferroni),
+      tprAtOnePercentFpr: tprAtTargetFpr(scoredBinary, DEFAULT_TARGET_FPR),
+    },
+    calibration: calibrationDiagnostics(
+      eligible,
+      scoredBinary,
+      seed,
+      bonferroni,
+      errorRate,
+    ),
+    labelBasis: labelBasisBreakdown(eligible, bonferroni),
+    predictiveValue: predictiveValueProjection(warning),
+    multiplicity: bonferroni,
+    ece15: continuousEstimate(scoredBinary, sampleEce, seed, bonferroni),
     coverage: proportionEstimate(
       eligible.filter((item) => item.status === "scored").length,
       eligibleCount,
+      bonferroni,
     ),
     abstentionRate: proportionEstimate(
       eligible.filter((item) => item.status === "abstained").length,
       eligibleCount,
+      bonferroni,
     ),
-    errorRate: proportionEstimate(
-      eligible.filter((item) => item.status === "error").length,
-      eligibleCount,
-    ),
-    resolution: resolutionBreakdown(eligible),
+    errorRate,
+    resolution: resolutionBreakdown(eligible, bonferroni),
     simulatedPrecision: {
       prevalence01: simulatedPrecisionAt(warning, prevalences.prevalence01),
       prevalence05: simulatedPrecisionAt(warning, prevalences.prevalence05),
@@ -732,8 +1210,291 @@ export function computeEvaluationMetrics(
     // evidence written into the plan (A6/G2, plan item 7).
     mixed: {
       atLeastHalfAi: mixedAtLeastHalfAi(items),
-      byFraction: mixedByFraction(items),
+      byFraction: mixedByFraction(items, bonferroni),
     },
+  };
+}
+
+// --- named roles, calibration and label bases (A6) -------------------------
+
+// The release projection of one decision. It reads the SAME matrices as
+// `metrics.warning` / `metrics.visualAction`; the point is the naming, and that
+// the conditional mirror can only be reached through a field that says it is a
+// selective-failure-sensitive diagnostic and that carries the error rate with it.
+function frozenThresholdMetrics(
+  decision: "warning" | "visual-action",
+  families: DecisionFamilies,
+  errorRate: MetricEstimate,
+): FrozenThresholdMetrics {
+  return {
+    role: "release",
+    decision,
+    family: "end-to-end",
+    recall: families.endToEnd.recall,
+    falsePositiveRate: families.endToEnd.falsePositiveRate,
+    errorRate,
+    conditional: {
+      role: "diagnostic",
+      family: "conditional-on-scored",
+      selectiveFailureSensitive: true,
+      recall: families.conditionalOnScored.recall,
+      falsePositiveRate: families.conditionalOnScored.falsePositiveRate,
+      errorRate,
+    },
+  };
+}
+
+// Highest TPR whose empirical FPR stays at or below the target, with the score at
+// which it happens. Diagnostic: the threshold here is chosen POST HOC on this very
+// sample, which is exactly why it can never be a release number (A7 makes the same
+// point about the fit-time search).
+function tprAtTargetFpr(
+  items: readonly ScoredEvaluationItem[],
+  targetFpr: number,
+): TprAtFixedFpr {
+  let positives = 0;
+  let negatives = 0;
+  for (const item of items) {
+    if (isWarningPositive(item.record)) positives += 1;
+    else negatives += 1;
+  }
+  if (positives === 0 || negatives === 0) {
+    return {
+      targetFpr,
+      achievedFpr: Number.NaN,
+      tpr: Number.NaN,
+      threshold: Number.NaN,
+      sampleSize: items.length,
+    };
+  }
+  const sorted = [...items].sort((a, b) => b.documentScore - a.documentScore);
+  let truePositives = 0;
+  let falsePositives = 0;
+  let best = { achievedFpr: 0, tpr: 0, threshold: Number.POSITIVE_INFINITY };
+  for (let i = 0; i < sorted.length; ) {
+    const currentScore = sorted[i].documentScore;
+    while (i < sorted.length && sorted[i].documentScore === currentScore) {
+      if (isWarningPositive(sorted[i].record)) truePositives += 1;
+      else falsePositives += 1;
+      i += 1;
+    }
+    const fpr = falsePositives / negatives;
+    const tpr = truePositives / positives;
+    if (fpr <= targetFpr && tpr >= best.tpr) {
+      best = { achievedFpr: fpr, tpr, threshold: currentScore };
+    }
+  }
+  return { targetFpr, ...best, sampleSize: items.length };
+}
+
+function calibrationDiagnostics(
+  eligible: readonly EvaluationItem[],
+  scoredBinary: readonly ScoredEvaluationItem[],
+  seed: number,
+  bonferroni: MultiplicityDeclaration | null,
+  errorRate: MetricEstimate,
+): CalibrationDiagnostics {
+  const points = scoredBinary.map(toCalibrationPoint);
+  const fit = calibrationInterceptSlope(points);
+  return {
+    role: "diagnostic",
+    gatedStatistic: "eceEqualMass15",
+    population: "conditional-on-scored",
+    errorRate,
+    brier: continuousEstimate(scoredBinary, sampleBrier, seed, bonferroni),
+    logLoss: logLoss(points),
+    intercept: fit.intercept,
+    slope: fit.slope,
+    bins: ECE_BINS,
+    eceEqualMass15: continuousEstimate(
+      scoredBinary,
+      sampleEceEqualMass,
+      seed,
+      bonferroni,
+    ),
+    reliability: reliabilityDiagram(points, ECE_BINS),
+    byLengthBucket: calibrationSlices(eligible, (record) =>
+      sizeBucket(record.wordCount),
+    ),
+    bySource: calibrationSlices(
+      eligible,
+      (record) => record.provenance.sourceId,
+    ),
+    byLinguisticStratum: calibrationSlices(
+      eligible,
+      (record) => record.humanSourceType ?? "unknown",
+    ),
+  };
+}
+
+// Calibration by slice. The denominator of the statistics is the SCORED
+// positive/negative rows of the slice; the denominator of `errorRate` is the whole
+// eligible slice, which is why both are published together (a slice can only look
+// calibrated because its hard rows failed).
+function calibrationSlices(
+  eligible: readonly EvaluationItem[],
+  keyOf: (record: BenchmarkRecord) => string,
+): CalibrationSliceMetrics[] {
+  const buckets = new Map<string, EvaluationItem[]>();
+  for (const item of eligible) {
+    const key = keyOf(item.record);
+    const bucket = buckets.get(key);
+    if (bucket === undefined) buckets.set(key, [item]);
+    else bucket.push(item);
+  }
+  return [...buckets.entries()]
+    .sort((a, b) => (a[0] < b[0] ? -1 : a[0] > b[0] ? 1 : 0))
+    .map(([key, bucket]) => {
+      const scored = bucket
+        .filter(isScoredItem)
+        .filter(
+          (item) =>
+            isWarningPositive(item.record) || isHumanNegative(item.record),
+        );
+      const points = scored.map(toCalibrationPoint);
+      return {
+        key,
+        count: scored.length,
+        samplingUnits: samplingUnits(scored),
+        samplingUnitAxis: "groups.author",
+        brier: brierScore(points),
+        logLoss: logLoss(points),
+        eceEqualMass: eceEqualMass(points, ECE_BINS),
+        errorRate: proportionEstimate(
+          bucket.filter((item) => item.status === "error").length,
+          bucket.length,
+        ),
+      };
+    });
+}
+
+// `labelBasis` reaches the closed schema only in C1; today it is read off the
+// record when a producer already wrote it and is NEVER invented. A row without a
+// readable basis lands in `unknown`, which is not evidence about either basis.
+function labelBasisOf(record: BenchmarkRecord): LabelBasisKey {
+  if (record.label !== REBUILD_V3_POLICY.labelBasis.appliesToLabel) {
+    return "unknown";
+  }
+  const raw = (record as { labelBasis?: unknown }).labelBasis;
+  if (
+    typeof raw === "string" &&
+    (REBUILD_V3_POLICY.labelBasis.allowed as readonly string[]).includes(raw)
+  ) {
+    return raw as LabelBasisKey;
+  }
+  return "unknown";
+}
+
+function labelBasisBreakdown(
+  eligible: readonly EvaluationItem[],
+  bonferroni: MultiplicityDeclaration | null,
+): LabelBasisBreakdown {
+  const negatives = eligible.filter((item) => isHumanNegative(item.record));
+  const buckets = new Map<LabelBasisKey, EvaluationItem[]>();
+  for (const item of negatives) {
+    const basis = labelBasisOf(item.record);
+    const bucket = buckets.get(basis);
+    if (bucket === undefined) buckets.set(basis, [item]);
+    else bucket.push(item);
+  }
+  const bases = [...buckets.entries()]
+    .sort((a, b) => (a[0] < b[0] ? -1 : a[0] > b[0] ? 1 : 0))
+    .map(([basis, bucket]) => {
+      const scored = bucket.filter(isScoredItem);
+      const falsePositives = scored.filter((item) => item.warned).length;
+      const points = scored.map(toCalibrationPoint);
+      // A basis is powered when it clears the pre-registered §6.4 FPR floor of
+      // human negatives. The SAMPLING-UNIT count is published but is not a pass
+      // criterion: no floor for it has been pre-registered, and inventing one
+      // here would be inventing evidence.
+      const powered =
+        basis !== "unknown" && bucket.length >= LABEL_BASIS_POWER_FLOOR;
+      return {
+        basis,
+        count: bucket.length,
+        scored: scored.length,
+        errored: bucket.filter((item) => item.status === "error").length,
+        samplingUnits: samplingUnits(bucket),
+        samplingUnitAxis: "groups.author" as const,
+        powered,
+        powerFloor: LABEL_BASIS_POWER_FLOOR,
+        evidenceRole: powered
+          ? ("gating" as const)
+          : REBUILD_V3_POLICY.labelBasis.underPoweredRole,
+        falsePositiveRate: proportionEstimate(
+          falsePositives,
+          scored.length,
+          bonferroni,
+        ),
+        errorRate: proportionEstimate(
+          bucket.filter((item) => item.status === "error").length,
+          bucket.length,
+          bonferroni,
+        ),
+        brier: brierScore(points),
+        logLoss: logLoss(points),
+        eceEqualMass: eceEqualMass(points, ECE_BINS),
+      };
+    });
+  return {
+    role: "human-negative-label-evidence",
+    fieldPresent: bases.some((slice) => slice.basis !== "unknown"),
+    pooledClaimAllowed: REBUILD_V3_POLICY.labelBasis.pooledClaimAllowed,
+    bases,
+  };
+}
+
+function predictiveValueProjection(
+  warning: DecisionFamilies,
+): PredictiveValueProjection {
+  const endToEnd = warning.endToEnd;
+  const total = endToEnd.positives + endToEnd.negatives;
+  return {
+    role: "release-context",
+    family: "end-to-end",
+    benchmarkPrevalence: total === 0 ? Number.NaN : endToEnd.positives / total,
+    byPrevalence: POLICY_PREVALENCES.map((prevalence) => ({
+      prevalence,
+      ...predictiveValues({
+        truePositiveRate: endToEnd.recall.value,
+        falsePositiveRate: endToEnd.falsePositiveRate.value,
+        prevalence,
+      }),
+    })),
+  };
+}
+
+function samplingUnits(items: readonly EvaluationItem[]): number {
+  const units = new Set<string>();
+  for (const item of items) units.add(item.record.groups.author);
+  return units.size;
+}
+
+// Bonferroni: alpha_família / m, with the family alpha and the descriptive
+// confidence read from the frozen contract. `m` is the caller's declaration of the
+// pre-registered mandatory statistical gate count; it is never derived from the
+// data, because a divisor that shrinks when a cell loses power is not a correction.
+function multiplicityFrom(
+  preRegisteredStatisticalGates: number | undefined,
+): MultiplicityDeclaration | null {
+  if (preRegisteredStatisticalGates === undefined) return null;
+  if (
+    !Number.isInteger(preRegisteredStatisticalGates) ||
+    preRegisteredStatisticalGates < 1
+  ) {
+    throw new RangeError(
+      "preRegisteredStatisticalGates must be a positive integer count of gates",
+    );
+  }
+  const familyAlpha = REBUILD_V3_POLICY.multiplicity.familyAlpha;
+  const perGateAlpha = familyAlpha / preRegisteredStatisticalGates;
+  return {
+    correction: "bonferroni",
+    familyAlpha,
+    descriptiveConfidence: REBUILD_V3_POLICY.multiplicity.descriptiveConfidence,
+    m: preRegisteredStatisticalGates,
+    perGateAlpha,
+    z: oneSidedZ(perGateAlpha),
   };
 }
 
@@ -744,13 +1505,15 @@ export function computeEvaluationMetrics(
 function decisionFamilies(
   eligible: readonly EvaluationItem[],
   decide: (item: ScoredEvaluationItem) => boolean,
+  bonferroni: MultiplicityDeclaration | null,
 ): DecisionFamilies {
   return {
-    endToEnd: decisionMetrics(eligible, decide, "end-to-end"),
+    endToEnd: decisionMetrics(eligible, decide, "end-to-end", bonferroni),
     conditionalOnScored: decisionMetrics(
       eligible.filter(isScoredItem),
       decide,
       "conditional-on-scored",
+      bonferroni,
     ),
   };
 }
@@ -762,6 +1525,7 @@ function decisionMetrics(
   population: readonly EvaluationItem[],
   decide: (item: ScoredEvaluationItem) => boolean,
   family: MetricFamily,
+  bonferroni: MultiplicityDeclaration | null = null,
 ): DecisionMetrics {
   let positives = 0;
   let negatives = 0;
@@ -814,12 +1578,14 @@ function decisionMetrics(
     falsePositiveRate: proportionEstimate(
       falsePositives,
       falsePositives + trueNegatives,
+      bonferroni,
     ),
-    clearanceRate: proportionEstimate(trueNegatives, negatives),
-    recall: proportionEstimate(truePositives, positives),
+    clearanceRate: proportionEstimate(trueNegatives, negatives, bonferroni),
+    recall: proportionEstimate(truePositives, positives, bonferroni),
     precision: proportionEstimate(
       truePositives,
       truePositives + falsePositives,
+      bonferroni,
     ),
   };
 }
@@ -840,10 +1606,11 @@ const RESOLUTION_AXES: ReadonlyArray<
 
 function resolutionBreakdown(
   eligible: readonly EvaluationItem[],
+  bonferroni: MultiplicityDeclaration | null,
 ): ResolutionBreakdown {
   const breakdown = {} as ResolutionBreakdown;
   for (const [axis, keyOf] of RESOLUTION_AXES) {
-    breakdown[axis] = resolutionSlices(eligible, keyOf);
+    breakdown[axis] = resolutionSlices(eligible, keyOf, bonferroni);
   }
   return breakdown;
 }
@@ -851,6 +1618,7 @@ function resolutionBreakdown(
 function resolutionSlices(
   eligible: readonly EvaluationItem[],
   keyOf: (record: BenchmarkRecord) => string,
+  bonferroni: MultiplicityDeclaration | null,
 ): ResolutionSlice[] {
   const buckets = new Map<string, EvaluationItem[]>();
   for (const item of eligible) {
@@ -873,23 +1641,45 @@ function resolutionSlices(
         scored,
         abstained,
         errored,
-        coverage: proportionEstimate(scored, bucket.length),
-        abstentionRate: proportionEstimate(abstained, bucket.length),
-        errorRate: proportionEstimate(errored, bucket.length),
+        coverage: proportionEstimate(scored, bucket.length, bonferroni),
+        abstentionRate: proportionEstimate(
+          abstained,
+          bucket.length,
+          bonferroni,
+        ),
+        errorRate: proportionEstimate(errored, bucket.length, bonferroni),
       };
     });
 }
 
 // Wilson one-sided lower and upper bounds on a proportion. A zero-denominator
 // proportion is undefined, reported as a NaN point rather than a false 0.
-function proportionEstimate(successes: number, total: number): MetricEstimate {
+function proportionEstimate(
+  successes: number,
+  total: number,
+  bonferroni: MultiplicityDeclaration | null = null,
+): MetricEstimate {
   if (total === 0) return { value: Number.NaN, method: "point" };
-  return {
+  const estimate: MetricEstimate = {
     value: successes / total,
     lower95: wilsonOneSided(successes, total, "lower").value,
     upper95: wilsonOneSided(successes, total, "upper").value,
     method: "wilson-one-sided",
   };
+  if (bonferroni !== null) {
+    const alpha = bonferroni.perGateAlpha;
+    estimate.simultaneous = {
+      correction: "bonferroni",
+      familyAlpha: bonferroni.familyAlpha,
+      m: bonferroni.m,
+      alpha,
+      z: bonferroni.z,
+      lower: wilsonOneSidedAtAlpha(successes, total, "lower", alpha).value,
+      upper: wilsonOneSidedAtAlpha(successes, total, "upper", alpha).value,
+      method: "wilson-one-sided",
+    };
+  }
+  return estimate;
 }
 
 // A continuous metric with a 2000-replicate author-clustered bootstrap
@@ -900,6 +1690,7 @@ function continuousEstimate(
   items: readonly ScoredEvaluationItem[],
   statistic: (sample: readonly ScoredEvaluationItem[]) => number,
   seed: number,
+  bonferroni: MultiplicityDeclaration | null = null,
 ): MetricEstimate {
   const value = statistic(items);
   if (!Number.isFinite(value)) return { value, method: "point" };
@@ -909,13 +1700,28 @@ function continuousEstimate(
       iterations: BOOTSTRAP_ITERATIONS,
       seed,
       statistic,
+      ...(bonferroni === null
+        ? {}
+        : { simultaneousAlpha: bonferroni.perGateAlpha }),
     });
-    return {
+    const estimate: MetricEstimate = {
       value,
       lower95: interval.lower95,
       upper95: interval.upper95,
       method: "author-cluster-percentile",
     };
+    if (bonferroni !== null && interval.simultaneous !== undefined) {
+      estimate.simultaneous = {
+        correction: "bonferroni",
+        familyAlpha: bonferroni.familyAlpha,
+        m: bonferroni.m,
+        alpha: interval.simultaneous.alpha,
+        lower: interval.simultaneous.lower,
+        upper: interval.simultaneous.upper,
+        method: "author-cluster-percentile",
+      };
+    }
+    return estimate;
   } catch {
     return { value, method: "point" };
   }
@@ -985,6 +1791,10 @@ function sampleBrier(items: readonly ScoredEvaluationItem[]): number {
 
 function sampleEce(items: readonly ScoredEvaluationItem[]): number {
   return ece15(items.map(toCalibrationPoint));
+}
+
+function sampleEceEqualMass(items: readonly ScoredEvaluationItem[]): number {
+  return eceEqualMass(items.map(toCalibrationPoint), ECE_BINS);
 }
 
 function toCalibrationPoint(item: ScoredEvaluationItem): CalibrationPoint {
@@ -1057,7 +1867,7 @@ function mixedAtLeastHalfAi(items: readonly EvaluationItem[]): {
   const strong = items.filter(
     (item) =>
       item.record.label === "mixed" &&
-      (item.record.mixture?.aiFraction ?? 0) >= 0.5,
+      (item.record.mixture?.aiFraction ?? 0) >= MATERIAL_ASSISTANCE_AI_FRACTION,
   );
   const warned = strong.filter(
     (item) => isScoredItem(item) && item.warned,
@@ -1089,6 +1899,7 @@ export function mixedFractionBucket(aiFraction: number): string {
 
 function mixedByFraction(
   items: readonly EvaluationItem[],
+  bonferroni: MultiplicityDeclaration | null,
 ): MixedFractionSegment[] {
   const buckets = new Map<string, EvaluationItem[]>();
   for (const item of items) {
@@ -1108,6 +1919,11 @@ function mixedByFraction(
       // miss, never a removal), not an eligibility claim: like the aggregate
       // above, the bucket holds every mixed record, eligible or not. MetricFamily
       // documents that distinction.
-      warning: decisionMetrics(bucket, (item) => item.warned, "end-to-end"),
+      warning: decisionMetrics(
+        bucket,
+        (item) => item.warned,
+        "end-to-end",
+        bonferroni,
+      ),
     }));
 }

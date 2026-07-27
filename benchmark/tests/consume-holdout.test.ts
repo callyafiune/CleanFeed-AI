@@ -69,6 +69,16 @@ const AGGREGATION = "tmr-aggregation-v3";
 const COMPOSITION = "lexical-content-v1";
 const DATASET_AUDIT = hex("dataset-audit");
 const SOURCE_READINESS = hex("source-readiness");
+// The part of the sealed gate report these tests read back off disk.
+interface GateReportShape {
+  decision: string;
+  gates: Array<{ id: string; evidence: string; passed: boolean }>;
+  multiplicity: { declared: number | null; observed: number };
+  failedIntegrity: string[];
+  failedWarning: string[];
+  failedAction: string[];
+}
+
 const FIXED_TIME = "2026-07-19T00:00:00.000Z";
 
 // Platt maps raw 0.2 -> ~0.0025 (below every threshold) and raw 0.8 -> ~0.9975
@@ -837,7 +847,15 @@ describe("consume-holdout one-way lease", () => {
   });
 
   it(
-    "delegates a pass decision to the Phase 2 gates and leaks no raw content",
+    // Until A6 this scenario reached `pass`. It cannot any more, and not because
+    // anything got worse: the gate policy now refuses to read an interval that no
+    // C4 resampling plan backs, and `evaluate` passes `resampling: null` because
+    // no such plan exists. So the assertion moved to what is actually true — the
+    // decision is delegated byte-for-byte to the gates, EVERY substantive gate
+    // still passes, and the only failures are the two kinds of missing evidence
+    // (no resampling plan, no pre-registered m). When C4 and G5 land, this is the
+    // test that should go back to `pass`.
+    "delegates the decision to the Phase 2 gates, which reject for missing resampling evidence, and leaks no raw content",
     async () => {
       const root = await newRoot();
       const scenario = await buildScenario(root, {
@@ -862,9 +880,28 @@ describe("consume-holdout one-way lease", () => {
           join(scenario.outputDirectory, "gate-report.json"),
           "utf8",
         ),
-      ) as { decision: string };
-      expect(gates.decision).toBe("pass");
-      expect(message).toBe("HOLDOUT_COMPLETED decision=pass");
+      ) as GateReportShape;
+      expect(gates.decision).toBe("reject");
+      expect(message).toBe("HOLDOUT_COMPLETED decision=reject");
+      // No integrity gate failed, and no substantive statistic failed either:
+      // every failure names missing evidence, never a breached budget.
+      expect(gates.failedIntegrity).toEqual([]);
+      expect(gates.failedAction).not.toContain("action.available");
+      // The label basis of every human negative is `unknown` until C1 puts the
+      // field in the closed schema, so the action tier's label-basis cell is
+      // supplementary-diagnostic and cannot authorize visual action. That is the
+      // one failure here that is about power rather than about missing evidence.
+      expect(gates.failedAction).toContain("action.fpr.labelBasis.unknown");
+      for (const id of [...gates.failedWarning, ...gates.failedAction]) {
+        if (id.startsWith("action.fpr.labelBasis.")) continue;
+        const gate = gates.gates.find((candidate) => candidate.id === id);
+        expect(gate?.evidence).toMatch(
+          /missing-resampling-plan|missing-simultaneous-interval/u,
+        );
+      }
+      // And the divisor was never quietly recomputed to fit.
+      expect(gates.multiplicity.declared).toBeNull();
+      expect(gates.multiplicity.observed).toBeGreaterThan(0);
 
       // Report privacy: no raw text, author, url or prompt in any public output.
       const report = await readFile(
@@ -888,7 +925,11 @@ describe("consume-holdout one-way lease", () => {
   );
 
   it(
-    "delegates an indicator-only decision when no visual-action threshold was frozen",
+    // Same reason as above: the missing C4 plan fails warning gates too, so the
+    // decision is reject rather than indicator-only. What this scenario still
+    // proves is the part that belongs to it — with no frozen visual threshold the
+    // action tier is unavailable, and it is the gates that say so.
+    "reports the action tier as unavailable when no visual-action threshold was frozen",
     async () => {
       const root = await newRoot();
       const scenario = await buildScenario(root, {
@@ -909,9 +950,18 @@ describe("consume-holdout one-way lease", () => {
           join(scenario.outputDirectory, "gate-report.json"),
           "utf8",
         ),
-      ) as { decision: string };
-      expect(gates.decision).toBe("indicator-only");
-      expect(message).toBe("HOLDOUT_COMPLETED decision=indicator-only");
+      ) as GateReportShape;
+      expect(gates.decision).toBe("reject");
+      expect(message).toBe("HOLDOUT_COMPLETED decision=reject");
+      expect(gates.failedAction).toContain("action.available");
+      expect(gates.failedIntegrity).toEqual([]);
+      // Every warning failure is a missing-evidence failure, not a breach.
+      for (const id of gates.failedWarning) {
+        const gate = gates.gates.find((candidate) => candidate.id === id);
+        expect(gate?.evidence).toMatch(
+          /missing-resampling-plan|missing-simultaneous-interval/u,
+        );
+      }
     },
     TIMEOUT_MS,
   );

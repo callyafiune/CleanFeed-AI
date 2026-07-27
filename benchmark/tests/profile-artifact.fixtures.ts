@@ -114,6 +114,103 @@ function families(metrics: DecisionMetrics): DecisionFamilies {
   };
 }
 
+
+// The A6 role-named blocks. The sealed profile reads none of them today, so the
+// fixture only has to be structurally complete: the release block mirrors the
+// same matrices under the name that says what they decide, and the separability
+// and calibration blocks carry their error-rate companion.
+function a6Blocks(
+  warning: DecisionFamilies,
+  visualAction: DecisionFamilies | null,
+): Pick<
+  EvaluationMetrics,
+  | "release"
+  | "separability"
+  | "calibration"
+  | "labelBasis"
+  | "predictiveValue"
+  | "multiplicity"
+> {
+  const errorRate = estimate(4, 2000);
+  const frozen = (
+    decision: "warning" | "visual-action",
+    families: DecisionFamilies,
+  ): EvaluationMetrics["release"]["warning"] => ({
+    role: "release",
+    decision,
+    family: "end-to-end",
+    recall: families.endToEnd.recall,
+    falsePositiveRate: families.endToEnd.falsePositiveRate,
+    errorRate,
+    conditional: {
+      role: "diagnostic",
+      family: "conditional-on-scored",
+      selectiveFailureSensitive: true,
+      recall: families.conditionalOnScored.recall,
+      falsePositiveRate: families.conditionalOnScored.falsePositiveRate,
+      errorRate,
+    },
+  });
+  return {
+    release: {
+      role: "release",
+      thresholdSource: "frozen-calibration-threshold",
+      warning: frozen("warning", warning),
+      visualAction:
+        visualAction === null ? null : frozen("visual-action", visualAction),
+    },
+    separability: {
+      role: "diagnostic",
+      purpose: "separability",
+      gates: false,
+      population: "conditional-on-scored",
+      errorRate,
+      auroc: { value: 0.94, method: "point" },
+      prAuc: { value: 0.93, method: "point" },
+      tprAtOnePercentFpr: {
+        targetFpr: 0.01,
+        achievedFpr: 0.01,
+        tpr: 0.7,
+        threshold: 0.9,
+        sampleSize: 4_000,
+      },
+    },
+    calibration: {
+      role: "diagnostic",
+      gatedStatistic: "eceEqualMass15",
+      population: "conditional-on-scored",
+      errorRate,
+      brier: { value: 0.08, method: "point" },
+      logLoss: 0.3,
+      intercept: 0,
+      slope: 1,
+      bins: 15,
+      eceEqualMass15: { value: 0.03, lower95: 0.02, upper95: 0.04, method: "point" },
+      reliability: [],
+      byLengthBucket: [],
+      bySource: [],
+      byLinguisticStratum: [],
+    },
+    labelBasis: {
+      role: "human-negative-label-evidence",
+      fieldPresent: false,
+      pooledClaimAllowed: false,
+      bases: [],
+    },
+    predictiveValue: {
+      role: "release-context",
+      family: "end-to-end",
+      benchmarkPrevalence: 0.5,
+      byPrevalence: [
+        { prevalence: 0.01, ppv: 0.1, npv: 0.99 },
+        { prevalence: 0.05, ppv: 0.4, npv: 0.98 },
+        { prevalence: 0.1, ppv: 0.6, npv: 0.97 },
+      ],
+    },
+    multiplicity: null,
+  };
+}
+
 function fullMetrics(
   warning: DecisionMetrics,
   visualAction: DecisionMetrics | null,
@@ -121,9 +218,7 @@ function fullMetrics(
   return {
     warning: families(warning),
     visualAction: visualAction === null ? null : families(visualAction),
-    rocAuc: { value: 0.94, method: "point" },
-    prAuc: { value: 0.93, method: "point" },
-    brier: { value: 0.08, method: "point" },
+    ...a6Blocks(families(warning), visualAction === null ? null : families(visualAction)),
     ece15: { value: 0.03, method: "point" },
     coverage: estimate(1900, 2000),
     abstentionRate: estimate(60, 2000),
@@ -217,8 +312,10 @@ function actionSliceGate(key: string, passed: boolean): GateResult {
     tier: "action",
     scope: "slice",
     slice: { axis: "lengthBucket", key },
+    estimand: "action.fpr.slice",
+    evidence: "present",
     observed: 0.015,
-    bound: "upper95",
+    bound: "simultaneous-upper",
     operator: "<=",
     required: 0.02,
     sampleSize: 400,
@@ -233,7 +330,18 @@ function gateReport(
   actionSliceGates: GateResult[],
 ): GateReport {
   return {
-    schemaVersion: 1,
+    schemaVersion: 2,
+    multiplicity: {
+      correction: "bonferroni",
+      familyAlpha: 0.05,
+      descriptiveConfidence: 0.95,
+      frozenAt: "G5",
+      declared: 40,
+      observed: actionSliceGates.length,
+      gateIds: actionSliceGates.map((gate) => gate.id),
+      perGateAlpha: 0.05 / 40,
+      covers: true,
+    },
     decision,
     gates: [...actionSliceGates],
     failedIntegrity: [],

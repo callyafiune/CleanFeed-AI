@@ -27,9 +27,13 @@
 import { canonicalSha256 } from "../contracts/canonical-json.ts";
 import type { GateReport, ReleaseDecision } from "./gates.ts";
 import type {
+  CalibrationSliceMetrics,
   DecisionFamilies,
   DecisionMetrics,
   EvaluationMetrics,
+  FrozenThresholdMetrics,
+  LabelBasisSlice,
+  MetricEstimate,
   ResolutionBreakdown,
   ResolutionSlice,
 } from "./metrics.ts";
@@ -276,6 +280,22 @@ function buildNotes(decision: ReleaseDecision): string[] {
       "nem entra como verdadeiro negativo; ele aparece nas células sem decisão e " +
       "nas tabelas de cobertura e erro por fonte, classe, faixa e plataforma.",
   );
+  notes.push(
+    "A família condicional é sensível a falha seletiva: se justamente os documentos " +
+      "que pontuariam mal falharem na inferência, ela melhora sem que nada tenha " +
+      "melhorado. É por isso que toda métrica condicional aqui vem acompanhada da " +
+      "taxa de erro da mesma população, e que a comparação entre as duas famílias — " +
+      "não a leitura de uma delas — é o que revela o efeito.",
+  );
+  notes.push(
+    "Papéis: recall e FPR no limiar congelado, fim-a-fim, são a métrica de release. " +
+      "AUROC, PR-AUC e TPR@1%FPR são diagnóstico de separabilidade e não decidem " +
+      "release em nenhuma direção.",
+  );
+  notes.push(
+    "Intervalos individuais de 95% são descritivos. Os gates leem os limites " +
+      "unilaterais simultâneos por Bonferroni em alpha_família / m.",
+  );
   return notes;
 }
 
@@ -313,18 +333,73 @@ export function renderReportMarkdown(report: BenchmarkReport): string {
 
   lines.push("## Gates");
   lines.push("");
-  lines.push("| Gate | Tier | Escopo | Elegível | Resultado |");
-  lines.push("| --- | --- | --- | --- | --- |");
+  lines.push(
+    "A coluna **limite** é o bound que decidiu o gate; a coluna **95% (descritivo)** " +
+      "é o intervalo individual, publicado e nunca usado como veredito.",
+  );
+  lines.push("");
+  lines.push(
+    "| Gate | Tier | Escopo | Limite | Observado | 95% (descritivo) | Evidência | Elegível | Resultado |",
+  );
+  lines.push("| --- | --- | --- | --- | --- | --- | --- | --- | --- |");
   for (const gate of report.gates.gates) {
     const scope =
       gate.slice === undefined
         ? gate.scope
         : `${gate.slice.axis}/${gate.slice.key}`;
     lines.push(
-      `| ${gate.id} | ${gate.tier} | ${scope} | ${gate.eligible ? "sim" : "não"} | ${gate.passed ? "passou" : "reprovou"} |`,
+      `| ${gate.id} | ${gate.tier} | ${scope} | ${gate.bound} | ${fmt(gate.observed)} | ` +
+        `${fmt(gate.descriptive?.value)} | ${gate.evidence} | ` +
+        `${gate.eligible ? "sim" : "não"} | ${gate.passed ? "passou" : "reprovou"} |`,
     );
   }
   lines.push("");
+
+  lines.push("## Multiplicidade");
+  lines.push("");
+  const multiplicity = report.gates.multiplicity;
+  if (multiplicity === undefined) {
+    lines.push("_Sem declaração de multiplicidade._");
+  } else {
+    lines.push(
+      `- Correção: ${multiplicity.correction} (congelada em ${multiplicity.frozenAt})`,
+    );
+    lines.push(`- alpha_família: ${multiplicity.familyAlpha}`);
+    lines.push(
+      `- m pré-registrado: ${multiplicity.declared ?? "não declarado"} · ` +
+        `gates estatísticos obrigatórios neste relatório: ${multiplicity.observed} · ` +
+        `cobre: ${multiplicity.covers ? "sim" : "não"}`,
+    );
+    lines.push(
+      `- alpha por gate: ${multiplicity.perGateAlpha ?? "n/a"} · ` +
+        `intervalos de ${multiplicity.descriptiveConfidence} são descritivos`,
+    );
+    lines.push(
+      "- Uma célula sem poder permanece em m e reprova; o divisor nunca encolhe.",
+    );
+  }
+  lines.push("");
+
+  const release = report.metrics.release;
+  lines.push("## Métrica de release (limiar congelado)");
+  lines.push("");
+  if (release === undefined) {
+    lines.push("_Sem bloco de release._");
+  } else {
+    lines.push(
+      "Recall e FPR **no limiar congelado**, família fim-a-fim: esta é a métrica " +
+        "de release. Cada número condicional vem com a taxa de erro da mesma " +
+        "população ao lado, porque a família condicional é sensível a falha " +
+        "seletiva.",
+    );
+    lines.push("");
+    lines.push(frozenThresholdTable("Aviso", release.warning));
+    lines.push("");
+    if (release.visualAction !== null && release.visualAction !== undefined) {
+      lines.push(frozenThresholdTable("Ação visual", release.visualAction));
+      lines.push("");
+    }
+  }
 
   lines.push("## Overall");
   lines.push("");
@@ -350,6 +425,162 @@ export function renderReportMarkdown(report: BenchmarkReport): string {
       `${fmt(report.metrics.simulatedPrecision?.prevalence05)} / ${fmt(report.metrics.simulatedPrecision?.prevalence10)}`,
   );
   lines.push("");
+
+  const separability = report.metrics.separability;
+  lines.push("## Diagnóstico de separabilidade (não decide release)");
+  lines.push("");
+  if (separability === undefined) {
+    lines.push("_Sem bloco de separabilidade._");
+  } else {
+    lines.push(
+      "Qualidade de ordenação, medida sobre as linhas escoradas. É exatamente a " +
+        "família de números que descola do comportamento em orçamento baixo de FPR, " +
+        "então ela nunca decide release — nem a favor, nem contra.",
+    );
+    lines.push("");
+    lines.push(
+      `- AUROC: ${fmt(separability.auroc?.value)} ` +
+        `(IC95 descritivo ${fmt(separability.auroc?.lower95)}–${fmt(separability.auroc?.upper95)})`,
+    );
+    lines.push(`- PR-AUC: ${fmt(separability.prAuc?.value)}`);
+    lines.push(
+      `- TPR@1%FPR: ${fmt(separability.tprAtOnePercentFpr?.tpr)} ` +
+        `(FPR atingido ${fmt(separability.tprAtOnePercentFpr?.achievedFpr)}, ` +
+        `limiar ${fmt(separability.tprAtOnePercentFpr?.threshold)}, ` +
+        `n=${separability.tprAtOnePercentFpr?.sampleSize})`,
+    );
+    lines.push(
+      `- Taxa de erro da mesma população: ${fmt(separability.errorRate?.value)}`,
+    );
+    lines.push("");
+  }
+
+  const calibration = report.metrics.calibration;
+  lines.push("## Calibração");
+  lines.push("");
+  if (calibration === undefined) {
+    lines.push("_Sem bloco de calibração._");
+  } else {
+    lines.push(
+      `- ECE equal-mass (${calibration.bins} bins, **estatística do gate**): ` +
+        `${fmt(calibration.eceEqualMass15?.value)} ` +
+        `(IC95 descritivo ${fmt(calibration.eceEqualMass15?.lower95)}–${fmt(calibration.eceEqualMass15?.upper95)}; ` +
+        `limite simultâneo ${fmt(calibration.eceEqualMass15?.simultaneous?.upper)})`,
+    );
+    lines.push(
+      `- ECE equal-width de 15 bins (diagnóstico): ${fmt(report.metrics.ece15?.value)}`,
+    );
+    lines.push(`- Brier: ${fmt(calibration.brier?.value)}`);
+    lines.push(`- log-loss: ${fmt(calibration.logLoss)}`);
+    lines.push(
+      `- Reta de calibração: intercept ${fmt(calibration.intercept)} · ` +
+        `slope ${fmt(calibration.slope)}`,
+    );
+    lines.push(
+      `- Taxa de erro da mesma população: ${fmt(calibration.errorRate?.value)}`,
+    );
+    lines.push("");
+    const reliability = calibration.reliability ?? [];
+    if (reliability.length > 0) {
+      lines.push("### Diagrama de confiabilidade (equal-mass)");
+      lines.push("");
+      lines.push("| Bin | n | p média | Taxa observada | Faixa de escore |");
+      lines.push("| --- | --- | --- | --- | --- |");
+      for (const bin of reliability) {
+        lines.push(
+          `| ${bin.index} | ${bin.count} | ${fmt(bin.meanProbability)} | ${fmt(bin.positiveRate)} | ` +
+            `${fmt(bin.lowestProbability)}–${fmt(bin.highestProbability)} |`,
+        );
+      }
+      lines.push("");
+    }
+    for (const [title, rows] of [
+      ["Por faixa de comprimento", calibration.byLengthBucket ?? []],
+      ["Por fonte", calibration.bySource ?? []],
+      ["Por estrato linguístico", calibration.byLinguisticStratum ?? []],
+    ] as ReadonlyArray<readonly [string, readonly CalibrationSliceMetrics[]]>) {
+      lines.push(`### ${title}`);
+      lines.push("");
+      if (rows.length === 0) {
+        lines.push("_Sem linhas escoradas._");
+      } else {
+        lines.push(
+          "| Chave | n escorado | Unidades amostrais | Brier | log-loss | ECE equal-mass | Taxa de erro |",
+        );
+        lines.push("| --- | --- | --- | --- | --- | --- | --- |");
+        for (const row of rows) {
+          lines.push(
+            `| ${row.key} | ${row.count} | ${row.samplingUnits} | ${fmt(row.brier)} | ` +
+              `${fmt(row.logLoss)} | ${fmt(row.eceEqualMass)} | ${fmt(row.errorRate?.value)} |`,
+          );
+        }
+      }
+      lines.push("");
+    }
+  }
+
+  const labelBasis = report.metrics.labelBasis;
+  lines.push("## Bases de rótulo humano");
+  lines.push("");
+  if (labelBasis === undefined) {
+    lines.push("_Sem bloco de base de rótulo._");
+  } else {
+    lines.push(
+      "Contagem, número de unidades amostrais e intervalo de cada base, sempre " +
+        "separados: agregar as bases esconderia de qual evidência vem o número. " +
+        "Uma base abaixo do poder pré-registrado é diagnóstico suplementar — " +
+        "**não aprova gate, não eleva teto de ação e não sustenta alegação mais " +
+        "forte para o agregado**.",
+    );
+    lines.push("");
+    lines.push(
+      `- Campo \`labelBasis\` presente nos registros: ${labelBasis.fieldPresent ? "sim" : "não"} · ` +
+        `alegação agregada permitida: ${labelBasis.pooledClaimAllowed ? "sim" : "não"}`,
+    );
+    lines.push("");
+    const bases: readonly LabelBasisSlice[] = labelBasis.bases ?? [];
+    if (bases.length === 0) {
+      lines.push("_Sem negativos humanos elegíveis._");
+    } else {
+      lines.push(
+        "| Base | Negativos | Escorados | Erros | Unidades amostrais | Eixo | FPR | FPR UCB95 | Taxa de erro | Poder | Papel |",
+      );
+      lines.push(
+        "| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |",
+      );
+      for (const row of bases) {
+        lines.push(
+          `| ${row.basis} | ${row.count} | ${row.scored} | ${row.errored} | ${row.samplingUnits} | ` +
+            `${row.samplingUnitAxis} | ${fmt(row.falsePositiveRate?.value)} | ` +
+            `${fmt(row.falsePositiveRate?.upper95)} | ${fmt(row.errorRate?.value)} | ` +
+            `${row.powered ? `>= ${row.powerFloor}` : `< ${row.powerFloor}`} | ${row.evidenceRole} |`,
+        );
+      }
+    }
+    lines.push("");
+  }
+
+  const predictiveValue = report.metrics.predictiveValue;
+  lines.push("## PPV e NPV por prevalência");
+  lines.push("");
+  if (predictiveValue === undefined) {
+    lines.push("_Sem projeção de valor preditivo._");
+  } else {
+    lines.push(
+      `A prevalência do benchmark é ${fmt(predictiveValue.benchmarkPrevalence)} — ` +
+        "perto de 50/50 — e um feed real é majoritariamente humano. Logo o escore " +
+        "calibrado sob este prior **não** é probabilidade posterior de autoria: as " +
+        "linhas abaixo projetam PPV e NPV em prevalências plausíveis, a partir do " +
+        "ponto de operação fim-a-fim.",
+    );
+    lines.push("");
+    lines.push("| Prevalência | PPV | NPV |");
+    lines.push("| --- | --- | --- |");
+    for (const row of predictiveValue.byPrevalence ?? []) {
+      lines.push(`| ${fmt(row.prevalence)} | ${fmt(row.ppv)} | ${fmt(row.npv)} |`);
+    }
+    lines.push("");
+  }
 
   lines.push("## Cobertura e erro por fatia");
   lines.push("");
@@ -451,6 +682,51 @@ function decisionFamilyTable(
       `| ${label} | ${read(families?.endToEnd)} | ${read(families?.conditionalOnScored)} |`,
     );
   }
+  return lines.join("\n");
+}
+
+// One decision at its frozen threshold. The release row is the end-to-end one;
+// the conditional row sits underneath it WITH the error rate of the same
+// population, because that comparison is what exposes selective failure.
+function frozenThresholdTable(
+  subject: string,
+  metrics: FrozenThresholdMetrics,
+): string {
+  const lines: string[] = [];
+  lines.push(`### ${subject}`);
+  lines.push("");
+  lines.push(
+    "| Papel | Família | Recall | Recall (LCB95 descritivo) | FPR | FPR (UCB95 descritivo) | FPR (limite simultâneo) | Taxa de erro |",
+  );
+  lines.push("| --- | --- | --- | --- | --- | --- | --- | --- |");
+  const row = (
+    role: string,
+    family: string,
+    recall: MetricEstimate | undefined,
+    fpr: MetricEstimate | undefined,
+    errorRate: MetricEstimate | undefined,
+  ): string =>
+    `| ${role} | ${family} | ${fmt(recall?.value)} | ${fmt(recall?.lower95)} | ` +
+    `${fmt(fpr?.value)} | ${fmt(fpr?.upper95)} | ${fmt(fpr?.simultaneous?.upper)} | ` +
+    `${fmt(errorRate?.value)} |`;
+  lines.push(
+    row(
+      "release",
+      "fim-a-fim",
+      metrics.recall,
+      metrics.falsePositiveRate,
+      metrics.errorRate,
+    ),
+  );
+  lines.push(
+    row(
+      "diagnóstico (sensível a falha seletiva)",
+      "condicional a status=scored",
+      metrics.conditional?.recall,
+      metrics.conditional?.falsePositiveRate,
+      metrics.conditional?.errorRate,
+    ),
+  );
   return lines.join("\n");
 }
 

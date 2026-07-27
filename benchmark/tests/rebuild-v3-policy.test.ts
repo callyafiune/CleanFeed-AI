@@ -15,7 +15,13 @@ import {
 // literals: everywhere else in the benchmark must read them from the policy.
 
 async function rawPolicyText(): Promise<string> {
-  return await readFile(REBUILD_V3_POLICY_PATH, "utf8");
+  // CRLF is normalized away: this repo is checked out on Windows with
+  // core.autocrlf, and the canonical form being asserted is the KEY ORDER and
+  // the indentation, not the platform's newline.
+  return (await readFile(REBUILD_V3_POLICY_PATH, "utf8")).replace(
+    /\r\n/gu,
+    "\n",
+  );
 }
 
 // Canonical form of the JSON file: object keys sorted by codepoint, two-space

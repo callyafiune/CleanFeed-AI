@@ -2,16 +2,23 @@ import { describe, expect, it } from "vitest";
 
 import {
   brierScore,
+  calibrationInterceptSlope,
   computeBinaryMetrics,
   computeEvaluationMetrics,
   computeSegmentedMetrics,
   ece15,
+  eceEqualMass,
+  logLoss,
+  predictiveValues,
+  reliabilityDiagram,
   simulatedPrecision,
   sizeBucket,
+  type CalibrationPoint,
   type EvaluationItem,
   type EvaluationOptions,
   type Prediction,
 } from "../metrics.ts";
+import { REBUILD_V3_POLICY } from "../rebuild-v3-policy.ts";
 import type { BenchmarkRecord } from "../schema.ts";
 
 function prediction(label: Prediction["label"], score: number): Prediction {
@@ -35,6 +42,9 @@ interface RecordFields {
   severity?: string;
   generatorFamily?: string;
   createdAt?: number;
+  // Only C1 adds `labelBasis` to the closed schema, so the fixture writes it as
+  // an extra field: A6 must read it tolerantly today and must not invent it.
+  labelBasis?: string;
 }
 
 function record(fields: RecordFields): BenchmarkRecord {
@@ -68,6 +78,7 @@ function record(fields: RecordFields): BenchmarkRecord {
   if (fields.generatorFamily !== undefined) {
     base.generation = { family: fields.generatorFamily };
   }
+  if (fields.labelBasis !== undefined) base.labelBasis = fields.labelBasis;
   return base as unknown as BenchmarkRecord;
 }
 
@@ -309,21 +320,22 @@ describe("computeEvaluationMetrics", () => {
     expect(metrics.coverage.method).toBe("wilson-one-sided");
   });
 
-  it("bootstraps ROC-AUC, PR-AUC, Brier and ECE by author cluster", () => {
+  it("bootstraps AUROC, PR-AUC, Brier and both ECEs by author cluster", () => {
     const metrics = computeEvaluationMetrics(SEPARABLE, OPTIONS);
     for (const estimate of [
-      metrics.rocAuc,
-      metrics.prAuc,
-      metrics.brier,
+      metrics.separability.auroc,
+      metrics.separability.prAuc,
+      metrics.calibration.brier,
+      metrics.calibration.eceEqualMass15,
       metrics.ece15,
     ]) {
       expect(estimate.method).toBe("author-cluster-percentile");
       expect(estimate.lower95).toBeLessThanOrEqual(estimate.value);
       expect(estimate.upper95).toBeGreaterThanOrEqual(estimate.value);
     }
-    expect(metrics.rocAuc.value).toBeCloseTo(1, 10);
-    expect(metrics.prAuc.value).toBeCloseTo(1, 10);
-    expect(metrics.brier.value).toBeCloseTo(0.01, 10);
+    expect(metrics.separability.auroc.value).toBeCloseTo(1, 10);
+    expect(metrics.separability.prAuc.value).toBeCloseTo(1, 10);
+    expect(metrics.calibration.brier.value).toBeCloseTo(0.01, 10);
     // bin1 |0.1-0| and bin13 |0.9-1|, each weight 40/80.
     expect(metrics.ece15.value).toBeCloseTo(0.1, 10);
   });
@@ -556,6 +568,378 @@ describe("metric families (R5)", () => {
       resolution.byPlatform.find((row) => row.key === "wikipedia")?.coverage
         .value,
     ).toBeCloseTo(0.5, 10);
+  });
+});
+
+// --- A6: named roles, calibration, label bases, PPV/NPV, multiplicity ------
+
+function points(
+  probability: number,
+  positives: number,
+  total: number,
+): CalibrationPoint[] {
+  return Array.from({ length: total }, (_, index) => ({
+    probability,
+    label: index < positives ? (1 as const) : (0 as const),
+  }));
+}
+
+describe("equal-mass calibration statistics", () => {
+  it("bins by mass, not by a fixed grid the data never populates", () => {
+    // Three probabilities crowded near zero and one far away. With TWO
+    // equal-mass bins each holds two points: {0.01, 0.02} (meanP 0.015, rate 0)
+    // and {0.03, 0.9} (meanP 0.465, rate 1).
+    const skewed: CalibrationPoint[] = [
+      { probability: 0.01, label: 0 },
+      { probability: 0.02, label: 0 },
+      { probability: 0.03, label: 1 },
+      { probability: 0.9, label: 1 },
+    ];
+    expect(eceEqualMass(skewed, 2)).toBeCloseTo(
+      0.5 * 0.015 + 0.5 * 0.535,
+      10,
+    );
+    // The equal-width answer over the same points is a different number: it
+    // pools the three low scores into one bin. That difference is the reason the
+    // gate moves to equal-mass.
+    expect(eceEqualMass(skewed, 2)).not.toBeCloseTo(0.26, 10);
+  });
+
+  it("keeps every point in exactly one bin when the count is not a multiple of the bins", () => {
+    const five: CalibrationPoint[] = [
+      { probability: 0.1, label: 0 },
+      { probability: 0.2, label: 0 },
+      { probability: 0.3, label: 1 },
+      { probability: 0.4, label: 0 },
+      { probability: 0.5, label: 1 },
+    ];
+    const diagram = reliabilityDiagram(five, 2);
+    expect(diagram.reduce((total, bin) => total + bin.count, 0)).toBe(5);
+    expect(diagram).toHaveLength(2);
+    expect(diagram[0].lowestProbability).toBeCloseTo(0.1, 10);
+    expect(diagram[1].highestProbability).toBeCloseTo(0.5, 10);
+    expect(Number.isFinite(eceEqualMass(five, 2))).toBe(true);
+  });
+
+  it("reports log loss with a declared clamp instead of an infinity", () => {
+    expect(
+      logLoss([
+        { probability: 0.5, label: 1 },
+        { probability: 0.5, label: 0 },
+      ]),
+    ).toBeCloseTo(Math.log(2), 10);
+    // A confident miss is finite: the probability is clamped, never 0 or 1.
+    const confidentMiss = logLoss([{ probability: 1, label: 0 }]);
+    expect(Number.isFinite(confidentMiss)).toBe(true);
+    expect(confidentMiss).toBeGreaterThan(20);
+  });
+
+  it("fits a calibration intercept and slope on the logit scale", () => {
+    // Two design points whose observed rates equal their probabilities: the
+    // maximum-likelihood fit reproduces them exactly, so the line is the
+    // identity (intercept 0, slope 1).
+    const calibrated = [...points(0.2, 20, 100), ...points(0.8, 80, 100)];
+    const identity = calibrationInterceptSlope(calibrated);
+    expect(identity.intercept).toBeCloseTo(0, 6);
+    expect(identity.slope).toBeCloseTo(1, 6);
+
+    // Same observed rates, far more extreme probabilities: overconfidence shows
+    // up as a slope well below one.
+    const overconfident = [...points(0.02, 20, 100), ...points(0.98, 80, 100)];
+    const shrunk = calibrationInterceptSlope(overconfident);
+    expect(shrunk.slope).toBeGreaterThan(0);
+    expect(shrunk.slope).toBeLessThan(0.5);
+  });
+
+  it("has no slope to report when the scores carry no spread", () => {
+    const flat = points(0.5, 50, 100);
+    const fit = calibrationInterceptSlope(flat);
+    expect(Number.isNaN(fit.slope)).toBe(true);
+    expect(Number.isNaN(fit.intercept)).toBe(true);
+  });
+});
+
+describe("predictive values at plausible prevalences", () => {
+  it("reports PPV and NPV, not precision alone", () => {
+    const projected = predictiveValues({
+      truePositiveRate: 0.8,
+      falsePositiveRate: 0.05,
+      prevalence: 0.01,
+    });
+    expect(projected.ppv).toBeCloseTo(0.1391, 4);
+    expect(projected.ppv).toBeCloseTo(
+      simulatedPrecision({
+        truePositiveRate: 0.8,
+        falsePositiveRate: 0.05,
+        prevalence: 0.01,
+      }),
+      12,
+    );
+    // NPV = (1-p)(1-FPR) / ((1-p)(1-FPR) + p(1-TPR)).
+    expect(projected.npv).toBeCloseTo(
+      (0.99 * 0.95) / (0.99 * 0.95 + 0.01 * 0.2),
+      10,
+    );
+  });
+
+  it("publishes the benchmark's own prevalence beside the projections", () => {
+    const metrics = computeEvaluationMetrics(SEPARABLE, OPTIONS);
+    // The fixture is exactly 50/50, which is the whole point of publishing it:
+    // a calibrated score under this prior is not a feed's posterior.
+    expect(metrics.predictiveValue.benchmarkPrevalence).toBeCloseTo(0.5, 10);
+    expect(
+      metrics.predictiveValue.byPrevalence.map((row) => row.prevalence),
+    ).toEqual([...REBUILD_V3_POLICY.predictiveValuePrevalences]);
+    for (const row of metrics.predictiveValue.byPrevalence) {
+      expect(row.ppv).toBeGreaterThan(0);
+      expect(row.npv).toBeGreaterThan(0);
+    }
+  });
+});
+
+describe("named metric roles", () => {
+  it("puts recall and FPR at the frozen threshold in the release block", () => {
+    const metrics = computeEvaluationMetrics(familiesFixture(), OPTIONS);
+    const release = metrics.release;
+    expect(release.role).toBe("release");
+    expect(release.warning.family).toBe("end-to-end");
+    expect(release.warning.recall.value).toBe(
+      metrics.warning.endToEnd.recall.value,
+    );
+    expect(release.warning.falsePositiveRate.value).toBe(
+      metrics.warning.endToEnd.falsePositiveRate.value,
+    );
+  });
+
+  it("keeps AUROC and TPR@1%FPR in the separability diagnostic, never in the release block", () => {
+    const metrics = computeEvaluationMetrics(SEPARABLE, OPTIONS);
+    expect(metrics.separability.role).toBe("diagnostic");
+    expect(metrics.separability.purpose).toBe("separability");
+    expect(metrics.separability.gates).toBe(false);
+    expect(metrics.separability.tprAtOnePercentFpr.targetFpr).toBe(0.01);
+    expect(metrics.separability.tprAtOnePercentFpr.tpr).toBeCloseTo(1, 10);
+    expect(metrics.separability.tprAtOnePercentFpr.achievedFpr).toBe(0);
+    expect("tprAtOnePercentFpr" in metrics.release.warning).toBe(false);
+    expect("auroc" in metrics.release.warning).toBe(false);
+  });
+
+  it("never publishes a conditional number without the error rate of the same population", () => {
+    const metrics = computeEvaluationMetrics(familiesFixture(), OPTIONS);
+    const conditional = metrics.release.warning.conditional;
+    expect(conditional.family).toBe("conditional-on-scored");
+    expect(conditional.selectiveFailureSensitive).toBe(true);
+    expect(conditional.errorRate.value).toBe(metrics.errorRate.value);
+    expect(conditional.errorRate.value).toBeGreaterThan(0);
+    // The separability and calibration blocks are conditional too, so they carry
+    // the same companion.
+    expect(metrics.separability.errorRate.value).toBe(metrics.errorRate.value);
+    expect(metrics.calibration.errorRate.value).toBe(metrics.errorRate.value);
+    expect(metrics.calibration.population).toBe("conditional-on-scored");
+  });
+
+  it("breaks calibration down by length, source and linguistic stratum", () => {
+    const items = [
+      item({
+        author: "s1",
+        label: "human",
+        wordCount: 60,
+        sourceId: "ptwiki",
+        humanSourceType: "encyclopedic",
+        documentScore: 0.1,
+      }),
+      item({
+        author: "s2",
+        label: "human",
+        wordCount: 250,
+        sourceId: "b2w-reviews01",
+        humanSourceType: "social-media",
+        status: "error",
+      }),
+      item({
+        author: "s3",
+        label: "ai",
+        wordCount: 250,
+        sourceId: "controlled-generation",
+        documentScore: 0.9,
+        warned: true,
+      }),
+    ];
+    const calibration = computeEvaluationMetrics(items, OPTIONS).calibration;
+
+    expect(calibration.byLengthBucket.map((row) => row.key)).toEqual([
+      "150_299",
+      "50_79",
+    ]);
+    const long = calibration.byLengthBucket.find(
+      (row) => row.key === "150_299",
+    );
+    // Two eligible rows in the bucket, one of them errored: the calibration
+    // count is the SCORED one and the error rate sits beside it.
+    expect(long?.count).toBe(1);
+    expect(long?.samplingUnits).toBe(1);
+    expect(long?.errorRate.value).toBeCloseTo(0.5, 10);
+
+    expect(calibration.bySource.map((row) => row.key)).toEqual([
+      "b2w-reviews01",
+      "controlled-generation",
+      "ptwiki",
+    ]);
+    expect(calibration.byLinguisticStratum.map((row) => row.key)).toEqual([
+      "encyclopedic",
+      "social-media",
+      "unknown",
+    ]);
+  });
+});
+
+describe("human negative label bases", () => {
+  it("keeps the count, the sampling units and the interval of each basis separate", () => {
+    const items = [
+      item({
+        author: "d1",
+        label: "human",
+        labelBasis: "date-cutoff",
+        documentScore: 0.1,
+      }),
+      item({
+        author: "d1",
+        label: "human",
+        labelBasis: "date-cutoff",
+        documentScore: 0.9,
+        warned: true,
+      }),
+      item({
+        author: "d2",
+        label: "human",
+        labelBasis: "date-cutoff",
+        status: "error",
+      }),
+      item({
+        author: "o1",
+        label: "human",
+        labelBasis: "observed-process",
+        documentScore: 0.1,
+      }),
+      item({
+        author: "o2",
+        label: "human",
+        labelBasis: "observed-process",
+        documentScore: 0.2,
+      }),
+      item({ author: "a1", label: "ai", documentScore: 0.9, warned: true }),
+    ];
+
+    const labelBasis = computeEvaluationMetrics(items, OPTIONS).labelBasis;
+    expect(labelBasis.fieldPresent).toBe(true);
+    expect(labelBasis.pooledClaimAllowed).toBe(false);
+    expect(labelBasis.bases.map((row) => row.basis)).toEqual([
+      "date-cutoff",
+      "observed-process",
+    ]);
+
+    const dateCutoff = labelBasis.bases[0];
+    // Three human negatives under two authors, one of them errored.
+    expect(dateCutoff.count).toBe(3);
+    expect(dateCutoff.samplingUnits).toBe(2);
+    expect(dateCutoff.samplingUnitAxis).toBe("groups.author");
+    expect(dateCutoff.errored).toBe(1);
+    expect(dateCutoff.falsePositiveRate.value).toBeCloseTo(0.5, 10);
+    expect(dateCutoff.falsePositiveRate.upper95).toBeGreaterThan(0.5);
+    expect(dateCutoff.errorRate.value).toBeCloseTo(1 / 3, 10);
+
+    const observed = labelBasis.bases[1];
+    expect(observed.count).toBe(2);
+    expect(observed.samplingUnits).toBe(2);
+    expect(observed.falsePositiveRate.value).toBe(0);
+    // The two intervals are separate objects over separate denominators; the
+    // pooled rate (1/5) appears nowhere as a basis-level claim.
+    expect(observed.falsePositiveRate.upper95).not.toBe(
+      dateCutoff.falsePositiveRate.upper95,
+    );
+  });
+
+  it("marks an under-powered basis as supplementary diagnostic, and a powered one as gating", () => {
+    const floor = REBUILD_V3_POLICY.powerFloors.criticalFprHumanNegatives;
+    const powered = Array.from({ length: floor }, (_, index) =>
+      item({
+        author: `p${index}`,
+        label: "human",
+        labelBasis: "date-cutoff",
+        documentScore: 0.1,
+      }),
+    );
+    const sparse = Array.from({ length: 4 }, (_, index) =>
+      item({
+        author: `q${index}`,
+        label: "human",
+        labelBasis: "observed-process",
+        documentScore: 0.1,
+      }),
+    );
+    const bases = computeEvaluationMetrics([...powered, ...sparse], OPTIONS)
+      .labelBasis.bases;
+
+    const dateCutoff = bases.find((row) => row.basis === "date-cutoff");
+    expect(dateCutoff?.count).toBe(floor);
+    expect(dateCutoff?.powered).toBe(true);
+    expect(dateCutoff?.evidenceRole).toBe("gating");
+
+    const observed = bases.find((row) => row.basis === "observed-process");
+    expect(observed?.count).toBe(4);
+    expect(observed?.powered).toBe(false);
+    expect(observed?.evidenceRole).toBe(
+      REBUILD_V3_POLICY.labelBasis.underPoweredRole,
+    );
+    expect(observed?.powerFloor).toBe(floor);
+  });
+
+  it("never invents a basis for a record that has none", () => {
+    const metrics = computeEvaluationMetrics(familiesFixture(), OPTIONS);
+    expect(metrics.labelBasis.fieldPresent).toBe(false);
+    expect(metrics.labelBasis.bases.map((row) => row.basis)).toEqual([
+      "unknown",
+    ]);
+    // An unknown basis is never evidence for anything.
+    expect(metrics.labelBasis.bases[0].evidenceRole).toBe(
+      "supplementary-diagnostic",
+    );
+  });
+});
+
+describe("simultaneous (Bonferroni) bounds", () => {
+  it("publishes none until the pre-registered gate count is declared", () => {
+    const metrics = computeEvaluationMetrics(SEPARABLE, OPTIONS);
+    expect(metrics.multiplicity).toBeNull();
+    expect(
+      metrics.warning.endToEnd.falsePositiveRate.simultaneous,
+    ).toBeUndefined();
+  });
+
+  it("widens every proportion at alpha_family / m", () => {
+    const metrics = computeEvaluationMetrics(familiesFixture(), {
+      ...OPTIONS,
+      preRegisteredStatisticalGates: 8,
+    });
+    const declaration = metrics.multiplicity;
+    expect(declaration).not.toBeNull();
+    expect(declaration?.correction).toBe("bonferroni");
+    expect(declaration?.familyAlpha).toBe(
+      REBUILD_V3_POLICY.multiplicity.familyAlpha,
+    );
+    expect(declaration?.descriptiveConfidence).toBe(
+      REBUILD_V3_POLICY.multiplicity.descriptiveConfidence,
+    );
+    expect(declaration?.m).toBe(8);
+    expect(declaration?.perGateAlpha).toBeCloseTo(0.05 / 8, 12);
+
+    const fpr = metrics.warning.endToEnd.falsePositiveRate;
+    expect(fpr.simultaneous?.m).toBe(8);
+    expect(fpr.simultaneous?.alpha).toBeCloseTo(0.05 / 8, 12);
+    // Simultaneous coverage is strictly more conservative than the individual
+    // 95% interval, in both directions.
+    expect(fpr.simultaneous?.upper).toBeGreaterThan(fpr.upper95 as number);
+    const recall = metrics.warning.endToEnd.recall;
+    expect(recall.simultaneous?.lower).toBeLessThan(recall.lower95 as number);
   });
 });
 
