@@ -275,6 +275,33 @@ describe("legitimate Portuguese survives normalization", () => {
     }
   });
 
+  it("guards a range that SPANS the assigned block rather than one that equals it", () => {
+    // U+2070-U+209C is the tightest range containing every ASSIGNED code point of
+    // SUPERSCRIPTS-AND-SUBSCRIPTS (U+2070-U+209F) — it is not "the assigned part" of
+    // the block, which is not an interval: six code points of the block carry no
+    // general category and THREE of those sit inside the guarded range. Pinned
+    // because the docstring said "the assigned part" and "the last three code
+    // points", and both were false in the same direction.
+    const unassigned: number[] = [];
+    for (let cp = 0x2070; cp <= 0x209f; cp += 1) {
+      if (/\p{Cn}/u.test(String.fromCodePoint(cp))) {
+        unassigned.push(cp);
+      }
+    }
+    expect(unassigned).toEqual([
+      0x2072, 0x2073, 0x208f, 0x209d, 0x209e, 0x209f,
+    ]);
+    expect(unassigned.filter((cp) => cp <= 0x209c)).toEqual([
+      0x2072, 0x2073, 0x208f,
+    ]);
+    // The guard therefore covers unassigned code points too, which is harmless and
+    // is the point of using a block-shaped range instead of a hand-picked list.
+    for (const cp of [0x2072, 0x208f]) {
+      const ch = String.fromCodePoint(cp);
+      expect(normalizeForInference(`x${ch} y`).text, ch).toBe(`x${ch} y`);
+    }
+  });
+
   it("names its residual as a property: every raised letter outside the guarded range still flattens", () => {
     // The guard is the three Latin-1 legacy characters plus U+2070-U+209C, and
     // NOT every raised character in Unicode. The residual is a PROPERTY, not the
@@ -422,6 +449,42 @@ describe("legitimate Portuguese survives normalization", () => {
     );
   });
 
+  it("does not let one combining mark re-manufacture the witness on the micro sign", () => {
+    // The cluster is the unit of step 1, and a CHANGED cluster charges every atom
+    // it produces to its whole source range — so the source slice the witness rule
+    // reads contains the base AND its combining marks. That made the closed
+    // micro-sign path reopen with one extra character: a mark whose Script is a
+    // specific script (rather than Inherited) attested that script for the whole
+    // document. Measured before the fix: `5 µ҃m e uma саѕа` kept its `саѕа`.
+    //
+    // The old neutral set matched only Inherited marks, which split the class for
+    // no reason the question can see: U+064B and U+0951 already attested nothing
+    // while U+0483 and U+05B0 attested. `\p{M}` is now neutral as a whole, which is
+    // sound because a mark rides on a base of its own script and the BASE attests
+    // on its own — asserted below, not assumed.
+    expect(/\p{M}/u.test("҃")).toBe(true);
+    expect(/\p{Script=Cyrillic}/u.test("҃")).toBe(true); // COMBINING CYRILLIC TITLO
+    expect(/\p{Script=Hebrew}/u.test("ְ")).toBe(true); // HEBREW POINT SHEVA
+    expect(/\p{Script=Inherited}/u.test("̀")).toBe(true); // COMBINING GRAVE
+    const clean = "a medida de 5 µm e uma casa fica ali";
+    for (const mark of ["҃", "ְ", "ั", "ா"]) {
+      const marked = clean.replace("µ", `µ${mark}`);
+      const attacked = marked.replace("casa", homoglyphVariant("casa"));
+      // The mark itself SURVIVES — this closes a witness path, it does not delete
+      // anything the author wrote.
+      expect(normalizeForInference(marked).text, mark).toBe(
+        `a medida de 5 μ${mark}m e uma casa fica ali`,
+      );
+      expect(normalizeForInference(attacked).text, mark).toBe(
+        normalizeForInference(marked).text,
+      );
+    }
+    // And the BASE still attests: a Cyrillic titlo over a Cyrillic base changes
+    // nothing, because `ж`/`д`/`и`/`н` are witnesses on their own.
+    const russian = "Журнал about ро҃к и джаз выходил в Москве больше";
+    expect(normalizeForInference(russian).text).toBe(russian);
+  });
+
   it("still takes a Han witness from a source Unicode assigns to Han", () => {
     // The counterpart of the two tests above: the fix must not throw away real
     // evidence. `⼀` U+2F00 KANGXI RADICAL ONE is Script=Han but category So, not a
@@ -486,13 +549,15 @@ describe("homoglyph variants score identically", () => {
     );
   });
 
-  // The three classes the tolerance does NOT cover, pinned as NON-invariant. Table
-  // coverage alone is not the precondition: `foldConfusables` also has to rewrite
-  // that very code point, and in each of these three it deliberately does not.
-  // These tests exist so the unconditional reading of the tolerance — "covered by
-  // CONFUSABLE_TO_LATIN is enough" — cannot come back green. All three were
-  // measured on this tree before being written, and all fail if asserted as
-  // invariant.
+  // The FOUR classes the tolerance does NOT cover, pinned as NON-invariant. For the
+  // first three, table coverage alone is not the precondition: `foldConfusables`
+  // also has to rewrite that very code point, and in each of them it deliberately
+  // does not. The fourth runs the OTHER way — the fold fires where it should not —
+  // and it is here because it is the price charged by the same witness rule the
+  // first two spend. These tests exist so the unconditional reading of the
+  // tolerance — "covered by CONFUSABLE_TO_LATIN is enough" — cannot come back
+  // green. All four were measured on this tree before being written, and all fail
+  // if asserted as invariant.
 
   it("does NOT restore a wholly-confusable word when the document carries a non-Latin witness", () => {
     // Every substituted code point is a table key, and the word still survives
@@ -569,6 +634,40 @@ describe("homoglyph variants score identically", () => {
     // `с` is covered, which is what makes the exclusion about NFKC and not about
     // one-letter substitutions.
     expect(normalizeForInference(clean.replace("c", "с")).text).toBe(clean);
+  });
+
+  it("does NOT protect genuine non-Latin text whose only witness is a script-neutral fold", () => {
+    // The fourth class, and the one that runs in the harmful direction: here the
+    // input is GENUINE text and normalization rewrites it. It is the exact price of
+    // reading the witness from the source — a Script=Common character that NFKC
+    // folds into a non-Latin letter attests nothing, so a document whose ONLY
+    // non-Latin evidence is such a fold loses the protection that keeps a genuine
+    // non-Latin word made entirely of table keys intact.
+    //
+    // U+1D6FD MATHEMATICAL ITALIC SMALL BETA is the centre of the class, not a
+    // corner of it: the whole mathematical Greek range U+1D6A8-U+1D7CB behaves this
+    // way, and so do `㎛` U+339B and `㈠` U+3220. Measured: 0 differing records
+    // across the 5000 `development` + `calibration` texts, which is why the rule
+    // was taken; this test is what turns a later corpus carrying mathematical Greek
+    // or parenthesized CJK in volume into a red line instead of a silent rewrite.
+    const MATH_ITALIC_BETA = "\u{1D6FD}";
+    expect(MATH_ITALIC_BETA.codePointAt(0)).toBe(0x1d6fd);
+    expect(/\p{Script=Common}/u.test(MATH_ITALIC_BETA)).toBe(true);
+    expect(MATH_ITALIC_BETA.normalize("NFKC")).toBe("β");
+    // `Муса` is the Chechen name from `mix_src_wikipedia_pt_5eff3608eeb8`; all four
+    // of its letters are table keys, which is what makes it destructible.
+    for (const char of "Муса") {
+      expect(CONFUSABLE_TO_LATIN.has(char), JSON.stringify(char)).toBe(true);
+    }
+    const manufactured = `a constante ${MATH_ITALIC_BETA} vale 3 e o nome Муса aparece aqui`;
+    expect(normalizeForInference(manufactured).text).toBe(
+      "a constante β vale 3 e o nome Myca aparece aqui",
+    );
+    // Swap the fold for a REAL Greek beta — one code point of difference, same
+    // rendering — and the same sentence is left exactly as written. That contrast is
+    // the mechanism: the loss is the witness rule's, not the table's or the word's.
+    const witnessed = "a constante β vale 3 e o nome Муса aparece aqui";
+    expect(normalizeForInference(witnessed).text).toBe(witnessed);
   });
 
   it("survives an attack combined with zero-width padding", () => {

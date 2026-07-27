@@ -42,6 +42,14 @@
 // below. The `ϲ` one is not a choice at all, just an order-of-steps fact, and it
 // is stated because `HOMOGLYPH_SCORE_TOLERANCE` would otherwise promise zero for
 // it.
+//
+// Nor does it claim never to rewrite legitimate text — only that it rewrites none
+// on a measured corpus. It rewrites a genuine non-Latin word made entirely of
+// table keys when the document's ONLY non-Latin evidence is a script-neutral
+// character NFKC folds into a non-Latin letter: `a constante 𝛽 vale 3 e o nome
+// Муса aparece aqui` → `… Myca …`, zero occurrences across `development` +
+// `calibration`. That is the price of taking the witness from the source, it is
+// argued in `countScriptWitnesses` and pinned as the fourth non-invariant class.
 
 /**
  * The maximum absolute raw-score difference this contract promises between a
@@ -63,8 +71,10 @@
  * `foldConfusables` folds, while the `ν` survives. A variant is covered only when
  * EVERY substitution in it is.
  *
- * Three classes fall OUTSIDE, and for them the difference is not bounded by this
- * constant at all — all three measured on this tree:
+ * Four classes fall OUTSIDE, and for them the difference is not bounded by this
+ * constant at all — all four measured on this tree. The first three are attacks the
+ * fold deliberately does not restore; the fourth runs the other way, and is genuine
+ * text the fold rewrites:
  *
  *   - a WHOLLY-CONFUSABLE word in a document carrying any non-Latin witness.
  *     `Guizhou ou Kueichau (贵州) e uma casa amarela` attacked to `саѕа` keeps the
@@ -80,15 +90,26 @@
  *     — it is the ONLY key in the table that is not NFKC-stable, which the test
  *     file asserts over the table rather than against a copied count.
  *
- * None of the three is an oversight. The first two are the measured price of not
+ * The fourth is the same contract failing in the opposite direction, so it is worth
+ * a sentence of its own: GENUINE non-Latin text is rewritten when the document's
+ * only non-Latin evidence is a script-neutral character NFKC folds into a non-Latin
+ * letter. `a constante 𝛽 vale 3 e o nome Муса aparece aqui` (U+1D6FD, Script=Common,
+ * NFKC → `β`) normalizes to `… o nome Myca aparece aqui`, while the same sentence
+ * with a real `β` keeps the name. Zero occurrences across `development` +
+ * `calibration`; the full argument, and why the alternative was a 541-entry curated
+ * list, is in `countScriptWitnesses`.
+ *
+ * None of the four is an oversight. The first two are the measured price of not
  * rewriting `TNF-α` and the Chechen name `Муса` in real records (see
  * `countScriptWitnesses`); drop the witness and the very same attack becomes
  * covered again. The third is why the `ϲ` entry stays in the table even though
  * the fold can never reach it: after this file started reading witnesses from the
  * SOURCE, that entry is what stops an attacker's `ϲ` from being counted as a
- * genuine Greek witness. All three are pinned as NON-invariant by
- * `tests/unit/contracts/text-normalization.test.ts`, so the unconditional reading
- * cannot come back green.
+ * genuine Greek witness. The fourth is what that same source-reading costs. All
+ * four are pinned as NON-invariant by
+ * `tests/unit/contracts/text-normalization.test.ts`, so neither the unconditional
+ * reading of the tolerance nor an unqualified "it does not rewrite legitimate text"
+ * can come back green.
  */
 export const HOMOGLYPH_SCORE_TOLERANCE = 0;
 
@@ -273,12 +294,34 @@ const LATIN_LETTER = /\p{Script=Latin}/u;
 const CONFUSABLE_SCRIPT_LETTER = /[\p{Script=Cyrillic}\p{Script=Greek}]/u;
 const GREEK_LETTER = /\p{Script=Greek}/u;
 /**
- * Script-neutral by Unicode's own definition, so never evidence that a document
- * contains a particular script: digits, punctuation, the mathematical alphanumeric
- * symbols, the squared SI units, U+00B5 MICRO SIGN, and every combining mark.
- * Read `countScriptWitnesses` for why that matters.
+ * Never evidence that a document contains a particular script. Two of the three
+ * classes are script-neutral by Unicode's own definition — Script=Common (digits,
+ * punctuation, the mathematical alphanumeric symbols, the squared SI units, U+00B5
+ * MICRO SIGN) and Script=Inherited. Read `countScriptWitnesses` for why that
+ * matters.
+ *
+ * The third class, `\p{M}`, is a DELIBERATE addition and not a Unicode property:
+ * plenty of combining marks carry a specific Script (U+0483 COMBINING CYRILLIC
+ * TITLO is Cyrillic, U+05B0 HEBREW POINT SHEVA is Hebrew, U+0E31 and U+0BBE are
+ * Thai and Tamil), so the two script properties alone do not cover them. They are
+ * neutralized here because a mark rides on a BASE of its own script and that base
+ * attests on its own, so nothing legitimate is lost — while leaving them in was
+ * measured to reopen, with one extra character, the very path
+ * `countScriptWitnesses` exists to close: step 1 charges every atom of a CHANGED
+ * cluster to the whole cluster, so `5 µ҃m e uma саѕа` put the Cyrillic titlo into
+ * the source slice read for the folded `μ` and kept its `саѕа`, exactly as the bare
+ * micro sign used to. Splitting the class by Script also had no principle behind
+ * it: U+064B ARABIC FATHATAN and U+0951 DEVANAGARI STRESS SIGN UDATTA are
+ * Script=Inherited and already attested nothing, while their Hebrew and Cyrillic
+ * counterparts attested.
+ *
+ * The residual is stated rather than implied: a mark whose base does NOT attest —
+ * a Cyrillic titlo written over a Latin letter, a lone Hebrew point quoted as the
+ * subject of a sentence — now attests nothing at all. That is the case where the
+ * "the base attests" argument does not hold, it is not covered, and the fold is
+ * enabled rather than vetoed there.
  */
-const SCRIPT_NEUTRAL = /[\p{Script=Common}\p{Script=Inherited}]/u;
+const SCRIPT_NEUTRAL = /[\p{Script=Common}\p{Script=Inherited}\p{M}]/u;
 const WORD_CHARACTER = /[\p{L}\p{M}\p{N}]/u;
 const SPACE_SEPARATOR = /\p{Zs}/u;
 const WHITESPACE = /\s/u;
@@ -323,12 +366,17 @@ function addsWhitespace(source: string, folded: string): boolean {
  * for 28 rewrites across `development` + `calibration`, plus `⁶ ⁸ ⁹ ₃ ₄ ₓ ⁻`.
  *
  * What it protects is the three Latin-1 legacy characters (`² ³ ¹`) plus
- * U+2070-U+209C, the assigned part of the SUPERSCRIPTS-AND-SUBSCRIPTS block
- * (U+2070-U+209F, whose last three code points are unassigned): mostly raised and
- * lowered digits and operators, where flattening merges `km²` into `km2`, and two
- * raised LETTERS that ride along inside the same range — `ⁱ` (U+2071) and `ⁿ`
- * (U+207F), both verified to survive. A block rather than a hand-picked list of
- * the characters this corpus happens to contain.
+ * U+2070-U+209C, the tightest range that SPANS every assigned code point of the
+ * SUPERSCRIPTS-AND-SUBSCRIPTS block (U+2070-U+209F). It is not "the assigned part"
+ * of that block, because the assigned part is not an interval: six code points of
+ * the block carry no general category — U+2072, U+2073, U+208F, U+209D, U+209E,
+ * U+209F — and THREE of them (U+2072, U+2073, U+208F) sit inside the guarded range,
+ * so the guard covers them too. That is harmless and is exactly why the guard is
+ * block-shaped rather than a hand-picked list of the characters this corpus happens
+ * to contain; the count and the interior three are pinned by test. What the range
+ * holds is mostly raised and lowered digits and operators, where flattening merges
+ * `km²` into `km2`, plus two raised LETTERS that ride along inside it — `ⁱ`
+ * (U+2071) and `ⁿ` (U+207F), both verified to survive.
  *
  * The residual is stated as a PROPERTY, not as a list, because a list of the
  * ranges this file happened to look at is the same over-claim one altitude down:
@@ -521,16 +569,46 @@ function stripInvisible(atoms: readonly Atom[]): Atom[] {
  * category So, and it folds to the letter `一` — demanding a letter would throw
  * that Han witness away.
  *
- * The price, named rather than implied: a Script=Common character that folds to a
- * genuine non-Latin letter no longer attests its script either, `㈠` U+3220
- * PARENTHESIZED IDEOGRAPH ONE → `(一)` being the type case. Zero occurrences
- * across `development` + `calibration`. Going finer would mean judging 297 Greek-
- * producing and 541 non-Latin-producing compatibility folds one by one, which is a
- * curated list this file would then have to keep — the general rule is what is
- * maintainable, and its cost is measured at nil on this corpus. Genuinely
- * Greek-script sources still attest, including `Ω` U+2126 OHM SIGN, whose Script
- * IS Greek; that is the conservative direction (it only ever switches the fold
- * OFF) and it is left alone deliberately.
+ * WHAT THE SOURCE SLICE CONTAINS, which the rule has to answer for. Step 1 works
+ * per grapheme cluster and charges every atom of a CHANGED cluster to the WHOLE
+ * cluster, so the slice read below is a base plus its combining marks — never a
+ * neighbouring letter, but not a single character either. That is why `\p{M}` as a
+ * whole is neutral (`SCRIPT_NEUTRAL`) and not only the Inherited marks Unicode
+ * happens to call script-neutral: measured, `5 µ҃m e uma саѕа` kept its `саѕа`
+ * because U+0483 COMBINING CYRILLIC TITLO rode along in the micro sign's cluster and
+ * attested Cyrillic for the whole document. Marks are neutralized rather than the
+ * slice narrowed, because narrowing it to the base would be a second rule with no
+ * argument behind it, while "a mark rides on a base of its own script and the base
+ * attests on its own" is one.
+ *
+ * THE PRICE, named in the direction that hurts. A Script=Common character that
+ * folds to a genuine non-Latin letter no longer attests its script either — and the
+ * consequence is not only that an attacked word beside it gets folded, which is the
+ * benign half. The harmful half: a document whose ONLY non-Latin evidence is such a
+ * fold LOSES the protection this whole function exists to give, so a genuine
+ * non-Latin word made entirely of table keys is rewritten. Measured on this tree,
+ * one code point of difference either way:
+ *
+ *   - `a constante 𝛽 vale 3 e o nome Муса aparece aqui` (U+1D6FD MATHEMATICAL
+ *     ITALIC SMALL BETA, Script=Common, NFKC → `β`) → `… o nome Myca aparece aqui`.
+ *     The Chechen name is destroyed, because every one of `М у с а` is a table key
+ *     and the pseudo-Latin gate now sees no witness;
+ *   - the same sentence written with a real `β` keeps `Муса` untouched.
+ *
+ * That is the centre of the rule and not a corner of it: the mathematical Greek
+ * alphabets U+1D6A8-U+1D7CB are 297 of the folds counted below, and `㎛` U+339B and
+ * `㈠` U+3220 PARENTHESIZED IDEOGRAPH ONE → `(一)` behave the same way. On THIS
+ * corpus the cost is nil — 0 records of the 5000 in `development` + `calibration`
+ * normalize differently — which is the measurement the rule was chosen on, and both
+ * halves of the price are pinned as a fourth NON-invariant class by
+ * `tests/unit/contracts/text-normalization.test.ts`, so a later corpus carrying
+ * mathematical Greek or parenthesized CJK in volume turns it into a red test rather
+ * than a silent rewrite. Going finer would mean judging 297 Greek-producing and 541
+ * non-Latin-producing compatibility folds one by one, which is a curated list this
+ * file would then have to keep against every Unicode revision — the general rule is
+ * what is maintainable. Genuinely Greek-script sources still attest, including `Ω`
+ * U+2126 OHM SIGN, whose Script IS Greek; that is the conservative direction (it
+ * only ever switches the fold OFF) and it is left alone deliberately.
  *
  * The Latin side is deliberately NOT source-read, and the asymmetry is load
  * bearing in two ways. It is the side that ENABLES the pseudo-Latin gate rather
@@ -614,8 +692,10 @@ function countScriptWitnesses(
  *
  * Both exceptions and the pseudo-Latin gate read `countScriptWitnesses`, which
  * takes its non-Latin evidence from the ORIGINAL characters and not from NFKC's
- * output. That is not a detail: read the other way, U+00B5 MICRO SIGN and the
- * table's own `ϲ` both manufactured the witness that switched the fold off.
+ * output, and treats every combining mark as neutral. Neither is a detail: read the
+ * other way, U+00B5 MICRO SIGN and the table's own `ϲ` both manufactured the witness
+ * that switched the fold off, and with the marks left script-bearing a single
+ * U+0483 on that same micro sign manufactured it again.
  *
  * Everything else is left exactly as written, which is what keeps `花巻市`,
  * `казаки́` and `Κτησίβιος` intact. The fold is 1:1 per code point, so no offset
