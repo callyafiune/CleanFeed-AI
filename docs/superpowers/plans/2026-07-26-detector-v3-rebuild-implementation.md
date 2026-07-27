@@ -1552,9 +1552,12 @@ negativas agora têm teste próprio, para que a razão não volte a ser uma não
    (**script misto** e **pseudo-latina**) mais duas exceções gregas, e o mesmo varrimento
    depois dela reporta **0 registros com confusável dobrado**. São **três** preços, todos
    nomeados no código: (i) uma palavra **inteiramente confusável** dentro de documento que
-   carregue **qualquer** testemunha não latina, (ii) um disfarce **grego** dentro de
-   documento que também escreve grego, e (iii) uma palavra de **uma letra** disfarçada com
-   `α`/`ο`/`ι` — nenhum dos três é restaurado.
+   carregue **qualquer** testemunha não latina, (ii) um **ponto de código** grego dentro de
+   documento que também escreve grego — por ponto de código e não por palavra, ver a
+   requalificação abaixo —, e (iii) uma palavra de **uma letra** disfarçada com `α`/`ο`/`ι` —
+   nenhum dos três é restaurado. A esses três a terceira rodada acrescentou uma **quarta**
+   exclusão da tolerância que não é preço de regra nenhuma, e sim ordem dos passos: a chave
+   `ϲ`, que o NFKC dobra antes de a dobra de confusáveis existir.
 2. **NFKC ganhou duas recusas que o plano não previa**, ambas na classe "cuidado com
    NFKC" que o próprio plano levanta: superscritos/subscritos (`km²` → `km2`, `H₂O` → `H2O`;
    `₂` sozinho são 28 reescritas no corpus) e **qualquer dobra que inventaria espaço em
@@ -1567,6 +1570,19 @@ negativas agora têm teste próprio, para que a razão não volte a ser uma não
    `development` + `calibration`). Resíduo **nomeado e fixado por teste**; estender a guarda
    moveria o texto pontuado desses dois registros, o que exige novo varrimento e nova
    medição do `222 de 5.000` — é trabalho de medição, não de comentário.
+   **Correção da terceira rodada:** a redação acima enunciava o resíduo como **lista de
+   faixas**, e lista de faixas é o mesmo excesso de alegação um nível abaixo. Varrido
+   U+0020–U+A7FF nesta árvore, há 29 letras modificadoras que o NFKC achata **fora** das
+   faixas nomeadas — entre elas as **Spacing Modifier Letters** (U+02B0-U+02B8,
+   U+02E0-U+02E4): `xʰ` → `xh` e `xʷ` → `xw`, medido. O resíduo passa a ser enunciado como
+   **propriedade** ("toda letra elevada que o NFKC achata e que está fora de U+2070-U+209C"),
+   com as duas famílias citadas como exemplo e não como enumeração, e o teste passou a
+   afirmar **dois blocos diferentes** para que a enumeração não volte. Deste resíduo todo, o
+   corpus contém exatamente `ᵉ` e `ᶰ`. E a glosa do que **é** protegido também estava
+   estreita: U+2070-U+209C não são só dígitos e operadores — `ⁱ` (U+2071) e `ⁿ` (U+207F) são
+   **letras** e estão protegidas (verificado, com teste próprio). O bloco Unicode é
+   U+2070-U+209F; U+209D-U+209F não estão atribuídos, então a faixa está certa, mas não é "o
+   bloco inteiro".
 3. **A terceira restrição do brief (CJK) exigiu corrigir `segmentBasicWords`**, em
    `src/inference/model-runtime.ts`, e não só normalizar. O `tokenizer.json` selado tem
    `handle_chinese_chars: true` e o BERTimbau não tem ideograma nu em `vocab.txt`, então
@@ -1597,6 +1613,77 @@ forma que a redação antiga prometia, as duas **falharam** (saídas no relatór
 que impede a leitura incondicional de voltar verde. Nenhuma regra de dobra foi alterada:
 elas foram medidas contra registros reais e mexer nelas reintroduziria `TNF-a` e `Myca`.
 
+**A definição de "coberta" é por SUBSTITUIÇÃO, não por palavra (terceira rodada).** A
+redação da rodada anterior dizia "coberta quando toda substituição é chave da tabela **e
+toda palavra** em que ela entrou é uma que `foldConfusables` dobra" — e essa regra geral
+**ainda admite** o caso que o seu próprio segundo item exclui, porque a exceção grega incide
+por **ponto de código dentro de** palavra já marcada como ataque. Medido nesta árvore:
+`a constante β vale 3 e uma νidа longa` (nu grego + `id` latino + `а` cirílico) normaliza
+para `… νida longa` — o `а` **foi** reescrito, logo a palavra **é** dobrada, e o `ν`
+sobrevive. Pela definição por palavra essa variante era "coberta" e tinha zero prometido; pela
+exclusão três linhas abaixo não era coberta. A definição passou a ser: coberta quando o ponto
+de código é chave da tabela **e** `foldConfusables` reescreve **aquele ponto de código**.
+Fixado por asserção no teste da classe grega (a forma `νidа`: `а` dobra, `ν` fica).
+
+**Terceira classe fora da tolerância, achada por medição: `ϲ`.** `ϲ` (U+03F2 GREEK LUNATE
+SIGMA SYMBOL) **é** chave de `CONFUSABLE_TO_LATIN`, mas o passo 1 (NFKC) a dobra para `ς`
+antes de o passo 3 existir, e `ς` não é chave: `uma ϲasa` fica `uma ςasa`. É a **única** das
+54 chaves que não é NFKC-estável, e o teste afirma isso **sobre a tabela** (não contra um
+número copiado), de modo que uma chave nova instável tem de encarar o teste. A entrada
+**permanece** na tabela e agora é load-bearing por outro motivo: depois da correção abaixo,
+`countScriptWitnesses` lê a fonte, e é essa entrada que impede o `ϲ` de um atacante de ser
+contado como testemunha grega genuína.
+
+**A testemunha de script passou a ser evidência do AUTOR, não do NFKC (terceira rodada).
+Única mudança de comportamento desta rodada.** O passo 3 contava testemunhas sobre os átomos
+**já dobrados** pelo passo 1, então o NFKC podia **fabricar** a própria evidência que
+desligava a defesa de homóglifos no documento inteiro:
+
+| fonte | script na fonte | NFKC | efeito na árvore anterior |
+|---|---|---|---|
+| U+00B5 MICRO SIGN (`µm`, `µg`, `µl`) | **Common** (nenhum) | U+03BC `μ` | contava como testemunha `nonLatin` **e** `greek`: `unmixedLatin` falso e `greekIsContent` verdadeiro para todo o documento |
+| `ϲ` U+03F2 — **chave da tabela** | Greek | `ς` (não é chave) | a substituição do próprio atacante virava testemunha grega |
+
+O primeiro é medido no corpus: `src_carolina_23f8e515f0eb` (um registro de `development`,
+**quatro** ocorrências de `µ`) pontuava com a defesa desligada, e digitar um micro sinal era
+uma maneira de um caractere de desligá-la. *(A revisão que motivou esta rodada disse "4
+registros"; são 4 **ocorrências** em **1** registro — a classe do defeito está certa, a
+contagem não.)*
+
+A regra que corrige os dois é uma só: **evidência de script vem de caractere que o Unicode
+atribui a um script específico, lido na fonte.** Common e Inherited são script-neutros por
+definição do próprio Unicode e não testemunham nada (`SCRIPT_NEUTRAL`); caractere da fonte
+que já é confusável conhecido é suspeito, não testemunha. **Não** se exige que a fonte seja
+letra: `⼀` U+2F00 KANGXI RADICAL ONE é Script=Han mas categoria `So` e dobra para a letra
+`一` — exigir letra jogaria essa testemunha Han fora. O lado **latino** continua sendo lido
+no átomo dobrado, deliberadamente: é o lado que **habilita** a porta pseudo-latina em vez de
+vetar reescrita, e lê-lo na fonte quebraria a idempotência (`𝐚 саѕа` não dobraria nada na
+primeira passada e dobraria `саѕа` na segunda).
+
+Escopo da classe, varrido U+0020–U+10FFFF nesta árvore: **541** pontos de código cuja dobra
+NFKC produz letra não latina a partir de fonte latina ou neutra, dos quais **297** produzem
+grego (`㎛`, `㏀`, `ℽ`, os alfabetos gregos matemáticos U+1D6A8-U+1D7CB, U+2135-U+2138). É
+por isso que a correção é **regra** e não lista de bloqueio.
+
+**Preço da regra, medido e nomeado:** caractere Script=Common que dobra para ideograma
+genuíno também deixa de testemunhar — `㈠` U+3220 → `(一)` é o caso-tipo, com **zero**
+ocorrências em `development` + `calibration`. Fonte Script=Greek continua testemunhando,
+inclusive `Ω` U+2126 OHM SIGN, cujo Script **é** Greek; essa direção só desliga a dobra, que
+é o lado conservador, e foi deixada em paz de propósito.
+
+**Varrimento de confirmação (`benchmark/out/rebuild-v3/a5-r2/`, dev + cal, 5.000
+registros).** `sweep-before.txt` (árvore em `4ee6c8d`) e `sweep-after.txt` (esta árvore),
+produzidos pelo **mesmo** script, saíram **byte a byte idênticos**: `changed 222`,
+`records with a folded confusable: 0`, 35 reescritas distintas, e `TNF-α`, `NF-κB` e `Муса`
+intactos. A **idempotência** foi medida em vez de afirmada em fixture: 10.005 textos (os
+5.000 como escritos, os mesmos 5.000 com ataque de homóglifo aplicado a todo `a/c/e/i/o/s/u/v`
+— para que a dobra seja de fato exercitada — e 5 casos à mão, entre eles `𝐚 саѕа`), **0 não
+idempotentes** (`idempotence.txt`). Logo a correção **não** reescreve texto legítimo, nenhum
+limite foi afrouxado (R3), e `CONTENT_COMPOSITION_VERSION` **fica** em `lexical-content-v2`: o `222 de 5.000` que
+`contracts/content-composition.ts` cita foi **re-medido** e continua verdadeiro, então
+incrementar mandaria re-pontuar sem que nenhum artefato tenha ficado errado. Essa decisão
+está registrada no docstring da constante, não só aqui.
+
 **Medição do critério de erro que A2 deixou aberto** (artefatos em
 `benchmark/out/rebuild-v3/a5/`; harness de bancada com o `vocab.txt` real e o WordPiece
 real, **sem** o modelo — mede a etapa dos offsets e do encaixe de janela, que é onde os
@@ -1621,14 +1708,16 @@ fim-a-fim no Chrome, que é H3/I1.
 (506 ocorrências) e U+2011 → U+2010 (347).
 
 **Identidade desta árvore, regenerada (não editada à mão):**
-- `inferenceCoreDigest` `4f535552b039b56a453231e77053f47ea225d27f330777da1b49b9457c11d32e`
-- `runtimeParityDigest` `cf882d5e34152bfba61675d1aec38449d9774df5cfe065e4776283bd57db09f0`
+- `inferenceCoreDigest` `e1661009a5418267ccaa35621a4ba96477fafd2597455ae7e1cbe101f4f8d775`
+- `runtimeParityDigest` `71c23a859554a021c244f0917cd18eba8f6a833c420cd9225ed236c9e9ec3aae`
 
 Os dois valores acima são **derivados da árvore**, não constantes: `contracts/`
 `text-normalization.ts` e `contracts/content-composition.ts` estão em `EVALUATOR_FILES` e no
 inventário do núcleo, e o que entra no hash são os **bytes crus** — logo uma edição de
-**comentário** move os dois. Ela já moveu duas vezes desde a entrega de A5
-(`1a7a1cd1…`/`41ccf6d3…` → … → estes), uma vez por rodada de conformidade. Nenhum arquivo
+**comentário** move os dois. Ela já moveu três vezes desde a entrega de A5
+(`1a7a1cd1…`/`41ccf6d3…` → `4f535552…`/`cf882d5e…` → estes), uma vez por rodada de
+conformidade. Note que **esta** rodada moveu também o comportamento, não só comentário, então
+aqui os digests mudariam de qualquer maneira. Nenhum arquivo
 versionado precisou mudar (o manifesto do modelo não carrega digest de arquivo do núcleo e
 `benchmark/work/model-benchmark/` é ignorado pelo Git), mas a consequência é operacional:
 **quem rodar a bancada tem de regenerar a paridade a partir desta árvore**, porque nenhuma

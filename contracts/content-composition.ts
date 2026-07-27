@@ -50,6 +50,15 @@ import { normalizeForInference } from "./text-normalization.ts";
  * coordinate has to move: the same units, made of different bytes, reach the
  * tokenizer. It does NOT version the window plan — that is `AGGREGATION_VERSION`
  * (A2, `tmr-aggregation-v3`).
+ *
+ * The `222` is re-measured, not inherited. A5's second conformance round changed
+ * WHOSE characters `foldConfusables` reads its script witnesses from (the source,
+ * not NFKC's output — see `countScriptWitnesses`), and the whole dev+cal sweep
+ * came out byte-identical: still `changed 222`, still `records with a folded
+ * confusable: 0`, still `TNF-α`/`NF-κB`/`Муса` untouched
+ * (`benchmark/out/rebuild-v3/a5-r2/`). That is why the coordinate stays at `v2`
+ * across that round rather than moving again: no artifact produced under `v2` on
+ * this corpus becomes wrong, so a bump would falsely order a re-score.
  */
 export const CONTENT_COMPOSITION_VERSION = "lexical-content-v2";
 

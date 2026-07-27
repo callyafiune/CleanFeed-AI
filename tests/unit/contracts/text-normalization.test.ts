@@ -4,9 +4,9 @@
 //   1. the same text in a COVERED homoglyph variant normalizes to the SAME
 //      bytes, so every downstream stage receives identical input and the
 //      raw-score difference is exactly `HOMOGLYPH_SCORE_TOLERANCE` (declared as
-//      0). "Covered" is narrower than "every substitution is in the table", and
-//      the two classes it excludes are pinned here as NON-invariant rather than
-//      left to be read out of the constant's name;
+//      0). "Covered" is a property of each SUBSTITUTION, narrower than "the code
+//      point is in the table", and the three classes it excludes are pinned here
+//      as NON-invariant rather than left to be read out of the constant's name;
 //   2. pt-BR accents, cedilla and legitimate punctuation SURVIVE;
 //   3. original offsets are RECONSTRUCTED from the map.
 //
@@ -261,18 +261,39 @@ describe("legitimate Portuguese survives normalization", () => {
     }
   });
 
-  it("names its residual: the modifier letters are NOT protected and still flatten", () => {
-    // The guard is the three Latin-1 legacy characters plus the
-    // Superscripts-and-Subscripts block (U+2070-U+209C) — raised/lowered DIGITS
-    // and OPERATORS — and NOT every raised character in Unicode. The MODIFIER
-    // LETTERS sit outside it and really do flatten: measured, one rewrite each
-    // across development + calibration
-    // (`benchmark/out/rebuild-v3/a5/normalization-rewrites.txt`).
-    // Named by code point, so the fixture cannot drift onto a different char.
+  it("protects the two raised LETTERS that sit inside the guarded range", () => {
+    // U+2071 and U+207F are letters, not digits or operators, and they are inside
+    // U+2070-U+209C, so they are protected like the rest of the range. Pinned
+    // because the docstring used to gloss the range as "digits and operators".
+    expect("ⁱ".codePointAt(0)).toBe(0x2071); // SUPERSCRIPT LATIN SMALL LETTER I
+    expect("ⁿ".codePointAt(0)).toBe(0x207f); // SUPERSCRIPT LATIN SMALL LETTER N
+    for (const raised of ["ⁱ", "ⁿ"]) {
+      expect(raised.normalize("NFKC"), raised).not.toBe(raised);
+      expect(normalizeForInference(`x ${raised} y`).text, raised).toBe(
+        `x ${raised} y`,
+      );
+    }
+  });
+
+  it("names its residual as a property: every raised letter outside the guarded range still flattens", () => {
+    // The guard is the three Latin-1 legacy characters plus U+2070-U+209C, and
+    // NOT every raised character in Unicode. The residual is a PROPERTY, not the
+    // enumeration of the ranges this file happened to look at, so it is asserted
+    // over two DIFFERENT blocks: the Phonetic Extensions modifier letters and the
+    // Spacing Modifier Letters. Named by code point, so no fixture can drift.
     expect("ᵉ".codePointAt(0)).toBe(0x1d49); // MODIFIER LETTER SMALL E
     expect("ᶰ".codePointAt(0)).toBe(0x1db0); // MODIFIER LETTER SMALL CAPITAL N
+    expect("ʰ".codePointAt(0)).toBe(0x02b0); // MODIFIER LETTER SMALL H
+    expect("ʷ".codePointAt(0)).toBe(0x02b7); // MODIFIER LETTER SMALL W
+    // Phonetic Extensions — the two this corpus actually contains, one rewrite
+    // each across development + calibration
+    // (`benchmark/out/rebuild-v3/a5/normalization-rewrites.txt`).
     expect(normalizeForInference("a 30ᵉ volta").text).toBe("a 30e volta");
     expect(normalizeForInference("o xᶰ fica").text).toBe("o xɴ fica");
+    // Spacing Modifier Letters — a different block, flattening the same way, so
+    // the residual cannot be read back as "the three ranges named in the comment".
+    expect(normalizeForInference("o xʰ fica").text).toBe("o xh fica");
+    expect(normalizeForInference("o xʷ fica").text).toBe("o xw fica");
     // Pinned as a residual, not as a promise: it is here so the docstring can
     // never again say the guard protects "the whole family" of raised letters.
   });
@@ -356,6 +377,74 @@ describe("legitimate Portuguese survives normalization", () => {
     expect(normalizeForInference("uma νida longa").text).toBe("uma vida longa");
   });
 
+  it("does not let NFKC MANUFACTURE the witness that switches the fold off", () => {
+    // U+00B5 MICRO SIGN is the SI prefix of `µm`/`µg`/`µl` — ordinary pt-BR
+    // encyclopedic and scientific prose — and Unicode calls it Script=Common, i.e.
+    // evidence of no script at all. NFKC folds it to U+03BC GREEK SMALL LETTER MU.
+    // Counted off the FOLDED atom it was both a `nonLatin` and a `greek` witness,
+    // so `unmixedLatin` went false and `greekIsContent` went true for the whole
+    // document and the confusable fold silently turned itself off. Measured on
+    // `src_carolina_23f8e515f0eb` (one development record, four occurrences), and
+    // typing a micro sign was a one-character way to disable the defense.
+    expect(/\p{Script=Greek}/u.test("µ")).toBe(false);
+    expect(/\p{Script=Common}/u.test("µ")).toBe(true);
+    expect("µ".normalize("NFKC")).toBe("μ");
+    expect("µ".codePointAt(0)).toBe(0x00b5);
+    expect("μ".codePointAt(0)).toBe(0x03bc);
+    const clean = "a medida de 5 µm e uma casa fica ali";
+    const attacked = clean.replace("casa", homoglyphVariant("casa"));
+    // The micro sign itself still folds — that is NFKC doing its job — but it no
+    // longer vetoes the fold, so the attacked word is restored.
+    expect(normalizeForInference(clean).text).toBe(
+      "a medida de 5 μm e uma casa fica ali",
+    );
+    expect(normalizeForInference(attacked).text).toBe(
+      normalizeForInference(clean).text,
+    );
+    // And a Greek-disguised word in the same document folds too, because a micro
+    // sign is not the document "really writing Greek".
+    expect(
+      normalizeForInference("uma dose de 5 µg e uma νida longa").text,
+    ).toBe("uma dose de 5 μg e uma vida longa");
+  });
+
+  it("does not let an attacker's own confusable become the Greek witness", () => {
+    // `ϲ` U+03F2 is a table KEY that NFKC folds to `ς`, which is not one. Counted
+    // off the folded atom, the attacker's own substitution became a genuine Greek
+    // witness and switched `greekIsContent` on document-wide, so the `νida` in the
+    // SAME text stopped folding. Now the witness is read from the source, where
+    // `ϲ` is a known confusable and therefore a suspect rather than a witness.
+    expect(CONFUSABLE_TO_LATIN.has("ϲ")).toBe(true);
+    expect("ϲ".normalize("NFKC")).toBe("ς");
+    expect(CONFUSABLE_TO_LATIN.has("ς")).toBe(false);
+    expect(normalizeForInference("uma ϲasa e uma νida").text).toBe(
+      "uma ςasa e uma vida",
+    );
+  });
+
+  it("still takes a Han witness from a source Unicode assigns to Han", () => {
+    // The counterpart of the two tests above: the fix must not throw away real
+    // evidence. `⼀` U+2F00 KANGXI RADICAL ONE is Script=Han but category So, not a
+    // letter, and NFKC folds it to the letter `一`, so requiring letterhood of the
+    // SOURCE would have lost the witness and folded the Cyrillic word below.
+    expect(/\p{Script=Han}/u.test("⼀")).toBe(true);
+    expect(/\p{L}/u.test("⼀")).toBe(false);
+    expect("⼀".normalize("NFKC")).toBe("一");
+    const attackedWord = homoglyphVariant("casa");
+    const text = `o radical ⼀ e uma ${attackedWord} amarela`;
+    expect(normalizeForInference(text).text).toContain(attackedWord);
+    // The price this rule does charge, pinned so it is not discovered later: a
+    // Script=Common character that folds to a genuine ideograph attests nothing.
+    // Zero occurrences across development + calibration.
+    expect(/\p{Script=Common}/u.test("㈠")).toBe(true);
+    expect("㈠".normalize("NFKC")).toBe("(一)");
+    expect(
+      normalizeForInference(
+        `o item ㈠ e uma ${attackedWord} amarela`,
+      ).text.includes(attackedWord),
+    ).toBe(false);
+  });
+
   it("keeps a lone Greek letter used as notation, even with no other witness", () => {
     // `src_carolina_7bb17c80e5de` is the measured case: `TNF-α` is the ONLY Greek
     // in the record, so the zero-witness test alone would still have folded it.
@@ -397,12 +486,13 @@ describe("homoglyph variants score identically", () => {
     );
   });
 
-  // The two classes the tolerance does NOT cover, pinned as NON-invariant. Table
-  // coverage alone is not the precondition: `foldConfusables` also has to mark
-  // the word as an attack, and in each of these two it deliberately does not.
+  // The three classes the tolerance does NOT cover, pinned as NON-invariant. Table
+  // coverage alone is not the precondition: `foldConfusables` also has to rewrite
+  // that very code point, and in each of these three it deliberately does not.
   // These tests exist so the unconditional reading of the tolerance — "covered by
-  // CONFUSABLE_TO_LATIN is enough" — cannot come back green. Both were measured
-  // on this tree before being written, and both fail if asserted as invariant.
+  // CONFUSABLE_TO_LATIN is enough" — cannot come back green. All three were
+  // measured on this tree before being written, and all fail if asserted as
+  // invariant.
 
   it("does NOT restore a wholly-confusable word when the document carries a non-Latin witness", () => {
     // Every substituted code point is a table key, and the word still survives
@@ -444,6 +534,41 @@ describe("homoglyph variants score identically", () => {
     expect(normalizeForInference(noWitness.replace("vida", "νida")).text).toBe(
       normalizeForInference(noWitness).text,
     );
+    // "Covered" is per SUBSTITUTION and not per word, and these two clauses are
+    // not the same thing: `νidа` (Greek nu + Latin `id` + Cyrillic `а`) is a word
+    // `foldConfusables` DOES fold — the `а` is rewritten — and the `ν` in it is
+    // still kept. A per-word definition would call this variant covered and
+    // promise a score difference of exactly zero for it.
+    expect(CONFUSABLE_TO_LATIN.get("а")).toBe("a");
+    const mixedDisguise = clean.replace("vida", "νidа");
+    expect(normalizeForInference(mixedDisguise).text).toBe(
+      "a constante β vale 3 e uma νida longa",
+    );
+    expect(normalizeForInference(mixedDisguise).text).not.toBe(
+      normalizeForInference(clean).text,
+    );
+  });
+
+  it("does NOT restore a substitution whose table key NFKC folds away first", () => {
+    // Step 1 runs before step 3. `ϲ` U+03F2 GREEK LUNATE SIGMA SYMBOL is a table
+    // key, but NFKC folds it to `ς`, which is not — so the fold can never reach
+    // it and the score difference is not bounded by HOMOGLYPH_SCORE_TOLERANCE.
+    // Asserted over the whole table rather than against a copied count, so a new
+    // NFKC-unstable entry has to confront this test.
+    const unstable = [...CONFUSABLE_TO_LATIN.keys()].filter(
+      (key) => key.normalize("NFKC") !== key,
+    );
+    expect(unstable).toEqual(["ϲ"]);
+    const clean = "uma casa amarela";
+    const attacked = clean.replace("c", "ϲ");
+    expect(normalizeForInference(attacked).text).not.toBe(
+      normalizeForInference(clean).text,
+    );
+    expect(normalizeForInference(attacked).text).toBe("uma ςasa amarela");
+    // Every other key IS reachable: the same one-letter attack with the Cyrillic
+    // `с` is covered, which is what makes the exclusion about NFKC and not about
+    // one-letter substitutions.
+    expect(normalizeForInference(clean.replace("c", "с")).text).toBe(clean);
   });
 
   it("survives an attack combined with zero-width padding", () => {

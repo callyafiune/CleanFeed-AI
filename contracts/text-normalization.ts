@@ -22,19 +22,26 @@
 //   3. maps confusable Cyrillic/Greek code points to Latin
 //      (`CONFUSABLE_TO_LATIN`) — but only inside a word the mixed-script/
 //      pseudo-Latin rule marks as an attack, never inside genuine Cyrillic,
-//      Greek, CJK, Hangul or any other script;
+//      Greek, CJK, Hangul or any other script. Step 3 runs AFTER step 1, so the
+//      evidence it reads about which scripts the document contains comes from
+//      the AUTHOR's own characters and never from NFKC's output — see
+//      `countScriptWitnesses`;
 //   4. records a `normalized → original` offset map, because the D4 provenance
 //      spans are defined in ORIGINAL character offsets and a span head trained
 //      on shifted offsets is a silent bug.
 //
-// WHAT IT DOES NOT CLAIM (R7). It is not "homoglyph-proof". It folds exactly the
-// code points enumerated in `CONFUSABLE_TO_LATIN`, in exactly the word contexts
-// `foldConfusables` names. A confusable from an unlisted script (Cherokee,
-// Armenian, Lisu…) is left as written; so is an all-confusable word in a document
-// that carries any non-Latin witness, a Greek-disguised word in a document that
-// also writes Greek, and a one-letter word disguised with a Greek confusable.
-// Each of those exclusions exists because the looser rule was MEASURED to rewrite
-// genuine corpus text; the counts and the record ids are in the comments below.
+// WHAT IT DOES NOT CLAIM (R7). It is not "homoglyph-proof". It folds a SUBSET of
+// the code points enumerated in `CONFUSABLE_TO_LATIN`, in exactly the word
+// contexts `foldConfusables` names. A confusable from an unlisted script
+// (Cherokee, Armenian, Lisu…) is left as written; so is an all-confusable word in
+// a document that carries any non-Latin witness, a Greek code point in a document
+// that also writes Greek, a one-letter word disguised with a Greek confusable,
+// and `ϲ` U+03F2 — a table key step 1 folds to `ς` before step 3 can reach it.
+// The first three exclusions exist because the looser rule was MEASURED to
+// rewrite genuine corpus text; the counts and the record ids are in the comments
+// below. The `ϲ` one is not a choice at all, just an order-of-steps fact, and it
+// is stated because `HOMOGLYPH_SCORE_TOLERANCE` would otherwise promise zero for
+// it.
 
 /**
  * The maximum absolute raw-score difference this contract promises between a
@@ -44,29 +51,44 @@
  * there is no numerical slack to allow for. It is declared here, not chosen
  * after measuring.
  *
- * "Covered" is the CONTRACT, and it is narrower than the table (R7). Being a key
- * of `CONFUSABLE_TO_LATIN` is NOT sufficient: `foldConfusables` rewrites a
- * confusable only inside a word its mixed-script / pseudo-Latin rule marks as an
- * attack, and two Greek exceptions ride on top of that. A variant is covered when
- * every substitution is a table key AND every word it substituted into is one
- * `foldConfusables` folds. Two classes fall OUTSIDE, and for them the difference
- * is not bounded by this constant at all — both measured on this tree:
+ * "Covered" is the CONTRACT, and it is narrower than the table (R7). It is a
+ * property of each SUBSTITUTION, not of the word it sits in: a substitution is
+ * covered when its code point is a key of `CONFUSABLE_TO_LATIN` AND
+ * `foldConfusables` actually rewrites THAT code point — its word is marked as an
+ * attack, and neither Greek exception applies to it. Per-word is the wrong
+ * altitude and it would over-claim, because the Greek exceptions are applied per
+ * code point INSIDE a word the rule did mark as an attack: measured on this tree,
+ * `a constante β vale 3 e uma νidа longa` (Greek `ν`, Latin `id`, Cyrillic `а`)
+ * normalizes to `… νida longa` — the `а` was rewritten, so the word IS one
+ * `foldConfusables` folds, while the `ν` survives. A variant is covered only when
+ * EVERY substitution in it is.
+ *
+ * Three classes fall OUTSIDE, and for them the difference is not bounded by this
+ * constant at all — all three measured on this tree:
  *
  *   - a WHOLLY-CONFUSABLE word in a document carrying any non-Latin witness.
  *     `Guizhou ou Kueichau (贵州) e uma casa amarela` attacked to `саѕа` keeps the
  *     `саѕа`, because `贵`/`州` are witnesses and the pseudo-Latin gate needs
  *     `unmixedLatin`;
- *   - a GREEK-DISGUISED word in a document that also writes Greek.
+ *   - a GREEK code point in a document that also writes Greek, whatever its word.
  *     `a constante β vale 3 e uma vida longa` attacked to `νida` keeps the `ν`,
- *     because the `β` says the document really writes Greek.
+ *     because the `β` says the document really writes Greek — and so does the
+ *     `νidа` shape above, where the Cyrillic in the SAME word does fold;
+ *   - a substitution with a key that NFKC does not leave alone. `ϲ` (U+03F2 GREEK
+ *     LUNATE SIGMA SYMBOL) is a table key, but step 1 folds it to `ς` before step
+ *     3 ever sees it, and `ς` is not a key: `uma ϲasa` stays `uma ςasa`. Measured
+ *     — it is the ONLY key in the table that is not NFKC-stable, which the test
+ *     file asserts over the table rather than against a copied count.
  *
- * Neither exclusion is an oversight: the looser rule was measured to rewrite
- * `TNF-α` and the Chechen name `Муса` in real records (see
- * `countScriptWitnesses`). They are prices this file names — the same three named
- * in the header — not promises it makes, and drop the witness and the very same
- * attack becomes covered again. Both are pinned as NON-invariant by
- * `tests/unit/contracts/text-normalization.test.ts`, so the unconditional
- * reading cannot come back green.
+ * None of the three is an oversight. The first two are the measured price of not
+ * rewriting `TNF-α` and the Chechen name `Муса` in real records (see
+ * `countScriptWitnesses`); drop the witness and the very same attack becomes
+ * covered again. The third is why the `ϲ` entry stays in the table even though
+ * the fold can never reach it: after this file started reading witnesses from the
+ * SOURCE, that entry is what stops an attacker's `ϲ` from being counted as a
+ * genuine Greek witness. All three are pinned as NON-invariant by
+ * `tests/unit/contracts/text-normalization.test.ts`, so the unconditional reading
+ * cannot come back green.
  */
 export const HOMOGLYPH_SCORE_TOLERANCE = 0;
 
@@ -250,6 +272,13 @@ const LETTER = /\p{L}/u;
 const LATIN_LETTER = /\p{Script=Latin}/u;
 const CONFUSABLE_SCRIPT_LETTER = /[\p{Script=Cyrillic}\p{Script=Greek}]/u;
 const GREEK_LETTER = /\p{Script=Greek}/u;
+/**
+ * Script-neutral by Unicode's own definition, so never evidence that a document
+ * contains a particular script: digits, punctuation, the mathematical alphanumeric
+ * symbols, the squared SI units, U+00B5 MICRO SIGN, and every combining mark.
+ * Read `countScriptWitnesses` for why that matters.
+ */
+const SCRIPT_NEUTRAL = /[\p{Script=Common}\p{Script=Inherited}]/u;
 const WORD_CHARACTER = /[\p{L}\p{M}\p{N}]/u;
 const SPACE_SEPARATOR = /\p{Zs}/u;
 const WHITESPACE = /\s/u;
@@ -293,19 +322,28 @@ function addsWhitespace(source: string, folded: string): boolean {
  * of meaning, not of encoding, and the corpus is full of it — `₂` alone accounts
  * for 28 rewrites across `development` + `calibration`, plus `⁶ ⁸ ⁹ ₃ ₄ ₓ ⁻`.
  *
- * What it protects is the three Latin-1 legacy characters (`² ³ ¹`) plus the
- * whole SUPERSCRIPTS-AND-SUBSCRIPTS block, U+2070-U+209C: raised and lowered
- * digits and operators, where flattening merges `km²` into `km2`. A block rather
- * than a hand-picked list of the characters this corpus happens to contain — but
- * a block is not "every raised character in Unicode", and the residual is named
- * rather than implied. The MODIFIER LETTERS (U+1D2C-U+1D6A, U+1D78,
- * U+1D9B-U+1DBF) are outside it and still flatten: measured, `30ᵉ` → `30e`
- * (U+1D49) and `xᶰ` → `xɴ` (U+1DB0), one rewrite each across `development` +
- * `calibration` (`benchmark/out/rebuild-v3/a5/normalization-rewrites.txt`), and
- * pinned as a residual by a test. Extending the guard over them would move the
- * scored text of those two records, so it is a measurement job — a new dev+cal
- * sweep and a re-measured `222 of 5000` — not a comment fix; it was left out
- * deliberately and this sentence is the record of that.
+ * What it protects is the three Latin-1 legacy characters (`² ³ ¹`) plus
+ * U+2070-U+209C, the assigned part of the SUPERSCRIPTS-AND-SUBSCRIPTS block
+ * (U+2070-U+209F, whose last three code points are unassigned): mostly raised and
+ * lowered digits and operators, where flattening merges `km²` into `km2`, and two
+ * raised LETTERS that ride along inside the same range — `ⁱ` (U+2071) and `ⁿ`
+ * (U+207F), both verified to survive. A block rather than a hand-picked list of
+ * the characters this corpus happens to contain.
+ *
+ * The residual is stated as a PROPERTY, not as a list, because a list of the
+ * ranges this file happened to look at is the same over-claim one altitude down:
+ * every NFKC-flattening raised letter OUTSIDE U+2070-U+209C stays outside the
+ * guard. The Phonetic Extensions modifier letters (U+1D2C-U+1D6A, U+1D78,
+ * U+1D9B-U+1DBF) and the Spacing Modifier Letters (U+02B0-U+02B8, U+02E0-U+02E4)
+ * are among them — measured, `xʰ` → `xh` and `xʷ` → `xw` flatten exactly like
+ * `30ᵉ` → `30e` — and they are not an exhaustive enumeration either. Of that whole
+ * residual this corpus contains exactly `ᵉ` (U+1D49) and `ᶰ` (U+1DB0), one rewrite
+ * each across `development` + `calibration`
+ * (`benchmark/out/rebuild-v3/a5/normalization-rewrites.txt`), and both are pinned
+ * by a test. Extending the guard over them would move the scored text of those two
+ * records, so it is a measurement job — a new dev+cal sweep and a re-measured
+ * `222 of 5000` — not a comment fix; it was left out deliberately and this
+ * sentence is the record of that.
  */
 const SUPERSCRIPT_OR_SUBSCRIPT = /^[\u00B2\u00B3\u00B9\u2070-\u209C]$/u;
 
@@ -456,6 +494,50 @@ function stripInvisible(atoms: readonly Atom[]): Atom[] {
  * became `Myca` (`mix_src_wikipedia_pt_5eff3608eeb8`). Each of those documents
  * carries a witness — `β`, or `Дудин`'s `д` — while a homoglyph variant of pt-BR
  * prose produces none at all, so zero is the threshold that separates them.
+ *
+ * WHOSE EVIDENCE IT IS. The claim above is about what the AUTHOR wrote, so the
+ * non-Latin side is read from the ORIGINAL characters each atom came from and NOT
+ * from the atom itself. Reading the atom made NFKC able to manufacture the very
+ * evidence that then switched the fold off for the whole document. Measured, and
+ * this is why the parameter exists rather than a comment saying it should:
+ *
+ *   - U+00B5 MICRO SIGN is Script=Common in the source — it is the SI prefix of
+ *     `µm`/`µg`/`µl`, ordinary pt-BR encyclopedic and scientific prose — but NFKC
+ *     folds it to U+03BC GREEK SMALL LETTER MU. Read off the atom it was both a
+ *     `nonLatin` and a `greek` witness, so `5 µm e uma саѕа` kept its `саѕа`. One
+ *     development record (`src_carolina_23f8e515f0eb`, four occurrences) scored
+ *     that way, and typing a micro sign was a one-character way to disable the
+ *     defense;
+ *   - `ϲ` U+03F2 is a table KEY that NFKC folds to `ς`, which is not a key. Read
+ *     off the atom, an attacker's own substitution became a Greek witness and
+ *     switched `greekIsContent` on document-wide.
+ *
+ * The rule that fixes both is one rule: script evidence comes from a character
+ * Unicode assigns to a SPECIFIC script, taken from the source. Script=Common and
+ * Script=Inherited characters are script-neutral by Unicode's own definition and
+ * so cannot be evidence for any script (`SCRIPT_NEUTRAL`), and a source character
+ * that is already a known confusable is a suspect, not a witness. Letterhood is
+ * NOT required of the source: `⼀` U+2F00 KANGXI RADICAL ONE is Script=Han but
+ * category So, and it folds to the letter `一` — demanding a letter would throw
+ * that Han witness away.
+ *
+ * The price, named rather than implied: a Script=Common character that folds to a
+ * genuine non-Latin letter no longer attests its script either, `㈠` U+3220
+ * PARENTHESIZED IDEOGRAPH ONE → `(一)` being the type case. Zero occurrences
+ * across `development` + `calibration`. Going finer would mean judging 297 Greek-
+ * producing and 541 non-Latin-producing compatibility folds one by one, which is a
+ * curated list this file would then have to keep — the general rule is what is
+ * maintainable, and its cost is measured at nil on this corpus. Genuinely
+ * Greek-script sources still attest, including `Ω` U+2126 OHM SIGN, whose Script
+ * IS Greek; that is the conservative direction (it only ever switches the fold
+ * OFF) and it is left alone deliberately.
+ *
+ * The Latin side is deliberately NOT source-read, and the asymmetry is load
+ * bearing in two ways. It is the side that ENABLES the pseudo-Latin gate rather
+ * than vetoing a rewrite, so it should describe the text the model will actually
+ * see; and reading it from the source would break idempotence — `𝐚 саѕа` (math
+ * bold `a`, Script=Common) would fold nothing on the first pass and then fold
+ * `саѕа` on the second, once NFKC had turned the `𝐚` into a plain `a`.
  */
 interface ScriptWitnesses {
   latin: number;
@@ -463,7 +545,10 @@ interface ScriptWitnesses {
   nonLatin: number;
 }
 
-function countScriptWitnesses(atoms: readonly Atom[]): ScriptWitnesses {
+function countScriptWitnesses(
+  original: string,
+  atoms: readonly Atom[],
+): ScriptWitnesses {
   const witnesses: ScriptWitnesses = { latin: 0, greek: 0, nonLatin: 0 };
   for (const atom of atoms) {
     if (!LETTER.test(atom.char) || CONFUSABLE_TO_LATIN.has(atom.char)) {
@@ -473,8 +558,26 @@ function countScriptWitnesses(atoms: readonly Atom[]): ScriptWitnesses {
       witnesses.latin += 1;
       continue;
     }
+    let attestsNonLatin = false;
+    let attestsGreek = false;
+    for (const char of original.slice(atom.originalStart, atom.originalEnd)) {
+      if (
+        CONFUSABLE_TO_LATIN.has(char) ||
+        SCRIPT_NEUTRAL.test(char) ||
+        LATIN_LETTER.test(char)
+      ) {
+        continue;
+      }
+      attestsNonLatin = true;
+      if (GREEK_LETTER.test(char)) {
+        attestsGreek = true;
+      }
+    }
+    if (!attestsNonLatin) {
+      continue;
+    }
     witnesses.nonLatin += 1;
-    if (GREEK_LETTER.test(atom.char)) {
+    if (attestsGreek) {
       witnesses.greek += 1;
     }
   }
@@ -501,18 +604,25 @@ function countScriptWitnesses(atoms: readonly Atom[]): ScriptWitnesses {
  *     `src_carolina_7bb17c80e5de` is that record's only Greek, so the witness test
  *     alone would still have folded it.
  *
- * The price is named rather than hidden: a Greek-disguised word inside a document
- * that also contains genuine Greek is NOT restored, and neither is a one-letter
- * Portuguese word disguised with `α`/`ο`/`ι`. Cyrillic disguises are still folded
- * in both cases, including one-letter words, which is what keeps the attacked
- * `a`/`e`/`o` of real prose covered.
+ * The price is named rather than hidden: a Greek code point inside a document that
+ * also contains genuine Greek is NOT restored — and note that the two exceptions
+ * are applied per CODE POINT, inside a word the rule has already marked as an
+ * attack, so `νidа` folds its Cyrillic `а` and keeps its Greek `ν`. Neither is a
+ * one-letter Portuguese word disguised with `α`/`ο`/`ι`. Cyrillic disguises are
+ * still folded in both cases, including one-letter words, which is what keeps the
+ * attacked `a`/`e`/`o` of real prose covered.
+ *
+ * Both exceptions and the pseudo-Latin gate read `countScriptWitnesses`, which
+ * takes its non-Latin evidence from the ORIGINAL characters and not from NFKC's
+ * output. That is not a detail: read the other way, U+00B5 MICRO SIGN and the
+ * table's own `ϲ` both manufactured the witness that switched the fold off.
  *
  * Everything else is left exactly as written, which is what keeps `花巻市`,
  * `казаки́` and `Κτησίβιος` intact. The fold is 1:1 per code point, so no offset
  * moves here.
  */
-function foldConfusables(atoms: Atom[]): void {
-  const witnesses = countScriptWitnesses(atoms);
+function foldConfusables(original: string, atoms: Atom[]): void {
+  const witnesses = countScriptWitnesses(original, atoms);
   const unmixedLatin = witnesses.latin > 0 && witnesses.nonLatin === 0;
   const greekIsContent = witnesses.greek > 0;
   let index = 0;
@@ -673,7 +783,7 @@ export function normalizeForInference(text: string): NormalizedText {
     return unchanged(text);
   }
   const atoms = stripInvisible(composeAtoms(text));
-  foldConfusables(atoms);
+  foldConfusables(text, atoms);
   const { text: normalized, segments } = buildSegments(text, atoms);
   if (normalized === text) {
     return unchanged(text);
