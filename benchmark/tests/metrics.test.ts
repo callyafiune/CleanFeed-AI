@@ -235,6 +235,48 @@ describe("computeEvaluationMetrics", () => {
     expect(metrics.mixed.atLeastHalfAi.warningRecallLower95).toBeLessThan(0.5);
   });
 
+  it("keeps the mixed gate population over every mixed row, eligible or not", () => {
+    // R3 pin. The two DECISION families are restricted to the eligible set;
+    // `metrics.mixed` is a separate gated block and its population is NOT ours
+    // to shrink. Restricting it to eligible rows would move a gated number in
+    // the favorable direction (an ineligible mixed row that got no decision
+    // would leave the denominator instead of counting as a miss) and, at
+    // sampleSize 0, gates.ts turns the mixed-recall gate into an unconditional
+    // pass. So the row below stays in, and stays a miss.
+    const fixture = [
+      item({
+        author: "m1",
+        label: "mixed",
+        aiFraction: 0.9,
+        wordCount: 120,
+        documentScore: 0.8,
+        warned: true,
+      }),
+      item({
+        author: "m2",
+        label: "mixed",
+        aiFraction: 0.9,
+        wordCount: 30,
+        status: "abstained",
+      }),
+    ];
+
+    const metrics = computeEvaluationMetrics(fixture, OPTIONS);
+
+    expect(metrics.mixed.atLeastHalfAi.sampleSize).toBe(2);
+    expect(metrics.mixed.atLeastHalfAi.warningRecall).toBe(0.5);
+    const bucket = metrics.mixed.byFraction.find(
+      (segment) => segment.key === "75_100",
+    );
+    expect(bucket?.sampleSize).toBe(2);
+    expect(bucket?.warning.positives).toBe(2);
+    expect(bucket?.warning.truePositives).toBe(1);
+    expect(bucket?.warning.falseNegatives).toBe(1);
+    // The eligible restriction still governs the decision families, so the two
+    // populations are deliberately different sizes.
+    expect(metrics.warning.endToEnd.positives).toBe(1);
+  });
+
   it("counts AI plus >=50% mixed as warning positives", () => {
     const metrics = computeEvaluationMetrics(SEPARABLE, OPTIONS);
     expect(metrics.warning.endToEnd.positives).toBe(40);

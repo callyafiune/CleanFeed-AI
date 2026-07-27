@@ -691,9 +691,17 @@ export function computeEvaluationMetrics(
     },
     latency: latencyMetricsAll(items),
     memory: memoryMetricsAll(items),
+    // The mixed blocks run over ALL items, not over `eligible`. The eligible
+    // restriction A3 introduced belongs to the two decision families and stops
+    // there: `mixed.atLeastHalfAi` feeds its own approved gate, and shrinking a
+    // gated population is a loosening (R3) — an ineligible mixed row that got no
+    // decision would leave the denominator instead of counting as a miss, and at
+    // sampleSize 0 gates.ts turns the mixed-recall gate into an unconditional
+    // pass. Errored and abstained rows are excluded from the NUMERATOR only,
+    // inside mixedAtLeastHalfAi / decisionMetrics.
     mixed: {
-      atLeastHalfAi: mixedAtLeastHalfAi(eligible),
-      byFraction: mixedByFraction(eligible),
+      atLeastHalfAi: mixedAtLeastHalfAi(items),
+      byFraction: mixedByFraction(items),
     },
   };
 }

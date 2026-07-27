@@ -1118,6 +1118,12 @@ relatório mostra o par de métricas.
 4. **Denominador dos dois pontos de operação virou o conjunto elegível** (pt-BR e
    `wordCount >= minimumEligibleWords`), como o texto pede; antes as matrizes rodavam
    sobre todos os itens. `coverage`/`abstentionRate`/`errorRate` já eram sobre elegíveis.
+   **A restrição para aí.** `metrics.mixed` (`atLeastHalfAi` e `byFraction`) é bloco
+   gateado **separado**, e o texto de A3 não fala dele: continua rodando sobre **todos**
+   os itens. A primeira entrega de A3 o havia trocado para `eligible` — mudança eletiva,
+   não forçada pela união (`mixedAtLeastHalfAi` aceita `EvaluationItem[]` e já narra por
+   `isScoredItem`) e **afrouxamento medido**, portanto revertida na rodada de correção.
+   Ver item 7.
 5. **`metrics.resolution`** publica cobertura, abstenção e taxa de erro por
    `provenance.sourceId`, `label`, faixa de `sizeBucket` e `platform`, com chaves em
    ordem de codepoint; `report.ts` renderiza as quatro tabelas e o par de famílias numa
@@ -1126,6 +1132,47 @@ relatório mostra o par de métricas.
    como não-detecção em `endToEnd`). R5 fala de erro; estender à abstenção é o que
    mantém a conta coerente, já que uma linha `abstained` também não tem escore por
    schema. `abstentionRate` continua reportada em separado de `errorRate`.
+
+**Rodada de correção (2026-07-27), depois da revisão de conformidade.** Dois defeitos
+introduzidos pela primeira entrega, ambos no lado favorável, ambos corrigidos:
+
+7. **`metrics.mixed` volta a rodar sobre `items`** (`benchmark/metrics.ts`). A troca para
+   `eligible` encolhia uma população **gateada**, o que é afrouxamento (R3). Medido, não
+   argumentado: com uma linha mista elegível avisada (120 palavras, `aiFraction` 0,9) mais
+   uma linha mista inelegível (30 palavras, `abstained`), o código da primeira entrega dava
+   `mixed.atLeastHalfAi = { sampleSize: 1, warningRecall: 1 }`; o código pré-A3 e o atual
+   dão `{ sampleSize: 2, warningRecall: 0,5 }`. `gates.ts` alimenta exatamente esse número
+   em `mixedRecallGate`, cuja barra é `MIXED_WARNING_RECALL_MIN = 0,5`: um valor que estava
+   **na** barra passava a folgá-la. Pior, `mixedRecallGate` calcula
+   `eligible = sampleSize > 0` e `passed = !eligible || …`, então empurrar a população para
+   zero converte reprovação dura em **aprovação incondicional**, e `profile-artifact.ts`
+   republicaria a figura com intervalo de Wilson sobre um `n` menor. A narração
+   `isScoredItem(item) && item.warned` **fica**: linha mista errada ou abstida continua
+   contando como perda no numerador. Pinado por
+   `benchmark/tests/metrics.test.ts > "keeps the mixed gate population over every mixed row,
+   eligible or not"`. Se a restrição a elegíveis for desejável, ela **não é de A3**: exige
+   evidência medida e justificativa escrita aqui (R3), e fica proposta a A6/G2.
+8. **`slice.positives` / `slice.negatives` passam a ser lidos da população medida**
+   (`benchmark/slices.ts`), isto é, de `slice.metrics.warning.endToEnd`. O item 4 fez a
+   matriz de cada fatia ser medida só sobre o subconjunto elegível, mas os contadores da
+   fatia continuavam recontando o bucket **cru** (`bucket.filter(isHumanNegative)`). Isso
+   **não** era dívida herdada: antes de A3 `decisionMetrics` rodava sobre o bucket inteiro
+   e as duas contagens coincidiam — a divergência foi criada pelo commit de A3. O efeito é
+   contrato, não exibição: esses números são `GateResult.sampleSize` (`gates.ts:352,371,
+   482,503`) e `ProportionGateEvidenceV1.sampleSize` no perfil selado
+   (`profile-artifact.ts:345,350,362,369`), então o leitor da evidência inferia mais poder
+   estatístico do que o intervalo pareado tem — lado favorável, e desalinhamento
+   propriedade-vs-contrato no espírito de R7. Além disso `fprGateEligible` /
+   `recallGateEligible` declaravam poder sobre linhas que a taxa nunca viu. `sampleSize` da
+   fatia continua descritivo (o bucket todo). Invariante pinado por
+   `benchmark/tests/slices.test.ts > "declares the population that produced the estimate,
+   not the raw bucket"`. **Consequência a registrar:** os pisos de 300 negativos / 200
+   positivos passam a contar elegíveis, então uma fatia cujo bucket cru chega ao piso mas
+   cujo subconjunto elegível não chega deixa de gatear (`eligible: false`, não-gateante) —
+   é a regra de poder aplicada à população real, não um limite mexido. Caso concreto: a
+   faixa `lengthBucket = 0_49` tem população elegível **vazia** por política de abstenção;
+   com a contagem crua ela era declarada gateante e reprovava com `observed: null`
+   (reprovação espúria), e agora sai como não-gateante. A6/G2 deve confirmar essa leitura.
 
 **Varredura do avaliador (requisito de A3), com o que ficou de fora:**
 
@@ -1137,6 +1184,10 @@ relatório mostra o par de métricas.
   **deixou de valer** com A3: evaluate não escora mais linha sem decisão. Contaminar a
   amostra humana com zeros puxa o quantil para baixo, isto é, derruba o limiar e
   **aumenta** a FPR real; G2 deve construir o quantil só sobre humanos escorados.
+  O **comentário** acima das linhas 178-179 foi corrigido na rodada de correção: um arquivo
+  dentro de `EVALUATOR_FILES` não pode carregar justificativa falsa. Ele agora nomeia o
+  defeito como conhecido, diz que a simetria com `evaluate.ts` terminou em A3, e escreve a
+  direção do viés. O **comportamento** ficou intacto, para não invadir G1/G2.
 - `record.mixture?.aiFraction ?? 0` (`metrics.ts`, `slices.ts`, `fit.ts:290`) não é
   substituição de escore: o schema já exige `mixture` para `label = "mixed"`, e as duas
   leituras fora disso são guardadas por `label === "mixed"`.

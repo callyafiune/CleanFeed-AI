@@ -156,6 +156,32 @@ function eligibilityFixture(): EvaluationItem[] {
   return items;
 }
 
+describe("buildSlices declared sample size", () => {
+  it("declares the population that produced the estimate, not the raw bucket", () => {
+    // The slice's decision matrix is measured over the ELIGIBLE subset, so the
+    // positive/negative counts it publishes — which become GateResult.sampleSize
+    // and the sealed profile's ProportionGateEvidenceV1.sampleSize — must be
+    // that same subset. Declaring the raw bucket would advertise statistical
+    // power the interval does not have, in the favorable direction.
+    const items = [
+      item({ author: "h1", label: "human", domain: "corp", wordCount: 120 }),
+      item({ author: "h2", label: "human", domain: "corp", wordCount: 120 }),
+      item({ author: "h3", label: "human", domain: "corp", wordCount: 30 }),
+      item({ author: "a1", label: "ai", domain: "corp", wordCount: 120 }),
+      item({ author: "a2", label: "ai", domain: "corp", wordCount: 20 }),
+    ];
+
+    const corp = find(buildSlices(items, SEED), "domain", "corp");
+
+    // sampleSize stays descriptive: every row that landed in the bucket.
+    expect(corp?.sampleSize).toBe(5);
+    expect(corp?.negatives).toBe(2);
+    expect(corp?.positives).toBe(1);
+    expect(corp?.negatives).toBe(corp?.metrics.warning.endToEnd.negatives);
+    expect(corp?.positives).toBe(corp?.metrics.warning.endToEnd.positives);
+  });
+});
+
 describe("buildSlices gate eligibility", () => {
   it("marks slices gate-eligible per the 300-negative / 200-positive floors", () => {
     const slices = buildSlices(eligibilityFixture(), SEED);

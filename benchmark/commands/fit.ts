@@ -154,11 +154,20 @@ export async function runFit(options: FitOptions): Promise<string> {
     ),
   );
 
-  // Threshold selection consumes ALL non-test records with null raw scores
-  // coerced to 0, staying symmetric with evaluate.ts's decision metrics.
-  // Calibrator fitting consumes ONLY status === "scored" records, mirroring
-  // metrics.ts `scoredBinary`, so an abstained/errored raw-0 never contaminates
-  // the calibration curve.
+  // KNOWN DEFECT, retained on purpose pending plan tasks G1/G2: threshold
+  // selection below consumes ALL non-test records with null raw scores coerced
+  // to 0 (`documentRawScore ?? 0`). That coercion is the R5 violation A3
+  // removed everywhere else, and the symmetry it used to claim with
+  // evaluate.ts's decision metrics ENDED with A3: evaluate.ts no longer scores
+  // an undecided row at all, so nothing here mirrors it any more. Direction of
+  // the bias, so nobody preserves it by accident: padding the human sample with
+  // fake 0s pulls the one-sided quantile DOWN, which LOWERS the threshold and
+  // RAISES the real FPR. It breaks the accusation budget rather than flattering
+  // it. G2 rewrites this population wholesale (conformal quantile over
+  // date-cutoff core humans of cal-B) and must NOT carry the `?? 0` over.
+  // Calibrator fitting is already clean: it consumes ONLY status === "scored"
+  // records, mirroring metrics.ts `scoredBinary`, so an abstained/errored raw-0
+  // never contaminates the calibration curve.
   const samples: FitSampleScores[] = [];
   const positives: FitSampleScores[] = [];
   const calibratorSamples: FitSampleScores[] = [];

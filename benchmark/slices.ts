@@ -3,7 +3,10 @@
 // Each slice is a subset of the holdout along one axis (the §6.4 critical slices
 // plus transformation severity), carrying its full EvaluationMetrics and the
 // sampling-floor verdict: an FPR slice can gate a release only with at least 300
-// human negatives; a recall slice only with at least 200 positives. Under-powered
+// human negatives; a recall slice only with at least 200 positives. Those floors
+// count the population the matrix was MEASURED over (the eligible subset), not
+// the raw bucket, so a slice is never declared powered on rows its rate never saw.
+// Under-powered
 // slices stay in the report but are flagged non-gating rather than silently
 // dropped, and the worst-slice search considers only gate-eligible slices so a
 // tiny, noisy slice never becomes the reported worst case.
@@ -20,8 +23,6 @@
 
 import {
   computeEvaluationMetrics,
-  isHumanNegative,
-  isWarningPositive,
   mixedFractionBucket,
   sizeBucket,
   type EvaluationItem,
@@ -44,7 +45,13 @@ export type SliceAxis =
 export interface SliceResult {
   axis: SliceAxis;
   key: string;
+  // Every row that fell in this bucket, eligible or not — descriptive only.
   sampleSize: number;
+  // The class counts of the population the decision matrix was MEASURED over
+  // (the eligible subset), so the sampling floors below and every declared
+  // sampleSize downstream match the interval they are paired with. Invariant:
+  // `positives === metrics.warning.endToEnd.positives` and likewise for
+  // `negatives`; pinned by benchmark/tests/slices.test.ts.
   positives: number;
   negatives: number;
   fprGateEligible: boolean;
@@ -161,22 +168,30 @@ export function buildSlices(
     );
     for (const key of keys) {
       const bucket = buckets.get(key) as EvaluationItem[];
-      const positives = bucket.filter((item) =>
-        isWarningPositive(item.record),
-      ).length;
-      const negatives = bucket.filter((item) =>
-        isHumanNegative(item.record),
-      ).length;
+      const metrics = computeEvaluationMetrics(bucket, options);
+      // The declared class counts are READ OFF the population that produced the
+      // estimate, never recounted over the raw bucket. `computeEvaluationMetrics`
+      // measures the decision matrix over the eligible subset only, so counting
+      // `bucket.filter(isHumanNegative)` here would publish a denominator larger
+      // than the one behind the interval — advertising statistical power that
+      // does not exist, in the favorable direction — and would let a slice be
+      // declared gate-eligible on rows its FPR was never measured over. These
+      // two numbers are consumed as `GateResult.sampleSize` (benchmark/gates.ts)
+      // and as `ProportionGateEvidenceV1.sampleSize` in the sealed profile
+      // (benchmark/profile-artifact.ts), so they are a contract, not a display.
+      const positives = metrics.warning.endToEnd.positives;
+      const negatives = metrics.warning.endToEnd.negatives;
       results.push({
         axis,
         key,
+        // Descriptive: every row that landed in the bucket, eligible or not.
         sampleSize: bucket.length,
         positives,
         negatives,
         fprGateEligible: FPR_AXES.has(axis) && negatives >= minimumFprNegatives,
         recallGateEligible:
           RECALL_AXES.has(axis) && positives >= minimumRecallPositives,
-        metrics: computeEvaluationMetrics(bucket, options),
+        metrics,
       });
     }
   }
