@@ -214,6 +214,32 @@ export function sanitizeFailureDetail(value: unknown): string {
 }
 
 /**
+ * The detail an error outcome carries, given the harness's own reason code and
+ * the thrown value when there is one.
+ *
+ * `cause` wins when the allowlist can classify it, because it names the real
+ * origin. It loses in exactly two cases: there was no throwable at all (an
+ * assembly failure such as a missing artifact or a parity mismatch), or the
+ * chain reduced to {@link UNCLASSIFIED_FAILURE_DETAIL_CODE} — and a reason code
+ * is strictly more informative than "unclassified".
+ *
+ * This lives in the contract rather than beside its single caller because the
+ * caller (`errorScore` in `src/model-benchmark/main.ts`) is browser-only, so this
+ * rule would otherwise be reachable only through a real Chrome run.
+ */
+export function selectFailureDetail(
+  reasonCode: string,
+  cause?: unknown,
+): string {
+  const fromCause =
+    cause === undefined ? undefined : sanitizeFailureDetail(cause);
+  return fromCause === undefined ||
+    fromCause === UNCLASSIFIED_FAILURE_DETAIL_CODE
+    ? sanitizeFailureDetail(reasonCode)
+    : fromCause;
+}
+
+/**
  * True when `value` is exactly what {@link sanitizeFailureDetail} would emit for
  * it. Defining the validator as the producer's fixed point means a row can only
  * store a detail that the sanitizer itself would have produced.

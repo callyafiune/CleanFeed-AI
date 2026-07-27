@@ -231,15 +231,17 @@ corresponde a um erro já cometido.
 
 **R1 — A janela `fit` → `consume-holdout` é congelada.**
 `EVALUATOR_FILES` ([`benchmark/digests.ts:57`](../../../benchmark/digests.ts#L57)) cobre
-**42 arquivos hoje**, incluindo `benchmark/commands/score.ts`,
-`benchmark/commands/consume-holdout.ts`, `benchmark/prediction-shards.ts` e
-`benchmark/browser-scorer.ts`. Editar qualquer um deles depois do `fit` reprova
+**a lista exportada por `benchmark/digests.ts`; a contagem é derivada, nunca fixada** —
+inclui hoje `benchmark/commands/score.ts`, `benchmark/commands/consume-holdout.ts`,
+`benchmark/prediction-shards.ts`, `benchmark/browser-scorer.ts` e (desde A1)
+`contracts/failure-detail.ts`. Editar qualquer um deles depois do `fit` reprova
 `integrity.evaluator-digest` e **queima a concessão do holdout**. Foi exatamente isso
 que aconteceu em 2026-07-25.
 
-C3 adicionará `cluster-exposure-ledger.ts`; A6 adicionará a política; G2 adicionará
-`conformal-thresholds.ts`. Portanto nenhum gate, teste ou procedimento pode fixar o
-número 42: a fonte de verdade é a lista exportada por `digests.ts`.
+A1 já adicionou `contracts/failure-detail.ts`; C3 adicionará
+`cluster-exposure-ledger.ts`; A6 adicionará a política; G2 adicionará
+`conformal-thresholds.ts`. Portanto nenhum gate, teste, prosa ou procedimento pode fixar
+a cardinalidade da lista: a fonte de verdade é a lista exportada por `digests.ts`.
 
 A regra é sobre a **fronteira G5**, não sobre fase: **toda tarefa que toca esses arquivos
 tem de terminar antes de G5**, e várias delas estão em F e G, não só em A–E. Verificado
@@ -376,22 +378,134 @@ divergência:
    compartilhava a mensagem `"Model input has an invalid length."` com o ramo de forma
    malformada; separados, porque é exatamente a distinção que autoriza (ou proíbe) A2 a
    cortar a janela.
-4. **A verificação por `score` NÃO foi executada, e não é executável neste ambiente.**
-   Não é falta de modelo nem de navegador — ambos existem (bundle INT8 de 109.681.931
-   bytes em `dist-model-benchmark/`, Chrome for Testing 150.0.7871.129 em
-   `.cache/chrome-for-testing/`). `node benchmark/cli.ts` **falha ao carregar**, com ou
-   sem argumentos, sob o Node 22.22.3 em modo strip-only:
-   `ERR_UNSUPPORTED_TYPESCRIPT_SYNTAX` em `benchmark/prediction-shards.ts:100`
-   (propriedade de parâmetro de construtor). É defeito pré-existente, fora do escopo de
-   A1. Em substituição, foi usada a alternativa exigida pelo brief: teste unitário
-   cobrindo cada caminho de erro (`tests/unit/inference/failure-detail-propagation.test.ts`),
-   mais o lane E2E real `tests/e2e/benchmark-browser-scorer.spec.ts` reexecutado sobre o
-   candidato **reconstruído**, que prova que a página ainda monta e pontua no Chrome
-   fixado, offline. **Nenhum documento longo real foi pontuado.** Consequência direta
-   para A2: a instrumentação existe, mas a **distribuição medida de códigos não existe**
-   — enquanto ela não for produzida por uma corrida real de `score`, o item 2 de A2 não
-   tem o insumo que a regra mecânica exige, e a saída correta é tarefa não concluída, não
-   uma tentativa especulativa.
+4. **A verificação por `score` FOI executada, em `development` e em `calibration`.** Uma
+   entrega anterior de A1 declarou a CLI "não executável neste ambiente"; **isso era
+   falso**, e a correção importa porque A2 leria essa frase como um portão fechado. O que
+   falha é só a **invocação nua**: `node benchmark/cli.ts` não carrega sob o modo
+   strip-only do Node 22.22.3, com ou sem argumentos, por causa de uma **propriedade de
+   parâmetro de construtor** pré-existente em
+   [`benchmark/prediction-shards.ts:100`](../../../benchmark/prediction-shards.ts#L100)
+   (`ERR_UNSUPPORTED_TYPESCRIPT_SYNTAX`). Isso é um defeito de formatação/sintaxe em um
+   arquivo de `EVALUATOR_FILES`, fora do escopo de A1 — e **não** um bloqueio: a CLI roda
+   sob `--experimental-transform-types`, sem alterar arquivo nenhum. **Toda tarefa que usa
+   a CLI (A2 inclusive) deve usar esta invocação** até que uma tarefa dona daquele arquivo
+   troque a propriedade de parâmetro por atribuição de campo:
+
+   ```
+   node --experimental-transform-types benchmark/cli.ts score \
+     --dataset-dir benchmark/data/corpus-build/dataset \
+     --split-artifact benchmark/data/corpus-build/out/split/split-artifact.json \
+     --partition development --candidate-extension-dir dist-model-benchmark \
+     --output benchmark/out/rebuild-v3/a1/dev-score --resume
+   ```
+
+   **Distribuição medida em `development`** — 20 shards, 2000 linhas, `runId`
+   `development-8f48be33-f6f87d27-1d5cd776`, corrida completa:
+
+   | status | linhas |
+   |---|---:|
+   | `scored` | 1961 |
+   | `abstained` | 37 |
+   | `error` | 2 |
+
+   | `failureDetail` | linhas |
+   |---|---:|
+   | `TOKEN_LIMIT_EXCEEDED: Model input exceeds the model token limit.` | 2 |
+
+   **Nenhuma** linha `status:"error"` saiu com detalhe ausente ou vazio, e as **2000**
+   linhas passam por `validatePredictionRow` (o parser selado, incluindo a validação
+   condicional nova). Os dois documentos que falharam são
+   `src_ptso_5d2158474eab` (765 palavras, 5025 caracteres, `human`) e
+   `mix_src_ptso_ba63d1168aa2` (624 palavras, 3884 caracteres, `mixed`).
+
+   **Consequência para A2 — a hipótese de estouro está CONFIRMADA, não refutada.** O texto
+   "Por que" de A1 acima afirma que a hipótese de estouro na re-tokenização foi "testada e
+   **refutada**", porque "a pior janela dá exatamente 512". A medição contradiz isso: o
+   único código observado em `development` é `TOKEN_LIMIT_EXCEEDED`, emitido pelo guard
+   [`onnx-classifier.ts:421`](../../../src/inference/onnx-classifier.ts#L421)
+   (`tokens.inputIds.length > maximumTokens`) — ou seja, uma janela real **passou** de 512.
+   A2 **não deve herdar a refutação**: pelo item 2 de A2, `TOKEN_LIMIT_EXCEEDED` é
+   exatamente o código que autoriza cortar tokens de conteúdo do fim e incrementar
+   `contentCompositionVersion`. O insumo que a regra mecânica de A2 exige **existe agora**.
+
+   **Latência não mostra deriva explosiva em `development`** (dado para a hipótese de
+   pressão WASM acumulada de A2, não conclusão): sobre as 1961 linhas `scored`, p50 640 ms,
+   p90 2259 ms, p99 4751 ms, máximo 6476 ms — longe dos 41 s observados na partição de
+   teste. Mas o alcance é limitado: `development` tem cauda fina (p99 = 618 palavras,
+   **zero** registros acima de 3000 palavras, 25 acima de 600), enquanto `calibration` tem
+   642 acima de 600 palavras e 129 acima de 1500. É em `calibration` que o fenômeno vive,
+   e é por isso que o plano manda usar essa partição.
+
+   Em `calibration`, onde os documentos longos estão, a latência sobe mas **não deriva com
+   a posição**: máximo 16 233 ms, e a média por bloco de 300 documentos cai de 1298 ms
+   (posição 1500) para 393 ms (posição 1800) antes de subir para 3102 ms (posição 2100) —
+   isto é, ela acompanha o **comprimento do documento**, não o tempo acumulado de sessão.
+   Isso **enfraquece** (não refuta) a hipótese de pressão WASM acumulada de A2, e o fato de
+   que nenhuma das 60 falhas foi `WASM_OOM` ou `MODEL_TIMEOUT` aponta na mesma direção.
+
+   **Distribuição medida em `calibration`** — 30 shards, 3000 linhas, corrida completa
+   (mesma invocação, `--partition calibration --output benchmark/out/rebuild-v3/a1/cal-score`),
+   sobre o bundle **reconstruído** depois da extração de `selectFailureDetail`:
+
+   | status | linhas |
+   |---|---:|
+   | `scored` | 2924 |
+   | `abstained` | 18 |
+   | `error` | 58 |
+
+   | `failureDetail` | linhas |
+   |---|---:|
+   | `TOKEN_LIMIT_EXCEEDED: Model input exceeds the model token limit.` | 58 |
+
+   Também aqui **nenhuma** linha de erro saiu sem detalhe, e as 3000 passam por
+   `validatePredictionRow`. **Somando as duas partições: 5000 linhas, 60 linhas de erro,
+   100% `TOKEN_LIMIT_EXCEEDED`, zero detalhe ausente ou vazio.** Nenhum `WASM_OOM`, nenhum
+   `MODEL_TIMEOUT`, nenhum código do agregador foi observado.
+
+   **A taxa de erro reproduz o padrão de §3.2 — e agora com a causa nomeada.** Em
+   `calibration`, por faixa de palavras:
+
+   | faixa (palavras) | linhas | erros | taxa |
+   |---|---:|---:|---:|
+   | < 200 | 1790 | 0 | 0,0% |
+   | 200–599 | 568 | 3 | 0,5% |
+   | 600–1499 | 513 | 36 | 7,0% |
+   | 1500–2999 | 127 | 18 | 14,2% |
+   | ≥ 3000 | 2 | 1 | 50,0% |
+
+   Monotônica no comprimento, como no teste; e **55 dos 58 erros são Carolina/`human`**,
+   o mesmo perfil dos 322 de 325 registrados no diagnóstico. Ou seja: o fenômeno que
+   queimou a concessão **é** este, e ele tem **um** código.
+
+   Bundle e navegador reais e offline: modelo `cleanfeed-ptbr-v1`
+   `d8f77f870fbd35a17add2498b73d906bbc299026`, Chrome for Testing 150.0.7871.129,
+   `backend=wasm`, toda requisição http/https abortada.
+
+5. **O risco de EOL contra o digest do avaliador MATERIALIZOU — e é medido, não teórico.**
+   `core.autocrlf` é `true` e não há `.gitattributes` para estes caminhos. Os blobs
+   commitados são LF, mas durante A1 a árvore de trabalho apareceu **100% CRLF** em 8
+   arquivos (por exemplo `benchmark/prediction-schema.ts`: 552 CRLF em disco contra 0 CRLF
+   no blob de HEAD). `computeEvaluatorDigest`
+   ([`benchmark/digests.ts:122-136`](../../../benchmark/digests.ts#L122)) lê **os bytes em
+   disco sem normalizar newline**, então **o mesmo commit produziu dois digests**:
+
+   | árvore de trabalho | `evaluatorDigest` |
+   |---|---|
+   | CRLF materializado | `bb1d59d6c84c4b108f8cb07b4079fb47ef92d74a338d910ef326bfb70326aa6f` |
+   | LF (igual aos blobs) | `514cf2a0359c9eaf9c76a5af1f7372058192bfc7dd59cb869d48e17a56af1f75` |
+
+   Isso é fatal para R1 se não for fechado **antes de G5**: `integrity.evaluator-digest`
+   passaria a depender de quem fez o checkout, não do commit. A1 apenas normalizou a árvore
+   (`prettier --write`, zero diferença de conteúdo — os blobs já eram LF); **a correção
+   durável é um `.gitattributes` com `eol=lf`, e é de uma tarefa que possa mexer na
+   configuração do repositório**, não de A1.
+
+   Isso também **corrige um erro do relatório anterior de A1**, que dizia haver três falhas
+   de `format:check` pré-existentes em HEAD e insinuava que `9dbbf63` entrou sem formatar.
+   Comparando o conteúdo de HEAD normalizado em LF, **só
+   `benchmark/lab/build_governance.ts` está realmente mal formatado**; as falhas de
+   `benchmark/prediction-shards.ts` e `benchmark/tests/prediction-shards.test.ts` eram
+   apenas o CRLF da árvore de trabalho.
 
 ### A2 — Diagnosticar e corrigir a falha em documento longo
 

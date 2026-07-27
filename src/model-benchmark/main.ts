@@ -40,10 +40,7 @@ import { CleanFeedError } from "@/shared/errors";
 import type { RuntimeModelIdentity } from "@/shared/types";
 
 import { computeContentComposition } from "../../contracts/content-composition";
-import {
-  sanitizeFailureDetail,
-  UNCLASSIFIED_FAILURE_DETAIL_CODE,
-} from "../../contracts/failure-detail";
+import { selectFailureDetail } from "../../contracts/failure-detail";
 import type { RuntimeParityManifestV1 } from "../../contracts/runtime-parity";
 
 /** The runtime-parity manifest, embedded verbatim by the Vite build. */
@@ -115,31 +112,22 @@ function failedStatus(errorCode: string): ModelBenchmarkStatusV1 {
 }
 
 /**
- * An error outcome, ALWAYS carrying a non-empty sanitized detail. `cause` is the
- * thrown value when there is one; the reason code is the fallback, so an
- * assembly failure with no throwable (a missing artifact, a parity mismatch)
- * still names itself instead of degrading to the generic code. A cause that the
- * allowlist cannot classify also falls back, because the reason code is strictly
- * more informative than "unclassified".
+ * An error outcome, ALWAYS carrying a non-empty sanitized detail. Which detail is
+ * decided by {@link selectFailureDetail} — the rule lives in the shared contract
+ * so it is unit-testable without a real Chrome run, since this module is
+ * browser-only.
  */
 function errorScore(
   reasonCode: string,
   cause?: unknown,
 ): ModelBenchmarkScoreV1 {
-  const fromCause =
-    cause === undefined ? undefined : sanitizeFailureDetail(cause);
-  const failureDetail =
-    fromCause === undefined || fromCause === UNCLASSIFIED_FAILURE_DETAIL_CODE
-      ? sanitizeFailureDetail(reasonCode)
-      : fromCause;
-
   return {
     status: "error",
     documentRawScore: null,
     localizedRawScore: null,
     evidenceQuality: "unsupported",
     reasonCode,
-    failureDetail,
+    failureDetail: selectFailureDetail(reasonCode, cause),
     coverage: 0,
     latencyMs: 0,
     memoryBytes: null,

@@ -5,6 +5,7 @@ import {
   FAILURE_DETAIL_MAX_LENGTH,
   isSanitizedFailureDetail,
   sanitizeFailureDetail,
+  selectFailureDetail,
   truncateFailureDetail,
   UNCLASSIFIED_FAILURE_DETAIL_CODE,
 } from "../../../contracts/failure-detail.ts";
@@ -185,5 +186,58 @@ describe("isSanitizedFailureDetail", () => {
     expect(isSanitizedFailureDetail(undefined)).toBe(false);
     expect(isSanitizedFailureDetail(7)).toBe(false);
     expect(isSanitizedFailureDetail(DOCUMENT_EXCERPT)).toBe(false);
+  });
+});
+
+// `selectFailureDetail` is the exact detail-selection rule that `errorScore()` in
+// src/model-benchmark/main.ts applies. It lives here, and is tested here, because
+// main.ts is browser-only (it dynamically imports the Transformers.js runtime and
+// reads an inlined model manifest), so the branch that decides WHICH detail a real
+// error row carries had no unit coverage at all while it was a private function.
+describe("selectFailureDetail", () => {
+  it("prefers a classifiable cause over the reason code", () => {
+    expect(
+      selectFailureDetail(
+        "INFERENCE_FAILED",
+        new Error("Model input exceeds the model token limit."),
+      ),
+    ).toBe("TOKEN_LIMIT_EXCEEDED: Model input exceeds the model token limit.");
+  });
+
+  it("falls back to the reason code when the cause is unclassifiable", () => {
+    // The reason code is strictly more informative than "unclassified", and the
+    // document excerpt must not survive either way.
+    const detail = selectFailureDetail(
+      "MODEL_BENCHMARK_FAILED",
+      new Error(DOCUMENT_EXCERPT),
+    );
+
+    expect(detail).toBe("MODEL_BENCHMARK_FAILED");
+    expect(detail).not.toContain("Supremo");
+    expect(detail).not.toContain("recorrente");
+  });
+
+  it("names the reason code when there is no cause at all", () => {
+    // Assembly failures with no throwable: a missing artifact, a parity mismatch.
+    expect(selectFailureDetail("MODEL_ARTIFACT_MISSING")).toBe(
+      "MODEL_ARTIFACT_MISSING",
+    );
+    expect(selectFailureDetail("RUNTIME_PARITY_IDENTITY_MISMATCH")).toBe(
+      "RUNTIME_PARITY_IDENTITY_MISMATCH",
+    );
+  });
+
+  it("never yields an empty or unstorable detail, even for an unknown reason code", () => {
+    for (const [reasonCode, cause] of [
+      ["INFERENCE_FAILED", undefined],
+      ["SOMETHING_NOBODY_ALLOWLISTED", undefined],
+      ["SOMETHING_NOBODY_ALLOWLISTED", new Error(DOCUMENT_EXCERPT)],
+      ["INFERENCE_FAILED", new Error("out of memory")],
+    ] as const) {
+      const detail = selectFailureDetail(reasonCode, cause);
+
+      expect(detail.length).toBeGreaterThan(0);
+      expect(isSanitizedFailureDetail(detail)).toBe(true);
+    }
   });
 });
