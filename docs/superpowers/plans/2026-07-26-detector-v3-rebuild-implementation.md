@@ -1514,9 +1514,31 @@ inventário do núcleo em `scripts/runtime-parity.mjs` — ele decide **quais by
 modelo**.
 
 **`CONTENT_COMPOSITION_VERSION` = `lexical-content-v2`**, a versão que A2 devolveu.
-Justificativa registrada na própria constante: separador exótico agora **separa** unidades,
-caractere invisível não fica mais dentro de uma unidade, e URL/hashtag escritas com
-confusáveis passam a classificar como `url`/`hashtag`.
+Justificativa registrada na própria constante e **fixada por teste** em
+`tests/unit/contracts/content-composition.test.ts` (`the movements that justify
+lexical-content-v2`), que reproduz o split do `v1` — `/\S+/gu` + `classifyContentUnit`,
+idêntico byte a byte entre as duas versões — e compara:
+
+1. **unidade feita só de invisível desaparece**, logo `totalUnits` **cai** e `lexicalRatio`
+   sobe: `uma <U+200B> palavra` era 3 unidades / 2 léxicas / razão 2/3 e agora é 2 / 2 / 1.
+   Vale para U+200B, U+2060, U+180E e U+00AD;
+2. **invisível não fica mais dentro de uma unidade**, o que move a **categoria** da unidade:
+   `#Cle<U+200B>anFeed` era `lexical` (U+200B não está em `[\p{L}\p{N}_]`) e agora é
+   `hashtag`;
+3. **URL escrita com confusável ou em latino de largura total** passa a classificar como
+   `url`: `htt<U+0440>s://exemplo.com` e `ｈｔｔｐｓ://exemplo.com`.
+
+Além das contagens, **o texto pontuado em si muda em 222 dos 5.000 registros de
+`development` + `calibration`** — as mesmas unidades, feitas de outros bytes, chegando ao
+tokenizador. Essa é a outra metade da razão para gastar a coordenada.
+
+**Correção de uma justificativa errada (rodada de conformidade).** A primeira redação
+afirmava que "separador exótico agora **separa** unidades". Isso é **falso e foi medido**:
+o `\s` do JavaScript já casa todo Zs/Zl/Zp, então o `/\S+/gu` do `v1` **já separava** em
+NO-BREAK SPACE, IDEOGRAPHIC SPACE, LINE SEPARATOR e OGHAM SPACE MARK — dobrar esses para
+U+0020 não move contagem nenhuma. Igualmente falsa era a metade "hashtag" do movimento 3:
+`\p{L}` casa cirílico, então `#Cle<U+0430>nFeed` já era `hashtag` no `v1`. As duas metades
+negativas agora têm teste próprio, para que a razão não volte a ser uma não medida.
 
 **Divergências do texto do plano — três, todas por medição, nenhuma afrouxando critério:**
 

@@ -7,10 +7,15 @@
 //   2. pt-BR accents, cedilla and legitimate punctuation SURVIVE;
 //   3. original offsets are RECONSTRUCTED from the map.
 //
-// Every fixture whose name is a record id is REAL corpus text, copied verbatim
-// from `benchmark/data/corpus-build/records.jsonl` (the pre-split corpus; the
-// blind `test` partition is never read), so "does not destroy legitimate text"
-// is asserted against text we actually score rather than a synthetic string.
+// Every fixture whose name is a record id is REAL corpus text, an EXACT
+// substring of that record in `benchmark/data/corpus-build/records.jsonl` (the
+// pre-split corpus; the blind `test` partition is never read), so "does not
+// destroy legitimate text" is asserted against text we actually score rather
+// than a synthetic string. The substring property is checked out of band, NOT by
+// a test in this file: `records.jsonl` is gitignored (`.gitignore:28`), so a test
+// that read it would fail on a clean checkout. It was re-checked for all ten
+// fixtures in A5's conformance round, which is when `CITOCINAS` was found to have
+// prepended an `Os ` the record does not contain and was corrected.
 // Two of them are load-bearing: `ANDORRA` carries U+00BA/U+00B2 and `DEMETER`
 // carries U+2026 — the three characters NFKC would silently rewrite.
 // The Wikipedia excerpts are CC BY-SA.
@@ -77,7 +82,7 @@ const DEMETER =
  * in this record and three others.
  */
 const CITOCINAS =
-  "Os pesquisadores identificaram níveis elevados de TNF-α, IL-1β e IL-6 no " +
+  "Pesquisadores identificaram níveis elevados de TNF-α, IL-1β e IL-6 no " +
   "líquido cefalorraquidiano";
 
 /**
@@ -468,11 +473,18 @@ describe("the normalized → original offset map", () => {
 
 describe("non-Latin scripts survive while confusables are folded", () => {
   // The brief's obligatory case, in ONE fixture built from real corpus text:
-  // Japanese kanji, Chinese hanzi, a genuine Cyrillic name, a genuine Greek
-  // name, and a Cyrillic homoglyph attack on a Portuguese word.
+  // Japanese kanji (HANAMAKI), Chinese hanzi (GUIZHOU, MADRAS_CJK), genuine
+  // Cyrillic NAMES (DUDAEV — `Джохар Мусаевич Дудаев`, and the Chechen gloss
+  // `Дудин Муса кант Жовхар`), genuine Cyrillic common nouns (COSSACOS), a
+  // genuine Greek name (CTESIBIO), and a Cyrillic homoglyph attack on a
+  // Portuguese word. DUDAEV is here and not only in the witness test because the
+  // brief asks the obligatory fixture for "um nome russo em cirílico"
+  // specifically: `казаки́` is a common noun, and a NAME is the harder case —
+  // every one of `Муса`'s four letters has a Latin confusable, so it is exactly
+  // the shape the pseudo-Latin rule would destroy.
   const MIXED_SCRIPTS =
     `${HANAMAKI}\n${GUIZHOU}\n${MADRAS_CJK}\n${COSSACOS}\n${CTESIBIO}\n` +
-    `Aqui a palavra аbacate foi atacada.`;
+    `${DUDAEV}\nAqui a palavra аbacate foi atacada.`;
 
   it("keeps the surrounding pt-BR intact", () => {
     const { text } = normalizeForInference(MIXED_SCRIPTS);
@@ -490,17 +502,47 @@ describe("non-Latin scripts survive while confusables are folded", () => {
     expect(text).toContain("当我们");
     expect(text).toContain("казаки́");
     expect(text).toContain("Κτησίβιος");
+    // The Cyrillic NAMES, letter for letter. `Муса` is the one that matters
+    // most: М, у, с and а are all in CONFUSABLE_TO_LATIN, so a rule that folded
+    // a wholly-confusable word unconditionally would write `Myca` here.
+    expect(text).toContain("Дудин Муса кант Жовхар");
+    expect(text).toContain("Джохар Мусаевич Дудаев");
   });
 
-  it("reconstructs the original offsets of every CJK run", () => {
+  // (b) and (c) of the brief's obligatory case together: the folded homoglyph and
+  // the preserved scripts have to BOTH reconstruct, because a map that only
+  // survives the untouched runs would not catch a fold that shifted offsets.
+  it("reconstructs the original offsets of every non-Latin run and of the fold", () => {
     const normalized = normalizeForInference(MIXED_SCRIPTS);
-    for (const cjk of ["花巻市", "贵州", "貴州", "当我们"]) {
-      const start = normalized.text.indexOf(cjk);
-      expect(start, cjk).toBeGreaterThanOrEqual(0);
+    for (const run of [
+      "花巻市",
+      "贵州",
+      "貴州",
+      "当我们",
+      "Муса",
+      "Жовхар",
+      "Дудаев",
+      "Мусаевич",
+      "казаки́",
+      "Κτησίβιος",
+    ]) {
+      const start = normalized.text.indexOf(run);
+      expect(start, run).toBeGreaterThanOrEqual(0);
       expect(
-        originalSliceFromNormalized(normalized, start, start + cjk.length),
-        cjk,
-      ).toBe(cjk);
+        originalSliceFromNormalized(normalized, start, start + run.length),
+        run,
+      ).toBe(run);
     }
+    // The folded word reconstructs to its ATTACKED original, not to the
+    // normalized spelling — the fold is 1:1, so the span does not even widen.
+    const folded = normalized.text.indexOf("abacate");
+    expect(folded).toBeGreaterThanOrEqual(0);
+    expect(
+      originalSliceFromNormalized(
+        normalized,
+        folded,
+        folded + "abacate".length,
+      ),
+    ).toBe("аbacate");
   });
 });

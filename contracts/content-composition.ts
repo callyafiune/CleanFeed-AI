@@ -11,24 +11,45 @@
 //   5. other        — everything else (pure punctuation, symbols, …).
 //
 // The decomposition runs over the NORMALIZED text
-// (`contracts/text-normalization.ts`): NFKC, invisible-character removal,
-// separator folding and confusable folding all change where a unit boundary
-// falls and which category a unit lands in. `normalizeForInference` is
-// idempotent, so it does not matter whether a caller passes raw or already
-// normalized text — the counts are the same either way.
+// (`contracts/text-normalization.ts`): invisible-character removal moves where a
+// unit boundary falls, and NFKC, invisible removal and confusable folding all
+// move which category a unit lands in. Separator folding moves NEITHER — the
+// split below is `/\S+/gu`, and `\s` already matched every separator that
+// folding rewrites. `normalizeForInference` is idempotent, so it does not matter
+// whether a caller passes raw or already normalized text — the counts are the
+// same either way.
 
 import { normalizeForInference } from "./text-normalization.ts";
 
 /**
  * `lexical-content-v2` (A5): the decomposition is now taken over the normalized
- * text. Three concrete movements versus `v1`, each of which changes
- * `lexicalRatio` and therefore eligibility and the evidence assessment:
- * an exotic separator (NO-BREAK SPACE, IDEOGRAPHIC SPACE, LINE SEPARATOR) now
- * SPLITS units where it used to sit inside one; an invisible character no
- * longer sits inside a unit; and a URL or hashtag written with confusable
- * Cyrillic/Greek code points now classifies as `url`/`hashtag` instead of
- * `lexical`. It does NOT version the window plan — that is
- * `AGGREGATION_VERSION` (A2, `tmr-aggregation-v3`).
+ * text. Three concrete movements versus `v1`, each MEASURED against `v1`'s own
+ * `/\S+/gu` split on this tree and each pinned by a test in
+ * `tests/unit/contracts/content-composition.test.ts`, so the reason for spending
+ * the version cannot drift back to an unmeasured one:
+ *
+ *   1. a unit made only of INVISIBLE characters vanishes, so `totalUnits` goes
+ *      DOWN and `lexicalRatio` up: `uma <U+200B> palavra` was 3 units / 2
+ *      lexical / ratio 2/3 and is now 2 units / 2 lexical / ratio 1. It has to
+ *      be an invisible (U+200B, U+2060, U+180E, U+00AD) and NOT an exotic
+ *      separator: JavaScript's `\s` already matches every Zs/Zl/Zp code point,
+ *      so `v1` ALREADY split on NO-BREAK SPACE, IDEOGRAPHIC SPACE, LINE
+ *      SEPARATOR and OGHAM SPACE MARK — folding those to U+0020 moves no count
+ *      at all, and claiming it did was a wrong rationale, removed here;
+ *   2. an invisible no longer sits INSIDE a unit, which can move the unit's
+ *      CATEGORY: `#Cle<U+200B>anFeed` was `lexical`, because U+200B is not in
+ *      `[\p{L}\p{N}_]`, and is now `hashtag`;
+ *   3. a URL written with a confusable Cyrillic/Greek code point, or with
+ *      full-width Latin, now classifies as `url` instead of `lexical`:
+ *      `htt<U+0440>s://exemplo.com` and `<FULLWIDTH>https://exemplo.com`. A
+ *      HASHTAG is NOT part of this movement — `\p{L}` matches Cyrillic, so
+ *      `#Cle<U+0430>nFeed` already classified as `hashtag` under `v1`.
+ *
+ * Beyond the counts, the SCORED TEXT itself changes for 222 of the 5000
+ * `development` + `calibration` records, which is the other half of why the
+ * coordinate has to move: the same units, made of different bytes, reach the
+ * tokenizer. It does NOT version the window plan — that is `AGGREGATION_VERSION`
+ * (A2, `tmr-aggregation-v3`).
  */
 export const CONTENT_COMPOSITION_VERSION = "lexical-content-v2";
 
