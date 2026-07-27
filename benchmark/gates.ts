@@ -74,7 +74,7 @@ import type {
   MetricEstimate,
 } from "./metrics.ts";
 import { REBUILD_V3_POLICY } from "./rebuild-v3-policy.ts";
-import type { ResamplingUnitKind } from "./rebuild-v3-policy.ts";
+import type { EceGateBound, ResamplingUnitKind } from "./rebuild-v3-policy.ts";
 import type { SliceAxis, SliceResult, SliceSummary } from "./slices.ts";
 
 export type ReleaseDecision = "pass" | "indicator-only" | "reject";
@@ -127,7 +127,14 @@ export interface GateResult {
   bound: GateBound;
   operator: GateOperator;
   required: number | boolean;
+  // The DENOMINATOR of the statistic this gate decided, never a wider count: a
+  // gate that reported the whole population while its rate was computed over the
+  // scored subset overstates the n behind its own verdict (R7).
   sampleSize: number;
+  // The population that denominator came out of, present only when the two
+  // differ — an ECE over scored rows inside an eligible population, a label-basis
+  // FPR over the scored rows of a basis. Both numbers are then visible at once.
+  populationSize?: number;
   eligible: boolean;
   passed: boolean;
   descriptive?: DescriptiveBound;
@@ -223,6 +230,20 @@ const MAX_ERROR_RATE = 0.01;
 const WARNING_FPR_MAX = REBUILD_V3_POLICY.fprBudgets.warning;
 const ACTION_FPR_MAX = REBUILD_V3_POLICY.fprBudgets.visualAction;
 const ECE_MAX = REBUILD_V3_POLICY.calibrationGate.eceMax;
+// The frozen contract NAMES the bound the ECE gate reads, and the gate derives its
+// direction from that name instead of restating it. The switch is exhaustive: a
+// different declared bound stops compiling here rather than drifting away from the
+// behaviour, which is the whole reason the field exists.
+const ECE_DIRECTION: "upper" | "lower" = eceDirection(
+  REBUILD_V3_POLICY.calibrationGate.eceBound,
+);
+
+function eceDirection(declared: EceGateBound): "upper" | "lower" {
+  switch (declared) {
+    case "bootstrap-simultaneous-upper":
+      return "upper";
+  }
+}
 const ALLOWED_UNIT_KINDS: ReadonlySet<string> = new Set(
   REBUILD_V3_POLICY.resampling.allowedUnitKinds,
 );
@@ -268,6 +289,7 @@ interface IntervalGateSpec {
   direction: "upper" | "lower";
   threshold: number;
   sampleSize: number;
+  populationSize?: number;
   subject: string;
   eligible: boolean;
   // What an ineligible cell means in this tier.
@@ -278,6 +300,22 @@ interface DecidedContext {
   plan: ResamplingPlan | null;
   multiplicity: MultiplicityReport;
 }
+
+/**
+ * The outcome of looking one estimand up in the resampling plan. A discriminated
+ * rejection, not a bare `null`: all four ways a plan can fail to cover an estimand
+ * fail the gate the same way, but they send an operator to four different places.
+ */
+export type ResamplingRejection =
+  | "no-plan"
+  | "no-entry"
+  | "unit-kind-not-allowed"
+  | "no-unit-axis"
+  | "replicates-below-pilot";
+
+type ResamplingLookup =
+  | { ok: true; entry: ResamplingPlanEntry }
+  | { ok: false; reason: ResamplingRejection; detail: string };
 
 export function evaluateReleaseGates(input: GateInput): GateReport {
   const intervalSpecs = [
@@ -556,9 +594,12 @@ function warningIntervalSpecs(
     // Equal-mass bins and an INTERVAL: the point estimate of ECE was the one
     // numeric gate in §6.5 with no bound at all (assessment §4.4).
     estimate: metrics.calibration.eceEqualMass15,
-    direction: "upper",
+    direction: ECE_DIRECTION,
     threshold: ECE_MAX,
-    sampleSize: metrics.warning.endToEnd.sampleSize,
+    // The ECE is computed over the SCORED rows of the binary population, not over
+    // the eligible set: the denominator of the statistic is the n of the gate.
+    sampleSize: metrics.calibration.scored,
+    populationSize: metrics.calibration.populationSize,
     subject: `equal-mass ECE-${REBUILD_V3_POLICY.calibrationGate.eceBins}`,
     eligible: true,
     ineligible: { passed: true, reason: null },
@@ -586,7 +627,11 @@ function labelBasisSpec(
     estimate: basis.falsePositiveRate,
     direction: "upper",
     threshold: warning ? WARNING_FPR_MAX : ACTION_FPR_MAX,
-    sampleSize: basis.count,
+    // The basis FPR has the SCORED negatives of the basis in its denominator; the
+    // whole count is the population and is what the power floor is measured on, so
+    // both travel.
+    sampleSize: basis.scored,
+    populationSize: basis.count,
     subject: `label basis ${basis.basis} ${tier} FPR`,
     eligible: basis.evidenceRole === "gating",
     ineligible: warning
@@ -744,6 +789,10 @@ function decideInterval(
     operator: (spec.direction === "upper" ? "<=" : ">=") as GateOperator,
     required: spec.threshold,
     sampleSize: spec.sampleSize,
+    ...(spec.populationSize === undefined ||
+    spec.populationSize === spec.sampleSize
+      ? {}
+      : { populationSize: spec.populationSize }),
     descriptive,
   };
 
@@ -760,9 +809,12 @@ function decideInterval(
     };
   }
 
-  // 2. No declared resampling unit for this estimand: fail, never assume rows.
-  const entry = resamplingEntry(context.plan, spec.estimand);
-  if (entry === null) {
+  // 2. No usable resampling unit for this estimand: fail, never assume rows. The
+  //    reason names WHICH of the four ways the plan came up short, because "no
+  //    plan declares this estimand" sent an operator looking for an entry that was
+  //    right there with the wrong replicate count.
+  const lookup = resamplingEntry(context.plan, spec.estimand);
+  if (!lookup.ok) {
     return {
       ...base,
       evidence: "missing-resampling-plan",
@@ -770,9 +822,8 @@ function decideInterval(
       eligible: true,
       passed: false,
       reasons: [
-        `${spec.subject}: nenhum plano de reamostragem hierárquico ou multiway ` +
-          `declara a unidade do estimando ${spec.estimand}; sem essa evidência o ` +
-          "gate reprova e nunca cai para linhas independentes",
+        `${spec.subject}: ${lookup.detail}; sem essa evidência o gate reprova e ` +
+          "nunca cai para linhas independentes",
       ],
     };
   }
@@ -916,21 +967,54 @@ function missingSimultaneousReason(
 function resamplingEntry(
   plan: ResamplingPlan | null,
   estimand: string,
-): ResamplingPlanEntry | null {
-  if (plan === null) return null;
+): ResamplingLookup {
+  if (plan === null) {
+    return {
+      ok: false,
+      reason: "no-plan",
+      detail:
+        "nenhum plano de reamostragem foi declarado (C4 ainda não produziu um)",
+    };
+  }
   const entry = plan.entries.find(
     (candidate) => candidate.estimand === estimand,
   );
-  if (entry === undefined) return null;
-  if (!ALLOWED_UNIT_KINDS.has(entry.unitKind)) return null;
-  if (entry.unitAxes.length === 0) return null;
+  if (entry === undefined) {
+    return {
+      ok: false,
+      reason: "no-entry",
+      detail: `o plano ${plan.planId} não tem entrada para o estimando ${estimand}`,
+    };
+  }
+  if (!ALLOWED_UNIT_KINDS.has(entry.unitKind)) {
+    return {
+      ok: false,
+      reason: "unit-kind-not-allowed",
+      detail:
+        `a entrada de ${estimand} declara unitKind "${entry.unitKind}", que não é ` +
+        `uma das unidades permitidas (${[...ALLOWED_UNIT_KINDS].join(", ")})`,
+    };
+  }
+  if (entry.unitAxes.length === 0) {
+    return {
+      ok: false,
+      reason: "no-unit-axis",
+      detail: `a entrada de ${estimand} não nomeia nenhum eixo de dependência`,
+    };
+  }
   if (
     !Number.isInteger(entry.replicates) ||
     entry.replicates < MINIMUM_DECLARED_REPLICATES
   ) {
-    return null;
+    return {
+      ok: false,
+      reason: "replicates-below-pilot",
+      detail:
+        `a entrada de ${estimand} declara ${entry.replicates} réplicas, abaixo das ` +
+        `${MINIMUM_DECLARED_REPLICATES} pré-registradas`,
+    };
   }
-  return entry;
+  return { ok: true, entry };
 }
 
 // --- shared gate constructors ---------------------------------------------

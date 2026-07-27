@@ -21,10 +21,23 @@
 //
 // The parser fails closed on a missing key, an unknown key, a wrong type, a value
 // outside its domain and — for the decisions whose whole point is that they are
-// settled (`commercialUse`, `resampling.fallbackToIndependentRows`,
-// `labelBasis.pooledClaimAllowed`, `rollout.actionsPromoted`, ...) — on any value
-// other than the frozen one. There is no default anywhere: a policy that does not
-// declare a value is invalid, never "the usual number".
+// settled — on any value other than the frozen one. There is no default anywhere: a
+// policy that does not declare a value is invalid, never "the usual number".
+//
+// Which rows are pinned to their exact value, and which are only shape-checked:
+//   * SCALARS pinned by `literal` / `frozenNumber`: every settled enum and flag
+//     (`commercialUse`, `resampling.fallbackToIndependentRows`,
+//     `labelBasis.pooledClaimAllowed`, `rollout.actionsPromoted`,
+//     `calibrationGate.eceBinning`, `parity.operationalMaximumInversions`, ...).
+//   * LISTS pinned by `frozenList`, content and order: the calibrator candidates
+//     and tie-break order, the human core strata, the hard-negative families, the
+//     profile bands, the human snapshots and the rollout stages. Those are rows of
+//     the frozen table, and a reordered tie-break or a dropped stratum is a
+//     different decision, not a formatting variant.
+//   * SHAPE-CHECKED ONLY, because they are magnitudes the plan sets rather than
+//     closed vocabularies: the numeric thresholds, seeds, replicate counts, epsilons
+//     and tolerances (validated for type, integrality and domain), and
+//     `predictiveValuePrevalences` (distinct values in (0, 1)).
 //
 // Standalone benchmark module: MUST NOT import from the extension bundle (src/).
 // Node-side by construction — it reads its own JSON once, at module load, with
@@ -51,6 +64,15 @@ export class RebuildV3PolicyError extends Error {
 export type ResamplingUnitKind = "hierarchical" | "multiway";
 export type LabelBasisValue = "date-cutoff" | "observed-process";
 export type CalibratorKind = "platt" | "beta" | "isotonic";
+/**
+ * WHICH bound the ECE gate reads. Not "bootstrap-upper95": the gate reads a
+ * Bonferroni percentile at alpha_família / m, which is a different and wider bound
+ * than the individual 95% one, and the file that is designated the single source of
+ * truth may not say something the code contradicts. benchmark/gates.ts derives the
+ * gate's direction from this value through an exhaustive switch, so a new value
+ * here is a type error there rather than a silent divergence.
+ */
+export type EceGateBound = "bootstrap-simultaneous-upper";
 
 export interface RebuildV3Policy {
   readonly attributionRequired: true;
@@ -64,7 +86,7 @@ export interface RebuildV3Policy {
   readonly calibrationGate: {
     readonly eceBinning: "equal-mass";
     readonly eceBins: number;
-    readonly eceBound: "bootstrap-upper95";
+    readonly eceBound: EceGateBound;
     readonly eceMax: number;
   };
   readonly calibrator: {
@@ -377,6 +399,35 @@ function textList(
   return Object.freeze([...(value as string[])]);
 }
 
+// A list whose exact CONTENT AND ORDER are frozen, the list counterpart of
+// `literal` and `frozenNumber`. The order is part of the decision for some of these
+// rows (the calibrator tie-break is "empate -> Platt, beta, isotônico", and a
+// reordering is a different rule), and for the rest the membership is: dropping a
+// core stratum or a hard-negative family silently narrows what the evaluation
+// covers. Validating only "non-empty array of distinct strings" would accept
+// `tieBreakOrder: ["isotonic"]` and `humanCoreStrata: ["foo"]`, which is exactly
+// what this module's own contract says it refuses.
+function frozenList(
+  record: Record<string, unknown>,
+  path: string,
+  key: string,
+  frozen: readonly string[],
+): readonly string[] {
+  // Shape first, so a malformed list still gets the specific shape message.
+  const value = textList(record, path, key);
+  const same =
+    value.length === frozen.length &&
+    value.every((entry, index) => entry === frozen[index]);
+  if (!same) {
+    throw new RebuildV3PolicyError(
+      at(path, key),
+      `is frozen at ${JSON.stringify(frozen)} (exact content and order) and ` +
+        "cannot be changed here",
+    );
+  }
+  return Object.freeze([...frozen]);
+}
+
 function numberList(
   record: Record<string, unknown>,
   path: string,
@@ -403,6 +454,39 @@ function numberList(
   }
   return Object.freeze([...(value as number[])]);
 }
+
+// The rows of the frozen table whose exact content AND order are the decision.
+// Repeating them here is not duplication of the JSON: it is what makes the JSON
+// checkable, the same way `literal` repeats a frozen scalar.
+const FROZEN_CALIBRATOR_CANDIDATES = ["platt", "beta", "isotonic"] as const;
+const FROZEN_CALIBRATOR_TIE_BREAK = ["platt", "beta", "isotonic"] as const;
+const FROZEN_HUMAN_CORE_STRATA = [
+  "encyclopedic",
+  "institutional",
+  "qa-informal",
+  "social-media",
+  "university",
+] as const;
+const FROZEN_HARD_NEGATIVE_FAMILIES = [
+  "corporate-structure",
+  "formulaic",
+  "highly-polished",
+  "motivational",
+  "non-native",
+  "repetitive",
+] as const;
+const FROZEN_PROFILE_BANDS = ["50-79", "80-199", "200-plus"] as const;
+const FROZEN_HUMAN_SNAPSHOTS = [
+  "b2w-reviews01",
+  "carolina",
+  "pt-stackoverflow",
+  "ptwiki",
+] as const;
+const FROZEN_ROLLOUT_STAGES = [
+  "bundle-verified",
+  "shadow",
+  "indicator",
+] as const;
 
 const POLICY_KEYS = [
   "attributionRequired",
@@ -443,11 +527,6 @@ const POLICY_KEYS = [
   "wordFloor",
 ] as const;
 
-const CALIBRATOR_KINDS: readonly CalibratorKind[] = [
-  "platt",
-  "beta",
-  "isotonic",
-];
 const LABEL_BASIS_VALUES: readonly LabelBasisValue[] = [
   "date-cutoff",
   "observed-process",
@@ -631,16 +710,16 @@ export function parseRebuildV3Policy(value: unknown): RebuildV3Policy {
         calibrationGate,
         "calibrationGate",
         "eceBound",
-        "bootstrap-upper95",
+        "bootstrap-simultaneous-upper",
       ),
       eceMax: proportion(calibrationGate, "calibrationGate", "eceMax"),
     },
     calibrator: {
-      candidates: textList(
+      candidates: frozenList(
         calibrator,
         "calibrator",
         "candidates",
-        CALIBRATOR_KINDS,
+        FROZEN_CALIBRATOR_CANDIDATES,
       ) as readonly CalibratorKind[],
       crossValidationFolds: integer(
         calibrator,
@@ -667,11 +746,11 @@ export function parseRebuildV3Policy(value: unknown): RebuildV3Policy {
         "thresholdsAre",
         "per-profile-band",
       ),
-      tieBreakOrder: textList(
+      tieBreakOrder: frozenList(
         calibrator,
         "calibrator",
         "tieBreakOrder",
-        CALIBRATOR_KINDS,
+        FROZEN_CALIBRATOR_TIE_BREAK,
       ) as readonly CalibratorKind[],
       tieToleranceAbsolute: proportion(
         calibrator,
@@ -719,8 +798,18 @@ export function parseRebuildV3Policy(value: unknown): RebuildV3Policy {
       visualAction: proportion(fprBudgets, "fprBudgets", "visualAction"),
       warning: proportion(fprBudgets, "fprBudgets", "warning"),
     },
-    hardNegativeFamilies: textList(root, "", "hardNegativeFamilies"),
-    humanCoreStrata: textList(root, "", "humanCoreStrata"),
+    hardNegativeFamilies: frozenList(
+      root,
+      "",
+      "hardNegativeFamilies",
+      FROZEN_HARD_NEGATIVE_FAMILIES,
+    ),
+    humanCoreStrata: frozenList(
+      root,
+      "",
+      "humanCoreStrata",
+      FROZEN_HUMAN_CORE_STRATA,
+    ),
     humanSources: {
       newDownloadsAllowed: literal(
         humanSources,
@@ -728,7 +817,12 @@ export function parseRebuildV3Policy(value: unknown): RebuildV3Policy {
         "newDownloadsAllowed",
         false,
       ),
-      snapshots: textList(humanSources, "humanSources", "snapshots"),
+      snapshots: frozenList(
+        humanSources,
+        "humanSources",
+        "snapshots",
+        FROZEN_HUMAN_SNAPSHOTS,
+      ),
     },
     infersAuthorship: literal(root, "", "infersAuthorship", false),
     integralPositive: {
@@ -869,7 +963,7 @@ export function parseRebuildV3Policy(value: unknown): RebuildV3Policy {
       "productTarget",
       "textual-compatibility-with-ai-generation",
     ),
-    profileBands: textList(root, "", "profileBands"),
+    profileBands: frozenList(root, "", "profileBands", FROZEN_PROFILE_BANDS),
     profileValidityDays: integer(root, "", "profileValidityDays", 1),
     resampling: {
       allowedUnitKinds: textList(
@@ -890,7 +984,7 @@ export function parseRebuildV3Policy(value: unknown): RebuildV3Policy {
     rollout: {
       actionsPromoted: literal(rollout, "rollout", "actionsPromoted", false),
       maximumStage: literal(rollout, "rollout", "maximumStage", "indicator"),
-      stages: textList(rollout, "rollout", "stages"),
+      stages: frozenList(rollout, "rollout", "stages", FROZEN_ROLLOUT_STAGES),
     },
     runtimeComparator: literal(
       root,

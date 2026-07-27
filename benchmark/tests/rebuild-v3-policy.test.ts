@@ -1,4 +1,5 @@
 import { readFile } from "node:fs/promises";
+import { dirname, join } from "node:path";
 
 import { describe, expect, it } from "vitest";
 
@@ -52,6 +53,28 @@ describe("rebuild-v3-policy.json", () => {
     const text = await rawPolicyText();
     const parsed = JSON.parse(text) as unknown;
     expect(text).toBe(`${JSON.stringify(canonicalize(parsed), null, 2)}\n`);
+  });
+
+  it("has exactly one formatting authority, so `npm run format` cannot move the evaluator digest", async () => {
+    // Two tools may not decide the bytes of an EVALUATOR_FILES member.
+    // `computeEvaluatorDigest` hashes this file raw, the canonical form asserted
+    // above is `JSON.stringify(canonical, null, 2)`, and prettier would inline the
+    // short arrays — so the file is in .prettierignore and the test above is the
+    // only authority. If someone deletes that entry, `npm run format` starts
+    // rewriting a hashed file and this fails first.
+    // Resolved off the policy path, not off `import.meta.url`: Vite rewrites a
+    // `new URL(..., import.meta.url)` literal into an asset URL that is not a
+    // `file:` URL under vitest.
+    const ignore = await readFile(
+      join(dirname(REBUILD_V3_POLICY_PATH), "..", ".prettierignore"),
+      "utf8",
+    );
+    expect(
+      ignore
+        .split(/\r?\n/u)
+        .map((line) => line.trim())
+        .filter((line) => line !== "" && !line.startsWith("#")),
+    ).toContain("benchmark/rebuild-v3-policy.json");
   });
 
   it("is part of the evaluator's identity, together with its validator", () => {
@@ -155,7 +178,7 @@ describe("rebuild-v3-policy.json", () => {
     expect(policy.calibrationGate).toEqual({
       eceBinning: "equal-mass",
       eceBins: 15,
-      eceBound: "bootstrap-upper95",
+      eceBound: "bootstrap-simultaneous-upper",
       eceMax: 0.05,
     });
     expect(policy.parity).toEqual({
@@ -297,6 +320,82 @@ describe("parseRebuildV3Policy fails closed", () => {
     expect(() => parseRebuildV3Policy(badKind)).toThrow(
       /resampling\.allowedUnitKinds/u,
     );
+  });
+
+  it("rejects a rewritten frozen LIST, not just a malformed one", () => {
+    // The validator is what a future consumer trusts, so it has to refuse the
+    // same things the test suite would catch. Every case below is a well-formed
+    // array of distinct non-empty strings from the right vocabulary — the shape
+    // check passes and the decision is still gone.
+    const reorderedTieBreak = validPolicyObject();
+    (reorderedTieBreak.calibrator as Record<string, unknown>).tieBreakOrder = [
+      "isotonic",
+      "beta",
+      "platt",
+    ];
+    expect(() => parseRebuildV3Policy(reorderedTieBreak)).toThrow(
+      /calibrator\.tieBreakOrder/u,
+    );
+
+    const oneCalibrator = validPolicyObject();
+    (oneCalibrator.calibrator as Record<string, unknown>).tieBreakOrder = [
+      "isotonic",
+    ];
+    expect(() => parseRebuildV3Policy(oneCalibrator)).toThrow(
+      /calibrator\.tieBreakOrder/u,
+    );
+
+    const fewerCandidates = validPolicyObject();
+    (fewerCandidates.calibrator as Record<string, unknown>).candidates = [
+      "platt",
+      "beta",
+    ];
+    expect(() => parseRebuildV3Policy(fewerCandidates)).toThrow(
+      /calibrator\.candidates/u,
+    );
+
+    const inventedStratum = validPolicyObject();
+    inventedStratum.humanCoreStrata = ["foo"];
+    expect(() => parseRebuildV3Policy(inventedStratum)).toThrow(
+      /humanCoreStrata/u,
+    );
+
+    const droppedFamily = validPolicyObject();
+    droppedFamily.hardNegativeFamilies = [
+      "corporate-structure",
+      "formulaic",
+      "highly-polished",
+      "motivational",
+      "non-native",
+    ];
+    expect(() => parseRebuildV3Policy(droppedFamily)).toThrow(
+      /hardNegativeFamilies/u,
+    );
+
+    const reorderedBands = validPolicyObject();
+    reorderedBands.profileBands = ["200-plus", "80-199", "50-79"];
+    expect(() => parseRebuildV3Policy(reorderedBands)).toThrow(/profileBands/u);
+
+    const extraSnapshot = validPolicyObject();
+    (extraSnapshot.humanSources as Record<string, unknown>).snapshots = [
+      "b2w-reviews01",
+      "carolina",
+      "iberautextification",
+      "pt-stackoverflow",
+      "ptwiki",
+    ];
+    expect(() => parseRebuildV3Policy(extraSnapshot)).toThrow(
+      /humanSources\.snapshots/u,
+    );
+
+    const extraStage = validPolicyObject();
+    (extraStage.rollout as Record<string, unknown>).stages = [
+      "bundle-verified",
+      "shadow",
+      "indicator",
+      "actions",
+    ];
+    expect(() => parseRebuildV3Policy(extraStage)).toThrow(/rollout\.stages/u);
   });
 
   it("rejects a loosened frozen decision", () => {

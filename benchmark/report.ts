@@ -339,17 +339,23 @@ export function renderReportMarkdown(report: BenchmarkReport): string {
   );
   lines.push("");
   lines.push(
-    "| Gate | Tier | Escopo | Limite | Observado | 95% (descritivo) | Evidência | Elegível | Resultado |",
+    "| Gate | Tier | Escopo | Limite | Observado | 95% (descritivo) | n (denominador) | Evidência | Elegível | Resultado |",
   );
-  lines.push("| --- | --- | --- | --- | --- | --- | --- | --- | --- |");
+  lines.push("| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |");
   for (const gate of report.gates.gates) {
     const scope =
       gate.slice === undefined
         ? gate.scope
         : `${gate.slice.axis}/${gate.slice.key}`;
+    // The denominator of the statistic, and the population it came out of when
+    // they differ: an n larger than the denominator overstates the verdict.
+    const denominator =
+      gate.populationSize === undefined
+        ? String(gate.sampleSize)
+        : `${gate.sampleSize} de ${gate.populationSize}`;
     lines.push(
       `| ${gate.id} | ${gate.tier} | ${scope} | ${gate.bound} | ${fmt(gate.observed)} | ` +
-        `${fmt(gate.descriptive?.value)} | ${gate.evidence} | ` +
+        `${fmt(gate.descriptive?.value)} | ${denominator} | ${gate.evidence} | ` +
         `${gate.eligible ? "sim" : "não"} | ${gate.passed ? "passou" : "reprovou"} |`,
     );
   }

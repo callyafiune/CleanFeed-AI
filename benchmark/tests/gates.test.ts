@@ -227,13 +227,21 @@ function humanNegativeWithoutBasis(author: string): EvaluationItem {
 // One human-negative label basis. `powered` decides whether it may gate at all.
 function basis(
   key: LabelBasisSlice["basis"],
-  options: { count: number; powered: boolean; fprUpper?: number },
+  options: {
+    count: number;
+    powered: boolean;
+    fprUpper?: number;
+    // Scored negatives, i.e. the DENOMINATOR of the basis FPR. Defaults to the
+    // whole count; a run with failed inferences has fewer.
+    scored?: number;
+  },
 ): LabelBasisSlice {
+  const scored = options.scored ?? options.count;
   return {
     basis: key,
     count: options.count,
-    scored: options.count,
-    errored: 0,
+    scored,
+    errored: options.count - scored,
     samplingUnits: options.count,
     samplingUnitAxis: "groups.author",
     powered: options.powered,
@@ -270,6 +278,10 @@ function metrics(overrides: MetricsOverrides = {}): EvaluationMetrics {
       role: "diagnostic",
       gatedStatistic: "eceEqualMass15",
       population: "conditional-on-scored",
+      // The ECE runs over the scored rows of the binary population, which is
+      // smaller than the population itself whenever an inference failed.
+      scored: 1_800,
+      populationSize: 2_000,
       eceEqualMass15: overrides.ece ?? resampled(upper(0.02)),
     },
     labelBasis: {
@@ -509,10 +521,46 @@ describe("gate thresholds match the §6.5 table", () => {
       bound: "simultaneous-upper",
       estimand: "calibration.ece",
     });
+    // The frozen contract names the bound this gate reads, and it names the one
+    // the gate actually read: a Bonferroni percentile, not the individual 95%.
+    expect(REBUILD_V3_POLICY.calibrationGate.eceBound).toBe(
+      "bootstrap-simultaneous-upper",
+    );
     expect(gateById(report.gates, "warning.mixed-recall")).toMatchObject({
       operator: ">=",
       required: 0.5,
     });
+  });
+
+  it("reports the denominator of the statistic it decided, not a wider population", () => {
+    const report = evaluateReleaseGates({
+      integrity: integrity(),
+      resampling: plan(),
+      metrics: metrics({
+        labelBases: [
+          // 900 human negatives of which 850 got a score: the FPR has 850 in its
+          // denominator and the power floor is measured on the 900.
+          basis("date-cutoff", { count: 900, powered: true, scored: 850 }),
+        ],
+      }),
+      slices: summary([passingSlice()]),
+    });
+
+    const ece = gateById(report.gates, "warning.calibration-ece");
+    expect(ece.sampleSize).toBe(1_800);
+    expect(ece.populationSize).toBe(2_000);
+
+    const labelBasis = gateById(
+      report.gates,
+      "warning.fpr.labelBasis.date-cutoff",
+    );
+    expect(labelBasis.sampleSize).toBe(850);
+    expect(labelBasis.populationSize).toBe(900);
+
+    // Where the two coincide, only the one number is published.
+    const fpr = gateById(report.gates, "warning.fpr.overall");
+    expect(fpr.sampleSize).toBe(2_000);
+    expect(fpr.populationSize).toBeUndefined();
   });
 
   it("passes cleanly with empty failure lists and structured gates", () => {
@@ -812,6 +860,10 @@ describe("missing resampling evidence fails the gate, never falls back to i.i.d.
     expect(fpr.evidence).toBe("missing-resampling-plan");
     expect(fpr.observed).toBeNull();
     expect(fpr.reasons[0]).toMatch(/reamostragem/u);
+    // The reason says WHICH of the four shortfalls this is: there is no plan.
+    expect(fpr.reasons[0]).toMatch(
+      /nenhum plano de reamostragem foi declarado/u,
+    );
     // The individual 95% bound is still published, and still marked descriptive:
     // it is exactly the number the gate refuses to decide on.
     expect(fpr.descriptive).toMatchObject({ value: 0.02, role: "descriptive" });
@@ -837,9 +889,13 @@ describe("missing resampling evidence fails the gate, never falls back to i.i.d.
     });
     expect(report.failedWarning).toContain("warning.recall.overall");
     expect(report.failedWarning).not.toContain("warning.fpr.overall");
-    expect(gateById(report.gates, "warning.recall.overall").evidence).toBe(
-      "missing-resampling-plan",
+    const gate = gateById(report.gates, "warning.recall.overall");
+    expect(gate.evidence).toBe("missing-resampling-plan");
+    // A plan that exists but skips this estimand says so, and names the plan.
+    expect(gate.reasons[0]).toMatch(
+      /não tem entrada para o estimando warning\.recall/u,
     );
+    expect(gate.reasons[0]).toMatch(/synthetic-c4-plan/u);
   });
 
   it("refuses a plan whose unit is not one of the two the policy allows", () => {
@@ -862,9 +918,9 @@ describe("missing resampling evidence fails the gate, never falls back to i.i.d.
       slices: summary([passingSlice()]),
     });
     expect(report.failedWarning).toContain("warning.fpr.overall");
-    expect(gateById(report.gates, "warning.fpr.overall").evidence).toBe(
-      "missing-resampling-plan",
-    );
+    const gate = gateById(report.gates, "warning.fpr.overall");
+    expect(gate.evidence).toBe("missing-resampling-plan");
+    expect(gate.reasons[0]).toMatch(/unitKind "independent-rows"/u);
   });
 
   it("refuses a plan that declares no unit axis, or fewer replicates than the pilot", () => {
@@ -879,6 +935,10 @@ describe("missing resampling evidence fails the gate, never falls back to i.i.d.
       slices: summary([passingSlice()]),
     });
     expect(withoutAxes.decision).toBe("reject");
+    // Not "there is no plan entry": the entry is there and names no axis.
+    expect(
+      gateById(withoutAxes.gates, "warning.fpr.overall").reasons[0],
+    ).toMatch(/não nomeia nenhum eixo de dependência/u);
 
     const thin = plan();
     const tooFewReplicates = evaluateReleaseGates({
@@ -891,6 +951,14 @@ describe("missing resampling evidence fails the gate, never falls back to i.i.d.
       slices: summary([passingSlice()]),
     });
     expect(tooFewReplicates.decision).toBe("reject");
+    // And this one is about the replicate count, not about a missing entry -- the
+    // single "nenhum plano declara a unidade" sentence sent an operator hunting
+    // for an entry that was right there.
+    const thinReason = gateById(tooFewReplicates.gates, "warning.fpr.overall")
+      .reasons[0];
+    expect(thinReason).toMatch(/declara 500 réplicas/u);
+    expect(thinReason).toMatch(String(PILOT_REPLICATES));
+    expect(thinReason).not.toMatch(/não tem entrada/u);
   });
 });
 

@@ -10,7 +10,7 @@
   "calibrationGate": {
     "eceBinning": "equal-mass",
     "eceBins": 15,
-    "eceBound": "bootstrap-upper95",
+    "eceBound": "bootstrap-simultaneous-upper",
     "eceMax": 0.05
   },
   "calibrator": {
