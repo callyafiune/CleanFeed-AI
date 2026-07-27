@@ -69,6 +69,8 @@ import {
   writeJsonAtomic,
 } from "./io.ts";
 
+import type { Page } from "playwright";
+
 export interface ConsumeHoldoutOptions {
   datasetDirectory: string;
   splitArtifactPath: string;
@@ -359,6 +361,8 @@ async function readTestInput(path: string): Promise<BenchmarkScoreItem[]> {
 
 const CANDIDATE_PAGE = "model-benchmark.html";
 const CANDIDATE_GLOBAL = "__cleanfeedModelBenchmark";
+/** Cold WASM start for the pinned bundle; see runScore for the rationale. */
+const CANDIDATE_READY_TIMEOUT_MS = 300_000;
 
 interface CandidatePageApi {
   status: ModelBenchmarkStatusV1;
@@ -403,7 +407,7 @@ async function defaultCreateTestPage(
     const worker = existing ?? (await context.waitForEvent("serviceworker"));
     const extensionId = new URL(worker.url()).host;
     const page = await context.newPage();
-    await page.goto(`chrome-extension://${extensionId}/${CANDIDATE_PAGE}`);
+    await openHoldoutCandidatePage(page, extensionId);
     const benchmarkPage: BenchmarkPage = {
       status(): Promise<ModelBenchmarkStatusV1> {
         return page.evaluate((globalName) => {
@@ -442,4 +446,26 @@ async function defaultCreateTestPage(
     await context.close();
     throw error;
   }
+}
+
+/**
+ * Navigates the one-way holdout driver and waits until the candidate has
+ * published its terminal API. Kept separate from the score path so a regression
+ * in either browser driver is detected independently.
+ */
+export async function openHoldoutCandidatePage(
+  page: Pick<Page, "goto" | "waitForFunction">,
+  extensionId: string,
+): Promise<void> {
+  await page.goto(`chrome-extension://${extensionId}/${CANDIDATE_PAGE}`);
+  // The candidate publishes its API only once model assembly reaches a
+  // TERMINAL outcome, so the global does not exist at navigation time — a 106M
+  // ONNX bundle takes tens of seconds under WASM. Racing it reads as
+  // "candidate benchmark API is unavailable", which on THIS path costs a
+  // resume of the one-way holdout lease.
+  await page.waitForFunction(
+    (globalName) => globalName in globalThis,
+    CANDIDATE_GLOBAL,
+    { timeout: CANDIDATE_READY_TIMEOUT_MS },
+  );
 }

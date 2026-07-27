@@ -46,6 +46,9 @@ import { join } from "node:path";
 /** The page and global the candidate extension publishes its API on. */
 const CANDIDATE_PAGE = "model-benchmark.html";
 const CANDIDATE_GLOBAL = "__cleanfeedModelBenchmark";
+// Cold WASM start for the pinned bundle; generous on purpose, since the only
+// alternative reading of a slow start is a false "API unavailable".
+const CANDIDATE_READY_TIMEOUT_MS = 300_000;
 
 export interface ScoreOptions {
   datasetDirectory: string;
@@ -137,7 +140,7 @@ export async function runScore(options: ScoreOptions): Promise<string> {
     await blockExternalRequests(context);
     const extensionId = await resolveExtensionId(context);
     const page = await context.newPage();
-    await page.goto(`chrome-extension://${extensionId}/${CANDIDATE_PAGE}`);
+    await openScoreCandidatePage(page, extensionId);
 
     const store = createPredictionShardStore({
       directory: options.outputDirectory,
@@ -157,6 +160,29 @@ export async function runScore(options: ScoreOptions): Promise<string> {
   } finally {
     await context.close();
   }
+}
+
+/**
+ * Navigates the development/calibration driver and waits until the candidate
+ * has published its terminal API. Exported so the race regression is testable
+ * without launching the 106M model bundle.
+ */
+export async function openScoreCandidatePage(
+  page: Pick<Page, "goto" | "waitForFunction">,
+  extensionId: string,
+): Promise<void> {
+  await page.goto(`chrome-extension://${extensionId}/${CANDIDATE_PAGE}`);
+  // The candidate publishes its API only once model assembly reaches a
+  // TERMINAL outcome — success or failure — precisely so no scorer can read a
+  // half-initialized runtime. That means the global is absent at navigation
+  // time: bringing a 106M ONNX bundle up under WASM takes tens of seconds.
+  // Wait for publication rather than racing it, and let a genuinely stuck
+  // candidate surface as a timeout instead of as "API unavailable".
+  await page.waitForFunction(
+    (globalName) => globalName in globalThis,
+    CANDIDATE_GLOBAL,
+    { timeout: CANDIDATE_READY_TIMEOUT_MS },
+  );
 }
 
 async function blockExternalRequests(context: BrowserContext): Promise<void> {
