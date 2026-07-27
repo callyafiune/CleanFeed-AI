@@ -114,10 +114,16 @@ function families(metrics: DecisionMetrics): DecisionFamilies {
   };
 }
 
+// The three error-rate denominators, kept DIFFERENT on purpose: a fixture that
+// gave all three the same rate would hide a block reading the wrong companion.
+const ELIGIBLE_ERROR_RATE = estimate(4, 2_000);
+const DECISION_POPULATION_ERROR_RATE = estimate(4, 1_900);
+const BINARY_POPULATION_ERROR_RATE = estimate(4, 1_800);
+
 // The A6 role-named blocks. The sealed profile reads none of them today, so the
 // fixture only has to be structurally complete: the release block mirrors the
 // same matrices under the name that says what they decide, and the separability
-// and calibration blocks carry their error-rate companion.
+// and calibration blocks carry the error-rate companion OF THEIR OWN population.
 function a6Blocks(
   warning: DecisionFamilies,
   visualAction: DecisionFamilies | null,
@@ -130,7 +136,6 @@ function a6Blocks(
   | "predictiveValue"
   | "multiplicity"
 > {
-  const errorRate = estimate(4, 2000);
   const frozen = (
     decision: "warning" | "visual-action",
     families: DecisionFamilies,
@@ -140,14 +145,16 @@ function a6Blocks(
     family: "end-to-end",
     recall: families.endToEnd.recall,
     falsePositiveRate: families.endToEnd.falsePositiveRate,
-    errorRate,
+    errorRatePopulation: "eligible-decision-population",
+    errorRate: DECISION_POPULATION_ERROR_RATE,
     conditional: {
       role: "diagnostic",
       family: "conditional-on-scored",
       selectiveFailureSensitive: true,
       recall: families.conditionalOnScored.recall,
       falsePositiveRate: families.conditionalOnScored.falsePositiveRate,
-      errorRate,
+      errorRatePopulation: "eligible-decision-population",
+      errorRate: DECISION_POPULATION_ERROR_RATE,
     },
   });
   return {
@@ -163,7 +170,8 @@ function a6Blocks(
       purpose: "separability",
       gates: false,
       population: "conditional-on-scored",
-      errorRate,
+      errorRatePopulation: "binary-population",
+      errorRate: BINARY_POPULATION_ERROR_RATE,
       auroc: { value: 0.94, method: "point" },
       prAuc: { value: 0.93, method: "point" },
       tprAtOnePercentFpr: {
@@ -178,7 +186,10 @@ function a6Blocks(
       role: "diagnostic",
       gatedStatistic: "eceEqualMass15",
       population: "conditional-on-scored",
-      errorRate,
+      scored: 1_800,
+      populationSize: 1_900,
+      errorRatePopulation: "binary-population",
+      errorRate: BINARY_POPULATION_ERROR_RATE,
       brier: { value: 0.08, method: "point" },
       logLoss: 0.3,
       intercept: 0,
@@ -229,7 +240,9 @@ function fullMetrics(
     ece15: { value: 0.03, method: "point" },
     coverage: estimate(1900, 2000),
     abstentionRate: estimate(60, 2000),
-    errorRate: estimate(4, 2000),
+    errorRate: ELIGIBLE_ERROR_RATE,
+    decisionPopulationErrorRate: DECISION_POPULATION_ERROR_RATE,
+    binaryPopulationErrorRate: BINARY_POPULATION_ERROR_RATE,
     resolution: {
       bySource: [],
       byClass: [],

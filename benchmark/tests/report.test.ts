@@ -222,7 +222,8 @@ function metrics(): EvaluationMetrics {
             method: "wilson-one-sided",
           },
         },
-        errorRate: { value: 0.125, method: "point" },
+        errorRatePopulation: "eligible-decision-population",
+        errorRate: { value: 0.2, method: "point" },
         conditional: {
           role: "diagnostic",
           family: "conditional-on-scored",
@@ -233,7 +234,8 @@ function metrics(): EvaluationMetrics {
             upper95: 0.6,
             method: "wilson-one-sided",
           },
-          errorRate: { value: 0.125, method: "point" },
+          errorRatePopulation: "eligible-decision-population",
+          errorRate: { value: 0.2, method: "point" },
         },
       },
       visualAction: null,
@@ -243,7 +245,8 @@ function metrics(): EvaluationMetrics {
       purpose: "separability",
       gates: false,
       population: "conditional-on-scored",
-      errorRate: { value: 0.125, method: "point" },
+      errorRatePopulation: "binary-population",
+      errorRate: { value: 0.3, method: "point" },
       auroc: {
         value: 0.9647,
         lower95: 0.95,
@@ -263,7 +266,10 @@ function metrics(): EvaluationMetrics {
       role: "diagnostic",
       gatedStatistic: "eceEqualMass15",
       population: "conditional-on-scored",
-      errorRate: { value: 0.125, method: "point" },
+      scored: 7,
+      populationSize: 10,
+      errorRatePopulation: "binary-population",
+      errorRate: { value: 0.3, method: "point" },
       brier: { value: 0.0812, method: "author-cluster-percentile" },
       logLoss: 0.2731,
       intercept: -0.12,
@@ -289,6 +295,7 @@ function metrics(): EvaluationMetrics {
         {
           key: "50_79",
           count: 3,
+          populationSize: 4,
           samplingUnits: 3,
           samplingUnitAxis: "groups.author",
           brier: 0.08,
@@ -368,6 +375,8 @@ function metrics(): EvaluationMetrics {
     coverage: { value: 0.75, method: "point" },
     abstentionRate: { value: 0.125, method: "point" },
     errorRate: { value: 0.125, method: "point" },
+    decisionPopulationErrorRate: { value: 0.2, method: "point" },
+    binaryPopulationErrorRate: { value: 0.3, method: "point" },
     resolution: {
       bySource: [
         {
@@ -697,7 +706,18 @@ describe("renderReportMarkdown", () => {
     // The undecided cells are published, so a failed inference is visible rather
     // than absorbed into a true negative.
     expect(md).toContain("| Sem decisão (negativos) | 1 | 0 |");
-    expect(md).toContain("Erro de inferência: 0.1250");
+    // The three error-rate denominators are printed as three named lines, so no
+    // reader can take the rate over the whole eligible set for the rate over the
+    // population a conditional column was measured on.
+    expect(md).toContain(
+      "Erro de inferência (todo o conjunto elegível): 0.1250",
+    );
+    expect(md).toContain(
+      "Erro de inferência (população das duas famílias de decisão): 0.2000",
+    );
+    expect(md).toContain(
+      "Erro de inferência (população binária, denominador das curvas): 0.3000",
+    );
   });
 
   it("breaks coverage and error rate out by source, class, length band and platform", async () => {
@@ -748,14 +768,21 @@ describe("renderReportMarkdown publishes the A6 evidence with its roles named", 
     // Every conditional block shows the error rate of the same population — in
     // the release table, in the two-family table, and in both diagnostics.
     expect(section(markdown, "Métrica de release")).toMatch(/Taxa de erro/u);
-    expect(section(markdown, "Overall")).toMatch(
-      /Taxa de erro \(mesma população\)/u,
+    // "Mesma população" is checked against the VALUE, not just the words: the
+    // two-family table must carry the decision-population rate (0.2) and the two
+    // conditional diagnostics the binary-population rate (0.3), never the 0.1250
+    // of the whole eligible set.
+    expect(section(markdown, "Overall")).toContain(
+      "| Taxa de erro (mesma população: elegíveis positivos/negativos) | 0.2000 | 0.2000 |",
     );
-    expect(section(markdown, "Diagnóstico de separabilidade")).toMatch(
-      /Taxa de erro da mesma população/u,
+    expect(section(markdown, "Diagnóstico de separabilidade")).toContain(
+      "Taxa de erro da mesma população (binary-population): 0.3000",
     );
-    expect(section(markdown, "Calibração")).toMatch(
-      /Taxa de erro da mesma população/u,
+    expect(section(markdown, "Calibração")).toContain(
+      "Taxa de erro da mesma população (binary-population): 0.3000",
+    );
+    expect(section(markdown, "Calibração")).toContain(
+      "Denominadores: 7 linhas escoradas de uma população de 10",
     );
   });
 

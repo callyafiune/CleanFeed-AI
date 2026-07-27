@@ -512,6 +512,28 @@ export interface SimulatedPrevalences {
 // only be read out of `EvaluationMetrics.release`, and nothing in there is a
 // ranking statistic.
 
+// WHICH population an `errorRate` companion was measured over. A conditional
+// number is uninterpretable without knowing how much of its own population
+// produced no decision — and "its own population" is not the same set in every
+// block of this artifact, so the denominator is NAMED instead of assumed (R7):
+//
+//   * "eligible"                     — every eligible row (pt-BR, at least
+//                                      `minimumEligibleWords` words), whatever its
+//                                      label. This is `EvaluationMetrics.errorRate`
+//                                      and the integrity gate's denominator.
+//   * "eligible-decision-population" — the eligible rows that are a warning
+//                                      positive or a human negative, i.e. exactly
+//                                      what the two decision families count. A
+//                                      mixed row below 50% AI is eligible and is
+//                                      in NEITHER family (frozen table: diagnostic
+//                                      slice only), so this set is smaller.
+//   * "binary-population"            — every warning positive or human negative,
+//                                      eligibility aside, which is the population
+//                                      behind `scoredBinary` and therefore behind
+//                                      the ranking and calibration statistics.
+export type ErrorRatePopulation =
+  "eligible" | "eligible-decision-population" | "binary-population";
+
 /** One decision at its frozen threshold: the release metric, end-to-end. */
 export interface FrozenThresholdMetrics {
   role: "release";
@@ -519,9 +541,10 @@ export interface FrozenThresholdMetrics {
   family: "end-to-end";
   recall: MetricEstimate;
   falsePositiveRate: MetricEstimate;
-  // The error rate of the SAME population, published beside the rates because a
-  // rate over the eligible set is uninterpretable without knowing how much of it
-  // produced no decision at all.
+  // The error rate of the population BOTH families were measured over, published
+  // beside the rates because a rate is uninterpretable without knowing how much of
+  // its own denominator produced no decision at all.
+  errorRatePopulation: "eligible-decision-population";
   errorRate: MetricEstimate;
   // The conditional mirror, kept here and only here: it is a diagnostic, it is
   // sensitive to selective failure (if the documents that would have scored badly
@@ -533,6 +556,10 @@ export interface FrozenThresholdMetrics {
     selectiveFailureSensitive: true;
     recall: MetricEstimate;
     falsePositiveRate: MetricEstimate;
+    // The same companion as the release row above: the two rows differ by exactly
+    // the rows this rate counts, which is the comparison that exposes selective
+    // failure.
+    errorRatePopulation: "eligible-decision-population";
     errorRate: MetricEstimate;
   };
 }
@@ -557,12 +584,14 @@ export interface TprAtFixedFpr {
 // numbers that decouples from behaviour at a low FPR budget (assessment §4.6).
 // `gates: false` is a literal so a consumer cannot mistake this block for a gate
 // input, and the error rate travels with it because it is measured over the
-// scored subset.
+// scored subset — the error rate of THAT subset's own population, which is every
+// binary row and not the whole eligible set.
 export interface SeparabilityDiagnostic {
   role: "diagnostic";
   purpose: "separability";
   gates: false;
   population: "conditional-on-scored";
+  errorRatePopulation: "binary-population";
   errorRate: MetricEstimate;
   auroc: MetricEstimate;
   prAuc: MetricEstimate;
@@ -578,12 +607,16 @@ export interface ReliabilityBin {
   highestProbability: number;
 }
 
-// Calibration over one slice. `count` is the number of SCORED rows the statistics
-// were computed on; `errorRate` is over the eligible rows of the same slice, so a
-// slice that looks well calibrated because half of it failed is visible.
+// Calibration over one slice. BOTH denominators are published: `count` is the
+// number of SCORED rows the statistics were computed on, `populationSize` is the
+// slice's whole binary population, and `errorRate` is over that population — the
+// same construction as the aggregate block, so a slice that looks well calibrated
+// because its hard rows failed is visible, and the slices are a decomposition of
+// the aggregate rather than a differently-filtered set.
 export interface CalibrationSliceMetrics {
   key: string;
   count: number;
+  populationSize: number;
   samplingUnits: number;
   samplingUnitAxis: "groups.author";
   brier: number;
@@ -597,6 +630,13 @@ export interface CalibrationDiagnostics {
   // The one statistic in this block a gate reads, and it reads its interval.
   gatedStatistic: "eceEqualMass15";
   population: "conditional-on-scored";
+  // The two denominators, published so no consumer has to guess which one a
+  // statistic used: `scored` is what every calibration number was computed on,
+  // `populationSize` is the binary population behind it, and `errorRate` is the
+  // gap between them expressed as a rate.
+  scored: number;
+  populationSize: number;
+  errorRatePopulation: "binary-population";
   errorRate: MetricEstimate;
   brier: MetricEstimate;
   logLoss: number;
@@ -717,7 +757,20 @@ export interface EvaluationMetrics {
   ece15: MetricEstimate;
   coverage: MetricEstimate;
   abstentionRate: MetricEstimate;
+  // Inference error over the WHOLE eligible set. This is the integrity gate's
+  // denominator and the one the resolution tables decompose; it is NOT the
+  // companion of any conditional block, because those were measured over
+  // narrower populations (see `ErrorRatePopulation`).
   errorRate: MetricEstimate;
+  // Inference error over the population the two decision families were measured
+  // over: the eligible rows that are a warning positive or a human negative.
+  // Published at the top level so the report can put it inside the two-family
+  // table without reaching into `release`.
+  decisionPopulationErrorRate: MetricEstimate;
+  // Inference error over every warning positive or human negative, eligibility
+  // aside: the population behind `scoredBinary`, hence behind AUROC, PR-AUC and
+  // every calibration statistic.
+  binaryPopulationErrorRate: MetricEstimate;
   // Coverage and error rate per source, class, length band and platform.
   resolution: ResolutionBreakdown;
   simulatedPrecision: Record<
@@ -1121,15 +1174,36 @@ export function computeEvaluationMetrics(
 
   // Continuous ranking/calibration metrics run over the scored positive/negative
   // set; mixed records below 50% AI are neither, so they never enter the curve.
-  const scoredBinary = items
-    .filter(isScoredItem)
-    .filter(
-      (item) => isWarningPositive(item.record) || isHumanNegative(item.record),
-    );
+  // NOTE the population: `items`, not `eligible`. That is a pre-existing choice
+  // of this module (the curve is over every binary row that produced a score),
+  // and it is why these statistics need their own error-rate companion.
+  const binaryPopulation = items.filter(
+    (item) => isWarningPositive(item.record) || isHumanNegative(item.record),
+  );
+  const scoredBinary = binaryPopulation.filter(isScoredItem);
 
+  // Three denominators, three companions. Handing the whole-eligible-set rate to
+  // a block measured over a narrower population is what made the phrase "the
+  // error rate of the same population" false: with mixed<50% rows in the corpus
+  // (a deliberate diagnostic slice of the frozen table) the sets differ, in
+  // either direction, and the printed companion could be an order of magnitude
+  // away from the failure rate of the rows the statistic actually used.
   const errorRate = proportionEstimate(
     eligible.filter((item) => item.status === "error").length,
     eligibleCount,
+    bonferroni,
+  );
+  const decisionPopulation = eligible.filter(
+    (item) => isWarningPositive(item.record) || isHumanNegative(item.record),
+  );
+  const decisionPopulationErrorRate = proportionEstimate(
+    decisionPopulation.filter((item) => item.status === "error").length,
+    decisionPopulation.length,
+    bonferroni,
+  );
+  const binaryPopulationErrorRate = proportionEstimate(
+    binaryPopulation.filter((item) => item.status === "error").length,
+    binaryPopulation.length,
     bonferroni,
   );
 
@@ -1139,18 +1213,27 @@ export function computeEvaluationMetrics(
     release: {
       role: "release",
       thresholdSource: "frozen-calibration-threshold",
-      warning: frozenThresholdMetrics("warning", warning, errorRate),
+      warning: frozenThresholdMetrics(
+        "warning",
+        warning,
+        decisionPopulationErrorRate,
+      ),
       visualAction:
         visualAction === null
           ? null
-          : frozenThresholdMetrics("visual-action", visualAction, errorRate),
+          : frozenThresholdMetrics(
+              "visual-action",
+              visualAction,
+              decisionPopulationErrorRate,
+            ),
     },
     separability: {
       role: "diagnostic",
       purpose: "separability",
       gates: false,
       population: "conditional-on-scored",
-      errorRate,
+      errorRatePopulation: "binary-population",
+      errorRate: binaryPopulationErrorRate,
       auroc: continuousEstimate(
         scoredBinary,
         rocAucFromItems,
@@ -1161,11 +1244,11 @@ export function computeEvaluationMetrics(
       tprAtOnePercentFpr: tprAtTargetFpr(scoredBinary, DEFAULT_TARGET_FPR),
     },
     calibration: calibrationDiagnostics(
-      eligible,
+      binaryPopulation,
       scoredBinary,
       seed,
       bonferroni,
-      errorRate,
+      binaryPopulationErrorRate,
     ),
     labelBasis: labelBasisBreakdown(eligible, bonferroni),
     predictiveValue: predictiveValueProjection(warning),
@@ -1182,6 +1265,8 @@ export function computeEvaluationMetrics(
       bonferroni,
     ),
     errorRate,
+    decisionPopulationErrorRate,
+    binaryPopulationErrorRate,
     resolution: resolutionBreakdown(eligible, bonferroni),
     simulatedPrecision: {
       prevalence01: simulatedPrecisionAt(warning, prevalences.prevalence01),
@@ -1227,6 +1312,9 @@ export function computeEvaluationMetrics(
 function frozenThresholdMetrics(
   decision: "warning" | "visual-action",
   families: DecisionFamilies,
+  // The error rate of the population BOTH families count, never the whole
+  // eligible set: the two differ by every eligible row that is neither a warning
+  // positive nor a human negative.
   errorRate: MetricEstimate,
 ): FrozenThresholdMetrics {
   return {
@@ -1235,6 +1323,7 @@ function frozenThresholdMetrics(
     family: "end-to-end",
     recall: families.endToEnd.recall,
     falsePositiveRate: families.endToEnd.falsePositiveRate,
+    errorRatePopulation: "eligible-decision-population",
     errorRate,
     conditional: {
       role: "diagnostic",
@@ -1242,6 +1331,7 @@ function frozenThresholdMetrics(
       selectiveFailureSensitive: true,
       recall: families.conditionalOnScored.recall,
       falsePositiveRate: families.conditionalOnScored.falsePositiveRate,
+      errorRatePopulation: "eligible-decision-population",
       errorRate,
     },
   };
@@ -1291,7 +1381,10 @@ function tprAtTargetFpr(
 }
 
 function calibrationDiagnostics(
-  eligible: readonly EvaluationItem[],
+  // The whole binary population, not the eligible set: `scoredBinary` is the part
+  // of THIS that produced a score, so the companion rate and the slices decompose
+  // the same denominator the statistics used.
+  binaryPopulation: readonly EvaluationItem[],
   scoredBinary: readonly ScoredEvaluationItem[],
   seed: number,
   bonferroni: MultiplicityDeclaration | null,
@@ -1303,6 +1396,9 @@ function calibrationDiagnostics(
     role: "diagnostic",
     gatedStatistic: "eceEqualMass15",
     population: "conditional-on-scored",
+    scored: scoredBinary.length,
+    populationSize: binaryPopulation.length,
+    errorRatePopulation: "binary-population",
     errorRate,
     brier: continuousEstimate(scoredBinary, sampleBrier, seed, bonferroni),
     logLoss: logLoss(points),
@@ -1316,30 +1412,30 @@ function calibrationDiagnostics(
       bonferroni,
     ),
     reliability: reliabilityDiagram(points, ECE_BINS),
-    byLengthBucket: calibrationSlices(eligible, (record) =>
+    byLengthBucket: calibrationSlices(binaryPopulation, (record) =>
       sizeBucket(record.wordCount),
     ),
     bySource: calibrationSlices(
-      eligible,
+      binaryPopulation,
       (record) => record.provenance.sourceId,
     ),
     byLinguisticStratum: calibrationSlices(
-      eligible,
+      binaryPopulation,
       (record) => record.humanSourceType ?? "unknown",
     ),
   };
 }
 
-// Calibration by slice. The denominator of the statistics is the SCORED
-// positive/negative rows of the slice; the denominator of `errorRate` is the whole
-// eligible slice, which is why both are published together (a slice can only look
-// calibrated because its hard rows failed).
+// Calibration by slice, over the same binary population as the aggregate block.
+// Both denominators are published: the statistics run over the SCORED rows of the
+// slice, `errorRate` runs over the whole slice, and the gap between them is how a
+// slice that looks well calibrated because its hard rows failed becomes visible.
 function calibrationSlices(
-  eligible: readonly EvaluationItem[],
+  binaryPopulation: readonly EvaluationItem[],
   keyOf: (record: BenchmarkRecord) => string,
 ): CalibrationSliceMetrics[] {
   const buckets = new Map<string, EvaluationItem[]>();
-  for (const item of eligible) {
+  for (const item of binaryPopulation) {
     const key = keyOf(item.record);
     const bucket = buckets.get(key);
     if (bucket === undefined) buckets.set(key, [item]);
@@ -1348,16 +1444,12 @@ function calibrationSlices(
   return [...buckets.entries()]
     .sort((a, b) => (a[0] < b[0] ? -1 : a[0] > b[0] ? 1 : 0))
     .map(([key, bucket]) => {
-      const scored = bucket
-        .filter(isScoredItem)
-        .filter(
-          (item) =>
-            isWarningPositive(item.record) || isHumanNegative(item.record),
-        );
+      const scored = bucket.filter(isScoredItem);
       const points = scored.map(toCalibrationPoint);
       return {
         key,
         count: scored.length,
+        populationSize: bucket.length,
         samplingUnits: samplingUnits(scored),
         samplingUnitAxis: "groups.author",
         brier: brierScore(points),

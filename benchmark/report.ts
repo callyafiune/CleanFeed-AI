@@ -414,7 +414,7 @@ export function renderReportMarkdown(report: BenchmarkReport): string {
     decisionFamilyTable(
       "Aviso",
       report.metrics.warning,
-      report.metrics.errorRate,
+      report.metrics.decisionPopulationErrorRate,
     ),
   );
   lines.push("");
@@ -424,14 +424,28 @@ export function renderReportMarkdown(report: BenchmarkReport): string {
       decisionFamilyTable(
         "Ação visual",
         visualAction,
-        report.metrics.errorRate,
+        report.metrics.decisionPopulationErrorRate,
       ),
     );
     lines.push("");
   }
   lines.push(`- Cobertura: ${fmt(report.metrics.coverage?.value)}`);
   lines.push(`- Abstenção: ${fmt(report.metrics.abstentionRate?.value)}`);
-  lines.push(`- Erro de inferência: ${fmt(report.metrics.errorRate?.value)}`);
+  // Three denominators, three lines, each named. The whole eligible set is the
+  // integrity gate's denominator; the two narrower populations are the companions
+  // of the blocks measured over them. Printing one rate for all three is what made
+  // the heading "mesma população" false whenever the corpus holds a mixed<50% row.
+  lines.push(
+    `- Erro de inferência (todo o conjunto elegível): ${fmt(report.metrics.errorRate?.value)}`,
+  );
+  lines.push(
+    "- Erro de inferência (população das duas famílias de decisão): " +
+      fmt(report.metrics.decisionPopulationErrorRate?.value),
+  );
+  lines.push(
+    "- Erro de inferência (população binária, denominador das curvas): " +
+      fmt(report.metrics.binaryPopulationErrorRate?.value),
+  );
   lines.push(
     `- Precisão simulada (prev. 1%/5%/10%): ${fmt(report.metrics.simulatedPrecision?.prevalence01)} / ` +
       `${fmt(report.metrics.simulatedPrecision?.prevalence05)} / ${fmt(report.metrics.simulatedPrecision?.prevalence10)}`,
@@ -462,7 +476,8 @@ export function renderReportMarkdown(report: BenchmarkReport): string {
         `n=${separability.tprAtOnePercentFpr?.sampleSize})`,
     );
     lines.push(
-      `- Taxa de erro da mesma população: ${fmt(separability.errorRate?.value)}`,
+      `- Taxa de erro da mesma população (${separability.errorRatePopulation}): ` +
+        fmt(separability.errorRate?.value),
     );
     lines.push("");
   }
@@ -489,7 +504,12 @@ export function renderReportMarkdown(report: BenchmarkReport): string {
         `slope ${fmt(calibration.slope)}`,
     );
     lines.push(
-      `- Taxa de erro da mesma população: ${fmt(calibration.errorRate?.value)}`,
+      `- Denominadores: ${calibration.scored} linhas escoradas de uma população ` +
+        `de ${calibration.populationSize} (${calibration.population})`,
+    );
+    lines.push(
+      `- Taxa de erro da mesma população (${calibration.errorRatePopulation}): ` +
+        fmt(calibration.errorRate?.value),
     );
     lines.push("");
     const reliability = calibration.reliability ?? [];
@@ -517,13 +537,14 @@ export function renderReportMarkdown(report: BenchmarkReport): string {
         lines.push("_Sem linhas escoradas._");
       } else {
         lines.push(
-          "| Chave | n escorado | Unidades amostrais | Brier | log-loss | ECE equal-mass | Taxa de erro |",
+          "| Chave | n escorado | n da população | Unidades amostrais | Brier | log-loss | ECE equal-mass | Taxa de erro |",
         );
-        lines.push("| --- | --- | --- | --- | --- | --- | --- |");
+        lines.push("| --- | --- | --- | --- | --- | --- | --- | --- |");
         for (const row of rows) {
           lines.push(
-            `| ${row.key} | ${row.count} | ${row.samplingUnits} | ${fmt(row.brier)} | ` +
-              `${fmt(row.logLoss)} | ${fmt(row.eceEqualMass)} | ${fmt(row.errorRate?.value)} |`,
+            `| ${row.key} | ${row.count} | ${row.populationSize} | ${row.samplingUnits} | ` +
+              `${fmt(row.brier)} | ${fmt(row.logLoss)} | ${fmt(row.eceEqualMass)} | ` +
+              `${fmt(row.errorRate?.value)} |`,
           );
         }
       }
@@ -688,7 +709,13 @@ function decisionFamilyTable(
     ["Recall (ponto)", (m) => fmt(m?.recall?.value)],
     // Never a conditional column without the error rate of the same population in
     // the same table: the two families differ by exactly the rows this rate counts.
-    ["Taxa de erro (mesma população)", () => fmt(errorRate?.value)],
+    // "Mesma população" is literal — the caller hands in the rate over the eligible
+    // positives and human negatives, which is what both columns count, and NOT the
+    // rate over the whole eligible set.
+    [
+      "Taxa de erro (mesma população: elegíveis positivos/negativos)",
+      () => fmt(errorRate?.value),
+    ],
   ];
   const lines: string[] = [];
   lines.push(`### ${subject}`);

@@ -418,6 +418,27 @@ function familiesFixture(): EvaluationItem[] {
   ];
 }
 
+// familiesFixture plus the two kinds of row that make the three error-rate
+// denominators differ: three ELIGIBLE mixed rows below 50% AI (eligible, but
+// neither a warning positive nor a human negative, so no decision family and no
+// curve ever sees them) and one INELIGIBLE errored human negative (a binary row
+// the continuous statistics count in their population but the decision families
+// drop for the word floor).
+function companionFixture(): EvaluationItem[] {
+  return [
+    ...familiesFixture(),
+    item({ author: "x1", label: "human", wordCount: 30, status: "error" }),
+    ...Array.from({ length: 3 }, (_, index) =>
+      item({
+        author: `mx${index}`,
+        label: "mixed",
+        aiFraction: 0.3,
+        documentScore: 0.3,
+      }),
+    ),
+  ];
+}
+
 describe("metric families (R5)", () => {
   it("publishes the pair with both roles named in the artifact", () => {
     const metrics = computeEvaluationMetrics(familiesFixture(), OPTIONS);
@@ -721,17 +742,62 @@ describe("named metric roles", () => {
   });
 
   it("never publishes a conditional number without the error rate of the same population", () => {
-    const metrics = computeEvaluationMetrics(familiesFixture(), OPTIONS);
+    const metrics = computeEvaluationMetrics(companionFixture(), OPTIONS);
     const conditional = metrics.release.warning.conditional;
     expect(conditional.family).toBe("conditional-on-scored");
     expect(conditional.selectiveFailureSensitive).toBe(true);
-    expect(conditional.errorRate.value).toBe(metrics.errorRate.value);
+    expect(conditional.errorRate.value).toBe(
+      metrics.decisionPopulationErrorRate.value,
+    );
     expect(conditional.errorRate.value).toBeGreaterThan(0);
-    // The separability and calibration blocks are conditional too, so they carry
-    // the same companion.
-    expect(metrics.separability.errorRate.value).toBe(metrics.errorRate.value);
-    expect(metrics.calibration.errorRate.value).toBe(metrics.errorRate.value);
+    // The separability and calibration blocks are conditional too, and they were
+    // measured over a THIRD population, so they carry their own companion.
+    expect(metrics.separability.errorRate.value).toBe(
+      metrics.binaryPopulationErrorRate.value,
+    );
+    expect(metrics.calibration.errorRate.value).toBe(
+      metrics.binaryPopulationErrorRate.value,
+    );
     expect(metrics.calibration.population).toBe("conditional-on-scored");
+  });
+
+  it("gives each block the error rate of ITS denominator, not the global one", () => {
+    // Three populations, three different rates, so no assertion here can be
+    // satisfied by the wrong denominator (the bug this pins: every block used to
+    // receive `metrics.errorRate`, whose denominator is the whole eligible set).
+    //
+    //   * eligible                     — 10 rows, 2 errored  => 0.2
+    //   * eligible decision population — the 7 rows that are a warning positive
+    //     or a human negative (the three mixed<50% rows are neither), 2 errored
+    //     => 2/7
+    //   * binary population            — every positive/negative row, eligibility
+    //     aside, so the 30-word human joins: 8 rows, 3 errored => 3/8
+    const metrics = computeEvaluationMetrics(companionFixture(), OPTIONS);
+
+    expect(metrics.errorRate.value).toBeCloseTo(0.2, 10);
+    expect(metrics.decisionPopulationErrorRate.value).toBeCloseTo(2 / 7, 10);
+    expect(metrics.binaryPopulationErrorRate.value).toBeCloseTo(3 / 8, 10);
+
+    // Release: the population both families were measured over.
+    expect(metrics.release.warning.errorRatePopulation).toBe(
+      "eligible-decision-population",
+    );
+    expect(metrics.release.warning.errorRate.value).toBeCloseTo(2 / 7, 10);
+    expect(metrics.release.visualAction?.errorRate.value).toBeCloseTo(
+      2 / 7,
+      10,
+    );
+
+    // Separability and calibration: the population behind `scoredBinary`.
+    expect(metrics.separability.errorRatePopulation).toBe("binary-population");
+    expect(metrics.separability.errorRate.value).toBeCloseTo(3 / 8, 10);
+    expect(metrics.calibration.errorRatePopulation).toBe("binary-population");
+    expect(metrics.calibration.errorRate.value).toBeCloseTo(3 / 8, 10);
+    // The two denominators are published, not inferred: 5 scored rows out of a
+    // binary population of 8.
+    expect(metrics.calibration.scored).toBe(5);
+    expect(metrics.calibration.population).toBe("conditional-on-scored");
+    expect(metrics.calibration.populationSize).toBe(8);
   });
 
   it("breaks calibration down by length, source and linguistic stratum", () => {
