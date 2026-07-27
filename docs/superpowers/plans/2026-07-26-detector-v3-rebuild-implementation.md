@@ -1234,10 +1234,56 @@ se moveu.
     `slices.ts` para `conditionalOnScored` deixava a suíte de fatias, `gates.test.ts` e
     `profile-artifact.test.ts` **verdes**. O helper agora espelha
     `benchmark/tests/metrics.test.ts` (linha não escorada não carrega escore nem decisão) e o
-    teste da invariante ganhou um negativo humano **elegível e errado**. A fixture pina as
-    contagens contra as **duas** alternativas erradas de uma vez: bucket cru = 4 negativos,
-    `conditionalOnScored` = 2, e só a população elegível fim-a-fim dá 3. A mutação
-    `conditionalOnScored` agora falha com `expected 2 to be 3`.
+    teste da invariante ganhou um negativo humano **elegível e errado**: bucket cru = 4
+    negativos, `conditionalOnScored` = 2, e só a população elegível fim-a-fim dá 3, então a
+    mutação da leitura de `negatives` passou a falhar com `expected 2 to be 3`. **Isso cobriu
+    só metade da invariante** — a fixture pinava `negatives`, não `positives`. Corrigido no
+    item 12; o texto original deste item, que dizia pinar "as contagens", superdeclarava o
+    alcance do teste.
+
+**Terceira rodada de correção (2026-07-27), depois da segunda revisão de qualidade.** Também
+só comentário, teste e plano: **nenhuma mudança de comportamento**, nenhum número de gate
+mexido.
+
+12. **A invariante das contagens de fatia passou a pinar `positives` também**
+    (`benchmark/tests/slices.test.ts`). A fixture do item 11 tinha uma única linha errada, e
+    ela era um **negativo** humano; logo `warning.endToEnd.positives` e
+    `warning.conditionalOnScored.positives` valiam 1 os dois, e **toda** asserção sobre
+    `positives` — inclusive a igualdade com `endToEnd` — era satisfeita pelas duas famílias.
+    Medido nesta rodada, antes de tocar a fixture: trocar `slices.ts:200` para
+    `metrics.warning.conditionalOnScored.positives` deixava
+    `slices.test.ts` + `gates.test.ts` + `profile-artifact.test.ts` **verdes** (3 arquivos,
+    35 testes, exit 0). O comentário em `slices.ts:197-199` afirmava "the end-to-end family is
+    deliberate and pinned by the test" acima das **duas** leituras: para `positives` a frase
+    era falsa — o mesmo defeito de alegação-escrita-falsificada que os itens 9 e 11 existem
+    para remover, reintroduzido uma linha abaixo. A fixture ganhou o **espelho positivo** de
+    `h3`: uma linha `label: "ai"`, elegível (120 palavras), `status: "error"`. Agora as três
+    populações candidatas são distintas nas duas classes — `negatives`: cru 4, fim-a-fim 3,
+    condicional 2; `positives`: cru 3, fim-a-fim 2, condicional 1 — e a mutação de `positives`
+    falha com `expected 1 to be 2`. **Dano concreto que isso passa a defender:** uma fatia de
+    recall com 205 positivos elegíveis dos quais 8 falham publica `endToEnd.positives = 205`,
+    fica acima de `DEFAULT_MINIMUM_RECALL_POSITIVES` e é gateada; lendo a família condicional
+    daria 197, a fatia cairia abaixo do piso e sairia de `criticalRecallSlices` **e** da busca
+    de pior fatia em `summarizeSlices` — a fatia mais prejudicada pelas falhas de inferência
+    escaparia do gate de recall, no lado favorável.
+13. **`MetricFamily` atribui o rótulo ao bloco que o carrega** (`benchmark/metrics.ts`). O doc
+    do item 9 dizia que "os dois blocos `metrics.mixed`" carregam `family: "end-to-end"`. Só um
+    carrega: `mixed.byFraction[].warning` é `DecisionMetrics` e tem o campo;
+    `mixed.atLeastHalfAi` é `{ sampleSize, warningRecall, warningRecallLower95 }` e **não tem
+    campo `family`**. Num bloco cujo propósito é evitar que o leitor re-derive a semântica, a
+    imprecisão obrigava exatamente essa re-derivação. O texto agora separa os dois casos.
+14. **O ponteiro para o plano em `benchmark/slices.ts` deixou de ser numérico.** Ele apontava
+    para "A3 item 9" (reconciliação do `family`) quando a decisão em aberto sobre o
+    denominador da FPR está no item 10. Trocado por ponteiro **por nome** — "o item titulado
+    pela invariante das contagens de fatia, o que nomeia `undecidedNegatives`" —, no mesmo
+    estilo já usado em `metrics.ts`, para sobreviver a renumeração.
+15. **O guarda do helper `item()` cobre as três colunas do ramo `scored`**
+    (`benchmark/tests/slices.test.ts` e `benchmark/tests/metrics.test.ts`). Ele checava
+    `documentScore` e `warned` mas não `visualActioned`, que também é decisão: uma linha
+    `{ status: "error", visualActioned: true }` era aceita e a decisão visual descartada em
+    silêncio, com a mensagem do próprio helper ("carries no score and no decision") valendo só
+    dois terços — e `visualAction` é justamente a família que nenhuma asserção de
+    `slices.test.ts` lê. Corrigido nos **dois** helpers, para que sigam espelhos.
 
 **Varredura do avaliador (requisito de A3), com o que ficou de fora:**
 

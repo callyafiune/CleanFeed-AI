@@ -79,7 +79,14 @@ interface ItemFields extends RecordFields {
 function item(fields: ItemFields): EvaluationItem {
   const status = fields.status ?? "scored";
   if (status !== "scored") {
-    if (fields.documentScore !== undefined || fields.warned !== undefined) {
+    // Both decisions, not just `warned`: an unscored row that quietly kept a
+    // `visualActioned: true` would be the same defect one field over, and the
+    // visualAction family is the one no assertion in this file reads.
+    if (
+      fields.documentScore !== undefined ||
+      fields.warned !== undefined ||
+      fields.visualActioned !== undefined
+    ) {
       throw new Error(
         `a ${status} fixture row carries no score and no decision`,
       );
@@ -184,12 +191,17 @@ describe("buildSlices declared sample size", () => {
     // that same subset. Declaring the raw bucket would advertise statistical
     // power the interval does not have, in the favorable direction.
     //
-    // The fixture pins the counts against BOTH wrong alternatives at once:
-    //   * the raw bucket (4 human rows) — the pre-correction recount;
-    //   * the conditional-on-scored family (2 human rows) — the family this
-    //     module documents that it never reads, because a slice whose inference
-    //     failed must not look better than one that answered.
-    // Only the end-to-end eligible population gives 3.
+    // The fixture pins BOTH declared counts against BOTH wrong alternatives at
+    // once, so no read can be swapped without a failure. Each class has an
+    // eligible row whose inference failed and an ineligible row, which makes the
+    // three candidate populations numerically distinct:
+    //   negatives — raw bucket 4 (the pre-correction recount), end-to-end
+    //     eligible 3, conditional-on-scored 2;
+    //   positives — raw bucket 3, end-to-end eligible 2,
+    //     conditional-on-scored 1.
+    // The conditional family is the one this module documents that it never
+    // reads, because a slice whose inference failed must not look better than
+    // one that answered.
     const items = [
       item({ author: "h1", label: "human", domain: "corp", wordCount: 120 }),
       item({ author: "h2", label: "human", domain: "corp", wordCount: 120 }),
@@ -206,25 +218,43 @@ describe("buildSlices declared sample size", () => {
       // Below the 50-word floor: ineligible, so it is in the raw bucket only.
       item({ author: "h4", label: "human", domain: "corp", wordCount: 30 }),
       item({ author: "a1", label: "ai", domain: "corp", wordCount: 120 }),
+      // The positive mirror of h3: eligible, inference failed. End-to-end it is
+      // an undecided positive — a miss — and it leaves the conditional
+      // population. Without it both families report `positives` 1 and the
+      // `positives` read in slices.ts is pinned by nothing.
+      item({
+        author: "a3",
+        label: "ai",
+        domain: "corp",
+        wordCount: 120,
+        status: "error",
+      }),
       item({ author: "a2", label: "ai", domain: "corp", wordCount: 20 }),
     ];
 
     const corp = find(buildSlices(items, SEED), "domain", "corp");
 
     // sampleSize stays descriptive: every row that landed in the bucket.
-    expect(corp?.sampleSize).toBe(6);
+    expect(corp?.sampleSize).toBe(7);
     expect(corp?.negatives).toBe(3);
-    expect(corp?.positives).toBe(1);
+    expect(corp?.positives).toBe(2);
     expect(corp?.negatives).toBe(corp?.metrics.warning.endToEnd.negatives);
     expect(corp?.positives).toBe(corp?.metrics.warning.endToEnd.positives);
-    // The declared count is strictly the UNFAVORABLE one: reading the
-    // conditional family instead would drop the errored row and publish a
-    // smaller, flattering denominator.
+    // Both declared counts are strictly the UNFAVORABLE one: reading the
+    // conditional family instead would drop the errored rows and publish
+    // smaller, flattering denominators. For `positives` that is what lets a
+    // recall slice damaged by inference failures fall under
+    // DEFAULT_MINIMUM_RECALL_POSITIVES and escape the recall gate entirely.
     expect(corp?.metrics.warning.conditionalOnScored.negatives).toBe(2);
     expect(corp?.negatives).toBeGreaterThan(
       corp?.metrics.warning.conditionalOnScored.negatives ?? 0,
     );
+    expect(corp?.metrics.warning.conditionalOnScored.positives).toBe(1);
+    expect(corp?.positives).toBeGreaterThan(
+      corp?.metrics.warning.conditionalOnScored.positives ?? 0,
+    );
     expect(corp?.metrics.warning.endToEnd.undecidedNegatives).toBe(1);
+    expect(corp?.metrics.warning.endToEnd.undecidedPositives).toBe(1);
     // ...and `negatives` is a CLASS count, not the FPR interval's denominator:
     // falsePositiveRate runs over FP + TN = 2, one row fewer. See the note on
     // SliceResult in benchmark/slices.ts.

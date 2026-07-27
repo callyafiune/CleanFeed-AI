@@ -397,8 +397,11 @@ export interface MetricEstimate {
 //     (pt-BR and at least `minimumEligibleWords` words);
 //   * the two `metrics.mixed` blocks deliberately run over EVERY mixed record,
 //     eligible or not — see the R3 note above the `mixed:` block in
-//     `computeEvaluationMetrics` — and still carry `family: "end-to-end"`,
-//     because the label describes the status rule they apply.
+//     `computeEvaluationMetrics`. `byFraction[].warning` is a full
+//     `DecisionMetrics` and still stamps `family: "end-to-end"`, because the
+//     label describes the status rule it applies and not its population;
+//     `atLeastHalfAi` is a bare recall triple that follows the same status rule
+//     without carrying the field at all.
 //
 // So a consumer must never infer the denominator from `family`: read the
 // matrix's own `sampleSize` / `positives` / `negatives`.

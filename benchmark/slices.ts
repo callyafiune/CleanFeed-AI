@@ -63,7 +63,8 @@ export interface SliceResult {
   // sampleSize — profile-artifact.ts pairs these counts with
   // `indicatorFpr`/`actionFpr`, which contracts/calibration-profile.ts checks
   // against MINIMUM_CRITICAL_FPR_SAMPLE — is A6/G2's call, not A3's; it is
-  // recorded as an open item in the plan (A3 item 9).
+  // recorded as an open item in the plan's A3 section, under the item titled
+  // after this slice-count invariant (the one that names `undecidedNegatives`).
   positives: number;
   negatives: number;
   fprGateEligible: boolean;
@@ -194,9 +195,13 @@ export function buildSlices(
       // `GateResult.sampleSize` (benchmark/gates.ts) and as
       // `ProportionGateEvidenceV1.sampleSize` in the sealed profile
       // (benchmark/profile-artifact.ts), so they are a contract, not a display.
-      // The end-to-end family is deliberate and pinned by the test: reading
-      // `conditionalOnScored` here would drop the errored rows and shrink the
-      // declared population in the flattering direction.
+      // The end-to-end family is deliberate, and BOTH reads below are pinned by
+      // that test — its fixture has an errored eligible row in each class, so
+      // swapping either line to `conditionalOnScored` fails. Reading the
+      // conditional family here would drop the errored rows and shrink the
+      // declared population in the flattering direction: for `negatives` it
+      // understates the FPR floor, and for `positives` it can push a recall
+      // slice below the floor so it stops gating altogether.
       const positives = metrics.warning.endToEnd.positives;
       const negatives = metrics.warning.endToEnd.negatives;
       results.push({

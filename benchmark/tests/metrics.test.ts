@@ -91,7 +91,14 @@ function item(fields: ItemFields): EvaluationItem {
     telemetry.memoryBytes = fields.memoryBytes;
   }
   if (status !== "scored") {
-    if (fields.documentScore !== undefined || fields.warned !== undefined) {
+    // All three fields the `scored` branch owns, so "no score and no decision"
+    // is enforced in full: `visualActioned` is a decision too, and leaving it
+    // out let an unscored row declare a visual action that was then discarded.
+    if (
+      fields.documentScore !== undefined ||
+      fields.warned !== undefined ||
+      fields.visualActioned !== undefined
+    ) {
       throw new Error(
         `a ${status} fixture row carries no score and no decision`,
       );
