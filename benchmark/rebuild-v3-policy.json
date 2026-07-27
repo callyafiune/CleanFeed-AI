@@ -1,0 +1,180 @@
+{
+  "attributionRequired": true,
+  "backbone": "neuralmind/bert-base-portuguese-cased",
+  "backboneBakeOff": false,
+  "blindReserveCompleteAttempts": 2,
+  "bootstrapReplicates": {
+    "pilot": 10000,
+    "release": 100000
+  },
+  "calibrationGate": {
+    "eceBinning": "equal-mass",
+    "eceBins": 15,
+    "eceBound": "bootstrap-upper95",
+    "eceMax": 0.05
+  },
+  "calibrator": {
+    "candidates": [
+      "platt",
+      "beta",
+      "isotonic"
+    ],
+    "crossValidationFolds": 5,
+    "lengthResultsAre": "diagnostic",
+    "scope": "global-per-path",
+    "selectionMetric": "brier-out-of-fold",
+    "thresholdsAre": "per-profile-band",
+    "tieBreakOrder": [
+      "platt",
+      "beta",
+      "isotonic"
+    ],
+    "tieToleranceAbsolute": 0.0001
+  },
+  "commercialUse": false,
+  "conformal": {
+    "action": {
+      "documentEpsilon": 0.02,
+      "localizedEpsilon": null
+    },
+    "method": "one-sided-split-conformal",
+    "perProfileBand": true,
+    "population": "cal-b-humans",
+    "warning": {
+      "documentEpsilon": 0.025,
+      "localizedEpsilon": 0.025
+    },
+    "worstStratum": true
+  },
+  "fprBudgets": {
+    "visualAction": 0.02,
+    "warning": 0.05
+  },
+  "hardNegativeFamilies": [
+    "corporate-structure",
+    "formulaic",
+    "highly-polished",
+    "motivational",
+    "non-native",
+    "repetitive"
+  ],
+  "humanCoreStrata": [
+    "encyclopedic",
+    "institutional",
+    "qa-informal",
+    "social-media",
+    "university"
+  ],
+  "humanSources": {
+    "newDownloadsAllowed": false,
+    "snapshots": [
+      "b2w-reviews01",
+      "carolina",
+      "pt-stackoverflow",
+      "ptwiki"
+    ]
+  },
+  "infersAuthorship": false,
+  "integralPositive": {
+    "label": "ai",
+    "requiresRegisteredPipeline": true
+  },
+  "labelBasis": {
+    "allowed": [
+      "date-cutoff",
+      "observed-process"
+    ],
+    "appliesToLabel": "human",
+    "pooledClaimAllowed": false,
+    "underPoweredRole": "supplementary-diagnostic"
+  },
+  "localization": {
+    "authorizesVisualAction": false,
+    "standaloneClaim": false,
+    "trainsAuxiliaryHead": true
+  },
+  "materialAssistance": {
+    "authorizes": "warning-only",
+    "generationMode": "mechanistic",
+    "minimumAiFraction": 0.5
+  },
+  "mixedBelowHalfAiRole": "diagnostic-curve-only",
+  "multiplicity": {
+    "correction": "bonferroni",
+    "descriptiveConfidence": 0.95,
+    "familyAlpha": 0.05,
+    "frozenAt": "G5"
+  },
+  "onnxMaximumInt8Bytes": 109681931,
+  "parity": {
+    "operationalMaximumInversions": 0,
+    "rawMaximumMeanAbsDelta": 0.02
+  },
+  "policyVersion": "rebuild-v3-policy-v1",
+  "powerFloors": {
+    "criticalFprHumanNegatives": 300,
+    "criticalRecallPositives": 200,
+    "samplingUnits": null
+  },
+  "predictiveValuePrevalences": [
+    0.01,
+    0.05,
+    0.1
+  ],
+  "productTarget": "textual-compatibility-with-ai-generation",
+  "profileBands": [
+    "50-79",
+    "80-199",
+    "200-plus"
+  ],
+  "profileValidityDays": 180,
+  "resampling": {
+    "allowedUnitKinds": [
+      "hierarchical",
+      "multiway"
+    ],
+    "fallbackToIndependentRows": false,
+    "required": true
+  },
+  "rollout": {
+    "actionsPromoted": false,
+    "maximumStage": "indicator",
+    "stages": [
+      "bundle-verified",
+      "shadow",
+      "indicator"
+    ]
+  },
+  "runtimeComparator": "score-ge-next-up-quantile",
+  "seeds": {
+    "ablation": [
+      712019,
+      712020,
+      712021,
+      712022,
+      712023
+    ],
+    "bootstrap": 20260728,
+    "crossValidation": 20260727,
+    "publishableCheckpoint": 712019,
+    "split": 20260726
+  },
+  "shareAlikeRequired": true,
+  "temporalCohort": {
+    "insufficientPowerLabel": "notApplicable",
+    "minimumDistinctTimestamps": 4,
+    "perSource": true,
+    "quartilesOf": "createdAt"
+  },
+  "training": {
+    "batchDocuments": 16,
+    "epochs": 3,
+    "learningRate": 0.00002,
+    "optimizer": "adamw",
+    "warmupFraction": 0.06,
+    "weightDecay": 0.01
+  },
+  "wordFloor": {
+    "abstainBelow": 50
+  }
+}

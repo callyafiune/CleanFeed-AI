@@ -66,6 +66,11 @@ export const EVALUATOR_FILES = [
   "contracts/runtime-parity.ts",
   "scripts/runtime-parity.mjs",
   "benchmark/schema.ts",
+  // The frozen execution contract of the v3 rebuild and its validator. Every
+  // budget, epsilon, seed and threshold a gate reads comes from these two files,
+  // so a changed byte in either changes the evaluator's identity.
+  "benchmark/rebuild-v3-policy.json",
+  "benchmark/rebuild-v3-policy.ts",
   "benchmark/dataset-manifest.ts",
   "benchmark/prediction-schema.ts",
   "benchmark/near-duplicates.ts",
