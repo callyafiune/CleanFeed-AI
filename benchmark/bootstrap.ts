@@ -11,6 +11,13 @@
 // fewer than 1000 finite replicates survive — the interval is never silently
 // downgraded to a per-record bootstrap.
 //
+// A SIMULTANEOUS (Bonferroni) percentile bound is published only when the tail it
+// is read from contains at least one replicate; otherwise the "bound" would be the
+// most extreme replicate observed and nothing more. The count of replicates behind
+// every simultaneous bound travels WITH it, because at alpha_family / m the
+// resolution of a fixed 2000-replicate distribution is a real limit on what the
+// bound can mean.
+//
 // Standalone benchmark module: MUST NOT import from the extension bundle (src/).
 // Pure apart from the caller-supplied seed: no Date, no wall-clock, no I/O.
 
@@ -29,6 +36,25 @@ export interface BootstrapOptions<T> {
   simultaneousAlpha?: number;
 }
 
+// A percentile bound, WITH the resampling effort that produced it. The effort is
+// not decoration: a percentile read at alpha sits `alpha * (n - 1)` order
+// statistics from the extreme of the replicate distribution, so at a Bonferroni
+// alpha the same 2000 replicates that give a comfortable 95% bound can leave the
+// simultaneous bound resting on two or three of them. A consumer that decides
+// something on this bound has to be able to see that (R7), and the gate refuses a
+// bound whose effort is below the pre-registered replicate count
+// (benchmark/gates.ts).
+export interface SimultaneousPercentileBound {
+  alpha: number;
+  lower: number;
+  upper: number;
+  // Finite replicates the percentile was read from.
+  replicates: number;
+  // How many replicates lie beyond the bound: floor(alpha * (replicates - 1)).
+  // One means the bound IS the second-most-extreme replicate.
+  tailReplicates: number;
+}
+
 export interface BootstrapInterval {
   lower95: number;
   upper95: number;
@@ -37,10 +63,17 @@ export interface BootstrapInterval {
   discardedReplicates: number;
   seed: number;
   method: "author-cluster-percentile";
-  simultaneous?: { alpha: number; lower: number; upper: number };
+  simultaneous?: SimultaneousPercentileBound;
 }
 
 const MINIMUM_VALID_REPLICATES = 1_000;
+
+// Below one replicate in the tail the percentile is not an estimate of anything:
+// it is the most extreme replicate observed, and reporting it as a bound at that
+// alpha would be an extrapolation dressed as a measurement. This is a
+// DEFINEDNESS floor, not a power floor — the pre-registered replicate counts of
+// the frozen contract are checked by the gate, which is where policy lives.
+const MINIMUM_TAIL_REPLICATES = 1;
 
 export function clusterBootstrap<T>(
   items: readonly T[],
@@ -108,16 +141,26 @@ export function clusterBootstrap<T>(
     // The same replicates, read at a wider pair of percentiles. Reusing them is
     // deliberate: a second resample would answer a different question and cost
     // another 2000 statistic evaluations.
-    const wide = percentileInterval(
-      replicates,
-      simultaneousAlpha,
-      1 - simultaneousAlpha,
+    const tailReplicates = Math.floor(
+      simultaneousAlpha * (validReplicates - 1),
     );
-    interval.simultaneous = {
-      alpha: simultaneousAlpha,
-      lower: wide.lower,
-      upper: wide.upper,
-    };
+    if (tailReplicates >= MINIMUM_TAIL_REPLICATES) {
+      const wide = percentileInterval(
+        replicates,
+        simultaneousAlpha,
+        1 - simultaneousAlpha,
+      );
+      interval.simultaneous = {
+        alpha: simultaneousAlpha,
+        lower: wide.lower,
+        upper: wide.upper,
+        replicates: validReplicates,
+        tailReplicates,
+      };
+    }
+    // No else: with an empty tail no bound is published at all, so a gate that
+    // needs one fails for missing evidence instead of reading the maximum
+    // replicate as if it were a percentile.
   }
   return interval;
 }

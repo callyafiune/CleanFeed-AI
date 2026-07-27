@@ -852,9 +852,11 @@ describe("consume-holdout one-way lease", () => {
     // C4 resampling plan backs, and `evaluate` passes `resampling: null` because
     // no such plan exists. So the assertion moved to what is actually true — the
     // decision is delegated byte-for-byte to the gates, EVERY substantive gate
-    // still passes, and the only failures are the two kinds of missing evidence
-    // (no resampling plan, no pre-registered m). When C4 and G5 land, this is the
-    // test that should go back to `pass`.
+    // still passes, and the only failures are the kinds of missing evidence (no
+    // resampling plan, no pre-registered m, and — once a plan exists — a bootstrap
+    // thinner than the pre-registered replicate count). This is the test that
+    // should go back to `pass`, and it needs C4 (the plan), G5 (the frozen m) and
+    // C6 (the replicate count actually executed) to get there.
     "delegates the decision to the Phase 2 gates, which reject for missing resampling evidence, and leaks no raw content",
     async () => {
       const root = await newRoot();
@@ -896,7 +898,7 @@ describe("consume-holdout one-way lease", () => {
         if (id.startsWith("action.fpr.labelBasis.")) continue;
         const gate = gates.gates.find((candidate) => candidate.id === id);
         expect(gate?.evidence).toMatch(
-          /missing-resampling-plan|missing-simultaneous-interval/u,
+          /missing-resampling-plan|missing-simultaneous-interval|insufficient-resampling-effort/u,
         );
       }
       // And the divisor was never quietly recomputed to fit.
@@ -959,7 +961,7 @@ describe("consume-holdout one-way lease", () => {
       for (const id of gates.failedWarning) {
         const gate = gates.gates.find((candidate) => candidate.id === id);
         expect(gate?.evidence).toMatch(
-          /missing-resampling-plan|missing-simultaneous-interval/u,
+          /missing-resampling-plan|missing-simultaneous-interval|insufficient-resampling-effort/u,
         );
       }
     },

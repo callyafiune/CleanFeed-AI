@@ -398,6 +398,14 @@ export interface SimultaneousBound {
   // The normal critical value, on the Wilson path only: a percentile bootstrap
   // bound reads percentiles of the replicate distribution and has no z.
   z?: number;
+  // The resampling effort, on the PERCENTILE path only (the Wilson bound is
+  // analytic and resamples nothing). `replicates` is how many finite replicates
+  // the percentile was read from and `tailReplicates` how many of them lie beyond
+  // the bound — at alpha_family / m that is a handful, which is why the numbers
+  // are published instead of left to the reader's imagination (R7). A gate refuses
+  // a bound whose `replicates` is below the pre-registered count.
+  replicates?: number;
+  tailReplicates?: number;
   lower: number;
   upper: number;
   method: "wilson-one-sided" | "author-cluster-percentile";
@@ -1811,6 +1819,9 @@ function continuousEstimate(
         familyAlpha: bonferroni.familyAlpha,
         m: bonferroni.m,
         alpha: interval.simultaneous.alpha,
+        // The effort travels with the bound; the gate reads it.
+        replicates: interval.simultaneous.replicates,
+        tailReplicates: interval.simultaneous.tailReplicates,
         lower: interval.simultaneous.lower,
         upper: interval.simultaneous.upper,
         method: "author-cluster-percentile",

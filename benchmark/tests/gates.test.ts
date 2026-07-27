@@ -90,6 +90,39 @@ function point(value: number): MetricEstimate {
   return { value, method: "point" };
 }
 
+// The same estimate as a RESAMPLED bound: the ECE gate reads a percentile of a
+// cluster bootstrap, not an analytic Wilson bound, and a percentile carries the
+// number of replicates it was read from. `"undeclared"` is a bound that never said
+// what its effort was — a literal, not `undefined`, because `undefined` would just
+// select the default parameter.
+const PILOT_REPLICATES = REBUILD_V3_POLICY.bootstrapReplicates.pilot;
+
+function resampled(
+  estimate: MetricEstimate,
+  replicates: number | "undeclared" = PILOT_REPLICATES,
+): MetricEstimate {
+  const simultaneous = estimate.simultaneous;
+  if (simultaneous === undefined) {
+    throw new Error(
+      "resampled() needs an estimate that has a bound to decorate",
+    );
+  }
+  const { z: _z, ...withoutZ } = simultaneous;
+  return {
+    ...estimate,
+    simultaneous: {
+      ...withoutZ,
+      method: "author-cluster-percentile",
+      ...(replicates === "undeclared"
+        ? {}
+        : {
+            replicates,
+            tailReplicates: Math.floor(simultaneous.alpha * (replicates - 1)),
+          }),
+    },
+  };
+}
+
 // A valid synthetic C4 plan: one entry per estimand the gates measure, with a
 // hierarchical unit and the pre-registered pilot replicate count.
 const ESTIMANDS = [
@@ -237,7 +270,7 @@ function metrics(overrides: MetricsOverrides = {}): EvaluationMetrics {
       role: "diagnostic",
       gatedStatistic: "eceEqualMass15",
       population: "conditional-on-scored",
-      eceEqualMass15: overrides.ece ?? upper(0.02),
+      eceEqualMass15: overrides.ece ?? resampled(upper(0.02)),
     },
     labelBasis: {
       role: "human-negative-label-evidence",
@@ -549,9 +582,11 @@ describe("warning tier teeth", () => {
       integrity: integrity(),
       resampling: plan(),
       metrics: metrics({
-        ece: splitBound(
-          { lower95: 0.02, upper95: 0.04 },
-          { lower: 0.02, upper: 0.09 },
+        ece: resampled(
+          splitBound(
+            { lower95: 0.02, upper95: 0.04 },
+            { lower: 0.02, upper: 0.09 },
+          ),
         ),
       }),
       slices: summary([passingSlice()]),
@@ -579,6 +614,60 @@ describe("warning tier teeth", () => {
     expect(gate.passed).toBe(false);
     expect(gate.evidence).toBe("missing-simultaneous-interval");
     expect(gate.observed).toBeNull();
+  });
+
+  it("fails the ECE gate when the percentile bound came from fewer replicates than the frozen count", () => {
+    // A comfortable point estimate AND a comfortable bound, refused on effort:
+    // read at alpha_family/40 = 0.00125, 2000 replicates leave two order
+    // statistics beyond the bound. The frozen contract pre-registers 10.000 and
+    // says never to reduce the count, so this is missing evidence.
+    const report = evaluateReleaseGates({
+      integrity: integrity(),
+      resampling: plan(),
+      metrics: metrics({ ece: resampled(upper(0.01), 2_000) }),
+      slices: summary([passingSlice()]),
+    });
+    expect(report.decision).toBe("reject");
+    const gate = gateById(report.gates, "warning.calibration-ece");
+    expect(gate.evidence).toBe("insufficient-resampling-effort");
+    expect(gate.passed).toBe(false);
+    // No number is published as the verdict: a bound that thin decides nothing.
+    expect(gate.observed).toBeNull();
+    expect(gate.reasons[0]).toMatch(/2000 réplicas/u);
+    expect(gate.reasons[0]).toMatch(String(PILOT_REPLICATES));
+    // The 95% interval stays in the report, still marked descriptive.
+    expect(gate.descriptive).toMatchObject({
+      value: 0.01,
+      role: "descriptive",
+    });
+  });
+
+  it("fails the ECE gate when the percentile bound never says how many replicates produced it", () => {
+    const report = evaluateReleaseGates({
+      integrity: integrity(),
+      resampling: plan(),
+      metrics: metrics({ ece: resampled(upper(0.01), "undeclared") }),
+      slices: summary([passingSlice()]),
+    });
+    const gate = gateById(report.gates, "warning.calibration-ece");
+    expect(gate.evidence).toBe("insufficient-resampling-effort");
+    expect(gate.passed).toBe(false);
+    expect(gate.reasons[0]).toMatch(/réplicas/u);
+  });
+
+  it("leaves the analytic Wilson bounds alone: they resample nothing", () => {
+    // Every FPR and recall gate reads a Wilson bound, which has no replicates. The
+    // effort check must not turn that into missing evidence.
+    const report = evaluateReleaseGates(passingEvidence);
+    for (const id of [
+      "warning.fpr.overall",
+      "warning.recall.overall",
+      "action.fpr.overall",
+      "action.recall.overall",
+    ]) {
+      expect(gateById(report.gates, id).evidence).toBe("present");
+    }
+    expect(report.decision).toBe("pass");
   });
 
   it("rejects on mixed >=50% AI warning-recall below 50%, reporting the IC without substituting the point gate", () => {

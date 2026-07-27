@@ -377,6 +377,18 @@ export function renderReportMarkdown(report: BenchmarkReport): string {
     lines.push(
       "- Uma célula sem poder permanece em m e reprova; o divisor nunca encolhe.",
     );
+    // The effort behind the resampled bound, at the alpha it is read at. Without
+    // it a reader cannot tell that a simultaneous percentile bound at
+    // alpha_família/m is an interpolation between a couple of order statistics.
+    const resampled = report.metrics.calibration?.eceEqualMass15?.simultaneous;
+    lines.push(
+      resampled === undefined || resampled.replicates === undefined
+        ? "- Esforço de reamostragem do limite simultâneo: não publicado " +
+            "(nenhum limite de percentil foi produzido)."
+        : `- Esforço de reamostragem do limite simultâneo (ECE): ${resampled.replicates} ` +
+            `réplicas em alpha=${resampled.alpha}, cauda de ` +
+            `${resampled.tailReplicates ?? 0} réplicas.`,
+    );
   }
   lines.push("");
 

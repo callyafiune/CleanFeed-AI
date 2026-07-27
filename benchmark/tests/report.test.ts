@@ -280,6 +280,19 @@ function metrics(): EvaluationMetrics {
         lower95: 0.0731,
         upper95: 0.0908,
         method: "author-cluster-percentile",
+        // The bound the ECE gate reads, with the effort behind it: at m = 40 the
+        // alpha is 0.00125, so 2000 replicates leave two beyond the bound.
+        simultaneous: {
+          correction: "bonferroni",
+          familyAlpha: 0.05,
+          m: 40,
+          alpha: 0.00125,
+          replicates: 2_000,
+          tailReplicates: 2,
+          lower: 0.0605,
+          upper: 0.1032,
+          method: "author-cluster-percentile",
+        },
       },
       reliability: [
         {
@@ -841,5 +854,18 @@ describe("renderReportMarkdown publishes the A6 evidence with its roles named", 
     expect(multiplicity).toMatch(/descritiv/u);
     // The gate table says which bound decided each gate.
     expect(section(markdown, "Gates")).toMatch(/simultaneous-upper/u);
+  });
+
+  it("says how much resampling produced the simultaneous bound it decides on", async () => {
+    // A percentile read at alpha_família/m is an interpolation between a couple of
+    // order statistics; a reader cannot judge the bound without the replicate count
+    // and the size of the tail it came from (R7).
+    const multiplicity = section(
+      renderReportMarkdown(await buildBenchmarkReport(baseInput())),
+      "Multiplicidade",
+    );
+    expect(multiplicity).toContain(
+      "Esforço de reamostragem do limite simultâneo (ECE): 2000 réplicas em alpha=0.00125, cauda de 2 réplicas.",
+    );
   });
 });

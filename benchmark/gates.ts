@@ -30,7 +30,7 @@
 // than the conditional family on recall or clearance. Reading the conditional
 // family here would let a fragile run buy a pass with its own failures.
 //
-// TWO KINDS OF MISSING EVIDENCE FAIL A GATE, AND NEITHER DEGRADES QUIETLY (A6):
+// THREE KINDS OF MISSING EVIDENCE FAIL A GATE, AND NONE DEGRADES QUIETLY (A6):
 //
 //   * The RESAMPLING PLAN. A Wilson or percentile interval over rows assumes the
 //     rows are exchangeable. The corpus is not: authors, pages, threads, prompts
@@ -49,6 +49,14 @@
 //     because a divisor that shrinks with the evidence is not a correction. When
 //     the declared `m` does not cover the mandatory gates this report produced,
 //     every interval gate fails — the alpha is never quietly recomputed.
+//   * The RESAMPLING EFFORT behind that bound. A percentile read at
+//     `alpha_família / m` sits `alpha * (n - 1)` order statistics from the extreme
+//     of the replicate distribution: with m = 40 and the 2000 replicates
+//     benchmark/bootstrap.ts executes today, the verdict would rest on two or
+//     three replicates. The frozen contract pre-registers 10.000 in the pilot and
+//     says never to reduce the count, so a bound thinner than that is missing
+//     evidence, not a faster measurement. Only the percentile path is checked; the
+//     Wilson bound is analytic and resamples nothing.
 //
 // Frozen numbers come from benchmark/rebuild-v3-policy.json through
 // benchmark/rebuild-v3-policy.ts; the FPR budgets, the ECE ceiling and the family
@@ -91,6 +99,9 @@ export type GateEvidence =
   // No multiplicity-corrected bound was published for this estimate, or the
   // declared `m` does not cover this report's mandatory gates.
   | "missing-simultaneous-interval"
+  // A percentile bound was published, but it was read from fewer replicates than
+  // the frozen contract pre-registers, so at alpha_family / m it has no resolution.
+  | "insufficient-resampling-effort"
   // The gate reads no interval (a boolean or an approved point gate), or the cell
   // has no pre-registered power and therefore no bound was read.
   | "not-applicable";
@@ -780,6 +791,30 @@ function decideInterval(
     };
   }
 
+  // 4. A percentile bound read from fewer replicates than the frozen contract
+  //    pre-registers. This is not a formatting quibble: at alpha_family / m the
+  //    bound sits `alpha * (n - 1)` order statistics from the extreme, so with
+  //    m = 40 and 2000 replicates the verdict rests on two of them. The frozen
+  //    table says 10.000 replicates in the pilot and "nunca reduzir por tempo", so
+  //    a thinner bound is missing evidence, not a cheaper measurement. The Wilson
+  //    path resamples nothing and is exempt by construction.
+  const effort = simultaneousEffortFailure(simultaneous);
+  if (effort !== null) {
+    return {
+      ...base,
+      evidence: "insufficient-resampling-effort",
+      observed: null,
+      eligible: true,
+      passed: false,
+      simultaneous: {
+        familyAlpha: simultaneous.familyAlpha,
+        m: simultaneous.m,
+        alpha: simultaneous.alpha,
+      },
+      reasons: [`${spec.subject}: ${effort}`],
+    };
+  }
+
   const observed = finiteOrNull(
     spec.direction === "upper" ? simultaneous.upper : simultaneous.lower,
   );
@@ -822,6 +857,31 @@ function describe(spec: IntervalGateSpec): DescriptiveBound {
   };
 }
 
+// Why a resampled simultaneous bound cannot be read, or `null` when it can. Only
+// the percentile path is checked: `wilson-one-sided` is an analytic bound with no
+// replicates, so a replicate count would be meaningless there rather than absent.
+function simultaneousEffortFailure(
+  simultaneous: NonNullable<MetricEstimate["simultaneous"]>,
+): string | null {
+  if (simultaneous.method !== "author-cluster-percentile") return null;
+  const replicates = simultaneous.replicates;
+  if (replicates === undefined) {
+    return (
+      "o limite simultâneo é um percentil de bootstrap mas não declara quantas " +
+      "réplicas o produziram; sem esse número o limite não é auditável"
+    );
+  }
+  if (replicates < MINIMUM_DECLARED_REPLICATES) {
+    return (
+      `o limite simultâneo em alpha=${simultaneous.alpha} foi lido de ` +
+      `${replicates} réplicas (cauda de ${simultaneous.tailReplicates ?? 0} ` +
+      `réplicas), abaixo das ${MINIMUM_DECLARED_REPLICATES} pré-registradas; ` +
+      "o contrato congelado diz para nunca reduzir a contagem de réplicas"
+    );
+  }
+  return null;
+}
+
 function missingSimultaneousReason(
   spec: IntervalGateSpec,
   context: DecidedContext,
@@ -849,9 +909,10 @@ function missingSimultaneousReason(
 
 // A plan entry is usable only when it declares one of the two allowed unit kinds,
 // at least one dependence axis and at least the pre-registered pilot replicate
-// count. NOTE: nothing here verifies that the replicate count DECLARED in the plan
-// is the one the metrics actually ran (benchmark/bootstrap.ts still runs a fixed
-// 2000); that reconciliation belongs to C6/G2 and is recorded in the plan.
+// count. NOTE: this checks the count DECLARED in the plan. The count actually
+// EXECUTED is checked separately, against the same floor, by
+// `simultaneousEffortFailure` on the published bound; reconciling the two against
+// each other (declared == executed, per estimand) belongs to C6/G2.
 function resamplingEntry(
   plan: ResamplingPlan | null,
   estimand: string,

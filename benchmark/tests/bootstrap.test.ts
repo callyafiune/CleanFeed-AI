@@ -96,6 +96,43 @@ describe("clusterBootstrap", () => {
     expect(a1).not.toEqual(b);
   });
 
+  it("publishes the resampling effort behind a simultaneous bound", () => {
+    // m = 40 gates sharing alpha_family = 0.05: the bound is read at 0.00125, i.e.
+    // floor(0.00125 * 1999) = 2 replicates from the extreme. That is exactly the
+    // fact the effort fields exist to expose.
+    const interval = clusterBootstrap(items, {
+      clusterBy: (item) => item.author,
+      iterations: 2_000,
+      seed: 712_019,
+      statistic: meanScore,
+      simultaneousAlpha: 0.05 / 40,
+    });
+    expect(interval.simultaneous?.replicates).toBe(2_000);
+    expect(interval.simultaneous?.tailReplicates).toBe(2);
+    expect(interval.simultaneous?.alpha).toBeCloseTo(0.00125, 12);
+    // Still a wider interval than the descriptive 95% one, in both directions.
+    expect(interval.simultaneous?.upper).toBeGreaterThanOrEqual(
+      interval.upper95,
+    );
+    expect(interval.simultaneous?.lower).toBeLessThanOrEqual(interval.lower95);
+  });
+
+  it("publishes no simultaneous bound at all when the tail holds no replicate", () => {
+    // alpha * (n - 1) < 1: the percentile would BE the most extreme replicate, so
+    // there is nothing to report. A gate that needs the bound then fails for
+    // missing evidence instead of reading an extrapolation.
+    const interval = clusterBootstrap(items, {
+      clusterBy: (item) => item.author,
+      iterations: 2_000,
+      seed: 712_019,
+      statistic: meanScore,
+      simultaneousAlpha: 1 / 4_000,
+    });
+    expect(interval.simultaneous).toBeUndefined();
+    // The descriptive 95% interval is untouched by the refusal.
+    expect(interval.lower95).toBeLessThanOrEqual(interval.upper95);
+  });
+
   it("throws an eligibility error when fewer than 1000 replicates are finite", () => {
     expect(() =>
       clusterBootstrap(items, {
