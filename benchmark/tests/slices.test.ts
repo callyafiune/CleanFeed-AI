@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import type {
+  DecisionFamilies,
   DecisionMetrics,
   EvaluationItem,
   EvaluationMetrics,
@@ -19,6 +20,8 @@ interface RecordFields {
   wordCount?: number;
   aiFraction?: number;
   domain?: string;
+  platform?: string;
+  sourceId?: string;
   humanSourceType?: string;
   hardNegativeFamily?: string;
   transformationKind?: string;
@@ -33,6 +36,8 @@ function record(fields: RecordFields): BenchmarkRecord {
     language: "pt-BR",
     wordCount: fields.wordCount ?? 120,
     domain: fields.domain ?? "corporate",
+    platform: fields.platform ?? "generic-platform",
+    provenance: { sourceId: fields.sourceId ?? "corpus-generic" },
     createdAt: fields.createdAt ?? 1_000,
     transformation: {
       kind: fields.transformationKind ?? "none",
@@ -290,6 +295,7 @@ function estimate(value: number) {
 
 function decision(fpr: number, recall: number): DecisionMetrics {
   return {
+    family: "end-to-end",
     sampleSize: 1,
     positives: 1,
     negatives: 1,
@@ -297,9 +303,21 @@ function decision(fpr: number, recall: number): DecisionMetrics {
     falsePositives: 0,
     trueNegatives: 1,
     falseNegatives: 0,
+    undecidedPositives: 0,
+    undecidedNegatives: 0,
     falsePositiveRate: estimate(fpr),
+    clearanceRate: estimate(1),
     recall: estimate(recall),
     precision: estimate(1),
+  };
+}
+
+// summarizeSlices reads the end-to-end family; nothing errored in these
+// hand-built slices, so the conditional copy is the same matrix.
+function families(metrics: DecisionMetrics): DecisionFamilies {
+  return {
+    endToEnd: metrics,
+    conditionalOnScored: { ...metrics, family: "conditional-on-scored" },
   };
 }
 
@@ -309,8 +327,9 @@ function metrics(
   visual: { fpr: number; recall: number } | null,
 ): EvaluationMetrics {
   return {
-    warning: decision(warningFpr, warningRecall),
-    visualAction: visual === null ? null : decision(visual.fpr, visual.recall),
+    warning: families(decision(warningFpr, warningRecall)),
+    visualAction:
+      visual === null ? null : families(decision(visual.fpr, visual.recall)),
   } as unknown as EvaluationMetrics;
 }
 

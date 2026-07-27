@@ -19,6 +19,7 @@ import { fileURLToPath } from "node:url";
 import { wilsonOneSided } from "../intervals.ts";
 import type { FrozenCalibrationArtifact } from "../calibration-pipeline.ts";
 import type {
+  DecisionFamilies,
   DecisionMetrics,
   EvaluationMetrics,
   MetricEstimate,
@@ -87,6 +88,7 @@ function decisionMetrics(
   negatives: number,
 ): DecisionMetrics {
   return {
+    family: "end-to-end",
     sampleSize: positives + negatives,
     positives,
     negatives,
@@ -94,9 +96,21 @@ function decisionMetrics(
     falsePositives,
     trueNegatives: negatives - falsePositives,
     falseNegatives: positives - truePositives,
+    undecidedPositives: 0,
+    undecidedNegatives: 0,
     falsePositiveRate: estimate(falsePositives, negatives),
+    clearanceRate: estimate(negatives - falsePositives, negatives),
     recall: estimate(truePositives, positives),
     precision: estimate(truePositives, truePositives + falsePositives),
+  };
+}
+
+// Nothing errored in these fixtures, so both families carry the same matrix under
+// their own role names.
+function families(metrics: DecisionMetrics): DecisionFamilies {
+  return {
+    endToEnd: metrics,
+    conditionalOnScored: { ...metrics, family: "conditional-on-scored" },
   };
 }
 
@@ -105,8 +119,8 @@ function fullMetrics(
   visualAction: DecisionMetrics | null,
 ): EvaluationMetrics {
   return {
-    warning,
-    visualAction,
+    warning: families(warning),
+    visualAction: visualAction === null ? null : families(visualAction),
     rocAuc: { value: 0.94, method: "point" },
     prAuc: { value: 0.93, method: "point" },
     brier: { value: 0.08, method: "point" },
@@ -114,6 +128,12 @@ function fullMetrics(
     coverage: estimate(1900, 2000),
     abstentionRate: estimate(60, 2000),
     errorRate: estimate(4, 2000),
+    resolution: {
+      bySource: [],
+      byClass: [],
+      byLengthBucket: [],
+      byPlatform: [],
+    },
     simulatedPrecision: {
       prevalence01: 0.1,
       prevalence05: 0.4,

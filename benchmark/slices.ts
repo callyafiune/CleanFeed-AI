@@ -8,6 +8,12 @@
 // dropped, and the worst-slice search considers only gate-eligible slices so a
 // tiny, noisy slice never becomes the reported worst case.
 //
+// Every rate this module macro-averages or ranks reads the END-TO-END metric
+// family (benchmark/metrics.ts): a slice whose inference failed must not look
+// better than one that answered, so the worst-slice search and the macro average
+// never read the conditional family. The conditional numbers stay available per
+// slice, inside each slice's own metrics.
+//
 // Standalone module: MUST NOT import from the extension bundle (src/). Pure and
 // deterministic apart from the caller-supplied bootstrap seed. Sibling imports
 // use explicit .ts extensions for Node's native TypeScript execution.
@@ -185,12 +191,12 @@ export function summarizeSlices(slices: readonly SliceResult[]): SliceSummary {
   const worst: SliceSummary["worst"] = {};
   const worstWarningFpr = worstBy(
     slices.filter((slice) => slice.fprGateEligible),
-    (slice) => slice.metrics.warning.falsePositiveRate.value,
+    (slice) => slice.metrics.warning.endToEnd.falsePositiveRate.value,
     "max",
   );
   const worstWarningRecall = worstBy(
     slices.filter((slice) => slice.recallGateEligible),
-    (slice) => slice.metrics.warning.recall.value,
+    (slice) => slice.metrics.warning.endToEnd.recall.value,
     "min",
   );
   const worstActionFpr = worstBy(
@@ -218,10 +224,12 @@ export function summarizeSlices(slices: readonly SliceResult[]): SliceSummary {
     slices: [...slices],
     macro: {
       warningFpr: meanFinite(
-        slices.map((slice) => slice.metrics.warning.falsePositiveRate.value),
+        slices.map(
+          (slice) => slice.metrics.warning.endToEnd.falsePositiveRate.value,
+        ),
       ),
       warningRecall: meanFinite(
-        slices.map((slice) => slice.metrics.warning.recall.value),
+        slices.map((slice) => slice.metrics.warning.endToEnd.recall.value),
       ),
       actionFpr:
         withVisual.length === 0
@@ -239,13 +247,13 @@ export function summarizeSlices(slices: readonly SliceResult[]): SliceSummary {
 function actionFprValue(slice: SliceResult): number {
   return slice.metrics.visualAction === null
     ? Number.NaN
-    : slice.metrics.visualAction.falsePositiveRate.value;
+    : slice.metrics.visualAction.endToEnd.falsePositiveRate.value;
 }
 
 function actionRecallValue(slice: SliceResult): number {
   return slice.metrics.visualAction === null
     ? Number.NaN
-    : slice.metrics.visualAction.recall.value;
+    : slice.metrics.visualAction.endToEnd.recall.value;
 }
 
 function meanFinite(values: readonly number[]): number {

@@ -21,6 +21,12 @@
 // warning budget (it is not gate-eligible), but it also cannot AUTHORIZE visual
 // action, so it fails the action tier and caps the decision at indicator-only.
 //
+// Every operating-point gate reads the END-TO-END metric family
+// (benchmark/metrics.ts): its denominator is the whole eligible set and a record
+// whose inference failed counts as a non-detection, so it is never more favorable
+// than the conditional family on recall or clearance. Reading the conditional
+// family here would let a fragile run buy a pass with its own failures.
+//
 // Standalone benchmark module: MUST NOT import from the extension bundle (src/).
 // Pure and deterministic: no Date, no randomness, no I/O.
 
@@ -281,9 +287,9 @@ function warningGates(
     upperGate(
       "warning.fpr.overall",
       "warning",
-      metrics.warning.falsePositiveRate,
+      metrics.warning.endToEnd.falsePositiveRate,
       WARNING_FPR_MAX,
-      metrics.warning.negatives,
+      metrics.warning.endToEnd.negatives,
       "overall warning FPR",
     ),
   );
@@ -296,9 +302,9 @@ function warningGates(
     lowerGate(
       "warning.recall.overall",
       "warning",
-      metrics.warning.recall,
+      metrics.warning.endToEnd.recall,
       WARNING_RECALL_MIN,
-      metrics.warning.positives,
+      metrics.warning.endToEnd.positives,
       "overall warning recall",
     ),
   );
@@ -350,7 +356,7 @@ function warningSliceFprGate(slice: SliceResult): GateResult {
     };
   }
   const observed = finiteOrNull(
-    slice.metrics.warning.falsePositiveRate.upper95,
+    slice.metrics.warning.endToEnd.falsePositiveRate.upper95,
   );
   const passed = observed !== null && observed <= WARNING_FPR_MAX;
   return {
@@ -434,9 +440,9 @@ function actionGates(
     upperGate(
       "action.fpr.overall",
       "action",
-      visualAction.falsePositiveRate,
+      visualAction.endToEnd.falsePositiveRate,
       ACTION_FPR_MAX,
-      visualAction.negatives,
+      visualAction.endToEnd.negatives,
       "overall action FPR",
     ),
   );
@@ -449,9 +455,9 @@ function actionGates(
     lowerGate(
       "action.recall.overall",
       "action",
-      visualAction.recall,
+      visualAction.endToEnd.recall,
       ACTION_RECALL_MIN,
-      visualAction.positives,
+      visualAction.endToEnd.positives,
       "overall action recall",
     ),
   );
@@ -482,7 +488,7 @@ function actionSliceFprGate(slice: SliceResult): GateResult {
     };
   }
   const observed = finiteOrNull(
-    slice.metrics.visualAction?.falsePositiveRate.upper95,
+    slice.metrics.visualAction?.endToEnd.falsePositiveRate.upper95,
   );
   const passed = observed !== null && observed <= ACTION_FPR_MAX;
   return {

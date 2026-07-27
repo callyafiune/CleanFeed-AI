@@ -34,6 +34,7 @@ import {
 } from "../report.ts";
 import type { GateReport } from "../gates.ts";
 import type {
+  DecisionFamilies,
   DecisionMetrics,
   EvaluationMetrics,
   MetricEstimate,
@@ -254,6 +255,7 @@ function estimate(value: number): MetricEstimate {
 
 function emptyDecisionMetrics(): DecisionMetrics {
   return {
+    family: "end-to-end",
     sampleSize: 0,
     positives: 0,
     negatives: 0,
@@ -261,15 +263,30 @@ function emptyDecisionMetrics(): DecisionMetrics {
     falsePositives: 0,
     trueNegatives: 0,
     falseNegatives: 0,
+    undecidedPositives: 0,
+    undecidedNegatives: 0,
     falsePositiveRate: estimate(0),
+    clearanceRate: estimate(0),
     recall: estimate(0),
     precision: estimate(0),
   };
 }
 
+// No failed inference in this fixture, so the two families are the same matrix
+// under their two role names.
+function emptyDecisionFamilies(): DecisionFamilies {
+  return {
+    endToEnd: emptyDecisionMetrics(),
+    conditionalOnScored: {
+      ...emptyDecisionMetrics(),
+      family: "conditional-on-scored",
+    },
+  };
+}
+
 function minimalMetrics(): EvaluationMetrics {
   return {
-    warning: emptyDecisionMetrics(),
+    warning: emptyDecisionFamilies(),
     visualAction: null,
     rocAuc: { value: 0.5, method: "point" },
     prAuc: { value: 0.5, method: "point" },
@@ -278,6 +295,12 @@ function minimalMetrics(): EvaluationMetrics {
     coverage: estimate(1),
     abstentionRate: estimate(0),
     errorRate: estimate(0),
+    resolution: {
+      bySource: [],
+      byClass: [],
+      byLengthBucket: [],
+      byPlatform: [],
+    },
     simulatedPrecision: { prevalence01: 0, prevalence05: 0, prevalence10: 0 },
     latency: { sampleSize: 0, meanMs: 0, p50Ms: 0, p95Ms: 0, maxMs: 0 },
     memory: { sampleSize: 0, meanBytes: 0, maxBytes: 0 },

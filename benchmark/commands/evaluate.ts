@@ -35,6 +35,7 @@ import {
   computePredictionManifestDigest,
   parsePredictionManifest,
   type PredictionManifestV1,
+  type StrictPredictionV2,
 } from "../prediction-schema.ts";
 import {
   buildBenchmarkReport,
@@ -145,7 +146,7 @@ export async function runEvaluate(options: EvaluateOptions): Promise<string> {
     identity,
   );
 
-  const items = predictions.map((prediction): EvaluationItem => {
+  const items = predictions.map((prediction) => {
     const record = recordsById.get(prediction.id);
     if (record === undefined) {
       throw new CommandError(
@@ -153,21 +154,7 @@ export async function runEvaluate(options: EvaluateOptions): Promise<string> {
         `prediction ${prediction.id} has no matching record`,
       );
     }
-    const applied = applyFrozenCalibration(frozen, {
-      documentRawScore: prediction.documentRawScore ?? 0,
-      localizedRawScore: prediction.localizedRawScore ?? 0,
-    });
-    const item: EvaluationItem = {
-      record,
-      documentScore: applied.documentScore,
-      warned: applied.warning,
-      visualActioned: applied.visualAction,
-      status: prediction.status,
-      latencyMs: prediction.latencyMs,
-    };
-    if (prediction.memoryBytes !== null)
-      item.memoryBytes = prediction.memoryBytes;
-    return item;
+    return buildEvaluationItem(frozen, record, prediction);
   });
   void labels;
 
@@ -281,6 +268,63 @@ export async function runEvaluate(options: EvaluateOptions): Promise<string> {
     "Holdout session concluded; " +
     `decision=${report.releaseDecision}; reportDigest=${report.reportDigest}.`
   );
+}
+
+/**
+ * Turns ONE prediction row into ONE evaluation item, branching on `status`.
+ *
+ * This is the site of the defect A3 removes. It used to read
+ * `prediction.documentRawScore ?? 0`, so a `status: "error"` row — whose scores
+ * are null BY SCHEMA — was calibrated from 0, the most human raw score there is,
+ * and then counted as a true negative. There is now nowhere to put a substituted
+ * score: only the `scored` branch of `EvaluationItem` carries one, and the
+ * calibration is applied ONLY on that branch (R5).
+ *
+ * A `scored` row whose scores are somehow null fails closed with a coded error
+ * instead of being coerced — the row parser already forbids that combination, so
+ * reaching it means the artifact was written by something other than the parser.
+ *
+ * Exported because `runEvaluate` needs a real holdout session to run and this
+ * mapping must be testable on its own.
+ */
+export function buildEvaluationItem(
+  frozen: FrozenCalibrationArtifact,
+  record: BenchmarkRecord,
+  prediction: StrictPredictionV2,
+): EvaluationItem {
+  const telemetry: { latencyMs?: number; memoryBytes?: number } = {
+    latencyMs: prediction.latencyMs,
+  };
+  if (prediction.memoryBytes !== null) {
+    telemetry.memoryBytes = prediction.memoryBytes;
+  }
+
+  if (prediction.status !== "scored") {
+    // No score and no decision: an abstention and a failure are outcomes, not
+    // values to impute.
+    return { record, status: prediction.status, ...telemetry };
+  }
+  if (
+    prediction.documentRawScore === null ||
+    prediction.localizedRawScore === null
+  ) {
+    throw new CommandError(
+      "SCORED_PREDICTION_WITHOUT_SCORE",
+      `prediction ${prediction.id} declares status "scored" with a null raw score`,
+    );
+  }
+  const applied = applyFrozenCalibration(frozen, {
+    documentRawScore: prediction.documentRawScore,
+    localizedRawScore: prediction.localizedRawScore,
+  });
+  return {
+    record,
+    status: "scored",
+    documentScore: applied.documentScore,
+    warned: applied.warning,
+    visualActioned: applied.visualAction,
+    ...telemetry,
+  };
 }
 
 function assertTestCoverage(

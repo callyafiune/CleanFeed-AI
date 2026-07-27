@@ -26,7 +26,13 @@
 
 import { canonicalSha256 } from "../contracts/canonical-json.ts";
 import type { GateReport, ReleaseDecision } from "./gates.ts";
-import type { EvaluationMetrics } from "./metrics.ts";
+import type {
+  DecisionFamilies,
+  DecisionMetrics,
+  EvaluationMetrics,
+  ResolutionBreakdown,
+  ResolutionSlice,
+} from "./metrics.ts";
 import {
   computePredictionManifestDigest,
   type PredictionManifestV1,
@@ -263,6 +269,13 @@ function buildNotes(decision: ReleaseDecision): string[] {
       "a precisão observada reflete a prevalência artificial do benchmark, não a de produção.",
   );
   notes.push('"Acurácia" nunca é métrica principal.');
+  notes.push(
+    "Cada ponto de operação sai em duas famílias: fim-a-fim (denominador = todo o " +
+      "conjunto elegível, um registro sem decisão conta como não-detecção) e " +
+      'condicional a status = "scored". Um erro de inferência nunca recebe escore ' +
+      "nem entra como verdadeiro negativo; ele aparece nas células sem decisão e " +
+      "nas tabelas de cobertura e erro por fonte, classe, faixa e plataforma.",
+  );
   return notes;
 }
 
@@ -316,23 +329,57 @@ export function renderReportMarkdown(report: BenchmarkReport): string {
   lines.push("## Overall");
   lines.push("");
   lines.push(
-    `- Aviso FPR (UCB95): ${fmt(report.metrics.warning?.falsePositiveRate?.upper95)}`,
+    "As duas famílias de métrica saem sempre em par: **fim-a-fim** tem como " +
+      "denominador todo o conjunto elegível e conta um registro sem decisão como " +
+      'não-detecção; **condicional** só considera `status = "scored"`. Nenhuma ' +
+      "das duas é *a* métrica.",
   );
-  lines.push(
-    `- Aviso recall (LCB95): ${fmt(report.metrics.warning?.recall?.lower95)}`,
-  );
+  lines.push("");
+  lines.push(decisionFamilyTable("Aviso", report.metrics.warning));
+  lines.push("");
+  const visualAction = report.metrics.visualAction;
+  if (visualAction !== null && visualAction !== undefined) {
+    lines.push(decisionFamilyTable("Ação visual", visualAction));
+    lines.push("");
+  }
   lines.push(`- Cobertura: ${fmt(report.metrics.coverage?.value)}`);
+  lines.push(`- Abstenção: ${fmt(report.metrics.abstentionRate?.value)}`);
+  lines.push(`- Erro de inferência: ${fmt(report.metrics.errorRate?.value)}`);
   lines.push(
     `- Precisão simulada (prev. 1%/5%/10%): ${fmt(report.metrics.simulatedPrecision?.prevalence01)} / ` +
       `${fmt(report.metrics.simulatedPrecision?.prevalence05)} / ${fmt(report.metrics.simulatedPrecision?.prevalence10)}`,
   );
   lines.push("");
 
+  lines.push("## Cobertura e erro por fatia");
+  lines.push("");
+  for (const [title, rows] of resolutionSections(report.metrics.resolution)) {
+    lines.push(`### ${title}`);
+    lines.push("");
+    if (rows.length === 0) {
+      lines.push("_Sem registros elegíveis._");
+    } else {
+      lines.push(
+        "| Chave | Elegíveis | Escorados | Abstenções | Erros | Cobertura | Taxa de erro |",
+      );
+      lines.push("| --- | --- | --- | --- | --- | --- | --- |");
+      for (const row of rows) {
+        lines.push(
+          `| ${row.key} | ${row.eligible} | ${row.scored} | ${row.abstained} | ${row.errored} | ` +
+            `${fmt(row.coverage?.value)} | ${fmt(row.errorRate?.value)} |`,
+        );
+      }
+    }
+    lines.push("");
+  }
+
   lines.push("## Macro");
   lines.push("");
-  lines.push(`- Aviso FPR (macro): ${fmt(report.slices.macro.warningFpr)}`);
   lines.push(
-    `- Aviso recall (macro): ${fmt(report.slices.macro.warningRecall)}`,
+    `- Aviso FPR (macro, fim-a-fim): ${fmt(report.slices.macro.warningFpr)}`,
+  );
+  lines.push(
+    `- Aviso recall (macro, fim-a-fim): ${fmt(report.slices.macro.warningRecall)}`,
   );
   lines.push("");
 
@@ -342,7 +389,11 @@ export function renderReportMarkdown(report: BenchmarkReport): string {
   lines.push(
     worstWarningFpr === undefined
       ? "- Aviso FPR: sem slice elegível."
-      : `- Aviso FPR: ${worstWarningFpr.axis}/${worstWarningFpr.key} = ${fmt(worstWarningFpr.metrics.warning?.falsePositiveRate?.upper95)}`,
+      : `- Aviso FPR (fim-a-fim, UCB95): ${worstWarningFpr.axis}/${worstWarningFpr.key} = ` +
+          fmt(
+            worstWarningFpr.metrics.warning?.endToEnd?.falsePositiveRate
+              ?.upper95,
+          ),
   );
   lines.push("");
 
@@ -369,6 +420,49 @@ export function renderReportMarkdown(report: BenchmarkReport): string {
   }
 
   return `${lines.join("\n")}\n`;
+}
+
+// One decision, both families, side by side. Publishing them in a single table
+// is the point: there is no row a reader can mistake for "the" FPR, and the
+// difference between the columns IS the cost of the failed inferences.
+function decisionFamilyTable(
+  subject: string,
+  families: DecisionFamilies,
+): string {
+  const rows: ReadonlyArray<
+    readonly [string, (metrics: DecisionMetrics) => string]
+  > = [
+    ["Positivos (denominador)", (m) => String(m?.positives)],
+    ["Negativos (denominador)", (m) => String(m?.negatives)],
+    ["Sem decisão (positivos)", (m) => String(m?.undecidedPositives)],
+    ["Sem decisão (negativos)", (m) => String(m?.undecidedNegatives)],
+    ["FPR entre decididos (UCB95)", (m) => fmt(m?.falsePositiveRate?.upper95)],
+    ["Taxa de liberação correta", (m) => fmt(m?.clearanceRate?.value)],
+    ["Recall (LCB95)", (m) => fmt(m?.recall?.lower95)],
+    ["Recall (ponto)", (m) => fmt(m?.recall?.value)],
+  ];
+  const lines: string[] = [];
+  lines.push(`### ${subject}`);
+  lines.push("");
+  lines.push("| Grandeza | fim-a-fim | condicional a status=scored |");
+  lines.push("| --- | --- | --- |");
+  for (const [label, read] of rows) {
+    lines.push(
+      `| ${label} | ${read(families?.endToEnd)} | ${read(families?.conditionalOnScored)} |`,
+    );
+  }
+  return lines.join("\n");
+}
+
+function resolutionSections(
+  resolution: ResolutionBreakdown | undefined,
+): ReadonlyArray<readonly [string, readonly ResolutionSlice[]]> {
+  return [
+    ["Por fonte", resolution?.bySource ?? []],
+    ["Por classe", resolution?.byClass ?? []],
+    ["Por faixa de comprimento", resolution?.byLengthBucket ?? []],
+    ["Por plataforma", resolution?.byPlatform ?? []],
+  ];
 }
 
 function fmt(value: number | null | undefined): string {

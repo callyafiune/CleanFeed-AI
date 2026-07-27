@@ -1086,6 +1086,65 @@ não há.
 **Concluída quando:** nenhum caminho do avaliador atribui escore a linha de erro, e o
 relatório mostra o par de métricas.
 
+**Executado (2026-07-27).** O que foi entregue, e onde divergiu do texto acima:
+
+1. **`EvaluationItem` virou união discriminada por `status`.** Só o ramo `scored`
+   carrega `documentScore`, `warned` e `visualActioned`; `abstained` e `error` não
+   carregam escore nem decisão. Não sobrou lugar para substituir escore — a proibição
+   passou a ser regra do compilador, não convenção. `evaluate.ts` expõe
+   `buildEvaluationItem`, que ramifica no `status` e **falha fechada**
+   (`SCORED_PREDICTION_WITHOUT_SCORE`) numa linha `scored` com escore nulo.
+2. **O par de famílias é `DecisionFamilies { endToEnd, conditionalOnScored }`**, e cada
+   `DecisionMetrics` carrega o próprio campo `family`, então nenhum consumidor lê uma
+   taxa sem saber o denominador. `metrics.warning` e `metrics.visualAction` passaram a
+   ser esse par; os call sites (`gates.ts`, `slices.ts`, `profile-artifact.ts`,
+   `report.ts`) foram atualizados mecanicamente e **todos leem `endToEnd`** — a família
+   nunca mais favorável, logo nenhum gate foi afrouxado (R3).
+3. **Célula nova, explícita:** `undecidedPositives` / `undecidedNegatives`. Um positivo
+   sem decisão é falso negativo; um negativo sem decisão **não** é verdadeiro negativo e
+   **não** é falso positivo — é uma célula própria. Duas decisões registradas aqui:
+   - `falsePositiveRate` é `FP / (FP + TN)`, sobre os negativos que **receberam
+     decisão**, nas duas famílias. Colocar as linhas sem decisão no denominador
+     **reduziria** a taxa: é exatamente o viés favorável que o `?? 0` produzia. Contar
+     um erro como acusação seria inventar acusação que não houve. A correção real está
+     na célula: a linha de erro saiu de `trueNegatives`, e por isso a FPR **sobe** em
+     relação ao comportamento antigo.
+   - `clearanceRate` é `TN / negatives` sobre **todos** os negativos da família: uma
+     linha sem decisão não é liberação correta. É aí que o erro cai no lado
+     desfavorável, e é uma das grandezas em que as famílias diferem.
+   Consequência: `falsePositiveRate` coincide entre as famílias por construção (só uma
+   linha escorada é decidida); quem difere é `recall`, `clearanceRate`, os contadores e
+   as células sem decisão. O teste de aceitação afere as duas coisas.
+4. **Denominador dos dois pontos de operação virou o conjunto elegível** (pt-BR e
+   `wordCount >= minimumEligibleWords`), como o texto pede; antes as matrizes rodavam
+   sobre todos os itens. `coverage`/`abstentionRate`/`errorRate` já eram sobre elegíveis.
+5. **`metrics.resolution`** publica cobertura, abstenção e taxa de erro por
+   `provenance.sourceId`, `label`, faixa de `sizeBucket` e `platform`, com chaves em
+   ordem de codepoint; `report.ts` renderiza as quatro tabelas e o par de famílias numa
+   tabela com os dois papéis nomeados.
+6. **Abstenção recebe o mesmo tratamento de célula que erro** (não é sucesso, e conta
+   como não-detecção em `endToEnd`). R5 fala de erro; estender à abstenção é o que
+   mantém a conta coerente, já que uma linha `abstained` também não tem escore por
+   schema. `abstentionRate` continua reportada em separado de `errorRate`.
+
+**Varredura do avaliador (requisito de A3), com o que ficou de fora:**
+
+- `benchmark/commands/fit.ts:178-179` **mantém** `documentRawScore ?? 0` na amostra de
+  **seleção de limiar** (o ajuste do calibrador já era restrito a `scored`). Não foi
+  tocado: `commands/fit.ts` e a construção do limiar pertencem a **G1/G2**, e G2 reescreve
+  essa população inteira. Fica registrado como defeito conhecido, porque a justificativa
+  escrita naquele comentário — "stay symmetric with evaluate.ts's decision metrics" —
+  **deixou de valer** com A3: evaluate não escora mais linha sem decisão. Contaminar a
+  amostra humana com zeros puxa o quantil para baixo, isto é, derruba o limiar e
+  **aumenta** a FPR real; G2 deve construir o quantil só sobre humanos escorados.
+- `record.mixture?.aiFraction ?? 0` (`metrics.ts`, `slices.ts`, `fit.ts:290`) não é
+  substituição de escore: o schema já exige `mixture` para `label = "mixed"`, e as duas
+  leituras fora disso são guardadas por `label === "mixed"`.
+- `benchmark/split.ts:126` e `benchmark/cli.ts:191` usam `Number(...)` seguido de
+  `Number.isFinite` com erro codificado — sem coerção silenciosa.
+- `benchmark/dataset-manifest.ts:375,498,506` e `benchmark/split.ts:398+` usam `?? 0`
+  como valor inicial de contador, não como escore.
+
 ### A4 — Identificador canônico de família geradora
 
 **Depende de:** nada.

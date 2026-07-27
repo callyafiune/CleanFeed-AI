@@ -7,6 +7,7 @@ import {
   type IntegrityEvidence,
 } from "../gates.ts";
 import type {
+  DecisionFamilies,
   DecisionMetrics,
   EvaluationMetrics,
   MetricEstimate,
@@ -44,6 +45,7 @@ function decision(
   negatives = 2_000,
 ): DecisionMetrics {
   return {
+    family: "end-to-end",
     sampleSize: positives + negatives,
     positives,
     negatives,
@@ -51,9 +53,21 @@ function decision(
     falsePositives: 0,
     trueNegatives: negatives,
     falseNegatives: 0,
+    undecidedPositives: 0,
+    undecidedNegatives: 0,
     falsePositiveRate: fpr,
+    clearanceRate: point(1),
     recall,
     precision: point(1),
+  };
+}
+
+// The gates read the end-to-end family; these fixtures have no failed inference,
+// so the conditional family is the same matrix under its own role name.
+function families(metrics: DecisionMetrics): DecisionFamilies {
+  return {
+    endToEnd: metrics,
+    conditionalOnScored: { ...metrics, family: "conditional-on-scored" },
   };
 }
 
@@ -80,11 +94,14 @@ function metrics(overrides: MetricsOverrides = {}): EvaluationMetrics {
       ? { fpr: upper(0.01), recall: lower(0.5) }
       : overrides.visual;
   return {
-    warning: decision(
-      overrides.warningFpr ?? upper(0.02),
-      overrides.warningRecall ?? lower(0.75),
+    warning: families(
+      decision(
+        overrides.warningFpr ?? upper(0.02),
+        overrides.warningRecall ?? lower(0.75),
+      ),
     ),
-    visualAction: visual === null ? null : decision(visual.fpr, visual.recall),
+    visualAction:
+      visual === null ? null : families(decision(visual.fpr, visual.recall)),
     coverage: point(overrides.coverage ?? 0.95),
     ece15: point(overrides.ece15 ?? 0.02),
     errorRate: point(overrides.errorRate ?? 0.001),
@@ -122,10 +139,11 @@ function slice(overrides: SliceOverrides): SliceResult {
     fprGateEligible: overrides.fprGateEligible ?? false,
     recallGateEligible: overrides.recallGateEligible ?? false,
     metrics: {
-      warning: decision(upper(overrides.warningFprUpper ?? 0.01), lower(0.75)),
-      visualAction: decision(
-        upper(overrides.actionFprUpper ?? 0.005),
-        lower(0.5),
+      warning: families(
+        decision(upper(overrides.warningFprUpper ?? 0.01), lower(0.75)),
+      ),
+      visualAction: families(
+        decision(upper(overrides.actionFprUpper ?? 0.005), lower(0.5)),
       ),
     } as unknown as EvaluationMetrics,
   };

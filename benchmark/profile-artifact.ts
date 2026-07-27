@@ -44,7 +44,7 @@ import {
 import type { FrozenCalibrationArtifact } from "./calibration-pipeline.ts";
 import type { GateReport, ReleaseDecision } from "./gates.ts";
 import { wilsonOneSided } from "./intervals.ts";
-import type { DecisionMetrics, MetricEstimate } from "./metrics.ts";
+import type { DecisionFamilies, MetricEstimate } from "./metrics.ts";
 import type { BenchmarkReport } from "./report.ts";
 
 // v1 policy: calibration profiles are published for the single "generic"
@@ -287,13 +287,17 @@ function neverFiresEvidence(
 }
 
 function actionFprEvidence(
-  visualAction: DecisionMetrics | null,
+  visualAction: DecisionFamilies | null,
   sampleSize: number,
   label: string,
 ): ProportionGateEvidenceV1 {
   return visualAction === null
     ? neverFiresEvidence(sampleSize, label)
-    : toProportionEvidence(visualAction.falsePositiveRate, sampleSize, label);
+    : toProportionEvidence(
+        visualAction.endToEnd.falsePositiveRate,
+        sampleSize,
+        label,
+      );
 }
 
 function buildGateEvidence(
@@ -301,7 +305,10 @@ function buildGateEvidence(
   report: BenchmarkReport,
 ): RuntimeCalibrationProfileV1["gateEvidence"] {
   const metrics = report.metrics;
-  const warning = metrics.warning;
+  // The published profile carries the END-TO-END family: the runtime evidence a
+  // consumer reads must charge inference failures against the system, exactly
+  // like the release gates do.
+  const warning = metrics.warning.endToEnd;
   const visual = metrics.visualAction;
 
   if (!Number.isFinite(metrics.ece15.value)) {
@@ -334,7 +341,7 @@ function buildGateEvidence(
     if (slice.fprGateEligible) {
       criticalFprSlices[key] = {
         indicatorFpr: toProportionEvidence(
-          slice.metrics.warning.falsePositiveRate,
+          slice.metrics.warning.endToEnd.falsePositiveRate,
           slice.negatives,
           `${key} indicatorFpr`,
         ),
@@ -351,14 +358,14 @@ function buildGateEvidence(
       const actionRecall =
         decision === "pass" && slice.metrics.visualAction !== null
           ? toProportionEvidence(
-              slice.metrics.visualAction.recall,
+              slice.metrics.visualAction.endToEnd.recall,
               slice.positives,
               `${key} actionRecall`,
             )
           : null;
       criticalRecallSlices[key] = {
         indicatorRecall: toProportionEvidence(
-          slice.metrics.warning.recall,
+          slice.metrics.warning.endToEnd.recall,
           slice.positives,
           `${key} indicatorRecall`,
         ),
@@ -395,7 +402,7 @@ function buildGateEvidence(
         visual === null
           ? neverFiresEvidence(warning.positives, "overall actionRecall")
           : toProportionEvidence(
-              visual.recall,
+              visual.endToEnd.recall,
               warning.positives,
               "overall actionRecall",
             ),

@@ -376,10 +376,30 @@ export interface MetricEstimate {
   method: "point" | "wilson-one-sided" | "author-cluster-percentile";
 }
 
+// Which population a confusion matrix was measured over. Every DecisionMetrics
+// carries its own role, so no consumer can read a rate without knowing which
+// denominator produced it (R5: metrics come out in pairs, never as "the" FPR).
+//
+//   * "end-to-end"           — every eligible record, whatever its status. A
+//                              record whose inference produced no decision is a
+//                              NON-DETECTION: for a positive a false negative,
+//                              for a negative neither a false positive nor a
+//                              true negative but an explicitly undecided cell.
+//   * "conditional-on-scored" — only the eligible records with
+//                              `status === "scored"`.
+export type MetricFamily = "end-to-end" | "conditional-on-scored";
+
 // A confusion matrix at one operating point with Wilson one-sided intervals on
 // every rate. Negatives are human records only; positives are AI plus the mixed
 // records with at least 50% AI contribution.
+//
+// The four classic cells count DECIDED records only. A record that produced no
+// decision (`abstained` or `error`) lands in `undecidedPositives` /
+// `undecidedNegatives`: it is never a success, and it is never a fabricated
+// accusation either. That is the whole defect this shape removes — an errored
+// row used to be scored 0 and counted as a true negative.
 export interface DecisionMetrics {
+  family: MetricFamily;
   sampleSize: number;
   positives: number;
   negatives: number;
@@ -387,9 +407,30 @@ export interface DecisionMetrics {
   falsePositives: number;
   trueNegatives: number;
   falseNegatives: number;
+  undecidedPositives: number;
+  undecidedNegatives: number;
+  // FP / (FP + TN): how often a human record that GOT a decision was wrongly
+  // accused. Undecided rows are excluded from this denominator on purpose —
+  // adding them would shrink the rate, which is exactly the favorable bias the
+  // `?? 0` substitution produced. It is identical in both families by
+  // construction, because only a scored record can be decided.
   falsePositiveRate: MetricEstimate;
+  // TN / negatives: how often a human record was actively and correctly cleared,
+  // over ALL negatives of the family. An undecided row is not a clearance, so
+  // this is where an inference failure lands on the unfavorable side.
+  clearanceRate: MetricEstimate;
+  // TP / positives: end-to-end this charges every undecided positive as a miss.
   recall: MetricEstimate;
+  // TP / (TP + FP), over decided records only.
   precision: MetricEstimate;
+}
+
+// The mandatory pair (R5). A report publishes BOTH; a gate that wants an
+// error-conservative bound reads `endToEnd`, which is never more favorable than
+// `conditionalOnScored` on either recall or clearance.
+export interface DecisionFamilies {
+  endToEnd: DecisionMetrics;
+  conditionalOnScored: DecisionMetrics;
 }
 
 export interface CalibrationPoint {
@@ -411,9 +452,33 @@ export interface MixedFractionSegment {
   warning: DecisionMetrics;
 }
 
+// Coverage / abstention / error over one slice of the eligible set, so a
+// fragility concentrated in one source, class, length band or platform shows up
+// instead of being diluted into a single overall error rate.
+export interface ResolutionSlice {
+  key: string;
+  // Denominator: the eligible records in this slice.
+  eligible: number;
+  scored: number;
+  abstained: number;
+  errored: number;
+  coverage: MetricEstimate;
+  abstentionRate: MetricEstimate;
+  errorRate: MetricEstimate;
+}
+
+// The four required breakdown axes. Keys are sorted by unicode codepoint, like
+// every other keyed collection the report seals.
+export interface ResolutionBreakdown {
+  bySource: ResolutionSlice[];
+  byClass: ResolutionSlice[];
+  byLengthBucket: ResolutionSlice[];
+  byPlatform: ResolutionSlice[];
+}
+
 export interface EvaluationMetrics {
-  warning: DecisionMetrics;
-  visualAction: DecisionMetrics | null;
+  warning: DecisionFamilies;
+  visualAction: DecisionFamilies | null;
   rocAuc: MetricEstimate;
   prAuc: MetricEstimate;
   brier: MetricEstimate;
@@ -421,6 +486,8 @@ export interface EvaluationMetrics {
   coverage: MetricEstimate;
   abstentionRate: MetricEstimate;
   errorRate: MetricEstimate;
+  // Coverage and error rate per source, class, length band and platform.
+  resolution: ResolutionBreakdown;
   simulatedPrecision: Record<
     "prevalence01" | "prevalence05" | "prevalence10",
     number
@@ -437,17 +504,47 @@ export interface EvaluationMetrics {
   };
 }
 
-// One scored (or abstained/errored) holdout record. The warning/visual-action
-// decisions are already applied from the frozen thresholds; `documentScore` is
-// the calibrated document probability used for ranking and calibration metrics.
-export interface EvaluationItem {
+// One holdout record's scoring outcome, as a union DISCRIMINATED BY `status`.
+//
+// This shape is load-bearing, not stylistic. While the item was one object with
+// `documentScore: number` and a separate `status`, every caller had to invent a
+// score for the rows that have none, `evaluate.ts` did it with `?? 0` — the most
+// human score possible — and 325 failed inferences were counted as true
+// negatives. Now only the `scored` branch HAS a score and a decision, so a
+// consumer cannot read `documentScore` or `warned` without first narrowing on
+// `status`, and there is nothing to substitute (R5).
+interface EvaluationItemTelemetry {
   record: BenchmarkRecord;
+  latencyMs?: number;
+  memoryBytes?: number;
+}
+
+/** The only branch that carries a probability and the two frozen decisions. */
+export interface ScoredEvaluationItem extends EvaluationItemTelemetry {
+  status: "scored";
   documentScore: number;
   warned: boolean;
   visualActioned: boolean;
-  status: "scored" | "abstained" | "error";
-  latencyMs?: number;
-  memoryBytes?: number;
+}
+
+/** The runtime declined to decide (below the word floor, unsupported evidence). */
+export interface AbstainedEvaluationItem extends EvaluationItemTelemetry {
+  status: "abstained";
+}
+
+/** Inference failed. No score, no decision, no substitution. */
+export interface ErroredEvaluationItem extends EvaluationItemTelemetry {
+  status: "error";
+}
+
+export type EvaluationItem =
+  ScoredEvaluationItem | AbstainedEvaluationItem | ErroredEvaluationItem;
+
+/** Narrowing guard: `Array.prototype.filter` keeps the `scored` branch typed. */
+export function isScoredItem(
+  item: EvaluationItem,
+): item is ScoredEvaluationItem {
+  return item.status === "scored";
 }
 
 export interface EvaluationOptions {
@@ -547,26 +644,25 @@ export function computeEvaluationMetrics(
   const visualActionAvailable = options.visualActionAvailable ?? true;
   const seed = options.bootstrapSeed;
 
-  const positives = items.filter((item) => isWarningPositive(item.record));
-  const negatives = items.filter((item) => isHumanNegative(item.record));
-
-  const warning = decisionMetrics(positives, negatives, (item) => item.warned);
-  const visualAction = visualActionAvailable
-    ? decisionMetrics(positives, negatives, (item) => item.visualActioned)
-    : null;
-
-  // Continuous ranking/calibration metrics run over the scored positive/negative
-  // set; mixed records below 50% AI are neither, so they never enter the curve.
-  const scoredBinary = items.filter(
-    (item) =>
-      item.status === "scored" &&
-      (isWarningPositive(item.record) || isHumanNegative(item.record)),
-  );
-
   const eligible = items.filter((item) =>
     isEligible(item.record, minimumWords),
   );
   const eligibleCount = eligible.length;
+
+  // Both decision families are measured over the ELIGIBLE set: end-to-end over
+  // all of it, conditional over the part of it that produced a score.
+  const warning = decisionFamilies(eligible, (item) => item.warned);
+  const visualAction = visualActionAvailable
+    ? decisionFamilies(eligible, (item) => item.visualActioned)
+    : null;
+
+  // Continuous ranking/calibration metrics run over the scored positive/negative
+  // set; mixed records below 50% AI are neither, so they never enter the curve.
+  const scoredBinary = items
+    .filter(isScoredItem)
+    .filter(
+      (item) => isWarningPositive(item.record) || isHumanNegative(item.record),
+    );
 
   return {
     warning,
@@ -587,6 +683,7 @@ export function computeEvaluationMetrics(
       eligible.filter((item) => item.status === "error").length,
       eligibleCount,
     ),
+    resolution: resolutionBreakdown(eligible),
     simulatedPrecision: {
       prevalence01: simulatedPrecisionAt(warning, prevalences.prevalence01),
       prevalence05: simulatedPrecisionAt(warning, prevalences.prevalence05),
@@ -595,44 +692,153 @@ export function computeEvaluationMetrics(
     latency: latencyMetricsAll(items),
     memory: memoryMetricsAll(items),
     mixed: {
-      atLeastHalfAi: mixedAtLeastHalfAi(items),
-      byFraction: mixedByFraction(items),
+      atLeastHalfAi: mixedAtLeastHalfAi(eligible),
+      byFraction: mixedByFraction(eligible),
     },
   };
 }
 
+// The mandatory pair for one decision (warning or visual action) over one
+// already-eligible population. A6 adds new estimands by extending
+// DecisionMetrics and reusing this helper, so every new number arrives in both
+// families at once instead of as a single unqualified figure.
+function decisionFamilies(
+  eligible: readonly EvaluationItem[],
+  decide: (item: ScoredEvaluationItem) => boolean,
+): DecisionFamilies {
+  return {
+    endToEnd: decisionMetrics(eligible, decide, "end-to-end"),
+    conditionalOnScored: decisionMetrics(
+      eligible.filter(isScoredItem),
+      decide,
+      "conditional-on-scored",
+    ),
+  };
+}
+
+// One confusion matrix over one population. `decide` is only ever called on a
+// scored item — the union makes that a type rule rather than a convention — and
+// a record with no decision is counted as undecided, never as a success.
 function decisionMetrics(
-  positives: readonly EvaluationItem[],
-  negatives: readonly EvaluationItem[],
-  decide: (item: EvaluationItem) => boolean,
+  population: readonly EvaluationItem[],
+  decide: (item: ScoredEvaluationItem) => boolean,
+  family: MetricFamily,
 ): DecisionMetrics {
+  let positives = 0;
+  let negatives = 0;
   let truePositives = 0;
   let falseNegatives = 0;
-  for (const item of positives) {
-    if (decide(item)) truePositives += 1;
-    else falseNegatives += 1;
-  }
   let falsePositives = 0;
   let trueNegatives = 0;
-  for (const item of negatives) {
-    if (decide(item)) falsePositives += 1;
+  let undecidedPositives = 0;
+  let undecidedNegatives = 0;
+
+  for (const item of population) {
+    const positive = isWarningPositive(item.record);
+    const negative = isHumanNegative(item.record);
+    if (!positive && !negative) continue;
+    if (positive) positives += 1;
+    else negatives += 1;
+
+    if (!isScoredItem(item)) {
+      // No score, so no decision. A positive that never got a decision is a
+      // missed detection; a negative that never got one is NOT a correct
+      // clearance and NOT an accusation.
+      if (positive) {
+        undecidedPositives += 1;
+        falseNegatives += 1;
+      } else {
+        undecidedNegatives += 1;
+      }
+      continue;
+    }
+
+    const decided = decide(item);
+    if (positive) {
+      if (decided) truePositives += 1;
+      else falseNegatives += 1;
+    } else if (decided) falsePositives += 1;
     else trueNegatives += 1;
   }
+
   return {
-    sampleSize: positives.length + negatives.length,
-    positives: positives.length,
-    negatives: negatives.length,
+    family,
+    sampleSize: positives + negatives,
+    positives,
+    negatives,
     truePositives,
     falsePositives,
     trueNegatives,
     falseNegatives,
-    falsePositiveRate: proportionEstimate(falsePositives, negatives.length),
-    recall: proportionEstimate(truePositives, positives.length),
+    undecidedPositives,
+    undecidedNegatives,
+    falsePositiveRate: proportionEstimate(
+      falsePositives,
+      falsePositives + trueNegatives,
+    ),
+    clearanceRate: proportionEstimate(trueNegatives, negatives),
+    recall: proportionEstimate(truePositives, positives),
     precision: proportionEstimate(
       truePositives,
       truePositives + falsePositives,
     ),
   };
+}
+
+// --- coverage / error by slice ---------------------------------------------
+
+// The four required axes. `source` is the provenance source id and `class` the
+// record label, so a coverage hole in one corpus or one class is visible instead
+// of averaged away.
+const RESOLUTION_AXES: ReadonlyArray<
+  readonly [keyof ResolutionBreakdown, (record: BenchmarkRecord) => string]
+> = [
+  ["bySource", (record) => record.provenance.sourceId],
+  ["byClass", (record) => record.label],
+  ["byLengthBucket", (record) => sizeBucket(record.wordCount)],
+  ["byPlatform", (record) => record.platform],
+];
+
+function resolutionBreakdown(
+  eligible: readonly EvaluationItem[],
+): ResolutionBreakdown {
+  const breakdown = {} as ResolutionBreakdown;
+  for (const [axis, keyOf] of RESOLUTION_AXES) {
+    breakdown[axis] = resolutionSlices(eligible, keyOf);
+  }
+  return breakdown;
+}
+
+function resolutionSlices(
+  eligible: readonly EvaluationItem[],
+  keyOf: (record: BenchmarkRecord) => string,
+): ResolutionSlice[] {
+  const buckets = new Map<string, EvaluationItem[]>();
+  for (const item of eligible) {
+    const key = keyOf(item.record);
+    const bucket = buckets.get(key);
+    if (bucket === undefined) buckets.set(key, [item]);
+    else bucket.push(item);
+  }
+  return [...buckets.entries()]
+    .sort((a, b) => (a[0] < b[0] ? -1 : a[0] > b[0] ? 1 : 0))
+    .map(([key, bucket]) => {
+      const scored = bucket.filter((item) => item.status === "scored").length;
+      const abstained = bucket.filter(
+        (item) => item.status === "abstained",
+      ).length;
+      const errored = bucket.filter((item) => item.status === "error").length;
+      return {
+        key,
+        eligible: bucket.length,
+        scored,
+        abstained,
+        errored,
+        coverage: proportionEstimate(scored, bucket.length),
+        abstentionRate: proportionEstimate(abstained, bucket.length),
+        errorRate: proportionEstimate(errored, bucket.length),
+      };
+    });
 }
 
 // Wilson one-sided lower and upper bounds on a proportion. A zero-denominator
@@ -652,8 +858,8 @@ function proportionEstimate(successes: number, total: number): MetricEstimate {
 // cannot muster enough finite replicates, it degrades to a bare point estimate
 // rather than fabricating an interval or throwing.
 function continuousEstimate(
-  items: readonly EvaluationItem[],
-  statistic: (sample: readonly EvaluationItem[]) => number,
+  items: readonly ScoredEvaluationItem[],
+  statistic: (sample: readonly ScoredEvaluationItem[]) => number,
   seed: number,
 ): MetricEstimate {
   const value = statistic(items);
@@ -676,7 +882,7 @@ function continuousEstimate(
   }
 }
 
-function rocAucFromItems(items: readonly EvaluationItem[]): number {
+function rocAucFromItems(items: readonly ScoredEvaluationItem[]): number {
   let positives = 0;
   let negatives = 0;
   for (const item of items) {
@@ -707,7 +913,7 @@ function rocAucFromItems(items: readonly EvaluationItem[]): number {
   return area;
 }
 
-function prAucFromItems(items: readonly EvaluationItem[]): number {
+function prAucFromItems(items: readonly ScoredEvaluationItem[]): number {
   let positives = 0;
   for (const item of items) {
     if (isWarningPositive(item.record)) positives += 1;
@@ -734,28 +940,31 @@ function prAucFromItems(items: readonly EvaluationItem[]): number {
   return averagePrecision;
 }
 
-function sampleBrier(items: readonly EvaluationItem[]): number {
+function sampleBrier(items: readonly ScoredEvaluationItem[]): number {
   return brierScore(items.map(toCalibrationPoint));
 }
 
-function sampleEce(items: readonly EvaluationItem[]): number {
+function sampleEce(items: readonly ScoredEvaluationItem[]): number {
   return ece15(items.map(toCalibrationPoint));
 }
 
-function toCalibrationPoint(item: EvaluationItem): CalibrationPoint {
+function toCalibrationPoint(item: ScoredEvaluationItem): CalibrationPoint {
   return {
     probability: item.documentScore,
     label: isWarningPositive(item.record) ? 1 : 0,
   };
 }
 
+// Projected from the END-TO-END operating point: the prevalence projection is a
+// product question ("how often would a warning be right in real traffic?"), and
+// real traffic includes the documents whose inference fails.
 function simulatedPrecisionAt(
-  warning: DecisionMetrics,
+  warning: DecisionFamilies,
   prevalence: number,
 ): number {
   return simulatedPrecision({
-    truePositiveRate: warning.recall.value,
-    falsePositiveRate: warning.falsePositiveRate.value,
+    truePositiveRate: warning.endToEnd.recall.value,
+    falsePositiveRate: warning.endToEnd.falsePositiveRate.value,
     prevalence,
   });
 }
@@ -795,6 +1004,9 @@ function memoryMetricsAll(items: readonly EvaluationItem[]): MemoryMetrics {
   };
 }
 
+// END-TO-END by construction: the denominator is every eligible >=50% AI mixed
+// record and an undecided one counts as a miss, so an inference failure can
+// never raise this recall.
 function mixedAtLeastHalfAi(items: readonly EvaluationItem[]): {
   sampleSize: number;
   warningRecall: number;
@@ -805,7 +1017,9 @@ function mixedAtLeastHalfAi(items: readonly EvaluationItem[]): {
       item.record.label === "mixed" &&
       (item.record.mixture?.aiFraction ?? 0) >= 0.5,
   );
-  const warned = strong.filter((item) => item.warned).length;
+  const warned = strong.filter(
+    (item) => isScoredItem(item) && item.warned,
+  ).length;
   if (strong.length === 0) {
     return { sampleSize: 0, warningRecall: 0, warningRecallLower95: 0 };
   }
@@ -847,10 +1061,8 @@ function mixedByFraction(
     .map(([key, bucket]) => ({
       key,
       sampleSize: bucket.length,
-      warning: decisionMetrics(
-        bucket.filter((item) => isWarningPositive(item.record)),
-        [],
-        (item) => item.warned,
-      ),
+      // A mixed bucket holds no human negatives, so this matrix is a pure recall
+      // block; it is the end-to-end family, like the aggregate above.
+      warning: decisionMetrics(bucket, (item) => item.warned, "end-to-end"),
     }));
 }

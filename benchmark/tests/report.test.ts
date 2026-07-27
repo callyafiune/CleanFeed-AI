@@ -158,7 +158,82 @@ function metrics(): EvaluationMetrics {
       prevalence05: 0.8,
       prevalence10: 0.9,
     },
-    warning: { recall: { value: 0.75, method: "point" } },
+    warning: {
+      endToEnd: {
+        family: "end-to-end",
+        positives: 4,
+        negatives: 4,
+        undecidedPositives: 1,
+        undecidedNegatives: 1,
+        falsePositiveRate: { value: 1 / 3, upper95: 0.6, method: "point" },
+        clearanceRate: { value: 0.5, method: "point" },
+        recall: { value: 0.5, lower95: 0.2, method: "point" },
+      },
+      conditionalOnScored: {
+        family: "conditional-on-scored",
+        positives: 3,
+        negatives: 3,
+        undecidedPositives: 0,
+        undecidedNegatives: 0,
+        falsePositiveRate: { value: 1 / 3, upper95: 0.6, method: "point" },
+        clearanceRate: { value: 2 / 3, method: "point" },
+        recall: { value: 0.75, lower95: 0.4, method: "point" },
+      },
+    },
+    visualAction: null,
+    coverage: { value: 0.75, method: "point" },
+    abstentionRate: { value: 0.125, method: "point" },
+    errorRate: { value: 0.125, method: "point" },
+    resolution: {
+      bySource: [
+        {
+          key: "ptwiki",
+          eligible: 4,
+          scored: 3,
+          abstained: 0,
+          errored: 1,
+          coverage: { value: 0.75, method: "point" },
+          abstentionRate: { value: 0, method: "point" },
+          errorRate: { value: 0.25, method: "point" },
+        },
+      ],
+      byClass: [
+        {
+          key: "human",
+          eligible: 4,
+          scored: 3,
+          abstained: 0,
+          errored: 1,
+          coverage: { value: 0.75, method: "point" },
+          abstentionRate: { value: 0, method: "point" },
+          errorRate: { value: 0.25, method: "point" },
+        },
+      ],
+      byLengthBucket: [
+        {
+          key: "50_79",
+          eligible: 4,
+          scored: 3,
+          abstained: 0,
+          errored: 1,
+          coverage: { value: 0.75, method: "point" },
+          abstentionRate: { value: 0, method: "point" },
+          errorRate: { value: 0.25, method: "point" },
+        },
+      ],
+      byPlatform: [
+        {
+          key: "wikipedia",
+          eligible: 4,
+          scored: 3,
+          abstained: 0,
+          errored: 1,
+          coverage: { value: 0.75, method: "point" },
+          abstentionRate: { value: 0, method: "point" },
+          errorRate: { value: 0.25, method: "point" },
+        },
+      ],
+    },
   } as unknown as EvaluationMetrics;
 }
 
@@ -408,5 +483,39 @@ describe("renderReportMarkdown", () => {
     expect(heading).toContain("pass");
     expect(md.toLowerCase()).not.toContain("# accuracy");
     expect(md.toLowerCase()).not.toContain("headline: accuracy");
+  });
+
+  it("prints the metric pair with both roles named, never a single FPR", async () => {
+    const report = await buildBenchmarkReport(baseInput());
+    const md = renderReportMarkdown(report);
+
+    // Both denominators are named, in the same table, so no row can be read as
+    // "the" FPR or "the" recall.
+    expect(md).toContain(
+      "| Grandeza | fim-a-fim | condicional a status=scored |",
+    );
+    expect(md).toContain("| Recall (ponto) | 0.5000 | 0.7500 |");
+    expect(md).toContain("| Taxa de liberação correta | 0.5000 | 0.6667 |");
+    // The undecided cells are published, so a failed inference is visible rather
+    // than absorbed into a true negative.
+    expect(md).toContain("| Sem decisão (negativos) | 1 | 0 |");
+    expect(md).toContain("Erro de inferência: 0.1250");
+  });
+
+  it("breaks coverage and error rate out by source, class, length band and platform", async () => {
+    const report = await buildBenchmarkReport(baseInput());
+    const md = renderReportMarkdown(report);
+
+    expect(md).toContain("## Cobertura e erro por fatia");
+    for (const heading of [
+      "### Por fonte",
+      "### Por classe",
+      "### Por faixa de comprimento",
+      "### Por plataforma",
+    ]) {
+      expect(md).toContain(heading);
+    }
+    expect(md).toContain("| ptwiki | 4 | 3 | 0 | 1 | 0.7500 | 0.2500 |");
+    expect(md).toContain("| wikipedia | 4 | 3 | 0 | 1 | 0.7500 | 0.2500 |");
   });
 });
