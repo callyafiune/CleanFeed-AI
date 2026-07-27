@@ -507,6 +507,47 @@ divergência:
    `benchmark/prediction-shards.ts` e `benchmark/tests/prediction-shards.test.ts` eram
    apenas o CRLF da árvore de trabalho.
 
+6. **O vocabulário colapsava, uma camada abaixo, exatamente o defeito que A1 existe para
+   remover — corrigido.** A primeira entrega de A1 cobria os sítios de `onnx-classifier.ts`
+   e do agregador, mas **não** os do tokenizador. `scoreDocument` começa em
+   [`runtime.tokenizer.encodeWithOffsets(text)`](../../../src/model-benchmark/main.ts#L257),
+   e essa chamada lança **seis** literais distintos de
+   [`model-runtime.ts`](../../../src/inference/model-runtime.ts#L267) (linhas 267, 340, 360,
+   429, 439, 451). Nenhum estava na allowlist, então os seis reduziam ao **mesmo**
+   `TOKENIZATION_FAILED` (medido: `selectFailureDetail("TOKENIZATION_FAILED", new Error(m))`
+   devolvia uma única string para todos os seis). São guards de **tiling de offsets
+   ByteLevel/WordPiece**, isto é, precisamente a classe que §6.4 (Unicode) torna plausível
+   para documento longo da Carolina — a população que A2 tem de explicar. Um documento cujo
+   fluxo de tokens não cobre o texto-fonte era indistinguível de um id inválido e de um
+   caractere fora do alfabeto de bytes: três bugs com três remédios diferentes. Cada um
+   ganhou seu código (`TOKENIZER_STREAM_LENGTH_MISMATCH`, `TOKENIZER_INVALID_TOKEN_ID`,
+   `TOKENIZER_INVALID_INPUT_IDS_SHAPE`, `BYTE_LEVEL_OFFSET_OVERFLOW`,
+   `BYTE_LEVEL_STREAM_NOT_TILED`, `BYTE_LEVEL_NON_ALPHABET_CHARACTER`) e a mudança é
+   **aditiva dentro de `contracts/failure-detail.ts`** — `model-runtime.ts` não foi tocado.
+   O comentário do módulo afirmava um guard de deriva que **não existia** ("o teste de
+   propagação verifica cada sítio"): o teste cobria só `onnx-classifier.ts`. Agora
+   `failure-detail-propagation.test.ts` **dirige os seis sítios reais** através de
+   `ExactTokenizer` e afirma o detalhe que cada um produz, então reescrever a mensagem de um
+   guard fica vermelho.
+
+7. **Três correções menores no mesmo contrato, todas com teste que fixa o valor.**
+   (a) O *fallback* de `selectFailureDetail` preferia o `reasonCode` até quando ele era
+   `INFERENCE_FAILED` — ou seja, uma falha genuinamente não classificável era arquivada sob
+   o **mesmo código opaco** que motivou o campo, tornando invisível a população
+   desconhecida que A2 vai contar. Agora só `INFERENCE_FAILED` perde para
+   `UNCLASSIFIED_RUNTIME_FAILURE`; todo outro `reasonCode` nomeia uma camada e continua
+   preferido. (b) `FAILURE_DETAIL_CODES` e `ErrorCode` eram dois vocabulários sem vínculo e
+   **já divergentes**: sete `ErrorCode` (`WORKER_UNAVAILABLE`, `WEBGPU_UNAVAILABLE`,
+   `CACHE_ERROR`, `STORAGE_ERROR`, `INVALID_SETTINGS`, `INVALID_MESSAGE`,
+   `PLATFORM_EXTRACTION_FAILED`) reduziam a "unclassified" mesmo quando o runtime já sabia o
+   código exato. `src/shared/errors.ts` passou a exportar `ERROR_CODES` como **valor**
+   (`ErrorCode` deriva dele, união idêntica) e um teste afirma a contenção, porque um union
+   type não é iterável e o modo de falha é um guard **mudar de lugar**. (c) O sanitizador
+   **podia lançar**: `messageOf`/`causeOf` liam `.message`/`.cause` de valor arbitrário sem
+   guarda, e ele fica no único caminho que transforma um throw em linha de erro — o laço de
+   shards não tem `catch` por documento, então um acessor hostil derrubava a partição
+   inteira em vez de degradar o detalhe. As duas leituras agora são **totais**.
+
 ### A2 — Diagnosticar e corrigir a falha em documento longo
 
 **Depende de:** A1.

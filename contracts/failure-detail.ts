@@ -20,6 +20,10 @@
 // `isSanitizedFailureDetail(d)` iff `sanitizeFailureDetail(d) === d`. That makes
 // "no document text can be stored" a property of one function rather than of two
 // lists that have to agree.
+//
+// Every function here is TOTAL: it returns a storable detail for any input and
+// never throws. It is the last thing standing between a thrown value and an error
+// row, so failing here would delete the row instead of describing it.
 
 /** Hard cap on a stored detail, in UTF-16 code units. */
 export const FAILURE_DETAIL_MAX_LENGTH = 160;
@@ -29,6 +33,12 @@ export const FAILURE_DETAIL_MAX_LENGTH = 160;
  * rebuild plan's window-slack decision keys on, so they must stay separately
  * observable; the rest exist because collapsing them would recreate exactly the
  * defect this module was written to remove.
+ *
+ * It is a SUPERSET of `ErrorCode` (src/shared/errors.ts): every coded error
+ * class the runtime can raise is storable as a detail, because a reason code the
+ * runtime already knew exactly must never degrade to "unclassified". That
+ * containment is asserted by test — this module deliberately does not import
+ * from `src/`, so it cannot be a type constraint here.
  */
 export const FAILURE_DETAIL_CODES = [
   // Causes the long-document correction discriminates on.
@@ -49,15 +59,39 @@ export const FAILURE_DETAIL_CODES = [
   "MODEL_PROBABILITIES_UNNORMALIZED",
   "CLASSIFIER_NOT_INITIALIZED",
   "ONNX_INFERENCE_FAILED",
+  // Tokenizer offset-derivation guards. `encodeWithOffsets` is the FIRST call
+  // scoring makes, and these six all threw one `TOKENIZATION_FAILED`: a
+  // token/id stream disagreement, a byte-layout mismatch and a non-ByteLevel
+  // surface character are three different bugs with three different remedies.
+  "TOKENIZER_STREAM_LENGTH_MISMATCH",
+  "TOKENIZER_INVALID_TOKEN_ID",
+  "TOKENIZER_INVALID_INPUT_IDS_SHAPE",
+  "BYTE_LEVEL_OFFSET_OVERFLOW",
+  "BYTE_LEVEL_STREAM_NOT_TILED",
+  "BYTE_LEVEL_NON_ALPHABET_CHARACTER",
   // Harness/assembly outcomes that also produce an error row.
   "MODEL_ARTIFACT_MISSING",
   "RUNTIME_PARITY_IDENTITY_MISMATCH",
   "MODEL_BENCHMARK_FAILED",
+  // The rest of `ErrorCode`. Several cannot reach a prediction row from today's
+  // call graph, and they are kept anyway: the invariant that is TESTED is
+  // containment of the whole error vocabulary, because the failure mode is a
+  // guard MOVING (a CACHE_ERROR or INVALID_SETTINGS reaching `errorScore`) and
+  // silently degrading the field from diagnostic to noise. `INSUFFICIENT_EVIDENCE`
+  // is the clearest example: `main.ts` maps it to `abstained`, and a non-error
+  // row may not carry a detail at all, so it is unreachable today.
   "MODEL_LOAD_FAILED",
   "TOKENIZATION_FAILED",
   "INFERENCE_FAILED",
   "INFERENCE_TIMEOUT",
   "INSUFFICIENT_EVIDENCE",
+  "WORKER_UNAVAILABLE",
+  "WEBGPU_UNAVAILABLE",
+  "CACHE_ERROR",
+  "STORAGE_ERROR",
+  "INVALID_SETTINGS",
+  "INVALID_MESSAGE",
+  "PLATFORM_EXTRACTION_FAILED",
   // The deterministic reduction for anything outside this allowlist.
   "UNCLASSIFIED_RUNTIME_FAILURE",
 ] as const;
@@ -73,25 +107,66 @@ const CODES: ReadonlySet<string> = new Set<string>(FAILURE_DETAIL_CODES);
 /**
  * Exact-match allowlist of OUR OWN thrown literals. Exact match is what makes
  * this safe to echo verbatim: these strings are source constants, so a document
- * excerpt can never equal one. Keep it in sync with the throw sites — the
- * propagation test asserts each site's real message lands here.
+ * excerpt can never equal one.
+ *
+ * Coverage: every literal message a guard on the SCORING path throws — the ONNX
+ * classifier (`src/inference/onnx-classifier.ts`) and the exact tokenizer's
+ * offset derivation (`src/inference/model-runtime.ts`), which is the first call
+ * `scoreDocument` makes. The aggregator's messages are codes, not prose, so they
+ * are in {@link FAILURE_DETAIL_CODES} instead. `failure-detail-propagation.test.ts`
+ * drives each of those REAL throw sites and asserts the detail it yields, so
+ * rewording a guard turns that test red — the drift guard covers the sites it
+ * names and no others. Messages built by template (a measured special-token
+ * count, an artifact path) are deliberately absent: they are not constants, so
+ * they must reduce to the reason code rather than be echoed.
  */
-const KNOWN_FAILURE_MESSAGES: ReadonlyMap<string, FailureDetailCode> = new Map([
-  ["Model input exceeds the model token limit.", "TOKEN_LIMIT_EXCEEDED"],
-  ["Model input has an invalid length.", "INVALID_MODEL_INPUT_LENGTH"],
-  ["Tokenizer emitted invalid IDs.", "TOKENIZER_INVALID_IDS"],
-  ["Tokenizer output has an invalid shape.", "TOKENIZER_INVALID_SHAPE"],
-  ["Model inputs are missing.", "MODEL_INPUTS_MISSING"],
-  ["Model output has an invalid shape.", "MODEL_OUTPUT_INVALID_SHAPE"],
-  ["Model probabilities must sum to one.", "MODEL_PROBABILITIES_UNNORMALIZED"],
-  [
-    "Classifier must be initialized before classification.",
-    "CLASSIFIER_NOT_INITIALIZED",
-  ],
-  ["ONNX inference failed.", "ONNX_INFERENCE_FAILED"],
-  ["Tokenizer is not loaded.", "MODEL_LOAD_FAILED"],
-  ["Model is not loaded.", "MODEL_LOAD_FAILED"],
-]);
+export const KNOWN_FAILURE_MESSAGES: ReadonlyMap<string, FailureDetailCode> =
+  new Map([
+    // src/inference/onnx-classifier.ts
+    ["Model input exceeds the model token limit.", "TOKEN_LIMIT_EXCEEDED"],
+    ["Model input has an invalid length.", "INVALID_MODEL_INPUT_LENGTH"],
+    ["Tokenizer emitted invalid IDs.", "TOKENIZER_INVALID_IDS"],
+    ["Tokenizer output has an invalid shape.", "TOKENIZER_INVALID_SHAPE"],
+    ["Model inputs are missing.", "MODEL_INPUTS_MISSING"],
+    ["Model output has an invalid shape.", "MODEL_OUTPUT_INVALID_SHAPE"],
+    [
+      "Model probabilities must sum to one.",
+      "MODEL_PROBABILITIES_UNNORMALIZED",
+    ],
+    [
+      "Classifier must be initialized before classification.",
+      "CLASSIFIER_NOT_INITIALIZED",
+    ],
+    ["ONNX inference failed.", "ONNX_INFERENCE_FAILED"],
+    ["Tokenizer is not loaded.", "MODEL_LOAD_FAILED"],
+    ["Model is not loaded.", "MODEL_LOAD_FAILED"],
+    // src/inference/model-runtime.ts — ExactTokenizer.encodeWithOffsets and the
+    // ByteLevel offset derivation it calls.
+    [
+      "The loaded tokenizer's token and id streams disagree.",
+      "TOKENIZER_STREAM_LENGTH_MISMATCH",
+    ],
+    [
+      "The loaded tokenizer emitted an invalid token id.",
+      "TOKENIZER_INVALID_TOKEN_ID",
+    ],
+    [
+      "The loaded tokenizer produced an invalid input_ids shape.",
+      "TOKENIZER_INVALID_INPUT_IDS_SHAPE",
+    ],
+    [
+      "A ByteLevel token does not fit the source byte layout.",
+      "BYTE_LEVEL_OFFSET_OVERFLOW",
+    ],
+    [
+      "The ByteLevel token stream did not tile the source text.",
+      "BYTE_LEVEL_STREAM_NOT_TILED",
+    ],
+    [
+      "A tokenizer surface token used a non-ByteLevel character.",
+      "BYTE_LEVEL_NON_ALPHABET_CHARACTER",
+    ],
+  ]);
 
 /**
  * Pattern allowlist for messages we do NOT own (Transformers.js, onnxruntime,
@@ -127,24 +202,33 @@ function isFailureDetailCode(value: string): value is FailureDetailCode {
   return CODES.has(value);
 }
 
+// Both readers are TOTAL by construction. They sit on the ONLY path that turns a
+// thrown value into an error row, so a property access that itself throws — a
+// hostile or merely lazy accessor — must not propagate: `selectFailureDetail`
+// would reject out of `score()`, and the shard loop has no per-document catch, so
+// one contrived value would abort a whole partition mid-shard. A throw here would
+// destroy the row this module exists to make safe, which is strictly worse than
+// degrading the detail. `in` is inside the `try` too: a proxy `has` trap can
+// throw as easily as a getter.
+
 function messageOf(value: unknown): string | undefined {
   if (typeof value === "string") return value;
-  if (
-    typeof value === "object" &&
-    value !== null &&
-    "message" in value &&
-    typeof (value as { message: unknown }).message === "string"
-  ) {
-    return (value as { message: string }).message;
+  if (typeof value !== "object" || value === null) return undefined;
+  try {
+    if (!("message" in value)) return undefined;
+    return typeof value.message === "string" ? value.message : undefined;
+  } catch {
+    return undefined;
   }
-  return undefined;
 }
 
 function causeOf(value: unknown): unknown {
-  if (typeof value === "object" && value !== null && "cause" in value) {
-    return (value as { cause: unknown }).cause;
+  if (typeof value !== "object" || value === null) return undefined;
+  try {
+    return "cause" in value ? value.cause : undefined;
+  } catch {
+    return undefined;
   }
-  return undefined;
 }
 
 /**
@@ -214,6 +298,24 @@ export function sanitizeFailureDetail(value: unknown): string {
 }
 
 /**
+ * Reason codes that name no cause at all, and so must NOT be stored as a detail.
+ * `INFERENCE_FAILED` is the exact code whose three collapsed origins created this
+ * module: a row whose detail reads `INFERENCE_FAILED` is indistinguishable from a
+ * pre-instrumentation row, so it would be an opaque code wearing the costume of a
+ * classification. {@link UNCLASSIFIED_FAILURE_DETAIL_CODE} says the same thing
+ * honestly and, unlike a silent alias, it is countable — sizing the residual
+ * unexplained population is a tally over this field.
+ *
+ * Every OTHER reason code stays preferred over "unclassified", because it names a
+ * layer or a guard: `TOKENIZATION_FAILED` locates the failure in the tokenizer,
+ * `MODEL_ARTIFACT_MISSING` in assembly, `MODEL_BENCHMARK_FAILED` in a throw that
+ * was not one of ours at all.
+ */
+const UNINFORMATIVE_REASON_CODES: ReadonlySet<string> = new Set<string>([
+  "INFERENCE_FAILED",
+]);
+
+/**
  * The detail an error outcome carries, given the harness's own reason code and
  * the thrown value when there is one.
  *
@@ -221,7 +323,8 @@ export function sanitizeFailureDetail(value: unknown): string {
  * origin. It loses in exactly two cases: there was no throwable at all (an
  * assembly failure such as a missing artifact or a parity mismatch), or the
  * chain reduced to {@link UNCLASSIFIED_FAILURE_DETAIL_CODE} — and a reason code
- * is strictly more informative than "unclassified".
+ * is more informative than "unclassified" unless it appears in
+ * {@link UNINFORMATIVE_REASON_CODES}.
  *
  * This lives in the contract rather than beside its single caller because the
  * caller (`errorScore` in `src/model-benchmark/main.ts`) is browser-only, so this
@@ -233,18 +336,27 @@ export function selectFailureDetail(
 ): string {
   const fromCause =
     cause === undefined ? undefined : sanitizeFailureDetail(cause);
-  return fromCause === undefined ||
-    fromCause === UNCLASSIFIED_FAILURE_DETAIL_CODE
-    ? sanitizeFailureDetail(reasonCode)
-    : fromCause;
+  if (
+    fromCause !== undefined &&
+    fromCause !== UNCLASSIFIED_FAILURE_DETAIL_CODE
+  ) {
+    return fromCause;
+  }
+  return UNINFORMATIVE_REASON_CODES.has(reasonCode)
+    ? UNCLASSIFIED_FAILURE_DETAIL_CODE
+    : sanitizeFailureDetail(reasonCode);
 }
 
 /**
  * True when `value` is exactly what {@link sanitizeFailureDetail} would emit for
  * it. Defining the validator as the producer's fixed point means a row can only
  * store a detail that the sanitizer itself would have produced.
+ *
+ * It NARROWS, because it rejects every non-string: that is what lets the row
+ * parser read the field without a cast, so widening this contract would turn the
+ * parser red instead of hiding behind an assertion.
  */
-export function isSanitizedFailureDetail(value: unknown): boolean {
+export function isSanitizedFailureDetail(value: unknown): value is string {
   if (typeof value !== "string") return false;
   if (value.length === 0 || value.length > FAILURE_DETAIL_MAX_LENGTH) {
     return false;

@@ -286,7 +286,14 @@ export function validatePredictionRow(value: unknown): StrictPredictionV2 {
   // An error row without a readable, sanitized cause is the artifact this field
   // exists to abolish, so it is required here and forbidden anywhere else.
   const carriesDetail = Object.hasOwn(row, "failureDetail");
-  if (carriesDetail && !isSanitizedFailureDetail(row.failureDetail)) {
+  // The guard narrows, so the detail is read without a cast, like every other
+  // field in this parser: if the sanitized-detail contract ever widened to admit
+  // a non-string, this line would turn red instead of laundering the value into
+  // StrictPredictionV2 as a string.
+  const failureDetail = isSanitizedFailureDetail(row.failureDetail)
+    ? row.failureDetail
+    : undefined;
+  if (carriesDetail && failureDetail === undefined) {
     fail(
       "failureDetail must be an allowlisted sanitized detail of at most 160 characters",
     );
@@ -297,9 +304,6 @@ export function validatePredictionRow(value: unknown): StrictPredictionV2 {
   if (status !== "error" && carriesDetail) {
     fail("failureDetail is only allowed when status is error");
   }
-  const failureDetail = carriesDetail
-    ? (row.failureDetail as string)
-    : undefined;
   if (
     memoryBytes !== null &&
     (!Number.isFinite(memoryBytes) || memoryBytes < 0)

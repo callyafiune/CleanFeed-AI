@@ -3,6 +3,10 @@ import { describe, expect, it, vi } from "vitest";
 import { aggregateWindowsV2, type WindowScore } from "@/inference/aggregator";
 import type { CleanFeedModelManifest } from "@/inference/model-bundle";
 import {
+  ExactTokenizer,
+  type LoadedTransformersTokenizer,
+} from "@/inference/model-runtime";
+import {
   OnnxTextClassifier,
   type ModelTokens,
   type TransformersModelGateway,
@@ -16,10 +20,13 @@ import {
 } from "../../../contracts/failure-detail.ts";
 import validManifest from "../../fixtures/models/valid/cleanfeed-model.json";
 
-// The three origins that used to collapse into one opaque INFERENCE_FAILED:
-// the two aggregator branches and the ONNX classifier wrapper. Each must reach
-// the prediction row as a DISTINCT, non-empty, sanitized detail — otherwise no
-// correction can be more than a guess.
+// Every origin that used to collapse into one opaque code, driven through its
+// REAL throw site: the four aggregator branches, the ONNX classifier wrapper and
+// the six tokenizer offset-derivation guards. Each must reach the prediction row
+// as a DISTINCT, non-empty, sanitized detail — otherwise no correction can be
+// more than a guess. Asserting the message from the throw site (rather than
+// copying the literal into the allowlist test) is what makes this a drift guard:
+// rewording a guard turns this red.
 
 const PORTUGUESE_TEXT = "Este é um texto em português para classificação.";
 
@@ -159,6 +166,107 @@ describe("OnnxTextClassifier failure causes", () => {
     expect(detail).not.toBe("");
     expect(detail).not.toBe(UNCLASSIFIED_FAILURE_DETAIL_CODE);
   });
+});
+
+describe("ExactTokenizer offset-derivation failures", () => {
+  // Five source bytes, so a surface-token stream can be made to under- or
+  // over-tile it.
+  const TARGET = "texto";
+
+  it("gives each of the six tokenizer guards its own readable code", () => {
+    const details = {
+      streamsDisagree: detailOf(() =>
+        // Two ids, one surface token.
+        encode({ ids: [1, 2], tokens: [byteLevelToken(TARGET)] }),
+      ),
+      invalidTokenId: detailOf(() =>
+        // 1.5 is not a safe integer, so it is not a token id.
+        encode({ ids: [1.5], tokens: [byteLevelToken(TARGET)] }),
+      ),
+      invalidIdsShape: detailOf(() =>
+        // input_ids is neither an array nor a typed-array view.
+        encode({ ids: { unexpected: true }, tokens: [byteLevelToken(TARGET)] }),
+      ),
+      byteLayoutOverflow: detailOf(() =>
+        // Seven token bytes over a five-byte source.
+        encode({ ids: [1], tokens: [byteLevelToken("textoos")] }),
+      ),
+      streamDoesNotTile: detailOf(() =>
+        // Three token bytes leave two source bytes uncovered.
+        encode({ ids: [1], tokens: [byteLevelToken("tex")] }),
+      ),
+      nonByteLevelChar: detailOf(() =>
+        // "中" is outside the 256-entry byte alphabet.
+        encode({ ids: [1], tokens: ["中"] }),
+      ),
+    };
+
+    expect(details).toEqual({
+      streamsDisagree:
+        "TOKENIZER_STREAM_LENGTH_MISMATCH: The loaded tokenizer's token and id streams disagree.",
+      invalidTokenId:
+        "TOKENIZER_INVALID_TOKEN_ID: The loaded tokenizer emitted an invalid token id.",
+      invalidIdsShape:
+        "TOKENIZER_INVALID_INPUT_IDS_SHAPE: The loaded tokenizer produced an invalid input_ids shape.",
+      byteLayoutOverflow:
+        "BYTE_LEVEL_OFFSET_OVERFLOW: A ByteLevel token does not fit the source byte layout.",
+      streamDoesNotTile:
+        "BYTE_LEVEL_STREAM_NOT_TILED: The ByteLevel token stream did not tile the source text.",
+      nonByteLevelChar:
+        "BYTE_LEVEL_NON_ALPHABET_CHARACTER: A tokenizer surface token used a non-ByteLevel character.",
+    });
+    expect(new Set(Object.values(details)).size).toBe(6);
+    for (const detail of Object.values(details)) {
+      expect(isSanitizedFailureDetail(detail)).toBe(true);
+    }
+  });
+
+  it("keeps the coded error class, and never echoes the document", () => {
+    // Every one of these throws carries code TOKENIZATION_FAILED, which is what
+    // `errorScore` records as reasonCode — so the detail is the ONLY place the
+    // six become distinguishable. The source text must not appear in either.
+    expect(() => encode({ ids: [1], tokens: ["中"] })).toThrowError(
+      expect.objectContaining({ code: "TOKENIZATION_FAILED" }),
+    );
+    expect(detailOf(() => encode({ ids: [1], tokens: ["中"] }))).not.toContain(
+      TARGET,
+    );
+  });
+
+  /** Renders a string's UTF-8 bytes as ByteLevel surface characters. */
+  function byteLevelToken(text: string): string {
+    return Array.from(new TextEncoder().encode(text), (byte) =>
+      byte === 0x20 ? "Ġ" : String.fromCharCode(byte),
+    ).join("");
+  }
+
+  function encode(target: { ids: unknown; tokens: unknown }): unknown {
+    return exactTokenizerOver(target).encodeWithOffsets(TARGET);
+  }
+
+  /**
+   * The smallest tokenizer double that reaches the guards: any text other than
+   * TARGET (the special-token probe "cleanfeed" and the mode probe "a b") gets a
+   * well-formed one-id, byte-tiling answer, so construction measures two special
+   * tokens and detects ByteLevel; TARGET gets whatever the case needs.
+   */
+  function exactTokenizerOver(target: {
+    ids: unknown;
+    tokens: unknown;
+  }): ExactTokenizer {
+    const call = (text: string, options: { add_special_tokens: boolean }) =>
+      text === TARGET
+        ? { input_ids: target.ids }
+        : { input_ids: options.add_special_tokens ? [0, 1, 2] : [1] };
+    const tokenize = (text: string) =>
+      text === TARGET ? target.tokens : [byteLevelToken(text)];
+
+    return ExactTokenizer.create(
+      Object.assign(call, {
+        tokenize,
+      }) as unknown as LoadedTransformersTokenizer,
+    );
+  }
 });
 
 class FakeGateway implements TransformersModelGateway {
