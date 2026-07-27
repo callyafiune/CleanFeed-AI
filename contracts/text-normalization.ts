@@ -38,11 +38,35 @@
 
 /**
  * The maximum absolute raw-score difference this contract promises between a
- * text and a homoglyph variant of it whose substitutions are all covered by
- * `CONFUSABLE_TO_LATIN`: EXACTLY ZERO. It is zero rather than merely small
- * because a covered variant normalizes to byte-identical text, so the tokenizer,
- * the window plan and the model all receive the same input — there is no
- * numerical slack to allow for. It is declared here, not chosen after measuring.
+ * text and a COVERED homoglyph variant of it: EXACTLY ZERO. It is zero rather
+ * than merely small because a covered variant normalizes to byte-identical text,
+ * so the tokenizer, the window plan and the model all receive the same input —
+ * there is no numerical slack to allow for. It is declared here, not chosen
+ * after measuring.
+ *
+ * "Covered" is the CONTRACT, and it is narrower than the table (R7). Being a key
+ * of `CONFUSABLE_TO_LATIN` is NOT sufficient: `foldConfusables` rewrites a
+ * confusable only inside a word its mixed-script / pseudo-Latin rule marks as an
+ * attack, and two Greek exceptions ride on top of that. A variant is covered when
+ * every substitution is a table key AND every word it substituted into is one
+ * `foldConfusables` folds. Two classes fall OUTSIDE, and for them the difference
+ * is not bounded by this constant at all — both measured on this tree:
+ *
+ *   - a WHOLLY-CONFUSABLE word in a document carrying any non-Latin witness.
+ *     `Guizhou ou Kueichau (贵州) e uma casa amarela` attacked to `саѕа` keeps the
+ *     `саѕа`, because `贵`/`州` are witnesses and the pseudo-Latin gate needs
+ *     `unmixedLatin`;
+ *   - a GREEK-DISGUISED word in a document that also writes Greek.
+ *     `a constante β vale 3 e uma vida longa` attacked to `νida` keeps the `ν`,
+ *     because the `β` says the document really writes Greek.
+ *
+ * Neither exclusion is an oversight: the looser rule was measured to rewrite
+ * `TNF-α` and the Chechen name `Муса` in real records (see
+ * `countScriptWitnesses`). They are prices this file names — the same three named
+ * in the header — not promises it makes, and drop the witness and the very same
+ * attack becomes covered again. Both are pinned as NON-invariant by
+ * `tests/unit/contracts/text-normalization.test.ts`, so the unconditional
+ * reading cannot come back green.
  */
 export const HOMOGLYPH_SCORE_TOLERANCE = 0;
 
@@ -267,9 +291,21 @@ function addsWhitespace(source: string, folded: string): boolean {
  * Superscripts and subscripts, which NFKC FLATTENS onto the baseline: `km²`
  * becomes `km2`, `10⁻⁶` becomes `10−6` and `H₂O` becomes `H2O`. That is a change
  * of meaning, not of encoding, and the corpus is full of it — `₂` alone accounts
- * for 28 rewrites across `development` + `calibration`, plus `⁶ ⁸ ⁹ ₃ ₄ ₓ ⁻ ᵉ`.
- * Protecting the whole family is what makes the rule principled instead of a
- * hand-picked list that happens to contain `²` and `³`.
+ * for 28 rewrites across `development` + `calibration`, plus `⁶ ⁸ ⁹ ₃ ₄ ₓ ⁻`.
+ *
+ * What it protects is the three Latin-1 legacy characters (`² ³ ¹`) plus the
+ * whole SUPERSCRIPTS-AND-SUBSCRIPTS block, U+2070-U+209C: raised and lowered
+ * digits and operators, where flattening merges `km²` into `km2`. A block rather
+ * than a hand-picked list of the characters this corpus happens to contain — but
+ * a block is not "every raised character in Unicode", and the residual is named
+ * rather than implied. The MODIFIER LETTERS (U+1D2C-U+1D6A, U+1D78,
+ * U+1D9B-U+1DBF) are outside it and still flatten: measured, `30ᵉ` → `30e`
+ * (U+1D49) and `xᶰ` → `xɴ` (U+1DB0), one rewrite each across `development` +
+ * `calibration` (`benchmark/out/rebuild-v3/a5/normalization-rewrites.txt`), and
+ * pinned as a residual by a test. Extending the guard over them would move the
+ * scored text of those two records, so it is a measurement job — a new dev+cal
+ * sweep and a re-measured `222 of 5000` — not a comment fix; it was left out
+ * deliberately and this sentence is the record of that.
  */
 const SUPERSCRIPT_OR_SUBSCRIPT = /^[\u00B2\u00B3\u00B9\u2070-\u209C]$/u;
 

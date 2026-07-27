@@ -1550,15 +1550,23 @@ negativas agora têm teste próprio, para que a razão não volte a ser uma não
    `src_carolina_7bb17c80e5de`) e o nome checheno `Муса` virava `Myca` em
    `mix_src_wikipedia_pt_5eff3608eeb8`. A regra final tem duas portas
    (**script misto** e **pseudo-latina**) mais duas exceções gregas, e o mesmo varrimento
-   depois dela reporta **0 registros com confusável dobrado**. O preço está nomeado no
-   código: um disfarce grego dentro de documento que também escreve grego, e uma palavra de
-   uma letra disfarçada com `α`/`ο`/`ι`, **não** são restaurados.
+   depois dela reporta **0 registros com confusável dobrado**. São **três** preços, todos
+   nomeados no código: (i) uma palavra **inteiramente confusável** dentro de documento que
+   carregue **qualquer** testemunha não latina, (ii) um disfarce **grego** dentro de
+   documento que também escreve grego, e (iii) uma palavra de **uma letra** disfarçada com
+   `α`/`ο`/`ι` — nenhum dos três é restaurado.
 2. **NFKC ganhou duas recusas que o plano não previa**, ambas na classe "cuidado com
    NFKC" que o próprio plano levanta: superscritos/subscritos (`km²` → `km2`, `H₂O` → `H2O`;
    `₂` sozinho são 28 reescritas no corpus) e **qualquer dobra que inventaria espaço em
    branco** (todo diacrítico espaçador decompõe em U+0020 + marca combinante; `´` são 9
    reescritas). Espaço inventado é fronteira de palavra inventada, logo `totalUnits` e a
-   faixa de comprimento se movem.
+   faixa de comprimento se movem. A primeira recusa protege os três caracteres do Latin-1
+   (`² ³ ¹`) mais o bloco **Superscripts-and-Subscripts** (U+2070-U+209C) — e **não** todo
+   caractere elevado do Unicode: as **letras modificadoras** ficam fora e continuam
+   achatando (`30ᵉ` → `30e`, U+1D49, e `xᶰ` → `xɴ`, U+1DB0; uma reescrita cada em
+   `development` + `calibration`). Resíduo **nomeado e fixado por teste**; estender a guarda
+   moveria o texto pontuado desses dois registros, o que exige novo varrimento e nova
+   medição do `222 de 5.000` — é trabalho de medição, não de comentário.
 3. **A terceira restrição do brief (CJK) exigiu corrigir `segmentBasicWords`**, em
    `src/inference/model-runtime.ts`, e não só normalizar. O `tokenizer.json` selado tem
    `handle_chinese_chars: true` e o BERTimbau não tem ideograma nu em `vocab.txt`, então
@@ -1567,6 +1575,27 @@ negativas agora têm teste próprio, para que a razão não volte a ser uma não
    `deriveWordPieceOffsets` degradava o documento inteiro para spans grosseiros — que
    `fitWindowSlice` recusa como `WINDOW_SLICE_NOT_REDUCIBLE` no momento em que o documento
    precisa de uma segunda janela.
+
+**Requalificação da tolerância declarada (segunda rodada de conformidade).**
+`HOMOGLYPH_SCORE_TOLERANCE = 0` continua **zero** — o valor não mudou e não pode mudar,
+porque variante coberta normaliza para bytes idênticos. O que mudou é a **precondição**: a
+primeira redação prometia zero para "toda variante cujas substituições estejam cobertas por
+`CONFUSABLE_TO_LATIN`", o que é **mais largo do que o código entrega** e portanto quebra R7.
+Cobertura na tabela **não** é suficiente — `foldConfusables` só reescreve dentro de palavra
+que a regra de script misto/pseudo-latina marca como ataque, e as duas exceções gregas ainda
+incidem por cima. Medido nesta árvore, com sonda temporária, antes de editar:
+
+| classe fora da tolerância | ataque | resultado |
+|---|---|---|
+| palavra inteiramente confusável + testemunha não latina | `…(贵州) e uma casa amarela` → `саѕа` | **não** dobra; normalizações diferem |
+| disfarce grego + documento que escreve grego | `a constante β … uma vida longa` → `νida` | **não** dobra; normalizações diferem |
+
+Nos dois casos, **removida a testemunha**, o mesmo ataque volta a ser coberto — a exclusão é
+a testemunha, não a palavra nem a tabela. As duas classes agora estão **fixadas como
+não-invariantes** em `tests/unit/contracts/text-normalization.test.ts`; escritas primeiro na
+forma que a redação antiga prometia, as duas **falharam** (saídas no relatório), e é isso
+que impede a leitura incondicional de voltar verde. Nenhuma regra de dobra foi alterada:
+elas foram medidas contra registros reais e mexer nelas reintroduziria `TNF-a` e `Myca`.
 
 **Medição do critério de erro que A2 deixou aberto** (artefatos em
 `benchmark/out/rebuild-v3/a5/`; harness de bancada com o `vocab.txt` real e o WordPiece
@@ -1592,8 +1621,19 @@ fim-a-fim no Chrome, que é H3/I1.
 (506 ocorrências) e U+2011 → U+2010 (347).
 
 **Identidade desta árvore, regenerada (não editada à mão):**
-- `inferenceCoreDigest` `1a7a1cd1158a3821b09408ce6b274a16127d206ad15b69681d23018997db79e1`
-- `runtimeParityDigest` `41ccf6d379b5d91716b70e131cea5eafb5f97f87da8a58e1e648719dc962ab04`
+- `inferenceCoreDigest` `4f535552b039b56a453231e77053f47ea225d27f330777da1b49b9457c11d32e`
+- `runtimeParityDigest` `cf882d5e34152bfba61675d1aec38449d9774df5cfe065e4776283bd57db09f0`
+
+Os dois valores acima são **derivados da árvore**, não constantes: `contracts/`
+`text-normalization.ts` e `contracts/content-composition.ts` estão em `EVALUATOR_FILES` e no
+inventário do núcleo, e o que entra no hash são os **bytes crus** — logo uma edição de
+**comentário** move os dois. Ela já moveu duas vezes desde a entrega de A5
+(`1a7a1cd1…`/`41ccf6d3…` → … → estes), uma vez por rodada de conformidade. Nenhum arquivo
+versionado precisou mudar (o manifesto do modelo não carrega digest de arquivo do núcleo e
+`benchmark/work/model-benchmark/` é ignorado pelo Git), mas a consequência é operacional:
+**quem rodar a bancada tem de regenerar a paridade a partir desta árvore**, porque nenhuma
+corrida anterior pareia com ela. Depois de G5 congelar a janela isso deixa de ser barato —
+até lá, cada rodada que mexe em comentário do núcleo atualiza estes dois valores aqui.
 
 Oito digests derivados sob `tests/fixtures/model-release/**` foram recomputados com
 `computeCalibrationProfileDigest` / `computeCalibrationSetDigest` do próprio contrato.

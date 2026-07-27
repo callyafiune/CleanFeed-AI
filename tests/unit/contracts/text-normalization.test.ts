@@ -1,9 +1,12 @@
 // The three acceptance tests A5 owes, plus the risk-class coverage the curated
 // homoglyph table has to carry:
 //
-//   1. the same text in a homoglyph variant normalizes to the SAME bytes, so
-//      every downstream stage receives identical input and the raw-score
-//      difference is exactly `HOMOGLYPH_SCORE_TOLERANCE` (declared as 0);
+//   1. the same text in a COVERED homoglyph variant normalizes to the SAME
+//      bytes, so every downstream stage receives identical input and the
+//      raw-score difference is exactly `HOMOGLYPH_SCORE_TOLERANCE` (declared as
+//      0). "Covered" is narrower than "every substitution is in the table", and
+//      the two classes it excludes are pinned here as NON-invariant rather than
+//      left to be read out of the constant's name;
 //   2. pt-BR accents, cedilla and legitimate punctuation SURVIVE;
 //   3. original offsets are RECONSTRUCTED from the map.
 //
@@ -258,6 +261,22 @@ describe("legitimate Portuguese survives normalization", () => {
     }
   });
 
+  it("names its residual: the modifier letters are NOT protected and still flatten", () => {
+    // The guard is the three Latin-1 legacy characters plus the
+    // Superscripts-and-Subscripts block (U+2070-U+209C) — raised/lowered DIGITS
+    // and OPERATORS — and NOT every raised character in Unicode. The MODIFIER
+    // LETTERS sit outside it and really do flatten: measured, one rewrite each
+    // across development + calibration
+    // (`benchmark/out/rebuild-v3/a5/normalization-rewrites.txt`).
+    // Named by code point, so the fixture cannot drift onto a different char.
+    expect("ᵉ".codePointAt(0)).toBe(0x1d49); // MODIFIER LETTER SMALL E
+    expect("ᶰ".codePointAt(0)).toBe(0x1db0); // MODIFIER LETTER SMALL CAPITAL N
+    expect(normalizeForInference("a 30ᵉ volta").text).toBe("a 30e volta");
+    expect(normalizeForInference("o xᶰ fica").text).toBe("o xɴ fica");
+    // Pinned as a residual, not as a promise: it is here so the docstring can
+    // never again say the guard protects "the whole family" of raised letters.
+  });
+
   it("refuses any NFKC fold that would invent whitespace", () => {
     // Every spacing diacritic decomposes to U+0020 plus a combining mark, and an
     // invented space is an invented word boundary. Measured on the corpus: `´`
@@ -375,6 +394,55 @@ describe("homoglyph variants score identically", () => {
     expect(attacked).not.toBe("a casa amarela fica ali");
     expect(normalizeForInference(attacked).text).toBe(
       "a casa amarela fica ali",
+    );
+  });
+
+  // The two classes the tolerance does NOT cover, pinned as NON-invariant. Table
+  // coverage alone is not the precondition: `foldConfusables` also has to mark
+  // the word as an attack, and in each of these two it deliberately does not.
+  // These tests exist so the unconditional reading of the tolerance — "covered by
+  // CONFUSABLE_TO_LATIN is enough" — cannot come back green. Both were measured
+  // on this tree before being written, and both fail if asserted as invariant.
+
+  it("does NOT restore a wholly-confusable word when the document carries a non-Latin witness", () => {
+    // Every substituted code point is a table key, and the word still survives
+    // as written: `贵`/`州` are non-Latin witnesses, so `unmixedLatin` is false
+    // and the pseudo-Latin gate never fires. This is the price of not rewriting
+    // genuine Cyrillic prose, and it means the score difference here is NOT
+    // bounded by HOMOGLYPH_SCORE_TOLERANCE.
+    const attackedWord = homoglyphVariant("casa");
+    for (const char of new Set([...attackedWord])) {
+      expect(CONFUSABLE_TO_LATIN.has(char), JSON.stringify(char)).toBe(true);
+    }
+    const clean = `${GUIZHOU} e uma casa amarela`;
+    const attacked = clean.replace("casa", attackedWord);
+    expect(normalizeForInference(attacked).text).not.toBe(
+      normalizeForInference(clean).text,
+    );
+    expect(normalizeForInference(attacked).text).toContain(attackedWord);
+    // Remove the CJK and the SAME attack IS covered, which proves the exclusion
+    // is the witness rather than the word or the table.
+    const noWitness = "Guizhou ou Kueichau e uma casa amarela";
+    expect(
+      normalizeForInference(noWitness.replace("casa", attackedWord)).text,
+    ).toBe(normalizeForInference(noWitness).text);
+  });
+
+  it("does NOT restore a Greek-disguised word when the document writes Greek", () => {
+    // `ν` is a table key, `νida` is mixed-script by the letter of the rule, and
+    // it still survives: the `β` says the document really writes Greek. Price of
+    // not rewriting `TNF-α`; again outside HOMOGLYPH_SCORE_TOLERANCE.
+    expect(CONFUSABLE_TO_LATIN.get("ν")).toBe("v");
+    const clean = "a constante β vale 3 e uma vida longa";
+    const attacked = clean.replace("vida", "νida");
+    expect(normalizeForInference(attacked).text).not.toBe(
+      normalizeForInference(clean).text,
+    );
+    expect(normalizeForInference(attacked).text).toContain("νida");
+    // Drop the `β` witness and the same attack IS covered.
+    const noWitness = "a constante vale 3 e uma vida longa";
+    expect(normalizeForInference(noWitness.replace("vida", "νida")).text).toBe(
+      normalizeForInference(noWitness).text,
     );
   });
 
