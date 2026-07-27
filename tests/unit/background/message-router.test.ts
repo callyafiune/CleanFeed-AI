@@ -62,7 +62,7 @@ const tmrIdentity: RuntimeModelIdentity = {
   bundleDigest: "a".repeat(64),
   tokenizerDigest: "c".repeat(64),
   aggregationVersion: "tmr-aggregation-v3",
-  contentCompositionVersion: "lexical-content-v1",
+  contentCompositionVersion: "lexical-content-v2",
   calibrationSetDigest: "b".repeat(64),
 };
 

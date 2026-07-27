@@ -12,6 +12,7 @@ import {
 import { configureTransformersEnvironment } from "@/inference/transformers-environment";
 import { CleanFeedError } from "@/shared/errors";
 import type { ClassifierMetadata, TextClassifier } from "@/shared/types";
+import { fakeWordPieceTokenizer } from "../../helpers/wordpiece-tokenizer";
 
 /** Asserts `run` throws a CleanFeedError carrying `code`. */
 function expectCode(run: () => unknown, code: string): void {
@@ -411,40 +412,6 @@ describe("ExactTokenizer", () => {
   });
 });
 
-/**
- * A dict-driven WordPiece fake (BERT family): whitespace/punctuation basic
- * split, then per-word pieces from `wordPieces` (default: one `[UNK]` for the
- * whole word — WordPiece is all-or-nothing per word). The callable and
- * `tokenize` are built from the SAME piece stream, and the detection probe
- * "a b" resolves to `["a", "b"]`, exactly like a real BERT tokenizer.
- */
-function fakeWordPieceTokenizer(
-  wordPieces: Record<string, string[]>,
-): LoadedTransformersTokenizer {
-  const vocabulary = new Map<string, number>();
-  const idOf = (piece: string): number => {
-    if (!vocabulary.has(piece)) vocabulary.set(piece, 10 + vocabulary.size);
-    return vocabulary.get(piece)!;
-  };
-  const withDefaults: Record<string, string[]> = {
-    a: ["a"],
-    b: ["b"],
-    ...wordPieces,
-  };
-  const piecesFor = (text: string): string[] =>
-    (text.match(/[^\s\p{P}]+|\p{P}/gu) ?? []).flatMap(
-      (word) => withDefaults[word] ?? ["[UNK]"],
-    );
-  const tokenizer = ((text: string, callOptions) => {
-    const ids = piecesFor(text).map(idOf);
-    return {
-      input_ids: callOptions.add_special_tokens ? [101, ...ids, 102] : ids,
-    };
-  }) as LoadedTransformersTokenizer;
-  tokenizer.tokenize = (text: string) => piecesFor(text);
-  return tokenizer;
-}
-
 describe("ExactTokenizer (WordPiece)", () => {
   it("detects WordPiece and derives exact piece offsets with ## continuations", () => {
     const exact = ExactTokenizer.create(
@@ -535,6 +502,64 @@ describe("ExactTokenizer (WordPiece)", () => {
     for (const offset of offsets) {
       expect(offset).toEqual({ start: 0, end: text.length });
     }
+  });
+
+  // The defect A2 handed to A5. `BertNormalizer` (handle_chinese_chars: true)
+  // makes every CJK ideograph its own basic word, and BERTimbau's vocabulary has
+  // no bare ideograph, so `花巻市` is THREE [UNK] tokens. The derivation used to
+  // segment it as ONE word, consume ONE token for it and hand the other two to
+  // the following words: the streams stayed the same LENGTH while every offset
+  // after the ideographs pointed at the wrong characters, and when the totals
+  // finally disagreed the whole document degraded to coarse whole-text spans.
+  // Measured on `mix_src_wikipedia_pt_d3e3087c4ae9` (real corpus text, quoted
+  // here), which is why the fixture is that sentence and not a synthetic one.
+  it("gives each CJK ideograph its own [UNK] span", () => {
+    const exact = ExactTokenizer.create(
+      fakeWordPieceTokenizer({
+        Hanamaki: ["Hana", "##maki"],
+        shi: ["shi"],
+        é: ["é"],
+        uma: ["uma"],
+        cidade: ["cidade"],
+      }),
+    );
+
+    const text = "Hanamaki (花巻市; -shi) é uma cidade";
+    const { offsets, inputIds } = exact.encodeWithOffsets(text);
+    expect(inputIds).toHaveLength(offsets.length);
+    expect(offsets.map(({ start, end }) => text.slice(start, end))).toEqual([
+      "Hana",
+      "maki",
+      "(",
+      "花",
+      "巻",
+      "市",
+      ";",
+      "-",
+      "shi",
+      ")",
+      "é",
+      "uma",
+      "cidade",
+    ]);
+  });
+
+  it("keeps a Hangul syllable and a kana run inside their own word span", () => {
+    // `is_chinese_char` covers neither Hangul nor kana, so the tokenizer does
+    // NOT split them: each stays one word and one [UNK]. Splitting them here
+    // would desynchronize the stream in the opposite direction.
+    const exact = ExactTokenizer.create(
+      fakeWordPieceTokenizer({ cidade: ["cidade"], de: ["de"] }),
+    );
+
+    const text = "cidade de 청주시 ひらがな";
+    const { offsets } = exact.encodeWithOffsets(text);
+    expect(offsets.map(({ start, end }) => text.slice(start, end))).toEqual([
+      "cidade",
+      "de",
+      "청주시",
+      "ひらがな",
+    ]);
   });
 
   it("attaches a residual ## ghost to the previous word span (local degrade)", () => {

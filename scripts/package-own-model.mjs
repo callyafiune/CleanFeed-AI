@@ -135,7 +135,7 @@ function main() {
     backend: "transformers-onnx",
     modelFile: "onnx/model_int8.onnx",
     aggregationVersion: "tmr-aggregation-v3",
-    contentCompositionVersion: "lexical-content-v1",
+    contentCompositionVersion: "lexical-content-v2",
     tokenizerDigest,
     windowing: {
       modelMaxTokens: 512,
@@ -160,7 +160,7 @@ function main() {
     bundleDigest,
     tokenizerDigest,
     aggregationVersion: "tmr-aggregation-v3",
-    contentCompositionVersion: "lexical-content-v1",
+    contentCompositionVersion: "lexical-content-v2",
     calibrationSetDigest: EMPTY_CALIBRATION_SET_DIGEST,
     profileDigests: [],
     rolloutState: "bundle-verified",

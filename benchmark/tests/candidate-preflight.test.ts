@@ -51,7 +51,7 @@ const RECORDS_SHA = "d".repeat(64);
 const REVIEW_LEDGER_SHA = "9".repeat(64);
 const EVALUATOR_DIGEST = "2".repeat(64);
 const AGGREGATION_VERSION = "tmr-aggregation-v3";
-const CONTENT_COMPOSITION_VERSION = "lexical-content-v1";
+const CONTENT_COMPOSITION_VERSION = "lexical-content-v2";
 const TWENTY_GIB = 20 * 1024 ** 3;
 
 const sourceManifestBase = {

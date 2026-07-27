@@ -14,7 +14,7 @@ const baseFields: ParityFields = {
   modelVersion: "d8f77f870fbd35a17add2498b73d906bbc299026",
   bundleDigest: "b".repeat(64),
   aggregationVersion: "tmr-aggregation-v3",
-  contentCompositionVersion: "lexical-content-v1",
+  contentCompositionVersion: "lexical-content-v2",
   tokenizerDigest:
     "2e3bc97587671b43d32a68bd134abea67f4a3aaaee8a65f7a1f923449ee13135",
   inferenceCoreDigest: "c".repeat(64),

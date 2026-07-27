@@ -50,7 +50,7 @@ const BUNDLE_DIGEST =
 const TOKENIZER_DIGEST =
   "2e3bc97587671b43d32a68bd134abea67f4a3aaaee8a65f7a1f923449ee13135";
 const AGGREGATION_VERSION = "tmr-aggregation-v3";
-const CONTENT_COMPOSITION_VERSION = "lexical-content-v1";
+const CONTENT_COMPOSITION_VERSION = "lexical-content-v2";
 
 const DATASET_DIGEST = "a".repeat(64);
 const SPLIT_DIGEST = "b".repeat(64);

@@ -33,7 +33,7 @@ const PARITY_FIELDS = {
   bundleDigest:
     "2d47d6f3e0a6f2c7836b03c9a47b1b81f6c34159aa35ae1bdffe3507e4dc25bc",
   aggregationVersion: "tmr-aggregation-v3",
-  contentCompositionVersion: "lexical-content-v1",
+  contentCompositionVersion: "lexical-content-v2",
   tokenizerDigest:
     "2e3bc97587671b43d32a68bd134abea67f4a3aaaee8a65f7a1f923449ee13135",
   inferenceCoreDigest: "5".repeat(64),

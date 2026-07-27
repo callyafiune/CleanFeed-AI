@@ -39,7 +39,7 @@ function baseProfile(): Omit<RuntimeCalibrationProfileV1, "profileDigest"> {
     locale: "pt-BR",
     lengthBucket: "200-plus",
     aggregationVersion: "tmr-aggregation-v3",
-    contentCompositionVersion: "lexical-content-v1",
+    contentCompositionVersion: "lexical-content-v2",
     datasetDigest: "c".repeat(64),
     splitDigest: "d".repeat(64),
     evaluatorDigest: "e".repeat(64),

@@ -42,7 +42,7 @@ function identity(overrides: Partial<HoldoutIdentity> = {}): HoldoutIdentity {
     modelVersion: "1.0.0",
     bundleDigest: hex("bundle"),
     aggregationVersion: "tmr-aggregation-v3",
-    contentCompositionVersion: "lexical-content-v1",
+    contentCompositionVersion: "lexical-content-v2",
     tokenizerDigest: hex("tokenizer"),
     runtimeParityDigest: hex("runtime-parity"),
     extensionBuildDigest: hex("extension-build"),

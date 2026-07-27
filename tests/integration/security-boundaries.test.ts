@@ -155,7 +155,7 @@ describe("security boundaries", () => {
           bundleDigest: "a".repeat(64),
           tokenizerDigest: "b".repeat(64),
           aggregationVersion: "tmr-aggregation-v3",
-          contentCompositionVersion: "lexical-content-v1",
+          contentCompositionVersion: "lexical-content-v2",
           calibrationSetDigest: "c".repeat(64),
         },
         selectedProfileDigest: "d".repeat(64),

@@ -37,6 +37,10 @@ import {
 } from "@/inference/runtime-activation";
 import { computeContentComposition } from "../../contracts/content-composition";
 import {
+  normalizeForInference,
+  type NormalizedText,
+} from "../../contracts/text-normalization";
+import {
   evaluateLanguagePolicy,
   HeuristicPortugueseDetector,
   type LanguageDetector,
@@ -142,6 +146,15 @@ export type PipelineBatchOutcome =
 
 type PreparedRequest = {
   request: ClassificationRequest;
+  /**
+   * The request text after the SHARED Unicode normalization
+   * (`contracts/text-normalization.ts`) — the exact bytes the tokenizer, the
+   * chunker and the classifier saw, plus the map back to `request.text`'s own
+   * offsets that a span-level head (D4) needs. Everything downstream of
+   * tokenization reads THIS and never `request.text`, so a homoglyph variant of
+   * a post cannot produce a different score.
+   */
+  normalized: NormalizedText;
   language: string;
   tokenCount: number;
   /** Whether the tokenizer produced exact native offsets (TMR) or an estimate. */
@@ -306,8 +319,14 @@ export class PipelineRunner {
     signal?: AbortSignal,
   ): Promise<PreparedOrEarly> {
     throwIfAborted(signal);
+    // Normalize ONCE, before ANY stage reads the text. Homoglyph substitution is
+    // a class of bug, not research: it takes published detectors to 0.000
+    // TPR@1%FPR. It is done before language detection too, because a post whose
+    // letters were swapped for Cyrillic look-alikes would otherwise be scored as
+    // "not Portuguese" and abstained on — the same evasion by a different exit.
+    const normalized = normalizeForInference(request.text);
     const languageStartedAt = performance.now();
-    const detection = await this.detector.detect(request.text);
+    const detection = await this.detector.detect(normalized.text);
     throwIfAborted(signal);
     const policy = evaluateLanguagePolicy(
       detection,
@@ -322,14 +341,16 @@ export class PipelineRunner {
     throwIfAborted(signal);
     const languageMs = performance.now() - languageStartedAt;
     const tokenizationStartedAt = performance.now();
-    const tokenized = await this.tokenizer.encode(request.text, signal);
+    // The tokenizer's offsets are offsets into the NORMALIZED text, so the chunk
+    // slices below must be cut from it too.
+    const tokenized = await this.tokenizer.encode(normalized.text, signal);
     throwIfAborted(signal);
     const tokenizationMs = performance.now() - tokenizationStartedAt;
     const chunkingStartedAt = performance.now();
     // The calibrated bundle path uses the sealed window plan; the builtin path
     // uses the editable settings.
     const chunks = createTextChunks(
-      request.text,
+      normalized.text,
       tokenized,
       this.chunkPlan ?? {
         chunkSizeTokens: settings.chunkSizeTokens,
@@ -339,6 +360,7 @@ export class PipelineRunner {
     );
     const prepared = {
       request,
+      normalized,
       language: detection.language,
       tokenCount: tokenized.tokenCount,
       exact: tokenized.exact,
@@ -527,7 +549,10 @@ function completePreparedRequest(
     item.tokenCount,
   );
   const aggregationMs = performance.now() - aggregationStartedAt;
-  const wordCount = getTextLengthInfo(item.request.text).wordCount;
+  // Length and composition describe the text that was actually SCORED — the
+  // normalized one — so the length bucket, the profile key and the evidence
+  // assessment all agree with the coverage the tokenizer measured over it.
+  const wordCount = getTextLengthInfo(item.normalized.text).wordCount;
   // The calibrated TMR (bundle) path derives its evidence from the shared, pure
   // assessor over the EXACT native-offset tokenization (`item.exact`); the
   // demonstration builtins keep their own conservative `limited` evidence.
@@ -537,7 +562,7 @@ function completePreparedRequest(
           locale: item.language,
           wordCount,
           coverage: aggregation.coverage,
-          lexicalRatio: computeContentComposition(item.request.text)
+          lexicalRatio: computeContentComposition(item.normalized.text)
             .lexicalRatio,
           stdDev: aggregation.stdDev,
           chunkAgreement: aggregation.chunkAgreement,

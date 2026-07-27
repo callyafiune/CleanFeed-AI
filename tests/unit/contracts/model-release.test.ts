@@ -24,7 +24,7 @@ async function descriptor(
     bundleDigest: HEX("a"),
     tokenizerDigest: HEX("b"),
     aggregationVersion: "tmr-aggregation-v3",
-    contentCompositionVersion: "lexical-content-v1",
+    contentCompositionVersion: "lexical-content-v2",
     profileDigests: [],
     rolloutState: "bundle-verified",
     gateDecision: "pending",

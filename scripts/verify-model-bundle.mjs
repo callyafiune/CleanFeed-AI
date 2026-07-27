@@ -104,7 +104,7 @@ const EXPECTED_MANIFEST_FIELDS = Object.freeze({
   backend: "transformers-onnx",
   modelFile: "onnx/model_int8.onnx",
   aggregationVersion: "tmr-aggregation-v3",
-  contentCompositionVersion: "lexical-content-v1",
+  contentCompositionVersion: "lexical-content-v2",
 });
 
 const EXPECTED_WINDOWING = Object.freeze({

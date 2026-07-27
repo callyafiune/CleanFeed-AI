@@ -44,6 +44,7 @@ import type { RuntimeModelIdentity } from "@/shared/types";
 
 import { computeContentComposition } from "../../contracts/content-composition";
 import { selectFailureDetail } from "../../contracts/failure-detail";
+import { normalizeForInference } from "../../contracts/text-normalization";
 import type { RuntimeParityManifestV1 } from "../../contracts/runtime-parity";
 
 /** The runtime-parity manifest, embedded verbatim by the Vite build. */
@@ -225,17 +226,26 @@ async function measurePeakMemoryBytes(): Promise<number | null> {
 }
 
 /**
- * Scores one document with the UNCALIBRATED core: exact native-offset
- * tokenization, sealed windowing, one classifier call per window and the v2
- * aggregation. Unsupported evidence abstains; a backend/tokenizer failure is
- * surfaced as an error by the caller — never a fabricated score, never a fallback.
+ * Scores one document with the UNCALIBRATED core: the SHARED Unicode
+ * normalization, exact native-offset tokenization, sealed windowing, one
+ * classifier call per window and the v2 aggregation. Unsupported evidence
+ * abstains; a backend/tokenizer failure is surfaced as an error by the caller —
+ * never a fabricated score, never a fallback.
+ *
+ * The normalization is the SAME function `src/inference/inference-worker.ts`
+ * calls (`contracts/text-normalization.ts`), not a second copy: a benchmark that
+ * scored differently-prepared text than the runtime would measure a detector
+ * nobody ships. `normalized.segments` is the map back to the caller's own
+ * offsets, which is what a D4 span head has to place its spans in.
  */
 async function scoreDocument(
   runtime: ModelRuntime,
   plan: TmrChunkPlan,
-  text: string,
+  rawText: string,
 ): Promise<ModelBenchmarkScoreV1> {
   const startedAt = performance.now();
+  const normalized = normalizeForInference(rawText);
+  const text = normalized.text;
   const encoding = runtime.tokenizer.encodeWithOffsets(text);
   const composition = computeContentComposition(text);
   if (encoding.inputIds.length === 0) {

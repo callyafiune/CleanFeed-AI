@@ -5,10 +5,10 @@
   "bundleDigest": "2d47d6f3e0a6f2c7836b03c9a47b1b81f6c34159aa35ae1bdffe3507e4dc25bc",
   "tokenizerDigest": "2e3bc97587671b43d32a68bd134abea67f4a3aaaee8a65f7a1f923449ee13135",
   "aggregationVersion": "tmr-aggregation-v3",
-  "contentCompositionVersion": "lexical-content-v1",
-  "calibrationSetDigest": "aa4fa1a272b408e7f7ed13fd253c19a4a39a791c727e249db3944cba83919f89",
+  "contentCompositionVersion": "lexical-content-v2",
+  "calibrationSetDigest": "f5e877dbd4f92d25a2504adf89590d6f48e91e13ce48a7743967c1f5a82cee16",
   "profileDigests": [
-    "9c5d5053dfb346b76c63c7abf612d56b3d90f8e6398382092eba291a4d1c2e41"
+    "6fea248b2e6ea1b1dbeaa1b08376178a59fcf96ae34d5eda23d0104c37b257ca"
   ],
   "rolloutState": "indicator",
   "gateDecision": "indicator-only",

@@ -9,8 +9,28 @@
 //   3. emoji-only   — a run of emoji / modifiers / variation selectors / ZWJ;
 //   4. lexical      — contains at least one Unicode letter or number;
 //   5. other        — everything else (pure punctuation, symbols, …).
+//
+// The decomposition runs over the NORMALIZED text
+// (`contracts/text-normalization.ts`): NFKC, invisible-character removal,
+// separator folding and confusable folding all change where a unit boundary
+// falls and which category a unit lands in. `normalizeForInference` is
+// idempotent, so it does not matter whether a caller passes raw or already
+// normalized text — the counts are the same either way.
 
-export const CONTENT_COMPOSITION_VERSION = "lexical-content-v1";
+import { normalizeForInference } from "./text-normalization.ts";
+
+/**
+ * `lexical-content-v2` (A5): the decomposition is now taken over the normalized
+ * text. Three concrete movements versus `v1`, each of which changes
+ * `lexicalRatio` and therefore eligibility and the evidence assessment:
+ * an exotic separator (NO-BREAK SPACE, IDEOGRAPHIC SPACE, LINE SEPARATOR) now
+ * SPLITS units where it used to sit inside one; an invisible character no
+ * longer sits inside a unit; and a URL or hashtag written with confusable
+ * Cyrillic/Greek code points now classifies as `url`/`hashtag` instead of
+ * `lexical`. It does NOT version the window plan — that is
+ * `AGGREGATION_VERSION` (A2, `tmr-aggregation-v3`).
+ */
+export const CONTENT_COMPOSITION_VERSION = "lexical-content-v2";
 
 const URL_PATTERN = /^(?:https?:\/\/|www\.)\S+$/iu;
 const HASHTAG_PATTERN = /^#[\p{L}\p{N}_]+$/u;
@@ -55,11 +75,14 @@ export function classifyContentUnit(token: string): ContentUnitKind {
 }
 
 /**
- * Decomposes `text` into units and counts them by category. CRLF is normalized
- * to LF first, then the text is split on runs of Unicode whitespace.
+ * Decomposes `text` into units and counts them by category. The text is put
+ * through {@link normalizeForInference} first — the SAME normalization the
+ * tokenizer sees, so composition and tokenization can never disagree about what
+ * the text is — then CRLF is folded to LF and the result is split on runs of
+ * Unicode whitespace.
  */
 export function computeContentComposition(text: string): ContentComposition {
-  const normalized = text.replace(/\r\n/gu, "\n");
+  const normalized = normalizeForInference(text).text.replace(/\r\n/gu, "\n");
   const units = normalized.match(/\S+/gu) ?? [];
 
   const composition: ContentComposition = {

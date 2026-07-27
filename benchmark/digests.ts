@@ -57,6 +57,12 @@ export async function computeDatasetDigest(
 export const EVALUATOR_FILES = [
   "contracts/canonical-json.ts",
   "contracts/content-composition.ts",
+  // The shared Unicode normalization every inference path applies before
+  // tokenization. It decides which bytes the model ever sees — a changed
+  // homoglyph entry, a changed NFKC exception or a changed removal set moves
+  // every score — so it belongs to the evaluator's identity exactly as much as
+  // the composition it is versioned by.
+  "contracts/text-normalization.ts",
   // The failure-detail allowlist decides which causes a prediction row may name
   // and is the parser's validator for that field, so it shapes a scored row.
   "contracts/failure-detail.ts",

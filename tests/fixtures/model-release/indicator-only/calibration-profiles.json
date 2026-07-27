@@ -12,7 +12,7 @@
       "locale": "pt-BR",
       "lengthBucket": "80-199",
       "aggregationVersion": "tmr-aggregation-v3",
-      "contentCompositionVersion": "lexical-content-v1",
+      "contentCompositionVersion": "lexical-content-v2",
       "datasetDigest": "1111111111111111111111111111111111111111111111111111111111111111",
       "splitDigest": "2222222222222222222222222222222222222222222222222222222222222222",
       "evaluatorDigest": "3333333333333333333333333333333333333333333333333333333333333333",
@@ -92,7 +92,7 @@
         "criticalRecallSlices": {}
       },
       "actionCeiling": "indicator",
-      "profileDigest": "9c5d5053dfb346b76c63c7abf612d56b3d90f8e6398382092eba291a4d1c2e41"
+      "profileDigest": "6fea248b2e6ea1b1dbeaa1b08376178a59fcf96ae34d5eda23d0104c37b257ca"
     }
   ]
 }

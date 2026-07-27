@@ -32,7 +32,7 @@ const identity = {
   tokenizerDigest:
     "2e3bc97587671b43d32a68bd134abea67f4a3aaaee8a65f7a1f923449ee13135",
   aggregationVersion: "tmr-aggregation-v3",
-  contentCompositionVersion: "lexical-content-v1",
+  contentCompositionVersion: "lexical-content-v2",
   calibrationSetDigest:
     "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
 };
@@ -195,7 +195,7 @@ describe("assert-performance-report.mjs (CI mirror)", () => {
       tokenizerDigest:
         "2e3bc97587671b43d32a68bd134abea67f4a3aaaee8a65f7a1f923449ee13135",
       aggregationVersion: "tmr-aggregation-v3",
-      contentCompositionVersion: "lexical-content-v1",
+      contentCompositionVersion: "lexical-content-v2",
       calibrationSetDigest: "4".repeat(64),
       profileDigests: ["a".repeat(64)],
       rolloutState: "actions",

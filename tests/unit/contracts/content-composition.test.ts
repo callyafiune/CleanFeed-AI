@@ -20,7 +20,7 @@ const MIXED_FIXTURE =
 
 describe("CONTENT_COMPOSITION_VERSION", () => {
   it("is the sealed lexical content version", () => {
-    expect(CONTENT_COMPOSITION_VERSION).toBe("lexical-content-v1");
+    expect(CONTENT_COMPOSITION_VERSION).toBe("lexical-content-v2");
   });
 
   // The constant and the sealed manifest are two halves of ONE coordinate:

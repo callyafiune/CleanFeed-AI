@@ -6,7 +6,7 @@
   "backend": "transformers-onnx",
   "modelFile": "onnx/model_int8.onnx",
   "aggregationVersion": "tmr-aggregation-v3",
-  "contentCompositionVersion": "lexical-content-v1",
+  "contentCompositionVersion": "lexical-content-v2",
   "tokenizerDigest": "2e3bc97587671b43d32a68bd134abea67f4a3aaaee8a65f7a1f923449ee13135",
   "windowing": {
     "modelMaxTokens": 512,

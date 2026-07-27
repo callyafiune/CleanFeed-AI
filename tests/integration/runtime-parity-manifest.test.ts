@@ -117,7 +117,7 @@ describe("Phase 3 runtime parity manifest binding", () => {
       modelVersion: "1.0.0",
       bundleDigest: "a".repeat(64),
       aggregationVersion: "tmr-aggregation-v3",
-      contentCompositionVersion: "lexical-content-v1",
+      contentCompositionVersion: "lexical-content-v2",
       tokenizerDigest: "b".repeat(64),
     };
     expect(

@@ -768,7 +768,7 @@ const TMR_IDENTITY: RuntimeModelIdentity = {
   bundleDigest: "a".repeat(64),
   tokenizerDigest: "b".repeat(64),
   aggregationVersion: "tmr-aggregation-v3",
-  contentCompositionVersion: "lexical-content-v1",
+  contentCompositionVersion: "lexical-content-v2",
   calibrationSetDigest: "d".repeat(64),
 };
 
@@ -908,7 +908,7 @@ function bundleProfile(): Omit<RuntimeCalibrationProfileV1, "profileDigest"> {
     locale: "pt-BR",
     lengthBucket: "200-plus",
     aggregationVersion: "tmr-aggregation-v3",
-    contentCompositionVersion: "lexical-content-v1",
+    contentCompositionVersion: "lexical-content-v2",
     datasetDigest: "c".repeat(64),
     splitDigest: "d".repeat(64),
     evaluatorDigest: "e".repeat(64),
@@ -985,7 +985,7 @@ async function bundleRegistry(): Promise<{
       bundleDigest: "a".repeat(64),
       tokenizerDigest: "b".repeat(64),
       aggregationVersion: "tmr-aggregation-v3",
-      contentCompositionVersion: "lexical-content-v1",
+      contentCompositionVersion: "lexical-content-v2",
       calibrationSetDigest: await computeCalibrationSetDigest([
         draft.profileDigest,
       ]),

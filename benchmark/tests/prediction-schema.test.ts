@@ -227,7 +227,7 @@ function validManifest() {
     modelVersion: "d8f77f870fbd35a17add2498b73d906bbc299026",
     bundleDigest: "b".repeat(64),
     aggregationVersion: "tmr-aggregation-v3",
-    contentCompositionVersion: "lexical-content-v1",
+    contentCompositionVersion: "lexical-content-v2",
     tokenizerDigest: "c".repeat(64),
     runtimeParityDigest: "d".repeat(64),
     extensionBuildDigest: "e".repeat(64),

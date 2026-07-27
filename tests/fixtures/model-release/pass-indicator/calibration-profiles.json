@@ -12,7 +12,7 @@
       "locale": "pt-BR",
       "lengthBucket": "200-plus",
       "aggregationVersion": "tmr-aggregation-v3",
-      "contentCompositionVersion": "lexical-content-v1",
+      "contentCompositionVersion": "lexical-content-v2",
       "datasetDigest": "1111111111111111111111111111111111111111111111111111111111111111",
       "splitDigest": "2222222222222222222222222222222222222222222222222222222222222222",
       "evaluatorDigest": "3333333333333333333333333333333333333333333333333333333333333333",
@@ -92,7 +92,7 @@
         "criticalRecallSlices": {}
       },
       "actionCeiling": "hide",
-      "profileDigest": "2f5f549ff157dcd72c3463795e8d366cfc28a43afa3fa00ad62fbd1b0f48a48d"
+      "profileDigest": "78219fd28cb1d5c07b10dbc1af42c42fc349bb4265dcde9071b1cecedcdd6d52"
     },
     {
       "schemaVersion": 1,
@@ -105,7 +105,7 @@
       "locale": "pt-BR",
       "lengthBucket": "50-79",
       "aggregationVersion": "tmr-aggregation-v3",
-      "contentCompositionVersion": "lexical-content-v1",
+      "contentCompositionVersion": "lexical-content-v2",
       "datasetDigest": "1111111111111111111111111111111111111111111111111111111111111111",
       "splitDigest": "2222222222222222222222222222222222222222222222222222222222222222",
       "evaluatorDigest": "3333333333333333333333333333333333333333333333333333333333333333",
@@ -185,7 +185,7 @@
         "criticalRecallSlices": {}
       },
       "actionCeiling": "indicator",
-      "profileDigest": "583c38d37317d4c3c7ba6c0bd1c53f57a7e0b97ecf0e29049d72200c0ad85262"
+      "profileDigest": "87272cd810c373208f59623bc1b146a4c89bc9ca84b287afd71c5118918e1eb7"
     }
   ]
 }

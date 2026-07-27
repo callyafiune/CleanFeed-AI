@@ -61,7 +61,7 @@ export function createBundleRuntimeIdentity(
     bundleDigest: "a".repeat(64),
     tokenizerDigest: "b".repeat(64),
     aggregationVersion: "tmr-aggregation-v3",
-    contentCompositionVersion: "lexical-content-v1",
+    contentCompositionVersion: "lexical-content-v2",
     calibrationSetDigest: EMPTY_SET_DIGEST,
     ...overrides,
   };
@@ -173,7 +173,7 @@ export function createModelManifestV2(
     backend: "transformers-onnx",
     modelFile: "onnx/model_int8.onnx",
     aggregationVersion: "tmr-aggregation-v3",
-    contentCompositionVersion: "lexical-content-v1",
+    contentCompositionVersion: "lexical-content-v2",
     ...overrides,
     windowing,
     artifacts,

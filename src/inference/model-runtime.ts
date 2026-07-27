@@ -482,8 +482,35 @@ function isPunctuationChar(char: string): boolean {
 }
 
 /**
- * Segments text like BERT's BasicTokenizer: whitespace separates words and
- * every punctuation character is its own word. UTF-16 spans, full code points.
+ * The ranges `BertNormalizer::handle_chinese_chars` isolates, verbatim from
+ * `tokenizers`' `is_chinese_char`: the CJK Unified Ideograph blocks and the two
+ * compatibility-ideograph blocks. Kana and Hangul are NOT in that list, so they
+ * are not here either — the sealed `tokenizer.json` sets
+ * `handle_chinese_chars: true`, and this must mirror it exactly, in both
+ * directions.
+ */
+const CHINESE_CHARACTER =
+  /^(?:[\u4E00-\u9FFF\u3400-\u4DBF\uF900-\uFAFF]|[\u{20000}-\u{2A6DF}]|[\u{2A700}-\u{2B73F}]|[\u{2B740}-\u{2B81F}]|[\u{2B820}-\u{2CEAF}]|[\u{2F800}-\u{2FA1F}])$/u;
+
+function isChineseChar(char: string): boolean {
+  return CHINESE_CHARACTER.test(char);
+}
+
+/**
+ * Segments text like BERT's BasicTokenizer: whitespace separates words, every
+ * punctuation character is its own word, and — because the sealed tokenizer runs
+ * `BertNormalizer` with `handle_chinese_chars: true` — every CJK ideograph is its
+ * own word too. UTF-16 spans, full code points.
+ *
+ * The ideograph split is load-bearing, not defensive. BERTimbau's vocabulary has
+ * no bare CJK ideograph, so the tokenizer emits ONE `[UNK]` per ideograph;
+ * treating `花巻市` as a single word consumed one token for three, handed the
+ * surplus to the following words and silently shifted every offset after it —
+ * and once the totals disagreed, `deriveWordPieceOffsets` degraded the WHOLE
+ * document to coarse spans, which `fitWindowSlice` then refuses as
+ * `WINDOW_SLICE_NOT_REDUCIBLE`. That is the measured cause of
+ * `mix_src_wikipedia_pt_d3e3087c4ae9`'s inference error, and the pt-BR Wikipedia
+ * is full of Japanese, Chinese and Korean toponyms, so it is not an edge case.
  */
 function segmentBasicWords(text: string): { start: number; end: number }[] {
   const words: { start: number; end: number }[] = [];
@@ -494,7 +521,7 @@ function segmentBasicWords(text: string): { start: number; end: number }[] {
       index += char.length;
       continue;
     }
-    if (isPunctuationChar(char)) {
+    if (isPunctuationChar(char) || isChineseChar(char)) {
       words.push({ start: index, end: index + char.length });
       index += char.length;
       continue;
@@ -502,7 +529,13 @@ function segmentBasicWords(text: string): { start: number; end: number }[] {
     const start = index;
     while (index < text.length) {
       const next = String.fromCodePoint(text.codePointAt(index)!);
-      if (isWhitespaceChar(next) || isPunctuationChar(next)) break;
+      if (
+        isWhitespaceChar(next) ||
+        isPunctuationChar(next) ||
+        isChineseChar(next)
+      ) {
+        break;
+      }
       index += next.length;
     }
     words.push({ start, end: index });

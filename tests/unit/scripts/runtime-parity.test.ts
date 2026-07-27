@@ -30,6 +30,7 @@ const CORE_FILES = [
   "contracts/content-composition.ts",
   "contracts/model-release.ts",
   "contracts/runtime-parity.ts",
+  "contracts/text-normalization.ts",
   "package-lock.json",
   "src/offscreen/worker-host.ts",
   "src/shared/constants.ts",

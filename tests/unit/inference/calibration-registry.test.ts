@@ -42,7 +42,7 @@ function baseProfile(
     locale: "pt-BR",
     lengthBucket: "200-plus",
     aggregationVersion: "tmr-aggregation-v3",
-    contentCompositionVersion: "lexical-content-v1",
+    contentCompositionVersion: "lexical-content-v2",
     datasetDigest: "c".repeat(64),
     splitDigest: "d".repeat(64),
     evaluatorDigest: "e".repeat(64),
@@ -122,7 +122,7 @@ async function releaseFor(
     bundleDigest: "a".repeat(64),
     tokenizerDigest: "b".repeat(64),
     aggregationVersion: "tmr-aggregation-v3",
-    contentCompositionVersion: "lexical-content-v1",
+    contentCompositionVersion: "lexical-content-v2",
     calibrationSetDigest: await computeCalibrationSetDigest(profileDigests),
     profileDigests,
     rolloutState: "actions",
@@ -146,7 +146,7 @@ function coordinates(
     locale: "pt",
     lengthBucket: "200-plus",
     aggregationVersion: "tmr-aggregation-v3",
-    contentCompositionVersion: "lexical-content-v1",
+    contentCompositionVersion: "lexical-content-v2",
     ...overrides,
   };
 }
