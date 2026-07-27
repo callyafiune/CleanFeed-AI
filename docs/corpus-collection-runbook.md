@@ -38,12 +38,17 @@ recusar atalhos:
   registro é `passed`.
 - **Sem alegação de autoria.** A verdade de rótulo vem da *procedência*
   documentada, nunca da opinião de um detector.
-- **O corpus é independente do que treinou o detector.** Nenhum registro pode ser
-  quase-duplicata de nada em `benchmark/data/dataset/{train,dev}.jsonl`.
-  Contaminação aqui não quebra o pipeline — ela **infla a métrica**, e o
-  benchmark passa a parecer melhor do que o detector é. Nenhum gate da esteira
-  audita isso: `validate` e `split` nunca veem o conjunto de treino, então o
-  invariante só existe se for imposto na montagem (ver §1.1).
+- **O corpus não repete o que treinou o detector, sob contrato explícito.** Nenhum
+  registro pode ser quase-duplicata de nada em
+  `benchmark/data/dataset/{train,dev}.jsonl`. O contrato verificado é **hash exato
+  + Jaccard ≥ 0,82 sobre shingles de 5 tokens** (`near_dupes.drop_seen()`), e é só
+  isso: **não é independência semântica**. Um registro pode tratar do mesmo assunto,
+  citar a mesma fonte ou parafrasear um texto de treino e passar folgado pelo limiar.
+  Ao declarar o invariante, declare o contrato — dizer "independente" sem qualificar
+  é alegar mais do que se mediu. Contaminação aqui não quebra o pipeline — ela
+  **infla a métrica**, e o benchmark passa a parecer melhor do que o detector é.
+  Nenhum gate da esteira audita isso: `validate` e `split` nunca veem o conjunto de
+  treino, então o invariante só existe se for imposto na montagem (ver §1.1).
 
 ## 1. Composição e cobertura do corpus (o "o quê")
 
