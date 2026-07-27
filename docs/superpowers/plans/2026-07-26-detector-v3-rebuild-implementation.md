@@ -597,6 +597,117 @@ janelas economizadas.
 **Atenção:** mudar a política de janelas muda `aggregationVersion` e o
 `inferenceCoreDigest`. Isso é esperado nesta fase e **proibido** depois de G5.
 
+#### A2 — o que a execução mediu (registro da entrega)
+
+**A hipótese de pressão de memória WASM está refutada, e o §3.2 tem um erro de
+medição.** Com os códigos estruturados de A1, os **60** documentos de
+`development` + `calibration` que falharam carregam **um único** detalhe:
+`TOKEN_LIMIT_EXCEEDED: Model input exceeds the model token limit.` (2 de 2000 em
+`development`, 58 de 3000 em `calibration`). A contiguidade das posições 3003–3799
+citada no §3.2 é artefato da ordenação por id opaco — os registros `src_carolina_*`
+ficam juntos —, não de memória acumulada.
+
+O §3.2 diz que a hipótese "re-tokenizar o recorte de caracteres estoura 512" está
+"refutada, a pior janela dá exatamente 512". **A medição da pior janela estava certa
+para os documentos que pontuaram e errada para os que falharam.** Reproduzindo o
+caminho exato (tokenizer do bundle + `ExactTokenizer` real) sobre todos os 5000
+documentos de `development` + `calibration`: nos 40 documentos longos que pontuaram a
+pior janela dá **exatamente 512**; nos 60 que falharam dá **513** (53 documentos),
+**514** (4) ou mais (3). A folga zero custa **um** token.
+
+**Item 1 — feito integralmente.** A seleção passou a acontecer antes da inferência,
+com a mesma função (`selectDistributedWindows`), que agora carrega
+`selectedWindows` — as janelas escolhidas com os índices originais. A contabilidade
+(`candidateWindowCount`, `truncated`, índices) é passada à agregação via
+`AggregateWindowsOptions.selection`, e `maxWindows` vem de
+`manifest.windowing.maxWindows`; a constante do agregador virou
+`FALLBACK_MAX_AGGREGATION_WINDOWS`, usada só por quem não tem manifesto (worker de
+produção e smoke). Provado por teste: para 3, 8, 20 e 47 candidatas a agregação sobre
+as janelas selecionadas é `toEqual` à agregação sobre todas as candidatas.
+
+**`aggregationVersion` NÃO foi incrementada, porque o item 1 não muda nenhuma saída.**
+A política de janelas é a mesma função aplicada mais cedo; o teste de igualdade acima
+é a evidência. O que muda de fato é o `inferenceCoreDigest`
+(`977bca0b…` → `647123a0…`) e, com ele, o `runtimeParityDigest`
+(`35f31b32…` → `e55472e7…`), que é derivado dos bytes e recalculado pelo build.
+
+**Item 1 tem um efeito colateral científico, medido:** `src_carolina_583c975dd4b4`
+(11 candidatas) deixa de falhar **só** pela seleção prévia, porque a janela que
+estourava não está entre as 8 escolhidas. Ou seja, item 1 e item 2 não são
+independentes na população de erros.
+
+**Ganho de custo, medido e modesto neste corpus:** 7430 janelas candidatas em
+`development` + `calibration`, 7414 inferidas — 16 inferências economizadas (0,22%),
+porque só 11 documentos têm mais de 8 candidatas. Por documento longo o ganho é o
+prometido: 12 → 8 janelas em `src_carolina_9e9842edb531`, 11 → 8 em
+`src_carolina_583c975dd4b4`, 9 → 8 nos outros nove.
+
+**Item 2 — implementado, porque o código observado é `TOKEN_LIMIT_EXCEEDED`.**
+`fitWindowSlice` (em `chunker.ts`) corta tokens de conteúdo **do fim** pelo excesso
+medido até `encodedLength <= modelMaxTokens - specialTokenCount`, e devolve o
+intervalo realmente pontuado, de modo que `coverage` e os pesos por token único
+descrevem o texto que foi ao modelo. Medido sobre os 5000 documentos: 56 documentos
+passam a pontuar cortando **1 token** (50) ou **2** (6).
+
+**Item 2 tem um caso em que a regra mecânica não se aplica, e ele falha fechado.**
+Três documentos (`src_ai_public_madras_961c462e650f`, `…_a48e8a49816d`,
+`…_be8b62bfe739`) caem no *coarse fallback* de `deriveWordPieceOffsets`, que mapeia
+**todo** token para o texto inteiro. Nesses, a "janela" É o documento inteiro e cortar
+`tokenEnd` não encurta o recorte: as 8 janelas viravam 8 cópias do mesmo prefixo, com
+`coverage` calculado sobre intervalos que não descrevem mais nada. Isso é fabricar
+resultado, não corrigir falha, então o corte detecta a ausência de progresso e falha
+fechado sob o código próprio `WINDOW_SLICE_NOT_REDUCIBLE`. Resultado medido:
+`development` 0/2000 (0,000%) em **todas** as faixas; `calibration` 3/3000 (0,100%) no
+total, mas concentrados: pelas faixas do próprio `sizeBucket` da bancada,
+`calibration/150_299` = 2/557 = **0,359%** e `calibration/300_PLUS` = 1/929 =
+**0,108%**; as demais faixas, 0,000%. Portanto os dois critérios do plano **não** foram
+atingidos: "≤ 0,1% em todas as faixas" falha em `150_299` e (por margem) em
+`300_PLUS`, e "erro em `calibration` restrito a `300_PLUS` cai a zero" não cai a zero.
+Antes da correção eram 58/3000 em `calibration` e 2/2000 em `development`.
+
+**Confirmação fim-a-fim em `development`** (Chrome for Testing 150.0.7871.129 travado,
+extensão candidata, ONNX INT8 real; `runtimeParityDigest`
+`61c5ff19febbb5daf952d7fe7cea6d570f3a3d91b3d0e42cfe39abf3a544dae4`, o do bundle
+construído a partir desta árvore): 2000 linhas, **0 erros** (eram 2), 1963 `scored`,
+37 `abstained`. Comparando linha a linha com a corrida de A1 sobre o mesmo split:
+**1998 de 2000 idênticas** em todos os campos científicos (`status`,
+`documentRawScore`, `localizedRawScore`, `evidenceQuality`, `reasonCode`, `coverage`,
+`failureDetail`) e as duas que mudaram são exatamente as que falhavam. O documento de 9
+candidatas (`src_ptso_9b3e98994bb0`) manteve `documentRawScore`
+`0.00011800936275887046` e `coverage` `0.8989952406134321` bit a bit, pagando 8
+inferências em vez de 9 — latência 17070 ms → 14069 ms. Duas corridas independentes
+com bundles diferentes só por um comentário deram 2000/2000 idênticas, o que também
+mede a determinismo do caminho.
+
+**A causa dos três residuais é outro defeito, e não é de A2:** `segmentBasicWords`
+(`model-runtime.ts`) não espelha `tokenize_chinese_chars: true` do
+`tokenizer_config.json`. O BasicTokenizer do BERT separa **cada** ideograma CJK em
+palavra própria; `segmentBasicWords` trata a sequência como uma só. Medido: os cinco
+documentos com *coarse fallback* que inspecionei têm CJK e mais primeiras-peças que
+palavras (por exemplo 202 peças iniciais contra 200 palavras), o que dessincroniza os
+fluxos e derruba a verificação global `tokenIndex !== tokens.length`. São 21
+documentos em `development` + `calibration` (7 + 14), todos `madras` ou
+`wikipedia_pt`; 18 têm ≤ 510 tokens, uma janela só, e pontuam hoje. Corrigir isso muda
+**offsets**, o que é escopo de **A5** (que já prevê o incremento de
+`contentCompositionVersion` e exige o mapa `normalizado → original`), e a fonte
+`madras` sai da v3 por D2. Fica registrado, não corrigido aqui.
+
+**Divergência deliberada: `contentCompositionVersion` NÃO foi incrementada.** Três
+razões medidas. (a) O campo é definido em `contracts/content-composition.ts` como a
+versão da decomposição em unidades lexicais, e o item 2 não toca nessa função; A5 é a
+tarefa que muda composição pré-tokenização de verdade e já carrega o incremento — dois
+incrementos deixariam a `v2` significando "nada mudou na composição". (b) A identidade
+que muda de fato já mudou, sozinha e honestamente:
+`inferenceCoreDigest` inventaria todo `.ts` sob `src/inference`, então
+`runtimeParityDigest` mudou e todo manifesto de predição o registra. (c) Não há nada
+para invalidar: `models/cleanfeed-ptbr-v1/release.json` tem `profileDigests: []` e
+`gateDecision: "pending"`, e o corte só afeta documentos que **não** produziam escore
+nenhum — nenhum documento que já pontuava muda de escore. O incremento é uma linha em
+`contracts/content-composition.ts` mais 46 arquivos que fixam a string, e não é
+substituição cega: `tests/unit/contracts/runtime-parity.test.ts:76` usa
+`lexical-content-v2` justamente como o valor **divergente** de um teste de *drift*, que
+teria de passar a um terceiro valor.
+
 ### A3 — Erro de inferência deixa de virar verdadeiro negativo
 
 **Depende de:** nada (independente de A1/A2).

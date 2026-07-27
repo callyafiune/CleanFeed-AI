@@ -50,6 +50,14 @@ export const FAILURE_DETAIL_CODES = [
   "SCORE_OUT_OF_RANGE",
   "ZERO_UNIQUE_TOKEN_WEIGHT",
   "INVALID_TOTAL_TOKEN_COUNT",
+  // Windowing guards. `TOKEN_LIMIT_EXCEEDED` was the measured cause of every
+  // long-document failure, and the remedy — dropping content tokens from the end
+  // of the window until the slice fits — cannot work when the derived offsets map
+  // every token to the whole text: the slice never shrinks, so the "window" is
+  // really the whole document. That case keeps its own code instead of being
+  // scored, because eight copies of one text is a fabricated result, not a repair.
+  "WINDOW_SLICE_NOT_REDUCIBLE",
+  "WINDOW_SELECTION_MISMATCH",
   // Classifier-side guards, each with its own literal message.
   "INVALID_MODEL_INPUT_LENGTH",
   "TOKENIZER_INVALID_IDS",

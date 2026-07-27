@@ -1,4 +1,5 @@
 import type { TokenizedText } from "@/inference/tokenizer";
+import { CleanFeedError } from "@/shared/errors";
 import type { TextChunk } from "@/shared/types";
 import { validateChunkWindow } from "@/shared/validation";
 
@@ -57,6 +58,13 @@ export interface DistributedWindowSelection {
   selectedWindowCount: number;
   /** The `index` of each selected window, in ascending order. */
   selectedIndices: number[];
+  /**
+   * The selected windows themselves, ascending, each keeping the index it had
+   * among ALL candidates. This is what lets a caller select BEFORE inferring:
+   * it loops over exactly these windows and never has to re-derive which ones
+   * the aggregation would have kept.
+   */
+  selectedWindows: WindowInterval[];
   /** The token intervals of the selected windows (raw, may overlap). */
   coveredIntervals: { start: number; end: number }[];
   truncated: boolean;
@@ -103,10 +111,129 @@ export function selectDistributedWindows(
     candidateWindowCount: windows.length,
     selectedWindowCount: selected.length,
     selectedIndices: selected.map((window) => window.index),
+    selectedWindows: selected,
     coveredIntervals: selected.map((window) => ({
       start: window.tokenStart,
       end: window.tokenEnd,
     })),
     truncated: windows.length > selected.length,
   };
+}
+
+/** The stride parameters a content-window tiling needs from the sealed plan. */
+export interface ContentWindowPlan {
+  contentTokens: number;
+  overlapTokens: number;
+}
+
+/**
+ * Tiles `totalTokenCount` content tokens into candidate windows of
+ * `contentTokens`, advancing by `contentTokens - overlapTokens` and stopping on
+ * the window that reaches the last token. Windows are numbered from zero in
+ * ascending order, and that number is the ONLY window identity downstream:
+ * {@link selectDistributedWindows} keeps it, so an aggregation over a selected
+ * subset still names the originals.
+ *
+ * It lives here, beside the selection policy, because two scoring harnesses used
+ * to carry private copies of this loop — and a window tiling that drifts between
+ * harnesses silently changes what a benchmark measured.
+ */
+export function buildContentWindows(
+  totalTokenCount: number,
+  plan: ContentWindowPlan,
+): WindowInterval[] {
+  if (totalTokenCount <= 0) {
+    return [];
+  }
+  const step = plan.contentTokens - plan.overlapTokens;
+  const windows: WindowInterval[] = [];
+  for (
+    let start = 0, index = 0;
+    start < totalTokenCount;
+    start += step, index += 1
+  ) {
+    const end = Math.min(start + plan.contentTokens, totalTokenCount);
+    windows.push({ index, tokenStart: start, tokenEnd: end });
+    if (end === totalTokenCount) {
+      break;
+    }
+  }
+  return windows;
+}
+
+/** A window's text slice, after it was made to fit the model's token budget. */
+export interface FittedWindowSlice {
+  /** The window as SCORED: `tokenEnd` is reduced when tokens were dropped. */
+  window: WindowInterval;
+  /** The source text between the first and the last KEPT token's offsets. */
+  text: string;
+  /** How many content tokens were dropped from the end; normally zero. */
+  trimmedTokens: number;
+}
+
+/**
+ * How many times the fitter may re-measure one window. Each attempt removes the
+ * measured excess, so a real overflow converges in two; the cap only bounds the
+ * pathological case where removing tokens does not shorten the slice.
+ */
+const MAX_SLICE_FIT_ATTEMPTS = 8;
+
+/**
+ * Builds the text slice for one window and, when that slice re-encodes to MORE
+ * content tokens than the model can accept, drops content tokens from the END —
+ * deterministically, by the measured excess — until it fits.
+ *
+ * Why this exists: `contentTokens` is validated as `modelMaxTokens - special`
+ * (510 of 512), so a full window occupies the model's entire capacity and the
+ * slack is zero. The slice is cut at CHARACTER offsets rounded outward to whole
+ * characters and re-tokenized in isolation, and that costs one or two tokens more
+ * than the same span cost inside the whole document — measured over
+ * development + calibration, every failing window whose offsets were sound landed
+ * on 513 or 514 of 512, against exactly 512 for the longest windows that scored.
+ * A single token over the budget threw away the whole document's score.
+ *
+ * It fails CLOSED rather than fabricating: when dropping tokens does not shorten
+ * the slice — which is what the WordPiece coarse-offset fallback produces, since
+ * it maps every token to the whole text — the window is really the entire
+ * document, and scoring eight copies of the same text would be a fabricated
+ * result rather than a repaired one.
+ *
+ * `countContentTokens` is injected because the authoritative count is the loaded
+ * tokenizer's, and this module must stay pure and unit-testable.
+ */
+export function fitWindowSlice(
+  text: string,
+  offsets: readonly { start: number; end: number }[],
+  window: WindowInterval,
+  maxContentTokens: number,
+  countContentTokens: (slice: string) => number,
+): FittedWindowSlice {
+  let tokenEnd = window.tokenEnd;
+  for (let attempt = 0; attempt < MAX_SLICE_FIT_ATTEMPTS; attempt += 1) {
+    const start = offsets[window.tokenStart];
+    const last = offsets[tokenEnd - 1];
+    if (start === undefined || last === undefined) {
+      break;
+    }
+    const slice = text.slice(start.start, last.end);
+    const count = countContentTokens(slice);
+    if (count <= maxContentTokens) {
+      return {
+        window: { ...window, tokenEnd },
+        text: slice,
+        trimmedTokens: window.tokenEnd - tokenEnd,
+      };
+    }
+    // Removing the measured excess converges in one step for a real overflow.
+    // Progress is tracked on the TOKEN cursor rather than the slice length,
+    // because neighbouring tokens can legitimately share one offset span (the
+    // WordPiece derivation rounds every piece of a mismatched word to that
+    // word), and a slice that did not shrink this step can still shrink the next.
+    const nextEnd = tokenEnd - Math.max(1, count - maxContentTokens);
+    if (nextEnd <= window.tokenStart) {
+      break;
+    }
+    tokenEnd = nextEnd;
+  }
+  throw new CleanFeedError("INFERENCE_FAILED", "WINDOW_SLICE_NOT_REDUCIBLE");
 }

@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 
 import { aggregateWindowsV2, type WindowScore } from "@/inference/aggregator";
+import { fitWindowSlice, selectDistributedWindows } from "@/inference/chunker";
 import type { CleanFeedModelManifest } from "@/inference/model-bundle";
 import {
   ExactTokenizer,
@@ -79,6 +80,50 @@ describe("aggregateWindowsV2 failure codes", () => {
     for (const detail of [nonFinite, outOfRange, zeroWeight, badTotal]) {
       expect(isSanitizedFailureDetail(detail)).toBe(true);
     }
+  });
+
+  // The two windowing guards A2 added. The long-document remedy — dropping
+  // content tokens from the end of a window — has one case where it cannot work
+  // (offsets that map every token to the whole text), and that case must be
+  // countable as itself rather than reported as the token-limit overflow that
+  // triggered it.
+  it("names the unshrinkable window slice and the selection mismatch", () => {
+    const text = Array.from({ length: 12 }, (_, i) => `t${i}`).join(" ");
+    const coarse = Array.from({ length: 12 }, () => ({
+      start: 0,
+      end: text.length,
+    }));
+    const notReducible = detailOf(() =>
+      fitWindowSlice(
+        text,
+        coarse,
+        { index: 0, tokenStart: 0, tokenEnd: 12 },
+        4,
+        (slice) => slice.trim().split(/\s+/u).length,
+      ),
+    );
+    const candidates: WindowScore[] = Array.from(
+      { length: 20 },
+      (_, index) => ({
+        index,
+        tokenStart: index * 446,
+        tokenEnd: index * 446 + 510,
+        rawScore: 0.5,
+      }),
+    );
+    const mismatch = detailOf(() =>
+      aggregateWindowsV2(candidates, 19 * 446 + 510, {
+        selection: selectDistributedWindows(candidates, 8),
+      }),
+    );
+
+    expect(notReducible).toBe("WINDOW_SLICE_NOT_REDUCIBLE");
+    expect(mismatch).toBe("WINDOW_SELECTION_MISMATCH");
+    expect(isSanitizedFailureDetail(notReducible)).toBe(true);
+    expect(isSanitizedFailureDetail(mismatch)).toBe(true);
+    // Neither may degrade to the opaque code the detail field exists to replace.
+    expect(notReducible).not.toBe(UNCLASSIFIED_FAILURE_DETAIL_CODE);
+    expect(mismatch).not.toBe(UNCLASSIFIED_FAILURE_DETAIL_CODE);
   });
 
   it("keeps the coded error class so existing recovery still recognizes it", () => {

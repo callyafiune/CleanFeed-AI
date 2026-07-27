@@ -1,4 +1,7 @@
-import { selectDistributedWindows } from "@/inference/chunker";
+import {
+  selectDistributedWindows,
+  type DistributedWindowSelection,
+} from "@/inference/chunker";
 import { CleanFeedError } from "@/shared/errors";
 import type { AggregationResultV2 } from "@/shared/types";
 
@@ -13,8 +16,13 @@ export interface WindowScore {
 /** The version stamp of this aggregation rule; part of the calibration key. */
 export const AGGREGATION_VERSION = "tmr-aggregation-v2" as const;
 
-/** At most eight windows are analyzed per document (part of the rule version). */
-const MAX_AGGREGATION_WINDOWS = 8;
+/**
+ * FALLBACK window budget, for the callers that hold no manifest. The sealed
+ * `manifest.windowing.maxWindows` is AUTHORITATIVE and must be passed through
+ * {@link AggregateWindowsOptions}; this constant only keeps the uncalibrated
+ * demonstration paths working, and it must stay equal to the sealed value.
+ */
+export const FALLBACK_MAX_AGGREGATION_WINDOWS = 8;
 
 /** Raw score at or above which a window is diagnosed as high-scoring. */
 const HIGH_SCORE_THRESHOLD = 0.8;
@@ -22,27 +30,71 @@ const HIGH_SCORE_THRESHOLD = 0.8;
 /** A window's score counts as agreeing within this band of the document score. */
 const AGREEMENT_BAND = 0.15;
 
+/** How the caller supplies the window budget, or a selection already made. */
+export interface AggregateWindowsOptions {
+  /**
+   * The window budget, from `manifest.windowing.maxWindows`. Defaults to
+   * {@link FALLBACK_MAX_AGGREGATION_WINDOWS}. Ignored when `selection` is given,
+   * because that selection already applied a budget.
+   */
+  maxWindows?: number;
+  /**
+   * The selection made BEFORE inference, when the caller inferred only the
+   * chosen windows instead of all candidates. `windows` must then be exactly
+   * those windows; the accounting (`candidateWindowCount`, `truncated`, the
+   * original indices) comes from here, so the report still describes how many
+   * candidates existed rather than how many were scored.
+   */
+  selection?: DistributedWindowSelection;
+}
+
 /**
  * Aggregates window scores into the v2 result WITHOUT ever blending the two
- * decision signals. At most eight windows are selected (first, last and evenly
- * distributed); each token is attributed to the FIRST selected window covering
- * it, so overlap is discounted exactly once. `documentRawScore` is the
+ * decision signals. At most `maxWindows` windows are selected (first, last and
+ * evenly distributed); each token is attributed to the FIRST selected window
+ * covering it, so overlap is discounted exactly once. `documentRawScore` is the
  * unique-token-weighted mean; `localizedRawScore` is the highest valid single
  * window; `coverage` is the union of selected intervals over `totalTokenCount`.
  * Median, min, max, stdDev and highScoreRatio are diagnostics only.
+ *
+ * The selection may equivalently be made by the CALLER, before inference, and
+ * passed in — the policy is the same function either way
+ * ({@link selectDistributedWindows}), so a document with more candidates than
+ * the budget pays one inference per SELECTED window instead of one per
+ * candidate, and the aggregation is bit-identical.
  */
 export function aggregateWindowsV2(
   windows: WindowScore[],
   totalTokenCount: number,
+  options: AggregateWindowsOptions = {},
 ): AggregationResultV2 {
   if (windows.length === 0) {
     throw new CleanFeedError("INSUFFICIENT_EVIDENCE", "INSUFFICIENT_EVIDENCE");
   }
 
-  const selection = selectDistributedWindows(windows, MAX_AGGREGATION_WINDOWS);
-  const selected = selection.selectedIndices.map((index) =>
-    windows.find((window) => window.index === index)!,
-  );
+  const selection =
+    options.selection ??
+    selectDistributedWindows(
+      windows,
+      options.maxWindows ?? FALLBACK_MAX_AGGREGATION_WINDOWS,
+    );
+  const selected: WindowScore[] = [];
+  for (const index of selection.selectedIndices) {
+    const window = windows.find((candidate) => candidate.index === index);
+    if (window !== undefined) {
+      selected.push(window);
+    }
+  }
+  // A SUPPLIED selection is a claim that `windows` are exactly the windows it
+  // chose — the claim a caller makes when it selected before inferring. If it is
+  // false the aggregation would score a different subset than the one the report
+  // accounts for, so it fails closed instead of quietly disagreeing.
+  if (
+    selected.length !== selection.selectedIndices.length ||
+    (options.selection !== undefined && selected.length !== windows.length)
+  ) {
+    throw new CleanFeedError("INFERENCE_FAILED", "WINDOW_SELECTION_MISMATCH");
+  }
 
   // The SAME inputs are rejected as before, but each branch now names itself.
   // While all four shared the message "INFERENCE_FAILED" the scored artifacts

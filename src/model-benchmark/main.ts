@@ -19,13 +19,16 @@
 
 import { aggregateWindowsV2, type WindowScore } from "@/inference/aggregator";
 import { bundledModelManifest } from "@/inference/bundled-model-metadata";
-import type { WindowInterval } from "@/inference/chunker";
+import {
+  buildContentWindows,
+  fitWindowSlice,
+  selectDistributedWindows,
+} from "@/inference/chunker";
 import { assessEvidence } from "@/inference/evidence";
 import type { CleanFeedModelManifest } from "@/inference/model-bundle";
 import {
   createModelRuntime,
   createTmrChunkPlan,
-  type ExactTokenEncoding,
   type LoadedTransformersTokenizer,
   type ModelRuntime,
   type ModelRuntimeAssets,
@@ -205,27 +208,6 @@ function loadAssets(
   };
 }
 
-/** Content-token windows over one encoding, mirroring the sealed chunk plan. */
-function buildWindows(
-  encoding: ExactTokenEncoding,
-  plan: TmrChunkPlan,
-): WindowInterval[] {
-  const total = encoding.inputIds.length;
-  if (total === 0) {
-    return [];
-  }
-  const step = plan.contentTokens - plan.overlapTokens;
-  const windows: WindowInterval[] = [];
-  for (let start = 0, index = 0; start < total; start += step, index += 1) {
-    const end = Math.min(start + plan.contentTokens, total);
-    windows.push({ index, tokenStart: start, tokenEnd: end });
-    if (end === total) {
-      break;
-    }
-  }
-  return windows;
-}
-
 /** Best-effort process memory; null unless the UA exposes the measurement API. */
 async function measurePeakMemoryBytes(): Promise<number | null> {
   const perf = performance as Performance & {
@@ -269,25 +251,45 @@ async function scoreDocument(
     };
   }
 
-  const windows = buildWindows(encoding, plan);
+  // Select BEFORE inferring. The aggregation keeps at most `maxWindows` windows,
+  // so inferring every candidate first and discarding the rest afterwards paid
+  // for windows no result ever used. The policy is the SAME function the
+  // aggregation would have applied, and the accounting it produces
+  // (`candidateWindowCount`, `truncated`, the original indices) is handed to the
+  // aggregation, so the report still says how many candidates existed.
+  const selection = selectDistributedWindows(
+    buildContentWindows(encoding.inputIds.length, plan),
+    plan.maxWindows,
+  );
+  const maxContentTokens = plan.modelMaxTokens - encoding.specialTokenCount;
   const scored: WindowScore[] = [];
-  for (const window of windows) {
-    const slice = text.slice(
-      encoding.offsets[window.tokenStart]!.start,
-      encoding.offsets[window.tokenEnd - 1]!.end,
+  for (const candidate of selection.selectedWindows) {
+    // A full window is exactly the model's capacity, and re-tokenizing the
+    // character slice on its own costs one or two tokens more than the same span
+    // cost inside the whole document, which threw the document away. The fitter
+    // drops content tokens from the END until the slice fits, and the SCORED
+    // interval is what it returns — so coverage describes the text really scored.
+    const fitted = fitWindowSlice(
+      text,
+      encoding.offsets,
+      candidate,
+      maxContentTokens,
+      (slice) => runtime.tokenizer.encodeWithOffsets(slice).inputIds.length,
     );
-    const result = await runtime.classifier.classify(slice, {
+    const result = await runtime.classifier.classify(fitted.text, {
       language: PROBE_LOCALE,
     });
     scored.push({
-      index: window.index,
-      tokenStart: window.tokenStart,
-      tokenEnd: window.tokenEnd,
+      index: fitted.window.index,
+      tokenStart: fitted.window.tokenStart,
+      tokenEnd: fitted.window.tokenEnd,
       rawScore: result.aiScore,
     });
   }
 
-  const aggregation = aggregateWindowsV2(scored, encoding.inputIds.length);
+  const aggregation = aggregateWindowsV2(scored, encoding.inputIds.length, {
+    selection,
+  });
   const assessment = assessEvidence({
     locale: PROBE_LOCALE,
     wordCount: composition.totalUnits,

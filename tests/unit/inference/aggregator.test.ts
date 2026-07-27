@@ -1,6 +1,11 @@
 import { describe, expect, it } from "vitest";
 
-import { aggregateWindowsV2, type WindowScore } from "@/inference/aggregator";
+import {
+  FALLBACK_MAX_AGGREGATION_WINDOWS,
+  aggregateWindowsV2,
+  type WindowScore,
+} from "@/inference/aggregator";
+import { selectDistributedWindows } from "@/inference/chunker";
 
 // The canonical Task 5 fixture: three overlapping content windows with no
 // special tokens. Unique-token weights (each token attributed to the FIRST
@@ -83,6 +88,109 @@ describe("aggregateWindowsV2", () => {
     expect(result.truncated).toBe(true);
     // The isolated high window is the localized signal.
     expect(result.localizedRawScore).toBe(0.95);
+  });
+
+  // The whole point of selecting BEFORE inference: the aggregation of the eight
+  // windows that were actually inferred must be BIT-IDENTICAL to the aggregation
+  // that the old code produced after inferring all twenty and selecting inside.
+  // If these two ever diverge, the pre-inference selection changed the science
+  // instead of only its cost.
+  describe("pre-inference selection", () => {
+    function manyWindows(count: number): WindowScore[] {
+      return Array.from({ length: count }, (_, index) => ({
+        index,
+        tokenStart: index * 446,
+        tokenEnd: index * 446 + 510,
+        rawScore: index === count - 1 ? 0.95 : (index % 7) / 10,
+      }));
+    }
+
+    it.each([3, 8, 20, 47])(
+      "matches the all-windows aggregation for %s candidates",
+      (count) => {
+        const candidates = manyWindows(count);
+        const totalTokenCount = (count - 1) * 446 + 510;
+        const selection = selectDistributedWindows(candidates, 8);
+        const inferred = selection.selectedWindows.map(
+          (window) => candidates[window.index]!,
+        );
+
+        const before = aggregateWindowsV2(candidates, totalTokenCount);
+        const after = aggregateWindowsV2(inferred, totalTokenCount, {
+          selection,
+        });
+
+        expect(after).toEqual(before);
+        // The accounting the long-document diagnosis rests on survives: how many
+        // candidates there were, that some were dropped, and WHICH originals ran.
+        expect(after.candidateWindowCount).toBe(count);
+        expect(after.truncated).toBe(count > 8);
+        expect(after.selectedWindowIndices).toEqual(selection.selectedIndices);
+        expect(inferred).toHaveLength(Math.min(count, 8));
+      },
+    );
+
+    it("keeps coverage correct for a twenty-window document", () => {
+      const candidates = manyWindows(20);
+      const totalTokenCount = 19 * 446 + 510;
+      const selection = selectDistributedWindows(candidates, 8);
+      const inferred = selection.selectedWindows.map(
+        (window) => candidates[window.index]!,
+      );
+
+      const result = aggregateWindowsV2(inferred, totalTokenCount, {
+        selection,
+      });
+
+      // Union of the eight selected intervals over the document's token count.
+      const covered = new Set<number>();
+      for (const window of inferred) {
+        for (
+          let token = window.tokenStart;
+          token < window.tokenEnd;
+          token += 1
+        ) {
+          covered.add(token);
+        }
+      }
+      expect(result.coverage).toBeCloseTo(covered.size / totalTokenCount, 12);
+      expect(result.coverage).toBeLessThan(1);
+    });
+
+    it("reads the window budget from the caller, not the fallback constant", () => {
+      const candidates = manyWindows(20);
+      const totalTokenCount = 19 * 446 + 510;
+      const selection = selectDistributedWindows(candidates, 3);
+      const inferred = selection.selectedWindows.map(
+        (window) => candidates[window.index]!,
+      );
+
+      expect(FALLBACK_MAX_AGGREGATION_WINDOWS).toBe(8);
+      expect(inferred).toHaveLength(3);
+      const supplied = aggregateWindowsV2(inferred, totalTokenCount, {
+        selection,
+      });
+      const derived = aggregateWindowsV2(candidates, totalTokenCount, {
+        maxWindows: 3,
+      });
+
+      expect(supplied).toEqual(derived);
+      expect(derived.selectedWindowIndices).toEqual([0, 10, 19]);
+    });
+
+    it("rejects a selection that does not describe the inferred windows", () => {
+      const candidates = manyWindows(20);
+      const selection = selectDistributedWindows(candidates, 8);
+
+      expect(() =>
+        aggregateWindowsV2(candidates, 19 * 446 + 510, { selection }),
+      ).toThrowError(
+        expect.objectContaining({
+          code: "INFERENCE_FAILED",
+          message: "WINDOW_SELECTION_MISMATCH",
+        }),
+      );
+    });
   });
 
   it("rejects empty windows as insufficient evidence", () => {

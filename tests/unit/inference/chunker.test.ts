@@ -1,8 +1,10 @@
 import { describe, expect, it } from "vitest";
 
 import {
+  buildContentWindows,
   createTextChunks,
   distributedIndices,
+  fitWindowSlice,
   selectDistributedWindows,
 } from "@/inference/chunker";
 import type { TokenizedText } from "@/inference/tokenizer";
@@ -164,6 +166,7 @@ describe("selectDistributedWindows", () => {
       candidateWindowCount: 3,
       selectedWindowCount: 3,
       selectedIndices: [0, 1, 2],
+      selectedWindows: windowsOf(3),
       coveredIntervals: [
         { start: 0, end: 510 },
         { start: 446, end: 956 },
@@ -190,8 +193,128 @@ describe("selectDistributedWindows", () => {
       candidateWindowCount: 0,
       selectedWindowCount: 0,
       selectedIndices: [],
+      selectedWindows: [],
       coveredIntervals: [],
       truncated: false,
     });
+  });
+
+  // The windows to infer must be carried by the selection itself, with their
+  // ORIGINAL indices: selecting BEFORE inference is only safe if the caller can
+  // loop over exactly the chosen windows without re-deriving which they were.
+  it("carries the selected windows themselves, keeping their original indices", () => {
+    const candidates = windowsOf(20);
+    const selection = selectDistributedWindows(candidates, 8);
+
+    expect(selection.selectedWindows).toHaveLength(8);
+    expect(selection.selectedWindows.map((window) => window.index)).toEqual(
+      selection.selectedIndices,
+    );
+    expect(selection.selectedWindows).toEqual(
+      selection.selectedIndices.map((index) => candidates[index]),
+    );
+  });
+});
+
+describe("buildContentWindows", () => {
+  const plan = { contentTokens: 510, overlapTokens: 64 };
+
+  it("returns no window for an empty encoding", () => {
+    expect(buildContentWindows(0, plan)).toEqual([]);
+  });
+
+  it("keeps a short document in one window bounded by the token count", () => {
+    expect(buildContentWindows(120, plan)).toEqual([
+      { index: 0, tokenStart: 0, tokenEnd: 120 },
+    ]);
+  });
+
+  it("tiles a long document with the sealed stride and ends on the last token", () => {
+    const windows = buildContentWindows(5_000, plan);
+
+    expect(windows).toHaveLength(12);
+    expect(windows[0]).toEqual({ index: 0, tokenStart: 0, tokenEnd: 510 });
+    expect(windows[1]).toEqual({ index: 1, tokenStart: 446, tokenEnd: 956 });
+    expect(windows.at(-1)!.tokenEnd).toBe(5_000);
+    expect(windows.map((window) => window.index)).toEqual(
+      windows.map((_, index) => index),
+    );
+  });
+});
+
+describe("fitWindowSlice", () => {
+  // A whitespace-unit "tokenizer": each unit is one token, so the fitter's
+  // arithmetic is checkable by counting words.
+  const text = Array.from({ length: 12 }, (_, index) => `t${index}`).join(" ");
+  const offsets = [...text.matchAll(/\S+/gu)].map((match) => ({
+    start: match.index,
+    end: match.index + match[0].length,
+  }));
+  const countUnits = (slice: string): number =>
+    slice.trim().length === 0 ? 0 : slice.trim().split(/\s+/u).length;
+  const wholeWindow = { index: 0, tokenStart: 0, tokenEnd: 12 };
+
+  it("leaves a window that already fits untouched", () => {
+    const fitted = fitWindowSlice(text, offsets, wholeWindow, 12, countUnits);
+
+    expect(fitted.window).toEqual(wholeWindow);
+    expect(fitted.text).toBe(text);
+    expect(fitted.trimmedTokens).toBe(0);
+  });
+
+  it("drops content tokens from the END until the slice fits the budget", () => {
+    const fitted = fitWindowSlice(text, offsets, wholeWindow, 10, countUnits);
+
+    expect(fitted.trimmedTokens).toBe(2);
+    expect(fitted.window).toEqual({ index: 0, tokenStart: 0, tokenEnd: 10 });
+    expect(countUnits(fitted.text)).toBe(10);
+    // The offsets still describe exactly what was scored: the returned slice is
+    // the source text between the first and the LAST KEPT token's offsets.
+    expect(fitted.text).toBe(
+      text.slice(offsets[0]!.start, offsets[fitted.window.tokenEnd - 1]!.end),
+    );
+    expect(fitted.text.endsWith("t9")).toBe(true);
+  });
+
+  it("trims only the tail, keeping the window's own start", () => {
+    const fitted = fitWindowSlice(
+      text,
+      offsets,
+      { index: 3, tokenStart: 4, tokenEnd: 12 },
+      5,
+      countUnits,
+    );
+
+    expect(fitted.window).toEqual({ index: 3, tokenStart: 4, tokenEnd: 9 });
+    expect(fitted.text).toBe(text.slice(offsets[4]!.start, offsets[8]!.end));
+    expect(fitted.trimmedTokens).toBe(3);
+  });
+
+  // Degenerate offsets (the WordPiece coarse fallback maps EVERY token to the
+  // whole text) make the slice unshrinkable. Fabricating a score from a window
+  // that is really the whole document is worse than an error row, so this fails
+  // closed under its own code.
+  it("fails closed when the slice cannot be shrunk", () => {
+    const coarse = offsets.map(() => ({ start: 0, end: text.length }));
+
+    expect(() =>
+      fitWindowSlice(text, coarse, wholeWindow, 10, countUnits),
+    ).toThrowError(
+      expect.objectContaining({
+        code: "INFERENCE_FAILED",
+        message: "WINDOW_SLICE_NOT_REDUCIBLE",
+      }),
+    );
+  });
+
+  it("fails closed when even a single token exceeds the budget", () => {
+    expect(() =>
+      fitWindowSlice(text, offsets, wholeWindow, 0, countUnits),
+    ).toThrowError(
+      expect.objectContaining({
+        code: "INFERENCE_FAILED",
+        message: "WINDOW_SLICE_NOT_REDUCIBLE",
+      }),
+    );
   });
 });
