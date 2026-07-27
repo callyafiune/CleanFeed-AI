@@ -7,14 +7,17 @@ import {
   type IntegrityEvidence,
   type ResamplingPlan,
 } from "../gates.ts";
+import { computeEvaluationMetrics } from "../metrics.ts";
 import type {
   DecisionFamilies,
   DecisionMetrics,
+  EvaluationItem,
   EvaluationMetrics,
   LabelBasisSlice,
   MetricEstimate,
 } from "../metrics.ts";
 import { REBUILD_V3_POLICY } from "../rebuild-v3-policy.ts";
+import type { BenchmarkRecord } from "../schema.ts";
 import type { SliceAxis, SliceResult, SliceSummary } from "../slices.ts";
 
 // --- fixture builders ------------------------------------------------------
@@ -163,6 +166,29 @@ interface MetricsOverrides {
   auroc?: number;
   declaredM?: number | null;
   labelBases?: LabelBasisSlice[];
+}
+
+// One scored human negative with NO `labelBasis` field, which is every human
+// negative the corpus has until C1 adds the field to the closed schema. Built
+// here rather than imported so the gate test can feed the REAL metrics pipeline.
+function humanNegativeWithoutBasis(author: string): EvaluationItem {
+  return {
+    record: {
+      label: "human",
+      language: "pt-BR",
+      wordCount: 120,
+      domain: "corporate",
+      platform: "generic-platform",
+      provenance: { sourceId: "ptwiki" },
+      createdAt: 1_000,
+      transformation: { kind: "none", severity: "none" },
+      groups: { author },
+    } as unknown as BenchmarkRecord,
+    status: "scored",
+    documentScore: 0.1,
+    warned: false,
+    visualActioned: false,
+  };
 }
 
 // One human-negative label basis. `powered` decides whether it may gate at all.
@@ -941,6 +967,40 @@ describe("human-negative label bases as gate evidence", () => {
     expect(action.eligible).toBe(false);
     expect(action.passed).toBe(false);
     expect(action.reasons[0]).toMatch(/supplementary|suplementar/u);
+    expect(report.decision).toBe("indicator-only");
+  });
+
+  it("refuses the unknown basis as evidence even past the power floor, so the action tier cannot be authorized today", () => {
+    // The state of the world until C1 puts `labelBasis` in the closed schema:
+    // every human negative lands in `unknown`, and a real corpus is far past the
+    // 300-row floor, so nothing but the basis guard stops an evidence basis that
+    // does not exist from approving the FPR budget (R4/R6). The label-basis block
+    // here is the REAL one, computed by metrics.ts over 305 unlabelled negatives.
+    const floor = REBUILD_V3_POLICY.powerFloors.criticalFprHumanNegatives;
+    const computed = computeEvaluationMetrics(
+      Array.from({ length: floor + 5 }, (_, index) =>
+        humanNegativeWithoutBasis(`u${index}`),
+      ),
+      { bootstrapSeed: 20260728 },
+    );
+    expect(computed.labelBasis.bases.map((row) => row.basis)).toEqual([
+      "unknown",
+    ]);
+
+    const report = evaluateReleaseGates({
+      integrity: integrity(),
+      resampling: plan(),
+      metrics: metrics({ labelBases: [...computed.labelBasis.bases] }),
+      slices: summary([passingSlice()]),
+    });
+
+    const warning = gateById(report.gates, "warning.fpr.labelBasis.unknown");
+    expect(warning.eligible).toBe(false);
+    expect(warning.passed).toBe(true);
+    const action = gateById(report.gates, "action.fpr.labelBasis.unknown");
+    expect(action.eligible).toBe(false);
+    expect(action.passed).toBe(false);
+    expect(report.failedAction).toContain("action.fpr.labelBasis.unknown");
     expect(report.decision).toBe("indicator-only");
   });
 });

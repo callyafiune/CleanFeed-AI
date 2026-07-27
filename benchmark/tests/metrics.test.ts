@@ -605,6 +605,16 @@ function points(
   }));
 }
 
+// Five points, two bins: the counts (2 and 3) differ, so the mass weighting and a
+// flat 1/bins weighting give different answers.
+const UNEVEN_BINS: CalibrationPoint[] = [
+  { probability: 0.1, label: 0 },
+  { probability: 0.2, label: 0 },
+  { probability: 0.3, label: 1 },
+  { probability: 0.4, label: 0 },
+  { probability: 0.5, label: 1 },
+];
+
 describe("equal-mass calibration statistics", () => {
   it("bins by mass, not by a fixed grid the data never populates", () => {
     // Three probabilities crowded near zero and one far away. With TWO
@@ -624,19 +634,35 @@ describe("equal-mass calibration statistics", () => {
   });
 
   it("keeps every point in exactly one bin when the count is not a multiple of the bins", () => {
-    const five: CalibrationPoint[] = [
-      { probability: 0.1, label: 0 },
-      { probability: 0.2, label: 0 },
-      { probability: 0.3, label: 1 },
-      { probability: 0.4, label: 0 },
-      { probability: 0.5, label: 1 },
-    ];
-    const diagram = reliabilityDiagram(five, 2);
+    const diagram = reliabilityDiagram(UNEVEN_BINS, 2);
     expect(diagram.reduce((total, bin) => total + bin.count, 0)).toBe(5);
     expect(diagram).toHaveLength(2);
     expect(diagram[0].lowestProbability).toBeCloseTo(0.1, 10);
     expect(diagram[1].highestProbability).toBeCloseTo(0.5, 10);
-    expect(Number.isFinite(eceEqualMass(five, 2))).toBe(true);
+    expect(Number.isFinite(eceEqualMass(UNEVEN_BINS, 2))).toBe(true);
+  });
+
+  it("weighs each bin by its MASS, not by 1/bins", () => {
+    // Unequal bins are the normal case, not the edge case: `equalMassBins` gives
+    // the first `count % bins` groups one extra point, so a 60-row probe comes out
+    // 3,4,4,3,4,... Five points in two bins split 2 | 3:
+    //   bin0 {0.1, 0.2}      meanP 0.15  observed 0/2  gap 0.15       weight 2/5
+    //   bin1 {0.3, 0.4, 0.5} meanP 0.40  observed 2/3  gap 4/15       weight 3/5
+    const expected = (2 / 5) * 0.15 + (3 / 5) * (2 / 3 - 0.4);
+    expect(eceEqualMass(UNEVEN_BINS, 2)).toBeCloseTo(expected, 10);
+    expect(expected).toBeCloseTo(0.22, 10);
+    // The flat 1/bins weighting answers 0.2083..., so replacing the mass weight
+    // with `1 / bins` breaks this assertion instead of going unnoticed.
+    const flatWeighting = 0.5 * 0.15 + 0.5 * (2 / 3 - 0.4);
+    expect(eceEqualMass(UNEVEN_BINS, 2)).not.toBeCloseTo(flatWeighting, 4);
+
+    // The diagram and the statistic read the same bins, so the mass behind each
+    // row is auditable.
+    const diagram = reliabilityDiagram(UNEVEN_BINS, 2);
+    expect(diagram[0].count).toBe(2);
+    expect(diagram[1].count).toBe(3);
+    expect(diagram[1].meanProbability).toBeCloseTo(0.4, 10);
+    expect(diagram[1].positiveRate).toBeCloseTo(2 / 3, 10);
   });
 
   it("reports log loss with a declared clamp instead of an infinity", () => {
@@ -954,6 +980,34 @@ describe("human negative label bases", () => {
       REBUILD_V3_POLICY.labelBasis.underPoweredRole,
     );
     expect(observed?.powerFloor).toBe(floor);
+  });
+
+  it("never lets the unknown basis become gating evidence, however many rows it holds", () => {
+    // This is the case a real corpus hits TODAY: `labelBasis` only enters the
+    // closed schema in C1, so every human negative lands in `unknown` — and a real
+    // corpus has far more than the 300-row floor, so the count check alone would
+    // wave it through. The basis guard is the only thing between a nonexistent
+    // evidence basis and an approved FPR budget (R4/R6).
+    const floor = REBUILD_V3_POLICY.powerFloors.criticalFprHumanNegatives;
+    const unlabelled = Array.from({ length: floor + 5 }, (_, index) =>
+      item({
+        author: `u${index}`,
+        label: "human",
+        documentScore: 0.1,
+      }),
+    );
+    const labelBasis = computeEvaluationMetrics(unlabelled, OPTIONS).labelBasis;
+
+    expect(labelBasis.fieldPresent).toBe(false);
+    expect(labelBasis.bases).toHaveLength(1);
+    const unknown = labelBasis.bases[0];
+    expect(unknown.basis).toBe("unknown");
+    // The count clears the floor and the basis is STILL not powered.
+    expect(unknown.count).toBeGreaterThan(unknown.powerFloor);
+    expect(unknown.powered).toBe(false);
+    expect(unknown.evidenceRole).toBe(
+      REBUILD_V3_POLICY.labelBasis.underPoweredRole,
+    );
   });
 
   it("never invents a basis for a record that has none", () => {
