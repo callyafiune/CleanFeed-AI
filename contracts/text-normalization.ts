@@ -13,25 +13,28 @@
 //
 // It does FOUR things, in this order, and nothing else:
 //
-//   1. NFKC per grapheme cluster, EXCEPT for the code points in
-//      `NFKC_PROTECTED_CHARACTERS`, which NFKC would rewrite into different
-//      pt-BR text (`…` → `...`, `º` → `o`, `²` → `2`);
+//   1. NFKC per grapheme cluster, refused for three families NFKC would rewrite
+//      into different pt-BR text: `NFKC_PROTECTED_CHARACTERS` (`…` → `...`,
+//      `º` → `o`), superscripts and subscripts (`km²` → `km2`, `H₂O` → `H2O`)
+//      and any fold that would INVENT whitespace (`´` → `" ́"`);
 //   2. drops invisible characters (`REMOVED_INVISIBLE_CHARACTERS` plus a
 //      category catch-all) and folds every remaining separator to U+0020/U+000A;
 //   3. maps confusable Cyrillic/Greek code points to Latin
 //      (`CONFUSABLE_TO_LATIN`) — but only inside a word the mixed-script/
-//      pseudo-Latin rule below marks as an attack, never inside genuine
-//      Cyrillic, Greek, CJK, Hangul or any other script;
+//      pseudo-Latin rule marks as an attack, never inside genuine Cyrillic,
+//      Greek, CJK, Hangul or any other script;
 //   4. records a `normalized → original` offset map, because the D4 provenance
 //      spans are defined in ORIGINAL character offsets and a span head trained
 //      on shifted offsets is a silent bug.
 //
 // WHAT IT DOES NOT CLAIM (R7). It is not "homoglyph-proof". It folds exactly the
-// code points enumerated in `CONFUSABLE_TO_LATIN`, in exactly the two word
-// contexts named below. A confusable from an unlisted script (Cherokee,
-// Armenian, Lisu…) is left as written, and so is an all-confusable Cyrillic or
-// Greek word inside text whose non-confusable letters are themselves
-// non-Latin — that text is foreign prose, not a pt-BR post under attack.
+// code points enumerated in `CONFUSABLE_TO_LATIN`, in exactly the word contexts
+// `foldConfusables` names. A confusable from an unlisted script (Cherokee,
+// Armenian, Lisu…) is left as written; so is an all-confusable word in a document
+// that carries any non-Latin witness, a Greek-disguised word in a document that
+// also writes Greek, and a one-letter word disguised with a Greek confusable.
+// Each of those exclusions exists because the looser rule was MEASURED to rewrite
+// genuine corpus text; the counts and the record ids are in the comments below.
 
 /**
  * The maximum absolute raw-score difference this contract promises between a
@@ -124,11 +127,21 @@ export const CONFUSABLE_TO_LATIN: ReadonlyMap<string, string> = new Map([
  * carries `16º` and `468&nbsp;km²` (`src_wikipedia_pt_201e401b7ee6`) and
  * `um acordo…` (`src_wikipedia_pt_bd7eb4154e14`).
  *
+ * The list is CLOSED, and it is not the only guard: {@link addsWhitespace}
+ * refuses any NFKC fold that would INVENT whitespace the source did not have.
+ * That is a rule rather than a list because the space-adding folds are a whole
+ * family — every spacing diacritic decomposes to U+0020 plus a combining mark
+ * (`´` → `" ́"`, `¨` → `" ̈"`, `¸` → `" ̧"`) — and inventing a space invents a
+ * word boundary, which moves `totalUnits`, the word count and the length bucket.
+ * Measured: `´` occurs in 9 rewrites across `development` + `calibration`.
+ *
  * Everything else NFKC does is ALLOWED here, deliberately: ligatures fold
  * (`ﬁ` → `fi`), full-width Latin and styled/mathematical digits fold to ASCII,
- * exotic spaces fold to U+0020, and decomposed accents recompose (`a`+U+0303 →
- * `ã`). Travessão (U+2014), en dash (U+2013), curly quotes and guillemets have
- * no compatibility mapping at all, so they survive without protection.
+ * exotic spaces fold to U+0020 (their source IS whitespace, so the rule above
+ * does not fire), the non-breaking hyphen folds to U+2010, and decomposed
+ * accents recompose (`a`+U+0303 → `ã`). Travessão (U+2014), en dash (U+2013),
+ * curly quotes and guillemets have no compatibility mapping at all, so they
+ * survive without protection.
  */
 export const NFKC_PROTECTED_CHARACTERS: ReadonlySet<string> = new Set([
   "ª", // FEMININE ORDINAL INDICATOR — NFKC: "a"
@@ -212,8 +225,10 @@ const COMBINING_MARK = /\p{M}/u;
 const LETTER = /\p{L}/u;
 const LATIN_LETTER = /\p{Script=Latin}/u;
 const CONFUSABLE_SCRIPT_LETTER = /[\p{Script=Cyrillic}\p{Script=Greek}]/u;
+const GREEK_LETTER = /\p{Script=Greek}/u;
 const WORD_CHARACTER = /[\p{L}\p{M}\p{N}]/u;
 const SPACE_SEPARATOR = /\p{Zs}/u;
+const WHITESPACE = /\s/u;
 const LINE_SEPARATOR = /[\p{Zl}\p{Zp}]/u;
 const FORMAT_CHARACTER = /\p{Cf}/u;
 const CONTROL_CHARACTER = /\p{Cc}/u;
@@ -237,9 +252,39 @@ function isKeptControl(char: string): boolean {
   return char === "\t" || char === "\n" || char === "\r";
 }
 
-/** True for a neighbour that can legitimately carry a ZWJ or a selector. */
+/**
+ * True when an NFKC fold would INVENT whitespace. Every spacing diacritic
+ * decomposes to U+0020 plus a combining mark, and a space the author did not
+ * write is a word boundary the author did not write: it splits a unit, moves the
+ * word count and can move the length bucket. A source that already carried
+ * whitespace (an exotic space folding to U+0020) is not affected.
+ */
+function addsWhitespace(source: string, folded: string): boolean {
+  return WHITESPACE.test(folded) && !WHITESPACE.test(source);
+}
+
+/**
+ * Superscripts and subscripts, which NFKC FLATTENS onto the baseline: `km²`
+ * becomes `km2`, `10⁻⁶` becomes `10−6` and `H₂O` becomes `H2O`. That is a change
+ * of meaning, not of encoding, and the corpus is full of it — `₂` alone accounts
+ * for 28 rewrites across `development` + `calibration`, plus `⁶ ⁸ ⁹ ₃ ₄ ₓ ⁻ ᵉ`.
+ * Protecting the whole family is what makes the rule principled instead of a
+ * hand-picked list that happens to contain `²` and `³`.
+ */
+const SUPERSCRIPT_OR_SUBSCRIPT = /^[\u00B2\u00B3\u00B9\u2070-\u209C]$/u;
+
+/**
+ * True for a neighbour that can legitimately carry a ZWJ or a selector. The
+ * variation selectors count: the real sequence for `🤦‍♀️` is
+ * `🤦 FE0F ZWJ ♀ FE0F`, so the character immediately before that ZWJ is a
+ * selector, not the pictograph. Measured — leaving them out dropped the joiner
+ * of two real records' emoji.
+ */
 function isEmojiJoinable(char: string | undefined): boolean {
-  return char !== undefined && EMOJI_JOINABLE.test(char);
+  return (
+    char !== undefined &&
+    (EMOJI_JOINABLE.test(char) || VARIATION_SELECTOR.test(char))
+  );
 }
 
 /** Splits `text` into base-plus-marks clusters, in UTF-16 index space. */
@@ -276,9 +321,11 @@ function composeAtoms(original: string): Atom[] {
   for (const range of clusterRanges(original)) {
     const source = original.slice(range.start, range.end);
     const base = String.fromCodePoint(source.codePointAt(0)!);
-    const folded = NFKC_PROTECTED_CHARACTERS.has(base)
-      ? source
-      : source.normalize("NFKC");
+    const candidate =
+      NFKC_PROTECTED_CHARACTERS.has(base) || SUPERSCRIPT_OR_SUBSCRIPT.test(base)
+        ? source
+        : source.normalize("NFKC");
+    const folded = addsWhitespace(source, candidate) ? source : candidate;
     if (folded === source) {
       let cursor = range.start;
       for (const char of source) {
@@ -358,27 +405,44 @@ function stripInvisible(atoms: readonly Atom[]): Atom[] {
 }
 
 /**
- * Whether the document's SCRIPT WITNESSES are Latin. A witness is a letter with
- * no Latin confusable at all — `b`, `f`, `ç` on one side, `з`, `и`, `ж` on the
- * other. Counting witnesses rather than letters is what survives a total attack:
- * substituting every confusable in a pt-BR text leaves all of its witnesses
- * Latin, while a Russian sentence's witnesses stay Cyrillic however many
- * confusables it happens to contain.
+ * How many SCRIPT WITNESSES the document carries, per side. A witness is a letter
+ * with NO Latin confusable at all — `b`, `f`, `ç` on one side; `з`, `и`, `ж`, `β`,
+ * `λ`, `花` on the other. Witnesses rather than letters, because substituting
+ * every confusable in a pt-BR text leaves all of its witnesses Latin, while ONE
+ * Cyrillic, Greek or Han witness anywhere proves the document really does contain
+ * that script.
+ *
+ * Both thresholds below are `=== 0` rather than a majority, and that is a
+ * measured correction. Under a majority rule the fold rewrote genuine text in 5
+ * of the 5000 development + calibration records: `TNF-α` became `TNF-a` and
+ * `NF-κB` became `NF-kB` (`src_ai_public_madras_7e700c7f00ab`, `…_7e8a1465ec45`,
+ * `…_7fe4198396df`, `src_carolina_7bb17c80e5de`) and the Chechen name `Муса`
+ * became `Myca` (`mix_src_wikipedia_pt_5eff3608eeb8`). Each of those documents
+ * carries a witness — `β`, or `Дудин`'s `д` — while a homoglyph variant of pt-BR
+ * prose produces none at all, so zero is the threshold that separates them.
  */
-function isLatinDominant(atoms: readonly Atom[]): boolean {
-  let latin = 0;
-  let other = 0;
+interface ScriptWitnesses {
+  latin: number;
+  greek: number;
+  nonLatin: number;
+}
+
+function countScriptWitnesses(atoms: readonly Atom[]): ScriptWitnesses {
+  const witnesses: ScriptWitnesses = { latin: 0, greek: 0, nonLatin: 0 };
   for (const atom of atoms) {
     if (!LETTER.test(atom.char) || CONFUSABLE_TO_LATIN.has(atom.char)) {
       continue;
     }
     if (LATIN_LETTER.test(atom.char)) {
-      latin += 1;
-    } else {
-      other += 1;
+      witnesses.latin += 1;
+      continue;
+    }
+    witnesses.nonLatin += 1;
+    if (GREEK_LETTER.test(atom.char)) {
+      witnesses.greek += 1;
     }
   }
-  return latin > other;
+  return witnesses;
 }
 
 /**
@@ -387,15 +451,34 @@ function isLatinDominant(atoms: readonly Atom[]): boolean {
  *   - MIXED SCRIPT: it carries at least one Latin letter AND at least one
  *     Cyrillic or Greek letter (`аbacate` — nobody writes that on purpose); or
  *   - PSEUDO-LATIN: it carries no Latin letter, every one of its letters has a
- *     Latin confusable, and the document is Latin-dominant (`саѕа`, the shape a
- *     total substitution of `casa` produces).
+ *     Latin confusable, and the document carries no non-Latin witness at all
+ *     (`саѕа`, the shape a total substitution of `casa` produces).
+ *
+ * Two GREEK exceptions ride on top, both measured on the corpus, because Greek
+ * letters are ordinary pt-BR scientific notation while Cyrillic ones are not:
+ *
+ *   - a Greek code point is never folded in a document that carries a Greek
+ *     witness. `NF-κB` splits into `NF` and `κB`, and `κB` is mixed-script by the
+ *     letter of the rule; the `β` two words away is what says the document really
+ *     writes Greek (`src_ai_public_madras_7e8a1465ec45`);
+ *   - a word that is a LONE Greek letter is never pseudo-Latin. `TNF-α` in
+ *     `src_carolina_7bb17c80e5de` is that record's only Greek, so the witness test
+ *     alone would still have folded it.
+ *
+ * The price is named rather than hidden: a Greek-disguised word inside a document
+ * that also contains genuine Greek is NOT restored, and neither is a one-letter
+ * Portuguese word disguised with `α`/`ο`/`ι`. Cyrillic disguises are still folded
+ * in both cases, including one-letter words, which is what keeps the attacked
+ * `a`/`e`/`o` of real prose covered.
  *
  * Everything else is left exactly as written, which is what keeps `花巻市`,
  * `казаки́` and `Κτησίβιος` intact. The fold is 1:1 per code point, so no offset
  * moves here.
  */
 function foldConfusables(atoms: Atom[]): void {
-  const latinDominant = isLatinDominant(atoms);
+  const witnesses = countScriptWitnesses(atoms);
+  const unmixedLatin = witnesses.latin > 0 && witnesses.nonLatin === 0;
+  const greekIsContent = witnesses.greek > 0;
   let index = 0;
   while (index < atoms.length) {
     if (!WORD_CHARACTER.test(atoms[index]!.char)) {
@@ -408,6 +491,7 @@ function foldConfusables(atoms: Atom[]): void {
     }
     let hasLatin = false;
     let hasConfusableScript = false;
+    let hasGreek = false;
     let letters = 0;
     let allLettersConfusable = true;
     for (let scan = index; scan < end; scan += 1) {
@@ -420,21 +504,30 @@ function foldConfusables(atoms: Atom[]): void {
         hasLatin = true;
       } else if (CONFUSABLE_SCRIPT_LETTER.test(char)) {
         hasConfusableScript = true;
+        if (GREEK_LETTER.test(char)) {
+          hasGreek = true;
+        }
       }
       if (!CONFUSABLE_TO_LATIN.has(char)) {
         allLettersConfusable = false;
       }
     }
+    const loneGreekSymbol = hasGreek && end - index === 1;
     const mixedScript = hasLatin && hasConfusableScript;
     const pseudoLatin =
       !hasLatin &&
       hasConfusableScript &&
       letters > 0 &&
       allLettersConfusable &&
-      latinDominant;
+      unmixedLatin &&
+      !loneGreekSymbol;
     if (mixedScript || pseudoLatin) {
       for (let scan = index; scan < end; scan += 1) {
-        const replacement = CONFUSABLE_TO_LATIN.get(atoms[scan]!.char);
+        const char = atoms[scan]!.char;
+        if (greekIsContent && GREEK_LETTER.test(char)) {
+          continue;
+        }
+        const replacement = CONFUSABLE_TO_LATIN.get(char);
         if (replacement !== undefined) {
           atoms[scan]!.char = replacement;
         }
@@ -563,9 +656,13 @@ function segmentIndexFor(
     const middle = (low + high) >> 1;
     const segment = segments[middle]!;
     const before =
-      edge === "end" ? offset <= segment.normalizedStart : offset < segment.normalizedStart;
+      edge === "end"
+        ? offset <= segment.normalizedStart
+        : offset < segment.normalizedStart;
     const after =
-      edge === "end" ? offset > segment.normalizedEnd : offset >= segment.normalizedEnd;
+      edge === "end"
+        ? offset > segment.normalizedEnd
+        : offset >= segment.normalizedEnd;
     if (before) {
       high = middle - 1;
     } else if (after) {
@@ -597,9 +694,8 @@ export function originalOffsetFromNormalized(
   if (offset >= normalized.text.length) {
     return normalized.original.length;
   }
-  const segment = normalized.segments[
-    segmentIndexFor(normalized.segments, offset, edge)
-  ]!;
+  const segment =
+    normalized.segments[segmentIndexFor(normalized.segments, offset, edge)]!;
   if (isOneToOne(segment)) {
     return segment.originalStart + (offset - segment.normalizedStart);
   }
@@ -616,7 +712,11 @@ export function originalSpanFromNormalized(
   start: number,
   end: number,
 ): { start: number; end: number } {
-  const originalStart = originalOffsetFromNormalized(normalized, start, "start");
+  const originalStart = originalOffsetFromNormalized(
+    normalized,
+    start,
+    "start",
+  );
   const originalEnd = originalOffsetFromNormalized(normalized, end, "end");
   return {
     start: originalStart,

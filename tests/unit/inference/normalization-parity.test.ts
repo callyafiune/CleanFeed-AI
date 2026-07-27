@@ -27,10 +27,7 @@ import {
   selectDistributedWindows,
 } from "@/inference/chunker";
 import { PipelineRunner } from "@/inference/inference-worker";
-import {
-  createTmrChunkPlan,
-  ExactTokenizer,
-} from "@/inference/model-runtime";
+import { createTmrChunkPlan, ExactTokenizer } from "@/inference/model-runtime";
 import { DEFAULT_SETTINGS } from "@/shared/constants";
 import type {
   ClassificationOptions,
@@ -246,7 +243,12 @@ describe("CJK survives the offset tiling across multiple windows", () => {
     const tokenizer = exactTokenizer();
     const encoding = tokenizer.encodeWithOffsets(TEXT);
     const plan = createTmrChunkPlan(
-      { modelMaxTokens: 34, contentTokens: 32, overlapTokens: 4, maxWindows: 8 },
+      {
+        modelMaxTokens: 34,
+        contentTokens: 32,
+        overlapTokens: 4,
+        maxWindows: 8,
+      },
       encoding.specialTokenCount,
     );
     const selection = selectDistributedWindows(

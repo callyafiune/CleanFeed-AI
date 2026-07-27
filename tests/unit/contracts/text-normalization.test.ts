@@ -71,6 +71,24 @@ const DEMETER =
   "Depois de muito tempo, Hades e Deméter fizeram um acordo… Perséfone " +
   "ficaria com a mãe 3/4 do ano e ficaria com Hades 1/4 do ano.";
 
+/**
+ * `src_ai_public_madras_7fe4198396df` — Greek letters as SCIENTIFIC NOTATION in
+ * pt-BR prose. Measured: the first pseudo-Latin rule folded `TNF-α` to `TNF-a`
+ * in this record and three others.
+ */
+const CITOCINAS =
+  "Os pesquisadores identificaram níveis elevados de TNF-α, IL-1β e IL-6 no " +
+  "líquido cefalorraquidiano";
+
+/**
+ * `mix_src_wikipedia_pt_5eff3608eeb8` — a Chechen/Russian name gloss. Measured:
+ * the first pseudo-Latin rule folded `Муса` to `Myca` here, because every one of
+ * its four letters happens to have a Latin confusable.
+ */
+const DUDAEV =
+  "Džokhar Musaevič Dudaev (em checheno: Дудин Муса кант Жовхар; em russo: " +
+  "Джохар Мусаевич Дудаев)";
+
 /** `src_wikipedia_pt_201e401b7ee6` — ordinal indicators and a superscript. */
 const ANDORRA =
   "Andorra é a sexta menor nação da Europa, com uma área de 468&nbsp;km² e " +
@@ -136,9 +154,7 @@ describe("the curated homoglyph table", () => {
       expect([...target], JSON.stringify(source)).toHaveLength(1);
       expect(target).toMatch(/^[A-Za-z]$/u);
       // A source that is already Latin would be a self-map, i.e. a table bug.
-      expect(source, JSON.stringify(source)).not.toMatch(
-        /^\p{Script=Latin}$/u,
-      );
+      expect(source, JSON.stringify(source)).not.toMatch(/^\p{Script=Latin}$/u);
     }
   });
 
@@ -151,15 +167,11 @@ describe("the curated homoglyph table", () => {
 
   it("covers the Greek risk class inside a Latin word", () => {
     // "νida": GREEK SMALL LETTER NU + Latin "ida".
-    expect(normalizeForInference("uma νida longa").text).toBe(
-      "uma vida longa",
-    );
+    expect(normalizeForInference("uma νida longa").text).toBe("uma vida longa");
   });
 
   it("covers full-width Latin, which NFKC folds rather than the table", () => {
-    expect(normalizeForInference("ａｂｃ ＡＢ").text).toBe(
-      "abc AB",
-    );
+    expect(normalizeForInference("ａｂｃ ＡＢ").text).toBe("abc AB");
   });
 
   it("covers mathematical and styled digits, which NFKC folds", () => {
@@ -185,9 +197,16 @@ describe("the curated homoglyph table", () => {
 
   it("keeps the zero-width joiner that composes an emoji sequence", () => {
     const family = `\u{1F468}${ZWJ}\u{1F469}${ZWJ}\u{1F467}`;
-    const { text, changed } = normalizeForInference(`familia ${family}`);
-    expect(text).toBe(`familia ${family}`);
-    expect(changed).toBe(false);
+    // The real gendered sequence puts a VARIATION SELECTOR-16 immediately before
+    // the joiner, so the joiner's left neighbour is the selector and not the
+    // pictograph. Two development/calibration records carry exactly this shape.
+    const facepalm = `\u{1F926}️${ZWJ}♀️`;
+    const skinToned = `\u{1F937}\u{1F3FB}${ZWJ}♂️`;
+    for (const emoji of [family, facepalm, skinToned]) {
+      const { text, changed } = normalizeForInference(`reação ${emoji} aqui`);
+      expect(text, JSON.stringify(emoji)).toBe(`reação ${emoji} aqui`);
+      expect(changed, JSON.stringify(emoji)).toBe(false);
+    }
   });
 
   it("removes a zero-width joiner that is only padding a word", () => {
@@ -204,9 +223,7 @@ describe("legitimate Portuguese survives normalization", () => {
   });
 
   it("leaves travessão, curly quotes and guillemets untouched", () => {
-    const punctuation =
-      "um — dois “três” ‘quatro’ " +
-      "«cinco» – seis";
+    const punctuation = "um — dois “três” ‘quatro’ " + "«cinco» – seis";
     expect(normalizeForInference(punctuation).text).toBe(punctuation);
   });
 
@@ -222,6 +239,46 @@ describe("legitimate Portuguese survives normalization", () => {
     }
   });
 
+  it("keeps superscripts and subscripts off the baseline", () => {
+    // NFKC flattens them, which changes meaning rather than encoding. Measured
+    // on the corpus: `₂` alone is 28 rewrites across development + calibration.
+    for (const [text, marker] of [
+      ["a área é 468 km² por ali", "²"],
+      ["a molécula H₂O é polar", "₂"],
+      ["a ordem é 10⁻⁶ metros", "⁻⁶"],
+      ["o volume em m³ do tanque", "³"],
+    ] as const) {
+      expect(marker.normalize("NFKC")).not.toBe(marker);
+      expect(normalizeForInference(text).text, marker).toBe(text);
+    }
+  });
+
+  it("refuses any NFKC fold that would invent whitespace", () => {
+    // Every spacing diacritic decomposes to U+0020 plus a combining mark, and an
+    // invented space is an invented word boundary. Measured on the corpus: `´`
+    // alone accounts for 9 rewrites across development + calibration.
+    for (const diacritic of [
+      "´",
+      "¨",
+      "¯",
+      "¸",
+      "˘",
+      "˙",
+      "˚",
+      "˛",
+      "˜",
+      "˝",
+    ]) {
+      expect(diacritic.normalize("NFKC"), diacritic).toMatch(/^\s/u);
+      expect(normalizeForInference(`ha${diacritic}bil`).text, diacritic).toBe(
+        `ha${diacritic}bil`,
+      );
+    }
+    // An exotic SPACE still folds: its source already was whitespace, so the
+    // guard does not fire and no boundary is invented.
+    expect(normalizeForInference("ha bil").text).toBe("ha bil");
+  });
+
   it("leaves real corpus pt-BR prose byte-identical", () => {
     for (const [name, fixture] of Object.entries({
       ANDRADE,
@@ -229,6 +286,8 @@ describe("legitimate Portuguese survives normalization", () => {
       ANDORRA,
       CTESIBIO,
       COSSACOS,
+      CITOCINAS,
+      DUDAEV,
       HANAMAKI,
       GUIZHOU,
       MADRAS_CJK,
@@ -250,12 +309,37 @@ describe("legitimate Portuguese survives normalization", () => {
     );
   });
 
-  it("does not Latinize an all-confusable word in Cyrillic-dominant text", () => {
-    // "рок" is entirely confusable, but the letters that CANNOT be confused
-    // with Latin are themselves Cyrillic here: this text is Russian, not a
-    // pt-BR post under attack.
+  it("does not Latinize an all-confusable word in text that carries any foreign witness", () => {
+    // "рок" is entirely confusable, but `ж`, `д`, `и`, `н` prove the document
+    // really contains Cyrillic: it is Russian, not a pt-BR post under attack.
     const russian = "Журнал about рок и джаз выходил в Москве больше двадцати";
     expect(normalizeForInference(russian).text).toBe(russian);
+    // The corpus cases the majority rule got wrong. `Муса` is all-confusable and
+    // `TNF-α` is a lone confusable letter; both survive.
+    expect(normalizeForInference(DUDAEV).text).toBe(DUDAEV);
+    expect(normalizeForInference(CITOCINAS).text).toBe(CITOCINAS);
+  });
+
+  it("keeps a Greek letter beside Latin capitals when the document writes Greek", () => {
+    // `NF-κB` splits into `NF` and `κB`; `κB` is mixed-script by the letter of
+    // the rule, and only the `β` two words away says the document really writes
+    // Greek. Measured on `src_ai_public_madras_7e8a1465ec45`.
+    const citocinas =
+      "as citocinas ativam vias de sinalização (como NF-κB) e IL-1β que promovem";
+    expect(normalizeForInference(citocinas).text).toBe(citocinas);
+    // With no Greek witness anywhere, a mixed-script Greek word IS still folded:
+    // that is the attack case, and it must not be lost to the exception above.
+    expect(normalizeForInference("uma νida longa").text).toBe("uma vida longa");
+  });
+
+  it("keeps a lone Greek letter used as notation, even with no other witness", () => {
+    // `src_carolina_7bb17c80e5de` is the measured case: `TNF-α` is the ONLY Greek
+    // in the record, so the zero-witness test alone would still have folded it.
+    const carolina = "de PGE2, leucotrieno B4 (LTB4), IL-6 e TNF-α de maneira";
+    expect(normalizeForInference(carolina).text).toBe(carolina);
+    expect(normalizeForInference("a constante α vale 2 e β vale 3").text).toBe(
+      "a constante α vale 2 e β vale 3",
+    );
   });
 });
 
@@ -343,12 +427,7 @@ describe("the normalized → original offset map", () => {
     const recovered = wordSpans(normalized.text).map((span) =>
       originalSliceFromNormalized(normalized, span.start, span.end),
     );
-    expect(recovered).toEqual([
-      homoglyphVariant("Sao"),
-      "Paulo",
-      "ﬁcou",
-      "ª",
-    ]);
+    expect(recovered).toEqual([homoglyphVariant("Sao"), "Paulo", "ﬁcou", "ª"]);
   });
 
   it("rounds an expanded span outward so it always contains its source", () => {

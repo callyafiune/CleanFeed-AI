@@ -813,6 +813,12 @@ logo quem confere **regenera** em vez de confiar no arquivo em disco:
 | `inferenceCoreDigest` | `977bca0b…` | `82deb043…` |
 | `runtimeParityDigest` | `35f31b32…` | `6c5b6453…` |
 
+**Superada por A5 (2026-07-27):** a coluna "entregue" acima descreve a árvore de A2 e não
+esta. A5 gastou `contentCompositionVersion` = `lexical-content-v2` e editou o núcleo, então a
+identidade corrente é `inferenceCoreDigest` `1a7a1cd1…` / `runtimeParityDigest` `41ccf6d3…`
+(regenerados, ver "A5 — como foi executada"). Nenhuma corrida de bancada anterior a A5 pareia
+com esta árvore.
+
 As duas colunas foram **recomputadas**, não copiadas: a coluna "antes de A2" é
 `buildRuntimeParityManifest` sobre os *blobs* de `6298269` extraídos com `git cat-file blob`
 (bytes brutos, LF — `git archive` aplicaria `core.autocrlf` e daria outro digest), e a
@@ -895,6 +901,12 @@ defeito a corrigir:
    determinístico se aplica e a expectativa é que passem a pontuar; **expectativa não é
    medição** — quem fechar A5 mede. `mix_src_wikipedia_pt_d3e3087c4ae9` é o único dos cinco
    que **não** sai por D2, então é ele que faz esta linha ser obrigatória.
+
+   **MEDIDO em A5 (2026-07-27), na etapa dos offsets e do encaixe de janela:** os cinco
+   deixam de produzir erro, e o varrimento de `development` + `calibration` vai de 21
+   documentos com offsets grosseiros e 3 falhas `WINDOW_SLICE_NOT_REDUCIBLE` para **0 e 0**.
+   Números e ids na subseção "A5 — como foi executada". Isso **não** fecha o critério de
+   ≤ 0,1% por faixa: falta o replay fim-a-fim no Chrome, que continua sendo H3/I1.
 3. **D2 remove `madras` da v3.** Quatro dos cinco residuais são `src_ai_public_madras_*`, e
    `madras` é conjunto externo que D2 mantém fora do corpus v3. Depois de D2 a medição
    tem de ser **repetida sobre o corpus pós-D2**, e o critério é avaliado ali; herdar o
@@ -967,6 +979,9 @@ de composição de conteúdo: altera a decomposição em unidades e o `lexicalRa
 gastasse a `v2`, A5 iria para `v3` e o histórico de versão atribuiria a mudança de composição
 à causa errada, para sempre. O critério de saída de A5 continua sendo "a versão de composição
 foi incrementada", e o número que ela incrementa é **`v1` → `v2`**.
+
+**Gasto em 2026-07-27 por A5**, exatamente nessa coordenada e por essa razão: a
+decomposição em unidades passou a correr sobre o texto normalizado.
 
 **O que o incremento arrastou, medido, para quem repetir a operação.** **52** arquivos
 rastreados fora de `docs/` fixam a string de agregação, e a substituição **não** é cega: três
@@ -1483,6 +1498,87 @@ equivalente (dentro de tolerância declarada); teste que prova que acentuação 
 sobrevivem; e teste que reconstrói offsets originais a partir do mapa.
 
 **Concluída quando:** os três testes passam e a versão de composição foi incrementada.
+
+#### A5 — como foi executada (2026-07-27)
+
+**Entregue.** Commits: `2cff056` (núcleo) e o commit de fechamento desta seção.
+
+**A implementação compartilhada é `contracts/text-normalization.ts`**, chamada por
+`src/inference/inference-worker.ts` (`prepare()`, **antes** da detecção de idioma, da
+tokenização e do fatiamento em janelas) e por `src/model-benchmark/main.ts`
+(`scoreDocument`). Não há segunda cópia. `computeContentComposition` também passa o texto
+por ela, então composição e tokenização nunca discordam sobre qual é o texto; como
+`normalizeForInference` é idempotente, tanto faz o chamador passar texto cru ou já
+normalizado. O arquivo entrou em `EVALUATOR_FILES` (`benchmark/digests.ts`) e no
+inventário do núcleo em `scripts/runtime-parity.mjs` — ele decide **quais bytes chegam ao
+modelo**.
+
+**`CONTENT_COMPOSITION_VERSION` = `lexical-content-v2`**, a versão que A2 devolveu.
+Justificativa registrada na própria constante: separador exótico agora **separa** unidades,
+caractere invisível não fica mais dentro de uma unidade, e URL/hashtag escritas com
+confusáveis passam a classificar como `url`/`hashtag`.
+
+**Divergências do texto do plano — três, todas por medição, nenhuma afrouxando critério:**
+
+1. **A tabela de confusáveis não é aplicada incondicionalmente.** O plano diz "mapear
+   cirílico `а` → latino `a` é correto"; medido sobre `development` + `calibration`
+   (5.000 registros), aplicar isso a toda palavra **destrói texto legítimo**: `TNF-α` virava
+   `TNF-a` e `NF-κB` virava `NF-kB` em quatro registros
+   (`src_ai_public_madras_7e700c7f00ab`, `…_7e8a1465ec45`, `…_7fe4198396df`,
+   `src_carolina_7bb17c80e5de`) e o nome checheno `Муса` virava `Myca` em
+   `mix_src_wikipedia_pt_5eff3608eeb8`. A regra final tem duas portas
+   (**script misto** e **pseudo-latina**) mais duas exceções gregas, e o mesmo varrimento
+   depois dela reporta **0 registros com confusável dobrado**. O preço está nomeado no
+   código: um disfarce grego dentro de documento que também escreve grego, e uma palavra de
+   uma letra disfarçada com `α`/`ο`/`ι`, **não** são restaurados.
+2. **NFKC ganhou duas recusas que o plano não previa**, ambas na classe "cuidado com
+   NFKC" que o próprio plano levanta: superscritos/subscritos (`km²` → `km2`, `H₂O` → `H2O`;
+   `₂` sozinho são 28 reescritas no corpus) e **qualquer dobra que inventaria espaço em
+   branco** (todo diacrítico espaçador decompõe em U+0020 + marca combinante; `´` são 9
+   reescritas). Espaço inventado é fronteira de palavra inventada, logo `totalUnits` e a
+   faixa de comprimento se movem.
+3. **A terceira restrição do brief (CJK) exigiu corrigir `segmentBasicWords`**, em
+   `src/inference/model-runtime.ts`, e não só normalizar. O `tokenizer.json` selado tem
+   `handle_chinese_chars: true` e o BERTimbau não tem ideograma nu em `vocab.txt`, então
+   `花巻市` são **três** palavras e três `[UNK]`; tratá-lo como uma palavra consumia um token
+   por três, deslocava todo offset seguinte e, quando os totais divergiam,
+   `deriveWordPieceOffsets` degradava o documento inteiro para spans grosseiros — que
+   `fitWindowSlice` recusa como `WINDOW_SLICE_NOT_REDUCIBLE` no momento em que o documento
+   precisa de uma segunda janela.
+
+**Medição do critério de erro que A2 deixou aberto** (artefatos em
+`benchmark/out/rebuild-v3/a5/`; harness de bancada com o `vocab.txt` real e o WordPiece
+real, **sem** o modelo — mede a etapa dos offsets e do encaixe de janela, que é onde os
+cinco erros foram diagnosticados, não o replay fim-a-fim no Chrome):
+
+| | documentos com offsets grosseiros | falhas de encaixe de janela |
+|---|---:|---:|
+| sem o split de CJK (`development`) | 7 | 0 |
+| sem o split de CJK (`calibration`) | 14 | 3 |
+| **com o split de CJK** (`development`) | **0** | **0** |
+| **com o split de CJK** (`calibration`) | **0** | **0** |
+
+As três falhas do estado anterior são `src_ai_public_madras_961c462e650f`,
+`…_a48e8a49816d` e `…_be8b62bfe739` — três dos cinco ids de A2, com o código exato
+`WINDOW_SLICE_NOT_REDUCIBLE`. Os outros dois (`…_5a06a06a65c4` e
+`mix_src_wikipedia_pt_d3e3087c4ae9`) aparecem como **grosseiros mas sem falhar**: exatamente
+o estado latente que o brief descreve. Depois da correção nenhum dos cinco produz erro nesta
+etapa. O critério de ≤ 0,1% por faixa **não** está declarado fechado: falta o replay
+fim-a-fim no Chrome, que é H3/I1.
+
+**Normalização muda 222 de 5.000 registros** (4,4%): quase tudo espaço exótico → U+0020
+(506 ocorrências) e U+2011 → U+2010 (347).
+
+**Identidade desta árvore, regenerada (não editada à mão):**
+- `inferenceCoreDigest` `1a7a1cd1158a3821b09408ce6b274a16127d206ad15b69681d23018997db79e1`
+- `runtimeParityDigest` `41ccf6d379b5d91716b70e131cea5eafb5f97f87da8a58e1e648719dc962ab04`
+
+Oito digests derivados sob `tests/fixtures/model-release/**` foram recomputados com
+`computeCalibrationProfileDigest` / `computeCalibrationSetDigest` do próprio contrato.
+
+**Registrado, não corrigido (fora do escopo de A5):** `src/model-smoke/main.ts` continua
+sem normalizar e mantém o construtor privado de janelas que A2 registrou em F1 — é um
+terceiro caminho divergente, e pertence a F1.
 
 ### A6 — Métricas e gate de calibração
 
@@ -2403,6 +2499,14 @@ Consequências que o schema e o relatório têm de impor:
 **Verificar:** `python -m unittest benchmark/lab/test_make_mixed_v3.py` e `vitest run
 benchmark/tests/schema.test.ts benchmark/tests/metrics.test.ts`; reconstruir o texto a
 partir dos segmentos e provar offsets após a normalização A5.
+
+**A5 entregou a função que este item consome:** `originalSpanFromNormalized` em
+`contracts/text-normalization.ts` traduz um span `[start, end)` do texto **normalizado**
+para o span do texto **original** em que os `mixture.spans` do schema estão definidos,
+arredondando **para fora** quando o trecho foi reescrito, de forma que o span devolvido
+sempre CONTÉM os caracteres de origem. Hoje nenhum consumidor emite span, então quem
+implementar D4 é o primeiro chamador; usar essa função em vez de assumir identidade de
+offsets é a diferença entre a cabeça de span treinar alinhada ou deslocada.
 
 **Concluída quando:** existe conjunto com proveniência por trecho verificável e a curva
 v0–v8 está montada nas três operações, no volume calculado por D0b; somente os pontos
