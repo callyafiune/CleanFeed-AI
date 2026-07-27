@@ -107,20 +107,19 @@ function resampled(
       "resampled() needs an estimate that has a bound to decorate",
     );
   }
-  const { z: _z, ...withoutZ } = simultaneous;
-  return {
-    ...estimate,
-    simultaneous: {
-      ...withoutZ,
-      method: "author-cluster-percentile",
-      ...(replicates === "undeclared"
-        ? {}
-        : {
-            replicates,
-            tailReplicates: Math.floor(simultaneous.alpha * (replicates - 1)),
-          }),
-    },
+  // No `z`: a percentile bound reads order statistics and has no critical value.
+  const percentile: NonNullable<MetricEstimate["simultaneous"]> = {
+    ...simultaneous,
+    method: "author-cluster-percentile",
+    ...(replicates === "undeclared"
+      ? {}
+      : {
+          replicates,
+          tailReplicates: Math.floor(simultaneous.alpha * (replicates - 1)),
+        }),
   };
+  delete percentile.z;
+  return { ...estimate, simultaneous: percentile };
 }
 
 // A valid synthetic C4 plan: one entry per estimand the gates measure, with a

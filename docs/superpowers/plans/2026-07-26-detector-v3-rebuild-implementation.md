@@ -1494,7 +1494,9 @@ planejado.
    evidência ausente. Dois testes de integração de `consume-holdout` que esperavam
    `pass` e `indicator-only` foram reescritos: agora provam que a decisão continua
    delegada aos gates, que **nenhum** gate substantivo reprovou e que toda reprovação
-   nomeia evidência ausente. Quando C4 e G5 fecharem, é esse teste que volta a `pass`.
+   nomeia evidência ausente. É esse teste que volta a `pass`, e para chegar lá ele precisa
+   de C4 (o plano), G5 (o `m` congelado) e — desde a rodada de correção, item 7 — C6 (a
+   contagem de réplicas efetivamente executada).
 3. **Gate novo, id novo.** `warning.ece15` virou `warning.calibration-ece`.
    `GateReport.schemaVersion` foi para `2` (o formato ganhou `multiplicity`, e cada gate
    ganhou `estimand`, `evidence`, `descriptive` e `simultaneous`).
@@ -1505,9 +1507,11 @@ planejado.
 **Lacunas declaradas (não fechadas por A6)**
 
 - `benchmark/bootstrap.ts` ainda executa **2000** réplicas fixas, enquanto a tabela
-  congelada exige 10.000 no piloto e 100.000 no release. O gate confere o número
-  **declarado no plano de reamostragem**, e nada ainda confere o número **executado**
-  contra o declarado. Reconciliação é de C6/G2.
+  congelada exige 10.000 no piloto e 100.000 no release. Elevar a contagem é de C6/G2.
+  (Atualizado na rodada de correção, item 7: o gate confere o número **declarado no
+  plano** e também o número **executado** contra o piso pré-registrado, então enquanto
+  `bootstrap.ts` rodar 2000 o gate de ECE reprova por evidência ausente. O que **falta**
+  é conciliar executado contra declarado por estimando.)
 - `benchmark/slices.ts` mantém suas próprias cópias dos pisos 300/200
   (`DEFAULT_MINIMUM_FPR_NEGATIVES`/`DEFAULT_MINIMUM_RECALL_POSITIVES`), que agora também
   vivem em `powerFloors`. A6 não tocou `slices.ts` para não colidir com o item aberto de
@@ -1521,6 +1525,75 @@ planejado.
 - `calibration-pipeline.ts` / `cross-validation.ts` seguem com `ECE_MAXIMUM` e o
   desempate do calibrador como constantes locais; a política já traz `calibrator` e
   `calibrationGate.eceMax` para eles lerem.
+
+**Rodada de correção de A6 (2026-07-27), depois da revisão de qualidade.** Dez achados;
+os dez foram avaliados tecnicamente e nenhum foi refutado. Nada afrouxou (R3) e nenhum
+número de gate se moveu.
+
+5. **Formatação (bloqueante).** `npm run format:check` — primeiro passo de `npm run
+   verify` — reprovava em 18 arquivos, 17 deles de A6. Duas causas independentes:
+   violações reais de prettier e uma árvore de trabalho metade CRLF enquanto o resto do
+   benchmark é LF. Um `prettier --write` resolve as duas (prettier escreve LF).
+   `benchmark/rebuild-v3-policy.json` ficou **fora** do formatador, em `.prettierignore`:
+   é membro de `EVALUATOR_FILES`, `computeEvaluatorDigest` hasheia seus bytes crus, e
+   prettier inlina arrays curtos — duas autoridades de formatação sobre um arquivo
+   hasheado moveriam o digest a cada `npm run format`, exatamente a deriva que o digest
+   existe para pegar. A autoridade única é `JSON.stringify(canônico, null, 2)`, fixada
+   byte a byte pelo teste, e um teste novo garante que a entrada em `.prettierignore`
+   continue lá. (`benchmark/lab/build_governance.ts` já reprovava antes de A6 e não é de
+   A6 reformatar.)
+6. **A "taxa de erro da mesma população" não era da mesma população.** Todo bloco que
+   dizia carregá-la recebia a taxa global, cujo denominador é o conjunto elegível
+   inteiro. `decisionMetrics` descarta a linha que não é positivo de aviso nem negativo
+   humano, e **misto < 50% é elegível e é exatamente isso** — a tabela congelada o mantém
+   como fatia diagnóstica, então em corpus real os denominadores diferem, nas duas
+   direções. Medido: com 3 negativos humanos, 3 positivos de IA errados e 100 mistos
+   elegíveis em 0,3, o campo lia 0,0283 enquanto a taxa de falha da população do aviso era
+   3/6. Agora existem três taxas nomeadas — `errorRate` (elegível inteiro; gate de
+   integridade e tabelas de resolução), `decisionPopulationErrorRate` (positivos/negativos
+   elegíveis; companheira das duas famílias e do bloco de release) e
+   `binaryPopulationErrorRate` (toda linha positivo/negativo, elegibilidade à parte; é a
+   população de `scoredBinary`, logo de AUROC, PR-AUC e da calibração) — e cada bloco
+   publica `errorRatePopulation` ao lado do número (R7). As fatias de calibração passaram
+   a decompor a mesma população binária do agregado e publicam os dois denominadores.
+7. **Esforço de reamostragem do limite simultâneo.** Um percentil lido em
+   `alpha_família/m` fica a `floor(alpha*(n-1))` estatísticas de ordem do extremo: com
+   `m = 40` e as 2000 réplicas de hoje, **duas**. O limite agora carrega `replicates` e
+   `tailReplicates` de `bootstrap.ts` até `MetricEstimate.simultaneous`, o relatório
+   imprime os dois na seção de Multiplicidade, `clusterBootstrap` **não publica** limite
+   quando a cauda não tem nem uma réplica (isso é definição, não política: naquele alpha o
+   percentil É a réplica mais extrema), e o gate reprova com o código novo
+   `insufficient-resampling-effort` quando o número **executado** fica abaixo das réplicas
+   pré-registradas. Isto fecha metade da lacuna de réplicas acima: o executado passa a ser
+   conferido contra o piso congelado; conciliar executado **contra o declarado** por
+   estimando segue em C6/G2. A contagem de réplicas **não** foi elevada aqui.
+8. **Testes que não viam a estatística mudar.** Trocar o peso de massa do ECE equal-mass
+   por `1/bins` deixava 101 testes verdes (a fixture tinha 4 pontos em 2 bins, onde os
+   dois pesos são 0,5); e remover a guarda `basis !== "unknown"` de `powered` deixava 89
+   verdes (nenhuma fixture chegava ao piso de 300). Ambas as mutações foram executadas e
+   agora matam um teste cada: o peso de massa está fixado em fixture de bins desiguais
+   (2 | 3) e a base `unknown` tem fixture de 305 linhas nos dois lados — em `metrics` ela
+   sai `powered: false`/`supplementary-diagnostic`, e em `gates` o bloco **real** de
+   `labelBasis` reprova `action.fpr.labelBasis.unknown` e limita a decisão a
+   `indicator-only`.
+9. **Denominador do gate e diagnosticabilidade.** O gate de ECE publicava o n do conjunto
+   elegível e os de `labelBasis` a contagem inteira da base, ambos maiores que o
+   denominador da estatística; agora publicam o denominador, com `populationSize` ao lado
+   quando os dois diferem, e a tabela de gates ganhou a coluna `n (denominador)`.
+   `resamplingEntry` devolvia `null` em quatro situações distintas com uma única frase
+   ("nenhum plano declara a unidade"), falsa para um plano que nomeia o estimando com 500
+   réplicas; agora devolve rejeição discriminada e cada ramo tem sua frase, fixada em
+   teste.
+10. **A política não podia contradizer o código nem sub-entregar seu próprio contrato.**
+    `calibrationGate.eceBound` dizia `bootstrap-upper95` enquanto o gate lê um percentil
+    de Bonferroni: virou `bootstrap-simultaneous-upper`, e `gates.ts` deriva a direção do
+    gate desse valor por `switch` exaustivo sobre `EceGateBound` — declaração diferente é
+    erro de compilação, não divergência silenciosa. E as sete linhas cuja **ordem e
+    conteúdo exatos** são a decisão (candidatos e desempate do calibrador, estratos core,
+    famílias hard-negative, faixas de perfil, snapshots humanos, estágios de rollout)
+    passaram a ser validadas por `frozenList`: antes `tieBreakOrder: ["isotonic"]` e
+    `humanCoreStrata: ["foo"]` passavam pelo validador. O comentário do módulo agora diz
+    quais linhas são fixadas exatamente e quais só têm forma verificada.
 
 ### A7 — O `fprUpper95` do `fit` é diagnóstico, não garantia
 

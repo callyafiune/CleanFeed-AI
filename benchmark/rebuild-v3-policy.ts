@@ -346,22 +346,6 @@ function frozenNumber(
   return frozen;
 }
 
-function enumeration<T extends string>(
-  record: Record<string, unknown>,
-  path: string,
-  key: string,
-  allowed: readonly T[],
-): T {
-  const value = record[key];
-  if (typeof value !== "string" || !allowed.includes(value as T)) {
-    throw new RebuildV3PolicyError(
-      at(path, key),
-      `must be one of ${allowed.join(", ")}`,
-    );
-  }
-  return value as T;
-}
-
 // A non-empty list of distinct non-empty strings. Duplicates are rejected because
 // a repeated stratum or family silently changes a denominator.
 function textList(
