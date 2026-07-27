@@ -114,7 +114,6 @@ function families(metrics: DecisionMetrics): DecisionFamilies {
   };
 }
 
-
 // The A6 role-named blocks. The sealed profile reads none of them today, so the
 // fixture only has to be structurally complete: the release block mirrors the
 // same matrices under the name that says what they decide, and the separability
@@ -185,7 +184,12 @@ function a6Blocks(
       intercept: 0,
       slope: 1,
       bins: 15,
-      eceEqualMass15: { value: 0.03, lower95: 0.02, upper95: 0.04, method: "point" },
+      eceEqualMass15: {
+        value: 0.03,
+        lower95: 0.02,
+        upper95: 0.04,
+        method: "point",
+      },
       reliability: [],
       byLengthBucket: [],
       bySource: [],
@@ -218,7 +222,10 @@ function fullMetrics(
   return {
     warning: families(warning),
     visualAction: visualAction === null ? null : families(visualAction),
-    ...a6Blocks(families(warning), visualAction === null ? null : families(visualAction)),
+    ...a6Blocks(
+      families(warning),
+      visualAction === null ? null : families(visualAction),
+    ),
     ece15: { value: 0.03, method: "point" },
     coverage: estimate(1900, 2000),
     abstentionRate: estimate(60, 2000),

@@ -745,8 +745,7 @@ function decideInterval(
       observed: null,
       eligible: false,
       passed: spec.ineligible.passed,
-      reasons:
-        spec.ineligible.reason === null ? [] : [spec.ineligible.reason],
+      reasons: spec.ineligible.reason === null ? [] : [spec.ineligible.reason],
     };
   }
 
@@ -858,7 +857,9 @@ function resamplingEntry(
   estimand: string,
 ): ResamplingPlanEntry | null {
   if (plan === null) return null;
-  const entry = plan.entries.find((candidate) => candidate.estimand === estimand);
+  const entry = plan.entries.find(
+    (candidate) => candidate.estimand === estimand,
+  );
   if (entry === undefined) return null;
   if (!ALLOWED_UNIT_KINDS.has(entry.unitKind)) return null;
   if (entry.unitAxes.length === 0) return null;

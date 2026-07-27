@@ -595,10 +595,7 @@ describe("equal-mass calibration statistics", () => {
       { probability: 0.03, label: 1 },
       { probability: 0.9, label: 1 },
     ];
-    expect(eceEqualMass(skewed, 2)).toBeCloseTo(
-      0.5 * 0.015 + 0.5 * 0.535,
-      10,
-    );
+    expect(eceEqualMass(skewed, 2)).toBeCloseTo(0.5 * 0.015 + 0.5 * 0.535, 10);
     // The equal-width answer over the same points is a different number: it
     // pools the three low scores into one bin. That difference is the reason the
     // gate moves to equal-mass.

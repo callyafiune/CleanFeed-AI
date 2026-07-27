@@ -827,7 +827,8 @@ describe("Bonferroni simultaneous bounds", () => {
     expect(multiplicity.observed).toBe(multiplicity.gateIds.length);
     const intervalGates = report.gates.filter(
       (gate) =>
-        gate.bound === "simultaneous-upper" || gate.bound === "simultaneous-lower",
+        gate.bound === "simultaneous-upper" ||
+        gate.bound === "simultaneous-lower",
     );
     expect(multiplicity.observed).toBe(intervalGates.length);
     expect(multiplicity.covers).toBe(true);
@@ -906,10 +907,7 @@ describe("human-negative label bases as gate evidence", () => {
       slices: summary([passingSlice()]),
     });
     expect(report.decision).toBe("reject");
-    const gate = gateById(
-      report.gates,
-      "warning.fpr.labelBasis.date-cutoff",
-    );
+    const gate = gateById(report.gates, "warning.fpr.labelBasis.date-cutoff");
     expect(gate.eligible).toBe(true);
     expect(gate.passed).toBe(false);
     expect(gate.sampleSize).toBe(900);

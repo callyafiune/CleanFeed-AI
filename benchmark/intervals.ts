@@ -141,8 +141,7 @@ function normalQuantile(p: number): number {
         ACKLAM_C[4]) *
         q +
         ACKLAM_C[5]) /
-      ((((ACKLAM_D[0] * q + ACKLAM_D[1]) * q + ACKLAM_D[2]) * q +
-        ACKLAM_D[3]) *
+      ((((ACKLAM_D[0] * q + ACKLAM_D[1]) * q + ACKLAM_D[2]) * q + ACKLAM_D[3]) *
         q +
         1)
     );

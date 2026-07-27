@@ -138,11 +138,7 @@ describe("rebuild-v3-policy.json", () => {
     expect(policy.conformal.population).toBe("cal-b-humans");
     expect(policy.runtimeComparator).toBe("score-ge-next-up-quantile");
     // Calibrator competition and its tie-break order.
-    expect(policy.calibrator.candidates).toEqual([
-      "platt",
-      "beta",
-      "isotonic",
-    ]);
+    expect(policy.calibrator.candidates).toEqual(["platt", "beta", "isotonic"]);
     expect(policy.calibrator.crossValidationFolds).toBe(5);
     expect(policy.calibrator.selectionMetric).toBe("brier-out-of-fold");
     expect(policy.calibrator.tieToleranceAbsolute).toBe(1e-4);
@@ -216,9 +212,7 @@ describe("parseRebuildV3Policy fails closed", () => {
   it("never substitutes a default for a missing value", () => {
     const withoutBudgets = validPolicyObject();
     delete withoutBudgets.fprBudgets;
-    expect(() => parseRebuildV3Policy(withoutBudgets)).toThrow(
-      /fprBudgets/u,
-    );
+    expect(() => parseRebuildV3Policy(withoutBudgets)).toThrow(/fprBudgets/u);
 
     const withoutWarningBudget = validPolicyObject();
     delete (withoutWarningBudget.fprBudgets as Record<string, unknown>).warning;
@@ -272,9 +266,7 @@ describe("parseRebuildV3Policy fails closed", () => {
 
     const emptyStrata = validPolicyObject();
     emptyStrata.humanCoreStrata = [];
-    expect(() => parseRebuildV3Policy(emptyStrata)).toThrow(
-      /humanCoreStrata/u,
-    );
+    expect(() => parseRebuildV3Policy(emptyStrata)).toThrow(/humanCoreStrata/u);
 
     const duplicatedFamily = validPolicyObject();
     duplicatedFamily.hardNegativeFamilies = [
@@ -315,8 +307,9 @@ describe("parseRebuildV3Policy fails closed", () => {
     expect(() => parseRebuildV3Policy(commercial)).toThrow(/commercialUse/u);
 
     const iidFallback = validPolicyObject();
-    (iidFallback.resampling as Record<string, unknown>)
-      .fallbackToIndependentRows = true;
+    (
+      iidFallback.resampling as Record<string, unknown>
+    ).fallbackToIndependentRows = true;
     expect(() => parseRebuildV3Policy(iidFallback)).toThrow(
       /resampling\.fallbackToIndependentRows/u,
     );

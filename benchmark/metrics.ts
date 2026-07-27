@@ -925,7 +925,8 @@ export function eceEqualMass(
     }
     const meanProbability = probabilitySum / bin.length;
     const positiveRate = positiveSum / bin.length;
-    ece += (bin.length / points.length) * Math.abs(meanProbability - positiveRate);
+    ece +=
+      (bin.length / points.length) * Math.abs(meanProbability - positiveRate);
   }
   return ece;
 }
@@ -1064,10 +1065,7 @@ export function calibrationInterceptSlope(
       scale /= 2;
     }
     if (!accepted) break;
-    if (
-      Math.abs(scale * step0) < 1e-12 &&
-      Math.abs(scale * step1) < 1e-12
-    ) {
+    if (Math.abs(scale * step0) < 1e-12 && Math.abs(scale * step1) < 1e-12) {
       break;
     }
   }
@@ -1153,7 +1151,12 @@ export function computeEvaluationMetrics(
       gates: false,
       population: "conditional-on-scored",
       errorRate,
-      auroc: continuousEstimate(scoredBinary, rocAucFromItems, seed, bonferroni),
+      auroc: continuousEstimate(
+        scoredBinary,
+        rocAucFromItems,
+        seed,
+        bonferroni,
+      ),
       prAuc: continuousEstimate(scoredBinary, prAucFromItems, seed, bonferroni),
       tprAtOnePercentFpr: tprAtTargetFpr(scoredBinary, DEFAULT_TARGET_FPR),
     },
@@ -1271,7 +1274,7 @@ function tprAtTargetFpr(
   let truePositives = 0;
   let falsePositives = 0;
   let best = { achievedFpr: 0, tpr: 0, threshold: Number.POSITIVE_INFINITY };
-  for (let i = 0; i < sorted.length; ) {
+  for (let i = 0; i < sorted.length;) {
     const currentScore = sorted[i].documentScore;
     while (i < sorted.length && sorted[i].documentScore === currentScore) {
       if (isWarningPositive(sorted[i].record)) truePositives += 1;

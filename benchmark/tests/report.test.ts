@@ -722,7 +722,9 @@ describe("renderReportMarkdown", () => {
 
 describe("renderReportMarkdown publishes the A6 evidence with its roles named", () => {
   it("puts TPR@1%FPR beside AUROC and marks both as separability diagnostics", async () => {
-    const markdown = renderReportMarkdown(await buildBenchmarkReport(baseInput()));
+    const markdown = renderReportMarkdown(
+      await buildBenchmarkReport(baseInput()),
+    );
     const separability = section(markdown, "Diagnóstico de separabilidade");
     expect(separability).toMatch(/AUROC/u);
     expect(separability).toMatch(/0\.9647/u);
@@ -739,7 +741,9 @@ describe("renderReportMarkdown publishes the A6 evidence with its roles named", 
   });
 
   it("declares that the conditional family is sensitive to selective failure, in the body", async () => {
-    const markdown = renderReportMarkdown(await buildBenchmarkReport(baseInput()));
+    const markdown = renderReportMarkdown(
+      await buildBenchmarkReport(baseInput()),
+    );
     expect(markdown).toMatch(/falha seletiva/u);
     // Every conditional block shows the error rate of the same population — in
     // the release table, in the two-family table, and in both diagnostics.
@@ -770,7 +774,9 @@ describe("renderReportMarkdown publishes the A6 evidence with its roles named", 
   });
 
   it("never hides the count, the sampling units or the interval of one label basis", async () => {
-    const markdown = renderReportMarkdown(await buildBenchmarkReport(baseInput()));
+    const markdown = renderReportMarkdown(
+      await buildBenchmarkReport(baseInput()),
+    );
     const bases = section(markdown, "Bases de rótulo humano");
     expect(bases).toMatch(/date-cutoff/u);
     expect(bases).toMatch(/observed-process/u);
@@ -799,7 +805,9 @@ describe("renderReportMarkdown publishes the A6 evidence with its roles named", 
   });
 
   it("marks the 95% intervals as descriptive and names the Bonferroni divisor", async () => {
-    const markdown = renderReportMarkdown(await buildBenchmarkReport(baseInput()));
+    const markdown = renderReportMarkdown(
+      await buildBenchmarkReport(baseInput()),
+    );
     const multiplicity = section(markdown, "Multiplicidade");
     expect(multiplicity).toMatch(/bonferroni/iu);
     expect(multiplicity).toMatch(/0\.05/u);
@@ -808,4 +816,3 @@ describe("renderReportMarkdown publishes the A6 evidence with its roles named", 
     expect(section(markdown, "Gates")).toMatch(/simultaneous-upper/u);
   });
 });
-

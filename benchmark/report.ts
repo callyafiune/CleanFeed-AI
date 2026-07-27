@@ -411,13 +411,21 @@ export function renderReportMarkdown(report: BenchmarkReport): string {
   );
   lines.push("");
   lines.push(
-    decisionFamilyTable("Aviso", report.metrics.warning, report.metrics.errorRate),
+    decisionFamilyTable(
+      "Aviso",
+      report.metrics.warning,
+      report.metrics.errorRate,
+    ),
   );
   lines.push("");
   const visualAction = report.metrics.visualAction;
   if (visualAction !== null && visualAction !== undefined) {
     lines.push(
-      decisionFamilyTable("Ação visual", visualAction, report.metrics.errorRate),
+      decisionFamilyTable(
+        "Ação visual",
+        visualAction,
+        report.metrics.errorRate,
+      ),
     );
     lines.push("");
   }
@@ -581,7 +589,9 @@ export function renderReportMarkdown(report: BenchmarkReport): string {
     lines.push("| Prevalência | PPV | NPV |");
     lines.push("| --- | --- | --- |");
     for (const row of predictiveValue.byPrevalence ?? []) {
-      lines.push(`| ${fmt(row.prevalence)} | ${fmt(row.ppv)} | ${fmt(row.npv)} |`);
+      lines.push(
+        `| ${fmt(row.prevalence)} | ${fmt(row.ppv)} | ${fmt(row.npv)} |`,
+      );
     }
     lines.push("");
   }
