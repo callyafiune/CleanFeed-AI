@@ -410,11 +410,15 @@ export function renderReportMarkdown(report: BenchmarkReport): string {
       "das duas é *a* métrica.",
   );
   lines.push("");
-  lines.push(decisionFamilyTable("Aviso", report.metrics.warning));
+  lines.push(
+    decisionFamilyTable("Aviso", report.metrics.warning, report.metrics.errorRate),
+  );
   lines.push("");
   const visualAction = report.metrics.visualAction;
   if (visualAction !== null && visualAction !== undefined) {
-    lines.push(decisionFamilyTable("Ação visual", visualAction));
+    lines.push(
+      decisionFamilyTable("Ação visual", visualAction, report.metrics.errorRate),
+    );
     lines.push("");
   }
   lines.push(`- Cobertura: ${fmt(report.metrics.coverage?.value)}`);
@@ -659,6 +663,7 @@ export function renderReportMarkdown(report: BenchmarkReport): string {
 function decisionFamilyTable(
   subject: string,
   families: DecisionFamilies,
+  errorRate: MetricEstimate | undefined,
 ): string {
   const rows: ReadonlyArray<
     readonly [string, (metrics: DecisionMetrics) => string]
@@ -671,6 +676,9 @@ function decisionFamilyTable(
     ["Taxa de liberação correta", (m) => fmt(m?.clearanceRate?.value)],
     ["Recall (LCB95)", (m) => fmt(m?.recall?.lower95)],
     ["Recall (ponto)", (m) => fmt(m?.recall?.value)],
+    // Never a conditional column without the error rate of the same population in
+    // the same table: the two families differ by exactly the rows this rate counts.
+    ["Taxa de erro (mesma população)", () => fmt(errorRate?.value)],
   ];
   const lines: string[] = [];
   lines.push(`### ${subject}`);

@@ -741,9 +741,18 @@ describe("renderReportMarkdown publishes the A6 evidence with its roles named", 
   it("declares that the conditional family is sensitive to selective failure, in the body", async () => {
     const markdown = renderReportMarkdown(await buildBenchmarkReport(baseInput()));
     expect(markdown).toMatch(/falha seletiva/u);
-    // Every conditional block shows the error rate of the same population.
-    const release = section(markdown, "Métrica de release");
-    expect(release).toMatch(/Taxa de erro/u);
+    // Every conditional block shows the error rate of the same population — in
+    // the release table, in the two-family table, and in both diagnostics.
+    expect(section(markdown, "Métrica de release")).toMatch(/Taxa de erro/u);
+    expect(section(markdown, "Overall")).toMatch(
+      /Taxa de erro \(mesma população\)/u,
+    );
+    expect(section(markdown, "Diagnóstico de separabilidade")).toMatch(
+      /Taxa de erro da mesma população/u,
+    );
+    expect(section(markdown, "Calibração")).toMatch(
+      /Taxa de erro da mesma população/u,
+    );
   });
 
   it("publishes calibration with both ECEs, the line and the reliability diagram", async () => {
