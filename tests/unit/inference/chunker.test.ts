@@ -317,4 +317,70 @@ describe("fitWindowSlice", () => {
       }),
     );
   });
+
+  // A window whose interval falls outside the offset array is a DIFFERENT defect
+  // from a slice that will not shrink: the first says the caller and the
+  // tokenizer disagree about how many tokens exist, the second says the derived
+  // offsets are degenerate. One code for both would make an error row
+  // undiagnosable, which is exactly what A1 fixed one layer up.
+  it("names an out-of-range window interval as its own failure", () => {
+    expect(() =>
+      fitWindowSlice(
+        text,
+        offsets,
+        { index: 0, tokenStart: 0, tokenEnd: offsets.length + 3 },
+        10,
+        countUnits,
+      ),
+    ).toThrowError(
+      expect.objectContaining({
+        code: "INFERENCE_FAILED",
+        message: "WINDOW_OFFSETS_OUT_OF_RANGE",
+      }),
+    );
+    expect(() =>
+      fitWindowSlice(
+        text,
+        offsets,
+        { index: 0, tokenStart: offsets.length, tokenEnd: offsets.length + 1 },
+        10,
+        countUnits,
+      ),
+    ).toThrowError(
+      expect.objectContaining({ message: "WINDOW_OFFSETS_OUT_OF_RANGE" }),
+    );
+  });
+
+  // The fitter must terminate on its REAL condition (the token cursor reaching
+  // the window start), not on a re-measurement budget. A tokenizer that
+  // under-reports the excess — it only ever says "one too many" — converges one
+  // token per attempt, so a 25-token window over a 10-token budget needs fifteen
+  // attempts. Any fixed attempt cap below that would mislabel a slice that IS
+  // reducible as unshrinkable, and fail a document that could have scored.
+  it("keeps re-measuring a slowly converging slice until it really fits", () => {
+    const longText = Array.from({ length: 25 }, (_, i) => `w${i}`).join(" ");
+    const longOffsets = [...longText.matchAll(/\S+/gu)].map((match) => ({
+      start: match.index,
+      end: match.index + match[0].length,
+    }));
+    let calls = 0;
+    const understatesExcess = (slice: string): number => {
+      calls += 1;
+      const units = countUnits(slice);
+      return units > 10 ? 11 : units;
+    };
+
+    const fitted = fitWindowSlice(
+      longText,
+      longOffsets,
+      { index: 0, tokenStart: 0, tokenEnd: 25 },
+      10,
+      understatesExcess,
+    );
+
+    expect(fitted.window.tokenEnd).toBe(10);
+    expect(fitted.trimmedTokens).toBe(15);
+    expect(calls).toBe(16);
+    expect(fitted.text).toBe(longText.slice(0, longOffsets[9]!.end));
+  });
 });

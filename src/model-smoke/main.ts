@@ -25,13 +25,15 @@
 import { aggregateWindowsV2, type WindowScore } from "@/inference/aggregator";
 import { bundledModelManifest } from "@/inference/bundled-model-metadata";
 import { buildBuiltinIdentity } from "@/inference/builtin-runtime";
-import { buildContentWindows } from "@/inference/chunker";
+import type { WindowInterval } from "@/inference/chunker";
 import type { CleanFeedModelManifest } from "@/inference/model-bundle";
 import {
   createModelRuntime,
+  type ExactTokenEncoding,
   type LoadedTransformersTokenizer,
   type ModelRuntime,
   type ModelRuntimeAssets,
+  type TmrChunkPlan,
 } from "@/inference/model-runtime";
 import {
   OnnxTextClassifier,
@@ -170,6 +172,27 @@ function loadAssets(
   };
 }
 
+/** Content-token windows over one encoding, mirroring the sealed chunk plan. */
+function buildWindows(
+  encoding: ExactTokenEncoding,
+  plan: TmrChunkPlan,
+): WindowInterval[] {
+  const total = encoding.inputIds.length;
+  if (total === 0) {
+    return [];
+  }
+  const step = plan.contentTokens - plan.overlapTokens;
+  const windows: WindowInterval[] = [];
+  for (let start = 0, index = 0; start < total; start += step, index += 1) {
+    const end = Math.min(start + plan.contentTokens, total);
+    windows.push({ index, tokenStart: start, tokenEnd: end });
+    if (end === total) {
+      break;
+    }
+  }
+  return windows;
+}
+
 /**
  * Scores one document with the real runtime: exact native-offset tokenization,
  * sealed windowing, one classifier call per candidate window and the v2
@@ -181,10 +204,7 @@ async function scoreDocument(
   text: string,
 ): Promise<AggregationResultV2> {
   const encoding = runtime.tokenizer.encodeWithOffsets(text);
-  const windows = buildContentWindows(
-    encoding.inputIds.length,
-    runtime.chunkPlan,
-  );
+  const windows = buildWindows(encoding, runtime.chunkPlan);
   const scored: WindowScore[] = [];
   for (const window of windows) {
     const slice = text.slice(

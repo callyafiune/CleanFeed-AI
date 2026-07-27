@@ -48,7 +48,7 @@ const BUNDLE_DIGEST =
   "2d47d6f3e0a6f2c7836b03c9a47b1b81f6c34159aa35ae1bdffe3507e4dc25bc";
 const TOKENIZER_DIGEST =
   "2e3bc97587671b43d32a68bd134abea67f4a3aaaee8a65f7a1f923449ee13135";
-const AGGREGATION_VERSION = "tmr-aggregation-v2";
+const AGGREGATION_VERSION = "tmr-aggregation-v3";
 const CONTENT_COMPOSITION_VERSION = "lexical-content-v1";
 
 const DATASET_DIGEST = "a".repeat(64);

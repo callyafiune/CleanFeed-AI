@@ -57,6 +57,14 @@ export const FAILURE_DETAIL_CODES = [
   // really the whole document. That case keeps its own code instead of being
   // scored, because eight copies of one text is a fabricated result, not a repair.
   "WINDOW_SLICE_NOT_REDUCIBLE",
+  // A window interval the offset array cannot address. Not the same defect as an
+  // unshrinkable slice: this one says the caller and the tokenizer disagree on
+  // how many tokens exist, and the remedy is on the caller's side.
+  "WINDOW_OFFSETS_OUT_OF_RANGE",
+  // The aggregation's enforcement of the accounting requirement: a SUPPLIED
+  // selection is a claim that the scored windows are exactly the ones it chose,
+  // and if that claim is false `candidateWindowCount`, `truncated` and `coverage`
+  // would describe a different subset than the one the model actually saw.
   "WINDOW_SELECTION_MISMATCH",
   // Classifier-side guards, each with its own literal message.
   "INVALID_MODEL_INPUT_LENGTH",

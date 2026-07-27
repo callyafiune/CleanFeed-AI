@@ -116,7 +116,7 @@ describe("Phase 3 runtime parity manifest binding", () => {
       modelId: "cleanfeed-ptbr-v1",
       modelVersion: "1.0.0",
       bundleDigest: "a".repeat(64),
-      aggregationVersion: "tmr-aggregation-v2",
+      aggregationVersion: "tmr-aggregation-v3",
       contentCompositionVersion: "lexical-content-v1",
       tokenizerDigest: "b".repeat(64),
     };

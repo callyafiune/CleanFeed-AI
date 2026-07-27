@@ -13,7 +13,7 @@ const baseFields: ParityFields = {
   modelId: "cleanfeed-ptbr-v1",
   modelVersion: "d8f77f870fbd35a17add2498b73d906bbc299026",
   bundleDigest: "b".repeat(64),
-  aggregationVersion: "tmr-aggregation-v2",
+  aggregationVersion: "tmr-aggregation-v3",
   contentCompositionVersion: "lexical-content-v1",
   tokenizerDigest:
     "2e3bc97587671b43d32a68bd134abea67f4a3aaaee8a65f7a1f923449ee13135",
@@ -72,8 +72,19 @@ describe("runtime parity manifest", () => {
       { ...baseFields, modelId: "other" },
       { ...baseFields, modelVersion: "other" },
       { ...baseFields, bundleDigest: "0".repeat(64) },
-      { ...baseFields, aggregationVersion: "tmr-aggregation-v3" },
-      { ...baseFields, contentCompositionVersion: "lexical-content-v2" },
+      // Derived from the baseline rather than written as a rival version string:
+      // when A2 bumped the real aggregation coordinate to `tmr-aggregation-v3`,
+      // the previous literal here silently became EQUAL to the baseline and the
+      // mutation would have proved nothing. A suffix cannot collide with a future
+      // bump of either coordinate.
+      {
+        ...baseFields,
+        aggregationVersion: `${baseFields.aggregationVersion}-mutated`,
+      },
+      {
+        ...baseFields,
+        contentCompositionVersion: `${baseFields.contentCompositionVersion}-mutated`,
+      },
       { ...baseFields, tokenizerDigest: "1".repeat(64) },
       { ...baseFields, inferenceCoreDigest: "2".repeat(64) },
     ];

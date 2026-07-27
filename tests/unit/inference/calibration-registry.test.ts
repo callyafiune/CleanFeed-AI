@@ -41,7 +41,7 @@ function baseProfile(
     platform: "generic",
     locale: "pt-BR",
     lengthBucket: "200-plus",
-    aggregationVersion: "tmr-aggregation-v2",
+    aggregationVersion: "tmr-aggregation-v3",
     contentCompositionVersion: "lexical-content-v1",
     datasetDigest: "c".repeat(64),
     splitDigest: "d".repeat(64),
@@ -121,7 +121,7 @@ async function releaseFor(
     modelVersion: "d8f77f870fbd35a17add2498b73d906bbc299026",
     bundleDigest: "a".repeat(64),
     tokenizerDigest: "b".repeat(64),
-    aggregationVersion: "tmr-aggregation-v2",
+    aggregationVersion: "tmr-aggregation-v3",
     contentCompositionVersion: "lexical-content-v1",
     calibrationSetDigest: await computeCalibrationSetDigest(profileDigests),
     profileDigests,
@@ -145,7 +145,7 @@ function coordinates(
     platform: "generic",
     locale: "pt",
     lengthBucket: "200-plus",
-    aggregationVersion: "tmr-aggregation-v2",
+    aggregationVersion: "tmr-aggregation-v3",
     contentCompositionVersion: "lexical-content-v1",
     ...overrides,
   };
@@ -179,7 +179,10 @@ describe("CalibrationRegistry.findExact", () => {
     ["platform", { platform: "linkedin" }],
     ["locale", { locale: "en" }],
     ["lengthBucket", { lengthBucket: "50-79" as const }],
-    ["aggregationVersion", { aggregationVersion: "tmr-aggregation-v3" }],
+    // Suffixed rather than written as a rival version literal: A2's bump to
+    // `tmr-aggregation-v3` made the old literal here EQUAL to the base profile's
+    // coordinate, so the "misses in isolation" case silently became a hit.
+    ["aggregationVersion", { aggregationVersion: "tmr-aggregation-v3-other" }],
     ["contentCompositionVersion", { contentCompositionVersion: "v2" }],
   ])(
     "misses when %s diverges in isolation and never returns the closest profile",

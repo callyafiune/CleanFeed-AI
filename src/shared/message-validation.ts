@@ -577,7 +577,7 @@ function isAggregationResult(value: unknown): boolean {
 
   return (
     hasExactKeys(value, keys) &&
-    value.version === "tmr-aggregation-v2" &&
+    value.version === "tmr-aggregation-v3" &&
     isScore(value.documentRawScore) &&
     isScore(value.localizedRawScore) &&
     isScore(value.coverage) &&

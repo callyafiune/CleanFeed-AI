@@ -11,7 +11,7 @@
       "platform": "windows-x64",
       "locale": "pt-BR",
       "lengthBucket": "80-199",
-      "aggregationVersion": "tmr-aggregation-v2",
+      "aggregationVersion": "tmr-aggregation-v3",
       "contentCompositionVersion": "lexical-content-v1",
       "datasetDigest": "1111111111111111111111111111111111111111111111111111111111111111",
       "splitDigest": "2222222222222222222222222222222222222222222222222222222222222222",
@@ -92,7 +92,7 @@
         "criticalRecallSlices": {}
       },
       "actionCeiling": "indicator",
-      "profileDigest": "b304756cc3d6cd808f57a1fb9d82e58fa01d0eea40824f6d43605955b134e727"
+      "profileDigest": "9c5d5053dfb346b76c63c7abf612d56b3d90f8e6398382092eba291a4d1c2e41"
     }
   ]
 }

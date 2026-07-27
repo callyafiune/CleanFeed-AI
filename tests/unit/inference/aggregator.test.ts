@@ -1,10 +1,15 @@
 import { describe, expect, it } from "vitest";
 
 import {
+  AGGREGATION_VERSION,
   FALLBACK_MAX_AGGREGATION_WINDOWS,
   aggregateWindowsV2,
   type WindowScore,
 } from "@/inference/aggregator";
+import {
+  bundledModelManifest,
+  bundledReleaseDescriptor,
+} from "@/inference/bundled-model-metadata";
 import { selectDistributedWindows } from "@/inference/chunker";
 
 // The canonical Task 5 fixture: three overlapping content windows with no
@@ -16,11 +21,28 @@ const windows: WindowScore[] = [
   { index: 2, tokenStart: 892, tokenEnd: 1_200, rawScore: 0.6 },
 ];
 
+describe("AGGREGATION_VERSION", () => {
+  it("is the version stamp the window policy carries", () => {
+    expect(AGGREGATION_VERSION).toBe("tmr-aggregation-v3");
+  });
+
+  // The stamp is part of the calibration key, and the sealed manifest declares
+  // the same coordinate; `identityMatchesParity` (src/model-benchmark/main.ts)
+  // compares them. Binding them here makes a one-sided bump a red test instead
+  // of a silently mismatched identity at scoring time.
+  it("equals the sealed bundle manifest's aggregation coordinate", () => {
+    expect(AGGREGATION_VERSION).toBe(bundledModelManifest.aggregationVersion);
+    expect(AGGREGATION_VERSION).toBe(
+      bundledReleaseDescriptor.aggregationVersion,
+    );
+  });
+});
+
 describe("aggregateWindowsV2", () => {
   it("keeps the document and localized raw scores separate", () => {
     const result = aggregateWindowsV2(windows, 1_200);
 
-    expect(result.version).toBe("tmr-aggregation-v2");
+    expect(result.version).toBe("tmr-aggregation-v3");
     // (0.2*510 + 0.8*446 + 0.6*244) / 1200
     expect(result.documentRawScore).toBe(0.5043333333333333);
     expect(result.localizedRawScore).toBe(0.8);
@@ -165,7 +187,13 @@ describe("aggregateWindowsV2", () => {
         (window) => candidates[window.index]!,
       );
 
-      expect(FALLBACK_MAX_AGGREGATION_WINDOWS).toBe(8);
+      // Derived from the source of truth, never pinned to the literal 8: the
+      // production worker and the smoke harness ride this constant, so if the
+      // sealed manifest ever changes the budget the mismatch must be red here
+      // rather than silently keeping the old number at scoring time.
+      expect(FALLBACK_MAX_AGGREGATION_WINDOWS).toBe(
+        bundledModelManifest.windowing.maxWindows,
+      );
       expect(inferred).toHaveLength(3);
       const supplied = aggregateWindowsV2(inferred, totalTokenCount, {
         selection,

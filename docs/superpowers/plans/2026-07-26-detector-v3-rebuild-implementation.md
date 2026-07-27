@@ -583,9 +583,20 @@ exclusivamente o código estruturado produzido por A1:
    ([`model-runtime.ts:130`](../../../src/inference/model-runtime.ts#L130)), ou seja,
    folga zero. Se A1 registrar `TOKEN_LIMIT_EXCEEDED`, cortar deterministicamente tokens
    de conteúdo do fim até `encodedLength <= modelMaxTokens`, incrementar
-   `contentCompositionVersion` e testar offsets. Para `WASM_OOM`, `MODEL_TIMEOUT` ou
+   **`aggregationVersion`** e testar offsets. Para `WASM_OOM`, `MODEL_TIMEOUT` ou
    `NON_FINITE_SCORE`, não reduzir a janela: corrigir a causa e manter 510. Código
    diferente deixa A2 incompleta; não autoriza tentativa especulativa.
+
+   **Correção de coordenada (esta linha já dizia `contentCompositionVersion` e estava
+   errada).** `CONTENT_COMPOSITION_VERSION` versiona **como um texto se decompõe em
+   unidades classificadas** — a precedência URL → hashtag → só-emoji → lexical → other que
+   produz `totalUnits`/`lexicalUnits`/`lexicalRatio` e alimenta
+   [`eligibility.ts`](../../../src/inference/eligibility.ts). Aparar `window.tokenEnd` é
+   política de **janela de tokenizer**: não muda a decomposição, não muda `lexicalRatio` e
+   não muda elegibilidade. A coordenada correta é `aggregationVersion`, exatamente como a
+   nota de atenção logo abaixo sempre disse. `lexical-content-v2` **pertence a A5**, que
+   altera de fato a decomposição (NFKC, largura zero, homóglifos); se A2 gastasse o número,
+   o histórico atribuiria a mudança de composição à causa errada para sempre.
 
 **Verificar:** taxa de erro em `calibration` restrita a `300_PLUS` cai a zero; o escore
 de documento não muda para documentos com ≤ 8 janelas (a seleção é a mesma).
@@ -598,6 +609,39 @@ janelas economizadas.
 `inferenceCoreDigest`. Isso é esperado nesta fase e **proibido** depois de G5.
 
 #### A2 — o que a execução mediu (registro da entrega)
+
+> **STATUS DE FECHAMENTO — leia antes de qualquer número abaixo.**
+> **A2 fecha como NÃO CONCLUÍDA contra a sua própria definição de pronto.** O critério do
+> plano é "erro de inferência ≤ 0,1% em **todas** as faixas de comprimento em
+> `development` **+** `calibration`", e o segundo critério é "erro em `calibration`
+> restrito a `300_PLUS` cai a **zero**".
+>
+> **O que a tarefa entregou, item por item:** o **item 1** (selecionar antes de inferir,
+> preservando a contabilidade) está **completo e verificado por teste**. O **item 2** (folga
+> na janela) estava condicionado ao código estruturado de A1, o código observado **foi**
+> `TOKEN_LIMIT_EXCEEDED` nos 60 documentos que falharam, e portanto o item 2 foi
+> **autorizado e implementado**. O que não fecha é o **critério de saída**, não os itens.
+>
+> Situação exata, por metade:
+>
+> | metade | estado |
+> |---|---|
+> | `development` | **MEDIDA e atingida** — 2000 de 2000 linhas, 0 erros nas seis faixas (`benchmark/out/rebuild-v3/a2-fix/dev-score`, `manifest.json` com `shardCount` 20), scorer selado em Chrome. **Mas a corrida foi feita sob `runtimeParityDigest` `897b1b49…`, que NÃO é a identidade desta árvore** — ver "Identidade entregue" adiante |
+> | `calibration` | **NÃO MEDIDA fim-a-fim.** Não existe corrida completa do scorer selado sobre nenhum bundle pós-correção. O único residual disponível (3/3000) vem de uma varredura vitest que não instancia o classificador, o WASM nem o relógio de timeout — ver a tabela de bancadas adiante |
+>
+> O número que reprova é explícito: **`calibration/150_299` = 2/557 = 0,359%**, contra um
+> teto de 0,1%. Portanto **nenhum dos dois critérios está fechado**, e o motivo é diferente
+> em cada um: o de `development` está atingido mas é só metade do critério **e** a corrida
+> não corresponde mais à identidade da árvore; o de `calibration` não foi medido pela
+> bancada que o critério pressupõe. **Nenhum limite foi afrouxado (R3)** — a disposição
+> explícita, com os caminhos de fechamento, está na seção "Disposição explícita dos dois
+> critérios não atingidos" adiante. Quem fechar A2 **mede `calibration` com
+> `score --partition calibration`**; herdar `3/3000` é proibido.
+>
+> **O critério não pode ser esquecido por ficar aberto aqui:** ele volta como **gate de
+> release em H3** ("limite de erro de inferência **por comprimento**") e como **condição de
+> promoção a `indicator` em I1** ("erro de inferência `<= 0,001` no replay de
+> `dev + cal-A + cal-B`"). Deixar A2 aberta atrasa a tarefa; não dispensa o número.
 
 **A hipótese de pressão de memória WASM está refutada, e o §3.2 tem um erro de
 medição.** Com os códigos estruturados de A1, os **60** documentos de
@@ -625,20 +669,35 @@ com a mesma função (`selectDistributedWindows`), que agora carrega
 produção e smoke). Provado por teste: para 3, 8, 20 e 47 candidatas a agregação sobre
 as janelas selecionadas é `toEqual` à agregação sobre todas as candidatas.
 
-**`aggregationVersion` NÃO foi incrementada, porque o item 1 não muda nenhuma saída.**
-A política de janelas é a mesma função aplicada mais cedo; o teste de igualdade acima
-é a evidência. O que muda de fato é o `inferenceCoreDigest`
-(`977bca0b…` → `647123a0…`) e, com ele, o `runtimeParityDigest`
-(`35f31b32…` → `e55472e7…`), que é derivado dos bytes e recalculado pelo build.
+**`aggregationVersion` FOI incrementada — `tmr-aggregation-v2` → `tmr-aggregation-v3`.**
+A primeira entrega não a incrementou, com o argumento de que a seleção prévia (item 1)
+não muda nenhuma saída. O argumento é correto **e cobre só o item 1**. O item 2 muda a
+política de janelas de fato: `fitWindowSlice` reduz `window.tokenEnd`, e esse valor
+alimenta `uniqueTokenWeights` dentro de `aggregateWindowsV2`
+([`aggregator.ts:190-204`](../../../src/inference/aggregator.ts#L190)) e portanto
+`documentRawScore` ([`:145-148`](../../../src/inference/aggregator.ts#L145)) e `coverage`
+([`:171`](../../../src/inference/aggregator.ts#L171)) — e converte, em 56 documentos, um
+erro de inferência em escore. 56 documentos passam a produzir escore a partir de um
+intervalo **cortado**, e o carimbo é parte da chave de calibração: deixá-lo em `v2` faria
+dois conjuntos de escores incomparáveis compartilharem uma chave. Vale a advertência
+literal deste plano — "mudar a política de janelas muda `aggregationVersion`".
+
+**Correção de fato (uma versão anterior deste registro, e o comentário do código, diziam
+que `truncated` também muda — não muda).** O `truncated` devolvido é exclusivamente
+`selection.truncated` ([`aggregator.ts:172`](../../../src/inference/aggregator.ts#L172)):
+é propriedade da **seleção** de janelas, não da aparagem do recorte. Um `tokenEnd` reduzido
+não o toca. O que a aparagem move é **escore** e **`coverage`** — o que já basta para exigir
+o incremento. O comentário de `AGGREGATION_VERSION` foi corrigido junto (R7).
 
 **Item 1 tem um efeito colateral científico, medido:** `src_carolina_583c975dd4b4`
 (11 candidatas) deixa de falhar **só** pela seleção prévia, porque a janela que
 estourava não está entre as 8 escolhidas. Ou seja, item 1 e item 2 não são
 independentes na população de erros.
 
-**Ganho de custo, medido e modesto neste corpus:** 7430 janelas candidatas em
-`development` + `calibration`, 7414 inferidas — 16 inferências economizadas (0,22%),
-porque só 11 documentos têm mais de 8 candidatas. Por documento longo o ganho é o
+**Ganho de custo, medido e modesto neste corpus** (bancada: **varredura vitest**, a mesma da
+tabela de bancadas adiante — contagem de janelas, não de tempo de ONNX)**:** 7430 janelas
+candidatas em `development` + `calibration`, 7414 inferidas — 16 inferências economizadas
+(0,22%), porque só 11 documentos têm mais de 8 candidatas. Por documento longo o ganho é o
 prometido: 12 → 8 janelas em `src_carolina_9e9842edb531`, 11 → 8 em
 `src_carolina_583c975dd4b4`, 9 → 8 nos outros nove.
 
@@ -646,8 +705,22 @@ prometido: 12 → 8 janelas em `src_carolina_9e9842edb531`, 11 → 8 em
 `fitWindowSlice` (em `chunker.ts`) corta tokens de conteúdo **do fim** pelo excesso
 medido até `encodedLength <= modelMaxTokens - specialTokenCount`, e devolve o
 intervalo realmente pontuado, de modo que `coverage` e os pesos por token único
-descrevem o texto que foi ao modelo. Medido sobre os 5000 documentos: 56 documentos
-passam a pontuar cortando **1 token** (50) ou **2** (6).
+descrevem o texto que foi ao modelo. Medido sobre os 5000 documentos de
+`development` + `calibration` pela **varredura vitest** (tokenizer do bundle + `ExactTokenizer`
+real, sem ONNX/WASM): 56 documentos passam a pontuar cortando **1 token** (50) ou **2** (6).
+
+**O corte termina pela condição real, não por orçamento de tentativas.** A primeira
+entrega limitava o laço a 8 remedições e depois declarava a janela irredutível. Isso
+mistura duas coisas: `tokenEnd` decresce ao menos 1 por passo, então a terminação já é
+garantida pela condição `nextEnd <= window.tokenStart`, e um teto rotularia como
+irredutível uma janela que **ainda é** redutível — um tokenizer que subestima o excesso
+converge um token por passo, e 25 tokens sobre orçamento de 10 precisam de 15 passos.
+Nos dados medidos bastavam ≤ 2 passos, então não havia impacto observado; o teto saiu de
+todo modo, porque o custo do erro é um documento perder o escore. Pelo mesmo motivo o
+ramo de *offset* ausente ganhou código próprio, `WINDOW_OFFSETS_OUT_OF_RANGE`: um
+intervalo fora do array de offsets é o autor da chamada discordando do tokenizer sobre
+quantos tokens existem, defeito diferente de um mapa de offsets degenerado, e um código
+para as duas causas é exatamente o que A1 desfez uma camada acima.
 
 **Item 2 tem um caso em que a regra mecânica não se aplica, e ele falha fechado.**
 Três documentos (`src_ai_public_madras_961c462e650f`, `…_a48e8a49816d`,
@@ -656,28 +729,188 @@ Três documentos (`src_ai_public_madras_961c462e650f`, `…_a48e8a49816d`,
 `tokenEnd` não encurta o recorte: as 8 janelas viravam 8 cópias do mesmo prefixo, com
 `coverage` calculado sobre intervalos que não descrevem mais nada. Isso é fabricar
 resultado, não corrigir falha, então o corte detecta a ausência de progresso e falha
-fechado sob o código próprio `WINDOW_SLICE_NOT_REDUCIBLE`. Resultado medido:
-`development` 0/2000 (0,000%) em **todas** as faixas; `calibration` 3/3000 (0,100%) no
-total, mas concentrados: pelas faixas do próprio `sizeBucket` da bancada,
-`calibration/150_299` = 2/557 = **0,359%** e `calibration/300_PLUS` = 1/929 =
-**0,108%**; as demais faixas, 0,000%. Portanto os dois critérios do plano **não** foram
-atingidos: "≤ 0,1% em todas as faixas" falha em `150_299` e (por margem) em
-`300_PLUS`, e "erro em `calibration` restrito a `300_PLUS` cai a zero" não cai a zero.
-Antes da correção eram 58/3000 em `calibration` e 2/2000 em `development`.
+fechado sob o código próprio `WINDOW_SLICE_NOT_REDUCIBLE`.
+
+**Disposição dos 5 residuais diagnosticados, um por um.** A evidência é
+`benchmark/out/rebuild-v3/a2/coarse-cause.txt`: cinco documentos inspecionados, **todos**
+quebrando no mesmo ponto — uma palavra que o WordPiece resolve como `[UNK]`, o que
+dessincroniza o *tiling* de offsets. Dos cinco, **três falham hoje** (mais de 510 tokens,
+logo mais de uma janela); os outros dois têm o **mesmo defeito latente** e só pontuam porque
+cabem em uma janela só. Nenhum é "erro residual aceito": cada um tem destino nomeado.
+
+| id | palavra em que os fluxos divergem | tokens | CJK no texto | falha hoje? | destino |
+|---|---|---:|---:|---|---|
+| `src_ai_public_madras_5a06a06a65c4` | `当我们` | 231 | 3 | não (1 janela) | fonte fora da v3 — **D2** |
+| `src_ai_public_madras_be8b62bfe739` | `如播放器` | 901 | 4 | **sim** | fonte fora da v3 — **D2** |
+| `src_ai_public_madras_a48e8a49816d` | `acadêmica` | 515 | 4 | **sim** | fonte fora da v3 — **D2** |
+| `src_ai_public_madras_961c462e650f` | `作为` | 580 | 2 | **sim** | fonte fora da v3 — **D2** |
+| `mix_src_wikipedia_pt_d3e3087c4ae9` | `花巻市` | 124 | 3 | não (1 janela) | dado v3 legítimo — **A5** |
+
+Quatro dos cinco são `src_ai_public_madras_*`: **fonte externa que não existe no corpus v3**
+— a decisão congelada nomeia somente pt.stackoverflow, ptwiki, B2W-Reviews01 e Carolina, e
+D2 mantém conjunto externo fora. Eles foram medidos sobre o **corpus antigo**; depois de D2
+não há registro-linha a corrigir. O quinto é **dado v3 legítimo** (topônimo japonês
+`花巻市` num artigo da Wikipédia lusófona) e é obrigação de **A5**, cujo critério nº 3 já é
+"teste que reconstrói offsets originais a partir do mapa".
+
+**Cuidado com a coluna do meio, para não gerar hipótese falsa:** ela é o ponto onde a
+comparação *diverge*, não necessariamente a causa. Em `…_a48e8a49816d` a divergência aparece
+numa palavra latina (`acadêmica`, com `ê` pré-composto U+00EA), o que sugeriria uma causa
+não-CJK — mas os **cinco** textos contêm CJK (contagem na coluna ao lado, medida sobre
+`benchmark/out/rebuild-v3/a2/devcal-texts.jsonl`), e a dessincronia começa **antes** do ponto
+reportado. Ou seja: a hipótese CJK explica os cinco, e "existe causa não-CJK" **não está
+medido** — não o afirme sem medir.
+
+**Resultado residual — dois números, duas bancadas diferentes; a distinção é
+load-bearing (R7).** Diga sempre qual mediu o quê:
+
+| número | quem mediu | o que essa bancada consegue observar |
+|---|---|---|
+| `calibration` 3/3000 (0,100%), `150_299` = 2/557 (0,359%), `300_PLUS` = 1/929 (0,108%), demais faixas 0,000% | **varredura vitest** (`benchmark/out/rebuild-v3/a2/lab/zz-a2-sweep.test.ts.txt`, saída em `…/a2/sweep-after.txt`), rodada com o código do item 2 já aplicado mas **antes de qualquer incremento de carimbo** — o que não afeta o número, porque carimbo é inerte no comportamento | somente `ExactTokenizer` + `buildContentWindows` + `selectDistributedWindows` + `fitWindowSlice`. **Não** instancia o classificador ONNX, **não** roda WASM e **não** tem relógio de timeout |
+| `development` 0 erros sob `runtimeParityDigest` `897b1b49…` (**não** a identidade desta árvore, `6c5b6453…`) | **scorer selado em Chrome**, ver "Confirmação fim-a-fim" abaixo | o caminho inteiro, incluindo ONNX/WASM e timeout |
+
+Consequência que ninguém deve contornar: **o residual de `calibration` não é uma taxa de
+erro fim-a-fim.** A varredura não pode observar `WASM_OOM`, `MODEL_TIMEOUT` nem
+`NON_FINITE_SCORE` — três das quatro classes de erro que o item 2 tinha de discriminar —,
+então ela pode apenas **subestimar**, nunca confirmar, a taxa em `calibration`. Antes de
+qualquer um tratar `3/3000` como taxa de erro de inferência, é obrigatório re-medir com
+`score --partition calibration` sobre o bundle entregue. Não existe, hoje, nenhum
+`cal-score` sobre bundle pós-correção: o único diretório de `calibration` em disco é
+`benchmark/out/rebuild-v3/a1/cal-score`, que é a linha de base **pré**-correção (58/3000).
+A varredura mede `development` 0/2000 também, e nisso concorda com o scorer selado — mas a
+concordância vale para `development`, não transfere para `calibration`.
+
+**Para quem for rodar esse `score --partition calibration`: uma corrida parcial quase não
+informa, e isto é medido.** `score` percorre a partição em ordem de id e persiste por
+*shard* de 100, então uma corrida interrompida cobre um prefixo. Localizando as 58 linhas
+`error` de `a1/cal-score` nessa mesma ordem, elas estão concentradas no **último terço**:
+1 no *shard* 14, 2 no 15, e as outras **55 nos shards 22–29** (histograma
+`{14:1, 15:2, 22:4, 23:7, 24:7, 25:7, 26:7, 27:8, 28:3, 29:12}`) — e os três residuais
+`src_ai_public_madras_*` caem nos *shards* 14 e 15 (índices 1445, 1503, 1578 de 3000).
+Ou seja: parar antes do *shard* 22 mede 3 das 58 falhas conhecidas e diria "0 erros" por
+não ter chegado nelas. **Só uma corrida completa dos 30 shards fecha o critério**; uma
+parcial precisa declarar quantos shards cobriu e que a população de falha ficou de fora.
+
+Com essa ressalva registrada, os dois critérios do plano **não** foram atingidos: "≤ 0,1%
+em todas as faixas" falha em `150_299` e (por margem) em `300_PLUS`, e "erro em
+`calibration` restrito a `300_PLUS` cai a zero" não cai a zero. Antes da correção eram
+58/3000 em `calibration` (medido pelo scorer selado, `a1/cal-score`) e 2/2000 em
+`development` (`a1/dev-score`).
+
+**Identidade entregue (a única a conferir contra esta árvore).** O build regenera
+`inferenceCoreDigest` a partir dos bytes de todo `.ts` sob `src/inference` mais
+`FIXED_CORE_FILES` (que inclui `contracts/content-composition.ts` e
+`src/shared/types.ts`), e `runtimeParityDigest` é derivado dele mais as coordenadas.
+Nada disso é editado à mão. Os valores abaixo saíram de
+`node scripts/runtime-parity.mjs write` (via `npm run build:model-benchmark`) sobre esta
+árvore, e ficam em `dist-model-benchmark/runtime-parity.json` — que é **ignorado pelo Git**,
+logo quem confere **regenera** em vez de confiar no arquivo em disco:
+
+| campo | antes de A2 (`6298269`) | entregue |
+|---|---|---|
+| `aggregationVersion` | `tmr-aggregation-v2` | `tmr-aggregation-v3` |
+| `contentCompositionVersion` | `lexical-content-v1` | `lexical-content-v1` (**inalterada**) |
+| `inferenceCoreDigest` | `977bca0b…` | `82deb043…` |
+| `runtimeParityDigest` | `35f31b32…` | `6c5b6453…` |
+
+As duas colunas foram **recomputadas**, não copiadas: a coluna "antes de A2" é
+`buildRuntimeParityManifest` sobre os *blobs* de `6298269` extraídos com `git cat-file blob`
+(bytes brutos, LF — `git archive` aplicaria `core.autocrlf` e daria outro digest), e a
+coluna "entregue" é a saída do build desta árvore.
+
+**Três identidades anteriores NÃO são a entregue, e nenhuma deve ser usada para conferir:**
+`benchmark/out/rebuild-v3/a2/dev-score` foi feita com `runtimeParityDigest` `e55472e7…`
+(`inferenceCoreDigest` `647123a0…`); `a2/dev-score-final` com `61c5ff19…` (`145cc989…`) —
+que é exatamente a identidade do commit `0e4231c`, a **primeira** entrega de A2; e
+`a2-fix/dev-score` com `897b1b49…` (`d117f372…`), que era a identidade **antes** da
+reversão de `contentCompositionVersion` descrita adiante. Quem conferir contra qualquer um
+dos três vai concluir *drift* onde não há.
 
 **Confirmação fim-a-fim em `development`** (Chrome for Testing 150.0.7871.129 travado,
-extensão candidata, ONNX INT8 real; `runtimeParityDigest`
-`61c5ff19febbb5daf952d7fe7cea6d570f3a3d91b3d0e42cfe39abf3a544dae4`, o do bundle
-construído a partir desta árvore): 2000 linhas, **0 erros** (eram 2), 1963 `scored`,
-37 `abstained`. Comparando linha a linha com a corrida de A1 sobre o mesmo split:
-**1998 de 2000 idênticas** em todos os campos científicos (`status`,
-`documentRawScore`, `localizedRawScore`, `evidenceQuality`, `reasonCode`, `coverage`,
-`failureDetail`) e as duas que mudaram são exatamente as que falhavam. O documento de 9
-candidatas (`src_ptso_9b3e98994bb0`) manteve `documentRawScore`
-`0.00011800936275887046` e `coverage` `0.8989952406134321` bit a bit, pagando 8
-inferências em vez de 9 — latência 17070 ms → 14069 ms. Duas corridas independentes
-com bundles diferentes só por um comentário deram 2000/2000 idênticas, o que também
-mede a determinismo do caminho.
+extensão candidata, ONNX INT8 real — `runtimeParityDigest` `897b1b49…`, corrida **completa**
+em `benchmark/out/rebuild-v3/a2-fix/dev-score`, `manifest.json` com `shardCount` 20 e
+`createdAt` `2026-07-27T11:40:39.208Z`). Todo número deste parágrafo saiu **desta**
+corrida, não de nenhuma anterior.
+
+> **Ressalva de identidade, e ela é obrigatória (R7).** Esta corrida foi feita **antes** da
+> reversão de `contentCompositionVersion`, sob `897b1b49…`. A identidade desta árvore é
+> `6c5b6453…`. Os números abaixo continuam sendo o comportamento **desta** árvore, e a razão
+> é verificável, não uma suposição: `CONTENT_COMPOSITION_VERSION` tem **um único** consumidor
+> executável, [`onnx-classifier.ts:320`](../../../src/inference/onnx-classifier.ts#L320), que
+> apenas o **carimba** no auto-relato de identidade; nenhuma janela, nenhum offset e nenhum
+> escore o leem. Mas **a conferência de identidade não vale mais**: quem repetir a corrida
+> tem de reconstruir o bundle desta árvore e conferir contra `6c5b6453…`. Tratar o par
+> `897b1b49…`/`a2-fix/dev-score` como a evidência desta árvore é o erro que esta ressalva
+> existe para impedir.
+
+- **2000 linhas** (20 shards × 100), `status`: **1963 `scored`, 37 `abstained`, 0
+  `error`** — eram 1961/37/**2** em `a1-fix/dev-score`.
+- Por faixa do `sizeBucket` da bancada, **0 erros em todas as seis**: `0_49` 0/37,
+  `50_79` 0/844, `80_99` 0/194, `100_149` 0/288, `150_299` 0/445, `300_PLUS` 0/192. A
+  faixa que falhava era `300_PLUS`, 2/192 = 1,042%. Tabela em
+  `benchmark/out/rebuild-v3/a2-fix/dev-bands.txt`.
+- Comparando **linha a linha** com `a1-fix/dev-score` sobre o mesmo split:
+  **1998 de 2000 idênticas** em todos os campos científicos (`status`,
+  `documentRawScore`, `localizedRawScore`, `evidenceQuality`, `reasonCode`, `coverage`,
+  `failureDetail`), e as duas que mudaram — `mix_src_ptso_ba63d1168aa2` e
+  `src_ptso_5d2158474eab` — são exatamente as que falhavam, cada uma passando de
+  `error`/`INFERENCE_FAILED`/`TOKEN_LIMIT_EXCEEDED` para `scored`/`SCORED` com
+  `coverage` 1. Saída em `benchmark/out/rebuild-v3/a2-fix/dev-comparison.txt`.
+
+Isso também mede que o incremento de carimbo de versão é inerte no comportamento: só o
+carimbo muda, e `identityMatchesParity` continua casando (se não casasse, as 2000 linhas
+sairiam `RUNTIME_PARITY_IDENTITY_MISMATCH`). É essa inércia medida — sobre as **duas**
+coordenadas, porque a corrida trazia `v3`/`v2` — que sustenta a ressalva acima: reverter
+uma das duas para `v1` não pode mudar escore, porque nem a `v2` mudava. O documento de 9
+candidatas
+(`src_ptso_9b3e98994bb0`) manteve `documentRawScore` `0.00011800936275887046` e
+`coverage` `0.8989952406134321` bit a bit, pagando 8 inferências em vez de 9 — latência
+**17070,1 ms → 15344,4 ms**, ambas as pontas lidas dos shards de `a1-fix/dev-score` e
+desta corrida `a2-fix/dev-score`. (Duas versões anteriores deste registro citaram aqui
+corridas que não eram a entregue: "17070 → 14069" é a intermediária `a2/dev-score`, e
+"17070 → 15092" é a intermediária `a2/dev-score-final`. As três medem a mesma queda de 9
+para 8 inferências; só esta usa o bundle entregue.) Latência de uma única página não é
+número publicável (R8); é diagnóstico de custo.
+
+**Disposição explícita dos dois critérios não atingidos (R3: nada é afrouxado).** Os
+limites ficam como estão — "≤ 0,1% em **todas** as faixas" e "`calibration/300_PLUS` cai
+a **zero**" — e **A2 fica registrada como não concluída contra a sua própria definição de
+pronto**. São **três** passos de fechamento, e o primeiro é uma medição que falta, não um
+defeito a corrigir:
+
+1. **Medir `calibration` fim-a-fim** com
+   `score --partition calibration --candidate-extension-dir dist-model-benchmark` sobre um
+   bundle cuja identidade seja conferida contra `dist-model-benchmark/runtime-parity.json`.
+   Isto é **obrigatório e não substituível**: o residual `3/3000` que este registro cita é
+   de varredura vitest, que não observa `WASM_OOM`, `MODEL_TIMEOUT` nem
+   `NON_FINITE_SCORE`, e a corrida tem de ser **completa** (30 shards) porque 55 das 58
+   falhas conhecidas ficam nos shards 22–29. Até essa corrida existir, a metade
+   `calibration` do critério não tem número, e escrever um seria inventá-lo.
+2. **A5 corrige o *coarse fallback*** (`segmentBasicWords` espelhando
+   `tokenize_chinese_chars`, ver o parágrafo seguinte) e **os ids da tabela de disposição
+   acima são medidos de novo** — os três que falham hoje
+   (`src_ai_public_madras_961c462e650f`, `…_a48e8a49816d`, `…_be8b62bfe739`) **e** os dois
+   latentes (`…_5a06a06a65c4`, `mix_src_wikipedia_pt_d3e3087c4ae9`), que hoje só pontuam por
+   caberem numa janela e voltariam a falhar se crescessem. Com offsets sãos, o corte
+   determinístico se aplica e a expectativa é que passem a pontuar; **expectativa não é
+   medição** — quem fechar A5 mede. `mix_src_wikipedia_pt_d3e3087c4ae9` é o único dos cinco
+   que **não** sai por D2, então é ele que faz esta linha ser obrigatória.
+3. **D2 remove `madras` da v3.** Quatro dos cinco residuais são `src_ai_public_madras_*`, e
+   `madras` é conjunto externo que D2 mantém fora do corpus v3. Depois de D2 a medição
+   tem de ser **repetida sobre o corpus pós-D2**, e o critério é avaliado ali; herdar o
+   número de qualquer medição anterior seria avaliar um corpus que já não existe.
+
+Enquanto os três não fecharem, o critério permanece **não atingido** e assim declarado.
+A redução medida em `development` (2 → 0 sobre 2000 linhas, scorer selado — mas sob
+`897b1b49…`, ver a ressalva de identidade acima) é mitigação real e verificada, e a redução
+em `calibration` (58 → 3) é real na bancada que a mediu; **nenhuma das duas é o critério.**
+
+**E o critério não morre com A2.** Ele reaparece duas vezes a jusante, sem depender desta
+seção: em **H3** como gate de publicação ("limite de erro de inferência **por comprimento**")
+e em **I1** como condição de promoção a `indicator` ("erro de inferência `<= 0,001` no
+replay" de `dev + cal-A + cal-B`). Fechar A2 mais tarde é atraso; **não** fechar o número
+antes de H3/I1 é reprovação mecânica. Quem herdar isto não precisa reabrir A2 para descobrir
+que o número é devido.
 
 **A causa dos três residuais é outro defeito, e não é de A2:** `segmentBasicWords`
 (`model-runtime.ts`) não espelha `tokenize_chinese_chars: true` do
@@ -692,21 +925,136 @@ documentos em `development` + `calibration` (7 + 14), todos `madras` ou
 `contentCompositionVersion` e exige o mapa `normalizado → original`), e a fonte
 `madras` sai da v3 por D2. Fica registrado, não corrigido aqui.
 
-**Divergência deliberada: `contentCompositionVersion` NÃO foi incrementada.** Três
-razões medidas. (a) O campo é definido em `contracts/content-composition.ts` como a
-versão da decomposição em unidades lexicais, e o item 2 não toca nessa função; A5 é a
-tarefa que muda composição pré-tokenização de verdade e já carrega o incremento — dois
-incrementos deixariam a `v2` significando "nada mudou na composição". (b) A identidade
-que muda de fato já mudou, sozinha e honestamente:
-`inferenceCoreDigest` inventaria todo `.ts` sob `src/inference`, então
-`runtimeParityDigest` mudou e todo manifesto de predição o registra. (c) Não há nada
-para invalidar: `models/cleanfeed-ptbr-v1/release.json` tem `profileDigests: []` e
-`gateDecision: "pending"`, e o corte só afeta documentos que **não** produziam escore
-nenhum — nenhum documento que já pontuava muda de escore. O incremento é uma linha em
-`contracts/content-composition.ts` mais 46 arquivos que fixam a string, e não é
-substituição cega: `tests/unit/contracts/runtime-parity.test.ts:76` usa
-`lexical-content-v2` justamente como o valor **divergente** de um teste de *drift*, que
-teria de passar a um terceiro valor.
+A evidência bruta desse diagnóstico está em `benchmark/out/rebuild-v3/a2/coarse-cause.txt`
+(uma linha por documento, com `firstPieces` vs `words` e a primeira palavra em que os
+fluxos divergem) e o teste que a produziu em
+`benchmark/out/rebuild-v3/a2/lab/zz-a2-coarse.test.ts.txt`. **`benchmark/out/` é ignorado
+pelo Git** (`.gitignore:24`), então A5 **não pode depender** de esses arquivos existirem:
+o `.txt` no `lab/` é o código-fonte do teste, guardado ali justamente para que a medição
+seja **regenerável** — copie-o para `tests/unit/inference/` (ou equivalente), rode, apague.
+A conclusão que importa e que não depende do arquivo: `segmentBasicWords` produz mais
+primeiras-peças do que palavras em texto com CJK, e é essa dessincronia que derruba
+`deriveWordPieceOffsets` no *coarse fallback*.
+
+**`contentCompositionVersion` NÃO foi incrementada, e a `v2` que uma entrega intermediária
+gastou foi REVERTIDA para `lexical-content-v1`.** Vale a pena registrar o vai-e-vem, porque
+ele é instrutivo: a primeira entrega deixou em `v1` e escreveu aqui a própria dispensa; uma
+revisão de spec exigiu o incremento, corretamente, porque **o plano mandava** ("incrementar
+`contentCompositionVersion`", item 2); e o incremento foi então revertido porque **o plano
+nomeava a coordenada errada**. A instrução era a autoridade certa apontando para o campo
+errado, e a própria nota de atenção do item 2 já apontava para o certo: "mudar a política de
+janelas muda `aggregationVersion` e o `inferenceCoreDigest`". O item 2 do plano foi corrigido
+nesta mesma entrega.
+
+**A razão é o que a constante versiona.** `CONTENT_COMPOSITION_VERSION` versiona *como um
+texto se decompõe em unidades classificadas* — o cabeçalho de
+[`contracts/content-composition.ts`](../../../contracts/content-composition.ts) diz
+literalmente "the single, versioned definition of how a text is decomposed into **classified
+units**", com a precedência URL → hashtag → só-emoji → lexical → other, produzindo
+`totalUnits`/`lexicalUnits`/`lexicalRatio` e alimentando `src/inference/eligibility.ts`.
+Aparar `window.tokenEnd` é **janela de tokenizer**: não muda `lexicalRatio`, não muda
+elegibilidade, não muda a decomposição. É verdade — e continua verdade — que o campo é
+também **coordenada de identidade** gravada por `contracts/calibration-profile.ts`,
+`contracts/model-release.ts` e `contracts/runtime-parity.ts` e comparada por
+`identityMatchesParity` (`src/model-benchmark/main.ts:344`); mas ser coordenada de identidade
+não o torna o carimbo de *qualquer* mudança. O carimbo da mudança de A2 é
+`aggregationVersion`, que É a coordenada de identidade da regra de agregação e foi
+incrementada.
+
+**A consequência a jusante é o motivo real de a reversão não ser cosmética: `lexical-content-v2`
+pertence a A5.** A5 (NFKC + remoção de largura zero + mapeamento de homóglifos) **é** mudança
+de composição de conteúdo: altera a decomposição em unidades e o `lexicalRatio`. Se A2
+gastasse a `v2`, A5 iria para `v3` e o histórico de versão atribuiria a mudança de composição
+à causa errada, para sempre. O critério de saída de A5 continua sendo "a versão de composição
+foi incrementada", e o número que ela incrementa é **`v1` → `v2`**.
+
+**O que o incremento arrastou, medido, para quem repetir a operação.** **52** arquivos
+rastreados fora de `docs/` fixam a string de agregação, e a substituição **não** é cega: três
+testes usavam justamente o novo valor como o valor **divergente** de um teste de *drift*, e a
+substituição os tornaria silenciosamente iguais ao valor base — provando nada.
+`tests/unit/contracts/runtime-parity.test.ts` ("binds every identity field into the
+digest") e `tests/unit/storage/cache.test.ts` ("changes when any sealing coordinate…")
+passaram a derivar o mutante do próprio valor base com sufixo `-mutated`, o que não pode
+colidir com um incremento futuro; `tests/unit/inference/calibration-registry.test.ts`
+passou a `tmr-aggregation-v3-other`. Além disso, os `profileDigest` das fixtures em
+`tests/fixtures/model-release/**` são o SHA-256 canônico do perfil **incluindo** as duas
+coordenadas, então foram recomputados (e com eles `release.calibrationSetDigest`); sem
+isso 34 testes em 7 arquivos ficam vermelhos com `profileDigest does not match the
+canonical digest`. Os dois planos de 2026-07-19 (fases 1 e 4) ainda citam
+`tmr-aggregation-v2` / `lexical-content-v1` em trechos de código: são **registro
+histórico** do que aquelas fases especificaram e não foram reescritos.
+
+**A reversão da composição arrastou a mesma cadeia, e recomputá-la é o trabalho de verdade.**
+Voltar a `lexical-content-v1` moveu os oito digests derivados de novo — cinco `profileDigest`
+e três `calibrationSetDigest` em `tests/fixtures/model-release/**` —, e eles foram
+**recomputados com as próprias funções do contrato** (`computeCalibrationProfileDigest` e
+`computeCalibrationSetDigest` de `contracts/calibration-profile.ts`), nunca escritos à mão:
+canonicalização à mão é exatamente como se produz um digest que passa no olho e falha no
+parser. Os valores **não** voltaram aos de `0e4231c`, porque `aggregationVersion` continua em
+`v3` — a coordenada revertida é uma das duas que entram no mesmo SHA. Uma ressalva de
+ambiente que custa tempo se for ignorada: este repositório tem `core.autocrlf=true` e nenhum
+`.gitattributes`, então `git archive` **converte para CRLF** e qualquer digest calculado sobre
+essa extração está errado; para comparar identidades entre commits, extraia com
+`git cat-file blob` (bytes brutos). Uma cópia não rastreada também tinha de ser ressincronizada:
+`public/models/cleanfeed-ptbr-v1/cleanfeed-model.json` é o mesmo objeto que
+`package-own-model.mjs` escreve nos dois destinos, e enquanto ela ficou em `v2`
+`npm run model:verify` reprovava com `MANIFEST_FIELD_INVALID`.
+
+**Contabilidade de janelas: a guarda que a torna um contrato.** O requisito 3 do item 1
+exige que `candidateWindowCount`, `truncated` e os índices originais sobrevivam até o
+relatório. Uma `selection` **fornecida** é a afirmação de que as janelas pontuadas são
+exatamente as que ela escolheu; se for falsa, esses três campos descrevem um subconjunto
+diferente do que o modelo viu, que é precisamente a perda de informação que o requisito
+proíbe. Por isso a agregação falha fechado com `WINDOW_SELECTION_MISMATCH` em vez de
+discordar em silêncio — é a aplicação do requisito 3, não um recurso extra. Registrado
+aqui porque o código foi adicionado a `contracts/failure-detail.ts`, arquivo fora da
+lista de A2.
+
+**Desvio ABERTO e NÃO RATIFICADO, registrado para não ser re-litigado do zero.** Uma
+revisão de conformidade exigiu **remover** essa guarda e o seu código, "mantendo o
+comportamento anterior para uma seleção malformada", a menos que o desvio fosse
+ratificado. A guarda foi **mantida** e a razão é factual, não preferência: *não existe*
+comportamento anterior a manter. `git show 0e4231c^:src/inference/aggregator.ts` mostra a
+assinatura `aggregateWindowsV2(windows: WindowScore[], totalTokenCount: number)` — sem
+parâmetro de opções e sem qualquer forma de fornecer uma seleção —, e o corpo fazia
+`selection.selectedIndices.map((index) => windows.find(...)!)`, uma asserção non-null que
+colocaria `undefined` no array pontuado. Remover a guarda, portanto, **não restaura** nada:
+cria um caminho novo em que `candidateWindowCount`, `truncated` e `selectedWindowIndices`
+descrevem um subconjunto e `coverage` é computado sobre outro. Quem tiver autoridade sobre
+o plano decide: se a remoção for ratificada, são duas deleções pequenas (o ramo em
+`aggregator.ts` e a entrada em `contracts/failure-detail.ts`). Até lá isto fica como
+desvio aberto, com a evidência acima, e **não** como pendência silenciosa.
+
+**LACUNA DE PARIDADE DE RUNTIME — o achado mais importante desta entrega, e não é de A2.
+Endereçada em F1.** A2 corrigiu o caminho da **bancada**
+(`src/model-benchmark/main.ts:261,272`, que usa `buildContentWindows` + `fitWindowSlice`). O
+caminho do **runtime** ficou como estava, em dois lugares:
+
+- [`inference-worker.ts:27`](../../../src/inference/inference-worker.ts#L27) importa
+  `createTextChunks` e [`:331`](../../../src/inference/inference-worker.ts#L331) o chama para
+  montar os chunks; o laço então infere **todo** chunk e só
+  [`:520`](../../../src/inference/inference-worker.ts#L520) chama `aggregateWindowsV2` — sem
+  `options`, portanto **sem seleção prévia** — e em nenhum ponto passa por `fitWindowSlice`.
+  Os DOIS defeitos que A2 corrigiu continuam ali.
+- [`model-smoke/main.ts:175-224`](../../../src/model-smoke/main.ts#L175) tem um construtor de
+  janelas **privado** (`buildWindows`) e um `scoreDocument` que fatia o texto direto dos
+  offsets, também **sem aparagem**.
+- [`chunker.ts:137-142`](../../../src/inference/chunker.ts#L137) já reconhece a duplicação em
+  comentário, o que é honesto e não é conserto.
+
+**Consequência exata, sem eufemismo:** o documento que perdia o escore por **um** token
+continua perdendo-o na extensão. A mitigação medida vale para a bancada; o produto não a
+tem. Nenhum dos dois arquivos está na lista de **Arquivos** de A2, então isto é **registro**,
+não escopo desta tarefa — e F1 já tem o critério exato que o fecha: "a política de janelas do
+treino e a do runtime são lidas da **mesma fonte**, e existe teste que prova a equivalência".
+`inference-worker.ts` e `model-smoke/main.ts` devem entrar na lista de arquivos de F1.
+
+**A tensão honesta, e as duas metades são verdadeiras.** A primeira entrega de A2 deduplicou
+o `model-smoke`; a dedução foi **revertida**, e a reversão foi **certa** para o escopo de A2
+(a única cobertura executável daquele arquivo é um spec de Playwright fora da verificação
+desta tarefa, então a mudança seria feita às cegas). A mesma reversão **restaura uma
+duplicação que F1 precisa matar**. Registrar as duas coisas é o ponto: quem fizer F1 não deve
+descobrir a duplicação como surpresa, nem tratá-la como negligência de A2.
 
 ### A3 — Erro de inferência deixa de virar verdadeiro negativo
 
@@ -1766,7 +2114,15 @@ proveniência real** (D4).
 **Arquivos:** `benchmark/lab/train_detector.py`,
 `benchmark/lab/windowing.py`, `benchmark/lab/test_windowing.py`,
 `src/inference/chunker.ts`, `src/inference/aggregator.ts`,
-`contracts/runtime-parity.ts`.
+`contracts/runtime-parity.ts`, **`src/inference/inference-worker.ts`**,
+**`src/model-smoke/main.ts`**.
+
+Os dois últimos entraram por causa da **lacuna de paridade de runtime** registrada em A2:
+`inference-worker.ts` ainda infere todo chunk sem seleção prévia e sem `fitWindowSlice`
+(`:27`, `:331`, `:520`), e `model-smoke/main.ts:175-224` mantém um construtor de janelas
+privado, também sem aparagem. "Mesma fonte" é literal: enquanto esses dois lerem a política de
+outro lugar, o critério de F1 não está atendido, e o documento que A2 salvou na bancada
+continua perdido no produto.
 
 **Verificar:** `python -m unittest benchmark/lab/test_windowing.py`, `vitest run
 tests/unit/inference/aggregator.test.ts` e `npm run test:model-benchmark`; os mesmos

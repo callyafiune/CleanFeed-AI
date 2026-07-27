@@ -631,7 +631,7 @@ function decideBundle(
   registry: CalibrationRegistry | undefined,
 ): ProfileDecision {
   const aggregation = base.aggregation ?? {
-    version: "tmr-aggregation-v2" as const,
+    version: "tmr-aggregation-v3" as const,
     documentRawScore: base.aiScore,
     localizedRawScore: base.aiScore,
     coverage: 0,

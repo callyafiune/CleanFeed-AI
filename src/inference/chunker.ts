@@ -134,9 +134,12 @@ export interface ContentWindowPlan {
  * {@link selectDistributedWindows} keeps it, so an aggregation over a selected
  * subset still names the originals.
  *
- * It lives here, beside the selection policy, because two scoring harnesses used
- * to carry private copies of this loop — and a window tiling that drifts between
- * harnesses silently changes what a benchmark measured.
+ * It lives here, beside the selection policy, so the tiling and the truncation
+ * that consumes it cannot drift apart. NOTE, honestly: `src/model-smoke/main.ts`
+ * still carries a byte-identical private copy of this loop. Removing it is a
+ * one-line change but it is not A2's file, and its only executable coverage is a
+ * Playwright spec outside this task's verification, so the duplication is
+ * recorded here rather than fixed on a typecheck.
  */
 export function buildContentWindows(
   totalTokenCount: number,
@@ -172,13 +175,6 @@ export interface FittedWindowSlice {
 }
 
 /**
- * How many times the fitter may re-measure one window. Each attempt removes the
- * measured excess, so a real overflow converges in two; the cap only bounds the
- * pathological case where removing tokens does not shorten the slice.
- */
-const MAX_SLICE_FIT_ATTEMPTS = 8;
-
-/**
  * Builds the text slice for one window and, when that slice re-encodes to MORE
  * content tokens than the model can accept, drops content tokens from the END —
  * deterministically, by the measured excess — until it fits.
@@ -209,11 +205,25 @@ export function fitWindowSlice(
   countContentTokens: (slice: string) => number,
 ): FittedWindowSlice {
   let tokenEnd = window.tokenEnd;
-  for (let attempt = 0; attempt < MAX_SLICE_FIT_ATTEMPTS; attempt += 1) {
+  // The loop terminates on its REAL condition — the token cursor reaching the
+  // window's own start — and on nothing else. `tokenEnd` strictly decreases by at
+  // least one every pass, so termination does not depend on an attempt budget; a
+  // budget would mislabel a slice that IS still reducible (a tokenizer that
+  // under-reports the excess converges one token at a time) as unshrinkable, and
+  // that mislabelling costs a document its score.
+  for (;;) {
     const start = offsets[window.tokenStart];
     const last = offsets[tokenEnd - 1];
+    // An interval outside the offset array means the caller and the tokenizer
+    // disagree about how many tokens exist. That is a different defect from a
+    // degenerate offset map, so it gets its own code rather than borrowing the
+    // "not reducible" one — one code for two causes is what made error rows
+    // undiagnosable before A1.
     if (start === undefined || last === undefined) {
-      break;
+      throw new CleanFeedError(
+        "INFERENCE_FAILED",
+        "WINDOW_OFFSETS_OUT_OF_RANGE",
+      );
     }
     const slice = text.slice(start.start, last.end);
     const count = countContentTokens(slice);
@@ -231,9 +241,11 @@ export function fitWindowSlice(
     // word), and a slice that did not shrink this step can still shrink the next.
     const nextEnd = tokenEnd - Math.max(1, count - maxContentTokens);
     if (nextEnd <= window.tokenStart) {
-      break;
+      throw new CleanFeedError(
+        "INFERENCE_FAILED",
+        "WINDOW_SLICE_NOT_REDUCIBLE",
+      );
     }
     tokenEnd = nextEnd;
   }
-  throw new CleanFeedError("INFERENCE_FAILED", "WINDOW_SLICE_NOT_REDUCIBLE");
 }

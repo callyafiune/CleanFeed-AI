@@ -34,7 +34,7 @@ import {
 } from "../../helpers/model-fixtures";
 
 const aggregation: AggregationResultV2 = {
-  version: "tmr-aggregation-v2",
+  version: "tmr-aggregation-v3",
   documentRawScore: 0.95,
   localizedRawScore: 0.96,
   coverage: 1,

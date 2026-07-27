@@ -19,7 +19,7 @@ function result(): ClassificationResult {
     tokenCount: 200,
     language: "pt",
     aggregation: {
-      version: "tmr-aggregation-v2",
+      version: "tmr-aggregation-v3",
       documentRawScore: 0.96,
       localizedRawScore: 0.98,
       coverage: 1,

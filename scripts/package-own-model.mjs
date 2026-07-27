@@ -134,7 +134,7 @@ function main() {
     task: "text-classification",
     backend: "transformers-onnx",
     modelFile: "onnx/model_int8.onnx",
-    aggregationVersion: "tmr-aggregation-v2",
+    aggregationVersion: "tmr-aggregation-v3",
     contentCompositionVersion: "lexical-content-v1",
     tokenizerDigest,
     windowing: {
@@ -159,7 +159,7 @@ function main() {
     modelVersion,
     bundleDigest,
     tokenizerDigest,
-    aggregationVersion: "tmr-aggregation-v2",
+    aggregationVersion: "tmr-aggregation-v3",
     contentCompositionVersion: "lexical-content-v1",
     calibrationSetDigest: EMPTY_CALIBRATION_SET_DIGEST,
     profileDigests: [],

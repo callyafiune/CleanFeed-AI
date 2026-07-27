@@ -82,13 +82,17 @@ describe("aggregateWindowsV2 failure codes", () => {
     }
   });
 
-  // The two windowing guards A2 added. The long-document remedy — dropping
-  // content tokens from the end of a window — has one case where it cannot work
-  // (offsets that map every token to the whole text), and that case must be
-  // countable as itself rather than reported as the token-limit overflow that
-  // triggered it.
-  it("names the unshrinkable window slice and the selection mismatch", () => {
+  // The three windowing guards A2 added. The long-document remedy — dropping
+  // content tokens from the end of a window — has two cases where it cannot work
+  // (offsets that map every token to the whole text, and an interval the offset
+  // array cannot address), and each must be countable as ITSELF rather than as
+  // the token-limit overflow that triggered it or as each other.
+  it("names the unshrinkable window slice, the bad interval and the selection mismatch", () => {
     const text = Array.from({ length: 12 }, (_, i) => `t${i}`).join(" ");
+    const sound = [...text.matchAll(/\S+/gu)].map((match) => ({
+      start: match.index,
+      end: match.index + match[0].length,
+    }));
     const coarse = Array.from({ length: 12 }, () => ({
       start: 0,
       end: text.length,
@@ -98,6 +102,15 @@ describe("aggregateWindowsV2 failure codes", () => {
         text,
         coarse,
         { index: 0, tokenStart: 0, tokenEnd: 12 },
+        4,
+        (slice) => slice.trim().split(/\s+/u).length,
+      ),
+    );
+    const outOfRangeInterval = detailOf(() =>
+      fitWindowSlice(
+        text,
+        sound,
+        { index: 0, tokenStart: 0, tokenEnd: sound.length + 2 },
         4,
         (slice) => slice.trim().split(/\s+/u).length,
       ),
@@ -118,12 +131,16 @@ describe("aggregateWindowsV2 failure codes", () => {
     );
 
     expect(notReducible).toBe("WINDOW_SLICE_NOT_REDUCIBLE");
+    expect(outOfRangeInterval).toBe("WINDOW_OFFSETS_OUT_OF_RANGE");
     expect(mismatch).toBe("WINDOW_SELECTION_MISMATCH");
-    expect(isSanitizedFailureDetail(notReducible)).toBe(true);
-    expect(isSanitizedFailureDetail(mismatch)).toBe(true);
-    // Neither may degrade to the opaque code the detail field exists to replace.
-    expect(notReducible).not.toBe(UNCLASSIFIED_FAILURE_DETAIL_CODE);
-    expect(mismatch).not.toBe(UNCLASSIFIED_FAILURE_DETAIL_CODE);
+    // Three distinct details, so a scored artifact can COUNT them apart.
+    expect(new Set([notReducible, outOfRangeInterval, mismatch]).size).toBe(3);
+    // None may degrade to the opaque code the detail field exists to replace —
+    // which is what a code missing from the shared allowlist would produce.
+    for (const detail of [notReducible, outOfRangeInterval, mismatch]) {
+      expect(isSanitizedFailureDetail(detail)).toBe(true);
+      expect(detail).not.toBe(UNCLASSIFIED_FAILURE_DETAIL_CODE);
+    }
   });
 
   it("keeps the coded error class so existing recovery still recognizes it", () => {

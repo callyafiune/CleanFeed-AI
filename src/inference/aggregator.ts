@@ -13,14 +13,34 @@ export interface WindowScore {
   rawScore: number;
 }
 
-/** The version stamp of this aggregation rule; part of the calibration key. */
-export const AGGREGATION_VERSION = "tmr-aggregation-v2" as const;
+/**
+ * The version stamp of this aggregation rule; part of the calibration key.
+ *
+ * `v3` is A2's window policy: the selection may happen before inference (which
+ * changes no output), and a window's `tokenEnd` may be REDUCED so its re-encoded
+ * slice fits the model's token budget (`fitWindowSlice`, in `chunker.ts`). A
+ * reduced `tokenEnd` shrinks that window's share in `uniqueTokenWeights`, which
+ * moves `documentRawScore` and `coverage` — and it also converts what used to be
+ * an inference error into a score. `truncated` is NOT affected: it is returned
+ * verbatim from `selection.truncated`, a property of window SELECTION, not of
+ * slice fitting. So scores produced under `v3` are not interchangeable with `v2`.
+ * `aggregator.test.ts` binds this constant to the sealed manifest's coordinate,
+ * so a one-sided bump is a red test rather than a scoring-time identity mismatch.
+ */
+export const AGGREGATION_VERSION = "tmr-aggregation-v3" as const;
 
 /**
  * FALLBACK window budget, for the callers that hold no manifest. The sealed
  * `manifest.windowing.maxWindows` is AUTHORITATIVE and must be passed through
  * {@link AggregateWindowsOptions}; this constant only keeps the uncalibrated
- * demonstration paths working, and it must stay equal to the sealed value.
+ * demonstration paths working.
+ *
+ * It must stay equal to the sealed value, and that is a BOUND contract, not a
+ * declaration: `aggregator.test.ts` asserts equality against
+ * `bundledModelManifest.windowing.maxWindows` rather than the literal, so
+ * changing the sealed budget turns that test red instead of leaving the
+ * production worker and the smoke harness silently on the old number. This module
+ * cannot import the manifest itself — it must stay free of bundle state.
  */
 export const FALLBACK_MAX_AGGREGATION_WINDOWS = 8;
 
@@ -87,8 +107,11 @@ export function aggregateWindowsV2(
   }
   // A SUPPLIED selection is a claim that `windows` are exactly the windows it
   // chose — the claim a caller makes when it selected before inferring. If it is
-  // false the aggregation would score a different subset than the one the report
-  // accounts for, so it fails closed instead of quietly disagreeing.
+  // false, `candidateWindowCount`, `truncated` and `selectedWindowIndices` below
+  // describe a DIFFERENT subset than the model actually saw, and `coverage` is
+  // computed over intervals that were never scored. Preserving that accounting is
+  // the whole point of selecting before inference, so the disagreement fails
+  // closed here rather than being published as a quietly wrong report.
   if (
     selected.length !== selection.selectedIndices.length ||
     (options.selection !== undefined && selected.length !== windows.length)

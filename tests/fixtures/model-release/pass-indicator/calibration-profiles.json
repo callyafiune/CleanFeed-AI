@@ -11,7 +11,7 @@
       "platform": "windows-x64",
       "locale": "pt-BR",
       "lengthBucket": "200-plus",
-      "aggregationVersion": "tmr-aggregation-v2",
+      "aggregationVersion": "tmr-aggregation-v3",
       "contentCompositionVersion": "lexical-content-v1",
       "datasetDigest": "1111111111111111111111111111111111111111111111111111111111111111",
       "splitDigest": "2222222222222222222222222222222222222222222222222222222222222222",
@@ -92,7 +92,7 @@
         "criticalRecallSlices": {}
       },
       "actionCeiling": "hide",
-      "profileDigest": "d1cead41007ebf3fcacfb899956b54016e4279141d91e19b618a72b35be672d9"
+      "profileDigest": "2f5f549ff157dcd72c3463795e8d366cfc28a43afa3fa00ad62fbd1b0f48a48d"
     },
     {
       "schemaVersion": 1,
@@ -104,7 +104,7 @@
       "platform": "windows-x64",
       "locale": "pt-BR",
       "lengthBucket": "50-79",
-      "aggregationVersion": "tmr-aggregation-v2",
+      "aggregationVersion": "tmr-aggregation-v3",
       "contentCompositionVersion": "lexical-content-v1",
       "datasetDigest": "1111111111111111111111111111111111111111111111111111111111111111",
       "splitDigest": "2222222222222222222222222222222222222222222222222222222222222222",
@@ -185,7 +185,7 @@
         "criticalRecallSlices": {}
       },
       "actionCeiling": "indicator",
-      "profileDigest": "6960e02a1488df024b2e27156068ab2d5a5888a9cd82918bcb94d951711b98d9"
+      "profileDigest": "583c38d37317d4c3c7ba6c0bd1c53f57a7e0b97ecf0e29049d72200c0ad85262"
     }
   ]
 }

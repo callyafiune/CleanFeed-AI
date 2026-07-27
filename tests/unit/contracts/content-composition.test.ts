@@ -5,6 +5,10 @@ import {
   classifyContentUnit,
   computeContentComposition,
 } from "../../../contracts/content-composition";
+import {
+  bundledModelManifest,
+  bundledReleaseDescriptor,
+} from "@/inference/bundled-model-metadata";
 import { evaluateEligibility } from "@/inference/eligibility";
 import type { EligibilityInput } from "@/inference/eligibility";
 
@@ -17,6 +21,20 @@ const MIXED_FIXTURE =
 describe("CONTENT_COMPOSITION_VERSION", () => {
   it("is the sealed lexical content version", () => {
     expect(CONTENT_COMPOSITION_VERSION).toBe("lexical-content-v1");
+  });
+
+  // The constant and the sealed manifest are two halves of ONE coordinate:
+  // `identityMatchesParity` (src/model-benchmark/main.ts) compares the runtime
+  // identity built from the manifest against the parity manifest derived from it,
+  // and the runtime composition is this constant. Pinning the literal alone left
+  // "they must stay equal" as prose; this makes a one-sided bump a red test.
+  it("equals the sealed bundle manifest's composition coordinate", () => {
+    expect(CONTENT_COMPOSITION_VERSION).toBe(
+      bundledModelManifest.contentCompositionVersion,
+    );
+    expect(CONTENT_COMPOSITION_VERSION).toBe(
+      bundledReleaseDescriptor.contentCompositionVersion,
+    );
   });
 });
 

@@ -103,7 +103,7 @@ const EXPECTED_MANIFEST_FIELDS = Object.freeze({
   task: "text-classification",
   backend: "transformers-onnx",
   modelFile: "onnx/model_int8.onnx",
-  aggregationVersion: "tmr-aggregation-v2",
+  aggregationVersion: "tmr-aggregation-v3",
   contentCompositionVersion: "lexical-content-v1",
 });
 

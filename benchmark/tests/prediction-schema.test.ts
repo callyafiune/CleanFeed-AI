@@ -226,7 +226,7 @@ function validManifest() {
     modelId: "cleanfeed-ptbr-v1",
     modelVersion: "d8f77f870fbd35a17add2498b73d906bbc299026",
     bundleDigest: "b".repeat(64),
-    aggregationVersion: "tmr-aggregation-v2",
+    aggregationVersion: "tmr-aggregation-v3",
     contentCompositionVersion: "lexical-content-v1",
     tokenizerDigest: "c".repeat(64),
     runtimeParityDigest: "d".repeat(64),

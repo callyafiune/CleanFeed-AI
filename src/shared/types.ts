@@ -154,7 +154,7 @@ export interface ChunkResult {
  * MUST never enter a decision formula.
  */
 export interface AggregationResultV2 {
-  version: "tmr-aggregation-v2";
+  version: "tmr-aggregation-v3";
   documentRawScore: number;
   localizedRawScore: number;
   coverage: number;

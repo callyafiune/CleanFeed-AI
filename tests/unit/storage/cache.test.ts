@@ -250,7 +250,7 @@ const bundleIdentity: RuntimeModelIdentity = {
   modelVersion: "d8f77f870fbd35a17add2498b73d906bbc299026",
   bundleDigest: "a".repeat(64),
   tokenizerDigest: "c".repeat(64),
-  aggregationVersion: "tmr-aggregation-v2",
+  aggregationVersion: "tmr-aggregation-v3",
   contentCompositionVersion: "lexical-content-v1",
   calibrationSetDigest: "b".repeat(64),
 };
@@ -275,16 +275,21 @@ describe("buildRuntimeModelKey", () => {
         tokenizerDigest: "0".repeat(64),
       }),
     ).not.toBe(base);
+    // Derived from the identity under test rather than written as a rival
+    // version literal: A2 bumped the real aggregation coordinate to
+    // `tmr-aggregation-v3`, which made the previous literal here EQUAL to the
+    // base and the mutation prove nothing. A suffix cannot collide with a bump of
+    // either coordinate.
     expect(
       buildRuntimeModelKey({
         ...bundleIdentity,
-        aggregationVersion: "tmr-aggregation-v3",
+        aggregationVersion: `${bundleIdentity.aggregationVersion}-mutated`,
       }),
     ).not.toBe(base);
     expect(
       buildRuntimeModelKey({
         ...bundleIdentity,
-        contentCompositionVersion: "lexical-content-v2",
+        contentCompositionVersion: `${bundleIdentity.contentCompositionVersion}-mutated`,
       }),
     ).not.toBe(base);
     expect(

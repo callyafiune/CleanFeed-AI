@@ -4,12 +4,12 @@
   "modelVersion": "d8f77f870fbd35a17add2498b73d906bbc299026",
   "bundleDigest": "2d47d6f3e0a6f2c7836b03c9a47b1b81f6c34159aa35ae1bdffe3507e4dc25bc",
   "tokenizerDigest": "2e3bc97587671b43d32a68bd134abea67f4a3aaaee8a65f7a1f923449ee13135",
-  "aggregationVersion": "tmr-aggregation-v2",
+  "aggregationVersion": "tmr-aggregation-v3",
   "contentCompositionVersion": "lexical-content-v1",
-  "calibrationSetDigest": "39fc82de3ca510b06f7e2f5e950d66dcfe89940dd408ad77395ffa0805bdd5d2",
+  "calibrationSetDigest": "c271cbb897ba70e846c5dfb47939be98cd9f92865d2a4813a1928c3aa6a76c65",
   "profileDigests": [
-    "d1cead41007ebf3fcacfb899956b54016e4279141d91e19b618a72b35be672d9",
-    "6960e02a1488df024b2e27156068ab2d5a5888a9cd82918bcb94d951711b98d9"
+    "2f5f549ff157dcd72c3463795e8d366cfc28a43afa3fa00ad62fbd1b0f48a48d",
+    "583c38d37317d4c3c7ba6c0bd1c53f57a7e0b97ecf0e29049d72200c0ad85262"
   ],
   "rolloutState": "indicator",
   "gateDecision": "pass",

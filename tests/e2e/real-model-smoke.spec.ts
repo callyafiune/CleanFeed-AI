@@ -135,7 +135,7 @@ test.describe("real TMR model smoke (offline Chrome)", () => {
             EXPECTED_TOKENIZER_DIGEST,
           );
           expect(report.runtimeIdentity.aggregationVersion).toBe(
-            "tmr-aggregation-v2",
+            "tmr-aggregation-v3",
           );
         }
         expect(report.exactTokenizer).toBe(true);

@@ -41,7 +41,7 @@ function identity(overrides: Partial<HoldoutIdentity> = {}): HoldoutIdentity {
     modelId: "cleanfeed-ptbr-v1",
     modelVersion: "1.0.0",
     bundleDigest: hex("bundle"),
-    aggregationVersion: "tmr-aggregation-v2",
+    aggregationVersion: "tmr-aggregation-v3",
     contentCompositionVersion: "lexical-content-v1",
     tokenizerDigest: hex("tokenizer"),
     runtimeParityDigest: hex("runtime-parity"),
