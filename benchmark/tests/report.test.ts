@@ -15,6 +15,7 @@ import {
 } from "../report.ts";
 import type { SliceSummary } from "../slices.ts";
 import type { SplitAudit } from "../split-audit.ts";
+import { asGeneratorFamily } from "../generator-family.ts";
 
 // --- fixture builders ------------------------------------------------------
 
@@ -704,6 +705,56 @@ describe("renderReportMarkdown", () => {
     expect(heading).toContain("pass");
     expect(md.toLowerCase()).not.toContain("# accuracy");
     expect(md.toLowerCase()).not.toContain("headline: accuracy");
+  });
+
+  // A4: the report is the fourth place the reserved families must agree, and the
+  // only one a reader sees. The `generatorExposure` slice reports an `unseen`
+  // bucket, and "unseen" is unreadable without the set beside it.
+  it("publishes the reserved generator families, declared beside derived", async () => {
+    const declared = [
+      asGeneratorFamily("gemini-3_5-flash-low"),
+      asGeneratorFamily("gemini-3_6-flash"),
+    ];
+    const input = baseInput();
+    const report = await buildBenchmarkReport({
+      ...input,
+      split: {
+        ...input.split,
+        heldOutGeneratorFamilies: declared,
+        audit: { ...input.split.audit, heldOutGeneratorFamilies: declared },
+      },
+    });
+    const md = renderReportMarkdown(report);
+
+    expect(md).toContain(
+      "## Famílias geradoras retidas (não vistas no treino)",
+    );
+    expect(md).toContain(
+      "- Declaradas e publicadas: `gemini-3_5-flash-low`, `gemini-3_6-flash`",
+    );
+    expect(md).toContain(
+      "- Derivadas pela auditoria do split: `gemini-3_5-flash-low`, `gemini-3_6-flash`",
+    );
+  });
+
+  it("says plainly when nothing was reserved, instead of printing an empty list", async () => {
+    const md = renderReportMarkdown(await buildBenchmarkReport(baseInput()));
+    expect(md).toContain("Nenhuma família geradora foi reservada");
+  });
+
+  it("refuses to assemble a report whose published families diverge from the audit's", async () => {
+    const input = baseInput();
+    await expect(
+      buildBenchmarkReport({
+        ...input,
+        split: {
+          ...input.split,
+          heldOutGeneratorFamilies: [asGeneratorFamily("gemini-3_5-flash-low")],
+        },
+      }),
+    ).rejects.toThrow(
+      /the derived generator families diverge from the published set/,
+    );
   });
 
   it("prints the metric pair with both roles named, never a single FPR", async () => {
