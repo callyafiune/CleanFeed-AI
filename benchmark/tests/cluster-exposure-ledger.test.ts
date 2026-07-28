@@ -5,9 +5,11 @@
 // `benchmark/data/private/`: freezing a real split is E2's, and a real exposure
 // event written from a test would burn eligibility for the whole project.
 
+import { execFileSync } from "node:child_process";
 import { mkdtemp, mkdir, readFile, readdir, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
+import { fileURLToPath } from "node:url";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
 import { runCli } from "../cli.ts";
@@ -769,6 +771,182 @@ describe("the identity boundary the ledger enforces itself", () => {
       ].sort(),
     );
   });
+});
+
+// --- the C2 <-> C3 keyring coupling, exercised for real ----------------------
+//
+// `initClusterLedger` WRITES the very file `benchmark/lab/pseudonymize.py` reads,
+// and C2's extractors write `pseudonym(PERSON_PURPOSE, owner)` straight into
+// `groups.author`. If the two sides ever disagree — the loader tightened to
+// refuse an unknown field, `init` normalising `keyringVersion` or re-minting
+// `secrets.person` — the TypeScript suite and C2's Python tests both stay green
+// and the break appears only in the real assembly, or worse: every person
+// pseudonym changes and the ledger answers "never exposed" for people it already
+// exposed. Shape checks cannot see that. Only running both sides can.
+
+const LAB_DIRECTORY = join(dirname(fileURLToPath(import.meta.url)), "..", "lab");
+
+const PSEUDONYM_PROBE = [
+  "import json, sys",
+  "sys.path.insert(0, sys.argv[1])",
+  "from pathlib import Path",
+  "from pseudonymize import PERSON_PURPOSE, load_cluster_keyring",
+  "keyring = load_cluster_keyring(Path(sys.argv[2]))",
+  "print(json.dumps({",
+  '  "keyringVersion": keyring.keyring_version,',
+  '  "pseudonym": keyring.pseudonym(PERSON_PURPOSE, sys.argv[3]),',
+  "}))",
+].join("\n");
+
+/** The interpreter, or undefined on a machine that has no Python at all. */
+function resolvePython(): string | undefined {
+  for (const candidate of ["python", "python3"]) {
+    try {
+      execFileSync(candidate, ["-c", "pass"], { stdio: "ignore" });
+      return candidate;
+    } catch {
+      // Keep looking; a missing interpreter is not a failure of this module.
+    }
+  }
+  return undefined;
+}
+
+const PYTHON = resolvePython();
+
+function personPseudonymViaPython(
+  keyringPath: string,
+  raw: string,
+): { keyringVersion: string; pseudonym: string } {
+  const output = execFileSync(
+    PYTHON as string,
+    ["-c", PSEUDONYM_PROBE, LAB_DIRECTORY, keyringPath, raw],
+    { encoding: "utf8" },
+  );
+  return JSON.parse(output.trim()) as {
+    keyringVersion: string;
+    pseudonym: string;
+  };
+}
+
+describe("the keyring C2's pseudonymizer reads is the keyring init writes", () => {
+  if (PYTHON === undefined) {
+    // Loud rather than silent: the coupling is unverified on this machine, and
+    // the operator's machine (which has Python, because the extractors are
+    // Python) is where it must hold.
+    console.warn(
+      "cluster-exposure-ledger.test.ts: no Python interpreter found, so the " +
+        "C2 keyring coupling was NOT verified in this run",
+    );
+  }
+  const withPython = PYTHON === undefined ? it.skip : it;
+
+  withPython(
+    "indexes a pseudonym Python produced and refuses it for test on a second run",
+    async () => {
+      await init();
+
+      const probe = personPseudonymViaPython(paths().keyringPath, "40");
+      // `keyringVersion` travels into C2's axis report, so a corpus records WHICH
+      // keyring pseudonymised it. `init` must leave it readable and stable.
+      expect(probe.keyringVersion).toBe("v1");
+      expect(probe.pseudonym).toMatch(/^person_[0-9a-f]{16}$/);
+
+      // Run 1: C2's extractor output enters the ledger as `groups.author`.
+      await recordPilotExposure(
+        paths(),
+        request({
+          eventType: "pilot-exposure",
+          records: [
+            record({
+              id: "ptso_140233",
+              partition: "dev",
+              author: probe.pseudonym,
+              source: "th_ptso_140233",
+            }),
+          ],
+        }),
+      );
+
+      // Run 2: the same account, re-extracted from the same snapshot under the
+      // same keyring, offered to test with a new id, a new tuple and unrelated
+      // text. Recognised as exposed — which is only possible if both sides
+      // derived the same pseudonym from the same file.
+      const second = personPseudonymViaPython(paths().keyringPath, "40");
+      expect(second.pseudonym).toBe(probe.pseudonym);
+
+      const decision = await preflightExposure(
+        paths(),
+        request({
+          datasetDigest: DATASET_B,
+          splitDigest: SPLIT_B,
+          records: [
+            record({
+              id: "ptso_998877",
+              partition: "test",
+              text: FAR_TEXT,
+              author: second.pseudonym,
+              source: "th_ptso_998877",
+            }),
+          ],
+        }),
+      );
+      expect(decision.eligible).toBe(false);
+      expect(decision.refusals.map((refusal) => refusal.reason)).toContain(
+        "cluster-exposed-previously",
+      );
+
+      // And a DIFFERENT account is not caught by it.
+      const other = personPseudonymViaPython(paths().keyringPath, "41");
+      expect(other.pseudonym).not.toBe(probe.pseudonym);
+      const admitted = await preflightExposure(
+        paths(),
+        request({
+          datasetDigest: DATASET_B,
+          splitDigest: SPLIT_B,
+          records: [
+            record({
+              id: "ptso_112233",
+              partition: "test",
+              text: FAR_TEXT,
+              author: other.pseudonym,
+              source: "th_ptso_112233",
+            }),
+          ],
+        }),
+      );
+      expect(admitted.refusals).toEqual([]);
+    },
+  );
+
+  withPython(
+    "adopting C2's keyring leaves every person pseudonym unchanged",
+    async () => {
+      // The failure this guards is the one C2's note in the plan predicted and
+      // this implementation deliberately avoids: if `init` re-minted or
+      // normalised `secrets.person`, every person cluster would be renumbered,
+      // the corpus would need re-extraction, and the ledger would report
+      // "never exposed" for every person it had already exposed.
+      const existing = {
+        keyringVersion: "c2-run-v1",
+        secrets: { person: "7".repeat(64) },
+      };
+      await mkdir(join(root, "private"), { recursive: true });
+      await writeFile(
+        paths().keyringPath,
+        `${JSON.stringify(existing, null, 2)}\n`,
+        "utf8",
+      );
+
+      const before = personPseudonymViaPython(paths().keyringPath, "40");
+      expect(before.keyringVersion).toBe("c2-run-v1");
+
+      await init();
+
+      const after = personPseudonymViaPython(paths().keyringPath, "40");
+      expect(after.pseudonym).toBe(before.pseudonym);
+      expect(after.keyringVersion).toBe("c2-run-v1");
+    },
+  );
 });
 
 describe("a new directory does not restart eligibility", () => {
