@@ -2438,12 +2438,94 @@ de qualquer edição. Segue sem mudança de comportamento: o diff de
    que `git status` mostrava árvore limpa. **Causa raiz fora do escopo de B1:**
    não existe `.gitattributes` fixando `text=auto eol=lf` contra um
    `core.autocrlf=true` global de máquina, então qualquer `git checkout` recria
-   CRLF. Importa além do gate porque `NOTICE.md` é lido **do disco** por
-   `scripts/package-own-model.mjs` e entra por sha256 no inventário de nove
-   arquivos atrás do `bundleDigest` em `scripts/verify-model-bundle.mjs`.
+   CRLF. **ERRATA (quarta rodada):** a consequência que este item atribuía ao
+   CRLF era **falsa**. `NOTICE.md` é de facto lido **do disco** por
+   `scripts/package-own-model.mjs`, mas é só **membro de conjunto** de
+   `MATERIALIZED_INVENTORY` / `MATERIALIZED_METADATA`: `computeBundleDigest`
+   (`scripts/verify-model-bundle.mjs:327`) digesta `manifest.artifacts`, e
+   `artifacts` é `ASSET_PATHS` — os **seis** ativos fixados (`config.json`,
+   `onnx/model_int8.onnx` e os quatro do tokenizer), medido em
+   `models/cleanfeed-ptbr-v1/cleanfeed-model.json`. Nenhum byte de `NOTICE.md`
+   pode mover `bundleDigest`. A metade genuína da preocupação continua de pé:
+   sem `.gitattributes` fixando `text=auto eol=lf` contra o `core.autocrlf=true`
+   global de máquina, `prettier --check .` reprova de novo depois de qualquer
+   `git checkout`.
 6. (minor) `docs/corpus-sources.md`: o parêntese inserido na rodada 2 deixou a
    linha 33 com 110 colunas num bloco de 66-84. As linhas 30-36 foram
    re-quebradas em 80; a maior do bloco agora tem 82.
+
+**Quarta rodada de correção (2026-07-28).** Um achado `important` e três `minor`;
+**nenhum foi refutado** — os quatro foram reproduzidos antes de qualquer edição,
+inclusive os dois que dizem que o *relatório da rodada 3* estava errado. Sem
+mudança de comportamento: `benchmark/source-manifest.ts` fica **byte-idêntico** a
+HEAD (`git hash-object` = `ac06cee…`, igual a `git rev-parse HEAD:<arquivo>`), e a
+entrega é teste + plano.
+
+7. **A precedência documentada entre `ND` e `NC` não era prendida por teste
+   nenhum.** O docstring de `sourceAdmissibility` afirma que `no-derivatives` é
+   reportado ANTES de `commercial-use` de propósito, "porque nomear `NC` ali
+   nomearia uma razão que satisfazê-la não removeria" — e nada verificava isso.
+   Reproduzido: trocando a ordem dos dois guardas na função —
+   `terms.nonCommercial && use.commercialUse` antes de `terms.noDerivatives` — o
+   arquivo fica **33/33 verde**, e a suíte inteira também, porque `grep` confirma
+   que só `benchmark/source-manifest.ts` e o seu próprio teste chamam a função.
+   Sob o mutante, `sourceAdmissibility("cc-by-nc-nd-4.0", { commercialUse: true })`
+   devolve `blockedBy: "commercial-use"` — exatamente o que o brief exclui ("o
+   motivo registrado é `ND`, não 'NC', não 'licença restritiva'"): um chamador
+   comercial que então satisfizesse `NC` acreditaria que o bloqueio de
+   IberAuTexTification saiu, e ele não sai. A causa é que **toda** chamada do
+   arquivo usava `{ commercialUse: false }` ou o default congelado, então
+   `terms.nonCommercial && use.commercialUse` era falso em todas elas e as duas
+   razões nunca competiam. Corrigido dentro do teste existente `blocks a
+   no-derivatives licence by ND and never by NC`, **sem tocar produção**: o caso
+   `{ commercialUse: true }` — o único em que as duas cláusulas poderiam disparar
+   — agora é asserido ao lado do `{ commercialUse: false }`. Vermelho medido sob a
+   mutação (`- "blockedBy": "no-derivatives"` / `+ "blockedBy": "commercial-use"`),
+   verde depois de reverter.
+8. (minor) **`declared` era lista bruta de matches comparada contra um `imported`
+   naturalmente sem duplicata**, então uma segunda menção editorial a um
+   especificador **já declarado**, dentro do bloco, quebrava a igualdade de
+   conjunto. Reproduzido acrescentando "The exact shape it validates is documented
+   inside `./rebuild-v3-policy.ts`." ao último bullet: `1 failed | 32 passed`, com
+   o diff `+ "./rebuild-v3-policy.ts"` — mensagem que **lê como import não
+   declarado** quando nada dos imports mudou, num bloco escrito de propósito como
+   prosa com uma frase explicativa por bullet, onde essa é a próxima edição
+   realista. Corrigido comparando conjuntos deduplicados nos **dois** lados
+   (`[...new Set(declared)]` contra `[...new Set(imported)]`), com mensagem própria
+   na asserção; o outro lado é deduplicado pela mesma razão, porque dois `import`
+   podem legalmente nomear um especificador. Os dentes sobrevivem, re-medidos:
+   (E) import de `./digests.ts` **e** array esperado honestamente atualizado →
+   **morre** imprimindo `- "./digests.ts"`; (H) entrada do bloco que ninguém
+   importa → **morre** imprimindo `+ "./digests.ts"`; (D) bloco apagado e frase
+   falsa reformulada de volta → **morre** em `header must open "DEPENDENCIES
+   (BEGIN)"`. Nenhum dos dois lados pode ser afrouxado para contenção.
+9. (minor) **Duas alegações mensuráveis do relatório da rodada 3 eram falsas** e
+   mandariam o próximo agente atrás de não-problema. (a) Eu escrevi que o teste de
+   cabeçalho "só casa import de uma linha terminado em ponto e vírgula, então um
+   `import` multilinha não seria visto, e a igualdade de conjunto compararia o
+   bloco contra uma lista de imports incompleta". Medido com sonda em Node:
+   `[^"']*` **casa newline**, então um `import { A, B, C } from "./digests.ts";`
+   formatado pelo prettier em quatro linhas **é** capturado — a sonda devolveu
+   `["../contracts/canonical-json.ts","./digests.ts","./rebuild-v3-policy.ts"]`. O
+   residual descrito não existe, e "consertá-lo" arriscaria afrouxar um regex que
+   já funciona. (b) A consequência de digest que atribuí ao CRLF era falsa;
+   corrigida em errata dentro do item 5 acima.
+10. (minor) **O `NOTICE.md` materializado divergiu do versionado, e nada no
+    repositório detecta a divergência.** Medido: `diff
+    models/cleanfeed-ptbr-v1/NOTICE.md public/models/cleanfeed-ptbr-v1/NOTICE.md`
+    → 41 linhas substituídas por 5. A cópia em `public/` (não versionada, disco do
+    operador) ainda tem a redação antiga de cinco linhas: **sem** o regime não
+    comercial, **sem** as linhas de obrigação por licença e **sem** o parágrafo
+    `ND`. O requisito 5 do brief proíbe reempacotar, então isto **não** foi
+    consertado aqui — mas registre que nenhum gate vê a divergência:
+    `verifyMaterializedBundle` checa só o **conjunto** de nove nomes de arquivo, e
+    `verifyReleaseModelDirectory` compara byte a byte apenas `release.json` e
+    `calibration-profiles.json` (`RELEASE_CANONICAL_METADATA`). Fica registrado
+    como **obrigação pendente de reempacotamento** do modelo `cleanfeed-ptbr-v1`,
+    para a tarefa de release ou para C1/C5: até ela, o artefato que efetivamente
+    embarca não carrega o texto de atribuição e share-alike de CC BY-NC-SA que B1
+    exigiu que ele carregasse, e o `prettier --ignore` de `public/models/` (bytes
+    de terceiros, sha256 contra o upstream) não muda nada disso.
 
 ### B2 — DECIDIDO: alvos, métricas e ações de produto
 

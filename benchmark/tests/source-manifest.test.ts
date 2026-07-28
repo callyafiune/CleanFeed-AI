@@ -382,7 +382,19 @@ describe("non-commercial corpus use policy", () => {
     // EXACTLY: an import missing from the block fails, and a block entry that is
     // no longer imported fails too. Updating the expectation above without
     // touching the header does not rescue it.
-    expect([...declared].sort()).toEqual([...imported].sort());
+    //
+    // What is compared is the SET of specifiers on each side, deduplicated. The
+    // block is deliberately prose — an explanatory sentence per bullet — so a
+    // second mention of an already-declared specifier is a realistic edit that
+    // adds no dependency, and it must be idempotent rather than fail with a
+    // message that reads like an undeclared import. `imported` is deduplicated
+    // for the same reason on the other side: two `import` statements may legally
+    // name one specifier. Neither side may be relaxed to containment, which is
+    // what would let a stale block entry or an undeclared import through.
+    expect(
+      [...new Set(declared)].sort(),
+      "the DEPENDENCIES block must name exactly the specifiers imported at load",
+    ).toEqual([...new Set(imported)].sort());
 
     // An accurate block under a false summary sentence still misleads whoever
     // stops reading at the first paragraph, so the two shapes the defect took
@@ -466,6 +478,22 @@ describe("non-commercial corpus use policy", () => {
     // and the verdict is still `no-derivatives`.
     expect(
       sourceAdmissibility("cc-by-nc-nd-4.0", { commercialUse: false }),
+    ).toMatchObject({ admissible: false, blockedBy: "no-derivatives" });
+    // The case where BOTH clauses could fire, which is the only one that pins
+    // the guard ORDER in `sourceAdmissibility`. Every other assertion in this
+    // file calls the function with `commercialUse: false` or lets it default to
+    // the frozen policy, so `terms.nonCommercial && use.commercialUse` is false
+    // throughout and the two reasons never compete: swapping the two guard
+    // blocks used to leave this whole file green at 33/33, and the whole suite
+    // too, since nothing outside this module calls the function.
+    //
+    // Only `ND` may be named here. `NC` is a reason a caller can satisfy, and
+    // satisfying it cannot remove an `ND` block — so reporting `commercial-use`
+    // would tell a commercial caller that dropping the commercial claim unblocks
+    // IberAuTexTification, which is false. That is the confusion of `NC` with
+    // `ND` this describe block exists to refuse.
+    expect(
+      sourceAdmissibility("cc-by-nc-nd-4.0", { commercialUse: true }),
     ).toMatchObject({ admissible: false, blockedBy: "no-derivatives" });
     expect(() =>
       assertLicenseInventoryAdmissible([
