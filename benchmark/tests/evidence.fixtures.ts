@@ -23,6 +23,7 @@ import {
   selectionThresholdEvidence,
   type FrozenCalibrationArtifact,
 } from "../calibration-pipeline.ts";
+import { emptyLabelBasisPublication } from "../dataset-manifest.ts";
 import type { DatasetAudit } from "../dataset-manifest.ts";
 import type { FitReport } from "../candidate-preflight.ts";
 import {
@@ -101,6 +102,7 @@ function lightDatasetAudit(report: BenchmarkReport): DatasetAudit {
     sourceTypes: { "qa-informal": 2_000, encyclopedic: 2_000 },
     hardNegativeFamilies: { formulaic: 500 },
     generatorFamilies: { acme_family: 4_000 },
+    labelBasisCounts: emptyLabelBasisPublication(),
     licenses: ["consent-v1"],
     recordsSha256: hex("records"),
     reviewLedgerSha256: hex("review-ledger"),
@@ -534,6 +536,7 @@ export async function buildRejectScenario(
     sourceTypes: { "qa-informal": 2_000, encyclopedic: 2_000 },
     hardNegativeFamilies: { formulaic: 500 },
     generatorFamilies: { acme_family: 4_000 },
+    labelBasisCounts: emptyLabelBasisPublication(),
     licenses: ["consent-v1"],
     recordsSha256: hex("reject-records"),
     reviewLedgerSha256: hex("reject-review-ledger"),

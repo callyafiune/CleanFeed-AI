@@ -39,7 +39,11 @@ import {
   clusterNearDuplicates,
   type NearDuplicateOptions,
 } from "./near-duplicates.ts";
-import { validateBenchmarkRecord, type BenchmarkRecord } from "./schema.ts";
+import {
+  groupAxisIdentity,
+  validateBenchmarkRecord,
+  type BenchmarkRecord,
+} from "./schema.ts";
 import {
   parseReviewedSourceManifest,
   type ReviewedSourceManifestV1,
@@ -280,7 +284,10 @@ function refuseCrossLineageNearDuplicates(
     const clusterId = clusters.clusterById.get(entry.record.id);
     if (clusterId === undefined) continue;
     const lineages = lineagesByCluster.get(clusterId) ?? new Set<string>();
-    lineages.add(entry.record.groups.derivationRoot);
+    // A v3 record whose derivationRoot is notApplicable is an ORIGINAL, and an
+    // original contributes no lineage to the cluster rather than a placeholder one.
+    const lineage = groupAxisIdentity(entry.record, "derivationRoot");
+    if (lineage !== undefined) lineages.add(lineage);
     lineagesByCluster.set(clusterId, lineages);
   }
 

@@ -142,11 +142,27 @@ export function asGeneratorFamily(value: string): GeneratorFamily {
  *
  * Typed structurally so this module stays free of a schema.ts import; the schema
  * guarantees that any record carrying `generation` also carries this field.
+ *
+ * It reads BOTH record versions, which is why the parameter type spells out two
+ * shapes. In v2 the field is the family itself or absent; in v3 it is a
+ * three-valued axis, and `notApplicable`/`unknown` mean the same thing to every
+ * caller of this function as an absent v2 field did — there is no family to
+ * compare. Keeping the two in one accessor is deliberate: this function is
+ * documented as the ONLY reader of the canonical field, and a second version-aware
+ * reader elsewhere is how two spellings of one fact came back last time.
  */
 export function generatorFamilyOf(record: {
-  groups: { generatorFamily?: GeneratorFamily };
+  groups: {
+    generatorFamily?:
+      | GeneratorFamily
+      | { state: "known"; id: GeneratorFamily }
+      | { state: "notApplicable" | "unknown"; reason: string };
+  };
 }): GeneratorFamily | undefined {
-  return record.groups.generatorFamily;
+  const value = record.groups.generatorFamily;
+  if (value === undefined) return undefined;
+  if (typeof value === "string") return value;
+  return value.state === "known" ? value.id : undefined;
 }
 
 /**

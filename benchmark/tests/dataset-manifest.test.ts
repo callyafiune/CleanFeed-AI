@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 
 import {
   computeDatasetAuditDigest,
+  emptyLabelBasisPublication,
   parseDatasetAudit,
   RELEASE_CORPUS_POLICY,
   sealDataset,
@@ -10,8 +11,15 @@ import {
   type DatasetFileDigests,
   type DatasetManifest,
 } from "../dataset-manifest.ts";
-import type { BenchmarkRecord } from "../schema.ts";
+import { validateBenchmarkRecordV3, type BenchmarkRecord } from "../schema.ts";
 import { asGeneratorFamily } from "../generator-family.ts";
+import {
+  unknownAxis,
+  v3Ai,
+  v3Human,
+  v3Mixed,
+  withAxis,
+} from "./helpers/v3-record-fixture.ts";
 
 const RECORDS_SHA = "d".repeat(64);
 const REVIEW_LEDGER_SHA = "e".repeat(64);
@@ -409,6 +417,7 @@ describe("dataset manifest", () => {
         sourceTypes: audit.sourceTypes,
         hardNegativeFamilies: audit.hardNegativeFamilies,
         generatorFamilies: audit.generatorFamilies,
+        labelBasisCounts: audit.labelBasisCounts,
         licenses: audit.licenses,
         recordsSha256: audit.recordsSha256,
         reviewLedgerSha256: audit.reviewLedgerSha256,
@@ -468,5 +477,171 @@ describe("dataset manifest", () => {
     await expect(parseDatasetAudit(licenseTampered)).rejects.toThrow(
       /auditDigest/i,
     );
+  });
+});
+
+// ---------------------------------------------------------------------------
+// C1 — what the PUBLIC audit publishes about the evidence behind human labels,
+// and what it must never publish.
+// ---------------------------------------------------------------------------
+
+describe("labelBasisCounts in the sealed audit", () => {
+  const v3Manifest: DatasetManifest = {
+    ...validManifest,
+    licenses: [
+      {
+        id: "cc-by-sa-4.0",
+        name: "Creative Commons Attribution-ShareAlike 4.0",
+        source: "https://creativecommons.org/licenses/by-sa/4.0/",
+        evaluationUseApproved: true,
+        redistribution: "not-published",
+        notice: "Atribuição e share-alike obrigatórios.",
+      },
+      {
+        id: "autoria-propria-v1",
+        name: "Autoria própria do operador",
+        source: "declaração do operador",
+        evaluationUseApproved: true,
+        redistribution: "not-published",
+        notice: "Gerado pelo próprio operador para avaliação interna.",
+      },
+    ],
+  };
+  const policy = {
+    ...RELEASE_CORPUS_POLICY,
+    counts: { human: 1, ai: 1, mixed: 1 },
+  };
+
+  function v3Corpus(): BenchmarkRecord[] {
+    return [
+      validateBenchmarkRecordV3(v3Human()),
+      validateBenchmarkRecordV3(v3Ai()),
+      validateBenchmarkRecordV3(v3Mixed()),
+    ];
+  }
+
+  it("publishes the record count and the sampling units per basis", async () => {
+    const audit = await sealDataset(
+      v3Manifest,
+      v3Corpus(),
+      policy,
+      validFileDigests,
+    );
+    // Only the human row rests on a basis, which is why the unit counts describe
+    // the human negatives — the population an FPR budget is spent against.
+    expect(audit.labelBasisCounts.records).toEqual({
+      "date-cutoff": 1,
+      "observed-process": 0,
+    });
+    expect(audit.labelBasisCounts.ineligible).toEqual({
+      "date-cutoff": 0,
+      "observed-process": 0,
+    });
+    expect(audit.labelBasisCounts.samplingUnits).toEqual({
+      "date-cutoff": {
+        author: 1,
+        source: 1,
+        domainSource: 1,
+        collectionBatch: 1,
+        nearDuplicate: 1,
+      },
+    });
+  });
+
+  it("counts an ineligible human row without dropping it from the basis", async () => {
+    const ineligible = validateBenchmarkRecordV3(
+      withAxis(v3Human(), "author", unknownAxis("HMAC keyring unavailable")),
+    );
+    const audit = await sealDataset(
+      v3Manifest,
+      [
+        ineligible,
+        validateBenchmarkRecordV3(v3Ai()),
+        validateBenchmarkRecordV3(v3Mixed()),
+      ],
+      policy,
+      validFileDigests,
+    );
+    // The row still counts toward its basis and is ALSO counted as ineligible, so
+    // an eligible denominator is read rather than inferred by subtraction.
+    expect(audit.labelBasisCounts.records["date-cutoff"]).toBe(1);
+    expect(audit.labelBasisCounts.ineligible["date-cutoff"]).toBe(1);
+    // ...and the axis that is unknown contributes no unit, which is the honest
+    // count: an unrecovered identity is not a sampling unit.
+    expect(
+      audit.labelBasisCounts.samplingUnits["date-cutoff"]?.author,
+    ).toBeUndefined();
+  });
+
+  it("publishes zeros for a v2 corpus instead of omitting the block", async () => {
+    const audit = await sealDataset(
+      validManifest,
+      [human, ai, mixed],
+      policy,
+      validFileDigests,
+    );
+    // A v2 corpus recorded no label basis at all. Zero is the truthful value and
+    // an absent block would read as "not measured", which is a different claim.
+    expect(audit.labelBasisCounts).toEqual(emptyLabelBasisPublication());
+    expect(audit.labelBasisCounts.records).toEqual({
+      "date-cutoff": 0,
+      "observed-process": 0,
+    });
+  });
+
+  it("survives a digest round-trip, so the counts are inside the seal", async () => {
+    const audit = await sealDataset(
+      v3Manifest,
+      v3Corpus(),
+      policy,
+      validFileDigests,
+    );
+    await expect(parseDatasetAudit(audit)).resolves.toEqual(audit);
+    // Tampering with a published count invalidates the audit digest, which is what
+    // makes the block evidence rather than decoration.
+    await expect(
+      parseDatasetAudit({
+        ...audit,
+        labelBasisCounts: {
+          ...audit.labelBasisCounts,
+          records: { "date-cutoff": 99, "observed-process": 0 },
+        },
+      }),
+    ).rejects.toThrow(/auditDigest does not match/u);
+  });
+
+  // The privacy requirement, asserted against the SERIALIZED artifact rather than
+  // against a field list: a new key that leaked an identity would pass a field
+  // check and fail this one.
+  it("carries no person identifier and no private-manifest entry", async () => {
+    const audit = await sealDataset(
+      v3Manifest,
+      v3Corpus(),
+      policy,
+      validFileDigests,
+    );
+    const serialized = JSON.stringify(audit);
+    const human0 = validateBenchmarkRecordV3(v3Human());
+    const author = human0.groups.author;
+    const origin = human0.groups.source;
+    expect(author.state).toBe("known");
+    expect(origin.state).toBe("known");
+    const forbidden = [
+      // the pseudonymised PERSON (HMAC of a Stack Exchange account)
+      author.state === "known" ? author.id : "",
+      // the origin document, which identifies a thread and thereby its posters
+      origin.state === "known" ? origin.id : "",
+      // the private source manifest's evidence entry, and its digest
+      human0.labelEvidenceRef?.entryId ?? "",
+      human0.labelEvidenceRef?.entryDigest ?? "",
+      // the date field and the observed value: a per-record timestamp narrows a
+      // thread to one post as effectively as its id does
+      "Posts.xml@CreationDate",
+      "2013-12-11T00:00:00.000Z",
+    ];
+    for (const token of forbidden) {
+      expect(token).not.toBe("");
+      expect(serialized).not.toContain(token);
+    }
   });
 });

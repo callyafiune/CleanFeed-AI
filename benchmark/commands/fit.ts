@@ -36,7 +36,11 @@ import {
   assertPredictionCompleteness,
   computePredictionManifestDigest,
 } from "../prediction-schema.ts";
-import { parseBenchmarkDataset, type BenchmarkRecord } from "../schema.ts";
+import {
+  authorClusterKey,
+  parseBenchmarkDataset,
+  type BenchmarkRecord,
+} from "../schema.ts";
 import {
   validateSplitArtifact,
   type SplitArtifact,
@@ -184,7 +188,7 @@ export async function runFit(options: FitOptions): Promise<string> {
     if (record === undefined || prediction === undefined) continue;
     const scores: FitSampleScores = {
       id: record.id,
-      authorGroup: record.groups.author,
+      authorGroup: authorClusterKey(record),
       documentRawScore: prediction.documentRawScore ?? 0,
       localizedRawScore: prediction.localizedRawScore ?? 0,
     };

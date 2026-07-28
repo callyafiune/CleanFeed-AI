@@ -569,6 +569,7 @@ function validateFitInputs(input: FitFrozenCalibrationInput): FrozenIdentity {
     sourceTypes: audit.sourceTypes,
     hardNegativeFamilies: audit.hardNegativeFamilies,
     generatorFamilies: audit.generatorFamilies,
+    labelBasisCounts: audit.labelBasisCounts,
     licenses: audit.licenses,
     recordsSha256: audit.recordsSha256,
     reviewLedgerSha256: audit.reviewLedgerSha256,

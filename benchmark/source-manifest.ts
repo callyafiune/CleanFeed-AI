@@ -13,6 +13,11 @@
 //   * `./rebuild-v3-policy.ts` — reads the frozen policy file at load, which is
 //     what makes this module Node-side; see "WHO OWNS WHICH VALUE" below and
 //     the load-cost note at the end of this header.
+//   * `./schema.ts` — the record-side axis vocabulary (`V3GroupAxis`), imported
+//     as a TYPE only so a source's `declaredGroupAxes` cannot name an axis no
+//     record can fill. The comparison itself lives on the record side
+//     (`assertDeclaredAxesResolved`), which is what keeps this direction of the
+//     dependency the only one.
 // DEPENDENCIES (END)
 //
 // The manifest binds the private governance file (`private/source-manifest.json`)
@@ -81,6 +86,7 @@ import {
   REBUILD_V3_POLICY,
   type LabelBasisValue,
 } from "./rebuild-v3-policy.ts";
+import type { V3GroupAxis } from "./schema.ts";
 
 export type ReviewedSourceEntryV1 =
   | {
@@ -723,6 +729,29 @@ export interface HumanSourceRegistrationV1 {
   /** The field whose value the cutoff compares, named as it appears at source. */
   anchorDateField: string | null;
   anchorDateScope: AnchorDateScope | null;
+  /**
+   * The dependence axes this source CAN fill, declared by the source rather than
+   * discovered from its records.
+   *
+   * It exists so the audit can compare a declaration against what a record-line
+   * actually filled: C3 calls `assertDeclaredAxesResolved`
+   * (benchmark/schema.ts) with this list, and a record that leaves a declared
+   * axis `unknown` fails, as does one that states `notApplicable` and thereby
+   * contradicts its own source. Without the declaration there is nothing to
+   * compare against, and "every axis this record happens to have filled" is
+   * trivially satisfied — which is how the v2 corpus passed its leakage audit
+   * with eight axes of singletons.
+   *
+   * The lists come from the plan's fixed mapping, and each names a real unit of
+   * the source rather than a convenient one: a Stack Overflow answer belongs to a
+   * THREAD and to an account; a Wikipedia article belongs to a PAGE and to no
+   * single author (it is collectively written, so `author` is legitimately
+   * `notApplicable` on those records and is deliberately NOT declared here); a
+   * B2W review belongs to a PRODUCT and to a reviewer; a Carolina text belongs to
+   * a MEMBER FILE of the package, whose own authorship the TEI header does not
+   * give per document.
+   */
+  declaredGroupAxes: readonly V3GroupAxis[];
 }
 
 /** Why a human source is not admissible. Each reason is a distinct diagnosis. */
@@ -730,6 +759,7 @@ export type HumanSourceBlockReason =
   | "individual-acquisition"
   | "no-public-license"
   | "non-public-base-license"
+  | "no-declared-group-axis"
   | "label-basis-undeclared"
   | "label-basis-not-allowed"
   | "anchor-date-field-missing"
@@ -771,7 +801,9 @@ export type HumanSourceAdmissibility =
  *   3. then the licence clauses, because a source with no admissible public
  *      licence cannot enter at all, so there is nothing for a label basis to be
  *      about.
- *   4. then the label basis, and only for a `date-cutoff` basis the field the
+ *   4. then `no-declared-group-axis`: a source that declares no applicable
+ *      dependence axis cannot support a blocked split at all.
+ *   5. then the label basis, and only for a `date-cutoff` basis the field the
  *      cutoff is compared against.
  *
  * Two pairs pin the order, both realistic. An individually-acquired source has no
@@ -819,6 +851,16 @@ export function humanSourceAdmissibility(
   const licence = sourceAdmissibility(registration.licenseId, use);
   if (!licence.admissible) {
     return refuse(licence.blockedBy, licence.obligations);
+  }
+  // Step 3.5: a source that declares NO applicable axis cannot support any
+  // grouping, so every record drawn from it is a component of one and the blocked
+  // split degenerates. That is not a hypothetical — it is the state the v2 corpus
+  // was in, with `leakages: []` reported over eight axes of singletons. It sits
+  // after the licence because a source that cannot enter at all has nothing to
+  // group, and before the label basis because it is a fact about the source's
+  // structure rather than about the evidence for its label.
+  if (registration.declaredGroupAxes.length === 0) {
+    return refuse("no-declared-group-axis", licence.obligations);
   }
   if (labelBasis === null) {
     return refuse("label-basis-undeclared", licence.obligations);
@@ -892,6 +934,8 @@ export const V3_HUMAN_SOURCE_INVENTORY: readonly HumanSourceRegistrationV1[] = [
     labelBasis: "date-cutoff",
     anchorDateField: "Posts.xml@CreationDate",
     anchorDateScope: "document",
+    // An answer belongs to a THREAD and to an account.
+    declaredGroupAxes: ["author", "source"],
   },
   {
     sourceId: "src_wikipedia_pt",
@@ -901,6 +945,9 @@ export const V3_HUMAN_SOURCE_INVENTORY: readonly HumanSourceRegistrationV1[] = [
     labelBasis: "date-cutoff",
     anchorDateField: "page/revision/timestamp",
     anchorDateScope: "document",
+    // An article belongs to a PAGE and to no single author: collectively
+    // written, so `author` is legitimately notApplicable on those records.
+    declaredGroupAxes: ["source"],
   },
   {
     sourceId: "src_carolina",
@@ -910,6 +957,9 @@ export const V3_HUMAN_SOURCE_INVENTORY: readonly HumanSourceRegistrationV1[] = [
     labelBasis: "date-cutoff",
     anchorDateField: 'teiHeader//date[@type="Download"]',
     anchorDateScope: "document",
+    // A text belongs to a MEMBER FILE of the package; the TEI header gives no
+    // per-document authorship, so `author` is not declared.
+    declaredGroupAxes: ["source"],
   },
   {
     sourceId: "src_b2w",
@@ -919,6 +969,8 @@ export const V3_HUMAN_SOURCE_INVENTORY: readonly HumanSourceRegistrationV1[] = [
     labelBasis: "date-cutoff",
     anchorDateField: "submission_date",
     anchorDateScope: "document",
+    // A review belongs to a PRODUCT and to a reviewer.
+    declaredGroupAxes: ["author", "source"],
   },
 ];
 

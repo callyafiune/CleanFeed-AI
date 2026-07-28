@@ -27,7 +27,7 @@ import { fileURLToPath } from "node:url";
 
 import { canonicalSha256 } from "../../../contracts/canonical-json.ts";
 import type { DatasetManifest } from "../../dataset-manifest.ts";
-import type { BenchmarkRecord } from "../../schema.ts";
+import type { BenchmarkRecordV2 } from "../../schema.ts";
 import {
   asGeneratorFamily,
   normalizeGeneratorFamily,
@@ -94,12 +94,12 @@ function buildText(id: string, seed: number, label: string): string {
 }
 
 interface GeneratedCorpus {
-  records: BenchmarkRecord[];
+  records: BenchmarkRecordV2[];
   counts: { human: number; ai: number; mixed: number };
 }
 
 export function generateRecords(seed: number): GeneratedCorpus {
-  const records: BenchmarkRecord[] = [];
+  const records: BenchmarkRecordV2[] = [];
   const counts = { human: 0, ai: 0, mixed: 0 };
   let index = 0;
 
@@ -135,7 +135,7 @@ export function generateRecords(seed: number): GeneratedCorpus {
   return { records, counts };
 }
 
-function baseGroups(id: string): BenchmarkRecord["groups"] {
+function baseGroups(id: string): BenchmarkRecordV2["groups"] {
   // Every value axis is unique per record, so the only union comes from a
   // mixed record naming its parent — always within the same temporal block.
   return {
@@ -151,9 +151,9 @@ function baseGroups(id: string): BenchmarkRecord["groups"] {
 function provenance(
   id: string,
   createdAt: number,
-  sourceKind: BenchmarkRecord["provenance"]["sourceKind"],
-  legalBasis: BenchmarkRecord["provenance"]["legalBasis"],
-): BenchmarkRecord["provenance"] {
+  sourceKind: BenchmarkRecordV2["provenance"]["sourceKind"],
+  legalBasis: BenchmarkRecordV2["provenance"]["legalBasis"],
+): BenchmarkRecordV2["provenance"] {
   return {
     sourceKind,
     sourceId: `src_${id}`,
@@ -170,7 +170,7 @@ function provenance(
   };
 }
 
-const ANNOTATION: BenchmarkRecord["annotation"] = {
+const ANNOTATION: BenchmarkRecordV2["annotation"] = {
   protocolVersion: "annotation-v1",
   reviewerIds: ["reviewer_a", "reviewer_b"],
   agreement: "agree",
@@ -181,9 +181,9 @@ function humanRecord(
   seed: number,
   createdAt: number,
   ordinal: number,
-): BenchmarkRecord {
+): BenchmarkRecordV2 {
   const text = buildText(id, seed, "human");
-  const record: BenchmarkRecord = {
+  const record: BenchmarkRecordV2 = {
     schemaVersion: 2,
     id,
     text,
@@ -215,7 +215,7 @@ function aiRecord(
   createdAt: number,
   ordinal: number,
   heldOut: boolean,
-): BenchmarkRecord {
+): BenchmarkRecordV2 {
   const text = buildText(id, seed, "ai");
   // The provider's label and the canonical field are the SAME fact written once:
   // the schema refuses a generated record whose groups.generatorFamily is not the
@@ -255,7 +255,7 @@ function mixedRecord(
   seed: number,
   createdAt: number,
   parentId: string,
-): BenchmarkRecord {
+): BenchmarkRecordV2 {
   const text = buildText(id, seed, "mixed");
   const groups = baseGroups(id);
   groups.derivationRoot = parentId;

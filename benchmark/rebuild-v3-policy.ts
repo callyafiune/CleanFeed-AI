@@ -81,6 +81,89 @@ export type LabelBasisValue = "date-cutoff" | "observed-process";
  */
 export type GenerationMode = "mechanistic" | "ecological";
 export type CalibratorKind = "platt" | "beta" | "isotonic";
+
+/**
+ * The channel a generated record's text came OUT of. Not a synonym for the
+ * provider: three of the four core families are served by ONE agent CLI (`agy`),
+ * so provider and channel vary independently.
+ *
+ * Operator decision of 2026-07-27, amending the D3 table. A CLI is a HARNESS: it
+ * injects a system prompt of its own, has a binary version, loops over tools,
+ * retries and post-processes. `benchmark/lab/generate_ai.py` has to strip
+ * "banner/telemetry lines the gemini CLI prints around the answer" and to tell an
+ * authentication failure apart from the model's own prose, which is proof that the
+ * harness leaves a mark on the text.
+ *
+ * The risk this exists to make visible: `agy` serves 3 of 4 core families and is
+ * ABSENT from the OOD family, so a detector that learned the harness signature
+ * instead of the generator's would fail the OOD family for the wrong reason, and
+ * the report would attribute the drop to "unseen generator" when the cause was
+ * "unseen harness" — assessment §3.3's confounding in a new dimension.
+ */
+export type GenerationLane = "agy" | "codex" | "gemini-api" | "gemini-cli";
+
+/**
+ * WHAT KIND of channel a lane is, and therefore whether a harness binary stands
+ * between the prompt and the text.
+ *
+ *   * `agent-cli` — a CLI that loops over tools and post-processes (`agy`, `codex`).
+ *   * `cli` — a CLI wrapper around one call (`gemini-cli`).
+ *   * `api` — a direct HTTP call, no binary of ours in the path.
+ *
+ * `harnessVersionRequired` is NOT a field: it is `channel !== "api"`, derived in
+ * one place ({@link laneRunsHarness}) so the two facts cannot disagree.
+ */
+export type GenerationChannel = "agent-cli" | "cli" | "api";
+
+/**
+ * WHERE a recorded reasoning-effort value came from. Without this, a recorded
+ * `effort` is indistinguishable from an inferred one, and inferring is what R6
+ * forbids.
+ *
+ *   * `model-id` — the effort IS the model identifier (`gemini-3.5-flash-medium`).
+ *   * `flag` — an independent flag we passed (`codex`'s `model_reasoning_effort`).
+ *   * `not-supported` — the lane has no notion of effort at all.
+ *   * `provider-default` — the provider applied a tier we did not choose, and we
+ *     observed which one.
+ *
+ * Measured by direct probing of `agy` on 2026-07-27: `--effort` is NOT supported
+ * on `claude-sonnet-4-6` or `claude-opus-4-6-thinking`, and CONFLICTS with models
+ * whose id embeds the tier (`gpt-oss-120b-medium`, `gemini-3.1-pro-high`). So on
+ * the `agy` lane the effort either IS the model id or does not exist — never an
+ * independent flag. Where it is real is `codex` (`model_reasoning_effort`, which
+ * accepts up to `xhigh`).
+ */
+export type EffortSource =
+  "model-id" | "flag" | "not-supported" | "provider-default";
+
+/**
+ * One row of the frozen lane table: what the lane accepts, and on which scale it
+ * reports effort.
+ *
+ * `effortScale` is nullable and is NOT decoration: `effort` is not comparable
+ * across providers (`codex` reaches `xhigh`, `agy` stops at `high`), so a level is
+ * meaningless without the scale it was measured on. The scale is named per lane
+ * here and stored beside every recorded level, and
+ * `compareEffortWithinScale` in benchmark/schema.ts refuses a cross-scale
+ * comparison — the same rule that keeps `mechanistic` from being pooled with
+ * `ecological`.
+ */
+export interface GenerationLaneRow {
+  readonly channel: GenerationChannel;
+  /** False on every CLI lane: a CLI accepts no `temperature`/`top_p`. */
+  readonly decodingConfigurable: boolean;
+  /** True only where effort is an independent flag, i.e. only on `codex`. */
+  readonly effortConfigurable: boolean;
+  readonly effortScale: string | null;
+  /** The levels of `effortScale`, in increasing order. Empty iff no scale. */
+  readonly effortLevels: readonly string[];
+  readonly effortSources: readonly EffortSource[];
+}
+
+/** Does this lane put a harness binary between the prompt and the text? */
+export function laneRunsHarness(row: GenerationLaneRow): boolean {
+  return row.channel !== "api";
+}
 /**
  * WHICH bound the ECE gate reads. Not "bootstrap-upper95": the gate reads a
  * Bonferroni percentile at alpha_família / m, which is a different and wider bound
@@ -134,6 +217,16 @@ export interface RebuildV3Policy {
   readonly fprBudgets: {
     readonly visualAction: number;
     readonly warning: number;
+  };
+  /**
+   * The closed lane vocabulary with what each lane accepts. It lives HERE and not
+   * as a loose constant in benchmark/schema.ts for the reason the frozen contract
+   * gives for every other settled row: the schema, the assembler (C2) and the
+   * generator matrix (D3) must read one table, and a lane added in one of them
+   * without the others is then a type error rather than a silent divergence.
+   */
+  readonly generationLanes: {
+    readonly [L in GenerationLane]: GenerationLaneRow;
   };
   readonly hardNegativeFamilies: readonly string[];
   readonly humanCoreStrata: readonly string[];
@@ -512,6 +605,158 @@ const FROZEN_ROLLOUT_STAGES = [
 // mechanistic cohort by omission, which is the aggregation the table forbids.
 const FROZEN_GENERATION_MODES = ["mechanistic", "ecological"] as const;
 
+// The lane names, frozen as a SET (the JSON block is keyed by them, and object
+// key order is not a decision the way a list's is). Four lanes: one API and three
+// CLIs, which is exactly the confounding the row exists to expose.
+const FROZEN_GENERATION_LANES: readonly GenerationLane[] = [
+  "agy",
+  "codex",
+  "gemini-api",
+  "gemini-cli",
+];
+const LANE_ROW_KEYS = [
+  "channel",
+  "decodingConfigurable",
+  "effortConfigurable",
+  "effortLevels",
+  "effortScale",
+  "effortSources",
+] as const;
+const GENERATION_CHANNELS: readonly GenerationChannel[] = [
+  "agent-cli",
+  "cli",
+  "api",
+];
+const EFFORT_SOURCES: readonly EffortSource[] = [
+  "model-id",
+  "flag",
+  "not-supported",
+  "provider-default",
+];
+
+function boolean(
+  record: Record<string, unknown>,
+  path: string,
+  key: string,
+): boolean {
+  const value = record[key];
+  if (typeof value !== "boolean") {
+    throw new RebuildV3PolicyError(at(path, key), "must be a boolean");
+  }
+  return value;
+}
+
+function member<T extends string>(
+  record: Record<string, unknown>,
+  path: string,
+  key: string,
+  allowed: readonly T[],
+): T {
+  const value = record[key];
+  if (typeof value !== "string" || !allowed.includes(value as T)) {
+    throw new RebuildV3PolicyError(
+      at(path, key),
+      `must be one of ${allowed.join(", ")}`,
+    );
+  }
+  return value as T;
+}
+
+// One lane row. The cross-field rule is the point of the row and not shape
+// hygiene: a scale and its levels stand or fall together, because a level list
+// with no scale is a shared ordinal by another name, and a scale with no levels
+// admits any string.
+//
+// `not-supported` DOES sit beside another source, deliberately — an earlier
+// version of this function refused that combination and the frozen `agy` row
+// immediately failed it, which is recorded here because the refusal was the wrong
+// half of a real measurement. On `agy` the effort either IS the model id
+// (`gemini-3.5-flash-medium`) or does not exist at all: `--effort` is refused on
+// `claude-sonnet-4-6` and on `claude-opus-4-6-thinking`. So one lane legitimately
+// produces records under both sources, and it is the RECORD that must say which
+// one applies to it, which is exactly what `effort.source` is for.
+function laneRow(value: unknown, path: string): GenerationLaneRow {
+  const row = object(value, path, LANE_ROW_KEYS);
+  const scale =
+    row.effortScale === null ? null : text(row, path, "effortScale");
+  const levels =
+    scale === null
+      ? emptyStringList(row, path, "effortLevels")
+      : textList(row, path, "effortLevels");
+  const sources = textList(
+    row,
+    path,
+    "effortSources",
+    EFFORT_SOURCES,
+  ) as readonly EffortSource[];
+  if (scale === null && !sources.includes("not-supported")) {
+    throw new RebuildV3PolicyError(
+      at(path, "effortScale"),
+      'is null, so effortSources must be exactly ["not-supported"]',
+    );
+  }
+  return Object.freeze({
+    channel: member(row, path, "channel", GENERATION_CHANNELS),
+    decodingConfigurable: boolean(row, path, "decodingConfigurable"),
+    effortConfigurable: boolean(row, path, "effortConfigurable"),
+    effortScale: scale,
+    effortLevels: levels,
+    effortSources: sources,
+  });
+}
+
+// The empty list is a legitimate value ONLY here: a lane with no effort scale has
+// no levels. `textList` refuses an empty array everywhere else on purpose, so this
+// is a separate function rather than a flag on it.
+function emptyStringList(
+  record: Record<string, unknown>,
+  path: string,
+  key: string,
+): readonly string[] {
+  const value = record[key];
+  if (!Array.isArray(value) || value.length !== 0) {
+    throw new RebuildV3PolicyError(
+      at(path, key),
+      "must be an empty array when effortScale is null",
+    );
+  }
+  return Object.freeze([]);
+}
+
+function generationLanes(value: unknown): {
+  readonly [L in GenerationLane]: GenerationLaneRow;
+} {
+  const block = object(value, "generationLanes", FROZEN_GENERATION_LANES);
+  const rows = {} as { [L in GenerationLane]: GenerationLaneRow };
+  for (const lane of FROZEN_GENERATION_LANES) {
+    if (!Object.hasOwn(block, lane)) {
+      throw new RebuildV3PolicyError(
+        `generationLanes.${lane}`,
+        "is missing: the lane vocabulary is frozen and every lane needs a row",
+      );
+    }
+    rows[lane] = laneRow(block[lane], `generationLanes.${lane}`);
+  }
+  // A harness lane whose decoding is configurable, or an API lane whose decoding
+  // is not, would contradict the measurement the row records.
+  for (const lane of FROZEN_GENERATION_LANES) {
+    const row = rows[lane];
+    if (laneRunsHarness(row) && row.decodingConfigurable) {
+      throw new RebuildV3PolicyError(
+        `generationLanes.${lane}.decodingConfigurable`,
+        "must be false on a lane that runs a harness: a CLI accepts no temperature or top_p",
+      );
+    }
+    if (row.effortConfigurable && !row.effortSources.includes("flag")) {
+      throw new RebuildV3PolicyError(
+        `generationLanes.${lane}.effortConfigurable`,
+        'is true, so effortSources must offer "flag": a configurable effort is one passed as a flag',
+      );
+    }
+  }
+  return Object.freeze(rows);
+}
+
 const POLICY_KEYS = [
   "attributionRequired",
   "backbone",
@@ -523,6 +768,7 @@ const POLICY_KEYS = [
   "commercialUse",
   "conformal",
   "fprBudgets",
+  "generationLanes",
   "hardNegativeFamilies",
   "humanCoreStrata",
   "humanSources",
@@ -831,6 +1077,7 @@ export function parseRebuildV3Policy(value: unknown): RebuildV3Policy {
       visualAction: proportion(fprBudgets, "fprBudgets", "visualAction"),
       warning: proportion(fprBudgets, "fprBudgets", "warning"),
     },
+    generationLanes: generationLanes(root.generationLanes),
     hardNegativeFamilies: frozenList(
       root,
       "",

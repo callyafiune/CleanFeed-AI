@@ -50,6 +50,59 @@
     "visualAction": 0.02,
     "warning": 0.05
   },
+  "generationLanes": {
+    "agy": {
+      "channel": "agent-cli",
+      "decodingConfigurable": false,
+      "effortConfigurable": false,
+      "effortLevels": [
+        "low",
+        "medium",
+        "high"
+      ],
+      "effortScale": "agy-model-id-tier",
+      "effortSources": [
+        "model-id",
+        "not-supported"
+      ]
+    },
+    "codex": {
+      "channel": "agent-cli",
+      "decodingConfigurable": false,
+      "effortConfigurable": true,
+      "effortLevels": [
+        "low",
+        "medium",
+        "high",
+        "xhigh"
+      ],
+      "effortScale": "codex-reasoning-effort",
+      "effortSources": [
+        "flag",
+        "provider-default"
+      ]
+    },
+    "gemini-api": {
+      "channel": "api",
+      "decodingConfigurable": true,
+      "effortConfigurable": false,
+      "effortLevels": [],
+      "effortScale": null,
+      "effortSources": [
+        "not-supported"
+      ]
+    },
+    "gemini-cli": {
+      "channel": "cli",
+      "decodingConfigurable": false,
+      "effortConfigurable": false,
+      "effortLevels": [],
+      "effortScale": null,
+      "effortSources": [
+        "not-supported"
+      ]
+    }
+  },
   "hardNegativeFamilies": [
     "corporate-structure",
     "formulaic",

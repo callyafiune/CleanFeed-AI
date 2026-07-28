@@ -16,9 +16,17 @@ import { canonicalSha256 } from "../contracts/canonical-json.ts";
 import {
   GeneratorFamilyError,
   asGeneratorFamily,
+  generatorFamilyOf,
   type GeneratorFamily,
 } from "./generator-family.ts";
-import { validateBenchmarkRecord, type BenchmarkRecord } from "./schema.ts";
+import { REBUILD_V3_POLICY } from "./rebuild-v3-policy.ts";
+import {
+  groupAxisIdentity,
+  recordEligibility,
+  V3_GROUP_AXES,
+  validateBenchmarkRecord,
+  type BenchmarkRecord,
+} from "./schema.ts";
 
 export interface DatasetManifest {
   schemaVersion: 1;
@@ -87,6 +95,38 @@ export const RELEASE_CORPUS_POLICY: CorpusPolicy = {
   ],
 };
 
+/**
+ * What the PUBLIC audit says about the evidence behind the human labels.
+ *
+ * NUMBERS ONLY, and that is a privacy requirement rather than a convenience. The
+ * evidence itself lives in `private/source-manifest.json`, which never enters Git
+ * and never enters this artifact; a record binds to it through an `entryId` and a
+ * digest, and `assertLabelEvidenceResolves` (benchmark/schema.ts) does the
+ * resolution with an index the caller builds. Nothing here can name a person, a
+ * thread, a page or an evidence entry, because nothing here is an identifier.
+ *
+ *   * `records` — how many record-lines rest on each basis.
+ *   * `samplingUnits` — per basis, per axis, how many DISTINCT `known` identities
+ *     there are. Which axis is the resampling unit is decided per estimand by C4,
+ *     so publishing one number would silently make that choice; publishing the
+ *     count for every axis lets C4 choose from the artifact instead of re-reading
+ *     the corpus, and lets a reader see that a "clustered" interval over an axis
+ *     with as many units as records is an i.i.d. interval with another name. That
+ *     is the exact reading the v2 audit made impossible.
+ *   * `ineligible` — how many record-lines carry an `unknown` axis (R6). Published
+ *     beside the others so an eligible denominator is never inferred by
+ *     subtraction.
+ *
+ * All three are zero/empty for a v2 corpus, which carries no label basis at all.
+ * That is the honest value: the v2 corpus did not record this evidence, and a
+ * missing number must not read as a satisfied one.
+ */
+export interface LabelBasisPublication {
+  records: Record<string, number>;
+  samplingUnits: Record<string, Record<string, number>>;
+  ineligible: Record<string, number>;
+}
+
 export interface DatasetAudit {
   datasetId: string;
   scientificUse: DatasetManifest["scientificUse"];
@@ -96,6 +136,7 @@ export interface DatasetAudit {
   sourceTypes: Record<string, number>;
   hardNegativeFamilies: Record<string, number>;
   generatorFamilies: Record<string, number>;
+  labelBasisCounts: LabelBasisPublication;
   licenses: string[];
   recordsSha256: string;
   reviewLedgerSha256: string;
@@ -161,6 +202,7 @@ const AUDIT_KEYS = [
   "sourceTypes",
   "hardNegativeFamilies",
   "generatorFamilies",
+  "labelBasisCounts",
   "licenses",
   "recordsSha256",
   "reviewLedgerSha256",
@@ -399,6 +441,114 @@ function increment(tally: Record<string, number>, key: string): void {
   tally[key] = (tally[key] ?? 0) + 1;
 }
 
+/**
+ * The block a corpus that records NO label basis publishes: a zero per allowed
+ * basis and no sampling-unit row.
+ *
+ * Exported because a fixture must not write it down by hand. It is byte-identical
+ * to what {@link publishLabelBasis} returns for a v2 corpus BY CONSTRUCTION — it
+ * calls it — so a hand-written copy that drifted could not make a fixture's
+ * `auditDigest` disagree with a sealed one.
+ */
+export function emptyLabelBasisPublication(): LabelBasisPublication {
+  return publishLabelBasis([]);
+}
+
+/**
+ * Counts the label-basis evidence of a corpus, as numbers.
+ *
+ * Every basis the frozen policy allows gets a row even when it is zero, so a basis
+ * that nothing rests on is VISIBLE as a zero rather than absent — an absent key
+ * reads as "not measured", and the difference matters for
+ * `labelBasis.underPoweredRole`, which only means something if the count is known.
+ * The same holds for the per-axis unit counts: every axis of every present basis is
+ * published, so a reader can see that an axis has as many units as records.
+ *
+ * Nothing that leaves this function is an identifier. The identities are counted
+ * into a `Set` and only its `size` escapes.
+ */
+function publishLabelBasis(
+  records: readonly BenchmarkRecord[],
+): LabelBasisPublication {
+  const bases = REBUILD_V3_POLICY.labelBasis.allowed;
+  const publication: LabelBasisPublication = {
+    records: {},
+    samplingUnits: {},
+    ineligible: {},
+  };
+  const identities = new Map<string, Map<string, Set<string>>>();
+  for (const basis of bases) {
+    publication.records[basis] = 0;
+    publication.ineligible[basis] = 0;
+    identities.set(basis, new Map());
+  }
+
+  for (const record of records) {
+    if (record.schemaVersion !== 3) continue;
+    const basis = record.labelBasis;
+    if (basis === undefined) continue;
+    publication.records[basis] = (publication.records[basis] ?? 0) + 1;
+    if (!recordEligibility(record).eligible) {
+      publication.ineligible[basis] = (publication.ineligible[basis] ?? 0) + 1;
+    }
+    const perAxis = identities.get(basis);
+    if (perAxis === undefined) continue;
+    for (const axis of V3_GROUP_AXES) {
+      const identity = groupAxisIdentity(record, axis);
+      if (identity === undefined) continue;
+      const set = perAxis.get(axis) ?? new Set<string>();
+      set.add(identity);
+      perAxis.set(axis, set);
+    }
+  }
+
+  for (const basis of bases) {
+    const perAxis = identities.get(basis);
+    if (perAxis === undefined || perAxis.size === 0) continue;
+    const counts: Record<string, number> = {};
+    // V3_GROUP_AXES order, not insertion order, so the published block is stable
+    // across corpora and its canonical digest does not depend on row order.
+    for (const axis of V3_GROUP_AXES) {
+      const set = perAxis.get(axis);
+      if (set !== undefined) counts[axis] = set.size;
+    }
+    publication.samplingUnits[basis] = counts;
+  }
+  return publication;
+}
+
+// The closed parser for the same block. It has to reproduce the emitted shape
+// EXACTLY, including which keys are present, because the audit's canonical digest
+// covers it: a reader that dropped an empty `samplingUnits` row would recompute a
+// different `auditDigest` and reject a valid audit.
+function parseLabelBasisPublication(value: unknown): LabelBasisPublication {
+  const obj = assertExactObject(
+    value,
+    "labelBasisCounts",
+    ["records", "samplingUnits", "ineligible"],
+    ["records", "samplingUnits", "ineligible"],
+  );
+  const samplingUnitsRaw = obj.samplingUnits;
+  if (!isPlainObject(samplingUnitsRaw)) {
+    fail(
+      "DATASET_SCHEMA_INVALID",
+      "labelBasisCounts.samplingUnits must be an object",
+    );
+  }
+  const samplingUnits: Record<string, Record<string, number>> = {};
+  for (const basis of Object.keys(samplingUnitsRaw)) {
+    samplingUnits[basis] = integerTally(
+      samplingUnitsRaw[basis],
+      `labelBasisCounts.samplingUnits.${basis}`,
+    );
+  }
+  return {
+    records: integerTally(obj.records, "labelBasisCounts.records"),
+    samplingUnits,
+    ineligible: integerTally(obj.ineligible, "labelBasisCounts.ineligible"),
+  };
+}
+
 /** SHA-256 (hex) of the canonical bytes of the audit without `auditDigest`. */
 export async function computeDatasetAuditDigest(
   input: Omit<DatasetAudit, "auditDigest">,
@@ -501,9 +651,8 @@ export async function sealDataset(
     if (record.hardNegativeFamily !== undefined) {
       increment(hardNegativeFamilies, record.hardNegativeFamily);
     }
-    if (record.groups.generatorFamily !== undefined) {
-      increment(generatorFamilies, record.groups.generatorFamily);
-    }
+    const family = generatorFamilyOf(record);
+    if (family !== undefined) increment(generatorFamilies, family);
     normalized.push(record);
   }
 
@@ -568,6 +717,7 @@ export async function sealDataset(
     sourceTypes,
     hardNegativeFamilies,
     generatorFamilies,
+    labelBasisCounts: publishLabelBasis(normalized),
     licenses: [...licenseIds].sort(),
     recordsSha256: m.recordsSha256,
     reviewLedgerSha256: m.reviewLedgerSha256,
@@ -638,6 +788,7 @@ export async function parseDatasetAudit(value: unknown): Promise<DatasetAudit> {
     root.generatorFamilies,
     "generatorFamilies",
   );
+  const labelBasisCounts = parseLabelBasisPublication(root.labelBasisCounts);
 
   if (!Array.isArray(root.licenses)) {
     fail("DATASET_FIELD_INVALID", "licenses must be an array");
@@ -671,6 +822,7 @@ export async function parseDatasetAudit(value: unknown): Promise<DatasetAudit> {
     sourceTypes,
     hardNegativeFamilies,
     generatorFamilies,
+    labelBasisCounts,
     licenses,
     recordsSha256,
     reviewLedgerSha256,

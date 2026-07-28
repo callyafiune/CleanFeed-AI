@@ -7,10 +7,11 @@ import {
   type BlockedSplitPolicy,
   type Partition,
 } from "../split.ts";
-import type {
-  BenchmarkLabel,
-  BenchmarkRecord,
-  TransformationKind,
+import {
+  groupAxisIdentity,
+  type BenchmarkLabel,
+  type BenchmarkRecord,
+  type TransformationKind,
 } from "../schema.ts";
 import {
   asGeneratorFamily,
@@ -330,7 +331,7 @@ describe("createBlockedSplit", () => {
       const recordsByValue = new Map<string, number>();
       for (const [partition, rows] of partitions) {
         for (const row of rows) {
-          const value = row.groups[axis];
+          const value = groupAxisIdentity(row, axis);
           if (value === undefined) continue;
           const set = partitionsByValue.get(value) ?? new Set<Partition>();
           set.add(partition);

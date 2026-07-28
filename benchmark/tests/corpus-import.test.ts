@@ -24,7 +24,7 @@ import {
   validateDatasetManifest,
   type DatasetManifest,
 } from "../dataset-manifest.ts";
-import { parseBenchmarkDataset, type BenchmarkRecord } from "../schema.ts";
+import { parseBenchmarkDataset, type BenchmarkRecordV2 } from "../schema.ts";
 import {
   computeReviewedSourceManifestDigest,
   type GenerationBatchV1,
@@ -141,10 +141,10 @@ async function sealedManifest(
 // the NFC/LF-normalized text so the importer never rejects a well-formed input.
 function humanRecord(
   id: string,
-  overrides: Partial<BenchmarkRecord> = {},
-): BenchmarkRecord {
+  overrides: Partial<BenchmarkRecordV2> = {},
+): BenchmarkRecordV2 {
   const text = overrides.text ?? `texto unico do registro ${id} alfa beta gama`;
-  const record: BenchmarkRecord = {
+  const record: BenchmarkRecordV2 = {
     schemaVersion: 2,
     id,
     text,
@@ -197,7 +197,7 @@ function humanRecord(
   return record;
 }
 
-function ledgerLine(record: BenchmarkRecord): string {
+function ledgerLine(record: BenchmarkRecordV2): string {
   return JSON.stringify({
     recordId: record.id,
     reviewerIds: record.annotation.reviewerIds,
@@ -574,7 +574,7 @@ describe("ingestAuthorizedRecords — atomic output set and stability", () => {
 // corpus so the real seal/split contracts run end to end.
 // ---------------------------------------------------------------------------
 
-const ANNOTATION: BenchmarkRecord["annotation"] = {
+const ANNOTATION: BenchmarkRecordV2["annotation"] = {
   protocolVersion: "annotation-v1",
   reviewerIds: ["reviewer_a", "reviewer_b"],
   agreement: "agree",
@@ -590,7 +590,7 @@ function buildText(id: string): string {
   return Array.from({ length: 12 }, (_, i) => `${id}_${i}`).join(" ");
 }
 
-function baseGroups(id: string, batch: string): BenchmarkRecord["groups"] {
+function baseGroups(id: string, batch: string): BenchmarkRecordV2["groups"] {
   return {
     author: `author_${id}`,
     source: `source_${id}`,
@@ -601,7 +601,11 @@ function baseGroups(id: string, batch: string): BenchmarkRecord["groups"] {
   };
 }
 
-function human(id: string, createdAt: number, batch: string): BenchmarkRecord {
+function human(
+  id: string,
+  createdAt: number,
+  batch: string,
+): BenchmarkRecordV2 {
   const text = buildText(id);
   return {
     schemaVersion: 2,
@@ -639,7 +643,7 @@ function human(id: string, createdAt: number, batch: string): BenchmarkRecord {
 function generationRecipe(
   family: string,
   createdAt: number,
-): NonNullable<BenchmarkRecord["generation"]> {
+): NonNullable<BenchmarkRecordV2["generation"]> {
   return {
     provider: "acme",
     family,
@@ -658,7 +662,7 @@ function ai(
   createdAt: number,
   batch: string,
   family: string,
-): BenchmarkRecord {
+): BenchmarkRecordV2 {
   const text = buildText(id);
   return {
     schemaVersion: 2,
@@ -703,7 +707,7 @@ function mixed(
   createdAt: number,
   batch: string,
   parentId: string,
-): BenchmarkRecord {
+): BenchmarkRecordV2 {
   const text = buildText(id);
   const groups = baseGroups(id, batch);
   groups.derivationRoot = parentId;
@@ -797,8 +801,8 @@ const BLOCKS: readonly Block[] = [
   },
 ];
 
-function generateCorpus(): BenchmarkRecord[] {
-  const records: BenchmarkRecord[] = [];
+function generateCorpus(): BenchmarkRecordV2[] {
+  const records: BenchmarkRecordV2[] = [];
   let index = 0;
   const nextId = (): string => {
     index += 1;

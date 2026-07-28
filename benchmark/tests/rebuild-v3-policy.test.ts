@@ -5,6 +5,7 @@ import { describe, expect, it } from "vitest";
 
 import { EVALUATOR_FILES } from "../digests.ts";
 import {
+  laneRunsHarness,
   parseRebuildV3Policy,
   REBUILD_V3_POLICY,
   REBUILD_V3_POLICY_PATH,
@@ -459,6 +460,115 @@ describe("parseRebuildV3Policy fails closed", () => {
     ];
     expect(() => parseRebuildV3Policy(modes)).toThrow(
       /materialAssistance\.generationModes/u,
+    );
+  });
+});
+
+// C1 — the generation-lane table. Frozen here because the schema, the assembler
+// (C2) and the generator matrix (D3) must read ONE table: `agy` serves 3 of the 4
+// core families and is absent from the OOD family, so a detector that learned the
+// harness signature would fail the OOD family for the wrong reason.
+describe("generationLanes", () => {
+  it("declares four lanes: one API and three CLIs", () => {
+    expect(Object.keys(REBUILD_V3_POLICY.generationLanes).sort()).toEqual([
+      "agy",
+      "codex",
+      "gemini-api",
+      "gemini-cli",
+    ]);
+    const channels = Object.values(REBUILD_V3_POLICY.generationLanes).map(
+      (row) => row.channel,
+    );
+    expect(channels.filter((channel) => channel === "api")).toHaveLength(1);
+    expect(channels.filter((channel) => channel !== "api")).toHaveLength(3);
+  });
+
+  // MEASURED 2026-07-27 by probing agy directly: `--effort` is refused on
+  // claude-sonnet-4-6 and claude-opus-4-6-thinking, and conflicts with models whose
+  // id embeds the tier. So on agy the effort either IS the model id or does not
+  // exist; it is never an independent flag. On codex it is real
+  // (`model_reasoning_effort`) and reaches `xhigh`.
+  it("records where effort is real and where it is the model id", () => {
+    const agy = REBUILD_V3_POLICY.generationLanes.agy;
+    expect(agy.effortConfigurable).toBe(false);
+    expect([...agy.effortSources]).toEqual(["model-id", "not-supported"]);
+    expect([...agy.effortLevels]).toEqual(["low", "medium", "high"]);
+
+    const codex = REBUILD_V3_POLICY.generationLanes.codex;
+    expect(codex.effortConfigurable).toBe(true);
+    expect(codex.effortSources).toContain("flag");
+    expect([...codex.effortLevels]).toEqual(["low", "medium", "high", "xhigh"]);
+
+    // The two scales are DIFFERENT names, which is what stops a level from being
+    // read as a shared ordinal across providers.
+    expect(agy.effortScale).not.toBe(codex.effortScale);
+  });
+
+  it("derives the harness requirement from the channel, in one place", () => {
+    for (const [lane, row] of Object.entries(
+      REBUILD_V3_POLICY.generationLanes,
+    )) {
+      expect(laneRunsHarness(row)).toBe(row.channel !== "api");
+      // Only the API lane accepts sampling parameters. A CLI takes no
+      // temperature/top_p, which is why a temperature recorded on a CLI row
+      // describes nothing.
+      expect(row.decodingConfigurable).toBe(lane === "gemini-api");
+    }
+  });
+
+  it("refuses a harness lane that claims configurable decoding", () => {
+    const policy = validPolicyObject();
+    const lanes = policy.generationLanes as Record<
+      string,
+      Record<string, unknown>
+    >;
+    lanes.agy = { ...lanes.agy, decodingConfigurable: true };
+    expect(() => parseRebuildV3Policy(policy)).toThrow(
+      /generationLanes\.agy\.decodingConfigurable/u,
+    );
+  });
+
+  it("refuses a scale with no levels and levels with no scale", () => {
+    const noLevels = validPolicyObject();
+    const a = noLevels.generationLanes as Record<
+      string,
+      Record<string, unknown>
+    >;
+    a.agy = { ...a.agy, effortLevels: [] };
+    expect(() => parseRebuildV3Policy(noLevels)).toThrow(
+      /generationLanes\.agy\.effortLevels/u,
+    );
+
+    const noScale = validPolicyObject();
+    const b = noScale.generationLanes as Record<
+      string,
+      Record<string, unknown>
+    >;
+    b.agy = { ...b.agy, effortScale: null };
+    expect(() => parseRebuildV3Policy(noScale)).toThrow(
+      /generationLanes\.agy\.effort(Levels|Scale)/u,
+    );
+  });
+
+  it("refuses a configurable effort that no flag can set", () => {
+    const policy = validPolicyObject();
+    const lanes = policy.generationLanes as Record<
+      string,
+      Record<string, unknown>
+    >;
+    lanes.agy = { ...lanes.agy, effortConfigurable: true };
+    expect(() => parseRebuildV3Policy(policy)).toThrow(
+      /generationLanes\.agy\.effortConfigurable/u,
+    );
+  });
+
+  it("refuses a lane dropped from the frozen vocabulary", () => {
+    const policy = validPolicyObject();
+    const lanes = { ...(policy.generationLanes as Record<string, unknown>) };
+    delete lanes["gemini-cli"];
+    policy.generationLanes = lanes;
+    expect(() => parseRebuildV3Policy(policy)).toThrow(
+      /generationLanes\.gemini-cli is missing/u,
     );
   });
 });

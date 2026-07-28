@@ -36,6 +36,7 @@ import {
   type ReviewedSourceEntryV1,
   type ReviewedSourceManifestV1,
 } from "../source-manifest.ts";
+import { V3_GROUP_AXES } from "../schema.ts";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const REPO_ROOT = resolve(HERE, "../..");
@@ -396,6 +397,7 @@ describe("non-commercial corpus use policy", () => {
     expect(imported).toEqual([
       "../contracts/canonical-json.ts",
       "./rebuild-v3-policy.ts",
+      "./schema.ts",
     ]);
     // EXACTLY: an import missing from the block fails, and a block entry that is
     // no longer imported fails too. Updating the expectation above without
@@ -697,6 +699,7 @@ const publicSnapshot: HumanSourceRegistrationV1 = {
   labelBasis: "date-cutoff",
   anchorDateField: "Posts.xml@CreationDate",
   anchorDateScope: "document",
+  declaredGroupAxes: ["author", "source"],
 };
 
 describe("B3 — only public licensed bases enter as human sources", () => {
@@ -821,6 +824,7 @@ describe("B3 — only public licensed bases enter as human sources", () => {
       labelBasis: "observed-process",
       anchorDateField: null,
       anchorDateScope: null,
+      declaredGroupAxes: ["author", "source"],
     };
     expect(humanSourceAdmissibility(instrumented)).toMatchObject({
       admissible: true,
@@ -1317,5 +1321,88 @@ describe("B3 — the human label is a declared mitigation, never a proof", () =>
     expect(runbook).not.toMatch(/doador/iu);
     // The invariant is stated, not merely absent by accident.
     expect(runbook).toMatch(/somente bases p[úu]blicas/iu);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// C1 — each source declares the dependence axes it can fill, so the audit has
+// something to compare a record-line against.
+// ---------------------------------------------------------------------------
+
+describe("declaredGroupAxes on the v3 human inventory", () => {
+  it("declares the plan's fixed per-source mapping", () => {
+    const byId = new Map(
+      V3_HUMAN_SOURCE_INVENTORY.map((entry) => [
+        entry.sourceId,
+        [...entry.declaredGroupAxes],
+      ]),
+    );
+    // Stack Overflow -> thread and author; Wikipedia -> page; B2W -> product and
+    // reviewer; Carolina -> member file. `source` IS the origin document in v3, so
+    // thread/page/product/member-file are one axis under four names, and `author`
+    // is declared only where a single person wrote the text.
+    expect(byId.get("src_ptso")).toEqual(["author", "source"]);
+    expect(byId.get("src_b2w")).toEqual(["author", "source"]);
+    expect(byId.get("src_wikipedia_pt")).toEqual(["source"]);
+    expect(byId.get("src_carolina")).toEqual(["source"]);
+  });
+
+  it("declares no axis a record cannot fill", () => {
+    for (const entry of V3_HUMAN_SOURCE_INVENTORY) {
+      for (const axis of entry.declaredGroupAxes) {
+        expect(V3_GROUP_AXES).toContain(axis);
+      }
+    }
+  });
+
+  it("keeps every frozen human source admissible with its declaration", () => {
+    expect(() =>
+      assertV3HumanInventoryAdmissible(V3_HUMAN_SOURCE_INVENTORY),
+    ).not.toThrow();
+  });
+
+  // A source that declares no axis cannot support a blocked split: every record
+  // drawn from it is a component of one. That is not hypothetical — it is the state
+  // the v2 corpus was in when it reported `leakages: []` over eight axes of
+  // singletons.
+  it("refuses a source that declares no applicable axis", () => {
+    expect(
+      humanSourceAdmissibility({ ...publicSnapshot, declaredGroupAxes: [] }),
+    ).toMatchObject({
+      admissible: false,
+      blockedBy: "no-declared-group-axis",
+    });
+    expect(() =>
+      assertV3HumanInventoryAdmissible([
+        { ...publicSnapshot, declaredGroupAxes: [] },
+      ]),
+    ).toThrow(/no-declared-group-axis/u);
+  });
+
+  // Guard order: the licence is reported before the missing declaration, because a
+  // source that cannot enter at all has nothing to group.
+  it("names the licence, not the missing declaration, when both could fire", () => {
+    expect(
+      humanSourceAdmissibility({
+        ...publicSnapshot,
+        licenseId: "cc-by-nc-nd-4.0",
+        declaredGroupAxes: [],
+      }),
+    ).toMatchObject({ admissible: false, blockedBy: "no-derivatives" });
+  });
+
+  // ...and the declaration is reported before the label basis, because it is a
+  // fact about the source's structure rather than about the evidence for its label.
+  it("names the missing declaration, not the undeclared basis, when both could fire", () => {
+    expect(
+      humanSourceAdmissibility({
+        ...publicSnapshot,
+        labelBasis: null,
+        declaredGroupAxes: [],
+      }),
+    ).toMatchObject({
+      admissible: false,
+      blockedBy: "no-declared-group-axis",
+    });
   });
 });

@@ -20,7 +20,11 @@ import {
   type GeneratorFamily,
 } from "./generator-family.ts";
 import { REBUILD_V3_POLICY } from "./rebuild-v3-policy.ts";
-import type { BenchmarkLabel, BenchmarkRecord } from "./schema.ts";
+import {
+  groupAxisIdentity,
+  type BenchmarkLabel,
+  type BenchmarkRecord,
+} from "./schema.ts";
 import {
   connectedComponentRoots,
   GROUP_KEYS,
@@ -193,8 +197,10 @@ function auditLeakages(
     const partitionsByValue = new Map<string, Set<Partition>>();
     for (const partition of PARTITIONS) {
       for (const record of byPartition[partition]) {
-        const value = record.groups[axis];
-        if (value === undefined || value === "") continue;
+        // Same accessor the splitter uses, for the same reason: the audit must
+        // enumerate the identities the splitter did, not a second reading of them.
+        const value = groupAxisIdentity(record, axis);
+        if (value === undefined) continue;
         const set = partitionsByValue.get(value) ?? new Set<Partition>();
         set.add(partition);
         partitionsByValue.set(value, set);

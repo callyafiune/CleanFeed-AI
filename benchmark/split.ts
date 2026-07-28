@@ -19,7 +19,11 @@ import {
   sortGeneratorFamilies,
   type GeneratorFamily,
 } from "./generator-family.ts";
-import type { BenchmarkLabel, BenchmarkRecord } from "./schema.ts";
+import {
+  groupAxisIdentity,
+  type BenchmarkLabel,
+  type BenchmarkRecord,
+} from "./schema.ts";
 
 // --- Legacy MVP group-time split -------------------------------------------
 
@@ -307,8 +311,11 @@ export function connectedComponentRoots(
   for (const key of GROUP_KEYS) {
     const firstByValue = new Map<string, string>();
     for (const record of records) {
-      const value = record.groups[key];
-      if (value === undefined || value === "") continue;
+      // Read through the accessor, not the block: a v3 axis is a three-valued
+      // object, and only a `known` state is an identity two rows can share.
+      // `notApplicable` and `unknown` both mean "this row joins no other here".
+      const value = groupAxisIdentity(record, key);
+      if (value === undefined) continue;
       const first = firstByValue.get(value);
       if (first === undefined) {
         firstByValue.set(value, record.id);
@@ -322,8 +329,8 @@ export function connectedComponentRoots(
   // so A <- B <- C become one component regardless of intermediate depth.
   const ids = new Set(records.map((record) => record.id));
   for (const record of records) {
-    const root = record.groups.derivationRoot;
-    if (root !== record.id && ids.has(root)) {
+    const root = groupAxisIdentity(record, "derivationRoot");
+    if (root !== undefined && root !== record.id && ids.has(root)) {
       disjoint.union(record.id, root);
     }
   }

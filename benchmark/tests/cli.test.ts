@@ -28,6 +28,7 @@ import {
 } from "../calibration-pipeline.ts";
 import { runFit, type FitOptions } from "../commands/fit.ts";
 import {
+  emptyLabelBasisPublication,
   computeDatasetAuditDigest,
   type DatasetAudit,
   type DatasetManifest,
@@ -1172,6 +1173,7 @@ async function buildFitScenario(
     sourceTypes: { "qa-informal": 1 },
     hardNegativeFamilies: { formulaic: 1 },
     generatorFamilies: { acme_family: aiCount },
+    labelBasisCounts: emptyLabelBasisPublication(),
     licenses: ["consent-v1"],
     recordsSha256: hex("fit-records"),
     reviewLedgerSha256: reviewLedgerSha,

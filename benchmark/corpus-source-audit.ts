@@ -25,7 +25,7 @@ import {
   type CorpusSourceReadinessReport,
   type SourceReadinessDigestInput,
 } from "../contracts/source-readiness.ts";
-import type { BenchmarkRecord } from "./schema.ts";
+import { groupAxisIdentity, type BenchmarkRecord } from "./schema.ts";
 import {
   computeReviewedSourceManifestDigest,
   licenseDescribesPublicBase,
@@ -257,8 +257,13 @@ function auditRecords(
       });
     }
 
+    // The declared collection/generation batch, read through the version-aware
+    // accessor: in v3 the axis is a three-valued object and only a `known` state
+    // names a batch a manifest entry could match.
+    const batchId = groupAxisIdentity(record, "collectionBatch");
+
     if (generated) {
-      const linked = batchById.get(record.groups.collectionBatch);
+      const linked = batchId === undefined ? undefined : batchById.get(batchId);
       if (linked === undefined || record.generation === undefined) {
         reasons.push({
           code: "GENERATION_RECIPE_MISSING",
@@ -270,7 +275,7 @@ function auditRecords(
           recordId: record.id,
         });
       }
-    } else if (batchById.has(record.groups.collectionBatch)) {
+    } else if (batchId !== undefined && batchById.has(batchId)) {
       // Human records must never link a generation batch.
       reasons.push({
         code: "GENERATION_RECIPE_MISMATCH",

@@ -3174,6 +3174,105 @@ resolve; e os testes provam as cinco recusas e as contagens do manifesto.
 **Verificar:** `vitest run benchmark/tests/schema.test.ts
 benchmark/tests/dataset-manifest.test.ts benchmark/tests/source-manifest.test.ts`.
 
+#### C1 — como ficou (executado em 2026-07-28)
+
+Entregue. As cinco recusas estão provadas em `benchmark/tests/schema-v3.test.ts`
+(arquivo novo, 47 testes); as contagens do manifesto e o requisito de privacidade em
+`benchmark/tests/dataset-manifest.test.ts`; a declaração de eixos por fonte em
+`benchmark/tests/source-manifest.test.ts`; a tabela de lanes em
+`benchmark/tests/rebuild-v3-policy.test.ts`.
+
+**Divergências deliberadas em relação ao texto acima, com o motivo:**
+
+1. **v2 e v3 coexistem; `schemaVersion` é discriminante.** O plano dizia "schema v3" sem
+   dizer o que fazer com o corpus selado que já está em disco em v2. Reescrever o ramo v2
+   tornaria ilegível um artefato que existe — e um corpus que ninguém lê não pode nem ser
+   auditado. Então `BenchmarkRecord = BenchmarkRecordV2 | BenchmarkRecordV3`,
+   `validateBenchmarkRecord` despacha, e `parseBenchmarkDataset` **recusa** um arquivo que
+   mistura as duas versões (um corpus meio-migrado selado e depois lido como uniforme é o
+   defeito v2 numa forma que nenhuma auditoria nomeia). O ramo v2 é byte-idêntico.
+2. **`groups` virou objeto de três estados, e isso quebrou 14 leituras — de propósito.**
+   Cada consumidor que lia `record.groups[eixo]` como string passou a falhar em
+   compilação, o que é o comportamento desejado: a lista dos que precisavam saber da
+   mudança saiu do compilador, não de uma busca textual. Todos passam agora por
+   `groupAxisIdentity`, que despacha pela FORMA do valor (string = identidade v2, objeto =
+   eixo v3) e não por `schemaVersion` — assim o leitor é total sobre as duas versões e
+   funciona num registro em construção (C2).
+3. **`authorClusterKey` falha alto em corpus v3, e isso é o resultado correto.**
+   `metrics.ts` e `commands/fit.ts` usavam `groups.author` como unidade de reamostragem.
+   Em v3, `author` é `notApplicable` em **todo** registro gerado por regra (texto de IA
+   não tem autor humano), logo o eixo `author` **não é** unidade de reamostragem de um
+   corpus v3. As três alternativas foram consideradas e todas são piores: devolver
+   `record.id` sintetiza um cluster por registro (é o defeito v2); devolver `undefined` e
+   deixar o chamador pular a linha tira linhas do denominador em silêncio; cair para
+   linhas independentes é proibido pelo próprio contrato congelado
+   (`resampling.fallbackToIndependentRows: false`). Então a função lança, citando C4.
+   **Consequência para C4:** o caminho `evaluate` de um corpus v3 não roda até C4 escolher
+   a unidade por estimando. Isso é bloqueio real e está registrado como tal.
+4. **`reason` é obrigatório em `notApplicable` e em `unknown`.** Não estava pedido. O modo
+   de falha que R6 vigia é um produtor escrever `notApplicable` para escapar da
+   inelegibilidade, e um estado cuja justificativa está escrita é um estado com que um
+   revisor pode discordar. Mesma jogada de `decodingConfigurable`.
+5. **Na lane de CLI, `harnessVersion` `unknown` é ACEITO e `notApplicable` é RECUSADO.** O
+   brief tem as duas frases ("obrigatória quando é lane de CLI" e "desconhecida → registro
+   inelegível") e só esta leitura satisfaz as duas. `notApplicable` é uma afirmação falsa
+   sobre a lane; `unknown` é verdadeira e custa a elegibilidade. Recusar `unknown` também
+   empurraria quem não capturou a versão do binário a escrever `notApplicable` para a
+   linha passar — a substituição exata que o schema existe para impedir.
+6. **`decoding` e `effort` são uniões discriminadas, não campos anuláveis.** Numa lane de
+   CLI os campos de amostragem **não existem** no ramo, em vez de existirem nulos. Isso
+   pegou um dado real: `generate_ai.py:766` escreve `"temperature": str(TEMPERATURE)` no
+   `meta` de **todo** provedor, e `CLI_PROVIDERS = {"agy","codex","gemini_cli"}` são
+   invocados como CLI sem nenhuma flag de amostragem (`agy` é `[AGY_BIN, "-p", prompt,
+   "--mode", "plan", "--model", model]`). Os pools em disco carregam `temperature: "0.8"`
+   em registros onde nenhuma temperatura foi aplicada. O schema recusa. `effort` carrega
+   `scale` junto do `level` por construção — não há como gravar um sem o outro — e
+   `compareEffortWithinScale` recusa comparação entre escalas.
+7. **`effortSources` de `agy` é `["model-id", "not-supported"]`, e uma versão anterior do
+   parser recusava justamente isso.** Escrevi um guarda dizendo que `not-supported` não
+   pode acompanhar outra fonte, e a linha congelada do `agy` falhou nele na hora. O guarda
+   estava errado, não o dado: no `agy` o effort "ou é o próprio id do modelo, ou não
+   existe" — `--effort` é recusado em `claude-sonnet-4-6` e em
+   `claude-opus-4-6-thinking` —, logo uma lane produz registros sob as duas fontes e é o
+   REGISTRO que diz qual se aplica a ele. Guarda removido; o motivo ficou escrito em
+   `laneRow`.
+8. **`humanSeed` e `derivationRoot` são eixos separados.** O plano lista "seed humano" e
+   "raiz de derivação" na mesma frase; não são sinônimos. A receita `original` gera texto
+   novo a partir de um prompt humano (seed conhecido, derivação `notApplicable`), enquanto
+   `parafrase` reescreve aquele texto (os dois conhecidos). Colapsar os dois inventaria uma
+   derivação ou perderia o seed. A recusa 5 é sobre `humanSeed`, com três falhas distintas
+   (pai ausente do dataset, pai não humano, pai humano sem `labelBasis`).
+9. **`generation` passou a ser obrigatório em `mixed`.** v2 deixava opcional, e por isso
+   uma linha mista podia nomear `generatorFamily` sem receita atrás. Os trechos de IA de um
+   misto saíram de um gerador; `mixed_from_pairs.jsonl` já grava `provider`, `model` e
+   `generatedAt` por linha, então o dado sustenta a exigência.
+10. **`generationLanes` foi para `benchmark/rebuild-v3-policy.json`,** como o item 8 do
+    brief manda, com `channel`, `decodingConfigurable`, `effortConfigurable`,
+    `effortScale`, `effortLevels` e `effortSources` por lane. `harnessVersionRequired`
+    **não** é campo: é `channel !== "api"`, derivado em `laneRunsHarness`, um lugar só.
+11. **`DatasetAudit.labelBasisCounts` é chave obrigatória, dentro do selo.** Publica
+    `records`, `samplingUnits` (por base, por eixo, contagem de identidades `known`
+    distintas) e `ineligible`. Um número só de "unidades amostrais" escolheria em silêncio
+    o eixo que é a unidade, e essa escolha é de C4 por estimando; publicar todos permite a
+    C4 escolher a partir do artefato e permite a um leitor ver que um intervalo "agrupado"
+    num eixo com tantas unidades quantos registros é um intervalo i.i.d. com outro nome.
+    Nada que sai de lá é identificador — as identidades entram num `Set` e só o `size`
+    escapa. Um corpus v2 publica zeros, não bloco ausente: ausente leria como "não medido".
+    Duas reconstruções manuais da identidade do audit
+    (`calibration-pipeline.ts`, `candidate-preflight.ts`) tiveram de receber a chave; são
+    duplicação pré-existente da forma do audit e ficam registradas aqui como risco.
+12. **Novo motivo de recusa de fonte: `no-declared-group-axis`.** Cada fonte declara em
+    `declaredGroupAxes` os eixos que consegue preencher (SO → thread e autor; Wikipédia →
+    página; B2W → produto e avaliador; Carolina → arquivo-membro), e
+    `assertDeclaredAxesResolved` (lado do registro) compara declaração contra
+    preenchimento — é o que C3 chama. Uma fonte que declara eixo nenhum não sustenta split
+    agrupado: é o estado em que o corpus v2 estava ao reportar `leakages: []`.
+
+**Não feito, e por quê:** métricas fatiadas por lane são de A6/E3 (o brief diz para
+registrar em vez de implementar); o keyring HMAC é C3 — aqui só o contrato do campo exige a
+forma pseudonimizada e recusa a crua; `assemble_corpus.py` continua emitindo v2, porque
+repropagar é C2.
+
 ### C2 — Montador persiste grupos reais
 
 **Depende de:** C1.

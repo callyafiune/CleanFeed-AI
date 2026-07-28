@@ -42,7 +42,7 @@ import {
 } from "./intervals.ts";
 import { REBUILD_V3_POLICY } from "./rebuild-v3-policy.ts";
 import type { GenerationMode } from "./rebuild-v3-policy.ts";
-import type { BenchmarkRecord } from "./schema.ts";
+import { authorClusterKey, type BenchmarkRecord } from "./schema.ts";
 
 export interface Prediction {
   // Ground-truth label of the record.
@@ -1980,7 +1980,7 @@ function predictiveValueProjection(
 
 function samplingUnits(items: readonly EvaluationItem[]): number {
   const units = new Set<string>();
-  for (const item of items) units.add(item.record.groups.author);
+  for (const item of items) units.add(authorClusterKey(item.record));
   return units.size;
 }
 
@@ -2227,7 +2227,7 @@ function continuousEstimate(
   if (!Number.isFinite(value)) return { value, method: "point" };
   try {
     const interval = clusterBootstrap(items, {
-      clusterBy: (item) => item.record.groups.author,
+      clusterBy: (item) => authorClusterKey(item.record),
       iterations: BOOTSTRAP_ITERATIONS,
       seed,
       statistic,

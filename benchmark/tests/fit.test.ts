@@ -15,6 +15,7 @@ import {
 } from "../../contracts/runtime-parity.ts";
 import { runFit, type FitOptions } from "../commands/fit.ts";
 import {
+  emptyLabelBasisPublication,
   computeDatasetAuditDigest,
   type DatasetAudit,
   type DatasetManifest,
@@ -341,6 +342,7 @@ async function buildAudit(): Promise<DatasetAudit> {
     sourceTypes: { "qa-informal": 1 },
     hardNegativeFamilies: { formulaic: 1 },
     generatorFamilies: { acme_family: ai },
+    labelBasisCounts: emptyLabelBasisPublication(),
     licenses: ["consent-v1"],
     recordsSha256: RECORDS_SHA,
     reviewLedgerSha256: REVIEW_LEDGER_SHA,
