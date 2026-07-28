@@ -325,13 +325,31 @@ export function connectedComponentRoots(
     }
   }
 
-  // Parent linkage: joins a derivative to its parent record even across a chain,
-  // so A <- B <- C become one component regardless of intermediate depth.
+  // Parent linkage: joins a row to the row it came OUT of, even across a chain, so
+  // A <- B <- C become one component regardless of intermediate depth.
+  //
+  // BOTH lineage axes, and they are not synonyms (see V3_GROUP_AXES): the
+  // `original` recipe generates fresh text from a human prompt, so its
+  // `derivationRoot` is legitimately `notApplicable` while `humanSeed` names the
+  // human row it started from. Following only `derivationRoot` therefore left the
+  // commonest lineage in v3 — human text in one partition, the generation it
+  // seeded in another — glued by nothing, and no VALUE axis reveals it because the
+  // two rows share no axis value at all. This is E2's invariant 4 ("the whole
+  // lineage seed -> generation -> derivatives in one partition"), enforced where
+  // the connectivity is defined.
+  //
+  // A parent that is ABSENT from these records is skipped, deliberately: C2
+  // measured 782 of 783 parent references resolving to no row of the assembled
+  // corpus, and a missing parent must neither invent a cluster nor refuse the row.
+  // Refusing an unresolved lineage is a SELECTION question, and it belongs to
+  // `assertDerivedParentsResolve` on the whole-corpus path, not to connectivity.
   const ids = new Set(records.map((record) => record.id));
   for (const record of records) {
-    const root = groupAxisIdentity(record, "derivationRoot");
-    if (root !== undefined && root !== record.id && ids.has(root)) {
-      disjoint.union(record.id, root);
+    for (const axis of ["derivationRoot", "humanSeed"] as const) {
+      const parent = groupAxisIdentity(record, axis);
+      if (parent !== undefined && parent !== record.id && ids.has(parent)) {
+        disjoint.union(record.id, parent);
+      }
     }
   }
 

@@ -4373,7 +4373,17 @@ foi além (ou ficou aquém) do que o texto acima diz.
    caminho de ingestão, onde a pergunta é se a linha entra no corpus; a da auditoria é se as
    partições merecem confiança, e um eixo legitimamente inaplicável não as compromete.
    `assertDeclaredAxesResolved` segue **não ligada**.
-7. **Escopo que cresceu, e por quê.** `commands/split.ts` passou a passar as declarações
+7. **`humanSeed` passou a colar a geração à sua semente** (`connectedComponentRoots` em
+   `split.ts`). Medido: antes disso a linhagem mais comum da v3 — texto humano numa
+   partição, a geração que ele semeou noutra — ficava colada por **nada**, porque a receita
+   `original` deixa `derivationRoot` legitimamente `notApplicable` e as duas linhas não
+   compartilham nenhum valor de eixo. O teste "glues the generation to its human seed"
+   falhava com `connectedComponent` ausente das leakages e passa agora. Pai **ausente** dos
+   registros continua ignorado de propósito (C2 mediu 782 de 783 referências sem
+   co-presença): recusar linhagem não resolvida é questão de SELEÇÃO, de
+   `assertDerivedParentsResolve` no caminho de corpus inteiro, não de conectividade. É a
+   invariante 4 de E2 imposta onde a conectividade é definida.
+8. **Escopo que cresceu, e por quê.** `commands/split.ts` passou a passar as declarações
    reais (de `V3_HUMAN_SOURCE_INVENTORY`, constante versionada — não do manifesto privado),
    então `benchmark/source-manifest.ts` entrou em `EVALUATOR_FILES` junto com
    `cluster-exposure-ledger.ts` e `commands/cluster-ledger.ts` (R1). `corpus-import.ts`

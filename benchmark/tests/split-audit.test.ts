@@ -723,6 +723,112 @@ function v3Split(
   };
 }
 
+// A generated row whose ONLY link to the corpus is the human text that seeded it.
+// Every other axis is distinct, so nothing but the seed can glue the two.
+function v3Generated(spec: { id: string; createdAt: number; seedId: string }): BenchmarkRecord {
+  const notOurs = "generated text has no human author";
+  return {
+    schemaVersion: 3,
+    id: spec.id,
+    text: `gerado ${spec.id}`,
+    normalizedTextSha256: "e".repeat(64),
+    label: "ai",
+    language: "pt-BR",
+    platform: "generic",
+    domain: "qa-informal",
+    topic: "programacao",
+    wordCount: 120,
+    createdAt: spec.createdAt,
+    provenance: {
+      sourceKind: "controlled-generation",
+      sourceId: "src_ai_agy",
+      sourceRevision: "rev_001",
+      collectedAt: spec.createdAt,
+      licenseId: "autoria-propria-v1",
+      legalBasis: "generated",
+    },
+    review: {
+      state: "automated/unreviewed",
+      automatedFilters: [
+        {
+          filter: "pii-pattern-scan",
+          implementation: "benchmark/lab/common.py:pii_hits",
+          outcome: "passed",
+        },
+      ],
+      humanAuditAbsentReason:
+        "no human reviewer was assigned to this corpus build; only the automated filters ran",
+    },
+    transformation: { kind: "none", severity: "none" },
+    groups: {
+      author: v3Axis("notApplicable", notOurs),
+      source: v3Axis("notApplicable", "generated text has no source document"),
+      domainSource: v3Axis("known", `ds_${spec.id}`),
+      humanSeed: v3Axis("known", spec.seedId),
+      promptTemplate: v3Axis("known", `pt_${spec.id}`),
+      generatorFamily: v3Axis("known", "gemini-3_5-flash-medium"),
+      generatorVersion: v3Axis("known", `gv_${spec.id}`),
+      generationLane: v3Axis("known", "agy"),
+      harnessVersion: v3Axis("known", `agy_${spec.id}`),
+      collectionBatch: v3Axis("known", `gb_${spec.id}`),
+      nearDuplicate: v3Axis("known", `nd_${spec.id}`),
+      derivationRoot: v3Axis(
+        "notApplicable",
+        "the original recipe generates fresh text rather than deriving it",
+      ),
+    },
+  } as unknown as BenchmarkRecord;
+}
+
+describe("the seed that produced a generation", () => {
+  it("glues the generation to its human seed, so the lineage cannot straddle partitions", () => {
+    // The human text is in development and the text it seeded is in test. No value
+    // axis is shared, and `derivationRoot` is notApplicable on the child because
+    // the `original` recipe generates fresh text rather than deriving it — so the
+    // ONLY thing that can catch this is the humanSeed parent linkage.
+    const seed = v3Human({
+      id: "h1",
+      createdAt: 1,
+      sourceId: "src_ptso",
+      authorState: "known",
+    });
+    const generated = v3Generated({ id: "g1", createdAt: 3, seedId: "h1" });
+    const records = [seed, generated];
+    const audit = auditBlockedSplit(
+      records,
+      { development: [seed], calibration: [], test: [generated] },
+      AUDIT_POLICY,
+    );
+
+    expect(audit.leakages.some((entry) => entry.axis === "humanSeed")).toBe(
+      false,
+    );
+    expect(
+      audit.leakages.some((entry) => entry.axis === "connectedComponent"),
+    ).toBe(true);
+    expect(audit.passed).toBe(false);
+
+    // And the cluster report counts them as ONE cluster, not two.
+    expect(audit.clusters.connected.overall.groups).toBe(1);
+  });
+
+  it("leaves a seed that is absent from the corpus alone", () => {
+    // C2 measured 782 of 783 parent references resolving to no row. An absent
+    // parent must not invent a cluster, and must not refuse the row either.
+    const generated = v3Generated({ id: "g1", createdAt: 3, seedId: "absent" });
+    const other = v3Generated({ id: "g2", createdAt: 4, seedId: "also-absent" });
+    const roots = auditBlockedSplit(
+      [generated, other],
+      { development: [generated], calibration: [], test: [other] },
+      AUDIT_POLICY,
+    );
+    expect(
+      roots.leakages.some((entry) => entry.axis === "connectedComponent"),
+    ).toBe(false);
+    expect(roots.clusters.connected.overall.groups).toBe(2);
+  });
+});
+
 describe("a grouping axis the source declared", () => {
   it("fails the audit when a record leaves it unknown", () => {
     const { records, split } = v3Split("unknown");
