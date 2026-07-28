@@ -188,7 +188,16 @@ def emit(
     edited: str,
     provider: str,
     model: str,
-    template_id: str = "mix_edit_v1",
+    # REQUIRED, with no default, and that is the last residual of commit b977b19
+    # ("make a legacy pair's template an operator assertion, not a silent default").
+    # `mix_edit_v1` used to sit here as a default. Both production call sites already
+    # pass the value explicitly — one from the pair's own `promptTemplateId` or
+    # `--assume-template`, one from the generating run — so the default was
+    # unreachable today and reachable by the NEXT caller, who would inherit a recipe
+    # claim without typing one. A mixed row is a controlled generation, so v3 requires
+    # its recipe on the row; a caller that does not know which template ran must fail
+    # here rather than publish `mix_edit_v1` and its digest as an observation.
+    template_id: str,
     harness_version: str | None = None,
 ) -> None:
     mixture = compute_mixture(parent_row["text"], edited)

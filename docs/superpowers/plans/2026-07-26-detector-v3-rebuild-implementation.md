@@ -3685,10 +3685,10 @@ suficiente por estrato**.
 #### C2 — execução (2026-07-28)
 
 **Feito.** Commits `8a16c9e` (extratores + eixos), `2de570b` (montador v3), `b631123`,
-`b977b19` e o commit da rodada de correção. Suíte: **86 testes** em
-`benchmark/lab/test_extractors.py` (eram 33 antes de C2, 76 antes da rodada de correção),
-`npx vitest run` 159 arquivos / 2006 testes verde, `npx tsc --noEmit --project
-tsconfig.benchmark.json` verde.
+`b977b19`, `c3362ca` (1ª rodada de correção) e o commit da 2ª rodada. Suíte: **95 testes**
+em `benchmark/lab/test_extractors.py` (eram 33 antes de C2, 76 antes da 1ª rodada de
+correção, 86 antes da 2ª), `npx vitest run` 159 arquivos / 2006 testes verde,
+`npx tsc --noEmit --project tsconfig.benchmark.json` verde.
 
 **1. `base_groups` saiu inteiro.** Os cinco tokens por registro (`a_`, `g_`, `ds_`, `cb_`,
 `nd_` + id) não existem em nenhum caminho, e um teste (`test_no_module_mints_a_per_record_
@@ -3787,6 +3787,25 @@ As quatro dívidas, cada uma com o dono do conserto:
    checável contra `make_mixed_agy.py`/`make_mixed_codex.py`, e registrada como tal.
    `mixed_candidates.jsonl` (821 linhas do caminho `--generate`, que **nudgeia**) continua
    corretamente recusado.
+
+   > **DÍVIDA DENTRO DESTA DÍVIDA (registrada na 2ª rodada de correção, 2026-07-28).** Os
+   > **180 registros mistos entregues** carregam
+   > `promptTemplateId: "mix_edit_v1"`/`promptTemplateDigest` que vieram de
+   > `--assume-template`, e **a linha não diz isso**: nos bytes dela a receita afirmada
+   > pelo operador é indistinguível de uma receita gravada pela execução. A afirmação
+   > sobrevive só no histórico do shell e nesta seção do plano — prosa, o que R7 chama de
+   > declarar a propriedade em vez do contrato. Não marquei a base na linha nesta rodada e a
+   > razão é estrutural, não de conveniência: o eixo `promptTemplate` é `known`, e um estado
+   > `known` carrega `id` e **nenhum campo de justificativa** (é `notApplicable`/`unknown`
+   > que carregam razão), então não há onde a base caber no registro v3 sem abrir
+   > `V3_RECORD_KEYS`, que é contrato selado de C1. Um campo só no pool, sem leitor nenhum,
+   > seria o mesmo parâmetro inerte que o `representative` de `near_duplicate_axis` — morto
+   > e com forma de vivo. **Quem re-derivar é quem regerar:** os pares mistos precisam ser
+   > re-emitidos pelas lanes (`make_mixed_agy.py`/`make_mixed_codex.py`), que hoje já
+   > persistem `promptTemplateId` de verdade, e aí a afirmação deixa de ser necessária.
+   > **Dono: D3** (mesma regeração que resolve a dívida 1, `harnessVersion`). Enquanto
+   > isso: nenhum consumidor deve ler o `promptTemplateId` desses 180 registros como
+   > observação da execução.
 4. **A lane `codex` não é escrevível em v3 hoje.** `generationLanes.codex.effortSources` é
    `["flag", "provider-default"]` e **nenhum** dos dois é `not-supported`, enquanto as duas
    variantes de `EffortConfig` com nível exigem `scale` **e** `level`. `generate_ai.py`
@@ -3940,6 +3959,87 @@ comportamento entrou junto.
    conselho ERRADO para identificador vazio, onde não há identidade para sluggar e o
    problema real é que string vazia volta como `unknown` por `groupAxisState`. O teste assere
    a MENSAGEM (`assertRaisesRegex(..., "reads back as")`) e morre sob a mutação.
+
+#### C2 — segunda rodada de correção de spec (2026-07-28)
+
+Quatro achados. **Todos os quatro procedem** — reproduzi cada um com a sua própria mutação
+antes de editar qualquer coisa — e todos os quatro estão consertados. `assemble_corpus.py`
+fica **byte-idêntico** ao commit anterior (`git hash-object` == `git rev-parse
+HEAD:benchmark/lab/assemble_corpus.py`, `e122df62…`), portanto o achado importante é
+**fechado só com teste**, sem nenhuma mudança de comportamento.
+
+10. **IMPORTANTE — o eixo `batch` não era alcançado por teste em língua nenhuma.** O eixo
+    `batch` é um dos quatro que o requisito 2 fixa para a fonte IA ("IA: seed + prompt +
+    batch + gerador"), e o primeiro critério de conclusão exige eixo aplicável provado por
+    teste de fixture. `ai_record` e `mixed_record` escrevem
+    `collectionBatch: unknown("the generation batch is derived after partitioning")`, e só
+    `assign_generation_batches` — chamada uma vez, de `main()`, depois de
+    `assign_partitions` — o torna `known`. `grep -rn assign_generation_batches` achava a
+    definição, a chamada e uma linha deste plano; `collectionBatch` não aparecia em
+    `test_extractors.py`. Medi as **duas** mutações da revisão e ambas deixavam a suíte em
+    **86/86 OK**:
+
+    * `return []` no topo de `assign_generation_batches`: os 540 registros gerados da
+      montagem entregue ficam `unknown` no eixo, portanto **inelegíveis**, e o eixo que
+      alimenta o gate de poder de E3 reporta 0 clusters onde o `cluster-report.json`
+      entregue publica **27** (maior cluster `gb_mixed_0020`, 90 linhas);
+    * o fallback humano `f"extraction_{cand['domainSource']}"` reescrito para `"batch_x"`,
+      apesar de a docstring da própria função chamar o prefixo `extraction_` de "structural
+      rather than incidental" porque "cannot collide with a `gb_` id" — o audit de
+      governança recusa registro não-gerado que nomeie batch de geração declarado.
+
+    As duas falhas são opostas em espécie, e é por isso que as duas direções estão pinadas:
+    a primeira **apaga elegibilidade em silêncio** e na direção que lisonjeia (linha que
+    ninguém consegue posicionar é linha que ninguém conta), a segunda fabrica uma colisão
+    que só aparece quando o audit selado roda, muito depois do corpus escrito.
+
+    A classe nova `GenerationBatchAxisTests` (8 testes) fecha os quatro itens pedidos:
+    duas linhas de uma receita → **um** batch declarado com `state: known` e `id ==
+    batches[0]["batchId"]`; uma linha diferindo em **um** componente → dois batches, em
+    `subTest` por componente; nenhum registro gerado fica `unknown` depois da passada;
+    linha humana mantém `extraction_ptso_qa` e nunca um `gb_`; e um registro IA declara os
+    doze eixos, espelhando `test_a_human_record_states_all_twelve_axes` (que não tinha
+    contrapartida — nenhum teste enunciava o CONJUNTO de eixos da IA).
+
+    **Todos os dez componentes da chave de batch morrem na sua própria linha**, medido um a
+    um removendo a linha correspondente da tupla: `sourceId` (1 != 2 em
+    `test_a_mixed_row_never_joins_a_generated_row_s_batch`, mais `'gemini' != 'src_ai'`),
+    `provider`, `family`, `model`, `version`, `promptTemplateDigest`, `decoding` e `seed`
+    (cada um no seu `subTest`), `effort` (na lane `agy`, a única onde effort é expressável —
+    `gemini-api` só oferece `not-supported`) e `generatedAt` (em
+    `test_a_batch_never_straddles_two_partitions`). Esse último pina a propriedade que faz
+    um eixo COMPARTILHADO ser seguro para o split e que estava afirmada só em prosa: como
+    `generatedAt` entra na chave e é o tempo do bloco, uma receita idêntica estampada em
+    dois blocos rende **dois** batches, logo um batch nunca atravessa partição.
+    `sourceId` também: o `batchId` embute `rec["label"]` mas a CHAVE não, então sem
+    `sourceId` uma linha mista passaria a nomear um batch publicado como `gb_ai_…`.
+11. **minor — o número medido no comentário do teste de HMAC estava errado.** O comentário
+    dizia "measured: 3171c3888025f79c". Rodei a mutação e o teste imprime
+    `'60cd07e428342f7d' == '60cd07e428342f7d'`; conferi independentemente que
+    `hmac-sha256(bytes.fromhex("11"*32), b"40").hexdigest()[:16] == 60cd07e428342f7d`, e que
+    `3171c3888025f79c` não corresponde a nada no caminho (nem à variante de chave ascii, nem
+    a `sha256`/`sha1` do cru, nem à mensagem com propósito). `pseudonymize.py:117`, a
+    mensagem do commit e o item 4 acima carregavam o valor certo, então a entrega afirmava
+    **duas medições diferentes para uma medição** e a errada estava justamente no teste que
+    existe para registrá-la. Corrigido, com a fórmula escrita ao lado do número.
+12. **minor — o comentário de `generate_ai.py` ainda afirmava "323 de 635".** São os números
+    da montagem INTERMEDIÁRIA que o item 10 da rodada anterior identificou como velhos e
+    corrigiu em todo lugar menos ali: a entregue é 786 registros com 503 inelegíveis em
+    `harnessVersion`. A ERRATA do plano dizia que os 635/323 ficavam "apenas aqui" enquanto
+    `grep -rn 635 benchmark/lab/*.py` achava a mesma figura afirmada como fato corrente em
+    código de produção. Tirei a **contagem** em vez de atualizá-la: contagem é propriedade de
+    uma montagem, não deste writer, e atualizá-la só reagenda o mesmo defeito para a próxima
+    corrida. O comentário agora afirma o que é permanente (toda linha de lane CLI dos pools
+    v2 cai no ramo `unknown`) e aponta para a tabela de dívidas do plano.
+13. **minor — dois resíduos do desenho "afirmação do operador".** (a) `emit` ainda tinha
+    `template_id: str = "mix_edit_v1"`, o default silencioso cuja remoção é o **título** do
+    commit `b977b19`. Os dois sítios de produção passam o valor explicitamente, então o
+    default era inalcançável hoje e alcançável pelo PRÓXIMO chamador, que herdaria uma
+    alegação de receita sem digitar nenhuma. Agora é parâmetro obrigatório, e um teste novo
+    assere `TypeError` na omissão (reintroduzir o default mata o teste: "TypeError not
+    raised"). O único sítio de teste que omitia passou a declarar `mix_edit_v1`.
+    (b) A afirmação do operador não está marcada nas linhas emitidas — registrada como
+    dívida na dívida 3 acima, com a razão estrutural de não a ter marcado e o dono.
 
 #### Defeitos fora de escopo observados nesta rodada (não consertados)
 

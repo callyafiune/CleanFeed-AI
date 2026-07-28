@@ -715,7 +715,13 @@ class ClusterPseudonymTests(unittest.TestCase):
         # point of this test. `pseudonym` returns `<purpose>_<digest[:16]>`, so
         # comparing whole tokens is satisfied by the `a_` / `b_` prefix alone: with
         # the purpose REMOVED from the MAC message both calls return the same digest
-        # half (measured: 3171c3888025f79c) and a whole-token assertion still passes.
+        # half (measured: 60cd07e428342f7d, which is hmac-sha256(bytes.fromhex("11"*32),
+        # b"40").hexdigest()[:16] — the same value pseudonymize.py:117 records, and the
+        # value this test PRINTS under that mutation) and a whole-token assertion still
+        # passes. An earlier revision of this comment said 3171c3888025f79c, which
+        # corresponds to nothing on the path: not the ascii-key variant, not sha256 or
+        # sha1 of the raw, not the purpose-prefixed message. A test that exists to
+        # record a measurement must not carry a second, wrong one.
         # What the mixing actually buys is MAC domain separation — the digest half
         # not being a cross-purpose join key — so the digest half is what has to be
         # compared. See ClusterKeyring.pseudonym's docstring.
@@ -1609,6 +1615,337 @@ class DerivationLineageTests(unittest.TestCase):
             mixed_record(candidate)
 
 
+class GenerationBatchAxisTests(unittest.TestCase):
+    """`groups.collectionBatch` — the `batch` axis requirement 2 fixes for the IA source.
+
+    THIS AXIS WAS REACHED BY NO TEST IN ANY LANGUAGE before this class. `ai_record`
+    and `mixed_record` both write `unknown("the generation batch is derived after
+    partitioning")`, and only `assign_generation_batches` — called once, from
+    `main()`, after `assign_partitions` — turns that into a `known` `gb_` id. Two
+    mutations measured the gap on the committed tree at c3362ca, and BOTH left the
+    lab suite at 86 tests OK:
+
+      * `return []` at the top of `assign_generation_batches`: every generated row
+        keeps `collectionBatch: unknown`, so all 540 generated records of the
+        delivered run turn INELIGIBLE and the axis that feeds E3's power gate reports
+        0 clusters where the delivered cluster-report.json publishes 27;
+      * the human fallback `f"extraction_{cand['domainSource']}"` rewritten to
+        `"batch_x"`, even though `assign_generation_batches`' own docstring calls the
+        `extraction_` prefix "structural rather than incidental" because it "cannot
+        collide with a `gb_` id" — the governance audit refuses a non-generated
+        record that names a declared generation batch.
+
+    The two failures are opposite in kind, which is why both directions are pinned
+    here: the first DELETES eligibility silently and in the flattering direction (a
+    row nobody can place is a row nobody counts), the second manufactures a collision
+    that surfaces only when the sealed audit runs, long after the corpus is written.
+    """
+
+    TEMPLATE_DIGEST = "b" * 64
+
+    def _api_candidate(self, candidate_id: str, **meta_overrides) -> dict:
+        """One `gemini-api` pool row. Every batch-key component is a parameter.
+
+        The lane is DECLARED (`generationLane`) rather than inferred from `provider`,
+        because `lane_of` lets the declaration win — which is what makes `provider`
+        variable independently of the lane, and therefore separately pinnable below.
+        """
+        meta = {
+            "provider": "gemini",
+            "generationLane": "gemini-api",
+            "family": "gemini-3.5-flash-lite",
+            "model": "gemini-3.5-flash-lite",
+            "version": "gemini-3.5-flash-lite",
+            "recipe": "original",
+            "promptId": "original_src_b2w_00848b3bc692",
+            "promptSha256": self.TEMPLATE_DIGEST,
+            "promptTemplateDigest": self.TEMPLATE_DIGEST,
+            "pairedWith": "src_b2w_00848b3bc692",
+            "temperature": "0.8",
+        }
+        meta.update(meta_overrides)
+        return {
+            "candidateId": candidate_id,
+            "text": PROSE_60,
+            "wordCount": 60,
+            "meta": meta,
+        }
+
+    def _mixed_candidate(self, parent_id: str, **overrides) -> dict:
+        """A mixed pool row whose recipe matches `_api_candidate`'s exactly.
+
+        Same provider, same declared lane, same model/family/version string, same
+        template digest, same temperature, no seed — so when it is batched beside an
+        AI row the ONLY differing component of the batch key is
+        `provenance.sourceId` (`src_mixed` against `src_ai`). That isolation is the
+        point: the batch ID embeds `rec["label"]` but the batch KEY does not, so
+        without `sourceId` in the key a mixed record would link a `gb_ai_` batch.
+        """
+        row = {
+            "parentId": parent_id,
+            "text": PROSE_60,
+            "provider": "gemini",
+            "generationLane": "gemini-api",
+            "model": "gemini-3.5-flash-lite",
+            "promptTemplateId": "original",
+            "promptTemplateDigest": self.TEMPLATE_DIGEST,
+            "parentFamily": "ptso_qa",
+            "temperature": "0.8",
+            "mixture": {
+                "spans": [
+                    {"start": 0, "end": 200, "origin": "human"},
+                    {"start": 200, "end": len(PROSE_60), "origin": "ai"},
+                ]
+            },
+        }
+        row.update(overrides)
+        return row
+
+    @staticmethod
+    def _batched(records: list[dict], partitions: list[str] | None = None) -> list[dict]:
+        """Stamp the block times, then derive the batches — main()'s real order.
+
+        `generatedAt` is part of the batch key and is written by `stamp_block`, so
+        calling `assign_generation_batches` before partitioning would key every batch
+        on a missing timestamp. main() calls them in this order for that reason.
+        """
+        from assemble_corpus import assign_generation_batches, stamp_block
+
+        blocks = partitions or ["development"] * len(records)
+        for record, partition in zip(records, blocks):
+            stamp_block(record, partition)
+        return assign_generation_batches(records)
+
+    def test_two_rows_of_one_recipe_share_one_declared_batch(self) -> None:
+        from assemble_corpus import ai_record
+
+        rows = [
+            ai_record(self._api_candidate("src_ai_gemini_aaaaaaaaaaaa")),
+            ai_record(self._api_candidate("src_ai_gemini_bbbbbbbbbbbb")),
+        ]
+        batches = self._batched(rows)
+        # Two distinct records, ONE declared batch: the whole reason the axis cannot
+        # be per-record. A per-record token names no batch in the reviewed manifest,
+        # and that is how all 5726 generated records of the v2 run were blocked with
+        # GENERATION_RECIPE_MISSING.
+        self.assertNotEqual(rows[0]["id"], rows[1]["id"])
+        self.assertEqual(len(batches), 1)
+        axis = rows[0]["groups"]["collectionBatch"]
+        self.assertEqual(axis["state"], "known")
+        self.assertTrue(axis["id"].startswith("gb_ai_"), axis)
+        self.assertEqual(axis, rows[1]["groups"]["collectionBatch"])
+        # The axis names the batch that was actually declared, byte for byte. Without
+        # this the two could agree with each other and match nothing published.
+        self.assertEqual(axis["id"], batches[0]["batchId"])
+        self.assertEqual(batches[0]["sourceId"], "src_ai")
+
+    # (component name, the meta override that changes THAT component and nothing
+    # else). Each row is one assertion that the component is load-bearing in the
+    # batch key: drop it from the key and the pair collapses into one batch, and the
+    # subTest carrying its name is the one that dies.
+    RECIPE_COMPONENTS = (
+        # `lane_of` prefers the DECLARED lane, so the provider label moves alone.
+        ("provider", {"provider": "google-genai"}),
+        ("family", {"family": "gemini-3.5-flash-low"}),
+        ("model", {"model": "gemini-3.5-flash-lite-002"}),
+        ("version", {"version": "gemini-3.5-flash-lite-002"}),
+        ("promptTemplateDigest", {"promptTemplateDigest": "c" * 64}),
+        ("decoding", {"temperature": "0.5"}),
+        ("seed", {"seed": "4242"}),
+    )
+
+    def test_one_component_of_the_recipe_splits_the_batch(self) -> None:
+        from assemble_corpus import ai_record
+
+        for component, override in self.RECIPE_COMPONENTS:
+            with self.subTest(component=component):
+                left = ai_record(self._api_candidate("src_ai_gemini_aaaaaaaaaaaa"))
+                right = ai_record(
+                    self._api_candidate("src_ai_gemini_bbbbbbbbbbbb", **override)
+                )
+                batches = self._batched([left, right])
+                self.assertEqual(len(batches), 2, component)
+                self.assertNotEqual(
+                    left["groups"]["collectionBatch"]["id"],
+                    right["groups"]["collectionBatch"]["id"],
+                    f"{component} is part of the recipe a batch declares: two rows "
+                    "differing in it were generated under different conditions and "
+                    "cannot be certified by one declared batch",
+                )
+
+    def test_the_effort_is_part_of_the_batch_key(self) -> None:
+        from assemble_corpus import ai_record
+
+        # On the `agy` lane, because that is where effort is expressible: gemini-api
+        # offers only `not-supported` as an effort source, so an api row can carry no
+        # level at all and this component would be unreachable from that fixture.
+        def agy(candidate_id: str, level: str) -> dict:
+            return self._api_candidate(
+                candidate_id,
+                provider="agy",
+                generationLane="agy",
+                family="gpt-oss-120b",
+                model="gpt-oss-120b",
+                version="gpt-oss-120b",
+                effortSource="model-id",
+                effortLevel=level,
+            )
+
+        left = ai_record(agy("src_ai_agy_aaaaaaaaaaaa", "low"))
+        right = ai_record(agy("src_ai_agy_bbbbbbbbbbbb", "medium"))
+        batches = self._batched([left, right])
+        self.assertEqual(len(batches), 2)
+        self.assertNotEqual(
+            left["groups"]["collectionBatch"]["id"],
+            right["groups"]["collectionBatch"]["id"],
+        )
+        # In v2 the key carried a bare temperature and no effort at all, so two runs
+        # at different reasoning tiers — a real difference in what the provider was
+        # asked to do — collapsed into one declared batch.
+        self.assertEqual(left["generation"]["effort"]["level"], "low")
+        self.assertEqual(right["generation"]["effort"]["level"], "medium")
+
+    def test_a_batch_never_straddles_two_partitions(self) -> None:
+        from assemble_corpus import ai_record
+
+        left = ai_record(self._api_candidate("src_ai_gemini_aaaaaaaaaaaa"))
+        right = ai_record(self._api_candidate("src_ai_gemini_bbbbbbbbbbbb"))
+        batches = self._batched([left, right], ["development", "calibration"])
+        # THE PROPERTY THAT MAKES A SHARED AXIS SAFE, and it was asserted nowhere.
+        # `collectionBatch` IS a grouping axis, so two rows sharing it form one split
+        # component; the docstring's argument that this cannot leak across blocks is
+        # that `generatedAt` is part of the key and equals the record's block time, so
+        # an identical recipe stamped into two blocks yields TWO batches. If that ever
+        # stopped holding, a single batch would span development and test and the
+        # split would be refused — with the corpus already written.
+        self.assertEqual(len(batches), 2)
+        self.assertNotEqual(
+            left["groups"]["collectionBatch"]["id"],
+            right["groups"]["collectionBatch"]["id"],
+        )
+        self.assertEqual(
+            {b["generatedAt"] for b in batches},
+            {left["generation"]["generatedAt"], right["generation"]["generatedAt"]},
+        )
+
+    def test_a_mixed_row_never_joins_a_generated_row_s_batch(self) -> None:
+        from assemble_corpus import ai_record, mixed_record
+
+        ai = ai_record(self._api_candidate("src_ai_gemini_aaaaaaaaaaaa"))
+        mixed = mixed_record(self._mixed_candidate("src_ptso_0f89e00a4836"))
+        batches = self._batched([ai, mixed])
+        # The two recipes are identical in every component EXCEPT sourceId, which is
+        # what this pins. The batch ID embeds `rec["label"]` while the batch KEY does
+        # not, so `sourceId` is the only thing keeping a mixed record from linking a
+        # batch published as `gb_ai_...` — a record whose class disagrees with the
+        # batch it names.
+        self.assertEqual(len(batches), 2)
+        self.assertTrue(ai["groups"]["collectionBatch"]["id"].startswith("gb_ai_"))
+        self.assertTrue(mixed["groups"]["collectionBatch"]["id"].startswith("gb_mixed_"))
+        self.assertEqual(
+            {b["sourceId"] for b in batches}, {"src_ai", "src_mixed"}
+        )
+
+    def test_no_generated_record_is_left_unknown_on_the_batch_axis(self) -> None:
+        from assemble_corpus import ai_record, human_record, mixed_record
+
+        human = human_record(
+            AssemblerRealGroupTests()._human_candidate(
+                "src_ptso_aaa", "ptso_thread_2", "person_x"
+            ),
+            "qa-informal",
+            None,
+        )
+        records = [
+            ai_record(self._api_candidate("src_ai_gemini_aaaaaaaaaaaa")),
+            ai_record(self._api_candidate("src_ai_gemini_bbbbbbbbbbbb")),
+            ai_record(
+                self._api_candidate("src_ai_gemini_cccccccccccc", temperature="0.5")
+            ),
+            mixed_record(self._mixed_candidate("src_ptso_0f89e00a4836")),
+            human,
+        ]
+        # Every generated row carries `unknown` UNTIL the batches are derived, which
+        # is a true statement while it is true — `main()` closes it in the same run.
+        for record in records[:-1]:
+            self.assertEqual(
+                record["groups"]["collectionBatch"]["state"], "unknown", record["id"]
+            )
+        self._batched(records)
+        # THE ASSERTION THAT CATCHES THE SILENT-INELIGIBILITY DIRECTION: after the
+        # pass, no controlled-generation record may still be `unknown` here. An
+        # `unknown` axis makes a record ineligible (R6), so a regression that skipped
+        # rows would not raise, would not print and would not fail validate — it
+        # would quietly shrink every denominator downstream.
+        for record in records:
+            axis = record["groups"]["collectionBatch"]
+            self.assertEqual(axis["state"], "known", record["id"])
+        for record in records[:-1]:
+            self.assertTrue(
+                record["groups"]["collectionBatch"]["id"].startswith("gb_"),
+                record["groups"]["collectionBatch"],
+            )
+
+    def test_a_human_row_keeps_its_extraction_batch_and_never_a_gb_id(self) -> None:
+        from assemble_corpus import human_record
+
+        candidate = AssemblerRealGroupTests()._human_candidate(
+            "src_ptso_aaa", "ptso_thread_2", "person_x"
+        )
+        record = human_record(candidate, "qa-informal", None)
+        # The EXTRACTION run that produced the row — `extraction_<domainSource>`,
+        # shared by every candidate of one pool file, `known` from the start and never
+        # touched by `assign_generation_batches`.
+        self.assertEqual(
+            record["groups"]["collectionBatch"],
+            {"state": "known", "id": "extraction_ptso_qa"},
+        )
+        before = dict(record["groups"]["collectionBatch"])
+        batches = self._batched([record])
+        self.assertEqual(batches, [])
+        self.assertEqual(record["groups"]["collectionBatch"], before)
+        # THE NON-COLLISION THE DOCSTRING CALLS STRUCTURAL, asserted instead of
+        # asserted-about: the governance audit rejects a non-generated record that
+        # names a declared GENERATION batch, so the prefix carries a real obligation.
+        # A fallback rewritten to a bare token (`batch_x`) satisfies every other test
+        # in this file and breaks that obligation the first time a `gb_`-shaped value
+        # appears on a human row.
+        self.assertTrue(
+            record["groups"]["collectionBatch"]["id"].startswith("extraction_"),
+            record["groups"]["collectionBatch"],
+        )
+        self.assertFalse(record["groups"]["collectionBatch"]["id"].startswith("gb_"))
+
+    def test_an_ai_record_states_all_twelve_axes(self) -> None:
+        from assemble_corpus import ai_record
+        from group_axes import V3_GROUP_AXES
+
+        record = ai_record(self._api_candidate("src_ai_gemini_aaaaaaaaaaaa"))
+        # The counterpart of test_a_human_record_states_all_twelve_axes. Without it no
+        # test stated the IA axis SET at all — only individual axes of it.
+        self.assertEqual(sorted(record["groups"]), sorted(V3_GROUP_AXES))
+        self.assertEqual(record["schemaVersion"], 3)
+        for axis, value in record["groups"].items():
+            self.assertIn(
+                value["state"], ("known", "notApplicable", "unknown"), axis
+            )
+        # The four axes requirement 2 fixes for the IA source — "seed + prompt +
+        # batch + gerador" — named one by one, in the field each one actually is.
+        self.assertEqual(record["groups"]["humanSeed"]["id"], "src_b2w_00848b3bc692")
+        self.assertEqual(record["groups"]["promptTemplate"]["state"], "known")
+        self.assertEqual(record["groups"]["generatorFamily"]["state"], "known")
+        # `batch` is `unknown` HERE and `known` after `assign_generation_batches`,
+        # because `generatedAt` is part of the batch key and is only fixed by
+        # partitioning. Both halves are asserted so neither can be read as the whole.
+        self.assertEqual(record["groups"]["collectionBatch"]["state"], "unknown")
+        self._batched([record])
+        self.assertEqual(record["groups"]["collectionBatch"]["state"], "known")
+        # Generated text has no human author and no origin document. Both are facts
+        # about the row, not gaps in what we recorded, so neither costs eligibility.
+        self.assertEqual(record["groups"]["author"]["state"], "notApplicable")
+        self.assertEqual(record["groups"]["source"]["state"], "notApplicable")
+
+
 class ClusterDistributionReportTests(unittest.TestCase):
     """Counts, size distribution and the largest cluster, per axis and slice."""
 
@@ -1930,8 +2267,30 @@ class GeneratorCaptureTests(unittest.TestCase):
             "uma frase reescrita. outra frase. terceira frase.",
             provider="antigravity",
             model="gemini-3.6-flash-low",
+            template_id="mix_edit_v1",
         )
         row = json.loads(buffer.getvalue())
         self.assertEqual(row["parentFamily"], "?")
         with self.assertRaises(MissingRecipe):
             mixed_record(row)
+
+    def test_the_mixing_template_has_no_default_a_caller_can_inherit(self) -> None:
+        import io
+
+        import make_mixed
+
+        # `template_id` carried `= "mix_edit_v1"` until this round. Unreachable from
+        # either production call site — both pass it explicitly — and therefore
+        # unreachable by every test too, which is exactly why it survived the commit
+        # whose subject line was removing the silent default. What a default costs is
+        # paid by the NEXT caller: a lane that does not know which template ran would
+        # publish `mix_edit_v1` plus its digest as an observation, and the row would be
+        # written as v3 with a recipe nobody sent. The failure has to be at the call.
+        with self.assertRaises(TypeError):
+            make_mixed.emit(  # type: ignore[call-arg]
+                io.StringIO(),
+                {"id": "src_ptso_abc", "text": "uma frase. outra frase.", "family": "ptso_qa"},
+                "uma frase reescrita. outra frase.",
+                provider="antigravity",
+                model="gemini-3.6-flash-low",
+            )

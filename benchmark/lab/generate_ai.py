@@ -861,8 +861,15 @@ def main() -> None:
                     # The lane the generator OBSERVED itself running on, plus the
                     # version of the binary that produced this very text. Both are
                     # grouping axes in v3, and both were missing from every row the
-                    # v2 runs wrote — which is why 323 of 635 records in C2's
-                    # assembly are ineligible on `harnessVersion` alone.
+                    # v2 runs wrote — so every CLI-lane row of those pools takes the
+                    # `unknown` arm of `harness_axis` and is ineligible on that axis
+                    # alone. The COUNT is deliberately not written here: it is a
+                    # property of one assembly run, not of this writer, and an earlier
+                    # revision of this comment carried "323 of 635" long after the
+                    # delivered run measured otherwise — two figures for one command.
+                    # The current number lives in the C2 debt table of
+                    # docs/superpowers/plans/2026-07-26-detector-v3-rebuild-implementation.md,
+                    # which is re-measured per run.
                     "generationLane": PROVIDER_LANE[provider],
                     "harnessVersion": captured_harness or "",
                     # The reasoning effort, recorded ONLY when the operator declared
