@@ -13,6 +13,7 @@ import {
 } from "../corpus-source-audit.ts";
 import {
   computeReviewedSourceManifestDigest,
+  parseReviewedSourceManifest,
   type GenerationBatchV1,
   type ReviewedSourceEntryV1,
   type ReviewedSourceManifestV1,
@@ -21,9 +22,10 @@ import { validateBenchmarkRecordV3, type BenchmarkRecord } from "../schema.ts";
 import { asGeneratorFamily } from "../generator-family.ts";
 import {
   known,
-  notApplicable,
   v3Ai,
+  v3ApiAi,
   withAxis,
+  withGeneration,
 } from "./helpers/v3-record-fixture.ts";
 
 // --- Reviewed source manifest fixtures -----------------------------------
@@ -93,6 +95,7 @@ const batch: GenerationBatchV1 = {
   version: "2026-05",
   promptTemplateDigest: "1".repeat(64),
   temperature: 0.7,
+  temperatureNullReason: null,
   generatedAt: 1_735_776_000_000,
   seed: "seed_1",
   seedNullReason: null,
@@ -642,17 +645,14 @@ describe("corpus source readiness privacy and determinism", () => {
 
 // The `gemini-api` lane is the one lane whose row sets
 // `decodingConfigurable: true`, so it is the only place a v3 record can carry an
-// applied temperature at all. Everything else is aligned with `batch` so that the
-// temperature is the ONLY field that can decide the comparison.
+// applied temperature at all. The lane shape itself comes from `v3ApiAi` in the
+// shared fixture helper — it was hand-built here AND in schema-v3.test.ts, down to
+// a byte-identical `notApplicable` reason string, so a drift between the two
+// copies would have been invisible in both. What stays local is the only thing
+// that IS local: the alignment with `batch`, so that the temperature is the ONLY
+// field which can decide the comparison.
 function v3ApiRecordAtTemperature(temperature: number | null): BenchmarkRecord {
-  const raw = v3Ai();
-  raw.id = "ai_v3_api";
-  raw.provenance = {
-    ...(raw.provenance as Record<string, unknown>),
-    sourceId: "src_generated",
-    licenseId: "lic_generated_1",
-  };
-  raw.generation = {
+  const raw = withGeneration(v3ApiAi(temperature), {
     provider: batch.provider,
     family: batch.family,
     model: batch.model,
@@ -663,23 +663,18 @@ function v3ApiRecordAtTemperature(temperature: number | null): BenchmarkRecord {
     promptSha256: batch.promptTemplateDigest,
     promptTemplateDigest: "3".repeat(64),
     generatedAt: batch.generatedAt,
-    decoding: {
-      configurable: true,
-      strategy: "sampling",
-      temperature,
-      topP: null,
-      repetitionPenalty: null,
-    },
-    effort: { source: "not-supported", configurable: false },
     seed: batch.seed ?? undefined,
+  });
+  // The base fixture is a seedless agy row; this one carries the batch's seed, and
+  // exactly one of the pair may be present.
+  delete (raw.generation as Record<string, unknown>).seedNullReason;
+  raw.id = "ai_v3_api";
+  raw.provenance = {
+    ...(raw.provenance as Record<string, unknown>),
+    sourceId: "src_generated",
+    licenseId: "lic_generated_1",
   };
   let record = withAxis(raw, "collectionBatch", known(batch.batchId));
-  record = withAxis(record, "generationLane", known("gemini-api"));
-  record = withAxis(
-    record,
-    "harnessVersion",
-    notApplicable("the gemini-api lane runs no harness binary"),
-  );
   record = withAxis(record, "generatorFamily", known(batch.family));
   return validateBenchmarkRecordV3(record);
 }
@@ -715,18 +710,18 @@ describe("the recipe comparison reads a v3 record's applied temperature", () => 
   // `null === null` and ADMITS a record that applied 0.7 — the silent direction,
   // where a divergence from the reviewed recipe enters the corpus unreported.
   //
-  // The null has to be LAUNDERED across the typed boundary, because
-  // `GenerationBatchV1.temperature` is `number` and `parseReviewedSourceManifest`
-  // runs it through `finiteNumber`. That is not a reason to skip the case: it is
-  // the same reason `tamperSource` above exists. `benchmark/lab/audit_sources.ts`
-  // reaches `auditCorpusSources` with a bare `JSON.parse(...) as ...` and never
-  // touches the parser, so a manifest file carrying `"temperature": null` arrives
-  // here unvalidated, and the audit has to answer for it on its own. Refusing is
-  // the fail-closed answer and the one this pins.
-  const noTemperatureBatch = {
+  // In the previous round this batch had to be LAUNDERED across the typed
+  // boundary, because `GenerationBatchV1.temperature` was `number`. It no longer
+  // does: a batch may now state that no temperature applied, with the reason
+  // written down, exactly as it already could for a seed no provider exposes. That
+  // change is what makes a CLI-lane batch expressible at all (see the block
+  // below), and it turns this case from a malformed input the lab path could
+  // deliver into a legitimate state of the contract.
+  const noTemperatureBatch: GenerationBatchV1 = {
     ...batch,
     temperature: null,
-  } as unknown as GenerationBatchV1;
+    temperatureNullReason: "the provider default applied on this batch",
+  };
 
   it("mismatches a batch declaring no temperature when one was applied", async () => {
     const report = await auditCorpusSources(
@@ -746,5 +741,121 @@ describe("the recipe comparison reads a v3 record's applied temperature", () => 
       }),
     );
     expect(codesOf(report)).toEqual([]);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// C1 second correction round — the recipe comparison on a CLI LANE, which is
+// three of the four frozen lanes and was UNSATISFIABLE.
+//
+// `recipeTemperature` returns `null` whenever `decoding.configurable` is false,
+// and `benchmark/rebuild-v3-policy.json` sets `decodingConfigurable: false` on
+// `agy`, `codex` and `gemini-cli` — only `gemini-api` is true. While
+// `GenerationBatchV1.temperature` was a required `number`, the comparison
+// `recipeTemperature(generation) === batch.temperature` was `null === <number>` on
+// every one of those lanes: always false, no escape. There was no escape through
+// the batch link either, because `collectionBatch` must be `known` in every axis
+// class, so a row with no resolvable batch is refused with
+// GENERATION_RECIPE_MISSING instead of skipping the comparison — and
+// `calibration-pipeline.ts` / `candidate-preflight.ts` hard-fail unless readiness
+// is `ready`.
+//
+// The previous round's coverage sat entirely on `gemini-api`, the ONE lane where
+// the comparison can succeed, so the suite documented the satisfiable lane and
+// left the majority lane both broken and unpinned — the same defect class that
+// round was fixing, one lane over. Measured on the committed tree at 7a4d610: an
+// `agy` row aligned field-for-field with its batch reported
+// `{recipeTemperature: null, batchTemperature: 0.7, codes:
+// [GENERATION_RECIPE_MISMATCH], status: "blocked"}`.
+// ---------------------------------------------------------------------------
+
+// A batch of the `agy` agent-CLI lane. The base v3 AI fixture IS an agy row, so
+// every recipe field here is the fixture's own — nothing is aligned by hand — and
+// the batch states the one thing the lane makes true: the binary takes no sampling
+// flag, so no temperature was applied and here is why.
+const cliLaneBatch: GenerationBatchV1 = {
+  batchId: "batch_agy",
+  sourceId: "src_generated",
+  generationProtocolVersion: "generation-v1",
+  provider: "agy",
+  family: "gemini-3.5-flash-medium",
+  model: "gemini-3.5-flash-medium",
+  version: "gemini-3.5-flash-medium",
+  promptTemplateDigest: "2".repeat(64),
+  temperature: null,
+  temperatureNullReason:
+    "agent-CLI lane: the agy binary accepts no sampling flag",
+  generatedAt: 1_784_926_573_575,
+  seed: null,
+  seedNullReason: "provider API does not expose a sampling seed",
+};
+
+function v3CliRecord(): BenchmarkRecord {
+  const raw = v3Ai();
+  raw.provenance = {
+    ...(raw.provenance as Record<string, unknown>),
+    sourceId: "src_generated",
+    licenseId: "lic_generated_1",
+  };
+  return validateBenchmarkRecordV3(
+    withAxis(raw, "collectionBatch", known(cliLaneBatch.batchId)),
+  );
+}
+
+// The batch goes through `parseReviewedSourceManifest` and the audit is handed the
+// PARSED value. That indirection is the whole point of these two tests and it is
+// worth saying why, because the obvious shorter version proves nothing:
+// `auditCorpusSources` never validates its input (`benchmark/lab/audit_sources.ts`
+// JSON-parses and casts), so a hand-written literal carrying `temperature: null`
+// compares `null === null` and reports "ready" even on the tree where the contract
+// forbade such a batch — the unsatisfiability lives in the MANIFEST, not in the
+// audit. Sealing through the parser is what pins the whole chain: a batch a real
+// reviewed manifest can carry, matched against the row it describes.
+async function sealedBatch(
+  overrides: Partial<GenerationBatchV1> = {},
+): Promise<GenerationBatchV1> {
+  const body = {
+    schemaVersion: 1 as const,
+    sources: [licensedHumanSource, licensedSource, generatedSource],
+    generationBatches: [{ ...cliLaneBatch, ...overrides }],
+  };
+  const manifest = await parseReviewedSourceManifest({
+    ...body,
+    sourceManifestDigest: await computeReviewedSourceManifestDigest(body),
+  });
+  return manifest.generationBatches[0]!;
+}
+
+describe("the recipe comparison on an agent-CLI lane, which applies no temperature", () => {
+  it("matches its reviewed batch", async () => {
+    const report = await auditCorpusSources(
+      await buildInput({
+        batches: [await sealedBatch()],
+        records: [v3CliRecord()],
+      }),
+    );
+    // The assertion the previous round could not have made: before a batch could
+    // say "no temperature applied, and here is why", no sealed manifest could
+    // describe an `agy`, `codex` or `gemini-cli` batch at all, and a hand-built one
+    // was reported as ["GENERATION_RECIPE_MISMATCH"] / `status: "blocked"`.
+    expect(codesOf(report)).toEqual([]);
+    expect(report.status).toBe("ready");
+  });
+
+  it("mismatches a batch declaring a temperature the lane cannot apply", async () => {
+    // The other direction, and it is not a formality: a batch claiming 0.7 on a
+    // lane with no sampling flag describes a recipe that CANNOT have produced the
+    // row, so the divergence has to be reported rather than waved through by a
+    // comparison that stopped asking. This is the case that dies if the
+    // temperature comparison is dropped from `recipeMatchesBatch`.
+    const report = await auditCorpusSources(
+      await buildInput({
+        batches: [
+          await sealedBatch({ temperature: 0.7, temperatureNullReason: null }),
+        ],
+        records: [v3CliRecord()],
+      }),
+    );
+    expect(codesOf(report)).toEqual(["GENERATION_RECIPE_MISMATCH"]);
   });
 });

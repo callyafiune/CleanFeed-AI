@@ -129,7 +129,34 @@ export interface GenerationBatchV1 {
   model: string;
   version: string;
   promptTemplateDigest: string;
-  temperature: number;
+  /**
+   * The sampling temperature the batch APPLIED, or `null` on a lane that applies
+   * none — in which case `temperatureNullReason` says why. Exactly one of the two
+   * is present, the same pair `seed`/`seedNullReason` already uses, and for the
+   * same kind of reason.
+   *
+   * It was a required `number` until the C1 correction round, and that made the
+   * recipe-identity comparison in benchmark/corpus-source-audit.ts UNSATISFIABLE
+   * for most of the v3 corpus. Three of the four frozen generation lanes (`agy`,
+   * `codex`, `gemini-cli`) are agent CLIs whose policy row sets
+   * `decodingConfigurable: false`, so a v3 record on those lanes has no
+   * temperature field at all and `recipeTemperature` returns `null` BY
+   * CONSTRUCTION; against a required number that comparison was `null ===
+   * <number>` and always false. There was no way around it either: an axis class
+   * requires `collectionBatch` to be `known`, so a row with no resolvable batch is
+   * refused with GENERATION_RECIPE_MISSING rather than skipping the comparison.
+   * Measured at 7a4d610 on an `agy` row aligned field-for-field with its batch:
+   * `GENERATION_RECIPE_MISMATCH`, `status: "blocked"`.
+   *
+   * A bare nullable would have made the comparison satisfiable and left the datum
+   * dishonest — `null` alone cannot be told apart from "nobody wrote it down",
+   * which is exactly the ambiguity `decodingConfigurable` exists to remove on the
+   * record's side. Hence the reason, and hence a batch of a CLI lane says the true
+   * thing (the binary takes no sampling flag) instead of a number nothing applied.
+   */
+  temperature: number | null;
+  /** Why no temperature applied. Exactly one of the pair above is present. */
+  temperatureNullReason: string | null;
   generatedAt: number;
   seed: string | null;
   seedNullReason: string | null;
@@ -1267,6 +1294,7 @@ const BATCH_KEYS = [
   "version",
   "promptTemplateDigest",
   "temperature",
+  "temperatureNullReason",
   "generatedAt",
   "seed",
   "seedNullReason",
@@ -1493,14 +1521,38 @@ function validateBatch(value: unknown, index: number): GenerationBatchV1 {
     obj.promptTemplateDigest,
     `batch ${batchId} promptTemplateDigest`,
   );
-  const temperature = finiteNumber(
-    obj.temperature,
-    `batch ${batchId} temperature`,
-  );
   const generatedAt = finiteNumber(
     obj.generatedAt,
     `batch ${batchId} generatedAt`,
   );
+
+  // Exactly one of `temperature` and a non-empty `temperatureNullReason` is
+  // present — the same shape as the seed pair below, deliberately written the same
+  // way. The presence test reads null/undefined and NOT falsiness, because `0` is a
+  // legitimate applied temperature (a deliberate greedy decode, and one of the
+  // frozen sweep values); treating it as an absence would turn a real recipe into
+  // "the lane has no knob".
+  const hasTemperature =
+    obj.temperature !== null && obj.temperature !== undefined;
+  const hasTemperatureReason =
+    obj.temperatureNullReason !== null &&
+    obj.temperatureNullReason !== undefined;
+  if (hasTemperature === hasTemperatureReason) {
+    fail(
+      "SOURCE_MANIFEST_FIELD_INVALID",
+      `batch ${batchId} must record exactly one of temperature or temperatureNullReason`,
+    );
+  }
+  let temperature: number | null = null;
+  let temperatureNullReason: string | null = null;
+  if (hasTemperature) {
+    temperature = finiteNumber(obj.temperature, `batch ${batchId} temperature`);
+  } else {
+    temperatureNullReason = nonEmptyString(
+      obj.temperatureNullReason,
+      `batch ${batchId} temperatureNullReason`,
+    );
+  }
 
   // Exactly one of `seed` and a non-empty `seedNullReason` is present.
   const hasSeed = obj.seed !== null && obj.seed !== undefined;
@@ -1533,6 +1585,7 @@ function validateBatch(value: unknown, index: number): GenerationBatchV1 {
     version,
     promptTemplateDigest,
     temperature,
+    temperatureNullReason,
     generatedAt,
     seed,
     seedNullReason,

@@ -489,6 +489,57 @@ function countsTowardHeldOutFloor(record: BenchmarkRecord): boolean {
 }
 
 /**
+ * Positives a reserved generator family must supply before a release corpus may
+ * claim it as held out. Named once so the guard and the sentence it prints cannot
+ * disagree about the number — R3: it is not loosened here, only stated once.
+ */
+const HELD_OUT_POSITIVES_FLOOR = 200;
+
+/**
+ * The held-out floor's refusal, saying WHICH population it counted.
+ *
+ * The number and its denominator are not enough on their own, because the two rows
+ * of a mixed-version corpus are judged by two different criteria — v3 rows by
+ * `recordEligibility`, v2 rows by presence, for the structural reason
+ * {@link countsTowardHeldOutFloor} spells out — and the word "eligible" is only
+ * true of the first. The message said it of both: on a v2 corpus a thin family was
+ * refused with "5 eligible of 5 positive rows" while `recordEligibility` reports
+ * every one of those rows INELIGIBLE (a v2 human row reports six unknown axes; a v2
+ * `groups` block is a closed nine-key object with no `humanSeed`, `generationLane`
+ * or `harnessVersion`). Asserting eligibility for rows the same module calls
+ * ineligible is the same class of over-claim the eligibility filter was added to
+ * remove — surviving in the one place an operator reads.
+ *
+ * So the sentence names its own rule. Three cases and not two, because a
+ * mixed-version array is reachable: `parseBenchmarkDataset` refuses a JSONL that
+ * mixes versions, but `sealDataset` takes an array and the calibration and preflight
+ * paths build theirs in memory.
+ */
+function heldOutFloorShortfall(
+  family: string,
+  counted: number,
+  positiveRows: readonly BenchmarkRecord[],
+): string {
+  const stateEligibility = positiveRows.filter(
+    (record) => record.schemaVersion === 3,
+  ).length;
+  const head = `held-out generator family "${family}" requires at least ${HELD_OUT_POSITIVES_FLOOR}`;
+  // BOTH numbers in every case, because they answer different questions. "0 of
+  // 200" tells an operator the family is stocked and the grouping axes are not
+  // recovered; "0 of 0" tells them the family is absent — and "0 of 0" is what a
+  // broken accessor looks like, which is the failure this block had.
+  const counts = `received ${counted} of ${positiveRows.length} positive rows`;
+  if (stateEligibility === positiveRows.length) {
+    // Includes the empty case, where 0 of 0 asserts eligibility of nothing.
+    return `${head} eligible positives, received ${counted} eligible of ${positiveRows.length} positive rows`;
+  }
+  if (stateEligibility === 0) {
+    return `${head} positives, ${counts} (no positive row states eligibility: schemaVersion 2 has no axis states, so the floor is judged on presence)`;
+  }
+  return `${head} positives, ${counts} (${stateEligibility} judged by eligibility, ${positiveRows.length - stateEligibility} of schemaVersion 2 judged on presence)`;
+}
+
+/**
  * Counts the label-basis evidence of a corpus, as numbers.
  *
  * Every basis the frozen policy allows gets a row even when it is zero, so a basis
@@ -750,15 +801,10 @@ export async function sealDataset(
           `held-out generator family "${family}" must appear only in ai or mixed records`,
         );
       }
-      if (positives < 200) {
-        // BOTH numbers, because they answer different questions. "0 eligible of
-        // 200 positive rows" tells an operator the family is stocked and the
-        // grouping axes are not recovered; "0 of 0" tells them the family is
-        // absent. The old message could not tell those apart, and the second is
-        // what a broken accessor looks like.
+      if (positives < HELD_OUT_POSITIVES_FLOOR) {
         fail(
           "DATASET_COVERAGE_INVALID",
-          `held-out generator family "${family}" requires at least 200 eligible positives, received ${positives} eligible of ${positiveRows.length} positive rows`,
+          heldOutFloorShortfall(family, positives, positiveRows),
         );
       }
     }

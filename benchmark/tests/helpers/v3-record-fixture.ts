@@ -313,6 +313,49 @@ export function v3Mixed(): Record<string, unknown> {
   return clone(V3_MIXED);
 }
 
+/** The one reason string for the api lane's absent harness. Shared so it cannot drift. */
+export const API_LANE_NO_HARNESS = "the gemini-api lane runs no harness binary";
+
+/**
+ * A v3 fully generated record on the `gemini-api` lane at a given applied
+ * temperature — `null` meaning the provider's own default applied, which is a
+ * different statement from "this lane has no such knob" and is why the field is
+ * required-and-nullable on the `configurable: true` branch.
+ *
+ * `gemini-api` is the ONLY lane whose frozen policy row sets
+ * `decodingConfigurable: true`, so it is the only shape in which a v3 record can
+ * carry a temperature at all. Every sampling parameter on that branch is
+ * required, so all four are written.
+ *
+ * It lives here rather than in a test file because two files need it — schema-v3
+ * (the accessor's own contract) and corpus-source-audit (the governance recipe
+ * comparison that gives the value its meaning) — and they hand-built it twice,
+ * down to a byte-identical `notApplicable` reason string. A drift between two
+ * copies of a lane fixture would have been invisible in both.
+ */
+export function v3ApiAi(temperature: number | null): Record<string, unknown> {
+  const raw = withGeneration(clone(V3_AI), {
+    // The api lane is Gemini's own endpoint, not the agy binary; the base fixture
+    // is an agy row, so the provider moves with the lane.
+    provider: "gemini",
+    decoding: {
+      configurable: true,
+      strategy: "sampling",
+      temperature,
+      topP: null,
+      repetitionPenalty: null,
+    },
+    effort: { source: "not-supported", configurable: false },
+  });
+  let record = withAxis(raw, "generationLane", known("gemini-api"));
+  record = withAxis(
+    record,
+    "harnessVersion",
+    notApplicable(API_LANE_NO_HARNESS),
+  );
+  return record;
+}
+
 /**
  * A v3 `ecological` mixed record: observed coauthorship, no recipe of ours, the
  * four generation axes `notApplicable`. It is eligible — `notApplicable` is a

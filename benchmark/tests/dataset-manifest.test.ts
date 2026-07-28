@@ -847,6 +847,83 @@ describe("held-out generator-family coverage on a release corpus", () => {
     expect(audit.generatorFamilies[reserved]).toBe(200);
   });
 
+  // C1 second correction round — the refusal SENTENCE, on the version that
+  // cannot state eligibility.
+  //
+  // `countsTowardHeldOutFloor` returns true for every non-v3 row, so on a v2
+  // corpus the counted number equals the row count and the message printed it as
+  // "N eligible of N positive rows" — asserting eligibility for rows this same
+  // module reports as INELIGIBLE (the test above asserts
+  // `recordEligibility(ai).eligible === false` on exactly such a row, with six
+  // unknown axes). That is the over-claim this round set out to remove, surviving
+  // in the one place an operator actually reads. The docstring's honest wording —
+  // "a v2 corpus is judged by the only criterion its schema can express, presence"
+  // — never reached the sentence.
+  it("does not call a v2 corpus's positives eligible when it refuses them", async () => {
+    const reserved = asGeneratorFamily("heldout_family");
+    const thin: BenchmarkRecord[] = [];
+    for (let n = 1; n <= 5; n += 1) {
+      thin.push({
+        ...ai,
+        id: `ai-v2-thin-${n}`,
+        normalizedTextSha256: n.toString(16).padStart(64, "0"),
+        generation: { ...ai.generation!, family: reserved },
+        groups: { ...ai.groups, generatorFamily: reserved },
+      });
+    }
+    const attempt = sealDataset(
+      { ...validManifest, scientificUse: "release" },
+      [human, ...thin],
+      {
+        counts: { human: 1, ai: 5, mixed: 0 },
+        requiredHumanSourceTypes: ["qa-informal"],
+        requiredHardNegativeFamilies: [],
+      },
+      validFileDigests,
+    );
+    // Both halves are asserted, because either alone is satisfiable by a wrong
+    // fix: the count and denominator still have to be right, AND the word
+    // "eligible" must be absent from a claim about rows that state no eligibility.
+    await expect(attempt).rejects.toThrow(
+      /requires at least 200 positives, received 5 of 5 positive rows \(no positive row states eligibility: schemaVersion 2 has no axis states, so the floor is judged on presence\)/u,
+    );
+    await expect(attempt).rejects.not.toThrow(/eligible positives/u);
+  });
+
+  it("names both populations when one corpus mixes the two schema versions", async () => {
+    // The third state, and it is reachable in exactly one direction: a v3 record
+    // and a v2 record cannot share a JSONL (`parseBenchmarkDataset` refuses a
+    // mixed dataset), but `sealDataset` takes an ARRAY, and the calibration and
+    // preflight paths build theirs in memory. So the sentence must not silently
+    // pick one of the two rules for a population judged under both.
+    const reserved = asGeneratorFamily("gemini-3_5-flash-medium");
+    const v2Positive: BenchmarkRecord = {
+      ...ai,
+      id: "ai-v2-mixed-1",
+      normalizedTextSha256: "f".repeat(64),
+      generation: { ...ai.generation!, family: reserved },
+      groups: { ...ai.groups, generatorFamily: reserved },
+    };
+    await expect(
+      sealDataset(
+        {
+          ...releaseManifest,
+          // Both fixture pools' licences, because the corpus draws on both.
+          licenses: [...releaseManifest.licenses, ...validManifest.licenses],
+        },
+        [validateBenchmarkRecordV3(v3Human()), v3AiRow(1), v2Positive],
+        {
+          counts: { human: 1, ai: 2, mixed: 0 },
+          requiredHumanSourceTypes: ["qa-informal"],
+          requiredHardNegativeFamilies: [],
+        },
+        validFileDigests,
+      ),
+    ).rejects.toThrow(
+      /requires at least 200 positives, received 2 of 2 positive rows \(1 judged by eligibility, 1 of schemaVersion 2 judged on presence\)/u,
+    );
+  });
+
   it("refuses a v2 human record that names a reserved family", async () => {
     // The leak check, on the version where it is reachable. A v2 record carries a
     // bare string in the axis, which `generatorFamilyOf` returns unchanged, so

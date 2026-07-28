@@ -111,6 +111,11 @@ HELD_OUT_INELIGIBLE = {"gemini-3_5-flash-lite", "gemini-3_1-flash-lite"}
 # channels exposes a seed, so every declared batch records the same pair.
 LAB_TEMPERATURE = 0.8
 SEED_NULL_REASON = "provider API does not expose a sampling seed"
+# The other half of the same pair, on the axis where an agent-CLI lane genuinely
+# applies nothing: `agy`, `codex` and `gemini-cli` take no sampling flag at all
+# (rebuild-v3-policy.json, `decodingConfigurable: false`), so a batch of one of
+# those lanes must say that instead of a number nothing applied.
+TEMPERATURE_NULL_REASON = "agent-CLI lane: the binary accepts no sampling flag"
 # The mixed cohort this lane produces. The frozen contract
 # (benchmark/rebuild-v3-policy.json, `materialAssistance.generationMode`) closes
 # the vocabulary at "mechanistic" | "ecological", and only the first is a fact
@@ -554,7 +559,18 @@ def assign_generation_batches(records: list[dict]) -> list[dict]:
                 "model": generation["model"],
                 "version": generation["version"],
                 "promptTemplateDigest": generation["promptSha256"],
+                # Exactly one of temperature / temperatureNullReason, the same pair
+                # the seed already uses. This v2 assembler always writes a
+                # temperature, because generate_ai.py records one for EVERY
+                # provider — including the three CLI lanes that accept no sampling
+                # flag, where the number describes nothing. So the null arm is
+                # never taken here and is written anyway: the v3 repropagation
+                # (C2) is what will emit a CLI-lane batch that says no temperature
+                # applied, and the parser requires the key either way.
                 "temperature": generation["temperature"],
+                "temperatureNullReason": (
+                    None if generation.get("temperature") is not None else TEMPERATURE_NULL_REASON
+                ),
                 "generatedAt": generation["generatedAt"],
                 # Exactly one of seed / seedNullReason, per the manifest parser.
                 "seed": generation.get("seed"),

@@ -16,7 +16,15 @@ Controlled generation is organised into **batches**. Every batch
 - `provider`, `family`, `model` and `version`;
 - `promptTemplateDigest` — the digest of the prompt template (never the prompt
   text);
-- `temperature`;
+- `temperature` **or** `temperatureNullReason` — exactly one is present. A batch
+  produced on a channel that accepts a sampling temperature records the value it
+  applied (`0` included: a deliberate greedy decode is a real recipe); a batch
+  produced on an agent-CLI channel, which accepts no sampling flag at all,
+  records a `null` temperature and a non-empty `temperatureNullReason`. A batch
+  with both, or with neither, is invalid. The reason is required because a bare
+  `null` cannot be told apart from "nobody wrote it down", and because a required
+  number forced a CLI batch to declare a temperature that nothing applied — which
+  no record of that channel could ever match, since its recipe has no such field;
 - `generatedAt` — the generation date;
 - `batchId` — the batch identifier every generated record links through
   `groups.collectionBatch`;
@@ -26,8 +34,12 @@ Controlled generation is organised into **batches**. Every batch
   neither, is invalid.
 
 A generated record's `generation` object (provider, family, model, version,
-prompt digest, temperature, date and seed) MUST match its linked batch exactly;
-any divergence is a `GENERATION_RECIPE_MISMATCH`, and a generated record with no
+prompt digest, temperature, date and seed) MUST match its linked batch exactly.
+The temperature is compared as the value APPLIED — a record whose channel has no
+sampling knob applied none, and matches a batch that declares none — while
+`temperatureNullReason` and `seedNullReason` are not compared: they are the
+auditor's readable half, not part of the recipe's identity. Any divergence in the
+compared fields is a `GENERATION_RECIPE_MISMATCH`, and a generated record with no
 linked batch or no recipe is a `GENERATION_RECIPE_MISSING`. Human records never
 link a generation batch.
 

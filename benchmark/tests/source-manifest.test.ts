@@ -85,6 +85,7 @@ const batch: GenerationBatchV1 = {
   version: "2026-05",
   promptTemplateDigest: "1".repeat(64),
   temperature: 0.7,
+  temperatureNullReason: null,
   generatedAt: 1_735_776_000_000,
   seed: "seed_1",
   seedNullReason: null,
@@ -266,6 +267,101 @@ describe("reviewed source manifest (closed schema)", () => {
     await expect(parseReviewedSourceManifest(manifest)).rejects.toThrow(
       /seed/i,
     );
+  });
+
+  // -----------------------------------------------------------------------
+  // C1 correction round — `temperature` gets the same pair `seed` already has,
+  // for the same reason and it is the same class of fact.
+  //
+  // A batch was required to declare a finite `temperature`, while three of the
+  // four frozen generation lanes (`agy`, `codex`, `gemini-cli`) are agent CLIs
+  // whose frozen policy row sets `decodingConfigurable: false` — they accept no
+  // sampling flag at all. So the reviewed batch of a CLI lane had to write down
+  // a number that was never applied, and the record's side (`recipeTemperature`,
+  // `null` on that lane BY CONSTRUCTION) could never equal it: the
+  // recipe-identity comparison in benchmark/corpus-source-audit.ts was
+  // UNSATISFIABLE for every v3 CLI-lane row. Measured on the committed tree at
+  // 7a4d610: an `agy` row aligned field-for-field with its batch reported
+  // `GENERATION_RECIPE_MISMATCH` and `status: "blocked"`.
+  //
+  // `temperature: null` alone would have been enough to make the comparison
+  // satisfiable and NOT enough to keep the datum honest: a bare null is
+  // indistinguishable from "nobody wrote it down", which is precisely the
+  // ambiguity `decodingConfigurable` exists to remove on the record side. So the
+  // absence carries a written reason, exactly as `seedNullReason` does for the
+  // seed a provider does not expose.
+  // -----------------------------------------------------------------------
+
+  it("accepts a batch that applied no temperature with a non-empty null reason", async () => {
+    const cliBatch = malformed({
+      ...batch,
+      temperature: null,
+      temperatureNullReason:
+        "agent-CLI lane: the binary accepts no sampling flag",
+    });
+    const manifest = await sealManifest({
+      ...validBody,
+      generationBatches: [cliBatch as GenerationBatchV1],
+    });
+    await expect(parseReviewedSourceManifest(manifest)).resolves.toMatchObject({
+      generationBatches: [
+        {
+          temperature: null,
+          temperatureNullReason:
+            "agent-CLI lane: the binary accepts no sampling flag",
+        },
+      ],
+    });
+  });
+
+  it("rejects a batch with both a temperature and a null reason", async () => {
+    const both = malformed({
+      ...batch,
+      temperatureNullReason: "unnecessary",
+    });
+    const manifest = await sealManifest({
+      ...validBody,
+      generationBatches: [both as GenerationBatchV1],
+    });
+    // The specific message, not just /temperature/: before the field existed the
+    // unknown-key refusal ALSO named `temperatureNullReason`, so a loose pattern
+    // would have passed against the very state this pins.
+    await expect(parseReviewedSourceManifest(manifest)).rejects.toThrow(
+      /must record exactly one of temperature or temperatureNullReason/u,
+    );
+  });
+
+  it("rejects a batch with neither a temperature nor a null reason", async () => {
+    const neither = malformed({
+      ...batch,
+      temperature: null,
+      temperatureNullReason: null,
+    });
+    const manifest = await sealManifest({
+      ...validBody,
+      generationBatches: [neither as GenerationBatchV1],
+    });
+    await expect(parseReviewedSourceManifest(manifest)).rejects.toThrow(
+      /must record exactly one of temperature or temperatureNullReason/u,
+    );
+  });
+
+  it("keeps a temperature of 0 as an applied value, not as an absence", async () => {
+    // A greedy decode is a REAL recipe. The exclusivity check reads
+    // null/undefined and not falsiness for that reason — the same trap the seed
+    // pair avoids, on a field where `0` is a legitimate frozen sweep value.
+    const greedy = malformed({
+      ...batch,
+      temperature: 0,
+      temperatureNullReason: null,
+    });
+    const manifest = await sealManifest({
+      ...validBody,
+      generationBatches: [greedy as GenerationBatchV1],
+    });
+    await expect(parseReviewedSourceManifest(manifest)).resolves.toMatchObject({
+      generationBatches: [{ temperature: 0, temperatureNullReason: null }],
+    });
   });
 
   it("rejects a manifest whose self-digest no longer matches", async () => {

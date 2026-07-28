@@ -845,6 +845,7 @@ function generationBatches(): GenerationBatchV1[] {
     version: "v1",
     promptTemplateDigest: PROMPT_DIGEST,
     temperature: 0.7,
+    temperatureNullReason: null,
     generatedAt: createdAt,
     seed: "seed_1",
     seedNullReason: null,

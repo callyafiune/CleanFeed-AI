@@ -31,6 +31,7 @@ import {
   notApplicable,
   unknownAxis,
   v3Ai,
+  v3ApiAi,
   v3EvidenceIndex,
   v3Human,
   v3Mixed,
@@ -965,13 +966,13 @@ describe("recipeTemperature reads the temperature of either schema version", () 
     // truthy value on purpose: an accessor written with `||` instead of a branch
     // would turn a deliberate greedy decode into "no temperature".
     for (const temperature of [0.8, 0]) {
-      const record = validateBenchmarkRecordV3(v3ApiRow(temperature));
+      const record = validateBenchmarkRecordV3(v3ApiAi(temperature));
       expect(recipeTemperature(record.generation!)).toBe(temperature);
     }
   });
 
   it("reads null from a v3 configurable branch that left the provider default", () => {
-    const record = validateBenchmarkRecordV3(v3ApiRow(null));
+    const record = validateBenchmarkRecordV3(v3ApiAi(null));
     expect(recipeTemperature(record.generation!)).toBeNull();
   });
 
@@ -986,28 +987,8 @@ describe("recipeTemperature reads the temperature of either schema version", () 
   });
 });
 
-/**
- * A `gemini-api` row at a given applied temperature. That lane is the only one
- * whose frozen row sets `decodingConfigurable: true`, so it is the only place a v3
- * record can carry a temperature at all. Every sampling parameter is
- * required-and-nullable on that branch, so they are all written.
- */
-function v3ApiRow(temperature: number | null): Record<string, unknown> {
-  const raw = withGeneration(v3Ai(), {
-    decoding: {
-      configurable: true,
-      strategy: "sampling",
-      temperature,
-      topP: null,
-      repetitionPenalty: null,
-    },
-    effort: { source: "not-supported", configurable: false },
-  });
-  let record = withAxis(raw, "generationLane", known("gemini-api"));
-  record = withAxis(
-    record,
-    "harnessVersion",
-    notApplicable("the gemini-api lane runs no harness binary"),
-  );
-  return record;
-}
+// The `gemini-api` row builder used to live here AND in
+// benchmark/tests/corpus-source-audit.test.ts, hand-built twice down to a
+// byte-identical `notApplicable` reason. It is now `v3ApiAi` in
+// ./helpers/v3-record-fixture.ts, beside `v3Ai`/`v3Mixed`, which is what that
+// helper's header says it exists for.

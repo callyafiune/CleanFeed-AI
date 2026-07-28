@@ -240,6 +240,15 @@ function recipeMatchesBatch(
     // of `generation`, v3 inside the `configurable: true` branch of `decoding`, and
     // a raw `generation.temperature` no longer compiles against the union — which is
     // the compile-time net doing its job rather than an inconvenience.
+    //
+    // Both sides can now say "none applied": `batch.temperature` is nullable with
+    // `batch.temperatureNullReason` carrying the why. Until that pair existed this
+    // very line was UNSATISFIABLE on `agy`, `codex` and `gemini-cli` — three of the
+    // four frozen lanes, whose policy rows set `decodingConfigurable: false`, so
+    // `recipeTemperature` returns `null` there by construction and the batch was
+    // forced to declare a number. `temperatureNullReason` is deliberately NOT
+    // compared, exactly as `seedNullReason` is not: the reason is prose for an
+    // auditor, and identity is a question about the value that was applied.
     recipeTemperature(generation) === batch.temperature &&
     generation.generatedAt === batch.generatedAt &&
     (generation.seed ?? null) === batch.seed

@@ -342,7 +342,9 @@ errado, não o guarda.
       "generationProtocolVersion": "generation-v1",
       "provider": "…", "family": "…", "model": "…", "version": "…",
       "promptTemplateDigest": "<64 hex>",
-      "temperature": 0.7,
+      "temperature": 0.7,            // EXATAMENTE um de: temperature …
+      "temperatureNullReason": null, // … ou temperatureNullReason (lane de CLI
+                                     //    não aceita flag de sampling)
       "generatedAt": 1700000000000,
       "seed": "42",              // EXATAMENTE um de: seed …
       "seedNullReason": null     // … ou seedNullReason (o outro é null)

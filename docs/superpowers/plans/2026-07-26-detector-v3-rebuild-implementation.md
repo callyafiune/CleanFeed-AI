@@ -3330,7 +3330,14 @@ contagens do manifesto e o requisito de privacidade em
    > ferramenta nossa rodou) ou `unknown` (a ferramenta do coautor não foi registrada, ao
    > preço da elegibilidade), nunca `known`. **São cinco, não quatro** —
    > `promptTemplate`, `generatorFamily`, `generatorVersion`, `generationLane` e
-   > `harnessVersion` (`schema.ts:1420/1426/1432/1438/1444`). Esta errata dizia "quatro",
+   > `harnessVersion` (chaves de `AXIS_STATE_RULE` em `benchmark/schema.ts`; ponteiro **por
+   > nome** de propósito — a versão anterior desta errata citava
+   > `schema.ts:1420/1426/1432/1438/1444` e os cinco números estavam **errados**, na direção
+   > que reproduz o próprio erro de contagem: as linhas reais são 1430/1436/1442/1448/1454, e
+   > 1420/1426 caem dentro de `domainSource` e `humanSeed`, os **dois** eixos que esta mesma
+   > errata diz estarem abertos em `mixed-ecological`. Terceira vez nesta entrega que um
+   > ponteiro numérico envelheceu no próprio commit; A4 e A7 já converteram os deles para
+   > ponteiro por nome, e este segue a mesma regra). Esta errata dizia "quatro",
    > e a mensagem de commit também; o docstring de `AXIS_STATE_RULE` dizia "quatro"
    > pendurado numa frase que nomeava **dois**. Corrigido nos três lugares na rodada de
    > qualidade abaixo (item 17). `humanSeed` e `derivationRoot` também
@@ -3495,6 +3502,15 @@ Itens acrescentados na rodada de correção de spec (2026-07-28):
     > arquivo de manifesto com `"temperature": null` chega aqui sem validação. Recusar é a
     > resposta fail-closed e é o que o teste fixa.
 
+    > **ERRATA (item 19).** A refutação acima estava certa sobre o tipo daquela árvore e
+    > **errada** sobre o que aquilo significava. Uma batch declarando `temperature: null`
+    > não era "impossível pelo tipo, logo caso lavado": era o **único** jeito honesto de uma
+    > batch de lane de CLI existir, e o tipo é que estava errado. Aquela cobertura ficou
+    > inteira em `gemini-api` justamente porque a leitura era essa. Corrigido no item 19: o
+    > par `temperature`/`temperatureNullReason` existe, o caso deixou de ser lavado e passou
+    > a ser estado legítimo do contrato, e o `agy` — a lane da fixture base — ganhou os dois
+    > testes de consumidor que faltavam.
+
 17. **A recusa de `known` na coorte ecológica era asserida em um eixo de cinco.** O teste
     de aceite iterava os cinco; o de recusa só `generationLane`. Medido: abrir
     `AXIS_STATE_RULE.generatorFamily["mixed-ecological"]` para `["known", …]` deixava a
@@ -3537,6 +3553,95 @@ Itens acrescentados na rodada de correção de spec (2026-07-28):
     > para o leitor (C2–C6 constroem e auditam essas linhas) e para que o par não seja o
     > último lugar onde um modo é confiado sem o rótulo.
 
+#### Segunda rodada de correção de qualidade (itens 19–22)
+
+19. **A comparação de identidade de receita era INSATISFAZÍVEL em lane de CLI — três das
+    quatro lanes congeladas** (`benchmark/source-manifest.ts`,
+    `benchmark/corpus-source-audit.ts`). `recipeTemperature` devolve `null` sempre que
+    `decoding.configurable` é falso, e `rebuild-v3-policy.json` põe
+    `decodingConfigurable: false` em `agy`, `codex` e `gemini-cli` (só `gemini-api` é
+    `true`), enquanto `GenerationBatchV1.temperature` era `number` obrigatório passado por
+    `finiteNumber`. Logo `recipeTemperature(generation) === batch.temperature` era
+    `null === <number>`: **sempre falso**. Medido em 7a4d610 com sondagem que apagou-se
+    depois — linha `agy` alinhada campo a campo com a batch (mesmo
+    provider/family/model/version/promptTemplateDigest/generatedAt/seed) devolveu
+    `{recipeTemperature: null, batchTemperature: 0.7, codes: [GENERATION_RECIPE_MISMATCH],
+    status: "blocked"}`. Não havia escapatória: `collectionBatch` tem de ser `known` em
+    toda classe de eixo, então linha sem batch resolvível cai em
+    `GENERATION_RECIPE_MISSING`, e `calibration-pipeline.ts` / `candidate-preflight.ts`
+    falham duro fora de `ready`. A cobertura da rodada anterior estava inteira em
+    `gemini-api`, a **única** lane onde a comparação pode fechar — a suíte documentava a
+    lane satisfazível e deixava a lane majoritária quebrada e sem pino, o mesmo defeito que
+    aquela rodada estava consertando, uma lane ao lado.
+
+    Corrigido dando ao lado da batch como dizer que **nenhuma configuração de sampling se
+    aplica**, na forma que o próprio arquivo já modela para o seed: `temperature` virou
+    `number | null` com `temperatureNullReason: string | null` e **exatamente um** dos dois
+    presente, checado por null/undefined e não por falsidade (`temperature: 0` é decode
+    guloso deliberado, um dos valores do sweep congelado — tratá-lo como ausência
+    transformaria receita real em "a lane não tem knob"). Nullable puro **não** bastava: um
+    `null` cru é indistinguível de "ninguém anotou", que é exatamente a ambiguidade que
+    `decodingConfigurable` existe para remover do lado do registro-linha. `generation-v1.md`
+    e o snippet do runbook foram corrigidos junto, e `assemble_corpus.py` passou a emitir a
+    chave (o braço nulo nunca é tomado por ele, porque `generate_ai.py` grava temperatura
+    para **todo** provedor — inclusive as três lanes de CLI, onde o número não descreve
+    nada; emitir uma batch de CLI honesta é C2).
+
+    Testes: no parser, o trio espelhando o do seed (aceita null-com-razão, recusa os dois,
+    recusa nenhum) mais `temperature: 0` como valor aplicado; no consumidor, uma linha `agy`
+    que **casa** com a batch e uma que **não casa** contra batch declarando 0.7 numa lane
+    que não aceita flag. Os dois testes de consumidor selam a batch **pelo parser** antes de
+    auditar, e essa indireção é o ponto: `auditCorpusSources` nunca valida a entrada
+    (`benchmark/lab/audit_sources.ts` faz `JSON.parse` e cast), então um literal escrito à
+    mão com `temperature: null` compara `null === null` e reporta "ready" **até na árvore
+    onde o contrato proibia tal batch** — a insatisfazibilidade morava no manifesto, não na
+    auditoria. Sem passar pelo parser esses dois testes nasceriam verdes e provariam nada;
+    com ele, nasceram vermelhos com `unknown key "temperatureNullReason"`.
+
+    `temperatureNullReason` **não** entra na comparação, exatamente como `seedNullReason`
+    não entra: a razão é a metade legível para auditoria, e identidade é pergunta sobre o
+    valor aplicado. Residual honesto e escrito: a batch nula não distingue "a lane não tem
+    knob" de "o default do provedor valeu" — quem distingue é o registro-linha, pela
+    estrutura de `decoding.configurable`.
+
+20. **A mensagem do piso chamava de "eligible" um número que o próprio módulo considera
+    inelegível, em corpus v2** (`benchmark/dataset-manifest.ts`).
+    `countsTowardHeldOutFloor` devolve `true` para toda linha não-v3, então em v2 o contado
+    é igual ao total e a frase saía `received 5 eligible of 5 positive rows` — enquanto
+    `recordEligibility` é constante `false` em v2 pela razão estrutural que o próprio
+    docstring descreve, e um teste commitado assere `recordEligibility(ai).eligible ===
+    false` numa linha exatamente dessas. Era a mesma sobre-alegação que o item 15 tinha ido
+    remover, sobrevivendo no único lugar que um operador lê. A formulação honesta do
+    docstring ("um corpus v2 é julgado pelo único critério que o schema dele sabe enunciar
+    — presença") nunca chegou à frase.
+
+    Corrigido com `heldOutFloorShortfall`, que nomeia a regra que aplicou. **Três** casos e
+    não dois, porque array de versão mista é alcançável (`parseBenchmarkDataset` recusa
+    JSONL misto, mas `sealDataset` recebe array e os caminhos de calibração e preflight
+    montam o deles em memória): tudo v3 mantém `N eligible of M` byte a byte (os dois testes
+    do item 15 continuam válidos sem reescrita); nada v3 imprime `N of M positive rows (no
+    positive row states eligibility: schemaVersion 2 has no axis states, so the floor is
+    judged on presence)`; misto imprime quantas linhas foram julgadas por cada regra. O piso
+    200 virou `HELD_OUT_POSITIVES_FLOOR`, nomeado uma vez para que guarda e frase não possam
+    discordar — **R3: não foi afrouxado, só enunciado num lugar**. Dois testes novos, e o do
+    caso v2 assere as duas metades (o texto exato **e** `not.toThrow(/eligible positives/)`),
+    porque cada uma sozinha é satisfazível por uma correção errada.
+
+21. **Os cinco ponteiros de linha da errata do item 9 estavam errados no próprio commit.**
+    Corrigido para ponteiro por nome; a errata registra o erro em vez de apagá-lo. Detalhe
+    e medição no item 9.
+
+22. **A linha `gemini-api` v3 estava construída à mão em dois arquivos.**
+    `v3ApiRecordAtTemperature` (corpus-source-audit) e `v3ApiRow` (schema-v3) escreviam o
+    mesmo `decoding`, o mesmo `effort` e a **mesma** string de razão de
+    `notApplicable`, byte a byte, enquanto os dois arquivos já importavam
+    `benchmark/tests/helpers/v3-record-fixture.ts`, cujo cabeçalho diz existir para que
+    fixture v3 seja compartilhada. Virou `v3ApiAi(temperature)` ao lado de `v3Ai`/`v3Mixed`,
+    com `API_LANE_NO_HARNESS` como constante única; ficou local só o que é local (o
+    alinhamento com a batch, em corpus-source-audit). O `provider` passou a `"gemini"` na
+    fixture compartilhada, porque a lane de API é o endpoint do Gemini e não o binário `agy`
+    — nenhuma asserção existente lê esse campo.
+
 **Não feito, e por quê:** métricas fatiadas por lane são de A6/E3 (o brief diz para
 registrar em vez de implementar); o keyring HMAC é C3 — aqui só o contrato do campo exige a
 forma pseudonimizada e recusa a crua; `assemble_corpus.py` continua emitindo v2, porque
@@ -3545,7 +3650,10 @@ repropagar é C2. **Não** foi publicada contagem de positivos inelegíveis por 
 canônico e nas duas recomputações artesanais de `calibration-pipeline.ts:562` e
 `candidate-preflight.ts:259` — blast radius de emenda de artefato, não de rodada de
 qualidade. Hoje o operador só descobre o número pela mensagem de recusa do item 15; fica
-registrado como lacuna de publicação.
+registrado como lacuna de publicação. `assemble_corpus.py` **continua emitindo v2** e a
+única mudança feita nele foi emitir a chave nova exigida pelo parser (item 19) — mudança de
+contrato obriga o emissor a acompanhar, sob pena de quebrar o montador; repropagar segue
+sendo C2.
 
 ### C2 — Montador persiste grupos reais
 
