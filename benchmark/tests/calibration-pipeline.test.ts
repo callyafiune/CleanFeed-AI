@@ -3,6 +3,7 @@ import { describe, expect, it } from "vitest";
 import {
   applyFrozenCalibration,
   fitFrozenCalibration,
+  readThresholdEvidence,
   validateFrozenCalibrationArtifact,
   type FitFrozenCalibrationInput,
   type FitSampleScores,
@@ -294,9 +295,9 @@ describe("fitFrozenCalibration", () => {
     expect(result.thresholdEvidence.warning.falsePositives).toBe(
       markedHumans.length,
     );
-    expect(result.thresholdEvidence.warning.fprUpper95).toBeLessThanOrEqual(
-      0.05,
-    );
+    expect(
+      result.thresholdEvidence.warning.selectionFprUpper95Nominal,
+    ).toBeLessThanOrEqual(0.05);
   });
 
   it("enforces a single 5% ceiling over the union, not 5% per path", () => {
@@ -327,7 +328,11 @@ describe("fitFrozenCalibration", () => {
     expect(visual).toBeGreaterThan(result.thresholds.warningDocument);
     expect(result.thresholdEvidence.visual).not.toBeNull();
     expect(
-      (result.thresholdEvidence.visual as { fprUpper95: number }).fprUpper95,
+      (
+        result.thresholdEvidence.visual as {
+          selectionFprUpper95Nominal: number;
+        }
+      ).selectionFprUpper95Nominal,
     ).toBeLessThanOrEqual(0.02);
     // The visual action never consults the localized calibrator.
     expect(
@@ -538,5 +543,139 @@ describe("fitFrozenCalibration governance guards", () => {
         },
       }),
     ).toThrow(/artifactDigest/);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// A7 — the selection-time FPR bound is diagnostic, never a 95% guarantee.
+//
+// `selectWarningThresholds` is an exact O(n²) search over every score value as a
+// candidate threshold, so the winning pair is chosen by millions of hypotheses
+// measured on the SAME negatives. A Wilson bound recomputed on those very
+// records is nominal, not post-selection (assessment §4.8). The number stays
+// exactly what it always was; what these tests pin is that the artifact never
+// NAMES it as a guarantee, and that the certified bound is represented as absent
+// instead of being impersonated by the nominal one (rule R7).
+// ---------------------------------------------------------------------------
+
+/** Every key name appearing anywhere in a value, at any depth. */
+function everyKey(value: unknown, into: Set<string> = new Set()): Set<string> {
+  if (Array.isArray(value)) {
+    for (const item of value) everyKey(item, into);
+    return into;
+  }
+  if (typeof value === "object" && value !== null) {
+    for (const [key, child] of Object.entries(value)) {
+      into.add(key);
+      everyKey(child, into);
+    }
+  }
+  return into;
+}
+
+/** The artifact's own fields, without the two applied-calibration closures. */
+function frozenFieldsOf(
+  result: typeof calibrationResult,
+): Record<string, unknown> {
+  const fields: Record<string, unknown> = { ...result };
+  delete fields.applyDocument;
+  delete fields.applyLocalized;
+  return fields;
+}
+
+/** A `thresholdEvidence.warning` exactly as artifacts wrote it before A7. */
+const PRE_A7_WARNING_EVIDENCE = {
+  documentThreshold: 0.7,
+  localizedThreshold: 0.65,
+  negatives: 2_000,
+  falsePositives: 40,
+  fprUpper95: 0.03,
+  positives: 2_000,
+  truePositives: 1_600,
+  recall: 0.8,
+} as const;
+
+describe("the frozen artifact never presents a selection bound as certified", () => {
+  it("names no field that claims a 95% FPR bound over the selection data", () => {
+    const keys = [...everyKey(frozenFieldsOf(calibrationResult))];
+    // The only two keys anywhere in the artifact that may name an FPR upper
+    // bound: the nominal selection one, explicitly labelled, and the certified
+    // one, which is where the blind test's number will land.
+    expect(keys.filter((key) => /fprupper/iu.test(key)).sort()).toEqual([
+      "certifiedFprUpper",
+      "selectionFprUpper95Nominal",
+    ]);
+    expect(keys).not.toContain("fprUpper95");
+  });
+
+  it("keeps the number identical to the Wilson bound the search computed", () => {
+    for (const evidence of [
+      calibrationResult.thresholdEvidence.warning,
+      spikeResult.thresholdEvidence.warning,
+      spikeResult.thresholdEvidence.visual,
+    ]) {
+      expect(evidence).not.toBeNull();
+      const block = evidence as NonNullable<typeof evidence>;
+      expect(block.selectionFprUpper95Nominal).toBe(
+        wilsonOneSided(block.falsePositives, block.negatives, "upper").value,
+      );
+    }
+  });
+
+  it("carries the certified bound as an explicitly absent, distinct field", () => {
+    const warning = calibrationResult.thresholdEvidence.warning;
+    expect(Object.hasOwn(warning, "certifiedFprUpper")).toBe(true);
+    expect(Object.hasOwn(warning, "selectionFprUpper95Nominal")).toBe(true);
+    // Distinct fields, and the absent one is absent — never the nominal number
+    // wearing the certified name.
+    expect(warning.certifiedFprUpper).toBeNull();
+    expect(warning.selectionFprUpper95Nominal).toBeGreaterThan(0);
+  });
+
+  it("documents in the artifact itself that certification comes from the blind test", () => {
+    const visual = spikeResult.thresholdEvidence.visual;
+    expect(visual).not.toBeNull();
+    for (const evidence of [
+      calibrationResult.thresholdEvidence.warning,
+      visual as NonNullable<typeof visual>,
+    ]) {
+      expect(evidence.fprBound).toMatchObject({
+        estimator: "wilson-one-sided-upper",
+        nominalConfidence: 0.95,
+        measuredOn: "threshold-selection-data",
+        postSelectionCorrection: "none",
+        role: "diagnostic",
+        vintage: "current",
+        certification: {
+          status: "pending",
+          stage: "h1-blind-test",
+          source: "blind-test-partition-measured-once",
+        },
+      });
+      // The artifact travels alone, so the reason is prose inside it and not a
+      // comment in this repository.
+      expect(evidence.fprBound.certification.absentBecause).toMatch(
+        /blind test/iu,
+      );
+    }
+  });
+
+  it("reads a pre-A7 block under its old name, marks it legacy and re-emits neither", () => {
+    const legacy = { ...PRE_A7_WARNING_EVIDENCE };
+    const read = readThresholdEvidence(legacy);
+    expect(read.selectionFprUpper95Nominal).toBe(0.03);
+    expect(read.certifiedFprUpper).toBeNull();
+    expect(read.fprBound.vintage).toBe("legacy-pre-a7");
+    expect([...everyKey(read)]).not.toContain("fprUpper95");
+    // Reading is not writing: the historical bytes are untouched, so the
+    // artifactDigest of a pre-A7 artifact still validates against itself.
+    expect(legacy).toEqual(PRE_A7_WARNING_EVIDENCE);
+  });
+
+  it("passes a current block through unchanged and marks it current", () => {
+    const current = calibrationResult.thresholdEvidence.warning;
+    const read = readThresholdEvidence(current);
+    expect(read).toEqual(current);
+    expect(read.fprBound.vintage).toBe("current");
   });
 });

@@ -463,6 +463,18 @@ export function renderReportMarkdown(report: BenchmarkReport): string {
         "seletiva.",
     );
     lines.push("");
+    // Where the certified bound comes from, said in the section a reader reaches
+    // holding the frozen artifact. The fit's own bound is nominal on the data
+    // that selected the threshold and certifies nothing (R7, assessment §4.8).
+    lines.push(
+      "O limite de FPR **certificado** é o desta tabela: medido uma única vez no " +
+        "**teste cego**, no limiar já congelado. O número gravado no artefato de " +
+        "calibração sob `selectionFprUpper95Nominal` é o limite de Wilson " +
+        "*nominal* do par vencedor, calculado nos mesmos registros que o " +
+        "escolheram — é diagnóstico e **não certifica** nada. No artefato, " +
+        "`certifiedFprUpper` é nulo justamente até que esta medição exista.",
+    );
+    lines.push("");
     lines.push(frozenThresholdTable("Aviso", release.warning));
     lines.push("");
     if (release.visualAction !== null && release.visualAction !== undefined) {

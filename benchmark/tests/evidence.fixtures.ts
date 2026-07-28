@@ -19,7 +19,10 @@ import { fileURLToPath } from "node:url";
 
 import { canonicalSha256 } from "../../contracts/canonical-json.ts";
 import type { CorpusSourceReadinessReport } from "../../contracts/source-readiness.ts";
-import type { FrozenCalibrationArtifact } from "../calibration-pipeline.ts";
+import {
+  selectionThresholdEvidence,
+  type FrozenCalibrationArtifact,
+} from "../calibration-pipeline.ts";
 import type { DatasetAudit } from "../dataset-manifest.ts";
 import type { FitReport } from "../candidate-preflight.ts";
 import {
@@ -644,16 +647,16 @@ export async function buildRejectScenario(
       visualDocument: null,
     },
     thresholdEvidence: {
-      warning: {
+      warning: selectionThresholdEvidence({
         documentThreshold: 0.7,
         localizedThreshold: 0.65,
         negatives: 2_000,
         falsePositives: 40,
-        fprUpper95: 0.03,
+        selectionFprUpper95Nominal: 0.03,
         positives: 2_000,
         truePositives: 1_600,
         recall: 0.8,
-      },
+      }),
       visual: null,
     },
     fitSeed: 712_019,

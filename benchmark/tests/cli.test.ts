@@ -22,7 +22,10 @@ import {
   type CorpusSourceReadinessReport,
 } from "../../contracts/source-readiness.ts";
 import { parseCliArgs, runCli } from "../cli.ts";
-import type { FrozenCalibrationArtifact } from "../calibration-pipeline.ts";
+import {
+  selectionThresholdEvidence,
+  type FrozenCalibrationArtifact,
+} from "../calibration-pipeline.ts";
 import { runFit, type FitOptions } from "../commands/fit.ts";
 import {
   computeDatasetAuditDigest,
@@ -625,26 +628,26 @@ async function frozenCalibration(
       visualDocument: 0.8,
     },
     thresholdEvidence: {
-      warning: {
+      warning: selectionThresholdEvidence({
         documentThreshold: 0.5,
         localizedThreshold: 0.5,
         negatives: 2,
         falsePositives: 0,
-        fprUpper95: 0.01,
+        selectionFprUpper95Nominal: 0.01,
         positives: 2,
         truePositives: 2,
         recall: 1,
-      },
-      visual: {
+      }),
+      visual: selectionThresholdEvidence({
         documentThreshold: 0.8,
         localizedThreshold: null,
         negatives: 2,
         falsePositives: 0,
-        fprUpper95: 0.01,
+        selectionFprUpper95Nominal: 0.01,
         positives: 2,
         truePositives: 1,
         recall: 0.5,
-      },
+      }),
     },
     fitSeed: 712019,
   };

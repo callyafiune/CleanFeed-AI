@@ -89,7 +89,77 @@ export interface FitFrozenCalibrationInput {
   calibrationManifestDigest: string;
 }
 
+/**
+ * How the false-positive bound recorded beside a frozen threshold is to be read.
+ * It exists because the number it qualifies was computed on the very records that
+ * CHOSE the threshold, and the name that number used to carry (`fprUpper95`) read
+ * as a 95% guarantee it does not have.
+ *
+ * `selectWarningThresholds` below is an exact search: every distinct score value
+ * is a candidate document threshold and every distinct score value a candidate
+ * localized threshold, so the winning pair is the survivor of on the order of n²
+ * hypotheses tested against the SAME negatives. A Wilson bound recomputed on
+ * those negatives is therefore nominal and post-hoc, not a post-selection bound,
+ * and it systematically understates the uncertainty of the published threshold
+ * (assessment §4.8). Nothing about the arithmetic changes that; only the label
+ * does, which is what rule R7 asks for — declare the contract, not the property.
+ *
+ * The certified bound is the one measured ONCE on the blind test partition at
+ * H1. It does not exist at fit time, so `certifiedFprUpper` is `null` here and
+ * this block says why, in the artifact, in prose: the frozen calibration travels
+ * on its own and is cited on its own.
+ */
+export interface ThresholdFprBoundProvenance {
+  estimator: "wilson-one-sided-upper";
+  nominalConfidence: 0.95;
+  /** The bound was computed on the same records that selected the threshold. */
+  measuredOn: "threshold-selection-data";
+  /** No multiplicity correction over the evaluated candidate grid was applied. */
+  postSelectionCorrection: "none";
+  /** Which is why the number decides nothing on its own. */
+  role: "diagnostic";
+  /**
+   * `legacy-pre-a7` marks a block that was READ from an artifact written before
+   * the field was renamed. It never marks a block this module produced.
+   */
+  vintage: "current" | "legacy-pre-a7";
+  certification: {
+    status: "pending";
+    stage: "h1-blind-test";
+    source: "blind-test-partition-measured-once";
+    absentBecause: string;
+  };
+}
+
 export interface ThresholdEvidence {
+  documentThreshold: number;
+  localizedThreshold: number | null;
+  negatives: number;
+  falsePositives: number;
+  /**
+   * The NOMINAL 95% Wilson upper bound of the winning pair's false-positive
+   * rate, computed on the selection data. Diagnostic — see
+   * `ThresholdFprBoundProvenance`. This is the same number the field
+   * `fprUpper95` carried before task A7; only the name changed.
+   */
+  selectionFprUpper95Nominal: number;
+  /**
+   * The certified upper bound of the false-positive rate. Always `null` in a fit
+   * artifact, because certification happens once on the blind test at H1. Never
+   * a placeholder: absence is recorded as absence.
+   */
+  certifiedFprUpper: null;
+  fprBound: ThresholdFprBoundProvenance;
+  positives: number;
+  truePositives: number;
+  recall: number;
+}
+
+/**
+ * A `thresholdEvidence` block as artifacts wrote it BEFORE task A7 renamed the
+ * field. Accepted on READ so a historical fit stays auditable; never emitted.
+ */
+export interface LegacyThresholdEvidencePreA7 {
   documentThreshold: number;
   localizedThreshold: number | null;
   negatives: number;
@@ -98,6 +168,110 @@ export interface ThresholdEvidence {
   positives: number;
   truePositives: number;
   recall: number;
+}
+
+const CERTIFICATION_ABSENT_BECAUSE =
+  "No certified bound exists at fit time: the thresholds were selected on these " +
+  "same records, so certification is a single measurement on the blind test " +
+  "partition at H1. Until then this artifact carries a nominal, diagnostic " +
+  "figure only.";
+
+function selectionFprBoundProvenance(
+  vintage: ThresholdFprBoundProvenance["vintage"],
+): ThresholdFprBoundProvenance {
+  return {
+    estimator: "wilson-one-sided-upper",
+    nominalConfidence: 0.95,
+    measuredOn: "threshold-selection-data",
+    postSelectionCorrection: "none",
+    role: "diagnostic",
+    vintage,
+    certification: {
+      status: "pending",
+      stage: "h1-blind-test",
+      source: "blind-test-partition-measured-once",
+      absentBecause: CERTIFICATION_ABSENT_BECAUSE,
+    },
+  };
+}
+
+/**
+ * Builds a fit-time `thresholdEvidence` block from the counts the search
+ * produced. Single place that decides the two things a fit artifact may never get
+ * wrong: the bound it publishes is the NOMINAL selection one, and the certified
+ * bound is recorded as absent rather than filled with the nominal number.
+ */
+export function selectionThresholdEvidence(counts: {
+  documentThreshold: number;
+  localizedThreshold: number | null;
+  negatives: number;
+  falsePositives: number;
+  selectionFprUpper95Nominal: number;
+  positives: number;
+  truePositives: number;
+  recall: number;
+}): ThresholdEvidence {
+  return {
+    documentThreshold: counts.documentThreshold,
+    localizedThreshold: counts.localizedThreshold,
+    negatives: counts.negatives,
+    falsePositives: counts.falsePositives,
+    selectionFprUpper95Nominal: counts.selectionFprUpper95Nominal,
+    certifiedFprUpper: null,
+    fprBound: selectionFprBoundProvenance("current"),
+    positives: counts.positives,
+    truePositives: counts.truePositives,
+    recall: counts.recall,
+  };
+}
+
+/**
+ * Reads a `thresholdEvidence` block of either vintage into the CURRENT shape, so
+ * that a consumer which republishes one — `evidence-sanitizer`'s fit summary is
+ * the only one — never emits the pre-A7 name.
+ *
+ * Pure and non-destructive: the block handed in is not mutated, so a historical
+ * artifact's bytes, and therefore its `artifactDigest`, stay exactly as sealed.
+ * That is deliberate — `validateFrozenCalibrationArtifact` recomputes the digest
+ * over the object as read from disk, and normalizing before validating would
+ * make every pre-A7 fit fail its own seal.
+ */
+export function readThresholdEvidence(
+  evidence: ThresholdEvidence | LegacyThresholdEvidencePreA7,
+): ThresholdEvidence {
+  const legacy = evidence as Partial<LegacyThresholdEvidencePreA7>;
+  const current = evidence as Partial<ThresholdEvidence>;
+  const isLegacy =
+    current.selectionFprUpper95Nominal === undefined &&
+    typeof legacy.fprUpper95 === "number";
+  if (!isLegacy) {
+    const known = current as ThresholdEvidence;
+    return {
+      documentThreshold: known.documentThreshold,
+      localizedThreshold: known.localizedThreshold,
+      negatives: known.negatives,
+      falsePositives: known.falsePositives,
+      selectionFprUpper95Nominal: known.selectionFprUpper95Nominal,
+      certifiedFprUpper: null,
+      fprBound: known.fprBound ?? selectionFprBoundProvenance("current"),
+      positives: known.positives,
+      truePositives: known.truePositives,
+      recall: known.recall,
+    };
+  }
+  const old = evidence as LegacyThresholdEvidencePreA7;
+  return {
+    documentThreshold: old.documentThreshold,
+    localizedThreshold: old.localizedThreshold,
+    negatives: old.negatives,
+    falsePositives: old.falsePositives,
+    selectionFprUpper95Nominal: old.fprUpper95,
+    certifiedFprUpper: null,
+    fprBound: selectionFprBoundProvenance("legacy-pre-a7"),
+    positives: old.positives,
+    truePositives: old.truePositives,
+    recall: old.recall,
+  };
 }
 
 export interface FrozenCalibrationArtifact {
@@ -415,6 +589,12 @@ interface CalibratedRecord {
   localized: number;
 }
 
+// Module-private search state, NOT an artifact shape. `fprUpper95` here is the
+// budget test the search applies while it is still searching; it reaches the
+// sealed artifact only as `selectionFprUpper95Nominal`, whose provenance block
+// says on what data it was computed. Task A7 deliberately left both search
+// functions byte-identical — it changed no arithmetic, no estimator and no
+// comparison, only the name the artifact publishes.
 interface WarningCandidate {
   documentThreshold: number;
   localizedThreshold: number;
@@ -718,29 +898,33 @@ export function fitFrozenCalibration(
     warning.documentThreshold,
   );
 
-  const warningEvidence: ThresholdEvidence = {
+  // The two searches above compute a nominal Wilson bound on the records that
+  // chose the winning candidate. The artifact publishes that number under a name
+  // that says so, plus an explicitly absent `certifiedFprUpper`: the certified
+  // bound is a single measurement on the blind test at H1 and does not exist yet.
+  const warningEvidence: ThresholdEvidence = selectionThresholdEvidence({
     documentThreshold: warning.documentThreshold,
     localizedThreshold: warning.localizedThreshold,
     negatives: negatives.length,
     falsePositives: warning.falsePositives,
-    fprUpper95: warning.fprUpper95,
+    selectionFprUpper95Nominal: warning.fprUpper95,
     positives: positives.length,
     truePositives: warning.truePositives,
     recall: warning.recall,
-  };
+  });
   const visualEvidence: ThresholdEvidence | null =
     visual === null
       ? null
-      : {
+      : selectionThresholdEvidence({
           documentThreshold: visual.documentThreshold,
           localizedThreshold: null,
           negatives: negatives.length,
           falsePositives: visual.falsePositives,
-          fprUpper95: visual.fprUpper95,
+          selectionFprUpper95Nominal: visual.fprUpper95,
           positives: positives.length,
           truePositives: visual.truePositives,
           recall: visual.recall,
-        };
+        });
 
   const base: Omit<FrozenCalibrationArtifact, "artifactDigest"> = {
     schemaVersion: 1,

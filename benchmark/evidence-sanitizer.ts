@@ -28,7 +28,10 @@ import type { CalibrationProfilesFileV1 } from "../contracts/calibration-profile
 import type { ModelReleaseDescriptorV1 } from "../contracts/model-release.ts";
 import type { CorpusSourceReadinessReport } from "../contracts/source-readiness.ts";
 import type { FitReport } from "./candidate-preflight.ts";
-import type { FrozenCalibrationArtifact } from "./calibration-pipeline.ts";
+import {
+  readThresholdEvidence,
+  type FrozenCalibrationArtifact,
+} from "./calibration-pipeline.ts";
 import type { DatasetAudit } from "./dataset-manifest.ts";
 import { sha256BytesHex } from "./digests.ts";
 import { renderReportMarkdown, type BenchmarkReport } from "./report.ts";
@@ -267,7 +270,19 @@ function fitSummary(input: EvidenceInput): unknown {
     evaluatorDigest: frozen.evaluatorDigest,
     calibrationArtifactDigest: frozen.artifactDigest,
     thresholds: { ...frozen.thresholds },
-    thresholdEvidence: frozen.thresholdEvidence,
+    // This is the only place a frozen artifact's threshold evidence is emitted
+    // into a public file, so it is where the pre-A7 field name has to stop. A
+    // historical artifact is still readable — `readThresholdEvidence` copies and
+    // never mutates, so its sealed bytes and its artifactDigest are untouched —
+    // but the published bundle only ever carries `selectionFprUpper95Nominal`,
+    // with the vintage marked and `certifiedFprUpper` explicitly absent.
+    thresholdEvidence: {
+      warning: readThresholdEvidence(frozen.thresholdEvidence.warning),
+      visual:
+        frozen.thresholdEvidence.visual === null
+          ? null
+          : readThresholdEvidence(frozen.thresholdEvidence.visual),
+    },
     preflight: {
       status: preflight.status,
       freeDiskBytes: preflight.freeDiskBytes,

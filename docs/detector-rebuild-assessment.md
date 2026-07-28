@@ -481,6 +481,14 @@ incerteza real do limiar publicado**. A assinatura empírica está no artefato: 
 vencedor ficou em **4,62% contra um orçamento de 5,00%** — encostado na restrição, que
 é o que se espera de uma maximização levada até a fronteira.
 
+> **Nota de campo (A7, 2026-07-27).** O nome `fprUpper95` acima é o do artefato de
+> 2026-07-25. Hoje o campo emitido chama-se `selectionFprUpper95Nominal`, ao lado de um
+> `certifiedFprUpper` explicitamente nulo e de um bloco `fprBound` que registra
+> estimador, dado de medição, ausência de correção pós-seleção e de onde virá a
+> certificação. A **matemática é a mesma**: A7 mudou rótulo e procedência, não
+> estimador. Artefatos gravados antes disso continuam legíveis sob o nome antigo — ele
+> só nunca é reemitido.
+
 **Correção — e uma versão anterior desta seção errava aqui.** Eu havia escrito que
 bastava separar `cal-A` (calibrador) de `cal-B` (limiar). **Não basta:** se o limiar é
 escolhido em `cal-B`, um limite de Wilson calculado em `cal-B` continua sendo

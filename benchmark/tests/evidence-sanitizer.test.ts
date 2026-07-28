@@ -19,6 +19,7 @@ import {
 } from "../evidence-sanitizer.ts";
 import { sha256BytesHex } from "../digests.ts";
 import { bundleInputFor, buildRejectScenario } from "./evidence.fixtures.ts";
+import type { FrozenCalibrationArtifact } from "../calibration-pipeline.ts";
 import type { ReleaseDecision } from "../gates.ts";
 
 const created: string[] = [];
@@ -258,6 +259,51 @@ describe("buildEvidenceBundle", () => {
     expect(fit.predictionManifestDigests).toEqual(
       input.frozenCalibration.predictionManifestDigests,
     );
+  });
+
+  // A7: this is the only place a frozen artifact's threshold evidence is EMITTED
+  // into a public file, so it is where the legacy decision has teeth. A pre-A7
+  // artifact is still readable — its bytes and its artifactDigest are never
+  // touched — but the name that read as a 95% guarantee is never published again.
+  it("publishes a pre-A7 fit's FPR bound under its A7 name, marked legacy", async () => {
+    const { input } = await bundleInputFor("pass");
+    const legacyInput = {
+      ...input,
+      frozenCalibration: {
+        ...input.frozenCalibration,
+        thresholdEvidence: {
+          warning: {
+            documentThreshold: 0.7,
+            localizedThreshold: 0.65,
+            negatives: 2_000,
+            falsePositives: 40,
+            fprUpper95: 0.03,
+            positives: 2_000,
+            truePositives: 1_600,
+            recall: 0.8,
+          } as unknown as FrozenCalibrationArtifact["thresholdEvidence"]["warning"],
+          visual: null,
+        },
+      },
+    };
+    const bundle = await buildEvidenceBundle(legacyInput);
+    const fit = JSON.parse(
+      (
+        bundle.files.find((f) => f.name === "fit-summary.json") as {
+          content: string;
+        }
+      ).content,
+    );
+    expect(fit.thresholdEvidence.warning).not.toHaveProperty("fprUpper95");
+    expect(fit.thresholdEvidence.warning.selectionFprUpper95Nominal).toBe(0.03);
+    expect(fit.thresholdEvidence.warning.certifiedFprUpper).toBeNull();
+    expect(fit.thresholdEvidence.warning.fprBound.vintage).toBe(
+      "legacy-pre-a7",
+    );
+    // The artifact we were handed is unchanged, so its own digest still checks.
+    expect(
+      legacyInput.frozenCalibration.thresholdEvidence.warning,
+    ).toHaveProperty("fprUpper95");
   });
 });
 

@@ -20,7 +20,10 @@ import type {
   ModelBenchmarkScoreV1,
   ModelBenchmarkStatusV1,
 } from "../browser-scorer.ts";
-import type { FrozenCalibrationArtifact } from "../calibration-pipeline.ts";
+import {
+  selectionThresholdEvidence,
+  type FrozenCalibrationArtifact,
+} from "../calibration-pipeline.ts";
 import {
   runConsumeHoldout,
   type ConsumeHoldoutOptions,
@@ -325,29 +328,29 @@ async function frozenCalibration(input: {
       visualDocument: input.visualDocument,
     },
     thresholdEvidence: {
-      warning: {
+      warning: selectionThresholdEvidence({
         documentThreshold: 0.5,
         localizedThreshold: 0.5,
         negatives: 150,
         falsePositives: 0,
-        fprUpper95: 0.02,
+        selectionFprUpper95Nominal: 0.02,
         positives: 30,
         truePositives: 30,
         recall: 1,
-      },
+      }),
       visual:
         input.visualDocument === null
           ? null
-          : {
+          : selectionThresholdEvidence({
               documentThreshold: input.visualDocument,
               localizedThreshold: null,
               negatives: 150,
               falsePositives: 0,
-              fprUpper95: 0.018,
+              selectionFprUpper95Nominal: 0.018,
               positives: 30,
               truePositives: 30,
               recall: 1,
-            },
+            }),
     },
     fitSeed: 712019,
   };

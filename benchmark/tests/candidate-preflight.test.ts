@@ -10,7 +10,10 @@ import {
   computeRuntimeParityDigest,
   type RuntimeParityManifestV1,
 } from "../../contracts/runtime-parity.ts";
-import type { FrozenCalibrationArtifact } from "../calibration-pipeline.ts";
+import {
+  selectionThresholdEvidence,
+  type FrozenCalibrationArtifact,
+} from "../calibration-pipeline.ts";
 import {
   buildFitReport,
   CandidatePreflightError,
@@ -275,16 +278,16 @@ async function buildFrozen(): Promise<FrozenCalibrationArtifact> {
       visualDocument: 0.8,
     },
     thresholdEvidence: {
-      warning: {
+      warning: selectionThresholdEvidence({
         documentThreshold: 0.5,
         localizedThreshold: 0.5,
         negatives: 70,
         falsePositives: 0,
-        fprUpper95: 0.037,
+        selectionFprUpper95Nominal: 0.037,
         positives: 20,
         truePositives: 20,
         recall: 1,
-      },
+      }),
       visual: null,
     },
     fitSeed: 712019,

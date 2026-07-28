@@ -17,7 +17,10 @@ import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
 import { wilsonOneSided } from "../intervals.ts";
-import type { FrozenCalibrationArtifact } from "../calibration-pipeline.ts";
+import {
+  selectionThresholdEvidence,
+  type FrozenCalibrationArtifact,
+} from "../calibration-pipeline.ts";
 import type {
   DecisionFamilies,
   DecisionMetrics,
@@ -405,29 +408,29 @@ function frozen(thresholds: {
     selectionEvidence: { document: [], localized: [] },
     thresholds,
     thresholdEvidence: {
-      warning: {
+      warning: selectionThresholdEvidence({
         documentThreshold: thresholds.warningDocument,
         localizedThreshold: thresholds.warningLocalized,
         negatives: 2000,
         falsePositives: 40,
-        fprUpper95: 0.03,
+        selectionFprUpper95Nominal: 0.03,
         positives: 2000,
         truePositives: 1600,
         recall: 0.8,
-      },
+      }),
       visual:
         thresholds.visualDocument === null
           ? null
-          : {
+          : selectionThresholdEvidence({
               documentThreshold: thresholds.visualDocument,
               localizedThreshold: null,
               negatives: 2000,
               falsePositives: 10,
-              fprUpper95: 0.012,
+              selectionFprUpper95Nominal: 0.012,
               positives: 2000,
               truePositives: 1000,
               recall: 0.5,
-            },
+            }),
     },
     fitSeed: 1234,
     artifactDigest: "9".repeat(64),

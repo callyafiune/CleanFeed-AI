@@ -921,3 +921,21 @@ describe("renderReportMarkdown publishes the A6 evidence with its roles named", 
     );
   });
 });
+
+// --- A7: the release section says where the certified FPR bound comes from ---
+
+describe("renderReportMarkdown separates the certified FPR bound from the fit's", () => {
+  it("attributes certification to the blind test and names the fit's bound nominal", async () => {
+    const release = section(
+      renderReportMarkdown(await buildBenchmarkReport(baseInput())),
+      "Métrica de release",
+    );
+    // The reader arrives here from the frozen artifact, where a number sits at
+    // the edge of the 5% budget. The report has to say that THIS table is the
+    // certification and that the fit's own bound never was one (R7, §4.8).
+    expect(release).toMatch(/selectionFprUpper95Nominal/u);
+    expect(release).toMatch(/teste cego/u);
+    expect(release).toMatch(/nominal/u);
+    expect(release).toMatch(/não certifica|não é garantia|não é uma garantia/u);
+  });
+});

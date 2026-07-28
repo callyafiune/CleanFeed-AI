@@ -2041,6 +2041,57 @@ dados de seleção.
 benchmark/tests/report.test.ts`; a fixture deve distinguir
 `selectionFprUpper95Nominal` de `certifiedFprUpper`.
 
+**Executado (2026-07-27).** Feito como escrito, com três precisões que o texto acima não
+antecipava.
+
+1. **O campo renomeado, e dois campos novos.** `ThresholdEvidence.fprUpper95` passou a
+   `selectionFprUpper95Nominal`. Ao lado dele o artefato passou a carregar
+   `certifiedFprUpper: null` — ausência registrada como ausência, **nunca** um número
+   placeholder (R4 pela mesma lógica: uma cota que não foi medida não se inventa) — e um
+   bloco `fprBound` com `estimator: "wilson-one-sided-upper"`,
+   `nominalConfidence: 0.95`, `measuredOn: "threshold-selection-data"`,
+   `postSelectionCorrection: "none"`, `role: "diagnostic"`, `vintage` e um
+   `certification` que diz em prosa, dentro do artefato, que a cota vem de uma medição
+   única no teste cego em H1. A procedência ficou no artefato e não em comentário de
+   fonte porque `frozen-calibration.json` é citado sozinho.
+2. **A matemática ficou intacta, literalmente.** `selectWarningThresholds` e
+   `selectVisualThreshold` não têm **uma linha** de diff: as interfaces privadas
+   `WarningCandidate`/`VisualCandidate` seguem com o campo `fprUpper95`, que é estado de
+   busca e não forma de artefato, e o novo nome aparece só na fronteira do artefato, via
+   o construtor único `selectionThresholdEvidence`. Um comentário acima de
+   `WarningCandidate` diz isso, para que o nome antigo lá dentro não volte a ser lido
+   como promessa. Um teste fixa `selectionFprUpper95Nominal ===
+   wilsonOneSided(falsePositives, negatives, "upper").value` nos três blocos de evidência
+   das duas fixtures reais, o que prova que o número não mudou.
+3. **Legado: aceito ao ler, jamais reemitido.** Existe artefato de 2026-07-25 em disco
+   (`benchmark/data/corpus-build/out/fit/frozen-calibration.json` e `fit-report.json`,
+   ambos gitignored) com o nome antigo. `readThresholdEvidence` lê os dois vintages e
+   marca `fprBound.vintage: "legacy-pre-a7"` no caso antigo; é **puro e não destrutivo**,
+   porque `validateFrozenCalibrationArtifact` recomputa `artifactDigest` sobre o objeto
+   como lido do disco — normalizar antes de validar reprovaria o selo de todo `fit`
+   anterior. O único ponto onde a evidência de limiar de um artefato congelado é
+   **emitida** para arquivo público é `fitSummary` em `evidence-sanitizer.ts`, e é ali que
+   a normalização entra; `candidate-preflight.ts` também propaga o bloco, mas sempre a
+   partir de um artefato recém-construído. Consequência registrada: republicar o `fit` de
+   2026-07-25 produz um `fit-summary.json` com o nome novo, logo bytes diferentes dos que
+   aquela execução teria produzido — nenhum bundle publicado existe no repo
+   (`benchmark/evidence/tmr-ptbr-v1/` só tem `.gitkeep`), então nada foi invalidado.
+
+Fora isso: `report.ts` ganhou, na seção **Métrica de release**, o parágrafo que diz que o
+limite certificado é o daquela tabela — medido uma vez no teste cego — e que o
+`selectionFprUpper95Nominal` do artefato é nominal e não certifica nada. `report.ts` não
+lia o campo antigo (só `calibrationArtifactDigest`), então ali não houve renomeação, e sim
+a prosa que faltava no lugar onde o leitor chega segurando o artefato. Cinco fixtures
+(`consume-holdout`, `cli`, `candidate-preflight`, `profile-artifact`, `evidence`) passaram
+a construir a evidência por `selectionThresholdEvidence`, em vez de repetir os dois
+campos constantes. A nota de campo em `docs/detector-rebuild-assessment.md` §4.8 registra
+o nome novo para quem chegar pelo diagnóstico.
+
+Um teste de invariante varre **todas as chaves** do artefato em qualquer profundidade e
+exige que as únicas que casam `/fprupper/i` sejam `certifiedFprUpper` e
+`selectionFprUpper95Nominal` — reintroduzir o nome antigo em qualquer lugar do artefato
+reprova, não só no bloco de aviso.
+
 ---
 
 ## Fase B — Decisões fechadas que bloqueiam o resto
