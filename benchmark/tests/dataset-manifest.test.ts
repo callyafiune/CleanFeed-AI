@@ -18,6 +18,7 @@ import {
 } from "../schema.ts";
 import { asGeneratorFamily } from "../generator-family.ts";
 import {
+  automatedUnreviewed,
   humanReviewed,
   labelDispute,
   unknownAxis,
@@ -843,6 +844,70 @@ describe("held-out generator-family coverage on a release corpus", () => {
     // is `automated/unreviewed`. This is the direction that was broken.
     await expect(attempt).rejects.not.toThrow(
       /only governance is the automated filter/u,
+    );
+  });
+
+  // The OTHER half of `REVIEW_SHORTFALL_ACTION`'s promise. The test above pins
+  // "never the acts of reasons absent"; this one pins "the act that answers EACH
+  // reason present", which nothing pinned: replacing `reasons.map(...)` with
+  // `reasons.slice(0, 1).map(...)` type-checks (tsc exit 0) and left
+  // `benchmark/tests/` at 35 files / 727 tests green, because both assertions on
+  // this message covered a corpus with exactly ONE distinct reason, so neither the
+  // map nor the sort over more than one element was ever exercised. An operator
+  // refused for two reasons was then told the act for one of them, silently.
+  //
+  // Two rows, two reasons, and the mixture is the honest one rather than a
+  // contrivance: a corpus mid-review has rows nobody reached yet
+  // (`automated/unreviewed`) beside rows whose reviewers dissent from the label
+  // (`label-disputed`), and the two need OPPOSITE acts — assign a reviewer versus
+  // re-derive the label's evidence or withdraw the row.
+  function unreviewedV3AiRow(n: number): BenchmarkRecord {
+    const raw = withReview(v3Ai(), automatedUnreviewed());
+    raw.id = `a_agy_${n.toString().padStart(4, "0")}`;
+    raw.normalizedTextSha256 = n.toString(16).padStart(64, "0");
+    return validateBenchmarkRecordV3(raw);
+  }
+
+  it("names the act of every reason present, in the breakdown's order", async () => {
+    const records = v3ReleaseCorpus(200);
+    // Replaces two positives rather than adding any, so the label counts and the
+    // held-out family's 200 are untouched and the FLOOR still passes: review state
+    // is not eligibility, so both rows still count toward the reservation.
+    //
+    // The DISPUTED row is placed FIRST on purpose, so that encounter order
+    // (label-disputed, automated-filter-only) is the reverse of sorted order. That is
+    // what makes the assertion below pin the sort: with the comparator dropped the
+    // breakdown would read `1 label-disputed, 1 automated-filter-only`. If both rows
+    // were in sorted order to begin with, dropping the sort would change nothing and
+    // the assertion would be pinning the fixture instead of the code.
+    records[records.length - 2] = disputedV3AiRow(199);
+    records[records.length - 1] = unreviewedV3AiRow(200);
+    const attempt = sealDataset(
+      releaseManifest,
+      records,
+      releasePolicy(200),
+      validFileDigests,
+    );
+    // Three properties in one assertion, each independently mutable: the count, the
+    // breakdown sorted by reason NAME, and `first` reported in RECORD order — the
+    // disputed row, which is second by reason and first by position, so the message
+    // cannot be reading one order for both.
+    await expect(attempt).rejects.toThrow(
+      /2 of 201 sustain no review claim \(1 automated-filter-only, 1 label-disputed\), first a_agy_0199/u,
+    );
+    // Both acts, each identified by a phrase unique to it. This pair is what kills
+    // the `slice(0, 1)` mutation.
+    await expect(attempt).rejects.toThrow(
+      /only governance is the automated filter/u,
+    );
+    await expect(attempt).rejects.toThrow(/nothing in a record resolves it/u);
+    // And they are two SENTENCES. The acts carried no terminal punctuation and were
+    // joined with a space, so they fused at "requires review A record whose" — a
+    // run-on in the sole operator-facing diagnosis of this gate, which is where a
+    // reader stops trusting the message. Asserting the boundary rather than the
+    // period alone, because the property is that the join cannot swallow it.
+    await expect(attempt).rejects.toThrow(
+      /requires review\. A record whose blind reviewers/u,
     );
   });
 

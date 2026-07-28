@@ -4533,6 +4533,31 @@ linhas. Com as duas classes restatadas, a cópia cai numa linha cujo label ou cu
 difere e é recusada por nome (os dois testes de cross-check já existentes). O delta são duas
 guardas, não três: a alternativa continua precisando da recusa de conflito inventado.
 
+**ERRATA da 4ª rodada de qualidade — o alcance desse argumento, que eu tinha deixado
+implícito (R7 pede o contrato medido, não a propriedade).** `(reviewedClass, recordLabel)` é
+par ordenado sobre três labels, então o que as duas guardas recusam é a cópia numa linha cuja
+**conclusão ou cujo label difere**. Elas **não** tornam o bloco específico da linha: dentro de
+um mesmo par o bloco inteiro, `rationale` incluído, é copiável byte a byte por quantas linhas
+se queira e nada aqui recusa — 10.000 linhas `ai` revisadas como `human` podem todas carregar
+blocos idênticos e todas validam. As próprias fixtures desta entrega são exatamente essa
+forma (`labelDispute("human", "ai")` com rationale fixo, estampado por `disputedV3AiRow(n)`
+em linhas que diferem só em id e hash), e isso é deliberado. A propriedade forte — uma disputa
+que só poderia ter sido escrita para **esta** linha — exige a vinculação por registro ao
+digest do log de sessão, campo que o recibo ainda não tem, e é de **D1**; mesmo insumo
+faltante que faz toda flag de cegueira ser autodeclarada. Escrito na docstring de
+`ReviewLabelDispute`, não só aqui.
+
+**ERRATA da mesma rodada — a mensagem de runtime carregava a justificativa que esta seção
+acabara de desautorizar.** A rodada anterior trocou "para o bloco se ler sozinho" pelo
+argumento da copiabilidade na docstring, e deixou intacta a frase que o operador de fato lê,
+em `benchmark/schema.ts` (recusa de `review.labelDispute.recordLabel`): ela continuava dizendo
+"so it can be read on its own". Quem copiasse um bloco para uma linha de label diferente
+recebia a recusa certa com o motivo que a entrega tinha argumentado por escrito não ser o
+motivo — a mesma classe de obsolescência que a rodada existia para fechar, no lugar de maior
+visibilidade. Reescrita para o motivo verdadeiro: o restatement é o que faz uma disputa
+copiada de outro registro ser recusada aqui em vez de descrever esta linha em silêncio.
+Verificado que nenhum teste e nenhum doc prendiam a frase antiga (grep sem ocorrência).
+
 **Data real, sem inventar relógio.** `REVIEW_RECEIPT_PROTOCOL_FROM` é
 `2026-07-26T00:00:00.000Z` — a data deste plano, a mesma que a seed de split `20260726`
 codifica. Nenhum recibo pode anteceder o protocolo que alega seguir, e o trabalho concreto
@@ -4567,6 +4592,53 @@ sintético para v3, e isso é falso — `v3ReleaseCorpus` em
 revisado, então o teste custou uma linha disputada. Ele afere os três lados: a contagem
 (`1 of 201 … (1 label-disputed), first a_agy_0200`), a ação da disputa presente, e a **ausência**
 da frase do filtro automático. Mutação: fixar a ação em `automated-filter-only` mata o teste.
+
+**ERRATA da 4ª rodada de qualidade: eu prendi metade da promessa.** A docstring de
+`REVIEW_SHORTFALL_ACTION` enuncia "a ação que responde **cada** razão presente — nunca as
+ações das razões ausentes". Só a metade *ausente* estava asseriada (o teste acima afere a
+ausência da frase do filtro). A metade *cada* estava presa por nada, medido: trocar
+`reasons.map(...)` por `reasons.slice(0, 1).map(...)` **type-checa** (`tsc` exit 0) e deixou
+`benchmark/tests/` em 35 arquivos / 727 testes verdes, porque as duas asserções existentes
+sobre essa mensagem cobrem corpus com **uma** razão distinta — nem o `map` nem o `sort` sobre
+mais de um elemento eram exercidos. O operador recusado por duas razões recebia a ação de
+uma, em silêncio. Mesma forma dos três defeitos anteriores desta tarefa: propriedade
+documentada, alcançável por nenhuma asserção.
+
+E a renderização estava errada junto: as quatro ações não tinham pontuação terminal e eram
+unidas por `" "`, então duas fundiam numa frase corrida. Medido, verbatim, no corpus de duas
+razões: `… requires review A record whose blind reviewers …`. Corrigido terminando **cada
+valor** com ponto (e não no `join`), para que cada ação seja frase inteira onde for lida.
+
+O teste novo (`names the act of every reason present, in the breakdown's order`) sela um
+corpus de release v3 de 201 linhas com **uma** linha `automated/unreviewed` e **uma** linha
+disputada, e a disputada vem **primeiro** de propósito: assim a ordem de encontro é o inverso
+da ordem ordenada, e a asserção prende três coisas independentes — a contagem, o breakdown
+ordenado por **nome** de razão (`1 automated-filter-only, 1 label-disputed`) e o `first` em
+ordem de **registro** (`a_agy_0199`, a disputada). Se as duas linhas já viessem ordenadas, tirar
+o `sort` não mudaria nada e a asserção estaria prendendo a fixture, não o código. Mutações
+rodadas: `slice(0, 1)` mata o teste (só ele), e remover o comparador do `sort` também
+(breakdown sai `1 label-disputed, 1 automated-filter-only`).
+
+**Mais dois acertos de forma na mesma rodada, ambos medidos e não argumentados.**
+
+1. `REVIEW_SHORTFALL_ACTION` passou a `} as const satisfies Record<…>`, que é como as quatro
+   tabelas irmãs desta forma já são escritas (`schema.ts:1802`, `source-manifest.ts:304`,
+   `:645`, `:654`). Sem `as const` os valores tipavam como `string` e a tabela de módulo era
+   **gravável** — meu relatório anterior a chamou de "frozen", o que era falso: não era `as
+   const` nem `Object.freeze`. Sonda: escrever `REVIEW_SHORTFALL_ACTION["label-disputed"] =
+   "probe"` dentro do módulo type-checava (exit 0) na versão anterior e agora é
+   `TS2540: Cannot assign … read-only property`. A exaustividade do `satisfies` não muda.
+2. `reviewClaimShortfall` passou a receber **tupla não-vazia**
+   (`readonly [UnsustainedReview, ...UnsustainedReview[]]`), então a guarda
+   `unsustained.length > 0` do chamador virou o **tipo**. Extrair o construtor de mensagem
+   tinha alargado o contrato: com `readonly UnsustainedReview[]` e `unsustained[0]?.id`, perder
+   ou mover essa guarda produziria a recusa `0 of 201 sustain no review claim (), first
+   undefined.` — breakdown vazio, ação nenhuma e o literal `undefined` como id de registro,
+   atirado num operador cujo corpus não tem nada de errado. Mesma regra fail-loudly que a
+   rodada de A3 pôs em `item()`. O chamador **desestrutura** em vez de testar `length`, porque
+   TypeScript não estreita array para tupla não-vazia por comprimento; sonda: remover a guarda
+   agora é `TS2345 … Source provides no match for required element at position 0`, em vez de
+   compilar e imprimir `undefined`.
 
 **O montador parou de fabricar.** `benchmark/lab/assemble_corpus.py` não tem mais a
 constante de anotação nem a função de auditoria de PII, `stamp_block` não estampa mais

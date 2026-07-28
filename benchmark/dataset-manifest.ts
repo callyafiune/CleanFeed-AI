@@ -571,22 +571,47 @@ type ReviewShortfallReason = UnsustainedReview["support"]["reason"];
  * reads. `satisfies Record<ReviewShortfallReason, string>` makes a fifth reason a
  * compile error here, so the message cannot go stale the way the count in
  * {@link reviewClaimSupport}'s docstring did.
+ *
+ * Each value ENDS WITH A PERIOD, and that is load-bearing rather than editorial:
+ * {@link reviewClaimShortfall} concatenates the acts of every reason present, so
+ * without a terminator two acts fused into one run-on sentence ("...a gate that
+ * requires review A record whose blind reviewers...") in the sole operator-facing
+ * diagnosis of this gate. The period lives here rather than in the join so that
+ * every value is a whole sentence wherever it is read.
+ *
+ * `as const` matches the four sibling tables of this shape (`schema.ts`'s
+ * `V3_AXIS_STATE_RULE`, `source-manifest.ts`'s obligation and regime tables): the
+ * values type as their literals and the module-level table is not writable, which a
+ * bare `satisfies` left open. The exhaustiveness above is unaffected.
  */
 const REVIEW_SHORTFALL_ACTION = {
-  "automated-filter-only": `A record whose only governance is the automated filter is "${AUTOMATED_UNREVIEWED}" — legitimate in the corpus, and it never counts toward a gate that requires review`,
+  "automated-filter-only": `A record whose only governance is the automated filter is "${AUTOMATED_UNREVIEWED}" — legitimate in the corpus, and it never counts toward a gate that requires review.`,
   "reviewer-saw-detector-score":
-    "A reviewer or adjudicator who saw the detector's score may have corroborated the score instead of the document: the receipt stands as the truth of what happened, and the review is re-run blind (D1)",
+    "A reviewer or adjudicator who saw the detector's score may have corroborated the score instead of the document: the receipt stands as the truth of what happened, and the review is re-run blind (D1).",
   "reviewer-saw-candidate-class":
-    "A reviewer or adjudicator who saw the candidate class was shown the answer before deciding: the receipt stands, and the review is re-run blind (D1)",
-  "label-disputed": `A record whose blind reviewers contradict its label keeps the dissent ("${LABEL_DISPUTE_UNRESOLVED}") and sustains no claim: nothing in a record resolves it, so resolving means re-deriving the label's own evidence or withdrawing the row (D1/D5)`,
-} satisfies Record<ReviewShortfallReason, string>;
+    "A reviewer or adjudicator who saw the candidate class was shown the answer before deciding: the receipt stands, and the review is re-run blind (D1).",
+  "label-disputed": `A record whose blind reviewers contradict its label keeps the dissent ("${LABEL_DISPUTE_UNRESOLVED}") and sustains no claim: nothing in a record resolves it, so resolving means re-deriving the label's own evidence or withdrawing the row (D1/D5).`,
+} as const satisfies Record<ReviewShortfallReason, string>;
 
 /**
  * The review claim's refusal: the count, the breakdown by reason, the first record,
  * and the act that answers each reason PRESENT — never the acts of reasons absent.
+ *
+ * Both halves of that promise are pinned by test, and the "each" half only became so
+ * in this round: `reasons.slice(0, 1).map(...)` type-checked and left the whole
+ * benchmark suite green, because every assertion on this message covered a corpus
+ * with exactly ONE distinct reason. `names the act of every reason present, in the
+ * breakdown's order` is the two-reason corpus that kills it and pins the sort.
+ *
+ * The parameter is a NON-EMPTY tuple, so the caller's `length > 0` guard is the type
+ * rather than a convention in another scope. Before that it was `readonly
+ * UnsustainedReview[]` read through `unsustained[0]?.id`, which rendered the literal
+ * `undefined` as a record id — a refusal naming nothing, with an empty breakdown and
+ * no act, thrown at an operator whose corpus is fine. Same fail-loudly rule A3's
+ * round put on `item()`: refuse the impossible input at the boundary.
  */
 function reviewClaimShortfall(
-  unsustained: readonly UnsustainedReview[],
+  unsustained: readonly [UnsustainedReview, ...UnsustainedReview[]],
   total: number,
 ): string {
   const byReason = new Map<ReviewShortfallReason, number>();
@@ -605,7 +630,7 @@ function reviewClaimShortfall(
   const actions = reasons
     .map((reason) => REVIEW_SHORTFALL_ACTION[reason])
     .join(" ");
-  return `a release corpus requires a human review receipt on every record: ${unsustained.length} of ${total} sustain no review claim (${breakdown}), first ${unsustained[0]?.id}. ${actions}`;
+  return `a release corpus requires a human review receipt on every record: ${unsustained.length} of ${total} sustain no review claim (${breakdown}), first ${unsustained[0].id}. ${actions}`;
 }
 
 /**
@@ -930,10 +955,19 @@ export async function sealDataset(
     // R3: this is not a loosened threshold anywhere. The refusal is new and there is
     // no way to satisfy it except a real review (D1/D5), which is exactly the input
     // this execution does not have.
-    if (unsustained.length > 0) {
+    //
+    // Destructured rather than tested with `length > 0`, because TypeScript does not
+    // narrow an array to a non-empty tuple from its length: this is what lets
+    // `reviewClaimShortfall` DEMAND a first element instead of rendering `undefined`
+    // into a refusal if this guard is ever moved or lost.
+    const [firstUnsustained, ...restUnsustained] = unsustained;
+    if (firstUnsustained !== undefined) {
       fail(
         "DATASET_REVIEW_INVALID",
-        reviewClaimShortfall(unsustained, normalized.length),
+        reviewClaimShortfall(
+          [firstUnsustained, ...restUnsustained],
+          normalized.length,
+        ),
       );
     }
   }

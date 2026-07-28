@@ -1407,6 +1407,19 @@ export const LABEL_DISPUTE_UNRESOLVED = "unresolved";
  * (`refuses a dispute whose recordLabel is not the record's label`, `refuses a
  * dispute whose reviewedClass is not what the review concluded`). The delta is two
  * guards, not three: the alternative still needs the invented-conflict refusal.
+ *
+ * THE SCOPE OF THAT, stated because the property is much narrower than "copies are
+ * detected" and R7 asks for the contract and not the property. `(reviewedClass,
+ * recordLabel)` is an ordered pair over three labels, so what the two guards refuse
+ * is a copy onto a row whose conclusion or whose label DIFFERS. They do not make the
+ * block record-specific: inside one pair the whole block, `rationale` included, is
+ * copyable verbatim across arbitrarily many rows and nothing here refuses it — 10.000
+ * `ai` rows each reviewed as `human` may all carry byte-identical dispute blocks and
+ * every one validates. This file's own test fixtures are exactly that shape, on
+ * purpose. The stronger property — a dispute that can only have been written for THIS
+ * row — needs the per-record session-log binding the receipt has no field for yet,
+ * and that is D1's, the same missing input as every blindness flag being
+ * self-reported.
  */
 export interface ReviewLabelDispute {
   /** What the review concluded. Must equal the receipt's own conclusion. */
@@ -2101,7 +2114,7 @@ export function validateBenchmarkRecordV3(value: unknown): BenchmarkRecordV3 {
     }
     if (dispute !== undefined && dispute.recordLabel !== label) {
       throw new BenchmarkRecordError(
-        `review.labelDispute.recordLabel is "${dispute.recordLabel}" while the record's label is "${label}": the block restates both sides of the contradiction so it can be read on its own, and a restatement that does not match the row describes some other record`,
+        `review.labelDispute.recordLabel is "${dispute.recordLabel}" while the record's label is "${label}": the block restates both sides of the contradiction so that a dispute copied off another record is refused here instead of silently describing this one, and this restatement describes some other record`,
         id,
       );
     }
