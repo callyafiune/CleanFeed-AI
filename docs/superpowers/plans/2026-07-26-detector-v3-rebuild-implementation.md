@@ -2632,6 +2632,78 @@ hardcoded e sem coorte; passou a delegar a `isWarningPositive`. Sem isso, uma li
 `ecological` seria positivo em tempo de `fit` e não-positivo em tempo de avaliação —
 a agregação entre coortes que esta tarefa proíbe, entrando pela porta de trás.
 
+#### B2 — rodada de correção de conformidade
+
+6. **ERRATA: "misto sub-piso não entra em denominador de gate" estava afirmado forte
+   demais, e o teste que provava isso passava vazio.** O cabeçalho de `gates.ts` dizia
+   que o ÚNICO gate cujo denominador contém tal linha é `integrity.error-rate`. É falso,
+   e foi **medido**: `warning.coverage` lê `metrics.coverage`, que é
+   `proportionEstimate(elegíveis scored, eligibleCount)` — o conjunto elegível inteiro.
+   Sonda contra o pipeline real: 20 humanos + 10 IA dão coverage 1; somando uma linha
+   `label: "mixed"`, `aiFraction: 0.25`, `status: "abstained"` (120 palavras, portanto
+   elegível) dá `0.967741935483871`, com `abstentionRate` de 0 para `0.032258…`. Perto do
+   piso 0,8, uma coorte sub-piso grande o bastante **vira** esse gate.
+   O teste apresentado como prova filtrava só `tier !== "integrity"` — isto é, mantinha
+   `warning.coverage` dentro do `toEqual` — mas a linha que ele somava era `scored`, então
+   numerador e denominador subiam juntos e o valor era 1 nos dois lados: passava
+   vazio exatamente para o gate que a prosa dizia não ser exceção.
+   **Corrigido:** o cabeçalho nomeia os DOIS gates de denominador-conjunto-elegível
+   (`integrity.error-rate` e `warning.coverage`), com a medição colada, e enuncia a
+   afirmação na forma congelada — sub-piso **não é positivo nem negativo** de gate
+   nenhum, o que não é a mesma coisa que "nenhum gate o observa". O bloco de teste virou
+   três testes: (a) todo gate de aviso e de ação **exceto** `warning.coverage` é
+   `toEqual` antes e depois; (b) `warning.coverage.observed` **move** de 1 para 600/602 e
+   ainda passa, com o motivo escrito ao lado; (c) nenhuma população de classe se move
+   (positivos, negativos, `actionAuthorization.positives`, `mixed.atLeastHalfAi`) nas
+   duas famílias. As linhas somadas são `abstained` e `error` — as duas que separam um
+   denominador de classe do denominador do conjunto elegível.
+7. **Não agregação de coortes chegou ao `slices.ts`.** O eixo `mixedFraction` ainda
+   chaveava por faixa nua, então uma linha `mechanistic` e uma `ecological` da mesma
+   faixa caíam numa ÚNICA fatia publicada — e `mixedFraction` é eixo de RECALL, logo essa
+   fatia alimenta o piso que declara uma fatia elegível a gate e, via
+   `profile-artifact.ts`, o `criticalRecallSlices` publicado. Não é defeito pré-existente:
+   `generationMode` não existia antes desta tarefa. Agora a chave é `"<modo>/<faixa>"`,
+   **a mesma** de `MixedFractionSegment.key` e construída pela mesma função exportada
+   (`mixedSegmentOf`), então as duas não podem divergir. Teste novo: as duas coortes na
+   mesma faixa produzem `["ecological/75_100", "mechanistic/75_100"]`, e só a mecanística
+   declara positivo.
+8. **`split-audit.ts` perdeu o literal 0,5**, que agora vem de
+   `materialAssistance.minimumAiFraction`. Aquele eixo continua **sem** coorte de
+   propósito, e a razão está escrita no arquivo: ele audita a COBERTURA das duas faixas na
+   partição cega e não é denominador de métrica nenhuma; dividi-lo por coorte hoje
+   dividiria contagens de cobertura para descrever uma coorte que não existe (só
+   `mechanistic` é produzível na v3). Os dois nomes de chave soletram o piso congelado, e
+   mover o piso exige renomeá-los na mesma mudança.
+9. **`?? 0` novos removidos.** `excludedEcologicalCohort` lia a fração num segundo acesso
+   a `mixture`, com fallback 0 — que classificaria um mixture malformado como sub-piso, a
+   direção favorável. Agora existe um único estreitamento (`mixedCohortOf`) que devolve
+   coorte e fração juntas. Em `gates.ts`, `action.recall.overall` deixou de usar
+   `authorization?.positives ?? 0`: `action.available` passou a exigir os DOIS blocos
+   (`visualAction` e `actionAuthorization`, que `computeEvaluationMetrics` publica
+   juntos), então `actionIntervalSpecs` estreita o par e lê um denominador não-nulo, e um
+   build de métricas que publicasse um sem o outro falha o tier de ação em vez de passar
+   com o gate de recall silenciosamente ausente. Nada disso era violação de R5 (R5 é
+   sobre escore ausente de inferência com erro), mas eram defaults silenciosos num módulo
+   cujo estilo é falhar alto.
+10. **`actionRecall` do perfil publicado: caveat registrado, renomeação diferida.**
+    `profile-artifact.ts` continua construindo `overall.actionRecall` e o `actionRecall`
+    por fatia a partir de `visualAction.endToEnd.recall` — população de positivos de
+    AVISO — enquanto o gate homônimo lê `actionAuthorization` sobre positivos integrais.
+    **Não foi repontado, e o motivo é medido, não estilístico:** a lista de eixos de
+    recall inclui `mixedFraction`, cujas fatias não têm positivo integral nenhum, e
+    `requireSampleSize` reprova zero (`GATE_EVIDENCE_INCOMPLETE`) — ler a população
+    autorizadora por fatia recusaria publicar um corpus legítimo, e mandar esse zero para
+    `null` soletraria "ação não autorizada", que é outra coisa. O caminho de autorização
+    permanece seguro e isso foi verificado: `ceilingFor` exige `decision === "pass"` e
+    `bucketAuthorizesAction` só olha gates de FPR de fatia do tier de ação. O que foi
+    feito é declarar a população no CONTRATO (`contracts/calibration-profile.ts`), nos
+    dois campos, dizendo que é evidência diagnóstica, que pode ser MAIOR que o número que
+    o gate observou e que nunca autoriza ação. **Pendência nomeada:** renomear o campo
+    (p.ex. `actionRecallWarningPositives`) é mudança de contrato publicado — atinge o
+    parser do runtime, dois fixtures de release já commitados
+    (`tests/fixtures/model-release/*/calibration-profiles.json`) e perfis com validade de
+    180 dias — e pertence a quem for mexer no artefato de perfil, não a B2.
+
 ### B3 — DECIDIDO: só bases públicas, sem coleta individual autorizada
 
 **Depende de:** nada.

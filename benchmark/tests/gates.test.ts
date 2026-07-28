@@ -251,29 +251,38 @@ function aiPositive(author: string): EvaluationItem {
   };
 }
 
-// One mechanistic mixed row at a chosen AI fraction, warned AND visual-actioned:
-// the row that would move every rate in the favorable direction if it were
-// counted in a gate population.
-function mixedRow(aiFraction: number, author: string): EvaluationItem {
+// One mechanistic mixed row at a chosen AI fraction. Scored by default, warned
+// AND visual-actioned: the row that would move every rate in the favorable
+// direction if it were counted in a gate population. The `abstained` and `error`
+// statuses carry no score and no decision (R5), and they are the rows that
+// separate a CLASS denominator from the eligible-set denominator behind
+// `warning.coverage`: an undecided row raises that denominator alone.
+function mixedRow(
+  aiFraction: number,
+  author: string,
+  status: EvaluationItem["status"] = "scored",
+): EvaluationItem {
+  const record = {
+    label: "mixed",
+    language: "pt-BR",
+    wordCount: 120,
+    domain: "corporate",
+    platform: "generic-platform",
+    provenance: { sourceId: "generated" },
+    createdAt: 1_000,
+    transformation: { kind: "human-ai-mix", severity: "medium" },
+    mixture: {
+      aiFraction,
+      humanFraction: 1 - aiFraction,
+      spans: [],
+      generationMode: "mechanistic",
+    },
+    groups: { author },
+  } as unknown as BenchmarkRecord;
+  if (status !== "scored") return { record, status };
   return {
-    record: {
-      label: "mixed",
-      language: "pt-BR",
-      wordCount: 120,
-      domain: "corporate",
-      platform: "generic-platform",
-      provenance: { sourceId: "generated" },
-      createdAt: 1_000,
-      transformation: { kind: "human-ai-mix", severity: "medium" },
-      mixture: {
-        aiFraction,
-        humanFraction: 1 - aiFraction,
-        spans: [],
-        generationMode: "mechanistic",
-      },
-      groups: { author },
-    } as unknown as BenchmarkRecord,
-    status: "scored",
+    record,
+    status,
     documentScore: 0.95,
     warned: true,
     visualActioned: true,
@@ -859,7 +868,36 @@ describe("action tier teeth", () => {
       slices: summary([passingSlice()]),
     });
     expect(report.decision).toBe("indicator-only");
-    expect(gateById(report.gates, "action.available").passed).toBe(false);
+    const available = gateById(report.gates, "action.available");
+    expect(available.passed).toBe(false);
+    expect(available.reasons).toEqual([
+      "no visual-action evidence: visualDocument and actionAuthorization are null",
+    ]);
+  });
+
+  // The authorizing block going missing on its own is the state that used to
+  // arrive at the recall gate as `sampleSize: 0` with an undefined estimate. Now
+  // `action.available` refuses it by shape, and `actionIntervalSpecs` emits no
+  // spec at all — so the tier fails on the availability gate instead of passing
+  // with its recall gate quietly absent.
+  it("fails the action tier when the authorizing population is missing on its own", () => {
+    const base = metrics();
+    const report = evaluateReleaseGates({
+      integrity: integrity(),
+      resampling: plan(),
+      metrics: { ...base, actionAuthorization: null },
+      slices: summary([passingSlice()]),
+    });
+    const available = gateById(report.gates, "action.available");
+    expect(available.passed).toBe(false);
+    expect(available.reasons).toEqual([
+      "no visual-action evidence: actionAuthorization is null",
+    ]);
+    expect(report.failedAction).toContain("action.available");
+    expect(report.decision).toBe("indicator-only");
+    expect(
+      report.gates.some((gate) => gate.id === "action.recall.overall"),
+    ).toBe(false);
   });
 });
 
@@ -1357,30 +1395,100 @@ describe("material assistance never authorizes visual action (B2)", () => {
   });
 });
 
+// The frozen decision's wording is "não é positivo nem negativo de gate": a
+// sub-floor mixed row enters no CLASS population. That is not the same claim as
+// "no gate observes it at all", and the difference is measurable. Two gates take
+// their denominator from the ELIGIBLE SET rather than from a class:
+// `integrity.error-rate` and `warning.coverage`. A sub-floor mixed row is
+// eligible (PT-BR, 120 words), so it lands in both denominators.
+//
+// The first version of this block fed a `scored` sub-floor row, which raises
+// coverage's numerator and denominator together — the value is 1 in both arms, so
+// the `toEqual` held for `warning.coverage` vacuously while the prose beside it
+// claimed the gate was not an exception. The undecided rows below are the case
+// that separates the two.
 describe("mixed below the AI-fraction floor enters no gate denominator (B2)", () => {
-  it("leaves every warning and action gate byte-identical", () => {
-    // Fed through the REAL metrics pipeline, not a hand-built matrix: the claim
-    // is about what `computeEvaluationMetrics` puts in a denominator.
-    const base = [
-      ...Array.from({ length: 400 }, (_, index) =>
-        humanNegativeWithoutBasis(`n${index}`),
-      ),
-      ...Array.from({ length: 200 }, (_, index) => aiPositive(`p${index}`)),
-    ];
-    const withDiagnosticRow = [...base, mixedRow(0.25, `d0`)];
+  // Fed through the REAL metrics pipeline, not a hand-built matrix: the claim is
+  // about what `computeEvaluationMetrics` puts in a denominator.
+  const base: readonly EvaluationItem[] = [
+    ...Array.from({ length: 400 }, (_, index) =>
+      humanNegativeWithoutBasis(`n${index}`),
+    ),
+    ...Array.from({ length: 200 }, (_, index) => aiPositive(`p${index}`)),
+  ];
+  // One abstained and one errored sub-floor row: the two undecided statuses, so
+  // the coverage numerator stays put while its denominator grows.
+  const withDiagnosticRows: readonly EvaluationItem[] = [
+    ...base,
+    mixedRow(0.25, "d0", "abstained"),
+    mixedRow(0.25, "d1", "error"),
+  ];
 
-    const of = (items: readonly EvaluationItem[]): GateResult[] =>
-      evaluateReleaseGates({
-        integrity: integrity(),
-        resampling: plan(),
-        metrics: computeEvaluationMetrics(items, {
-          bootstrapSeed: 20260726,
-          preRegisteredStatisticalGates: M,
-        }),
-        slices: summary([passingSlice()]),
-      }).gates.filter((gate) => gate.tier !== "integrity");
+  const metricsOf = (items: readonly EvaluationItem[]): EvaluationMetrics =>
+    computeEvaluationMetrics(items, {
+      bootstrapSeed: 20260726,
+      preRegisteredStatisticalGates: M,
+    });
 
-    expect(of(withDiagnosticRow)).toEqual(of(base));
+  const of = (items: readonly EvaluationItem[]): GateResult[] =>
+    evaluateReleaseGates({
+      integrity: integrity(),
+      resampling: plan(),
+      metrics: metricsOf(items),
+      slices: summary([passingSlice()]),
+    }).gates.filter((gate) => gate.tier !== "integrity");
+
+  const COVERAGE = "warning.coverage";
+
+  it("leaves every warning and action gate except warning.coverage byte-identical", () => {
+    const without = (gates: readonly GateResult[]): GateResult[] =>
+      gates.filter((gate) => gate.id !== COVERAGE);
+
+    expect(without(of(withDiagnosticRows))).toEqual(without(of(base)));
+  });
+
+  it("moves warning.coverage, whose denominator is the eligible set and not a class", () => {
+    const before = gateById(of(base), COVERAGE);
+    const after = gateById(of(withDiagnosticRows), COVERAGE);
+
+    // 600/600 -> 600/602. This is the coverage estimand doing exactly what it is
+    // defined to do (`proportionEstimate(eligible scored, eligibleCount)`), NOT a
+    // class denominator absorbing a diagnostic row: near the floor a large enough
+    // sub-floor cohort could flip this gate, which is why it is named here rather
+    // than filtered out.
+    expect(before.observed).toBe(1);
+    expect(after.observed).toBe(600 / 602);
+    expect(after.passed).toBe(true);
+  });
+
+  it("counts the sub-floor rows as neither a positive nor a negative of any class", () => {
+    const before = metricsOf(base);
+    const after = metricsOf(withDiagnosticRows);
+
+    for (const family of ["endToEnd", "conditionalOnScored"] as const) {
+      expect(after.warning[family].positives).toBe(
+        before.warning[family].positives,
+      );
+      expect(after.warning[family].negatives).toBe(
+        before.warning[family].negatives,
+      );
+      expect(after.visualAction?.[family].positives).toBe(
+        before.visualAction?.[family].positives,
+      );
+      expect(after.visualAction?.[family].negatives).toBe(
+        before.visualAction?.[family].negatives,
+      );
+    }
+    expect(after.actionAuthorization?.positives).toBe(
+      before.actionAuthorization?.positives,
+    );
+    // The gated material-assistance cohort is `aiFraction >= 0.50`, so a 0.25 row
+    // is not in its denominator either.
+    expect(after.mixed.atLeastHalfAi.sampleSize).toBe(
+      before.mixed.atLeastHalfAi.sampleSize,
+    );
+    // It IS in the eligible set, which is what moved coverage above.
+    expect(after.coverage.value).toBeLessThan(before.coverage.value);
   });
 });
 

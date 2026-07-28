@@ -359,17 +359,72 @@ describe("buildSlices gate eligibility", () => {
       heldOutGeneratorFamilies: [],
     });
 
+    // Keys are `"<mode>/<bucket>"`, the SAME format as
+    // `MixedFractionSegment.key`: the cohort is part of the slice identity, so a
+    // published slice never pools the two.
     // The 50-74% mixed counts as a warning positive.
-    const halfAi = find(slices, "mixedFraction", "50_74");
+    const halfAi = find(slices, "mixedFraction", "mechanistic/50_74");
     expect(halfAi?.sampleSize).toBe(1);
     expect(halfAi?.positives).toBe(1);
     // The >=75% mixed lands in its own bucket and still counts as a positive.
-    const dominant = find(slices, "mixedFraction", "75_100");
+    const dominant = find(slices, "mixedFraction", "mechanistic/75_100");
     expect(dominant?.positives).toBe(1);
     // The <50% mixed is neither a positive nor a human negative.
-    const weakAi = find(slices, "mixedFraction", "0_24");
+    const weakAi = find(slices, "mixedFraction", "mechanistic/0_24");
     expect(weakAi?.positives).toBe(0);
     expect(weakAi?.negatives).toBe(0);
+  });
+
+  // `mixedFraction` is a RECALL axis (RECALL_AXES), so this slice reaches
+  // `criticalRecallSlices` in the published profile and the recall floor that
+  // declares a slice gate-eligible. A bare fraction key would put a mechanistic
+  // and an ecological row of the same band in ONE published slice — the
+  // aggregation the frozen table forbids (`cohortsAggregated: false`) — and it
+  // would do it silently, because the pooled slice still looks well-formed while
+  // its `sampleSize` counts rows its recall never measured (an ecological row is
+  // a warning positive of nothing).
+  it("never pools the mechanistic and ecological cohorts into one slice", () => {
+    const items = [
+      item({
+        author: "m1",
+        label: "mixed",
+        aiFraction: 0.8,
+        generationMode: "mechanistic",
+        warned: true,
+      }),
+      item({
+        author: "e1",
+        label: "mixed",
+        aiFraction: 0.8,
+        generationMode: "ecological",
+        warned: true,
+      }),
+    ];
+
+    const slices = buildSlices(items, {
+      bootstrapSeed: 7,
+      heldOutGeneratorFamilies: [],
+    });
+    const mixedKeys = slices
+      .filter((slice) => slice.axis === "mixedFraction")
+      .map((slice) => slice.key);
+
+    expect(mixedKeys).toEqual(["ecological/75_100", "mechanistic/75_100"]);
+    expect(
+      find(slices, "mixedFraction", "mechanistic/75_100")?.sampleSize,
+    ).toBe(1);
+    expect(find(slices, "mixedFraction", "ecological/75_100")?.sampleSize).toBe(
+      1,
+    );
+    // Only the mechanistic cohort supplies a warning positive; the ecological row
+    // is a positive of nothing, so its slice declares zero and can never become
+    // recall-gate-eligible on borrowed rows.
+    expect(find(slices, "mixedFraction", "mechanistic/75_100")?.positives).toBe(
+      1,
+    );
+    expect(find(slices, "mixedFraction", "ecological/75_100")?.positives).toBe(
+      0,
+    );
   });
 
   it("is deterministic for a fixed bootstrap seed", () => {

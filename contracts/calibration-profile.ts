@@ -72,6 +72,17 @@ export interface RuntimeCalibrationProfileV1 {
       indicatorFpr: ProportionGateEvidenceV1;
       indicatorRecall: ProportionGateEvidenceV1;
       actionFpr: ProportionGateEvidenceV1;
+      // DIAGNOSTIC EVIDENCE, not the gate's statistic, and the population is why.
+      // This is the visual-action decision's recall over the WARNING positives —
+      // integral generation plus mechanistic material assistance. The release gate
+      // named for the same quantity (`action.recall.overall` in benchmark/gates.ts)
+      // reads a different and narrower population, `metrics.actionAuthorization`
+      // over the INTEGRAL positives alone, because the frozen table authorizes
+      // `indicator` and nothing more for material assistance (B2). So this number
+      // may be HIGHER than the one the gate observed and must never be quoted as
+      // the authorization for a visual action. What authorizes an action in this
+      // file is `decision`, `actionCeiling` and the action-tier slice gates, none
+      // of which read this field.
       actionRecall: ProportionGateEvidenceV1;
       coverage: ProportionGateEvidenceV1;
       mixedRecall: ProportionGateEvidenceV1;
@@ -87,6 +98,9 @@ export interface RuntimeCalibrationProfileV1 {
       string,
       {
         indicatorRecall: ProportionGateEvidenceV1;
+        // Same population caveat as `overall.actionRecall` above: warning
+        // positives, diagnostic. `null` means the visual-action path was not
+        // authorized for this run, never "this slice had no positives".
         actionRecall: ProportionGateEvidenceV1 | null;
       }
     >;

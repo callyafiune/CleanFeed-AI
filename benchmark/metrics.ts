@@ -1104,10 +1104,57 @@ export function isHumanNegative(record: BenchmarkRecord): boolean {
   return record.label === "human";
 }
 
+/**
+ * The two fields that identify a mixed row's diagnostic segment, read TOGETHER
+ * from one narrowing of `record.mixture`. Reading them apart is what forced the
+ * `?? 0` defaults this replaced: a caller that had already established the cohort
+ * still had to re-open `mixture` for the fraction, and the fallback silently
+ * classified a mixture-less record as `aiFraction 0` — i.e. as sub-floor, the
+ * favorable direction. Absent `mixture` is not a fraction of zero; the schema
+ * refuses a mixed record without it, so there is nothing to bucket.
+ */
+function mixedCohortOf(
+  record: BenchmarkRecord,
+): { generationMode: GenerationMode; aiFraction: number } | undefined {
+  if (record.label !== "mixed") return undefined;
+  const mixture = record.mixture;
+  if (mixture === undefined) return undefined;
+  return {
+    generationMode: mixture.generationMode,
+    aiFraction: mixture.aiFraction,
+  };
+}
+
 /** The cohort of a mixed record, or `undefined` for a non-mixed one. */
 function generationModeOf(record: BenchmarkRecord): GenerationMode | undefined {
-  if (record.label !== "mixed") return undefined;
-  return record.mixture?.generationMode;
+  return mixedCohortOf(record)?.generationMode;
+}
+
+/**
+ * The identity of one mixed-text diagnostic segment: the cohort, the fraction
+ * bucket and the `"<mode>/<bucket>"` key built from them. ONE function, because
+ * `MixedFractionSegment.key` here and the `mixedFraction` slice axis in
+ * benchmark/slices.ts must be the SAME string — the slice axis is a RECALL axis,
+ * so it reaches `criticalRecallSlices` in the published profile, and two
+ * spellings of one segment would let a consumer join them wrongly or, worse, let
+ * one of the two keep pooling the cohorts. `undefined` for a row that has no
+ * segment (not mixed, or no mixture at all), never a default bucket.
+ */
+export function mixedSegmentOf(record: BenchmarkRecord):
+  | {
+      key: string;
+      generationMode: GenerationMode;
+      fractionBucket: string;
+    }
+  | undefined {
+  const cohort = mixedCohortOf(record);
+  if (cohort === undefined) return undefined;
+  const fractionBucket = mixedFractionBucket(cohort.aiFraction);
+  return {
+    key: `${cohort.generationMode}/${fractionBucket}`,
+    generationMode: cohort.generationMode,
+    fractionBucket,
+  };
 }
 
 // ECE-15: exactly fifteen equal-width bins on [0,1] — [0,1/15), ... [14/15,1].
@@ -1569,13 +1616,17 @@ function actionAuthorizationMetrics(
     excludedMaterialAssistancePositives: eligible.filter((item) =>
       isMaterialAssistancePositive(item.record),
     ).length,
-    excludedEcologicalCohort: eligible.filter(
-      (item) =>
-        generationModeOf(item.record) !== undefined &&
-        generationModeOf(item.record) !== MATERIAL_ASSISTANCE_MODE &&
-        (item.record.mixture?.aiFraction ?? 0) >=
-          MATERIAL_ASSISTANCE_AI_FRACTION,
-    ).length,
+    // Read through ONE narrowing of `mixture`, so the fraction cannot arrive as a
+    // default: a mixed record without `mixture` has no cohort and no fraction, and
+    // `?? 0` used to file it as sub-floor, which is the favorable direction.
+    excludedEcologicalCohort: eligible.filter((item) => {
+      const cohort = mixedCohortOf(item.record);
+      return (
+        cohort !== undefined &&
+        cohort.generationMode !== MATERIAL_ASSISTANCE_MODE &&
+        cohort.aiFraction >= MATERIAL_ASSISTANCE_AI_FRACTION
+      );
+    }).length,
   };
 }
 
@@ -2467,12 +2518,12 @@ function mixedByFraction(
     { mode: GenerationMode; fractionBucket: string; items: EvaluationItem[] }
   >();
   for (const item of items) {
-    const mode = generationModeOf(item.record);
-    if (mode === undefined) continue;
-    const fractionBucket = mixedFractionBucket(
-      item.record.mixture?.aiFraction ?? 0,
-    );
-    const key = `${mode}/${fractionBucket}`;
+    // Through the shared helper, so this key and the `mixedFraction` slice axis
+    // key are the same string by construction and not by two template literals
+    // that happen to match today.
+    const segment = mixedSegmentOf(item.record);
+    if (segment === undefined) continue;
+    const { key, generationMode: mode, fractionBucket } = segment;
     const bucket = buckets.get(key);
     if (bucket === undefined) {
       buckets.set(key, { mode, fractionBucket, items: [item] });

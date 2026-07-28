@@ -22,7 +22,7 @@
 
 import {
   computeEvaluationMetrics,
-  mixedFractionBucket,
+  mixedSegmentOf,
   sizeBucket,
   type EvaluationItem,
   type EvaluationMetrics,
@@ -165,10 +165,18 @@ export function buildSlices(
     },
     transformation: (record) => record.transformation.kind,
     severity: (record) => record.transformation.severity,
-    mixedFraction: (record) =>
-      record.label === "mixed"
-        ? mixedFractionBucket(record.mixture?.aiFraction ?? 0)
-        : undefined,
+    // Keyed by COHORT AND fraction (`"<mode>/<bucket>"`, the same identity
+    // `MixedFractionSegment.key` uses, built by the same helper). `mixedFraction`
+    // is a RECALL axis, so this slice reaches the recall floor that declares a
+    // slice gate-eligible and, through profile-artifact.ts, the published
+    // `criticalRecallSlices`. A bare fraction key would put a mechanistic and an
+    // ecological row of the same band in ONE published slice — the aggregation
+    // `materialAssistance.cohortsAggregated: false` forbids — and silently: the
+    // pooled slice still looks well-formed while its `sampleSize` counts rows its
+    // recall never measured, because an ecological row is a warning positive of
+    // nothing. A mixed record with no `mixture` yields no key at all (the schema
+    // refuses it) rather than a fraction of zero.
+    mixedFraction: (record) => mixedSegmentOf(record)?.key,
   };
 
   const results: SliceResult[] = [];

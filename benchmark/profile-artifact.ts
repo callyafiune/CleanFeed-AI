@@ -355,6 +355,17 @@ function buildGateEvidence(
     if (slice.recallGateEligible) {
       // Action recall exists only when visual action is authorized (a pass with
       // a measured visual matrix); otherwise it is explicitly null, never omitted.
+      //
+      // POPULATION (B2): `visualAction.endToEnd.recall` counts the WARNING
+      // positives, so this is diagnostic evidence and NOT the statistic behind
+      // `action.recall.overall`, which reads `metrics.actionAuthorization` over the
+      // integral positives alone. It is deliberately not repointed here: this axis
+      // list includes `mixedFraction`, whose slices hold no integral positives at
+      // all, and `requireSampleSize` fails a zero — so reading the authorizing
+      // population per slice would refuse to publish a legitimate corpus, and
+      // routing that zero to `null` would spell "action not authorized". The
+      // caveat is recorded on the field in contracts/calibration-profile.ts;
+      // renaming it is a published-contract change and is tracked in the plan.
       const actionRecall =
         decision === "pass" && slice.metrics.visualAction !== null
           ? toProportionEvidence(
@@ -398,13 +409,21 @@ function buildGateEvidence(
         warning.negatives,
         "overall actionFpr",
       ),
+      // Warning positives, like the per-slice field above: diagnostic evidence,
+      // not the `action.recall.overall` gate's statistic. Both the denominator
+      // (`warning.positives`) and the numerator's matrix count integral generation
+      // AND mechanistic material assistance, so this number can exceed the one the
+      // gate observed over the integral positives alone.
       actionRecall:
         visual === null
-          ? neverFiresEvidence(warning.positives, "overall actionRecall")
+          ? neverFiresEvidence(
+              warning.positives,
+              "overall actionRecall (warning positives)",
+            )
           : toProportionEvidence(
               visual.endToEnd.recall,
               warning.positives,
-              "overall actionRecall",
+              "overall actionRecall (warning positives)",
             ),
       coverage: toProportionEvidence(
         metrics.coverage,

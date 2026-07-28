@@ -70,11 +70,20 @@
 // `warning.mixed-recall` reads ONE cohort (mechanistic material assistance at or
 // above the frozen AI fraction) and `action.recall.overall` reads the INTEGRAL
 // positives only, so a material-assistance cohort can raise a warning recall but
-// can never raise the recall that lifts `actionCeiling`. Mixed below the fraction
-// floor is in no gate's positive or negative population at all — it is a
-// diagnostic slice of the curve. The one gate whose denominator still contains
-// such a row is `integrity.error-rate`, deliberately: it is the inference-failure
-// rate of the WHOLE eligible set, not a class denominator.
+// can never raise the recall that lifts `actionCeiling`.
+//
+// Mixed below the fraction floor is a positive of NO gate and a negative of NO
+// gate — which is the frozen decision's exact wording, and is NOT the same claim
+// as "no gate observes it". Two gates take their denominator from the ELIGIBLE
+// SET rather than from a class, and a sub-floor mixed row is eligible, so it
+// lands in both: `integrity.error-rate` (the inference-failure rate of the whole
+// eligible set) and `warning.coverage` (scored over eligible — see
+// `metrics.coverage`). MEASURED, not inferred: 20 human + 10 AI rows give
+// coverage 1; adding one abstained mixed row at `aiFraction 0.25` gives
+// 0.967741935483871. Near the 0.8 floor a large enough sub-floor cohort can
+// therefore flip `warning.coverage`. That is the coverage estimand behaving as
+// defined, not a class population absorbing a diagnostic row, and
+// benchmark/tests/gates.test.ts names the gate instead of filtering it out.
 //
 // Standalone benchmark module: MUST NOT import from the extension bundle (src/).
 // Pure and deterministic: no Date, no randomness, no I/O of its own (the policy
@@ -701,8 +710,20 @@ function mixedRecallGate(
 
 // --- action ----------------------------------------------------------------
 
+// Visual action is available only when BOTH blocks are there: the matrix over the
+// frozen action threshold and the authorizing statistic over the integral
+// positives. `computeEvaluationMetrics` publishes them together, so requiring the
+// pair costs nothing today and buys two things: `actionIntervalSpecs` can read a
+// NON-NULL authorization (no `?? 0` sample size can hand the recall gate an empty
+// denominator), and a metrics build that ever published one without the other
+// fails HERE, loudly, instead of passing an action tier whose recall gate silently
+// went missing.
 function actionAvailabilityGate(metrics: EvaluationMetrics): GateResult[] {
-  const available = metrics.visualAction !== null;
+  const missing = [
+    metrics.visualAction === null ? "visualDocument" : null,
+    metrics.actionAuthorization === null ? "actionAuthorization" : null,
+  ].filter((name): name is string => name !== null);
+  const available = missing.length === 0;
   return [
     {
       id: "action.available",
@@ -718,7 +739,10 @@ function actionAvailabilityGate(metrics: EvaluationMetrics): GateResult[] {
       passed: available,
       reasons: available
         ? []
-        : ["no visual-action threshold was frozen (visualDocument is null)"],
+        : [
+            "no visual-action evidence: " +
+              `${missing.join(" and ")} ${missing.length === 1 ? "is" : "are"} null`,
+          ],
     },
   ];
 }
@@ -728,7 +752,11 @@ function actionIntervalSpecs(
   slices: SliceSummary,
 ): IntervalGateSpec[] {
   const visualAction = metrics.visualAction;
-  if (visualAction === null) return [];
+  // The authorizing block is required here, not defaulted: `actionAvailabilityGate`
+  // fails the whole action tier when either block is missing, so returning no
+  // specs is fail-CLOSED and the recall spec below reads a non-null denominator.
+  const authorization = metrics.actionAuthorization;
+  if (visualAction === null || authorization === null) return [];
 
   const specs: IntervalGateSpec[] = [
     {
@@ -780,19 +808,19 @@ function actionIntervalSpecs(
   // `visualAction.endToEnd.recall`: that matrix counts the warning positives, so
   // a cohort of mechanistic material-assistance rows crossing the action
   // threshold would raise it and lift `actionCeiling` to `hide` — and the frozen
-  // table authorizes `indicator` and nothing more for that target. When the
-  // authorizing block is absent the estimate is `undefined` and the gate fails
-  // for missing evidence, which is the fail-closed direction.
-  const authorization = metrics.actionAuthorization;
+  // table authorizes `indicator` and nothing more for that target. The block is
+  // narrowed at the top of this function, so both the estimate and its denominator
+  // come from the same non-null object; an absent block never arrives here as a
+  // zero sample size, it fails `action.available` instead.
   specs.push({
     id: "action.recall.overall",
     tier: "action",
     scope: "overall",
     estimand: ESTIMAND_ACTION_RECALL,
-    estimate: authorization?.recall,
+    estimate: authorization.recall,
     direction: "lower",
     threshold: ACTION_RECALL_MIN,
-    sampleSize: authorization?.positives ?? 0,
+    sampleSize: authorization.positives,
     subject: "overall action recall over integral positives",
     eligible: true,
     ineligible: { passed: true, reason: null },

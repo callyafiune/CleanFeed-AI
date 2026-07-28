@@ -19,6 +19,7 @@ import {
   sortGeneratorFamilies,
   type GeneratorFamily,
 } from "./generator-family.ts";
+import { REBUILD_V3_POLICY } from "./rebuild-v3-policy.ts";
 import type { BenchmarkLabel, BenchmarkRecord } from "./schema.ts";
 import {
   connectedComponentRoots,
@@ -301,10 +302,31 @@ function auditCriticalSlices(
       return held.has(family) ? "unseen" : "seen";
     },
     transformation: (record) => record.transformation.kind,
+    // The floor is the frozen `materialAssistance.minimumAiFraction`, read from
+    // the policy rather than written here: this is the SAME 0.50 that defines the
+    // material-assistance target in benchmark/metrics.ts, and a second copy of it
+    // as a literal is how one side of the pipeline ends up calling a row a
+    // positive that the other side does not.
+    //
+    // Deliberately NOT cohort-keyed, unlike the `mixedFraction` axis in
+    // benchmark/slices.ts. This axis audits the blind partition's COVERAGE of the
+    // two fraction bands (does test hold enough of each to sample a critical
+    // recall slice), and it is never a metric denominator: nothing here reads a
+    // rate. Splitting it by cohort would halve two coverage counts to describe a
+    // cohort that does not exist yet, and `ecological` has no records in v3 (only
+    // `mechanistic` is producible — see the frozen table), so the two keys would
+    // be identical to these by construction. If an ecological sample ever lands,
+    // this axis must be split before its counts are read as per-cohort power.
+    //
+    // The two key names spell the frozen floor, so moving
+    // `materialAssistance.minimumAiFraction` means renaming them in the same
+    // change — deliberately a rename and not a silently recomputed label, because
+    // these keys identify rows of a published audit.
     mixedFractionBucket: (record) =>
       record.mixture === undefined
         ? undefined
-        : record.mixture.aiFraction >= 0.5
+        : record.mixture.aiFraction >=
+            REBUILD_V3_POLICY.materialAssistance.minimumAiFraction
           ? "ai-ge-50"
           : "ai-lt-50",
   };
