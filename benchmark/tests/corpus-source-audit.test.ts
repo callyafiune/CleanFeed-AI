@@ -22,6 +22,28 @@ import { asGeneratorFamily } from "../generator-family.ts";
 
 // --- Reviewed source manifest fixtures -----------------------------------
 
+// The authorized human-content source of the default fixture set. It used to be
+// a `linkedin-contribution` / `acquisition: "consent"` entry: since B3
+// (2026-07-26) per-document consent is a refused acquisition route, so a consent
+// entry is no longer an AUTHORIZED source and cannot be the fixture for "fully
+// authorized". It kept `sourceId`-shaped stability rather than semantic
+// stability — nothing in the audit pairs a record's `sourceKind` with its
+// source's `sourceType`, so the switch is confined to these fixtures.
+const licensedHumanSource: ReviewedSourceEntryV1 = {
+  sourceId: "src_human_licensed",
+  sourceType: "licensed-corpus",
+  acquisition: "licensed",
+  evaluationUseApproved: true,
+  licenseId: "lic_ptbr_human",
+  consentReceiptDigest: null,
+  collectionProtocolVersion: "collection-v1",
+  legalReviewerIds: ["legal_a", "legal_b"],
+};
+
+// The refused route, kept as a fixture precisely so the refusal can be asserted:
+// the v1 schema can still spell it, and `auditCorpusSources` receives already-
+// parsed objects (see `benchmark/lab/audit_sources.ts`, which JSON-parses a
+// manifest and casts it), so the audit must block it on its own.
 const consentSource: ReviewedSourceEntryV1 = {
   sourceId: "src_consent",
   sourceType: "linkedin-contribution",
@@ -72,7 +94,11 @@ const batch: GenerationBatchV1 = {
 
 // --- Benchmark record fixtures (schema v2) -------------------------------
 
-const humanConsent: BenchmarkRecord = {
+// The record that draws on `licensedHumanSource`. Its id stays `human_c1` — the
+// blocking-reason assertions below name it, and a fixture id carries no meaning —
+// but its provenance is now the licensed one, so `acquisitionCounts` reads
+// licensed 2 / consent 0 for the default set.
+const humanFromLicensedBase: BenchmarkRecord = {
   schemaVersion: 2,
   id: "human_c1",
   text: "prosa corporativa autorizada em portugues do brasil",
@@ -86,13 +112,12 @@ const humanConsent: BenchmarkRecord = {
   wordCount: 7,
   createdAt: 1_735_689_600_000,
   provenance: {
-    sourceKind: "authorized-contribution",
-    sourceId: "src_consent",
+    sourceKind: "licensed-corpus",
+    sourceId: "src_human_licensed",
     sourceRevision: "rev_1",
     collectedAt: 1_735_689_600_000,
-    licenseId: "consent_v1",
-    legalBasis: "consent",
-    consentId: "consent_1",
+    licenseId: "lic_ptbr_human",
+    legalBasis: "license",
     piiAudit: {
       status: "passed",
       method: "manual-and-automated",
@@ -108,9 +133,9 @@ const humanConsent: BenchmarkRecord = {
   transformation: { kind: "none", severity: "none" },
   groups: {
     author: "author_c1",
-    source: "src_consent",
-    domainSource: "linkedin_contribution",
-    collectionBatch: "batch_h_consent",
+    source: "src_human_licensed",
+    domainSource: "licensed_human_base",
+    collectionBatch: "batch_h_1",
     nearDuplicate: "nd_c1",
     derivationRoot: "human_c1",
   },
@@ -226,7 +251,7 @@ async function buildInput(options: {
   const body: ManifestBody = {
     schemaVersion: 1,
     sources: options.sources ?? [
-      consentSource,
+      licensedHumanSource,
       licensedSource,
       generatedSource,
     ],
@@ -235,7 +260,11 @@ async function buildInput(options: {
   const sourceManifestDigest =
     options.digestOverride ?? (await computeReviewedSourceManifestDigest(body));
   return {
-    records: options.records ?? [humanConsent, humanLicensed, aiGenerated],
+    records: options.records ?? [
+      humanFromLicensedBase,
+      humanLicensed,
+      aiGenerated,
+    ],
     sourceManifest: { ...body, sourceManifestDigest },
   };
 }
@@ -260,7 +289,9 @@ describe("auditCorpusSources", () => {
       blockingReasons: [],
       recordCount: 3,
       sourceCount: 3,
-      acquisitionCounts: { consent: 1, licensed: 1, generated: 1 },
+      // Two licensed human records and one generated: the consent count is 0
+      // because B3 leaves no admissible per-document-consent source to draw on.
+      acquisitionCounts: { consent: 0, licensed: 2, generated: 1 },
       protocols: {
         corpus: "corpus-v1",
         collection: "collection-v1",
@@ -280,8 +311,29 @@ describe("auditCorpusSources", () => {
     expect(report.sourceManifestDigest).toBe(
       await computeReviewedSourceManifestDigest({
         schemaVersion: 1,
-        sources: [consentSource, licensedSource, generatedSource],
+        sources: [licensedHumanSource, licensedSource, generatedSource],
         generationBatches: [batch],
+      }),
+    );
+  });
+
+  it("blocks a per-document-consent source however well formed it is", async () => {
+    // B3 (2026-07-26): consent is a refused ACQUISITION route, so this entry is
+    // not authorized even with a well-formed receipt digest, two distinct legal
+    // reviewers and `evaluationUseApproved: true`. `parseReviewedSourceManifest`
+    // already refuses it before a manifest ever loads; the audit has to refuse it
+    // too, because `auditCorpusSources` takes an already-parsed object and
+    // `benchmark/lab/audit_sources.ts` reaches it with a plain `JSON.parse`.
+    const report = await auditCorpusSources(
+      await buildInput({
+        sources: [consentSource, licensedSource, generatedSource],
+      }),
+    );
+    expect(report.status).toBe("blocked");
+    expect(report.blockingReasons).toContainEqual(
+      expect.objectContaining({
+        code: "LINKEDIN_SOURCE_NOT_AUTHORIZED",
+        sourceId: "src_consent",
       }),
     );
   });
@@ -367,9 +419,12 @@ describe("auditCorpusSources", () => {
 
   it("flags a record whose source is absent from the manifest", async () => {
     const orphan: BenchmarkRecord = {
-      ...humanConsent,
-      provenance: { ...humanConsent.provenance, sourceId: "src_absent" },
-      groups: { ...humanConsent.groups, source: "src_absent" },
+      ...humanFromLicensedBase,
+      provenance: {
+        ...humanFromLicensedBase.provenance,
+        sourceId: "src_absent",
+      },
+      groups: { ...humanFromLicensedBase.groups, source: "src_absent" },
     };
     const report = await auditCorpusSources(
       await buildInput({ records: [orphan, humanLicensed, aiGenerated] }),
@@ -388,7 +443,9 @@ describe("auditCorpusSources", () => {
       groups: { ...aiGenerated.groups, collectionBatch: "batch_absent" },
     };
     const report = await auditCorpusSources(
-      await buildInput({ records: [humanConsent, humanLicensed, unlinked] }),
+      await buildInput({
+        records: [humanFromLicensedBase, humanLicensed, unlinked],
+      }),
     );
     expect(report.blockingReasons).toContainEqual(
       expect.objectContaining({
@@ -404,7 +461,9 @@ describe("auditCorpusSources", () => {
       generation: { ...aiGenerated.generation!, model: "acme_large_9" },
     };
     const report = await auditCorpusSources(
-      await buildInput({ records: [humanConsent, humanLicensed, drifted] }),
+      await buildInput({
+        records: [humanFromLicensedBase, humanLicensed, drifted],
+      }),
     );
     expect(report.blockingReasons).toContainEqual(
       expect.objectContaining({
@@ -416,8 +475,8 @@ describe("auditCorpusSources", () => {
 
   it("forbids a human record from linking a generation batch", async () => {
     const linked: BenchmarkRecord = {
-      ...humanConsent,
-      groups: { ...humanConsent.groups, collectionBatch: "batch_gen" },
+      ...humanFromLicensedBase,
+      groups: { ...humanFromLicensedBase.groups, collectionBatch: "batch_gen" },
     };
     const report = await auditCorpusSources(
       await buildInput({ records: [linked, humanLicensed, aiGenerated] }),
@@ -450,9 +509,9 @@ describe("auditCorpusSources", () => {
         ],
         records: [
           {
-            ...humanConsent,
+            ...humanFromLicensedBase,
             provenance: {
-              ...humanConsent.provenance,
+              ...humanFromLicensedBase.provenance,
               sourceId: "src_absent",
             },
           },
@@ -484,8 +543,11 @@ describe("auditCorpusSources", () => {
 describe("corpus source readiness privacy and determinism", () => {
   it("never serializes text, urls, prompts or raw receipts", async () => {
     const orphan: BenchmarkRecord = {
-      ...humanConsent,
-      provenance: { ...humanConsent.provenance, sourceId: "src_absent" },
+      ...humanFromLicensedBase,
+      provenance: {
+        ...humanFromLicensedBase.provenance,
+        sourceId: "src_absent",
+      },
     };
     const report = await auditCorpusSources(
       await buildInput({ records: [orphan, humanLicensed, aiGenerated] }),
@@ -506,12 +568,12 @@ describe("corpus source readiness privacy and determinism", () => {
   it("produces byte-identical output when records are permuted", async () => {
     const forward = await auditCorpusSources(
       await buildInput({
-        records: [humanConsent, humanLicensed, aiGenerated],
+        records: [humanFromLicensedBase, humanLicensed, aiGenerated],
       }),
     );
     const permuted = await auditCorpusSources(
       await buildInput({
-        records: [aiGenerated, humanConsent, humanLicensed],
+        records: [aiGenerated, humanFromLicensedBase, humanLicensed],
       }),
     );
     expect(canonicalJson(permuted)).toBe(canonicalJson(forward));

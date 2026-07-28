@@ -84,19 +84,25 @@ function isNonEmptyString(value: unknown): value is string {
 }
 
 /**
- * A human-content source (LinkedIn contribution or licensed corpus) is
- * authorized only through an approved consent path (with a receipt digest) or an
- * approved compatible-license path (with a licenseId). Controlled generation is
- * not subject to the LinkedIn source policy.
+ * A human-content source is authorized only through an approved
+ * compatible-licence path: a `licensed-corpus` entry, acquired as `licensed`,
+ * carrying a licenceId. Controlled generation is not subject to this policy.
+ *
+ * There used to be a second admissible path here — a `linkedin-contribution`
+ * entry with a consent receipt digest. B3 (2026-07-26) removed it: per-document
+ * consent is a refused ACQUISITION route, so a consent entry is not an authorized
+ * source at any receipt quality, and it is reported as
+ * `LINKEDIN_SOURCE_NOT_AUTHORIZED` like any other unauthorized human source.
+ *
+ * Why the refusal has to be repeated here and not only in
+ * `parseReviewedSourceManifest` (which now calls `assertNoIndividualAcquisition`):
+ * this module is handed an ALREADY-PARSED `ReviewedSourceManifestV1`, and
+ * `benchmark/lab/audit_sources.ts` reaches it with a plain `JSON.parse` and a
+ * cast, never touching the parser. That is a second, independent way in, so this
+ * predicate cannot rely on the first one having run.
  */
 function isAuthorizedHumanSource(source: ReviewedSourceEntryV1): boolean {
   if (source.evaluationUseApproved !== true) return false;
-  if (
-    source.sourceType === "linkedin-contribution" &&
-    source.acquisition === "consent"
-  ) {
-    return isNonEmptyString(source.consentReceiptDigest);
-  }
   if (
     source.sourceType === "licensed-corpus" &&
     source.acquisition === "licensed"

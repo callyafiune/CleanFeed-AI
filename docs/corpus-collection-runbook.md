@@ -278,10 +278,13 @@ Duas rotas aparecem abaixo, e são as duas que a v3 usa: `licensed-corpus` para
 base pública e `controlled-generation` para a classe de IA. A terceira rota do
 schema v1, `linkedin-contribution` (`acquisition: "consent"`), **não** aparece de
 propósito: ela é autorização por documento, que B3 fechou, e nenhum passo deste
-runbook a produz. O parser v1 ainda a aceita — v1 é forma de artefato já selado —
-mas quem varre um manifesto chama `assertNoIndividualAcquisition`
-([source-manifest.ts](../benchmark/source-manifest.ts)), que a recusa com
-`individual-acquisition`. Consequência para a §3.5: em um corpus da v3
+runbook a produz. E ela não carrega: `parseReviewedSourceManifest` chama
+`assertNoIndividualAcquisition`
+([source-manifest.ts](../benchmark/source-manifest.ts)), então um manifesto com
+entrada de consentimento falha com `individual-acquisition` antes de virar
+`ReviewedSourceManifestV1`. A auditoria recusa a mesma entrada por conta própria
+(`LINKEDIN_SOURCE_NOT_AUTHORIZED`), porque recebe objeto já parseado.
+Consequência para a §3.5: em um corpus da v3
 `acquisitionCounts.consent` é **0**, e um valor diferente de zero é sinal de que
 entrou registro por uma rota que não existe mais.
 

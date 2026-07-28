@@ -61,16 +61,26 @@
    redistribuição.
 
 A rota `linkedin-contribution` (autorização por documento, post pessoal) está
-**fechada por B3** e nenhuma fonte da v3 a usa: todas as fontes abaixo entram
-pela rota `licensed-corpus`. O schema fechado **v1** do source-manifest ainda
-*parseia* aquela rota, e isso é deliberado: v1 é forma de artefato já selado, e
-retirar a rota move junto `provenance.sourceKind: "authorized-contribution"` e
-`provenance.legalBasis: "consent"` em `benchmark/schema.ts` mais
-`acquisitionCounts.consent` em `contracts/source-readiness.ts` — fechar um sem os
-outros produz manifesto que nenhum registro-linha pode referenciar, e o conjunto
-é mudança de C1. Até lá, quem varre um manifesto v1 chama
-`assertNoIndividualAcquisition`, que recusa a entrada de autorização por
-documento com o motivo `individual-acquisition`.
+**fechada por B3**, e fechada **no caminho de admissão**, não só em prosa:
+`parseReviewedSourceManifest` chama `assertNoIndividualAcquisition`, então um
+manifesto que traga uma entrada de consentimento **não carrega** — falha com
+`individual-acquisition`. `auditCorpusSources` recusa a mesma entrada por conta
+própria (`LINKEDIN_SOURCE_NOT_AUTHORIZED`), porque ele recebe objeto já parseado
+e `benchmark/lab/audit_sources.ts` chega nele com `JSON.parse` puro, sem passar
+pelo parser. Todas as fontes abaixo entram pela rota `licensed-corpus`.
+
+Uma rodada anterior deixou a recusa **sem chamador**, argumentando que retirar a
+rota moveria junto três contratos. O argumento estava errado na medição e fica
+registrado para não voltar: `benchmark/corpus-import.ts` cruza **apenas**
+`provenance.sourceId` contra o conjunto de ids do manifesto — não existe
+verificação de par `sourceKind`/`legalBasis` em lugar algum —, e nenhum manifesto
+em disco tem entrada de consentimento, então nada selado deixou de ser legível.
+O que sobra para **C1** é vocabulário do registro-linha, não brecha:
+`provenance.sourceKind: "authorized-contribution"` e
+`provenance.legalBasis: "consent"` ainda são grafáveis pelo schema, e
+`acquisitionCounts.consent` ainda é chave obrigatória do contrato de prontidão.
+Nenhum dos três pode trazer fonte que o manifesto recusa: registro cujo
+`sourceId` não está no manifesto é rejeitado como `SOURCE_ENTRY_ABSENT`.
 
 ## Inventário aprovado para o piloto
 
@@ -82,7 +92,7 @@ documento com o motivo `individual-acquisition`.
 | `src_proprio` | Textos do próprio operador | Autoria própria → `autoria-propria-v1` | Variado | não | avaliação + treino |
 | `src_atos_oficiais` | Leis/decisões/atos (Diário Oficial, LexML) | Lei 9.610, art. 8º, I (não protegidos) → `lei9610-art8` | Formal | não | lastro de treino apenas (nunca dominar a distribuição) |
 | `src_carolina` | **Corpus Carolina — snapshot em disco: Version 2.0 (Bea)** (verificado 2026-07-27; o cabeçalho do próprio pacote diz que é o corte por data que o torna utilizável). Vintages anteriores (Ada 1.0/1.1/1.3) **não** estão em disco | CC BY-**NC**-SA 4.0 no header do pacote; **licença POR DOCUMENTO nos metadados TEI**, com allowlist fail-closed no extrator → `cc-by-nc-sa-4.0` | Variado, proveniência por documento. ⚠️ A 2.0 (Bea) **contém datas TEI de 2024 e 2025**, então o corte por data do header TEI (`< 2022-11-30`) é **load-bearing**, não defesa em profundidade: sem ele o rótulo `human` fica contaminado | sim — admissível (`commercialUse: false`) | treino/volume + fatias informais |
-| `src_b2w_reviews` *(opcional)* | B2W-Reviews01 (reviews pt-BR) | CC BY-**NC**-SA 4.0 → `cc-by-nc-sa-4.0` | Curto, informal, opinativo | sim — **utilizável** | avaliação + treino |
+| `src_b2w` *(opcional)* | B2W-Reviews01 (reviews pt-BR) | CC BY-**NC**-SA 4.0 → `cc-by-nc-sa-4.0` | Curto, informal, opinativo | sim — **utilizável** | avaliação + treino |
 
 **Regra NC × ND (congelada em B1, 2026-07-26):** o projeto é **não comercial**
 (`commercialUse: false`) e essa decisão não tem ramo alternativo. Nesse regime,
@@ -131,7 +141,7 @@ que as duas não divirjam em silêncio.
 | `src_ptso` | `pt-stackoverflow` | `Posts.xml`, atributo `CreationDate` | documento | `date-cutoff` |
 | `src_wikipedia_pt` | `ptwiki` | `page/revision/timestamp` | documento | `date-cutoff` |
 | `src_carolina` | `carolina` | `teiHeader//date[@type="Download"]`, por documento | documento | `date-cutoff` |
-| `src_b2w_reviews` | `b2w-reviews01` | coluna `submission_date` | documento | `date-cutoff` |
+| `src_b2w` | `b2w-reviews01` | coluna `submission_date` | documento | `date-cutoff` |
 
 Escopo `container` — o vintage do dump, do zip ou do release — **não** sustenta
 `date-cutoff`, e `humanSourceAdmissibility` recusa com
@@ -142,7 +152,7 @@ texto pós-LLM com nome antigo — daí o campo por documento ser *load-bearing*
 não defesa em profundidade.
 
 **Quais destas são fontes humanas da v3.** Só quatro: `src_ptso`,
-`src_wikipedia_pt`, `src_carolina` e `src_b2w_reviews` — exatamente os snapshots
+`src_wikipedia_pt`, `src_carolina` e `src_b2w` — exatamente os snapshots
 congelados em `benchmark/rebuild-v3-policy.json` (`humanSources.snapshots`), com
 `newDownloadsAllowed: false`. `src_empresa` (autorização interna escrita) e
 `src_proprio` (autoria do operador) **não** entram: nenhuma das duas é base

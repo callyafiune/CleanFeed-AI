@@ -2929,21 +2929,58 @@ todas deliberadas e medidas.
    nunca padrão silencioso para `date-cutoff`. O laço no registro-linha continua sendo de
    **C1** (`labelBasis` obrigatório se e somente se `label === "human"`).
 
-3. **A rota v1 de consentimento NÃO foi fechada no parser, e isso foi medido antes de
-   decidir.** Fazer `parseReviewedSourceManifest` recusar `linkedin-contribution` deixa
-   **14 testes vermelhos em `benchmark/tests/corpus-import.test.ts`** (medido com o parser
-   mutado; `corpus-source-audit.test.ts` e `cli.test.ts` seguem verdes). O motivo é que a
-   rota atravessa três contratos que se movem juntos:
-   `provenance.sourceKind: "authorized-contribution"` e `provenance.legalBasis: "consent"`
-   em `benchmark/schema.ts`, e `acquisitionCounts.consent` em
-   `contracts/source-readiness.ts`. Fechar um sem os outros produz manifesto que nenhum
-   registro-linha pode referenciar, e o conjunto é o schema v3 de **C1**. O que B3 entregou
-   é a varredura: `determinedHumanAcquisition` mapeia a entrada v1 para
-   `per-document-consent` e `assertNoIndividualAcquisition` a recusa com
-   `individual-acquisition`, com teste. Falta **uma chamada** para C1 fazer. Enquanto ela
-   não existir, a frase "o manifesto só admite base pública" vale para a camada B3 e
-   **não** para o parser v1 — está escrito assim no módulo e em `docs/corpus-sources.md`,
-   em vez de alegado inteiro.
+3. **ERRATA (corrigida em 2026-07-28, rodada de correção de spec). A rota v1 de
+   consentimento ESTÁ fechada no caminho de admissão.** A primeira redação deste item
+   dizia o contrário e o argumento estava errado; fica registrado para não voltar.
+
+   O que a primeira rodada entregou foi `determinedHumanAcquisition` +
+   `assertNoIndividualAcquisition` **sem nenhum chamador** — recusa que era código morto:
+   `grep` pelos sete símbolos novos fora de `benchmark/source-manifest.ts` e
+   `benchmark/tests/` não retornava nada. A justificativa ("a rota atravessa três
+   contratos que se movem juntos; fechar um sem os outros produz manifesto que nenhum
+   registro-linha pode referenciar") foi **refutada por medição**:
+
+   - `benchmark/corpus-import.ts` cruza **apenas** `record.provenance.sourceId` contra o
+     conjunto de ids do manifesto (`SOURCE_ENTRY_ABSENT`). Não existe verificação de par
+     `sourceKind`/`legalBasis` em lugar algum, então registro-linha passa a referenciar
+     fonte licenciada sem tocar `benchmark/schema.ts` nem
+     `contracts/source-readiness.ts`.
+   - Nenhum `source-manifest.json` em disco tem entrada de consentimento
+     (`benchmark/data/corpus-build/**`, `benchmark/work/smoke*`), logo nenhum artefato
+     selado ficou ilegível. `grep -l linkedin-contribution` sobre todo `*.json` do repo
+     não retorna nada.
+   - Os "14 testes vermelhos" eram **uma** fixture compartilhada, `CONSENT_SOURCE` em
+     `benchmark/tests/corpus-import.test.ts`, e o contrato comum permite atualizar teste
+     cujo comportamento correto mudou.
+
+   O que ficou: `parseReviewedSourceManifest` chama `assertNoIndividualAcquisition`
+   imediatamente após `assertRegisteredLicensesAdmissible`, e um manifesto com entrada de
+   consentimento **falha** com `individual-acquisition`. Duas fixtures foram reparadas
+   como fontes licenciadas (`corpus-import.test.ts` `LICENSED_HUMAN_SOURCE`,
+   `corpus-source-audit.test.ts` `licensedHumanSource`), com os registros que as
+   referenciam movidos para `licensed-corpus`/`license`.
+
+   **O segundo caminho de admissão também foi fechado.** `isAuthorizedHumanSource`
+   (`benchmark/corpus-source-audit.ts`) autorizava a entrada de consentimento por conta
+   própria, e ele importa porque `benchmark/lab/audit_sources.ts` chega em
+   `auditCorpusSources` com `JSON.parse` puro e um cast, sem passar pelo parser. O ramo de
+   consentimento foi removido: a entrada agora é reportada como
+   `LINKEDIN_SOURCE_NOT_AUTHORIZED`, com teste próprio. Custo medido: **1** teste vermelho
+   ("returns a ready report for fully authorized sources"), reparado.
+
+   O que sobra para **C1** é vocabulário do registro-linha, não brecha:
+   `provenance.sourceKind: "authorized-contribution"`, `provenance.legalBasis: "consent"`
+   e a chave obrigatória `acquisitionCounts.consent` continuam grafáveis. Nenhum dos três
+   traz fonte que o manifesto recusa — registro cujo `sourceId` não está no manifesto é
+   rejeitado como `SOURCE_ENTRY_ABSENT`.
+
+3b. **`src_b2w_reviews` -> `src_b2w` (mesma rodada).** O `sourceId` da quarta entrada de
+   `V3_HUMAN_SOURCE_INVENTORY` divergia dos manifestos em disco, que a chamam `src_b2w`
+   (os outros três — `src_ptso`, `src_wikipedia_pt`, `src_carolina` — coincidiam). Um join
+   por `sourceId` sairia vazio só para B2W, silenciosamente. Reconciliado no código e nas
+   três linhas de `docs/corpus-sources.md`, e fixado por teste ("declares the sourceId a
+   reviewed manifest joins on") como literal, porque aqueles manifestos são artefatos de
+   build ignorados pelo Git e nenhum teste pode lê-los.
 
 4. **Duas recusas distintas, de propósito, e a segunda não está em
    `humanSourceAdmissibility`.** `snapshot-not-frozen` (fonte fora de

@@ -40,13 +40,23 @@ import { normalizeGeneratorFamily } from "../generator-family.ts";
 // Shared fixtures.
 // ---------------------------------------------------------------------------
 
-const CONSENT_SOURCE: ReviewedSourceEntryV1 = {
-  sourceId: "src_consent",
-  sourceType: "linkedin-contribution",
-  acquisition: "consent",
+// The human-content source of every fixture below. It used to be a
+// `linkedin-contribution` / `acquisition: "consent"` entry; B3 (2026-07-26)
+// refuses per-document consent as an acquisition route, and the refusal now runs
+// inside `parseReviewedSourceManifest`, so a consent entry cannot be sealed into
+// a manifest at all and the fixture would have been testing an impossible input.
+// Nothing else about these tests depends on the route: the importer's only
+// manifest cross-check is `provenance.sourceId` against the manifest's id set
+// (corpus-import.ts, `SOURCE_ENTRY_ABSENT`), and there is no
+// `sourceKind`/`legalBasis` pairing rule anywhere, so the records that reference
+// it move to `licensed-corpus`/`license` without any schema change.
+const LICENSED_HUMAN_SOURCE: ReviewedSourceEntryV1 = {
+  sourceId: "src_licensed_human",
+  sourceType: "licensed-corpus",
+  acquisition: "licensed",
   evaluationUseApproved: true,
-  licenseId: null,
-  consentReceiptDigest: "a".repeat(64),
+  licenseId: "licensed-v1",
+  consentReceiptDigest: null,
   collectionProtocolVersion: "collection-v1",
   legalReviewerIds: ["legal_a", "legal_b"],
 };
@@ -92,12 +102,12 @@ function template(overrides: Partial<TemplateLike> = {}): TemplateLike {
     heldOutGeneratorFamilies: ["heldout_family"],
     licenses: [
       {
-        id: "consent-v1",
-        name: "Authorized contribution",
-        source: "fixture://consent",
+        id: "licensed-v1",
+        name: "Licensed pt-BR corpus",
+        source: "fixture://licensed",
         evaluationUseApproved: true,
         redistribution: "not-published",
-        notice: "Contributed under explicit consent; raw text stays local.",
+        notice: "Used under a compatible public licence; raw text stays local.",
       },
       {
         id: "generated-v1",
@@ -148,13 +158,12 @@ function humanRecord(
     wordCount: 8,
     createdAt: 1000,
     provenance: {
-      sourceKind: "authorized-contribution",
-      sourceId: "src_consent",
+      sourceKind: "licensed-corpus",
+      sourceId: "src_licensed_human",
       sourceRevision: "rev_001",
       collectedAt: 1000,
-      licenseId: "consent-v1",
-      legalBasis: "consent",
-      consentId: "consent_001",
+      licenseId: "licensed-v1",
+      legalBasis: "license",
       piiAudit: {
         status: "passed",
         method: "manual-and-automated",
@@ -258,7 +267,7 @@ afterEach(async () => {
 
 // Convenience for the common valid two-source manifest.
 async function validSources(): Promise<ReviewedSourceManifestV1> {
-  return sealedManifest([CONSENT_SOURCE, GEN_SOURCE]);
+  return sealedManifest([LICENSED_HUMAN_SOURCE, GEN_SOURCE]);
 }
 
 // ---------------------------------------------------------------------------
@@ -608,13 +617,12 @@ function human(id: string, createdAt: number, batch: string): BenchmarkRecord {
     wordCount: 60,
     createdAt,
     provenance: {
-      sourceKind: "authorized-contribution",
-      sourceId: "src_consent",
+      sourceKind: "licensed-corpus",
+      sourceId: "src_licensed_human",
       sourceRevision: "rev_001",
       collectedAt: createdAt,
-      licenseId: "consent-v1",
-      legalBasis: "consent",
-      consentId: "consent_001",
+      licenseId: "licensed-v1",
+      legalBasis: "license",
       piiAudit: {
         status: "passed",
         method: "manual-and-automated",
@@ -855,7 +863,7 @@ describe("ingest -> validate -> split integration (10k)", () => {
     expect(records).toHaveLength(10_000);
 
     const manifest = await sealedManifest(
-      [CONSENT_SOURCE, GEN_SOURCE],
+      [LICENSED_HUMAN_SOURCE, GEN_SOURCE],
       generationBatches(),
     );
     const { request, datasetDirectory } = await buildRequest(root, {

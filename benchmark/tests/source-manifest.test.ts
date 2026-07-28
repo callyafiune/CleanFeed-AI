@@ -89,9 +89,16 @@ const batch: GenerationBatchV1 = {
 
 type ManifestBody = Omit<ReviewedSourceManifestV1, "sourceManifestDigest">;
 
+// The admissible baseline. `consentSource` is deliberately NOT here: since B3
+// the parser refuses a per-document-consent entry, so a body that carried one
+// would be a body no manifest can be sealed from. It stays a fixture because the
+// closed-schema tests below still have to show that each of ITS OWN field rules
+// (unknown key, missing receipt digest, non-null licenceId, distinct reviewers)
+// fires on its own reason — those all fail inside `validateEntry`, before the
+// acquisition sweep, and the test that pins the sweep itself adds the entry back.
 const validBody: ManifestBody = {
   schemaVersion: 1,
-  sources: [consentSource, licensedSource, generatedSource],
+  sources: [licensedSource, generatedSource],
   generationBatches: [batch],
 };
 
@@ -569,7 +576,6 @@ describe("non-commercial corpus use policy", () => {
     const manifest = await sealManifest();
     const parsed = await parseReviewedSourceManifest(manifest);
     expect(parsed.sources.map((source) => source.licenseId)).toEqual([
-      null,
       "lic_ptbr_1",
       "lic_generated_1",
     ]);
@@ -855,6 +861,22 @@ describe("B3 — the frozen v3 human inventory", () => {
     ).toEqual([...REBUILD_V3_POLICY.humanSources.snapshots].sort());
   });
 
+  it("declares the sourceId a reviewed manifest joins on", () => {
+    // The inventory is keyed twice — by `snapshot` against the frozen policy
+    // (asserted above) and by `sourceId` against the reviewed source manifest.
+    // These are the ids the manifests an operator holds actually use; the fourth
+    // was written `src_b2w_reviews` for one round, which would have made a
+    // by-sourceId join to `benchmark/data/corpus-build/**` silently empty for
+    // B2W while succeeding for the other three. Those manifests are gitignored
+    // build artifacts, so this is a literal and not a read.
+    expect(V3_HUMAN_SOURCE_INVENTORY.map((entry) => entry.sourceId)).toEqual([
+      "src_ptso",
+      "src_wikipedia_pt",
+      "src_carolina",
+      "src_b2w",
+    ]);
+  });
+
   it("registers every entry as a public base with a document-level cutoff field", () => {
     for (const entry of V3_HUMAN_SOURCE_INVENTORY) {
       expect(entry.acquisition, entry.sourceId).toBe("public-dataset");
@@ -891,11 +913,37 @@ describe("B3 — the frozen v3 human inventory", () => {
 });
 
 describe("B3 — the v1 consent route is a route B3 forbids", () => {
-  // The bridge exists so the legacy v1 entry can be SWEPT: the closed v1 parser
-  // predates B3 and still accepts `linkedin-contribution`, and closing that is
-  // C1's schema-v3 change (it also owns `legalBasis: "consent"` on the record
-  // and `acquisitionCounts.consent` on the readiness contract). What is pinned
-  // here is that the B3 layer refuses the entry, so C1 has one call to make.
+  // Requirement 1, the part that has to hold in PRODUCTION and not only in a
+  // helper: "não há caminho no código que a admita". `parseReviewedSourceManifest`
+  // is the only way a manifest on disk becomes a `ReviewedSourceManifestV1`, so
+  // it is the admission path, and this is the test that says so.
+  it("refuses a sealed manifest that carries a per-document-consent source", async () => {
+    const manifest = await sealManifest({
+      ...validBody,
+      sources: [consentSource, licensedSource, generatedSource],
+    });
+    // The entry is otherwise perfectly well formed — the digest matches, the
+    // receipt is a real sha256 shape, the two legal reviewers are distinct — so
+    // the ONLY thing that can refuse it is the acquisition route.
+    await expect(parseReviewedSourceManifest(manifest)).rejects.toThrow(
+      /src_consent.*individual-acquisition/u,
+    );
+  });
+
+  it("keeps the licensed and generated routes loading", async () => {
+    // The counter-case, so the refusal above cannot be satisfied by refusing
+    // everything: the same manifest without the consent entry still parses.
+    const manifest = await sealManifest();
+    await expect(parseReviewedSourceManifest(manifest)).resolves.toEqual(
+      manifest,
+    );
+  });
+
+  // The bridge below is what the parser now calls. It stays exported and
+  // separately tested because the record-line half of the consent route —
+  // `provenance.legalBasis: "consent"` in benchmark/schema.ts and
+  // `acquisitionCounts.consent` in contracts/source-readiness.ts — is still
+  // C1's schema-v3 change; what B3 closes is the SOURCE admission path.
   it("maps the consent entry to the route B3 refuses", () => {
     expect(determinedHumanAcquisition(consentSource)).toBe(
       "per-document-consent",

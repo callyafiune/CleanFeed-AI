@@ -46,8 +46,10 @@
 // `assertV3HumanInventoryAdmissible`), it declares which basis its `human` label
 // rests on and which date field the pre-ChatGPT cutoff is compared against, and
 // the documentation is screened for claims that upgrade that cutoff into proof
-// (`humanLabelOverclaimIn`). See the B3 section below for what the layer does
-// NOT do, which is close the legacy v1 consent route.
+// (`humanLabelOverclaimIn`). `parseReviewedSourceManifest` CALLS the acquisition
+// refusal (`assertNoIndividualAcquisition`), so the legacy v1 consent route no
+// longer loads; what remains for C1 is the record-side vocabulary, and that
+// residual is written out on `assertNoIndividualAcquisition` itself.
 //
 // WHO OWNS WHICH VALUE (this module is not the authority for all of it):
 //   * `benchmark/rebuild-v3-policy.json`, validated by
@@ -750,6 +752,16 @@ export function humanSourceAdmissibility(
  * published instrumented pt-BR base of the required size exists, and inventing
  * one would be inventing provenance (R4). That is a limitation of this
  * inventory, recorded in `docs/limitations.md`, not a property of the field.
+ *
+ * BOTH keys here are join keys, and both are pinned by test. `snapshot` joins to
+ * `REBUILD_V3_POLICY.humanSources.snapshots` (asserted set-equal). `sourceId`
+ * joins to the `sourceId` of the reviewed source manifest, and these four values
+ * are the ones the manifests an operator actually holds use — `src_ptso`,
+ * `src_wikipedia_pt`, `src_carolina`, `src_b2w` in
+ * `benchmark/data/corpus-build/**\/private/source-manifest.json`. That file is a
+ * gitignored build artifact, so no test can read it; the ids are pinned as
+ * literals by "declares the sourceId a reviewed manifest joins on" instead, and a
+ * rename on either side has to move both.
  */
 export const V3_HUMAN_SOURCE_INVENTORY: readonly HumanSourceRegistrationV1[] = [
   {
@@ -780,7 +792,7 @@ export const V3_HUMAN_SOURCE_INVENTORY: readonly HumanSourceRegistrationV1[] = [
     anchorDateScope: "document",
   },
   {
-    sourceId: "src_b2w_reviews",
+    sourceId: "src_b2w",
     snapshot: "b2w-reviews01",
     acquisition: "public-dataset",
     licenseId: "cc-by-nc-sa-4.0",
@@ -849,15 +861,28 @@ export function determinedHumanAcquisition(
 /**
  * Refuses every v1 manifest entry whose determined route B3 forbids.
  *
- * This is the sweep over the LEGACY shape, and what it does not do matters: the
- * closed v1 parser predates B3 and still accepts a `linkedin-contribution`
- * entry, so calling this is how a caller closes that route. Wiring it into
- * `parseReviewedSourceManifest` is C1's change and not this one, because the
- * consent route runs through three contracts that move together — the record's
- * `provenance.sourceKind: "authorized-contribution"` and
- * `provenance.legalBasis: "consent"` in `benchmark/schema.ts`, and
- * `acquisitionCounts.consent` in `contracts/source-readiness.ts`. Closing one
- * without the others produces a manifest no record can reference.
+ * `parseReviewedSourceManifest` calls this, so the refusal is on the admission
+ * path and not merely available to a caller: a manifest carrying a
+ * `linkedin-contribution` entry no longer loads. An earlier round left it
+ * uncalled on the argument that the consent route runs through three contracts
+ * that move together, and that argument was WRONG on measurement, so it is
+ * recorded here rather than deleted:
+ *
+ *   * `benchmark/corpus-import.ts` cross-checks only `provenance.sourceId`
+ *     against the manifest's id set. There is no `sourceKind`/`legalBasis`
+ *     pairing check anywhere, so a record can reference a licensed source with
+ *     no change to `benchmark/schema.ts` or `contracts/source-readiness.ts`.
+ *   * No manifest on disk carries a consent entry (checked over
+ *     `benchmark/data/corpus-build/**` and `benchmark/work/smoke*`), so no
+ *     sealed artifact becomes unreadable by refusing the route.
+ *
+ * What genuinely remains for C1 is narrower and is a vocabulary cleanup, not a
+ * hole: `provenance.sourceKind: "authorized-contribution"` and
+ * `provenance.legalBasis: "consent"` are still spellable by the record schema,
+ * and `acquisitionCounts.consent` is still a required key of the readiness
+ * contract. Neither can bring in a source the manifest refuses, because a record
+ * whose `sourceId` is absent from the manifest is rejected as
+ * `SOURCE_ENTRY_ABSENT`.
  */
 export function assertNoIndividualAcquisition(
   sources: readonly Pick<ReviewedSourceEntryV1, "sourceId" | "sourceType">[],
@@ -1321,6 +1346,14 @@ export async function parseReviewedSourceManifest(
     return parsed;
   });
   assertRegisteredLicensesAdmissible(sources);
+  // B3: the acquisition route is refused here, at the only place a manifest on
+  // disk becomes a `ReviewedSourceManifestV1`. It runs AFTER the licence check
+  // so the two reasons stay distinguishable in the order `humanSourceAdmissibility`
+  // documents — a blocked licence is a licence problem whatever the route, and a
+  // forbidden route is refused whatever the licence (a `linkedin-contribution`
+  // entry is required to carry `licenseId: null`, so no licence reason can fire
+  // on it at all).
+  assertNoIndividualAcquisition(sources);
 
   const seenBatchIds = new Set<string>();
   const generationBatches = root.generationBatches.map((entry, index) => {
