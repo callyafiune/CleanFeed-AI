@@ -2742,13 +2742,19 @@ a agregação entre coortes que esta tarefa proíbe, entrando pela porta de trá
     observado publicava `localizedEmitted: 0`, `localizedPathRecall.value: 0`,
     `microIou: 0`, `macroIou: 0` sobre `population` **não** zero — números que se leem
     como falha de localização medida do detector quando nada emitiu nada.
-    **Corrigido:** cada coorte declara `spanProducer: "present" | "absent"` (presente e
+    **Corrigido:** cada coorte declara `spanProducer` (presente e
     vazio conta como presente: é produtor que não achou nada), e com produtor ausente —
     ou população zero, onde `proportionEstimate(0, 0)` devolvia `NaN` — `localizedPathRecall`
     e o bloco `overlap` inteiro saem `null`, nunca `0`. As **contagens** continuam
     publicadas, porque elas dizem quanta evidência de span está esperando produtor. Teste
     novo fixa o estado de produtor ausente; a mutação que remove a guarda morre com
     `expected { value: +0, … } to be null`.
+    **ERRATA (itens 15 e 16):** este item foi entregue com dois defeitos. O par
+    presente-e-vazio *versus* sem-produtor estava escrito mas **não** era alcançável por
+    nenhuma asserção, e `spanProducer` era derivado **por coorte** — o que reintroduziu,
+    dentro deste mesmo commit, a falha que o item 11 tinha acabado de remover. O estado
+    passou a ter três valores e a ser derivado por **execução**; leia 15 e 16 antes de
+    citar o parágrafo acima.
 13. **ERRATA: a "curva v0–v8 completa" NÃO foi entregue como diagnóstico.** Nada na seção
     de execução registrava a lacuna: ela abre com "cinco mecanismos [que] implementam
     exatamente a tabela" e o item 4 fala de `mixed.byFraction` chaveado por
@@ -2779,6 +2785,75 @@ a agregação entre coortes que esta tarefa proíbe, entrando pela porta de trá
     nenhum), nomeia os dois gates de denominador-conjunto-elegível e cola a medição.
     Não foi pedido pela revisão desta rodada; é a mesma frase, e deixá-la seria publicar
     uma alegação sabidamente falsa num arquivo que o brief de B2 lista.
+
+#### B2 — terceira rodada de correção de qualidade
+
+15. **A distinção que justifica o `null` do item 12 não era alcançável por teste nenhum.**
+    A base inteira daquela correção é a diferença entre "o produtor rodou e emitiu lista
+    vazia" (erro total real, publica `0`) e "não existe produtor" (publica `null`). O
+    código dizia isso deliberadamente (`!== undefined` e não `length > 0`), o item 12 e a
+    §2.1 da spec repetiam — e **nenhuma asserção chegava lá**: a mesma classe de defeito
+    marcada como IMPORTANT nas rodadas de A7 e B1. **Medido:** trocar
+    `item.localizedSpans !== undefined` por `(item.localizedSpans ?? []).length > 0`
+    deixava `npx vitest run benchmark/tests/metrics.test.ts` em **58/58 verde**, e nada
+    fora de `metrics.ts` lê coorte de localização. E o efeito não é cosmético — sonda de
+    duas linhas mecanísticas `scored` com `localizedSpans: []` sobre span observado
+    `[0,10)`: na árvore commitada
+    `{"spanProducer":"present","population":2,"recall":0,"overlapIsNull":false,"microIou":0}`;
+    com a mutação
+    `{"spanProducer":"absent","population":2,"recall":null,"overlapIsNull":true,"microIou":null}`.
+    Ou seja, uma regressão ali converte falha de localização **medida e total** em "sem
+    medição", em silêncio, num arquivo de `EVALUATOR_FILES`, na direção que esconde a
+    falha. **Corrigido:** teste novo no bloco de localização de B2 fixa o caso
+    presente-e-vazio (`spanProducer: "present"`, `localizedPathRecall.value: 0`,
+    `overlap.microIou: 0`, e `not.toBeNull()` nos dois). Mutação D (`length > 0`) mata só
+    esse teste, com `expected 'absent' to be 'present'`.
+16. **`spanProducer` era derivado da coorte e anulava também a família fim-a-fim — o
+    defeito do item 11 de volta, no mesmo commit.** O estado vinha de
+    `cohortRows.some(item => isScoredItem(item) && …)`, isto é, **só** das linhas que
+    produziram decisão, e então zerava as duas famílias. Logo uma coorte em que **toda**
+    linha falhou inferência publicava `spanProducer: "absent"` e `localizedPathRecall:
+    null` mesmo com produtor demonstravelmente existente na mesma execução: 100% de falha
+    de inferência **apagava** o número em vez de lê-lo como `0`. **Medido** contra a árvore
+    commitada em f513ac8, três linhas — uma mecanística `scored` com
+    `localizedSpans: [{0,10}]` e duas ecológicas `status: "error"` com spans observados:
+    `{"mode":"ecological","spanProducer":"absent","e2ePopulation":2,"e2eUndecided":2,`
+    `"e2eRecall":null,"e2eOverlapNull":true}` ao lado de
+    `{"mode":"mechanistic","spanProducer":"present","e2eRecall":1}`. Além de violar R5,
+    o motivo publicado era **falso** (R7): o produtor não estava ausente naquela execução,
+    emitiu span uma coorte ao lado — e contradizia a linha que este mesmo commit escreveu
+    na spec ("falha de inferência nunca sobe IoU nem recall do caminho localizado"): não
+    subia, **apagava**. **Corrigido:** `SpanProducerState` passa a ser derivado **uma vez
+    por execução** (`spanProducerOfRun`, sobre `items` inteiro) e entregue a cada coorte,
+    que só o repete ao lado dos números que ele explica. E ficou de **três valores**,
+    porque `"absent"` é alegação que precisa de testemunha — uma linha que **recebeu**
+    decisão e não trouxe o campo: `present` · `absent` · `undeterminable` (execução que
+    não decidiu nada, logo nada poderia ter trazido o campo). Com produtor presente, uma
+    família cujas linhas são todas indecisas **publica `0`** — erro integral medido, que
+    era exatamente o que estava sendo apagado. Dois testes novos: o de coorte
+    toda-indecisa com produtor na execução (vermelho antes com
+    `expected 'absent' to be 'present'`) e o de execução sem decisão nenhuma (vermelho
+    antes com `expected 'absent' to be 'undeterminable'`); mutação F (devolver `"absent"`
+    no lugar de `"undeterminable"`) mata o segundo.
+17. **`populationRule` deixou de ser parâmetro e passou a ser derivado de `family`.** Eram
+    dois parâmetros independentes de `localizationFamily` que tinham de concordar, e nada
+    além dos dois pontos de chamada os mantinha em passo: `localizationFamily(cohortRows,
+    "end-to-end", "scored-cohort-rows-with-observed-spans", …)` compilava e publicava uma
+    família cuja regra de denominador declarada era a **da outra**. É a forma que a rodada
+    de A7 resolveu para os dois cabeçalhos de coluna de FPR, roteando ambos por um
+    construtor só. Agora um `Record<MetricFamily, …>` congelado
+    (`LOCALIZATION_POPULATION_RULES`) decide a regra dentro da função e o parâmetro
+    sumiu, então o par não pode ser construído desemparelhado. Fixado por asserção que
+    exige, para **as duas coortes e as duas famílias**, que a regra publicada concorde com
+    o próprio rótulo de família; mutação G (trocar as duas entradas do `Record`) mata dois
+    testes.
+18. **Legibilidade de `localizationFamily`.** O parâmetro de array chamava-se `population`
+    enquanto a função **também** devolve um campo numérico `population`, então o mesmo
+    identificador nomeava as linhas do laço e a contagem do resultado (a variável `count`
+    existia só porque o nome estava tomado). Renomeado para `rows`. E `isScoredItem(item)`
+    era avaliado duas vezes em linhas adjacentes, na ordem inversa da leitura (primeiro
+    `emitted`, depois a classificação que o decidiu); agora há um `const scored` só,
+    antes dos dois usos. Sem mudança de comportamento — a suíte inteira continua verde.
 
 ### B3 — DECIDIDO: só bases públicas, sem coleta individual autorizada
 

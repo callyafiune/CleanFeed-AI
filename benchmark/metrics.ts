@@ -842,6 +842,36 @@ export interface LocalizationOverlapRatios {
   macroTokenRecall: number;
 }
 
+// Whether this RUN has a span producer at all. Producer presence is a property
+// of the run, not of a cohort: `localizedSpans` is written — or not — by a
+// pipeline stage, so the answer cannot honestly differ between two cohorts of one
+// evaluation. Deriving it per cohort was a defect, and the direction was the bad
+// one: a cohort whose every row failed inference read `"absent"` and published
+// null ratios even though a producer had demonstrably emitted a span one cohort
+// over, so 100% inference failure DELETED the number instead of reading 0 (R5),
+// and the published reason was false besides (R7). MEASURED on the committed tree
+// at f513ac8 with three rows — one scored `mechanistic` row carrying
+// `localizedSpans`, two `status: "error"` `ecological` rows with observed spans:
+// `{"mode":"ecological","spanProducer":"absent","e2ePopulation":2,
+// "e2eUndecided":2,"e2eRecall":null,"e2eOverlapNull":true}`.
+//
+// Three-valued, because `"absent"` is a claim that needs a witness: it says a row
+// that GOT a decision carried no span field. With no scored row anywhere in the
+// run there is no such witness, so a third state says that instead of blaming a
+// producer that was never given the chance to emit.
+//
+// - `present` — some scored row of the run carries `localizedSpans`.
+//   Present-and-EMPTY counts as present: a producer that ran and found nothing is
+//   a real, measured total miss, so its zeros are published rather than nulled.
+// - `absent` — the run produced decisions and none of them carries the field.
+//   This is today's answer on every real run: `benchmark/prediction-schema.ts`
+//   has no span column and `benchmark/commands/evaluate.ts` forwards
+//   `localizedRawScore` alone, so NO stage of the sealed pipeline writes it. D4
+//   owns the span head that will.
+// - `undeterminable` — the run produced no decision at all, so nothing could have
+//   carried the field either way.
+export type SpanProducerState = "present" | "absent" | "undeterminable";
+
 // One localization family over one cohort. R5 requires the pair, and the reason
 // is the same here as for the decision matrices: while this block published only
 // the scored rows, an errored row of the cohort left every denominator, so an
@@ -867,7 +897,10 @@ export interface LocalizationFamily {
   // never dropped, never substituted (R5).
   undecidedRows: number;
   localizedEmitted: number;
-  // `null`, never 0, when there is no producer or no row: see `spanProducer`.
+  // `null`, never 0, when the run has no producer (or cannot be asked) or this
+  // family has no row: see `SpanProducerState`. With a producer, a population of
+  // undecided rows publishes 0 — that is a measured integral miss, not an absence
+  // of measurement.
   localizedPathRecall: MetricEstimate | null;
   overlap: LocalizationOverlapRatios | null;
 }
@@ -880,17 +913,15 @@ export interface LocalizationCohort {
   generationMode: GenerationMode;
   role: "diagnostic";
   aggregated: false;
-  // Whether ANY row of the cohort carries a `localizedSpans` field at all —
-  // present-and-empty counts as present, because that is a producer that emitted
-  // nothing. This is published because today the answer is always `"absent"` on a
-  // real run: `benchmark/prediction-schema.ts` has no span field and
-  // `benchmark/commands/evaluate.ts` forwards `localizedRawScore` only, so NO
-  // stage of the sealed pipeline populates it. D4 owns the span head that will.
-  // Without this field a reader cannot tell "the detector located nothing" from
-  // "nothing was asked to locate anything", because both spell 0 — which is why
-  // every ratio above is `null` while this says `"absent"` (R7: declare the
-  // contract, not the property).
-  spanProducer: "present" | "absent";
+  // The RUN's producer state (see `SpanProducerState`), restated on every cohort
+  // beside the ratios it explains. It is identical across the cohorts of one
+  // artifact by construction — `localizationDiagnostics` derives it once and hands
+  // the same value down — and it is repeated here and not published once at the
+  // top because it is the reason a cohort's ratios are `null`, and a reason a
+  // reader has to go looking for is a reason a reader will skip. Without it,
+  // "the detector located nothing" and "nothing was asked to locate anything"
+  // both spell 0 (R7: declare the contract, not the property).
+  spanProducer: SpanProducerState;
   endToEnd: LocalizationFamily;
   conditionalOnScored: LocalizationFamily;
 }
@@ -981,8 +1012,9 @@ export interface EvaluationMetrics {
   latency: LatencyMetrics;
   memory: MemoryMetrics;
   // Span IoU, token precision/recall and localized-path recall, per cohort, in
-  // both status families, all diagnostic in v3 — and each cohort declares whether
-  // a span producer exists at all, because today none does.
+  // both status families, all diagnostic in v3 — and every cohort restates the
+  // run's `SpanProducerState`, because today no stage of the sealed pipeline
+  // produces a span at all.
   localization: LocalizationDiagnostics;
   mixed: {
     // The GATED block: the mechanistic cohort at or above the frozen AI fraction,
@@ -1030,8 +1062,11 @@ export interface ScoredEvaluationItem extends EvaluationItemTelemetry {
   // NO PRODUCER YET, and the artifact says so rather than implying one: nothing in
   // the sealed pipeline writes this field. `benchmark/prediction-schema.ts` has no
   // span column and `benchmark/commands/evaluate.ts` forwards `localizedRawScore`
-  // alone, so on a real run only the unit fixtures populate it and every cohort
-  // publishes `spanProducer: "absent"` with null ratios. D4 is the task that adds
+  // alone, so on a real run only the unit fixtures populate it and the run
+  // publishes `spanProducer: "absent"` with null ratios. Note the asymmetry that
+  // makes both readings possible: the RUN decides whether a producer exists (any
+  // scored row carrying the field, `SpanProducerState`), while WITHIN a run that
+  // has one, a scored row missing the field emitted nothing and is a miss. D4 is the task that adds
   // the span head, and A5's `originalSpanFromNormalized` is what it must translate
   // through — the offsets here are the ORIGINAL text's, like `mixture.spans`.
   localizedSpans?: readonly SpanInterval[];
@@ -2435,14 +2470,18 @@ export function spanOverlap(
 //
 // Every cohort publishes BOTH status families (R5) and declares whether a span
 // producer exists at all. The second half is not defensive programming: on a real
-// run today the answer is `"absent"` for every cohort, because no stage writes
-// `localizedSpans` (D4 owns the span head), and the numbers a `"present"` cohort
-// would publish are the same zeros an absent producer would — so the block has to
-// say which of the two it is instead of leaving a reader to assume the detector
-// was measured and failed.
+// run today the answer is `"absent"`, because no stage writes `localizedSpans`
+// (D4 owns the span head), and the numbers a `"present"` run would publish are the
+// same zeros an absent producer would — so the block has to say which of the two
+// it is instead of leaving a reader to assume the detector was measured and failed.
+//
+// The producer state is derived ONCE here, over every item of the run, and handed
+// to each cohort. It must not be re-derived per cohort: see `SpanProducerState`
+// for the measured defect that shape produced.
 function localizationDiagnostics(
   items: readonly EvaluationItem[],
 ): LocalizationDiagnostics {
+  const spanProducer = spanProducerOfRun(items);
   return {
     role: "diagnostic",
     gates: false,
@@ -2450,9 +2489,28 @@ function localizationDiagnostics(
       REBUILD_V3_POLICY.localization.authorizesVisualAction,
     unit: "character-offset",
     byGenerationMode: sortedGenerationModes().map((mode) =>
-      localizationCohort(items, mode),
+      localizationCohort(items, mode, spanProducer),
     ),
   };
+}
+
+// Derived over the WHOLE run, never over a cohort or a family: only a scored row
+// can carry `localizedSpans`, so a population that by construction holds none —
+// an all-errored cohort — carries no evidence about the producer at all.
+function spanProducerOfRun(
+  items: readonly EvaluationItem[],
+): SpanProducerState {
+  const scored = items.filter(isScoredItem);
+  // No decision anywhere: nothing could have carried the field, so neither
+  // "present" nor "absent" is supportable.
+  if (scored.length === 0) return "undeterminable";
+  // `!== undefined` and not `length > 0`: a span head that ran and emitted an
+  // empty list IS a producer, and its zeros are a measurement (pinned by the
+  // present-and-empty test in benchmark/tests/metrics.test.ts, which dies under
+  // the `length > 0` spelling).
+  return scored.some((item) => item.localizedSpans !== undefined)
+    ? "present"
+    : "absent";
 }
 
 function sortedGenerationModes(): GenerationMode[] {
@@ -2462,6 +2520,7 @@ function sortedGenerationModes(): GenerationMode[] {
 function localizationCohort(
   items: readonly EvaluationItem[],
   generationMode: GenerationMode,
+  spanProducer: SpanProducerState,
 ): LocalizationCohort {
   // The cohort: every row of this generation mode that HAS an observed AI span,
   // whatever its status. A row whose localized path emitted nothing stays in,
@@ -2473,40 +2532,36 @@ function localizationCohort(
       generationModeOf(item.record) === generationMode &&
       observedAiSpans(item.record).length > 0,
   );
-  // Producer presence is a property of the COHORT, not of a family: a field that
-  // no stage writes is missing from the scored rows and from the undecided ones
-  // alike. `!== undefined` and not `length > 0`, so a span head that emits an
-  // empty list reads as a producer that found nothing, which is a real miss.
-  const spanProducer = cohortRows.some(
-    (item) => isScoredItem(item) && item.localizedSpans !== undefined,
-  )
-    ? "present"
-    : "absent";
   return {
     generationMode,
     role: "diagnostic",
     aggregated: false,
+    // Handed down from the run, never recomputed here.
     spanProducer,
-    endToEnd: localizationFamily(
-      cohortRows,
-      "end-to-end",
-      "cohort-rows-with-observed-spans",
-      spanProducer,
-    ),
+    endToEnd: localizationFamily(cohortRows, "end-to-end", spanProducer),
     conditionalOnScored: localizationFamily(
       cohortRows.filter(isScoredItem),
       "conditional-on-scored",
-      "scored-cohort-rows-with-observed-spans",
       spanProducer,
     ),
   };
 }
 
+// The denominator rule of each family, in words. Derived from `family` and not
+// passed alongside it, so the label and the rule it describes cannot be
+// constructed disagreeing — the same shape A7 resolved for the two FPR column
+// headers by routing both through one constructor.
+const LOCALIZATION_POPULATION_RULES: Readonly<
+  Record<MetricFamily, LocalizationFamily["populationRule"]>
+> = {
+  "end-to-end": "cohort-rows-with-observed-spans",
+  "conditional-on-scored": "scored-cohort-rows-with-observed-spans",
+};
+
 function localizationFamily(
-  population: readonly EvaluationItem[],
+  rows: readonly EvaluationItem[],
   family: MetricFamily,
-  populationRule: LocalizationFamily["populationRule"],
-  spanProducer: LocalizationCohort["spanProducer"],
+  spanProducer: SpanProducerState,
 ): LocalizationFamily {
   let intersection = 0;
   let union = 0;
@@ -2517,12 +2572,14 @@ function localizationFamily(
   let recallSum = 0;
   let localizedEmitted = 0;
   let undecidedRows = 0;
-  for (const item of population) {
-    // An undecided row emitted nothing, so it enters every ratio as a total miss:
+  for (const item of rows) {
+    // One classification drives both the emission and the count, in that order:
+    // an undecided row emitted nothing, so it enters every ratio as a total miss —
     // full observed length into the union, zero into the intersection. There is
     // no substitution and no removal here (R5).
-    const emitted = isScoredItem(item) ? (item.localizedSpans ?? []) : [];
-    if (!isScoredItem(item)) undecidedRows += 1;
+    const scored = isScoredItem(item);
+    if (!scored) undecidedRows += 1;
+    const emitted = scored ? (item.localizedSpans ?? []) : [];
     const overlap = spanOverlap(observedAiSpans(item.record), emitted);
     intersection += overlap.intersection;
     union += overlap.union;
@@ -2533,16 +2590,20 @@ function localizationFamily(
     recallSum += overlap.tokenRecall;
     if (overlap.predicted > 0) localizedEmitted += 1;
   }
-  const count = population.length;
+  const count = rows.length;
   // The counts are published either way — they say how much span evidence is
   // waiting — but a ratio needs both a denominator AND a producer to be a
-  // measurement. With `spanProducer: "absent"` every ratio below would be exactly
-  // 0, indistinguishable from a detector that located nothing; with `count === 0`
+  // measurement. Without a producer every ratio below would be exactly 0,
+  // indistinguishable from a detector that located nothing; with `count === 0`
   // `proportionEstimate` returns a NaN value, which is not a statement either.
+  // Note what this does NOT exclude: a run WITH a producer whose every row in this
+  // family is undecided is measurable and publishes 0. That is the measured
+  // integral miss R5 asks for, and nulling it was the defect `SpanProducerState`
+  // records.
   const measurable = count > 0 && spanProducer === "present";
   return {
     family,
-    populationRule,
+    populationRule: LOCALIZATION_POPULATION_RULES[family],
     population: count,
     undecidedRows,
     localizedEmitted,

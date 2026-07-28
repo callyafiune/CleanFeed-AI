@@ -102,10 +102,22 @@ Consequências mecânicas, não apenas redacionais:
   do caminho localizado;
 - **nenhum estágio da esteira preenche span hoje.** `benchmark/prediction-schema.ts`
   não tem coluna de span e `benchmark/commands/evaluate.ts` só repassa
-  `localizedRawScore`; a cabeça de span é de **D4**. Enquanto isso cada coorte
-  declara `spanProducer: "absent"` e publica `localizedPathRecall` e o bloco
-  `overlap` como `null` — nunca `0`, porque `0` se leria como localização medida e
-  reprovada quando ninguém emitiu nada (R7, R8).
+  `localizedRawScore`; a cabeça de span é de **D4**. Enquanto isso a execução
+  declara `spanProducer: "absent"` e cada coorte publica `localizedPathRecall` e o
+  bloco `overlap` como `null` — nunca `0`, porque `0` se leria como localização
+  medida e reprovada quando ninguém emitiu nada (R7, R8);
+- `spanProducer` é propriedade da **execução**, não da coorte, e tem três valores.
+  `localizedSpans` é escrito — ou não — por um estágio da esteira, então a resposta
+  não pode diferir honestamente entre duas coortes da mesma avaliação; derivá-la por
+  coorte fazia uma coorte com 100% de falha de inferência declarar `"absent"` e
+  **apagar** o número, enquanto um produtor tinha emitido span na coorte ao lado.
+  `present` = alguma linha `scored` da execução traz o campo (**presente e vazio
+  conta como presente**: produtor que rodou e não achou nada é erro total medido,
+  logo publica `0`, não `null`); `absent` = a execução decidiu e nenhuma decisão
+  trouxe o campo; `undeterminable` = a execução não decidiu nada, logo nada poderia
+  ter trazido o campo — e `"absent"` ali seria motivo falso. Com produtor presente,
+  uma família cujas linhas são **todas** indecisas publica `0`, porque isso é erro
+  integral medido e não ausência de medição.
 
 Os orçamentos aprovados são:
 

@@ -1531,6 +1531,188 @@ describe("span localization metrics are diagnostic (B2)", () => {
     expect(empty?.spanProducer).toBe("absent");
   });
 
+  // The OTHER side of the null: `spanProducer` is `!== undefined` and not
+  // `length > 0` on purpose, because a span head that ran and emitted an empty
+  // list is a producer whose zeros are a real, measured total miss. That
+  // distinction is the entire basis of the test above, and until this test existed
+  // NO assertion reached it: replacing `item.localizedSpans !== undefined` with
+  // `(item.localizedSpans ?? []).length > 0` left the file at 58/58 green, and
+  // nothing outside metrics.ts reads a localization cohort. The flip is not
+  // cosmetic — under it the fixture below reports `spanProducer: "absent"`,
+  // `localizedPathRecall: null`, `overlap: null`, i.e. a measured total
+  // localization failure silently becomes "no measurement", in an EVALUATOR_FILES
+  // member, in the direction that hides the failure.
+  it("treats a producer that emitted an empty list as present, so its zeros stay a measurement", () => {
+    const fixture = [
+      item({ author: "h1", label: "human", documentScore: 0.1 }),
+      // Both rows got a decision AND carry the field; the span head simply found
+      // nothing in either. That is a detector result, not a missing stage.
+      item({
+        author: "m1",
+        label: "mixed",
+        aiFraction: 0.6,
+        observedAiSpans: [{ start: 0, end: 10 }],
+        localizedSpans: [],
+        documentScore: 0.9,
+        warned: true,
+      }),
+      item({
+        author: "m2",
+        label: "mixed",
+        aiFraction: 0.6,
+        observedAiSpans: [{ start: 0, end: 10 }],
+        localizedSpans: [],
+        documentScore: 0.9,
+        warned: true,
+      }),
+    ];
+
+    const cohort = computeEvaluationMetrics(
+      fixture,
+      OPTIONS,
+    ).localization.byGenerationMode.find(
+      (entry) => entry.generationMode === "mechanistic",
+    );
+
+    expect(cohort?.spanProducer).toBe("present");
+    expect(cohort?.endToEnd.population).toBe(2);
+    expect(cohort?.endToEnd.localizedEmitted).toBe(0);
+    // Zero, published — NOT null. Twenty observed characters, none of them found.
+    expect(cohort?.endToEnd.localizedPathRecall?.value).toBe(0);
+    expect(cohort?.endToEnd.localizedPathRecall).not.toBeNull();
+    expect(cohort?.endToEnd.overlap).not.toBeNull();
+    expect(cohort?.endToEnd.overlap?.microIou).toBe(0);
+    expect(cohort?.endToEnd.overlap?.macroIou).toBe(0);
+    expect(cohort?.endToEnd.overlap?.microTokenRecall).toBe(0);
+    // Same statement in the conditional family: every row here is scored.
+    expect(cohort?.conditionalOnScored.overlap?.microIou).toBe(0);
+  });
+
+  // Producer presence is a property of the RUN, and inferring it from a cohort's
+  // scored rows re-created the very defect the family pair removed: a cohort whose
+  // every row failed inference reported `"absent"` and null ratios while a producer
+  // had emitted a span one cohort over, so 100% inference failure DELETED the
+  // number instead of reading 0, and the published reason was false besides (R7).
+  // MEASURED on the committed tree at f513ac8 with this exact fixture:
+  // `{"mode":"ecological","spanProducer":"absent","e2ePopulation":2,
+  // "e2eUndecided":2,"e2eRecall":null,"e2eOverlapNull":true}`.
+  it("publishes the end-to-end zeros of an all-undecided cohort when the run has a producer", () => {
+    const fixture = [
+      item({ author: "h1", label: "human", documentScore: 0.1 }),
+      // The producer's witness, in the OTHER cohort.
+      item({
+        author: "m1",
+        label: "mixed",
+        aiFraction: 0.6,
+        observedAiSpans: [{ start: 0, end: 10 }],
+        localizedSpans: [{ start: 0, end: 10 }],
+        documentScore: 0.9,
+        warned: true,
+      }),
+      // Two rows with observed spans that the pipeline never decided.
+      item({
+        author: "e1",
+        label: "mixed",
+        aiFraction: 0.6,
+        generationMode: "ecological",
+        observedAiSpans: [{ start: 0, end: 10 }],
+        status: "error",
+      }),
+      item({
+        author: "e2",
+        label: "mixed",
+        aiFraction: 0.6,
+        generationMode: "ecological",
+        observedAiSpans: [{ start: 0, end: 20 }],
+        status: "error",
+      }),
+    ];
+
+    const localization = computeEvaluationMetrics(
+      fixture,
+      OPTIONS,
+    ).localization;
+    const ecological = localization.byGenerationMode.find(
+      (entry) => entry.generationMode === "ecological",
+    );
+
+    // The run has a producer, so this cohort's silence is measurable silence.
+    expect(ecological?.spanProducer).toBe("present");
+    expect(ecological?.endToEnd.population).toBe(2);
+    expect(ecological?.endToEnd.undecidedRows).toBe(2);
+    expect(ecological?.endToEnd.localizedEmitted).toBe(0);
+    expect(ecological?.endToEnd.localizedPathRecall?.value).toBe(0);
+    expect(ecological?.endToEnd.overlap).not.toBeNull();
+    expect(ecological?.endToEnd.overlap?.microIou).toBe(0);
+    expect(ecological?.endToEnd.overlap?.microTokenRecall).toBe(0);
+    // The conditional family is null for a DIFFERENT reason — it has no row —
+    // which is why the two nulls must not be spelled the same way.
+    expect(ecological?.conditionalOnScored.population).toBe(0);
+    expect(ecological?.conditionalOnScored.localizedPathRecall).toBeNull();
+    expect(ecological?.conditionalOnScored.overlap).toBeNull();
+
+    // One derivation, handed down: every cohort of one artifact says the same
+    // thing about the producer, because the producer is not a cohort property.
+    expect(
+      localization.byGenerationMode.map((cohort) => cohort.spanProducer),
+    ).toEqual(["present", "present"]);
+
+    // And every published family's stated denominator rule agrees with its own
+    // family label, for both cohorts — `populationRule` is derived from `family`
+    // rather than passed beside it, so the pair cannot be built mismatched.
+    expect(
+      localization.byGenerationMode.flatMap((cohort) =>
+        [cohort.endToEnd, cohort.conditionalOnScored].map((family) => [
+          family.family,
+          family.populationRule,
+        ]),
+      ),
+    ).toEqual([
+      ["end-to-end", "cohort-rows-with-observed-spans"],
+      ["conditional-on-scored", "scored-cohort-rows-with-observed-spans"],
+      ["end-to-end", "cohort-rows-with-observed-spans"],
+      ["conditional-on-scored", "scored-cohort-rows-with-observed-spans"],
+    ]);
+  });
+
+  // The third state. `"absent"` is a claim with a witness — a row that GOT a
+  // decision and carried no span field. A run that decided nothing has no such
+  // witness, so blaming an absent producer would be a false reason under R7.
+  it("declares the producer undeterminable when the run produced no decision at all", () => {
+    const fixture = [
+      item({ author: "h1", label: "human", status: "error" }),
+      item({
+        author: "m1",
+        label: "mixed",
+        aiFraction: 0.6,
+        observedAiSpans: [{ start: 0, end: 10 }],
+        status: "error",
+      }),
+      item({
+        author: "m2",
+        label: "mixed",
+        aiFraction: 0.6,
+        observedAiSpans: [{ start: 0, end: 20 }],
+        status: "error",
+      }),
+    ];
+
+    const cohort = computeEvaluationMetrics(
+      fixture,
+      OPTIONS,
+    ).localization.byGenerationMode.find(
+      (entry) => entry.generationMode === "mechanistic",
+    );
+
+    expect(cohort?.spanProducer).toBe("undeterminable");
+    // The counts still say how much span evidence is waiting.
+    expect(cohort?.endToEnd.population).toBe(2);
+    expect(cohort?.endToEnd.undecidedRows).toBe(2);
+    // But there is no producer to charge the misses to, so no ratio is published.
+    expect(cohort?.endToEnd.localizedPathRecall).toBeNull();
+    expect(cohort?.endToEnd.overlap).toBeNull();
+  });
+
   // Requisito 2 of the B2 brief asks for the v0-v8 curve as the diagnostic beside
   // the `warning.mixed-recall` gate. `mixed.byFraction` is NOT that curve: it is a
   // four-band aggregation of it, and this test pins WHICH levels it pools so the
