@@ -552,7 +552,7 @@ describe("the cluster report the audit publishes", () => {
     // The slot siblings really do share a source, so the distribution is a
     // measurement rather than the tautology `leakages: []` used to be.
     expect(source!.overall.largest).toBeGreaterThan(1);
-    expect(source!.overall.records).toBe(RELEASE_DATASET.length);
+    expect(source!.overall.recordLines).toBe(RELEASE_DATASET.length);
     expect(source!.connectivityAxis).toBe(true);
 
     // The connected component — the union of the applicable axes — is the split
@@ -561,7 +561,7 @@ describe("the cluster report the audit publishes", () => {
     expect(audit.clusters.connected.overall.groups).toBeLessThan(
       RELEASE_DATASET.length,
     );
-    expect(audit.clusters.connected.overall.records).toBe(
+    expect(audit.clusters.connected.overall.recordLines).toBe(
       RELEASE_DATASET.length,
     );
 
@@ -573,7 +573,7 @@ describe("the cluster report the audit publishes", () => {
     for (const axis of CLUSTER_SLICE_AXES) expect(slices).toContain(axis);
     const partitionRecords = audit.clusters.connected.bySlice
       .filter((row) => row.slice === "partition")
-      .reduce((total, row) => total + row.count.records, 0);
+      .reduce((total, row) => total + row.count.recordLines, 0);
     expect(partitionRecords).toBe(RELEASE_DATASET.length);
   });
 
@@ -733,7 +733,7 @@ describe("a grouping axis the source declared", () => {
         sourceId: "src_ptso",
         axis: "author",
         state: "unknown",
-        records: 1,
+        recordLines: 1,
       },
     ]);
     expect(

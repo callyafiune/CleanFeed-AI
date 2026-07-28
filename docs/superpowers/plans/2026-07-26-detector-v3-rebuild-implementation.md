@@ -4322,6 +4322,67 @@ partições; e que split e evento de exposição são gravados juntos ou nenhum 
 > singleton, e texto de IA não tem autor humano (R6). Degeneração de um eixo
 > `notApplicable` é o resultado correto, não um defeito.
 
+#### C3 — o que a execução decidiu (2026-07-28)
+
+Entregue. Os oito testes de aceitação nomeados estão em
+`benchmark/tests/cluster-exposure-ledger.test.ts` (23 testes) e
+`benchmark/tests/split-audit.test.ts` (+11). Nenhum evento real foi gravado: o
+congelamento continua sendo E2. Sete decisões precisam ficar registradas porque a execução
+foi além (ou ficou aquém) do que o texto acima diz.
+
+1. **Um keyring só, e o ledger HMACa sobre o pseudônimo de C2 — não sobre o identificador
+   cru.** O arquivo canônico deste plano é exatamente o que
+   `benchmark/lab/pseudonymize.py` já nomeia como canônico, e C2 minted um ali com
+   `keyringVersion: "c2-run-v1"` e `secrets.person`. Duas chaves em dois arquivos teriam
+   produzido o pior modo de falha possível: o ledger indexaria identidades derivadas de uma
+   chave e o corpus carregaria identidades derivadas de outra, a comparação nunca casaria, e
+   o ledger responderia "nunca exposto" para tudo — a tautologia de `leakages: []`
+   reintroduzida por outra porta. Então: `init` **preserva** `secrets` byte a byte e apenas
+   **acrescenta** o array `keys` que é dele; a separação de domínio vem do PROPÓSITO
+   misturado na mensagem do MAC (`cluster-exposure` + eixo), que é o mesmo mecanismo que o
+   docstring de `pseudonymize.py` já mede e declara suficiente. `secrets.person` nunca é
+   reescrito: rotacioná-lo renumeraria todo cluster de pessoa e exigiria re-extração.
+   Consequência prática: na máquina do operador `init` **adota** o keyring de C2 em vez de
+   recusar, e nenhum pseudônimo de pessoa muda — ao contrário do que a nota de C2 previa.
+2. **A comparação de elegibilidade usa quatro eixos, não os doze** (`EXPOSURE_IDENTITY_AXES`
+   = `author`, `source`, `humanSeed`, `derivationRoot`). O evento **registra** todos os eixos
+   que a linha preenche, então alargar depois não exige re-derivar história. Mas comparar
+   `domainSource` (um estrato) ou `collectionBatch` (uma execução) tornaria toda linha futura
+   inelegível para teste no instante em que uma linha do estrato fosse exposta — isso é um
+   desligamento, não um controle. `nearDuplicate` fica fora porque depois da poda ele é o id
+   da própria linha (nota de C2) e não carrega nada que a impressão de conteúdo não carregue.
+3. **R7 é aplicado como SCREEN, e o relatório diz isso.** O ledger guarda hash exato +
+   assinatura MinHash de 128 permutações (`nearDuplicateFingerprint`, novo em
+   `near-duplicates.ts`), porque guardar os shingles de 5 tokens seria guardar o documento
+   num artefato que sobrevive ao corpus. Logo o que é medido é "hash exato OU Jaccard
+   ESTIMADO ≥ 0,82", com erro padrão ≈ 0,034 no limiar — não "Jaccard ≥ 0,82". O passo de
+   confirmação exata de `clusterNearDuplicates` continua sendo da poda, que tem os textos.
+4. **Rotação é biblioteca, não CLI.** O conjunto de ações da CLI é fechado exatamente como
+   escrito acima, e não inclui `rotate`; `rotateClusterExposureKey` é função exportada.
+5. **Atomicidade, dita com honestidade no Windows.** `rename` do Node é `MoveFileExW` com
+   `MOVEFILE_REPLACE_EXISTING`: atômico em relação a um leitor no mesmo volume, e **não** uma
+   barreira de durabilidade — o Windows não expõe fsync de diretório. O que cobre esse
+   resíduo é o backup autenticado tomado ANTES do rename e o `verify`, que recusa cadeia que
+   não fecha. "Juntos ou nenhum dos dois" é implementado como transação com callback: o
+   ledger novo é escrito e fsyncado num temporário, o `finalizeSplit` do chamador roda, e só
+   então o rename publica o ledger; falha do chamador descarta o temporário.
+6. **A auditoria falha em `unknown` e NÃO em `notApplicable`, divergindo de
+   `assertDeclaredAxesResolved`.** A função de C1 recusa os dois (o `notApplicable`
+   contradiz a declaração da fonte). O critério deste brief é explícito ao pedir só
+   `unknown`, e as duas direções estão testadas. A regra mais estrita continua sendo do
+   caminho de ingestão, onde a pergunta é se a linha entra no corpus; a da auditoria é se as
+   partições merecem confiança, e um eixo legitimamente inaplicável não as compromete.
+   `assertDeclaredAxesResolved` segue **não ligada**.
+7. **Escopo que cresceu, e por quê.** `commands/split.ts` passou a passar as declarações
+   reais (de `V3_HUMAN_SOURCE_INVENTORY`, constante versionada — não do manifesto privado),
+   então `benchmark/source-manifest.ts` entrou em `EVALUATOR_FILES` junto com
+   `cluster-exposure-ledger.ts` e `commands/cluster-ledger.ts` (R1). `corpus-import.ts`
+   passou a consumir `NEAR_DUPLICATE_V1_OPTIONS` em vez de manter uma segunda cópia literal
+   dos parâmetros congelados. `SplitAudit` ganhou dois campos **obrigatórios**
+   (`clusters`, `declaredAxisGaps`); opcionais deixariam a tautologia sobreviver. O campo de
+   contagem se chama `recordLines` e não `records` porque `records` é chave **proibida** no
+   sanitizador de evidência — e a auditoria é publicada.
+
 ### C4 — Bootstrap com unidade de reamostragem por estimando
 
 **Depende de:** C2.

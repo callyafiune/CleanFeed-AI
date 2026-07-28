@@ -61,8 +61,8 @@ export type ClusterSliceAxis = (typeof CLUSTER_SLICE_AXES)[number];
 /**
  * How much independent grouping one axis (or the connected component) actually
  * offers. `groups` counts the DISTINCT identities, `largest` the biggest one,
- * `singletons` how many hold exactly one record-line, and `records` how many
- * record-lines carried an identity at all.
+ * `singletons` how many hold exactly one record-line, and `recordLines` how
+ * many record-lines carried an identity at all.
  *
  * A degenerate reading is not a defect. After pruning, `nearDuplicate` is
  * expected to be all singletons, and generated text has no human author, so an
@@ -75,7 +75,13 @@ export interface ClusterCount {
   groups: number;
   largest: number;
   singletons: number;
-  records: number;
+  /**
+   * How many record-lines carried an identity at all. Named `recordLines` and
+   * not `records`, deliberately: `records` is a FORBIDDEN key in published
+   * evidence (benchmark/evidence-sanitizer.ts) precisely because a key of that
+   * name is almost always a record list, and this audit is published.
+   */
+  recordLines: number;
 }
 
 export interface ClusterSliceCount {
@@ -126,7 +132,7 @@ export interface DeclaredAxisGap {
   sourceId: string;
   axis: V3GroupAxis;
   state: "unknown";
-  records: number;
+  recordLines: number;
 }
 
 export interface SplitAudit {
@@ -267,11 +273,11 @@ export function standInClusterReport(): SplitClusterReport {
       axis,
       connectivityAxis: (GROUP_KEYS as readonly string[]).includes(axis),
       states: { known: 0, notApplicable: 0, unknown: 0 },
-      overall: { groups: 0, largest: 0, singletons: 0, records: 0 },
+      overall: { groups: 0, largest: 0, singletons: 0, recordLines: 0 },
       bySlice: [],
     })),
     connected: {
-      overall: { groups: 0, largest: 0, singletons: 0, records: 0 },
+      overall: { groups: 0, largest: 0, singletons: 0, recordLines: 0 },
       bySlice: [],
     },
   };
@@ -401,13 +407,13 @@ function auditLeakages(
 function countGroups(sizes: readonly number[]): ClusterCount {
   let largest = 0;
   let singletons = 0;
-  let records = 0;
+  let recordLines = 0;
   for (const size of sizes) {
     if (size > largest) largest = size;
     if (size === 1) singletons += 1;
-    records += size;
+    recordLines += size;
   }
-  return { groups: sizes.length, largest, singletons, records };
+  return { groups: sizes.length, largest, singletons, recordLines };
 }
 
 // The slice keys one record-line belongs to. `partition` comes from the caller
@@ -554,13 +560,13 @@ function auditDeclaredAxes(
     }
   }
   return [...counts.entries()]
-    .map(([key, records_]) => {
+    .map(([key, recordLines]) => {
       const [sourceId, axis] = key.split(KEY_SEP);
       return {
         sourceId,
         axis: axis as V3GroupAxis,
         state: "unknown" as const,
-        records: records_,
+        recordLines,
       };
     })
     .sort((a, b) =>
@@ -738,7 +744,7 @@ function collectReasons(
   for (const gap of declaredAxisGaps) {
     reasons.push(
       `source ${gap.sourceId} declares axis "${gap.axis}" applicable and ` +
-        `${gap.records} record-line(s) leave it unknown: those record-lines are ` +
+        `${gap.recordLines} record-line(s) leave it unknown: those record-lines are ` +
         "ineligible and the axis cannot support the split",
     );
   }
