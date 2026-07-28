@@ -133,6 +133,41 @@ export const EXPOSURE_IDENTITY_AXES: readonly V3GroupAxis[] = [
 ];
 
 /**
+ * The axes whose identity is ANOTHER RECORD-LINE'S ID rather than a value two
+ * rows happen to share.
+ *
+ * They are the reason this module needs a MAC domain that is not the axis name.
+ * A human row carries `author`/`source`; the generation it seeded carries
+ * `humanSeed` naming the human's id and, being machine text, has no author and no
+ * thread at all (R6: those axes are `notApplicable`). The two rows therefore share
+ * no axis VALUE, and an axis-scoped comparison — `humanSeed` digest against
+ * `humanSeed` digest — matches only generation-to-generation. The seed half of
+ * every lineage, which is the commonest sampling unit in v3, went through
+ * unrefused; it is the same blindness `connectedComponentRoots` had before
+ * 02ea363, arriving through the ledger instead of the splitter.
+ *
+ * `derivationRoot` behaves identically and is included for the same reason. The
+ * two are NOT synonyms (see `V3_GROUP_AXES`), but a row that names `h1` as its
+ * seed and a row that names `h1` as its derivation root both depend on `h1`, so
+ * they belong to one cluster and one MAC domain.
+ */
+export const LINEAGE_AXES: readonly V3GroupAxis[] = [
+  "humanSeed",
+  "derivationRoot",
+];
+
+/**
+ * The MAC domain the lineage axes AND a record-line's own id are MACed under.
+ *
+ * It replaces the axis name in the message for exactly those axes, so the digest
+ * a child presents when it names its parent equals the digest the parent presents
+ * for itself. Domain separation from the value axes is preserved: `author` and
+ * `source` still mix their own axis name, so an id that happens to equal a
+ * pseudonym cannot join two rows into a dependence that does not exist.
+ */
+const LINEAGE_MAC_DOMAIN = "lineage";
+
+/**
  * The axes that carry a PERSON, and therefore the axes whose identity this module
  * refuses to accept in raw form. See the boundary note on
  * {@link assertLedgerIdentity}.
@@ -217,6 +252,14 @@ export interface ClusterExposureRecord {
   partition: LedgerPartition;
   /** axis -> one digest per key version present when the event was written. */
   groupDigests: Record<string, ClusterDigest[]>;
+  /**
+   * The digests a CHILD of this record-line would present when it names this row
+   * as its `humanSeed` or `derivationRoot` — that is, this row's own identity in
+   * the lineage MAC domain. Written for every record, because the ledger cannot
+   * know which future row will cite it, and it is what lets the seed half of a
+   * lineage be recognised. See {@link LINEAGE_AXES}.
+   */
+  lineageDigests: ClusterDigest[];
   /** The R7 index: exact hash plus MinHash signature. Never the text. */
   fingerprint: { contentSha256: string; signature: number[] | null };
 }
@@ -257,6 +300,7 @@ const RECORD_KEYS: readonly string[] = [
   "recordDigest",
   "partition",
   "groupDigests",
+  "lineageDigests",
   "fingerprint",
 ];
 
@@ -524,12 +568,23 @@ function hmacHex(secret: string, message: string): string {
     .digest("hex");
 }
 
-function axisDigests(
+/**
+ * Which MAC domain an axis is compared in. The lineage axes share ONE domain with
+ * a record-line's own id, so the two ends of a parent/child edge meet; every other
+ * axis is its own domain, so a value seen on two axes stays two identities.
+ */
+function macDomainOf(axis: string): string {
+  return (LINEAGE_AXES as readonly string[]).includes(axis)
+    ? LINEAGE_MAC_DOMAIN
+    : axis;
+}
+
+function identityDigests(
   keyring: ClusterExposureKeyring,
-  axis: string,
+  domain: string,
   identity: string,
 ): ClusterDigest[] {
-  const message = `${CLUSTER_PURPOSE}${SEP}${axis}${SEP}${identity}`;
+  const message = `${CLUSTER_PURPOSE}${SEP}${domain}${SEP}${identity}`;
   return keyring.keys.map((key) => ({
     keyVersion: key.keyVersion,
     digest: hmacHex(key.secret, message),
@@ -1070,7 +1125,12 @@ interface HistoryEntry {
 }
 
 interface ExposureIndex {
-  /** Digests of identity axes seen in ANY partition. */
+  /**
+   * Digests of identity axes seen in ANY partition, PLUS the lineage identity of
+   * every exposed record-line itself. Both live in one set on purpose: the lineage
+   * axes and a row's own id share a MAC domain, so "the parent was exposed" and
+   * "a child of this row was exposed" are the same lookup from either end.
+   */
   clusterDigests: Set<string>;
   /** Record-line digests and exact content hashes seen in a `test` partition. */
   consumedRecordDigests: Set<string>;
@@ -1093,6 +1153,13 @@ function buildIndex(events: readonly ClusterExposureEvent[]): ExposureIndex {
         for (const digest of record.groupDigests[axis] ?? []) {
           index.clusterDigests.add(digest.digest);
         }
+      }
+      // The exposed row's own lineage identity. Without it a future child naming
+      // this row matches nothing, because a child shares no axis VALUE with its
+      // human seed. It is a REQUIRED field of the record schema, so an event that
+      // lacks it is refused by `validateEventShape` rather than read as empty.
+      for (const digest of record.lineageDigests) {
+        index.clusterDigests.add(digest.digest);
       }
       if (inTest) {
         index.consumedRecordDigests.add(record.recordDigest);
@@ -1166,8 +1233,13 @@ function buildEventRecords(
       }
       if (identity === undefined) continue;
       assertLedgerIdentity(axis, identity);
-      groupDigests[axis] = axisDigests(keyring, axis, identity);
+      groupDigests[axis] = identityDigests(keyring, macDomainOf(axis), identity);
     }
+    // The row's OWN lineage identity, in the domain a child would use. The id is
+    // shape-checked here for the same reason a group identity is: it becomes part
+    // of a MAC message that has to match one another run computes, and the schema
+    // already restricts an id to this alphabet (`pseudonym(root, "id", "")`).
+    assertLedgerIdentity("id", input.id);
     const fingerprint = nearDuplicateFingerprint(input.text);
     return {
       recordDigest: sha256Text(
@@ -1175,6 +1247,7 @@ function buildEventRecords(
       ),
       partition: input.partition,
       groupDigests,
+      lineageDigests: identityDigests(keyring, LINEAGE_MAC_DOMAIN, input.id),
       fingerprint: {
         contentSha256: fingerprint.contentSha256,
         signature: fingerprint.signature,
@@ -1249,11 +1322,21 @@ function collectRefusals(
     // A sampling unit exposed in ANY previous partition cannot enter a future
     // test block. Any digest in common counts, so a key rotation cannot mint a
     // "new" cluster.
-    const exposedAxes = EXPOSURE_IDENTITY_AXES.filter((axis) =>
+    const exposedAxes: string[] = EXPOSURE_IDENTITY_AXES.filter((axis) =>
       (record.groupDigests[axis] ?? []).some((digest) =>
         index.clusterDigests.has(digest.digest),
       ),
     );
+    // The other end of a lineage edge: this row's own id was already named as the
+    // seed or the derivation root of something exposed, so the child is in history
+    // even though the parent row never was.
+    if (
+      record.lineageDigests.some((digest) =>
+        index.clusterDigests.has(digest.digest),
+      )
+    ) {
+      exposedAxes.push("lineage(self)");
+    }
     if (exposedAxes.length > 0) {
       refusals.push({
         recordId,

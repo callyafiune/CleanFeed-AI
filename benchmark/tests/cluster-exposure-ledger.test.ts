@@ -454,6 +454,146 @@ describe("acceptance 6 — the split and its exposure event are written together
   });
 });
 
+describe("acceptance 9 — a LINEAGE edge is caught from both of its ends", () => {
+  // The commonest sampling unit of v3 is a human row in one partition and the
+  // generation it seeded in another. The two rows share NO axis value: the human
+  // carries `author`/`source`, the generation carries `humanSeed` naming the
+  // human's ID. So the comparison has to index the exposed row's own lineage
+  // identity in the same MAC domain a child uses when it names that id —
+  // otherwise the seed -> generation half of every lineage walks straight through
+  // the ledger, which is the exact blindness 02ea363 fixed in the splitter.
+  const SEED_TEXT = words("beta", 200);
+  const CHILD_TEXT = words("gamma", 200);
+
+  function generation(
+    id: string,
+    partition: ExposureRecordInput["partition"],
+    lineage: { humanSeed?: string; derivationRoot?: string },
+    text = CHILD_TEXT,
+  ): ExposureRecordInput {
+    return {
+      id,
+      text,
+      partition,
+      // Generated text has no human author and no thread (R6: those axes are
+      // `notApplicable`, never a synthetic identity), so the lineage axes are the
+      // only thing that can tie it to anything.
+      groups: {
+        ...lineage,
+        promptTemplate: `pt_${id}`,
+        generatorFamily: "gemini-3_5-flash-medium",
+      },
+    };
+  }
+
+  it("refuses a generation for test when the human seed was already exposed", async () => {
+    await init();
+    await recordPilotExposure(
+      paths(),
+      request({
+        eventType: "pilot-exposure",
+        records: [
+          record({ id: "h1", partition: "dev", text: SEED_TEXT, source: "th_h1" }),
+        ],
+      }),
+    );
+
+    const decision = await preflightExposure(
+      paths(),
+      request({
+        datasetDigest: DATASET_B,
+        splitDigest: SPLIT_B,
+        records: [generation("g1", "test", { humanSeed: "h1" })],
+      }),
+    );
+
+    expect(decision.eligible).toBe(false);
+    expect(decision.refusals.map((refusal) => refusal.reason)).toContain(
+      "cluster-exposed-previously",
+    );
+  });
+
+  it("refuses the human seed for test when the generation it seeded was exposed", async () => {
+    await init();
+    await recordPilotExposure(
+      paths(),
+      request({
+        eventType: "pilot-exposure",
+        records: [generation("g1", "dev", { humanSeed: "h1" })],
+      }),
+    );
+
+    const decision = await preflightExposure(
+      paths(),
+      request({
+        datasetDigest: DATASET_B,
+        splitDigest: SPLIT_B,
+        records: [
+          record({ id: "h1", partition: "test", text: SEED_TEXT, source: "th_h1" }),
+        ],
+      }),
+    );
+
+    expect(decision.eligible).toBe(false);
+    expect(decision.refusals.map((refusal) => refusal.reason)).toContain(
+      "cluster-exposed-previously",
+    );
+  });
+
+  it("refuses a derivative for test when its parent was already exposed", async () => {
+    await init();
+    await recordPilotExposure(
+      paths(),
+      request({
+        eventType: "pilot-exposure",
+        records: [
+          record({ id: "p1", partition: "dev", text: SEED_TEXT, source: "th_p1" }),
+        ],
+      }),
+    );
+
+    const decision = await preflightExposure(
+      paths(),
+      request({
+        datasetDigest: DATASET_B,
+        splitDigest: SPLIT_B,
+        records: [generation("d1", "test", { derivationRoot: "p1" })],
+      }),
+    );
+
+    expect(decision.refusals.map((refusal) => refusal.reason)).toContain(
+      "cluster-exposed-previously",
+    );
+  });
+
+  it("admits a generation whose seed the history never saw", async () => {
+    // The negative half: the refusal must come from the lineage MATCHING, not
+    // from the mere presence of a lineage axis.
+    await init();
+    await recordPilotExposure(
+      paths(),
+      request({
+        eventType: "pilot-exposure",
+        records: [
+          record({ id: "h1", partition: "dev", text: SEED_TEXT, source: "th_h1" }),
+        ],
+      }),
+    );
+
+    const decision = await preflightExposure(
+      paths(),
+      request({
+        datasetDigest: DATASET_B,
+        splitDigest: SPLIT_B,
+        records: [generation("g2", "test", { humanSeed: "h-never-seen" })],
+      }),
+    );
+
+    expect(decision.refusals).toEqual([]);
+    expect(decision.eligible).toBe(true);
+  });
+});
+
 describe("acceptance 8 — the CLI-level lifecycle on a temporary fixture", () => {
   it("backs up, restores over absent state and refuses to restore over divergence", async () => {
     await init();
