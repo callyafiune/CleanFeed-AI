@@ -91,7 +91,13 @@ SOURCE_SNAPSHOT = {
 
 # Block timestamps drive the temporal split (dev < cal < test).
 BLOCK_TIME = {"development": 1_000_000, "calibration": 2_000_000, "test": 3_000_000}
-CLASS_FRACTIONS = [("development", 0.2), ("calibration", 0.3), ("test", 0.5)]
+# The 20/30/50 blocks per class, and the ONLY place they are written down.
+# `assign_partitions` reads this dict instead of repeating 0.2/0.3 inline, which it
+# used to do while this constant sat here with no reader at all: two spellings of one
+# frozen decision, either of which could be edited without the other moving.
+# `test` carries no fraction because it is the REMAINDER — deriving it by rounding
+# too would let the three blocks fail to sum to the class size.
+CLASS_FRACTIONS = {"development": 0.2, "calibration": 0.3}
 
 # domainSource (candidate) -> humanSourceType (register). datasets set aside.
 REGISTER = {
@@ -153,9 +159,15 @@ HELD_OUT_MINIMUM = 200
 # They stay in the corpus as ordinary AI families — no record is discarded, only
 # the claim is withdrawn.
 HELD_OUT_INELIGIBLE = {"gemini-3_5-flash-lite", "gemini-3_1-flash-lite"}
-# The lab generates at a fixed sampling temperature and no provider on these
-# channels exposes a seed, so every declared batch records the same pair.
-LAB_TEMPERATURE = 0.8
+# No provider on these channels exposes a seed, so every declared batch records the
+# same reason for its absence.
+#
+# `LAB_TEMPERATURE = 0.8` stood here and is DELETED. It had two readers before this
+# task (`git show eae6ce6:benchmark/lab/assemble_corpus.py`, lines 246 and 302) and
+# none after, because `decoding_config` now derives the temperature from the frozen
+# LANE and from what the row recorded. Leaving a retyped 0.8 next to the function
+# whose whole point is that the pools carry a temperature no lane ever applied is
+# how it gets picked back up.
 SEED_NULL_REASON = "provider API does not expose a sampling seed"
 # The other half of the same pair, on the axis where an agent-CLI lane genuinely
 # applies nothing: `agy`, `codex` and `gemini-cli` take no sampling flag at all
@@ -612,23 +624,42 @@ def label_evidence(cand: dict, source_id: str, license_id: str) -> tuple[dict, d
     return ref, {"entryId": entry_id, "entryDigest": entry_digest, **entry}
 
 
-def near_duplicate_axis(cand_id: str, representative: str | None) -> dict:
-    """`groups.nearDuplicate` — the cluster `near_dupes.prune` left this row in.
+def near_duplicate_axis(cand_id: str) -> dict:
+    """`groups.nearDuplicate` — THE ROW'S OWN ID, because pruning left it alone here.
 
-    The identity is the surviving REPRESENTATIVE's candidate id, so a cluster with
-    two members would share it. After pruning every cluster has exactly one member,
-    so in practice this axis is all singletons and the representative is the row
-    itself — and that is CORRECT, not degenerate: collapsing near-duplicates to one
-    representative is what pruning does, so an all-singleton distribution here is the
-    evidence that it worked.
+    Stated plainly, because an earlier version of this docstring claimed more than
+    the code did: it said the identity was "read from the pruning result" and "would
+    collide the moment two rows shared a cluster", via a `representative` parameter
+    that `main()` never passed and that `near_dupes.prune` could not have supplied
+    anyway — prune returns `(drop, stats)` and no row-to-representative map. So the
+    value was always `cand_id`, and the claimed mechanism did not exist. The
+    parameter is gone rather than wired, for the reason below.
 
-    This is the one axis whose identifier legitimately coincides with the record's
-    own, and the distinction from the old nd-plus-record-id token is not cosmetic (a
-    verbatim quote would trip the guard test; see the note above). That
-    token was minted BECAUSE it would be unique; this one is read from the pruning
-    result and would collide the moment two rows shared a cluster.
+    WHY THE ROW'S OWN ID IS THE HONEST VALUE HERE, and not the per-record token this
+    task removed. `main()` runs `near_dupes.prune` over all three pools and DROPS
+    every non-representative before any record is built, so by the time this function
+    is called each surviving row is the sole member of its near-duplicate cluster.
+    Naming a one-member cluster after its one member is a description of the pruning
+    result, not an identifier minted to avoid collisions. That is also why wiring a
+    representative map would buy nothing: it would be the identity function on every
+    row that reaches here, an always-inert parameter that reads like a real one.
+
+    The difference from `nd_<recordId>` is therefore in the JUSTIFICATION and not in
+    the value, and the value is genuinely the same. The old token was minted per
+    record BECAUSE uniqueness made the split report `leakages: []`; this one is one
+    per record because pruning made the clusters singletons. An all-singleton
+    distribution on this axis is the evidence that pruning worked, which is exactly
+    why R6 and the plan forbid a "no axis may be 100% singletons" criterion — it
+    would flag this axis for being correct.
+
+    The consequence to keep in mind: this axis carries no information the record id
+    does not already carry, so it cannot be the axis that catches a leaked
+    near-duplicate pair. What catches that is the pruning step itself, and if pruning
+    is ever changed to KEEP both members of a cluster, this function has to change
+    with it — a shared cluster id would then be a real datum, and it would have to
+    come from a prune that publishes one.
     """
-    return group_axes.known(group_axes.axis_token(representative or cand_id))
+    return group_axes.known(group_axes.axis_token(cand_id))
 
 
 # --- record builders (return the canonical dict, block_time filled later) ----
@@ -638,7 +669,6 @@ def human_record(
     cand: dict,
     register: str,
     hard_neg: str | None,
-    near_duplicate: str | None = None,
     evidence_sink: list | None = None,
 ) -> dict:
     rec_id = slug(cand["candidateId"])
@@ -716,7 +746,7 @@ def human_record(
                     str(meta.get("collectionBatch") or f"extraction_{cand['domainSource']}")
                 )
             ),
-            "nearDuplicate": near_duplicate_axis(rec_id, near_duplicate),
+            "nearDuplicate": near_duplicate_axis(rec_id),
             "derivationRoot": group_axes.not_applicable(
                 "the record is an extracted source text, derived from nothing in "
                 "this corpus"
@@ -728,7 +758,7 @@ def human_record(
     return rec
 
 
-def ai_record(cand: dict, near_duplicate: str | None = None) -> dict:
+def ai_record(cand: dict) -> dict:
     meta = cand.get("meta") or {}
     rec_id = slug(cand.get("candidateId") or cand["id"])
     family_raw = meta.get("family") or cand.get("family") or "unknown"
@@ -809,7 +839,7 @@ def ai_record(cand: dict, near_duplicate: str | None = None) -> dict:
             "collectionBatch": group_axes.unknown(
                 "the generation batch is derived after partitioning"
             ),
-            "nearDuplicate": near_duplicate_axis(rec_id, near_duplicate),
+            "nearDuplicate": near_duplicate_axis(rec_id),
             "derivationRoot": (
                 group_axes.known(group_axes.axis_token(str(parent)))
                 if parent and recipe in REWRITING_RECIPES
@@ -820,7 +850,7 @@ def ai_record(cand: dict, near_duplicate: str | None = None) -> dict:
     return rec
 
 
-def mixed_record(cand: dict, near_duplicate: str | None = None) -> dict:
+def mixed_record(cand: dict) -> dict:
     parent = slug(cand["parentId"])
     rec_id = f"mix_{parent}"
     text = cand["text"]
@@ -926,7 +956,7 @@ def mixed_record(cand: dict, near_duplicate: str | None = None) -> dict:
             "collectionBatch": group_axes.unknown(
                 "the generation batch is derived after partitioning"
             ),
-            "nearDuplicate": near_duplicate_axis(rec_id, near_duplicate),
+            "nearDuplicate": near_duplicate_axis(rec_id),
         },
     }
     return rec
@@ -1007,8 +1037,8 @@ def assign_partitions(records: list[dict], held_out: set[str]) -> None:
         by_class.setdefault(rec["label"], []).append(rec)
     for label, recs in by_class.items():
         n = len(recs)
-        n_dev = round(n * 0.2)
-        n_cal = round(n * 0.3)
+        n_dev = round(n * CLASS_FRACTIONS["development"])
+        n_cal = round(n * CLASS_FRACTIONS["calibration"])
         n_test = n - n_dev - n_cal
         forced = [
             r

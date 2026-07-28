@@ -3684,8 +3684,9 @@ suficiente por estrato**.
 
 #### C2 — execução (2026-07-28)
 
-**Feito.** Commits `8a16c9e` (extratores + eixos), `2de570b` (montador v3), e o commit
-desta seção. Suíte: 76 testes em `benchmark/lab/test_extractors.py` (era 33),
+**Feito.** Commits `8a16c9e` (extratores + eixos), `2de570b` (montador v3), `b631123`,
+`b977b19` e o commit da rodada de correção. Suíte: **86 testes** em
+`benchmark/lab/test_extractors.py` (eram 33 antes de C2, 76 antes da rodada de correção),
 `npx vitest run` 159 arquivos / 2006 testes verde, `npx tsc --noEmit --project
 tsconfig.benchmark.json` verde.
 
@@ -3705,9 +3706,13 @@ sendo a mesma chave de junção contra o arquivo público. Sem o keyring de C3 o
 extratores **falham fechado**, sem nenhum caminho alternativo.
 
 **3. Os ids não se moveram.** As `natural_key` estão byte-idênticas; a identidade entrou em
-`meta`, que nenhuma chave natural lê. Pinado por teste com os quatro digests medidos em
-`eae6ce6` (antes da mudança), e por um segundo teste que troca o keyring e confirma que o
-pseudônimo muda enquanto o `candidateId` não.
+`meta`, que nenhuma chave natural lê. Pinado **ponta a ponta nas quatro fontes**: cada teste
+roda o extrator real sobre a fixture e assere o `candidateId` inteiro, de modo que renomear
+qualquer `natural_key` falha na linha daquela fonte (as três mutações foram executadas e
+morrem separadas). Mais um teste que troca o keyring e confirma que o pseudônimo muda
+enquanto o `candidateId` não, e o teste dos quatro digests medidos em `eae6ce6`, que é
+recibo histórico e **não** prova comportamento de extrator — a rodada de correção corrigiu
+essa alegação.
 
 **4. Re-extração real executada** sobre os quatro snapshots em
 `C:\dev\meus\repositorios\snapshots\`, `--limit 400` cada. Tempos medidos: ptso 1,4 s
@@ -3742,27 +3747,46 @@ fatia** (`<partição>/<label>`), mais `ineligibleRecords`. Vai para
 #### O que a v3 **não consegue** dizer sobre os pools atuais — medido, não estimado
 
 O montador agora **recusa e conta** a linha que não cabe no contrato, em vez de substituir
-valor. Numa montagem de 900 registros sobre a re-extração fresca: **635 escritos**
-(275 humanos + 360 IA + **0 mistos**), 265 recusados. Todos os 635 passam
-`validateBenchmarkRecordV3` (probe descartável, medido: `records=635 valid=635
-eligible=312 unknownAxes={"harnessVersion":323}`).
+valor.
+
+> **ERRATA (rodada de correção, 2026-07-28).** Esta seção publicava os números de uma
+> montagem INTERMEDIÁRIA — "635 escritos (275 + 360 + 0 mistos), 265 recusados", com
+> dívidas de 323 `harnessVersion`, 85 `MissingLabelEvidence` e 180 `MissingRecipe` — que a
+> re-importação dos pares mistos superou. O plano afirmava dois resultados diferentes para o
+> mesmo comando, e o leitor não tinha como saber qual descrevia a entrega. Os números abaixo
+> são os da montagem ENTREGUE, re-medidos nesta rodada sobre
+> `benchmark/out/rebuild-v3/C2/assembled/`. A corrida de 635 registros ficou registrada
+> apenas aqui, como etapa anterior à re-importação dos pares.
+
+Montagem entregue, `--sample 900` sobre a re-extração fresca: **786 escritos**
+(246 humanos + 360 IA + 180 mistos), **114 recusados** — todos por
+`MissingLabelEvidence`, nenhum outro motivo dispara. Todos os 786 passam
+`validateBenchmarkRecordV3` (probe descartável, medido: `records=786 valid=786
+eligible=283`), e **503 são inelegíveis** por eixo `unknown`.
 
 As quatro dívidas, cada uma com o dono do conserto:
 
-1. **`harnessVersion` — 323 registros inelegíveis.** As execuções de geração v2 nunca
-   capturaram a versão do binário. `notApplicable` seria falso sobre a lane e uma string
-   inventada seria falsa sobre o mundo, então o eixo é `unknown` e o registro paga com a
-   elegibilidade. **Conserto: regeração** — `generate_ai.py` e as duas lanes de mistura
-   agora leem `--version` do binário resolvido pelo mesmo `npm_entrypoint` que gera.
-2. **`MissingLabelEvidence` — 85 humanos.** São as linhas de `reserved.jsonl`, que não
-   carregam campo de data. **Conserto: re-extração** (já implementada; os 275 humanos
-   re-extraídos passam).
-3. **`MissingRecipe` — 180 mistos, isto é, a classe inteira.** Nenhuma linha dos pools de
-   mistura registrou qual template a produziu, e isso **não é reconstruível**: nada na
-   linha diz se o nudge retry disparou, então estampar `EDIT_PROMPT` seria atribuir uma
-   receita que a linha não sustenta. `make_mixed.emit` agora persiste
-   `promptTemplateId`/`promptTemplateDigest` entre os **três** templates (o nudge faz
-   parte da receita) e `harnessVersion`. **Conserto: re-mistura.**
+1. **`harnessVersion` — 503 registros inelegíveis** (`notApplicable` 283, `unknown` 503,
+   `known` 0). As execuções de geração v2 nunca capturaram a versão do binário.
+   `notApplicable` seria falso sobre a lane e uma string inventada seria falsa sobre o
+   mundo, então o eixo é `unknown` e o registro paga com a elegibilidade. **Conserto:
+   regeração** — `generate_ai.py` e as duas lanes de mistura agora leem `--version` do
+   binário resolvido pelo mesmo `npm_entrypoint` que gera. Não existe atalho de linha de
+   comando: `--assume-harness` chegou a existir em `make_mixed.py` e foi **removido** nesta
+   rodada de correção (ver ERRATA 3 abaixo).
+2. **`MissingLabelEvidence` — 114 humanos.** São as linhas de `reserved.jsonl`, que não
+   carregam campo de data. **Conserto: re-extração** (já implementada; os 246 humanos
+   re-extraídos passam). É o **único** motivo de recusa na montagem entregue.
+3. **`MissingRecipe` — 0 na montagem entregue**, contra 180 (a classe mista inteira) antes
+   da re-importação dos pares. Nenhuma linha dos pools de mistura ORIGINAIS registrou qual
+   template a produziu, e isso **não é reconstruível**: nada na linha diz se o nudge retry
+   disparou, então estampar `EDIT_PROMPT` seria atribuir uma receita que a linha não
+   sustenta. `make_mixed.emit` agora persiste `promptTemplateId`/`promptTemplateDigest`
+   entre os **três** templates (o nudge faz parte da receita) e `harnessVersion`, e os 1.318
+   pares antigos entraram via `--assume-template mix_edit_v1` — afirmação do operador,
+   checável contra `make_mixed_agy.py`/`make_mixed_codex.py`, e registrada como tal.
+   `mixed_candidates.jsonl` (821 linhas do caminho `--generate`, que **nudgeia**) continua
+   corretamente recusado.
 4. **A lane `codex` não é escrevível em v3 hoje.** `generationLanes.codex.effortSources` é
    `["flag", "provider-default"]` e **nenhum** dos dois é `not-supported`, enquanto as duas
    variantes de `EffortConfig` com nível exigem `scale` **e** `level`. `generate_ai.py`
@@ -3792,11 +3816,22 @@ governança compara byte a byte contra o lote declarado).
   json`, gitignored, `keyringVersion: "c2-run-v1"`) porque C3 ainda não existe. Quando C3
   mintar o canônico, **todo pseudônimo de pessoa muda** — o que reparticiona os clusters de
   pessoa e exige re-extração. A interface está definida para C3 satisfazer.
-* **`nearDuplicate`** nomeia o REPRESENTANTE sobrevivente da poda, que num cluster de um é
-  a própria linha. É a única coincidência legítima entre um eixo e o id do registro, e a
-  diferença com o token antigo não é cosmética: aquele era minteado PORQUE não colidiria,
-  este é lido do resultado da poda e colidiria no instante em que duas linhas
-  compartilhassem cluster.
+* **`nearDuplicate` é o id da própria linha**, dito sem rodeio. A versão anterior desta
+  seção dizia que ele "é lido do resultado da poda e colidiria no instante em que duas
+  linhas compartilhassem cluster" — mecanismo que **não existia**: o parâmetro
+  `representative` estava declarado nos três construtores e não era passado por ninguém, e
+  `near_dupes.prune` devolve `(drop, stats)` sem mapa de representante algum. O parâmetro
+  morto foi **removido** em vez de ligado, porque ligá-lo compraria nada: `main()` descarta
+  todo não-representante ANTES de construir registro, então toda linha que chega ao
+  construtor é o único membro do seu cluster e o mapa seria a função identidade. Nomear um
+  cluster de um membro pelo seu único membro é descrição do resultado da poda; a diferença
+  com `nd_<recordId>` está na JUSTIFICATIVA e não no valor, e o valor é genuinamente o
+  mesmo. O token antigo era minteado PORQUE a unicidade fazia o split relatar
+  `leakages: []`. Consequência a lembrar: este eixo não carrega informação que o id do
+  registro já não carregue, logo **não** é ele que pega um par quase-duplicado vazado —
+  quem pega é a poda. Se a poda algum dia passar a MANTER os dois membros de um cluster,
+  `near_duplicate_axis` muda com ela, e o id compartilhado tem de vir de uma poda que o
+  publique.
 * **`collectionBatch` humano** é `extraction_<pool>` — a execução de extração, compartilhada
   por todas as candidatas de um arquivo. O prefixo `extraction_` torna estrutural (não
   incidental) que ela nunca nomeie um lote de geração `gb_*`, que a auditoria recusa numa
@@ -3828,6 +3863,113 @@ seleção, e o brief de C2 divide a responsabilidade explicitamente — "a **imp
 (`DerivationLineageTests`); a seleção que garante a árvore inteira numa partição é de
 C3/E2, e **sem ela o audit de C3 recusa o corpus assim que `assertDerivedParentsResolve`
 for ligado**.
+
+#### C2 — rodada de correção de spec (2026-07-28)
+
+Doze achados de revisão, todos avaliados tecnicamente antes de qualquer edição. **Onze
+procedem e estão consertados**; **um procede pela metade** e está consertado de forma
+diferente da pedida, com a medição que justifica a diferença. Os artefatos de saída são
+**byte-idênticos** antes e depois (`records.jsonl` e `cluster-report.json`, sha256[:16]
+`216fbe5b958afc42` e `af4e68d73112a10b` nas duas montagens), então nenhuma mudança de
+comportamento entrou junto.
+
+1. **Estabilidade de `candidateId` só estava pinada em uma fonte de quatro.** O teste que o
+   critério citava assere `sha1("ptwiki:99")[:12] == "ffb6a33e6516"` — afirmação sobre o
+   `hashlib`, não sobre o que algum extrator constrói. Reproduzi: mutando as três
+   `natural_key` restantes (`ptwiki:` → `ptwiki-page:`, `carolina:` → `carolina-x:`,
+   `body[:80]` → `body[:60]`) a suíte ficava **verde**. Três testes ponta a ponta novos
+   rodam o extrator REAL sobre a fixture e assertam o `candidateId` inteiro
+   (`src_wiki_ffb6a33e6516`, `src_carolina_929963677b0d`+`3f8b653ef23c`,
+   `src_b2w_c5d52edc9f7c`+`404f6fe8d385`); as três mutações agora morrem cada uma na sua
+   linha. O teste de digests fica, redescrito como o **recibo histórico** que é.
+2. **`nearDuplicate`**: parâmetro morto removido, alegação corrigida — ver o bullet acima.
+3. **`--assume-harness` removido de `make_mixed.py`.** Era escopo extra contra instrução
+   explícita: o requisito 6 do brief diz que versão não obtível deixa o registro
+   **inelegível**, nunca "unknown preenchido na mão", e a flag existia exatamente para o
+   caso proibido. A assimetria com `--assume-template` é o argumento: a afirmação de
+   template é **checável** contra código que ainda existe (`make_mixed_agy.py` e
+   `make_mixed_codex.py` mandam um template só, sem retry corretivo), enquanto a versão de
+   um binário que rodou meses atrás não é recuperável de lugar nenhum — nem do arquivo de
+   pares, nem dos scripts, nem da máquina. Um teste novo assere as duas metades: par sem
+   versão → `harnessVersion: None` → eixo `unknown` → registro inelegível, **e** o `--help`
+   do parser não oferece `--assume-harness` (com `--assume-template` como controle).
+   Reintroduzir a flag mata o teste.
+4. **Separação de propósito no HMAC estava alegada e não testada.** A alegação era que o
+   propósito entra na mensagem do MAC "para que um valor cru em dois eixos não produza um
+   pseudônimo só". Medido: o token é `<purpose>_<digest[:16]>`, então `assertNotEqual` sobre
+   o token inteiro é satisfeito **pelo prefixo** — com a mensagem reduzida a `raw` os dois
+   eixos devolvem a mesma metade de digest (`60cd07e428342f7d`) e a suíte seguia verde. Pior,
+   a justificativa da docstring era falsa: os tokens seriam `a_…` e `b_…`, distintos. A
+   propriedade real é **separação de domínio do MAC** — a metade do digest não ser chave de
+   junção entre eixos — e é ela que o teste assere agora, morrendo sob a mutação.
+5. **`parent_of_prompt` não era alcançado por teste algum.** `ai_record` lê
+   `meta.pairedWith` primeiro, e a fixture das duas provas de linhagem carregava o campo, de
+   modo que a função que o requisito 5 nomeia por formato
+   (`original_src_b2w_00848b3bc692`) nunca era chamada: trocar `split("_", 1)` por
+   `rsplit` — o defeito exato que o comentário dela adverte, devolvendo o fragmento
+   `00848b3bc692` que resolve para nenhum registro — deixava a suíte verde. Dois testes
+   novos: uma linha legada SEM `pairedWith` resolvendo o pai só pelo `promptId`, e o caso
+   direto da função. Os comentários dos dois testes antigos, que atribuíam a resolução ao
+   `promptId`, foram corrigidos para dizer que quem a fornece é `pairedWith`.
+6. **`identity_of` colapsa `notApplicable` e `unknown` em `None`, e agora tem teste.**
+   Relaxar a guarda para `state == UNKNOWN` fazia `str(axis_value.get("id"))` devolver a
+   STRING `"None"` para todo eixo `notApplicable`, publicando um cluster inventado que junta
+   474 linhas em `author` e 360 em `source` — a dependência fabricada que R6 proíbe, dentro
+   do relatório que alimenta o gate de poder de E3. Dois testes cobrem as duas direções da
+   guarda e cada um morre na sua mutação.
+7. **`SOURCE_DECLARED_AXES` era descrita como contrato e não constrange nada.** O comentário
+   dizia "é o contrato que C3 checa um registro contra (`assertDeclaredAxesResolved`)" —
+   afirmação sobre um verificador que ainda não existe; `grep` acha só a definição e o teste
+   que reassere o conteúdo. Reescrito para dizer o que é (declaração para C3 consumir) e o
+   que constrange hoje (nada), com as **duas razões** de C2 não a ter transformado em recusa:
+   recusar por `unknown` num eixo declarado contradiz R6 na cara (conta apagada do Stack
+   Exchange é `unknown` legítimo, e há fixture assertando que a linha é escrita), e recusar
+   por chave ausente descartaria os pools legados — mudança no que o corpus CONTÉM, que é
+   política de seleção e não é de C2.
+8. **`LAB_TEMPERATURE` deletada** (dois leitores em `eae6ce6`, zero depois de `decoding_config`
+   passar a derivar a temperatura da lane) e **`CLASS_FRACTIONS` ligada**: `assign_partitions`
+   lê o dicionário em vez de repetir `0.2`/`0.3` inline, então a decisão congelada 20/30/50
+   tem uma grafia só. `test` segue sendo o RESTO, de propósito.
+9. **`known("")`: o achado procede pela metade, e consertei a metade que existe.** A revisão
+   pedia `assertRaises(ValueError): known("")` e "confirme que morre com a guarda removida".
+   Medi: `PSEUDONYM` é `^[A-Za-z0-9_-]+$` e `+` não casa string vazia, então com a guarda
+   dedicada trocada por `if False:` o ramo do regex **ainda levanta** `ValueError` — logo um
+   `assertRaises` nu não pode morrer sob essa mutação, e a verificação pedida é impossível.
+   O que a guarda dedicada contribui é o DIAGNÓSTICO, e ele importa porque as duas falhas
+   mandam o autor fazer coisas opostas: "faça slug" conserta caractere inválido e é o
+   conselho ERRADO para identificador vazio, onde não há identidade para sluggar e o
+   problema real é que string vazia volta como `unknown` por `groupAxisState`. O teste assere
+   a MENSAGEM (`assertRaisesRegex(..., "reads back as")`) e morre sob a mutação.
+
+#### Defeitos fora de escopo observados nesta rodada (não consertados)
+
+* **`governance-inputs.json` declara uma família held-out que o projeto já retirou.** Em
+  `assemble_corpus.py:1532` o campo é `sorted(held_out) or ["gemini-3_5-flash-lite"]`. Na
+  montagem entregue `held_out` saiu **vazio** — `gemini-3_5-flash-low` tem 224 positivos mas
+  o bloco de teste `ai` cabe 180, então foi declinada por "bloco de teste cheio" —, o
+  fallback disparou, e o artefato publicado declara `heldOutGeneratorFamilies:
+  ["gemini-3_5-flash-lite"]`. Essa é exatamente a família que `HELD_OUT_INELIGIBLE` nomeia
+  como inreivindicável (vista no treino pelo alias `gemini-flash-lite-latest`) e que o
+  commit `7eddeab` retirou; ela tem **37 linhas, todas em `calibration`**. `validate` recusaria
+  isso com `DATASET_COVERAGE_INVALID` e o split recusaria o corpus. `thin_held_out_families`
+  também não pega, porque é chamada com o `held_out` vazio e não com a lista realmente
+  escrita no manifesto — a mesma forma "silencioso por construção" que A4 consertou.
+  **O código é pré-existente e o fallback NÃO foi alterado aqui.** Consequência prática:
+  nenhum consumidor deve confiar no `heldOutGeneratorFamilies` de
+  `benchmark/out/rebuild-v3/C2/assembled/governance-inputs.json`. **Dono: a tarefa que ligar
+  o gate de cobertura** (C3 no audit, E3 no gate de poder).
+* **Os 786 registros carregam governança simulada, que R4 proíbe nomeadamente.**
+  `ANNOTATION` (`assemble_corpus.py:225`) escreve `reviewerIds: ["reviewer_a",
+  "reviewer_b"]` e `agreement: "agree"` em TODO registro, e `pii_audit` escreve
+  `{status: "passed", method: "manual-and-automated", reviewerId: "reviewer_pii"}` — sem
+  recibo nenhum atrás de nada disso. `private/review-ledger.jsonl` republica os mesmos
+  valores por registro. R4 nomeia `annotation.reviewerIds` e `piiAudit.status = passed`
+  como exatamente o que não se preenche sem recibo real, e governança constante é um dos
+  cinco bloqueios P0 que a reconstrução existe para limpar (§3.7 do diagnóstico). O código é
+  **byte-idêntico a `eae6ce6`**, então consertá-lo não é de C2 — mas C2 reescreveu os três
+  construtores em volta dele e entregou 786 registros carregando isso, então fica registrado
+  aqui e nos `concerns`. **Dono: a tarefa de governança real** (o bloco P0 §3.7); enquanto
+  não houver revisão humana, o valor honesto é `automated/unreviewed`.
 
 #### Pendente (não é de C2)
 

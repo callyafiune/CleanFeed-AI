@@ -62,10 +62,12 @@ CANONICAL_KEYRING = (
 KEYRING_ENV = "CLEANFEED_CLUSTER_KEYRING"
 
 # The purpose label of the only person-carrying axis pair we have. A purpose is
-# NOT decoration: it is mixed into the MAC so that one raw value seen on two axes
-# does not produce one pseudonym. A reviewer whose id happens to equal a Stack
-# Exchange user id must not join those two rows into one cluster, because they are
-# two different people and the collision would be an invented dependence.
+# NOT decoration: it is mixed into the MAC MESSAGE so that one raw value seen on
+# two axes does not produce one MAC. The token would differ by its prefix either
+# way; it is the DIGEST that must differ, because the digest is what survives as a
+# join key. A reviewer whose id happens to equal a Stack Exchange user id must not
+# be re-identifiable as one person across those two axes, and the two rows must not
+# join into one cluster, because that collision would be an invented dependence.
 PERSON_PURPOSE = "person"
 
 # 32 hex characters = 16 bytes. Below that the secret itself is brute-forceable,
@@ -103,12 +105,21 @@ class ClusterKeyring:
     def pseudonym(self, purpose: str, raw: str) -> str:
         """`<purpose>_<hmac-sha256(secret, purpose | raw)[:16]>`.
 
-        The purpose is BOTH the key selector and part of the MAC input. Selecting
-        the key alone would not be enough: C3 may legitimately issue one secret
-        for several purposes (the fixture keyring in the tests does), and then two
-        axes sharing a secret would produce the same pseudonym for the same raw
-        value. Mixing the purpose in makes the separation a property of the MAC
-        rather than of how the keyring happens to be provisioned.
+        The purpose is BOTH the key selector and part of the MAC input, and the
+        reason is MAC DOMAIN SEPARATION rather than token distinctness. The token
+        already carries the purpose as a prefix, so two axes would come out as
+        `a_<hex>` and `b_<hex>` and never collide as strings even with the purpose
+        left out of the message — an earlier version of this docstring claimed they
+        would, which is false and was measured to be false. What mixing the purpose
+        in buys is that the DIGEST HALF differs: with the message reduced to `raw`
+        and one secret shared across purposes (C3 may legitimately issue one, and
+        the fixture keyring in the tests does), both axes MAC to the same 16 hex
+        characters — measured `60cd07e428342f7d` for `"40"` — and that hex is a
+        stable join key. It travels into the cluster report and into anything that
+        strips or ignores the prefix, so a reviewer id equal to a Stack Exchange
+        user id would be re-identifiable as one person across the two axes.
+        `test_the_purpose_separates_two_axes_of_the_same_raw_value` asserts the
+        digest half for exactly that reason and fails under that mutation.
 
         The separator is `\\x1f` (unit separator) rather than a printable
         character, because it cannot occur in either source identifier — so no

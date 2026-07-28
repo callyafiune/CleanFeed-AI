@@ -206,11 +206,33 @@ def identity_of(axis_value: dict | str | None) -> str | None:
 # `author` exists only where a single identifiable person wrote the text.
 #
 # The mapping is deliberately NOT "every axis every source could conceivably have".
-# It is the contract C3 checks a record against (`assertDeclaredAxesResolved`): an
-# axis listed here and left `unknown` means the extractor failed to recover
-# something the source HAS, and an axis listed here and marked `notApplicable`
-# means the record CONTRADICTS its own source. Both are refusals, and they are
+#
+# WHAT IT CONSTRAINS TODAY: nothing. It is a DECLARATION, consumed only by
+# `test_every_source_declares_the_axes_the_plan_fixes_for_it`, which pins its
+# contents against requirement 2 of the C2 brief. No production path reads it, and
+# no code checks that a ptso row actually carries the two axes named here — the
+# per-source fixture tests in `test_extractors.py` do that one source at a time. An
+# earlier version of this comment described it as "the contract C3 checks a record
+# against", which was a claim about a checker that does not exist yet.
+#
+# WHAT IT IS FOR: C3 to consume, as the input to `assertDeclaredAxesResolved`. The
+# intended reading there is that an axis listed here and left `unknown` means the
+# extractor failed to recover something the source HAS, while an axis listed here
+# and marked `notApplicable` means the record CONTRADICTS its own source — two
 # different mistakes.
+#
+# WHY C2 DID NOT TURN IT INTO A REFUSAL, since the table was sitting right here:
+#   * refusing a row for `unknown` on a declared axis would contradict R6 outright.
+#     `unknown` makes a record INELIGIBLE and is a legitimate state — a Stack
+#     Exchange post whose account was deleted is exactly that, and there is a
+#     fixture test asserting the row is written and marked `unknown`. Dropping it
+#     instead would delete the evidence that the gap exists;
+#   * refusing a row whose axis KEY is merely absent would drop the legacy candidate
+#     pools, which predate the extractors that emit these axes and which
+#     `human_record` deliberately reads as `unknown` with a written reason. That is a
+#     change to what the corpus CONTAINS, and C2 was told not to make selection
+#     decisions.
+# Both refusals are C3's to make against a corpus, with the split in front of it.
 #
 # Why ptwiki and Carolina declare no `author`:
 #   * a Wikipedia lead section is the accreted work of many editors, so there is no

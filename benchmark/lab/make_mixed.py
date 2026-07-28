@@ -254,13 +254,6 @@ def main() -> None:
         "par sem template FALHA em vez de supor",
     )
     parser.add_argument(
-        "--assume-harness",
-        default=None,
-        help="idem para a versão do binário editor de um arquivo de pares antigo. "
-        "Ausente => o eixo fica unknown e os registros ficam inelegíveis, que é o "
-        "resultado honesto",
-    )
-    parser.add_argument(
         "--nudge-retries",
         type=int,
         default=1,
@@ -329,7 +322,20 @@ def main() -> None:
                     # `mix_edit_v1` is what ran. A future pairs lane that nudges would
                     # break that, which is exactly why it must not be silent.
                     template_id=pair.get("promptTemplateId") or assumed_template,
-                    harness_version=pair.get("harnessVersion") or args.assume_harness,
+                    # ONLY what the pair file recorded, and no operator override. A
+                    # `--assume-harness` flag lived here and was removed: requirement
+                    # 6 of the C2 brief says outright that a version which cannot be
+                    # obtained leaves the record INELIGIBLE, and never an "unknown"
+                    # filled in by hand. The asymmetry with `--assume-template` above
+                    # is deliberate and not an oversight. A template assertion is
+                    # CHECKABLE from code that still exists — make_mixed_agy.py and
+                    # make_mixed_codex.py each send one template with no corrective
+                    # retry — while the version of a binary that ran months ago is
+                    # recoverable from nothing: not from the pairs file, not from the
+                    # scripts, not from the machine. Typing it would be inventing a
+                    # version string, and it would buy the row back its eligibility,
+                    # which is precisely the trade R6 forbids.
+                    harness_version=pair.get("harnessVersion"),
                 )
                 emitted += 1
             print(f"pares importados: {emitted} (fora da faixa: {skipped})")
