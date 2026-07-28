@@ -200,13 +200,8 @@ function selectionFprBoundProvenance(
   };
 }
 
-/**
- * Builds a fit-time `thresholdEvidence` block from the counts the search
- * produced. Single place that decides the two things a fit artifact may never get
- * wrong: the bound it publishes is the NOMINAL selection one, and the certified
- * bound is recorded as absent rather than filled with the nominal number.
- */
-export function selectionThresholdEvidence(counts: {
+/** Everything a `thresholdEvidence` block carries except the provenance block. */
+export interface ThresholdEvidenceCounts {
   documentThreshold: number;
   localizedThreshold: number | null;
   negatives: number;
@@ -215,7 +210,28 @@ export function selectionThresholdEvidence(counts: {
   positives: number;
   truePositives: number;
   recall: number;
-}): ThresholdEvidence {
+}
+
+/**
+ * The ONE constructor of a `thresholdEvidence` block, for both vintages. It
+ * decides two things a fit artifact may never get wrong — the bound it publishes
+ * is the NOMINAL selection one, and the certified bound is recorded as absent
+ * rather than filled with the nominal number — and one thing a REPUBLISHED block
+ * may never get wrong: the key order.
+ *
+ * Key order is load-bearing, not cosmetic. `evidence-sanitizer` writes the fit
+ * summary with `JSON.stringify(value, null, 2)`, and that file's sha256 enters
+ * the evidence inventory and `publicationDigest`. A second, hand-rolled builder
+ * in the reader produced the same fields in a different order, so a
+ * current-vintage block was republished with different BYTES from the ones the
+ * sealed artifact carries — a published bundle moving for identical inputs. So
+ * both `selectionThresholdEvidence` and `readThresholdEvidence` come through
+ * here, and nothing else builds this shape.
+ */
+function thresholdEvidenceBlock(
+  counts: ThresholdEvidenceCounts,
+  vintage: ThresholdFprBoundProvenance["vintage"],
+): ThresholdEvidence {
   return {
     documentThreshold: counts.documentThreshold,
     localizedThreshold: counts.localizedThreshold,
@@ -223,11 +239,38 @@ export function selectionThresholdEvidence(counts: {
     falsePositives: counts.falsePositives,
     selectionFprUpper95Nominal: counts.selectionFprUpper95Nominal,
     certifiedFprUpper: null,
-    fprBound: selectionFprBoundProvenance("current"),
+    fprBound: selectionFprBoundProvenance(vintage),
     positives: counts.positives,
     truePositives: counts.truePositives,
     recall: counts.recall,
   };
+}
+
+/**
+ * Builds a fit-time `thresholdEvidence` block from the counts the search
+ * produced. Stamps `vintage: "current"`, because a block this repository just
+ * computed is by definition not a historical read.
+ */
+export function selectionThresholdEvidence(
+  counts: ThresholdEvidenceCounts,
+): ThresholdEvidence {
+  return thresholdEvidenceBlock(counts, "current");
+}
+
+/**
+ * A field of a threshold block, checked to be a finite number before it is
+ * republished. The name is in the message because "some count is wrong" does not
+ * tell an operator which artifact field to go look at.
+ */
+function requireFiniteNumber(value: unknown, field: string): number {
+  if (typeof value !== "number" || !Number.isFinite(value)) {
+    fail(
+      `frozen threshold evidence field \`${field}\` is not a finite number ` +
+        `(got ${typeof value === "number" ? String(value) : typeof value}): ` +
+        "a threshold block is republished whole or not at all",
+    );
+  }
+  return value;
 }
 
 /**
@@ -240,20 +283,42 @@ export function selectionThresholdEvidence(counts: {
  * That is deliberate — `validateFrozenCalibrationArtifact` recomputes the digest
  * over the object as read from disk, and normalizing before validating would
  * make every pre-A7 fit fail its own seal.
+ *
+ * Fail-closed over the WHOLE block, not just the bound. The block arrives as
+ * `readJsonFile(...) as FrozenCalibrationArtifact` and the only validation it
+ * passed is `validateFrozenCalibrationArtifact`, which recomputes
+ * `artifactDigest` and checks no field's type. A bound whose `negatives` and
+ * `falsePositives` are missing cannot be re-derived by an auditor, which is the
+ * same defect as no bound at all — so every count and threshold is required to be
+ * a finite number here (`localizedThreshold` may also be `null`, which is a real
+ * state: a warning path with no localized threshold).
  */
 export function readThresholdEvidence(
   evidence: ThresholdEvidence | LegacyThresholdEvidencePreA7,
 ): ThresholdEvidence {
-  // Shared by both vintages, so read before deciding which one this is.
+  // Shared by both vintages, so read before deciding which one this is. The
+  // bound is the one field whose NAME depends on the vintage, so it is added by
+  // the branch below.
   const counts = {
-    documentThreshold: evidence.documentThreshold,
-    localizedThreshold: evidence.localizedThreshold,
-    negatives: evidence.negatives,
-    falsePositives: evidence.falsePositives,
-    certifiedFprUpper: null,
-    positives: evidence.positives,
-    truePositives: evidence.truePositives,
-    recall: evidence.recall,
+    documentThreshold: requireFiniteNumber(
+      evidence.documentThreshold,
+      "documentThreshold",
+    ),
+    localizedThreshold:
+      evidence.localizedThreshold === null
+        ? null
+        : requireFiniteNumber(
+            evidence.localizedThreshold,
+            "localizedThreshold",
+          ),
+    negatives: requireFiniteNumber(evidence.negatives, "negatives"),
+    falsePositives: requireFiniteNumber(
+      evidence.falsePositives,
+      "falsePositives",
+    ),
+    positives: requireFiniteNumber(evidence.positives, "positives"),
+    truePositives: requireFiniteNumber(evidence.truePositives, "truePositives"),
+    recall: requireFiniteNumber(evidence.recall, "recall"),
   } as const;
   if ("selectionFprUpper95Nominal" in evidence) {
     // Both names at once is the shape a migration tool would write mid-flight.
@@ -265,19 +330,27 @@ export function readThresholdEvidence(
           "the pre-A7 fprUpper95: refusing to guess which bound is authoritative",
       );
     }
+    // Division of labour with `requireFiniteNumber` below: absent or non-numeric
+    // is "no bound under either name", which is its own diagnosis and its own
+    // message; NaN and Infinity are numbers, so the finite check catches those.
     if (typeof evidence.selectionFprUpper95Nominal !== "number") {
       fail(NO_FPR_BOUND_MESSAGE);
     }
-    return {
-      ...counts,
-      selectionFprUpper95Nominal: evidence.selectionFprUpper95Nominal,
-      // Derived, never copied from disk: this block is what THIS module asserts
-      // about the number it just read, not data to be trusted from the file. It
-      // is a constant apart from `vintage`, and only the branch taken here can
-      // know that. So a block cannot arrive without provenance, or with a
-      // vintage that contradicts the name it uses.
-      fprBound: selectionFprBoundProvenance("current"),
-    };
+    // The provenance is derived by the constructor, never copied from disk: that
+    // block is what THIS module asserts about the number it just read, not data
+    // to be trusted from the file. It is a constant apart from `vintage`, and
+    // only the branch taken here can know the vintage. So a block cannot arrive
+    // without provenance, or with a vintage that contradicts the name it uses.
+    return thresholdEvidenceBlock(
+      {
+        ...counts,
+        selectionFprUpper95Nominal: requireFiniteNumber(
+          evidence.selectionFprUpper95Nominal,
+          "selectionFprUpper95Nominal",
+        ),
+      },
+      "current",
+    );
   }
   // Neither name, or a non-numeric one. This used to fall into the branch above,
   // where `selectionFprUpper95Nominal` became `undefined`, JSON.stringify
@@ -285,11 +358,16 @@ export function readThresholdEvidence(
   // stamped `vintage: "current"`. Publishing no bound silently is the one thing
   // this function exists to prevent, so it fails closed instead.
   if (typeof evidence.fprUpper95 !== "number") fail(NO_FPR_BOUND_MESSAGE);
-  return {
-    ...counts,
-    selectionFprUpper95Nominal: evidence.fprUpper95,
-    fprBound: selectionFprBoundProvenance("legacy-pre-a7"),
-  };
+  return thresholdEvidenceBlock(
+    {
+      ...counts,
+      selectionFprUpper95Nominal: requireFiniteNumber(
+        evidence.fprUpper95,
+        "fprUpper95",
+      ),
+    },
+    "legacy-pre-a7",
+  );
 }
 
 export interface FrozenCalibrationArtifact {

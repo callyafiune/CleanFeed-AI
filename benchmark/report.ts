@@ -51,6 +51,20 @@ import type { SplitAudit } from "./split-audit.ts";
 export const SPLIT_STRATEGY = "blocked-group-time-v1" as const;
 export type SplitStrategy = typeof SPLIT_STRATEGY;
 
+// The two FPR upper bounds the frozen-threshold table publishes per row. They
+// live here, once, because the release section's prose points an auditor at ONE
+// of them by name: `SIMULTANEOUS_FPR_COLUMN` is the cell a release gate reads
+// (`evaluateReleaseGates` requires `estimate.simultaneous` and fails with
+// `missing-simultaneous-interval` rather than falling back), while
+// `DESCRIPTIVE_FPR_COLUMN` is the individual 95% interval, uncorrected over the
+// gate family, which certifies nothing. Hand-copying either label into the
+// paragraph let a rename of the header desynchronize the two silently: the
+// published `benchmark-report.md` would then point at a column that does not
+// exist, leaving the descriptive bound as the only recognizable one — the exact
+// misreading R7 forbids. One constant per label makes that impossible.
+const SIMULTANEOUS_FPR_COLUMN = "FPR (limite simultâneo)";
+const DESCRIPTIVE_FPR_COLUMN = "FPR (UCB95 descritivo)";
+
 /** Coded, fail-closed error raised when the active identity diverges from the frozen seal. */
 export class ReportGovernanceError extends Error {
   constructor(message: string) {
@@ -471,12 +485,12 @@ export function renderReportMarkdown(report: BenchmarkReport): string {
     // tabela": a paragraph written to kill an overclaim must not leave the
     // reader to pick a column.
     lines.push(
-      "O limite de FPR **certificado** é a célula `FPR (limite simultâneo)` da " +
+      `O limite de FPR **certificado** é a célula \`${SIMULTANEOUS_FPR_COLUMN}\` da ` +
         "tabela abaixo: medida uma única vez no **teste cego**, no limiar já " +
         "congelado, com correção de multiplicidade de Bonferroni " +
         "(`alpha_família/m`). É essa coluna — e nenhuma outra — que o gate de " +
         "release lê; sem ela o gate reprova por `missing-simultaneous-interval` " +
-        "em vez de cair no limite individual. A coluna `FPR (UCB95 descritivo)` " +
+        `em vez de cair no limite individual. A coluna \`${DESCRIPTIVE_FPR_COLUMN}\` ` +
         "é o intervalo individual de 95%, sem correção sobre a família de gates: " +
         "é **descritiva** e **não certifica** nada. O número gravado no artefato " +
         "de calibração sob `selectionFprUpper95Nominal` é o limite de Wilson " +
@@ -835,8 +849,11 @@ function frozenThresholdTable(
   const lines: string[] = [];
   lines.push(`### ${subject}`);
   lines.push("");
+  // Both bound columns come from the shared constants, so the release section's
+  // prose and this header can never name different cells.
   lines.push(
-    "| Papel | Família | Recall | Recall (LCB95 descritivo) | FPR | FPR (UCB95 descritivo) | FPR (limite simultâneo) | Taxa de erro |",
+    "| Papel | Família | Recall | Recall (LCB95 descritivo) | FPR | " +
+      `${DESCRIPTIVE_FPR_COLUMN} | ${SIMULTANEOUS_FPR_COLUMN} | Taxa de erro |`,
   );
   lines.push("| --- | --- | --- | --- | --- | --- | --- | --- |");
   const row = (

@@ -700,6 +700,76 @@ describe("the frozen artifact never presents a selection bound as certified", ()
     ).toThrow(/threshold evidence carries no FPR bound/iu);
   });
 
+  it("re-emits a current block byte-for-byte, key order included", () => {
+    // `toEqual` is order-blind, and `fit-summary.json` is written with
+    // `JSON.stringify(value, null, 2)` whose sha256 enters the evidence
+    // inventory and `publicationDigest`. So a reader that rebuilds the block
+    // field by field can republish a current-vintage block with different BYTES
+    // from the ones the sealed artifact carries, moving a published bundle
+    // between commits for identical inputs. Measured before the fix: emitter key
+    // order was [...,selectionFprUpper95Nominal,certifiedFprUpper,fprBound,
+    // positives,...] and the reader's was [...,certifiedFprUpper,positives,...,
+    // selectionFprUpper95Nominal,fprBound]. One constructor now decides both.
+    const current = calibrationResult.thresholdEvidence.warning;
+    const read = readThresholdEvidence(current);
+    expect(Object.keys(read)).toEqual(Object.keys(current));
+    expect(JSON.stringify(read, null, 2)).toBe(
+      JSON.stringify(current, null, 2),
+    );
+  });
+
+  it("refuses a block whose counts or thresholds are not numbers", () => {
+    // The bound's own denominator arrives by the same route the bound does:
+    // `readJsonFile(...) as FrozenCalibrationArtifact`, validated only by
+    // `validateFrozenCalibrationArtifact`, which recomputes `artifactDigest` and
+    // checks no field. Measured before the fix:
+    // `readThresholdEvidence({ selectionFprUpper95Nominal: 0.03 })` returned a
+    // block whose six counts were `undefined`, `JSON.stringify` dropped the keys,
+    // `assertSanitized` did not object, and `fit-summary.json` published an FPR
+    // bound with NO denominator stamped `vintage: "current"`. A bound an auditor
+    // cannot re-derive is the same defect as no bound at all, so the read is
+    // fail-closed over the whole block, not just the bound.
+    const complete = {
+      ...PRE_A7_WARNING_EVIDENCE,
+      fprUpper95: undefined,
+      selectionFprUpper95Nominal: 0.03,
+    };
+    delete (complete as Record<string, unknown>).fprUpper95;
+    for (const field of [
+      "documentThreshold",
+      "localizedThreshold",
+      "negatives",
+      "falsePositives",
+      "positives",
+      "truePositives",
+      "recall",
+    ] as const) {
+      for (const bad of [
+        undefined,
+        "0.7",
+        Number.NaN,
+        Number.POSITIVE_INFINITY,
+      ]) {
+        const broken: Record<string, unknown> = { ...complete, [field]: bad };
+        if (bad === undefined) delete broken[field];
+        expect(() =>
+          readThresholdEvidence(broken as unknown as ThresholdEvidence),
+        ).toThrow(CalibrationPipelineError);
+        expect(() =>
+          readThresholdEvidence(broken as unknown as ThresholdEvidence),
+        ).toThrow(new RegExp(field, "u"));
+      }
+    }
+    // `localizedThreshold` is legitimately null — the warning path can have no
+    // localized threshold — so null must survive where a string may not.
+    expect(
+      readThresholdEvidence({
+        ...complete,
+        localizedThreshold: null,
+      } as unknown as ThresholdEvidence).localizedThreshold,
+    ).toBeNull();
+  });
+
   it("refuses a block that names both bounds rather than dropping the old one", () => {
     // The transition shape: a migration tool that writes the new name while
     // leaving the old one behind. Read as "current", the legacy value would be

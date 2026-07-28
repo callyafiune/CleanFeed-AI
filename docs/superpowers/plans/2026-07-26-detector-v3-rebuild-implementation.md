@@ -2149,6 +2149,61 @@ a matemática seguiu intacta.
    nenhum membro de `EVALUATOR_FILES` mudou. Nesta rodada as mutações foram revertidas por
    **cópia de backup**, não por `git checkout --`, para não reintroduzir o CRLF.
 
+**Segunda rodada de correção de A7 (2026-07-27).** Três achados; os três foram
+**reproduzidos** antes de qualquer edição e nenhum foi refutado. Nenhum número se moveu (R3)
+e as seis funções de busca seguem byte-idênticas a HEAD.
+
+8. **O nome da célula era string mágica duplicada à mão, e nada acoplava as duas pontas.**
+   O item 4 acima resolveu o *conteúdo* do parágrafo, mas o rótulo
+   `FPR (limite simultâneo)` ficou escrito duas vezes em `report.ts`: no parágrafo e, 365
+   linhas adiante, no cabeçalho montado por `frozenThresholdTable`. Nenhum teste fixava o
+   cabeçalho (`grep "Papel"` em `report.test.ts` não achava nada), e o único lugar que
+   asseverava o literal era a regex **do parágrafo** — satisfeita pela prosa sozinha.
+   Medido, não argumentado: renomeando **só** o cabeçalho para `FPR (limite conjunto)` a
+   suíte inteira seguiu verde (`report.test.ts` 27/27), estado em que um
+   `benchmark-report.md` publicado (membro de `EVIDENCE_FILE_NAMES`) aponta para uma coluna
+   que não existe na tabela abaixo dele e deixa `FPR (UCB95 descritivo)` — justamente a que
+   o parágrafo diz não certificar nada — como a única cota reconhecível. É a mesma
+   desorientação de auditor do item 4, reabrível por um rename sem sinal de teste. Os dois
+   rótulos passaram a ser **uma constante de módulo cada** (`SIMULTANEOUS_FPR_COLUMN`,
+   `DESCRIPTIVE_FPR_COLUMN`), lidas pelo parágrafo **e** pelo cabeçalho, de modo que
+   dessincronizar virou impossível estruturalmente. Além disso um teste novo afirma o
+   acoplamento **sem** depender do literal: extrai toda coluna `` `FPR (...)` `` citada pelo
+   parágrafo e exige que cada uma apareça no cabeçalho renderizado. Sob o rename do
+   cabeçalho esse teste morre; sob rename **da constante** ele continua verde (as duas
+   pontas andam juntas) e morre só o teste que fixa o nome atual — que é o comportamento
+   certo, porque rename deliberado deve ser visível.
+9. **O guard de leitura era assimétrico: só a cota era checada.** Os oito campos restantes
+   eram copiados sem verificação de um valor que chega como
+   `readJsonFile(...) as FrozenCalibrationArtifact` e cuja única validação
+   (`validateFrozenCalibrationArtifact`) recomputa `artifactDigest` e **nada** de tipos.
+   Reproduzido: `readThresholdEvidence({ selectionFprUpper95Nominal: 0.03 })` devolvia
+   `{"certifiedFprUpper":null,"selectionFprUpper95Nominal":0.03,"fprBound":{…"vintage":"current"…}}`
+   — as seis contagens e os dois limiares viravam `undefined`, `JSON.stringify` derrubava as
+   chaves, `assertSanitized` não reclamava, e o `fit-summary.json` publicava uma cota de FPR
+   **sem denominador**, estampada `vintage: "current"`, em silêncio. Uma cota sem `negatives`
+   /`falsePositives` não é re-derivável por auditor, que é o mesmo defeito de não ter cota.
+   A leitura agora é fail-closed sobre o **bloco inteiro**: `requireFiniteNumber` por campo,
+   com o nome do campo na mensagem, e `localizedThreshold` aceitando `null` (estado real:
+   caminho de aviso sem limiar localizado). A alcançabilidade é a mesma classe do item 6
+   (artefato malformado mas consistente com o digest; nenhum comando do repo escreve um),
+   por isso é resíduo menor — mas a mensagem do guard não cobre mais do que o código faz.
+10. **Havia dois construtores da mesma forma, e eles discordavam na ordem das chaves.**
+    `selectionThresholdEvidence` dizia ser o "single place that decides" a forma do bloco,
+    enquanto `readThresholdEvidence` a remontava campo a campo. Medido sobre um bloco real:
+    emissor `[…, selectionFprUpper95Nominal, certifiedFprUpper, fprBound, positives, …]`;
+    leitor `[…, certifiedFprUpper, positives, …, selectionFprUpper95Nominal, fprBound]`, com
+    `JSON.stringify(emitido) === JSON.stringify(lido)` **falso**. Isso é byte-visível, não
+    cosmético: `evidence-sanitizer` escreve o resumo do fit com
+    `JSON.stringify(value, null, 2)` e o sha256 desse arquivo entra no inventário de
+    evidência e no `publicationDigest`, logo um bloco *current* era republicado com bytes
+    diferentes dos que o artefato selado carrega e o bundle publicado se moveu entre e0bce69
+    e 401ca25 para entradas idênticas. `toEqual` é cego a ordem e nenhum digest literal está
+    fixado, então nenhum teste via. Agora existe **um** construtor privado,
+    `thresholdEvidenceBlock(counts, vintage)`, por onde passam os dois vintages, e um teste
+    exige sobrevivência **byte a byte** (`Object.keys` iguais e `JSON.stringify(…, null, 2)`
+    idêntico), que é o que `toEqual` não sabe expressar.
+
 ---
 
 ## Fase B — Decisões fechadas que bloqueiam o resto

@@ -960,6 +960,34 @@ describe("renderReportMarkdown separates the certified FPR bound from the fit's"
     );
   });
 
+  it("points only at column names the frozen threshold table actually renders", async () => {
+    // The paragraph's whole job is to send an auditor to ONE cell. Naming the
+    // cell in prose is worthless if the header can be renamed without the prose
+    // following: the published `benchmark-report.md` would then point at a column
+    // that does not exist, leaving `FPR (UCB95 descritivo)` — the column the
+    // paragraph says certifies nothing — as the only recognizable upper bound.
+    // Measured: renaming the header cell to `FPR (limite conjunto)` left the
+    // whole suite green before this test existed. So the coupling is asserted
+    // here structurally, over whatever names the two sides use, and not against
+    // a literal that a rename would take with it.
+    const markdown = renderReportMarkdown(
+      await buildBenchmarkReport(baseInput()),
+    );
+    const release = section(markdown, "Métrica de release");
+    const header = release
+      .split("\n")
+      .find((line) => line.startsWith("| Papel |"));
+    expect(header).toBeDefined();
+    const quotedColumns = [
+      ...certifiedBoundParagraph(markdown).matchAll(/`(FPR \([^`]+\))`/gu),
+    ].map((match) => match[1]);
+    // Both bounds, or the paragraph is not doing the disambiguation at all.
+    expect(quotedColumns.length).toBeGreaterThanOrEqual(2);
+    for (const column of quotedColumns) {
+      expect(header as string).toContain(`| ${column} |`);
+    }
+  });
+
   it("does not promise that the artifact's certifiedFprUpper is ever filled in", async () => {
     const paragraph = certifiedBoundParagraph(
       renderReportMarkdown(await buildBenchmarkReport(baseInput())),
