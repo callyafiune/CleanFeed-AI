@@ -2677,7 +2677,9 @@ a agregação entre coortes que esta tarefa proíbe, entrando pela porta de trá
 9. **`?? 0` novos removidos.** `excludedEcologicalCohort` lia a fração num segundo acesso
    a `mixture`, com fallback 0 — que classificaria um mixture malformado como sub-piso, a
    direção favorável. Agora existe um único estreitamento (`mixedCohortOf`) que devolve
-   coorte e fração juntas. Em `gates.ts`, `action.recall.overall` deixou de usar
+   coorte e fração juntas — e o mesmo acesso duplo estava numa TERCEIRA função,
+   `mixedAtLeastHalfAi`, que é o denominador do gate `warning.mixed-recall`; as três
+   passam pelo mesmo estreitamento. Em `gates.ts`, `action.recall.overall` deixou de usar
    `authorization?.positives ?? 0`: `action.available` passou a exigir os DOIS blocos
    (`visualAction` e `actionAuthorization`, que `computeEvaluationMetrics` publica
    juntos), então `actionIntervalSpecs` estreita o par e lê um denominador não-nulo, e um

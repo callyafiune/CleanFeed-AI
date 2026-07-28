@@ -2466,11 +2466,17 @@ function mixedAtLeastHalfAi(
   items: readonly EvaluationItem[],
   generationMode: GenerationMode,
 ): MixedRecallBlock {
-  const strong = items.filter(
-    (item) =>
-      generationModeOf(item.record) === generationMode &&
-      (item.record.mixture?.aiFraction ?? 0) >= MATERIAL_ASSISTANCE_AI_FRACTION,
-  );
+  // One narrowing of `mixture` for both fields (`mixedCohortOf`), so the fraction
+  // of this GATED denominator can never arrive as a default. This is the third
+  // instance of that read; the other two are in `mixedByFraction` and
+  // `actionAuthorizationMetrics`.
+  const strong = items.filter((item) => {
+    const cohort = mixedCohortOf(item.record);
+    return (
+      cohort?.generationMode === generationMode &&
+      cohort.aiFraction >= MATERIAL_ASSISTANCE_AI_FRACTION
+    );
+  });
   const warned = strong.filter(
     (item) => isScoredItem(item) && item.warned,
   ).length;
