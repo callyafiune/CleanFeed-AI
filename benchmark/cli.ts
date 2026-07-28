@@ -20,6 +20,12 @@ import { argv, cwd, exit, stderr, stdout } from "node:process";
 import { fileURLToPath } from "node:url";
 
 import {
+  CLUSTER_LEDGER_ACTIONS,
+  runClusterLedger,
+  type ClusterLedgerAction,
+  type ClusterLedgerOptions,
+} from "./commands/cluster-ledger.ts";
+import {
   runConsumeHoldout,
   type ConsumeHoldoutOptions,
 } from "./commands/consume-holdout.ts";
@@ -49,9 +55,11 @@ import {
   runVerifyPublishedEvidence,
   type VerifyPublishedEvidenceOptions,
 } from "./commands/verify-published-evidence.ts";
+import { defaultClusterLedgerPaths } from "./cluster-exposure-ledger.ts";
 import type { Partition } from "./split.ts";
 
 export const BENCHMARK_COMMANDS = [
+  "cluster-ledger",
   "ingest",
   "validate",
   "split",
@@ -75,6 +83,11 @@ export interface CommonPaths {
 
 export interface ParsedCli {
   command: BenchmarkCommand;
+  /**
+   * The positional action, for the ONE command that takes one. Every other
+   * command is `--flag value` only, and an unexpected positional stays fatal.
+   */
+  action?: string;
   flags: Map<string, string | boolean>;
 }
 
@@ -94,6 +107,22 @@ export function parseCliArgs(args: readonly string[]): ParsedCli {
   ) {
     throw new CliError(`expected one of ${BENCHMARK_COMMANDS.join(", ")}`);
   }
+  // `cluster-ledger` carries a closed positional action, because that is how the
+  // plan freezes its surface: `cluster-ledger init|verify|preflight|record-pilot|
+  // commit-split|backup|restore`. The exception is exactly one command wide, and
+  // an unknown action is fatal here rather than inside the command module.
+  if (command === "cluster-ledger") {
+    const action = args[1];
+    if (
+      action === undefined ||
+      !(CLUSTER_LEDGER_ACTIONS as readonly string[]).includes(action)
+    ) {
+      throw new CliError(
+        `cluster-ledger expects one of ${CLUSTER_LEDGER_ACTIONS.join(", ")}`,
+      );
+    }
+    return { command, action, flags: parseFlagTokens(args.slice(2)) };
+  }
   return {
     command: command as BenchmarkCommand,
     flags: parseFlagTokens(args.slice(1)),
@@ -106,16 +135,21 @@ export async function runCli(args: readonly string[]): Promise<void> {
     stdout.write(usage());
     return;
   }
-  const { command, flags } = parseCliArgs(args);
-  const message = await dispatch(command, flags);
+  const { command, action, flags } = parseCliArgs(args);
+  const message = await dispatch(command, flags, action);
   stdout.write(`${message}\n`);
 }
 
 async function dispatch(
   command: BenchmarkCommand,
   flags: FlagMap,
+  action?: string,
 ): Promise<string> {
   switch (command) {
+    case "cluster-ledger":
+      return runClusterLedger(
+        buildClusterLedger(flags, action as ClusterLedgerAction),
+      );
     case "ingest":
       return runIngest(buildIngest(flags));
     case "validate":
@@ -196,6 +230,46 @@ function requireNumberFlag(flags: FlagMap, key: string): number {
 }
 
 // --- per-command option builders ------------------------------------------
+
+// The ledger paths default to the CANONICAL project-wide artifact, and the flags
+// exist so a test (or an operator inspecting a backup) can point at a fixture
+// directory instead. A fresh directory is not a fresh ledger: `init` refuses when
+// the keyring already carries a key, whatever path the ledger is given.
+function buildClusterLedger(
+  flags: FlagMap,
+  action: ClusterLedgerAction,
+): ClusterLedgerOptions {
+  assertKnownFlags(flags, [
+    "ledger",
+    "keyring",
+    "backup-root",
+    "occurred-at",
+    "request",
+    "backup",
+    "staged-split",
+    "split-out",
+  ]);
+  const defaults = defaultClusterLedgerPaths(cwd());
+  const options: ClusterLedgerOptions = {
+    action,
+    paths: {
+      ledgerPath: optionalFlag(flags, "ledger") ?? defaults.ledgerPath,
+      keyringPath: optionalFlag(flags, "keyring") ?? defaults.keyringPath,
+      backupRoot: optionalFlag(flags, "backup-root") ?? defaults.backupRoot,
+    },
+  };
+  const occurredAt = optionalFlag(flags, "occurred-at");
+  const request = optionalFlag(flags, "request");
+  const backup = optionalFlag(flags, "backup");
+  const stagedSplit = optionalFlag(flags, "staged-split");
+  const splitOut = optionalFlag(flags, "split-out");
+  if (occurredAt !== undefined) options.occurredAt = occurredAt;
+  if (request !== undefined) options.requestPath = request;
+  if (backup !== undefined) options.backupDirectory = backup;
+  if (stagedSplit !== undefined) options.stagedSplitPath = stagedSplit;
+  if (splitOut !== undefined) options.splitOutPath = splitOut;
+  return options;
+}
 
 function buildIngest(flags: FlagMap): IngestOptions {
   assertKnownFlags(flags, [
@@ -528,6 +602,11 @@ function usage(): string {
     "Usage: npm run benchmark -- <subcommand> [flags]",
     "",
     "Subcommands (run in order):",
+    "  cluster-ledger <init|verify|preflight|record-pilot|commit-split|backup|restore>",
+    "                       [--ledger --keyring --backup-root]",
+    "                       init|backup: --occurred-at · restore: --backup",
+    "                       preflight|record-pilot: --request",
+    "                       commit-split: --request --staged-split --split-out",
     "  ingest               --input --review-ledger --sources",
     "                       --dataset-manifest-template --dataset-dir",
     "  validate             --dataset-dir --output",

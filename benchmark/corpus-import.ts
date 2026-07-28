@@ -36,8 +36,8 @@ import {
 } from "./dataset-manifest.ts";
 import { computeDatasetDigest } from "./digests.ts";
 import {
+  NEAR_DUPLICATE_V1_OPTIONS,
   clusterNearDuplicates,
-  type NearDuplicateOptions,
 } from "./near-duplicates.ts";
 import {
   groupAxisIdentity,
@@ -100,17 +100,6 @@ const DERIVED_MANIFEST_KEYS = [
   "sourceManifestFile",
   "sourceManifestSha256",
 ] as const;
-
-// Frozen v1 near-duplicate parameters. The seed is a fixed constant: the
-// importer's clustering only decides cross-lineage refusal and must be
-// reproducible, independent of the split's caller-supplied seed.
-const NEAR_DUPLICATE_OPTIONS: NearDuplicateOptions = {
-  shingleSize: 5,
-  permutations: 128,
-  bands: 32,
-  jaccardThreshold: 0.82,
-  seed: 0,
-};
 
 const RECORDS_FILE = "records.jsonl";
 const REVIEW_LEDGER_FILE = "private/review-ledger.jsonl";
@@ -276,7 +265,7 @@ function refuseCrossLineageNearDuplicates(
       id: entry.record.id,
       text: entry.record.text,
     })),
-    NEAR_DUPLICATE_OPTIONS,
+    NEAR_DUPLICATE_V1_OPTIONS,
   );
 
   const lineagesByCluster = new Map<string, Set<string>>();

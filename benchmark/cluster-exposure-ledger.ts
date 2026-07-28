@@ -305,6 +305,109 @@ export interface ExposureDecision {
   event: ClusterExposureEvent;
 }
 
+/**
+ * Validates an exposure request that arrived as JSON (from the CLI), so a
+ * hand-written file cannot reach the transaction with a partition, an axis or an
+ * identity the ledger would have to guess about. Fail-closed on every field: a
+ * request is the input to an irreversible write.
+ */
+export function parseExposureRequest(value: unknown): ExposureRequest {
+  if (typeof value !== "object" || value === null) {
+    fail("CLUSTER_LEDGER_REQUEST_INVALID", "the exposure request is not an object");
+  }
+  const object = value as Record<string, unknown>;
+  const requiredString = (key: string): string => {
+    const found = object[key];
+    if (typeof found !== "string" || found === "") {
+      fail(
+        "CLUSTER_LEDGER_REQUEST_INVALID",
+        `the exposure request field "${key}" must be a non-empty string`,
+      );
+    }
+    return found;
+  };
+  const eventType = requiredString("eventType");
+  if (!(CLUSTER_EXPOSURE_EVENT_TYPES as readonly string[]).includes(eventType)) {
+    fail(
+      "CLUSTER_LEDGER_REQUEST_INVALID",
+      `eventType must be one of ${CLUSTER_EXPOSURE_EVENT_TYPES.join(", ")}`,
+    );
+  }
+  if (
+    object.reserveManifestDigest !== null &&
+    typeof object.reserveManifestDigest !== "string"
+  ) {
+    fail(
+      "CLUSTER_LEDGER_REQUEST_INVALID",
+      "reserveManifestDigest must be a digest string or null (the reserve is never a partition)",
+    );
+  }
+  if (!Array.isArray(object.records) || object.records.length === 0) {
+    fail(
+      "CLUSTER_LEDGER_REQUEST_INVALID",
+      "the exposure request must carry at least one active record-line",
+    );
+  }
+  const records = (object.records as unknown[]).map((entry, index) => {
+    if (typeof entry !== "object" || entry === null) {
+      fail(
+        "CLUSTER_LEDGER_REQUEST_INVALID",
+        `records[${index}] is not an object`,
+      );
+    }
+    const row = entry as Record<string, unknown>;
+    if (typeof row.id !== "string" || row.id === "") {
+      fail("CLUSTER_LEDGER_REQUEST_INVALID", `records[${index}].id is missing`);
+    }
+    if (typeof row.text !== "string") {
+      fail(
+        "CLUSTER_LEDGER_REQUEST_INVALID",
+        `records[${index}].text is missing: the fingerprint cannot be computed without it`,
+      );
+    }
+    if (!(LEDGER_PARTITIONS as readonly unknown[]).includes(row.partition)) {
+      fail(
+        "CLUSTER_LEDGER_PARTITION_INVALID",
+        `records[${index}].partition must be one of ${LEDGER_PARTITIONS.join(", ")}`,
+      );
+    }
+    if (typeof row.groups !== "object" || row.groups === null) {
+      fail(
+        "CLUSTER_LEDGER_REQUEST_INVALID",
+        `records[${index}].groups must be an object of axis -> pseudonym`,
+      );
+    }
+    const groups: Record<string, string | undefined> = {};
+    for (const [axis, identity] of Object.entries(
+      row.groups as Record<string, unknown>,
+    )) {
+      if (identity === null || identity === undefined) continue;
+      if (typeof identity !== "string") {
+        fail(
+          "CLUSTER_LEDGER_REQUEST_INVALID",
+          `records[${index}].groups.${axis} must be a pseudonym string`,
+        );
+      }
+      groups[axis] = identity;
+    }
+    return {
+      id: row.id,
+      text: row.text,
+      partition: row.partition as LedgerPartition,
+      groups,
+    };
+  });
+  return {
+    eventType: eventType as ClusterExposureEventType,
+    occurredAt: requiredString("occurredAt"),
+    runId: requiredString("runId"),
+    datasetDigest: requiredString("datasetDigest"),
+    splitDigest: requiredString("splitDigest"),
+    records,
+    reserveManifestDigest: object.reserveManifestDigest as string | null,
+  };
+}
+
 export interface ClusterLedgerPaths {
   ledgerPath: string;
   keyringPath: string;

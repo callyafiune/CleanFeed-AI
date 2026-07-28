@@ -88,6 +88,16 @@ export const EVALUATOR_FILES = [
   "benchmark/near-duplicates.ts",
   "benchmark/split.ts",
   "benchmark/split-audit.ts",
+  // The cluster-exposure ledger and its CLI validation. They decide which
+  // record-lines and which sampling units are still eligible for a blind test
+  // block, so a post-freeze edit could hand back eligibility that was already
+  // spent — which changes what the evaluator is allowed to measure at all.
+  "benchmark/cluster-exposure-ledger.ts",
+  "benchmark/commands/cluster-ledger.ts",
+  // The frozen human-source inventory. `commands/split.ts` reads its
+  // `declaredGroupAxes` and the audit FAILS on a declared axis left unknown, so a
+  // changed declaration changes a gate verdict.
+  "benchmark/source-manifest.ts",
   "benchmark/digests.ts",
   "benchmark/split-artifact.ts",
   "benchmark/intervals.ts",

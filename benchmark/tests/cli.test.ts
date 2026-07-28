@@ -8,6 +8,7 @@ import {
 } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { stdout } from "node:process";
 
 import { afterEach, describe, expect, it } from "vitest";
 
@@ -64,13 +65,13 @@ import {
 describe("benchmark CLI parsing and dispatch", () => {
   it("requires a named subcommand", () => {
     expect(() => parseCliArgs([])).toThrow(
-      /expected one of ingest, validate, split, validate-predictions, score, fit, evaluate, consume-holdout, publish-profile, verify-evidence/u,
+      /expected one of cluster-ledger, ingest, validate, split, validate-predictions, score, fit, evaluate, consume-holdout, publish-profile, verify-evidence/u,
     );
   });
 
   it("rejects an unknown subcommand", () => {
     expect(() => parseCliArgs(["frobnicate"])).toThrow(
-      /expected one of ingest, validate, split, validate-predictions, score, fit, evaluate, consume-holdout, publish-profile, verify-evidence/u,
+      /expected one of cluster-ledger, ingest, validate, split, validate-predictions, score, fit, evaluate, consume-holdout, publish-profile, verify-evidence/u,
     );
   });
 
@@ -108,6 +109,79 @@ describe("benchmark CLI parsing and dispatch", () => {
 
   it("prints usage for --help without dispatching a command", async () => {
     await expect(runCli(["--help"])).resolves.toBeUndefined();
+  });
+
+  it("lists cluster-ledger and its closed action set in the usage text", async () => {
+    const written: string[] = [];
+    const write = stdout.write.bind(stdout);
+    // The usage text is what an operator reads to find the command at all, so it
+    // is asserted rather than assumed. Restored in a finally: a leaked stub would
+    // silence every later test's output.
+    (stdout as unknown as { write: (chunk: string) => boolean }).write = (
+      chunk: string,
+    ) => {
+      written.push(chunk);
+      return true;
+    };
+    try {
+      await runCli(["--help"]);
+    } finally {
+      (stdout as unknown as { write: typeof write }).write = write;
+    }
+    const usage = written.join("");
+    expect(usage).toContain("cluster-ledger");
+    for (const action of [
+      "init",
+      "verify",
+      "preflight",
+      "record-pilot",
+      "commit-split",
+      "backup",
+      "restore",
+    ]) {
+      expect(usage).toContain(action);
+    }
+  });
+
+  it("parses cluster-ledger's positional action and its flags", () => {
+    const parsed = parseCliArgs([
+      "cluster-ledger",
+      "verify",
+      "--ledger",
+      "l.jsonl",
+      "--keyring",
+      "k.json",
+    ]);
+    expect(parsed.command).toBe("cluster-ledger");
+    expect(parsed.action).toBe("verify");
+    expect(parsed.flags.get("ledger")).toBe("l.jsonl");
+  });
+
+  it("rejects a cluster-ledger action outside the closed set", () => {
+    expect(() => parseCliArgs(["cluster-ledger", "rotate"])).toThrow(
+      /cluster-ledger expects one of init, verify, preflight, record-pilot, commit-split, backup, restore/u,
+    );
+    expect(() => parseCliArgs(["cluster-ledger"])).toThrow(
+      /cluster-ledger expects one of/u,
+    );
+  });
+
+  it("refuses a positional action on any other subcommand", () => {
+    expect(() => parseCliArgs(["validate", "init"])).toThrow(
+      /unexpected argument: init/u,
+    );
+  });
+
+  it("requires the flags each cluster-ledger action needs", async () => {
+    await expect(runCli(["cluster-ledger", "init"])).rejects.toThrow(
+      /--occurred-at/u,
+    );
+    await expect(runCli(["cluster-ledger", "restore"])).rejects.toThrow(
+      /--backup/u,
+    );
+    await expect(
+      runCli(["cluster-ledger", "verify", "--bogus", "x"]),
+    ).rejects.toThrow(/unknown flag --bogus/u);
   });
 });
 
@@ -335,7 +409,7 @@ describe("benchmark CLI evidence-publication parsing", () => {
 
   it("still lists the Phase 2 subcommands in the dispatch error", () => {
     expect(() => parseCliArgs(["frobnicate"])).toThrow(
-      /expected one of ingest, validate, split, validate-predictions, score, fit, evaluate, consume-holdout, publish-profile, verify-evidence/u,
+      /expected one of cluster-ledger, ingest, validate, split, validate-predictions, score, fit, evaluate, consume-holdout, publish-profile, verify-evidence/u,
     );
   });
 

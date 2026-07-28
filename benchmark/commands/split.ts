@@ -21,7 +21,12 @@ import {
   GeneratorFamilyError,
   assertGeneratorFamilyAgreement,
 } from "../generator-family.ts";
-import { parseBenchmarkDataset, type BenchmarkRecord } from "../schema.ts";
+import {
+  parseBenchmarkDataset,
+  type BenchmarkRecord,
+  type V3GroupAxis,
+} from "../schema.ts";
+import { V3_HUMAN_SOURCE_INVENTORY } from "../source-manifest.ts";
 import { buildSplitArtifact } from "../split-artifact.ts";
 import { auditBlockedSplit, type SplitAuditPolicy } from "../split-audit.ts";
 import {
@@ -50,6 +55,24 @@ const SPLIT_AUDIT_POLICY: SplitAuditPolicy = {
   minimumCriticalRecallPositives: 200,
   classTolerance: 0.02,
 };
+
+/**
+ * The join C3 owes the audit: `provenance.sourceId` -> the axes that source
+ * DECLARED applicable. This is the only place both halves exist at once — the
+ * declaration is a frozen constant of the inventory, and the filling is a property
+ * of each record — so it is the only place the comparison can be made.
+ *
+ * Built from `V3_HUMAN_SOURCE_INVENTORY` and NOT from `private/source-manifest.json`:
+ * the declaration is versioned in the tree, so the check needs no private file and
+ * cannot be softened by one. A source the inventory does not name contributes no
+ * declaration, and the audit stays silent about it rather than inventing one.
+ */
+const DECLARED_GROUP_AXES: ReadonlyMap<string, readonly V3GroupAxis[]> = new Map(
+  V3_HUMAN_SOURCE_INVENTORY.map((entry) => [
+    entry.sourceId,
+    entry.declaredGroupAxes,
+  ]),
+);
 
 export async function runSplit(options: SplitOptions): Promise<string> {
   const { datasetDirectory, datasetAuditPath, outputDirectory, seed } = options;
@@ -89,7 +112,12 @@ export async function runSplit(options: SplitOptions): Promise<string> {
   };
 
   const split = createBlockedSplit(records, policy);
-  const splitAudit = auditBlockedSplit(records, split, SPLIT_AUDIT_POLICY);
+  const splitAudit = auditBlockedSplit(
+    records,
+    split,
+    SPLIT_AUDIT_POLICY,
+    DECLARED_GROUP_AXES,
+  );
   if (!splitAudit.passed) {
     throw new CommandError(
       "SPLIT_AUDIT_FAILED",

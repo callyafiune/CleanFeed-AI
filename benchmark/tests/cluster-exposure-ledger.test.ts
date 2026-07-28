@@ -10,6 +10,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
+import { runCli } from "../cli.ts";
 import {
   CLUSTER_EXPOSURE_KEYRING_FILE,
   CLUSTER_EXPOSURE_LEDGER_FILE,
@@ -651,6 +652,92 @@ describe("a new directory does not restart eligibility", () => {
     await expect(
       initClusterLedger(fresh, { createdAt: "2026-07-28T14:00:00.000Z" }),
     ).rejects.toMatchObject({ code: "CLUSTER_LEDGER_ALREADY_INITIALISED" });
+  });
+});
+
+describe("acceptance 8 — driven through the real CLI on a temporary fixture", () => {
+  // `runCli` is the parser and dispatcher the operator actually invokes. Driving
+  // it (rather than the command function) is what proves the subcommand, its
+  // closed action set and its flags are wired, not merely present.
+  function cli(action: string, ...flags: string[]): Promise<void> {
+    return runCli([
+      "cluster-ledger",
+      action,
+      "--ledger",
+      paths().ledgerPath,
+      "--keyring",
+      paths().keyringPath,
+      "--backup-root",
+      paths().backupRoot,
+      ...flags,
+    ]);
+  }
+
+  it("initialises once, verifies, preflights without writing, records, backs up and restores", async () => {
+    await cli("init", "--occurred-at", "2026-07-28T09:00:00.000Z");
+    await expect(
+      cli("init", "--occurred-at", "2026-07-28T09:05:00.000Z"),
+    ).rejects.toMatchObject({ code: "CLUSTER_LEDGER_ALREADY_INITIALISED" });
+
+    await cli("verify");
+
+    const requestPath = join(root, "request.json");
+    await writeFile(
+      requestPath,
+      JSON.stringify(request({ eventType: "pilot-exposure" }), null, 2),
+      "utf8",
+    );
+
+    const emptyLedger = await readFile(paths().ledgerPath, "utf8");
+    await cli("preflight", "--request", requestPath);
+    expect(await readFile(paths().ledgerPath, "utf8")).toBe(emptyLedger);
+
+    await cli("record-pilot", "--request", requestPath);
+    expect((await readClusterLedger(paths().ledgerPath)).length).toBe(1);
+
+    await cli("backup", "--occurred-at", "2026-07-28T13:00:00.000Z");
+    const backups = await readdir(paths().backupRoot);
+    const directory = join(
+      paths().backupRoot,
+      backups.find((entry) => entry.startsWith("2026-07-28T13-00-00")) as string,
+    );
+
+    const committed = await readFile(paths().ledgerPath, "utf8");
+    await rm(paths().ledgerPath);
+    await cli("restore", "--backup", directory);
+    expect(await readFile(paths().ledgerPath, "utf8")).toBe(committed);
+
+    // And a split freeze publishes the staged artifact and the event together.
+    const splitRequest = join(root, "split-request.json");
+    await writeFile(
+      splitRequest,
+      JSON.stringify(
+        request({
+          runId: "run-freeze",
+          records: [
+            record({ id: "f1", text: FAR_TEXT, partition: "train", source: "th_f1" }),
+          ],
+        }),
+        null,
+        2,
+      ),
+      "utf8",
+    );
+    const staged = join(root, "split-artifact.staged.json");
+    await writeFile(staged, '{"splitDigest":"staged"}\n', "utf8");
+    await cli(
+      "commit-split",
+      "--request",
+      splitRequest,
+      "--staged-split",
+      staged,
+      "--split-out",
+      join(root, "split-artifact.json"),
+    );
+    expect(await readFile(join(root, "split-artifact.json"), "utf8")).toBe(
+      '{"splitDigest":"staged"}\n',
+    );
+    expect((await readClusterLedger(paths().ledgerPath)).length).toBe(2);
   });
 });
 
