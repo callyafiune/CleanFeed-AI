@@ -13,14 +13,23 @@ import {
   CORPUS_USE_POLICY,
   FROZEN_ARTIFACT_OBLIGATIONS,
   LICENSE_OBLIGATION_LABEL_PT,
+  PRE_CHATGPT_CUTOFF_ISO,
+  V3_HUMAN_SOURCE_INVENTORY,
   artifactLicenseObligations,
   assertLicenseInventoryAdmissible,
+  assertNoIndividualAcquisition,
+  assertV3HumanInventoryAdmissible,
   computeReviewedSourceManifestDigest,
   corpusLicenseTerms,
+  determinedHumanAcquisition,
+  humanLabelOverclaimIn,
+  humanSourceAdmissibility,
   parseReviewedSourceManifest,
   sourceAdmissibility,
   type CorpusLicenseTermsV1,
   type GenerationBatchV1,
+  type HumanLabelBasis,
+  type HumanSourceRegistrationV1,
   type LicenseObligation,
   type ReviewedSourceEntryV1,
   type ReviewedSourceManifestV1,
@@ -661,5 +670,387 @@ describe("licence policy agreement across manifest, review and NOTICE", () => {
       .split(/\r?\n/u)
       .find((line) => line.includes("cc-by-nc-nd-4.0"));
     expect(ndLine).toMatch(/ND/u);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// B3 — public bases only. The project acquires no text individually: no donor
+// recruitment, no per-document consent, no writing session of our own. What is
+// pinned here is the vocabulary, because the vocabulary is the deliverable:
+// the RESTRICTION is on acquisition, never on the evidence CATEGORY, so a public
+// base that already carries instrumented sessions stays representable.
+// ---------------------------------------------------------------------------
+
+const publicSnapshot: HumanSourceRegistrationV1 = {
+  sourceId: "src_ptso",
+  snapshot: "pt-stackoverflow",
+  acquisition: "public-dataset",
+  licenseId: "cc-by-sa-4.0",
+  labelBasis: "date-cutoff",
+  anchorDateField: "Posts.xml@CreationDate",
+  anchorDateScope: "document",
+};
+
+describe("B3 — only public licensed bases enter as human sources", () => {
+  it("admits a public licensed snapshot whose cutoff reads a document date", () => {
+    expect(humanSourceAdmissibility(publicSnapshot)).toMatchObject({
+      admissible: true,
+      blockedBy: null,
+      labelBasis: "date-cutoff",
+    });
+  });
+
+  // Requirement 1 / criterion "fonte sem licença pública compatível falha".
+  // Each individually-acquired route is named on its own, because the refusal is
+  // of the ACQUISITION and the three routes are three different things a reader
+  // might think survives.
+  it("refuses every route that acquires text from an individual", () => {
+    for (const acquisition of [
+      "per-document-consent",
+      "recruited-donor",
+      "operator-authored-session",
+    ] as const) {
+      expect(
+        humanSourceAdmissibility({
+          ...publicSnapshot,
+          sourceId: `src_${acquisition}`,
+          acquisition,
+          licenseId: null,
+        }),
+        `route ${acquisition} is refused`,
+      ).toMatchObject({
+        admissible: false,
+        blockedBy: "individual-acquisition",
+      });
+    }
+  });
+
+  // The ONE case that pins the guard ORDER: an individual source has no public
+  // licence either, so both reasons could fire. `individual-acquisition` must
+  // win, for the same reason `no-derivatives` wins over `commercial-use` above:
+  // a caller can satisfy "find a public licence", and satisfying it cannot make
+  // an individually-acquired source admissible. Naming `no-public-license` there
+  // would tell a donor-recruiting caller that a licence unblocks recruitment.
+  it("names the acquisition, not the missing licence, when both could fire", () => {
+    const individual: HumanSourceRegistrationV1 = {
+      ...publicSnapshot,
+      sourceId: "src_donor",
+      acquisition: "recruited-donor",
+      licenseId: null,
+      labelBasis: null,
+      anchorDateField: null,
+      anchorDateScope: null,
+    };
+    expect(humanSourceAdmissibility(individual).blockedBy).toBe(
+      "individual-acquisition",
+    );
+    // Fixing only the licence does not rescue the route.
+    expect(
+      humanSourceAdmissibility({ ...individual, licenseId: "cc-by-sa-4.0" })
+        .blockedBy,
+    ).toBe("individual-acquisition");
+    // And a public route with no licence is refused by the licence, which is
+    // what makes the two reasons distinguishable rather than interchangeable.
+    expect(
+      humanSourceAdmissibility({
+        ...individual,
+        acquisition: "public-dataset",
+        licenseId: null,
+      }).blockedBy,
+    ).toBe("no-public-license");
+  });
+
+  it("refuses a public base whose licence blocks a derived corpus", () => {
+    expect(
+      humanSourceAdmissibility({
+        ...publicSnapshot,
+        licenseId: "cc-by-nc-nd-4.0",
+      }).blockedBy,
+    ).toBe("no-derivatives");
+    expect(
+      humanSourceAdmissibility({ ...publicSnapshot, licenseId: "aberta" })
+        .blockedBy,
+    ).toBe("license-not-registered");
+  });
+
+  // Requirement 2. The record-line schema gets `labelBasis` in C1; what is in
+  // scope here is the SOURCE declaring which basis it sustains, so a human
+  // source with no declared basis cannot enter the inventory.
+  it("refuses a human source that declares no label basis", () => {
+    expect(
+      humanSourceAdmissibility({ ...publicSnapshot, labelBasis: null }),
+    ).toMatchObject({
+      admissible: false,
+      blockedBy: "label-basis-undeclared",
+    });
+  });
+
+  it("refuses a basis outside the frozen allowed list", () => {
+    expect(
+      humanSourceAdmissibility({
+        ...publicSnapshot,
+        labelBasis: "self-declared" as unknown as HumanLabelBasis,
+      }).blockedBy,
+    ).toBe("label-basis-not-allowed");
+    // The allowed list is READ from the frozen policy, not restated here.
+    expect([...REBUILD_V3_POLICY.labelBasis.allowed].sort()).toEqual([
+      "date-cutoff",
+      "observed-process",
+    ]);
+  });
+
+  // Vocabulary pair 3 and criterion "bases instrumentadas públicas permanecem
+  // representáveis": a PUBLIC base that already ran instrumented sessions is
+  // admissible, with the stronger basis and NO date field, because its basis is
+  // the observed process and not a date. If this test cannot be written, the
+  // acquisition restriction has been mistaken for a ban on the category.
+  it("keeps a public instrumented base representable, under the stronger basis", () => {
+    const instrumented: HumanSourceRegistrationV1 = {
+      sourceId: "src_public_instrumented",
+      snapshot: "some-public-instrumented-base",
+      acquisition: "public-dataset",
+      licenseId: "cc-by-sa-4.0",
+      labelBasis: "observed-process",
+      anchorDateField: null,
+      anchorDateScope: null,
+    };
+    expect(humanSourceAdmissibility(instrumented)).toMatchObject({
+      admissible: true,
+      blockedBy: null,
+      labelBasis: "observed-process",
+    });
+  });
+
+  // Requirement 3: the cutoff is applied over the field that anchors the BYTES
+  // of the document, never presumed from the vintage of the dump.
+  it("refuses a date-cutoff basis with no anchoring date field", () => {
+    expect(
+      humanSourceAdmissibility({
+        ...publicSnapshot,
+        anchorDateField: null,
+        anchorDateScope: null,
+      }).blockedBy,
+    ).toBe("anchor-date-field-missing");
+  });
+
+  it("refuses a cutoff anchored on the container vintage instead of the document", () => {
+    expect(
+      humanSourceAdmissibility({
+        ...publicSnapshot,
+        anchorDateField: "dump filename vintage",
+        anchorDateScope: "container",
+      }),
+    ).toMatchObject({
+      admissible: false,
+      blockedBy: "anchor-date-is-container-vintage",
+    });
+  });
+});
+
+describe("B3 — the frozen v3 human inventory", () => {
+  it("covers exactly the frozen snapshot list, with no new download", () => {
+    expect(REBUILD_V3_POLICY.humanSources.newDownloadsAllowed).toBe(false);
+    expect(
+      V3_HUMAN_SOURCE_INVENTORY.map((entry) => entry.snapshot).sort(),
+    ).toEqual([...REBUILD_V3_POLICY.humanSources.snapshots].sort());
+  });
+
+  it("registers every entry as a public base with a document-level cutoff field", () => {
+    for (const entry of V3_HUMAN_SOURCE_INVENTORY) {
+      expect(entry.acquisition, entry.sourceId).toBe("public-dataset");
+      expect(entry.labelBasis, entry.sourceId).toBe("date-cutoff");
+      expect(entry.anchorDateScope, entry.sourceId).toBe("document");
+      expect(entry.anchorDateField, entry.sourceId).toBeTruthy();
+      expect(humanSourceAdmissibility(entry).admissible, entry.sourceId).toBe(
+        true,
+      );
+    }
+  });
+
+  it("returns the obligations the frozen inventory imposes on the artifact", () => {
+    expect(assertV3HumanInventoryAdmissible(V3_HUMAN_SOURCE_INVENTORY)).toEqual(
+      FROZEN_ARTIFACT_OBLIGATIONS,
+    );
+  });
+
+  it("refuses a snapshot the frozen list does not name", () => {
+    expect(() =>
+      assertV3HumanInventoryAdmissible([
+        { ...publicSnapshot, sourceId: "src_new", snapshot: "brwac" },
+      ]),
+    ).toThrow(/snapshot-not-frozen/u);
+  });
+
+  it("refuses an inadmissible registration with its own reason", () => {
+    expect(() =>
+      assertV3HumanInventoryAdmissible([
+        { ...publicSnapshot, acquisition: "recruited-donor" },
+      ]),
+    ).toThrow(/src_ptso.*individual-acquisition/u);
+  });
+});
+
+describe("B3 — the v1 consent route is a route B3 forbids", () => {
+  // The bridge exists so the legacy v1 entry can be SWEPT: the closed v1 parser
+  // predates B3 and still accepts `linkedin-contribution`, and closing that is
+  // C1's schema-v3 change (it also owns `legalBasis: "consent"` on the record
+  // and `acquisitionCounts.consent` on the readiness contract). What is pinned
+  // here is that the B3 layer refuses the entry, so C1 has one call to make.
+  it("maps the consent entry to the route B3 refuses", () => {
+    expect(determinedHumanAcquisition(consentSource)).toBe(
+      "per-document-consent",
+    );
+    expect(() => assertNoIndividualAcquisition([consentSource])).toThrow(
+      /src_consent.*individual-acquisition/u,
+    );
+  });
+
+  it("leaves the licensed route undetermined rather than guessing it is public", () => {
+    // A `licensed-corpus` entry does not say whether its licence is a PUBLIC
+    // one (`autorizacao-interna-v1` is a licensed-corpus too), so the bridge
+    // reports `null` instead of admitting it as `public-dataset` by default.
+    expect(determinedHumanAcquisition(licensedSource)).toBeNull();
+    expect(determinedHumanAcquisition(generatedSource)).toBeNull();
+    expect(() =>
+      assertNoIndividualAcquisition([licensedSource, generatedSource]),
+    ).not.toThrow();
+  });
+});
+
+// Requirement 3: confirm and document the Python default; do NOT reimplement it.
+describe("B3 — the pre-ChatGPT cutoff is the Python bench's default", () => {
+  it("reads the same cutoff the extractors apply, from common.py", async () => {
+    const common = await readFile(
+      resolve(REPO_ROOT, "benchmark/lab/common.py"),
+      "utf8",
+    );
+    // The default of the shared candidate writer, i.e. every human extractor
+    // gets the cutoff without asking for it.
+    expect(common).toMatch(
+      /date_cutoff:\s*datetime\s*\|\s*None\s*=\s*CHATGPT_CUTOFF/u,
+    );
+    expect(common).toMatch(
+      /CHATGPT_CUTOFF\s*=\s*datetime\(2022,\s*11,\s*30,\s*tzinfo=timezone\.utc\)/u,
+    );
+    // And a candidate with NO date is dropped, so the cutoff fails closed
+    // instead of admitting an undated document.
+    expect(common).toMatch(/created_at is None or \(/u);
+    // The TS side documents the same date and never computes it.
+    expect(PRE_CHATGPT_CUTOFF_ISO).toBe("2022-11-30T00:00:00.000Z");
+  });
+});
+
+// Criterion: the documentation says "mitigação declarada" and never claims proof.
+describe("B3 — the human label is a declared mitigation, never a proof", () => {
+  const DOCS = [
+    "docs/corpus-sources.md",
+    "docs/corpus-collection-runbook.md",
+    "docs/limitations.md",
+  ];
+
+  async function doc(relativePath: string): Promise<string> {
+    return readFile(resolve(REPO_ROOT, relativePath), "utf8");
+  }
+
+  it("fires on the claims it exists to forbid, and not on their denials", () => {
+    // What must be refused.
+    for (const claim of [
+      "O corte de data garante que o texto é humano.",
+      "É prova de autoria humana.",
+      "A autoria humana está comprovada pelo corte de data.",
+      "O rótulo humano é certificado por construção.",
+      "O corte temporal assegura autoria humana.",
+    ]) {
+      expect(humanLabelOverclaimIn(claim), claim).not.toBeNull();
+    }
+    // What must survive, because the project's own correct formulations use
+    // exactly these words in the denying direction.
+    for (const allowed of [
+      "A autoria humana não pode ser garantida em 100%.",
+      "É mitigação declarada de risco, não prova de autoria humana.",
+      "Isso não comprova sua origem.",
+      "O corte de data nunca prova autoria humana.",
+      "Isso é garantido estruturalmente pelo pipeline: o schema rejeita chaves de autor.",
+      "O corte de data sustenta o rótulo humano como mitigação declarada.",
+    ]) {
+      expect(humanLabelOverclaimIn(allowed), allowed).toBeNull();
+    }
+  });
+
+  // The screen has to survive the way markdown is actually written. Prose in
+  // `docs/` wraps at about 80 columns, so a claim can straddle two physical
+  // lines; a per-line screen then sees a subject with no claim next to a claim
+  // with no subject and reports nothing. Blockquotes are the same defect with a
+  // `>` in front, and the frozen-decision blocks of corpus-sources.md are
+  // blockquotes. Both are pinned against the SAME sentence unwrapped, so what is
+  // asserted is that the wrapping is irrelevant, not that some string matches.
+  it("sees through a soft line wrap and a blockquote marker", () => {
+    const flat = "A autoria humana está comprovada pelo corte de data.";
+    expect(humanLabelOverclaimIn(flat)).not.toBeNull();
+    expect(
+      humanLabelOverclaimIn("A autoria humana está\ncomprovada pelo corte."),
+    ).not.toBeNull();
+    expect(
+      humanLabelOverclaimIn(
+        "> A autoria humana está\n> comprovada pelo corte.",
+      ),
+    ).not.toBeNull();
+    // And unwrapping must not fuse neighbours: two list items are two clauses,
+    // so a subject in one may not pair with a claim in the next.
+    expect(
+      humanLabelOverclaimIn("- A autoria humana é o assunto\n- e isto prova."),
+    ).toBeNull();
+    expect(
+      humanLabelOverclaimIn("| autoria humana |\n| isto prova |"),
+    ).toBeNull();
+  });
+
+  it("screens every documentation file that describes the human label", async () => {
+    for (const relativePath of DOCS) {
+      const body = await doc(relativePath);
+      expect(humanLabelOverclaimIn(body), relativePath).toBeNull();
+    }
+  });
+
+  // Whitespace is collapsed before matching for the same reason the screen
+  // unwraps soft lines: a reflow of the paragraph must not decide whether the
+  // required wording is present.
+  it("says 'mitigação declarada' where it states what the cutoff is", async () => {
+    const sources = (await doc("docs/corpus-sources.md")).replace(/\s+/gu, " ");
+    expect(sources).toMatch(/mitiga[çc][ãa]o declarada/iu);
+    expect(sources).toMatch(/n[ãa]o pode ser garantida em 100%/iu);
+  });
+
+  // Requirement 4: the three definitive limitations, unsoftened, plus the four
+  // answers, plus the R8 note that 0%–7,12% is a diagnosis of the run that
+  // failed on 2026-07-25 and not a claim about v3.
+  it("records the three definitive limitations and the four answers", async () => {
+    const limitations = await doc("docs/limitations.md");
+    expect(limitations).toMatch(/pr[ée]-?nov(embro)?\/?2022/iu);
+    expect(limitations).toMatch(/n[ãa]o ser[áa] medido/iu);
+    expect(limitations).toMatch(/7,12\s?%/u);
+    expect(limitations).toMatch(/sem cota superior/iu);
+    for (const answer of ["G2", "E4", "G3", "H4"]) {
+      expect(limitations, `answer ${answer}`).toContain(answer);
+    }
+    // R8: the range is a diagnosis of the failed run, never a v3 number.
+    expect(limitations).toMatch(/2026-07-25/u);
+  });
+
+  // Requirement 6: no step of the runbook may require recruitment.
+  //
+  // The stems are banned OUTRIGHT here, which is stricter than the overclaim
+  // screen above and deliberately so: the runbook is a procedure, its content is
+  // steps, and the bluntest check that no step recruits anybody is that the
+  // vocabulary of recruitment does not occur in it. `docs/corpus-sources.md` is
+  // the opposite case — it is the policy document, so it has to NAME the
+  // prohibition ("não recruta pessoas para doar texto") and is not screened for
+  // the stems. Banning them there would forbid stating the decision.
+  it("keeps every runbook step free of donor recruitment", async () => {
+    const runbook = await doc("docs/corpus-collection-runbook.md");
+    expect(runbook).not.toMatch(/recrut/iu);
+    expect(runbook).not.toMatch(/doador/iu);
+    // The invariant is stated, not merely absent by accident.
+    expect(runbook).toMatch(/somente bases p[úu]blicas/iu);
   });
 });

@@ -2912,6 +2912,75 @@ docs:check`; fonte individual sem licença pública compatível e registro sem
 **Concluída quando:** runbook e manifesto só admitem bases públicas licenciadas, bases
 instrumentadas públicas permanecem representáveis e nenhum passo exige recrutamento.
 
+**Como ficou na execução (2026-07-28).** Quatro divergências em relação ao texto acima,
+todas deliberadas e medidas.
+
+1. **Um quarto arquivo entrou: `docs/limitations.md`.** O requisito de documentar as três
+   limitações definitivas de L1 pedia "`docs/corpus-sources.md` e/ou
+   `docs/limitations.md`". Ficaram em `limitations.md` (seção **L1**, com as três
+   consequências, as quatro respostas G2/E4/G3/H4 e a nota de R8 de que 0%–7,12% é
+   diagnóstico da execução reprovada de **2026-07-25**), e `corpus-sources.md` aponta para
+   lá em vez de repetir. Um teste exige cada um desses itens por busca.
+
+2. **A exigência de base de rótulo foi imposta no nível da FONTE, não do registro-linha.**
+   `HumanSourceRegistrationV1` em `benchmark/source-manifest.ts` declara
+   `acquisition`, `licenseId`, `labelBasis` e o par `anchorDateField`/`anchorDateScope`;
+   `humanSourceAdmissibility` recusa `label-basis-undeclared` — "não declarado" é estado,
+   nunca padrão silencioso para `date-cutoff`. O laço no registro-linha continua sendo de
+   **C1** (`labelBasis` obrigatório se e somente se `label === "human"`).
+
+3. **A rota v1 de consentimento NÃO foi fechada no parser, e isso foi medido antes de
+   decidir.** Fazer `parseReviewedSourceManifest` recusar `linkedin-contribution` deixa
+   **14 testes vermelhos em `benchmark/tests/corpus-import.test.ts`** (medido com o parser
+   mutado; `corpus-source-audit.test.ts` e `cli.test.ts` seguem verdes). O motivo é que a
+   rota atravessa três contratos que se movem juntos:
+   `provenance.sourceKind: "authorized-contribution"` e `provenance.legalBasis: "consent"`
+   em `benchmark/schema.ts`, e `acquisitionCounts.consent` em
+   `contracts/source-readiness.ts`. Fechar um sem os outros produz manifesto que nenhum
+   registro-linha pode referenciar, e o conjunto é o schema v3 de **C1**. O que B3 entregou
+   é a varredura: `determinedHumanAcquisition` mapeia a entrada v1 para
+   `per-document-consent` e `assertNoIndividualAcquisition` a recusa com
+   `individual-acquisition`, com teste. Falta **uma chamada** para C1 fazer. Enquanto ela
+   não existir, a frase "o manifesto só admite base pública" vale para a camada B3 e
+   **não** para o parser v1 — está escrito assim no módulo e em `docs/corpus-sources.md`,
+   em vez de alegado inteiro.
+
+4. **Duas recusas distintas, de propósito, e a segunda não está em
+   `humanSourceAdmissibility`.** `snapshot-not-frozen` (fonte fora de
+   `humanSources.snapshots`, com `newDownloadsAllowed: false`) vive só em
+   `assertV3HumanInventoryAdmissible`. Se estivesse na admissibilidade, uma base pública
+   instrumentada — que não está na lista congelada — passaria a ser inadmissível, e o
+   critério "bases instrumentadas públicas permanecem representáveis" cairia. É por isso
+   que `src_atos_oficiais` é recusado por `snapshot-not-frozen` e `src_empresa`/
+   `src_proprio` por `individual-acquisition`: são diagnósticos diferentes, não um único
+   "fonte não admitida".
+
+**O corte de data foi confirmado, não reimplementado.** `PRE_CHATGPT_CUTOFF_ISO` é
+documentação; nenhuma função do TypeScript compara data. O teste extrai
+`CHATGPT_CUTOFF = datetime(2022, 11, 30, tzinfo=timezone.utc)` e o padrão
+`date_cutoff: datetime | None = CHATGPT_CUTOFF` de `benchmark/lab/common.py`, mais o ramo
+`created_at is None` que descarta candidato sem data (falha fechada). Os quatro campos de
+data foram lidos nos próprios extratores: `Posts.xml@CreationDate`,
+`page/revision/timestamp`, `teiHeader//date[@type="Download"]` e `submission_date`.
+
+**A tela de linguagem (`humanLabelOverclaimIn`) julga afirmação, não palavra**, porque
+toda palavra proibida aparece em texto que o projeto precisa manter — "não pode ser
+garantida em 100%", "não prova de autoria", e o parágrafo de PII que diz "garantido
+estruturalmente pelo pipeline" sobre outro assunto. Uma violação exige três coisas na
+mesma oração: sujeito (rótulo humano / autoria humana / corte de data), verbo de alegação
+e ausência de negação nos 40 caracteres anteriores. A tela também **desfaz a quebra
+mole de linha** e o marcador de citação antes de recortar orações: sem isso, "a autoria
+humana está\ncomprovada" escapava — sujeito numa linha física, verbo na seguinte — que é
+exatamente a redação que ela existe para pegar, invisível por motivo tipográfico.
+
+**Verificado:** `source-manifest.test.ts` 56/56 · `corpus-source-audit.test.ts` 16/16 ·
+`npm run docs:check` OK (179 links) · três projetos de `tsc` verdes · suíte completa
+**158 arquivos / 1887 testes** (de 158/1864: +23, exatamente os novos, zero regressão).
+Seis mutações rodadas, cada uma morre no seu próprio teste: ordem das guardas invertida;
+base sem declaração virando `date-cutoff`; escopo `container` aceito; tela por linha
+física sem desfazer a quebra; verificação de snapshot desligada; ponte devolvendo
+`public-dataset` para a entrada de consentimento.
+
 ---
 
 ## Fase C — Proveniência e grupos (o bloqueio P0)

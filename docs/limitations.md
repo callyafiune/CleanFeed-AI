@@ -25,6 +25,53 @@
 - O filtro automático desta fase está limitado ao LinkedIn. Outros adaptadores
   dependem do mesmo contrato, mas ainda não foram implementados.
 
+## L1 — Sem coleta individual autorizada: o que isso fecha, definitivamente
+
+Decidido em 2026-07-26 (B3). O projeto não recruta pessoas para doar texto, não
+obtém autorização por documento e não registra sessões de escrita próprias: a
+coleta humana se limita a **bases de dados públicas com licença compatível**. A
+restrição é de **aquisição**, não de categoria de evidência — base pública que já
+contenha sessões instrumentadas continua admissível, e com base de rótulo mais
+forte (`observed-process`). É limitação de projeto declarada, não pendência.
+
+O que sustenta o rótulo `human` é o corte de data `< 2022-11-30`, e ele é
+**mitigação declarada** de risco: não é prova de autoria humana, e a autoria
+humana **não pode ser garantida em 100%** (a formulação é a que o MultiSocial usa
+sobre a mesma política). O detalhe por fonte — qual campo de data ancora os bytes
+de cada uma — está em [corpus-sources.md](corpus-sources.md).
+
+Três consequências, e são definitivas:
+
+1. **O rótulo humano fica ancorado em texto pré-nov/2022.** "Público +
+   contemporâneo + verificavelmente humano" é quase contraditório depois dessa
+   data. Bases públicas contemporâneas e instrumentadas existem, mas não atingem
+   a escala nem as fatias de calibração exigidas.
+2. **Não existe base pública licenciada de publicação profissional pt-BR**, e por
+   isso o FPR no domínio de operação do produto **não será medido**. Não é que
+   ele seja bom ou ruim: ele não é medido, e nada neste repositório o estima.
+3. **O falso alarme varia de 0% a 7,12% entre os estratos linguísticos
+   disponíveis**, então extrapolar dos estratos calibrados para o feed
+   profissional é inferência **sem cota superior**.
+
+Sobre esse intervalo, e isto é obrigatório: **0%–7,12% é diagnóstico da execução
+reprovada de 2026-07-25**, não alegação de desempenho do detector v3. Nenhum
+número de desempenho da v3 existe antes de um holdout válido, e nenhum será
+escrito aqui até então.
+
+Quatro respostas do projeto, em vez de ignorar:
+
+1. **Limiar escolhido contra o pior estrato linguístico calibrado**, nunca contra
+   a média (G2). Entre os estratos disponíveis, o mais próximo de um post de feed
+   é o informal curto — que é exatamente onde o falso alarme foi pior.
+2. **Teto de ação rebaixado** em plataforma sem perfil calibrado, com o motivo
+   exposto ao usuário (E4).
+3. **Cota conformal unilateral** sobre texto humano (G3), que dá cota de acusação
+   falsa sem modelar a distribuição de geradores — enunciada com a sua condição:
+   exige exchangeability do domínio humano e **não** cobre mudança de estrato
+   linguístico.
+4. **Comunicação como detector de pt-BR genérico**, nunca como calibrado para
+   feed profissional (H4).
+
 ## Fatores que degradam a detecção
 
 Estas quatro dimensões limitam qualquer resultado e são tratadas como riscos no

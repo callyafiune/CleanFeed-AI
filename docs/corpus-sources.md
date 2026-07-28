@@ -36,6 +36,21 @@
 > duas cláusulas são restrições distintas: nunca as trate como uma única
 > "licença restritiva".
 
+> **Regime de aquisição congelado (B3, 2026-07-26):** a coleta humana se limita
+> a **bases de dados públicas com licença compatível**. O projeto não recruta
+> pessoas para doar texto, não obtém autorização por documento e não registra
+> sessões de escrita próprias — não por objeção de método, e sim porque não tem
+> como financiar nem governar isso (plano §L1: é restrição local, não
+> impossibilidade da área; o AITDNA tem 95 textos `human-only` de participantes
+> instrumentados, então doadores existem e alguém já os usou). A restrição é de
+> **aquisição**, nunca de **categoria de evidência**: base pública que já
+> contenha sessões instrumentadas continua admissível, sob as mesmas
+> verificações de licença, idioma, proveniência, poder amostral e adequação ao
+> estimando, e com base de rótulo mais forte (`observed-process`). Quem impõe
+> isso no código é `benchmark/source-manifest.ts` — `HumanSourceRegistrationV1`,
+> `humanSourceAdmissibility` e `assertV3HumanInventoryAdmissible` — com testes
+> no describe `B3 — only public licensed bases enter as human sources`.
+
 ## As duas camadas legais (resumo)
 
 1. **Direito autoral (Lei 9.610/98)** — protege o texto. Sai da frente com:
@@ -45,8 +60,17 @@
    pseudonimização total, PII-scrub, uso local de avaliação, nenhuma
    redistribuição.
 
-Consentimento individual só é exigido pela rota `linkedin-contribution`
-(post pessoal de LinkedIn). As fontes abaixo usam a rota `licensed-corpus`.
+A rota `linkedin-contribution` (autorização por documento, post pessoal) está
+**fechada por B3** e nenhuma fonte da v3 a usa: todas as fontes abaixo entram
+pela rota `licensed-corpus`. O schema fechado **v1** do source-manifest ainda
+*parseia* aquela rota, e isso é deliberado: v1 é forma de artefato já selado, e
+retirar a rota move junto `provenance.sourceKind: "authorized-contribution"` e
+`provenance.legalBasis: "consent"` em `benchmark/schema.ts` mais
+`acquisitionCounts.consent` em `contracts/source-readiness.ts` — fechar um sem os
+outros produz manifesto que nenhum registro-linha pode referenciar, e o conjunto
+é mudança de C1. Até lá, quem varre um manifesto v1 chama
+`assertNoIndividualAcquisition`, que recusa a entrada de autorização por
+documento com o motivo `individual-acquisition`.
 
 ## Inventário aprovado para o piloto
 
@@ -72,11 +96,75 @@ share-alike propagam para o artefato** (é o que `NOTICE.md` e
 `assertLicenseInventoryAdmissible` recusa uma fonte ND antes de qualquer
 incorporação.
 
-**Proveniência humana por data:** para as fontes pré-novembro/2022, a data de
-publicação sustenta o rótulo `human` — registre-a como `collectedAt`/metadado da
-fonte. Nunca usar raspagem de plataformas com ToS restritivo (LinkedIn, X,
-Reddit, Instagram) nem derivados de Common Crawl (copyright subjacente não
-licenciado — abaixo do nosso padrão de governança).
+Nunca usar raspagem de plataformas com ToS restritivo (LinkedIn, X, Reddit,
+Instagram) nem derivados de Common Crawl (copyright subjacente não licenciado —
+abaixo do nosso padrão de governança).
+
+## A base do rótulo humano: corte de data, por campo do documento
+
+O que sustenta o rótulo `human` das fontes acima é o corte `< 2022-11-30`
+(pré-ChatGPT). Ele é **mitigação declarada** de risco: não é prova de autoria
+humana, não é certificado, e não vale "por construção". A formulação correta é a
+que o MultiSocial usa sobre a mesma política — a autoria humana **não pode ser
+garantida em 100%**. O corte torna implausível o uso do ChatGPT *se a data for
+confiável*, e não exclui: assistência por ferramentas anteriores a nov/2022
+(tradução automática, geração GPT-2/GPT-3, spinners, paráfrase automática), data
+de contêiner divergente da data do texto, nem republicação com data enganosa. É
+evidência **mais fraca** que sessão instrumentada, nunca mais forte: um histórico
+de versões dá *observação do processo*; uma data dá *exclusão circunstancial de
+uma ferramenta*. Também é **prática difundida** na área (RAID, MultiSocial,
+Liang et al., Jabarian & Imas), o que torna a nossa posição comum — não superior.
+
+**O corte é verificado por campo de data do documento, nunca presumido do vintage
+do dump.** Cada fonte declara qual campo ancora os seus bytes, e o corte é
+comparado contra *esse* campo. Quem aplica o corte é o banco Python:
+`benchmark/lab/common.py` define `CHATGPT_CUTOFF = datetime(2022, 11, 30,
+tzinfo=timezone.utc)` como **padrão** de `CandidateWriter.date_cutoff`, e um
+candidato **sem** data é descartado (falha fechada — ausência de data não passa).
+O lado TypeScript apenas registra o campo, o escopo e a data
+(`PRE_CHATGPT_CUTOFF_ISO`); ele não recompara nada, e o teste "reads the same
+cutoff the extractors apply, from common.py" extrai a data do próprio Python para
+que as duas não divirjam em silêncio.
+
+| sourceId | snapshot | campo que ancora os bytes | escopo | base do rótulo |
+| --- | --- | --- | --- | --- |
+| `src_ptso` | `pt-stackoverflow` | `Posts.xml`, atributo `CreationDate` | documento | `date-cutoff` |
+| `src_wikipedia_pt` | `ptwiki` | `page/revision/timestamp` | documento | `date-cutoff` |
+| `src_carolina` | `carolina` | `teiHeader//date[@type="Download"]`, por documento | documento | `date-cutoff` |
+| `src_b2w_reviews` | `b2w-reviews01` | coluna `submission_date` | documento | `date-cutoff` |
+
+Escopo `container` — o vintage do dump, do zip ou do release — **não** sustenta
+`date-cutoff`, e `humanSourceAdmissibility` recusa com
+`anchor-date-is-container-vintage`. O motivo é medido, não teórico: o Carolina
+2.0 (Bea) em disco traz datas TEI de 2024 e 2025, e `pages-articles` guarda só a
+revisão corrente de cada página. Um snapshot recente de qualquer um dos dois é
+texto pós-LLM com nome antigo — daí o campo por documento ser *load-bearing* e
+não defesa em profundidade.
+
+**Quais destas são fontes humanas da v3.** Só quatro: `src_ptso`,
+`src_wikipedia_pt`, `src_carolina` e `src_b2w_reviews` — exatamente os snapshots
+congelados em `benchmark/rebuild-v3-policy.json` (`humanSources.snapshots`), com
+`newDownloadsAllowed: false`. `src_empresa` (autorização interna escrita) e
+`src_proprio` (autoria do operador) **não** entram: nenhuma das duas é base
+pública licenciada, que é a única rota que B3 deixa aberta.
+`src_atos_oficiais` é público, mas não está na lista congelada, e por isso é
+recusado por um motivo **distinto** — `snapshot-not-frozen`, não
+`individual-acquisition`: não há bytes em disco para ele e nenhum download novo
+está autorizado. As três permanecem no inventário como registro do piloto;
+nenhuma é fonte humana da v3.
+
+**Base pública instrumentada continua representável.** Uma base publicada que já
+tenha registrado o processo de escrita entra com `acquisition: "public-dataset"`,
+`labelBasis: "observed-process"` e **sem** campo de data — a base dela é a
+observação, não a data. O piso de poder, porém, é separado e não se mistura: o
+maior conjunto instrumentado publicado tem 95 textos `human-only` (limite
+superior unilateral de 2,77%) contra o piso de 300 negativos por fatia crítica,
+então um conjunto assim é diagnóstico suplementar e nunca eleva a alegação do
+conjunto inteiro (`labelBasis.pooledClaimAllowed: false`). Hoje nenhuma fonte da
+v3 usa essa base; inventar uma seria inventar proveniência (R4).
+
+O custo definitivo dessa decisão — os três itens que ela fecha e as quatro
+respostas do projeto — está em [limitations.md](limitations.md).
 
 ### Fonte de classe IA aprovada — corpus de TREINO (2026-07-22)
 

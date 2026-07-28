@@ -9,10 +9,10 @@
 > e do parser da CLI ([benchmark/cli.ts](../benchmark/cli.ts)).
 >
 > **O que este documento não é:** ele não coleta, não raspa e não gera dados. A
-> coleta em si — texto licenciado/consentido, auditoria de PII, anotação humana,
-> revisão legal — é um entregável de **dados + jurídico + anotação** que acontece
-> fora deste repositório. O CleanFeed apenas **ingere** materiais que um workflow
-> autorizado já produziu.
+> coleta em si — extração de base pública licenciada, auditoria de PII, anotação
+> humana, revisão legal — é um entregável de **dados + jurídico + anotação** que
+> acontece fora deste repositório. O CleanFeed apenas **ingere** materiais que um
+> workflow autorizado já produziu.
 >
 > A matriz de publicação e os gates de empacotamento ficam em
 > [release-checklist.md](release-checklist.md); o contrato de calibração em
@@ -38,6 +38,17 @@ recusar atalhos:
   registro é `passed`.
 - **Sem alegação de autoria.** A verdade de rótulo vem da *procedência*
   documentada, nunca da opinião de um detector.
+- **Somente bases públicas licenciadas (B3, 2026-07-26).** A coleta humana entra
+  por uma única rota: base publicada, com licença verificada na fonte. Nenhum
+  passo deste runbook pede autorização por documento a uma pessoa, convida alguém
+  a ceder texto próprio, ou registra sessão de escrita nossa. A restrição é de
+  **aquisição** e não de categoria de evidência: base pública que já contenha
+  sessões instrumentadas continua admissível, com base de rótulo
+  `observed-process`. O rótulo `human` das quatro fontes da v3 vem do corte
+  `< 2022-11-30`, que é **mitigação declarada** e não prova de autoria humana —
+  o campo de data que ancora cada fonte está em
+  [corpus-sources.md](corpus-sources.md), e o que a decisão fecha em
+  [limitations.md](limitations.md).
 - **O corpus não repete o que treinou o detector, sob contrato explícito.** Nenhum
   registro pode ser quase-duplicata de nada em
   `benchmark/data/dataset/{train,dev}.jsonl`. O contrato verificado é **hash exato
@@ -200,8 +211,8 @@ Um JSON por linha, validado por [validateBenchmarkRecord](../benchmark/schema.ts
     "collectedAt": 1700000000000,
     "licenseId": "cc-by-4.0",             // precisa existir no inventário de licenças do manifest
     "licenseUrl": "https://…",            // opcional
-    "legalBasis": "consent" | "license" | "generated",
-    "consentId": "consent_x",             // opcional (token pseudonimizado)
+    "legalBasis": "consent" | "license" | "generated",  // v3 usa "license"/"generated"; "consent" é rota fechada (B3)
+    "consentId": "consent_x",             // opcional (token pseudonimizado); ausente na v3
     "piiAudit": {
       "status": "passed",                 // ÚNICO valor aceito
       "method": "manual-and-automated",   // ÚNICO valor aceito
@@ -263,26 +274,37 @@ LF-normalizados para o hash.
 Inventário fechado das fontes autorizadas. **Nenhuma URL, nome, handle ou recibo
 bruto** — só tokens opacos e digests.
 
+Duas rotas aparecem abaixo, e são as duas que a v3 usa: `licensed-corpus` para
+base pública e `controlled-generation` para a classe de IA. A terceira rota do
+schema v1, `linkedin-contribution` (`acquisition: "consent"`), **não** aparece de
+propósito: ela é autorização por documento, que B3 fechou, e nenhum passo deste
+runbook a produz. O parser v1 ainda a aceita — v1 é forma de artefato já selado —
+mas quem varre um manifesto chama `assertNoIndividualAcquisition`
+([source-manifest.ts](../benchmark/source-manifest.ts)), que a recusa com
+`individual-acquisition`. Consequência para a §3.5: em um corpus da v3
+`acquisitionCounts.consent` é **0**, e um valor diferente de zero é sinal de que
+entrou registro por uma rota que não existe mais.
+
 ```jsonc
 {
   "schemaVersion": 1,
   "sources": [
     {
-      "sourceId": "src_consent_1",
-      "sourceType": "linkedin-contribution",   // acquisition = "consent"
-      "acquisition": "consent",
+      "sourceId": "src_ptso",
+      "sourceType": "licensed-corpus",          // acquisition = "licensed"
+      "acquisition": "licensed",
       "evaluationUseApproved": true,
-      "licenseId": null,                        // consent → licenseId null
-      "consentReceiptDigest": "<64 hex>",       // consent → digest obrigatório
+      "licenseId": "cc-by-sa-4.0",              // licensed/generated → licenseId obrigatório
+      "consentReceiptDigest": null,             // não-consentimento → null
       "collectionProtocolVersion": "collection-v1",
       "legalReviewerIds": ["legal_a", "legal_b"]  // EXATAMENTE 2, distintos
     },
     {
-      "sourceId": "src_licensed_1",
-      "sourceType": "licensed-corpus",          // acquisition = "licensed"
+      "sourceId": "src_carolina",
+      "sourceType": "licensed-corpus",
       "acquisition": "licensed",
       "evaluationUseApproved": true,
-      "licenseId": "cc-by-4.0",                 // licensed/generated → licenseId obrigatório
+      "licenseId": "cc-by-nc-sa-4.0",           // NC admissível: commercialUse é false
       "consentReceiptDigest": null,
       "collectionProtocolVersion": "collection-v1",
       "legalReviewerIds": ["legal_a", "legal_c"]
@@ -348,10 +370,13 @@ derivados (o ingest os gera: `recordsFile`, `recordsSha256`, `reviewLedgerFile`,
 }
 ```
 
-> **Fontes sem consentimento individual** (licenciadas/domínio público/atos
-> oficiais), com inventário pronto, blocos `licenses[]`/source-manifest no
-> formato exato do `ingest`, política de zero-PII e as implicações do projeto
-> aberto não-comercial: ver [corpus-sources.md](corpus-sources.md).
+> **O inventário de fontes** — todas públicas e licenciadas, sem autorização
+> individual —, com blocos `licenses[]`/source-manifest no formato exato do
+> `ingest`, a política de zero-PII, o campo de data que ancora cada fonte e as
+> implicações do projeto aberto não-comercial: ver
+> [corpus-sources.md](corpus-sources.md). O que a decisão de usar somente bases
+> públicas fecha, e as quatro respostas do projeto:
+> [limitations.md](limitations.md).
 
 ### 3.5 Relatório de source-readiness — [CorpusSourceReadinessReport](../contracts/source-readiness.ts)
 
