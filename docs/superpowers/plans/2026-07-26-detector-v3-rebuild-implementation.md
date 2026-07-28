@@ -2945,10 +2945,21 @@ todas deliberadas e medidas.
      `sourceKind`/`legalBasis` em lugar algum, então registro-linha passa a referenciar
      fonte licenciada sem tocar `benchmark/schema.ts` nem
      `contracts/source-readiness.ts`.
-   - Nenhum `source-manifest.json` em disco tem entrada de consentimento
-     (`benchmark/data/corpus-build/**`, `benchmark/work/smoke*`), logo nenhum artefato
-     selado ficou ilegível. `grep -l linkedin-contribution` sobre todo `*.json` do repo
-     não retorna nada.
+   - Nenhum `ReviewedSourceManifestV1` em disco carrega entrada
+     `sourceType: "linkedin-contribution"`, logo nenhum artefato selado ficou ilegível.
+     `grep -l linkedin-contribution` sobre todo `*.json` do repo não retorna nada (saída 1,
+     reconfirmado em 2026-07-28).
+
+     **Precisão desta frase (corrigida em 2026-07-28):** a redação anterior — "nenhum
+     `source-manifest.json` em disco tem entrada de consentimento" — era ampla demais.
+     `benchmark/work/smoke/corpus/private/source-manifest.json` **tem**
+     `{"id": "consent", "kind": "authorized-contribution"}`. É **outra forma de artefato**:
+     chaves `id`/`kind` (mais `corpus`, `seed`, `note`), produzida por
+     `benchmark/tests/helpers/generate-synthetic-release-corpus.ts`, lida por outro loader e
+     nunca por `parseReviewedSourceManifest` — que a rejeitaria por chave desconhecida antes
+     de chegar à varredura de aquisição. A conclusão operativa não muda (nada selado ficou
+     ilegível), mas numa errata cujo propósito é impedir que uma afirmação errada volte, a
+     afirmação medida é a que vale.
    - Os "14 testes vermelhos" eram **uma** fixture compartilhada, `CONSENT_SOURCE` em
      `benchmark/tests/corpus-import.test.ts`, e o contrato comum permite atualizar teste
      cujo comportamento correto mudou.
@@ -2988,9 +2999,80 @@ todas deliberadas e medidas.
    `assertV3HumanInventoryAdmissible`. Se estivesse na admissibilidade, uma base pública
    instrumentada — que não está na lista congelada — passaria a ser inadmissível, e o
    critério "bases instrumentadas públicas permanecem representáveis" cairia. É por isso
-   que `src_atos_oficiais` é recusado por `snapshot-not-frozen` e `src_empresa`/
-   `src_proprio` por `individual-acquisition`: são diagnósticos diferentes, não um único
-   "fonte não admitida".
+   que `src_atos_oficiais` é recusado por `snapshot-not-frozen`: são diagnósticos
+   diferentes, não um único "fonte não admitida".
+
+   **ERRATA (2026-07-28).** A redação anterior terminava dizendo que `src_empresa`/
+   `src_proprio` eram recusados "por `individual-acquisition`". Era falso duas vezes.
+   Primeiro de fato: naquela árvore **nada** os recusava — a licença de cada um passava por
+   `sourceAdmissibility` com `admissible: true`, `determinedHumanAcquisition` devolvia
+   `null` para toda entrada `licensed-corpus`, e um manifesto selado com as duas parseava
+   limpo (medido: `PARSED OK — sources admitted: src_proprio:autoria-propria-v1,
+   src_empresa:autorizacao-interna-v1`). A recusa existia só na prosa da tabela do piloto,
+   que é exatamente o estado que o requisito 1 proíbe. Segundo de vocabulário: agora que
+   estão fechados, os motivos são **dois e distintos** — `src_proprio` cai como
+   `operator-authored-session` (aquisição), `src_empresa` como `non-public-base`
+   (publicação) —, porque autorização interna não é aquisição individual. Ver item 5.
+
+5. **A outra metade do requisito 1: `publicationRegime` (2026-07-28, segunda rodada de
+   correção de spec).** Fechar `per-document-consent` fechou a rota que **nomeia** um doador
+   individual e deixou duas licenças registradas passando — e ambas são base não pública.
+   `autoria-propria-v1` **é** a rota `operator-authored-session` que a união deste módulo
+   declara proibida, e o docstring de `determinedHumanAcquisition` já dizia, antes desta
+   rodada, que "`autorizacao-interna-v1` e `autoria-propria-v1` são entradas
+   licensed-corpus também, e nenhuma é base pública" — observação correta com **nenhuma
+   consequência ligada a ela**. Mesma forma de defeito das rodadas anteriores: política em
+   prosa, alcançável por nenhuma guarda.
+
+   O veredito agora vem de **dado no registro**, não de lista de ids no código: cada licença
+   declara `publicationRegime` ∈ {`published-base`, `operator-authorship`,
+   `internal-authorization`}, e duas tabelas de decisão (`satisfies Record<...>`, então
+   regime novo sem veredito é erro de tipo) dizem qual é base pública e qual **determina**
+   rota. A distinção tinha de ser campo próprio porque é invisível nas cláusulas:
+   `autoria-propria-v1`, `autorizacao-interna-v1` e `lei9610-art8` têm
+   atribuição/NC/SA/ND todas falsas, e só as duas primeiras são recusadas — uma correção que
+   se apoiasse em "sem obrigações" teria pegado atos oficiais junto.
+
+   **Três caminhos de admissão fechados, cada um com teste e mutação próprios.**
+   `parseReviewedSourceManifest` chama `assertNoIndividualAcquisition` (agora determinando
+   rota pela licença) e depois `assertPublicBaseLicensesOnly`;
+   `humanSourceAdmissibility` ganhou o passo 2, `non-public-base-license`, que é o que
+   recusa registro declarando `acquisition: "public-dataset"` **e** nomeando
+   `autoria-propria-v1` — contradição entre dois campos do próprio registro, e a brecha por
+   onde `assertV3HumanInventoryAdmissible` podia estocar a v3 de base não publicada; e
+   `isAuthorizedHumanSource` (`benchmark/corpus-source-audit.ts`) repete as duas recusas,
+   porque `benchmark/lab/audit_sources.ts` chega em `auditCorpusSources` com `JSON.parse`
+   puro.
+
+   **A ordem das guardas é carregada e está fixada por teste.** Rota antes de publicação:
+   publicar a própria sessão de escrita não destrava rota que B3 recusa, então nomear a
+   publicação nomearia motivo que o chamador poderia satisfazer sem ficar admissível — mesma
+   regra de precedência de ND sobre NC. `autorizacao-interna-v1` **não** recebeu rótulo de
+   rota: existe terceiro real e autorização escrita real, nenhuma das três rotas proibidas a
+   descreve com honestidade, e inventar uma seria inventar proveniência (R4); ela é recusada
+   pelo eixo da publicação.
+
+   **`licenseDescribesPublicBase` é de três valores, não booleana.** `null` = identificador
+   não registrado, que **não** é o mesmo que "não é base pública": os manifestos privados e
+   todas as fixtures ainda usam ids opacos (`lic_ptbr_1`), e exigir registro de todo
+   identificador é decisão de schema (v3). Por isso as guardas testam `=== false`, nunca
+   `!== true`, e há teste do contra-caso; a mutação para `=== true` mata dois testes.
+
+   `models/cleanfeed-ptbr-v1/license-review.json` recebeu o campo nas sete linhas, porque o
+   teste "the model licence review carries the registry's terms verbatim" exige igualdade
+   com o registro. `NOTICE.md` **não** foi tocado de propósito: nenhum teste o exige, ele é
+   materializado sob `public/models/` e já divergia (obrigação de repackage pendente,
+   registrada por B1); editá-lo aprofundaria a divergência sem fechar nada.
+
+**Verificado (rodada de 2026-07-28):** `source-manifest.test.ts` 71/71 ·
+`corpus-source-audit.test.ts` 19/19 · suíte completa **158 arquivos / 1905 testes**
+(de 158/1891: +14, exatamente os novos, zero regressão) · três projetos de `tsc` verdes ·
+`npm run docs:check` OK. Vermelho antes de verde, e pela razão certa: os dois testes de
+recusa falharam com `promise resolved "{ schemaVersion: 1, …(3) }" instead of rejecting`,
+que é o defeito, não símbolo ausente. Seis mutações, cada uma morre no seu próprio teste:
+parser sem `assertPublicBaseLicensesOnly`; `determinedHumanAcquisition` voltando a ignorar
+a licença; `internal-authorization` declarada base pública; `humanSourceAdmissibility` sem
+o passo 2; auditor sem ler o regime; guarda do auditor escrita `=== true`.
 
 **O corte de data foi confirmado, não reimplementado.** `PRE_CHATGPT_CUTOFF_ISO` é
 documentação; nenhuma função do TypeScript compara data. O teste extrai

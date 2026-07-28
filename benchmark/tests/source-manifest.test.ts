@@ -18,11 +18,13 @@ import {
   artifactLicenseObligations,
   assertLicenseInventoryAdmissible,
   assertNoIndividualAcquisition,
+  assertPublicBaseLicensesOnly,
   assertV3HumanInventoryAdmissible,
   computeReviewedSourceManifestDigest,
   corpusLicenseTerms,
   determinedHumanAcquisition,
   humanLabelOverclaimIn,
+  licenseDescribesPublicBase,
   humanSourceAdmissibility,
   parseReviewedSourceManifest,
   sourceAdmissibility,
@@ -953,14 +955,229 @@ describe("B3 — the v1 consent route is a route B3 forbids", () => {
     );
   });
 
-  it("leaves the licensed route undetermined rather than guessing it is public", () => {
-    // A `licensed-corpus` entry does not say whether its licence is a PUBLIC
-    // one (`autorizacao-interna-v1` is a licensed-corpus too), so the bridge
-    // reports `null` instead of admitting it as `public-dataset` by default.
+  it("leaves an unregistered licence undetermined rather than guessing it is public", () => {
+    // A `licensed-corpus` entry under an OPAQUE licence id does not say whether
+    // its licence is a public one, so the bridge reports `null` instead of
+    // admitting it as `public-dataset` by default. What it no longer does is
+    // report `null` for a licence the registry has already classified — that is
+    // the hole the "non-public authorization licence" block below closes.
     expect(determinedHumanAcquisition(licensedSource)).toBeNull();
     expect(determinedHumanAcquisition(generatedSource)).toBeNull();
     expect(() =>
       assertNoIndividualAcquisition([licensedSource, generatedSource]),
+    ).not.toThrow();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// B3, requirement 1, the OTHER half: "só admite base pública licenciada".
+//
+// Refusing `per-document-consent` closed the route that NAMES an individual
+// donor. It left two registered licences through, and both are non-public bases:
+// `autoria-propria-v1` IS the `operator-authored-session` route this module's own
+// union forbids, and `autorizacao-interna-v1` is a corporate self-authorization
+// with no publication at all. Both parse as ordinary `licensed-corpus` entries
+// with every restrictive clause false, so the licence guard has nothing to say
+// about them and the acquisition guard used to determine no route.
+//
+// These tests run against `parseReviewedSourceManifest` on purpose: the criterion
+// is "não há caminho no código que a admita", and the parser is the only way a
+// manifest on disk becomes a `ReviewedSourceManifestV1`.
+// ---------------------------------------------------------------------------
+
+describe("B3 — a non-public authorization licence is not a public base", () => {
+  function licensedUnder(
+    sourceId: string,
+    licenseId: string,
+  ): ReviewedSourceEntryV1 {
+    return {
+      sourceId,
+      sourceType: "licensed-corpus",
+      acquisition: "licensed",
+      evaluationUseApproved: true,
+      licenseId,
+      consentReceiptDigest: null,
+      collectionProtocolVersion: "collection-v1",
+      legalReviewerIds: ["legal_a", "legal_b"],
+    };
+  }
+
+  async function sealedUnder(
+    sourceId: string,
+    licenseId: string,
+  ): Promise<ReviewedSourceManifestV1> {
+    return sealManifest({
+      ...validBody,
+      sources: [licensedUnder(sourceId, licenseId), generatedSource],
+    });
+  }
+
+  it("refuses a sealed manifest licensed as the operator's own authorship", async () => {
+    // `src_proprio` is the pilot row docs/corpus-sources.md refuses in prose.
+    // The entry is otherwise flawless: digest matches, two distinct reviewers,
+    // a registered licence with no ND and no NC clause. The ONLY thing that can
+    // refuse it is that the licence describes text the operator wrote.
+    await expect(
+      parseReviewedSourceManifest(
+        await sealedUnder("src_proprio", "autoria-propria-v1"),
+      ),
+    ).rejects.toThrow(/src_proprio.*operator-authored-session/u);
+  });
+
+  it("refuses a sealed manifest licensed as an internal authorization", async () => {
+    // `src_empresa`, the other prose-only pilot row. Corporate self-authorization
+    // is NOT individual acquisition, so it gets its own reason — but B3's rule is
+    // "só admite base pública licenciada", not "só recusa doador individual".
+    await expect(
+      parseReviewedSourceManifest(
+        await sealedUnder("src_empresa", "autorizacao-interna-v1"),
+      ),
+    ).rejects.toThrow(/src_empresa.*non-public-base/u);
+  });
+
+  it("keeps the same manifest loading under a published-base licence", async () => {
+    // The counter-case, so neither refusal above can be satisfied by refusing
+    // everything: one licence id apart, this is the manifest that must parse.
+    const manifest = await sealedUnder("src_proprio", "cc-by-sa-4.0");
+    await expect(parseReviewedSourceManifest(manifest)).resolves.toEqual(
+      manifest,
+    );
+  });
+
+  it("keeps the official-acts licence a public base", async () => {
+    // `lei9610-art8` has every clause false, exactly like the two authorization
+    // ids, so a fix that keyed off "no obligations" would have caught it too.
+    // Official acts ARE published; they are refused only as `snapshot-not-frozen`.
+    const manifest = await sealedUnder("src_atos_oficiais", "lei9610-art8");
+    await expect(parseReviewedSourceManifest(manifest)).resolves.toEqual(
+      manifest,
+    );
+  });
+
+  it("decides the regime from the registry, for every registered licence", () => {
+    // The verdict is DATA on the entry, not a hardcoded id list, so this asserts
+    // the field exists on all of them and then the partition it induces. A new
+    // licence added without a regime is a type error, not a silent admission.
+    for (const terms of CORPUS_LICENSE_REGISTRY) {
+      expect(
+        terms.publicationRegime,
+        `${terms.licenseId} declares a publication regime`,
+      ).toBeTruthy();
+    }
+    const nonPublic = CORPUS_LICENSE_REGISTRY.filter(
+      (terms) => licenseDescribesPublicBase(terms.licenseId) === false,
+    ).map((terms) => terms.licenseId);
+    expect(new Set(nonPublic)).toEqual(
+      new Set(["autorizacao-interna-v1", "autoria-propria-v1"]),
+    );
+  });
+
+  it("answers `null`, not `false`, for a licence it has never reviewed", () => {
+    // Three-valued on purpose: v1 manifests and every fixture here carry opaque
+    // ids, and "not registered" is an unanswered question, not a refusal. A guard
+    // written as `!== true` instead of `=== false` would refuse all of them.
+    expect(licenseDescribesPublicBase("lic_ptbr_1")).toBeNull();
+    expect(licenseDescribesPublicBase("cc-by-sa-4.0")).toBe(true);
+    expect(licenseDescribesPublicBase("autoria-propria-v1")).toBe(false);
+  });
+
+  it("maps the operator's own authorship to the route it really is", () => {
+    // The licence names a route; the internal authorization does not, because no
+    // forbidden route describes corporate self-authorization truthfully (R4).
+    expect(
+      determinedHumanAcquisition(
+        licensedUnder("src_proprio", "autoria-propria-v1"),
+      ),
+    ).toBe("operator-authored-session");
+    expect(
+      determinedHumanAcquisition(
+        licensedUnder("src_empresa", "autorizacao-interna-v1"),
+      ),
+    ).toBeNull();
+    expect(
+      determinedHumanAcquisition(licensedUnder("src_ok", "cc-by-sa-4.0")),
+    ).toBeNull();
+  });
+
+  it("names the route, not the publication, when both could fire", () => {
+    // `autoria-propria-v1` fails both guards. The route is reported, because
+    // publishing your own writing session does not unblock a route B3 refuses,
+    // so naming the publication would name a reason a caller could satisfy
+    // without becoming admissible.
+    expect(() =>
+      assertNoIndividualAcquisition([
+        licensedUnder("src_proprio", "autoria-propria-v1"),
+      ]),
+    ).toThrow(/src_proprio.*operator-authored-session/u);
+    expect(() =>
+      assertPublicBaseLicensesOnly([
+        licensedUnder("src_proprio", "autoria-propria-v1"),
+      ]),
+    ).toThrow(/src_proprio.*non-public-base/u);
+  });
+
+  it("refuses a non-public base whatever label the entry gives itself", () => {
+    // The reason is a property of the base, not of the entry's own sourceType: a
+    // `controlled-generation` entry claiming the operator's authorship licence is
+    // still a corpus built on an unpublished base.
+    expect(() =>
+      assertPublicBaseLicensesOnly([
+        { ...generatedSource, licenseId: "autorizacao-interna-v1" },
+      ]),
+    ).toThrow(/src_generated.*non-public-base/u);
+    // ...and the v1 tolerance survives: an unregistered id is not refused here.
+    expect(() =>
+      assertPublicBaseLicensesOnly([licensedSource, generatedSource]),
+    ).not.toThrow();
+  });
+
+  it("refuses a registration that claims a public route under a private licence", () => {
+    // The `public-dataset` LIE: the registration contradicts itself, the route
+    // guard believes the declared route, and the licence the registration named
+    // itself is what refuses it. Without this step `assertV3HumanInventoryAdmissible`
+    // could have stocked v3 from an unpublished base.
+    expect(
+      humanSourceAdmissibility({
+        ...publicSnapshot,
+        sourceId: "src_proprio",
+        licenseId: "autoria-propria-v1",
+      }),
+    ).toMatchObject({
+      admissible: false,
+      blockedBy: "non-public-base-license",
+    });
+    expect(() =>
+      assertV3HumanInventoryAdmissible([
+        {
+          ...publicSnapshot,
+          sourceId: "src_empresa",
+          licenseId: "autorizacao-interna-v1",
+        },
+      ]),
+    ).toThrow(/src_empresa.*non-public-base-license/u);
+  });
+
+  it("names the declared route, not the licence's regime, when both could fire", () => {
+    // Declared honestly, the same source is refused for the route: step 1 of the
+    // documented guard order beats step 2.
+    expect(
+      humanSourceAdmissibility({
+        ...publicSnapshot,
+        sourceId: "src_proprio",
+        acquisition: "operator-authored-session",
+        licenseId: "autoria-propria-v1",
+      }),
+    ).toMatchObject({
+      admissible: false,
+      blockedBy: "individual-acquisition",
+    });
+  });
+
+  it("leaves the frozen v3 inventory admissible", () => {
+    // The counter-case for the registration path: all four v3 human sources are
+    // public bases, so the new step refuses none of them.
+    expect(() =>
+      assertV3HumanInventoryAdmissible(V3_HUMAN_SOURCE_INVENTORY),
     ).not.toThrow();
   });
 });

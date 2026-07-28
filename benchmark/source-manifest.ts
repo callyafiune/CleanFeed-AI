@@ -46,10 +46,15 @@
 // `assertV3HumanInventoryAdmissible`), it declares which basis its `human` label
 // rests on and which date field the pre-ChatGPT cutoff is compared against, and
 // the documentation is screened for claims that upgrade that cutoff into proof
-// (`humanLabelOverclaimIn`). `parseReviewedSourceManifest` CALLS the acquisition
-// refusal (`assertNoIndividualAcquisition`), so the legacy v1 consent route no
-// longer loads; what remains for C1 is the record-side vocabulary, and that
-// residual is written out on `assertNoIndividualAcquisition` itself.
+// (`humanLabelOverclaimIn`). `parseReviewedSourceManifest` CALLS both halves of
+// that refusal, so neither is merely available to a caller: the acquisition axis
+// (`assertNoIndividualAcquisition`, which retires the legacy v1 consent route) and
+// the publication axis (`assertPublicBaseLicensesOnly`, which retires the two
+// registered authorization licences that are not published bases). The two axes
+// are separate because they refuse different things — HOW the bytes were acquired
+// and WHETHER the base was published — and a licence can fail one without the
+// other. What remains for C1 is the record-side vocabulary, and that residual is
+// written out on `assertNoIndividualAcquisition` itself.
 //
 // WHO OWNS WHICH VALUE (this module is not the authority for all of it):
 //   * `benchmark/rebuild-v3-policy.json`, validated by
@@ -245,12 +250,40 @@ export const LICENSE_OBLIGATION_LABEL_PT = {
   "share-alike": "share-alike",
 } as const satisfies Record<LicenseObligation, string>;
 
+/**
+ * WHAT KIND of base a licence describes. This is not a clause of the licence: it
+ * is what the licence is an instrument OF, and it is the datum B3's "só admite
+ * base pública licenciada" is decided from.
+ *
+ *   * `published-base` — the licence governs a base someone PUBLISHED. Every
+ *     Creative Commons and Open Data Commons identifier here is one, and so is
+ *     `lei9610-art8`: official acts are published by the state.
+ *   * `operator-authorship` — the "licence" is the operator declaring they wrote
+ *     the text. There is no publisher and no third party; the bytes exist because
+ *     we produced them.
+ *   * `internal-authorization` — an organization authorizing its own unpublished
+ *     content. There IS a third party and a real written authorization, so this is
+ *     not the same thing as operator authorship, but the base is still not public.
+ *
+ * The distinction is invisible in the clauses, which is exactly why it needs its
+ * own field: `autoria-propria-v1`, `autorizacao-interna-v1` and `lei9610-art8`
+ * all carry attribution/NC/SA/ND false, and only the first two are refused.
+ */
+export type LicensePublicationRegime =
+  "published-base" | "operator-authorship" | "internal-authorization";
+
 /** A registered licence: its clauses plus what they imply for a derived corpus. */
 export interface CorpusLicenseTermsV1 {
   /** The exact official identifier. Never "CC BY", "aberta" or "permissiva". */
   licenseId: string;
   name: string;
   source: string;
+  /**
+   * Which kind of base the licence is an instrument of. Declared per entry and
+   * NOT inferred from the clauses; see {@link LicensePublicationRegime} for why
+   * the clauses cannot carry this.
+   */
+  publicationRegime: LicensePublicationRegime;
   attribution: boolean;
   nonCommercial: boolean;
   shareAlike: boolean;
@@ -271,6 +304,7 @@ const REGISTERED_LICENSES: readonly LicenseClauses[] = [
     licenseId: "cc-by-sa-4.0",
     name: "Creative Commons Attribution-ShareAlike 4.0",
     source: "https://creativecommons.org/licenses/by-sa/4.0/",
+    publicationRegime: "published-base",
     attribution: true,
     nonCommercial: false,
     shareAlike: true,
@@ -280,6 +314,7 @@ const REGISTERED_LICENSES: readonly LicenseClauses[] = [
     licenseId: "cc-by-nc-sa-4.0",
     name: "Creative Commons Attribution-NonCommercial-ShareAlike 4.0",
     source: "https://creativecommons.org/licenses/by-nc-sa/4.0/",
+    publicationRegime: "published-base",
     attribution: true,
     nonCommercial: true,
     shareAlike: true,
@@ -289,6 +324,7 @@ const REGISTERED_LICENSES: readonly LicenseClauses[] = [
     licenseId: "cc-by-nc-nd-4.0",
     name: "Creative Commons Attribution-NonCommercial-NoDerivatives 4.0",
     source: "https://creativecommons.org/licenses/by-nc-nd/4.0/",
+    publicationRegime: "published-base",
     attribution: true,
     nonCommercial: true,
     shareAlike: false,
@@ -298,6 +334,7 @@ const REGISTERED_LICENSES: readonly LicenseClauses[] = [
     licenseId: "odc-by-1.0",
     name: "Open Data Commons Attribution License 1.0",
     source: "https://opendatacommons.org/licenses/by/1-0/",
+    publicationRegime: "published-base",
     attribution: true,
     nonCommercial: false,
     shareAlike: false,
@@ -307,6 +344,7 @@ const REGISTERED_LICENSES: readonly LicenseClauses[] = [
     licenseId: "lei9610-art8",
     name: "Atos oficiais — Lei 9.610/98, art. 8º, I",
     source: "https://www.planalto.gov.br/ccivil_03/leis/l9610.htm",
+    publicationRegime: "published-base",
     attribution: false,
     nonCommercial: false,
     shareAlike: false,
@@ -316,6 +354,7 @@ const REGISTERED_LICENSES: readonly LicenseClauses[] = [
     licenseId: "autorizacao-interna-v1",
     name: "Autorização interna escrita (conteúdo corporativo próprio)",
     source: "registro interno da autorização",
+    publicationRegime: "internal-authorization",
     attribution: false,
     nonCommercial: false,
     shareAlike: false,
@@ -325,6 +364,7 @@ const REGISTERED_LICENSES: readonly LicenseClauses[] = [
     licenseId: "autoria-propria-v1",
     name: "Autoria própria do operador",
     source: "declaração do operador",
+    publicationRegime: "operator-authorship",
     attribution: false,
     nonCommercial: false,
     shareAlike: false,
@@ -551,6 +591,63 @@ const ACQUISITION_IS_INDIVIDUAL = {
   "operator-authored-session": true,
 } as const satisfies Record<HumanSourceAcquisition, boolean>;
 
+// Whether each publication regime is the ONE thing B3 admits: a published base.
+// Same decision-table shape and same reason — a regime added to the union without
+// a verdict here is a type error, and nothing is a public base by default.
+const REGIME_IS_PUBLIC_BASE = {
+  "published-base": true,
+  "operator-authorship": false,
+  "internal-authorization": false,
+} as const satisfies Record<LicensePublicationRegime, boolean>;
+
+// Which acquisition route each regime DETERMINES, when it determines one.
+//
+// `operator-authorship` determines `operator-authored-session` because that is
+// literally what it is: a licence whose whole basis is "the operator wrote this"
+// describes the writing session the route names. It is the one place where a
+// licence identifies a route, and it is why `autoria-propria-v1` is refused with
+// an ACQUISITION reason rather than a publication one.
+//
+// The other two determine nothing, for two DIFFERENT reasons that must not be
+// collapsed:
+//
+//   * `published-base` determines nothing because a published-base licence does
+//     not testify that these particular bytes came from a published base — the
+//     same CC identifier can cover a document written to order. Returning
+//     `public-dataset` here would manufacture the very claim B3 exists to require
+//     evidence for, so the route still has to be declared by a
+//     {@link HumanSourceRegistrationV1}.
+//   * `internal-authorization` determines nothing because corporate
+//     self-authorization is NOT individual acquisition: there is a real third
+//     party and a real written authorization, so none of the three forbidden
+//     routes describes it truthfully, and naming one would be inventing
+//     provenance (R4). It is still refused — by
+//     {@link assertPublicBaseLicensesOnly}, on the publication axis — because
+//     B3's rule is "só admite base pública licenciada", not "só recusa doador
+//     individual".
+const REGIME_DETERMINES_ACQUISITION = {
+  "published-base": null,
+  "operator-authorship": "operator-authored-session",
+  "internal-authorization": null,
+} as const satisfies Record<
+  LicensePublicationRegime,
+  HumanSourceAcquisition | null
+>;
+
+/**
+ * Does `licenseId` describe a base someone published?
+ *
+ * `null` means the identifier is not registered, which is NOT the same answer as
+ * `false`: v1 predates the registry and its manifests still carry opaque ids
+ * (`lic_ptbr_1`), so an unregistered id is an unanswered question and the callers
+ * that must not guess treat it as one. `assertLicenseInventoryAdmissible` is the
+ * guard that fails closed on an unregistered id.
+ */
+export function licenseDescribesPublicBase(licenseId: string): boolean | null {
+  const terms = corpusLicenseTerms(licenseId);
+  return terms === null ? null : REGIME_IS_PUBLIC_BASE[terms.publicationRegime];
+}
+
 /**
  * The evidence basis of a `human` label. The vocabulary is NOT written down here:
  * `benchmark/rebuild-v3-policy.json` is the authority (`labelBasis.allowed`) and
@@ -632,6 +729,7 @@ export interface HumanSourceRegistrationV1 {
 export type HumanSourceBlockReason =
   | "individual-acquisition"
   | "no-public-license"
+  | "non-public-base-license"
   | "label-basis-undeclared"
   | "label-basis-not-allowed"
   | "anchor-date-field-missing"
@@ -664,15 +762,31 @@ export type HumanSourceAdmissibility =
  *   1. `individual-acquisition` first. Reporting the missing licence there would
  *      tell a donor-recruiting caller that finding a licence unblocks
  *      recruitment, which is false — B3 refuses the route, whatever its licence.
- *   2. then the licence, because a source with no admissible public licence
- *      cannot enter at all, so there is nothing for a label basis to be about.
- *   3. then the label basis, and only for a `date-cutoff` basis the field the
+ *   2. then `non-public-base-license`, for a licence the registry classifies as
+ *      something other than a published base. It sits above the clause-level
+ *      verdict because a base that was never published cannot enter whatever its
+ *      clauses permit, and it sits below the route because a declared route is
+ *      the stronger statement — a registration that says `recruited-donor` under
+ *      `cc-by-sa-4.0` is refused for the route, not for the licence.
+ *   3. then the licence clauses, because a source with no admissible public
+ *      licence cannot enter at all, so there is nothing for a label basis to be
+ *      about.
+ *   4. then the label basis, and only for a `date-cutoff` basis the field the
  *      cutoff is compared against.
  *
- * The pair that pins the order is the realistic one: an individually-acquired
- * source has no public licence either, so both of 1 and 2 could fire on the same
- * input. The test "names the acquisition, not the missing licence, when both
- * could fire" is what keeps that decided.
+ * Two pairs pin the order, both realistic. An individually-acquired source has no
+ * public licence either, so 1 and 3 could fire on the same input ("names the
+ * acquisition, not the missing licence, when both could fire"). And an operator's
+ * own writing session declared honestly — `acquisition: "operator-authored-session"`
+ * under `autoria-propria-v1` — is the pair where 1 and 2 fire together, and 1 wins
+ * ("names the declared route, not the licence's regime, when both could fire").
+ *
+ * Step 2 is what the `public-dataset` LIE runs into: a registration that declares
+ * `public-dataset` while naming `autoria-propria-v1` contradicts itself, guard 1
+ * believes the declared route and lets it through, and guard 2 refuses it on the
+ * licence the registration named itself. Without step 2 that registration was
+ * admissible, which is how `assertV3HumanInventoryAdmissible` could have stocked
+ * v3 from an unpublished base.
  */
 export function humanSourceAdmissibility(
   registration: HumanSourceRegistrationV1,
@@ -695,6 +809,12 @@ export function humanSourceAdmissibility(
   }
   if (registration.licenseId === null) {
     return refuse("no-public-license");
+  }
+  // Step 2: the licence names a base that was never published. Distinct from
+  // `no-public-license` above, which is the absence of any licence at all, and
+  // from the clause verdict below, which is about what a published base permits.
+  if (licenseDescribesPublicBase(registration.licenseId) === false) {
+    return refuse("non-public-base-license");
   }
   const licence = sourceAdmissibility(registration.licenseId, use);
   if (!licence.admissible) {
@@ -841,21 +961,38 @@ export function assertV3HumanInventoryAdmissible(
  * The B3 acquisition route a v1 manifest entry DETERMINES, or `null` when the
  * entry does not determine one.
  *
- * `linkedin-contribution` determines `per-document-consent`: its whole legal
- * basis is a consent receipt digest, so there is nothing else it could be.
- * `licensed-corpus` determines nothing — `autorizacao-interna-v1` and
- * `autoria-propria-v1` are licensed-corpus entries too, and neither is a public
- * base — so the honest answer is `null` and the route has to be declared by a
- * {@link HumanSourceRegistrationV1}. Returning `public-dataset` there would
- * manufacture the very claim B3 exists to require evidence for.
- * `controlled-generation` is not a human source at all.
+ * Two things can determine a route, and the entry carries both:
+ *
+ *   * `sourceType`. `linkedin-contribution` determines `per-document-consent`:
+ *     its whole legal basis is a consent receipt digest, so there is nothing else
+ *     it could be. `controlled-generation` is not a human source at all.
+ *   * the LICENCE of a `licensed-corpus` entry, through its publication regime.
+ *     An earlier round returned `null` for every `licensed-corpus` entry and said
+ *     in this docstring that `autorizacao-interna-v1` and `autoria-propria-v1`
+ *     "are licensed-corpus entries too, and neither is a public base" — a correct
+ *     observation with no consequence attached, so a manifest carrying either id
+ *     parsed clean. It is recorded here rather than deleted, because the failure
+ *     shape is the one that recurs: a policy stated in prose and reachable by no
+ *     guard. Now `REGIME_DETERMINES_ACQUISITION` answers it from the registry, so
+ *     `autoria-propria-v1` determines `operator-authored-session` and the refusal
+ *     comes from data instead of from a hardcoded id list.
+ *
+ * An UNREGISTERED licence id still determines nothing, deliberately: it is an
+ * unanswered question, not a public base (see {@link licenseDescribesPublicBase}).
  */
 export function determinedHumanAcquisition(
-  entry: Pick<ReviewedSourceEntryV1, "sourceType">,
+  entry: Pick<ReviewedSourceEntryV1, "sourceType" | "licenseId">,
 ): HumanSourceAcquisition | null {
-  return entry.sourceType === "linkedin-contribution"
-    ? "per-document-consent"
-    : null;
+  if (entry.sourceType === "linkedin-contribution") {
+    return "per-document-consent";
+  }
+  if (entry.sourceType !== "licensed-corpus" || entry.licenseId === null) {
+    return null;
+  }
+  const terms = corpusLicenseTerms(entry.licenseId);
+  return terms === null
+    ? null
+    : REGIME_DETERMINES_ACQUISITION[terms.publicationRegime];
 }
 
 /**
@@ -872,9 +1009,14 @@ export function determinedHumanAcquisition(
  *     against the manifest's id set. There is no `sourceKind`/`legalBasis`
  *     pairing check anywhere, so a record can reference a licensed source with
  *     no change to `benchmark/schema.ts` or `contracts/source-readiness.ts`.
- *   * No manifest on disk carries a consent entry (checked over
- *     `benchmark/data/corpus-build/**` and `benchmark/work/smoke*`), so no
- *     sealed artifact becomes unreadable by refusing the route.
+ *   * No `ReviewedSourceManifestV1` on disk carries a `linkedin-contribution`
+ *     entry, so no sealed artifact becomes unreadable by refusing the route. The
+ *     claim is scoped to THIS shape deliberately: the synthetic smoke corpus under
+ *     `benchmark/work/` does carry `{"id": "consent", "kind":
+ *     "authorized-contribution"}`, which is a different artifact with different
+ *     keys, written by a different producer and read by a different loader. This
+ *     parser would reject it on an unknown key long before the acquisition sweep,
+ *     so the sweep does not apply to it.
  *
  * What genuinely remains for C1 is narrower and is a vocabulary cleanup, not a
  * hole: `provenance.sourceKind: "authorized-contribution"` and
@@ -885,7 +1027,10 @@ export function determinedHumanAcquisition(
  * `SOURCE_ENTRY_ABSENT`.
  */
 export function assertNoIndividualAcquisition(
-  sources: readonly Pick<ReviewedSourceEntryV1, "sourceId" | "sourceType">[],
+  sources: readonly Pick<
+    ReviewedSourceEntryV1,
+    "sourceId" | "sourceType" | "licenseId"
+  >[],
 ): void {
   for (const source of sources) {
     const route = determinedHumanAcquisition(source);
@@ -893,6 +1038,47 @@ export function assertNoIndividualAcquisition(
       fail(
         "HUMAN_SOURCE_NOT_ADMISSIBLE",
         `source ${source.sourceId} is acquired through "${route}": individual-acquisition is refused (B3)`,
+      );
+    }
+  }
+}
+
+/**
+ * Refuses every v1 manifest entry whose licence is registered as something other
+ * than a published base. The companion of {@link assertNoIndividualAcquisition}
+ * on the other axis of B3's rule: that one asks HOW the bytes were acquired, this
+ * one asks whether the base they came from was ever published.
+ *
+ * Both are needed and neither subsumes the other. `autoria-propria-v1` fails both
+ * (the acquisition guard runs first and reports the route, because "publish your
+ * own writing session" does not unblock a route B3 refuses, so naming the
+ * publication would name a reason a caller could satisfy without becoming
+ * admissible — the same precedence rule `sourceAdmissibility` follows for ND over
+ * NC and `humanSourceAdmissibility` follows for the route over the licence).
+ * `autorizacao-interna-v1` fails only this one, because corporate
+ * self-authorization is not individual acquisition.
+ *
+ * It applies to EVERY entry and not only to `licensed-corpus`, because the reason
+ * is a property of the base and not of the label the entry gives itself: a
+ * `controlled-generation` entry claiming `autoria-propria-v1` is still a corpus
+ * built on an unpublished base.
+ *
+ * An UNREGISTERED licence id passes here, and that is the same deliberate v1
+ * tolerance `assertRegisteredLicensesAdmissible` documents: the private manifests
+ * and the fixtures still carry opaque ids, and requiring registration of every
+ * identifier is a schema decision (v3), not this guard's. Callers that need the
+ * full closure call `assertLicenseInventoryAdmissible`.
+ */
+export function assertPublicBaseLicensesOnly(
+  sources: readonly Pick<ReviewedSourceEntryV1, "sourceId" | "licenseId">[],
+): void {
+  for (const source of sources) {
+    if (source.licenseId === null) continue;
+    if (licenseDescribesPublicBase(source.licenseId) === false) {
+      const terms = corpusLicenseTerms(source.licenseId);
+      fail(
+        "HUMAN_SOURCE_NOT_ADMISSIBLE",
+        `source ${source.sourceId} licence "${source.licenseId}" is ${terms?.publicationRegime ?? "unregistered"}: non-public-base is refused (B3 admits only a published base)`,
       );
     }
   }
@@ -1354,6 +1540,11 @@ export async function parseReviewedSourceManifest(
   // entry is required to carry `licenseId: null`, so no licence reason can fire
   // on it at all).
   assertNoIndividualAcquisition(sources);
+  // ...and then the publication axis. Order is load-bearing and pinned by
+  // "names the route, not the publication, when both could fire": an
+  // `autoria-propria-v1` entry fails both guards, and the route is the reason a
+  // caller cannot satisfy away.
+  assertPublicBaseLicensesOnly(sources);
 
   const seenBatchIds = new Set<string>();
   const generationBatches = root.generationBatches.map((entry, index) => {

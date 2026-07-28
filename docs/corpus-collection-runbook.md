@@ -288,6 +288,18 @@ Consequência para a §3.5: em um corpus da v3
 `acquisitionCounts.consent` é **0**, e um valor diferente de zero é sinal de que
 entrou registro por uma rota que não existe mais.
 
+`licensed-corpus` **não** é passe livre, e é onde um passo deste runbook pode
+errar sem perceber: a rota exige licença de **base publicada**. Duas licenças do
+registro não são — `autoria-propria-v1` (autoria do operador) e
+`autorizacao-interna-v1` (autorização interna escrita) —, e ambas entram como
+`licensed-corpus` comum, com todas as cláusulas restritivas falsas, então nada nas
+cláusulas as distingue de `lei9610-art8`. O que as distingue é o
+`publicationRegime` declarado no registro, e o parser chama as duas recusas:
+`autoria-propria-v1` falha como `operator-authored-session` (o regime **determina**
+a rota) e `autorizacao-interna-v1` como `non-public-base`. Nenhum passo deste
+runbook produz qualquer das duas; se você se pegar preenchendo uma, o passo está
+errado, não o guarda.
+
 ```jsonc
 {
   "schemaVersion": 1,

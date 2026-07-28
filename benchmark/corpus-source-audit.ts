@@ -28,6 +28,7 @@ import {
 import type { BenchmarkRecord } from "./schema.ts";
 import {
   computeReviewedSourceManifestDigest,
+  licenseDescribesPublicBase,
   type GenerationBatchV1,
   type ReviewedSourceEntryV1,
   type ReviewedSourceManifestV1,
@@ -86,7 +87,8 @@ function isNonEmptyString(value: unknown): value is string {
 /**
  * A human-content source is authorized only through an approved
  * compatible-licence path: a `licensed-corpus` entry, acquired as `licensed`,
- * carrying a licenceId. Controlled generation is not subject to this policy.
+ * carrying a licenceId that is not registered as a non-public base. Controlled
+ * generation is not subject to this policy.
  *
  * There used to be a second admissible path here — a `linkedin-contribution`
  * entry with a consent receipt digest. B3 (2026-07-26) removed it: per-document
@@ -94,12 +96,21 @@ function isNonEmptyString(value: unknown): value is string {
  * source at any receipt quality, and it is reported as
  * `LINKEDIN_SOURCE_NOT_AUTHORIZED` like any other unauthorized human source.
  *
- * Why the refusal has to be repeated here and not only in
- * `parseReviewedSourceManifest` (which now calls `assertNoIndividualAcquisition`):
- * this module is handed an ALREADY-PARSED `ReviewedSourceManifestV1`, and
- * `benchmark/lab/audit_sources.ts` reaches it with a plain `JSON.parse` and a
- * cast, never touching the parser. That is a second, independent way in, so this
- * predicate cannot rely on the first one having run.
+ * The licence check is `=== false` and not `!== true` on purpose, because
+ * `licenseDescribesPublicBase` has three answers and only one of them is a
+ * refusal. `null` means the identifier is not in the registry, which v1 tolerates
+ * deliberately — the private manifests and every fixture here still carry opaque
+ * ids like `lic_ptbr_1`, and requiring registration of every identifier is a v3
+ * schema decision, not this predicate's. So an unregistered id stays authorized
+ * and only a licence the registry has CLASSIFIED as `operator-authorship` or
+ * `internal-authorization` is refused.
+ *
+ * Why both refusals have to be repeated here and not only in
+ * `parseReviewedSourceManifest` (which calls `assertNoIndividualAcquisition` and
+ * `assertPublicBaseLicensesOnly`): this module is handed an ALREADY-PARSED
+ * `ReviewedSourceManifestV1`, and `benchmark/lab/audit_sources.ts` reaches it with
+ * a plain `JSON.parse` and a cast, never touching the parser. That is a second,
+ * independent way in, so this predicate cannot rely on the first one having run.
  */
 function isAuthorizedHumanSource(source: ReviewedSourceEntryV1): boolean {
   if (source.evaluationUseApproved !== true) return false;
@@ -107,7 +118,8 @@ function isAuthorizedHumanSource(source: ReviewedSourceEntryV1): boolean {
     source.sourceType === "licensed-corpus" &&
     source.acquisition === "licensed"
   ) {
-    return isNonEmptyString(source.licenseId);
+    if (!isNonEmptyString(source.licenseId)) return false;
+    return licenseDescribesPublicBase(source.licenseId) !== false;
   }
   return false;
 }

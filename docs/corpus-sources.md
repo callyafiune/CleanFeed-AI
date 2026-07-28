@@ -69,12 +69,43 @@ própria (`LINKEDIN_SOURCE_NOT_AUTHORIZED`), porque ele recebe objeto já parsea
 e `benchmark/lab/audit_sources.ts` chega nele com `JSON.parse` puro, sem passar
 pelo parser. Todas as fontes abaixo entram pela rota `licensed-corpus`.
 
+Fechar a rota de consentimento, porém, fecha só **metade** da regra: ela recusa a
+aquisição que **nomeia** um doador individual, e deixava passar duas licenças
+registradas que não são base pública. Isso também está fechado agora, num eixo
+próprio. Cada licença do registro declara um `publicationRegime`, e a distinção é
+invisível nas cláusulas — `autoria-propria-v1`, `autorizacao-interna-v1` e
+`lei9610-art8` têm atribuição/NC/SA/ND todas falsas, e só as duas primeiras são
+recusadas:
+
+| `publicationRegime` | licenças | veredito |
+| --- | --- | --- |
+| `published-base` | as quatro CC/ODC e `lei9610-art8` | única rota que B3 admite |
+| `operator-authorship` | `autoria-propria-v1` | recusada — **é** a rota `operator-authored-session` |
+| `internal-authorization` | `autorizacao-interna-v1` | recusada — base não publicada |
+
+`parseReviewedSourceManifest` chama os dois eixos: `assertNoIndividualAcquisition`
+(como o regime `operator-authorship` **determina** a rota, `autoria-propria-v1`
+falha aqui, com `operator-authored-session`) e depois
+`assertPublicBaseLicensesOnly` (`non-public-base`). A ordem é deliberada e está
+fixada por teste: publicar a própria sessão de escrita **não** destrava uma rota
+que B3 recusa, então nomear a publicação nomearia motivo que o chamador poderia
+satisfazer sem ficar admissível — a mesma regra de precedência que já vale para ND
+sobre NC. Autorização interna **não** é aquisição individual (existe terceiro real
+e autorização escrita real, e nenhuma das três rotas proibidas a descreve com
+honestidade), então ela é recusada pelo eixo da publicação, e não por um rótulo de
+rota inventado (R4). `isAuthorizedHumanSource`, no auditor, repete as duas recusas
+pelo mesmo motivo de sempre: ele recebe objeto já parseado.
+
 Uma rodada anterior deixou a recusa **sem chamador**, argumentando que retirar a
 rota moveria junto três contratos. O argumento estava errado na medição e fica
 registrado para não voltar: `benchmark/corpus-import.ts` cruza **apenas**
 `provenance.sourceId` contra o conjunto de ids do manifesto — não existe
-verificação de par `sourceKind`/`legalBasis` em lugar algum —, e nenhum manifesto
-em disco tem entrada de consentimento, então nada selado deixou de ser legível.
+verificação de par `sourceKind`/`legalBasis` em lugar algum —, e nenhum
+`ReviewedSourceManifestV1` em disco tem entrada `linkedin-contribution`, então nada
+selado deixou de ser legível. (O corpus sintético de smoke sob `benchmark/work/`
+tem `{"id": "consent", "kind": "authorized-contribution"}`, mas é **outra forma de
+artefato**, de outro produtor e outro loader; este parser a rejeitaria por chave
+desconhecida antes de chegar à varredura de aquisição.)
 O que sobra para **C1** é vocabulário do registro-linha, não brecha:
 `provenance.sourceKind: "authorized-contribution"` e
 `provenance.legalBasis: "consent"` ainda são grafáveis pelo schema, e
@@ -157,11 +188,25 @@ congelados em `benchmark/rebuild-v3-policy.json` (`humanSources.snapshots`), com
 `newDownloadsAllowed: false`. `src_empresa` (autorização interna escrita) e
 `src_proprio` (autoria do operador) **não** entram: nenhuma das duas é base
 pública licenciada, que é a única rota que B3 deixa aberta.
+
+E, desde 2026-07-28, essa recusa das duas **não é mais só prosa** — antes, era: a
+tabela do piloto dizia que não entravam e nenhum código dizia. Agora a licença que
+cada uma declara é o que as recusa, pelo `publicationRegime` da tabela acima, em
+três caminhos independentes: `parseReviewedSourceManifest` (um manifesto selado com
+qualquer das duas **não carrega**), `humanSourceAdmissibility` /
+`assertV3HumanInventoryAdmissible` (`non-public-base-license`, que é o que impede
+um registro de declarar `acquisition: "public-dataset"` **e** nomear
+`autoria-propria-v1` — contradição entre dois campos do próprio registro) e
+`isAuthorizedHumanSource` no auditor. O que continua valendo é o alerta inverso: as
+três linhas do piloto são recusadas pela **licença** que nomeiam, não pelo
+`sourceId`; um `sourceId` novo com licença pública seria admissível, como deve ser.
+
 `src_atos_oficiais` é público, mas não está na lista congelada, e por isso é
 recusado por um motivo **distinto** — `snapshot-not-frozen`, não
-`individual-acquisition`: não há bytes em disco para ele e nenhum download novo
-está autorizado. As três permanecem no inventário como registro do piloto;
-nenhuma é fonte humana da v3.
+`individual-acquisition` nem `non-public-base`: `lei9610-art8` é
+`published-base` (atos oficiais são publicados pelo Estado), e o que falta é bytes
+em disco, porque nenhum download novo está autorizado. As três permanecem no
+inventário como registro do piloto; nenhuma é fonte humana da v3.
 
 **Base pública instrumentada continua representável.** Uma base publicada que já
 tenha registrado o processo de escrita entra com `acquisition: "public-dataset"`,

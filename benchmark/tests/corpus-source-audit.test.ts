@@ -338,6 +338,42 @@ describe("auditCorpusSources", () => {
     );
   });
 
+  it("blocks a licensed source whose licence is not a published base", async () => {
+    // The other half of B3's rule, on the same second entry point. `licensed` +
+    // `licensed-corpus` + a non-empty licenceId used to be enough, so a licence
+    // registered as the OPERATOR'S OWN authorship was an authorized human source
+    // here even after the parser learned to refuse it.
+    const report = await auditCorpusSources(
+      await buildInput({
+        sources: [
+          { ...licensedSource, licenseId: "autoria-propria-v1" },
+          generatedSource,
+        ],
+      }),
+    );
+    expect(report.status).toBe("blocked");
+    expect(report.blockingReasons).toContainEqual(
+      expect.objectContaining({
+        code: "LINKEDIN_SOURCE_NOT_AUTHORIZED",
+        sourceId: "src_licensed",
+      }),
+    );
+  });
+
+  it("keeps an unregistered licence id authorized", async () => {
+    // The counter-case that stops the check above from refusing everything, and
+    // the reason it is written `=== false` and not `!== true`: `lic_ptbr_1` is not
+    // in the registry, which v1 tolerates deliberately, so it stays authorized.
+    const report = await auditCorpusSources(
+      await buildInput({ sources: [licensedSource, generatedSource] }),
+    );
+    expect(
+      report.blockingReasons.filter(
+        (reason) => reason.code === "LINKEDIN_SOURCE_NOT_AUTHORIZED",
+      ),
+    ).toEqual([]);
+  });
+
   it("flags a LinkedIn source that is not authorized", async () => {
     const report = await auditCorpusSources(
       await buildInput({
