@@ -1,19 +1,41 @@
-"""Assembles the sealed corpus ptbr-generic-v1 from candidate pools into the
-canonical BenchmarkRecord v2 shape that `ingest` + `validate` accept.
+"""Assembles the corpus ptbr-generic-v1 from candidate pools into the canonical
+BenchmarkRecord **v3** shape that `ingest` + `validate` accept.
 
 Emits (into --out-dir):
-  records.jsonl                 the 10k canonical records (human/ai/mixed)
-  private/review-ledger.jsonl   one {recordId,reviewerIds,agreement} per record
-  governance-inputs.json        sourceIds + held-out families + licenses, for
-                                build_governance.ts to mint the digest-bound
-                                source-manifest.json and template manifest.json
+  records.jsonl                    the canonical records (human/ai/mixed)
+  cluster-report.json              cluster count + size distribution + largest
+                                   cluster, per axis and per slice (feeds E3)
+  private/review-ledger.jsonl      one {recordId,reviewerIds,agreement} per record
+  private/label-evidence.jsonl     the entries every human labelEvidenceRef resolves
+                                   against, one per SOURCE registration
+  governance-inputs.json           sourceIds + held-out families + licenses, for
+                                   build_governance.ts to mint the digest-bound
+                                   source-manifest.json and template manifest.json
 
-Design pinned to the assembly map (memory: cleanfeed-canonical-assembly):
-  * Closed v2 schema; OMIT normalizedTextSha256 (ingest recomputes + fills).
-  * All groups.* tokens UNIQUE per record (author/source/domainSource/
-    collectionBatch/nearDuplicate/derivationRoot) so the blocked split treats
-    each record as its own connected component; domain/generatorFamily are NOT
-    grouping axes. Mixed's derivationRoot points to its (out-of-corpus) parent.
+WHAT CHANGED IN v3, AND WHY (C2). The v2 assembler wrote a fresh identifier per
+record on five of the grouping axes, so the blocked split had nothing to find, the
+clustered bootstrap resampled i.i.d. over singletons, and the near-duplicate axis
+could not name a cluster. The long note above `UnmappableLane` states the defect and
+its three measured consequences. Now:
+
+  * every axis carries a STATE — `known` with an identity, `notApplicable` with a
+    written reason, or `unknown` with a written reason and the cost of the record's
+    eligibility (R6). Nothing is ever substituted;
+  * the identities are the ones the sources have: the Stack Overflow THREAD, the
+    Wikipedia PAGE, the B2W PRODUCT, the Carolina MEMBER FILE, the extraction RUN,
+    the generation BATCH, the human SEED, the prompt TEMPLATE, the LANE;
+  * person identifiers (SE author, B2W reviewer) are HMAC pseudonyms keyed by C3's
+    keyring, never bare digests, and the extractors fail closed without it;
+  * a human row states the basis of its `human` label — which date field, what value,
+    against which cutoff, out of which snapshot — instead of asserting it;
+  * a row the v3 contract cannot express is DROPPED AND COUNTED, never patched. v2
+    accepted generated rows with no lane, no template digest and no effort, and human
+    rows with no date evidence; those counts are printed, and they are the size of
+    what has to be re-extracted or regenerated.
+
+Design otherwise unchanged from the assembly map (memory:
+cleanfeed-canonical-assembly):
+  * OMIT normalizedTextSha256 (ingest recomputes + fills).
   * Pseudonyms /^[A-Za-z0-9_-]+$/ everywhere ids/groups live; families slugged.
   * label cross-rules: human->no generation; ai->generation; mixed->mixture
     (fractions sum to 1 at full float precision) + derivationRoot != id.
@@ -24,7 +46,12 @@ Design pinned to the assembly map (memory: cleanfeed-canonical-assembly):
     as the split requires them after the test cut.
 
 Usage:
-  python assemble_corpus.py --out-dir ../data/corpus-build [--sample 120]
+  python assemble_corpus.py --out-dir ../out/rebuild-v3/C2 [--sample 120]
+    [--candidates-dir <pools>]
+
+NEVER point --out-dir at benchmark/data/corpus-build: that is the sealed artifact of
+the REPROVED run and §7 of the plan puts it in "Descarte", so overwriting it would
+destroy the evidence the diagnosis rests on.
 """
 
 from __future__ import annotations
@@ -455,6 +482,30 @@ def harness_axis(lane: str, meta: dict) -> dict:
     )
 
 
+def seed_pair(meta: dict) -> dict:
+    """Exactly one of `seed` / `seedNullReason`, and NEVER an invented seed.
+
+    The sealed schema refuses a recipe carrying both or neither, and the rule matters
+    beyond well-formedness: a seed is the one field that would make a generation
+    reproducible, so a fabricated one is a claim that the text can be regenerated
+    when it cannot. D3 states the same prohibition.
+
+    An EMPTY seed is not a seed. The pools spell the absent case as `"seed": ""` plus
+    a reason, so a truthiness test is what reads them correctly; `is not None` would
+    write `seed: ""` and be refused by `nonEmptyString` anyway — loudly, which is
+    fine, but at the cost of a full assembly run to discover.
+
+    Defaulting fills in the REASON and never the seed, which is the safe half: no
+    provider on any of the four frozen lanes exposes a sampling seed, so for a row
+    that recorded neither, "there was no seed" is a fact about the lane rather than a
+    guess about the row.
+    """
+    seed = meta.get("seed")
+    if seed:
+        return {"seed": str(seed)}
+    return {"seedNullReason": str(meta.get("seedNullReason") or SEED_NULL_REASON)}
+
+
 def parent_of_prompt(prompt_id: str) -> str | None:
     """The human seed a generated row came from, out of its `promptId`.
 
@@ -729,6 +780,7 @@ def ai_record(cand: dict, near_duplicate: str | None = None) -> dict:
             "promptTemplateDigest": str(template_digest),
             "decoding": decoding_config(lane, meta),
             "effort": effort_config(lane, meta),
+            **seed_pair(meta),
         },
         "transformation": {"kind": "none", "severity": "none"},
         "groups": {
@@ -831,6 +883,7 @@ def mixed_record(cand: dict, near_duplicate: str | None = None) -> dict:
             "promptTemplateDigest": str(template_digest),
             "decoding": decoding_config(lane, cand),
             "effort": effort_config(lane, cand),
+            **seed_pair(cand),
         },
         "transformation": {"kind": "human-ai-mix", "severity": "medium"},
         "groups": {
@@ -866,8 +919,16 @@ def mixed_record(cand: dict, near_duplicate: str | None = None) -> dict:
     return rec
 
 
+# recordId -> the partition its block time places it in. A SIDE map and not a field:
+# V3_RECORD_KEYS is a closed object and `partition` is not one of its keys, and the
+# partition is a DERIVED fact (which block `createdAt` falls in) that would become a
+# second copy able to disagree with the timestamp if it were stored on the record.
+PARTITION_OF: dict[str, str] = {}
+
+
 def stamp_block(rec: dict, partition: str) -> dict:
     """Fills every *At timestamp with the partition's block time."""
+    PARTITION_OF[rec["id"]] = partition
     t = BLOCK_TIME[partition]
     rec["createdAt"] = t
     rec["provenance"]["collectedAt"] = t
@@ -902,7 +963,15 @@ def thin_held_out_families(
     here instead of writing a corpus that `validate` rejects with
     DATASET_COVERAGE_INVALID.
     """
-    written = Counter((r.get("groups") or {}).get("generatorFamily") for r in records)
+    # `identity_of` and not a bare read: since C2 an axis is an object carrying a
+    # state, and `.get("generatorFamily")` would compare a dict against a set of
+    # strings and silently match nothing — the same defect class A4 fixed here, in a
+    # new spelling. It reads the v2 string shape too, so this counter still works
+    # against a v2 corpus on disk.
+    written = Counter(
+        group_axes.identity_of((r.get("groups") or {}).get("generatorFamily"))
+        for r in records
+    )
     return {f: written[f] for f in sorted(held_out) if written[f] < minimum}
 
 
@@ -929,7 +998,10 @@ def assign_partitions(records: list[dict], held_out: set[str]) -> None:
         n_cal = round(n * 0.3)
         n_test = n - n_dev - n_cal
         forced = [
-            r for r in recs if (r.get("groups") or {}).get("generatorFamily") in held_out
+            r
+            for r in recs
+            if group_axes.identity_of((r.get("groups") or {}).get("generatorFamily"))
+            in held_out
         ]
         forced_ids = {id(r) for r in forced}
         rest = [r for r in recs if id(r) not in forced_ids]
@@ -953,21 +1025,33 @@ def assign_partitions(records: list[dict], held_out: set[str]) -> None:
 # --- loading + selection -----------------------------------------------------
 
 
-def load_humans() -> list[dict]:
+def load_humans(cand: Path = CAND) -> list[dict]:
     """Fresh pools + reserved-clean humans, each tagged with its register.
 
     Only domainSources present in REGISTER are kept (carolina_datasets and
-    public-domain are set aside — social-media is B2W-backed now)."""
+    public-domain are set aside — social-media is B2W-backed now).
+
+    `cand` is a parameter so a RE-EXTRACTION can be assembled without overwriting
+    the pools of the failed run: §7 of the plan puts benchmark/data/corpus-build in
+    "Descarte", and reading from a fresh directory is how C2 proves the identity
+    comes out right end to end without destroying the evidence of the diagnosis."""
     rows: list[dict] = []
     for fname in ("ptso_fresh", "wikipedia_fresh", "carolina_fresh", "b2w_fresh"):
-        for r in read_jsonl(CAND / f"{fname}.jsonl"):
+        for r in read_jsonl(cand / f"{fname}.jsonl"):
             if r["domainSource"] in REGISTER:
+                # The EXTRACTION RUN this row came out of, which is a real batch
+                # shared by every candidate of one pool file — the identity the
+                # per-record cb- token stood in for. Stamped by the loader rather
+                # than the extractor because the pool FILE is the batch, and only
+                # the reader knows which file it opened.
+                meta = r.setdefault("meta", {})
+                meta.setdefault("collectionBatch", f"extraction_{fname}")
                 rows.append(r)
     # reserved-clean humans (never trained, not mixed parents) reuse the same
     # candidate shape; their family field is the domainSource.
     parents = set()
     for f in ("mixed_candidates.jsonl", "mixed_from_pairs.jsonl"):
-        for r in read_jsonl(CAND / f):
+        for r in read_jsonl(cand / f):
             parents.add(r["parentId"])
     for r in read_jsonl(DATASET / "reserved.jsonl"):
         if r.get("label") == 0 and r["id"] not in parents:
@@ -979,12 +1063,19 @@ def load_humans() -> list[dict]:
                         "text": r["text"],
                         "wordCount": len(r["text"].split()),
                         "domainSource": fam,
+                        # No meta: these rows predate the extractors that emit an
+                        # identity, so their author/source axes are `unknown` and the
+                        # rows carry no date evidence. human_record refuses them with
+                        # MissingLabelEvidence, and main() counts them — a v2 corpus
+                        # could take them and a v3 one cannot, which is a real cost of
+                        # the reserved pool and not something to fill in by hand.
+                        "meta": {"collectionBatch": "extraction_reserved"},
                     }
                 )
     return rows
 
 
-def load_ai() -> list[dict]:
+def load_ai(cand: Path = CAND) -> list[dict]:
     rows: list[dict] = []
     # ORDER IS THE SELECTION PRIORITY: the pool is truncated at the class quota
     # from the end, so the least reproducible generations come first. The
@@ -1000,7 +1091,7 @@ def load_ai() -> list[dict]:
         "ai_fresh_codex_topup",
         "ai_reserved",
     ):
-        for r in read_jsonl(CAND / f"{fname}.jsonl"):
+        for r in read_jsonl(cand / f"{fname}.jsonl"):
             # reserved rows lack candidateId/meta; normalize the shape.
             if "candidateId" not in r:
                 r = {
@@ -1013,10 +1104,10 @@ def load_ai() -> list[dict]:
     return rows
 
 
-def load_mixed() -> list[dict]:
+def load_mixed(cand: Path = CAND) -> list[dict]:
     rows: list[dict] = []
     for f in ("mixed_candidates.jsonl", "mixed_from_pairs.jsonl"):
-        for r in read_jsonl(CAND / f):
+        for r in read_jsonl(cand / f):
             rows.append(r)
     return rows
 
@@ -1036,9 +1127,13 @@ def assign_generation_batches(records: list[dict]) -> list[dict]:
     were blocked with GENERATION_RECIPE_MISSING. Sharing it is safe for the
     split even though collectionBatch is a grouping axis — generatedAt is part
     of the batch key and equals the record's temporal block, so a batch is an
-    indivisible component that can never straddle two blocks. Human records keep
-    their per-record cb_ token, which must NOT name a batch (the audit rejects a
-    non-generated record that links one) and cannot collide with a gb_ id.
+    indivisible component that can never straddle two blocks.
+
+    Human records are untouched here and keep the `extraction_<domainSource>` batch
+    their builder assigned — the extraction RUN that produced them, shared by every
+    candidate of one pool. It must NOT name a declared generation batch (the audit
+    rejects a non-generated record that links one), which the `extraction_` prefix
+    makes structural rather than incidental: it cannot collide with a `gb_` id.
     """
     batches: dict[tuple, dict] = {}
     for rec in records:
@@ -1053,8 +1148,14 @@ def assign_generation_batches(records: list[dict]) -> list[dict]:
             generation["family"],
             generation["model"],
             generation["version"],
-            generation["promptSha256"],
-            generation["temperature"],
+            generation["promptTemplateDigest"],
+            # The DECODING and the EFFORT, canonicalised, are part of the batch key
+            # now. In v2 the key carried a bare `temperature`, which could not tell a
+            # CLI lane (no sampling knob at all) from an api lane that happened to
+            # leave the default in place — so two recipes that differ in what the
+            # provider was allowed to do collapsed into one declared batch.
+            json.dumps(generation["decoding"], sort_keys=True),
+            json.dumps(generation["effort"], sort_keys=True),
             generation["generatedAt"],
             generation.get("seed"),
         )
@@ -1068,18 +1169,19 @@ def assign_generation_batches(records: list[dict]) -> list[dict]:
                 "family": generation["family"],
                 "model": generation["model"],
                 "version": generation["version"],
-                "promptTemplateDigest": generation["promptSha256"],
-                # Exactly one of temperature / temperatureNullReason, the same pair
-                # the seed already uses. This v2 assembler always writes a
-                # temperature, because generate_ai.py records one for EVERY
-                # provider — including the three CLI lanes that accept no sampling
-                # flag, where the number describes nothing. So the null arm is
-                # never taken here and is written anyway: the v3 repropagation
-                # (C2) is what will emit a CLI-lane batch that says no temperature
-                # applied, and the parser requires the key either way.
-                "temperature": generation["temperature"],
+                "promptTemplateDigest": generation["promptTemplateDigest"],
+                # Exactly one of temperature / temperatureNullReason, the pair C1
+                # closed. This is the arm C1's own comment said "the v3
+                # repropagation (C2) is what will emit": on a lane whose frozen row
+                # sets `decodingConfigurable: false` there is no temperature to
+                # declare, and the batch now SAYS SO instead of publishing the 0.8
+                # that generate_ai.py wrote into every provider's meta while
+                # invoking three of them with no sampling flag.
+                "temperature": recipe_temperature(generation),
                 "temperatureNullReason": (
-                    None if generation.get("temperature") is not None else TEMPERATURE_NULL_REASON
+                    None
+                    if recipe_temperature(generation) is not None
+                    else TEMPERATURE_NULL_REASON
                 ),
                 "generatedAt": generation["generatedAt"],
                 # Exactly one of seed / seedNullReason, per the manifest parser.
@@ -1089,8 +1191,26 @@ def assign_generation_batches(records: list[dict]) -> list[dict]:
                 ),
             }
             batches[key] = batch
-        rec["groups"]["collectionBatch"] = batch["batchId"]
+        # The axis, in the v3 shape. Sharing it across a batch is safe for the split
+        # even though collectionBatch IS a grouping axis: generatedAt is part of the
+        # batch key and equals the record's temporal block, so a batch is an
+        # indivisible component that can never straddle two blocks.
+        rec["groups"]["collectionBatch"] = group_axes.known(batch["batchId"])
     return list(batches.values())
+
+
+def recipe_temperature(generation: dict) -> float | None:
+    """The temperature the recipe APPLIED, or None when none did.
+
+    The Python mirror of `recipeTemperature` in benchmark/schema.ts, and it exists
+    for the same reason: a consumer comparing a record against a declared batch is
+    asking one question, and the answer lives in a different place depending on
+    whether the lane could be configured at all.
+    """
+    decoding = generation.get("decoding") or {}
+    if not decoding.get("configurable"):
+        return None
+    return decoding.get("temperature")
 
 
 def enforce_unique_keys(pools: list[tuple[list[dict], str]]) -> int:
@@ -1167,6 +1287,14 @@ def main() -> None:
     parser.add_argument(
         "--sample", type=int, default=0, help="montagem de fumaça: N registros totais"
     )
+    parser.add_argument(
+        "--candidates-dir",
+        type=Path,
+        default=CAND,
+        help="pools de candidatos a ler (default: benchmark/data/candidates). "
+        "Aponte para uma re-extração fresca; NÃO sobrescreva "
+        "benchmark/data/corpus-build, que é a evidência da execução reprovada",
+    )
     args = parser.parse_args()
     sys.stdout.reconfigure(encoding="utf-8", errors="replace")
 
@@ -1178,9 +1306,9 @@ def main() -> None:
     )
 
     seen: set[str] = set()
-    humans = dedup(load_humans(), lambda r: r["text"], seen)
-    ai = dedup(load_ai(), lambda r: r["text"], seen)
-    mixed = dedup(load_mixed(), lambda r: r["text"], seen)
+    humans = dedup(load_humans(args.candidates_dir), lambda r: r["text"], seen)
+    ai = dedup(load_ai(args.candidates_dir), lambda r: r["text"], seen)
+    mixed = dedup(load_mixed(args.candidates_dir), lambda r: r["text"], seen)
     print(f"pools (dedup): human={len(humans)} ai={len(ai)} mixed={len(mixed)}")
 
     # Exact-hash dedup is not enough: ingest refuses EVERY member of a
@@ -1256,9 +1384,40 @@ def main() -> None:
     ai_sel = ai[: counts["ai"]]
     mixed_sel = mixed[: counts["mixed"]]
 
-    records = [human_record(c, REGISTER[c["domainSource"]], None) for c in human_sel]
-    records += [ai_record(c) for c in ai_sel]
-    records += [mixed_record(c) for c in mixed_sel]
+    # Every builder can REFUSE a row now, and a refusal is counted rather than
+    # swallowed or worked around. This is where the v2 corpus's hidden debt becomes
+    # visible: v2 accepted a generated row with no lane, no template digest and no
+    # effort, and a human row with no date evidence, because it asked for none of
+    # them. v3 asks, so those rows leave — and the count below is the honest size of
+    # what has to be re-extracted or regenerated, which is exactly the number a
+    # `?? 0`-style substitution would have hidden.
+    evidence_entries: list[dict] = []
+    refused: Counter = Counter()
+    refused_examples: dict[str, str] = {}
+
+    def build(rows: list[dict], make) -> list[dict]:
+        out: list[dict] = []
+        for row in rows:
+            try:
+                out.append(make(row))
+            except UnwritableInV3 as error:
+                reason = type(error).__name__
+                refused[reason] += 1
+                refused_examples.setdefault(reason, str(error))
+        return out
+
+    records = build(
+        human_sel,
+        lambda c: human_record(
+            c, REGISTER[c["domainSource"]], None, evidence_sink=evidence_entries
+        ),
+    )
+    records += build(ai_sel, ai_record)
+    records += build(mixed_sel, mixed_record)
+    if refused:
+        print("!! registros que a v3 nao consegue expressar (descartados):")
+        for reason, count in sorted(refused.items()):
+            print(f"   {reason}: {count} — ex.: {refused_examples[reason][:160]}")
 
     # Hard-negative tagging: ensure every required family present on >=1 human.
     by_reg_recs: dict[str, list[dict]] = {}
@@ -1294,7 +1453,7 @@ def main() -> None:
     # rests on) and stop when the next family would not fit.
     per_family: dict[str, Counter] = {}
     for r in records:
-        family = r["groups"].get("generatorFamily")
+        family = group_axes.identity_of(r["groups"].get("generatorFamily"))
         if family and r["label"] in ("ai", "mixed"):
             per_family.setdefault(family, Counter())[r["label"]] += 1
     positives = {f: sum(c.values()) for f, c in per_family.items()}
@@ -1369,8 +1528,40 @@ def main() -> None:
         ],
     }
 
+    # THE CLUSTER DISTRIBUTION REPORT (requirement 7). Counts, size distribution and
+    # the largest cluster per axis AND per slice, over the records actually written.
+    # It feeds E3's power gate, and it is what makes the old per-record token
+    # impossible to reintroduce unnoticed: under `base_groups` every axis would read
+    # `clusters == records`, `sizeDistribution == {"1": n}` and largest size 1 —
+    # which is what this report would have said all along, had anyone asked it.
+    report = group_axes.cluster_report(
+        [
+            {
+                "id": r["id"],
+                "label": r["label"],
+                "partition": PARTITION_OF.get(r["id"], "unassigned"),
+                "groups": r["groups"],
+            }
+            for r in records
+        ]
+    )
+
     out = args.out_dir
     (out / "private").mkdir(parents=True, exist_ok=True)
+    (out / "cluster-report.json").write_text(
+        json.dumps(report, ensure_ascii=False, indent=2) + "\n", encoding="utf-8"
+    )
+    # The private evidence index every human row's labelEvidenceRef resolves against.
+    # Deduplicated by entryId: it is one entry per SOURCE registration and not one per
+    # record, so thousands of human rows point at four entries.
+    by_entry = {entry["entryId"]: entry for entry in evidence_entries}
+    (out / "private" / "label-evidence.jsonl").write_text(
+        "".join(
+            json.dumps(entry, ensure_ascii=False) + "\n"
+            for _, entry in sorted(by_entry.items())
+        ),
+        encoding="utf-8",
+    )
     with (out / "records.jsonl").open("w", encoding="utf-8", newline="\n") as fh:
         for r in records:
             fh.write(json.dumps(r, ensure_ascii=False) + "\n")
@@ -1408,6 +1599,9 @@ def main() -> None:
         print(f"!! held-out families magras (<{HELD_OUT_MINIMUM}):", thin)
     print("hard-negatives:", dict(Counter(
         r.get("hardNegativeFamily") for r in records if r.get("hardNegativeFamily"))))
+    print("--- distribuicao de clusters por eixo e por fatia ---")
+    print(group_axes.render_cluster_report(report))
+    print(f"entradas de evidencia de rotulo: {len(by_entry)}")
     print(f"escrito em {out}")
 
 

@@ -1191,6 +1191,39 @@ class LaneIdentityTests(unittest.TestCase):
             seen["groups"]["harnessVersion"], {"state": "known", "id": "0_145_0"}
         )
 
+    def test_exactly_one_of_a_seed_and_a_written_reason_travels(self) -> None:
+        from assemble_corpus import ai_record
+
+        # The sealed schema demands exactly one, and never a seed we made up (D3
+        # repeats the same rule). The pools carry the pair already — `"seed": ""` plus
+        # a reason — and an EMPTY seed is not a seed: writing both keys, or writing
+        # `seed: ""`, are the two ways to fail this.
+        candidate = self._ai_candidate("agy", "claude-sonnet-4-6", "original")
+        candidate["meta"]["seed"] = ""
+        candidate["meta"]["seedNullReason"] = "provider API does not expose a seed"
+        generation = ai_record(candidate)["generation"]
+        self.assertNotIn("seed", generation)
+        self.assertEqual(
+            generation["seedNullReason"], "provider API does not expose a seed"
+        )
+        # A lane that DOES expose one carries the seed and no reason.
+        candidate["meta"]["seed"] = "712019"
+        generation = ai_record(candidate)["generation"]
+        self.assertEqual(generation["seed"], "712019")
+        self.assertNotIn("seedNullReason", generation)
+
+    def test_a_row_with_neither_a_seed_nor_a_reason_gets_the_lane_default(self) -> None:
+        from assemble_corpus import SEED_NULL_REASON, ai_record
+
+        # No provider on any of the four frozen lanes exposes a sampling seed, and
+        # that is a property of the LANES rather than of a pool row, so a row that
+        # recorded neither gets the reason and never a synthesized seed. The default
+        # fills in the REASON, which is the safe half of the pair to default.
+        candidate = self._ai_candidate("agy", "claude-sonnet-4-6", "original")
+        generation = ai_record(candidate)["generation"]
+        self.assertNotIn("seed", generation)
+        self.assertEqual(generation["seedNullReason"], SEED_NULL_REASON)
+
     def test_a_codex_row_without_a_recorded_effort_level_is_refused(self) -> None:
         from assemble_corpus import MissingRecipe, ai_record
 
