@@ -51,6 +51,119 @@ const HUMAN_NOT_DERIVED =
   "original human text, not derived from another record";
 const AI_NO_HUMAN_AUTHOR = "generated text has no human author";
 
+// --- the review state (C5) --------------------------------------------------
+//
+// EVERY v3 fixture here is `automated/unreviewed`, and that is not laziness: no
+// human reviewer existed for this corpus, so a fixture pool modelled on it must
+// not carry a receipt by default. `humanReviewed()` exists because the coherence
+// rules cannot be tested without a COHERENT receipt to mutate, and a fixture is
+// hypothetical data — writing one here is not the thing R4 forbids, which is
+// writing a receipt into a corpus, into the assembler, or into an artifact.
+// Nothing in `benchmark/lab/` or `benchmark/data/` may produce this shape until a
+// real review happens (D1/D5).
+
+/** The automated PII screen the extractors really run, named honestly. */
+export function piiPatternScan(): Record<string, unknown> {
+  return {
+    filter: "pii-pattern-scan",
+    implementation: "benchmark/lab/common.py:pii_hits",
+    outcome: "passed",
+  };
+}
+
+/** The honest state of every record this project has: filtered, never audited. */
+export function automatedUnreviewed(
+  overrides: Record<string, unknown> = {},
+): Record<string, unknown> {
+  return {
+    state: "automated/unreviewed",
+    automatedFilters: [piiPatternScan()],
+    humanAuditAbsentReason:
+      "no human reviewer was assigned to this corpus build; only the automated filters ran",
+    ...overrides,
+  };
+}
+
+// Two instants inside the window a receipt date must fall in: at or after the
+// protocol's effective instant and not in the future. Written as constants so a
+// date test mutates ONE of them and the rest of the fixture stays coherent.
+const REVIEWED_AT = Date.parse("2026-07-27T09:00:00.000Z");
+const ADJUDICATED_AT = Date.parse("2026-07-27T11:00:00.000Z");
+
+/** One reviewer's individual opinion, blind to the score and to the class. */
+export function opinion(
+  reviewerId: string,
+  decision: string,
+  overrides: Record<string, unknown> = {},
+): Record<string, unknown> {
+  return {
+    reviewerId,
+    decision,
+    decidedAt: REVIEWED_AT,
+    blindToScore: true,
+    blindToCandidateClass: true,
+    ...overrides,
+  };
+}
+
+/**
+ * A COHERENT two-reviewer receipt, agreeing on `decision`. The control every
+ * incoherence test mutates one field of.
+ */
+export function humanReviewed(
+  decision: string,
+  overrides: Record<string, unknown> = {},
+): Record<string, unknown> {
+  return {
+    state: "human-reviewed",
+    protocolVersion: "annotation-v2",
+    reviewerIds: ["rev_hmac_a1", "rev_hmac_b2"],
+    decisions: [
+      opinion("rev_hmac_a1", decision),
+      opinion("rev_hmac_b2", decision),
+    ],
+    agreement: "agree",
+    pii: {
+      protocol: "pii-review-v1",
+      automatedStage: piiPatternScan(),
+      reviewerId: "rev_hmac_pii",
+      reviewedAt: REVIEWED_AT,
+      treatment: "no-identifier-found",
+    },
+    ...overrides,
+  };
+}
+
+/** A resolved disagreement: two opposed opinions plus a named adjudication. */
+export function adjudicated(
+  decision: string,
+  other: string,
+): Record<string, unknown> {
+  return humanReviewed(decision, {
+    decisions: [
+      opinion("rev_hmac_a1", decision),
+      opinion("rev_hmac_b2", other),
+    ],
+    agreement: "disagree",
+    adjudication: {
+      adjudicatorId: "rev_hmac_c3",
+      decision,
+      decidedAt: ADJUDICATED_AT,
+      rationale:
+        "the second reviewer read the quoted stretch as generated; the quotation marks and the source link place it with the human author",
+      blindToScore: true,
+    },
+  });
+}
+
+/** Replaces a record's whole `review` block. */
+export function withReview(
+  record: Record<string, unknown>,
+  review: unknown,
+): Record<string, unknown> {
+  return { ...record, review };
+}
+
 const V3_HUMAN: Record<string, unknown> = {
   schemaVersion: 3,
   id: "h_ptso_0001",
@@ -81,18 +194,8 @@ const V3_HUMAN: Record<string, unknown> = {
     collectedAt: 1_784_900_000_000,
     licenseId: "cc-by-sa-4.0",
     legalBasis: "license",
-    piiAudit: {
-      status: "passed",
-      method: "manual-and-automated",
-      reviewerId: "reviewer_pii",
-      reviewedAt: 1_784_900_000_000,
-    },
   },
-  annotation: {
-    protocolVersion: "annotation-v1",
-    reviewerIds: ["reviewer_a", "reviewer_b"],
-    agreement: "agree",
-  },
+  review: automatedUnreviewed(),
   transformation: { kind: "none", severity: "none" },
   groups: {
     author: known("au_hmac_5c1f0a9d"),
@@ -129,18 +232,8 @@ const V3_AI: Record<string, unknown> = {
     collectedAt: 1_784_926_573_575,
     licenseId: "autoria-propria-v1",
     legalBasis: "generated",
-    piiAudit: {
-      status: "passed",
-      method: "manual-and-automated",
-      reviewerId: "reviewer_pii",
-      reviewedAt: 1_784_926_573_575,
-    },
   },
-  annotation: {
-    protocolVersion: "annotation-v1",
-    reviewerIds: ["reviewer_a", "reviewer_b"],
-    agreement: "agree",
-  },
+  review: automatedUnreviewed(),
   generation: {
     provider: "agy",
     family: "gemini-3.5-flash-medium",
@@ -202,18 +295,8 @@ const V3_MIXED: Record<string, unknown> = {
     collectedAt: 1_784_926_600_000,
     licenseId: "autoria-propria-v1",
     legalBasis: "generated",
-    piiAudit: {
-      status: "passed",
-      method: "manual-and-automated",
-      reviewerId: "reviewer_pii",
-      reviewedAt: 1_784_926_600_000,
-    },
   },
-  annotation: {
-    protocolVersion: "annotation-v1",
-    reviewerIds: ["reviewer_a", "reviewer_b"],
-    agreement: "agree",
-  },
+  review: automatedUnreviewed(),
   generation: {
     provider: "agy",
     family: "gemini-3.5-flash-medium",

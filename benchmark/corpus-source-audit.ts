@@ -13,6 +13,21 @@
 // status with the DatasetAudit; `split` remains the sole producer of
 // leakage/slice reasons.
 //
+// WHAT THE `protocols` BLOCK OF THE REPORT DOES AND DOES NOT SAY (C5). It names the
+// protocols the corpus is judged AGAINST — `annotation-v1`, `pii-review-v1` and the
+// rest are literals in `contracts/source-readiness.ts` — and it is NOT a statement
+// that every record passed them. Whether a record was reviewed is a per-record fact
+// carried by `review` (`benchmark/schema.ts`): a receipt, or the first-class state
+// `automated/unreviewed`, which is what all 10.000 sealed records really are once
+// `reviewOf` downgrades their fabricated `annotation` block. The COHERENCE gate over
+// that fact is `sealDataset` (`benchmark/dataset-manifest.ts`), which refuses a
+// release corpus whose records sustain no review claim, and it lives there rather
+// than here for the reason the paragraph above gives: annotation and adjudication
+// belong to the DatasetAudit, and a second copy of the rule in this module could
+// disagree with the first. The residual is stated rather than left implicit — a
+// reader of a `ready` readiness report must not read `protocols.annotation` as
+// evidence that an annotator existed.
+//
 // Output is deterministic and privacy preserving: reasons are sorted in the
 // contract's canonical order and de-duplicated, records may be supplied in any
 // order, and the report carries no text, URL, prompt, author group, consent

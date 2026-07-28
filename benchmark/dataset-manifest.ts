@@ -5,12 +5,24 @@
 // through contracts/.
 //
 // "Sealed" means sealDataset only produces a DatasetAudit when the observed file
-// bytes match the manifest exactly, the composition equals the policy counts,
-// every record carries two distinct reviewers (plus an independent adjudicator
-// on divergence), and every referenced license is present and approved in the
-// inventory. The audit is self-digested with canonicalSha256 so any later change
-// to a conclusion invalidates auditDigest. There is no coercion and no
-// last-write-wins.
+// bytes match the manifest exactly, the composition equals the policy counts, the
+// review rules of the record's own schema version hold, and every referenced
+// license is present and approved in the inventory. The audit is self-digested
+// with canonicalSha256 so any later change to a conclusion invalidates
+// auditDigest. There is no coercion and no last-write-wins.
+//
+// THE REVIEW RULES ARE VERSION-AWARE SINCE C5, and the asymmetry is deliberate. A
+// v2 record can only be asked what its `annotation` block can answer — two distinct
+// reviewers, an adjudicator who is not one of them — so those two checks are
+// unchanged. A v3 record carries `review`, whose coherence `validateBenchmarkRecord`
+// already enforced (one decision per declared reviewer, an agreement its decisions
+// support, an adjudication behind every disagreement, a PII audit naming a method
+// and a real instant), so this module does not restate them. What it adds on top of
+// both is the CORPUS-level question neither version can answer per record: a
+// RELEASE corpus must have a review receipt on every row. `reviewOf` reads a v2
+// annotation block as `automated/unreviewed` — it cannot substantiate the agreement
+// it declares — so a release seal of the corpus on disk is now refused, which is the
+// intended consequence of removing simulated governance rather than a regression.
 
 import { canonicalSha256 } from "../contracts/canonical-json.ts";
 import {
@@ -21,8 +33,10 @@ import {
 } from "./generator-family.ts";
 import { REBUILD_V3_POLICY } from "./rebuild-v3-policy.ts";
 import {
+  AUTOMATED_UNREVIEWED,
   groupAxisIdentity,
   recordEligibility,
+  reviewClaimSupport,
   V3_GROUP_AXES,
   validateBenchmarkRecord,
   type BenchmarkRecord,
@@ -688,6 +702,13 @@ export async function sealDataset(
   const seenIds = new Set<string>();
   const seenHashes = new Set<string>();
   const normalized: BenchmarkRecord[] = [];
+  // Records whose review sustains no governance claim, with the reason each one
+  // failed. Collected rather than thrown on, because "how many records support the
+  // claim" is a question about the CORPUS and is decided once the loop is done.
+  const unsustained: Array<{
+    id: string;
+    support: Exclude<ReturnType<typeof reviewClaimSupport>, { sustains: true }>;
+  }> = [];
 
   for (const raw of records) {
     const record = validateBenchmarkRecord(raw);
@@ -704,23 +725,42 @@ export async function sealDataset(
     seenIds.add(record.id);
     seenHashes.add(record.normalizedTextSha256);
 
-    const distinctReviewers = new Set(record.annotation.reviewerIds);
-    if (distinctReviewers.size < 2) {
-      fail(
-        "DATASET_REVIEW_INVALID",
-        `record ${record.id} requires two distinct reviewers`,
-      );
+    // The review rules, version-aware since C5.
+    //
+    // v2 keeps the two checks it always had, byte for byte, because two tests pin
+    // them and because they are the only questions its `annotation` block can be
+    // asked. What it CANNOT do is substantiate the agreement it declares, and the
+    // consequence of that is priced once, below, on the release claim — not here,
+    // where it would refuse every corpus already on disk for a reason that is
+    // about the whole corpus rather than about one record.
+    //
+    // v3 needs no equivalent loop: `validateBenchmarkRecord` above already refused
+    // an incoherent receipt (a vote count that does not match the assignment, an
+    // agreement over decisions that differ, a disagreement with no adjudication, an
+    // adjudicator who was also a reviewer, a PII audit with no method or a
+    // synthetic date). Repeating those here would be a second copy of the rules
+    // able to disagree with the first.
+    if (record.schemaVersion === 2) {
+      const distinctReviewers = new Set(record.annotation.reviewerIds);
+      if (distinctReviewers.size < 2) {
+        fail(
+          "DATASET_REVIEW_INVALID",
+          `record ${record.id} requires two distinct reviewers`,
+        );
+      }
+      if (
+        record.annotation.agreement === "adjudicated" &&
+        record.annotation.adjudicatorId !== undefined &&
+        distinctReviewers.has(record.annotation.adjudicatorId)
+      ) {
+        fail(
+          "DATASET_REVIEW_INVALID",
+          `record ${record.id} adjudicator must be independent from its two reviewers`,
+        );
+      }
     }
-    if (
-      record.annotation.agreement === "adjudicated" &&
-      record.annotation.adjudicatorId !== undefined &&
-      distinctReviewers.has(record.annotation.adjudicatorId)
-    ) {
-      fail(
-        "DATASET_REVIEW_INVALID",
-        `record ${record.id} adjudicator must be independent from its two reviewers`,
-      );
-    }
+    const support = reviewClaimSupport(record);
+    if (!support.sustains) unsustained.push({ id: record.id, support });
 
     if (!licenseIds.has(record.provenance.licenseId)) {
       fail(
@@ -807,6 +847,43 @@ export async function sealDataset(
           heldOutFloorShortfall(family, positives, positiveRows),
         );
       }
+    }
+
+    // THE REVIEW CLAIM (C5), and the reason it is the last release check rather
+    // than the first. Every refusal above names ONE record — a duplicate, an
+    // incoherent receipt, a licence absent from the inventory — and those must keep
+    // firing first, because they point an operator at a row to fix. This one names a
+    // COUNT over the whole corpus, so it cannot be asked until the loop has ended,
+    // and it is the coarsest thing that can be wrong: nobody reviewed the corpus.
+    //
+    // It fires on the sealed corpus on disk, which is v2 and `scientificUse:
+    // "release"`, and that is the intended outcome and not a regression. Ten thousand
+    // records declare `agreement: "agree"` and a passed PII audit that never
+    // happened; `reviewOf` reads every one of them as `automated/unreviewed`, so the
+    // release claim has nothing under it. An `automated/unreviewed` record is honest
+    // and may exist in a corpus — an `infrastructure-only` seal is unaffected, which
+    // is what "does not count toward a gate" means (R6, D5). What it may not do is
+    // sustain a claim that a human looked.
+    //
+    // R3: this is not a loosened threshold anywhere. The refusal is new and there is
+    // no way to satisfy it except a real review (D1/D5), which is exactly the input
+    // this execution does not have.
+    if (unsustained.length > 0) {
+      const byReason = new Map<string, number>();
+      for (const entry of unsustained) {
+        byReason.set(
+          entry.support.reason,
+          (byReason.get(entry.support.reason) ?? 0) + 1,
+        );
+      }
+      const breakdown = [...byReason.entries()]
+        .sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0))
+        .map(([reason, count]) => `${count} ${reason}`)
+        .join(", ");
+      fail(
+        "DATASET_REVIEW_INVALID",
+        `a release corpus requires a human review receipt on every record: ${unsustained.length} of ${normalized.length} sustain no review claim (${breakdown}), first ${unsustained[0]?.id}. A record whose only governance is the automated filter is "${AUTOMATED_UNREVIEWED}" — legitimate in the corpus, and it never counts toward a gate that requires review`,
+      );
     }
   }
 

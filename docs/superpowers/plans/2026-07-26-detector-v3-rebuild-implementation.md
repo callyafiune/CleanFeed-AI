@@ -4396,6 +4396,136 @@ alegação, não a mera presença do campo.
 **Verificar:** `vitest run benchmark/tests/source-manifest.test.ts
 benchmark/tests/corpus-source-audit.test.ts benchmark/tests/corpus-import.test.ts`.
 
+#### O que foi entregue (2026-07-28) e onde divergiu do escrito
+
+**A forma dos dados.** `review` é uma união discriminada de duas pernas no schema v3
+(`benchmark/schema.ts`), e `annotation` **não existe mais** na v3. `provenance.piiAudit`
+também saiu: o fato de PII é um ato de revisão, e o bloco antigo tinha tipo literal
+(`status` só podia ser `passed`, `method` só podia nomear as duas etapas), então "não
+auditado" era **inexprimível** — que é a razão pela qual 10.000 registros afirmaram uma
+auditoria inexistente. A v2 ficou byte-a-byte intacta, porque o corpus selado em disco é
+v2 e um corpus que nada lê não pode ser auditado.
+
+- `automated/unreviewed` — estado **nomeado** (não campo ausente), com os filtros
+  automáticos que rodaram (`automatedFilters`, vocabulário fechado) e o motivo de não ter
+  havido auditoria humana. As chaves de recibo são recusadas nessa perna com frase
+  própria, antes da checagem de objeto fechado, porque "campo desconhecido
+  review.agreement" se lê como erro de digitação e o erro é um estado alegando conclusão.
+- `human-reviewed` — recibo: revisores **declarados** (≥2, distintos), uma **decisão
+  individual por revisor declarado**, `agreement` `agree`/`disagree`, `adjudication`
+  (adjudicador independente, com `rationale`, e nunca anterior à última decisão que
+  resolve), `pii` (protocolo + etapa automática nomeada + revisor humano pseudonimizado +
+  instante real + tratamento + achado), `exclusionCode` por decisão de exclusão, e
+  `blindToScore`/`blindToCandidateClass` por revisor (requisito 7 / D1).
+
+**O downgrade da v2 é o mecanismo, não a prosa.** `reviewOf(record)` é o acessador
+versão-ciente; para a v2 devolve um `automated/unreviewed` congelado cujo motivo diz por
+quê, e **derruba o `agreement`** em vez de carregá-lo. §7 ("Descarte") pedia descartar
+`annotation`/`piiAudit`: para um corpus já em disco, descartar é exatamente isto.
+
+**O gate.** `sealDataset` recusa um corpus **de release** em que algum registro não
+sustenta alegação de revisão (`DATASET_REVIEW_INVALID`, com a contagem e a razão por
+registro). Isso **reprova** o corpus selado em disco (v2, `scientificUse: "release"`), que
+é o resultado certo. Um selo `infrastructure-only` continua passando: `automated/unreviewed`
+é honesto, existe no corpus e **não conta** para gate que exija revisão (R6/D5). Nenhum
+limite foi afrouxado (R3) — a recusa é nova e o insumo que falta é revisão real (D1/D5).
+A checagem é a **última** do bloco de release, porque nomeia uma contagem sobre o corpus
+inteiro; as recusas que nomeiam **um** registro continuam disparando primeiro.
+
+**Coerência, uma regra por incoerência**, toda com teste em
+`benchmark/tests/review-receipt.test.ts` (42 testes): número de decisões vs. revisores
+declarados (em ambas as direções, mais decisão de revisor não declarado e revisor votando
+duas vezes); `agree` sobre decisões divergentes **e** `disagree` sobre decisões idênticas;
+desacordo sem adjudicação **e** adjudicação sem desacordo; adjudicador que também votou;
+PII sem etapa automática, sem revisor ou com data sintética; data fora da janela (abaixo
+do instante do protocolo, no futuro, ou não inteira) e adjudicação anterior às decisões;
+exclusão sem código e código sem exclusão; registro cuja revisão concluiu `exclude`.
+
+**Uma regra que o brief não listou e foi adicionada:** a conclusão do recibo tem de
+coincidir com o `label`. Ground truth continua vindo da proveniência — o revisor
+**corrobora**, não concede — logo um recibo que concluiu `ai` num registro `human` são
+duas alegações contraditórias no mesmo registro, e preferir uma delas em silêncio seria
+adivinhar.
+
+**Data real, sem inventar relógio.** `REVIEW_RECEIPT_PROTOCOL_FROM` é
+`2026-07-26T00:00:00.000Z` — a data deste plano, a mesma que a seed de split `20260726`
+codifica. Nenhum recibo pode anteceder o protocolo que alega seguir, e o trabalho concreto
+da constante é recusar os três *block times* do corpus (1.000.000/2.000.000/3.000.000 ms,
+janeiro de 1970). O teto é `Date.now()`, lido dentro do validador e **não** injetado: um
+validador que aceita relógio convida quem chama a passar um que faça a data impossível
+passar. Nada aqui verifica que a revisão ocorreu no dia declarado; isso é o digest do log
+de sessão, que é de D1.
+
+**Cegueira é precificada, não recusada.** Uma revisão que viu o escore realmente
+aconteceu se aconteceu (R4: registre a verdade); o que ela não pode é sustentar alegação.
+`reviewClaimSupport` é uma rejeição discriminada com três razões
+(`automated-filter-only`, `reviewer-saw-detector-score`, `reviewer-saw-candidate-class`),
+porque são três fatos com ações diferentes: contratar revisor, refazer cego, refazer só a
+adjudicação.
+
+**O montador parou de fabricar.** `benchmark/lab/assemble_corpus.py` não tem mais a
+constante de anotação nem a função de auditoria de PII, `stamp_block` não estampa mais
+verdadeiro nenhum, e `private/review-ledger.jsonl` grava o **estado** (nunca revisor nem
+concordância) — era dali que o hash de `integrity.review-ledger-hash` certificava a
+própria invenção. `test_the_assembler_mints_no_review_receipt` faz *grep* dos tokens
+antigos no próprio arquivo, então o comentário histórico os **descreve** em prosa em vez
+de colá-los (mesma disciplina do `base_groups` em C2). Medido: 48 registros escritos com
+`--sample 120`, todos validam contra o schema v3 e todos com
+`{"sustains":false,"reason":"automated-filter-only"}`.
+
+**Filtro automático ≠ auditoria, no dado e não só no texto.**
+`common.CandidateWriter.offer` passa a registrar os filtros que ele mesmo rodou
+(`meta.automatedFilters`: `pii-pattern-scan` e `length-floor`, com o símbolo de
+implementação), e o montador **lê** essa lista em vez de afirmá-la. Pool sem o campo →
+lista **vazia**, que é a resposta honesta (é o caso de todo pool existente, e de todo
+registro v2). Linha gerada não recebe a lista: `CandidateWriter` é o caminho humano, e
+nenhum filtro nosso varreu texto gerado em busca de dado pessoal. `outcome: "excluded"` é
+recusado num registro que existe — as duas afirmações se contradizem.
+
+**Divergências do escrito, declaradas:**
+
+1. **`benchmark/schema.ts` e `benchmark/dataset-manifest.ts` entraram** na lista de
+   arquivos. O recibo é campo de registro e o gate de coerência é o DatasetAudit; a lista
+   do plano nomeava só os três outros.
+2. **`benchmark/corpus-source-audit.ts` mudou só o cabeçalho.** O próprio módulo declara
+   que "annotation / adjudication" pertencem ao `DatasetAudit`, então pôr a regra ali seria
+   uma segunda cópia capaz de discordar da primeira. O que o cabeçalho passa a dizer é o
+   que o bloco `protocols` do relatório de readiness **não** diz: ele nomeia os protocolos
+   contra os quais o corpus é julgado, não protocolos que todo registro passou. Residual
+   registrado: `contracts/source-readiness.ts` tipa `protocols.annotation` e
+   `protocols.pii` como **literais**, então um relatório `ready` continua imprimindo os
+   dois nomes para um corpus sem revisor. Fechar isso pede um décimo código de bloqueio no
+   contrato e é trabalho de D1/D5, não desta tarefa.
+3. **`benchmark/source-manifest.ts` ganhou uma tela de sobre-alegação**
+   (`reviewOverclaimIn`), não uma mudança de schema. O módulo já hospeda
+   `humanLabelOverclaimIn` e reusa os mesmos verbos de alegação e a mesma janela de
+   negação; só o sujeito muda. A razão: C5 removeu a alegação do dado, e prosa é o outro
+   lugar por onde ela volta. A tela recusa a asserção ("a revisão humana garante…", "todos
+   os registros foram revisados") e **não** recusa a descrição do protocolo ("cada
+   registro passa por revisão manual"), porque o projeto precisa continuar documentando o
+   que exige. Os sete documentos de governança são varridos por teste.
+4. **`benchmark/protocols/pii-review-v1.md` foi corrigido.** Ele afirmava que a auditoria
+   de cada registro "is recorded in `provenance.piiAudit`" com status passado — a mesma
+   fabricação em prosa. Agora diz o que exige, distingue as duas etapas, nomeia
+   `automated/unreviewed` para quem só passou pela primeira, e diz que o documento não é
+   alegação de que o protocolo rodou.
+5. **Um teste existente afirmava o contrário e foi atualizado**, não apagado:
+   "still clears the floor on a v2 release corpus" (`dataset-manifest.test.ts`) selava um
+   corpus v2 de release com sucesso. Agora afirma a recusa por revisão simulada e prova,
+   pela mensagem, que o **piso** de família reservada aceitou antes (o piso nomeia uma
+   família e roda primeiro); um teste irmão novo lê a contagem de 200 positivos num selo
+   `infrastructure-only`, que é a forma honesta para um corpus de linhas não revisadas.
+6. **`integrity.review-ledger-hash` e `integrity.dataset-audit-sealed` continuam
+   recebendo `true` literal** em `benchmark/commands/evaluate.ts`. Isso é defeito real e
+   está **fora** desta entrega: `evaluate` não carrega o DatasetAudit, e o caminho certo é
+   `validate`/`sealDataset` recusar antes — que é o que passa a acontecer. Registrado para
+   quem cablear a evidência de integridade (G5/C6).
+
+**Insumo que falta (não é defeito):** revisão humana real. O mecanismo está pronto e a
+perna `human-reviewed` **não tem produtor** em `benchmark/lab/`: D1 e D5 são as tarefas
+que trazem revisor. Até lá, todo corpus é `automated/unreviewed` e um selo de release é
+recusado — que é preferir falhar fechado a alegar governança (R4).
+
 ---
 
 ### C6 — Validação cruzada agrupada

@@ -500,11 +500,17 @@ export function parseBenchmarkDataset(jsonl: string): BenchmarkRecord[] {
   return records;
 }
 
-function validateProvenance(
+/**
+ * The source/licence half of `provenance`, shared by both versions. Split out for
+ * C5: v3 has no `piiAudit`, and duplicating these nine reads would be two places a
+ * later field could be added to only one of them.
+ */
+function validateProvenanceCore(
   value: unknown,
   id: string,
-): BenchmarkRecordV2["provenance"] {
-  const obj = assertClosedObject(value, "provenance", PROVENANCE_KEYS, id);
+  allowedKeys: readonly string[],
+): { obj: Record<string, unknown>; core: V3Provenance } {
+  const obj = assertClosedObject(value, "provenance", allowedKeys, id);
   const sourceKind = enumValue(
     obj,
     "sourceKind",
@@ -531,6 +537,30 @@ function validateProvenance(
   );
   const consentId = optionalPseudonym(obj, "consentId", "provenance", id);
 
+  const core: V3Provenance = {
+    sourceKind,
+    sourceId,
+    sourceRevision,
+    collectedAt,
+    licenseId,
+    legalBasis,
+  };
+  if (licenseUrl !== undefined) core.licenseUrl = licenseUrl;
+  if (consentId !== undefined) core.consentId = consentId;
+  return { obj, core };
+}
+
+/** v3 provenance: the shared core and nothing else. */
+function validateV3Provenance(value: unknown, id: string): V3Provenance {
+  return validateProvenanceCore(value, id, V3_PROVENANCE_KEYS).core;
+}
+
+function validateProvenance(
+  value: unknown,
+  id: string,
+): BenchmarkRecordV2["provenance"] {
+  const { obj, core } = validateProvenanceCore(value, id, PROVENANCE_KEYS);
+
   const auditObj = assertClosedObject(
     obj.piiAudit,
     "provenance.piiAudit",
@@ -552,18 +582,7 @@ function validateProvenance(
     reviewedAt: finiteNumber(auditObj, "reviewedAt", "provenance.piiAudit", id),
   };
 
-  const provenance: BenchmarkRecordV2["provenance"] = {
-    sourceKind,
-    sourceId,
-    sourceRevision,
-    collectedAt,
-    licenseId,
-    legalBasis,
-    piiAudit,
-  };
-  if (licenseUrl !== undefined) provenance.licenseUrl = licenseUrl;
-  if (consentId !== undefined) provenance.consentId = consentId;
-  return provenance;
+  return { ...core, piiAudit };
 }
 
 function validateAnnotation(
@@ -1181,10 +1200,287 @@ export type LabelEvidenceRef =
       residualRisk: string;
     };
 
+// ---------------------------------------------------------------------------
+// THE REVIEW STATE (C5). What a record may claim about the humans who looked at
+// it, and what it must say when none did.
+//
+// WHAT WAS HERE. Every one of the 10.000 sealed records carries the SAME
+// `annotation` block — `{protocolVersion: "annotation-v1", reviewerIds:
+// ["reviewer_a","reviewer_b"], agreement: "agree"}` — and one of three `piiAudit`
+// blocks differing only in a synthetic timestamp, all `status: "passed"`,
+// `method: "manual-and-automated"`, `reviewerId: "reviewer_pii"`. No reviewer ever
+// looked at a record. That is falsified provenance (R4), and the shape is what made
+// it possible: both blocks are PRESENCE claims whose types cannot express any other
+// answer. `status` is the literal `"passed"` and `method` the literal
+// `"manual-and-automated"`, so "not audited" is unwritable, and `agreement: "agree"`
+// needs no decision behind it because there is nowhere to put one.
+//
+// So v3 does not keep either block. `review` is a DISCRIMINATED union with two
+// arms, and the arms are not "the same fields, some missing":
+//
+//   * `automated/unreviewed` — the automated filters ran and no human audit did.
+//     It is a NAMED state and not an absent field, because the whole failure mode
+//     is a consumer reading "no findings recorded" as "reviewed, nothing found".
+//     It has no `agreement`, no `reviewerIds` and no `decisions` — not optional
+//     ones, ABSENT ones, refused as unknown keys with a sentence of their own.
+//   * `human-reviewed` — a receipt. Individual decisions per declared reviewer,
+//     the disagreement and how it was adjudicated and by whom, real instants, the
+//     PII method (which code screened it, which human read it, what was done), an
+//     exclusion code when a reviewer voted to exclude, and whether each reviewer
+//     was blind to the detector's score and to the candidate class.
+//
+// WHAT THIS MODULE DOES NOT DO: it does not create a receipt and cannot. No
+// reviewer exists for this corpus, so every record the assembler writes is
+// `automated/unreviewed` (benchmark/lab/assemble_corpus.py) and the receipt arm has
+// no producer until a real review happens (D1/D5). Writing one would be exactly the
+// falsification the arm exists to make visible.
+//
+// The v2 branch is untouched, because the sealed corpus on disk is v2 and a corpus
+// nothing can read cannot be audited. Its `annotation` block is instead DOWNGRADED
+// at the accessor: {@link reviewOf} reads it as `automated/unreviewed`, dropping the
+// agreement rather than carrying it, so the fabricated claim is not merely
+// deprecated — no consumer can reach it through the accessor every consumer uses.
+// ---------------------------------------------------------------------------
+
+/** Source and licence provenance. v3 carries this and no audit block. */
+export type V3Provenance = Omit<BenchmarkRecordV2["provenance"], "piiAudit">;
+
+/** The state that says the automated filters ran and no human audit did. */
+export const AUTOMATED_UNREVIEWED = "automated/unreviewed";
+/** The state that says a human review receipt exists. */
+export const HUMAN_REVIEWED = "human-reviewed";
+
+export type ReviewStateName =
+  typeof AUTOMATED_UNREVIEWED | typeof HUMAN_REVIEWED;
+
+export const REVIEW_STATES: readonly ReviewStateName[] = [
+  AUTOMATED_UNREVIEWED,
+  HUMAN_REVIEWED,
+];
+
 /**
- * A v3 record. Shares `provenance`, `annotation`, `mixture` and `transformation`
- * with v2 — those blocks were not the defect — and replaces `groups`, extends
- * `generation`, and adds the label-evidence pair.
+ * The closed vocabulary of automated filters this project actually runs.
+ *
+ * It lives here and NOT in `benchmark/rebuild-v3-policy.json` on purpose: the
+ * frozen policy is the authority for decisions (budgets, seeds, thresholds), and
+ * these three are facts about which of OUR scripts saw the row. A filter added to
+ * the lab is a change to this list in the same commit, and the point of the list
+ * being closed is that a record cannot name a screen nobody can find.
+ */
+export const AUTOMATED_FILTERS = [
+  "pii-pattern-scan",
+  "license-by-source",
+  "length-floor",
+] as const;
+export type AutomatedFilterName = (typeof AUTOMATED_FILTERS)[number];
+
+/**
+ * One automated filter that ran over the record. NOT a review, and the type says
+ * so: it names code, never a person, and it has no verdict field a reader could
+ * mistake for a human finding.
+ */
+export interface AutomatedFilterRun {
+  filter: AutomatedFilterName;
+  /** WHERE the code is, so the run is re-derivable: `path:symbol`. */
+  implementation: string;
+  /**
+   * What it decided about THIS record. `excluded` is representable because the
+   * filters really do exclude rows — and it is REFUSED on a record that is in the
+   * corpus, because those two statements contradict each other.
+   */
+  outcome: "passed" | "excluded";
+}
+
+/** What a reviewer may decide. `exclude` is a decision, not an absence of one. */
+export const REVIEW_DECISIONS = [
+  "human",
+  "ai",
+  "mixed",
+  "exclude",
+] as const satisfies readonly (BenchmarkLabel | "exclude")[];
+export type ReviewDecision = (typeof REVIEW_DECISIONS)[number];
+
+/**
+ * Why a reviewer voted to exclude. A CODE and not only prose, so exclusions can be
+ * counted; the prose is `note`, and it never substitutes for the code.
+ */
+export const REVIEW_EXCLUSION_CODES = [
+  "pii-survived",
+  "off-language",
+  "below-length-floor",
+  "unverifiable-provenance",
+  "duplicate-of-another-record",
+] as const;
+export type ReviewExclusionCode = (typeof REVIEW_EXCLUSION_CODES)[number];
+
+/** ONE reviewer's own decision. The aggregate is derived from these, never given. */
+export interface ReviewerOpinion {
+  /** Pseudonymised reviewer token, never a name (same rule as every id here). */
+  reviewerId: string;
+  decision: ReviewDecision;
+  /** A real instant in epoch milliseconds. Never a partition block time. */
+  decidedAt: number;
+  /** Did this reviewer see a detector score? D1 requires not; the receipt records it. */
+  blindToScore: boolean;
+  /** Did this reviewer see the candidate class the pipeline had assigned? */
+  blindToCandidateClass: boolean;
+  /** Required if and only if `decision` is `exclude`. */
+  exclusionCode?: ReviewExclusionCode;
+  note?: string;
+}
+
+/** How a disagreement was resolved, and by whom. */
+export interface ReviewAdjudication {
+  /** Pseudonymised, and distinct from every reviewer of the record. */
+  adjudicatorId: string;
+  decision: ReviewDecision;
+  decidedAt: number;
+  /** WHY. An adjudication with no reason is a third vote, not a resolution. */
+  rationale: string;
+  blindToScore: boolean;
+}
+
+/** What was screened, by which code and which human, and what was done about it. */
+export interface PiiAuditReceipt {
+  /** The protocol followed, e.g. `pii-review-v1`. */
+  protocol: string;
+  /** Stage 1: the automated screen that produced the candidates. */
+  automatedStage: AutomatedFilterRun;
+  /** Stage 2: the human who read them. Pseudonymised. */
+  reviewerId: string;
+  reviewedAt: number;
+  /**
+   * What stage 2 did. `no-identifier-found` is a finding; the other two are acts,
+   * and `record-excluded` cannot describe a record that is in the corpus.
+   */
+  treatment: "no-identifier-found" | "identifier-removed" | "record-excluded";
+  /** Required whenever something WAS found: what it was, without reproducing it. */
+  finding?: string;
+}
+
+export interface AutomatedUnreviewedReview {
+  state: typeof AUTOMATED_UNREVIEWED;
+  /**
+   * Which filters ran. MAY be empty, and the empty case is not a loophole: it is
+   * the honest answer for a record whose producer recorded no filter at all, which
+   * is every v2 record ({@link reviewOf}). The state's claim is that no human audit
+   * happened; this list is the separate, positive claim about what did run, and an
+   * invented entry here would be the same falsification with the opposite sign.
+   */
+  automatedFilters: readonly AutomatedFilterRun[];
+  /** Why no human audit exists. Mandatory: the absence is a fact with a cause. */
+  humanAuditAbsentReason: string;
+}
+
+export interface HumanReviewReceipt {
+  state: typeof HUMAN_REVIEWED;
+  protocolVersion: string;
+  /**
+   * The reviewers ASSIGNED to the record, at least two and distinct. Kept beside
+   * `decisions` rather than derived from it, because "two reviewers were assigned
+   * and one answered" is precisely one of the incoherences the gate must catch, and
+   * a derived list cannot express it.
+   */
+  reviewerIds: [string, string, ...string[]];
+  /** Exactly one per declared reviewer, in any order. */
+  decisions: [ReviewerOpinion, ReviewerOpinion, ...ReviewerOpinion[]];
+  agreement: "agree" | "disagree";
+  /** Required if and only if `agreement` is `disagree`. */
+  adjudication?: ReviewAdjudication;
+  pii: PiiAuditReceipt;
+}
+
+export type RecordReview = AutomatedUnreviewedReview | HumanReviewReceipt;
+
+/**
+ * The instant the receipt contract in this module took effect: the date of the v3
+ * rebuild plan that specifies it
+ * (`docs/superpowers/plans/2026-07-26-detector-v3-rebuild-implementation.md`, and
+ * the same date the frozen split seed `20260726` encodes).
+ *
+ * A receipt cannot predate the protocol it claims to follow, so this is the floor
+ * every instant in a receipt is checked against. Its JOB is narrow and worth
+ * stating: it refuses the partition block times the sealed corpus carries
+ * (1.000.000 / 2.000.000 / 3.000.000 milliseconds — January 1970), which are the
+ * synthetic timestamps C5 exists to remove. It does NOT verify that a review
+ * happened on the day it says; nothing inside a record can do that, and the digest
+ * of the session log is what D1 binds for that purpose.
+ */
+export const REVIEW_RECEIPT_PROTOCOL_FROM = "2026-07-26T00:00:00.000Z";
+const REVIEW_RECEIPT_PROTOCOL_FROM_MS = Date.parse(
+  REVIEW_RECEIPT_PROTOCOL_FROM,
+);
+
+/**
+ * The review state of a record of EITHER version — and the one place the v2
+ * `annotation` block is DOWNGRADED.
+ *
+ * A v2 block declares two reviewer tokens and an aggregate agreement with no
+ * individual decision, no date and no adjudication behind them, so it cannot
+ * substantiate the agreement it declares: it is read as `automated/unreviewed` and
+ * the agreement is DROPPED rather than carried over. §7 of the plan puts
+ * `annotation` and `piiAudit` in "Descarte"; for a corpus already sealed on disk,
+ * discarding them means exactly this — the bytes stay readable and stop being read
+ * as a review.
+ */
+export function reviewOf(record: BenchmarkRecord): RecordReview {
+  return record.schemaVersion === 3 ? record.review : V2_ANNOTATION_DOWNGRADE;
+}
+
+const V2_ANNOTATION_DOWNGRADE: AutomatedUnreviewedReview = Object.freeze({
+  state: AUTOMATED_UNREVIEWED,
+  automatedFilters: Object.freeze<readonly AutomatedFilterRun[]>([]),
+  humanAuditAbsentReason:
+    "schemaVersion 2 records no receipt: its annotation block carries two reviewer tokens and an aggregate agreement, with no individual decision, no date and no adjudication behind them, so it cannot substantiate the agreement it declares (C5)",
+});
+
+/**
+ * Whether a record's review sustains a governance claim, and when it does not, WHY.
+ *
+ * A discriminated rejection rather than a boolean, because the three refusals are
+ * three different facts an operator acts on differently: hire reviewers, re-run the
+ * review blind, or re-run only the adjudication. R6/D5 in one function — an
+ * `automated/unreviewed` record may exist in the corpus (it is honest) and never
+ * counts toward a gate that requires review.
+ *
+ * Blindness is priced HERE and not refused at the parser, deliberately. A review
+ * that saw the score really happened if it happened, and R4 says record the truth;
+ * what must not happen is that truth sustaining a claim.
+ */
+export type ReviewClaimSupport =
+  | { sustains: true }
+  | {
+      sustains: false;
+      reason:
+        | "automated-filter-only"
+        | "reviewer-saw-detector-score"
+        | "reviewer-saw-candidate-class";
+    };
+
+export function reviewClaimSupport(
+  recordOrReview: BenchmarkRecord | RecordReview,
+): ReviewClaimSupport {
+  const review =
+    "state" in recordOrReview ? recordOrReview : reviewOf(recordOrReview);
+  if (review.state === AUTOMATED_UNREVIEWED) {
+    return { sustains: false, reason: "automated-filter-only" };
+  }
+  const sawScore =
+    review.decisions.some((decision) => !decision.blindToScore) ||
+    review.adjudication?.blindToScore === false;
+  if (sawScore) {
+    return { sustains: false, reason: "reviewer-saw-detector-score" };
+  }
+  if (review.decisions.some((decision) => !decision.blindToCandidateClass)) {
+    return { sustains: false, reason: "reviewer-saw-candidate-class" };
+  }
+  return { sustains: true };
+}
+
+/**
+ * A v3 record. Shares `mixture` and `transformation` with v2 — those blocks were
+ * not the defect — replaces `groups` and `annotation`, drops `provenance.piiAudit`,
+ * extends `generation`, and adds the label-evidence pair.
  */
 export interface BenchmarkRecordV3 {
   schemaVersion: 3;
@@ -1210,8 +1506,15 @@ export interface BenchmarkRecordV3 {
    */
   labelBasis?: LabelBasisValue;
   labelEvidenceRef?: LabelEvidenceRef;
-  provenance: BenchmarkRecordV2["provenance"];
-  annotation: BenchmarkRecordV2["annotation"];
+  /**
+   * Source and licence provenance, WITHOUT `piiAudit`. The PII fact is a review
+   * act, so it lives on the review receipt; leaving the block here would keep a
+   * field whose type can only ever say `status: "passed"`, which is the automated
+   * filter signing an audit.
+   */
+  provenance: V3Provenance;
+  /** The review state: a receipt, or `automated/unreviewed`. Never absent. */
+  review: RecordReview;
   generation?: GenerationV3;
   mixture?: BenchmarkRecordV2["mixture"];
   transformation: BenchmarkRecordV2["transformation"];
@@ -1238,12 +1541,65 @@ const V3_RECORD_KEYS = [
   "labelBasis",
   "labelEvidenceRef",
   "provenance",
-  "annotation",
+  "review",
   "generation",
   "mixture",
   "transformation",
   "groups",
 ];
+// v3 provenance is v2's minus the audit block. Derived from the v2 list rather than
+// respelled, so a field added to provenance cannot reach one version only.
+const V3_PROVENANCE_KEYS = PROVENANCE_KEYS.filter((key) => key !== "piiAudit");
+const AUTOMATED_UNREVIEWED_KEYS = [
+  "state",
+  "automatedFilters",
+  "humanAuditAbsentReason",
+];
+const HUMAN_REVIEWED_KEYS = [
+  "state",
+  "protocolVersion",
+  "reviewerIds",
+  "decisions",
+  "agreement",
+  "adjudication",
+  "pii",
+];
+// The keys that only a RECEIPT may carry. Named as a list so the refusal on the
+// unreviewed arm can say which claim was attempted instead of "unknown field".
+const RECEIPT_ONLY_KEYS = HUMAN_REVIEWED_KEYS.filter(
+  (key) => key !== "state" && key !== "protocolVersion",
+);
+const AUTOMATED_FILTER_KEYS = ["filter", "implementation", "outcome"];
+const REVIEWER_OPINION_KEYS = [
+  "reviewerId",
+  "decision",
+  "decidedAt",
+  "blindToScore",
+  "blindToCandidateClass",
+  "exclusionCode",
+  "note",
+];
+const ADJUDICATION_KEYS = [
+  "adjudicatorId",
+  "decision",
+  "decidedAt",
+  "rationale",
+  "blindToScore",
+];
+const PII_RECEIPT_KEYS = [
+  "protocol",
+  "automatedStage",
+  "reviewerId",
+  "reviewedAt",
+  "treatment",
+  "finding",
+];
+const PII_TREATMENTS = [
+  "no-identifier-found",
+  "identifier-removed",
+  "record-excluded",
+] as const;
+const REVIEW_AGREEMENTS = ["agree", "disagree"] as const;
 const V3_GENERATION_KEYS = [
   "provider",
   "family",
@@ -1526,8 +1882,8 @@ export function validateBenchmarkRecordV3(value: unknown): BenchmarkRecordV3 {
   const wordCount = finiteNumber(root, "wordCount", "", id);
   const createdAt = finiteNumber(root, "createdAt", "", id);
 
-  const provenance = validateProvenance(root.provenance, id);
-  const annotation = validateAnnotation(root.annotation, id);
+  const provenance = validateV3Provenance(root.provenance, id);
+  const review = validateRecordReview(root.review, id);
   const generation = validateGenerationV3(root.generation, id);
   const mixture = validateMixture(root.mixture, id, text.length);
   const transformation = validateTransformation(root.transformation, id);
@@ -1589,6 +1945,26 @@ export function validateBenchmarkRecordV3(value: unknown): BenchmarkRecordV3 {
     const sum = mixture.aiFraction + mixture.humanFraction;
     if (Math.abs(sum - 1) > Number.EPSILON * 8) {
       throw new BenchmarkRecordError("mixed fractions must sum to 1", id);
+    }
+  }
+
+  // The receipt against the LABEL, which is the coarsest coherence there is: a
+  // review that concluded `ai` on a row labelled `human` is two contradictory
+  // claims on one record, and picking either would be guessing which. It is checked
+  // here, once the label is known and before the axes, because it decides whether
+  // the record is self-consistent at all.
+  //
+  // Ground truth stays provenance-derived: the reviewers do not GRANT the label
+  // (that is `labelBasis`/`generation`/`mixture`), they corroborate it, so their
+  // conclusion has to agree with it or one of the two is wrong.
+  if (review.state === HUMAN_REVIEWED) {
+    const concluded =
+      review.adjudication?.decision ?? review.decisions[0].decision;
+    if (concluded !== label) {
+      throw new BenchmarkRecordError(
+        `the review concluded "${concluded}" while the record's label is "${label}": the label comes from provenance and the review corroborates it, so a divergence means one of the two is wrong and neither may be silently preferred`,
+        id,
+      );
     }
   }
 
@@ -1732,16 +2108,6 @@ export function validateBenchmarkRecordV3(value: unknown): BenchmarkRecordV3 {
     }
   }
 
-  if (
-    annotation.agreement === "adjudicated" &&
-    annotation.adjudicatorId === undefined
-  ) {
-    throw new BenchmarkRecordError(
-      "adjudicated records require adjudicatorId",
-      id,
-    );
-  }
-
   const record: BenchmarkRecordV3 = {
     schemaVersion: 3,
     id,
@@ -1755,7 +2121,7 @@ export function validateBenchmarkRecordV3(value: unknown): BenchmarkRecordV3 {
     wordCount,
     createdAt,
     provenance,
-    annotation,
+    review,
     transformation,
     groups,
   };
@@ -1853,6 +2219,392 @@ function validateGroupAxisValue(
   return state === "notApplicable"
     ? { state: "notApplicable", reason }
     : { state: "unknown", reason };
+}
+
+// --- the review receipt (C5) ------------------------------------------------
+//
+// COHERENCE, not presence. Every rule below compares the receipt against the claim
+// it makes, because the defect being closed is a field that existed and said
+// nothing. The rules are ordered from the most specific to the most general so a
+// receipt with more than one problem names the narrowest one first, the same
+// convention `validateMixture` follows.
+
+function validateRecordReview(value: unknown, id: string): RecordReview {
+  if (value === undefined) {
+    throw new BenchmarkRecordError(
+      `review is required: a record states either a human receipt or ${AUTOMATED_UNREVIEWED}, and an absent block states nothing — a consumer would read it as "reviewed, nothing found"`,
+      id,
+    );
+  }
+  if (typeof value !== "object" || value === null || Array.isArray(value)) {
+    throw new BenchmarkRecordError("review must be an object", id);
+  }
+  const obj = value as Record<string, unknown>;
+  const state = enumValue(obj, "state", "review", REVIEW_STATES, id);
+  return state === AUTOMATED_UNREVIEWED
+    ? validateAutomatedUnreviewed(obj, id)
+    : validateHumanReviewReceipt(obj, id);
+}
+
+function validateAutomatedUnreviewed(
+  obj: Record<string, unknown>,
+  id: string,
+): AutomatedUnreviewedReview {
+  // Named BEFORE the closed-object check, and that order is the whole point. The
+  // generic "unknown field review.agreement" reads as a misspelled key; the mistake
+  // is a state claiming a conclusion it cannot have reached, and the sentence has to
+  // say that or the operator fixes it by renaming the field.
+  for (const key of RECEIPT_ONLY_KEYS) {
+    if (obj[key] !== undefined) {
+      throw new BenchmarkRecordError(
+        `review is ${AUTOMATED_UNREVIEWED} and cannot carry ${key}: an automated filter reaches no conclusion, so there is no agreement, no reviewer and no adjudication to record. A record that was really reviewed states state "${HUMAN_REVIEWED}" and carries the receipt`,
+        id,
+      );
+    }
+  }
+  assertClosedObject(obj, "review", AUTOMATED_UNREVIEWED_KEYS, id);
+  const filtersRaw = obj.automatedFilters;
+  if (!Array.isArray(filtersRaw)) {
+    throw new BenchmarkRecordError(
+      "review.automatedFilters must be an array (empty when the producer recorded no filter)",
+      id,
+    );
+  }
+  const automatedFilters = filtersRaw.map((run, index) =>
+    validateAutomatedFilterRun(run, `review.automatedFilters[${index}]`, id),
+  );
+  return {
+    state: AUTOMATED_UNREVIEWED,
+    automatedFilters,
+    humanAuditAbsentReason: nonEmptyString(
+      obj,
+      "humanAuditAbsentReason",
+      "review",
+      id,
+    ),
+  };
+}
+
+function validateAutomatedFilterRun(
+  value: unknown,
+  path: string,
+  id: string,
+): AutomatedFilterRun {
+  const obj = assertClosedObject(value, path, AUTOMATED_FILTER_KEYS, id);
+  const filter = enumValue(obj, "filter", path, AUTOMATED_FILTERS, id);
+  const outcome = enumValue(obj, "outcome", path, ["passed", "excluded"], id);
+  // The record is in the corpus, so a filter that excluded it is a contradiction
+  // between two of the record's own statements — not a value a producer may set to
+  // mean "it fired". A dropped row has no record to carry this.
+  if (outcome === "excluded") {
+    throw new BenchmarkRecordError(
+      `${path} says the filter excluded this record, and an excluded record is not in the corpus: the exclusion belongs to the filter's own log, not to a row that survived it`,
+      id,
+    );
+  }
+  return {
+    filter,
+    implementation: nonEmptyString(obj, "implementation", path, id),
+    outcome,
+  };
+}
+
+function validateHumanReviewReceipt(
+  obj: Record<string, unknown>,
+  id: string,
+): HumanReviewReceipt {
+  assertClosedObject(obj, "review", HUMAN_REVIEWED_KEYS, id);
+  const protocolVersion = nonEmptyString(obj, "protocolVersion", "review", id);
+
+  const reviewerIdsRaw = obj.reviewerIds;
+  if (!Array.isArray(reviewerIdsRaw) || reviewerIdsRaw.length < 2) {
+    throw new BenchmarkRecordError(
+      "review.reviewerIds must declare at least two reviewers: an agreement is a relation between two independent opinions",
+      id,
+    );
+  }
+  const reviewerIds = reviewerIdsRaw.map((reviewer, index) => {
+    if (typeof reviewer !== "string" || !PSEUDONYM.test(reviewer)) {
+      throw new BenchmarkRecordError(
+        `review.reviewerIds[${index}] must be a pseudonymised token matching [A-Za-z0-9_-], never a name`,
+        id,
+      );
+    }
+    return reviewer;
+  }) as [string, string, ...string[]];
+  if (new Set(reviewerIds).size !== reviewerIds.length) {
+    throw new BenchmarkRecordError(
+      "review.reviewerIds repeats a reviewer, so the two opinions are not independent",
+      id,
+    );
+  }
+
+  const decisionsRaw = obj.decisions;
+  if (!Array.isArray(decisionsRaw)) {
+    throw new BenchmarkRecordError("review.decisions must be an array", id);
+  }
+  // INCOHERENCE: the number of individual decisions against the reviewers declared.
+  // Both directions are the same refusal because both are the same lie — a receipt
+  // whose vote count does not match its assignment.
+  if (decisionsRaw.length !== reviewerIds.length) {
+    throw new BenchmarkRecordError(
+      `review declares ${reviewerIds.length} reviewers and carries ${decisionsRaw.length} individual decision${decisionsRaw.length === 1 ? "" : "s"}: a receipt records exactly one decision per declared reviewer`,
+      id,
+    );
+  }
+  const declared = new Set(reviewerIds);
+  const voted = new Set<string>();
+  const decisions = decisionsRaw.map((decision, index) => {
+    const opinion = validateReviewerOpinion(
+      decision,
+      `review.decisions[${index}]`,
+      id,
+    );
+    if (!declared.has(opinion.reviewerId)) {
+      throw new BenchmarkRecordError(
+        `review.decisions[${index}] is by "${opinion.reviewerId}", who is not one of the declared reviewers (${reviewerIds.join(", ")})`,
+        id,
+      );
+    }
+    if (voted.has(opinion.reviewerId)) {
+      throw new BenchmarkRecordError(
+        `review.decisions[${index}] repeats reviewer "${opinion.reviewerId}": one reviewer, one decision`,
+        id,
+      );
+    }
+    voted.add(opinion.reviewerId);
+    return opinion;
+  }) as [ReviewerOpinion, ReviewerOpinion, ...ReviewerOpinion[]];
+
+  const agreement = enumValue(
+    obj,
+    "agreement",
+    "review",
+    REVIEW_AGREEMENTS,
+    id,
+  );
+  const distinctDecisions = [...new Set(decisions.map((d) => d.decision))];
+  // INCOHERENCE, both directions: `agree` over decisions that differ is the claim
+  // the v2 block made with nothing behind it, and `disagree` over decisions that
+  // are identical invents a conflict to justify an adjudication.
+  if (agreement === "agree" && distinctDecisions.length > 1) {
+    throw new BenchmarkRecordError(
+      `review.agreement is "agree" while the individual decisions are ${decisions.map((d) => d.decision).join(", ")}`,
+      id,
+    );
+  }
+  if (agreement === "disagree" && distinctDecisions.length === 1) {
+    throw new BenchmarkRecordError(
+      `review.agreement is "disagree" while every individual decision is ${distinctDecisions[0]}`,
+      id,
+    );
+  }
+
+  let adjudication: ReviewAdjudication | undefined;
+  if (obj.adjudication !== undefined) {
+    if (agreement === "agree") {
+      throw new BenchmarkRecordError(
+        'review.adjudication is forbidden when agreement is "agree": there was nothing to resolve, and an adjudication here would be a third vote presented as a resolution',
+        id,
+      );
+    }
+    adjudication = validateAdjudication(obj.adjudication, id, decisions);
+    if (declared.has(adjudication.adjudicatorId)) {
+      throw new BenchmarkRecordError(
+        `review.adjudication.adjudicatorId "${adjudication.adjudicatorId}" is also a reviewer of this record: an adjudicator who cast one of the votes is not resolving the disagreement, they are winning it`,
+        id,
+      );
+    }
+  } else if (agreement === "disagree") {
+    // INCOHERENCE: a disagreement with no adjudication recorded.
+    throw new BenchmarkRecordError(
+      'review.adjudication is required when agreement is "disagree": a disagreement with no recorded resolution is not a decision, and the record carries no defensible label',
+      id,
+    );
+  }
+
+  const pii = validatePiiAuditReceipt(obj.pii, id);
+
+  // The CONCLUSION of the review, and the one thing it may not be. An excluded
+  // record is not in the corpus, so a receipt that concluded exclusion contradicts
+  // the row it is attached to. Checked last because it needs the adjudication: on a
+  // disagreement the conclusion is the adjudicator's, not the first vote.
+  const concluded = adjudication?.decision ?? decisions[0].decision;
+  if (concluded === "exclude") {
+    throw new BenchmarkRecordError(
+      'the review concluded "exclude", and an excluded record is not in the corpus: the exclusion and its code belong to the review log of the dropped row',
+      id,
+    );
+  }
+
+  const receipt: HumanReviewReceipt = {
+    state: HUMAN_REVIEWED,
+    protocolVersion,
+    reviewerIds,
+    decisions,
+    agreement,
+    pii,
+  };
+  if (adjudication !== undefined) receipt.adjudication = adjudication;
+  return receipt;
+}
+
+function validateReviewerOpinion(
+  value: unknown,
+  path: string,
+  id: string,
+): ReviewerOpinion {
+  const obj = assertClosedObject(value, path, REVIEWER_OPINION_KEYS, id);
+  const decision = enumValue(obj, "decision", path, REVIEW_DECISIONS, id);
+  const exclusionCode = optionalEnumValue(
+    obj,
+    "exclusionCode",
+    path,
+    REVIEW_EXCLUSION_CODES,
+    id,
+  );
+  // Both directions, because they are two different mistakes: an exclusion with no
+  // code cannot be counted or contested, and a code on a decision that excludes
+  // nothing is a reason attached to no act.
+  if (decision === "exclude" && exclusionCode === undefined) {
+    throw new BenchmarkRecordError(
+      `${path} decides "exclude" and records no exclusionCode: an exclusion has to name which rule it rests on (${REVIEW_EXCLUSION_CODES.join(", ")})`,
+      id,
+    );
+  }
+  if (decision !== "exclude" && exclusionCode !== undefined) {
+    throw new BenchmarkRecordError(
+      `${path} records an exclusionCode while deciding "${decision}", so the code explains an exclusion that did not happen`,
+      id,
+    );
+  }
+  const opinion: ReviewerOpinion = {
+    reviewerId: pseudonym(obj, "reviewerId", path, id),
+    decision,
+    decidedAt: reviewInstant(obj, "decidedAt", path, id),
+    blindToScore: booleanValue(obj, "blindToScore", path, id),
+    blindToCandidateClass: booleanValue(obj, "blindToCandidateClass", path, id),
+  };
+  if (exclusionCode !== undefined) opinion.exclusionCode = exclusionCode;
+  const note = optionalNonEmptyString(obj, "note", path, id);
+  if (note !== undefined) opinion.note = note;
+  return opinion;
+}
+
+function validateAdjudication(
+  value: unknown,
+  id: string,
+  decisions: readonly ReviewerOpinion[],
+): ReviewAdjudication {
+  const path = "review.adjudication";
+  const obj = assertClosedObject(value, path, ADJUDICATION_KEYS, id);
+  const decidedAt = reviewInstant(obj, "decidedAt", path, id);
+  // An adjudication resolves opinions that already exist, so it cannot predate the
+  // last of them. This is the second form of the synthetic-date defect: each
+  // instant is individually plausible and the ORDER is impossible.
+  const lastOpinion = Math.max(...decisions.map((d) => d.decidedAt));
+  if (decidedAt < lastOpinion) {
+    throw new BenchmarkRecordError(
+      `${path}.decidedAt precedes the last individual decision it resolves (${decidedAt} < ${lastOpinion})`,
+      id,
+    );
+  }
+  return {
+    adjudicatorId: pseudonym(obj, "adjudicatorId", path, id),
+    decision: enumValue(obj, "decision", path, REVIEW_DECISIONS, id),
+    decidedAt,
+    rationale: nonEmptyString(obj, "rationale", path, id),
+    blindToScore: booleanValue(obj, "blindToScore", path, id),
+  };
+}
+
+function validatePiiAuditReceipt(value: unknown, id: string): PiiAuditReceipt {
+  const path = "review.pii";
+  const obj = assertClosedObject(value, path, PII_RECEIPT_KEYS, id);
+  const treatment = enumValue(obj, "treatment", path, PII_TREATMENTS, id);
+  const finding = optionalNonEmptyString(obj, "finding", path, id);
+  if (treatment !== "no-identifier-found" && finding === undefined) {
+    throw new BenchmarkRecordError(
+      `${path}.finding is required when treatment is "${treatment}": an act on an identifier has to say what the identifier was`,
+      id,
+    );
+  }
+  if (treatment === "no-identifier-found" && finding !== undefined) {
+    throw new BenchmarkRecordError(
+      `${path}.finding is present while treatment says no identifier was found`,
+      id,
+    );
+  }
+  if (treatment === "record-excluded") {
+    throw new BenchmarkRecordError(
+      `${path}.treatment says the record was excluded, and an excluded record is not in the corpus`,
+      id,
+    );
+  }
+  const receipt: PiiAuditReceipt = {
+    protocol: nonEmptyString(obj, "protocol", path, id),
+    automatedStage: validateAutomatedFilterRun(
+      obj.automatedStage,
+      `${path}.automatedStage`,
+      id,
+    ),
+    reviewerId: pseudonym(obj, "reviewerId", path, id),
+    reviewedAt: reviewInstant(obj, "reviewedAt", path, id),
+    treatment,
+  };
+  if (finding !== undefined) receipt.finding = finding;
+  return receipt;
+}
+
+/**
+ * A real instant on a receipt: a whole millisecond, at or after the protocol's
+ * effective date, and not in the future.
+ *
+ * `Date.now()` is read here rather than injected, because a validator that takes a
+ * clock invites a caller to pass one that makes an impossible date pass. The bound
+ * only ever moves forward, so the check cannot expire, and the two refusals it
+ * really exists for are testable without a clock at all: the block times the sealed
+ * corpus carries (1970) and a date in the year 3000.
+ */
+function reviewInstant(
+  obj: Record<string, unknown>,
+  key: string,
+  path: string,
+  id: string,
+): number {
+  const value = finiteNumber(obj, key, path, id);
+  if (!Number.isInteger(value)) {
+    throw new BenchmarkRecordError(
+      `${field(path, key)} must be a whole millisecond instant`,
+      id,
+    );
+  }
+  if (value < REVIEW_RECEIPT_PROTOCOL_FROM_MS) {
+    throw new BenchmarkRecordError(
+      `${field(path, key)} precedes the review protocol it claims to follow (${REVIEW_RECEIPT_PROTOCOL_FROM}): the corpus's synthetic block times are the defect this refuses, not an edge case`,
+      id,
+    );
+  }
+  if (value > Date.now()) {
+    throw new BenchmarkRecordError(
+      `${field(path, key)} is in the future, so no review happened at it`,
+      id,
+    );
+  }
+  return value;
+}
+
+function booleanValue(
+  obj: Record<string, unknown>,
+  key: string,
+  path: string,
+  id: string,
+): boolean {
+  const value = obj[key];
+  if (typeof value !== "boolean") {
+    throw new BenchmarkRecordError(`${field(path, key)} must be a boolean`, id);
+  }
+  return value;
 }
 
 function validateGenerationV3(

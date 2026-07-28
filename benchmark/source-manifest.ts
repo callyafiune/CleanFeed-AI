@@ -61,6 +61,13 @@
 // other. What remains for C1 is the record-side vocabulary, and that residual is
 // written out on `assertNoIndividualAcquisition` itself.
 //
+// It carries a SECOND over-claim screen for the same reason (`reviewOverclaimIn`,
+// C5): the review receipt was removed from the records and from the assembler, and
+// prose is the other place a removed claim comes back. What that screen does NOT do
+// is decide whether a record was reviewed — the review state is a record field
+// (`benchmark/schema.ts`) and the coherence gate is `sealDataset`
+// (`benchmark/dataset-manifest.ts`); this module only refuses the SENTENCE.
+//
 // WHO OWNS WHICH VALUE (this module is not the authority for all of it):
 //   * `benchmark/rebuild-v3-policy.json`, validated by
 //     `benchmark/rebuild-v3-policy.ts` and inside `EVALUATOR_FILES`, is the
@@ -1250,6 +1257,69 @@ export function humanLabelOverclaimIn(text: string): string | null {
     if (!HUMAN_LABEL_SUBJECT.test(clause)) continue;
     // Fresh lastIndex per clause: the pattern carries `g` for `matchAll`, so it
     // must never be shared as a stateful cursor across clauses.
+    for (const match of clause.matchAll(HUMAN_LABEL_CLAIM)) {
+      const before = clause.slice(
+        Math.max(0, match.index - DENIAL_WINDOW),
+        match.index,
+      );
+      if (HUMAN_LABEL_DENIAL.test(before)) continue;
+      return `${match[0]} @ ${clause.trim().slice(0, 160)}`;
+    }
+  }
+  return null;
+}
+
+// --- the over-claim screen for the review receipt (C5) ---------------------
+//
+// The SAME defect as the human label's, one governance level up, and the reason it
+// needs its own screen is that C5 removed the claim from the DATA and prose is the
+// other place a removed claim comes back. Ten thousand records asserted a
+// two-reviewer concordance and a cleared personal-data audit that never happened;
+// `benchmark/schema.ts` makes the record-level assertion unwritable and
+// `benchmark/lab/assemble_corpus.py` no longer mints one, so what is left is a
+// sentence in a document saying the corpus was reviewed. A reader believes the
+// sentence exactly as much as they believed the field.
+//
+// It reuses {@link HUMAN_LABEL_CLAIM} and {@link HUMAN_LABEL_DENIAL} rather than
+// respelling them: the verbs that turn a mitigation into a proof are the same verbs,
+// and two copies of that list would drift. Only the SUBJECT changes.
+//
+// WHAT IT DELIBERATELY DOES NOT FIRE ON, because the project must keep saying it:
+// the protocols DESCRIBE a review in the present tense ("cada registro passa por
+// revisão manual", "o revisor inspeciona os candidatos"), and a description of what
+// a protocol requires is not a claim that it ran. So a violation still needs three
+// things in one clause — a review subject, a claim verb, and no denial in front of
+// it — plus one extra pattern for the past-tense assertion that the work is DONE
+// ("todo registro foi revisado", "cada registro foi auditado"), which is the exact
+// sentence the corpus's own fabricated field made true-looking.
+const REVIEW_SUBJECT =
+  /\brevis[ãa]o\s+(?:humana|manual|dupla|independente)\b|\bdois\s+revisores\b|\brevisores\s+(?:independentes|humanos)\b|\bconcord[âa]ncia\s+entre\s+(?:os\s+)?revisores\b|\baudit(?:oria|ado|ada)\s+de\s+(?:PII|dados\s+pessoais)\b|\bauditoria\s+humana\b/iu;
+
+// The past-tense assertion that the review HAPPENED over the corpus. Narrow on
+// purpose: it requires a corpus-wide quantifier and the passive of one of the two
+// acts, so "o protocolo exige que cada registro seja revisado" (subjunctive, a
+// requirement) and "o revisor inspeciona" (present, a description) both survive.
+const REVIEW_DONE_CLAIM =
+  /\b(?:todos?\s+os\s+registros|cada\s+registro|todo\s+registro|os\s+10\.?000\s+registros)\s+(?:j[áa]\s+)?(?:foi|foram)\s+(?:revisad[oa]s?|auditad[oa]s?)\b/giu;
+
+/**
+ * The first forbidden claim that the corpus WAS humanly reviewed or PII-audited, or
+ * `null` when the text makes none. Same return shape as
+ * {@link humanLabelOverclaimIn}: the claim and its clause, so a failing screen names
+ * what fired and where.
+ */
+export function reviewOverclaimIn(text: string): string | null {
+  const unwrapped = unwrapSoftLines(text);
+  for (const clause of unwrapped.split(CLAUSE_BOUNDARY)) {
+    for (const match of clause.matchAll(REVIEW_DONE_CLAIM)) {
+      const before = clause.slice(
+        Math.max(0, match.index - DENIAL_WINDOW),
+        match.index,
+      );
+      if (HUMAN_LABEL_DENIAL.test(before)) continue;
+      return `${match[0]} @ ${clause.trim().slice(0, 160)}`;
+    }
+    if (!REVIEW_SUBJECT.test(clause)) continue;
     for (const match of clause.matchAll(HUMAN_LABEL_CLAIM)) {
       const before = clause.slice(
         Math.max(0, match.index - DENIAL_WINDOW),

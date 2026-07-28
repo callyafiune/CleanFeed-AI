@@ -2390,3 +2390,179 @@ class GeneratorCaptureTests(unittest.TestCase):
                 provider="antigravity",
                 model="gemini-3.6-flash-low",
             )
+
+
+class ReviewStateTests(unittest.TestCase):
+    """C5 — the assembler emits `automated/unreviewed` and cannot mint a receipt.
+
+    WHAT THIS CLASS EXISTS TO STOP COMING BACK. Until C5 the assembler stamped one
+    constant annotation block (an annotation protocol, two reviewer tokens and an
+    agreement) and one PII-audit function (a passed status, a manual-and-automated
+    method, a reviewer token and the partition's block time) onto every record it
+    wrote. All 10.000 rows of the sealed corpus therefore assert a two-reviewer
+    agreement and a passed PII audit that never happened, with January-1970
+    timestamps borrowed from the temporal split, and both governance gates passed
+    over it because both asked only whether the field was present.
+
+    No test in any language reached those two constants. Nothing had to: they were
+    literals, so they could not be wrong about anything except the world.
+    """
+
+    def _human(self) -> dict:
+        return AssemblerRealGroupTests()._human_candidate(
+            "src_ptso_aaa", "ptso_thread_2", "person_x"
+        )
+
+    def test_every_record_class_states_automated_unreviewed(self) -> None:
+        from assemble_corpus import ai_record, human_record, mixed_record
+
+        rows = [
+            human_record(self._human(), "qa-informal", None),
+            ai_record(
+                GenerationBatchAxisTests()._api_candidate("src_ai_gemini_aaaaaaaaaaaa")
+            ),
+            mixed_record(GenerationBatchAxisTests()._mixed_candidate("src_ptso_aaa")),
+        ]
+        for row in rows:
+            self.assertEqual(row["review"]["state"], "automated/unreviewed", row["id"])
+            # The three keys of the state, and NOTHING a receipt would add. Asserted
+            # as an exact key set rather than key by key: a receipt field smuggled in
+            # later is caught here even if every assertion below still holds.
+            self.assertEqual(
+                sorted(row["review"]),
+                ["automatedFilters", "humanAuditAbsentReason", "state"],
+                row["id"],
+            )
+            self.assertNotIn("annotation", row, row["id"])
+            self.assertNotIn("piiAudit", row["provenance"], row["id"])
+
+    def test_the_assembler_mints_no_review_receipt(self) -> None:
+        # The source-level guard, in the same shape as
+        # `test_no_module_mints_a_per_record_group_token`: the tokens the fabricated
+        # blocks were spelled with must not appear in the module at all, so a future
+        # edit cannot reintroduce them under a new variable name. The prose comment
+        # in the module deliberately paraphrases them for exactly this reason.
+        source = Path(__file__).with_name("assemble_corpus.py").read_text(
+            encoding="utf-8"
+        )
+        for token in (
+            "reviewer_a",
+            "reviewer_b",
+            "reviewer_pii",
+            "manual-and-automated",
+            "agreement",
+            "piiAudit",
+        ):
+            self.assertNotIn(token, source, token)
+
+    def test_the_state_carries_the_filters_the_extractor_recorded(self) -> None:
+        from assemble_corpus import human_record
+
+        candidate = self._human()
+        candidate["meta"]["automatedFilters"] = [
+            {
+                "filter": "pii-pattern-scan",
+                "implementation": "benchmark/lab/common.py:pii_hits",
+                "outcome": "passed",
+            }
+        ]
+        record = human_record(candidate, "qa-informal", None)
+        self.assertEqual(
+            record["review"]["automatedFilters"],
+            candidate["meta"]["automatedFilters"],
+        )
+
+    def test_a_pool_that_recorded_no_filter_claims_none(self) -> None:
+        from assemble_corpus import human_record
+
+        # EMPTY, and that is the honest answer rather than a gap to fill. Pools
+        # written before `CandidateWriter` recorded its filters say nowhere which
+        # screens saw the row, and naming one here would be the old constant again on
+        # a smaller scale. The state's own claim — no human audit happened — is still
+        # made, and the reason is still written down.
+        record = human_record(self._human(), "qa-informal", None)
+        self.assertEqual(record["review"]["automatedFilters"], [])
+        self.assertIn("no human reviewer", record["review"]["humanAuditAbsentReason"])
+
+    def test_a_generated_row_claims_no_pii_screen_it_never_met(self) -> None:
+        from assemble_corpus import ai_record
+
+        # `CandidateWriter` is the HUMAN extraction path; the generation pools do not
+        # go through it, so no filter of ours screened a generated row for personal
+        # data. Passing the candidate here would have read a `meta` the pool does not
+        # have — but a later edit that "helpfully" forwarded it would start claiming
+        # the screen the moment a generator began writing that key for another reason.
+        candidate = GenerationBatchAxisTests()._api_candidate(
+            "src_ai_gemini_aaaaaaaaaaaa"
+        )
+        candidate["meta"]["automatedFilters"] = [
+            {
+                "filter": "pii-pattern-scan",
+                "implementation": "benchmark/lab/common.py:pii_hits",
+                "outcome": "passed",
+            }
+        ]
+        self.assertEqual(ai_record(candidate)["review"]["automatedFilters"], [])
+
+    def test_the_ledger_records_the_state_and_no_agreement(self) -> None:
+        # `private/review-ledger.jsonl` is hashed into the manifest and the hash
+        # feeds `integrity.review-ledger-hash`. It used to copy the reviewer tokens
+        # and the agreement out of the fabricated block, so the gate certified a
+        # review by certifying the bytes of its own invention.
+        source = Path(__file__).with_name("assemble_corpus.py").read_text(
+            encoding="utf-8"
+        )
+        self.assertIn('"reviewState": r["review"]["state"]', source)
+        self.assertNotIn('r["annotation"]', source)
+
+    def test_the_writer_records_the_filters_it_ran(self) -> None:
+        from common import AUTOMATED_FILTERS_RUN
+
+        with tempfile.TemporaryDirectory() as tmp:
+            rows, _ = run_writer(
+                Path(tmp),
+                "filters",
+                lambda w: w.offer(
+                    natural_key="k1",
+                    license_id="cc-by-sa-4.0",
+                    created_at=parse_iso_date("2013-12-11"),
+                    raw_text=PROSE_60,
+                    domain_source="ptso_qa",
+                ),
+            )
+        self.assertEqual(len(rows), 1)
+        self.assertEqual(
+            rows[0]["meta"]["automatedFilters"],
+            [dict(f) for f in AUTOMATED_FILTERS_RUN],
+        )
+        # Every recorded outcome is "passed" BY CONSTRUCTION: a candidate that hit a
+        # filter returned before this line and has no row to carry the fact. The
+        # schema refuses "excluded" on a record that exists for the same reason.
+        for run in rows[0]["meta"]["automatedFilters"]:
+            self.assertEqual(run["outcome"], "passed")
+
+    def test_a_callers_own_meta_still_wins(self) -> None:
+        # The merge order, pinned: an extractor that ran additional filters (the
+        # Carolina licence allowlist) must be able to say so, and the default must
+        # not overwrite it.
+        mine = [
+            {
+                "filter": "license-by-source",
+                "implementation": "benchmark/lab/extract_carolina.py:ALLOWED_LICENSES",
+                "outcome": "passed",
+            }
+        ]
+        with tempfile.TemporaryDirectory() as tmp:
+            rows, _ = run_writer(
+                Path(tmp),
+                "filters2",
+                lambda w: w.offer(
+                    natural_key="k2",
+                    license_id="cc-by-nc-sa-4.0",
+                    created_at=parse_iso_date("2013-12-11"),
+                    raw_text=PROSE_60,
+                    domain_source="carolina_social_media",
+                    meta={"automatedFilters": mine},
+                ),
+            )
+        self.assertEqual(rows[0]["meta"]["automatedFilters"], mine)

@@ -5,7 +5,8 @@ Emits (into --out-dir):
   records.jsonl                    the canonical records (human/ai/mixed)
   cluster-report.json              cluster count + size distribution + largest
                                    cluster, per axis and per slice (feeds E3)
-  private/review-ledger.jsonl      one {recordId,reviewerIds,agreement} per record
+  private/review-ledger.jsonl      one {recordId,reviewState,...} per record — the
+                                   HONEST review state, never a fabricated concordance
   private/label-evidence.jsonl     the entries every human labelEvidenceRef resolves
                                    against, one per SOURCE registration
   governance-inputs.json           sourceIds + held-out families + licenses, for
@@ -234,19 +235,73 @@ def read_jsonl(path: Path) -> list[dict]:
         return [json.loads(line) for line in handle if line.strip()]
 
 
-ANNOTATION = {
-    "protocolVersion": "annotation-v1",
-    "reviewerIds": ["reviewer_a", "reviewer_b"],
-    "agreement": "agree",
-}
+# --- the review state: this assembler cannot produce a receipt (C5) ----------
+#
+# WHAT WAS HERE, AND WHY IT WAS FALSIFICATION. One constant naming the annotation
+# protocol, two reviewer tokens and a declared concordance between them, plus one
+# function returning a personal-data verdict of "passed" over a method that claimed
+# both a machine and a human stage, a third reviewer token and a timestamp — both
+# stamped onto every record.
+#
+# (Described in prose rather than pasted as the original literals, for the reason
+# C2's `base_groups` note gives: `test_the_assembler_mints_no_review_receipt` greps
+# this file for those tokens, and a comment quoting any of them verbatim would defeat
+# the guard that keeps them from coming back. `git show
+# 743767c:benchmark/lab/assemble_corpus.py` has the original bytes.)
+#
+# All 10.000 rows of the sealed corpus therefore assert that two named reviewers
+# examined them and concurred, and that a third audited them for personal data and
+# cleared them — and no human ever looked at a single row. The review timestamps
+# were the three partition BLOCK TIMES (1.000.000 / 2.000.000 / 3.000.000 ms,
+# January 1970), so even the dates were the split's bookkeeping wearing a governance
+# label. `integrity.review-ledger-hash` and `integrity.dataset-audit-sealed` passed
+# over all of it, because both asked whether the field was PRESENT.
+#
+# That is inventing a reviewer, a date and a verdict: the one thing R4 names
+# outright. §7 of the plan puts both blocks in "Descarte".
+#
+# WHAT REPLACES IT. Nothing that claims a review. Every record this assembler writes
+# is `automated/unreviewed`, which is a first-class state in `benchmark/schema.ts`
+# and not an absence: it names the automated filters that DID run and why no human
+# audit did. The receipt arm exists in the schema and has NO producer here — D1/D5
+# are the tasks that bring real reviewers, and until they do, a release seal is
+# refused (DATASET_REVIEW_INVALID) rather than granted on a fabricated receipt.
+#
+# DO NOT ADD A RECEIPT BUILDER HERE. It would be one function away from a corpus
+# that claims 10.000 reviews again, and the assembler is the only place with the
+# means: it writes every row. A receipt has to enter from the review's own output,
+# per record, and it has to name a real person's pseudonym and a real instant.
+NO_HUMAN_AUDIT = (
+    "no human reviewer was assigned to this corpus build: the extractors' automated "
+    "filters ran and no audit did, so the record supports no review claim (C5/R4)"
+)
 
 
-def pii_audit(block_time: int) -> dict:
+def review_state(cand: dict | None = None) -> dict:
+    """The `automated/unreviewed` block of one record.
+
+    The filter list is READ from the candidate row (`meta.automatedFilters`, written
+    by `common.CandidateWriter.offer` at the moment it ran them) and is EMPTY when
+    the row does not carry one. Empty is the honest answer and not a gap to fill:
+    pools written before that field existed record nowhere which screens saw them,
+    and naming one here would be the same invention as the old constant with a
+    smaller blast radius. It is the same discipline the grouping axes follow — a
+    value the row does not have is stated as missing, never substituted (R6/R7).
+
+    Generated and mixed rows pass `cand=None`: `common.CandidateWriter` is the human
+    extraction path, the generation pools do not go through it, and no filter of ours
+    screened a generated row for personal data. Claiming otherwise would be a
+    provenance we do not have.
+    """
+    meta = (cand or {}).get("meta") or {}
+    declared = meta.get("automatedFilters")
+    filters = list(declared) if isinstance(declared, list) else []
     return {
-        "status": "passed",
-        "method": "manual-and-automated",
-        "reviewerId": "reviewer_pii",
-        "reviewedAt": block_time,
+        "state": "automated/unreviewed",
+        "automatedFilters": filters,
+        # One spelling, read from the module constant, so 10.000 rows cannot end up
+        # carrying two versions of the same sentence.
+        "humanAuditAbsentReason": NO_HUMAN_AUDIT,
     }
 
 
@@ -699,7 +754,9 @@ def human_record(
             "licenseId": license_id,
             "legalBasis": "license",
         },
-        "annotation": dict(ANNOTATION),
+        # The candidate is passed so the filters the EXTRACTOR ran travel with the
+        # row instead of being asserted here.
+        "review": review_state(cand),
         "transformation": {"kind": "none", "severity": "none"},
         "groups": {
             # From the SOURCE, via the extractor. `author` is `known` (HMAC
@@ -799,7 +856,7 @@ def ai_record(cand: dict) -> dict:
             "licenseId": GENERATED_LICENSE,
             "legalBasis": "generated",
         },
-        "annotation": dict(ANNOTATION),
+        "review": review_state(),
         "generation": {
             "provider": str(meta.get("provider") or "reserved"),
             "family": str(family_raw),
@@ -901,7 +958,7 @@ def mixed_record(cand: dict) -> dict:
             "licenseId": GENERATED_LICENSE,
             "legalBasis": "generated",
         },
-        "annotation": dict(ANNOTATION),
+        "review": review_state(),
         "mixture": {
             "aiFraction": ai_fraction,
             "humanFraction": 1.0 - ai_fraction,
@@ -975,7 +1032,6 @@ def stamp_block(rec: dict, partition: str) -> dict:
     t = BLOCK_TIME[partition]
     rec["createdAt"] = t
     rec["provenance"]["collectedAt"] = t
-    rec["provenance"]["piiAudit"] = pii_audit(t)
     if "generation" in rec:
         rec["generation"]["generatedAt"] = t
     return rec
@@ -1616,8 +1672,19 @@ def main() -> None:
                 json.dumps(
                     {
                         "recordId": r["id"],
-                        "reviewerIds": r["annotation"]["reviewerIds"],
-                        "agreement": r["annotation"]["agreement"],
+                        # The LEDGER records the state, and for an unreviewed row
+                        # that is all there is: no reviewer token and no verdict,
+                        # because there was no reviewer and no review. It used to
+                        # copy both out of the fabricated annotation block, which is
+                        # how a hash over this file came to certify a review that
+                        # never happened (integrity.review-ledger-hash).
+                        "reviewState": r["review"]["state"],
+                        "automatedFilters": [
+                            f["filter"] for f in r["review"]["automatedFilters"]
+                        ],
+                        "humanAuditAbsentReason": r["review"][
+                            "humanAuditAbsentReason"
+                        ],
                     },
                     ensure_ascii=False,
                 )

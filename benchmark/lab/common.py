@@ -65,6 +65,35 @@ def pii_hits(text: str) -> list[str]:
     return [name for name, pattern in PII_PATTERNS.items() if pattern.search(text)]
 
 
+# --- automated filters are not an audit (C5) ---------------------------------
+#
+# `pii_hits` above is a regex screen over five identifier shapes. It is a FILTER:
+# it drops a candidate on a hit and never rewrites one, and it reads no context, so
+# it cannot find an identifier it has no pattern for — a full name in running prose,
+# an address, a rare handle shape. A human audit is a different act, and the sealed
+# corpus asserting `piiAudit.status: "passed"`, `method: "manual-and-automated"` on
+# 10.000 records that only ever met this function is precisely the falsification C5
+# removes (R4).
+#
+# So the writer RECORDS which filters ran, as evidence produced by the code that ran
+# them, and the record built from the candidate carries them inside
+# `review.automatedFilters` under state `automated/unreviewed`. Nothing here may
+# write a reviewer, a date or a verdict: `benchmark/schema.ts` refuses a receipt key
+# on that state, and a pool row has no way to spell one.
+AUTOMATED_FILTERS_RUN: tuple[dict[str, str], ...] = (
+    {
+        "filter": "pii-pattern-scan",
+        "implementation": "benchmark/lab/common.py:pii_hits",
+        "outcome": "passed",
+    },
+    {
+        "filter": "length-floor",
+        "implementation": "benchmark/lab/common.py:CandidateWriter.offer",
+        "outcome": "passed",
+    },
+)
+
+
 # --- deterministic sampling ---------------------------------------------------
 
 
@@ -231,7 +260,13 @@ class CandidateWriter:
             text=text,
             words=words,
             domain_source=domain_source,
-            meta=meta or {},
+            # The two filters this method just ran, recorded on the row that
+            # survived them. `outcome` is always "passed" here BY CONSTRUCTION: a
+            # candidate that hit either filter returned above and has no row to
+            # carry the fact, which is why the schema refuses "excluded" on a
+            # record that exists. A caller's own `meta` wins, so an extractor that
+            # ran additional filters (the Carolina licence allowlist) can say so.
+            meta={"automatedFilters": [dict(f) for f in AUTOMATED_FILTERS_RUN], **(meta or {})},
         )
         self._handle.write(candidate.to_json() + "\n")
         stats.kept += 1

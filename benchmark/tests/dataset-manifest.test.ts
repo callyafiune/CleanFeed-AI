@@ -18,11 +18,13 @@ import {
 } from "../schema.ts";
 import { asGeneratorFamily } from "../generator-family.ts";
 import {
+  humanReviewed,
   unknownAxis,
   v3Ai,
   v3Human,
   v3Mixed,
   withAxis,
+  withReview,
 } from "./helpers/v3-record-fixture.ts";
 
 const RECORDS_SHA = "d".repeat(64);
@@ -696,11 +698,24 @@ describe("held-out generator-family coverage on a release corpus", () => {
   // The floor is 200 positives per reserved family, so the fixture has to reach
   // it: a smaller corpus could not tell "the accessor reads nothing" apart from
   // "the corpus is thin", which is exactly the confusion the defect produced.
+  // C5 — a RELEASE corpus must substantiate its review claim, so the rows of this
+  // block carry a receipt. The fixture pool is `automated/unreviewed` by default,
+  // which is the honest state of every record this project actually holds; a
+  // release seal is the one place that state is not enough, and giving these rows a
+  // receipt is what keeps this block's subject (the held-out family FLOOR) reachable
+  // instead of masked by a governance refusal. A test fixture is hypothetical data:
+  // no assembler, artifact or corpus may write this shape until a real review exists.
   function v3AiRow(n: number): BenchmarkRecord {
-    const raw = v3Ai();
+    const raw = withReview(v3Ai(), humanReviewed("ai"));
     raw.id = `a_agy_${n.toString().padStart(4, "0")}`;
     raw.normalizedTextSha256 = n.toString(16).padStart(64, "0");
     return validateBenchmarkRecordV3(raw);
+  }
+
+  function v3HumanRow(): BenchmarkRecord {
+    return validateBenchmarkRecordV3(
+      withReview(v3Human(), humanReviewed("human")),
+    );
   }
 
   function releasePolicy(aiCount: number) {
@@ -712,7 +727,7 @@ describe("held-out generator-family coverage on a release corpus", () => {
   }
 
   function v3ReleaseCorpus(aiCount: number): BenchmarkRecord[] {
-    const records: BenchmarkRecord[] = [validateBenchmarkRecordV3(v3Human())];
+    const records: BenchmarkRecord[] = [v3HumanRow()];
     for (let n = 1; n <= aiCount; n += 1) records.push(v3AiRow(n));
     return records;
   }
@@ -751,7 +766,7 @@ describe("held-out generator-family coverage on a release corpus", () => {
   // eligibility half.
   function ineligibleV3AiRow(n: number): BenchmarkRecord {
     const raw = withAxis(
-      v3Ai(),
+      withReview(v3Ai(), humanReviewed("ai")),
       "humanSeed",
       // A real gap and the honest state for it: the row's human seed was not
       // recovered, so under R6 the record is INELIGIBLE and is never given a
@@ -765,7 +780,7 @@ describe("held-out generator-family coverage on a release corpus", () => {
   }
 
   it("refuses a reserved family whose 200 positives are all ineligible", async () => {
-    const records: BenchmarkRecord[] = [validateBenchmarkRecordV3(v3Human())];
+    const records: BenchmarkRecord[] = [v3HumanRow()];
     for (let n = 1; n <= 200; n += 1) records.push(ineligibleV3AiRow(n));
     // The rows are present, valid and of the reserved family — and every one of
     // them carries an `unknown` grouping axis, so none can be placed in a split
@@ -788,7 +803,7 @@ describe("held-out generator-family coverage on a release corpus", () => {
     // One ineligible row inside an otherwise complete family: the refusal has to
     // say 199 of 200, not "0" and not "200". Pinning both numbers is what stops a
     // later edit from swapping the population and leaving the message true.
-    const records: BenchmarkRecord[] = [validateBenchmarkRecordV3(v3Human())];
+    const records: BenchmarkRecord[] = [v3HumanRow()];
     for (let n = 1; n <= 199; n += 1) records.push(v3AiRow(n));
     records.push(ineligibleV3AiRow(200));
     await expect(
@@ -803,21 +818,30 @@ describe("held-out generator-family coverage on a release corpus", () => {
     );
   });
 
-  it("still clears the floor on a v2 release corpus, whose rows cannot state eligibility", async () => {
-    // The reason the filter is asked of v3 rows ONLY, pinned so nobody widens it.
-    // On v2 `recordEligibility` is constant false for structural reasons rather
-    // than per-record ones: `groups` is a closed object of nine keys with no
+  // UPDATED BY C5, and the update is the point rather than a casualty.
+  //
+  // This test used to assert that a complete v2 release corpus SEALS
+  // (`releaseEligible: true`). It cannot any more, and that is the result C5 set out
+  // to produce: every one of those rows declares `agreement: "agree"` and a passed
+  // PII audit that never happened, `reviewOf` reads the v2 annotation block as
+  // `automated/unreviewed`, and a release corpus with no review receipt on any row
+  // sustains no review claim. Reproved gates are the correct outcome of removing
+  // fabricated governance, not a regression to accommodate (R3: the gate was not
+  // relaxed; a real review is the missing input, and it belongs to D1/D5).
+  //
+  // What the test still has to pin is what it always pinned — that the held-out
+  // FLOOR counts v2 positives on presence and reaches 200 rather than zeroing them.
+  // The floor check runs BEFORE the review claim (it names one family; the review
+  // claim names a count over the corpus), so the refusal below proves the floor did
+  // not fire: with the eligibility filter widened to v2 the message would be the
+  // floor's, not the review's. The two sibling tests immediately after this one pin
+  // the floor's own sentence on v2 directly.
+  it("refuses a v2 release corpus for its simulated review, after the floor accepted it", async () => {
+    // The reason the eligibility filter is asked of v3 rows ONLY, pinned so nobody
+    // widens it. On v2 `recordEligibility` is constant false for structural reasons
+    // rather than per-record ones: `groups` is a closed object of nine keys with no
     // `humanSeed`, `generationLane` or `harnessVersion`, so those three read as
-    // `unknown` on every v2 record ever written. Filtering unconditionally would
-    // not tighten the floor — it would zero every v2 family and refuse the sealed
-    // corpus on disk, which is `scientificUse: "release"` and v2. That is this
-    // block's own defect with the versions swapped.
-    //
-    // The corpus below has to be a RELEASE one and has to REACH the floor: the
-    // held-out block runs only when `releaseEligible`, so an
-    // `infrastructure-only` seal would pass under either rule and pin nothing.
-    // (First version of this test made exactly that mistake and let the widening
-    // mutation survive.)
+    // `unknown` on every v2 record ever written.
     expect(recordEligibility(ai).eligible).toBe(false);
     expect(recordEligibility(ai).unknownAxes).toContain("humanSeed");
     const reserved = asGeneratorFamily("heldout_family");
@@ -833,7 +857,7 @@ describe("held-out generator-family coverage on a release corpus", () => {
         groups: { ...ai.groups, generatorFamily: reserved },
       });
     }
-    const audit = await sealDataset(
+    const attempt = sealDataset(
       { ...validManifest, scientificUse: "release" },
       [human, ...v2Positives],
       {
@@ -843,7 +867,41 @@ describe("held-out generator-family coverage on a release corpus", () => {
       },
       validFileDigests,
     );
-    expect(audit.releaseEligible).toBe(true);
+    await expect(attempt).rejects.toThrow(
+      /201 of 201 sustain no review claim \(201 automated-filter-only\)/u,
+    );
+    // Both halves: the review claim is what refused it, and the FLOOR did not —
+    // 200 positives of the reserved family were counted, on presence.
+    await expect(attempt).rejects.not.toThrow(/positives/u);
+  });
+
+  it("still counts a v2 corpus's reserved positives while refusing the corpus", async () => {
+    // The tally itself, on the version whose rows state no eligibility. Read off an
+    // `infrastructure-only` seal, which is the honest shape for a corpus of
+    // `automated/unreviewed` rows: the review claim is a RELEASE claim, so a
+    // diagnostic corpus seals and publishes its counts.
+    const reserved = asGeneratorFamily("heldout_family");
+    const v2Positives: BenchmarkRecord[] = [];
+    for (let n = 1; n <= 200; n += 1) {
+      v2Positives.push({
+        ...ai,
+        id: `ai-v2-${n.toString().padStart(4, "0")}`,
+        normalizedTextSha256: n.toString(16).padStart(64, "0"),
+        generation: { ...ai.generation!, family: reserved },
+        groups: { ...ai.groups, generatorFamily: reserved },
+      });
+    }
+    const audit = await sealDataset(
+      validManifest,
+      [human, ...v2Positives],
+      {
+        counts: { human: 1, ai: 200, mixed: 0 },
+        requiredHumanSourceTypes: ["qa-informal"],
+        requiredHardNegativeFamilies: [],
+      },
+      validFileDigests,
+    );
+    expect(audit.releaseEligible).toBe(false);
     expect(audit.generatorFamilies[reserved]).toBe(200);
   });
 
@@ -911,7 +969,7 @@ describe("held-out generator-family coverage on a release corpus", () => {
           // Both fixture pools' licences, because the corpus draws on both.
           licenses: [...releaseManifest.licenses, ...validManifest.licenses],
         },
-        [validateBenchmarkRecordV3(v3Human()), v3AiRow(1), v2Positive],
+        [v3HumanRow(), v3AiRow(1), v2Positive],
         {
           counts: { human: 1, ai: 2, mixed: 0 },
           requiredHumanSourceTypes: ["qa-informal"],

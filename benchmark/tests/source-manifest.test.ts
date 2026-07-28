@@ -24,6 +24,7 @@ import {
   corpusLicenseTerms,
   determinedHumanAcquisition,
   humanLabelOverclaimIn,
+  reviewOverclaimIn,
   licenseDescribesPublicBase,
   humanSourceAdmissibility,
   parseReviewedSourceManifest,
@@ -1500,5 +1501,92 @@ describe("declaredGroupAxes on the v3 human inventory", () => {
       admissible: false,
       blockedBy: "no-declared-group-axis",
     });
+  });
+});
+
+// C5 — the review claim was removed from the records and from the assembler, and
+// prose is the other place a removed claim comes back. `reviewOverclaimIn` refuses
+// the SENTENCE; whether a record was reviewed is decided by `review` on the record
+// and by `sealDataset`, never here.
+describe("C5 — documentation may not claim a review that did not happen", () => {
+  const SCREENED = [
+    "docs/corpus-sources.md",
+    "docs/corpus-collection-runbook.md",
+    "docs/limitations.md",
+    "benchmark/protocols/pii-review-v1.md",
+    "benchmark/protocols/collection-v1.md",
+    "benchmark/protocols/annotation-v1.md",
+    "benchmark/protocols/generation-v1.md",
+  ];
+
+  it("fires on the assertions the fabricated field used to make true-looking", () => {
+    for (const claim of [
+      "A revisão humana garante que nenhum dado pessoal sobrou.",
+      "Dois revisores certificam cada registro.",
+      "A auditoria de PII prova que o corpus está limpo.",
+      "Todos os registros foram revisados por dois revisores.",
+      "Cada registro foi auditado para dados pessoais.",
+      "A concordância entre os revisores é garantida por construção.",
+    ]) {
+      expect(reviewOverclaimIn(claim), claim).not.toBeNull();
+    }
+  });
+
+  it("does not fire on a protocol describing what it requires", () => {
+    // The distinction the screen exists to keep: a REQUIREMENT and a DESCRIPTION
+    // are not claims that the work was done. Every one of these has to survive, or
+    // the project cannot document its own protocol.
+    for (const allowed of [
+      "Cada registro passa por revisão manual antes de ser selado.",
+      "O revisor inspeciona os candidatos sinalizados e confirma que o registro está limpo.",
+      "O protocolo exige que cada registro seja revisado por dois revisores independentes.",
+      "Nenhum registro foi revisado: o estado é automated/unreviewed.",
+      "A revisão humana não ocorreu neste corpus, e o registro não sustenta alegação.",
+      "Um registro sem revisão humana nunca é certificado como auditado.",
+      "A auditoria de PII deste corpus não está comprovada por recibo nenhum.",
+    ]) {
+      expect(reviewOverclaimIn(allowed), allowed).toBeNull();
+    }
+  });
+
+  it("sees through a soft line wrap, as the label screen does", () => {
+    // Same machinery, so the same property has to hold: prose in `docs/` wraps at
+    // about 80 columns and a claim may straddle two physical lines.
+    expect(
+      reviewOverclaimIn("Todos os registros\nforam revisados."),
+    ).not.toBeNull();
+    expect(
+      reviewOverclaimIn("> A revisão humana\n> garante o resultado."),
+    ).not.toBeNull();
+    // And two list items stay two clauses.
+    expect(
+      reviewOverclaimIn("- A revisão humana é o assunto\n- e isto garante."),
+    ).toBeNull();
+  });
+
+  it("screens every document that describes the corpus governance", async () => {
+    for (const relativePath of SCREENED) {
+      const body = await readFile(resolve(REPO_ROOT, relativePath), "utf8");
+      expect(reviewOverclaimIn(body), relativePath).toBeNull();
+    }
+  });
+
+  it("keeps the PII protocol from presenting the automated filter as an audit", async () => {
+    const body = await readFile(
+      resolve(REPO_ROOT, "benchmark/protocols/pii-review-v1.md"),
+      "utf8",
+    );
+    // The protocol has to name the state a stage-1-only record carries, or the
+    // document describes a two-stage review whose first stage silently counts as
+    // the second — which is exactly what the removed `provenance.piiAudit` did.
+    expect(body).toContain("automated/unreviewed");
+    // Whitespace collapsed first: the sentence wraps at about 80 columns, and a
+    // reflow of the paragraph must not decide whether the required wording is
+    // present (the same reason the label screen's doc assertions collapse it).
+    expect(body.replace(/\s+/gu, " ")).toMatch(
+      /is not a claim that the protocol ran/u,
+    );
+    // And it may no longer point at the field that could only ever say "passed".
+    expect(body).not.toMatch(/`status: "passed"`/u);
   });
 });
