@@ -3981,31 +3981,84 @@ HEAD:benchmark/lab/assemble_corpus.py`, `e122df62…`), portanto o achado import
 
     * `return []` no topo de `assign_generation_batches`: os 540 registros gerados da
       montagem entregue ficam `unknown` no eixo, portanto **inescrevíveis** — e o eixo
-      que alimenta o gate de poder de E3 reporta 0 clusters onde o
-      `cluster-report.json` entregue publica **27** (maior cluster `gb_mixed_0020`, 90
-      linhas);
+      que alimenta o gate de poder de E3 cai dos **27** clusters que o
+      `cluster-report.json` entregue publica (maior cluster `gb_mixed_0020`, 90
+      linhas) para **4** clusters sobre 246 linhas agrupadas (maior
+      `extraction_wikipedia_fresh`, 73);
 
       > **ERRATA (terceira rodada de qualidade, 2026-07-28).** Este item dizia
       > "portanto **inelegíveis**". Está errado, e a generalização vem de
       > `harnessVersion`, onde vale. `AXIS_STATE_RULE.collectionBatch` em
       > `benchmark/schema.ts` admite **só `known`** nas quatro classes de eixo, então
       > `validate` → `parseBenchmarkDataset` → `validateBenchmarkRecordV3` **recusa o
-      > registro**, medido verbatim nas próprias fixtures desta classe com o eixo
-      > forçado de volta: `BENCHMARK_RECORD_INVALID: groups.collectionBatch of an ai
-      > record must be known, received unknown (id=src_ai_gemini_aaaaaaaaaaaa)`, idem
-      > para a linha `agy`, e `... of a mechanistic mixed record must be known,
-      > received unknown (id=mix_src_ptso_0f89e00a4836)`. Logo o preço não é
-      > elegibilidade, é o registro: `recordEligibility` é inalcançável para essa
-      > linha (o registro válido mede `{eligible: true, unknownAxes: []}` e o inválido
-      > nunca chega lá). **Metade da frase original procede**: a bancada é silenciosa
-      > — `assign_generation_batches` retornando vazio não levanta nada nem imprime
-      > aviso, e `cluster_report` não carrega veredito por decisão de projeto —, mas
-      > `validate` **não** é silencioso. E mesmo do lado da bancada a elegibilidade
-      > mal se move: `ineligibleRecords` iria de **503 para 540** (+37), porque 503
-      > dos 540 gerados já são inelegíveis por `harnessVersion` (débito 1). O número
-      > que desaba é o de clusters, não o de elegíveis. Consequência para quem lê
+      > registro**. **Metade da frase original procede**: a bancada é silenciosa no
+      > sentido de que nada levanta e nada falha — `assign_generation_batches`
+      > retornando vazio não levanta erro nem imprime aviso, e `cluster_report` não
+      > carrega veredito por decisão de projeto —, mas `validate` **não** é
+      > silencioso. E mesmo do lado da bancada a elegibilidade mal se move:
+      > `ineligibleRecords` iria de **503 para 540** (+37), porque 503 dos 540 gerados
+      > já são inelegíveis por `harnessVersion` (débito 1). Consequência para quem lê
       > depois: o teste da bancada **não** é a única defesa, e a entrada do schema
       > **não** é redundante com ele.
+      >
+      > **ERRATA 2 (quarta rodada de qualidade, 2026-07-28) — corrige a errata acima,
+      > não o texto original.** Três frases da errata anterior estavam erradas ou
+      > largas demais, e as três agora estão medidas.
+      >
+      > 1. **O número de clusters.** A errata anterior dizia que os clusters do eixo
+      >    "vão a 0" e que "o número que desaba é o de clusters". Rodei o
+      >    `group_axes.cluster_report` real sobre o `records.jsonl` entregue (786
+      >    linhas, sha256 `216fbe5b…`) com o efeito da mutação A aplicado — as 540
+      >    linhas de geração controlada de volta para `unknown`, exatamente o conjunto
+      >    que `assign_generation_batches` toca. A baseline reproduz o artefato
+      >    entregue (clusters 27, maior `gb_mixed_0020`/90, `ineligibleRecords` 503) e
+      >    o mutante reporta **4 clusters**, não 0: `registros_agrupados` 786 → 246,
+      >    maior `extraction_wikipedia_fresh`/73, `estados` `{'known': 786}` →
+      >    `{'known': 246, 'unknown': 540}`, `sizeDistribution` `{41:1, 59:1, 73:2}`.
+      >    A causa está na própria docstring de `assign_generation_batches`, três
+      >    linhas acima do ponto da mutação: "Human records are untouched here and
+      >    keep the `extraction_<domainSource>` batch their builder assigned". As 246
+      >    linhas humanas carregam 4 ids `extraction_*` distintos, já dentro dos 27
+      >    entregues, e a mutação não as alcança. O erro corria na direção
+      >    **lisonjeira**, e é por isso que importa: `clusters=0 /
+      >    registros_agrupados=0` é alarme gritante em `render_cluster_report`,
+      >    enquanto 4 clusters de 41–73 linhas sobre 246 agrupadas parecem um eixo
+      >    saudável — ou seja, a regressão é **mais** escondida do que a errata
+      >    anterior afirmava, não menos. **Onde o 0 é o número certo**, nomeando a
+      >    estatística: nas **células por fatia**, não no agregado. Cada célula
+      >    `<partição>/ai` e `<partição>/mixed` vai a `clusters=0` e `grouped=0`
+      >    (medido por rótulo sobre o corpus entregue: 20 → 0 em ai e 3 → 0 em mixed,
+      >    que é a soma das células geradas por partição do relatório entregue),
+      >    enquanto as quatro células humanas ficam intactas. A coluna mais **alta**
+      >    sob a mutação não é a de clusters e sim o mapa `estados`; a de clusters é a
+      >    mais **baixa**.
+      > 2. **"nas próprias fixtures desta classe"** era largo demais, e a linha `agy`
+      >    citada não está no teste em questão. O teste
+      >    `test_no_generated_record_is_left_unknown_on_the_batch_axis` monta **cinco**
+      >    registros — três linhas ai `gemini-api`, uma mista mecanística e **uma
+      >    humana** —; as linhas `agy` vivem em
+      >    `test_the_effort_is_part_of_the_batch_key`. Medido com o eixo forçado de
+      >    volta em cada uma: `BENCHMARK_RECORD_INVALID: groups.collectionBatch of an
+      >    ai record must be known, received unknown (id=src_ai_gemini_aaaaaaaaaaaa)`,
+      >    `... of a mechanistic mixed record ... (id=mix_src_ptso_0f89e00a4836)` e
+      >    `... of a human record ... (id=src_ptso_aaa)`. A linha **humana** é recusada
+      >    igual (a regra vale `["known"]` também para `human`), e é justamente a
+      >    classe que sobrevive à mutação na bancada e mantém a contagem de clusters
+      >    fora do zero — o fato que o item 1 acima corrige.
+      > 3. **Elegibilidade.** A errata anterior dizia "o registro válido mede
+      >    `{eligible: true, unknownAxes: []}`", no singular, o que vale para quatro
+      >    das sete fixtures e é falso para as outras três; e "o preço não é
+      >    elegibilidade" contradizia, seis linhas abaixo, o próprio "503 dos 540 já
+      >    são inelegíveis". O enunciado correto é mais estreito: o `unknown` **deste
+      >    eixo** custa o registro, não a elegibilidade — o registro pode muito bem
+      >    ser inelegível por outro motivo (503 dos 540 entregues são, por
+      >    `harnessVersion`), mas `recordEligibility` nunca é **alcançado** com
+      >    `collectionBatch: unknown`, porque o parse levanta antes. Medido nas
+      >    fixtures válidas: as três linhas api e a humana medem `{eligible: true,
+      >    unknownAxes: []}`, a mista mede `{eligible: false, unknownAxes: ["author",
+      >    "source"]}` e as duas `agy` medem `{eligible: false, unknownAxes:
+      >    ["harnessVersion"]}` — as sete recusadas com as mensagens acima quando o
+      >    eixo é forçado.
     * o fallback humano `f"extraction_{cand['domainSource']}"` reescrito para `"batch_x"`,
       apesar de a docstring da própria função chamar o prefixo `extraction_` de "structural
       rather than incidental" porque "cannot collide with a `gb_` id" — o audit de
@@ -4118,13 +4171,14 @@ comportamento mudou, nenhum teste mudou de asserção, nenhum número de gate se
     Dizia que um eixo `unknown` "makes a record ineligible (R6), so a regression that
     skipped rows would not raise, would not print and would not fail validate". A
     generalização é importada de `harnessVersion`, onde vale, e **quebra em
-    `collectionBatch`**. Medi em vez de raciocinar: passei as três fixtures desta classe
-    pelo validador selado com o eixo forçado de volta para `unknown` e o resultado está
-    na ERRATA do item 10 acima — `validate` **recusa o registro**, com a mensagem
-    verbatim, nas três. Então o registro não é inelegível, é **inescrevível**, e
-    `recordEligibility` é inalcançável para ele. A metade verdadeira da frase (bancada
-    silenciosa: nada levanta, nada avisa, o `cluster_report` não tem veredito e os
-    clusters do eixo vão a 0) está preservada e agora **separada** da metade falsa, com
+    `collectionBatch`**. Medi em vez de raciocinar: passei fixtures desta classe pelo
+    validador selado com o eixo forçado de volta para `unknown` e o resultado está na
+    ERRATA do item 10 acima — `validate` **recusa o registro**, com a mensagem verbatim,
+    em todas (a quarta rodada refez a medição sobre as **sete** fixtures, incluindo a
+    linha humana que esta rodada omitiu; ver item 16). Então o `unknown` **deste eixo** custa o registro, e não a
+    elegibilidade: `recordEligibility` nunca é alcançado para ele. A metade verdadeira
+    da frase (bancada silenciosa: nada levanta, nada avisa, o `cluster_report` não tem
+    veredito) está preservada e agora **separada** da metade falsa, com
     `AXIS_STATE_RULE` nomeado como a segunda defesa para que ninguém leia o teste da
     bancada como a única nem a entrada do schema como redundante. Corrigido nos **três**
     lugares que repetiam a mesma subestimação: o comentário de
@@ -4146,6 +4200,54 @@ comportamento mudou, nenhum teste mudou de asserção, nenhum número de gate se
     apodreceria em silêncio, e havia **dois** ponteiros para o mesmo lugar no mesmo
     comentário. Agora é `ClusterKeyring.pseudonym` por nome, uma vez, com a fórmula ao
     lado do número — nada se perde, porque o valor é re-derivável ali mesmo.
+
+#### C2 — quarta rodada de correção de qualidade (2026-07-28)
+
+Três achados, **os três procedem**, e os três são **prosa**: nenhuma linha de
+comportamento mudou, nenhum teste mudou de asserção, nenhum número de gate se moveu.
+Os cinco módulos Python de produção (`assemble_corpus.py`, `group_axes.py`,
+`pseudonymize.py`, `make_mixed.py`, `generate_ai.py`) ficam byte-idênticos a `e53ec96`,
+e os três artefatos entregues mantêm os digests. O diff é `test_extractors.py`
+(comentários e docstring) e este plano.
+
+O tema da rodada é o mesmo das anteriores, uma volta acima: a rodada 3 trocou uma
+consequência **inferida** por uma **medida**, mas o número em que a versão corrigida
+passou a se apoiar — "os clusters vão a 0" — também era inferido, e ninguém o mediu
+antes de escrevê-lo em quatro lugares e na mensagem de commit. A lição registrada:
+**errata não isenta de medição**; uma correção que herda um número não medido do texto
+que corrige apenas move o defeito.
+
+16. **IMPORTANTE — o número que a rodada 3 tornou a única prova era falso, e na
+    direção lisonjeira.** Medição, causa, o lugar onde o `0` é certo e as quatro
+    ocorrências corrigidas estão na **ERRATA 2 do item 10** acima, para não duplicar o
+    número em dois lugares e criar de novo o problema que esta rodada conserta.
+    Resumo: agregado 27 → **4** clusters (não 0), 786 → 246 linhas agrupadas, maior
+    `gb_mixed_0020`/90 → `extraction_wikipedia_fresh`/73; o `0` é das células
+    `<partição>/ai` e `<partição>/mixed` (20 → 0 e 3 → 0 por rótulo). Corrigido nos
+    quatro lugares que repetiam o número — o comentário do teste, o bullet da mutação
+    na docstring de `GenerationBatchAxisTests`, o item 10 e o item 14 —, e o parágrafo
+    "opostas em espécie" da mesma docstring, que dizia "having emptied the power axis",
+    passou a "having stripped the power axis of every GENERATED row — not of every row,
+    which is what makes it look survivable on the bench side", porque "emptied" era a
+    mesma alegação de 0 em prosa. O comentário do teste agora diz explicitamente que
+    **4 clusters plausíveis é sinal mais fraco que 0**, que é o argumento que ele de
+    fato faz, e que a coluna mais alta sob a mutação é o mapa `estados`, não a de
+    clusters.
+17. **minor — "measured on these very fixtures" era largo demais.** O teste monta
+    cinco registros (três ai `gemini-api`, uma mista mecanística, **uma humana**) e não
+    tem linha `agy` nenhuma; a `agy` vive em
+    `test_the_effort_is_part_of_the_batch_key`. O comentário agora enumera as cinco,
+    diz de onde vem a `agy`, e **acrescenta a recusa da linha humana**
+    (`... of a human record must be known, received unknown (id=src_ptso_aaa)`), que
+    faltava e é a mais relevante das três: `AXIS_STATE_RULE.collectionBatch.human`
+    também é `["known"]`, e a classe humana é exatamente a que sobrevive à mutação na
+    bancada e mantém a contagem em 4 em vez de 0. As mensagens estão em ERRATA 2.2 do
+    item 10.
+18. **minor — "não é inelegível, é inescrevível" contradizia a medição seis linhas
+    acima.** As 503 linhas citadas **são** inelegíveis; o enunciado correto é mais
+    estreito, e o `{eligible: true}` no singular valia para quatro das sete fixtures.
+    Corrigido em ERRATA 2.3 do item 10 e no comentário do teste, que agora publica os
+    três resultados de elegibilidade medidos por classe em vez de um exemplo.
 
 ### C3 — Split e auditoria sobre clusters reais
 

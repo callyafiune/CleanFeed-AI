@@ -1630,11 +1630,16 @@ class GenerationBatchAxisTests(unittest.TestCase):
       * `return []` at the top of `assign_generation_batches`: every generated row
         keeps `collectionBatch: unknown`, so all 540 generated records of the
         delivered run become UNWRITABLE — `AXIS_STATE_RULE.collectionBatch` allows
-        only `known` in every axis class, so `validate` refuses each one — and the
-        axis that feeds E3's power gate reports 0 clusters where the delivered
-        cluster-report.json publishes 27. (ERRATA: this bullet used to say the 540
-        "turn INELIGIBLE", which is the price on `harnessVersion` and not on this
-        axis; the measured refusal and the reason are in the comment on
+        only `known` in every axis class, so `validate` refuses each one — while on
+        the bench side the axis that feeds E3's power gate goes from the 27 clusters
+        the delivered cluster-report.json publishes to **4**, over 246 grouped rows
+        instead of 786, with the largest cluster moving `gb_mixed_0020`/90 ->
+        `extraction_wikipedia_fresh`/73. (ERRATA, twice over: this bullet first said
+        the 540 "turn INELIGIBLE", which is the price on `harnessVersion` and not on
+        this axis; the correction then said the clusters go "to 0", which is also
+        wrong and in the flattering direction — the four human `extraction_*` clusters
+        survive, because `assign_generation_batches` never touches human rows. Both
+        measurements, and the per-slice cells that DO go to 0, are in the comment on
         `test_no_generated_record_is_left_unknown_on_the_batch_axis`.);
       * the human fallback `f"extraction_{cand['domainSource']}"` rewritten to
         `"batch_x"`, even though `assign_generation_batches`' own docstring calls the
@@ -1644,11 +1649,12 @@ class GenerationBatchAxisTests(unittest.TestCase):
 
     The two failures are opposite in kind, which is why both directions are pinned
     here: the first writes a corpus the sealed `validate` then refuses record by
-    record, having emptied the power axis without raising anything on the bench side
-    where the corpus was built; the second manufactures a collision that surfaces only
-    when the sealed audit runs, long after the corpus is written. Both are cheap here
-    and expensive there, which is the whole reason the bench guard exists beside the
-    schema one rather than instead of it.
+    record, having stripped the power axis of every GENERATED row — not of every row,
+    which is what makes it look survivable on the bench side — without raising
+    anything where the corpus was built; the second manufactures a collision that
+    surfaces only when the sealed audit runs, long after the corpus is written. Both
+    are cheap here and expensive there, which is the whole reason the bench guard
+    exists beside the schema one rather than instead of it.
     """
 
     TEMPLATE_DIGEST = "b" * 64
@@ -1885,38 +1891,88 @@ class GenerationBatchAxisTests(unittest.TestCase):
         # THE ASSERTION THAT CATCHES THE SILENT DIRECTION: after the pass, no
         # controlled-generation record may still be `unknown` here.
         #
-        # ERRATA. An earlier revision of this comment said an `unknown` axis "makes a
-        # record ineligible (R6), so a regression that skipped rows would not raise,
+        # ERRATA 1. An earlier revision of this comment said an `unknown` axis "makes
+        # a record ineligible (R6), so a regression that skipped rows would not raise,
         # would not print and would not fail validate". That generalisation is
         # imported from `harnessVersion`, where it holds, and it is FALSE for this
-        # axis. What is silent and what is not, measured on these very fixtures:
+        # axis.
         #
-        #   * SILENT on the bench side. `assign_generation_batches` returning nothing
-        #     raises nothing and warns nothing, and `cluster_report` carries no verdict
-        #     by design, so the only trace is numbers moving: `collectionBatch` drops
-        #     from the 27 clusters the delivered cluster-report.json publishes to 0 —
-        #     on the axis that feeds E3's power gate — while `ineligibleRecords` moves
-        #     only 503 -> 540 (+37), because 503 of the 540 generated rows are already
-        #     ineligible on `harnessVersion`. Eligibility is not even where the cost
-        #     shows up.
+        # ERRATA 2, which corrects the REPLACEMENT and not the original. The revision
+        # that fixed ERRATA 1 said this axis "drops from the 27 clusters the delivered
+        # cluster-report.json publishes to 0". That 0 was inferred too, and it is
+        # wrong. Measured: the real `group_axes.cluster_report` over the delivered
+        # records.jsonl (786 rows, sha256 216fbe5b…) with mutation A's effect applied
+        # — the 540 controlled-generation rows put back to `unknown`, exactly the set
+        # `assign_generation_batches` touches. The baseline reproduces the delivered
+        # artifact exactly (clusters 27, largest gb_mixed_0020/90, ineligible 503), and
+        # the mutant reports FOUR clusters, not zero:
+        #
+        #   BASELINE  collectionBatch clusters=27 registros_agrupados=786
+        #             maior=gb_mixed_0020/90 estados={'known': 786}
+        #   MUTANT    collectionBatch clusters=4  registros_agrupados=246
+        #             maior=extraction_wikipedia_fresh/73
+        #             estados={'known': 246, 'unknown': 540}
+        #
+        # The cause is stated three lines above the mutation point, in
+        # `assign_generation_batches`' own docstring: "Human records are untouched here
+        # and keep the `extraction_<domainSource>` batch their builder assigned". The
+        # 246 human rows of the delivered corpus carry 4 distinct `extraction_*` ids
+        # (41/59/73/73 rows), those 4 are already inside the delivered 27, and the
+        # mutation cannot reach them. The error ran in the FLATTERING direction, which
+        # is why it is corrected in place rather than quietly: `clusters=0 /
+        # registros_agrupados=0` is a screaming tripwire in `render_cluster_report`,
+        # while four mid-sized clusters over 246 grouped rows read like a healthy axis.
+        # Four plausible clusters is a WEAKER signal than zero, so the regression is
+        # MORE hidden than the previous revision claimed, not less.
+        #
+        # Where a 0 is the right number, named by statistic: the PER-SLICE cells, not
+        # the aggregate. Every `<partition>/ai` and `<partition>/mixed` cell goes to
+        # clusters=0 and grouped=0 — measured by label over the delivered corpus,
+        # 20 -> 0 on ai and 3 -> 0 on mixed, which is what the delivered report's
+        # per-partition generated cells sum to — while the four human cells are
+        # untouched.
+        #
+        # What is silent and what is not, measured on the five fixtures of THIS test
+        # (three `gemini-api` ai rows, one mechanistic mixed row, and the human row
+        # beside them; the `agy` rows live in
+        # `test_the_effort_is_part_of_the_batch_key`, not here):
+        #
+        #   * SILENT on the bench side in the sense that nothing raises and nothing
+        #     fails: `assign_generation_batches` returning nothing raises no error and
+        #     warns nothing, and `cluster_report` carries no verdict by design. Numbers
+        #     do move, and some of them print. The header's `inelegiveis por eixo
+        #     unknown` goes 503 -> 540, which is +37 only, because 503 of the 540
+        #     generated rows are already ineligible on `harnessVersion`; the axis line's
+        #     `estados` map goes {known: 786} to {known: 246, unknown: 540}, the loudest
+        #     of the columns. The cluster count is the QUIETEST of them: 27 -> 4.
         #   * NOT SILENT on the sealed side. `AXIS_STATE_RULE.collectionBatch` in
         #     benchmark/schema.ts allows ONLY `known`, in all four axis classes, so
         #     `validate` -> `parseBenchmarkDataset` -> `validateBenchmarkRecordV3`
-        #     refuses the record itself: measured verbatim on these three fixtures with
-        #     the axis forced back, `BENCHMARK_RECORD_INVALID: groups.collectionBatch
-        #     of an ai record must be known, received unknown
-        #     (id=src_ai_gemini_aaaaaaaaaaaa)` and the same for the `agy` row, and
-        #     `... of a mechanistic mixed record must be known, received unknown
-        #     (id=mix_src_ptso_0f89e00a4836)`.
+        #     refuses the record itself. Measured verbatim by forcing the axis back on
+        #     each fixture above: `BENCHMARK_RECORD_INVALID: groups.collectionBatch of
+        #     an ai record must be known, received unknown
+        #     (id=src_ai_gemini_aaaaaaaaaaaa)`, `... of a mechanistic mixed record must
+        #     be known, received unknown (id=mix_src_ptso_0f89e00a4836)`, and `... of a
+        #     human record must be known, received unknown (id=src_ptso_aaa)`. The
+        #     human class is refused IDENTICALLY, which matters here precisely because
+        #     it is the row class that survives the mutation on the bench side and keeps
+        #     the cluster count off zero. The `agy` rows of the sibling test are refused
+        #     the same way, as `an ai record`.
         #
-        # So the row is not ineligible, it is UNWRITABLE, and `recordEligibility` is
-        # unreachable for it — the valid record measures {eligible: true} and the
-        # invalid one never gets that far. Two consequences for whoever reads this
-        # next: this test is NOT the only defence, and the schema entry is NOT
-        # redundant with it. The reason the generalisation does not carry is the rule
-        # itself: `harnessVersion` admits `unknown` for ai, so there the price is
-        # eligibility; `collectionBatch` admits only `known` in every class, so here
-        # the price is the record.
+        # It is not that the row stops being eligible: THIS axis's `unknown` costs the
+        # record, not eligibility. A record may well be ineligible for other reasons —
+        # 503 of the delivered 540 are, on `harnessVersion` — but `recordEligibility`
+        # is never REACHED for an `unknown` `collectionBatch`, because the parse throws
+        # first. Measured on the valid fixtures, eligibility varies and is beside the
+        # point: the three api rows and the human row are {eligible: true, unknownAxes:
+        # []}, the mixed row is {eligible: false, unknownAxes: ["author", "source"]},
+        # and the `agy` rows are {eligible: false, unknownAxes: ["harnessVersion"]} —
+        # all seven refused with the messages above once the axis is forced back. Two
+        # consequences for whoever reads this next: this test is NOT the only defence,
+        # and the schema entry is NOT redundant with it. The reason the generalisation
+        # does not carry is the rule itself: `harnessVersion` admits `unknown` for ai,
+        # so there the price is eligibility; `collectionBatch` admits only `known` in
+        # every class, so here the price is the record.
         for record in records:
             axis = record["groups"]["collectionBatch"]
             self.assertEqual(axis["state"], "known", record["id"])
