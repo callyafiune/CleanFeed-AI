@@ -3980,18 +3980,43 @@ HEAD:benchmark/lab/assemble_corpus.py`, `e122df62…`), portanto o achado import
     **86/86 OK**:
 
     * `return []` no topo de `assign_generation_batches`: os 540 registros gerados da
-      montagem entregue ficam `unknown` no eixo, portanto **inelegíveis**, e o eixo que
-      alimenta o gate de poder de E3 reporta 0 clusters onde o `cluster-report.json`
-      entregue publica **27** (maior cluster `gb_mixed_0020`, 90 linhas);
+      montagem entregue ficam `unknown` no eixo, portanto **inescrevíveis** — e o eixo
+      que alimenta o gate de poder de E3 reporta 0 clusters onde o
+      `cluster-report.json` entregue publica **27** (maior cluster `gb_mixed_0020`, 90
+      linhas);
+
+      > **ERRATA (terceira rodada de qualidade, 2026-07-28).** Este item dizia
+      > "portanto **inelegíveis**". Está errado, e a generalização vem de
+      > `harnessVersion`, onde vale. `AXIS_STATE_RULE.collectionBatch` em
+      > `benchmark/schema.ts` admite **só `known`** nas quatro classes de eixo, então
+      > `validate` → `parseBenchmarkDataset` → `validateBenchmarkRecordV3` **recusa o
+      > registro**, medido verbatim nas próprias fixtures desta classe com o eixo
+      > forçado de volta: `BENCHMARK_RECORD_INVALID: groups.collectionBatch of an ai
+      > record must be known, received unknown (id=src_ai_gemini_aaaaaaaaaaaa)`, idem
+      > para a linha `agy`, e `... of a mechanistic mixed record must be known,
+      > received unknown (id=mix_src_ptso_0f89e00a4836)`. Logo o preço não é
+      > elegibilidade, é o registro: `recordEligibility` é inalcançável para essa
+      > linha (o registro válido mede `{eligible: true, unknownAxes: []}` e o inválido
+      > nunca chega lá). **Metade da frase original procede**: a bancada é silenciosa
+      > — `assign_generation_batches` retornando vazio não levanta nada nem imprime
+      > aviso, e `cluster_report` não carrega veredito por decisão de projeto —, mas
+      > `validate` **não** é silencioso. E mesmo do lado da bancada a elegibilidade
+      > mal se move: `ineligibleRecords` iria de **503 para 540** (+37), porque 503
+      > dos 540 gerados já são inelegíveis por `harnessVersion` (débito 1). O número
+      > que desaba é o de clusters, não o de elegíveis. Consequência para quem lê
+      > depois: o teste da bancada **não** é a única defesa, e a entrada do schema
+      > **não** é redundante com ele.
     * o fallback humano `f"extraction_{cand['domainSource']}"` reescrito para `"batch_x"`,
       apesar de a docstring da própria função chamar o prefixo `extraction_` de "structural
       rather than incidental" porque "cannot collide with a `gb_` id" — o audit de
       governança recusa registro não-gerado que nomeie batch de geração declarado.
 
     As duas falhas são opostas em espécie, e é por isso que as duas direções estão pinadas:
-    a primeira **apaga elegibilidade em silêncio** e na direção que lisonjeia (linha que
-    ninguém consegue posicionar é linha que ninguém conta), a segunda fabrica uma colisão
-    que só aparece quando o audit selado roda, muito depois do corpus escrito.
+    a primeira **escreve em silêncio um corpus que o `validate` selado depois recusa
+    registro por registro**, tendo esvaziado o eixo de poder sem levantar nada do lado
+    onde o corpus foi construído (ver a ERRATA acima: em silêncio na bancada, não no
+    schema); a segunda fabrica uma colisão que só aparece quando o audit selado roda,
+    muito depois do corpus escrito.
 
     A classe nova `GenerationBatchAxisTests` (8 testes) fecha os quatro itens pedidos:
     duas linhas de uma receita → **um** batch declarado com `state: known` e `id ==
@@ -4080,6 +4105,47 @@ HEAD:benchmark/lab/assemble_corpus.py`, `e122df62…`), portanto o achado import
   os números que este relatório passa a publicar. C2 entrega os números, não o veredito.
 * A árvore seed → geração → derivados carrega o dado que permite impor uma partição só
   (`humanSeed` + `derivationRoot` resolvem o pai); a **imposição** é C3/E2.
+
+#### C2 — terceira rodada de correção de qualidade (2026-07-28)
+
+Dois achados, **os dois procedem**, e os dois são **prosa**: nenhuma linha de
+comportamento mudou, nenhum teste mudou de asserção, nenhum número de gate se moveu.
+`assemble_corpus.py`, `group_axes.py`, `pseudonymize.py`, `make_mixed.py` e
+`generate_ai.py` ficam byte-idênticos a `e53ec96`. O diff é `test_extractors.py`
+(comentários e docstring) e este plano.
+
+14. **IMPORTANTE — o comentário que justifica o teste novo enunciava um mecanismo falso.**
+    Dizia que um eixo `unknown` "makes a record ineligible (R6), so a regression that
+    skipped rows would not raise, would not print and would not fail validate". A
+    generalização é importada de `harnessVersion`, onde vale, e **quebra em
+    `collectionBatch`**. Medi em vez de raciocinar: passei as três fixtures desta classe
+    pelo validador selado com o eixo forçado de volta para `unknown` e o resultado está
+    na ERRATA do item 10 acima — `validate` **recusa o registro**, com a mensagem
+    verbatim, nas três. Então o registro não é inelegível, é **inescrevível**, e
+    `recordEligibility` é inalcançável para ele. A metade verdadeira da frase (bancada
+    silenciosa: nada levanta, nada avisa, o `cluster_report` não tem veredito e os
+    clusters do eixo vão a 0) está preservada e agora **separada** da metade falsa, com
+    `AXIS_STATE_RULE` nomeado como a segunda defesa para que ninguém leia o teste da
+    bancada como a única nem a entrada do schema como redundante. Corrigido nos **três**
+    lugares que repetiam a mesma subestimação: o comentário de
+    `test_no_generated_record_is_left_unknown_on_the_batch_axis`, a docstring de
+    `GenerationBatchAxisTests` (dois trechos: o bullet da mutação e o parágrafo "opostas
+    em espécie") e o item 10 deste plano — sempre como **errata em linha** e não como
+    edição silenciosa (R7). Medição extra que o achado não pedia e que reforça o ponto:
+    do lado da bancada `ineligibleRecords` iria de **503 para 540 (+37)** sob a mutação,
+    porque 503 dos 540 gerados já são inelegíveis por `harnessVersion` — ou seja, mesmo
+    na leitura da bancada a elegibilidade era o número **errado** para citar.
+15. **minor — o único ponteiro por número de linha da árvore Python da bancada.**
+    O comentário novo do teste de HMAC apontava `pseudonymize.py:117`. Estava exato, mas
+    era o único `arquivo.py:linha` em `test_extractors.py`, `assemble_corpus.py`,
+    `make_mixed.py`, `pseudonymize.py` e `group_axes.py` (confirmado por
+    `grep -nE '\.py:[0-9]+|\.ts:[0-9]+'`, um único hit, introduzido por aquele diff), e
+    reinstalava o estilo que as duas rodadas anteriores converteram para ponteiro por
+    nome (minor 3 de C1 nas linhas de `AXIS_STATE_RULE`; a rodada de A7 em `slices.ts`).
+    Pior, a linha alvo está dentro de uma docstring que aquele diff não tocou, então
+    apodreceria em silêncio, e havia **dois** ponteiros para o mesmo lugar no mesmo
+    comentário. Agora é `ClusterKeyring.pseudonym` por nome, uma vez, com a fórmula ao
+    lado do número — nada se perde, porque o valor é re-derivável ali mesmo.
 
 ### C3 — Split e auditoria sobre clusters reais
 
