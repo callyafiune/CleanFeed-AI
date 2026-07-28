@@ -14,12 +14,25 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
 import { runCli } from "../cli.ts";
 import {
+  validateBenchmarkRecordV3,
+  type BenchmarkRecord,
+} from "../schema.ts";
+import {
+  known,
+  unknownAxis,
+  v3Ai,
+  v3Human,
+  withAxis,
+} from "./helpers/v3-record-fixture.ts";
+import {
   CLUSTER_EXPOSURE_KEYRING_FILE,
   CLUSTER_EXPOSURE_LEDGER_FILE,
   ClusterLedgerError,
   EXPOSURE_IDENTITY_AXES,
   backupClusterLedger,
+  clusterAssignments,
   commitSplitFreeze,
+  exposureInputsFromRecords,
   initClusterLedger,
   preflightExposure,
   readClusterLedger,
@@ -726,6 +739,30 @@ describe("the identity boundary the ledger enforces itself", () => {
     ).rejects.toMatchObject({ code: "CLUSTER_LEDGER_IDENTITY_NOT_PSEUDONYM" });
   });
 
+  it("refuses a reserve manifest digest that is not a digest, and accepts null", async () => {
+    await init();
+    // The reserve's manifest digest is the only trace the blind reserve leaves.
+    // A path or an empty string would be written into an append-only event and
+    // would keep verifying, and the link would be found useless only when the
+    // second holdout attempt had to prove which reserve it came from.
+    for (const bad of ["", "benchmark/data/private/reserve-manifest.json", "F".repeat(64)]) {
+      await expect(
+        preflightExposure(paths(), request({ reserveManifestDigest: bad })),
+        `reserveManifestDigest ${JSON.stringify(bad)}`,
+      ).rejects.toMatchObject({ code: "CLUSTER_LEDGER_DIGEST_INVALID" });
+    }
+    // `null` is the legitimate "this event concerns no reserve" statement.
+    const decision = await preflightExposure(
+      paths(),
+      request({ reserveManifestDigest: null }),
+    );
+    expect(decision.event.reserveManifestDigest).toBeNull();
+    // And the tuple is held to the same shape, for the same reason.
+    await expect(
+      preflightExposure(paths(), request({ splitDigest: "split-1" })),
+    ).rejects.toMatchObject({ code: "CLUSTER_LEDGER_DIGEST_INVALID" });
+  });
+
   it("refuses an axis name the schema does not declare", async () => {
     await init();
     await expect(
@@ -1056,6 +1093,144 @@ describe("acceptance 8 — driven through the real CLI on a temporary fixture", 
       '{"splitDigest":"staged"}\n',
     );
     expect((await readClusterLedger(paths().ledgerPath)).length).toBe(2);
+  });
+});
+
+// --- the cluster notion C4 and C6 import, and the record adapter E2 will ------
+
+/** A v3 human row with the axes this test controls, schema-validated. */
+function humanRow(
+  id: string,
+  axes: { author: string; source: string },
+): BenchmarkRecord {
+  let raw: Record<string, unknown> = { ...v3Human(), id };
+  raw = withAxis(raw, "author", known(axes.author));
+  raw = withAxis(raw, "source", known(axes.source));
+  // Everything else that GROUP_KEYS unions on is made per-row, so the only
+  // connectivity in the fixture is the connectivity the test asks for.
+  raw = withAxis(raw, "domainSource", known(`ds_${id}`));
+  raw = withAxis(raw, "collectionBatch", known(`cb_${id}`));
+  raw = withAxis(raw, "nearDuplicate", known(`nd_${id}`));
+  return validateBenchmarkRecordV3(raw);
+}
+
+/** A v3 generated row: no author, no source, tied to its seed and nothing else. */
+function generatedRow(id: string, humanSeedId: string): BenchmarkRecord {
+  let raw: Record<string, unknown> = { ...v3Ai(), id };
+  raw = withAxis(raw, "humanSeed", known(humanSeedId));
+  raw = withAxis(raw, "domainSource", known(`ds_${id}`));
+  raw = withAxis(raw, "promptTemplate", known(`pt_${id}`));
+  raw = withAxis(raw, "generatorVersion", known(`gv_${id}`));
+  raw = withAxis(raw, "collectionBatch", known(`cb_${id}`));
+  raw = withAxis(raw, "nearDuplicate", known(`nd_${id}`));
+  return validateBenchmarkRecordV3(raw);
+}
+
+describe("clusterAssignments — the cluster notion C4 and C6 import", () => {
+  it("groups by shared value and by lineage, and leaves an isolated row alone", () => {
+    const records = [
+      humanRow("h_a1", { author: "au_1", source: "th_1" }),
+      humanRow("h_a2", { author: "au_2", source: "th_1" }), // same thread as h_a1
+      humanRow("h_b1", { author: "au_3", source: "th_2" }), // shares nothing
+      generatedRow("g_a1", "h_a1"), // glued to h_a1 by lineage ONLY
+    ];
+
+    const { rootById, membersByRoot } = clusterAssignments(records);
+
+    // Three clusters: {h_a1, h_a2, g_a1}, {h_b1}. The generated row shares no
+    // axis VALUE with its seed, so only the lineage edge can put it there.
+    expect(rootById.get("h_a2")).toBe(rootById.get("h_a1"));
+    expect(rootById.get("g_a1")).toBe(rootById.get("h_a1"));
+    expect(rootById.get("h_b1")).not.toBe(rootById.get("h_a1"));
+    expect(membersByRoot.size).toBe(2);
+
+    // Members are ascending, so a consumer can compare two runs byte for byte.
+    expect(membersByRoot.get(rootById.get("h_a1") as string)).toEqual([
+      "g_a1",
+      "h_a1",
+      "h_a2",
+    ]);
+    expect(membersByRoot.get(rootById.get("h_b1") as string)).toEqual(["h_b1"]);
+
+    // Every record is placed exactly once: the members partition the corpus.
+    const placed = [...membersByRoot.values()].flat().sort();
+    expect(placed).toEqual(records.map((row) => row.id).sort());
+  });
+});
+
+describe("exposureInputsFromRecords — R6's three states at the boundary", () => {
+  it("carries a known identity and omits notApplicable and unknown alike", () => {
+    const human = humanRow("h_a1", { author: "au_1", source: "th_1" });
+    const generated = generatedRow("g_a1", "h_a1");
+    const withUnknown = validateBenchmarkRecordV3(
+      withAxis({ ...v3Human(), id: "h_a2" }, "author", unknownAxis(
+        "the source row carried no owner",
+      )),
+    );
+
+    const inputs = exposureInputsFromRecords(
+      [human, generated, withUnknown],
+      (record) => (record.label === "ai" ? "train" : "dev"),
+    );
+
+    expect(inputs.map((input) => input.id)).toEqual(["h_a1", "g_a1", "h_a2"]);
+    expect(inputs.map((input) => input.partition)).toEqual([
+      "dev",
+      "train",
+      "dev",
+    ]);
+
+    // `known` -> the identity itself.
+    expect(inputs[0].groups.author).toBe("au_1");
+    expect(inputs[1].groups.humanSeed).toBe("h_a1");
+    // `notApplicable` -> the axis is ABSENT, never a synthetic per-row id: a
+    // generated row has no human author, and inventing one would mint a cluster.
+    expect(inputs[1].groups.author).toBeUndefined();
+    expect(inputs[0].groups.humanSeed).toBeUndefined();
+    // `unknown` -> also absent. It means "this row joins no other here"; the
+    // ELIGIBILITY consequence of `unknown` belongs to selection, not to the
+    // ledger's index.
+    expect(inputs[2].groups.author).toBeUndefined();
+
+    // The text travels so the fingerprint can be computed, and nothing else does.
+    expect(Object.keys(inputs[0]).sort()).toEqual([
+      "groups",
+      "id",
+      "partition",
+      "text",
+    ]);
+  });
+
+  it("produces inputs the ledger accepts and indexes as one lineage", async () => {
+    // The adapter and the ledger are one path, so the pair is exercised as one:
+    // the human seed in `dev`, then the generation offered to `test`.
+    await init();
+    const human = humanRow("h_a1", {
+      author: "person_0123456789abcdef",
+      source: "th_1",
+    });
+    await recordPilotExposure(
+      paths(),
+      request({
+        eventType: "pilot-exposure",
+        records: exposureInputsFromRecords([human], () => "dev"),
+      }),
+    );
+
+    const decision = await preflightExposure(
+      paths(),
+      request({
+        datasetDigest: DATASET_B,
+        splitDigest: SPLIT_B,
+        records: exposureInputsFromRecords(
+          [generatedRow("g_a1", "h_a1")],
+          () => "test",
+        ),
+      }),
+    );
+    expect(decision.refusals.map((refusal) => refusal.reason)).toContain(
+      "cluster-exposed-previously",
+    );
   });
 });
 

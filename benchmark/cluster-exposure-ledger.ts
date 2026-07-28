@@ -349,6 +349,20 @@ export interface ExposureDecision {
   event: ClusterExposureEvent;
 }
 
+const SHA256_HEX = /^[0-9a-f]{64}$/;
+
+/** Fail-closed on a field that must be a lowercase SHA-256 digest. */
+function assertSha256Field(key: string, value: unknown): void {
+  if (typeof value !== "string" || !SHA256_HEX.test(value)) {
+    fail(
+      "CLUSTER_LEDGER_DIGEST_INVALID",
+      `${key} must be a lowercase 64-character SHA-256 digest; received ` +
+        `${JSON.stringify(value)}. A path, a label or an empty string would be ` +
+        "written into an append-only event and would still verify forever",
+    );
+  }
+}
+
 /**
  * Validates an exposure request that arrived as JSON (from the CLI), so a
  * hand-written file cannot reach the transaction with a partition, an axis or an
@@ -377,14 +391,19 @@ export function parseExposureRequest(value: unknown): ExposureRequest {
       `eventType must be one of ${CLUSTER_EXPOSURE_EVENT_TYPES.join(", ")}`,
     );
   }
-  if (
-    object.reserveManifestDigest !== null &&
-    typeof object.reserveManifestDigest !== "string"
-  ) {
-    fail(
-      "CLUSTER_LEDGER_REQUEST_INVALID",
-      "reserveManifestDigest must be a digest string or null (the reserve is never a partition)",
-    );
+  // The reserve's manifest digest is the ONLY trace the blind reserve leaves in
+  // the ledger, and it is what a second holdout attempt will have to point at to
+  // prove which reserve it came from. An empty string or a FILE PATH would be
+  // accepted by "string or null", written into the event, and pass `verify`
+  // forever — the link would be discovered useless exactly when it is needed.
+  // `datasetDigest` and `splitDigest` are held to the same shape for the same
+  // reason: they are the tuple, and a tuple that is not a digest identifies
+  // nothing.
+  if (object.reserveManifestDigest !== null) {
+    assertSha256Field("reserveManifestDigest", object.reserveManifestDigest);
+  }
+  for (const key of ["datasetDigest", "splitDigest"] as const) {
+    assertSha256Field(key, object[key]);
   }
   if (!Array.isArray(object.records) || object.records.length === 0) {
     fail(
@@ -1273,6 +1292,13 @@ function buildEvent(
   events: readonly ClusterExposureEvent[],
   request: ExposureRequest,
 ): ClusterExposureEvent {
+  // Re-checked here and not only in `parseExposureRequest`, because a library
+  // caller (E2's freeze path) never goes through the JSON parser.
+  assertSha256Field("datasetDigest", request.datasetDigest);
+  assertSha256Field("splitDigest", request.splitDigest);
+  if (request.reserveManifestDigest !== null) {
+    assertSha256Field("reserveManifestDigest", request.reserveManifestDigest);
+  }
   const event: ClusterExposureEvent = {
     schemaVersion: CLUSTER_EXPOSURE_SCHEMA_VERSION,
     eventId: computeEventId(request),
