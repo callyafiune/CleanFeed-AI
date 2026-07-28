@@ -30,6 +30,7 @@ import {
   type V3GroupAxis,
 } from "./schema.ts";
 import {
+  CONNECTIVITY_AXES,
   connectedComponentRoots,
   GROUP_KEYS,
   type Partition,
@@ -92,7 +93,13 @@ export interface ClusterSliceCount {
 
 export interface AxisClusterReport {
   axis: V3GroupAxis;
-  /** Whether the splitter UNIONS on this axis (`GROUP_KEYS` in split.ts). */
+  /**
+   * Whether the splitter UNIONS on this axis — `CONNECTIVITY_AXES` in split.ts,
+   * which is `GROUP_KEYS` PLUS the parent linkage. It is not `GROUP_KEYS` alone:
+   * `humanSeed` is followed as linkage and not as a shared value, so reading the
+   * flag off `GROUP_KEYS` claimed independence for an axis the splitter treats as
+   * one indivisible block.
+   */
   connectivityAxis: boolean;
   /** How many record-lines state each of R6's three states on this axis. */
   states: Record<GroupAxisState, number>;
@@ -271,7 +278,7 @@ export function standInClusterReport(): SplitClusterReport {
   return {
     axes: V3_GROUP_AXES.map((axis) => ({
       axis,
-      connectivityAxis: (GROUP_KEYS as readonly string[]).includes(axis),
+      connectivityAxis: CONNECTIVITY_AXES.includes(axis),
       states: { known: 0, notApplicable: 0, unknown: 0 },
       overall: { groups: 0, largest: 0, singletons: 0, recordLines: 0 },
       bySlice: [],
@@ -482,7 +489,7 @@ function auditClusters(
     }
     return {
       axis,
-      connectivityAxis: (GROUP_KEYS as readonly string[]).includes(axis),
+      connectivityAxis: CONNECTIVITY_AXES.includes(axis),
       states,
       overall: countGroups([...overall.values()]),
       bySlice: toSliceCounts(bySlice),

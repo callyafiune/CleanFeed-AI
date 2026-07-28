@@ -3,6 +3,7 @@ import { describe, expect, it } from "vitest";
 import {
   CLUSTER_SLICE_AXES,
   auditBlockedSplit,
+  standInClusterReport,
   type SplitAuditPolicy,
 } from "../split-audit.ts";
 import {
@@ -575,6 +576,34 @@ describe("the cluster report the audit publishes", () => {
       .filter((row) => row.slice === "partition")
       .reduce((total, row) => total + row.count.recordLines, 0);
     expect(partitionRecords).toBe(RELEASE_DATASET.length);
+  });
+
+  it("reports connectivity from what the splitter unions on, linkage included", () => {
+    const split = createBlockedSplit(RELEASE_DATASET, POLICY);
+    const audit = auditBlockedSplit(RELEASE_DATASET, split, AUDIT_POLICY);
+    const connectivityOf = (axis: string): boolean =>
+      audit.clusters.axes.find((row) => row.axis === axis)!.connectivityAxis;
+
+    // Both lineage axes are followed by `connectedComponentRoots` as PARENT
+    // LINKAGE, so a row sharing them is in an indivisible block. `humanSeed` is
+    // not in `GROUP_KEYS` — it is not a value axis — and deriving the flag from
+    // `GROUP_KEYS` alone published `false` for it. A reader picking a power axis
+    // off this report would then size a stratum as if a human row and the
+    // generation it seeded were independent, which the splitter already denies.
+    expect(connectivityOf("humanSeed")).toBe(true);
+    expect(connectivityOf("derivationRoot")).toBe(true);
+
+    // And the flag still says NO for the axes the splitter deliberately refuses
+    // to union on, or unioning would collapse a whole family into one block.
+    expect(connectivityOf("generatorFamily")).toBe(false);
+    expect(connectivityOf("generationLane")).toBe(false);
+
+    // The fixture stand-in must agree, or a hand-built audit would carry the
+    // opposite claim from a measured one.
+    const standIn = standInClusterReport();
+    expect(
+      standIn.axes.find((row) => row.axis === "humanSeed")!.connectivityAxis,
+    ).toBe(true);
   });
 
   it("does not fail an axis that is legitimately all singletons or absent", () => {

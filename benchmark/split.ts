@@ -176,6 +176,29 @@ export const GROUP_KEYS = [
 
 export type GroupKey = (typeof GROUP_KEYS)[number];
 
+// The axes `connectedComponentRoots` follows as PARENT LINKAGE — a row whose
+// value names another row's ID joins that row — rather than as a shared value.
+// Exported so nothing has to restate the pair; `connectedComponentRoots` reads it
+// and so does the audit's `connectivityAxis`.
+export const PARENT_LINKAGE_AXES = ["derivationRoot", "humanSeed"] as const;
+
+/**
+ * Every axis the splitter actually unions on: the value axes PLUS the parent
+ * linkage. This, and not `GROUP_KEYS` alone, is what "does the splitter treat two
+ * rows sharing this axis as one indivisible block" means.
+ *
+ * The distinction is load-bearing for a reader downstream: `humanSeed` is not a
+ * value axis (a human row and the generation it seeded share no value), it is
+ * followed as linkage only, so a report that derived connectivity from
+ * `GROUP_KEYS` published `false` for an axis the splitter had just started
+ * unioning on — and D0b choosing a power axis off that report would size a stratum
+ * as if the seed and its generation were independent.
+ */
+export const CONNECTIVITY_AXES: readonly string[] = [
+  ...GROUP_KEYS,
+  ...PARENT_LINKAGE_AXES,
+];
+
 const PARTITIONS: readonly Partition[] = ["development", "calibration", "test"];
 
 export class SplitConstraintError extends Error {
@@ -345,7 +368,7 @@ export function connectedComponentRoots(
   // `assertDerivedParentsResolve` on the whole-corpus path, not to connectivity.
   const ids = new Set(records.map((record) => record.id));
   for (const record of records) {
-    for (const axis of ["derivationRoot", "humanSeed"] as const) {
+    for (const axis of PARENT_LINKAGE_AXES) {
       const parent = groupAxisIdentity(record, axis);
       if (parent !== undefined && parent !== record.id && ids.has(parent)) {
         disjoint.union(record.id, parent);
