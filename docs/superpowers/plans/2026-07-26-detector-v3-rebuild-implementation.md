@@ -2371,11 +2371,79 @@ decidir se podem importar o módulo. Corrigido:
    `rebuild-v3-policy` → morre em `header must name rebuild-v3-policy`. As duas
    primeiras asserções já passavam antes do conserto (o parágrafo novo nomeava o
    módulo); o defeito residual era exatamente a frase "depends only on".
+
+   > **ERRATA (terceira rodada).** Este item 2 alegava mais do que o teste
+   > prendia, e a alegação central — "pins the header against the imports
+   > instead of against a literal sentence" — era **falsa**. Medido: o teste
+   > buscava o **basename** de cada import em 50 linhas de prosa, e
+   > `rebuild-v3-policy` já aparecia no bullet de WHO OWNS WHICH VALUE como
+   > *dono de valor congelado*, não como dependência — logo a asserção de nome
+   > passava com ou sem a correção, e a mutação (c) só morreu porque renomeou
+   > **todas** as ocorrências, WHO OWNS incluído. E a mutação (b) provava apenas
+   > que `toEqual` é quebra-molas: atualizando também o array esperado (o que um
+   > agente futuro faz quando a lista fica vermelha) a suíte voltava a 33/33 com
+   > o cabeçalho sem citar dependência nenhuma, porque a palavra `digests` já
+   > está na prosa da linha 11. Restava com dentes só a proibição de uma frase de
+   > três palavras — que a reformulação "its sole dependency is" contorna. Veja o
+   > item 4 abaixo para o que substituiu isto.
 3. `docs/corpus-sources.md` dizia "os quatro testes de acordo" — contagem escrita
    pela própria rodada anterior e errada nas duas versões (eram cinco antes, são
    seis depois). Trocado por referência ao describe `licence policy agreement
    across manifest, review and NOTICE`, **sem contagem**: o documento é o mapa de
    quais elos estão enforçados, e um número em prosa envelhece a cada teste novo.
+
+**Terceira rodada de correção (2026-07-28).** Dois achados `important` e dois
+`minor`; **nenhum foi refutado**, e os dois `important` foram reproduzidos antes
+de qualquer edição. Segue sem mudança de comportamento: o diff de
+`benchmark/source-manifest.ts` é inteiramente dentro do comentário inicial.
+
+4. **O teste de cabeçalho da rodada 2 não prendia a propriedade que dizia
+   prender** (`benchmark/tests/source-manifest.test.ts`). Reproduzido: reescrevi
+   as linhas 2-7 no defeito exato que a rodada existia para consertar, apenas
+   reformulado — *"this module is standalone and MUST NOT import from the
+   extension bundle (src/); its sole dependency is the Phase 1 canonical-json
+   digest helper shared through contracts/"* — apagando o parágrafo de
+   dependência. Resultado: **33/33 verde**. Duas causas, ambas do desenho do
+   teste e não da prosa: a proibição de `/depends only on/` deixa de casar quando
+   a mesma alegação falsa vira "its sole dependency is"; e a busca de basename
+   era satisfeita por prosa não relacionada (WHO OWNS, `digests` na linha 11).
+   **Corrigido pelo lado da estrutura:** o cabeçalho passou a carregar um bloco
+   **delimitado** `DEPENDENCIES (BEGIN)`/`DEPENDENCIES (END)` que enumera os
+   **especificadores completos** dos imports (`../contracts/canonical-json.ts`,
+   `./rebuild-v3-policy.ts`) — strings que nenhuma outra prosa do arquivo contém
+   — e o teste renomeado **"declares in its header exactly the specifiers it
+   imports at load"** exige igualdade de conjunto entre o bloco e os `import`
+   reais do módulo, mais a recusa de `/standalone/`, `/depends?\s+(only|solely)/`
+   e `/\b(sole|only)\s+dependenc/`. A palavra `standalone` é banida inteira, não
+   só a versão falsa: o bloco é a autoridade sobre o que carrega, então prosa
+   restatando estado de dependência é errada ou redundante — e foi exatamente
+   essa restatação que envelheceu duas vezes. Mutações re-medidas, as duas que a
+   revisão usou para derrubar a rodada 2: (D) bloco apagado + frase reformulada →
+   **morre** em `header must open "DEPENDENCIES (BEGIN)"`; (E) `./digests.ts`
+   importado **e** o array esperado honestamente atualizado, sem tocar o
+   cabeçalho → **morre** na linha 386, `expect([...declared].sort()).toEqual([...
+   imported].sort())`, imprimindo `- "./digests.ts"`. O comentário do teste
+   registra as duas versões fracas anteriores, para que a terceira não seja
+   reinventada.
+5. **`prettier --check .` estava reprovando com 4 arquivos, contra a baseline de
+   1** (medida por A6: só `benchmark/lab/build_governance.ts`, de 9b41c22). Causa
+   medida no byte: `benchmark/source-manifest.ts`, `NOTICE.md` e
+   `license-review.json` estavam **inteiramente CRLF** em disco (CR=866/50/93
+   contra LF idêntico), enquanto os outros 417 `.ts`/`.md`/`.json` versionados são
+   LF puro. São exatamente os três arquivos que os commits de B1 tocaram por
+   último. Normalizados com `prettier --write`; `--check .` volta a reportar só
+   `build_governance.ts`. **Nenhum byte versionado se moveu:** `git hash-object`
+   dos três é idêntico ao blob de HEAD (`ea805ba…`, `0f44ed5…`, `e521c1d…`) porque
+   `core.autocrlf=true` normaliza no `add` — foi por isso que passou batido, já
+   que `git status` mostrava árvore limpa. **Causa raiz fora do escopo de B1:**
+   não existe `.gitattributes` fixando `text=auto eol=lf` contra um
+   `core.autocrlf=true` global de máquina, então qualquer `git checkout` recria
+   CRLF. Importa além do gate porque `NOTICE.md` é lido **do disco** por
+   `scripts/package-own-model.mjs` e entra por sha256 no inventário de nove
+   arquivos atrás do `bundleDigest` em `scripts/verify-model-bundle.mjs`.
+6. (minor) `docs/corpus-sources.md`: o parêntese inserido na rodada 2 deixou a
+   linha 33 com 110 colunas num bloco de 66-84. As linhas 30-36 foram
+   re-quebradas em 80; a maior do bloco agora tem 82.
 
 ### B2 — DECIDIDO: alvos, métricas e ações de produto
 

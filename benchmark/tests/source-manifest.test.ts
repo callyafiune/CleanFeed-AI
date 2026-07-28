@@ -319,34 +319,80 @@ describe("non-commercial corpus use policy", () => {
   });
 
   // Reading the frozen policy changed what this module depends on, and its
-  // header is what C1/C5 read first to decide whether they may import it. The
-  // previous round left the header claiming it "depends only on" the
-  // canonical-json helper while an import of the policy module sat 50 lines
-  // below, so the file contradicted itself. This pins the header against the
-  // imports themselves instead of against a literal sentence: add an import and
-  // the header must name it.
-  it("declares in its header every module it imports at load", async () => {
+  // header is what C1/C5 read first to decide whether they may import it.
+  //
+  // Two rounds of this test were too weak, and both failures are worth writing
+  // down because they are the same mistake in different clothes. Round one left
+  // the header claiming it "depends only on" the canonical-json helper while an
+  // import of the policy module sat 50 lines below. Round two banned that one
+  // phrase and searched the header for each imported BASENAME — which a simple
+  // rewording walked around ("its sole dependency is"), while the basename
+  // search stayed green on the unrelated WHO-OWNS bullet that names
+  // `benchmark/rebuild-v3-policy.ts` as the owner of a frozen value, not as a
+  // dependency. A bare basename over 50 lines of prose is satisfiable by
+  // accident: "digests" already appears in a sentence about digesting sources,
+  // so even an honestly-updated expectation list could not catch an undeclared
+  // import of `./digests.ts`.
+  //
+  // So the header now carries a DELIMITED dependency block, and what is pinned
+  // is that the block enumerates EXACTLY this module's import specifiers — whole
+  // specifiers, which no other prose in the file contains. Delete the block and
+  // the test fails loudly rather than falling back on prose found elsewhere.
+  it("declares in its header exactly the specifiers it imports at load", async () => {
+    const BLOCK_BEGIN = "DEPENDENCIES (BEGIN)";
+    const BLOCK_END = "DEPENDENCIES (END)";
     const source = await readFile(
       resolve(HERE, "../source-manifest.ts"),
       "utf8",
     );
-    const header = source
-      .split(/\r?\n/u)
-      .slice(
-        0,
-        source.split(/\r?\n/u).findIndex((line) => !line.startsWith("//")),
-      )
-      .join("\n");
+    const lines = source.split(/\r?\n/u);
+    // The header is the leading run of `//` lines. Derive the boundary once, and
+    // if there were no code at all say so — `slice(0, -1)` would otherwise drop
+    // the LAST header line and silently judge a truncated block.
+    const firstCodeLine = lines.findIndex((line) => !line.startsWith("//"));
+    expect(
+      firstCodeLine,
+      "expected code after the header comment block",
+    ).toBeGreaterThan(0);
+    const headerLines = lines.slice(0, firstCodeLine);
+    const header = headerLines.join("\n");
+
+    // Locate the block by its markers, so every assertion below is scoped to a
+    // deliberate dependency declaration instead of to any prose that happens to
+    // mention a module name.
+    const begin = headerLines.findIndex((line) => line.includes(BLOCK_BEGIN));
+    const end = headerLines.findIndex((line) => line.includes(BLOCK_END));
+    expect(begin, `header must open "${BLOCK_BEGIN}"`).toBeGreaterThan(-1);
+    expect(end, `header must close "${BLOCK_END}"`).toBeGreaterThan(begin);
+    const declared = [
+      ...headerLines
+        .slice(begin + 1, end)
+        .join("\n")
+        .matchAll(/(\.{1,2}\/[\w./-]+\.ts)/gu),
+    ].map((match) => match[1]);
+
+    // The imports as written: the full specifier, not the basename.
     const imported = [
       ...source.matchAll(/^import[^"']*["'](\.[^"']+)["'];$/gmu),
-    ].map((match) => match[1].replace(/^.*\//u, "").replace(/\.ts$/u, ""));
-    // Both of today's imports, so a header that forgot either one fails.
-    expect(imported).toEqual(["canonical-json", "rebuild-v3-policy"]);
-    for (const moduleName of imported) {
-      expect(header, `header must name ${moduleName}`).toContain(moduleName);
-    }
-    // And it must not claim the canonical-json helper is the only dependency.
-    expect(header).not.toMatch(/depends only on/u);
+    ].map((match) => match[1]);
+    expect(imported).toEqual([
+      "../contracts/canonical-json.ts",
+      "./rebuild-v3-policy.ts",
+    ]);
+    // EXACTLY: an import missing from the block fails, and a block entry that is
+    // no longer imported fails too. Updating the expectation above without
+    // touching the header does not rescue it.
+    expect([...declared].sort()).toEqual([...imported].sort());
+
+    // An accurate block under a false summary sentence still misleads whoever
+    // stops reading at the first paragraph, so the two shapes the defect took
+    // are refused along with the general claim both are instances of. The bare
+    // word "standalone" is banned rather than the false version of it: the block
+    // is now the authority on what loads, so prose restating dependency status
+    // is either wrong or redundant — that restatement is what went stale twice.
+    expect(header).not.toMatch(/standalone/iu);
+    expect(header).not.toMatch(/depends?\s+(?:only|solely)\b/iu);
+    expect(header).not.toMatch(/\b(?:sole|only)\s+dependenc/iu);
   });
 
   it("imposes every obligation the frozen contract requires", () => {

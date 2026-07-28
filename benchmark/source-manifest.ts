@@ -1,10 +1,19 @@
 // Closed reviewed-source manifest (v1) for the PT-BR/LinkedIn corpus. Like
 // schema.ts and dataset-manifest.ts this module MUST NOT import from the
-// extension bundle (src/). It is NOT standalone: it depends on the Phase 1
-// canonical-json digest helper shared through contracts/ AND on
-// `benchmark/rebuild-v3-policy.ts`, which reads the frozen policy file at load
-// and therefore makes this module Node-side — see "WHO OWNS WHICH VALUE" and
-// the load-cost note at the end of this header.
+// extension bundle (src/).
+//
+// DEPENDENCIES (BEGIN) — this block, and not the prose around it, is the
+// authority on what this module loads. The test "declares in its header exactly
+// the specifiers it imports at load" asserts it enumerates EXACTLY the module's
+// own `import` statements, so add an import and you add its specifier here in
+// the same commit, or that test fails. Do not summarise this list in a sentence
+// above: two rounds of such a summary went stale and contradicted the imports.
+//   * `../contracts/canonical-json.ts` — the Phase 1 canonical-json digest
+//     helper, shared with the runtime through contracts/.
+//   * `./rebuild-v3-policy.ts` — reads the frozen policy file at load, which is
+//     what makes this module Node-side; see "WHO OWNS WHICH VALUE" below and
+//     the load-cost note at the end of this header.
+// DEPENDENCIES (END)
 //
 // The manifest binds the private governance file (`private/source-manifest.json`)
 // that never enters Git: it names — only by opaque, pseudonymised tokens and
