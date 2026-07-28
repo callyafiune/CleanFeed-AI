@@ -134,7 +134,11 @@ export function humanReviewed(
   };
 }
 
-/** A resolved disagreement: two opposed opinions plus a named adjudication. */
+/**
+ * A resolved disagreement: two opposed opinions plus a named adjudication, blind on
+ * BOTH axes — the adjudicator's vote is the one the record is judged against, so a
+ * fixture blind only to the score would model the case the schema now refuses.
+ */
 export function adjudicated(
   decision: string,
   other: string,
@@ -152,6 +156,7 @@ export function adjudicated(
       rationale:
         "the second reviewer read the quoted stretch as generated; the quotation marks and the source link place it with the human author",
       blindToScore: true,
+      blindToCandidateClass: true,
     },
   });
 }

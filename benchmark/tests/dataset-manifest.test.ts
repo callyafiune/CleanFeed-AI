@@ -19,6 +19,7 @@ import {
 import { asGeneratorFamily } from "../generator-family.ts";
 import {
   humanReviewed,
+  labelDispute,
   unknownAxis,
   v3Ai,
   v3Human,
@@ -796,6 +797,52 @@ describe("held-out generator-family coverage on a release corpus", () => {
       ),
     ).rejects.toThrow(
       /requires at least 200 eligible positives, received 0 eligible of 200 positive rows/u,
+    );
+  });
+
+  // C5 quality round — the REVIEW-CLAIM refusal on a corpus whose shortfall is NOT
+  // the automated filter, which is the case the sentence used to misdescribe.
+  //
+  // The refusal closed with "A record whose only governance is the automated filter
+  // is automated/unreviewed — legitimate in the corpus, and it never counts toward a
+  // gate that requires review": true of one of the four reasons and printed for all
+  // four, so a corpus refused solely over `1 label-disputed` got a diagnosis about a
+  // filter that had nothing to do with it. My previous round filed the corpus-level
+  // test as blocked on migrating the synthetic release helper to v3; that was wrong,
+  // and the fixture above is the refutation — `v3ReleaseCorpus` is a fully reviewed
+  // v3 release corpus that SEALS, so one disputed row is the whole cost.
+  function disputedV3AiRow(n: number): BenchmarkRecord {
+    const raw = withReview(
+      v3Ai(),
+      humanReviewed("human", { labelDispute: labelDispute("human", "ai") }),
+    );
+    raw.id = `a_agy_${n.toString().padStart(4, "0")}`;
+    raw.normalizedTextSha256 = n.toString(16).padStart(64, "0");
+    return validateBenchmarkRecordV3(raw);
+  }
+
+  it("refuses a release corpus over one disputed row, with the dispute's own action", async () => {
+    const records = v3ReleaseCorpus(200);
+    // Replaces the last positive rather than adding one, so the label counts and
+    // the held-out family's 200 are untouched: the ONLY thing that changes is that
+    // one row's two blind reviewers contradict its provenance-derived label.
+    records[records.length - 1] = disputedV3AiRow(200);
+    const attempt = sealDataset(
+      releaseManifest,
+      records,
+      releasePolicy(200),
+      validFileDigests,
+    );
+    await expect(attempt).rejects.toThrow(
+      /1 of 201 sustain no review claim \(1 label-disputed\), first a_agy_0200/u,
+    );
+    // The action belongs to the reason: this row needs the label's own evidence
+    // re-derived or the row withdrawn (D1/D5), which no record can do for itself.
+    await expect(attempt).rejects.toThrow(/nothing in a record resolves it/u);
+    // And the automated filter's sentence is ABSENT, because no row of this corpus
+    // is `automated/unreviewed`. This is the direction that was broken.
+    await expect(attempt).rejects.not.toThrow(
+      /only governance is the automated filter/u,
     );
   });
 

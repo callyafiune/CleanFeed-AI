@@ -4416,7 +4416,21 @@ v2 e um corpus que nada lê não pode ser auditado.
   (adjudicador independente, com `rationale`, e nunca anterior à última decisão que
   resolve), `pii` (protocolo + etapa automática nomeada + revisor humano pseudonimizado +
   instante real + tratamento + achado), `exclusionCode` por decisão de exclusão, e
-  `blindToScore`/`blindToCandidateClass` por revisor (requisito 7 / D1).
+  `blindToScore`/`blindToCandidateClass` por revisor **e pela adjudicação**
+  (requisito 7 / D1).
+
+**Cegueira da adjudicação — corrigido na rodada de qualidade.** `ReviewAdjudication`
+carregava só `blindToScore`, e `reviewClaimSupport` dobrava o adjudicador no eixo do escore
+mas **não** no eixo da classe (lia `decisions` apenas). O voto contra o qual o registro é
+julgado é `adjudication?.decision ?? decisions[0].decision`, isto é, em todo desacordo é o
+do adjudicador — então um adjudicador a quem se mostrou a classe candidata antes de decidir
+**sustentava** a alegação de revisão, e o recibo não conseguia nem declarar que isso
+aconteceu (`unknown field review.adjudication.blindToCandidateClass`, medido). A assimetria
+corria na direção que esconde falha de governança, no único voto que decide. Agora o campo é
+obrigatório nos dois blocos e os dois eixos dobram o adjudicador de forma simétrica. Três
+testes (campo ausente é recusado; adjudicador não cego à classe → `reviewer-saw-candidate-class`;
+cego nos dois eixos → `sustains: true`, asserido contra as duas flags do próprio fixture) e
+a mutação "voltar a ler só `decisions`" mata o do meio.
 
 **O downgrade da v2 é o mecanismo, não a prosa.** `reviewOf(record)` é o acessador
 versão-ciente; para a v2 devolve um `automated/unreviewed` congelado cujo motivo diz por
@@ -4433,10 +4447,11 @@ A checagem é a **última** do bloco de release, porque nomeia uma contagem sobr
 inteiro; as recusas que nomeiam **um** registro continuam disparando primeiro.
 
 **Coerência, uma regra por incoerência**, toda com teste em
-`benchmark/tests/review-receipt.test.ts` — **42 testes de coerência do recibo**, dos 54 do
-arquivo (os outros 12 são do bloco de divergência descrito abaixo; a contagem "42" que
-esta seção trazia antes descrevia o arquivo inteiro e ficou velha na mesma rodada em que
-o bloco de divergência entrou): número de decisões vs. revisores
+`benchmark/tests/review-receipt.test.ts` — **45 testes de coerência do recibo**, dos 59 do
+arquivo (os outros 14 são do bloco de divergência descrito abaixo; medido por bloco:
+4 + 5 + 16 + 4 + 5 + 7 + 4 fora da divergência. A contagem "42" que esta seção trazia
+duas rodadas atrás descrevia o arquivo inteiro e ficou velha na mesma rodada em que o
+bloco de divergência entrou): número de decisões vs. revisores
 declarados (em ambas as direções, mais decisão de revisor não declarado e revisor votando
 duas vezes); `agree` sobre decisões divergentes **e** `disagree` sobre decisões idênticas;
 desacordo sem adjudicação **e** adjudicação sem desacordo; adjudicador que também votou;
@@ -4480,14 +4495,43 @@ disputa depois. Dissenso levantado por quem viu o escore ou a classe não é dis
 resolver, é revisão a refazer cega; só depois de cega a contradição com a proveniência é o
 fato, e a ação dela não é nenhuma das outras duas.
 
-**Por que o bloco não pode inventar conflito:** ele declara os dois lados e os dois são
-conferidos contra o registro — `reviewedClass` contra a conclusão do próprio recibo (a
-adjudicação, quando há), `recordLabel` contra o `label` da linha — e `reviewedClass ===
-recordLabel` é recusado com frase própria. Logo o bloco só é escrivível onde a divergência
-existe de verdade. Doze testes no bloco "a divergence between receipt and label is
-recorded, not erased"; três mutações rodadas: reverter para o `throw` incondicional mata os
-dois testes de registro da divergência (3 no total), remover o preço em
-`reviewClaimSupport` mata os dois, e desligar a guarda de conflito inventado mata o seu.
+**ERRATA da rodada de qualidade: essa ordem estava declarada em dois lugares e asseriada em
+nenhum.** Medido: mover o bloco de `labelDispute` do fim da função para logo depois do
+retorno de `automated/unreviewed` deixava `review-receipt.test.ts` em 54/54 **e**
+`benchmark/tests/` em 721/721 — nada no repositório a prendia. O custo do relato errado é
+concreto: `reviewer-saw-detector-score` manda refazer a revisão cega, `label-disputed` manda
+para D1/D5 re-derivar `labelBasis`/`labelEvidenceRef`/`generation` (ou retirar a linha), e
+relatar disputa numa revisão que nunca foi cega compra o ato caro para resolver um dissenso
+que ainda não tem direito de existir. Mesma classe de defeito da precedência ND-sobre-NC de
+B1. Dois testes novos constroem um recibo que é **ao mesmo tempo** disputado e não-cego (um
+por eixo) e asserem a razão de cegueira; a mutação de reordenação mata os dois.
+
+**Por que o bloco não pode inventar conflito:** ele declara os dois lados e cada um é
+conferido contra um lado **diferente**, em escopo diferente — `reviewedClass` contra a
+conclusão do próprio recibo (a adjudicação, quando há), dentro de
+`validateHumanReviewReceipt`, que é o único escopo que tem as decisões; `recordLabel` contra o
+`label` da linha, no chamador de nível-registro, que é o único escopo que tem o label — e
+`reviewedClass === recordLabel` é recusado com frase própria. São **três** guardas em **dois**
+escopos, mais a recusa da divergência silenciosa; a docstring do tipo dizia "os dois são
+conferidos contra o registro" e o comentário do validador dizia "as duas conferências do
+chamador", e ambos mandavam o leitor à função errada — corrigidos na rodada de qualidade.
+Logo o bloco só é escrivível onde a divergência existe de verdade. Quatorze testes no bloco
+"a divergence between receipt and label is recorded, not erased"; mutações rodadas: reverter
+para o `throw` incondicional mata os dois testes de registro da divergência (3 no total),
+remover o preço em `reviewClaimSupport` mata os dois, desligar a guarda de conflito inventado
+mata o seu, e reordenar disputa antes de cegueira mata os dois de precedência.
+
+**Por que os dois campos derivados ficam, apesar de serem recomputáveis.** A revisão de
+qualidade propôs reduzir o bloco a `{state, rationale}` mais uma guarda, e o argumento é
+correto quanto ao fato: `reviewedClass` e `recordLabel` são determinados por `concluded` e
+por `label`. Ficam por uma razão que não é "para o bloco se ler sozinho" (não se lê: são as
+guardas que o tornam confiável, e elas precisam do registro). Ficam porque um bloco
+`{state, rationale}` não carrega **nada específico da linha** e portanto pode ser copiado de
+um registro para qualquer outro que também tenha divergência real, sem detecção — que é
+exatamente a falha que C5 existe para remover, uma forma de governança repetida em 10.000
+linhas. Com as duas classes restatadas, a cópia cai numa linha cujo label ou cuja conclusão
+difere e é recusada por nome (os dois testes de cross-check já existentes). O delta são duas
+guardas, não três: a alternativa continua precisando da recusa de conflito inventado.
 
 **Data real, sem inventar relógio.** `REVIEW_RECEIPT_PROTOCOL_FROM` é
 `2026-07-26T00:00:00.000Z` — a data deste plano, a mesma que a seed de split `20260726`
@@ -4500,10 +4544,29 @@ de sessão, que é de D1.
 
 **Cegueira é precificada, não recusada.** Uma revisão que viu o escore realmente
 aconteceu se aconteceu (R4: registre a verdade); o que ela não pode é sustentar alegação.
-`reviewClaimSupport` é uma rejeição discriminada com três razões
-(`automated-filter-only`, `reviewer-saw-detector-score`, `reviewer-saw-candidate-class`),
-porque são três fatos com ações diferentes: contratar revisor, refazer cego, refazer só a
-adjudicação.
+`reviewClaimSupport` é uma rejeição discriminada, e a docstring dela **enumera a ação contra
+o nome da razão em vez de contar razões** — contar foi exatamente o que ficou velho quando a
+quarta entrou (o código dizia "three refusals" com quatro razões no tipo logo abaixo):
+
+| razão | ação do operador |
+|---|---|
+| `automated-filter-only` | ninguém olhou: designar revisores (D1/D5) |
+| `reviewer-saw-detector-score` | refazer a revisão cega ao escore |
+| `reviewer-saw-candidate-class` | refazer a revisão cega à classe |
+| `label-disputed` | nenhuma das acima: re-derivar a evidência do próprio label ou retirar a linha (D1/D5) |
+
+**A mensagem de `DATASET_REVIEW_INVALID` agora anexa a ação à razão presente.** Ela fechava
+sempre com a frase do filtro automático, verdadeira de **uma** das quatro razões e impressa
+para as quatro: um corpus de release recusado só por `1 label-disputed` recebia diagnóstico
+sobre um filtro que não tinha nada a ver com o caso, no único lugar que um operador lê.
+`REVIEW_SHORTFALL_ACTION` é um `Record` sobre a união de razões com `satisfies`, então uma
+quinta razão é erro de compilação ali. Corrigido também um engano do **meu** relatório
+anterior: eu registrei o teste de nível-corpus como bloqueado pela migração do helper
+sintético para v3, e isso é falso — `v3ReleaseCorpus` em
+`benchmark/tests/dataset-manifest.test.ts` já sela um corpus de release v3 inteiramente
+revisado, então o teste custou uma linha disputada. Ele afere os três lados: a contagem
+(`1 of 201 … (1 label-disputed), first a_agy_0200`), a ação da disputa presente, e a **ausência**
+da frase do filtro automático. Mutação: fixar a ação em `automated-filter-only` mata o teste.
 
 **O montador parou de fabricar.** `benchmark/lab/assemble_corpus.py` não tem mais a
 constante de anotação nem a função de auditoria de PII, `stamp_block` não estampa mais

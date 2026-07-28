@@ -35,6 +35,7 @@ import { REBUILD_V3_POLICY } from "./rebuild-v3-policy.ts";
 import {
   AUTOMATED_UNREVIEWED,
   groupAxisIdentity,
+  LABEL_DISPUTE_UNRESOLVED,
   recordEligibility,
   reviewClaimSupport,
   V3_GROUP_AXES,
@@ -553,6 +554,60 @@ function heldOutFloorShortfall(
   return `${head} positives, ${counts} (${stateEligibility} judged by eligibility, ${positiveRows.length - stateEligibility} of schemaVersion 2 judged on presence)`;
 }
 
+/** One record that sustains no review claim, with the reason it does not. */
+type UnsustainedReview = {
+  id: string;
+  support: Exclude<ReturnType<typeof reviewClaimSupport>, { sustains: true }>;
+};
+type ReviewShortfallReason = UnsustainedReview["support"]["reason"];
+
+/**
+ * The act that answers each reason a review claim fails, one sentence per reason.
+ *
+ * A `Record` over the reason union rather than one closing paragraph, because the
+ * refusal used to end with the `automated-filter-only` sentence whatever the reason
+ * was: a release corpus refused solely over `1 label-disputed` got a diagnosis about
+ * an automated filter that had nothing to do with it, in the one place an operator
+ * reads. `satisfies Record<ReviewShortfallReason, string>` makes a fifth reason a
+ * compile error here, so the message cannot go stale the way the count in
+ * {@link reviewClaimSupport}'s docstring did.
+ */
+const REVIEW_SHORTFALL_ACTION = {
+  "automated-filter-only": `A record whose only governance is the automated filter is "${AUTOMATED_UNREVIEWED}" — legitimate in the corpus, and it never counts toward a gate that requires review`,
+  "reviewer-saw-detector-score":
+    "A reviewer or adjudicator who saw the detector's score may have corroborated the score instead of the document: the receipt stands as the truth of what happened, and the review is re-run blind (D1)",
+  "reviewer-saw-candidate-class":
+    "A reviewer or adjudicator who saw the candidate class was shown the answer before deciding: the receipt stands, and the review is re-run blind (D1)",
+  "label-disputed": `A record whose blind reviewers contradict its label keeps the dissent ("${LABEL_DISPUTE_UNRESOLVED}") and sustains no claim: nothing in a record resolves it, so resolving means re-deriving the label's own evidence or withdrawing the row (D1/D5)`,
+} satisfies Record<ReviewShortfallReason, string>;
+
+/**
+ * The review claim's refusal: the count, the breakdown by reason, the first record,
+ * and the act that answers each reason PRESENT — never the acts of reasons absent.
+ */
+function reviewClaimShortfall(
+  unsustained: readonly UnsustainedReview[],
+  total: number,
+): string {
+  const byReason = new Map<ReviewShortfallReason, number>();
+  for (const entry of unsustained) {
+    byReason.set(
+      entry.support.reason,
+      (byReason.get(entry.support.reason) ?? 0) + 1,
+    );
+  }
+  const reasons = [...byReason.keys()].sort((a, b) =>
+    a < b ? -1 : a > b ? 1 : 0,
+  );
+  const breakdown = reasons
+    .map((reason) => `${byReason.get(reason)} ${reason}`)
+    .join(", ");
+  const actions = reasons
+    .map((reason) => REVIEW_SHORTFALL_ACTION[reason])
+    .join(" ");
+  return `a release corpus requires a human review receipt on every record: ${unsustained.length} of ${total} sustain no review claim (${breakdown}), first ${unsustained[0]?.id}. ${actions}`;
+}
+
 /**
  * Counts the label-basis evidence of a corpus, as numbers.
  *
@@ -705,10 +760,7 @@ export async function sealDataset(
   // Records whose review sustains no governance claim, with the reason each one
   // failed. Collected rather than thrown on, because "how many records support the
   // claim" is a question about the CORPUS and is decided once the loop is done.
-  const unsustained: Array<{
-    id: string;
-    support: Exclude<ReturnType<typeof reviewClaimSupport>, { sustains: true }>;
-  }> = [];
+  const unsustained: UnsustainedReview[] = [];
 
   for (const raw of records) {
     const record = validateBenchmarkRecord(raw);
@@ -746,7 +798,10 @@ export async function sealDataset(
     // divergence (`review.labelDispute`) and parses, because refusing the row would
     // erase the reviewers' dissent (R4). `reviewClaimSupport` prices it
     // (`label-disputed`), so it flows into `unsustained` below like any other
-    // non-sustaining state and a release seal counts it against the claim.
+    // non-sustaining state and a release seal counts it against the claim. Asserted
+    // rather than reasoned: "refuses a release corpus over one disputed row" seals a
+    // 201-row v3 release corpus with exactly one disputed row and reads the count,
+    // the reason and the act off the refusal.
     if (record.schemaVersion === 2) {
       const distinctReviewers = new Set(record.annotation.reviewerIds);
       if (distinctReviewers.size < 2) {
@@ -876,20 +931,9 @@ export async function sealDataset(
     // no way to satisfy it except a real review (D1/D5), which is exactly the input
     // this execution does not have.
     if (unsustained.length > 0) {
-      const byReason = new Map<string, number>();
-      for (const entry of unsustained) {
-        byReason.set(
-          entry.support.reason,
-          (byReason.get(entry.support.reason) ?? 0) + 1,
-        );
-      }
-      const breakdown = [...byReason.entries()]
-        .sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0))
-        .map(([reason, count]) => `${count} ${reason}`)
-        .join(", ");
       fail(
         "DATASET_REVIEW_INVALID",
-        `a release corpus requires a human review receipt on every record: ${unsustained.length} of ${normalized.length} sustain no review claim (${breakdown}), first ${unsustained[0]?.id}. A record whose only governance is the automated filter is "${AUTOMATED_UNREVIEWED}" — legitimate in the corpus, and it never counts toward a gate that requires review`,
+        reviewClaimShortfall(unsustained, normalized.length),
       );
     }
   }

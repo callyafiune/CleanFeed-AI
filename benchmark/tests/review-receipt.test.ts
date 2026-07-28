@@ -388,6 +388,66 @@ describe("a divergence between receipt and label is recorded, not erased", () =>
     });
   });
 
+  // THE ORDER between the two blindness refusals and `label-disputed`, in both
+  // directions of "which fact does the operator get told".
+  //
+  // The order was declared load-bearing in a six-line comment in
+  // `reviewClaimSupport` and in the plan, and it was pinned by NOTHING: moving the
+  // `labelDispute` check from the end of the function to immediately after the
+  // `automated/unreviewed` return left this file at 54/54 and `benchmark/tests/` at
+  // 721/721. That is not a cosmetic gap. The reason is what an operator acts on —
+  // `reviewer-saw-detector-score` means re-run the review blind, `label-disputed`
+  // means go to D1/D5 and re-derive the label's own evidence (`labelBasis`,
+  // `labelEvidenceRef`, `generation`) or withdraw the row — so reporting the dispute
+  // for a review that was never blind buys the expensive act to settle a dissent
+  // nobody has yet earned the right to raise. Same defect class as B1's ND-over-NC
+  // precedence: a documented order with no competing assertion behind it.
+  it("prices a reviewer who saw the score before the dispute they raised", () => {
+    const record = validateBenchmarkRecordV3(
+      withReview(
+        v3Ai(),
+        humanReviewed("human", {
+          decisions: [
+            opinion("rev_hmac_a1", "human", { blindToScore: false }),
+            opinion("rev_hmac_b2", "human"),
+          ],
+          labelDispute: labelDispute("human", "ai"),
+        }),
+      ),
+    );
+    // The dispute IS on the record: what this pins is WHICH of the two facts the
+    // support names, not that one of them went missing on the way in.
+    const review = record.review;
+    if (review.state !== HUMAN_REVIEWED) throw new Error("unreachable");
+    expect(review.labelDispute?.reviewedClass).toBe("human");
+    expect(reviewClaimSupport(record)).toEqual({
+      sustains: false,
+      reason: "reviewer-saw-detector-score",
+    });
+  });
+
+  it("prices a reviewer who saw the candidate class before the dispute", () => {
+    const record = validateBenchmarkRecordV3(
+      withReview(
+        v3Ai(),
+        humanReviewed("human", {
+          decisions: [
+            opinion("rev_hmac_a1", "human"),
+            opinion("rev_hmac_b2", "human", { blindToCandidateClass: false }),
+          ],
+          labelDispute: labelDispute("human", "ai"),
+        }),
+      ),
+    );
+    const review = record.review;
+    if (review.state !== HUMAN_REVIEWED) throw new Error("unreachable");
+    expect(review.labelDispute).toBeDefined();
+    expect(reviewClaimSupport(record)).toEqual({
+      sustains: false,
+      reason: "reviewer-saw-candidate-class",
+    });
+  });
+
   it("refuses a dispute whose reviewedClass is not what the review concluded", () => {
     expect(() =>
       reviewedHuman(
@@ -646,6 +706,46 @@ describe("blind review is what makes the blindness auditable", () => {
     expect(reviewClaimSupport(reviewedHuman(receipt))).toEqual({
       sustains: false,
       reason: "reviewer-saw-detector-score",
+    });
+  });
+
+  // BOTH AXES ON THE ADJUDICATOR, and the adjudicator is the vote that matters
+  // most: the conclusion the record is judged against is
+  // `adjudication?.decision ?? decisions[0].decision`, so on every disagreement it
+  // is the adjudicator's class that becomes the receipt's. The block recorded only
+  // `blindToScore`, so an adjudicator shown the pipeline's candidate class before
+  // deciding sustained the claim AND the receipt could not even state that it
+  // happened (`unknown field review.adjudication.blindToCandidateClass`) — the
+  // asymmetry ran in the direction that hides a governance failure, which is the
+  // whole subject of C5.
+  it("refuses an adjudication that does not say whether it saw the class", () => {
+    const receipt = adjudicated("human", "mixed");
+    delete (receipt.adjudication as Record<string, unknown>)
+      .blindToCandidateClass;
+    expect(() => reviewedHuman(receipt)).toThrow(
+      /review\.adjudication\.blindToCandidateClass must be a boolean/u,
+    );
+  });
+
+  it("does not sustain a claim when the adjudicator saw the candidate class", () => {
+    const receipt = adjudicated("human", "mixed");
+    (receipt.adjudication as Record<string, unknown>).blindToCandidateClass =
+      false;
+    expect(reviewClaimSupport(reviewedHuman(receipt))).toEqual({
+      sustains: false,
+      reason: "reviewer-saw-candidate-class",
+    });
+  });
+
+  it("sustains the claim when the adjudicator was blind on both axes", () => {
+    // The other direction, asserted against the fixture's own two flags so that a
+    // fixture edit cannot make this test pass for the wrong reason.
+    const receipt = adjudicated("human", "mixed");
+    const adjudication = receipt.adjudication as Record<string, unknown>;
+    expect(adjudication.blindToScore).toBe(true);
+    expect(adjudication.blindToCandidateClass).toBe(true);
+    expect(reviewClaimSupport(reviewedHuman(receipt))).toEqual({
+      sustains: true,
     });
   });
 });

@@ -1333,7 +1333,18 @@ export interface ReviewerOpinion {
   note?: string;
 }
 
-/** How a disagreement was resolved, and by whom. */
+/**
+ * How a disagreement was resolved, and by whom.
+ *
+ * Blindness is recorded on BOTH axes here, exactly as on {@link ReviewerOpinion},
+ * and the symmetry is not decoration: the conclusion a record is judged against is
+ * `adjudication?.decision ?? decisions[0].decision`, so on every disagreement it is
+ * the adjudicator's vote that becomes the receipt's. While this block carried only
+ * `blindToScore`, an adjudicator shown the pipeline's candidate class before
+ * deciding still sustained the review claim, and the receipt could not even state
+ * that it had happened — an asymmetry in the direction that hides a governance
+ * failure, in the one vote that decides.
+ */
 export interface ReviewAdjudication {
   /** Pseudonymised, and distinct from every reviewer of the record. */
   adjudicatorId: string;
@@ -1342,6 +1353,8 @@ export interface ReviewAdjudication {
   /** WHY. An adjudication with no reason is a third vote, not a resolution. */
   rationale: string;
   blindToScore: boolean;
+  /** Did the adjudicator see the candidate class the pipeline had assigned? */
+  blindToCandidateClass: boolean;
 }
 
 /**
@@ -1370,9 +1383,30 @@ export const LABEL_DISPUTE_UNRESOLVED = "unresolved";
  * sustains no governance claim and cannot enter a gate that requires review.
  *
  * A silent divergence is still refused: the block is required whenever the
- * conclusion differs from the label. Both classes are restated here and both are
- * cross-checked against the record, which is also what makes the block unwritable
- * on a coherent receipt — an invented conflict cannot match a record that has none.
+ * conclusion differs from the label. Both classes are restated here, and each is
+ * checked against a DIFFERENT side, in a different place:
+ *
+ * - `reviewedClass` against the receipt's own conclusion (`adjudication?.decision ??
+ *   decisions[0].decision`), inside {@link validateHumanReviewReceipt}, which is the
+ *   only scope that has the decisions;
+ * - `recordLabel` against the row's `label`, in the record-level caller, which is the
+ *   only scope that has the label.
+ *
+ * Plus the caller's refusal of a SILENT divergence, they are what makes the block
+ * unwritable on a coherent record: it must declare a divergence, and the divergence
+ * has to be the real one.
+ *
+ * WHY THE TWO RESTATEMENTS EARN THEIR REDUNDANCY, since both are recomputable from
+ * data already on the record. Not "so the block reads on its own" — reading it
+ * honestly needs the record anyway, because the guards are what make it trustworthy.
+ * The reason is that a `{state, rationale}` block would carry NOTHING record-specific
+ * and so could be copied from one record to any other record that also has a real
+ * divergence, undetected: which is precisely the failure C5 exists to remove, one
+ * governance shape repeated across 10.000 rows. With the two classes restated, a copy
+ * lands on a row whose label or whose conclusion differs and is refused by name
+ * (`refuses a dispute whose recordLabel is not the record's label`, `refuses a
+ * dispute whose reviewedClass is not what the review concluded`). The delta is two
+ * guards, not three: the alternative still needs the invented-conflict refusal.
  */
 export interface ReviewLabelDispute {
   /** What the review concluded. Must equal the receipt's own conclusion. */
@@ -1486,11 +1520,20 @@ const V2_ANNOTATION_DOWNGRADE: AutomatedUnreviewedReview = Object.freeze({
 /**
  * Whether a record's review sustains a governance claim, and when it does not, WHY.
  *
- * A discriminated rejection rather than a boolean, because the three refusals are
- * three different facts an operator acts on differently: hire reviewers, re-run the
- * review blind, or re-run only the adjudication. R6/D5 in one function — an
- * `automated/unreviewed` record may exist in the corpus (it is honest) and never
- * counts toward a gate that requires review.
+ * A discriminated rejection rather than a boolean, because each refusal is a
+ * different fact an operator acts on differently. The actions are enumerated against
+ * the reason NAMES rather than counted, so a reason added later cannot leave this
+ * docstring stale the way a count did:
+ *
+ * - `automated-filter-only` — nobody looked. Assign reviewers (D1/D5).
+ * - `reviewer-saw-detector-score` — re-run the review blind to the score.
+ * - `reviewer-saw-candidate-class` — re-run the review blind to the class.
+ * - `label-disputed` — the blind reviewers contradict the label. Neither of the
+ *   above helps: re-derive the label's own evidence (`labelBasis` /
+ *   `labelEvidenceRef` / `generation` / `mixture`) or withdraw the row, both D1/D5.
+ *
+ * R6/D5 in one function — an `automated/unreviewed` record may exist in the corpus
+ * (it is honest) and never counts toward a gate that requires review.
  *
  * Blindness is priced HERE and not refused at the parser, deliberately. A review
  * that saw the score really happened if it happened, and R4 says record the truth;
@@ -1515,13 +1558,22 @@ export function reviewClaimSupport(
   if (review.state === AUTOMATED_UNREVIEWED) {
     return { sustains: false, reason: "automated-filter-only" };
   }
+  // Both blindness axes fold in the ADJUDICATOR beside the reviewers, and they must
+  // stay symmetrical: the conclusion the record is judged against is the
+  // adjudicator's whenever there is one, so an adjudicator who saw the score or the
+  // class decided the receipt's class with the answer in hand. The class axis used to
+  // read `decisions` only, which left the deciding vote unpriced on the very axis
+  // C5's requirement 7 exists to make auditable.
   const sawScore =
     review.decisions.some((decision) => !decision.blindToScore) ||
     review.adjudication?.blindToScore === false;
   if (sawScore) {
     return { sustains: false, reason: "reviewer-saw-detector-score" };
   }
-  if (review.decisions.some((decision) => !decision.blindToCandidateClass)) {
+  const sawCandidateClass =
+    review.decisions.some((decision) => !decision.blindToCandidateClass) ||
+    review.adjudication?.blindToCandidateClass === false;
+  if (sawCandidateClass) {
     return { sustains: false, reason: "reviewer-saw-candidate-class" };
   }
   // Checked LAST, after both blindness rules, and the order is the operator's:
@@ -1530,6 +1582,13 @@ export function reviewClaimSupport(
   // blind, the contradiction with provenance is the fact, and its action is neither
   // of the other two — it is resolving the label's own evidence (D1/D5), which no
   // record can do for itself.
+  //
+  // Pinned, not merely documented. `review-receipt.test.ts` builds a receipt that is
+  // BOTH disputed and non-blind on each axis and asserts the blindness reason, so
+  // moving this block above either of them fails a test. It was previously asserted
+  // by nothing: the same reordering left the whole benchmark suite green, and the
+  // cost of the wrong reason is real — it sends an operator to re-derive a label's
+  // evidence to settle a dissent that was never blind.
   if (review.labelDispute !== undefined) {
     return { sustains: false, reason: "label-disputed" };
   }
@@ -1651,6 +1710,7 @@ const ADJUDICATION_KEYS = [
   "decidedAt",
   "rationale",
   "blindToScore",
+  "blindToCandidateClass",
 ];
 const PII_RECEIPT_KEYS = [
   "protocol",
@@ -2517,9 +2577,12 @@ function validateHumanReviewReceipt(
   }
 
   // The DISPUTE block, checked here for everything that can be decided without the
-  // record and cross-checked against the label by the caller. Both halves are
-  // needed: this one keeps the block from misdescribing the receipt it sits in, and
-  // the caller's keeps it from misdescribing the row it is attached to.
+  // record: `reviewedClass` against THIS receipt's conclusion, plus the two sides
+  // naming one class. The other half is the caller's, and it is one comparison —
+  // `recordLabel` against the row's `label` — because the label is the one thing this
+  // scope does not have. Both halves are needed: this one keeps the block from
+  // misdescribing the receipt it sits in, the caller's keeps it from misdescribing
+  // the row it is attached to.
   let labelDispute: ReviewLabelDispute | undefined;
   if (obj.labelDispute !== undefined) {
     const path = "review.labelDispute";
@@ -2544,9 +2607,11 @@ function validateHumanReviewReceipt(
         id,
       );
     }
-    // Two sides naming one class is not a dispute. With this refusal plus the
-    // caller's two cross-checks, the block is unwritable on a coherent record: it
-    // has to declare a divergence, and the divergence has to be the real one.
+    // Two sides naming one class is not a dispute. Three guards close the block, in
+    // two scopes: this one and `reviewedClass !== concluded` here, plus the caller's
+    // single cross-check of `recordLabel` against the row's label and its refusal of
+    // an undeclared divergence. Together the block is unwritable on a coherent
+    // record: it has to declare a divergence, and it has to be the real one.
     if (reviewedClass === recordLabel) {
       throw new BenchmarkRecordError(
         `${path} names "${reviewedClass}" on both sides, so nothing is in dispute: the block exists to record a review that CONTRADICTS the label, and inventing a conflict is the mirror of hiding one`,
@@ -2640,6 +2705,7 @@ function validateAdjudication(
     decidedAt,
     rationale: nonEmptyString(obj, "rationale", path, id),
     blindToScore: booleanValue(obj, "blindToScore", path, id),
+    blindToCandidateClass: booleanValue(obj, "blindToCandidateClass", path, id),
   };
 }
 
