@@ -4324,11 +4324,11 @@ partições; e que split e evento de exposição são gravados juntos ou nenhum 
 
 #### C3 — o que a execução decidiu (2026-07-28)
 
-Entregue. Os oito testes de aceitação nomeados estão em
-`benchmark/tests/cluster-exposure-ledger.test.ts` (23 testes) e
-`benchmark/tests/split-audit.test.ts` (+11). Nenhum evento real foi gravado: o
-congelamento continua sendo E2. Sete decisões precisam ficar registradas porque a execução
-foi além (ou ficou aquém) do que o texto acima diz.
+Entregue, e depois corrigida por revisão (rodada de 2026-07-28, itens 9 a 13). Os oito
+testes de aceitação nomeados estão em `benchmark/tests/cluster-exposure-ledger.test.ts`
+(33 testes) e `benchmark/tests/split-audit.test.ts` (+12). Nenhum evento real foi gravado: o
+congelamento continua sendo E2. As decisões abaixo precisam ficar registradas porque a
+execução foi além (ou ficou aquém) do que o texto acima diz.
 
 1. **Um keyring só, e o ledger HMACa sobre o pseudônimo de C2 — não sobre o identificador
    cru.** O arquivo canônico deste plano é exatamente o que
@@ -4392,6 +4392,60 @@ foi além (ou ficou aquém) do que o texto acima diz.
    (`clusters`, `declaredAxisGaps`); opcionais deixariam a tautologia sobreviver. O campo de
    contagem se chama `recordLines` e não `records` porque `records` é chave **proibida** no
    sanitizador de evidência — e a auditoria é publicada.
+
+##### Rodada de correção (revisão de 2026-07-28)
+
+9. **A linhagem tem domínio de MAC próprio, porque a comparação por eixo era cega de um
+   lado.** DEFEITO MEDIDO na primeira entrega: `buildIndex` alimentava o índice apenas com
+   `record.groupDigests[eixo]`, e a comparação era digest-de-eixo contra digest-do-MESMO-eixo.
+   Como `humanSeed` e `derivationRoot` carregam o **id de outra linha**, a metade
+   semente→geração da linhagem não casava com nada: humano exposto em `dev`, e a geração que
+   ele semeou entrava em `test` com `eligible: true` e zero recusas. Só a metade
+   geração→geração (duas gerações com a mesma semente) funcionava. É a mesma cegueira que o
+   item 7 acabara de consertar em `connectedComponentRoots`, entrando pela porta do ledger.
+   Conserto: `LINEAGE_AXES` (`humanSeed`, `derivationRoot`) e o **id da própria linha** são
+   MACados sob **um** domínio (`lineage`) em vez do nome do eixo, e cada registro do evento
+   grava `lineageDigests` — o digest que um filho apresentaria ao nomear aquela linha. Assim
+   as duas pontas da aresta caem na mesma consulta: pai exposto → filho recusado, filho
+   exposto → pai recusado. Quatro testes novos, incluindo o par negativo (semente ausente do
+   histórico não recusa nada). A separação de domínio dos eixos de valor é preservada:
+   `author` e `source` continuam misturando o próprio nome do eixo.
+10. **`connectivityAxis` deriva de `CONNECTIVITY_AXES`, não de `GROUP_KEYS`.** O item 7 fez o
+    splitter unir por `humanSeed` como ligação de pai, mas `humanSeed` não está em
+    `GROUP_KEYS` (não é eixo de valor), então a auditoria **publicada** afirmava
+    `connectivityAxis: false` para um eixo em que o splitter passou a tratar as duas linhas
+    como bloco indivisível — e D0b escolhendo eixo de poder por esse relatório dimensionaria
+    o estrato como se semente e geração fossem independentes. `split.ts` agora exporta
+    `PARENT_LINKAGE_AXES` (consumida pelo próprio `connectedComponentRoots`, para o par ser
+    dito uma vez) e `CONNECTIVITY_AXES = GROUP_KEYS + ligação de pai`; a auditoria e o
+    `standInClusterReport` leem essa lista.
+11. **O acoplamento C2↔C3 é testado rodando os dois lados, não conferindo forma.** A primeira
+    entrega provou só a FORMA do pseudônimo (`<propósito>_<16 hex>`), o que não vê a falha que
+    importa: `initClusterLedger` reescreve o arquivo que `pseudonymize.py` lê, e se os dois
+    lados divergirem as duas suítes seguem verdes enquanto todo pseudônimo de pessoa muda e o
+    ledger responde "nunca exposto" para quem já foi exposto. O teste agora roda Python por
+    subprocesso contra o keyring que `init` acabou de escrever, indexa o pseudônimo devolvido
+    e oferece a mesma conta a `test` sob id e tupla novos. Provado não-vacuoso por mutação:
+    fazer `init` normalizar `keyringVersion` e re-mintar `secrets.person` reprova; apertar o
+    loader Python para recusar campo desconhecido também reprova. Onde não há interpretador o
+    teste é `skip` com aviso em `console.warn` — a máquina do operador tem Python, porque os
+    extratores são Python, e é lá que a propriedade tem de valer.
+12. **`reserveManifestDigest` e a tupla são validados como sha256.** Eram "string ou null" num
+    módulo cuja premissa declarada é falhar fechado em todo campo. Aquele digest é o **único**
+    traço que a reserva cega deixa no ledger: string vazia ou caminho de arquivo entraria num
+    evento append-only, seguiria passando no `verify`, e a inutilidade apareceria exatamente
+    quando a segunda tentativa de holdout precisasse provar de qual reserva veio. Agora
+    `/^[0-9a-f]{64}$/` no caminho da CLI **e** no da biblioteca (`buildEvent`), porque E2
+    chama a biblioteca direto.
+13. **BLOQUEADOR PARA E2, fora do escopo de C3:** `benchmark/prediction-shards.ts:100` usa
+    parameter property (`constructor(private readonly options: …)`), que o modo strip-only do
+    Node recusa. Logo `node benchmark/cli.ts` — isto é, `npm run benchmark` — falha no import,
+    antes de ler argumento, em **todo** subcomando; `npm run benchmark -- cluster-ledger
+    commit-split …` morre ali. A linha é anterior a C3 (existe em `ef3c92b~1`) e o arquivo
+    está em `EVALUATOR_FILES` e é entrega de outra tarefa, então C3 não a tocou e substituiu a
+    verificação por testes que dirigem `runCli`. **E2 não começa antes de mover a atribuição
+    para o corpo do construtor**, com um teste que execute `node benchmark/cli.ts --help` como
+    processo real e afirme que `cluster-ledger` aparece no usage.
 
 ### C4 — Bootstrap com unidade de reamostragem por estimando
 
