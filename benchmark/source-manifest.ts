@@ -62,11 +62,24 @@
 // written out on `assertNoIndividualAcquisition` itself.
 //
 // It carries a SECOND over-claim screen for the same reason (`reviewOverclaimIn`,
-// C5): the review receipt was removed from the records and from the assembler, and
-// prose is the other place a removed claim comes back. What that screen does NOT do
-// is decide whether a record was reviewed — the review state is a record field
-// (`benchmark/schema.ts`) and the coherence gate is `sealDataset`
-// (`benchmark/dataset-manifest.ts`); this module only refuses the SENTENCE.
+// C5 requirement 4 — "não deixe o filtro automático poder se apresentar como
+// revisão", one level up from the record): the review receipt was removed from the
+// records and from the assembler, and prose is the other place a removed claim comes
+// back. What that screen does NOT do is decide whether a record was reviewed — the
+// review state is a record field (`benchmark/schema.ts`) and the coherence gate is
+// `sealDataset` (`benchmark/dataset-manifest.ts`); this module only refuses the
+// SENTENCE.
+//
+// HOW BOTH SCREENS ARE ENFORCED, said plainly because the sentence above about
+// `parseReviewedSourceManifest` is about the acquisition guards and does not carry
+// over: neither `humanLabelOverclaimIn` nor `reviewOverclaimIn` has a production
+// caller, by design and not by oversight. They are lint rules over the governance
+// documents, and the enforcement is the sweep in
+// `benchmark/tests/source-manifest.test.ts`, which reads every screened file from
+// disk and fails the suite on a violation. Note the consequence for provenance of
+// the screen itself: this module is NOT in `EVALUATOR_FILES` (see
+// `benchmark/digests.ts`), so neither screen is part of the evaluator's identity and
+// editing them does not move `integrity.evaluator-digest`.
 //
 // WHO OWNS WHICH VALUE (this module is not the authority for all of it):
 //   * `benchmark/rebuild-v3-policy.json`, validated by

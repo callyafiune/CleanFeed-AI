@@ -740,6 +740,13 @@ export async function sealDataset(
     // adjudicator who was also a reviewer, a PII audit with no method or a
     // synthetic date). Repeating those here would be a second copy of the rules
     // able to disagree with the first.
+    //
+    // One v3 state is deliberately NOT a parse error and lands here instead: a
+    // receipt whose conclusion contradicts the record's label declares the
+    // divergence (`review.labelDispute`) and parses, because refusing the row would
+    // erase the reviewers' dissent (R4). `reviewClaimSupport` prices it
+    // (`label-disputed`), so it flows into `unsustained` below like any other
+    // non-sustaining state and a release seal counts it against the claim.
     if (record.schemaVersion === 2) {
       const distinctReviewers = new Set(record.annotation.reviewerIds);
       if (distinctReviewers.size < 2) {

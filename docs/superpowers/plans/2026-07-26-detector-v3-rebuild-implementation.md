@@ -4433,7 +4433,10 @@ A checagem é a **última** do bloco de release, porque nomeia uma contagem sobr
 inteiro; as recusas que nomeiam **um** registro continuam disparando primeiro.
 
 **Coerência, uma regra por incoerência**, toda com teste em
-`benchmark/tests/review-receipt.test.ts` (42 testes): número de decisões vs. revisores
+`benchmark/tests/review-receipt.test.ts` — **42 testes de coerência do recibo**, dos 54 do
+arquivo (os outros 12 são do bloco de divergência descrito abaixo; a contagem "42" que
+esta seção trazia antes descrevia o arquivo inteiro e ficou velha na mesma rodada em que
+o bloco de divergência entrou): número de decisões vs. revisores
 declarados (em ambas as direções, mais decisão de revisor não declarado e revisor votando
 duas vezes); `agree` sobre decisões divergentes **e** `disagree` sobre decisões idênticas;
 desacordo sem adjudicação **e** adjudicação sem desacordo; adjudicador que também votou;
@@ -4441,11 +4444,50 @@ PII sem etapa automática, sem revisor ou com data sintética; data fora da jane
 do instante do protocolo, no futuro, ou não inteira) e adjudicação anterior às decisões;
 exclusão sem código e código sem exclusão; registro cuja revisão concluiu `exclude`.
 
-**Uma regra que o brief não listou e foi adicionada:** a conclusão do recibo tem de
-coincidir com o `label`. Ground truth continua vindo da proveniência — o revisor
-**corrobora**, não concede — logo um recibo que concluiu `ai` num registro `human` são
-duas alegações contraditórias no mesmo registro, e preferir uma delas em silêncio seria
-adivinhar.
+**Uma regra que o brief não listou, foi adicionada, e teve de ser CORRIGIDA na rodada
+seguinte:** a relação entre a conclusão do recibo e o `label`. Ground truth continua vindo
+da proveniência — o revisor **corrobora**, não concede — logo um recibo que concluiu `ai`
+num registro `human` são duas alegações contraditórias no mesmo registro, e preferir uma
+delas em silêncio seria adivinhar. Isso está certo e continua valendo.
+
+O que estava **errado** era a consequência. A primeira versão **lançava** nesse caso, e um
+`throw` no validador significa que o registro não existe: um recibo em que dois revisores
+cegos concluem `human` numa linha cuja proveniência diz `ai` passava a ser **inexprimível**
+— o achado que um revisor mais existe para produzir era o único achado que o schema não
+podia guardar. Sobravam ao operador dois caminhos, **editar o label** ou **descartar a
+revisão**, e R4 proíbe os dois: o fato é que a revisão discordou. Além disso a regra
+pré-decidia, por refutação, uma pergunta de D1/D5 (o que acontece quando revisão humana
+contradiz proveniência).
+
+**Forma atual — a divergência é registrável e não sustenta alegação.** O recibo ganhou
+`labelDispute` (`benchmark/schema.ts`): `reviewedClass`, `recordLabel`, `state`
+(`unresolved`, o único valor escrivível) e `rationale`. Quem recusa continua sendo o
+validador, mas o que ele recusa é a divergência **silenciosa**: sem o bloco, a mensagem
+manda declarar. Com o bloco, o registro parseia e `reviewClaimSupport` devolve
+`{sustains: false, reason: "label-disputed"}` — quarta razão da rejeição discriminada — de
+modo que a linha entra no corpus, entra na contagem de `sealDataset` **contra** a alegação
+de release, e nunca conta para gate que exija revisão. Fail-closed continua fail-closed: o
+que mudou é que ele falha **guardando** o dissenso em vez de apagá-lo.
+
+**Quem resolve.** Não o registro, e por isso `unresolved` é o único estado: o label repousa
+em `labelBasis`/`labelEvidenceRef`/`generation`/`mixture`, então resolver é mudar essa
+evidência ou retirar a linha — **D1** (evidência de label) e **D5** (protocolo de revisão).
+Um valor `resolved` no registro seria veredito sem autor, exatamente a forma do `agreement`
+fabricado que C5 removeu.
+
+**Ordem dentro de `reviewClaimSupport`** (é do operador, não estética): cegueira primeiro,
+disputa depois. Dissenso levantado por quem viu o escore ou a classe não é disputa a
+resolver, é revisão a refazer cega; só depois de cega a contradição com a proveniência é o
+fato, e a ação dela não é nenhuma das outras duas.
+
+**Por que o bloco não pode inventar conflito:** ele declara os dois lados e os dois são
+conferidos contra o registro — `reviewedClass` contra a conclusão do próprio recibo (a
+adjudicação, quando há), `recordLabel` contra o `label` da linha — e `reviewedClass ===
+recordLabel` é recusado com frase própria. Logo o bloco só é escrivível onde a divergência
+existe de verdade. Doze testes no bloco "a divergence between receipt and label is
+recorded, not erased"; três mutações rodadas: reverter para o `throw` incondicional mata os
+dois testes de registro da divergência (3 no total), remover o preço em
+`reviewClaimSupport` mata os dois, e desligar a guarda de conflito inventado mata o seu.
 
 **Data real, sem inventar relógio.** `REVIEW_RECEIPT_PROTOCOL_FROM` é
 `2026-07-26T00:00:00.000Z` — a data deste plano, a mesma que a seed de split `20260726`
@@ -4497,7 +4539,15 @@ recusado num registro que existe — as duas afirmações se contradizem.
    dois nomes para um corpus sem revisor. Fechar isso pede um décimo código de bloqueio no
    contrato e é trabalho de D1/D5, não desta tarefa.
 3. **`benchmark/source-manifest.ts` ganhou uma tela de sobre-alegação**
-   (`reviewOverclaimIn`), não uma mudança de schema. O módulo já hospeda
+   (`reviewOverclaimIn`), não uma mudança de schema. Ela atende o **requisito 4** do brief
+   ("não deixe o filtro automático poder se apresentar como revisão") um nível acima do
+   registro: um documento que afirma que o corpus foi revisado apresenta o filtro como
+   revisão para o leitor, ainda que nenhum campo o faça. Duas coisas ficam ditas em vez de
+   presumidas, porque a rodada de revisão as cobrou: a tela **não tem chamador de produção**
+   — é regra de lint sobre os documentos, aplicada pela varredura em
+   `benchmark/tests/source-manifest.test.ts`, exatamente como `humanLabelOverclaimIn` de
+   B3 — e `benchmark/source-manifest.ts` está **fora** de `EVALUATOR_FILES`, logo a tela não
+   faz parte da identidade do avaliador. O módulo já hospeda
    `humanLabelOverclaimIn` e reusa os mesmos verbos de alegação e a mesma janela de
    negação; só o sujeito muda. A razão: C5 removeu a alegação do dado, e prosa é o outro
    lugar por onde ela volta. A tela recusa a asserção ("a revisão humana garante…", "todos
@@ -4515,11 +4565,20 @@ recusado num registro que existe — as duas afirmações se contradizem.
    pela mensagem, que o **piso** de família reservada aceitou antes (o piso nomeia uma
    família e roda primeiro); um teste irmão novo lê a contagem de 200 positivos num selo
    `infrastructure-only`, que é a forma honesta para um corpus de linhas não revisadas.
-6. **`integrity.review-ledger-hash` e `integrity.dataset-audit-sealed` continuam
-   recebendo `true` literal** em `benchmark/commands/evaluate.ts`. Isso é defeito real e
-   está **fora** desta entrega: `evaluate` não carrega o DatasetAudit, e o caminho certo é
-   `validate`/`sealDataset` recusar antes — que é o que passa a acontecer. Registrado para
-   quem cablear a evidência de integridade (G5/C6).
+6. **O critério "o gate que hoje passa sobre a fabricação passa a reprovar" NÃO foi
+   atendido como está escrito, e isto é a redação honesta do que o diff sustenta.** Os dois
+   gates que o brief nomeia — `integrity.review-ledger-hash` e
+   `integrity.dataset-audit-sealed` — continuam **passando**, porque as duas evidências que
+   eles leem (`gates.ts:429`, `gates.ts:439`) são literais `true` escritos em um único
+   lugar, `benchmark/commands/evaluate.ts:184` e `:186`, e C5 **não** tocou nenhum dos dois
+   arquivos. `evaluate` nunca carrega o DatasetAudit, então não há o que ele possa checar.
+   O que passa a reprovar é **a montante**: `benchmark/commands/validate.ts:83` chama
+   `sealDataset`, que agora lança `DATASET_REVIEW_INVALID` sobre o corpus selado (v2,
+   `scientificUse: "release"`), de modo que um corpus com governança fabricada **não chega**
+   a `evaluate` — resultado defensável e discutivelmente mais forte, mas outro. Cablear as
+   nove evidências literais de integridade é de quem as possui (G5/C6); fazê-lo aqui também
+   viraria dois testes de `consume-holdout` cujo assunto é evidência de reamostragem, não
+   governança.
 
 **Insumo que falta (não é defeito):** revisão humana real. O mecanismo está pronto e a
 perna `human-reviewed` **não tem produtor** em `benchmark/lab/`: D1 e D5 são as tarefas

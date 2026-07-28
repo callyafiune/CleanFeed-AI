@@ -27,6 +27,7 @@ import {
   adjudicated,
   automatedUnreviewed,
   humanReviewed,
+  labelDispute,
   opinion,
   piiPatternScan,
   v3Ai,
@@ -322,17 +323,132 @@ describe("a receipt is coherent with the claim it makes", () => {
   });
 });
 
-describe("the receipt is coherent with the label the record carries", () => {
-  it("refuses a review that concluded a different class", () => {
+// A divergence between the receipt's conclusion and the record's label is NOT one
+// of the six incoherences the brief enumerates, and the rule is here for a reason
+// the brief does not decide: the label comes from provenance and the review
+// corroborates it, so if the two disagree the record makes two contradictory
+// claims. What the first round got wrong was the consequence. It threw, and a
+// throw deletes the dissent — the case a reviewer most exists to produce became
+// the one case the schema cannot hold, leaving an operator two options (edit the
+// label, or discard the review) that R4 forbids. So the divergence is now
+// RECORDABLE and non-sustaining: `labelDispute` states it, and
+// `reviewClaimSupport` refuses to let it sustain a claim. Nothing in the record
+// resolves it — resolution is a change to the label's own evidence (`labelBasis`,
+// `generation`, `mixture`) or a withdrawal of the row, which D1 and D5 own.
+describe("a divergence between receipt and label is recorded, not erased", () => {
+  it("refuses an undeclared divergence", () => {
+    // Silence is still refused: what may not happen is preferring one of the two
+    // claims without saying that the other exists.
     expect(() => reviewedHuman(humanReviewed("ai"))).toThrow(
-      /the review concluded "ai" while the record's label is "human"/u,
+      /the review concluded "ai" while the record's label is "human", and the receipt declares no labelDispute/u,
     );
   });
 
   it("refuses it through the adjudication too", () => {
     expect(() => reviewedHuman(adjudicated("mixed", "human"))).toThrow(
-      /the review concluded "mixed" while the record's label is "human"/u,
+      /the review concluded "mixed" while the record's label is "human", and the receipt declares no labelDispute/u,
     );
+  });
+
+  it("records a declared divergence and refuses it the claim", () => {
+    // THE case the previous round made unwritable: two blind reviewers conclude
+    // `human` on a row whose provenance-derived label is `ai`. The record parses,
+    // the dissent is in it, and it sustains nothing.
+    const record = validateBenchmarkRecordV3(
+      withReview(
+        v3Ai(),
+        humanReviewed("human", { labelDispute: labelDispute("human", "ai") }),
+      ),
+    );
+    expect(record.label).toBe("ai");
+    const review = record.review;
+    if (review.state !== HUMAN_REVIEWED) throw new Error("unreachable");
+    expect(review.labelDispute).toEqual({
+      reviewedClass: "human",
+      recordLabel: "ai",
+      state: "unresolved",
+      rationale: expect.stringContaining("both reviewers read"),
+    });
+    expect(reviewClaimSupport(record)).toEqual({
+      sustains: false,
+      reason: "label-disputed",
+    });
+  });
+
+  it("records a divergence the adjudicator reached", () => {
+    const record = validateBenchmarkRecordV3(
+      withReview(v3Ai(), {
+        ...adjudicated("human", "mixed"),
+        labelDispute: labelDispute("human", "ai"),
+      }),
+    );
+    expect(reviewClaimSupport(record)).toEqual({
+      sustains: false,
+      reason: "label-disputed",
+    });
+  });
+
+  it("refuses a dispute whose reviewedClass is not what the review concluded", () => {
+    expect(() =>
+      reviewedHuman(
+        humanReviewed("mixed", { labelDispute: labelDispute("ai", "human") }),
+      ),
+    ).toThrow(
+      /review\.labelDispute\.reviewedClass is "ai" while the review concluded "mixed"/u,
+    );
+  });
+
+  it("refuses a dispute whose recordLabel is not the record's label", () => {
+    expect(() =>
+      reviewedHuman(
+        humanReviewed("ai", { labelDispute: labelDispute("ai", "mixed") }),
+      ),
+    ).toThrow(
+      /review\.labelDispute\.recordLabel is "mixed" while the record's label is "human"/u,
+    );
+  });
+
+  it("refuses a dispute that invents a conflict", () => {
+    // The two sides naming one class is not a dispute, and this is what makes the
+    // block unwritable on a coherent receipt: it must declare a divergence, and
+    // both halves are checked against the record.
+    expect(() =>
+      reviewedHuman(
+        humanReviewed("human", {
+          labelDispute: labelDispute("human", "human"),
+        }),
+      ),
+    ).toThrow(
+      /review\.labelDispute names "human" on both sides, so nothing is in dispute/u,
+    );
+  });
+
+  it("refuses a dispute that declares itself resolved", () => {
+    expect(() =>
+      reviewedHuman(
+        humanReviewed("ai", {
+          labelDispute: labelDispute("ai", "human", { state: "resolved" }),
+        }),
+      ),
+    ).toThrow(/review\.labelDispute\.state must be one of unresolved/u);
+  });
+
+  it("refuses a dispute with no rationale", () => {
+    expect(() =>
+      reviewedHuman(
+        humanReviewed("ai", {
+          labelDispute: labelDispute("ai", "human", { rationale: "" }),
+        }),
+      ),
+    ).toThrow(/review\.labelDispute\.rationale must be a non-empty string/u);
+  });
+
+  it("refuses a dispute on an automated/unreviewed record", () => {
+    expect(() =>
+      reviewedHuman(
+        automatedUnreviewed({ labelDispute: labelDispute("ai", "human") }),
+      ),
+    ).toThrow(/review is automated\/unreviewed and cannot carry labelDispute/u);
   });
 
   it("accepts the adjudicated conclusion that agrees with the label", () => {

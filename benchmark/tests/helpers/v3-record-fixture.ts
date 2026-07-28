@@ -156,6 +156,26 @@ export function adjudicated(
   });
 }
 
+/**
+ * A COHERENT declared divergence between what the review concluded and the label
+ * the record carries. Both classes are cross-checked against the record by the
+ * validator, so this fixture is only accepted where the divergence is real.
+ */
+export function labelDispute(
+  reviewedClass: string,
+  recordLabel: string,
+  overrides: Record<string, unknown> = {},
+): Record<string, unknown> {
+  return {
+    reviewedClass,
+    recordLabel,
+    state: "unresolved",
+    rationale:
+      "both reviewers read the document as written by a person; the label rests on the generation recipe the batch records, and neither side of the contradiction was preferred here",
+    ...overrides,
+  };
+}
+
 /** Replaces a record's whole `review` block. */
 export function withReview(
   record: Record<string, unknown>,

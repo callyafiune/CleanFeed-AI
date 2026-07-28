@@ -1227,7 +1227,11 @@ export type LabelEvidenceRef =
 //     the disagreement and how it was adjudicated and by whom, real instants, the
 //     PII method (which code screened it, which human read it, what was done), an
 //     exclusion code when a reviewer voted to exclude, and whether each reviewer
-//     was blind to the detector's score and to the candidate class.
+//     was blind to the detector's score and to the candidate class. When the
+//     reviewers' conclusion CONTRADICTS the provenance-derived label, the receipt
+//     says so (`labelDispute`) and the record sustains no claim — the contradiction
+//     is the finding a reviewer most exists to produce, so the schema has to be able
+//     to hold it (R4) instead of refusing the row and erasing the dissent.
 //
 // WHAT THIS MODULE DOES NOT DO: it does not create a receipt and cannot. No
 // reviewer exists for this corpus, so every record the assembler writes is
@@ -1340,6 +1344,46 @@ export interface ReviewAdjudication {
   blindToScore: boolean;
 }
 
+/**
+ * The one state a dispute may be in inside a record: unresolved.
+ *
+ * Resolving it is not a record-level act. The label rests on `labelBasis` /
+ * `labelEvidenceRef` / `generation` / `mixture`, so a resolution is either a change
+ * to that evidence or a withdrawal of the row — D1 (label evidence) and D5 (review
+ * protocol) own both. A record can therefore only ever say that the contradiction
+ * exists and that nobody settled it here; a `resolved` value would be a verdict
+ * with no author, the same shape as the fabricated `agreement` C5 removed.
+ */
+export const LABEL_DISPUTE_UNRESOLVED = "unresolved";
+
+/**
+ * A review whose conclusion CONTRADICTS the label the record carries.
+ *
+ * Why this block exists rather than a refusal at the parser. The label comes from
+ * provenance and the review corroborates it, so a divergence means one of the two
+ * is wrong — but throwing on it deletes the dissent, which makes the case a
+ * reviewer most exists to produce the one case the schema cannot hold. The only
+ * moves left to an operator would then be to edit the label or to discard the
+ * review, and R4 forbids both: the truth is that two blind reviewers read the
+ * document the other way. So the divergence is recordable and it is priced —
+ * {@link reviewClaimSupport} returns `label-disputed`, so a disputed record
+ * sustains no governance claim and cannot enter a gate that requires review.
+ *
+ * A silent divergence is still refused: the block is required whenever the
+ * conclusion differs from the label. Both classes are restated here and both are
+ * cross-checked against the record, which is also what makes the block unwritable
+ * on a coherent receipt — an invented conflict cannot match a record that has none.
+ */
+export interface ReviewLabelDispute {
+  /** What the review concluded. Must equal the receipt's own conclusion. */
+  reviewedClass: BenchmarkLabel;
+  /** The label the record carries. Must equal it, so the block cannot misdescribe. */
+  recordLabel: BenchmarkLabel;
+  state: typeof LABEL_DISPUTE_UNRESOLVED;
+  /** WHY the reviewers dissent from the provenance-derived label. */
+  rationale: string;
+}
+
 /** What was screened, by which code and which human, and what was done about it. */
 export interface PiiAuditReceipt {
   /** The protocol followed, e.g. `pii-review-v1`. */
@@ -1388,6 +1432,11 @@ export interface HumanReviewReceipt {
   /** Required if and only if `agreement` is `disagree`. */
   adjudication?: ReviewAdjudication;
   pii: PiiAuditReceipt;
+  /**
+   * Required if and only if the receipt's conclusion differs from the record's
+   * label. See {@link ReviewLabelDispute}: recordable, and never claim-sustaining.
+   */
+  labelDispute?: ReviewLabelDispute;
 }
 
 export type RecordReview = AutomatedUnreviewedReview | HumanReviewReceipt;
@@ -1454,7 +1503,8 @@ export type ReviewClaimSupport =
       reason:
         | "automated-filter-only"
         | "reviewer-saw-detector-score"
-        | "reviewer-saw-candidate-class";
+        | "reviewer-saw-candidate-class"
+        | "label-disputed";
     };
 
 export function reviewClaimSupport(
@@ -1473,6 +1523,15 @@ export function reviewClaimSupport(
   }
   if (review.decisions.some((decision) => !decision.blindToCandidateClass)) {
     return { sustains: false, reason: "reviewer-saw-candidate-class" };
+  }
+  // Checked LAST, after both blindness rules, and the order is the operator's:
+  // a dissent raised by a reviewer who saw the score or the class is not a dispute
+  // worth resolving, it is a review worth re-running blind. Once the review WAS
+  // blind, the contradiction with provenance is the fact, and its action is neither
+  // of the other two — it is resolving the label's own evidence (D1/D5), which no
+  // record can do for itself.
+  if (review.labelDispute !== undefined) {
+    return { sustains: false, reason: "label-disputed" };
   }
   return { sustains: true };
 }
@@ -1563,6 +1622,7 @@ const HUMAN_REVIEWED_KEYS = [
   "agreement",
   "adjudication",
   "pii",
+  "labelDispute",
 ];
 // The keys that only a RECEIPT may carry. Named as a list so the refusal on the
 // unreviewed arm can say which claim was attempted instead of "unknown field".
@@ -1578,6 +1638,12 @@ const REVIEWER_OPINION_KEYS = [
   "blindToCandidateClass",
   "exclusionCode",
   "note",
+];
+const LABEL_DISPUTE_KEYS = [
+  "reviewedClass",
+  "recordLabel",
+  "state",
+  "rationale",
 ];
 const ADJUDICATION_KEYS = [
   "adjudicatorId",
@@ -1950,19 +2016,32 @@ export function validateBenchmarkRecordV3(value: unknown): BenchmarkRecordV3 {
 
   // The receipt against the LABEL, which is the coarsest coherence there is: a
   // review that concluded `ai` on a row labelled `human` is two contradictory
-  // claims on one record, and picking either would be guessing which. It is checked
-  // here, once the label is known and before the axes, because it decides whether
-  // the record is self-consistent at all.
+  // claims on one record. It is checked here, once the label is known and before the
+  // axes, because it decides whether the record is self-consistent at all.
   //
   // Ground truth stays provenance-derived: the reviewers do not GRANT the label
-  // (that is `labelBasis`/`generation`/`mixture`), they corroborate it, so their
-  // conclusion has to agree with it or one of the two is wrong.
+  // (that is `labelBasis`/`generation`/`mixture`), they corroborate it. What the
+  // first C5 round got wrong was the consequence of a divergence — it threw, and a
+  // throw ERASES the dissent, so the finding a reviewer most exists to produce
+  // became the one finding the schema could not hold and the operator's only moves
+  // were to edit the label or drop the review (R4 forbids both). The divergence is
+  // now declarable (`labelDispute`) and non-sustaining (`reviewClaimSupport` →
+  // `label-disputed`); what is refused is a SILENT divergence, and the two
+  // cross-checks below keep the declaration from describing a different record than
+  // the one it is on.
   if (review.state === HUMAN_REVIEWED) {
     const concluded =
       review.adjudication?.decision ?? review.decisions[0].decision;
-    if (concluded !== label) {
+    const dispute = review.labelDispute;
+    if (concluded !== label && dispute === undefined) {
       throw new BenchmarkRecordError(
-        `the review concluded "${concluded}" while the record's label is "${label}": the label comes from provenance and the review corroborates it, so a divergence means one of the two is wrong and neither may be silently preferred`,
+        `the review concluded "${concluded}" while the record's label is "${label}", and the receipt declares no labelDispute: the label comes from provenance and the review corroborates it, so a divergence means one of the two is wrong — record it as review.labelDispute (state "${LABEL_DISPUTE_UNRESOLVED}", with the reviewers' reason) rather than preferring either one in silence. A disputed record stays in the corpus and sustains no review claim`,
+        id,
+      );
+    }
+    if (dispute !== undefined && dispute.recordLabel !== label) {
+      throw new BenchmarkRecordError(
+        `review.labelDispute.recordLabel is "${dispute.recordLabel}" while the record's label is "${label}": the block restates both sides of the contradiction so it can be read on its own, and a restatement that does not match the row describes some other record`,
         id,
       );
     }
@@ -2257,7 +2336,7 @@ function validateAutomatedUnreviewed(
   for (const key of RECEIPT_ONLY_KEYS) {
     if (obj[key] !== undefined) {
       throw new BenchmarkRecordError(
-        `review is ${AUTOMATED_UNREVIEWED} and cannot carry ${key}: an automated filter reaches no conclusion, so there is no agreement, no reviewer and no adjudication to record. A record that was really reviewed states state "${HUMAN_REVIEWED}" and carries the receipt`,
+        `review is ${AUTOMATED_UNREVIEWED} and cannot carry ${key}: an automated filter reaches no conclusion, so there is no agreement, no reviewer, no adjudication and no dissent from the label to record. A record that was really reviewed states state "${HUMAN_REVIEWED}" and carries the receipt`,
         id,
       );
     }
@@ -2437,6 +2516,51 @@ function validateHumanReviewReceipt(
     );
   }
 
+  // The DISPUTE block, checked here for everything that can be decided without the
+  // record and cross-checked against the label by the caller. Both halves are
+  // needed: this one keeps the block from misdescribing the receipt it sits in, and
+  // the caller's keeps it from misdescribing the row it is attached to.
+  let labelDispute: ReviewLabelDispute | undefined;
+  if (obj.labelDispute !== undefined) {
+    const path = "review.labelDispute";
+    const disputeObj = assertClosedObject(
+      obj.labelDispute,
+      path,
+      LABEL_DISPUTE_KEYS,
+      id,
+    );
+    const reviewedClass = enumValue(
+      disputeObj,
+      "reviewedClass",
+      path,
+      LABELS,
+      id,
+    );
+    const recordLabel = enumValue(disputeObj, "recordLabel", path, LABELS, id);
+    enumValue(disputeObj, "state", path, [LABEL_DISPUTE_UNRESOLVED], id);
+    if (reviewedClass !== concluded) {
+      throw new BenchmarkRecordError(
+        `${path}.reviewedClass is "${reviewedClass}" while the review concluded "${concluded}": the block describes this receipt's own dissent, so it may not name a third class`,
+        id,
+      );
+    }
+    // Two sides naming one class is not a dispute. With this refusal plus the
+    // caller's two cross-checks, the block is unwritable on a coherent record: it
+    // has to declare a divergence, and the divergence has to be the real one.
+    if (reviewedClass === recordLabel) {
+      throw new BenchmarkRecordError(
+        `${path} names "${reviewedClass}" on both sides, so nothing is in dispute: the block exists to record a review that CONTRADICTS the label, and inventing a conflict is the mirror of hiding one`,
+        id,
+      );
+    }
+    labelDispute = {
+      reviewedClass,
+      recordLabel,
+      state: LABEL_DISPUTE_UNRESOLVED,
+      rationale: nonEmptyString(disputeObj, "rationale", path, id),
+    };
+  }
+
   const receipt: HumanReviewReceipt = {
     state: HUMAN_REVIEWED,
     protocolVersion,
@@ -2446,6 +2570,7 @@ function validateHumanReviewReceipt(
     pii,
   };
   if (adjudication !== undefined) receipt.adjudication = adjudication;
+  if (labelDispute !== undefined) receipt.labelDispute = labelDispute;
   return receipt;
 }
 
