@@ -23,11 +23,18 @@ import xml.etree.ElementTree as ET
 import zipfile
 from pathlib import Path
 
+import group_axes
 from common import CandidateWriter, parse_iso_date, read_id_file
 
 SOURCE_ID = "src_carolina"
 TEI_NS = "{http://www.tei-c.org/ns/1.0}"
 EXCLUDED_TYPOLOGY_DIRS = {"wikis"}
+# The date field as the TEI header names it, for the record's labelEvidenceRef. The
+# download date is what makes the v2.0 (Bea) package usable at all — the package
+# carries TEI dates from 2024 and 2025, so this filter is load-bearing, not a
+# formality.
+DATE_FIELD = "TEI@teiHeader/fileDesc/publicationStmt/date[@type=Download]"
+SNAPSHOT = "carolina"
 
 # Carolina availability license -> our inventory licenseId. Fail-closed: a
 # license outside this map drops the document (counted as drop_license).
@@ -117,13 +124,46 @@ def extract(
                         writer.stats.scanned += 1
                         writer.stats.drop_license += 1
                     else:
+                        created = parse_iso_date(download_date or "")
                         writer.offer(
+                            # UNCHANGED: the candidate id derives from this string.
                             natural_key=f"carolina:{info.filename}:{sequence}",
                             license_id=license_id,
-                            created_at=parse_iso_date(download_date or ""),
+                            created_at=created,
                             raw_text=text,
                             domain_source=f"carolina_{typology}",
-                            meta={"typology": typology},
+                            meta={
+                                "typology": typology,
+                                "dateField": DATE_FIELD,
+                                "observedValue": (
+                                    created.isoformat() if created else ""
+                                ),
+                                "snapshot": SNAPSHOT,
+                                "groupAxes": {
+                                    # The MEMBER FILE, which is the axis the plan
+                                    # fixes for Carolina. It is a real cluster and
+                                    # not a formality: one member holds many TEI
+                                    # documents drawn from one crawl of one domain,
+                                    # so they share topic, register and often
+                                    # boilerplate. 361 non-wiki members carry the
+                                    # whole Carolina contribution, so these are large
+                                    # clusters — exactly the dependence `g_<recordId>`
+                                    # erased.
+                                    "source": group_axes.known(
+                                        "carolina_member_"
+                                        + group_axes.axis_token(info.filename)
+                                    ),
+                                    # This extractor never reads TEI header names (see
+                                    # its docstring and parse_document, which touches
+                                    # only availability, the download date and the
+                                    # body), so no author identifier ever enters the
+                                    # pipeline. notApplicable states that; `unknown`
+                                    # would claim we tried and failed.
+                                    "author": group_axes.not_applicable(
+                                        group_axes.NO_AUTHOR_READ
+                                    ),
+                                },
+                            },
                         )
                     if writer.stats.kept > kept_before:
                         kept_by_typology[typology] = (

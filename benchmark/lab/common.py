@@ -96,7 +96,13 @@ class Candidate:
     text: str
     words: int
     domain_source: str
-    meta: dict[str, str] = field(default_factory=dict)
+    # Not `dict[str, str]`: since C2 the extractors carry `groupAxes`, a nested
+    # object per grouping axis ({"state": ..., "id"/"reason": ...}). The annotation
+    # is widened rather than the axes being flattened into strings, because a
+    # three-valued state squeezed into a string is precisely the v2 defect — an
+    # empty string that means "unknown" to one reader and "not applicable" to
+    # another.
+    meta: dict[str, object] = field(default_factory=dict)
 
     def to_json(self) -> str:
         return json.dumps(
@@ -184,7 +190,7 @@ class CandidateWriter:
         created_at: datetime | None,
         raw_text: str,
         domain_source: str,
-        meta: dict[str, str] | None = None,
+        meta: dict[str, object] | None = None,
     ) -> None:
         """Runs the shared filters and writes the candidate when ALL pass."""
         stats = self.stats

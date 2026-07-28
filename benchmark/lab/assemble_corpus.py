@@ -38,10 +38,29 @@ import unicodedata
 from collections import Counter
 from pathlib import Path
 
+import group_axes
 import near_dupes
 
 CAND = Path(__file__).resolve().parent.parent / "data" / "candidates"
 DATASET = Path(__file__).resolve().parent.parent / "data" / "dataset"
+
+# The cutoff every human label in this corpus rests on, as the ISO instant the
+# record's labelEvidenceRef carries. Same value as common.CHATGPT_CUTOFF; spelled
+# here because the record needs the string form and the extractor needs the datetime.
+CUTOFF_ISO = "2022-11-30T00:00:00+00:00"
+
+# provenance.sourceId -> the frozen snapshot token it was extracted from
+# (benchmark/rebuild-v3-policy.json humanSources.snapshots). The fallback for a
+# candidate whose own meta does not carry the snapshot, which is every pool written
+# before C2. It maps SOURCE to SNAPSHOT and nothing else: it does not record which
+# concrete dump version, because that is a fact only the extractor saw and D1 is
+# what registers it.
+SOURCE_SNAPSHOT = {
+    "src_ptso": "pt-stackoverflow",
+    "src_wikipedia_pt": "ptwiki",
+    "src_b2w": "b2w-reviews01",
+    "src_carolina": "carolina",
+}
 
 # Block timestamps drive the temporal split (dev < cal < test).
 BLOCK_TIME = {"development": 1_000_000, "calibration": 2_000_000, "test": 3_000_000}
@@ -192,26 +211,394 @@ def pii_audit(block_time: int) -> dict:
     }
 
 
-def base_groups(rec_id: str, derivation_root: str) -> dict:
-    # All UNIQUE per record so the blocked split sees singleton components.
+# --- the grouping axes, from the identity the source actually has -------------
+#
+# WHAT WAS HERE, AND WHY IT WAS WRONG. `base_groups(rec_id, derivation_root)`
+# returned a fresh identifier per record on five axes at once: author as
+# a-underscore-recordId, source as g-, domainSource as ds-, collectionBatch as cb-
+# and nearDuplicate as nd-, each interpolating the record id —
+#
+# (spelled out in prose rather than pasted as the original f-strings on purpose:
+# `test_no_module_mints_a_per_record_group_token` greps this file for those five
+# literals, and a comment quoting them verbatim would defeat the guard that keeps
+# them from coming back. `git show 04c2cd5:benchmark/lab/assemble_corpus.py` has the
+# original bytes.)
+#
+# — under the comment "All UNIQUE per record so the blocked split sees singleton
+# components." Read as a design that is the whole defect stated out loud: the
+# grouping axes were built to guarantee that the split would never find a shared
+# component, and then the split's silence was read as evidence of no leakage.
+#
+# It is not merely uninformative, it is actively misleading in three measured ways:
+#
+#   * the blocked split reported `leakages: []` while separating identifiers that
+#     could not collide — a true statement about nothing;
+#   * `authorClusterKey` handed the bootstrap 10.000 distinct "authors", so a
+#     clustered resample was i.i.d. and every interval came out narrower than the
+#     data supports, in the direction that flatters the result;
+#   * `nearDuplicate` could not name a cluster, so a surviving near-duplicate pair
+#     cost BOTH records (ingest refuses every member of a cluster that straddles
+#     more than one lineage) instead of collapsing to one representative.
+#
+# DO NOT REINTRODUCE IT AS AN OPTIMISATION. It is tempting, because a per-record
+# token makes every downstream constraint pass on the first try: the split never
+# refuses a component, no stratum is ever under-powered, no record is ever
+# ineligible. That is exactly the reason it must not come back — it converts every
+# check in the pipeline into a tautology. If an axis has no identity, the answer is
+# `notApplicable` with a reason or `unknown` with a reason and the eligibility cost,
+# and a source that cannot yield one of the three is a bug in the extractor.
+
+
+class UnwritableInV3(ValueError):
+    """The pool row cannot be expressed as a v3 record, so it leaves the corpus.
+
+    A shared base so the assembler has ONE drop path: every subclass means the same
+    thing operationally ("count it, name the reason, do not write it"), and none of
+    them means "abort the assembly". The subclasses exist because the REASONS are
+    different facts an operator has to act on differently — a lane that is not frozen
+    needs a decision about the provider, a missing template digest needs a
+    regeneration, a missing date needs a re-extraction.
+
+    What no subclass ever means is "substitute a value and continue". Every one of
+    these rows was accepted by the v2 schema, which asked for less; the corpus gets
+    smaller and honest rather than complete and unverifiable.
+    """
+
+
+class UnmappableLane(UnwritableInV3):
+    """The record's provider is not one of the four frozen generation lanes.
+
+    Its own type because the correct handling is to DROP the record, not to abort
+    the assembly: the pools hold rows from providers that predate the frozen lane
+    table (`anthropic`, `openai`), and `groups.generationLane` must be `known` on
+    every `ai` row. A lane cannot be added here to accommodate them — the four are
+    frozen — and naming one they never ran on would be invented provenance (R4).
+    """
+
+
+class MissingRecipe(UnwritableInV3):
+    """The pool row does not record enough of its own recipe to be written as v3.
+
+    Also a drop-this-record signal rather than a crash. It fires on rows that the
+    v2 schema accepted because v2 asked for less: `ai_reserved.jsonl` carries only
+    {id, text, family, recipe, pairedWith, split} with no provider and no template
+    digest, and the mixed pools never recorded which mixing template produced them.
+
+    The alternative — reconstructing the missing field from whatever is in the lab
+    scripts TODAY — is refused on purpose. The template in `make_mixed.EDIT_PROMPT`
+    may not be the one that ran months ago, and a digest that merely looks plausible
+    is worse than an absent row: it would make `promptTemplate` a cluster nobody can
+    verify, which is the same class of defect as the per-record token above.
+    """
+
+
+class MissingLabelEvidence(UnwritableInV3):
+    """A human row whose candidate does not carry the date it was labelled on.
+
+    v3 requires `labelBasis` + `labelEvidenceRef` on every human record, because a
+    human label with no stated basis is an assertion rather than evidence. The date
+    is read from the source by the extractor; a candidate that lacks it came from a
+    pool written before the extractors emitted it, and the honest outcome is to drop
+    the row rather than to date it by guesswork.
+    """
+
+
+# provider label in the pools -> the frozen lane it corresponds to. Data, not
+# heuristics: `antigravity` is the name make_mixed_agy.py records for the SAME agy
+# binary generate_ai.py calls `agy`, which is why both map onto one lane.
+PROVIDER_LANE = {
+    "agy": "agy",
+    "antigravity": "agy",
+    "codex": "codex",
+    "gemini": "gemini-api",
+    "gemini_cli": "gemini-cli",
+}
+
+# The frozen lane rows, read from benchmark/rebuild-v3-policy.json rather than
+# retyped. The policy file is the single source of truth for what each lane accepts,
+# and a copy here would be a second authority that can disagree with the schema.
+POLICY_PATH = Path(__file__).resolve().parent.parent / "rebuild-v3-policy.json"
+
+
+def lane_rows() -> dict[str, dict]:
+    return json.loads(POLICY_PATH.read_text(encoding="utf-8"))["generationLanes"]
+
+
+LANE_ROWS = lane_rows()
+
+
+def lane_of(provider: str, declared: str | None = None) -> str:
+    """The frozen lane of a pool row.
+
+    `declared` wins when the generator recorded it, because a lane the generator
+    WROTE DOWN is an observation and a lane derived from a provider label is an
+    inference. The inference is kept as a fallback only for the pools written before
+    generate_ai.py emitted the field.
+    """
+    lane = declared or PROVIDER_LANE.get(provider or "")
+    if lane not in LANE_ROWS:
+        raise UnmappableLane(
+            f"provider {provider!r} (declared lane {declared!r}) is not one of the "
+            f"four frozen generation lanes {sorted(LANE_ROWS)}. The record cannot "
+            "name a lane it never ran on, so it leaves the corpus"
+        )
+    return lane
+
+
+def decoding_config(lane: str, meta: dict) -> dict:
+    """`generation.decoding`, decided by the LANE and not by what the pool carries.
+
+    MEASURED, and this is the sharpest datum C1 surfaced: generate_ai.py wrote
+    `"temperature": str(TEMPERATURE)` into the meta of EVERY provider, including
+    `agy`, `codex` and `gemini_cli`, which it invokes as CLIs with no sampling flag
+    anywhere in the argv (`[AGY_BIN, "-p", prompt, "--mode", "plan", "--model",
+    model]`). So the pools on disk carry temperature 0.8 on thousands of records
+    where no temperature was ever applied.
+
+    Under `decodingConfigurable: false` that number has nowhere to go and the schema
+    refuses it outright, which is the right outcome: carrying it forward would let a
+    reader — or a governance audit comparing a record against its declared batch —
+    conclude that a sampling temperature was chosen for a run that had no such knob.
+    """
+    row = LANE_ROWS[lane]
+    if not row["decodingConfigurable"]:
+        return {"configurable": False}
+    temperature = meta.get("temperature")
     return {
-        "author": f"a_{rec_id}",
-        "source": f"g_{rec_id}",
-        "domainSource": f"ds_{rec_id}",
-        "collectionBatch": f"cb_{rec_id}",
-        "nearDuplicate": f"nd_{rec_id}",
-        "derivationRoot": derivation_root,
+        "configurable": True,
+        # The provider's own word for the strategy, when it names one. None is a real
+        # state ("we did not set it, the default applied"), distinct from the
+        # `configurable: false` branch above ("this lane has no such knob").
+        "strategy": meta.get("decodingStrategy") or None,
+        "temperature": float(temperature) if temperature not in (None, "") else None,
+        "topP": float(meta["topP"]) if meta.get("topP") not in (None, "") else None,
+        "repetitionPenalty": (
+            float(meta["repetitionPenalty"])
+            if meta.get("repetitionPenalty") not in (None, "")
+            else None
+        ),
     }
+
+
+def effort_config(lane: str, meta: dict) -> dict:
+    """`generation.effort`, from what the lane RECORDED — never from the model name.
+
+    NOT DERIVED FROM THE MODEL ID SUFFIX, deliberately, even though on `agy` some
+    model ids embed the tier (`gpt-oss-120b-medium`, `gemini-3.6-flash-low`) and the
+    temptation to read it off the string is obvious. `--effort` exists as a session
+    flag in parallel, so `model` and `effort` are NOT orthogonal on that lane, and
+    the precedence between them has not been measured (it will be, by `--dry-run`,
+    before D3). Reading "medium" off a suffix would record as an observation
+    something that is a guess about which of two inputs won — the exact shape of
+    invented identity R6 forbids. So the fields are modelled such that the
+    precedence CAN be written down once it is known, and nothing is written until it
+    is.
+
+    The `not-supported` arm is only available on a lane whose frozen row offers it.
+    `codex` does not: its `effortSources` are `flag` and `provider-default`, and both
+    of those carry a level. A codex row whose effort was never recorded therefore
+    cannot be written as v3 at all, and it is refused rather than given a level we
+    do not know. That is a real blocker for the codex lane, not a quirk of this
+    function — see the plan's C2 section.
+    """
+    row = LANE_ROWS[lane]
+    level = meta.get("effortLevel")
+    source = meta.get("effortSource")
+    if level and source:
+        return {
+            "source": str(source),
+            "configurable": bool(row["effortConfigurable"]),
+            # The scale comes from the LANE, not from the record: effort is not
+            # comparable across providers (codex reaches xhigh, agy stops at high),
+            # so a level without its own lane's scale would read as a shared ordinal.
+            "scale": str(row["effortScale"]),
+            "level": str(level),
+        }
+    if "not-supported" in row["effortSources"]:
+        return {"source": "not-supported", "configurable": False}
+    raise MissingRecipe(
+        f"the lane {lane!r} offers effort sources {row['effortSources']} and none of "
+        "them is 'not-supported', so every record of this lane must name an effort "
+        "level and a source. This pool row records neither, and a level we did not "
+        "observe is not ours to supply"
+    )
+
+
+def harness_axis(lane: str, meta: dict) -> dict:
+    """`groups.harnessVersion` — the CLI binary that is an input to the text.
+
+    Three-way and the difference is the whole of R6. On an API lane there is no
+    harness, so `notApplicable` is TRUE. On a CLI lane the binary injects a system
+    prompt, loops over tools, retries and post-processes, so its version is an input
+    to the text: `notApplicable` there would be a false statement about the lane, and
+    a synthesized version string would be a false statement about the world. What is
+    left is `unknown` — true, and priced at the record's eligibility.
+
+    The pools on disk all take the `unknown` arm, because generate_ai.py did not
+    capture the binary version until this task added it. That is a measured cost of
+    the v2 generation runs and not something to paper over: those records are
+    ineligible until they are regenerated.
+    """
+    row = LANE_ROWS[lane]
+    if row["channel"] == "api":
+        return group_axes.not_applicable(
+            f"the lane {lane!r} is a direct API call: no harness binary runs, so "
+            "there is no version to attribute"
+        )
+    version = meta.get("harnessVersion")
+    if version:
+        return group_axes.known(group_axes.axis_token(str(version)))
+    return group_axes.unknown(
+        f"the lane {lane!r} runs a harness binary whose version this generation run "
+        "did not capture. The axis applies, so notApplicable would be false; the "
+        "record is ineligible instead of being given a version we never read"
+    )
+
+
+def parent_of_prompt(prompt_id: str) -> str | None:
+    """The human seed a generated row came from, out of its `promptId`.
+
+    The observed format is `<recipe>_<candidateId>` — `original_src_b2w_00848b3bc692`
+    — so the parent is everything after the first underscore. Split on the FIRST
+    underscore only: candidate ids contain underscores themselves
+    (`src_b2w_00848b3bc692`), and splitting on the last would return a hex fragment
+    that resolves to no record.
+    """
+    if not prompt_id or "_" not in prompt_id:
+        return None
+    _, parent = prompt_id.split("_", 1)
+    return parent or None
+
+
+# Which recipes REWRITE their parent text rather than writing new text about the
+# same subject. Only a rewrite makes the row a DERIVATION of the parent; `original`,
+# `social` and `humanizado` all produce new text from a seed, so their
+# `derivationRoot` is notApplicable while their `humanSeed` is known. Collapsing the
+# two axes would either invent a derivation or lose the seed, which is why
+# benchmark/schema.ts keeps them separate.
+REWRITING_RECIPES = {"parafrase"}
+
+
+def generation_axes(
+    lane: str,
+    family: str,
+    version: str,
+    recipe: str | None,
+    template_digest: str,
+    meta: dict,
+) -> dict:
+    """The six axes that name a piece of the generation apparatus."""
+    return {
+        "promptTemplate": group_axes.known(
+            # The TEMPLATE, identified by the digest of its own bytes, so two records
+            # of one recipe share the axis and a template edited between runs does
+            # not silently pool with its predecessor. The recipe NAME is carried too
+            # when the pool recorded it, because a digest alone is unreadable in a
+            # cluster report.
+            group_axes.axis_token(f"{recipe or 'recipe'}_{template_digest[:16]}")
+        ),
+        "generatorFamily": group_axes.known(generator_family(family)),
+        "generatorVersion": group_axes.known(group_axes.axis_token(version)),
+        "generationLane": group_axes.known(lane),
+        "harnessVersion": harness_axis(lane, meta),
+    }
+
+
+def label_evidence(cand: dict, source_id: str, license_id: str) -> tuple[dict, dict]:
+    """(labelEvidenceRef, the private entry it resolves against).
+
+    The `human` label of every row in this corpus rests on ONE fact: the text
+    predates the ChatGPT launch, read from a date field the source itself carries.
+    v3 makes the row say so — which field, what value, against which cutoff, out of
+    which snapshot — instead of asserting "human" and leaving the reader to trust it.
+
+    `entryId`/`entryDigest` name an entry of the PRIVATE manifest and the digest of
+    that entry's canonical bytes; only the digest crosses into the record, which is
+    what keeps the private file out of every published artifact. The entry is per
+    SOURCE (a registration: this base, this snapshot, this licence, this date field)
+    while the payload is per RECORD (the value read for this row), and that split is
+    the schema's, not ours.
+
+    SCOPE: the canonical private source manifest is D1's artifact. What this function
+    writes is the assembler's own evidence index, digest-consistent by construction
+    with the records it emits, so C3's `assertLabelEvidenceResolves` has something
+    real to resolve. It is not a stand-in for D1's registration and it does not
+    record the snapshot digests, which the shared context assigns to D1.
+    """
+    meta = cand.get("meta") or {}
+    date_field = meta.get("dateField")
+    observed = meta.get("observedValue")
+    snapshot = meta.get("snapshot") or SOURCE_SNAPSHOT.get(source_id)
+    if not date_field or not observed or not snapshot:
+        raise MissingLabelEvidence(
+            f"candidate {cand.get('candidateId')!r} carries no "
+            f"dateField/observedValue/snapshot (got {date_field!r}, {observed!r}, "
+            f"{snapshot!r}), so its human label has no stated basis. Re-extract the "
+            "pool with the current extractors; the date is not ours to guess"
+        )
+    entry = {
+        "entryKind": "human-source-registration",
+        "sourceId": source_id,
+        "snapshot": snapshot,
+        "licenseId": license_id,
+        "dateField": date_field,
+        "cutoff": CUTOFF_ISO,
+    }
+    # Canonical bytes: sorted keys, no spaces. The digest has to be reproducible by
+    # anyone holding the entry, so the serialization is pinned rather than incidental.
+    canonical = json.dumps(entry, sort_keys=True, separators=(",", ":"))
+    entry_id = f"ev_{group_axes.axis_token(source_id)}_{group_axes.axis_token(snapshot)}"
+    entry_digest = hashlib.sha256(canonical.encode("utf-8")).hexdigest()
+    ref = {
+        "basis": "date-cutoff",
+        "entryId": entry_id,
+        "entryDigest": entry_digest,
+        "dateField": date_field,
+        "observedValue": observed,
+        "cutoff": CUTOFF_ISO,
+        "snapshot": snapshot,
+    }
+    return ref, {"entryId": entry_id, "entryDigest": entry_digest, **entry}
+
+
+def near_duplicate_axis(cand_id: str, representative: str | None) -> dict:
+    """`groups.nearDuplicate` — the cluster `near_dupes.prune` left this row in.
+
+    The identity is the surviving REPRESENTATIVE's candidate id, so a cluster with
+    two members would share it. After pruning every cluster has exactly one member,
+    so in practice this axis is all singletons and the representative is the row
+    itself — and that is CORRECT, not degenerate: collapsing near-duplicates to one
+    representative is what pruning does, so an all-singleton distribution here is the
+    evidence that it worked.
+
+    This is the one axis whose identifier legitimately coincides with the record's
+    own, and the distinction from the old nd-plus-record-id token is not cosmetic (a
+    verbatim quote would trip the guard test; see the note above). That
+    token was minted BECAUSE it would be unique; this one is read from the pruning
+    result and would collide the moment two rows shared a cluster.
+    """
+    return group_axes.known(group_axes.axis_token(representative or cand_id))
 
 
 # --- record builders (return the canonical dict, block_time filled later) ----
 
 
-def human_record(cand: dict, register: str, hard_neg: str | None) -> dict:
+def human_record(
+    cand: dict,
+    register: str,
+    hard_neg: str | None,
+    near_duplicate: str | None = None,
+    evidence_sink: list | None = None,
+) -> dict:
     rec_id = slug(cand["candidateId"])
     source_id, license_id = HUMAN_SOURCE[cand["domainSource"]]
+    meta = cand.get("meta") or {}
+    axes = dict(meta.get("groupAxes") or {})
+    ref, entry = label_evidence(cand, source_id, license_id)
+    if evidence_sink is not None:
+        evidence_sink.append(entry)
     rec = {
-        "schemaVersion": 2,
+        "schemaVersion": 3,
         "id": rec_id,
         "text": cand["text"],
         "label": "human",
@@ -221,6 +608,9 @@ def human_record(cand: dict, register: str, hard_neg: str | None) -> dict:
         "topic": "geral",
         "humanSourceType": register,
         "wordCount": int(cand["wordCount"]),
+        # The whole basis of the human label, and the entry it resolves against.
+        "labelBasis": "date-cutoff",
+        "labelEvidenceRef": ref,
         "provenance": {
             "sourceKind": "licensed-corpus",
             "sourceId": source_id,
@@ -230,34 +620,89 @@ def human_record(cand: dict, register: str, hard_neg: str | None) -> dict:
         },
         "annotation": dict(ANNOTATION),
         "transformation": {"kind": "none", "severity": "none"},
-        "groups": base_groups(rec_id, rec_id),
+        "groups": {
+            # From the SOURCE, via the extractor. `author` is `known` (HMAC
+            # pseudonym), `notApplicable` (Wikipedia has no single author, Carolina
+            # headers are never read) or `unknown` (deleted account) — the extractor
+            # decides, because it is the only layer that saw the row.
+            "author": axes.get("author")
+            or group_axes.unknown(
+                "the candidate pool predates the extractors that emit an author axis"
+            ),
+            "source": axes.get("source")
+            or group_axes.unknown(
+                "the candidate pool predates the extractors that emit a source axis"
+            ),
+            "domainSource": group_axes.known(
+                group_axes.axis_token(cand["domainSource"])
+            ),
+            # A human row seeds generations; it is not itself seeded by one, and it
+            # derives from nothing. Both are statements, and neither costs the row.
+            "humanSeed": group_axes.not_applicable(
+                "the record IS the human text: it is a seed, not something seeded"
+            ),
+            "promptTemplate": group_axes.not_applicable(
+                group_axes.NOT_A_GENERATED_ROW
+            ),
+            "generatorFamily": group_axes.not_applicable(
+                group_axes.NOT_A_GENERATED_ROW
+            ),
+            "generatorVersion": group_axes.not_applicable(
+                group_axes.NOT_A_GENERATED_ROW
+            ),
+            "generationLane": group_axes.not_applicable(
+                group_axes.NOT_A_GENERATED_ROW
+            ),
+            "harnessVersion": group_axes.not_applicable(
+                group_axes.NOT_A_GENERATED_ROW
+            ),
+            # The EXTRACTION RUN that produced the row: a real batch shared by every
+            # candidate of one pool file, not a per-record token. The audit refuses a
+            # non-generated record that names a declared GENERATION batch, so this
+            # deliberately reads `extraction_*` and can never collide with a `gb_*`.
+            "collectionBatch": group_axes.known(
+                group_axes.axis_token(
+                    str(meta.get("collectionBatch") or f"extraction_{cand['domainSource']}")
+                )
+            ),
+            "nearDuplicate": near_duplicate_axis(rec_id, near_duplicate),
+            "derivationRoot": group_axes.not_applicable(
+                "the record is an extracted source text, derived from nothing in "
+                "this corpus"
+            ),
+        },
     }
     if hard_neg is not None:
         rec["hardNegativeFamily"] = hard_neg
     return rec
 
 
-def ai_record(cand: dict) -> dict:
+def ai_record(cand: dict, near_duplicate: str | None = None) -> dict:
     meta = cand.get("meta") or {}
     rec_id = slug(cand.get("candidateId") or cand["id"])
     family_raw = meta.get("family") or cand.get("family") or "unknown"
-    family = generator_family(family_raw)
-    prompt_id = slug(meta.get("promptId") or f"repro_{rec_id}")
+    lane = lane_of(str(meta.get("provider") or ""), meta.get("generationLane"))
     # The governance audit compares generation.promptSha256 against the batch's
-    # promptTemplateDigest, so the record must carry the TEMPLATE digest (shared
-    # by every record of a recipe) — not the per-record full-prompt digest, which
+    # promptTemplateDigest, so the record carries the TEMPLATE digest (shared by
+    # every record of a recipe) rather than the per-record full-prompt digest, which
     # would force one declared batch per record. The instance stays identifiable
-    # through promptId; candidates keep the full-prompt digest in their own meta.
-    prompt_sha = (
-        meta.get("promptTemplateDigest")
-        or meta.get("promptSha256")
-        # Reserved records carry no prompt metadata at all. Keying the fallback
-        # on the record id would mint one declared batch per record (1476 of
-        # them); the family is what is actually known about their recipe.
-        or hashlib.sha256(f"reserved-recipe:{family_raw}".encode("utf-8")).hexdigest()
-    )
+    # through promptId.
+    template_digest = meta.get("promptTemplateDigest") or meta.get("promptSha256")
+    if not template_digest:
+        raise MissingRecipe(
+            f"candidate {rec_id!r} records no prompt template digest, so its "
+            "promptTemplate axis has no identity. v2 accepted such a row by keying "
+            "a fallback on the family name; v3 requires the axis to be known, and a "
+            "digest we invent is a cluster nobody can verify"
+        )
+    recipe = meta.get("recipe")
+    prompt_id = slug(meta.get("promptId") or f"repro_{rec_id}")
+    parent = meta.get("pairedWith") or parent_of_prompt(str(meta.get("promptId") or ""))
+    model = str(meta.get("model") or family_raw)
+    version = str(meta.get("version") or family_raw)
+    axes = generation_axes(lane, str(family_raw), version, recipe, template_digest, meta)
     rec = {
-        "schemaVersion": 2,
+        "schemaVersion": 3,
         "id": rec_id,
         "text": cand["text"],
         "label": "ai",
@@ -277,22 +722,53 @@ def ai_record(cand: dict) -> dict:
         "generation": {
             "provider": str(meta.get("provider") or "reserved"),
             "family": str(family_raw),
-            "model": str(meta.get("model") or family_raw),
-            "version": str(meta.get("version") or family_raw),
+            "model": model,
+            "version": version,
             "promptId": prompt_id,
-            "promptSha256": prompt_sha,
-            # Governance compares (temperature ?? null) against the declared
-            # batch, whose temperature MUST be a finite number — so the record
-            # has to carry it too, not leave it implicit.
-            "temperature": float(meta.get("temperature") or LAB_TEMPERATURE),
+            "promptSha256": str(meta.get("promptSha256") or template_digest),
+            "promptTemplateDigest": str(template_digest),
+            "decoding": decoding_config(lane, meta),
+            "effort": effort_config(lane, meta),
         },
         "transformation": {"kind": "none", "severity": "none"},
-        "groups": {**base_groups(rec_id, rec_id), "generatorFamily": family},
+        "groups": {
+            # Generated text has no human author and comes from no origin document,
+            # and both of those are facts rather than gaps. The v2 fixtures wrote
+            # `author: "author_gen_001"` on generated rows — a person-shaped token
+            # for a row with no person.
+            "author": group_axes.not_applicable(group_axes.NO_HUMAN_AUTHOR),
+            "source": group_axes.not_applicable(
+                "generated text has no origin document: its input was a prompt, "
+                "which is groups.promptTemplate, and a seed, which is groups.humanSeed"
+            ),
+            "domainSource": group_axes.known(
+                group_axes.axis_token(str(cand.get("domainSource") or f"ai_{lane}"))
+            ),
+            "humanSeed": (
+                group_axes.known(group_axes.axis_token(str(parent)))
+                if parent
+                else group_axes.not_applicable(
+                    "the recipe answered a bare topic prompt with no human parent"
+                )
+            ),
+            **axes,
+            # Filled by assign_generation_batches once every record knows its
+            # temporal block, because generatedAt is part of the batch key.
+            "collectionBatch": group_axes.unknown(
+                "the generation batch is derived after partitioning"
+            ),
+            "nearDuplicate": near_duplicate_axis(rec_id, near_duplicate),
+            "derivationRoot": (
+                group_axes.known(group_axes.axis_token(str(parent)))
+                if parent and recipe in REWRITING_RECIPES
+                else group_axes.not_applicable(group_axes.NO_DERIVATION)
+            ),
+        },
     }
     return rec
 
 
-def mixed_record(cand: dict) -> dict:
+def mixed_record(cand: dict, near_duplicate: str | None = None) -> dict:
     parent = slug(cand["parentId"])
     rec_id = f"mix_{parent}"
     text = cand["text"]
@@ -300,9 +776,19 @@ def mixed_record(cand: dict) -> dict:
     total = len(text)
     ai_chars = sum(s["end"] - s["start"] for s in spans if s["origin"] == "ai")
     ai_fraction = ai_chars / total if total else 0.0
-    family = generator_family(cand.get("model") or "unknown")
+    model = str(cand.get("model") or "unknown")
+    lane = lane_of(str(cand.get("provider") or ""), cand.get("generationLane"))
+    template_digest = cand.get("promptTemplateDigest")
+    if not template_digest:
+        raise MissingRecipe(
+            f"mixed row {rec_id!r} records no mixing template digest. The template "
+            "that produced it is not recoverable from the row, and taking whichever "
+            "template make_mixed.py holds today would attach a recipe this row "
+            "cannot support — the pool was written before the digest was persisted"
+        )
+    recipe = str(cand.get("promptTemplateId") or "mixed")
     rec = {
-        "schemaVersion": 2,
+        "schemaVersion": 3,
         "id": rec_id,
         "text": text,
         "label": "mixed",
@@ -326,32 +812,56 @@ def mixed_record(cand: dict) -> dict:
                 {"start": int(s["start"]), "end": int(s["end"]), "origin": s["origin"]}
                 for s in spans
             ],
-            # Mandatory in the sealed schema (benchmark/schema.ts) and a FACT here,
-            # not a default: make_mixed.py chose and executed the edits, so the
-            # provenance of every span is known while the coauthorship
+            # A FACT here and not a default: make_mixed.py chose and executed the
+            # edits, so the provenance of every span is known while the coauthorship
             # distribution is ours. "ecological" would claim an observed writing
-            # process this lane never watched, and this assembler must never
-            # write it (R4).
+            # process this lane never watched, and this assembler must never write
+            # it (R4).
             "generationMode": MECHANISTIC_GENERATION_MODE,
         },
-        # The AI spans ARE controlled generation, and governance demands a
-        # recipe for every controlled-generation record. mixed candidates carry
-        # no prompt digest of their own, so the mixing recipe is identified
-        # deterministically by its model — shared by every record of the batch.
+        # The AI spans ARE controlled generation, and a mechanistic mixed row's
+        # recipe is ours, so the schema requires it on the row.
         "generation": {
             "provider": str(cand.get("provider") or "reserved"),
-            "family": str(cand.get("model") or "unknown"),
-            "model": str(cand.get("model") or "unknown"),
-            "version": str(cand.get("model") or "unknown"),
-            "promptId": f"mix_{family}",
-            "promptSha256": hashlib.sha256(
-                f"mixed-recipe:{cand.get('model') or 'unknown'}".encode("utf-8")
-            ).hexdigest(),
-            "temperature": LAB_TEMPERATURE,
+            "family": model,
+            "model": model,
+            "version": model,
+            "promptId": slug(f"{recipe}_{parent}"),
+            "promptSha256": str(template_digest),
+            "promptTemplateDigest": str(template_digest),
+            "decoding": decoding_config(lane, cand),
+            "effort": effort_config(lane, cand),
         },
         "transformation": {"kind": "human-ai-mix", "severity": "medium"},
-        # derivationRoot points to the (out-of-corpus) parent; != rec_id.
-        "groups": {**base_groups(rec_id, parent), "generatorFamily": family},
+        "groups": {
+            # A mixed row IS a human text with generated stretches, so its human
+            # author and origin document are real. The pools do not carry them (the
+            # pairs files record only the parent id), so they are `unknown` and
+            # inherited from the parent by C3 rather than fabricated here.
+            "author": group_axes.unknown(
+                "the mixing pools record only the parent id; the parent's author "
+                "axis is resolved through groups.derivationRoot, not copied here"
+            ),
+            "source": group_axes.unknown(
+                "the mixing pools record only the parent id; the parent's origin "
+                "document is resolved through groups.derivationRoot"
+            ),
+            "domainSource": group_axes.known(
+                group_axes.axis_token(str(cand.get("parentFamily") or "mixed"))
+            ),
+            # BOTH known, and both the same row: a mechanistic mixed record is built
+            # by editing one specific human text, so that text is its seed AND the
+            # thing it derives from. This is the lineage requirement 5 asks for, and
+            # it is what keeps the whole seed -> generation -> derivative tree in one
+            # partition once C3/E2 impose it.
+            "humanSeed": group_axes.known(parent),
+            "derivationRoot": group_axes.known(parent),
+            **generation_axes(lane, model, model, recipe, str(template_digest), cand),
+            "collectionBatch": group_axes.unknown(
+                "the generation batch is derived after partitioning"
+            ),
+            "nearDuplicate": near_duplicate_axis(rec_id, near_duplicate),
+        },
     }
     return rec
 

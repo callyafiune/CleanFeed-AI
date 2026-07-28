@@ -22,11 +22,19 @@ import re
 import xml.etree.ElementTree as ET
 from pathlib import Path
 
+import group_axes
 from common import CandidateWriter, parse_iso_date, read_id_file
 
 SOURCE_ID = "src_wikipedia_pt"
 LICENSE_ID = "cc-by-sa-4.0"
 MW_NS = "{http://www.mediawiki.org/xml/export-0.10/}"
+# The date field as the DUMP names it, for the record's labelEvidenceRef.
+DATE_FIELD = "pages-articles.xml@revision/timestamp"
+# The frozen snapshot token. The dump on disk is ptwiki-20220301 — 1 March 2022,
+# pre-ChatGPT, which is what satisfies the mandatory pre-Nov/2022 requirement of
+# docs/corpus-sources.md. The policy vocabulary names the base, not the date, so the
+# concrete dump version is recorded through --snapshot-version and never presumed.
+SNAPSHOT = "ptwiki"
 
 _COMMENT = re.compile(r"<!--.*?-->", re.DOTALL)
 _REF = re.compile(r"<ref[^>/]*/>|<ref[^>]*>.*?</ref>", re.DOTALL | re.IGNORECASE)
@@ -82,7 +90,19 @@ def lead_section(wikitext: str) -> str:
     return "\n\n".join(lines)
 
 
-def extract(input_path: Path, writer: CandidateWriter) -> None:
+def extract(
+    input_path: Path,
+    writer: CandidateWriter,
+    snapshot_version: str = "",
+) -> None:
+    """Streams the dump, emitting the PAGE as the grouping identity.
+
+    `snapshot_version` is the concrete dump name (`ptwiki-20220301`) and is recorded
+    rather than presumed: the shared context is explicit that the version must be
+    registered in the provenance, and the extractor is the only place that has seen
+    the file. It is empty when the caller did not say, and empty is a truthful
+    "nobody wrote it down" rather than a guessed date.
+    """
     with bz2.open(str(input_path), "rb") as stream:
         for _, element in ET.iterparse(stream, events=("end",)):
             if element.tag != f"{MW_NS}page":
@@ -100,13 +120,42 @@ def extract(input_path: Path, writer: CandidateWriter) -> None:
                         revision.findtext(f"{MW_NS}text") if revision is not None else None
                     )
                     if wikitext:
+                        created = parse_iso_date(timestamp or "")
                         writer.offer(
+                            # UNCHANGED: the candidate id derives from this string,
+                            # and a re-extraction must not renumber the corpus.
                             natural_key=f"ptwiki:{page_id}",
                             license_id=LICENSE_ID,
-                            created_at=parse_iso_date(timestamp or ""),
+                            created_at=created,
                             raw_text=lead_section(wikitext),
                             domain_source="ptwiki_lead",
-                            meta={},
+                            meta={
+                                "dateField": DATE_FIELD,
+                                "observedValue": (
+                                    created.isoformat() if created else ""
+                                ),
+                                "snapshot": SNAPSHOT,
+                                "snapshotVersion": snapshot_version,
+                                "groupAxes": {
+                                    # The PAGE. Two lead sections never come from one
+                                    # page (we take one per page), so this axis is
+                                    # expected to be all singletons TODAY — and it is
+                                    # still the right identity, because it is what
+                                    # makes a future revision of the same page join
+                                    # its predecessor instead of looking independent.
+                                    "source": group_axes.known(
+                                        f"ptwiki_page_{page_id}"
+                                    ),
+                                    # notApplicable and NOT unknown: there is no
+                                    # single author to recover, so nothing was lost
+                                    # and the record stays eligible. Writing
+                                    # `unknown` here would make every Wikipedia row
+                                    # ineligible over a value that does not exist.
+                                    "author": group_axes.not_applicable(
+                                        group_axes.NO_SINGLE_AUTHOR
+                                    ),
+                                },
+                            },
                         )
             finally:
                 element.clear()
@@ -127,6 +176,12 @@ def main() -> None:
         help="arquivo de candidate_ids (um por linha) a pular na emissão — "
         "extração fresca disjunta do que já foi usado",
     )
+    parser.add_argument(
+        "--snapshot-version",
+        default="",
+        help="nome concreto do dump (ex.: ptwiki-20220301). Registrado na "
+        "proveniência; não é inferido do arquivo",
+    )
     args = parser.parse_args()
 
     writer = CandidateWriter(
@@ -137,7 +192,7 @@ def main() -> None:
         exclude_ids=read_id_file(args.exclude) if args.exclude else None,
     )
     try:
-        extract(args.input, writer)
+        extract(args.input, writer, snapshot_version=args.snapshot_version)
     finally:
         writer.close()
     print(f"{SOURCE_ID}: kept={writer.stats.kept} scanned={writer.stats.scanned}")

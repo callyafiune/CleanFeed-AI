@@ -25,12 +25,20 @@ from common import (
     word_count,
 )
 from extract_b2w import extract as extract_b2w
+from pseudonymize import ClusterKeyring
 from extract_carolina import extract as extract_carolina
 from extract_stackexchange import extract as extract_stackexchange, html_to_text
 from extract_wikipedia import lead_section, strip_templates
 import extract_wikipedia
 
 PROSE_60 = " ".join(f"palavra{i}" for i in range(60))
+
+# The two person-carrying sources fail closed without a cluster-exposure keyring
+# (pseudonymize.require_keyring), so every extractor test that reaches them has to
+# supply one. A FIXTURE secret, deliberately not the operator's: the pseudonyms it
+# produces are meaningless outside this file, which is the point — no test may
+# depend on the real keyring, and no real pseudonym may be pinned in a test.
+FIXTURE_KEYRING = ClusterKeyring("fixture-v1", {"person": "ab" * 32})
 
 
 def run_writer(tmp: Path, name: str, fn) -> tuple[list[dict], dict]:
@@ -167,7 +175,7 @@ class StackExchangeTests(unittest.TestCase):
             posts = tmp / "Posts.xml"
             posts.write_text(xml, encoding="utf-8")
             rows, stats = run_writer(
-                tmp, "ptso_bad", lambda w: extract_stackexchange(posts, w)
+                tmp, "ptso_bad", lambda w: extract_stackexchange(posts, w, keyring=FIXTURE_KEYRING)
             )
         self.assertEqual(len(rows), 1)
         self.assertEqual(stats["drop_other"], 1)
@@ -186,7 +194,7 @@ class StackExchangeTests(unittest.TestCase):
             posts = tmp / "Posts.xml"
             posts.write_text(xml, encoding="utf-8")
             rows, stats = run_writer(
-                tmp, "ptso", lambda w: extract_stackexchange(posts, w)
+                tmp, "ptso", lambda w: extract_stackexchange(posts, w, keyring=FIXTURE_KEYRING)
             )
         self.assertEqual(len(rows), 1)
         self.assertEqual(rows[0]["meta"]["postType"], "question")
@@ -249,7 +257,7 @@ class B2WTests(unittest.TestCase):
             tmp = Path(raw)
             path = tmp / "b2w.csv"
             path.write_text(csv_text, encoding="utf-8")
-            rows, stats = run_writer(tmp, "b2w", lambda w: extract_b2w(path, w))
+            rows, stats = run_writer(tmp, "b2w", lambda w: extract_b2w(path, w, keyring=FIXTURE_KEYRING))
         self.assertEqual(len(rows), 1)
         self.assertEqual(rows[0]["domainSource"], "b2w_reviews")
         self.assertEqual(rows[0]["licenseId"], "cc-by-nc-sa-4.0")
@@ -632,3 +640,827 @@ class HeldOutFloorWarningTests(unittest.TestCase):
             thin_held_out_families([], {"gemini-3_5-flash-low"}, minimum=200),
             {"gemini-3_5-flash-low": 0},
         )
+
+
+# ===========================================================================
+# C2 — the assembler persists REAL groups.
+#
+# Every test below exists because `assemble_corpus.base_groups` used to mint
+# `a_<recordId>` / `g_<recordId>` / `ds_<recordId>` / `cb_<recordId>` /
+# `nd_<recordId>` — one identifier per record, on five axes at once, under the
+# comment "All UNIQUE per record so the blocked split sees singleton
+# components." A split over identifiers built never to collide reports no
+# leakage because there is nothing left to collide, and a bootstrap clustered on
+# them is i.i.d. over 10.000 groups of one.
+#
+# So the property under test is never "the axis is filled". It is "the axis
+# carries the identity the SOURCE has, and says so when the source has none".
+# ===========================================================================
+
+
+class ClusterPseudonymTests(unittest.TestCase):
+    """A person identifier is HMAC'd with a secret, or the run fails."""
+
+    def test_missing_keyring_fails_closed_instead_of_hashing(self) -> None:
+        from pseudonymize import ClusterKeyringMissing, load_cluster_keyring
+
+        with tempfile.TemporaryDirectory() as raw:
+            absent = Path(raw) / "cluster-exposure-keyring.v1.json"
+            with self.assertRaises(ClusterKeyringMissing) as caught:
+                load_cluster_keyring(absent)
+        # The message has to point at C3's canonical path, because the operator's
+        # next question is "where do I put it".
+        self.assertIn("cluster-exposure-keyring.v1.json", str(caught.exception))
+
+    def test_a_keyring_without_the_purpose_key_fails_closed(self) -> None:
+        from pseudonymize import ClusterKeyringMissing, load_cluster_keyring
+
+        with tempfile.TemporaryDirectory() as raw:
+            path = Path(raw) / "cluster-exposure-keyring.v1.json"
+            path.write_text(
+                json.dumps({"keyringVersion": "v1", "secrets": {"other": "aa" * 32}}),
+                encoding="utf-8",
+            )
+            keyring = load_cluster_keyring(path)
+            with self.assertRaises(ClusterKeyringMissing):
+                keyring.pseudonym("person", "40")
+
+    def test_the_pseudonym_is_keyed_and_not_a_bare_digest(self) -> None:
+        import hashlib
+
+        from pseudonymize import ClusterKeyring
+
+        left = ClusterKeyring("v1", {"person": "11" * 32})
+        right = ClusterKeyring("v1", {"person": "22" * 32})
+        first = left.pseudonym("person", "40")
+        # Deterministic under one secret...
+        self.assertEqual(first, left.pseudonym("person", "40"))
+        # ...and NOT a function of the identifier alone. This is the whole point:
+        # `OwnerUserId="40"` is low entropy, so an unkeyed digest of it is
+        # reversible by enumerating the integers.
+        self.assertNotEqual(first, right.pseudonym("person", "40"))
+        self.assertNotIn(hashlib.sha256(b"40").hexdigest()[:16], first)
+        self.assertNotIn(hashlib.sha1(b"40").hexdigest()[:16], first)
+        # A pseudonym token: benchmark/schema.ts validates every group id against
+        # /^[A-Za-z0-9_-]+$/, so a "." would be refused at ingest.
+        self.assertRegex(first, r"^[A-Za-z0-9_-]+$")
+
+    def test_the_purpose_separates_two_axes_of_the_same_raw_value(self) -> None:
+        from pseudonymize import ClusterKeyring
+
+        keyring = ClusterKeyring("v1", {"a": "11" * 32, "b": "11" * 32})
+        # Same secret, same raw value, different axis -> different pseudonym, so a
+        # reviewer id that happens to equal an author id does not join two rows.
+        self.assertNotEqual(keyring.pseudonym("a", "40"), keyring.pseudonym("b", "40"))
+
+
+class GroupAxisStateTests(unittest.TestCase):
+    """The three states R6 allows, in the shape benchmark/schema.ts accepts."""
+
+    def test_the_axis_list_mirrors_the_sealed_schema(self) -> None:
+        import re as _re
+
+        from group_axes import V3_GROUP_AXES
+
+        source = (
+            Path(__file__).resolve().parent.parent / "schema.ts"
+        ).read_text(encoding="utf-8")
+        block = source.split("export const V3_GROUP_AXES = [", 1)[1].split("]", 1)[0]
+        self.assertEqual(list(V3_GROUP_AXES), _re.findall(r'"([a-zA-Z]+)"', block))
+
+    def test_known_carries_an_id_and_the_others_carry_a_reason(self) -> None:
+        from group_axes import known, not_applicable, unknown
+
+        self.assertEqual(known("thread_7"), {"state": "known", "id": "thread_7"})
+        self.assertEqual(
+            not_applicable("no single author"),
+            {"state": "notApplicable", "reason": "no single author"},
+        )
+        self.assertEqual(
+            unknown("deleted account"),
+            {"state": "unknown", "reason": "deleted account"},
+        )
+
+    def test_a_state_without_its_justification_is_refused(self) -> None:
+        from group_axes import not_applicable, unknown
+
+        # The reason is mandatory for exactly the failure mode R6 names: a producer
+        # writing notApplicable to dodge ineligibility. A reason is something a
+        # reviewer can disagree with; an empty string is not.
+        for factory in (not_applicable, unknown):
+            with self.assertRaises(ValueError):
+                factory("")
+
+    def test_known_refuses_a_raw_identifier_carrying_a_pii_separator(self) -> None:
+        from group_axes import known
+
+        # "." is the separator this project treats as PII-shaped, and the sealed
+        # schema refuses it. Catching it here means the assembler fails on the lab
+        # bench instead of after a full ingest run.
+        with self.assertRaises(ValueError):
+            known("gemini-3.5-flash-lite")
+
+
+class SourceIdentityTests(unittest.TestCase):
+    """Each extractor emits the identity the plan fixes for its source."""
+
+    def setUp(self) -> None:
+        self.keyring = FIXTURE_KEYRING
+
+    def test_stackexchange_emits_thread_and_author(self) -> None:
+        import extract_stackexchange
+
+        xml = (
+            "<posts>"
+            f'<row Id="2" PostTypeId="1" CreationDate="2013-12-11T15:51:07.527"'
+            f' OwnerUserId="40" Body="&lt;p&gt;{PROSE_60}&lt;/p&gt;" />'
+            f'<row Id="4" PostTypeId="2" ParentId="2"'
+            f' CreationDate="2013-12-11T15:54:31.357" OwnerUserId="57"'
+            f' Body="&lt;p&gt;{PROSE_60}&lt;/p&gt;" />'
+            f'<row Id="9" PostTypeId="2" ParentId="2"'
+            f' CreationDate="2013-12-12T10:00:00.000"'
+            f' Body="&lt;p&gt;{PROSE_60}&lt;/p&gt;" />'
+            "</posts>"
+        )
+        with tempfile.TemporaryDirectory() as raw:
+            path = Path(raw) / "Posts.xml"
+            path.write_text(xml, encoding="utf-8")
+            rows, _ = run_writer(
+                Path(raw),
+                "ptso",
+                lambda w: extract_stackexchange.extract(path, w, keyring=self.keyring),
+            )
+        self.assertEqual(len(rows), 3)
+        axes = [r["meta"]["groupAxes"] for r in rows]
+        # THREAD: the question is its own thread, and both answers belong to it. So
+        # the three rows form ONE cluster of three on the `source` axis, which is
+        # exactly what `g_<recordId>` could never express.
+        self.assertEqual(axes[0]["source"], {"state": "known", "id": "ptso_thread_2"})
+        self.assertEqual(axes[1]["source"], axes[0]["source"])
+        self.assertEqual(axes[2]["source"], axes[0]["source"])
+        # AUTHOR: two different real accounts, pseudonymised, never the raw id.
+        self.assertEqual(axes[0]["author"]["state"], "known")
+        self.assertNotEqual(axes[0]["author"]["id"], axes[1]["author"]["id"])
+        self.assertNotIn("40", axes[0]["author"]["id"])
+        # A post with NO OwnerUserId is a deleted account: the author exists and was
+        # not recovered, which is `unknown` (the record becomes ineligible) and
+        # never a synthesized token.
+        self.assertEqual(axes[2]["author"]["state"], "unknown")
+        self.assertTrue(axes[2]["author"]["reason"])
+
+    def test_stackexchange_without_a_keyring_refuses_to_run(self) -> None:
+        import extract_stackexchange
+        from pseudonymize import ClusterKeyringMissing
+
+        xml = (
+            "<posts>"
+            f'<row Id="2" PostTypeId="1" CreationDate="2013-12-11T15:51:07.527"'
+            f' OwnerUserId="40" Body="&lt;p&gt;{PROSE_60}&lt;/p&gt;" />'
+            "</posts>"
+        )
+        with tempfile.TemporaryDirectory() as raw:
+            path = Path(raw) / "Posts.xml"
+            path.write_text(xml, encoding="utf-8")
+            with self.assertRaises(ClusterKeyringMissing):
+                run_writer(
+                    Path(raw),
+                    "ptso",
+                    lambda w: extract_stackexchange.extract(path, w, keyring=None),
+                )
+
+    def test_wikipedia_emits_the_page_and_says_author_does_not_apply(self) -> None:
+        page = (
+            '<mediawiki xmlns="http://www.mediawiki.org/xml/export-0.10/">'
+            "<page><title>T</title><ns>0</ns><id>99</id><revision>"
+            "<timestamp>2021-05-01T00:00:00Z</timestamp>"
+            f"<text>{PROSE_60}</text>"
+            "</revision></page></mediawiki>"
+        )
+        with tempfile.TemporaryDirectory() as raw:
+            path = Path(raw) / "ptwiki.xml.bz2"
+            path.write_bytes(bz2.compress(page.encode("utf-8")))
+            rows, _ = run_writer(
+                Path(raw), "wiki", lambda w: extract_wikipedia.extract(path, w)
+            )
+        axes = rows[0]["meta"]["groupAxes"]
+        self.assertEqual(axes["source"], {"state": "known", "id": "ptwiki_page_99"})
+        # NOT `unknown`: a Wikipedia article is collectively written, so there is no
+        # single author to recover. notApplicable is legitimate and does NOT cost
+        # the record its eligibility — that distinction is the whole of R6.
+        self.assertEqual(axes["author"]["state"], "notApplicable")
+        self.assertTrue(axes["author"]["reason"])
+
+    def test_b2w_emits_product_and_reviewer(self) -> None:
+        import extract_b2w
+
+        header = "submission_date,reviewer_id,product_id,review_title,review_text\n"
+        body = (
+            f"2018-01-01 00:11:28,rev_aaa,132532965,Bom,{PROSE_60}\n"
+            f"2018-01-02 00:11:28,rev_bbb,132532965,Otimo,{PROSE_60} extra\n"
+        )
+        with tempfile.TemporaryDirectory() as raw:
+            path = Path(raw) / "b2w.csv"
+            path.write_text(header + body, encoding="utf-8")
+            rows, _ = run_writer(
+                Path(raw),
+                "b2w",
+                lambda w: extract_b2w.extract(path, w, keyring=self.keyring),
+            )
+        self.assertEqual(len(rows), 2)
+        axes = [r["meta"]["groupAxes"] for r in rows]
+        # PRODUCT: two reviews of one product are one cluster of two.
+        self.assertEqual(
+            axes[0]["source"], {"state": "known", "id": "b2w_product_132532965"}
+        )
+        self.assertEqual(axes[1]["source"], axes[0]["source"])
+        # REVIEWER: personal data even though the base is public, so HMAC and never
+        # the raw column — B2W already ships a digest there, and a digest of a
+        # digest is still the same join key.
+        self.assertEqual(axes[0]["author"]["state"], "known")
+        self.assertNotEqual(axes[0]["author"]["id"], axes[1]["author"]["id"])
+        self.assertNotIn("rev_aaa", axes[0]["author"]["id"])
+
+    def test_b2w_without_a_keyring_refuses_to_run(self) -> None:
+        import extract_b2w
+        from pseudonymize import ClusterKeyringMissing
+
+        header = "submission_date,reviewer_id,product_id,review_title,review_text\n"
+        with tempfile.TemporaryDirectory() as raw:
+            path = Path(raw) / "b2w.csv"
+            path.write_text(
+                header + f"2018-01-01 00:11:28,rev_aaa,1,Bom,{PROSE_60}\n",
+                encoding="utf-8",
+            )
+            with self.assertRaises(ClusterKeyringMissing):
+                run_writer(
+                    Path(raw),
+                    "b2w",
+                    lambda w: extract_b2w.extract(path, w, keyring=None),
+                )
+
+    def test_carolina_emits_the_member_file(self) -> None:
+        import extract_carolina
+
+        tei = (
+            '<teiCorpus xmlns="http://www.tei-c.org/ns/1.0">'
+            "<TEI><teiHeader><fileDesc><publicationStmt>"
+            '<date type="Download">2021-05-21</date>'
+            "<availability><licence>CC BY-NC-SA 4.0</licence></availability>"
+            "</publicationStmt></fileDesc></teiHeader>"
+            f"<text><body><p>{PROSE_60}</p></body></text></TEI>"
+            "<TEI><teiHeader><fileDesc><publicationStmt>"
+            '<date type="Download">2021-05-22</date>'
+            "<availability><licence>CC BY-NC-SA 4.0</licence></availability>"
+            "</publicationStmt></fileDesc></teiHeader>"
+            f"<text><body><p>{PROSE_60} outro</p></body></text></TEI>"
+            "</teiCorpus>"
+        )
+        member = "Corpus/university_domains/uni.xml"
+        with tempfile.TemporaryDirectory() as raw:
+            path = Path(raw) / "archive.zip"
+            with zipfile.ZipFile(path, "w") as archive:
+                archive.writestr(member, tei)
+            rows, _ = run_writer(
+                Path(raw), "carolina", lambda w: extract_carolina.extract(path, w)
+            )
+        self.assertEqual(len(rows), 2)
+        axes = [r["meta"]["groupAxes"] for r in rows]
+        # The MEMBER FILE is the axis the plan fixes for Carolina, and two TEI
+        # documents of one member share it — a real cluster of two.
+        self.assertEqual(
+            axes[0]["source"],
+            {
+                "state": "known",
+                "id": "carolina_member_Corpus_university_domains_uni_xml",
+            },
+        )
+        self.assertEqual(axes[1]["source"], axes[0]["source"])
+        # The extractor deliberately never reads TEI header names, so there is no
+        # author to pseudonymise and nothing was lost.
+        self.assertEqual(axes[0]["author"]["state"], "notApplicable")
+
+    def test_every_source_declares_the_axes_the_plan_fixes_for_it(self) -> None:
+        from group_axes import SOURCE_DECLARED_AXES
+
+        # Requirement 2 of the brief, as data: these domain sources and these axes,
+        # no invented extra and none omitted. `source` is the thread / page /
+        # product / member file; `author` is the post author or the reviewer, and
+        # ONLY those two sources have one.
+        self.assertEqual(
+            {source: sorted(axes) for source, axes in SOURCE_DECLARED_AXES.items()},
+            {
+                "ptso_qa": ["author", "source"],
+                "ptwiki_lead": ["source"],
+                "b2w_reviews": ["author", "source"],
+                "carolina_datasets_and_other_corpora": ["source"],
+                "carolina_judicial_branch": ["source"],
+                "carolina_legislative_branch": ["source"],
+                "carolina_public_domain_works": ["source"],
+                "carolina_social_media": ["source"],
+                "carolina_university_domains": ["source"],
+            },
+        )
+
+
+class CandidateIdStabilityTests(unittest.TestCase):
+    """The re-extraction must not renumber the corpus."""
+
+    def test_the_natural_keys_still_digest_to_the_ids_measured_before_c2(self) -> None:
+        import hashlib
+
+        # Measured on the tree at eae6ce6, BEFORE C2 touched an extractor. The id is
+        # `<sourceId>_<sha1(naturalKey)[:12]>`, so pinning the digest of the natural
+        # key pins the id: any change to a natural key renumbers the corpus and
+        # breaks every pair reference and every ledger row that names an id.
+        for natural_key, digest in (
+            ("ptso:2", "2a96d0991f15"),
+            ("ptso:4", "9b92587c3035"),
+            ("ptwiki:99", "ffb6a33e6516"),
+            ("carolina:Corpus/university_domains/uni.xml:1", "929963677b0d"),
+        ):
+            self.assertEqual(
+                hashlib.sha1(natural_key.encode("utf-8")).hexdigest()[:12],
+                digest,
+                natural_key,
+            )
+
+    def test_adding_identity_to_meta_leaves_every_candidate_id_unchanged(self) -> None:
+        import extract_stackexchange
+        from pseudonymize import ClusterKeyring
+
+        xml = (
+            "<posts>"
+            f'<row Id="2" PostTypeId="1" CreationDate="2013-12-11T15:51:07.527"'
+            f' OwnerUserId="40" Body="&lt;p&gt;{PROSE_60}&lt;/p&gt;" />'
+            f'<row Id="4" PostTypeId="2" ParentId="2"'
+            f' CreationDate="2013-12-11T15:54:31.357" OwnerUserId="57"'
+            f' Body="&lt;p&gt;{PROSE_60}&lt;/p&gt;" />'
+            "</posts>"
+        )
+        keyring = ClusterKeyring("v1", {"person": "ab" * 32})
+        with tempfile.TemporaryDirectory() as raw:
+            path = Path(raw) / "Posts.xml"
+            path.write_text(xml, encoding="utf-8")
+            rows, _ = run_writer(
+                Path(raw),
+                "ptso",
+                lambda w: extract_stackexchange.extract(path, w, keyring=keyring),
+            )
+        # run_writer names the writer `src_ptso`, the same source id the real run
+        # uses, so the WHOLE id is comparable and not only its digest half.
+        self.assertEqual(
+            [r["candidateId"] for r in rows],
+            ["src_ptso_2a96d0991f15", "src_ptso_9b92587c3035"],
+        )
+        # And a SECOND run with a different keyring changes the author pseudonym
+        # without moving the id: identity is not part of the natural key.
+        other = ClusterKeyring("v1", {"person": "cd" * 32})
+        with tempfile.TemporaryDirectory() as raw:
+            path = Path(raw) / "Posts.xml"
+            path.write_text(xml, encoding="utf-8")
+            again, _ = run_writer(
+                Path(raw),
+                "ptso",
+                lambda w: extract_stackexchange.extract(path, w, keyring=other),
+            )
+        self.assertEqual(
+            [r["candidateId"] for r in rows], [r["candidateId"] for r in again]
+        )
+        self.assertNotEqual(
+            rows[0]["meta"]["groupAxes"]["author"]["id"],
+            again[0]["meta"]["groupAxes"]["author"]["id"],
+        )
+
+
+class AssemblerRealGroupTests(unittest.TestCase):
+    """`base_groups` is gone, and no path mints an identifier per record."""
+
+    def test_no_module_mints_a_per_record_group_token(self) -> None:
+        source = (Path(__file__).resolve().parent / "assemble_corpus.py").read_text(
+            encoding="utf-8"
+        )
+        self.assertNotIn("def base_groups", source)
+        # The five f-string tokens the old block wrote. Searched as literals rather
+        # than by function name so reintroducing them under ANY name fails here.
+        for minted in ('f"a_{', 'f"g_{', 'f"ds_{', 'f"cb_{', 'f"nd_{'):
+            self.assertNotIn(minted, source)
+
+    def _human_candidate(self, candidate_id: str, thread: str, author: str) -> dict:
+        from group_axes import known
+
+        return {
+            "candidateId": candidate_id,
+            "text": PROSE_60,
+            "wordCount": 60,
+            "domainSource": "ptso_qa",
+            "createdAt": 1386720000000,
+            "meta": {
+                "dateField": "Posts.xml@CreationDate",
+                "observedValue": "2013-12-11T00:00:00+00:00",
+                "groupAxes": {"source": known(thread), "author": known(author)},
+            },
+        }
+
+    def test_two_records_of_one_thread_share_the_source_axis(self) -> None:
+        from assemble_corpus import human_record
+
+        first = human_record(
+            self._human_candidate("src_ptso_aaa", "ptso_thread_2", "person_x"),
+            "qa-informal",
+            None,
+        )
+        second = human_record(
+            self._human_candidate("src_ptso_bbb", "ptso_thread_2", "person_x"),
+            "qa-informal",
+            None,
+        )
+        self.assertNotEqual(first["id"], second["id"])
+        # The point of the whole task: ONE cluster of two, on both axes.
+        self.assertEqual(first["groups"]["source"], second["groups"]["source"])
+        self.assertEqual(first["groups"]["author"], second["groups"]["author"])
+        self.assertEqual(first["groups"]["source"]["id"], "ptso_thread_2")
+        # ...and no axis holds the record id, which is how the old block worked —
+        # with ONE argued exception. `nearDuplicate` names the surviving
+        # representative of the pruning cluster, and after pruning every cluster has
+        # exactly one member, so the representative IS this row. That is not a minted
+        # token: it is read from the pruning result and would collide the moment two
+        # rows shared a cluster, whereas the old nd- token was minted BECAUSE it
+        # could not. The plan is explicit that this axis must be all singletons.
+        for axis, value in first["groups"].items():
+            if axis == "nearDuplicate" or value.get("state") != "known":
+                continue
+            self.assertNotIn(first["id"], value["id"], axis)
+        self.assertEqual(first["groups"]["nearDuplicate"]["id"], first["id"])
+
+    def test_a_human_record_states_all_twelve_axes(self) -> None:
+        from assemble_corpus import human_record
+        from group_axes import V3_GROUP_AXES
+
+        record = human_record(
+            self._human_candidate("src_ptso_aaa", "ptso_thread_2", "person_x"),
+            "qa-informal",
+            None,
+        )
+        self.assertEqual(sorted(record["groups"]), sorted(V3_GROUP_AXES))
+        self.assertEqual(record["schemaVersion"], 3)
+        # Every generation axis genuinely does not apply to a human row, and saying
+        # so is a statement, not a gap: it costs the record nothing.
+        for axis in ("promptTemplate", "generatorFamily", "generationLane"):
+            self.assertEqual(record["groups"][axis]["state"], "notApplicable")
+
+    def test_an_unknown_axis_is_carried_and_never_synthesized(self) -> None:
+        from assemble_corpus import human_record
+        from group_axes import unknown
+
+        candidate = self._human_candidate("src_ptso_ccc", "ptso_thread_2", "person_x")
+        candidate["meta"]["groupAxes"]["author"] = unknown("conta removida")
+        record = human_record(candidate, "qa-informal", None)
+        self.assertEqual(record["groups"]["author"]["state"], "unknown")
+        self.assertNotIn("id", record["groups"]["author"])
+
+
+class LaneIdentityTests(unittest.TestCase):
+    """The generated record names its lane, and the lane decides the rest."""
+
+    def _ai_candidate(self, provider: str, model: str, recipe: str) -> dict:
+        import hashlib
+
+        lanes = {
+            "agy": "agy",
+            "codex": "codex",
+            "gemini": "gemini-api",
+            "gemini_cli": "gemini-cli",
+        }
+        return {
+            "candidateId": f"src_ai_{provider}_deadbeef",
+            "text": PROSE_60,
+            "wordCount": 60,
+            "meta": {
+                "provider": provider,
+                "family": model,
+                "model": model,
+                "version": model,
+                "recipe": recipe,
+                "generationLane": lanes[provider],
+                "promptId": f"{recipe}_src_b2w_00848b3bc692",
+                "promptSha256": hashlib.sha256(b"p").hexdigest(),
+                "promptTemplateDigest": hashlib.sha256(b"t").hexdigest(),
+                "pairedWith": "src_b2w_00848b3bc692",
+                "generatedAt": "2026-07-24T13:51:05.004170+00:00",
+            },
+        }
+
+    def test_an_api_lane_carries_the_temperature_it_actually_applied(self) -> None:
+        from assemble_corpus import ai_record
+
+        candidate = self._ai_candidate("gemini", "gemini-3.5-flash-lite", "original")
+        candidate["meta"]["temperature"] = "0.8"
+        record = ai_record(candidate)
+        self.assertEqual(
+            record["groups"]["generationLane"], {"state": "known", "id": "gemini-api"}
+        )
+        self.assertTrue(record["generation"]["decoding"]["configurable"])
+        self.assertEqual(record["generation"]["decoding"]["temperature"], 0.8)
+        # gemini-api runs no harness binary, so the axis genuinely does not apply.
+        self.assertEqual(record["groups"]["harnessVersion"]["state"], "notApplicable")
+
+    def test_a_cli_lane_refuses_the_temperature_the_pool_carries(self) -> None:
+        from assemble_corpus import ai_record
+
+        # MEASURED: generate_ai.py wrote "temperature": "0.8" into the meta of every
+        # provider, including the three CLI lanes it invokes with no sampling flag.
+        # The frozen policy sets decodingConfigurable false for them, so the number
+        # describes nothing and the record must not carry it.
+        candidate = self._ai_candidate("agy", "gemini-3.5-flash-medium", "original")
+        candidate["meta"]["temperature"] = "0.8"
+        record = ai_record(candidate)
+        self.assertEqual(record["generation"]["decoding"], {"configurable": False})
+
+    def test_an_uncaptured_harness_version_is_unknown_and_not_invented(self) -> None:
+        from assemble_corpus import ai_record
+
+        candidate = self._ai_candidate("agy", "claude-sonnet-4-6", "original")
+        record = ai_record(candidate)
+        # agy is an agent-CLI lane: claiming notApplicable would be false about it,
+        # and inventing a version string would be false about the world. `unknown`
+        # is true and costs the record its eligibility.
+        self.assertEqual(record["groups"]["harnessVersion"]["state"], "unknown")
+        candidate["meta"]["harnessVersion"] = "0.145.0"
+        seen = ai_record(candidate)
+        self.assertEqual(
+            seen["groups"]["harnessVersion"], {"state": "known", "id": "0_145_0"}
+        )
+
+    def test_a_codex_row_without_a_recorded_effort_level_is_refused(self) -> None:
+        from assemble_corpus import MissingRecipe, ai_record
+
+        # MEASURED against the frozen policy, and it is a real blocker rather than a
+        # quirk: `generationLanes.codex.effortSources` is ["flag", "provider-default"]
+        # and NEITHER is "not-supported", while both of those EffortConfig branches
+        # require a `level`. generate_ai.py never recorded one. So a codex row cannot
+        # be written as v3 until the level is observed, and it is refused instead of
+        # being given a level nobody read. Loosening the policy to admit
+        # "not-supported" on codex would be relaxing a frozen contract to make data
+        # fit (R3), which is not this task's call.
+        candidate = self._ai_candidate("codex", "gpt-5.6-luna", "original")
+        with self.assertRaises(MissingRecipe) as caught:
+            ai_record(candidate)
+        self.assertIn("not-supported", str(caught.exception))
+        # With the level observed, the same row writes cleanly — so the refusal is
+        # about the missing datum and not about the lane.
+        candidate["meta"]["effortLevel"] = "medium"
+        candidate["meta"]["effortSource"] = "flag"
+        record = ai_record(candidate)
+        self.assertEqual(
+            record["generation"]["effort"],
+            {
+                "source": "flag",
+                "configurable": True,
+                "scale": "codex-reasoning-effort",
+                "level": "medium",
+            },
+        )
+
+    def test_effort_is_never_derived_from_the_model_name_suffix(self) -> None:
+        from assemble_corpus import ai_record
+
+        # `gpt-oss-120b-medium` EMBEDS its effort in the model id and `--effort`
+        # exists as a session flag in parallel, so the precedence between them is
+        # undetermined (to be measured by --dry-run before D3). Reading "medium" off
+        # the suffix would be an identity we made up, which R6 forbids.
+        candidate = self._ai_candidate("agy", "gpt-oss-120b-medium", "original")
+        record = ai_record(candidate)
+        self.assertEqual(
+            record["generation"]["effort"],
+            {"source": "not-supported", "configurable": False},
+        )
+        # When the lane DID record a level, it travels with its scale.
+        candidate["meta"]["effortLevel"] = "medium"
+        candidate["meta"]["effortSource"] = "model-id"
+        record = ai_record(candidate)
+        self.assertEqual(
+            record["generation"]["effort"],
+            {
+                "source": "model-id",
+                "configurable": False,
+                "scale": "agy-model-id-tier",
+                "level": "medium",
+            },
+        )
+
+    def test_a_provider_outside_the_frozen_lanes_is_refused(self) -> None:
+        from assemble_corpus import UnmappableLane, ai_record
+
+        candidate = self._ai_candidate("gemini", "gemini-3.5-flash-lite", "original")
+        candidate["meta"]["provider"] = "anthropic"
+        del candidate["meta"]["generationLane"]
+        # Four lanes are frozen. A fifth is not a lane to add here: the record has
+        # no admissible `generationLane`, so it leaves the corpus rather than
+        # borrowing a lane it never ran on.
+        with self.assertRaises(UnmappableLane):
+            ai_record(candidate)
+
+    def test_a_pool_row_with_no_recipe_at_all_is_refused(self) -> None:
+        from assemble_corpus import UnmappableLane, ai_record
+
+        # MEASURED: ai_reserved.jsonl holds 1476 rows carrying only
+        # {id, text, family, recipe, pairedWith, split} — no provider, no lane, no
+        # template digest. `generationLane` must be `known` on an `ai` row, so these
+        # cannot be written as v3 at all, and the honest outcome is to drop them.
+        #
+        # UnmappableLane and not MissingRecipe: such a row is missing BOTH its lane
+        # and its template digest, and the lane is refused first because
+        # `groups.generationLane` must be `known` on every ai row while the template
+        # digest is a second requirement on top. Both derive from UnwritableInV3, so
+        # the assembler's drop path catches either.
+        with self.assertRaises(UnmappableLane):
+            ai_record(
+                {
+                    "candidateId": "src_ai_reserved_1",
+                    "text": PROSE_60,
+                    "wordCount": 60,
+                    "meta": {"family": "madras:synthetic_corpusqwn"},
+                }
+            )
+
+
+class DerivationLineageTests(unittest.TestCase):
+    """seed -> generation -> derivative, resolvable from the row."""
+
+    def test_a_generated_record_resolves_its_human_seed(self) -> None:
+        from assemble_corpus import ai_record
+
+        candidate = LaneIdentityTests()._ai_candidate(
+            "gemini", "gemini-3.5-flash-lite", "original"
+        )
+        candidate["meta"]["temperature"] = "0.8"
+        record = ai_record(candidate)
+        # `promptId` encodes the parent (`original_src_b2w_00848b3bc692`), which is
+        # the datum requirement 5 says to persist. The `original` recipe writes NEW
+        # text from that seed, so the seed is known and there is no derivation.
+        self.assertEqual(
+            record["groups"]["humanSeed"],
+            {"state": "known", "id": "src_b2w_00848b3bc692"},
+        )
+        self.assertEqual(record["groups"]["derivationRoot"]["state"], "notApplicable")
+
+    def test_a_paraphrase_resolves_both_the_seed_and_the_derivation(self) -> None:
+        from assemble_corpus import ai_record
+
+        candidate = LaneIdentityTests()._ai_candidate(
+            "gemini", "gemini-3.5-flash-lite", "parafrase"
+        )
+        candidate["meta"]["temperature"] = "0.8"
+        record = ai_record(candidate)
+        # `parafrase` REWRITES the parent text, so this row IS a derivation of it.
+        self.assertEqual(
+            record["groups"]["derivationRoot"],
+            {"state": "known", "id": "src_b2w_00848b3bc692"},
+        )
+        self.assertEqual(record["groups"]["humanSeed"]["id"], "src_b2w_00848b3bc692")
+
+    def test_a_mixed_record_resolves_the_parent_it_was_edited_from(self) -> None:
+        import hashlib
+
+        from assemble_corpus import mixed_record
+
+        candidate = {
+            "parentId": "src_ptso_0f89e00a4836",
+            "text": PROSE_60,
+            "provider": "antigravity",
+            "model": "gemini-3.6-flash-low",
+            "generatedAt": "2026-07-23T18:53:31.606876+00:00",
+            "promptTemplateId": "edit_v1",
+            "promptTemplateDigest": hashlib.sha256(b"edit").hexdigest(),
+            "mixture": {
+                "spans": [
+                    {"start": 0, "end": 200, "origin": "human"},
+                    {"start": 200, "end": len(PROSE_60), "origin": "ai"},
+                ]
+            },
+        }
+        record = mixed_record(candidate)
+        parent = "src_ptso_0f89e00a4836"
+        self.assertEqual(
+            record["groups"]["derivationRoot"], {"state": "known", "id": parent}
+        )
+        self.assertEqual(record["groups"]["humanSeed"], {"state": "known", "id": parent})
+        # A mechanistic mixed row is a human text WE edited, so the recipe is ours
+        # and the row must carry it (schema.ts refuses a mechanistic row without).
+        self.assertEqual(record["mixture"]["generationMode"], "mechanistic")
+        self.assertEqual(record["groups"]["generationLane"]["id"], "agy")
+        # ...and the derivation root is the parent, never the record itself, which
+        # `groups.derivationRoot must not name the record itself` refuses.
+        self.assertNotEqual(record["groups"]["derivationRoot"]["id"], record["id"])
+
+    def test_a_mixed_row_with_no_recorded_template_is_refused(self) -> None:
+        from assemble_corpus import MissingRecipe, mixed_record
+
+        candidate = {
+            "parentId": "src_ptso_0f89e00a4836",
+            "text": PROSE_60,
+            "provider": "antigravity",
+            "model": "gemini-3.6-flash-low",
+            "generatedAt": "2026-07-23T18:53:31.606876+00:00",
+            "mixture": {
+                "spans": [{"start": 0, "end": len(PROSE_60), "origin": "human"}]
+            },
+        }
+        # The mixing template digest is not recoverable from a pool row that never
+        # recorded it. Guessing it from whichever template is in make_mixed.py TODAY
+        # would attach a recipe the row cannot support, so the row leaves instead.
+        with self.assertRaises(MissingRecipe):
+            mixed_record(candidate)
+
+
+class ClusterDistributionReportTests(unittest.TestCase):
+    """Counts, size distribution and the largest cluster, per axis and slice."""
+
+    def _record(self, rid: str, label: str, partition: str, **axes) -> dict:
+        import group_axes
+
+        groups = {
+            axis: group_axes.not_applicable("fixture")
+            for axis in group_axes.V3_GROUP_AXES
+        }
+        for axis, value in axes.items():
+            groups[axis] = group_axes.known(value)
+        return {"id": rid, "label": label, "partition": partition, "groups": groups}
+
+    def test_it_reports_count_distribution_and_largest_per_axis(self) -> None:
+        from group_axes import cluster_report
+
+        records = [
+            self._record("h1", "human", "development", source="t1", author="a1"),
+            self._record("h2", "human", "development", source="t1", author="a1"),
+            self._record("h3", "human", "development", source="t1", author="a2"),
+            self._record("h4", "human", "calibration", source="t2", author="a3"),
+        ]
+        report = cluster_report(records)
+        source = report["axes"]["source"]
+        self.assertEqual(source["clusters"], 2)
+        self.assertEqual(source["records"], 4)
+        # Size distribution as size -> how many clusters have it.
+        self.assertEqual(source["sizeDistribution"], {"1": 1, "3": 1})
+        self.assertEqual(source["largestCluster"], {"id": "t1", "size": 3})
+        author = report["axes"]["author"]
+        self.assertEqual(author["clusters"], 3)
+        self.assertEqual(author["sizeDistribution"], {"1": 2, "2": 1})
+        self.assertEqual(author["largestCluster"], {"id": "a1", "size": 2})
+
+    def test_it_counts_the_states_rather_than_dropping_them(self) -> None:
+        from group_axes import cluster_report, unknown
+
+        records = [
+            self._record("h1", "human", "development", source="t1"),
+            self._record("h2", "human", "development", source="t1"),
+        ]
+        records[1]["groups"]["source"] = unknown("nao recuperado")
+        report = cluster_report(records)
+        source = report["axes"]["source"]
+        # A row whose axis is not `known` joins no cluster, and saying so is the
+        # difference between "one cluster of one" and "one cluster of two".
+        self.assertEqual(source["clusters"], 1)
+        self.assertEqual(source["records"], 1)
+        self.assertEqual(source["states"], {"known": 1, "unknown": 1})
+        self.assertEqual(report["ineligibleRecords"], 1)
+
+    def test_it_reports_per_slice_and_not_only_in_aggregate(self) -> None:
+        from group_axes import cluster_report
+
+        records = [
+            self._record("h1", "human", "development", source="t1"),
+            self._record("h2", "human", "development", source="t1"),
+            self._record("a1", "ai", "development", source="t1"),
+            self._record("h3", "human", "calibration", source="t2"),
+        ]
+        report = cluster_report(records)
+        # A slice is (partition, label): the aggregate hides that `t1` is one
+        # cluster of three ACROSS two classes, which is the shape that leaks.
+        slices = report["slices"]
+        self.assertEqual(
+            slices["development/human"]["axes"]["source"]["largestCluster"],
+            {"id": "t1", "size": 2},
+        )
+        self.assertEqual(slices["development/ai"]["axes"]["source"]["clusters"], 1)
+        self.assertEqual(
+            slices["calibration/human"]["axes"]["source"]["sizeDistribution"], {"1": 1}
+        )
+        self.assertEqual(report["axes"]["source"]["largestCluster"]["size"], 3)
+
+    def test_it_does_not_call_an_all_singleton_axis_degenerate(self) -> None:
+        from group_axes import cluster_report
+
+        # The plan is explicit: after near-duplicate pruning `nearDuplicate` MUST be
+        # all singletons, and AI text has no human author, so a "no axis may be
+        # 100% singletons" criterion would reward artificial grouping. The report
+        # DESCRIBES; sufficient power per stratum is E3's criterion.
+        records = [
+            self._record("h1", "human", "development", nearDuplicate="nd1"),
+            self._record("h2", "human", "development", nearDuplicate="nd2"),
+        ]
+        report = cluster_report(records)
+        rendered = json.dumps(report)
+        self.assertNotIn("degenerate", rendered)
+        self.assertNotIn("degenerado", rendered)
+        self.assertEqual(report["axes"]["nearDuplicate"]["sizeDistribution"], {"1": 2})
