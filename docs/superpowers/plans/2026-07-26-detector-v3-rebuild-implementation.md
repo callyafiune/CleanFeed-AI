@@ -2556,6 +2556,82 @@ abaixo de 50% não entra em denominador de gate e que misto nunca eleva
 **Concluída quando:** schema, métricas, gates e copy implementam exatamente a tabela e
 nenhuma mensagem afirma autoria, intenção ou processo real.
 
+#### B2 — o que foi realmente executado
+
+Cinco mecanismos, cada um substituindo uma frase de prosa por algo que falha:
+
+1. **`mixture.generationMode` obrigatório e fechado.** `benchmark/schema.ts` valida
+   `mechanistic | ecological` contra o vocabulário congelado
+   (`materialAssistance.generationModes`) e recusa um mixture sem o campo, em vez de
+   assumir uma coorte. `assemble_corpus.py` escreve `mechanistic` — que é fato, não
+   default: `make_mixed.py` escolheu e executou as edições (R4 proíbe escrever
+   `ecological` sem processo observado). A validação é a ÚLTIMA dentro de
+   `validateMixture`, para os diagnósticos mais específicos (fração fora de faixa, span
+   além do texto) continuarem disparando primeiro.
+2. **Duas populações de positivo, nomeadas no artefato.**
+   `DecisionMetrics.positivePopulation` diz de qual alvo vieram os positivos daquela
+   matriz. `isWarningPositive` = integral **ou** assistência material *mecanística* com
+   `aiFraction >= 0.50`; `isVisualActionPositive` = integral apenas. `ecological`
+   acima do piso não é positivo de nenhuma das duas — é coorte separada.
+3. **`EvaluationMetrics.actionAuthorization`.** O gate `action.recall.overall` passou a
+   ler ESTE bloco (recall sobre positivos integrais) e não
+   `visualAction.endToEnd.recall`. `visualAction` continua publicado e intocado — o FPR
+   dele é o estatístico do orçamento de ação e não depende da definição de positivo
+   (negativos são humanos) —, então `profile-artifact.ts`, `slices.ts` e `report.ts`
+   não mudaram e nenhum número já publicado se moveu por causa disto. **Isto é mudança
+   de estimando, não afrouxamento de limite (R3):** o piso 0,35 não foi tocado; o que
+   mudou é QUAL população pode autorizar ação. A direção empírica do número num corpus
+   real é **não medida** (não há holdout válido — R8), e o motivo da mudança não é o
+   número: é que assistência material autoriza `indicator` e nada mais, então ela não
+   pode entrar na estatística que levanta `actionCeiling`.
+4. **Não agregação, por construção.** `mixed.atLeastHalfAi` é de UMA coorte e carrega
+   `generationMode`; `mixed.byGenerationMode` publica cada coorte separada;
+   `mixed.byFraction` passou a ser chaveado por `"<modo>/<faixa>"`. Não existe total
+   entre coortes em lugar nenhum, e `localization` só tem `byGenerationMode` — um campo
+   que não existe não pode ser citado.
+5. **Métricas de span, diagnósticas.** `spanOverlap` + `LocalizationDiagnostics` com
+   `role: "diagnostic"`, `gates: false`, `authorizesVisualAction: false` e
+   `unit: "character-offset"`. **R7:** a tabela pede "precisão/recall de token", mas
+   `mixture.spans` são offsets de caractere, então a unidade é declarada em todo bloco
+   em vez de a palavra "token" alegar uma tokenização que não existe. O denominador do
+   recall do caminho localizado inclui a linha que não emitiu span — silêncio é erro,
+   não ausência de evidência.
+
+**Política (o que foi para `rebuild-v3-policy.json`, e não para constante solta):**
+`materialAssistance.minimumWarningRecall: 0.5`, `materialAssistance.cohortsAggregated:
+false`, `materialAssistance.generationModes: ["mechanistic", "ecological"]`,
+`integralPositive.visualActionRequiresDocumentGates: true`,
+`localization.metricsRole: "diagnostic"`. O teto de ação de cada alvo fica no bloco do
+seu próprio alvo (`materialAssistance.authorizes`,
+`localization.authorizesVisualAction`, o novo campo em `integralPositive`), então nenhum
+teto está escrito duas vezes.
+
+**Sobre `warning.mixed-recall` e §4.5.** A FORMULAÇÃO mudou — o denominador agora é a
+coorte `mechanistic` com `aiFraction >= 0.50`, o que §4.5 é o que autoriza — e por isso
+o número saiu de `gates.ts` e virou linha da tabela congelada. O VALOR não mudou: 0,50
+antes, 0,50 depois. Nenhum outro limite foi tocado.
+
+**Copy.** A varredura não encontrou nenhuma afirmação de autoria na copy existente
+(fases anteriores já a sanearam), então o entregável de copy é o mecanismo, não uma
+correção: `userFacingCopy()` percorre a única árvore de que todos os exports de
+`src/shared/classification-copy.ts` derivam, e `overclaimIn()` a filtra contra
+`AUTHORSHIP_CLAIM_PATTERNS`. Uma string nova é varrida no momento em que é adicionada.
+Os padrões olham CONSTRUÇÕES, não palavras: "autoria" e "gerado" precisam continuar
+aparecendo na copy obrigatória, então cada padrão casa uma predicação sobre o texto
+(particípio adjacente ao agente, "este texto é de IA", "a autoria deste texto é",
+intenção atribuída a uma pessoa) e a forma hedged sobrevive. Limite conhecido: uma
+string que chegue à UI **sem** passar por este módulo escapa da varredura — o que é
+exatamente por que toda superfície importa a copy daqui e não guarda a sua.
+`classification-copy.json` ganhou `productTarget`, espelhando o identificador congelado
+(o benchmark é standalone e não pode ser importado do bundle, então os dois lados são
+fixados por teste, não por import).
+
+**Fora do escopo do brief, mas necessário como consequência:**
+`benchmark/commands/fit.ts` tinha uma segunda cópia do predicado de positivo, com 0,5
+hardcoded e sem coorte; passou a delegar a `isWarningPositive`. Sem isso, uma linha
+`ecological` seria positivo em tempo de `fit` e não-positivo em tempo de avaliação —
+a agregação entre coortes que esta tarefa proíbe, entrando pela porta de trás.
+
 ### B3 — DECIDIDO: só bases públicas, sem coleta individual autorizada
 
 **Depende de:** nada.

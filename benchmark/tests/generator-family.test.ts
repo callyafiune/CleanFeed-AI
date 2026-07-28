@@ -136,6 +136,7 @@ function plain(spec: RecordSpec): Record<string, unknown> {
       aiFraction: spec.aiFraction,
       humanFraction: Number((1 - spec.aiFraction).toFixed(4)),
       spans: [],
+      generationMode: "mechanistic",
     };
   }
   return record;

@@ -732,6 +732,9 @@ function mixed(
       aiFraction: 0.6,
       humanFraction: 0.4,
       spans: [{ start: 0, end: 5, origin: "ai" }],
+      // Everything this project mixes is mechanistic: we chose and executed the
+      // edit (benchmark/schema.ts).
+      generationMode: "mechanistic",
     },
     transformation: { kind: "human-ai-mix", severity: "medium" },
     groups,

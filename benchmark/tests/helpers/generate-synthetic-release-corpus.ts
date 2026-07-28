@@ -277,6 +277,7 @@ function mixedRecord(
       aiFraction: 0.6,
       humanFraction: 0.4,
       spans: [{ start: 0, end: 5, origin: "ai" }],
+      generationMode: "mechanistic",
     },
     transformation: { kind: "human-ai-mix", severity: "medium" },
     groups,

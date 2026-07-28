@@ -32,6 +32,7 @@ interface RecordFields {
   severity?: string;
   generatorFamily?: string;
   createdAt?: number;
+  generationMode?: "mechanistic" | "ecological";
 }
 
 function record(fields: RecordFields): BenchmarkRecord {
@@ -60,6 +61,7 @@ function record(fields: RecordFields): BenchmarkRecord {
       aiFraction: fields.aiFraction,
       humanFraction: 1 - fields.aiFraction,
       spans: [],
+      generationMode: fields.generationMode ?? "mechanistic",
     };
   }
   if (fields.generatorFamily !== undefined) {
@@ -417,6 +419,7 @@ function estimate(value: number) {
 function decision(fpr: number, recall: number): DecisionMetrics {
   return {
     family: "end-to-end",
+    positivePopulation: "warning-positives",
     sampleSize: 1,
     positives: 1,
     negatives: 1,

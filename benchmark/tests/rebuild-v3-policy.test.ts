@@ -100,6 +100,17 @@ describe("rebuild-v3-policy.json", () => {
     expect(policy.materialAssistance.authorizes).toBe("warning-only");
     expect(policy.localization.authorizesVisualAction).toBe(false);
     expect(policy.mixedBelowHalfAiRole).toBe("diagnostic-curve-only");
+    // B2: the three-target table's own rows.
+    expect(policy.materialAssistance.minimumWarningRecall).toBe(0.5);
+    expect(policy.materialAssistance.cohortsAggregated).toBe(false);
+    expect([...policy.materialAssistance.generationModes]).toEqual([
+      "mechanistic",
+      "ecological",
+    ]);
+    expect(policy.integralPositive.visualActionRequiresDocumentGates).toBe(
+      true,
+    );
+    expect(policy.localization.metricsRole).toBe("diagnostic");
     // Strata, bands, families, sources.
     expect(policy.humanCoreStrata).toEqual([
       "encyclopedic",
@@ -423,6 +434,31 @@ describe("parseRebuildV3Policy fails closed", () => {
     (promoted.rollout as Record<string, unknown>).actionsPromoted = true;
     expect(() => parseRebuildV3Policy(promoted)).toThrow(
       /rollout\.actionsPromoted/u,
+    );
+
+    // B2: pooling the two mixed cohorts, and letting a span authorize an action
+    // on its own, are both decisions the frozen table settled the other way.
+    const pooledCohorts = validPolicyObject();
+    (
+      pooledCohorts.materialAssistance as Record<string, unknown>
+    ).cohortsAggregated = true;
+    expect(() => parseRebuildV3Policy(pooledCohorts)).toThrow(
+      /materialAssistance\.cohortsAggregated/u,
+    );
+
+    const gatingSpans = validPolicyObject();
+    (gatingSpans.localization as Record<string, unknown>).metricsRole =
+      "gating";
+    expect(() => parseRebuildV3Policy(gatingSpans)).toThrow(
+      /localization\.metricsRole/u,
+    );
+
+    const modes = validPolicyObject();
+    (modes.materialAssistance as Record<string, unknown>).generationModes = [
+      "mechanistic",
+    ];
+    expect(() => parseRebuildV3Policy(modes)).toThrow(
+      /materialAssistance\.generationModes/u,
     );
   });
 });

@@ -158,6 +158,7 @@ function decision(
 ): DecisionMetrics {
   return {
     family: "end-to-end",
+    positivePopulation: "warning-positives",
     sampleSize: positives + negatives,
     positives,
     negatives,
@@ -198,6 +199,10 @@ interface MetricsOverrides {
   auroc?: number;
   declaredM?: number | null;
   labelBases?: LabelBasisSlice[];
+  // B2: the recall of the visual-action decision over INTEGRAL positives only.
+  // Separate from `visual.recall`, which is the mixed-inclusive operating point,
+  // precisely so a test can set the two apart and see which one the gate read.
+  actionAuthorizationRecall?: MetricEstimate;
 }
 
 // One scored human negative with NO `labelBasis` field, which is every human
@@ -220,6 +225,58 @@ function humanNegativeWithoutBasis(author: string): EvaluationItem {
     documentScore: 0.1,
     warned: false,
     visualActioned: false,
+  };
+}
+
+// One integral positive (label = ai), warned and visual-actioned, so the action
+// tier has a population of its own that mixed rows cannot supply.
+function aiPositive(author: string): EvaluationItem {
+  return {
+    record: {
+      label: "ai",
+      language: "pt-BR",
+      wordCount: 120,
+      domain: "corporate",
+      platform: "generic-platform",
+      provenance: { sourceId: "generated" },
+      createdAt: 1_000,
+      transformation: { kind: "none", severity: "none" },
+      groups: { author, generatorFamily: "gemini_3_5_flash_low" },
+      generation: { family: "gemini-3.5-flash-low" },
+    } as unknown as BenchmarkRecord,
+    status: "scored",
+    documentScore: 0.9,
+    warned: true,
+    visualActioned: true,
+  };
+}
+
+// One mechanistic mixed row at a chosen AI fraction, warned AND visual-actioned:
+// the row that would move every rate in the favorable direction if it were
+// counted in a gate population.
+function mixedRow(aiFraction: number, author: string): EvaluationItem {
+  return {
+    record: {
+      label: "mixed",
+      language: "pt-BR",
+      wordCount: 120,
+      domain: "corporate",
+      platform: "generic-platform",
+      provenance: { sourceId: "generated" },
+      createdAt: 1_000,
+      transformation: { kind: "human-ai-mix", severity: "medium" },
+      mixture: {
+        aiFraction,
+        humanFraction: 1 - aiFraction,
+        spans: [],
+        generationMode: "mechanistic",
+      },
+      groups: { author },
+    } as unknown as BenchmarkRecord,
+    status: "scored",
+    documentScore: 0.95,
+    warned: true,
+    visualActioned: true,
   };
 }
 
@@ -271,6 +328,21 @@ function metrics(overrides: MetricsOverrides = {}): EvaluationMetrics {
     ),
     visualAction:
       visual === null ? null : families(decision(visual.fpr, visual.recall)),
+    actionAuthorization:
+      visual === null
+        ? null
+        : {
+            role: "release",
+            decision: "visual-action",
+            positivePopulation: "integral-positives",
+            family: "end-to-end",
+            // Defaults to the mixed-inclusive recall so every pre-B2 fixture
+            // keeps its meaning; the two B2 tests set them apart on purpose.
+            recall: overrides.actionAuthorizationRecall ?? visual.recall,
+            positives: 500,
+            excludedMaterialAssistancePositives: 0,
+            excludedEcologicalCohort: 0,
+          },
     coverage: point(overrides.coverage ?? 0.95),
     ece15: point(0.02),
     calibration: {
@@ -1210,6 +1282,105 @@ describe("integrity tier teeth", () => {
     });
     expect(gateById(report.gates, "integrity.error-rate").passed).toBe(true);
     expect(report.decision).toBe("pass");
+  });
+});
+
+// ===========================================================================
+// B2 — the frozen three-target table, at the gate boundary.
+// ===========================================================================
+
+describe("the mixed-recall gate reads the frozen policy (B2)", () => {
+  it("takes its floor from the policy, not from a local constant", () => {
+    const floor = REBUILD_V3_POLICY.materialAssistance.minimumWarningRecall;
+    expect(floor).toBe(0.5);
+    const report = evaluateReleaseGates({
+      integrity: integrity(),
+      resampling: plan(),
+      metrics: metrics(),
+      slices: summary([passingSlice()]),
+    });
+    const gate = gateById(report.gates, "warning.mixed-recall");
+    expect(gate.required).toBe(floor);
+    expect(gate.tier).toBe("warning");
+  });
+
+  it("fails when the mechanistic cohort misses the floor", () => {
+    const report = evaluateReleaseGates({
+      integrity: integrity(),
+      resampling: plan(),
+      metrics: metrics({
+        mixed: {
+          sampleSize: 200,
+          warningRecall: 0.49,
+          warningRecallLower95: 0.42,
+        },
+      }),
+      slices: summary([passingSlice()]),
+    });
+    expect(gateById(report.gates, "warning.mixed-recall").passed).toBe(false);
+    expect(report.decision).toBe("reject");
+  });
+});
+
+describe("material assistance never authorizes visual action (B2)", () => {
+  it("reads the action recall gate off the integral-positive population", () => {
+    // The visual-action matrix looks excellent because mixed rows crossed the
+    // action threshold; the INTEGRAL positives did not. The gate must read the
+    // second number, so a material-assistance cohort can never lift the ceiling.
+    const report = evaluateReleaseGates({
+      integrity: integrity(),
+      resampling: plan(),
+      metrics: metrics({
+        visual: { fpr: upper(0.01), recall: lower(0.95) },
+        actionAuthorizationRecall: lower(0.1),
+      }),
+      slices: summary([passingSlice()]),
+    });
+    const gate = gateById(report.gates, "action.recall.overall");
+    expect(gate.passed).toBe(false);
+    expect(gate.observed).toBe(0.1);
+    expect(report.decision).toBe("indicator-only");
+  });
+
+  it("passes when the integral positives carry the recall themselves", () => {
+    const report = evaluateReleaseGates({
+      integrity: integrity(),
+      resampling: plan(),
+      metrics: metrics({
+        visual: { fpr: upper(0.01), recall: lower(0.36) },
+        actionAuthorizationRecall: lower(0.6),
+      }),
+      slices: summary([passingSlice()]),
+    });
+    expect(gateById(report.gates, "action.recall.overall").observed).toBe(0.6);
+    expect(report.decision).toBe("pass");
+  });
+});
+
+describe("mixed below the AI-fraction floor enters no gate denominator (B2)", () => {
+  it("leaves every warning and action gate byte-identical", () => {
+    // Fed through the REAL metrics pipeline, not a hand-built matrix: the claim
+    // is about what `computeEvaluationMetrics` puts in a denominator.
+    const base = [
+      ...Array.from({ length: 400 }, (_, index) =>
+        humanNegativeWithoutBasis(`n${index}`),
+      ),
+      ...Array.from({ length: 200 }, (_, index) => aiPositive(`p${index}`)),
+    ];
+    const withDiagnosticRow = [...base, mixedRow(0.25, `d0`)];
+
+    const of = (items: readonly EvaluationItem[]): GateResult[] =>
+      evaluateReleaseGates({
+        integrity: integrity(),
+        resampling: plan(),
+        metrics: computeEvaluationMetrics(items, {
+          bootstrapSeed: 20260726,
+          preRegisteredStatisticalGates: M,
+        }),
+        slices: summary([passingSlice()]),
+      }).gates.filter((gate) => gate.tier !== "integrity");
+
+    expect(of(withDiagnosticRow)).toEqual(of(base));
   });
 });
 

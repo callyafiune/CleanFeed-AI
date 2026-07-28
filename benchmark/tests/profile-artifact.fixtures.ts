@@ -92,6 +92,7 @@ function decisionMetrics(
 ): DecisionMetrics {
   return {
     family: "end-to-end",
+    positivePopulation: "warning-positives",
     sampleSize: positives + negatives,
     positives,
     negatives,
@@ -236,6 +237,31 @@ function fullMetrics(
   return {
     warning: families(warning),
     visualAction: visualAction === null ? null : families(visualAction),
+    // B2: the recall that may lift the action ceiling, over integral positives
+    // only. Mirrors the visual-action matrix here because this fixture holds no
+    // material-assistance rows for the two populations to differ over.
+    actionAuthorization:
+      visualAction === null
+        ? null
+        : {
+            role: "release",
+            decision: "visual-action",
+            positivePopulation: "integral-positives",
+            family: "end-to-end",
+            recall: visualAction.recall,
+            positives: visualAction.positives,
+            excludedMaterialAssistancePositives: 0,
+            excludedEcologicalCohort: 0,
+          },
+    // B2: diagnostic-only span localization. Empty cohorts here — this fixture
+    // scores no spans; the block exists so the shape is complete.
+    localization: {
+      role: "diagnostic",
+      gates: false,
+      authorizesVisualAction: false,
+      unit: "character-offset",
+      byGenerationMode: [],
+    },
     ...a6Blocks(
       families(warning),
       visualAction === null ? null : families(visualAction),
@@ -261,10 +287,12 @@ function fullMetrics(
     memory: { sampleSize: 10, meanBytes: 100, maxBytes: 200 },
     mixed: {
       atLeastHalfAi: {
+        generationMode: "mechanistic",
         sampleSize: 400,
         warningRecall: 0.7,
         warningRecallLower95: wilsonOneSided(280, 400, "lower").value,
       },
+      byGenerationMode: [],
       byFraction: [],
     },
   };

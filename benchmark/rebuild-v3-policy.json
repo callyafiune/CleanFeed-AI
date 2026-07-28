@@ -77,7 +77,8 @@
   "infersAuthorship": false,
   "integralPositive": {
     "label": "ai",
-    "requiresRegisteredPipeline": true
+    "requiresRegisteredPipeline": true,
+    "visualActionRequiresDocumentGates": true
   },
   "labelBasis": {
     "allowed": [
@@ -90,13 +91,20 @@
   },
   "localization": {
     "authorizesVisualAction": false,
+    "metricsRole": "diagnostic",
     "standaloneClaim": false,
     "trainsAuxiliaryHead": true
   },
   "materialAssistance": {
     "authorizes": "warning-only",
+    "cohortsAggregated": false,
     "generationMode": "mechanistic",
-    "minimumAiFraction": 0.5
+    "generationModes": [
+      "mechanistic",
+      "ecological"
+    ],
+    "minimumAiFraction": 0.5,
+    "minimumWarningRecall": 0.5
   },
   "mixedBelowHalfAiRole": "diagnostic-curve-only",
   "multiplicity": {

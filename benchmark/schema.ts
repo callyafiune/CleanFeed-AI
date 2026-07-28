@@ -16,8 +16,12 @@ import {
   normalizeGeneratorFamily,
   type GeneratorFamily,
 } from "./generator-family.ts";
+import { REBUILD_V3_POLICY } from "./rebuild-v3-policy.ts";
+import type { GenerationMode } from "./rebuild-v3-policy.ts";
 
 export type BenchmarkLabel = "human" | "ai" | "mixed";
+
+export type { GenerationMode };
 
 export type TransformationKind =
   | "none"
@@ -93,6 +97,18 @@ export interface BenchmarkRecord {
     aiFraction: number;
     humanFraction: number;
     spans: Array<{ start: number; end: number; origin: EvidenceSpanOrigin }>;
+    // WHICH cohort this mixture belongs to, and therefore which claim it can
+    // support. Mandatory, with no default: `mechanistic` is what this project
+    // produces (we chose and executed the edits, so the provenance per stretch
+    // is known but the coauthorship DISTRIBUTION is ours), `ecological` is
+    // reserved for a sample whose writing process was observed. The two are
+    // never added together — see `materialAssistance.cohortsAggregated: false`
+    // in benchmark/rebuild-v3-policy.json and the cohort split in
+    // benchmark/metrics.ts. Absent the field there is nothing to infer: a
+    // mixture whose cohort is unknown would be pooled into whichever one the
+    // consumer assumed, which is exactly the aggregation the frozen table
+    // forbids, so the record is REFUSED instead (R4/R6: never synthesize).
+    generationMode: GenerationMode;
   };
   transformation: {
     kind: TransformationKind;
@@ -210,7 +226,11 @@ const GENERATION_KEYS = [
   "seed",
   "generatedAt",
 ];
-const MIXTURE_KEYS = ["aiFraction", "humanFraction", "spans"];
+const MIXTURE_KEYS = ["aiFraction", "humanFraction", "spans", "generationMode"];
+// The closed vocabulary comes from the frozen contract, never from a literal
+// repeated here (benchmark/rebuild-v3-policy.ts is the single source).
+const GENERATION_MODES: readonly GenerationMode[] =
+  REBUILD_V3_POLICY.materialAssistance.generationModes;
 const SPAN_KEYS = ["start", "end", "origin"];
 const TRANSFORMATION_KEYS = ["kind", "severity", "operatorId"];
 const GROUPS_KEYS = [
@@ -594,7 +614,18 @@ function validateMixture(
     return { start, end, origin };
   });
 
-  return { aiFraction, humanFraction, spans };
+  // Validated LAST so the earlier, more specific diagnostics (a fraction out of
+  // range, a span past the end of the text) keep firing first on a record that
+  // has more than one problem.
+  const generationMode = enumValue(
+    obj,
+    "generationMode",
+    "mixture",
+    GENERATION_MODES,
+    id,
+  );
+
+  return { aiFraction, humanFraction, spans, generationMode };
 }
 
 function validateTransformation(

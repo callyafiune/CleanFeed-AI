@@ -45,6 +45,39 @@ apresenta sinais compatíveis com geração ou edição por IA e explicará que 
 não comprova a origem. Uma pequena taxa de falsos positivos é aceita porque a
 mensagem é probabilística e todas as intervenções são reversíveis.
 
+### 2.1 O alvo estimado e os três alvos de anotação
+
+O detector estima **compatibilidade textual com geração por IA** — nunca autoria,
+intenção ou o processo real de escrita. O identificador congelado do alvo é
+`textual-compatibility-with-ai-generation`
+(`benchmark/rebuild-v3-policy.json`, espelhado em
+`src/shared/classification-copy.json`). Nenhuma mensagem de produto pode afirmar
+mais do que isso; a varredura é mecânica, em
+`src/shared/classification-copy.ts` (`userFacingCopy` + `overclaimIn`).
+
+Os três alvos de anotação são fechados:
+
+| alvo | regra de anotação | métrica de gate | ação de produto |
+| --- | --- | --- | --- |
+| documento integralmente gerado | `label = ai`; geração integral registrada | recall de aviso e de ação no limiar congelado | `indicator`; ação visual somente se os gates de documento passarem |
+| assistência material mecanística | `label = mixed`, `mixture.generationMode = mechanistic`, `aiFraction >= 0.50` | `warning.mixed-recall >= 0.50`; curva completa v0–v8 diagnóstica | **somente `indicator`** |
+| spans observados | spans contíguos registrados pela operação de D4 | IoU de span, precisão/recall de token e recall do caminho localizado, **todos diagnósticos** nesta versão | explica/localiza um aviso; nunca autoriza ação visual sozinho |
+
+Consequências mecânicas, não apenas redacionais:
+
+- misto com `aiFraction < 0.50` não é negativo humano nem positivo de release —
+  é fatia diagnóstica da curva e não entra em denominador de gate nenhum;
+- `mixture.generationMode` é obrigatório e fechado em
+  `mechanistic | ecological`. Tudo que este projeto produz é `mechanistic`: nós
+  escolhemos e executamos as edições, então a proveniência por trecho é
+  conhecida, mas a **distribuição** de coautoria é nossa, não de pessoas reais.
+  `ecological` fica reservado para uma amostra com processo de escrita
+  observado. As duas coortes são **fatias separadas** e **nunca agregadas**
+  (`materialAssistance.cohortsAggregated: false`);
+- o recall que pode elevar o teto de ação (`actionCeiling`) é medido **somente**
+  sobre os positivos integrais (`EvaluationMetrics.actionAuthorization`), então
+  uma coorte de assistência material não consegue levantá-lo.
+
 Os orçamentos aprovados são:
 
 - aviso probabilístico: limite superior unilateral de 95% do FPR menor ou igual
@@ -265,10 +298,12 @@ temperatura, seed quando disponível e data. Pelo menos uma família geradora
 inteira fica reservada ao teste como gerador não visto.
 
 Os textos mistos registram texto pai, método de edição, faixas aproximadas de
-contribuição humana/IA e spans anotados quando possível. Mistos não são
-descartados das métricas. Exemplos com contribuição de IA igual ou superior a
-50% participam do gate de recall de aviso; os demais são reportados por faixa e
-entram na análise de risco, mas não são negativos humanos.
+contribuição humana/IA, spans anotados quando possível e a coorte
+`mixture.generationMode` (§2.1). Mistos não são descartados das métricas.
+Exemplos `mechanistic` com contribuição de IA igual ou superior a 50%
+participam do gate de recall de aviso; os demais são reportados por faixa **e por
+coorte** e entram na análise de risco, mas não são negativos humanos nem
+positivos de release.
 
 O rótulo de origem é derivado da proveniência documentada, nunca da opinião de
 um detector. Dois revisores conferem rótulo, licença, linhagem e remoção de PII;
@@ -369,7 +404,13 @@ Os gates estatísticos são:
 | Utilidade da ação | LCB95(recall) ≥ 35% |
 | Cobertura | ≥ 80% dos posts elegíveis sem abstenção |
 | Calibração | ECE ≤ 0,05 |
-| Mistos ≥ 50% IA | recall de aviso ≥ 50% |
+| Assistência material | recall de aviso ≥ 50% na coorte `mechanistic` com `aiFraction ≥ 0,50` |
+
+A utilidade da AÇÃO é medida sobre os positivos **integrais** apenas
+(`label = ai`): assistência material autoriza `indicator` e nada mais, então uma
+linha mista não entra nesse denominador. As métricas de span (IoU, precisão e
+recall de token, recall do caminho localizado) são publicadas por coorte e são
+**diagnósticas** — nenhum gate as lê.
 
 Falhar no gate de ação, mas passar no gate de aviso, produz indicator-only.
 Falhar no gate de aviso produz reject e mantém o estilométrico como

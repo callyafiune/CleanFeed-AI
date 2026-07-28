@@ -111,6 +111,11 @@ HELD_OUT_INELIGIBLE = {"gemini-3_5-flash-lite", "gemini-3_1-flash-lite"}
 # channels exposes a seed, so every declared batch records the same pair.
 LAB_TEMPERATURE = 0.8
 SEED_NULL_REASON = "provider API does not expose a sampling seed"
+# The mixed cohort this lane produces. The frozen contract
+# (benchmark/rebuild-v3-policy.json, `materialAssistance.generationMode`) closes
+# the vocabulary at "mechanistic" | "ecological", and only the first is a fact
+# about anything this project makes.
+MECHANISTIC_GENERATION_MODE = "mechanistic"
 
 
 def slug(value: str) -> str:
@@ -316,6 +321,13 @@ def mixed_record(cand: dict) -> dict:
                 {"start": int(s["start"]), "end": int(s["end"]), "origin": s["origin"]}
                 for s in spans
             ],
+            # Mandatory in the sealed schema (benchmark/schema.ts) and a FACT here,
+            # not a default: make_mixed.py chose and executed the edits, so the
+            # provenance of every span is known while the coauthorship
+            # distribution is ours. "ecological" would claim an observed writing
+            # process this lane never watched, and this assembler must never
+            # write it (R4).
+            "generationMode": MECHANISTIC_GENERATION_MODE,
         },
         # The AI spans ARE controlled generation, and governance demands a
         # recipe for every controlled-generation record. mixed candidates carry

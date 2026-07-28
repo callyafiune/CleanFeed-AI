@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 
+import { REBUILD_V3_POLICY } from "../rebuild-v3-policy.ts";
 import { parseBenchmarkDataset, validateBenchmarkRecord } from "../schema.ts";
 
 const HUMAN_TEXT = Array.from(
@@ -80,7 +81,12 @@ describe("validateBenchmarkRecord", () => {
       validateBenchmarkRecord({
         ...human,
         label: "mixed",
-        mixture: { aiFraction: 0.7, humanFraction: 0.4, spans: [] },
+        mixture: {
+          aiFraction: 0.7,
+          humanFraction: 0.4,
+          spans: [],
+          generationMode: "mechanistic",
+        },
       }),
     ).toThrow(/mixed fractions must sum to 1/);
   });
@@ -115,11 +121,72 @@ describe("validateBenchmarkRecord", () => {
         aiFraction: 0.5,
         humanFraction: 0.5,
         spans: [{ start: 0, end: 10, origin: "ai" }],
+        generationMode: "mechanistic",
       },
       groups: { ...human.groups, derivationRoot: "human-parent-0001" },
     });
     expect(record.label).toBe("mixed");
     expect(record.mixture?.spans).toHaveLength(1);
     expect(record.mixture?.spans[0]?.end).toBe(10);
+  });
+});
+
+// B2: `generationMode` is the field that keeps the two mixed cohorts apart.
+// `mechanistic` is what THIS project produces (we choose and execute the edits,
+// so the provenance per stretch is known but the coauthorship DISTRIBUTION is
+// ours); `ecological` is reserved for a sample with an observed writing process.
+// The schema makes it mandatory so a mixed record can never be silently pooled
+// into whichever cohort a consumer assumed.
+describe("mixture.generationMode", () => {
+  function mixed(mixture: Record<string, unknown>): unknown {
+    return {
+      ...human,
+      label: "mixed",
+      mixture,
+      groups: { ...human.groups, derivationRoot: "human-parent-0001" },
+    };
+  }
+
+  it("is mandatory on every mixture", () => {
+    expect(() =>
+      validateBenchmarkRecord(
+        mixed({ aiFraction: 0.5, humanFraction: 0.5, spans: [] }),
+      ),
+    ).toThrow(
+      /mixture\.generationMode must be one of mechanistic, ecological/u,
+    );
+  });
+
+  it("refuses any value outside the closed vocabulary", () => {
+    expect(() =>
+      validateBenchmarkRecord(
+        mixed({
+          aiFraction: 0.5,
+          humanFraction: 0.5,
+          spans: [],
+          generationMode: "codex-cli",
+        }),
+      ),
+    ).toThrow(
+      /mixture\.generationMode must be one of mechanistic, ecological/u,
+    );
+  });
+
+  it("accepts both cohorts, and the vocabulary comes from the frozen policy", () => {
+    for (const mode of REBUILD_V3_POLICY.materialAssistance.generationModes) {
+      const record = validateBenchmarkRecord(
+        mixed({
+          aiFraction: 0.6,
+          humanFraction: 0.4,
+          spans: [{ start: 0, end: 10, origin: "ai" }],
+          generationMode: mode,
+        }),
+      );
+      expect(record.mixture?.generationMode).toBe(mode);
+    }
+    expect([...REBUILD_V3_POLICY.materialAssistance.generationModes]).toEqual([
+      "mechanistic",
+      "ecological",
+    ]);
   });
 });

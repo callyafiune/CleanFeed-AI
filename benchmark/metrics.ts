@@ -8,9 +8,22 @@
 //     intervals for ROC-AUC/PR-AUC/Brier/ECE-15, coverage/abstention/error over
 //     the eligible set, prevalence-simulated precision, latency/memory and the
 //     mixed-text (>=50% AI) warning-recall block. Ground truth is the record
-//     label, never a score; warning positives are the AI records PLUS the mixed
-//     records with at least 50% AI contribution, and human records are the only
-//     negatives — mixed text never inflates the human negative count.
+//     label, never a score; human records are the only negatives — mixed text
+//     never inflates the human negative count.
+//
+//     WHAT COUNTS AS A POSITIVE IS NOT ONE ANSWER (B2). The frozen three-target
+//     table gives each target a different product action, so this module publishes
+//     two positive populations and names both on every matrix
+//     (`DecisionMetrics.positivePopulation`):
+//       - WARNING positives — integral generation (`label = "ai"`) plus MECHANISTIC
+//         material assistance (`label = "mixed"`, `aiFraction >= 0.50`);
+//       - the positives that may AUTHORIZE VISUAL ACTION — integral generation
+//         alone, published as `EvaluationMetrics.actionAuthorization`, because
+//         material assistance authorizes `indicator` and nothing more.
+//     Mixed below the fraction floor and the whole `ecological` cohort are
+//     positives of nothing: they are diagnostic slices, kept apart and never
+//     pooled (`materialAssistance.cohortsAggregated: false`). Span localization is
+//     diagnostic too — see `EvaluationMetrics.localization`.
 //
 //   * The legacy binary contract (`computeBinaryMetrics` /
 //     `computeSegmentedMetrics`) still feeds the pre-migration MVP CLI report
@@ -28,6 +41,7 @@ import {
   wilsonOneSidedAtAlpha,
 } from "./intervals.ts";
 import { REBUILD_V3_POLICY } from "./rebuild-v3-policy.ts";
+import type { GenerationMode } from "./rebuild-v3-policy.ts";
 import type { BenchmarkRecord } from "./schema.ts";
 
 export interface Prediction {
@@ -464,8 +478,18 @@ export type MetricFamily = "end-to-end" | "conditional-on-scored";
 // `undecidedNegatives`: it is never a success, and it is never a fabricated
 // accusation either. That is the whole defect this shape removes — an errored
 // row used to be scored 0 and counted as a true negative.
+// WHICH of the frozen targets supplied the positives of a confusion matrix.
+// Published on every matrix because "positives" is not one population in this
+// module: the warning decision counts integral generation AND mechanistic
+// material assistance, while anything that AUTHORIZES visual action counts
+// integral generation alone (B2).
+export type PositivePopulation = "warning-positives" | "integral-positives";
+
 export interface DecisionMetrics {
   family: MetricFamily;
+  // The target whose positives are in `positives`. A consumer that needs to know
+  // whether a rate may authorize an action reads this, never the field name.
+  positivePopulation: PositivePopulation;
   sampleSize: number;
   positives: number;
   negatives: number;
@@ -713,12 +737,128 @@ export interface PredictiveValueProjection {
   byPrevalence: PredictiveValueAtPrevalence[];
 }
 
-// One mixed-text fraction bucket ("0_24" | "25_49" | "50_74" | "75_100") with
-// the warning decision measured over the >=50% AI records it contains.
+// The statistic that may AUTHORIZE visual action, over the integral-generation
+// positives alone (B2).
+//
+// Why it is a block of its own rather than a read of `metrics.visualAction`:
+// `visualAction` is the operating point of the action threshold over the WARNING
+// positives, which include mechanistic material assistance. The frozen table says
+// material assistance authorizes `indicator` and nothing more, so if the action
+// recall gate read that matrix a cohort of mixed rows crossing the action
+// threshold would raise the recall that lifts `actionCeiling` to `hide`. Here the
+// denominator is integral positives only, and the two exclusion counts are
+// published so the difference between the populations is a number an auditor can
+// see instead of a claim they have to trust (R7).
+export interface ActionAuthorizationMetrics {
+  role: "release";
+  decision: "visual-action";
+  positivePopulation: "integral-positives";
+  family: "end-to-end";
+  recall: MetricEstimate;
+  // The denominator of `recall`: eligible integral positives.
+  positives: number;
+  // Eligible warning positives that are material assistance, i.e. exactly the
+  // rows this statistic refuses to count.
+  excludedMaterialAssistancePositives: number;
+  // Eligible mixed rows of the OTHER cohort at or above the fraction floor. They
+  // are not warning positives either; the count travels so a future ecological
+  // sample is visible here rather than silently absent.
+  excludedEcologicalCohort: number;
+}
+
+// One mixed-text fraction bucket, per cohort. `key` is `"<mode>/<bucket>"` —
+// never the bare bucket — because the two cohorts are separate slices and a
+// single key holding both would BE the aggregation the frozen table forbids.
 export interface MixedFractionSegment {
   key: string;
+  generationMode: GenerationMode;
+  fractionBucket: string;
   sampleSize: number;
   warning: DecisionMetrics;
+}
+
+// The gated material-assistance recall triple: warned over every mixed row of ONE
+// cohort at or above the frozen AI fraction. END-TO-END in the status sense — an
+// undecided row is a miss — and never pooled across cohorts.
+export interface MixedRecallBlock {
+  generationMode: GenerationMode;
+  sampleSize: number;
+  warningRecall: number;
+  warningRecallLower95: number;
+}
+
+// One mixed cohort as its own slice. `aggregated: false` is a literal: there is no
+// cross-cohort total anywhere in this artifact, and this field says so at the
+// point a reader would otherwise go looking for one.
+export interface MixedCohort {
+  generationMode: GenerationMode;
+  role: "diagnostic" | "release";
+  aggregated: false;
+  sampleSize: number;
+  atLeastHalfAi: MixedRecallBlock;
+}
+
+/** A half-open character-offset interval `[start, end)` into a record's text. */
+export interface SpanInterval {
+  start: number;
+  end: number;
+}
+
+// The agreement between the observed AI spans of one record and what the localized
+// path emitted for it, in the unit the spans are DEFINED in.
+//
+// R7 note on the word "token": the frozen table calls for "precisão/recall de
+// token", and `mixture.spans` are character offsets (benchmark/schema.ts), so the
+// unit counted here is the character offset and `unit` says so on every published
+// block. When a tokenized span head exists the same ratios can be recounted over
+// its tokens; until then naming this "token precision" without declaring the unit
+// would be a claim about a tokenization that does not exist.
+export interface SpanOverlap {
+  // Merged lengths, so an input that lists an interval twice is not counted twice.
+  observed: number;
+  predicted: number;
+  intersection: number;
+  union: number;
+  iou: number;
+  tokenPrecision: number;
+  tokenRecall: number;
+  tokenF1: number;
+}
+
+// Localization over one cohort. DIAGNOSTIC in v3: `gates: false` and
+// `authorizesVisualAction: false` are literals, matching
+// `localization.metricsRole: "diagnostic"` and
+// `localization.authorizesVisualAction: false` in the frozen contract.
+export interface LocalizationCohort {
+  generationMode: GenerationMode;
+  role: "diagnostic";
+  aggregated: false;
+  // Scored rows of the cohort that carry at least one observed AI span. A row
+  // whose localized path emitted nothing STAYS here and counts as a miss.
+  population: number;
+  localizedEmitted: number;
+  localizedPathRecall: MetricEstimate;
+  // Micro: one ratio over the summed intersections / unions / lengths of the
+  // cohort, so a long document weighs what its length says it weighs.
+  microIou: number;
+  microTokenPrecision: number;
+  microTokenRecall: number;
+  // Macro: the unweighted mean of the per-row ratios, which is the number a
+  // per-document reading of "how well was this located?" wants.
+  macroIou: number;
+  macroTokenPrecision: number;
+  macroTokenRecall: number;
+}
+
+export interface LocalizationDiagnostics {
+  role: "diagnostic";
+  gates: false;
+  authorizesVisualAction: false;
+  unit: "character-offset";
+  // Cohorts only. There is deliberately NO aggregate over both of them: an
+  // aggregate is exactly what "as duas coortes são fatias separadas e nunca
+  // agregadas" forbids, and a field that does not exist cannot be quoted.
+  byGenerationMode: LocalizationCohort[];
 }
 
 // Coverage / abstention / error over one slice of the eligible set, so a
@@ -747,7 +887,15 @@ export interface ResolutionBreakdown {
 
 export interface EvaluationMetrics {
   warning: DecisionFamilies;
+  // The operating point of the visual-action threshold over the WARNING
+  // positives (`positivePopulation: "warning-positives"`). Its FPR is the action
+  // budget's statistic — negatives are human rows, so the positive definition
+  // cannot touch it. Its RECALL is a diagnostic and is NOT what authorizes an
+  // action: read `actionAuthorization` for that (B2).
   visualAction: DecisionFamilies | null;
+  // The recall that may lift the action ceiling, over integral positives alone.
+  // Null exactly when no visual-action threshold was frozen.
+  actionAuthorization: ActionAuthorizationMetrics | null;
   // The release metric, with its role in the field name (A6). Same numbers as
   // `warning`/`visualAction`, projected under the name that says what they decide.
   release: ReleaseMetrics;
@@ -787,12 +935,18 @@ export interface EvaluationMetrics {
   >;
   latency: LatencyMetrics;
   memory: MemoryMetrics;
+  // Span IoU, token precision/recall and localized-path recall, per cohort, all
+  // diagnostic in v3.
+  localization: LocalizationDiagnostics;
   mixed: {
-    atLeastHalfAi: {
-      sampleSize: number;
-      warningRecall: number;
-      warningRecallLower95: number;
-    };
+    // The GATED block: the mechanistic cohort at or above the frozen AI fraction,
+    // and it carries the cohort name so the gate's population is readable off the
+    // artifact instead of inferred from the field name.
+    atLeastHalfAi: MixedRecallBlock;
+    // Every cohort, separately, including the mechanistic one. The gated block
+    // above is the mechanistic entry of this list, projected under the name the
+    // gate reads; nothing here is a cross-cohort total.
+    byGenerationMode: MixedCohort[];
     byFraction: MixedFractionSegment[];
   };
 }
@@ -818,6 +972,12 @@ export interface ScoredEvaluationItem extends EvaluationItemTelemetry {
   documentScore: number;
   warned: boolean;
   visualActioned: boolean;
+  // What the LOCALIZED path emitted for this row, in the character offsets the
+  // record's own spans use. Absent means it emitted nothing — which is a miss for
+  // the localized-path recall, never a reason to drop the row from a denominator.
+  // Diagnostic only: a span explains and locates a warning and authorizes no
+  // visual action of its own (`localization.authorizesVisualAction: false`).
+  localizedSpans?: readonly SpanInterval[];
 }
 
 /** The runtime declined to decide (below the word floor, unsupported evidence). */
@@ -865,6 +1025,11 @@ const BOOTSTRAP_ITERATIONS = 2_000 as const;
 const DEFAULT_MINIMUM_ELIGIBLE_WORDS = REBUILD_V3_POLICY.wordFloor.abstainBelow;
 const MATERIAL_ASSISTANCE_AI_FRACTION =
   REBUILD_V3_POLICY.materialAssistance.minimumAiFraction;
+// The ONE cohort the material-assistance target is defined over. `ecological` is
+// a separate cohort and is never added to it (`cohortsAggregated: false`).
+const MATERIAL_ASSISTANCE_MODE =
+  REBUILD_V3_POLICY.materialAssistance.generationMode;
+const GENERATION_MODES = REBUILD_V3_POLICY.materialAssistance.generationModes;
 const LABEL_BASIS_POWER_FLOOR =
   REBUILD_V3_POLICY.powerFloors.criticalFprHumanNegatives;
 // The legacy `simulatedPrecision` trio is the first three policy prevalences; the
@@ -881,19 +1046,68 @@ const DEFAULT_PREVALENCES: SimulatedPrevalences = {
 // finite-precision score, never a missing one (R5 is about absent scores).
 const LOG_LOSS_EPSILON = 1e-12;
 
-// Warning positives are AI records and mixed records at or above the frozen
-// material-assistance AI fraction.
+// --- the three frozen targets, as predicates (B2) ---------------------------
+//
+// The frozen table (plan, "alvos, métricas e ações de produto") closes three
+// targets, and each one authorizes a different product action. The predicates
+// below are the only place that translation happens, so a caller cannot pick the
+// wrong population by accident:
+//
+//   | target                        | positive of                  | authorizes |
+//   |-------------------------------|------------------------------|------------|
+//   | integral generation           | warning AND visual action    | indicator; visual action only if the document gates pass |
+//   | mechanistic material assist.  | warning ONLY                 | indicator  |
+//   | observed spans                | neither (a localized detail) | explains a warning; never an action on its own |
+//
+// Mixed below the frozen AI fraction, and the whole `ecological` cohort, are
+// positives of NOTHING: they are diagnostic slices of the curve.
+
+/** A document generated integrally by a registered pipeline (`label = "ai"`). */
+export function isIntegralPositive(record: BenchmarkRecord): boolean {
+  return record.label === REBUILD_V3_POLICY.integralPositive.label;
+}
+
+/**
+ * Material assistance: `label = "mixed"`, `generationMode = "mechanistic"` and
+ * `aiFraction >= 0.50`, all three from the frozen contract. The generation mode
+ * is part of the DEFINITION, not a decoration: an `ecological` row above the same
+ * fraction belongs to the other cohort and is never pooled into this one.
+ */
+export function isMaterialAssistancePositive(record: BenchmarkRecord): boolean {
+  const mixture = record.mixture;
+  return (
+    record.label === "mixed" &&
+    mixture !== undefined &&
+    mixture.generationMode === MATERIAL_ASSISTANCE_MODE &&
+    mixture.aiFraction >= MATERIAL_ASSISTANCE_AI_FRACTION
+  );
+}
+
+/** Warning positives: integral generation plus mechanistic material assistance. */
 export function isWarningPositive(record: BenchmarkRecord): boolean {
-  if (record.label === "ai") return true;
-  if (record.label === "mixed") {
-    return (record.mixture?.aiFraction ?? 0) >= MATERIAL_ASSISTANCE_AI_FRACTION;
-  }
-  return false;
+  return isIntegralPositive(record) || isMaterialAssistancePositive(record);
+}
+
+/**
+ * The positives that may AUTHORIZE visual action: integral generation only.
+ * Material assistance authorizes `indicator` and nothing more
+ * (`materialAssistance.authorizes: "warning-only"`), so letting a mixed row into
+ * this population would let it raise a recall that lifts the action ceiling —
+ * which is the one thing the frozen table says it can never do.
+ */
+export function isVisualActionPositive(record: BenchmarkRecord): boolean {
+  return isIntegralPositive(record);
 }
 
 // The only negatives are clean human records; mixed text is never a negative.
 export function isHumanNegative(record: BenchmarkRecord): boolean {
   return record.label === "human";
+}
+
+/** The cohort of a mixed record, or `undefined` for a non-mixed one. */
+function generationModeOf(record: BenchmarkRecord): GenerationMode | undefined {
+  if (record.label !== "mixed") return undefined;
+  return record.mixture?.generationMode;
 }
 
 // ECE-15: exactly fifteen equal-width bins on [0,1] — [0,1/15), ... [14/15,1].
@@ -1179,6 +1393,12 @@ export function computeEvaluationMetrics(
   const visualAction = visualActionAvailable
     ? decisionFamilies(eligible, (item) => item.visualActioned, bonferroni)
     : null;
+  // The authorizing statistic: the SAME decision over the integral positives
+  // alone. A separate matrix, not a projection of the one above, because the
+  // populations differ (B2).
+  const actionAuthorization = visualActionAvailable
+    ? actionAuthorizationMetrics(eligible, bonferroni)
+    : null;
 
   // Continuous ranking/calibration metrics run over the scored positive/negative
   // set; mixed records below 50% AI are neither, so they never enter the curve.
@@ -1218,6 +1438,7 @@ export function computeEvaluationMetrics(
   return {
     warning,
     visualAction,
+    actionAuthorization,
     release: {
       role: "release",
       thresholdSource: "frozen-calibration-threshold",
@@ -1304,10 +1525,57 @@ export function computeEvaluationMetrics(
     // to a pt-BR detector's gate is the §4.1 unsatisfiable-gate pattern; A3 does
     // not decide it, and neither restriction may be reintroduced without measured
     // evidence written into the plan (A6/G2, plan item 7).
+    localization: localizationDiagnostics(items),
     mixed: {
-      atLeastHalfAi: mixedAtLeastHalfAi(items),
+      atLeastHalfAi: mixedAtLeastHalfAi(items, MATERIAL_ASSISTANCE_MODE),
+      // Sorted by codepoint, like every other keyed collection this module
+      // seals; the policy's own order encodes which cohort we produce, not a
+      // report ordering.
+      byGenerationMode: sortedGenerationModes().map((mode) => ({
+        generationMode: mode,
+        // The mechanistic cohort is what the approved gate reads; the other one
+        // is a separate cohort and carries no gate of its own.
+        role: mode === MATERIAL_ASSISTANCE_MODE ? "release" : "diagnostic",
+        aggregated: false as const,
+        sampleSize: items.filter(
+          (item) => generationModeOf(item.record) === mode,
+        ).length,
+        atLeastHalfAi: mixedAtLeastHalfAi(items, mode),
+      })),
       byFraction: mixedByFraction(items, bonferroni),
     },
+  };
+}
+
+// Recall of the visual-action decision over the eligible INTEGRAL positives, with
+// the two populations it refuses to count published beside it.
+function actionAuthorizationMetrics(
+  eligible: readonly EvaluationItem[],
+  bonferroni: MultiplicityDeclaration | null,
+): ActionAuthorizationMetrics {
+  const families = decisionFamilies(
+    eligible,
+    (item) => item.visualActioned,
+    bonferroni,
+    "integral-positives",
+  );
+  return {
+    role: "release",
+    decision: "visual-action",
+    positivePopulation: "integral-positives",
+    family: "end-to-end",
+    recall: families.endToEnd.recall,
+    positives: families.endToEnd.positives,
+    excludedMaterialAssistancePositives: eligible.filter((item) =>
+      isMaterialAssistancePositive(item.record),
+    ).length,
+    excludedEcologicalCohort: eligible.filter(
+      (item) =>
+        generationModeOf(item.record) !== undefined &&
+        generationModeOf(item.record) !== MATERIAL_ASSISTANCE_MODE &&
+        (item.record.mixture?.aiFraction ?? 0) >=
+          MATERIAL_ASSISTANCE_AI_FRACTION,
+    ).length,
   };
 }
 
@@ -1609,14 +1877,25 @@ function decisionFamilies(
   eligible: readonly EvaluationItem[],
   decide: (item: ScoredEvaluationItem) => boolean,
   bonferroni: MultiplicityDeclaration | null,
+  // Which target's positives this matrix counts. Explicit at every call site
+  // because it is the difference between a rate that may authorize an action and
+  // one that may not (B2).
+  positivePopulation: PositivePopulation = "warning-positives",
 ): DecisionFamilies {
   return {
-    endToEnd: decisionMetrics(eligible, decide, "end-to-end", bonferroni),
+    endToEnd: decisionMetrics(
+      eligible,
+      decide,
+      "end-to-end",
+      bonferroni,
+      positivePopulation,
+    ),
     conditionalOnScored: decisionMetrics(
       eligible.filter(isScoredItem),
       decide,
       "conditional-on-scored",
       bonferroni,
+      positivePopulation,
     ),
   };
 }
@@ -1629,7 +1908,12 @@ function decisionMetrics(
   decide: (item: ScoredEvaluationItem) => boolean,
   family: MetricFamily,
   bonferroni: MultiplicityDeclaration | null = null,
+  positivePopulation: PositivePopulation = "warning-positives",
 ): DecisionMetrics {
+  const isPositive =
+    positivePopulation === "integral-positives"
+      ? isIntegralPositive
+      : isWarningPositive;
   let positives = 0;
   let negatives = 0;
   let truePositives = 0;
@@ -1640,7 +1924,7 @@ function decisionMetrics(
   let undecidedNegatives = 0;
 
   for (const item of population) {
-    const positive = isWarningPositive(item.record);
+    const positive = isPositive(item.record);
     const negative = isHumanNegative(item.record);
     if (!positive && !negative) continue;
     if (positive) positives += 1;
@@ -1669,6 +1953,7 @@ function decisionMetrics(
 
   return {
     family,
+    positivePopulation,
     sampleSize: positives + negatives,
     positives,
     negatives,
@@ -1959,29 +2244,195 @@ function memoryMetricsAll(items: readonly EvaluationItem[]): MemoryMetrics {
   };
 }
 
+// --- span localization, diagnostic only (B2) --------------------------------
+
+// Merges a list of half-open intervals into a disjoint, ascending list, so a
+// caller that lists the same stretch twice cannot inflate a length. Malformed and
+// empty intervals (`end <= start`) are dropped rather than clamped: an empty span
+// carries no evidence in either direction.
+function mergeSpans(spans: readonly SpanInterval[]): SpanInterval[] {
+  const sorted = spans
+    .filter((span) => Number.isFinite(span.start) && Number.isFinite(span.end))
+    .filter((span) => span.end > span.start)
+    .sort((a, b) => a.start - b.start);
+  const merged: SpanInterval[] = [];
+  for (const span of sorted) {
+    const last = merged[merged.length - 1];
+    if (last !== undefined && span.start <= last.end) {
+      last.end = Math.max(last.end, span.end);
+    } else merged.push({ start: span.start, end: span.end });
+  }
+  return merged;
+}
+
+function totalLength(spans: readonly SpanInterval[]): number {
+  return spans.reduce((total, span) => total + (span.end - span.start), 0);
+}
+
+function intersectionLength(
+  left: readonly SpanInterval[],
+  right: readonly SpanInterval[],
+): number {
+  let total = 0;
+  for (const a of left) {
+    for (const b of right) {
+      const start = Math.max(a.start, b.start);
+      const end = Math.min(a.end, b.end);
+      if (end > start) total += end - start;
+    }
+  }
+  return total;
+}
+
+/**
+ * Span agreement between the OBSERVED AI spans of a record and what the localized
+ * path emitted for it, counted in character offsets (see {@link SpanOverlap} for
+ * why the unit is declared rather than called "token").
+ *
+ * A ratio with an empty denominator is 0, not NaN, and the reason is a policy one:
+ * this is a recall-style diagnostic where "predicted nothing" must read as a total
+ * miss, and a NaN would silently drop the row out of every average it enters.
+ */
+export function spanOverlap(
+  observedSpans: readonly SpanInterval[],
+  predictedSpans: readonly SpanInterval[],
+): SpanOverlap {
+  const observedMerged = mergeSpans(observedSpans);
+  const predictedMerged = mergeSpans(predictedSpans);
+  const observed = totalLength(observedMerged);
+  const predicted = totalLength(predictedMerged);
+  const intersection = intersectionLength(observedMerged, predictedMerged);
+  const union = observed + predicted - intersection;
+  const tokenPrecision = ratio(intersection, predicted);
+  const tokenRecall = ratio(intersection, observed);
+  return {
+    observed,
+    predicted,
+    intersection,
+    union,
+    iou: ratio(intersection, union),
+    tokenPrecision,
+    tokenRecall,
+    tokenF1:
+      tokenPrecision + tokenRecall === 0
+        ? 0
+        : (2 * tokenPrecision * tokenRecall) / (tokenPrecision + tokenRecall),
+  };
+}
+
+// Localization per cohort. Nothing here gates: the frozen table makes span IoU,
+// token precision/recall and localized-path recall diagnostics of this version,
+// and a span explains or locates a warning without ever authorizing a visual
+// action on its own.
+function localizationDiagnostics(
+  items: readonly EvaluationItem[],
+): LocalizationDiagnostics {
+  return {
+    role: "diagnostic",
+    gates: false,
+    authorizesVisualAction:
+      REBUILD_V3_POLICY.localization.authorizesVisualAction,
+    unit: "character-offset",
+    byGenerationMode: sortedGenerationModes().map((mode) =>
+      localizationCohort(items, mode),
+    ),
+  };
+}
+
+function sortedGenerationModes(): GenerationMode[] {
+  return [...GENERATION_MODES].sort((a, b) => (a < b ? -1 : a > b ? 1 : 0));
+}
+
+function localizationCohort(
+  items: readonly EvaluationItem[],
+  generationMode: GenerationMode,
+): LocalizationCohort {
+  // The denominator: scored rows of this cohort that HAVE an observed AI span.
+  // A row whose localized path emitted nothing stays in, because dropping it
+  // would turn silence into an absence of evidence rather than a miss.
+  const population = items.filter(
+    (item): item is ScoredEvaluationItem =>
+      isScoredItem(item) &&
+      generationModeOf(item.record) === generationMode &&
+      observedAiSpans(item.record).length > 0,
+  );
+  let intersection = 0;
+  let union = 0;
+  let observed = 0;
+  let predicted = 0;
+  let iouSum = 0;
+  let precisionSum = 0;
+  let recallSum = 0;
+  let localizedEmitted = 0;
+  for (const item of population) {
+    const overlap = spanOverlap(
+      observedAiSpans(item.record),
+      item.localizedSpans ?? [],
+    );
+    intersection += overlap.intersection;
+    union += overlap.union;
+    observed += overlap.observed;
+    predicted += overlap.predicted;
+    iouSum += overlap.iou;
+    precisionSum += overlap.tokenPrecision;
+    recallSum += overlap.tokenRecall;
+    if (overlap.predicted > 0) localizedEmitted += 1;
+  }
+  const count = population.length;
+  return {
+    generationMode,
+    role: "diagnostic",
+    aggregated: false,
+    population: count,
+    localizedEmitted,
+    localizedPathRecall: proportionEstimate(localizedEmitted, count),
+    microIou: ratio(intersection, union),
+    microTokenPrecision: ratio(intersection, predicted),
+    microTokenRecall: ratio(intersection, observed),
+    macroIou: ratio(iouSum, count),
+    macroTokenPrecision: ratio(precisionSum, count),
+    macroTokenRecall: ratio(recallSum, count),
+  };
+}
+
+function observedAiSpans(record: BenchmarkRecord): SpanInterval[] {
+  return (record.mixture?.spans ?? [])
+    .filter((span) => span.origin === "ai")
+    .map((span) => ({ start: span.start, end: span.end }));
+}
+
 // END-TO-END by construction, in the status sense (see MetricFamily): the
 // denominator is every >=50% AI mixed record, ELIGIBLE OR NOT, and an undecided
 // one counts as a miss, so an inference failure can never raise this recall.
 // The population is deliberately not eligibility-filtered — the R3 reason is
 // written above the `mixed:` block in `computeEvaluationMetrics`; do not add an
 // `isEligible` filter here without reading it.
-function mixedAtLeastHalfAi(items: readonly EvaluationItem[]): {
-  sampleSize: number;
-  warningRecall: number;
-  warningRecallLower95: number;
-} {
+// ONE cohort at a time: the caller names the generation mode, and the frozen gate
+// asks for `mechanistic`. Pooling the cohorts here would report a coauthorship
+// distribution we manufactured as if it had been observed
+// (`materialAssistance.cohortsAggregated: false`).
+function mixedAtLeastHalfAi(
+  items: readonly EvaluationItem[],
+  generationMode: GenerationMode,
+): MixedRecallBlock {
   const strong = items.filter(
     (item) =>
-      item.record.label === "mixed" &&
+      generationModeOf(item.record) === generationMode &&
       (item.record.mixture?.aiFraction ?? 0) >= MATERIAL_ASSISTANCE_AI_FRACTION,
   );
   const warned = strong.filter(
     (item) => isScoredItem(item) && item.warned,
   ).length;
   if (strong.length === 0) {
-    return { sampleSize: 0, warningRecall: 0, warningRecallLower95: 0 };
+    return {
+      generationMode,
+      sampleSize: 0,
+      warningRecall: 0,
+      warningRecallLower95: 0,
+    };
   }
   return {
+    generationMode,
     sampleSize: strong.length,
     warningRecall: warned / strong.length,
     warningRecallLower95: wilsonOneSided(warned, strong.length, "lower").value,
@@ -2007,18 +2458,32 @@ function mixedByFraction(
   items: readonly EvaluationItem[],
   bonferroni: MultiplicityDeclaration | null,
 ): MixedFractionSegment[] {
-  const buckets = new Map<string, EvaluationItem[]>();
+  // Keyed by COHORT AND fraction. A key of just the fraction would put a
+  // mechanistic and an ecological row of the same band into one segment, which is
+  // the aggregation the frozen table forbids — and it would do it silently,
+  // because the segment would still look like a well-formed diagnostic row.
+  const buckets = new Map<
+    string,
+    { mode: GenerationMode; fractionBucket: string; items: EvaluationItem[] }
+  >();
   for (const item of items) {
-    if (item.record.label !== "mixed") continue;
-    const key = mixedFractionBucket(item.record.mixture?.aiFraction ?? 0);
+    const mode = generationModeOf(item.record);
+    if (mode === undefined) continue;
+    const fractionBucket = mixedFractionBucket(
+      item.record.mixture?.aiFraction ?? 0,
+    );
+    const key = `${mode}/${fractionBucket}`;
     const bucket = buckets.get(key);
-    if (bucket === undefined) buckets.set(key, [item]);
-    else bucket.push(item);
+    if (bucket === undefined) {
+      buckets.set(key, { mode, fractionBucket, items: [item] });
+    } else bucket.items.push(item);
   }
   return [...buckets.entries()]
-    .sort((a, b) => a[0].localeCompare(b[0]))
-    .map(([key, bucket]) => ({
+    .sort((a, b) => (a[0] < b[0] ? -1 : a[0] > b[0] ? 1 : 0))
+    .map(([key, { mode, fractionBucket, items: bucket }]) => ({
       key,
+      generationMode: mode,
+      fractionBucket,
       sampleSize: bucket.length,
       // A mixed bucket holds no human negatives, so this matrix is a pure recall
       // block. `family: "end-to-end"` is the STATUS rule (an undecided row is a

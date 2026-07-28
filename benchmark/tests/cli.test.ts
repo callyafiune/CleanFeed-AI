@@ -470,6 +470,7 @@ function record(
       aiFraction: 0.6,
       humanFraction: 0.4,
       spans: [{ start: 0, end: 10, origin: "ai" }],
+      generationMode: "mechanistic",
     };
     base.groups.derivationRoot = `parent_${id}`;
   }

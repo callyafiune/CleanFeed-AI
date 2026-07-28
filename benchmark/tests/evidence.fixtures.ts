@@ -260,6 +260,7 @@ function estimate(value: number): MetricEstimate {
 function emptyDecisionMetrics(): DecisionMetrics {
   return {
     family: "end-to-end",
+    positivePopulation: "warning-positives",
     sampleSize: 0,
     positives: 0,
     negatives: 0,
@@ -292,6 +293,18 @@ function minimalMetrics(): EvaluationMetrics {
   return {
     warning: emptyDecisionFamilies(),
     visualAction: null,
+    // B2: no visual-action threshold in this fixture, so nothing may authorize
+    // an action either.
+    actionAuthorization: null,
+    // B2: diagnostic-only span localization. Empty cohorts here — this fixture
+    // scores no spans; the block exists so the shape is complete.
+    localization: {
+      role: "diagnostic",
+      gates: false,
+      authorizesVisualAction: false,
+      unit: "character-offset",
+      byGenerationMode: [],
+    },
     // The A6 role-named blocks. This fixture never reads them; it only has to be
     // structurally complete, so the release block mirrors the empty matrix and
     // every conditional block carries its error-rate companion.
@@ -384,10 +397,12 @@ function minimalMetrics(): EvaluationMetrics {
     memory: { sampleSize: 0, meanBytes: 0, maxBytes: 0 },
     mixed: {
       atLeastHalfAi: {
+        generationMode: "mechanistic",
         sampleSize: 0,
         warningRecall: 0,
         warningRecallLower95: 0,
       },
+      byGenerationMode: [],
       byFraction: [],
     },
   };

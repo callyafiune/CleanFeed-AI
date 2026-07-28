@@ -13,6 +13,7 @@ import {
   reliabilityDiagram,
   simulatedPrecision,
   sizeBucket,
+  spanOverlap,
   type CalibrationPoint,
   type EvaluationItem,
   type EvaluationOptions,
@@ -45,6 +46,14 @@ interface RecordFields {
   // Only C1 adds `labelBasis` to the closed schema, so the fixture writes it as
   // an extra field: A6 must read it tolerantly today and must not invent it.
   labelBasis?: string;
+  // B2: which mixed cohort the row belongs to. Defaults to `mechanistic`,
+  // because that is the only cohort this project produces and the only one the
+  // material-assistance target is defined over; a fixture that wants the other
+  // cohort has to say so, which is what makes the non-aggregation testable.
+  generationMode?: "mechanistic" | "ecological";
+  // Observed AI spans (character offsets into the record text), as D4's
+  // operation records them.
+  observedAiSpans?: ReadonlyArray<{ start: number; end: number }>;
 }
 
 function record(fields: RecordFields): BenchmarkRecord {
@@ -72,7 +81,11 @@ function record(fields: RecordFields): BenchmarkRecord {
     base.mixture = {
       aiFraction: fields.aiFraction,
       humanFraction: 1 - fields.aiFraction,
-      spans: [],
+      spans: (fields.observedAiSpans ?? []).map((span) => ({
+        ...span,
+        origin: "ai",
+      })),
+      generationMode: fields.generationMode ?? "mechanistic",
     };
   }
   if (fields.generatorFamily !== undefined) {
@@ -89,6 +102,10 @@ interface ItemFields extends RecordFields {
   status?: "scored" | "abstained" | "error";
   latencyMs?: number;
   memoryBytes?: number;
+  // What the localized path emitted for this row. `undefined` means it emitted
+  // nothing at all, which is a miss for the localized-path recall and not an
+  // excuse to leave the row out of the denominator.
+  localizedSpans?: ReadonlyArray<{ start: number; end: number }>;
 }
 
 // The fixture mirrors the discriminated union: only a `scored` row has a score
@@ -125,6 +142,9 @@ function item(fields: ItemFields): EvaluationItem {
     documentScore: fields.documentScore,
     warned: fields.warned ?? false,
     visualActioned: fields.visualActioned ?? false,
+    ...(fields.localizedSpans === undefined
+      ? {}
+      : { localizedSpans: fields.localizedSpans }),
     ...telemetry,
   };
 }
@@ -284,7 +304,7 @@ describe("computeEvaluationMetrics", () => {
     expect(metrics.mixed.atLeastHalfAi.sampleSize).toBe(2);
     expect(metrics.mixed.atLeastHalfAi.warningRecall).toBe(0.5);
     const bucket = metrics.mixed.byFraction.find(
-      (segment) => segment.key === "75_100",
+      (segment) => segment.key === "mechanistic/75_100",
     );
     expect(bucket?.sampleSize).toBe(2);
     expect(bucket?.warning.positives).toBe(2);
@@ -1061,6 +1081,303 @@ describe("simultaneous (Bonferroni) bounds", () => {
 });
 
 // --- legacy binary metrics (MVP CLI report path) --------------------------
+
+// ===========================================================================
+// B2 — the three frozen targets. Each block below pins one thing the frozen
+// table makes IMPOSSIBLE rather than merely unlikely.
+// ===========================================================================
+
+describe("the three product targets (B2)", () => {
+  // Two authors' worth of clean evidence so every population below is non-empty
+  // and the added rows are the only thing that can move a number.
+  const BASE: readonly EvaluationItem[] = [
+    item({ author: "h1", label: "human", documentScore: 0.1 }),
+    item({ author: "h2", label: "human", documentScore: 0.15 }),
+    item({
+      author: "a1",
+      label: "ai",
+      documentScore: 0.95,
+      warned: true,
+      visualActioned: true,
+    }),
+    item({
+      author: "m1",
+      label: "mixed",
+      aiFraction: 0.7,
+      documentScore: 0.8,
+      warned: true,
+    }),
+  ];
+
+  it("keeps a mixed row below the frozen AI fraction out of every gate population", () => {
+    const floor = REBUILD_V3_POLICY.materialAssistance.minimumAiFraction;
+    expect(floor).toBe(0.5);
+    // A row that WOULD move every one of these numbers if it were counted: it is
+    // warned and visual-actioned, so counting it as a positive would raise both
+    // recalls, and counting it as a negative would raise both FPRs.
+    const withDiagnosticRow = [
+      ...BASE,
+      item({
+        author: "m2",
+        label: "mixed",
+        aiFraction: floor - 0.01,
+        documentScore: 0.9,
+        warned: true,
+        visualActioned: true,
+      }),
+    ];
+
+    const before = computeEvaluationMetrics(BASE, OPTIONS);
+    const after = computeEvaluationMetrics(withDiagnosticRow, OPTIONS);
+
+    for (const families of [
+      [before.warning, after.warning] as const,
+      [before.visualAction, after.visualAction] as const,
+    ]) {
+      const [a, b] = families;
+      expect(b?.endToEnd.positives).toBe(a?.endToEnd.positives);
+      expect(b?.endToEnd.negatives).toBe(a?.endToEnd.negatives);
+      expect(b?.endToEnd.sampleSize).toBe(a?.endToEnd.sampleSize);
+      expect(b?.endToEnd.truePositives).toBe(a?.endToEnd.truePositives);
+      expect(b?.endToEnd.falsePositives).toBe(a?.endToEnd.falsePositives);
+      expect(b?.endToEnd.recall.value).toBe(a?.endToEnd.recall.value);
+      expect(b?.endToEnd.falsePositiveRate.value).toBe(
+        a?.endToEnd.falsePositiveRate.value,
+      );
+    }
+    // The gated mixed-recall block has the same denominator before and after.
+    expect(after.mixed.atLeastHalfAi.sampleSize).toBe(
+      before.mixed.atLeastHalfAi.sampleSize,
+    );
+    expect(after.mixed.atLeastHalfAi.warningRecall).toBe(
+      before.mixed.atLeastHalfAi.warningRecall,
+    );
+    // And it IS visible, as the diagnostic curve slice the frozen table says it
+    // is — dropped from the gates, never dropped from the report.
+    expect(after.mixed.byFraction.map((segment) => segment.key)).toContain(
+      "mechanistic/25_49",
+    );
+    expect(REBUILD_V3_POLICY.mixedBelowHalfAiRole).toBe(
+      "diagnostic-curve-only",
+    );
+  });
+
+  it("never lets material assistance raise the action ceiling above indicator", () => {
+    expect(REBUILD_V3_POLICY.materialAssistance.authorizes).toBe(
+      "warning-only",
+    );
+    // A corpus whose ONLY visual-actioned positives are material assistance:
+    // three mechanistic mixed rows above the fraction floor, all actioned, and
+    // one integral AI positive that the action threshold missed.
+    const fixture = [
+      item({ author: "h1", label: "human", documentScore: 0.1 }),
+      item({
+        author: "a1",
+        label: "ai",
+        documentScore: 0.6,
+        warned: true,
+        visualActioned: false,
+      }),
+      ...[0.6, 0.7, 0.8].map((aiFraction, index) =>
+        item({
+          author: `m${index}`,
+          label: "mixed",
+          aiFraction,
+          documentScore: 0.99,
+          warned: true,
+          visualActioned: true,
+        }),
+      ),
+    ];
+
+    const metrics = computeEvaluationMetrics(fixture, OPTIONS);
+
+    // The warning target counts both: integral generation AND mechanistic
+    // material assistance are warning positives.
+    expect(metrics.warning.endToEnd.positives).toBe(4);
+    expect(metrics.warning.endToEnd.recall.value).toBe(1);
+
+    // The statistic that authorizes visual action counts INTEGRAL positives
+    // only, and it says so in the artifact.
+    const authorization = metrics.actionAuthorization;
+    expect(authorization?.role).toBe("release");
+    expect(authorization?.positivePopulation).toBe("integral-positives");
+    expect(authorization?.positives).toBe(1);
+    expect(authorization?.excludedMaterialAssistancePositives).toBe(3);
+    // One integral positive, not actioned: recall 0. Three actioned mixed rows
+    // cannot lift it, which is the whole point.
+    expect(authorization?.recall.value).toBe(0);
+  });
+
+  it("never aggregates the mechanistic and ecological cohorts", () => {
+    expect(REBUILD_V3_POLICY.materialAssistance.cohortsAggregated).toBe(false);
+    const fixture = [
+      item({ author: "h1", label: "human", documentScore: 0.1 }),
+      item({ author: "a1", label: "ai", documentScore: 0.95, warned: true }),
+      item({
+        author: "m1",
+        label: "mixed",
+        aiFraction: 0.8,
+        generationMode: "mechanistic",
+        documentScore: 0.9,
+        warned: true,
+      }),
+      // An ecological row above the fraction floor. If the cohorts were pooled
+      // it would be a warning positive and would enter the gated block.
+      item({
+        author: "e1",
+        label: "mixed",
+        aiFraction: 0.8,
+        generationMode: "ecological",
+        documentScore: 0.05,
+        warned: false,
+      }),
+    ];
+
+    const metrics = computeEvaluationMetrics(fixture, OPTIONS);
+
+    // The gated block is the MECHANISTIC cohort: one row, warned, recall 1.
+    expect(metrics.mixed.atLeastHalfAi.generationMode).toBe("mechanistic");
+    expect(metrics.mixed.atLeastHalfAi.sampleSize).toBe(1);
+    expect(metrics.mixed.atLeastHalfAi.warningRecall).toBe(1);
+
+    // The ecological row is a warning positive of NEITHER family.
+    expect(metrics.warning.endToEnd.positives).toBe(2);
+    expect(metrics.warning.endToEnd.negatives).toBe(1);
+    expect(metrics.warning.endToEnd.sampleSize).toBe(3);
+
+    // Both cohorts are published, separately, and each carries its own count.
+    const cohorts = metrics.mixed.byGenerationMode;
+    expect(cohorts.map((cohort) => cohort.generationMode)).toEqual([
+      "ecological",
+      "mechanistic",
+    ]);
+    expect(cohorts.every((cohort) => cohort.aggregated === false)).toBe(true);
+    const ecological = cohorts.find(
+      (cohort) => cohort.generationMode === "ecological",
+    );
+    expect(ecological?.atLeastHalfAi.sampleSize).toBe(1);
+    expect(ecological?.atLeastHalfAi.warningRecall).toBe(0);
+    expect(ecological?.role).toBe("diagnostic");
+    // No key of the fraction curve mixes the two cohorts either.
+    expect(metrics.mixed.byFraction.map((segment) => segment.key)).toEqual([
+      "ecological/75_100",
+      "mechanistic/75_100",
+    ]);
+  });
+});
+
+describe("span localization metrics are diagnostic (B2)", () => {
+  it("scores span overlap in the unit the spans are defined in", () => {
+    // Observed [0,10) and [20,30); predicted [5,25). Intersection = [5,10) plus
+    // [20,25) = 10 characters; union = [0,10) + [20,30) + [10,20) = 30.
+    const overlap = spanOverlap(
+      [
+        { start: 0, end: 10 },
+        { start: 20, end: 30 },
+      ],
+      [{ start: 5, end: 25 }],
+    );
+    expect(overlap.observed).toBe(20);
+    expect(overlap.predicted).toBe(20);
+    expect(overlap.intersection).toBe(10);
+    expect(overlap.union).toBe(30);
+    expect(overlap.iou).toBeCloseTo(1 / 3, 12);
+    expect(overlap.tokenPrecision).toBe(0.5);
+    expect(overlap.tokenRecall).toBe(0.5);
+    expect(overlap.tokenF1).toBe(0.5);
+  });
+
+  it("merges overlapping spans instead of double counting them", () => {
+    const overlap = spanOverlap(
+      [
+        { start: 0, end: 10 },
+        { start: 5, end: 12 },
+      ],
+      [{ start: 0, end: 12 }],
+    );
+    expect(overlap.observed).toBe(12);
+    expect(overlap.iou).toBe(1);
+  });
+
+  it("publishes localization as a diagnostic, per cohort, never as a gate", () => {
+    const fixture = [
+      item({ author: "h1", label: "human", documentScore: 0.1 }),
+      // Perfect localization.
+      item({
+        author: "m1",
+        label: "mixed",
+        aiFraction: 0.6,
+        observedAiSpans: [{ start: 0, end: 10 }],
+        localizedSpans: [{ start: 0, end: 10 }],
+        documentScore: 0.9,
+        warned: true,
+      }),
+      // The localized path emitted nothing: a miss for its recall, and the row
+      // stays in the denominator.
+      item({
+        author: "m2",
+        label: "mixed",
+        aiFraction: 0.6,
+        observedAiSpans: [{ start: 0, end: 10 }],
+        documentScore: 0.9,
+        warned: true,
+      }),
+      // The other cohort, kept apart.
+      item({
+        author: "e1",
+        label: "mixed",
+        aiFraction: 0.6,
+        generationMode: "ecological",
+        observedAiSpans: [{ start: 0, end: 10 }],
+        localizedSpans: [{ start: 5, end: 15 }],
+        documentScore: 0.9,
+        warned: true,
+      }),
+    ];
+
+    const localization = computeEvaluationMetrics(
+      fixture,
+      OPTIONS,
+    ).localization;
+
+    expect(localization.role).toBe("diagnostic");
+    expect(localization.gates).toBe(false);
+    expect(localization.authorizesVisualAction).toBe(false);
+    expect(localization.unit).toBe("character-offset");
+    expect(REBUILD_V3_POLICY.localization.metricsRole).toBe("diagnostic");
+    expect(REBUILD_V3_POLICY.localization.authorizesVisualAction).toBe(false);
+
+    // There is no cross-cohort aggregate to misread: only cohorts.
+    expect(
+      localization.byGenerationMode.map((cohort) => cohort.generationMode),
+    ).toEqual(["ecological", "mechanistic"]);
+
+    const mechanistic = localization.byGenerationMode.find(
+      (cohort) => cohort.generationMode === "mechanistic",
+    );
+    expect(mechanistic?.population).toBe(2);
+    expect(mechanistic?.localizedEmitted).toBe(1);
+    expect(mechanistic?.localizedPathRecall.value).toBe(0.5);
+    // Micro: intersection 10 over union 10 for the first row, 0 over 10 for the
+    // second — 10/20.
+    expect(mechanistic?.microIou).toBe(0.5);
+    expect(mechanistic?.macroIou).toBe(0.5);
+    expect(mechanistic?.microTokenRecall).toBe(0.5);
+    // Precision has the PREDICTED length in its denominator, and only one row
+    // predicted anything at all.
+    expect(mechanistic?.microTokenPrecision).toBe(1);
+
+    const ecological = localization.byGenerationMode.find(
+      (cohort) => cohort.generationMode === "ecological",
+    );
+    // [0,10) against [5,15): intersection 5, union 15.
+    expect(ecological?.population).toBe(1);
+    expect(ecological?.microIou).toBeCloseTo(1 / 3, 12);
+    expect(ecological?.microTokenPrecision).toBe(0.5);
+    expect(ecological?.microTokenRecall).toBe(0.5);
+  });
+});
 
 describe("computeBinaryMetrics", () => {
   it("computes precision among blocked as the primary metric", () => {

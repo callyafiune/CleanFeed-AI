@@ -1,4 +1,5 @@
 {
+  "productTarget": "textual-compatibility-with-ai-generation",
   "probabilisticDisclosure": "Este texto apresenta padrões compatíveis com conteúdo gerado ou editado por IA. Isso não comprova sua origem.",
   "technicalScoreDisclaimer": "Este score não equivale à probabilidade real de autoria por IA.",
   "experimentalUncalibratedLabel": "preview experimental / não calibrado",

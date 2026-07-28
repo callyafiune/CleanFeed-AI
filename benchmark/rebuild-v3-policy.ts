@@ -31,7 +31,8 @@
 //     `calibrationGate.eceBinning`, `parity.operationalMaximumInversions`, ...).
 //   * LISTS pinned by `frozenList`, content and order: the calibrator candidates
 //     and tie-break order, the human core strata, the hard-negative families, the
-//     profile bands, the human snapshots and the rollout stages. Those are rows of
+//     profile bands, the human snapshots, the rollout stages and the two mixed
+//     generation modes. Those are rows of
 //     the frozen table, and a reordered tie-break or a dropped stratum is a
 //     different decision, not a formatting variant.
 //   * SHAPE-CHECKED ONLY, because they are magnitudes the plan sets rather than
@@ -63,6 +64,22 @@ export class RebuildV3PolicyError extends Error {
 
 export type ResamplingUnitKind = "hierarchical" | "multiway";
 export type LabelBasisValue = "date-cutoff" | "observed-process";
+/**
+ * HOW the human/AI mixture of a `mixed` record came about, and therefore which
+ * cohort it belongs to.
+ *
+ *   * `mechanistic` — WE chose and executed the edits. The provenance per stretch
+ *     is known exactly, but the coauthorship DISTRIBUTION is ours, not any real
+ *     person's. Everything this project produces is mechanistic.
+ *   * `ecological` — observed human coauthorship, i.e. a sample whose writing
+ *     process was watched rather than staged. Reserved; nothing carries it yet.
+ *
+ * The vocabulary lives in the policy (`materialAssistance.generationModes`) and
+ * `cohortsAggregated: false` is the mechanical consequence: the two are separate
+ * slices wherever both can occur, and pooling them would report a coauthorship
+ * distribution we manufactured as if it had been observed.
+ */
+export type GenerationMode = "mechanistic" | "ecological";
 export type CalibratorKind = "platt" | "beta" | "isotonic";
 /**
  * WHICH bound the ECE gate reads. Not "bootstrap-upper95": the gate reads a
@@ -128,6 +145,11 @@ export interface RebuildV3Policy {
   readonly integralPositive: {
     readonly label: "ai";
     readonly requiresRegisteredPipeline: true;
+    // The action ceiling of the integral-generation target: visual action is
+    // authorized only when the DOCUMENT gates pass. The other two targets have
+    // their ceilings on their own blocks (`materialAssistance.authorizes` and
+    // `localization.authorizesVisualAction`), so no ceiling is written twice.
+    readonly visualActionRequiresDocumentGates: true;
   };
   readonly labelBasis: {
     readonly allowed: readonly LabelBasisValue[];
@@ -137,13 +159,26 @@ export interface RebuildV3Policy {
   };
   readonly localization: {
     readonly authorizesVisualAction: false;
+    // Span IoU, token precision/recall and localized-path recall are DIAGNOSTIC
+    // in v3: they explain and locate a warning, and no gate reads them.
+    readonly metricsRole: "diagnostic";
     readonly standaloneClaim: false;
     readonly trainsAuxiliaryHead: true;
   };
   readonly materialAssistance: {
     readonly authorizes: "warning-only";
+    // Frozen false: `mechanistic` and `ecological` are separate slices wherever
+    // both occur and are never added together.
+    readonly cohortsAggregated: false;
+    // The cohort THIS project produces.
     readonly generationMode: "mechanistic";
+    // The closed vocabulary the schema validates a mixture against.
+    readonly generationModes: readonly GenerationMode[];
     readonly minimumAiFraction: number;
+    // The floor of the `warning.mixed-recall` gate. It is a row of the frozen
+    // three-target table (B2), so it lives here and not as a constant in
+    // benchmark/gates.ts.
+    readonly minimumWarningRecall: number;
   };
   readonly mixedBelowHalfAiRole: "diagnostic-curve-only";
   readonly multiplicity: {
@@ -471,6 +506,11 @@ const FROZEN_ROLLOUT_STAGES = [
   "shadow",
   "indicator",
 ] as const;
+// Content AND order: `mechanistic` first because it is the cohort this project
+// produces and the one the material-assistance target is defined over. Dropping
+// `ecological` would let a future observed-process sample be pooled into the
+// mechanistic cohort by omission, which is the aggregation the table forbids.
+const FROZEN_GENERATION_MODES = ["mechanistic", "ecological"] as const;
 
 const POLICY_KEYS = [
   "attributionRequired",
@@ -576,6 +616,7 @@ export function parseRebuildV3Policy(value: unknown): RebuildV3Policy {
   const integralPositive = object(root.integralPositive, "integralPositive", [
     "label",
     "requiresRegisteredPipeline",
+    "visualActionRequiresDocumentGates",
   ]);
   const labelBasis = object(root.labelBasis, "labelBasis", [
     "allowed",
@@ -585,13 +626,21 @@ export function parseRebuildV3Policy(value: unknown): RebuildV3Policy {
   ]);
   const localization = object(root.localization, "localization", [
     "authorizesVisualAction",
+    "metricsRole",
     "standaloneClaim",
     "trainsAuxiliaryHead",
   ]);
   const materialAssistance = object(
     root.materialAssistance,
     "materialAssistance",
-    ["authorizes", "generationMode", "minimumAiFraction"],
+    [
+      "authorizes",
+      "cohortsAggregated",
+      "generationMode",
+      "generationModes",
+      "minimumAiFraction",
+      "minimumWarningRecall",
+    ],
   );
   const multiplicity = object(root.multiplicity, "multiplicity", [
     "correction",
@@ -817,6 +866,12 @@ export function parseRebuildV3Policy(value: unknown): RebuildV3Policy {
         "requiresRegisteredPipeline",
         true,
       ),
+      visualActionRequiresDocumentGates: literal(
+        integralPositive,
+        "integralPositive",
+        "visualActionRequiresDocumentGates",
+        true,
+      ),
     },
     labelBasis: {
       allowed: textList(
@@ -851,6 +906,12 @@ export function parseRebuildV3Policy(value: unknown): RebuildV3Policy {
         "authorizesVisualAction",
         false,
       ),
+      metricsRole: literal(
+        localization,
+        "localization",
+        "metricsRole",
+        "diagnostic",
+      ),
       standaloneClaim: literal(
         localization,
         "localization",
@@ -871,16 +932,33 @@ export function parseRebuildV3Policy(value: unknown): RebuildV3Policy {
         "authorizes",
         "warning-only",
       ),
+      cohortsAggregated: literal(
+        materialAssistance,
+        "materialAssistance",
+        "cohortsAggregated",
+        false,
+      ),
       generationMode: literal(
         materialAssistance,
         "materialAssistance",
         "generationMode",
         "mechanistic",
       ),
+      generationModes: frozenList(
+        materialAssistance,
+        "materialAssistance",
+        "generationModes",
+        FROZEN_GENERATION_MODES,
+      ) as readonly GenerationMode[],
       minimumAiFraction: proportion(
         materialAssistance,
         "materialAssistance",
         "minimumAiFraction",
+      ),
+      minimumWarningRecall: proportion(
+        materialAssistance,
+        "materialAssistance",
+        "minimumWarningRecall",
       ),
     },
     mixedBelowHalfAiRole: literal(

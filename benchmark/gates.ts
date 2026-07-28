@@ -59,10 +59,22 @@
 //     Wilson bound is analytic and resamples nothing.
 //
 // Frozen numbers come from benchmark/rebuild-v3-policy.json through
-// benchmark/rebuild-v3-policy.ts; the FPR budgets, the ECE ceiling and the family
-// alpha are not written down here. The remaining §6.5 thresholds (recall floors,
-// coverage, the mixed-recall floor, the inference error ceiling) are not rows of
-// that frozen table and stay as named constants below.
+// benchmark/rebuild-v3-policy.ts; the FPR budgets, the ECE ceiling, the family
+// alpha and — since B2 — the material-assistance recall floor are not written down
+// here. The remaining §6.5 thresholds (the two recall floors, coverage, the
+// inference error ceiling) are not rows of that frozen table and stay as named
+// constants below.
+//
+// WHICH POPULATION AUTHORIZES WHAT (B2). The frozen three-target table gives each
+// target its own ceiling, and two of the three consequences are enforced here:
+// `warning.mixed-recall` reads ONE cohort (mechanistic material assistance at or
+// above the frozen AI fraction) and `action.recall.overall` reads the INTEGRAL
+// positives only, so a material-assistance cohort can raise a warning recall but
+// can never raise the recall that lifts `actionCeiling`. Mixed below the fraction
+// floor is in no gate's positive or negative population at all — it is a
+// diagnostic slice of the curve. The one gate whose denominator still contains
+// such a row is `integrity.error-rate`, deliberately: it is the inference-failure
+// rate of the WHOLE eligible set, not a class denominator.
 //
 // Standalone benchmark module: MUST NOT import from the extension bundle (src/).
 // Pure and deterministic: no Date, no randomness, no I/O of its own (the policy
@@ -223,13 +235,21 @@ export interface GateInput {
 const WARNING_RECALL_MIN = 0.6;
 const ACTION_RECALL_MIN = 0.35;
 const COVERAGE_MIN = 0.8;
-const MIXED_WARNING_RECALL_MIN = 0.5;
 const MAX_ERROR_RATE = 0.01;
 
 // Frozen rebuild contract.
 const WARNING_FPR_MAX = REBUILD_V3_POLICY.fprBudgets.warning;
 const ACTION_FPR_MAX = REBUILD_V3_POLICY.fprBudgets.visualAction;
 const ECE_MAX = REBUILD_V3_POLICY.calibrationGate.eceMax;
+// The material-assistance recall floor and the cohort it is measured over. B2
+// made both rows of the frozen table: the FORMULATION changed (the denominator is
+// now the `mechanistic` cohort at or above `aiFraction >= 0.50`, per assessment
+// §4.5), so the number moved out of this file and into the policy. The VALUE is
+// unchanged at 0.50 — R3 forbids loosening a limit, and nothing here was loosened.
+const MIXED_WARNING_RECALL_MIN =
+  REBUILD_V3_POLICY.materialAssistance.minimumWarningRecall;
+const MATERIAL_ASSISTANCE_MODE =
+  REBUILD_V3_POLICY.materialAssistance.generationMode;
 // The frozen contract NAMES the bound the ECE gate reads, and the gate derives its
 // direction from that name instead of restating it. The switch is exhaustive: a
 // different declared bound stops compiling here rather than drifting away from the
@@ -646,11 +666,13 @@ function labelBasisSpec(
   };
 }
 
-function mixedRecallGate(mixed: {
-  sampleSize: number;
-  warningRecall: number;
-  warningRecallLower95: number;
-}): GateResult {
+// The material-assistance gate. Its population is ONE cohort — the mechanistic
+// one — at or above the frozen AI fraction, and the block it reads names that
+// cohort itself, so a pooled figure could not reach this gate even if some future
+// caller built one.
+function mixedRecallGate(
+  mixed: EvaluationMetrics["mixed"]["atLeastHalfAi"],
+): GateResult {
   const eligible = mixed.sampleSize > 0;
   const observed = eligible ? finiteOrNull(mixed.warningRecall) : null;
   const passed =
@@ -672,7 +694,7 @@ function mixedRecallGate(mixed: {
     reasons: passed
       ? []
       : [
-          `mixed >=50% AI warning recall ${show(observed)} is below ${MIXED_WARNING_RECALL_MIN} (lower95 ${mixed.warningRecallLower95} reported, not gating)`,
+          `${MATERIAL_ASSISTANCE_MODE} mixed >=${REBUILD_V3_POLICY.materialAssistance.minimumAiFraction} AI warning recall ${show(observed)} is below ${MIXED_WARNING_RECALL_MIN} (lower95 ${mixed.warningRecallLower95} reported, not gating)`,
         ],
   };
 }
@@ -753,16 +775,25 @@ function actionIntervalSpecs(
     specs.push(labelBasisSpec(basis, "action"));
   }
 
+  // The recall that AUTHORIZES visual action, over the integral-generation
+  // positives alone (B2). It deliberately does NOT read
+  // `visualAction.endToEnd.recall`: that matrix counts the warning positives, so
+  // a cohort of mechanistic material-assistance rows crossing the action
+  // threshold would raise it and lift `actionCeiling` to `hide` — and the frozen
+  // table authorizes `indicator` and nothing more for that target. When the
+  // authorizing block is absent the estimate is `undefined` and the gate fails
+  // for missing evidence, which is the fail-closed direction.
+  const authorization = metrics.actionAuthorization;
   specs.push({
     id: "action.recall.overall",
     tier: "action",
     scope: "overall",
     estimand: ESTIMAND_ACTION_RECALL,
-    estimate: visualAction.endToEnd.recall,
+    estimate: authorization?.recall,
     direction: "lower",
     threshold: ACTION_RECALL_MIN,
-    sampleSize: visualAction.endToEnd.positives,
-    subject: "overall action recall",
+    sampleSize: authorization?.positives ?? 0,
+    subject: "overall action recall over integral positives",
     eligible: true,
     ineligible: { passed: true, reason: null },
   });

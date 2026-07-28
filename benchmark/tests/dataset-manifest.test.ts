@@ -199,6 +199,7 @@ const mixed: BenchmarkRecord = {
     aiFraction: 0.5,
     humanFraction: 0.5,
     spans: [{ start: 0, end: 10, origin: "ai" }],
+    generationMode: "mechanistic",
   },
   transformation: { kind: "human-ai-mix", severity: "medium" },
   groups: {

@@ -31,6 +31,7 @@ import {
   validateDatasetManifest,
 } from "../dataset-manifest.ts";
 import { computeEvaluatorDigest } from "../digests.ts";
+import { isWarningPositive } from "../metrics.ts";
 import {
   assertPredictionCompleteness,
   computePredictionManifestDigest,
@@ -293,9 +294,12 @@ export async function runFit(options: FitOptions): Promise<string> {
   );
 }
 
-// Warning positives are AI records and mixed records with at least 50% AI.
+// Warning positives, from the ONE definition (benchmark/metrics.ts): integral
+// generation plus MECHANISTIC material assistance at or above the frozen AI
+// fraction. Delegated rather than restated, because the copy that used to live
+// here hardcoded 0.5 and knew nothing about the generation mode — so an
+// `ecological` row would have been a fit-time positive and an evaluation-time
+// non-positive, which is precisely the cross-cohort pooling B2 forbids.
 function isPositive(record: BenchmarkRecord): boolean {
-  if (record.label === "ai") return true;
-  if (record.label === "mixed") return (record.mixture?.aiFraction ?? 0) >= 0.5;
-  return false;
+  return isWarningPositive(record);
 }
