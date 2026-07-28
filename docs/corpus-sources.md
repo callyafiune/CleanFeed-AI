@@ -13,12 +13,22 @@
 
 > **Regime de uso congelado (B1):** `commercialUse: false`, política
 > `noncommercial-v1`. O produto e o modelo não têm e não terão ambição
-> comercial, e **não existe variante comercial a preservar**. A fonte de verdade
-> executável é `benchmark/source-manifest.ts` (`CORPUS_USE_POLICY`,
-> `CORPUS_LICENSE_REGISTRY`, `sourceAdmissibility`,
-> `assertLicenseInventoryAdmissible`); `models/cleanfeed-ptbr-v1/NOTICE.md` e
-> `models/cleanfeed-ptbr-v1/license-review.json` declaram o mesmo, e a suíte
-> falha se os três divergirem. Nesse regime **`NC` é admissível** (a cláusula
+> comercial, e **não existe variante comercial a preservar**. A cadeia de
+> autoridade, em ordem: **`benchmark/rebuild-v3-policy.json`** (validado por
+> `benchmark/rebuild-v3-policy.ts`, dentro de `EVALUATOR_FILES`) é a autoridade
+> do valor congelado `commercialUse: false` e das obrigações congeladas
+> `attributionRequired`/`shareAlikeRequired`; **`benchmark/source-manifest.ts`**
+> **lê** esse arquivo (`CORPUS_USE_POLICY`, `FROZEN_ARTIFACT_OBLIGATIONS`) e é a
+> autoridade do registro de licenças, do veredito por fonte e das obrigações que
+> cada licença impõe (`CORPUS_LICENSE_REGISTRY`, `sourceAdmissibility`,
+> `assertLicenseInventoryAdmissible`); **`models/cleanfeed-ptbr-v1/NOTICE.md`** e
+> **`models/cleanfeed-ptbr-v1/license-review.json`** publicam o resultado. Cada
+> elo tem um teste em `benchmark/tests/source-manifest.test.ts`: "reads the
+> frozen non-commercial decision from the policy file, not a copy of it" e
+> "derives the frozen flag in its source instead of restating it" prendem o
+> primeiro elo, "imposes every obligation the frozen contract requires" prende as
+> obrigações ao registro, e os quatro testes de acordo prendem review, NOTICE e
+> este documento. Nesse regime **`NC` é admissível** (a cláusula
 > está satisfeita) e **`ND` é proibido para corpus derivado** — montar um corpus
 > é exatamente o derivado que `ND` restringe. As duas cláusulas são restrições
 > distintas: nunca as trate como uma única "licença restritiva".

@@ -6,6 +6,8 @@
   "commercialUse": false,
   "declaredLicense": "Projeto e modelo NÃO COMERCIAIS (commercialUse: false, congelado); base BERTimbau (MIT); licenças das fontes em sourceLicenses e NOTICE.md",
   "artifactObligations": ["attribution", "non-commercial", "share-alike"],
+  "sourceLicensesScope": "corpus-inventory",
+  "sourceLicensesNote": "sourceLicenses é o inventário de licenças revisadas do corpus (mesmo conteúdo de CORPUS_LICENSE_REGISTRY em benchmark/source-manifest.ts), NÃO a lista de licenças do conjunto de treino deste modelo: entradas com derivedCorpus \"blocked\" nunca foram incorporadas. As fontes que realmente treinaram cleanfeed-ptbr-v1 estão nomeadas em NOTICE.md. Uma lista por modelo é trabalho de C1/C5.",
   "sourceLicenses": [
     {
       "licenseId": "cc-by-sa-4.0",

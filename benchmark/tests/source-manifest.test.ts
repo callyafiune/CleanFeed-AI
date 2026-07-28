@@ -5,8 +5,13 @@ import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
 
 import {
+  REBUILD_V3_POLICY,
+  REBUILD_V3_POLICY_PATH,
+} from "../rebuild-v3-policy.ts";
+import {
   CORPUS_LICENSE_REGISTRY,
   CORPUS_USE_POLICY,
+  FROZEN_ARTIFACT_OBLIGATIONS,
   LICENSE_OBLIGATION_LABEL_PT,
   artifactLicenseObligations,
   assertLicenseInventoryAdmissible,
@@ -278,6 +283,68 @@ describe("non-commercial corpus use policy", () => {
     expect(CORPUS_USE_POLICY.redistribution).toBe("not-published");
   });
 
+  // The frozen table row "uso e licença" is materialized in
+  // benchmark/rebuild-v3-policy.json, which the plan designates as the ONLY
+  // place a frozen value is written down ("código não pode repeti-los como
+  // constantes soltas"). These two tests pin the chain from that file to what
+  // this module publishes, so `commercialUse: false` exists once and not twice.
+  it("reads the frozen non-commercial decision from the policy file, not a copy of it", async () => {
+    const frozenFile = JSON.parse(
+      await readFile(REBUILD_V3_POLICY_PATH, "utf8"),
+    ) as { commercialUse: unknown };
+    // file bytes -> validated policy -> the use policy this module publishes.
+    expect(REBUILD_V3_POLICY.commercialUse).toBe(frozenFile.commercialUse);
+    expect(CORPUS_USE_POLICY.commercialUse).toBe(
+      REBUILD_V3_POLICY.commercialUse,
+    );
+    // And the verdict on the NC source follows that flag rather than a local
+    // decision: Carolina is admissible BECAUSE the frozen use is not commercial.
+    expect(sourceAdmissibility("cc-by-nc-sa-4.0").admissible).toBe(
+      !REBUILD_V3_POLICY.commercialUse,
+    );
+  });
+
+  // The test above cannot fail on a re-inlined literal: once both spellings say
+  // `false` no runtime assertion can tell a derived value from a copy that
+  // happens to agree. What the plan forbids is the SECOND spelling, so that is
+  // what this pins — structurally, on the module's own text.
+  it("derives the frozen flag in its source instead of restating it", async () => {
+    const source = await readFile(
+      resolve(HERE, "../source-manifest.ts"),
+      "utf8",
+    );
+    expect(source).toMatch(
+      /commercialUse:\s*REBUILD_V3_POLICY\.commercialUse/u,
+    );
+  });
+
+  it("imposes every obligation the frozen contract requires", () => {
+    // Rebuilt here from the frozen flags, independently of the module's own
+    // derivation, so the two cannot agree by being the same literal.
+    const requiredByContract: LicenseObligation[] = [];
+    if (REBUILD_V3_POLICY.attributionRequired)
+      requiredByContract.push("attribution");
+    if (!REBUILD_V3_POLICY.commercialUse)
+      requiredByContract.push("non-commercial");
+    if (REBUILD_V3_POLICY.shareAlikeRequired)
+      requiredByContract.push("share-alike");
+    expect(FROZEN_ARTIFACT_OBLIGATIONS).toEqual(requiredByContract);
+
+    // The registry must actually IMPOSE them: dropping `shareAlike` from
+    // `cc-by-nc-sa-4.0` would otherwise leave a frozen obligation unenforced
+    // while every other test stayed green.
+    const imposed = artifactLicenseObligations(
+      CORPUS_LICENSE_REGISTRY.filter(
+        (terms) => terms.derivedCorpus === "admissible",
+      ).map((terms) => terms.licenseId),
+    );
+    for (const obligation of FROZEN_ARTIFACT_OBLIGATIONS) {
+      expect(imposed, `the registry imposes ${obligation}`).toContain(
+        obligation,
+      );
+    }
+  });
+
   it("refuses a declared commercial use over the Carolina NC licence", () => {
     // The fixture named by the plan: `commercialUse: true` + Carolina.
     const inventory = [
@@ -421,6 +488,22 @@ describe("licence policy agreement across manifest, review and NOTICE", () => {
           .map((terms) => terms.licenseId),
       ),
     );
+  });
+
+  it("the review scopes its licence list as the corpus inventory, not this model's training set", async () => {
+    const review = await licenseReview();
+    // `sourceLicenses` is the whole reviewed inventory, and it deliberately
+    // carries an entry that was NEVER incorporated (`derivedCorpus: "blocked"`),
+    // so the scope has to be stated in the file: unlabelled, the list reads as
+    // this model's provenance, right next to the sentence that states the real
+    // training sources.
+    expect(review.sourceLicensesScope).toBe("corpus-inventory");
+    expect(review.sourceLicensesNote).toMatch(/inventário/u);
+    expect(
+      (review.sourceLicenses as CorpusLicenseTermsV1[]).some(
+        (terms) => terms.derivedCorpus === "blocked",
+      ),
+    ).toBe(true);
   });
 
   it("the NOTICE states the non-commercial regime and its obligations", async () => {

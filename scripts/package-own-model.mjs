@@ -13,6 +13,14 @@
 // release, empty calibration profiles) plus LICENSE/NOTICE. The model version
 // is the first 40 hex of the onnx SHA-256 — deterministic and auditable.
 //
+// PREREQUISITE (added with B1): packaging ANY model reads the two tracked legal
+// files of `models/cleanfeed-ptbr-v1/` — `license-review.json` and `NOTICE.md` —
+// because they are where the non-commercial licence policy is published, and
+// this script must not restate it in literals of its own. That directory must
+// therefore exist even when packaging a different model id. The derivation is
+// the exported pure function `derivePackagedPolicyFiles`, unit-tested by
+// `tests/unit/scripts/packaged-policy-files.test.ts` without packaging anything.
+//
 // Provenance: unlike the TMR (pinned Hugging Face download), this bundle is
 // trained by the project itself; the source-lock's baseUrl uses the reserved
 // `.invalid` TLD to state, syntactically-URL but unresolvable, that there is
@@ -67,6 +75,38 @@ function canonicalArtifactRecords(records) {
   return JSON.stringify(
     sorted.map(({ bytes, path, sha256 }) => ({ bytes, path, sha256 })),
   );
+}
+
+/**
+ * The two legal files of a freshly packaged model, derived from the tracked ones.
+ *
+ * Pure on purpose: it takes the file CONTENTS, not paths, so the derivation is
+ * covered by unit test without an --artifacts export directory and without
+ * rewriting a bundle on disk. What it may change is exactly three things — the
+ * `modelId`, the review state (a fresh package has had no legal review, R4) and
+ * the NOTICE heading. Everything else, including `commercialUse`, `usePolicyId`,
+ * `sourceLicenses`, `sourceLicensesScope` and `artifactObligations`, is carried
+ * through untouched, because this script is not an authority for any of it.
+ *
+ * @param {{licenseReviewJson: string, noticeText: string, modelId: string}} input
+ * @returns {{licenseReview: Record<string, unknown>, notice: string}}
+ */
+export function derivePackagedPolicyFiles({
+  licenseReviewJson,
+  noticeText,
+  modelId,
+}) {
+  return {
+    licenseReview: {
+      ...JSON.parse(licenseReviewJson),
+      modelId,
+      status: "pending",
+      reviewedAt: null,
+      reviewer: null,
+      evidence: [],
+    },
+    notice: noticeText.replace(/^# NOTICE — .*$/mu, `# NOTICE — ${modelId}`),
+  };
 }
 
 function parseArgs() {
@@ -168,25 +208,24 @@ function main() {
     issuedAt: null,
     evidenceDigest: null,
   };
-  // The non-commercial licence policy (B1) has ONE authority in code —
-  // benchmark/source-manifest.ts (`CORPUS_USE_POLICY`,
-  // `CORPUS_LICENSE_REGISTRY`) — pinned to these two tracked files by
-  // benchmark/tests/source-manifest.test.ts. Packaging a new model REUSES them
-  // instead of restating the policy in a literal here, so a repackage can never
-  // quietly revert `commercialUse: false`, the per-source licence identifiers or
-  // the attribution/share-alike obligations. Only the review state is reset: a
-  // freshly packaged model has no legal review yet.
+  // The non-commercial licence policy (B1) is NOT authored here. The frozen
+  // `commercialUse: false` lives in benchmark/rebuild-v3-policy.json (validated
+  // by benchmark/rebuild-v3-policy.ts, inside EVALUATOR_FILES);
+  // benchmark/source-manifest.ts reads it and owns the licence registry and the
+  // obligations; the two tracked files below PUBLISH that result and are pinned
+  // to the module by benchmark/tests/source-manifest.test.ts. Packaging a new
+  // model reuses their content instead of restating any of it in a literal here,
+  // so a repackage can never quietly revert `commercialUse: false`, the
+  // per-source licence identifiers or the attribution/share-alike obligations.
   const policyDirectory = join(REPO_ROOT, "models", "cleanfeed-ptbr-v1");
-  const licenseReview = {
-    ...JSON.parse(
-      readFileSync(join(policyDirectory, "license-review.json"), "utf-8"),
+  const { licenseReview, notice } = derivePackagedPolicyFiles({
+    licenseReviewJson: readFileSync(
+      join(policyDirectory, "license-review.json"),
+      "utf-8",
     ),
+    noticeText: readFileSync(join(policyDirectory, "NOTICE.md"), "utf-8"),
     modelId,
-    status: "pending",
-    reviewedAt: null,
-    reviewer: null,
-    evidence: [],
-  };
+  });
 
   const write = (dir, name, value) =>
     writeFileSync(join(dir, name), JSON.stringify(value, null, 2) + "\n");
@@ -200,12 +239,6 @@ function main() {
   );
   write(trackedDir, "license-review.json", licenseReview);
 
-  // Same single authority as the licence review above: the tracked NOTICE is the
-  // text, and only its heading names the packaged model.
-  const notice = readFileSync(
-    join(policyDirectory, "NOTICE.md"),
-    "utf-8",
-  ).replace(/^# NOTICE — .*$/mu, `# NOTICE — ${modelId}`);
   writeFileSync(join(trackedDir, "NOTICE.md"), notice);
   writeFileSync(join(publicDir, "NOTICE.md"), notice);
   const license = readFileSync(join(REPO_ROOT, "LICENSE"), "utf-8");
@@ -221,4 +254,9 @@ function main() {
   console.log(JSON.stringify(artifacts, null, 2));
 }
 
-main();
+// Same entry guard every other script in scripts/ uses: importing this module —
+// which the unit test of `derivePackagedPolicyFiles` does — must not package
+// anything.
+if (argv[1] === fileURLToPath(import.meta.url)) {
+  main();
+}

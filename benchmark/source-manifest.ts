@@ -21,15 +21,36 @@
 // own digest field excluded), NOT the raw file SHA. The raw SHA lives on
 // DatasetManifest/DatasetAudit; the two are bridged by `fit`.
 //
-// The module also carries the licence policy of the corpus: the frozen
-// non-commercial use declaration (`CORPUS_USE_POLICY`), the registry of exact
-// licence identifiers with their clauses (`CORPUS_LICENSE_REGISTRY`) and the two
-// guards that answer "is this source admissible, under which licence, with which
-// obligations" (`sourceAdmissibility`, `assertLicenseInventoryAdmissible`). `NC`
-// is admissible because the product and the model are non-commercial; `ND` is
+// The module also carries the licence policy of the corpus: the registry of
+// exact licence identifiers with their clauses (`CORPUS_LICENSE_REGISTRY`), the
+// obligations they impose and the two guards that answer "is this source
+// admissible, under which licence, with which obligations"
+// (`sourceAdmissibility`, `assertLicenseInventoryAdmissible`). `NC` is
+// admissible because the product and the model are non-commercial; `ND` is
 // blocked because assembling a corpus is the derivative it restricts.
+//
+// WHO OWNS WHICH VALUE (this module is not the authority for all of it):
+//   * `benchmark/rebuild-v3-policy.json`, validated by
+//     `benchmark/rebuild-v3-policy.ts` and inside `EVALUATOR_FILES`, is the
+//     authority for the frozen decisions themselves — `commercialUse: false`,
+//     `attributionRequired`, `shareAlikeRequired`. The plan's frozen contract
+//     says code may not repeat them as loose constants, so this module READS
+//     them (`CORPUS_USE_POLICY.commercialUse`, `FROZEN_ARTIFACT_OBLIGATIONS`)
+//     and never writes them down a second time.
+//   * This module is the authority for the licence registry, the per-source
+//     admissibility verdict and the obligations each licence imposes.
+//   * `models/cleanfeed-ptbr-v1/license-review.json` and `NOTICE.md` PUBLISH the
+//     result; `docs/corpus-sources.md` documents it.
+// Each link is enforced by a named test in
+// `benchmark/tests/source-manifest.test.ts`; see `CORPUS_USE_POLICY`.
+//
+// Reading the frozen policy makes this module Node-side (the policy module does
+// one `readFileSync` at load). That is not a new constraint on its consumers —
+// it is imported only by benchmark modules and by `scripts/` — but it does mean
+// it must still never be imported from the extension bundle (src/).
 
 import { canonicalSha256 } from "../contracts/canonical-json.ts";
+import { REBUILD_V3_POLICY } from "./rebuild-v3-policy.ts";
 
 export type ReviewedSourceEntryV1 =
   | {
@@ -111,19 +132,35 @@ function fail(code: string, message: string): never {
 // ---------------------------------------------------------------------------
 
 /**
- * The frozen use declaration of the product and of the model: NOT commercial.
- * There is no commercial variant to preserve, so this is a constant and not a
- * setting — no flag, no override, no branch kept open.
+ * The use declaration of the product and of the model: NOT commercial. There is
+ * no commercial variant to preserve, so this is a constant and not a setting —
+ * no flag, no override, no branch kept open.
  *
- * `models/cleanfeed-ptbr-v1/license-review.json` (`commercialUse`,
- * `usePolicyId`), `models/cleanfeed-ptbr-v1/NOTICE.md` and
- * `docs/corpus-sources.md` declare the same policy, and
- * `benchmark/tests/source-manifest.test.ts` fails if any of them drifts from
- * this module — the three places cannot diverge silently.
+ * `commercialUse` is NOT decided here. It is the frozen-table row materialized
+ * in `benchmark/rebuild-v3-policy.json` and validated by
+ * `benchmark/rebuild-v3-policy.ts`, and it is read from there so the decision
+ * exists in exactly one place. `policyId` and `redistribution` are local: they
+ * are not rows of the frozen table, they name THIS module's regime.
+ *
+ * Which test enforces which link:
+ *   * frozen file -> this constant: "reads the frozen non-commercial decision
+ *     from the policy file, not a copy of it" (and "derives the frozen flag in
+ *     its source instead of restating it", which fails if the literal comes
+ *     back, because no runtime assertion can tell a copy that agrees from a
+ *     derivation).
+ *   * frozen obligations -> the registry: "imposes every obligation the frozen
+ *     contract requires".
+ *   * this module -> `license-review.json`: "the model licence review declares
+ *     the same frozen use policy" and "…carries the registry's terms verbatim".
+ *   * this module -> `NOTICE.md`: "the NOTICE states the non-commercial regime
+ *     and its obligations" and "…lists every registered licence with exactly
+ *     its obligations".
+ *   * this module -> `docs/corpus-sources.md`: "the source inventory doc records
+ *     every exact licence identifier".
  */
 export const CORPUS_USE_POLICY = {
   policyId: "noncommercial-v1",
-  commercialUse: false,
+  commercialUse: REBUILD_V3_POLICY.commercialUse,
   redistribution: "not-published",
 } as const;
 
@@ -145,6 +182,31 @@ const OBLIGATION_ORDER: readonly LicenseObligation[] = [
   "non-commercial",
   "share-alike",
 ];
+
+/**
+ * The obligations the frozen contract requires the artifact to carry, DERIVED
+ * from `benchmark/rebuild-v3-policy.json` instead of listed here: the row "uso e
+ * licença" is `commercialUse: false` plus `attributionRequired` plus
+ * `shareAlikeRequired`.
+ *
+ * It is not the same statement as `artifactLicenseObligations(...)`, which
+ * answers what a given set of licences happens to impose. This one is the floor:
+ * a registry edit that dropped `shareAlike` from `cc-by-nc-sa-4.0` would lower
+ * what the licences impose while the frozen requirement stayed, which is the
+ * divergence the test "imposes every obligation the frozen contract requires"
+ * exists to catch. C1/C5 should read this constant, not restate the flags.
+ */
+export const FROZEN_ARTIFACT_OBLIGATIONS: readonly LicenseObligation[] =
+  OBLIGATION_ORDER.filter((obligation) => {
+    switch (obligation) {
+      case "attribution":
+        return REBUILD_V3_POLICY.attributionRequired;
+      case "non-commercial":
+        return !REBUILD_V3_POLICY.commercialUse;
+      case "share-alike":
+        return REBUILD_V3_POLICY.shareAlikeRequired;
+    }
+  });
 
 /**
  * The exact Portuguese words the NOTICE uses for each obligation. They live

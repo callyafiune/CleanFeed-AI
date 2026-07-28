@@ -35,9 +35,15 @@ O bloqueio da última é por **ND**, nunca por NC. NC é admissível neste regim
 ND proíbe justamente o derivado que um corpus é. Exemplo registrado:
 IberAuTexTification (`cc-by-nc-nd-4.0`), não incorporado.
 
-Os termos acima são validados contra `benchmark/source-manifest.ts`
-(`CORPUS_LICENSE_REGISTRY`) e contra `license-review.json`; os três não podem
-divergir sem que a suíte falhe.
+De onde vem cada valor: `commercialUse: false` é decisão congelada em
+`benchmark/rebuild-v3-policy.json` (validada por `benchmark/rebuild-v3-policy.ts`,
+dentro de `EVALUATOR_FILES`); `benchmark/source-manifest.ts` a lê e é a autoridade
+do registro de licenças, do veredito por fonte e das obrigações; este NOTICE e
+`license-review.json` publicam o resultado. Os testes que prendem cada elo estão
+em `benchmark/tests/source-manifest.test.ts` — "the NOTICE states the
+non-commercial regime and its obligations" e "the NOTICE lists every registered
+licence with exactly its obligations" prendem este arquivo, linha a linha, ao
+registro do módulo.
 
 O modelo emite um score TÉCNICO não calibrado até que uma decisão científica
 selada exista (release.json permanece "pending"); nenhuma saída constitui

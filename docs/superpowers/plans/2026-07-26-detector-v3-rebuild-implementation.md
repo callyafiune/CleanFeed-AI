@@ -2236,8 +2236,11 @@ comercial, Carolina está admissível e IberAuTexTification continua bloqueado p
 
 **Como foi executado (2026-07-27):** a política virou superfície de código em
 `benchmark/source-manifest.ts` — `CORPUS_USE_POLICY`
-(`policyId: "noncommercial-v1"`, `commercialUse: false`,
-`redistribution: "not-published"`), `CORPUS_LICENSE_REGISTRY` (identificador
+(`policyId: "noncommercial-v1"`, `commercialUse` **lido** de
+`benchmark/rebuild-v3-policy.json`, `redistribution: "not-published"`),
+`FROZEN_ARTIFACT_OBLIGATIONS` (derivado de `attributionRequired`,
+`shareAlikeRequired` e `commercialUse` do mesmo arquivo),
+`CORPUS_LICENSE_REGISTRY` (identificador
 exato + cláusulas `attribution`/`nonCommercial`/`shareAlike`/`noDerivatives`, com
 `derivedCorpus`/`blockedBy` **derivados** de `noDerivatives`, nunca digitados),
 `corpusLicenseTerms`, `sourceAdmissibility`, `artifactLicenseObligations` e
@@ -2265,8 +2268,16 @@ Quatro divergências do texto acima, deliberadas:
 3. **`scripts/package-own-model.mjs` entrou no escopo** (não estava na lista de
    arquivos). Ele reescrevia `NOTICE.md` e `license-review.json` a partir de
    literais próprios; mantido assim, um repackage reverteria B1 em silêncio. Agora
-   ele **lê** os dois arquivos rastreados (só o cabeçalho do NOTICE e o estado de
-   revisão são recalculados), então a política tem uma autoridade só.
+   ele **lê** os dois arquivos rastreados e só recalcula o cabeçalho do NOTICE, o
+   `modelId` e o estado de revisão. A derivação é a função pura exportada
+   `derivePackagedPolicyFiles` (contents, não caminhos), tipada em
+   `scripts/package-own-model.d.mts` (padrão dos outros scripts) e coberta por
+   `tests/unit/scripts/packaged-policy-files.test.ts` sem empacotar bundle
+   nenhum, e o `main()` ganhou a guarda de entrada padrão do repositório
+   (`argv[1] === fileURLToPath(import.meta.url)`) para que importar o módulo não
+   empacote nada. **Pré-requisito novo, registrado no cabeçalho do próprio
+   script:** empacotar QUALQUER modelo agora exige que
+   `models/cleanfeed-ptbr-v1/` exista, porque é lá que a política é publicada.
 4. **`docs/corpus-sources.md`: a versão do Carolina foi corrigida** de "Ada 1.1
    preferida" para o que está em disco, **Version 2.0 (Bea)**, e o corte por data
    do header TEI passou de "defesa em profundidade" a **load-bearing** (o pacote
@@ -2287,6 +2298,53 @@ identificador exato e registre o bloqueio como `ND`. Mutações medidas: trocar
 do Carolina no NOTICE mata 1; remover a chamada do guarda no parser mata 1.
 Nenhum recibo de revisão foi inventado — `status` segue `pending`, `reviewer`
 `null` e `evidence` `[]` (R4).
+
+**Rodada de correção (2026-07-27) — a autoridade do valor congelado era errada.**
+A entrega anterior escreveu `commercialUse: false` como **constante solta** em
+`benchmark/source-manifest.ts`, exatamente o que a seção **Contrato de execução
+sem decisões pendentes** (no topo deste plano) proíbe — "código não pode
+repeti-los como constantes soltas": o valor já estava materializado em
+`benchmark/rebuild-v3-policy.json`
+(com `attributionRequired` e `shareAlikeRequired`), validado por
+`benchmark/rebuild-v3-policy.ts` e dentro de `EVALUATOR_FILES`. Duas grafias do
+mesmo valor, cada uma presa por um literal próprio, sem nada afirmando que
+concordam. Corrigido:
+
+1. `CORPUS_USE_POLICY.commercialUse` agora é `REBUILD_V3_POLICY.commercialUse`, e
+   `FROZEN_ARTIFACT_OBLIGATIONS` deriva as obrigações congeladas dos flags do
+   mesmo arquivo. `policyId` e `redistribution` seguem locais — não são linhas da
+   tabela congelada.
+2. **A cadeia de autoridade está escrita onde antes se afirmava o contrário.** As
+   três proses que diziam que `benchmark/source-manifest.ts` é a autoridade única
+   da política (`docs/corpus-sources.md`, o cabeçalho do módulo,
+   `scripts/package-own-model.mjs`) agora dizem a cadeia real: o JSON congelado
+   decide `commercialUse`; `source-manifest.ts` **lê** e decide registro, veredito
+   e obrigações; `license-review.json` e `NOTICE.md` publicam. Cada elo cita o
+   teste que o prende, em vez de prometer que "os três não podem divergir".
+3. **Mutações medidas.** Virar `commercialUse` para `true` no JSON congelado agora
+   derruba `source-manifest.test.ts` também (falha de carga
+   `REBUILD_V3_POLICY_INVALID: commercialUse is frozen at false`), não só
+   `rebuild-v3-policy.test.ts`. Re-inlinear o literal em `source-manifest.ts` mata
+   "derives the frozen flag in its source instead of restating it" — teste
+   estrutural, porque depois da derivação existe **um** valor e nenhuma asserção
+   de runtime distingue derivação de cópia que concorda. Tirar `shareAlike` só do
+   Carolina **não** mata "imposes every obligation the frozen contract requires"
+   (mata outros 4): a obrigação congelada é do **artefato**, e `cc-by-sa-4.0`
+   ainda a impõe; tirar de ambas as licenças mata (6 testes).
+4. `license-review.json` ganhou `sourceLicensesScope: "corpus-inventory"` e um
+   `sourceLicensesNote`: `sourceLicenses` é o inventário revisado do corpus
+   (inclui `cc-by-nc-nd-4.0`, `derivedCorpus: "blocked"`, nunca incorporada) e não
+   as licenças do treino deste modelo — sem rótulo, a lista se lê como
+   proveniência, ao lado da frase que declara as fontes reais. Lista por modelo é
+   trabalho de C1/C5.
+5. **Para C1:** `benchmark/source-manifest.ts` **não** está em `EVALUATOR_FILES`,
+   mas `benchmark/commands/validate.ts` (que está) importa
+   `parseReviewedSourceManifest`, e B1 adicionou ali
+   `assertRegisteredLicensesAdmissible`. Ou seja: um byte de arquivo fora da
+   identidade do avaliador decide se `validate` aceita um manifesto. A lacuna é
+   anterior a B1 (o parser já barrava `validate` antes), e alargá-la não criou
+   arquivo novo — mas C1, ao escrever o esquema v3, precisa decidir se
+   `source-manifest.ts` entra na identidade do avaliador.
 
 ### B2 — DECIDIDO: alvos, métricas e ações de produto
 
