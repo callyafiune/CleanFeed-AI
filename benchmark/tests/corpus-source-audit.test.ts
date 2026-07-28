@@ -17,8 +17,14 @@ import {
   type ReviewedSourceEntryV1,
   type ReviewedSourceManifestV1,
 } from "../source-manifest.ts";
-import type { BenchmarkRecord } from "../schema.ts";
+import { validateBenchmarkRecordV3, type BenchmarkRecord } from "../schema.ts";
 import { asGeneratorFamily } from "../generator-family.ts";
+import {
+  known,
+  notApplicable,
+  v3Ai,
+  withAxis,
+} from "./helpers/v3-record-fixture.ts";
 
 // --- Reviewed source manifest fixtures -----------------------------------
 
@@ -614,5 +620,131 @@ describe("corpus source readiness privacy and determinism", () => {
     );
     expect(canonicalJson(permuted)).toBe(canonicalJson(forward));
     expect(permuted.reportDigest).toBe(forward.reportDigest);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// C1 correction round — the recipe-identity comparison reads a v3 record's
+// applied temperature through `recipeTemperature`, and the v3 ARM of that
+// accessor was pinned by nothing.
+//
+// Every record fixture above is `schemaVersion: 2`, so replacing the whole v3
+// branch of `recipeTemperature` with `return null` left the entire benchmark
+// suite green. The consequence is in both directions and both are silent: a v3
+// row whose applied temperature diverges from its reviewed batch compares
+// `null === null` and is ADMITTED with no `GENERATION_RECIPE_MISMATCH`, and a v3
+// row that genuinely matches a batch declaring `0.7` is reported as a mismatch.
+// The compiler checked the shape of the accessor; nothing checked its value.
+//
+// The test lives here rather than only beside the accessor because this is the
+// consumer that gives the value its meaning — governance recipe identity.
+// ---------------------------------------------------------------------------
+
+// The `gemini-api` lane is the one lane whose row sets
+// `decodingConfigurable: true`, so it is the only place a v3 record can carry an
+// applied temperature at all. Everything else is aligned with `batch` so that the
+// temperature is the ONLY field that can decide the comparison.
+function v3ApiRecordAtTemperature(temperature: number | null): BenchmarkRecord {
+  const raw = v3Ai();
+  raw.id = "ai_v3_api";
+  raw.provenance = {
+    ...(raw.provenance as Record<string, unknown>),
+    sourceId: "src_generated",
+    licenseId: "lic_generated_1",
+  };
+  raw.generation = {
+    provider: batch.provider,
+    family: batch.family,
+    model: batch.model,
+    version: batch.version,
+    promptId: "prompt_1",
+    // `recipeMatchesBatch` compares the record's `promptSha256` against the
+    // batch's `promptTemplateDigest` — a pre-existing pairing, kept as is.
+    promptSha256: batch.promptTemplateDigest,
+    promptTemplateDigest: "3".repeat(64),
+    generatedAt: batch.generatedAt,
+    decoding: {
+      configurable: true,
+      strategy: "sampling",
+      temperature,
+      topP: null,
+      repetitionPenalty: null,
+    },
+    effort: { source: "not-supported", configurable: false },
+    seed: batch.seed ?? undefined,
+  };
+  let record = withAxis(raw, "collectionBatch", known(batch.batchId));
+  record = withAxis(record, "generationLane", known("gemini-api"));
+  record = withAxis(
+    record,
+    "harnessVersion",
+    notApplicable("the gemini-api lane runs no harness binary"),
+  );
+  record = withAxis(record, "generatorFamily", known(batch.family));
+  return validateBenchmarkRecordV3(record);
+}
+
+describe("the recipe comparison reads a v3 record's applied temperature", () => {
+  it("matches a batch declaring the same temperature", async () => {
+    const report = await auditCorpusSources(
+      await buildInput({ records: [v3ApiRecordAtTemperature(0.7)] }),
+    );
+    expect(codesOf(report)).toEqual([]);
+    expect(report.status).toBe("ready");
+  });
+
+  it("mismatches a batch declaring a different temperature", async () => {
+    const report = await auditCorpusSources(
+      await buildInput({ records: [v3ApiRecordAtTemperature(0.9)] }),
+    );
+    expect(codesOf(report)).toEqual(["GENERATION_RECIPE_MISMATCH"]);
+  });
+
+  it("mismatches a batch declaring a temperature when none was applied", async () => {
+    // `null` inside `configurable: true` means the provider's default applied.
+    // That is a DIFFERENT recipe from one that set 0.7.
+    const report = await auditCorpusSources(
+      await buildInput({ records: [v3ApiRecordAtTemperature(null)] }),
+    );
+    expect(codesOf(report)).toEqual(["GENERATION_RECIPE_MISMATCH"]);
+  });
+
+  // The two cases above are both refused under a v3 arm hardwired to `null`, so
+  // they cannot tell a working accessor from a dead one on their own. These two
+  // can: against a batch that declares NO temperature, a dead arm compares
+  // `null === null` and ADMITS a record that applied 0.7 — the silent direction,
+  // where a divergence from the reviewed recipe enters the corpus unreported.
+  //
+  // The null has to be LAUNDERED across the typed boundary, because
+  // `GenerationBatchV1.temperature` is `number` and `parseReviewedSourceManifest`
+  // runs it through `finiteNumber`. That is not a reason to skip the case: it is
+  // the same reason `tamperSource` above exists. `benchmark/lab/audit_sources.ts`
+  // reaches `auditCorpusSources` with a bare `JSON.parse(...) as ...` and never
+  // touches the parser, so a manifest file carrying `"temperature": null` arrives
+  // here unvalidated, and the audit has to answer for it on its own. Refusing is
+  // the fail-closed answer and the one this pins.
+  const noTemperatureBatch = {
+    ...batch,
+    temperature: null,
+  } as unknown as GenerationBatchV1;
+
+  it("mismatches a batch declaring no temperature when one was applied", async () => {
+    const report = await auditCorpusSources(
+      await buildInput({
+        batches: [noTemperatureBatch],
+        records: [v3ApiRecordAtTemperature(0.7)],
+      }),
+    );
+    expect(codesOf(report)).toEqual(["GENERATION_RECIPE_MISMATCH"]);
+  });
+
+  it("matches a batch declaring no temperature when none was applied", async () => {
+    const report = await auditCorpusSources(
+      await buildInput({
+        batches: [noTemperatureBatch],
+        records: [v3ApiRecordAtTemperature(null)],
+      }),
+    );
+    expect(codesOf(report)).toEqual([]);
   });
 });

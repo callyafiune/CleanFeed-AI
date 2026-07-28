@@ -11,7 +11,11 @@ import {
   type DatasetFileDigests,
   type DatasetManifest,
 } from "../dataset-manifest.ts";
-import { validateBenchmarkRecordV3, type BenchmarkRecord } from "../schema.ts";
+import {
+  recordEligibility,
+  validateBenchmarkRecordV3,
+  type BenchmarkRecord,
+} from "../schema.ts";
 import { asGeneratorFamily } from "../generator-family.ts";
 import {
   unknownAxis,
@@ -737,6 +741,110 @@ describe("held-out generator-family coverage on a release corpus", () => {
         validFileDigests,
       ),
     ).rejects.toThrow(/requires at least 200 eligible positives/u);
+  });
+
+  // The floor's message has always promised "eligible positives" while the
+  // counter applied no eligibility filter at all. That was harmless on v2, which
+  // has no `unknown` axis state to fail on, and unreachable on v3 while the
+  // comparison read the raw axis and counted 0 — so fixing the counting is what
+  // opened it. The counting half is pinned above (200 and 199); these pin the
+  // eligibility half.
+  function ineligibleV3AiRow(n: number): BenchmarkRecord {
+    const raw = withAxis(
+      v3Ai(),
+      "humanSeed",
+      // A real gap and the honest state for it: the row's human seed was not
+      // recovered, so under R6 the record is INELIGIBLE and is never given a
+      // synthesized one. `humanSeed` admits `unknown` on an `ai` row, so the
+      // record is valid — it is the FLOOR that must not count it.
+      unknownAxis("the human seed was not recovered"),
+    );
+    raw.id = `a_agy_${n.toString().padStart(4, "0")}`;
+    raw.normalizedTextSha256 = n.toString(16).padStart(64, "0");
+    return validateBenchmarkRecordV3(raw);
+  }
+
+  it("refuses a reserved family whose 200 positives are all ineligible", async () => {
+    const records: BenchmarkRecord[] = [validateBenchmarkRecordV3(v3Human())];
+    for (let n = 1; n <= 200; n += 1) records.push(ineligibleV3AiRow(n));
+    // The rows are present, valid and of the reserved family — and every one of
+    // them carries an `unknown` grouping axis, so none can be placed in a split
+    // cluster or a resampling unit. Certifying the reservation on them would be
+    // §3.3's empty-unseen-generator failure arriving THROUGH the gate.
+    expect(recordEligibility(records[1]!).eligible).toBe(false);
+    await expect(
+      sealDataset(
+        releaseManifest,
+        records,
+        releasePolicy(200),
+        validFileDigests,
+      ),
+    ).rejects.toThrow(
+      /requires at least 200 eligible positives, received 0 eligible of 200 positive rows/u,
+    );
+  });
+
+  it("counts the eligible positives and names both numbers", async () => {
+    // One ineligible row inside an otherwise complete family: the refusal has to
+    // say 199 of 200, not "0" and not "200". Pinning both numbers is what stops a
+    // later edit from swapping the population and leaving the message true.
+    const records: BenchmarkRecord[] = [validateBenchmarkRecordV3(v3Human())];
+    for (let n = 1; n <= 199; n += 1) records.push(v3AiRow(n));
+    records.push(ineligibleV3AiRow(200));
+    await expect(
+      sealDataset(
+        releaseManifest,
+        records,
+        releasePolicy(200),
+        validFileDigests,
+      ),
+    ).rejects.toThrow(
+      /requires at least 200 eligible positives, received 199 eligible of 200 positive rows/u,
+    );
+  });
+
+  it("still clears the floor on a v2 release corpus, whose rows cannot state eligibility", async () => {
+    // The reason the filter is asked of v3 rows ONLY, pinned so nobody widens it.
+    // On v2 `recordEligibility` is constant false for structural reasons rather
+    // than per-record ones: `groups` is a closed object of nine keys with no
+    // `humanSeed`, `generationLane` or `harnessVersion`, so those three read as
+    // `unknown` on every v2 record ever written. Filtering unconditionally would
+    // not tighten the floor — it would zero every v2 family and refuse the sealed
+    // corpus on disk, which is `scientificUse: "release"` and v2. That is this
+    // block's own defect with the versions swapped.
+    //
+    // The corpus below has to be a RELEASE one and has to REACH the floor: the
+    // held-out block runs only when `releaseEligible`, so an
+    // `infrastructure-only` seal would pass under either rule and pin nothing.
+    // (First version of this test made exactly that mistake and let the widening
+    // mutation survive.)
+    expect(recordEligibility(ai).eligible).toBe(false);
+    expect(recordEligibility(ai).unknownAxes).toContain("humanSeed");
+    const reserved = asGeneratorFamily("heldout_family");
+    const v2Positives: BenchmarkRecord[] = [];
+    for (let n = 1; n <= 200; n += 1) {
+      v2Positives.push({
+        ...ai,
+        id: `ai-v2-${n.toString().padStart(4, "0")}`,
+        normalizedTextSha256: n.toString(16).padStart(64, "0"),
+        // A4's rule holds in v2 too: the canonical axis must be the canonical
+        // form of the recipe's own label, so BOTH move together.
+        generation: { ...ai.generation!, family: reserved },
+        groups: { ...ai.groups, generatorFamily: reserved },
+      });
+    }
+    const audit = await sealDataset(
+      { ...validManifest, scientificUse: "release" },
+      [human, ...v2Positives],
+      {
+        counts: { human: 1, ai: 200, mixed: 0 },
+        requiredHumanSourceTypes: ["qa-informal"],
+        requiredHardNegativeFamilies: [],
+      },
+      validFileDigests,
+    );
+    expect(audit.releaseEligible).toBe(true);
+    expect(audit.generatorFamilies[reserved]).toBe(200);
   });
 
   it("refuses a v2 human record that names a reserved family", async () => {

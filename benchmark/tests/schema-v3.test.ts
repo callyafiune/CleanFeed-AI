@@ -19,6 +19,7 @@ import {
   assertLabelEvidenceResolves,
   compareEffortWithinScale,
   parseBenchmarkDataset,
+  recipeTemperature,
   recordEligibility,
   V3_GROUP_AXES,
   validateBenchmarkRecord,
@@ -721,14 +722,39 @@ describe("the mixed cohort decides what provenance a row must carry", () => {
     expect(recordEligibility(record).eligible).toBe(false);
   });
 
-  it("refuses a generation axis claimed as known on an ecological row", () => {
-    expect(() =>
-      validateBenchmarkRecordV3(
-        withAxis(v3MixedEcological(), "generationLane", known("agy")),
-      ),
-    ).toThrow(
-      /groups\.generationLane of an ecological mixed record must be notApplicable or unknown, received known/u,
-    );
+  it("refuses EVERY generation axis claimed as known on an ecological row", () => {
+    // One assertion per axis, over the same five the accept test iterates. The
+    // previous version of this test asserted `generationLane` alone, so opening
+    // any of the other four in `AXIS_STATE_RULE` left the whole benchmark suite
+    // green — measured on `generatorFamily`. Nothing else catches it: the
+    // generator-identity rule below is one-directional (`generation` present =>
+    // family must be `known`), so a `known` family with NO recipe behind it is
+    // unconstrained, which is an observed coauthored document asserting OUR
+    // generator family. That is the fabricated provenance (R4) this cohort exists
+    // to make unwritable.
+    for (const axis of [
+      "promptTemplate",
+      "generatorFamily",
+      "generatorVersion",
+      "generationLane",
+      "harnessVersion",
+    ] as const) {
+      // The id is deliberately a REAL one of ours per axis where the axis
+      // validates its own vocabulary, so the refusal cannot be mistaken for a
+      // malformed-value refusal: the axis-state rule fires before the
+      // canonical-family and known-lane checks, and this pins that order too.
+      const id = axis === "generationLane" ? "agy" : "gemini-3_5-flash-medium";
+      expect(() =>
+        validateBenchmarkRecordV3(
+          withAxis(v3MixedEcological(), axis, known(id)),
+        ),
+      ).toThrow(
+        new RegExp(
+          `groups\\.${axis} of an ecological mixed record must be notApplicable or unknown, received known`,
+          "u",
+        ),
+      );
+    }
   });
 
   it("refuses an ecological row that names a recipe of ours", () => {
@@ -737,6 +763,96 @@ describe("the mixed cohort decides what provenance a row must carry", () => {
     expect(() => validateBenchmarkRecordV3(record)).toThrow(
       /generation is forbidden when mixture\.generationMode is ecological/u,
     );
+  });
+
+  // The two cohort guards were written as `mixture?.generationMode === …` rather
+  // than scoped to the mixed cohort, and `mixture` was forbidden only on `human`.
+  // So they fired on `ai` rows and misdiagnosed them. Measured on the committed
+  // tree before the fix:
+  //
+  //   * `ai` + `generationMode: "ecological"` was refused with "generation is
+  //     forbidden when mixture.generationMode is ecological: the assistance came
+  //     out of the coauthor's own tool" — a sentence about a cohort the row does
+  //     not belong to, blaming the recipe, while `label: "ai"` REQUIRES one. The
+  //     two refusals pointed at each other and neither named the contradiction.
+  //   * `ai` + `generationMode: "mechanistic"` was ACCEPTED outright. A fully
+  //     generated row silently carried an `aiFraction: 0.5` human-coauthorship
+  //     block. That is the sharper half and it was not in the finding.
+  //   * `ai` + fractions 0.9/0.9 was refused with "mixed fractions must sum to 1",
+  //     the widened check firing on a non-mixed row.
+  describe("a mixture block belongs to the mixed label and nowhere else", () => {
+    function aiWithMixture(
+      generationMode: string,
+      fractions = { aiFraction: 0.5, humanFraction: 0.5 },
+    ): Record<string, unknown> {
+      return {
+        ...v3Ai(),
+        mixture: {
+          ...fractions,
+          spans: [{ start: 0, end: 10, origin: "ai" }],
+          generationMode,
+        },
+      };
+    }
+
+    for (const mode of ["mechanistic", "ecological"] as const) {
+      it(`refuses a ${mode} mixture block on a fully generated row`, () => {
+        // The message names the CONTRADICTION — divided origin against a label
+        // that claims a single one — and not the recipe. Whether the mode is
+        // mechanistic or ecological cannot change the diagnosis, because the row
+        // is in neither cohort.
+        expect(() => validateBenchmarkRecordV3(aiWithMixture(mode))).toThrow(
+          /mixture is forbidden when label is ai/u,
+        );
+        expect(() =>
+          validateBenchmarkRecordV3(aiWithMixture(mode)),
+        ).not.toThrow(/generationMode is ecological/u);
+      });
+    }
+
+    it("refuses the block before judging its fractions", () => {
+      // Guard order, pinned: the widened fraction-sum check reads
+      // `mixture !== undefined` rather than `label === "mixed"`, so on an `ai`
+      // row it used to answer first. "The fractions do not sum to 1" invites a
+      // producer to fix the fractions; the row is wrong whatever they are.
+      expect(() =>
+        validateBenchmarkRecordV3(
+          aiWithMixture("mechanistic", {
+            aiFraction: 0.9,
+            humanFraction: 0.9,
+          }),
+        ),
+      ).toThrow(/mixture is forbidden when label is ai/u);
+    });
+
+    it("keeps refusing a mixture block on a human row", () => {
+      expect(() =>
+        validateBenchmarkRecordV3({
+          ...v3Human(),
+          mixture: {
+            aiFraction: 0.5,
+            humanFraction: 0.5,
+            spans: [{ start: 0, end: 10, origin: "ai" }],
+            generationMode: "mechanistic",
+          },
+        }),
+      ).toThrow(/mixture is forbidden when label is human/u);
+    });
+
+    it("still checks the fractions of a row that IS mixed", () => {
+      // The sum check keeps its teeth where it is reachable, so generalizing the
+      // guard above did not turn it into dead code.
+      const record = v3Mixed();
+      record.mixture = {
+        aiFraction: 0.9,
+        humanFraction: 0.9,
+        spans: [{ start: 0, end: 10, origin: "ai" }],
+        generationMode: "mechanistic",
+      };
+      expect(() => validateBenchmarkRecordV3(record)).toThrow(
+        /mixed fractions must sum to 1/u,
+      );
+    });
   });
 
   it("still refuses a mechanistic row whose generation axes are notApplicable", () => {
@@ -805,3 +921,93 @@ describe("v3 datasets do not mix schema versions", () => {
     );
   });
 });
+
+// ---------------------------------------------------------------------------
+// `recipeTemperature` collapses three states into `null`, and its docstring says
+// which three. The consumer test that gives the value its meaning lives in
+// benchmark/tests/corpus-source-audit.test.ts (governance recipe identity); this
+// pins the accessor's own contract, which is what a future reader will check the
+// docstring against.
+// ---------------------------------------------------------------------------
+
+describe("recipeTemperature reads the temperature of either schema version", () => {
+  it("reads a v2 record's top-level temperature", () => {
+    expect(
+      recipeTemperature({
+        provider: "acme",
+        family: "acme-large",
+        model: "acme-large-2",
+        version: "2026-05",
+        promptId: "p",
+        promptSha256: "1".repeat(64),
+        generatedAt: 1,
+        temperature: 0.7,
+      }),
+    ).toBe(0.7);
+  });
+
+  it("reads null from a v2 record that recorded none", () => {
+    expect(
+      recipeTemperature({
+        provider: "acme",
+        family: "acme-large",
+        model: "acme-large-2",
+        version: "2026-05",
+        promptId: "p",
+        promptSha256: "1".repeat(64),
+        generatedAt: 1,
+      }),
+    ).toBeNull();
+  });
+
+  it("reads the temperature inside a v3 configurable decoding branch", () => {
+    // The arm that was pinned by nothing. `0` is asserted separately from a
+    // truthy value on purpose: an accessor written with `||` instead of a branch
+    // would turn a deliberate greedy decode into "no temperature".
+    for (const temperature of [0.8, 0]) {
+      const record = validateBenchmarkRecordV3(v3ApiRow(temperature));
+      expect(recipeTemperature(record.generation!)).toBe(temperature);
+    }
+  });
+
+  it("reads null from a v3 configurable branch that left the provider default", () => {
+    const record = validateBenchmarkRecordV3(v3ApiRow(null));
+    expect(recipeTemperature(record.generation!)).toBeNull();
+  });
+
+  it("reads null from a v3 CLI lane, whose branch has no such field", () => {
+    // The third collapsed state: `agy` takes no sampling flag, so the field does
+    // not exist on the branch at all. Indistinguishable from the case above
+    // through this accessor by design — telling them apart requires reading
+    // `decoding`, and the docstring says so.
+    const record = validateBenchmarkRecordV3(v3Ai());
+    expect(record.generation?.decoding.configurable).toBe(false);
+    expect(recipeTemperature(record.generation!)).toBeNull();
+  });
+});
+
+/**
+ * A `gemini-api` row at a given applied temperature. That lane is the only one
+ * whose frozen row sets `decodingConfigurable: true`, so it is the only place a v3
+ * record can carry a temperature at all. Every sampling parameter is
+ * required-and-nullable on that branch, so they are all written.
+ */
+function v3ApiRow(temperature: number | null): Record<string, unknown> {
+  const raw = withGeneration(v3Ai(), {
+    decoding: {
+      configurable: true,
+      strategy: "sampling",
+      temperature,
+      topP: null,
+      repetitionPenalty: null,
+    },
+    effort: { source: "not-supported", configurable: false },
+  });
+  let record = withAxis(raw, "generationLane", known("gemini-api"));
+  record = withAxis(
+    record,
+    "harnessVersion",
+    notApplicable("the gemini-api lane runs no harness binary"),
+  );
+  return record;
+}

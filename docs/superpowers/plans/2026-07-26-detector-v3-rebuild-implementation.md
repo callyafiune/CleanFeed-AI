@@ -3184,7 +3184,8 @@ benchmark/tests/source-manifest.test.ts benchmark/tests/rebuild-v3-policy.test.t
 #### C1 — como ficou (executado em 2026-07-28)
 
 Entregue. As cinco recusas estão provadas em `benchmark/tests/schema-v3.test.ts`
-(arquivo novo, 47 testes); as contagens do manifesto e o requisito de privacidade em
+(arquivo novo, 63 testes depois das duas rodadas de correção; 47 na primeira entrega); as
+contagens do manifesto e o requisito de privacidade em
 `benchmark/tests/dataset-manifest.test.ts`; a declaração de eixos por fonte em
 `benchmark/tests/source-manifest.test.ts`; a tabela de lanes em
 `benchmark/tests/rebuild-v3-policy.test.ts`.
@@ -3325,9 +3326,14 @@ Entregue. As cinco recusas estão provadas em `benchmark/tests/schema-v3.test.ts
    > e C3 audita, e duas cópias da derivação divergiriam. A `mixture` passou a ser
    > validada **antes** dos eixos, porque é ela que decide a coorte. Em
    > `mixed-ecological`: `generation` é **proibido** (nomear receita nossa seria inventar
-   > proveniência) e os quatro eixos de geração admitem `notApplicable` (nenhuma
+   > proveniência) e os **cinco** eixos de geração admitem `notApplicable` (nenhuma
    > ferramenta nossa rodou) ou `unknown` (a ferramenta do coautor não foi registrada, ao
-   > preço da elegibilidade), nunca `known`. `humanSeed` e `derivationRoot` também
+   > preço da elegibilidade), nunca `known`. **São cinco, não quatro** —
+   > `promptTemplate`, `generatorFamily`, `generatorVersion`, `generationLane` e
+   > `harnessVersion` (`schema.ts:1420/1426/1432/1438/1444`). Esta errata dizia "quatro",
+   > e a mensagem de commit também; o docstring de `AXIS_STATE_RULE` dizia "quatro"
+   > pendurado numa frase que nomeava **dois**. Corrigido nos três lugares na rodada de
+   > qualidade abaixo (item 17). `humanSeed` e `derivationRoot` também
    > abriram nessa coorte, e por medida do mesmo problema: um documento coautorado
    > observado **não tem** linha precursora separada neste corpus, então exigir `known`
    > repetiria o defeito numa casa vizinha. `author` e `source` continuam abertos nas duas
@@ -3423,10 +3429,123 @@ Itens acrescentados na rodada de correção de spec (2026-07-28):
     evidência dentro de `schema.ts` faria este módulo alcançar o manifesto privado, que é
     justamente o que a fronteira existe para impedir.
 
+**Segunda rodada de correção de qualidade (2026-07-28) — itens 15 a 18.**
+
+15. **O piso de positivos da família reservada prometia elegibilidade e não filtrava
+    nada** (`benchmark/dataset-manifest.ts`). A mensagem diz `requires at least 200
+    eligible positives` desde 31a4b8a, e o contador somava toda linha `ai`/`mixed` da
+    família sem olhar `recordEligibility`. Era inofensivo em v2 (que não tem estado
+    `unknown`) e **inalcançável** em v3 enquanto a comparação lia o eixo cru e contava 0 —
+    ou seja, **consertar a contagem (item 2 desta seção) é o que abriu o buraco**, e a
+    entrega que consertou a contagem pinou o piso por baixo (199) sem pinar a metade da
+    elegibilidade. Medido com sondagem antes da correção: 200 linhas v3 da família
+    reservada, cada uma com `humanSeed` em `unknown`, seladas com `releaseEligible: true`
+    e `generatorFamilies[família] === 200`. O artefato público também não denuncia, porque
+    `labelBasisCounts.ineligible` é indexado por base de rótulo — que só existe em linha
+    humana — e imprimiu `{"date-cutoff":0,"observed-process":0}`. É a falha de gerador não
+    visto vazio da §3.3 chegando **pelo** gate em vez de por fora dele.
+
+    Corrigido **filtrando** (aperto, logo R3-limpo), com a população nomeada uma vez em
+    `countsTowardHeldOutFloor` e a mensagem passando a publicar os dois números:
+    `received N eligible of M positive rows`. "0 de 200" e "0 de 0" são diagnósticos
+    diferentes — família estocada com eixo não recuperado versus família ausente — e a
+    mensagem antiga não distinguia.
+
+    **O filtro só é cobrado de linha v3, e isso não é brecha.** Em v2
+    `recordEligibility` é constante `false` por razão **estrutural**, não por registro:
+    `groups` é objeto fechado de nove chaves sem `humanSeed`, `generationLane` nem
+    `harnessVersion`, então esses três leem `unknown` em **toda** linha v2 já escrita
+    (medido: uma linha humana v2 reporta **seis** eixos `unknown`, porque a linha humana
+    também omite os eixos de gerador). Filtrar sem condição não apertaria o piso — zeraria
+    toda família de todo corpus v2 e recusaria o corpus selado em disco, que é
+    `scientificUse: "release"` e v2. Seria o defeito do item 2 com as versões trocadas.
+    Três testes: 200 positivos v3 inelegíveis recusados com `0 eligible of 200`; 199
+    elegíveis + 1 inelegível recusados com `199 eligible of 200`; e um corpus **de
+    release** v2 com 200 positivos da família reservada que continua selando. Mutação que
+    mata os dois primeiros: tirar o filtro. Mutação que mata o terceiro: estender o filtro
+    a toda versão. (A primeira versão do terceiro teste selava
+    `infrastructure-only`, que **não entra** no bloco do piso, e deixou a mutação de
+    alargamento sobreviver; corrigido antes de commitar.)
+
+16. **O braço v3 de `recipeTemperature` não era pinado por teste nenhum**
+    (`benchmark/schema.ts`, `benchmark/corpus-source-audit.ts`). O acessor nasceu na
+    rodada anterior para substituir uma leitura v2 que funcionava, e vive dentro da
+    comparação de identidade de receita da governança — mas
+    `benchmark/tests/corpus-source-audit.test.ts` só tem registros `schemaVersion: 2`, e o
+    nome não aparecia em nenhum teste. Medido: trocar todo o braço v3 por `return null`
+    deixava a suíte de benchmark verde. O compilador conferiu a **forma**; nada conferia o
+    **valor**.
+
+    Três testes de consumidor (linha `gemini-api` v3, a única lane cujo row permite
+    `decodingConfigurable: true`) mais cinco de unidade sobre os estados que o `null`
+    colapsa. Duas mutações morrem: `return null` no braço v3 e `|| null` no lugar do valor
+    do ramo (esta última é por que o caso `temperature: 0` é asserido separado — decode
+    guloso deliberado não pode virar "sem temperatura").
+
+    > **Refutação parcial da crítica, medida.** A crítica descrevia como falha concreta
+    > uma batch revisada declarando `temperature: null`, contra a qual o mutante compararia
+    > `null === null` e **admitiria** a divergência em silêncio. Pelo tipo isso é
+    > impossível: `GenerationBatchV1.temperature` é `number` e
+    > `parseReviewedSourceManifest` passa o campo por `finiteNumber`. Consequência real de
+    > um braço morto é a **oposta** — falso `GENERATION_RECIPE_MISMATCH` em toda linha
+    > gerada v3, que é ruidoso. Mas o caso **é** alcançável por outro caminho, e por isso
+    > ficou no teste com o `null` lavado explicitamente pela fronteira de tipos (como
+    > `tamperSource` já faz no mesmo arquivo): `benchmark/lab/audit_sources.ts:30` chega a
+    > `auditCorpusSources` com `JSON.parse(...) as ...` e nunca toca no parser, então um
+    > arquivo de manifesto com `"temperature": null` chega aqui sem validação. Recusar é a
+    > resposta fail-closed e é o que o teste fixa.
+
+17. **A recusa de `known` na coorte ecológica era asserida em um eixo de cinco.** O teste
+    de aceite iterava os cinco; o de recusa só `generationLane`. Medido: abrir
+    `AXIS_STATE_RULE.generatorFamily["mixed-ecological"]` para `["known", …]` deixava a
+    suíte verde, e nada mais pega — a regra de identidade de gerador é unidirecional
+    (`generation` presente ⇒ família `known`), então uma família `known` **sem receita
+    atrás** ficava sem restrição: um documento coautorado observado afirmando a **nossa**
+    família geradora, que é a proveniência inventada (**R4**) que esta coorte existe para
+    impedir. O teste virou laço sobre os cinco, e as cinco mutações morrem, uma por eixo.
+    Junto: a contagem "quatro" foi corrigida para **cinco** no docstring de
+    `AXIS_STATE_RULE`, na errata do item 9 e aqui; e o bullet de `harnessVersion` deixou de
+    dizer só "decidido num lugar só" (a regra de lane), porque a tabela recusa `known` por
+    conta própria nessa coorte — a regra de lane **nunca fala** ali, já que só dispara com
+    `generationLane` em `known`, e uma versão de harness sem lane atrás é inatribuível.
+
+18. **Os dois guardas de coorte disparavam em linha `ai` e a diagnosticavam errado**
+    (`benchmark/schema.ts`). `mixture` era proibido só em `label: "human"`, e os guardas
+    liam `mixture?.generationMode === …` em vez da coorte. Medido na árvore commitada:
+    `ai` + `generationMode: "ecological"` era recusado com "the assistance came out of the
+    coauthor's own tool" — frase sobre coorte à qual a linha não pertence, culpando a
+    receita, enquanto `label: "ai"` **exige** receita; as duas recusas apontavam uma para a
+    outra e nenhuma nomeava a contradição. E `ai` + `generationMode: "mechanistic"` era
+    **aceito**: linha integralmente gerada carregando bloco de coautoria humana com
+    `aiFraction: 0.5`. Essa metade não estava na crítica e é a mais grave; o único motivo
+    de não ter contaminado coorte a jusante é que todo consumidor em `metrics.ts` filtra
+    `label === "mixed"` primeiro.
+
+    Corrigido nas duas frentes que a crítica pediu. `mixture` agora é proibido em
+    **qualquer** rótulo que não seja `mixed`, com mensagem que nomeia a contradição em si
+    (bloco descreve documento de origem dividida, rótulo afirma origem única) — razão que o
+    produtor **não** pode satisfazer editando o bloco, mesma precedência do ND-sobre-NC em
+    `source-manifest.ts` — e é a **primeira** pergunta feita sobre o bloco, antes das
+    frações. A verificação de soma continua lendo `mixture !== undefined` de propósito
+    (fração é propriedade do bloco), e ficou pinada numa linha `mixed` para não ser código
+    morto. Os dois guardas de coorte passaram a ler `axisClass`.
+
+    > **Honestidade sobre mutação.** Reverter **apenas** os guardas para
+    > `mixture?.generationMode` é mutação que **nenhum teste mata**, e isso está medido
+    > (93 testes verdes) e escrito no código: com `mixture` confinado a `mixed`, as duas
+    > grafias concordam em toda entrada que o validador aceita. Ficaram escritos assim
+    > para o leitor (C2–C6 constroem e auditam essas linhas) e para que o par não seja o
+    > último lugar onde um modo é confiado sem o rótulo.
+
 **Não feito, e por quê:** métricas fatiadas por lane são de A6/E3 (o brief diz para
 registrar em vez de implementar); o keyring HMAC é C3 — aqui só o contrato do campo exige a
 forma pseudonimizada e recusa a crua; `assemble_corpus.py` continua emitindo v2, porque
-repropagar é C2.
+repropagar é C2. **Não** foi publicada contagem de positivos inelegíveis por família no
+`DatasetAudit`: seria chave nova dentro do selo, mexendo em `AUDIT_KEYS`, no digest
+canônico e nas duas recomputações artesanais de `calibration-pipeline.ts:562` e
+`candidate-preflight.ts:259` — blast radius de emenda de artefato, não de rodada de
+qualidade. Hoje o operador só descobre o número pela mensagem de recusa do item 15; fica
+registrado como lacuna de publicação.
 
 ### C2 — Montador persiste grupos reais
 

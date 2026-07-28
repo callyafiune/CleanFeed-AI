@@ -1358,10 +1358,16 @@ export function v3AxisClass(
  *   * `promptTemplate` and `generatorVersion` must be `known` on every row whose
  *     recipe is OURS. These are the two axes the v2 corpus NEVER filled, and both
  *     exist in `meta` in the candidate pools, so `unknown` there would be a choice
- *     not to read data that is on disk. On `mixed-ecological` the same four axes
- *     are `notApplicable` (no tool of ours ran) or `unknown` (the coauthor's tool
- *     was not recorded, at the cost of eligibility) and `known` is REFUSED,
- *     because a known value there could only be one we made up.
+ *     not to read data that is on disk. On `mixed-ecological` the table restricts
+ *     FIVE axes, not the two named in the sentence above and not four: it is
+ *     `promptTemplate`, `generatorFamily`, `generatorVersion`, `generationLane` and
+ *     `harnessVersion` — every axis that names a piece of a generation apparatus.
+ *     Each of the five is `notApplicable` (no tool of ours ran) or `unknown` (the
+ *     coauthor's tool was not recorded, at the cost of eligibility), and `known` is
+ *     REFUSED on all five, because a known value there could only be one we made
+ *     up. Count them off this list rather than from the prose: an earlier round of
+ *     this comment said "two" and then "four" while the table said five, and a
+ *     reader who trusted the number left an axis open.
  *   * `humanSeed` must be `known` on `mixed-mechanistic` and is open on `ai` and on
  *     `mixed-ecological`: a mechanistic mixed record is built by editing a specific
  *     human text, a generated record may legitimately answer a bare topic prompt
@@ -1371,7 +1377,15 @@ export function v3AxisClass(
  *     in the ecological one.
  *   * `harnessVersion` is open on rows whose recipe is ours HERE and narrowed by
  *     the lane rule below, because whether a harness exists is a fact about the
- *     lane and must be decided in one place.
+ *     lane and must be decided in one place. "One place" holds for the three
+ *     classes that can name a lane and NOT for `mixed-ecological`, where this table
+ *     refuses `known` on its own: the lane rule fires only when `generationLane` is
+ *     `known`, which an ecological row may never be, so it would never speak. A
+ *     harness version with no lane behind it is unattributable — it would name a
+ *     binary of ours as an input to text no tool of ours produced — so the refusal
+ *     has to live here. Do not read the clause above as "leave `harnessVersion`
+ *     free on an ecological row and let the lane rule sort it out"; the table
+ *     answers first and the row will be refused.
  *   * `domainSource`, `collectionBatch` and `nearDuplicate` admit `known` and
  *     NOTHING else, in every class, and that asymmetry against `harnessVersion` is
  *     deliberate. All three identities are produced by OUR OWN extraction and
@@ -1525,6 +1539,32 @@ export function validateBenchmarkRecordV3(value: unknown): BenchmarkRecordV3 {
       id,
     );
   }
+  // A `mixture` block belongs to the `mixed` label and to no other, and this is
+  // the FIRST question asked about it — before its fractions, before the recipe
+  // rules, and before the cohort is derived from it. It used to be forbidden on
+  // `human` only, which left it legal on `ai` with two measured consequences:
+  //
+  //   * `ai` + `generationMode: "mechanistic"` VALIDATED. A fully generated row
+  //     carried an `aiFraction: 0.5` human-coauthorship block, and the only thing
+  //     keeping it out of the mechanistic mixed cohort downstream was that every
+  //     consumer in metrics.ts happens to gate on `label === "mixed"` first.
+  //   * `ai` + `generationMode: "ecological"` was refused by the cohort rule
+  //     below, with a sentence about the coauthor's own tool — a cohort the row is
+  //     not in — while `label: "ai"` REQUIRES the recipe that sentence forbids. The
+  //     two refusals pointed at each other and neither named the contradiction.
+  //
+  // So the message names the contradiction itself, and it is the same
+  // contradiction in both directions: the block describes a document of divided
+  // origin while the label claims a single one. It is a reason a caller CANNOT
+  // satisfy by editing the block, which is why it must not be phrased as a fact
+  // about fractions or recipes — the same precedence argument the ND-over-NC rule
+  // in source-manifest.ts uses.
+  if (label !== "mixed" && mixture !== undefined) {
+    throw new BenchmarkRecordError(
+      `mixture is forbidden when label is ${label}: the block describes a document of divided origin, and a ${label} label claims a single one — a divided document is label "mixed", and its generationMode then decides which cohort it belongs to`,
+      id,
+    );
+  }
   if (label === "ai" && generation === undefined) {
     throw new BenchmarkRecordError(
       "generation is required when label is ai",
@@ -1540,17 +1580,16 @@ export function validateBenchmarkRecordV3(value: unknown): BenchmarkRecordV3 {
       id,
     );
   }
+  // Reads the BLOCK rather than the label, deliberately, even though the guard
+  // above now makes the two equivalent: the fractions are a property of the block,
+  // and if a later edit ever re-admits `mixture` somewhere else, a malformed pair
+  // should still be refused rather than silently carried. Pinned on a mixed row so
+  // it is not dead code.
   if (mixture !== undefined) {
     const sum = mixture.aiFraction + mixture.humanFraction;
     if (Math.abs(sum - 1) > Number.EPSILON * 8) {
       throw new BenchmarkRecordError("mixed fractions must sum to 1", id);
     }
-  }
-  if (label === "human" && mixture !== undefined) {
-    throw new BenchmarkRecordError(
-      "mixture is forbidden when label is human",
-      id,
-    );
   }
 
   const axisClass = v3AxisClass(label, mixture?.generationMode);
@@ -1570,13 +1609,25 @@ export function validateBenchmarkRecordV3(value: unknown): BenchmarkRecordV3 {
   // writable form of such a row would have named OUR lane and OUR template. That is
   // invented provenance (R4). Both directions are refusals now, and they are
   // different sentences because they are different mistakes.
-  if (mixture?.generationMode === "mechanistic" && generation === undefined) {
+  //
+  // Both read `axisClass`, the value the axis table is keyed on, rather than
+  // `mixture?.generationMode` directly. That is what makes the guards say what they
+  // mean: each one is a statement about a COHORT, and a cohort is a mixed row with
+  // a mode, never a mode on its own. Before the `mixture`-forbidden guard above
+  // existed this was also load-bearing — an `ai` row could reach these lines and be
+  // told about the coauthor's tool. It no longer can, so reverting only this pair
+  // to the bare `mixture?.generationMode` read is a mutation NO test can kill: with
+  // `mixture` confined to `mixed`, the two spellings agree on every input the
+  // validator accepts. They are written this way for the reader (C2-C6 build and
+  // audit these rows) and to keep the pair from being the last place a mode is
+  // trusted without its label.
+  if (axisClass === "mixed-mechanistic" && generation === undefined) {
     throw new BenchmarkRecordError(
       "generation is required when label is mixed and mixture.generationMode is mechanistic: the recipe that produced its AI spans is ours, and it is provenance rather than decoration",
       id,
     );
   }
-  if (mixture?.generationMode === "ecological" && generation !== undefined) {
+  if (axisClass === "mixed-ecological" && generation !== undefined) {
     throw new BenchmarkRecordError(
       "generation is forbidden when mixture.generationMode is ecological: the assistance came out of the coauthor's own tool, so a recipe of ours attached to the row would be provenance we invented",
       id,

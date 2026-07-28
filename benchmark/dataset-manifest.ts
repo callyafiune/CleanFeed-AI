@@ -455,6 +455,40 @@ export function emptyLabelBasisPublication(): LabelBasisPublication {
 }
 
 /**
+ * WHETHER a positive row counts toward the held-out family's positives floor.
+ *
+ * Stated once, as a named function, because the refusal message PROMISES it. The
+ * message has said "at least 200 eligible positives" since 31a4b8a while the
+ * counter applied no eligibility filter at all, and the promise went unkept: a
+ * release corpus reserving a family could clear the floor on 200 rows each
+ * carrying an `unknown` grouping axis — rows that cannot be placed in a split
+ * cluster or a resampling unit, so the gate certified a reservation the corpus
+ * cannot support. That is §3.3's empty-unseen-generator failure arriving THROUGH
+ * the gate instead of around it. Measured before the fix: 200 such rows sealed
+ * with `releaseEligible: true` and `generatorFamilies[family] === 200`.
+ *
+ * The filter is asked of v3 rows ONLY, and that is not a loophole left for v2 to
+ * slip through. On v2 `recordEligibility` is constant false for STRUCTURAL reasons
+ * rather than per-record ones: a v2 `groups` block is a closed object of nine keys
+ * with no `humanSeed`, `generationLane` or `harnessVersion`, so `groupAxisState`
+ * reads those three as `unknown` on every v2 record that has ever been written
+ * (measured: a v2 human record reports six unknown axes, since a human row also
+ * omits the generator axes). Filtering unconditionally would therefore not tighten
+ * the floor — it would set every v2 family's count to 0 and refuse the sealed
+ * corpus on disk, which is `scientificUse: "release"` and v2. That is precisely
+ * the defect this block was just repaired for, with the versions swapped.
+ *
+ * So the rule is the honest one: eligibility is a statement only a v3 record is
+ * able to make, and it is only asked of the records that can make it. When the
+ * corpus is v3 there is no v2 row to exempt, and until then a v2 corpus is judged
+ * by the only criterion its schema can express — presence.
+ */
+function countsTowardHeldOutFloor(record: BenchmarkRecord): boolean {
+  if (record.schemaVersion !== 3) return true;
+  return recordEligibility(record).eligible;
+}
+
+/**
  * Counts the label-basis evidence of a corpus, as numbers.
  *
  * Every basis the frozen policy allows gets a row even when it is zero, so a basis
@@ -694,11 +728,12 @@ export async function sealDataset(
       // eligible positives", and `appearsInHuman` could never be true, so the leak
       // check was silently dead. Same defect class A4 fixed: two spellings that
       // never meet.
-      const positives = normalized.filter(
+      const positiveRows = normalized.filter(
         (record) =>
           (record.label === "ai" || record.label === "mixed") &&
           generatorFamilyOf(record) === family,
-      ).length;
+      );
+      const positives = positiveRows.filter(countsTowardHeldOutFloor).length;
       const appearsInHuman = normalized.some(
         (record) =>
           record.label === "human" && generatorFamilyOf(record) === family,
@@ -716,9 +751,14 @@ export async function sealDataset(
         );
       }
       if (positives < 200) {
+        // BOTH numbers, because they answer different questions. "0 eligible of
+        // 200 positive rows" tells an operator the family is stocked and the
+        // grouping axes are not recovered; "0 of 0" tells them the family is
+        // absent. The old message could not tell those apart, and the second is
+        // what a broken accessor looks like.
         fail(
           "DATASET_COVERAGE_INVALID",
-          `held-out generator family "${family}" requires at least 200 eligible positives`,
+          `held-out generator family "${family}" requires at least 200 eligible positives, received ${positives} eligible of ${positiveRows.length} positive rows`,
         );
       }
     }
