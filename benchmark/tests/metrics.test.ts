@@ -9,6 +9,7 @@ import {
   ece15,
   eceEqualMass,
   logLoss,
+  mixedFractionBucket,
   predictiveValues,
   reliabilityDiagram,
   simulatedPrecision,
@@ -1356,26 +1357,204 @@ describe("span localization metrics are diagnostic (B2)", () => {
     const mechanistic = localization.byGenerationMode.find(
       (cohort) => cohort.generationMode === "mechanistic",
     );
-    expect(mechanistic?.population).toBe(2);
-    expect(mechanistic?.localizedEmitted).toBe(1);
-    expect(mechanistic?.localizedPathRecall.value).toBe(0.5);
+    // Every row of this cohort is scored, so the two families coincide here —
+    // which is exactly why this fixture could not see the status defect. The
+    // test below adds the undecided row that separates them.
+    expect(mechanistic?.spanProducer).toBe("present");
+    expect(mechanistic?.endToEnd.population).toBe(2);
+    expect(mechanistic?.conditionalOnScored.population).toBe(2);
+    expect(mechanistic?.endToEnd.localizedEmitted).toBe(1);
+    expect(mechanistic?.endToEnd.localizedPathRecall?.value).toBe(0.5);
     // Micro: intersection 10 over union 10 for the first row, 0 over 10 for the
     // second — 10/20.
-    expect(mechanistic?.microIou).toBe(0.5);
-    expect(mechanistic?.macroIou).toBe(0.5);
-    expect(mechanistic?.microTokenRecall).toBe(0.5);
+    expect(mechanistic?.endToEnd.overlap?.microIou).toBe(0.5);
+    expect(mechanistic?.endToEnd.overlap?.macroIou).toBe(0.5);
+    expect(mechanistic?.endToEnd.overlap?.microTokenRecall).toBe(0.5);
     // Precision has the PREDICTED length in its denominator, and only one row
     // predicted anything at all.
-    expect(mechanistic?.microTokenPrecision).toBe(1);
+    expect(mechanistic?.endToEnd.overlap?.microTokenPrecision).toBe(1);
 
     const ecological = localization.byGenerationMode.find(
       (cohort) => cohort.generationMode === "ecological",
     );
     // [0,10) against [5,15): intersection 5, union 15.
-    expect(ecological?.population).toBe(1);
-    expect(ecological?.microIou).toBeCloseTo(1 / 3, 12);
-    expect(ecological?.microTokenPrecision).toBe(0.5);
-    expect(ecological?.microTokenRecall).toBe(0.5);
+    expect(ecological?.endToEnd.population).toBe(1);
+    expect(ecological?.endToEnd.overlap?.microIou).toBeCloseTo(1 / 3, 12);
+    expect(ecological?.endToEnd.overlap?.microTokenPrecision).toBe(0.5);
+    expect(ecological?.endToEnd.overlap?.microTokenRecall).toBe(0.5);
+  });
+
+  // R5's pairing rule applied to the localization diagnostics. Before this test
+  // the block published ONE population — scored rows only — so an errored row of
+  // the cohort left the denominator of the localized-path recall AND of every
+  // micro/macro ratio, and an inference failure could only ever raise them.
+  // MEASURED on the committed tree at 5812cdf with a scratch probe: adding the
+  // errored row below left `population: 1, localizedPathRecall: 1, microIou: 1`
+  // byte-identical, while `mixed.atLeastHalfAi.sampleSize` in the SAME artifact
+  // went 1 -> 2 and its recall 1 -> 0.5. Two mixed-cohort recall blocks with
+  // opposite status conventions, and the localization one favorable to failure.
+  it("charges an undecided cohort row as a localization miss end to end, and leaves the conditional family alone", () => {
+    const base = [
+      item({ author: "h1", label: "human", documentScore: 0.1 }),
+      item({
+        author: "m1",
+        label: "mixed",
+        aiFraction: 0.6,
+        observedAiSpans: [{ start: 0, end: 10 }],
+        localizedSpans: [{ start: 0, end: 10 }],
+        documentScore: 0.9,
+        warned: true,
+      }),
+    ];
+    // Same cohort, same observed span, no decision and therefore no emission.
+    const errored = item({
+      author: "m2",
+      label: "mixed",
+      aiFraction: 0.6,
+      observedAiSpans: [{ start: 0, end: 10 }],
+      status: "error",
+    });
+
+    const mechanistic = (items: readonly EvaluationItem[]) => {
+      const cohort = computeEvaluationMetrics(
+        items,
+        OPTIONS,
+      ).localization.byGenerationMode.find(
+        (entry) => entry.generationMode === "mechanistic",
+      );
+      if (cohort === undefined) throw new Error("no mechanistic cohort");
+      return cohort;
+    };
+    const before = mechanistic(base);
+    const after = mechanistic([...base, errored]);
+
+    // Conditional on scored: unchanged by construction — that is what the family
+    // conditions on, and it is the ONLY family the block used to publish.
+    expect(after.conditionalOnScored).toEqual(before.conditionalOnScored);
+    expect(after.conditionalOnScored.population).toBe(1);
+    expect(after.conditionalOnScored.undecidedRows).toBe(0);
+    expect(after.conditionalOnScored.localizedPathRecall?.value).toBe(1);
+    expect(after.conditionalOnScored.overlap?.microIou).toBe(1);
+
+    // End to end: the undecided row is IN the denominator and emitted nothing.
+    expect(before.endToEnd.population).toBe(1);
+    expect(before.endToEnd.localizedPathRecall?.value).toBe(1);
+    expect(after.endToEnd.population).toBe(2);
+    expect(after.endToEnd.undecidedRows).toBe(1);
+    expect(after.endToEnd.localizedEmitted).toBe(1);
+    expect(after.endToEnd.localizedPathRecall?.value).toBe(0.5);
+    expect(after.endToEnd.localizedPathRecall?.value).toBeLessThan(
+      before.endToEnd.localizedPathRecall?.value ?? Number.NaN,
+    );
+    // Intersection 10 over union 10 + 10: the errored row contributes its whole
+    // observed length to the union and nothing to the intersection.
+    expect(after.endToEnd.overlap?.microIou).toBe(0.5);
+    expect(after.endToEnd.overlap?.microTokenRecall).toBe(0.5);
+    expect(after.endToEnd.overlap?.macroIou).toBe(0.5);
+    // Precision's denominator is the PREDICTED length, which an undecided row
+    // does not move — so micro precision is the one ratio that cannot fall.
+    expect(after.endToEnd.overlap?.microTokenPrecision).toBe(1);
+
+    // The direction now agrees with the other mixed-cohort recall block in the
+    // same artifact, which is where the divergence was.
+    expect(
+      computeEvaluationMetrics([...base, errored], OPTIONS).mixed.atLeastHalfAi
+        .warningRecall,
+    ).toBe(0.5);
+
+    // Both families name their own denominator rule, so the artifact is readable
+    // without inferring the population from the field names.
+    expect(after.endToEnd.family).toBe("end-to-end");
+    expect(after.endToEnd.populationRule).toBe(
+      "cohort-rows-with-observed-spans",
+    );
+    expect(after.conditionalOnScored.family).toBe("conditional-on-scored");
+    expect(after.conditionalOnScored.populationRule).toBe(
+      "scored-cohort-rows-with-observed-spans",
+    );
+  });
+
+  // No stage of the sealed pipeline populates `localizedSpans` yet: there is no
+  // span field in benchmark/prediction-schema.ts and benchmark/commands/evaluate.ts
+  // forwards `localizedRawScore` only. D4 owns the span head. Until then a zero
+  // ratio here would read as a measured localization failure of the detector when
+  // in fact nothing emitted anything, so the ratios are `null` and the absence is
+  // declared instead of being spelled `0`.
+  it("publishes no localization ratio at all when no row carries a localized span", () => {
+    const fixture = [
+      item({ author: "h1", label: "human", documentScore: 0.1 }),
+      item({
+        author: "m1",
+        label: "mixed",
+        aiFraction: 0.6,
+        observedAiSpans: [{ start: 0, end: 10 }],
+        documentScore: 0.9,
+        warned: true,
+      }),
+      item({
+        author: "m2",
+        label: "mixed",
+        aiFraction: 0.9,
+        observedAiSpans: [{ start: 20, end: 40 }],
+        documentScore: 0.9,
+        warned: true,
+      }),
+    ];
+
+    const cohort = computeEvaluationMetrics(
+      fixture,
+      OPTIONS,
+    ).localization.byGenerationMode.find(
+      (entry) => entry.generationMode === "mechanistic",
+    );
+
+    expect(cohort?.spanProducer).toBe("absent");
+    // The counts stay: they say how much evidence is waiting for a producer.
+    expect(cohort?.endToEnd.population).toBe(2);
+    expect(cohort?.endToEnd.localizedEmitted).toBe(0);
+    // The ratios do not, because there is nothing to be a ratio OF.
+    expect(cohort?.endToEnd.localizedPathRecall).toBeNull();
+    expect(cohort?.endToEnd.overlap).toBeNull();
+    expect(cohort?.conditionalOnScored.localizedPathRecall).toBeNull();
+    expect(cohort?.conditionalOnScored.overlap).toBeNull();
+
+    // An empty cohort is the same statement for a different reason, and a NaN
+    // recall (which `proportionEstimate(0, 0)` returns) is not that statement.
+    const empty = computeEvaluationMetrics(
+      fixture,
+      OPTIONS,
+    ).localization.byGenerationMode.find(
+      (entry) => entry.generationMode === "ecological",
+    );
+    expect(empty?.endToEnd.population).toBe(0);
+    expect(empty?.endToEnd.localizedPathRecall).toBeNull();
+    expect(empty?.spanProducer).toBe("absent");
+  });
+
+  // Requisito 2 of the B2 brief asks for the v0-v8 curve as the diagnostic beside
+  // the `warning.mixed-recall` gate. `mixed.byFraction` is NOT that curve: it is a
+  // four-band aggregation of it, and this test pins WHICH levels it pools so the
+  // shortfall is executable rather than a sentence someone can delete. D4 owns
+  // the per-level curve (it owns the mixing lane that would write the level).
+  it("pools the nine frozen curve levels into four bands, so byFraction is not the curve", () => {
+    // The frozen v0-v8 coverage levels, from D4 in the plan.
+    const levels = [0, 0.15, 0.25, 0.4, 0.5, 0.6, 0.75, 0.9, 1];
+    const pooled = new Map<string, number[]>();
+    for (const level of levels) {
+      const band = mixedFractionBucket(level);
+      pooled.set(band, [...(pooled.get(band) ?? []), level]);
+    }
+    expect([...pooled.entries()]).toEqual([
+      ["0_24", [0, 0.15]],
+      ["25_49", [0.25, 0.4]],
+      ["50_74", [0.5, 0.6]],
+      ["75_100", [0.75, 0.9, 1]],
+    ]);
+    // Four keys for nine levels: no consumer of `mixed.byFraction`, of the
+    // `mixedFraction` slice axis or of `criticalRecallSlices` can read v0 apart
+    // from v1, v2 apart from v3, or v4 apart from v5.
+    expect(pooled.size).toBe(4);
+    expect(pooled.size).toBeLessThan(levels.length);
   });
 });
 

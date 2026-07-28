@@ -66,7 +66,25 @@ Os três alvos de anotação são fechados:
 Consequências mecânicas, não apenas redacionais:
 
 - misto com `aiFraction < 0.50` não é negativo humano nem positivo de release —
-  é fatia diagnóstica da curva e não entra em denominador de gate nenhum;
+  é fatia diagnóstica da curva, e **não é positivo nem negativo de gate nenhum**,
+  que é a forma congelada da afirmação. Isso **não** é o mesmo que "não entra em
+  denominador de gate nenhum", que era como esta linha estava escrita e é falso
+  medido: dois gates têm o conjunto elegível inteiro como denominador e portanto
+  observam a linha sub-piso — `integrity.error-rate` (taxa de falha de inferência
+  do conjunto elegível) e `warning.coverage` (scored sobre elegíveis). Medido:
+  20 humanos + 10 IA dão coverage 1; somando uma linha misto `aiFraction 0.25`
+  `abstained` elegível, dá 0,967741935483871. O cabeçalho de `benchmark/gates.ts`
+  carrega a mesma correção;
+- a **curva v0–v8 é o diagnóstico pedido, e ainda não existe como curva.** O que
+  o avaliador publica hoje é `mixed.byFraction`, uma **agregação em quatro
+  faixas** dela: `0_24` funde v0 (0%) com v1 (15%), `25_49` funde v2 (25%) com
+  v3 (40%), `50_74` funde v4 (50%) com v5 (60%), e `75_100` funde v6/v7/v8
+  (75%/90%/100%). Nenhum consumidor de `mixed.byFraction`, do eixo de fatia
+  `mixedFraction` ou de `criticalRecallSlices` consegue ler um nível apartado do
+  seu par. O nível é propriedade da **operação de mistura**, não da `aiFraction`
+  observada do registro-linha, então a curva por nível depende de campo de nível
+  escrito pela pista de mistura — que é de **D4**. O pooling está fixado por
+  teste sobre os nove níveis congelados;
 - `mixture.generationMode` é obrigatório e fechado em
   `mechanistic | ecological`. Tudo que este projeto produz é `mechanistic`: nós
   escolhemos e executamos as edições, então a proveniência por trecho é
@@ -76,7 +94,18 @@ Consequências mecânicas, não apenas redacionais:
   (`materialAssistance.cohortsAggregated: false`);
 - o recall que pode elevar o teto de ação (`actionCeiling`) é medido **somente**
   sobre os positivos integrais (`EvaluationMetrics.actionAuthorization`), então
-  uma coorte de assistência material não consegue levantá-lo.
+  uma coorte de assistência material não consegue levantá-lo;
+- as métricas de span saem **em par de status** como todas as outras (R5): cada
+  coorte de `EvaluationMetrics.localization` publica `endToEnd` e
+  `conditionalOnScored`, e na família fim-a-fim uma linha sem decisão emitiu nada
+  e conta como erro integral, então falha de inferência nunca sobe IoU nem recall
+  do caminho localizado;
+- **nenhum estágio da esteira preenche span hoje.** `benchmark/prediction-schema.ts`
+  não tem coluna de span e `benchmark/commands/evaluate.ts` só repassa
+  `localizedRawScore`; a cabeça de span é de **D4**. Enquanto isso cada coorte
+  declara `spanProducer: "absent"` e publica `localizedPathRecall` e o bloco
+  `overlap` como `null` — nunca `0`, porque `0` se leria como localização medida e
+  reprovada quando ninguém emitiu nada (R7, R8).
 
 Os orçamentos aprovados são:
 

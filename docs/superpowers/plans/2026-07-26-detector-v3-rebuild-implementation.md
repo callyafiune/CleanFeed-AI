@@ -2706,6 +2706,80 @@ a agregação entre coortes que esta tarefa proíbe, entrando pela porta de trá
     (`tests/fixtures/model-release/*/calibration-profiles.json`) e perfis com validade de
     180 dias — e pertence a quem for mexer no artefato de perfil, não a B2.
 
+#### B2 — segunda rodada de correção de conformidade
+
+11. **As métricas de localização violavam a regra do par (R5) e usavam a convenção
+    favorável.** `localizationCohort` tinha UMA população — `isScoredItem(item) && coorte
+    && spans observados > 0` — e nenhuma contraparte fim-a-fim em lugar nenhum. Logo uma
+    linha `abstained`/`error` da coorte **saía** do denominador de `localizedPathRecall` e
+    de todos os seis IoU/precisão/recall micro e macro, e uma falha de inferência só podia
+    **subir** esses números: a mesma classe de defeito que A3 removeu das matrizes de
+    decisão. **Medido** com sonda contra a árvore commitada em 5812cdf, antes de qualquer
+    edição: somando uma linha `status: "error"` mecanística (`aiFraction 0.6`, um span de
+    IA observado) a um fixture de uma linha, o bloco de localização ficou byte-idêntico
+    (`population: 1, localizedEmitted: 1, localizedPathRecall: 1, microIou: 1`) enquanto
+    `mixed.atLeastHalfAi` no MESMO artefato foi de `sampleSize 1` para `2` e de
+    `warningRecall 1` para `0,5` — dois blocos de recall da mesma coorte com convenções de
+    status opostas. A docstring afirmava só a propriedade fraca ("uma linha cujo caminho
+    localizado não emitiu nada FICA aqui e conta como erro"), verdadeira para linha
+    `scored` e silenciosamente falsa para linha com erro.
+    **Corrigido:** `LocalizationCohort` agora publica `endToEnd` e `conditionalOnScored`,
+    cada um um `LocalizationFamily` com `family`, `populationRule` (a regra do
+    denominador em palavras), `population`, `undecidedRows` e `localizedEmitted`, então as
+    duas famílias são reconciliáveis a partir do artefato. A seleção da coorte é uma só e
+    o que difere é **apenas** a regra de status; uma linha indecisa emite `[]`, portanto
+    entra com o comprimento observado inteiro na união e zero na interseção — erro
+    integral, nunca remoção nem substituição. Teste novo prova a direção: somando a linha
+    com erro, `endToEnd.localizedPathRecall` cai de 1 para 0,5, `undecidedRows` vai a 1 e
+    `microIou` a 0,5, enquanto `conditionalOnScored` é `toEqual` antes e depois. Mutação
+    (voltar `cohortRows` a `isScoredItem`) mata o teste com `expected 1 to be 2`.
+12. **Ausência de produtor de span deixou de ser indistinguível de erro total.** Nenhum
+    estágio da esteira selada escreve `localizedSpans`: `benchmark/prediction-schema.ts`
+    não tem coluna de span (grep por `span` não devolve nada) e
+    `benchmark/commands/evaluate.ts` só repassa `localizedRawScore` — o campo é populado
+    apenas pelo fixture de teste, e o único chamador futuro é a cabeça de span de **D4**.
+    Consequência antes da correção: em qualquer execução real toda coorte com span
+    observado publicava `localizedEmitted: 0`, `localizedPathRecall.value: 0`,
+    `microIou: 0`, `macroIou: 0` sobre `population` **não** zero — números que se leem
+    como falha de localização medida do detector quando nada emitiu nada.
+    **Corrigido:** cada coorte declara `spanProducer: "present" | "absent"` (presente e
+    vazio conta como presente: é produtor que não achou nada), e com produtor ausente —
+    ou população zero, onde `proportionEstimate(0, 0)` devolvia `NaN` — `localizedPathRecall`
+    e o bloco `overlap` inteiro saem `null`, nunca `0`. As **contagens** continuam
+    publicadas, porque elas dizem quanta evidência de span está esperando produtor. Teste
+    novo fixa o estado de produtor ausente; a mutação que remove a guarda morre com
+    `expected { value: +0, … } to be null`.
+13. **ERRATA: a "curva v0–v8 completa" NÃO foi entregue como diagnóstico.** Nada na seção
+    de execução registrava a lacuna: ela abre com "cinco mecanismos [que] implementam
+    exatamente a tabela" e o item 4 fala de `mixed.byFraction` chaveado por
+    `"<modo>/<faixa>"` sem dizer que a faixa não é nível; a §2.1 da spec repetia a linha
+    da tabela congelada ("curva completa v0–v8 diagnóstica") sem ressalva. A metade do
+    gate está entregue exatamente (`warning.mixed-recall >= 0,50`, piso lido de
+    `materialAssistance.minimumWarningRecall`, denominador = coorte mecanística com
+    `aiFraction >= 0,50`, §4.5 citada). A metade do diagnóstico **não é a curva**: o único
+    diagnóstico por fração é o bucketing pré-existente de quatro faixas, e as nove
+    coberturas congeladas em D4 (0%, 15%, 25%, 40%, 50%, 60%, 75%, 90%, 100%) colapsam
+    duas a duas dentro delas — v0 com v1 em `0_24`, v2 com v3 em `25_49`, v4 com v5 em
+    `50_74`, e v6/v7/v8 em `75_100`. Logo nenhum consumidor de `mixed.byFraction`, do eixo
+    `mixedFraction` ou de `criticalRecallSlices` consegue ler curva por nível.
+    **Por que B2 para aqui e não divide as faixas:** o nível é propriedade da OPERAÇÃO de
+    mistura, não da `aiFraction` observada do registro-linha (D4 mira um nível e chega
+    perto dele, então chavear pela fração obtida daria uma chave por registro-linha).
+    Publicar a curva por nível exige campo de nível escrito pela pista de mistura, e essa
+    pista é de **D4** (`benchmark/lab/make_mixed_v3.py`, que ainda não existe). O
+    pooling está declarado na docstring de `MIXED_FRACTION_BUCKETS`, no campo
+    `mixed.byFraction`, na §2.1 da spec e **fixado por teste** sobre os nove níveis
+    congelados, para que a lacuna seja executável e não uma frase que alguém apaga.
+    Quem fizer D4 tem de emitir a curva por nível **antes** de qualquer leitura de
+    `byFraction` como curva.
+14. **A errata do item 6 chegou à spec.** A §2.1 ainda dizia que misto sub-piso "não entra
+    em denominador de gate nenhum" — exatamente a afirmação que o item 6 mediu falsa e
+    retirou de `gates.ts` e deste plano na rodada anterior, deixada de pé no documento
+    publicado. Agora a §2.1 traz a forma congelada (não é positivo nem negativo de gate
+    nenhum), nomeia os dois gates de denominador-conjunto-elegível e cola a medição.
+    Não foi pedido pela revisão desta rodada; é a mesma frase, e deixá-la seria publicar
+    uma alegação sabidamente falsa num arquivo que o brief de B2 lista.
+
 ### B3 — DECIDIDO: só bases públicas, sem coleta individual autorizada
 
 **Depende de:** nada.

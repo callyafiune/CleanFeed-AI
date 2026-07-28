@@ -825,19 +825,11 @@ export interface SpanOverlap {
   tokenF1: number;
 }
 
-// Localization over one cohort. DIAGNOSTIC in v3: `gates: false` and
-// `authorizesVisualAction: false` are literals, matching
-// `localization.metricsRole: "diagnostic"` and
-// `localization.authorizesVisualAction: false` in the frozen contract.
-export interface LocalizationCohort {
-  generationMode: GenerationMode;
-  role: "diagnostic";
-  aggregated: false;
-  // Scored rows of the cohort that carry at least one observed AI span. A row
-  // whose localized path emitted nothing STAYS here and counts as a miss.
-  population: number;
-  localizedEmitted: number;
-  localizedPathRecall: MetricEstimate;
+// The six overlap ratios of one cohort under one status rule. Grouped rather than
+// flattened onto the family so ONE null covers all six: when there is no span
+// producer at all (see `spanProducer`) none of them is a measurement, and six
+// separate nulls would invite a consumer to read five of them and miss one.
+export interface LocalizationOverlapRatios {
   // Micro: one ratio over the summed intersections / unions / lengths of the
   // cohort, so a long document weighs what its length says it weighs.
   microIou: number;
@@ -848,6 +840,59 @@ export interface LocalizationCohort {
   macroIou: number;
   macroTokenPrecision: number;
   macroTokenRecall: number;
+}
+
+// One localization family over one cohort. R5 requires the pair, and the reason
+// is the same here as for the decision matrices: while this block published only
+// the scored rows, an errored row of the cohort left every denominator, so an
+// inference failure could only ever RAISE the localized-path recall and the IoUs.
+// MEASURED before the fix, on a one-row cohort: adding one `status: "error"` row
+// with an observed AI span left `population: 1, localizedPathRecall: 1,
+// microIou: 1` byte-identical while `mixed.atLeastHalfAi.sampleSize` in the same
+// artifact went 1 -> 2. Two mixed-cohort recall blocks, opposite conventions.
+export interface LocalizationFamily {
+  family: MetricFamily;
+  // The denominator rule in words, because "population" alone does not say which
+  // of the two it is and `family` is a status label a consumer may not know how
+  // to apply to spans. `end-to-end` counts EVERY row of the cohort that carries
+  // an observed AI span, undecided ones included; the conditional family keeps
+  // the scored rows only.
+  populationRule:
+    | "cohort-rows-with-observed-spans"
+    | "scored-cohort-rows-with-observed-spans";
+  population: number;
+  // Rows of `population` that produced no decision, so the two families can be
+  // reconciled from the artifact alone (it is 0 in the conditional one by
+  // construction). An undecided row emitted nothing and is charged as a MISS —
+  // never dropped, never substituted (R5).
+  undecidedRows: number;
+  localizedEmitted: number;
+  // `null`, never 0, when there is no producer or no row: see `spanProducer`.
+  localizedPathRecall: MetricEstimate | null;
+  overlap: LocalizationOverlapRatios | null;
+}
+
+// Localization over one cohort. DIAGNOSTIC in v3: `gates: false` and
+// `authorizesVisualAction: false` are literals, matching
+// `localization.metricsRole: "diagnostic"` and
+// `localization.authorizesVisualAction: false` in the frozen contract.
+export interface LocalizationCohort {
+  generationMode: GenerationMode;
+  role: "diagnostic";
+  aggregated: false;
+  // Whether ANY row of the cohort carries a `localizedSpans` field at all —
+  // present-and-empty counts as present, because that is a producer that emitted
+  // nothing. This is published because today the answer is always `"absent"` on a
+  // real run: `benchmark/prediction-schema.ts` has no span field and
+  // `benchmark/commands/evaluate.ts` forwards `localizedRawScore` only, so NO
+  // stage of the sealed pipeline populates it. D4 owns the span head that will.
+  // Without this field a reader cannot tell "the detector located nothing" from
+  // "nothing was asked to locate anything", because both spell 0 — which is why
+  // every ratio above is `null` while this says `"absent"` (R7: declare the
+  // contract, not the property).
+  spanProducer: "present" | "absent";
+  endToEnd: LocalizationFamily;
+  conditionalOnScored: LocalizationFamily;
 }
 
 export interface LocalizationDiagnostics {
@@ -935,8 +980,9 @@ export interface EvaluationMetrics {
   >;
   latency: LatencyMetrics;
   memory: MemoryMetrics;
-  // Span IoU, token precision/recall and localized-path recall, per cohort, all
-  // diagnostic in v3.
+  // Span IoU, token precision/recall and localized-path recall, per cohort, in
+  // both status families, all diagnostic in v3 — and each cohort declares whether
+  // a span producer exists at all, because today none does.
   localization: LocalizationDiagnostics;
   mixed: {
     // The GATED block: the mechanistic cohort at or above the frozen AI fraction,
@@ -947,6 +993,9 @@ export interface EvaluationMetrics {
     // above is the mechanistic entry of this list, projected under the name the
     // gate reads; nothing here is a cross-cohort total.
     byGenerationMode: MixedCohort[];
+    // A FOUR-BAND AGGREGATION of the frozen v0-v8 coverage curve, not the curve:
+    // `MIXED_FRACTION_BUCKETS` says which levels each band pools and why B2 cannot
+    // split them (the level belongs to D4's mixing lane, not to the record).
     byFraction: MixedFractionSegment[];
   };
 }
@@ -977,6 +1026,14 @@ export interface ScoredEvaluationItem extends EvaluationItemTelemetry {
   // the localized-path recall, never a reason to drop the row from a denominator.
   // Diagnostic only: a span explains and locates a warning and authorizes no
   // visual action of its own (`localization.authorizesVisualAction: false`).
+  //
+  // NO PRODUCER YET, and the artifact says so rather than implying one: nothing in
+  // the sealed pipeline writes this field. `benchmark/prediction-schema.ts` has no
+  // span column and `benchmark/commands/evaluate.ts` forwards `localizedRawScore`
+  // alone, so on a real run only the unit fixtures populate it and every cohort
+  // publishes `spanProducer: "absent"` with null ratios. D4 is the task that adds
+  // the span head, and A5's `originalSpanFromNormalized` is what it must translate
+  // through — the offsets here are the ORIGINAL text's, like `mixture.spans`.
   localizedSpans?: readonly SpanInterval[];
 }
 
@@ -2375,6 +2432,14 @@ export function spanOverlap(
 // token precision/recall and localized-path recall diagnostics of this version,
 // and a span explains or locates a warning without ever authorizing a visual
 // action on its own.
+//
+// Every cohort publishes BOTH status families (R5) and declares whether a span
+// producer exists at all. The second half is not defensive programming: on a real
+// run today the answer is `"absent"` for every cohort, because no stage writes
+// `localizedSpans` (D4 owns the span head), and the numbers a `"present"` cohort
+// would publish are the same zeros an absent producer would — so the block has to
+// say which of the two it is instead of leaving a reader to assume the detector
+// was measured and failed.
 function localizationDiagnostics(
   items: readonly EvaluationItem[],
 ): LocalizationDiagnostics {
@@ -2398,15 +2463,51 @@ function localizationCohort(
   items: readonly EvaluationItem[],
   generationMode: GenerationMode,
 ): LocalizationCohort {
-  // The denominator: scored rows of this cohort that HAVE an observed AI span.
-  // A row whose localized path emitted nothing stays in, because dropping it
-  // would turn silence into an absence of evidence rather than a miss.
-  const population = items.filter(
-    (item): item is ScoredEvaluationItem =>
-      isScoredItem(item) &&
+  // The cohort: every row of this generation mode that HAS an observed AI span,
+  // whatever its status. A row whose localized path emitted nothing stays in,
+  // because dropping it would turn silence into an absence of evidence rather
+  // than a miss — and that is as true of an undecided row as of a scored one.
+  // The two families differ ONLY by the status rule applied to this selection.
+  const cohortRows = items.filter(
+    (item) =>
       generationModeOf(item.record) === generationMode &&
       observedAiSpans(item.record).length > 0,
   );
+  // Producer presence is a property of the COHORT, not of a family: a field that
+  // no stage writes is missing from the scored rows and from the undecided ones
+  // alike. `!== undefined` and not `length > 0`, so a span head that emits an
+  // empty list reads as a producer that found nothing, which is a real miss.
+  const spanProducer = cohortRows.some(
+    (item) => isScoredItem(item) && item.localizedSpans !== undefined,
+  )
+    ? "present"
+    : "absent";
+  return {
+    generationMode,
+    role: "diagnostic",
+    aggregated: false,
+    spanProducer,
+    endToEnd: localizationFamily(
+      cohortRows,
+      "end-to-end",
+      "cohort-rows-with-observed-spans",
+      spanProducer,
+    ),
+    conditionalOnScored: localizationFamily(
+      cohortRows.filter(isScoredItem),
+      "conditional-on-scored",
+      "scored-cohort-rows-with-observed-spans",
+      spanProducer,
+    ),
+  };
+}
+
+function localizationFamily(
+  population: readonly EvaluationItem[],
+  family: MetricFamily,
+  populationRule: LocalizationFamily["populationRule"],
+  spanProducer: LocalizationCohort["spanProducer"],
+): LocalizationFamily {
   let intersection = 0;
   let union = 0;
   let observed = 0;
@@ -2415,11 +2516,14 @@ function localizationCohort(
   let precisionSum = 0;
   let recallSum = 0;
   let localizedEmitted = 0;
+  let undecidedRows = 0;
   for (const item of population) {
-    const overlap = spanOverlap(
-      observedAiSpans(item.record),
-      item.localizedSpans ?? [],
-    );
+    // An undecided row emitted nothing, so it enters every ratio as a total miss:
+    // full observed length into the union, zero into the intersection. There is
+    // no substitution and no removal here (R5).
+    const emitted = isScoredItem(item) ? (item.localizedSpans ?? []) : [];
+    if (!isScoredItem(item)) undecidedRows += 1;
+    const overlap = spanOverlap(observedAiSpans(item.record), emitted);
     intersection += overlap.intersection;
     union += overlap.union;
     observed += overlap.observed;
@@ -2430,19 +2534,31 @@ function localizationCohort(
     if (overlap.predicted > 0) localizedEmitted += 1;
   }
   const count = population.length;
+  // The counts are published either way — they say how much span evidence is
+  // waiting — but a ratio needs both a denominator AND a producer to be a
+  // measurement. With `spanProducer: "absent"` every ratio below would be exactly
+  // 0, indistinguishable from a detector that located nothing; with `count === 0`
+  // `proportionEstimate` returns a NaN value, which is not a statement either.
+  const measurable = count > 0 && spanProducer === "present";
   return {
-    generationMode,
-    role: "diagnostic",
-    aggregated: false,
+    family,
+    populationRule,
     population: count,
+    undecidedRows,
     localizedEmitted,
-    localizedPathRecall: proportionEstimate(localizedEmitted, count),
-    microIou: ratio(intersection, union),
-    microTokenPrecision: ratio(intersection, predicted),
-    microTokenRecall: ratio(intersection, observed),
-    macroIou: ratio(iouSum, count),
-    macroTokenPrecision: ratio(precisionSum, count),
-    macroTokenRecall: ratio(recallSum, count),
+    localizedPathRecall: measurable
+      ? proportionEstimate(localizedEmitted, count)
+      : null,
+    overlap: measurable
+      ? {
+          microIou: ratio(intersection, union),
+          microTokenPrecision: ratio(intersection, predicted),
+          microTokenRecall: ratio(intersection, observed),
+          macroIou: ratio(iouSum, count),
+          macroTokenPrecision: ratio(precisionSum, count),
+          macroTokenRecall: ratio(recallSum, count),
+        }
+      : null,
   };
 }
 
@@ -2496,6 +2612,22 @@ function mixedAtLeastHalfAi(
   };
 }
 
+// FOUR BANDS, NOT THE v0-v8 CURVE. The frozen diagnostic beside the
+// `warning.mixed-recall` gate is the nine-level coverage curve (0%, 15%, 25%, 40%,
+// 50%, 60%, 75%, 90%, 100% — D4 in the plan), and these bands POOL it: v0 with v1
+// into `0_24`, v2 with v3 into `25_49`, v4 with v5 into `50_74`, and v6/v7/v8 into
+// `75_100`. So nothing that keys off these bands — `mixed.byFraction`, the
+// `mixedFraction` slice axis, `criticalRecallSlices` in the published profile —
+// can be read as a per-level curve, and a nine-point curve cannot be recovered
+// from four aggregated points.
+//
+// Why B2 stops here instead of splitting them: the level is a property of the
+// MIXING OPERATION, not of the record's observed `aiFraction` (D4 targets a level
+// and lands near it, so keying by the achieved fraction would produce one key per
+// record). Publishing a per-level curve therefore needs a level field written by
+// the mixing lane, and that lane is D4's — `benchmark/lab/make_mixed_v3.py` does
+// not exist yet. The pooling is pinned by a test over the nine frozen levels, so
+// this shortfall is executable rather than a paragraph someone can delete.
 const MIXED_FRACTION_BUCKETS: ReadonlyArray<readonly [string, number, number]> =
   [
     ["0_24", 0, 0.25],
