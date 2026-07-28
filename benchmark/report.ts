@@ -466,13 +466,26 @@ export function renderReportMarkdown(report: BenchmarkReport): string {
     // Where the certified bound comes from, said in the section a reader reaches
     // holding the frozen artifact. The fit's own bound is nominal on the data
     // that selected the threshold and certifies nothing (R7, assessment §4.8).
+    // The table below publishes TWO upper bounds per row and only one of them is
+    // read by a gate, so the sentence names the cell instead of saying "esta
+    // tabela": a paragraph written to kill an overclaim must not leave the
+    // reader to pick a column.
     lines.push(
-      "O limite de FPR **certificado** é o desta tabela: medido uma única vez no " +
-        "**teste cego**, no limiar já congelado. O número gravado no artefato de " +
-        "calibração sob `selectionFprUpper95Nominal` é o limite de Wilson " +
+      "O limite de FPR **certificado** é a célula `FPR (limite simultâneo)` da " +
+        "tabela abaixo: medida uma única vez no **teste cego**, no limiar já " +
+        "congelado, com correção de multiplicidade de Bonferroni " +
+        "(`alpha_família/m`). É essa coluna — e nenhuma outra — que o gate de " +
+        "release lê; sem ela o gate reprova por `missing-simultaneous-interval` " +
+        "em vez de cair no limite individual. A coluna `FPR (UCB95 descritivo)` " +
+        "é o intervalo individual de 95%, sem correção sobre a família de gates: " +
+        "é **descritiva** e **não certifica** nada. O número gravado no artefato " +
+        "de calibração sob `selectionFprUpper95Nominal` é o limite de Wilson " +
         "*nominal* do par vencedor, calculado nos mesmos registros que o " +
         "escolheram — é diagnóstico e **não certifica** nada. No artefato, " +
-        "`certifiedFprUpper` é nulo justamente até que esta medição exista.",
+        "`certifiedFprUpper` permanece nulo **por construção**: o " +
+        "`frozen-calibration.json` é selado por `artifactDigest` e imutável, " +
+        "então a cota certificada nunca é escrita lá — ela vive aqui, nesta " +
+        "seção, e no bundle de evidência.",
     );
     lines.push("");
     lines.push(frozenThresholdTable("Aviso", release.warning));

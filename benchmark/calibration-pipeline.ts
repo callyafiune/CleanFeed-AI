@@ -176,6 +176,11 @@ const CERTIFICATION_ABSENT_BECAUSE =
   "partition at H1. Until then this artifact carries a nominal, diagnostic " +
   "figure only.";
 
+const NO_FPR_BOUND_MESSAGE =
+  "frozen threshold evidence carries no FPR bound under either name " +
+  "(selectionFprUpper95Nominal, or the pre-A7 fprUpper95): a threshold block " +
+  "without a bound is refused, never republished as if it had one";
+
 function selectionFprBoundProvenance(
   vintage: ThresholdFprBoundProvenance["vintage"],
 ): ThresholdFprBoundProvenance {
@@ -239,38 +244,51 @@ export function selectionThresholdEvidence(counts: {
 export function readThresholdEvidence(
   evidence: ThresholdEvidence | LegacyThresholdEvidencePreA7,
 ): ThresholdEvidence {
-  const legacy = evidence as Partial<LegacyThresholdEvidencePreA7>;
-  const current = evidence as Partial<ThresholdEvidence>;
-  const isLegacy =
-    current.selectionFprUpper95Nominal === undefined &&
-    typeof legacy.fprUpper95 === "number";
-  if (!isLegacy) {
-    const known = current as ThresholdEvidence;
+  // Shared by both vintages, so read before deciding which one this is.
+  const counts = {
+    documentThreshold: evidence.documentThreshold,
+    localizedThreshold: evidence.localizedThreshold,
+    negatives: evidence.negatives,
+    falsePositives: evidence.falsePositives,
+    certifiedFprUpper: null,
+    positives: evidence.positives,
+    truePositives: evidence.truePositives,
+    recall: evidence.recall,
+  } as const;
+  if ("selectionFprUpper95Nominal" in evidence) {
+    // Both names at once is the shape a migration tool would write mid-flight.
+    // Read as current, the legacy number would be dropped without a word, and
+    // nothing says the two agree. There is no defensible winner, so refuse.
+    if ("fprUpper95" in evidence) {
+      fail(
+        "frozen threshold evidence carries both selectionFprUpper95Nominal and " +
+          "the pre-A7 fprUpper95: refusing to guess which bound is authoritative",
+      );
+    }
+    if (typeof evidence.selectionFprUpper95Nominal !== "number") {
+      fail(NO_FPR_BOUND_MESSAGE);
+    }
     return {
-      documentThreshold: known.documentThreshold,
-      localizedThreshold: known.localizedThreshold,
-      negatives: known.negatives,
-      falsePositives: known.falsePositives,
-      selectionFprUpper95Nominal: known.selectionFprUpper95Nominal,
-      certifiedFprUpper: null,
-      fprBound: known.fprBound ?? selectionFprBoundProvenance("current"),
-      positives: known.positives,
-      truePositives: known.truePositives,
-      recall: known.recall,
+      ...counts,
+      selectionFprUpper95Nominal: evidence.selectionFprUpper95Nominal,
+      // Derived, never copied from disk: this block is what THIS module asserts
+      // about the number it just read, not data to be trusted from the file. It
+      // is a constant apart from `vintage`, and only the branch taken here can
+      // know that. So a block cannot arrive without provenance, or with a
+      // vintage that contradicts the name it uses.
+      fprBound: selectionFprBoundProvenance("current"),
     };
   }
-  const old = evidence as LegacyThresholdEvidencePreA7;
+  // Neither name, or a non-numeric one. This used to fall into the branch above,
+  // where `selectionFprUpper95Nominal` became `undefined`, JSON.stringify
+  // dropped the key, and a fit summary went out with NO FPR bound at all —
+  // stamped `vintage: "current"`. Publishing no bound silently is the one thing
+  // this function exists to prevent, so it fails closed instead.
+  if (typeof evidence.fprUpper95 !== "number") fail(NO_FPR_BOUND_MESSAGE);
   return {
-    documentThreshold: old.documentThreshold,
-    localizedThreshold: old.localizedThreshold,
-    negatives: old.negatives,
-    falsePositives: old.falsePositives,
-    selectionFprUpper95Nominal: old.fprUpper95,
-    certifiedFprUpper: null,
+    ...counts,
+    selectionFprUpper95Nominal: evidence.fprUpper95,
     fprBound: selectionFprBoundProvenance("legacy-pre-a7"),
-    positives: old.positives,
-    truePositives: old.truePositives,
-    recall: old.recall,
   };
 }
 

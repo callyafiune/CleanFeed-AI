@@ -2,11 +2,13 @@ import { describe, expect, it } from "vitest";
 
 import {
   applyFrozenCalibration,
+  CalibrationPipelineError,
   fitFrozenCalibration,
   readThresholdEvidence,
   validateFrozenCalibrationArtifact,
   type FitFrozenCalibrationInput,
   type FitSampleScores,
+  type ThresholdEvidence,
 } from "../calibration-pipeline.ts";
 import { sha256BytesHex } from "../digests.ts";
 import { wilsonOneSided } from "../intervals.ts";
@@ -677,5 +679,37 @@ describe("the frozen artifact never presents a selection bound as certified", ()
     const read = readThresholdEvidence(current);
     expect(read).toEqual(current);
     expect(read.fprBound.vintage).toBe("current");
+  });
+
+  it("refuses a block that names neither bound instead of publishing none", () => {
+    // A block whose FPR figure is a string, or absent, or spelled some third
+    // way, used to fall through the "current" branch: the reader copied
+    // `undefined` into `selectionFprUpper95Nominal`, JSON.stringify dropped the
+    // key, and `fit-summary.json` came out with NO FPR bound at all — stamped
+    // `vintage: "current"`, silently. Absence of a bound is exactly what this
+    // module may never publish quietly, so it fails closed.
+    const nameless: Record<string, unknown> = {
+      ...PRE_A7_WARNING_EVIDENCE,
+      fprUpper95: "0.03",
+    };
+    expect(() =>
+      readThresholdEvidence(nameless as unknown as ThresholdEvidence),
+    ).toThrow(CalibrationPipelineError);
+    expect(() =>
+      readThresholdEvidence(nameless as unknown as ThresholdEvidence),
+    ).toThrow(/threshold evidence carries no FPR bound/iu);
+  });
+
+  it("refuses a block that names both bounds rather than dropping the old one", () => {
+    // The transition shape: a migration tool that writes the new name while
+    // leaving the old one behind. Read as "current", the legacy value would be
+    // discarded without a word, and the two could disagree. Fail loudly.
+    const both: Record<string, unknown> = {
+      ...calibrationResult.thresholdEvidence.warning,
+      fprUpper95: 0.99,
+    };
+    expect(() =>
+      readThresholdEvidence(both as unknown as ThresholdEvidence),
+    ).toThrow(/carries both/iu);
   });
 });

@@ -2092,6 +2092,63 @@ exige que as únicas que casam `/fprupper/i` sejam `certifiedFprUpper` e
 `selectionFprUpper95Nominal` — reintroduzir o nome antigo em qualquer lugar do artefato
 reprova, não só no bloco de aviso.
 
+**Rodada de correção de A7 (2026-07-27), depois da revisão de qualidade.** Quatro achados;
+os quatro foram verificados no código e nenhum foi refutado. Nenhum número se moveu (R3) e
+a matemática seguiu intacta.
+
+4. **O parágrafo novo do relatório apontava para "esta tabela", e a tabela tem duas
+   cotas.** `frozenThresholdTable` publica `FPR (UCB95 descritivo)` **e**
+   `FPR (limite simultâneo)` por linha, e só a segunda é lida por gate:
+   `evaluateReleaseGates` lê `spec.estimate.simultaneous` e reprova com
+   `missing-simultaneous-interval` em vez de cair na individual, conforme a decisão
+   congelada de multiplicidade (IC individuais de 95% para descrição; unilaterais
+   simultâneos por Bonferroni nos gates). Dizer "o limite certificado é o desta tabela"
+   deixava o auditor escolher a coluna — e a primeira delas é declaradamente descritiva,
+   isto é, o mesmo erro de ler cota nominal como garantia que A7 tirou do artefato,
+   reintroduzido uma seção adiante num arquivo publicado (`EVIDENCE_FILE_NAMES`). O
+   parágrafo agora **nomeia a célula**: certificado é `FPR (limite simultâneo)`, com
+   `alpha_família/m` por Bonferroni, e `FPR (UCB95 descritivo)` é descritiva e não
+   certifica nada (R7). Um teste isola **o parágrafo** (não a seção, cujo cabeçalho de
+   tabela contém os dois nomes por construção) e exige os dois nomes com os dois papéis.
+5. **A última frase do parágrafo prometia uma transição impossível.** "`certifiedFprUpper`
+   é nulo justamente até que esta medição exista" descreve um artefato pós-H1 que não pode
+   existir: o relatório é gerado **pela** consumação do teste cego, então a medição já está
+   na tabela acima da frase, enquanto o artefato acompanhante segue com `certifiedFprUpper:
+   null` e `certification.status: "pending"` para sempre — o campo é tipado como o literal
+   `null` e o artefato é selado por `artifactDigest`. A frase agora diz onde a cota
+   certificada mora de fato: nulo no artefato **por construção** (selado, imutável), e
+   certificado aqui e no bundle de evidência.
+6. **`readThresholdEvidence` tratava "nenhum dos dois nomes" como "nome novo".** O
+   discriminador era `selectionFprUpper95Nominal === undefined && typeof fprUpper95 ===
+   "number"`, então um bloco que não satisfizesse nenhum dos dois caía no ramo *current*:
+   `selectionFprUpper95Nominal` virava `undefined`, `JSON.stringify` derrubava a chave, e
+   saía um `fit-summary.json` **sem cota de FPR nenhuma**, estampado
+   `vintage: "current"`, em silêncio (reproduzido com `fprUpper95: "0.03"`). Publicar
+   ausência de cota calado é justamente o que a função existe para impedir, então agora ela
+   **falha fechada** com o `fail()` que o módulo já tinha, nos dois resíduos: nenhum dos
+   nomes, e **os dois** nomes (a forma de transição, em que o valor legado seria descartado
+   sem uma palavra e nada garante que os dois concordem — não há vencedor defensável). Os
+   dois `as Partial<…>` saíram: `if ("selectionFprUpper95Nominal" in evidence)` estreita a
+   união corretamente. Com isso o `?? selectionFprBoundProvenance("current")` morto também
+   saiu — a procedência passou a ser **derivada, nunca copiada do disco**, porque é o que
+   *este* módulo afirma sobre o número que acabou de ler, e só o ramo tomado aqui sabe o
+   `vintage` certo. Assim não existe mais bloco sem procedência nem `vintage` que contradiga
+   o nome usado.
+7. **A árvore de trabalho estava CRLF, e a culpa não era de A6.** `calibration-pipeline.ts`
+   e `evidence-sanitizer.ts` reprovavam `prettier --check` no local (1035 e 432 bytes CR),
+   embora os **bytes commitados** estejam LF (`git show` de HEAD e HEAD~1 dá CR=0). Causa:
+   `core.autocrlf=true` sem `.gitattributes` — o `git checkout --` usado para reverter as
+   mutações reescreveu os arquivos em CRLF. É a mesma causa dos avisos em `gates.ts`,
+   `metrics.ts` e `rebuild-v3-policy.ts`, que o relatório de A7 atribuíra erradamente a
+   deriva de A6: A6 commitou LF; a árvore local derivou depois. Importa além do cosmético
+   porque `computeEvaluatorDigest` hasheia os bytes crus de `readFile`, então árvore com EOL
+   misto produz digest de avaliador que nenhum checkout limpo reproduz. Normalizado por EOL
+   nos cinco arquivos: `prettier --check .` passou a acusar só
+   `benchmark/lab/build_governance.ts` (pré-existente, de 9b41c22), e `git diff --cached`
+   mostra que os quatro arquivos que eu não editei entram no commit com **zero** byte —
+   nenhum membro de `EVALUATOR_FILES` mudou. Nesta rodada as mutações foram revertidas por
+   **cópia de backup**, não por `git checkout --`, para não reintroduzir o CRLF.
+
 ---
 
 ## Fase B — Decisões fechadas que bloqueiam o resto
