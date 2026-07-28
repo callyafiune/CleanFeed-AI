@@ -20,6 +20,14 @@
 // `sourceManifestDigest` is the canonical self-digest of the manifest body (its
 // own digest field excluded), NOT the raw file SHA. The raw SHA lives on
 // DatasetManifest/DatasetAudit; the two are bridged by `fit`.
+//
+// The module also carries the licence policy of the corpus: the frozen
+// non-commercial use declaration (`CORPUS_USE_POLICY`), the registry of exact
+// licence identifiers with their clauses (`CORPUS_LICENSE_REGISTRY`) and the two
+// guards that answer "is this source admissible, under which licence, with which
+// obligations" (`sourceAdmissibility`, `assertLicenseInventoryAdmissible`). `NC`
+// is admissible because the product and the model are non-commercial; `ND` is
+// blocked because assembling a corpus is the derivative it restricts.
 
 import { canonicalSha256 } from "../contracts/canonical-json.ts";
 
@@ -94,6 +102,319 @@ export class ReviewedSourceManifestError extends Error {
 
 function fail(code: string, message: string): never {
   throw new ReviewedSourceManifestError(code, message);
+}
+
+// ---------------------------------------------------------------------------
+// Licence policy: which source is admissible, under which licence, with which
+// obligations. This is the surface the corpus inventory, the model licence
+// review and the NOTICE all answer to.
+// ---------------------------------------------------------------------------
+
+/**
+ * The frozen use declaration of the product and of the model: NOT commercial.
+ * There is no commercial variant to preserve, so this is a constant and not a
+ * setting — no flag, no override, no branch kept open.
+ *
+ * `models/cleanfeed-ptbr-v1/license-review.json` (`commercialUse`,
+ * `usePolicyId`), `models/cleanfeed-ptbr-v1/NOTICE.md` and
+ * `docs/corpus-sources.md` declare the same policy, and
+ * `benchmark/tests/source-manifest.test.ts` fails if any of them drifts from
+ * this module — the three places cannot diverge silently.
+ */
+export const CORPUS_USE_POLICY = {
+  policyId: "noncommercial-v1",
+  commercialUse: false,
+  redistribution: "not-published",
+} as const;
+
+/**
+ * The use a caller declares. Only `commercialUse` can change a verdict: the
+ * `NC` clause is about use, not about the corpus.
+ */
+export interface DeclaredCorpusUse {
+  commercialUse: boolean;
+}
+
+/** An obligation a licence imposes on the derived artifact. */
+export type LicenseObligation =
+  "attribution" | "non-commercial" | "share-alike";
+
+/** Canonical order for every obligation list this module returns. */
+const OBLIGATION_ORDER: readonly LicenseObligation[] = [
+  "attribution",
+  "non-commercial",
+  "share-alike",
+];
+
+/**
+ * The exact Portuguese words the NOTICE uses for each obligation. They live
+ * here so the NOTICE is checked against this module instead of being trusted:
+ * the agreement test reads the licence line out of `NOTICE.md` and requires it
+ * to state exactly the obligations the registry gives that licence.
+ */
+export const LICENSE_OBLIGATION_LABEL_PT = {
+  attribution: "atribuição",
+  "non-commercial": "não comercial",
+  "share-alike": "share-alike",
+} as const satisfies Record<LicenseObligation, string>;
+
+/** A registered licence: its clauses plus what they imply for a derived corpus. */
+export interface CorpusLicenseTermsV1 {
+  /** The exact official identifier. Never "CC BY", "aberta" or "permissiva". */
+  licenseId: string;
+  name: string;
+  source: string;
+  attribution: boolean;
+  nonCommercial: boolean;
+  shareAlike: boolean;
+  noDerivatives: boolean;
+  derivedCorpus: "admissible" | "blocked";
+  blockedBy: null | "no-derivatives";
+}
+
+type LicenseClauses = Omit<CorpusLicenseTermsV1, "derivedCorpus" | "blockedBy">;
+
+// Every licence identifier the corpus inventory (docs/corpus-sources.md) has
+// reviewed, with the clauses of the licence itself. Nothing here is a new
+// review: each identifier is one already recorded in the repository, and the
+// clauses are the licence's own. A source whose identifier is absent is NOT
+// silently admitted — `sourceAdmissibility` reports `license-not-registered`.
+const REGISTERED_LICENSES: readonly LicenseClauses[] = [
+  {
+    licenseId: "cc-by-sa-4.0",
+    name: "Creative Commons Attribution-ShareAlike 4.0",
+    source: "https://creativecommons.org/licenses/by-sa/4.0/",
+    attribution: true,
+    nonCommercial: false,
+    shareAlike: true,
+    noDerivatives: false,
+  },
+  {
+    licenseId: "cc-by-nc-sa-4.0",
+    name: "Creative Commons Attribution-NonCommercial-ShareAlike 4.0",
+    source: "https://creativecommons.org/licenses/by-nc-sa/4.0/",
+    attribution: true,
+    nonCommercial: true,
+    shareAlike: true,
+    noDerivatives: false,
+  },
+  {
+    licenseId: "cc-by-nc-nd-4.0",
+    name: "Creative Commons Attribution-NonCommercial-NoDerivatives 4.0",
+    source: "https://creativecommons.org/licenses/by-nc-nd/4.0/",
+    attribution: true,
+    nonCommercial: true,
+    shareAlike: false,
+    noDerivatives: true,
+  },
+  {
+    licenseId: "odc-by-1.0",
+    name: "Open Data Commons Attribution License 1.0",
+    source: "https://opendatacommons.org/licenses/by/1-0/",
+    attribution: true,
+    nonCommercial: false,
+    shareAlike: false,
+    noDerivatives: false,
+  },
+  {
+    licenseId: "lei9610-art8",
+    name: "Atos oficiais — Lei 9.610/98, art. 8º, I",
+    source: "https://www.planalto.gov.br/ccivil_03/leis/l9610.htm",
+    attribution: false,
+    nonCommercial: false,
+    shareAlike: false,
+    noDerivatives: false,
+  },
+  {
+    licenseId: "autorizacao-interna-v1",
+    name: "Autorização interna escrita (conteúdo corporativo próprio)",
+    source: "registro interno da autorização",
+    attribution: false,
+    nonCommercial: false,
+    shareAlike: false,
+    noDerivatives: false,
+  },
+  {
+    licenseId: "autoria-propria-v1",
+    name: "Autoria própria do operador",
+    source: "declaração do operador",
+    attribution: false,
+    nonCommercial: false,
+    shareAlike: false,
+    noDerivatives: false,
+  },
+];
+
+// `ND` is the ONLY clause that blocks a derived corpus, and assembling a corpus
+// is exactly the derivative that `ND` restricts. `NC` blocks nothing here: the
+// frozen policy satisfies it. The two restrictions never collapse into one
+// "restrictive licence" notion, which is why the block reason is derived from
+// `noDerivatives` alone and is named `no-derivatives`.
+function withDerivedCorpusVerdict(
+  clauses: LicenseClauses,
+): CorpusLicenseTermsV1 {
+  return {
+    ...clauses,
+    derivedCorpus: clauses.noDerivatives ? "blocked" : "admissible",
+    blockedBy: clauses.noDerivatives ? "no-derivatives" : null,
+  };
+}
+
+/** Every reviewed licence identifier with its terms and derived-corpus verdict. */
+export const CORPUS_LICENSE_REGISTRY: readonly CorpusLicenseTermsV1[] =
+  REGISTERED_LICENSES.map(withDerivedCorpusVerdict);
+
+/** The registered terms of `licenseId`, or `null` when it is not registered. */
+export function corpusLicenseTerms(
+  licenseId: string,
+): CorpusLicenseTermsV1 | null {
+  return (
+    CORPUS_LICENSE_REGISTRY.find((terms) => terms.licenseId === licenseId) ??
+    null
+  );
+}
+
+/** Why a source is not admissible. Each reason is a distinct diagnosis. */
+export type LicenseBlockReason =
+  "no-derivatives" | "commercial-use" | "license-not-registered";
+
+export type SourceAdmissibility =
+  | {
+      admissible: true;
+      licenseId: string;
+      terms: CorpusLicenseTermsV1;
+      obligations: readonly LicenseObligation[];
+      blockedBy: null;
+    }
+  | {
+      admissible: false;
+      licenseId: string;
+      terms: CorpusLicenseTermsV1 | null;
+      obligations: readonly LicenseObligation[];
+      blockedBy: LicenseBlockReason;
+    };
+
+function obligationsOf(
+  terms: CorpusLicenseTermsV1,
+): readonly LicenseObligation[] {
+  const obligations: LicenseObligation[] = [];
+  if (terms.attribution) obligations.push("attribution");
+  if (terms.nonCommercial) obligations.push("non-commercial");
+  if (terms.shareAlike) obligations.push("share-alike");
+  return obligations;
+}
+
+/**
+ * Is a source under `licenseId` admissible for a derived corpus under `use`,
+ * and with which obligations? Defaults to the frozen non-commercial policy.
+ *
+ * `no-derivatives` is reported BEFORE `commercial-use` on purpose: an `ND`
+ * licence blocks the corpus whatever the declared use, so naming `NC` there
+ * would name a reason that satisfying it could not remove.
+ */
+export function sourceAdmissibility(
+  licenseId: string,
+  use: DeclaredCorpusUse = CORPUS_USE_POLICY,
+): SourceAdmissibility {
+  const terms = corpusLicenseTerms(licenseId);
+  if (terms === null) {
+    return {
+      admissible: false,
+      licenseId,
+      terms: null,
+      obligations: [],
+      blockedBy: "license-not-registered",
+    };
+  }
+  const obligations = obligationsOf(terms);
+  if (terms.noDerivatives) {
+    return {
+      admissible: false,
+      licenseId,
+      terms,
+      obligations,
+      blockedBy: "no-derivatives",
+    };
+  }
+  if (terms.nonCommercial && use.commercialUse) {
+    return {
+      admissible: false,
+      licenseId,
+      terms,
+      obligations,
+      blockedBy: "commercial-use",
+    };
+  }
+  return { admissible: true, licenseId, terms, obligations, blockedBy: null };
+}
+
+/**
+ * The obligations the artifact inherits from a set of licence identifiers, in
+ * canonical order. Obligations do not depend on the declared use, so this
+ * function does not take one; it fails closed on an unregistered identifier,
+ * because a licence whose clauses are unknown cannot be said to impose none.
+ */
+export function artifactLicenseObligations(
+  licenseIds: readonly string[],
+): readonly LicenseObligation[] {
+  const union = new Set<LicenseObligation>();
+  for (const licenseId of licenseIds) {
+    const terms = corpusLicenseTerms(licenseId);
+    if (terms === null) {
+      fail(
+        "SOURCE_LICENSE_NOT_ADMISSIBLE",
+        `licence "${licenseId}" is not admissible: license-not-registered`,
+      );
+    }
+    for (const obligation of obligationsOf(terms)) union.add(obligation);
+  }
+  return OBLIGATION_ORDER.filter((obligation) => union.has(obligation));
+}
+
+/**
+ * Refuses an inventory that contradicts `use`, and returns the obligations the
+ * artifact must carry. A `commercialUse: true` declaration over an `NC` source
+ * (Carolina) is a contradiction this throws on — not an inconsistency it
+ * records. Sources with a `null` licenceId are consent sources: their basis is
+ * a receipt digest, not a licence, so they impose no licence obligation.
+ */
+export function assertLicenseInventoryAdmissible(
+  sources: readonly { sourceId: string; licenseId: string | null }[],
+  use: DeclaredCorpusUse = CORPUS_USE_POLICY,
+): readonly LicenseObligation[] {
+  const union = new Set<LicenseObligation>();
+  for (const source of sources) {
+    if (source.licenseId === null) continue;
+    const verdict = sourceAdmissibility(source.licenseId, use);
+    if (!verdict.admissible) {
+      fail(
+        "SOURCE_LICENSE_NOT_ADMISSIBLE",
+        `source ${source.sourceId} licence "${source.licenseId}" is not admissible under commercialUse=${String(use.commercialUse)}: ${verdict.blockedBy}`,
+      );
+    }
+    for (const obligation of verdict.obligations) union.add(obligation);
+  }
+  return OBLIGATION_ORDER.filter((obligation) => union.has(obligation));
+}
+
+// The part of the licence policy the closed v1 parser itself enforces: a
+// REGISTERED licence whose terms contradict the frozen policy is refused, so an
+// `ND` source can never enter a parsed manifest. An UNREGISTERED identifier is
+// tolerated here, deliberately: v1 predates this registry and its fixtures and
+// the private manifest still carry opaque ids. Requiring registration of every
+// identifier is a schema decision (v3), not this task's; callers that need the
+// full guard call `assertLicenseInventoryAdmissible`, which fails closed on an
+// unregistered id too.
+function assertRegisteredLicensesAdmissible(
+  sources: readonly ReviewedSourceEntryV1[],
+): void {
+  for (const source of sources) {
+    if (source.licenseId === null) continue;
+    if (corpusLicenseTerms(source.licenseId) === null) continue;
+    assertLicenseInventoryAdmissible([
+      { sourceId: source.sourceId, licenseId: source.licenseId },
+    ]);
+  }
 }
 
 const SHA256_PATTERN = /^[a-f0-9]{64}$/u;
@@ -444,6 +765,7 @@ export async function parseReviewedSourceManifest(
     seenSourceIds.add(parsed.sourceId);
     return parsed;
   });
+  assertRegisteredLicensesAdmissible(sources);
 
   const seenBatchIds = new Set<string>();
   const generationBatches = root.generationBatches.map((entry, index) => {

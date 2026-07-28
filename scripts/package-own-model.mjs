@@ -168,12 +168,21 @@ function main() {
     issuedAt: null,
     evidenceDigest: null,
   };
+  // The non-commercial licence policy (B1) has ONE authority in code —
+  // benchmark/source-manifest.ts (`CORPUS_USE_POLICY`,
+  // `CORPUS_LICENSE_REGISTRY`) — pinned to these two tracked files by
+  // benchmark/tests/source-manifest.test.ts. Packaging a new model REUSES them
+  // instead of restating the policy in a literal here, so a repackage can never
+  // quietly revert `commercialUse: false`, the per-source licence identifiers or
+  // the attribution/share-alike obligations. Only the review state is reset: a
+  // freshly packaged model has no legal review yet.
+  const policyDirectory = join(REPO_ROOT, "models", "cleanfeed-ptbr-v1");
   const licenseReview = {
-    schemaVersion: 1,
+    ...JSON.parse(
+      readFileSync(join(policyDirectory, "license-review.json"), "utf-8"),
+    ),
     modelId,
     status: "pending",
-    declaredLicense:
-      "Projeto não-comercial; base BERTimbau (MIT); dados de treino conforme NOTICE.md",
     reviewedAt: null,
     reviewer: null,
     evidence: [],
@@ -191,21 +200,12 @@ function main() {
   );
   write(trackedDir, "license-review.json", licenseReview);
 
-  const notice = `# NOTICE — ${modelId}
-
-Detector de texto gerado por IA para pt-BR, treinado pelo projeto CleanFeed AI
-(fine-tune de BERTimbau-base — neuralmind/bert-base-portuguese-cased, MIT).
-
-Uso NÃO-COMERCIAL: o conjunto de treino inclui dados sob CC BY-NC-SA 4.0
-(Corpus Carolina/USP), condicionando este modelo ao regime não-comercial do
-projeto. Demais dados de treino: Stack Exchange PT e Wikipédia PT (CC BY-SA
-4.0, snapshots pré-2022-11), subset sintético de Madras1/corpus-ptbr-v1
-(ODC-By 1.0) e gerações próprias (OpenAI/Gemini/Anthropic via APIs/CLI).
-
-O modelo emite um score TÉCNICO não calibrado até que uma decisão científica
-selada exista (release.json permanece "pending"); nenhuma saída constitui
-alegação de autoria.
-`;
+  // Same single authority as the licence review above: the tracked NOTICE is the
+  // text, and only its heading names the packaged model.
+  const notice = readFileSync(
+    join(policyDirectory, "NOTICE.md"),
+    "utf-8",
+  ).replace(/^# NOTICE — .*$/mu, `# NOTICE — ${modelId}`);
   writeFileSync(join(trackedDir, "NOTICE.md"), notice);
   writeFileSync(join(publicDir, "NOTICE.md"), notice);
   const license = readFileSync(join(REPO_ROOT, "LICENSE"), "utf-8");

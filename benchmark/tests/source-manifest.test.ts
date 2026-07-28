@@ -1,12 +1,29 @@
+import { readFile } from "node:fs/promises";
+import { dirname, resolve } from "node:path";
+import { fileURLToPath } from "node:url";
+
 import { describe, expect, it } from "vitest";
 
 import {
+  CORPUS_LICENSE_REGISTRY,
+  CORPUS_USE_POLICY,
+  LICENSE_OBLIGATION_LABEL_PT,
+  artifactLicenseObligations,
+  assertLicenseInventoryAdmissible,
   computeReviewedSourceManifestDigest,
+  corpusLicenseTerms,
   parseReviewedSourceManifest,
+  sourceAdmissibility,
+  type CorpusLicenseTermsV1,
   type GenerationBatchV1,
+  type LicenseObligation,
   type ReviewedSourceEntryV1,
   type ReviewedSourceManifestV1,
 } from "../source-manifest.ts";
+
+const HERE = dirname(fileURLToPath(import.meta.url));
+const REPO_ROOT = resolve(HERE, "../..");
+const MODEL_DIR = resolve(REPO_ROOT, "models/cleanfeed-ptbr-v1");
 
 const consentSource: ReviewedSourceEntryV1 = {
   sourceId: "src_consent",
@@ -249,5 +266,212 @@ describe("reviewed source manifest (closed schema)", () => {
       generationBatches: manifest.generationBatches,
     };
     expect(await computeReviewedSourceManifestDigest(strip)).toBe(bodyOnly);
+  });
+});
+
+// B1 — the frozen non-commercial policy. `commercialUse: false` is an invariant
+// the code refuses to contradict, not an annotation it records; `NC` is
+// admissible under it and `ND` stays blocked for a derived corpus.
+describe("non-commercial corpus use policy", () => {
+  it("freezes commercial use out of the inventory", () => {
+    expect(CORPUS_USE_POLICY.commercialUse).toBe(false);
+    expect(CORPUS_USE_POLICY.redistribution).toBe("not-published");
+  });
+
+  it("refuses a declared commercial use over the Carolina NC licence", () => {
+    // The fixture named by the plan: `commercialUse: true` + Carolina.
+    const inventory = [
+      { sourceId: "src_carolina", licenseId: "cc-by-nc-sa-4.0" },
+    ];
+    expect(() =>
+      assertLicenseInventoryAdmissible(inventory, { commercialUse: true }),
+    ).toThrow(/src_carolina.*cc-by-nc-sa-4\.0.*commercial-use/u);
+    // The very same inventory is admissible under the frozen policy, so what
+    // the guard refuses is the declared use, not the source.
+    expect(assertLicenseInventoryAdmissible(inventory)).toEqual([
+      "attribution",
+      "non-commercial",
+      "share-alike",
+    ]);
+  });
+
+  it("admits Carolina with attribution and share-alike obligations", () => {
+    const verdict = sourceAdmissibility("cc-by-nc-sa-4.0");
+    expect(verdict.admissible).toBe(true);
+    expect(verdict.obligations).toEqual([
+      "attribution",
+      "non-commercial",
+      "share-alike",
+    ]);
+  });
+
+  it("blocks a no-derivatives licence by ND and never by NC", () => {
+    const nd = corpusLicenseTerms("cc-by-nc-nd-4.0");
+    const nc = corpusLicenseTerms("cc-by-nc-sa-4.0");
+    // NC and ND are two restrictions, not one "restrictive licence" concept:
+    // both licences are nonCommercial, only one is noDerivatives, and only the
+    // noDerivatives one is blocked.
+    expect(nc?.nonCommercial).toBe(true);
+    expect(nc?.noDerivatives).toBe(false);
+    expect(nc?.derivedCorpus).toBe("admissible");
+    expect(nd?.nonCommercial).toBe(true);
+    expect(nd?.noDerivatives).toBe(true);
+    expect(nd?.derivedCorpus).toBe("blocked");
+    expect(nd?.blockedBy).toBe("no-derivatives");
+    // Satisfying NC does not unblock it: the frozen policy is non-commercial
+    // and the verdict is still `no-derivatives`.
+    expect(
+      sourceAdmissibility("cc-by-nc-nd-4.0", { commercialUse: false }),
+    ).toMatchObject({ admissible: false, blockedBy: "no-derivatives" });
+    expect(() =>
+      assertLicenseInventoryAdmissible([
+        { sourceId: "src_iberautextification", licenseId: "cc-by-nc-nd-4.0" },
+      ]),
+    ).toThrow(/no-derivatives/u);
+  });
+
+  it("refuses a licence the registry does not carry", () => {
+    expect(sourceAdmissibility("cc-by-4.0")).toMatchObject({
+      admissible: false,
+      blockedBy: "license-not-registered",
+      terms: null,
+    });
+    expect(() =>
+      assertLicenseInventoryAdmissible([
+        { sourceId: "src_x", licenseId: "aberta" },
+      ]),
+    ).toThrow(/license-not-registered/u);
+  });
+
+  it("ignores a consent source, whose basis is a receipt and not a licence", () => {
+    expect(
+      assertLicenseInventoryAdmissible([
+        { sourceId: "src_consent", licenseId: null },
+      ]),
+    ).toEqual([]);
+  });
+
+  it("unions the obligations the artifact must carry", () => {
+    expect(
+      artifactLicenseObligations(["cc-by-sa-4.0", "lei9610-art8"]),
+    ).toEqual(["attribution", "share-alike"]);
+    expect(artifactLicenseObligations(["lei9610-art8"])).toEqual([]);
+    expect(
+      artifactLicenseObligations(
+        CORPUS_LICENSE_REGISTRY.filter(
+          (terms) => terms.derivedCorpus === "admissible",
+        ).map((terms) => terms.licenseId),
+      ),
+    ).toEqual(["attribution", "non-commercial", "share-alike"]);
+  });
+
+  it("rejects a manifest whose licensed source carries a blocked licence", async () => {
+    const blocked = malformed({
+      ...licensedSource,
+      licenseId: "cc-by-nc-nd-4.0",
+    });
+    const manifest = await sealManifest({
+      ...validBody,
+      sources: [blocked as ReviewedSourceEntryV1],
+      generationBatches: [],
+    });
+    await expect(parseReviewedSourceManifest(manifest)).rejects.toThrow(
+      /no-derivatives/u,
+    );
+  });
+
+  it("still parses an unregistered licence id, and says so on purpose", async () => {
+    // The closed v1 schema does NOT require every licenceId to be registered
+    // (its fixtures and the private manifest predate the registry); what it
+    // refuses is a REGISTERED licence whose terms contradict the frozen policy.
+    // Making registration mandatory is the schema-v3 decision, not B1's.
+    const manifest = await sealManifest();
+    const parsed = await parseReviewedSourceManifest(manifest);
+    expect(parsed.sources.map((source) => source.licenseId)).toEqual([
+      null,
+      "lic_ptbr_1",
+      "lic_generated_1",
+    ]);
+    expect(corpusLicenseTerms("lic_ptbr_1")).toBeNull();
+  });
+});
+
+// Requirement 4: the manifest module, the model licence review and the NOTICE
+// must agree, and must not be able to diverge without something failing.
+describe("licence policy agreement across manifest, review and NOTICE", () => {
+  async function licenseReview(): Promise<Record<string, unknown>> {
+    return JSON.parse(
+      await readFile(resolve(MODEL_DIR, "license-review.json"), "utf8"),
+    ) as Record<string, unknown>;
+  }
+
+  it("the model licence review declares the same frozen use policy", async () => {
+    const review = await licenseReview();
+    expect(review.commercialUse).toBe(CORPUS_USE_POLICY.commercialUse);
+    expect(review.usePolicyId).toBe(CORPUS_USE_POLICY.policyId);
+  });
+
+  it("the model licence review carries the registry's terms verbatim", async () => {
+    const review = await licenseReview();
+    expect(review.sourceLicenses).toEqual(CORPUS_LICENSE_REGISTRY);
+    expect(review.artifactObligations).toEqual(
+      artifactLicenseObligations(
+        (review.sourceLicenses as CorpusLicenseTermsV1[])
+          .filter((terms) => terms.derivedCorpus === "admissible")
+          .map((terms) => terms.licenseId),
+      ),
+    );
+  });
+
+  it("the NOTICE states the non-commercial regime and its obligations", async () => {
+    const notice = await readFile(resolve(MODEL_DIR, "NOTICE.md"), "utf8");
+    expect(notice).toMatch(/`commercialUse: false`/u);
+    for (const obligation of artifactLicenseObligations(
+      CORPUS_LICENSE_REGISTRY.filter(
+        (terms) => terms.derivedCorpus === "admissible",
+      ).map((terms) => terms.licenseId),
+    )) {
+      expect(notice).toContain(LICENSE_OBLIGATION_LABEL_PT[obligation]);
+    }
+  });
+
+  it("the NOTICE lists every registered licence with exactly its obligations", async () => {
+    const notice = await readFile(resolve(MODEL_DIR, "NOTICE.md"), "utf8");
+    const labels = Object.values(LICENSE_OBLIGATION_LABEL_PT);
+    for (const terms of CORPUS_LICENSE_REGISTRY) {
+      const line = notice
+        .split(/\r?\n/u)
+        .find((candidate) => candidate.includes(`\`${terms.licenseId}\``));
+      expect(line, `NOTICE.md names \`${terms.licenseId}\``).toBeDefined();
+      const stated = labels.filter((label) => line?.includes(label));
+      const expected: LicenseObligation[] = [];
+      if (terms.attribution) expected.push("attribution");
+      if (terms.nonCommercial) expected.push("non-commercial");
+      if (terms.shareAlike) expected.push("share-alike");
+      expect(new Set(stated)).toEqual(
+        new Set(expected.map((o) => LICENSE_OBLIGATION_LABEL_PT[o])),
+      );
+      if (terms.derivedCorpus === "blocked") {
+        expect(line).toMatch(/ND/u);
+      }
+    }
+  });
+
+  it("the source inventory doc records every exact licence identifier", async () => {
+    const inventory = await readFile(
+      resolve(REPO_ROOT, "docs/corpus-sources.md"),
+      "utf8",
+    );
+    expect(inventory).toMatch(/`commercialUse: false`/u);
+    for (const terms of CORPUS_LICENSE_REGISTRY) {
+      expect(inventory, `docs names ${terms.licenseId}`).toContain(
+        terms.licenseId,
+      );
+    }
+    // The ND block is recorded as ND, never as NC or "restrictive licence".
+    const ndLine = inventory
+      .split(/\r?\n/u)
+      .find((line) => line.includes("cc-by-nc-nd-4.0"));
+    expect(ndLine).toMatch(/ND/u);
   });
 });

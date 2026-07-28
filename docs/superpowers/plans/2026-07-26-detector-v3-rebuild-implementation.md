@@ -2234,6 +2234,60 @@ docs:check`; fixture com `commercialUse: true` e Carolina deve falhar.
 **Concluída quando:** manifesto, review e NOTICE concordam que o artefato é não
 comercial, Carolina está admissível e IberAuTexTification continua bloqueado por `ND`.
 
+**Como foi executado (2026-07-27):** a política virou superfície de código em
+`benchmark/source-manifest.ts` — `CORPUS_USE_POLICY`
+(`policyId: "noncommercial-v1"`, `commercialUse: false`,
+`redistribution: "not-published"`), `CORPUS_LICENSE_REGISTRY` (identificador
+exato + cláusulas `attribution`/`nonCommercial`/`shareAlike`/`noDerivatives`, com
+`derivedCorpus`/`blockedBy` **derivados** de `noDerivatives`, nunca digitados),
+`corpusLicenseTerms`, `sourceAdmissibility`, `artifactLicenseObligations` e
+`assertLicenseInventoryAdmissible`. É essa a superfície que C1 e C5 consomem para
+"esta fonte é admissível, sob qual licença, com quais obrigações".
+
+Quatro divergências do texto acima, deliberadas:
+
+1. **`commercialUse` NÃO virou campo do manifesto.** Ele é constante congelada do
+   módulo + campo do `license-review.json` + frase do `NOTICE.md`. Acrescentar
+   chave à raiz do `ReviewedSourceManifestV1` mudaria o esquema fechado v1, o
+   `sourceManifestDigest` e o `private/source-manifest.json` do operador, e o
+   esquema é decisão de **C1** (v3), não de B1. Consequência registrada: o parser
+   v1 recusa uma licença **registrada** cujos termos contradizem a política
+   (fonte `ND` nunca entra num manifesto parseado), mas **tolera** um `licenseId`
+   não registrado — os fixtures e o manifesto privado ainda usam ids opacos
+   (`lic_ptbr_1`). Exigir registro de todo id é decisão de esquema (C1); um teste
+   fixa essa tolerância explicitamente para que ela não passe por descuido.
+   `assertLicenseInventoryAdmissible`, que é o guarda que C1/C5 chamam, **falha
+   fechado** também no id não registrado (`license-not-registered`).
+2. **`NC` e `ND` são recusas com códigos distintos:** `commercial-use`,
+   `no-derivatives` e `license-not-registered`. `no-derivatives` é reportado
+   ANTES de `commercial-use` de propósito — satisfazer `NC` não destrava `ND`, e
+   nomear `NC` ali nomearia um motivo que não se pode remover.
+3. **`scripts/package-own-model.mjs` entrou no escopo** (não estava na lista de
+   arquivos). Ele reescrevia `NOTICE.md` e `license-review.json` a partir de
+   literais próprios; mantido assim, um repackage reverteria B1 em silêncio. Agora
+   ele **lê** os dois arquivos rastreados (só o cabeçalho do NOTICE e o estado de
+   revisão são recalculados), então a política tem uma autoridade só.
+4. **`docs/corpus-sources.md`: a versão do Carolina foi corrigida** de "Ada 1.1
+   preferida" para o que está em disco, **Version 2.0 (Bea)**, e o corte por data
+   do header TEI passou de "defesa em profundidade" a **load-bearing** (o pacote
+   tem datas TEI de 2024 e 2025). A justificativa velha do rastreio por
+   `licenseId` ("preserva a opcionalidade se a postura um dia mudar") foi
+   removida: não há ramo comercial a preservar; o rastreio existe porque
+   atribuição e share-alike propagam para o artefato e porque é por ele que uma
+   fonte `ND` é recusada.
+
+**Acordo entre os três lugares é testado, não prometido:**
+`benchmark/tests/source-manifest.test.ts` lê `license-review.json` e `NOTICE.md`
+do disco e exige que `sourceLicenses` seja **igual** a `CORPUS_LICENSE_REGISTRY`,
+que `commercialUse`/`usePolicyId` sejam os da política, que a linha de cada
+licença no NOTICE declare **exatamente** as obrigações que o registro lhe dá (via
+`LICENSE_OBLIGATION_LABEL_PT`) e que `docs/corpus-sources.md` cite todo
+identificador exato e registre o bloqueio como `ND`. Mutações medidas: trocar
+`commercialUse` para `true` no review mata 1 teste; apagar `share-alike` da linha
+do Carolina no NOTICE mata 1; remover a chamada do guarda no parser mata 1.
+Nenhum recibo de revisão foi inventado — `status` segue `pending`, `reviewer`
+`null` e `evidence` `[]` (R4).
+
 ### B2 — DECIDIDO: alvos, métricas e ações de produto
 
 **Depende de:** nada.

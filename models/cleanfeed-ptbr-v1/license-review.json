@@ -2,7 +2,89 @@
   "schemaVersion": 1,
   "modelId": "cleanfeed-ptbr-v1",
   "status": "pending",
-  "declaredLicense": "Projeto não-comercial; base BERTimbau (MIT); dados de treino conforme NOTICE.md",
+  "usePolicyId": "noncommercial-v1",
+  "commercialUse": false,
+  "declaredLicense": "Projeto e modelo NÃO COMERCIAIS (commercialUse: false, congelado); base BERTimbau (MIT); licenças das fontes em sourceLicenses e NOTICE.md",
+  "artifactObligations": ["attribution", "non-commercial", "share-alike"],
+  "sourceLicenses": [
+    {
+      "licenseId": "cc-by-sa-4.0",
+      "name": "Creative Commons Attribution-ShareAlike 4.0",
+      "source": "https://creativecommons.org/licenses/by-sa/4.0/",
+      "attribution": true,
+      "nonCommercial": false,
+      "shareAlike": true,
+      "noDerivatives": false,
+      "derivedCorpus": "admissible",
+      "blockedBy": null
+    },
+    {
+      "licenseId": "cc-by-nc-sa-4.0",
+      "name": "Creative Commons Attribution-NonCommercial-ShareAlike 4.0",
+      "source": "https://creativecommons.org/licenses/by-nc-sa/4.0/",
+      "attribution": true,
+      "nonCommercial": true,
+      "shareAlike": true,
+      "noDerivatives": false,
+      "derivedCorpus": "admissible",
+      "blockedBy": null
+    },
+    {
+      "licenseId": "cc-by-nc-nd-4.0",
+      "name": "Creative Commons Attribution-NonCommercial-NoDerivatives 4.0",
+      "source": "https://creativecommons.org/licenses/by-nc-nd/4.0/",
+      "attribution": true,
+      "nonCommercial": true,
+      "shareAlike": false,
+      "noDerivatives": true,
+      "derivedCorpus": "blocked",
+      "blockedBy": "no-derivatives"
+    },
+    {
+      "licenseId": "odc-by-1.0",
+      "name": "Open Data Commons Attribution License 1.0",
+      "source": "https://opendatacommons.org/licenses/by/1-0/",
+      "attribution": true,
+      "nonCommercial": false,
+      "shareAlike": false,
+      "noDerivatives": false,
+      "derivedCorpus": "admissible",
+      "blockedBy": null
+    },
+    {
+      "licenseId": "lei9610-art8",
+      "name": "Atos oficiais — Lei 9.610/98, art. 8º, I",
+      "source": "https://www.planalto.gov.br/ccivil_03/leis/l9610.htm",
+      "attribution": false,
+      "nonCommercial": false,
+      "shareAlike": false,
+      "noDerivatives": false,
+      "derivedCorpus": "admissible",
+      "blockedBy": null
+    },
+    {
+      "licenseId": "autorizacao-interna-v1",
+      "name": "Autorização interna escrita (conteúdo corporativo próprio)",
+      "source": "registro interno da autorização",
+      "attribution": false,
+      "nonCommercial": false,
+      "shareAlike": false,
+      "noDerivatives": false,
+      "derivedCorpus": "admissible",
+      "blockedBy": null
+    },
+    {
+      "licenseId": "autoria-propria-v1",
+      "name": "Autoria própria do operador",
+      "source": "declaração do operador",
+      "attribution": false,
+      "nonCommercial": false,
+      "shareAlike": false,
+      "noDerivatives": false,
+      "derivedCorpus": "admissible",
+      "blockedBy": null
+    }
+  ],
   "reviewedAt": null,
   "reviewer": null,
   "evidence": []

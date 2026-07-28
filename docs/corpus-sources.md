@@ -11,6 +11,18 @@
 > removida/pseudonimizada ANTES do ingest (o hash de conteúdo é recomputado do
 > texto já limpo).
 
+> **Regime de uso congelado (B1):** `commercialUse: false`, política
+> `noncommercial-v1`. O produto e o modelo não têm e não terão ambição
+> comercial, e **não existe variante comercial a preservar**. A fonte de verdade
+> executável é `benchmark/source-manifest.ts` (`CORPUS_USE_POLICY`,
+> `CORPUS_LICENSE_REGISTRY`, `sourceAdmissibility`,
+> `assertLicenseInventoryAdmissible`); `models/cleanfeed-ptbr-v1/NOTICE.md` e
+> `models/cleanfeed-ptbr-v1/license-review.json` declaram o mesmo, e a suíte
+> falha se os três divergirem. Nesse regime **`NC` é admissível** (a cláusula
+> está satisfeita) e **`ND` é proibido para corpus derivado** — montar um corpus
+> é exatamente o derivado que `ND` restringe. As duas cláusulas são restrições
+> distintas: nunca as trate como uma única "licença restritiva".
+
 ## As duas camadas legais (resumo)
 
 1. **Direito autoral (Lei 9.610/98)** — protege o texto. Sai da frente com:
@@ -32,15 +44,20 @@ Consentimento individual só é exigido pela rota `linkedin-contribution`
 | `src_empresa` | Blog/comunicados corporativos próprios pré-nov/2022 | Autorização interna escrita → `autorizacao-interna-v1` | Corporativo — match com o feed | não | avaliação + treino |
 | `src_proprio` | Textos do próprio operador | Autoria própria → `autoria-propria-v1` | Variado | não | avaliação + treino |
 | `src_atos_oficiais` | Leis/decisões/atos (Diário Oficial, LexML) | Lei 9.610, art. 8º, I (não protegidos) → `lei9610-art8` | Formal | não | lastro de treino apenas (nunca dominar a distribuição) |
-| `src_carolina` | **Corpus Carolina — versão preferida: Ada 1.1 (22/07/2022, Portulan)**; alternativas: Ada 1.0 no HuggingFace (08/04/2022) ou Ada 1.3 | CC BY-**NC**-SA 4.0 no header; **licença POR DOCUMENTO nos metadados TEI** → `cc-by-nc-sa-4.0` | Variado, proveniência por documento. Ada 1.1/1.0 são **inteiramente pré-ChatGPT por construção** (release < nov/2022) — mesma garantia dos snapshots SE/ptwiki. ⚠️ Se usar a 1.3 (2024): corte por data do header TEI (< 2022-11-30) vira OBRIGATÓRIO | sim — utilizável | treino/volume + fatias informais |
+| `src_carolina` | **Corpus Carolina — snapshot em disco: Version 2.0 (Bea)** (verificado 2026-07-27; o cabeçalho do próprio pacote diz que é o corte por data que o torna utilizável). Vintages anteriores (Ada 1.0/1.1/1.3) **não** estão em disco | CC BY-**NC**-SA 4.0 no header do pacote; **licença POR DOCUMENTO nos metadados TEI**, com allowlist fail-closed no extrator → `cc-by-nc-sa-4.0` | Variado, proveniência por documento. ⚠️ A 2.0 (Bea) **contém datas TEI de 2024 e 2025**, então o corte por data do header TEI (`< 2022-11-30`) é **load-bearing**, não defesa em profundidade: sem ele o rótulo `human` fica contaminado | sim — admissível (`commercialUse: false`) | treino/volume + fatias informais |
 | `src_b2w_reviews` *(opcional)* | B2W-Reviews01 (reviews pt-BR) | CC BY-**NC**-SA 4.0 → `cc-by-nc-sa-4.0` | Curto, informal, opinativo | sim — **utilizável** | avaliação + treino |
 
-**Regra NC (atualizada 2026-07-22):** o operador declarou que o projeto será
-disponibilizado **sem uso comercial**. Nesse regime, fontes CC BY-NC(-SA) são
-plenamente utilizáveis (a cláusula NC é satisfeita). O rastreio por
-`licenseId` por fonte permanece obrigatório mesmo assim — ele preserva a
-opcionalidade (trocar fontes NC se a postura um dia mudar) e é o que o gate de
-inventário verifica.
+**Regra NC × ND (congelada em B1, 2026-07-26):** o projeto é **não comercial**
+(`commercialUse: false`) e essa decisão não tem ramo alternativo. Nesse regime,
+fontes CC BY-NC(-SA) são plenamente admissíveis — a cláusula NC está satisfeita.
+Fonte **ND** (`cc-by-nc-nd-4.0`, p. ex.) continua **proibida**: o corpus é um
+derivado, e é o derivado que ND restringe; declarar-se não comercial não
+destrava ND. O rastreio por `licenseId` por fonte permanece obrigatório por dois
+motivos que continuam valendo com a decisão congelada: **atribuição e
+share-alike propagam para o artefato** (é o que `NOTICE.md` e
+`license-review.json` publicam, por identificador exato), e é por ele que
+`assertLicenseInventoryAdmissible` recusa uma fonte ND antes de qualquer
+incorporação.
 
 **Proveniência humana por data:** para as fontes pré-novembro/2022, a data de
 publicação sustenta o rótulo `human` — registre-a como `collectedAt`/metadado da
@@ -75,6 +92,15 @@ licenciado — abaixo do nosso padrão de governança).
   FIAP e/ou publicar resultados (PROPOR/STIL/arXiv) — aí o formulário de acesso
   do BrWaC pode ser preenchido com o vínculo real e a concessão dos mantenedores
   vira o documento de autorização.
+- **IberAuTexTification (`Genaios/iberautextification`)** — **bloqueado por ND**,
+  não por NC. O card oficial declara `cc-by-nc-nd-4.0`: `NC` estaria satisfeito
+  neste projeto (`commercialUse: false`), mas **ND = sem derivados** e montar um
+  corpus derivado é exatamente o que a cláusula restringe; o card ainda pede
+  contato com os organizadores para adaptar ou construir sobre o dataset.
+  Registrado no inventário como `derivedCorpus: "blocked"`,
+  `blockedBy: "no-derivatives"`. Não baixar e não incorporar sem autorização
+  escrita dos organizadores. Conjuntos externos (MultiSocial e outros) ficam
+  fora da v3 até licença verificada na fonte (R9).
 - **Common Crawl / OSCAR / mC4 / CC-100** — copyright subjacente não licenciado.
 - **cnmoro/Fab1e5-traces-2M-ptbr** — rejeitado 2026-07-22 para o corpus do
   detector: (1) pt-BR por **tradução automática** do inglês — a assinatura vira
@@ -125,14 +151,26 @@ licenciado — abaixo do nosso padrão de governança).
   },
   {
     "id": "cc-by-nc-sa-4.0",
-    "name": "Creative Commons BY-NC-SA 4.0",
+    "name": "Creative Commons Attribution-NonCommercial-ShareAlike 4.0",
     "source": "https://creativecommons.org/licenses/by-nc-sa/4.0/",
     "evaluationUseApproved": true,
     "redistribution": "not-published",
-    "notice": "Cláusula NC satisfeita: o projeto é declarado sem uso comercial. Rastreada por fonte para preservar opcionalidade."
+    "notice": "Cláusula NC satisfeita: commercialUse é false e congelado. Atribuição e share-alike propagam para o artefato; rastreada por fonte para que essa propagação seja auditável."
+  },
+  {
+    "id": "odc-by-1.0",
+    "name": "Open Data Commons Attribution License 1.0",
+    "source": "https://opendatacommons.org/licenses/by/1-0/",
+    "evaluationUseApproved": true,
+    "redistribution": "not-published",
+    "notice": "Subset sintético de Madras1/corpus-ptbr-v1; atribuição registrada nesta notice."
   }
 ]
 ```
+
+Uma licença **ND** nunca entra neste bloco: `evaluationUseApproved: true` para
+uma fonte ND seria a contradição que `assertLicenseInventoryAdmissible` recusa
+(`blockedBy: "no-derivatives"`).
 
 ### Entradas do `private/source-manifest.json` (rota `licensed-corpus`)
 
@@ -277,9 +315,11 @@ uso comercial**. Três consequências práticas:
    código, algo como PolyForm Noncommercial 1.0.0 (ou dual licensing); para
    docs/dados publicáveis, CC BY-NC 4.0. Nota de precisão terminológica: uma
    licença com restrição comercial não é "open source" pela definição OSI —
-   costuma-se dizer "source-available não-comercial". A troca de licença é uma
-   decisão pendente do operador; nada neste inventário depende dela, mas os
-   avisos NC acima assumem que ela será feita antes da publicação.
+   costuma-se dizer "source-available não-comercial". A troca do texto de
+   licença do repositório é uma tarefa pendente do operador; nada neste
+   inventário depende dela, e ela **não** é um ramo comercial pendente — o
+   regime `commercialUse: false` está congelado, e o que falta é apenas alinhar
+   o arquivo `LICENSE` a ele antes da publicação.
 
 ## Dependência pendente
 
@@ -295,6 +335,6 @@ inventário (`qa-informal`, `encyclopedic`, `social-media`, `university`,
 ## Disclaimer
 
 Este inventário é engenharia informada pela leitura da lei, não parecer
-jurídico. Antes do corpus de release (e de qualquer comercialização), as fontes
-devem passar pela revisão jurídica formal — os dois `legalReviewerIds` por fonte
-são exatamente o lugar de registrar essa revisão.
+jurídico. Antes do corpus de release as fontes devem passar pela revisão
+jurídica formal — os dois `legalReviewerIds` por fonte são exatamente o lugar de
+registrar essa revisão.
