@@ -3805,6 +3805,30 @@ governança compara byte a byte contra o lote declarado).
   distinguia uma lane de CLI sem botão de amostragem de uma lane de API que deixou o
   default — duas receitas diferentes colapsavam num lote declarado só.
 
+#### BLOQUEADOR MEDIDO para C3: a semente do pai não está no corpus
+
+O dado de linhagem está certo e testado — cada linha derivada nomeia o id real do pai
+(`groups.humanSeed` e, numa reescrita, `groups.derivationRoot`) — mas **a co-presença no
+corpus não existe**. Medido na montagem de 786 registros: das 783 referências a pai em
+estado `known`, **1 resolve para uma linha do corpus e 782 não**; por classe, 359 linhas
+`ai` e 180 `mixed` nomeiam uma semente ausente. `assertDerivedParentsResolve` (de C1, hoje
+NOT WIRED) recusa exatamente isso:
+
+```
+BENCHMARK_RECORD_INVALID: groups.humanSeed "src_ptso_002da4494595" resolves to no
+record in the dataset (id=src_ai_agy_14abd66f2433)
+```
+
+A causa é de **seleção**, não de proveniência: `balanced_humans` escolhe humanos por
+registro linguístico, independentemente de quais humanos semearam as gerações mantidas, e
+as sementes das lanes de IA vêm de extrações anteriores que a re-extração fresca não
+reproduz. Não consertei isto aqui de propósito: mudar quem entra no corpus é política de
+seleção, e o brief de C2 divide a responsabilidade explicitamente — "a **imposição** disso
+é C3/E2, mas o **dado** que permite impor é seu". O dado está entregue e pinado por teste
+(`DerivationLineageTests`); a seleção que garante a árvore inteira numa partição é de
+C3/E2, e **sem ela o audit de C3 recusa o corpus assim que `assertDerivedParentsResolve`
+for ligado**.
+
 #### Pendente (não é de C2)
 
 * Passada de **volume completo** sobre os snapshots: `not-verified`. Só Carolina custa

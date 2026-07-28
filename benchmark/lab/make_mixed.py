@@ -245,6 +245,22 @@ def main() -> None:
         help="429s consecutivos antes de tratar como cota do dia e parar",
     )
     parser.add_argument(
+        "--assume-template",
+        default=None,
+        choices=sorted(MIX_TEMPLATES),
+        help="afirma qual template produziu um arquivo de pares ANTIGO, que não grava "
+        "o campo. Só é verdadeiro para lanes de um único prompt sem nudge retry "
+        "(make_mixed_agy.py, make_mixed_codex.py hoje) — sem isto a importação de um "
+        "par sem template FALHA em vez de supor",
+    )
+    parser.add_argument(
+        "--assume-harness",
+        default=None,
+        help="idem para a versão do binário editor de um arquivo de pares antigo. "
+        "Ausente => o eixo fica unknown e os registros ficam inelegíveis, que é o "
+        "resultado honesto",
+    )
+    parser.add_argument(
         "--nudge-retries",
         type=int,
         default=1,
@@ -257,6 +273,15 @@ def main() -> None:
         encoding="utf-8", errors="replace", line_buffering=True
     )
     done = already_done(args.output)
+    # Bound once, so the assertion the operator made on the command line is read in
+    # exactly one place and reported when it is used.
+    assumed_template = args.assume_template
+    if assumed_template is not None:
+        print(
+            f"assumindo template {assumed_template} "
+            f"(digest {mix_template_digest(assumed_template)[:16]}) para pares que "
+            "não declaram o campo — afirmação do operador, não dado do arquivo"
+        )
 
     with args.output.open("a", encoding="utf-8", newline="\n") as output:
         if args.from_pairs is not None:
@@ -272,6 +297,14 @@ def main() -> None:
                     )
                     skipped += 1
                     continue
+                if not pair.get("promptTemplateId") and assumed_template is None:
+                    raise SystemExit(
+                        f"o par {pair['parentId']} não declara promptTemplateId e "
+                        "--assume-template não foi passado. Um registro misto é uma "
+                        "geração controlada, então a v3 exige a receita nele; supor "
+                        "um template aqui atribuiria uma receita que a linha não "
+                        "sustenta"
+                    )
                 emit(
                     output,
                     {
@@ -282,15 +315,21 @@ def main() -> None:
                     pair["editedText"],
                     provider=pair.get("provider", "external"),
                     model=pair.get("model", "external"),
-                    # The CLI lanes record which template and which binary they used;
-                    # `template_id` falls back to the base prompt because that is the
-                    # ONLY one make_mixed_agy.py / make_mixed_codex.py ever send (they
-                    # import EDIT_PROMPT and run no nudge retry — the retry lives in
-                    # the --generate path below). A pairs file written before this
-                    # field existed carries None, and the assembler refuses such a row
-                    # rather than assuming.
-                    template_id=pair.get("promptTemplateId") or "mix_edit_v1",
-                    harness_version=pair.get("harnessVersion"),
+                    # The template the pair itself declares. A pairs file written
+                    # before that field existed declares nothing, and the fallback is
+                    # NOT a default in this code: `--assume-template` makes the
+                    # operator assert it on the command line, so the assertion is
+                    # visible in the shell history that produced the corpus instead of
+                    # buried in a `or` here.
+                    #
+                    # For the two existing pair-producing lanes that assertion is
+                    # checkable rather than a guess: make_mixed_agy.py and
+                    # make_mixed_codex.py send ONE template and have no corrective
+                    # retry (the nudge lives in the --generate path below), so
+                    # `mix_edit_v1` is what ran. A future pairs lane that nudges would
+                    # break that, which is exactly why it must not be silent.
+                    template_id=pair.get("promptTemplateId") or assumed_template,
+                    harness_version=pair.get("harnessVersion") or args.assume_harness,
                 )
                 emitted += 1
             print(f"pares importados: {emitted} (fora da faixa: {skipped})")
