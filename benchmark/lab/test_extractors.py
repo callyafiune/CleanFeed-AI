@@ -1365,6 +1365,7 @@ class DerivationLineageTests(unittest.TestCase):
             "generatedAt": "2026-07-23T18:53:31.606876+00:00",
             "promptTemplateId": "edit_v1",
             "promptTemplateDigest": hashlib.sha256(b"edit").hexdigest(),
+            "parentFamily": "ptso_qa",
             "mixture": {
                 "spans": [
                     {"start": 0, "end": 200, "origin": "human"},
@@ -1395,6 +1396,7 @@ class DerivationLineageTests(unittest.TestCase):
             "provider": "antigravity",
             "model": "gemini-3.6-flash-low",
             "generatedAt": "2026-07-23T18:53:31.606876+00:00",
+            "parentFamily": "ptso_qa",
             "mixture": {
                 "spans": [{"start": 0, "end": len(PROSE_60), "origin": "human"}]
             },
@@ -1497,3 +1499,137 @@ class ClusterDistributionReportTests(unittest.TestCase):
         self.assertNotIn("degenerate", rendered)
         self.assertNotIn("degenerado", rendered)
         self.assertEqual(report["axes"]["nearDuplicate"]["sizeDistribution"], {"1": 2})
+
+
+class GeneratorCaptureTests(unittest.TestCase):
+    """What the GENERATORS have to record so a v3 row can be eligible."""
+
+    def test_the_harness_version_is_read_from_the_binary_or_is_none(self) -> None:
+        import subprocess
+
+        import generate_ai
+
+        real = subprocess.run
+
+        def fake(argv, **kwargs):
+            return subprocess.CompletedProcess(argv, 0, b"codex-cli 0.145.0\n", b"")
+
+        try:
+            subprocess.run = fake
+            self.assertEqual(generate_ai.harness_version("codex"), "0.145.0")
+        finally:
+            subprocess.run = real
+
+        # Every failure mode returns None, and None becomes `unknown` downstream —
+        # never a placeholder string, which is the substitution R6 forbids.
+        for outcome in (
+            lambda argv, **kw: subprocess.CompletedProcess(argv, 1, b"", b"boom"),
+            lambda argv, **kw: subprocess.CompletedProcess(argv, 0, b"no digits", b""),
+            lambda argv, **kw: (_ for _ in ()).throw(FileNotFoundError("absent")),
+            lambda argv, **kw: (_ for _ in ()).throw(
+                subprocess.TimeoutExpired(argv, 60)
+            ),
+        ):
+            try:
+                subprocess.run = outcome
+                self.assertIsNone(generate_ai.harness_version("codex"))
+            finally:
+                subprocess.run = real
+
+        # An API lane has no harness to ask, which is a different answer from a
+        # failed capture only downstream: harness_axis reads the lane, not this.
+        self.assertIsNone(generate_ai.harness_version("gemini"))
+
+    def test_the_version_regex_takes_the_number_and_not_the_banner(self) -> None:
+        import generate_ai
+
+        # A banner around the version must not become part of the grouping identity:
+        # `axis_token` would turn "codex-cli 0.145.0" into one token and two builds
+        # printing different banners would look like two harnesses.
+        for printed, expected in (
+            ("0.145.0", "0.145.0"),
+            ("codex-cli 0.145.0", "0.145.0"),
+            ("gemini 1.2.3-rc.4 (build x)", "1.2.3-rc.4"),
+        ):
+            self.assertEqual(generate_ai._VERSION.search(printed).group(0), expected)
+
+    def test_every_provider_maps_onto_a_frozen_lane(self) -> None:
+        import json as _json
+
+        import generate_ai
+
+        policy = _json.loads(
+            (Path(__file__).resolve().parent.parent / "rebuild-v3-policy.json")
+            .read_text(encoding="utf-8")
+        )
+        frozen = set(policy["generationLanes"])
+        # Read against the POLICY rather than a retyped list, so a lane renamed in the
+        # frozen file fails here instead of producing rows no corpus can accept.
+        self.assertEqual(set(generate_ai.PROVIDER_LANE.values()), frozen)
+        self.assertEqual(
+            set(generate_ai.PROVIDER_LANE), set(generate_ai.CLI_PROVIDERS) | {"gemini"}
+        )
+
+    def test_the_mixing_lanes_record_which_template_produced_the_row(self) -> None:
+        import io
+
+        import make_mixed
+
+        # Three templates, three digests: the nudge retry sends a DIFFERENT prompt, so
+        # a row that was nudged came out of that one, and recording only the base
+        # template would pool rows produced by different recipes.
+        digests = {
+            name: make_mixed.mix_template_digest(name) for name in make_mixed.MIX_TEMPLATES
+        }
+        self.assertEqual(len(set(digests.values())), 3, digests)
+
+        buffer = io.StringIO()
+        make_mixed.emit(
+            buffer,
+            {
+                "id": "src_ptso_abc",
+                "text": "uma frase. outra frase. terceira frase.",
+                "family": "ptso_qa",
+            },
+            "uma frase reescrita. outra frase. terceira frase.",
+            provider="antigravity",
+            model="gemini-3.6-flash-low",
+            template_id="mix_change_less_v1",
+            harness_version="1.2.3",
+        )
+        row = json.loads(buffer.getvalue())
+        self.assertEqual(row["promptTemplateId"], "mix_change_less_v1")
+        self.assertEqual(row["promptTemplateDigest"], digests["mix_change_less_v1"])
+        self.assertEqual(row["harnessVersion"], "1.2.3")
+        # And that row is now writable as v3, which the legacy pools are not.
+        from assemble_corpus import mixed_record
+
+        record = mixed_record(row)
+        self.assertEqual(record["groups"]["generationLane"]["id"], "agy")
+        self.assertEqual(record["groups"]["harnessVersion"],
+                         {"state": "known", "id": "1_2_3"})
+        self.assertEqual(record["groups"]["derivationRoot"]["id"], "src_ptso_abc")
+        self.assertEqual(record["groups"]["domainSource"]["id"], "ptso_qa")
+
+    def test_a_mixed_row_whose_parent_names_no_family_is_refused(self) -> None:
+        import io
+
+        from assemble_corpus import MissingRecipe, mixed_record
+        import make_mixed
+
+        # `emit` writes "?" when the parent row carried no family, and "?" normalises
+        # to no token at all. `domainSource` must be `known` in every class, so the row
+        # is refused rather than filed under an invented stratum — which would be worse
+        # than dropping it, because it would pool unrelated rows into one cluster.
+        buffer = io.StringIO()
+        make_mixed.emit(
+            buffer,
+            {"id": "src_ptso_abc", "text": "uma frase. outra frase. terceira frase."},
+            "uma frase reescrita. outra frase. terceira frase.",
+            provider="antigravity",
+            model="gemini-3.6-flash-low",
+        )
+        row = json.loads(buffer.getvalue())
+        self.assertEqual(row["parentFamily"], "?")
+        with self.assertRaises(MissingRecipe):
+            mixed_record(row)

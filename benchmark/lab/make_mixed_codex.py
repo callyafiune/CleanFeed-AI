@@ -34,7 +34,11 @@ import tempfile
 import time
 from pathlib import Path
 
-from make_mixed import EDIT_PROMPT, already_done, read_jsonl
+from generate_ai import harness_version
+from make_mixed import MIX_TEMPLATES, already_done, read_jsonl
+
+# This lane sends the base editing prompt and runs no corrective retry.
+TEMPLATE_ID = "mix_edit_v1"
 
 
 def run_codex(
@@ -105,13 +109,22 @@ def main() -> None:
     parents = parents[: args.target]
     print(f"codex lane: {len(parents)} pais (resume-skip={len(done)})")
 
+    # Once, before the first edit: the codex binary is the harness whose version is a
+    # grouping axis, and it is read from the binary rather than composed.
+    captured_harness = harness_version("codex")
+    print(
+        f"harness codex: "
+        f"{captured_harness or 'NAO CAPTURADA (registros inelegiveis)'}"
+    )
     workdir = Path(tempfile.mkdtemp(prefix="codex_mixed_"))
     detected_model = args.model or ""
     failures = 0
     kept = 0
     with args.pairs.open("a", encoding="utf-8", newline="\n") as pairs_out:
         for index, parent in enumerate(parents, start=1):
-            prompt = EDIT_PROMPT.format(parent=parent["text"][:6000])
+            prompt = MIX_TEMPLATES[TEMPLATE_ID]().format(
+                parent=parent["text"][:6000]
+            )
             edited = log = None
             for attempt in range(args.item_retries):
                 try:
@@ -145,7 +158,18 @@ def main() -> None:
                         "editedText": edited,
                         "family": parent.get("family", "?"),
                         "provider": "openai",
+                        # The LANE, stated outright, because `provider` here does NOT
+                        # name it: this script writes "openai" while the text came out
+                        # of the codex CLI, and `codex` is the frozen lane. Left as an
+                        # explicit field rather than by relabelling `provider`, which
+                        # the governance audit compares byte for byte against the
+                        # declared batch. Without this the 177 rows this lane
+                        # contributed to mixed_from_pairs.jsonl are refused as
+                        # UnmappableLane, which is what the C2 assembly measured.
+                        "generationLane": "codex",
                         "model": detected_model,
+                        "promptTemplateId": TEMPLATE_ID,
+                        "harnessVersion": captured_harness,
                     },
                     ensure_ascii=False,
                 )

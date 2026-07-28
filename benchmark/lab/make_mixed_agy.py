@@ -31,8 +31,12 @@ import tempfile
 import time
 from pathlib import Path
 
-from make_mixed import EDIT_PROMPT, already_done, read_jsonl
+from generate_ai import harness_version
+from make_mixed import MIX_TEMPLATES, already_done, read_jsonl
 
+# This lane sends the base editing prompt and runs no corrective retry (the nudge
+# lives in make_mixed.py's --generate path), so the template is fixed here.
+TEMPLATE_ID = "mix_edit_v1"
 AGY_DEFAULT = str(
     Path.home() / "AppData" / "Local" / "agy" / "bin" / "agy.exe"
 )
@@ -81,12 +85,20 @@ def main() -> None:
     parents = parents[: args.target]
     print(f"agy lane ({args.model}): {len(parents)} pais (resume-skip={len(done)})")
 
+    # Captured ONCE, before the first edit: the binary does not change mid-run, and
+    # the version is a grouping axis, so it is read from the binary and never composed.
+    # None when the capture fails, which costs the rows their eligibility rather than
+    # giving them a version nobody read.
+    captured_harness = harness_version("agy")
+    print(f"harness agy: {captured_harness or 'NAO CAPTURADA (registros inelegiveis)'}")
     workdir = tempfile.mkdtemp(prefix="agy_mixed_")
     failures = 0
     kept = 0
     with args.pairs.open("a", encoding="utf-8", newline="\n") as pairs_out:
         for index, parent in enumerate(parents, start=1):
-            prompt = EDIT_PROMPT.format(parent=parent["text"][:6000])
+            prompt = MIX_TEMPLATES[TEMPLATE_ID]().format(
+                parent=parent["text"][:6000]
+            )
             edited = None
             for attempt in range(args.item_retries):
                 try:
@@ -118,6 +130,13 @@ def main() -> None:
                         "family": parent.get("family", "?"),
                         "provider": "antigravity",
                         "model": args.model,
+                        # WHICH template and WHICH binary produced this pair. This
+                        # lane sends one template and runs no nudge retry, so the id
+                        # is constant here — but it is RECORDED rather than assumed
+                        # downstream, because assemble_corpus refuses a mixed row that
+                        # does not name its own recipe instead of guessing one.
+                        "promptTemplateId": TEMPLATE_ID,
+                        "harnessVersion": captured_harness,
                     },
                     ensure_ascii=False,
                 )

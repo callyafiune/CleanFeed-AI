@@ -839,6 +839,21 @@ def mixed_record(cand: dict, near_duplicate: str | None = None) -> dict:
             "cannot support — the pool was written before the digest was persisted"
         )
     recipe = str(cand.get("promptTemplateId") or "mixed")
+    # `domainSource` must be `known` in EVERY class: the stratum a row is counted
+    # under is decided by our own extraction, so `unknown` there is a defect in a
+    # pipeline we control rather than an unrecoverable gap in the world (schema.ts
+    # AXIS_STATE_RULE says exactly that). `make_mixed.emit` writes "?" when the parent
+    # row carried no family, and "?" normalises to nothing — so it is refused HERE with
+    # a message naming the cause, instead of surfacing as a bare ValueError out of
+    # axis_token halfway through an assembly.
+    parent_family = str(cand.get("parentFamily") or "")
+    if not parent_family or parent_family == "?":
+        raise MissingRecipe(
+            f"mixed row {rec_id!r} names no parent family (parentFamily="
+            f"{cand.get('parentFamily')!r}), so it has no domainSource stratum to be "
+            "counted under. The parent's family is on the parent row; re-emit the pair "
+            "from a parents file that carries it"
+        )
     rec = {
         "schemaVersion": 3,
         "id": rec_id,
@@ -899,9 +914,7 @@ def mixed_record(cand: dict, near_duplicate: str | None = None) -> dict:
                 "the mixing pools record only the parent id; the parent's origin "
                 "document is resolved through groups.derivationRoot"
             ),
-            "domainSource": group_axes.known(
-                group_axes.axis_token(str(cand.get("parentFamily") or "mixed"))
-            ),
+            "domainSource": group_axes.known(group_axes.axis_token(parent_family)),
             # BOTH known, and both the same row: a mechanistic mixed record is built
             # by editing one specific human text, so that text is its seed AND the
             # thing it derives from. This is the lineage requirement 5 asks for, and

@@ -3681,6 +3681,140 @@ suficiente por estrato**.
 > faz — e texto de IA não tem autor humano. Exigir grupos > 1 incentivaria agrupamento
 > artificial, que é o oposto do que se quer.
 
+
+#### C2 — execução (2026-07-28)
+
+**Feito.** Commits `8a16c9e` (extratores + eixos), `2de570b` (montador v3), e o commit
+desta seção. Suíte: 76 testes em `benchmark/lab/test_extractors.py` (era 33),
+`npx vitest run` 159 arquivos / 2006 testes verde, `npx tsc --noEmit --project
+tsconfig.benchmark.json` verde.
+
+**1. `base_groups` saiu inteiro.** Os cinco tokens por registro (`a_`, `g_`, `ds_`, `cb_`,
+`nd_` + id) não existem em nenhum caminho, e um teste (`test_no_module_mints_a_per_record_
+group_token`) varre o arquivo pelos cinco literais — de modo que reintroduzi-los sob
+qualquer nome falha. O comentário que explica o defeito descreve os tokens em prosa de
+propósito: citá-los verbatim derrotaria a própria guarda. Os bytes originais estão em
+`git show 04c2cd5:benchmark/lab/assemble_corpus.py`.
+
+**2. Identidade real por fonte, emitida pelos extratores.** `pt.stackoverflow` emite
+THREAD (`ParentId`, ou o próprio `Id` numa pergunta) e AUTOR; `ptwiki` a PÁGINA; `B2W` o
+PRODUTO e o AVALIADOR; `Carolina` o ARQUIVO-MEMBRO. Os dois eixos de pessoa passam por
+HMAC com segredo (`benchmark/lab/pseudonymize.py`), nunca hash simples: `OwnerUserId` é um
+inteiro pequeno e o `reviewer_id` do B2W já vem digerido — e um digest de digest continua
+sendo a mesma chave de junção contra o arquivo público. Sem o keyring de C3 os dois
+extratores **falham fechado**, sem nenhum caminho alternativo.
+
+**3. Os ids não se moveram.** As `natural_key` estão byte-idênticas; a identidade entrou em
+`meta`, que nenhuma chave natural lê. Pinado por teste com os quatro digests medidos em
+`eae6ce6` (antes da mudança), e por um segundo teste que troca o keyring e confirma que o
+pseudônimo muda enquanto o `candidateId` não.
+
+**4. Re-extração real executada** sobre os quatro snapshots em
+`C:\dev\meus\repositorios\snapshots\`, `--limit 400` cada. Tempos medidos: ptso 1,4 s
+(739 linhas varridas), b2w 0,3 s (5.087), ptwiki 1,4 s (462), **Carolina 9 min 30 s**
+(20.797 documentos TEI, `--per-typology-limit 100`). Carolina domina o custo por um fator
+de ~400; uma passada de volume completo é a única que precisa de orçamento próprio.
+
+Distribuição de cluster medida na re-extração (400 registros por fonte):
+
+| fonte | eixo `source` | maior | eixo `author` | maior |
+|---|---:|---|---:|---|
+| pt.stackoverflow | 220 clusters | `ptso_thread_183` / 5 | 107 clusters | 32 |
+| B2W | 353 clusters | `b2w_product_22562178` / 6 | 391 clusters | 5 |
+| Carolina | 67 clusters | membro `SOCa.xml` / 100 | — | `notApplicable` |
+| ptwiki | 400 clusters | página / 1 | — | `notApplicable` |
+
+Isto **refuta a degeneração**: um autor com 32 registros e um membro Carolina com 100 são
+dependências que `g_<recordId>` apagava. O 100 do Carolina é o teto de
+`--per-typology-limit`, não o tamanho real do membro — numa passada completa é maior.
+ptwiki é todo singleton porque tiramos uma lead por página, e isso é **correto**, não
+degenerado.
+
+**5. Nenhum critério de "eixo degenerado" foi adicionado**, conforme o plano manda. Um
+teste assere que as palavras "degenerate"/"degenerado" não aparecem na saída do relatório.
+`nearDuplicate` sai todo singleton porque é o que a poda faz.
+
+**6. O relatório de clusters** (`group_axes.cluster_report`) publica contagem,
+distribuição de tamanho, maior cluster e a contagem dos três estados, por eixo **e por
+fatia** (`<partição>/<label>`), mais `ineligibleRecords`. Vai para
+`<out-dir>/cluster-report.json` e para stdout.
+
+#### O que a v3 **não consegue** dizer sobre os pools atuais — medido, não estimado
+
+O montador agora **recusa e conta** a linha que não cabe no contrato, em vez de substituir
+valor. Numa montagem de 900 registros sobre a re-extração fresca: **635 escritos**
+(275 humanos + 360 IA + **0 mistos**), 265 recusados. Todos os 635 passam
+`validateBenchmarkRecordV3` (probe descartável, medido: `records=635 valid=635
+eligible=312 unknownAxes={"harnessVersion":323}`).
+
+As quatro dívidas, cada uma com o dono do conserto:
+
+1. **`harnessVersion` — 323 registros inelegíveis.** As execuções de geração v2 nunca
+   capturaram a versão do binário. `notApplicable` seria falso sobre a lane e uma string
+   inventada seria falsa sobre o mundo, então o eixo é `unknown` e o registro paga com a
+   elegibilidade. **Conserto: regeração** — `generate_ai.py` e as duas lanes de mistura
+   agora leem `--version` do binário resolvido pelo mesmo `npm_entrypoint` que gera.
+2. **`MissingLabelEvidence` — 85 humanos.** São as linhas de `reserved.jsonl`, que não
+   carregam campo de data. **Conserto: re-extração** (já implementada; os 275 humanos
+   re-extraídos passam).
+3. **`MissingRecipe` — 180 mistos, isto é, a classe inteira.** Nenhuma linha dos pools de
+   mistura registrou qual template a produziu, e isso **não é reconstruível**: nada na
+   linha diz se o nudge retry disparou, então estampar `EDIT_PROMPT` seria atribuir uma
+   receita que a linha não sustenta. `make_mixed.emit` agora persiste
+   `promptTemplateId`/`promptTemplateDigest` entre os **três** templates (o nudge faz
+   parte da receita) e `harnessVersion`. **Conserto: re-mistura.**
+4. **A lane `codex` não é escrevível em v3 hoje.** `generationLanes.codex.effortSources` é
+   `["flag", "provider-default"]` e **nenhum** dos dois é `not-supported`, enquanto as duas
+   variantes de `EffortConfig` com nível exigem `scale` **e** `level`. `generate_ai.py`
+   nunca gravou nível. Logo toda linha codex é recusada. **Não afrouxei a política para
+   admitir `not-supported` em codex**: seria relaxar contrato congelado para os dados
+   caberem (R3). `generate_ai.py` ganhou `--effort` + `--effort-source`, que andam juntos e
+   são gravados como observação, **nunca** derivados do sufixo do id do modelo — a
+   precedência entre `model` e `--effort` no `agy` segue indeterminada e será medida por
+   `--dry-run` antes de D3, exatamente como o brief manda. **Dono: D3.**
+
+Um defeito adicional encontrado e consertado no caminho: `make_mixed_codex.py` gravava
+`"provider": "openai"` enquanto o texto saía do CLI do codex, e `openai` não é uma das
+quatro lanes congeladas — as 177 linhas que essa lane contribuiu para
+`mixed_from_pairs.jsonl` eram recusadas como `UnmappableLane`. Agora grava
+`generationLane: "codex"` explicitamente, sem renomear `provider` (que a auditoria de
+governança compara byte a byte contra o lote declarado).
+
+#### Decisões de projeto que merecem revisão
+
+* **`labelEvidenceRef`**: o montador escreve `private/label-evidence.jsonl` com uma entrada
+  por REGISTRO DE FONTE (base, snapshot, licença, campo de data, cutoff) e o registro
+  carrega `entryId` + `entryDigest` sobre os bytes canônicos dela, mais a leitura por
+  linha. É digest-consistente por construção, para que `assertLabelEvidenceResolves` de C3
+  tenha o que resolver. **Não substitui o manifesto privado canônico de D1** e **não**
+  grava os digests dos snapshots, que são de D1.
+* **Keyring**: minteado localmente (`benchmark/data/private/cluster-exposure-keyring.v1.
+  json`, gitignored, `keyringVersion: "c2-run-v1"`) porque C3 ainda não existe. Quando C3
+  mintar o canônico, **todo pseudônimo de pessoa muda** — o que reparticiona os clusters de
+  pessoa e exige re-extração. A interface está definida para C3 satisfazer.
+* **`nearDuplicate`** nomeia o REPRESENTANTE sobrevivente da poda, que num cluster de um é
+  a própria linha. É a única coincidência legítima entre um eixo e o id do registro, e a
+  diferença com o token antigo não é cosmética: aquele era minteado PORQUE não colidiria,
+  este é lido do resultado da poda e colidiria no instante em que duas linhas
+  compartilhassem cluster.
+* **`collectionBatch` humano** é `extraction_<pool>` — a execução de extração, compartilhada
+  por todas as candidatas de um arquivo. O prefixo `extraction_` torna estrutural (não
+  incidental) que ela nunca nomeie um lote de geração `gb_*`, que a auditoria recusa numa
+  linha não gerada.
+* **Chave do lote** ganhou `decoding` e `effort` canonicalizados. Um `temperature` nu não
+  distinguia uma lane de CLI sem botão de amostragem de uma lane de API que deixou o
+  default — duas receitas diferentes colapsavam num lote declarado só.
+
+#### Pendente (não é de C2)
+
+* Passada de **volume completo** sobre os snapshots: `not-verified`. Só Carolina custa
+  ~9,5 min por 400 registros; o gargalo é a varredura de 20.797 documentos TEI, não a
+  memória.
+* **Poder suficiente por estrato** é o critério de aceitação e é avaliado em **E3**, contra
+  os números que este relatório passa a publicar. C2 entrega os números, não o veredito.
+* A árvore seed → geração → derivados carrega o dado que permite impor uma partição só
+  (`humanSeed` + `derivationRoot` resolvem o pai); a **imposição** é C3/E2.
+
 ### C3 — Split e auditoria sobre clusters reais
 
 **Depende de:** C2.

@@ -22,6 +22,7 @@ from __future__ import annotations
 
 import argparse
 import difflib
+import hashlib
 import json
 import sys
 import time
@@ -156,7 +157,40 @@ def already_done(output: Path) -> set[str]:
     return done
 
 
-def emit(output, parent_row, edited: str, provider: str, model: str) -> None:
+# The mixing templates, each identified by the digest of its own bytes, so
+# `groups.promptTemplate` groups mixed rows by the recipe that actually produced them.
+#
+# THREE and not one, because the nudge retry is part of the recipe: a row whose first
+# edit fell outside the mixed band was re-asked with PROMPT_CHANGE_LESS or
+# PROMPT_CHANGE_MORE, and the text that survived came out of THAT template. Recording
+# only EDIT_PROMPT would put rows produced by different prompts into one cluster.
+#
+# The pools already on disk record none of this, and it is NOT reconstructable from
+# them: nothing in a written row says whether a nudge fired. So the assembler refuses
+# those rows (MissingRecipe) instead of stamping them with whichever template this
+# file holds today — see assemble_corpus.mixed_record.
+MIX_TEMPLATES = {
+    "mix_edit_v1": lambda: EDIT_PROMPT,
+    "mix_change_less_v1": lambda: PROMPT_CHANGE_LESS,
+    "mix_change_more_v1": lambda: PROMPT_CHANGE_MORE,
+}
+
+
+def mix_template_digest(template_id: str) -> str:
+    return hashlib.sha256(
+        MIX_TEMPLATES[template_id]().encode("utf-8")
+    ).hexdigest()
+
+
+def emit(
+    output,
+    parent_row,
+    edited: str,
+    provider: str,
+    model: str,
+    template_id: str = "mix_edit_v1",
+    harness_version: str | None = None,
+) -> None:
     mixture = compute_mixture(parent_row["text"], edited)
     record = {
         "parentId": parent_row["id"],
@@ -164,6 +198,16 @@ def emit(output, parent_row, edited: str, provider: str, model: str) -> None:
         "mixture": mixture,
         "provider": provider,
         "model": model,
+        # WHICH template produced this row, and its digest. Persisted from this run
+        # rather than derivable later, which is the whole point: a mixed row is a
+        # controlled generation, so v3 requires a recipe on it, and the recipe has to
+        # be captured while the run still knows which prompt it sent.
+        "promptTemplateId": template_id,
+        "promptTemplateDigest": mix_template_digest(template_id),
+        # The editor binary's version on the CLI lanes, so the mixed rows can be
+        # eligible for the same reason the generated ones can. None when the lane is
+        # an API call or the capture failed — never a placeholder.
+        "harnessVersion": harness_version,
         "generatedAt": datetime.now(timezone.utc).isoformat(),
         "parentFamily": parent_row.get("family", "?"),
     }
@@ -238,6 +282,15 @@ def main() -> None:
                     pair["editedText"],
                     provider=pair.get("provider", "external"),
                     model=pair.get("model", "external"),
+                    # The CLI lanes record which template and which binary they used;
+                    # `template_id` falls back to the base prompt because that is the
+                    # ONLY one make_mixed_agy.py / make_mixed_codex.py ever send (they
+                    # import EDIT_PROMPT and run no nudge retry — the retry lives in
+                    # the --generate path below). A pairs file written before this
+                    # field existed carries None, and the assembler refuses such a row
+                    # rather than assuming.
+                    template_id=pair.get("promptTemplateId") or "mix_edit_v1",
+                    harness_version=pair.get("harnessVersion"),
                 )
                 emitted += 1
             print(f"pares importados: {emitted} (fora da faixa: {skipped})")
@@ -330,9 +383,12 @@ def main() -> None:
         print(f"gerando {len(pending)} mistos (resume-skip={len(done)})")
         kept = 0
         for index, parent in enumerate(pending, start=1):
+            # Reset PER PARENT, not once outside the loop: a nudge on one row must not
+            # leave the next row claiming the corrective template it never saw.
+            template_id = "mix_edit_v1"
             try:
                 result = edit_with_failover(
-                    EDIT_PROMPT.format(parent=parent["text"][:6000])
+                    MIX_TEMPLATES[template_id]().format(parent=parent["text"][:6000])
                 )
                 mixture = (
                     compute_mixture(parent["text"], result[0]) if result else None
@@ -340,11 +396,16 @@ def main() -> None:
                 for _ in range(args.nudge_retries):
                     if result is None or in_band(mixture):
                         break
-                    template = (
-                        PROMPT_CHANGE_LESS
+                    # The nudge sends a DIFFERENT template, so the id has to move
+                    # with it: the surviving text came out of this prompt, not out of
+                    # EDIT_PROMPT, and grouping the two together would put rows
+                    # produced by different recipes in one promptTemplate cluster.
+                    template_id = (
+                        "mix_change_less_v1"
                         if mixture["aiFraction"] > MIXED_BAND[1]
-                        else PROMPT_CHANGE_MORE
+                        else "mix_change_more_v1"
                     )
+                    template = MIX_TEMPLATES[template_id]()
                     result = edit_with_failover(
                         template.format(parent=parent["text"][:6000])
                     )
@@ -363,7 +424,17 @@ def main() -> None:
                 )
                 continue
             edited, used_model = result
-            emit(output, parent, edited, provider="gemini", model=used_model)
+            emit(
+                output,
+                parent,
+                edited,
+                provider="gemini",
+                model=used_model,
+                template_id=template_id,
+                # gemini-api is a direct API call: no harness binary runs, so there is
+                # no version to attribute and the axis is notApplicable downstream.
+                harness_version=None,
+            )
             kept += 1
             if index % 10 == 0:
                 print(f"  {index}/{len(pending)} (kept={kept})")

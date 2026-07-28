@@ -142,6 +142,66 @@ def gemini_command() -> list[str]:
     return npm_entrypoint("gemini", "@google/gemini-cli") or ["gemini"]
 
 
+# The provider label this script uses -> the frozen generation lane
+# (benchmark/rebuild-v3-policy.json). Recorded on every row so the assembler reads a
+# lane the GENERATOR observed instead of inferring one from a provider string, and so
+# a provider that is not one of the four frozen lanes fails HERE rather than silently
+# producing rows no v3 corpus can accept.
+PROVIDER_LANE = {
+    "agy": "agy",
+    "codex": "codex",
+    "gemini": "gemini-api",
+    "gemini_cli": "gemini-cli",
+}
+# argv that asks each CLI lane for its own version. `agy` is a single executable;
+# codex and gemini are resolved through the npm entrypoint, so the prefix has to come
+# from the same resolver that will actually run the generation — asking a shim on PATH
+# could report a different build from the one that produced the text, which is the
+# bug codex_command() already exists to avoid.
+HARNESS_VERSION_ARGV = {
+    "agy": lambda: [AGY_BIN, "--version"],
+    "codex": lambda: codex_command() + ["--version"],
+    "gemini_cli": lambda: gemini_command() + ["--version"],
+}
+# A version string is a line like "codex-cli 0.145.0" or "0.145.0"; take the first
+# dotted numeric run and nothing else, so a banner around it cannot become part of the
+# grouping identity.
+_VERSION = re.compile(r"\d+(?:\.\d+)+(?:[-+][0-9A-Za-z.]+)?")
+
+
+def harness_version(provider: str) -> str | None:
+    """The REAL version of the binary that will generate, or None.
+
+    Captured by asking the binary, never composed from a package name or a constant:
+    `groups.harnessVersion` is a dependence axis, and a version we asserted rather
+    than read would group records by a claim instead of by the artifact that produced
+    them.
+
+    None on any failure — binary absent, non-zero exit, unparseable output, timeout —
+    and None means the record's axis becomes `unknown`, which costs it eligibility.
+    That is the intended price. There is deliberately no fallback string: "unknown"
+    filled in by hand is the substitution R6 forbids, and the version of a harness is
+    exactly the kind of value that cannot be recovered later, because the binary may
+    have been upgraded past recall by the time anyone notices.
+    """
+    build = HARNESS_VERSION_ARGV.get(provider)
+    if build is None:
+        return None
+    try:
+        proc = subprocess.run(
+            build(), capture_output=True, timeout=60, stdin=subprocess.DEVNULL
+        )
+    except (OSError, subprocess.SubprocessError):
+        return None
+    if proc.returncode != 0:
+        return None
+    printed = (proc.stdout or b"").decode("utf-8", errors="replace")
+    if not printed.strip():
+        printed = (proc.stderr or b"").decode("utf-8", errors="replace")
+    found = _VERSION.search(printed)
+    return found.group(0) if found else None
+
+
 def cli_env_without_keys() -> dict[str, str]:
     """Child environment with the Gemini API keys REMOVED.
 
@@ -632,7 +692,27 @@ def main() -> None:
     )
     parser.add_argument("--sleep", type=float, default=1.0)
     parser.add_argument("--dry-run", action="store_true")
+    parser.add_argument(
+        "--effort",
+        default=None,
+        help="nível de esforço de raciocínio APLICADO (ex.: medium). Gravado como "
+        "observação; NUNCA inferido do nome do modelo. Obrigatório nas lanes cuja "
+        "linha congelada não oferece 'not-supported' (hoje: codex)",
+    )
+    parser.add_argument(
+        "--effort-source",
+        default=None,
+        choices=["model-id", "flag", "provider-default"],
+        help="DE ONDE veio o nível: do id do modelo, de uma flag que passamos, ou do "
+        "default do provedor. Sem isto um esforço gravado é indistinguível de um "
+        "inferido, que é o que R6 proíbe",
+    )
     args = parser.parse_args()
+    if (args.effort is None) != (args.effort_source is None):
+        raise SystemExit(
+            "--effort e --effort-source andam juntos: um nível sem origem declarada "
+            "não é distinguível de um nível inferido"
+        )
 
     import os
 
@@ -667,6 +747,21 @@ def main() -> None:
             f"defina a variável de ambiente da chave do provedor '{provider}'"
         )
 
+    # ONCE per lane, before any generation: the binary does not change mid-run, and
+    # asking it 400 times would be 400 subprocesses for one answer. Captured BEFORE
+    # the first call so the version recorded is the one that produced the first row
+    # as well as the last.
+    captured_harness = harness_version(provider)
+    if provider in HARNESS_VERSION_ARGV:
+        print(
+            f"harness {provider}: "
+            + (
+                captured_harness
+                if captured_harness
+                else "NAO CAPTURADA — os registros desta lane ficam INELEGIVEIS "
+                "(groups.harnessVersion unknown). Nenhuma versao e inventada"
+            )
+        )
     lock = acquire_lane_lock(args.output)
     writer = CandidateWriter(
         args.output,
@@ -763,6 +858,21 @@ def main() -> None:
                     "model": model,
                     "version": model,
                     "recipe": recipe,
+                    # The lane the generator OBSERVED itself running on, plus the
+                    # version of the binary that produced this very text. Both are
+                    # grouping axes in v3, and both were missing from every row the
+                    # v2 runs wrote — which is why 323 of 635 records in C2's
+                    # assembly are ineligible on `harnessVersion` alone.
+                    "generationLane": PROVIDER_LANE[provider],
+                    "harnessVersion": captured_harness or "",
+                    # The reasoning effort, recorded ONLY when the operator declared
+                    # it. Never derived from the model id, even though `agy` embeds
+                    # the tier in some ids (`gpt-oss-120b-medium`) — `--effort` is a
+                    # session flag in parallel and the precedence between the two is
+                    # not yet measured, so a value read off the suffix would record a
+                    # guess about which input won as though it were an observation.
+                    "effortSource": args.effort_source or "",
+                    "effortLevel": args.effort or "",
                     "temperature": str(TEMPERATURE),
                     "seed": str(seed) if seed is not None else "",
                     "seedNullReason": "" if seed is not None else SEED_NULL_REASON,
@@ -794,6 +904,14 @@ def main() -> None:
                     "version": batch_family,
                     "models": models,
                     "recipes": {name: template_digest(name) for name in RECIPES},
+                    # The lane, the harness and the declared effort, so the batch
+                    # record says what the rows say. `harnessVersion` is null rather
+                    # than a placeholder when the capture failed: a batch that names a
+                    # version it did not read would contradict its own rows.
+                    "generationLane": PROVIDER_LANE[provider],
+                    "harnessVersion": captured_harness,
+                    "effortSource": args.effort_source,
+                    "effortLevel": args.effort,
                     "temperature": TEMPERATURE,
                     "seedPolicy": (
                         "per-record deterministic seed"
