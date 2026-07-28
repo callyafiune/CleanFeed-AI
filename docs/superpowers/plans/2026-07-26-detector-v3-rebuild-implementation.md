@@ -2346,6 +2346,37 @@ concordam. Corrigido:
    arquivo novo — mas C1, ao escrever o esquema v3, precisa decidir se
    `source-manifest.ts` entra na identidade do avaliador.
 
+**Segunda rodada de correção (2026-07-28) — a prosa da dependência ficou falsa, e
+o item 2 acima estava incompleto.** A rodada anterior ADICIONOU ao cabeçalho de
+`benchmark/source-manifest.ts` um parágrafo dizendo que ler a política torna o
+módulo Node-side, mas **não editou** as linhas 3-4, que continuavam
+byte-idênticas a 8e37108: "it depends only on the Phase 1 canonical-json digest
+helper shared through contracts/". Com o `import { REBUILD_V3_POLICY } from
+"./rebuild-v3-policy.ts"` 50 linhas abaixo, o mesmo cabeçalho se contradizia — a
+mesma classe de defeito (prosa declarando dependência/autoridade falsa) que a
+rodada existia para consertar, e é esse cabeçalho que C1/C5 leem primeiro para
+decidir se podem importar o módulo. Corrigido:
+
+1. As linhas 1-7 declaram a dependência real (helper canonical-json de
+   `contracts/` **mais** `benchmark/rebuild-v3-policy.ts`, que lê o arquivo
+   congelado no load e torna o módulo Node-side), dizem que o módulo **não** é
+   standalone e mantêm a proibição de importar de `src/`.
+2. O elo passou a ser preso por teste, e não por revisão de prosa: **"declares in
+   its header every module it imports at load"** extrai o bloco de comentário
+   inicial e todos os `import` relativos do próprio arquivo, exige que o
+   cabeçalho nomeie cada módulo importado e proíbe a frase "depends only on".
+   Mutações medidas: (a) a frase antiga de volta → morre (foi o vermelho desta
+   rodada); (b) importar um módulo novo (`./digests.ts`) sem citar no cabeçalho →
+   morre em `expect(imported).toEqual([...])`; (c) o cabeçalho deixar de nomear
+   `rebuild-v3-policy` → morre em `header must name rebuild-v3-policy`. As duas
+   primeiras asserções já passavam antes do conserto (o parágrafo novo nomeava o
+   módulo); o defeito residual era exatamente a frase "depends only on".
+3. `docs/corpus-sources.md` dizia "os quatro testes de acordo" — contagem escrita
+   pela própria rodada anterior e errada nas duas versões (eram cinco antes, são
+   seis depois). Trocado por referência ao describe `licence policy agreement
+   across manifest, review and NOTICE`, **sem contagem**: o documento é o mapa de
+   quais elos estão enforçados, e um número em prosa envelhece a cada teste novo.
+
 ### B2 — DECIDIDO: alvos, métricas e ações de produto
 
 **Depende de:** nada.

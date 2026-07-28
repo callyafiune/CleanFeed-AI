@@ -318,6 +318,37 @@ describe("non-commercial corpus use policy", () => {
     );
   });
 
+  // Reading the frozen policy changed what this module depends on, and its
+  // header is what C1/C5 read first to decide whether they may import it. The
+  // previous round left the header claiming it "depends only on" the
+  // canonical-json helper while an import of the policy module sat 50 lines
+  // below, so the file contradicted itself. This pins the header against the
+  // imports themselves instead of against a literal sentence: add an import and
+  // the header must name it.
+  it("declares in its header every module it imports at load", async () => {
+    const source = await readFile(
+      resolve(HERE, "../source-manifest.ts"),
+      "utf8",
+    );
+    const header = source
+      .split(/\r?\n/u)
+      .slice(
+        0,
+        source.split(/\r?\n/u).findIndex((line) => !line.startsWith("//")),
+      )
+      .join("\n");
+    const imported = [
+      ...source.matchAll(/^import[^"']*["'](\.[^"']+)["'];$/gmu),
+    ].map((match) => match[1].replace(/^.*\//u, "").replace(/\.ts$/u, ""));
+    // Both of today's imports, so a header that forgot either one fails.
+    expect(imported).toEqual(["canonical-json", "rebuild-v3-policy"]);
+    for (const moduleName of imported) {
+      expect(header, `header must name ${moduleName}`).toContain(moduleName);
+    }
+    // And it must not claim the canonical-json helper is the only dependency.
+    expect(header).not.toMatch(/depends only on/u);
+  });
+
   it("imposes every obligation the frozen contract requires", () => {
     // Rebuilt here from the frozen flags, independently of the module's own
     // derivation, so the two cannot agree by being the same literal.

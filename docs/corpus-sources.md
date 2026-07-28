@@ -27,8 +27,10 @@
 > frozen non-commercial decision from the policy file, not a copy of it" e
 > "derives the frozen flag in its source instead of restating it" prendem o
 > primeiro elo, "imposes every obligation the frozen contract requires" prende as
-> obrigações ao registro, e os quatro testes de acordo prendem review, NOTICE e
-> este documento. Nesse regime **`NC` é admissível** (a cláusula
+> obrigações ao registro, e os testes do describe `licence policy agreement
+> across manifest, review and NOTICE` prendem review, NOTICE e este documento
+> (sem contagem fixa aqui de propósito: a lista cresce, e uma contagem em prosa
+> aponta para menos elos do que existem no minuto seguinte). Nesse regime **`NC` é admissível** (a cláusula
 > está satisfeita) e **`ND` é proibido para corpus derivado** — montar um corpus
 > é exatamente o derivado que `ND` restringe. As duas cláusulas são restrições
 > distintas: nunca as trate como uma única "licença restritiva".
