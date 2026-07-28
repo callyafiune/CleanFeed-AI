@@ -38,7 +38,10 @@ import {
 } from "../prediction-schema.ts";
 import type { BenchmarkRecord } from "../schema.ts";
 import { buildSplitArtifact } from "../split-artifact.ts";
-import type { SplitAudit } from "../split-audit.ts";
+import {
+  standInClusterReport,
+  type SplitAudit,
+} from "../split-audit.ts";
 import type { DatasetSplit } from "../split.ts";
 import {
   asGeneratorFamily,
@@ -231,6 +234,8 @@ function passingAudit(split: DatasetSplit<BenchmarkRecord>): SplitAudit {
       earliestTest: 300,
     },
     leakages: [],
+    clusters: standInClusterReport(),
+    declaredAxisGaps: [],
     criticalSliceSamples: [],
     heldOutGeneratorFamilies: derivedHeldOutFamilies(split),
     passed: true,

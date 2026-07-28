@@ -39,6 +39,86 @@ export interface NearDuplicateOptions {
   seed: number;
 }
 
+/**
+ * The frozen v1 parameters, as ONE value rather than a literal each caller
+ * respells. The seed is 0 and is deliberately NOT the split seed: a signature
+ * recorded in the exposure ledger has to stay comparable against a corpus built
+ * years later, so the permutation family cannot depend on who called.
+ */
+export const NEAR_DUPLICATE_V1_OPTIONS: NearDuplicateOptions = {
+  shingleSize: 5,
+  permutations: 128,
+  bands: 32,
+  jaccardThreshold: 0.82,
+  seed: 0,
+};
+
+/**
+ * What one text contributes to the near-duplicate contract, WITHOUT the text.
+ *
+ * It exists for the cluster-exposure ledger (C3), which must apply R7 against
+ * records exposed by an earlier corpus whose text it does not have and must not
+ * keep: retaining the 5-token shingles themselves would be retaining the
+ * document. So the ledger stores this pair and nothing else.
+ *
+ * The two halves answer two different questions, and only the first is exact:
+ *
+ *   * `contentSha256` decides EXACT duplication, over the same normalized token
+ *     stream {@link clusterNearDuplicates} hashes — so an id change, a reflow or
+ *     a case change cannot disguise the same document.
+ *   * `signature` supports an ESTIMATE of the 5-token-shingle Jaccard
+ *     ({@link estimateShingleJaccard}). It is the same MinHash the LSH stage
+ *     uses to PROPOSE candidates; the confirmation step of
+ *     {@link clusterNearDuplicates} compares the shingle sets exactly, and that
+ *     step is not reproducible from a signature. Anything reading this must say
+ *     "estimated Jaccard", never "Jaccard" (R7).
+ *
+ * `signature` is `null` for a text shorter than `shingleSize` tokens, which has
+ * no shingles at all; only the exact hash applies to those.
+ */
+export interface NearDuplicateFingerprint {
+  contentSha256: string;
+  signature: number[] | null;
+  shingleCount: number;
+}
+
+export function nearDuplicateFingerprint(
+  text: string,
+  options: NearDuplicateOptions = NEAR_DUPLICATE_V1_OPTIONS,
+): NearDuplicateFingerprint {
+  assertOptions(options);
+  const prepared = prepare({ id: "", text }, options);
+  return {
+    contentSha256: prepared.contentHash,
+    signature: prepared.signature === undefined ? null : [...prepared.signature],
+    shingleCount: prepared.shingles.size,
+  };
+}
+
+/**
+ * The fraction of MinHash permutations on which two signatures agree — the
+ * standard unbiased ESTIMATOR of the shingle Jaccard, not the Jaccard itself.
+ * With the frozen 128 permutations its standard error near 0.82 is about 0.034,
+ * so a pair whose true overlap sits on the threshold can estimate either side of
+ * it. Callers that bar a record on this number are running a screen, and must
+ * say so.
+ *
+ * Returns 0 when either side has no signature: a text too short to shingle is
+ * comparable only by its exact hash.
+ */
+export function estimateShingleJaccard(
+  left: readonly number[] | null,
+  right: readonly number[] | null,
+): number {
+  if (left === null || right === null) return 0;
+  if (left.length === 0 || left.length !== right.length) return 0;
+  let agreements = 0;
+  for (let i = 0; i < left.length; i += 1) {
+    if (left[i] === right[i]) agreements += 1;
+  }
+  return agreements / left.length;
+}
+
 export interface NearDuplicateResult {
   algorithm: "minhash-lsh-jaccard-v1";
   options: NearDuplicateOptions;

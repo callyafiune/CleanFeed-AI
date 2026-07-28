@@ -24,6 +24,7 @@ import {
   type FrozenCalibrationArtifact,
 } from "../calibration-pipeline.ts";
 import { emptyLabelBasisPublication } from "../dataset-manifest.ts";
+import { standInClusterReport } from "../split-audit.ts";
 import type { DatasetAudit } from "../dataset-manifest.ts";
 import type { FitReport } from "../candidate-preflight.ts";
 import {
@@ -164,6 +165,8 @@ function lightSplitArtifact(report: BenchmarkReport): SplitArtifact {
         earliestTest: 300,
       },
       leakages: [],
+      clusters: standInClusterReport(),
+      declaredAxisGaps: [],
       criticalSliceSamples: [],
       heldOutGeneratorFamilies: [asGeneratorFamily("heldout_family")],
       passed: true,
@@ -600,6 +603,8 @@ export async function buildRejectScenario(
         earliestTest: 300,
       },
       leakages: [],
+      clusters: standInClusterReport(),
+      declaredAxisGaps: [],
       criticalSliceSamples: [],
       heldOutGeneratorFamilies: [asGeneratorFamily("heldout_family")],
       passed: true,

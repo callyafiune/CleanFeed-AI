@@ -21,9 +21,13 @@ import {
 } from "./generator-family.ts";
 import { REBUILD_V3_POLICY } from "./rebuild-v3-policy.ts";
 import {
+  V3_GROUP_AXES,
   groupAxisIdentity,
+  groupAxisState,
   type BenchmarkLabel,
   type BenchmarkRecord,
+  type GroupAxisState,
+  type V3GroupAxis,
 } from "./schema.ts";
 import {
   connectedComponentRoots,
@@ -38,6 +42,93 @@ export interface SplitAuditPolicy {
   classTolerance: 0.02;
 }
 
+/**
+ * The slices the cluster report is broken down by. `partition` first, because
+ * "how many independent clusters does each partition hold" is the question E3's
+ * composition gate asks; the rest are the slices a per-stratum power calculation
+ * (D0b) needs an OFFER for.
+ */
+export const CLUSTER_SLICE_AXES = [
+  "partition",
+  "label",
+  "lengthBucket",
+  "domain",
+  "humanSourceType",
+] as const;
+
+export type ClusterSliceAxis = (typeof CLUSTER_SLICE_AXES)[number];
+
+/**
+ * How much independent grouping one axis (or the connected component) actually
+ * offers. `groups` counts the DISTINCT identities, `largest` the biggest one,
+ * `singletons` how many hold exactly one record-line, and `records` how many
+ * record-lines carried an identity at all.
+ *
+ * A degenerate reading is not a defect. After pruning, `nearDuplicate` is
+ * expected to be all singletons, and generated text has no human author, so an
+ * axis whose `groups` is 0 or whose `largest` is 1 is a DESCRIPTION of the corpus
+ * (R6). Nothing here fails on it, and nothing here computes power: C3 measures the
+ * offer, D0b computes the power and E3 applies the gate. Wiring a power gate here
+ * would create exactly the circular dependency the plan split apart.
+ */
+export interface ClusterCount {
+  groups: number;
+  largest: number;
+  singletons: number;
+  records: number;
+}
+
+export interface ClusterSliceCount {
+  slice: ClusterSliceAxis;
+  key: string;
+  count: ClusterCount;
+}
+
+export interface AxisClusterReport {
+  axis: V3GroupAxis;
+  /** Whether the splitter UNIONS on this axis (`GROUP_KEYS` in split.ts). */
+  connectivityAxis: boolean;
+  /** How many record-lines state each of R6's three states on this axis. */
+  states: Record<GroupAxisState, number>;
+  overall: ClusterCount;
+  bySlice: ClusterSliceCount[];
+}
+
+/**
+ * The count and distribution of independent clusters, per axis and per slice.
+ *
+ * This is what replaces `leakages: []` as the audit's evidence of independence.
+ * An empty leakage list over identifiers minted to be unique is a tautology — it
+ * is §3.6 of the assessment — and it is what let a corpus of 10.000 singleton
+ * "authors" pass a leakage audit. A count and a distribution can be wrong out
+ * loud.
+ */
+export interface SplitClusterReport {
+  axes: AxisClusterReport[];
+  /** The split/exposure cluster: the connected component of the axis union. */
+  connected: { overall: ClusterCount; bySlice: ClusterSliceCount[] };
+}
+
+/**
+ * A grouping axis a SOURCE declared applicable that a record-line left `unknown`.
+ *
+ * Only `unknown` is reported, and the precision is deliberate: `notApplicable` is
+ * legitimate (Wikipedia has no single author) and does NOT make a record
+ * ineligible, while `unknown` means the axis was not recovered and the record-line
+ * is ineligible (R6). `assertDeclaredAxesResolved` (benchmark/schema.ts) is
+ * STRICTER — it also refuses `notApplicable` as a contradiction of the source's
+ * own declaration — and that stricter rule belongs to the ingest path, where a
+ * record is being accepted into the corpus. The audit's question is whether the
+ * partitions can be trusted, and a legitimately inapplicable axis does not make
+ * them untrustworthy.
+ */
+export interface DeclaredAxisGap {
+  sourceId: string;
+  axis: V3GroupAxis;
+  state: "unknown";
+  records: number;
+}
+
 export interface SplitAudit {
   sizes: Record<Partition, number>;
   classFractions: Record<BenchmarkLabel, Record<Partition, number>>;
@@ -47,6 +138,9 @@ export interface SplitAudit {
     earliestTest: number;
   };
   leakages: Array<{ axis: string; value: string; partitions: Partition[] }>;
+  /** The published cluster counts. Never `undefined`: see {@link SplitClusterReport}. */
+  clusters: SplitClusterReport;
+  declaredAxisGaps: DeclaredAxisGap[];
   criticalSliceSamples: Array<{
     axis: string;
     key: string;
@@ -70,6 +164,10 @@ interface DatasetSplitInput {
 
 const PARTITIONS: readonly Partition[] = ["development", "calibration", "test"];
 const LABELS: readonly BenchmarkLabel[] = ["human", "ai", "mixed"];
+// Composite-map key separator: the unit separator cannot occur in a slice name,
+// a source id or an axis name, so no pair of parts can be re-parenthesised into
+// another pair. Written as an escape, never as a literal control byte.
+const KEY_SEP = "\u001f";
 const TARGETS: Record<Partition, number> = {
   development: 0.2,
   calibration: 0.3,
@@ -93,10 +191,23 @@ const RECALL_AXES = [
   "mixedFractionBucket",
 ] as const;
 
+/**
+ * @param declaredGroupAxes `provenance.sourceId` -> the axes that source declares
+ *   applicable (`HumanSourceRegistrationV1.declaredGroupAxes`). Passed in as a
+ *   plain map rather than imported, for the same reason
+ *   `assertDeclaredAxesResolved` takes a list: this module must not reach for the
+ *   source manifest. An absent entry means the source declared nothing to compare
+ *   against, and the audit stays silent about it — which is why the map has to be
+ *   supplied by the command that owns both halves.
+ */
 export function auditBlockedSplit(
   records: readonly BenchmarkRecord[],
   split: DatasetSplitInput,
   policy: SplitAuditPolicy,
+  declaredGroupAxes: ReadonlyMap<
+    string,
+    readonly V3GroupAxis[]
+  > = new Map(),
 ): SplitAudit {
   const byPartition: Record<Partition, readonly BenchmarkRecord[]> = {
     development: split.development,
@@ -108,6 +219,8 @@ export function auditBlockedSplit(
   const classFractions = auditClassFractions(records, byPartition);
   const cutoffs = auditCutoffs(byPartition);
   const leakages = auditLeakages(records, byPartition);
+  const clusters = auditClusters(records, byPartition);
+  const declaredAxisGaps = auditDeclaredAxes(records, declaredGroupAxes);
 
   const heldOutGeneratorFamilies = deriveHeldOutFamilies(byPartition);
   const criticalSliceSamples = auditCriticalSlices(
@@ -121,6 +234,7 @@ export function auditBlockedSplit(
     classFractions,
     cutoffs,
     leakages,
+    declaredAxisGaps,
     byPartition,
     policy,
   );
@@ -130,10 +244,36 @@ export function auditBlockedSplit(
     classFractions,
     cutoffs,
     leakages,
+    clusters,
+    declaredAxisGaps,
     criticalSliceSamples,
     heldOutGeneratorFamilies,
     passed: reasons.length === 0,
     reasons,
+  };
+}
+
+/**
+ * A stand-in cluster report for a HAND-BUILT audit object in a test fixture.
+ *
+ * `auditBlockedSplit` never returns this: it measures. It exists so a fixture that
+ * only needs a structurally valid `SplitAudit` does not have to fabricate counts,
+ * and it is deliberately all-zero so a fixture that leaks into a real assertion is
+ * obviously empty rather than plausibly wrong.
+ */
+export function standInClusterReport(): SplitClusterReport {
+  return {
+    axes: V3_GROUP_AXES.map((axis) => ({
+      axis,
+      connectivityAxis: (GROUP_KEYS as readonly string[]).includes(axis),
+      states: { known: 0, notApplicable: 0, unknown: 0 },
+      overall: { groups: 0, largest: 0, singletons: 0, records: 0 },
+      bySlice: [],
+    })),
+    connected: {
+      overall: { groups: 0, largest: 0, singletons: 0, records: 0 },
+      bySlice: [],
+    },
   };
 }
 
@@ -254,6 +394,184 @@ function auditLeakages(
     }
   }
   return leakages;
+}
+
+// --- the cluster report -----------------------------------------------------
+
+function countGroups(sizes: readonly number[]): ClusterCount {
+  let largest = 0;
+  let singletons = 0;
+  let records = 0;
+  for (const size of sizes) {
+    if (size > largest) largest = size;
+    if (size === 1) singletons += 1;
+    records += size;
+  }
+  return { groups: sizes.length, largest, singletons, records };
+}
+
+// The slice keys one record-line belongs to. `partition` comes from the caller
+// because it is a property of the SPLIT and not of the record.
+function sliceKeysOf(
+  record: BenchmarkRecord,
+  partition: Partition,
+): Record<ClusterSliceAxis, string | undefined> {
+  return {
+    partition,
+    label: record.label,
+    lengthBucket: lengthBucket(record.wordCount),
+    domain: record.domain,
+    humanSourceType: record.humanSourceType,
+  };
+}
+
+/**
+ * Counts the independent clusters this split offers, per axis and per slice, plus
+ * the connected component of the axis union — the split/exposure cluster.
+ *
+ * The per-axis identities are read through `groupAxisIdentity`, the SAME accessor
+ * the splitter and the leakage check use, so the three cannot enumerate different
+ * identities. The component count delegates to `connectedComponentRoots` for the
+ * same reason.
+ */
+function auditClusters(
+  records: readonly BenchmarkRecord[],
+  byPartition: Record<Partition, readonly BenchmarkRecord[]>,
+): SplitClusterReport {
+  const partitionOf = new Map<string, Partition>();
+  for (const partition of PARTITIONS) {
+    for (const record of byPartition[partition]) {
+      partitionOf.set(record.id, partition);
+    }
+  }
+  // Only assigned records are counted: an unassigned row is a defect the
+  // completeness check in split-artifact.ts refuses, not a cluster.
+  const assigned = records.filter((record) => partitionOf.has(record.id));
+
+  const axes = V3_GROUP_AXES.map((axis) => {
+    const states: Record<GroupAxisState, number> = {
+      known: 0,
+      notApplicable: 0,
+      unknown: 0,
+    };
+    const overall = new Map<string, number>();
+    const bySlice = new Map<string, Map<string, number>>();
+    for (const record of assigned) {
+      states[groupAxisState(record, axis)] += 1;
+      const identity = groupAxisIdentity(record, axis);
+      if (identity === undefined) continue;
+      overall.set(identity, (overall.get(identity) ?? 0) + 1);
+      const keys = sliceKeysOf(
+        record,
+        partitionOf.get(record.id) as Partition,
+      );
+      for (const slice of CLUSTER_SLICE_AXES) {
+        const key = keys[slice];
+        if (key === undefined) continue;
+        const bucketKey = `${slice}${KEY_SEP}${key}`;
+        const bucket = bySlice.get(bucketKey) ?? new Map<string, number>();
+        bucket.set(identity, (bucket.get(identity) ?? 0) + 1);
+        bySlice.set(bucketKey, bucket);
+      }
+    }
+    return {
+      axis,
+      connectivityAxis: (GROUP_KEYS as readonly string[]).includes(axis),
+      states,
+      overall: countGroups([...overall.values()]),
+      bySlice: toSliceCounts(bySlice),
+    };
+  });
+
+  const roots = connectedComponentRoots(assigned);
+  const overall = new Map<string, number>();
+  const bySlice = new Map<string, Map<string, number>>();
+  for (const record of assigned) {
+    const root = roots.get(record.id) as string;
+    overall.set(root, (overall.get(root) ?? 0) + 1);
+    const keys = sliceKeysOf(record, partitionOf.get(record.id) as Partition);
+    for (const slice of CLUSTER_SLICE_AXES) {
+      const key = keys[slice];
+      if (key === undefined) continue;
+      const bucketKey = `${slice}${KEY_SEP}${key}`;
+      const bucket = bySlice.get(bucketKey) ?? new Map<string, number>();
+      bucket.set(root, (bucket.get(root) ?? 0) + 1);
+      bySlice.set(bucketKey, bucket);
+    }
+  }
+
+  return {
+    axes,
+    connected: {
+      overall: countGroups([...overall.values()]),
+      bySlice: toSliceCounts(bySlice),
+    },
+  };
+}
+
+function toSliceCounts(
+  bySlice: ReadonlyMap<string, ReadonlyMap<string, number>>,
+): ClusterSliceCount[] {
+  const rows: ClusterSliceCount[] = [];
+  for (const [bucketKey, groups] of bySlice) {
+    const [slice, key] = bucketKey.split(KEY_SEP);
+    rows.push({
+      slice: slice as ClusterSliceAxis,
+      key,
+      count: countGroups([...groups.values()]),
+    });
+  }
+  rows.sort((a, b) => {
+    const left = CLUSTER_SLICE_AXES.indexOf(a.slice);
+    const right = CLUSTER_SLICE_AXES.indexOf(b.slice);
+    if (left !== right) return left - right;
+    return a.key < b.key ? -1 : a.key > b.key ? 1 : 0;
+  });
+  return rows;
+}
+
+/**
+ * Which axes a source DECLARED applicable were left `unknown` by its records.
+ *
+ * The join key is `provenance.sourceId`, which is the same token
+ * `HumanSourceRegistrationV1.sourceId` carries. A record of a source the map does
+ * not mention is not examined: there is no declaration to contradict, and
+ * inventing one would be inventing the very thing the declaration exists to make
+ * checkable.
+ */
+function auditDeclaredAxes(
+  records: readonly BenchmarkRecord[],
+  declaredGroupAxes: ReadonlyMap<string, readonly V3GroupAxis[]>,
+): DeclaredAxisGap[] {
+  const counts = new Map<string, number>();
+  for (const record of records) {
+    const declared = declaredGroupAxes.get(record.provenance.sourceId);
+    if (declared === undefined) continue;
+    for (const axis of declared) {
+      if (groupAxisState(record, axis) !== "unknown") continue;
+      const key = `${record.provenance.sourceId}${KEY_SEP}${axis}`;
+      counts.set(key, (counts.get(key) ?? 0) + 1);
+    }
+  }
+  return [...counts.entries()]
+    .map(([key, records_]) => {
+      const [sourceId, axis] = key.split(KEY_SEP);
+      return {
+        sourceId,
+        axis: axis as V3GroupAxis,
+        state: "unknown" as const,
+        records: records_,
+      };
+    })
+    .sort((a, b) =>
+      a.sourceId === b.sourceId
+        ? a.axis < b.axis
+          ? -1
+          : 1
+        : a.sourceId < b.sourceId
+          ? -1
+          : 1,
+    );
 }
 
 // The reserved families are those present in test yet absent from development
@@ -401,6 +719,7 @@ function collectReasons(
   classFractions: Record<BenchmarkLabel, Record<Partition, number>>,
   cutoffs: SplitAudit["cutoffs"],
   leakages: SplitAudit["leakages"],
+  declaredAxisGaps: readonly DeclaredAxisGap[],
   byPartition: Record<Partition, readonly BenchmarkRecord[]>,
   policy: SplitAuditPolicy,
 ): string[] {
@@ -409,6 +728,18 @@ function collectReasons(
   if (leakages.length > 0) {
     reasons.push(
       `grouping leakage: ${leakages.length} group value(s) cross partitions`,
+    );
+  }
+
+  // A declared axis left `unknown` is a hard failure, not a note: the source says
+  // the dependence exists, the extractor did not recover it, and a split built on
+  // an axis nobody filled is a split whose independence claim has no support. This
+  // is the ONE direction that fails — `notApplicable` does not appear here.
+  for (const gap of declaredAxisGaps) {
+    reasons.push(
+      `source ${gap.sourceId} declares axis "${gap.axis}" applicable and ` +
+        `${gap.records} record-line(s) leave it unknown: those record-lines are ` +
+        "ineligible and the axis cannot support the split",
     );
   }
 

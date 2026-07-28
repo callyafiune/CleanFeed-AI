@@ -1,15 +1,21 @@
 import { describe, expect, it } from "vitest";
 
-import { auditBlockedSplit, type SplitAuditPolicy } from "../split-audit.ts";
+import {
+  CLUSTER_SLICE_AXES,
+  auditBlockedSplit,
+  type SplitAuditPolicy,
+} from "../split-audit.ts";
 import {
   createBlockedSplit,
   type BlockedSplitPolicy,
   type DatasetSplit,
 } from "../split.ts";
-import type {
-  BenchmarkLabel,
-  BenchmarkRecord,
-  TransformationKind,
+import {
+  V3_GROUP_AXES,
+  type BenchmarkLabel,
+  type BenchmarkRecord,
+  type TransformationKind,
+  type V3GroupAxis,
 } from "../schema.ts";
 import {
   asGeneratorFamily,
@@ -523,5 +529,236 @@ describe("auditBlockedSplit", () => {
     expect(audit.leakages).toEqual([]);
     expect(audit.passed).toBe(false);
     expect(audit.reasons.some((reason) => /negative/i.test(reason))).toBe(true);
+  });
+});
+
+// --- C3: the audit publishes real cluster counts, not `leakages: []` ---------
+
+describe("the cluster report the audit publishes", () => {
+  it("counts independent clusters per axis and per slice, with the largest", () => {
+    const split = createBlockedSplit(RELEASE_DATASET, POLICY);
+    const audit = auditBlockedSplit(RELEASE_DATASET, split, AUDIT_POLICY);
+
+    // Every declared axis is reported, whether or not this corpus fills it: an
+    // axis that is absent from the report is an axis nobody can gate on.
+    expect(audit.clusters.axes.map((row) => row.axis)).toEqual([
+      ...V3_GROUP_AXES,
+    ]);
+
+    const source = audit.clusters.axes.find((row) => row.axis === "source");
+    expect(source).toBeDefined();
+    // 100 human slots + 100 ai + 100 mixed + 5*4 unseen source values.
+    expect(source!.overall.groups).toBe(320);
+    // The slot siblings really do share a source, so the distribution is a
+    // measurement rather than the tautology `leakages: []` used to be.
+    expect(source!.overall.largest).toBeGreaterThan(1);
+    expect(source!.overall.records).toBe(RELEASE_DATASET.length);
+    expect(source!.connectivityAxis).toBe(true);
+
+    // The connected component — the union of the applicable axes — is the split
+    // and exposure cluster, and it is what E3 will gate on.
+    expect(audit.clusters.connected.overall.groups).toBeGreaterThan(1);
+    expect(audit.clusters.connected.overall.groups).toBeLessThan(
+      RELEASE_DATASET.length,
+    );
+    expect(audit.clusters.connected.overall.records).toBe(
+      RELEASE_DATASET.length,
+    );
+
+    // Per slice: every declared slice axis appears, and the partition slice
+    // accounts for exactly the whole corpus.
+    const slices = new Set(
+      audit.clusters.connected.bySlice.map((row) => row.slice),
+    );
+    for (const axis of CLUSTER_SLICE_AXES) expect(slices).toContain(axis);
+    const partitionRecords = audit.clusters.connected.bySlice
+      .filter((row) => row.slice === "partition")
+      .reduce((total, row) => total + row.count.records, 0);
+    expect(partitionRecords).toBe(RELEASE_DATASET.length);
+  });
+
+  it("does not fail an axis that is legitimately all singletons or absent", () => {
+    const split = createBlockedSplit(RELEASE_DATASET, POLICY);
+    const audit = auditBlockedSplit(RELEASE_DATASET, split, AUDIT_POLICY);
+
+    const nearDuplicate = audit.clusters.axes.find(
+      (row) => row.axis === "nearDuplicate",
+    );
+    expect(nearDuplicate!.overall.largest).toBe(1);
+    expect(nearDuplicate!.overall.singletons).toBe(nearDuplicate!.overall.groups);
+
+    // `harnessVersion` is a v3 axis no v2 record carries: it reads as `unknown`
+    // for every row, and that is a description of the corpus, not a defect the
+    // audit invents a failure for (R6).
+    const harness = audit.clusters.axes.find(
+      (row) => row.axis === "harnessVersion",
+    );
+    expect(harness!.overall.groups).toBe(0);
+
+    expect(audit.passed).toBe(true);
+    expect(audit.reasons).toEqual([]);
+  });
+});
+
+// --- C3 acceptance 7: a declared axis left `unknown` fails the audit ---------
+
+const V3_SHA = "d".repeat(64);
+
+function v3Axis(
+  state: "known" | "notApplicable" | "unknown",
+  value: string,
+): { state: "known"; id: string } | { state: "notApplicable" | "unknown"; reason: string } {
+  return state === "known"
+    ? { state: "known", id: value }
+    : { state, reason: value };
+}
+
+interface V3Spec {
+  id: string;
+  createdAt: number;
+  sourceId: string;
+  authorState: "known" | "notApplicable" | "unknown";
+}
+
+// A minimal v3 human record: the only thing under test is the state of a
+// declared axis, so everything else is the honest constant shape C2 emits.
+function v3Human(spec: V3Spec): BenchmarkRecord {
+  const notOurs = "human record: no generator produced this text";
+  return {
+    schemaVersion: 3,
+    id: spec.id,
+    text: `texto ${spec.id}`,
+    normalizedTextSha256: V3_SHA,
+    label: "human",
+    language: "pt-BR",
+    platform: "generic",
+    domain: "qa-informal",
+    topic: "programacao",
+    humanSourceType: "qa-informal",
+    wordCount: 120,
+    createdAt: spec.createdAt,
+    labelBasis: "date-cutoff",
+    provenance: {
+      sourceKind: "licensed-corpus",
+      sourceId: spec.sourceId,
+      sourceRevision: "rev_001",
+      collectedAt: spec.createdAt,
+      licenseId: "cc-by-sa-4.0",
+      legalBasis: "license",
+    },
+    review: {
+      state: "automated/unreviewed",
+      automatedFilters: [
+        {
+          filter: "pii-pattern-scan",
+          implementation: "benchmark/lab/common.py:pii_hits",
+          outcome: "passed",
+        },
+      ],
+      humanAuditAbsentReason:
+        "no human reviewer was assigned to this corpus build; only the automated filters ran",
+    },
+    transformation: { kind: "none", severity: "none" },
+    groups: {
+      author: v3Axis(
+        spec.authorState,
+        spec.authorState === "known"
+          ? `person_${spec.id.padEnd(16, "0").slice(0, 16)}`
+          : spec.authorState === "notApplicable"
+            ? "collectively written: this source names no single author"
+            : "the extractor did not recover the account for this row",
+      ),
+      source: v3Axis("known", `th_${spec.id}`),
+      domainSource: v3Axis("known", "ds_ptso_qa"),
+      humanSeed: v3Axis(
+        "notApplicable",
+        "a human record is not seeded by another text",
+      ),
+      promptTemplate: v3Axis("notApplicable", notOurs),
+      generatorFamily: v3Axis("notApplicable", notOurs),
+      generatorVersion: v3Axis("notApplicable", notOurs),
+      generationLane: v3Axis("notApplicable", notOurs),
+      harnessVersion: v3Axis("notApplicable", notOurs),
+      collectionBatch: v3Axis("known", "cb_ptso_20260727"),
+      nearDuplicate: v3Axis("known", `nd_${spec.id}`),
+      derivationRoot: v3Axis(
+        "notApplicable",
+        "original human text, not derived from another record",
+      ),
+    },
+  } as unknown as BenchmarkRecord;
+}
+
+const DECLARED: ReadonlyMap<string, readonly V3GroupAxis[]> = new Map([
+  ["src_ptso", ["author", "source"] as readonly V3GroupAxis[]],
+]);
+
+function v3Split(
+  authorState: "known" | "notApplicable" | "unknown",
+): {
+  records: BenchmarkRecord[];
+  split: DatasetSplit<BenchmarkRecord>;
+} {
+  const dev = v3Human({
+    id: "d1",
+    createdAt: 1,
+    sourceId: "src_ptso",
+    authorState,
+  });
+  const cal = v3Human({
+    id: "c1",
+    createdAt: 2,
+    sourceId: "src_ptso",
+    authorState: "known",
+  });
+  const test = v3Human({
+    id: "t1",
+    createdAt: 3,
+    sourceId: "src_ptso",
+    authorState: "known",
+  });
+  return {
+    records: [dev, cal, test],
+    split: { development: [dev], calibration: [cal], test: [test] },
+  };
+}
+
+describe("a grouping axis the source declared", () => {
+  it("fails the audit when a record leaves it unknown", () => {
+    const { records, split } = v3Split("unknown");
+    const audit = auditBlockedSplit(records, split, AUDIT_POLICY, DECLARED);
+
+    expect(audit.declaredAxisGaps).toEqual([
+      {
+        sourceId: "src_ptso",
+        axis: "author",
+        state: "unknown",
+        records: 1,
+      },
+    ]);
+    expect(
+      audit.reasons.some((reason) => /declares axis "author"/.test(reason)),
+    ).toBe(true);
+    expect(audit.passed).toBe(false);
+  });
+
+  it("passes when the record states notApplicable, which is legitimate", () => {
+    const { records, split } = v3Split("notApplicable");
+    const audit = auditBlockedSplit(records, split, AUDIT_POLICY, DECLARED);
+
+    expect(audit.declaredAxisGaps).toEqual([]);
+    expect(
+      audit.reasons.some((reason) => /declares axis/.test(reason)),
+    ).toBe(false);
+  });
+
+  it("says nothing about an axis no source declared", () => {
+    const { records, split } = v3Split("unknown");
+    const audit = auditBlockedSplit(records, split, AUDIT_POLICY);
+
+    expect(audit.declaredAxisGaps).toEqual([]);
+    expect(
+      audit.reasons.some((reason) => /declares axis/.test(reason)),
+    ).toBe(false);
   });
 });
