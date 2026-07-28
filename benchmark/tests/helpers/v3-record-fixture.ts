@@ -257,6 +257,47 @@ const V3_MIXED: Record<string, unknown> = {
   },
 };
 
+// An `ecological` mixed row: observed human coauthorship, the cohort the frozen
+// table keeps apart from `mechanistic` (`materialAssistance.generationModes`,
+// `cohortsAggregated: false`). Nothing carries it yet, and that is exactly why it
+// has to be REPRESENTABLE: the only writable form must not be one that names a
+// recipe we never ran. So there is no `generation` block, and the four generation
+// axes say `notApplicable` with the reason written down — the assistance came out
+// of the coauthor's own tool, whose prompt, template digest and seed we do not
+// have and must not invent (R4).
+const ECOLOGICAL_NOT_OURS =
+  "observed coauthorship: the assistance came from the coauthor's own tool, so no recipe of ours applies";
+
+const V3_MIXED_ECOLOGICAL: Record<string, unknown> = {
+  ...structuredClone(V3_MIXED),
+  id: "m_eco_0001",
+  normalizedTextSha256: "e".repeat(64),
+  generation: undefined,
+  mixture: {
+    aiFraction: 0.5,
+    humanFraction: 0.5,
+    spans: [{ start: 0, end: 10, origin: "ai" }],
+    generationMode: "ecological",
+  },
+  groups: {
+    ...structuredClone(V3_MIXED.groups as Record<string, unknown>),
+    // The human author and the origin document are as real here as on a
+    // mechanistic row — more so, since nothing about this text was staged.
+    humanSeed: notApplicable(
+      "the coauthored document has no separate human precursor row in this corpus",
+    ),
+    promptTemplate: notApplicable(ECOLOGICAL_NOT_OURS),
+    generatorFamily: notApplicable(ECOLOGICAL_NOT_OURS),
+    generatorVersion: notApplicable(ECOLOGICAL_NOT_OURS),
+    generationLane: notApplicable(ECOLOGICAL_NOT_OURS),
+    harnessVersion: notApplicable(ECOLOGICAL_NOT_OURS),
+    derivationRoot: notApplicable(
+      "no derivation of ours produced this text: the coauthorship was observed, not executed",
+    ),
+  },
+};
+delete V3_MIXED_ECOLOGICAL.generation;
+
 /** A v3 human record whose label rests on a `date-cutoff` evidence entry. */
 export function v3Human(): Record<string, unknown> {
   return clone(V3_HUMAN);
@@ -270,6 +311,15 @@ export function v3Ai(): Record<string, unknown> {
 /** A v3 mechanistic mixed record derived from {@link v3Human}. */
 export function v3Mixed(): Record<string, unknown> {
   return clone(V3_MIXED);
+}
+
+/**
+ * A v3 `ecological` mixed record: observed coauthorship, no recipe of ours, the
+ * four generation axes `notApplicable`. It is eligible — `notApplicable` is a
+ * legitimate state and does not cost eligibility.
+ */
+export function v3MixedEcological(): Record<string, unknown> {
+  return clone(V3_MIXED_ECOLOGICAL);
 }
 
 /** The digest index a caller builds from the private manifest, never embedded. */

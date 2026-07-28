@@ -33,6 +33,7 @@ import {
   v3EvidenceIndex,
   v3Human,
   v3Mixed,
+  v3MixedEcological,
   withAxis,
   withGeneration,
 } from "./helpers/v3-record-fixture.ts";
@@ -403,12 +404,14 @@ describe("v3 derived records resolve their human parent", () => {
     expect(() => assertDerivedParentsResolve(records)).not.toThrow();
   });
 
-  it("requires a mixed record to name the parent it edited", () => {
+  it("requires a mechanistic mixed record to name the parent it edited", () => {
     expect(() =>
       validateBenchmarkRecordV3(
         withAxis(v3Mixed(), "derivationRoot", notApplicable("unknown parent")),
       ),
-    ).toThrow(/groups\.derivationRoot of a mixed record must be known/u);
+    ).toThrow(
+      /groups\.derivationRoot of a mechanistic mixed record must be known/u,
+    );
   });
 
   it("refuses a derivationRoot that names the record itself", () => {
@@ -455,10 +458,10 @@ describe("v3 generation records the lane, the harness and the effort", () => {
         decoding: {
           configurable: true,
           strategy: "sampling",
+          temperature: 0.8,
           topP: null,
           repetitionPenalty: null,
         },
-        temperature: 0.8,
         effort: { source: "not-supported", configurable: false },
       },
     );
@@ -483,11 +486,67 @@ describe("v3 generation records the lane, the harness and the effort", () => {
     // meta of EVERY provider, including `agy` and `codex`, which it invokes as
     // CLIs with no sampling flag (`CLI_PROVIDERS = {"agy","codex","gemini_cli"}`).
     // The pools on disk therefore carry a temperature that was never applied.
+    //
+    // The refusal is now STRUCTURAL and not a cross-field check: `temperature`
+    // lives inside the `configurable: true` branch of `decoding`, so there is no
+    // key for it anywhere on a CLI row. Both spellings a producer could reach for
+    // are refused as unknown fields against a closed object, which is the same
+    // guarantee stated once instead of twice.
     expect(() =>
       validateBenchmarkRecordV3(withGeneration(v3Ai(), { temperature: 0.8 })),
-    ).toThrow(
-      /generation\.temperature is forbidden when generation\.decoding\.configurable is false/u,
+    ).toThrow(/unknown field generation\.temperature/u);
+    expect(() =>
+      validateBenchmarkRecordV3(
+        withGeneration(v3Ai(), {
+          decoding: { configurable: false, temperature: 0.8 },
+        }),
+      ),
+    ).toThrow(/unknown field generation\.decoding\.temperature/u);
+  });
+
+  it("requires a configurable lane to state its temperature", () => {
+    // Requirement 8 exists to stop a reader ASSUMING nobody recorded a sampling
+    // parameter. `topP` and `repetitionPenalty` were already required-and-nullable
+    // for that reason; `temperature` was optional, so an api row could omit it and
+    // still validate — leaving exactly the ambiguity the requirement removes, on
+    // the one field the pools are known to carry a false value for.
+    const api = withGeneration(
+      withAxis(
+        withAxis(v3Ai(), "generationLane", known("gemini-api")),
+        "harnessVersion",
+        notApplicable("the API lane runs no harness binary"),
+      ),
+      {
+        provider: "gemini",
+        decoding: {
+          configurable: true,
+          strategy: "sampling",
+          topP: null,
+          repetitionPenalty: null,
+        },
+        effort: { source: "not-supported", configurable: false },
+      },
     );
+    expect(() => validateBenchmarkRecordV3(api)).toThrow(
+      /generation\.decoding\.temperature is required \(use null when the provider default applied\)/u,
+    );
+    // `null` is accepted and MEANS something different from an absent key: the
+    // provider's own default applied. That distinction is the point of the field.
+    const withDefault = withGeneration(api, {
+      decoding: {
+        configurable: true,
+        strategy: "sampling",
+        temperature: null,
+        topP: null,
+        repetitionPenalty: null,
+      },
+    });
+    const parsed = validateBenchmarkRecordV3(withDefault);
+    expect(
+      parsed.generation?.decoding.configurable === true
+        ? parsed.generation.decoding.temperature
+        : "absent",
+    ).toBeNull();
   });
 
   it("refuses a decoding block that contradicts its lane", () => {
@@ -497,6 +556,7 @@ describe("v3 generation records the lane, the harness and the effort", () => {
           decoding: {
             configurable: true,
             strategy: "sampling",
+            temperature: 0.8,
             topP: 0.95,
             repetitionPenalty: null,
           },
@@ -606,11 +666,92 @@ describe("v3 generation records the lane, the harness and the effort", () => {
     ).toThrow(/generation must record exactly one of seed or seedNullReason/u);
   });
 
-  it("requires a mixed record to record the recipe that produced its AI spans", () => {
+  it("requires a MECHANISTIC mixed record to record the recipe that produced its AI spans", () => {
     const record = v3Mixed();
     delete record.generation;
     expect(() => validateBenchmarkRecordV3(record)).toThrow(
       /generation is required when label is mixed/u,
+    );
+  });
+});
+
+// ---------------------------------------------------------------------------
+// The two mixed COHORTS are not one class. `mechanistic` edits are ours and their
+// recipe is provenance the row must carry; `ecological` coauthorship was observed
+// and no recipe of ours exists. Requiring a recipe of every mixed row made the
+// only writable form of an observed row one that names our `agy` lane and our
+// prompt template — fabricated provenance (R4), and the exact substitution
+// pressure this schema exists to remove. The frozen table keeps the cohorts apart
+// (`materialAssistance.generationModes`, `cohortsAggregated: false`) and live code
+// reads `ecological` in metrics.ts, slices.ts and commands/fit.ts, so v3 has to be
+// able to HOLD one.
+// ---------------------------------------------------------------------------
+
+describe("the mixed cohort decides what provenance a row must carry", () => {
+  it("accepts an ecological mixed record with no recipe and no generation axis", () => {
+    const record = validateBenchmarkRecordV3(v3MixedEcological());
+    expect(record.label).toBe("mixed");
+    expect(record.mixture?.generationMode).toBe("ecological");
+    expect(record.generation).toBeUndefined();
+    for (const axis of [
+      "promptTemplate",
+      "generatorFamily",
+      "generatorVersion",
+      "generationLane",
+      "harnessVersion",
+    ] as const) {
+      expect(record.groups[axis].state).toBe("notApplicable");
+    }
+    // `notApplicable` costs nothing: the row is a real observation, not a gap.
+    expect(recordEligibility(record).eligible).toBe(true);
+  });
+
+  it("accepts an ecological mixed record whose coauthor's tool is unknown", () => {
+    // The other honest state: the coauthor used SOMETHING and we did not recover
+    // which. That is `unknown` and it costs the record its eligibility (R6) —
+    // never a synthesized lane, and never `notApplicable`, which would assert no
+    // tool applied.
+    const record = validateBenchmarkRecordV3(
+      withAxis(
+        v3MixedEcological(),
+        "generationLane",
+        unknownAxis("the coauthor's tool was not recorded during observation"),
+      ),
+    );
+    expect(recordEligibility(record).eligible).toBe(false);
+  });
+
+  it("refuses a generation axis claimed as known on an ecological row", () => {
+    expect(() =>
+      validateBenchmarkRecordV3(
+        withAxis(v3MixedEcological(), "generationLane", known("agy")),
+      ),
+    ).toThrow(
+      /groups\.generationLane of an ecological mixed record must be notApplicable or unknown, received known/u,
+    );
+  });
+
+  it("refuses an ecological row that names a recipe of ours", () => {
+    const record = v3MixedEcological();
+    record.generation = (v3Mixed() as { generation: unknown }).generation;
+    expect(() => validateBenchmarkRecordV3(record)).toThrow(
+      /generation is forbidden when mixture\.generationMode is ecological/u,
+    );
+  });
+
+  it("still refuses a mechanistic row whose generation axes are notApplicable", () => {
+    // The other direction of the same rule: relaxing `mixed` must not relax the
+    // cohort whose recipe IS ours and IS on disk.
+    expect(() =>
+      validateBenchmarkRecordV3(
+        withAxis(
+          v3Mixed(),
+          "promptTemplate",
+          notApplicable("no template recorded"),
+        ),
+      ),
+    ).toThrow(
+      /groups\.promptTemplate of a mechanistic mixed record must be known, received notApplicable/u,
     );
   });
 });

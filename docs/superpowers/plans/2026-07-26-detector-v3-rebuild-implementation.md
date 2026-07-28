@@ -3171,8 +3171,15 @@ O schema fechado também passa a representar a **base de evidência do rótulo h
 referência de evidência ausente ou divergente; recusa derivado cujo pai humano não
 resolve; e os testes provam as cinco recusas e as contagens do manifesto.
 
-**Verificar:** `vitest run benchmark/tests/schema.test.ts
-benchmark/tests/dataset-manifest.test.ts benchmark/tests/source-manifest.test.ts`.
+**Verificar:** `vitest run benchmark/tests/schema-v3.test.ts
+benchmark/tests/schema.test.ts benchmark/tests/dataset-manifest.test.ts
+benchmark/tests/source-manifest.test.ts benchmark/tests/rebuild-v3-policy.test.ts`.
+
+> **ERRATA da linha acima (rodada de correção).** O texto original nomeava só
+> `schema.test.ts`, que ficou **intocado** — a metade v3 foi para o arquivo novo
+> `benchmark/tests/schema-v3.test.ts`. O comando como estava passava sem exercitar
+> nenhuma das cinco recusas. `rebuild-v3-policy.test.ts` entrou porque a tabela de
+> lanes que o schema lê vive lá.
 
 #### C1 — como ficou (executado em 2026-07-28)
 
@@ -3194,10 +3201,38 @@ Entregue. As cinco recusas estão provadas em `benchmark/tests/schema-v3.test.ts
 2. **`groups` virou objeto de três estados, e isso quebrou 14 leituras — de propósito.**
    Cada consumidor que lia `record.groups[eixo]` como string passou a falhar em
    compilação, o que é o comportamento desejado: a lista dos que precisavam saber da
-   mudança saiu do compilador, não de uma busca textual. Todos passam agora por
+   mudança saiu do compilador, não de uma busca textual. As migradas passam por
    `groupAxisIdentity`, que despacha pela FORMA do valor (string = identidade v2, objeto =
    eixo v3) e não por `schemaVersion` — assim o leitor é total sobre as duas versões e
    funciona num registro em construção (C2).
+
+   > **ERRATA (rodada de correção, 2026-07-28).** A frase original dizia que **todas**
+   > as leituras passaram a ir por `groupAxisIdentity`. Era falso, e o motivo é o mais
+   > importante desta errata: **a rede do compilador não pega tudo.**
+   > `record.groups.generatorFamily === family` **compila** na união, porque o ramo v2
+   > do eixo É um `GeneratorFamily`, então duas comparações em
+   > `dataset-manifest.ts:690/694` (bloco de cobertura de família reservada dentro de
+   > `sealDataset`) ficaram sem migrar e são **sempre falsas** num registro v3, cujo
+   > valor é `{ state, id }`. Consequências medidas num corpus v3 de release:
+   > `positives` contava 0 para toda família reservada, logo um corpus completo era
+   > recusado com `requires at least 200 eligible positives` estando os 200 presentes;
+   > e `appearsInHuman` nunca podia ser verdadeiro, logo a checagem de vazamento estava
+   > morta em silêncio. É a classe de defeito que A4 consertou (duas grafias que nunca
+   > se encontram). Nada pegou porque
+   > `benchmark/tests/helpers/generate-synthetic-release-corpus.ts` está fixado em
+   > `BenchmarkRecordV2`, então **nenhum teste selava corpus v3 de release**. Corrigido:
+   > as duas comparações vão por `generatorFamilyOf`, e há quatro testes novos em
+   > `dataset-manifest.test.ts` (contagem com 200 positivos v3, o piso recusando 199,
+   > o vazamento v2 ainda recusado, e o vazamento v3 recusado **antes**, na regra de
+   > eixo). A mutação de volta para o `===` cru mata o primeiro.
+   >
+   > Uma nota honesta sobre a segunda comparação: a mutação dela **sobrevive** aos
+   > testes e não há como matá-la, porque o único caminho onde ela é alcançável é v2 —
+   > onde as duas grafias concordam — e em v3 `AXIS_STATE_RULE` só admite
+   > `notApplicable` em `generatorFamily` de linha humana, então o registro é recusado
+   > antes de `sealDataset` ver o corpus. Migrar as duas mesmo assim é o certo: deixar
+   > uma leitura falsa-por-construção ao lado de uma correta é exatamente a armadilha
+   > que esta errata descreve.
 3. **`authorClusterKey` falha alto em corpus v3, e isso é o resultado correto.**
    `metrics.ts` e `commands/fit.ts` usavam `groups.author` como unidade de reamostragem.
    Em v3, `author` é `notApplicable` em **todo** registro gerado por regra (texto de IA
@@ -3228,6 +3263,25 @@ Entregue. As cinco recusas estão provadas em `benchmark/tests/schema-v3.test.ts
    em registros onde nenhuma temperatura foi aplicada. O schema recusa. `effort` carrega
    `scale` junto do `level` por construção — não há como gravar um sem o outro — e
    `compareEffortWithinScale` recusa comparação entre escalas.
+
+   > **ERRATA (rodada de correção).** Na primeira entrega a frase acima não valia para
+   > `temperature`: `topP` e `repetitionPenalty` estavam dentro do ramo
+   > `configurable: true` e **obrigatórios-com-`null`**, mas `temperature` era opcional
+   > **no topo de `generation`**, recusada por checagem entre campos. Duas consequências:
+   > a promessa da união ("os campos de amostragem não existem naquele ramo") era falsa
+   > justamente para o campo em que os pools carregam valor errado, e um registro de
+   > `gemini-api` podia **omitir** a temperatura e validar — a ambiguidade que o item 8
+   > do brief existe para remover ("em vez de deixar o leitor supor que ninguém os
+   > registrou"). Corrigido: `temperature` entrou no ramo `configurable: true` via
+   > `nullableFiniteNumber`, saiu de `V3_GENERATION_KEYS` e de `GenerationV3`, e a recusa
+   > numa lane de CLI passou a ser **estrutural** (campo desconhecido contra objeto
+   > fechado) nas duas grafias possíveis. `null` continua significando "o default do
+   > provedor valeu", que é afirmação diferente de chave ausente. Um teste novo recusa
+   > o registro `gemini-api` sem temperatura e morre com a mutação de volta para
+   > `optionalFiniteNumber`. Efeito colateral necessário: `corpus-source-audit.ts` lia
+   > `generation.temperature` cru — deixou de compilar, como devia — e agora usa o
+   > acessor `recipeTemperature` de `schema.ts`, que despacha por versão do mesmo jeito
+   > que `groupAxisIdentity`.
 7. **`effortSources` de `agy` é `["model-id", "not-supported"]`, e uma versão anterior do
    parser recusava justamente isso.** Escrevi um guarda dizendo que `not-supported` não
    pode acompanhar outra fonte, e a linha congelada do `agy` falhou nele na hora. O guarda
@@ -3242,10 +3296,51 @@ Entregue. As cinco recusas estão provadas em `benchmark/tests/schema-v3.test.ts
    `parafrase` reescreve aquele texto (os dois conhecidos). Colapsar os dois inventaria uma
    derivação ou perderia o seed. A recusa 5 é sobre `humanSeed`, com três falhas distintas
    (pai ausente do dataset, pai não humano, pai humano sem `labelBasis`).
-9. **`generation` passou a ser obrigatório em `mixed`.** v2 deixava opcional, e por isso
-   uma linha mista podia nomear `generatorFamily` sem receita atrás. Os trechos de IA de um
-   misto saíram de um gerador; `mixed_from_pairs.jsonl` já grava `provider`, `model` e
-   `generatedAt` por linha, então o dado sustenta a exigência.
+9. **`generation` passou a ser obrigatório no misto MECANÍSTICO — e proibido no
+   ecológico.** v2 deixava opcional, e por isso uma linha mista podia nomear
+   `generatorFamily` sem receita atrás. Os trechos de IA de um misto **mecanístico**
+   saíram de um gerador **nosso**; `mixed_from_pairs.jsonl` já grava `provider`, `model` e
+   `generatedAt` por linha, então o dado sustenta a exigência **nessa coorte**.
+
+   > **ERRATA (rodada de correção).** A primeira entrega exigiu `generation` em **toda**
+   > linha `mixed` e, junto com `promptTemplate`/`generatorFamily`/`generatorVersion`/
+   > `generationLane` = `mixed: ["known"]`, tornou uma linha **`ecological`**
+   > irrepresentável. Medido com sondagem: sem receita ela é recusada com
+   > `generation is required when label is mixed`; com os quatro eixos honestamente em
+   > `notApplicable`/`unknown` é recusada com
+   > `groups.promptTemplate of a mixed record must be known`; **só é aceita** carregando
+   > a nossa receita `agy`, o nosso `pt_parafrase_v1` e a nossa lane. Ou seja: a única
+   > forma escrevível de coautoria observada era uma que nomeia recipe que nunca rodamos
+   > — proveniência inventada (**R4**), e exatamente a pressão de substituição que este
+   > schema existe para eliminar. A evidência citada acima
+   > (`mixed_from_pairs.jsonl` grava provider/model por linha) é sobre a coorte
+   > mecanística e **não** se transfere. `ecological` está congelado no glossário do
+   > contrato e em `materialAssistance.generationModes`, com caminhos vivos em
+   > `metrics.ts:1120/1154/2712`, `slices.ts:173` e `commands/fit.ts:305`.
+   >
+   > Corrigido condicionando à **coorte** e não à classe. `AXIS_STATE_RULE` deixou de ser
+   > indexada por `BenchmarkLabel` e passou a ser indexada por `V3AxisClass`
+   > (`human` | `ai` | `mixed-mechanistic` | `mixed-ecological`), derivada por
+   > `v3AxisClass(label, mixture?.generationMode)` — exportada porque C2 constrói a linha
+   > e C3 audita, e duas cópias da derivação divergiriam. A `mixture` passou a ser
+   > validada **antes** dos eixos, porque é ela que decide a coorte. Em
+   > `mixed-ecological`: `generation` é **proibido** (nomear receita nossa seria inventar
+   > proveniência) e os quatro eixos de geração admitem `notApplicable` (nenhuma
+   > ferramenta nossa rodou) ou `unknown` (a ferramenta do coautor não foi registrada, ao
+   > preço da elegibilidade), nunca `known`. `humanSeed` e `derivationRoot` também
+   > abriram nessa coorte, e por medida do mesmo problema: um documento coautorado
+   > observado **não tem** linha precursora separada neste corpus, então exigir `known`
+   > repetiria o defeito numa casa vizinha. `author` e `source` continuam abertos nas duas
+   > coortes. As mensagens agora nomeiam a coorte ("of a mechanistic mixed record", "of an
+   > ecological mixed record"). Cinco testes novos, incluindo a direção contrária (linha
+   > mecanística sem receita continua recusada; eixo de geração `notApplicable` numa
+   > mecanística continua recusado). Mutações que morrem: `mixed-ecological` de volta
+   > para `["known"]`, e a exigência de receita de volta para `label === "mixed"`.
+   >
+   > Residual honesto: se algum dia uma amostra observada trouxer a ferramenta
+   > **autodeclarada** pelo coautor, ela **não** cabe em `generation` — que exige
+   > `promptSha256`, `promptTemplateDigest` e seed que nunca teremos. Registrar isso pede
+   > campo próprio, e é emenda de esquema, não desta rodada.
 10. **`generationLanes` foi para `benchmark/rebuild-v3-policy.json`,** como o item 8 do
     brief manda, com `channel`, `decodingConfigurable`, `effortConfigurable`,
     `effortScale`, `effortLevels` e `effortSources` por lane. `harnessVersionRequired`
@@ -3261,12 +3356,72 @@ Entregue. As cinco recusas estão provadas em `benchmark/tests/schema-v3.test.ts
     Duas reconstruções manuais da identidade do audit
     (`calibration-pipeline.ts`, `candidate-preflight.ts`) tiveram de receber a chave; são
     duplicação pré-existente da forma do audit e ficam registradas aqui como risco.
+
+    > **CONSEQUÊNCIA NÃO DECLARADA na primeira entrega, agora medida.** Chave obrigatória
+    > nova **invalida todo audit já selado em disco**. Sondagem:
+    > `parseDatasetAudit` sobre
+    > `benchmark/data/corpus-build/out/validate/dataset-audit.json` devolve
+    > `DATASET_SCHEMA_INVALID: dataset audit is missing key "labelBasisCounts"`, e o mesmo
+    > para `benchmark/work/smoke/validate/dataset-audit.json`. Logo `split`, `fit` e
+    > `publish-evidence` — os três chamadores de `parseDatasetAudit` — **falham** sobre
+    > esses arquivos até que `validate` seja rodado de novo. Meu relatório anterior dizia
+    > apenas que `publishLabelBasis` "devolve zeros para todo corpus real, que é o valor
+    > honesto", o que lê como "sem impacto no dado existente" e omitia a quebra. Isso
+    > contradiz em parte a justificativa escrita no cabeçalho de `schema.ts` para manter o
+    > ramo v2 byte-idêntico ("um corpus que ninguém lê não pode nem ser auditado"): os
+    > bytes do registro foram preservados, os do artefato de auditoria não.
+    >
+    > **Obrigação operacional:** rodar `validate` para regerar `dataset-audit.json`
+    > **antes** de qualquer comando que o leia. Os dois arquivos são saída de build e
+    > ignorados pelo Git (`.gitignore:25` e `:28`), então nada versionado se perde e a
+    > regeneração é determinística a partir do corpus.
+    >
+    > **Por que NÃO aceitei um audit sem a chave** (a alternativa (b) da revisão):
+    > medida, ela não funciona. Preenchendo a chave com `emptyLabelBasisPublication()`
+    > dentro de `parseDatasetAudit`, o digest recomputado passa a incluir a chave e
+    > **não** bate com o `auditDigest` gravado — medido:
+    > armazenado `970f14c9…`, recomputado com bloco vazio `6973c98f…`, iguais? `false`.
+    > Fazê-la funcionar exigiria uma "safra" de digest que recomputa **sem** a chave
+    > quando ela vem ausente, e então apagar a chave passaria a ser um rebaixamento
+    > silencioso do selo. Um selo com duas entradas canônicas é um selo mais fraco, então
+    > a saída é declarar a consequência, não relaxar a verificação (**R3**).
 12. **Novo motivo de recusa de fonte: `no-declared-group-axis`.** Cada fonte declara em
     `declaredGroupAxes` os eixos que consegue preencher (SO → thread e autor; Wikipédia →
     página; B2W → produto e avaliador; Carolina → arquivo-membro), e
     `assertDeclaredAxesResolved` (lado do registro) compara declaração contra
     preenchimento — é o que C3 chama. Uma fonte que declara eixo nenhum não sustenta split
     agrupado: é o estado em que o corpus v2 estava ao reportar `leakages: []`.
+
+Itens acrescentados na rodada de correção de spec (2026-07-28):
+
+13. **Três eixos só admitem `known`, e agora o argumento está escrito no código.**
+    `domainSource`, `collectionBatch` e `nearDuplicate` recusam `unknown` em vez de aceitá-lo
+    e marcar a linha inelegível, o que divergia do requisito 1 e de **R6** como escritos
+    ("valor desconhecido → registro inelegível") e era o **oposto** do argumento que a
+    própria entrega fez para `harnessVersion`. A assimetria é defensável e a defesa passou a
+    viver ao lado de `AXIS_STATE_RULE`: as três identidades saem da **nossa própria**
+    extração e poda — o domínio é decidido pelo extrator que leu a fonte, o batch é atribuído
+    pelo montador que escreveu a linha, e o cluster de quase-duplicata sai de `near_dupes.py`
+    sobre o próprio corpus —, logo `unknown` ali não é lacuna do mundo e sim defeito de um
+    pipeline que controlamos, e aceitá-lo entregaria linha inelegível onde o resultado certo
+    é build vermelho. O argumento **não** se transfere para `harnessVersion`, cujo valor vive
+    num binário de terceiro que pode já ter sido atualizado além da recuperação quando a
+    linha é montada: ali a lacuna é real, então `unknown` é aceito e cobrado em elegibilidade.
+    **Correção de contagem:** o relatório anterior e este parágrafo diziam "dois eixos" e
+    listavam três. São **três**.
+14. **Os três guardas de nível de dataset não são chamados por nenhum caminho de produção,
+    e isso agora está dito no código.** `assertDeclaredAxesResolved`,
+    `assertLabelEvidenceResolves` e `assertDerivedParentsResolve` são exportados e testados,
+    e nada em `benchmark/**/*.ts` fora de teste os chama. Logo as recusas 4 e 5 do brief
+    estão provadas **contra a função exportada**, não sobre caminho de pipeline: um JSONL
+    cujos derivados apontam para pai ausente ou não humano hoje é parseado sem reclamação, e
+    nada resolve `labelEvidenceRef` contra o índice do manifesto privado. Cada guarda ganhou
+    um bloco dizendo isso e nomeando o dono da fiação (**C3**, a tarefa que lê
+    `private/source-manifest.json`) e **por que aqui não dá**: `parseBenchmarkDataset` recebe
+    um arquivo que pode ser **uma partição**, e um pai legitimamente mora em outra, então
+    chamar `assertDerivedParentsResolve` lá recusaria arquivo válido; e construir o índice de
+    evidência dentro de `schema.ts` faria este módulo alcançar o manifesto privado, que é
+    justamente o que a fronteira existe para impedir.
 
 **Não feito, e por quê:** métricas fatiadas por lane são de A6/E3 (o brief diz para
 registrar em vez de implementar); o keyring HMAC é C3 — aqui só o contrato do campo exige a

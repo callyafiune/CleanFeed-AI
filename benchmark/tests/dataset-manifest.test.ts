@@ -645,3 +645,141 @@ describe("labelBasisCounts in the sealed audit", () => {
     }
   });
 });
+
+// ---------------------------------------------------------------------------
+// C1 correction round — the held-out coverage block must read the CANONICAL
+// family through the version-aware accessor.
+//
+// `record.groups.generatorFamily === family` typechecks on the union (the v2 arm
+// overlaps `GeneratorFamily`), so the "every unmigrated read breaks at compile
+// time" net did not catch these two comparisons, and they are always false on a
+// v3 record: the value there is `{ state, id }`. The consequence on a v3 release
+// corpus is a misleading refusal — "requires at least 200 eligible positives"
+// with all 200 positives present — and a silently dead leak check. Same defect
+// class A4 fixed: two spellings that never meet.
+//
+// Nothing caught it because the synthetic release-corpus helper is pinned to
+// `BenchmarkRecordV2`, so no test sealed a v3 release corpus at all. These do.
+// ---------------------------------------------------------------------------
+
+describe("held-out generator-family coverage on a release corpus", () => {
+  const HELD_OUT = asGeneratorFamily("gemini-3_5-flash-medium");
+
+  const releaseManifest: DatasetManifest = {
+    ...validManifest,
+    scientificUse: "release",
+    heldOutGeneratorFamilies: [HELD_OUT],
+    licenses: [
+      {
+        id: "cc-by-sa-4.0",
+        name: "Creative Commons Attribution-ShareAlike 4.0",
+        source: "https://creativecommons.org/licenses/by-sa/4.0/",
+        evaluationUseApproved: true,
+        redistribution: "not-published",
+        notice: "Atribuição e share-alike obrigatórios.",
+      },
+      {
+        id: "autoria-propria-v1",
+        name: "Autoria própria do operador",
+        source: "declaração do operador",
+        evaluationUseApproved: true,
+        redistribution: "not-published",
+        notice: "Gerado pelo próprio operador para avaliação interna.",
+      },
+    ],
+  };
+
+  // The floor is 200 positives per reserved family, so the fixture has to reach
+  // it: a smaller corpus could not tell "the accessor reads nothing" apart from
+  // "the corpus is thin", which is exactly the confusion the defect produced.
+  function v3AiRow(n: number): BenchmarkRecord {
+    const raw = v3Ai();
+    raw.id = `a_agy_${n.toString().padStart(4, "0")}`;
+    raw.normalizedTextSha256 = n.toString(16).padStart(64, "0");
+    return validateBenchmarkRecordV3(raw);
+  }
+
+  function releasePolicy(aiCount: number) {
+    return {
+      counts: { human: 1, ai: aiCount, mixed: 0 },
+      requiredHumanSourceTypes: ["qa-informal"],
+      requiredHardNegativeFamilies: [],
+    };
+  }
+
+  function v3ReleaseCorpus(aiCount: number): BenchmarkRecord[] {
+    const records: BenchmarkRecord[] = [validateBenchmarkRecordV3(v3Human())];
+    for (let n = 1; n <= aiCount; n += 1) records.push(v3AiRow(n));
+    return records;
+  }
+
+  it("counts the positives of a held-out family on v3 records", async () => {
+    const audit = await sealDataset(
+      releaseManifest,
+      v3ReleaseCorpus(200),
+      releasePolicy(200),
+      validFileDigests,
+    );
+    expect(audit.releaseEligible).toBe(true);
+    // The tally already went through `generatorFamilyOf`; the FLOOR now reads the
+    // same value, so the two agree by construction instead of by coincidence.
+    expect(audit.generatorFamilies[HELD_OUT]).toBe(200);
+  });
+
+  it("still refuses a held-out family that misses the positives floor", async () => {
+    // The counting direction, pinned from below: 199 v3 positives are counted as
+    // 199 and refused, not counted as 0 and refused for the wrong reason.
+    await expect(
+      sealDataset(
+        releaseManifest,
+        v3ReleaseCorpus(199),
+        releasePolicy(199),
+        validFileDigests,
+      ),
+    ).rejects.toThrow(/requires at least 200 eligible positives/u);
+  });
+
+  it("refuses a v2 human record that names a reserved family", async () => {
+    // The leak check, on the version where it is reachable. A v2 record carries a
+    // bare string in the axis, which `generatorFamilyOf` returns unchanged, so
+    // migrating the comparison does not weaken the v2 guard.
+    const leaked: BenchmarkRecord = {
+      ...human,
+      groups: {
+        ...human.groups,
+        generatorFamily: asGeneratorFamily("heldout_family"),
+      },
+    };
+    await expect(
+      sealDataset(
+        { ...validManifest, scientificUse: "release" },
+        [leaked, ai, mixed],
+        {
+          counts: { human: 1, ai: 1, mixed: 1 },
+          requiredHumanSourceTypes: ["qa-informal"],
+          requiredHardNegativeFamilies: ["formulaic"],
+        },
+        validFileDigests,
+      ),
+    ).rejects.toThrow(/must appear only in ai or mixed records/u);
+  });
+
+  it("refuses the same leak EARLIER on a v3 record, at the axis rule", () => {
+    // On v3 the leak cannot reach `sealDataset`: `AXIS_STATE_RULE` allows only
+    // `notApplicable` for `generatorFamily` on a human row, so the record itself
+    // is refused. The coverage guard above is therefore v2's last line, and the
+    // v3 guarantee is the stronger one — stated here so a later reader does not
+    // read the audit check as the only thing standing between a reserved family
+    // and the negatives.
+    expect(() =>
+      validateBenchmarkRecordV3(
+        withAxis(v3Human(), "generatorFamily", {
+          state: "known",
+          id: "gemini-3_5-flash-medium",
+        }),
+      ),
+    ).toThrow(
+      /groups\.generatorFamily of a human record must be notApplicable/u,
+    );
+  });
+});

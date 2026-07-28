@@ -25,7 +25,11 @@ import {
   type CorpusSourceReadinessReport,
   type SourceReadinessDigestInput,
 } from "../contracts/source-readiness.ts";
-import { groupAxisIdentity, type BenchmarkRecord } from "./schema.ts";
+import {
+  groupAxisIdentity,
+  recipeTemperature,
+  type BenchmarkRecord,
+} from "./schema.ts";
 import {
   computeReviewedSourceManifestDigest,
   licenseDescribesPublicBase,
@@ -232,7 +236,11 @@ function recipeMatchesBatch(
     generation.model === batch.model &&
     generation.version === batch.version &&
     generation.promptSha256 === batch.promptTemplateDigest &&
-    (generation.temperature ?? null) === batch.temperature &&
+    // Read through the version-aware accessor: v2 keeps the temperature at the top
+    // of `generation`, v3 inside the `configurable: true` branch of `decoding`, and
+    // a raw `generation.temperature` no longer compiles against the union — which is
+    // the compile-time net doing its job rather than an inconvenience.
+    recipeTemperature(generation) === batch.temperature &&
     generation.generatedAt === batch.generatedAt &&
     (generation.seed ?? null) === batch.seed
   );

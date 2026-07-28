@@ -1063,6 +1063,15 @@ export type V3Groups = {
  * Inside `configurable: true`, `null` means "we did not set it, the provider's
  * default applied" — which is a different statement from "this lane has no such
  * knob", and the two are now told apart by the branch rather than by a comment.
+ * Every sampling parameter is REQUIRED-and-nullable for that reason: an absent key
+ * would leave a reader to assume nobody recorded it, which is the ambiguity this
+ * block exists to remove.
+ *
+ * `temperature` lives HERE and not beside `seed` at the top of `generation`. In the
+ * first C1 round it was a top-level optional refused by a cross-field check, which
+ * meant the union's promise that the sampling fields "do not exist on that branch"
+ * was false for the one field the pools are known to carry a wrong value for, and
+ * an api row could omit it entirely and still validate.
  */
 export type DecodingConfig =
   | { configurable: false }
@@ -1070,6 +1079,7 @@ export type DecodingConfig =
       configurable: true;
       /** The provider's own word for the decoding strategy, when it names one. */
       strategy: string | null;
+      temperature: number | null;
       topP: number | null;
       repetitionPenalty: number | null;
     };
@@ -1117,8 +1127,13 @@ export interface GenerationV3 {
   generatedAt: number;
   decoding: DecodingConfig;
   effort: EffortConfig;
-  /** Present only on a lane that exposes a sampling seed. */
-  temperature?: number;
+  /**
+   * Present only on a lane that exposes a sampling seed. The sampling PARAMETERS
+   * are not here — they live inside {@link DecodingConfig}, on the branch of a lane
+   * that has them. `seed` stays at this level because `agy` exposes none while
+   * still being a real recipe, so its absence needs a written reason
+   * (`seedNullReason`) rather than a branch.
+   */
   seed?: string;
   /** Why there is no seed. Exactly one of `seed`/`seedNullReason` is present. */
   seedNullReason?: string;
@@ -1240,13 +1255,16 @@ const V3_GENERATION_KEYS = [
   "generatedAt",
   "decoding",
   "effort",
-  "temperature",
   "seed",
   "seedNullReason",
 ];
+// `temperature` is deliberately NOT in V3_GENERATION_KEYS: the pools carry it at
+// this level and the refusal for a CLI row is now the closed-object one against
+// `{ configurable: false }`, so the guarantee is stated once, structurally.
 const DECODING_CONFIGURABLE_KEYS = [
   "configurable",
   "strategy",
+  "temperature",
   "topP",
   "repetitionPenalty",
 ];
@@ -1272,10 +1290,59 @@ const OBSERVED_PROCESS_REF_KEYS = [
 ];
 
 /**
+ * WHICH class a record's axes are judged against. NOT the same thing as
+ * {@link BenchmarkLabel}, and the difference is load-bearing rather than tidy:
+ * `mixed` covers TWO cohorts the frozen table refuses to pool
+ * (`materialAssistance.generationModes`, `cohortsAggregated: false`), and they
+ * have opposite provenance for the four generation axes.
+ *
+ *   * `mixed-mechanistic` — WE chose and executed the edits. The recipe is ours,
+ *     it is on disk (`mixed_from_pairs.jsonl` records provider, model and
+ *     `generatedAt` per row), so the row must carry it.
+ *   * `mixed-ecological` — observed human coauthorship. The assistance came out of
+ *     the COAUTHOR's tool: we have no prompt, no template digest, no seed and no
+ *     lane. Requiring the four axes `known` here would leave exactly one writable
+ *     form for an observed row — one naming our `agy` lane and our
+ *     `pt_parafrase_v1` template — which is fabricated provenance (R4) and the
+ *     substitution pressure this schema exists to remove. Nothing carries the
+ *     cohort yet; that is why representability has to be checked by test and not
+ *     by the corpus.
+ */
+export type V3AxisClass =
+  "human" | "ai" | "mixed-mechanistic" | "mixed-ecological";
+
+/** How each class is NAMED in a refusal, so the message says which cohort. */
+const AXIS_CLASS_LABEL = {
+  human: "a human record",
+  ai: "an ai record",
+  "mixed-mechanistic": "a mechanistic mixed record",
+  "mixed-ecological": "an ecological mixed record",
+} as const satisfies Record<V3AxisClass, string>;
+
+/**
+ * The class of a record, from its label and — for `mixed` — its cohort. Exported
+ * because C2 needs the same derivation when it builds a row and C3 when it audits
+ * one, and two copies of this mapping would drift.
+ */
+export function v3AxisClass(
+  label: BenchmarkLabel,
+  generationMode: GenerationMode | undefined,
+): V3AxisClass {
+  if (label !== "mixed") return label;
+  // `mixture` is required on `mixed` and validated BEFORE the axes, so the mode is
+  // present by the time this is called. `mechanistic` is the fail-closed default
+  // for the impossible case because it is the STRICTER row: defaulting to
+  // `ecological` would silently drop the recipe requirement.
+  return generationMode === "ecological"
+    ? "mixed-ecological"
+    : "mixed-mechanistic";
+}
+
+/**
  * WHICH states each axis may take, per class. A decision table and not a list of
  * `if`s: `satisfies` makes an axis added to {@link V3_GROUP_AXES} without a rule a
- * compile error, and makes a class added to {@link BenchmarkLabel} one too. No
- * axis is permissive by default.
+ * compile error, and makes a class added to {@link V3AxisClass} one too. No axis is
+ * permissive by default.
  *
  * The entries that carry an argument rather than an obvious answer:
  *
@@ -1284,73 +1351,119 @@ const OBSERVED_PROCESS_REF_KEYS = [
  *     `author: "author_gen_001"` on a generated record — a person-shaped token for
  *     a row that has no person — and that is precisely how an axis becomes a
  *     10.000-singleton set nobody questions.
- *   * `author` and `source` stay open on `mixed`, because a mixed record IS a
- *     human text with generated stretches: its human author and its origin
- *     document are real, and pruning them would delete the dependence that makes
- *     a mixed row correlated with its parent.
- *   * `promptTemplate` and `generatorVersion` must be `known` on every generated
- *     row. These are the two axes the v2 corpus NEVER filled, and both exist in
- *     `meta` in the candidate pools, so `unknown` here would be a choice not to
- *     read data that is on disk.
- *   * `humanSeed` must be `known` on `mixed` and is open on `ai`: a mixed record
- *     is built by editing a specific human text, while a generated record may
- *     legitimately answer a bare topic prompt with no human parent.
- *   * `harnessVersion` is open on generated rows HERE and narrowed by the lane
- *     rule below, because whether a harness exists is a fact about the lane and
- *     must be decided in one place.
+ *   * `author` and `source` stay open on BOTH mixed cohorts, because a mixed
+ *     record IS a human text with generated stretches: its human author and its
+ *     origin document are real, and pruning them would delete the dependence that
+ *     makes a mixed row correlated with its parent.
+ *   * `promptTemplate` and `generatorVersion` must be `known` on every row whose
+ *     recipe is OURS. These are the two axes the v2 corpus NEVER filled, and both
+ *     exist in `meta` in the candidate pools, so `unknown` there would be a choice
+ *     not to read data that is on disk. On `mixed-ecological` the same four axes
+ *     are `notApplicable` (no tool of ours ran) or `unknown` (the coauthor's tool
+ *     was not recorded, at the cost of eligibility) and `known` is REFUSED,
+ *     because a known value there could only be one we made up.
+ *   * `humanSeed` must be `known` on `mixed-mechanistic` and is open on `ai` and on
+ *     `mixed-ecological`: a mechanistic mixed record is built by editing a specific
+ *     human text, a generated record may legitimately answer a bare topic prompt
+ *     with no human parent, and an observed coauthored document has no separate
+ *     precursor row in this corpus. `derivationRoot` follows the same split, for
+ *     the same reason: we derived the mechanistic row and we derived nothing at all
+ *     in the ecological one.
+ *   * `harnessVersion` is open on rows whose recipe is ours HERE and narrowed by
+ *     the lane rule below, because whether a harness exists is a fact about the
+ *     lane and must be decided in one place.
+ *   * `domainSource`, `collectionBatch` and `nearDuplicate` admit `known` and
+ *     NOTHING else, in every class, and that asymmetry against `harnessVersion` is
+ *     deliberate. All three identities are produced by OUR OWN extraction and
+ *     pruning: the domain of a source is decided by the extractor that read it, the
+ *     batch is assigned by the assembler that wrote the row, and the near-duplicate
+ *     cluster comes out of `near_dupes.py` over the corpus itself. So `unknown` on
+ *     any of the three is not an unrecoverable gap in the world, it is a defect in
+ *     a pipeline we control — and accepting it as `unknown` would ship an
+ *     ineligible row where the right outcome is a failing build. The argument does
+ *     NOT carry to `harnessVersion`, whose value lives in a third-party binary that
+ *     may already have been upgraded past recovery by the time the row is
+ *     assembled; there the gap is real, so `unknown` is accepted and priced in
+ *     eligibility instead of refused. If a source ever genuinely cannot yield one
+ *     of the three, the fix is the extractor or this table, argued — not a
+ *     `notApplicable` written to get a row accepted.
  */
 const AXIS_STATE_RULE = {
   author: {
     human: ["known", "notApplicable", "unknown"],
     ai: ["notApplicable"],
-    mixed: ["known", "notApplicable", "unknown"],
+    "mixed-mechanistic": ["known", "notApplicable", "unknown"],
+    "mixed-ecological": ["known", "notApplicable", "unknown"],
   },
   source: {
     human: ["known", "notApplicable", "unknown"],
     ai: ["notApplicable"],
-    mixed: ["known", "notApplicable", "unknown"],
+    "mixed-mechanistic": ["known", "notApplicable", "unknown"],
+    "mixed-ecological": ["known", "notApplicable", "unknown"],
   },
-  domainSource: { human: ["known"], ai: ["known"], mixed: ["known"] },
+  domainSource: {
+    human: ["known"],
+    ai: ["known"],
+    "mixed-mechanistic": ["known"],
+    "mixed-ecological": ["known"],
+  },
   humanSeed: {
     human: ["notApplicable"],
     ai: ["known", "notApplicable", "unknown"],
-    mixed: ["known"],
+    "mixed-mechanistic": ["known"],
+    "mixed-ecological": ["known", "notApplicable", "unknown"],
   },
   promptTemplate: {
     human: ["notApplicable"],
     ai: ["known"],
-    mixed: ["known"],
+    "mixed-mechanistic": ["known"],
+    "mixed-ecological": ["notApplicable", "unknown"],
   },
   generatorFamily: {
     human: ["notApplicable"],
     ai: ["known"],
-    mixed: ["known"],
+    "mixed-mechanistic": ["known"],
+    "mixed-ecological": ["notApplicable", "unknown"],
   },
   generatorVersion: {
     human: ["notApplicable"],
     ai: ["known"],
-    mixed: ["known"],
+    "mixed-mechanistic": ["known"],
+    "mixed-ecological": ["notApplicable", "unknown"],
   },
   generationLane: {
     human: ["notApplicable"],
     ai: ["known"],
-    mixed: ["known"],
+    "mixed-mechanistic": ["known"],
+    "mixed-ecological": ["notApplicable", "unknown"],
   },
   harnessVersion: {
     human: ["notApplicable"],
     ai: ["known", "notApplicable", "unknown"],
-    mixed: ["known", "notApplicable", "unknown"],
+    "mixed-mechanistic": ["known", "notApplicable", "unknown"],
+    "mixed-ecological": ["notApplicable", "unknown"],
   },
-  collectionBatch: { human: ["known"], ai: ["known"], mixed: ["known"] },
-  nearDuplicate: { human: ["known"], ai: ["known"], mixed: ["known"] },
+  collectionBatch: {
+    human: ["known"],
+    ai: ["known"],
+    "mixed-mechanistic": ["known"],
+    "mixed-ecological": ["known"],
+  },
+  nearDuplicate: {
+    human: ["known"],
+    ai: ["known"],
+    "mixed-mechanistic": ["known"],
+    "mixed-ecological": ["known"],
+  },
   derivationRoot: {
     human: ["notApplicable"],
     ai: ["known", "notApplicable", "unknown"],
-    mixed: ["known"],
+    "mixed-mechanistic": ["known"],
+    "mixed-ecological": ["known", "notApplicable", "unknown"],
   },
 } as const satisfies Record<
   V3GroupAxis,
-  Record<BenchmarkLabel, readonly GroupAxisState[]>
+  Record<V3AxisClass, readonly GroupAxisState[]>
 >;
 
 const V3_LABEL_BASES: readonly LabelBasisValue[] =
@@ -1404,7 +1517,6 @@ export function validateBenchmarkRecordV3(value: unknown): BenchmarkRecordV3 {
   const generation = validateGenerationV3(root.generation, id);
   const mixture = validateMixture(root.mixture, id, text.length);
   const transformation = validateTransformation(root.transformation, id);
-  const groups = validateV3Groups(root.groups, id, label);
 
   // --- label / recipe consistency (the v2 rules, kept) ---------------------
   if (label === "human" && generation !== undefined) {
@@ -1419,24 +1531,16 @@ export function validateBenchmarkRecordV3(value: unknown): BenchmarkRecordV3 {
       id,
     );
   }
-  // NEW in v3, and not an inherited rule: a `mixed` record's AI stretches came out
-  // of a generator, so the recipe that produced them is provenance the record must
-  // carry. v2 left it optional, which is why a mixed row could name a
-  // `generatorFamily` with no recipe behind it. The data supports the requirement:
-  // `mixed_from_pairs.jsonl` records provider, model and generatedAt per row.
-  if (label === "mixed" && generation === undefined) {
+  // The mixture is checked BEFORE the axes now, because the COHORT it declares is
+  // what the axis table is keyed on. A mixed row with no mixture has no cohort, so
+  // it has to be refused here rather than judged against a guessed one.
+  if (label === "mixed" && mixture === undefined) {
     throw new BenchmarkRecordError(
-      "generation is required when label is mixed: the recipe that produced its AI spans is provenance, not decoration",
+      "mixed records require mixture metadata",
       id,
     );
   }
-  if (label === "mixed") {
-    if (mixture === undefined) {
-      throw new BenchmarkRecordError(
-        "mixed records require mixture metadata",
-        id,
-      );
-    }
+  if (mixture !== undefined) {
     const sum = mixture.aiFraction + mixture.humanFraction;
     if (Math.abs(sum - 1) > Number.EPSILON * 8) {
       throw new BenchmarkRecordError("mixed fractions must sum to 1", id);
@@ -1445,6 +1549,36 @@ export function validateBenchmarkRecordV3(value: unknown): BenchmarkRecordV3 {
   if (label === "human" && mixture !== undefined) {
     throw new BenchmarkRecordError(
       "mixture is forbidden when label is human",
+      id,
+    );
+  }
+
+  const axisClass = v3AxisClass(label, mixture?.generationMode);
+  const groups = validateV3Groups(root.groups, id, axisClass);
+
+  // NEW in v3, and conditioned on the COHORT rather than on the class. A
+  // `mechanistic` mixed row's AI stretches came out of a generator WE ran, so the
+  // recipe is provenance the row must carry; v2 left it optional, which is why a
+  // mixed row could name a `generatorFamily` with no recipe behind it, and
+  // `mixed_from_pairs.jsonl` already records provider, model and `generatedAt` per
+  // row, so the data supports the requirement.
+  //
+  // It does NOT support it for `ecological`, and requiring it there was a defect of
+  // the first C1 round: the evidence quoted above is about the mechanistic cohort
+  // only. An observed coauthored document has a recipe belonging to the coauthor's
+  // tool — we have no prompt, no template digest and no seed for it — so the only
+  // writable form of such a row would have named OUR lane and OUR template. That is
+  // invented provenance (R4). Both directions are refusals now, and they are
+  // different sentences because they are different mistakes.
+  if (mixture?.generationMode === "mechanistic" && generation === undefined) {
+    throw new BenchmarkRecordError(
+      "generation is required when label is mixed and mixture.generationMode is mechanistic: the recipe that produced its AI spans is ours, and it is provenance rather than decoration",
+      id,
+    );
+  }
+  if (mixture?.generationMode === "ecological" && generation !== undefined) {
+    throw new BenchmarkRecordError(
+      "generation is forbidden when mixture.generationMode is ecological: the assistance came out of the coauthor's own tool, so a recipe of ours attached to the row would be provenance we invented",
       id,
     );
   }
@@ -1590,7 +1724,7 @@ export function validateBenchmarkRecordV3(value: unknown): BenchmarkRecordV3 {
 function validateV3Groups(
   value: unknown,
   id: string,
-  label: BenchmarkLabel,
+  axisClass: V3AxisClass,
 ): V3Groups {
   const obj = assertClosedObject(value, "groups", V3_GROUP_AXES, id);
   const groups: Record<string, GroupAxisValue> = {};
@@ -1605,10 +1739,10 @@ function validateV3Groups(
       );
     }
     const parsed = validateGroupAxisValue(obj[axis], `groups.${axis}`, id);
-    const allowed: readonly GroupAxisState[] = AXIS_STATE_RULE[axis][label];
+    const allowed: readonly GroupAxisState[] = AXIS_STATE_RULE[axis][axisClass];
     if (!allowed.includes(parsed.state)) {
       throw new BenchmarkRecordError(
-        `groups.${axis} of ${label === "ai" ? "an" : "a"} ${label} record must be ${allowed.join(" or ")}, received ${parsed.state}`,
+        `groups.${axis} of ${AXIS_CLASS_LABEL[axisClass]} must be ${allowed.join(" or ")}, received ${parsed.state}`,
         id,
       );
     }
@@ -1694,24 +1828,6 @@ function validateGenerationV3(
     effort: validateEffortConfig(obj.effort, id),
   };
 
-  const temperature = optionalFiniteNumber(
-    obj,
-    "temperature",
-    "generation",
-    id,
-  );
-  if (temperature !== undefined) {
-    // The measured catch: the pools carry `temperature: "0.8"` on `agy` and
-    // `codex` rows, which are CLI invocations with no sampling flag.
-    if (!generation.decoding.configurable) {
-      throw new BenchmarkRecordError(
-        "generation.temperature is forbidden when generation.decoding.configurable is false: a lane that accepts no sampling flag cannot have applied one",
-        id,
-      );
-    }
-    generation.temperature = temperature;
-  }
-
   // Exactly one of a seed and a written reason there is none. Never invent a seed.
   const seed = optionalNonEmptyString(obj, "seed", "generation", id);
   const seedNullReason = optionalNonEmptyString(
@@ -1757,6 +1873,12 @@ function validateDecodingConfig(value: unknown, id: string): DecodingConfig {
     strategy: nullableNonEmptyString(
       obj,
       "strategy",
+      "generation.decoding",
+      id,
+    ),
+    temperature: nullableFiniteNumber(
+      obj,
+      "temperature",
       "generation.decoding",
       id,
     ),
@@ -2029,6 +2151,30 @@ export function groupAxisIdentity(
 }
 
 /**
+ * The sampling temperature a record's recipe applied, or `null` when none did.
+ * Version-aware for the same reason {@link groupAxisIdentity} is: v2 keeps it as a
+ * top-level optional on `generation`, v3 keeps it inside the `configurable: true`
+ * branch of `decoding`, and a consumer comparing a record against a declared batch
+ * is asking one question, not two.
+ *
+ * `null` covers three states that are all "no temperature was applied": a v2 record
+ * that recorded none, a v3 CLI row whose branch has no such field, and a v3 api row
+ * that left the provider's default in place. Only the last of those is
+ * distinguishable, and the distinction belongs to a reader of `decoding`, not to a
+ * batch comparison.
+ */
+export function recipeTemperature(
+  generation: NonNullable<BenchmarkRecord["generation"]>,
+): number | null {
+  if ("decoding" in generation) {
+    return generation.decoding.configurable
+      ? generation.decoding.temperature
+      : null;
+  }
+  return generation.temperature ?? null;
+}
+
+/**
  * The state of one axis.
  *
  * A v2 record has no states, so a filled axis reads as `known` and an absent one
@@ -2119,6 +2265,14 @@ export function recordEligibility(record: BenchmarkRecord): {
  * sentences. They are different failures: `unknown` means the extractor did not
  * recover a value the source says exists, while `notApplicable` CONTRADICTS the
  * source's own declaration — one is a gap, the other is a disagreement.
+ *
+ * NOT WIRED YET, and deliberately named as such: no production path calls this.
+ * The obligation is C3's — it is the task that reads
+ * `private/source-manifest.json`, so it is the only one that can pair a record
+ * with its source's declaration. Until then the refusal is proven against this
+ * exported function by test and is NOT a property of any pipeline. Wiring it
+ * anywhere else would mean this module reaching for the private manifest, which is
+ * the one thing the split above exists to prevent.
  */
 export function assertDeclaredAxesResolved(
   record: BenchmarkRecord,
@@ -2148,6 +2302,15 @@ export function assertDeclaredAxesResolved(
  * ABSENT means the record points at nothing, and a digest that DIVERGES means the
  * entry it points at is not the one that was digested when the record was
  * written — the reference resolved, to different bytes.
+ *
+ * NOT WIRED YET. `validateBenchmarkRecordV3` checks everything a reference can be
+ * checked for WITHOUT the private file (its basis agrees with the label, its
+ * per-basis payload is complete and closed, its snapshot is a frozen one, its
+ * observed date really precedes the cutoff it names) and stops there, because the
+ * index does not exist inside this module. Building it from
+ * `private/source-manifest.json` and calling this on every human row is C3's
+ * obligation; until then "refuses a divergent reference" is a property of this
+ * function and not of the ingest path.
  */
 export function assertLabelEvidenceResolves(
   records: readonly BenchmarkRecord[],
@@ -2187,6 +2350,14 @@ export function assertLabelEvidenceResolves(
  * nothing, and the whole chain is unsupported. Refusing the derived row is
  * therefore not pedantry about a missing field — it is refusing a lineage with no
  * evidence at its root.
+ *
+ * NOT WIRED YET. `parseBenchmarkDataset` deliberately does not call it: that
+ * function parses a JSONL file that may be one PARTITION, and a parent legitimately
+ * lives in another, so calling it there would refuse valid files. It belongs on the
+ * whole-corpus path — C3's audit, beside `assertDeclaredAxesResolved` — and until
+ * that call exists a JSONL file whose derived rows name a missing or non-human
+ * parent parses without complaint. The refusal is proven against this function, not
+ * against any pipeline.
  */
 export function assertDerivedParentsResolve(
   records: readonly BenchmarkRecord[],

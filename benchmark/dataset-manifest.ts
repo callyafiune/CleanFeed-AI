@@ -684,15 +684,31 @@ export async function sealDataset(
       }
     }
     for (const family of m.heldOutGeneratorFamilies) {
+      // BOTH comparisons go through `generatorFamilyOf`, the same accessor the
+      // tally above uses, and NOT through `record.groups.generatorFamily`. The raw
+      // read typechecks on the union — the v2 arm of the axis IS a
+      // `GeneratorFamily` — so the compiler does not object, and it is always
+      // false on a v3 record, whose axis holds `{ state, id }`. That produced two
+      // failures pointing the wrong way: every held-out family counted 0
+      // positives, so a complete corpus was refused for "requires at least 200
+      // eligible positives", and `appearsInHuman` could never be true, so the leak
+      // check was silently dead. Same defect class A4 fixed: two spellings that
+      // never meet.
       const positives = normalized.filter(
         (record) =>
           (record.label === "ai" || record.label === "mixed") &&
-          record.groups.generatorFamily === family,
+          generatorFamilyOf(record) === family,
       ).length;
       const appearsInHuman = normalized.some(
         (record) =>
-          record.label === "human" && record.groups.generatorFamily === family,
+          record.label === "human" && generatorFamilyOf(record) === family,
       );
+      // On a v3 corpus this branch is unreachable and that is the stronger state,
+      // not a reason to drop it: `AXIS_STATE_RULE` allows `generatorFamily` only
+      // `notApplicable` on a human row, so `validateBenchmarkRecord` above refuses
+      // the leak first, with BENCHMARK_RECORD_INVALID. It stays because v2 records
+      // are what the sealed corpus on disk still is, and there the axis is a bare
+      // string a human row may legally carry.
       if (appearsInHuman) {
         fail(
           "DATASET_COVERAGE_INVALID",
