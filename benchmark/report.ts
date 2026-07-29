@@ -948,7 +948,7 @@ function resamplingSection(plan: ResamplingPlan | undefined): string[] {
   lines.push(
     `Plano \`${plan.planId}\`, lido de \`${plan.source}\`. Não existe uma única ` +
       '"unidade real": a unidade depende do estimando, e cada linha abaixo diz ' +
-      "qual é a dela, quantas unidades ela tinha na população medida, e se o " +
+      "qual é a dela, quantos níveis cada fator tinha na população medida, e se o " +
       "intervalo publicado foi de fato reamostrado sobre ela ou se a unidade é " +
       "declarada enquanto o limite vem do estimador analítico de Wilson (R7). " +
       "Uma unidade **degenerada** tem uma unidade por registro-linha: reamostrá-la " +
@@ -956,9 +956,21 @@ function resamplingSection(plan: ResamplingPlan | undefined): string[] {
   );
   lines.push("");
   lines.push(
-    "| Estimando | Método | Unidade declarada | Réplicas | Intervalo publicado | Unidades medidas | Rebaixamento |",
+    "**O plano cobre estes estimandos e nenhum outro.** As taxas com gate (FPR, " +
+      "especificidade e recall dos dois alvos, por base de rótulo e por fatia) e as " +
+      "cinco estatísticas contínuas de ranking e calibração saem por aqui. " +
+      "Cobertura, abstenção, as três taxas de erro, precisão, as fatias de " +
+      "resolução, o recall do caminho localizado e as faixas diagnósticas da curva " +
+      "mista **não têm unidade declarada em nenhum lugar**: nenhuma linha da tabela " +
+      "congelada cobre esses estimandos, elas publicam o intervalo analítico de " +
+      "Wilson e inventar uma unidade para elas seria inventar o contrato. " +
+      "`MetricEstimate.method` diz qual estimador produziu cada número.",
   );
-  lines.push("| --- | --- | --- | --- | --- | --- | --- |");
+  lines.push("");
+  lines.push(
+    "| Estimando | Método | Unidade declarada | Réplicas | Intervalo publicado | Unidades medidas | Níveis por fator | Rebaixamento |",
+  );
+  lines.push("| --- | --- | --- | --- | --- | --- | --- | --- |");
   for (const entry of plan.entries) {
     const separator = entry.unitKind === "hierarchical" ? " ⊃ " : " × ";
     const measured = entry.measured ?? null;
@@ -973,14 +985,46 @@ function resamplingSection(plan: ResamplingPlan | undefined): string[] {
             .join("; ");
     const units =
       measured === null
-        ? "não medida"
+        ? `não medida${entry.measurementNote ? ` — ${entry.measurementNote}` : ""}`
         : `${measured.units}/${measured.items}${measured.degenerate ? " (degenerada)" : ""}`;
+    // Per FACTOR, not just the leaf count: a crossed design with one level in one
+    // of its factors has nothing to cross, and the total unit count hides that.
+    const perFactor =
+      measured === null
+        ? "—"
+        : measured.levels
+            .map(
+              (level) =>
+                `${level.axis}=${level.levels}${level.degenerate ? " (uma por linha)" : ""}`,
+            )
+            .join("; ");
     lines.push(
       `| ${entry.estimand} | ${entry.unitKind} | ${entry.unitAxes.join(separator)} | ` +
-        `${entry.replicates} | ${entry.executed ?? "não declarado"} | ${units} | ${demoted} |`,
+        `${entry.replicates} | ${entry.executed ?? "não declarado"} | ${units} | ` +
+        `${perFactor} | ${demoted} |`,
     );
   }
   lines.push("");
+  // The substitutions, printed where they cannot be missed. A factor of the frozen
+  // table that no axis of the schema records is read through a stand-in, and a
+  // reader of the table alone would take the row for implemented.
+  const proxies = plan.entries.flatMap((entry) =>
+    (entry.proxies ?? []).map((proxy) => ({ entry, proxy })),
+  );
+  if (proxies.length > 0) {
+    lines.push(
+      "**Fatores substituídos.** A tabela congelada nomeia um fator que nenhum " +
+        "eixo do schema registra, e o eixo abaixo entra no lugar dele. Isso não é " +
+        "sinônimo: o intervalo cruzado desta linha não é o da tabela.",
+    );
+    lines.push("");
+    for (const { entry, proxy } of proxies) {
+      lines.push(
+        `- \`${entry.estimand}\`: \`${proxy.axis}\` no lugar de "${proxy.standsInFor}" — ${proxy.reason}`,
+      );
+    }
+    lines.push("");
+  }
   return lines;
 }
 

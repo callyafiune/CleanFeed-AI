@@ -286,9 +286,9 @@ function metrics(): EvaluationMetrics {
         value: 0.9647,
         lower95: 0.95,
         upper95: 0.97,
-        method: "author-cluster-percentile",
+        method: "hierarchical-cluster-percentile",
       },
-      prAuc: { value: 0.9788, method: "author-cluster-percentile" },
+      prAuc: { value: 0.9788, method: "hierarchical-cluster-percentile" },
       tprAtOnePercentFpr: {
         targetFpr: 0.01,
         achievedFpr: 0.0098,
@@ -305,7 +305,7 @@ function metrics(): EvaluationMetrics {
       populationSize: 10,
       errorRatePopulation: "binary-population",
       errorRate: { value: 0.3, method: "point" },
-      brier: { value: 0.0812, method: "author-cluster-percentile" },
+      brier: { value: 0.0812, method: "hierarchical-cluster-percentile" },
       logLoss: 0.2731,
       intercept: -0.12,
       slope: 0.71,
@@ -314,7 +314,7 @@ function metrics(): EvaluationMetrics {
         value: 0.0819,
         lower95: 0.0731,
         upper95: 0.0908,
-        method: "author-cluster-percentile",
+        method: "hierarchical-cluster-percentile",
         // The bound the ECE gate reads, with the effort behind it: at m = 40 the
         // alpha is 0.00125, so 2000 replicates leave two beyond the bound.
         simultaneous: {
@@ -326,7 +326,7 @@ function metrics(): EvaluationMetrics {
           tailReplicates: 2,
           lower: 0.0605,
           upper: 0.1032,
-          method: "author-cluster-percentile",
+          method: "hierarchical-cluster-percentile",
         },
       },
       reliability: [
@@ -422,22 +422,56 @@ function metrics(): EvaluationMetrics {
       const plan = declaredResamplingPlan();
       return {
         ...plan,
-        entries: plan.entries.map((entry) =>
-          entry.estimand === "calibration.ece"
-            ? {
-                ...entry,
-                executed: "percentile-bootstrap" as const,
-                measured: unit("calibration.ece", 8, 5, [
+        entries: plan.entries.map((entry) => {
+          if (entry.estimand === "calibration.ece") {
+            return {
+              ...entry,
+              executed: "percentile-bootstrap" as const,
+              measured: unit("calibration.ece", 8, 5, [
+                {
+                  position: 1,
+                  from: "groups.author",
+                  to: "groups.source",
+                  items: 3,
+                },
+              ]),
+            };
+          }
+          // The mixed row as a real run publishes it: MEASURED and degenerate in
+          // both factors, with the substitute factor at a single level. The report
+          // has to print the degeneracy, not the prose about degeneracy.
+          if (entry.estimand === "mixed.warning.recall") {
+            return {
+              ...entry,
+              executed: "declared-only" as const,
+              measured: {
+                estimand: "mixed.warning.recall",
+                method: "multiway" as const,
+                axes: ["groups.humanSeed", "groups.promptTemplate"],
+                items: 3,
+                units: 3,
+                levels: [
+                  {
+                    position: 0,
+                    axis: "groups.humanSeed",
+                    levels: 3,
+                    degenerate: true,
+                  },
                   {
                     position: 1,
-                    from: "groups.author",
-                    to: "groups.source",
-                    items: 3,
+                    axis: "groups.promptTemplate",
+                    levels: 1,
+                    degenerate: false,
+                    proxyFor: "operação de edição",
                   },
-                ]),
-              }
-            : entry,
-        ),
+                ],
+                demotions: [],
+                degenerate: true,
+              },
+            };
+          }
+          return entry;
+        }),
       };
     })(),
     multiplicity: {
@@ -965,7 +999,30 @@ describe("renderReportMarkdown publishes the A6 evidence with its roles named", 
     expect(units).toMatch(/declared-only/u);
     // And the demotion `notApplicable` forced is recorded, not silent.
     expect(units).toMatch(/groups\.author→groups\.source \(3\)/u);
-    expect(units).toMatch(/nunca cai para linhas independentes|degenerada/u);
+    // The mixed row's DEGENERACY, read off its own row rather than off the prose
+    // the section always prints: three parent levels over three rows (one per
+    // record-line) crossed with a factor that has exactly one level, so the crossing
+    // has nothing to cross.
+    const mixedRow = units
+      .split("\n")
+      .find((line) => line.startsWith("| mixed.warning.recall "));
+    expect(mixedRow).toBeDefined();
+    expect(mixedRow).toMatch(/3\/3 \(degenerada\)/u);
+    expect(mixedRow).toMatch(/groups\.humanSeed=3 \(uma por linha\)/u);
+    expect(mixedRow).toMatch(/groups\.promptTemplate=1/u);
+    // The substitution is named, with the factor it replaces and why.
+    expect(units).toMatch(
+      /`groups\.promptTemplate` no lugar de "operação de edição"/u,
+    );
+    expect(units).toMatch(/nenhum eixo do schema v3 registra/u);
+    // The section says which estimands the plan covers, and that the rest declare
+    // no unit at all — the claim `MetricEstimate.method` backs per number.
+    expect(units).toMatch(/não têm unidade declarada em nenhum lugar/u);
+    // A row this plan does not measure says WHERE it is measured.
+    const sliceRow = units
+      .split("\n")
+      .find((line) => line.startsWith("| warning.fpr.slice "));
+    expect(sliceRow).toMatch(/não medida — medida no plano da própria fatia/u);
   });
 
   it("publishes PPV and NPV beside the benchmark's own prevalence", async () => {

@@ -4996,21 +4996,86 @@ estado `known` que não resolvem para linha do corpus — 539 em `humanSeed`, 24
 valor) tanto quanto sob a do splitter (linhagem de pai): reamostrar sobre ele é reamostrar
 linhas. Além disso não existe campo de **operação de edição** nos registros v3: o mais
 próximo é `groups.promptTemplate`, que nas 180 linhas mistas tem **um único nível**
-(`mix_edit_v1_*`). O multiway está implementado e testado como a tabela manda, e as duas
-degenerações estão **publicadas** — `ResamplingUnitDeclaration.degenerate` e a contagem de
-níveis por fator entram no relatório — em vez de produzirem um intervalo que parece
-válido. Nada foi afrouxado e nenhum eixo sintético foi criado (R6).
+(`mix_edit_v1_*`). O multiway está implementado e testado como a tabela manda. Nada foi
+afrouxado e nenhum eixo sintético foi criado (R6).
 
-**O que ficou de fora, de propósito.** Os intervalos de FPR e de recall continuam vindo do
-estimador **analítico de Wilson**, que não reamostra e portanto **não usa** a unidade
-declarada. A6 isentou esse caminho do piso de esforço explicitamente ("the Wilson path
-resamples nothing and is exempt by construction") e a lista de arquivos de C4 é
-`bootstrap.ts` + `metrics.ts`, então trocar Wilson por bootstrap agrupado nas taxas não é
-desta tarefa. Para que isso não seja lido como uma propriedade que o número não tem (R7),
-cada entrada do plano publica `executed`: `percentile-bootstrap` nos cinco estimandos
-contínuos (AUROC, PR-AUC, Brier, ECE equal-mass, ECE equal-width) e `declared-only` nos
-demais. **Gap nomeado para o próximo agente:** enquanto o gate de FPR/recall ler um limite
-de Wilson, esse limite trata linhas correlacionadas como independentes.
+Na primeira rodada essas duas degenerações existiam **só nesta prosa**: nada em produção
+resolvia o desenho `mixed.warning.recall`, então a entrada do plano saía sempre com
+`measured: null` e o relatório imprimia "não medida". Corrigido: `computeEvaluationMetrics`
+resolve o desenho misto sobre a coorte que o gate lê (mecanística, `aiFraction >= 0,50`) e
+publica a declaração medida — `degenerate: true` mais a contagem de níveis **por fator**,
+que agora tem coluna própria no relatório. `executed` continua `declared-only`, com nota
+dizendo por quê: o limite ao lado de `mixed.atLeastHalfAi` é analítico e o segundo fator
+cruzado é um proxy. Esta resolução é **o único lugar** onde um `ResamplingUnitError` é
+capturado, e a razão de ser seguro aqui é a razão de não ser em nenhum outro lugar: dela não
+sai intervalo nenhum, logo não há número que pareça válido — mas ela derrubaria a avaliação
+inteira por uma declaração que nada gateia, num corpus que **não pode** satisfazê-la (um
+registro v2 não tem eixo `groups.humanSeed`). O plano então carrega o motivo em vez de um
+`measured: null` sem explicação.
+
+**A substituição virou dado, no arquivo onde o valor mora.** A linha mista da tabela cruza
+`pai-humano × operação de edição`, e o JSON escrevia o segundo fator como
+`groups.promptTemplate` sem nenhuma marca de que é **proxy** — um leitor de
+`rebuild-v3-policy.json`, que é fonte de verdade de todo valor congelado, lia a linha como
+implementada. Agora o nível carrega `proxyFor: "operação de edição"` e `proxyReason`
+explicando que nenhum eixo do schema v3 registra a operação; o parser exige os dois campos
+juntos (metade da declaração lê-se como sinônimo) e recusa string vazia; a declaração
+publicada propaga `proxyFor` para o nível e `proxies` para a entrada do plano; e o relatório
+imprime a lista de fatores substituídos abaixo da tabela.
+
+**O que ficou de fora na primeira rodada, e foi corrigido na segunda (2026-07-29, revisão
+de spec).** A primeira entrega deixou as linhas 1 e 2 da tabela **só como dado**: os
+intervalos de FPR e de recall continuavam vindo do estimador analítico de Wilson, que não
+reamostra, e o gate — que passou a receber o plano — aceitava uma entrada `declared-only`
+como a evidência de reamostragem que A6 exigia. Efeito líquido: um gate ficou **mais fácil
+de passar sem melhora de evidência** (R3), na força de uma declaração que o número não
+honrava (R7). Disclosure não é mitigação para um gate que deixou de falhar fechado. As duas
+metades do conserto:
+
+1. **As taxas com gate saem do desenho.** `decisionMetrics` agrega, por cluster folha,
+   FP/decididos, TN/negativos e TP/positivos e passa cada uma pelo sorteio hierárquico da
+   linha do estimando — `groups.domainSource ⊃ groups.author` nas taxas sobre negativos
+   humanos, `groups.generatorFamily ⊃ groups.promptTemplate ⊃ groups.collectionBatch` no
+   recall. As duas famílias (`end-to-end` e `conditional-on-scored`) são reamostradas; só a
+   `end-to-end` alimenta o plano, porque é a que o gate lê. `labelBasisBreakdown` faz o
+   mesmo por base, e os dois estimandos de gate (`warning.fpr.labelBasis` e
+   `action.fpr.labelBasis`) leem **o mesmo** intervalo — o plano registra os dois com esse
+   nome em vez de finge dois sorteios. A **especificidade** entrou junto porque a linha 1 se
+   chama "FPR / especificidade em texto humano": `warning.clearanceRate` e
+   `action.clearanceRate` são novas chaves de `resampling.estimands` e compartilham o
+   mesmo fluxo de réplicas da FPR (um sorteio, duas estatísticas). **Precisão não entrou**:
+   seu denominador TP+FP atravessa as duas populações, nenhuma linha da tabela a cobre, e
+   escolher uma seria escolher unidade por conveniência.
+
+2. **O gate confere o número, não a alegação.** Um limite simultâneo que não seja percentil
+   sobre exatamente os eixos que o plano declara reprova com evidência
+   `unresampled-interval`. Conferido na **estimativa** e não em `ResamplingPlanEntry.executed`
+   — que é a letra do pedido da revisão — porque é estritamente mais forte e porque
+   `executed` reprovaria gate cuja evidência existe: o intervalo de uma fatia é sorteado
+   dentro do `computeEvaluationMetrics` **daquela fatia**, então o plano agregado diz
+   `declared-only` para `*.fpr.slice` enquanto o número da fatia é reamostrado. As entradas
+   `*.slice` agora carregam `measurementNote` dizendo onde a medição vive, em vez de um
+   `measured: null` que se lê como falha.
+
+**O limite publicado numa taxa é o MAIS LARGO dos dois estimadores, com os dois impressos**
+(`MetricEstimate.boundEnvelope`). Isto é decisão desta rodada e a razão é medida: os dois
+estimadores falham em direções opostas e nenhum domina. O analítico trata registros-linha
+como independentes, o que é estreito demais num corpus com autor/página/prompt/gerador
+compartilhados. O percentil sobre clusters vê essa dependência e **colapsa em largura zero**
+exatamente quando a estatística é constante entre réplicas — FPR = 0 sem nenhum falso
+positivo, ou um único cluster carregando todo o denominador. Um "intervalo de 95%" de
+largura zero é mais **estreito** que o analítico, não mais conservador, e passaria gate com
+menos evidência (R3). Medido no fixture `SEPARABLE` (40 pools de um autor, zero falsos
+positivos): percentil `[0, 0]`, analítico `[0, 0.0879]`, publicado `0.0879`. E no fixture
+de correlação intra-cluster (12 pools de 5 linhas que concordam entre si): o percentil é o
+mais largo e é ele que sai. O mais largo de dois só pode mover limite para fora, logo não
+compra passagem; o que ele **não** é: intervalo de cobertura exata — é conservador por
+construção, que é a direção em que um gate de release tem de errar.
+
+**Piso de definibilidade, não de poder.** A recusa acima é medida na distribuição de
+réplicas que a corrida produziu (largura > 0), deliberadamente **não** um mínimo de
+unidades de reamostragem: `powerFloors.samplingUnits` é `null` de propósito e inventar um
+número aqui seria inventar evidência.
 
 **Duas mudanças de forma que o texto não previa.** (1) `ResamplingPlan` /
 `ResamplingPlanEntry` saíram de `gates.ts` para `bootstrap.ts` — o módulo que constrói o
@@ -5033,6 +5098,18 @@ resolver a unidade das linhas mistas, porque `groups.author` está `unknown` em 
 (medido). É o comportamento que C4 existe para instalar — falhar em vez de reamostrar
 linhas — e o defeito é de **seleção**, da mesma família da semente ausente: é C2/E2/E3 que
 decide se uma linha mista tem autor humano `known` ou `notApplicable`.
+
+**Quais estimandos o plano cobre, dito por extenso.** As taxas com gate (FPR,
+especificidade e recall dos dois alvos, mais as variantes por base de rótulo e por fatia) e
+as cinco contínuas. **Não cobertos, e o relatório diz isso:** cobertura, abstenção, as três
+taxas de erro, precisão nas duas famílias, cobertura/abstenção/erro das quatro fatias de
+resolução, o erro por base de rótulo, o erro por fatia de calibração, o recall do caminho
+localizado e as faixas diagnósticas de `mixed.byFraction`. Todos publicam intervalo de
+Wilson e **nenhuma unidade** — nenhuma linha da tabela congelada cobre esses estimandos, e
+inventar linha para eles seria estender o contrato sem evidência (R3). O critério "cada
+métrica publicada declara sua unidade" vale, portanto, para os estimandos da tabela; para os
+outros a afirmação publicada é a ausência, legível em `MetricEstimate.method` e na prosa da
+seção "Unidades de reamostragem".
 
 ### C5 — Recibos de revisão e PII reais
 

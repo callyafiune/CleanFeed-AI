@@ -30,7 +30,7 @@
 // than the conditional family on recall or clearance. Reading the conditional
 // family here would let a fragile run buy a pass with its own failures.
 //
-// THREE KINDS OF MISSING EVIDENCE FAIL A GATE, AND NONE DEGRADES QUIETLY (A6):
+// FOUR KINDS OF MISSING EVIDENCE FAIL A GATE, AND NONE DEGRADES QUIETLY (A6/C4):
 //
 //   * The RESAMPLING PLAN. A Wilson or percentile interval over rows assumes the
 //     rows are exchangeable. The corpus is not: authors, pages, threads, prompts
@@ -39,6 +39,17 @@
 //     multiway unit for an estimand, the gate for that estimand FAILS for missing
 //     evidence. It never falls back to treating rows as independent, which is the
 //     silent version of the same decision and the one that inflates confidence.
+//   * The BOUND ACTUALLY COMING OUT OF THAT UNIT. A declaration is not a property
+//     of the number (R7), and the two came apart the moment the plan existed: the
+//     plan declared the frozen table's unit for `warning.fpr` while the published
+//     bound was still an analytic Wilson interval that counts every correlated
+//     record-line as independent. So the gate reconciles them on the ESTIMATE —
+//     percentile method, same unit kind, same axes, in order — and refuses the
+//     bound otherwise. Checked on the estimate and not on
+//     `ResamplingPlanEntry.executed` because a slice's interval is drawn inside
+//     that slice's own metrics: the aggregate plan reads `declared-only` for the
+//     `*.fpr.slice` estimands while their numbers are resampled, so `executed`
+//     would fail a gate whose evidence exists.
 //   * The SIMULTANEOUS BOUND. Dozens of one-sided gates share one release
 //     decision, so an individual 95% bound per gate does not control the
 //     family-wise error rate. Each interval gate reads the Bonferroni bound at
@@ -55,8 +66,8 @@
 //     benchmark/bootstrap.ts executes today, the verdict would rest on two or
 //     three replicates. The frozen contract pre-registers 10.000 in the pilot and
 //     says never to reduce the count, so a bound thinner than that is missing
-//     evidence, not a faster measurement. Only the percentile path is checked; the
-//     Wilson bound is analytic and resamples nothing.
+//     evidence, not a faster measurement. Every bound that reaches this check is
+//     already a percentile: the step above refused the analytic ones.
 //
 // Frozen numbers come from benchmark/rebuild-v3-policy.json through
 // benchmark/rebuild-v3-policy.ts; the FPR budgets, the ECE ceiling, the family

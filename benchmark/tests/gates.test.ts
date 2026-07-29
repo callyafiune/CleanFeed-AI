@@ -1085,6 +1085,93 @@ describe("C4's real plan closes the gap A6 left open", () => {
       if (gate.estimand === undefined) continue;
       expect(declared.has(gate.estimand)).toBe(true);
     }
+    // And the plan does not merely DECLARE the unit of the gated rates: the bounds
+    // the FPR and recall gates read are percentiles of the design, so no gate is
+    // deciding a release on an interval that treats correlated rows as independent.
+    for (const id of [
+      "warning.fpr.overall",
+      "warning.recall.overall",
+      "action.fpr.overall",
+      "action.recall.overall",
+    ]) {
+      const gate = gateById(report.gates, id);
+      expect(gate.evidence).not.toBe("unresampled-interval");
+      expect(gate.evidence).not.toBe("missing-resampling-plan");
+    }
+    expect(
+      computed.resampling.entries.find(
+        (entry) => entry.estimand === "warning.fpr",
+      )?.executed,
+    ).toBe("percentile-bootstrap");
+  });
+});
+
+describe("a declared unit is not a property of the number (R7)", () => {
+  // The gap the previous round left open, closed as a test: the plan declared the
+  // frozen table's unit for `warning.fpr` while the published bound came from the
+  // analytic Wilson estimator, and the gate read the declaration as satisfaction of
+  // the unit requirement. It decided a release on an interval that counts every
+  // correlated record-line as independent — the exact defect C4 exists to remove,
+  // reached through the plan instead of through the estimator.
+  it("fails the gate when the bound is analytic and the plan only declares the unit", () => {
+    const report = evaluateReleaseGates({
+      integrity: integrity(),
+      resampling: plan(),
+      metrics: metrics({ warningFpr: analyticUpper(0.02) }),
+      slices: summary([passingSlice()]),
+    });
+    expect(report.decision).toBe("reject");
+    const fpr = gateById(report.gates, "warning.fpr.overall");
+    expect(fpr.evidence).toBe("unresampled-interval");
+    expect(fpr.passed).toBe(false);
+    expect(fpr.observed).toBeNull();
+    expect(fpr.reasons[0]).toMatch(/não reamostra nada/u);
+    expect(fpr.reasons[0]).toMatch(/declarar a unidade não é medi-la/u);
+    // The descriptive interval is still published: it is precisely the number the
+    // gate refuses to decide on, and hiding it would hide the refusal's subject.
+    expect(fpr.descriptive).toMatchObject({ value: 0.02, role: "descriptive" });
+  });
+
+  it("fails the gate when the interval was resampled over other axes than the plan declares", () => {
+    const overOtherAxes = upper(0.02);
+    const report = evaluateReleaseGates({
+      integrity: integrity(),
+      resampling: plan(),
+      metrics: metrics({
+        warningFpr: {
+          ...overOtherAxes,
+          resampling: {
+            ...(overOtherAxes.resampling as NonNullable<
+              MetricEstimate["resampling"]
+            >),
+            axes: ["groups.source"],
+          },
+        },
+      }),
+      slices: summary([passingSlice()]),
+    });
+    const fpr = gateById(report.gates, "warning.fpr.overall");
+    expect(fpr.evidence).toBe("unresampled-interval");
+    expect(fpr.reasons[0]).toMatch(/groups\.source/u);
+  });
+
+  it("fails the gate when a crossed design was drawn as a nested one", () => {
+    const nested = upper(0.02);
+    const report = evaluateReleaseGates({
+      integrity: integrity(),
+      resampling: plan({
+        entries: plan().entries.map((entry) =>
+          entry.estimand === "warning.fpr"
+            ? { ...entry, unitKind: "multiway" as const }
+            : entry,
+        ),
+      }),
+      metrics: metrics({ warningFpr: nested }),
+      slices: summary([passingSlice()]),
+    });
+    const fpr = gateById(report.gates, "warning.fpr.overall");
+    expect(fpr.evidence).toBe("unresampled-interval");
+    expect(fpr.reasons[0]).toMatch(/aninhar o que é cruzado/u);
   });
 });
 
