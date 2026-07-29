@@ -4827,8 +4827,8 @@ execução foi além (ou ficou aquém) do que o texto acima diz.
     `finally`, então um `close()` que lança pulava o `rm` e deixava exatamente a cópia integral do
     keyring que o comentário diz que mais ninguém coleta. Agora existe `discardTemp`
     (`rm(...).catch(() => {})`) e o `close()` roda num `finally` **interno**, com o `catch` que
-    limpa por fora. As duas metades seguem sem teste (forçar `rename`/`fsync`/`close` a falhar de
-    forma determinística no Windows pediria segurar handle ou encher volume).
+    limpa por fora. A metade do `rename` segue sem teste; a do `close` ganhou um na sétima rodada
+    (item 37), que também mostrou que o `finally` interno reintroduzia o defeito por outro caminho.
     (c) `CLUSTER_LEDGER_COMMITTED_UNBACKED` interpolava `(error as Error).message` sobre `unknown`:
     uma rejeição que não fosse `Error` imprimiria `undefined` na única mensagem cujo trabalho é
     dizer que a exposição **está** gravada. Passou à forma que o resto do repo usa
@@ -4842,6 +4842,79 @@ execução foi além (ou ficou aquém) do que o texto acima diz.
     passed`, `promise resolved "{ eligible: false, …(2) }" instead of rejecting`. Isso está dentro
     do modelo de não-ameaça do item 18 (quem escreve o keyring), mas agora nenhuma das duas metades
     depende de análise para estar presa.
+
+##### Sétima rodada de correção (qualidade de diagnóstico dos itens 30–32)
+
+Todos os cinco são de **qualidade de mensagem e de determinismo**; nenhum afrouxa o invariante
+atestado, e o desenho da testemunha não foi reaberto. Os cinco foram medidos antes de consertados
+e cada um tem teste que afirma o **conteúdo** da mensagem. Fixture temporária (`mkdtemp`) em todos:
+`benchmark/data/private/` continuou com só o keyring de C2 e `<home>/.cleanfeed-ai` nunca existiu.
+Arquivo: `benchmark/cluster-exposure-ledger.ts` (mais os testes).
+
+33. **A nota de escrita interrompida do item 31 estava MORTA no comando que a promete.**
+    `verifyClusterLedger` recusava ledger **ausente** com `CLUSTER_LEDGER_ABSENT` **antes** de
+    `assertLedgerConsistent` rodar, então a metade `HISTORY_ABSENT` da nota — a que serve
+    exatamente à forma que um `--ledger` mistipado produz — nunca saía do comando cujo docstring
+    promete verificar a altura atestada e reportar as escritas interrompidas. MEDIDO: keyring
+    atestando 1 evento, ledger ausente, `.tmp` com os bytes publicados ao lado → `code:
+    CLUSTER_LEDGER_ABSENT`, mensagem `no cluster-exposure ledger at …` e nenhum `.tmp`.
+    Conserto: a checagem atestada roda **primeiro**; `AttestedLedger` passou a carregar `present`
+    (a presença que os eventos e a testemunha não distinguem entre si) para não reler o arquivo, e
+    a recusa genérica só alcança o que `assertAttestedHistory` aceita como **provadamente novo** —
+    onde o texto foi reescrito para dizer que nada se perdeu, em vez de herdar o vocabulário de
+    história perdida. Duas direções testadas: "names the staged ledger when the ledger is ABSENT,
+    which is the state verify promised to diagnose" (vermelho: `expected 'CLUSTER_LEDGER_ABSENT'
+    to be 'CLUSTER_LEDGER_HISTORY_ABSENT'`; executa o reparo nomeado e volta a `verify` na altura
+    2) e "still refuses an absent ledger plainly when the keyring attests no history".
+34. **O sinalizador de temporário abrangia o diretório do keyring.** O item 29d fez
+    `strayTempFiles` varrer os dois nomes, e o reordenamento do reparo do item 31 lê
+    `staged.length > 0` — logo resíduo **só de keyring** promovia "An interrupted write is listed
+    below, and it is the FIRST thing to check: those bytes may be the missing state" sobre um
+    arquivo que comprovadamente não pode ser o estado faltante do ledger. MEDIDO com ledger
+    truncado à primeira linha e só `cluster-exposure-keyring.v1.json.777.1.tmp` em disco.
+    Conserto: `stagedLedgerWrites` filtra por `basename(paths.ledgerPath)` e é ele que reordena;
+    a **lista** continua com os dois nomes, porque temporário que ninguém reporta é temporário que
+    ninguém apaga. Teste "keeps the backup as the repair when the only temp on disk is a KEYRING
+    one" (vermelho: `expected '…' to contain 'To recover:'`).
+35. **Conselho errado no ramo de eventos excedentes.** `interruptedWriteNote` era anexada aos
+    **três** ramos, então o ramo "o ledger tem eventos que o keyring nunca atestou" dizia na mesma
+    string *"Do NOT discard the surplus events: they may be a real exposure whose attestation was
+    lost"* e *"…renaming it over the ledger publishes bytes that are already fsynced"*. MEDIDO com
+    ledger na altura 2 contra 1 atestada e um `.tmp` de uma linha ao lado: o digest de cauda que a
+    nota manda conferir é o **atestado**, que é o da primeira linha — ou seja, a nota afirmava a
+    condição e mandava renomear, o que destruiria o evento 2. Conserto: a nota partiu em metade
+    **lista** e metade **candidato**, e `renameMayRecover` (`events.length <= witness.eventCount`)
+    retém a segunda exatamente no excedente. Teste "names the temps without offering a rename when
+    the ledger holds SURPLUS events" (vermelho: `expected '…' not to contain 'renaming it over the
+    ledger'`).
+36. **Diagnóstico NÃO DETERMINÍSTICO no caminho de durabilidade.** `restoreClusterLedger` avaliava
+    os planos de ledger e keyring em `Promise.all`, e uma mutação torna as **duas** metades de um
+    par anterior divergentes (apende evento e reatesta o keyring), então as duas recusas correm —
+    e o item 30 tornou as mensagens assimétricas (só o ledger carrega a dica de mover para o lado).
+    MEDIDO em 12 execuções idênticas: **6 relataram a do ledger e 6 a do keyring**. Conserto:
+    `planRestore` extraído e chamado **sequencialmente**, ledger primeiro (o que também eliminou os
+    dois `!` de `plans.find`); nada é escrito antes de os dois planos existirem. Depois: **12/12
+    ledger** em três processos separados. Dois testes — "reports the LEDGER's divergence, and
+    reports the same one on every run" (20 repetições) e "checks the ledger's plan before the
+    keyring's, whichever plan fails sooner", que prende a ordem **sem corrida** deixando o lado
+    keyring do backup ilegível, i.e. falhando no primeiro `await` (vermelho: `expected
+    'CLUSTER_LEDGER_BACKUP_INVALID' to be 'CLUSTER_LEDGER_RESTORE_DIVERGENT'`).
+37. **O `close()` do item 32b podia substituir o erro que importa.** `discardTemp` existe para que
+    a limpeza nunca **se torne** o erro reportado, mas o `finally { await handle.close(); }`
+    interno reintroduzia isso pelo outro lado: `close()` num `finally` substitui a exceção em voo,
+    então um EPERM/EBUSY no handle — a própria classe de falha que o docstring discute — entregava
+    erro de close no lugar de "estes bytes nunca foram fsyncados". Conserto: o caminho de erro faz
+    `await handle.close().catch(() => {})` e só o de sucesso propaga o erro de close (um handle que
+    não fecha não é arquivo publicado). **O teste que a rodada anterior julgou impossível existe**:
+    `sync` é o único método de **protótipo** que a escrita encenada chama e `close` é propriedade
+    **própria** de cada `FileHandle`, então armar o close falho de dentro do spy de `sync` atinge o
+    handle da escrita e nada mais — o handle do lock nunca sincroniza. Não foi por mock de módulo:
+    medido que o vitest deste repo **não** intercepta `node:fs/promises` importado por um módulo de
+    origem (nem com `vi.mock` içado, nem com `vi.doMock` + import dinâmico; o import direto no
+    próprio arquivo de teste é mockado, o do módulo não). Dois testes, "keeps the sync error when
+    the close that follows it fails too" (vermelho: `expected [Function] to throw error including
+    'SYNC_FAILED' but got 'CLOSE_FAILED'`) e "still fails the write when only the close fails"
+    (guarda: já passava, e prende que o caminho de sucesso não engula).
 
 ### C4 — Bootstrap com unidade de reamostragem por estimando
 

@@ -9,6 +9,7 @@ import { execFileSync } from "node:child_process";
 import {
   mkdtemp,
   mkdir,
+  open,
   readFile,
   readdir,
   rename,
@@ -18,7 +19,7 @@ import {
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { canonicalJson } from "../../contracts/canonical-json.ts";
 import { runCli } from "../cli.ts";
@@ -1423,6 +1424,122 @@ describe("the ledger reads as empty only when it is provably new", () => {
     expect(verified.strayTempFiles).toEqual([]);
   });
 
+  it("names the staged ledger when the ledger is ABSENT, which is the state verify promised to diagnose", async () => {
+    // `verify` is the command whose docstring promises the attested height and the
+    // interrupted writes, and a generic "no ledger here" refusal used to run BEFORE
+    // the attested check — so for the shape a mistyped `--ledger` actually produces
+    // it reported neither the lost history nor the fsynced bytes that are the repair.
+    const commit = await burnATestClusterInTheTail();
+    const published = await readFile(paths().ledgerPath, "utf8");
+    const target = freshLedger();
+    await mkdir(dirname(target.ledgerPath), { recursive: true });
+    const staged = `${target.ledgerPath}.4242.1.tmp`;
+    await writeFile(staged, published, "utf8");
+
+    const failure = (await verifyClusterLedger(target).catch(
+      (caught: unknown) => caught,
+    )) as ClusterLedgerError;
+    expect(failure.code).toBe("CLUSTER_LEDGER_HISTORY_ABSENT");
+    expect(failure.message).toContain(staged);
+
+    // And the repair it names is the whole repair, from `verify` alone.
+    await rename(staged, target.ledgerPath);
+    const verified = await verifyClusterLedger(target);
+    expect(verified.eventCount).toBe(2);
+    expect(verified.lastEventDigest).toBe(commit.event.eventDigest);
+  });
+
+  it("still refuses an absent ledger plainly when the keyring attests no history", async () => {
+    // The other direction: a keyring at height zero has no history to have lost, so
+    // the refusal must stay "there is no ledger at this path" and not accuse the
+    // operator of losing events a project this new never wrote.
+    const virgin = await mkdtemp(join(tmpdir(), "cleanfeed-cluster-absent-"));
+    try {
+      const fresh: ClusterLedgerPaths = {
+        ledgerPath: join(virgin, "private", CLUSTER_EXPOSURE_LEDGER_FILE),
+        keyringPath: join(virgin, "private", CLUSTER_EXPOSURE_KEYRING_FILE),
+        backupRoot: join(virgin, "ledger-backups"),
+      };
+      await initClusterLedger(fresh, { createdAt: "2026-07-28T09:00:00.000Z" });
+      // The one crash window `init` leaves: the keyring is published before the
+      // empty ledger, so "zero attested, no file" is a state that really occurs.
+      await rm(fresh.ledgerPath, { force: true });
+
+      const failure = (await verifyClusterLedger(fresh).catch(
+        (caught: unknown) => caught,
+      )) as ClusterLedgerError;
+      expect(failure.code).toBe("CLUSTER_LEDGER_ABSENT");
+      expect(failure.message).toContain("nothing was lost");
+      expect(failure.message).not.toContain("already burned");
+    } finally {
+      await rm(virgin, { recursive: true, force: true });
+    }
+  });
+
+  it("keeps the backup as the repair when the only temp on disk is a KEYRING one", async () => {
+    // A staged keyring is not a candidate for the ledger's missing state — it is a
+    // copy of `secrets.person` and every exposure key — so it must not displace the
+    // repair that does work. Reordering on it sends the operator to check bytes that
+    // provably cannot hold the events the ledger lost.
+    await burnATestClusterInTheTail();
+    const lines = await ledgerLines();
+    expect(lines).toHaveLength(2);
+    await writeFile(paths().ledgerPath, `${lines[0]}\n`, "utf8");
+    const strayKeyring = `${paths().keyringPath}.777.1.tmp`;
+    await writeFile(strayKeyring, "{}", "utf8");
+
+    const failure = (await verifyClusterLedger(paths()).catch(
+      (caught: unknown) => caught,
+    )) as ClusterLedgerError;
+    expect(failure.code).toBe("CLUSTER_LEDGER_HISTORY_DIVERGED");
+    // Still NAMED, because a temp nobody reports is a temp nobody deletes.
+    expect(failure.message).toContain(strayKeyring);
+    expect(failure.message).toContain("To recover:");
+    expect(failure.message).not.toContain("FIRST thing to check");
+  });
+
+  it("names the temps without offering a rename when the ledger holds SURPLUS events", async () => {
+    // The mirror residue: the ledger published and the attestation did not. The
+    // ledger's tail may be a real exposure, so renaming a staged file over it would
+    // destroy the very events the diagnosis says not to discard — and the staged
+    // file here carries exactly the attested tail digest, so the candidate half of
+    // the note reads as an instruction rather than a hypothesis.
+    await burnATestClusterInTheTail();
+    const lines = await ledgerLines();
+    expect(lines).toHaveLength(2);
+    const first = JSON.parse(lines[0]) as Record<string, unknown>;
+    const keyring = JSON.parse(
+      await readFile(paths().keyringPath, "utf8"),
+    ) as Record<string, unknown>;
+    await writeFile(
+      paths().keyringPath,
+      `${JSON.stringify(
+        {
+          ...keyring,
+          ledgerWitness: {
+            ...(keyring.ledgerWitness as Record<string, unknown>),
+            eventCount: 1,
+            lastEventDigest: first.eventDigest,
+          },
+        },
+        null,
+        2,
+      )}\n`,
+      "utf8",
+    );
+    const staged = `${paths().ledgerPath}.4242.1.tmp`;
+    await writeFile(staged, `${lines[0]}\n`, "utf8");
+
+    const failure = (await verifyClusterLedger(paths()).catch(
+      (caught: unknown) => caught,
+    )) as ClusterLedgerError;
+    expect(failure.code).toBe("CLUSTER_LEDGER_HISTORY_DIVERGED");
+    expect(failure.message).toContain("Do NOT discard the surplus");
+    expect(failure.message).toContain(staged);
+    expect(failure.message).not.toContain("renaming it over the ledger");
+    expect(failure.message).not.toContain("CANDIDATE");
+  });
+
   it("refuses a tail REWRITTEN in place, at the very height the keyring attests", async () => {
     // Height and tail digest are two halves of one comparison, and only the DIGEST
     // half sees this: the last event is replaced rather than removed, and its own
@@ -1708,6 +1825,69 @@ describe("the state a mutation commits stays restorable", () => {
     );
   });
 
+  /** A restore point at height 1 against a disk that has moved on to height 2. */
+  async function bothFilesMovedOn(): Promise<ClusterExposureCommit> {
+    await init();
+    const first = await recordPilotExposure(
+      paths(),
+      request({ eventType: "pilot-exposure" }),
+    );
+    await commitSplitFreeze(
+      paths(),
+      request({
+        runId: "run-2",
+        records: [
+          record({
+            id: "t1",
+            text: FAR_TEXT,
+            author: "person_aaaabbbbccccdddd",
+            source: "th_9",
+            partition: "test",
+          }),
+        ],
+      }),
+    );
+    return first;
+  }
+
+  it("reports the LEDGER's divergence, and reports the same one on every run", async () => {
+    // Both halves of the pair diverge from that restore point — the ledger by an
+    // event, the keyring by the attestation of it — and only the ledger's refusal
+    // carries the move-aside repair. Deciding which one the operator reads by which
+    // read finishes first spends an operator's night on a message that changes.
+    const first = await bothFilesMovedOn();
+    for (let attempt = 0; attempt < 20; attempt += 1) {
+      const failure = (await restoreClusterLedger(
+        paths(),
+        first.restorePoint.directory,
+      ).catch((caught: unknown) => caught)) as ClusterLedgerError;
+      expect(failure.code).toBe("CLUSTER_LEDGER_RESTORE_DIVERGENT");
+      expect(failure.message).toContain("the ledger on disk differs");
+      expect(failure.message).toContain("move the ledger aside");
+    }
+  });
+
+  it("checks the ledger's plan before the keyring's, whichever plan fails sooner", async () => {
+    // Pinned WITHOUT a race: the keyring side of this backup is now unreadable,
+    // which fails on its first await, while the ledger side still has to digest the
+    // backup and read the file on disk. Concurrent plans report the keyring; ordered
+    // plans report the ledger, which is the refusal that names a repair.
+    const first = await bothFilesMovedOn();
+    await rm(
+      join(first.restorePoint.directory, CLUSTER_EXPOSURE_KEYRING_FILE),
+      {
+        force: true,
+      },
+    );
+
+    const failure = (await restoreClusterLedger(
+      paths(),
+      first.restorePoint.directory,
+    ).catch((caught: unknown) => caught)) as ClusterLedgerError;
+    expect(failure.code).toBe("CLUSTER_LEDGER_RESTORE_DIVERGENT");
+    expect(failure.message).toContain("the ledger on disk differs");
+  });
+
   it("says the exposure IS recorded when the post-commit backup cannot be written", async () => {
     // The event is already published by then, so a raw filesystem error would let
     // the operator conclude the split was never frozen — and re-running the command
@@ -1976,6 +2156,72 @@ describe("exposureInputsFromRecords — R6's three states at the boundary", () =
     expect(decision.refusals.map((refusal) => refusal.reason)).toContain(
       "cluster-exposed-previously",
     );
+  });
+});
+
+describe("the staging failure is the error that reaches the operator", () => {
+  // EPERM/EBUSY on a handle is the platform case this module's durability comments
+  // argue about, and a `close()` inside a `finally` REPLACES the exception in
+  // flight — so "these bytes were never fsynced" could reach the operator as a
+  // close error, on the one path whose whole job is to say what failed.
+  //
+  // HOW THE FAULT IS AIMED: `sync` is the only FileHandle PROTOTYPE method the
+  // staging write calls, and `close` is an OWN property of every handle, so arming
+  // a failing close from inside the `sync` spy hits the staging handle and nothing
+  // else — the ledger lock's handle never syncs, and neither does any read.
+  async function failTheStagingHandle(faults: {
+    sync: boolean;
+  }): Promise<() => void> {
+    const probe = await open(join(root, "handle-probe"), "w");
+    const prototype = Object.getPrototypeOf(probe) as {
+      sync: () => Promise<void>;
+    };
+    await probe.close();
+    const realSync = prototype.sync;
+    const spy = vi
+      .spyOn(prototype, "sync")
+      .mockImplementation(async function (this: {
+        close: () => Promise<void>;
+      }) {
+        const realClose = this.close;
+        this.close = async () => {
+          await realClose.call(this);
+          throw new Error("CLOSE_FAILED");
+        };
+        if (faults.sync) throw new Error("SYNC_FAILED");
+        await realSync.call(this);
+      });
+    return () => spy.mockRestore();
+  }
+
+  async function tempsLeftBehind(): Promise<string[]> {
+    const entries = await readdir(dirname(paths().keyringPath)).catch(
+      () => [] as string[],
+    );
+    return entries.filter((entry) => entry.endsWith(".tmp"));
+  }
+
+  it("keeps the sync error when the close that follows it fails too", async () => {
+    const restore = await failTheStagingHandle({ sync: true });
+    try {
+      await expect(init()).rejects.toThrow("SYNC_FAILED");
+    } finally {
+      restore();
+    }
+    expect(await tempsLeftBehind()).toEqual([]);
+  });
+
+  it("still fails the write when only the close fails", async () => {
+    // The other direction: a handle that would not close is not a published file,
+    // so the success path must NOT swallow the close error — and the staged bytes
+    // are discarded either way.
+    const restore = await failTheStagingHandle({ sync: false });
+    try {
+      await expect(init()).rejects.toThrow("CLOSE_FAILED");
+    } finally {
+      restore();
+    }
+    expect(await tempsLeftBehind()).toEqual([]);
   });
 });
 

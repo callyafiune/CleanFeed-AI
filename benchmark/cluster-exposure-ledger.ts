@@ -1139,14 +1139,22 @@ async function writeTemp(target: string, content: string): Promise<string> {
     try {
       await handle.writeFile(content, "utf8");
       await handle.sync();
-    } finally {
-      await handle.close();
+    } catch (error) {
+      // A `close()` in a `finally` REPLACES the exception in flight, and EPERM/EBUSY
+      // on a handle is the platform case this module's durability comments argue
+      // about — so closing there could turn "these bytes were never fsynced" into an
+      // unactionable close error. The write failure is the diagnosis; the close is
+      // swallowed only once there is already one to keep.
+      await handle.close().catch(() => {});
+      throw error;
     }
+    // On the way out it is NOT swallowed: a handle that would not close is not a
+    // published file, and the caller is about to rename these bytes into place.
+    await handle.close();
   } catch (error) {
-    // Outside the `finally` that closes, so a throwing `close()` — which fails the
-    // write as much as `sync()` does — cannot skip the cleanup. Nothing else can
-    // collect the file: the path is generated here, so a caller that never received
-    // it cannot clean up after this.
+    // Outside the block that closes, so a throwing `close()` cannot skip the
+    // cleanup. Nothing else can collect the file: the path is generated here, so a
+    // caller that never received it cannot clean up after this.
     await discardTemp(tempPath);
     throw error;
   }
@@ -1440,6 +1448,7 @@ async function assertLedgerConsistent(
   // that names what the operator actually did.
   return {
     events,
+    present: onDisk,
     witness: await assertAttestedHistory(paths, keyring, onDisk, events),
   };
 }
@@ -1456,6 +1465,12 @@ async function assertLedgerConsistent(
 interface AttestedLedger {
   events: ClusterExposureEvent[];
   witness: ClusterLedgerWitness;
+  /**
+   * Whether the ledger FILE was there. Only a witness attesting a height of zero
+   * admits `false`, so this distinguishes "provably new" from "present and empty" —
+   * the one difference the events and the witness cannot express between them.
+   */
+  present: boolean;
 }
 
 /** Reads the file once, so the attested check and the parse see the same bytes. */
@@ -1513,7 +1528,7 @@ async function assertAttestedHistory(
         `(${join(CLUSTER_EXPOSURE_PRIVATE_DIRECTORY, CLUSTER_EXPOSURE_LEDGER_FILE)}) ` +
         'or restore it with "cluster-ledger restore". Reading it as empty would ' +
         "return test eligibility to every cluster a consumed test already burned. " +
-        interruptedWriteNote(staged, witness),
+        interruptedWriteNote(staged, witness, true),
     );
   }
   const lastEventDigest = events.at(-1)?.eventDigest ?? null;
@@ -1531,12 +1546,31 @@ async function assertAttestedHistory(
         `${divergenceDiagnosis(
           events.length,
           witness.eventCount,
-          staged.length > 0,
+          stagedLedgerWrites(paths, staged).length > 0,
         )}. ` +
-        interruptedWriteNote(staged, witness),
+        interruptedWriteNote(
+          staged,
+          witness,
+          events.length <= witness.eventCount,
+        ),
     );
   }
   return witness;
+}
+
+/**
+ * The subset of {@link strayTempFiles} that could hold the LEDGER's missing state.
+ *
+ * A transaction stages both files, so a staged KEYRING is routinely on disk beside a
+ * short ledger — and it is a copy of `secrets.person` and every exposure key, never
+ * of the events. Only the ledger's own temps may reorder the repair.
+ */
+function stagedLedgerWrites(
+  paths: ClusterLedgerPaths,
+  staged: readonly string[],
+): string[] {
+  const prefix = `${basename(paths.ledgerPath)}.`;
+  return staged.filter((path) => basename(path).startsWith(prefix));
 }
 
 /**
@@ -1552,16 +1586,25 @@ async function assertAttestedHistory(
  * so nothing here proves a staged ledger is the missing state — what the operator
  * gets is how to check: the attested tail digest is in the last line of the bytes
  * that are it.
+ *
+ * `renameMayRecover` withholds that second half, and the caller that clears it is
+ * the surplus one: a ledger holding events the keyring never attested may hold a
+ * REAL exposure in that surplus, so renaming a staged file over it is the single
+ * action the diagnosis for that shape tells the operator not to take. The files are
+ * still named, because a temp nobody reports is a temp nobody deletes.
  */
 function interruptedWriteNote(
   staged: readonly string[],
   witness: ClusterLedgerWitness,
+  renameMayRecover: boolean,
 ): string {
   if (staged.length === 0) return "No interrupted write is on disk.";
+  const listed = `Interrupted write(s) still on disk: ${staged.join(", ")}.`;
+  if (!renameMayRecover) return listed;
   return (
-    `Interrupted write(s) still on disk: ${staged.join(", ")}. A staged LEDGER ` +
-    "among them is a CANDIDATE for the missing state and nothing here proves it is " +
-    "one: it holds the attested state only if its last line carries the digest " +
+    `${listed} A staged LEDGER among them is a CANDIDATE for the missing state and ` +
+    "nothing here proves it is one: it holds the attested state only if its last " +
+    "line carries the digest " +
     `${witness.lastEventDigest ?? "(none — the attested height is zero)"}. If it ` +
     "does, renaming it over the ledger publishes bytes that are already fsynced; " +
     'then take a "cluster-ledger backup", because no backup on disk matches the ' +
@@ -1581,16 +1624,17 @@ function interruptedWriteNote(
  * action this state always rejects. "Aside" is deliberately not "away": the file is
  * the only copy of whatever it holds that the backup may not.
  *
- * `stagedWriteOnDisk` reorders the repair without changing it. A ledger short of its
- * attestation with a staged write beside it is the crash residue the write order
- * prefers ({@link appendEvent}), and the repair for THAT is the staged file, not a
- * backup: an operator who reaches for the backup first is refused, because its
- * keyring attests the pre-mutation height.
+ * `stagedLedgerWriteOnDisk` reorders the repair without changing it. A ledger short
+ * of its attestation with a staged LEDGER beside it is the crash residue the write
+ * order prefers ({@link appendEvent}), and the repair for THAT is the staged file,
+ * not a backup: an operator who reaches for the backup first is refused, because its
+ * keyring attests the pre-mutation height. It is the staged ledger and not any temp
+ * that reorders it — see {@link stagedLedgerWrites}.
  */
 function divergenceDiagnosis(
   onDisk: number,
   attested: number,
-  stagedWriteOnDisk: boolean,
+  stagedLedgerWriteOnDisk: boolean,
 ): string {
   if (onDisk < attested) {
     const restore =
@@ -1604,7 +1648,7 @@ function divergenceDiagnosis(
       "or a run that died between attesting the height and publishing the ledger. " +
       "The hash chain cannot see a removal from the TAIL, which is where the " +
       "newest exposures are, so this is the only check that catches it. " +
-      (stagedWriteOnDisk
+      (stagedLedgerWriteOnDisk
         ? "An interrupted write is listed below, and it is the FIRST thing to " +
           `check: those bytes may be the missing state. If they are not, ${restore}`
         : `To recover: ${restore}`)
@@ -1647,18 +1691,35 @@ function witnessFor(
  * The attested height is what keeps `verify` from passing green over a ledger that
  * lost its tail — the state in which every other command would have answered
  * "never exposed". See {@link assertAttestedHistory}.
+ *
+ * ORDER. The attested check runs BEFORE the plain "there is no file here". A missing
+ * file is the shape a mistyped `--ledger` produces, and the two states behind it need
+ * different words: with a height attested it is a LOST history whose repair is the
+ * staged write the refusal names, and only a witness at zero makes it an empty path.
+ * Refusing on absence alone answers for both, and shadows the one that has a repair.
  */
 export async function verifyClusterLedger(
   paths: ClusterLedgerPaths,
 ): Promise<ClusterLedgerVerification> {
   const keyring = await requireKeyring(paths.keyringPath);
-  if ((await readOptionalText(paths.ledgerPath)) === undefined) {
+  const { events, witness, present } = await assertLedgerConsistent(
+    paths,
+    keyring,
+  );
+  if (!present) {
+    // What reaches here is only what `assertAttestedHistory` accepts as provably
+    // new, so there is no history to have lost and none of that vocabulary applies.
     fail(
       "CLUSTER_LEDGER_ABSENT",
-      `no cluster-exposure ledger at ${paths.ledgerPath}`,
+      `no cluster-exposure ledger at ${paths.ledgerPath}, and the keyring attests a ` +
+        "height of zero: nothing was lost, this path simply holds no file. Point " +
+        "--ledger at the canonical artifact " +
+        `(${join(CLUSTER_EXPOSURE_PRIVATE_DIRECTORY, CLUSTER_EXPOSURE_LEDGER_FILE)}), ` +
+        "or, if the project's first run died between publishing the keyring and " +
+        "creating the empty ledger, an empty file at that path is the whole of what " +
+        "is missing",
     );
   }
-  const { events, witness } = await assertLedgerConsistent(paths, keyring);
   const referenced = new Set<string>();
   for (const event of events) {
     for (const version of event.keyVersions) referenced.add(version);
@@ -2132,77 +2193,93 @@ export async function restoreClusterLedger(
       );
     }
 
-    const plans = await Promise.all(
-      (
-        [
-          [
-            join(backupDirectory, CLUSTER_EXPOSURE_LEDGER_FILE),
-            paths.ledgerPath,
-            manifest.ledgerSha256 as string,
-            "ledger" as const,
-          ],
-          [
-            join(backupDirectory, CLUSTER_EXPOSURE_KEYRING_FILE),
-            paths.keyringPath,
-            manifest.keyringSha256 as string,
-            "keyring" as const,
-          ],
-        ] as const
-      ).map(async ([source, target, declaredSha, name]) => {
-        const backupContent = await readOptionalText(source);
-        if (backupContent === undefined) {
-          fail(
-            "CLUSTER_LEDGER_BACKUP_INVALID",
-            `the backup in ${backupDirectory} is missing its ${name}`,
-          );
-        }
-        if (sha256Text(backupContent) !== declaredSha) {
-          fail(
-            "CLUSTER_LEDGER_BACKUP_INVALID",
-            `the backed-up ${name} does not hash to the digest its manifest declares`,
-          );
-        }
-        const current = await readOptionalText(target);
-        if (current !== undefined && current !== backupContent) {
-          fail(
-            "CLUSTER_LEDGER_RESTORE_DIVERGENT",
-            `the ${name} on disk differs from the backup: restore writes only over ` +
-              "absent or identical state, because a divergent ledger holds exposures " +
-              "this backup does not know about" +
-              // Said only for the ledger: setting the KEYRING aside is not a repair
-              // (it holds the un-rotatable person secret, and authenticating this
-              // very manifest needs it), and its divergence is the rotation case
-              // recorded in the plan.
-              (name === "ledger"
-                ? '. If this is the corruption "verify" reported, move the ledger ' +
-                  "aside — keep it — and restore again: an ABSENT ledger is written " +
-                  "from the backup"
-                : ""),
-          );
-        }
-        return {
-          name,
-          target,
-          backupContent,
-          outcome:
-            current === undefined
-              ? ("written" as const)
-              : ("identical" as const),
-        };
-      }),
+    // SEQUENTIALLY, and the ledger first. One mutation makes BOTH halves of an
+    // earlier pair divergent — it appends an event and re-attests the keyring — so
+    // both checks refuse and only the ledger's refusal names a repair. Concurrent
+    // plans report whichever read finishes first, which on a durability path means a
+    // refusal that differs between identical runs of the same command.
+    const ledgerPlan = await planRestore(
+      backupDirectory,
+      join(backupDirectory, CLUSTER_EXPOSURE_LEDGER_FILE),
+      paths.ledgerPath,
+      manifest.ledgerSha256 as string,
+      "ledger",
+    );
+    const keyringPlan = await planRestore(
+      backupDirectory,
+      join(backupDirectory, CLUSTER_EXPOSURE_KEYRING_FILE),
+      paths.keyringPath,
+      manifest.keyringSha256 as string,
+      "keyring",
     );
 
-    for (const plan of plans) {
+    for (const plan of [ledgerPlan, keyringPlan]) {
       if (plan.outcome === "written") {
         await atomicWrite(plan.target, plan.backupContent);
       }
     }
     return {
       directory: backupDirectory,
-      ledger: plans.find((plan) => plan.name === "ledger")!.outcome,
-      keyring: plans.find((plan) => plan.name === "keyring")!.outcome,
+      ledger: ledgerPlan.outcome,
+      keyring: keyringPlan.outcome,
     };
   });
+}
+
+interface RestorePlan {
+  target: string;
+  backupContent: string;
+  outcome: "written" | "identical";
+}
+
+/**
+ * What restoring one half of a backup pair would do, or the refusal that stops it.
+ *
+ * Nothing is written from here: both halves are planned before either is published,
+ * so a pair that is half-restorable leaves the disk untouched.
+ */
+async function planRestore(
+  backupDirectory: string,
+  source: string,
+  target: string,
+  declaredSha: string,
+  name: "ledger" | "keyring",
+): Promise<RestorePlan> {
+  const backupContent = await readOptionalText(source);
+  if (backupContent === undefined) {
+    fail(
+      "CLUSTER_LEDGER_BACKUP_INVALID",
+      `the backup in ${backupDirectory} is missing its ${name}`,
+    );
+  }
+  if (sha256Text(backupContent) !== declaredSha) {
+    fail(
+      "CLUSTER_LEDGER_BACKUP_INVALID",
+      `the backed-up ${name} does not hash to the digest its manifest declares`,
+    );
+  }
+  const current = await readOptionalText(target);
+  if (current !== undefined && current !== backupContent) {
+    fail(
+      "CLUSTER_LEDGER_RESTORE_DIVERGENT",
+      `the ${name} on disk differs from the backup: restore writes only over ` +
+        "absent or identical state, because a divergent ledger holds exposures " +
+        "this backup does not know about" +
+        // Said only for the ledger: setting the KEYRING aside is not a repair (it
+        // holds the un-rotatable person secret, and authenticating the manifest
+        // needs it), and its divergence is the rotation case recorded in the plan.
+        (name === "ledger"
+          ? '. If this is the corruption "verify" reported, move the ledger ' +
+            "aside — keep it — and restore again: an ABSENT ledger is written " +
+            "from the backup"
+          : ""),
+    );
+  }
+  return {
+    target,
+    backupContent,
+    outcome: current === undefined ? "written" : "identical",
+  };
 }
 
 // --- the two writing transactions ------------------------------------------
