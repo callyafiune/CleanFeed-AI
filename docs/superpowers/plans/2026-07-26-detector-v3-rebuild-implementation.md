@@ -5296,6 +5296,14 @@ coberturas**" enquanto a lista vinha de `resampling.estimandExtensions`: contage
 sobre lista do contrato. A contagem sai de `extensions.length`, com concordância de número, e
 o teste assevera a frase **contra o tamanho da lista lida do contrato** e conta os bullets.
 
+**Achado meu, não da revisão, e ele atrapalha revisão:** `benchmark/bootstrap.ts` usava bytes
+de controle **literais** (NUL e SOH) como separadores nas chaves compostas dos resolvedores.
+Isso faz o arquivo inteiro ser lido como binário — `file` diz `data` e o ripgrep responde
+`binary file matches` **sem imprimir linha alguma** —, de modo que qualquer busca de código
+sobre o módulo central de C4 volta vazia sem avisar. Agora são duas constantes nomeadas
+escritas como escapes (`KEY_FIELD_SEPARATOR`, `KEY_PAIR_SEPARATOR`): mesmas strings em runtime, mesmas chaves,
+mesmos clusters, e os quatro arquivos de teste que leem o módulo seguem em 172 passando.
+
 ### C5 — Recibos de revisão e PII reais
 
 **Depende de:** B1, C1.
