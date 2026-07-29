@@ -94,6 +94,7 @@ export async function runClusterLedger(
       return (
         `Cluster-exposure ledger verified: ${verified.eventCount} event(s), ` +
         `chain closed at ${verified.lastEventDigest ?? "(empty)"}, ` +
+        `matching the ${verified.attestedEventCount} the keyring attests, ` +
         `keys ${verified.keyVersions.join(", ")}, ` +
         `${verified.strayTempFiles.length} interrupted write(s) left on disk.`
       );

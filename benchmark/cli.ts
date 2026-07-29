@@ -233,8 +233,10 @@ function requireNumberFlag(flags: FlagMap, key: string): number {
 
 // The ledger paths default to the CANONICAL project-wide artifact, and the flags
 // exist so a test (or an operator inspecting a backup) can point at a fixture
-// directory instead. A fresh directory is not a fresh ledger: `init` refuses when
-// the keyring already carries a key, whatever path the ledger is given.
+// directory instead. A fresh directory is not a fresh ledger, and no action gets to
+// believe otherwise: the keyring attests the ledger's height, so a `--ledger` that
+// is absent or truncated fails hard on every action instead of reading as "nothing
+// was ever exposed" (`benchmark/cluster-exposure-ledger.ts`, ClusterLedgerWitness).
 function buildClusterLedger(
   flags: FlagMap,
   action: ClusterLedgerAction,

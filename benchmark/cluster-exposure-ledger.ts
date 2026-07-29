@@ -25,6 +25,12 @@
 // own initiative: every path is an argument, and the canonical names below are
 // constants, not defaults that fire by accident.
 //
+// THE FILE PATH IS NOT A TRUST BOUNDARY. Blindness must not depend on which path
+// `--ledger` was given, so an absent or truncated ledger is a HARD FAILURE and
+// never an empty history: the keyring attests the height and the tail digest, and
+// the two are compared on every path that decides eligibility. See
+// {@link ClusterLedgerWitness}.
+//
 // PLATFORM HONESTY (Windows). Every mutation writes a temp file, `fsync`s it and
 // renames it over the target. On NTFS Node's `rename` is `MoveFileExW` with
 // `MOVEFILE_REPLACE_EXISTING`, which is atomic with respect to a concurrent
@@ -229,6 +235,46 @@ export interface ClusterExposureKeyring {
   secrets: Record<string, string>;
   /** C3's cluster-exposure keys, oldest first. */
   keys: ClusterExposureKey[];
+  /**
+   * What the ledger must contain. Absent only on a keyring that predates the
+   * attestation, which is a hard failure everywhere a decision is taken — see
+   * {@link ClusterLedgerWitness} and {@link readAttestedLedger}.
+   */
+  ledgerWitness?: ClusterLedgerWitness;
+}
+
+/**
+ * The keyring's attestation of the ledger, and the reason the ledger cannot be
+ * read as empty on its own word.
+ *
+ * A JSONL file carries no statement about its own length: an absent file, a file
+ * truncated to zero bytes and a file whose last line was deleted all parse into a
+ * shorter history whose hash chain still closes, because every
+ * `previousEventDigest` in the surviving PREFIX still matches. So the chain sees a
+ * removal from the head and from the middle and never one from the TAIL — which is
+ * where the newest exposures live. Read as "nothing was exposed", that hands full
+ * test eligibility back to every cluster and every record-line a consumed test
+ * already burned, and `verify` passes green over it. It is the failure that cost
+ * the 2026-07-25 measurement, arriving through the file path instead of the tuple.
+ *
+ * The witness lives in the KEYRING because the keyring is the artifact `init`
+ * already refuses to overwrite and `restore` already requires — an operator who
+ * mistypes `--ledger`, or a `git clean` that removes one file, does not
+ * coincidentally produce a matching pair. It is written INSIDE the same
+ * transaction that appends the event (see {@link appendEvent}); attested out of
+ * band it would become one more thing that can diverge.
+ *
+ * WHAT IT DOES NOT DO (R7). It binds a height and a tail digest, not the secret
+ * material: a keyring whose `v1` secret was replaced by another 32 bytes of the
+ * same name still passes here, and that gap is `assertLedgerConsistent`'s
+ * documented limit, unchanged by this attestation.
+ */
+export interface ClusterLedgerWitness {
+  /** How many events the ledger must hold. */
+  eventCount: number;
+  /** The `eventDigest` of the last one, or null when the height is zero. */
+  lastEventDigest: string | null;
+  updatedAt: string;
 }
 
 /** One pseudonymised identity under one key version. */
@@ -486,6 +532,12 @@ export interface ClusterLedgerPaths {
 export interface ClusterLedgerVerification {
   ledgerPath: string;
   eventCount: number;
+  /**
+   * What the keyring attests the height to be. Reported even though a mismatch has
+   * already thrown, so the operator reading a green `verify` sees WHICH statement
+   * was checked rather than taking "verified" on faith.
+   */
+  attestedEventCount: number;
   keyVersions: string[];
   referencedKeyVersions: string[];
   lastEventDigest: string | null;
@@ -727,7 +779,7 @@ function parseKeyring(raw: string, path: string): ClusterExposureKeyring {
       `the keyring at ${path} repeats a keyVersion`,
     );
   }
-  return {
+  const parsedKeyring: ClusterExposureKeyring = {
     keyringVersion:
       typeof object.keyringVersion === "string" && object.keyringVersion !== ""
         ? object.keyringVersion
@@ -736,6 +788,57 @@ function parseKeyring(raw: string, path: string): ClusterExposureKeyring {
       Object.entries(secrets).map(([name, value]) => [name, String(value)]),
     ),
     keys,
+  };
+  const witness = parseWitness(object.ledgerWitness, path);
+  if (witness !== undefined) parsedKeyring.ledgerWitness = witness;
+  return parsedKeyring;
+}
+
+/**
+ * Fail-closed on the attestation itself. A malformed witness is never repaired to
+ * a permissive default: "no height stated" would read as zero, which is the very
+ * answer this field exists to refuse.
+ */
+function parseWitness(
+  value: unknown,
+  path: string,
+): ClusterLedgerWitness | undefined {
+  if (value === undefined || value === null) return undefined;
+  const invalid = (why: string): never =>
+    fail(
+      "CLUSTER_LEDGER_KEYRING_INVALID",
+      `the keyring at ${path} declares a ledgerWitness that ${why}. It attests the ` +
+        "height and the tail digest of the ledger, and a witness that cannot be " +
+        "read is not a permission to read the ledger as empty",
+    );
+  if (typeof value !== "object") invalid("is not an object");
+  const object = value as Record<string, unknown>;
+  const eventCount = object.eventCount;
+  if (
+    typeof eventCount !== "number" ||
+    !Number.isSafeInteger(eventCount) ||
+    eventCount < 0
+  ) {
+    invalid("carries no non-negative integer eventCount");
+  }
+  if (typeof object.updatedAt !== "string" || object.updatedAt === "") {
+    invalid("carries no updatedAt");
+  }
+  const lastEventDigest = object.lastEventDigest;
+  if (lastEventDigest !== null && !SHA256_HEX.test(String(lastEventDigest))) {
+    invalid("carries a lastEventDigest that is not a SHA-256 digest or null");
+  }
+  // The two fields state one fact between them, so a pair that contradicts itself
+  // proves the attestation was written by hand.
+  if (((eventCount as number) === 0) !== (lastEventDigest === null)) {
+    invalid(
+      "states a height of zero with a tail digest, or a height above zero without one",
+    );
+  }
+  return {
+    eventCount: eventCount as number,
+    lastEventDigest: lastEventDigest as string | null,
+    updatedAt: object.updatedAt as string,
   };
 }
 
@@ -753,6 +856,12 @@ async function readKeyringFile(
 }
 
 async function requireKeyring(path: string): Promise<ClusterExposureKeyring> {
+  return (await requireKeyringFile(path)).keyring;
+}
+
+async function requireKeyringFile(
+  path: string,
+): Promise<{ keyring: ClusterExposureKeyring; raw: string }> {
   const loaded = await readKeyringFile(path);
   if (loaded === undefined) {
     fail(
@@ -767,11 +876,28 @@ async function requireKeyring(path: string): Promise<ClusterExposureKeyring> {
       `the keyring at ${path} carries no cluster-exposure key: run "cluster-ledger init"`,
     );
   }
-  return loaded.keyring;
+  return loaded;
 }
 
 function serializeKeyring(keyring: ClusterExposureKeyring): string {
   return `${JSON.stringify(keyring, null, 2)}\n`;
+}
+
+/**
+ * Rewrites the attestation and NOTHING else, from the file's OWN bytes.
+ *
+ * Not `serializeKeyring({...parsed, ledgerWitness})`: the parsed shape is this
+ * module's three fields, so re-serialising it would silently drop any field the
+ * keyring carries that this module does not know about — and the file is C2's too.
+ * Its `secrets.person` cannot be rotated without re-extracting the whole corpus, so
+ * every write to it stays a minimal edit of what was read.
+ */
+function reattestKeyringText(
+  raw: string,
+  witness: ClusterLedgerWitness,
+): string {
+  const object = JSON.parse(raw) as Record<string, unknown>;
+  return `${JSON.stringify({ ...object, ledgerWitness: witness }, null, 2)}\n`;
 }
 
 // --- event digests and the chain --------------------------------------------
@@ -900,17 +1026,24 @@ function validateEventShape(
  * Parses the ledger and verifies it INTRINSICALLY: every line hashes to its own
  * `eventDigest` and every `previousEventDigest` names the line before it. An
  * absent file is an empty ledger, which is what a fresh `init` leaves.
+ *
+ * INTRINSIC IS NOT ENOUGH TO DECIDE ANYTHING. A file that closes its own chain
+ * says nothing about whether it is the WHOLE history: an absent file, a truncated
+ * one and one missing its last line all pass here. Every path that reads the
+ * ledger to answer "was this exposed" therefore goes through
+ * {@link readAttestedLedger}, which compares what this returns against the
+ * keyring's witness. This function stays exported for `init` (which must tolerate
+ * absence) and for tests that construct a ledger state on purpose.
  */
 export async function readClusterLedger(
   ledgerPath: string,
 ): Promise<ClusterExposureEvent[]> {
-  let raw: string;
-  try {
-    raw = await readFile(ledgerPath, "utf8");
-  } catch (error) {
-    if ((error as NodeJS.ErrnoException).code === "ENOENT") return [];
-    throw error;
-  }
+  const raw = await readOptionalText(ledgerPath);
+  if (raw === undefined) return [];
+  return parseClusterLedger(raw);
+}
+
+function parseClusterLedger(raw: string): ClusterExposureEvent[] {
   const events: ClusterExposureEvent[] = [];
   const lines = raw.split(/\r?\n/);
   for (const [index, line] of lines.entries()) {
@@ -1021,13 +1154,13 @@ export interface InitOptions {
 /**
  * Creates the keyring's FIRST cluster-exposure key and an empty ledger, once.
  *
- * It refuses when C3 state already exists — a `keys` array, or a ledger holding
- * events — because a second `init` would mint a second key family and every
- * cluster would come back as never-exposed. A fresh DIRECTORY does not restart
- * anything either: the keyring is the identity, so pointing the ledger at a new
- * path while the keyring still carries keys is refused here, and a ledger whose
- * events reference a key the keyring no longer has is refused by
- * {@link verifyClusterLedger}.
+ * It refuses when C3 state already exists — a `keys` array, an attested height, or
+ * a ledger holding events — because a second `init` would mint a second key family
+ * and every cluster would come back as never-exposed. A fresh DIRECTORY does not
+ * restart anything either, and that no longer rests on this command alone: the
+ * keyring attests the ledger's height, so a fresh path is refused by every command
+ * that decides eligibility ({@link assertAttestedHistory}), not only by the one
+ * command an operator with a mistyped `--ledger` never runs.
  *
  * An existing keyring that carries only C2's `secrets` (the shape C2 minted
  * before this module existed) is ADOPTED: `keyringVersion`, `secrets` and any
@@ -1047,6 +1180,22 @@ export async function initClusterLedger(
         `the keyring at ${paths.keyringPath} already carries ` +
           `${existing.keyring.keys.length} cluster-exposure key(s). A second init would ` +
           "mint a second key family, and every exposed cluster would read as never exposed",
+      );
+    }
+    // A keyring stripped of its `keys` but still attesting a height would pass the
+    // check above, and the freshly minted key family would read every exposed
+    // cluster as never exposed. The attestation is the state that matters, so it is
+    // checked in its own right.
+    if (
+      existing !== undefined &&
+      (existing.keyring.ledgerWitness?.eventCount ?? 0) > 0
+    ) {
+      fail(
+        "CLUSTER_LEDGER_ALREADY_INITIALISED",
+        `the keyring at ${paths.keyringPath} attests ` +
+          `${existing.keyring.ledgerWitness?.eventCount} ledger event(s): this project ` +
+          "has a history, and init mints a key family that would read all of it as " +
+          "never exposed",
       );
     }
     const events = await readClusterLedger(paths.ledgerPath);
@@ -1079,6 +1228,16 @@ export async function initClusterLedger(
           createdAt: options.createdAt,
         },
       ],
+      // The one place a height of zero may be attested: nothing has been exposed
+      // yet, and every later command reads this as permission to see an empty
+      // ledger. It is written BEFORE the ledger file exists, so a crash between the
+      // two leaves "zero attested, no file", which is exactly the state this pair
+      // describes.
+      ledgerWitness: {
+        eventCount: 0,
+        lastEventDigest: null,
+        updatedAt: options.createdAt,
+      },
     } as ClusterExposureKeyring;
 
     await atomicWrite(paths.keyringPath, serializeKeyring(keyring));
@@ -1154,7 +1313,11 @@ async function strayTempFiles(ledgerPath: string): Promise<string[]> {
 }
 
 /**
- * Key coverage, checked BY VERSION NAME — and that is the whole limit of it.
+ * The two things every decision path checks before reading history: the ledger is
+ * the WHOLE attested history ({@link assertAttestedHistory}), and every key its
+ * events reference is still present.
+ *
+ * Key coverage is checked BY VERSION NAME — and that is the whole limit of it.
  *
  * What it catches: a keyVersion an event references that the keyring no longer
  * carries, i.e. a key removed or renamed instead of appended.
@@ -1178,7 +1341,7 @@ async function assertLedgerConsistent(
   paths: ClusterLedgerPaths,
   keyring: ClusterExposureKeyring,
 ): Promise<ClusterExposureEvent[]> {
-  const events = await readClusterLedger(paths.ledgerPath);
+  const { events, present: onDisk } = await readAttestedLedgerText(paths);
   const present = new Set(keyring.keys.map((key) => key.keyVersion));
   const referenced = new Set<string>();
   for (const event of events) {
@@ -1193,10 +1356,111 @@ async function assertLedgerConsistent(
         "every digest written under it, and no migration exists that could recover them",
     );
   }
+  // Key coverage is checked FIRST on purpose: a keyring that dropped a key it once
+  // held has also dropped the witness, and "you removed a key" is the diagnostic
+  // that names what the operator actually did.
+  assertAttestedHistory(paths, keyring, onDisk, events);
   return events;
 }
 
-/** Verifies the chain, the key coverage, and reports interrupted writes. */
+/** Reads the file once, so the attested check and the parse see the same bytes. */
+async function readAttestedLedgerText(paths: ClusterLedgerPaths): Promise<{
+  events: ClusterExposureEvent[];
+  present: boolean;
+}> {
+  const raw = await readOptionalText(paths.ledgerPath);
+  if (raw === undefined) return { events: [], present: false };
+  return { events: parseClusterLedger(raw), present: true };
+}
+
+/**
+ * THE INVARIANT: the ledger may be read as empty only when it is provably new.
+ *
+ * "Provably" means the keyring — the durable artifact of this ledger, the one
+ * `init` refuses to overwrite — attests a height of zero. Anything else that reads
+ * as shorter than the attestation is a LOST HISTORY and fails hard, because the
+ * alternative is handing test eligibility back to clusters a consumed test already
+ * burned. See {@link ClusterLedgerWitness} for why the hash chain cannot do this
+ * on its own.
+ *
+ * A height ABOVE the attestation fails just as hard, and for the mirror reason:
+ * the surplus event was written by something that did not attest it, so which of
+ * the two files is the stale one is not knowable from here. Both directions name
+ * the actionable condition instead of guessing.
+ */
+function assertAttestedHistory(
+  paths: ClusterLedgerPaths,
+  keyring: ClusterExposureKeyring,
+  ledgerPresent: boolean,
+  events: readonly ClusterExposureEvent[],
+): void {
+  const witness = keyring.ledgerWitness;
+  if (witness === undefined) {
+    fail(
+      "CLUSTER_LEDGER_WITNESS_ABSENT",
+      `the keyring at ${paths.keyringPath} carries ${keyring.keys.length} ` +
+        "cluster-exposure key(s) but attests no ledger height, so how much history " +
+        `${paths.ledgerPath} is supposed to hold is unknown. An unattested ledger is ` +
+        "never read as empty: restore the keyring from an authenticated backup " +
+        '("cluster-ledger restore"), or, if this really is the project\'s first run, ' +
+        'start from "cluster-ledger init" on a keyring that carries no keys',
+    );
+  }
+  if (!ledgerPresent) {
+    if (witness.eventCount === 0) return;
+    fail(
+      "CLUSTER_LEDGER_HISTORY_ABSENT",
+      `there is no ledger at ${paths.ledgerPath}, and the keyring at ` +
+        `${paths.keyringPath} attests ${witness.eventCount} event(s) ending at ` +
+        `${witness.lastEventDigest}. A path with no file is not an empty history: ` +
+        "point --ledger at the canonical artifact " +
+        `(${join(CLUSTER_EXPOSURE_PRIVATE_DIRECTORY, CLUSTER_EXPOSURE_LEDGER_FILE)}) ` +
+        'or restore it with "cluster-ledger restore". Reading it as empty would ' +
+        "return test eligibility to every cluster a consumed test already burned",
+    );
+  }
+  const lastEventDigest = events.at(-1)?.eventDigest ?? null;
+  if (
+    events.length !== witness.eventCount ||
+    lastEventDigest !== witness.lastEventDigest
+  ) {
+    fail(
+      "CLUSTER_LEDGER_HISTORY_DIVERGED",
+      `the ledger at ${paths.ledgerPath} holds ${events.length} event(s) ending at ` +
+        `${lastEventDigest ?? "(empty)"}, and the keyring at ${paths.keyringPath} ` +
+        `attests ${witness.eventCount} ending at ` +
+        `${witness.lastEventDigest ?? "(empty)"}. ` +
+        (events.length < witness.eventCount
+          ? "The ledger lost events: a truncation, a deleted last line or a stale " +
+            "copy. The hash chain cannot see a removal from the TAIL, which is where " +
+            "the newest exposures are, so this is the only check that catches it. " +
+            'Restore the ledger with "cluster-ledger restore"'
+          : "The ledger holds events the keyring never attested, so one of the two " +
+            "files is stale and this cannot tell which. Restore the matching pair " +
+            'with "cluster-ledger restore"'),
+    );
+  }
+}
+
+function witnessFor(
+  event: ClusterExposureEvent,
+  eventCount: number,
+): ClusterLedgerWitness {
+  return {
+    eventCount,
+    lastEventDigest: event.eventDigest,
+    updatedAt: event.occurredAt,
+  };
+}
+
+/**
+ * Verifies the chain, the ATTESTED HEIGHT, the key coverage, and reports
+ * interrupted writes.
+ *
+ * The attested height is what keeps `verify` from passing green over a ledger that
+ * lost its tail — the state in which every other command would have answered
+ * "never exposed". See {@link assertAttestedHistory}.
+ */
 export async function verifyClusterLedger(
   paths: ClusterLedgerPaths,
 ): Promise<ClusterLedgerVerification> {
@@ -1215,6 +1479,10 @@ export async function verifyClusterLedger(
   return {
     ledgerPath: paths.ledgerPath,
     eventCount: events.length,
+    // `assertLedgerConsistent` has already refused every state where the two differ,
+    // and refuses a keyring that attests nothing at all.
+    attestedEventCount: (keyring.ledgerWitness as ClusterLedgerWitness)
+      .eventCount,
     keyVersions: keyring.keys.map((key) => key.keyVersion),
     referencedKeyVersions: [...referenced].sort(),
     lastEventDigest: events.at(-1)?.eventDigest ?? null,
@@ -1500,8 +1768,9 @@ async function decide(
   decision: ExposureDecision;
   events: ClusterExposureEvent[];
   keyring: ClusterExposureKeyring;
+  keyringRaw: string;
 }> {
-  const keyring = await requireKeyring(paths.keyringPath);
+  const { keyring, raw } = await requireKeyringFile(paths.keyringPath);
   const events = await assertLedgerConsistent(paths, keyring);
   const event = buildEvent(keyring, events, request);
   const refusals = collectRefusals(
@@ -1513,6 +1782,7 @@ async function decide(
     decision: { eligible: refusals.length === 0, refusals, event },
     events,
     keyring,
+    keyringRaw: raw,
   };
 }
 
@@ -1624,6 +1894,17 @@ export async function backupClusterLedger(
  * hand back eligibility that was already spent. The backup's MAC is checked
  * first, against every key still in the keyring, so a hand-edited backup cannot
  * be restored at all.
+ *
+ * WHICH BACKUP IS RESTORABLE, stated because the attestation narrowed it. The
+ * backup a mutation takes is taken BEFORE it, so it holds the ledger AND the keyring
+ * at height N while the committed state is N+1. Restoring that pair over a lost
+ * ledger used to succeed and silently roll the history back one event; now the
+ * keyring on disk attests N+1, the pair diverges, and it is refused. The restorable
+ * pair for the current state is the one `cluster-ledger backup` takes AFTER the
+ * mutation, which is therefore the step that makes a freeze recoverable. Two
+ * further limits are unfixed and recorded in the plan: a keyring that is itself lost
+ * cannot be restored at all (authenticating the manifest needs it), and a rotation
+ * makes every earlier pair divergent for the same reason as above.
  */
 export async function restoreClusterLedger(
   paths: ClusterLedgerPaths,
@@ -1732,7 +2013,10 @@ async function appendEvent(
   return withLedgerLock(paths.ledgerPath, async () => {
     // Order matters and is the transaction: verify the chain and the keys, REFUSE
     // an ineligible exposure, and only then touch anything on disk.
-    const { decision, events, keyring } = await decide(paths, request);
+    const { decision, events, keyring, keyringRaw } = await decide(
+      paths,
+      request,
+    );
     if (!decision.eligible) {
       fail(
         "CLUSTER_LEDGER_EXPOSURE_REFUSED",
@@ -1758,6 +2042,21 @@ async function appendEvent(
     const tempPath = await writeTemp(paths.ledgerPath, `${lines.join("\n")}\n`);
     try {
       if (finalize !== undefined) await finalize(event);
+      // The witness is part of THIS transaction, not a bookkeeping step after it:
+      // attested out of band it would be one more thing that can diverge, and the
+      // whole point of it is to be the thing that cannot.
+      //
+      // ORDER. It is attested BEFORE the ledger is published, so the only residue a
+      // crash between the two writes can leave is "attested N+1, ledger at N" — the
+      // direction that REFUSES. The reverse order would leave a ledger holding an
+      // exposure nothing attests, and the repair for that is a hand-edit of the file
+      // that also holds the un-rotatable person secret. Here the repair is renaming
+      // the staged file, whose bytes are already fsynced and which `verify` reports
+      // as an interrupted write.
+      await atomicWrite(
+        paths.keyringPath,
+        reattestKeyringText(keyringRaw, witnessFor(event, lines.length)),
+      );
     } catch (error) {
       await rm(tempPath, { force: true });
       throw error;

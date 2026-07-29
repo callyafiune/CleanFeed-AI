@@ -1125,6 +1125,29 @@ describe("the keyring C2's pseudonymizer reads is the keyring init writes", () =
       expect(after.keyringVersion).toBe("c2-run-v1");
     },
   );
+
+  withPython(
+    "recording an event rewrites the keyring and still leaves C2's side intact",
+    async () => {
+      // The witness of the ledger's height lives IN the keyring, so every event now
+      // rewrites the file C2's extractors read. If that write dropped or normalised
+      // `secrets.person` — or `keyringVersion`, which travels into the axis report —
+      // every person cluster would be renumbered and the corpus would need
+      // re-extraction. Only running C2's real loader over the rewritten file can
+      // see that.
+      await init();
+      const before = personPseudonymViaPython(paths().keyringPath, "40");
+
+      await recordPilotExposure(
+        paths(),
+        request({ eventType: "pilot-exposure" }),
+      );
+
+      const after = personPseudonymViaPython(paths().keyringPath, "40");
+      expect(after.pseudonym).toBe(before.pseudonym);
+      expect(after.keyringVersion).toBe(before.keyringVersion);
+    },
+  );
 });
 
 describe("a new directory does not restart eligibility", () => {
@@ -1147,6 +1170,230 @@ describe("a new directory does not restart eligibility", () => {
     };
     await expect(
       initClusterLedger(fresh, { createdAt: "2026-07-28T14:00:00.000Z" }),
+    ).rejects.toMatchObject({ code: "CLUSTER_LEDGER_ALREADY_INITIALISED" });
+  });
+});
+
+describe("the ledger reads as empty only when it is provably new", () => {
+  // The requirement above ("a new directory does not restart eligibility") used to
+  // be enforced on the `init` path ALONE, and `init` is the one command an operator
+  // pointing `--ledger` at the wrong path never runs. Every other command read an
+  // absent or truncated file as "nothing was ever exposed" and handed back test
+  // eligibility for every consumed cluster, with `verify` passing green over it.
+  //
+  // So the checks below are of CONTENT and not of name: each one drives the three
+  // commands that decide eligibility (`preflight`, `record-pilot`, `commit-split`)
+  // plus `verify`, against a ledger state that lost history the keyring attests.
+
+  /** A path the operator could plausibly mistype, with the SAME keyring. */
+  function freshLedger(): ClusterLedgerPaths {
+    return {
+      ledgerPath: join(root, "elsewhere", CLUSTER_EXPOSURE_LEDGER_FILE),
+      keyringPath: paths().keyringPath,
+      backupRoot: paths().backupRoot,
+    };
+  }
+
+  /** The exposure a lost history would hand back: the cluster test consumed. */
+  function reoffer(): ExposureRequest {
+    return request({
+      datasetDigest: DATASET_B,
+      splitDigest: SPLIT_B,
+      records: [record({ id: "t1-renamed", partition: "test" })],
+    });
+  }
+
+  async function refusesEveryPath(
+    target: ClusterLedgerPaths,
+    code: string,
+  ): Promise<void> {
+    await expect(preflightExposure(target, reoffer())).rejects.toMatchObject({
+      code,
+    });
+    await expect(
+      recordPilotExposure(target, {
+        ...reoffer(),
+        eventType: "pilot-exposure",
+      }),
+    ).rejects.toMatchObject({ code });
+    await expect(commitSplitFreeze(target, reoffer())).rejects.toMatchObject({
+      code,
+    });
+    // And `verify` must not pass green over the same state.
+    const verified = await verifyClusterLedger(target).catch(
+      (caught: unknown) => caught,
+    );
+    expect(verified).toBeInstanceOf(ClusterLedgerError);
+  }
+
+  async function consumeOneTestCluster(): Promise<void> {
+    await init();
+    await commitSplitFreeze(
+      paths(),
+      request({ records: [record({ id: "t1", partition: "test" })] }),
+    );
+  }
+
+  it("refuses every eligibility path when the ledger is missing from the path given", async () => {
+    await consumeOneTestCluster();
+    await refusesEveryPath(freshLedger(), "CLUSTER_LEDGER_HISTORY_ABSENT");
+  });
+
+  it("refuses every eligibility path when the ledger was truncated to zero bytes", async () => {
+    await consumeOneTestCluster();
+    await writeFile(paths().ledgerPath, "", "utf8");
+    await refusesEveryPath(paths(), "CLUSTER_LEDGER_HISTORY_DIVERGED");
+  });
+
+  it("refuses every eligibility path when the LAST line was removed", async () => {
+    // The tail is where the newest exposures live, and it is the one direction the
+    // hash chain cannot see: dropping the last line leaves a prefix whose every
+    // `previousEventDigest` still matches, so `readClusterLedger` accepts it. Only
+    // the attested height and tail digest catch it.
+    await init();
+    await recordPilotExposure(
+      paths(),
+      request({ eventType: "pilot-exposure" }),
+    );
+    await commitSplitFreeze(
+      paths(),
+      request({
+        runId: "run-2",
+        records: [
+          record({
+            id: "t1",
+            text: FAR_TEXT,
+            author: "person_aaaabbbbccccdddd",
+            source: "th_9",
+            partition: "test",
+          }),
+        ],
+      }),
+    );
+
+    const lines = (await readFile(paths().ledgerPath, "utf8"))
+      .split("\n")
+      .filter((line) => line !== "");
+    expect(lines).toHaveLength(2);
+    await writeFile(paths().ledgerPath, `${lines[0]}\n`, "utf8");
+    // The truncated file is intrinsically valid — which is the whole point.
+    expect(await readClusterLedger(paths().ledgerPath)).toHaveLength(1);
+
+    await refusesEveryPath(paths(), "CLUSTER_LEDGER_HISTORY_DIVERGED");
+  });
+
+  it("keeps accepting a ledger that is legitimately new", async () => {
+    // Without this the fix could simply forbid every empty ledger, which would
+    // break `init` and the project's first use.
+    const virgin = await mkdtemp(join(tmpdir(), "cleanfeed-cluster-virgin-"));
+    try {
+      const fresh: ClusterLedgerPaths = {
+        ledgerPath: join(virgin, "private", CLUSTER_EXPOSURE_LEDGER_FILE),
+        keyringPath: join(virgin, "private", CLUSTER_EXPOSURE_KEYRING_FILE),
+        backupRoot: join(virgin, "ledger-backups"),
+      };
+      await initClusterLedger(fresh, { createdAt: "2026-07-28T09:00:00.000Z" });
+      const verified = await verifyClusterLedger(fresh);
+      expect(verified.eventCount).toBe(0);
+      const decision = await preflightExposure(
+        fresh,
+        request({ records: [record({ id: "t1", partition: "test" })] }),
+      );
+      expect(decision.eligible).toBe(true);
+    } finally {
+      await rm(virgin, { recursive: true, force: true });
+    }
+  });
+
+  it("attests the height and the tail digest inside the writing transaction", async () => {
+    await init();
+    const first = await recordPilotExposure(
+      paths(),
+      request({ eventType: "pilot-exposure" }),
+    );
+    const afterFirst = JSON.parse(
+      await readFile(paths().keyringPath, "utf8"),
+    ) as Record<string, unknown>;
+    expect(afterFirst.ledgerWitness).toMatchObject({
+      eventCount: 1,
+      lastEventDigest: first.eventDigest,
+    });
+
+    // A refused or failed transaction must not move the witness: the attestation
+    // and the event are written together or neither is.
+    await expect(
+      commitSplitFreeze(paths(), request(), async () => {
+        throw new Error("disk full while writing split-artifact.json");
+      }),
+    ).rejects.toThrow(/disk full/);
+    expect(
+      (
+        JSON.parse(await readFile(paths().keyringPath, "utf8")) as Record<
+          string,
+          unknown
+        >
+      ).ledgerWitness,
+    ).toMatchObject({ eventCount: 1, lastEventDigest: first.eventDigest });
+  });
+
+  it("refuses a keyring that carries keys but attests no history at all", async () => {
+    // A hand-stripped witness is the obvious way around the check, so absence of
+    // the attestation is itself a hard failure — never "assume zero".
+    await consumeOneTestCluster();
+    const keyring = JSON.parse(
+      await readFile(paths().keyringPath, "utf8"),
+    ) as Record<string, unknown>;
+    delete keyring.ledgerWitness;
+    await writeFile(
+      paths().keyringPath,
+      `${JSON.stringify(keyring, null, 2)}\n`,
+      "utf8",
+    );
+    await refusesEveryPath(paths(), "CLUSTER_LEDGER_WITNESS_ABSENT");
+  });
+
+  it("refuses a witness that is not a height plus a tail digest", async () => {
+    await consumeOneTestCluster();
+    const keyring = JSON.parse(
+      await readFile(paths().keyringPath, "utf8"),
+    ) as Record<string, unknown>;
+    for (const broken of [
+      { eventCount: 1, lastEventDigest: null, updatedAt: "2026-07-28" },
+      { eventCount: 0, lastEventDigest: "a".repeat(64), updatedAt: "x" },
+      { eventCount: -1, lastEventDigest: "a".repeat(64), updatedAt: "x" },
+      { eventCount: 1.5, lastEventDigest: "a".repeat(64), updatedAt: "x" },
+      { eventCount: 1, lastEventDigest: "not-a-digest", updatedAt: "x" },
+      { eventCount: 1, lastEventDigest: "a".repeat(64) },
+    ]) {
+      await writeFile(
+        paths().keyringPath,
+        `${JSON.stringify({ ...keyring, ledgerWitness: broken }, null, 2)}\n`,
+        "utf8",
+      );
+      await expect(
+        preflightExposure(paths(), reoffer()),
+        JSON.stringify(broken),
+      ).rejects.toMatchObject({ code: "CLUSTER_LEDGER_KEYRING_INVALID" });
+    }
+  });
+
+  it("refuses to init over a keyring that attests a history, on any path", async () => {
+    // `init` mints a key only when the keyring has none — so a keyring stripped of
+    // its `keys` but still attesting a height would otherwise pass, and the newly
+    // minted key family would read every exposed cluster as never exposed.
+    await consumeOneTestCluster();
+    const keyring = JSON.parse(
+      await readFile(paths().keyringPath, "utf8"),
+    ) as Record<string, unknown>;
+    await writeFile(
+      paths().keyringPath,
+      `${JSON.stringify({ ...keyring, keys: [] }, null, 2)}\n`,
+      "utf8",
+    );
+    await expect(
+      initClusterLedger(freshLedger(), {
+        createdAt: "2026-07-28T14:00:00.000Z",
+      }),
     ).rejects.toMatchObject({ code: "CLUSTER_LEDGER_ALREADY_INITIALISED" });
   });
 });

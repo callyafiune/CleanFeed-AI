@@ -4570,6 +4570,71 @@ execução foi além (ou ficou aquém) do que o texto acima diz.
     exportação fica porque é o único lugar que responde "quais eixos o splitter olha", que é o
     que D0b precisa ao escolher eixo de poder.
 
+##### Quarta rodada de correção (revisão cruzada de 2026-07-29)
+
+23. **O ledger falhava ABERTO pelo caminho do arquivo, e agora o keyring atesta a altura.**
+    DEFEITO MEDIDO, reproduzido e não deduzido: `readClusterLedger` tratava `ENOENT` como
+    ledger vazio, então com **o mesmo keyring** — apontar `--ledger` para um caminho novo,
+    truncar o arquivo a zero bytes, ou apagar só a **última linha** — `preflight`,
+    `record-pilot` e `commit-split` devolviam `eligible: true, refusals: []` para o cluster
+    e o registro-linha que um `test` consumido já havia queimado, e `verify` passava **verde**
+    por cima. O requisito 6 desta tarefa ("criar diretório ou ledger novo não reinicia
+    elegibilidade") estava imposto **só** em `init` — a única ação que um operador com
+    `--ledger` errado nunca roda. O teste que levava o nome do requisito só chamava
+    `initClusterLedger`: requisito com teste de nome, não de conteúdo.
+    A cadeia de `eventDigest` não podia cobrir isso: remover a **cauda** deixa um prefixo cujo
+    `previousEventDigest` continua fechando, e um arquivo JSONL não afirma nada sobre o próprio
+    comprimento. Conserto: o keyring — o artefato que `init` já recusa sobrescrever e que
+    `restore` já exige — passa a carregar `ledgerWitness = {eventCount, lastEventDigest,
+    updatedAt}`, e `assertLedgerConsistent` compara ledger contra testemunha em **todo**
+    caminho que decide elegibilidade (`preflight`, `record-pilot`, `commit-split`, `verify`,
+    `backup`, rotação). Códigos próprios: `CLUSTER_LEDGER_HISTORY_ABSENT` (arquivo ausente com
+    altura atestada > 0), `CLUSTER_LEDGER_HISTORY_DIVERGED` (altura ou digest de cauda
+    diferentes, nas duas direções) e `CLUSTER_LEDGER_WITNESS_ABSENT` (keyring com chave e sem
+    atestado — nunca lido como zero). Ledger legitimamente novo continua aceito, porque
+    `init` atesta altura zero.
+    **A testemunha é escrita DENTRO da transação** e **antes** de publicar o ledger: assim o
+    único resíduo que uma queda entre os dois renames pode deixar é "atestado N+1, ledger em
+    N", que é a direção que **recusa**; o reparo é renomear o temporário já fsyncado, que o
+    `verify` reporta como escrita interrompida. A ordem inversa deixaria exposição gravada que
+    ninguém atesta, e o reparo seria editar à mão o arquivo que guarda `secrets.person`.
+    O keyring é reescrito a partir dos **próprios bytes** (`reattestKeyringText`), não
+    re-serializado a partir da forma parseada, porque o arquivo é de C2 também — o keyring do
+    operador carrega um `_note` que uma re-serialização apagaria, e `secrets.person` não pode
+    ser rotacionado sem re-extrair o corpus. Um teste roda o loader Python real contra o
+    keyring depois de um evento e afirma que nenhum pseudônimo de pessoa muda.
+    O que a testemunha **não** faz (R7): ela liga altura e digest de cauda, **não** o material
+    secreto — o item 18 (segredo novo com o mesmo nome `v1`) segue exatamente como estava, e
+    continua sendo decisão de E2 antes do congelamento.
+    **Consequência para `restore`, medida:** o backup que uma mutação tira é tirado ANTES dela,
+    logo carrega ledger **e** keyring na altura N enquanto o estado commitado é N+1. Restaurar
+    esse par sobre um ledger perdido **passava** e rolava a história um evento para trás em
+    silêncio — medido em `7b7fcbd` numa fixture temporária: com o estado commitado na altura 2,
+    `restore` do backup pré-mutação devolveu `{ledger: "written", keyring: "identical"}` e
+    deixou o ledger na altura 1. Agora o keyring em disco atesta N+1, o par divergiu, e é
+    recusado. O par restaurável do estado atual é o que `cluster-ledger backup` tira **depois**
+    da mutação (verificado: restaura sobre ledger ausente) — então E2 roda `backup` logo após
+    `commit-split`, e H1 após `holdout-consumed`.
+24. **Duas limitações de `restore` reproduzidas, e NÃO consertadas nesta rodada.** A revisão as
+    reportou sem confirmação; foram reproduzidas em fixture temporária, **as duas em `7b7fcbd`
+    também** (isto é, são anteriores ao item 23 e não consequência dele), e ficam registradas
+    porque são do mesmo modelo de confiança entre keyring e ledger:
+    (a) **keyring ausente nunca pode ser restaurado.** `restoreClusterLedger` chama
+    `requireKeyring` **antes** de autenticar o manifesto, e o MAC do manifesto só pode ser
+    verificado com uma chave do keyring. Logo o backup autenticado não recupera o único
+    artefato cuja perda é irrecuperável: com o keyring apagado, `restore` falha com
+    `CLUSTER_LEDGER_KEYRING_ABSENT` mesmo tendo o keyring dentro do diretório de backup.
+    Consertar isso é decidir se o backup pode se autenticar com o keyring que ele mesmo carrega
+    (o que prova consistência interna, não procedência) — uma mudança de modelo de confiança,
+    não um conserto local.
+    (b) **depois de uma rotação, todo backup anterior fica irrestaurável.** O keyring em disco
+    passa a ter `v1+v2` e o do backup só `v1`: o MAC ainda autentica (a chave que assinou
+    continua presente), mas a divergência é julgada sobre os **dois** arquivos em conjunto, e o
+    keyring diverge. Mesmo diagnóstico de (a) na prática: o par só é restaurável enquanto
+    nenhum dos dois arquivos mudou.
+    **Nenhuma das duas bloqueia E2**, desde que o `backup` posterior à mutação seja rotina.
+    Decisão de qual das duas atacar, e como, é de E2 — junto com o item 18, que é da mesma
+    família.
 ### C4 — Bootstrap com unidade de reamostragem por estimando
 
 **Depende de:** C2.
