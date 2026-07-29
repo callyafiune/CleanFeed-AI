@@ -4666,6 +4666,27 @@ execução foi além (ou ficou aquém) do que o texto acima diz.
     escolha, em vez de herdar a mais fraca por ser a que já vem pronta. A revisão de C3 não
     classificou a assimetria como defeito e ela **não** deve ser "consertada" aqui.
 
+##### Quinta rodada de correção (revisão de qualidade do item 23)
+
+27. **A metade DIGEST da comparação de testemunha não tinha teste — o mesmo defeito do item 23
+    um nível abaixo.** MEDIDO por mutação: apagando `lastEventDigest !== witness.lastEventDigest`
+    de `assertAttestedHistory`, os 44 testes do arquivo continuavam **verdes**. Os testes de
+    cauda entregues só **removiam** a última linha, e remoção de linha muda a altura — logo a
+    comparação de altura sozinha já os satisfazia, e nada exercitava o digest. Era "requisito com
+    teste de nome" outra vez, agora dentro do conserto que existia para eliminá-lo.
+    O estado que passava: reescrever a última linha **no lugar** (`records: []`) e recomputar o
+    seu próprio `eventDigest` — a altura continua 2, todo `previousEventDigest` continua
+    fechando, `readClusterLedger` aceita, e o cluster que o `test` queimou volta a ser elegível.
+    Dois testes novos: "refuses a tail REWRITTEN in place, at the very height the keyring
+    attests" (os três caminhos de elegibilidade mais `verify` recusam com
+    `CLUSTER_LEDGER_HISTORY_DIVERGED`) e o seu guarda, "hands the burned cluster back once the
+    rewritten tail is itself attested", que re-atesta o keyring para a cauda reescrita e mede
+    `eligible: true, refusals: []` — provando que a recusa do primeiro vem da comparação de
+    digest e não de uma re-oferta que já era recusável. Com a mutação aplicada o primeiro fica
+    **vermelho** com `promise resolved "{ eligible: true, refusals: [] }" instead of rejecting`.
+    A metade ALTURA continua sem teste próprio e isso é aceito: ela é implicada pela metade
+    digest (toda perda de altura muda a cauda), logo é defesa em profundidade, não lacuna.
+
 ### C4 — Bootstrap com unidade de reamostragem por estimando
 
 **Depende de:** C2.

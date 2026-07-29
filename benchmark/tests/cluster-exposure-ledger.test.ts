@@ -19,7 +19,9 @@ import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
+import { canonicalJson } from "../../contracts/canonical-json.ts";
 import { runCli } from "../cli.ts";
+import { sha256BytesHex } from "../digests.ts";
 import { validateBenchmarkRecordV3, type BenchmarkRecord } from "../schema.ts";
 import {
   known,
@@ -1206,17 +1208,18 @@ describe("the ledger reads as empty only when it is provably new", () => {
   async function refusesEveryPath(
     target: ClusterLedgerPaths,
     code: string,
+    exposure: ExposureRequest = reoffer(),
   ): Promise<void> {
-    await expect(preflightExposure(target, reoffer())).rejects.toMatchObject({
+    await expect(preflightExposure(target, exposure)).rejects.toMatchObject({
       code,
     });
     await expect(
       recordPilotExposure(target, {
-        ...reoffer(),
+        ...exposure,
         eventType: "pilot-exposure",
       }),
     ).rejects.toMatchObject({ code });
-    await expect(commitSplitFreeze(target, reoffer())).rejects.toMatchObject({
+    await expect(commitSplitFreeze(target, exposure)).rejects.toMatchObject({
       code,
     });
     // And `verify` must not pass green over the same state.
@@ -1245,11 +1248,15 @@ describe("the ledger reads as empty only when it is provably new", () => {
     await refusesEveryPath(paths(), "CLUSTER_LEDGER_HISTORY_DIVERGED");
   });
 
-  it("refuses every eligibility path when the LAST line was removed", async () => {
-    // The tail is where the newest exposures live, and it is the one direction the
-    // hash chain cannot see: dropping the last line leaves a prefix whose every
-    // `previousEventDigest` still matches, so `readClusterLedger` accepts it. Only
-    // the attested height and tail digest catch it.
+  /**
+   * The tail burns a cluster NOTHING ELSE in the ledger names, so losing the tail
+   * really does hand that cluster's test eligibility back — the two tests below
+   * would pass vacuously against a cluster the head also exposes.
+   */
+  const TAIL_AUTHOR = "person_aaaabbbbccccdddd";
+  const TAIL_SOURCE = "th_9";
+
+  async function burnATestClusterInTheTail(): Promise<void> {
     await init();
     await recordPilotExposure(
       paths(),
@@ -1263,23 +1270,134 @@ describe("the ledger reads as empty only when it is provably new", () => {
           record({
             id: "t1",
             text: FAR_TEXT,
-            author: "person_aaaabbbbccccdddd",
-            source: "th_9",
+            author: TAIL_AUTHOR,
+            source: TAIL_SOURCE,
             partition: "test",
           }),
         ],
       }),
     );
+  }
 
-    const lines = (await readFile(paths().ledgerPath, "utf8"))
+  /** That cluster re-offered to `test` under a new id, a new tuple, new text. */
+  function reofferTheTailCluster(): ExposureRequest {
+    return request({
+      datasetDigest: DATASET_B,
+      splitDigest: SPLIT_B,
+      records: [
+        record({
+          id: "t1-renamed",
+          text: words("kappa", 200),
+          author: TAIL_AUTHOR,
+          source: TAIL_SOURCE,
+          partition: "test",
+        }),
+      ],
+    });
+  }
+
+  async function ledgerLines(): Promise<string[]> {
+    return (await readFile(paths().ledgerPath, "utf8"))
       .split("\n")
       .filter((line) => line !== "");
+  }
+
+  /** The chain digest, recomputed over the same key set the module hashes. */
+  function eventDigestOf(event: Record<string, unknown>): string {
+    const hashed = { ...event };
+    delete hashed.eventDigest;
+    return sha256BytesHex(new TextEncoder().encode(canonicalJson(hashed)));
+  }
+
+  it("refuses every eligibility path when the LAST line was removed", async () => {
+    // The tail is where the newest exposures live, and it is the one direction the
+    // hash chain cannot see: dropping the last line leaves a prefix whose every
+    // `previousEventDigest` still matches, so `readClusterLedger` accepts it. Only
+    // the attested height and tail digest catch it.
+    await burnATestClusterInTheTail();
+
+    const lines = await ledgerLines();
     expect(lines).toHaveLength(2);
     await writeFile(paths().ledgerPath, `${lines[0]}\n`, "utf8");
     // The truncated file is intrinsically valid — which is the whole point.
     expect(await readClusterLedger(paths().ledgerPath)).toHaveLength(1);
 
     await refusesEveryPath(paths(), "CLUSTER_LEDGER_HISTORY_DIVERGED");
+  });
+
+  it("refuses a tail REWRITTEN in place, at the very height the keyring attests", async () => {
+    // Height and tail digest are two halves of one comparison, and only the DIGEST
+    // half sees this: the last event is replaced rather than removed, and its own
+    // `eventDigest` is recomputed, so the file still holds two events, every
+    // `previousEventDigest` still matches, and the attested height still agrees.
+    // Emptying `records` is the cheapest edit that returns a burned cluster to
+    // `test` — the blocker's exact failure mode, reached through the content of the
+    // tail instead of its absence.
+    await burnATestClusterInTheTail();
+
+    const lines = await ledgerLines();
+    expect(lines).toHaveLength(2);
+    const tail = JSON.parse(lines[1]) as Record<string, unknown>;
+    tail.records = [];
+    tail.eventDigest = eventDigestOf(tail);
+    await writeFile(
+      paths().ledgerPath,
+      `${lines[0]}\n${JSON.stringify(tail)}\n`,
+      "utf8",
+    );
+
+    // Intrinsically valid AT the attested height: nothing the file can check about
+    // itself is violated, and the height comparison alone would let this through.
+    const reread = await readClusterLedger(paths().ledgerPath);
+    expect(reread).toHaveLength(2);
+    expect(reread[1].records).toEqual([]);
+
+    await refusesEveryPath(
+      paths(),
+      "CLUSTER_LEDGER_HISTORY_DIVERGED",
+      reofferTheTailCluster(),
+    );
+  });
+
+  it("hands the burned cluster back once the rewritten tail is itself attested", async () => {
+    // The guard on the test above: it must refuse because the ledger DIVERGED from
+    // the attestation, not because the re-offer was refusable anyway. Re-attest the
+    // keyring to the rewritten tail and the very same re-offer becomes fully
+    // eligible — which is what an accepted tail rewrite costs, and the reason the
+    // digest half of the comparison is load-bearing rather than defence in depth.
+    await burnATestClusterInTheTail();
+
+    const lines = await ledgerLines();
+    const tail = JSON.parse(lines[1]) as Record<string, unknown>;
+    tail.records = [];
+    tail.eventDigest = eventDigestOf(tail);
+    await writeFile(
+      paths().ledgerPath,
+      `${lines[0]}\n${JSON.stringify(tail)}\n`,
+      "utf8",
+    );
+    const keyring = JSON.parse(
+      await readFile(paths().keyringPath, "utf8"),
+    ) as Record<string, unknown>;
+    await writeFile(
+      paths().keyringPath,
+      `${JSON.stringify(
+        {
+          ...keyring,
+          ledgerWitness: {
+            ...(keyring.ledgerWitness as Record<string, unknown>),
+            lastEventDigest: tail.eventDigest,
+          },
+        },
+        null,
+        2,
+      )}\n`,
+      "utf8",
+    );
+
+    const decision = await preflightExposure(paths(), reofferTheTailCluster());
+    expect(decision.refusals).toEqual([]);
+    expect(decision.eligible).toBe(true);
   });
 
   it("keeps accepting a ledger that is legitimately new", async () => {
