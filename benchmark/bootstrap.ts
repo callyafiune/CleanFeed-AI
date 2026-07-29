@@ -300,6 +300,15 @@ export class ResamplingUnitError extends Error {
 export type ResampledPercentileMethod =
   "hierarchical-cluster-percentile" | "multiway-cluster-percentile";
 
+// Separators for the composite keys the resolvers build below. They are CONTROL
+// characters because an axis name or a group id may contain any printable character,
+// so a printable separator could be forged inside an id and collapse two distinct
+// keys into one. They are written as ESCAPES and never as literal bytes: a literal
+// control byte makes this file "binary" to grep and ripgrep, which then report a
+// match without ever showing the line — a whole module invisible to code search.
+const KEY_FIELD_SEPARATOR = "\u0000";
+const KEY_PAIR_SEPARATOR = "\u0001";
+
 /** Is this the method name of a percentile bootstrap (as opposed to Wilson)? */
 export function isResampledPercentileMethod(
   method: string,
@@ -424,7 +433,9 @@ export function resolveResampling<T>(
       const chain = chains[position];
       const level = resolveChain(item, chain, design.estimand, position);
       if (level.axis !== chain.declared.axis) {
-        const key = `${position} ${chain.declared.axis} ${level.axis}`;
+        const key =
+          `${position}${KEY_FIELD_SEPARATOR}${chain.declared.axis}` +
+          `${KEY_FIELD_SEPARATOR}${level.axis}`;
         const existing = demotionCounts.get(key);
         demotionCounts.set(key, {
           position,
@@ -552,7 +563,9 @@ function buildHierarchical(resolved: readonly ResolvedLevel[][]): BuiltDesign {
     let node = root;
     let prefix = "";
     for (let position = 0; position < depth; position += 1) {
-      prefix += `${levels[position].axis}${levels[position].id} `;
+      prefix +=
+        `${levels[position].axis}${KEY_PAIR_SEPARATOR}` +
+        `${levels[position].id}${KEY_FIELD_SEPARATOR}`;
       prefixCounts[position].add(prefix);
       const children = node.children as Map<string, MutableNode>;
       let child = children.get(prefix);
@@ -601,7 +614,7 @@ function buildMultiway(resolved: readonly ResolvedLevel[][]): BuiltDesign {
   for (const levels of resolved) {
     const levelIndex: number[] = [];
     for (let factor = 0; factor < factors; factor += 1) {
-      const key = `${levels[factor].axis}${levels[factor].id}`;
+      const key = `${levels[factor].axis}${KEY_PAIR_SEPARATOR}${levels[factor].id}`;
       const table = levelIndexByFactor[factor];
       let index = table.get(key);
       if (index === undefined) {
