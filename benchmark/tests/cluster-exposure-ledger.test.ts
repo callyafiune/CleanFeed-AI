@@ -11,6 +11,7 @@ import {
   mkdir,
   readFile,
   readdir,
+  rename,
   rm,
   writeFile,
 } from "node:fs/promises";
@@ -46,6 +47,7 @@ import {
   restoreClusterLedger,
   rotateClusterExposureKey,
   verifyClusterLedger,
+  type ClusterExposureCommit,
   type ClusterLedgerPaths,
   type ExposureRecordInput,
   type ExposureRequest,
@@ -1269,13 +1271,13 @@ describe("the ledger reads as empty only when it is provably new", () => {
   const TAIL_AUTHOR = "person_aaaabbbbccccdddd";
   const TAIL_SOURCE = "th_9";
 
-  async function burnATestClusterInTheTail(): Promise<void> {
+  async function burnATestClusterInTheTail(): Promise<ClusterExposureCommit> {
     await init();
     await recordPilotExposure(
       paths(),
       request({ eventType: "pilot-exposure" }),
     );
-    await commitSplitFreeze(
+    return commitSplitFreeze(
       paths(),
       request({
         runId: "run-2",
@@ -1336,6 +1338,46 @@ describe("the ledger reads as empty only when it is provably new", () => {
     expect(await readClusterLedger(paths().ledgerPath)).toHaveLength(1);
 
     await refusesEveryPath(paths(), "CLUSTER_LEDGER_HISTORY_DIVERGED");
+  });
+
+  it("names a repair a TRUNCATED ledger can follow, and following it reaches the attested height", async () => {
+    // Refusing is half a defence: the ledger on disk is PRESENT and short, and
+    // `restore` writes only over state that is absent or byte-identical, so
+    // "restore the ledger" on its own is an action this state always refuses. A
+    // truncation and a stale `--ledger` copy are the realistic shapes of the
+    // corruption this whole attestation exists to catch, so the refusal has to
+    // name the sequence that actually recovers from them.
+    const commit = await burnATestClusterInTheTail();
+    const lines = await ledgerLines();
+    expect(lines).toHaveLength(2);
+    await writeFile(paths().ledgerPath, `${lines[0]}\n`, "utf8");
+
+    const failure = (await verifyClusterLedger(paths()).catch(
+      (caught: unknown) => caught,
+    )) as ClusterLedgerError;
+    expect(failure.code).toBe("CLUSTER_LEDGER_HISTORY_DIVERGED");
+    // Measured, and the reason the message may not stop at "restore": the pair the
+    // transaction itself returned is refused over the short file.
+    await expect(
+      restoreClusterLedger(paths(), commit.restorePoint.directory),
+    ).rejects.toMatchObject({ code: "CLUSTER_LEDGER_RESTORE_DIVERGENT" });
+    expect(failure.message).toContain("move the ledger aside");
+
+    // The named sequence, run exactly as written.
+    await rename(paths().ledgerPath, `${paths().ledgerPath}.diverged`);
+    const outcome = await restoreClusterLedger(
+      paths(),
+      commit.restorePoint.directory,
+    );
+    expect(outcome.ledger).toBe("written");
+    expect(outcome.keyring).toBe("identical");
+    const verified = await verifyClusterLedger(paths());
+    expect(verified.eventCount).toBe(2);
+    expect(verified.lastEventDigest).toBe(commit.event.eventDigest);
+    // And the protection the truncation removed is back: the cluster the tail
+    // burned is refused for `test` again.
+    const decision = await preflightExposure(paths(), reofferTheTailCluster());
+    expect(decision.eligible).toBe(false);
   });
 
   it("refuses a tail REWRITTEN in place, at the very height the keyring attests", async () => {

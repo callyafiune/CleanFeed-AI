@@ -1507,28 +1507,47 @@ function assertAttestedHistory(
   return witness;
 }
 
-/** Names which of the three shapes of divergence this is, and what to do. */
+/**
+ * Names which of the three shapes of divergence this is, and a repair that is not
+ * refused when the operator runs it.
+ *
+ * Every repair that ends in `restore` begins by MOVING THE LEDGER ASIDE, because
+ * `restore` writes only over state that is absent or byte-identical
+ * ({@link restoreClusterLedger}). A ledger that is present and different — the
+ * truncation, the stale `--ledger` copy, the rewritten tail, i.e. every shape below
+ * — is refused as divergent, so naming `restore` on its own would name the one
+ * action this state always rejects. "Aside" is deliberately not "away": the file is
+ * the only copy of whatever it holds that the backup may not.
+ */
 function divergenceDiagnosis(onDisk: number, attested: number): string {
   if (onDisk < attested) {
     return (
       "The ledger lost events: a truncation, a deleted last line or a stale " +
       "copy. The hash chain cannot see a removal from the TAIL, which is where " +
       "the newest exposures are, so this is the only check that catches it. " +
-      'Restore the ledger with "cluster-ledger restore"'
+      "To recover: move the ledger aside — keep it — and then " +
+      '"cluster-ledger restore <backup>", which writes only over an ABSENT ' +
+      "ledger and therefore cannot run over the file as it stands. The " +
+      "restorable pair is the one taken AFTER the last mutation, because its " +
+      "keyring attests this same height"
     );
   }
   if (onDisk > attested) {
     return (
       "The ledger holds events the keyring never attested, so one of the two " +
-      "files is stale and this cannot tell which. Restore the matching pair " +
-      'with "cluster-ledger restore"'
+      "files is stale and this cannot tell which. Do NOT discard the surplus " +
+      "events: they may be a real exposure whose attestation was lost, and no " +
+      "backup can be restored over them either (restore writes only over an " +
+      "absent or identical ledger). Compare the surplus event against the " +
+      "newest backup pair by hand before moving either file aside"
     );
   }
   return (
     "The ledger is at the attested HEIGHT and its last event is not the attested " +
     "one: the tail was rewritten in place, or this is a fork of the same history " +
     "from another run. The hash chain cannot see either, because a rewritten tail " +
-    'closes its own chain. Restore the matching pair with "cluster-ledger restore"'
+    "closes its own chain. To recover: move the ledger aside — keep it — and then " +
+    '"cluster-ledger restore <backup>" from the pair taken after the last mutation'
   );
 }
 
@@ -2062,7 +2081,16 @@ export async function restoreClusterLedger(
             "CLUSTER_LEDGER_RESTORE_DIVERGENT",
             `the ${name} on disk differs from the backup: restore writes only over ` +
               "absent or identical state, because a divergent ledger holds exposures " +
-              "this backup does not know about",
+              "this backup does not know about" +
+              // Said only for the ledger: setting the KEYRING aside is not a repair
+              // (it holds the un-rotatable person secret, and authenticating this
+              // very manifest needs it), and its divergence is the rotation case
+              // recorded in the plan.
+              (name === "ledger"
+                ? '. If this is the corruption "verify" reported, move the ledger ' +
+                  "aside — keep it — and restore again: an ABSENT ledger is written " +
+                  "from the backup"
+                : ""),
           );
         }
         return {
@@ -2157,11 +2185,17 @@ async function appendEvent(
     }
     await rename(tempPath, paths.ledgerPath);
 
-    // The two files now agree at N+1, and THIS is the pair a lost ledger can be
-    // recovered from: the backup taken above holds height N against a keyring that
-    // attests N+1, which `restore` refuses as divergent. Without this second backup
-    // the split E2 freezes and the holdout H1 consumes would have no restore point
-    // at all, and the compensating step would live only in a runbook.
+    // The two files now agree at N+1, and THIS is the pair the committed state can
+    // be recovered from: the backup taken above holds height N against a keyring
+    // that attests N+1, which `restore` refuses as divergent. Without this second
+    // backup the split E2 freezes and the holdout H1 consumes would have no restore
+    // point at all, and the compensating step would live only in a runbook.
+    //
+    // WHAT IT RECOVERS, narrowly: a ledger that is ABSENT, or one an operator moved
+    // aside by hand. `restore` writes only over absent or byte-identical state, so a
+    // ledger that is present and CORRUPTED — a truncation, a stale `--ledger` copy —
+    // is not restored in place; the refusal that reports it names the move-aside
+    // step ({@link divergenceDiagnosis}).
     //
     // `keyring` is the pre-mutation parse, which is what the MAC needs: re-attesting
     // does not touch `keys`, so the newest key is the same one. The BYTES copied into

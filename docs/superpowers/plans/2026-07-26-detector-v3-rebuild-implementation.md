@@ -4741,6 +4741,40 @@ execução foi além (ou ficou aquém) do que o texto acima diz.
     o próprio temporário quando a publicação falha. Medido vermelho: `expected [] to deeply equal
     [Array(1)]`.
 
+##### Sexta rodada de correção (revisão de qualidade dos itens 27–29)
+
+30. **O diagnóstico da corrupção que o item 23 existe para pegar nomeava uma ação SEMPRE
+    recusada.** MEDIDO em fixture temporária: `init` → dois eventos (o segundo queimando um
+    cluster `test` que mais nada nomeia) → reescrever o ledger só com a primeira linha.
+    `CLUSTER_LEDGER_HISTORY_DIVERGED` fechava com *"Restore the ledger with
+    `cluster-ledger restore`"*, e `restore` contra **qualquer** backup em disco — inclusive o
+    `commit.restorePoint.directory` que o item 28 acabou de criar — devolvia
+    `CLUSTER_LEDGER_RESTORE_DIVERGENT`. A causa é o próprio contrato de `restore`: ele escreve
+    só sobre estado **ausente** ou byte-a-byte idêntico, e um ledger truncado está **presente e
+    diferente**. Logo o backup novo do item 28 recuperava apenas o ledger **ausente** — que é
+    exatamente a forma que o teste entregue montava (`rm` antes de restaurar) — enquanto a
+    truncagem e a cópia velha de `--ledger`, as formas realistas que o próprio brief cita, não
+    tinham reparo escrito em lugar nenhum.
+    Conserto sem mudar o modelo de confiança de `restore`: os **três** ramos de
+    `divergenceDiagnosis` passam a nomear a sequência que funciona — *mover o ledger para o
+    lado (mantendo-o) e então `cluster-ledger restore <backup>`, que escreve sobre ledger
+    AUSENTE*. O ramo de **eventos excedentes** não promete reparo: os eventos a mais podem ser
+    exposição real cujo atestado se perdeu, então a instrução é comparar à mão e não descartar.
+    A mensagem de `CLUSTER_LEDGER_RESTORE_DIVERGENT` ganha a mesma dica, **só** para o ledger:
+    pôr o KEYRING de lado não é reparo (ele guarda `secrets.person` e é o que autentica o
+    manifesto), e a divergência dele é o item 24(b).
+    Alternativa considerada e recusada: deixar `restore` aceitar backup que seja **superconjunto
+    provável** do ledger em disco. Seria mudança do modelo de confiança de `restore` (família dos
+    itens 18 e 24, decisão de E2) e cobriria só a relação de prefixo — a cauda reescrita de altura
+    igual continuaria sem reparo.
+    Teste novo, de ciclo completo: "names a repair a TRUNCATED ledger can follow, and following it
+    reaches the attested height" — trunca (não apaga), afere a recusa, **mede** que
+    `restore` sobre o par commitado é recusado, executa a sequência nomeada e volta a
+    `verify` com altura 2 e o `lastEventDigest` do evento; por fim afere que o cluster que a cauda
+    queimou é recusado outra vez. Vermelho antes: `expected '…' to contain 'move the ledger aside'`.
+    O comentário do backup pós-publicação foi estreitado: ele afirmava recuperar "um ledger
+    perdido" e agora diz o que recupera — ledger **ausente**, ou posto de lado à mão.
+
 ### C4 — Bootstrap com unidade de reamostragem por estimando
 
 **Depende de:** C2.
