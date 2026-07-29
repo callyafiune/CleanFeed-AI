@@ -5065,10 +5065,12 @@ compartilhados. O percentil sobre clusters vê essa dependência e **colapsa em 
 exatamente quando a estatística é constante entre réplicas — FPR = 0 sem nenhum falso
 positivo, ou um único cluster carregando todo o denominador. Um "intervalo de 95%" de
 largura zero é mais **estreito** que o analítico, não mais conservador, e passaria gate com
-menos evidência (R3). Medido no fixture `SEPARABLE` (40 pools de um autor, zero falsos
-positivos): percentil `[0, 0]`, analítico `[0, 0.0879]`, publicado `0.0879`. E no fixture
-de correlação intra-cluster (12 pools de 5 linhas que concordam entre si): o percentil é o
-mais largo e é ele que sai. O mais largo de dois só pode mover limite para fora, logo não
+menos evidência (R3). Medido em 2026-07-29 no fixture `SEPARABLE` (um pool, 40 autores, zero
+falsos positivos, 10.000 réplicas, seed 20260719): percentil `[0, 0]`, analítico
+`[0, 0,06335344864545808]`, publicado `0,06335344864545808`. E no fixture de correlação
+intra-cluster (12 pools de 5 linhas que concordam entre si, FPR 0,5): percentil
+`[0,25, 0,75]` contra analítico `[0,39614, 0,60386]` — o percentil é o mais largo nas duas
+direções e é ele que sai. O mais largo de dois só pode mover limite para fora, logo não
 compra passagem; o que ele **não** é: intervalo de cobertura exata — é conservador por
 construção, que é a direção em que um gate de release tem de errar.
 
@@ -5076,6 +5078,16 @@ construção, que é a direção em que um gate de release tem de errar.
 réplicas que a corrida produziu (largura > 0), deliberadamente **não** um mínimo de
 unidades de reamostragem: `powerFloors.samplingUnits` é `null` de propósito e inventar um
 número aqui seria inventar evidência.
+
+**Custo medido, e o que ele implica para o release.** Uma corrida agora paga treze fluxos de
+réplicas por `computeEvaluationMetrics` em vez de um (aviso e ação × duas famílias × duas
+sub-populações, mais o recall autorizador, mais as bases de rótulo, mais o contínuo). Medido
+em 2026-07-29: 158 ms para 80 linhas com 10.000 réplicas; a suíte completa foi de 94 s para
+110 s. O número de réplicas **não** foi reduzido em nenhum caminho (R3 e a linha congelada
+"nunca reduzir por tempo"), e `buildSlices` multiplica esse custo pelo número de baldes —
+com 100.000 réplicas no release isso é minutos por corrida, não segundos. Se isso vier a
+doer, a saída **não** é menos réplicas: é o sorteio compartilhado que já existe
+(`clusteredPercentileBootstrapAll`) cobrindo mais estatísticas por fluxo.
 
 **Duas mudanças de forma que o texto não previa.** (1) `ResamplingPlan` /
 `ResamplingPlanEntry` saíram de `gates.ts` para `bootstrap.ts` — o módulo que constrói o
