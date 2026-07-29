@@ -191,8 +191,13 @@ export const PARENT_LINKAGE_AXES = ["derivationRoot", "humanSeed"] as const;
  * `axisConnectivity` is the function that separates them. Reading indivisibility
  * off this list published a false independence claim for `humanSeed` once already.
  *
- * De-duplicated at construction because `derivationRoot` is in both lists, and a
- * consumer that counts or serialises this array must not see it twice.
+ * De-duplicated at construction because `derivationRoot` is in both lists. NOTE, so
+ * the dedup is not read as protecting something it is not: as of C3 this array has
+ * **no consumer outside its own tests** — the audit reads `axisConnectivity`, not
+ * this list. It stays exported because it is the only place that answers "which axes
+ * does the splitter look at at all", which D0b needs when it chooses a power axis;
+ * the dedup is there so the first consumer to count or serialise it does not see
+ * `derivationRoot` twice, not because one does today.
  */
 export const CONNECTIVITY_AXES: readonly string[] = [
   ...new Set<string>([...GROUP_KEYS, ...PARENT_LINKAGE_AXES]),
@@ -217,11 +222,27 @@ export const CONNECTIVITY_AXES: readonly string[] = [
  * VALUE axis — two generations grown from the same human prompt are dependent
  * whether or not the seed row was assembled — is a substantive question for E2/E3
  * and is deliberately not decided here.
+ *
+ * The TYPE lives here too, with the function, and not only the values. It was once
+ * an anonymous inline return here plus a hand-restated interface in
+ * `split-audit.ts`: since the audit assigns a variable rather than a fresh literal,
+ * excess-property checking does not apply, so adding a third relation would have put
+ * the new flag into the published, `splitDigest`-sealed artifact at runtime while the
+ * type consumers read still described two — with a green typecheck.
  */
-export function axisConnectivity(axis: string): {
+export interface AxisConnectivity {
+  /** The axis is in `GROUP_KEYS`: equal identities are ALWAYS one cluster. */
   sharedValue: boolean;
+  /**
+   * The axis is in `PARENT_LINKAGE_AXES`: an identity naming another record-line's
+   * id unions with that row, and ONLY when that row is present in the same record
+   * set. So `true` alone does not mean rows sharing this identity are kept
+   * together; the audit publishes the measured resolution next to it.
+   */
   parentLinkage: boolean;
-} {
+}
+
+export function axisConnectivity(axis: string): AxisConnectivity {
   return {
     sharedValue: (GROUP_KEYS as readonly string[]).includes(axis),
     parentLinkage: (PARENT_LINKAGE_AXES as readonly string[]).includes(axis),

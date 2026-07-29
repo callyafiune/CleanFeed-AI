@@ -33,6 +33,7 @@ import {
   axisConnectivity,
   connectedComponentRoots,
   GROUP_KEYS,
+  type AxisConnectivity,
   type Partition,
 } from "./split.ts";
 
@@ -92,7 +93,7 @@ export interface ClusterSliceCount {
 }
 
 /**
- * How the splitter unions this axis, as the TWO relations it really is.
+ * How the splitter unions an axis, as the TWO relations it really is.
  *
  * The single boolean this replaced could not tell them apart, and the conflation
  * published a FALSE independence claim: `humanSeed` is linkage-only, linkage
@@ -101,21 +102,12 @@ export interface ClusterSliceCount {
  * indivisible block of two record-lines" about two rows the splitter had just put
  * on opposite sides of the test cut.
  *
- * Definition of each flag: {@link axisConnectivity} in split.ts, which is the one
- * place that derives them, from the same two lists `connectedComponentRoots`
- * iterates.
+ * RE-EXPORTED, never restated: the type is declared next to
+ * {@link axisConnectivity} in split.ts, the one place that derives the values, so a
+ * third relation added there cannot leave this side describing two while the sealed
+ * artifact carries three.
  */
-export interface AxisConnectivity {
-  /** Two record-lines with the same identity here are ALWAYS one cluster. */
-  sharedValue: boolean;
-  /**
-   * A record-line whose identity here names another record-line's ID is unioned
-   * with it — ONLY when that record-line is present in the same record set. So
-   * `true` does NOT mean rows sharing this identity are kept together; read
-   * {@link AxisClusterReport.linkage} for how often the condition actually held.
-   */
-  parentLinkage: boolean;
-}
+export type { AxisConnectivity };
 
 /**
  * What the `known` references on a PARENT-LINKAGE axis resolved to inside the
@@ -140,16 +132,42 @@ export interface LinkageResolution {
   absentFromRecordSet: number;
 }
 
+/**
+ * The two union relations PLUS the measurement that says how strong the conditional
+ * one actually was — with the measurement sitting behind its own discriminant.
+ *
+ * `linkage` used to be a sibling field typed `LinkageResolution | null`, whose
+ * discriminant lived one field away in `connectivity.parentLinkage`. TypeScript
+ * cannot narrow across two fields, so every reader either asserted with `!` or
+ * checked the flag and got no narrowing for its trouble. Here `parentLinkage` is a
+ * literal in each branch, so `if (connectivity.parentLinkage)` narrows `linkage` to
+ * `LinkageResolution` and the else-branch to `null`.
+ *
+ * `null` is kept on the false branch rather than the field being absent: this object
+ * is serialised into the `splitDigest`-sealed artifact, and an explicit `null` states
+ * "measured, and the question does not arise" where a missing key would be
+ * indistinguishable from an older writer that never measured.
+ *
+ * Both branches spread {@link AxisConnectivity} whole, so a third relation added
+ * there appears here too instead of being silently understated.
+ */
+export type AxisConnectivityReport =
+  | (Omit<AxisConnectivity, "parentLinkage"> & {
+      parentLinkage: false;
+      linkage: null;
+    })
+  | (Omit<AxisConnectivity, "parentLinkage"> & {
+      parentLinkage: true;
+      linkage: LinkageResolution;
+    });
+
 export interface AxisClusterReport {
   axis: V3GroupAxis;
-  /** The two union relations, never one flag: see {@link AxisConnectivity}. */
-  connectivity: AxisConnectivity;
   /**
-   * The measured resolution of this axis's references, or `null` when the axis is
-   * not followed as parent linkage at all (`connectivity.parentLinkage === false`),
-   * where the question does not arise.
+   * The two union relations and the measured resolution of the conditional one,
+   * never one flag: see {@link AxisConnectivityReport}.
    */
-  linkage: LinkageResolution | null;
+  connectivity: AxisConnectivityReport;
   /** How many record-lines state each of R6's three states on this axis. */
   states: Record<GroupAxisState, number>;
   overall: ClusterCount;
@@ -209,7 +227,7 @@ export interface SplitAudit {
    * under the current definition of a cluster, because the splitter does not union
    * on the value; whether it SHOULD (the two generations are dependent regardless)
    * is a substantive question for E2/E3, not one C3 decides. It is visible in
-   * {@link AxisClusterReport.linkage}, which counts exactly those references.
+   * {@link AxisConnectivityReport}'s `linkage`, which counts exactly those references.
    */
   leakages: Array<{ axis: string; value: string; partitions: Partition[] }>;
   /** The published cluster counts. Never `undefined`: see {@link SplitClusterReport}. */
@@ -335,18 +353,14 @@ export function auditBlockedSplit(
 export function standInClusterReport(): SplitClusterReport {
   return {
     axes: V3_GROUP_AXES.map((axis) => {
-      const connectivity = axisConnectivity(axis);
       return {
         axis,
-        connectivity,
-        linkage: connectivity.parentLinkage
-          ? {
-              references: 0,
-              joinedAnotherRecordLine: 0,
-              selfReference: 0,
-              absentFromRecordSet: 0,
-            }
-          : null,
+        connectivity: connectivityReport(axis, () => ({
+          references: 0,
+          joinedAnotherRecordLine: 0,
+          selfReference: 0,
+          absentFromRecordSet: 0,
+        })),
         states: { known: 0, notApplicable: 0, unknown: 0 },
         overall: { groups: 0, largest: 0, singletons: 0, recordLines: 0 },
         bySlice: [],
@@ -553,13 +567,11 @@ function auditClusters(
         bySlice.set(bucketKey, bucket);
       }
     }
-    const connectivity = axisConnectivity(axis);
     return {
       axis,
-      connectivity,
-      linkage: connectivity.parentLinkage
-        ? measureLinkage(assigned, axis)
-        : null,
+      connectivity: connectivityReport(axis, () =>
+        measureLinkage(assigned, axis),
+      ),
       states,
       overall: countGroups([...overall.values()]),
       bySlice: toSliceCounts(bySlice),
@@ -590,6 +602,26 @@ function auditClusters(
       bySlice: toSliceCounts(bySlice),
     },
   };
+}
+
+/**
+ * Builds the published connectivity, and is the ONE place that decides whether the
+ * linkage measurement is due.
+ *
+ * `measure` is a thunk on purpose: the counting walks the whole record set, and an
+ * axis that is not followed as parent linkage must not pay for a number the report
+ * is going to state as `null` anyway. It also keeps the branch that decides
+ * "measured / does not arise" in a single place, so the audit and
+ * {@link standInClusterReport} cannot disagree about which axes carry a resolution.
+ */
+function connectivityReport(
+  axis: V3GroupAxis,
+  measure: () => LinkageResolution,
+): AxisConnectivityReport {
+  const connectivity = axisConnectivity(axis);
+  return connectivity.parentLinkage
+    ? { ...connectivity, parentLinkage: true, linkage: measure() }
+    : { ...connectivity, parentLinkage: false, linkage: null };
 }
 
 /**

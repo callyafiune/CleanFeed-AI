@@ -4,7 +4,9 @@ import {
   CLUSTER_SLICE_AXES,
   auditBlockedSplit,
   standInClusterReport,
+  type AxisClusterReport,
   type AxisConnectivity,
+  type LinkageResolution,
   type SplitAuditPolicy,
 } from "../split-audit.ts";
 import {
@@ -585,8 +587,16 @@ describe("the cluster report the audit publishes", () => {
   it("reports connectivity as the two relations it is, never as one flag", () => {
     const split = createBlockedSplit(RELEASE_DATASET, POLICY);
     const audit = auditBlockedSplit(RELEASE_DATASET, split, AUDIT_POLICY);
-    const connectivityOf = (axis: string): AxisConnectivity =>
-      audit.clusters.axes.find((row) => row.axis === axis)!.connectivity;
+    // The two RELATIONS alone: `linkage` is the measurement of the conditional one
+    // and has its own test below. The return annotation is the re-exported
+    // `AxisConnectivity`, so if split.ts ever adds a third relation this helper
+    // stops compiling instead of quietly asserting two out of three.
+    const connectivityOf = (axis: string): AxisConnectivity => {
+      const { sharedValue, parentLinkage } = audit.clusters.axes.find(
+        (row) => row.axis === axis,
+      )!.connectivity;
+      return { sharedValue, parentLinkage };
+    };
 
     // `source` is a VALUE axis: two rows carrying the same identity are unioned,
     // unconditionally, and nothing has to be present for that to happen.
@@ -628,7 +638,16 @@ describe("the cluster report the audit publishes", () => {
     const standIn = standInClusterReport();
     expect(
       standIn.axes.find((row) => row.axis === "humanSeed")!.connectivity,
-    ).toEqual({ sharedValue: false, parentLinkage: true });
+    ).toEqual({
+      sharedValue: false,
+      parentLinkage: true,
+      linkage: {
+        references: 0,
+        joinedAnotherRecordLine: 0,
+        selfReference: 0,
+        absentFromRecordSet: 0,
+      },
+    });
   });
 
   it("does not fail an axis that is legitimately all singletons or absent", () => {
@@ -914,6 +933,23 @@ function seededRow(
   return validateBenchmarkRecordV3(raw) as unknown as BenchmarkRecord;
 }
 
+/**
+ * The published `linkage`, read WITHOUT a non-null assertion.
+ *
+ * The discriminant is a literal in each branch of `AxisConnectivityReport`, so
+ * checking `parentLinkage` narrows `linkage` to `LinkageResolution` — which is the
+ * whole point of moving it behind the flag. When it was a sibling field typed
+ * `LinkageResolution | null`, these three assertions read `linkage!` and the check
+ * would have bought no narrowing anyway.
+ */
+function linkageOf(report: AxisClusterReport): LinkageResolution {
+  const { connectivity } = report;
+  if (!connectivity.parentLinkage) {
+    throw new Error(`${report.axis} is not followed as parent linkage`);
+  }
+  return connectivity.linkage;
+}
+
 describe("two rows naming a seed no record carries", () => {
   it("is never published as one indivisible block on humanSeed", () => {
     // The fixture C2's measurement makes the COMMON case, not the exotic one:
@@ -941,17 +977,19 @@ describe("two rows naming a seed no record carries", () => {
     // block of 2 on an axis the splitter unions on", which is the dangerous
     // direction to be wrong in: D0b would size the stratum as if the seed and
     // its generation were one unit here.
+    //
+    // Asserted as ONE object, because the measurement is what settles the flag and
+    // the two travel together in the published artifact: zero of the two references
+    // joined anything.
     expect(seed.connectivity).toEqual({
       sharedValue: false,
       parentLinkage: true,
-    });
-    // The measurement that settles it, published rather than left to a reader:
-    // zero of the two references joined anything.
-    expect(seed.linkage).toEqual({
-      references: 2,
-      joinedAnotherRecordLine: 0,
-      selfReference: 0,
-      absentFromRecordSet: 2,
+      linkage: {
+        references: 2,
+        joinedAnotherRecordLine: 0,
+        selfReference: 0,
+        absentFromRecordSet: 2,
+      },
     });
 
     // And the splitter agrees: two components, not one.
@@ -977,7 +1015,7 @@ describe("two rows naming a seed no record carries", () => {
     const humanSeed = audit.clusters.axes.find(
       (row) => row.axis === "humanSeed",
     )!;
-    expect(humanSeed.linkage).toEqual({
+    expect(linkageOf(humanSeed)).toEqual({
       references: 1,
       joinedAnotherRecordLine: 1,
       selfReference: 0,
@@ -998,9 +1036,9 @@ describe("two rows naming a seed no record carries", () => {
     const derivation = release.clusters.axes.find(
       (row) => row.axis === "derivationRoot",
     )!;
-    expect(derivation.linkage!.references).toBe(RELEASE_DATASET.length);
-    expect(derivation.linkage!.selfReference).toBe(RELEASE_DATASET.length);
-    expect(derivation.linkage!.joinedAnotherRecordLine).toBe(0);
+    expect(linkageOf(derivation).references).toBe(RELEASE_DATASET.length);
+    expect(linkageOf(derivation).selfReference).toBe(RELEASE_DATASET.length);
+    expect(linkageOf(derivation).joinedAnotherRecordLine).toBe(0);
   });
 
   it("leaves `linkage` null for an axis that is not followed as linkage", () => {
@@ -1008,16 +1046,18 @@ describe("two rows naming a seed no record carries", () => {
     const audit = auditBlockedSplit(RELEASE_DATASET, split, AUDIT_POLICY);
     for (const axis of ["source", "author", "generatorFamily"]) {
       expect(
-        audit.clusters.axes.find((row) => row.axis === axis)!.linkage,
+        audit.clusters.axes.find((row) => row.axis === axis)!.connectivity
+          .linkage,
       ).toBeNull();
     }
     // The stand-in agrees, and is all-zero rather than plausible.
     const standIn = standInClusterReport();
     expect(
-      standIn.axes.find((row) => row.axis === "source")!.linkage,
+      standIn.axes.find((row) => row.axis === "source")!.connectivity.linkage,
     ).toBeNull();
     expect(
-      standIn.axes.find((row) => row.axis === "humanSeed")!.linkage,
+      standIn.axes.find((row) => row.axis === "humanSeed")!.connectivity
+        .linkage,
     ).toEqual({
       references: 0,
       joinedAnotherRecordLine: 0,

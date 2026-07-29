@@ -4537,6 +4537,38 @@ execução foi além (ou ficou aquém) do que o texto acima diz.
     (`cluster-exposed-previously`), para as duas checagens não poderem divergir de novo. O
     teste do id passou a construir o registro **em volta** do id longo (`record({ id: long })`),
     porque a versão anterior escapava do teto só por manter `nearDuplicate` curto.
+20. **O tipo da conectividade mora junto da função que a deriva.** `axisConnectivity`
+    devolvia um objeto anônimo inline em `split.ts` e `split-audit.ts` **restatava** a forma
+    numa interface própria. Como a auditoria atribui uma variável (não um literal fresco), a
+    checagem de propriedade excedente não se aplica: acrescentar uma terceira relação em
+    `axisConnectivity` colocaria a flag nova no artefato publicado e selado por `splitDigest`
+    em tempo de execução, enquanto o TIPO que o consumidor lê continuaria descrevendo duas — com
+    typecheck verde. Agora `AxisConnectivity` é declarada e exportada em `split.ts`, anota o
+    retorno da função, e `split-audit.ts` **re-exporta** (`export type { AxisConnectivity }`).
+    Provado por mutação: acrescentar `thirdRelation: boolean` à interface reprova em dois
+    lugares (`split.ts:248` e o helper do teste em `split-audit.test.ts:598`), onde antes
+    reprovava em zero.
+21. **`linkage` ficou atrás do próprio discriminante.** Era campo irmão tipado
+    `LinkageResolution | null` cujo discriminante (`connectivity.parentLinkage`) morava um
+    campo ao lado, e o TypeScript não estreita entre dois campos: quem checava a flag não
+    ganhava estreitamento e quem esquecia usava `!` (o próprio teste desta tarefa usava três
+    vezes). Agora `AxisConnectivityReport` é união discriminada — `parentLinkage: false` com
+    `linkage: null`, ou `parentLinkage: true` com `linkage: LinkageResolution` — e as duas
+    pernas espalham `Omit<AxisConnectivity, "parentLinkage">`, então uma terceira relação
+    também aparece aqui. `null` foi mantido na perna falsa (em vez de campo ausente) porque o
+    objeto é serializado no artefato selado, e ali "medido, e a pergunta não se aplica" e
+    "escritor antigo que nunca mediu" precisam ser distinguíveis. `connectivityReport()` é o
+    único construtor, com o cálculo passado como thunk para o eixo que não é de ligação não
+    pagar por um número que sai `null`. Os três `linkage!` do teste sumiram: um helper
+    `linkageOf()` estreita pela flag e compila **sem** cast — o que só é possível porque o
+    discriminante agora é literal em cada perna.
+22. **`CONNECTIVITY_AXES` não tem consumidor de produção, e o JSDoc diz isso.** Depois do item
+    14 a auditoria passou a ler `axisConnectivity` e parou de importar a lista; medido por grep
+    em `benchmark/`, `src/` e `contracts/`, restam a definição e as asserções do próprio
+    `split.test.ts`. O texto que justificava a deduplicação por "um consumidor que conta ou
+    serializa" foi corrigido: a dedup protege o PRIMEIRO consumidor, não um que exista hoje. A
+    exportação fica porque é o único lugar que responde "quais eixos o splitter olha", que é o
+    que D0b precisa ao escolher eixo de poder.
 
 ### C4 — Bootstrap com unidade de reamostragem por estimando
 
