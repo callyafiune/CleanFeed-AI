@@ -439,6 +439,10 @@ describe("the generatorExposure slice", () => {
         collectionBatch: `cb_${id}`,
         nearDuplicate: `nd_${id}`,
         derivationRoot: id,
+        // The middle level of the ai-recall row: a positive with no prompt template
+        // has no resampling unit for its recall, and C4 fails instead of resampling
+        // rows.
+        promptTemplate: `pt_${id}`,
       }),
     );
   }

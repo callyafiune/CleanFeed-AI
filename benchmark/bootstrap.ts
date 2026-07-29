@@ -70,6 +70,15 @@ export type ResamplingIdentity =
 export interface ResamplingLevel<T> {
   readonly axis: string;
   readonly identity: (item: T) => ResamplingIdentity;
+  /**
+   * The factor of the frozen table this axis STANDS IN FOR, when the table names
+   * a factor no axis of the schema records. It travels into the published
+   * declaration on purpose: a crossed design whose second factor is a substitute
+   * is not the design the table froze, and a reader who cannot see the
+   * substitution reads the row as implemented.
+   */
+  readonly proxyFor?: string;
+  readonly proxyReason?: string;
 }
 
 /**
@@ -111,6 +120,9 @@ export interface ResamplingLevelReport {
   readonly axis: string;
   /** Distinct units this level actually had over the population resolved. */
   readonly levels: number;
+  /** The frozen table's factor this axis substitutes for, when it substitutes. */
+  readonly proxyFor?: string;
+  readonly proxyReason?: string;
   /**
    * One unit per record-line. Resampling this level IS resampling rows, so it is
    * published rather than left for a reader to infer from the counts. It is NOT
@@ -158,6 +170,27 @@ export interface ResamplingPlanEntry {
   readonly executed?: "percentile-bootstrap" | "declared-only";
   /** The unit as measured over the population, when it was resolved. */
   readonly measured?: ResamplingUnitDeclaration | null;
+  /**
+   * WHY `measured` is null, when it is. Two things put it there and a reader has
+   * to be able to tell them apart: the resolution failed over this population, or
+   * this plan is not the one that measures this estimand (a slice's interval is
+   * measured inside that slice's own plan). Silence would read as the first.
+   */
+  readonly measurementNote?: string | null;
+  /**
+   * Factors of the frozen table with no axis of their own, and the axis standing
+   * in. Empty on every row whose axes are the table's own. It is published beside
+   * the declaration because `unitAxes` alone shows a crossed design that looks
+   * implemented while one of its factors is a substitute.
+   */
+  readonly proxies?: readonly ResamplingProxy[];
+}
+
+/** One factor of the frozen table read through a substitute axis. */
+export interface ResamplingProxy {
+  readonly axis: string;
+  readonly standsInFor: string;
+  readonly reason: string;
 }
 
 export interface ResamplingPlan {
@@ -372,12 +405,21 @@ export function resolveResampling<T>(
       : buildMultiway(resolved);
 
   const levelReports: ResamplingLevelReport[] = built.levelCounts.map(
-    (levels, position) => ({
-      position,
-      axis: declaredAxes[position],
-      levels,
-      degenerate: levels === items.length,
-    }),
+    (levels, position) => {
+      const declared = chains[position].declared;
+      return {
+        position,
+        axis: declaredAxes[position],
+        levels,
+        ...(declared.proxyFor === undefined
+          ? {}
+          : { proxyFor: declared.proxyFor }),
+        ...(declared.proxyReason === undefined
+          ? {}
+          : { proxyReason: declared.proxyReason }),
+        degenerate: levels === items.length,
+      };
+    },
   );
 
   return {

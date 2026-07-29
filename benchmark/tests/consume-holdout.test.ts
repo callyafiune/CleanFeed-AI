@@ -176,6 +176,10 @@ function record(
     base.groups.generatorFamily = normalizeGeneratorFamily(
       options.family ?? "acme_family",
     );
+    // The middle level of the ai-recall row of the frozen resampling table: the
+    // recall interval of a positive is drawn over generator ⊃ prompt template ⊃
+    // batch, and an absent axis is `unknown`, which is not a resampling unit.
+    base.groups.promptTemplate = `pt_${id}`;
   }
   return base;
 }

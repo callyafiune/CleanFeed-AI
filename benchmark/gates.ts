@@ -122,6 +122,12 @@ export type GateEvidence =
   // No multiplicity-corrected bound was published for this estimate, or the
   // declared `m` does not cover this report's mandatory gates.
   | "missing-simultaneous-interval"
+  // A bound was published, the plan declares a unit for the estimand — and the
+  // bound was not produced BY resampling that unit. An analytic Wilson bound over
+  // correlated record-lines is the case that matters: it treats every row as
+  // independent, which is the defect C4 exists to remove, and a declaration beside
+  // it is not a property of the number (R7).
+  | "unresampled-interval"
   // A percentile bound was published, but it was read from fewer replicates than
   // the frozen contract pre-registers, so at alpha_family / m it has no resolution.
   | "insufficient-resampling-effort"
@@ -890,13 +896,50 @@ function decideInterval(
     };
   }
 
-  // 4. A percentile bound read from fewer replicates than the frozen contract
+  // 4. A bound that does not come out of the declared unit. The plan lookup above
+  //    proves a unit was DECLARED for this estimand; this proves the number the
+  //    verdict rests on was drawn over it. Without this step the two are
+  //    independent: a `declared-only` entry passed step 2 while the bound came from
+  //    the analytic Wilson estimator, and the release decided a correlated-rows
+  //    interval on the strength of a declaration the number never honoured.
+  //
+  //    It is checked on the ESTIMATE and not on `ResamplingPlanEntry.executed`,
+  //    which is the stronger of the two and the only one that works everywhere: a
+  //    slice's interval is drawn inside that slice's own metrics, so the aggregate
+  //    plan says `declared-only` for `*.fpr.slice` while the slice's number IS
+  //    resampled — reading `executed` there would fail a gate whose evidence
+  //    exists. The reverse mistake is impossible: an estimate that names a
+  //    resampled unit was produced by resampling it, because the estimator is the
+  //    only thing that writes the field.
+  const unresampled = unresampledFailure(
+    spec.estimate,
+    simultaneous,
+    lookup.entry,
+  );
+  if (unresampled !== null) {
+    return {
+      ...base,
+      evidence: "unresampled-interval",
+      observed: null,
+      eligible: true,
+      passed: false,
+      simultaneous: {
+        familyAlpha: simultaneous.familyAlpha,
+        m: simultaneous.m,
+        alpha: simultaneous.alpha,
+      },
+      reasons: [`${spec.subject}: ${unresampled}`],
+    };
+  }
+
+  // 5. A percentile bound read from fewer replicates than the frozen contract
   //    pre-registers. This is not a formatting quibble: at alpha_family / m the
   //    bound sits `alpha * (n - 1)` order statistics from the extreme, so with
   //    m = 40 and 2000 replicates the verdict rests on two of them. The frozen
   //    table says 10.000 replicates in the pilot and "nunca reduzir por tempo", so
-  //    a thinner bound is missing evidence, not a cheaper measurement. The Wilson
-  //    path resamples nothing and is exempt by construction.
+  //    a thinner bound is missing evidence, not a cheaper measurement. Step 4 has
+  //    already refused every non-percentile bound, so this reaches only percentile
+  //    bounds.
   const effort = simultaneousEffortFailure(simultaneous);
   if (effort !== null) {
     return {
@@ -954,6 +997,63 @@ function describe(spec: IntervalGateSpec): DescriptiveBound {
     confidence: 0.95,
     role: "descriptive",
   };
+}
+
+/**
+ * Why the bound this gate would read is not evidence about the unit the plan
+ * declares, or `null` when it is. Four ways it can fail, and each one names what a
+ * reader has to go fix:
+ *
+ *   * the bound is analytic (Wilson) — it resamples nothing, so the declared unit
+ *     played no part in it and every correlated record-line was counted as
+ *     independent;
+ *   * the estimate names no unit at all, so nothing connects it to the plan;
+ *   * the unit's METHOD differs from the declared one — a hierarchical draw where
+ *     the table crosses two factors understates the variance, and vice versa;
+ *   * the unit's AXES differ from the declared ones, which is a different design
+ *     wearing the estimand's name.
+ */
+function unresampledFailure(
+  estimate: MetricEstimate | undefined,
+  simultaneous: NonNullable<MetricEstimate["simultaneous"]>,
+  entry: ResamplingPlanEntry,
+): string | null {
+  const declared = entry.unitAxes.join(
+    entry.unitKind === "multiway" ? " × " : " ⊃ ",
+  );
+  if (!isResampledPercentileMethod(simultaneous.method)) {
+    return (
+      `o limite simultâneo veio do estimador "${simultaneous.method}", que não ` +
+      `reamostra nada: o plano declara a unidade ${declared} para ` +
+      `${entry.estimand}, mas o número trata registros-linha correlacionados como ` +
+      "independentes; declarar a unidade não é medi-la (R7)"
+    );
+  }
+  const unit = estimate?.resampling;
+  if (unit === undefined) {
+    return (
+      "o limite diz ser percentil de bootstrap mas a estimativa não publica " +
+      "unidade de reamostragem alguma, então não há como ligá-la à unidade " +
+      `declarada (${declared})`
+    );
+  }
+  if (unit.method !== entry.unitKind) {
+    return (
+      `a estimativa foi reamostrada com método "${unit.method}" enquanto o plano ` +
+      `declara "${entry.unitKind}" para ${entry.estimand}; aninhar o que é cruzado ` +
+      "(ou cruzar o que é aninhado) muda a variância"
+    );
+  }
+  if (
+    unit.axes.length !== entry.unitAxes.length ||
+    unit.axes.some((axis, index) => axis !== entry.unitAxes[index])
+  ) {
+    return (
+      `a estimativa foi reamostrada sobre ${unit.axes.join(" / ")} enquanto o ` +
+      `plano declara ${declared} para ${entry.estimand}`
+    );
+  }
+  return null;
 }
 
 // Why a resampled simultaneous bound cannot be read, or `null` when it can. Only

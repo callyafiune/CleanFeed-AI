@@ -45,7 +45,37 @@ function simultaneousBound(
   };
 }
 
-function upper(bound: number): MetricEstimate {
+// The DECLARED unit of the synthetic plan below, as the estimate publishes it. The
+// gate reconciles the two — an interval resampled over other axes than the plan
+// declares is a different design wearing the estimand's name — so the fixture keeps
+// one definition and both sides read it.
+const PLAN_AXES = ["groups.author", "groups.nearDuplicate"] as const;
+
+function unitDeclaration(
+  estimand: string,
+): NonNullable<MetricEstimate["resampling"]> {
+  return {
+    estimand,
+    method: "hierarchical",
+    axes: [...PLAN_AXES],
+    items: 2_000,
+    units: 400,
+    levels: PLAN_AXES.map((axis, position) => ({
+      position,
+      axis,
+      levels: position === 0 ? 40 : 400,
+      degenerate: false,
+    })),
+    demotions: [],
+    degenerate: false,
+  };
+}
+
+// Every gated rate the metrics publish is a percentile bootstrap over its declared
+// unit, so that is what a gate fixture has to look like: `analyticUpper` /
+// `analyticLower` keep the OLD analytic shape, and they exist for the tests that
+// prove a gate refuses one.
+function analyticUpper(bound: number): MetricEstimate {
   return {
     value: bound,
     lower95: 0,
@@ -54,7 +84,7 @@ function upper(bound: number): MetricEstimate {
     simultaneous: simultaneousBound(0, bound),
   };
 }
-function lower(bound: number): MetricEstimate {
+function analyticLower(bound: number): MetricEstimate {
   return {
     value: bound,
     lower95: bound,
@@ -63,8 +93,14 @@ function lower(bound: number): MetricEstimate {
     simultaneous: simultaneousBound(bound, 1),
   };
 }
+function upper(bound: number): MetricEstimate {
+  return resampled(analyticUpper(bound));
+}
+function lower(bound: number): MetricEstimate {
+  return resampled(analyticLower(bound));
+}
 // An estimate whose individual 95% bound and whose simultaneous bound disagree.
-function splitBound(
+function analyticSplitBound(
   individual: { lower95: number; upper95: number },
   wide: { lower: number; upper: number },
 ): MetricEstimate {
@@ -75,6 +111,12 @@ function splitBound(
     method: "wilson-one-sided",
     simultaneous: simultaneousBound(wide.lower, wide.upper),
   };
+}
+function splitBound(
+  individual: { lower95: number; upper95: number },
+  wide: { lower: number; upper: number },
+): MetricEstimate {
+  return resampled(analyticSplitBound(individual, wide));
 }
 // An estimate with no simultaneous bound: the metrics were computed without a
 // declared `m`, so no gate may read them.
@@ -100,6 +142,7 @@ const PILOT_REPLICATES = REBUILD_V3_POLICY.bootstrapReplicates.pilot;
 function resampled(
   estimate: MetricEstimate,
   replicates: number | "undeclared" = PILOT_REPLICATES,
+  estimand = "synthetic",
 ): MetricEstimate {
   const simultaneous = estimate.simultaneous;
   if (simultaneous === undefined) {
@@ -119,7 +162,12 @@ function resampled(
         }),
   };
   delete percentile.z;
-  return { ...estimate, simultaneous: percentile };
+  return {
+    ...estimate,
+    method: "hierarchical-cluster-percentile",
+    resampling: unitDeclaration(estimand),
+    simultaneous: percentile,
+  };
 }
 
 // A valid synthetic C4 plan: one entry per estimand the gates measure, with a
@@ -143,8 +191,9 @@ function plan(overrides: Partial<ResamplingPlan> = {}): ResamplingPlan {
     entries: ESTIMANDS.map((estimand) => ({
       estimand,
       unitKind: "hierarchical" as const,
-      unitAxes: ["groups.author", "groups.nearDuplicate"],
+      unitAxes: [...PLAN_AXES],
       replicates: REBUILD_V3_POLICY.bootstrapReplicates.pilot,
+      executed: "percentile-bootstrap" as const,
     })),
     ...overrides,
   };
@@ -243,10 +292,15 @@ function aiPositive(author: string): EvaluationItem {
       provenance: { sourceId: "generated" },
       createdAt: 1_000,
       transformation: { kind: "none", severity: "none" },
+      // The three levels of the ai-recall row, all `known`: the recall interval of
+      // an AI positive is drawn over generator ⊃ prompt template ⊃ batch, and an
+      // absent axis is `unknown`, which is not a resampling unit.
       groups: {
         author,
         domainSource: "ai_gemini",
         generatorFamily: "gemini_3_5_flash_low",
+        promptTemplate: "qa_v1",
+        collectionBatch: "gen_batch_01",
       },
       generation: { family: "gemini-3.5-flash-low" },
     } as unknown as BenchmarkRecord,
@@ -283,7 +337,17 @@ function mixedRow(
       spans: [],
       generationMode: "mechanistic",
     },
-    groups: { author, domainSource: "ai_gemini" },
+    // A mechanistic mixed row is a warning positive above the fraction floor, so it
+    // needs the ai-recall levels; and the mixed row of the frozen table crosses its
+    // human parent with the edit operation, so it names the parent too.
+    groups: {
+      author,
+      domainSource: "ai_gemini",
+      generatorFamily: "gemini_3_5_flash_low",
+      promptTemplate: "mix_edit_v1",
+      collectionBatch: "mix_batch_01",
+      humanSeed: `seed_${author}`,
+    },
   } as unknown as BenchmarkRecord;
   if (status !== "scored") return { record, status };
   return {
@@ -341,8 +405,12 @@ function basis(
     powered: options.powered,
     powerFloor: REBUILD_V3_POLICY.powerFloors.criticalFprHumanNegatives,
     evidenceRole: options.powered ? "gating" : "supplementary-diagnostic",
-    falsePositiveRate: upper(options.fprUpper ?? 0.01),
-    errorRate: upper(0),
+    falsePositiveRate: resampled(
+      analyticUpper(options.fprUpper ?? 0.01),
+      PILOT_REPLICATES,
+      "warning.fpr.labelBasis",
+    ),
+    errorRate: analyticUpper(0),
     brier: 0.05,
     logLoss: 0.2,
     eceEqualMass: 0.02,
@@ -740,7 +808,7 @@ describe("warning tier teeth", () => {
       resampling: plan(),
       metrics: metrics({
         ece: resampled(
-          splitBound(
+          analyticSplitBound(
             { lower95: 0.02, upper95: 0.04 },
             { lower: 0.02, upper: 0.09 },
           ),
@@ -781,7 +849,7 @@ describe("warning tier teeth", () => {
     const report = evaluateReleaseGates({
       integrity: integrity(),
       resampling: plan(),
-      metrics: metrics({ ece: resampled(upper(0.01), 2_000) }),
+      metrics: metrics({ ece: resampled(analyticUpper(0.01), 2_000) }),
       slices: summary([passingSlice()]),
     });
     expect(report.decision).toBe("reject");
@@ -803,7 +871,7 @@ describe("warning tier teeth", () => {
     const report = evaluateReleaseGates({
       integrity: integrity(),
       resampling: plan(),
-      metrics: metrics({ ece: resampled(upper(0.01), "undeclared") }),
+      metrics: metrics({ ece: resampled(analyticUpper(0.01), "undeclared") }),
       slices: summary([passingSlice()]),
     });
     const gate = gateById(report.gates, "warning.calibration-ece");

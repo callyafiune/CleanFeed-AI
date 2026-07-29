@@ -4,12 +4,24 @@
 //
 //   * The v2 statistical evaluation report (`computeEvaluationMetrics`) is the
 //     release-grade contract §6.5 mandates: warning/visual-action confusion
-//     matrices with one-sided Wilson intervals, author-clustered bootstrap
-//     intervals for ROC-AUC/PR-AUC/Brier/ECE-15, coverage/abstention/error over
-//     the eligible set, prevalence-simulated precision, latency/memory and the
-//     mixed-text (>=50% AI) warning-recall block. Ground truth is the record
-//     label, never a score; human records are the only negatives — mixed text
-//     never inflates the human negative count.
+//     matrices, coverage/abstention/error over the eligible set,
+//     prevalence-simulated precision, latency/memory and the mixed-text (>=50%
+//     AI) warning-recall block. Ground truth is the record label, never a score;
+//     human records are the only negatives — mixed text never inflates the human
+//     negative count.
+//
+//     TWO ESTIMATORS, AND WHICH ONE BACKS A NUMBER IS PUBLISHED ON IT (C4). The
+//     estimands of the frozen resampling table — the FPR/specificity rates over
+//     human text, recall over AI text, and the five continuous
+//     ranking/calibration statistics — get a PERCENTILE BOOTSTRAP over the
+//     hierarchical or multiway unit that table gives their row, and each estimate
+//     carries the unit it was drawn over. Everything else (coverage, abstention,
+//     the three error rates, precision, the resolution slices, the localized-path
+//     recall, the diagnostic mixed bands) keeps the analytic one-sided WILSON
+//     interval and declares no unit, because no row of the frozen table covers
+//     those estimands and inventing one would be inventing the contract. Reading
+//     which is which is a field read, never an assumption: `MetricEstimate.method`
+//     and `MetricEstimate.resampling`.
 //
 //     WHAT COUNTS AS A POSITIVE IS NOT ONE ANSWER (B2). The frozen three-target
 //     table gives each target a different product action, so this module publishes
@@ -36,7 +48,9 @@
 
 import {
   clusteredPercentileBootstrapAll,
+  isResampledPercentileMethod,
   resolveResampling,
+  ResamplingUnitError,
   type ResampledPercentileMethod,
   type ResamplingDesign,
   type ResamplingIdentity,
@@ -44,6 +58,7 @@ import {
   type ResamplingLevelChain,
   type ResamplingPlan,
   type ResamplingPlanEntry,
+  type ResamplingProxy,
   type ResamplingResolution,
   type ResamplingUnitDeclaration,
 } from "./bootstrap.ts";
@@ -406,9 +421,12 @@ function isFiniteNumber(value: unknown): value is number {
 // v2 statistical evaluation report (§6.5).
 // ===========================================================================
 
-// A point estimate with an optional interval and the method that produced it,
-// so a report can prove which estimator (Wilson vs author-clustered bootstrap)
-// backs every number.
+// A point estimate with an optional interval and the method that produced it, so
+// a report can prove which estimator backs every number: the analytic one-sided
+// Wilson bound, or the percentile bootstrap over the per-estimand
+// hierarchical/multiway unit of the frozen table (C4). `resampling` is present on
+// the second only, and a consumer that decides something on the bound reads it
+// rather than assuming a declared unit was honoured (R7).
 //
 // The 95% bounds are INDIVIDUAL and descriptive. `simultaneous` is the same
 // estimator re-evaluated at alpha_family / m (Bonferroni), and it is the only
@@ -429,6 +447,25 @@ export interface MetricEstimate {
   // unit each estimand DECLARES, resampled or not, is in
   // `EvaluationMetrics.resampling`.
   resampling?: ResamplingUnitDeclaration;
+  // On a RATE of the frozen table's first two rows, the published bound is the
+  // WIDER of two estimators and this field carries both. See `rateEnvelope` for
+  // why: the percentile bootstrap over clusters is the only one of the two that
+  // sees the dependence between record-lines, and it is also the one that collapses
+  // to zero width on a zero-count rate — where it would be narrower than the
+  // analytic bound rather than more conservative. Publishing the wider of the two
+  // can only move a bound outward, so it never buys a gate a pass (R3), and both
+  // numbers are here so neither hides behind the other.
+  boundEnvelope?: BoundEnvelope;
+}
+
+export interface BoundEnvelope {
+  rule: "wider-of-analytic-and-resampled";
+  analytic: { lower: number; upper: number; method: "wilson-one-sided" };
+  resampled: {
+    lower: number;
+    upper: number;
+    method: ResampledPercentileMethod;
+  };
 }
 
 export interface SimultaneousBound {
@@ -1231,10 +1268,37 @@ function axisLevel(declared: string): ResamplingLevel<EvaluationItem> {
 function levelChain(
   row: ResamplingLevelRow,
 ): ResamplingLevelChain<EvaluationItem> {
+  const declared = axisLevel(row.axis);
   return {
-    declared: axisLevel(row.axis),
+    declared:
+      row.proxyFor === undefined
+        ? declared
+        : {
+            ...declared,
+            proxyFor: row.proxyFor,
+            ...(row.proxyReason === undefined
+              ? {}
+              : { proxyReason: row.proxyReason }),
+          },
     fallbacks: row.fallbacks.map(axisLevel),
   };
+}
+
+/** The substitutions one estimand's declared unit rests on, in level order. */
+function proxiesOf(estimand: string): ResamplingProxy[] {
+  const row =
+    RESAMPLING_TABLE.estimandClasses[RESAMPLING_TABLE.estimands[estimand]];
+  if (row === undefined) return [];
+  const proxies: ResamplingProxy[] = [];
+  for (const level of row.levels) {
+    if (level.proxyFor === undefined) continue;
+    proxies.push({
+      axis: level.axis,
+      standsInFor: level.proxyFor,
+      reason: level.proxyReason ?? "",
+    });
+  }
+  return proxies;
 }
 
 /**
@@ -1268,18 +1332,39 @@ function resamplingUnitOf(
 }
 
 // The estimands whose PUBLISHED interval is a percentile bootstrap over the unit
-// below. Every other entry of the plan declares the frozen table's unit while its
-// published interval comes from the analytic Wilson estimator, and the plan says
-// so per entry (`executed`) instead of letting a reader assume.
+// the frozen table gives them. Every other entry of the plan declares the table's
+// unit while its published interval comes from the analytic Wilson estimator, and
+// the plan says so per entry (`executed`) instead of letting a reader assume.
 const ESTIMAND_CALIBRATION_ECE = "calibration.ece";
 const ESTIMAND_CALIBRATION_ECE15 = "calibration.ece15";
 const ESTIMAND_CALIBRATION_BRIER = "calibration.brier";
 const ESTIMAND_SEPARABILITY_AUROC = "separability.auroc";
 const ESTIMAND_SEPARABILITY_PR_AUC = "separability.prAuc";
-// Declaration-only: the label-basis FPR is published with an analytic Wilson
-// interval, so this estimand names the unit the frozen table gives it and the
-// slice publishes the unit MEASURED over its own rows.
+// The two gated decisions, each with the human-negative row (FPR and its
+// specificity companion) and the AI-recall row. Row 1 of the frozen table is named
+// "FPR / especificidade em texto humano", so the clearance rate is the same row and
+// shares the same resample stream — one draw, two statistics over it.
+const ESTIMAND_WARNING_FPR = "warning.fpr";
+const ESTIMAND_WARNING_CLEARANCE = "warning.clearanceRate";
+const ESTIMAND_WARNING_RECALL = "warning.recall";
+const ESTIMAND_ACTION_FPR = "action.fpr";
+const ESTIMAND_ACTION_CLEARANCE = "action.clearanceRate";
+const ESTIMAND_ACTION_RECALL = "action.recall";
 const ESTIMAND_WARNING_FPR_LABEL_BASIS = "warning.fpr.labelBasis";
+const ESTIMAND_ACTION_FPR_LABEL_BASIS = "action.fpr.labelBasis";
+// Measured but not resampled: the mixed multiway is resolved over the mechanistic
+// cohort so its degeneracy is a published number instead of a paragraph, and the
+// bound beside `mixed.atLeastHalfAi` stays the analytic one — see the note above
+// the resolution in `computeEvaluationMetrics`.
+const ESTIMAND_MIXED_WARNING_RECALL = "mixed.warning.recall";
+// The slice variants of the two FPR rows. THIS plan never measures them: a slice's
+// interval is drawn inside that slice's own `computeEvaluationMetrics` call
+// (benchmark/slices.ts), which publishes its own plan, so the aggregate plan says
+// where the measurement lives instead of leaving `measured: null` unexplained.
+const PER_SLICE_ESTIMANDS: readonly string[] = [
+  "warning.fpr.slice",
+  "action.fpr.slice",
+];
 
 /**
  * The plan as the frozen table declares it, with nothing measured yet: one entry
@@ -1302,6 +1387,10 @@ export function declaredResamplingPlan(
         replicates,
         executed: "declared-only" as const,
         measured: null,
+        measurementNote: PER_SLICE_ESTIMANDS.includes(estimand)
+          ? PER_SLICE_NOTE
+          : null,
+        proxies: proxiesOf(estimand),
       };
     });
   return {
@@ -1311,6 +1400,17 @@ export function declaredResamplingPlan(
   };
 }
 
+const PER_SLICE_NOTE =
+  "medida no plano da própria fatia: buildSlices chama computeEvaluationMetrics " +
+  "por fatia e cada uma publica o seu plano; este plano agregado não calcula fatia";
+
+/** What one estimand's resolution produced, or why it produced nothing. */
+interface MeasuredUnit {
+  readonly unit: ResamplingUnitDeclaration | null;
+  readonly resampled: boolean;
+  readonly note: string | null;
+}
+
 /**
  * The plan the release gate reads. `measured` carries the resolutions the run
  * actually performed, so a declared unit cannot drift from an executed one: the
@@ -1318,19 +1418,23 @@ export function declaredResamplingPlan(
  */
 function buildResamplingPlan(
   replicates: number,
-  measured: ReadonlyMap<string, ResamplingUnitDeclaration>,
-  resampled: ReadonlySet<string>,
+  measured: ReadonlyMap<string, MeasuredUnit>,
 ): ResamplingPlan {
   const declared = declaredResamplingPlan(replicates);
   return {
     ...declared,
-    entries: declared.entries.map((entry) => ({
-      ...entry,
-      executed: resampled.has(entry.estimand)
-        ? ("percentile-bootstrap" as const)
-        : ("declared-only" as const),
-      measured: measured.get(entry.estimand) ?? null,
-    })),
+    entries: declared.entries.map((entry) => {
+      const found = measured.get(entry.estimand);
+      if (found === undefined) return entry;
+      return {
+        ...entry,
+        executed: found.resampled
+          ? ("percentile-bootstrap" as const)
+          : ("declared-only" as const),
+        measured: found.unit,
+        measurementNote: found.note ?? entry.measurementNote ?? null,
+      };
+    }),
   };
 }
 
@@ -1578,6 +1682,209 @@ function weightedPrAuc(points: BinaryPoints): WeightedStatistic {
     }
     return averagePrecision;
   };
+}
+
+// --- rates over a clustered design -----------------------------------------
+//
+// A RATE is the one shape the frozen table's first two rows are about, and it is
+// the shape that used to escape resampling entirely: FPR, specificity and recall
+// were analytic Wilson bounds, which treat every record-line as independent no
+// matter what unit the plan declared beside them. Written over cluster weights a
+// rate is a ratio of two weighted sums, so it costs one pass over the clusters per
+// replicate and never touches a record-line.
+//
+// The two counters are aggregated ONCE per cluster before the first draw:
+// `numerator[c]` is how many rows of cluster `c` are in the numerator and
+// `denominator[c]` how many are in the denominator. FPR and specificity have
+// DIFFERENT denominators over the same population — FP+TN counts the decided
+// negatives, TN/negatives counts all of them — which is why the denominator is
+// per statistic and not shared.
+function weightedRate(
+  numerator: Float64Array,
+  denominator: Float64Array,
+): WeightedStatistic {
+  const clusters = numerator.length;
+  return (weights) => {
+    let top = 0;
+    let bottom = 0;
+    for (let cluster = 0; cluster < clusters; cluster += 1) {
+      const weight = weights[cluster];
+      if (weight === 0) continue;
+      top += weight * numerator[cluster];
+      bottom += weight * denominator[cluster];
+    }
+    // A replicate that drew no denominator says nothing about the rate; it is
+    // discarded as non-finite rather than counted as zero (R5's rule, one level
+    // down: an undefined statistic is never substituted).
+    return bottom === 0 ? Number.NaN : top / bottom;
+  };
+}
+
+/**
+ * One rate to resample: its estimand, the point value from the row-wise counts,
+ * and the two PER-ROW indicators the sufficient statistics are aggregated from.
+ * They are per row here and per cluster in `weightedRate`, and the aggregation
+ * happens once, before the first draw.
+ */
+interface RateStatistic {
+  readonly estimand: string;
+  /** 1 for a row in the numerator, 0 otherwise, in the order the rows were given. */
+  readonly numerator: readonly number[];
+  /** 1 for a row in the denominator, 0 otherwise, in the same order. */
+  readonly denominator: readonly number[];
+  /** The analytic estimate, which is also the point value and the other half of
+   *  the published envelope (`rateEnvelope`). */
+  readonly analytic: MetricEstimate;
+}
+
+/**
+ * The seed and the effort one population's rates are resampled with, plus where
+ * the measured unit is recorded. Absent means "publish the analytic bound and
+ * declare no unit", which is what the diagnostic blocks do: no row of the frozen
+ * table covers a band of the mixed curve, and inventing one to have an interval
+ * would be inventing the contract.
+ */
+interface RateResampling {
+  readonly seed: number;
+  readonly replicates: number;
+  readonly bonferroni: MultiplicityDeclaration | null;
+  /** The human-negative row: the FPR estimand and its specificity companion. */
+  readonly humanEstimands: { fpr: string; clearance: string } | null;
+  /** The AI-recall row. */
+  readonly recallEstimand: string | null;
+  /**
+   * Where a measured unit goes. Called only for the family a release gate reads,
+   * so the plan carries the unit of the interval the verdict came from and not the
+   * one of its diagnostic mirror over a narrower population.
+   */
+  readonly record: ((estimand: string, measured: MeasuredUnit) => void) | null;
+}
+
+/**
+ * The rates of one population, drawn over the unit each estimand declares. Every
+ * statistic gets an entry, resampled or degraded, and the caller decides which it
+ * may publish (`usableRateInterval`).
+ */
+function resampledRates(
+  resolution: ResamplingResolution,
+  statistics: readonly RateStatistic[],
+  resampling: RateResampling,
+): Map<string, MetricEstimate> {
+  const clusters = resolution.clusterCount;
+  return resampledEstimates({
+    resolution,
+    statistics: statistics.map((entry) => ({
+      estimand: entry.estimand,
+      value: entry.analytic.value,
+      weighted: weightedRate(
+        perCluster(entry.numerator, resolution.clusterOf, clusters),
+        perCluster(entry.denominator, resolution.clusterOf, clusters),
+      ),
+    })),
+    seed: resampling.seed,
+    replicates: resampling.replicates,
+    bonferroni: resampling.bonferroni,
+  });
+}
+
+/**
+ * The published bound of one rate: the WIDER of the analytic Wilson bound and the
+ * percentile bound over the declared unit, with both recorded. `null` when the
+ * design produced no interval at all, and the caller then publishes the analytic
+ * bound alone — which leaves the plan at `declared-only` for that estimand, and the
+ * release gate refuses to decide on it (benchmark/gates.ts).
+ *
+ * WHY THE WIDER OF TWO AND NOT THE RESAMPLED ONE ALONE. The two estimators fail in
+ * opposite directions and neither dominates:
+ *
+ *   * the analytic bound treats every record-line as independent. On a corpus whose
+ *     rows share authors, pages, prompts and generators that is too narrow, by an
+ *     amount nothing in the number reveals — the defect C4 exists to remove.
+ *   * the percentile bound over clusters sees that dependence, and it collapses to
+ *     ZERO WIDTH exactly when the statistic is constant across replicates: a rate
+ *     with no events at all (FPR 0 with no false positive anywhere), or a design
+ *     where a single cluster carries every denominator. A zero-width "95% interval"
+ *     claims certainty from a finite sample, and it is NARROWER than the analytic
+ *     bound, so it would make a gate easier to pass with less evidence (R3).
+ *
+ * Taking the wider bound can only move a limit outward, so it cannot buy a pass;
+ * and because it is never narrower than the resampled bound, the dependence the
+ * design captures is always honoured. What it is NOT is an exact-coverage interval:
+ * it is conservative by construction, which is the direction a release gate has to
+ * err in. Both bounds are published (`boundEnvelope`) so a reader can see which one
+ * bound the verdict, and the design is named either way (`resampling`).
+ */
+function rateEnvelope(
+  analytic: MetricEstimate,
+  resampled: MetricEstimate | undefined,
+): MetricEstimate | null {
+  const unit = resampled?.resampling;
+  const method = resampled?.method;
+  if (
+    resampled === undefined ||
+    unit === undefined ||
+    method === undefined ||
+    !isResampledPercentileMethod(method) ||
+    resampled.lower95 === undefined ||
+    resampled.upper95 === undefined ||
+    analytic.lower95 === undefined ||
+    analytic.upper95 === undefined
+  ) {
+    return null;
+  }
+  const combined: MetricEstimate = {
+    value: analytic.value,
+    lower95: Math.min(analytic.lower95, resampled.lower95),
+    upper95: Math.max(analytic.upper95, resampled.upper95),
+    method,
+    resampling: unit,
+    boundEnvelope: {
+      rule: "wider-of-analytic-and-resampled",
+      analytic: {
+        lower: analytic.lower95,
+        upper: analytic.upper95,
+        method: "wilson-one-sided",
+      },
+      resampled: {
+        lower: resampled.lower95,
+        upper: resampled.upper95,
+        method,
+      },
+    },
+  };
+  const analyticSimultaneous = analytic.simultaneous;
+  const resampledSimultaneous = resampled.simultaneous;
+  if (
+    analyticSimultaneous !== undefined &&
+    resampledSimultaneous !== undefined
+  ) {
+    combined.simultaneous = {
+      ...resampledSimultaneous,
+      lower: Math.min(analyticSimultaneous.lower, resampledSimultaneous.lower),
+      upper: Math.max(analyticSimultaneous.upper, resampledSimultaneous.upper),
+    };
+  } else if (analyticSimultaneous !== undefined) {
+    // The design gave no simultaneous bound (its tail held no replicate at this
+    // alpha). Publishing the analytic one alone keeps the number honest and the
+    // gate fail-closed: its method says `wilson-one-sided`, so the gate refuses it
+    // for an unresampled interval instead of deciding on it.
+    combined.simultaneous = analyticSimultaneous;
+  }
+  return combined;
+}
+
+// Row indicators summed into their leaf cluster: the sufficient statistic of a
+// rate under a clustered design, computed once per statistic.
+function perCluster(
+  perRow: readonly number[],
+  clusterOf: readonly number[],
+  clusters: number,
+): Float64Array {
+  const totals = new Float64Array(clusters);
+  for (let index = 0; index < perRow.length; index += 1) {
+    totals[clusterOf[index]] += perRow[index];
+  }
+  return totals;
 }
 
 // --- the three frozen targets, as predicates (B2) ---------------------------
@@ -1976,17 +2283,65 @@ export function computeEvaluationMetrics(
   );
   const eligibleCount = eligible.length;
 
+  // What the plan will publish as MEASURED: one entry per estimand whose unit this
+  // run resolved, saying whether the published interval came out of the design.
+  const measuredUnits = new Map<string, MeasuredUnit>();
+  const recordUnit = (estimand: string, measured: MeasuredUnit): void => {
+    if (!measuredUnits.has(estimand)) measuredUnits.set(estimand, measured);
+  };
+  const rateResampling = (
+    humanEstimands: { fpr: string; clearance: string } | null,
+    recallEstimand: string | null,
+  ): RateResampling => ({
+    seed,
+    replicates,
+    bonferroni,
+    humanEstimands,
+    recallEstimand,
+    record: recordUnit,
+  });
+
   // Both decision families are measured over the ELIGIBLE set: end-to-end over
-  // all of it, conditional over the part of it that produced a score.
-  const warning = decisionFamilies(eligible, (item) => item.warned, bonferroni);
+  // all of it, conditional over the part of it that produced a score. Their rates
+  // are drawn from the frozen table's first two rows — source ⊃ author over the
+  // human negatives, generator ⊃ prompt template ⊃ batch over the AI positives —
+  // and never from an analytic bound that would treat correlated rows as
+  // independent while declaring a unit beside itself.
+  const warning = decisionFamilies(
+    eligible,
+    (item) => item.warned,
+    bonferroni,
+    "warning-positives",
+    rateResampling(
+      { fpr: ESTIMAND_WARNING_FPR, clearance: ESTIMAND_WARNING_CLEARANCE },
+      ESTIMAND_WARNING_RECALL,
+    ),
+  );
   const visualAction = visualActionAvailable
-    ? decisionFamilies(eligible, (item) => item.visualActioned, bonferroni)
+    ? decisionFamilies(
+        eligible,
+        (item) => item.visualActioned,
+        bonferroni,
+        "warning-positives",
+        rateResampling(
+          { fpr: ESTIMAND_ACTION_FPR, clearance: ESTIMAND_ACTION_CLEARANCE },
+          // NOT the gated action recall: this matrix counts the WARNING positives,
+          // and `action.recall` is the recall over integral positives alone
+          // (`actionAuthorization`). Resampling it here under that estimand would
+          // put the wrong population's measurement in the plan.
+          null,
+        ),
+      )
     : null;
   // The authorizing statistic: the SAME decision over the integral positives
   // alone. A separate matrix, not a projection of the one above, because the
   // populations differ (B2).
   const actionAuthorization = visualActionAvailable
-    ? actionAuthorizationMetrics(eligible, bonferroni)
+    ? actionAuthorizationMetrics(
+        eligible,
+        bonferroni,
+        rateResampling(null, ESTIMAND_ACTION_RECALL),
+      )
     : null;
 
   // Continuous ranking/calibration metrics run over the scored positive/negative
@@ -2056,15 +2411,37 @@ export function computeEvaluationMetrics(
   });
   const estimateOf = (estimand: string): MetricEstimate =>
     continuous.get(estimand) ?? absentEstimate();
-  // What the plan will publish as MEASURED: the unit of every estimand whose
-  // interval this run actually resampled, and no other.
-  const resampledUnits = new Map<string, ResamplingUnitDeclaration>();
-  const resampledEstimands = new Set<string>();
   for (const [estimand, estimate] of continuous) {
     const unit = estimate.resampling;
     if (unit === undefined) continue;
-    resampledUnits.set(estimand, unit);
-    resampledEstimands.add(estimand);
+    recordUnit(estimand, { unit, resampled: true, note: null });
+  }
+
+  // The MIXED row of the frozen table, resolved over the cohort its gate reads
+  // (mechanistic, at or above the frozen AI fraction). It is resolved and NOT
+  // resampled, on purpose: the crossed pair is `human parent × edit operation` and
+  // no axis of the v3 schema records the edit operation, so the second factor is a
+  // declared PROXY (`groups.promptTemplate`, see the policy row) that measured one
+  // single level over the assembled corpus while the parent factor measured one
+  // level per row. Publishing the measurement is the point — a reader sees the
+  // degeneracy as a number instead of reading a crossed interval that is really
+  // i.i.d. The bound beside `mixed.atLeastHalfAi` stays the analytic one and the
+  // plan says `declared-only` for this estimand.
+  const mixedCohort = items.filter((item) => {
+    const cohort = mixedCohortOf(item.record);
+    return (
+      cohort?.generationMode === MATERIAL_ASSISTANCE_MODE &&
+      cohort.aiFraction >= MATERIAL_ASSISTANCE_AI_FRACTION
+    );
+  });
+  if (mixedCohort.length > 0) {
+    recordUnit(
+      ESTIMAND_MIXED_WARNING_RECALL,
+      measuredMixedUnit(
+        mixedCohort,
+        resamplingDesignFor(ESTIMAND_MIXED_WARNING_RECALL),
+      ),
+    );
   }
 
   // Three denominators, three companions. Handing the whole-eligible-set rate to
@@ -2131,13 +2508,16 @@ export function computeEvaluationMetrics(
       estimateOf(ESTIMAND_CALIBRATION_ECE),
       binaryPopulationErrorRate,
     ),
-    labelBasis: labelBasisBreakdown(eligible, bonferroni),
-    predictiveValue: predictiveValueProjection(warning),
-    resampling: buildResamplingPlan(
+    labelBasis: labelBasisBreakdown(eligible, bonferroni, {
+      seed,
       replicates,
-      resampledUnits,
-      resampledEstimands,
-    ),
+      bonferroni,
+      humanEstimands: null,
+      recallEstimand: null,
+      record: recordUnit,
+    }),
+    predictiveValue: predictiveValueProjection(warning),
+    resampling: buildResamplingPlan(replicates, measuredUnits),
     multiplicity: bonferroni,
     ece15: estimateOf(ESTIMAND_CALIBRATION_ECE15),
     coverage: proportionEstimate(
@@ -2209,12 +2589,14 @@ export function computeEvaluationMetrics(
 function actionAuthorizationMetrics(
   eligible: readonly EvaluationItem[],
   bonferroni: MultiplicityDeclaration | null,
+  resampling: RateResampling | null = null,
 ): ActionAuthorizationMetrics {
   const families = decisionFamilies(
     eligible,
     (item) => item.visualActioned,
     bonferroni,
     "integral-positives",
+    resampling,
   );
   return {
     role: "release",
@@ -2417,6 +2799,11 @@ function labelBasisOf(record: BenchmarkRecord): LabelBasisKey {
 function labelBasisBreakdown(
   eligible: readonly EvaluationItem[],
   bonferroni: MultiplicityDeclaration | null,
+  // The seed and effort the per-basis FPR is resampled with, and where the plan
+  // records what happened. Only `seed`, `replicates`, `bonferroni` and `record` are
+  // read: the estimand is fixed by the block (`warning.fpr.labelBasis`, which the
+  // action gate reads as `action.fpr.labelBasis` off the same interval).
+  resampling: RateResampling | null = null,
 ): LabelBasisBreakdown {
   const negatives = eligible.filter((item) => isHumanNegative(item.record));
   const buckets = new Map<LabelBasisKey, EvaluationItem[]>();
@@ -2426,6 +2813,8 @@ function labelBasisBreakdown(
     if (bucket === undefined) buckets.set(basis, [item]);
     else bucket.push(item);
   }
+  let resampledBases = 0;
+  let intervalBases = 0;
   const bases = [...buckets.entries()]
     .sort((a, b) => (a[0] < b[0] ? -1 : a[0] > b[0] ? 1 : 0))
     .map(([basis, bucket]) => {
@@ -2438,25 +2827,55 @@ function labelBasisBreakdown(
       // here would be inventing evidence.
       const powered =
         basis !== "unknown" && bucket.length >= LABEL_BASIS_POWER_FLOOR;
+      const analyticFpr = proportionEstimate(
+        falsePositives,
+        scored.length,
+        bonferroni,
+      );
+      // The unit is resolved over the WHOLE basis and the FPR's denominator is its
+      // scored subset — the same split `decisionMetrics` uses, so the published
+      // `resamplingUnit` is the unit the interval was actually drawn over.
+      const resolution =
+        bucket.length === 0
+          ? null
+          : resolveResampling(
+              bucket,
+              resamplingDesignFor(ESTIMAND_WARNING_FPR_LABEL_BASIS),
+            );
+      const drawnFpr =
+        resampling === null || resolution === null
+          ? undefined
+          : resampledRates(
+              resolution,
+              [
+                {
+                  estimand: ESTIMAND_WARNING_FPR_LABEL_BASIS,
+                  numerator: bucket.map((item) =>
+                    isScoredItem(item) && item.warned ? 1 : 0,
+                  ),
+                  denominator: bucket.map((item) =>
+                    isScoredItem(item) ? 1 : 0,
+                  ),
+                  analytic: analyticFpr,
+                },
+              ],
+              resampling,
+            ).get(ESTIMAND_WARNING_FPR_LABEL_BASIS);
+      const resampledFpr = rateEnvelope(analyticFpr, drawnFpr) ?? undefined;
+      if (Number.isFinite(analyticFpr.value)) intervalBases += 1;
+      if (resampledFpr !== undefined) resampledBases += 1;
       return {
         basis,
         count: bucket.length,
         scored: scored.length,
         errored: bucket.filter((item) => item.status === "error").length,
-        resamplingUnit: resamplingUnitOf(
-          bucket,
-          ESTIMAND_WARNING_FPR_LABEL_BASIS,
-        ),
+        resamplingUnit: resolution?.declaration ?? null,
         powered,
         powerFloor: LABEL_BASIS_POWER_FLOOR,
         evidenceRole: powered
           ? ("gating" as const)
           : REBUILD_V3_POLICY.labelBasis.underPoweredRole,
-        falsePositiveRate: proportionEstimate(
-          falsePositives,
-          scored.length,
-          bonferroni,
-        ),
+        falsePositiveRate: resampledFpr ?? analyticFpr,
         errorRate: proportionEstimate(
           bucket.filter((item) => item.status === "error").length,
           bucket.length,
@@ -2467,6 +2886,30 @@ function labelBasisBreakdown(
         eceEqualMass: eceEqualMass(points, ECE_BINS),
       };
     });
+  // ONE interval per basis, and BOTH gate estimands read it: the warning tier and
+  // the action tier decide the same number against different budgets. The plan
+  // therefore records the same outcome under both names, with `measured: null` —
+  // there are several bases and one entry, so the per-basis unit lives on the
+  // basis (`LabelBasisSlice.resamplingUnit`) and the note says where.
+  if (resampling?.record !== null && resampling !== null) {
+    const note =
+      `medida por base: ${bases.length} base(s), ${resampledBases} de ` +
+      `${intervalBases} com taxa definida reamostrada(s); a unidade de cada base ` +
+      "está em labelBasis.bases[].resamplingUnit";
+    for (const estimand of [
+      ESTIMAND_WARNING_FPR_LABEL_BASIS,
+      ESTIMAND_ACTION_FPR_LABEL_BASIS,
+    ]) {
+      resampling.record(estimand, {
+        unit: null,
+        // Every basis whose rate is defined at all had to come out of the design;
+        // one that did not leaves the entry `declared-only`, and the gate then
+        // refuses the analytic bound that took its place.
+        resampled: intervalBases > 0 && resampledBases === intervalBases,
+        note,
+      });
+    }
+  }
   return {
     role: "human-negative-label-evidence",
     fieldPresent: bases.some((slice) => slice.basis !== "unknown"),
@@ -2535,6 +2978,12 @@ function decisionFamilies(
   // because it is the difference between a rate that may authorize an action and
   // one that may not (B2).
   positivePopulation: PositivePopulation = "warning-positives",
+  // How the rates of BOTH families are resampled. Both, not only the gated one: a
+  // reader compares the conditional mirror against the end-to-end number directly,
+  // and giving one an honest interval and the other a too-narrow one would invite
+  // exactly the wrong comparison. Only the end-to-end family feeds the plan
+  // (`RateResampling.record`), because that is the interval a gate reads.
+  resampling: RateResampling | null = null,
 ): DecisionFamilies {
   return {
     endToEnd: decisionMetrics(
@@ -2543,6 +2992,7 @@ function decisionFamilies(
       "end-to-end",
       bonferroni,
       positivePopulation,
+      resampling,
     ),
     conditionalOnScored: decisionMetrics(
       eligible.filter(isScoredItem),
@@ -2550,6 +3000,7 @@ function decisionFamilies(
       "conditional-on-scored",
       bonferroni,
       positivePopulation,
+      resampling,
     ),
   };
 }
@@ -2563,6 +3014,7 @@ function decisionMetrics(
   family: MetricFamily,
   bonferroni: MultiplicityDeclaration | null = null,
   positivePopulation: PositivePopulation = "warning-positives",
+  resampling: RateResampling | null = null,
 ): DecisionMetrics {
   const isPositive =
     positivePopulation === "integral-positives"
@@ -2576,6 +3028,16 @@ function decisionMetrics(
   let trueNegatives = 0;
   let undecidedPositives = 0;
   let undecidedNegatives = 0;
+  // The two sub-populations the frozen table gives DIFFERENT units, kept apart as
+  // they are counted: rows 1 and 2 are not two views of one design. Row 1 nests
+  // source ⊃ author over the human negatives; row 2 nests generator ⊃ prompt
+  // template ⊃ batch over the AI positives.
+  const negativeRows: EvaluationItem[] = [];
+  const negativeDecided: number[] = [];
+  const negativeFalsePositive: number[] = [];
+  const negativeTrueNegative: number[] = [];
+  const positiveRows: EvaluationItem[] = [];
+  const positiveTruePositive: number[] = [];
 
   for (const item of population) {
     const positive = isPositive(item.record);
@@ -2584,7 +3046,19 @@ function decisionMetrics(
     if (positive) positives += 1;
     else negatives += 1;
 
-    if (!isScoredItem(item)) {
+    const scored = isScoredItem(item);
+    const decided = scored && decide(item);
+    if (positive) {
+      positiveRows.push(item);
+      positiveTruePositive.push(decided ? 1 : 0);
+    } else {
+      negativeRows.push(item);
+      negativeDecided.push(scored ? 1 : 0);
+      negativeFalsePositive.push(decided ? 1 : 0);
+      negativeTrueNegative.push(scored && !decided ? 1 : 0);
+    }
+
+    if (!scored) {
       // No score, so no decision. A positive that never got a decision is a
       // missed detection; a negative that never got one is NOT a correct
       // clearance and NOT an accusation.
@@ -2597,13 +3071,71 @@ function decisionMetrics(
       continue;
     }
 
-    const decided = decide(item);
     if (positive) {
       if (decided) truePositives += 1;
       else falseNegatives += 1;
     } else if (decided) falsePositives += 1;
     else trueNegatives += 1;
   }
+
+  const analyticFpr = proportionEstimate(
+    falsePositives,
+    falsePositives + trueNegatives,
+    bonferroni,
+  );
+  const analyticClearance = proportionEstimate(
+    trueNegatives,
+    negatives,
+    bonferroni,
+  );
+  const analyticRecall = proportionEstimate(
+    truePositives,
+    positives,
+    bonferroni,
+  );
+  const resampled =
+    resampling === null
+      ? new Map<string, MetricEstimate>()
+      : new Map([
+          ...rateEstimates(
+            negativeRows,
+            resampling.humanEstimands === null
+              ? []
+              : [
+                  {
+                    estimand: resampling.humanEstimands.fpr,
+                    numerator: negativeFalsePositive,
+                    denominator: negativeDecided,
+                    analytic: analyticFpr,
+                  },
+                  {
+                    estimand: resampling.humanEstimands.clearance,
+                    numerator: negativeTrueNegative,
+                    denominator: negativeRows.map(() => 1),
+                    analytic: analyticClearance,
+                  },
+                ],
+            resampling.humanEstimands?.fpr ?? null,
+            resampling,
+            family,
+          ),
+          ...rateEstimates(
+            positiveRows,
+            resampling.recallEstimand === null
+              ? []
+              : [
+                  {
+                    estimand: resampling.recallEstimand,
+                    numerator: positiveTruePositive,
+                    denominator: positiveRows.map(() => 1),
+                    analytic: analyticRecall,
+                  },
+                ],
+            resampling.recallEstimand,
+            resampling,
+            family,
+          ),
+        ]);
 
   return {
     family,
@@ -2617,19 +3149,121 @@ function decisionMetrics(
     falseNegatives,
     undecidedPositives,
     undecidedNegatives,
-    falsePositiveRate: proportionEstimate(
-      falsePositives,
-      falsePositives + trueNegatives,
-      bonferroni,
-    ),
-    clearanceRate: proportionEstimate(trueNegatives, negatives, bonferroni),
-    recall: proportionEstimate(truePositives, positives, bonferroni),
+    falsePositiveRate:
+      resampled.get(resampling?.humanEstimands?.fpr ?? "") ?? analyticFpr,
+    clearanceRate:
+      resampled.get(resampling?.humanEstimands?.clearance ?? "") ??
+      analyticClearance,
+    recall: resampled.get(resampling?.recallEstimand ?? "") ?? analyticRecall,
+    // PRECISION IS NOT A ROW OF THE FROZEN TABLE and gets no unit. Its
+    // denominator TP+FP spans both populations — AI positives and human negatives
+    // — so neither row applies to it, and picking one would be choosing a unit by
+    // convenience for a quantity the table does not cover. It keeps the analytic
+    // bound and declares nothing (R7).
     precision: proportionEstimate(
       truePositives,
       truePositives + falsePositives,
       bonferroni,
     ),
   };
+}
+
+/**
+ * The rates of one sub-population, resampled over ONE unit, plus the measurement
+ * recorded in the plan. The resolution happens here and is NOT wrapped in a
+ * try/catch: an `unknown` axis on a required unit has to surface, because the
+ * failure this module exists to remove is the one that produced an interval that
+ * looked valid.
+ */
+function rateEstimates(
+  rows: readonly EvaluationItem[],
+  statistics: readonly RateStatistic[],
+  unitEstimand: string | null,
+  resampling: RateResampling,
+  family: MetricFamily,
+): Map<string, MetricEstimate> {
+  if (statistics.length === 0 || rows.length === 0 || unitEstimand === null) {
+    return new Map();
+  }
+  const resolution = resolveResampling(rows, resamplingDesignFor(unitEstimand));
+  const drawn = resampledRates(resolution, statistics, resampling);
+  const publishable = new Map<string, MetricEstimate>();
+  for (const entry of statistics) {
+    const combined = rateEnvelope(entry.analytic, drawn.get(entry.estimand));
+    if (combined !== null) publishable.set(entry.estimand, combined);
+  }
+  // Only the gated family is recorded. An estimand the design could not carry is
+  // recorded as MEASURED-BUT-NOT-RESAMPLED, with the reason: the measured unit is
+  // the evidence a reader needs, and `executed` stays `declared-only` so the gate
+  // refuses the analytic bound that took its place instead of reading it as if the
+  // declared unit had been honoured.
+  if (resampling.record !== null && family === "end-to-end") {
+    for (const entry of statistics) {
+      const published = publishable.get(entry.estimand);
+      resampling.record(entry.estimand, {
+        unit: published?.resampling ?? resolution.declaration,
+        resampled: published !== undefined,
+        note:
+          published !== undefined
+            ? null
+            : unresampledRateNote(entry.analytic.value),
+      });
+    }
+  }
+  return publishable;
+}
+
+/**
+ * The mixed row's unit, measured over the mechanistic cohort — or the reason it
+ * could not be.
+ *
+ * This is the ONE place a `ResamplingUnitError` is caught, and the reason it is
+ * safe here is exactly the reason it is not safe anywhere else: no interval is
+ * published from this design. `mixed.atLeastHalfAi` carries an analytic lower bound
+ * and its gate reads the point, so an unresolvable unit cannot produce a number
+ * that looks valid — the failure mode the rest of this module refuses to allow. It
+ * would, however, take down the whole evaluation over a declaration nothing gates,
+ * and it does so for a corpus that CANNOT satisfy it: a v2 record has no
+ * `groups.humanSeed` axis at all, so the crossed pair is unresolvable there by
+ * construction rather than by omission. The plan then carries the reason instead of
+ * a bare `measured: null`.
+ */
+function measuredMixedUnit(
+  cohort: readonly EvaluationItem[],
+  design: ResamplingDesign<EvaluationItem>,
+): MeasuredUnit {
+  try {
+    return {
+      unit: resolveResampling(cohort, design).declaration,
+      resampled: false,
+      note:
+        "unidade medida, intervalo não reamostrado: o limite publicado ao lado de " +
+        "mixed.atLeastHalfAi é o de Wilson, e o segundo fator cruzado é um proxy " +
+        "declarado até D4 gravar a operação de edição como eixo",
+    };
+  } catch (error) {
+    if (!(error instanceof ResamplingUnitError)) throw error;
+    return {
+      unit: null,
+      resampled: false,
+      note: `unidade não resolvida sobre a coorte mecanística: ${error.message}`,
+    };
+  }
+}
+
+// Why a rate whose unit RESOLVED still has no resampled bound in its interval.
+function unresampledRateNote(value: number): string {
+  if (!Number.isFinite(value)) {
+    return (
+      "a taxa é indefinida nesta população (denominador zero), logo não há " +
+      "estatística para reamostrar"
+    );
+  }
+  return (
+    "as réplicas finitas não bastaram para ler um percentil sobre a unidade " +
+    "declarada, então o limite publicado é só o de Wilson e o gate reprova por " +
+    "intervalo não reamostrado"
+  );
 }
 
 // --- coverage / error by slice ---------------------------------------------

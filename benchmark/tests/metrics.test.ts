@@ -42,6 +42,12 @@ interface RecordFields {
   sourceId?: string;
   // The source POOL, i.e. the outer level of the frozen resampling hierarchy.
   domainSource?: string;
+  // The three levels of the ai-recall row and the human parent of the mixed row.
+  // Defaulted per label by `record` below; named here so a fixture that wants
+  // several generators, templates, batches or parents can say so.
+  promptTemplate?: string;
+  collectionBatch?: string;
+  humanSeed?: string;
   humanSourceType?: string;
   hardNegativeFamily?: string;
   transformationKind?: string;
@@ -76,12 +82,33 @@ function record(fields: RecordFields): BenchmarkRecord {
     },
     // C4 resolves the resampling unit off the grouping axes, so a fixture that
     // wants an interval has to declare one. `domainSource` is the outer level of
-    // both frozen hierarchical rows; `author` is the inner one.
+    // the human-specificity row; `author` is the inner one.
     groups: {
       author: fields.author,
       domainSource: fields.domainSource ?? "pool-generic",
     },
   };
+  // The ai-recall row nests generator ⊃ prompt template ⊃ batch, so a POSITIVE row
+  // declares all three or its recall interval has no unit at all; the mixed row
+  // crosses the human parent with the edit operation, so a mechanistic mixed row
+  // declares its seed too. A human row declares NONE of them: an apparatus axis is
+  // `notApplicable` on human text by rule, and no design of the frozen table reads
+  // one over a human population. The defaults are single-valued on purpose — a test
+  // that needs more than one level per factor overrides them, and one that does not
+  // gets a design with a single unit, which the estimator refuses to call an
+  // interval.
+  if (fields.label !== "human") {
+    const groups = base.groups as Record<string, unknown>;
+    groups.generatorFamily = fields.generatorFamily ?? "gpt";
+    groups.promptTemplate = fields.promptTemplate ?? "tpl-generic";
+    groups.collectionBatch = fields.collectionBatch ?? "batch-generic";
+    if (
+      fields.label === "mixed" &&
+      (fields.generationMode ?? "mechanistic") === "mechanistic"
+    ) {
+      groups.humanSeed = fields.humanSeed ?? `seed-${fields.author}`;
+    }
+  }
   if (fields.humanSourceType !== undefined) {
     base.humanSourceType = fields.humanSourceType;
   }
@@ -268,11 +295,42 @@ describe("a resampling unit that cannot be resolved fails loudly", () => {
     }
     expect(thrown).toBeInstanceOf(ResamplingUnitError);
     expect((thrown as ResamplingUnitError).axis).toBe("groups.domainSource");
-    expect((thrown as ResamplingUnitError).estimand).toBe("calibration.ece");
+    // The FPR of the warning decision is the first estimand resolved, so it is the
+    // one that names itself; every other design over these rows is unusable too.
+    expect((thrown as ResamplingUnitError).estimand).toBe("warning.fpr");
     expect((thrown as Error).message).toMatch(/unknown/u);
     expect((thrown as Error).message).toMatch(
       /fallbackToIndependentRows em false/u,
     );
+  });
+
+  it("refuses positives with no generator axis, naming the ai-recall row", () => {
+    // The human negatives resolve fine here: only the AI positives lose the outer
+    // level of the ai-recall row. So the failure has to name THAT estimand and THAT
+    // axis — an operator sent to `groups.domainSource` would find nothing wrong.
+    const withoutGenerator = SEPARABLE.map((entry) =>
+      entry.record.label === "human"
+        ? entry
+        : {
+            ...entry,
+            record: {
+              ...entry.record,
+              groups: {
+                ...(entry.record.groups as Record<string, unknown>),
+                generatorFamily: undefined,
+              },
+            } as unknown as BenchmarkRecord,
+          },
+    );
+    let thrown: unknown;
+    try {
+      computeEvaluationMetrics(withoutGenerator, OPTIONS);
+    } catch (error) {
+      thrown = error;
+    }
+    expect(thrown).toBeInstanceOf(ResamplingUnitError);
+    expect((thrown as ResamplingUnitError).axis).toBe("groups.generatorFamily");
+    expect((thrown as ResamplingUnitError).estimand).toBe("warning.recall");
   });
 });
 
@@ -329,14 +387,74 @@ describe("the published plan declares a unit for every estimand", () => {
       "percentile-bootstrap",
     );
     expect(byEstimand.get("calibration.ece")?.measured?.units).toBe(40);
-    expect(byEstimand.get("warning.fpr")?.executed).toBe("declared-only");
-    expect(byEstimand.get("warning.fpr")?.measured).toBeNull();
+    expect(byEstimand.get("warning.fpr")?.executed).toBe(
+      "percentile-bootstrap",
+    );
+    expect(byEstimand.get("warning.fpr")?.measured?.units).toBe(40);
+    expect(byEstimand.get("warning.recall")?.executed).toBe(
+      "percentile-bootstrap",
+    );
+    // The SLICE variants are declared here and measured elsewhere, and the entry
+    // says so instead of leaving a bare `measured: null` to be read as a failure.
+    expect(byEstimand.get("warning.fpr.slice")?.measured).toBeNull();
+    expect(byEstimand.get("warning.fpr.slice")?.measurementNote).toMatch(
+      /plano da própria fatia/u,
+    );
     // No entry may declare fewer replicates than the pre-registered pilot count.
     for (const entry of plan.entries) {
       expect(entry.replicates).toBeGreaterThanOrEqual(
         REBUILD_V3_POLICY.bootstrapReplicates.pilot,
       );
     }
+  });
+
+  it("publishes the mixed multiway as measured and degenerate, with its proxy factor", () => {
+    // Four mechanistic mixed rows above the frozen fraction, each with its own human
+    // parent — which is what the assembled corpus looks like: 782 parent labels, no
+    // two alike. The crossed design is therefore singleton in the parent factor and
+    // one-level in the substitute factor, and BOTH numbers are published rather than
+    // dressed up as a clustered interval.
+    const mixed = Array.from({ length: 4 }, (_, index) =>
+      item({
+        author: `h${index}`,
+        label: "mixed",
+        aiFraction: 0.8,
+        documentScore: 0.8,
+        warned: true,
+        humanSeed: `seed-${index}`,
+      }),
+    );
+    const entry = computeEvaluationMetrics(
+      [
+        ...mixed,
+        item({ author: "n1", label: "human", documentScore: 0.1 }),
+        item({ author: "n2", label: "human", documentScore: 0.2 }),
+      ],
+      OPTIONS,
+    ).resampling.entries.find(
+      (candidate) => candidate.estimand === "mixed.warning.recall",
+    );
+    expect(entry?.unitKind).toBe("multiway");
+    expect(entry?.measured?.items).toBe(4);
+    // One level per row in the parent factor, one level in the whole substitute
+    // factor: the crossing has nothing to cross.
+    expect(entry?.measured?.levels[0].levels).toBe(4);
+    expect(entry?.measured?.levels[0].degenerate).toBe(true);
+    expect(entry?.measured?.levels[1].levels).toBe(1);
+    expect(entry?.measured?.degenerate).toBe(true);
+    // The substitution is on the level AND on the entry, because a reader of either
+    // one has to see that the table's own factor is not what ran.
+    expect(entry?.measured?.levels[1].proxyFor).toBe("operação de edição");
+    expect(entry?.proxies).toEqual([
+      {
+        axis: "groups.promptTemplate",
+        standsInFor: "operação de edição",
+        reason: expect.stringMatching(/nenhum eixo do schema v3/u),
+      },
+    ]);
+    // Measured, not resampled: the bound beside `mixed.atLeastHalfAi` is analytic.
+    expect(entry?.executed).toBe("declared-only");
+    expect(entry?.measurementNote).toMatch(/proxy declarado/u);
   });
 });
 
@@ -487,19 +605,104 @@ describe("computeEvaluationMetrics", () => {
     expect(metrics.warning.endToEnd.falsePositiveRate.value).toBe(0);
   });
 
-  it("puts a Wilson one-sided interval on every proportion", () => {
+  it("puts a Wilson one-sided interval on the proportions the frozen table does not cover", () => {
     const metrics = computeEvaluationMetrics(SEPARABLE, OPTIONS);
-    expect(metrics.warning.endToEnd.falsePositiveRate.method).toBe(
-      "wilson-one-sided",
-    );
-    expect(metrics.warning.endToEnd.recall.method).toBe("wilson-one-sided");
-    expect(metrics.warning.endToEnd.recall.lower95).toBeGreaterThan(0.9);
-    expect(metrics.warning.endToEnd.recall.lower95).toBeLessThanOrEqual(1);
-    expect(metrics.warning.endToEnd.falsePositiveRate.upper95).toBeGreaterThan(
-      0,
-    );
+    // No row of the frozen resampling table covers coverage, abstention, the three
+    // error rates or precision, so they keep the analytic estimator and declare NO
+    // unit. That absence is the claim: an interval with a unit beside it that never
+    // resampled the unit is what R7 forbids.
+    for (const estimate of [
+      metrics.coverage,
+      metrics.abstentionRate,
+      metrics.errorRate,
+      metrics.warning.endToEnd.precision,
+    ]) {
+      expect(estimate.method).toBe("wilson-one-sided");
+      expect(estimate.resampling).toBeUndefined();
+      expect(estimate.boundEnvelope).toBeUndefined();
+    }
     expect(metrics.coverage.value).toBe(1);
-    expect(metrics.coverage.method).toBe("wilson-one-sided");
+  });
+
+  it("draws the gated rates over the unit their row of the frozen table declares", () => {
+    const metrics = computeEvaluationMetrics(SEPARABLE, OPTIONS);
+    // Row 1 — FPR and its specificity companion over human text — nests source
+    // outside author/donor.
+    for (const [estimand, estimate] of [
+      ["warning.fpr", metrics.warning.endToEnd.falsePositiveRate],
+      ["warning.clearanceRate", metrics.warning.endToEnd.clearanceRate],
+      ["action.fpr", metrics.visualAction?.endToEnd.falsePositiveRate],
+    ] as ReadonlyArray<readonly [string, MetricEstimate]>) {
+      expect(estimate.method).toBe("hierarchical-cluster-percentile");
+      expect(estimate.resampling?.estimand).toBe(estimand);
+      expect(estimate.resampling?.axes).toEqual([
+        "groups.domainSource",
+        "groups.author",
+      ]);
+    }
+    // Row 2 — recall over AI text — nests generator, prompt template and batch, in
+    // that order, over the POSITIVES, which is a different population and therefore
+    // a different design.
+    for (const [estimand, estimate] of [
+      ["warning.recall", metrics.warning.endToEnd.recall],
+      ["action.recall", metrics.actionAuthorization?.recall],
+    ] as ReadonlyArray<readonly [string, MetricEstimate]>) {
+      expect(estimate.method).toBe("hierarchical-cluster-percentile");
+      expect(estimate.resampling?.estimand).toBe(estimand);
+      expect(estimate.resampling?.axes).toEqual([
+        "groups.generatorFamily",
+        "groups.promptTemplate",
+        "groups.collectionBatch",
+      ]);
+    }
+  });
+
+  it("publishes the WIDER of the analytic and the resampled bound, with both", () => {
+    // Perfect separation: not one false positive anywhere, so every replicate of
+    // the FPR is 0 and the percentile "interval" is [0, 0] — the point twice, and
+    // NARROWER than the analytic bound rather than more conservative. The published
+    // upper bound is therefore the analytic one, and both are printed.
+    const fpr = computeEvaluationMetrics(SEPARABLE, OPTIONS).warning.endToEnd
+      .falsePositiveRate;
+    expect(fpr.value).toBe(0);
+    expect(fpr.boundEnvelope?.rule).toBe("wider-of-analytic-and-resampled");
+    expect(fpr.boundEnvelope?.resampled.upper).toBe(0);
+    expect(fpr.boundEnvelope?.analytic.upper).toBeGreaterThan(0);
+    expect(fpr.upper95).toBe(fpr.boundEnvelope?.analytic.upper);
+    // And the design is still named: the unit was resampled, its bound just lost
+    // the comparison.
+    expect(fpr.resampling?.axes).toEqual([
+      "groups.domainSource",
+      "groups.author",
+    ]);
+  });
+
+  it("takes the resampled bound when intra-cluster correlation makes it the wider one", () => {
+    // Twelve source pools of five human rows each, and the whole pool agrees:
+    // six pools are false positives outright, six are clean. The rate is 0.5 either
+    // way, but the information is twelve independent units, not sixty, and the
+    // analytic bound is the one that does not know it.
+    const correlated = Array.from({ length: 12 }, (_, pool) =>
+      Array.from({ length: 5 }, (_, row) =>
+        item({
+          author: `p${pool}-a${row}`,
+          domainSource: `pool-${pool}`,
+          label: "human",
+          documentScore: pool % 2 === 0 ? 0.9 : 0.1,
+          warned: pool % 2 === 0,
+        }),
+      ),
+    ).flat();
+    const fpr = computeEvaluationMetrics(correlated, OPTIONS).warning.endToEnd
+      .falsePositiveRate;
+    expect(fpr.value).toBeCloseTo(0.5, 12);
+    const envelope = fpr.boundEnvelope;
+    expect(envelope).not.toBeUndefined();
+    expect(envelope?.resampled.upper).toBeGreaterThan(
+      envelope?.analytic.upper as number,
+    );
+    expect(fpr.upper95).toBe(envelope?.resampled.upper);
+    expect(fpr.resampling?.levels[0].levels).toBe(12);
   });
 
   it("bootstraps AUROC, PR-AUC, Brier and both ECEs over the unit their estimand declares", () => {
@@ -1250,11 +1453,26 @@ describe("simultaneous (Bonferroni) bounds", () => {
     const fpr = metrics.warning.endToEnd.falsePositiveRate;
     expect(fpr.simultaneous?.m).toBe(8);
     expect(fpr.simultaneous?.alpha).toBeCloseTo(0.05 / 8, 12);
-    // Simultaneous coverage is strictly more conservative than the individual
-    // 95% interval, in both directions.
-    expect(fpr.simultaneous?.upper).toBeGreaterThan(fpr.upper95 as number);
+    // Simultaneous coverage is never INSIDE the individual 95% interval. On the
+    // gated rates it is not strictly outside either, and that is the percentile
+    // estimator, not a bug: the replicate distribution has a finite maximum, so once
+    // a replicate reaches 1 both bounds sit there and a wider alpha cannot move
+    // further out. The strict version of the claim belongs to the analytic path.
+    expect(fpr.simultaneous?.upper).toBeGreaterThanOrEqual(
+      fpr.upper95 as number,
+    );
     const recall = metrics.warning.endToEnd.recall;
-    expect(recall.simultaneous?.lower).toBeLessThan(recall.lower95 as number);
+    expect(recall.simultaneous?.lower).toBeLessThanOrEqual(
+      recall.lower95 as number,
+    );
+    // Wilson, where the bound is a continuous function of alpha: strictly wider.
+    expect(metrics.coverage.method).toBe("wilson-one-sided");
+    expect(metrics.coverage.simultaneous?.lower).toBeLessThan(
+      metrics.coverage.lower95 as number,
+    );
+    expect(metrics.errorRate.simultaneous?.upper).toBeGreaterThan(
+      metrics.errorRate.upper95 as number,
+    );
   });
 });
 

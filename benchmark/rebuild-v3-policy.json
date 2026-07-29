@@ -251,13 +251,16 @@
           },
           {
             "axis": "groups.promptTemplate",
-            "fallbacks": []
+            "fallbacks": [],
+            "proxyFor": "operação de edição",
+            "proxyReason": "nenhum eixo do schema v3 registra a operação de edição aplicada a uma linha mista; groups.promptTemplate é o eixo mais próximo e tem um único nível sobre as linhas mistas montadas, logo este fator é degenerado por construção até D4 gravar a operação como eixo"
           }
         ],
         "unitKind": "multiway"
       }
     },
     "estimands": {
+      "action.clearanceRate": "human-specificity",
       "action.fpr": "human-specificity",
       "action.fpr.labelBasis": "human-specificity",
       "action.fpr.slice": "human-specificity",
@@ -268,6 +271,7 @@
       "mixed.warning.recall": "mixed",
       "separability.auroc": "calibration",
       "separability.prAuc": "calibration",
+      "warning.clearanceRate": "human-specificity",
       "warning.fpr": "human-specificity",
       "warning.fpr.labelBasis": "human-specificity",
       "warning.fpr.slice": "human-specificity",

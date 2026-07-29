@@ -235,13 +235,37 @@ describe("rebuild-v3-policy.json", () => {
         { axis: "groups.collectionBatch", fallbacks: [] },
       ],
     });
+    // The mixed row's second crossed factor is a DECLARED SUBSTITUTE, and the
+    // substitution lives in the policy file rather than in prose somewhere else:
+    // the frozen table crosses the human parent with the EDIT OPERATION, and no
+    // axis of the v3 schema records that operation. A reader of this file who saw
+    // only `groups.promptTemplate` would read the row as implemented.
     expect(policy.resampling.estimandClasses.mixed).toEqual({
       unitKind: "multiway",
       levels: [
         { axis: "groups.humanSeed", fallbacks: [] },
-        { axis: "groups.promptTemplate", fallbacks: [] },
+        {
+          axis: "groups.promptTemplate",
+          fallbacks: [],
+          proxyFor: "operação de edição",
+          proxyReason: expect.stringMatching(
+            /nenhum eixo do schema v3 registra a operação de edição/u,
+          ),
+        },
       ],
     });
+    // Every OTHER row is the table's own axis, so none of them carries a proxy: a
+    // substitution that spread silently is the failure this field exists to stop.
+    for (const row of [
+      "human-specificity",
+      "ai-recall",
+      "calibration",
+    ] as const) {
+      for (const level of policy.resampling.estimandClasses[row].levels) {
+        expect(level.proxyFor).toBeUndefined();
+        expect(level.proxyReason).toBeUndefined();
+      }
+    }
     expect(policy.resampling.estimandClasses.calibration.unitKind).toBe(
       "hierarchical",
     );
@@ -679,6 +703,56 @@ describe("resampling estimand table", () => {
     });
     expect(() => parseRebuildV3Policy(policy)).toThrow(
       /repeats the axis groups\.author/u,
+    );
+  });
+
+  it("refuses a substituted factor that says what it replaces but not why", () => {
+    // Half a declaration is worse than none: `proxyFor` on its own reads as a
+    // synonym for the table's factor, which is exactly the impression that let a
+    // degenerate stand-in pass for the crossed pair the table froze.
+    const policy = withResampling((resampling) => {
+      const classes = {
+        ...(resampling.estimandClasses as Record<string, unknown>),
+      };
+      classes.mixed = {
+        unitKind: "multiway",
+        levels: [
+          { axis: "groups.humanSeed", fallbacks: [] },
+          {
+            axis: "groups.promptTemplate",
+            fallbacks: [],
+            proxyFor: "operação de edição",
+          },
+        ],
+      };
+      resampling.estimandClasses = classes;
+    });
+    expect(() => parseRebuildV3Policy(policy)).toThrow(
+      /proxyReason is required whenever the other is present/u,
+    );
+  });
+
+  it("refuses an empty substitution string", () => {
+    const policy = withResampling((resampling) => {
+      const classes = {
+        ...(resampling.estimandClasses as Record<string, unknown>),
+      };
+      classes.mixed = {
+        unitKind: "multiway",
+        levels: [
+          { axis: "groups.humanSeed", fallbacks: [] },
+          {
+            axis: "groups.promptTemplate",
+            fallbacks: [],
+            proxyFor: "   ",
+            proxyReason: "porque sim",
+          },
+        ],
+      };
+      resampling.estimandClasses = classes;
+    });
+    expect(() => parseRebuildV3Policy(policy)).toThrow(
+      /proxyFor must be a non-empty string/u,
     );
   });
 

@@ -33,6 +33,11 @@ interface RecordFields {
   generatorFamily?: string;
   createdAt?: number;
   generationMode?: "mechanistic" | "ecological";
+  // The inner two levels of the ai-recall row and the human parent of the mixed
+  // row. Defaulted per label by `record`; named here so a fixture can vary them.
+  promptTemplate?: string;
+  collectionBatch?: string;
+  humanSeed?: string;
 }
 
 function record(fields: RecordFields): BenchmarkRecord {
@@ -73,6 +78,25 @@ function record(fields: RecordFields): BenchmarkRecord {
     base.generation = { family: fields.generatorFamily };
     (base.groups as Record<string, unknown>).generatorFamily =
       normalizeGeneratorFamily(fields.generatorFamily);
+  }
+  // The ai-recall row of the frozen table nests generator ⊃ prompt template ⊃
+  // batch, so a POSITIVE row has to declare all three or its recall interval has no
+  // unit; a mechanistic mixed row also declares the human parent the mixed row
+  // crosses. Human rows declare none: an apparatus axis is `notApplicable` on human
+  // text by rule, and no design reads one over a human population.
+  if (fields.label !== "human") {
+    const groups = base.groups as Record<string, unknown>;
+    if (groups.generatorFamily === undefined) {
+      groups.generatorFamily = normalizeGeneratorFamily("gen-generic");
+    }
+    groups.promptTemplate = fields.promptTemplate ?? "tpl-generic";
+    groups.collectionBatch = fields.collectionBatch ?? "batch-generic";
+    if (
+      fields.label === "mixed" &&
+      (fields.generationMode ?? "mechanistic") === "mechanistic"
+    ) {
+      groups.humanSeed = fields.humanSeed ?? `seed-${fields.author}`;
+    }
   }
   return base as unknown as BenchmarkRecord;
 }

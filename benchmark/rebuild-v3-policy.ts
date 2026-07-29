@@ -90,6 +90,16 @@ export type ResamplingEstimandClass =
 export interface ResamplingLevelRow {
   readonly axis: string;
   readonly fallbacks: readonly string[];
+  /**
+   * The factor of the FROZEN TABLE this axis stands in for, when the table names
+   * a factor the record schema has no axis for. Present only on a substitution,
+   * and the substitution is then published everywhere the unit is (the plan entry
+   * and the report), because a reader of this file would otherwise see the row as
+   * implemented while what runs is a different factor.
+   */
+  readonly proxyFor?: string;
+  /** Why the table's own factor cannot be read, and what the stand-in costs. */
+  readonly proxyReason?: string;
 }
 
 export interface ResamplingClassRow {
@@ -856,7 +866,12 @@ const FROZEN_RESAMPLING_CLASSES: readonly ResamplingEstimandClass[] = [
   "human-specificity",
   "mixed",
 ];
-const RESAMPLING_LEVEL_KEYS = ["axis", "fallbacks"] as const;
+const RESAMPLING_LEVEL_KEYS = [
+  "axis",
+  "fallbacks",
+  "proxyFor",
+  "proxyReason",
+] as const;
 const RESAMPLING_CLASS_KEYS = ["levels", "unitKind"] as const;
 // A resampling axis names a grouping axis of the record schema. The prefix is
 // required so a level can never be confused with a synthetic per-row key, which
@@ -892,7 +907,41 @@ function resamplingLevel(value: unknown, path: string): ResamplingLevelRow {
     seen.add(next);
     return next;
   });
-  return Object.freeze({ axis, fallbacks: Object.freeze(fallbacks) });
+  // A stand-in factor has to say BOTH what it replaces and why the table's own
+  // factor cannot be read. One without the other is how a substitution becomes
+  // invisible: `proxyFor` alone reads as a synonym, and `proxyReason` alone leaves
+  // the table row looking implemented.
+  const proxyFor = optionalProxyField(row, path, "proxyFor");
+  const proxyReason = optionalProxyField(row, path, "proxyReason");
+  if ((proxyFor === undefined) !== (proxyReason === undefined)) {
+    throw new RebuildV3PolicyError(
+      at(path, proxyFor === undefined ? "proxyFor" : "proxyReason"),
+      "is required whenever the other is present: a substituted factor declares " +
+        "both what it stands in for and why the table's own factor cannot be read",
+    );
+  }
+  return Object.freeze({
+    axis,
+    fallbacks: Object.freeze(fallbacks),
+    ...(proxyFor === undefined ? {} : { proxyFor }),
+    ...(proxyReason === undefined ? {} : { proxyReason }),
+  });
+}
+
+function optionalProxyField(
+  row: Record<string, unknown>,
+  path: string,
+  key: "proxyFor" | "proxyReason",
+): string | undefined {
+  const value = row[key];
+  if (value === undefined) return undefined;
+  if (typeof value !== "string" || value.trim() === "") {
+    throw new RebuildV3PolicyError(
+      at(path, key),
+      "must be a non-empty string when present",
+    );
+  }
+  return value;
 }
 
 function resamplingClass(value: unknown, path: string): ResamplingClassRow {

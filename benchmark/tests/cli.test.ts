@@ -539,6 +539,10 @@ function record(
     // The canonical field, required by the schema on every generated record and
     // the only one the split/slices/audit read (benchmark/generator-family.ts).
     base.groups.generatorFamily = normalizeGeneratorFamily(family);
+    // The middle level of the ai-recall row of the frozen resampling table: the
+    // recall interval of a positive is drawn over generator ⊃ prompt template ⊃
+    // batch, and an absent axis is `unknown`, which is not a resampling unit.
+    base.groups.promptTemplate = `pt_${id}`;
   }
   if (label === "mixed") {
     base.mixture = {
@@ -548,6 +552,13 @@ function record(
       generationMode: "mechanistic",
     };
     base.groups.derivationRoot = `parent_${id}`;
+    // A mechanistic mixed row above the fraction floor is a warning positive, so
+    // the ai-recall levels apply to it too. NOT `groups.humanSeed`: these are v2
+    // records and the v2 schema has no such axis, which is why the mixed multiway
+    // cannot be measured on a v2 corpus at all — the plan says so per run instead
+    // of the evaluation failing over a declaration nothing gates.
+    base.groups.generatorFamily = normalizeGeneratorFamily(family);
+    base.groups.promptTemplate = `pt_${id}`;
   }
   return base;
 }
