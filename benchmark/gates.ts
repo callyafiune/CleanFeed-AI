@@ -49,7 +49,12 @@
 //     `ResamplingPlanEntry.executed` because a slice's interval is drawn inside
 //     that slice's own metrics: the aggregate plan reads `declared-only` for the
 //     `*.fpr.slice` estimands while their numbers are resampled, so `executed`
-//     would fail a gate whose evidence exists.
+//     would fail a gate whose evidence exists. And when the estimate publishes a
+//     bound ENVELOPE — the frozen `resampling.publishedBound` rule choosing between
+//     the analytic and the resampled limit — the deciding simultaneous limit keeps
+//     the percentile method name whichever estimator supplied it, so the gate reads
+//     the envelope's simultaneous pair instead of the name: no pair, or a published
+//     limit narrower than the resampled one it records, is refused.
 //   * The SIMULTANEOUS BOUND. Dozens of one-sided gates share one release
 //     decision, so an individual 95% bound per gate does not control the
 //     family-wise error rate. Each interval gate reads the Bonferroni bound at

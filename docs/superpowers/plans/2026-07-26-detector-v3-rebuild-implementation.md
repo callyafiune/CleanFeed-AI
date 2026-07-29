@@ -5123,6 +5123,121 @@ métrica publicada declara sua unidade" vale, portanto, para os estimandos da ta
 outros a afirmação publicada é a ausência, legível em `MetricEstimate.method` e na prosa da
 seção "Unidades de reamostragem".
 
+#### C4 — segunda rodada de correção (2026-07-29)
+
+A revisão cruzada reprovou a rodada anterior com um bloqueante de **suíte** e um important
+de **onde a política mora**. Os dois eram factualmente corretos.
+
+**A suíte ficava vermelha por tempo, sob carga, e o verde relatado não reproduzia.** Três
+testes de `benchmark/tests/gates.test.ts` (`mixed below the AI-fraction floor enters no gate
+denominator (B2)`) estouravam o `testTimeout` de 5.000 ms do vitest quando a suíte inteira
+rodava, e passavam isolados. A causa não é um teste lento: é um custo **pré-registrado**.
+`computeEvaluationMetrics` reamostra cada taxa com gate sobre a unidade da sua linha da
+tabela, o contrato congela 10.000 réplicas no piloto e diz "nunca reduzir por tempo", e um
+teste que afirma o que o pipeline REAL põe num denominador chama a função várias vezes.
+Medido nesta árvore: 1.709 / 1.659 / 1.652 ms por teste isolado; 5.229-6.222 ms sob carga na
+máquina do revisor.
+
+Três coisas, nesta ordem:
+
+1. **Custo do sorteio, reduzido de verdade.** `drawChildren` recorria uma vez por nó, e
+   quase toda a recursão está no nível mais interno: um desenho de dois níveis sobre uma
+   fonte e n autores visita n+1 nós por réplica, n deles folhas cujo corpo só incrementa um
+   peso. A árvore agora é **compilada uma vez por fluxo** (`CompiledNode`): um nó cujos
+   filhos são todos folhas guarda os ids de cluster num `Int32Array` e é sorteado num laço
+   de array. É mudança de **representação**, não de estimador — `nextUnit` é chamada na mesma
+   ordem e a mesma quantidade de vezes, logo todo intervalo é idêntico bit a bit. Medido
+   sobre 600 linhas com 10.000 réplicas: **790 ms → 705 ms** por chamada (perfil de CPU:
+   `drawChildren` de 45% para 40% do tempo próprio).
+2. **Trabalho duplicado no teste, removido.** O bloco B2 pedia as MESMAS duas métricas
+   determinísticas seis vezes. Agora são memoizadas por população. Medido: os três testes
+   passaram de 1.709 / 1.659 / 1.652 ms para **1.331 / 1 / 1 ms**. Nenhuma assertiva mudou
+   e nenhum caminho deixou de ser exercido — recomputar resultado determinístico de entrada
+   idêntica não afirma nada a mais.
+3. **`testTimeout: 20.000` em `vitest.config.ts`, com o motivo escrito ao lado.** É a rota
+   (b) que a revisão autoriza, e ela continua **necessária** mesmo depois de (1) e (2): a
+   redução de 11% não põe um teste de 1,3 s em segurança dentro de 5 s numa máquina com 3,5x
+   de contenção, e o que fixa o piso é a contagem de réplicas congelada, que não é alavanca.
+   A alavanca é o timeout. Verificado que o limite realmente se aplica a estes testes, que
+   são **síncronos**: `npx vitest run benchmark/tests/gates.test.ts --testTimeout=100 -t
+   "AI-fraction floor"` reprova o primeiro deles com `Error: Test timed out in 100ms.` a
+   1.436 ms de corpo bloqueante, e passa os outros dois (1 ms cada, pela memoização). Ou
+   seja: o modo de falha que o revisor viu é reproduzível, e o corpo síncrono não é isento.
+
+Honestidade sobre o que a minha máquina mede: ela **não reproduz** a carga do revisor — a
+suíte saiu verde aqui antes e depois, inclusive numa corrida explícita com
+`--testTimeout=5000`. O que sustenta a correção não é "não reproduz mais aqui", é (a) o custo
+dos três testes medido caindo 1.709/1.659/1.652 ms → 1.331/1/1 ms, (b) o limite subindo para
+15x o pior deles, e (c) a demonstração acima de que o limite se aplica de fato.
+
+Uma redução maior existe e **não foi feita**, com o número medido para quem pegar: os fluxos
+de reamostragem dos negativos humanos são **quatro** por chamada (aviso e ação × as duas
+famílias) sobre exatamente as mesmas linhas, com a mesma resolução e a mesma seed, logo
+poderiam ser **dois** fluxos carregando quatro estatísticas — e o resultado seria idêntico
+bit a bit, porque `clusteredPercentileBootstrapAll` avalia toda estatística sobre os mesmos
+vetores de peso. Economia esperada: ~147 ms dos ~294 ms/chamada que o sorteio custa, ~700 ms
+→ ~555 ms. Não foi feito porque exige `decisionFamilies` calcular aviso e ação numa passada
+só (mudança de forma em ~150 linhas de `metrics.ts` com cobertura densa) e porque **não muda
+o veredito**: o timeout seria necessário de qualquer maneira. Registrado aqui em vez de
+apresentado como custo irredutível.
+
+Medição vizinha, também não aplicada e maior que todas as acima: `benchmark/**` roda em
+ambiente **jsdom** por herdar a configuração da extensão, e não usa DOM nenhum ("standalone
+benchmark module: MUST NOT import from src/"). Medido: `benchmark/tests/` leva **36,46 s**
+com jsdom (environment 87,13 s) e **18,28 s** com `--environment=node` (environment 6 ms),
+com 838/838 passando nos dois. Em vitest 4 isso exige `test.projects` ou um docblock por
+arquivo, é cirurgia no harness compartilhado que nenhuma tarefa pediu, e fica como
+recomendação medida.
+
+**A regra que escolhe o limite publicado saiu do código para o contrato.** A rodada anterior
+escreveu `rule: "wider-of-analytic-and-resampled"` como literal em `metrics.ts` — uma
+política inventada na tarefa, num arquivo que não é a fonte de verdade de valor congelado.
+Agora é `resampling.publishedBound` em `benchmark/rebuild-v3-policy.json`, lido de
+`REBUILD_V3_POLICY` dentro de `rateEnvelope` e parseado como **literal** exatamente como
+`fallbackToIndependentRows` ao lado: trocar a regra exige editar o arquivo congelado **e** o
+parser, com a justificativa medida que R3 pede. `PublishedBoundRule` carrega a razão medida
+(o percentil colapsa para largura zero numa taxa sem eventos, o que é mais **estreito** que
+Wilson e não mais conservador), e `envelopeOf` recusa uma regra que não implementa em vez de
+cair na que tem código.
+
+**E o limite que o gate decide passou a nomear o seu próprio estimador.** O defeito era
+real: `combined.simultaneous` mantinha `method: "hierarchical-cluster-percentile"` enquanto
+`lower`/`upper` eram min/max contra Wilson, então numa taxa de contagem zero o número que
+decide o gate era o analítico sob rótulo de percentil, e **nada** registrava a troca — o
+`unresampledFailure` checava justamente esse rótulo. `BoundEnvelope` agora carrega o par
+simultâneo (`analytic`, `resampled`, `lowerFrom`, `upperFrom`) além do par de 95%, e o gate
+**recusa** um limite simultâneo com nome de percentil cujo envelope não traz o par
+reamostrado, ou cujo limite publicado é mais **estreito** que o reamostrado que ele registra
+(este segundo caso é a regra não tendo sido aplicada — desenho executado e depois estreitado,
+a direção que R3 proíbe). Provado com vermelho deliberado: sem a checagem os dois casos
+levavam o release a `pass` (`expected 'pass' to be 'reject'`, `expected 'present' to be
+'unresampled-interval'`).
+
+**AUROC e PR-AUC estavam mapeados na linha 4, que não as nomeia.** A linha é "calibração
+(ECE, Brier)"; as duas são estatísticas de **separabilidade** (`separability`, `gates:
+false`). Escolha feita: **declarar a extensão onde o valor mora**, em vez de mover as duas
+para a lista sem unidade — mover degradaria dois diagnósticos publicados de intervalo
+agrupado para ponto nu, sem ganho nenhum, já que nenhum gate as lê. `resampling
+.estimandExtensions` traz `standsInFor` + `reason` por estimando, parseado ambos-ou-nenhum e
+com **checagem cruzada**: uma extensão de estimando que `resampling.estimands` não mapeia é
+recusada. O relatório imprime a lista dentro do próprio parágrafo de cobertura, para que "o
+plano cobre estes estimandos" não possa ser lido como "a linha da tabela nomeia estes
+estimandos".
+
+**Dois minors mais.** (a) `benchmark/gates.ts` estava com CRLF na árvore de trabalho — a
+cópia versionada é LF (`core.autocrlf=true` converte na saída, e um `git checkout` meu no
+meio da rodada anterior reintroduziu CRLF), e o `endOfLine: lf` do prettier recusava o
+arquivo, então `npm run format:check` saía 1. Renormalizado; o exit code está reportado
+abaixo em vez do fim do stdout. (b) `cli.test.ts` e `consume-holdout.test.ts` davam a cada
+linha gerada o seu próprio `groups.promptTemplate` (`pt_${id}`), o que faz o nível do meio do
+desenho de recall ser uma unidade por registro-linha — a degeneração que C4 existe para
+remover, chegando por fixture. O template agora vem da **receita**
+(`pt_${normalizeGeneratorFamily(family)}`), e o teste de relatório do `cli.test.ts` **afirma**
+a degeneração que sobra e a causa dela: aquele cenário avalia exatamente duas positivas de
+IA, uma por família, e qualquer partição de duas linhas em dois grupos é uma unidade por
+linha. Ninguém pode ler intervalo agrupado de recall daquele corpus, e agora isso é
+expectativa declarada e não acidente.
+
 ### C5 — Recibos de revisão e PII reais
 
 **Depende de:** B1, C1.

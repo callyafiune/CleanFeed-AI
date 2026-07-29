@@ -21,10 +21,12 @@ export default defineConfig({
     // "never reduce it for run time". One call over ~600 record-lines therefore
     // costs a few hundred milliseconds, and the tests that assert what the REAL
     // pipeline puts in a denominator legitimately make several calls. Measured on
-    // this tree, such a test takes ~1,2 s alone and 5-6 s when the whole suite runs
-    // it under load — over the default, which made `npx vitest run` fail
-    // load-dependently while every test passed in isolation. The lever here is the
-    // timeout; reducing the replicate count is forbidden.
+    // this tree, the worst such test costs 1,33 s alone and was seen at 5-6 s with
+    // the whole suite running under load — over the default, which made
+    // `npx vitest run` fail load-dependently while every test passed in isolation.
+    // A SYNCHRONOUS test is not exempt: vitest checks the elapsed time after the
+    // body returns, so a blocking 1,4 s body fails a 100 ms limit. The lever here is
+    // the timeout; reducing the replicate count is forbidden.
     testTimeout: 20_000,
   },
 });
