@@ -5257,8 +5257,10 @@ ocorrências), então o leitor do artefato não tinha como descobrir.
 Corrigido pelos dois lados que a revisão ofereceu, porque um só não fecha:
 
 - **Procedência virou fato registrado, por estimando, nunca derivado.**
-  `PublishedBoundProvenance` (em `benchmark/bootstrap.ts`) é união discriminada de quatro
-  casos, e cada produtor declara o seu: `envelope` (com a regra do contrato e os dois pares,
+  `PublishedBoundProvenance` (em `benchmark/bootstrap.ts`) é união discriminada — de quatro
+  casos **nesta rodada**; a quarta acrescentou o quinto (`no-published-bound`) e trocou o slot
+  simultâneo por uma união de três, veja abaixo —, e cada produtor declara o seu: `envelope`
+  (com a regra do contrato e os dois pares,
   individual e simultâneo, cada um com `lowerFrom`/`upperFrom`), `resampled-only` (as cinco
   contínuas — não existe limite analítico concorrendo pelo lugar de um Brier ou de uma AUROC),
   `analytic-only` (o desenho não publicou limite; é o caso de `mixed.warning.recall`), e
@@ -5303,6 +5305,61 @@ Isso faz o arquivo inteiro ser lido como binário — `file` diz `data` e o ripg
 sobre o módulo central de C4 volta vazia sem avisar. Agora são duas constantes nomeadas
 escritas como escapes (`KEY_FIELD_SEPARATOR`, `KEY_PAIR_SEPARATOR`): mesmas strings em runtime, mesmas chaves,
 mesmos clusters, e os quatro arquivos de teste que leem o módulo seguem em 172 passando.
+
+#### C4 — quarta rodada de correção (2026-07-29)
+
+A rodada anterior tirou a procedência de `executed` e a transformou em fato registrado. **Ela
+reintroduziu o mesmo erro de R7 dentro do próprio conserto:** a procedência passou a nomear um
+estimador em estados que **não publicam limite nenhum**. Dois importants, ambos reproduzidos
+antes de qualquer edição, nenhum refutado.
+
+**Nomear estimador é afirmar que ele produziu um limite.** `boundProvenanceOf` devolvia
+`analytic-only` para `estimate === undefined` e para toda estimativa cujo `method` não fosse
+percentil — inclusive `{value: NaN, method: "point"}`, que é exatamente o que
+`proportionEstimate` devolve com denominador zero, **sem** `lower95` nem `upper95`. Os dois
+lugares em que isso aparece no artefato:
+
+- tabela de bases de rótulo: uma base cujas linhas todas erraram (`count > 0`, `scored === 0`)
+  saía `| … | n/a | n/a | Wilson analítico | …` — os dois limites ausentes e a coluna nova
+  afirmando que Wilson forneceu o limite;
+- tabela de reamostragem: com os 40 negativos humanos em `status: "error"`, `warning.fpr` sai
+  `executed: "declared-only"`, `publishedBound: {"kind":"analytic-only"}` e a nota da própria
+  linha diz "a taxa é indefinida nesta população (denominador zero), logo não há estatística
+  para reamostrar". A mesma linha afirmava as duas coisas.
+
+Corrigido com um caso próprio, não com prosa: `PublishedBoundProvenance` ganhou
+**`no-published-bound`**, decidido pela **ausência de intervalo** (`lower95` e `upper95`
+indefinidos) e não pelo nome do método — a ausência do limite é o fato, e `method` só a codifica
+por coincidência. O relatório imprime "nenhum limite publicado". E `rateEstimates` passou a
+derivar a procedência da estimativa **que foi publicada** (`published ?? entry.analytic`, que é
+literalmente o `?? ` do bloco de métricas), de modo que uma entrada cujo envelope não se formou
+reporta os limites que o número dela carrega.
+
+**`simultaneous: null` era um estado para dois fatos, e o fato errado é o DEFAULT da esteira.**
+`null` era renderizado "simultâneo: um estimador só (ver `simultaneous.method`)". Isso é
+verdade quando o limite analítico simultâneo existe e o desenho não produziu o seu. É **falso**
+quando nenhum dos dois produziu: nada foi publicado naquele alpha e `simultaneous.method` não
+existe, então o relatório inventava um estimador e mandava o leitor a um campo ausente. E
+`benchmark/commands/evaluate.ts:162` chama `computeEvaluationMetrics` só com `bootstrapSeed` e
+`visualActionAvailable`, logo `multiplicityFrom(undefined)` devolve `null` e **nenhum** estimando
+recebe limite simultâneo — a configuração selada inteira caía no ramo falso, e o teste da rodada
+anterior só exercitava o caminho com `preRegisteredStatisticalGates: 8`.
+
+O slot simultâneo virou união de três (`PublishedSimultaneousProvenance`):
+`both-estimators` (a regra do envelope escolheu), `single-estimator` **com o método nomeado na
+própria procedência** em vez de uma indireção para outro campo, e `none` ("sem limite simultâneo
+publicado"). A decisão lê as duas metades: o par simultâneo do envelope diz que houve
+competição, `estimate.simultaneous` diz se houve limite publicado naquele alpha.
+
+**Minor aceito:** `estimateBoundLabel` mantinha uma segunda cópia da classificação
+analítico-versus-reamostrado com lista literal de métodos (`"wilson-one-sided" || "point"`), que
+divergiria silenciosamente de `metrics.ts` no dia em que a união fechada de `MetricEstimate.
+method` ganhasse um terceiro nome analítico. `boundProvenanceOf` passou a ser exportado e o
+relatório consome; a regra vive num lugar só.
+
+**Minor recusado como escopo, não como fato:** `benchmark/lab/build_governance.ts:14`
+(`dirname` sem uso, desde 81e5f3f) continua mantendo `npx eslint benchmark/` em 1. A própria
+revisão o classifica como "not this task's to fix". Não é regressão de C4.
 
 ### C5 — Recibos de revisão e PII reais
 
