@@ -4324,9 +4324,11 @@ partições; e que split e evento de exposição são gravados juntos ou nenhum 
 
 #### C3 — o que a execução decidiu (2026-07-28)
 
-Entregue, e depois corrigida por revisão (rodada de 2026-07-28, itens 9 a 13). Os oito
-testes de aceitação nomeados estão em `benchmark/tests/cluster-exposure-ledger.test.ts`
-(33 testes) e `benchmark/tests/split-audit.test.ts` (+12). Nenhum evento real foi gravado: o
+Entregue, e depois corrigida por duas rodadas de revisão no mesmo dia (2026-07-28, itens 9 a
+13 e 14 a 18). Os oito testes de aceitação nomeados estão em
+`benchmark/tests/cluster-exposure-ledger.test.ts` (34 testes) e
+`benchmark/tests/split-audit.test.ts` (17), com mais 2 em `benchmark/tests/split.test.ts`
+sobre as listas de eixos que a auditoria e D0b leem. Nenhum evento real foi gravado: o
 congelamento continua sendo E2. As decisões abaixo precisam ficar registradas porque a
 execução foi além (ou ficou aquém) do que o texto acima diz.
 
@@ -4410,15 +4412,15 @@ execução foi além (ou ficou aquém) do que o texto acima diz.
    exposto → pai recusado. Quatro testes novos, incluindo o par negativo (semente ausente do
    histórico não recusa nada). A separação de domínio dos eixos de valor é preservada:
    `author` e `source` continuam misturando o próprio nome do eixo.
-10. **`connectivityAxis` deriva de `CONNECTIVITY_AXES`, não de `GROUP_KEYS`.** O item 7 fez o
-    splitter unir por `humanSeed` como ligação de pai, mas `humanSeed` não está em
-    `GROUP_KEYS` (não é eixo de valor), então a auditoria **publicada** afirmava
-    `connectivityAxis: false` para um eixo em que o splitter passou a tratar as duas linhas
-    como bloco indivisível — e D0b escolhendo eixo de poder por esse relatório dimensionaria
-    o estrato como se semente e geração fossem independentes. `split.ts` agora exporta
+10. **`connectivityAxis` deriva de `CONNECTIVITY_AXES`, não de `GROUP_KEYS`** — e este
+    conserto estava **errado**, corrigido em definitivo no item 14. O item 7 fez o splitter
+    unir por `humanSeed` como ligação de pai, mas `humanSeed` não está em `GROUP_KEYS` (não é
+    eixo de valor), então a auditoria **publicada** afirmava `connectivityAxis: false` para um
+    eixo que o splitter passou a seguir. A troca de `false` por `true`, porém, passou a
+    afirmar coisa FALSA no sentido perigoso: ligação de pai só une quando a linha nomeada está
+    presente, e C2 mediu 782 de 783 referências sem co-presença. `split.ts` exporta
     `PARENT_LINKAGE_AXES` (consumida pelo próprio `connectedComponentRoots`, para o par ser
-    dito uma vez) e `CONNECTIVITY_AXES = GROUP_KEYS + ligação de pai`; a auditoria e o
-    `standInClusterReport` leem essa lista.
+    dito uma vez) e `CONNECTIVITY_AXES` = a união dos dois, **sem repetição** (ver item 15).
 11. **O acoplamento C2↔C3 é testado rodando os dois lados, não conferindo forma.** A primeira
     entrega provou só a FORMA do pseudônimo (`<propósito>_<16 hex>`), o que não vê a falha que
     importa: `initClusterLedger` reescreve o arquivo que `pseudonymize.py` lê, e se os dois
@@ -4446,6 +4448,59 @@ execução foi além (ou ficou aquém) do que o texto acima diz.
     verificação por testes que dirigem `runCli`. **E2 não começa antes de mover a atribuição
     para o corpo do construtor**, com um teste que execute `node benchmark/cli.ts --help` como
     processo real e afirme que `cluster-ledger` aparece no usage.
+
+##### Segunda rodada de correção (revisão de 2026-07-28, mesma noite)
+
+14. **Conectividade são DUAS relações, e um booleano sobre as duas publicava independência
+    falsa.** DEFEITO MEDIDO: duas linhas de IA schema-válidas com `humanSeed: known("h_absent")`
+    e `h_absent` ausente do corpus, split `development=[g_1]`, `test=[g_2]`. A auditoria
+    publicava para o eixo `humanSeed` `{connectivityAxis: true, overall: {groups: 1,
+    largest: 2, singletons: 0, recordLines: 2}}` e `leakages: []`, enquanto
+    `connectedComponentRoots` devolvia dois componentes — ou seja, "um bloco indivisível de
+    duas linhas num eixo em que o splitter une, sem leakage" sobre duas linhas em lados
+    opostos do corte de teste. `GROUP_KEYS` significa "duas linhas com o mesmo VALOR são
+    unidas"; `PARENT_LINKAGE_AXES` significa algo mais fraco, "une se `ids.has(pai)`".
+    `derivationRoot` está nas duas listas, então `true` estava certo para ele; `humanSeed` é
+    só ligação. O `false` anterior era impreciso no sentido conservador; o `true` era errado
+    no sentido perigoso. Conserto: `split.ts` exporta `axisConnectivity(eixo)` →
+    `{sharedValue, parentLinkage}` (a ÚNICA derivação; a auditoria e o `standInClusterReport`
+    leem dela), `AxisClusterReport.connectivityAxis` foi **substituído** por
+    `connectivity: {sharedValue, parentLinkage}`, e cada eixo de ligação passa a publicar
+    `linkage: {references, joinedAnotherRecordLine, selfReference, absentFromRecordSet}` —
+    a resolução MEDIDA das referências, pelo mesmo predicado que o splitter aplica, para que
+    ninguém tenha de adivinhar quanto vale `parentLinkage: true` no corpus que tem na frente.
+    O docstring de `leakages` passa a dizer o que a lista **não** cobre.
+    **QUESTÃO ABERTA, DE E2/E3 E NÃO DE C3:** se `humanSeed` deve virar eixo de VALOR em
+    `GROUP_KEYS` — duas gerações crescidas do mesmo prompt humano são dependentes, tenha a
+    linha-semente sido montada ou não. C3 mede a oferta e deixa a decisão escrita aqui.
+15. **`CONNECTIVITY_AXES` listava `derivationRoot` duas vezes** (está em `GROUP_KEYS` e em
+    `PARENT_LINKAGE_AXES`; medido: `.filter(a => a === "derivationRoot").length === 2`).
+    Inofensivo para `.includes()`, errado para quem contar ou serializar a lista exportada.
+    Deduplicado na construção, com teste que reprova a concatenação (medido: 10 ≠ 9).
+16. **O id do registro-linha tem checagem própria.** Reusar `assertLedgerIdentity` produzia
+    `groups.id identity … is not a pseudonym token` — campo que registro nenhum tem — e
+    importava um teto de 128 caracteres que o schema **não** impõe (`PSEUDONYM` é sem teto),
+    de modo que um corpus schema-válido com id longo abortaria o congelamento de E2. Agora
+    `assertLedgerRecordId` usa o alfabeto do próprio schema, sem teto, e roda **antes** de
+    todo diagnóstico que cita o id. O teto de 128 dos eixos de grupo fica, agora documentado
+    como limite que ESTE módulo escolheu (todo valor aceito vira mensagem de MAC guardada
+    pela vida do projeto; os pseudônimos de C2 têm 24 caracteres) e não como regra do schema.
+17. **Formatação: o registro anterior estava errado.** A entrega anterior disse que a reprovação
+    do prettier era inteiramente pré-existente; ela também **acrescentou** linhas que o
+    prettier reflui (por exemplo `groupDigests[axis] = identityDigests(keyring,
+    macDomainOf(axis), identity);`). Os quatro arquivos de C3 foram formatados nesta rodada e
+    `prettier --check` passa nos seis arquivos tocados. O diff commitado é só de conteúdo:
+    `core.autocrlf=true` faz o Git normalizar CRLF→LF, o que foi verificado rodando
+    `prettier --write` num arquivo sem defeito real de formatação e conferindo `git diff` vazio.
+    O resto do repositório continua com 13 arquivos reprovados, de outras tarefas.
+18. **Cobertura de chave é por NOME, e isso está escrito onde o leitor está.**
+    `assertLedgerConsistent` compara `keyVersion`; nada liga um segredo à história que ele
+    produziu. Substituir o keyring por um segredo novo ainda chamado `v1` faz `verify` passar,
+    todo HMAC ser recomputado sob o segredo novo e o ledger inteiro responder "nunca exposto" —
+    a falha de verificação-vazia-em-silêncio que o módulo existe para evitar. Não é conserto
+    de C3 (a lista de campos do evento é fechada e versionada): **E2 decide antes do
+    congelamento** se o evento passa a carregar testemunha ligada à chave (por exemplo um MAC
+    sobre `eventDigest` sob cada chave ativa) e sobe `schemaVersion` no mesmo movimento.
 
 ### C4 — Bootstrap com unidade de reamostragem por estimando
 
