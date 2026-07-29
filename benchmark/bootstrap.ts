@@ -203,6 +203,26 @@ export interface PublishedBoundSource {
 }
 
 /**
+ * The SIMULTANEOUS (Bonferroni) slot of an envelope's provenance — the limit a
+ * release gate decides on.
+ *
+ * Three states and not two, because they are not the same claim and one of them
+ * asserts an estimator that produced nothing. `single-estimator` is true when one
+ * of the two produced a simultaneous limit and the other did not; `none` is true
+ * when NEITHER did, which is the state of every estimand whenever the run declares
+ * no pre-registered gate count — there is no Bonferroni family, so nothing was
+ * published at any family alpha. Collapsing `none` onto `single-estimator` names an
+ * estimator for a limit that does not exist (R7).
+ */
+export type PublishedSimultaneousProvenance =
+  /** Both estimators produced one and the envelope's rule chose between them. */
+  | ({ readonly kind: "both-estimators" } & PublishedBoundSource)
+  /** Only one did, and it is named here rather than left to be looked up. */
+  | { readonly kind: "single-estimator"; readonly method: string }
+  /** Neither did: no simultaneous limit was published for this estimand. */
+  | { readonly kind: "none" };
+
+/**
  * Where one estimand's PUBLISHED limits came from — a different question from
  * `ResamplingPlanEntry.executed`, which says only that the design RAN.
  *
@@ -219,17 +239,22 @@ export type PublishedBoundProvenance =
       readonly rule: PublishedBoundRule;
       /** The individual 95% pair, which is descriptive. */
       readonly individual: PublishedBoundSource;
-      /**
-       * The simultaneous (Bonferroni) limit — the only one a release gate decides
-       * on. `null` when just one estimator produced a simultaneous bound, in which
-       * case `MetricEstimate.simultaneous.method` names it alone.
-       */
-      readonly simultaneous: PublishedBoundSource | null;
+      /** The simultaneous limit — the only one a release gate decides on. */
+      readonly simultaneous: PublishedSimultaneousProvenance;
     }
   /** The resampled percentile, with no analytic estimator competing for the slot. */
   | { readonly kind: "resampled-only" }
   /** The analytic bound, because the design published no limit for this estimand. */
   | { readonly kind: "analytic-only" }
+  /**
+   * NO estimator published a limit here — not the design and not Wilson. A rate
+   * whose denominator is zero is the reachable case: `proportionEstimate` returns a
+   * bare point with no interval at all, and the population it was measured over can
+   * be non-empty (every row errored, which is never a score — R5). This case exists
+   * because the alternative is `analytic-only`, which would name Wilson as the
+   * estimator behind a limit Wilson never produced.
+   */
+  | { readonly kind: "no-published-bound" }
   /**
    * One entry standing for several intervals — one per label basis, say. Averaging
    * their provenance would invent a fact, so the entry names where each one is.

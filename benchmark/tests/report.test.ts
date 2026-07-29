@@ -459,6 +459,7 @@ function metrics(): EvaluationMetrics {
                   upperFrom: "analytic" as const,
                 },
                 simultaneous: {
+                  kind: "both-estimators" as const,
                   lowerFrom: "resampled" as const,
                   upperFrom: "analytic" as const,
                 },
@@ -1050,6 +1051,132 @@ describe("renderReportMarkdown publishes the A6 evidence with its roles named", 
       .split("\n")
       .find((line) => line.startsWith("| observed-process "));
     expect(supplementaryRow).toMatch(/Wilson analítico/u);
+  });
+
+  // "Which estimator supplied the limit" only has an answer when some estimator
+  // did. Three states carry no answer and the column has to say so rather than
+  // fall back on Wilson: a basis whose rows all errored publishes no interval at
+  // all; an alpha at which neither estimator produced a simultaneous bound
+  // publishes none (the DEFAULT of the sealed pipeline, which passes no gate
+  // count); and a simultaneous bound from one estimator alone has to name it
+  // instead of pointing the reader at a field that may not exist.
+  it("never names an estimator for a limit nobody published", async () => {
+    const base = metrics();
+    const labelBasis = base.labelBasis;
+    if (labelBasis === undefined) throw new Error("fixture lost labelBasis");
+    const markdown = renderReportMarkdown(
+      await buildBenchmarkReport(
+        baseInput({
+          metrics: {
+            ...base,
+            labelBasis: {
+              ...labelBasis,
+              bases: [
+                ...labelBasis.bases,
+                {
+                  // What `labelBasisBreakdown` produces when every row of a basis
+                  // errored: count above zero, zero scored, so the rate has a zero
+                  // denominator and `proportionEstimate` returns a bare point.
+                  basis: "observed-process",
+                  count: 12,
+                  scored: 0,
+                  errored: 12,
+                  resamplingUnit: unit("warning.fpr.labelBasis", 12, 9, []),
+                  powered: false,
+                  powerFloor: 300,
+                  evidenceRole: "supplementary-diagnostic",
+                  falsePositiveRate: {
+                    value: Number.NaN,
+                    method: "point",
+                  },
+                  errorRate: { value: 1, method: "wilson-one-sided" },
+                  brier: Number.NaN,
+                  logLoss: Number.NaN,
+                  eceEqualMass: Number.NaN,
+                },
+              ],
+            },
+            resampling: {
+              ...base.resampling,
+              entries: base.resampling.entries.map((entry) => {
+                if (entry.estimand === "warning.recall") {
+                  return {
+                    ...entry,
+                    executed: "percentile-bootstrap" as const,
+                    publishedBound: {
+                      kind: "envelope" as const,
+                      rule: REBUILD_V3_POLICY.resampling.publishedBound,
+                      individual: {
+                        lowerFrom: "resampled" as const,
+                        upperFrom: "resampled" as const,
+                      },
+                      simultaneous: { kind: "none" as const },
+                    },
+                    measured: unit("warning.recall", 80, 40, []),
+                  };
+                }
+                if (entry.estimand === "action.fpr") {
+                  return {
+                    ...entry,
+                    executed: "percentile-bootstrap" as const,
+                    publishedBound: {
+                      kind: "envelope" as const,
+                      rule: REBUILD_V3_POLICY.resampling.publishedBound,
+                      individual: {
+                        lowerFrom: "resampled" as const,
+                        upperFrom: "analytic" as const,
+                      },
+                      simultaneous: {
+                        kind: "single-estimator" as const,
+                        method: "wilson-one-sided",
+                      },
+                    },
+                    measured: unit("action.fpr", 80, 40, []),
+                  };
+                }
+                if (entry.estimand === "action.recall") {
+                  return {
+                    ...entry,
+                    executed: "declared-only" as const,
+                    publishedBound: { kind: "no-published-bound" as const },
+                    measured: unit("action.recall", 0, 0, []),
+                  };
+                }
+                return entry;
+              }),
+            },
+          },
+        }),
+      ),
+    );
+    const bases = section(markdown, "Bases de rótulo humano");
+    const erroredRow = bases
+      .split("\n")
+      .filter((line) => line.startsWith("| observed-process "))
+      .at(-1);
+    // No number, therefore no estimator: the cell may not read "Wilson analítico"
+    // beside two `n/a` limits.
+    expect(erroredRow).toMatch(
+      /\| n\/a \| n\/a \| nenhum limite publicado \|/u,
+    );
+    expect(erroredRow).not.toMatch(/Wilson analítico/u);
+
+    const units = section(markdown, "Unidades de reamostragem");
+    const noSimultaneous = units
+      .split("\n")
+      .find((line) => line.startsWith("| warning.recall |"));
+    expect(noSimultaneous).toMatch(/sem limite simultâneo publicado/u);
+    expect(noSimultaneous).not.toMatch(/um estimador só/u);
+    // One estimator: the report NAMES it instead of sending the reader to
+    // `simultaneous.method`, which does not exist in the state above.
+    expect(
+      units.split("\n").find((line) => line.startsWith("| action.fpr |")),
+    ).toMatch(/simultâneo: um estimador só \(wilson-one-sided\)/u);
+    const nothingPublished = units
+      .split("\n")
+      .find((line) => line.startsWith("| action.recall |"));
+    expect(nothingPublished).toMatch(/nenhum limite publicado/u);
+    expect(nothingPublished).not.toMatch(/Wilson/u);
   });
 
   it("names the resampling unit of every published estimand, with its demotion", async () => {

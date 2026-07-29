@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import {
+  boundProvenanceOf,
   brierScore,
   calibrationInterceptSlope,
   computeBinaryMetrics,
@@ -436,12 +437,18 @@ describe("the published plan declares a unit for every estimand", () => {
       upperFrom: envelope?.upperFrom,
     });
     expect(provenance.simultaneous).toEqual({
+      kind: "both-estimators",
       lowerFrom: envelope?.simultaneous?.lowerFrom,
       upperFrom: envelope?.simultaneous?.upperFrom,
     });
     // And on THIS population the deciding limit is the analytic one, while the
     // design ran: the two facts the single `executed` column could not separate.
-    expect(provenance.simultaneous?.upperFrom).toBe("analytic");
+    if (provenance.simultaneous.kind !== "both-estimators") {
+      throw new Error(
+        `expected two competing estimators, got ${provenance.simultaneous.kind}`,
+      );
+    }
+    expect(provenance.simultaneous.upperFrom).toBe("analytic");
     expect(envelope?.simultaneous?.resampled.upper).toBe(0);
 
     // The five continuous statistics have no analytic estimator competing for the
@@ -464,6 +471,109 @@ describe("the published plan declares a unit for every estimand", () => {
         (candidate) => candidate.estimand === "warning.fpr.slice",
       )?.publishedBound ?? null,
     ).toBeNull();
+  });
+
+  // Naming an estimator is a claim that the estimator produced a limit. Two states
+  // carry no limit at all, and the provenance has to say so instead of falling back
+  // on Wilson: a rate whose denominator is zero publishes no interval, and an alpha
+  // at which neither estimator produced a simultaneous bound publishes none either.
+  // Both states are REACHABLE from the sealed pipeline, so a provenance that named
+  // Wilson in them would assert a bound the number does not have (R7).
+  it("names no estimator for a rate whose denominator is zero", () => {
+    // Every human negative errored: `status = "error"` is never a score (R5), so
+    // the FPR denominator is zero over a population that is not empty.
+    const humansErrored = Array.from({ length: 40 }, (_, index) => {
+      const author = `a${index}`;
+      return [
+        item({ author, label: "human", status: "error" }),
+        item({
+          author,
+          label: "ai",
+          documentScore: 0.9,
+          warned: true,
+          visualActioned: true,
+          generatorFamily: "gpt",
+        }),
+      ];
+    }).flat();
+    const metrics = computeEvaluationMetrics(humansErrored, {
+      ...OPTIONS,
+      preRegisteredStatisticalGates: 8,
+    });
+    const fpr = metrics.warning.endToEnd.falsePositiveRate;
+    expect(fpr.value).toBeNaN();
+    expect(fpr.lower95).toBeUndefined();
+    expect(fpr.upper95).toBeUndefined();
+    const entry = metrics.resampling.entries.find(
+      (candidate) => candidate.estimand === "warning.fpr",
+    );
+    expect(entry?.executed).toBe("declared-only");
+    expect(entry?.publishedBound).toEqual({ kind: "no-published-bound" });
+  });
+
+  it("says no simultaneous limit was published when neither estimator produced one", () => {
+    // The configuration `benchmark/commands/evaluate.ts` actually uses: a bootstrap
+    // seed and no pre-registered gate count, so there is no Bonferroni family and
+    // NO estimand gets a simultaneous bound.
+    const metrics = computeEvaluationMetrics(SEPARABLE, OPTIONS);
+    expect(
+      metrics.warning.endToEnd.falsePositiveRate.simultaneous,
+    ).toBeUndefined();
+    expect(
+      metrics.warning.endToEnd.falsePositiveRate.boundEnvelope?.simultaneous,
+    ).toBeUndefined();
+    const provenance = metrics.resampling.entries.find(
+      (candidate) => candidate.estimand === "warning.fpr",
+    )?.publishedBound;
+    if (provenance?.kind !== "envelope") {
+      throw new Error(
+        `expected an envelope provenance, got ${provenance?.kind}`,
+      );
+    }
+    expect(provenance.simultaneous).toEqual({ kind: "none" });
+  });
+
+  it("names the one estimator behind a simultaneous limit only one of them produced", () => {
+    // Unreachable from the sealed pipeline by construction — `rateEnvelope` only
+    // takes this branch when the analytic simultaneous bound exists and the design's
+    // tail held no replicate at the family alpha — so it is exercised directly. It
+    // is the state the single `null` used to stand for, alongside the two above.
+    const provenance = boundProvenanceOf({
+      value: 0.03,
+      lower95: 0.02,
+      upper95: 0.041,
+      method: "hierarchical-cluster-percentile",
+      simultaneous: {
+        correction: "bonferroni",
+        familyAlpha: 0.05,
+        m: 8,
+        alpha: 0.00625,
+        z: 2.734,
+        lower: 0.01,
+        upper: 0.08,
+        method: "wilson-one-sided",
+      },
+      boundEnvelope: {
+        rule: REBUILD_V3_POLICY.resampling.publishedBound,
+        analytic: { lower: 0.02, upper: 0.041, method: "wilson-one-sided" },
+        resampled: {
+          lower: 0.021,
+          upper: 0.037,
+          method: "hierarchical-cluster-percentile",
+        },
+        lowerFrom: "resampled",
+        upperFrom: "analytic",
+      },
+    });
+    if (provenance.kind !== "envelope") {
+      throw new Error(
+        `expected an envelope provenance, got ${provenance.kind}`,
+      );
+    }
+    expect(provenance.simultaneous).toEqual({
+      kind: "single-estimator",
+      method: "wilson-one-sided",
+    });
   });
 
   it("publishes the mixed multiway as measured and degenerate, with its proxy factor", () => {

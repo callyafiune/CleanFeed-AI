@@ -52,6 +52,7 @@ import {
   resolveResampling,
   ResamplingUnitError,
   type PublishedBoundProvenance,
+  type PublishedSimultaneousProvenance,
   type ResampledPercentileMethod,
   type ResamplingDesign,
   type ResamplingIdentity,
@@ -1451,18 +1452,32 @@ interface MeasuredUnit {
   readonly note: string | null;
 }
 
-/** The provenance an estimate's envelope records, in the shape the plan publishes. */
-function boundProvenanceOf(
+/**
+ * The provenance an estimate's envelope records, in the shape the plan publishes.
+ *
+ * Exported because the report renders the same fact for the estimates it prints
+ * beside their numbers (the label-basis table), and two copies of this derivation
+ * drift the day `MetricEstimate.method` gains a name: one rule, one place.
+ */
+export function boundProvenanceOf(
   estimate: MetricEstimate | undefined,
 ): PublishedBoundProvenance {
-  if (estimate === undefined) return { kind: "analytic-only" };
+  if (estimate === undefined) return { kind: "no-published-bound" };
   const envelope = estimate.boundEnvelope;
   if (envelope === undefined) {
+    // NO LIMIT AT ALL comes before either estimator's name. `proportionEstimate`
+    // returns a bare point on a zero denominator, and a bare point carries no
+    // interval, so calling it `analytic-only` would credit Wilson with a bound
+    // Wilson never produced (R7). Read off the interval and not off `method`: the
+    // absence of a limit is the fact that matters, and it is what `method` encodes
+    // only by coincidence.
+    if (estimate.lower95 === undefined && estimate.upper95 === undefined) {
+      return { kind: "no-published-bound" };
+    }
     return isResampledPercentileMethod(estimate.method)
       ? { kind: "resampled-only" }
       : { kind: "analytic-only" };
   }
-  const simultaneous = envelope.simultaneous;
   return {
     kind: "envelope",
     rule: envelope.rule,
@@ -1470,14 +1485,34 @@ function boundProvenanceOf(
       lowerFrom: envelope.lowerFrom,
       upperFrom: envelope.upperFrom,
     },
-    simultaneous:
-      simultaneous === undefined
-        ? null
-        : {
-            lowerFrom: simultaneous.lowerFrom,
-            upperFrom: simultaneous.upperFrom,
-          },
+    simultaneous: simultaneousProvenanceOf(estimate),
   };
+}
+
+/**
+ * Which estimator stands behind the simultaneous limit, read from BOTH halves: the
+ * envelope's simultaneous pair says two estimators competed, and `estimate.
+ * simultaneous` says whether any limit was published at that alpha at all. The
+ * second read is what separates "one estimator produced it" from "nobody did" —
+ * without it the default run of `benchmark/commands/evaluate.ts`, which declares no
+ * gate count and therefore no Bonferroni family, would report a single estimator for
+ * every estimand and point at a field that is absent.
+ */
+function simultaneousProvenanceOf(
+  estimate: MetricEstimate,
+): PublishedSimultaneousProvenance {
+  const pair = estimate.boundEnvelope?.simultaneous;
+  if (pair !== undefined) {
+    return {
+      kind: "both-estimators",
+      lowerFrom: pair.lowerFrom,
+      upperFrom: pair.upperFrom,
+    };
+  }
+  const published = estimate.simultaneous;
+  return published === undefined
+    ? { kind: "none" }
+    : { kind: "single-estimator", method: published.method };
 }
 
 /**
@@ -3322,7 +3357,10 @@ function rateEstimates(
       resampling.record(entry.estimand, {
         unit: published?.resampling ?? resolution.declaration,
         resampled: published !== undefined,
-        bound: boundProvenanceOf(published),
+        // The provenance of the number that GOT published: when the envelope did
+        // not form, the analytic estimate is what the metric block carries, and it
+        // is the one whose limits (or absence of limits) a reader sees.
+        bound: boundProvenanceOf(published ?? entry.analytic),
         note:
           published !== undefined
             ? null

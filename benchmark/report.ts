@@ -28,6 +28,7 @@ import { canonicalSha256 } from "../contracts/canonical-json.ts";
 import type {
   PublishedBoundProvenance,
   PublishedBoundSource,
+  PublishedSimultaneousProvenance,
   ResamplingPlan,
   ResamplingUnitDeclaration,
 } from "./bootstrap.ts";
@@ -36,6 +37,7 @@ import {
   type GeneratorFamily,
 } from "./generator-family.ts";
 import type { GateReport, ReleaseDecision } from "./gates.ts";
+import { boundProvenanceOf } from "./metrics.ts";
 import type {
   CalibrationSliceMetrics,
   DecisionFamilies,
@@ -936,6 +938,24 @@ function boundSides(source: PublishedBoundSource): string {
   )}`;
 }
 
+// The three states of the simultaneous slot, each in its own words. "One estimator"
+// and "no simultaneous limit" are different facts, and the second is the DEFAULT of
+// the sealed pipeline: without a pre-registered gate count there is no Bonferroni
+// family, so nothing is published at any family alpha. Printing "um estimador só"
+// there would name an estimator and send the reader to a field that is absent.
+function simultaneousBoundLabel(
+  provenance: PublishedSimultaneousProvenance,
+): string {
+  switch (provenance.kind) {
+    case "both-estimators":
+      return `simultâneo: ${boundSides(provenance)}`;
+    case "single-estimator":
+      return `simultâneo: um estimador só (${provenance.method})`;
+    case "none":
+      return "sem limite simultâneo publicado";
+  }
+}
+
 // Which estimator's limits were published, never derived from whether the design
 // ran: on a zero-count rate the design runs and Wilson's limit is the published one.
 function publishedBoundLabel(
@@ -946,45 +966,30 @@ function publishedBoundLabel(
     case "envelope":
       return (
         `envelope \`${provenance.rule}\` · 95%: ${boundSides(provenance.individual)} · ` +
-        (provenance.simultaneous === null
-          ? "simultâneo: um estimador só (ver `simultaneous.method`)"
-          : `simultâneo: ${boundSides(provenance.simultaneous)}`)
+        simultaneousBoundLabel(provenance.simultaneous)
       );
     case "resampled-only":
       return "percentil reamostrado (nenhum limite analítico concorre pelo lugar)";
     case "analytic-only":
       return "Wilson analítico";
+    case "no-published-bound":
+      return "nenhum limite publicado";
     case "per-interval":
       return `por intervalo — ${provenance.where}`;
   }
 }
 
 // The same fact read off one estimate, for the tables that print the number itself.
+// The derivation is NOT repeated here: `boundProvenanceOf` owns the rule that maps an
+// estimate to its provenance, and a second copy of it would classify a new method
+// name differently from the plan's copy without anything failing.
 function estimateBoundLabel(
   estimate: MetricEstimate | null | undefined,
 ): string {
+  // An absent metric is a missing cell, not a metric that published no limit: the
+  // row has no number to carry a provenance for.
   if (estimate === null || estimate === undefined) return "—";
-  const envelope = estimate.boundEnvelope;
-  if (envelope === undefined) {
-    return estimate.method === "wilson-one-sided" || estimate.method === "point"
-      ? publishedBoundLabel({ kind: "analytic-only" })
-      : publishedBoundLabel({ kind: "resampled-only" });
-  }
-  return publishedBoundLabel({
-    kind: "envelope",
-    rule: envelope.rule,
-    individual: {
-      lowerFrom: envelope.lowerFrom,
-      upperFrom: envelope.upperFrom,
-    },
-    simultaneous:
-      envelope.simultaneous === undefined
-        ? null
-        : {
-            lowerFrom: envelope.simultaneous.lowerFrom,
-            upperFrom: envelope.simultaneous.upperFrom,
-          },
-  });
+  return publishedBoundLabel(boundProvenanceOf(estimate));
 }
 
 function resamplingUnitCount(
