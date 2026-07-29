@@ -179,25 +179,54 @@ export type GroupKey = (typeof GROUP_KEYS)[number];
 // The axes `connectedComponentRoots` follows as PARENT LINKAGE — a row whose
 // value names another row's ID joins that row — rather than as a shared value.
 // Exported so nothing has to restate the pair; `connectedComponentRoots` reads it
-// and so does the audit's `connectivityAxis`.
+// and so does the audit, through `axisConnectivity`.
 export const PARENT_LINKAGE_AXES = ["derivationRoot", "humanSeed"] as const;
 
 /**
- * Every axis the splitter actually unions on: the value axes PLUS the parent
- * linkage. This, and not `GROUP_KEYS` alone, is what "does the splitter treat two
- * rows sharing this axis as one indivisible block" means.
+ * Every axis the splitter unions on IN EITHER SENSE, each named once.
  *
- * The distinction is load-bearing for a reader downstream: `humanSeed` is not a
- * value axis (a human row and the generation it seeded share no value), it is
- * followed as linkage only, so a report that derived connectivity from
- * `GROUP_KEYS` published `false` for an axis the splitter had just started
- * unioning on — and D0b choosing a power axis off that report would size a stratum
- * as if the seed and its generation were independent.
+ * Membership answers "does the splitter look at this axis at all", and NOTHING
+ * stronger. It deliberately does not answer "are two rows sharing this axis kept
+ * together": that question has two different answers for the two relations, and
+ * `axisConnectivity` is the function that separates them. Reading indivisibility
+ * off this list published a false independence claim for `humanSeed` once already.
+ *
+ * De-duplicated at construction because `derivationRoot` is in both lists, and a
+ * consumer that counts or serialises this array must not see it twice.
  */
 export const CONNECTIVITY_AXES: readonly string[] = [
-  ...GROUP_KEYS,
-  ...PARENT_LINKAGE_AXES,
+  ...new Set<string>([...GROUP_KEYS, ...PARENT_LINKAGE_AXES]),
 ];
+
+/**
+ * The TWO relations the splitter can union an axis by. They are separate because
+ * they are not equally strong, and collapsing them into one boolean states
+ * something false about `humanSeed`:
+ *
+ * - `sharedValue` — the axis is in `GROUP_KEYS`: two record-lines carrying the
+ *   SAME identity here are always placed in one cluster, unconditionally.
+ * - `parentLinkage` — the axis is in `PARENT_LINKAGE_AXES`: a record-line whose
+ *   identity here NAMES ANOTHER RECORD-LINE'S ID is unioned with that row, and
+ *   **only when that row is present in the same record set**. C2 measured 782 of
+ *   783 parent references resolving to no row of the assembled corpus, so for the
+ *   corpus that exists this relation usually unions nothing — which is why the
+ *   audit publishes a resolution count next to the flag instead of a bare `true`.
+ *
+ * A reader must therefore NOT infer from `parentLinkage: true` that two rows
+ * sharing a seed value are kept together. Whether `humanSeed` should also become a
+ * VALUE axis — two generations grown from the same human prompt are dependent
+ * whether or not the seed row was assembled — is a substantive question for E2/E3
+ * and is deliberately not decided here.
+ */
+export function axisConnectivity(axis: string): {
+  sharedValue: boolean;
+  parentLinkage: boolean;
+} {
+  return {
+    sharedValue: (GROUP_KEYS as readonly string[]).includes(axis),
+    parentLinkage: (PARENT_LINKAGE_AXES as readonly string[]).includes(axis),
+  };
+}
 
 const PARTITIONS: readonly Partition[] = ["development", "calibration", "test"];
 

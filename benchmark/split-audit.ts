@@ -30,7 +30,7 @@ import {
   type V3GroupAxis,
 } from "./schema.ts";
 import {
-  CONNECTIVITY_AXES,
+  axisConnectivity,
   connectedComponentRoots,
   GROUP_KEYS,
   type Partition,
@@ -91,16 +91,65 @@ export interface ClusterSliceCount {
   count: ClusterCount;
 }
 
+/**
+ * How the splitter unions this axis, as the TWO relations it really is.
+ *
+ * The single boolean this replaced could not tell them apart, and the conflation
+ * published a FALSE independence claim: `humanSeed` is linkage-only, linkage
+ * unions only when the named row is present, and C2 measured 782 of 783 parent
+ * references resolving to no row — so `true` next to `largest: 2` read as "one
+ * indivisible block of two record-lines" about two rows the splitter had just put
+ * on opposite sides of the test cut.
+ *
+ * Definition of each flag: {@link axisConnectivity} in split.ts, which is the one
+ * place that derives them, from the same two lists `connectedComponentRoots`
+ * iterates.
+ */
+export interface AxisConnectivity {
+  /** Two record-lines with the same identity here are ALWAYS one cluster. */
+  sharedValue: boolean;
+  /**
+   * A record-line whose identity here names another record-line's ID is unioned
+   * with it — ONLY when that record-line is present in the same record set. So
+   * `true` does NOT mean rows sharing this identity are kept together; read
+   * {@link AxisClusterReport.linkage} for how often the condition actually held.
+   */
+  parentLinkage: boolean;
+}
+
+/**
+ * What the `known` references on a PARENT-LINKAGE axis resolved to inside the
+ * record set that was audited. `references` is their total, and the other three
+ * partition it by the exact predicate `connectedComponentRoots` applies:
+ *
+ * - `joinedAnotherRecordLine` — the named row is present and is not this row, so
+ *   the splitter DID union the two. This is the only branch that creates a cluster.
+ * - `selfReference` — the identity names the row's own id (the shape a v2 record
+ *   carries on `derivationRoot`), which unions nothing.
+ * - `absentFromRecordSet` — the named row is in no record of this set, which unions
+ *   nothing either, and is the case C2 measured for 782 of 783 references.
+ *
+ * It exists so a consumer never has to guess how strong `parentLinkage: true` is
+ * for the corpus in front of it. C3 publishes the number; it computes no power and
+ * applies no gate (D0b and E3 own those).
+ */
+export interface LinkageResolution {
+  references: number;
+  joinedAnotherRecordLine: number;
+  selfReference: number;
+  absentFromRecordSet: number;
+}
+
 export interface AxisClusterReport {
   axis: V3GroupAxis;
+  /** The two union relations, never one flag: see {@link AxisConnectivity}. */
+  connectivity: AxisConnectivity;
   /**
-   * Whether the splitter UNIONS on this axis — `CONNECTIVITY_AXES` in split.ts,
-   * which is `GROUP_KEYS` PLUS the parent linkage. It is not `GROUP_KEYS` alone:
-   * `humanSeed` is followed as linkage and not as a shared value, so reading the
-   * flag off `GROUP_KEYS` claimed independence for an axis the splitter treats as
-   * one indivisible block.
+   * The measured resolution of this axis's references, or `null` when the axis is
+   * not followed as parent linkage at all (`connectivity.parentLinkage === false`),
+   * where the question does not arise.
    */
-  connectivityAxis: boolean;
+  linkage: LinkageResolution | null;
   /** How many record-lines state each of R6's three states on this axis. */
   states: Record<GroupAxisState, number>;
   overall: ClusterCount;
@@ -150,6 +199,18 @@ export interface SplitAudit {
     latestCalibration: number;
     earliestTest: number;
   };
+  /**
+   * A group identity that crosses partitions, on the axes the splitter unions by
+   * VALUE (`GROUP_KEYS`) plus the connected component of the whole union.
+   *
+   * What it therefore does NOT report: a LINKAGE-only axis whose identity is shared
+   * across the cut while the row it names is absent from the corpus — two
+   * generations grown from the same unassembled human prompt. That is not a leakage
+   * under the current definition of a cluster, because the splitter does not union
+   * on the value; whether it SHOULD (the two generations are dependent regardless)
+   * is a substantive question for E2/E3, not one C3 decides. It is visible in
+   * {@link AxisClusterReport.linkage}, which counts exactly those references.
+   */
   leakages: Array<{ axis: string; value: string; partitions: Partition[] }>;
   /** The published cluster counts. Never `undefined`: see {@link SplitClusterReport}. */
   clusters: SplitClusterReport;
@@ -217,10 +278,7 @@ export function auditBlockedSplit(
   records: readonly BenchmarkRecord[],
   split: DatasetSplitInput,
   policy: SplitAuditPolicy,
-  declaredGroupAxes: ReadonlyMap<
-    string,
-    readonly V3GroupAxis[]
-  > = new Map(),
+  declaredGroupAxes: ReadonlyMap<string, readonly V3GroupAxis[]> = new Map(),
 ): SplitAudit {
   const byPartition: Record<Partition, readonly BenchmarkRecord[]> = {
     development: split.development,
@@ -276,13 +334,24 @@ export function auditBlockedSplit(
  */
 export function standInClusterReport(): SplitClusterReport {
   return {
-    axes: V3_GROUP_AXES.map((axis) => ({
-      axis,
-      connectivityAxis: CONNECTIVITY_AXES.includes(axis),
-      states: { known: 0, notApplicable: 0, unknown: 0 },
-      overall: { groups: 0, largest: 0, singletons: 0, recordLines: 0 },
-      bySlice: [],
-    })),
+    axes: V3_GROUP_AXES.map((axis) => {
+      const connectivity = axisConnectivity(axis);
+      return {
+        axis,
+        connectivity,
+        linkage: connectivity.parentLinkage
+          ? {
+              references: 0,
+              joinedAnotherRecordLine: 0,
+              selfReference: 0,
+              absentFromRecordSet: 0,
+            }
+          : null,
+        states: { known: 0, notApplicable: 0, unknown: 0 },
+        overall: { groups: 0, largest: 0, singletons: 0, recordLines: 0 },
+        bySlice: [],
+      };
+    }),
     connected: {
       overall: { groups: 0, largest: 0, singletons: 0, recordLines: 0 },
       bySlice: [],
@@ -474,10 +543,7 @@ function auditClusters(
       const identity = groupAxisIdentity(record, axis);
       if (identity === undefined) continue;
       overall.set(identity, (overall.get(identity) ?? 0) + 1);
-      const keys = sliceKeysOf(
-        record,
-        partitionOf.get(record.id) as Partition,
-      );
+      const keys = sliceKeysOf(record, partitionOf.get(record.id) as Partition);
       for (const slice of CLUSTER_SLICE_AXES) {
         const key = keys[slice];
         if (key === undefined) continue;
@@ -487,9 +553,13 @@ function auditClusters(
         bySlice.set(bucketKey, bucket);
       }
     }
+    const connectivity = axisConnectivity(axis);
     return {
       axis,
-      connectivityAxis: CONNECTIVITY_AXES.includes(axis),
+      connectivity,
+      linkage: connectivity.parentLinkage
+        ? measureLinkage(assigned, axis)
+        : null,
       states,
       overall: countGroups([...overall.values()]),
       bySlice: toSliceCounts(bySlice),
@@ -520,6 +590,41 @@ function auditClusters(
       bySlice: toSliceCounts(bySlice),
     },
   };
+}
+
+/**
+ * Measures what a parent-linkage axis's references resolved to, over the SAME
+ * record set the components were built from.
+ *
+ * The three branches are the predicate `connectedComponentRoots` applies, written
+ * out: `parent !== undefined && parent !== record.id && ids.has(parent)`. Only the
+ * middle branch unions. If that predicate ever changes, this counter has to change
+ * with it — which is the point of stating it here rather than describing it.
+ */
+function measureLinkage(
+  records: readonly BenchmarkRecord[],
+  axis: V3GroupAxis,
+): LinkageResolution {
+  const ids = new Set(records.map((record) => record.id));
+  const resolution: LinkageResolution = {
+    references: 0,
+    joinedAnotherRecordLine: 0,
+    selfReference: 0,
+    absentFromRecordSet: 0,
+  };
+  for (const record of records) {
+    const parent = groupAxisIdentity(record, axis);
+    if (parent === undefined) continue;
+    resolution.references += 1;
+    if (parent === record.id) {
+      resolution.selfReference += 1;
+    } else if (ids.has(parent)) {
+      resolution.joinedAnotherRecordLine += 1;
+    } else {
+      resolution.absentFromRecordSet += 1;
+    }
+  }
+  return resolution;
 }
 
 function toSliceCounts(

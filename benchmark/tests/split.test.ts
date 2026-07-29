@@ -2,7 +2,11 @@ import { describe, expect, it } from "vitest";
 
 import { auditBlockedSplit, type SplitAuditPolicy } from "../split-audit.ts";
 import {
+  axisConnectivity,
+  CONNECTIVITY_AXES,
   createBlockedSplit,
+  GROUP_KEYS,
+  PARENT_LINKAGE_AXES,
   SplitConstraintError,
   type BlockedSplitPolicy,
   type Partition,
@@ -470,5 +474,53 @@ describe("createBlockedSplit", () => {
     expect(() => createBlockedSplit(skewed, POLICY)).toThrow(
       /fractions unreachable within tolerance/,
     );
+  });
+});
+
+// --- the axis lists the audit and D0b read ----------------------------------
+
+describe("the connectivity axis lists", () => {
+  it("names every axis the splitter unions on exactly once", () => {
+    // `derivationRoot` is BOTH a value axis and a linkage axis, so a plain
+    // concatenation of the two lists carried it twice. Harmless to `.includes()`,
+    // wrong for anything that counts or serialises the list — and this one is
+    // exported and read downstream.
+    expect(CONNECTIVITY_AXES.length).toBe(new Set(CONNECTIVITY_AXES).size);
+    expect(
+      CONNECTIVITY_AXES.filter((axis) => axis === "derivationRoot").length,
+    ).toBe(1);
+
+    // It is the union of the two relations, and nothing else is in it.
+    expect([...CONNECTIVITY_AXES].sort()).toEqual(
+      [...new Set([...GROUP_KEYS, ...PARENT_LINKAGE_AXES])].sort(),
+    );
+  });
+
+  it("separates the two relations instead of flattening them to one flag", () => {
+    // A value axis: sharing the identity is enough.
+    expect(axisConnectivity("source")).toEqual({
+      sharedValue: true,
+      parentLinkage: false,
+    });
+    // Linkage only. The named row has to be PRESENT for anything to be unioned,
+    // so this flag alone must never be read as "these rows are kept together".
+    expect(axisConnectivity("humanSeed")).toEqual({
+      sharedValue: false,
+      parentLinkage: true,
+    });
+    // Both, said as both.
+    expect(axisConnectivity("derivationRoot")).toEqual({
+      sharedValue: true,
+      parentLinkage: true,
+    });
+    // An axis the splitter deliberately refuses to union on, and one it never saw.
+    expect(axisConnectivity("generatorFamily")).toEqual({
+      sharedValue: false,
+      parentLinkage: false,
+    });
+    expect(axisConnectivity("noSuchAxis")).toEqual({
+      sharedValue: false,
+      parentLinkage: false,
+    });
   });
 });

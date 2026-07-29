@@ -4,20 +4,24 @@ import {
   CLUSTER_SLICE_AXES,
   auditBlockedSplit,
   standInClusterReport,
+  type AxisConnectivity,
   type SplitAuditPolicy,
 } from "../split-audit.ts";
 import {
+  connectedComponentRoots,
   createBlockedSplit,
   type BlockedSplitPolicy,
   type DatasetSplit,
 } from "../split.ts";
 import {
   V3_GROUP_AXES,
+  validateBenchmarkRecordV3,
   type BenchmarkLabel,
   type BenchmarkRecord,
   type TransformationKind,
   type V3GroupAxis,
 } from "../schema.ts";
+import { known, v3Ai, withAxis } from "./helpers/v3-record-fixture.ts";
 import {
   asGeneratorFamily,
   normalizeGeneratorFamily,
@@ -554,7 +558,7 @@ describe("the cluster report the audit publishes", () => {
     // measurement rather than the tautology `leakages: []` used to be.
     expect(source!.overall.largest).toBeGreaterThan(1);
     expect(source!.overall.recordLines).toBe(RELEASE_DATASET.length);
-    expect(source!.connectivityAxis).toBe(true);
+    expect(source!.connectivity.sharedValue).toBe(true);
 
     // The connected component — the union of the applicable axes — is the split
     // and exposure cluster, and it is what E3 will gate on.
@@ -578,32 +582,53 @@ describe("the cluster report the audit publishes", () => {
     expect(partitionRecords).toBe(RELEASE_DATASET.length);
   });
 
-  it("reports connectivity from what the splitter unions on, linkage included", () => {
+  it("reports connectivity as the two relations it is, never as one flag", () => {
     const split = createBlockedSplit(RELEASE_DATASET, POLICY);
     const audit = auditBlockedSplit(RELEASE_DATASET, split, AUDIT_POLICY);
-    const connectivityOf = (axis: string): boolean =>
-      audit.clusters.axes.find((row) => row.axis === axis)!.connectivityAxis;
+    const connectivityOf = (axis: string): AxisConnectivity =>
+      audit.clusters.axes.find((row) => row.axis === axis)!.connectivity;
 
-    // Both lineage axes are followed by `connectedComponentRoots` as PARENT
-    // LINKAGE, so a row sharing them is in an indivisible block. `humanSeed` is
-    // not in `GROUP_KEYS` — it is not a value axis — and deriving the flag from
-    // `GROUP_KEYS` alone published `false` for it. A reader picking a power axis
-    // off this report would then size a stratum as if a human row and the
-    // generation it seeded were independent, which the splitter already denies.
-    expect(connectivityOf("humanSeed")).toBe(true);
-    expect(connectivityOf("derivationRoot")).toBe(true);
+    // `source` is a VALUE axis: two rows carrying the same identity are unioned,
+    // unconditionally, and nothing has to be present for that to happen.
+    expect(connectivityOf("source")).toEqual({
+      sharedValue: true,
+      parentLinkage: false,
+    });
 
-    // And the flag still says NO for the axes the splitter deliberately refuses
-    // to union on, or unioning would collapse a whole family into one block.
-    expect(connectivityOf("generatorFamily")).toBe(false);
-    expect(connectivityOf("generationLane")).toBe(false);
+    // `humanSeed` is followed ONLY as parent linkage, and linkage is conditional:
+    // it unions a row with the row its seed NAMES, and only when that row is in
+    // the same record set. Publishing one boolean over both relations claimed
+    // rows sharing a seed VALUE are one indivisible block, which is false — see
+    // the absent-seed case below.
+    expect(connectivityOf("humanSeed")).toEqual({
+      sharedValue: false,
+      parentLinkage: true,
+    });
 
-    // The fixture stand-in must agree, or a hand-built audit would carry the
-    // opposite claim from a measured one.
+    // `derivationRoot` is genuinely both, and the two flags say so instead of
+    // one of the relations hiding the other.
+    expect(connectivityOf("derivationRoot")).toEqual({
+      sharedValue: true,
+      parentLinkage: true,
+    });
+
+    // And both stay false for the axes the splitter deliberately refuses to
+    // union on, because unioning would collapse a whole family or lane.
+    expect(connectivityOf("generatorFamily")).toEqual({
+      sharedValue: false,
+      parentLinkage: false,
+    });
+    expect(connectivityOf("generationLane")).toEqual({
+      sharedValue: false,
+      parentLinkage: false,
+    });
+
+    // The fixture stand-in must agree, or a hand-built audit would carry a
+    // different claim from a measured one.
     const standIn = standInClusterReport();
     expect(
-      standIn.axes.find((row) => row.axis === "humanSeed")!.connectivityAxis,
-    ).toBe(true);
+      standIn.axes.find((row) => row.axis === "humanSeed")!.connectivity,
+    ).toEqual({ sharedValue: false, parentLinkage: true });
   });
 
   it("does not fail an axis that is legitimately all singletons or absent", () => {
@@ -614,7 +639,9 @@ describe("the cluster report the audit publishes", () => {
       (row) => row.axis === "nearDuplicate",
     );
     expect(nearDuplicate!.overall.largest).toBe(1);
-    expect(nearDuplicate!.overall.singletons).toBe(nearDuplicate!.overall.groups);
+    expect(nearDuplicate!.overall.singletons).toBe(
+      nearDuplicate!.overall.groups,
+    );
 
     // `harnessVersion` is a v3 axis no v2 record carries: it reads as `unknown`
     // for every row, and that is a description of the corpus, not a defect the
@@ -636,7 +663,9 @@ const V3_SHA = "d".repeat(64);
 function v3Axis(
   state: "known" | "notApplicable" | "unknown",
   value: string,
-): { state: "known"; id: string } | { state: "notApplicable" | "unknown"; reason: string } {
+):
+  | { state: "known"; id: string }
+  | { state: "notApplicable" | "unknown"; reason: string } {
   return state === "known"
     ? { state: "known", id: value }
     : { state, reason: value };
@@ -722,9 +751,7 @@ const DECLARED: ReadonlyMap<string, readonly V3GroupAxis[]> = new Map([
   ["src_ptso", ["author", "source"] as readonly V3GroupAxis[]],
 ]);
 
-function v3Split(
-  authorState: "known" | "notApplicable" | "unknown",
-): {
+function v3Split(authorState: "known" | "notApplicable" | "unknown"): {
   records: BenchmarkRecord[];
   split: DatasetSplit<BenchmarkRecord>;
 } {
@@ -754,7 +781,11 @@ function v3Split(
 
 // A generated row whose ONLY link to the corpus is the human text that seeded it.
 // Every other axis is distinct, so nothing but the seed can glue the two.
-function v3Generated(spec: { id: string; createdAt: number; seedId: string }): BenchmarkRecord {
+function v3Generated(spec: {
+  id: string;
+  createdAt: number;
+  seedId: string;
+}): BenchmarkRecord {
   const notOurs = "generated text has no human author";
   return {
     schemaVersion: 3,
@@ -845,7 +876,11 @@ describe("the seed that produced a generation", () => {
     // C2 measured 782 of 783 parent references resolving to no row. An absent
     // parent must not invent a cluster, and must not refuse the row either.
     const generated = v3Generated({ id: "g1", createdAt: 3, seedId: "absent" });
-    const other = v3Generated({ id: "g2", createdAt: 4, seedId: "also-absent" });
+    const other = v3Generated({
+      id: "g2",
+      createdAt: 4,
+      seedId: "also-absent",
+    });
     const roots = auditBlockedSplit(
       [generated, other],
       { development: [generated], calibration: [], test: [other] },
@@ -855,6 +890,140 @@ describe("the seed that produced a generation", () => {
       roots.leakages.some((entry) => entry.axis === "connectedComponent"),
     ).toBe(false);
     expect(roots.clusters.connected.overall.groups).toBe(2);
+  });
+});
+
+// --- the absent parent: linkage is CONDITIONAL, and the report must say so ---
+
+/**
+ * A v3 generated row, SCHEMA-VALIDATED, whose only tie to anything is `seedId`.
+ * Every value axis is per-row, so no shared value can union two of these.
+ */
+function seededRow(
+  id: string,
+  seedId: string,
+  createdAt: number,
+): BenchmarkRecord {
+  let raw: Record<string, unknown> = { ...v3Ai(), id, createdAt };
+  raw = withAxis(raw, "humanSeed", known(seedId));
+  raw = withAxis(raw, "domainSource", known(`ds_${id}`));
+  raw = withAxis(raw, "promptTemplate", known(`pt_${id}`));
+  raw = withAxis(raw, "generatorVersion", known(`gv_${id}`));
+  raw = withAxis(raw, "collectionBatch", known(`cb_${id}`));
+  raw = withAxis(raw, "nearDuplicate", known(`nd_${id}`));
+  return validateBenchmarkRecordV3(raw) as unknown as BenchmarkRecord;
+}
+
+describe("two rows naming a seed no record carries", () => {
+  it("is never published as one indivisible block on humanSeed", () => {
+    // The fixture C2's measurement makes the COMMON case, not the exotic one:
+    // 782 of 783 parent references resolved to no row of the assembled corpus.
+    const g1 = seededRow("g_1", "h_absent", 1);
+    const g2 = seededRow("g_2", "h_absent", 2);
+    const records = [g1, g2];
+    const audit = auditBlockedSplit(
+      records,
+      { development: [g1], calibration: [], test: [g2] },
+      AUDIT_POLICY,
+    );
+    const seed = audit.clusters.axes.find((row) => row.axis === "humanSeed")!;
+
+    // The IDENTITY is shared — one group of two record-lines on this axis...
+    expect(seed.overall).toEqual({
+      groups: 1,
+      largest: 2,
+      singletons: 0,
+      recordLines: 2,
+    });
+    // ...and yet the splitter put the two rows on opposite sides of the test cut,
+    // because linkage needs the named row to be PRESENT. A single
+    // `connectivityAxis: true` next to `largest: 2` read as "one indivisible
+    // block of 2 on an axis the splitter unions on", which is the dangerous
+    // direction to be wrong in: D0b would size the stratum as if the seed and
+    // its generation were one unit here.
+    expect(seed.connectivity).toEqual({
+      sharedValue: false,
+      parentLinkage: true,
+    });
+    // The measurement that settles it, published rather than left to a reader:
+    // zero of the two references joined anything.
+    expect(seed.linkage).toEqual({
+      references: 2,
+      joinedAnotherRecordLine: 0,
+      selfReference: 0,
+      absentFromRecordSet: 2,
+    });
+
+    // And the splitter agrees: two components, not one.
+    const roots = connectedComponentRoots(records);
+    expect(roots.get("g_1")).not.toBe(roots.get("g_2"));
+    expect(audit.clusters.connected.overall).toEqual({
+      groups: 2,
+      largest: 1,
+      singletons: 2,
+      recordLines: 2,
+    });
+  });
+
+  it("counts a resolved reference as joined, and a self-reference as neither", () => {
+    // Same axis, the other two branches of the same predicate the splitter uses.
+    const seed = v3Split("known").records[0];
+    const child = seededRow("g_1", seed.id, 5);
+    const audit = auditBlockedSplit(
+      [seed, child],
+      { development: [seed], calibration: [], test: [child] },
+      AUDIT_POLICY,
+    );
+    const humanSeed = audit.clusters.axes.find(
+      (row) => row.axis === "humanSeed",
+    )!;
+    expect(humanSeed.linkage).toEqual({
+      references: 1,
+      joinedAnotherRecordLine: 1,
+      selfReference: 0,
+      absentFromRecordSet: 0,
+    });
+    // One cluster: the linkage resolved, so this pair really is indivisible.
+    expect(audit.clusters.connected.overall.groups).toBe(1);
+
+    // `derivationRoot` in the v2 release fixture names the row's OWN id, which
+    // unions nothing — the splitter skips `parent === record.id`. A count that
+    // called those "joined" would inflate the linkage evidence for every row.
+    const releaseSplit = createBlockedSplit(RELEASE_DATASET, POLICY);
+    const release = auditBlockedSplit(
+      RELEASE_DATASET,
+      releaseSplit,
+      AUDIT_POLICY,
+    );
+    const derivation = release.clusters.axes.find(
+      (row) => row.axis === "derivationRoot",
+    )!;
+    expect(derivation.linkage!.references).toBe(RELEASE_DATASET.length);
+    expect(derivation.linkage!.selfReference).toBe(RELEASE_DATASET.length);
+    expect(derivation.linkage!.joinedAnotherRecordLine).toBe(0);
+  });
+
+  it("leaves `linkage` null for an axis that is not followed as linkage", () => {
+    const split = createBlockedSplit(RELEASE_DATASET, POLICY);
+    const audit = auditBlockedSplit(RELEASE_DATASET, split, AUDIT_POLICY);
+    for (const axis of ["source", "author", "generatorFamily"]) {
+      expect(
+        audit.clusters.axes.find((row) => row.axis === axis)!.linkage,
+      ).toBeNull();
+    }
+    // The stand-in agrees, and is all-zero rather than plausible.
+    const standIn = standInClusterReport();
+    expect(
+      standIn.axes.find((row) => row.axis === "source")!.linkage,
+    ).toBeNull();
+    expect(
+      standIn.axes.find((row) => row.axis === "humanSeed")!.linkage,
+    ).toEqual({
+      references: 0,
+      joinedAnotherRecordLine: 0,
+      selfReference: 0,
+      absentFromRecordSet: 0,
+    });
   });
 });
 
@@ -882,9 +1051,9 @@ describe("a grouping axis the source declared", () => {
     const audit = auditBlockedSplit(records, split, AUDIT_POLICY, DECLARED);
 
     expect(audit.declaredAxisGaps).toEqual([]);
-    expect(
-      audit.reasons.some((reason) => /declares axis/.test(reason)),
-    ).toBe(false);
+    expect(audit.reasons.some((reason) => /declares axis/.test(reason))).toBe(
+      false,
+    );
   });
 
   it("says nothing about an axis no source declared", () => {
@@ -892,8 +1061,8 @@ describe("a grouping axis the source declared", () => {
     const audit = auditBlockedSplit(records, split, AUDIT_POLICY);
 
     expect(audit.declaredAxisGaps).toEqual([]);
-    expect(
-      audit.reasons.some((reason) => /declares axis/.test(reason)),
-    ).toBe(false);
+    expect(audit.reasons.some((reason) => /declares axis/.test(reason))).toBe(
+      false,
+    );
   });
 });
