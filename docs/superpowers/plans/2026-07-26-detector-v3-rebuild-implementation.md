@@ -5238,6 +5238,64 @@ IA, uma por família, e qualquer partição de duas linhas em dois grupos é uma
 linha. Ninguém pode ler intervalo agrupado de recall daquele corpus, e agora isso é
 expectativa declarada e não acidente.
 
+#### C4 — terceira rodada de correção (2026-07-29)
+
+Dois importants e três minors, todos factualmente corretos, nenhum refutado.
+
+**O defeito de R7 que a rodada anterior consertou no número, deixou no artefato.** A seção
+"Unidades de reamostragem" prometia em prosa que a linha dizia "se o intervalo publicado foi
+de fato reamostrado sobre ela ou se a unidade é declarada enquanto o limite vem do estimador
+analítico de Wilson", e imprimia `ResamplingPlanEntry.executed`, que responde outra pergunta:
+o desenho **rodou**. As duas respostas divergem no caso normal, não no exótico — medido no
+teste novo de `metrics.test.ts` sobre a fixture de 40 autores com zero falsos positivos:
+`warning.fpr` sai `executed: "percentile-bootstrap"`, com o par simultâneo do envelope em
+`upperFrom: "analytic"` e o limite reamostrado em `0`. Ou seja: **o número que o gate decide é
+o de Wilson, sob um desenho que rodou**, e o relatório afirmava o contrário na métrica
+primária. `boundEnvelope` não era impresso em lugar nenhum (`report.ts` e `commands/`: zero
+ocorrências), então o leitor do artefato não tinha como descobrir.
+
+Corrigido pelos dois lados que a revisão ofereceu, porque um só não fecha:
+
+- **Procedência virou fato registrado, por estimando, nunca derivado.**
+  `PublishedBoundProvenance` (em `benchmark/bootstrap.ts`) é união discriminada de quatro
+  casos, e cada produtor declara o seu: `envelope` (com a regra do contrato e os dois pares,
+  individual e simultâneo, cada um com `lowerFrom`/`upperFrom`), `resampled-only` (as cinco
+  contínuas — não existe limite analítico concorrendo pelo lugar de um Brier ou de uma AUROC),
+  `analytic-only` (o desenho não publicou limite; é o caso de `mixed.warning.recall`), e
+  `per-interval` para a entrada que representa **vários** intervalos. A alternativa era o
+  relatório inferir a procedência da ausência de envelope — inferência que estaria errada
+  justamente na linha por base, que tem envelope por base.
+- **A tabela deixou de ter uma coluna fazendo dois trabalhos.** "Intervalo publicado" virou
+  **"Desenho executado"** (`executed`) e **"Limite publicado"** (a procedência), e a prosa
+  passou a enunciar a distinção em vez de sugeri-la: a regra congelada publica o **mais largo**
+  entre os dois limites, e numa taxa de contagem zero o reamostrado é 0.
+- **A linha por base aponta para onde a procedência realmente mora, e agora ela mora lá.** A
+  entrada `*.fpr.labelBasis` cobre várias bases com um envelope cada; média de procedência
+  seria fato inventado. Então a tabela de bases de rótulo humano ganhou a coluna
+  **"Procedência do limite"**, lida do envelope de cada `falsePositiveRate`, e a entrada do
+  plano cita essa coluna pelo nome.
+
+**`ResamplingUnitKind` ficou importado sem uso em `benchmark/gates.ts`** quando o primeiro
+commit de C4 moveu o tipo para `bootstrap.ts`. Regressão desta tarefa, e `npm run lint` é
+passo de `npm run verify` que a verificação relatada nunca rodou. Removido; `npx eslint
+benchmark/gates.ts` sai 0. Fica **pré-existente e fora do escopo**:
+`benchmark/lab/build_governance.ts:14` (`dirname` sem uso, desde 81e5f3f), que mantém
+`npx eslint benchmark/` em 1.
+
+**Três minors.** (a) A checagem de método divergente dentro do envelope não tinha teste, e é
+**inalcançável pelo fluxo real** (`rateEnvelope` copia o método publicado para o par), isto é,
+existe só contra estimativa de outra origem — exatamente o tipo de checagem que morre sem
+teste. Escolhi manter e testar, não remover: o gate é a única coisa entre uma estimativa de
+outro produtor e um veredito. Vermelho deliberado com o ramo apagado: `expected 'pass' to be
+'reject'`. O docstring passou a nomear as três subchecagens do envelope e a dizer por que a do
+meio não é produzível aqui. (b) A mensagem do ramo "mais estreito" renderizava
+`[resampled, resampled]` — notação de intervalo preenchida com nome de estimador, e os quatro
+números do diagnóstico não apareciam. Agora imprime `[publicado] … [reamostrado]` e deixa a
+procedência fora dos colchetes. (c) O parágrafo de extensões começava com o literal "**Duas
+coberturas**" enquanto a lista vinha de `resampling.estimandExtensions`: contagem em prosa
+sobre lista do contrato. A contagem sai de `extensions.length`, com concordância de número, e
+o teste assevera a frase **contra o tamanho da lista lida do contrato** e conta os bullets.
+
 ### C5 — Recibos de revisão e PII reais
 
 **Depende de:** B1, C1.
