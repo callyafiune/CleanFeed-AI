@@ -778,6 +778,19 @@ describe("acceptance 8 — the CLI-level lifecycle on a temporary fixture", () =
     expect(next.previousEventDigest).toBe(events[0].eventDigest);
   });
 
+  it("reports an interrupted KEYRING write too, not only an interrupted ledger one", async () => {
+    // The transaction writes the keyring as well (it carries the attestation), and a
+    // staged copy of it is a full copy of `secrets.person` and every exposure key.
+    // A temp nobody reports is a temp nobody deletes, and the module's crash story
+    // leans on `verify` reporting interrupted writes.
+    await init();
+    const stray = `${paths().keyringPath}.4242.1.tmp`;
+    await writeFile(stray, "{}\n", "utf8");
+
+    const verified = await verifyClusterLedger(paths());
+    expect(verified.strayTempFiles).toEqual([stray]);
+  });
+
   it("detects a tampered chain and refuses every mutation", async () => {
     await init();
     await recordPilotExposure(
@@ -1357,6 +1370,13 @@ describe("the ledger reads as empty only when it is provably new", () => {
       "CLUSTER_LEDGER_HISTORY_DIVERGED",
       reofferTheTailCluster(),
     );
+
+    // And the diagnosis names THIS divergence: at equal heights the ledger holds no
+    // surplus event, so the message about a stale pair of files would misdirect.
+    const failure = (await verifyClusterLedger(paths()).catch(
+      (caught: unknown) => caught,
+    )) as ClusterLedgerError;
+    expect(failure.message).toContain("at the attested HEIGHT");
   });
 
   it("hands the burned cluster back once the rewritten tail is itself attested", async () => {
@@ -1482,6 +1502,9 @@ describe("the ledger reads as empty only when it is provably new", () => {
       { eventCount: 1.5, lastEventDigest: "a".repeat(64), updatedAt: "x" },
       { eventCount: 1, lastEventDigest: "not-a-digest", updatedAt: "x" },
       { eventCount: 1, lastEventDigest: "a".repeat(64) },
+      // Stringifies to 64 hex characters, so a check that coerced instead of
+      // testing the type would accept it and then blame the LEDGER for diverging.
+      { eventCount: 1, lastEventDigest: ["a".repeat(64)], updatedAt: "x" },
     ]) {
       await writeFile(
         paths().keyringPath,
@@ -1569,6 +1592,43 @@ describe("the state a mutation commits stays restorable", () => {
     expect(commit.restorePoint.directory).toContain(
       commit.restorePoint.ledgerSha256.slice(0, 8),
     );
+  });
+
+  it("says the exposure IS recorded when the post-commit backup cannot be written", async () => {
+    // The event is already published by then, so a raw filesystem error would let
+    // the operator conclude the split was never frozen — and re-running the command
+    // would be refused, because the clusters are now exposed.
+    await init();
+    const exposure = request({
+      records: [record({ id: "t1", partition: "test" })],
+    });
+    // The event is a pure function of the request, the keyring and the history, so
+    // preflight yields the exact line the commit will publish — and therefore the
+    // exact backup directory name, which carries the ledger digest.
+    const { event } = await preflightExposure(paths(), exposure);
+    const willPublish = `${JSON.stringify(event)}\n`;
+    const digest = sha256BytesHex(new TextEncoder().encode(willPublish));
+    await mkdir(paths().backupRoot, { recursive: true });
+    // A FILE where the post-commit backup's directory must go. The pre-mutation
+    // backup carries a different ledger digest, so it still succeeds.
+    await writeFile(
+      join(
+        paths().backupRoot,
+        `2026-07-28T10-00-00.000Z-${digest.slice(0, 8)}`,
+      ),
+      "",
+      "utf8",
+    );
+
+    await expect(commitSplitFreeze(paths(), exposure)).rejects.toMatchObject({
+      code: "CLUSTER_LEDGER_COMMITTED_UNBACKED",
+    });
+
+    // The claim in that message has to be true: the event is on disk and attested.
+    expect(await readFile(paths().ledgerPath, "utf8")).toBe(willPublish);
+    const verified = await verifyClusterLedger(paths());
+    expect(verified.eventCount).toBe(1);
+    expect(verified.attestedEventCount).toBe(1);
   });
 });
 

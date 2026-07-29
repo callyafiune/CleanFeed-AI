@@ -824,7 +824,10 @@ function parseWitness(
   path: string,
 ): ClusterLedgerWitness | undefined {
   if (value === undefined || value === null) return undefined;
-  const invalid = (why: string): never =>
+  // Annotated, so TypeScript knows the calls below do not return and narrows each
+  // field after its check. Written as an untyped arrow it would not, and the
+  // function would have to end in casts over values it has already validated.
+  const invalid: (why: string) => never = (why) =>
     fail(
       "CLUSTER_LEDGER_KEYRING_INVALID",
       `the keyring at ${path} declares a ledgerWitness that ${why}. It attests the ` +
@@ -841,25 +844,30 @@ function parseWitness(
   ) {
     invalid("carries no non-negative integer eventCount");
   }
-  if (typeof object.updatedAt !== "string" || object.updatedAt === "") {
+  const updatedAt = object.updatedAt;
+  if (typeof updatedAt !== "string" || updatedAt === "") {
     invalid("carries no updatedAt");
   }
   const lastEventDigest = object.lastEventDigest;
-  if (lastEventDigest !== null && !SHA256_HEX.test(String(lastEventDigest))) {
+  // The TYPE is tested, not a coercion of it: `String(["<64 hex>"])` is 64 hex
+  // characters, and a witness read permissively is exactly what this function
+  // exists to refuse. It would still fail closed downstream — an array never
+  // equals the ledger's digest — but the diagnostic would blame the ledger for a
+  // malformed attestation.
+  if (
+    lastEventDigest !== null &&
+    (typeof lastEventDigest !== "string" || !SHA256_HEX.test(lastEventDigest))
+  ) {
     invalid("carries a lastEventDigest that is not a SHA-256 digest or null");
   }
   // The two fields state one fact between them, so a pair that contradicts itself
   // proves the attestation was written by hand.
-  if (((eventCount as number) === 0) !== (lastEventDigest === null)) {
+  if ((eventCount === 0) !== (lastEventDigest === null)) {
     invalid(
       "states a height of zero with a tail digest, or a height above zero without one",
     );
   }
-  return {
-    eventCount: eventCount as number,
-    lastEventDigest: lastEventDigest as string | null,
-    updatedAt: object.updatedAt as string,
-  };
+  return { eventCount, lastEventDigest, updatedAt };
 }
 
 async function readKeyringFile(
@@ -1107,18 +1115,32 @@ async function writeTemp(target: string, content: string): Promise<string> {
   await mkdir(dirname(target), { recursive: true });
   const tempPath = tempPathFor(target);
   const handle = await open(tempPath, "w");
+  let staged = false;
   try {
     await handle.writeFile(content, "utf8");
     await handle.sync();
+    staged = true;
   } finally {
     await handle.close();
+    // Nothing else can collect it: the path is generated here, so a caller that
+    // never received it cannot clean up after this.
+    if (!staged) await rm(tempPath, { force: true });
   }
   return tempPath;
 }
 
 async function atomicWrite(target: string, content: string): Promise<void> {
   const tempPath = await writeTemp(target, content);
-  await rename(tempPath, target);
+  try {
+    await rename(tempPath, target);
+  } catch (error) {
+    // A publish that failed must not leave the staged bytes on disk. For the
+    // keyring those bytes are a full copy of `secrets.person` and every exposure
+    // key, and the only caller that used to clean up after itself was the ledger's
+    // own staging in `appendEvent`.
+    await rm(tempPath, { force: true });
+    throw error;
+  }
 }
 
 /**
@@ -1316,20 +1338,33 @@ export async function rotateClusterExposureKey(
 
 // --- verification -----------------------------------------------------------
 
-async function strayTempFiles(ledgerPath: string): Promise<string[]> {
-  const directory = dirname(ledgerPath);
-  const prefix = `${basename(ledgerPath)}.`;
-  let entries: string[];
-  try {
-    entries = await readdir(directory);
-  } catch (error) {
-    if ((error as NodeJS.ErrnoException).code === "ENOENT") return [];
-    throw error;
+/**
+ * Staged writes a dead run left behind, for BOTH files a transaction touches.
+ *
+ * The keyring is included because the transaction writes it too, and its staged
+ * copy is a full copy of `secrets.person` and every exposure key. A temp nobody
+ * reports is a temp nobody deletes, and the module's crash story leans on `verify`
+ * reporting interrupted writes.
+ */
+async function strayTempFiles(paths: ClusterLedgerPaths): Promise<string[]> {
+  const found = new Set<string>();
+  for (const target of [paths.ledgerPath, paths.keyringPath]) {
+    const directory = dirname(target);
+    const prefix = `${basename(target)}.`;
+    let entries: string[];
+    try {
+      entries = await readdir(directory);
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code === "ENOENT") continue;
+      throw error;
+    }
+    for (const entry of entries) {
+      if (entry.startsWith(prefix) && entry.endsWith(".tmp")) {
+        found.add(join(directory, entry));
+      }
+    }
   }
-  return entries
-    .filter((entry) => entry.startsWith(prefix) && entry.endsWith(".tmp"))
-    .sort()
-    .map((entry) => join(directory, entry));
+  return [...found].sort();
 }
 
 /**
@@ -1360,7 +1395,7 @@ async function strayTempFiles(ledgerPath: string): Promise<string[]> {
 async function assertLedgerConsistent(
   paths: ClusterLedgerPaths,
   keyring: ClusterExposureKeyring,
-): Promise<ClusterExposureEvent[]> {
+): Promise<AttestedLedger> {
   const { events, present: onDisk } = await readAttestedLedgerText(paths);
   const present = new Set(keyring.keys.map((key) => key.keyVersion));
   const referenced = new Set<string>();
@@ -1379,8 +1414,24 @@ async function assertLedgerConsistent(
   // Key coverage is checked FIRST on purpose: a keyring that dropped a key it once
   // held has also dropped the witness, and "you removed a key" is the diagnostic
   // that names what the operator actually did.
-  assertAttestedHistory(paths, keyring, onDisk, events);
-  return events;
+  return {
+    events,
+    witness: assertAttestedHistory(paths, keyring, onDisk, events),
+  };
+}
+
+/**
+ * A ledger that agreed with its attestation, and the attestation it agreed with.
+ *
+ * The witness is returned rather than re-read from the keyring because on
+ * `ClusterExposureKeyring` it is OPTIONAL — a keyring predating the attestation
+ * parses without one, and every decision path refuses that. Handing the validated
+ * value back is what keeps the invariant inside the types instead of inviting each
+ * caller to cast an optional field it "knows" is present.
+ */
+interface AttestedLedger {
+  events: ClusterExposureEvent[];
+  witness: ClusterLedgerWitness;
 }
 
 /** Reads the file once, so the attested check and the parse see the same bytes. */
@@ -1413,7 +1464,7 @@ function assertAttestedHistory(
   keyring: ClusterExposureKeyring,
   ledgerPresent: boolean,
   events: readonly ClusterExposureEvent[],
-): void {
+): ClusterLedgerWitness {
   const witness = keyring.ledgerWitness;
   if (witness === undefined) {
     fail(
@@ -1427,7 +1478,7 @@ function assertAttestedHistory(
     );
   }
   if (!ledgerPresent) {
-    if (witness.eventCount === 0) return;
+    if (witness.eventCount === 0) return witness;
     fail(
       "CLUSTER_LEDGER_HISTORY_ABSENT",
       `there is no ledger at ${paths.ledgerPath}, and the keyring at ` +
@@ -1450,16 +1501,35 @@ function assertAttestedHistory(
         `${lastEventDigest ?? "(empty)"}, and the keyring at ${paths.keyringPath} ` +
         `attests ${witness.eventCount} ending at ` +
         `${witness.lastEventDigest ?? "(empty)"}. ` +
-        (events.length < witness.eventCount
-          ? "The ledger lost events: a truncation, a deleted last line or a stale " +
-            "copy. The hash chain cannot see a removal from the TAIL, which is where " +
-            "the newest exposures are, so this is the only check that catches it. " +
-            'Restore the ledger with "cluster-ledger restore"'
-          : "The ledger holds events the keyring never attested, so one of the two " +
-            "files is stale and this cannot tell which. Restore the matching pair " +
-            'with "cluster-ledger restore"'),
+        divergenceDiagnosis(events.length, witness.eventCount),
     );
   }
+  return witness;
+}
+
+/** Names which of the three shapes of divergence this is, and what to do. */
+function divergenceDiagnosis(onDisk: number, attested: number): string {
+  if (onDisk < attested) {
+    return (
+      "The ledger lost events: a truncation, a deleted last line or a stale " +
+      "copy. The hash chain cannot see a removal from the TAIL, which is where " +
+      "the newest exposures are, so this is the only check that catches it. " +
+      'Restore the ledger with "cluster-ledger restore"'
+    );
+  }
+  if (onDisk > attested) {
+    return (
+      "The ledger holds events the keyring never attested, so one of the two " +
+      "files is stale and this cannot tell which. Restore the matching pair " +
+      'with "cluster-ledger restore"'
+    );
+  }
+  return (
+    "The ledger is at the attested HEIGHT and its last event is not the attested " +
+    "one: the tail was rewritten in place, or this is a fork of the same history " +
+    "from another run. The hash chain cannot see either, because a rewritten tail " +
+    'closes its own chain. Restore the matching pair with "cluster-ledger restore"'
+  );
 }
 
 function witnessFor(
@@ -1491,7 +1561,7 @@ export async function verifyClusterLedger(
       `no cluster-exposure ledger at ${paths.ledgerPath}`,
     );
   }
-  const events = await assertLedgerConsistent(paths, keyring);
+  const { events, witness } = await assertLedgerConsistent(paths, keyring);
   const referenced = new Set<string>();
   for (const event of events) {
     for (const version of event.keyVersions) referenced.add(version);
@@ -1499,14 +1569,11 @@ export async function verifyClusterLedger(
   return {
     ledgerPath: paths.ledgerPath,
     eventCount: events.length,
-    // `assertLedgerConsistent` has already refused every state where the two differ,
-    // and refuses a keyring that attests nothing at all.
-    attestedEventCount: (keyring.ledgerWitness as ClusterLedgerWitness)
-      .eventCount,
+    attestedEventCount: witness.eventCount,
     keyVersions: keyring.keys.map((key) => key.keyVersion),
     referencedKeyVersions: [...referenced].sort(),
     lastEventDigest: events.at(-1)?.eventDigest ?? null,
-    strayTempFiles: await strayTempFiles(paths.ledgerPath),
+    strayTempFiles: await strayTempFiles(paths),
   };
 }
 
@@ -1791,7 +1858,7 @@ async function decide(
   keyringRaw: string;
 }> {
   const { keyring, raw } = await requireKeyringFile(paths.keyringPath);
-  const events = await assertLedgerConsistent(paths, keyring);
+  const { events } = await assertLedgerConsistent(paths, keyring);
   const event = buildEvent(keyring, events, request);
   const refusals = collectRefusals(
     buildIndex(events),
@@ -2066,13 +2133,20 @@ async function appendEvent(
       // attested out of band it would be one more thing that can diverge, and the
       // whole point of it is to be the thing that cannot.
       //
-      // ORDER. It is attested BEFORE the ledger is published, so the only residue a
-      // crash between the two writes can leave is "attested N+1, ledger at N" — the
-      // direction that REFUSES. The reverse order would leave a ledger holding an
-      // exposure nothing attests, and the repair for that is a hand-edit of the file
-      // that also holds the un-rotatable person secret. Here the repair is renaming
-      // the staged file, whose bytes are already fsynced and which `verify` reports
-      // as an interrupted write.
+      // ORDER. It is attested BEFORE the ledger is published, which PREFERS the
+      // residue "attested N+1, ledger at N": the direction whose repair does not
+      // touch the file holding the un-rotatable person secret — rename the staged
+      // ledger, whose bytes are already fsynced and which `verify` reports as an
+      // interrupted write, then take a `backup`.
+      //
+      // It does not make that the only possible residue, and the header says why:
+      // this platform exposes no directory fsync, so a power loss can lose either
+      // rename's directory entry independently of the other. "Attested N, ledger at
+      // N+1" is therefore equally possible. Both are refused — the first as a lost
+      // history, the second as surplus events — and only the first has a repair, so
+      // the order buys the repairable side of an unavoidable window, not the absence
+      // of the window. The CLI action set is frozen, so neither repair is a
+      // subcommand.
       await atomicWrite(
         paths.keyringPath,
         reattestKeyringText(keyringRaw, witnessFor(event, lines.length)),

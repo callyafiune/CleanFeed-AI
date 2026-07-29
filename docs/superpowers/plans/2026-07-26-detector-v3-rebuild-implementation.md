@@ -4712,6 +4712,34 @@ execução foi além (ou ficou aquém) do que o texto acima diz.
     nomeado, e reparado à mão. O cabeçalho do módulo foi corrigido: ele afirmava que o resíduo de
     queda estava "coberto pelo backup autenticado tirado ANTES do rename", o que deixou de ser
     verdade — o keyring em disco diverge do keyring do backup.
+29. **Quatro correções menores do item 23, três delas de honestidade (R7).**
+    (a) O comentário de ORDEM em `appendEvent` afirmava que "o único resíduo que uma queda entre
+    as duas escritas pode deixar é atestado N+1, ledger em N — a direção que RECUSA". O cabeçalho
+    do próprio módulo diz que o Windows não expõe fsync de diretório e que uma queda logo após um
+    rename pode perder a atualização da entrada de diretório; nenhum dos dois renames tem
+    barreira, logo o resíduo inverso ("atestado N, ledger N+1") é igualmente possível. Nada falha
+    aberto — o inverso cai no ramo de eventos excedentes de `CLUSTER_LEDGER_HISTORY_DIVERGED` —
+    mas a garantia estava mais forte do que o filesystem dá, no módulo que argumenta R7.
+    Reescrito: a ordem **prefere** o resíduo reparável, os dois são recusados, e só o primeiro tem
+    reparo (renomear o `.tmp`), que não é subcomando porque o conjunto de ações é congelado.
+    (b) A mensagem de `HISTORY_DIVERGED` tinha só dois ramos (`<` e o resto), então o caso de
+    **altura igual e cauda diferente** — precisamente o do item 27 — recebia o texto "o ledger
+    tem eventos que o keyring nunca atestou", que é falso ali. Terceiro ramo escrito, com teste
+    que exige a frase.
+    (c) `parseWitness` validava a cauda por coerção (`SHA256_HEX.test(String(x))`), então
+    `"lastEventDigest": ["<64 hex>"]` passava e era **castado** a `string`; falhava fechado a
+    jusante, mas o diagnóstico culpava o LEDGER por um atestado malformado. Agora testa o tipo, e
+    o caso entrou na lista de testemunhas inválidas (medido vermelho: aceitava e devolvia
+    `HISTORY_DIVERGED`). O helper `invalid` ganhou anotação `(why: string) => never`, o que faz o
+    TypeScript estreitar cada campo depois da sua checagem e elimina os três casts do fim da
+    função; e `assertLedgerConsistent` passou a devolver a testemunha que validou, então
+    `verifyClusterLedger` não castra mais `keyring.ledgerWitness`.
+    (d) `strayTempFiles` filtrava só pelo nome do ledger, e a transação agora escreve o keyring
+    também: um `cluster-exposure-keyring.v1.json.<pid>.<n>.tmp` — cópia integral de
+    `secrets.person` e de toda chave de exposição — não era limpo nem reportado, e `verify` ainda
+    dizia "0 interrupted write(s)". Agora varre os dois nomes, e `atomicWrite`/`writeTemp` apagam
+    o próprio temporário quando a publicação falha. Medido vermelho: `expected [] to deeply equal
+    [Array(1)]`.
 
 ### C4 — Bootstrap com unidade de reamostragem por estimando
 
