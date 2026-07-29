@@ -542,7 +542,12 @@ function record(
     // The middle level of the ai-recall row of the frozen resampling table: the
     // recall interval of a positive is drawn over generator ⊃ prompt template ⊃
     // batch, and an absent axis is `unknown`, which is not a resampling unit.
-    base.groups.promptTemplate = `pt_${id}`;
+    // Derived from the RECIPE and never from the record-line: a template id per row
+    // makes that middle level one unit per row by construction, which is the
+    // degeneration C4 exists to remove arriving through a fixture. It adds no split
+    // connectivity either — `domainSource` and `collectionBatch` above are already
+    // shared by every row of this corpus.
+    base.groups.promptTemplate = `pt_${normalizeGeneratorFamily(family)}`;
   }
   if (label === "mixed") {
     base.mixture = {
@@ -1007,6 +1012,39 @@ describe("benchmark CLI holdout consumption via evaluate", () => {
     );
     expect(report.reportDigest).toMatch(/^[0-9a-f]{64}$/u);
     expect(report.holdoutConsumptionId).toBe(session.consumptionId);
+    // The ai-recall design of the frozen table, as MEASURED over this corpus. Two
+    // things are stated rather than left for a reader to infer, because a clustered
+    // interval that is secretly an i.i.d. one is the defect C4 exists to remove:
+    //
+    //   * no level is a per-row id. The prompt template comes from the recipe, so
+    //     the middle level is as coarse as the generator family it belongs to and
+    //     not one unit per record-line;
+    //   * and the unit is nevertheless DEGENERATE here, for a reason that is the
+    //     population and not the fixture's ids: this scenario evaluates exactly two
+    //     AI positives, one per generator family, and any grouping of two rows into
+    //     two groups is one unit per row. Nobody may read a clustered recall
+    //     interval off this corpus, and the assertion says so instead of the number
+    //     looking valid.
+    const recall = report.metrics.resampling.entries.find(
+      (entry: { estimand: string }) => entry.estimand === "warning.recall",
+    );
+    expect(recall.unitAxes).toEqual([
+      "groups.generatorFamily",
+      "groups.promptTemplate",
+      "groups.collectionBatch",
+    ]);
+    expect(recall.measured.items).toBe(2);
+    expect(
+      recall.measured.levels.map(
+        (level: { axis: string; levels: number }) =>
+          `${level.axis}=${level.levels}`,
+      ),
+    ).toEqual([
+      "groups.generatorFamily=2",
+      "groups.promptTemplate=2",
+      "groups.collectionBatch=2",
+    ]);
+    expect(recall.measured.degenerate).toBe(true);
     await expect(stat(scenario.activeSessionPath)).rejects.toThrow();
 
     // The tuple is consumed once; neither begin nor resume reopens it.

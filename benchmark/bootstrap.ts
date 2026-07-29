@@ -649,6 +649,11 @@ export function clusteredPercentileBootstrapAll(
   // the only per-replicate allocation in the estimator, and at 100.000 replicates
   // it is the difference between reusing a buffer and churning one.
   const weights = new Array<number>(resolution.clusterCount).fill(0);
+  // The draw tree, compiled once for the whole stream. See `compileNode`.
+  const compiledRoot =
+    resolution.draw.kind === "hierarchical"
+      ? compileNode(resolution.draw.root)
+      : null;
   const factorCounts =
     resolution.draw.kind === "multiway"
       ? resolution.draw.factorLevelCounts.map((levels) =>
@@ -668,10 +673,15 @@ export function clusteredPercentileBootstrapAll(
 
   for (let iteration = 0; iteration < iterations; iteration += 1) {
     weights.fill(0);
-    if (resolution.draw.kind === "hierarchical") {
-      drawChildren(resolution.draw.root, weights, nextUnit);
+    if (compiledRoot !== null) {
+      drawChildren(compiledRoot, weights, nextUnit);
     } else {
-      drawMultiway(resolution.draw, weights, factorCounts, nextUnit);
+      drawMultiway(
+        resolution.draw as Extract<DrawStructure, { kind: "multiway" }>,
+        weights,
+        factorCounts,
+        nextUnit,
+      );
     }
     for (let which = 0; which < statistics.length; which += 1) {
       const value = statistics[which](weights);
@@ -729,15 +739,65 @@ export function clusteredPercentileBootstrapAll(
   });
 }
 
+/**
+ * `DrawNode` with the innermost level flattened, compiled once per stream.
+ *
+ * The tree is walked once per replicate, so the walk is the hottest loop in the
+ * estimator and almost all of it happens at the innermost level: a two-level
+ * design over one source and n authors visits n + 1 nodes per replicate, n of
+ * them leaves. `leafClusters` holds the cluster ids of a node whose children are
+ * ALL leaves, so that level is drawn in an array loop instead of n recursive
+ * calls into a body that only increments a weight.
+ *
+ * It is a representation change and not an estimator change: `nextUnit` is called
+ * in exactly the same order and the same number of times, so every interval is
+ * bit-identical to the one the un-flattened walk produced with the same seed.
+ * `children` is null on a flattened node, which is why the fast path is tested
+ * FIRST — a true leaf has both fields null.
+ */
+interface CompiledNode {
+  readonly children: readonly CompiledNode[] | null;
+  readonly leafClusters: Int32Array | null;
+  readonly cluster: number;
+}
+
+function compileNode(node: DrawNode): CompiledNode {
+  const children = node.children;
+  if (children === null) {
+    return { children: null, leafClusters: null, cluster: node.cluster };
+  }
+  if (children.every((child) => child.children === null)) {
+    const leafClusters = new Int32Array(children.length);
+    for (let index = 0; index < children.length; index += 1) {
+      leafClusters[index] = children[index].cluster;
+    }
+    return { children: null, leafClusters, cluster: node.cluster };
+  }
+  return {
+    children: children.map(compileNode),
+    leafClusters: null,
+    cluster: node.cluster,
+  };
+}
+
 // Draws this node's children with replacement, once per child, and recurses into
 // EACH DRAWN OCCURRENCE. A node drawn twice therefore gets two independent
 // resamples of its own children — the property that separates a hierarchical
 // bootstrap from a flattened one.
 function drawChildren(
-  node: DrawNode,
+  node: CompiledNode,
   weights: number[],
   nextUnit: () => number,
 ): void {
+  const leafClusters = node.leafClusters;
+  if (leafClusters !== null) {
+    const count = leafClusters.length;
+    for (let draw = 0; draw < count; draw += 1) {
+      const index = Math.min(count - 1, Math.floor(nextUnit() * count));
+      weights[leafClusters[index]] += 1;
+    }
+    return;
+  }
   const children = node.children;
   if (children === null) {
     weights[node.cluster] += 1;

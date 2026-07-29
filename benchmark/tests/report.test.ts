@@ -1018,6 +1018,15 @@ describe("renderReportMarkdown publishes the A6 evidence with its roles named", 
     // The section says which estimands the plan covers, and that the rest declare
     // no unit at all — the claim `MetricEstimate.method` backs per number.
     expect(units).toMatch(/não têm unidade declarada em nenhum lugar/u);
+    // And it names the two coverages that are a STRETCHED row rather than a row of
+    // their own, so "o plano cobre estes estimandos" cannot be read as "a linha da
+    // tabela nomeia estes estimandos".
+    expect(units).toMatch(/extensão declarada, não linha própria/u);
+    expect(units).toMatch(
+      /`separability\.auroc` herda a linha "calibração \(ECE, Brier\)"/u,
+    );
+    expect(units).toMatch(/`separability\.prAuc` herda a linha/u);
+    expect(units).toMatch(/separability\.gates = false/u);
     // A row this plan does not measure says WHERE it is measured.
     const sliceRow = units
       .split("\n")

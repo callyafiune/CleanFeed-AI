@@ -46,6 +46,7 @@ import {
   computePredictionManifestDigest,
   type PredictionManifestV1,
 } from "./prediction-schema.ts";
+import { REBUILD_V3_POLICY } from "./rebuild-v3-policy.ts";
 import type { SliceSummary } from "./slices.ts";
 import type { SplitAudit } from "./split-audit.ts";
 
@@ -933,6 +934,30 @@ function resamplingUnitLabel(
   return `${unit.method}: ${axes}${suffix}${degenerate}`;
 }
 
+// The rows the plan STRETCHES, printed inside the coverage paragraph rather than
+// beside the table: a reader who takes "o plano cobre estes estimandos" literally
+// would otherwise count a stretched row as a row that names the estimand. Read from
+// the frozen contract, so the list cannot drift from the file that decides it.
+function resamplingExtensionLines(): string[] {
+  const extensions = Object.entries(
+    REBUILD_V3_POLICY.resampling.estimandExtensions,
+  );
+  if (extensions.length === 0) return [];
+  const lines = [
+    "**Duas coberturas são extensão declarada, não linha própria.** A linha da " +
+      "tabela congelada não nomeia estes estimandos; eles herdam a unidade dela e " +
+      "isso está dito aqui em vez de ficar implícito no mapeamento:",
+    "",
+  ];
+  for (const [estimand, extension] of extensions) {
+    lines.push(
+      `- \`${estimand}\` herda a linha "${extension.standsInFor}" — ${extension.reason}`,
+    );
+  }
+  lines.push("");
+  return lines;
+}
+
 function resamplingSection(plan: ResamplingPlan | undefined): string[] {
   const lines = ["## Unidades de reamostragem", ""];
   if (plan === undefined) {
@@ -967,6 +992,7 @@ function resamplingSection(plan: ResamplingPlan | undefined): string[] {
       "`MetricEstimate.method` diz qual estimador produziu cada número.",
   );
   lines.push("");
+  lines.push(...resamplingExtensionLines());
   lines.push(
     "| Estimando | Método | Unidade declarada | Réplicas | Intervalo publicado | Unidades medidas | Níveis por fator | Rebaixamento |",
   );

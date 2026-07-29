@@ -259,6 +259,16 @@
         "unitKind": "multiway"
       }
     },
+    "estimandExtensions": {
+      "separability.auroc": {
+        "reason": "AUROC não é estatística de calibração e nenhuma linha da tabela congelada a nomeia; ela é reamostrada sobre a mesma população binária e o mesmo estrato que ECE e Brier, logo herda a unidade da linha 4 como extensão declarada. Não tem gate (separability.gates = false), então a extensão não afrouxa limite algum",
+        "standsInFor": "calibração (ECE, Brier)"
+      },
+      "separability.prAuc": {
+        "reason": "PR-AUC não é estatística de calibração e nenhuma linha da tabela congelada a nomeia; ela é reamostrada sobre a mesma população binária e o mesmo estrato que ECE e Brier, logo herda a unidade da linha 4 como extensão declarada. Não tem gate (separability.gates = false), então a extensão não afrouxa limite algum",
+        "standsInFor": "calibração (ECE, Brier)"
+      }
+    },
     "estimands": {
       "action.clearanceRate": "human-specificity",
       "action.fpr": "human-specificity",
@@ -278,6 +288,7 @@
       "warning.recall": "ai-recall"
     },
     "fallbackToIndependentRows": false,
+    "publishedBound": "wider-of-analytic-and-resampled",
     "required": true
   },
   "rollout": {

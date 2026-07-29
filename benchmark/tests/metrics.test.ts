@@ -665,16 +665,50 @@ describe("computeEvaluationMetrics", () => {
     const fpr = computeEvaluationMetrics(SEPARABLE, OPTIONS).warning.endToEnd
       .falsePositiveRate;
     expect(fpr.value).toBe(0);
-    expect(fpr.boundEnvelope?.rule).toBe("wider-of-analytic-and-resampled");
+    // The rule is READ from the frozen contract, not written down in the estimator.
+    expect(fpr.boundEnvelope?.rule).toBe(
+      REBUILD_V3_POLICY.resampling.publishedBound,
+    );
     expect(fpr.boundEnvelope?.resampled.upper).toBe(0);
     expect(fpr.boundEnvelope?.analytic.upper).toBeGreaterThan(0);
     expect(fpr.upper95).toBe(fpr.boundEnvelope?.analytic.upper);
+    expect(fpr.boundEnvelope?.upperFrom).toBe("analytic");
+    // Both limits are 0 on the lower side, and a tie is credited to the design that
+    // ran rather than to the estimator that happens to agree with it.
+    expect(fpr.boundEnvelope?.lowerFrom).toBe("resampled");
     // And the design is still named: the unit was resampled, its bound just lost
     // the comparison.
     expect(fpr.resampling?.axes).toEqual([
       "groups.domainSource",
       "groups.author",
     ]);
+  });
+
+  it("names the estimator behind the SIMULTANEOUS limit, which is the one a gate decides on", () => {
+    // The 95% pair already said which estimator won. The simultaneous bound is the
+    // only one a release gate reads, it keeps the percentile method name, and on a
+    // zero-count rate its published limit is the analytic one — so the envelope has
+    // to carry that pair too or the name would be the only thing a reader gets.
+    const fpr = computeEvaluationMetrics(SEPARABLE, {
+      ...OPTIONS,
+      preRegisteredStatisticalGates: 8,
+    }).warning.endToEnd.falsePositiveRate;
+    const simultaneous = fpr.simultaneous;
+    const envelope = fpr.boundEnvelope?.simultaneous;
+    expect(simultaneous?.method).toBe("hierarchical-cluster-percentile");
+    expect(envelope).not.toBeUndefined();
+    expect(envelope?.resampled.method).toBe("hierarchical-cluster-percentile");
+    expect(envelope?.analytic.method).toBe("wilson-one-sided");
+    // Zero false positives: every replicate is 0, so the resampled bound at the
+    // Bonferroni alpha is 0 too and the analytic one decides.
+    expect(envelope?.resampled.upper).toBe(0);
+    expect(envelope?.analytic.upper).toBeGreaterThan(0);
+    expect(envelope?.upperFrom).toBe("analytic");
+    expect(simultaneous?.upper).toBe(envelope?.analytic.upper);
+    // Wider than the individual pair, because the alpha is.
+    expect(simultaneous?.upper).toBeGreaterThan(
+      fpr.boundEnvelope?.analytic.upper as number,
+    );
   });
 
   it("takes the resampled bound when intra-cluster correlation makes it the wider one", () => {

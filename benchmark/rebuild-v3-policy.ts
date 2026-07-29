@@ -108,6 +108,51 @@ export interface ResamplingClassRow {
   readonly unitKind: ResamplingUnitKind;
 }
 
+/**
+ * How the published bound of a rate is chosen when both estimators produced one.
+ *
+ * `wider-of-analytic-and-resampled` — the published limit is the outer of the
+ * analytic Wilson bound and the percentile bound over the declared unit, on each
+ * side. The two fail in opposite directions and neither dominates: the analytic
+ * bound counts correlated record-lines as independent and is too narrow on a
+ * corpus with shared authors, pages, prompts and generators; the percentile bound
+ * sees that dependence but collapses to ZERO WIDTH whenever the statistic is
+ * constant across replicates, which is exactly a rate with no events at all. A
+ * zero-width interval claims certainty from a finite sample and is NARROWER than
+ * the analytic bound, so publishing it would make a gate easier to pass with less
+ * evidence (R3). The outer of the two can only move a limit away from the budget,
+ * so it never buys a pass, and it is never narrower than the resampled bound, so
+ * the dependence the design captures is always honoured. What it is NOT is an
+ * exact-coverage interval: it is conservative by construction.
+ *
+ * This is a FROZEN VALUE, not a knob. It shapes release verdicts, so it lives in
+ * `rebuild-v3-policy.json` beside `fallbackToIndependentRows` and is parsed as a
+ * literal: replacing it takes an edit to the frozen file AND to the parser, with
+ * the measured justification R3 demands.
+ */
+export type PublishedBoundRule = "wider-of-analytic-and-resampled";
+
+/**
+ * An estimand that inherits a row's unit WITHOUT the row naming it.
+ *
+ * The frozen table names four rows by what they estimate, and most published
+ * estimands fall inside one. A few do not, and there are two honest answers for
+ * those: publish no unit at all (which is what coverage, abstention, the error
+ * rates and precision do), or say out loud that the row is being stretched. This
+ * is the second, and it exists so that a reader of `resampling.estimands` cannot
+ * mistake a stretched row for a row that covers the estimand.
+ *
+ * Both fields are required together, and the key must also appear in
+ * `resampling.estimands`: an extension of a mapping that does not exist is a typo,
+ * not a declaration.
+ */
+export interface ResamplingEstimandExtension {
+  /** The row's OWN subject, verbatim from the frozen table. */
+  readonly standsInFor: string;
+  /** Why the row is stretched, and what the stretch does and does not buy. */
+  readonly reason: string;
+}
+
 export type LabelBasisValue = "date-cutoff" | "observed-process";
 /**
  * HOW the human/AI mixture of a `mixed` record came about, and therefore which
@@ -351,9 +396,19 @@ export interface RebuildV3Policy {
     readonly estimandClasses: {
       readonly [C in ResamplingEstimandClass]: ResamplingClassRow;
     };
+    // The estimands of `estimands` whose row does NOT name them, and why the row
+    // is being stretched. Empty for every estimand the table covers on its own.
+    readonly estimandExtensions: Readonly<
+      Record<string, ResamplingEstimandExtension>
+    >;
     // Published estimand name -> the class whose unit it inherits.
     readonly estimands: Readonly<Record<string, ResamplingEstimandClass>>;
     readonly fallbackToIndependentRows: false;
+    // WHICH ESTIMATOR'S LIMIT A RELEASE GATE READS, when a rate of the frozen
+    // table has both an analytic and a resampled bound. It lives here and not in
+    // the estimator because it shapes a release verdict, so changing it is a
+    // change to the contract and not to a helper.
+    readonly publishedBound: PublishedBoundRule;
     readonly required: true;
   };
   readonly rollout: {
@@ -873,6 +928,7 @@ const RESAMPLING_LEVEL_KEYS = [
   "proxyReason",
 ] as const;
 const RESAMPLING_CLASS_KEYS = ["levels", "unitKind"] as const;
+const RESAMPLING_EXTENSION_KEYS = ["reason", "standsInFor"] as const;
 // A resampling axis names a grouping axis of the record schema. The prefix is
 // required so a level can never be confused with a synthetic per-row key, which
 // is the one thing R6 forbids outright.
@@ -1002,6 +1058,52 @@ function resamplingEstimands(
   return Object.freeze(mapped);
 }
 
+// The declared stretches of a row, cross-checked against the mapping they stretch.
+// Both fields are mandatory together, and an extension of an estimand that has no
+// row at all is refused: it would read as a covered estimand while nothing maps it.
+function resamplingEstimandExtensions(
+  value: unknown,
+  estimands: Readonly<Record<string, ResamplingEstimandClass>>,
+): Readonly<Record<string, ResamplingEstimandExtension>> {
+  if (typeof value !== "object" || value === null || Array.isArray(value)) {
+    throw new RebuildV3PolicyError(
+      "resampling.estimandExtensions",
+      "must be an object mapping estimand names to a declared extension " +
+        "(empty when the frozen table covers every estimand on its own)",
+    );
+  }
+  const block = value as Record<string, unknown>;
+  const mapped: Record<string, ResamplingEstimandExtension> = {};
+  for (const estimand of Object.keys(block)) {
+    const path = `resampling.estimandExtensions.${estimand}`;
+    if (!Object.hasOwn(estimands, estimand)) {
+      throw new RebuildV3PolicyError(
+        path,
+        "declares an extension for an estimand that resampling.estimands does " +
+          "not map to any row of the frozen table",
+      );
+    }
+    const row = object(block[estimand], path, RESAMPLING_EXTENSION_KEYS);
+    mapped[estimand] = Object.freeze({
+      standsInFor: nonEmptyText(row, path, "standsInFor"),
+      reason: nonEmptyText(row, path, "reason"),
+    });
+  }
+  return Object.freeze(mapped);
+}
+
+function nonEmptyText(
+  row: Record<string, unknown>,
+  path: string,
+  key: string,
+): string {
+  const value = row[key];
+  if (typeof value !== "string" || value.trim() === "") {
+    throw new RebuildV3PolicyError(at(path, key), "must be a non-empty string");
+  }
+  return value;
+}
+
 /**
  * Validates an already-parsed JSON value against the frozen contract and returns
  * a deeply frozen policy. Throws `RebuildV3PolicyError` naming the offending path
@@ -1102,8 +1204,10 @@ export function parseRebuildV3Policy(value: unknown): RebuildV3Policy {
   const resampling = object(root.resampling, "resampling", [
     "allowedUnitKinds",
     "estimandClasses",
+    "estimandExtensions",
     "estimands",
     "fallbackToIndependentRows",
+    "publishedBound",
     "required",
   ]);
   const estimandClassBlock = object(
@@ -1126,6 +1230,9 @@ export function parseRebuildV3Policy(value: unknown): RebuildV3Policy {
       `resampling.estimandClasses.${row}`,
     );
   }
+  // Parsed before the extensions so an extension can be cross-checked against the
+  // mapping it stretches instead of against an unvalidated object.
+  const parsedEstimands = resamplingEstimands(resampling.estimands);
   const rollout = object(root.rollout, "rollout", [
     "actionsPromoted",
     "maximumStage",
@@ -1500,13 +1607,26 @@ export function parseRebuildV3Policy(value: unknown): RebuildV3Policy {
         RESAMPLING_UNIT_KINDS,
       ) as readonly ResamplingUnitKind[],
       estimandClasses: Object.freeze(estimandClasses),
-      estimands: resamplingEstimands(resampling.estimands),
+      estimandExtensions: resamplingEstimandExtensions(
+        resampling.estimandExtensions,
+        parsedEstimands,
+      ),
+      estimands: parsedEstimands,
       // Frozen false: without C4's plan the gate fails for missing evidence.
       fallbackToIndependentRows: literal(
         resampling,
         "resampling",
         "fallbackToIndependentRows",
         false,
+      ),
+      // Frozen: the estimator reads this instead of choosing for itself, so the
+      // rule that shapes a release verdict is a contract value (see
+      // `PublishedBoundRule` for the measured reason it is the wider of the two).
+      publishedBound: literal(
+        resampling,
+        "resampling",
+        "publishedBound",
+        "wider-of-analytic-and-resampled",
       ),
       required: literal(resampling, "resampling", "required", true),
     },

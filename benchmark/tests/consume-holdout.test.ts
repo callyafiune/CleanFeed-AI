@@ -179,7 +179,14 @@ function record(
     // The middle level of the ai-recall row of the frozen resampling table: the
     // recall interval of a positive is drawn over generator ⊃ prompt template ⊃
     // batch, and an absent axis is `unknown`, which is not a resampling unit.
-    base.groups.promptTemplate = `pt_${id}`;
+    // Derived from the RECIPE and never from the record-line: a template id per row
+    // makes that middle level one unit per row by construction, which is the
+    // degeneration C4 exists to remove arriving through a fixture. It adds no split
+    // connectivity either — `domainSource` and `collectionBatch` above are already
+    // shared by every row of this corpus.
+    base.groups.promptTemplate = `pt_${normalizeGeneratorFamily(
+      options.family ?? "acme_family",
+    )}`;
   }
   return base;
 }

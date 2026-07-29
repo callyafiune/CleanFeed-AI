@@ -70,6 +70,7 @@ import {
 import { REBUILD_V3_POLICY } from "./rebuild-v3-policy.ts";
 import type {
   GenerationMode,
+  PublishedBoundRule,
   ResamplingLevelRow,
 } from "./rebuild-v3-policy.ts";
 import {
@@ -447,25 +448,54 @@ export interface MetricEstimate {
   // unit each estimand DECLARES, resampled or not, is in
   // `EvaluationMetrics.resampling`.
   resampling?: ResamplingUnitDeclaration;
-  // On a RATE of the frozen table's first two rows, the published bound is the
-  // WIDER of two estimators and this field carries both. See `rateEnvelope` for
-  // why: the percentile bootstrap over clusters is the only one of the two that
-  // sees the dependence between record-lines, and it is also the one that collapses
-  // to zero width on a zero-count rate — where it would be narrower than the
-  // analytic bound rather than more conservative. Publishing the wider of the two
-  // can only move a bound outward, so it never buys a gate a pass (R3), and both
-  // numbers are here so neither hides behind the other.
+  // On a RATE of the frozen table's first two rows, the published bound is chosen
+  // between two estimators by the rule the frozen contract names
+  // (`resampling.publishedBound`), and this field carries both bounds and which one
+  // won — for the individual 95% pair AND for the simultaneous bound, which is the
+  // only one a release gate may read. See `rateEnvelope`.
   boundEnvelope?: BoundEnvelope;
 }
 
-export interface BoundEnvelope {
-  rule: "wider-of-analytic-and-resampled";
-  analytic: { lower: number; upper: number; method: "wilson-one-sided" };
-  resampled: {
-    lower: number;
-    upper: number;
-    method: ResampledPercentileMethod;
-  };
+/** One estimator's limits at one alpha, with the estimator named. */
+export interface EnvelopeBound<M extends string> {
+  lower: number;
+  upper: number;
+  method: M;
+}
+
+/**
+ * Which estimator supplied each published limit. `"resampled"` on a tie: the
+ * design was executed and its limit is the one being reported, so a tie is not a
+ * case of the analytic bound deciding anything.
+ */
+export interface EnvelopeSource {
+  lowerFrom: "analytic" | "resampled";
+  upperFrom: "analytic" | "resampled";
+}
+
+export interface EnvelopePair extends EnvelopeSource {
+  analytic: EnvelopeBound<"wilson-one-sided">;
+  resampled: EnvelopeBound<ResampledPercentileMethod>;
+}
+
+export interface BoundEnvelope extends EnvelopePair {
+  /** The rule, read from the frozen contract and never decided here. */
+  rule: PublishedBoundRule;
+  /**
+   * The SIMULTANEOUS (Bonferroni) bound's own envelope. Present only when both
+   * estimators produced a simultaneous bound — which is the only case in which the
+   * published simultaneous limit can differ from the resampled one. Its absence
+   * therefore means the published limit came from one estimator alone, and
+   * `MetricEstimate.simultaneous.method` names which.
+   *
+   * It exists because `simultaneous` is the bound a release gate DECIDES on. That
+   * bound keeps the percentile method name (the design was executed and its limit
+   * is inside the envelope), so without this field a reader could not tell that on
+   * a zero-count rate the deciding number is the analytic one. The gate refuses a
+   * percentile-named simultaneous bound that carries no resampled pair here
+   * (benchmark/gates.ts), so the name is backed by evidence rather than asserted.
+   */
+  simultaneous?: EnvelopePair;
 }
 
 export interface SimultaneousBound {
@@ -1787,32 +1817,53 @@ function resampledRates(
   });
 }
 
+// The rule that picks the published limit, read from the frozen contract. It is
+// NOT a decision of this module: it shapes release verdicts, so it is a contract
+// value like `fallbackToIndependentRows` beside it, and `PublishedBoundRule` in
+// benchmark/rebuild-v3-policy.ts carries the measured reason it is what it is.
+const PUBLISHED_BOUND_RULE = REBUILD_V3_POLICY.resampling.publishedBound;
+
+// The outer of two limits at one alpha, plus which estimator supplied each side.
+function envelopeOf(
+  analytic: EnvelopeBound<"wilson-one-sided">,
+  resampled: EnvelopeBound<ResampledPercentileMethod>,
+): { lower: number; upper: number; pair: EnvelopePair } {
+  if (PUBLISHED_BOUND_RULE !== "wider-of-analytic-and-resampled") {
+    // Unreachable while the contract freezes the one rule, and deliberately not
+    // an `else`: a rule this function does not implement must stop the run rather
+    // than fall through to the rule it happens to have code for.
+    throw new RangeError(
+      `resampling.publishedBound declares "${String(PUBLISHED_BOUND_RULE)}", ` +
+        "which this estimator does not implement",
+    );
+  }
+  return {
+    lower: Math.min(analytic.lower, resampled.lower),
+    upper: Math.max(analytic.upper, resampled.upper),
+    pair: {
+      analytic,
+      resampled,
+      lowerFrom: resampled.lower <= analytic.lower ? "resampled" : "analytic",
+      upperFrom: resampled.upper >= analytic.upper ? "resampled" : "analytic",
+    },
+  };
+}
+
 /**
- * The published bound of one rate: the WIDER of the analytic Wilson bound and the
- * percentile bound over the declared unit, with both recorded. `null` when the
- * design produced no interval at all, and the caller then publishes the analytic
+ * The published bound of one rate under the frozen contract's
+ * `resampling.publishedBound` rule, with BOTH estimators' bounds recorded — for the
+ * individual 95% pair and for the simultaneous bound a gate decides on. `null` when
+ * the design produced no interval at all, and the caller then publishes the analytic
  * bound alone — which leaves the plan at `declared-only` for that estimand, and the
  * release gate refuses to decide on it (benchmark/gates.ts).
  *
- * WHY THE WIDER OF TWO AND NOT THE RESAMPLED ONE ALONE. The two estimators fail in
- * opposite directions and neither dominates:
- *
- *   * the analytic bound treats every record-line as independent. On a corpus whose
- *     rows share authors, pages, prompts and generators that is too narrow, by an
- *     amount nothing in the number reveals — the defect C4 exists to remove.
- *   * the percentile bound over clusters sees that dependence, and it collapses to
- *     ZERO WIDTH exactly when the statistic is constant across replicates: a rate
- *     with no events at all (FPR 0 with no false positive anywhere), or a design
- *     where a single cluster carries every denominator. A zero-width "95% interval"
- *     claims certainty from a finite sample, and it is NARROWER than the analytic
- *     bound, so it would make a gate easier to pass with less evidence (R3).
- *
- * Taking the wider bound can only move a limit outward, so it cannot buy a pass;
- * and because it is never narrower than the resampled bound, the dependence the
- * design captures is always honoured. What it is NOT is an exact-coverage interval:
- * it is conservative by construction, which is the direction a release gate has to
- * err in. Both bounds are published (`boundEnvelope`) so a reader can see which one
- * bound the verdict, and the design is named either way (`resampling`).
+ * WHY THE PUBLISHED BOUND IS NOT SIMPLY THE RESAMPLED ONE is a contract question,
+ * answered in `PublishedBoundRule`, not here. What is this function's business is
+ * that the answer be VISIBLE on the number it produces: `simultaneous.method` keeps
+ * the percentile name because the design was executed and its limit is inside the
+ * envelope, and `boundEnvelope.simultaneous` then says which of the two estimators
+ * the deciding limit actually came from. Without it a zero-count rate would publish
+ * the analytic limit under a percentile name with nothing recording the swap (R7).
  */
 function rateEnvelope(
   analytic: MetricEstimate,
@@ -1832,25 +1883,25 @@ function rateEnvelope(
   ) {
     return null;
   }
+  const individual = envelopeOf(
+    {
+      lower: analytic.lower95,
+      upper: analytic.upper95,
+      method: "wilson-one-sided",
+    },
+    { lower: resampled.lower95, upper: resampled.upper95, method },
+  );
+  const envelope: BoundEnvelope = {
+    rule: PUBLISHED_BOUND_RULE,
+    ...individual.pair,
+  };
   const combined: MetricEstimate = {
     value: analytic.value,
-    lower95: Math.min(analytic.lower95, resampled.lower95),
-    upper95: Math.max(analytic.upper95, resampled.upper95),
+    lower95: individual.lower,
+    upper95: individual.upper,
     method,
     resampling: unit,
-    boundEnvelope: {
-      rule: "wider-of-analytic-and-resampled",
-      analytic: {
-        lower: analytic.lower95,
-        upper: analytic.upper95,
-        method: "wilson-one-sided",
-      },
-      resampled: {
-        lower: resampled.lower95,
-        upper: resampled.upper95,
-        method,
-      },
-    },
+    boundEnvelope: envelope,
   };
   const analyticSimultaneous = analytic.simultaneous;
   const resampledSimultaneous = resampled.simultaneous;
@@ -1858,16 +1909,30 @@ function rateEnvelope(
     analyticSimultaneous !== undefined &&
     resampledSimultaneous !== undefined
   ) {
+    const simultaneous = envelopeOf(
+      {
+        lower: analyticSimultaneous.lower,
+        upper: analyticSimultaneous.upper,
+        method: "wilson-one-sided",
+      },
+      {
+        lower: resampledSimultaneous.lower,
+        upper: resampledSimultaneous.upper,
+        method,
+      },
+    );
     combined.simultaneous = {
       ...resampledSimultaneous,
-      lower: Math.min(analyticSimultaneous.lower, resampledSimultaneous.lower),
-      upper: Math.max(analyticSimultaneous.upper, resampledSimultaneous.upper),
+      lower: simultaneous.lower,
+      upper: simultaneous.upper,
     };
+    envelope.simultaneous = simultaneous.pair;
   } else if (analyticSimultaneous !== undefined) {
     // The design gave no simultaneous bound (its tail held no replicate at this
     // alpha). Publishing the analytic one alone keeps the number honest and the
     // gate fail-closed: its method says `wilson-one-sided`, so the gate refuses it
-    // for an unresampled interval instead of deciding on it.
+    // for an unresampled interval instead of deciding on it. No envelope either:
+    // there is no pair to choose between.
     combined.simultaneous = analyticSimultaneous;
   }
   return combined;

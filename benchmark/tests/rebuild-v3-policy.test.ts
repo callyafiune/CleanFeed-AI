@@ -275,6 +275,34 @@ describe("rebuild-v3-policy.json", () => {
     expect(policy.resampling.estimands["warning.recall"]).toBe("ai-recall");
     expect(policy.resampling.estimands["calibration.ece"]).toBe("calibration");
     expect(policy.resampling.estimands["mixed.warning.recall"]).toBe("mixed");
+    // WHICH ESTIMATOR'S LIMIT A GATE READS is a frozen value, not something the
+    // estimator decides for itself: it shapes release verdicts.
+    expect(policy.resampling.publishedBound).toBe(
+      "wider-of-analytic-and-resampled",
+    );
+    // Row 4 is "calibração (ECE, Brier)". AUROC and PR-AUC are separability
+    // statistics and no row names them, so their mapping onto that row is a
+    // DECLARED EXTENSION and says so where the value lives — the same rule the
+    // mixed row's substituted factor follows.
+    expect(Object.keys(policy.resampling.estimandExtensions).sort()).toEqual([
+      "separability.auroc",
+      "separability.prAuc",
+    ]);
+    for (const estimand of ["separability.auroc", "separability.prAuc"]) {
+      expect(policy.resampling.estimands[estimand]).toBe("calibration");
+      expect(policy.resampling.estimandExtensions[estimand]).toEqual({
+        standsInFor: "calibração (ECE, Brier)",
+        reason: expect.stringMatching(
+          /não é estatística de calibração e nenhuma linha da tabela congelada a nomeia/u,
+        ),
+      });
+    }
+    // And no estimand the table covers on its own carries one: an extension that
+    // spread silently is the failure this block exists to stop.
+    for (const estimand of Object.keys(policy.resampling.estimands)) {
+      if (estimand.startsWith("separability.")) continue;
+      expect(policy.resampling.estimandExtensions[estimand]).toBeUndefined();
+    }
     // Power floors: the two §6.4 minima, and an explicitly absent one.
     expect(policy.powerFloors.criticalFprHumanNegatives).toBe(300);
     expect(policy.powerFloors.criticalRecallPositives).toBe(200);
@@ -765,6 +793,60 @@ describe("resampling estimand table", () => {
     });
     expect(() => parseRebuildV3Policy(policy)).toThrow(
       /resampling\.estimands\.warning\.fpr must be one of/u,
+    );
+  });
+
+  // `publishedBound` decides which estimator's limit a release gate reads, so it is
+  // frozen exactly like `fallbackToIndependentRows` beside it: the parser refuses
+  // any other value instead of handing the estimator a rule it does not implement.
+  it("refuses a published-bound rule other than the frozen one", () => {
+    const policy = withResampling((resampling) => {
+      resampling.publishedBound = "resampled-only";
+    });
+    expect(() => parseRebuildV3Policy(policy)).toThrow(
+      /resampling\.publishedBound is frozen at "wider-of-analytic-and-resampled"/u,
+    );
+  });
+
+  it("refuses an extension for an estimand no row maps", () => {
+    const policy = withResampling((resampling) => {
+      resampling.estimandExtensions = {
+        ...(resampling.estimandExtensions as Record<string, unknown>),
+        "warning.precision": {
+          standsInFor: "calibração (ECE, Brier)",
+          reason: "porque sim",
+        },
+      };
+    });
+    expect(() => parseRebuildV3Policy(policy)).toThrow(
+      /resampling\.estimandExtensions\.warning\.precision declares an extension for an estimand that resampling\.estimands does not map/u,
+    );
+  });
+
+  it("refuses half an extension", () => {
+    // The same both-or-neither rule the substituted factor follows: `standsInFor`
+    // alone reads as a synonym and a bare reason leaves the row looking covered.
+    const policy = withResampling((resampling) => {
+      resampling.estimandExtensions = {
+        "separability.auroc": { standsInFor: "calibração (ECE, Brier)" },
+      };
+    });
+    expect(() => parseRebuildV3Policy(policy)).toThrow(
+      /resampling\.estimandExtensions\.separability\.auroc/u,
+    );
+  });
+
+  it("refuses an empty extension reason", () => {
+    const policy = withResampling((resampling) => {
+      resampling.estimandExtensions = {
+        "separability.auroc": {
+          standsInFor: "calibração (ECE, Brier)",
+          reason: "   ",
+        },
+      };
+    });
+    expect(() => parseRebuildV3Policy(policy)).toThrow(
+      /resampling\.estimandExtensions\.separability\.auroc\.reason must be a non-empty string/u,
     );
   });
 });

@@ -1155,6 +1155,83 @@ describe("a declared unit is not a property of the number (R7)", () => {
     expect(fpr.reasons[0]).toMatch(/groups\.source/u);
   });
 
+  // The published bound of a rate is chosen between two estimators by the frozen
+  // contract's `resampling.publishedBound`, and the chosen simultaneous limit keeps
+  // the PERCENTILE method name even when the analytic estimator supplied it. That is
+  // the one place a method name can outrun the estimator behind the number, so the
+  // gate checks the envelope instead of trusting the name.
+  it("fails the gate when an envelope is published without its simultaneous pair", () => {
+    const withoutPair = upper(0.02);
+    const report = evaluateReleaseGates({
+      integrity: integrity(),
+      resampling: plan(),
+      metrics: metrics({
+        warningFpr: {
+          ...withoutPair,
+          boundEnvelope: {
+            rule: "wider-of-analytic-and-resampled",
+            analytic: { lower: 0, upper: 0.02, method: "wilson-one-sided" },
+            resampled: {
+              lower: 0,
+              upper: 0,
+              method: "hierarchical-cluster-percentile",
+            },
+            lowerFrom: "resampled",
+            upperFrom: "analytic",
+          },
+        },
+      }),
+      slices: summary([passingSlice()]),
+    });
+    expect(report.decision).toBe("reject");
+    const fpr = gateById(report.gates, "warning.fpr.overall");
+    expect(fpr.evidence).toBe("unresampled-interval");
+    expect(fpr.passed).toBe(false);
+    expect(fpr.reasons[0]).toMatch(/não traz o par simultâneo/u);
+  });
+
+  it("fails the gate when the published simultaneous limit is narrower than the resampled one", () => {
+    // The rule can only move a limit outward. A published upper bound BELOW the
+    // resampled one it records means the rule was not applied — the declared design
+    // was executed and then narrowed, which is the direction R3 forbids.
+    const narrowed = upper(0.02);
+    const report = evaluateReleaseGates({
+      integrity: integrity(),
+      resampling: plan(),
+      metrics: metrics({
+        warningFpr: {
+          ...narrowed,
+          boundEnvelope: {
+            rule: "wider-of-analytic-and-resampled",
+            analytic: { lower: 0, upper: 0.02, method: "wilson-one-sided" },
+            resampled: {
+              lower: 0,
+              upper: 0.02,
+              method: "hierarchical-cluster-percentile",
+            },
+            lowerFrom: "resampled",
+            upperFrom: "resampled",
+            simultaneous: {
+              analytic: { lower: 0, upper: 0.02, method: "wilson-one-sided" },
+              resampled: {
+                lower: 0,
+                upper: 0.09,
+                method: "hierarchical-cluster-percentile",
+              },
+              lowerFrom: "resampled",
+              upperFrom: "resampled",
+            },
+          },
+        },
+      }),
+      slices: summary([passingSlice()]),
+    });
+    const fpr = gateById(report.gates, "warning.fpr.overall");
+    expect(fpr.evidence).toBe("unresampled-interval");
+    expect(fpr.passed).toBe(false);
+    expect(fpr.reasons[0]).toMatch(/mais estreito que o limite reamostrado/u);
+  });
+
   it("fails the gate when a crossed design was drawn as a nested one", () => {
     const nested = upper(0.02);
     const report = evaluateReleaseGates({
@@ -1645,11 +1722,21 @@ describe("mixed below the AI-fraction floor enters no gate denominator (B2)", ()
     mixedRow(0.25, "d1", "error"),
   ];
 
-  const metricsOf = (items: readonly EvaluationItem[]): EvaluationMetrics =>
-    computeEvaluationMetrics(items, {
+  // Memoised per population. Two populations reach the real pipeline and the four
+  // tests below want them six times between them; at the frozen 10.000 replicates
+  // each resolution is a few hundred milliseconds of resampling, and recomputing a
+  // deterministic result from an identical input asserts nothing extra.
+  const metricsCache = new Map<readonly EvaluationItem[], EvaluationMetrics>();
+  const metricsOf = (items: readonly EvaluationItem[]): EvaluationMetrics => {
+    const cached = metricsCache.get(items);
+    if (cached !== undefined) return cached;
+    const computed = computeEvaluationMetrics(items, {
       bootstrapSeed: 20260726,
       preRegisteredStatisticalGates: M,
     });
+    metricsCache.set(items, computed);
+    return computed;
+  };
 
   const of = (items: readonly EvaluationItem[]): GateResult[] =>
     evaluateReleaseGates({

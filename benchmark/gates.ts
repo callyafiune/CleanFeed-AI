@@ -1012,7 +1012,7 @@ function describe(spec: IntervalGateSpec): DescriptiveBound {
 
 /**
  * Why the bound this gate would read is not evidence about the unit the plan
- * declares, or `null` when it is. Four ways it can fail, and each one names what a
+ * declares, or `null` when it is. Five ways it can fail, and each one names what a
  * reader has to go fix:
  *
  *   * the bound is analytic (Wilson) — it resamples nothing, so the declared unit
@@ -1022,7 +1022,13 @@ function describe(spec: IntervalGateSpec): DescriptiveBound {
  *   * the unit's METHOD differs from the declared one — a hierarchical draw where
  *     the table crosses two factors understates the variance, and vice versa;
  *   * the unit's AXES differ from the declared ones, which is a different design
- *     wearing the estimand's name.
+ *     wearing the estimand's name;
+ *   * the estimate publishes a bound ENVELOPE (the frozen contract's
+ *     `resampling.publishedBound` chose between two estimators) but the simultaneous
+ *     bound carries no resampled pair inside it, or carries one the published limit
+ *     is narrower than. That is the only case in which a percentile method name can
+ *     sit on a limit the analytic estimator supplied, so it is checked rather than
+ *     trusted (R7).
  */
 function unresampledFailure(
   estimate: MetricEstimate | undefined,
@@ -1063,6 +1069,36 @@ function unresampledFailure(
       `a estimativa foi reamostrada sobre ${unit.axes.join(" / ")} enquanto o ` +
       `plano declara ${declared} para ${entry.estimand}`
     );
+  }
+  const envelope = estimate?.boundEnvelope;
+  if (envelope !== undefined) {
+    const pair = envelope.simultaneous;
+    if (pair === undefined) {
+      return (
+        `o limite simultâneo diz vir de "${simultaneous.method}" e a estimativa ` +
+        `publica um envelope de regra "${envelope.rule}", mas o envelope não traz ` +
+        "o par simultâneo: sem ele não há como saber se o número que decide o gate " +
+        "saiu do desenho reamostrado ou do estimador analítico (R7)"
+      );
+    }
+    if (pair.resampled.method !== simultaneous.method) {
+      return (
+        `o envelope do limite simultâneo nomeia o estimador reamostrado ` +
+        `"${pair.resampled.method}" enquanto o limite publicado diz ` +
+        `"${simultaneous.method}"`
+      );
+    }
+    if (
+      simultaneous.lower > pair.resampled.lower ||
+      simultaneous.upper < pair.resampled.upper
+    ) {
+      return (
+        `o limite simultâneo publicado [${pair.lowerFrom}, ${pair.upperFrom}] é ` +
+        "mais estreito que o limite reamostrado que o envelope registra, logo a " +
+        `regra "${envelope.rule}" não foi aplicada e o desenho declarado foi ` +
+        "estreitado em vez de honrado"
+      );
+    }
   }
   return null;
 }
