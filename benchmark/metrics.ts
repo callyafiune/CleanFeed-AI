@@ -51,6 +51,7 @@ import {
   isResampledPercentileMethod,
   resolveResampling,
   ResamplingUnitError,
+  type PublishedBoundProvenance,
   type ResampledPercentileMethod,
   type ResamplingDesign,
   type ResamplingIdentity,
@@ -1416,6 +1417,9 @@ export function declaredResamplingPlan(
         unitAxes: row.levels.map((level) => level.axis),
         replicates,
         executed: "declared-only" as const,
+        // Nothing is published yet, so there is no estimator to name. A declared
+        // plan that claimed provenance would be claiming a measurement.
+        publishedBound: null,
         measured: null,
         measurementNote: PER_SLICE_ESTIMANDS.includes(estimand)
           ? PER_SLICE_NOTE
@@ -1438,7 +1442,42 @@ const PER_SLICE_NOTE =
 interface MeasuredUnit {
   readonly unit: ResamplingUnitDeclaration | null;
   readonly resampled: boolean;
+  /**
+   * Which estimator's limits were published. Stated by each producer rather than
+   * derived from `resampled`: a design that ran can still publish the analytic
+   * limit under the frozen `resampling.publishedBound` rule.
+   */
+  readonly bound: PublishedBoundProvenance;
   readonly note: string | null;
+}
+
+/** The provenance an estimate's envelope records, in the shape the plan publishes. */
+function boundProvenanceOf(
+  estimate: MetricEstimate | undefined,
+): PublishedBoundProvenance {
+  if (estimate === undefined) return { kind: "analytic-only" };
+  const envelope = estimate.boundEnvelope;
+  if (envelope === undefined) {
+    return isResampledPercentileMethod(estimate.method)
+      ? { kind: "resampled-only" }
+      : { kind: "analytic-only" };
+  }
+  const simultaneous = envelope.simultaneous;
+  return {
+    kind: "envelope",
+    rule: envelope.rule,
+    individual: {
+      lowerFrom: envelope.lowerFrom,
+      upperFrom: envelope.upperFrom,
+    },
+    simultaneous:
+      simultaneous === undefined
+        ? null
+        : {
+            lowerFrom: simultaneous.lowerFrom,
+            upperFrom: simultaneous.upperFrom,
+          },
+  };
 }
 
 /**
@@ -1461,6 +1500,7 @@ function buildResamplingPlan(
         executed: found.resampled
           ? ("percentile-bootstrap" as const)
           : ("declared-only" as const),
+        publishedBound: found.bound,
         measured: found.unit,
         measurementNote: found.note ?? entry.measurementNote ?? null,
       };
@@ -2479,7 +2519,15 @@ export function computeEvaluationMetrics(
   for (const [estimand, estimate] of continuous) {
     const unit = estimate.resampling;
     if (unit === undefined) continue;
-    recordUnit(estimand, { unit, resampled: true, note: null });
+    // No analytic estimator competes for a Brier, an ECE or an AUROC limit, so the
+    // published bound IS the resampled percentile — recorded, not inferred by a
+    // reader from the absence of an envelope.
+    recordUnit(estimand, {
+      unit,
+      resampled: true,
+      bound: { kind: "resampled-only" },
+      note: null,
+    });
   }
 
   // The MIXED row of the frozen table, resolved over the cohort its gate reads
@@ -2971,6 +3019,12 @@ function labelBasisBreakdown(
         // one that did not leaves the entry `declared-only`, and the gate then
         // refuses the analytic bound that took its place.
         resampled: intervalBases > 0 && resampledBases === intervalBases,
+        bound: {
+          kind: "per-interval",
+          where:
+            'coluna "Procedência do limite" da tabela de bases de rótulo humano ' +
+            "(labelBasis.bases[].falsePositiveRate.boundEnvelope)",
+        },
         note,
       });
     }
@@ -3268,6 +3322,7 @@ function rateEstimates(
       resampling.record(entry.estimand, {
         unit: published?.resampling ?? resolution.declaration,
         resampled: published !== undefined,
+        bound: boundProvenanceOf(published),
         note:
           published !== undefined
             ? null
@@ -3301,6 +3356,7 @@ function measuredMixedUnit(
     return {
       unit: resolveResampling(cohort, design).declaration,
       resampled: false,
+      bound: { kind: "analytic-only" },
       note:
         "unidade medida, intervalo não reamostrado: o limite publicado ao lado de " +
         "mixed.atLeastHalfAi é o de Wilson, e o segundo fator cruzado é um proxy " +
@@ -3311,6 +3367,7 @@ function measuredMixedUnit(
     return {
       unit: null,
       resampled: false,
+      bound: { kind: "analytic-only" },
       note: `unidade não resolvida sobre a coorte mecanística: ${error.message}`,
     };
   }

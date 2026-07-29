@@ -113,7 +113,7 @@ import type {
   MetricEstimate,
 } from "./metrics.ts";
 import { REBUILD_V3_POLICY } from "./rebuild-v3-policy.ts";
-import type { EceGateBound, ResamplingUnitKind } from "./rebuild-v3-policy.ts";
+import type { EceGateBound } from "./rebuild-v3-policy.ts";
 import type { SliceAxis, SliceResult, SliceSummary } from "./slices.ts";
 
 export type ReleaseDecision = "pass" | "indicator-only" | "reject";
@@ -1029,11 +1029,15 @@ function describe(spec: IntervalGateSpec): DescriptiveBound {
  *   * the unit's AXES differ from the declared ones, which is a different design
  *     wearing the estimand's name;
  *   * the estimate publishes a bound ENVELOPE (the frozen contract's
- *     `resampling.publishedBound` chose between two estimators) but the simultaneous
- *     bound carries no resampled pair inside it, or carries one the published limit
- *     is narrower than. That is the only case in which a percentile method name can
- *     sit on a limit the analytic estimator supplied, so it is checked rather than
- *     trusted (R7).
+ *     `resampling.publishedBound` chose between two estimators) and its simultaneous
+ *     bound fails one of three checks: no resampled pair inside it, a pair naming a
+ *     resampled estimator other than the published one, or a published limit
+ *     narrower than the resampled one recorded beside it. This is the only case in
+ *     which a percentile method name can sit on a limit the analytic estimator
+ *     supplied, so it is checked rather than trusted (R7). `rateEnvelope` cannot
+ *     produce the middle case — it copies the published method into the pair — which
+ *     is precisely why the check exists and is tested: an estimate from any other
+ *     producer has nothing else standing between it and a gate.
  */
 function unresampledFailure(
   estimate: MetricEstimate | undefined,
@@ -1098,10 +1102,12 @@ function unresampledFailure(
       simultaneous.upper < pair.resampled.upper
     ) {
       return (
-        `o limite simultâneo publicado [${pair.lowerFrom}, ${pair.upperFrom}] é ` +
-        "mais estreito que o limite reamostrado que o envelope registra, logo a " +
-        `regra "${envelope.rule}" não foi aplicada e o desenho declarado foi ` +
-        "estreitado em vez de honrado"
+        `o limite simultâneo publicado [${simultaneous.lower}, ` +
+        `${simultaneous.upper}] é mais estreito que o limite reamostrado ` +
+        `[${pair.resampled.lower}, ${pair.resampled.upper}] que o envelope ` +
+        `registra (procedência declarada: inferior "${pair.lowerFrom}", ` +
+        `superior "${pair.upperFrom}"), logo a regra "${envelope.rule}" não foi ` +
+        "aplicada e o desenho declarado foi estreitado em vez de honrado"
       );
     }
   }

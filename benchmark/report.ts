@@ -25,7 +25,12 @@
 // for a fixed input (the caller supplies `generatedAt`).
 
 import { canonicalSha256 } from "../contracts/canonical-json.ts";
-import type { ResamplingPlan, ResamplingUnitDeclaration } from "./bootstrap.ts";
+import type {
+  PublishedBoundProvenance,
+  PublishedBoundSource,
+  ResamplingPlan,
+  ResamplingUnitDeclaration,
+} from "./bootstrap.ts";
 import {
   assertGeneratorFamiliesEqual,
   type GeneratorFamily,
@@ -688,18 +693,23 @@ export function renderReportMarkdown(report: BenchmarkReport): string {
     if (bases.length === 0) {
       lines.push("_Sem negativos humanos elegíveis._");
     } else {
+      // The provenance of each basis's published bound belongs HERE and not only in
+      // the resampling section: the plan carries ONE entry for all the bases, so
+      // averaging their provenance into it would invent a fact, and the entry points
+      // at this column instead.
       lines.push(
-        "| Base | Negativos | Escorados | Erros | Unidades amostrais | Eixo | FPR | FPR UCB95 | Taxa de erro | Poder | Papel |",
+        "| Base | Negativos | Escorados | Erros | Unidades amostrais | Eixo | FPR | FPR UCB95 | Procedência do limite | Taxa de erro | Poder | Papel |",
       );
       lines.push(
-        "| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |",
+        "| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |",
       );
       for (const row of bases) {
         lines.push(
           `| ${row.basis} | ${row.count} | ${row.scored} | ${row.errored} | ` +
             `${resamplingUnitCount(row.resamplingUnit)} | ` +
             `${resamplingUnitLabel(row.resamplingUnit)} | ${fmt(row.falsePositiveRate?.value)} | ` +
-            `${fmt(row.falsePositiveRate?.upper95)} | ${fmt(row.errorRate?.value)} | ` +
+            `${fmt(row.falsePositiveRate?.upper95)} | ` +
+            `${estimateBoundLabel(row.falsePositiveRate)} | ${fmt(row.errorRate?.value)} | ` +
             `${row.powered ? `>= ${row.powerFloor}` : `< ${row.powerFloor}`} | ${row.evidenceRole} |`,
         );
       }
@@ -908,11 +918,74 @@ function resolutionSections(
 // --- resampling units (C4) -------------------------------------------------
 //
 // Every published estimand names its unit HERE, in the report, and not only in
-// the code. Two things travel with the name because a reader cannot recover them
-// from it: whether the published interval was actually resampled over that unit
-// or whether the unit is declared while an analytic estimator produced the bound,
-// and whether any level of the unit degenerated to one level per record-line —
-// which is the state in which a "clustered" interval is an i.i.d. one.
+// the code. THREE things travel with the name because a reader cannot recover them
+// from it: whether the design ran at all; which estimator supplied the limit that
+// got published, which is a separate question because the frozen
+// `resampling.publishedBound` rule can publish the analytic limit over a design
+// that ran; and whether any level of the unit degenerated to one level per
+// record-line — the state in which a "clustered" interval is an i.i.d. one.
+
+/** The estimator behind one published limit, in the reader's words. */
+function boundEstimatorName(from: "analytic" | "resampled"): string {
+  return from === "analytic" ? "Wilson" : "reamostrado";
+}
+
+function boundSides(source: PublishedBoundSource): string {
+  return `inf ${boundEstimatorName(source.lowerFrom)} / sup ${boundEstimatorName(
+    source.upperFrom,
+  )}`;
+}
+
+// Which estimator's limits were published, never derived from whether the design
+// ran: on a zero-count rate the design runs and Wilson's limit is the published one.
+function publishedBoundLabel(
+  provenance: PublishedBoundProvenance | null | undefined,
+): string {
+  if (provenance === null || provenance === undefined) return "não declarada";
+  switch (provenance.kind) {
+    case "envelope":
+      return (
+        `envelope \`${provenance.rule}\` · 95%: ${boundSides(provenance.individual)} · ` +
+        (provenance.simultaneous === null
+          ? "simultâneo: um estimador só (ver `simultaneous.method`)"
+          : `simultâneo: ${boundSides(provenance.simultaneous)}`)
+      );
+    case "resampled-only":
+      return "percentil reamostrado (nenhum limite analítico concorre pelo lugar)";
+    case "analytic-only":
+      return "Wilson analítico";
+    case "per-interval":
+      return `por intervalo — ${provenance.where}`;
+  }
+}
+
+// The same fact read off one estimate, for the tables that print the number itself.
+function estimateBoundLabel(
+  estimate: MetricEstimate | null | undefined,
+): string {
+  if (estimate === null || estimate === undefined) return "—";
+  const envelope = estimate.boundEnvelope;
+  if (envelope === undefined) {
+    return estimate.method === "wilson-one-sided" || estimate.method === "point"
+      ? publishedBoundLabel({ kind: "analytic-only" })
+      : publishedBoundLabel({ kind: "resampled-only" });
+  }
+  return publishedBoundLabel({
+    kind: "envelope",
+    rule: envelope.rule,
+    individual: {
+      lowerFrom: envelope.lowerFrom,
+      upperFrom: envelope.upperFrom,
+    },
+    simultaneous:
+      envelope.simultaneous === undefined
+        ? null
+        : {
+            lowerFrom: envelope.simultaneous.lowerFrom,
+            upperFrom: envelope.simultaneous.upperFrom,
+          },
+  });
+}
 
 function resamplingUnitCount(
   unit: ResamplingUnitDeclaration | null | undefined,
@@ -943,10 +1016,15 @@ function resamplingExtensionLines(): string[] {
     REBUILD_V3_POLICY.resampling.estimandExtensions,
   );
   if (extensions.length === 0) return [];
+  // The COUNT comes from the list, never from prose: the contract owns how many
+  // estimands are stretched, and a sentence carrying its own number would publish a
+  // false count the first time the file changes.
+  const count = extensions.length;
   const lines = [
-    "**Duas coberturas são extensão declarada, não linha própria.** A linha da " +
-      "tabela congelada não nomeia estes estimandos; eles herdam a unidade dela e " +
-      "isso está dito aqui em vez de ficar implícito no mapeamento:",
+    `**${count} cobertura${count === 1 ? " é" : "s são"} extensão declarada, não ` +
+      "linha própria.** A linha da tabela congelada não nomeia estes estimandos; " +
+      "eles herdam a unidade dela e isso está dito aqui em vez de ficar implícito " +
+      "no mapeamento:",
     "",
   ];
   for (const [estimand, extension] of extensions) {
@@ -973,11 +1051,23 @@ function resamplingSection(plan: ResamplingPlan | undefined): string[] {
   lines.push(
     `Plano \`${plan.planId}\`, lido de \`${plan.source}\`. Não existe uma única ` +
       '"unidade real": a unidade depende do estimando, e cada linha abaixo diz ' +
-      "qual é a dela, quantos níveis cada fator tinha na população medida, e se o " +
-      "intervalo publicado foi de fato reamostrado sobre ela ou se a unidade é " +
-      "declarada enquanto o limite vem do estimador analítico de Wilson (R7). " +
+      "qual é a dela e quantos níveis cada fator tinha na população medida. " +
       "Uma unidade **degenerada** tem uma unidade por registro-linha: reamostrá-la " +
       "é reamostrar linhas, e o número está aqui em vez de escondido.",
+  );
+  lines.push("");
+  // The distinction the previous round asserted in prose while printing only the
+  // first half of it. Spelled out because the two columns are easy to conflate and
+  // conflating them is exactly the R7 error: reading the design's existence as the
+  // provenance of the number.
+  lines.push(
+    "**Desenho executado e limite publicado são fatos diferentes.** " +
+      "`executed` diz apenas que o desenho rodou; a regra congelada " +
+      "`resampling.publishedBound` publica então o **mais largo** entre o limite " +
+      "reamostrado e o de Wilson, e numa taxa de contagem zero o reamostrado é 0 — " +
+      "logo o número que o gate decide é o de Wilson **sob um desenho que rodou**. " +
+      "A coluna *Limite publicado* diz de qual estimador saiu cada limite, para o " +
+      "par individual de 95% e para o simultâneo, que é o único que gate lê (R7).",
   );
   lines.push("");
   lines.push(
@@ -994,9 +1084,9 @@ function resamplingSection(plan: ResamplingPlan | undefined): string[] {
   lines.push("");
   lines.push(...resamplingExtensionLines());
   lines.push(
-    "| Estimando | Método | Unidade declarada | Réplicas | Intervalo publicado | Unidades medidas | Níveis por fator | Rebaixamento |",
+    "| Estimando | Método | Unidade declarada | Réplicas | Desenho executado | Limite publicado | Unidades medidas | Níveis por fator | Rebaixamento |",
   );
-  lines.push("| --- | --- | --- | --- | --- | --- | --- | --- |");
+  lines.push("| --- | --- | --- | --- | --- | --- | --- | --- | --- |");
   for (const entry of plan.entries) {
     const separator = entry.unitKind === "hierarchical" ? " ⊃ " : " × ";
     const measured = entry.measured ?? null;
@@ -1026,7 +1116,8 @@ function resamplingSection(plan: ResamplingPlan | undefined): string[] {
             .join("; ");
     lines.push(
       `| ${entry.estimand} | ${entry.unitKind} | ${entry.unitAxes.join(separator)} | ` +
-        `${entry.replicates} | ${entry.executed ?? "não declarado"} | ${units} | ` +
+        `${entry.replicates} | ${entry.executed ?? "não declarado"} | ` +
+        `${publishedBoundLabel(entry.publishedBound)} | ${units} | ` +
         `${perFactor} | ${demoted} |`,
     );
   }

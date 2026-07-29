@@ -408,6 +408,64 @@ describe("the published plan declares a unit for every estimand", () => {
     }
   });
 
+  // `executed` says the DESIGN ran; it does not say which estimator supplied the
+  // limit that got published. On this fixture the two answers differ — zero false
+  // positives make every resampled replicate 0, so the contract's rule publishes
+  // Wilson's upper bound under a design that ran — and a plan that carried only
+  // `executed` would let a reader take the published bound for a resampled one (R7).
+  it("names which estimator supplied each published limit, apart from whether the design ran", () => {
+    const metrics = computeEvaluationMetrics(SEPARABLE, {
+      ...OPTIONS,
+      preRegisteredStatisticalGates: 8,
+    });
+    const entry = metrics.resampling.entries.find(
+      (candidate) => candidate.estimand === "warning.fpr",
+    );
+    expect(entry?.executed).toBe("percentile-bootstrap");
+    const provenance = entry?.publishedBound;
+    if (provenance?.kind !== "envelope") {
+      throw new Error(
+        `expected an envelope provenance, got ${provenance?.kind}`,
+      );
+    }
+    expect(provenance.rule).toBe(REBUILD_V3_POLICY.resampling.publishedBound);
+    // The plan's provenance is the estimate's, not a second opinion about it.
+    const envelope = metrics.warning.endToEnd.falsePositiveRate.boundEnvelope;
+    expect(provenance.individual).toEqual({
+      lowerFrom: envelope?.lowerFrom,
+      upperFrom: envelope?.upperFrom,
+    });
+    expect(provenance.simultaneous).toEqual({
+      lowerFrom: envelope?.simultaneous?.lowerFrom,
+      upperFrom: envelope?.simultaneous?.upperFrom,
+    });
+    // And on THIS population the deciding limit is the analytic one, while the
+    // design ran: the two facts the single `executed` column could not separate.
+    expect(provenance.simultaneous?.upperFrom).toBe("analytic");
+    expect(envelope?.simultaneous?.resampled.upper).toBe(0);
+
+    // The five continuous statistics have no analytic estimator competing for the
+    // slot, so their published limit IS the resampled percentile — stated, not
+    // inferred from the absence of an envelope.
+    expect(
+      metrics.resampling.entries.find(
+        (candidate) => candidate.estimand === "calibration.ece",
+      )?.publishedBound,
+    ).toEqual({ kind: "resampled-only" });
+    // The label-basis entry stands for several intervals, one per basis, so it says
+    // where the per-interval provenance is instead of averaging it away.
+    const perBasis = metrics.resampling.entries.find(
+      (candidate) => candidate.estimand === "warning.fpr.labelBasis",
+    )?.publishedBound;
+    expect(perBasis?.kind).toBe("per-interval");
+    // A row this plan does not measure claims nothing about provenance.
+    expect(
+      metrics.resampling.entries.find(
+        (candidate) => candidate.estimand === "warning.fpr.slice",
+      )?.publishedBound ?? null,
+    ).toBeNull();
+  });
+
   it("publishes the mixed multiway as measured and degenerate, with its proxy factor", () => {
     // Four mechanistic mixed rows above the frozen fraction, each with its own human
     // parent — which is what the assembled corpus looks like: 782 parent labels, no

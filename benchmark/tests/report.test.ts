@@ -18,6 +18,7 @@ import {
   type GovernanceSeal,
 } from "../report.ts";
 import type { SliceSummary } from "../slices.ts";
+import { REBUILD_V3_POLICY } from "../rebuild-v3-policy.ts";
 import { standInClusterReport, type SplitAudit } from "../split-audit.ts";
 import { asGeneratorFamily } from "../generator-family.ts";
 
@@ -375,10 +376,28 @@ function metrics(): EvaluationMetrics {
           powered: true,
           powerFloor: 300,
           evidenceRole: "gating",
+          // The published upper bound is Wilson's under a design that RAN: the
+          // envelope's rule took the wider of the two, and the plan's entry for
+          // `warning.fpr.labelBasis` points here for exactly this reason.
           falsePositiveRate: {
             value: 0.03,
             upper95: 0.041,
-            method: "wilson-one-sided",
+            method: "hierarchical-cluster-percentile",
+            boundEnvelope: {
+              rule: "wider-of-analytic-and-resampled",
+              analytic: {
+                lower: 0.021,
+                upper: 0.041,
+                method: "wilson-one-sided",
+              },
+              resampled: {
+                lower: 0.021,
+                upper: 0.037,
+                method: "hierarchical-cluster-percentile",
+              },
+              lowerFrom: "resampled",
+              upperFrom: "analytic",
+            },
           },
           errorRate: { value: 0.011, method: "wilson-one-sided" },
           brier: 0.07,
@@ -423,10 +442,35 @@ function metrics(): EvaluationMetrics {
       return {
         ...plan,
         entries: plan.entries.map((entry) => {
+          // The case the previous round published wrong: the design RAN and the
+          // limit a gate decides on came out of Wilson anyway, because zero false
+          // positives make the resampled upper bound 0 and the frozen rule takes
+          // the wider of the two. Measured on the 40-author fixture in
+          // metrics.test.ts, not invented here.
+          if (entry.estimand === "warning.fpr") {
+            return {
+              ...entry,
+              executed: "percentile-bootstrap" as const,
+              publishedBound: {
+                kind: "envelope" as const,
+                rule: "wider-of-analytic-and-resampled" as const,
+                individual: {
+                  lowerFrom: "resampled" as const,
+                  upperFrom: "analytic" as const,
+                },
+                simultaneous: {
+                  lowerFrom: "resampled" as const,
+                  upperFrom: "analytic" as const,
+                },
+              },
+              measured: unit("warning.fpr", 80, 40, []),
+            };
+          }
           if (entry.estimand === "calibration.ece") {
             return {
               ...entry,
               executed: "percentile-bootstrap" as const,
+              publishedBound: { kind: "resampled-only" as const },
               measured: unit("calibration.ece", 8, 5, [
                 {
                   position: 1,
@@ -440,10 +484,26 @@ function metrics(): EvaluationMetrics {
           // The mixed row as a real run publishes it: MEASURED and degenerate in
           // both factors, with the substitute factor at a single level. The report
           // has to print the degeneracy, not the prose about degeneracy.
+          if (entry.estimand === "warning.fpr.labelBasis") {
+            return {
+              ...entry,
+              executed: "percentile-bootstrap" as const,
+              publishedBound: {
+                kind: "per-interval" as const,
+                where:
+                  'coluna "Procedência do limite" da tabela de bases de rótulo ' +
+                  "humano (labelBasis.bases[].falsePositiveRate.boundEnvelope)",
+              },
+              measurementNote:
+                "medida por base: 2 base(s); a unidade de cada base está em " +
+                "labelBasis.bases[].resamplingUnit",
+            };
+          }
           if (entry.estimand === "mixed.warning.recall") {
             return {
               ...entry,
               executed: "declared-only" as const,
+              publishedBound: { kind: "analytic-only" as const },
               measured: {
                 estimand: "mixed.warning.recall",
                 method: "multiway" as const,
@@ -977,6 +1037,19 @@ describe("renderReportMarkdown publishes the A6 evidence with its roles named", 
     // And the under-powered one is labelled supplementary, not pooled away.
     expect(bases).toMatch(/supplementary-diagnostic/u);
     expect(bases).toMatch(/não aprova gate/u);
+    // The provenance of each published bound, because the plan's entry for
+    // `warning.fpr.labelBasis` stands for these intervals and points here. The
+    // gating basis resampled and still publishes Wilson's upper limit; the
+    // under-powered one never had a competing resampled bound at all.
+    expect(bases).toMatch(/Procedência do limite/u);
+    const gatingRow = bases
+      .split("\n")
+      .find((line) => line.startsWith("| date-cutoff "));
+    expect(gatingRow).toMatch(/inf reamostrado \/ sup Wilson/u);
+    const supplementaryRow = bases
+      .split("\n")
+      .find((line) => line.startsWith("| observed-process "));
+    expect(supplementaryRow).toMatch(/Wilson analítico/u);
   });
 
   it("names the resampling unit of every published estimand, with its demotion", async () => {
@@ -994,9 +1067,42 @@ describe("renderReportMarkdown publishes the A6 evidence with its roles named", 
     // The declared unit is spelled out, nested and crossed differently.
     expect(units).toMatch(/groups\.domainSource ⊃ groups\.author/u);
     expect(units).toMatch(/groups\.humanSeed × groups\.promptTemplate/u);
-    // Whether the published interval was actually resampled over the unit.
+    // Whether the DESIGN ran, in its own column.
+    expect(units).toMatch(/Desenho executado/u);
     expect(units).toMatch(/percentile-bootstrap/u);
     expect(units).toMatch(/declared-only/u);
+    // And, in a column of its own, WHICH ESTIMATOR supplied the published limit.
+    // The two are different facts: `warning.fpr` here ran its design and still
+    // publishes Wilson's upper bound, which is what the frozen rule does to a
+    // zero-count rate — and the old single column asserted the opposite.
+    expect(units).toMatch(/Limite publicado/u);
+    const fprRow = units
+      .split("\n")
+      .find((line) => line.startsWith("| warning.fpr |"));
+    expect(fprRow).toBeDefined();
+    expect(fprRow).toMatch(/percentile-bootstrap/u);
+    expect(fprRow).toMatch(/95%: inf reamostrado \/ sup Wilson/u);
+    expect(fprRow).toMatch(/simultâneo: inf reamostrado \/ sup Wilson/u);
+    expect(fprRow).toMatch(/wider-of-analytic-and-resampled/u);
+    // A continuous statistic has no analytic estimator competing for the slot.
+    expect(
+      units.split("\n").find((line) => line.startsWith("| calibration.ece |")),
+    ).toMatch(/percentil reamostrado/u);
+    // An entry standing for several intervals says where each one's provenance is,
+    // instead of averaging two estimators into one claim.
+    expect(
+      units
+        .split("\n")
+        .find((line) => line.startsWith("| warning.fpr.labelBasis |")),
+    ).toMatch(/Procedência do limite/u);
+    // A row this plan does not measure claims no provenance at all.
+    expect(
+      units
+        .split("\n")
+        .find((line) => line.startsWith("| warning.fpr.slice |")),
+    ).toMatch(/não declarada/u);
+    // The prose no longer promises that one column makes the distinction.
+    expect(units).toMatch(/`executed` diz apenas que o desenho rodou/u);
     // And the demotion `notApplicable` forced is recorded, not silent.
     expect(units).toMatch(/groups\.author→groups\.source \(3\)/u);
     // The mixed row's DEGENERACY, read off its own row rather than off the prose
@@ -1021,7 +1127,25 @@ describe("renderReportMarkdown publishes the A6 evidence with its roles named", 
     // And it names the two coverages that are a STRETCHED row rather than a row of
     // their own, so "o plano cobre estes estimandos" cannot be read as "a linha da
     // tabela nomeia estes estimandos".
-    expect(units).toMatch(/extensão declarada, não linha própria/u);
+    // The COUNT in that sentence is read from the contract that owns the list, so
+    // a third extension (or one fewer) cannot leave the report asserting a number
+    // the file no longer says.
+    const extensionCount = Object.keys(
+      REBUILD_V3_POLICY.resampling.estimandExtensions,
+    ).length;
+    expect(units).toMatch(
+      new RegExp(
+        `\\*\\*${extensionCount} coberturas? (é|são) extensão declarada, ` +
+          "não linha própria\\.\\*\\*",
+        "u",
+      ),
+    );
+    // And the list under it has exactly that many bullets.
+    expect(
+      units
+        .split("\n")
+        .filter((line) => /^- `[^`]+` herda a linha /u.test(line)).length,
+    ).toBe(extensionCount);
     expect(units).toMatch(
       /`separability\.auroc` herda a linha "calibração \(ECE, Brier\)"/u,
     );

@@ -1230,6 +1230,56 @@ describe("a declared unit is not a property of the number (R7)", () => {
     expect(fpr.evidence).toBe("unresampled-interval");
     expect(fpr.passed).toBe(false);
     expect(fpr.reasons[0]).toMatch(/mais estreito que o limite reamostrado/u);
+    // The four limits that make the diagnosis, not the estimator names dressed as
+    // an interval: a reader has to see 0.02 against 0.09 to see the narrowing.
+    expect(fpr.reasons[0]).toMatch(/\[0, 0\.02\]/u);
+    expect(fpr.reasons[0]).toMatch(/\[0, 0\.09\]/u);
+    expect(fpr.reasons[0]).not.toMatch(/\[resampled, resampled\]/u);
+  });
+
+  // Defensive, and therefore only reachable from an estimate this module did not
+  // produce: `rateEnvelope` always writes the published simultaneous method into
+  // the envelope's resampled pair. Nothing else exercises the branch, so without
+  // this case the check could be deleted and the suite would stay green.
+  it("fails the gate when the envelope names a resampled estimator other than the published one", () => {
+    const mismatched = upper(0.02);
+    const report = evaluateReleaseGates({
+      integrity: integrity(),
+      resampling: plan(),
+      metrics: metrics({
+        warningFpr: {
+          ...mismatched,
+          boundEnvelope: {
+            rule: "wider-of-analytic-and-resampled",
+            analytic: { lower: 0, upper: 0.02, method: "wilson-one-sided" },
+            resampled: {
+              lower: 0,
+              upper: 0.02,
+              method: "hierarchical-cluster-percentile",
+            },
+            lowerFrom: "resampled",
+            upperFrom: "resampled",
+            simultaneous: {
+              analytic: { lower: 0, upper: 0.02, method: "wilson-one-sided" },
+              resampled: {
+                lower: 0,
+                upper: 0.02,
+                method: "multiway-cluster-percentile",
+              },
+              lowerFrom: "resampled",
+              upperFrom: "resampled",
+            },
+          },
+        },
+      }),
+      slices: summary([passingSlice()]),
+    });
+    expect(report.decision).toBe("reject");
+    const fpr = gateById(report.gates, "warning.fpr.overall");
+    expect(fpr.evidence).toBe("unresampled-interval");
+    expect(fpr.passed).toBe(false);
+    expect(fpr.reasons[0]).toMatch(/multiway-cluster-percentile/u);
+    expect(fpr.reasons[0]).toMatch(/hierarchical-cluster-percentile/u);
   });
 
   it("fails the gate when a crossed design was drawn as a nested one", () => {

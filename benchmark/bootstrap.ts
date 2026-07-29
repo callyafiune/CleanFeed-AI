@@ -53,7 +53,10 @@
 
 import { percentileInterval } from "./intervals.ts";
 import { REBUILD_V3_POLICY } from "./rebuild-v3-policy.ts";
-import type { ResamplingUnitKind } from "./rebuild-v3-policy.ts";
+import type {
+  PublishedBoundRule,
+  ResamplingUnitKind,
+} from "./rebuild-v3-policy.ts";
 
 /**
  * One axis of one item, in the three states R6 allows and no fourth. It mirrors
@@ -168,6 +171,13 @@ export interface ResamplingPlanEntry {
    * fixture may state the unit alone; producers set it.
    */
   readonly executed?: "percentile-bootstrap" | "declared-only";
+  /**
+   * Which estimator supplied the limits this run PUBLISHED for this estimand.
+   * Absent on an entry that published nothing here — a declaration with no run
+   * behind it, or a row measured in another plan. See `PublishedBoundProvenance`
+   * for why this is not readable off `executed`.
+   */
+  readonly publishedBound?: PublishedBoundProvenance | null;
   /** The unit as measured over the population, when it was resolved. */
   readonly measured?: ResamplingUnitDeclaration | null;
   /**
@@ -185,6 +195,46 @@ export interface ResamplingPlanEntry {
    */
   readonly proxies?: readonly ResamplingProxy[];
 }
+
+/** Which estimator supplied each published limit of one interval. */
+export interface PublishedBoundSource {
+  readonly lowerFrom: "analytic" | "resampled";
+  readonly upperFrom: "analytic" | "resampled";
+}
+
+/**
+ * Where one estimand's PUBLISHED limits came from — a different question from
+ * `ResamplingPlanEntry.executed`, which says only that the design RAN.
+ *
+ * The two answers diverge routinely. Under the frozen `resampling.publishedBound`
+ * rule the published limit is the wider of two estimators', so a zero-count rate
+ * publishes the analytic bound while its design ran and its resampled upper bound is
+ * 0. Reading provenance off `executed` therefore claims a property the number does
+ * not have (R7), which is why it is recorded as its own fact and never derived.
+ */
+export type PublishedBoundProvenance =
+  | {
+      /** Two estimators produced a limit and the contract's rule chose between them. */
+      readonly kind: "envelope";
+      readonly rule: PublishedBoundRule;
+      /** The individual 95% pair, which is descriptive. */
+      readonly individual: PublishedBoundSource;
+      /**
+       * The simultaneous (Bonferroni) limit — the only one a release gate decides
+       * on. `null` when just one estimator produced a simultaneous bound, in which
+       * case `MetricEstimate.simultaneous.method` names it alone.
+       */
+      readonly simultaneous: PublishedBoundSource | null;
+    }
+  /** The resampled percentile, with no analytic estimator competing for the slot. */
+  | { readonly kind: "resampled-only" }
+  /** The analytic bound, because the design published no limit for this estimand. */
+  | { readonly kind: "analytic-only" }
+  /**
+   * One entry standing for several intervals — one per label basis, say. Averaging
+   * their provenance would invent a fact, so the entry names where each one is.
+   */
+  | { readonly kind: "per-interval"; readonly where: string };
 
 /** One factor of the frozen table read through a substitute axis. */
 export interface ResamplingProxy {
