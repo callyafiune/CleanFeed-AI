@@ -1503,6 +1503,7 @@ async function assertAttestedHistory(
   }
   if (!ledgerPresent) {
     if (witness.eventCount === 0) return witness;
+    const staged = await strayTempFiles(paths);
     fail(
       "CLUSTER_LEDGER_HISTORY_ABSENT",
       `there is no ledger at ${paths.ledgerPath}, and the keyring at ` +
@@ -1512,7 +1513,7 @@ async function assertAttestedHistory(
         `(${join(CLUSTER_EXPOSURE_PRIVATE_DIRECTORY, CLUSTER_EXPOSURE_LEDGER_FILE)}) ` +
         'or restore it with "cluster-ledger restore". Reading it as empty would ' +
         "return test eligibility to every cluster a consumed test already burned. " +
-        (await interruptedWriteNote(paths, witness)),
+        interruptedWriteNote(staged, witness),
     );
   }
   const lastEventDigest = events.at(-1)?.eventDigest ?? null;
@@ -1520,14 +1521,19 @@ async function assertAttestedHistory(
     events.length !== witness.eventCount ||
     lastEventDigest !== witness.lastEventDigest
   ) {
+    const staged = await strayTempFiles(paths);
     fail(
       "CLUSTER_LEDGER_HISTORY_DIVERGED",
       `the ledger at ${paths.ledgerPath} holds ${events.length} event(s) ending at ` +
         `${lastEventDigest ?? "(empty)"}, and the keyring at ${paths.keyringPath} ` +
         `attests ${witness.eventCount} ending at ` +
         `${witness.lastEventDigest ?? "(empty)"}. ` +
-        `${divergenceDiagnosis(events.length, witness.eventCount)}. ` +
-        (await interruptedWriteNote(paths, witness)),
+        `${divergenceDiagnosis(
+          events.length,
+          witness.eventCount,
+          staged.length > 0,
+        )}. ` +
+        interruptedWriteNote(staged, witness),
     );
   }
   return witness;
@@ -1547,11 +1553,10 @@ async function assertAttestedHistory(
  * gets is how to check: the attested tail digest is in the last line of the bytes
  * that are it.
  */
-async function interruptedWriteNote(
-  paths: ClusterLedgerPaths,
+function interruptedWriteNote(
+  staged: readonly string[],
   witness: ClusterLedgerWitness,
-): Promise<string> {
-  const staged = await strayTempFiles(paths);
+): string {
   if (staged.length === 0) return "No interrupted write is on disk.";
   return (
     `Interrupted write(s) still on disk: ${staged.join(", ")}. A staged LEDGER ` +
@@ -1575,18 +1580,34 @@ async function interruptedWriteNote(
  * — is refused as divergent, so naming `restore` on its own would name the one
  * action this state always rejects. "Aside" is deliberately not "away": the file is
  * the only copy of whatever it holds that the backup may not.
+ *
+ * `stagedWriteOnDisk` reorders the repair without changing it. A ledger short of its
+ * attestation with a staged write beside it is the crash residue the write order
+ * prefers ({@link appendEvent}), and the repair for THAT is the staged file, not a
+ * backup: an operator who reaches for the backup first is refused, because its
+ * keyring attests the pre-mutation height.
  */
-function divergenceDiagnosis(onDisk: number, attested: number): string {
+function divergenceDiagnosis(
+  onDisk: number,
+  attested: number,
+  stagedWriteOnDisk: boolean,
+): string {
   if (onDisk < attested) {
-    return (
-      "The ledger lost events: a truncation, a deleted last line or a stale " +
-      "copy. The hash chain cannot see a removal from the TAIL, which is where " +
-      "the newest exposures are, so this is the only check that catches it. " +
-      "To recover: move the ledger aside — keep it — and then " +
+    const restore =
+      "move the ledger aside — keep it — and then " +
       '"cluster-ledger restore <backup>", which writes only over an ABSENT ' +
       "ledger and therefore cannot run over the file as it stands. The " +
       "restorable pair is the one taken AFTER the last mutation, because its " +
-      "keyring attests this same height"
+      "keyring attests this same height";
+    return (
+      "The ledger lost events: a truncation, a deleted last line, a stale copy, " +
+      "or a run that died between attesting the height and publishing the ledger. " +
+      "The hash chain cannot see a removal from the TAIL, which is where the " +
+      "newest exposures are, so this is the only check that catches it. " +
+      (stagedWriteOnDisk
+        ? "An interrupted write is listed below, and it is the FIRST thing to " +
+          `check: those bytes may be the missing state. If they are not, ${restore}`
+        : `To recover: ${restore}`)
     );
   }
   if (onDisk > attested) {

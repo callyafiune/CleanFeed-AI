@@ -1362,6 +1362,8 @@ describe("the ledger reads as empty only when it is provably new", () => {
       restoreClusterLedger(paths(), commit.restorePoint.directory),
     ).rejects.toMatchObject({ code: "CLUSTER_LEDGER_RESTORE_DIVERGENT" });
     expect(failure.message).toContain("move the ledger aside");
+    // Nothing was interrupted here, so no staged file is offered as the shortcut.
+    expect(failure.message).toContain("No interrupted write is on disk.");
 
     // The named sequence, run exactly as written.
     await rename(paths().ledgerPath, `${paths().ledgerPath}.diverged`);
@@ -1400,6 +1402,10 @@ describe("the ledger reads as empty only when it is provably new", () => {
     )) as ClusterLedgerError;
     expect(failure.code).toBe("CLUSTER_LEDGER_HISTORY_DIVERGED");
     expect(failure.message).toContain(staged);
+    // And the staged file is offered BEFORE the backup, because the backup is the
+    // wrong repair here: every backup keyring attests the pre-mutation height, so
+    // an operator who reaches for it first is refused.
+    expect(failure.message).toContain("FIRST thing to check");
     // Not a property of `verify` alone: every command that decides eligibility hits
     // this refusal, and the operator reads whichever one they ran.
     const refused = (await preflightExposure(

@@ -4796,6 +4796,12 @@ execução foi além (ou ficou aquém) do que o texto acima diz.
     that needs it" monta o resíduo, exige o caminho do `.tmp` na mensagem de `verify` **e** na de
     `preflight`, executa o reparo nomeado e volta a `verify` verde na altura 2 com zero escritas
     interrompidas. Vermelho antes: `expected '…' to contain '…jsonl.4242.1.tmp'`.
+    A **ordem** dos dois reparos também importa e foi medida na mensagem real: com o `.tmp`
+    presente, o ramo de altura perdida abre com *"An interrupted write is listed below, and it is
+    the FIRST thing to check"* e só depois oferece o par de backup — porque nesse estado o backup é
+    o reparo **errado** (todo keyring de backup atesta a altura pré-mutação, então quem tenta o
+    backup primeiro é recusado). Sem `.tmp`, a mensagem abre com "To recover:" e fecha com "No
+    interrupted write is on disk."; as duas frases estão aferidas nos dois testes.
     Cabeçalho corrigido junto, e com ele o **menor** que a revisão levantou em separado: ele dizia
     "backup dos DOIS lados de toda mutação", e a **rotação** de chave é mutação que tira só o lado
     pré — o efeito é o que o item 24(b) já registra (todo par anterior, inclusive o que a própria
