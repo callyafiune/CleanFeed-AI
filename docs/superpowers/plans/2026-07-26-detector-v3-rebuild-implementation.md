@@ -4802,6 +4802,40 @@ execução foi além (ou ficou aquém) do que o texto acima diz.
     rotação tira, fica irrestaurável), remedido pela revisão desta rodada como
     `CLUSTER_LEDGER_RESTORE_DIVERGENT` nos três backups em disco. Agora o cabeçalho diz "toda
     transação que grava exposição" e aponta o item 24(b) como o caso não consertado.
+32. **Um docstring que o item 28 tornou falso, e três menores.**
+    (a) O parágrafo "WHICH BACKUP IS RESTORABLE" de `restoreClusterLedger` continuava dizendo
+    que "o backup que uma mutação tira é tirado ANTES dela" (agora tira dois) e que "o par
+    restaurável do estado atual é o que `cluster-ledger backup` tira DEPOIS da mutação, que é
+    portanto o passo que torna um congelamento recuperável" — passo que o item 28 pôs dentro da
+    transação. O item 23 desta lista teve a frase gêmea corrigida na entrega anterior; o código
+    não (`git log -S` mostra o parágrafo intocado desde `b51fedc`). Mesma classe do item 25: o
+    arquivo declara propriedade que deixou de ser verdade, no módulo que existe por causa disso.
+    Reescrito: a transação tira os dois, o pós-publicação é o `ClusterExposureCommit.restorePoint`
+    que ela devolve, e `cluster-ledger backup` é o **fallback manual** dos dois estados sem ponto
+    de restauração próprio (`CLUSTER_LEDGER_COMMITTED_UNBACKED` e a rotação). Junto, o parágrafo
+    novo "WHAT IT CANNOT DO": ledger presente e corrompido não é restaurado no lugar (item 30).
+    (b) `atomicWrite`/`writeTemp` (item 29d) podiam **substituir ou pular** a falha que
+    acompanham: `rm(force: true)` só engole ENOENT, então um EPERM/EBUSY no temporário estourava
+    do `catch` e descartava o erro do `rename` — "o keyring não pôde ser publicado" virava erro de
+    unlink; e a limpeza de `writeTemp` estava **depois** de `await handle.close()` no mesmo
+    `finally`, então um `close()` que lança pulava o `rm` e deixava exatamente a cópia integral do
+    keyring que o comentário diz que mais ninguém coleta. Agora existe `discardTemp`
+    (`rm(...).catch(() => {})`) e o `close()` roda num `finally` **interno**, com o `catch` que
+    limpa por fora. As duas metades seguem sem teste (forçar `rename`/`fsync`/`close` a falhar de
+    forma determinística no Windows pediria segurar handle ou encher volume).
+    (c) `CLUSTER_LEDGER_COMMITTED_UNBACKED` interpolava `(error as Error).message` sobre `unknown`:
+    uma rejeição que não fosse `Error` imprimiria `undefined` na única mensagem cujo trabalho é
+    dizer que a exposição **está** gravada. Passou à forma que o resto do repo usa
+    (`cli.ts:648`, `corpus-import.ts:340`).
+    (d) A metade **ALTURA** da comparação de testemunha ganhou teste próprio, e o item 27 estava
+    otimista: o argumento "toda perda de altura move a cauda" vale para ledger honestamente
+    apendado, **não** para testemunha escrita à mão — `parseWitness` só amarra altura zero a digest
+    nulo, então um keyring pode afirmar 3 eventos nomeando a cauda verdadeira de um ledger de 1.
+    Teste "refuses a witness whose HEIGHT was bumped while its tail digest stayed correct";
+    mutação (apagar `events.length !== witness.eventCount`) mata **só** ele: `1 failed | 52
+    passed`, `promise resolved "{ eligible: false, …(2) }" instead of rejecting`. Isso está dentro
+    do modelo de não-ameaça do item 18 (quem escreve o keyring), mas agora nenhuma das duas metades
+    depende de análise para estar presa.
 
 ### C4 — Bootstrap com unidade de reamostragem por estimando
 

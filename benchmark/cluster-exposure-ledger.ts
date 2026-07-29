@@ -572,9 +572,11 @@ export interface BackupReceipt {
  * The restore point is not a convenience field. A backup is ALSO taken before the
  * mutation, and that pair sits at height N while the committed state is N+1 — a
  * pair the keyring's attestation makes divergent, so `restore` refuses it over a
- * lost ledger. The only backup that can recover a frozen split is therefore the one
- * taken after the ledger is published, and returning its directory is what puts it
- * in front of the operator rather than in a runbook.
+ * lost ledger. The only backup a frozen split can be recovered from is therefore the
+ * one taken after the ledger is published, and returning its directory is what puts
+ * it in front of the operator rather than in a runbook. What "recovered" covers is
+ * narrow and stated where it is enforced: a ledger that is absent, or one moved aside
+ * because it was corrupted ({@link restoreClusterLedger}).
  */
 export interface ClusterExposureCommit {
   event: ClusterExposureEvent;
@@ -1115,20 +1117,38 @@ function tempPathFor(target: string): string {
   return `${target}.${process.pid}.${tempCounter}.tmp`;
 }
 
+/**
+ * Cleanup that accompanies a failure and can never become one.
+ *
+ * `rm(force: true)` only suppresses ENOENT: an EPERM or EBUSY on the temp — plausible
+ * on the platform whose semantics this module argues about — would throw out of the
+ * `catch` and REPLACE the error that matters, turning "the keyring could not be
+ * published" into an unlink error. The leftover is reported by
+ * {@link strayTempFiles} either way, so discarding the real diagnosis to announce a
+ * failed deletion is never the better trade.
+ */
+async function discardTemp(tempPath: string): Promise<void> {
+  await rm(tempPath, { force: true }).catch(() => {});
+}
+
 async function writeTemp(target: string, content: string): Promise<string> {
   await mkdir(dirname(target), { recursive: true });
   const tempPath = tempPathFor(target);
   const handle = await open(tempPath, "w");
-  let staged = false;
   try {
-    await handle.writeFile(content, "utf8");
-    await handle.sync();
-    staged = true;
-  } finally {
-    await handle.close();
-    // Nothing else can collect it: the path is generated here, so a caller that
-    // never received it cannot clean up after this.
-    if (!staged) await rm(tempPath, { force: true });
+    try {
+      await handle.writeFile(content, "utf8");
+      await handle.sync();
+    } finally {
+      await handle.close();
+    }
+  } catch (error) {
+    // Outside the `finally` that closes, so a throwing `close()` — which fails the
+    // write as much as `sync()` does — cannot skip the cleanup. Nothing else can
+    // collect the file: the path is generated here, so a caller that never received
+    // it cannot clean up after this.
+    await discardTemp(tempPath);
+    throw error;
   }
   return tempPath;
 }
@@ -1142,7 +1162,7 @@ async function atomicWrite(target: string, content: string): Promise<void> {
     // keyring those bytes are a full copy of `secrets.person` and every exposure
     // key, and the only caller that used to clean up after itself was the ledger's
     // own staging in `appendEvent`.
-    await rm(tempPath, { force: true });
+    await discardTemp(tempPath);
     throw error;
   }
 }
@@ -2038,16 +2058,25 @@ export async function backupClusterLedger(
  * first, against every key still in the keyring, so a hand-edited backup cannot
  * be restored at all.
  *
- * WHICH BACKUP IS RESTORABLE, stated because the attestation narrowed it. The
- * backup a mutation takes is taken BEFORE it, so it holds the ledger AND the keyring
- * at height N while the committed state is N+1. Restoring that pair over a lost
- * ledger used to succeed and silently roll the history back one event; now the
- * keyring on disk attests N+1, the pair diverges, and it is refused. The restorable
- * pair for the current state is the one `cluster-ledger backup` takes AFTER the
- * mutation, which is therefore the step that makes a freeze recoverable. Two
- * further limits are unfixed and recorded in the plan: a keyring that is itself lost
- * cannot be restored at all (authenticating the manifest needs it), and a rotation
- * makes every earlier pair divergent for the same reason as above.
+ * WHICH BACKUP IS RESTORABLE, stated because the attestation narrowed it. An
+ * exposure-recording transaction takes TWO backups ({@link appendEvent}): the
+ * pre-mutation pair holds ledger and keyring at height N while the committed state is
+ * N+1, so restoring it over a lost ledger — which used to succeed and silently roll
+ * the history back one event — now diverges on the keyring and is refused. The
+ * restorable pair for the committed state is the post-publication one, which the
+ * transaction returns as `ClusterExposureCommit.restorePoint`. `cluster-ledger
+ * backup` is the MANUAL fallback for the two states that have no restore point of
+ * their own: after `CLUSTER_LEDGER_COMMITTED_UNBACKED`, and after a key rotation
+ * (which takes only the pre-side).
+ *
+ * WHAT IT CANNOT DO, because "absent or identical" is narrow: a ledger that is
+ * present and CORRUPTED — truncated, a stale `--ledger` copy, a rewritten tail — is
+ * not restored in place. The refusal that reports the corruption names the sequence
+ * that works, which begins by moving that file aside
+ * ({@link divergenceDiagnosis}). Two further limits are unfixed and recorded in the
+ * plan: a keyring that is itself lost cannot be restored at all (authenticating the
+ * manifest needs it), and a rotation makes every earlier pair divergent for the same
+ * reason as the pre-mutation pair above.
  */
 export async function restoreClusterLedger(
   paths: ClusterLedgerPaths,
@@ -2217,7 +2246,9 @@ async function appendEvent(
         reattestKeyringText(keyringRaw, witnessFor(event, lines.length)),
       );
     } catch (error) {
-      await rm(tempPath, { force: true });
+      // The caller's write or the attestation failed, and THAT is the error the
+      // operator has to see — see {@link discardTemp}.
+      await discardTemp(tempPath);
       throw error;
     }
     await rename(tempPath, paths.ledgerPath);
@@ -2248,7 +2279,12 @@ async function appendEvent(
         "CLUSTER_LEDGER_COMMITTED_UNBACKED",
         `the ${request.eventType} event ${event.eventId} IS RECORDED in ` +
           `${paths.ledgerPath} at height ${lines.length}, and the backup of that ` +
-          `state could not be written: ${(error as Error).message}. Do NOT re-run ` +
+          "state could not be written: " +
+          // The module's shape for an unknown catch (`cli.ts:648`, `corpus-import.ts`).
+          // A rejection that is not an Error would otherwise render "undefined" in the
+          // one message whose job is to say the exposure IS recorded and why the
+          // backup did not land.
+          `${error instanceof Error ? error.message : String(error)}. Do NOT re-run ` +
           "this command — the exposure is recorded and would now be refused. Run " +
           '"cluster-ledger backup" once the backup root is writable; until then the ' +
           "committed pair has no restore point",

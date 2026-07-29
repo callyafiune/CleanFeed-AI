@@ -1597,6 +1597,35 @@ describe("the ledger reads as empty only when it is provably new", () => {
     }
   });
 
+  it("refuses a witness whose HEIGHT was bumped while its tail digest stayed correct", async () => {
+    // The HEIGHT half of the comparison, on its own. On an honestly appended ledger
+    // the digest half implies it — losing height moves the tail — but a HAND-WRITTEN
+    // witness has no such discipline: `parseWitness` ties only a height of zero to a
+    // null digest, so a keyring can claim three events while naming the true tail of
+    // a one-event ledger. Deleting `events.length !== witness.eventCount` leaves
+    // every other test in this file green.
+    await consumeOneTestCluster();
+    const keyring = JSON.parse(
+      await readFile(paths().keyringPath, "utf8"),
+    ) as Record<string, unknown>;
+    await writeFile(
+      paths().keyringPath,
+      `${JSON.stringify(
+        {
+          ...keyring,
+          ledgerWitness: {
+            ...(keyring.ledgerWitness as Record<string, unknown>),
+            eventCount: 3,
+          },
+        },
+        null,
+        2,
+      )}\n`,
+      "utf8",
+    );
+    await refusesEveryPath(paths(), "CLUSTER_LEDGER_HISTORY_DIVERGED");
+  });
+
   it("refuses to init over a keyring that attests a history, on any path", async () => {
     // `init` mints a key only when the keyring has none — so a keyring stripped of
     // its `keys` but still attesting a height would otherwise pass, and the newly
