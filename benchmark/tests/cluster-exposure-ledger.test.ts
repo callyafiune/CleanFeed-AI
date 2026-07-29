@@ -6,17 +6,21 @@
 // event written from a test would burn eligibility for the whole project.
 
 import { execFileSync } from "node:child_process";
-import { mkdtemp, mkdir, readFile, readdir, rm, writeFile } from "node:fs/promises";
+import {
+  mkdtemp,
+  mkdir,
+  readFile,
+  readdir,
+  rm,
+  writeFile,
+} from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
 import { runCli } from "../cli.ts";
-import {
-  validateBenchmarkRecordV3,
-  type BenchmarkRecord,
-} from "../schema.ts";
+import { validateBenchmarkRecordV3, type BenchmarkRecord } from "../schema.ts";
 import {
   known,
   unknownAxis,
@@ -327,7 +331,10 @@ describe("acceptance 3 — a historical near-duplicate is barred even under a ne
             text: NEAR_TEXT,
             partition: "test",
             // A different sampling unit too, so only the CONTENT can catch it.
-            groups: { source: "th_other_77", author: "person_aaaabbbbccccdddd" },
+            groups: {
+              source: "th_other_77",
+              author: "person_aaaabbbbccccdddd",
+            },
           },
         ],
       }),
@@ -344,7 +351,10 @@ describe("acceptance 3 — a historical near-duplicate is barred even under a ne
             id: "unrelated",
             text: FAR_TEXT,
             partition: "test",
-            groups: { source: "th_other_78", author: "person_aaaabbbbcccceeee" },
+            groups: {
+              source: "th_other_78",
+              author: "person_aaaabbbbcccceeee",
+            },
           },
         ],
       }),
@@ -361,7 +371,13 @@ describe("acceptance 4 — a consumed test record-line returns to no partition",
       request({ records: [record({ id: "t1", partition: "test" })] }),
     );
 
-    for (const partition of ["train", "dev", "cal-A", "cal-B", "test"] as const) {
+    for (const partition of [
+      "train",
+      "dev",
+      "cal-A",
+      "cal-B",
+      "test",
+    ] as const) {
       const decision = await preflightExposure(
         paths(),
         request({
@@ -508,7 +524,12 @@ describe("acceptance 9 — a LINEAGE edge is caught from both of its ends", () =
       request({
         eventType: "pilot-exposure",
         records: [
-          record({ id: "h1", partition: "dev", text: SEED_TEXT, source: "th_h1" }),
+          record({
+            id: "h1",
+            partition: "dev",
+            text: SEED_TEXT,
+            source: "th_h1",
+          }),
         ],
       }),
     );
@@ -544,7 +565,12 @@ describe("acceptance 9 — a LINEAGE edge is caught from both of its ends", () =
         datasetDigest: DATASET_B,
         splitDigest: SPLIT_B,
         records: [
-          record({ id: "h1", partition: "test", text: SEED_TEXT, source: "th_h1" }),
+          record({
+            id: "h1",
+            partition: "test",
+            text: SEED_TEXT,
+            source: "th_h1",
+          }),
         ],
       }),
     );
@@ -562,7 +588,12 @@ describe("acceptance 9 — a LINEAGE edge is caught from both of its ends", () =
       request({
         eventType: "pilot-exposure",
         records: [
-          record({ id: "p1", partition: "dev", text: SEED_TEXT, source: "th_p1" }),
+          record({
+            id: "p1",
+            partition: "dev",
+            text: SEED_TEXT,
+            source: "th_p1",
+          }),
         ],
       }),
     );
@@ -590,7 +621,12 @@ describe("acceptance 9 — a LINEAGE edge is caught from both of its ends", () =
       request({
         eventType: "pilot-exposure",
         records: [
-          record({ id: "h1", partition: "dev", text: SEED_TEXT, source: "th_h1" }),
+          record({
+            id: "h1",
+            partition: "dev",
+            text: SEED_TEXT,
+            source: "th_h1",
+          }),
         ],
       }),
     );
@@ -745,7 +781,11 @@ describe("the identity boundary the ledger enforces itself", () => {
     // A path or an empty string would be written into an append-only event and
     // would keep verifying, and the link would be found useless only when the
     // second holdout attempt had to prove which reserve it came from.
-    for (const bad of ["", "benchmark/data/private/reserve-manifest.json", "F".repeat(64)]) {
+    for (const bad of [
+      "",
+      "benchmark/data/private/reserve-manifest.json",
+      "F".repeat(64),
+    ]) {
       await expect(
         preflightExposure(paths(), request({ reserveManifestDigest: bad })),
         `reserveManifestDigest ${JSON.stringify(bad)}`,
@@ -761,6 +801,42 @@ describe("the identity boundary the ledger enforces itself", () => {
     await expect(
       preflightExposure(paths(), request({ splitDigest: "split-1" })),
     ).rejects.toMatchObject({ code: "CLUSTER_LEDGER_DIGEST_INVALID" });
+  });
+
+  it("checks the record id as an ID, and against the shape the schema allows", async () => {
+    await init();
+
+    // A long id is SCHEMA-VALID: `benchmark/schema.ts` validates a record id with
+    // the uncapped `/^[A-Za-z0-9_-]+$/`. Borrowing the group-identity check
+    // imported a 128-character cap the schema does not have, so a valid corpus
+    // would have aborted E2's freeze — and with a message about `groups`.
+    const long = "r".repeat(200);
+    const decision = await preflightExposure(
+      paths(),
+      request({
+        records: [{ ...record({ id: "r1" }), id: long }],
+      }),
+    );
+    expect(decision.event.records).toHaveLength(1);
+
+    // The alphabet still holds, and the message names the field that is wrong.
+    await expect(
+      preflightExposure(
+        paths(),
+        request({ records: [record({ id: "r1@example.com" })] }),
+      ),
+    ).rejects.toMatchObject({
+      code: "CLUSTER_LEDGER_RECORD_ID_INVALID",
+      message: expect.stringMatching(/record id/),
+    });
+    await expect(
+      preflightExposure(
+        paths(),
+        request({ records: [record({ id: "r1@example.com" })] }),
+      ),
+    ).rejects.toMatchObject({
+      message: expect.not.stringMatching(/groups\./),
+    });
   });
 
   it("refuses an axis name the schema does not declare", async () => {
@@ -821,7 +897,11 @@ describe("the identity boundary the ledger enforces itself", () => {
 // pseudonym changes and the ledger answers "never exposed" for people it already
 // exposed. Shape checks cannot see that. Only running both sides can.
 
-const LAB_DIRECTORY = join(dirname(fileURLToPath(import.meta.url)), "..", "lab");
+const LAB_DIRECTORY = join(
+  dirname(fileURLToPath(import.meta.url)),
+  "..",
+  "lab",
+);
 
 const PSEUDONYM_PROBE = [
   "import json, sys",
@@ -1054,7 +1134,9 @@ describe("acceptance 8 — driven through the real CLI on a temporary fixture", 
     const backups = await readdir(paths().backupRoot);
     const directory = join(
       paths().backupRoot,
-      backups.find((entry) => entry.startsWith("2026-07-28T13-00-00")) as string,
+      backups.find((entry) =>
+        entry.startsWith("2026-07-28T13-00-00"),
+      ) as string,
     );
 
     const committed = await readFile(paths().ledgerPath, "utf8");
@@ -1070,7 +1152,12 @@ describe("acceptance 8 — driven through the real CLI on a temporary fixture", 
         request({
           runId: "run-freeze",
           records: [
-            record({ id: "f1", text: FAR_TEXT, partition: "train", source: "th_f1" }),
+            record({
+              id: "f1",
+              text: FAR_TEXT,
+              partition: "train",
+              source: "th_f1",
+            }),
           ],
         }),
         null,
@@ -1163,9 +1250,11 @@ describe("exposureInputsFromRecords — R6's three states at the boundary", () =
     const human = humanRow("h_a1", { author: "au_1", source: "th_1" });
     const generated = generatedRow("g_a1", "h_a1");
     const withUnknown = validateBenchmarkRecordV3(
-      withAxis({ ...v3Human(), id: "h_a2" }, "author", unknownAxis(
-        "the source row carried no owner",
-      )),
+      withAxis(
+        { ...v3Human(), id: "h_a2" },
+        "author",
+        unknownAxis("the source row carried no owner"),
+      ),
     );
 
     const inputs = exposureInputsFromRecords(

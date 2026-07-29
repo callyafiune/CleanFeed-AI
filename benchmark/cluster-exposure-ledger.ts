@@ -371,7 +371,10 @@ function assertSha256Field(key: string, value: unknown): void {
  */
 export function parseExposureRequest(value: unknown): ExposureRequest {
   if (typeof value !== "object" || value === null) {
-    fail("CLUSTER_LEDGER_REQUEST_INVALID", "the exposure request is not an object");
+    fail(
+      "CLUSTER_LEDGER_REQUEST_INVALID",
+      "the exposure request is not an object",
+    );
   }
   const object = value as Record<string, unknown>;
   const requiredString = (key: string): string => {
@@ -385,7 +388,9 @@ export function parseExposureRequest(value: unknown): ExposureRequest {
     return found;
   };
   const eventType = requiredString("eventType");
-  if (!(CLUSTER_EXPOSURE_EVENT_TYPES as readonly string[]).includes(eventType)) {
+  if (
+    !(CLUSTER_EXPOSURE_EVENT_TYPES as readonly string[]).includes(eventType)
+  ) {
     fail(
       "CLUSTER_LEDGER_REQUEST_INVALID",
       `eventType must be one of ${CLUSTER_EXPOSURE_EVENT_TYPES.join(", ")}`,
@@ -538,9 +543,39 @@ export function defaultBackupRoot(): string {
 
 // --- identity boundary ------------------------------------------------------
 
+// A GROUP identity. The 128-character cap is deliberately TIGHTER than the
+// schema's uncapped `PSEUDONYM`, and it is a bound on what this module will index:
+// every accepted identity becomes a MAC message under every active key and is kept
+// for the life of the project. C2's own pseudonyms are 24 characters, so nothing an
+// extractor emits comes near the cap — but if a future source does, the freeze must
+// fail loudly here rather than silently index an unbounded string. It is NOT a
+// claim that the schema forbids longer identities: it does not.
 const PSEUDONYM_SHAPE = /^[A-Za-z0-9_-]{1,128}$/;
+// A record-line ID, exactly as `benchmark/schema.ts` validates it — UNCAPPED. The
+// ledger must not be stricter than the schema about an id: a schema-valid corpus
+// carrying a 200-character id would otherwise abort E2's freeze, and the id is not
+// an identity the ledger chose to index, it is the row it was handed.
+const RECORD_ID_SHAPE = /^[A-Za-z0-9_-]+$/;
 // Exactly what C2's `ClusterKeyring.pseudonym` emits: `<purpose>_<16 hex>`.
 const PERSON_PSEUDONYM_SHAPE = /^[a-z][a-z0-9-]*_[0-9a-f]{16}$/;
+
+/**
+ * Refuses a record-line id the ledger cannot MAC coherently.
+ *
+ * Separate from {@link assertLedgerIdentity} for two reasons that both bit once:
+ * the message has to name `id` and not `groups.id`, a field no record has, and the
+ * id must be held to the SCHEMA's alphabet rather than to the group-identity cap.
+ */
+function assertLedgerRecordId(id: string): void {
+  if (!RECORD_ID_SHAPE.test(id)) {
+    fail(
+      "CLUSTER_LEDGER_RECORD_ID_INVALID",
+      `record id ${JSON.stringify(id)} is not a record-line id: the schema allows ` +
+        "only the characters A-Z a-z 0-9 _ -, and the id becomes part of a MAC " +
+        "message another run has to reproduce byte for byte",
+    );
+  }
+}
 
 /**
  * Refuses an identity this ledger must not index.
@@ -744,9 +779,15 @@ function sha256Text(text: string): string {
   return sha256BytesHex(new TextEncoder().encode(text));
 }
 
-function validateEventShape(value: unknown, line: number): ClusterExposureEvent {
+function validateEventShape(
+  value: unknown,
+  line: number,
+): ClusterExposureEvent {
   if (typeof value !== "object" || value === null) {
-    fail("CLUSTER_LEDGER_EVENT_INVALID", `ledger line ${line} is not an object`);
+    fail(
+      "CLUSTER_LEDGER_EVENT_INVALID",
+      `ledger line ${line} is not an object`,
+    );
   }
   const object = value as Record<string, unknown>;
   for (const key of Object.keys(object)) {
@@ -1087,6 +1128,27 @@ async function strayTempFiles(ledgerPath: string): Promise<string[]> {
     .map((entry) => join(directory, entry));
 }
 
+/**
+ * Key coverage, checked BY VERSION NAME — and that is the whole limit of it.
+ *
+ * What it catches: a keyVersion an event references that the keyring no longer
+ * carries, i.e. a key removed or renamed instead of appended.
+ *
+ * What it CANNOT catch: a key whose NAME is unchanged and whose SECRET is not. If
+ * `benchmark/data/private/cluster-exposure-keyring.v1.json` is replaced by a fresh
+ * 32-byte secret still called `v1`, every name lines up, `verifyClusterLedger`
+ * passes, every HMAC `buildIndex` computes is taken under the new secret, and the
+ * whole history reads as "never exposed" — the silent-empty-check failure this
+ * module exists to prevent. `init` refuses to mint over an existing `keys` array,
+ * so reaching that state takes a manual edit or restoring a foreign keyring, and the
+ * backup manifest's MAC is today the only place a secret is bound to anything.
+ *
+ * Fixing it means an event carrying a key-bound witness (e.g. a MAC over
+ * `eventDigest` under each active key) so `verify` can detect a substituted secret.
+ * The event schema is closed and versioned, so that field cannot be added without a
+ * `schemaVersion` bump: it is E2's decision, to be taken BEFORE the freeze, and it
+ * is recorded as such in the plan.
+ */
 async function assertLedgerConsistent(
   paths: ClusterLedgerPaths,
   keyring: ClusterExposureKeyring,
@@ -1233,6 +1295,12 @@ function buildEventRecords(
   inputs: readonly ExposureRecordInput[],
 ): ClusterExposureRecord[] {
   return inputs.map((input) => {
+    // The id first, because every diagnostic below quotes it and because the row's
+    // OWN lineage identity is MACed from it. Checked as an ID, not as a group
+    // identity: the group cap is a bound this module chose, and applying it here
+    // both named a `groups.id` field no record has and would have refused a
+    // schema-valid corpus at freeze time.
+    assertLedgerRecordId(input.id);
     if (!(LEDGER_PARTITIONS as readonly string[]).includes(input.partition)) {
       fail(
         "CLUSTER_LEDGER_PARTITION_INVALID",
@@ -1252,13 +1320,12 @@ function buildEventRecords(
       }
       if (identity === undefined) continue;
       assertLedgerIdentity(axis, identity);
-      groupDigests[axis] = identityDigests(keyring, macDomainOf(axis), identity);
+      groupDigests[axis] = identityDigests(
+        keyring,
+        macDomainOf(axis),
+        identity,
+      );
     }
-    // The row's OWN lineage identity, in the domain a child would use. The id is
-    // shape-checked here for the same reason a group identity is: it becomes part
-    // of a MAC message that has to match one another run computes, and the schema
-    // already restricts an id to this alphabet (`pseudonym(root, "id", "")`).
-    assertLedgerIdentity("id", input.id);
     const fingerprint = nearDuplicateFingerprint(input.text);
     return {
       recordDigest: sha256Text(
@@ -1490,7 +1557,13 @@ async function writeBackup(
     join(directory, "backup-manifest.json"),
     `${JSON.stringify({ ...manifest, mac }, null, 2)}\n`,
   );
-  return { directory, ledgerSha256, keyringSha256, mac, keyVersion: newest.keyVersion };
+  return {
+    directory,
+    ledgerSha256,
+    keyringSha256,
+    mac,
+    keyVersion: newest.keyVersion,
+  };
 }
 
 async function copyFileIfPresent(
@@ -1604,7 +1677,9 @@ export async function restoreClusterLedger(
           target,
           backupContent,
           outcome:
-            current === undefined ? ("written" as const) : ("identical" as const),
+            current === undefined
+              ? ("written" as const)
+              : ("identical" as const),
         };
       }),
     );
