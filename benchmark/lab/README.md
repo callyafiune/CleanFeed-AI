@@ -56,6 +56,39 @@ python generate_ai.py --provider anthropic \
 # idem --provider openai | gemini; --dry-run mostra o plano sem chamar API
 ```
 
+## Piloto de triagem de PII por NER — `ner_pilot.py`
+
+**Não é a triagem; é a medição do custo dela.** O estágio 1 do
+[`pii-review-v1`](../protocols/pii-review-v1.md) (`common.py:pii_hits`) **descarta** o
+candidato em vez de sinalizá-lo, então toda linha de pool sobrevivente é limpa-até-onde-os-
+cinco-regexes-veem e a incógnita é a **taxa de escape** — nome próprio em prosa corrida,
+endereço, forma rara de handle, que o próprio `common.py:70-76` nomeia. Um NER é a única
+entrada possível para uma adjudicação humana por achado, e o custo dessa adjudicação é a
+taxa de apontamento vezes o custo por item. O script mede a primeira e instrumenta o
+segundo; o número que ele produz é
+`P(o NER aponta pessoa | a varredura de regex disse limpo)`, **não** a prevalência de PII
+nos dumps.
+
+Amostra estratificada (~125 por fonte humana), sorteio determinístico por digest da chave
+`seed:candidateId`, janelas cortadas nos **offsets do tokenizador** (nunca truncamento) e
+menções repetidas do mesmo nome agrupadas — um acórdão cita o mesmo ministro quinze vezes e
+o revisor julga aquele nome **uma**. **Nenhum artefato carrega texto de entidade:** as
+linhas de achado têm id, categoria canônica e offsets. O subcomando `show` imprime a forma
+de superfície **no console** para quem adjudica, e isso não é gravado.
+
+```bash
+python ner_pilot.py screen                      # modelo primário (HAREM/BERTimbau)
+python ner_pilot.py screen --model Babelscape/wikineural-multilingual-ner
+python ner_pilot.py show --batch adjudication-batch-<slug>.json \
+  --findings findings-<slug>.jsonl              # console; nada é persistido
+python ner_pilot.py tally --verdicts verdicts.json \
+  --summary summary-<slug>.json --findings findings-<slug>.jsonl
+```
+
+Saída em `../out/rebuild-v3/ner-pilot/` (gitignored). `tally` exige que o arquivo de
+vereditos declare em prosa a **origem** dos segundos por item: é o único insumo que não é
+medição deste corpus.
+
 ## T4 — treino no Colab (bake-off)
 
 O smoke local (CPU) valida o script; o treino real roda num Colab T4 grátis:

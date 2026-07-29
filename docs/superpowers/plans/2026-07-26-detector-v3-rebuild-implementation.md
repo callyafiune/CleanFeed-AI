@@ -4968,6 +4968,114 @@ perna `human-reviewed` **não tem produtor** em `benchmark/lab/`: D1 e D5 são a
 que trazem revisor. Até lá, todo corpus é `automated/unreviewed` e um selo de release é
 recusado — que é preferir falhar fechado a alegar governança (R4).
 
+#### Piloto de triagem por NER (2026-07-29): o custo da adjudicação, medido
+
+**Por que este piloto existe:** o desenho de auditoria de PII para um revisor único é
+triagem automática por NER + adjudicação humana de cada apontamento + amostra aleatória
+entre os não apontados. O custo da adjudicação é a **taxa de apontamento** vezes o custo
+por item, e a taxa nunca havia sido medida — o número em circulação ("3 a 6 h") era
+estimativa sem base. `benchmark/lab/ner_pilot.py` a mede.
+
+**Desenho, congelado antes de olhar qualquer texto.** Amostra estratificada de 500
+registros-linha humanos, 125 por fonte, dos pools `*_fresh` de `benchmark/data/candidates/`
+(pt.stackoverflow, ptwiki, B2W, Carolina), sorteados por ordem de digest da chave
+`ner-pilot-20260729:candidateId`. Estratificar é obrigatório porque a densidade de PII é
+propriedade do gênero. A partição `test` e `test-labels.jsonl` não foram tocadas (R2).
+
+**O que a taxa significa (R7).** Os pools já passaram por `pii_hits`, que **descarta**.
+Logo o que se mede é `P(o NER aponta pessoa | a varredura de regex disse limpo)` — a
+população exata que uma adjudicação de estágio 2 receberia. **Não** é a prevalência de PII
+nos dumps, e **não** é precisão do NER contra um padrão-ouro, que não existe aqui.
+
+**Modelo primário: `jordyvl/bert-base-portuguese-cased_harem-selective-sm-first-ner`**
+(BERTimbau + HAREM *selective*). Escolhido porque o HAREM é o corpus-ouro português de
+**gênero misto** — não jurídico como o LeNER-Br, não notícia como o `ner_news_portuguese` —
+e porque o backbone é o mesmo já congelado pelo projeto. Segundo modelo,
+`Babelscape/wikineural-multilingual-ner` (mBERT, dado prateado de Wikipédia), rodado sobre
+a **mesma** amostra para separar "o corpus tem nomes" de "este modelo diz que tem".
+Janelas cortadas nos offsets do tokenizador, nunca truncamento; menções repetidas do mesmo
+nome agrupadas, porque o revisor julga um nome **uma** vez.
+
+**Taxa de apontamento medida (limiar 0,5; IC 95% de Wilson):**
+
+| fonte | n | apontados | taxa | IC 95% | nomes distintos | nomes/registro apontado |
+|---|---:|---:|---:|---|---:|---:|
+| B2W (`social-media`) | 125 | 3 | **2,4%** | 0,8–6,8% | 3 | 1,0 |
+| pt.stackoverflow (`qa-informal`) | 125 | 5 | **4,0%** | 1,7–9,0% | 7 | 1,4 |
+| ptwiki (`encyclopedic`) | 125 | 73 | **58,4%** | 49,6–66,7% | 365 | 5,0 |
+| Carolina (`university`/`institutional`) | 125 | 85 | **68,0%** | 59,4–75,5% | 1.858 | **21,9** |
+| total (cota igual) | 500 | 166 | **33,2%** | 29,2–37,4% | 2.233 | 13,5 |
+
+O segundo modelo mede **31,8%** (IC 27,9–36,0%) e concorda com o primeiro em **96,6%** dos
+500 registros-linha (154 apontados por ambos, 12 só pelo HAREM, 5 só pelo WikiNEuRal). A
+taxa é do **corpus**, não da escolha de modelo. Limiar não ajuda: subir de 0,5 para 0,95
+leva a taxa de 33,2% para 32,2%.
+
+**Adjudicação manual de 30 apontados** (sorteio determinístico entre os apontados; regra
+por registro, ordenada por severidade): **8 pessoa privada (26,7%)**, **18 figura pública
+(60,0%)**, **4 falso positivo (13,3%)**. Os 8 de pessoa privada são todos Carolina: sete
+acórdãos do STF que nomeiam **parte, advogado e réu** (um deles um habeas corpus com
+paciente e corréus identificados) e uma conversa interpessoal transcrita com prenomes. Os
+falsos positivos são nome de navio, clubes de futebol, o termo de programação *Model* e uma
+palavra de provérbio. **Existe PII real escapando do filtro de regex** — é exatamente o
+ponto cego que `common.py:70-76` declara.
+
+**Tempo.** 138 s de relógio medidos para os 30 registros-linha (4,6 s cada; 379 nomes
+distintos exibidos, 0,364 s por nome), **do adjudicador desta rodada, que é uma máquina**.
+O tempo de um revisor humano sobre o mesmo lote **não foi medido** e nenhum multiplicador é
+inventado aqui. Da distribuição de dificuldade — **11 de 30 exigiram ler a prosa em volta**
+(papel processual, agradecimento, cônjuge em verbete, pseudônimo de contribuidor) e 19 foram
+decidíveis pelo próprio span — o que se sustenta é que **cerca de um terço dos itens é juízo
+real**, não descarte à vista.
+
+**Extrapolação para 9.000 registros-linha humanos**, propagando o IC da taxa:
+
+| mistura de fontes | taxa | apontados / 9.000 | nomes distintos |
+|---|---:|---:|---:|
+| cota igual (a do piloto) | 33,2% | 2.629–3.370 | ~40.000 |
+| proporcional aos pools `*_fresh` | 35,1% | ~3.155 | ~38.000 |
+| cinco estratos core equilibrados | 40,2% | ~3.614 | ~59.000 |
+
+Horas, como **função** do custo por registro-linha apontado (a coluna de 4,6 s é a única
+medida; as outras são sensibilidade declarada, não medição):
+
+| s por apontado | 4,6 | 10 | 20 | 30 | 45 | 60 |
+|---|---:|---:|---:|---:|---:|---:|
+| horas (cota igual) | 3,8 | 8,3 | 16,6 | 24,9 | 37,4 | 49,8 |
+| horas (cinco estratos) | 4,6 | 10,0 | 20,1 | 30,1 | 45,2 | 60,2 |
+
+**Conclusão: o desenho não fecha como orçado, e o piloto o refuta.** Com 30% a 40% dos
+registros-linha apontados, a adjudicação de achados de NER **não** é a tarefa de 3–6 h da
+tabela de trabalho humano: a qualquer ritmo humano plausível (10–30 s por registro-linha)
+ela custa **8 a 30 h sozinha** e consome todo o orçamento de 9–13 h. Isso não invalida a
+triagem — ela **funciona**, achou PII real que o regex não acha — invalida o
+dimensionamento. Três saídas mecânicas, nenhuma delas afrouxando gate:
+
+1. **Adjudicar por estrato, não por corpus.** B2W e pt.stackoverflow apontam 2,4% e 4,0%:
+   um censo de adjudicação nesses dois estratos custa dezenas de itens, não milhares. O
+   custo inteiro está em ptwiki e Carolina.
+2. **Tratar Carolina judiciário como estrato de PII conhecida, não como fila de
+   adjudicação.** Acórdão do STF nomeia parte por construção; adjudicar 21,9 nomes por
+   documento para redescobrir isso é medir o óbvio. A decisão é de admissão do estrato
+   (com tratamento) ou de exclusão, e é decisão de D1.
+3. **Amostrar a adjudicação e publicar taxa residual**, como já se faz para os não
+   apontados — com a mesma redação obrigatória de "isto não certifica registro não
+   auditado".
+
+Qual dessas três é de **D1**, com o volume de D0b em mãos. O que este piloto entrega é o
+número que faltava para escolher.
+
+**Ganho colateral medido:** os registros-linha **não apontados** têm média de **92
+palavras** (mediana por fonte entre 53 e 129), contra 768 do lote apontado — nomes se
+concentram em texto longo. A amostra aleatória de n=300 entre os não apontados é portanto
+leitura curta; quanto tempo um humano leva nela **não foi medido**.
+
+**Artefatos:** `benchmark/out/rebuild-v3/ner-pilot/` (gitignored) — `sample.json`,
+`findings-<modelo>.jsonl`, `summary-<modelo>.json`, `adjudication-batch-<modelo>.json`,
+`verdicts.json`, `adjudication-cost.json`. **Nenhum deles contém texto de entidade**: id,
+categoria canônica e offsets. Os 30 ids de `adjudication-batch-*.json` foram **lidos pelo
+desenvolvimento** e são material de exposição para o ledger de C3.
+
 ---
 
 ### C6 — Validação cruzada agrupada

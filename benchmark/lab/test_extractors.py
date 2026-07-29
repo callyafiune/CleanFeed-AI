@@ -11,6 +11,7 @@ import bz2
 import contextlib
 import io
 import json
+import re
 import sys
 import tempfile
 import unittest
@@ -2566,3 +2567,192 @@ class ReviewStateTests(unittest.TestCase):
                 ),
             )
         self.assertEqual(rows[0]["meta"]["automatedFilters"], mine)
+
+
+class NerPilotTests(unittest.TestCase):
+    """The pure parts of the NER screening pilot (no model download, no torch).
+
+    What these pin is the arithmetic the measurement rests on: the draw has to be
+    reproducible and disjoint per pool, long text has to be COVERED rather than
+    truncated, the duplicates that overlapping windows create must collapse to one
+    finding, and an unmapped model label must raise instead of quietly counting as
+    "not a person" — that last one is how a model swap would silently lower a flag
+    rate nobody re-measured.
+    """
+
+    def test_sample_is_deterministic_and_seed_dependent(self) -> None:
+        from ner_pilot import deterministic_sample
+
+        ids = [f"src_x_{i:04d}" for i in range(500)]
+        first = deterministic_sample(ids, 30, "seed-a")
+        self.assertEqual(first, deterministic_sample(ids, 30, "seed-a"))
+        self.assertEqual(len(set(first)), 30)
+        self.assertNotEqual(first, deterministic_sample(ids, 30, "seed-b"))
+        # A prefix property: growing the draw keeps every id already drawn, so a
+        # pilot can be widened without re-randomising what was already reviewed.
+        self.assertEqual(deterministic_sample(ids, 40, "seed-a")[:30], first)
+
+    def test_sample_survives_pool_reordering(self) -> None:
+        from ner_pilot import deterministic_sample
+
+        ids = [f"src_x_{i:04d}" for i in range(200)]
+        self.assertEqual(
+            deterministic_sample(ids, 20, "s"),
+            deterministic_sample(list(reversed(ids)), 20, "s"),
+        )
+
+    def test_windows_cover_every_token_with_overlap(self) -> None:
+        from ner_pilot import offset_windows
+
+        # A tokenizer's offset mapping: one (start, end) pair per wordpiece.
+        text = " ".join(f"palavra{i}" for i in range(400))
+        offsets = [(m.start(), m.end()) for m in re.finditer(r"\S+", text)]
+        windows = offset_windows(offsets, max_tokens=150, overlap_tokens=25)
+        self.assertGreater(len(windows), 1)
+        # Coverage: every token lies inside at least one window. Truncation instead of
+        # coverage would make the flag rate a fact about first paragraphs.
+        for start, end in offsets:
+            self.assertTrue(
+                any(w_start <= start and end <= w_end for w_start, w_end in windows)
+            )
+        # Consecutive windows really overlap, which is what makes a name on a
+        # boundary visible whole to at least one window.
+        self.assertLess(windows[1][0], windows[0][1])
+
+    def test_windows_of_short_and_empty_token_sequences(self) -> None:
+        from ner_pilot import offset_windows
+
+        self.assertEqual(offset_windows([], 150, 25), [])
+        # Special tokens and padding arrive as zero-width offsets and are not content.
+        self.assertEqual(offset_windows([(0, 0), (0, 0)], 150, 25), [])
+        self.assertEqual(offset_windows([(0, 3), (4, 9)], 150, 25), [(0, 9)])
+
+    def test_overlap_must_be_smaller_than_the_window(self) -> None:
+        from ner_pilot import offset_windows
+
+        with self.assertRaises(ValueError):
+            offset_windows([(0, 1), (1, 2)], max_tokens=10, overlap_tokens=10)
+
+    def test_labels_map_across_models_and_fail_closed(self) -> None:
+        from ner_pilot import UnknownEntityLabel, canonical_category
+
+        for label in ("PESSOA", "B-PESSOA", "I-PER", "L-PESSOA", "PER", "Pessoa"):
+            self.assertEqual(canonical_category(label), "person")
+        self.assertEqual(canonical_category("B-ORGANIZACAO"), "organization")
+        self.assertEqual(canonical_category("I-LOC"), "place")
+        with self.assertRaises(UnknownEntityLabel):
+            canonical_category("B-GENE")
+
+    def test_overlapping_findings_collapse_to_one(self) -> None:
+        from ner_pilot import Entity, dedupe_entities
+
+        # The same name seen by two windows, plus a distinct one further along.
+        entities = [
+            Entity("person", 100, 112, 0.91),
+            Entity("person", 100, 112, 0.97),
+            Entity("person", 106, 118, 0.80),
+            Entity("place", 100, 112, 0.75),
+            Entity("person", 400, 410, 0.60),
+        ]
+        merged = dedupe_entities(entities)
+        self.assertEqual(
+            [(e.category, e.start, e.end) for e in merged],
+            [("place", 100, 112), ("person", 100, 118), ("person", 400, 410)],
+        )
+        # The merged person keeps the best score of the two windows that saw it.
+        self.assertAlmostEqual(merged[1].score, 0.97)
+
+    def test_person_count_honours_the_score_floor(self) -> None:
+        from ner_pilot import persons_at
+
+        row = {
+            "entities": [
+                {"category": "person", "score": 0.99, "mentionGroup": 1},
+                {"category": "person", "score": 0.55, "mentionGroup": 2},
+                {"category": "place", "score": 0.99, "mentionGroup": 0},
+            ]
+        }
+        self.assertEqual(persons_at(row, 0.5), 2)
+        self.assertEqual(persons_at(row, 0.7), 1)
+        self.assertEqual(persons_at(row, 0.999), 0)
+
+    def test_repeated_mentions_of_one_name_cost_one_judgement(self) -> None:
+        from ner_pilot import person_mentions_at, persons_at
+
+        # A court decision naming the same judge four times and one party once: five
+        # highlights, two decisions. Counting highlights would inflate the budget.
+        row = {
+            "entities": [
+                {"category": "person", "score": 0.99, "mentionGroup": 1},
+                {"category": "person", "score": 0.98, "mentionGroup": 1},
+                {"category": "person", "score": 0.97, "mentionGroup": 1},
+                {"category": "person", "score": 0.96, "mentionGroup": 1},
+                {"category": "person", "score": 0.95, "mentionGroup": 2},
+            ]
+        }
+        self.assertEqual(person_mentions_at(row, 0.5), 5)
+        self.assertEqual(persons_at(row, 0.5), 2)
+
+    def test_mentions_group_by_normalized_surface(self) -> None:
+        from ner_pilot import Entity, group_mentions
+
+        text = "Fulano de Tal disse. Depois FULANO DE TAL, e ainda Beltrano."
+        entities = [
+            Entity("person", 0, 13, 0.99),
+            Entity("person", 28, 41, 0.99),
+            Entity("person", 51, 59, 0.99),
+        ]
+        grouped = group_mentions(entities, text)
+        self.assertEqual([e.mention_group for e in grouped], [1, 1, 2])
+
+    def test_junk_spans_are_not_person_findings(self) -> None:
+        from ner_pilot import is_plausible_person
+
+        self.assertTrue(is_plausible_person("Fulano de Tal"))
+        self.assertTrue(is_plausible_person(" Min. Cármen "))
+        # Shapes the models really emit on legal abbreviations.
+        self.assertFalse(is_plausible_person("."))
+        self.assertFalse(is_plausible_person(" - "))
+        self.assertFalse(is_plausible_person("12"))
+        self.assertFalse(is_plausible_person(""))
+
+    def test_wilson_interval_brackets_the_point_estimate(self) -> None:
+        from ner_pilot import wilson_interval
+
+        low, high = wilson_interval(25, 125)
+        self.assertLess(low, 0.2)
+        self.assertGreater(high, 0.2)
+        # Zero hits still yields a positive upper bound: "none seen" is not "none".
+        zero_low, zero_high = wilson_interval(0, 300)
+        self.assertEqual(zero_low, 0.0)
+        self.assertGreater(zero_high, 0.0)
+
+    def test_verdict_tally_refuses_an_unknown_verdict(self) -> None:
+        from ner_pilot import tally_verdicts
+
+        tally = tally_verdicts(
+            {"a": "private-person", "b": "public-figure", "c": "false-positive", "d": "public-figure"}
+        )
+        self.assertEqual(tally["adjudicated"], 4)
+        self.assertEqual(tally["public-figure"]["count"], 2)
+        self.assertAlmostEqual(tally["private-person"]["share"], 0.25)
+        with self.assertRaises(ValueError):
+            tally_verdicts({"a": "maybe"})
+
+    def test_extrapolation_propagates_both_intervals(self) -> None:
+        from ner_pilot import extrapolate
+
+        out = extrapolate(
+            unit="distinct-name",
+            flag_rate_low=0.10,
+            flag_rate_high=0.20,
+            corpus_records=9000,
+            seconds_low=10.0,
+            seconds_high=30.0,
+            units_per_flagged_record=2.0,
+        )
+        self.assertEqual(out["flaggedRecords"], [900.0, 1800.0])
+        self.assertEqual(out["units"], [1800.0, 3600.0])
+        # 1800 names x 10 s = 5 h; 3600 x 30 s = 30 h.
+        self.assertEqual(out["hours"], [5.0, 30.0])
+        self.assertEqual(out["unit"], "distinct-name")
