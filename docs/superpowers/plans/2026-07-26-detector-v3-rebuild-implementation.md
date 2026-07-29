@@ -4482,9 +4482,9 @@ execução foi além (ou ficou aquém) do que o texto acima diz.
     importava um teto de 128 caracteres que o schema **não** impõe (`PSEUDONYM` é sem teto),
     de modo que um corpus schema-válido com id longo abortaria o congelamento de E2. Agora
     `assertLedgerRecordId` usa o alfabeto do próprio schema, sem teto, e roda **antes** de
-    todo diagnóstico que cita o id. O teto de 128 dos eixos de grupo fica, agora documentado
-    como limite que ESTE módulo escolheu (todo valor aceito vira mensagem de MAC guardada
-    pela vida do projeto; os pseudônimos de C2 têm 24 caracteres) e não como regra do schema.
+    todo diagnóstico que cita o id. O teto de 128 dos eixos de grupo ficou nesta rodada, como
+    limite que ESTE módulo escolheu — **e isso estava errado: o item 19 o removeu.** Meia
+    correção não resolve, porque o mesmo id longo chega ao módulo por três campos.
 17. **Formatação: o registro anterior estava errado.** A entrega anterior disse que a reprovação
     do prettier era inteiramente pré-existente; ela também **acrescentou** linhas que o
     prettier reflui (por exemplo `groupDigests[axis] = identityDigests(keyring,
@@ -4492,7 +4492,15 @@ execução foi além (ou ficou aquém) do que o texto acima diz.
     `prettier --check` passa nos seis arquivos tocados. O diff commitado é só de conteúdo:
     `core.autocrlf=true` faz o Git normalizar CRLF→LF, o que foi verificado rodando
     `prettier --write` num arquivo sem defeito real de formatação e conferindo `git diff` vazio.
-    O resto do repositório continua com 13 arquivos reprovados, de outras tarefas.
+    O resto do repositório continua com **12** arquivos reprovados, de outras tarefas
+    (`npx prettier --check "benchmark/**/*.ts"` nesta checkout, em 9c2acea: `commands/split.ts`,
+    `corpus-source-audit.ts`, `lab/build_governance.ts`, `near-duplicates.ts`, `tests/cli.test.ts`,
+    `tests/consume-holdout.test.ts`, `tests/corpus-import.test.ts`, `tests/corpus-source-audit.test.ts`,
+    `tests/fit.test.ts`, `tests/report.test.ts`, `tests/schema-v3.test.ts`,
+    `tests/source-manifest.test.ts`). **A contagem depende da checkout e não deve ser tratada
+    como estável:** com `core.autocrlf=true` o checkout escreve CRLF e o `endOfLine: lf` padrão
+    do prettier reprova arquivos sem nenhuma violação de conteúdo — medido, `corpus-source-audit.ts`,
+    `near-duplicates.ts` e `tests/schema-v3.test.ts` têm delta ZERO quando normalizados para LF.
 18. **Cobertura de chave é por NOME, e isso está escrito onde o leitor está.**
     `assertLedgerConsistent` compara `keyVersion`; nada liga um segredo à história que ele
     produziu. Substituir o keyring por um segredo novo ainda chamado `v1` faz `verify` passar,
@@ -4501,6 +4509,34 @@ execução foi além (ou ficou aquém) do que o texto acima diz.
     de C3 (a lista de campos do evento é fechada e versionada): **E2 decide antes do
     congelamento** se o evento passa a carregar testemunha ligada à chave (por exemplo um MAC
     sobre `eventDigest` sob cada chave ativa) e sobe `schemaVersion` no mesmo movimento.
+
+##### Terceira rodada de correção (revisão de 2026-07-28)
+
+19. **O teto de 128 caracteres FOI REMOVIDO: há UMA regra de forma, e é a do schema.** O item
+    16 destetou o id e **manteve** o teto nos eixos de grupo. Isso não conserta o defeito, ele
+    o move: as duas pontas de uma aresta de linhagem são **a mesma string no mesmo domínio de
+    MAC** (`LINEAGE_MAC_DOMAIN`) — o `id` do pai e o `groups.derivationRoot` do filho — então
+    duas regras não podem estar certas nas duas direções. **Medido** em 9c2acea: um pai com
+    `id = "r"×200` era ACEITO (evento com 1 registro) e o filho que o nomeava era RECUSADO com
+    `CLUSTER_LEDGER_IDENTITY_INVALID`, um registro depois, por um valor que este mesmo módulo
+    havia acabado de aceitar. Pior: capar "só os eixos de valor" também não bastaria, porque
+    `assemble_corpus.near_duplicate_axis` escreve **o próprio id da linha** em
+    `groups.nearDuplicate` (é o que o docstring de C2 diz: "THE ROW'S OWN ID"), de modo que um
+    id longo chega ao módulo por **três** campos. E a justificativa do teto não se sustentava:
+    identidade **não é persistida** — só o HMAC de 64 hex é — logo não existia estado
+    ilimitado a defender, e um limite que o schema não tem só serve para reprovar corpus que o
+    schema aceita. Agora `IDENTITY_SHAPE = /^[A-Za-z0-9_-]+$/` (o alfabeto do schema, sem
+    teto) é usada por `assertLedgerRecordId` **e** por `assertLedgerIdentity`; a separação
+    entre as duas funções sobrevive só para o diagnóstico dizer `id` em vez de `groups.id`. O
+    que continua falhando fechado é FORMA que o módulo não consegue MACar coerentemente
+    (caractere fora do alfabeto) e identificador cru em eixo de pessoa — propriedades do
+    valor, não do comprimento. Teste novo indexa **as duas pontas da mesma aresta**
+    ("holds both ends of one edge to one rule, however long the parent id is"): pai com id de
+    200 caracteres, `nearDuplicate` igual ao id, e o filho que o nomeia em `derivationRoot` —
+    afirmando que ambos são aceitos **e** que a aresta continua sendo pega
+    (`cluster-exposed-previously`), para as duas checagens não poderem divergir de novo. O
+    teste do id passou a construir o registro **em volta** do id longo (`record({ id: long })`),
+    porque a versão anterior escapava do teto só por manter `nearDuplicate` curto.
 
 ### C4 — Bootstrap com unidade de reamostragem por estimando
 

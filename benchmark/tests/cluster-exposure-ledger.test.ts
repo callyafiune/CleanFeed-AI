@@ -643,6 +643,59 @@ describe("acceptance 9 — a LINEAGE edge is caught from both of its ends", () =
     expect(decision.refusals).toEqual([]);
     expect(decision.eligible).toBe(true);
   });
+
+  it("holds both ends of one edge to one rule, however long the parent id is", async () => {
+    // The two ends of a lineage edge are THE SAME STRING in THE SAME MAC domain:
+    // the parent's own `id`, and the child's `derivationRoot`. `benchmark/schema.ts`
+    // validates both with one uncapped alphabet, so validating them here by two
+    // different rules cannot be right in both directions — and the direction it
+    // was wrong in aborted E2's freeze on the axis end one record AFTER accepting
+    // the id end.
+    //
+    // The parent also carries its own id on `groups.nearDuplicate`, which is what
+    // C2's assembler really writes (`assemble_corpus.near_duplicate_axis`: "THE
+    // ROW'S OWN ID, because pruning left it alone here"). So a cap on the value
+    // axes alone would not have fixed this: a long id reaches this module on three
+    // fields, only one of which is called `id`.
+    await init();
+    const longParent = "r".repeat(200);
+    await recordPilotExposure(
+      paths(),
+      request({
+        eventType: "pilot-exposure",
+        records: [
+          {
+            id: longParent,
+            text: SEED_TEXT,
+            partition: "dev",
+            groups: {
+              author: "person_0123456789abcdef",
+              source: "th_long_parent",
+              nearDuplicate: longParent,
+            },
+          },
+        ],
+      }),
+    );
+
+    const decision = await preflightExposure(
+      paths(),
+      request({
+        datasetDigest: DATASET_B,
+        splitDigest: SPLIT_B,
+        records: [
+          generation("child_1", "test", { derivationRoot: longParent }),
+        ],
+      }),
+    );
+
+    // Accepted at both ends, and the edge is still CAUGHT: the refusal has to come
+    // from the exposure history, never from a shape rule the schema does not have.
+    expect(decision.refusals.map((refusal) => refusal.reason)).toContain(
+      "cluster-exposed-previously",
+    );
+    expect(decision.eligible).toBe(false);
+  });
 });
 
 describe("acceptance 8 — the CLI-level lifecycle on a temporary fixture", () => {
@@ -810,14 +863,22 @@ describe("the identity boundary the ledger enforces itself", () => {
     // the uncapped `/^[A-Za-z0-9_-]+$/`. Borrowing the group-identity check
     // imported a 128-character cap the schema does not have, so a valid corpus
     // would have aborted E2's freeze — and with a message about `groups`.
+    //
+    // The record is built AROUND the long id rather than beside it, so the same
+    // string arrives on `id` AND on `groups.nearDuplicate` — the two fields C2's
+    // assembler really fills with a row's id. A fix that uncapped only the field
+    // called `id` would be red here.
     const long = "r".repeat(200);
     const decision = await preflightExposure(
       paths(),
       request({
-        records: [{ ...record({ id: "r1" }), id: long }],
+        records: [record({ id: long })],
       }),
     );
     expect(decision.event.records).toHaveLength(1);
+    expect(Object.keys(decision.event.records[0].groupDigests)).toContain(
+      "nearDuplicate",
+    );
 
     // The alphabet still holds, and the message names the field that is wrong.
     await expect(

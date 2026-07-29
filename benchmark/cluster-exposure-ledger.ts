@@ -543,31 +543,51 @@ export function defaultBackupRoot(): string {
 
 // --- identity boundary ------------------------------------------------------
 
-// A GROUP identity. The 128-character cap is deliberately TIGHTER than the
-// schema's uncapped `PSEUDONYM`, and it is a bound on what this module will index:
-// every accepted identity becomes a MAC message under every active key and is kept
-// for the life of the project. C2's own pseudonyms are 24 characters, so nothing an
-// extractor emits comes near the cap — but if a future source does, the freeze must
-// fail loudly here rather than silently index an unbounded string. It is NOT a
-// claim that the schema forbids longer identities: it does not.
-const PSEUDONYM_SHAPE = /^[A-Za-z0-9_-]{1,128}$/;
-// A record-line ID, exactly as `benchmark/schema.ts` validates it — UNCAPPED. The
-// ledger must not be stricter than the schema about an id: a schema-valid corpus
-// carrying a 200-character id would otherwise abort E2's freeze, and the id is not
-// an identity the ledger chose to index, it is the row it was handed.
-const RECORD_ID_SHAPE = /^[A-Za-z0-9_-]+$/;
+/**
+ * ONE alphabet for every identity this module indexes, and it is the schema's own
+ * (`PSEUDONYM` / the record-id rule in `benchmark/schema.ts`): the characters
+ * `A-Z a-z 0-9 _ -`, UNCAPPED.
+ *
+ * IT USED TO BE TWO RULES, AND THAT WAS THE DEFECT. Group identities were held to
+ * `{1,128}` while a record-line id was held to the uncapped alphabet, on the theory
+ * that the cap bounded "what this module will index". Both halves of that were
+ * wrong:
+ *
+ *   * The two ends of one lineage edge are THE SAME STRING in THE SAME MAC domain
+ *     ({@link LINEAGE_MAC_DOMAIN}): a parent's `id`, and the child's
+ *     `groups.derivationRoot` naming it. Two rules meant a 200-character id was
+ *     accepted as an id and refused one record later as an axis — a schema-valid
+ *     corpus aborting E2's freeze, which is exactly what uncapping the id was
+ *     supposed to have prevented. `nearDuplicate` makes it worse, not better:
+ *     C2's assembler writes THE ROW'S OWN ID there
+ *     (`assemble_corpus.near_duplicate_axis`), so capping "only the value axes"
+ *     would have left the same abort alive on a value axis.
+ *   * The cap bounded nothing durable. An identity is never persisted; only its
+ *     64-hex HMAC is. Length costs one MAC message that is discarded, so there is
+ *     no unbounded state to defend against, and a bound the schema does not have
+ *     can only ever fail a corpus the schema accepts.
+ *
+ * What DOES still fail closed is a FORM this module cannot MAC coherently — a
+ * character outside the alphabet, and a raw identifier on a person axis
+ * ({@link assertLedgerIdentity}). Those are properties of the value, not of its
+ * length.
+ */
+const IDENTITY_SHAPE = /^[A-Za-z0-9_-]+$/;
 // Exactly what C2's `ClusterKeyring.pseudonym` emits: `<purpose>_<16 hex>`.
 const PERSON_PSEUDONYM_SHAPE = /^[a-z][a-z0-9-]*_[0-9a-f]{16}$/;
 
 /**
  * Refuses a record-line id the ledger cannot MAC coherently.
  *
- * Separate from {@link assertLedgerIdentity} for two reasons that both bit once:
- * the message has to name `id` and not `groups.id`, a field no record has, and the
- * id must be held to the SCHEMA's alphabet rather than to the group-identity cap.
+ * Separate from {@link assertLedgerIdentity} only so the DIAGNOSTIC can name `id`
+ * instead of `groups.id`, a field no record has. The SHAPE both check is one and the
+ * same ({@link IDENTITY_SHAPE}) — it has to be, because a parent's id and the
+ * child's `derivationRoot` are the same string MACed in the same domain, and the
+ * previous split of one rule into two refused as an axis what it had accepted as an
+ * id.
  */
 function assertLedgerRecordId(id: string): void {
-  if (!RECORD_ID_SHAPE.test(id)) {
+  if (!IDENTITY_SHAPE.test(id)) {
     fail(
       "CLUSTER_LEDGER_RECORD_ID_INVALID",
       `record id ${JSON.stringify(id)} is not a record-line id: the schema allows ` +
@@ -593,12 +613,17 @@ function assertLedgerRecordId(id: string): void {
  * Shape alone cannot decide the general case — B2W ships a sha256-shaped
  * `reviewer_id`, so "looks like a digest" proves nothing — which is why the check
  * is for the FORM C2's `pseudonym()` actually emits, prefix included.
+ *
+ * The ALPHABET check, by contrast, is deliberately no stricter than the schema's:
+ * see {@link IDENTITY_SHAPE} for why a length cap here refused a schema-valid
+ * corpus at the far end of a lineage edge.
  */
 function assertLedgerIdentity(axis: string, identity: string): void {
-  if (!PSEUDONYM_SHAPE.test(identity)) {
+  if (!IDENTITY_SHAPE.test(identity)) {
     fail(
       "CLUSTER_LEDGER_IDENTITY_INVALID",
-      `groups.${axis} identity ${JSON.stringify(identity)} is not a pseudonym token`,
+      `groups.${axis} identity ${JSON.stringify(identity)} is not a pseudonym token: ` +
+        "the schema allows only the characters A-Z a-z 0-9 _ -",
     );
   }
   if (
@@ -1296,10 +1321,10 @@ function buildEventRecords(
 ): ClusterExposureRecord[] {
   return inputs.map((input) => {
     // The id first, because every diagnostic below quotes it and because the row's
-    // OWN lineage identity is MACed from it. Checked as an ID, not as a group
-    // identity: the group cap is a bound this module chose, and applying it here
-    // both named a `groups.id` field no record has and would have refused a
-    // schema-valid corpus at freeze time.
+    // OWN lineage identity is MACed from it. It goes through its own function only
+    // so the message names `id` and not `groups.id`; the shape is the same one
+    // `assertLedgerIdentity` applies, which is what keeps the two ends of a lineage
+    // edge from being judged by two rules ({@link IDENTITY_SHAPE}).
     assertLedgerRecordId(input.id);
     if (!(LEDGER_PARTITIONS as readonly string[]).includes(input.partition)) {
       fail(
