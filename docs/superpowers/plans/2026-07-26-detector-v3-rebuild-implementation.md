@@ -4963,6 +4963,77 @@ intervalo sob correlação intra-cluster injetada.
 benchmark/tests/metrics.test.ts`; fixtures cobrem hierárquico, multiway, `unknown` e
 fallback documentado de `notApplicable`.
 
+#### C4 — como foi executada (2026-07-29)
+
+Entregue como escrito, com três coisas que o texto acima não previa e uma medição que
+muda o que se pode afirmar sobre o texto misto.
+
+**A tabela virou dado.** As quatro linhas estão em
+`benchmark/rebuild-v3-policy.json` sob `resampling.estimandClasses`, e
+`resampling.estimands` mapeia cada estimando publicado para a linha cuja unidade ele
+herda. O código não repete eixo nenhum como constante solta; o parser recusa uma linha
+faltando, um `multiway` com menos de dois fatores cruzados, um eixo que não é eixo de
+agrupamento do schema e um fallback que repete o eixo do qual cai.
+
+Tradução da prosa da tabela para eixos do schema, que é escolha desta tarefa e fica
+declarada aqui: **"fonte"** é `groups.domainSource` (o pool fonte×gênero: `ptwiki_lead`,
+`carolina_*`, `ptso_qa`, `b2w_reviews`), não `groups.source`, que é o documento/página
+dentro da fonte. **"seed/batch"** é `groups.collectionBatch`. Para calibração, "a unidade
+do estrato" é implementada como `groups.domainSource ⊃ cadeia[author → promptTemplate →
+source]`: o nível externo é o estrato e o interno é a unidade do próprio estrato,
+resolvida por linha pela cadeia de rebaixamento. Medido no corpus de C2 (786 registros):
+o nível externo tem 6 pools humanos, 2 de IA e 2 de misto, e o interno resolve para
+`author` em 132 linhas humanas, cai para `source` em 114 anônimas e para `promptTemplate`
+nas de IA — sem nenhum `unknown` no caminho, exceto o descrito abaixo.
+
+**A escolha entre as duas noções de cluster (item 26/14): medida, e a pista estava
+errada.** O item 26 sugere que o ledger trata `humanSeed` como eixo de valor de propósito
+porque os rótulos repetiriam. **Não repetem.** Medição de 2026-07-29 sobre
+`benchmark/out/rebuild-v3/C2/assembled/records.jsonl`: das 782 referências a pai em
+estado `known` que não resolvem para linha do corpus — 539 em `humanSeed`, 243 em
+`derivationRoot` —, **todas as 782 são distintas** (multiplicidade máxima 1, histograma
+`[[1, 782]]`). Logo o fator **pai-humano é singleton**, sob a noção do ledger (eixo de
+valor) tanto quanto sob a do splitter (linhagem de pai): reamostrar sobre ele é reamostrar
+linhas. Além disso não existe campo de **operação de edição** nos registros v3: o mais
+próximo é `groups.promptTemplate`, que nas 180 linhas mistas tem **um único nível**
+(`mix_edit_v1_*`). O multiway está implementado e testado como a tabela manda, e as duas
+degenerações estão **publicadas** — `ResamplingUnitDeclaration.degenerate` e a contagem de
+níveis por fator entram no relatório — em vez de produzirem um intervalo que parece
+válido. Nada foi afrouxado e nenhum eixo sintético foi criado (R6).
+
+**O que ficou de fora, de propósito.** Os intervalos de FPR e de recall continuam vindo do
+estimador **analítico de Wilson**, que não reamostra e portanto **não usa** a unidade
+declarada. A6 isentou esse caminho do piso de esforço explicitamente ("the Wilson path
+resamples nothing and is exempt by construction") e a lista de arquivos de C4 é
+`bootstrap.ts` + `metrics.ts`, então trocar Wilson por bootstrap agrupado nas taxas não é
+desta tarefa. Para que isso não seja lido como uma propriedade que o número não tem (R7),
+cada entrada do plano publica `executed`: `percentile-bootstrap` nos cinco estimandos
+contínuos (AUROC, PR-AUC, Brier, ECE equal-mass, ECE equal-width) e `declared-only` nos
+demais. **Gap nomeado para o próximo agente:** enquanto o gate de FPR/recall ler um limite
+de Wilson, esse limite trata linhas correlacionadas como independentes.
+
+**Duas mudanças de forma que o texto não previa.** (1) `ResamplingPlan` /
+`ResamplingPlanEntry` saíram de `gates.ts` para `bootstrap.ts` — o módulo que constrói o
+valor é dono do tipo — e `gates.ts` reexporta os nomes. (2) As estatísticas contínuas de
+uma corrida compartilham **um** fluxo de réplicas
+(`clusteredPercentileBootstrapAll`): elas têm a mesma unidade e a mesma seed, logo já
+sorteavam vetores de peso idênticos, e pagar o sorteio uma vez em vez de cinco é a mesma
+computação (intervalo idêntico bit a bit) por um quinto do custo de sorteio. Medido: 480 ms
+por `computeEvaluationMetrics` sobre 600 linhas com 10.000 réplicas, contra 750 ms sem o
+compartilhamento.
+
+**O laço de A6 fechou.** `benchmark/commands/evaluate.ts` passa `metrics.resampling` ao
+gate — o plano montado a partir das **mesmas** resoluções que os intervalos usaram, para
+que a unidade declarada não possa divergir da executada — e nenhum gate reprova mais por
+`missing-resampling-plan`. `EvaluationOptions.bootstrapReplicates` existe só para **subir**
+para as 100.000 do release: abaixo das 10.000 do piloto ele falha.
+
+**Consequência conhecida e correta:** num corpus v3 real o `evaluate` agora **falha** ao
+resolver a unidade das linhas mistas, porque `groups.author` está `unknown` em todas as 180
+(medido). É o comportamento que C4 existe para instalar — falhar em vez de reamostrar
+linhas — e o defeito é de **seleção**, da mesma família da semente ausente: é C2/E2/E3 que
+decide se uma linha mista tem autor humano `known` ou `notApplicable`.
+
 ### C5 — Recibos de revisão e PII reais
 
 **Depende de:** B1, C1.

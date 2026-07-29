@@ -983,6 +983,43 @@ describe("eligible-slice gating (undersized slices do not block the warning budg
 
 // --- A6: resampling evidence, Bonferroni and label bases -------------------
 
+describe("C4's real plan closes the gap A6 left open", () => {
+  it("stops every interval gate failing for a missing plan", () => {
+    // The plan the metrics themselves publish, not a hand-written one: it is
+    // assembled from the resolutions the intervals were drawn over, which is what
+    // `benchmark/commands/evaluate.ts` hands the gate.
+    const computed = computeEvaluationMetrics(
+      [
+        ...Array.from({ length: 400 }, (_, index) =>
+          humanNegativeWithoutBasis(`n${index}`),
+        ),
+        ...Array.from({ length: 200 }, (_, index) => aiPositive(`p${index}`)),
+      ],
+      { bootstrapSeed: 20260726, preRegisteredStatisticalGates: M },
+    );
+    const report = evaluateReleaseGates({
+      integrity: integrity(),
+      resampling: computed.resampling,
+      metrics: computed,
+      slices: summary([passingSlice()]),
+    });
+    // Not one gate is left without a declared unit.
+    expect(
+      report.gates.filter(
+        (gate) => gate.evidence === "missing-resampling-plan",
+      ),
+    ).toEqual([]);
+    // And every estimand the gates name is covered by an entry of the plan.
+    const declared = new Set(
+      computed.resampling.entries.map((entry) => entry.estimand),
+    );
+    for (const gate of report.gates) {
+      if (gate.estimand === undefined) continue;
+      expect(declared.has(gate.estimand)).toBe(true);
+    }
+  });
+});
+
 describe("missing resampling evidence fails the gate, never falls back to i.i.d. rows", () => {
   it("fails every interval gate when no plan backs its estimand", () => {
     const report = evaluateReleaseGates({

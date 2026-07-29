@@ -22,6 +22,7 @@ import {
   type Prediction,
 } from "../metrics.ts";
 import { REBUILD_V3_POLICY } from "../rebuild-v3-policy.ts";
+import { ResamplingUnitError } from "../bootstrap.ts";
 import type { BenchmarkRecord } from "../schema.ts";
 
 function prediction(label: Prediction["label"], score: number): Prediction {
@@ -187,6 +188,157 @@ const SEPARABLE = Array.from({ length: 40 }, (_, index) => {
     }),
   ];
 }).flat();
+
+// Every row in ONE resampling unit: one source pool, one author. A replicate can
+// then only draw that single cluster once, so every replicate equals the weighted
+// statistic at unit weights and the interval collapses onto it. That is what makes
+// this fixture a black-box equivalence proof between the weighted replicate forms
+// and the exported unweighted definitions.
+const SINGLE_UNIT = Array.from({ length: 12 }, (_, index) =>
+  item({
+    author: "solo",
+    domainSource: "pool-solo",
+    label: index % 2 === 0 ? "human" : "ai",
+    documentScore: index % 2 === 0 ? 0.05 + index / 100 : 0.85 + index / 200,
+    warned: index % 2 === 1,
+    visualActioned: index % 2 === 1,
+  }),
+);
+
+const SINGLE_UNIT_POINTS: CalibrationPoint[] = Array.from(
+  { length: 12 },
+  (_, index) => ({
+    probability: index % 2 === 0 ? 0.05 + index / 100 : 0.85 + index / 200,
+    label: index % 2 === 0 ? 0 : 1,
+  }),
+);
+
+describe("the weighted replicate statistics mirror the exported definitions", () => {
+  it("collapses onto the unweighted value when the population is one unit", () => {
+    const metrics = computeEvaluationMetrics(SINGLE_UNIT, OPTIONS);
+    // One cluster, so every replicate is the same weight vector [1]: the interval
+    // IS the weighted statistic evaluated at unit weights.
+    expect(metrics.calibration.brier.lower95).toBeCloseTo(
+      brierScore(SINGLE_UNIT_POINTS),
+      12,
+    );
+    expect(metrics.calibration.brier.upper95).toBeCloseTo(
+      brierScore(SINGLE_UNIT_POINTS),
+      12,
+    );
+    expect(metrics.calibration.eceEqualMass15.lower95).toBeCloseTo(
+      eceEqualMass(
+        SINGLE_UNIT_POINTS,
+        REBUILD_V3_POLICY.calibrationGate.eceBins,
+      ),
+      12,
+    );
+    expect(metrics.ece15.lower95).toBeCloseTo(ece15(SINGLE_UNIT_POINTS), 12);
+    // AUROC and PR-AUC have no exported unweighted form, so the point estimate is
+    // the reference: it comes from the row-wise implementation, the bounds from the
+    // weighted one, and they have to agree.
+    for (const estimate of [
+      metrics.separability.auroc,
+      metrics.separability.prAuc,
+    ]) {
+      expect(estimate.lower95).toBeCloseTo(estimate.value, 12);
+      expect(estimate.upper95).toBeCloseTo(estimate.value, 12);
+    }
+  });
+});
+
+describe("a resampling unit that cannot be resolved fails loudly", () => {
+  it("refuses a record whose declared unit is unknown, naming axis and estimand", () => {
+    // A v2 record carries no `domainSource`, and an absent axis reads as
+    // `unknown` — the truthful mapping, not a flattering one. The frozen contract
+    // forbids falling back to independent rows, so the whole computation fails
+    // instead of publishing an interval that would look valid.
+    const withoutUnit = SEPARABLE.map((entry) => ({
+      ...entry,
+      record: {
+        ...entry.record,
+        groups: { author: (entry.record.groups as { author: string }).author },
+      } as BenchmarkRecord,
+    }));
+    let thrown: unknown;
+    try {
+      computeEvaluationMetrics(withoutUnit, OPTIONS);
+    } catch (error) {
+      thrown = error;
+    }
+    expect(thrown).toBeInstanceOf(ResamplingUnitError);
+    expect((thrown as ResamplingUnitError).axis).toBe("groups.domainSource");
+    expect((thrown as ResamplingUnitError).estimand).toBe("calibration.ece");
+    expect((thrown as Error).message).toMatch(/unknown/u);
+    expect((thrown as Error).message).toMatch(
+      /fallbackToIndependentRows em false/u,
+    );
+  });
+});
+
+describe("the frozen replicate count is a floor, not a default", () => {
+  it("refuses fewer replicates than the pre-registered pilot count", () => {
+    expect(() =>
+      computeEvaluationMetrics(SEPARABLE, {
+        ...OPTIONS,
+        bootstrapReplicates: REBUILD_V3_POLICY.bootstrapReplicates.pilot - 1,
+      }),
+    ).toThrow(
+      new RegExp(String(REBUILD_V3_POLICY.bootstrapReplicates.pilot), "u"),
+    );
+  });
+
+  it("accepts the release count, which is higher", () => {
+    const plan = computeEvaluationMetrics(SEPARABLE, {
+      ...OPTIONS,
+      bootstrapReplicates: REBUILD_V3_POLICY.bootstrapReplicates.release,
+    }).resampling;
+    for (const entry of plan.entries) {
+      expect(entry.replicates).toBe(
+        REBUILD_V3_POLICY.bootstrapReplicates.release,
+      );
+    }
+  });
+});
+
+describe("the published plan declares a unit for every estimand", () => {
+  it("names the unit, the method and whether the interval was resampled", () => {
+    const plan = computeEvaluationMetrics(SEPARABLE, OPTIONS).resampling;
+    const byEstimand = new Map(
+      plan.entries.map((entry) => [entry.estimand, entry]),
+    );
+    // The frozen table, estimand by estimand.
+    expect(byEstimand.get("warning.fpr")?.unitKind).toBe("hierarchical");
+    expect(byEstimand.get("warning.fpr")?.unitAxes).toEqual([
+      "groups.domainSource",
+      "groups.author",
+    ]);
+    expect(byEstimand.get("warning.recall")?.unitAxes).toEqual([
+      "groups.generatorFamily",
+      "groups.promptTemplate",
+      "groups.collectionBatch",
+    ]);
+    expect(byEstimand.get("mixed.warning.recall")?.unitKind).toBe("multiway");
+    expect(byEstimand.get("mixed.warning.recall")?.unitAxes).toEqual([
+      "groups.humanSeed",
+      "groups.promptTemplate",
+    ]);
+    // Only the estimands this run actually resampled say so, and they carry the
+    // measured unit; the rest declare the unit without claiming a resample (R7).
+    expect(byEstimand.get("calibration.ece")?.executed).toBe(
+      "percentile-bootstrap",
+    );
+    expect(byEstimand.get("calibration.ece")?.measured?.units).toBe(40);
+    expect(byEstimand.get("warning.fpr")?.executed).toBe("declared-only");
+    expect(byEstimand.get("warning.fpr")?.measured).toBeNull();
+    // No entry may declare fewer replicates than the pre-registered pilot count.
+    for (const entry of plan.entries) {
+      expect(entry.replicates).toBeGreaterThanOrEqual(
+        REBUILD_V3_POLICY.bootstrapReplicates.pilot,
+      );
+    }
+  });
+});
 
 describe("calibration metrics", () => {
   it("uses fifteen equal-width bins", () => {
