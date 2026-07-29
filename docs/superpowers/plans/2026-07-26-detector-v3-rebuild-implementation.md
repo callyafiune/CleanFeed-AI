@@ -2337,14 +2337,19 @@ concordam. Corrigido:
    as licenças do treino deste modelo — sem rótulo, a lista se lê como
    proveniência, ao lado da frase que declara as fontes reais. Lista por modelo é
    trabalho de C1/C5.
-5. **Para C1:** `benchmark/source-manifest.ts` **não** está em `EVALUATOR_FILES`,
-   mas `benchmark/commands/validate.ts` (que está) importa
+5. **Para C1 — RESPONDIDO, ver abaixo:** quando isto foi escrito,
+   `benchmark/source-manifest.ts` **não** estava em `EVALUATOR_FILES`, mas
+   `benchmark/commands/validate.ts` (que está) importava
    `parseReviewedSourceManifest`, e B1 adicionou ali
    `assertRegisteredLicensesAdmissible`. Ou seja: um byte de arquivo fora da
-   identidade do avaliador decide se `validate` aceita um manifesto. A lacuna é
+   identidade do avaliador decidia se `validate` aceita um manifesto. A lacuna é
    anterior a B1 (o parser já barrava `validate` antes), e alargá-la não criou
-   arquivo novo — mas C1, ao escrever o esquema v3, precisa decidir se
-   `source-manifest.ts` entra na identidade do avaliador.
+   arquivo novo.
+   **FECHADA por C3 em `b4cf566`, com sim:** `benchmark/source-manifest.ts` está em
+   `EVALUATOR_FILES`, porque `commands/split.ts` passou a alimentar a auditoria com as
+   declarações reais de `V3_HUMAN_SOURCE_INVENTORY` — uma declaração alterada altera o
+   veredito de um gate (item 8 de C3). O cabeçalho do módulo continuou afirmando o
+   contrário até 2026-07-29 (item 25 de C3).
 
 **Segunda rodada de correção (2026-07-28) — a prosa da dependência ficou falsa, e
 o item 2 acima estava incompleto.** A rodada anterior ADICIONOU ao cabeçalho de
@@ -4635,6 +4640,32 @@ execução foi além (ou ficou aquém) do que o texto acima diz.
     **Nenhuma das duas bloqueia E2**, desde que o `backup` posterior à mutação seja rotina.
     Decisão de qual das duas atacar, e como, é de E2 — junto com o item 18, que é da mesma
     família.
+25. **A alegação do cabeçalho de `source-manifest.ts` era falsa desde `b4cf566`.** O módulo
+    dizia "this module is **NOT** in `EVALUATOR_FILES` … editing them does not move
+    `integrity.evaluator-digest`" enquanto o item 8 desta mesma tarefa o havia **colocado**
+    lá — verificável por `git log 88f3ca8..9e50ab6 -- benchmark/source-manifest.ts` voltar
+    vazio. Era R7 na forma mais direta, no arquivo que C3 acabou de tornar load-bearing para o
+    gate de eixo declarado, e dizia ao próximo editor exatamente a crença cuja consequência é
+    queimar a concessão do holdout (R1). Cabeçalho reescrito com a consequência real (reprova
+    `integrity.evaluator-digest` se editado depois do `fit`; a janela que fecha é G5), e a
+    afirmação agora tem teste: "says in its header that it IS part of the evaluator identity"
+    fixa a pertinência a `EVALUATOR_FILES`, exige a frase afirmativa e proíbe a negação —
+    medido vermelho antes do conserto. O limite está escrito no teste: negação reescrita com
+    outras palavras passaria. Isso **fecha** a pergunta aberta de B1 ("C1 precisa decidir se
+    `source-manifest.ts` entra na identidade do avaliador"), agora anotada lá.
+26. **Para C4, sobre a assimetria das duas noções de cluster (item 14):** o `clusterAssignments`
+    que C4 e C6 importam delega a `connectedComponentRoots`, isto é, à noção **mais fraca** —
+    ligação de pai só une quando a linha nomeada está montada, e C2 mediu **782 de 783**
+    referências de pai sem co-presença. O ledger de exposição usa a noção **mais forte** para
+    `humanSeed`/`derivationRoot`: eixo de VALOR num domínio de MAC de linhagem, em que duas
+    linhas que nomeiam a mesma semente ausente colidem de propósito. Consequência prática para
+    C4: um cluster devolvido por `clusterAssignments` pode ser **menor** que o cluster de
+    exposição, e nas caudas de linhagem quase sempre é. `clusterAssignments` **não** é a
+    unidade de reamostragem (glossário) — a escolha é por estimando, e onde a unidade escolhida
+    depende de linhagem C4 tem de decidir explicitamente qual das duas noções usa e registrar a
+    escolha, em vez de herdar a mais fraca por ser a que já vem pronta. A revisão de C3 não
+    classificou a assimetria como defeito e ela **não** deve ser "consertada" aqui.
+
 ### C4 — Bootstrap com unidade de reamostragem por estimando
 
 **Depende de:** C2.

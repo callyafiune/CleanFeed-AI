@@ -4,6 +4,7 @@ import { fileURLToPath } from "node:url";
 
 import { describe, expect, it } from "vitest";
 
+import { EVALUATOR_FILES } from "../digests.ts";
 import {
   REBUILD_V3_POLICY,
   REBUILD_V3_POLICY_PATH,
@@ -432,6 +433,38 @@ describe("non-commercial corpus use policy", () => {
     expect(source).toMatch(
       /commercialUse:\s*REBUILD_V3_POLICY\.commercialUse/u,
     );
+  });
+
+  // The header told an editor that this module is NOT part of the evaluator's
+  // identity and that editing its two over-claim screens "does not move
+  // `integrity.evaluator-digest`" — while C3 had already put it inside
+  // `EVALUATOR_FILES`. That is the belief whose consequence is a burned holdout
+  // grant (R1), stated in the file C3 had just made load-bearing for the
+  // declared-axis gate.
+  //
+  // WHAT THIS MEASURES, and its limit: the membership itself, plus the presence of
+  // the affirmative sentence and the absence of the denial. A reworded denial the
+  // pattern does not know would pass — the pairing is what makes the current text
+  // red, not a general lie detector.
+  it("says in its header that it IS part of the evaluator identity", async () => {
+    expect(new Set<string>(EVALUATOR_FILES)).toContain(
+      "benchmark/source-manifest.ts",
+    );
+    const source = await readFile(
+      resolve(HERE, "../source-manifest.ts"),
+      "utf8",
+    );
+    const header = source
+      .split(/\r?\n/u)
+      .slice(
+        0,
+        source.split(/\r?\n/u).findIndex((line) => !line.startsWith("//")),
+      )
+      .join("\n");
+    expect(header).not.toMatch(/not\s+in\s+`?EVALUATOR_FILES/iu);
+    expect(header).toMatch(/is\s+in\s+`?EVALUATOR_FILES/iu);
+    // And the consequence, which is the part an editor needs before the freeze.
+    expect(header).toMatch(/integrity\.evaluator-digest/u);
   });
 
   // Reading the frozen policy changed what this module depends on, and its

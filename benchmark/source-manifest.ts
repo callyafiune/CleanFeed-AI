@@ -77,9 +77,14 @@
 // documents, and the enforcement is the sweep in
 // `benchmark/tests/source-manifest.test.ts`, which reads every screened file from
 // disk and fails the suite on a violation. Note the consequence for provenance of
-// the screen itself: this module is NOT in `EVALUATOR_FILES` (see
-// `benchmark/digests.ts`), so neither screen is part of the evaluator's identity and
-// editing them does not move `integrity.evaluator-digest`.
+// the screen itself: this module IS in `EVALUATOR_FILES` (see
+// `benchmark/digests.ts`), so every byte of it — the two screens included — is part
+// of the evaluator's identity, and editing it AFTER `fit` fails
+// `integrity.evaluator-digest` and burns the holdout grant (R1). It was added there
+// by C3, because `commands/split.ts` now feeds the audit the real source
+// declarations from `V3_HUMAN_SOURCE_INVENTORY`: a changed declaration changes a
+// gate verdict. Editing it during Phase A/B/C is expected and allowed; the window
+// that closes is G5.
 //
 // WHO OWNS WHICH VALUE (this module is not the authority for all of it):
 //   * `benchmark/rebuild-v3-policy.json`, validated by
