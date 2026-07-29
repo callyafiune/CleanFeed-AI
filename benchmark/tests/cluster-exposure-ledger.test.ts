@@ -1380,6 +1380,43 @@ describe("the ledger reads as empty only when it is provably new", () => {
     expect(decision.eligible).toBe(false);
   });
 
+  it("names the staged ledger a dead run left, in the very refusal that needs it", async () => {
+    // The residue the write ORDER deliberately prefers: the keyring was re-attested
+    // to N+1 and the crash lost the ledger's rename, so the fsynced bytes are still
+    // staged next to it. `verify` reports interrupted writes only on the way OUT of a
+    // consistent ledger, so in every state where the report is the repair it was
+    // never produced — and the two halves of the module's crash story (refuse the
+    // disagreement, report the staged file) could not both happen in one call.
+    const commit = await burnATestClusterInTheTail();
+    const published = await readFile(paths().ledgerPath, "utf8");
+    const lines = await ledgerLines();
+    expect(lines).toHaveLength(2);
+    const staged = `${paths().ledgerPath}.4242.1.tmp`;
+    await writeFile(staged, published, "utf8");
+    await writeFile(paths().ledgerPath, `${lines[0]}\n`, "utf8");
+
+    const failure = (await verifyClusterLedger(paths()).catch(
+      (caught: unknown) => caught,
+    )) as ClusterLedgerError;
+    expect(failure.code).toBe("CLUSTER_LEDGER_HISTORY_DIVERGED");
+    expect(failure.message).toContain(staged);
+    // Not a property of `verify` alone: every command that decides eligibility hits
+    // this refusal, and the operator reads whichever one they ran.
+    const refused = (await preflightExposure(
+      paths(),
+      reofferTheTailCluster(),
+    ).catch((caught: unknown) => caught)) as ClusterLedgerError;
+    expect(refused.message).toContain(staged);
+
+    // The repair the message names is real, and it is the whole repair.
+    await rename(staged, paths().ledgerPath);
+    const verified = await verifyClusterLedger(paths());
+    expect(verified.eventCount).toBe(2);
+    expect(verified.attestedEventCount).toBe(2);
+    expect(verified.lastEventDigest).toBe(commit.event.eventDigest);
+    expect(verified.strayTempFiles).toEqual([]);
+  });
+
   it("refuses a tail REWRITTEN in place, at the very height the keyring attests", async () => {
     // Height and tail digest are two halves of one comparison, and only the DIGEST
     // half sees this: the last event is replaced rather than removed, and its own

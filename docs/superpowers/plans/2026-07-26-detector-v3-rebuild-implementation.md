@@ -4774,6 +4774,34 @@ execução foi além (ou ficou aquém) do que o texto acima diz.
     queimou é recusado outra vez. Vermelho antes: `expected '…' to contain 'move the ledger aside'`.
     O comentário do backup pós-publicação foi estreitado: ele afirmava recuperar "um ledger
     perdido" e agora diz o que recupera — ledger **ausente**, ou posto de lado à mão.
+31. **As duas metades da história de queda do módulo eram mutuamente exclusivas numa chamada.**
+    O comentário de ORDEM (item 29a) e o cabeçalho diziam que o reparo do resíduo preferido é
+    renomear o `.tmp` "que o `verify` reporta como escrita interrompida". MEDIDO: com um evento
+    commitado e o resíduo "atestado N+1, ledger em N" mais o
+    `cluster-exposure-ledger.v1.jsonl.4242.1.tmp` em disco, a mensagem de
+    `CLUSTER_LEDGER_HISTORY_DIVERGED` **não continha `.tmp` nenhum** — `verifyClusterLedger`
+    chama `assertLedgerConsistent` **antes** de montar `strayTempFiles`, logo em todo estado em
+    que o relatório é o reparo ele nunca era produzido. E a única ação que a mensagem nomeava
+    (`cluster-ledger restore`) é recusada nesse estado, porque o keyring em disco atesta N+1 e o
+    de **todo** backup atesta N: o operador não tinha reparo descobrível para a única janela de
+    durabilidade que o módulo admite — sobre-alegação R7 no módulo que argumenta R7.
+    Conserto: `assertAttestedHistory` virou `async` e as duas recusas (`HISTORY_ABSENT` e
+    `HISTORY_DIVERGED`) fecham com `interruptedWriteNote`, que lista os temporários dos dois
+    arquivos e diz como **checar** o candidato — o digest de cauda atestado aparece na última
+    linha dos bytes que são o estado que falta — e que depois é preciso um `backup`, porque
+    nenhum backup em disco casa com o par que sai dali. Coletado no caminho de falha, o relatório
+    chega a **todo** comando que decide elegibilidade, não só a `verify`. A nota **não** afirma
+    que o `.tmp` é o estado faltante: um temporário guarda o que a execução morta tinha escrito.
+    Teste novo, de ciclo completo: "names the staged ledger a dead run left, in the very refusal
+    that needs it" monta o resíduo, exige o caminho do `.tmp` na mensagem de `verify` **e** na de
+    `preflight`, executa o reparo nomeado e volta a `verify` verde na altura 2 com zero escritas
+    interrompidas. Vermelho antes: `expected '…' to contain '…jsonl.4242.1.tmp'`.
+    Cabeçalho corrigido junto, e com ele o **menor** que a revisão levantou em separado: ele dizia
+    "backup dos DOIS lados de toda mutação", e a **rotação** de chave é mutação que tira só o lado
+    pré — o efeito é o que o item 24(b) já registra (todo par anterior, inclusive o que a própria
+    rotação tira, fica irrestaurável), remedido pela revisão desta rodada como
+    `CLUSTER_LEDGER_RESTORE_DIVERGENT` nos três backups em disco. Agora o cabeçalho diz "toda
+    transação que grava exposição" e aponta o item 24(b) como o caso não consertado.
 
 ### C4 — Bootstrap com unidade de reamostragem por estimando
 

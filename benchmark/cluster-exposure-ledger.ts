@@ -37,13 +37,17 @@
 // READER on the same volume: a reader sees either the whole old file or the whole
 // new one. It is NOT a durability barrier — Windows exposes no directory fsync,
 // so a power loss immediately after the rename can lose the directory entry
-// update. What covers that: `verify`, which refuses a ledger that disagrees with
-// the height the keyring attests and reports the staged temp files a dead run left
-// behind, and an authenticated backup taken on BOTH sides of every mutation — the
-// pre-mutation pair for the state before it, the post-publication pair for the
-// state it committed. Neither backup restores over a HALF-written mutation, whose
-// two files disagree: that residue is refused, named, and repaired by hand. We do
-// not claim more than that.
+// update. What covers that: EVERY command that decides eligibility refuses a ledger
+// disagreeing with the height the keyring attests, and names the staged temp files a
+// dead run left behind in that same refusal — one `verify` used to produce the
+// report only on its way out of a CONSISTENT ledger, the one state with no use for
+// it. Plus an authenticated backup taken on both sides of every exposure-recording
+// transaction: the pre-mutation pair for the state before it, the post-publication
+// pair for the state it committed. Key ROTATION is a mutation that takes only the
+// pre-side, and has therefore no restore point of its own — item 24(b) of the plan,
+// unfixed. Neither backup restores over a HALF-written mutation, whose two files
+// disagree, and `restore` writes only over an absent or identical ledger: that
+// residue is refused, named, and repaired by hand. We do not claim more than that.
 //
 // Standalone benchmark module: MUST NOT import from the extension bundle (src/).
 // Node-only (node:crypto, node:fs). The only randomness is key material and
@@ -1416,7 +1420,7 @@ async function assertLedgerConsistent(
   // that names what the operator actually did.
   return {
     events,
-    witness: assertAttestedHistory(paths, keyring, onDisk, events),
+    witness: await assertAttestedHistory(paths, keyring, onDisk, events),
   };
 }
 
@@ -1459,12 +1463,12 @@ async function readAttestedLedgerText(paths: ClusterLedgerPaths): Promise<{
  * the two files is the stale one is not knowable from here. Both directions name
  * the actionable condition instead of guessing.
  */
-function assertAttestedHistory(
+async function assertAttestedHistory(
   paths: ClusterLedgerPaths,
   keyring: ClusterExposureKeyring,
   ledgerPresent: boolean,
   events: readonly ClusterExposureEvent[],
-): ClusterLedgerWitness {
+): Promise<ClusterLedgerWitness> {
   const witness = keyring.ledgerWitness;
   if (witness === undefined) {
     fail(
@@ -1487,7 +1491,8 @@ function assertAttestedHistory(
         "point --ledger at the canonical artifact " +
         `(${join(CLUSTER_EXPOSURE_PRIVATE_DIRECTORY, CLUSTER_EXPOSURE_LEDGER_FILE)}) ` +
         'or restore it with "cluster-ledger restore". Reading it as empty would ' +
-        "return test eligibility to every cluster a consumed test already burned",
+        "return test eligibility to every cluster a consumed test already burned. " +
+        (await interruptedWriteNote(paths, witness)),
     );
   }
   const lastEventDigest = events.at(-1)?.eventDigest ?? null;
@@ -1501,10 +1506,42 @@ function assertAttestedHistory(
         `${lastEventDigest ?? "(empty)"}, and the keyring at ${paths.keyringPath} ` +
         `attests ${witness.eventCount} ending at ` +
         `${witness.lastEventDigest ?? "(empty)"}. ` +
-        divergenceDiagnosis(events.length, witness.eventCount),
+        `${divergenceDiagnosis(events.length, witness.eventCount)}. ` +
+        (await interruptedWriteNote(paths, witness)),
     );
   }
   return witness;
+}
+
+/**
+ * The staged writes on disk, said INSIDE the refusal.
+ *
+ * `verify` reports them in its SUCCESS value, which is the one state that has no use
+ * for them: a ledger disagreeing with its attestation throws before the report is
+ * built, and the crash residue the write order deliberately prefers IS that
+ * disagreement ({@link appendEvent}). Collected here, the list reaches every command
+ * that decides eligibility instead of only the one an operator may not have run.
+ *
+ * It stops at NAMING the files (R7). A temp holds whatever the dead run had written,
+ * so nothing here proves a staged ledger is the missing state — what the operator
+ * gets is how to check: the attested tail digest is in the last line of the bytes
+ * that are it.
+ */
+async function interruptedWriteNote(
+  paths: ClusterLedgerPaths,
+  witness: ClusterLedgerWitness,
+): Promise<string> {
+  const staged = await strayTempFiles(paths);
+  if (staged.length === 0) return "No interrupted write is on disk.";
+  return (
+    `Interrupted write(s) still on disk: ${staged.join(", ")}. A staged LEDGER ` +
+    "among them is a CANDIDATE for the missing state and nothing here proves it is " +
+    "one: it holds the attested state only if its last line carries the digest " +
+    `${witness.lastEventDigest ?? "(none — the attested height is zero)"}. If it ` +
+    "does, renaming it over the ledger publishes bytes that are already fsynced; " +
+    'then take a "cluster-ledger backup", because no backup on disk matches the ' +
+    "pair that leaves."
+  );
 }
 
 /**
@@ -2164,8 +2201,8 @@ async function appendEvent(
       // ORDER. It is attested BEFORE the ledger is published, which PREFERS the
       // residue "attested N+1, ledger at N": the direction whose repair does not
       // touch the file holding the un-rotatable person secret — rename the staged
-      // ledger, whose bytes are already fsynced and which `verify` reports as an
-      // interrupted write, then take a `backup`.
+      // ledger, whose bytes are already fsynced and which the refusal itself names
+      // ({@link interruptedWriteNote}), then take a `backup`.
       //
       // It does not make that the only possible residue, and the header says why:
       // this platform exposes no directory fsync, so a power loss can lose either
