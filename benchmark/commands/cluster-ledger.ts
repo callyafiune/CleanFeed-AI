@@ -124,10 +124,11 @@ export async function runClusterLedger(
       const request = parseExposureRequest(
         await readJsonFile(require_(options.requestPath, "request", action)),
       );
-      const event = await recordPilotExposure(paths, request);
+      const { event, restorePoint } = await recordPilotExposure(paths, request);
       return (
         `Pilot exposure recorded: ${event.records.length} record-line(s), ` +
-        `event ${event.eventId}, digest ${event.eventDigest}.`
+        `event ${event.eventId}, digest ${event.eventDigest}. ` +
+        `Restore this state from ${restorePoint.directory}.`
       );
     }
     case "commit-split": {
@@ -136,15 +137,20 @@ export async function runClusterLedger(
       );
       const staged = require_(options.stagedSplitPath, "staged-split", action);
       const target = require_(options.splitOutPath, "split-out", action);
-      const event = await commitSplitFreeze(paths, request, async () => {
-        // The caller staged and fsynced the artifact; publishing it is one
-        // rename, which is the smallest window this platform offers.
-        await rename(staged, target);
-      });
+      const { event, restorePoint } = await commitSplitFreeze(
+        paths,
+        request,
+        async () => {
+          // The caller staged and fsynced the artifact; publishing it is one
+          // rename, which is the smallest window this platform offers.
+          await rename(staged, target);
+        },
+      );
       return (
         `Split freeze committed: ${event.records.length} record-line(s) across the ` +
         `five active partitions, reserve manifest ` +
-        `${event.reserveManifestDigest ?? "(none)"}, event ${event.eventId}.`
+        `${event.reserveManifestDigest ?? "(none)"}, event ${event.eventId}. ` +
+        `Restore this state from ${restorePoint.directory}.`
       );
     }
     case "backup": {

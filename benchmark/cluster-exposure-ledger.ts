@@ -37,9 +37,13 @@
 // READER on the same volume: a reader sees either the whole old file or the whole
 // new one. It is NOT a durability barrier — Windows exposes no directory fsync,
 // so a power loss immediately after the rename can lose the directory entry
-// update. That residue is covered by the authenticated backup taken BEFORE the
-// rename, and by `verify`, which refuses a ledger whose chain does not close. We
-// do not claim more than that.
+// update. What covers that: `verify`, which refuses a ledger that disagrees with
+// the height the keyring attests and reports the staged temp files a dead run left
+// behind, and an authenticated backup taken on BOTH sides of every mutation — the
+// pre-mutation pair for the state before it, the post-publication pair for the
+// state it committed. Neither backup restores over a HALF-written mutation, whose
+// two files disagree: that residue is refused, named, and repaired by hand. We do
+// not claim more than that.
 //
 // Standalone benchmark module: MUST NOT import from the extension bundle (src/).
 // Node-only (node:crypto, node:fs). The only randomness is key material and
@@ -555,6 +559,22 @@ export interface BackupReceipt {
   keyringSha256: string;
   mac: string;
   keyVersion: string;
+}
+
+/**
+ * What a writing transaction produced: the event, and the restore point for the
+ * state that event created.
+ *
+ * The restore point is not a convenience field. A backup is ALSO taken before the
+ * mutation, and that pair sits at height N while the committed state is N+1 — a
+ * pair the keyring's attestation makes divergent, so `restore` refuses it over a
+ * lost ledger. The only backup that can recover a frozen split is therefore the one
+ * taken after the ledger is published, and returning its directory is what puts it
+ * in front of the operator rather than in a runbook.
+ */
+export interface ClusterExposureCommit {
+  event: ClusterExposureEvent;
+  restorePoint: BackupReceipt;
 }
 
 export interface RestoreOutcome {
@@ -2009,7 +2029,7 @@ async function appendEvent(
   paths: ClusterLedgerPaths,
   request: ExposureRequest,
   finalize?: (event: ClusterExposureEvent) => Promise<void>,
-): Promise<ClusterExposureEvent> {
+): Promise<ClusterExposureCommit> {
   return withLedgerLock(paths.ledgerPath, async () => {
     // Order matters and is the transaction: verify the chain and the keys, REFUSE
     // an ineligible exposure, and only then touch anything on disk.
@@ -2062,18 +2082,47 @@ async function appendEvent(
       throw error;
     }
     await rename(tempPath, paths.ledgerPath);
-    return event;
+
+    // The two files now agree at N+1, and THIS is the pair a lost ledger can be
+    // recovered from: the backup taken above holds height N against a keyring that
+    // attests N+1, which `restore` refuses as divergent. Without this second backup
+    // the split E2 freezes and the holdout H1 consumes would have no restore point
+    // at all, and the compensating step would live only in a runbook.
+    //
+    // `keyring` is the pre-mutation parse, which is what the MAC needs: re-attesting
+    // does not touch `keys`, so the newest key is the same one. The BYTES copied into
+    // the backup are read from disk, i.e. the re-attested file.
+    let restorePoint: BackupReceipt;
+    try {
+      restorePoint = await writeBackup(paths, keyring, request.occurredAt);
+    } catch (error) {
+      // The event is already published, so this cannot be reported as a failed
+      // transaction: re-running the command would be refused (the clusters are now
+      // exposed) and the operator would conclude the split was never frozen.
+      fail(
+        "CLUSTER_LEDGER_COMMITTED_UNBACKED",
+        `the ${request.eventType} event ${event.eventId} IS RECORDED in ` +
+          `${paths.ledgerPath} at height ${lines.length}, and the backup of that ` +
+          `state could not be written: ${(error as Error).message}. Do NOT re-run ` +
+          "this command — the exposure is recorded and would now be refused. Run " +
+          '"cluster-ledger backup" once the backup root is writable; until then the ' +
+          "committed pair has no restore point",
+      );
+    }
+    return { event, restorePoint };
   });
 }
 
 /**
  * Records a `pilot-exposure`: the pilot's clusters become exposed, and therefore
- * ineligible for any future test block. Backs up and transacts.
+ * ineligible for any future test block. Backs up on both sides of the mutation and
+ * transacts; the returned {@link ClusterExposureCommit} names the restore point of
+ * the state it committed.
  */
 export async function recordPilotExposure(
   paths: ClusterLedgerPaths,
   request: ExposureRequest,
-): Promise<ClusterExposureEvent> {
+): Promise<ClusterExposureCommit> {
   assertEventType(request, "pilot-exposure");
   return appendEvent(paths, request);
 }
@@ -2088,7 +2137,7 @@ export async function commitSplitFreeze(
   paths: ClusterLedgerPaths,
   request: ExposureRequest,
   finalizeSplit?: (event: ClusterExposureEvent) => Promise<void>,
-): Promise<ClusterExposureEvent> {
+): Promise<ClusterExposureCommit> {
   assertEventType(request, "split-freeze");
   return appendEvent(paths, request, finalizeSplit);
 }

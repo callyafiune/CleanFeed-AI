@@ -399,7 +399,7 @@ describe("acceptance 4 — a consumed test record-line returns to no partition",
 describe("acceptance 5 — the future reserve appears in no partition", () => {
   it("records only the reserve manifest digest and refuses a reserve partition", async () => {
     await init();
-    const event = await commitSplitFreeze(
+    const { event } = await commitSplitFreeze(
       paths(),
       request({
         records: [
@@ -476,7 +476,7 @@ describe("acceptance 6 — the split and its exposure event are written together
   it("writes both when the split write succeeds", async () => {
     await init();
     const splitPath = join(root, "split-artifact.json");
-    const event = await commitSplitFreeze(paths(), request(), async () => {
+    const { event } = await commitSplitFreeze(paths(), request(), async () => {
       await writeFile(splitPath, "{}\n", "utf8");
     });
     expect(await readFile(splitPath, "utf8")).toBe("{}\n");
@@ -765,7 +765,7 @@ describe("acceptance 8 — the CLI-level lifecycle on a temporary fixture", () =
 
     // The next mutation still works, and the stray file was never read as an
     // event: the chain continues from the one event that was committed.
-    const next = await recordPilotExposure(
+    const { event: next } = await recordPilotExposure(
       paths(),
       request({
         eventType: "pilot-exposure",
@@ -1425,7 +1425,7 @@ describe("the ledger reads as empty only when it is provably new", () => {
 
   it("attests the height and the tail digest inside the writing transaction", async () => {
     await init();
-    const first = await recordPilotExposure(
+    const { event: first } = await recordPilotExposure(
       paths(),
       request({ eventType: "pilot-exposure" }),
     );
@@ -1513,6 +1513,62 @@ describe("the ledger reads as empty only when it is provably new", () => {
         createdAt: "2026-07-28T14:00:00.000Z",
       }),
     ).rejects.toMatchObject({ code: "CLUSTER_LEDGER_ALREADY_INITIALISED" });
+  });
+});
+
+describe("the state a mutation commits stays restorable", () => {
+  // `writeBackup` also runs BEFORE the event is published, so that earlier pair sits
+  // at height N while the committed state is N+1 — and with the height attested on
+  // the keyring, restoring it over a lost ledger is refused as divergent. Without a
+  // backup taken AFTER the ledger is published, the frozen split (E2) and the
+  // consumed holdout (H1) would have no restore point at all.
+
+  it("backs up the pair it committed, and that is the one a lost ledger restores from", async () => {
+    await init();
+    const commit = await commitSplitFreeze(
+      paths(),
+      request({ records: [record({ id: "t1", partition: "test" })] }),
+    );
+
+    const directories = await readdir(paths().backupRoot);
+    expect(directories).toHaveLength(2);
+    const beforeTheMutation = directories
+      .map((entry) => join(paths().backupRoot, entry))
+      .find((directory) => directory !== commit.restorePoint.directory);
+    expect(beforeTheMutation).toBeDefined();
+
+    // Losing the ledger is the case the authenticated backup exists for.
+    await rm(paths().ledgerPath, { force: true });
+    await expect(
+      restoreClusterLedger(paths(), beforeTheMutation as string),
+    ).rejects.toMatchObject({ code: "CLUSTER_LEDGER_RESTORE_DIVERGENT" });
+
+    const outcome = await restoreClusterLedger(
+      paths(),
+      commit.restorePoint.directory,
+    );
+    expect(outcome.ledger).toBe("written");
+    expect(outcome.keyring).toBe("identical");
+    const verified = await verifyClusterLedger(paths());
+    expect(verified.eventCount).toBe(1);
+    expect(verified.lastEventDigest).toBe(commit.event.eventDigest);
+  });
+
+  it("does the same for a pilot exposure, and the receipt names the committed bytes", async () => {
+    await init();
+    const commit = await recordPilotExposure(
+      paths(),
+      request({ eventType: "pilot-exposure" }),
+    );
+    // The receipt's digest is of the ledger AS PUBLISHED, which is what makes the
+    // directory name distinguish it from the pre-mutation backup.
+    const published = await readFile(paths().ledgerPath, "utf8");
+    expect(commit.restorePoint.ledgerSha256).toBe(
+      sha256BytesHex(new TextEncoder().encode(published)),
+    );
+    expect(commit.restorePoint.directory).toContain(
+      commit.restorePoint.ledgerSha256.slice(0, 8),
+    );
   });
 });
 

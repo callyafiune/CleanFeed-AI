@@ -4617,9 +4617,9 @@ execução foi além (ou ficou aquém) do que o texto acima diz.
     silêncio — medido em `7b7fcbd` numa fixture temporária: com o estado commitado na altura 2,
     `restore` do backup pré-mutação devolveu `{ledger: "written", keyring: "identical"}` e
     deixou o ledger na altura 1. Agora o keyring em disco atesta N+1, o par divergiu, e é
-    recusado. O par restaurável do estado atual é o que `cluster-ledger backup` tira **depois**
-    da mutação (verificado: restaura sobre ledger ausente) — então E2 roda `backup` logo após
-    `commit-split`, e H1 após `holdout-consumed`.
+    recusado. O par restaurável do estado atual é o que se tira **depois** da mutação (verificado:
+    restaura sobre ledger ausente) — e o **item 28** passou a tirá-lo dentro da própria transação,
+    em vez de deixar isso como rotina que E2 e H1 têm de lembrar.
 24. **Duas limitações de `restore` reproduzidas, e NÃO consertadas nesta rodada.** A revisão as
     reportou sem confirmação; foram reproduzidas em fixture temporária, **as duas em `7b7fcbd`
     também** (isto é, são anteriores ao item 23 e não consequência dele), e ficam registradas
@@ -4686,6 +4686,32 @@ execução foi além (ou ficou aquém) do que o texto acima diz.
     **vermelho** com `promise resolved "{ eligible: true, refusals: [] }" instead of rejecting`.
     A metade ALTURA continua sem teste próprio e isso é aceito: ela é implicada pela metade
     digest (toda perda de altura muda a cauda), logo é defesa em profundidade, não lacuna.
+28. **O item 23 deixava o estado commitado sem ponto de restauração, e agora a transação tira
+    backup dos DOIS lados.** MEDIDO: `init` → `commitSplitFreeze` (uma linha de `test`) → apagar
+    o ledger → `restore` contra o único backup em disco
+    (`2026-07-28T10-00-00.000Z-e3b0c442`) falhava com `CLUSTER_LEDGER_RESTORE_DIVERGENT`. O
+    `writeBackup` roda **antes** de publicar o evento, logo o par guardado está na altura N
+    enquanto o commitado está em N+1 — e com a altura atestada no keyring, restaurar esse par é
+    (corretamente) recusado. Antes do item 23 esse `restore` **passava**, rolando a história um
+    evento para trás em silêncio; recusar é a direção certa, mas o efeito líquido era: logo
+    depois do `commit-split` real (E2) ou do `holdout-consumed` (H1) **não existia backup
+    restaurável nenhum**, e o passo compensatório ("rode `backup` depois") vivia só num docstring
+    e nos itens 23-24. Isso é o mesmo defeito do item 23 — invariante que depende de o operador
+    lembrar.
+    Conserto: `appendEvent` tira um **segundo** `writeBackup` **depois** do `rename` do ledger,
+    dentro da mesma transação. O nome do diretório já carrega o digest do ledger, então não
+    colide com o do backup pré-mutação. As duas funções públicas passam a devolver
+    `ClusterExposureCommit = {event, restorePoint}` e a CLI imprime `Restore this state from
+    <dir>` em `record-pilot` e `commit-split`, para o ponto de restauração chegar ao operador no
+    momento em que ele existe. Se esse backup falhar **depois** do evento publicado, o erro é
+    `CLUSTER_LEDGER_COMMITTED_UNBACKED` e a mensagem diz que a exposição **está gravada** e que
+    re-rodar o comando será recusado — um erro de filesystem cru faria o operador concluir que o
+    split não foi congelado.
+    O que continua **não** coberto (e é o resíduo do item 24): nenhum dos dois backups restaura
+    sobre uma mutação **meio escrita**, cujos dois arquivos discordam; esse estado é recusado,
+    nomeado, e reparado à mão. O cabeçalho do módulo foi corrigido: ele afirmava que o resíduo de
+    queda estava "coberto pelo backup autenticado tirado ANTES do rename", o que deixou de ser
+    verdade — o keyring em disco diverge do keyring do backup.
 
 ### C4 — Bootstrap com unidade de reamostragem por estimando
 
