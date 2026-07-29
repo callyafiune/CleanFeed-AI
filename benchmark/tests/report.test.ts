@@ -1,7 +1,11 @@
 import { describe, expect, it } from "vitest";
 
 import type { GateReport } from "../gates.ts";
-import type { EvaluationMetrics } from "../metrics.ts";
+import { declaredResamplingPlan, type EvaluationMetrics } from "../metrics.ts";
+import type {
+  ResamplingDemotion,
+  ResamplingUnitDeclaration,
+} from "../bootstrap.ts";
 import {
   computePredictionManifestDigest,
   type PredictionManifestV1,
@@ -18,6 +22,34 @@ import { standInClusterReport, type SplitAudit } from "../split-audit.ts";
 import { asGeneratorFamily } from "../generator-family.ts";
 
 // --- fixture builders ------------------------------------------------------
+
+// One resampling unit as a producer publishes it: the frozen human/calibration
+// hierarchy, with the measured level counts and any demotion it forced.
+function unit(
+  estimand: string,
+  items: number,
+  units: number,
+  demotions: readonly ResamplingDemotion[],
+): ResamplingUnitDeclaration {
+  return {
+    estimand,
+    method: "hierarchical",
+    axes: ["groups.domainSource", "groups.author"],
+    items,
+    units,
+    levels: [
+      {
+        position: 0,
+        axis: "groups.domainSource",
+        levels: 2,
+        degenerate: false,
+      },
+      { position: 1, axis: "groups.author", levels: units, degenerate: false },
+    ],
+    demotions,
+    degenerate: false,
+  };
+}
 
 // A distinct lowercase 64-char hex per label.
 function hex(label: string): string {
@@ -312,8 +344,7 @@ function metrics(): EvaluationMetrics {
           key: "50_79",
           count: 3,
           populationSize: 4,
-          samplingUnits: 3,
-          samplingUnitAxis: "groups.author",
+          resamplingUnit: unit("calibration.ece", 4, 3, []),
           brier: 0.08,
           logLoss: 0.27,
           eceEqualMass: 0.09,
@@ -333,8 +364,14 @@ function metrics(): EvaluationMetrics {
           count: 900,
           scored: 890,
           errored: 10,
-          samplingUnits: 640,
-          samplingUnitAxis: "groups.author",
+          resamplingUnit: unit("warning.fpr.labelBasis", 900, 640, [
+            {
+              position: 1,
+              from: "groups.author",
+              to: "groups.source",
+              items: 12,
+            },
+          ]),
           powered: true,
           powerFloor: 300,
           evidenceRole: "gating",
@@ -353,8 +390,7 @@ function metrics(): EvaluationMetrics {
           count: 12,
           scored: 12,
           errored: 0,
-          samplingUnits: 9,
-          samplingUnitAxis: "groups.author",
+          resamplingUnit: unit("warning.fpr.labelBasis", 12, 9, []),
           powered: false,
           powerFloor: 300,
           evidenceRole: "supplementary-diagnostic",
@@ -380,6 +416,30 @@ function metrics(): EvaluationMetrics {
         { prevalence: 0.1, ppv: 0.1429, npv: 0.9459 },
       ],
     },
+    // C4: the units, declared per estimand. Two entries are overridden below so
+    // the section has both a measured unit and a recorded demotion to publish.
+    resampling: (() => {
+      const plan = declaredResamplingPlan();
+      return {
+        ...plan,
+        entries: plan.entries.map((entry) =>
+          entry.estimand === "calibration.ece"
+            ? {
+                ...entry,
+                executed: "percentile-bootstrap" as const,
+                measured: unit("calibration.ece", 8, 5, [
+                  {
+                    position: 1,
+                    from: "groups.author",
+                    to: "groups.source",
+                    items: 3,
+                  },
+                ]),
+              }
+            : entry,
+        ),
+      };
+    })(),
     multiplicity: {
       correction: "bonferroni",
       familyAlpha: 0.05,
@@ -883,6 +943,29 @@ describe("renderReportMarkdown publishes the A6 evidence with its roles named", 
     // And the under-powered one is labelled supplementary, not pooled away.
     expect(bases).toMatch(/supplementary-diagnostic/u);
     expect(bases).toMatch(/não aprova gate/u);
+  });
+
+  it("names the resampling unit of every published estimand, with its demotion", async () => {
+    const markdown = renderReportMarkdown(
+      await buildBenchmarkReport(baseInput()),
+    );
+    const units = section(markdown, "Unidades de reamostragem");
+    // Every estimand of the frozen table is named, with its method.
+    expect(units).toMatch(/warning\.fpr/u);
+    expect(units).toMatch(/warning\.recall/u);
+    expect(units).toMatch(/calibration\.ece/u);
+    expect(units).toMatch(/mixed\.warning\.recall/u);
+    expect(units).toMatch(/hierarchical/u);
+    expect(units).toMatch(/multiway/u);
+    // The declared unit is spelled out, nested and crossed differently.
+    expect(units).toMatch(/groups\.domainSource ⊃ groups\.author/u);
+    expect(units).toMatch(/groups\.humanSeed × groups\.promptTemplate/u);
+    // Whether the published interval was actually resampled over the unit.
+    expect(units).toMatch(/percentile-bootstrap/u);
+    expect(units).toMatch(/declared-only/u);
+    // And the demotion `notApplicable` forced is recorded, not silent.
+    expect(units).toMatch(/groups\.author→groups\.source \(3\)/u);
+    expect(units).toMatch(/nunca cai para linhas independentes|degenerada/u);
   });
 
   it("publishes PPV and NPV beside the benchmark's own prevalence", async () => {

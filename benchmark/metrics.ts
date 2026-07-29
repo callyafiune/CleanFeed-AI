@@ -34,15 +34,36 @@
 // imports use explicit .ts extensions for Node's native TypeScript execution.
 // Deterministic: the only randomness is the caller-supplied bootstrap seed.
 
-import { clusterBootstrap } from "./bootstrap.ts";
+import {
+  clusteredPercentileBootstrapAll,
+  resolveResampling,
+  type ResampledPercentileMethod,
+  type ResamplingDesign,
+  type ResamplingIdentity,
+  type ResamplingLevel,
+  type ResamplingLevelChain,
+  type ResamplingPlan,
+  type ResamplingPlanEntry,
+  type ResamplingResolution,
+  type ResamplingUnitDeclaration,
+} from "./bootstrap.ts";
 import {
   oneSidedZ,
   wilsonOneSided,
   wilsonOneSidedAtAlpha,
 } from "./intervals.ts";
 import { REBUILD_V3_POLICY } from "./rebuild-v3-policy.ts";
-import type { GenerationMode } from "./rebuild-v3-policy.ts";
-import { authorClusterKey, type BenchmarkRecord } from "./schema.ts";
+import type {
+  GenerationMode,
+  ResamplingLevelRow,
+} from "./rebuild-v3-policy.ts";
+import {
+  groupAxisIdentity,
+  groupAxisState,
+  V3_GROUP_AXES,
+  type BenchmarkRecord,
+  type V3GroupAxis,
+} from "./schema.ts";
 
 export interface Prediction {
   // Ground-truth label of the record.
@@ -400,8 +421,14 @@ export interface MetricEstimate {
   value: number;
   lower95?: number;
   upper95?: number;
-  method: "point" | "wilson-one-sided" | "author-cluster-percentile";
+  method: "point" | "wilson-one-sided" | ResampledPercentileMethod;
   simultaneous?: SimultaneousBound;
+  // The resampling unit the interval was drawn over, named (C4). Present only on
+  // the percentile paths: an analytic Wilson interval resamples nothing, so
+  // attaching a unit to it would claim a property it does not have (R7). Which
+  // unit each estimand DECLARES, resampled or not, is in
+  // `EvaluationMetrics.resampling`.
+  resampling?: ResamplingUnitDeclaration;
 }
 
 export interface SimultaneousBound {
@@ -422,7 +449,7 @@ export interface SimultaneousBound {
   tailReplicates?: number;
   lower: number;
   upper: number;
-  method: "wilson-one-sided" | "author-cluster-percentile";
+  method: "wilson-one-sided" | ResampledPercentileMethod;
 }
 
 // The multiplicity declaration of one evaluation: how many pre-registered
@@ -649,8 +676,11 @@ export interface CalibrationSliceMetrics {
   key: string;
   count: number;
   populationSize: number;
-  samplingUnits: number;
-  samplingUnitAxis: "groups.author";
+  // The resampling unit of THIS slice, resolved over its scored rows: the frozen
+  // table says a calibration statistic inherits the unit of the stratum under
+  // analysis, so the unit is a property of the slice and not of the module. Null
+  // when the slice scored nothing and there was no population to resolve.
+  resamplingUnit: ResamplingUnitDeclaration | null;
   brier: number;
   logLoss: number;
   eceEqualMass: number;
@@ -698,8 +728,9 @@ export interface LabelBasisSlice {
   count: number;
   scored: number;
   errored: number;
-  samplingUnits: number;
-  samplingUnitAxis: "groups.author";
+  // The human-specificity unit of the frozen table, resolved over this basis.
+  // Null when the basis has no rows to resolve.
+  resamplingUnit: ResamplingUnitDeclaration | null;
   powered: boolean;
   powerFloor: number;
   evidenceRole: "gating" | "supplementary-diagnostic";
@@ -981,6 +1012,13 @@ export interface EvaluationMetrics {
   calibration: CalibrationDiagnostics;
   labelBasis: LabelBasisBreakdown;
   predictiveValue: PredictiveValueProjection;
+  // C4's resampling plan: one entry per published estimand, naming the unit it
+  // resamples over and whether the published interval was actually produced by
+  // resampling it. The release gate reads this and refuses to decide an interval
+  // for an estimand the plan does not cover (benchmark/gates.ts); it never
+  // substitutes independent rows. It is built from the SAME resolutions the
+  // intervals used, so the declared unit cannot drift from the executed one.
+  resampling: ResamplingPlan;
   // Null until the caller declares the pre-registered gate count.
   multiplicity: MultiplicityDeclaration | null;
   // Equal-WIDTH ECE-15, kept as a diagnostic and as the statistic the sealed
@@ -1093,8 +1131,13 @@ export function isScoredItem(
 }
 
 export interface EvaluationOptions {
-  // Seed for the author-clustered bootstrap of the continuous metrics.
+  // Seed for the clustered bootstrap of the continuous metrics.
   bootstrapSeed: number;
+  // Replicates for that bootstrap. Defaults to the pre-registered pilot count and
+  // is REFUSED below it: the frozen contract sets 10.000 in the pilot and 100.000
+  // in the release and says never to reduce the count for run time, so this
+  // parameter exists to raise it for the release, never to lower it.
+  bootstrapReplicates?: number;
   // Prevalences for the simulated-precision projection. Defaults to 1/5/10%.
   prevalences?: SimulatedPrevalences;
   // Coverage eligibility floor: PT-BR and at least this many words. Default 50.
@@ -1113,7 +1156,10 @@ export interface EvaluationOptions {
 // Every threshold below comes from the frozen contract
 // (benchmark/rebuild-v3-policy.json); none of them is a local constant.
 const ECE_BINS = REBUILD_V3_POLICY.calibrationGate.eceBins;
-const BOOTSTRAP_ITERATIONS = 2_000 as const;
+// The pre-registered pilot replicate count, and the FLOOR: 10.000 in the pilot,
+// 100.000 in the release, "nunca reduzir por tempo".
+const PILOT_REPLICATES = REBUILD_V3_POLICY.bootstrapReplicates.pilot;
+const RESAMPLING_TABLE = REBUILD_V3_POLICY.resampling;
 const DEFAULT_MINIMUM_ELIGIBLE_WORDS = REBUILD_V3_POLICY.wordFloor.abstainBelow;
 const MATERIAL_ASSISTANCE_AI_FRACTION =
   REBUILD_V3_POLICY.materialAssistance.minimumAiFraction;
@@ -1137,6 +1183,402 @@ const DEFAULT_PREVALENCES: SimulatedPrevalences = {
 // hidden, and it is the only substitution anywhere in this module — it changes a
 // finite-precision score, never a missing one (R5 is about absent scores).
 const LOG_LOSS_EPSILON = 1e-12;
+
+// --- the resampling unit, per estimand (C4) --------------------------------
+//
+// The unit of resampling is NOT a property of this module: it is a row of the
+// frozen table in `benchmark/rebuild-v3-policy.json`, read here and turned into a
+// design over evaluation items. Nothing below names an axis as a local constant.
+//
+// One thing this replaces deserves naming, because it is the defect C4 exists to
+// remove: every continuous interval used to be drawn over `groups.author` as a
+// single flat key. On a v3 corpus `author` is `notApplicable` on every generated
+// row BY RULE, and in the v2 corpus it was 10.000 singletons — so the "clustered"
+// bootstrap was an i.i.d. row bootstrap wearing a cluster's name, and every
+// interval in the report was too narrow by an unrecoverable amount.
+
+const V3_AXIS_NAMES: ReadonlySet<string> = new Set(V3_GROUP_AXES);
+const AXIS_PREFIX = "groups.";
+
+// Reads one declared axis of one item in its three R6 states. `known` is the only
+// state that is an identity two rows can share; `notApplicable` demotes to the
+// next unit the source declares and `unknown` fails, and the difference between
+// those two is enforced by benchmark/bootstrap.ts, not here.
+function axisLevel(declared: string): ResamplingLevel<EvaluationItem> {
+  const axis = declared.startsWith(AXIS_PREFIX)
+    ? declared.slice(AXIS_PREFIX.length)
+    : declared;
+  if (!V3_AXIS_NAMES.has(axis)) {
+    throw new RangeError(
+      `the resampling table names "${declared}", which is not a record grouping axis`,
+    );
+  }
+  const typed = axis as V3GroupAxis;
+  return {
+    axis: declared,
+    identity: (item): ResamplingIdentity => {
+      const state = groupAxisState(item.record, typed);
+      if (state === "unknown") return { state: "unknown" };
+      if (state === "notApplicable") return { state: "notApplicable" };
+      const id = groupAxisIdentity(item.record, typed);
+      // An axis that says `known` and yields no identity contradicts itself;
+      // treating it as unknown is the fail-closed reading, not a substitution.
+      return id === undefined ? { state: "unknown" } : { state: "known", id };
+    },
+  };
+}
+
+function levelChain(
+  row: ResamplingLevelRow,
+): ResamplingLevelChain<EvaluationItem> {
+  return {
+    declared: axisLevel(row.axis),
+    fallbacks: row.fallbacks.map(axisLevel),
+  };
+}
+
+/**
+ * The design of one estimand, straight from the frozen table. Throws when no row
+ * covers the estimand, because a missing row is a gap in the contract and not a
+ * licence to resample rows.
+ */
+export function resamplingDesignFor(
+  estimand: string,
+): ResamplingDesign<EvaluationItem> {
+  const row = RESAMPLING_TABLE.estimands[estimand];
+  if (row === undefined) {
+    throw new RangeError(
+      `no row of the frozen resampling table covers the estimand "${estimand}"`,
+    );
+  }
+  const declared = RESAMPLING_TABLE.estimandClasses[row];
+  const chains = declared.levels.map(levelChain);
+  return declared.unitKind === "hierarchical"
+    ? { method: "hierarchical", estimand, levels: chains }
+    : { method: "multiway", estimand, factors: chains };
+}
+
+/** The unit of one population under one estimand, or null when it is empty. */
+function resamplingUnitOf(
+  items: readonly EvaluationItem[],
+  estimand: string,
+): ResamplingUnitDeclaration | null {
+  if (items.length === 0) return null;
+  return resolveResampling(items, resamplingDesignFor(estimand)).declaration;
+}
+
+// The estimands whose PUBLISHED interval is a percentile bootstrap over the unit
+// below. Every other entry of the plan declares the frozen table's unit while its
+// published interval comes from the analytic Wilson estimator, and the plan says
+// so per entry (`executed`) instead of letting a reader assume.
+const ESTIMAND_CALIBRATION_ECE = "calibration.ece";
+const ESTIMAND_CALIBRATION_ECE15 = "calibration.ece15";
+const ESTIMAND_CALIBRATION_BRIER = "calibration.brier";
+const ESTIMAND_SEPARABILITY_AUROC = "separability.auroc";
+const ESTIMAND_SEPARABILITY_PR_AUC = "separability.prAuc";
+// Declaration-only: the label-basis FPR is published with an analytic Wilson
+// interval, so this estimand names the unit the frozen table gives it and the
+// slice publishes the unit MEASURED over its own rows.
+const ESTIMAND_WARNING_FPR_LABEL_BASIS = "warning.fpr.labelBasis";
+
+/**
+ * The plan as the frozen table declares it, with nothing measured yet: one entry
+ * per published estimand, naming the unit and the pre-registered replicate count.
+ * Exported because a caller that has no evaluation to measure — a fixture, a
+ * pre-flight check — still has to be able to state the unit rather than omit it.
+ */
+export function declaredResamplingPlan(
+  replicates: number = PILOT_REPLICATES,
+): ResamplingPlan {
+  const entries: ResamplingPlanEntry[] = Object.keys(RESAMPLING_TABLE.estimands)
+    .sort((a, b) => (a < b ? -1 : a > b ? 1 : 0))
+    .map((estimand) => {
+      const row =
+        RESAMPLING_TABLE.estimandClasses[RESAMPLING_TABLE.estimands[estimand]];
+      return {
+        estimand,
+        unitKind: row.unitKind,
+        unitAxes: row.levels.map((level) => level.axis),
+        replicates,
+        executed: "declared-only" as const,
+        measured: null,
+      };
+    });
+  return {
+    planId: `c4-resampling-plan/${REBUILD_V3_POLICY.policyVersion}`,
+    source: "benchmark/rebuild-v3-policy.json#resampling",
+    entries,
+  };
+}
+
+/**
+ * The plan the release gate reads. `measured` carries the resolutions the run
+ * actually performed, so a declared unit cannot drift from an executed one: the
+ * same declaration object goes into the interval and into the plan.
+ */
+function buildResamplingPlan(
+  replicates: number,
+  measured: ReadonlyMap<string, ResamplingUnitDeclaration>,
+  resampled: ReadonlySet<string>,
+): ResamplingPlan {
+  const declared = declaredResamplingPlan(replicates);
+  return {
+    ...declared,
+    entries: declared.entries.map((entry) => ({
+      ...entry,
+      executed: resampled.has(entry.estimand)
+        ? ("percentile-bootstrap" as const)
+        : ("declared-only" as const),
+      measured: measured.get(entry.estimand) ?? null,
+    })),
+  };
+}
+
+// --- weighted statistics over cluster weights ------------------------------
+//
+// A replicate is a WEIGHT VECTOR over leaf clusters, never a copy of the rows, so
+// every resampled statistic has to be expressible over those weights. Each
+// builder below aggregates the sufficient statistics ONCE and returns a closure
+// that reads the weight vector; at unit weights every one of them reproduces the
+// unweighted function it mirrors, which is asserted by test.
+
+type WeightedStatistic = (weights: readonly number[]) => number;
+
+interface BinaryPoints {
+  probability: Float64Array;
+  label: Float64Array;
+  cluster: readonly number[];
+  /** Indices ordered by probability ascending (stable), for equal-mass bins. */
+  byProbability: readonly number[];
+  /** Indices ordered by score descending (stable), for the ROC/PR walks. */
+  byScoreDescending: readonly number[];
+  /** Document score, i.e. the ranking key. */
+  score: Float64Array;
+}
+
+function binaryPoints(
+  items: readonly ScoredEvaluationItem[],
+  cluster: readonly number[],
+): BinaryPoints {
+  const size = items.length;
+  const probability = new Float64Array(size);
+  const label = new Float64Array(size);
+  const score = new Float64Array(size);
+  for (let index = 0; index < size; index += 1) {
+    const point = toCalibrationPoint(items[index]);
+    probability[index] = point.probability;
+    label[index] = point.label;
+    score[index] = items[index].documentScore;
+  }
+  const indices = [...items.keys()];
+  const byProbability = [...indices].sort((a, b) =>
+    probability[a] !== probability[b] ? probability[a] - probability[b] : a - b,
+  );
+  const byScoreDescending = [...indices].sort((a, b) =>
+    score[a] !== score[b] ? score[b] - score[a] : a - b,
+  );
+  return {
+    probability,
+    label,
+    cluster,
+    byProbability,
+    byScoreDescending,
+    score,
+  };
+}
+
+function weightedBrier(
+  points: BinaryPoints,
+  clusters: number,
+): WeightedStatistic {
+  const squaredError = new Float64Array(clusters);
+  const counts = new Float64Array(clusters);
+  for (let index = 0; index < points.probability.length; index += 1) {
+    const error = points.probability[index] - points.label[index];
+    squaredError[points.cluster[index]] += error * error;
+    counts[points.cluster[index]] += 1;
+  }
+  return (weights) => {
+    let total = 0;
+    let mass = 0;
+    for (let cluster = 0; cluster < clusters; cluster += 1) {
+      const weight = weights[cluster];
+      if (weight === 0) continue;
+      total += weight * squaredError[cluster];
+      mass += weight * counts[cluster];
+    }
+    return mass === 0 ? Number.NaN : total / mass;
+  };
+}
+
+// Equal-WIDTH ECE over fifteen bins, weighted. Mirrors `ece15`: the bin is chosen
+// from the clamped probability and the bin mean is taken over the raw one.
+function weightedEce15(points: BinaryPoints): WeightedStatistic {
+  const size = points.probability.length;
+  const bin = new Int32Array(size);
+  for (let index = 0; index < size; index += 1) {
+    const clamped = Math.min(1, Math.max(0, points.probability[index]));
+    bin[index] = Math.min(ECE_BINS - 1, Math.floor(clamped * ECE_BINS));
+  }
+  const mass = new Float64Array(ECE_BINS);
+  const probabilitySum = new Float64Array(ECE_BINS);
+  const positiveSum = new Float64Array(ECE_BINS);
+  return (weights) => {
+    mass.fill(0);
+    probabilitySum.fill(0);
+    positiveSum.fill(0);
+    let total = 0;
+    for (let index = 0; index < size; index += 1) {
+      const weight = weights[points.cluster[index]];
+      if (weight === 0) continue;
+      const slot = bin[index];
+      mass[slot] += weight;
+      probabilitySum[slot] += weight * points.probability[index];
+      positiveSum[slot] += weight * points.label[index];
+      total += weight;
+    }
+    if (total === 0) return Number.NaN;
+    let ece = 0;
+    for (let slot = 0; slot < ECE_BINS; slot += 1) {
+      const inBin = mass[slot];
+      if (inBin === 0) continue;
+      ece +=
+        (inBin / total) *
+        Math.abs(probabilitySum[slot] / inBin - positiveSum[slot] / inBin);
+    }
+    return ece;
+  };
+}
+
+// Equal-MASS ECE, weighted. The weighted sample is the multiset in which each
+// point appears `weight` times, and the bin boundaries are the same
+// `floor(bin * n / count)` cut points `equalMassBins` uses — with `n` the TOTAL
+// WEIGHT. A point whose weight straddles a boundary is split across the two bins,
+// which is exactly what expanding the multiset would do.
+function weightedEceEqualMass(points: BinaryPoints): WeightedStatistic {
+  const order = points.byProbability;
+  return (weights) => {
+    let totalWeight = 0;
+    for (const index of order) totalWeight += weights[points.cluster[index]];
+    if (!(totalWeight > 0)) return Number.NaN;
+    const bins = Math.min(ECE_BINS, Math.floor(totalWeight));
+    if (bins < 1) return Number.NaN;
+
+    let ece = 0;
+    let consumed = 0;
+    let bin = 0;
+    let binEnd = Math.floor(totalWeight / bins);
+    let mass = 0;
+    let probabilitySum = 0;
+    let positiveSum = 0;
+    const closeBin = (): void => {
+      if (mass > 0) {
+        ece +=
+          (mass / totalWeight) *
+          Math.abs(probabilitySum / mass - positiveSum / mass);
+      }
+      mass = 0;
+      probabilitySum = 0;
+      positiveSum = 0;
+    };
+
+    for (const index of order) {
+      let remaining = weights[points.cluster[index]];
+      if (remaining <= 0) continue;
+      const probability = points.probability[index];
+      const label = points.label[index];
+      while (remaining > 0) {
+        while (consumed >= binEnd && bin < bins - 1) {
+          closeBin();
+          bin += 1;
+          binEnd = Math.floor(((bin + 1) * totalWeight) / bins);
+        }
+        const take = Math.min(remaining, binEnd - consumed);
+        // The last bin ends at the total weight, so `take` is only ever zero if
+        // the accumulated weight overshot it, which cannot happen.
+        const step = take > 0 ? take : remaining;
+        mass += step;
+        probabilitySum += step * probability;
+        positiveSum += step * label;
+        consumed += step;
+        remaining -= step;
+      }
+    }
+    closeBin();
+    return ece;
+  };
+}
+
+// AUROC over the weighted multiset. Mirrors `rocAucFromItems`: the same
+// tie-grouped trapezoid, with `+= 1` replaced by `+= weight`.
+function weightedAuroc(points: BinaryPoints): WeightedStatistic {
+  const order = points.byScoreDescending;
+  return (weights) => {
+    let positives = 0;
+    let negatives = 0;
+    for (const index of order) {
+      const weight = weights[points.cluster[index]];
+      if (points.label[index] === 1) positives += weight;
+      else negatives += weight;
+    }
+    if (positives === 0 || negatives === 0) return Number.NaN;
+    let truePositives = 0;
+    let falsePositives = 0;
+    let previousFpr = 0;
+    let previousTpr = 0;
+    let area = 0;
+    for (let cursor = 0; cursor < order.length;) {
+      const score = points.score[order[cursor]];
+      while (cursor < order.length && points.score[order[cursor]] === score) {
+        const index = order[cursor];
+        const weight = weights[points.cluster[index]];
+        if (points.label[index] === 1) truePositives += weight;
+        else falsePositives += weight;
+        cursor += 1;
+      }
+      const tpr = truePositives / positives;
+      const fpr = falsePositives / negatives;
+      area += ((fpr - previousFpr) * (tpr + previousTpr)) / 2;
+      previousFpr = fpr;
+      previousTpr = tpr;
+    }
+    return area;
+  };
+}
+
+// Average precision over the weighted multiset. Mirrors `prAucFromItems`.
+function weightedPrAuc(points: BinaryPoints): WeightedStatistic {
+  const order = points.byScoreDescending;
+  return (weights) => {
+    let positives = 0;
+    let total = 0;
+    for (const index of order) {
+      const weight = weights[points.cluster[index]];
+      total += weight;
+      if (points.label[index] === 1) positives += weight;
+    }
+    if (positives === 0 || positives === total) return Number.NaN;
+    let truePositives = 0;
+    let falsePositives = 0;
+    let previousRecall = 0;
+    let averagePrecision = 0;
+    for (let cursor = 0; cursor < order.length;) {
+      const score = points.score[order[cursor]];
+      while (cursor < order.length && points.score[order[cursor]] === score) {
+        const index = order[cursor];
+        const weight = weights[points.cluster[index]];
+        if (points.label[index] === 1) truePositives += weight;
+        else falsePositives += weight;
+        cursor += 1;
+      }
+      const recall = truePositives / positives;
+      const precision = ratio(truePositives, truePositives + falsePositives);
+      averagePrecision += (recall - previousRecall) * precision;
+      previousRecall = recall;
+    }
+    return averagePrecision;
+  };
+}
 
 // --- the three frozen targets, as predicates (B2) ---------------------------
 //
@@ -1518,6 +1960,14 @@ export function computeEvaluationMetrics(
   const prevalences = options.prevalences ?? DEFAULT_PREVALENCES;
   const visualActionAvailable = options.visualActionAvailable ?? true;
   const seed = options.bootstrapSeed;
+  const replicates = options.bootstrapReplicates ?? PILOT_REPLICATES;
+  if (!Number.isInteger(replicates) || replicates < PILOT_REPLICATES) {
+    throw new RangeError(
+      `bootstrapReplicates must be an integer of at least ${PILOT_REPLICATES} ` +
+        `(the pre-registered pilot count), got ${replicates}; the frozen contract ` +
+        "says never to reduce the replicate count for run time",
+    );
+  }
 
   const bonferroni = multiplicityFrom(options.preRegisteredStatisticalGates);
 
@@ -1548,6 +1998,74 @@ export function computeEvaluationMetrics(
     (item) => isWarningPositive(item.record) || isHumanNegative(item.record),
   );
   const scoredBinary = binaryPopulation.filter(isScoredItem);
+
+  // ONE resolution for the whole binary population: the five continuous
+  // statistics belong to the same row of the frozen table, so they share the unit
+  // and must publish the same one. Resolved OUTSIDE the interval helpers so a
+  // `ResamplingUnitError` cannot be swallowed by a per-statistic fallback.
+  const binaryResolution =
+    scoredBinary.length === 0
+      ? null
+      : resolveResampling(
+          scoredBinary,
+          resamplingDesignFor(ESTIMAND_CALIBRATION_ECE),
+        );
+  const binaryStatistics =
+    binaryResolution === null
+      ? null
+      : binaryPoints(scoredBinary, binaryResolution.clusterOf);
+  // The five continuous statistics, in ONE resample stream over that unit.
+  const continuous = resampledEstimates({
+    resolution: binaryResolution,
+    statistics:
+      binaryStatistics === null
+        ? []
+        : [
+            {
+              estimand: ESTIMAND_SEPARABILITY_AUROC,
+              value: rocAucFromItems(scoredBinary),
+              weighted: weightedAuroc(binaryStatistics),
+            },
+            {
+              estimand: ESTIMAND_SEPARABILITY_PR_AUC,
+              value: prAucFromItems(scoredBinary),
+              weighted: weightedPrAuc(binaryStatistics),
+            },
+            {
+              estimand: ESTIMAND_CALIBRATION_BRIER,
+              value: sampleBrier(scoredBinary),
+              weighted: weightedBrier(
+                binaryStatistics,
+                binaryResolution?.clusterCount ?? 0,
+              ),
+            },
+            {
+              estimand: ESTIMAND_CALIBRATION_ECE,
+              value: sampleEceEqualMass(scoredBinary),
+              weighted: weightedEceEqualMass(binaryStatistics),
+            },
+            {
+              estimand: ESTIMAND_CALIBRATION_ECE15,
+              value: sampleEce(scoredBinary),
+              weighted: weightedEce15(binaryStatistics),
+            },
+          ],
+    seed,
+    replicates,
+    bonferroni,
+  });
+  const estimateOf = (estimand: string): MetricEstimate =>
+    continuous.get(estimand) ?? absentEstimate();
+  // What the plan will publish as MEASURED: the unit of every estimand whose
+  // interval this run actually resampled, and no other.
+  const resampledUnits = new Map<string, ResamplingUnitDeclaration>();
+  const resampledEstimands = new Set<string>();
+  for (const [estimand, estimate] of continuous) {
+    const unit = estimate.resampling;
+    if (unit === undefined) continue;
+    resampledUnits.set(estimand, unit);
+    resampledEstimands.add(estimand);
+  }
 
   // Three denominators, three companions. Handing the whole-eligible-set rate to
   // a block measured over a narrower population is what made the phrase "the
@@ -1602,26 +2120,26 @@ export function computeEvaluationMetrics(
       population: "conditional-on-scored",
       errorRatePopulation: "binary-population",
       errorRate: binaryPopulationErrorRate,
-      auroc: continuousEstimate(
-        scoredBinary,
-        rocAucFromItems,
-        seed,
-        bonferroni,
-      ),
-      prAuc: continuousEstimate(scoredBinary, prAucFromItems, seed, bonferroni),
+      auroc: estimateOf(ESTIMAND_SEPARABILITY_AUROC),
+      prAuc: estimateOf(ESTIMAND_SEPARABILITY_PR_AUC),
       tprAtOnePercentFpr: tprAtTargetFpr(scoredBinary, DEFAULT_TARGET_FPR),
     },
     calibration: calibrationDiagnostics(
       binaryPopulation,
       scoredBinary,
-      seed,
-      bonferroni,
+      estimateOf(ESTIMAND_CALIBRATION_BRIER),
+      estimateOf(ESTIMAND_CALIBRATION_ECE),
       binaryPopulationErrorRate,
     ),
     labelBasis: labelBasisBreakdown(eligible, bonferroni),
     predictiveValue: predictiveValueProjection(warning),
+    resampling: buildResamplingPlan(
+      replicates,
+      resampledUnits,
+      resampledEstimands,
+    ),
     multiplicity: bonferroni,
-    ece15: continuousEstimate(scoredBinary, sampleEce, seed, bonferroni),
+    ece15: estimateOf(ESTIMAND_CALIBRATION_ECE15),
     coverage: proportionEstimate(
       eligible.filter((item) => item.status === "scored").length,
       eligibleCount,
@@ -1805,8 +2323,11 @@ function calibrationDiagnostics(
   // the same denominator the statistics used.
   binaryPopulation: readonly EvaluationItem[],
   scoredBinary: readonly ScoredEvaluationItem[],
-  seed: number,
-  bonferroni: MultiplicityDeclaration | null,
+  // Both come from the single resample stream of `computeEvaluationMetrics`; this
+  // function no longer resamples, so the unit it publishes cannot differ from the
+  // one AUROC and PR-AUC were drawn over.
+  brier: MetricEstimate,
+  eceEqualMass15: MetricEstimate,
   errorRate: MetricEstimate,
 ): CalibrationDiagnostics {
   const points = scoredBinary.map(toCalibrationPoint);
@@ -1819,17 +2340,12 @@ function calibrationDiagnostics(
     populationSize: binaryPopulation.length,
     errorRatePopulation: "binary-population",
     errorRate,
-    brier: continuousEstimate(scoredBinary, sampleBrier, seed, bonferroni),
+    brier,
     logLoss: logLoss(points),
     intercept: fit.intercept,
     slope: fit.slope,
     bins: ECE_BINS,
-    eceEqualMass15: continuousEstimate(
-      scoredBinary,
-      sampleEceEqualMass,
-      seed,
-      bonferroni,
-    ),
+    eceEqualMass15,
     reliability: reliabilityDiagram(points, ECE_BINS),
     byLengthBucket: calibrationSlices(binaryPopulation, (record) =>
       sizeBucket(record.wordCount),
@@ -1869,8 +2385,7 @@ function calibrationSlices(
         key,
         count: scored.length,
         populationSize: bucket.length,
-        samplingUnits: samplingUnits(scored),
-        samplingUnitAxis: "groups.author",
+        resamplingUnit: resamplingUnitOf(scored, ESTIMAND_CALIBRATION_ECE),
         brier: brierScore(points),
         logLoss: logLoss(points),
         eceEqualMass: eceEqualMass(points, ECE_BINS),
@@ -1928,8 +2443,10 @@ function labelBasisBreakdown(
         count: bucket.length,
         scored: scored.length,
         errored: bucket.filter((item) => item.status === "error").length,
-        samplingUnits: samplingUnits(bucket),
-        samplingUnitAxis: "groups.author" as const,
+        resamplingUnit: resamplingUnitOf(
+          bucket,
+          ESTIMAND_WARNING_FPR_LABEL_BASIS,
+        ),
         powered,
         powerFloor: LABEL_BASIS_POWER_FLOOR,
         evidenceRole: powered
@@ -1976,12 +2493,6 @@ function predictiveValueProjection(
       }),
     })),
   };
-}
-
-function samplingUnits(items: readonly EvaluationItem[]): number {
-  const units = new Set<string>();
-  for (const item of items) units.add(authorClusterKey(item.record));
-  return units.size;
 }
 
 // Bonferroni: alpha_família / m, with the family alpha and the descriptive
@@ -2213,33 +2724,89 @@ function proportionEstimate(
   return estimate;
 }
 
-// A continuous metric with a 2000-replicate author-clustered bootstrap
-// interval. When the statistic is undefined (a single class) or the bootstrap
-// cannot muster enough finite replicates, it degrades to a bare point estimate
-// rather than fabricating an interval or throwing.
-function continuousEstimate(
-  items: readonly ScoredEvaluationItem[],
-  statistic: (sample: readonly ScoredEvaluationItem[]) => number,
-  seed: number,
-  bonferroni: MultiplicityDeclaration | null = null,
-): MetricEstimate {
-  const value = statistic(items);
-  if (!Number.isFinite(value)) return { value, method: "point" };
-  try {
-    const interval = clusterBootstrap(items, {
-      clusterBy: (item) => authorClusterKey(item.record),
-      iterations: BOOTSTRAP_ITERATIONS,
-      seed,
-      statistic,
-      ...(bonferroni === null
-        ? {}
-        : { simultaneousAlpha: bonferroni.perGateAlpha }),
-    });
+/**
+ * A continuous metric with a clustered percentile bootstrap interval over the
+ * unit its estimand declares.
+ *
+ * The resolution is handed in already built, because the five continuous
+ * statistics of one run share one estimand class and therefore one unit: doing
+ * the resolution once is what stops the published unit from differing between two
+ * statistics over the same population.
+ *
+ * It degrades to a bare point estimate only when the statistic is undefined (a
+ * single class) or when the replicate distribution is too thin to read a
+ * percentile from. A `ResamplingUnitError` is NOT caught: an unusable unit must
+ * surface, because the failure this whole module exists to remove is the one that
+ * produced an interval that looked valid.
+ */
+/**
+ * The continuous statistics of one population, each with a clustered percentile
+ * bootstrap interval over the unit its estimand declares — all from ONE resample
+ * stream.
+ *
+ * One stream and not five: the statistics belong to the same row of the frozen
+ * table over the same population, so they share the unit and the seed and were
+ * already drawing identical weight vectors. Paying the draw once is the same
+ * computation, and it is what keeps 100.000 replicates over a real corpus from
+ * costing five times what it has to.
+ *
+ * A statistic degrades to a bare point estimate only when it is undefined (a
+ * single class) or when its replicate distribution is too thin to read a
+ * percentile from. A `ResamplingUnitError` is NOT caught anywhere on this path:
+ * the resolution is built by the caller, before any statistic runs, because an
+ * unusable unit must surface instead of quietly becoming a point estimate.
+ */
+function resampledEstimates(input: {
+  resolution: ResamplingResolution | null;
+  /** Estimand name, the point value from the exported definition, and the
+   *  weighted form the replicates use. */
+  statistics: ReadonlyArray<{
+    estimand: string;
+    value: number;
+    weighted: WeightedStatistic;
+  }>;
+  seed: number;
+  replicates: number;
+  bonferroni: MultiplicityDeclaration | null;
+}): Map<string, MetricEstimate> {
+  const { resolution, bonferroni } = input;
+  const estimates = new Map<string, MetricEstimate>();
+  const resampleable = input.statistics.filter((entry) =>
+    Number.isFinite(entry.value),
+  );
+  for (const entry of input.statistics) {
+    if (!resampleable.includes(entry)) {
+      estimates.set(entry.estimand, { value: entry.value, method: "point" });
+    }
+  }
+  if (resolution === null || resampleable.length === 0) {
+    for (const entry of resampleable) {
+      estimates.set(entry.estimand, { value: entry.value, method: "point" });
+    }
+    return estimates;
+  }
+
+  const intervals = clusteredPercentileBootstrapAll(resolution, {
+    iterations: input.replicates,
+    seed: input.seed,
+    statistics: resampleable.map((entry) => entry.weighted),
+    ...(bonferroni === null
+      ? {}
+      : { simultaneousAlpha: bonferroni.perGateAlpha }),
+  });
+
+  resampleable.forEach((entry, index) => {
+    const interval = intervals[index];
+    if (interval === null) {
+      estimates.set(entry.estimand, { value: entry.value, method: "point" });
+      return;
+    }
     const estimate: MetricEstimate = {
-      value,
+      value: entry.value,
       lower95: interval.lower95,
       upper95: interval.upper95,
-      method: "author-cluster-percentile",
+      method: interval.method,
+      resampling: { ...interval.unit, estimand: entry.estimand },
     };
     if (bonferroni !== null && interval.simultaneous !== undefined) {
       estimate.simultaneous = {
@@ -2252,13 +2819,18 @@ function continuousEstimate(
         tailReplicates: interval.simultaneous.tailReplicates,
         lower: interval.simultaneous.lower,
         upper: interval.simultaneous.upper,
-        method: "author-cluster-percentile",
+        method: interval.method,
       };
     }
-    return estimate;
-  } catch {
-    return { value, method: "point" };
-  }
+    estimates.set(entry.estimand, estimate);
+  });
+  return estimates;
+}
+
+// A statistic the run did not compute, published as an absent point rather than
+// invented: it happens only when the population scored nothing.
+function absentEstimate(): MetricEstimate {
+  return { value: Number.NaN, method: "point" };
 }
 
 function rocAucFromItems(items: readonly ScoredEvaluationItem[]): number {

@@ -25,6 +25,7 @@
 // for a fixed input (the caller supplies `generatedAt`).
 
 import { canonicalSha256 } from "../contracts/canonical-json.ts";
+import type { ResamplingPlan, ResamplingUnitDeclaration } from "./bootstrap.ts";
 import {
   assertGeneratorFamiliesEqual,
   type GeneratorFamily,
@@ -646,12 +647,14 @@ export function renderReportMarkdown(report: BenchmarkReport): string {
         lines.push("_Sem linhas escoradas._");
       } else {
         lines.push(
-          "| Chave | n escorado | n da população | Unidades amostrais | Brier | log-loss | ECE equal-mass | Taxa de erro |",
+          "| Chave | n escorado | n da população | Unidades amostrais | Unidade de reamostragem | Brier | log-loss | ECE equal-mass | Taxa de erro |",
         );
-        lines.push("| --- | --- | --- | --- | --- | --- | --- | --- |");
+        lines.push("| --- | --- | --- | --- | --- | --- | --- | --- | --- |");
         for (const row of rows) {
           lines.push(
-            `| ${row.key} | ${row.count} | ${row.populationSize} | ${row.samplingUnits} | ` +
+            `| ${row.key} | ${row.count} | ${row.populationSize} | ` +
+              `${resamplingUnitCount(row.resamplingUnit)} | ` +
+              `${resamplingUnitLabel(row.resamplingUnit)} | ` +
               `${fmt(row.brier)} | ${fmt(row.logLoss)} | ${fmt(row.eceEqualMass)} | ` +
               `${fmt(row.errorRate?.value)} |`,
           );
@@ -692,8 +695,9 @@ export function renderReportMarkdown(report: BenchmarkReport): string {
       );
       for (const row of bases) {
         lines.push(
-          `| ${row.basis} | ${row.count} | ${row.scored} | ${row.errored} | ${row.samplingUnits} | ` +
-            `${row.samplingUnitAxis} | ${fmt(row.falsePositiveRate?.value)} | ` +
+          `| ${row.basis} | ${row.count} | ${row.scored} | ${row.errored} | ` +
+            `${resamplingUnitCount(row.resamplingUnit)} | ` +
+            `${resamplingUnitLabel(row.resamplingUnit)} | ${fmt(row.falsePositiveRate?.value)} | ` +
             `${fmt(row.falsePositiveRate?.upper95)} | ${fmt(row.errorRate?.value)} | ` +
             `${row.powered ? `>= ${row.powerFloor}` : `< ${row.powerFloor}`} | ${row.evidenceRole} |`,
         );
@@ -701,6 +705,8 @@ export function renderReportMarkdown(report: BenchmarkReport): string {
     }
     lines.push("");
   }
+
+  lines.push(...resamplingSection(report.metrics.resampling));
 
   const predictiveValue = report.metrics.predictiveValue;
   lines.push("## PPV e NPV por prevalência");
@@ -896,6 +902,86 @@ function resolutionSections(
     ["Por faixa de comprimento", resolution?.byLengthBucket ?? []],
     ["Por plataforma", resolution?.byPlatform ?? []],
   ];
+}
+
+// --- resampling units (C4) -------------------------------------------------
+//
+// Every published estimand names its unit HERE, in the report, and not only in
+// the code. Two things travel with the name because a reader cannot recover them
+// from it: whether the published interval was actually resampled over that unit
+// or whether the unit is declared while an analytic estimator produced the bound,
+// and whether any level of the unit degenerated to one level per record-line —
+// which is the state in which a "clustered" interval is an i.i.d. one.
+
+function resamplingUnitCount(
+  unit: ResamplingUnitDeclaration | null | undefined,
+): string {
+  return unit === null || unit === undefined ? "n/a" : String(unit.units);
+}
+
+function resamplingUnitLabel(
+  unit: ResamplingUnitDeclaration | null | undefined,
+): string {
+  if (unit === null || unit === undefined) return "não resolvida";
+  const separator = unit.method === "hierarchical" ? " ⊃ " : " × ";
+  const axes = unit.axes.join(separator);
+  const demoted = unit.demotions
+    .map((demotion) => `${demotion.from}→${demotion.to} (${demotion.items})`)
+    .join("; ");
+  const suffix = demoted === "" ? "" : ` · rebaixamento: ${demoted}`;
+  const degenerate = unit.degenerate ? " · **degenerada**" : "";
+  return `${unit.method}: ${axes}${suffix}${degenerate}`;
+}
+
+function resamplingSection(plan: ResamplingPlan | undefined): string[] {
+  const lines = ["## Unidades de reamostragem", ""];
+  if (plan === undefined) {
+    lines.push(
+      "_Sem plano de reamostragem._ Sem ele nenhum gate de intervalo decide: " +
+        "o contrato congelado põe `resampling.fallbackToIndependentRows` em " +
+        "`false`, logo a ausência do plano reprova por evidência ausente e nunca " +
+        "cai para linhas independentes.",
+    );
+    lines.push("");
+    return lines;
+  }
+  lines.push(
+    `Plano \`${plan.planId}\`, lido de \`${plan.source}\`. Não existe uma única ` +
+      '"unidade real": a unidade depende do estimando, e cada linha abaixo diz ' +
+      "qual é a dela, quantas unidades ela tinha na população medida, e se o " +
+      "intervalo publicado foi de fato reamostrado sobre ela ou se a unidade é " +
+      "declarada enquanto o limite vem do estimador analítico de Wilson (R7). " +
+      "Uma unidade **degenerada** tem uma unidade por registro-linha: reamostrá-la " +
+      "é reamostrar linhas, e o número está aqui em vez de escondido.",
+  );
+  lines.push("");
+  lines.push(
+    "| Estimando | Método | Unidade declarada | Réplicas | Intervalo publicado | Unidades medidas | Rebaixamento |",
+  );
+  lines.push("| --- | --- | --- | --- | --- | --- | --- |");
+  for (const entry of plan.entries) {
+    const separator = entry.unitKind === "hierarchical" ? " ⊃ " : " × ";
+    const measured = entry.measured ?? null;
+    const demoted =
+      measured === null || measured.demotions.length === 0
+        ? "—"
+        : measured.demotions
+            .map(
+              (demotion) =>
+                `${demotion.from}→${demotion.to} (${demotion.items})`,
+            )
+            .join("; ");
+    const units =
+      measured === null
+        ? "não medida"
+        : `${measured.units}/${measured.items}${measured.degenerate ? " (degenerada)" : ""}`;
+    lines.push(
+      `| ${entry.estimand} | ${entry.unitKind} | ${entry.unitAxes.join(separator)} | ` +
+        `${entry.replicates} | ${entry.executed ?? "não declarado"} | ${units} | ${demoted} |`,
+    );
+  }
+  lines.push("");
+  return lines;
 }
 
 function fmt(value: number | null | undefined): string {

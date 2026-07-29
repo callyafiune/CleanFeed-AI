@@ -63,6 +63,41 @@ export class RebuildV3PolicyError extends Error {
 }
 
 export type ResamplingUnitKind = "hierarchical" | "multiway";
+
+/**
+ * The four rows of the frozen resampling table, named by what they estimate.
+ *
+ *   * `human-specificity` — FPR and specificity over human text: source, then
+ *     author/donor inside the drawn source.
+ *   * `ai-recall` — recall over AI text: generator, then prompt template, then
+ *     seed/batch, nested in that order.
+ *   * `mixed` — statistics over mixed text: the human parent CROSSED with the
+ *     edit operation, never nested, because nesting what is crossed understates
+ *     the variance.
+ *   * `calibration` — ECE and Brier inherit the unit of the stratum under
+ *     analysis, so the row nests the stratum outside the stratum's own unit and
+ *     lets the inner level fall back per row.
+ */
+export type ResamplingEstimandClass =
+  "ai-recall" | "calibration" | "human-specificity" | "mixed";
+
+/**
+ * One level of a resampling unit: the axis the source declares FIRST, plus the
+ * axes it declares after it. `fallbacks` is consulted only when a record-line is
+ * `notApplicable` on the axis before it — an `unknown` state fails instead
+ * (benchmark/bootstrap.ts), because the two states mean different things.
+ */
+export interface ResamplingLevelRow {
+  readonly axis: string;
+  readonly fallbacks: readonly string[];
+}
+
+export interface ResamplingClassRow {
+  /** Outer level first for `hierarchical`; crossed factors for `multiway`. */
+  readonly levels: readonly ResamplingLevelRow[];
+  readonly unitKind: ResamplingUnitKind;
+}
+
 export type LabelBasisValue = "date-cutoff" | "observed-process";
 /**
  * HOW the human/AI mixture of a `mixed` record came about, and therefore which
@@ -300,6 +335,14 @@ export interface RebuildV3Policy {
   readonly profileValidityDays: number;
   readonly resampling: {
     readonly allowedUnitKinds: readonly ResamplingUnitKind[];
+    // The four rows of the frozen estimand table. They are CLASSES, not gate
+    // ids: the unit of resampling is a property of what is being estimated, so
+    // every gate over the same estimand shares one row.
+    readonly estimandClasses: {
+      readonly [C in ResamplingEstimandClass]: ResamplingClassRow;
+    };
+    // Published estimand name -> the class whose unit it inherits.
+    readonly estimands: Readonly<Record<string, ResamplingEstimandClass>>;
     readonly fallbackToIndependentRows: false;
     readonly required: true;
   };
@@ -805,6 +848,110 @@ const RESAMPLING_UNIT_KINDS: readonly ResamplingUnitKind[] = [
   "hierarchical",
   "multiway",
 ];
+// Content AND membership: the frozen table has exactly these four rows, so a row
+// added or dropped in the JSON is a change to the table and stops here.
+const FROZEN_RESAMPLING_CLASSES: readonly ResamplingEstimandClass[] = [
+  "ai-recall",
+  "calibration",
+  "human-specificity",
+  "mixed",
+];
+const RESAMPLING_LEVEL_KEYS = ["axis", "fallbacks"] as const;
+const RESAMPLING_CLASS_KEYS = ["levels", "unitKind"] as const;
+// A resampling axis names a grouping axis of the record schema. The prefix is
+// required so a level can never be confused with a synthetic per-row key, which
+// is the one thing R6 forbids outright.
+const RESAMPLING_AXIS_PATTERN = /^groups\.[A-Za-z][A-Za-z0-9]*$/u;
+
+function resamplingAxis(value: unknown, path: string): string {
+  if (typeof value !== "string" || !RESAMPLING_AXIS_PATTERN.test(value)) {
+    throw new RebuildV3PolicyError(
+      path,
+      'must name a record grouping axis as "groups.<axis>"',
+    );
+  }
+  return value;
+}
+
+function resamplingLevel(value: unknown, path: string): ResamplingLevelRow {
+  const row = object(value, path, RESAMPLING_LEVEL_KEYS);
+  const axis = resamplingAxis(row.axis, at(path, "axis"));
+  const raw = row.fallbacks;
+  if (!Array.isArray(raw)) {
+    throw new RebuildV3PolicyError(at(path, "fallbacks"), "must be an array");
+  }
+  const seen = new Set<string>([axis]);
+  const fallbacks = raw.map((entry, index) => {
+    const next = resamplingAxis(entry, `${at(path, "fallbacks")}[${index}]`);
+    if (seen.has(next)) {
+      throw new RebuildV3PolicyError(
+        `${at(path, "fallbacks")}[${index}]`,
+        `repeats the axis ${next} already declared in this level`,
+      );
+    }
+    seen.add(next);
+    return next;
+  });
+  return Object.freeze({ axis, fallbacks: Object.freeze(fallbacks) });
+}
+
+function resamplingClass(value: unknown, path: string): ResamplingClassRow {
+  const row = object(value, path, RESAMPLING_CLASS_KEYS);
+  const unitKind = member(row, path, "unitKind", RESAMPLING_UNIT_KINDS);
+  const raw = row.levels;
+  if (!Array.isArray(raw) || raw.length === 0) {
+    throw new RebuildV3PolicyError(
+      at(path, "levels"),
+      "must be a non-empty array of levels",
+    );
+  }
+  const levels = raw.map((entry, index) =>
+    resamplingLevel(entry, `${at(path, "levels")}[${index}]`),
+  );
+  // The cross-field rule that IS the decision: crossing needs two factors. A
+  // one-factor "multiway" design is a one-level hierarchical design wearing the
+  // wrong name, and it would be read as evidence that the crossed pair of the
+  // frozen table was honoured.
+  if (unitKind === "multiway" && levels.length < 2) {
+    throw new RebuildV3PolicyError(
+      at(path, "levels"),
+      "declares unitKind multiway with fewer than two factors: crossing needs two",
+    );
+  }
+  return Object.freeze({ levels: Object.freeze(levels), unitKind });
+}
+
+function resamplingEstimands(
+  value: unknown,
+): Readonly<Record<string, ResamplingEstimandClass>> {
+  if (
+    typeof value !== "object" ||
+    value === null ||
+    Array.isArray(value) ||
+    Object.keys(value).length === 0
+  ) {
+    throw new RebuildV3PolicyError(
+      "resampling.estimands",
+      "must be a non-empty object mapping estimand names to table rows",
+    );
+  }
+  const block = value as Record<string, unknown>;
+  const mapped: Record<string, ResamplingEstimandClass> = {};
+  for (const estimand of Object.keys(block)) {
+    const declared = block[estimand];
+    if (
+      typeof declared !== "string" ||
+      !FROZEN_RESAMPLING_CLASSES.includes(declared as ResamplingEstimandClass)
+    ) {
+      throw new RebuildV3PolicyError(
+        `resampling.estimands.${estimand}`,
+        `must be one of ${FROZEN_RESAMPLING_CLASSES.join(", ")}`,
+      );
+    }
+    mapped[estimand] = declared as ResamplingEstimandClass;
+  }
+  return Object.freeze(mapped);
+}
 
 /**
  * Validates an already-parsed JSON value against the frozen contract and returns
@@ -905,9 +1052,31 @@ export function parseRebuildV3Policy(value: unknown): RebuildV3Policy {
   ]);
   const resampling = object(root.resampling, "resampling", [
     "allowedUnitKinds",
+    "estimandClasses",
+    "estimands",
     "fallbackToIndependentRows",
     "required",
   ]);
+  const estimandClassBlock = object(
+    resampling.estimandClasses,
+    "resampling.estimandClasses",
+    FROZEN_RESAMPLING_CLASSES,
+  );
+  const estimandClasses = {} as {
+    [C in ResamplingEstimandClass]: ResamplingClassRow;
+  };
+  for (const row of FROZEN_RESAMPLING_CLASSES) {
+    if (!Object.hasOwn(estimandClassBlock, row)) {
+      throw new RebuildV3PolicyError(
+        `resampling.estimandClasses.${row}`,
+        "is missing: the four rows of the frozen resampling table are all required",
+      );
+    }
+    estimandClasses[row] = resamplingClass(
+      estimandClassBlock[row],
+      `resampling.estimandClasses.${row}`,
+    );
+  }
   const rollout = object(root.rollout, "rollout", [
     "actionsPromoted",
     "maximumStage",
@@ -1281,6 +1450,8 @@ export function parseRebuildV3Policy(value: unknown): RebuildV3Policy {
         "allowedUnitKinds",
         RESAMPLING_UNIT_KINDS,
       ) as readonly ResamplingUnitKind[],
+      estimandClasses: Object.freeze(estimandClasses),
+      estimands: resamplingEstimands(resampling.estimands),
       // Frozen false: without C4's plan the gate fails for missing evidence.
       fallbackToIndependentRows: literal(
         resampling,

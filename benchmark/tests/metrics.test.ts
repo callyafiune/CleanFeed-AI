@@ -18,6 +18,7 @@ import {
   type CalibrationPoint,
   type EvaluationItem,
   type EvaluationOptions,
+  type MetricEstimate,
   type Prediction,
 } from "../metrics.ts";
 import { REBUILD_V3_POLICY } from "../rebuild-v3-policy.ts";
@@ -38,6 +39,8 @@ interface RecordFields {
   domain?: string;
   platform?: string;
   sourceId?: string;
+  // The source POOL, i.e. the outer level of the frozen resampling hierarchy.
+  domainSource?: string;
   humanSourceType?: string;
   hardNegativeFamily?: string;
   transformationKind?: string;
@@ -70,7 +73,13 @@ function record(fields: RecordFields): BenchmarkRecord {
       kind: fields.transformationKind ?? "none",
       severity: fields.severity ?? "none",
     },
-    groups: { author: fields.author },
+    // C4 resolves the resampling unit off the grouping axes, so a fixture that
+    // wants an interval has to declare one. `domainSource` is the outer level of
+    // both frozen hierarchical rows; `author` is the inner one.
+    groups: {
+      author: fields.author,
+      domainSource: fields.domainSource ?? "pool-generic",
+    },
   };
   if (fields.humanSourceType !== undefined) {
     base.humanSourceType = fields.humanSourceType;
@@ -341,18 +350,30 @@ describe("computeEvaluationMetrics", () => {
     expect(metrics.coverage.method).toBe("wilson-one-sided");
   });
 
-  it("bootstraps AUROC, PR-AUC, Brier and both ECEs by author cluster", () => {
+  it("bootstraps AUROC, PR-AUC, Brier and both ECEs over the unit their estimand declares", () => {
     const metrics = computeEvaluationMetrics(SEPARABLE, OPTIONS);
-    for (const estimate of [
-      metrics.separability.auroc,
-      metrics.separability.prAuc,
-      metrics.calibration.brier,
-      metrics.calibration.eceEqualMass15,
-      metrics.ece15,
-    ]) {
-      expect(estimate.method).toBe("author-cluster-percentile");
-      expect(estimate.lower95).toBeLessThanOrEqual(estimate.value);
-      expect(estimate.upper95).toBeGreaterThanOrEqual(estimate.value);
+    for (const [estimand, estimate] of [
+      ["separability.auroc", metrics.separability.auroc],
+      ["separability.prAuc", metrics.separability.prAuc],
+      ["calibration.brier", metrics.calibration.brier],
+      ["calibration.ece", metrics.calibration.eceEqualMass15],
+      ["calibration.ece15", metrics.ece15],
+    ] as ReadonlyArray<readonly [string, MetricEstimate]>) {
+      expect(estimate.method).toBe("hierarchical-cluster-percentile");
+      expect(estimate.lower95).toBeLessThanOrEqual(estimate.upper95 as number);
+      // The point is bracketed to within summation noise, not exactly: the
+      // replicate statistic sums per cluster in draw order while the exported
+      // definition sums per row, and a percentile interval is under no obligation
+      // to contain the point estimate in the first place.
+      expect(estimate.lower95).toBeLessThanOrEqual(estimate.value + 1e-9);
+      expect(estimate.upper95).toBeGreaterThanOrEqual(estimate.value - 1e-9);
+      // Every published estimate NAMES its unit; none of them is implicit.
+      expect(estimate.resampling?.estimand).toBe(estimand);
+      expect(estimate.resampling?.method).toBe("hierarchical");
+      expect(estimate.resampling?.axes).toEqual([
+        "groups.domainSource",
+        "groups.author",
+      ]);
     }
     expect(metrics.separability.auroc.value).toBeCloseTo(1, 10);
     expect(metrics.separability.prAuc.value).toBeCloseTo(1, 10);
@@ -886,7 +907,7 @@ describe("named metric roles", () => {
     // Two eligible rows in the bucket, one of them errored: the calibration
     // count is the SCORED one and the error rate sits beside it.
     expect(long?.count).toBe(1);
-    expect(long?.samplingUnits).toBe(1);
+    expect(long?.resamplingUnit?.units).toBe(1);
     expect(long?.errorRate.value).toBeCloseTo(0.5, 10);
 
     expect(calibration.bySource.map((row) => row.key)).toEqual([
@@ -950,8 +971,12 @@ describe("human negative label bases", () => {
     const dateCutoff = labelBasis.bases[0];
     // Three human negatives under two authors, one of them errored.
     expect(dateCutoff.count).toBe(3);
-    expect(dateCutoff.samplingUnits).toBe(2);
-    expect(dateCutoff.samplingUnitAxis).toBe("groups.author");
+    expect(dateCutoff.resamplingUnit?.units).toBe(2);
+    expect(dateCutoff.resamplingUnit?.axes).toEqual([
+      "groups.domainSource",
+      "groups.author",
+    ]);
+    expect(dateCutoff.resamplingUnit?.method).toBe("hierarchical");
     expect(dateCutoff.errored).toBe(1);
     expect(dateCutoff.falsePositiveRate.value).toBeCloseTo(0.5, 10);
     expect(dateCutoff.falsePositiveRate.upper95).toBeGreaterThan(0.5);
@@ -959,7 +984,7 @@ describe("human negative label bases", () => {
 
     const observed = labelBasis.bases[1];
     expect(observed.count).toBe(2);
-    expect(observed.samplingUnits).toBe(2);
+    expect(observed.resamplingUnit?.units).toBe(2);
     expect(observed.falsePositiveRate.value).toBe(0);
     // The two intervals are separate objects over separate denominators; the
     // pooled rate (1/5) appears nowhere as a basis-level claim.

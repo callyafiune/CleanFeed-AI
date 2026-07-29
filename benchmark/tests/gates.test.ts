@@ -110,7 +110,7 @@ function resampled(
   // No `z`: a percentile bound reads order statistics and has no critical value.
   const percentile: NonNullable<MetricEstimate["simultaneous"]> = {
     ...simultaneous,
-    method: "author-cluster-percentile",
+    method: "hierarchical-cluster-percentile",
     ...(replicates === "undeclared"
       ? {}
       : {
@@ -219,7 +219,9 @@ function humanNegativeWithoutBasis(author: string): EvaluationItem {
       provenance: { sourceId: "ptwiki" },
       createdAt: 1_000,
       transformation: { kind: "none", severity: "none" },
-      groups: { author },
+      // C4 resolves the resampling unit off the axes, so a fixture that reaches
+      // computeEvaluationMetrics has to declare the outer level too.
+      groups: { author, domainSource: "ptwiki_lead" },
     } as unknown as BenchmarkRecord,
     status: "scored",
     documentScore: 0.1,
@@ -241,7 +243,11 @@ function aiPositive(author: string): EvaluationItem {
       provenance: { sourceId: "generated" },
       createdAt: 1_000,
       transformation: { kind: "none", severity: "none" },
-      groups: { author, generatorFamily: "gemini_3_5_flash_low" },
+      groups: {
+        author,
+        domainSource: "ai_gemini",
+        generatorFamily: "gemini_3_5_flash_low",
+      },
       generation: { family: "gemini-3.5-flash-low" },
     } as unknown as BenchmarkRecord,
     status: "scored",
@@ -277,7 +283,7 @@ function mixedRow(
       spans: [],
       generationMode: "mechanistic",
     },
-    groups: { author },
+    groups: { author, domainSource: "ai_gemini" },
   } as unknown as BenchmarkRecord;
   if (status !== "scored") return { record, status };
   return {
@@ -307,8 +313,31 @@ function basis(
     count: options.count,
     scored,
     errored: options.count - scored,
-    samplingUnits: options.count,
-    samplingUnitAxis: "groups.author",
+    // The human-specificity unit of the frozen table, stated as a fixture would:
+    // one source pool holding `count` donor units.
+    resamplingUnit: {
+      estimand: "warning.fpr.labelBasis",
+      method: "hierarchical",
+      axes: ["groups.domainSource", "groups.author"],
+      items: options.count,
+      units: options.count,
+      levels: [
+        {
+          position: 0,
+          axis: "groups.domainSource",
+          levels: 1,
+          degenerate: false,
+        },
+        {
+          position: 1,
+          axis: "groups.author",
+          levels: options.count,
+          degenerate: true,
+        },
+      ],
+      demotions: [],
+      degenerate: true,
+    },
     powered: options.powered,
     powerFloor: REBUILD_V3_POLICY.powerFloors.criticalFprHumanNegatives,
     evidenceRole: options.powered ? "gating" : "supplementary-diagnostic",

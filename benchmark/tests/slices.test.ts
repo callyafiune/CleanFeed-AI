@@ -48,7 +48,9 @@ function record(fields: RecordFields): BenchmarkRecord {
       kind: fields.transformationKind ?? "none",
       severity: fields.severity ?? "none",
     },
-    groups: { author: fields.author },
+    // C4 resolves the resampling unit off the grouping axes, so a fixture that
+    // reaches computeEvaluationMetrics has to declare the outer level too.
+    groups: { author: fields.author, domainSource: "pool-generic" },
   };
   if (fields.humanSourceType !== undefined) {
     base.humanSourceType = fields.humanSourceType;

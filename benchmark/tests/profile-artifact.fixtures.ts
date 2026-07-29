@@ -21,11 +21,12 @@ import {
   selectionThresholdEvidence,
   type FrozenCalibrationArtifact,
 } from "../calibration-pipeline.ts";
-import type {
-  DecisionFamilies,
-  DecisionMetrics,
-  EvaluationMetrics,
-  MetricEstimate,
+import {
+  declaredResamplingPlan,
+  type DecisionFamilies,
+  type DecisionMetrics,
+  type EvaluationMetrics,
+  type MetricEstimate,
 } from "../metrics.ts";
 import type { GateReport, GateResult, ReleaseDecision } from "../gates.ts";
 import type { BenchmarkReport } from "../report.ts";
@@ -266,6 +267,9 @@ function fullMetrics(
       families(warning),
       visualAction === null ? null : families(visualAction),
     ),
+    // C4: the unit every estimand declares. `declared-only` throughout, because
+    // this fixture resamples nothing; the gate still needs the unit to exist.
+    resampling: declaredResamplingPlan(),
     ece15: { value: 0.03, method: "point" },
     coverage: estimate(1900, 2000),
     abstentionRate: estimate(60, 2000),

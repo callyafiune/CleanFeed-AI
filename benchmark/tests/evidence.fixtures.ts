@@ -38,11 +38,12 @@ import {
   type GovernanceSeal,
 } from "../report.ts";
 import type { GateReport } from "../gates.ts";
-import type {
-  DecisionFamilies,
-  DecisionMetrics,
-  EvaluationMetrics,
-  MetricEstimate,
+import {
+  declaredResamplingPlan,
+  type DecisionFamilies,
+  type DecisionMetrics,
+  type EvaluationMetrics,
+  type MetricEstimate,
 } from "../metrics.ts";
 import type { SliceSummary } from "../slices.ts";
 import type { SplitArtifact } from "../split-artifact.ts";
@@ -384,6 +385,9 @@ function minimalMetrics(): EvaluationMetrics {
       benchmarkPrevalence: 0.5,
       byPrevalence: [],
     },
+    // C4: the unit every estimand declares. `declared-only` throughout, because
+    // this fixture resamples nothing; the gate still needs the unit to exist.
+    resampling: declaredResamplingPlan(),
     multiplicity: null,
     ece15: { value: 0, method: "point" },
     coverage: estimate(1),

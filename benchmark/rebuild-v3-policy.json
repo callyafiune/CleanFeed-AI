@@ -194,6 +194,85 @@
       "hierarchical",
       "multiway"
     ],
+    "estimandClasses": {
+      "ai-recall": {
+        "levels": [
+          {
+            "axis": "groups.generatorFamily",
+            "fallbacks": []
+          },
+          {
+            "axis": "groups.promptTemplate",
+            "fallbacks": []
+          },
+          {
+            "axis": "groups.collectionBatch",
+            "fallbacks": []
+          }
+        ],
+        "unitKind": "hierarchical"
+      },
+      "calibration": {
+        "levels": [
+          {
+            "axis": "groups.domainSource",
+            "fallbacks": []
+          },
+          {
+            "axis": "groups.author",
+            "fallbacks": [
+              "groups.promptTemplate",
+              "groups.source"
+            ]
+          }
+        ],
+        "unitKind": "hierarchical"
+      },
+      "human-specificity": {
+        "levels": [
+          {
+            "axis": "groups.domainSource",
+            "fallbacks": []
+          },
+          {
+            "axis": "groups.author",
+            "fallbacks": [
+              "groups.source"
+            ]
+          }
+        ],
+        "unitKind": "hierarchical"
+      },
+      "mixed": {
+        "levels": [
+          {
+            "axis": "groups.humanSeed",
+            "fallbacks": []
+          },
+          {
+            "axis": "groups.promptTemplate",
+            "fallbacks": []
+          }
+        ],
+        "unitKind": "multiway"
+      }
+    },
+    "estimands": {
+      "action.fpr": "human-specificity",
+      "action.fpr.labelBasis": "human-specificity",
+      "action.fpr.slice": "human-specificity",
+      "action.recall": "ai-recall",
+      "calibration.brier": "calibration",
+      "calibration.ece": "calibration",
+      "calibration.ece15": "calibration",
+      "mixed.warning.recall": "mixed",
+      "separability.auroc": "calibration",
+      "separability.prAuc": "calibration",
+      "warning.fpr": "human-specificity",
+      "warning.fpr.labelBasis": "human-specificity",
+      "warning.fpr.slice": "human-specificity",
+      "warning.recall": "ai-recall"
+    },
     "fallbackToIndependentRows": false,
     "required": true
   },

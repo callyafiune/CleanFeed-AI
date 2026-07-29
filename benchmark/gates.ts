@@ -89,6 +89,8 @@
 // Pure and deterministic: no Date, no randomness, no I/O of its own (the policy
 // module reads its JSON once, at import).
 
+import { isResampledPercentileMethod } from "./bootstrap.ts";
+import type { ResamplingPlan, ResamplingPlanEntry } from "./bootstrap.ts";
 import type {
   EvaluationMetrics,
   LabelBasisSlice,
@@ -212,24 +214,11 @@ export interface IntegrityEvidence {
   holdoutSessionActive: boolean;
 }
 
-/**
- * One estimand's resampling unit, as C4 will declare it. `unitAxes` names the
- * observable dependence axes (author, page, thread, prompt, generator, ...) that
- * the unit is built from; `replicates` is the declared replicate count, which
- * must reach the pre-registered pilot floor.
- */
-export interface ResamplingPlanEntry {
-  estimand: string;
-  unitKind: ResamplingUnitKind;
-  unitAxes: readonly string[];
-  replicates: number;
-}
-
-export interface ResamplingPlan {
-  planId: string;
-  source: string;
-  entries: readonly ResamplingPlanEntry[];
-}
+// One estimand's resampling unit, and the plan that holds them. The shapes moved
+// to benchmark/bootstrap.ts when C4 produced the plan: the module that BUILDS a
+// value owns its type, and the gate is a reader. Re-exported here so every
+// consumer that learned the names from the gate keeps compiling.
+export type { ResamplingPlan, ResamplingPlanEntry } from "./bootstrap.ts";
 
 export interface GateInput {
   integrity: IntegrityEvidence;
@@ -973,7 +962,7 @@ function describe(spec: IntervalGateSpec): DescriptiveBound {
 function simultaneousEffortFailure(
   simultaneous: NonNullable<MetricEstimate["simultaneous"]>,
 ): string | null {
-  if (simultaneous.method !== "author-cluster-percentile") return null;
+  if (!isResampledPercentileMethod(simultaneous.method)) return null;
   const replicates = simultaneous.replicates;
   if (replicates === undefined) {
     return (

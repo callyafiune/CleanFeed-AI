@@ -216,6 +216,41 @@ describe("rebuild-v3-policy.json", () => {
       "hierarchical",
       "multiway",
     ]);
+    // The four rows of the frozen resampling table, verbatim: source over
+    // author/donor for human specificity, generator over template over batch for
+    // AI recall, human parent CROSSED with the edit operation for mixed text, and
+    // the stratum's own unit for calibration.
+    expect(policy.resampling.estimandClasses["human-specificity"]).toEqual({
+      unitKind: "hierarchical",
+      levels: [
+        { axis: "groups.domainSource", fallbacks: [] },
+        { axis: "groups.author", fallbacks: ["groups.source"] },
+      ],
+    });
+    expect(policy.resampling.estimandClasses["ai-recall"]).toEqual({
+      unitKind: "hierarchical",
+      levels: [
+        { axis: "groups.generatorFamily", fallbacks: [] },
+        { axis: "groups.promptTemplate", fallbacks: [] },
+        { axis: "groups.collectionBatch", fallbacks: [] },
+      ],
+    });
+    expect(policy.resampling.estimandClasses.mixed).toEqual({
+      unitKind: "multiway",
+      levels: [
+        { axis: "groups.humanSeed", fallbacks: [] },
+        { axis: "groups.promptTemplate", fallbacks: [] },
+      ],
+    });
+    expect(policy.resampling.estimandClasses.calibration.unitKind).toBe(
+      "hierarchical",
+    );
+    expect(policy.resampling.estimands["warning.fpr"]).toBe(
+      "human-specificity",
+    );
+    expect(policy.resampling.estimands["warning.recall"]).toBe("ai-recall");
+    expect(policy.resampling.estimands["calibration.ece"]).toBe("calibration");
+    expect(policy.resampling.estimands["mixed.warning.recall"]).toBe("mixed");
     // Power floors: the two §6.4 minima, and an explicitly absent one.
     expect(policy.powerFloors.criticalFprHumanNegatives).toBe(300);
     expect(policy.powerFloors.criticalRecallPositives).toBe(200);
@@ -569,6 +604,93 @@ describe("generationLanes", () => {
     policy.generationLanes = lanes;
     expect(() => parseRebuildV3Policy(policy)).toThrow(
       /generationLanes\.gemini-cli is missing/u,
+    );
+  });
+});
+
+describe("resampling estimand table", () => {
+  function withResampling(
+    mutate: (resampling: Record<string, unknown>) => void,
+  ): Record<string, unknown> {
+    const policy = validPolicyObject();
+    const resampling = policy.resampling as Record<string, unknown>;
+    mutate(resampling);
+    return policy;
+  }
+
+  it("refuses a row of the frozen table being dropped", () => {
+    const policy = withResampling((resampling) => {
+      const classes = {
+        ...(resampling.estimandClasses as Record<string, unknown>),
+      };
+      delete classes.mixed;
+      resampling.estimandClasses = classes;
+    });
+    expect(() => parseRebuildV3Policy(policy)).toThrow(
+      /resampling\.estimandClasses\.mixed is missing/u,
+    );
+  });
+
+  it("refuses a multiway row that crosses fewer than two factors", () => {
+    const policy = withResampling((resampling) => {
+      const classes = {
+        ...(resampling.estimandClasses as Record<string, unknown>),
+      };
+      classes.mixed = {
+        unitKind: "multiway",
+        levels: [{ axis: "groups.humanSeed", fallbacks: [] }],
+      };
+      resampling.estimandClasses = classes;
+    });
+    expect(() => parseRebuildV3Policy(policy)).toThrow(
+      /fewer than two factors/u,
+    );
+  });
+
+  it("refuses a level that is not a record grouping axis", () => {
+    const policy = withResampling((resampling) => {
+      const classes = {
+        ...(resampling.estimandClasses as Record<string, unknown>),
+      };
+      classes["human-specificity"] = {
+        unitKind: "hierarchical",
+        levels: [{ axis: "record.id", fallbacks: [] }],
+      };
+      resampling.estimandClasses = classes;
+    });
+    expect(() => parseRebuildV3Policy(policy)).toThrow(
+      /must name a record grouping axis/u,
+    );
+  });
+
+  it("refuses a fallback that repeats the axis it falls back from", () => {
+    const policy = withResampling((resampling) => {
+      const classes = {
+        ...(resampling.estimandClasses as Record<string, unknown>),
+      };
+      classes["human-specificity"] = {
+        unitKind: "hierarchical",
+        levels: [
+          { axis: "groups.domainSource", fallbacks: [] },
+          { axis: "groups.author", fallbacks: ["groups.author"] },
+        ],
+      };
+      resampling.estimandClasses = classes;
+    });
+    expect(() => parseRebuildV3Policy(policy)).toThrow(
+      /repeats the axis groups\.author/u,
+    );
+  });
+
+  it("refuses an estimand pointing at a row the table does not have", () => {
+    const policy = withResampling((resampling) => {
+      resampling.estimands = {
+        ...(resampling.estimands as Record<string, unknown>),
+        "warning.fpr": "independent-rows",
+      };
+    });
+    expect(() => parseRebuildV3Policy(policy)).toThrow(
+      /resampling\.estimands\.warning\.fpr must be one of/u,
     );
   });
 });
