@@ -96,8 +96,17 @@ let tempCounter = 0;
 class FilePredictionShardStore implements PredictionShardStore {
   private run: BrowserScoreRun | null = null;
   private readonly shards = new Map<number, LoadedShard>();
+  // Declared as a field and assigned in the body, NOT as a constructor parameter
+  // property. `node --experimental-strip-types` only ERASES types; it never emits
+  // code, so a parameter property leaves no `this.options = options` behind and
+  // every `benchmark/cli.ts` subcommand dies at import time. vitest transforms
+  // with esbuild and handles the sugar, which is how a green 2126-test suite sat
+  // beside a CLI that could not start: the two run different TypeScript pipelines.
+  private readonly options: PredictionShardStoreOptions;
 
-  constructor(private readonly options: PredictionShardStoreOptions) {}
+  constructor(options: PredictionShardStoreOptions) {
+    this.options = options;
+  }
 
   async open(run: BrowserScoreRun): Promise<void> {
     await mkdir(this.options.directory, { recursive: true });

@@ -14,10 +14,7 @@ import {
   type GovernanceSeal,
 } from "../report.ts";
 import type { SliceSummary } from "../slices.ts";
-import {
-  standInClusterReport,
-  type SplitAudit,
-} from "../split-audit.ts";
+import { standInClusterReport, type SplitAudit } from "../split-audit.ts";
 import { asGeneratorFamily } from "../generator-family.ts";
 
 // --- fixture builders ------------------------------------------------------

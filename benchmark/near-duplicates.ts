@@ -90,7 +90,8 @@ export function nearDuplicateFingerprint(
   const prepared = prepare({ id: "", text }, options);
   return {
     contentSha256: prepared.contentHash,
-    signature: prepared.signature === undefined ? null : [...prepared.signature],
+    signature:
+      prepared.signature === undefined ? null : [...prepared.signature],
     shingleCount: prepared.shingles.size,
   };
 }

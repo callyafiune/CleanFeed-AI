@@ -28,7 +28,9 @@ const LEGAL_REVIEWERS: [string, string] = ["legal_rev_1", "legal_rev_2"];
 async function main(): Promise<void> {
   const [, , inputsPath, outDir] = argv;
   if (!inputsPath || !outDir) {
-    throw new Error("usage: build_governance.ts <governance-inputs.json> <out-dir>");
+    throw new Error(
+      "usage: build_governance.ts <governance-inputs.json> <out-dir>",
+    );
   }
   const inputs = JSON.parse(await readFile(inputsPath, "utf-8")) as {
     datasetId: string;
@@ -44,9 +46,7 @@ async function main(): Promise<void> {
   const sources = inputs.sources.map((s) => ({
     sourceId: s.sourceId,
     sourceType: s.sourceType as
-      | "licensed-corpus"
-      | "controlled-generation"
-      | "linkedin-contribution",
+      "licensed-corpus" | "controlled-generation" | "linkedin-contribution",
     acquisition: ACQUISITION[s.sourceType],
     evaluationUseApproved: true as const,
     licenseId: s.licenseId,

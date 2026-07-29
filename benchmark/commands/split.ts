@@ -67,12 +67,13 @@ const SPLIT_AUDIT_POLICY: SplitAuditPolicy = {
  * cannot be softened by one. A source the inventory does not name contributes no
  * declaration, and the audit stays silent about it rather than inventing one.
  */
-const DECLARED_GROUP_AXES: ReadonlyMap<string, readonly V3GroupAxis[]> = new Map(
-  V3_HUMAN_SOURCE_INVENTORY.map((entry) => [
-    entry.sourceId,
-    entry.declaredGroupAxes,
-  ]),
-);
+const DECLARED_GROUP_AXES: ReadonlyMap<string, readonly V3GroupAxis[]> =
+  new Map(
+    V3_HUMAN_SOURCE_INVENTORY.map((entry) => [
+      entry.sourceId,
+      entry.declaredGroupAxes,
+    ]),
+  );
 
 export async function runSplit(options: SplitOptions): Promise<string> {
   const { datasetDirectory, datasetAuditPath, outputDirectory, seed } = options;
