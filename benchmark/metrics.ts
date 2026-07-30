@@ -3758,14 +3758,20 @@ function isEligible(record: BenchmarkRecord, minimumWords: number): boolean {
 }
 
 function latencyMetricsAll(items: readonly EvaluationItem[]): LatencyByStatus {
-  const samplesOf = (population: LatencyPopulation): (number | undefined)[] =>
-    items
-      .filter((item) => item.status === population)
-      .map((item) => item.latencyMs);
+  // One argument, on purpose: the population is BOTH the filter and the label the
+  // block publishes, so spelling them separately would let a block carry samples
+  // from one outcome under the name of another and still typecheck.
+  const blockFor = (population: LatencyPopulation): LatencyMetrics | null =>
+    latencyOf(
+      items
+        .filter((item) => item.status === population)
+        .map((item) => item.latencyMs),
+      population,
+    );
   return {
-    scored: latencyOf(samplesOf("scored"), "scored"),
-    abstained: latencyOf(samplesOf("abstained"), "abstained"),
-    errored: latencyOf(samplesOf("error"), "error"),
+    scored: blockFor("scored"),
+    abstained: blockFor("abstained"),
+    errored: blockFor("error"),
   };
 }
 

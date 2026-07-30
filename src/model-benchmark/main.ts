@@ -125,7 +125,9 @@ function failedStatus(errorCode: string): ModelBenchmarkStatusV1 {
  * reported `0` was a finite sample the aggregate could not tell from a
  * zero-millisecond success, and it pulled the published latency down once per
  * failure (`LatencyByStatus` in benchmark/metrics.ts). The caller owns the clock
- * because only the caller knows when the attempt began.
+ * because only the caller knows when the attempt began — and a caller with nothing
+ * to time has to write the `0` itself, which is a statement about that path rather
+ * than a default nobody chose.
  */
 function errorScore(
   reasonCode: string,
@@ -147,20 +149,22 @@ function errorScore(
 
 /**
  * The scoring function of an assembly that never produced a runtime: it refuses
- * every document with the same code. The refusal is TIMED like any other outcome
- * rather than declared as zero — it is genuinely cheap, and that is a measurement,
- * not an assumption.
+ * every document with the same code, at CONSTANT cost, and reports `0` because on
+ * this path nothing ran per document. The work that failed — the assembly — ran
+ * ONCE, before scoring began, and is not attributable to any single document, so
+ * there is no per-document duration to measure here and none is claimed.
+ *
+ * The `0` is passed EXPLICITLY rather than inherited from a default, which is why
+ * {@link errorScore} keeps `latencyMs` required: this path states that nothing was
+ * measured, and no other caller can end up saying the same thing by omission. The
+ * rows are `status: "error"`, so the zero lands in the `errored` block of
+ * `LatencyByStatus` and never in the `scored` aggregate a budget is read from.
  */
 function refuseEveryDocument(
   reasonCode: string,
   cause?: unknown,
 ): () => Promise<ModelBenchmarkScoreV1> {
-  return () => {
-    const startedAt = performance.now();
-    return Promise.resolve(
-      errorScore(reasonCode, performance.now() - startedAt, cause),
-    );
-  };
+  return () => Promise.resolve(errorScore(reasonCode, 0, cause));
 }
 
 /** True when the extension-local asset responds without leaving the extension. */

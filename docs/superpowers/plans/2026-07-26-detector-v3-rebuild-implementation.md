@@ -2391,6 +2391,11 @@ do plano: **latência nunca foi gate.** O que a torna consequente não é gate n
 o valor reportado alimenta `LATENCY_BUCKET_BOUNDS` em `src/storage/metrics.ts`, que é o que
 **I2** exibe no diagnóstico local e o que a comparação de deriva por **PSI** consome.
 
+A **quinta** já está localizada e **não** foi consertada: é o `processingTimeMs: 0` da
+abstenção por idioma no runtime, primeira entrada de "Fora de escopo" no fim desta seção. Ela
+fica em aberto porque a decisão é de **I2** (a mesma dos campos de estágio), não porque não
+foi encontrada.
+
 1. **`latencyMs: 0` de uma linha `error` entrava no agregado publicado.** Os dois
    agregadores (`latencyMetrics` sobre `Prediction`, `latencyMetricsAll` sobre
    `EvaluationItem`) filtravam **só** `isFiniteNumber`, e `0` é finito. **Medido** em
@@ -2416,8 +2421,18 @@ o valor reportado alimenta `LATENCY_BUCKET_BOUNDS` em `src/storage/metrics.ts`, 
    continuaria contando, isto é, armadilha nova em nome de fechar um buraco inalcançável.
    **Produtor, no mesmo commit:** `errorScore()` em `src/model-benchmark/main.ts` devolvia
    `latencyMs: 0` fixo. Agora recebe o tempo decorrido como argumento **obrigatório** (sem
-   default), e os três atalhos de falha de montagem cronometram a própria recusa via
-   `refuseEveryDocument` — a recusa é genuinamente barata, e isso é medição, não suposição.
+   default), e o caminho real de escoragem passa o decorrido de um relógio que sobrevive ao
+   `throw`. Os três atalhos de falha de montagem (`refuseEveryDocument`) passam `0`
+   **explicitamente**: naquele caminho nada roda por documento — o que falhou foi a montagem,
+   **uma vez**, antes de a escoragem começar, e não é atribuível a documento nenhum. A
+   primeira versão cronometrava `performance.now() - performance.now()` entre dois comandos
+   adjacentes e o comentário chamava isso de medição; sob a resolução limitada de
+   `performance.now()` no Chrome aquilo dá `0,0` na esmagadora maioria das chamadas, isto é,
+   reproduzia o `latencyMs: 0` do defeito por um caminho mais longo, afirmando medir o custo
+   da recusa quando media o custo de construir uma promessa já resolvida. O argumento segue
+   obrigatório justamente para que esse `0` seja **declarado** por quem não tem o que medir,
+   e não herdado por omissão. As linhas são `status: "error"`, logo o zero cai no bloco
+   `errored` e nunca no agregado `scored`.
 2. **O timeout gravava o orçamento, não o tempo decorrido.**
    `src/offscreen/worker-host.ts` escrevia
    `processingTimeMs: pending.request.settings?.inferenceTimeoutMs ?? 20_000`. Duas
@@ -2454,8 +2469,29 @@ linhas neste tree (vitest 4.1.10): `useFakeTimers()` seguido de
 necessária. Os dois testes novos acabaram não usando fake timers — injetar o relógio direto é
 mais preciso e não depende desse default.
 
-**Fora de escopo, registrado e NÃO consertado:**
+**Fora de escopo, registrado e NÃO consertado** (em ordem de consequência: o primeiro
+contamina **hoje**, os demais são potenciais ou definicionais):
 
+- **A abstenção por idioma publica `processingTimeMs: 0` depois de trabalho real.**
+  `languageAbstention()` em `src/inference/inference-worker.ts` devolve `processingTimeMs: 0`
+  num ponto em que `normalizeForInference()` e `await this.detector.detect()` **já rodaram** —
+  a própria função captura `languageStartedAt` duas linhas antes para `languageMs`, que ela
+  então descarta ao não emitir `stageTimings`. **Medido por sonda descartável** (deletada;
+  árvore limpa): `PipelineRunner.classify` sobre 120 repetições de texto em inglês resolve
+  com `status: "insufficient_evidence"`, `processingTimeMs === 0` e `stageTimings === undefined`.
+  O que torna isso consequente é estrutural: sem `stageTimings`, `inferenceTrace()` em
+  `src/background/message-router.ts` cai no fallback `inferenceMs: result.processingTimeMs` e
+  publica `totalMs: result.processingTimeMs`; `MetricsStore.record` chama `addLatency` sempre
+  que `inferenceMs !== undefined`, **sem olhar o status** — ou seja, o histograma de runtime
+  (`LATENCY_BUCKET_BOUNDS`) **não tem separação por desfecho nenhuma**, e agrupa escorado,
+  abstido e erro exatamente como o `LatencyByStatus` do item 1 acabou de proibir na bancada.
+  Consequência concreta: num feed com 30% de conteúdo não português, cada post desses empurra
+  uma amostra de 0 ms, e `averageInferenceMs` / `medianInferenceMs` / `p90InferenceMs` podem
+  reportar ~0 ms enquanto toda inferência real custou centenas de ms — a mesma deflação do
+  item 1, no consumidor que o item 1 nomeia (diagnóstico local de **I2** e a comparação de
+  deriva por PSI). **Não consertado aqui de propósito:** a decisão é a mesma dos seis campos
+  de estágio abaixo (medir de verdade **ou** parar de publicar o campo) mais a decisão de
+  separar o histograma por status, e as duas pertencem a **I2**.
 - **Seis campos de estágio são zero fixo** em `inferenceTrace()`,
   `src/background/message-router.ts`: `extractionMs`, `normalizationMs`, `eligibilityMs`,
   `hashingMs`, `queueWaitMs`, `presentationMs`. Só `languageDetectionMs`, `tokenizationMs`,
@@ -2463,11 +2499,26 @@ mais preciso e não depende desse default.
   por estágio e seis estágios reportam custo zero, o que é alegação de medição que não houve
   (R7) — e `queueWaitMs` é exatamente o número de que o orçamento derivado do veículo
   precisa. A decisão (medir de verdade **ou remover o campo**) pertence a **I2**.
+- **O histograma passou a misturar duas definições de "decorrido", e a amostra de timeout
+  deixou de ser limitada.** Consequência direta do item 2, e deliberada: o `startedAt` que o
+  timeout usa é capturado dentro do executor da promessa em `src/offscreen/worker-host.ts`,
+  isto é, no **enfileiramento**, antes de `enqueueOrPost` decidir entre postar e acumular em
+  lote — logo `processingTimeMs` de um timeout é relógio de parede **do host, incluindo espera
+  de fila e de lote**, enquanto o de um resultado bem-sucedido vem de `message.payload`, medido
+  **dentro do worker**, sem essa espera. As duas alimentam o mesmo `LATENCY_BUCKET_BOUNDS`.
+  Segundo efeito: o valor não é mais limitado pelo orçamento — `setTimeout` estrangulado
+  (throttling de background/offscreen atrasa timer por minutos) produz amostra arbitrariamente
+  grande, e como `percentile()` resolve o bucket `+Inf` para `latency.maximum`, um único abort
+  estrangulado pode dominar p90/p95 e `averageInferenceMs`. A **direção** do viés não mudou
+  (antes o timeout já contribuía `20000`), então isto é amplificação do agrupamento que já
+  existia, não defeito novo — mas **I2** precisa saber, junto com `queueWaitMs`, que o
+  histograma que ela renderiza mistura duração de host com duração de worker.
 - **`memoryMetricsAll` não tem filtro de status**, simétrico ao defeito do item 1. Hoje não
   contamina nada por acidente e não por construção: linha `error` traz `memoryBytes: null`
   do produtor e `evaluate.ts` só copia o campo quando não é nulo, então nenhuma amostra
-  entra. É contaminação a **uma mudança de produtor** de distância. Candidata natural à
-  quinta ocorrência, se alguém for procurar.
+  entra. É contaminação a **uma mudança de produtor** de distância — **dormente**, portanto,
+  ao contrário do `processingTimeMs: 0` da abstenção por idioma, que contamina hoje. Quem for
+  procurar a quinta ocorrência começa pela abstenção e depois olha aqui.
 - **O orçamento de 20 s nunca foi validado contra latência real**, e a bancada mede latência
   **sem** fila nem lote enquanto o produto corta em 20 s. É F1/I1.
 
