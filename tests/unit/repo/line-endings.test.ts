@@ -10,13 +10,23 @@
 // A `.gitattributes` that pins `eol=lf` makes the checkout itself LF, so the
 // cached size matches what tools write and the phantom mark cannot appear.
 //
+// Pinning the attribute is not enough on its own: it governs the NEXT checkout
+// and does not rewrite what is already on disk, so a file extracted as CRLF
+// before the attribute existed keeps ghosting until it is written out again.
+// That residual is asserted here too.
+//
 // The tests below read the real repository through git, not a fixture: the
 // invariant is about what git resolves for tracked paths, so a fixture would
 // assert nothing. Nothing here hardcodes a file count or an extension list —
 // both are derived from `git ls-files` so the guard survives new files.
+//
+// Trap when editing these tests: git resolves attributes from the index when
+// `.gitattributes` is missing from the working tree, so deleting the file does
+// NOT turn the attribute assertions red. Presence on disk is asserted
+// separately for that reason.
 
 import { execFileSync } from "node:child_process";
-import { readFileSync, writeFileSync } from "node:fs";
+import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 
 import { describe, expect, it } from "vitest";
@@ -73,9 +83,11 @@ function checkAttr(
   return { value: line.slice(line.lastIndexOf(": ") + 2) };
 }
 
+const attributesFile = join(repoRoot, ".gitattributes");
+
 /** Extensions the repository declares `binary`, read from `.gitattributes`. */
 function declaredBinaryExtensions(): readonly string[] {
-  const raw = readFileSync(join(repoRoot, ".gitattributes"), "utf8");
+  const raw = readFileSync(attributesFile, "utf8");
   const extensions: string[] = [];
   for (const line of raw.split("\n")) {
     const trimmed = line.trim();
@@ -95,7 +107,22 @@ function extensionOf(path: string): string {
   return dot > slash ? path.slice(dot).toLowerCase() : "";
 }
 
+/** Byte-exact CRLF -> LF rewrite, the transform a normalizing tool applies. */
+function toLf(bytes: Buffer): Buffer {
+  return Buffer.from(
+    bytes.toString("latin1").replaceAll("\r\n", "\n"),
+    "latin1",
+  );
+}
+
 describe("repository end-of-line contract", () => {
+  it("keeps .gitattributes present in the working tree", () => {
+    // git falls back to the indexed blob when the file is absent from disk, so
+    // the attribute assertions below stay green after a deletion. Only this one
+    // catches it.
+    expect(existsSync(attributesFile)).toBe(true);
+  });
+
   it("resolves text=auto and eol=lf for every kind of tracked text file", () => {
     const entries = listEol();
     // One representative per extension among the files git itself treats as
@@ -161,15 +188,46 @@ describe("repository end-of-line contract", () => {
     expect([...new Set(misdeclared)]).toEqual([]);
   });
 
-  it("does not mark a file modified when a tool rewrites it byte-identically in LF", () => {
-    const target = listEol().find(
-      (entry) => entry.indexEol === "i/lf" && entry.worktreeEol === "w/lf",
+  it("leaves no tracked path CRLF in the working tree", () => {
+    // The attribute governs the next checkout; it does not rewrite what is
+    // already on disk. Every path listed here still produces the phantom mark
+    // when a tool normalizes it, and every one of them makes an on-disk digest
+    // (computeEvaluatorDigest reads bytes from the working tree) depend on the
+    // platform that checked the file out. To clear one: delete it,
+    // `git checkout-index -f -- <path>`, then `git add <path>`. Plain
+    // `git checkout-index -f` over an existing file is a no-op, because the
+    // cached size still matches the CRLF bytes — the same fast path that
+    // fabricates the phantom mark also blocks the repair.
+    const stale = listEol()
+      .filter((entry) => entry.worktreeEol === "w/crlf")
+      .map((entry) => entry.path);
+    expect(stale).toEqual([]);
+  });
+
+  it("does not mark a file modified when a tool normalizes it to LF", () => {
+    // A path with real uncommitted edits is already reported modified, which
+    // says nothing about line endings, so those are excluded — the suite has to
+    // survive being run on a dirty tree.
+    const dirty = new Set(
+      git(["status", "--porcelain", "-z"])
+        .split("\0")
+        .filter((entry) => entry.length > 3)
+        .map((entry) => entry.slice(3)),
     );
+    const entries = listEol().filter((entry) => !dirty.has(entry.path));
+    // Prefer a path that is CRLF on disk: that is the class the phantom mark
+    // afflicts, so probing a w/lf path while a w/crlf one exists would prove
+    // the invariant on the only files that never broke it.
+    const target =
+      entries.find((entry) => entry.worktreeEol === "w/crlf") ??
+      entries.find(
+        (entry) => entry.indexEol === "i/lf" && entry.worktreeEol === "w/lf",
+      );
     expect(target).toBeDefined();
     const absolute = join(repoRoot, ...target!.path.split("/"));
     const original = readFileSync(absolute);
     try {
-      writeFileSync(absolute, original);
+      writeFileSync(absolute, toLf(original));
       const status = git(["status", "--porcelain", "--", target!.path]);
       expect(status).toBe("");
     } finally {

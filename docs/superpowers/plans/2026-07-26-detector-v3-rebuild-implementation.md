@@ -7578,30 +7578,43 @@ esquema por "control characters"; e C6, a marca fantasma que levou a este diagn�
 **Armadilha ao medir CRLF no Git Bash:** `grep -c $'\r'` casa **toda** linha, porque o grep
 remove o CR em modo texto. Meça com `od -c` ou contando bytes em Python.
 
-**O que a mudança não fez.** A aplicação de `.gitattributes` seguida de
-`git add --renormalize .` foi no-op de bytes, verificado: os 548 blobs do índice, os 548
-hashes da árvore de trabalho, os hashes dos arquivos de `EVALUATOR_FILES`, o
-`evaluatorDigest`, o `inferenceCoreDigest` e o `runtimeParityDigest` ficaram idênticos, e
-os 345 arquivos com extensão binária declarada continuaram byte-idênticos sob o filtro
-`clean`. A lista de binários foi levantada da árvore, não copiada: `text=auto` já aplica a
-heurística de NUL do git, e as marcas `binary` fixam os casos em que essa heurística é a
-única defesa.
+**O que a mudança não fez.** Nada de conteúdo versionado se moveu, verificado: os 550
+blobs do índice, os 550 hashes da árvore de trabalho sob o filtro `clean`, os hashes dos
+50 arquivos de `EVALUATOR_FILES`, o `inferenceCoreDigest`
+(`e5f3757ac9764fc05ce98ffceaad7fc94883332091e2bc6e526f4c720dd01194`) e o
+`runtimeParityDigest` (`92c7bd33eeb305025a1425ec23a419047a8c48027c21b46d630572cf3d873a30`)
+ficaram idênticos, e os arquivos com extensão binária declarada continuaram byte-idênticos
+sob o filtro `clean`. A lista de binários foi levantada varrendo a própria árvore,
+inclusive os diretórios ignorados; `text=auto` já aplica a heurística de NUL do git, e as
+marcas `binary` fixam os casos em que essa heurística seria a única defesa.
 
-**Residual que exige decisão do operador — não resolvido aqui.** 24 dos 544 arquivos de
-texto versionados continuam **em CRLF na árvore de trabalho**, porque `.gitattributes`
-governa a próxima extração e não reescreve o que já está em disco. Enquanto estiverem
-assim, cada um deles ainda produz a marca fantasma quando uma ferramenta o reescreve em
-LF. Um deles é `benchmark/rebuild-v3-policy.json`, que está em `EVALUATOR_FILES` — o que
-significa que o `evaluatorDigest` desta árvore hoje **depende da plataforma**:
+**A conversão da árvore, que o atributo por si só não faz.** `.gitattributes` governa a
+próxima extração; ele não reescreve o que já está em disco. 24 caminhos versionados
+estavam em CRLF na árvore e continuavam a produzir a marca fantasma. Foram convertidos
+para LF na mesma entrega, e a divergência de plataforma foi **eliminada, não delegada**:
+`git ls-files --eol` não reporta mais nenhum `w/crlf`, e reescrever em LF por ferramenta
+`benchmark/rebuild-v3-policy.json`, `benchmark/lab/common.py`, `LICENSE` e `.gitignore`
+deixa `git status --porcelain` vazio.
 
-| leitura | evaluatorDigest |
-|---|---|
-| bytes em disco nesta árvore Windows (`rebuild-v3-policy.json` em CRLF) | `ef88d108d234a654bd61dfe44e7c4290274c805b2c3c5d4bbdee4d45bf8b7441` |
-| blobs do índice, isto é, o valor canônico em LF | `cb248cc3224b6d95d36e3506b6525f53642eee4e418d5e453ac0430b99f41840` |
+O único valor que se moveu foi o `evaluatorDigest`, que passou a ser
+`cb248cc3224b6d95d36e3506b6525f53642eee4e418d5e453ac0430b99f41840` — exatamente o valor
+que os blobs do índice já implicavam, porque `computeEvaluatorDigest` hasheia bytes **em
+disco** e `benchmark/rebuild-v3-policy.json`, que está em `EVALUATOR_FILES`, era um dos 24.
+Esse é o valor canônico e é o mesmo em qualquer plataforma. O valor transitório da árvore
+em CRLF não existe mais.
 
-Converter a árvore (`git checkout-index -f -a`, que não mexe em `HEAD`) elimina o residual
-e move o `evaluatorDigest` para o valor canônico. Nenhum artefato versionado registra
-`ef88d108…` hoje, e o congelamento é G5, muito à frente — mas a decisão é do operador e
-**não foi tomada nesta tarefa**, porque a verificação exigia que nenhum digest se movesse.
-Qualquer edição futura de `benchmark/rebuild-v3-policy.json` por ferramenta move esse
-digest como efeito colateral, então a conversão deve acontecer **antes** de G5.
+**O guarda.** `tests/unit/repo/line-endings.test.ts` fixa o contrato lendo o repositório
+real por `git`, sem contagem nem lista de extensão fixada: nenhum caminho versionado em
+`w/crlf`, nenhum blob `i/crlf` ou `i/mixed`, `eol=lf` resolvido em todo caminho de texto,
+`text: unset` em toda extensão declarada `binary`, e a reescrita em LF por ferramenta sem
+marca de modificação — esta última escolhendo de propósito um caminho `w/crlf` quando
+existir, já que provar a ausência do fantasma num arquivo que nunca fantasmou não prova
+nada. Armadilha para quem editar esses testes: o git resolve atributos a partir do índice
+quando `.gitattributes` está ausente da árvore, logo apagar o arquivo do disco **não**
+deixa as asserções de atributo vermelhas; a presença em disco é asserida separadamente.
+
+**Sequência para consertar um caminho que volte a aparecer como `w/crlf`:** apagar o
+arquivo, `git checkout-index -f -- <caminho>` e `git add <caminho>` para atualizar o
+tamanho em cache no índice. `git checkout-index -f` sozinho, com o arquivo presente, é
+no-op: o tamanho em cache ainda casa com os bytes CRLF e o git conclui que o arquivo está
+atualizado — o mesmo caminho rápido que produz a marca fantasma também impede o conserto.

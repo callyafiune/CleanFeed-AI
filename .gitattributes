@@ -15,18 +15,28 @@
 # applies the `eol` attribute; with the attribute unset, the same commit yields a
 # different digest on a CRLF checkout than on an LF one.
 #
+# The attribute governs the NEXT checkout and does not rewrite what is already on
+# disk. To clear a path that `git ls-files --eol` still reports as `w/crlf`:
+# delete it, `git checkout-index -f -- <path>`, then `git add <path>` to refresh
+# the index's cached stat size. Plain `git checkout-index -f` on an existing file
+# is a no-op, because that cached size still matches the CRLF bytes and git
+# concludes the file is up to date.
+#
 # Measuring CRLF in Git Bash: `grep -c $'\r'` matches EVERY line, because grep
 # strips the CR in text mode. Use `od -c`, or count bytes in Python.
 
 * text=auto eol=lf
 
-# Binary formats present in this repository's tree. `text=auto` already applies
-# git's own NUL-byte heuristic, so an unlisted binary is normally detected and
-# left alone; these marks pin the cases where that heuristic is the only defence,
-# because a binary run through EOL conversion is silent file corruption. Every
-# extension below was found on disk under this worktree — all are gitignored
-# today, which is exactly why the marks matter: they must already be in force the
-# first time one is staged.
+# Binary formats. `text=auto` already applies git's own NUL-byte heuristic, so an
+# unlisted binary is normally detected and left alone; these marks pin the cases
+# where that heuristic would be the only defence, because a binary run through
+# EOL conversion is silent file corruption.
+#
+# Selection rule, applied literally: every unambiguously binary extension found
+# by sweeping this worktree's own files (including ignored trees), plus the web
+# asset formats this extension acquires the moment it ships an icon or a font.
+# No extension here is tracked today — that is precisely why the marks matter,
+# since the attribute must already be in force the first time one is staged.
 
 # Model and inference assets: public/models/**/onnx, public/vendor/transformers-wasm,
 # benchmark/data/checkpoints/**.
@@ -48,6 +58,13 @@
 *.pkl binary
 *.pyc binary
 
+# Native modules and shared libraries. `.node` and `.dylib` are in the dependency
+# tree; `.so` is its Linux counterpart, absent only because the sweep ran on
+# Windows.
+*.dylib binary
+*.node binary
+*.so binary
+
 # The pinned Chrome for Testing build under .cache/. Never committed, but a
 # `git add -f` of that tree must not mangle it.
 *.bin binary
@@ -58,6 +75,20 @@
 *.pak binary
 *.pb binary
 
-# NOT binary despite the name: benchmark/data/candidates/**/*.raw are raw JSON
-# provider responses, and *.jsonl is the corpus line format. Both are text and
-# must normalize to LF like everything else.
+# Images and fonts. `.png` and `.ttf` exist today only inside the dependency
+# tree; the rest are declared because this is a browser extension, so the first
+# packaged icon or bundled font lands in a versioned path.
+*.gif binary
+*.ico binary
+*.jpeg binary
+*.jpg binary
+*.otf binary
+*.png binary
+*.ttf binary
+*.webp binary
+*.woff binary
+*.woff2 binary
+
+# NOT binary despite looking it: *.svg is XML, benchmark/data/candidates/**/*.raw
+# are raw JSON provider responses, and *.jsonl is the corpus line format. All are
+# text and must normalize to LF like everything else.
