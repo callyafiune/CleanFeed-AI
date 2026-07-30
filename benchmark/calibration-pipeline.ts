@@ -29,7 +29,8 @@ import { applyCalibrator } from "./calibrators.ts";
 import {
   selectCalibrator,
   type CandidateCalibrationSummary,
-  type GroupedCalibrationSample,
+  type ClusteredCalibrationSample,
+  type FoldStratification,
 } from "./cross-validation.ts";
 import type { DatasetAudit, DatasetManifest } from "./dataset-manifest.ts";
 import { sha256BytesHex } from "./digests.ts";
@@ -50,7 +51,16 @@ const NEVER_THRESHOLD = 2;
 /** A single calibration record's raw path scores. Label comes from the list. */
 export interface FitSampleScores {
   id: string;
-  authorGroup: string;
+  /**
+   * The root of this row's SPLIT/EXPOSURE CLUSTER — the connected component of the
+   * union of the applicable grouping axes — as `clusterRootsOf`
+   * (benchmark/cross-validation.ts) produced it. It replaced an `authorGroup`, and
+   * the rename is the point: `groups.author` is `notApplicable` on every generated
+   * row and was one singleton per row on the v2 corpus, so a fold keyed on it was a
+   * per-record-line fold. A caller must not synthesise this value; it is the atom
+   * the cross-validation refuses to divide.
+   */
+  clusterRoot: string;
   documentRawScore: number;
   localizedRawScore: number;
 }
@@ -420,6 +430,22 @@ export interface FrozenCalibrationArtifact {
 export interface FrozenCalibrationResult extends FrozenCalibrationArtifact {
   applyDocument(rawScore: number): number;
   applyLocalized(rawScore: number): number;
+  /**
+   * What the cluster-atomised cross-validation ACHIEVED for each path: how many
+   * split/exposure clusters the population held, the class deviation each fold
+   * ended with, and any atom too large for even balancing.
+   *
+   * It sits beside the sealed artifact and not inside it, deliberately. The
+   * artifact's `selectionEvidence` is the competition's result, and restructuring
+   * that block across the `cal-A`/`cal-B` partitions is G1's task; adding fields to
+   * the digest-sealed object here would decide the shape G1 has to seal. What must
+   * not happen is the degeneracy going unpublished, and this is where a caller reads
+   * it from.
+   */
+  crossValidation: {
+    document: FoldStratification;
+    localized: FoldStratification;
+  };
 }
 
 export interface AppliedCalibration {
@@ -904,23 +930,23 @@ function selectVisualThreshold(
   return best;
 }
 
-function toGroupedSamples(
+function toClusteredSamples(
   samples: readonly FitSampleScores[],
   positives: readonly FitSampleScores[],
   path: "document" | "localized",
-): GroupedCalibrationSample[] {
+): ClusteredCalibrationSample[] {
   const read = (sample: FitSampleScores): number =>
     path === "document" ? sample.documentRawScore : sample.localizedRawScore;
   return [
     ...samples.map((sample) => ({
       id: sample.id,
-      authorGroup: sample.authorGroup,
+      clusterRoot: sample.clusterRoot,
       rawScore: read(sample),
       label: 0 as const,
     })),
     ...positives.map((sample) => ({
       id: sample.id,
-      authorGroup: sample.authorGroup,
+      clusterRoot: sample.clusterRoot,
       rawScore: read(sample),
       label: 1 as const,
     })),
@@ -964,13 +990,15 @@ export function fitFrozenCalibration(
   const calibratorSamples = input.calibratorSamples ?? input.samples;
   const calibratorPositives = input.calibratorPositives ?? input.positives;
 
+  // No seed is passed: the fold assignment runs under the frozen CV seed the
+  // policy declares, not under the fit seed. Handing `fitSeed` to the CV made the
+  // folds — and therefore the calibrator the competition returned — move with a
+  // number the contract froze for something else.
   const documentSelection = selectCalibrator(
-    toGroupedSamples(calibratorSamples, calibratorPositives, "document"),
-    input.fitSeed,
+    toClusteredSamples(calibratorSamples, calibratorPositives, "document"),
   );
   const localizedSelection = selectCalibrator(
-    toGroupedSamples(calibratorSamples, calibratorPositives, "localized"),
-    input.fitSeed,
+    toClusteredSamples(calibratorSamples, calibratorPositives, "localized"),
   );
 
   const negatives: CalibratedRecord[] = input.samples.map((sample) => ({
@@ -1080,6 +1108,10 @@ export function fitFrozenCalibration(
       applyCalibrator(artifact.calibrators.document, rawScore),
     applyLocalized: (rawScore: number): number =>
       applyCalibrator(artifact.calibrators.localized, rawScore),
+    crossValidation: {
+      document: documentSelection.stratification,
+      localized: localizedSelection.stratification,
+    },
   };
 }
 

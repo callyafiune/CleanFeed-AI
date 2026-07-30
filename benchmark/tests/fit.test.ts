@@ -90,6 +90,15 @@ function makeRecord(
   // four-way invariant in benchmark/generator-family.ts refuses a reservation
   // nothing satisfies.
   family = "acme_family",
+  // The SPLIT/EXPOSURE CLUSTER this row belongs to. `domainSource` and
+  // `collectionBatch` are shared inside one cluster and NESTED in it (a collection
+  // batch belongs to one stratum), so the connected component of the union of the
+  // grouping axes is this cluster. Giving every row of a corpus the SAME value on
+  // those two axes — which this fixture used to do — describes a corpus that is ONE
+  // indivisible cluster, and a corpus of one cluster can be neither split nor
+  // cross-validated. Development, calibration and test clusters are disjoint, so no
+  // component straddles a partition either.
+  cluster = "c0",
 ): BenchmarkRecord {
   const base: BenchmarkRecord = {
     schemaVersion: 2,
@@ -127,8 +136,8 @@ function makeRecord(
     groups: {
       author: `author_${id}`,
       source: `src_${id}`,
-      domainSource: "linkedin_batch_01",
-      collectionBatch: "batch_001",
+      domainSource: `ds_${cluster}`,
+      collectionBatch: `batch_${cluster}`,
       nearDuplicate: `nd_${id}`,
       derivationRoot: id,
     },
@@ -150,23 +159,40 @@ function makeRecord(
   return base;
 }
 
+// Five clusters per fit partition, so the cluster-atomised cross-validation has
+// ten atoms for its five folds and every class reaches every fold. The blocks are
+// CONTIGUOUS rather than strided so a cluster does not coincide with one raw-score
+// value: `humanScore`/`aiScore` cycle with the row index, and a cluster equal to
+// `index % 5` would hand each fold a score region its own training half never sees.
 const devHumans = Array.from({ length: 35 }, (_unused, i) =>
-  makeRecord(`dev-h-${i}`, "human", 10 + i),
+  makeRecord(
+    `dev-h-${i}`,
+    "human",
+    10 + i,
+    "acme_family",
+    `dev_${(i / 7) | 0}`,
+  ),
 );
 const devAis = Array.from({ length: 10 }, (_unused, i) =>
-  makeRecord(`dev-a-${i}`, "ai", 50 + i),
+  makeRecord(`dev-a-${i}`, "ai", 50 + i, "acme_family", `dev_${(i / 2) | 0}`),
 );
 const calHumans = Array.from({ length: 35 }, (_unused, i) =>
-  makeRecord(`cal-h-${i}`, "human", 110 + i),
+  makeRecord(
+    `cal-h-${i}`,
+    "human",
+    110 + i,
+    "acme_family",
+    `cal_${(i / 7) | 0}`,
+  ),
 );
 const calAis = Array.from({ length: 10 }, (_unused, i) =>
-  makeRecord(`cal-a-${i}`, "ai", 150 + i),
+  makeRecord(`cal-a-${i}`, "ai", 150 + i, "acme_family", `cal_${(i / 2) | 0}`),
 );
 const testRecords = [
-  makeRecord("test-h-0", "human", 310),
-  makeRecord("test-h-1", "human", 311),
-  makeRecord("test-a-0", "ai", 320, "heldout_family"),
-  makeRecord("test-a-1", "ai", 321, "heldout_family"),
+  makeRecord("test-h-0", "human", 310, "acme_family", "tst_0"),
+  makeRecord("test-h-1", "human", 311, "acme_family", "tst_0"),
+  makeRecord("test-a-0", "ai", 320, "heldout_family", "tst_1"),
+  makeRecord("test-a-1", "ai", 321, "heldout_family", "tst_1"),
 ];
 const allRecords = [
   ...devHumans,

@@ -207,8 +207,35 @@ async function manifestDigest(raw: Record<string, unknown>): Promise<string> {
 // second path and settle for 2/3 recall with exactly one union false positive.
 // ---------------------------------------------------------------------------
 
-function neg(id: string, doc: number, loc: number): FitSampleScores {
-  return { id, authorGroup: id, documentRawScore: doc, localizedRawScore: loc };
+// The `clusterRoot` is the SPLIT/EXPOSURE CLUSTER, and these fixtures put two
+// record-lines in each one rather than one: a fixture of singleton atoms would
+// describe a corpus where no two rows are dependent, which is the degeneration the
+// cluster-atomised cross-validation exists to remove, arriving through a fixture.
+//
+// Two and not five, and the reason is worth stating because it is a real limit of
+// grouped CV rather than a fixture convenience: each score group here holds ten
+// rows, so atoms of five would put a whole score group inside one or two atoms —
+// and a fold that validates all of them trains on none, which leaves the calibrator
+// extrapolating over a region it never saw. Atoms of two give every score group five
+// atoms, one per fold. The general fact: a class-score region carried by fewer atoms
+// than folds cannot be held out safely, whatever the row count.
+function scores(
+  id: string,
+  doc: number,
+  loc: number,
+  cluster: string,
+): FitSampleScores {
+  return {
+    id,
+    clusterRoot: cluster,
+    documentRawScore: doc,
+    localizedRawScore: loc,
+  };
+}
+
+/** Blocks of two consecutive rows share one atom. */
+function atomOf(prefix: string, index: number): string {
+  return `${prefix}_${Math.floor(index / 2)}`;
 }
 
 function buildCalibrationScores(): {
@@ -216,14 +243,22 @@ function buildCalibrationScores(): {
   positives: FitSampleScores[];
 } {
   const samples: FitSampleScores[] = [];
-  for (let i = 0; i < 98; i += 1) samples.push(neg(`clean-${i}`, 0.05, 0.05));
-  samples.push(neg("doc-noisy", 0.75, 0.05));
-  samples.push(neg("loc-noisy", 0.05, 0.75));
+  for (let i = 0; i < 98; i += 1) {
+    samples.push(scores(`clean-${i}`, 0.05, 0.05, atomOf("clean", i)));
+  }
+  samples.push(scores("doc-noisy", 0.75, 0.05, "noisy_doc"));
+  samples.push(scores("loc-noisy", 0.05, 0.75, "noisy_loc"));
 
   const positives: FitSampleScores[] = [];
-  for (let i = 0; i < 10; i += 1) positives.push(neg(`pos-a-${i}`, 0.7, 0.05));
-  for (let i = 0; i < 10; i += 1) positives.push(neg(`pos-b-${i}`, 0.05, 0.7));
-  for (let i = 0; i < 10; i += 1) positives.push(neg(`pos-c-${i}`, 0.9, 0.05));
+  for (let i = 0; i < 10; i += 1) {
+    positives.push(scores(`pos-a-${i}`, 0.7, 0.05, atomOf("pos_a", i)));
+  }
+  for (let i = 0; i < 10; i += 1) {
+    positives.push(scores(`pos-b-${i}`, 0.05, 0.7, atomOf("pos_b", i)));
+  }
+  for (let i = 0; i < 10; i += 1) {
+    positives.push(scores(`pos-c-${i}`, 0.9, 0.05, atomOf("pos_c", i)));
+  }
   return { samples, positives };
 }
 
@@ -237,14 +272,20 @@ function buildLocalizedSpikeScores(): {
   positives: FitSampleScores[];
 } {
   const samples: FitSampleScores[] = [];
-  for (let i = 0; i < 140; i += 1) samples.push(neg(`clean-${i}`, 0.05, 0.05));
-  samples.push(neg("doc-borderline", 0.65, 0.05));
-  samples.push(neg("loc-spike-0", 0.05, 0.8));
-  samples.push(neg("loc-spike-1", 0.05, 0.8));
+  for (let i = 0; i < 140; i += 1) {
+    samples.push(scores(`clean-${i}`, 0.05, 0.05, atomOf("clean", i)));
+  }
+  samples.push(scores("doc-borderline", 0.65, 0.05, "borderline_doc"));
+  samples.push(scores("loc-spike-0", 0.05, 0.8, "spike_loc"));
+  samples.push(scores("loc-spike-1", 0.05, 0.8, "spike_loc"));
 
   const positives: FitSampleScores[] = [];
-  for (let i = 0; i < 20; i += 1) positives.push(neg(`pos-l-${i}`, 0.6, 0.1));
-  for (let i = 0; i < 10; i += 1) positives.push(neg(`pos-h-${i}`, 0.9, 0.1));
+  for (let i = 0; i < 20; i += 1) {
+    positives.push(scores(`pos-l-${i}`, 0.6, 0.1, atomOf("pos_l", i)));
+  }
+  for (let i = 0; i < 10; i += 1) {
+    positives.push(scores(`pos-h-${i}`, 0.9, 0.1, atomOf("pos_h", i)));
+  }
   return { samples, positives };
 }
 

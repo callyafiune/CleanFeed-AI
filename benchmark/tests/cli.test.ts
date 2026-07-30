@@ -481,6 +481,13 @@ function record(
   // names a family the corpus actually contains — the four-way invariant in
   // benchmark/generator-family.ts refuses a reservation nothing satisfies.
   family = "acme_family",
+  // The SPLIT/EXPOSURE CLUSTER this row belongs to: `domainSource` and
+  // `collectionBatch` are shared inside one cluster and nested in it, so the
+  // connected component of the union of the grouping axes is this cluster. The
+  // eight-record evaluate scenario leaves the default and is therefore one cluster,
+  // which is all it needs; the fit scenario names clusters, because a corpus of one
+  // indivisible cluster cannot be cross-validated at all.
+  cluster = "c0",
 ): BenchmarkRecord {
   recordCounter += 1;
   const id = `r${recordCounter}`;
@@ -520,8 +527,8 @@ function record(
     groups: {
       author: `author_${id}`,
       source: `src_${id}`,
-      domainSource: "linkedin_batch_01",
-      collectionBatch: "batch_001",
+      domainSource: `ds_${cluster}`,
+      collectionBatch: `batch_${cluster}`,
       nearDuplicate: `nd_${id}`,
       derivationRoot: id,
     },
@@ -544,10 +551,11 @@ function record(
     // batch, and an absent axis is `unknown`, which is not a resampling unit.
     // Derived from the RECIPE and never from the record-line: a template id per row
     // makes that middle level one unit per row by construction, which is the
-    // degeneration C4 exists to remove arriving through a fixture. It adds no split
-    // connectivity either — `domainSource` and `collectionBatch` above are already
-    // shared by every row of this corpus.
-    base.groups.promptTemplate = `pt_${normalizeGeneratorFamily(family)}`;
+    // degeneration C4 exists to remove arriving through a fixture. It is scoped to
+    // the CLUSTER, not to the whole corpus: `promptTemplate` is a value axis of the
+    // split connectivity, so one template shared by every generated row would union
+    // every cluster holding a generated row back into one component.
+    base.groups.promptTemplate = `pt_${normalizeGeneratorFamily(family)}_${cluster}`;
   }
   if (label === "mixed") {
     base.mixture = {
@@ -1182,19 +1190,27 @@ async function buildFitScenario(
   freeDiskBytes: number,
 ): Promise<FitScenario> {
   recordCounter = 0;
+  // Five clusters per fit partition, so the cluster-atomised cross-validation has
+  // ten atoms for its five folds. The blocks are CONTIGUOUS rather than strided so a
+  // cluster does not coincide with one raw-score value, which would hand a fold a
+  // score region its own training half never sees.
   const devHumans = Array.from({ length: 35 }, (_u, i) =>
-    record("human", 10 + i),
+    record("human", 10 + i, "acme_family", `dev_${(i / 7) | 0}`),
   );
-  const devAis = Array.from({ length: 10 }, (_u, i) => record("ai", 50 + i));
+  const devAis = Array.from({ length: 10 }, (_u, i) =>
+    record("ai", 50 + i, "acme_family", `dev_${(i / 2) | 0}`),
+  );
   const calHumans = Array.from({ length: 35 }, (_u, i) =>
-    record("human", 110 + i),
+    record("human", 110 + i, "acme_family", `cal_${(i / 7) | 0}`),
   );
-  const calAis = Array.from({ length: 10 }, (_u, i) => record("ai", 150 + i));
+  const calAis = Array.from({ length: 10 }, (_u, i) =>
+    record("ai", 150 + i, "acme_family", `cal_${(i / 2) | 0}`),
+  );
   const testRecords = [
-    record("human", 310),
-    record("human", 311),
-    record("ai", 320, "heldout_family"),
-    record("ai", 321, "heldout_family"),
+    record("human", 310, "acme_family", "tst_0"),
+    record("human", 311, "acme_family", "tst_0"),
+    record("ai", 320, "heldout_family", "tst_1"),
+    record("ai", 321, "heldout_family", "tst_1"),
   ];
   const allRecords = [
     ...devHumans,

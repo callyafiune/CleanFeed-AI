@@ -23,6 +23,7 @@ import {
   groupAxisIdentity,
   type BenchmarkLabel,
   type BenchmarkRecord,
+  type V3GroupAxis,
 } from "./schema.ts";
 
 // --- Legacy MVP group-time split -------------------------------------------
@@ -191,16 +192,16 @@ export const PARENT_LINKAGE_AXES = ["derivationRoot", "humanSeed"] as const;
  * `axisConnectivity` is the function that separates them. Reading indivisibility
  * off this list published a false independence claim for `humanSeed` once already.
  *
- * De-duplicated at construction because `derivationRoot` is in both lists. NOTE, so
- * the dedup is not read as protecting something it is not: as of C3 this array has
- * **no consumer outside its own tests** — the audit reads `axisConnectivity`, not
- * this list. It stays exported because it is the only place that answers "which axes
- * does the splitter look at at all", which D0b needs when it chooses a power axis;
- * the dedup is there so the first consumer to count or serialise it does not see
- * `derivationRoot` twice, not because one does today.
+ * De-duplicated at construction because `derivationRoot` is in both lists, so a
+ * consumer that counts or serialises it does not see the axis twice.
+ *
+ * Typed as axes rather than as bare strings because C6 reads each entry through
+ * {@link groupAxisDeclaredState}: the cross-validation atom is this same connected
+ * component, so the axes whose `unknown` state makes the atom unknowable are exactly
+ * the ones named here, and restating the list there would let the two drift.
  */
-export const CONNECTIVITY_AXES: readonly string[] = [
-  ...new Set<string>([...GROUP_KEYS, ...PARENT_LINKAGE_AXES]),
+export const CONNECTIVITY_AXES: readonly V3GroupAxis[] = [
+  ...new Set<V3GroupAxis>([...GROUP_KEYS, ...PARENT_LINKAGE_AXES]),
 ];
 
 /**

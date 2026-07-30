@@ -36,11 +36,8 @@ import {
   assertPredictionCompleteness,
   computePredictionManifestDigest,
 } from "../prediction-schema.ts";
-import {
-  authorClusterKey,
-  parseBenchmarkDataset,
-  type BenchmarkRecord,
-} from "../schema.ts";
+import { clusterRootsOf } from "../cross-validation.ts";
+import { parseBenchmarkDataset, type BenchmarkRecord } from "../schema.ts";
 import {
   validateSplitArtifact,
   type SplitArtifact,
@@ -173,6 +170,12 @@ export async function runFit(options: FitOptions): Promise<string> {
   // Calibrator fitting is already clean: it consumes ONLY status === "scored"
   // records, mirroring metrics.ts `scoredBinary`, so an abstained/errored raw-0
   // never contaminates the calibration curve.
+  // The split/exposure cluster of every row, over the WHOLE corpus: connectivity is
+  // a property of the record set and not of a partition, so computing it over the
+  // fit population alone could split a component whose other half sits in test. It
+  // reads only the grouping axes — no test label and no test score.
+  const clusterRootById = clusterRootsOf(records);
+
   const samples: FitSampleScores[] = [];
   const positives: FitSampleScores[] = [];
   const calibratorSamples: FitSampleScores[] = [];
@@ -186,9 +189,16 @@ export async function runFit(options: FitOptions): Promise<string> {
     const record = recordsById.get(assignment.id);
     const prediction = scoreById.get(assignment.id);
     if (record === undefined || prediction === undefined) continue;
+    const clusterRoot = clusterRootById.get(record.id);
+    if (clusterRoot === undefined) {
+      throw new CommandError(
+        "FIT_CLUSTER_MISSING",
+        `record "${record.id}" has no split/exposure cluster`,
+      );
+    }
     const scores: FitSampleScores = {
       id: record.id,
-      authorGroup: authorClusterKey(record),
+      clusterRoot,
       documentRawScore: prediction.documentRawScore ?? 0,
       localizedRawScore: prediction.localizedRawScore ?? 0,
     };

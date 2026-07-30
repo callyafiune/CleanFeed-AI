@@ -3158,6 +3158,46 @@ export function groupAxisIdentity(
 }
 
 /**
+ * The state one axis DECLARES on this record, or `undefined` when the record's
+ * schema version has no such axis at all.
+ *
+ * Not the same question as {@link groupAxisState}, and a consumer that REFUSES an
+ * `unknown` axis needs this one. `groupAxisState` maps an ABSENT key to `unknown`,
+ * which is the truthful reading for eligibility — a v2 record cannot say
+ * `notApplicable`, so an axis it never recorded is certainly not known. But a v2
+ * record has no `promptTemplate`, `humanSeed`, `generatorVersion`, `generationLane`
+ * or `harnessVersion` KEY in its contract at all, so reading those as a declared
+ * `unknown` would refuse every v2 corpus over axes its schema never offered. This
+ * accessor separates "the producer wrote unknown here" from "this version has no
+ * such axis" and returns `undefined` for the second.
+ */
+export function groupAxisDeclaredState(
+  record: BenchmarkRecord,
+  axis: V3GroupAxis,
+): GroupAxisState | undefined {
+  const value = (
+    record.groups as Record<string, string | GroupAxisValue | undefined>
+  )[axis];
+  if (value === undefined) return undefined;
+  if (typeof value === "string") return value === "" ? "unknown" : "known";
+  return value.state;
+}
+
+/**
+ * Is this string the pseudonymised FORM the record schema requires of every id and
+ * every grouping identity?
+ *
+ * Exported so a consumer that HASHES an identity can check the form first. A hash
+ * of a raw identifier is still derived from personal data, and the hazard is not
+ * hypothetical: the ids and axis identities the benchmark handles are pseudonyms
+ * only because this predicate holds of them, so a module that seeds a digest with
+ * one asserts the form rather than assuming it.
+ */
+export function isPseudonymToken(value: string): boolean {
+  return PSEUDONYM.test(value);
+}
+
+/**
  * The sampling temperature a record's recipe applied, or `null` when none did.
  * Version-aware for the same reason {@link groupAxisIdentity} is: v2 keeps it as a
  * top-level optional on `generation`, v3 keeps it inside the `configurable: true`
