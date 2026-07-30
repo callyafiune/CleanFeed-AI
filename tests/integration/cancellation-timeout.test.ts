@@ -73,6 +73,38 @@ describe("worker cancellation and timeout", () => {
     vi.useRealTimers();
   });
 
+  // The clock that REPORTS, as opposed to the clock that decides. The deciding one
+  // was already covered; `processingTimeMs` was the timeout budget itself, so an
+  // aborted document landed in the finite `<= 20000` bucket of
+  // LATENCY_BUCKET_BOUNDS, was indistinguishable from a genuine twenty-second
+  // document, and its real duration was lost for good.
+  //
+  // The clock here is INJECTED (a spy over performance.now), so the declared
+  // tolerance is exact: no scheduler slack can enter the number. The budget is 1 ms
+  // and the elapsed time is 2.500 ms, which no budget-derived value can produce.
+  it("reports the elapsed time of an aborted document, not the timeout budget", async () => {
+    let clock = 1_000;
+    const now = vi.spyOn(performance, "now").mockImplementation(() => clock);
+    const worker = workerThatNeverResponds();
+    const host = new WorkerHost(() => worker);
+    const promise = host.classify({
+      requestId: "r-elapsed",
+      text: "texto suficiente para a requisição",
+      platform: "linkedin",
+      manual: false,
+      settings: { ...DEFAULT_SETTINGS, inferenceTimeoutMs: 1 },
+    });
+
+    clock = 3_500;
+
+    await expect(promise).resolves.toMatchObject({
+      status: "classification_failed",
+      errorCode: "INFERENCE_TIMEOUT",
+      processingTimeMs: 2_500,
+    });
+    now.mockRestore();
+  });
+
   it("settles cancellation even when posting CANCEL throws", async () => {
     const worker = workerThatNeverResponds();
     worker.postMessage

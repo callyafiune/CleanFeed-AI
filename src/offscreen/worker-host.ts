@@ -46,6 +46,12 @@ type PendingRequest = {
   reject: (reason: unknown) => void;
   timeout: ReturnType<typeof setTimeout>;
   request: WorkerClassificationRequest;
+  // When the request was handed to the worker, so an aborted document can report
+  // how long it actually took. Reporting the budget instead put every timeout in
+  // the finite `<= 20000` bucket of LATENCY_BUCKET_BOUNDS, made it
+  // indistinguishable from a genuine twenty-second document, and threw away the
+  // one number the budget itself has to be derived from.
+  startedAt: number;
 };
 
 /** Bridges the offscreen document to its one dedicated inference worker. */
@@ -101,6 +107,7 @@ export class WorkerHost implements WorkerClassifierClient {
         reject,
         timeout,
         request,
+        startedAt: performance.now(),
       });
       this.enqueueOrPost(request);
     });
@@ -244,7 +251,10 @@ export class WorkerHost implements WorkerClassifierClient {
       modelVersion: "unavailable",
       modelId: "unavailable",
       backend: "mock",
-      processingTimeMs: pending.request.settings?.inferenceTimeoutMs ?? 20_000,
+      // The elapsed time, never the budget. The outcome stays an error with no
+      // score (R5); knowing that it aborted is one thing, knowing in how long is
+      // another, and it is the one a budget can be derived from.
+      processingTimeMs: performance.now() - pending.startedAt,
       errorCode: "INFERENCE_TIMEOUT",
       demo: true,
     });
