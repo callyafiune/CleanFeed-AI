@@ -94,12 +94,14 @@ qual alternativa adotar**, não troca o estimando e não afrouxa gate.
 > 2. **Vocabulário incompleto — lane Anthropic.** `FROZEN_GENERATION_LANES`
 >    ([`rebuild-v3-policy.ts:719`](../../../benchmark/rebuild-v3-policy.ts#L719)) admite exatamente
 >    `agy | codex | gemini-api | gemini-cli`, e **nenhuma** é Anthropic, enquanto D3 põe duas
->    famílias core em `claude -p`. Os dois consumidores falham fechado
+>    famílias core em `claude -p`. Os dois consumidores derivam a união do próprio JSON
 >    ([`schema.ts:2003`](../../../benchmark/schema.ts#L2003) e
+>    [`assemble_corpus.py:426`](../../../benchmark/lab/assemble_corpus.py#L426)) e **recusam** o que
+>    não está nela ([`schema.ts:2347`](../../../benchmark/schema.ts#L2347) e
 >    [`assemble_corpus.py:441`](../../../benchmark/lab/assemble_corpus.py#L441)), logo hoje é
 >    impossível gravar `generationLane: "claude-cli"`.
 >
-> **As outras quatro linhas movidas NÃO pedem escrita no JSON, e isso é deliberado.** A política
+> **As outras quatro linhas movidas não pedem escrita PRÓPRIA no JSON, e isso é deliberado.** A política
 > materializa o que o **avaliador selado** precisa verificar em tempo de execução; decisão de
 > bancada fica fora dela para não obrigar o avaliador a validar o que nunca consulta.
 >
@@ -111,7 +113,9 @@ qual alternativa adotar**, não troca o estimando e não afrouxa gate.
 >   que congela o **eixo** de reamostragem e não a lista de modelos, e a forma canônica do nome vive
 >   em [`generator-family.ts`](../../../benchmark/generator-family.ts). Qual modelo é core, OOD ou
 >   reserva é decisão de **coleta**: entra no manifesto como fatia observada, não como constante que
->   o avaliador confere.
+>   o avaliador confere. **Escrita própria ela não pede; a do item 2 ela exige** — é justamente esta
+>   linha que põe `claude-sonnet-4-6` e `claude-opus-4-6-thinking` em `claude -p`, e por isso o
+>   vocabulário de lanes precisa da lane Anthropic.
 > - `receitas de geração` — a parte materializável **já está coerente**, verificada no JSON: as lane
 >   rows trazem `decodingConfigurable: true` só em `gemini-api` e `false` nas três lanes de CLI, com
 >   `effortScale` e `effortSources` por lane, que é exatamente o que a linha manda. A grade
@@ -2401,7 +2405,8 @@ sobra não é editorial, é executável nos dois sentidos:
    ([`rebuild-v3-policy.ts:719`](../../../benchmark/rebuild-v3-policy.ts#L719)) congela o
    vocabulário de lanes em `agy | codex | gemini-api | gemini-cli`, sem lane Anthropic. Esse
    vocabulário é lido pelo schema
-   ([`schema.ts:2003`](../../../benchmark/schema.ts#L2003)) e pelo montador de bancada
+   ([`schema.ts:2003`](../../../benchmark/schema.ts#L2003), com a recusa em
+   [`:2347`](../../../benchmark/schema.ts#L2347)) e pelo montador de bancada
    (as linhas de lane vêm do próprio JSON em
    [`assemble_corpus.py:426`](../../../benchmark/lab/assemble_corpus.py#L426), e a recusa está em
    [`:441`](../../../benchmark/lab/assemble_corpus.py#L441)), e os dois **falham fechado** — logo a
@@ -2410,8 +2415,9 @@ sobra não é editorial, é executável nos dois sentidos:
 **A linha `agy` NÃO entra nesta tarefa, e a direção fica declarada para que ninguém a "conserte".**
 `agy.effortConfigurable: false` com `effortSources` sem `flag` é **medição registrada**, não resíduo:
 a sondagem direta de 2026-07-27 está documentada em
-[`rebuild-v3-policy.ts:219`](../../../benchmark/rebuild-v3-policy.ts#L219) (`--effort` recusado em
-`claude-sonnet-4-6` e `claude-opus-4-6-thinking`, em conflito com ids que embutem o tier), e
+[`rebuild-v3-policy.ts:219`](../../../benchmark/rebuild-v3-policy.ts#L219) (`--effort` em conflito
+com ids que embutem o tier, `gpt-oss-120b-medium` nomeado entre eles, e recusado em
+`claude-sonnet-4-6` e `claude-opus-4-6-thinking`), e
 [`:778`](../../../benchmark/rebuild-v3-policy.ts#L778) registra que um validador mais estrito foi
 afrouxado justamente porque a recusa era a metade errada de uma medição real. A tabela de capacidade
 de D3 mede outra coisa — o caminho de **flag com id base**, que o slate da v3 não usa na lane `agy` —
@@ -7214,21 +7220,41 @@ a alegação OOD mais forte disponível, e exatamente o eixo em que o estado da 
 em core**, senão a reserva de provedor desaparece.
 
 **Um provedor por harness.** `claude-sonnet-4-6` e `claude-opus-4-6-thinking` saem por
-`claude -p`, não por `agy`; `agy` serve apenas as famílias Gemini e o `gpt-oss`. Isso faz
-família e harness variarem **juntos por construção**, em vez de três famílias core
-compartilharem um harness — ver a mitigação de fingerprint abaixo, que continua devida porque
-é ela que torna a propriedade verificável em vez de suposta.
+`claude -p`, não por `agy`. Leia a tabela acima pela coluna de lane: em **core**, `agy` serve
+**uma única** família, `gpt-oss-120b-medium`, e a família Gemini core sai pela **lane de API**. A
+única presença Gemini em `agy` é `gemini-3.6-flash-low`, que é **reserva bloqueada e não exposta**
+— o caminho core recusa esse id, e nenhuma partição ativa o recebe. Logo nenhum harness carrega
+famílias de **dois provedores diferentes** nas partições ativas, em vez de três famílias core
+compartilharem um harness. O ganho é **diversidade de harness** entre os positivos: nenhuma
+assinatura de harness cobre **três das quatro** famílias core, que era o arranjo anterior a esta
+emenda e é o cenário em que o detector aprenderia "marca de harness" como se fosse "marca de IA".
+No arranjo desta tabela o harness mais compartilhado é `claude -p`, com duas famílias — e as duas
+são do mesmo provedor. Ver a mitigação de fingerprint
+abaixo, que continua devida porque é ela que torna a propriedade verificável em vez de suposta.
 
-**A exceção do `gpt-oss` é medida, não descuido — não a "conserte".** A regra acima tem
-**uma** exceção: `gpt-oss-120b-medium` é alcançável **somente** pelo `agy`. Não existe CLI de
-provedor para ele neste ambiente, e a sondagem de 2026-07-27 o encontrou justamente ali
-(`agy --print ... --model gpt-oss-120b-medium`). Portanto `agy` carrega duas famílias core —
-Gemini e `gpt-oss` — e é a única lane em que família e harness **não** variam juntos. Quem ler a
-regra ao pé da letra vai concluir que a linha de `gpt-oss` está errada e tentar removê-la ou
-movê-la: **as duas coisas são proibidas**, porque remover apaga uma família core e mover é trocar
-modelo por conveniência. O que se faz com essa exceção é o que a mitigação de fingerprint já
-manda: `generationLane` gravado, métricas fatiadas por lane, e o relatório declarando que **nesta
-lane** família e harness estão parcialmente confundidos.
+**A exceção do `gpt-oss` é medida, não descuido — não a "conserte".** A regra acima tem **uma**
+exceção, e ela **não** é "duas famílias core na mesma lane": é que `agy` é um harness **do
+Google** e a família core que ele carrega **não é do Google**. `gpt-oss-120b-medium` é alcançável
+**somente** pelo `agy` — não existe CLI de provedor para ele neste ambiente, e a sondagem de
+2026-07-27 o encontrou justamente ali (`agy --print ... --model gpt-oss-120b-medium`). Portanto a
+correspondência harness ↔ provedor, que é o que "um provedor por harness" quer dizer, fica
+**cruzada** nesta lane: o harness do Google serve `gpt-oss` enquanto a família Gemini core sai
+pela lane de API. Quem ler a regra ao pé da letra vai concluir que a linha de `gpt-oss` está
+errada e tentar removê-la ou movê-la: **as duas coisas são proibidas**, porque remover apaga uma
+família core e mover é trocar modelo por conveniência.
+
+**O que a exceção obriga a declarar — e a palavra "parcialmente" está errada aqui.** Com uma só
+família core na lane, em `agy` família e harness variam **juntos**: eles são **colineares**, e
+nenhum fatiamento por lane separa a assinatura de `gpt-oss` da assinatura do `agy`. Isso vale
+para toda lane com uma só família core (`gemini-api`, `agy`, `codex`) e é o **custo aceito** da
+diversidade de harness do parágrafo anterior; só em `claude -p`, onde as duas famílias Anthropic
+partilham o harness, a família é separável dentro da lane. O que é próprio de `agy` é o
+cruzamento: ali **fatiar por lane não é fatiar por provedor**, porque qualquer marca do harness do
+Google recai sobre texto de `gpt-oss`. Por isso o que se faz com a exceção é o que a mitigação de
+fingerprint já manda: `generationLane` e versão de harness gravados, métricas fatiadas por lane, e
+o relatório declarando que em `agy` família e harness são colineares e que o provedor do harness
+**não** é o provedor da família — nunca atribuindo a "gerador não visto" uma queda que a lane
+explica igualmente bem.
 
 **Reserva da segunda tentativa.** R2 torna inelegível toda unidade amostral já exposta e D0b
 **reprova** com `supportedReleaseAttempts < 2`. Até aqui a reserva prevista era só humana
@@ -7299,7 +7325,8 @@ buscar na web em vez de redigir) e o mesmo pipeline de normalização/janela/PII
 `FROZEN_GENERATION_LANES` ([`rebuild-v3-policy.ts:719`](../../../benchmark/rebuild-v3-policy.ts#L719))
 admite exatamente `agy | codex | gemini-api | gemini-cli` — quatro lanes, **nenhuma** Anthropic.
 Esse vocabulário é a fonte para o schema
-([`schema.ts:2003`](../../../benchmark/schema.ts#L2003)) e para o montador de bancada (as linhas de
+([`schema.ts:2003`](../../../benchmark/schema.ts#L2003); a recusa está em
+[`:2347`](../../../benchmark/schema.ts#L2347)) e para o montador de bancada (as linhas de
 lane vêm do próprio JSON em
 [`assemble_corpus.py:426`](../../../benchmark/lab/assemble_corpus.py#L426); a recusa está em
 [`:441`](../../../benchmark/lab/assemble_corpus.py#L441)), e os dois **falham fechado**: hoje é
@@ -7316,8 +7343,9 @@ redação.** `agy.effortConfigurable` é `false` no JSON, com `effortSources` = 
 descrevem conjuntos de modelo **disjuntos**. A tabela registra o caminho de flag medido com **id
 base** (`agy --print ... --model gemini-3.6-flash --effort low` → exit 0); o JSON registra a
 sondagem de 2026-07-27 sobre os modelos que **o slate da v3 de fato roda nessa lane**
-([`rebuild-v3-policy.ts:219`](../../../benchmark/rebuild-v3-policy.ts#L219): `--effort` é recusado em
-`claude-sonnet-4-6` e em `claude-opus-4-6-thinking`, e **conflita** com ids que embutem o tier). A
+([`rebuild-v3-policy.ts:219`](../../../benchmark/rebuild-v3-policy.ts#L219): `--effort` **conflita
+com ids que embutem o tier**, e a sondagem nomeia `gpt-oss-120b-medium` entre eles — além de ser
+recusado em `claude-sonnet-4-6` e em `claude-opus-4-6-thinking`, que este plano tira desta lane). A
 única família core em `agy` é `gpt-oss-120b-medium`, de tier embutido — para ela o effort **é** o id,
 `effortSource = model-id` e `configurable = false` é o valor correto. E o valor **é** verificado
 fechado por lane em [`schema.ts:3032`](../../../benchmark/schema.ts#L3032); o que não existe é
