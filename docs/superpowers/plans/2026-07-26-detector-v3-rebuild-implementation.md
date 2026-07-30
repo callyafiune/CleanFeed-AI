@@ -45,6 +45,8 @@ repeti-los como constantes soltas.
 | faixas de perfil | `50-79`, `80-199`, `200-plus`; menos de 50 palavras é abstenção |
 | coorte temporal | quartis de `createdAt` real dentro de cada fonte, congelados antes do split; fonte com menos de 4 timestamps distintos ou sem poder usa `notApplicable` |
 | famílias hard-negative | `formulaic`, `motivational`, `highly-polished`, `repetitive`, `non-native`, `corporate-structure` |
+| famílias geradoras (D3) | core `gemini-2.0-flash` (lane de API), `claude-sonnet-4-6`, `claude-opus-4-6-thinking`, `gpt-oss-120b-medium`; OOD exclusivo de teste `gpt-5.4-mini`; reserva bloqueada `gemini-3.6-flash-low`; reserva da 2ª tentativa `gpt-5.5`, não exposta em nenhuma partição |
+| receitas de geração | `temperature ∈ {0,2; 0,7; 1,0}` × `top_p ∈ {0,8; 0,95}` **somente** na lane de API; nas lanes de CLI o eixo é `model` × `effort`, com `effortScale` e `effortSource` gravados, e `decodingConfigurable: false` |
 | fontes humanas v3 | somente os snapshots locais já presentes de pt.stackoverflow, ptwiki, B2W-Reviews01 e Carolina; cada byte é digestado, não há novo download |
 | backbone | `neuralmind/bert-base-portuguese-cased`; não haverá bake-off de backbone nesta reconstrução |
 | seeds de ablação | `712019`, `712020`, `712021`, `712022`, `712023`; checkpoint publicável usa `712019` |
@@ -6663,6 +6665,14 @@ alegação do conjunto inteiro.
    identificador de baixa entropia é reversível por força bruta, e continua sendo dado
    pessoal mesmo vindo de fonte pública.
 
+**D1 não espera revisão para começar, e todo registro nasce `automated/unreviewed`.** Extrair
+dos quatro snapshots com proveniência real, corte de data verificado por fonte e
+`labelEvidenceRef` digestado destrava C2 (provar cluster não degenerado), D0 (medir ICC) e D0b
+(dimensionar) — o caminho crítico inteiro. Consequência que o relatório declara junto:
+**nenhum desses registros sustenta gate** até haver revisão humana real.
+`automated/unreviewed` é o estado honesto sob R4 e não conta para gate (C5/D5); a ausência de
+revisão é insumo que falta, não detalhe a contornar.
+
 **Estratos linguísticos disponíveis, e o que cada um cobre:** encyclopedic (Wikipédia),
 qa-informal (Stack Exchange pt), social-media (avaliações B2W), institutional e
 university (Carolina — **admissível por B1**, CC BY-NC-SA), legislative e domínio público
@@ -6732,14 +6742,44 @@ e faixa de comprimento**, com prompt do gênero ("escreva um verbete de enciclop
 sobre X", "responda a esta pergunta", "escreva uma avaliação deste produto"). O plano de
 geração é fechado:
 
-| papel | família/modelo canônico |
-|---|---|
-| core | `gpt-4o-mini` |
-| core | `claude-haiku-4-5-20251001` |
-| core | `gemini-2.0-flash` |
-| core | `claude-sonnet-4-6` |
-| OOD exclusivo de teste | `gpt-5.6-luna` |
-| reserva futura, não exposta | `gemini-3.6-flash-low` |
+| papel | família/modelo canônico | lane | eixo de diversidade intra-família |
+|---|---|---|---|
+| core | `gemini-2.0-flash` | `gemini` (API) | template de registro **+** `temperature` × `top_p` |
+| core | `claude-sonnet-4-6` | `claude -p` | template de registro |
+| core | `claude-opus-4-6-thinking` | `claude -p` | template de registro |
+| core | `gpt-oss-120b-medium` | `agy` | template de registro |
+| OOD exclusivo de teste | `gpt-5.4-mini` | `codex exec` | template de registro **+** `model` × `effort` |
+| reserva bloqueada, não exposta | `gemini-3.6-flash-low` | `agy` | — (o caminho core recusa este modelo) |
+| reserva da 2ª tentativa, não exposta | `gpt-5.5` | `codex exec` | — (fora das cinco partições) |
+
+**Por que este slate, e não o da primeira redação.** `gpt-4o-mini` e
+`claude-haiku-4-5-20251001` exigem `OPENAI_API_KEY` / `ANTHROPIC_API_KEY`, que não existem
+(`snapshots/keys.env` só tem `GEMINI_API_KEY`), então as famílias de API daqueles provedores
+são inalcançáveis e o acesso é por CLI. `gpt-5.6-luna` sai do papel OOD porque difere de
+`gpt-5.6-sol` apenas por **tier dentro da mesma geração**: A4 plausivelmente os julgaria
+materialmente equivalentes e, nesse caso, D3 **falharia por regra**. `gpt-5.4-mini` está duas
+gerações atrás e é família OOD genuinamente distinta.
+
+**A lane OpenAI inteira fica fora de core, e isso é o ganho científico.** Com ela reservada, o
+gerador não visto passa a ser um **provedor inteiro ausente do treino**, não só uma família —
+a alegação OOD mais forte disponível, e exatamente o eixo em que o estado da arte despenca
+(0,9972 dentro da distribuição contra 0,6995 fora). **Nenhum modelo da lane OpenAI pode entrar
+em core**, senão a reserva de provedor desaparece.
+
+**Um provedor por harness.** `claude-sonnet-4-6` e `claude-opus-4-6-thinking` saem por
+`claude -p`, não por `agy`; `agy` serve apenas as famílias Gemini e o `gpt-oss`. Isso faz
+família e harness variarem **juntos por construção**, em vez de três famílias core
+compartilharem um harness — ver a mitigação de fingerprint abaixo, que continua devida porque
+é ela que torna a propriedade verificável em vez de suposta.
+
+**Reserva da segunda tentativa.** R2 torna inelegível toda unidade amostral já exposta e D0b
+**reprova** com `supportedReleaseAttempts < 2`. Até aqui a reserva prevista era só humana
+(`future-holdout-reserve`) mais `gemini-3.6-flash-low`; **não havia família geradora reservada
+para a segunda tentativa**. `gpt-5.5` fecha a lacuna: não entra em `train`, `dev`, `cal-A`,
+`cal-B` **nem `test`** desta release, e é registrada no ledger de exposição de C3 apenas como
+digest de manifesto de reserva, como E2 item 5 já exige para a reserva humana. Sem isso, uma
+segunda tentativa herdaria família OOD já revelada e R2 a barraria — o cenário que H3b existe
+para impedir.
 
 Os templates core são igualmente fechados; todos terminam com “aproximadamente
 `{words}` palavras; não copie frases da referência; responda apenas com o texto” e
@@ -6756,16 +6796,98 @@ incluem a referência somente como âncora temática:
 Em `train`, 80% usam o template do registro e 20% usam a receita `parafrase`; esta
 última nunca entra em `dev/cal/test` por ser quase-duplicata deliberada. Em
 `dev/cal-A/cal-B/test` core, 100% usam o template de registro. A receita `humanizado`
-é OOD de teste: 100 positivos de `gpt-4o-mini` e 100 de
-`claude-haiku-4-5-20251001`, sem entrar em treino ou calibração. A família OOD
-`gpt-5.6-luna` usa os templates de registro, mantendo separados os dois fatores.
+é OOD de teste: 100 positivos de `gemini-2.0-flash` e 100 de `claude-sonnet-4-6`, sem entrar
+em treino ou calibração. A família OOD `gpt-5.4-mini` usa os templates de registro, mantendo
+separados os dois fatores.
 
 A4 agrupa aliases e versões materialmente equivalentes antes da atribuição; se uma
 família OOD for alias de core, ela é inelegível e D3 falha até haver família realmente
-distinta. Para cada família core, distribuir deterministicamente as receitas
-`temperature ∈ {0.2, 0.7, 1.0}` e `top_p ∈ {0.8, 0.95}`; usar penalidade default do
-provedor, registrar quando não configurável e nunca inventar seed não exposta pela API.
-Diversidade de geradores prevalece sobre volume repetido da mesma família.
+distinta. Diversidade de geradores prevalece sobre volume repetido da mesma família.
+
+**A grade `temperature` × `top_p` vale SÓ na lane de API, e isso é medição, não preferência.**
+Verificado em 2026-07-27: `gemini --help` tem 29 flags e **nenhuma** de sampling; `codex exec`
+expõe `-m/--model` e `-c key=value` e **nenhuma** chave de sampling existe no bundle nem em
+`~/.codex/config.toml`; só a API da OpenAI expõe seed (`SEEDED_PROVIDERS = {"openai"}` em
+`generate_ai.py`). Um CLI de agente escolhe a própria amostragem e **não repassa a nossa**, e
+`generate_ai.py` hoje usa `TEMPERATURE = 0.8` como constante única — a grade 3×2 nunca existiu
+nem no caminho de API. Portanto:
+
+- **lane de API** (`gemini-2.0-flash`): distribuir deterministicamente
+  `temperature ∈ {0,2; 0,7; 1,0}` e `top_p ∈ {0,8; 0,95}`, penalidade default do provedor,
+  **nunca** inventar seed não exposta pela API;
+- **lanes de CLI**: o eixo é **`model` × `effort`**, que o harness aceita e que nós gravamos
+  exatamente. É **melhor** para proveniência que temperatura: C1 exige configuração de geração
+  como eixo de agrupamento real sob R6, e `effort` registrável satisfaz isso — `temperature:
+  unknown` não.
+
+**Capacidade real por lane, medida em 2026-07-27 e não presumida:**
+
+| lane | batch não interativo | eixo de `effort` | decoding |
+|---|---|---|---|
+| `gemini` (API) | ✅ com `GEMINI_API_KEY` | n/a | ✅ `temperature` × `top_p` |
+| `agy` | ✅ `--print` | ✅ `--effort low\|medium\|high`, **só com o id base** | ❌ |
+| `codex` | ✅ `exec` | ✅ `-c model_reasoning_effort=` (`light\|medium\|high\|xhigh`) | ❌ |
+| `claude` | ✅ `-p` (`claude.cmd` 2.1.220) | ✅ `--effort low\|medium\|high\|xhigh\|max` | ❌ |
+
+As quatro lanes são scriptáveis por subprocesso, e é assim que D3 as usa: mesmo padrão de
+subprocess + parse de JSON fail-closed que `gemini_cli_text()` já aplica. **Não** dirigir uma
+família por laço de agente enquanto as outras saem por subprocesso — isso daria àquela família
+um caminho de geração estruturalmente diferente, que é o confundimento que a regra "um provedor
+por harness" acabou de eliminar. Se a rota de subagente for usada mesmo assim, ela exige
+**geração de texto puro, sem ferramentas** (um subagente pedido para "escrever um verbete" pode
+buscar na web em vez de redigir) e o mesmo pipeline de normalização/janela/PII.
+
+**Restrição real que sobrou:** ids com tier embutido (`gemini-3.6-flash-low`,
+`gpt-oss-120b-medium`) **recusam** `--effort` e o harness **falha fechado** — é
+estruturalmente impossível gravar um effort falso para eles. Para esses, o effort **é** o id.
+
+**Registro obrigatório, para que a origem do valor seja auditável e não inferida:**
+
+1. `decodingConfigurable: false` e `effortConfigurable` explícitos em todo registro gerado por
+   CLI — campo presente, para o leitor não supor que ninguém registrou;
+2. `effortSource`: `model-id` | `flag` | `not-supported` | `provider-default`. **Nunca** derivar
+   `effort` do sufixo do nome do modelo e gravá-lo como se tivesse vindo de uma flag; nunca as
+   duas origens ao mesmo tempo;
+3. `effortScale` junto do valor. `effort` **não é comparável entre provedores** — `codex` vai a
+   `xhigh`, `agy` para em `high`, Anthropic vai a `max`. Ler `high` como o mesmo valor entre
+   provedores é o mesmo erro de categoria que agregar `mechanistic` com `ecological` (D4), e
+   leitura ordinal compartilhada é proibida;
+4. `seedNullReason` onde nenhuma rota expõe seed.
+
+**A assimetria de variância interna vai no corpo do relatório, não em ressalva (R7).**
+`gemini-2.0-flash` é a única família core com grade de decoding; as outras três têm receita
+única por template. Uma família com seis receitas e outra com uma **não são comparáveis em
+variância interna**, e a diversidade intra-família das três vem do eixo que o plano já
+congelou — o **template de registro**, com uma instrução por `humanSourceType`, mais
+`parafrase` (só `train`) e `humanizado` (só OOD de teste). Não se inventa fator para preencher
+a lacuna. A lane OOD (`codex`) **tem** variação de `effort` que as core não têm: essa
+assimetria é declarada, e a queda medida na família OOD **não** é atribuível a "gerador não
+visto" isoladamente.
+
+**Fingerprint de harness — mitigação exigida, não sugerida.** O harness é um **input não
+gravado**: system prompt próprio, versão do binário, laço de ferramentas, retentativas e
+pós-processamento. `generate_ai.py` já documenta que precisa remover "banner/telemetry lines
+the gemini CLI prints around the answer" e distinguir erro de autenticação da prosa do modelo —
+prova de que o harness deixa marca no texto. Se o detector aprender a assinatura do harness em
+vez da do gerador, ele **falha na família OOD pelo motivo errado**, e o relatório atribuiria a
+queda a "gerador não visto" quando a causa seria "harness não visto". Portanto:
+
+- `generationLane` (`gemini-api` | `agy` | `codex` | `claude-cli` | `gemini-cli`) e a **versão
+  do harness** são **eixos de agrupamento gravados** ao lado de `generatorFamily`, sob o
+  contrato de C1/R6 (`known`/`notApplicable`/`unknown`, nunca sintético);
+- as métricas saem **fatiadas por lane**, não só por família, para que um fingerprint de
+  harness seja **visível** em vez de inferido;
+- o relatório declara em qual medida família e lane estão confundidas por construção. Mover uma
+  família para outra lane reduz o confundimento e é preferível — mas **nunca** trocando família
+  por conveniência (o agente não substitui modelo).
+
+**Custo medido da lane Anthropic, para a conta de volume:** uma chamada trivial
+(`claude -p ... --model haiku --effort low --output-format json` → exit 0) custou
+`total_cost_usd 0,0706` com `cache_creation_input_tokens 35014` — o CLI monta system prompt e
+contexto de projeto **por processo**, logo o custo por documento é dominado por **overhead de
+harness**, não pela geração. Na ordem de 2.000 documentos, ~US$ 140. Não é proibitivo, mas
+entra no planejamento e manda reduzir contexto por chamada (`--append-system-prompt` mínimo,
+sem `--add-dir`, e rodar fora de diretório com `CLAUDE.md` grande).
 
 **Atenção de custo:** só **48 registros de sobra** nos pools de IA do pipeline. Isso
 significa gerar milhares de documentos novos, e foi onde a cota dos CLIs limitou a
@@ -6776,13 +6898,17 @@ coleta anterior. Reservar famílias inteiras para o teste desde o início (E2).
 `benchmark/lab/assemble_corpus.py`, `docs/corpus-collection-runbook.md`.
 
 **Verificar:** `python -m unittest discover -s benchmark/lab -p "test_*.py"`; o
-`--dry-run` precisa reproduzir exatamente pais, famílias e receitas, e falhar sob alias,
-metadado ausente ou tentativa de abrir a reserva.
+`--dry-run` precisa reproduzir exatamente pais, famílias, lanes e receitas, e falhar sob
+alias, metadado ausente, `effort` sem `effortScale`/`effortSource` ou tentativa de abrir
+qualquer uma das duas reservas. `gemini-3.6-flash-low` vive na mesma lane que serve core, logo
+o caminho core **recusa** esse id em vez de confiar em disciplina de chamada.
 
 **Concluída quando:** cada estrato *core* de registro tem contraparte de IA no mesmo
 gênero e faixa, com diferença absoluta de proporção humano/IA <= 1 ponto percentual em
-cada célula; a família OOD só está em `test` e a família de reserva não aparece em
-nenhuma partição ativa.
+cada célula; a família OOD só está em `test`; **nenhuma das duas famílias de reserva**
+(`gemini-3.6-flash-low` e `gpt-5.5`) aparece em partição ativa; e todo registro gerado
+carrega `generationLane`, versão de harness, `effort`, `effortScale`, `effortSource` e
+`decodingConfigurable`.
 
 ### D4 — Classe mista com proveniência observável
 
