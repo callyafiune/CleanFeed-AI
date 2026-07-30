@@ -151,9 +151,16 @@ export function asGeneratorFamily(value: string): GeneratorFamily {
 }
 
 /**
- * The ONLY accessor for a record's generator family. Reads the canonical field,
- * never `generation.family` (the provider's own label, kept unnormalized inside
- * the recipe so the governance audit can match a declared batch byte for byte).
+ * The one place that decides WHICH FIELD holds a record's generator family, and
+ * the only accessor that answers "what family is this record's". Reads the
+ * canonical field, never `generation.family` (the provider's own label, kept
+ * unnormalized inside the recipe so the governance audit can match a declared
+ * batch byte for byte).
+ *
+ * Narrowly stated on purpose, and the module header says why: the splitter and
+ * the split audit read the SAME field through `groupAxisIdentity`
+ * (benchmark/schema.ts), because to them `generatorFamily` is one of the nine
+ * grouping axes and the question is "do these two rows share this axis".
  *
  * Typed structurally so this module stays free of a schema.ts import; the schema
  * guarantees that any record carrying `generation` also carries this field.
@@ -162,9 +169,9 @@ export function asGeneratorFamily(value: string): GeneratorFamily {
  * shapes. In v2 the field is the family itself or absent; in v3 it is a
  * three-valued axis, and `notApplicable`/`unknown` mean the same thing to every
  * caller of this function as an absent v2 field did — there is no family to
- * compare. Keeping the two in one accessor is deliberate: this function is
- * documented as the ONLY reader of the canonical field, and a second version-aware
- * reader elsewhere is how two spellings of one fact came back last time.
+ * compare. Keeping the two in one accessor is deliberate: a second version-aware
+ * reader of this field is how two spellings of one fact came back last time, and
+ * `schema.ts` already exports one (`recordGeneratorFamily`, caller-less today).
  */
 export function generatorFamilyOf(record: {
   groups: {

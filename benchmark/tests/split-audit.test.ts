@@ -1190,31 +1190,28 @@ describe("the reservation the partitions honor", () => {
   // hold one record-line and both sit ONLY in test. The two test-only families
   // differ in exactly one respect — whether the reservation named them — which is
   // the distinction the audit has to make and the one it used to be blind to.
+  const ai = (id: string, createdAt: number, family: string): BenchmarkRecord =>
+    rec({
+      id,
+      label: "ai",
+      createdAt,
+      domain: "corporate",
+      wordCount: 120,
+      family,
+      author: `auth_${id}`,
+      source: `src_${id}`,
+      domainSource: `ds_${id}`,
+      collectionBatch: `cb_${id}`,
+      nearDuplicate: `nd_${id}`,
+      derivationRoot: id,
+      generatorVersion: `gv_${id}`,
+      promptTemplate: `pt_${id}`,
+    });
+
   function corpus(): {
     records: BenchmarkRecord[];
     split: DatasetSplit<BenchmarkRecord>;
   } {
-    const ai = (
-      id: string,
-      createdAt: number,
-      family: string,
-    ): BenchmarkRecord =>
-      rec({
-        id,
-        label: "ai",
-        createdAt,
-        domain: "corporate",
-        wordCount: 120,
-        family,
-        author: `auth_${id}`,
-        source: `src_${id}`,
-        domainSource: `ds_${id}`,
-        collectionBatch: `cb_${id}`,
-        nearDuplicate: `nd_${id}`,
-        derivationRoot: id,
-        generatorVersion: `gv_${id}`,
-        promptTemplate: `pt_${id}`,
-      });
     const development = [ai("dev_seen", 1, "family-seen")];
     const calibration = [ai("cal_seen", 2, "family-seen")];
     const test = [
@@ -1225,6 +1222,24 @@ describe("the reservation the partitions honor", () => {
     return {
       records: [...development, ...calibration, ...test],
       split: { development, calibration, test },
+    };
+  }
+
+  // The same three families, except the reservation is only PARTLY violated:
+  // `family-reserved` keeps a record-line in `test` and has a second one in
+  // `development`. This is the corpus that tells the two possible keyings of the
+  // `generatorExposure` axis apart. In `corpus()` every declared family has all
+  // its record-lines in `test`, so declared and honored are the same set and the
+  // axis reads identically whichever one it is keyed on.
+  function partlyViolatedCorpus(): {
+    records: BenchmarkRecord[];
+    split: DatasetSplit<BenchmarkRecord>;
+  } {
+    const { records, split } = corpus();
+    const strayed = ai("dev_reserved", 0, "family-reserved");
+    return {
+      records: [strayed, ...records],
+      split: { ...split, development: [strayed, ...split.development] },
     };
   }
 
@@ -1298,6 +1313,30 @@ describe("the reservation the partitions honor", () => {
     ).toThrow(/omits \[family-absent\]/);
   });
 
+  it("withdraws a declared family whose record-line is assigned to no partition", () => {
+    const { records, split } = corpus();
+    // Present in the record set, absent from all three partitions. It must not
+    // pass for "absent from development and calibration": the predicate is
+    // measured over the whole record set exactly so this row withdraws the
+    // reservation instead of reading as harmless here. (split-artifact.ts refuses
+    // the incomplete assignment separately; the reservation is not the place that
+    // gets to be lenient about it.)
+    const orphan = ai("orphan_reserved", 6, "family-reserved");
+    const audit = auditBlockedSplit([...records, orphan], split, AUDIT_POLICY, [
+      RESERVED,
+    ]);
+
+    expect(audit.heldOutGeneratorFamilies).toEqual([]);
+    expect(() =>
+      assertGeneratorFamiliesEqual(
+        "declared",
+        [RESERVED],
+        "derived",
+        audit.heldOutGeneratorFamilies,
+      ),
+    ).toThrow(/omits \[family-reserved\]/);
+  });
+
   it("keys generatorExposure on the declared set, so an incidental family reads seen", () => {
     const { records, split } = corpus();
     const audit = auditBlockedSplit(records, split, AUDIT_POLICY, [RESERVED]);
@@ -1309,5 +1348,23 @@ describe("the reservation the partitions honor", () => {
     // `family-seen` and `family-incidental`: two positives that were never
     // reserved, whatever partition they landed in.
     expect(exposure.find((slice) => slice.key === "seen")!.positives).toBe(2);
+  });
+
+  it("keeps the unseen slice of a VIOLATED reservation in the published audit", () => {
+    const { records, split } = partlyViolatedCorpus();
+    const audit = auditBlockedSplit(records, split, AUDIT_POLICY, [RESERVED]);
+
+    // Withdrawn — one record-line sits in `development` — and yet the axis still
+    // has to publish the `unseen` row, because keying it on the honored subset
+    // would relabel the violated reservation as `seen` and erase from
+    // `criticalSliceSamples` (sealed into split-artifact.json) the very
+    // divergence the exact equality is about to fail on.
+    expect(audit.heldOutGeneratorFamilies).toEqual([]);
+
+    const exposure = audit.criticalSliceSamples.filter(
+      (slice) => slice.axis === "generatorExposure",
+    );
+    expect(exposure.find((slice) => slice.key === "unseen")?.positives).toBe(1);
+    expect(exposure.find((slice) => slice.key === "seen")?.positives).toBe(2);
   });
 });

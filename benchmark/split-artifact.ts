@@ -204,6 +204,15 @@ export async function validateSplitArtifact(
     "audit.heldOutGeneratorFamilies",
     artifact.audit.heldOutGeneratorFamilies,
   );
+  // Checked for the same reason even though NO gate compares it: the report prints
+  // this list and reads `.length` on it, so a non-canonical spelling would reach a
+  // published document unexamined, and an absent key would surface as a TypeError
+  // from the renderer instead of naming the file and the path. It stays out of the
+  // set agreements below — it is diagnosis, not reserve.
+  assertCanonicalFamilies(
+    "audit.incidentalTestOnlyGeneratorFamilies",
+    artifact.audit.incidentalTestOnlyGeneratorFamilies,
+  );
   try {
     assertGeneratorFamiliesEqual(
       "declared",

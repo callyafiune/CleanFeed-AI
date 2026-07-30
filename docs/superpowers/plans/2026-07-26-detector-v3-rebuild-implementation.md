@@ -1587,11 +1587,47 @@ rodando o script: com `["gemini-3.5-flash-low"]` ele levanta
    "concordam por construção". O **denominador** foi corrigido (é o piso que o `validate`
    escreve sobre positivos), não o docstring.
 
-**Verificação desta rodada:** `npx vitest run` 162 arquivos / 2249 testes verdes (baseline
-medido antes de tocar em nada: 162 / 2235); `python -m unittest discover -s benchmark/lab`
-119 testes `OK` (baseline 117); três `tsc --noEmit` em 0; `npm run format:check` verde;
-CRLF verificado byte a byte (Python, não `grep -c`) em todo arquivo alterado — todos LF,
-zero CR solto.
+**Rodada de correção de qualidade (revisão dirigida da própria A4-fix).** Quatro achados,
+todos de *rede* e não de comportamento — nenhum gate mudou de sentido:
+
+1. **A escolha de chavear `generatorExposure` pelo declarado não tinha teste que a
+   defendesse.** O teste que dizia fixá-la usava um corpus em que toda família declarada
+   tem *todas* as linhas em `test`, logo declarado ≡ honrado e as duas chavações são
+   indistinguíveis: trocar o 4º argumento de `auditCriticalSlices` por `honored` deixava a
+   suíte inteira verde. Isso importa: numa reserva **violada** a chavação pelo honrado
+   apaga a linha `unseen` de `criticalSliceSamples` — que é selada no `split-artifact.json`
+   e contada por `evidence-sanitizer.ts` — escondendo do artefato publicado exatamente a
+   divergência que a igualdade vai reprovar. Novo caso com `family-reserved` **partida**
+   entre `development` e `test`: a reserva é retirada (`heldOutGeneratorFamilies = []`) e o
+   eixo continua publicando `unseen` com o positivo do bloco cego. Provado não-vacuoso pela
+   troca acima (vermelho), depois restaurado.
+2. **A medição "sobre o conjunto inteiro de registros" era propriedade não medida (R7).** O
+   docstring de `auditReservation` nomeia a linha que a regra existe para pegar — a
+   atribuída a **nenhuma** partição, que não pode passar por "ausente das outras duas" — e
+   nada a testava: trocar `records` por `development + calibration + test` na chamada
+   passava. Novo caso com a linha órfã; provado vermelho pela troca.
+3. **O JSDoc de `generatorFamilyOf` mantinha, literalmente, a alegação falsa** que o
+   cabeçalho do módulo acabara de retirar ("the ONLY accessor" / "the ONLY reader") — dois
+   contratos incompatíveis para uma função no mesmo arquivo, e o que o consumidor vê é o
+   JSDoc. Estreitado para o mesmo texto do cabeçalho.
+4. **`incidentalTestOnlyGeneratorFamilies` entrava no mundo tipado sem checagem canônica.**
+   `validateSplitArtifact` verificava as três listas de reserva e não essa, embora o
+   relatório a **imprima** e leia `.length` nela sem guarda. Ganhou
+   `assertCanonicalFamilies` ao lado das outras três — fora das igualdades de conjunto, que
+   é diagnóstico e não reserva. Dois casos: grafia pontuada, e a **chave ausente** de um
+   artefato selado antes do campo existir (chave ausente, não `undefined`:
+   `canonical-json.ts` recusa propriedade indefinida, então nenhum escritor consegue
+   digestar isso — e é justamente a ausência que atravessa todos os digests, porque o
+   `splitDigest` do arquivo velho reconfere sozinho). Falha como
+   `SPLIT_ARTIFACT_HELD_OUT_FAMILY_INVALID` nomeando o caminho, em vez de virar `TypeError`
+   no renderizador. **Não** se usou `?? []` em `report.ts`: chave ausente tem de continuar
+   distinguível de escritor que mediu e não achou nada.
+
+**Verificação desta rodada:** `npx vitest run` 162 arquivos / 2253 testes verdes (baseline
+medido antes de tocar em nada nesta rodada: 162 / 2249; e 162 / 2235 antes de A4-fix);
+`python -m unittest discover -s benchmark/lab` 119 testes `OK` (baseline 117); três
+`tsc --noEmit` em 0; `npm run format:check` verde; CRLF verificado byte a byte (Python, não
+`grep -c`) em todo arquivo alterado — todos LF, zero CR solto.
 
 **Fora de escopo, registrado:** os `200`/`300`/`2000` de `commands/split.ts` e o
 `HELD_OUT_POSITIVES_FLOOR` de `dataset-manifest.ts` duplicam `powerFloors` de

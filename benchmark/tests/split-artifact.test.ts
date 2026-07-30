@@ -6,7 +6,11 @@ import {
   validateSplitArtifact,
   type SplitArtifact,
 } from "../split-artifact.ts";
-import { auditBlockedSplit, type SplitAuditPolicy } from "../split-audit.ts";
+import {
+  auditBlockedSplit,
+  type SplitAudit,
+  type SplitAuditPolicy,
+} from "../split-audit.ts";
 import { createBlockedSplit, type BlockedSplitPolicy } from "../split.ts";
 import type { DatasetManifest } from "../dataset-manifest.ts";
 import type {
@@ -555,6 +559,71 @@ describe("validateSplitArtifact", () => {
     );
     expect((failure as Error).message).toMatch(
       /audit\.heldOutGeneratorFamilies\[0\]/u,
+    );
+  });
+
+  // The incidental list enters no set agreement — it is diagnosis — but the report
+  // prints it, so the canonical form and the presence of the key are still refused
+  // here rather than surfacing later as a TypeError from the renderer.
+  it("rejects a dotted spelling in the incidental test-only families", async () => {
+    const artifact = await buildSplitArtifact({
+      manifest: MANIFEST,
+      records: RELEASE_DATASET,
+      split: RELEASE_SPLIT,
+      policy: POLICY,
+      audit: {
+        ...RELEASE_AUDIT,
+        incidentalTestOnlyGeneratorFamilies: [
+          "family.incidental",
+        ] as unknown as GeneratorFamily[],
+      },
+    });
+    const failure = await validateSplitArtifact(
+      artifact,
+      MANIFEST,
+      RELEASE_DATASET,
+    ).catch((error: unknown) => error);
+
+    expect(failure).toBeInstanceOf(SplitArtifactError);
+    expect((failure as SplitArtifactError).code).toBe(
+      "SPLIT_ARTIFACT_HELD_OUT_FAMILY_INVALID",
+    );
+    expect((failure as Error).message).toMatch(
+      /audit\.incidentalTestOnlyGeneratorFamilies\[0\]/u,
+    );
+  });
+
+  it("rejects a sealed artifact that never measured the incidental families", async () => {
+    const staleAudit: SplitAudit = { ...RELEASE_AUDIT };
+    delete (staleAudit as Partial<SplitAudit>)
+      .incidentalTestOnlyGeneratorFamilies;
+    const artifact = await buildSplitArtifact({
+      manifest: MANIFEST,
+      records: RELEASE_DATASET,
+      split: RELEASE_SPLIT,
+      policy: POLICY,
+      // The shape a split-artifact.json sealed BEFORE the field existed really has:
+      // the key is ABSENT, not `undefined` (contracts/canonical-json.ts refuses an
+      // undefined property outright, so no writer can even digest that). Absent is
+      // the hazard that gets past every digest — the stale file's own splitDigest
+      // recomputes perfectly, because canonicalizing it reproduces the bytes the old
+      // writer signed — which is why the check has to live in the validator. A
+      // missing key must stay distinguishable from a writer that measured and found
+      // nothing, so it fails naming the path instead of being defaulted to `[]`.
+      audit: staleAudit,
+    });
+    const failure = await validateSplitArtifact(
+      artifact,
+      MANIFEST,
+      RELEASE_DATASET,
+    ).catch((error: unknown) => error);
+
+    expect(failure).toBeInstanceOf(SplitArtifactError);
+    expect((failure as SplitArtifactError).code).toBe(
+      "SPLIT_ARTIFACT_HELD_OUT_FAMILY_INVALID",
+    );
+    expect((failure as Error).message).toMatch(
+      /audit\.incidentalTestOnlyGeneratorFamilies must be an array/u,
     );
   });
 
