@@ -1010,38 +1010,83 @@ e três `calibrationSetDigest` em `tests/fixtures/model-release/**` —, e eles 
 canonicalização à mão é exatamente como se produz um digest que passa no olho e falha no
 parser. Os valores **não** voltaram aos de `0e4231c`, porque `aggregationVersion` continua em
 `v3` — a coordenada revertida é uma das duas que entram no mesmo SHA. Uma ressalva de
-ambiente que custa tempo se for ignorada: este repositório tem `core.autocrlf=true` e nenhum
-`.gitattributes`, então `git archive` **converte para CRLF** e qualquer digest calculado sobre
-essa extração está errado; para comparar identidades entre commits, extraia com
-`git cat-file blob` (bytes brutos). Uma cópia não rastreada também tinha de ser ressincronizada:
+ambiente que custa tempo se for ignorada: quando isto foi medido, o repositório tinha
+`core.autocrlf=true` e **nenhum** `.gitattributes`, então `git archive` **convertia para CRLF**
+e qualquer digest calculado sobre essa extração estava errado; para comparar identidades entre
+commits, extraia com `git cat-file blob` (bytes brutos). O `.gitattributes` passou a existir
+depois — ver **§10**, que registra a conversão e o único digest que se moveu com ela —, e a
+regra do `git cat-file blob` continua valendo por ser independente de configuração de máquina. Uma cópia não rastreada também tinha de ser ressincronizada:
 `public/models/cleanfeed-ptbr-v1/cleanfeed-model.json` é o mesmo objeto que
 `package-own-model.mjs` escreve nos dois destinos, e enquanto ela ficou em `v2`
 `npm run model:verify` reprovava com `MANIFEST_FIELD_INVALID`.
 
-**Contabilidade de janelas: a guarda que a torna um contrato.** O requisito 3 do item 1
-exige que `candidateWindowCount`, `truncated` e os índices originais sobrevivam até o
-relatório. Uma `selection` **fornecida** é a afirmação de que as janelas pontuadas são
-exatamente as que ela escolheu; se for falsa, esses três campos descrevem um subconjunto
-diferente do que o modelo viu, que é precisamente a perda de informação que o requisito
-proíbe. Por isso a agregação falha fechado com `WINDOW_SELECTION_MISMATCH` em vez de
-discordar em silêncio — é a aplicação do requisito 3, não um recurso extra. Registrado
-aqui porque o código foi adicionado a `contracts/failure-detail.ts`, arquivo fora da
-lista de A2.
+**Contabilidade de janelas: a guarda que a torna um contrato.** Uma `selection` **fornecida**
+é a afirmação de que as janelas pontuadas são exatamente as que ela escolheu; se essa
+afirmação for falsa, o agregado descreve um subconjunto diferente do que o modelo viu. Por
+isso a agregação falha fechado com `WINDOW_SELECTION_MISMATCH` em vez de discordar em
+silêncio, e o agregador é a camada certa para o invariante porque é ele que publica a
+contabilidade. Registrado aqui porque o código foi adicionado a
+`contracts/failure-detail.ts`, arquivo fora da lista de A2.
 
-**Desvio ABERTO e NÃO RATIFICADO, registrado para não ser re-litigado do zero.** Uma
-revisão de conformidade exigiu **remover** essa guarda e o seu código, "mantendo o
-comportamento anterior para uma seleção malformada", a menos que o desvio fosse
-ratificado. A guarda foi **mantida** e a razão é factual, não preferência: *não existe*
-comportamento anterior a manter. `git show 0e4231c^:src/inference/aggregator.ts` mostra a
-assinatura `aggregateWindowsV2(windows: WindowScore[], totalTokenCount: number)` — sem
-parâmetro de opções e sem qualquer forma de fornecer uma seleção —, e o corpo fazia
-`selection.selectedIndices.map((index) => windows.find(...)!)`, uma asserção non-null que
-colocaria `undefined` no array pontuado. Remover a guarda, portanto, **não restaura** nada:
-cria um caminho novo em que `candidateWindowCount`, `truncated` e `selectedWindowIndices`
-descrevem um subconjunto e `coverage` é computado sobre outro. Quem tiver autoridade sobre
-o plano decide: se a remoção for ratificada, são duas deleções pequenas (o ramo em
-`aggregator.ts` e a entrada em `contracts/failure-detail.ts`). Até lá isto fica como
-desvio aberto, com a evidência acima, e **não** como pendência silenciosa.
+**RATIFICADO COM MODIFICAÇÃO (2026-07-27).** Uma revisão de conformidade exigiu **remover** a
+guarda inteira, "mantendo o comportamento anterior para uma seleção malformada". A remoção
+foi recusada porque *não existe* comportamento anterior a manter:
+`git show 0e4231c^:src/inference/aggregator.ts` mostra a assinatura
+`aggregateWindowsV2(windows: WindowScore[], totalTokenCount: number)` — sem parâmetro de
+opções e sem qualquer forma de fornecer uma seleção —, e o corpo fazia
+`selection.selectedIndices.map((index) => windows.find(...)!)`, asserção non-null que
+colocaria `undefined` no array pontuado. A decisão final tem três partes, e duas delas são
+trabalho de **F1**:
+
+1. **A cláusula 1 fica, ratificada.** `selected.length !== selection.selectedIndices.length`:
+   todo índice que a seleção afirma tem de ser encontrado entre as janelas pontuadas. Uma
+   análise adversarial independente procurou contraexemplo legítimo e **não achou** — a
+   aparagem de `fitWindowSlice` preserva `index`, entrada vazia falha antes por evidência
+   insuficiente, documento de janela única passa, e a seleção usa posição de array mas
+   preserva índices arbitrários de janela (`src/inference/chunker.ts:103-120`).
+2. **A cláusula 1 está INCOMPLETA, e isso é defeito de correção.** O laço resolve cada índice
+   com `windows.find(...)`, então `selectedIndices` com índice **duplicado** devolve a
+   **mesma** janela mais de uma vez: as duas verificações de comprimento passam, a janela
+   entra em dobro no agregado, outra é ignorada em silêncio e `coverage` é computado duas
+   vezes sobre o mesmo intervalo (`src/inference/aggregator.ts:102-118`). O guard que existe
+   para impedir número silenciosamente errado **tem uma porta para exatamente isso**, e nem a
+   revisão de conformidade nem o registro anterior deste plano notaram. Exigir
+   `selectedIndices` livre de duplicatas, com cada índice resolvendo para uma janela
+   **distinta**.
+3. **A cláusula 2 SAI.** `options.selection !== undefined && selected.length !==
+   windows.length` exige que o chamador passe **somente** as janelas selecionadas, rejeitando
+   a convenção "passe todos os candidatos + uma seleção dizendo pontue estes 8". Janela extra
+   não torna o número errado, apenas mais caro: o lookup de `aggregator.ts:102-106` já a
+   descarta e a contabilidade descreve as janelas efetivamente usadas —
+   `candidateWindowCount` vem de `selection.candidateWindowCount` (`aggregator.ts:183`),
+   **não** de `windows.length`. Usar `INFERENCE_FAILED` para policiar **custo** é erro de
+   categoria sob **R5**, e converte execução desperdiçada-mas-correta em documento não
+   pontuado. "Nenhuma janela extra foi inferida" é invariante de **call site**, e o agregador
+   não tem como prová-lo.
+
+**Correção de registro, no mesmo lugar em que o erro estava.** Este plano descrevia a cláusula
+2 como aplicação do requisito 3 do item 1 de A2 ("preservar `candidateWindowCount`, `truncated`
+e os índices originais"). **Isso estava errado**: a contabilidade vem da própria seleção, não
+de `windows.length`. Deixar a justificativa errada aqui é o que faria o próximo revisor
+reinstaurar a cláusula.
+
+**O invariante de custo continua imposto, sem exceção em runtime.** O requisito de A2 item 1
+(não inferir o que não se vai usar) não precisa de exceção, porque a informação **já é
+publicada**: `candidateWindowCount` contra o tamanho de `selectedWindowIndices` mostra
+exatamente o desperdício. Ele passa a ser **teste** e número visível no relatório. A cláusula 2
+serviria de arame de tropeço para um F1 incompleto — mas no pior lugar possível, o documento de
+um usuário falhando em produção. F1 já exige "existe teste que prova a equivalência", e teste
+falha na CI: trocar exceção em produção por teste em CI é ganho limpo.
+
+**Onde o trabalho acontece: F1, não agora.** `WINDOW_SELECTION_MISMATCH` **permanece** em
+`contracts/failure-detail.ts` (a cláusula 1 ainda o usa), logo **não há edição de
+`EVALUATOR_FILES` por esta ratificação**. Mas `src/inference/aggregator.ts` alimenta
+`inferenceCoreDigest`, que entra no `runtimeParityDigest` — então os itens 2 e 3 **têm de
+acontecer antes de G5**, e pertencem a F1, que é onde o runtime passa a fornecer seleção e o
+guard deixa de ser teórico. Estado por caminho, medido em 2026-07-27:
+`src/model-benchmark/main.ts:290` passa `selection` (cláusula 2 **ativa**);
+`src/inference/inference-worker.ts:520` e `src/model-smoke/main.ts:224` não passam (dormente).
+Hoje o guard está vivo **apenas na bancada**.
 
 **LACUNA DE PARIDADE DE RUNTIME — o achado mais importante desta entrega, e não é de A2.
 Endereçada em F1.** A2 corrigiu o caminho da **bancada**
@@ -7212,13 +7257,50 @@ privado, também sem aparagem. "Mesma fonte" é literal: enquanto esses dois ler
 outro lugar, o critério de F1 não está atendido, e o documento que A2 salvou na bancada
 continua perdido no produto.
 
+**Herdado da ratificação do `WINDOW_SELECTION_MISMATCH` (ver A2), e é trabalho desta tarefa
+porque `src/inference/aggregator.ts` alimenta `inferenceCoreDigest` e portanto tem de fechar
+antes de G5:**
+
+- **consertar o buraco do índice duplicado** da cláusula 1, com teste que prove que
+  `selectedIndices` com índice repetido **falha** — hoje passa, entrega janela em dobro e
+  computa `coverage` duas vezes sobre o mesmo intervalo;
+- **remover a cláusula 2** (`options.selection !== undefined && selected.length !==
+  windows.length`), que policia custo com um ramo de erro e viola R5;
+- **teste do invariante de custo** comparando `candidateWindowCount` com
+  `selectedWindowIndices.length` no caminho da bancada, mais o número visível no relatório: é
+  o teste de paridade de F1 que passa a pegar um F1 incompleto, não uma exceção em runtime.
+
+**A latência que o produto impõe não é a que a bancada mede, e a divergência é desta tarefa.**
+Ordem verificada em `src/offscreen/worker-host.ts:94-107`: o `setTimeout` do orçamento parte
+**antes** de `enqueueOrPost`, e `enqueueOrPost` (`:280-287`) empurra para `batchQueue` com
+`batchTimer` de 10 ms; `flushBatch` (`:289-309`) agrupa até **8** requisições, mas **somente**
+as de `platform` e `settings` idênticos à primeira — quem não casa espera o ciclo seguinte, e o
+seguinte. Portanto o orçamento cobre **espera na fila + montagem do lote + transferência +
+inferência**: um documento que esperou 5 s na fila recebe 15 s efetivos para inferir. E a
+bancada **não tem fila nem lote** — `src/model-benchmark/main.ts` chama `ExactTokenizer`,
+`createTmrChunkPlan` e `aggregateWindowsV2` direto, sem `worker-host`. Comparar "41 s na
+bancada" com "20 s no produto" **subestima** o problema, porque os 41 s são inferência pura e a
+folga real do produto é menor que 20 s.
+
+**A decisão está tomada e é em duas etapas** (ver o perfil de latência do modelo em F6):
+o campo é **renomeado agora** — `inferenceTimeoutMs` afirma uma grandeza que o código não impõe
+(R7) —, e **o relógio é movido aqui**, para depois do desenfileiramento, **junto com** um
+limite separado para a espera de fila. A ordem importa: mover sem limitar a fila é regressão,
+porque o documento poderia esperar indefinidamente. Enquanto as duas não estiverem no lugar, o
+relatório declara latência de bancada e latência de veículo como **grandezas distintas**, nunca
+comparáveis, e declara também a consequência sob A3/R5: documento abortado é erro e conta como
+não-detecção fim-a-fim, logo o recall de bancada é **otimista em relação ao produto** por um
+mecanismo sem relação com a qualidade do modelo.
+
 **Verificar:** `python -m unittest benchmark/lab/test_windowing.py`, `vitest run
 tests/unit/inference/aggregator.test.ts` e `npm run test:model-benchmark`; os mesmos
 tokens e logits sintéticos precisam selecionar as mesmas janelas e produzir o mesmo
-agregado nos dois runtimes.
+agregado nos dois runtimes; `selectedIndices` duplicado precisa falhar; e uma fixture com
+espera de fila conhecida precisa provar que o orçamento não a consome.
 
 **Concluída quando:** a política de janelas do treino e a do runtime são lidas da mesma
-fonte, e existe teste que prova a equivalência.
+fonte e existe teste que prova a equivalência; a cláusula 2 saiu, o índice duplicado falha, e o
+relógio do orçamento mede inferência com a espera de fila limitada à parte.
 
 ### F2 — Aumento por truncamento (ablação, não adoção)
 
