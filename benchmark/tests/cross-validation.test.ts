@@ -22,23 +22,43 @@ import {
   withAxis,
 } from "./helpers/v3-record-fixture.ts";
 
+// Read from the policy rather than from the module under test, so a test asserting
+// the frozen number cannot be satisfied by the module agreeing with itself.
 const FOLDS = REBUILD_V3_POLICY.calibrator.crossValidationFolds;
 const CV_SEED = REBUILD_V3_POLICY.seeds.crossValidation;
+const TIE_TOLERANCE = REBUILD_V3_POLICY.calibrator.tieToleranceAbsolute;
+const TIE_BREAK_ORDER = REBUILD_V3_POLICY.calibrator.tieBreakOrder;
+const ECE_MAXIMUM = REBUILD_V3_POLICY.calibrationGate.eceMax;
 
 // ---------------------------------------------------------------------------
-// Record fixture: five split/exposure clusters of three record-lines each, and
-// every cluster is held together by a CHAIN of two DIFFERENT axes rather than by
-// one shared identity:
+// TWO record fixtures, because one cannot answer both questions this file asks.
 //
-//   row 0 and row 1 share an `author`; row 1 and row 2 share a `source`; rows 0
-//   and 2 share no axis value at all.
+// `chainedClusters` is the REALISTIC one, used for everything about folds: five
+// split/exposure clusters of three record-lines each, where a cluster shares an
+// `author`/`source` chain AND a per-cluster `domainSource` and `collectionBatch`.
+// Per-cluster is what a corpus really looks like — a collection batch belongs to one
+// stratum — and it is also what keeps the five components from collapsing into one:
+// those two axes are shared by design across many rows, so a fixture giving EVERY
+// row the same value describes a corpus that is one indivisible cluster and cannot
+// be cross-validated at all.
 //
-// So folds built on any single axis would split the trio, and only the connected
-// component of the union keeps it whole. `domainSource` and `collectionBatch` are
-// per-cluster here (a collection batch belongs to one stratum), which is what
-// keeps the five components from collapsing into one: those two axes are shared by
-// design across many rows, so a fixture giving every row the same value describes
-// a corpus that is ONE cluster and cannot be cross-validated at all.
+// But precisely because `domainSource` and `collectionBatch` are `GROUP_KEYS` value
+// axes, a per-cluster value ALREADY unions each trio through a single axis. Measured
+// on this fixture with `author` and `source` made distinct per row: still one root
+// per trio. So it cannot show that the CONNECTED COMPONENT is the atom rather than
+// some one axis — the chain in it is load-bearing for nothing, and an earlier comment
+// here claiming "rows 0 and 2 share no axis value at all" was false against the four
+// lines below it.
+//
+// `isolatedChain` is the discriminating one, used only for that claim: every
+// non-chain axis is per-ROW, so the ONLY relation joining row 0 to row 2 is
+// author(0,1) + source(1,2). All three of `domainSource`, `collectionBatch` and
+// `nearDuplicate` admit `known` and nothing else in every class (schema
+// AXIS_STATE_RULE), so per-row distinct values are the only way to neutralise them —
+// `notApplicable` is refused by the validator, which was measured before writing
+// this. Distinct-per-row here models "each row came from its own source and batch"
+// in a three-row fixture; it is not the R6 defect of minting a synthetic id per
+// record-line to make a real corpus splittable.
 // ---------------------------------------------------------------------------
 
 function humanRow(
@@ -66,6 +86,30 @@ function chainedClusters(clusterCount: number): BenchmarkRecord[] {
     );
   }
   return records;
+}
+
+/** A row whose every axis EXCEPT `author`/`source` is unshareable. */
+function isolatedRow(
+  id: string,
+  author: string,
+  source: string,
+): BenchmarkRecord {
+  let raw: Record<string, unknown> = { ...v3Human(), id };
+  raw = withAxis(raw, "author", known(author));
+  raw = withAxis(raw, "source", known(source));
+  raw = withAxis(raw, "domainSource", known(`ds_${id}`));
+  raw = withAxis(raw, "collectionBatch", known(`cb_${id}`));
+  raw = withAxis(raw, "nearDuplicate", known(`nd_${id}`));
+  return validateBenchmarkRecordV3(raw);
+}
+
+// row 0 --author-- row 1 --source-- row 2, and nothing else anywhere.
+function isolatedChain(tag: string): BenchmarkRecord[] {
+  return [
+    isolatedRow(`h_${tag}_0`, `au_${tag}_a`, `th_${tag}_p`),
+    isolatedRow(`h_${tag}_1`, `au_${tag}_a`, `th_${tag}_q`),
+    isolatedRow(`h_${tag}_2`, `au_${tag}_b`, `th_${tag}_q`),
+  ];
 }
 
 // One positive and two negatives per cluster, so a perfectly stratified packing
@@ -100,18 +144,51 @@ function foldIndexById(
 }
 
 describe("selectCandidateSummary", () => {
-  it("selects lowest Brier among ECE-valid candidates and prefers Platt within 0.002", () => {
+  it("reads its bound, tolerance and tie-break order from the frozen policy", () => {
+    // The rule used to carry a 0.002 "Platt preference margin" as a loose constant,
+    // 20x the frozen tolerance, while the policy module's own contract says the
+    // settled values may not be repeated in code. These are the four it needs.
+    expect(TIE_TOLERANCE).toBe(1e-4);
+    expect(TIE_BREAK_ORDER).toEqual(["platt", "beta", "isotonic"]);
+    expect(ECE_MAXIMUM).toBe(0.05);
+    expect(REBUILD_V3_POLICY.calibrator.candidates).toEqual(TIE_BREAK_ORDER);
+  });
+
+  it("breaks a Brier tie inside the frozen tolerance by the frozen order", () => {
+    // isotonic is nominally lowest, platt is 5e-5 behind it — inside 1e-4, so the
+    // two are TIED and `tieBreakOrder` puts platt first. beta is dropped on ECE.
     const selected = selectCandidateSummary([
       { kind: "isotonic", brier: 0.1, ece15: 0.03 },
-      { kind: "platt", brier: 0.1019, ece15: 0.04 },
+      { kind: "platt", brier: 0.10005, ece15: 0.04 },
       { kind: "beta", brier: 0.099, ece15: 0.06 },
     ]);
     expect(selected.kind).toBe("platt");
   });
 
-  it("drops a lower-Brier candidate whose ECE-15 exceeds 0.05 and keeps the best admissible one", () => {
-    // beta has the lowest Brier but ECE-15 0.06 removes it; platt is more than
-    // 0.002 worse than isotonic, so the lowest admissible Brier (isotonic) wins.
+  it("does NOT hand a tie to Platt for a gap the frozen tolerance calls a real difference", () => {
+    // The exact case the replaced rule got wrong: platt is 0.0019 behind isotonic,
+    // inside the old 0.002 margin and 19x OUTSIDE the frozen 1e-4 tolerance. It is
+    // not a tie, so the smallest Brier wins outright.
+    const selected = selectCandidateSummary([
+      { kind: "isotonic", brier: 0.1, ece15: 0.03 },
+      { kind: "platt", brier: 0.1019, ece15: 0.04 },
+    ]);
+    expect(selected.kind).toBe("isotonic");
+  });
+
+  it("lets beta win a tie against a marginally lower isotonic", () => {
+    // The other half of `tieBreakOrder`, which a Platt-only preference could not
+    // express at all: beta precedes isotonic, so a tie between them goes to beta
+    // even though isotonic's Brier is the smaller number.
+    const selected = selectCandidateSummary([
+      { kind: "isotonic", brier: 0.1, ece15: 0.03 },
+      { kind: "beta", brier: 0.10005, ece15: 0.03 },
+      { kind: "platt", brier: 0.3, ece15: 0.03 },
+    ]);
+    expect(selected.kind).toBe("beta");
+  });
+
+  it("drops a lower-Brier candidate whose ECE-15 exceeds the frozen bound and keeps the best admissible one", () => {
     const selected = selectCandidateSummary([
       { kind: "isotonic", brier: 0.1, ece15: 0.03 },
       { kind: "platt", brier: 0.2, ece15: 0.04 },
@@ -120,7 +197,7 @@ describe("selectCandidateSummary", () => {
     expect(selected.kind).toBe("isotonic");
   });
 
-  it("throws a coded error when no candidate satisfies ECE-15 <= 0.05", () => {
+  it("throws a coded error when no candidate satisfies the frozen ECE-15 bound", () => {
     expect(() =>
       selectCandidateSummary([
         { kind: "platt", brier: 0.1, ece15: 0.09 },
@@ -133,9 +210,34 @@ describe("selectCandidateSummary", () => {
 
 describe("clusterRootsOf", () => {
   it("atomises by the CONNECTED COMPONENT of two axes, not by either axis alone", () => {
+    // On `isolatedChain` the ONLY relation between row 0 and row 2 is the two-hop
+    // chain: author joins 0-1, source joins 1-2, and every other axis is per-row.
+    const trio = isolatedChain("iso");
+    const joined = clusterRootsOf(trio);
+    const first = joined.get("h_iso_0");
+    expect(first).toBeDefined();
+    expect(joined.get("h_iso_1")).toBe(first);
+    expect(joined.get("h_iso_2")).toBe(first);
+
+    // ...and REMOVING the middle row is what makes the chain load-bearing rather
+    // than decorative: without row 1, rows 0 and 2 share nothing and must fall into
+    // different atoms. Without this half, a fixture that unions the trio through one
+    // shared axis would pass the assertions above just as well.
+    const broken = clusterRootsOf([trio[0], trio[2]]);
+    expect(broken.get("h_iso_0")).not.toBe(broken.get("h_iso_2"));
+
+    // Two such trios stay two atoms, so the union is not simply collapsing the
+    // whole record set.
+    const twoTrios = clusterRootsOf([...trio, ...isolatedChain("jso")]);
+    expect(new Set(twoTrios.values()).size).toBe(2);
+  });
+
+  it("keeps the realistic per-cluster fixture whole, through the axes it really shares", () => {
+    // The fold fixture, stated for what it IS: each trio shares an author/source
+    // chain AND a per-cluster `domainSource` and `collectionBatch`, either of which
+    // alone would already union the trio. That makes it the right fixture for fold
+    // behaviour and the wrong one for the connected-component claim above.
     const rootById = clusterRootsOf(chainedRecords);
-    // Rows 0 and 2 of a cluster share no axis value; only the chain through row 1
-    // joins them, so a matching root proves the component is the atom.
     for (let cluster = 0; cluster < FOLDS; cluster += 1) {
       const first = rootById.get(`h_${cluster}_0`);
       expect(first).toBeDefined();

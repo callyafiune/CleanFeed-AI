@@ -5928,6 +5928,57 @@ fato geral, que vale para o corpus real e não só para a fixture: **uma região
 classe carregada por menos átomos do que folds não pode ser held out com segurança**, qualquer
 que seja a contagem de linhas.
 
+**Rodada de correção (revisão cruzada reprovou a primeira entrega).** Quatro consertos, um
+deles bloqueante:
+
+1. **O teste de aceitação nomeado não provava o que o brief exigia, e seu comentário mentia.**
+   A fixture `chainedClusters` dá a cada trio um `domainSource` e um `collectionBatch`
+   **por cluster**, e os dois são eixos de valor de `GROUP_KEYS`: cada trio já era um
+   componente conectado por **um** eixo isolado, antes de a cadeia autor/fonte ser
+   considerada. Medido: com `author` e `source` distintos linha a linha, os trios continuam
+   com **uma** raiz cada. Logo a cadeia não sustentava nada, e o comentário "rows 0 and 2
+   share no axis value at all" era falso contra as quatro linhas abaixo dele — exatamente o
+   defeito de R7 que este plano existe para remover. Agora há **duas** fixtures, e o arquivo
+   diz qual pergunta cada uma responde: `chainedClusters` (realista, por cluster) para tudo
+   que é fold, e `isolatedChain` para a alegação de componente conectado — nela `domainSource`,
+   `collectionBatch` e `nearDuplicate` são **por linha**, de modo que a única relação entre a
+   linha 0 e a linha 2 é `author`(0,1) + `source`(1,2). As três admitem só `known` em toda
+   classe (`AXIS_STATE_RULE`), então valor distinto por linha é o único jeito de neutralizá-las;
+   `notApplicable` é recusado pelo validador, o que foi **medido** antes de escrever. O teste
+   passou a asseverar as **duas** metades: com a linha do meio, uma raiz; **sem** ela, raízes
+   diferentes. A segunda metade é o que torna a cadeia load-bearing, e foi verificada em
+   vermelho contra a fixture antiga (rodando a nova asserção sobre linhas com `ds`/`cb` por
+   cluster ela falha, porque as linhas 0 e 2 continuam unidas por `ds_0`).
+2. **`PLATT_PREFERENCE_MARGIN = 0.002` era constante solta 20x mais frouxa que a tabela
+   congelada, e o cabeçalho reescrito por C6 a declarava como contrato do módulo.** A política
+   diz `calibrator.tieToleranceAbsolute: 1e-4` e `tieBreakOrder: [platt, beta, isotonic]`, e o
+   cabeçalho do próprio `rebuild-v3-policy.ts` diz que código não pode repetir valor congelado
+   como constante solta. Além do número, a **forma** da regra estava errada: "um Platt dentro
+   de 0,002 do mínimo vence" não é "empate <= 1e-4 decidido por `tieBreakOrder`" — dava a Platt
+   uma folga 20x a congelada e não conseguia deixar `beta` vencer um empate contra um
+   `isotonic` marginalmente menor, que é o que a ordem manda. `selectCandidateSummary` agora lê
+   `tieToleranceAbsolute`, `tieBreakOrder`, `candidates`, `calibrationGate.eceBins` e
+   `calibrationGate.eceMax` da política; `ECE_BINS`, `ECE_MAXIMUM`, `FAMILIES` e `KIND_RANK`
+   deixaram de existir como literais. Isto **aperta** (1e-4 < 0,002) e não afrouxa nada (R3).
+   Três testes de `selectCandidateSummary` foram reescritos porque a regra que codificavam
+   passou a estar errada, inclusive um que nomeava 0,002 no título; um deles agora é regressão
+   do caso exato que a regra antiga errava. O limite de ECE é o **número** do gate e **não** o
+   estimador do gate: `calibrationGate` mede com bins de massa igual sob limite superior
+   simultâneo de bootstrap, e esta seleção usa estimativa pontual de largura fixa — está dito
+   no docstring de `aggregateOutOfFold` para ninguém ler um ECE-15 daqui como grandeza do gate.
+   Reestruturar a seleção por partição segue sendo de G1.
+3. **O cabeçalho dizia que o fold de um cluster é função do digest do id pseudonimizado.** Não
+   é: o digest só desempata a **ordem** por tamanho; o fold é função do empacotamento guloso
+   sobre a população inteira (tamanhos e contagens de classe de todos os outros átomos). A frase
+   agora diz isso, e mantém a metade que é medida — mesma população, mesmos folds bit a bit, em
+   qualquer ordem de entrada.
+4. **Duas leituras de "este eixo é unknown" convivem no benchmark, e isso passou a estar
+   escrito onde importa.** O docstring de `groupAxisState` agora aponta para
+   `groupAxisDeclaredState` e nomeia a pergunta de cada uma — elegibilidade (chave ausente conta
+   como `unknown`) *vs* recusa por declaração (chave ausente é `undefined`, para não recusar
+   corpus v2 por eixo que seu schema nunca ofereceu). Para v3 as duas concordam; divergem só em
+   v2, e ali a divergência é o ponto. Nenhuma mudança de comportamento.
+
 ## Fase D — Dados
 
 ### D0 — Coleta piloto para estimar ICC e efeito de desenho

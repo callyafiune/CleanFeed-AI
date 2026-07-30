@@ -3222,12 +3222,26 @@ export function recipeTemperature(
 }
 
 /**
- * The state of one axis.
+ * The state of one axis, for the ELIGIBILITY question.
  *
  * A v2 record has no states, so a filled axis reads as `known` and an absent one
  * as `unknown` — which is the truthful mapping and NOT a flattering one: it means
  * `recordEligibility` reports a v2 record with an absent axis as ineligible, and a
  * v2 record has no way to say `notApplicable` about anything.
+ *
+ * There are TWO readings of "this axis is unknown" in the benchmark, and picking the
+ * wrong one by autocomplete has consequences, so name the question first:
+ *
+ *   * THIS function answers *is the record eligible* ({@link recordEligibility},
+ *     `benchmark/metrics.ts`'s resampling-unit check). An absent key counts as
+ *     `unknown`, because an axis a record never recorded is certainly not known.
+ *   * {@link groupAxisDeclaredState} answers *did the producer DECLARE unknown here*,
+ *     which is what a consumer REFUSING a row must ask (`clusterRootsOf` in
+ *     `benchmark/cross-validation.ts`). It returns `undefined` for an absent key, so
+ *     a refusal does not fire over an axis the record's schema version never offered.
+ *
+ * For a v3 record the two agree, since v3 requires all nine connectivity axes to be
+ * declared. They diverge only on v2, and there the divergence is the point.
  */
 export function groupAxisState(
   record: BenchmarkRecord,

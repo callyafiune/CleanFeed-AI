@@ -39,19 +39,34 @@
 //     `notApplicable` does NOT fail: it is a legitimate state and R6 forbids
 //     treating it as a defect.
 //   * The number of folds is the frozen one, read from
-//     `benchmark/rebuild-v3-policy.json` (`calibrator.crossValidationFolds`), and
-//     the fold of a cluster is a function of the seeded digest of its PSEUDONYMISED
-//     root id under the frozen CV seed (`seeds.crossValidation`) — so the same
-//     population yields the same folds bit for bit, in any input order.
+//     `benchmark/rebuild-v3-policy.json` (`calibrator.crossValidationFolds`), and the
+//     fold of a cluster is a deterministic function of the WHOLE POPULATION: atoms
+//     are ordered by size, then by the seeded digest of their pseudonymised root id
+//     under the frozen CV seed (`seeds.crossValidation`), then by that id, and each
+//     is placed in the lightest fold — so the same population yields the same folds
+//     bit for bit, in any input order. The digest orders the atoms; it does not by
+//     itself decide the fold, which also depends on the sizes and class counts of
+//     every other atom, and stating it the shorter way would be the kind of
+//     almost-true claim this header exists to stop.
 //   * Class stratification with atoms of unequal size is a packing problem, not a
 //     partition. The packing is greedy and deterministic, and what it ACHIEVED is
 //     published beside the deviation no packing of these atoms could have beaten
 //     ({@link FoldStratification}). Nothing here claims the folds are balanced.
 //
-// Selection rule (classifier design §6.5): score every family on out-of-fold
+// Selection rule: score every family in `calibrator.candidates` on out-of-fold
 // predictions aggregated with EQUAL WEIGHT PER CLUSTER, drop any candidate whose
-// ECE-15 exceeds 0.05, and take the smallest Brier among the survivors; a Brier tie
-// within 0.002 favours Platt. The chosen family is then REFIT on the full
+// ECE-15 exceeds `calibrationGate.eceMax`, and take the smallest Brier among the
+// survivors; Briers within `calibrator.tieToleranceAbsolute` of that minimum count
+// as TIED and are decided by `calibrator.tieBreakOrder`. Every one of those five
+// values is read from `benchmark/rebuild-v3-policy.json`, because the frozen table
+// materialised there says in so many words that code may not repeat them as loose
+// constants — and this module did: it carried a 0.002 "Platt preference margin",
+// 20x the frozen tie tolerance, so a Platt 0.0019 worse than the best candidate won
+// on a tie that the contract does not consider a tie at all. The ECE bound is the
+// gate's NUMBER and not the gate's estimator: `calibrationGate` measures it with
+// equal-mass bins under a bootstrap simultaneous upper bound, while this selection
+// uses a fixed-width point estimate over the out-of-fold rows (see
+// {@link aggregateOutOfFold}). The chosen family is then REFIT on the full
 // calibration split (never on test). Restructuring the selection across the
 // `cal-A`/`cal-B` partitions is G1's and is deliberately not done here.
 //
@@ -75,24 +90,39 @@ import {
 import { CONNECTIVITY_AXES } from "./split.ts";
 import type { SerializedCalibratorV1 } from "../contracts/calibration-profile.ts";
 
-const ECE_BINS = 15;
-const ECE_MAXIMUM = 0.05;
-const PLATT_PREFERENCE_MARGIN = 0.002;
-const FAMILIES: readonly CalibratorKind[] = ["platt", "beta", "isotonic"];
-// Deterministic tie-break order when Briers are equal outside the Platt margin.
-const KIND_RANK: Record<CalibratorKind, number> = {
-  platt: 0,
-  beta: 1,
-  isotonic: 2,
-};
-
 /**
- * The frozen fold count and CV seed, read from the policy and never written down
- * as a constant here: `benchmark/rebuild-v3-policy.json` is the single place the
- * settled values of the rebuild live (A6).
+ * Every settled number of the calibrator competition, read from the policy and none
+ * of them written down again here: `benchmark/rebuild-v3-policy.json` is the single
+ * place the frozen values of the rebuild live (A6), and its own header states that
+ * code may not repeat them as loose constants.
  */
 const FOLD_COUNT = REBUILD_V3_POLICY.calibrator.crossValidationFolds;
 const CV_SEED = REBUILD_V3_POLICY.seeds.crossValidation;
+const FAMILIES: readonly CalibratorKind[] =
+  REBUILD_V3_POLICY.calibrator.candidates;
+const TIE_TOLERANCE = REBUILD_V3_POLICY.calibrator.tieToleranceAbsolute;
+const TIE_BREAK_ORDER: readonly CalibratorKind[] =
+  REBUILD_V3_POLICY.calibrator.tieBreakOrder;
+const ECE_BINS = REBUILD_V3_POLICY.calibrationGate.eceBins;
+const ECE_MAXIMUM = REBUILD_V3_POLICY.calibrationGate.eceMax;
+
+/**
+ * A candidate's position in the frozen tie-break order, refusing a family the order
+ * does not name. The policy pins `candidates` and `tieBreakOrder` to the same three
+ * families as frozen lists, so an unranked kind means a caller built a summary for a
+ * family the contract never admitted — silently sorting it last would let it win a
+ * tie.
+ */
+function tieBreakRank(kind: CalibratorKind): number {
+  const rank = TIE_BREAK_ORDER.indexOf(kind);
+  if (rank < 0) {
+    throw new CalibrationSelectionError(
+      `calibrator kind ${JSON.stringify(kind)} is not in the frozen tie-break order ` +
+        `[${TIE_BREAK_ORDER.join(", ")}], so a Brier tie involving it has no settled winner`,
+    );
+  }
+  return rank;
+}
 
 /**
  * The axes the split/exposure cluster is built from, and therefore the axes whose
@@ -499,10 +529,18 @@ function foldIsLighter(
 }
 
 /**
- * The pure selection rule over already-scored candidates. Drops any candidate
- * with `ece15 > 0.05`; throws when none survive. Among the survivors it takes
- * the smallest Brier, but a Platt within `0.002` of that minimum is preferred.
- * Ties outside the Platt margin break `platt < beta < isotonic`.
+ * The pure selection rule over already-scored candidates, exactly as the frozen
+ * table states it: drop any candidate whose `ece15` exceeds
+ * `calibrationGate.eceMax` (throwing when none survive), then take the smallest
+ * out-of-fold Brier — counting every candidate within
+ * `calibrator.tieToleranceAbsolute` of that minimum as TIED and deciding between the
+ * tied ones by `calibrator.tieBreakOrder`.
+ *
+ * The tolerance is symmetric in effect and not a preference for one family: the rule
+ * this replaced was "a Platt within 0.002 of the minimum wins", which is a different
+ * rule and not merely a looser number. It let Platt take a gap 20x the frozen
+ * tolerance, and it could not let `beta` win a genuine tie against a marginally
+ * lower `isotonic`, which `tieBreakOrder` says it should.
  */
 export function selectCandidateSummary<T extends CandidateScore>(
   candidates: readonly T[],
@@ -512,22 +550,18 @@ export function selectCandidateSummary<T extends CandidateScore>(
   );
   if (admissible.length === 0) {
     throw new CalibrationSelectionError(
-      "no calibrator satisfies ECE-15 <= 0.05",
+      `no calibrator satisfies ECE-15 <= ${ECE_MAXIMUM}`,
     );
   }
-  const ranked = [...admissible].sort((a, b) => {
-    if (a.brier !== b.brier) return a.brier - b.brier;
-    return KIND_RANK[a.kind] - KIND_RANK[b.kind];
-  });
-  const smallestBrier = ranked[0].brier;
-  const platt = admissible.find((candidate) => candidate.kind === "platt");
-  if (
-    platt !== undefined &&
-    platt.brier - smallestBrier < PLATT_PREFERENCE_MARGIN
-  ) {
-    return platt;
-  }
-  return ranked[0];
+  const smallestBrier = Math.min(
+    ...admissible.map((candidate) => candidate.brier),
+  );
+  const tied = admissible.filter(
+    (candidate) => candidate.brier - smallestBrier <= TIE_TOLERANCE,
+  );
+  return [...tied].sort(
+    (a, b) => tieBreakRank(a.kind) - tieBreakRank(b.kind),
+  )[0];
 }
 
 /** One out-of-fold prediction, carrying the atom it must be weighted under. */
@@ -559,9 +593,13 @@ export interface OutOfFoldAggregate {
  *
  * A cluster's contribution is the MEAN over its own record-lines, so the aggregate
  * is the unweighted mean over clusters. ECE-15 uses the same weights: each row
- * carries `1 / (clusters * rows in its cluster)` into its bin, and the bins are
- * fixed-width over [0, 1] (the equal-mass binning of the release gate is
- * `calibrationGate.eceBinning` and belongs to the gate, not to this selection).
+ * carries `1 / (clusters * rows in its cluster)` into its bin, and the bin COUNT is
+ * the frozen `calibrationGate.eceBins` while the binning is fixed-width over [0, 1].
+ * That last part is a deliberate divergence from the gate, which is `equal-mass`
+ * under a bootstrap simultaneous upper bound: the gate decides whether a release may
+ * ship and this rule only ranks three candidates against each other. So the number of
+ * bins and the 0.05 bound are read from the policy, and the estimator is not the
+ * gate's — a reader must not take an ECE-15 published here as the gate's quantity.
  */
 export function aggregateOutOfFold(
   predictions: readonly OutOfFoldPrediction[],
