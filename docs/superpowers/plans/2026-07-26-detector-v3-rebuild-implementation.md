@@ -74,6 +74,30 @@ de uma tarefa não é satisfeito, a saída é `reject`, `indicator-only`,
 `insufficient-power` ou tarefa não concluída, conforme indicado. O agente **não pergunta
 qual alternativa adotar**, não troca o estimando e não afrouxa gate.
 
+> **Nota de materialização — a tabela acima está ADIANTE do arquivo que a materializa.**
+> A6 já rodou e gravou `benchmark/rebuild-v3-policy.json` com os valores **anteriores** a
+> quatro linhas que foram alteradas depois: `fatias hard-negative`, `famílias geradoras (D3)`,
+> `receitas de geração` e as duas linhas novas de grade (`grade de F3`, `grade de F2`).
+> Enquanto **A6-REMAT** não rodar, o JSON e os validadores que o leem contradizem esta tabela,
+> e a contradição é **executável**:
+>
+> - `hardNegativeFamilies` no JSON e `RELEASE_CORPUS_POLICY.requiredHardNegativeFamilies`
+>   ([`dataset-manifest.ts:103`](../../../benchmark/dataset-manifest.ts#L103)) ainda exigem as
+>   **seis famílias perceptuais**, `non-native` inclusa — que esta tabela declara descartada;
+> - `FROZEN_GENERATION_LANES`
+>   ([`rebuild-v3-policy.ts:719`](../../../benchmark/rebuild-v3-policy.ts#L719)) congela quatro
+>   lanes e **nenhuma** delas é Anthropic, enquanto D3 põe duas famílias core em `claude -p`;
+> - `agy.effortConfigurable` está `false` no JSON, e a tabela de capacidade de D3 registra
+>   `--effort` por flag com o id base.
+>
+> **As duas linhas de grade (F3 e F2) NÃO têm contraparte no JSON, e isso é deliberado.** A
+> política materializa o que o **avaliador selado** precisa verificar em tempo de execução; a
+> grade de ablação é insumo de **bancada** (`benchmark/lab/`), não entra em nenhum gate e não é
+> lida por `rebuild-v3-policy.ts`. Congelar seeds de ablação no JSON obrigaria o avaliador a
+> validar uma decisão que ele nunca consulta — a linha `seeds de ablação`, que já está no JSON,
+> é o que sustenta a rastreabilidade de F6. Se um gate futuro passar a depender da grade, ela
+> vira linha de política; até então, a fonte de verdade dela é **esta tabela**.
+
 `D0b` é um id deliberado, executado imediatamente após o piloto D0; não existe E1. A Fase E
 começa em E2 porque o dimensionamento precisa bloquear a coleta D1, e portanto pertence ao
 caminho D0 → D0b → D1.
@@ -81,9 +105,10 @@ caminho D0 → D0b → D1.
 **A contagem de tarefas mudou, e a aritmética fica escrita para ser verificável.** Eram 46.
 **F4 deixou de ser tarefa** e virou critério de aceitação de F5a/F6 (−1). Entraram **duas
 tarefas novas**, ambas antes de G5: o **ensaio geral sintético** e o **smoke pré-concessão de
-H1** (+2). **LAT** foi criada durante a execução (+1). Total: **48**. D2 continua existindo, com
-objeto trocado (avaliação externa em vez de suíte caseira), e I2/I3 continuam existindo como
-*fast-follow* — nenhuma das duas foi apagada.
+H1** (+2). **LAT** foi criada durante a execução (+1). **A6-REMAT** foi criada quando as emendas
+deixaram a tabela congelada adiante do arquivo que a materializa (+1). Total: **49**. D2 continua
+existindo, com objeto trocado (avaliação externa em vez de suíte caseira), e I2/I3 continuam
+existindo como *fast-follow* — nenhuma das duas foi apagada.
 
 ### Protocolo comum de cada tarefa
 
@@ -2325,6 +2350,68 @@ número de gate se moveu.
     passaram a ser validadas por `frozenList`: antes `tieBreakOrder: ["isotonic"]` e
     `humanCoreStrata: ["foo"]` passavam pelo validador. O comentário do módulo agora diz
     quais linhas são fixadas exatamente e quais só têm forma verificada.
+
+### A6-REMAT — Re-materializar a política congelada nas quatro linhas que mudaram depois de A6
+
+**Depende de:** A6.
+**Bloqueia:** D1, D3, D5, E3 e **G5**.
+
+**Por que:** A6 materializou a tabela congelada como ela era em 2026-07-26. Depois disso, quatro
+linhas mudaram — as fatias hard-negative (D5), o slate de famílias geradoras e as receitas de
+geração (D3) — e **o arquivo não foi regravado**. A divergência não é editorial, é executável nos
+dois sentidos:
+
+1. `RELEASE_CORPUS_POLICY.requiredHardNegativeFamilies`
+   ([`dataset-manifest.ts:103`](../../../benchmark/dataset-manifest.ts#L103)) e
+   `hardNegativeFamilies` no JSON ainda exigem as seis famílias perceptuais. O laço de cobertura
+   ([`dataset-manifest.ts:890`](../../../benchmark/dataset-manifest.ts#L890)) reprova com
+   `DATASET_COVERAGE_INVALID` qualquer corpus de `scientificUse: "release"` em que uma família
+   exigida tenha **zero** registros. Como D5 descarta `non-native` e declara a fatia **não
+   medida**, um corpus montado **conforme este plano** é inválido por construção;
+2. `FROZEN_GENERATION_LANES`
+   ([`rebuild-v3-policy.ts:719`](../../../benchmark/rebuild-v3-policy.ts#L719)) congela o
+   vocabulário de lanes em `agy | codex | gemini-api | gemini-cli`, sem lane Anthropic. Esse
+   vocabulário é lido pelo schema
+   ([`schema.ts:2003`](../../../benchmark/schema.ts#L2003)) e pelo montador de bancada
+   ([`assemble_corpus.py:426`](../../../benchmark/lab/assemble_corpus.py#L426)), que **falham
+   fechado** — logo a lane `claude -p` que D3 exige é hoje impossível de gravar;
+3. `agy.effortConfigurable: false` e `effortSources` sem `flag` contradizem a tabela de
+   capacidade de D3, que registra `--effort low|medium|high` com o id base.
+
+**Mudança:** regravar `benchmark/rebuild-v3-policy.json` e atualizar as listas congeladas de
+`benchmark/rebuild-v3-policy.ts` e `benchmark/dataset-manifest.ts` para as quatro linhas
+vigentes — as seis fatias operacionais no lugar das seis famílias perceptuais, a lane
+`claude-cli` acrescentada ao vocabulário e à união `GenerationLane` com a sua linha de
+capacidade (`channel: "cli"`, `effortConfigurable: true`, `effortScale`
+`anthropic-low..max`, `effortSources` com `flag`), e a linha `agy` reconciliada. A regra do
+cabeçalho da tabela congelada continua valendo: **nada disso vira constante solta** — o JSON é a
+fonte, o `.ts` valida, o resto lê.
+
+**Prazo, e ele é duro.** Os três arquivos estão em `EVALUATOR_FILES`
+([`digests.ts:84`](../../../benchmark/digests.ts#L84)), então editá-los depois do `fit` reprova
+`integrity.evaluator-digest` e queima a concessão (**R1**). E D1/D5 montam corpus contra
+`RELEASE_CORPUS_POLICY`, D3 grava `generationLane`: esta tarefa fecha **antes** das três.
+
+**Não é afrouxamento de gate (R3).** A exigência de cobertura não cai: ela passa a nomear as
+fatias que D5 de fato define. Trocar seis nomes por seis nomes mantém o número de fatias
+exigidas; o que muda é `m`, e essa decisão está em D5 e E3, não aqui.
+
+**Arquivos:** `benchmark/rebuild-v3-policy.json`, `benchmark/rebuild-v3-policy.ts`,
+`benchmark/dataset-manifest.ts`, `benchmark/schema.ts`, `benchmark/lab/assemble_corpus.py`,
+mais os testes dos três primeiros.
+
+**Verificar:** `npx vitest run benchmark/tests/rebuild-v3-policy.test.ts
+benchmark/tests/dataset-manifest.test.ts benchmark/tests/schema-v3.test.ts`; fixture de corpus de
+release **sem** `non-native` tem de passar, fixture sem uma fatia por proveniência tem de
+reprovar com `DATASET_COVERAGE_INVALID`, e um registro com `generationLane: "claude-cli"` tem de
+validar. Em `assemble_corpus.py` as **linhas** de lane já vêm do próprio JSON
+([`:426`](../../../benchmark/lab/assemble_corpus.py#L426)), logo só o mapa
+`PROVIDER_LANE` ([`:409`](../../../benchmark/lab/assemble_corpus.py#L409)) precisa da entrada
+nova — não copie o vocabulário para lá.
+
+**Concluída quando:** o JSON, os validadores e as quatro linhas da tabela congelada dizem a mesma
+coisa; nenhum consumidor lê família ou lane de uma lista local; e o digest do avaliador foi
+recomputado **antes** de G5.
 
 ### A7 — O `fprUpper95` do `fit` é diagnóstico, não garantia
 
@@ -6789,6 +6876,15 @@ bloco de teste é ≈ **1800 humanos + 1200 de IA + 300 mistos >= 0,5**, mas o t
 definitivo vem de clusters, células conjuntas core, Bonferroni de H2 e efeitos de desenho
 medidos em D0.
 
+**Por que o `6×300` continua sendo 6, se D5 faz só 3 fatias serem gate.** As seis fatias
+operacionais de D5 se dividem em **3 por proveniência (gate)** e **3 por medida (diagnóstico na
+v3)**, e só as três primeiras entram em `m`. O piso de **300 permanece para as seis**, de
+propósito, e a razão é R2, não conservadorismo: uma fatia diagnóstica subdimensionada **não pode
+ser promovida a gate na v3.1** sem recoletar, e todo cluster já exposto em qualquer partição é
+inelegível para a coleta futura — o dado que faltar hoje não volta. Portanto o dimensionamento
+orça 6×300 e a **multiplicidade** conta 3: são grandezas diferentes, e a que a decisão de D5
+altera é a segunda. `m` é `alpha_família = 0,05 / m` em H2; o piso de 300 é inventário em D0b.
+
 R2 torna inelegível para testes futuros toda unidade amostral já exposta em qualquer
 partição. O cálculo precisa reservar capacidade para **duas tentativas completas no
 total**: a corrente e uma substituição independente. Modelar explicitamente:
@@ -6825,7 +6921,7 @@ bloqueia coleta cara e congelamento, sem pedido de decisão.
 
 ### D1 — Humanos de bases públicas, com corte de data como mitigação de rótulo
 
-**Depende de:** B3 (decidido), C2, C5, D0b.
+**Depende de:** **A6-REMAT**, B3 (decidido), C2, C5, D0b.
 
 **Base do rótulo, e seu limite:** a admissão aplica `CHATGPT_CUTOFF` (`< 2022-11-30`) por
 padrão em `common.py:149`. Isso torna **implausível** o uso de ChatGPT — condicionado à
@@ -7039,7 +7135,7 @@ pré-condições estão respondidas por medição, não por suposição; e os n�
 
 ### D3 — IA pareada por estrato linguístico
 
-**Depende de:** B1, C2, D0b, D1.
+**Depende de:** **A6-REMAT**, B1, C2, D0b, D1.
 
 **Por que:** hoje **todo texto de IA tem `domain: "geral"` e `humanSourceType: null`**,
 enquanto todo humano tem um gênero real — classe e domínio perfeitamente confundidos. É
@@ -7080,6 +7176,17 @@ em core**, senão a reserva de provedor desaparece.
 família e harness variarem **juntos por construção**, em vez de três famílias core
 compartilharem um harness — ver a mitigação de fingerprint abaixo, que continua devida porque
 é ela que torna a propriedade verificável em vez de suposta.
+
+**A exceção do `gpt-oss` é medida, não descuido — não a "conserte".** A regra acima tem
+**uma** exceção: `gpt-oss-120b-medium` é alcançável **somente** pelo `agy`. Não existe CLI de
+provedor para ele neste ambiente, e a sondagem de 2026-07-27 o encontrou justamente ali
+(`agy --print ... --model gpt-oss-120b-medium`). Portanto `agy` carrega duas famílias core —
+Gemini e `gpt-oss` — e é a única lane em que família e harness **não** variam juntos. Quem ler a
+regra ao pé da letra vai concluir que a linha de `gpt-oss` está errada e tentar removê-la ou
+movê-la: **as duas coisas são proibidas**, porque remover apaga uma família core e mover é trocar
+modelo por conveniência. O que se faz com essa exceção é o que a mitigação de fingerprint já
+manda: `generationLane` gravado, métricas fatiadas por lane, e o relatório declarando que **nesta
+lane** família e harness estão parcialmente confundidos.
 
 **Reserva da segunda tentativa.** R2 torna inelegível toda unidade amostral já exposta e D0b
 **reprova** com `supportedReleaseAttempts < 2`. Até aqui a reserva prevista era só humana
@@ -7145,6 +7252,20 @@ um caminho de geração estruturalmente diferente, que é o confundimento que a 
 por harness" acabou de eliminar. Se a rota de subagente for usada mesmo assim, ela exige
 **geração de texto puro, sem ferramentas** (um subagente pedido para "escrever um verbete" pode
 buscar na web em vez de redigir) e o mesmo pipeline de normalização/janela/PII.
+
+**O vocabulário de lanes é CONGELADO, e a lane Anthropic ainda não está nele.**
+`FROZEN_GENERATION_LANES` ([`rebuild-v3-policy.ts:719`](../../../benchmark/rebuild-v3-policy.ts#L719))
+admite exatamente `agy | codex | gemini-api | gemini-cli` — quatro lanes, **nenhuma** Anthropic.
+Esse vocabulário é a fonte para o schema
+([`schema.ts:2003`](../../../benchmark/schema.ts#L2003)) e para o montador de bancada
+([`assemble_corpus.py:426`](../../../benchmark/lab/assemble_corpus.py#L426)), e os dois **falham
+fechado**: hoje é impossível gravar um registro com `generationLane: "claude-cli"`. Logo, antes de
+D3 rodar, **A6-REMAT** acrescenta a lane e a sua linha de capacidade ao
+`benchmark/rebuild-v3-policy.json` e à união `GenerationLane`, e **reconcilia a linha `agy`** —
+que hoje declara `effortConfigurable: false` e `effortSources` sem `flag`, contradizendo a tabela
+de capacidade acima. Enquanto isso não acontecer, as duas famílias core de `claude -p` são
+inalcançáveis pelo mesmo motivo pelo qual as famílias de API da OpenAI e da Anthropic o são: o
+caminho não existe, e o plano prefere dizer isso a presumir que existe.
 
 **Restrição real que sobrou:** ids com tier embutido (`gemini-3.6-flash-low`,
 `gpt-oss-120b-medium`) **recusam** `--effort` e o harness **falha fechado** — é
@@ -7297,7 +7418,7 @@ v0–v8 está montada nas três operações, no volume calculado por D0b; soment
 
 ### D5 — Hard negatives curados
 
-**Depende de:** C2, C5, D0b, D1.
+**Depende de:** **A6-REMAT**, C2, C5, D0b, D1.
 
 **Por que:** as famílias são atribuídas aos primeiros registros disponíveis de certos
 gêneros, sem classificação ou revisão que demonstre a característica declarada. E são
@@ -7322,6 +7443,17 @@ adversarial, é para **validar saída mecânica**. A substituição:
 | `repetitive` | `high-ngram-repetition` | **medida**: repetição de n-gramas, type-token ratio |
 | `motivational` | `motivational-lexicon-density` | **medida**: densidade léxica declarada |
 | `non-native` | **descartada** | ver abaixo |
+
+**A substituição ainda NÃO está no código, e o código de hoje reprovaria o corpus que esta
+tarefa manda montar.** `hardNegativeFamilies` em `benchmark/rebuild-v3-policy.json` e
+`RELEASE_CORPUS_POLICY.requiredHardNegativeFamilies`
+([`dataset-manifest.ts:103`](../../../benchmark/dataset-manifest.ts#L103)) continuam carregando as
+**seis famílias perceptuais superadas**, `non-native` inclusa, e o laço de cobertura
+([`dataset-manifest.ts:890`](../../../benchmark/dataset-manifest.ts#L890)) reprova com
+`DATASET_COVERAGE_INVALID` todo corpus de release em que uma família exigida tenha zero
+registros. Como `non-native` é descartada aqui, um corpus conforme este plano é **inválido por
+construção** até que **A6-REMAT** regrave os dois. Os dois arquivos estão em `EVALUATOR_FILES`,
+logo A6-REMAT fecha **antes de D1 e desta tarefa**, e obrigatoriamente **antes de G5** (R1).
 
 **A regra do nome, e ela é load-bearing:** *nomeação reprodutível errada é pior que opinião
 claramente atribuída*. Baixa taxa de erro de digitação **não é** "altamente polido"; densidade
@@ -8078,10 +8210,10 @@ faixa” e trazem os diagnósticos condicionais sem linguagem ambígua.
 
 ### G5 — Congelar e verificar antes do holdout
 
-**Depende de:** A1–A7, **LAT**, B1–B3, C1–C6, D0, D0b, D1–D5, E2–E4, F1–F3,
-**F5b**, F6, G1–G4, **H1-SMOKE** e **G5-ENSAIO** (as duas fecham antes do congelamento:
-`consume-holdout.ts` está em `EVALUATOR_FILES` e o ensaio existe para achar falha de
-procedimento antes de ela custar a concessão).
+**Depende de:** A1–A7, **A6-REMAT**, **LAT**, B1–B3, C1–C6, D0, D0b, D1–D5, E2–E4, F1–F3,
+**F5b**, F6, G1–G4, **H1-SMOKE** e **G5-ENSAIO** (as três últimas fecham antes do congelamento:
+`consume-holdout.ts` e os três arquivos de política estão em `EVALUATOR_FILES`, e o ensaio existe
+para achar falha de procedimento antes de ela custar a concessão).
 
 **Por que:** **este é o ponto onde a execução anterior falhou.** Editei
 `consume-holdout.ts` depois do `fit`, `integrity.evaluator-digest` reprovou, e a
@@ -8316,6 +8448,13 @@ em E3; recall mínimo por
 gerador OOD; limite de erro de inferência **por comprimento**; calibração aceitável
 global **e condicional**; teste cego não consumido anteriormente; artefatos de treino e
 publicação integralmente rastreáveis (F6).
+
+**A comparação frente a frente é conteúdo obrigatório de H2 e NÃO é gate de publicação na v3.**
+Ela não aparece na lista acima de propósito. Um gate novo entra em `m` e divide
+`alpha_família = 0,05` com os gates que sustentam a alegação primária — e a comparação depende de
+comparadores de terceiros cuja possível contaminação de treino a enviesa **a favor deles**, o que
+faz dela evidência para o relatório, não critério mecânico de reprovação. Ausência da comparação
+reprova **H2**, por conteúdo obrigatório faltando; ela nunca produz `reject` aqui.
 
 **Arquivos:** nenhum código. Ler `gate-report.json`, `benchmark-report.json`,
 `frozen-calibration.json`, `training-run.json` e os eventos dos ledgers.
