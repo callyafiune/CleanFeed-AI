@@ -113,9 +113,9 @@ qual alternativa adotar**, não troca o estimando e não afrouxa gate.
 >   que congela o **eixo** de reamostragem e não a lista de modelos, e a forma canônica do nome vive
 >   em [`generator-family.ts`](../../../benchmark/generator-family.ts). Qual modelo é core, OOD ou
 >   reserva é decisão de **coleta**: entra no manifesto como fatia observada, não como constante que
->   o avaliador confere. **Escrita própria ela não pede; a do item 2 ela exige** — é justamente esta
->   linha que põe `claude-sonnet-4-6` e `claude-opus-4-6-thinking` em `claude -p`, e por isso o
->   vocabulário de lanes precisa da lane Anthropic.
+>   o avaliador confere. **Escrita própria ela não pede; a do item 2 ela exige** — é esta linha que
+>   admite as duas famílias Anthropic em core (`claude-sonnet-4-6` e `claude-opus-4-6-thinking`), e o
+>   slate de D3 as põe em `claude -p`; por isso o vocabulário de lanes precisa da lane Anthropic.
 > - `receitas de geração` — a parte materializável **já está coerente**, verificada no JSON: as lane
 >   rows trazem `decodingConfigurable: true` só em `gemini-api` e `false` nas três lanes de CLI, com
 >   `effortScale` e `effortSources` por lane, que é exatamente o que a linha manda. A grade
@@ -7219,17 +7219,20 @@ a alegação OOD mais forte disponível, e exatamente o eixo em que o estado da 
 (0,9972 dentro da distribuição contra 0,6995 fora). **Nenhum modelo da lane OpenAI pode entrar
 em core**, senão a reserva de provedor desaparece.
 
-**Um provedor por harness.** `claude-sonnet-4-6` e `claude-opus-4-6-thinking` saem por
-`claude -p`, não por `agy`. Leia a tabela acima pela coluna de lane: em **core**, `agy` serve
-**uma única** família, `gpt-oss-120b-medium`, e a família Gemini core sai pela **lane de API**. A
-única presença Gemini em `agy` é `gemini-3.6-flash-low`, que é **reserva bloqueada e não exposta**
-— o caminho core recusa esse id, e nenhuma partição ativa o recebe. Logo nenhum harness carrega
-famílias de **dois provedores diferentes** nas partições ativas, em vez de três famílias core
-compartilharem um harness. O ganho é **diversidade de harness** entre os positivos: nenhuma
-assinatura de harness cobre **três das quatro** famílias core, que era o arranjo anterior a esta
-emenda e é o cenário em que o detector aprenderia "marca de harness" como se fosse "marca de IA".
-No arranjo desta tabela o harness mais compartilhado é `claude -p`, com duas famílias — e as duas
-são do mesmo provedor. Ver a mitigação de fingerprint
+**Um provedor por harness.** A regra é enunciada aqui **uma única vez**, na forma a que o
+parágrafo seguinte abre exceção: **o provedor do harness é o provedor da família que ele serve**.
+A contagem de famílias por harness é **consequência** dela, não uma segunda regra — se toda
+família de uma lane tem de ser do provedor daquele harness, nenhum harness carrega famílias de
+dois provedores diferentes nas partições ativas. Por isso `claude-sonnet-4-6` e
+`claude-opus-4-6-thinking` saem por `claude -p`, não por `agy`. Leia a tabela acima pela coluna de
+lane: em **core**, `agy` serve **uma única** família, `gpt-oss-120b-medium`, e a família Gemini
+core sai pela **lane de API**. A única presença Gemini em `agy` é `gemini-3.6-flash-low`, que é
+**reserva bloqueada e não exposta** — o caminho core recusa esse id, e nenhuma partição ativa o
+recebe. O ganho é **diversidade de harness** entre os positivos: nenhuma assinatura de harness
+cobre **três das quatro** famílias core, que era o arranjo anterior a esta emenda e é o cenário em
+que o detector aprenderia "marca de harness" como se fosse "marca de IA". No arranjo desta tabela
+o harness mais compartilhado é `claude -p`, com duas famílias — e as duas são do mesmo provedor,
+que é o provedor do próprio harness, logo ele cumpre a regra. Ver a mitigação de fingerprint
 abaixo, que continua devida porque é ela que torna a propriedade verificável em vez de suposta.
 
 **A exceção do `gpt-oss` é medida, não descuido — não a "conserte".** A regra acima tem **uma**
@@ -7237,19 +7240,18 @@ exceção, e ela **não** é "duas famílias core na mesma lane": é que `agy` �
 Google** e a família core que ele carrega **não é do Google**. `gpt-oss-120b-medium` é alcançável
 **somente** pelo `agy` — não existe CLI de provedor para ele neste ambiente, e a sondagem de
 2026-07-27 o encontrou justamente ali (`agy --print ... --model gpt-oss-120b-medium`). Portanto a
-correspondência harness ↔ provedor, que é o que "um provedor por harness" quer dizer, fica
-**cruzada** nesta lane: o harness do Google serve `gpt-oss` enquanto a família Gemini core sai
-pela lane de API. Quem ler a regra ao pé da letra vai concluir que a linha de `gpt-oss` está
+correspondência harness ↔ provedor, que é a regra enunciada acima, fica **cruzada** nesta lane: o
+harness do Google serve `gpt-oss` enquanto a família Gemini core sai pela lane de API. Quem ler a regra ao pé da letra vai concluir que a linha de `gpt-oss` está
 errada e tentar removê-la ou movê-la: **as duas coisas são proibidas**, porque remover apaga uma
 família core e mover é trocar modelo por conveniência.
 
 **O que a exceção obriga a declarar — e a palavra "parcialmente" está errada aqui.** Com uma só
 família core na lane, em `agy` família e harness variam **juntos**: eles são **colineares**, e
 nenhum fatiamento por lane separa a assinatura de `gpt-oss` da assinatura do `agy`. Isso vale
-para toda lane com uma só família core (`gemini-api`, `agy`, `codex`) e é o **custo aceito** da
-diversidade de harness do parágrafo anterior; só em `claude -p`, onde as duas famílias Anthropic
-partilham o harness, a família é separável dentro da lane. O que é próprio de `agy` é o
-cruzamento: ali **fatiar por lane não é fatiar por provedor**, porque qualquer marca do harness do
+para toda lane que carrega **uma só família** nas partições ativas — `gemini-api` e `agy` em core,
+`codex` na OOD, lane que não tem família core nenhuma — e é o **custo aceito** da diversidade de
+harness do parágrafo anterior; só em `claude -p`, onde as duas famílias Anthropic partilham o
+harness, a família é separável dentro da lane. O que é próprio de `agy` é o cruzamento: ali **fatiar por lane não é fatiar por provedor**, porque qualquer marca do harness do
 Google recai sobre texto de `gpt-oss`. Por isso o que se faz com a exceção é o que a mitigação de
 fingerprint já manda: `generationLane` e versão de harness gravados, métricas fatiadas por lane, e
 o relatório declarando que em `agy` família e harness são colineares e que o provedor do harness
