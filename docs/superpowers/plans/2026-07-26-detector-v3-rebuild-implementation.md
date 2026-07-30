@@ -6117,20 +6117,24 @@ limiares em qualquer população cujos átomos difiram em tamanho e composição
    mesma grandeza que o gate, sob o mesmo binning". Não faz: o gate lê
    `metrics.calibration.eceEqualMass15`, e `metrics.ts::eceEqualMass` **parte** empates em
    cortes por índice e pesa **por linha**, enquanto `equalMassEce` agrupa empates e pesa **por
-   cluster**. As três chaves são parâmetro compartilhado, não estimador compartilhado. A
-   **direção** foi medida em vez de argumentada, e a medição **refuta** a versão tentadora dela:
-   com pesos uniformes, 400 populações aleatórias por cenário — 2 escores distintos, os dois
-   estimadores coincidem (400/400); 5 distintos, este módulo fica **abaixo** em 384 e **acima**
-   em 5; 40 distintos, abaixo em 195 e acima em 198, excesso máximo 0,062. Com clusters gordos,
-   este módulo ficou **acima** em 480 de 500. Logo "agrupar empates faz disto um limite inferior
-   do estimador do gate" só vale no regime muito empatado: as duas partições da reta de escore
-   são contíguas e **nenhuma refina a outra**, então o argumento de que fundir bins não aumenta
-   ECE não atravessa. A admissão passou a ser declarada como **peneira** contra candidato
-   grosseiramente descalibrado, no orçamento e na contagem de bins do gate, e **não** como
-   previsão do veredito do gate. Duas fixtures de **sinais opostos** fixam isso (empate de 20
-   linhas em 0,5: 0 aqui, 0,25 lá; um cluster de 60 linhas + 5 singletons ruins: 0,75 aqui, 0,1
-   lá). Nem o orçamento 0,05 nem os 15 bins mudaram (R3). Qual estimador a admissão deve usar
-   segue sendo de G1.
+   cluster**. As três chaves são parâmetro compartilhado, não estimador compartilhado. O que
+   **refuta** a versão tentadora ("agrupar empates faz disto um limite inferior do estimador do
+   gate") é estrutural: as duas partições da reta de escore são contíguas e **nenhuma refina a
+   outra**, então o argumento de que fundir bins não aumenta ECE não atravessa. A admissão
+   passou a ser declarada como **peneira** contra candidato grosseiramente descalibrado, no
+   orçamento e na contagem de bins do gate, e **não** como previsão do veredito do gate. Duas
+   fixtures de **sinais opostos** fixam isso (empate de 20 linhas em 0,5: 0 aqui, 0,25 lá; um
+   cluster de 60 linhas + 5 singletons ruins: 0,75 aqui, 0,1 lá). Nem o orçamento 0,05 nem os
+   15 bins mudaram (R3). Qual estimador a admissão deve usar segue sendo de G1.
+
+   > **ERRATA (quarta rodada, item 1).** No lugar do argumento estrutural acima, esta rodada
+   > publicou aqui e no cabeçalho do módulo uma **tabela de frequências** apresentada como
+   > medição: "com pesos uniformes, 400 populações por cenário — 2 escores distintos, os dois
+   > estimadores coincidem (400/400); 5 distintos, abaixo em 384 e acima em 5; 40 distintos,
+   > abaixo em 195 e acima em 198, excesso máximo 0,062; clusters gordos, acima em 480 de 500".
+   > A entrada de 2 escores é **falsa** e a tabela inteira foi **retirada** — as frequências
+   > medem o gerador, não os dois estimadores. Números da re-medição na "Quarta rodada de
+   > correção", item 1.
 3. **`aggregateOutOfFold` não era invariante à ordem, e o teste não conseguia ver.** O Brier
    acumulava na ordem de inserção do `Map` e cada grupo de escore na ordem de chegada, então a
    invariância valia só a menos de ponto flutuante — o mesmo argumento de associatividade que
@@ -6144,6 +6148,83 @@ limiares em qualquer população cujos átomos difiram em tamanho e composição
    de contagem de bins **depende** de ser falso (16 escores distintos em 15 bins põem os ranks 7
    e 8 no mesmo bin). Passou a dizer "tão igual quanto os grupos permitem", com as duas formas
    de inexatidão e a referência ao resto que `metrics.ts::eceEqualMass` documenta.
+
+**Quarta rodada de correção (2026-07-29), depois da terceira revisão de qualidade.** Dois
+achados `important` e dois `minor`, todos em `benchmark/cross-validation.ts` e no seu teste.
+Nenhum reabre o desenho: a revisão confirmou por reprodução independente o núcleo da terceira
+rodada (3000 populações fuzzeadas com **zero** folds vazios onde a regra anterior recusava 1889;
+membership de fold invariante sob 2693 permutações; desvio de classe melhor em 579 de 804
+populações; as quatro fixtures de ECE re-derivadas à mão). Só o item 4 muda **valor publicado**;
+os outros três são alegação e teste. Nenhum limite foi tocado (R3).
+
+1. **IMPORTANT — a tabela de frequências do cabeçalho media o GERADOR, e a entrada principal era
+   falsa.** O cabeçalho declarava como fato medido que, com uma linha por cluster e 2 escores
+   distintos, os dois estimadores coincidem em 400/400. Re-medido aqui no mesmo cenário
+   (400 populações de 30 a 150 linhas, uma linha por cluster, escores sorteados uniformes, bins
+   e binning da política) com o rótulo sorteado **Bernoulli no escore**: **0 de 400** coincidem
+   bit a bit, este módulo fica **abaixo** em 398 e **acima** em 2. E a tabela não descreve os
+   estimadores: mantendo tudo o que ela nomeia e trocando só a parte que ela **não** nomeia — o
+   mecanismo do rótulo — a direção majoritária **inverte**, para **acima** em 275 de 400 com
+   rótulo `escore >= 0,5`. As demais linhas reproduzem apenas de perto (5 distintos: 397/3 contra
+   384/5; 40 distintos: 205/195 contra 195/198, excesso máximo 0,0656 contra 0,062; clusters
+   gordos: acima em 412 de 500 contra 480). Escolhida a opção de **retirar a tabela inteira** em
+   vez de declarar a população: uma frequência que vira com uma escolha de modelagem não
+   sustentável por corpus nenhum não é contrato, e o leitor não tem como saber de qual das duas
+   varreduras a população dele se parece. O que sustenta "nenhuma direção confiável" passou a ser
+   (a) as **duas fixtures de sinais opostos** já fixadas em teste e (b) o argumento estrutural
+   (nenhuma das duas partições da reta de escore refina a outra). As duas frequências acima
+   entraram no cabeçalho **como o que são** — uma varredura de gerador — para justificar a
+   retirada. Isto era **R7 na forma grave**: número errado apresentado como medição, no
+   cabeçalho do módulo cuja rodada existia para parar de carregar alegação quase-verdadeira.
+2. **IMPORTANT — a regra de empacotamento não estava presa por teste.** Duas mutações de
+   `bestFoldIndex` que **mudam em qual fold cada registro-linha cai** deixavam os 33 testes do
+   arquivo verdes: remover o desempate de custo pelo fold menor, e normalizar o peso da classe
+   por `total` em vez de `total ** 2`. Numa tarefa cujo propósito é atribuição determinística de
+   fold, o determinismo repousava sobre nada. Nenhuma fixture existente pode ver as duas: o peso
+   só é observável quando um átomo carrega **as duas** classes (para átomo de uma classe o custo
+   é um termo vezes constante positiva, mesmo minimizador) **e** `total[pos] != total[neg]`, e as
+   fixtures são ou de classe agrupada (`unevenAtomShapes`, átomos gordos de uma classe) ou
+   balanceadas 15/15 (`classSkewedAtoms`). Fixture nova `imbalancedMixedAtoms`: sete átomos
+   mistos, 10 positivos contra 14 negativos, 24 linhas. Afirma contagens exatas
+   (`perFold` de positivos `[3, 1, 3, 2, 1]`, de negativos `[4, 5, 1, 1, 3]`) e a consequência
+   que as torna dignas de pino: **nenhuma metade de validação é cega a uma classe**. Verificada
+   **vermelha** sob as duas mutações, com os valores previstos — `[3, 0, 3, 2, 2]` sem o
+   desempate e `[3, 0, 3, 3, 1]` com o peso linear, isto é, **fold 1 sem nenhum positivo** nas
+   duas —, e ambas revertidas.
+3. **MENOR — metade do conserto de invariância de ordem estava desprotegida.** A terceira rodada
+   ordenou duas coisas em `aggregateOutOfFold` (a visita das raízes e as linhas dentro de cada
+   cluster) e só a primeira estava presa: remover **apenas** a ordenação de linhas dentro do
+   cluster deixava os 33 testes verdes, porque na fixture de 111 linhas os clusters têm 1 a 9
+   linhas e as somas por cluster são FP-exatas nos dois sentidos — a mesma fraqueza da fixture de
+   3 linhas, um tamanho acima. O teste de ordem ganhou uma **terceira permutação**: inverter as
+   linhas **dentro** de cada cluster mantendo o agrupamento e a ordem dos clusters intactos (o
+   teste afirma isso comparando a sequência de raízes posição a posição), sobre 7 clusters de 2 a
+   23 linhas com predição `((cluster*7919 + linha*104729) % 9973) / 9973` — aritmética inteira e
+   uma divisão por primo, para o valor ser o mesmo em qualquer engine e **não** ser racional
+   diádico. Verificada **vermelha** removendo só a ordenação interna: Brier
+   `0.4043546072652704` contra `0.40435460726527045`. Registrado no teste o que a medição também
+   mostrou: o **ECE não vê** essa permutação (seus grupos são chaveados por escore exato e toda
+   linha de um cluster carrega o mesmo peso), então a ordenação interna é o que protege o
+   **Brier**.
+4. **MENOR — `excessOverFloor` contradizia o próprio docstring por um ulp.** O campo era
+   `deviation - deviationFloor` sem clamp e valia `-2.7755575615628914e-17` em duas das quatro
+   fixtures de átomos desiguais: o empacotamento chega **exatamente** ao piso e os dois números
+   alcançam o mesmo racional por expressões diferentes (`2/6 - 1/5` contra `4/(5*6)`). O
+   docstring do campo diz "zero significa que o empacotamento alcançou o limite" e o de
+   `deviationFloor` diz que o invariante é `deviation >= deviationFloor`; um valor negativo
+   contradiz o primeiro e nenhum leitor pode manter os dois. Passou a ser
+   `Math.max(0, deviation - floor)`, e os dois docstrings passaram a dizer que as duas expressões
+   podem cruzar por **um ulp** quando o empacotamento fica no piso (com o valor observado e a
+   instrução de comparar `deviation` com `deviationFloor` sob tolerância). O clamp não esconde
+   informação: nenhum empacotamento pode furar um limite inferior **provado**, então valor
+   negativo ali nunca carregou significado. Teste novo verificado **vermelho** antes do conserto
+   (`expected -2.7755575615628914e-17 to be +0`), e a asserção de folga `> -1e-12` do teste das
+   quatro formas foi apertada para `>= 0`.
+
+**Verificação da quarta rodada.** `cross-validation.test.ts` 33 → **35 testes**;
+`cross-validation.test.ts` + `calibration-pipeline.test.ts` **65 passando**; suíte completa
+**161 arquivos / 2227 testes** (baseline 2225 + os 2 testes novos); os três typechecks em 0;
+`node benchmark/cli.ts --help` em 0; `npm run format:check` verde.
 
 ## Fase D — Dados
 

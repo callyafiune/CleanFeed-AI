@@ -101,17 +101,38 @@
 //   * WEIGHTS. `metrics.ts` weights per ROW. This module weights per CLUSTER, which
 //     is the aggregation the frozen contract states for this competition.
 //
-// NEITHER divergence has a sign, and that is measured rather than argued. Holding the
-// weights uniform (one row per cluster) over 400 random populations per setting: with
-// 2 distinct scores the two estimators agree exactly (400/400); with 5 distinct this
-// module's number is BELOW `metrics.ts`'s in 384 and ABOVE it in 5; with 40 distinct,
-// below in 195 and above in 198, the largest excess 0.062. And with fat clusters,
-// where the per-cluster weights actually bite, this module's number was ABOVE
-// `metrics.ts`'s in 480 of 500 populations. So "grouping ties makes this a lower bound
-// on the gate's estimator" is true only in the heavily tied regime and false as a
-// general claim: both estimators partition the score line into contiguous blocks but
-// neither partition refines the other, so the argument that merging bins cannot
-// increase the ECE does not apply between them.
+// NEITHER divergence has a sign, and what stands behind that are two FIXTURES that go
+// opposite ways — each exact, each re-derivable by hand, both asserted in
+// `benchmark/tests/cross-validation.test.ts`:
+//
+//   * twenty rows all scored 0.5, half of them positive, one cluster each. The weights
+//     are uniform, so only the tie handling differs: this module reports 0 (one group,
+//     mean score 0.5 against mean label 0.5) and `metrics.ts` reports 0.25 (the tie
+//     split across fifteen index-cut bins makes bins that are label-pure for rows the
+//     model scored identically). This module BELOW.
+//   * one well-calibrated cluster of sixty rows against five badly calibrated
+//     singletons. Per-row weights give the singletons 5/65 of the mass and report 0.1;
+//     per-cluster weights give them 5/6 and report 0.75. This module ABOVE.
+//
+// NO FREQUENCY over random populations is claimed, and none should be added. A table of
+// such counts stood here — "over 400 random populations per setting, with 2 distinct
+// scores the two estimators agree exactly (400/400)", and two more rows like it — and it
+// is WITHDRAWN rather than re-stated, because those counts measure the GENERATOR. Fixing
+// everything that table named (one row per cluster, the policy's bins, 400 populations of
+// 30 to 150 rows, two distinct scores) and varying only the part it left unstated — how
+// the label is drawn — flips the majority direction: this module ran below `metrics.ts` in
+// 398 of 400 with the label drawn Bernoulli at the score, and above it in 275 of 400 with
+// the label drawn as `score >= 0.5`. The withdrawn entry reproduced under neither reading;
+// under Bernoulli labels 0 of 400 agreed bit for bit. Those two counts are stated as what
+// they are, one sweep of a generator that is nobody's corpus, and they are the reason no
+// such count belongs in the contract: a reader cannot tell which sweep their own
+// population resembles.
+//
+// What can be said in general is structural, and it is what kills the tempting version
+// of the claim: both estimators partition the score line into contiguous blocks, and
+// neither partition refines the other, so the argument that merging bins cannot increase
+// the ECE does not carry between them. "Grouping ties makes this a lower bound on the
+// gate's estimator" is therefore not available.
 //
 // The admission is therefore a SCREEN against a grossly miscalibrated candidate at
 // the gate's budget and bin count, and NOT a prediction of the gate's verdict in
@@ -163,8 +184,8 @@ const TIE_BREAK_ORDER: readonly CalibratorKind[] =
  * calibrator row ranks by Brier and says nothing about ECE. Adopting the gate's
  * BUDGET, BIN COUNT and BINNING is what keeps the guard from being a number of our
  * choosing — and it is all it does. The estimator behind the gate's number is a
- * different one, in the two ways the header sets out with the measurement, so these
- * three keys are shared parameters and not a shared quantity.
+ * different one, in the two ways the header sets out with the fixtures that pin them, so
+ * these three keys are shared parameters and not a shared quantity.
  *
  * `eceBound` is deliberately NOT read: the gate's bound is a bootstrap simultaneous
  * upper bound and {@link aggregateOutOfFold} computes a point estimate. Reading it
@@ -255,14 +276,28 @@ export interface FoldClassBalance {
    * sum of two lower bounds is not a lower bound, and it published 0.08 next to a
    * measured deviation of 0 — a floor above an achieved value. It is a bound and not
    * an achievable target: indivisible atoms can make even this bound unreachable, so
-   * `deviation >= deviationFloor` is the invariant, never equality.
+   * `deviation >= deviationFloor` is the invariant and equality is not promised.
+   *
+   * IN EXACT ARITHMETIC, that is. This number and {@link deviation} are computed by
+   * different expressions — a packing that sits exactly at the floor reaches the same
+   * rational number as `2/6 - 1/5` on one side and `4/(5*6)` on the other — so the two
+   * can cross by ONE ULP, and two of this module's own test fixtures do
+   * (0.1333333333333333 against 0.13333333333333333). Compare them with a tolerance,
+   * or read {@link excessOverFloor}, which is clamped for exactly this reason.
    */
   deviationFloor: number;
   /**
-   * `deviation - deviationFloor`: how much imbalance the greedy packing left above
-   * what the atoms make unavoidable. Zero means the packing matched the bound; it is
-   * the number that separates "this corpus cannot be balanced" from "this packer did
-   * not balance it", which is the whole reason the pair is published.
+   * `max(0, deviation - deviationFloor)`: how much imbalance the greedy packing left
+   * above what the atoms make unavoidable. Zero means the packing matched the bound;
+   * it is the number that separates "this corpus cannot be balanced" from "this packer
+   * did not balance it", which is the whole reason the pair is published.
+   *
+   * Clamped, and not the raw subtraction, because of the ulp {@link deviationFloor}
+   * documents: the raw difference reads -2.7755575615628914e-17 on a packing that sits
+   * exactly at the floor, and a negative excess contradicts both this field's "zero
+   * means it matched the bound" and the floor's `deviation >= deviationFloor`. The
+   * clamp costs nothing a consumer could want — no packing can genuinely undercut a
+   * proven lower bound, so a negative value never carries information.
    */
   excessOverFloor: number;
 }
@@ -626,7 +661,7 @@ function classBalance(
     perFold,
     deviation,
     deviationFloor: floor,
-    excessOverFloor: deviation - floor,
+    excessOverFloor: Math.max(0, deviation - floor),
   };
 }
 
@@ -771,9 +806,10 @@ function bestFoldIndex(
  * against a grossly miscalibrated candidate, at the gate's budget and bin count rather
  * than at one of our choosing. It is NOT "a calibrator the release gate would reject",
  * which is what this docstring used to say: the estimator behind `ece` differs from the
- * gate's in two measured ways with no reliable sign, so admission here neither implies
- * nor is implied by passing there. The header carries the measurement; G1 owns whether
- * the admission belongs in the frozen table and which estimator it should use.
+ * gate's in two ways with no reliable sign, so admission here neither implies nor is
+ * implied by passing there. The header carries the two fixtures that go opposite ways;
+ * G1 owns whether the admission belongs in the frozen table and which estimator it
+ * should use.
  */
 export function selectCandidateSummary<T extends CandidateScore>(
   candidates: readonly T[],
@@ -966,7 +1002,7 @@ function selectionEce(points: readonly WeightedPoint[]): number {
  * `1 / (clusters * rows in its cluster)` — under the frozen bin count and binning
  * ({@link selectionEce}). It is a POINT estimate and not `calibrationGate.eceBound`,
  * which is a bootstrap simultaneous upper bound, and it is not the gate's ESTIMATOR
- * either: see this file's header for the two divergences and the measurement showing
+ * either: see this file's header for the two divergences and the two fixtures showing
  * neither has a reliable sign. So this number must not be read as the gate's quantity
  * or as evidence a release would pass.
  *

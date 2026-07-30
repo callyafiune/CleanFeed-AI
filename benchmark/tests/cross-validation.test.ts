@@ -11,6 +11,7 @@ import {
   selectCandidateSummary,
   type ClusteredCalibrationSample,
   type FoldClassBalance,
+  type OutOfFoldPrediction,
 } from "../cross-validation.ts";
 import { eceEqualMass } from "../metrics.ts";
 import { REBUILD_V3_POLICY } from "../rebuild-v3-policy.ts";
@@ -208,6 +209,50 @@ const unevenAtomShapes: Record<string, ClusteredCalibrationSample[]> = {
     ...singletons("n_", 0, 6),
   ],
 };
+
+/** One atom carrying both classes, which the fixture below needs and no other has. */
+function mixedAtom(
+  root: string,
+  positives: number,
+  negatives: number,
+): ClusteredCalibrationSample[] {
+  return [
+    ...Array.from({ length: positives }, (_unused, row) => ({
+      id: `${root}_p${row}`,
+      clusterRoot: root,
+      rawScore: 0.9,
+      label: 1 as const,
+    })),
+    ...Array.from({ length: negatives }, (_unused, row) => ({
+      id: `${root}_n${row}`,
+      clusterRoot: root,
+      rawScore: 0.1,
+      label: 0 as const,
+    })),
+  ];
+}
+
+// Seven atoms of MIXED class over an UNEQUAL class total — 10 positives against 14
+// negatives. Both properties are needed for the fold cost to be observable at all,
+// which is why no other fixture in this file can stand in:
+//
+//   * the class weights are `atom[c] / total[c] ** 2`, so the ratio between the two
+//     class terms is `(atom[pos]/atom[neg]) * (total[neg]/total[pos]) ** 2`.
+//     Re-scaling the two terms by different constants can only move the argmin when an
+//     atom carries BOTH classes — a single-class atom's cost is one term times a
+//     positive constant, whose minimiser is the same whatever the constant — and when
+//     `total[pos] !== total[neg]`, since otherwise the two normalisations coincide;
+//   * `unevenAtomShapes` is class-CLUMPED (its fat atoms are single-class) and
+//     `classSkewedAtoms` is balanced 15/15, so both are blind to the normalisation.
+const imbalancedMixedAtoms: ClusteredCalibrationSample[] = [
+  ...mixedAtom("sk_0", 3, 1),
+  ...mixedAtom("sk_1", 2, 1),
+  ...mixedAtom("sk_2", 0, 2),
+  ...mixedAtom("sk_3", 1, 1),
+  ...mixedAtom("sk_4", 0, 4),
+  ...mixedAtom("sk_5", 1, 1),
+  ...mixedAtom("sk_6", 3, 4),
+];
 
 // Six clusters, one of them carrying three positives while the other five carry one
 // each: no packing can give five folds an equal share of label 1.
@@ -584,18 +629,52 @@ describe("createClusteredFolds", () => {
           );
         }
       }
-      // ...and whatever imbalance is left is the atoms', not the packer's. The
-      // comparison carries an ulp of slack on purpose: on two of these shapes the
-      // packing sits EXACTLY at the floor, and `deviation` and `deviationFloor`
-      // reach the same rational number through different expressions — `2/6 - 1/5`
-      // against `4/(5*6)` — so one lands 1 ulp below the other. A strict
-      // `>=` here fails on 0.1333333333333333 vs 0.13333333333333333, which is
-      // floating point and not a broken invariant.
+      // ...and whatever imbalance is left is the atoms', not the packer's. No slack:
+      // the published field is clamped at zero, and the ulp by which `deviation` and
+      // `deviationFloor` can cross when the packing sits exactly at the floor is the
+      // subject of its own test below.
       for (const balance of stratification.balance) {
-        expect(balance.excessOverFloor).toBeGreaterThan(-1e-12);
+        expect(balance.excessOverFloor).toBeGreaterThanOrEqual(0);
       }
     },
   );
+
+  it("puts both classes in every validation half under class imbalance, and the cost weights are what do it", () => {
+    // The pin the packing rule did not have. Two mutations of `bestFoldIndex` that
+    // MOVE which fold a record-line lands in left the whole file green, so the
+    // determinism this module contracts rested on nothing:
+    //
+    //   * dropping the equal-cost tie-break on the smaller resulting fold, keeping
+    //     `cost < bestCost` alone;
+    //   * normalising a class weight by `total` instead of `total ** 2`.
+    //
+    // Both need a population with mixed-class atoms and unequal class totals to be
+    // visible at all (see `imbalancedMixedAtoms`), and on this one both empty fold 1 of
+    // positives — `[3, 0, 3, 2, 2]` without the tie-break, `[3, 0, 3, 3, 1]` under the
+    // linear weight — which is a validation half that measures the recall of nothing.
+    const { folds, stratification } = createClusteredFolds(
+      imbalancedMixedAtoms,
+      CV_SEED,
+    );
+    expect(stratification.clusters).toBe(7);
+    expect(stratification.items).toBe(24);
+
+    const positives = balanceOf(stratification, 1);
+    const negatives = balanceOf(stratification, 0);
+    expect(positives.total).toBe(10);
+    expect(negatives.total).toBe(14);
+    // Exact counts in fold order, in the style of the `[3, 3, 3, 3, 3]` above: fold
+    // membership is contracted as a function of the population and the seed alone, so
+    // there is nothing here to state as a tolerance.
+    expect(positives.perFold).toEqual([3, 1, 3, 2, 1]);
+    expect(negatives.perFold).toEqual([4, 5, 1, 1, 3]);
+
+    // ...and the consequence that makes those counts worth pinning.
+    for (const fold of folds) {
+      expect(fold.validation.some((sample) => sample.label === 1)).toBe(true);
+      expect(fold.validation.some((sample) => sample.label === 0)).toBe(true);
+    }
+  });
 
   it("leaves no fold empty while atoms remain, which is a property of the cost and not a tendency", () => {
     // `bestFoldIndex`'s second documented property, asserted directly: every term of
@@ -681,6 +760,49 @@ describe("createClusteredFolds", () => {
       [0, 0],
       [0, 0],
     ]);
+  });
+
+  it("publishes an excess of exactly zero where the packing sits ON the floor, which the raw subtraction does not give", () => {
+    // `deviation` and `deviationFloor` reach the same rational number through DIFFERENT
+    // expressions — `2/6 - 1/5` against `4/(5*6)` — so on a packing that sits exactly at
+    // the floor their difference lands one ulp BELOW zero
+    // (-2.7755575615628914e-17). Two of the four uneven shapes do exactly that, and the
+    // published field used to carry that negative number while its own docstring said
+    // "Zero means the packing matched the bound" and `deviationFloor`'s said the
+    // invariant is `deviation >= deviationFloor`. A reader cannot hold both against a
+    // negative value.
+    const onTheFloor: [string, 0 | 1][] = [
+      ["a fat negative lineage under a negative-majority population", 1],
+      ["two fat positive lineages against a negative-majority tail", 0],
+    ];
+    for (const [shape, label] of onTheFloor) {
+      const { stratification } = createClusteredFolds(
+        unevenAtomShapes[shape],
+        CV_SEED,
+      );
+      const balance = balanceOf(stratification, label);
+      // The raw subtraction really is negative on these two, without which the clamp
+      // below would be asserting nothing.
+      expect(balance.deviation - balance.deviationFloor).toBeLessThan(0);
+      expect(balance.deviation - balance.deviationFloor).toBeGreaterThan(
+        -1e-12,
+      );
+      expect(balance.excessOverFloor).toBe(0);
+    }
+
+    // And nowhere across this file's populations is the published field negative.
+    for (const samples of [
+      chainedSamples,
+      classSkewedAtoms,
+      skewedAtoms,
+      imbalancedMixedAtoms,
+      ...Object.values(unevenAtomShapes),
+    ]) {
+      for (const balance of createClusteredFolds(samples, CV_SEED)
+        .stratification.balance) {
+        expect(balance.excessOverFloor).toBeGreaterThanOrEqual(0);
+      }
+    }
   });
 
   it("names a cluster too large for even balancing instead of accepting it silently", () => {
@@ -849,6 +971,63 @@ describe("aggregateOutOfFold", () => {
     expect(
       aggregateOutOfFold([...rows].sort((a, b) => (a.id < b.id ? 1 : -1))),
     ).toEqual(forward);
+
+    // A THIRD permutation, which the 111 rows above cannot see: reversing the rows
+    // INSIDE each cluster while leaving the grouping — and the order the clusters appear
+    // in — untouched. Two sorts make this function order-invariant, the sorted visit of
+    // roots and the sorted visit of rows within a root, and only the first is load-bearing
+    // for the two permutations above: with the in-cluster sort removed and the root sort
+    // kept, both stay green, because the fixture's clusters run 1 to 9 rows and their sums
+    // of squared residuals are FP-exact in either direction. That is the same weakness the
+    // three-row fixture had, one size up.
+    //
+    // Seven clusters of 2 to 23 rows, predictions on a /9973 grid, is where it bites:
+    // the per-cluster sum of squared residuals moves in the last digit
+    // (0.4043546072652704 against 0.40435460726527045) when the rows arrive reversed
+    // inside the cluster. The ECE cannot see this permutation at all — its groups are
+    // keyed by exact score and every row of one cluster carries the same weight, so the
+    // addends of a group are re-ordered only by the cluster visit — which is why the
+    // in-cluster sort is what the BRIER needs.
+    const deep: OutOfFoldPrediction[] = [];
+    for (let cluster = 0; cluster < 7; cluster += 1) {
+      const size = 2 + ((cluster * 7) % 24);
+      for (let row = 0; row < size; row += 1) {
+        deep.push({
+          id: `d_${cluster}_${String(row).padStart(2, "0")}`,
+          clusterRoot: `cd_${cluster}`,
+          // Integer arithmetic and one division by a prime: the value is the same on
+          // every engine, and it is NOT a dyadic rational, so the sums are inexact.
+          prediction: ((cluster * 7919 + row * 104729) % 9973) / 9973,
+          label: ((cluster * 5 + row * 3) % 4 === 0 ? 1 : 0) as 0 | 1,
+        });
+      }
+    }
+    expect(deep).toHaveLength(89);
+    const deepForward = aggregateOutOfFold(deep);
+    expect(deepForward.clusters).toBe(7);
+
+    const reverseInsideClusters = (
+      original: readonly OutOfFoldPrediction[],
+    ): OutOfFoldPrediction[] => {
+      const byCluster = new Map<string, OutOfFoldPrediction[]>();
+      for (const row of original) {
+        const bucket = byCluster.get(row.clusterRoot);
+        if (bucket === undefined) byCluster.set(row.clusterRoot, [row]);
+        else bucket.push(row);
+      }
+      return [...byCluster.values()].flatMap((bucket) => [...bucket].reverse());
+    };
+    const inCluster = reverseInsideClusters(deep);
+    // The permutation is the one claimed: every position still holds the same cluster,
+    // so nothing here is testing a regrouping.
+    expect(inCluster.map((row) => row.clusterRoot)).toEqual(
+      deep.map((row) => row.clusterRoot),
+    );
+    expect(inCluster.map((row) => row.id)).not.toEqual(
+      deep.map((row) => row.id),
+    );
+    expect(aggregateOutOfFold(inCluster)).toEqual(deepForward);
+    expect(aggregateOutOfFold([...deep].reverse())).toEqual(deepForward);
   });
 
   it("is NOT the estimator the release gate reads, and the difference has no reliable sign", () => {
