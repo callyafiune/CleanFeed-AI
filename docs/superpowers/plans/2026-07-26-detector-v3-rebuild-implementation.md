@@ -7066,7 +7066,10 @@ concessão foi gasta sem medição válida.
 **Mudança / procedimento:**
 1. Rodar `npm run verify` e `npm run typecheck:benchmark` — verde.
 2. `git status --short` — **árvore limpa**. Nenhuma modificação pendente em nenhum dos
-   arquivos enumerados por `EVALUATOR_FILES`; não usar contagem fixa.
+   arquivos enumerados por `EVALUATOR_FILES`; não usar contagem fixa. Se um caminho
+   aparecer como modificado com `git diff` e `git diff --cached` vazios, é a marca
+   fantasma de fim de linha: leia §10 antes de investigar, e trate o residual de 24
+   arquivos descrito lá **antes** de rodar o `fit`.
 3. Rodar `fit`.
 4. Recomputar o digest do avaliador e conferir que casa com o gravado em
    `frozen-calibration.json`.
@@ -7540,3 +7543,65 @@ Duas modificações não commitadas de 2026-07-25 continuam na árvore:
 espera pela publicação da API do candidato (`waitForFunction`, timeout de 300 s). **Ambas
 estão em `EVALUATOR_FILES`.** Elas precisam ser commitadas na Fase A, junto com A1/A2,
 e nunca depois de G5.
+
+## §10 Contrato de fim de linha: por que o repositório tem `.gitattributes`
+
+**Não remova `.gitattributes` achando que é preferência de estilo.** Ele existe porque
+G5 exige `git status --short` vazio e a configuração da máquina tornava isso inalcançável.
+
+**O mecanismo, medido nesta árvore.** Com `core.autocrlf=true` (o padrão do Git for
+Windows) e sem `.gitattributes`, um arquivo de texto é extraído em CRLF enquanto o blob
+permanece em LF, e o índice guarda o tamanho do arquivo CRLF. Quando qualquer ferramenta
+reescreve esse arquivo em LF, o tamanho deixa de casar e o caminho rápido `ie_modified`
+do git devolve `DATA_CHANGED` **sem comparar conteúdo**. O sintoma reproduzido em
+`benchmark/lab/common.py`:
+
+```
+git status --short   →  M benchmark/lab/common.py
+git diff             →  vazio
+git diff --cached    →  vazio
+git hash-object      →  2eba9d15737f18138b28e9056fbe9136657b59d4
+blob no índice       →  2eba9d15737f18138b28e9056fbe9136657b59d4
+```
+
+Fixar `eol=lf` faz a própria extração sair em LF: o que a ferramenta escreve é o que o
+git espera, e a marca fantasma não aparece. O mesmo atributo torna a identidade de bytes
+independente de plataforma — `computeEvaluatorDigest` e `computeInferenceCoreDigest`
+hasheiam os bytes **em disco**, e `git archive` aplica o atributo `eol`.
+
+**O atrito já custou tempo quatro vezes:** §9 (primeira revisão de qualidade reprovada por
+CRLF, e o corretor mediu errado ao verificar); A2-close (`git archive` produziu
+`inferenceCoreDigest` errado por converter para CRLF, e o baseline só foi reproduzido com
+`git cat-file blob`); um script de workflow gerado com 360 CRLF, recusado pelo validador de
+esquema por "control characters"; e C6, a marca fantasma que levou a este diagnóstico.
+
+**Armadilha ao medir CRLF no Git Bash:** `grep -c $'\r'` casa **toda** linha, porque o grep
+remove o CR em modo texto. Meça com `od -c` ou contando bytes em Python.
+
+**O que a mudança não fez.** A aplicação de `.gitattributes` seguida de
+`git add --renormalize .` foi no-op de bytes, verificado: os 548 blobs do índice, os 548
+hashes da árvore de trabalho, os hashes dos arquivos de `EVALUATOR_FILES`, o
+`evaluatorDigest`, o `inferenceCoreDigest` e o `runtimeParityDigest` ficaram idênticos, e
+os 345 arquivos com extensão binária declarada continuaram byte-idênticos sob o filtro
+`clean`. A lista de binários foi levantada da árvore, não copiada: `text=auto` já aplica a
+heurística de NUL do git, e as marcas `binary` fixam os casos em que essa heurística é a
+única defesa.
+
+**Residual que exige decisão do operador — não resolvido aqui.** 24 dos 544 arquivos de
+texto versionados continuam **em CRLF na árvore de trabalho**, porque `.gitattributes`
+governa a próxima extração e não reescreve o que já está em disco. Enquanto estiverem
+assim, cada um deles ainda produz a marca fantasma quando uma ferramenta o reescreve em
+LF. Um deles é `benchmark/rebuild-v3-policy.json`, que está em `EVALUATOR_FILES` — o que
+significa que o `evaluatorDigest` desta árvore hoje **depende da plataforma**:
+
+| leitura | evaluatorDigest |
+|---|---|
+| bytes em disco nesta árvore Windows (`rebuild-v3-policy.json` em CRLF) | `ef88d108d234a654bd61dfe44e7c4290274c805b2c3c5d4bbdee4d45bf8b7441` |
+| blobs do índice, isto é, o valor canônico em LF | `cb248cc3224b6d95d36e3506b6525f53642eee4e418d5e453ac0430b99f41840` |
+
+Converter a árvore (`git checkout-index -f -a`, que não mexe em `HEAD`) elimina o residual
+e move o `evaluatorDigest` para o valor canônico. Nenhum artefato versionado registra
+`ef88d108…` hoje, e o congelamento é G5, muito à frente — mas a decisão é do operador e
+**não foi tomada nesta tarefa**, porque a verificação exigia que nenhum digest se movesse.
+Qualquer edição futura de `benchmark/rebuild-v3-policy.json` por ferramenta move esse
+digest como efeito colateral, então a conversão deve acontecer **antes** de G5.

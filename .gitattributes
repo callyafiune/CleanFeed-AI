@@ -1,0 +1,63 @@
+# End-of-line contract. This is a tooling invariant, not a style preference:
+# removing it breaks digests and makes `git status` unreliable.
+#
+# Under `core.autocrlf=true` (the Git for Windows default) a text file is checked
+# out as CRLF while its blob stays LF. The index caches the CRLF file's stat size.
+# When any tool then rewrites that file in LF, the size no longer matches and
+# git's `ie_modified` fast path returns DATA_CHANGED WITHOUT comparing content:
+# `git status` reports the path as modified while `git diff` and
+# `git diff --cached` are both empty and `git hash-object` equals the index blob.
+# Pinning `eol=lf` makes the checkout itself LF, so what tools write is what git
+# expects and the phantom mark cannot appear.
+#
+# It also makes byte-level identity platform-independent. `computeEvaluatorDigest`
+# and `computeInferenceCoreDigest` hash the bytes ON DISK, and `git archive`
+# applies the `eol` attribute; with the attribute unset, the same commit yields a
+# different digest on a CRLF checkout than on an LF one.
+#
+# Measuring CRLF in Git Bash: `grep -c $'\r'` matches EVERY line, because grep
+# strips the CR in text mode. Use `od -c`, or count bytes in Python.
+
+* text=auto eol=lf
+
+# Binary formats present in this repository's tree. `text=auto` already applies
+# git's own NUL-byte heuristic, so an unlisted binary is normally detected and
+# left alone; these marks pin the cases where that heuristic is the only defence,
+# because a binary run through EOL conversion is silent file corruption. Every
+# extension below was found on disk under this worktree — all are gitignored
+# today, which is exactly why the marks matter: they must already be in force the
+# first time one is staged.
+
+# Model and inference assets: public/models/**/onnx, public/vendor/transformers-wasm,
+# benchmark/data/checkpoints/**.
+*.onnx binary
+*.wasm binary
+*.safetensors binary
+
+# Archives. benchmark/data/*.tgz exist here; the four source snapshots are .bz2
+# and .zip, and the external Madras set is .parquet.
+*.7z binary
+*.bz2 binary
+*.gz binary
+*.parquet binary
+*.tgz binary
+*.xz binary
+*.zip binary
+
+# Python bench by-products: __pycache__ under benchmark/lab, pickled estimators.
+*.pkl binary
+*.pyc binary
+
+# The pinned Chrome for Testing build under .cache/. Never committed, but a
+# `git add -f` of that tree must not mangle it.
+*.bin binary
+*.dat binary
+*.dll binary
+*.exe binary
+*.hyb binary
+*.pak binary
+*.pb binary
+
+# NOT binary despite the name: benchmark/data/candidates/**/*.raw are raw JSON
+# provider responses, and *.jsonl is the corpus line format. Both are text and
+# must normalize to LF like everything else.
