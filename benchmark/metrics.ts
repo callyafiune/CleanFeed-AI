@@ -92,12 +92,46 @@ export interface Prediction {
   memoryBytes?: number;
 }
 
+/**
+ * Which scoring outcome a latency block was measured over. Carried ON the block so
+ * a consumer that receives one cannot read a duration without knowing whose it is
+ * (R7) — the same reason `DecisionMetrics` carries its own `family`.
+ */
+export type LatencyPopulation = "scored" | "abstained" | "error";
+
 export interface LatencyMetrics {
+  population: LatencyPopulation;
   sampleSize: number;
   meanMs: number;
   p50Ms: number;
   p95Ms: number;
   maxMs: number;
+}
+
+/**
+ * Latency SPLIT BY OUTCOME and never pooled.
+ *
+ * This is the fourth door of the §3.1 asymmetry A3 closed for the decision
+ * families, and the one nothing guarded because latency was never a gate: a failed
+ * inference reported `latencyMs: 0`, `0` is finite, the aggregate filtered on
+ * finiteness alone, and every failure therefore pulled the PUBLISHED mean, p50 and
+ * p95 down. On the run of 2026-07-25 that would be 325 zero-millisecond samples in
+ * 5.000 — 6,5% of the denominator, all in the flattering direction.
+ *
+ * So `scored` is the aggregate a budget is read from, and the other two outcomes
+ * get their OWN blocks. There is deliberately no pooled total: how long a document
+ * took to fail is a real and useful number, but it is not a scoring cost and
+ * summing the two would recreate exactly the defect. Knowing that it aborted is
+ * one thing; knowing in how long is another, and it is the one that informs the
+ * budget.
+ *
+ * `null` means the population is EMPTY, which cannot be misread as a latency of
+ * zero — the reading a zero-filled block invited.
+ */
+export interface LatencyByStatus {
+  scored: LatencyMetrics | null;
+  abstained: LatencyMetrics | null;
+  errored: LatencyMetrics | null;
 }
 
 export interface MemoryMetrics {
@@ -363,23 +397,22 @@ function recallAtFpr(
   return { targetFpr, ...best };
 }
 
+/**
+ * The legacy row type REQUIRES a score, so it cannot represent an abstention or a
+ * failure at all: every `Prediction` is a scored row by construction, and the block
+ * declares that population rather than leaving it to be assumed. A caller that has
+ * unscored rows to report belongs on `EvaluationItem`, whose union keeps them apart
+ * — substituting a score to fit them in here is the defect A3 removed.
+ */
 function latencyMetrics(
   predictions: readonly Prediction[],
 ): LatencyMetrics | undefined {
-  const samples = predictions
-    .map((prediction) => prediction.latencyMs)
-    .filter((value): value is number => isFiniteNumber(value))
-    .sort((a, b) => a - b);
-  if (samples.length === 0) return undefined;
-
-  const sum = samples.reduce((total, value) => total + value, 0);
-  return {
-    sampleSize: samples.length,
-    meanMs: sum / samples.length,
-    p50Ms: percentile(samples, 0.5),
-    p95Ms: percentile(samples, 0.95),
-    maxMs: samples[samples.length - 1],
-  };
+  return (
+    latencyOf(
+      predictions.map((prediction) => prediction.latencyMs),
+      "scored",
+    ) ?? undefined
+  );
 }
 
 function memoryMetrics(
@@ -1116,7 +1149,9 @@ export interface EvaluationMetrics {
     "prevalence01" | "prevalence05" | "prevalence10",
     number
   >;
-  latency: LatencyMetrics;
+  // One block per scoring outcome, never pooled: the budget is read off `scored`
+  // and the cost of a failure is published beside it, not inside it.
+  latency: LatencyByStatus;
   memory: MemoryMetrics;
   // Span IoU, token precision/recall and localized-path recall, per cohort, in
   // both status families, all diagnostic in v3 — and every cohort restates the
@@ -3722,16 +3757,30 @@ function isEligible(record: BenchmarkRecord, minimumWords: number): boolean {
   return record.language === "pt-BR" && record.wordCount >= minimumWords;
 }
 
-function latencyMetricsAll(items: readonly EvaluationItem[]): LatencyMetrics {
-  const samples = items
-    .map((item) => item.latencyMs)
+function latencyMetricsAll(items: readonly EvaluationItem[]): LatencyByStatus {
+  const samplesOf = (population: LatencyPopulation): (number | undefined)[] =>
+    items
+      .filter((item) => item.status === population)
+      .map((item) => item.latencyMs);
+  return {
+    scored: latencyOf(samplesOf("scored"), "scored"),
+    abstained: latencyOf(samplesOf("abstained"), "abstained"),
+    errored: latencyOf(samplesOf("error"), "error"),
+  };
+}
+
+function latencyOf(
+  values: readonly (number | undefined)[],
+  population: LatencyPopulation,
+): LatencyMetrics | null {
+  const samples = values
     .filter((value): value is number => isFiniteNumber(value))
     .sort((a, b) => a - b);
-  if (samples.length === 0) {
-    return { sampleSize: 0, meanMs: 0, p50Ms: 0, p95Ms: 0, maxMs: 0 };
-  }
+  if (samples.length === 0) return null;
+
   const sum = samples.reduce((total, value) => total + value, 0);
   return {
+    population,
     sampleSize: samples.length,
     meanMs: sum / samples.length,
     p50Ms: percentile(samples, 0.5),

@@ -120,9 +120,16 @@ function failedStatus(errorCode: string): ModelBenchmarkStatusV1 {
  * decided by {@link selectFailureDetail} — the rule lives in the shared contract
  * so it is unit-testable without a real Chrome run, since this module is
  * browser-only.
+ *
+ * `latencyMs` is a REQUIRED argument, not a default of zero. A failure that
+ * reported `0` was a finite sample the aggregate could not tell from a
+ * zero-millisecond success, and it pulled the published latency down once per
+ * failure (`LatencyByStatus` in benchmark/metrics.ts). The caller owns the clock
+ * because only the caller knows when the attempt began.
  */
 function errorScore(
   reasonCode: string,
+  latencyMs: number,
   cause?: unknown,
 ): ModelBenchmarkScoreV1 {
   return {
@@ -133,8 +140,26 @@ function errorScore(
     reasonCode,
     failureDetail: selectFailureDetail(reasonCode, cause),
     coverage: 0,
-    latencyMs: 0,
+    latencyMs,
     memoryBytes: null,
+  };
+}
+
+/**
+ * The scoring function of an assembly that never produced a runtime: it refuses
+ * every document with the same code. The refusal is TIMED like any other outcome
+ * rather than declared as zero — it is genuinely cheap, and that is a measurement,
+ * not an assumption.
+ */
+function refuseEveryDocument(
+  reasonCode: string,
+  cause?: unknown,
+): () => Promise<ModelBenchmarkScoreV1> {
+  return () => {
+    const startedAt = performance.now();
+    return Promise.resolve(
+      errorScore(reasonCode, performance.now() - startedAt, cause),
+    );
   };
 }
 
@@ -364,7 +389,7 @@ async function assemble(): Promise<ModelBenchmarkApi> {
   if (!(await assetPresent(onnxUrl))) {
     return {
       status: failedStatus("MODEL_ARTIFACT_MISSING"),
-      score: () => Promise.resolve(errorScore("MODEL_ARTIFACT_MISSING")),
+      score: refuseEveryDocument("MODEL_ARTIFACT_MISSING"),
     };
   }
 
@@ -384,15 +409,14 @@ async function assemble(): Promise<ModelBenchmarkApi> {
       error instanceof CleanFeedError ? error.code : "MODEL_BENCHMARK_FAILED";
     return {
       status: failedStatus(code),
-      score: () => Promise.resolve(errorScore(code, error)),
+      score: refuseEveryDocument(code, error),
     };
   }
 
   if (!identityMatchesParity(runtime.identity, parity)) {
     return {
       status: failedStatus("RUNTIME_PARITY_IDENTITY_MISMATCH"),
-      score: () =>
-        Promise.resolve(errorScore("RUNTIME_PARITY_IDENTITY_MISMATCH")),
+      score: refuseEveryDocument("RUNTIME_PARITY_IDENTITY_MISMATCH"),
     };
   }
 
@@ -418,9 +442,15 @@ async function assemble(): Promise<ModelBenchmarkApi> {
   return {
     status,
     score: async (text: string): Promise<ModelBenchmarkScoreV1> => {
+      // The clock that survives a throw. `scoreDocument` starts its own for the
+      // outcomes it returns itself; this one exists because an outcome built in
+      // the catch has no access to that one, and reporting the elapsed time of a
+      // failure as zero is the defect this file used to carry.
+      const startedAt = performance.now();
       try {
         return await scoreDocument(runtime, plan, text);
       } catch (error) {
+        const latencyMs = performance.now() - startedAt;
         if (
           error instanceof CleanFeedError &&
           error.code === "INSUFFICIENT_EVIDENCE"
@@ -432,7 +462,7 @@ async function assemble(): Promise<ModelBenchmarkApi> {
             evidenceQuality: "unsupported",
             reasonCode: "INSUFFICIENT_EVIDENCE",
             coverage: 0,
-            latencyMs: 0,
+            latencyMs,
             memoryBytes: null,
           };
         }
@@ -440,6 +470,7 @@ async function assemble(): Promise<ModelBenchmarkApi> {
           error instanceof CleanFeedError
             ? error.code
             : "MODEL_BENCHMARK_FAILED",
+          latencyMs,
           error,
         );
       }
@@ -462,7 +493,7 @@ void (async () => {
       error instanceof CleanFeedError ? error.code : "MODEL_BENCHMARK_FAILED";
     api = {
       status: failedStatus(code),
-      score: () => Promise.resolve(errorScore(code, error)),
+      score: refuseEveryDocument(code, error),
     };
   }
   // Publish only after a terminal assembly outcome, so the scorer never reads a

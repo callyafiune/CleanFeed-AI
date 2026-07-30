@@ -26,8 +26,12 @@ import { REBUILD_V3_POLICY } from "../rebuild-v3-policy.ts";
 import { ResamplingUnitError } from "../bootstrap.ts";
 import type { BenchmarkRecord } from "../schema.ts";
 
-function prediction(label: Prediction["label"], score: number): Prediction {
-  return { label, score };
+function prediction(
+  label: Prediction["label"],
+  score: number,
+  telemetry: { latencyMs?: number } = {},
+): Prediction {
+  return { label, score, ...telemetry };
 }
 
 // --- v2 evaluation fixtures -----------------------------------------------
@@ -979,10 +983,86 @@ describe("computeEvaluationMetrics", () => {
 
   it("aggregates only present latency and memory samples", () => {
     const metrics = computeEvaluationMetrics(SEPARABLE, OPTIONS);
-    expect(metrics.latency.sampleSize).toBe(80);
-    expect(metrics.latency.maxMs).toBe(30);
+    expect(metrics.latency.scored).toMatchObject({
+      sampleSize: 80,
+      maxMs: 30,
+    });
     expect(metrics.memory.sampleSize).toBe(80);
     expect(metrics.memory.maxBytes).toBe(3_000);
+  });
+
+  // The latency aggregate is the FOURTH door of the same §3.1 asymmetry, and the
+  // one nothing guarded because latency was never a gate: a failed inference
+  // reported `latencyMs: 0`, `0` is finite, and the aggregate filtered on
+  // finiteness alone — so every failure pushed the mean, p50 and p95 of the
+  // PUBLISHED latency down. The pair below mirrors what A3 fixed for the two
+  // decision families: with failures present the scored block must DIFFER from
+  // the pooled number, and with none it must COINCIDE with it.
+  it("keeps failed and abstained rows out of the published latency aggregate", () => {
+    const items = [
+      ...SEPARABLE,
+      item({ author: "u1", label: "human", status: "abstained", latencyMs: 3 }),
+      item({ author: "u2", label: "human", status: "error", latencyMs: 0 }),
+      item({ author: "u3", label: "human", status: "error", latencyMs: 1 }),
+      item({ author: "u4", label: "human", status: "error", latencyMs: 2 }),
+    ];
+
+    const metrics = computeEvaluationMetrics(items, OPTIONS);
+
+    expect(metrics.latency).toEqual({
+      scored: {
+        population: "scored",
+        sampleSize: 80,
+        meanMs: 20,
+        p50Ms: 10,
+        p95Ms: 30,
+        maxMs: 30,
+      },
+      abstained: {
+        population: "abstained",
+        sampleSize: 1,
+        meanMs: 3,
+        p50Ms: 3,
+        p95Ms: 3,
+        maxMs: 3,
+      },
+      errored: {
+        population: "error",
+        sampleSize: 3,
+        meanMs: 1,
+        p50Ms: 1,
+        p95Ms: 2,
+        maxMs: 2,
+      },
+    });
+
+    // The case is DISCRIMINATING: pooling the four undecided samples into the
+    // published mean is what the defect did, and it lands below the scored mean.
+    const pooledSamples = items
+      .map((entry) => entry.latencyMs)
+      .filter((value): value is number => value !== undefined);
+    const pooledMean =
+      pooledSamples.reduce((total, value) => total + value, 0) /
+      pooledSamples.length;
+    expect(pooledSamples).toHaveLength(84);
+    expect(pooledMean).toBeLessThan(20);
+  });
+
+  it("publishes the scored latency aggregate over every sample when nothing failed", () => {
+    const metrics = computeEvaluationMetrics(SEPARABLE, OPTIONS);
+    const pooledSamples = SEPARABLE.map((entry) => entry.latencyMs).filter(
+      (value): value is number => value !== undefined,
+    );
+    const pooledMean =
+      pooledSamples.reduce((total, value) => total + value, 0) /
+      pooledSamples.length;
+
+    expect(metrics.latency.scored?.sampleSize).toBe(pooledSamples.length);
+    expect(metrics.latency.scored?.meanMs).toBe(pooledMean);
+    // A block is `null` when the population is EMPTY, which cannot be read as a
+    // latency of zero.
+    expect(metrics.latency.abstained).toBeNull();
+    expect(metrics.latency.errored).toBeNull();
   });
 
   it("reports a null visual-action block when no visual threshold was frozen", () => {
@@ -2367,6 +2447,28 @@ describe("computeBinaryMetrics", () => {
 
     expect(metrics.rocAuc).toBe(1);
     expect(metrics.prAuc).toBe(1);
+  });
+
+  // The legacy row type REQUIRES a score, so it cannot represent an abstention or
+  // a failure at all. That is why its latency block is scored-only, and the block
+  // says so on itself instead of leaving the population to be assumed (R7).
+  it("names the population of the latency block it publishes", () => {
+    const metrics = computeBinaryMetrics(
+      [
+        prediction("ai", 0.9, { latencyMs: 30 }),
+        prediction("human", 0.1, { latencyMs: 10 }),
+      ],
+      { blockThreshold: 0.5 },
+    );
+
+    expect(metrics.latency).toEqual({
+      population: "scored",
+      sampleSize: 2,
+      meanMs: 20,
+      p50Ms: 10,
+      p95Ms: 30,
+      maxMs: 30,
+    });
   });
 });
 

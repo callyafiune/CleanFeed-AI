@@ -403,7 +403,7 @@ function minimalMetrics(): EvaluationMetrics {
       byPlatform: [],
     },
     simulatedPrecision: { prevalence01: 0, prevalence05: 0, prevalence10: 0 },
-    latency: { sampleSize: 0, meanMs: 0, p50Ms: 0, p95Ms: 0, maxMs: 0 },
+    latency: { scored: null, abstained: null, errored: null },
     memory: { sampleSize: 0, meanBytes: 0, maxBytes: 0 },
     mixed: {
       atLeastHalfAi: {

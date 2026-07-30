@@ -287,7 +287,18 @@ function fullMetrics(
       prevalence05: 0.4,
       prevalence10: 0.6,
     },
-    latency: { sampleSize: 10, meanMs: 5, p50Ms: 5, p95Ms: 8, maxMs: 10 },
+    latency: {
+      scored: {
+        population: "scored",
+        sampleSize: 10,
+        meanMs: 5,
+        p50Ms: 5,
+        p95Ms: 8,
+        maxMs: 10,
+      },
+      abstained: null,
+      errored: null,
+    },
     memory: { sampleSize: 10, meanBytes: 100, maxBytes: 200 },
     mixed: {
       atLeastHalfAi: {
