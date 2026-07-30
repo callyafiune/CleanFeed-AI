@@ -3823,6 +3823,14 @@ suficiente por estrato**.
 > faz — e texto de IA não tem autor humano. Exigir grupos > 1 incentivaria agrupamento
 > artificial, que é o oposto do que se quer.
 
+> **Restrição de reserva herdada de A4-fix (leia antes de declarar uma família).** A
+> auditoria do split deriva **reserva honrada**: para cada família declarada, *toda*
+> linha-registro em `test` e *nenhuma* fora. Família que cai só em `test` **sem** ter sido
+> declarada não reprova mais o split (vai para `incidentalTestOnlyGeneratorFamilies`, que é
+> diagnóstico), mas a restrição de corpus permanece: **toda família geradora não declarada
+> precisa ter ao menos um registro fora de `test`**; caso contrário ela vira concentração
+> acidental e consome capacidade do bloco cego sem sustentar alegação de gerador não visto.
+
 
 #### C2 — execução (2026-07-28)
 
@@ -6716,7 +6724,8 @@ Invariantes:
    `humanSourceType` × faixa de comprimento **dentro** da atribuição por cluster.
 2. **Coortes *OOD* exclusivas do teste**, explicitamente separadas dos core: a família
    geradora retida em D3, conteúdo misto mecanístico e a receita `humanizado` já
-   existente. Templates e decodings comuns são variados nas partições core, não
+   existente. **A reserva é declarada, nunca inferida da partição** — ver a
+   restrição de A4-fix repetida ao fim desta seção. Templates e decodings comuns são variados nas partições core, não
    artificialmente chamados de unseen. A suíte humana D2 permanece externa ao split e
    diagnóstica. Não criar “fonte humana não vista” ou “período não visto” artificial:
    faltam fontes in-domain, e os quartis temporais core são definidos pela política e
@@ -6758,6 +6767,15 @@ benchmark/tests/split-artifact.test.ts benchmark/tests/split-audit.test.ts
 benchmark/tests/cluster-exposure-ledger.test.ts`; repetir com a mesma seed produz os
 mesmos digests e uma segunda gravação da exposição falha.
 
+> **Restrição de reserva herdada de A4-fix.** A reserva de família geradora é
+> **declarada**, nunca inferida da partição, e o que a auditoria devolve é **reserva
+> honrada**: cada família declarada com *todas* as suas linhas-registro em `test` e
+> *nenhuma* fora. Consequência para o congelamento: **toda família geradora não declarada
+> precisa ter ao menos um registro fora de `test`**. Uma que caia só no teste sem
+> declaração não reprova mais o split — é publicada como
+> `incidentalTestOnlyGeneratorFamilies`, diagnóstico — mas consome capacidade do bloco cego
+> sem sustentar alegação de gerador não visto.
+
 ### E3 — Gates de composição do split
 
 **Depende de:** E2.
@@ -6775,7 +6793,12 @@ mesmos digests e uma segunda gravação da exposição falha.
   contagem e unidades amostrais separadas por base; `date-cutoff` sustenta os gates *core*;
   `observed-process` só sustenta gate ou alegação própria se atingir sozinho o poder
   pré-registrado;
-- **igualdade exata** entre heldouts declarados, marcados, auditados e publicados (A4);
+- **igualdade exata** entre heldouts declarados, marcados, auditados e publicados (A4).
+  Depois de A4-fix o que se compara é **reserva honrada** — família declarada cujas
+  linhas-registro estão *todas* em `test` e *nenhuma* fora — e **não** "família que caiu só
+  no teste". `incidentalTestOnlyGeneratorFamilies` é diagnóstico publicado: não reprova o
+  gate e **não** entra em `m` (Bonferroni). Declarar uma família que o corpus estoca com
+  nada continua falhando duro;
 - **divergência calibração-vs-teste**, comparando **apenas os estratos *core*, com pesos
   padronizados**: o fit mediu FPR 3,85% e o teste 0,00% com o mesmo limiar, e divergência
   dessa ordem entre o conjunto que escolheu o limiar e o que o avalia deve ser um gate de
