@@ -916,12 +916,22 @@ export async function sealDataset(
         (record) =>
           record.label === "human" && generatorFamilyOf(record) === family,
       );
-      // On a v3 corpus this branch is unreachable and that is the stronger state,
-      // not a reason to drop it: `AXIS_STATE_RULE` allows `generatorFamily` only
-      // `notApplicable` on a human row, so `validateBenchmarkRecord` above refuses
-      // the leak first, with BENCHMARK_RECORD_INVALID. It stays because v2 records
-      // are what the sealed corpus on disk still is, and there the axis is a bare
-      // string a human row may legally carry.
+      // NO current path reaches this branch, in either version, and that is the
+      // stronger state rather than a reason to drop it. `validateBenchmarkRecord`
+      // above refuses the leak first with BENCHMARK_RECORD_INVALID: on v3 because
+      // `AXIS_STATE_RULE` allows `generatorFamily` only `notApplicable` on a human
+      // row, and on v2 because a family with no `generation` behind it is refused
+      // outright (A4-fix imposed that coherence in both directions — the one-way rule
+      // let a human row carry a family, and this guard runs only for a `release`
+      // corpus, so a non-release corpus accepted the row and counted it in the
+      // `generatorExposure` denominator).
+      //
+      // It stays because the two refusals are about the RECORD and this one is about
+      // the CORPUS: it is the only place that knows which families were reserved, so
+      // it is the line that would still speak if the record-level coherence were
+      // narrowed, or if a caller ever assembled a record array past the validator.
+      // What it may not claim any more is that it is v2's last line — it is nobody's
+      // first line today.
       if (appearsInHuman) {
         fail(
           "DATASET_COVERAGE_INVALID",

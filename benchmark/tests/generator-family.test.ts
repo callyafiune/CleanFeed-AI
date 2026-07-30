@@ -326,6 +326,55 @@ describe("schema refuses a divergent generator-family spelling", () => {
     ).toThrow(/groups\.generatorFamily/);
   });
 
+  // --- the OTHER direction: a family with no recipe behind it ---------------
+  //
+  // The rule used to be one-way (`generation` ⇒ `groups.generatorFamily`), and the
+  // asymmetry was not cosmetic. `generatorFamilyOf` reads the canonical field with
+  // no reference to `generation`, so a row carrying a family and no recipe entered
+  // the `generatorExposure` axis as `seen`/`unseen` — on a HUMAN row that put a
+  // negative into the denominator of that slice's FPR floor, widening the very
+  // slice §1 of the assessment says the FPR depends on. `dataset-manifest.ts` has a
+  // release-only guard for the human case, but a non-release corpus never runs it,
+  // and a v2 mixed row was never covered at all. Refused at the origin now.
+  function withFamilyOnly(label: BenchmarkLabel): Record<string, unknown> {
+    const record = plain({
+      id: label === "human" ? "h1" : "x1",
+      label,
+      createdAt: 1,
+      domain: "linkedin",
+      wordCount: 120,
+      author: "a",
+      source: "s",
+      domainSource: "ds",
+      collectionBatch: "cb",
+      nearDuplicate: "nd",
+      derivationRoot: label === "human" ? "h1" : "parent1",
+    });
+    if (label === "mixed") {
+      record.mixture = {
+        aiFraction: 0.6,
+        humanFraction: 0.4,
+        spans: [{ start: 0, end: 5, origin: "ai" }],
+        generationMode: "mechanistic",
+      };
+    }
+    (record.groups as Record<string, unknown>).generatorFamily =
+      CANONICAL_SPELLING;
+    return record;
+  }
+
+  it("refuses a human record that names a family with no recipe behind it", () => {
+    expect(() => validateBenchmarkRecord(withFamilyOnly("human"))).toThrow(
+      /groups\.generatorFamily/,
+    );
+  });
+
+  it("refuses a mixed record with a family and no recipe, where v2 left the recipe optional", () => {
+    expect(() => validateBenchmarkRecord(withFamilyOnly("mixed"))).toThrow(
+      /groups\.generatorFamily/,
+    );
+  });
+
   // generator-family.ts cannot import schema.ts (schema.ts imports it), so it keeps
   // its own copy of the pseudonym character class. This pins that the two agree by
   // running the values through the validator itself, not by comparing regexes: a
@@ -510,6 +559,32 @@ describe("normalizeGeneratorFamily", () => {
   it("preserves case, so two provider labels never collapse into one family", () => {
     expect(normalizeGeneratorFamily("Gemini-3.5")).toBe("Gemini-3_5");
     expect(normalizeGeneratorFamily("gemini-3.5")).toBe("gemini-3_5");
+  });
+
+  // The trim covers BOTH separators of the token class, not just `_`. Trimming only
+  // `_` left `gemini-3.5-` normalizing to `gemini-3_5-`: canonical by the fixed-point
+  // definition, and a DIFFERENT family from `gemini-3_5` — exactly the pair of
+  // spellings of one family the module exists to make impossible.
+  it("trims both separators off both ends, so one label cannot yield two families", () => {
+    for (const [raw, canonical] of [
+      ["gemini-3.5-", "gemini-3_5"],
+      ["-gemini-3.5", "gemini-3_5"],
+      ["_gemini-3.5_", "gemini-3_5"],
+      ["--gemini-3.5--", "gemini-3_5"],
+    ] as const) {
+      expect(normalizeGeneratorFamily(raw)).toBe(canonical);
+    }
+    expect(isCanonicalGeneratorFamily("gemini-3_5-")).toBe(false);
+    expect(isCanonicalGeneratorFamily("-gemini-3_5")).toBe(false);
+    expect(() => asGeneratorFamily("gemini-3_5-")).toThrow(
+      /not in canonical form/,
+    );
+  });
+
+  it("refuses a label made only of separators, which trims down to nothing", () => {
+    expect(() => normalizeGeneratorFamily("-_-")).toThrow(
+      /carries no character of/,
+    );
   });
 });
 

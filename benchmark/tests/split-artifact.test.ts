@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 
 import {
   buildSplitArtifact,
+  SplitArtifactError,
   validateSplitArtifact,
   type SplitArtifact,
 } from "../split-artifact.ts";
@@ -16,6 +17,7 @@ import type {
 import {
   asGeneratorFamily,
   normalizeGeneratorFamily,
+  type GeneratorFamily,
 } from "../generator-family.ts";
 
 const SHA = "a".repeat(64);
@@ -496,6 +498,64 @@ describe("validateSplitArtifact", () => {
         RELEASE_DATASET,
       ),
     ).rejects.toThrow(/assignment/i);
+  });
+
+  // The two refusals a sealed artifact re-entering the typed world from JSON needs,
+  // exercised through `buildSplitArtifact` so `splitDigest` is computed OVER the
+  // divergence: mutating a built artifact in place would fail on the digest first
+  // and never reach these branches, which is how both mappings stayed untested.
+  it("rejects a sealed artifact whose audited reserve is not the declared one", async () => {
+    const artifact = await buildSplitArtifact({
+      manifest: MANIFEST,
+      records: RELEASE_DATASET,
+      split: RELEASE_SPLIT,
+      policy: POLICY,
+      // The partitions honoured nothing while the policy reserved `family-unseen`:
+      // the report would print a reserve the blind block does not hold.
+      audit: { ...RELEASE_AUDIT, heldOutGeneratorFamilies: [] },
+    });
+    const failure = await validateSplitArtifact(
+      artifact,
+      MANIFEST,
+      RELEASE_DATASET,
+    ).catch((error: unknown) => error);
+
+    expect(failure).toBeInstanceOf(SplitArtifactError);
+    expect((failure as SplitArtifactError).code).toBe(
+      "SPLIT_ARTIFACT_HELD_OUT_FAMILY_DISAGREEMENT",
+    );
+    expect((failure as Error).message).toMatch(/omits \[family-unseen\]/u);
+  });
+
+  it("rejects a sealed artifact carrying the provider's dotted spelling", async () => {
+    const artifact = await buildSplitArtifact({
+      manifest: MANIFEST,
+      records: RELEASE_DATASET,
+      split: RELEASE_SPLIT,
+      policy: POLICY,
+      audit: {
+        ...RELEASE_AUDIT,
+        // A JSON-loaded artifact is only nominally typed, so the cast models the
+        // real hazard: a dotted label that reached the file cannot be compared as a
+        // plain string, it has to be refused.
+        heldOutGeneratorFamilies: [
+          "family.unseen",
+        ] as unknown as GeneratorFamily[],
+      },
+    });
+    const failure = await validateSplitArtifact(
+      artifact,
+      MANIFEST,
+      RELEASE_DATASET,
+    ).catch((error: unknown) => error);
+
+    expect(failure).toBeInstanceOf(SplitArtifactError);
+    expect((failure as SplitArtifactError).code).toBe(
+      "SPLIT_ARTIFACT_HELD_OUT_FAMILY_INVALID",
+    );
+    expect((failure as Error).message).toMatch(
+      /audit\.heldOutGeneratorFamilies\[0\]/u,
+    );
   });
 
   it("rejects an artifact whose audit did not pass", async () => {

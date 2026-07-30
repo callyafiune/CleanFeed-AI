@@ -437,8 +437,16 @@ export function connectedComponentRoots(
  * set `component.heldOut` on at least one component of this dataset. Exists so
  * the pipeline can assert exact agreement between what the manifest reserved and
  * what the split acted on: a reservation the splitter silently ignored used to be
- * invisible, and was precisely the A4 defect. Derived through the same
- * `buildComponents` call the splitter uses, never a re-implementation of it.
+ * invisible, and was precisely the A4 defect.
+ *
+ * It calls the same `buildComponents` the splitter calls — never a
+ * re-implementation of the marking rule — but it is a SECOND call, over the whole
+ * record set, whose result the splitter's own call never sees. The two therefore
+ * agree by DETERMINISM (same records, same declared set, same seed, no clock and no
+ * randomness) and not by identity, and the cost is one extra union-find pass. Making
+ * it identity would mean `createBlockedSplit` returning its marks alongside the
+ * partitions, which changes the shape every caller destructures; that is a
+ * deliberate deferral, not an oversight.
  */
 export function markedHeldOutGeneratorFamilies(
   records: readonly BenchmarkRecord[],

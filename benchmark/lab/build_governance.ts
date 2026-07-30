@@ -14,6 +14,10 @@ import { argv } from "node:process";
 import { join, dirname } from "node:path";
 
 import {
+  asGeneratorFamily,
+  type GeneratorFamily,
+} from "../generator-family.ts";
+import {
   computeReviewedSourceManifestDigest,
   type ReviewedSourceManifestBody,
 } from "../source-manifest.ts";
@@ -42,6 +46,16 @@ async function main(): Promise<void> {
     // groups.collectionBatch name a batch the governance audit can match.
     generationBatches: ReviewedSourceManifestBody["generationBatches"];
   };
+
+  // The reservation is admitted into the canonical type HERE, at the write. Typed as
+  // raw `string[]` above because that is what the JSON holds, and mapped through
+  // `asGeneratorFamily` because this writer is the path C2 uses: a dotted provider
+  // label compiles into `manifest-template.json` otherwise and is only refused two
+  // steps later, in `validateDatasetManifest`, on a file nobody edited by hand.
+  // REFUSES rather than normalizes — the reservation has to be written in the same
+  // spelling every other place compares by exact equality.
+  const heldOutGeneratorFamilies: GeneratorFamily[] =
+    inputs.heldOutGeneratorFamilies.map(asGeneratorFamily);
 
   const sources = inputs.sources.map((s) => ({
     sourceId: s.sourceId,
@@ -73,7 +87,7 @@ async function main(): Promise<void> {
     createdAt: "2026-07-24T00:00:00.000Z",
     normalizationVersion: "cleanfeed-text-v1",
     annotationProtocolVersion: "annotation-v1",
-    heldOutGeneratorFamilies: inputs.heldOutGeneratorFamilies,
+    heldOutGeneratorFamilies,
     licenses: inputs.licenses.map((l) => ({
       id: l.id,
       name: l.name,
@@ -99,7 +113,7 @@ async function main(): Promise<void> {
     "utf-8",
   );
   process.stdout.write(
-    `governance escrito: ${sources.length} sources, held-out=${inputs.heldOutGeneratorFamilies.join(",")}, digest=${sourceManifestDigest.slice(0, 12)}...\n`,
+    `governance escrito: ${sources.length} sources, held-out=${heldOutGeneratorFamilies.join(",")}, digest=${sourceManifestDigest.slice(0, 12)}...\n`,
   );
 }
 

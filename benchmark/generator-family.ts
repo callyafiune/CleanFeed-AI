@@ -29,8 +29,17 @@
 //     assignable to it, so `heldOut.has(record.generation.family)` — the original
 //     defect — does not compile. That is the point: the wrong comparison is meant
 //     to be unwritable, not merely absent.
-//   * `generatorFamilyOf` is the only accessor consumers use, so there is exactly
-//     one place that decides which field holds the family.
+//   * `generatorFamilyOf` is the one place that decides WHICH FIELD holds the
+//     family, and the only accessor that answers "what family is this record's".
+//     Stated that narrowly on purpose. The splitter and the split audit also read
+//     the same field through `groupAxisIdentity` (benchmark/schema.ts), because to
+//     them `generatorFamily` is one of the nine grouping axes and the question is
+//     "do these two rows share this axis" — a different question, answered
+//     uniformly over all nine axes, and it reads the same field this accessor does.
+//     The earlier wording said "the only accessor consumers use", which was simply
+//     false, and a false contract is worse than a narrow one: `schema.ts` also
+//     exports `recordGeneratorFamily`, a version-aware read of the same axis with
+//     no caller today.
 //
 // It does NOT claim that two records with the same canonical family came from the
 // same model build, nor that different canonical families are independent
@@ -73,12 +82,18 @@ const NON_TOKEN_RUN = /[^A-Za-z0-9_-]+/g;
 
 // The raw rewrite, shared by the normalizer and the canonical predicate: collapse
 // every run of characters outside the token class into a single `_`, then drop
-// leading/trailing `_` so `gemini-3.5` and `gemini_3_5_` cannot both survive as
-// distinct "canonical" spellings. Case is PRESERVED: lowercasing would merge two
+// leading/trailing separators so `gemini-3.5` and `gemini_3_5_` cannot both survive
+// as distinct "canonical" spellings. Case is PRESERVED: lowercasing would merge two
 // provider labels that differ only in case, which is a loss of fact, not a
 // normalization. Returns "" when nothing survives.
+//
+// BOTH separators of the token class are trimmed, not just `_`. Trimming `_` alone
+// mapped `gemini-3.5-` to `gemini-3_5-`, which is a fixed point of this function and
+// therefore canonical — and a different family from `gemini-3_5`. That is the very
+// pair of spellings for one family this module exists to make unwritable, so the
+// trim has to cover the separator a provider label actually ends with.
 function rewrite(raw: string): string {
-  return raw.replace(NON_TOKEN_RUN, "_").replace(/^_+|_+$/g, "");
+  return raw.replace(NON_TOKEN_RUN, "_").replace(/^[_-]+|[_-]+$/g, "");
 }
 
 /**

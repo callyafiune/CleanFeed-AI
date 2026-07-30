@@ -217,6 +217,18 @@ const mixed: BenchmarkRecord = {
     spans: [{ start: 0, end: 10, origin: "ai" }],
     generationMode: "mechanistic",
   },
+  // The recipe that produced the AI stretches. v2 leaves it optional on a mixed
+  // row, but the family in `groups` names a generator, and the schema now refuses a
+  // family with no recipe behind it in either version.
+  generation: {
+    provider: "acme",
+    family: "acme-large",
+    model: "acme-large-2",
+    version: "2026-05",
+    promptId: "prompt_002",
+    promptSha256: "2".repeat(64),
+    generatedAt: 1_735_862_400_000,
+  },
   transformation: { kind: "human-ai-mix", severity: "medium" },
   groups: {
     author: "author_001",
@@ -242,6 +254,32 @@ describe("dataset manifest", () => {
     expect(() =>
       validateDatasetManifest({ ...validManifest, rogue: true }),
     ).toThrow(/unknown key.*rogue/i);
+  });
+
+  // The manifest is the reservation, and it is the likeliest door for a real
+  // dotted spelling: `generation.family` carries the provider's own label, so a
+  // hand-written or script-written manifest that copies it lands here. Refused,
+  // never normalized into shape — a reservation nobody else can match by exact
+  // equality reserves nothing, and silent correction is what let two spellings of
+  // one family coexist in the corpus.
+  it("refuses a reservation written in the provider's dotted spelling", () => {
+    expect(() =>
+      validateDatasetManifest({
+        ...validManifest,
+        heldOutGeneratorFamilies: ["gemini-3.5-flash-low"],
+      }),
+    ).toThrow(
+      /heldOutGeneratorFamilies\[0\].*not in canonical form.*gemini-3_5-flash-low/u,
+    );
+  });
+
+  it("refuses a reservation that normalizes to nothing at all", () => {
+    expect(() =>
+      validateDatasetManifest({
+        ...validManifest,
+        heldOutGeneratorFamilies: ["..."],
+      }),
+    ).toThrow(/heldOutGeneratorFamilies\[0\]/u);
   });
 
   it("rejects a non-literal intendedDomain", () => {
@@ -1094,10 +1132,13 @@ describe("held-out generator-family coverage on a release corpus", () => {
     );
   });
 
-  it("refuses a v2 human record that names a reserved family", async () => {
-    // The leak check, on the version where it is reachable. A v2 record carries a
-    // bare string in the axis, which `generatorFamilyOf` returns unchanged, so
-    // migrating the comparison does not weaken the v2 guard.
+  it("refuses a v2 human record that names a reserved family, at the record schema", async () => {
+    // The leak now fails on the RECORD, not on the corpus, and that is the whole
+    // point of imposing the family/recipe coherence in both directions: a human row
+    // carrying a generator family is refused whatever the corpus is for, whereas
+    // `sealDataset`'s coverage guard runs only for `scientificUse: "release"` — so a
+    // non-release corpus used to accept the row and let it into the
+    // `generatorExposure` denominator.
     const leaked: BenchmarkRecord = {
       ...human,
       groups: {
@@ -1105,27 +1146,30 @@ describe("held-out generator-family coverage on a release corpus", () => {
         generatorFamily: asGeneratorFamily("heldout_family"),
       },
     };
-    await expect(
-      sealDataset(
-        { ...validManifest, scientificUse: "release" },
-        [leaked, ai, mixed],
-        {
-          counts: { human: 1, ai: 1, mixed: 1 },
-          requiredHumanSourceTypes: ["qa-informal"],
-          requiredHardNegativeFamilies: ["formulaic"],
-        },
-        validFileDigests,
-      ),
-    ).rejects.toThrow(/must appear only in ai or mixed records/u);
+    for (const scientificUse of ["release", "infrastructure-only"] as const) {
+      await expect(
+        sealDataset(
+          { ...validManifest, scientificUse },
+          [leaked, ai, mixed],
+          {
+            counts: { human: 1, ai: 1, mixed: 1 },
+            requiredHumanSourceTypes: ["qa-informal"],
+            requiredHardNegativeFamilies: ["formulaic"],
+          },
+          validFileDigests,
+        ),
+      ).rejects.toThrow(
+        /groups\.generatorFamily is "heldout_family" on a record that carries no generation recipe/u,
+      );
+    }
   });
 
-  it("refuses the same leak EARLIER on a v3 record, at the axis rule", () => {
-    // On v3 the leak cannot reach `sealDataset`: `AXIS_STATE_RULE` allows only
-    // `notApplicable` for `generatorFamily` on a human row, so the record itself
-    // is refused. The coverage guard above is therefore v2's last line, and the
-    // v3 guarantee is the stronger one — stated here so a later reader does not
-    // read the audit check as the only thing standing between a reserved family
-    // and the negatives.
+  it("refuses the same leak on a v3 record too, at the axis rule", () => {
+    // v3 reaches the same outcome through a different door: `AXIS_STATE_RULE` allows
+    // only `notApplicable` for `generatorFamily` on a human row. Both versions now
+    // refuse the record itself, which is why `sealDataset`'s `appearsInHuman` guard
+    // is no longer the thing standing between a reserved family and the negatives —
+    // it is a second line no current path reaches.
     expect(() =>
       validateBenchmarkRecordV3(
         withAxis(v3Human(), "generatorFamily", {

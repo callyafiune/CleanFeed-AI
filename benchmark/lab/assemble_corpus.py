@@ -193,9 +193,17 @@ def generator_family(value: str) -> str:
 
     The single Python-side mirror of normalizeGeneratorFamily in
     benchmark/generator-family.ts: collapse every run outside [A-Za-z0-9_-] into
-    one "_", strip leading/trailing "_", preserve case. So
+    one "_", strip leading/trailing SEPARATORS ("_" and "-"), preserve case. So
     "gemini-3.5-flash-low" -> "gemini-3_5-flash-low", and the underscore form maps
     to itself.
+
+    Both separators, because "-" is in the token class too: stripping only "_" mapped
+    "gemini-3.5-" to "gemini-3_5-", a canonical token DISTINCT from "gemini-3_5" --
+    two spellings of one family, which is the defect this pair of functions exists to
+    prevent. The two sides must agree character for character or the assembler writes
+    a family the schema refuses, so this strip and the TypeScript one move together.
+    slug() keeps the narrower strip: it mints ordinary grouping tokens, and widening
+    it there would rewrite batch and template identities that name nothing canonical.
 
     The underscore spelling is canonical because the value has to live in
     groups.generatorFamily, and every grouping token is validated as a pseudonym
@@ -210,7 +218,7 @@ def generator_family(value: str) -> str:
     generation.family — so this function exists to make the assembler write what
     the schema will accept, not to be a second authority.
     """
-    out = re.sub(r"[^A-Za-z0-9_-]+", "_", value).strip("_")
+    out = re.sub(r"[^A-Za-z0-9_-]+", "_", value).strip("_-")
     if not out:
         raise ValueError(
             f"generator family {value!r} normalizes to nothing: "
@@ -1054,13 +1062,15 @@ def thin_held_out_families(
     vanishing from the report — that is the worst case for a held-out claim, not an
     absence of one.
 
-    Not the same question as `below_floor` in main(), which asks it of the
-    declaration candidates: this one asks it of the records actually written, after
-    partitioning. Today the two agree by construction, because a family is only
-    declared when it already clears the floor; the point is that any later edit
-    which prunes records after the declaration loop, or relaxes the floor, is caught
-    here instead of writing a corpus that `validate` rejects with
-    DATASET_COVERAGE_INVALID.
+    Same QUESTION as `below_floor` in main(), asked at the other end: that one asks
+    it of the declaration candidates, this one of the records actually written, after
+    partitioning. So it has to count the same thing — POSITIVES (`ai` + `mixed`),
+    which is what `validate` puts the 200-record floor on
+    (DATASET_COVERAGE_INVALID). Counting record-lines of any label instead would give
+    the two sides different denominators while the docstring claimed they agree, and
+    a family padded to the floor by rows that are not positives would pass here and
+    be refused by `validate`. The value of asking twice is catching a later edit that
+    prunes records after the declaration loop, or relaxes the floor.
     """
     # `identity_of` and not a bare read: since C2 an axis is an object carrying a
     # state, and `.get("generatorFamily")` would compare a dict against a set of
@@ -1070,6 +1080,7 @@ def thin_held_out_families(
     written = Counter(
         group_axes.identity_of((r.get("groups") or {}).get("generatorFamily"))
         for r in records
+        if r.get("label") in ("ai", "mixed")
     )
     return {f: written[f] for f in sorted(held_out) if written[f] < minimum}
 

@@ -379,12 +379,29 @@ export function validateBenchmarkRecordV2(value: unknown): BenchmarkRecordV2 {
       );
     }
   }
-  // One family, one spelling. A generated record must carry the canonical field,
-  // and it must be the canonical form of the recipe's own label. Divergence is
-  // REFUSED rather than reconciled: silent correction is what allowed two
-  // spellings of one family to coexist in the corpus, which left the
+  // One family, one spelling, and the coherence is imposed in BOTH directions. A
+  // generated record must carry the canonical field as the canonical form of the
+  // recipe's own label; a record with no recipe must not carry the field at all.
+  // Divergence is REFUSED rather than reconciled: silent correction is what allowed
+  // two spellings of one family to coexist in the corpus, which left the
   // `generatorExposure` slice with no `unseen` bucket and the splitter's held-out
   // mark permanently false.
+  //
+  // The second direction is not symmetry for its own sake. `generatorFamilyOf`
+  // reads the canonical field without consulting `generation`, so a row carrying a
+  // family and no recipe was accepted and then classified `seen`/`unseen` by the
+  // `generatorExposure` axis — a HUMAN row so accepted put a negative into the
+  // denominator of that slice's FPR floor, and the release-only leak guard in
+  // dataset-manifest.ts never runs on a non-release corpus. v2 also left
+  // `generation` optional on `mixed`, so that shape was uncovered entirely. v3 needs
+  // no equivalent line: `AXIS_STATE_RULE` admits `known` only on the two classes
+  // that already require a recipe.
+  if (generation === undefined && groups.generatorFamily !== undefined) {
+    throw new BenchmarkRecordError(
+      `groups.generatorFamily is "${groups.generatorFamily}" on a record that carries no generation recipe: the canonical field names the generator that produced the text, so a family with no recipe behind it is either a missing recipe or a grouping key on text no generator of ours wrote`,
+      id,
+    );
+  }
   if (generation !== undefined) {
     let expected: GeneratorFamily;
     try {

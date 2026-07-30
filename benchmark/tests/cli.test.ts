@@ -565,6 +565,19 @@ function record(
       generationMode: "mechanistic",
     };
     base.groups.derivationRoot = `parent_${id}`;
+    // The recipe that produced the AI stretches of a MECHANISTIC mixed row: ours,
+    // therefore provenance. v2 leaves it optional, but the schema refuses a
+    // `groups.generatorFamily` with no recipe behind it, and this row needs the
+    // family for the resampling levels below.
+    base.generation = {
+      provider: "acme",
+      family,
+      model: "acme-1",
+      version: "v1",
+      promptId: `prompt_${id}`,
+      promptSha256: hex(`prompt-${id}`),
+      generatedAt: createdAt,
+    };
     // A mechanistic mixed row above the fraction floor is a warning positive, so
     // the ai-recall levels apply to it too. NOT `groups.humanSeed`: these are v2
     // records and the v2 schema has no such axis, which is why the mixed multiway

@@ -1528,6 +1528,77 @@ split congela, publica `heldOutGeneratorFamilies=[heldout_family]` e
 mapeamento `HELD_OUT_FAMILY_DISAGREEMENT` reescrevendo só o `manifest.json` para declarar
 uma família que o corpus não estoca.
 
+**Imposição simétrica família ↔ receita no schema v2.** `schema.ts` exigia
+`generation` ⇒ `groups.generatorFamily` mas **não** o inverso, e a assimetria não era
+cosmética: `generatorFamilyOf` lê o campo canônico sem consultar `generation`, então uma
+linha com família e sem receita era aceita e entrava no eixo `generatorExposure` como
+`seen`/`unseen`. Numa linha **`human`** isso punha um negativo no denominador do piso de
+FPR daquela fatia — a fatia de que o §1 do assessment diz que o FPR depende — e o único
+guarda existente (`appearsInHuman`, em `dataset-manifest.ts`) só roda em corpus
+`release`. Em v2 a receita também era opcional em `mixed`, forma que ninguém cobria. Agora
+o v2 recusa `groups.generatorFamily` sem `generation`, com mensagem própria; v3 não
+precisa de linha equivalente porque `AXIS_STATE_RULE` só admite `known` nas duas classes
+que já exigem receita. Consequências assumidas: `appearsInHuman` deixou de ser alcançável
+por qualquer caminho (o comentário passou a dizer isso em vez de afirmar que é "a última
+linha do v2"), o teste do vazamento v2 passou a exigir a recusa nos **dois**
+`scientificUse`, e três fixtures que modelavam registros que o schema recusa
+(`cli.test.ts`, `dataset-manifest.test.ts`) ganharam a receita que a família implica.
+
+**Os três sítios de guarda ganharam rede.** `HELD_OUT_FAMILY_DISAGREEMENT`
+(`commands/split.ts`), `SPLIT_ARTIFACT_HELD_OUT_FAMILY_DISAGREEMENT` / `_INVALID`
+(`split-artifact.ts`) e a recusa canônica do manifesto (`dataset-manifest.ts`) não tinham
+teste algum: o invariante estava provado no nível da função, os **mapeamentos de erro**
+não. Os do artefato selado exigiram construir pelo `buildSplitArtifact` (mutar um artefato
+pronto reprova no `splitDigest` antes de chegar à família — que é como os mapeamentos
+ficaram sem cobertura). Cada um foi provado não-vacuoso desativando o guarda
+temporariamente e vendo o teste ficar vermelho.
+
+**`lab/build_governance.ts` falha na escrita.** Tipava `heldOutGeneratorFamilies:
+string[]` e escrevia direto em `manifest-template.json`, que é o caminho de C2: uma grafia
+pontuada compilava e só era recusada duas etapas depois, em `validateDatasetManifest`,
+num arquivo que ninguém editou à mão. Agora passa por `asGeneratorFamily`. Verificado
+rodando o script: com `["gemini-3.5-flash-low"]` ele levanta
+`GENERATOR_FAMILY_NOT_CANONICAL` **sem escrever nenhum arquivo**; com
+`["gemini-3_5-flash-low"]` escreve o template com a reserva canônica.
+
+**Quatro alegações que não correspondiam ao código (R7):**
+
+1. `generator-family.ts` dizia que `generatorFamilyOf` é "the only accessor consumers
+   use" — falso: o splitter e a auditoria leem o mesmo campo por `groupAxisIdentity`, como
+   um dos nove eixos, e `schema.ts` exporta `recordGeneratorFamily` (sem chamador). A
+   alegação foi **estreitada** para o que é verdade: é o único lugar que decide **qual
+   campo** carrega a família. Os quatro pontos de `dataset-manifest.ts` que o brief
+   apontava já haviam migrado para o acessor.
+2. A apara de pontas cobria só `_`, então `normalizeGeneratorFamily("gemini-3.5-")` dava
+   `"gemini-3_5-"` — canônico pela definição de ponto fixo e **distinto** de
+   `"gemini-3_5"`: duas grafias de uma família, exatamente o que o módulo existe para
+   impedir. Agora apara `[_-]` nas duas pontas, **e o espelho Python** (`generator_family`
+   em `assemble_corpus.py`) apara os mesmos caracteres — os dois lados têm de concordar
+   caractere a caractere ou o montador escreve família que o schema recusa. `slug()`
+   ficou como estava: cunha token de agrupamento comum, e alargar lá reescreveria
+   identidades de lote e de template.
+3. `split.ts` dizia que `markedHeldOutGeneratorFamilies` deriva "through the same
+   `buildComponents` call the splitter uses". É uma **segunda** chamada: concorda por
+   determinismo, não por identidade, ao custo de um union-find extra. A frase passou a
+   dizer isso e a registrar que devolver as marcas de `createBlockedSplit` é adiamento
+   deliberado (mudaria a forma que todo chamador desestrutura).
+4. `thin_held_out_families` contava linha-registro de qualquer rótulo enquanto
+   `below_floor` conta positivos `ai`+`mixed`, e o docstring afirmava que as duas
+   "concordam por construção". O **denominador** foi corrigido (é o piso que o `validate`
+   escreve sobre positivos), não o docstring.
+
+**Verificação desta rodada:** `npx vitest run` 162 arquivos / 2249 testes verdes (baseline
+medido antes de tocar em nada: 162 / 2235); `python -m unittest discover -s benchmark/lab`
+119 testes `OK` (baseline 117); três `tsc --noEmit` em 0; `npm run format:check` verde;
+CRLF verificado byte a byte (Python, não `grep -c`) em todo arquivo alterado — todos LF,
+zero CR solto.
+
+**Fora de escopo, registrado:** os `200`/`300`/`2000` de `commands/split.ts` e o
+`HELD_OUT_POSITIVES_FLOOR` de `dataset-manifest.ts` duplicam `powerFloors` de
+`benchmark/rebuild-v3-policy.json` (fonte de verdade criada por A6), e o
+`HELD_OUT_MINIMUM = 200` do Python é o mesmo caso. São pré-existentes, A4 não os tocou, e
+**E3** deve consumi-los da política em vez de os reescrever.
+
 ### A5 — Normalização Unicode no caminho de inferência
 
 **Depende de:** nada.

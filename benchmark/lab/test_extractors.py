@@ -561,6 +561,24 @@ class GeneratorFamilyTests(unittest.TestCase):
             generator_family("Gemini-3.5"), generator_family("gemini-3.5")
         )
 
+    def test_strips_both_separators_off_both_ends(self) -> None:
+        from assemble_corpus import generator_family
+
+        # The TypeScript normalizer trims "_" AND "-" from both ends, and this mirror
+        # has to trim the same characters: stripping only "_" mapped "gemini-3.5-" to
+        # "gemini-3_5-", a token the schema calls canonical and which is a DIFFERENT
+        # family from "gemini-3_5". A record written with one and declared with the
+        # other is the two-spellings defect, in a corpus nobody could re-derive.
+        for raw, canonical in (
+            ("gemini-3.5-", "gemini-3_5"),
+            ("-gemini-3.5", "gemini-3_5"),
+            ("_gemini-3.5_", "gemini-3_5"),
+            ("--gemini-3.5--", "gemini-3_5"),
+        ):
+            self.assertEqual(generator_family(raw), canonical)
+        with self.assertRaises(ValueError):
+            generator_family("-_-")
+
     def test_fails_closed_instead_of_inventing_a_token(self) -> None:
         from assemble_corpus import generator_family, slug
 
@@ -632,6 +650,31 @@ class HeldOutFloorWarningTests(unittest.TestCase):
         self.assertEqual(
             thin_held_out_families(records, held_out, minimum=4),
             {"gemini-3_5-flash-low": 3},
+        )
+
+    def test_counts_the_same_denominator_the_floor_is_written_on(self) -> None:
+        from assemble_corpus import thin_held_out_families
+
+        # `validate` puts the 200-record floor on POSITIVES, and main()'s
+        # `below_floor` counts `ai` + `mixed`. This counter asks the same question of
+        # the written records, so it has to count the same rows: a family padded by a
+        # row that is not a positive must still be reported as thin, or the two sides
+        # disagree while the docstring claims they agree. (The schema refuses a human
+        # row carrying a family, which is why this is a guard rather than a corpus
+        # shape — the counter must not be the one place such a row reads as stock.)
+        records = [
+            self._ai_record("gemini-3_5-flash-low", "gemini-3.5-flash-low")
+            for _ in range(2)
+        ]
+        records.append(
+            {
+                "label": "human",
+                "groups": {"generatorFamily": "gemini-3_5-flash-low"},
+            }
+        )
+        self.assertEqual(
+            thin_held_out_families(records, {"gemini-3_5-flash-low"}, minimum=3),
+            {"gemini-3_5-flash-low": 2},
         )
 
     def test_a_declared_family_with_no_record_at_all_is_reported_as_zero(self) -> None:
