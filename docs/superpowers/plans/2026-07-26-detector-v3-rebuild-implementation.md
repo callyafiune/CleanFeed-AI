@@ -8408,6 +8408,138 @@ passa precisa abrir a concessão exatamente uma vez.
 consegue gravar `failed` terminal, porque a concessão ainda não existe quando esses caminhos
 podem falhar; e existe teste que prova o ledger vazio nesse cenário.
 
+#### H1-SMOKE — ampliação e execução (2026-07-30)
+
+Duas medições fecharam juntas, num commit único, porque são o **mesmo defeito visto de dois
+lados**: conferir o digest antes da concessão não serve se o bloco segue reconsumível por outro
+candidato, e recusar o bloco não serve se os números saem de um avaliador que ninguém conferiu.
+
+**Defeito 1 — o uso único era por par (bloco, candidato), não por bloco.**
+`assertHoldoutAvailable` (`benchmark/holdout-ledger.ts:246-259` antes do commit) comparava a
+tupla **inteira** via `identityMatches` (`:134-136`), e `IDENTITY_FIELDS` (`:94-111`) mistura o
+material cego com o candidato. Trocar `bundleDigest`, `evaluatorDigest`, `modelVersion` ou
+qualquer outro campo de candidato fazia o mesmo `datasetDigest + splitDigest` ser consumido outra
+vez. O teste `holdout-ledger.test.ts` «allows a genuinely different tuple to open its own
+session» **descrevia** esse defeito, com `evaluatorDigest` trocado.
+
+**Defeito 2 — o digest do avaliador era medido uma única vez, e tarde.** A medição em disco
+existia só em `benchmark/commands/evaluate.ts:174`, depois de a concessão abrir
+(`consume-holdout.ts:172`), do input cego ser lido (`:193`), do candidato subir (`:199`), da
+pontuação gravar shards (`:202`, via `browser-scorer.ts:290` a cada `SHARD_SIZE = 100` linhas) e
+das métricas saírem. A tupla da concessão nunca observava o avaliador: `consume-holdout.ts:281` e
+`evaluate.ts:438` copiavam `evaluatorDigest: frozen.evaluatorDigest`, e o congelado **não** está
+em `EVALUATOR_FILES` — logo `identityMatches` casava igual antes e depois da edição, e um veto de
+integridade **provocado** era indistinguível de um honesto.
+
+**As duas identidades, agora separadas.** `benchmark/holdout-ledger.ts` passa a ter
+`BLOCK_IDENTITY_FIELDS` (exportado) ao lado de `IDENTITY_FIELDS`, e `blockMatches` ao lado de
+`identityMatches`:
+
+- **bloco** = `datasetDigest` + `splitDigest`, **e nada mais**. É o que `assertHoldoutAvailable`
+  compara. `datasetAuditDigest` e `sourceReadinessDigest` ficaram **fora**, contra o palpite do
+  brief, por três razões medidas: (a) são atestações **sobre** o mesmo material —
+  `sealDataset` deriva `auditDigest` do manifesto e dos registros (`dataset-manifest.ts:985-1002`)
+  e a prontidão de fonte deriva `reportDigest` do inventário de fontes
+  (`corpus-source-audit.ts:409`), bytes que `datasetDigest` já cobre —, então não distinguem um
+  bloco de outro; (b) quem as recomputa é **código do avaliador**, e um campo que pode se mover com
+  o material byte-idêntico é exatamente um caminho de reconsumo, isto é, o defeito que se está
+  fechando; (c) todo campo admitido no conjunto **estreita** a recusa, e num recurso de uma bala o
+  padrão certo é o conjunto mínimo que nomeia o material. Os doze campos de candidato — incluindo
+  esses dois — têm teste explícito de recusa em `holdout-ledger.test.ts`, e
+  `BLOCK_IDENTITY_FIELDS` é fixado por asserção para que uma edição futura não devolva parte da
+  garantia em silêncio;
+- **execução** = a tupla inteira, inalterada. Continua governando `computeConsumptionId`,
+  `resumeHoldoutConsumption`, `completeHoldoutConsumption` e `failHoldoutConsumption`. O evento
+  `started` continua gravando a tupla **completa** (`projectIdentity`): a mudança é de
+  **comparação na admissão**, nunca de conteúdo do evento.
+
+**A ordem nova de `runConsumeHoldout`,** com a conferência precedendo tudo o que toca corpus:
+
+```
+ler frozen-calibration.json  →  validateFrozenCalibrationArtifact
+assertEvaluatorIdentity(evaluatorRoot, frozen.evaluatorDigest)   ← 1ª medição, ANTES de tudo
+observeEvaluatorFiles(evaluatorRoot)                              (tabela por arquivo + W_OK)
+manifest.json → records.jsonl → validateSplitArtifact             (records.jsonl carrega label)
+mkdir work/ledger → confirmação de --confirm-split-digest
+<work-dir>/pre-exposure-check.json                                (recibo legível, atômico)
+beginHoldoutConsumption | resumeHoldoutConsumption                ← CONCESSÃO
+readTestInput → createTestPage → runHoldoutTestScore → shards em disco
+computeEvaluatorDigest(evaluatorRoot)                             ← 2ª medição, JÁ com escores
+  divergiu?  <output-dir>/holdout-exposure-incident.json
+           + failHoldoutConsumption(..., "identity-mismatch")     ← TERMINAL, e nenhum número
+runEvaluate → ... → computeEvaluatorDigest (evaluate.ts:174)      ← 3ª medição, alimenta o gate
+```
+
+`runEvaluate` recebeu o mesmo guarda no topo, na mesma ordem (congelado → validar → conferir →
+só então `manifest.json`/`records.jsonl`), porque `evaluate` é subcomando da CLI e o caminho
+direto `evaluate --consumption-id` precisa dele. A medição de `:174` **continua onde estava**
+alimentando `evaluatorDigestMatches`; ela não é redundante, porque entre o guarda do topo e ela
+há a leitura dos shards, dos rótulos, as métricas e as fatias — janela em que a árvore pode se
+mover.
+
+**O recibo NÃO é evento de ledger,** e não pode ser: `latestForId`
+(`holdout-ledger.ts:229-238`) devolve o **último** evento do id, e `assertHoldoutStarted`,
+`resumeHoldoutConsumption` e `requireStartedSession` tratam qualquer `status` diferente de
+`"started"` como terminal — uma linha de recibo quebraria `complete` e `resume`. O substituto é
+melhor: com a conferência precedendo o `append`, o próprio evento `started` grava um
+`evaluatorDigest` **observado em disco** e passa a ser recibo verificado.
+`<work-dir>/pre-exposure-check.json` é cópia legível para auditoria — local e apagável, **não** é
+controle. `labels-opened` como `status` também ficou fora: `HoldoutConsumption` é
+`schemaVersion: 1` com três estados, e a premissa era falsa de qualquer modo — os rótulos já
+estão em memória em `consume-holdout.ts:128` e `evaluate.ts:79`.
+
+**A raiz do avaliador entra só por `deps.evaluatorRoot`** (default = raiz do repositório, via
+`resolveEvaluatorRoot`), nunca por flag. Uma flag deixaria a conferência apontar para uma cópia
+limpa enquanto um avaliador alterado produz os números — o buraco que a tarefa fecha. Há teste em
+`cli.test.ts` provando que `--evaluator-root` é recusada por `assertKnownFlags`.
+
+**Guarda 4 (não expor shards/escores antes do desfecho) foi RETIRADA**, não implementada: o
+operador é dev solo rodando a CLI na própria máquina, os shards são gravados pelo processo dele em
+`<work-dir>/predictions/test/`, e nenhum processo Node local nega leitura a quem tem o código e o
+disco. Especificar «não expor» seria exigir o inexequível (R7). O que substitui é não-repúdio:
+pré-registro público antes de a concessão abrir, obrigação de evento terminal (implementada), e a
+limitação declarada — **o controle não é cegueira do operador; é o pré-registro mais o registro
+terminal**.
+
+**Guarda 2 (checkout imutável) entrou só como observação, não como bloqueio:**
+`observeEvaluatorFiles` grava no recibo o resultado de `access(W_OK)` por arquivo. No Windows esse
+teste enxerga o atributo `FILE_ATTRIBUTE_READONLY` e **não** a ACL, então `writable: false` prova
+proteção e `writable: true` não prova o contrário. O detector de verdade continua sendo o digest.
+
+**Aspereza aceita e dita:** um byte trocado por acidente (auto-save, format-on-save) **durante** a
+corrida queima o bloco. É o preço de tirar o veto provocado do alcance do operador. No `--resume`,
+porém, a divergência é recusada **sem** evento terminal: o bloco já está gasto pelo `started`
+anterior e nenhum outro candidato pode reabri-lo, então uma árvore restaurada ao digest congelado
+termina a corrida em vez de perder o bloco por um acidente de editor.
+
+**Consequência desejada e registrada:** o bloco de 2026-07-25 passa a ser **recusado para
+qualquer candidato**, porque seu evento `started` está no ledger real. É o que R2 sempre disse em
+prosa (ver âncora `### H1 — Consumir o holdout uma única vez`).
+
+**Novo `evaluatorDigest`** (esperado nesta fase, proibido depois da âncora
+`### G5 — Congelar e verificar antes do holdout`):
+
+| quando | digest |
+|---|---|
+| antes | `afa31a9d4ccfdc0f265cf19d7c7afd15d941159f4aeb88ae8d75b57015a0e292` |
+| depois | `6948ed00fb0e2555e3804ecf2a1ef0d97d55ec9a2b9abcb15b936dd1758dd5cb` |
+
+`computeEvaluatorDigest` **não mudou de receita** — segue `sha256(path + NUL + bytes)` em ordem
+lexicográfica — e `EVALUATOR_FILES` segue com os mesmos 50 caminhos: `observeEvaluatorFiles` é
+aditiva e não alimenta o agregado.
+
+**Arquivos tocados:** `benchmark/holdout-ledger.ts`, `benchmark/digests.ts`,
+`benchmark/commands/evaluate.ts`, `benchmark/commands/consume-holdout.ts` (os quatro em
+`EVALUATOR_FILES`), mais `benchmark/tests/{holdout-ledger,digests,consume-holdout,cli}.test.ts` e
+o novo `benchmark/tests/helpers/evaluator-tree.ts`. O guarda mora em arquivos que **já** estão no
+inventário: um módulo novo fora dele seria editável sem mover o digest.
+
+**Documentação obsoleta identificada e não editada:** o plano da Fase 2
+(`docs/superpowers/plans/2026-07-19-cleanfeed-ai-tmr-ptbr-phase-2-benchmark-calibration.md`,
+parágrafo que começa «`assertHoldoutAvailable` compara a tupla científica sem os campos de
+lifecycle, incluindo `datasetAuditDigest` e `sourceReadinessDigest`») descreve o comportamento
+anterior. Fica como registro histórico da Fase 2; esta seção é a que vale.
+
 ---
 
 ## Fase H — Medição e publicação
@@ -8416,8 +8548,10 @@ podem falhar; e existe teste que prova o ledger vazio nesse cenário.
 
 **Depende de:** G5, e portanto de **H1-SMOKE** e **G5-ENSAIO**, que fecham antes dele.
 
-**Atenção:** o ledger de consumo registra a concessão por tupla
-`datasetDigest`+`splitDigest`, mas o consumo é **informacional** (R2): uma tupla nova não
+**Atenção:** o ledger de consumo registra a concessão por bloco
+`datasetDigest`+`splitDigest` — desde 2026-07-30 isso é imposto pelo código e não só afirmado em
+prosa (âncora `#### H1-SMOKE — ampliação e execução (2026-07-30)`), então nenhum candidato novo
+reabre um bloco gasto. O consumo é **informacional** (R2): um bloco novo não
 restaura cegueira. A execução anterior está `completed`. Antes de rodar, conferir no
 ledger de exposição de C3 que (a) nenhum registro-linha de teste consumido voltou a qualquer
 partição, (b) cada cluster do teste atual teve sua **primeira exposição no split atual**,
@@ -8931,7 +9065,7 @@ de 180 dias que o runtime respeita sem apagar preferências.
 | G4 | três perfis por comprimento sem calibração por comprimento | 4.9 |
 | E2 item 3, D1 | época sem sobreposição entre classes — risco medido e **não** encontrado (§7) | 6, item 5 |
 | **G5-ENSAIO** | a queima de 2026-07-25 foi **procedural** e nada exercitava a sequência inteira pela CLI real | — |
-| **H1-SMOKE** | `consume-holdout.ts` abre a concessão antes de ler o input e de subir o candidato; falha irrecuperável ali grava `failed` terminal | — |
+| **H1-SMOKE** | `consume-holdout.ts` abre a concessão antes de ler o input e de subir o candidato; falha irrecuperável ali grava `failed` terminal. **Ampliada em 2026-07-30**: o digest do avaliador era conferido só depois de os escores existirem, e a admissão comparava a tupla inteira — trocar o candidato reconsumia o mesmo bloco cego | — |
 | **A6-REMAT** | a tabela congelada ficou adiante do arquivo que a materializa: `DATASET_COVERAGE_INVALID` ainda exige `non-native`, e o vocabulário de lanes não tem lane Anthropic | — |
 
 ### O critério pelo qual as tarefas foram enxugadas

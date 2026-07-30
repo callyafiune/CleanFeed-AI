@@ -1,17 +1,26 @@
 // `consume-holdout`: the Phase 3 orchestrator that spends the ONE-WAY temporal
 // holdout lease exactly once and issues an auditable release decision.
 //
-// The lease is irreversible. This command opens the Phase 2 append-only ledger
-// session EXACTLY ONCE (after confirming `--confirm-split-digest` against the
-// frozen `SplitArtifact.splitDigest`), browser-scores the sealed test partition
-// under that active consumption through the scorer's internal test entry point,
-// validates completeness, then DELEGATES the scientific decision byte-for-byte
-// to the Phase 2 `evaluate`/gates. It never restates gate policy and never calls
-// fit code after the consumption has started.
+// The lease is irreversible. This command confirms the evaluator's own bytes
+// against the frozen declaration BEFORE anything else, opens the Phase 2
+// append-only ledger session EXACTLY ONCE (after confirming
+// `--confirm-split-digest` against the frozen `SplitArtifact.splitDigest`),
+// browser-scores the sealed test partition under that active consumption through
+// the scorer's internal test entry point, validates completeness, confirms the
+// evaluator a second time now that shards exist, then DELEGATES the scientific
+// decision byte-for-byte to the Phase 2 `evaluate`/gates. It never restates gate
+// policy and never calls fit code after the consumption has started.
+//
+// The two evaluator checks bracket the exposure, and the bracket is the point: a
+// divergence before the lease costs nothing, while a divergence after the first
+// shard hit disk is a spent block that yields an exposure record and no claim.
+// Neither check is blindness — the operator owns the disk — they make a provoked
+// integrity veto indistinguishable from an honest one impossible.
 //
 // One-way semantics, enforced by the Phase 2 ledger primitives:
-//   - The first `started` event consumes the tuple even if the process later
-//     crashes; a plain crash leaves the lease `started` for `--resume`.
+//   - The first `started` event consumes the BLOCK (dataset+split) even if the
+//     process later crashes; a plain crash leaves the lease `started` for
+//     `--resume`, and no other candidate can reopen that block.
 //   - `--resume-consumption` reopens ONLY the same id under the identical tuple;
 //     it can never mint a new id, and a fresh run of a consumed tuple is refused.
 //   - A recognized irrecoverable failure (a candidate that fails identity/parity
@@ -21,7 +30,7 @@
 //
 // Standalone benchmark module: MUST NOT import from the extension bundle (src/).
 
-import { mkdir } from "node:fs/promises";
+import { mkdir, readdir } from "node:fs/promises";
 import { dirname, join, resolve } from "node:path";
 
 import {
@@ -38,6 +47,11 @@ import {
   type FrozenCalibrationArtifact,
 } from "../calibration-pipeline.ts";
 import { validateDatasetManifest } from "../dataset-manifest.ts";
+import {
+  computeEvaluatorDigest,
+  observeEvaluatorFiles,
+  type EvaluatorFileObservation,
+} from "../digests.ts";
 import type { ReleaseDecision } from "../gates.ts";
 import {
   beginHoldoutConsumption,
@@ -60,7 +74,11 @@ import {
   validateSplitArtifact,
   type SplitArtifact,
 } from "../split-artifact.ts";
-import { runEvaluate } from "./evaluate.ts";
+import {
+  assertEvaluatorIdentity,
+  resolveEvaluatorRoot,
+  runEvaluate,
+} from "./evaluate.ts";
 import {
   CommandError,
   readJsonFile,
@@ -108,7 +126,19 @@ export interface ConsumeHoldoutDeps {
   createTestPage?: (
     candidateExtensionDir: string,
   ) => Promise<ConsumeHoldoutTestPage>;
+  /**
+   * The tree whose bytes ARE the evaluator, for the identity check. Reachable only
+   * from a caller in this process: `assertKnownFlags` keeps it off the CLI, because
+   * a flag would let a run aim the check at a clean copy while an altered evaluator
+   * produces the numbers.
+   */
+  evaluatorRoot?: string;
 }
+
+/** Readable copy of the pre-exposure check, beside the shards it precedes. */
+const PRE_EXPOSURE_RECEIPT_FILE = "pre-exposure-check.json";
+/** What a spent-but-uncertified block leaves behind, in the output directory. */
+const EXPOSURE_INCIDENT_FILE = "holdout-exposure-incident.json";
 
 /**
  * Consumes the temporal holdout exactly once and returns the sole line the
@@ -121,6 +151,21 @@ export async function runConsumeHoldout(
 ): Promise<string> {
   const now = deps.now ?? ((): string => new Date().toISOString());
   const createTestPage = deps.createTestPage ?? defaultCreateTestPage;
+  const evaluatorRoot = resolveEvaluatorRoot(deps.evaluatorRoot);
+
+  // The frozen calibration is read first because the evaluator has to be judged
+  // before this command touches the corpus: records.jsonl carries `text` and
+  // `label` on every record, and the lease does not exist yet either. A divergence
+  // here costs nothing — no ledger byte, no marker, no output.
+  const frozen = (await readJsonFile(
+    options.frozenCalibrationPath,
+  )) as FrozenCalibrationArtifact;
+  validateFrozenCalibrationArtifact(frozen);
+  const observedEvaluatorDigest = await assertEvaluatorIdentity(
+    evaluatorRoot,
+    frozen.evaluatorDigest,
+  );
+  const preExposureFiles = await observeEvaluatorFiles(evaluatorRoot);
 
   const manifest = validateDatasetManifest(
     await readJsonFile(join(options.datasetDirectory, "manifest.json")),
@@ -133,11 +178,6 @@ export async function runConsumeHoldout(
   )) as SplitArtifact;
   await validateSplitArtifact(artifact, manifest, records);
 
-  const frozen = (await readJsonFile(
-    options.frozenCalibrationPath,
-  )) as FrozenCalibrationArtifact;
-  validateFrozenCalibrationArtifact(frozen);
-
   // The FULL scientific tuple the lease binds — identical to the one evaluate
   // re-verifies on resume, so the begin here and the resume there agree exactly.
   const identity = buildIdentity(frozen, artifact);
@@ -146,17 +186,9 @@ export async function runConsumeHoldout(
   await mkdir(options.workDirectory, { recursive: true });
   await mkdir(dirname(options.ledgerPath), { recursive: true });
 
-  // Open (or reopen) the single atomic session. On a fresh run the split-digest
-  // confirmation is checked FIRST, before any ledger byte is written, so a wrong
-  // confirmation can never consume the holdout.
-  let session: HoldoutConsumption;
-  if (options.resumeConsumptionId !== undefined) {
-    session = await resumeHoldoutConsumption(
-      options.ledgerPath,
-      options.resumeConsumptionId,
-      identity,
-    );
-  } else {
+  // On a fresh run the split-digest confirmation is checked FIRST, before any
+  // ledger byte is written, so a wrong confirmation can never consume the holdout.
+  if (options.resumeConsumptionId === undefined) {
     if (options.confirmSplitDigest === undefined) {
       throw new CommandError(
         "SPLIT_DIGEST_CONFIRMATION_REQUIRED",
@@ -169,13 +201,36 @@ export async function runConsumeHoldout(
         "--confirm-split-digest does not match the frozen split artifact splitDigest",
       );
     }
-    session = await beginHoldoutConsumption(
-      options.ledgerPath,
-      identity,
-      now(),
-      { activeSessionPath },
-    );
   }
+
+  // The durable receipt of the check is the `started` event itself: its
+  // `evaluatorDigest` now equals bytes confirmed on disk moments earlier. This file
+  // is only a readable copy for an auditor, and it must NOT become a ledger line —
+  // `latestForId` returns the last event for an id, so a stray line would make
+  // resume and complete read a live session as terminal.
+  await writeJsonAtomic(
+    join(options.workDirectory, PRE_EXPOSURE_RECEIPT_FILE),
+    {
+      schemaVersion: 1,
+      frozenEvaluatorDigest: frozen.evaluatorDigest,
+      observedEvaluatorDigest,
+      files: preExposureFiles,
+      checkedAt: now(),
+    },
+  );
+
+  // Open (or reopen) the single atomic session. A resume rescores everything and
+  // rewrites the shards, so it is fresh exposure and gets the same check.
+  const session: HoldoutConsumption =
+    options.resumeConsumptionId !== undefined
+      ? await resumeHoldoutConsumption(
+          options.ledgerPath,
+          options.resumeConsumptionId,
+          identity,
+        )
+      : await beginHoldoutConsumption(options.ledgerPath, identity, now(), {
+          activeSessionPath,
+        });
 
   const testPredictionsDirectory = join(
     options.workDirectory,
@@ -237,6 +292,37 @@ export async function runConsumeHoldout(
     throw error;
   }
 
+  // Measured again now that shards exist on disk. A divergence at this point was
+  // introduced by someone who could already read partial scores, so the lease goes
+  // TERMINAL instead of sealing numbers an uncertified evaluator produced: the block
+  // was spent and it yields an exposure record, not a claim.
+  const postExposureEvaluatorDigest =
+    await computeEvaluatorDigest(evaluatorRoot);
+  if (postExposureEvaluatorDigest !== frozen.evaluatorDigest) {
+    await writeExposureIncident({
+      workDirectory: options.workDirectory,
+      outputDirectory: options.outputDirectory,
+      testPredictionsDirectory,
+      evaluatorRoot,
+      consumptionId: session.consumptionId,
+      frozenEvaluatorDigest: frozen.evaluatorDigest,
+      observedEvaluatorDigest: postExposureEvaluatorDigest,
+      detectedAt: now(),
+    });
+    await failHoldoutConsumption(
+      options.ledgerPath,
+      session.consumptionId,
+      identity,
+      "identity-mismatch",
+      now(),
+      { activeSessionPath },
+    );
+    throw new CommandError(
+      "EVALUATOR_DIGEST_POST_EXPOSURE_MISMATCH",
+      `the evaluator changed after the test block was scored (${postExposureEvaluatorDigest} on disk, ${frozen.evaluatorDigest} frozen); the session is terminal and no metric was computed`,
+    );
+  }
+
   // Delegate metrics, slices, the gate report and the terminal `completed`
   // ledger event to the frozen Phase 2 evaluator under the SAME consumption id.
   await runEvaluate({
@@ -249,12 +335,91 @@ export async function runConsumeHoldout(
     consumptionId: session.consumptionId,
     outputDirectory: options.outputDirectory,
     bootstrapSeed: options.bootstrapSeed,
+    evaluatorRoot: deps.evaluatorRoot,
   });
 
   const gateReport = (await readJsonFile(
     join(options.outputDirectory, "gate-report.json"),
   )) as { decision: ReleaseDecision };
   return `HOLDOUT_COMPLETED decision=${gateReport.decision}`;
+}
+
+interface ExposureIncidentInput {
+  workDirectory: string;
+  outputDirectory: string;
+  testPredictionsDirectory: string;
+  evaluatorRoot: string;
+  consumptionId: string;
+  frozenEvaluatorDigest: string;
+  observedEvaluatorDigest: string;
+  detectedAt: string;
+}
+
+/**
+ * Records that a block was spent without producing a certified claim: both digests,
+ * which inventory paths moved since the pre-exposure receipt, and how many shards
+ * already existed. Paths and counts only — never a row, a score, a label or a text,
+ * because this file is published alongside the ledger event.
+ */
+async function writeExposureIncident(
+  input: ExposureIncidentInput,
+): Promise<void> {
+  const receipt = await readPreExposureFileDigests(
+    join(input.workDirectory, PRE_EXPOSURE_RECEIPT_FILE),
+  );
+  const observed = await observeEvaluatorFiles(input.evaluatorRoot);
+  await writeJsonAtomic(join(input.outputDirectory, EXPOSURE_INCIDENT_FILE), {
+    schemaVersion: 1,
+    consumptionId: input.consumptionId,
+    frozenEvaluatorDigest: input.frozenEvaluatorDigest,
+    observedEvaluatorDigest: input.observedEvaluatorDigest,
+    changedFiles:
+      receipt === null
+        ? null
+        : observed
+            .filter((file) => receipt.get(file.path) !== file.digest)
+            .map((file) => file.path),
+    receiptMissing: receipt === null,
+    exposedShardCount: await countExposedShards(input.testPredictionsDirectory),
+    detectedAt: input.detectedAt,
+    failureCode: "identity-mismatch",
+  });
+}
+
+// The receipt is a local convenience file and therefore deletable: an unreadable
+// one yields `null`, which the incident reports as `receiptMissing` instead of
+// claiming an empty change set.
+async function readPreExposureFileDigests(
+  path: string,
+): Promise<Map<string, string> | null> {
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(await readTextFile(path));
+  } catch {
+    return null;
+  }
+  const files = (parsed as { files?: unknown }).files;
+  if (!Array.isArray(files)) return null;
+  const digests = new Map<string, string>();
+  for (const entry of files as EvaluatorFileObservation[]) {
+    if (typeof entry?.path !== "string" || typeof entry?.digest !== "string") {
+      return null;
+    }
+    digests.set(entry.path, entry.digest);
+  }
+  return digests;
+}
+
+// How much of the blind block was already on disk when the divergence was found.
+// The shard store commits a file every SHARD_SIZE rows during scoring, so this is a
+// count of committed files and nothing is opened.
+async function countExposedShards(directory: string): Promise<number> {
+  try {
+    const entries = await readdir(directory);
+    return entries.filter((entry) => entry.endsWith(".jsonl")).length;
+  } catch {
+    return 0;
+  }
 }
 
 // The scientific tuple that identifies the lease — byte-for-byte the identity

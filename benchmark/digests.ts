@@ -12,7 +12,8 @@
 // split policy rather than here.
 
 import { createHash } from "node:crypto";
-import { readFile } from "node:fs/promises";
+import { constants as fsConstants } from "node:fs";
+import { access, readFile } from "node:fs/promises";
 import { resolve } from "node:path";
 
 import { canonicalJson } from "../contracts/canonical-json.ts";
@@ -161,6 +162,53 @@ export async function computeEvaluatorDigest(root: string): Promise<string> {
     );
   }
   return sha256BytesHex(concatBytes(chunks));
+}
+
+/** One evaluator file as found on disk: its own bytes and whether it is writable. */
+export interface EvaluatorFileObservation {
+  path: string;
+  digest: string;
+  writable: boolean;
+}
+
+/**
+ * Per-file view of the same closed inventory `computeEvaluatorDigest` aggregates,
+ * in the same lexicographic order. Purely additive: it never feeds the aggregate,
+ * so the sealed recipe stays a pure function of path + NUL + bytes and a digest
+ * written by an earlier `fit` keeps comparing equal. It exists so a mismatch can
+ * name WHICH file moved instead of only that something did.
+ */
+export async function observeEvaluatorFiles(
+  root: string,
+): Promise<EvaluatorFileObservation[]> {
+  const ordered = [...EVALUATOR_FILES].sort((a, b) =>
+    a < b ? -1 : a > b ? 1 : 0,
+  );
+  const observations: EvaluatorFileObservation[] = [];
+  for (const relativePath of ordered) {
+    const absolute = resolve(root, relativePath);
+    const bytes = await readFile(absolute);
+    observations.push({
+      path: relativePath,
+      digest: sha256BytesHex(
+        new Uint8Array(bytes.buffer, bytes.byteOffset, bytes.byteLength),
+      ),
+      writable: await isWritable(absolute),
+    });
+  }
+  return observations;
+}
+
+// On Windows `access(W_OK)` reports the FILE_ATTRIBUTE_READONLY attribute and NOT
+// the ACL, so a deny-write ACL reads back as writable. `writable: false` therefore
+// proves a file is protected; `writable: true` does not prove it is unprotected.
+async function isWritable(absolutePath: string): Promise<boolean> {
+  try {
+    await access(absolutePath, fsConstants.W_OK);
+    return true;
+  } catch {
+    return false;
+  }
 }
 
 function concatBytes(chunks: readonly Uint8Array[]): Uint8Array {

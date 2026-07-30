@@ -7,13 +7,14 @@ import {
   writeFile,
 } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 
 import { afterEach, describe, expect, it } from "vitest";
 
 import {
   assertHoldoutAvailable,
   beginHoldoutConsumption,
+  BLOCK_IDENTITY_FIELDS,
   completeHoldoutConsumption,
   failHoldoutConsumption,
   HoldoutLedgerError,
@@ -103,21 +104,21 @@ describe("holdout ledger one-way lease", () => {
     expect(active.consumptionId).toBe(session.consumptionId);
   });
 
-  it("blocks a second consumption of the same tuple even after a crash left it started", async () => {
+  it("blocks a second consumption of the same block even after a crash left it started", async () => {
     const { ledger, activeSessionPath } = await workspace();
     await beginHoldoutConsumption(ledger, identity(), FIXED_TIME, {
       activeSessionPath,
     });
     // No terminal event was ever written (simulated crash): the started lease
-    // still consumes the tuple.
+    // still consumes the block.
     await expect(assertHoldoutAvailable(ledger, identity())).rejects.toThrow(
-      /holdout tuple was already consumed/,
+      /holdout block was already consumed/,
     );
     await expect(
       beginHoldoutConsumption(ledger, identity(), LATER_TIME, {
         activeSessionPath,
       }),
-    ).rejects.toThrow(/holdout tuple was already consumed/);
+    ).rejects.toThrow(/holdout block was already consumed/);
   });
 
   it("resumes only the same started session with an identical tuple, never minting a new id", async () => {
@@ -155,7 +156,7 @@ describe("holdout ledger one-way lease", () => {
     ).rejects.toThrow(/no started holdout session/);
   });
 
-  it("completes a started session terminally and marks the tuple consumed", async () => {
+  it("completes a started session terminally and marks the block consumed", async () => {
     const { ledger, activeSessionPath } = await workspace();
     const session = await beginHoldoutConsumption(
       ledger,
@@ -185,7 +186,7 @@ describe("holdout ledger one-way lease", () => {
       beginHoldoutConsumption(ledger, identity(), LATER_TIME, {
         activeSessionPath,
       }),
-    ).rejects.toThrow(/holdout tuple was already consumed/);
+    ).rejects.toThrow(/holdout block was already consumed/);
     await expect(
       resumeHoldoutConsumption(ledger, session.consumptionId, identity()),
     ).rejects.toThrow(/holdout session is terminal/);
@@ -247,24 +248,171 @@ describe("holdout ledger one-way lease", () => {
       beginHoldoutConsumption(ledger, identity(), LATER_TIME, {
         activeSessionPath,
       }),
-    ).rejects.toThrow(/holdout tuple was already consumed/);
+    ).rejects.toThrow(/holdout block was already consumed/);
     await expect(
       resumeHoldoutConsumption(ledger, session.consumptionId, identity()),
     ).rejects.toThrow(/holdout session is terminal/);
   });
 
-  it("allows a genuinely different tuple to open its own session", async () => {
+  it("allows a genuinely different block to open its own session", async () => {
     const { ledger, activeSessionPath } = await workspace();
     await beginHoldoutConsumption(ledger, identity(), FIXED_TIME, {
       activeSessionPath,
     });
-    // A different evaluator digest is a different scientific tuple.
+    // Different blind material, so nothing was measured twice. Without this case a
+    // guard that refused every second run would look correct.
     const other = await beginHoldoutConsumption(
       ledger,
-      identity({ evaluatorDigest: hex("evaluator-2") }),
+      identity({ splitDigest: hex("other-split") }),
       LATER_TIME,
       { activeSessionPath },
     );
     expect(other.status).toBe("started");
+    const alsoOther = await beginHoldoutConsumption(
+      ledger,
+      identity({ datasetDigest: hex("other-dataset") }),
+      LATER_TIME,
+      { activeSessionPath },
+    );
+    expect(alsoOther.status).toBe("started");
+  });
+});
+
+// The one-use guarantee is over the blind BLOCK, not over the pair
+// (block, candidate). Swapping a bundle, an evaluator or a model version buys no
+// second measurement of the same material, and the ledger stays untouched when it
+// is tried.
+describe("holdout block identity", () => {
+  const created: string[] = [];
+
+  afterEach(async () => {
+    await Promise.all(
+      created.map((dir) => rm(dir, { recursive: true, force: true })),
+    );
+    created.length = 0;
+  });
+
+  async function ledgerPath(): Promise<string> {
+    const dir = await mkdtemp(join(tmpdir(), "cf-ledger-block-"));
+    created.push(dir);
+    const privateDir = join(dir, "private");
+    await mkdir(privateDir, { recursive: true });
+    return join(privateDir, "holdout-ledger.jsonl");
+  }
+
+  function events(raw: string): { consumptionId: string; status: string }[] {
+    return raw
+      .split("\n")
+      .map((line) => line.trim())
+      .filter((line) => line !== "")
+      .map(
+        (line) => JSON.parse(line) as { consumptionId: string; status: string },
+      );
+  }
+
+  it("names exactly the two digests over the blind material", () => {
+    // Pinned because every field admitted here narrows the refusal: a later edit
+    // that adds one silently hands back part of the one-use guarantee.
+    expect([...BLOCK_IDENTITY_FIELDS]).toEqual([
+      "datasetDigest",
+      "splitDigest",
+    ]);
+  });
+
+  const candidateSwaps: Partial<HoldoutIdentity>[] = [
+    { bundleDigest: hex("other-bundle") },
+    { evaluatorDigest: hex("other-evaluator") },
+    { modelVersion: "1.0.1" },
+    { modelId: "cleanfeed-ptbr-v2" },
+    { calibrationArtifactDigest: hex("other-calibration") },
+    { tokenizerDigest: hex("other-tokenizer") },
+    { runtimeParityDigest: hex("other-parity") },
+    { extensionBuildDigest: hex("other-build") },
+    { aggregationVersion: "tmr-aggregation-v4" },
+    { contentCompositionVersion: "lexical-content-v3" },
+    // The two attestations ABOUT the same material. They are deliberately NOT
+    // block fields: evaluator code recomputes them from the bytes datasetDigest
+    // already covers, so a change in that code could otherwise reopen a block
+    // whose material never moved.
+    { datasetAuditDigest: hex("other-audit") },
+    { sourceReadinessDigest: hex("other-readiness") },
+  ];
+
+  for (const swap of candidateSwaps) {
+    const field = Object.keys(swap)[0];
+    it(`refuses the same block under a different ${field}, writing no event`, async () => {
+      const ledger = await ledgerPath();
+      const activeSessionPath = join(dirname(ledger), "active-session.json");
+      await beginHoldoutConsumption(ledger, identity(), FIXED_TIME, {
+        activeSessionPath,
+      });
+      const afterFirst = await readFile(ledger, "utf8");
+      expect(events(afterFirst)).toHaveLength(1);
+
+      await expect(
+        assertHoldoutAvailable(ledger, identity(swap)),
+      ).rejects.toThrow(/holdout block was already consumed/);
+      await expect(
+        beginHoldoutConsumption(ledger, identity(swap), LATER_TIME, {
+          activeSessionPath,
+        }),
+      ).rejects.toThrow(/holdout block was already consumed/);
+
+      // Refused before the append: the ledger is byte-identical.
+      expect(await readFile(ledger, "utf8")).toBe(afterFirst);
+    });
+  }
+
+  it("keeps resume matched to the exact execution, not a neighbouring one", async () => {
+    const ledger = await ledgerPath();
+    const activeSessionPath = join(dirname(ledger), "active-session.json");
+    const session = await beginHoldoutConsumption(
+      ledger,
+      identity(),
+      FIXED_TIME,
+      { activeSessionPath },
+    );
+
+    await expect(
+      resumeHoldoutConsumption(ledger, session.consumptionId, identity()),
+    ).resolves.toMatchObject({ status: "started" });
+    // Same block, different candidate: the block is spent AND the run is not this
+    // one, so a resume must not hand the session over either.
+    await expect(
+      resumeHoldoutConsumption(
+        ledger,
+        session.consumptionId,
+        identity({ bundleDigest: hex("other-bundle") }),
+      ),
+    ).rejects.toThrow(/tuple/);
+  });
+
+  it("refuses a spent block after a terminal event too", async () => {
+    const ledger = await ledgerPath();
+    const activeSessionPath = join(dirname(ledger), "active-session.json");
+    const session = await beginHoldoutConsumption(
+      ledger,
+      identity(),
+      FIXED_TIME,
+      { activeSessionPath },
+    );
+    await completeHoldoutConsumption(
+      ledger,
+      session.consumptionId,
+      identity(),
+      hex("report"),
+      LATER_TIME,
+      { activeSessionPath },
+    );
+    // Every terminal session had a `started` before it, so checking `started`
+    // already covers `completed` and `failed`.
+    await expect(
+      beginHoldoutConsumption(
+        ledger,
+        identity({ evaluatorDigest: hex("other-evaluator") }),
+        LATER_TIME,
+        { activeSessionPath },
+      ),
+    ).rejects.toThrow(/holdout block was already consumed/);
   });
 });

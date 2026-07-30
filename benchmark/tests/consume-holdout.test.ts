@@ -6,7 +6,7 @@ import {
   stat,
   writeFile,
 } from "node:fs/promises";
-import { existsSync, readFileSync } from "node:fs";
+import { appendFileSync, existsSync, readFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -26,6 +26,7 @@ import {
 } from "../calibration-pipeline.ts";
 import {
   runConsumeHoldout,
+  type ConsumeHoldoutDeps,
   type ConsumeHoldoutOptions,
   type ConsumeHoldoutTestPage,
 } from "../commands/consume-holdout.ts";
@@ -46,6 +47,7 @@ import {
   normalizeGeneratorFamily,
   type GeneratorFamily,
 } from "../generator-family.ts";
+import { writeEvaluatorFixture } from "./helpers/evaluator-tree.ts";
 
 // ---------------------------------------------------------------------------
 // consume-holdout drives the one-way holdout lease end to end: it opens the
@@ -290,12 +292,13 @@ function predictionManifest(
   partition: PredictionManifestV1["partition"],
   datasetDigest: string,
   splitDigest: string,
+  bundleDigest: string,
 ): PredictionManifestV1 {
   return {
     schemaVersion: 1,
     modelId: MODEL_ID,
     modelVersion: MODEL_VERSION,
-    bundleDigest: BUNDLE,
+    bundleDigest,
     aggregationVersion: AGGREGATION,
     contentCompositionVersion: COMPOSITION,
     tokenizerDigest: TOKENIZER,
@@ -320,6 +323,7 @@ async function frozenCalibration(input: {
   developmentDigest: string;
   calibrationDigest: string;
   evaluatorDigest: string;
+  bundleDigest: string;
   visualDocument: number | null;
 }): Promise<FrozenCalibrationArtifact> {
   const base: Omit<FrozenCalibrationArtifact, "artifactDigest"> = {
@@ -327,7 +331,7 @@ async function frozenCalibration(input: {
     model: {
       modelId: MODEL_ID,
       modelVersion: MODEL_VERSION,
-      bundleDigest: BUNDLE,
+      bundleDigest: input.bundleDigest,
       tokenizerDigest: TOKENIZER,
       aggregationVersion: AGGREGATION,
       contentCompositionVersion: COMPOSITION,
@@ -388,6 +392,11 @@ async function frozenCalibration(input: {
 interface ScenarioSpec {
   scientificUse: DatasetManifest["scientificUse"];
   visualDocument: number | null;
+  /**
+   * Hash the real repository tree. Otherwise the scenario gets a synthetic tree
+   * under its own root, which the frozen artifact then declares: the pre-exposure
+   * check is a real check in both cases, and the synthetic one is far cheaper.
+   */
   realEvaluator: boolean;
   testNegatives: number;
   testPositives: number;
@@ -397,6 +406,10 @@ interface ScenarioSpec {
   authorMarker?: string;
   /** Omit some test ids from test-input.jsonl to force a completeness failure. */
   omitInputIds?: number;
+  /** Declare an evaluatorDigest that no tree on disk hashes to. */
+  frozenEvaluatorDigest?: string;
+  /** A different CANDIDATE over the same blind block. */
+  bundleDigest?: string;
 }
 
 interface Scenario {
@@ -406,6 +419,20 @@ interface Scenario {
   ledgerPath: string;
   workDirectory: string;
   outputDirectory: string;
+  evaluatorRoot: string;
+}
+
+// The evaluator root is injected through deps and never through a flag, so every
+// scenario has to hand it over explicitly.
+function holdoutDeps(
+  scenario: Scenario,
+  createTestPage: () => Promise<ConsumeHoldoutTestPage>,
+): ConsumeHoldoutDeps {
+  return {
+    now: () => FIXED_TIME,
+    createTestPage,
+    evaluatorRoot: scenario.evaluatorRoot,
+  };
 }
 
 async function buildScenario(
@@ -413,6 +440,7 @@ async function buildScenario(
   spec: ScenarioSpec,
 ): Promise<Scenario> {
   recordCounter = 0;
+  const bundleDigest = spec.bundleDigest ?? BUNDLE;
   const marker: RecordOptions = {
     textMarker: spec.textMarker,
     authorMarker: spec.authorMarker,
@@ -475,11 +503,13 @@ async function buildScenario(
     "development",
     datasetDigest,
     splitDigest,
+    bundleDigest,
   );
   const calManifest = predictionManifest(
     "calibration",
     datasetDigest,
     splitDigest,
+    bundleDigest,
   );
   const developmentDigest = await computePredictionManifestDigest(devManifest);
   const calibrationDigest = await computePredictionManifestDigest(calManifest);
@@ -491,15 +521,19 @@ async function buildScenario(
     join(fitDir, "calibration-prediction-manifest.json"),
     `${JSON.stringify(calManifest, null, 2)}\n`,
   );
-  const evaluatorDigest = spec.realEvaluator
-    ? await computeEvaluatorDigest(REPO_ROOT)
-    : hex("evaluator");
+  const evaluatorRoot = spec.realEvaluator
+    ? REPO_ROOT
+    : join(root, "evaluator");
+  if (!spec.realEvaluator) await writeEvaluatorFixture(evaluatorRoot);
+  const evaluatorDigest =
+    spec.frozenEvaluatorDigest ?? (await computeEvaluatorDigest(evaluatorRoot));
   const frozen = await frozenCalibration({
     datasetDigest,
     splitDigest,
     developmentDigest,
     calibrationDigest,
     evaluatorDigest,
+    bundleDigest,
     visualDocument: spec.visualDocument,
   });
   const frozenCalibrationPath = join(fitDir, "frozen-calibration.json");
@@ -543,7 +577,7 @@ async function buildScenario(
     state: "ready",
     modelId: MODEL_ID,
     modelVersion: MODEL_VERSION,
-    bundleDigest: BUNDLE,
+    bundleDigest,
     aggregationVersion: AGGREGATION,
     contentCompositionVersion: COMPOSITION,
     tokenizerDigest: TOKENIZER,
@@ -574,6 +608,7 @@ async function buildScenario(
     ledgerPath,
     workDirectory,
     outputDirectory,
+    evaluatorRoot,
   };
 }
 
@@ -653,18 +688,35 @@ function stubPage(
   return handle;
 }
 
-function readLedgerEvents(
-  path: string,
-): { consumptionId: string; status: string }[] {
+interface LedgerEvent {
+  consumptionId: string;
+  status: string;
+  failureCode: string | null;
+  evaluatorDigest: string;
+}
+
+/** The `code` of a coded rejection, so a test pins the code and not the prose. */
+async function rejectionCode(promise: Promise<unknown>): Promise<string> {
+  try {
+    await promise;
+  } catch (error) {
+    return (error as { code?: string }).code ?? "";
+  }
+  throw new Error("expected the call to reject");
+}
+
+const ACTIVE_SESSION_FILE = "active-session.json";
+const RECEIPT_FILE = "pre-exposure-check.json";
+const INCIDENT_FILE = "holdout-exposure-incident.json";
+
+function readLedgerEvents(path: string): LedgerEvent[] {
   if (!existsSync(path)) return [];
   const raw = readFileSync(path, "utf8");
   return raw
     .split(/\r?\n/)
     .map((line) => line.trim())
     .filter((line) => line !== "")
-    .map(
-      (line) => JSON.parse(line) as { consumptionId: string; status: string },
-    );
+    .map((line) => JSON.parse(line) as LedgerEvent);
 }
 
 const TIMEOUT_MS = 120_000;
@@ -699,7 +751,7 @@ describe("consume-holdout one-way lease", () => {
     await expect(
       runConsumeHoldout(
         { ...scenario.options, confirmSplitDigest: hex("wrong-split") },
-        { now: () => FIXED_TIME, createTestPage: page.createTestPage },
+        holdoutDeps(scenario, page.createTestPage),
       ),
     ).rejects.toThrow(/split.?digest/iu);
 
@@ -737,10 +789,10 @@ describe("consume-holdout one-way lease", () => {
       },
     });
 
-    const message = await runConsumeHoldout(scenario.options, {
-      now: () => FIXED_TIME,
-      createTestPage: page.createTestPage,
-    });
+    const message = await runConsumeHoldout(
+      scenario.options,
+      holdoutDeps(scenario, page.createTestPage),
+    );
 
     // The atomic started event and its marker existed before any text was scored.
     expect(startedVisibleAtFirstInteraction).toBe(true);
@@ -785,10 +837,10 @@ describe("consume-holdout one-way lease", () => {
     // declared failure), so the started lease must survive for a resume.
     const crashing = stubPage(scenario.status, { throwOnFirstScore: true });
     await expect(
-      runConsumeHoldout(scenario.options, {
-        now: () => FIXED_TIME,
-        createTestPage: crashing.createTestPage,
-      }),
+      runConsumeHoldout(
+        scenario.options,
+        holdoutDeps(scenario, crashing.createTestPage),
+      ),
     ).rejects.toThrow(/scorer boom/u);
 
     const afterCrash = readLedgerEvents(scenario.ledgerPath);
@@ -802,20 +854,17 @@ describe("consume-holdout one-way lease", () => {
 
     // A fresh (non-resume) run of the SAME tuple is refused; the lease is spent.
     await expect(
-      runConsumeHoldout(scenario.options, {
-        now: () => FIXED_TIME,
-        createTestPage: stubPage(scenario.status).createTestPage,
-      }),
+      runConsumeHoldout(
+        scenario.options,
+        holdoutDeps(scenario, stubPage(scenario.status).createTestPage),
+      ),
     ).rejects.toThrow(/already consumed/iu);
 
     // A resume can never mint a different id.
     await expect(
       runConsumeHoldout(
         { ...scenario.options, resumeConsumptionId: hex("bogus").slice(0, 24) },
-        {
-          now: () => FIXED_TIME,
-          createTestPage: stubPage(scenario.status).createTestPage,
-        },
+        holdoutDeps(scenario, stubPage(scenario.status).createTestPage),
       ),
     ).rejects.toThrow(/no started holdout session|session/iu);
 
@@ -823,7 +872,7 @@ describe("consume-holdout one-way lease", () => {
     const working = stubPage(scenario.status);
     const message = await runConsumeHoldout(
       { ...scenario.options, resumeConsumptionId: consumptionId },
-      { now: () => FIXED_TIME, createTestPage: working.createTestPage },
+      holdoutDeps(scenario, working.createTestPage),
     );
     expect(message).toMatch(
       /^HOLDOUT_COMPLETED decision=(pass|indicator-only|reject)$/u,
@@ -855,10 +904,10 @@ describe("consume-holdout one-way lease", () => {
     };
     const page = stubPage(drifted);
     await expect(
-      runConsumeHoldout(scenario.options, {
-        now: () => FIXED_TIME,
-        createTestPage: page.createTestPage,
-      }),
+      runConsumeHoldout(
+        scenario.options,
+        holdoutDeps(scenario, page.createTestPage),
+      ),
     ).rejects.toThrow(/SCORER_PARITY_MISMATCH/u);
 
     const events = readLedgerEvents(scenario.ledgerPath);
@@ -871,18 +920,15 @@ describe("consume-holdout one-way lease", () => {
 
     // Terminal + consumed: neither a fresh run nor a resume reopens it.
     await expect(
-      runConsumeHoldout(scenario.options, {
-        now: () => FIXED_TIME,
-        createTestPage: stubPage(scenario.status).createTestPage,
-      }),
+      runConsumeHoldout(
+        scenario.options,
+        holdoutDeps(scenario, stubPage(scenario.status).createTestPage),
+      ),
     ).rejects.toThrow(/already consumed/iu);
     await expect(
       runConsumeHoldout(
         { ...scenario.options, resumeConsumptionId: failed[0].consumptionId },
-        {
-          now: () => FIXED_TIME,
-          createTestPage: stubPage(scenario.status).createTestPage,
-        },
+        holdoutDeps(scenario, stubPage(scenario.status).createTestPage),
       ),
     ).rejects.toThrow(/terminal/iu);
   });
@@ -900,10 +946,10 @@ describe("consume-holdout one-way lease", () => {
     });
     const page = stubPage(scenario.status);
     await expect(
-      runConsumeHoldout(scenario.options, {
-        now: () => FIXED_TIME,
-        createTestPage: page.createTestPage,
-      }),
+      runConsumeHoldout(
+        scenario.options,
+        holdoutDeps(scenario, page.createTestPage),
+      ),
     ).rejects.toThrow(/completeness|missing/iu);
 
     // No report/decision was produced, and the spent lease is terminal (failed).
@@ -941,10 +987,10 @@ describe("consume-holdout one-way lease", () => {
         authorMarker: "AUTORSEGREDO",
       });
       const page = stubPage(scenario.status);
-      const message = await runConsumeHoldout(scenario.options, {
-        now: () => FIXED_TIME,
-        createTestPage: page.createTestPage,
-      });
+      const message = await runConsumeHoldout(
+        scenario.options,
+        holdoutDeps(scenario, page.createTestPage),
+      );
 
       const gates = JSON.parse(
         await readFile(
@@ -973,6 +1019,36 @@ describe("consume-holdout one-way lease", () => {
       // And the divisor was never quietly recomputed to fit.
       expect(gates.multiplicity.declared).toBeNull();
       expect(gates.multiplicity.observed).toBeGreaterThan(0);
+
+      // Exactly one lease over the real evaluator, opened once and concluded once,
+      // with no exposure incident anywhere.
+      const events = readLedgerEvents(scenario.ledgerPath);
+      expect(events.map((event) => event.status)).toEqual([
+        "started",
+        "completed",
+      ]);
+      expect(page.scoreCalls).toBeGreaterThan(0);
+      expect(existsSync(join(scenario.outputDirectory, INCIDENT_FILE))).toBe(
+        false,
+      );
+
+      // The `started` event is the receipt: its evaluatorDigest is the value that
+      // was confirmed against the bytes on disk, not a figure copied from the
+      // frozen artifact and never checked.
+      const receipt = JSON.parse(
+        await readFile(join(scenario.workDirectory, RECEIPT_FILE), "utf8"),
+      ) as {
+        frozenEvaluatorDigest: string;
+        observedEvaluatorDigest: string;
+        files: { path: string; digest: string; writable: boolean }[];
+        checkedAt: string;
+      };
+      expect(receipt.observedEvaluatorDigest).toBe(
+        receipt.frozenEvaluatorDigest,
+      );
+      expect(events[0].evaluatorDigest).toBe(receipt.observedEvaluatorDigest);
+      expect(receipt.files.length).toBeGreaterThan(0);
+      expect(receipt.checkedAt).toBe(FIXED_TIME);
 
       // Report privacy: no raw text, author, url or prompt in any public output.
       const report = await readFile(
@@ -1012,10 +1088,10 @@ describe("consume-holdout one-way lease", () => {
         negativeTag: "LOW",
       });
       const page = stubPage(scenario.status);
-      const message = await runConsumeHoldout(scenario.options, {
-        now: () => FIXED_TIME,
-        createTestPage: page.createTestPage,
-      });
+      const message = await runConsumeHoldout(
+        scenario.options,
+        holdoutDeps(scenario, page.createTestPage),
+      );
       const gates = JSON.parse(
         await readFile(
           join(scenario.outputDirectory, "gate-report.json"),
@@ -1050,10 +1126,10 @@ describe("consume-holdout one-way lease", () => {
         negativeTag: "HIGH",
       });
       const page = stubPage(scenario.status);
-      const message = await runConsumeHoldout(scenario.options, {
-        now: () => FIXED_TIME,
-        createTestPage: page.createTestPage,
-      });
+      const message = await runConsumeHoldout(
+        scenario.options,
+        holdoutDeps(scenario, page.createTestPage),
+      );
       const gates = JSON.parse(
         await readFile(
           join(scenario.outputDirectory, "gate-report.json"),
@@ -1065,4 +1141,334 @@ describe("consume-holdout one-way lease", () => {
     },
     TIMEOUT_MS,
   );
+
+  // ---------------------------------------------------------------------------
+  // One use is per BLOCK, and the evaluator is judged before the block is opened.
+  // The two live together because a digest confirmed before the lease still leaves
+  // the block reconsumable if admission compares the candidate, and a block-level
+  // refusal still leaves the numbers to an evaluator nobody checked.
+  // ---------------------------------------------------------------------------
+
+  it("refuses the same block under a different candidate, writing no ledger event", async () => {
+    const first = await buildScenario(await newRoot(), {
+      scientificUse: "release",
+      visualDocument: 0.8,
+      realEvaluator: false,
+      testNegatives: 4,
+      testPositives: 2,
+      negativeTag: "LOW",
+    });
+    expect(
+      await runConsumeHoldout(
+        first.options,
+        holdoutDeps(first, stubPage(first.status).createTestPage),
+      ),
+    ).toMatch(/^HOLDOUT_COMPLETED decision=/u);
+    const spentLedger = readFileSync(first.ledgerPath, "utf8");
+
+    // Same records and the same split policy, so the same blind material — under a
+    // different bundle, which also moves the calibration artifact digest.
+    const second = await buildScenario(await newRoot(), {
+      scientificUse: "release",
+      visualDocument: 0.8,
+      realEvaluator: false,
+      testNegatives: 4,
+      testPositives: 2,
+      negativeTag: "LOW",
+      bundleDigest: hex("bundle-2"),
+    });
+    expect(second.options.confirmSplitDigest).toBe(
+      first.options.confirmSplitDigest,
+    );
+    const page = stubPage(second.status);
+    await expect(
+      runConsumeHoldout(
+        { ...second.options, ledgerPath: first.ledgerPath },
+        holdoutDeps(second, page.createTestPage),
+      ),
+    ).rejects.toThrow(/holdout block was already consumed/u);
+
+    // Refused before the append and before the candidate went up.
+    expect(readFileSync(first.ledgerPath, "utf8")).toBe(spentLedger);
+    expect(page.createCalls).toBe(0);
+    expect(page.scoreCalls).toBe(0);
+  });
+
+  it("opens a fresh lease for a genuinely different block under the same candidate", async () => {
+    const first = await buildScenario(await newRoot(), {
+      scientificUse: "release",
+      visualDocument: 0.8,
+      realEvaluator: false,
+      testNegatives: 4,
+      testPositives: 2,
+      negativeTag: "LOW",
+    });
+    await runConsumeHoldout(
+      first.options,
+      holdoutDeps(first, stubPage(first.status).createTestPage),
+    );
+
+    // Different material, so nothing is measured twice. Without this case a guard
+    // that refused every second run would look correct.
+    const second = await buildScenario(await newRoot(), {
+      scientificUse: "release",
+      visualDocument: 0.8,
+      realEvaluator: false,
+      testNegatives: 6,
+      testPositives: 2,
+      negativeTag: "LOW",
+    });
+    expect(second.options.confirmSplitDigest).not.toBe(
+      first.options.confirmSplitDigest,
+    );
+    expect(
+      await runConsumeHoldout(
+        { ...second.options, ledgerPath: first.ledgerPath },
+        holdoutDeps(second, stubPage(second.status).createTestPage),
+      ),
+    ).toMatch(/^HOLDOUT_COMPLETED decision=/u);
+
+    const events = readLedgerEvents(first.ledgerPath);
+    expect(events.filter((event) => event.status === "started")).toHaveLength(
+      2,
+    );
+    expect(events.filter((event) => event.status === "completed")).toHaveLength(
+      2,
+    );
+    expect(new Set(events.map((event) => event.consumptionId)).size).toBe(2);
+  });
+
+  it("costs nothing when the evaluator already diverges before the lease exists", async () => {
+    const root = await newRoot();
+    const scenario = await buildScenario(root, {
+      scientificUse: "release",
+      visualDocument: 0.8,
+      realEvaluator: false,
+      testNegatives: 4,
+      testPositives: 2,
+      negativeTag: "LOW",
+      frozenEvaluatorDigest: hex("stale-evaluator"),
+    });
+    const page = stubPage(scenario.status);
+    expect(
+      await rejectionCode(
+        runConsumeHoldout(
+          scenario.options,
+          holdoutDeps(scenario, page.createTestPage),
+        ),
+      ),
+    ).toBe("EVALUATOR_DIGEST_PRE_EXPOSURE_MISMATCH");
+
+    expect(readLedgerEvents(scenario.ledgerPath)).toEqual([]);
+    expect(existsSync(join(scenario.workDirectory, ACTIVE_SESSION_FILE))).toBe(
+      false,
+    );
+    expect(existsSync(join(scenario.workDirectory, RECEIPT_FILE))).toBe(false);
+    expect(existsSync(scenario.outputDirectory)).toBe(false);
+    expect(page.createCalls).toBe(0);
+    expect(page.scoreCalls).toBe(0);
+  });
+
+  it(
+    "turns a mismatch provoked after the shards exist into a terminal exposure with no numbers",
+    async () => {
+      const scenario = await buildScenario(await newRoot(), {
+        scientificUse: "release",
+        visualDocument: 0.8,
+        realEvaluator: false,
+        // Over one shard's worth, so a shard is committed to disk while scoring is
+        // still running: the boundary this defends is "before any number exists",
+        // not "before the labels are opened".
+        testNegatives: 100,
+        testPositives: 10,
+        negativeTag: "LOW",
+        textMarker: "SEGREDO",
+        authorMarker: "AUTORSEGREDO",
+      });
+      const drifted = join(scenario.evaluatorRoot, "benchmark", "gates.ts");
+      let mutated = false;
+      const page = stubPage(scenario.status, {
+        scoreFor: (text) => {
+          if (!mutated) {
+            mutated = true;
+            appendFileSync(drifted, "// drift\n");
+          }
+          return decode(text);
+        },
+      });
+
+      expect(
+        await rejectionCode(
+          runConsumeHoldout(
+            scenario.options,
+            holdoutDeps(scenario, page.createTestPage),
+          ),
+        ),
+      ).toBe("EVALUATOR_DIGEST_POST_EXPOSURE_MISMATCH");
+
+      // The exposed run does not escape a terminal event.
+      const events = readLedgerEvents(scenario.ledgerPath);
+      expect(events.map((event) => event.status)).toEqual([
+        "started",
+        "failed",
+      ]);
+      expect(events[1].failureCode).toBe("identity-mismatch");
+      expect(events[1].consumptionId).toBe(events[0].consumptionId);
+      expect(
+        existsSync(join(scenario.workDirectory, ACTIVE_SESSION_FILE)),
+      ).toBe(false);
+      // The run began legitimately, and the receipt is what says so.
+      expect(existsSync(join(scenario.workDirectory, RECEIPT_FILE))).toBe(true);
+      // No claim was sealed: the evaluator that would have computed it is not the
+      // certified one.
+      expect(
+        existsSync(join(scenario.outputDirectory, "benchmark-report.json")),
+      ).toBe(false);
+      expect(
+        existsSync(join(scenario.outputDirectory, "gate-report.json")),
+      ).toBe(false);
+
+      const body = await readFile(
+        join(scenario.outputDirectory, INCIDENT_FILE),
+        "utf8",
+      );
+      const incident = JSON.parse(body) as {
+        consumptionId: string;
+        frozenEvaluatorDigest: string;
+        observedEvaluatorDigest: string;
+        changedFiles: string[] | null;
+        receiptMissing: boolean;
+        exposedShardCount: number;
+        failureCode: string;
+      };
+      expect(incident.consumptionId).toBe(events[0].consumptionId);
+      expect(incident.failureCode).toBe("identity-mismatch");
+      expect(incident.receiptMissing).toBe(false);
+      expect(incident.changedFiles).toEqual(["benchmark/gates.ts"]);
+      expect(incident.frozenEvaluatorDigest).not.toBe(
+        incident.observedEvaluatorDigest,
+      );
+      // Two shards: one of them was committed before the last document scored.
+      expect(incident.exposedShardCount).toBe(2);
+      // Published beside the ledger event, so it carries paths and counts only.
+      expect(body).not.toMatch(/SEGREDO/u);
+      expect(body).not.toMatch(/AUTORSEGREDO/u);
+      expect(body).not.toMatch(/[Ss]core/u);
+    },
+    TIMEOUT_MS,
+  );
+
+  it("tells a pre-existing mismatch apart from a provoked one, by the ledger alone", async () => {
+    const stale = await buildScenario(await newRoot(), {
+      scientificUse: "release",
+      visualDocument: 0.8,
+      realEvaluator: false,
+      testNegatives: 4,
+      testPositives: 2,
+      negativeTag: "LOW",
+      frozenEvaluatorDigest: hex("stale-evaluator"),
+    });
+    await expect(
+      runConsumeHoldout(
+        stale.options,
+        holdoutDeps(stale, stubPage(stale.status).createTestPage),
+      ),
+    ).rejects.toThrow();
+
+    const provoked = await buildScenario(await newRoot(), {
+      scientificUse: "release",
+      visualDocument: 0.8,
+      realEvaluator: false,
+      testNegatives: 4,
+      testPositives: 2,
+      negativeTag: "LOW",
+    });
+    const drifted = join(provoked.evaluatorRoot, "benchmark", "report.ts");
+    let mutated = false;
+    await expect(
+      runConsumeHoldout(
+        provoked.options,
+        holdoutDeps(
+          provoked,
+          stubPage(provoked.status, {
+            scoreFor: (text) => {
+              if (!mutated) {
+                mutated = true;
+                appendFileSync(drifted, "// drift\n");
+              }
+              return decode(text);
+            },
+          }).createTestPage,
+        ),
+      ),
+    ).rejects.toThrow();
+
+    // The distinction is in the ledger and nowhere else: nothing at all for the
+    // block that was never opened, `started` then `failed(identity-mismatch)` for
+    // the block that was.
+    expect(readLedgerEvents(stale.ledgerPath)).toEqual([]);
+    const provokedEvents = readLedgerEvents(provoked.ledgerPath);
+    expect(
+      provokedEvents.map((event) => `${event.status}:${event.failureCode}`),
+    ).toEqual(["started:null", "failed:identity-mismatch"]);
+  });
+
+  it("refuses a resume whose evaluator drifted, and spends nothing on the refusal", async () => {
+    const scenario = await buildScenario(await newRoot(), {
+      scientificUse: "release",
+      visualDocument: 0.8,
+      realEvaluator: false,
+      testNegatives: 4,
+      testPositives: 2,
+      negativeTag: "LOW",
+    });
+    const crashing = stubPage(scenario.status, { throwOnFirstScore: true });
+    await expect(
+      runConsumeHoldout(
+        scenario.options,
+        holdoutDeps(scenario, crashing.createTestPage),
+      ),
+    ).rejects.toThrow(/scorer boom/u);
+    const afterCrash = readLedgerEvents(scenario.ledgerPath);
+    const consumptionId = afterCrash[0].consumptionId;
+
+    // An editor touches an inventory file between the crash and the resume. A
+    // resume rescores everything, so it is fresh exposure and gets the same check.
+    appendFileSync(
+      join(scenario.evaluatorRoot, "benchmark", "report.ts"),
+      "// drift\n",
+    );
+    const refused = stubPage(scenario.status);
+    expect(
+      await rejectionCode(
+        runConsumeHoldout(
+          { ...scenario.options, resumeConsumptionId: consumptionId },
+          holdoutDeps(scenario, refused.createTestPage),
+        ),
+      ),
+    ).toBe("EVALUATOR_DIGEST_PRE_EXPOSURE_MISMATCH");
+    expect(refused.createCalls).toBe(0);
+    expect(refused.scoreCalls).toBe(0);
+    // Nothing was spent by the refusal itself: the session is exactly as the crash
+    // left it. The BLOCK stays consumed either way — no other candidate can reopen
+    // it — so a tree restored to the frozen digest is allowed to finish the run.
+    expect(readLedgerEvents(scenario.ledgerPath)).toEqual(afterCrash);
+
+    await writeEvaluatorFixture(scenario.evaluatorRoot);
+    const working = stubPage(scenario.status);
+    expect(
+      await runConsumeHoldout(
+        { ...scenario.options, resumeConsumptionId: consumptionId },
+        holdoutDeps(scenario, working.createTestPage),
+      ),
+    ).toMatch(/^HOLDOUT_COMPLETED decision=/u);
+    expect(working.scoreCalls).toBeGreaterThan(0);
+    const events = readLedgerEvents(scenario.ledgerPath);
+    expect(events.filter((event) => event.status === "started")).toHaveLength(
+      1,
+    );
+    expect(events.filter((event) => event.status === "completed")).toHaveLength(
+      1,
+    );
+  });
 });

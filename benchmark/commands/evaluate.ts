@@ -68,11 +68,54 @@ export interface EvaluateOptions {
   consumptionId: string;
   outputDirectory: string;
   bootstrapSeed: number;
+  /**
+   * The tree whose bytes ARE the evaluator, for the identity check. Reachable only
+   * from a caller in this process: `assertKnownFlags` keeps it off the CLI, because
+   * a flag would let a run aim the check at a clean copy while an altered evaluator
+   * produces the numbers.
+   */
+  evaluatorRoot?: string;
 }
 
 const REPO_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..", "..");
 
+/** The injected evaluator tree, or the repository this code was loaded from. */
+export function resolveEvaluatorRoot(root: string | undefined): string {
+  return root ?? REPO_ROOT;
+}
+
+/**
+ * Measures the evaluator's own bytes on disk and refuses when they diverge from the
+ * digest the frozen calibration declares, returning the OBSERVED digest so a caller
+ * can record what it saw rather than what it was told. The frozen artifact is not
+ * part of the inventory, so its declared `evaluatorDigest` is a claim until this
+ * comparison is made.
+ */
+export async function assertEvaluatorIdentity(
+  evaluatorRoot: string,
+  frozenEvaluatorDigest: string,
+): Promise<string> {
+  const observed = await computeEvaluatorDigest(evaluatorRoot);
+  if (observed !== frozenEvaluatorDigest) {
+    throw new CommandError(
+      "EVALUATOR_DIGEST_PRE_EXPOSURE_MISMATCH",
+      `the evaluator on disk (${observed}) is not the one the frozen calibration declares (${frozenEvaluatorDigest})`,
+    );
+  }
+  return observed;
+}
+
 export async function runEvaluate(options: EvaluateOptions): Promise<string> {
+  const evaluatorRoot = resolveEvaluatorRoot(options.evaluatorRoot);
+  const frozen = (await readJsonFile(
+    options.frozenCalibrationPath,
+  )) as FrozenCalibrationArtifact;
+  validateFrozenCalibrationArtifact(frozen);
+  // Ahead of the dataset on purpose: records.jsonl carries `text` and `label` on
+  // every record, so this is the last point at which the evaluator can be judged
+  // by someone who has not seen a label.
+  await assertEvaluatorIdentity(evaluatorRoot, frozen.evaluatorDigest);
+
   const manifest = validateDatasetManifest(
     await readJsonFile(join(options.datasetDirectory, "manifest.json")),
   );
@@ -85,11 +128,6 @@ export async function runEvaluate(options: EvaluateOptions): Promise<string> {
     options.splitArtifactPath,
   )) as SplitArtifact;
   await validateSplitArtifact(artifact, manifest, records);
-
-  const frozen = (await readJsonFile(
-    options.frozenCalibrationPath,
-  )) as FrozenCalibrationArtifact;
-  validateFrozenCalibrationArtifact(frozen);
 
   // The two prediction manifests the fit consumed live next to the frozen
   // calibration; they re-enter the report so its three manifest digests match
@@ -171,7 +209,10 @@ export async function runEvaluate(options: EvaluateOptions): Promise<string> {
     }),
   );
 
-  const evaluatorDigest = await computeEvaluatorDigest(REPO_ROOT);
+  // The third measurement of the same bytes, and the one the gate reads. It can
+  // still differ from the check above: everything between them — the shard reads,
+  // the labels, the metrics, the slices — is a window in which the tree can move.
+  const evaluatorDigest = await computeEvaluatorDigest(evaluatorRoot);
   const developmentManifestDigest =
     await computePredictionManifestDigest(developmentManifest);
   const calibrationManifestDigest =

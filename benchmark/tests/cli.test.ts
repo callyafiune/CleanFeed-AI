@@ -7,8 +7,9 @@ import {
   writeFile,
 } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join, resolve } from "node:path";
 import { stdout } from "node:process";
+import { fileURLToPath } from "node:url";
 
 import { afterEach, describe, expect, it } from "vitest";
 
@@ -34,7 +35,11 @@ import {
   type DatasetAudit,
   type DatasetManifest,
 } from "../dataset-manifest.ts";
-import { computeDatasetDigest, sha256BytesHex } from "../digests.ts";
+import {
+  computeDatasetDigest,
+  computeEvaluatorDigest,
+  sha256BytesHex,
+} from "../digests.ts";
 import {
   beginHoldoutConsumption,
   resumeHoldoutConsumption,
@@ -362,6 +367,21 @@ describe("benchmark CLI consume-holdout parsing", () => {
       ]),
     ).rejects.toThrow(/unknown flag --bogus/u);
   });
+
+  it("keeps the evaluator root off the command line", async () => {
+    // A flag here would let a run aim the evaluator identity check at a clean copy
+    // while an altered evaluator produces the numbers, which is the hole the
+    // pre-exposure check closes. The closed flag list is what forbids it.
+    await expect(
+      runCli([
+        ...CONSUME_ARGS,
+        "--confirm-split-digest",
+        "abc",
+        "--evaluator-root",
+        "/tmp/clean-copy",
+      ]),
+    ).rejects.toThrow(/unknown flag --evaluator-root/u);
+  });
 });
 
 describe("benchmark CLI evidence-publication parsing", () => {
@@ -469,8 +489,20 @@ const AGGREGATION = "tmr-aggregation-v3";
 const COMPOSITION = "lexical-content-v2";
 const DATASET_AUDIT = hex("dataset-audit");
 const SOURCE_READINESS = hex("source-readiness");
-const EVALUATOR = hex("evaluator");
 const SESSION_TIME = "2026-07-19T00:00:00.000Z";
+
+const REPO_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..", "..");
+
+// The `evaluate` subcommand takes no evaluator root: the injection point is a deps
+// field on the in-process callers, never a flag. So a frozen artifact driven through
+// the CLI has to declare the digest of THIS working tree, or the identity check
+// refuses the run before it reads a label. Memoized because hashing the inventory is
+// the most expensive thing in this file.
+let repoEvaluatorDigest: string | undefined;
+async function evaluatorDigest(): Promise<string> {
+  repoEvaluatorDigest ??= await computeEvaluatorDigest(REPO_ROOT);
+  return repoEvaluatorDigest;
+}
 
 let recordCounter = 0;
 function record(
@@ -745,7 +777,7 @@ async function frozenCalibration(
     datasetAuditDigest: DATASET_AUDIT,
     sourceReadinessDigest: SOURCE_READINESS,
     splitDigest,
-    evaluatorDigest: EVALUATOR,
+    evaluatorDigest: await evaluatorDigest(),
     partitionsUsed: ["development", "calibration"],
     calibrators: { document: PLATT, localized: PLATT },
     selectionEvidence: { document: [], localized: [] },
@@ -908,7 +940,7 @@ async function buildScenario(root: string): Promise<Scenario> {
     extensionBuildDigest: BUILD,
     backend: "wasm",
     chromeVersion: "150.0.7871.129",
-    evaluatorDigest: EVALUATOR,
+    evaluatorDigest: await evaluatorDigest(),
     calibrationArtifactDigest: frozen.artifactDigest,
   };
 
@@ -1080,7 +1112,7 @@ describe("benchmark CLI holdout consumption via evaluate", () => {
     expect(recall.measured.degenerate).toBe(true);
     await expect(stat(scenario.activeSessionPath)).rejects.toThrow();
 
-    // The tuple is consumed once; neither begin nor resume reopens it.
+    // The block is consumed once; neither begin nor resume reopens it.
     await expect(
       beginHoldoutConsumption(
         scenario.ledgerPath,
@@ -1088,7 +1120,7 @@ describe("benchmark CLI holdout consumption via evaluate", () => {
         SESSION_TIME,
         { activeSessionPath: scenario.activeSessionPath },
       ),
-    ).rejects.toThrow(/holdout tuple was already consumed/u);
+    ).rejects.toThrow(/holdout block was already consumed/u);
     await expect(
       resumeHoldoutConsumption(
         scenario.ledgerPath,

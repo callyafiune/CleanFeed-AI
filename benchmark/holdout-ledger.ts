@@ -1,9 +1,18 @@
-// Append-only, auditable ledger of holdout consumption. The blocked test may be
-// scored exactly ONCE, under a single atomic session bound to the full
-// scientific tuple (dataset/audit/source-readiness/split identity, the model and
-// its bundle/aggregation/composition/tokenizer, the runtime parity and build,
-// the pinned WASM/Chrome shell, the evaluator and the frozen calibration). The
-// lease is ONE-WAY: the first `started` event consumes the tuple even if the
+// Append-only, auditable ledger of holdout consumption. Two identities live here
+// and they answer different questions:
+//
+//   - the BLOCK (`datasetDigest` + `splitDigest`) is the blind material, and it
+//     may be scored exactly ONCE. Admission compares only these fields, so no
+//     candidate — no bundle, no evaluator, no model version — can buy a second
+//     measurement of the same block;
+//   - the full scientific tuple (block plus the audit/source-readiness
+//     attestations, the model and its bundle/aggregation/composition/tokenizer,
+//     the runtime parity and build, the pinned WASM/Chrome shell, the evaluator
+//     and the frozen calibration) identifies the RUN, and governs the
+//     consumptionId and every resume/terminal transition, so a resume reopens the
+//     exact execution and never a neighbouring one.
+//
+// The lease is ONE-WAY: the first `started` event consumes the block even if the
 // process later crashes, so a crashed run can only be `--resume`d with the same
 // consumptionId AND the identical tuple — never restarted under a fresh id.
 // `completed` and `failed` are terminal and remain consumed forever.
@@ -37,9 +46,10 @@ export const HOLDOUT_FAILURE_CODES = [
 
 export type HoldoutFailureCode = (typeof HOLDOUT_FAILURE_CODES)[number];
 
-// The scientific tuple that a release evaluation consumes. Every field must be
-// identical for a resume to reopen the same session; changing any one is a
-// different consumption that opens its own (single) lease.
+// The scientific tuple that a release evaluation runs under. Every field must be
+// identical for a resume or a terminal transition to reach the same session.
+// Changing a candidate field does NOT open a fresh lease: admission is decided by
+// the block fields alone (see BLOCK_IDENTITY_FIELDS).
 export interface HoldoutIdentity {
   datasetDigest: string;
   datasetAuditDigest: string;
@@ -110,6 +120,23 @@ const IDENTITY_FIELDS: readonly (keyof HoldoutIdentity)[] = [
   "calibrationArtifactDigest",
 ];
 
+/**
+ * The fields that identify the blind BLOCK, and the whole set of them. Exactly the
+ * two digests over the material itself: the sealed dataset and the partition
+ * assignment drawn over it.
+ *
+ * `datasetAuditDigest` and `sourceReadinessDigest` are deliberately absent. They
+ * are attestations ABOUT this same material, recomputed by evaluator code from the
+ * very bytes `datasetDigest` already covers, so they add no power to tell one block
+ * from another — while a change in that code can move them with the material
+ * byte-identical, which would hand a spent block back. Any field admitted here
+ * narrows the refusal, so the set stays at the minimum that names the material.
+ */
+export const BLOCK_IDENTITY_FIELDS: readonly (keyof HoldoutIdentity)[] = [
+  "datasetDigest",
+  "splitDigest",
+];
+
 let tempCounter = 0;
 
 function defaultActiveSessionPath(): string {
@@ -133,6 +160,10 @@ function projectIdentity(identity: HoldoutIdentity): HoldoutIdentity {
 
 function identityMatches(a: HoldoutIdentity, b: HoldoutIdentity): boolean {
   return IDENTITY_FIELDS.every((field) => a[field] === b[field]);
+}
+
+function blockMatches(a: HoldoutIdentity, b: HoldoutIdentity): boolean {
+  return BLOCK_IDENTITY_FIELDS.every((field) => a[field] === b[field]);
 }
 
 function computeConsumptionId(
@@ -238,10 +269,12 @@ function latestForId(
 }
 
 /**
- * Compares the scientific tuple (lifecycle fields excluded) against every
- * `started` lease in the ledger. ANY prior started event with a matching tuple
- * has already consumed the holdout — even if the process later crashed before a
- * terminal event — so a fresh consumption is refused.
+ * Compares the BLOCK fields against every `started` lease in the ledger. ANY prior
+ * started event over the same block has already consumed the holdout — even if the
+ * process later crashed before a terminal event, and whatever candidate it ran —
+ * so a fresh consumption is refused. Scoring the same blind material a second time
+ * is what the one-way lease exists to prevent, and swapping a candidate does not
+ * restore blindness.
  */
 export async function assertHoldoutAvailable(
   ledgerPath: string,
@@ -249,20 +282,22 @@ export async function assertHoldoutAvailable(
 ): Promise<void> {
   const events = await readLedger(ledgerPath);
   for (const event of events) {
-    if (event.status === "started" && identityMatches(identity, event)) {
+    if (event.status === "started" && blockMatches(identity, event)) {
       fail(
         "HOLDOUT_ALREADY_CONSUMED",
-        "holdout tuple was already consumed by an existing session",
+        "holdout block was already consumed by an existing session",
       );
     }
   }
 }
 
 /**
- * Opens the single atomic session for a tuple. Under the ledger lock it verifies
- * availability, writes the `started` event with null report/failure, and writes
- * the active-session marker BEFORE any scoring. The consumptionId is
- * `sha256(tuple + startedAt).slice(0,24)`.
+ * Opens the single atomic session over a block. Under the ledger lock it verifies
+ * the block is unspent, writes the `started` event with null report/failure, and
+ * writes the active-session marker BEFORE any scoring. The event carries the FULL
+ * tuple — that is what makes it a verifiable receipt — and the consumptionId stays
+ * `sha256(tuple + startedAt).slice(0,24)`, so two runs over one block would still
+ * be told apart if one were ever allowed.
  */
 export async function beginHoldoutConsumption(
   ledgerPath: string,

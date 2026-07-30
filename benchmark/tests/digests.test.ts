@@ -1,8 +1,7 @@
 import { afterAll, describe, expect, it } from "vitest";
 
-import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
-import { tmpdir } from "node:os";
-import { dirname, join } from "node:path";
+import { rm } from "node:fs/promises";
+import { join } from "node:path";
 
 import {
   canonicalJson,
@@ -12,11 +11,16 @@ import {
   computeDatasetDigest,
   computeEvaluatorDigest,
   EVALUATOR_FILES,
+  observeEvaluatorFiles,
   sha256BytesHex,
 } from "../digests.ts";
 import type { DatasetManifest } from "../dataset-manifest.ts";
 import type { BenchmarkLabel, BenchmarkRecord } from "../schema.ts";
 import { asGeneratorFamily } from "../generator-family.ts";
+import {
+  makeEvaluatorRoot,
+  writeEvaluatorFixture,
+} from "./helpers/evaluator-tree.ts";
 
 const SHA = "a".repeat(64);
 
@@ -199,25 +203,9 @@ describe("computeDatasetDigest", () => {
 const tempRoots: string[] = [];
 
 async function makeRoot(): Promise<string> {
-  const root = await mkdtemp(join(tmpdir(), "cleanfeed-evaluator-"));
+  const root = await makeEvaluatorRoot();
   tempRoots.push(root);
   return root;
-}
-
-async function writeEvaluatorFixture(
-  root: string,
-  mutate?: (relativePath: string, content: string) => string,
-): Promise<void> {
-  for (const relativePath of EVALUATOR_FILES) {
-    const absolute = join(root, relativePath);
-    await mkdir(dirname(absolute), { recursive: true });
-    const base = `// fixture content for ${relativePath}\n`;
-    await writeFile(
-      absolute,
-      mutate ? mutate(relativePath, base) : base,
-      "utf8",
-    );
-  }
 }
 
 afterAll(async () => {
@@ -312,5 +300,54 @@ describe("computeEvaluatorDigest", () => {
     await writeEvaluatorFixture(root);
     await rm(join(root, "package-lock.json"));
     await expect(computeEvaluatorDigest(root)).rejects.toThrow();
+  });
+});
+
+describe("observeEvaluatorFiles", () => {
+  it("covers the whole inventory in lexicographic order without touching the aggregate", async () => {
+    const root = await makeRoot();
+    await writeEvaluatorFixture(root);
+    const aggregateBefore = await computeEvaluatorDigest(root);
+
+    const observed = await observeEvaluatorFiles(root);
+    expect(observed.map((file) => file.path)).toEqual(
+      [...EVALUATOR_FILES].sort((a, b) => (a < b ? -1 : a > b ? 1 : 0)),
+    );
+    for (const file of observed) {
+      expect(file.digest).toMatch(/^[0-9a-f]{64}$/u);
+    }
+    // Purely additive: observing the tree cannot move the sealed recipe, or a
+    // digest written by an earlier fit would stop comparing equal.
+    expect(await computeEvaluatorDigest(root)).toBe(aggregateBefore);
+  });
+
+  it("names exactly the file whose bytes moved", async () => {
+    const clean = await makeRoot();
+    const tampered = await makeRoot();
+    await writeEvaluatorFixture(clean);
+    await writeEvaluatorFixture(tampered, (relativePath, content) =>
+      relativePath === "benchmark/gates.ts" ? `${content}// drift\n` : content,
+    );
+
+    const before = new Map(
+      (await observeEvaluatorFiles(clean)).map((file) => [
+        file.path,
+        file.digest,
+      ]),
+    );
+    const changed = (await observeEvaluatorFiles(tampered))
+      .filter((file) => before.get(file.path) !== file.digest)
+      .map((file) => file.path);
+    expect(changed).toEqual(["benchmark/gates.ts"]);
+  });
+
+  it("reports a plain temporary file as writable", async () => {
+    const root = await makeRoot();
+    await writeEvaluatorFixture(root);
+    const observed = await observeEvaluatorFiles(root);
+    // The read-only ATTRIBUTE is what an accidental editor save trips over, and
+    // absence of it is all this field claims: on Windows `access(W_OK)` never sees
+    // an ACL, so `writable: true` is not a claim that the file is unprotected.
+    expect(observed.every((file) => file.writable)).toBe(true);
   });
 });
