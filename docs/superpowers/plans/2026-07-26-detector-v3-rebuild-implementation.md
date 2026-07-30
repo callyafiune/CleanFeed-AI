@@ -7068,8 +7068,10 @@ concessão foi gasta sem medição válida.
 2. `git status --short` — **árvore limpa**. Nenhuma modificação pendente em nenhum dos
    arquivos enumerados por `EVALUATOR_FILES`; não usar contagem fixa. Se um caminho
    aparecer como modificado com `git diff` e `git diff --cached` vazios, é a marca
-   fantasma de fim de linha: leia §10 antes de investigar, e trate o residual de 24
-   arquivos descrito lá **antes** de rodar o `fit`.
+   fantasma de fim de linha: rode `git ls-files --eol | grep w/crlf` e, para cada caminho
+   listado, aplique a sequência de conserto da §10 (apagar, `git checkout-index -f --
+   <caminho>`, `git add <caminho>`) **antes** de rodar o `fit`. A saída esperada desse
+   `grep` é vazia; se não for, esta árvore não é a que a §10 descreve.
 3. Rodar `fit`.
 4. Recomputar o digest do avaliador e conferir que casa com o gravado em
    `frozen-calibration.json`.
@@ -7579,14 +7581,21 @@ esquema por "control characters"; e C6, a marca fantasma que levou a este diagn�
 remove o CR em modo texto. Meça com `od -c` ou contando bytes em Python.
 
 **O que a mudança não fez.** Nada de conteúdo versionado se moveu, verificado: os 550
-blobs do índice, os 550 hashes da árvore de trabalho sob o filtro `clean`, os hashes dos
-50 arquivos de `EVALUATOR_FILES`, o `inferenceCoreDigest`
+blobs do índice, os 550 hashes da árvore de trabalho sob o filtro `clean`, os hashes de
+todos os arquivos enumerados por `EVALUATOR_FILES`, o `inferenceCoreDigest`
 (`e5f3757ac9764fc05ce98ffceaad7fc94883332091e2bc6e526f4c720dd01194`) e o
 `runtimeParityDigest` (`92c7bd33eeb305025a1425ec23a419047a8c48027c21b46d630572cf3d873a30`)
 ficaram idênticos, e os arquivos com extensão binária declarada continuaram byte-idênticos
-sob o filtro `clean`. A lista de binários foi levantada varrendo a própria árvore,
-inclusive os diretórios ignorados; `text=auto` já aplica a heurística de NUL do git, e as
-marcas `binary` fixam os casos em que essa heurística seria a única defesa.
+sob o filtro `clean`. A lista de binários tem três origens, e o próprio `.gitattributes`
+diz bloco por bloco de qual delas cada extensão vem: **medida nesta árvore** varrendo os
+arquivos dela, inclusive os diretórios ignorados (17 extensões, 373 arquivos, 1,85 GB);
+**medida fora da árvore**, nos contêineres dos snapshots de origem e do conjunto Madras; e
+**antecipada, não medida em lugar nenhum**, para as extensões que ainda não existem em
+disco. Só a primeira origem é medição, e a distinção está escrita no arquivo para nenhuma
+marca antecipada parecer fato medido. `text=auto` já aplica a heurística de NUL do git, e
+as marcas `binary` fixam os casos em que essa heurística seria a única defesa — declarar de
+sobra uma extensão binária ausente é grátis, e declarar de menos corrompe em silêncio o
+primeiro arquivo que for indexado com ela.
 
 **A conversão da árvore, que o atributo por si só não faz.** `.gitattributes` governa a
 próxima extração; ele não reescreve o que já está em disco. 24 caminhos versionados
@@ -7602,6 +7611,17 @@ que os blobs do índice já implicavam, porque `computeEvaluatorDigest` hasheia 
 disco** e `benchmark/rebuild-v3-policy.json`, que está em `EVALUATOR_FILES`, era um dos 24.
 Esse é o valor canônico e é o mesmo em qualquer plataforma. O valor transitório da árvore
 em CRLF não existe mais.
+
+**Esse movimento foi uma superação consciente da condição de verificação da própria
+tarefa**, que dizia "não commite se algum digest mover". A condição existe para pegar um
+blob que não estivesse em LF; esse gatilho não ocorreu, e é o que autorizou seguir:
+nenhum blob do índice se moveu, o digest calculado sobre os bytes em disco passou a ser
+**igual** ao digest calculado sobre os blobs do índice, e o movimento está confinado à
+codificação de fim de linha de um membro de `EVALUATOR_FILES`. `runtimeParityDigest` e
+`inferenceCoreDigest` não se moveram. Sem a conversão, o critério primário da tarefa — a
+árvore limpa **continuar** limpa depois de qualquer reescrita por ferramenta — é
+inalcançável, então manter o digest antigo custaria exatamente a propriedade que a tarefa
+existe para obter.
 
 **O guarda.** `tests/unit/repo/line-endings.test.ts` fixa o contrato lendo o repositório
 real por `git`, sem contagem nem lista de extensão fixada: nenhum caminho versionado em

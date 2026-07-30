@@ -32,20 +32,33 @@
 # where that heuristic would be the only defence, because a binary run through
 # EOL conversion is silent file corruption.
 #
-# Selection rule, applied literally: every unambiguously binary extension found
-# by sweeping this worktree's own files (including ignored trees), plus the web
-# asset formats this extension acquires the moment it ships an icon or a font.
+# Selection rule, in three parts, because only the first part is a measurement.
+# Each block below says which part its extensions come from, so no mark is left
+# looking like a measured fact when it is a prediction.
+#
+#   1. MEASURED IN THIS WORKTREE — every unambiguously binary extension found by
+#      sweeping this tree's own files, ignored directories included.
+#   2. MEASURED OUTSIDE THIS TREE — the container formats of the source snapshots
+#      and of the external Madras set, which sit in a sibling `snapshots/` folder
+#      and would be staged from there.
+#   3. ANTICIPATED, NOT MEASURED ANYWHERE — no file on disk has these extensions
+#      today. They are marked because over-declaring an absent binary extension
+#      costs nothing, while under-declaring one is silent corruption of the very
+#      first file staged with it, and staging is exactly when it is too late.
+#
 # No extension here is tracked today — that is precisely why the marks matter,
 # since the attribute must already be in force the first time one is staged.
 
-# Model and inference assets: public/models/**/onnx, public/vendor/transformers-wasm,
-# benchmark/data/checkpoints/**.
+# Model and inference assets — all part 1: public/models/**/onnx,
+# public/vendor/transformers-wasm, benchmark/data/checkpoints/**.
 *.onnx binary
 *.wasm binary
 *.safetensors binary
 
-# Archives. benchmark/data/*.tgz exist here; the four source snapshots are .bz2
-# and .zip, and the external Madras set is .parquet.
+# Archives, spanning all three parts. Part 1: .tgz, in benchmark/data/. Part 2:
+# .bz2 and .zip are the source-snapshot containers and .parquet is the external
+# Madras set. Part 3: .7z, .gz and .xz are on no disk here — sibling archive
+# formats a future snapshot could arrive in.
 *.7z binary
 *.bz2 binary
 *.gz binary
@@ -54,19 +67,20 @@
 *.xz binary
 *.zip binary
 
-# Python bench by-products: __pycache__ under benchmark/lab, pickled estimators.
+# Python bench by-products — part 1: __pycache__ under benchmark/lab, pickled
+# estimators.
 *.pkl binary
 *.pyc binary
 
-# Native modules and shared libraries. `.node` and `.dylib` are in the dependency
-# tree; `.so` is its Linux counterpart, absent only because the sweep ran on
-# Windows.
+# Native modules and shared libraries. Part 1: `.node` and `.dylib`, in the
+# dependency tree. Part 3: `.so`, the Linux counterpart of `.dylib`, absent only
+# because the sweep ran on Windows and present on any Linux checkout.
 *.dylib binary
 *.node binary
 *.so binary
 
-# The pinned Chrome for Testing build under .cache/. Never committed, but a
-# `git add -f` of that tree must not mangle it.
+# The pinned Chrome for Testing build under .cache/ — all part 1. Never
+# committed, but a `git add -f` of that tree must not mangle it.
 *.bin binary
 *.dat binary
 *.dll binary
@@ -75,9 +89,10 @@
 *.pak binary
 *.pb binary
 
-# Images and fonts. `.png` and `.ttf` exist today only inside the dependency
-# tree; the rest are declared because this is a browser extension, so the first
-# packaged icon or bundled font lands in a versioned path.
+# Images and fonts. Part 1: `.png` and `.ttf`, today only inside the dependency
+# tree. Part 3: everything else here is absent from disk, declared because this
+# is a browser extension, so the first packaged icon or bundled font lands in a
+# versioned path and must not be normalized on its way in.
 *.gif binary
 *.ico binary
 *.jpeg binary
