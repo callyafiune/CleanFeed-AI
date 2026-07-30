@@ -166,7 +166,7 @@ Cada linha nova de corpus tem de preencher esta mesma matriz antes de entrar (**
 | **Jabarian & Imas** (NBER WP 34223) | **pré-2020** | inferido | baixo | sim; ressalva: ~1.000 dos 1.992 são romances — diversidade nominal ≠ balanceamento |
 | **Liang et al.** (*Patterns* 2023) | TOEFL-91 + ASAP, pré-ChatGPT | inferido | baixo | usa bases preexistentes; **não** apresenta o corte como protocolo próprio de certificação |
 | **MultiSocial** (ACL 2025) | pré-2022 por escolha | inferido | **os autores declaram que autoria humana não pode ser garantida em 100%** | sim, com a ressalva |
-| **MULTITuDE** (EMNLP 2023) | MassiveSumm | inferido | não auditado aqui | reconhece ausência de licença do dataset |
+| **MULTITuDE** (EMNLP 2023) / **MULTITuDEv2** (2024-09-27) | MassiveSumm | inferido | não auditado aqui; a v2 admite que **os rótulos humanos podem não ser 100% precisos** | R9 executado na fonte em 2026-07-29: dataset **`CC-BY-4.0`**, mas o acordo de acesso **proíbe re-compartilhar** (mais restritivo que a licença) e a licença dos **textos-fonte é não especificada** (ver D2) |
 | **IberAuTexTification** | heterogêneo (inclui OASST2) | inferido | **não é coorte antiga única** | licença `cc-by-nc-nd-4.0` (ver D2) |
 | **AITDNA** (preprint 2026) | contemporâneo | **observado, instrumentado** | muito baixo | 452 coletados → 362 retidos, 99 participantes, **95 `human-only`** |
 | **CoAuthor** (CHI 2022) | contemporâneo | **observado, instrumentado** | muito baixo | **1.445 sessões de escrita** (não redações independentes), 63 escritores |
@@ -795,9 +795,9 @@ cabem em uma janela só. Nenhum é "erro residual aceito": cada um tem destino n
 | `mix_src_wikipedia_pt_d3e3087c4ae9` | `花巻市` | 124 | 3 | não (1 janela) | dado v3 legítimo — **A5** |
 
 Quatro dos cinco são `src_ai_public_madras_*`: **fonte externa que não existe no corpus v3**
-— a decisão congelada nomeia somente pt.stackoverflow, ptwiki, B2W-Reviews01 e Carolina, e
-D2 mantém conjunto externo fora. Eles foram medidos sobre o **corpus antigo**; depois de D2
-não há registro-linha a corrigir. O quinto é **dado v3 legítimo** (topônimo japonês
+— a decisão congelada nomeia somente pt.stackoverflow, ptwiki, B2W-Reviews01 e Carolina, e é
+essa decisão, não D2, que mantém conjunto externo fora do corpus. Eles foram medidos sobre o
+**corpus antigo**; no corpus v3 não há registro-linha a corrigir. O quinto é **dado v3 legítimo** (topônimo japonês
 `花巻市` num artigo da Wikipédia lusófona) e é obrigação de **A5**, cujo critério nº 3 já é
 "teste que reconstrói offsets originais a partir do mapa".
 
@@ -948,16 +948,16 @@ defeito a corrigir:
    caberem numa janela e voltariam a falhar se crescessem. Com offsets sãos, o corte
    determinístico se aplica e a expectativa é que passem a pontuar; **expectativa não é
    medição** — quem fechar A5 mede. `mix_src_wikipedia_pt_d3e3087c4ae9` é o único dos cinco
-   que **não** sai por D2, então é ele que faz esta linha ser obrigatória.
+   que **não** sai com `madras`, então é ele que faz esta linha ser obrigatória.
 
    **MEDIDO em A5 (2026-07-27), na etapa dos offsets e do encaixe de janela:** os cinco
    deixam de produzir erro, e o varrimento de `development` + `calibration` vai de 21
    documentos com offsets grosseiros e 3 falhas `WINDOW_SLICE_NOT_REDUCIBLE` para **0 e 0**.
    Números e ids na subseção "A5 — como foi executada". Isso **não** fecha o critério de
    ≤ 0,1% por faixa: falta o replay fim-a-fim no Chrome, que continua sendo H3/I1.
-3. **D2 remove `madras` da v3.** Quatro dos cinco residuais são `src_ai_public_madras_*`, e
-   `madras` é conjunto externo que D2 mantém fora do corpus v3. Depois de D2 a medição
-   tem de ser **repetida sobre o corpus pós-D2**, e o critério é avaliado ali; herdar o
+3. **`madras` não existe no corpus v3.** Quatro dos cinco residuais são
+   `src_ai_public_madras_*`, e a decisão congelada de fontes humanas o mantém fora. A medição
+   tem de ser **repetida sobre o corpus v3 montado**, e o critério é avaliado ali; herdar o
    número de qualquer medição anterior seria avaliar um corpus que já não existe.
 
 Enquanto os três não fecharem, o critério permanece **não atingido** e assim declarado.
@@ -983,7 +983,7 @@ documentos em `development` + `calibration` (7 + 14), todos `madras` ou
 `wikipedia_pt`; 18 têm ≤ 510 tokens, uma janela só, e pontuam hoje. Corrigir isso muda
 **offsets**, o que é escopo de **A5** (que já prevê o incremento de
 `contentCompositionVersion` e exige o mapa `normalizado → original`), e a fonte
-`madras` sai da v3 por D2. Fica registrado, não corrigido aqui.
+`madras` não é fonte da v3 pela decisão congelada. Fica registrado, não corrigido aqui.
 
 A evidência bruta desse diagnóstico está em `benchmark/out/rebuild-v3/a2/coarse-cause.txt`
 (uma linha por documento, com `firstPieces` vs `words` e a primeira palavra em que os
@@ -6870,40 +6870,113 @@ corte de data verificado por fonte e proveniência real (C1/C2); todo registro-l
 resolve sua evidência no manifesto privado; e o relatório declara separadamente bases de
 rótulo e estratos linguísticos existentes e ausentes.
 
-### D2 — Suíte de robustez/OOD a partir do que já existe
+### D2 — Avaliação externa via MULTITuDEv2 (a suíte OOD caseira sai)
 
 **Depende de:** C2.
 
-**Por que:** há **51.825 textos distintos já extraídos e não usados** (união de
-`candidates/` + `dataset/` = 61.825; o selado usa 10.000), e todos os snapshots de
-origem continuam em disco (`Posts.xml` 748 MB, `ptwiki` 1,9 GB, Carolina `archive.zip`
-3,0 GB com 567 membros em 7 tipologias, B2W 48 MB). Além disso
-**IberAuTexTification** tem 32.450 textos em português em 7 domínios
-(`Genaios/iberautextification` no HuggingFace), e **MultiSocial** tem 44.178.
+**A tarefa mudou de objeto, e a cláusula do próprio D2 autorizou.** A versão anterior mandava
+montar uma suíte OOD com material local cuja licença já estava verificada, e dizia que
+"MultiSocial e qualquer outro conjunto externo ficam fora da v3; uma reconstrução futura só os
+reabre **depois de R9**". R9 foi executado para o **MULTITuDEv2** em 2026-07-29, na fonte, e a
+cláusula se cumpre. Como o próprio plano já registrava que esta tarefa "mede limites de
+generalização; não governa calibração nem decisão de release", trocar construção própria por um
+conjunto publicado é ganho a **custo zero de construção** — e o substituto é melhor em dois
+eixos que a suíte caseira nunca teria: **8 geradores não vistos** e **10 métodos de obfuscação
+de autoria**, um eixo de robustez adversarial onde este projeto tem cobertura **zero**.
 
-> **BLOQUEIO DE LICENÇA — não incorporar.** O card oficial de IberAuTexTification declara
-> **`cc-by-nc-nd-4.0`**, e o texto do card pede contato com os organizadores
-> (`organizers.autextification@gmail.com`) para adaptar ou construir sobre o dataset.
-> **ND = sem derivados**: montar um corpus derivado dele é justamente o que a licença
-> restringe, e NC bloqueia uso comercial independentemente de B1. **Não incorporar sem
-> autorização escrita dos organizadores.** MultiSocial e qualquer outro conjunto externo
-> ficam fora da v3; uma reconstrução futura só os reabre depois de R9.
+**Mudança:** usar **MULTITuDEv2 como conjunto de avaliação externa**. Não montar suíte OOD
+própria a partir dos pools locais — aquele trabalho sai da v3.
 
-**Mudança:** montar a suíte OOD com o material **cuja licença já foi verificada** —
-Wikipédia, Stack Exchange, Carolina e avaliações B2W já locais. Não baixar nem incorporar
-conjunto externo nesta tarefa. **Ela mede limites de generalização; não governa
-calibração nem decisão de release** (isso é D1).
+**O registro de R9, verificado na fonte (<https://zenodo.org/records/13846588>), não presumido:**
 
-**Verificar:** overlap com os pools próprios medido antes da incorporação, sob o
-contrato de R7.
+| camada | estado |
+|---|---|
+| licença do dataset | **`CC-BY-4.0`** — permite redistribuir e reusar com crédito |
+| acordo de acesso | **mais restritivo que a licença** — ver as cinco condições |
+| textos-fonte (MassiveSumm) | **licença NÃO especificada** na página |
 
-**Arquivos:** `benchmark/lab/build_ood_suite.py`,
-`benchmark/lab/test_build_ood_suite.py`, `benchmark/near-duplicates.ts`,
+As cinco condições de acesso, e a segunda **contradiz** a licença declarada: (1) apenas fins de
+pesquisa, via e-mail institucional; (2) **proibido re-compartilhar com terceiros não
+autorizados**; (3) citação obrigatória do artigo; (4) reconhecer que **os rótulos humanos podem
+não ser 100% precisos**; (5) o usuário assume responsabilidade legal integral. Entre licença e
+acordo, **vale o mais restritivo**.
+
+Metadados: v2 publicada em **2024-09-27**, **74.081** amostras (7.992 humanas + 66.089 geradas),
+11 línguas (`ar, ca, cs, de, en, es, nl, pt, ru, uk, zh`), 8 LLMs multilíngues, 10 métodos de
+obfuscação (EMNLP 2024 Findings); 29,1 GB nesta versão.
+
+**Texto a gravar em `benchmark/source-manifest.ts`, como fonte de avaliação externa e nunca de
+corpus:** `licenseId: "CC-BY-4.0"`; `redistribution: "not-published"` (o acordo proíbe
+re-compartilhar); `sourceTextLicense: "unspecified"` — a licença das notícias do MassiveSumm
+**não** é declarada, e é isso que impede incorporação, logo tem de ficar **escrito**, não
+inferido; `accessConditions` com as cinco acima e a nota de que (2) é mais restritiva que a
+licença; `verifiedAt: "2026-07-29"`,
+`verifiedFrom: "https://zenodo.org/records/13846588"`; e `role: "external-evaluation"`, com o
+schema **recusando** essa fonte em qualquer caminho de corpus.
+
+**NÃO reabre para incorporação ao corpus**, por duas barreiras independentes: a licença dos
+textos-fonte é **indeterminada**, então R9 não fecha para eles; e a decisão congelada mantém as
+fontes humanas da v3 nos quatro snapshots locais, sem novo download. Isto cria uma **via
+separada**, não exceção à decisão congelada — o texto deles nunca entra em `train`, `dev`,
+`cal-A`, `cal-B`, `test` nem na reserva.
+
+**Três pré-condições, a verificar ANTES de usar:**
+
+1. **`pt` é pt-BR ou pt-PT?** O detector é pt-BR; notícia europeia é variedade **e** registro
+   diferentes, e mudaria a leitura de qualquer FPR medido. Se for pt-PT, continua útil — mas
+   como fatia de **variedade não calibrada**, que é alegação diferente.
+2. **Que datas têm os textos humanos?** Se as notícias em `pt` forem posteriores a **nov/2022**,
+   não podem carregar `labelBasis: date-cutoff`, e a condição 4 do acesso já avisa que o rótulo
+   humano pode não ser preciso. Sem data, o meio humano serve só como diagnóstico
+   **declaradamente sem base de rótulo**.
+3. **O download é passo de operador** — 29,1 GB, e o ambiente não tem rede para arquivo grande,
+   exatamente como os snapshots.
+
+**O que isto destrava:** comparação frente a frente em H2/H3 (era a peça que faltava: um
+substrato publicado, com `pt`, sobre o qual comparar); **robustez adversarial**, transformando o
+trabalho de A5 de defesa plausível em defesa **medida**; 8 geradores não vistos; e FPR em
+**registro de notícia** — que **não é** feed profissional, mas está muito mais perto dele que
+enciclopédia, Q&A ou avaliação de produto, e permite reportar FPR num registro que L1 declara
+não medido **sem** transformar isso em "medimos o domínio do produto", que continua falso.
+
+**Restrições de uso, e a mais importante é sobre não queimar o conjunto:**
+
+- **não é parte do corpus selado** — não entra nos gates selados, não consome o holdout, e seus
+  números são **diagnósticos** a menos que pré-registrados como gate de release antes de serem
+  vistos;
+- **proibido usar para ajustar qualquer coisa.** Se olharmos o resultado e mexermos em limiar,
+  calibrador, política de janelas ou seleção de checkpoint, ele deixa de ser avaliação externa e
+  vira **segundo conjunto de validação** — e queima do mesmo jeito que o holdout queima. A regra
+  de H3b vale por analogia: olhar *o que* falhou é legítimo; usar os escores para escolher valor
+  não é;
+- **a garantia conformal de G3 NÃO se transfere.** Ela é condicionada a exchangeability entre o
+  texto humano de calibração e o de operação, e notícia é estrato **diferente** do calibrado.
+  Medir FPR aqui é medir **fora da garantia** — o que é precisamente a coisa informativa a
+  fazer, e tem de ser rotulado assim, nunca como "a cota vale aqui também";
+- **fatia separada da OOD interna, nunca agregada.** A família retida de D3 mede gerador não
+  visto **sob o nosso pipeline de geração**; os 8 geradores daqui medem gerador não visto sob o
+  pipeline de **outra equipe**. Misturá-las esconde qual efeito foi medido;
+- **nunca redistribuir texto**, nem dentro de artefato de evidência (condição 2 do acesso).
+
+> **IberAuTexTification continua BLOQUEADO, e por motivo diferente.** O card oficial declara
+> **`cc-by-nc-nd-4.0`** e pede contato com os organizadores
+> (`organizers.autextification@gmail.com`) para adaptar ou construir sobre o dataset. **ND = sem
+> derivados**: montar corpus derivado é exatamente o que a licença restringe, e `NC` bloqueia uso
+> comercial independentemente de B1. Não incorporar sem autorização escrita. Que MULTITuDEv2
+> tenha passado por R9 não diz nada sobre este.
+
+**Arquivos:** `benchmark/source-manifest.ts`,
+`benchmark/tests/source-manifest.test.ts`, `benchmark/lab/compare_detectors.py`,
 `docs/corpus-sources.md`.
 
-**Concluída quando:** a suíte OOD existe como ativo separado, com licença por fonte
-registrada, zero overlap exato e nenhum par com Jaccard de shingles >= 0,82 contra
-`train`, `dev`, `cal-A` ou `cal-B`.
+**Verificar:** `vitest run benchmark/tests/source-manifest.test.ts`; uma fixture que tente usar
+fonte `role: "external-evaluation"` em caminho de corpus precisa **falhar**, e a ausência de
+`sourceTextLicense` precisa falhar em vez de assumir a licença do invólucro.
+
+**Concluída quando:** o registro de R9 está no manifesto com as cinco condições e a licença dos
+textos-fonte como `unspecified`; o schema recusa a fonte em caminho de corpus; as três
+pré-condições estão respondidas por medição, não por suposição; e os números saem rotulados como
+**fora da garantia conformal** e em fatia separada da OOD interna.
 
 ### D3 — IA pareada por estrato linguístico
 
@@ -7265,8 +7338,8 @@ Invariantes:
    geradora retida em D3, conteúdo misto mecanístico e a receita `humanizado` já
    existente. **A reserva é declarada, nunca inferida da partição** — ver a
    restrição de A4-fix repetida ao fim desta seção. Templates e decodings comuns são variados nas partições core, não
-   artificialmente chamados de unseen. A suíte humana D2 permanece externa ao split e
-   diagnóstica. Não criar “fonte humana não vista” ou “período não visto” artificial:
+   artificialmente chamados de unseen. A avaliação externa de D2 (MULTITuDEv2) permanece **fora
+   do split** e diagnóstica, em fatia separada da família OOD retida. Não criar “fonte humana não vista” ou “período não visto” artificial:
    faltam fontes in-domain, e os quartis temporais core são definidos pela política e
    distribuídos entre as cinco partições.
 3. **Restaurar a data real do texto** em vez de abandonar o eixo temporal. As datas
