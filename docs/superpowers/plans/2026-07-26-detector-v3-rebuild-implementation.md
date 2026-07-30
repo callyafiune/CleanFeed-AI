@@ -7171,6 +7171,20 @@ OOD, `observed-process` suplementar ou curva mista abaixo de 50% sem poder é
 `insufficient-power` diagnóstico e não entra em `m`. Essa classificação é congelada no
 split; H1 não a reinterpreta.
 
+**O que NÃO entra em `m`, e a razão em cada caso** — porque `m` é o recurso escasso e cada
+entrada endurece **todos** os gates de FPR e recall:
+
+- `incidentalTestOnlyGeneratorFamilies` (diagnóstico, A4-fix);
+- coorte OOD, `observed-process` suplementar e curva mista `< 0,50` sem poder;
+- **conformidade de latência de carga fixa** (F6/I1): é conformidade em máquina de referência
+  sem alegação populacional, não gate estatístico, e nada no teto de alegação de H4 menciona
+  velocidade;
+- **as fatias operacionais definidas por medida** de D5 (`high-ngram-repetition`,
+  `low-disfluency-low-typo`, `motivational-lexicon-density`), que na v3 são **diagnóstico**.
+
+Cada um destes é publicado; nenhum reprova release na v3, e é isso que reserva poder para os
+gates da alegação primária — FPR conformal por estrato.
+
 E uma correção de gate existente: **`action.fpr.slice.lengthBucket.0_49` é
 insatisfazível** — exige 300 negativos humanos com menos de 50 palavras, que a admissão
 proíbe (humanos e IA são barrados abaixo de 50) e onde o produto **se abstém**
@@ -7440,11 +7454,89 @@ checkpoint escolhido e critério de escolha, digest do ONNX e parâmetros de qua
 **O digest desse arquivo entra no manifest e no `release.json`**, e a verificação de
 release falha se ele estiver ausente ou divergente.
 
+**Perfil de latência do modelo, e ele é do MODELO, não do veículo.** O modelo pode ser
+publicado **sem** a extensão, ou rodar em app web ou desktop, cada um com latência inerente
+própria; logo latência de modelo e de veículo são grandezas distintas e têm de ser
+estruturalmente separáveis. O perfil viaja com o artefato publicado, e a primitiva é
+**milissegundo por token**, mais um **custo fixo** — nunca por janela e nunca por documento:
+
+- **medido** sobre 1.961 documentos pontuados de `development`: Spearman(tokens, latência)
+  dentro de documentos de uma janela = **+0,958** (n = 1.831), com medianas de 271 ms na faixa
+  0–100 tokens a 1.775 ms na de 400–520. O ajuste é **≈ 90 ms fixos + ~3,5 ms por token**; o
+  aparente 5,42 ms/token da primeira faixa é o custo fixo com denominador pequeno, não custo
+  marginal maior;
+- o token é a primitiva comparável por **duas** razões: independe do tamanho do documento e
+  independe da **política de janelamento**. Se `maxWindows` deixar de ser 8, ou a sobreposição
+  mudar, `ms/janela` deixa de valer e `ms/token` sobrevive. Para publicar o modelo sozinho isso
+  é decisivo: o integrador aplica dois coeficientes à distribuição de comprimentos **dele**, sem
+  replicar a nossa política de janelas;
+- **não reintroduzir o termo super-linear.** Uma versão anterior desta análise afirmava custo
+  super-linear por janela (433 → 1.316 → 2.076 ms/janela) e o atribuía a "tokenização não
+  limitada sobre inferência limitada". Era **artefato de denominador errado**: dividir por
+  número de janelas quando o custo é por token. Documentos de uma janela parecem baratos porque
+  a maioria tem janela **parcial e curta**. Um modelo linear em tokens explica a curva inteira —
+  8 janelas ≈ 4.080 tokens → `90 + 4080 × 3,67 ≈ 15.060 ms`, contra **16.611 ms** observados;
+- **os coeficientes acima não são publicáveis como estão.** O `latencyMs` veio de um build da
+  época de A1 e as contagens de janela de um build **pós-A2**, e A2 mudou a política de janelas:
+  a **forma** do modelo de custo é confiável, os **coeficientes** não. Re-medir num único build;
+- **a região que os dados não cobrem é justamente a de risco.** O máximo do conjunto é
+  exatamente 8 janelas inferidas, isto é, o cap. Abaixo do cap, "linear em tokens totais" e
+  "linear em tokens inferidos" predizem o mesmo, porque toda janela candidata é inferida; os
+  dois modelos divergem **somente acima do cap**, onde a inferência para de crescer e a
+  tokenização continua, e ali o corpus dá `n = 1`. Portanto o perfil exige **carga desenhada**,
+  cobrindo deliberadamente os dois regimes, com a declaração de que acima do cap o coeficiente
+  **muda de significado**;
+- **faixa é proxy, a primitiva é `ms/token`**, e a faixa só vale para o relatório se declarar o
+  **contrato exato de contagem de palavras e normalização**. Não é formalidade: A5 alterou a
+  normalização (NFKC, largura zero, confusáveis) e portanto alterou `totalUnits` de
+  `contracts/content-composition.ts`. Perfil sem contrato de comprimento é incomparável entre
+  versões.
+
+**O artefato: companion digestado à parte, NÃO dentro do `bundleDigest`.** `bundleDigest` cobre
+apenas registros de artefato de modelo/tokenizer fixados
+(`scripts/verify-model-bundle.mjs:164-175`), `model:verify` impõe **inventário fechado de nove
+arquivos** (`:62-72`) e o parser de `contracts/model-release.ts` é de **chaves exatas e rejeita
+adições** (`:70-104`). Uma medição dependente de hardware ali reprovaria bundle legítimo
+re-medido em outra máquina. A forma correta é um artefato de **evidência de release digestado à
+parte**, referenciado pelo descritor e vinculado a digest do modelo, digest do avaliador,
+navegador/WASM, hardware, protocolo de aquecimento e protocolo de execução. A verificação
+**hasheia bytes canônicos e nunca re-mede localmente**: assim a dependência de hardware deixa de
+invalidar bundle e passa a **delimitar onde a alegação vale**.
+
+**O gate é conformidade de carga fixa e fica FORA de `m` — decidido, e escrito aqui para
+ninguém "corrigir".** Duas formas eram coerentes; a adotada é conformidade em máquina de
+referência **sem alegação populacional**, não gate estatístico com limite superior unilateral.
+Razões: poder estatístico é o recurso escasso (`alpha_família = 0,05 / m`, e cada gate novo
+endurece **todos** os gates de FPR e recall, além de consumir dimensionamento de D0b); nada no
+teto de alegação de H4 menciona latência; `scripts/run-release-performance.mjs` já é carga fixa
+em Chrome fixado com hardware declarado e orçamentos; e a **censura decide a favor** — alegação
+populacional exigiria a cauda não censurada, mas o produto corta no orçamento, e usar
+distribuição censurada para escolher o corte é circular. É também o que um integrador precisa:
+coeficientes reprodutíveis para dimensionar o sistema **dele**. Condição de honestidade (R7):
+publicar sempre com hardware **e** protocolo, declarando que **não é** alegação sobre usuários —
+latência real de usuário continua existindo como diagnóstico local em I2.
+
+**O orçamento do veículo não é soma de percentis.** Quantis não são aditivos:
+`p95(modelo) + p95(overhead)` não é `p95(total)`, e o overhead de fila e lote **muda sob
+contenção**, que é o regime que importa num feed. A forma correta é medir a **distribuição
+combinada** do veículo, ponta a ponta, no próprio veículo — hoje impossível, porque `queueWaitMs`
+é zero fixo (I2). Logo aquele conserto é **pré-requisito** do orçamento derivado.
+
+**Protocolo, sempre declarado.** O que a bancada mede é o **núcleo a quente, em página**:
+`createTmrChunkPlan`, construção do tokenizer, carga do modelo e init do ONNX ocorrem **antes**
+do relógio (`src/model-benchmark/main.ts:371-402`). Não é inferência ONNX pura nem cold start.
+Toda publicação diz o que está dentro e o que está fora do relógio, e o perfil do modelo **não**
+é medido pelo caminho da extensão, que o contaminaria com fila e lote.
+
 **Concluída quando:** `npm run model:verify` reprova um bundle cujo `training-run.json`
-não case, e existe teste que prova a reprovação.
+não case, e existe teste que prova a reprovação; e existe artefato de perfil de latência
+digestado à parte, com os dois coeficientes re-medidos num único build, carga desenhada nos
+dois regimes, hardware e protocolo declarados, e a verificação hasheando bytes canônicos sem
+re-medir.
 
 **Verificar:** `vitest run tests/unit/contracts/model-release.test.ts` e `npm run
-model:verify`; alterar uma seed, digest de corpus ou byte do ONNX precisa reprovar.
+model:verify`; alterar uma seed, digest de corpus ou byte do ONNX precisa reprovar; e o parser
+precisa **recusar** a tentativa de colocar a medição de latência dentro do `bundleDigest`.
 
 ---
 
@@ -7704,6 +7796,13 @@ usar nos gates os intervalos unilaterais simultâneos por **Bonferroni** de A6, 
 obrigatórios congelado em G5. Célula sem poder permanece em `m` e falha; o relatório
 publica `m`, o alpha de cada gate e ambos os intervalos.
 
+**Obrigatório sobre latência: recall e FPR da bancada são de latência IRRESTRITA.** O produto
+aplica orçamento finito, logo as duas populações **não são idênticas** — a bancada pontua
+documentos que o veículo abandonaria, e sob A3/R5 documento abandonado conta como
+**não-detecção**. Sem essa frase, o número da bancada é lido como promessa do produto. Publicar
+o perfil de latência do modelo (F6) com hardware e protocolo, declarando que **não** é alegação
+sobre usuários, e nunca somar quantis de modelo com quantis de veículo.
+
 **Nunca publicar um número único de FPR sem nomear o estrato linguístico e a base do
 rótulo humano.** Na execução anterior o
 mesmo limiar congelado deu **7,12% em avaliações de produto, 2,68% em texto
@@ -7874,6 +7973,35 @@ Não há avanço automático, backend, telemetria, coorte remota nem kill switch
 alteração versionada de `release.json` e novo build auditado. Falha mantém o estado
 anterior.
 
+**Pré-condição de promoção a `indicator`: o orçamento de 20 s tem de ser confrontado com
+latência real.** O valor vive em `src/shared/constants.ts` (`inferenceTimeoutMs: 20_000`),
+clampado a `[1_000, 120_000]` e validado na fronteira de mensagem — o número está **protegido**
+contra `0`, `NaN` e negativo, e isso está certo. O que não existe é evidência de que 20.000 ms
+seja o valor certo: ele foi **escolhido, não derivado**, e o único dado empírico do repositório
+o contradiz (41 s de latência máxima observada na bancada). `scripts/run-release-performance.mjs`
+já admite a lacuna por escrito no cabeçalho: sem o Chrome for Testing 150.0.7871.129 no hardware
+de referência a corrida para na instalação do navegador, e o que os testes provam é a
+**imposição** do orçamento, nunca a **calibração** dele.
+
+Portanto: a corrida de performance no hardware de referência produz a distribuição real, e o
+orçamento é confrontado com ela. Se o p95 real ficar próximo ou acima de 20 s, o orçamento está
+errado — e sob **R3** a correção é ajustar o orçamento **com evidência registrada**, nunca
+afrouxar o gate de erro para acomodar as abstenções que ele gera. O orçamento é
+**consequência do perfil de latência publicado em F6**, não um valor independente, e por isso
+não é escalar: com dois coeficientes (custo fixo + ms por token), um valor único dá folga
+enorme aos documentos de uma janela e quase nenhuma à cauda — o documento de 8 janelas consumiu
+**16,6 s de 20 s** só do modelo, na bancada, antes de qualquer overhead de veículo.
+
+**Hipótese a testar aqui, e não é achado:** `setTimeout` é estrangulado pelo Chrome em contexto
+de background (aba inativa, documento offscreen do MV3 sujeito a suspensão), enquanto
+`performance.now()` é monotônico e imune. Se isso ocorrer, o prazo imposto fica silenciosamente
+**maior** que o declarado e o valor reportado continua honesto. É comportamento conhecido de
+navegador, **não medido neste repositório**; registrar como hipótese, nunca como achado.
+
+**O gate de conformidade de carga fixa é verificado aqui, e ele NÃO entra em `m`.** A medição de
+velocidade é conformidade em máquina de referência, sem alegação populacional — ver F6 para a
+razão e para a proibição de "corrigir" isso depois achando que é gate estatístico esquecido.
+
 **Arquivos:** `contracts/model-release.ts`,
 `benchmark/commands/verify-published-evidence.ts`,
 `scripts/activate-model-release.mjs`, `tests/e2e/tmr-release.spec.ts`,
@@ -7901,6 +8029,42 @@ escores, `PSI >= 0,25` mostra aviso local de possível mudança de distribuiçã
 opções, mas **não** certifica deriva, não promove e não rebaixa sozinho o release. Falhas
 operacionais continuam sob a regra existente do circuit breaker: três em dez minutos
 abrem fallback local até retry explícito.
+
+**Três decisões que LAT deixou nomeadas aqui, e o histograma de runtime depende das três.**
+LAT consertou o agregado da bancada (`LatencyByStatus`, um bloco por desfecho e nada somado);
+o histograma do runtime **não tem separação por desfecho nenhuma**, e é ele que esta tarefa
+renderiza e que a comparação por PSI consome:
+
+1. **Separar `LATENCY_BUCKET_BOUNDS` por status.** `MetricsStore.record` chama `addLatency`
+   sempre que `inferenceMs !== undefined`, **sem olhar o status**, então escorado, abstido e
+   erro caem no mesmo histograma — exatamente o que `LatencyByStatus` acabou de proibir na
+   bancada.
+2. **A abstenção por idioma publica `processingTimeMs: 0` depois de trabalho real.**
+   `languageAbstention()` em `src/inference/inference-worker.ts` devolve zero num ponto em que
+   `normalizeForInference()` e `await this.detector.detect()` **já rodaram**, e descarta o
+   `languageMs` que ela própria capturou. Num feed com 30% de conteúdo não português, cada post
+   desses empurra uma amostra de 0 ms e `averageInferenceMs`/`medianInferenceMs`/`p90InferenceMs`
+   podem reportar ~0 ms enquanto toda inferência real custou centenas de ms. Isto **contamina
+   hoje**; a decisão é medir de verdade **ou** parar de publicar o campo.
+3. **Seis campos de estágio são zero fixo** em `inferenceTrace()`
+   (`src/background/message-router.ts`): `extractionMs`, `normalizationMs`, `eligibilityMs`,
+   `hashingMs`, `queueWaitMs`, `presentationMs`. O diagnóstico **afirma** decompor latência por
+   estágio e seis estágios reportam custo zero, o que é alegação de medição que não houve (R7).
+   Medir de verdade **ou remover o campo**. `queueWaitMs` tem prioridade: é exatamente o número
+   de que o orçamento derivado do veículo precisa (F1, F6).
+
+**E saber o que o histograma mistura.** Depois de LAT, `processingTimeMs` de um timeout é
+relógio de parede **do host, incluindo espera de fila e de lote**, enquanto o de um resultado
+bem-sucedido vem de `message.payload`, medido **dentro do worker**, sem essa espera; as duas
+alimentam o mesmo `LATENCY_BUCKET_BOUNDS`. Segundo efeito: a amostra de timeout deixou de ser
+limitada pelo orçamento, e como `percentile()` resolve o bucket `+Inf` para `latency.maximum`,
+um único abort estrangulado pode dominar p90/p95. A direção do viés não mudou, mas quem
+renderiza o histograma precisa saber que ele mistura duração de host com duração de worker.
+
+**O que este diagnóstico local NÃO é.** Ele é latência **de usuário**, medida em buckets por
+privacidade, e não substitui nem valida o perfil de latência do modelo de F6, que é exato e
+medido em carga fixa. Nenhum dos dois instrumentos finge ser o outro, e nenhum número daqui
+entra em alegação publicada.
 
 **Arquivos:** `src/storage/metrics.ts`, `src/storage/diagnostics.ts`,
 `src/shared/diagnostic-types.ts`, `src/inference/circuit-breaker.ts`,
