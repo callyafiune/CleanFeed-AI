@@ -60,6 +60,12 @@ import {
   type GeneratorFamily,
 } from "../generator-family.ts";
 
+/** The same argument list with one `--flag value` pair removed. */
+function withoutFlag(args: readonly string[], flag: string): string[] {
+  const index = args.indexOf(flag);
+  return [...args.slice(0, index), ...args.slice(index + 2)];
+}
+
 // ---------------------------------------------------------------------------
 // Parsing and dispatch guards (no I/O required).
 // ---------------------------------------------------------------------------
@@ -368,6 +374,24 @@ describe("benchmark CLI consume-holdout parsing", () => {
     ).rejects.toThrow(/unknown flag --bogus/u);
   });
 
+  it("no longer demands --ledger, because it defaults to the canonical ledger", async () => {
+    // A mandatory `--ledger` is a path somebody types, and a typed path under a
+    // directory that does not exist is how an absent ledger becomes a second
+    // measurement of the same block. The default is what keeps it untyped.
+    const message = await runCli([
+      ...withoutFlag(CONSUME_ARGS, "--ledger"),
+      "--confirm-split-digest",
+      "abc",
+    ]).then(
+      () => "",
+      (error: unknown) => (error as Error).message,
+    );
+    // It still fails — the fixture paths are not a corpus — but never for want of a
+    // ledger flag.
+    expect(message).not.toBe("");
+    expect(message).not.toMatch(/--ledger/u);
+  });
+
   it("keeps the evaluator root off the command line", async () => {
     // A flag here would let a run aim the evaluator identity check at a clean copy
     // while an altered evaluator produces the numbers, which is the hole the
@@ -440,6 +464,17 @@ describe("benchmark CLI evidence-publication parsing", () => {
     await expect(
       runCli(["publish-evidence", "--report", "report.json"]),
     ).rejects.toThrow(/--source-readiness|--dataset-audit|--output/u);
+  });
+
+  it("no longer demands --ledger on publish-evidence either", async () => {
+    const message = await runCli(
+      withoutFlag(PUBLISH_EVIDENCE_ARGS, "--ledger"),
+    ).then(
+      () => "",
+      (error: unknown) => (error as Error).message,
+    );
+    expect(message).not.toBe("");
+    expect(message).not.toMatch(/--ledger/u);
   });
 
   it("requires verify-published-evidence's mandatory flags", async () => {

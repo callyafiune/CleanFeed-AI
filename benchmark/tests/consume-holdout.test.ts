@@ -6,7 +6,15 @@ import {
   stat,
   writeFile,
 } from "node:fs/promises";
-import { appendFileSync, existsSync, readFileSync } from "node:fs";
+import {
+  appendFileSync,
+  existsSync,
+  mkdirSync,
+  readFileSync,
+  renameSync,
+  rmSync,
+  statSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -570,6 +578,11 @@ async function buildScenario(
   const workDirectory = join(root, "work", "holdout");
   await mkdir(workDirectory, { recursive: true });
   const ledgerPath = join(datasetDir, "private", "holdout-ledger.jsonl");
+  // Genesis of a release ledger is a deliberate act OUTSIDE the command, because a
+  // release run refuses an absent `--ledger` instead of creating one. Zero bytes is
+  // the honest starting height, so a scenario that expects "nothing consumed yet"
+  // now expects an empty ledger and not a missing one.
+  await writeFile(ledgerPath, "");
   const outputDirectory = join(root, "out");
 
   const status: ModelBenchmarkStatusV1 = {
@@ -755,8 +768,10 @@ describe("consume-holdout one-way lease", () => {
       ),
     ).rejects.toThrow(/split.?digest/iu);
 
-    // No lease was opened, no session marker written, no scoring attempted.
-    expect(existsSync(scenario.ledgerPath)).toBe(false);
+    // No lease was opened, no session marker written, no scoring attempted. The
+    // ledger exists because genesis precedes the command; what it must not hold is
+    // an event.
+    expect(readLedgerEvents(scenario.ledgerPath)).toEqual([]);
     expect(
       existsSync(join(scenario.workDirectory, "active-session.json")),
     ).toBe(false);
@@ -1471,4 +1486,306 @@ describe("consume-holdout one-way lease", () => {
       1,
     );
   });
+
+  // ---------------------------------------------------------------------------
+  // The two ways around the pair above, and both are cheaper than what it refuses.
+  //
+  // A ledger nobody wrote answers "unspent" for every block there is, so the command
+  // must refuse an absent `--ledger` rather than create the path it was handed. And
+  // the aggregate THROWS on a file it cannot read, so unless the post-exposure check
+  // catches that, removing one of the fifty files buys what editing one does not:
+  // block spent, nothing terminal, nothing published.
+  // ---------------------------------------------------------------------------
+
+  const RELEASE_SCENARIO: ScenarioSpec = {
+    scientificUse: "release",
+    visualDocument: 0.8,
+    realEvaluator: false,
+    testNegatives: 4,
+    testPositives: 2,
+    negativeTag: "LOW",
+  };
+
+  it("refuses a release run whose --ledger does not exist, and creates nothing", async () => {
+    const root = await newRoot();
+    const scenario = await buildScenario(root, RELEASE_SCENARIO);
+    // The shape an operator types by hand: a ledger under a private directory that
+    // nothing has created yet.
+    const absentDirectory = join(root, "unwritten", "private");
+    const absentLedger = join(absentDirectory, "holdout-ledger.jsonl");
+    const page = stubPage(scenario.status);
+    expect(
+      await rejectionCode(
+        runConsumeHoldout(
+          { ...scenario.options, ledgerPath: absentLedger },
+          holdoutDeps(scenario, page.createTestPage),
+        ),
+      ),
+    ).toBe("HOLDOUT_LEDGER_ABSENT");
+
+    // Nothing was backfilled: no directory, no ledger, no marker, no receipt, and
+    // the candidate never went up. The refusal precedes records.jsonl.
+    expect(existsSync(join(root, "unwritten"))).toBe(false);
+    expect(existsSync(absentLedger)).toBe(false);
+    expect(existsSync(join(scenario.workDirectory, ACTIVE_SESSION_FILE))).toBe(
+      false,
+    );
+    expect(existsSync(join(scenario.workDirectory, RECEIPT_FILE))).toBe(false);
+    expect(page.createCalls).toBe(0);
+    expect(page.scoreCalls).toBe(0);
+
+    // A missing FILE beside an existing directory is the same refusal: it is the
+    // ledger that has to exist, not somewhere to put one.
+    expect(
+      await rejectionCode(
+        runConsumeHoldout(
+          {
+            ...scenario.options,
+            ledgerPath: join(root, "holdout-ledger.jsonl"),
+          },
+          holdoutDeps(scenario, stubPage(scenario.status).createTestPage),
+        ),
+      ),
+    ).toBe("HOLDOUT_LEDGER_ABSENT");
+    expect(existsSync(join(root, "holdout-ledger.jsonl"))).toBe(false);
+
+    // And the refusal is about the ledger, not about the block: the honest path over
+    // the very same material still runs. Without this the guard could be refusing
+    // everything and still look correct.
+    expect(
+      await runConsumeHoldout(
+        scenario.options,
+        holdoutDeps(scenario, stubPage(scenario.status).createTestPage),
+      ),
+    ).toMatch(/^HOLDOUT_COMPLETED decision=/u);
+  });
+
+  it("refuses a --ledger that is a directory", async () => {
+    const root = await newRoot();
+    const scenario = await buildScenario(root, RELEASE_SCENARIO);
+    const asDirectory = join(root, "ledger-as-dir");
+    mkdirSync(asDirectory);
+    expect(
+      await rejectionCode(
+        runConsumeHoldout(
+          { ...scenario.options, ledgerPath: asDirectory },
+          holdoutDeps(scenario, stubPage(scenario.status).createTestPage),
+        ),
+      ),
+    ).toBe("HOLDOUT_LEDGER_ABSENT");
+    expect(readLedgerEvents(scenario.ledgerPath)).toEqual([]);
+  });
+
+  it("admits a release run over a ledger that exists and holds zero events", async () => {
+    const scenario = await buildScenario(await newRoot(), RELEASE_SCENARIO);
+    // The decision the guard rests on, pinned: zero bytes is genesis and not
+    // truncation, because nothing attests this ledger's height (the exposure ledger's
+    // keyring is what lets IT call a short file an attack). Refusing zero bytes would
+    // refuse the first honest consumption of every corpus.
+    expect(statSync(scenario.ledgerPath).size).toBe(0);
+    expect(
+      await runConsumeHoldout(
+        scenario.options,
+        holdoutDeps(scenario, stubPage(scenario.status).createTestPage),
+      ),
+    ).toMatch(/^HOLDOUT_COMPLETED decision=/u);
+    expect(
+      readLedgerEvents(scenario.ledgerPath).map((event) => event.status),
+    ).toEqual(["started", "completed"]);
+  });
+
+  it("lets an infrastructure-only run bring its own ledger into being", async () => {
+    const root = await newRoot();
+    const scenario = await buildScenario(root, {
+      ...RELEASE_SCENARIO,
+      scientificUse: "infrastructure-only",
+    });
+    // A diagnostic run measures nothing that a second measurement could spoil, so it
+    // may create a throwaway ledger. Without this case the release/non-release branch
+    // would be indistinguishable from an unconditional refusal.
+    const freshLedger = join(root, "diagnostic", "holdout-ledger.jsonl");
+    await runConsumeHoldout(
+      { ...scenario.options, ledgerPath: freshLedger },
+      holdoutDeps(scenario, stubPage(scenario.status).createTestPage),
+    );
+    expect(
+      readLedgerEvents(freshLedger).map((event) => event.status),
+    ).toContain("started");
+  });
+
+  it("refuses before the lease when an inventory file is already unreadable", async () => {
+    const scenario = await buildScenario(await newRoot(), RELEASE_SCENARIO);
+    rmSync(join(scenario.evaluatorRoot, "benchmark", "gates.ts"));
+    const page = stubPage(scenario.status);
+    // A digest that cannot be computed is a refusal, never a pass: at this point the
+    // block is untouched, so stopping costs only the run.
+    expect(
+      await rejectionCode(
+        runConsumeHoldout(
+          scenario.options,
+          holdoutDeps(scenario, page.createTestPage),
+        ),
+      ),
+    ).toBe("EVALUATOR_INVENTORY_UNREADABLE");
+    expect(readLedgerEvents(scenario.ledgerPath)).toEqual([]);
+    expect(existsSync(join(scenario.workDirectory, ACTIVE_SESSION_FILE))).toBe(
+      false,
+    );
+    expect(existsSync(join(scenario.workDirectory, RECEIPT_FILE))).toBe(false);
+    expect(existsSync(scenario.outputDirectory)).toBe(false);
+    expect(page.createCalls).toBe(0);
+    expect(page.scoreCalls).toBe(0);
+  });
+
+  it(
+    "writes the terminal event even when the exposure incident cannot be written",
+    async () => {
+      const scenario = await buildScenario(await newRoot(), {
+        ...RELEASE_SCENARIO,
+        testNegatives: 100,
+        testPositives: 10,
+      });
+      // A directory where the incident file belongs: the atomic rename onto it fails,
+      // which is the readable ATTACHMENT failing. The ledger event is the durable
+      // half and must already exist by then — written first for exactly this reason.
+      mkdirSync(join(scenario.outputDirectory, INCIDENT_FILE), {
+        recursive: true,
+      });
+      const target = join(scenario.evaluatorRoot, "benchmark", "gates.ts");
+      let mutated = false;
+      await expect(
+        runConsumeHoldout(
+          scenario.options,
+          holdoutDeps(
+            scenario,
+            stubPage(scenario.status, {
+              scoreFor: (text) => {
+                if (!mutated) {
+                  mutated = true;
+                  rmSync(target);
+                }
+                return decode(text);
+              },
+            }).createTestPage,
+          ),
+        ),
+      ).rejects.toThrow();
+
+      const events = readLedgerEvents(scenario.ledgerPath);
+      expect(events.map((event) => event.status)).toEqual([
+        "started",
+        "failed",
+      ]);
+      expect(events[1].failureCode).toBe("identity-mismatch");
+      expect(
+        existsSync(join(scenario.workDirectory, ACTIVE_SESSION_FILE)),
+      ).toBe(false);
+      expect(
+        existsSync(join(scenario.outputDirectory, "gate-report.json")),
+      ).toBe(false);
+    },
+    TIMEOUT_MS,
+  );
+
+  // Deleting, renaming and replacing-with-a-directory are three ways to say "this
+  // file can no longer be read", and each must land where an added byte lands.
+  const AFTER_EXPOSURE_TAMPERS: ReadonlyArray<{
+    name: string;
+    apply: (path: string) => void;
+  }> = [
+    { name: "deleted", apply: (path) => rmSync(path) },
+    { name: "renamed", apply: (path) => renameSync(path, `${path}.moved`) },
+    {
+      name: "unreadable",
+      apply: (path) => {
+        // A directory where a file belongs: `readFile` fails on it on every OS this
+        // repository runs on, which a chmod would not.
+        rmSync(path);
+        mkdirSync(path);
+      },
+    },
+  ];
+
+  for (const tamper of AFTER_EXPOSURE_TAMPERS) {
+    it(
+      `turns an inventory file ${tamper.name} after the shards exist into the same terminal exposure`,
+      async () => {
+        const scenario = await buildScenario(await newRoot(), {
+          scientificUse: "release",
+          visualDocument: 0.8,
+          realEvaluator: false,
+          // Over one shard's worth, so committed shards exist when the tamper lands.
+          testNegatives: 100,
+          testPositives: 10,
+          negativeTag: "LOW",
+          textMarker: "SEGREDO",
+          authorMarker: "AUTORSEGREDO",
+        });
+        const target = join(scenario.evaluatorRoot, "benchmark", "gates.ts");
+        let mutated = false;
+        const page = stubPage(scenario.status, {
+          scoreFor: (text) => {
+            if (!mutated) {
+              mutated = true;
+              tamper.apply(target);
+            }
+            return decode(text);
+          },
+        });
+
+        expect(
+          await rejectionCode(
+            runConsumeHoldout(
+              scenario.options,
+              holdoutDeps(scenario, page.createTestPage),
+            ),
+          ),
+        ).toBe("EVALUATOR_DIGEST_POST_EXPOSURE_MISMATCH");
+
+        // The durable half: a terminal event, and the SAME id the lease opened under.
+        const events = readLedgerEvents(scenario.ledgerPath);
+        expect(events.map((event) => event.status)).toEqual([
+          "started",
+          "failed",
+        ]);
+        expect(events[1].failureCode).toBe("identity-mismatch");
+        expect(events[1].consumptionId).toBe(events[0].consumptionId);
+        expect(
+          existsSync(join(scenario.workDirectory, ACTIVE_SESSION_FILE)),
+        ).toBe(false);
+        // No claim was sealed.
+        expect(
+          existsSync(join(scenario.outputDirectory, "benchmark-report.json")),
+        ).toBe(false);
+        expect(
+          existsSync(join(scenario.outputDirectory, "gate-report.json")),
+        ).toBe(false);
+
+        // The attachment: it survived a tree it could not hash, and it names the file.
+        const body = await readFile(
+          join(scenario.outputDirectory, INCIDENT_FILE),
+          "utf8",
+        );
+        const incident = JSON.parse(body) as {
+          consumptionId: string;
+          observedEvaluatorDigest: string | null;
+          changedFiles: string[] | null;
+          receiptMissing: boolean;
+          exposedShardCount: number;
+          failureCode: string;
+        };
+        expect(incident.consumptionId).toBe(events[0].consumptionId);
+        expect(incident.failureCode).toBe("identity-mismatch");
+        expect(incident.receiptMissing).toBe(false);
+        // The aggregate could not be computed at all, which is reported as `null`
+        // rather than as a digest of a tree that no longer exists.
+        expect(incident.observedEvaluatorDigest).toBeNull();
+        expect(incident.changedFiles).toEqual(["benchmark/gates.ts"]);
+        expect(incident.exposedShardCount).toBe(2);
+        expect(body).not.toMatch(/SEGREDO/u);
+        expect(body).not.toMatch(/AUTORSEGREDO/u);
+      },
+      TIMEOUT_MS,
+    );
+  }
 });

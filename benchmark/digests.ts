@@ -167,7 +167,8 @@ export async function computeEvaluatorDigest(root: string): Promise<string> {
 /** One evaluator file as found on disk: its own bytes and whether it is writable. */
 export interface EvaluatorFileObservation {
   path: string;
-  digest: string;
+  /** `null` when the bytes could not be read at all: absent, renamed or denied. */
+  digest: string | null;
   writable: boolean;
 }
 
@@ -177,6 +178,12 @@ export interface EvaluatorFileObservation {
  * so the sealed recipe stays a pure function of path + NUL + bytes and a digest
  * written by an earlier `fit` keeps comparing equal. It exists so a mismatch can
  * name WHICH file moved instead of only that something did.
+ *
+ * Unlike `computeEvaluatorDigest` this NEVER throws on a file it cannot read, and
+ * that difference is the point of the two functions. The aggregate is a claim about
+ * identity and a file it cannot read must break it; this table is written as the
+ * ATTACHMENT to a terminal ledger event, and an attachment that throws would
+ * suppress the record of the very deletion it exists to describe.
  */
 export async function observeEvaluatorFiles(
   root: string,
@@ -187,12 +194,15 @@ export async function observeEvaluatorFiles(
   const observations: EvaluatorFileObservation[] = [];
   for (const relativePath of ordered) {
     const absolute = resolve(root, relativePath);
-    const bytes = await readFile(absolute);
+    const bytes = await readFile(absolute).catch(() => null);
     observations.push({
       path: relativePath,
-      digest: sha256BytesHex(
-        new Uint8Array(bytes.buffer, bytes.byteOffset, bytes.byteLength),
-      ),
+      digest:
+        bytes === null
+          ? null
+          : sha256BytesHex(
+              new Uint8Array(bytes.buffer, bytes.byteOffset, bytes.byteLength),
+            ),
       writable: await isWritable(absolute),
     });
   }

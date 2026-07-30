@@ -28,12 +28,35 @@
 // Deterministic: `startedAt`/`terminalAt` are explicit arguments, never
 // `Date.now()`; the only randomness is in throwaway temp-file names.
 
-import { open, readFile, rename, rm } from "node:fs/promises";
+import { open, readFile, rename, rm, stat } from "node:fs/promises";
 import { dirname, join } from "node:path";
 
 import { canonicalJson } from "../contracts/canonical-json.ts";
 import { sha256BytesHex } from "./digests.ts";
 import { RELEASE_CHROME_VERSION } from "./prediction-schema.ts";
+
+/** The canonical file name. The DATA is one artifact for the whole project. */
+export const HOLDOUT_LEDGER_FILE = "holdout-ledger.jsonl";
+/**
+ * Where it lives, relative to the repository root. It is the corpus-build private
+ * directory and not a per-dataset one, because the events already written there are
+ * what refuse a spent block: a ledger chosen per dataset directory would let a
+ * re-sealed copy of the same material meet an empty history.
+ */
+export const HOLDOUT_LEDGER_PRIVATE_DIRECTORY = join(
+  "benchmark",
+  "data",
+  "corpus-build",
+  "private",
+);
+
+export function defaultHoldoutLedgerPath(repositoryRoot: string): string {
+  return join(
+    repositoryRoot,
+    HOLDOUT_LEDGER_PRIVATE_DIRECTORY,
+    HOLDOUT_LEDGER_FILE,
+  );
+}
 
 /** The closed set of irrecoverable-failure reason codes. No free text is allowed. */
 export const HOLDOUT_FAILURE_CODES = [
@@ -266,6 +289,39 @@ function latestForId(
     if (event.consumptionId === consumptionId) latest = event;
   }
   return latest;
+}
+
+/**
+ * Refuses a ledger path that does not already hold a ledger. `readLedger` reports an
+ * absent file as zero events, so a path nobody wrote yet answers "this block was
+ * never exposed" for every block there is — and creating it makes that answer
+ * permanent. An absent ledger is therefore not an unspent one, and neither the file
+ * nor its directory may be created by a run that is about to measure something.
+ *
+ * A file with zero bytes IS admitted, and the asymmetry is deliberate. This ledger
+ * has no height attestation (the exposure ledger can call truncation an attack only
+ * because its keyring signs the height), so zero events and genesis are the same
+ * measurement here and refusing them would refuse the first honest consumption of
+ * any corpus. What the guard removes is the case where the tool itself supplies the
+ * empty history: an existing file is always something a human put at the path they
+ * named, and it stays on disk for an auditor to find.
+ */
+export async function assertHoldoutLedgerPresent(
+  ledgerPath: string,
+): Promise<void> {
+  const stats = await stat(ledgerPath).catch(() => null);
+  if (stats === null) {
+    fail(
+      "HOLDOUT_LEDGER_ABSENT",
+      `no holdout ledger at ${ledgerPath}: an absent ledger reads as an unspent block, so this run will not create one`,
+    );
+  }
+  if (!stats.isFile()) {
+    fail(
+      "HOLDOUT_LEDGER_ABSENT",
+      `${ledgerPath} is not a regular file, so it holds no ledger to append to`,
+    );
+  }
 }
 
 /**

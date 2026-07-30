@@ -469,11 +469,16 @@ npm run benchmark -- fit \
 
 # 7) CONSUME-HOLDOUT — ⚠️ IRREVERSÍVEL. Gasta o lease do holdout UMA vez.
 #    Pontua o bloco de teste selado e DELEGA a decisão aos gates da Fase 2.
+#    NÃO passe --ledger: ele já aponta para o ledger canônico do projeto,
+#    benchmark/data/corpus-build/private/holdout-ledger.jsonl, que é onde estão os
+#    eventos `started` que recusam um bloco já gasto. Um --ledger digitado à mão
+#    num caminho que não existe seria lido como "nenhum bloco foi exposto" — por
+#    isso um corpus `release` RECUSA (HOLDOUT_LEDGER_ABSENT) um --ledger ausente
+#    em vez de criá-lo.
 npm run benchmark -- consume-holdout \
   --dataset-dir benchmark/data/ptbr-generic-v1 \
   --split-artifact benchmark/work/split/split-artifact.json \
   --frozen-calibration benchmark/work/fit/frozen-calibration.json \
-  --ledger benchmark/data/ptbr-generic-v1/private/holdout-ledger.jsonl \
   --candidate-extension-dir dist-model-benchmark \
   --work-dir benchmark/work/holdout \
   --output benchmark/work/evaluate \
@@ -491,6 +496,7 @@ npm run benchmark -- publish-profile \
   --model-dir models/cleanfeed-ptbr-v1
 
 # 9) PUBLISH-EVIDENCE — escreve os 7 arquivos sanitizados de evidência versionável
+#    --ledger também tem default canônico aqui; omita-o pelo mesmo motivo do passo 7.
 npm run benchmark -- publish-evidence \
   --source-readiness <source-readiness.json> \
   --dataset-audit benchmark/work/validate/dataset-audit.json \
@@ -498,7 +504,6 @@ npm run benchmark -- publish-evidence \
   --frozen-calibration benchmark/work/fit/frozen-calibration.json \
   --fit-report benchmark/work/fit/fit-report.json \
   --report benchmark/work/evaluate/benchmark-report.json \
-  --ledger benchmark/data/ptbr-generic-v1/private/holdout-ledger.jsonl \
   --consumption-id <id da sessão> \
   --model-dir models/cleanfeed-ptbr-v1 \
   --output benchmark/evidence/tmr-ptbr-v1

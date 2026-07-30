@@ -74,6 +74,29 @@ Quatro respostas do projeto, em vez de ignorar:
 4. **Comunicação como detector de pt-BR genérico**, nunca como calibrado para
    feed profissional (H4).
 
+## L2 — O operador lê os escores do bloco cego durante a corrida
+
+O projeto é desenvolvido por uma pessoa que roda a CLI na própria máquina. Os
+shards do bloco de teste são gravados pelo processo dela em
+`<work-dir>/predictions/test/`, e nenhum processo Node local nega leitura a quem
+tem o código e o disco. **Não existe, e não vai existir, um controle que impeça o
+operador de ler os escores do bloco cego enquanto a corrida acontece.** Exigir isso
+seria especificar o inexequível, e declará-lo como se estivesse imposto seria pior
+do que declarar a limitação.
+
+**O controle não é cegueira do operador; é o pré-registro mais o registro
+terminal.** O que sustenta a medição é: o pré-registro público antes de a concessão
+abrir; a obrigação de um evento terminal no ledger append-only para toda concessão
+aberta (`completed` ou `failed`, sempre com o mesmo `consumptionId`); e a
+conferência do digest do avaliador antes e depois da exposição, que torna um veto de
+integridade **provocado** indistinguível de um honesto — inclusive quando a provocação
+é apagar, renomear ou tornar ilegível um arquivo do inventário, e não editar um byte.
+
+O que isso NÃO cobre, dito sem eufemismo: um operador que leia os escores e depois
+decida não publicar. Contra isso o mecanismo é o registro, não a prevenção — a
+concessão fica gravada, o bloco fica gasto para qualquer candidato, e um bloco gasto
+sem relatório publicado é visível para qualquer auditor que leia o ledger.
+
 ## Fatores que degradam a detecção
 
 Estas quatro dimensões limitam qualquer resultado e são tratadas como riscos no

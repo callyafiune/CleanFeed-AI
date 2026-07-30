@@ -26,7 +26,9 @@
 //   - A recognized irrecoverable failure (a candidate that fails identity/parity
 //     verification, or an invalid shard set) is declared via
 //     `failHoldoutConsumption`; `completed` and `failed` are terminal and stay
-//     consumed. Deleting or resetting a ledger is unsupported.
+//     consumed. Deleting or resetting a ledger is unsupported, and a release run
+//     refuses a `--ledger` that does not exist instead of creating it — an absent
+//     ledger reads as an unspent block for every block there is.
 //
 // Standalone benchmark module: MUST NOT import from the extension bundle (src/).
 
@@ -54,6 +56,7 @@ import {
 } from "../digests.ts";
 import type { ReleaseDecision } from "../gates.ts";
 import {
+  assertHoldoutLedgerPresent,
   beginHoldoutConsumption,
   failHoldoutConsumption,
   resumeHoldoutConsumption,
@@ -170,6 +173,14 @@ export async function runConsumeHoldout(
   const manifest = validateDatasetManifest(
     await readJsonFile(join(options.datasetDirectory, "manifest.json")),
   );
+  // A release run appends to a ledger whose existing `started` events are the only
+  // thing that can refuse a spent block, so an absent ledger is refused instead of
+  // created: `readLedger` reports ENOENT as zero events, which reads as "no block was
+  // ever exposed" for every block at once. The refusal sits ahead of records.jsonl,
+  // which carries `text` and `label` on every record.
+  if (manifest.scientificUse === "release") {
+    await assertHoldoutLedgerPresent(options.ledgerPath);
+  }
   const records = parseBenchmarkDataset(
     await readTextFile(join(options.datasetDirectory, "records.jsonl")),
   );
@@ -184,7 +195,12 @@ export async function runConsumeHoldout(
   const activeSessionPath = join(options.workDirectory, "active-session.json");
 
   await mkdir(options.workDirectory, { recursive: true });
-  await mkdir(dirname(options.ledgerPath), { recursive: true });
+  // Only an infrastructure-only run may bring its own ledger into being: it measures
+  // nothing scientific, so a throwaway ledger under a throwaway directory costs
+  // nothing. The release path was already refused above rather than backfilled.
+  if (manifest.scientificUse !== "release") {
+    await mkdir(dirname(options.ledgerPath), { recursive: true });
+  }
 
   // On a fresh run the split-digest confirmation is checked FIRST, before any
   // ledger byte is written, so a wrong confirmation can never consume the holdout.
@@ -296,9 +312,32 @@ export async function runConsumeHoldout(
   // introduced by someone who could already read partial scores, so the lease goes
   // TERMINAL instead of sealing numbers an uncertified evaluator produced: the block
   // was spent and it yields an exposure record, not a claim.
-  const postExposureEvaluatorDigest =
-    await computeEvaluatorDigest(evaluatorRoot);
+  //
+  // An inventory file that cannot be read AT ALL — deleted, renamed, permission
+  // revoked — is measured as `null`, which is not the frozen digest and so takes the
+  // same branch as an altered byte. Adding a byte and taking a file away are the same
+  // act with the same motive, and a throw here would leave this function with the
+  // block spent and no terminal event: the one outcome this guard exists to deny, and
+  // reachable by a single `rm`.
+  let postExposureEvaluatorDigest: string | null;
+  try {
+    postExposureEvaluatorDigest = await computeEvaluatorDigest(evaluatorRoot);
+  } catch {
+    postExposureEvaluatorDigest = null;
+  }
   if (postExposureEvaluatorDigest !== frozen.evaluatorDigest) {
+    // The DURABLE event first, its readable attachment second. The incident re-reads
+    // the same tree that just failed to hash and writes into the output directory, so
+    // it is the fragile half of the pair; ahead of the ledger it could take the
+    // terminal event down with it.
+    await failHoldoutConsumption(
+      options.ledgerPath,
+      session.consumptionId,
+      identity,
+      "identity-mismatch",
+      now(),
+      { activeSessionPath },
+    );
     await writeExposureIncident({
       workDirectory: options.workDirectory,
       outputDirectory: options.outputDirectory,
@@ -309,17 +348,9 @@ export async function runConsumeHoldout(
       observedEvaluatorDigest: postExposureEvaluatorDigest,
       detectedAt: now(),
     });
-    await failHoldoutConsumption(
-      options.ledgerPath,
-      session.consumptionId,
-      identity,
-      "identity-mismatch",
-      now(),
-      { activeSessionPath },
-    );
     throw new CommandError(
       "EVALUATOR_DIGEST_POST_EXPOSURE_MISMATCH",
-      `the evaluator changed after the test block was scored (${postExposureEvaluatorDigest} on disk, ${frozen.evaluatorDigest} frozen); the session is terminal and no metric was computed`,
+      `the evaluator changed after the test block was scored (${postExposureEvaluatorDigest ?? "unreadable"} on disk, ${frozen.evaluatorDigest} frozen); the session is terminal and no metric was computed`,
     );
   }
 
@@ -351,7 +382,8 @@ interface ExposureIncidentInput {
   evaluatorRoot: string;
   consumptionId: string;
   frozenEvaluatorDigest: string;
-  observedEvaluatorDigest: string;
+  /** `null` when the aggregate could not be computed at all. */
+  observedEvaluatorDigest: string | null;
   detectedAt: string;
 }
 

@@ -56,6 +56,7 @@ import {
   type VerifyPublishedEvidenceOptions,
 } from "./commands/verify-published-evidence.ts";
 import { defaultClusterLedgerPaths } from "./cluster-exposure-ledger.ts";
+import { defaultHoldoutLedgerPath } from "./holdout-ledger.ts";
 import type { Partition } from "./split.ts";
 
 export const BENCHMARK_COMMANDS = [
@@ -273,6 +274,17 @@ function buildClusterLedger(
   return options;
 }
 
+// The SAME rule as the exposure ledger above, for the consumption ledger: `--ledger`
+// defaults to the canonical project artifact, so no operator and no runbook retypes a
+// path that a typo turns into an empty history. The enforcement differs because
+// `benchmark/holdout-ledger.ts` has no keyring attesting a height —
+// `assertHoldoutLedgerPresent` refuses a path that does not already exist instead of
+// creating it, since `readLedger` reports an absent file as zero events and that
+// answer would hand a spent block to the next candidate.
+function holdoutLedgerPath(flags: FlagMap): string {
+  return optionalFlag(flags, "ledger") ?? defaultHoldoutLedgerPath(cwd());
+}
+
 function buildIngest(flags: FlagMap): IngestOptions {
   assertKnownFlags(flags, [
     "input",
@@ -465,7 +477,7 @@ function buildEvaluate(flags: FlagMap): EvaluateOptions {
     frozenCalibrationPath: requireFlag(flags, "frozen-calibration"),
     testPredictionsDirectory: requireFlag(flags, "test-predictions"),
     testLabelsPath: requireFlag(flags, "test-labels"),
-    ledgerPath: requireFlag(flags, "ledger"),
+    ledgerPath: holdoutLedgerPath(flags),
     consumptionId: requireFlag(flags, "consumption-id"),
     outputDirectory: requireFlag(flags, "output"),
     bootstrapSeed: requireNumberFlag(flags, "bootstrap-seed"),
@@ -503,7 +515,7 @@ function buildConsumeHoldout(flags: FlagMap): ConsumeHoldoutOptions {
     datasetDirectory,
     splitArtifactPath: requireFlag(flags, "split-artifact"),
     frozenCalibrationPath: requireFlag(flags, "frozen-calibration"),
-    ledgerPath: requireFlag(flags, "ledger"),
+    ledgerPath: holdoutLedgerPath(flags),
     candidateExtensionDir: requireFlag(flags, "candidate-extension-dir"),
     workDirectory: requireFlag(flags, "work-dir"),
     outputDirectory: requireFlag(flags, "output"),
@@ -568,7 +580,7 @@ function buildPublishEvidence(flags: FlagMap): PublishEvidenceOptions {
     frozenCalibrationPath: requireFlag(flags, "frozen-calibration"),
     fitReportPath: requireFlag(flags, "fit-report"),
     reportPath: requireFlag(flags, "report"),
-    ledgerPath: requireFlag(flags, "ledger"),
+    ledgerPath: holdoutLedgerPath(flags),
     consumptionId: requireFlag(flags, "consumption-id"),
     modelDirectory: requireFlag(flags, "model-dir"),
     outputDirectory: requireFlag(flags, "output"),
@@ -621,15 +633,19 @@ function usage(): string {
     "                       --runtime-parity --development-predictions --calibration-predictions",
     "                       --output --seed",
     "  evaluate             --dataset-dir --split-artifact --frozen-calibration --test-predictions",
-    "                       --test-labels --ledger --consumption-id --output --bootstrap-seed",
-    "  consume-holdout      --dataset-dir --split-artifact --frozen-calibration --ledger",
+    "                       --test-labels --consumption-id --output --bootstrap-seed [--ledger]",
+    "  consume-holdout      --dataset-dir --split-artifact --frozen-calibration [--ledger]",
     "                       --candidate-extension-dir --work-dir --output --bootstrap-seed",
     "                       (--confirm-split-digest | --resume-consumption <id>)",
     "  publish-profile      --report --frozen-calibration --issued-at --model-dir",
     "  verify-evidence      --report --frozen-calibration --model-dir",
     "  publish-evidence     --source-readiness --dataset-audit --split-artifact --frozen-calibration",
-    "                       --fit-report --report --ledger --consumption-id --model-dir --output",
+    "                       --fit-report --report --consumption-id --model-dir --output [--ledger]",
     "  verify-published-evidence  --evidence-dir --model-dir",
+    "",
+    "--ledger defaults to benchmark/data/corpus-build/private/holdout-ledger.jsonl.",
+    "A release consume-holdout REFUSES a --ledger that does not exist instead of",
+    "creating it: an absent ledger reads as a block nobody ever consumed.",
     "",
     "The benchmark is standalone (never imports src/) and deterministic.",
     "Scoring the holdout belongs to Phase 3, under a single consume-holdout session.",

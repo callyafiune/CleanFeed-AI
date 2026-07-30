@@ -341,6 +341,45 @@ describe("observeEvaluatorFiles", () => {
     expect(changed).toEqual(["benchmark/gates.ts"]);
   });
 
+  it("reports an unreadable file as a null digest instead of throwing", async () => {
+    const root = await makeRoot();
+    await writeEvaluatorFixture(root);
+    await rm(join(root, "benchmark", "gates.ts"));
+    // The aggregate must break on the same tree, and the pair of behaviours is the
+    // contract: the aggregate is a claim about identity, while this table is the
+    // attachment to a terminal ledger event and has to survive to name the deletion.
+    await expect(computeEvaluatorDigest(root)).rejects.toThrow();
+
+    const observed = await observeEvaluatorFiles(root);
+    expect(observed.map((file) => file.path)).toEqual(
+      [...EVALUATOR_FILES].sort((a, b) => (a < b ? -1 : a > b ? 1 : 0)),
+    );
+    const missing = observed.filter((file) => file.digest === null);
+    expect(missing.map((file) => file.path)).toEqual(["benchmark/gates.ts"]);
+    expect(missing[0].writable).toBe(false);
+  });
+
+  it("names a deleted file as changed against an earlier observation", async () => {
+    const clean = await makeRoot();
+    const emptied = await makeRoot();
+    await writeEvaluatorFixture(clean);
+    await writeEvaluatorFixture(emptied);
+    await rm(join(emptied, "benchmark", "report.ts"));
+
+    const before = new Map(
+      (await observeEvaluatorFiles(clean)).map((file) => [
+        file.path,
+        file.digest,
+      ]),
+    );
+    const changed = (await observeEvaluatorFiles(emptied))
+      .filter((file) => before.get(file.path) !== file.digest)
+      .map((file) => file.path);
+    // A `null` never equals the digest the receipt recorded, so taking a file away
+    // is reported by the same comparison that reports a byte added to one.
+    expect(changed).toEqual(["benchmark/report.ts"]);
+  });
+
   it("reports a plain temporary file as writable", async () => {
     const root = await makeRoot();
     await writeEvaluatorFixture(root);

@@ -90,12 +90,24 @@ export function resolveEvaluatorRoot(root: string | undefined): string {
  * can record what it saw rather than what it was told. The frozen artifact is not
  * part of the inventory, so its declared `evaluatorDigest` is a claim until this
  * comparison is made.
+ *
+ * An inventory file that cannot be read is a REFUSAL and never a pass. It reaches a
+ * coded error rather than a bare ENOENT because a missing declared file and a failing
+ * disk are different news, and because every caller of this function runs it before
+ * anything has been spent: the whole cost of stopping here is the run itself.
  */
 export async function assertEvaluatorIdentity(
   evaluatorRoot: string,
   frozenEvaluatorDigest: string,
 ): Promise<string> {
-  const observed = await computeEvaluatorDigest(evaluatorRoot);
+  const observed = await computeEvaluatorDigest(evaluatorRoot).catch(
+    (error: unknown) => {
+      throw new CommandError(
+        "EVALUATOR_INVENTORY_UNREADABLE",
+        `an evaluator inventory file could not be read, so the evaluator identity cannot be measured: ${error instanceof Error ? error.message : String(error)}`,
+      );
+    },
+  );
   if (observed !== frozenEvaluatorDigest) {
     throw new CommandError(
       "EVALUATOR_DIGEST_PRE_EXPOSURE_MISMATCH",
@@ -212,7 +224,16 @@ export async function runEvaluate(options: EvaluateOptions): Promise<string> {
   // The third measurement of the same bytes, and the one the gate reads. It can
   // still differ from the check above: everything between them — the shard reads,
   // the labels, the metrics, the slices — is a window in which the tree can move.
-  const evaluatorDigest = await computeEvaluatorDigest(evaluatorRoot);
+  // The measurement the gate reads, and the only one taken after the shards, the
+  // labels, the metrics and the slices. A tree that moved in that window has to reach
+  // the gate as evidence, so an inventory file that cannot be read is `null` — which
+  // is not the frozen digest either, fails `integrity.evaluator-digest`, and lands as
+  // a PUBLISHED `reject` on a `completed` lease. Letting it throw would end the run
+  // with the lease still `started` and nothing terminal written, which is precisely
+  // the outcome a deletion is attempted to obtain.
+  const evaluatorDigest = await computeEvaluatorDigest(evaluatorRoot).catch(
+    () => null,
+  );
   const developmentManifestDigest =
     await computePredictionManifestDigest(developmentManifest);
   const calibrationManifestDigest =

@@ -8477,6 +8477,17 @@ alimentando `evaluatorDigestMatches`; ela não é redundante, porque entre o gua
 há a leitura dos shards, dos rótulos, as métricas e as fatias — janela em que a árvore pode se
 mover.
 
+**O desfecho dessa janela residual, dito com precisão, porque ele NÃO é evento terminal.**
+Se a árvore se mover entre o guarda do topo de `runEvaluate` e a terceira medição, o que
+acontece é `evaluatorDigestMatches: false` → o gate booleano `integrity.evaluator-digest`
+reprova → a decisão é `reject` → o relatório e o `gate-report.json` são **escritos** → e a
+concessão vira **`completed`**, porque `evaluate` conclui a lease mesmo quando os gates
+reprovam. Não há `failed`, não há `identity-mismatch` e não há incidente de exposição: **quem
+cobre esse ramo é a publicação obrigatória de R2, não a Guarda 6.** A Guarda 6 termina antes
+de `runEvaluate` ser chamado, e a diferença entre os dois ramos é exatamente essa — a Guarda 6
+troca a alegação por um registro de exposição, a janela residual troca a alegação por um
+`reject` publicado. Ambos são desfechos declarados; nenhum dos dois é silêncio.
+
 **O recibo NÃO é evento de ledger,** e não pode ser: `latestForId`
 (`holdout-ledger.ts:229-238`) devolve o **último** evento do id, e `assertHoldoutStarted`,
 `resumeHoldoutConsumption` e `requireStartedSession` tratam qualquer `status` diferente de
@@ -8539,6 +8550,189 @@ inventário: um módulo novo fora dele seria editável sem mover o digest.
 parágrafo que começa «`assertHoldoutAvailable` compara a tupla científica sem os campos de
 lifecycle, incluindo `datasetAuditDigest` e `sourceReadinessDigest`») descreve o comportamento
 anterior. Fica como registro histórico da Fase 2; esta seção é a que vale.
+
+#### H1-SMOKE — as duas evasões que contornavam o par (2026-07-30)
+
+A revisão adversarial confirmou que os dois consertos da âncora acima funcionam e discriminam
+por teste, e achou **duas evasões que passavam por fora deles**. As duas foram MEDIDAS, não
+deduzidas, e as duas têm a mesma forma: o controle existia, mas o caminho que o contornava era
+**mais barato** do que o caminho que ele fechava.
+
+**Evasão 1 — um `--ledger` inexistente devolvia o bloco, e o runbook mandava fazer isso.**
+`readLedger` (`benchmark/holdout-ledger.ts`) devolve `[]` em `ENOENT`; `assertHoldoutAvailable`
+não acha nada; `blockMatches` não recusa nada; e `runConsumeHoldout` **criava** o diretório do
+ledger antes de abrir a concessão. Logo o mesmo `datasetDigest + splitDigest` era medido pela
+segunda vez com qualquer candidato, sem nenhum artifício: bastava apontar `--ledger` para um
+caminho novo. E o passo 7 do runbook prescrevia literalmente
+`--ledger benchmark/data/ptbr-generic-v1/private/holdout-ledger.jsonl`, um diretório que **não
+existe** — o operador honesto seguindo a documentação recebia o buraco de graça. Toda a suíte
+de `consume-holdout.test.ts` partia de ledger inexistente e a admissão passava, o que
+**provava** o buraco em vez de testá-lo.
+
+O projeto já tinha escrito a regra certa para o OUTRO ledger, em `buildClusterLedger`
+(`benchmark/cli.ts`): «uma directory nova não é um ledger novo, e nenhuma ação tem o direito de
+acreditar o contrário». Ela agora vale para os dois, em duas metades:
+
+- **default canônico.** `HOLDOUT_LEDGER_FILE`, `HOLDOUT_LEDGER_PRIVATE_DIRECTORY` e
+  `defaultHoldoutLedgerPath` entram em `benchmark/holdout-ledger.ts` no padrão de
+  `defaultClusterLedgerPaths`, e `--ledger` passa a ser **opcional** em `buildConsumeHoldout`,
+  `buildEvaluate` e `buildPublishEvidence`. O default é
+  `benchmark/data/corpus-build/private/holdout-ledger.jsonl` — o arquivo que **carrega o evento
+  `started` de 2026-07-25**. Isso é o critério, não conveniência: um default que apontasse para
+  outro lugar seria ele mesmo um ledger fresco. Ninguém digita mais o caminho, então ninguém
+  erra mais o caminho;
+- **ausente é recusa, nunca «não-gasto».** `assertHoldoutLedgerPresent`
+  (`benchmark/holdout-ledger.ts`) falha com `HOLDOUT_LEDGER_ABSENT` quando o `--ledger` não
+  existe ou não é arquivo regular, e `runConsumeHoldout` a chama **logo depois de parsear o
+  manifesto e antes de `records.jsonl`** — que carrega `text` e `label` em cada linha — quando
+  `manifest.scientificUse === "release"`. O `mkdir` do diretório do ledger passou a rodar
+  **somente** para `infrastructure-only`, que não mede nada que uma segunda medição estrague.
+
+**A distinção `scientificUse === "release"` existe e cobre os casos**, e foi conferida:
+`DatasetManifest.scientificUse` é `"release" | "infrastructure-only"` desde
+`benchmark/dataset-manifest.ts`, o corpus real em disco é `release`, e o smoke sintético
+(`benchmark/tests/helpers/generate-synthetic-release-corpus.ts`) é `infrastructure-only` por
+construção e **nunca** pode ser release. Cenários de teste continuam podendo partir de ledger
+inexistente pela porta da frente: os que precisam de um ledger agora **criam** um. `buildScenario`
+escreve um ledger vazio, e nenhum teste foi neutralizado por isso — o único que afirmava
+`existsSync(ledgerPath) === false` passou a afirmar `readLedgerEvents(ledgerPath) === []`, que é
+a asserção que ele sempre quis fazer.
+
+**Decisão: ledger que EXISTE e tem 0 bytes é ADMITIDO.** É assimétrico em relação ao ledger de
+exposição, que trata truncagem como ataque, e a assimetria é medida e não descuido:
+
+1. o ledger de exposição pode chamar um arquivo curto de ataque porque o **keyring atesta a
+   altura** (`ClusterLedgerWitness`). O ledger de consumo **não tem atestação de altura
+   nenhuma**, então «zero eventos» e «gênese» são a mesma medição aqui, e recusar seria palpite
+   com cara de controle;
+2. recusar não tem saída. Nenhum subcomando inicializa um ledger de consumo, então «vazio =
+   recusa» tornaria impossível a **primeira** consumação honesta de qualquer corpus — o guarda
+   proibiria o caminho honesto em vez da evasão;
+3. e o que o guarda precisa matar é o caso em que **a própria ferramenta** fornece a história
+   vazia. Com a recusa de ausência, a existência do arquivo é sempre ato humano num caminho que
+   o humano nomeou, e ele **fica no disco** para um auditor achar. Um `touch` deliberado é
+   falsificação visível; um `ENOENT` que a ferramenta preenchia sozinha não deixava nada.
+
+Fixado por teste nas duas pontas: `admits a release run over a ledger that exists and holds zero
+events` (com `statSync(...).size === 0` afirmado) e `refuses a release run whose --ledger does
+not exist, and creates nothing`.
+
+**Evasão 2 — apagar um arquivo do inventário depois da exposição contornava a Guarda 6
+inteira.** `computeEvaluatorDigest` **lança** em arquivo ausente (é o contrato certo para um
+agregado de identidade). A segunda medição chamava-o sem guarda, então trocar
+`appendFileSync(drifted, "// drift\n")` por `rmSync(drifted)` produzia `ENOENT` em vez de
+`EVALUATOR_DIGEST_POST_EXPOSURE_MISMATCH`, e o ledger ficava com **só `started`** — sem
+`failed`, sem `identity-mismatch`, sem incidente, nada publicado. Isto é: **acrescentar byte era
+punido, apagar não era**, e apagar é mais simples. Agravava que `writeExposureIncident` era
+chamada ANTES do evento terminal e chama `observeEvaluatorFiles`, que **também** lançava em
+arquivo ausente: a coisa frágil estava na frente da coisa durável.
+
+Três mudanças, e a ordem entre elas é o conserto:
+
+- **a segunda medição tolera ilegibilidade e a trata como divergência.**
+  `postExposureEvaluatorDigest` é `string | null`; um arquivo apagado, renomeado ou ilegível dá
+  `null`, que não é o digest congelado e portanto entra no **mesmo** ramo de um byte trocado;
+- **primeiro o durável, depois o anexo.** `failHoldoutConsumption(..., "identity-mismatch")`
+  roda ANTES de `writeExposureIncident`. O incidente relê a árvore que acabou de falhar em
+  hashear e escreve no diretório de saída, logo é a metade frágil do par; à frente do ledger ela
+  podia levar o evento terminal embora;
+- **`observeEvaluatorFiles` nunca lança.** `EvaluatorFileObservation.digest` passa a
+  `string | null`. O par de comportamentos é o contrato e está fixado por teste em
+  `digests.test.ts`: o **agregado** é uma alegação de identidade e tem de quebrar num arquivo
+  que não consegue ler; a **tabela por arquivo** é o anexo de um evento terminal e tem de
+  sobreviver para nomear a deleção. Um `null` nunca é igual ao digest do recibo, então
+  `changedFiles` reporta o arquivo apagado pela mesma comparação que reporta um byte a mais.
+
+**A mesma pergunta aplicada ao lado PRÉ-concessão, com o comportamento de hoje conferido.**
+Antes da concessão o desfecho já era recusa — `computeEvaluatorDigest` lançava e nada tinha sido
+gasto — mas era um `ENOENT` **sem código**, indistinguível de um disco com defeito.
+`assertEvaluatorIdentity` (`benchmark/commands/evaluate.ts`) passa a converter isso em
+`EVALUATOR_INVENTORY_UNREADABLE`, e como as duas entradas (`runConsumeHoldout` e `runEvaluate`)
+compartilham essa função, um conserto cobre os dois lados. **Ausência = recusa nas duas pontas**,
+e nos dois casos com código próprio: recusa antes, evento terminal depois.
+
+**Cenários de evasão agora cobertos por teste**, cada um matando o seu:
+
+| cenário | desfecho fixado |
+|---|---|
+| `--ledger` em caminho inexistente, `release` | `HOLDOUT_LEDGER_ABSENT`; nenhum diretório criado, nenhum evento, nenhum recibo, candidato não sobe |
+| `--ledger` apontando para um diretório | `HOLDOUT_LEDGER_ABSENT` |
+| `--ledger` existente com 0 bytes | admissão, `started` + `completed` |
+| `infrastructure-only` com ledger novo | cria e roda (prova que a recusa não é universal) |
+| arquivo do inventário **apagado** depois dos shards | `failed(identity-mismatch)` + incidente + `EVALUATOR_DIGEST_POST_EXPOSURE_MISMATCH`, `observedEvaluatorDigest: null` |
+| arquivo **renomeado** depois dos shards | idem |
+| arquivo **ilegível** depois dos shards (substituído por diretório) | idem |
+| incidente **impossível de escrever** (arquivo-alvo é diretório) | o evento terminal existe de qualquer forma |
+| arquivo ausente **antes** da concessão | `EVALUATOR_INVENTORY_UNREADABLE`, ledger vazio, sem recibo, sem marcador |
+
+Cada um foi provado não-vacuoso desligando o conserto correspondente: sem
+`assertHoldoutLedgerPresent` morrem exatamente os dois primeiros; sem o `try/catch` da segunda
+medição morrem os quatro de pós-exposição; invertendo a ordem
+`failHoldoutConsumption`/`writeExposureIncident` morre exatamente um, o do incidente
+impossível; sem o código na recusa pré-concessão morre exatamente um.
+
+**Um ramo mudou sem teste, e é dito porque não há como testá-lo daqui.** A terceira medição
+(`runEvaluate`, a que alimenta `evaluatorDigestMatches`) também passou a tolerar ilegibilidade,
+por `null`. Sem isso, um arquivo apagado **naquela** janela terminava a corrida com a lease
+`started` e nada terminal — a mesma forma de evasão, um estágio depois, no caminho direto
+`evaluate --consumption-id`. Com isso, o desfecho é o descrito na âncora acima: `reject`
+publicado e lease `completed`. **Não há teste**: entre o guarda do topo de `runEvaluate` e essa
+medição existem apenas leituras de arquivo e computação pura — nenhuma dependência injetada,
+nenhum relógio, nenhuma página —, então a janela não é alcançável por um teste sem mockar
+módulo. Foi mantido porque escolher o estágio que tem costura e deixar aberto o que não tem
+seria escolher testabilidade contra a invariante; a totalidade da comparação é garantida pelo
+tipo (`string | null` contra `string`).
+
+**O que estava errado nas prescrições da revisão, medido:**
+
+- o conserto prescrito pedia `CommandError("HOLDOUT_LEDGER_ABSENT")` dentro de
+  `runConsumeHoldout`. O código é o mesmo, mas o guarda mora em `benchmark/holdout-ledger.ts`
+  como `HoldoutLedgerError`, porque a invariante «ausente não é não-gasto» é do módulo que
+  detém a semântica de mão única, não de um dos seus chamadores — e `evaluate`/`publish-evidence`
+  também recebem `--ledger`. Para o teste é indiferente: os dois erros carregam `.code`;
+- a prescrição de retirar `exposure-open.json` dizia que `active-session.json` «não carrega o
+  digest observado». **Carrega.** `beginHoldoutConsumption` grava a tupla inteira via
+  `projectIdentity`, e desde a âncora acima o `evaluatorDigest` desse evento é um valor
+  **provado igual** ao observado em disco pelo guarda que precede o append. A outra metade da
+  frase está certa: ele **é apagado** no evento terminal.
+
+**Guarda 5 (`<work-dir>/exposure-open.json`) foi RETIRADA, explicitamente.** O brief 27 a
+especificava como marcador atômico depois do `started` e antes de `readTestInput`. Grep no repo:
+zero ocorrências — nunca foi implementada nem declarada, e o relatório não podia deixá-la
+implícita. O substituto é `active-session.json`, que `beginHoldoutConsumption` escreve
+atomicamente **sob o lock do ledger, depois do append e antes de `readTestInput`** — a posição e
+a atomicidade exatas que o brief pedia. Um `exposure-open.json` seria uma segunda cópia do mesmo
+fato uma linha depois: ele também seria escrito **antes** do primeiro byte lido, então não
+distingue «a concessão abriu» de «a exposição começou», que é a pergunta que ele parecia
+responder. Quem responde essa é medido e não declarado — `countExposedShards` sobre
+`<work-dir>/predictions/test/`, que o incidente publica como `exposedShardCount`.
+
+**O que se perde, nomeado:** `active-session.json` é **apagado** no evento terminal, então não
+existe marcador de exposição que sobreviva a `completed`/`failed` **e** seja controle. Para o
+`--resume` isso não custa nada (o caso do resume é justamente o marcador ainda estar lá), e para
+o auditor sobra `<work-dir>/pre-exposure-check.json`, que **não** é apagado e carrega o digest
+observado com nome próprio mais a tabela por arquivo — mas ele é cópia legível e local,
+apagável, e **não é controle**. Quem é controle é o evento append-only.
+
+**Novo `evaluatorDigest`** (esperado nesta fase, proibido depois da âncora
+`### G5 — Congelar e verificar antes do holdout`):
+
+| quando | digest |
+|---|---|
+| antes | `6948ed00fb0e2555e3804ecf2a1ef0d97d55ec9a2b9abcb15b936dd1758dd5cb` |
+| depois | `99a993f1cc18243eed168db7bc804b931b25a0799a8ad0ec0c1bb9314cdf8b62` |
+
+`computeEvaluatorDigest` **não mudou de receita** e `EVALUATOR_FILES` segue com os mesmos 50
+caminhos.
+
+**Arquivos tocados:** `benchmark/holdout-ledger.ts`, `benchmark/digests.ts`, `benchmark/cli.ts`,
+`benchmark/commands/consume-holdout.ts`, `benchmark/commands/evaluate.ts` (os cinco em
+`EVALUATOR_FILES`), mais `benchmark/tests/{consume-holdout,digests,cli}.test.ts`,
+`docs/corpus-collection-runbook.md` (passos 7 e 9) e `docs/limitations.md` (âncora `## L2`).
+
+**A partição `test`, `test-labels.jsonl` e `benchmark/data/corpus-build/private/` não foram
+lidas nem escritas.** O sha256 do ledger real segue
+`2040fb7a3346dfc8d6856b5d6ca7097514aae6db60241ce048c8ecccd18d88cd`, conferido antes e depois.
 
 ---
 
