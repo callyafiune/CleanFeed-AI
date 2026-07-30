@@ -2370,6 +2370,107 @@ e as seis funções de busca seguem byte-idênticas a HEAD.
     exige sobrevivência **byte a byte** (`Object.keys` iguais e `JSON.stringify(…, null, 2)`
     idêntico), que é o que `toEqual` não sabe expressar.
 
+### LAT — Erro de inferência não pode melhorar a latência publicada
+
+**Depende de:** nada. **Obrigatoriamente antes de G5:** `benchmark/metrics.ts` está em
+`EVALUATOR_FILES`, e depois do congelamento mexer nele queima a concessão do holdout.
+
+**Executado (2026-07-30).** A assimetria de §3.1 — falha de inferência caindo sempre no
+lado favorável — foi encontrada pela **quarta** vez. As três anteriores, para que a quinta
+seja **procurada** em vez de descoberta:
+
+| # | onde | o que a falha virava | quem matou |
+|---|---|---|---|
+| 1 | `evaluate.ts`, `documentRawScore ?? 0` | verdadeiro negativo (325 de 5.000 documentos da corrida de 2026-07-25) | A3 |
+| 2 | família condicional a `status = "scored"` | número imune a falha **seletiva**, sem par fim-a-fim | A6 |
+| 3 | caminho **localizado** (`spanProducer` derivado só das linhas escoradas) | recall e IoU **apagados** em vez de lidos como `0` | B2, item 16 (`f513ac8`) |
+| 4 | agregado de **latência** | amostra de `0 ms` na média/p50/p95 publicados | LAT (aqui) |
+
+Nenhuma das três primeiras alcançou a latência, e o motivo é o mesmo em todas as leituras
+do plano: **latência nunca foi gate.** O que a torna consequente não é gate nenhum — é que
+o valor reportado alimenta `LATENCY_BUCKET_BOUNDS` em `src/storage/metrics.ts`, que é o que
+**I2** exibe no diagnóstico local e o que a comparação de deriva por **PSI** consome.
+
+1. **`latencyMs: 0` de uma linha `error` entrava no agregado publicado.** Os dois
+   agregadores (`latencyMetrics` sobre `Prediction`, `latencyMetricsAll` sobre
+   `EvaluationItem`) filtravam **só** `isFiniteNumber`, e `0` é finito. **Medido** em
+   fixture de 80 linhas escoradas a 10/30 ms mais uma abstenção e três falhas: a média
+   publicada era **19,119 sobre 84 amostras** onde a média das escoradas é **20 sobre 80**.
+   Na corrida de 2026-07-25 seriam **325 amostras fixadas em zero em 5.000** — 6,5% do
+   denominador, todas na direção lisonjeira.
+   **Corrigido:** `EvaluationMetrics.latency` passou de um bloco único para
+   `LatencyByStatus`, **um bloco por desfecho e nenhum somado**: `scored` é o agregado de
+   onde um orçamento se lê, e `abstained` e `errored` ficam **ao lado**, nunca dentro. Não
+   existe total agrupado, de propósito: quanto tempo um documento levou para falhar é número
+   real e útil, mas não é custo de escoragem, e somar os dois recria exatamente o defeito.
+   População vazia é `null`, **não** bloco de zeros — `sampleSize: 0` com `meanMs: 0`
+   admitia a leitura "latência zero". Cada bloco carrega o próprio campo `population`, pelo
+   mesmo motivo que `DecisionMetrics` carrega `family`: consumidor que recebe um bloco não
+   pode ler duração sem saber de quem ela é (R7).
+   **Sobre o caminho legado (`computeBinaryMetrics`):** o tipo `Prediction` **exige** escore,
+   logo não sabe representar abstenção nem falha; toda linha dele é escorada por construção.
+   O bloco declara `population: "scored"` em vez de deixar a população por suposição, e quem
+   tiver linha indecisa para reportar pertence a `EvaluationItem` — substituir escore para
+   caber ali é o defeito que A3 removeu. Não foi acrescentado campo `status` a `Prediction`:
+   seria um `status: "error"` ao lado de um `score` obrigatório que a matriz de confusão
+   continuaria contando, isto é, armadilha nova em nome de fechar um buraco inalcançável.
+   **Produtor, no mesmo commit:** `errorScore()` em `src/model-benchmark/main.ts` devolvia
+   `latencyMs: 0` fixo. Agora recebe o tempo decorrido como argumento **obrigatório** (sem
+   default), e os três atalhos de falha de montagem cronometram a própria recusa via
+   `refuseEveryDocument` — a recusa é genuinamente barata, e isso é medição, não suposição.
+2. **O timeout gravava o orçamento, não o tempo decorrido.**
+   `src/offscreen/worker-host.ts` escrevia
+   `processingTimeMs: pending.request.settings?.inferenceTimeoutMs ?? 20_000`. Duas
+   consequências: `20000` caía no bucket **finito** `<= 20000` de `LATENCY_BUCKET_BOUNDS` em
+   vez de `+Inf`, e o histograma **não distinguia** um documento genuíno de 20 s de um
+   timeout — enquanto a latência real do documento abortado se perdia, sendo ela o único
+   número de que o próprio orçamento pode ser derivado.
+   **Corrigido:** a entrada pendente passou a carregar `startedAt` e o timeout publica
+   `performance.now() - pending.startedAt`. O desfecho **não** mudou: segue erro sem escore
+   e sem decisão (R5). Com o item 1 no lugar, essa latência de erro agora tem onde ser
+   publicada.
+3. **Fidelidade do relógio que REPORTA não era testada em lugar nenhum.** Busca exaustiva
+   em `tests/` por asserção sobre duração devolvia duas ocorrências e nenhuma verificava
+   fidelidade: `phase-2-acceptance.test.ts` afirmava `inferenceMs: expect.any(Number)`, que
+   passa para um estágio que reporte sempre `0`, e `storage/metrics.test.ts` rejeitava
+   `inferenceMs: -1`, que é validação de domínio. O relógio que **decide** tinha teste real
+   (`cancellation-timeout.test.ts` com `useFakeTimers` e `inferenceTimeoutMs: 1`); o que
+   **reporta**, não.
+   **Corrigido:** teste novo que injeta custo conhecido no **mesmo** relógio que o pipeline
+   lê (spy sobre `performance.now`) e exige que `stageTimings.inferenceMs` seja **igual** a
+   ele. A tolerância declarada é **exata** — relógio injetado não admite folga de
+   escalonador. **Medido que o teste não é vácuo:** trocar o tempo decorrido pela constante
+   `0` em `inference-worker.ts` mata **só** este teste (`expected +0 to be 500`), e a
+   asserção `expect.any(Number)` ao lado **continua verde**.
+   O mesmo padrão cobre o item 2: relógio injetado, orçamento de 1 ms, decorrido de 2.500 ms
+   — valor que nenhuma derivação do orçamento produz (vermelho antes: `processingTimeMs: 1`).
+
+**Obstáculo do brief, resolvido por medição e não por suposição:** `vi.useFakeTimers()` é
+chamado **sem** `toFake` e o `vitest.config.ts` não tem bloco `fakeTimers`, então não estava
+determinado se avançar o relógio virtual move `performance.now()`. Sonda descartável de duas
+linhas neste tree (vitest 4.1.10): `useFakeTimers()` seguido de
+`advanceTimersByTimeAsync(5000)` dá delta de `performance.now()` **exatamente 5000**.
+**`performance` É falseado por padrão**, logo **nenhuma** alteração em `vitest.config.ts` foi
+necessária. Os dois testes novos acabaram não usando fake timers — injetar o relógio direto é
+mais preciso e não depende desse default.
+
+**Fora de escopo, registrado e NÃO consertado:**
+
+- **Seis campos de estágio são zero fixo** em `inferenceTrace()`,
+  `src/background/message-router.ts`: `extractionMs`, `normalizationMs`, `eligibilityMs`,
+  `hashingMs`, `queueWaitMs`, `presentationMs`. Só `languageDetectionMs`, `tokenizationMs`,
+  `inferenceMs` e `aggregationMs` vêm de medição. O diagnóstico **afirma** decompor latência
+  por estágio e seis estágios reportam custo zero, o que é alegação de medição que não houve
+  (R7) — e `queueWaitMs` é exatamente o número de que o orçamento derivado do veículo
+  precisa. A decisão (medir de verdade **ou remover o campo**) pertence a **I2**.
+- **`memoryMetricsAll` não tem filtro de status**, simétrico ao defeito do item 1. Hoje não
+  contamina nada por acidente e não por construção: linha `error` traz `memoryBytes: null`
+  do produtor e `evaluate.ts` só copia o campo quando não é nulo, então nenhuma amostra
+  entra. É contaminação a **uma mudança de produtor** de distância. Candidata natural à
+  quinta ocorrência, se alguém for procurar.
+- **O orçamento de 20 s nunca foi validado contra latência real**, e a bancada mede latência
+  **sem** fila nem lote enquanto o produto corta em 20 s. É F1/I1.
+
 ---
 
 ## Fase B — Decisões fechadas que bloqueiam o resto
@@ -7581,6 +7682,7 @@ de 180 dias que o runtime respeita sem apagar preferências.
 | A5 | ausência de normalização Unicode | 6.4 |
 | A6 | gate de ECE pontual; métrica primária errada; prior ≠ produção; bases de rótulo humano agregadas | 4.4, 4.6 |
 | A7, G2 | incerteza pós-seleção nos limiares | 4.8 |
+| **LAT** | quarta porta da mesma assimetria: falha de inferência baixava a latência publicada; timeout gravava o orçamento; relógio que reporta sem teste de fidelidade | 3.1 |
 | C1–C4, **C6** | seis de oito eixos de agrupamento sintéticos, dois ausentes; bootstrap **e CV agrupada** degenerados; ausência de ledger de exposição entre reconstruções | 3.6 |
 | **D0, D0b** | circularidade entre dimensionar e coletar; dimensionamento em linhas; ausência de reserva para retry | 4.7 |
 | **E4** | runtime normaliza toda plataforma para `generic`; dados in-domain não chegam ao produto | 3.8 |
