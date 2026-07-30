@@ -65,10 +65,12 @@ Quatro respostas do projeto, em vez de ignorar:
    é o informal curto — que é exatamente onde o falso alarme foi pior.
 2. **Teto de ação rebaixado** em plataforma sem perfil calibrado, com o motivo
    exposto ao usuário (E4).
-3. **Cota conformal unilateral** sobre texto humano (G3), que dá cota de acusação
-   falsa sem modelar a distribuição de geradores — enunciada com a sua condição:
-   exige exchangeability do domínio humano e **não** cobre mudança de estrato
-   linguístico.
+3. **Cota conformal unilateral** sobre texto humano (G3), que dá cota de **taxa de
+   falso positivo sinalizado** sem modelar a distribuição de geradores — enunciada
+   com a sua condição: exige exchangeability do domínio humano e **não** cobre
+   mudança de estrato linguístico. O nome importa: o produto **sinaliza**, e se um
+   sinal se torna acusação depende do que o leitor faz, num processo que este
+   projeto **não mede** — por isso a grandeza não se chama "taxa de acusação falsa".
 4. **Comunicação como detector de pt-BR genérico**, nunca como calibrado para
    feed profissional (H4).
 

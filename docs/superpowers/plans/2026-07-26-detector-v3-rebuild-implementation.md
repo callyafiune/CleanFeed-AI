@@ -122,6 +122,7 @@ antes de usar qualquer um deles.
 | **createdAt** | data real do texto | seletor de partição — foi o que o montador gravou, e por isso o split "temporal" não era temporal (3.4) |
 | **misto mecanístico** vs **ecológico** | `mechanistic` = edições que nós executamos e registramos; `ecological` = coautoria humana observada | descrever resultado `mechanistic` como desempenho em edição humana real (D4) |
 | **F5** | não existe: são **F5a** (paridade bruta) e **F5b** (paridade nos limiares) | referência solta a "F5", que já deixou uma dependência órfã |
+| **taxa de falso positivo sinalizado** (*false-positive flag rate*) | a fração de texto humano que o produto **sinaliza** no limiar congelado — é o que G2/G3 controlam e o que H2/H3/H4 publicam | "taxa de acusação falsa" / *false-accusation rate*, **proibida**: afirma cobertura sobre o que o leitor faz com o sinal, processo que este plano não mede (L1, G3, H4) |
 
 Regra prática: se uma frase deste plano depende de qual sentido o leitor escolher, ela está
 mal escrita. Reescreva até não depender.
@@ -203,9 +204,9 @@ edições é a nossa. Ver D4, campo `generationMode`.
    (G2).
 2. **Teto de ação rebaixado** em plataforma sem perfil calibrado, com motivo exposto ao
    usuário (E4).
-3. **Garantia conformal unilateral** sobre texto humano, que é o que dá cota de acusação
-   falsa sem modelar a distribuição de geradores (G3) — mas ela exige exchangeability do
-   domínio humano e não cobre mudança de estrato linguístico.
+3. **Garantia conformal unilateral** sobre texto humano, que é o que dá cota de **taxa de
+   falso positivo sinalizado** sem modelar a distribuição de geradores (G3) — mas ela exige
+   exchangeability do domínio humano e não cobre mudança de estrato linguístico.
 4. **Comunicação como detector de pt-BR genérico**, nunca como calibrado para feed
    profissional (H4).
 
@@ -213,8 +214,8 @@ edições é a nossa. Ver D4, campo `generationMode`.
 
 O vencedor do PAN 2025 é um Qwen3-14B e faz 0,6995 de ROC-AUC fora de distribuição; o
 melhor sistema em autoria mista de 6 classes faz 64,46% de recall macro. Não vamos bater
-isso, e o produto precisa ser desenhado em torno de abstenção e cota de acusação falsa —
-não de recall (H4).
+isso, e o produto precisa ser desenhado em torno de abstenção e cota de **taxa de falso
+positivo sinalizado** — não de recall (H4).
 
 ### L3 — Licença de origem pode restringir o modelo resultante
 
@@ -7323,8 +7324,14 @@ coincidem e sela `conformal-evidence.json` no digest da calibração.
 > **(a) não protege contra mudança de domínio humano** — se o feed real tiver estrato
 > diferente do calibrado, a garantia não se transfere, e é exatamente o risco que o
 > achado principal expôs (0% a 7,12% conforme o estrato linguístico); **(b) não diz nada sobre
-> recall**, muito menos sob gerador novo. É garantia de **taxa de acusação falsa**, e só.
-> Comunicar como tal, no produto e em qualquer material.
+> recall**, muito menos sob gerador novo. É garantia de **taxa de falso positivo sinalizado**,
+> e só. Comunicar como tal, no produto e em qualquer material.
+>
+> **(c) e ela é cota sobre o que o produto FAZ, não sobre o que acontece depois.** O produto
+> **sinaliza**; se um sinal se torna acusação depende do que o leitor faz com ele, e esse
+> processo **não é medido em lugar nenhum deste plano**. Por isso a grandeza se chama **taxa
+> de falso positivo sinalizado** e nunca "taxa de acusação falsa": o nome antigo afirmava
+> cobertura sobre um comportamento humano a jusante que nada aqui observa.
 
 **Arquivos:** `benchmark/conformal-thresholds.ts`,
 `benchmark/calibration-pipeline.ts`, `benchmark/digests.ts`,
@@ -7587,12 +7594,19 @@ dentro da distribuição e 0,6995 fora**. O melhor sistema na única competiçã
 mista em 6 classes fez **64,46% de recall macro**. Um detector local de ~106 MB em WASM
 não vai bater isso.
 
-O produto deve ser comunicado em torno de **abstenção, cota de acusação falsa e incerteza
-honesta** — não de um número de recall. E a cota tem de ser enunciada com as duas
-condições que a sustentam: é **cota conformal condicionada a exchangeability entre o texto
-humano de calibração e o de operação**, e **restrita aos estratos calibrados** (G3).
-Escrever "taxa de acusação falsa garantida", sem essas condições, afirma o que L1 e G3
-dizem explicitamente que não temos. Abstenção tem respaldo: o PAN
+O produto deve ser comunicado em torno de **abstenção, cota de taxa de falso positivo
+sinalizado e incerteza honesta** — não de um número de recall. E a cota tem de ser enunciada
+com as duas condições que a sustentam: é **cota conformal condicionada a exchangeability
+entre o texto humano de calibração e o de operação**, e **restrita aos estratos calibrados**
+(G3). Escrever "taxa de falso positivo garantida", sem essas condições, afirma o que L1 e G3
+dizem explicitamente que não temos.
+
+**O termo é obrigatório e o antigo é proibido.** Nenhum material — relatório, README,
+`docs/limitations.md`, copy, resumo de divulgação — escreve "acusação falsa" nem
+*false-accusation rate*. A grandeza medida é a **taxa de falso positivo sinalizado**
+(*false-positive flag rate*): o produto sinaliza, e transformar sinal em acusação é ato de
+quem lê, num processo que este plano **não mede**. É o mesmo R7 que fez A7 renomear
+`fprUpper95` e C5 recusar `agreement` sem duas decisões independentes. Abstenção tem respaldo: o PAN
 Voight-Kampff é a única competição que a permite explicitamente, pontuando com
 **C@1 + F0.5u + Brier**, o que a torna custosa mas permitida. Sobre ECE, o contexto
 importa: existem **apenas dois artigos publicados com ECE para esta tarefa**, ambos
@@ -7618,7 +7632,7 @@ do rótulo. Onde o produto agir sobre plataforma não calibrada, isso aparece na
 
 **Verificar:** `npm run docs:check`, `vitest run
 tests/unit/shared/classification-copy.test.ts` e busca normalizada pelas expressões
-proibidas “garante autoria”, “FPR no feed” e “texto contemporâneo”.
+proibidas “garante autoria”, “FPR no feed”, “texto contemporâneo” e “acusação falsa”.
 
 **Concluída quando:** todo material usa a decisão real de H3, os números por estrato e
 as condições de exchangeability, sem alegação causal ou extrapolação de domínio.
