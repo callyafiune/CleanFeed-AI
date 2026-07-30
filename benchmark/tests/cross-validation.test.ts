@@ -17,6 +17,7 @@ import {
   known,
   notApplicable,
   unknownAxis,
+  v3Ai,
   v3Human,
   withAxis,
 } from "./helpers/v3-record-fixture.ts";
@@ -171,6 +172,48 @@ describe("clusterRootsOf", () => {
       ...chainedRecords,
     ];
     expect(() => clusterRootsOf(withNotApplicable)).not.toThrow();
+  });
+
+  it("does NOT join two rows grown from the same ABSENT lineage seed, and that is measured here rather than assumed away", () => {
+    // The atom is `connectedComponentRoots`, where `humanSeed` and `derivationRoot`
+    // are PARENT LINKAGE: they union a row with the row they name, and only when
+    // that row is present in the same record set. C2 measured 782 of 783 parent
+    // references resolving to no assembled row, so for the corpus that exists this
+    // relation usually unions nothing. The exposure ledger uses the STRONGER
+    // reading for those two axes — a value axis in a lineage MAC domain, where two
+    // rows naming the same absent seed collide on purpose.
+    //
+    // The cross-validation therefore inherits the weaker notion, and this test
+    // exists so nobody reads sampling independence off the fold construction: two
+    // generations from one human prompt whose row was never assembled can land in
+    // different folds. Whether `humanSeed` should also be a value axis is E2/E3's,
+    // and is deliberately not decided here.
+    const shared = "h_absent_parent";
+    const generated = [0, 1].map((index) => {
+      let raw: Record<string, unknown> = {
+        ...v3Ai(),
+        id: `a_lineage_${index}`,
+      };
+      raw = withAxis(raw, "humanSeed", known(shared));
+      raw = withAxis(raw, "domainSource", known(`ds_lineage_${index}`));
+      raw = withAxis(raw, "promptTemplate", known(`pt_lineage_${index}`));
+      raw = withAxis(raw, "generatorVersion", known(`gv_lineage_${index}`));
+      raw = withAxis(raw, "collectionBatch", known(`cb_lineage_${index}`));
+      raw = withAxis(raw, "nearDuplicate", known(`nd_lineage_${index}`));
+      return validateBenchmarkRecordV3(raw);
+    });
+
+    const rootById = clusterRootsOf(generated);
+    expect(rootById.get("a_lineage_0")).not.toBe(rootById.get("a_lineage_1"));
+
+    // With the parent row PRESENT the same two rows become one atom, which is what
+    // makes the sentence above a statement about co-presence and not about the axis.
+    const withParent = [
+      ...generated,
+      validateBenchmarkRecordV3({ ...v3Human(), id: shared }),
+    ];
+    const joined = clusterRootsOf(withParent);
+    expect(joined.get("a_lineage_0")).toBe(joined.get("a_lineage_1"));
   });
 });
 

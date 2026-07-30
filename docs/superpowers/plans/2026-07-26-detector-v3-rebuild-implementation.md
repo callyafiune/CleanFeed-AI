@@ -3250,6 +3250,13 @@ contagens do manifesto e o requisito de privacidade em
    (`resampling.fallbackToIndependentRows: false`). Então a função lança, citando C4.
    **Consequência para C4:** o caminho `evaluate` de um corpus v3 não roda até C4 escolher
    a unidade por estimando. Isso é bloqueio real e está registrado como tal.
+   **Atualização de C6:** `commands/fit.ts` era o último chamador e passou a usar
+   `clusterRootsOf`, então `authorClusterKey` hoje **não tem chamador algum** — e nenhum
+   teste a exercita (medido: as únicas outras menções são comentários em
+   `benchmark/lab/assemble_corpus.py` e `benchmark/lab/group_axes.py`). Continua exportada
+   de propósito, porque a documentação dela é o registro de por que o eixo `author` não é
+   unidade de um corpus v3; decidir se ela sai é de quem for reescrever a população do
+   `fit` (G1/G2), não de C6.
 4. **`reason` é obrigatório em `notApplicable` e em `unknown`.** Não estava pedido. O modo
    de falha que R6 vigia é um produtor escrever `notApplicable` para escapar da
    inelegibilidade, e um estado cuja justificativa está escrita é um estado com que um
@@ -5849,6 +5856,77 @@ benchmark/tests/calibration-pipeline.test.ts`.
 **Concluída quando:** existe teste que prova que um cluster de split/exposição não
 atravessa treino e validação do mesmo fold, e que a CV falha sob eixo obrigatório
 `unknown`.
+
+**Como foi executada (registro, não plano).** O átomo passou a ser o cluster de C3:
+`cross-validation.ts` importa `clusterAssignments` e não re-deriva conectividade. Sete
+pontos em que a execução foi além do texto acima ou o precisou:
+
+1. **A seed dos folds é a congelada de CV, não a do `fit`.** `selectCalibrator` perdeu o
+   parâmetro de seed e lê `seeds.crossValidation` da política; `createClusteredFolds` mantém
+   a seed como parâmetro só para o determinismo ser testável. Antes o pipeline passava
+   `input.fitSeed`, isto é, os folds — e portanto o calibrador vencedor — se moviam com um
+   número que o contrato congelou para outra coisa. `fitSeed` continua no artefato selado.
+2. **A contagem de folds saiu da assinatura.** Não há mais parâmetro de fold count (o teste
+   fixa `createClusteredFolds.length === 2`); o valor vem de
+   `calibrator.crossValidationFolds`. `CandidateCalibrationSummary.foldCount` deixou de ser
+   o tipo literal `5` e passou a `number` alimentado pela política, para não repetir um valor
+   congelado como constante solta.
+3. **Pesos iguais por cluster ficaram NA CV**, em `aggregateOutOfFold` (exportada), porque é
+   onde as predições out-of-fold nascem; `calibration-pipeline.ts` consome o escore, não as
+   linhas. Vale para o Brier e para o ECE-15.
+4. **A tolerância de desbalanceamento é publicada como piso atingível, não como gate.**
+   `FoldClassBalance` traz `deviation` medido, `attainable` (excesso do maior átomo sobre a
+   fatia ideal de um fold + resíduo de um total que não é múltiplo de 5) e
+   `withinAttainable`. Não vira exceção: `attainable` é um piso sobre o que qualquer
+   empacotamento alcançaria, e afirmar que o guloso o atinge sempre seria a alegação sem
+   medida que R7 proíbe. Átomo grande demais para o balanceamento aparece em
+   `oversizedClusters`.
+5. **Falha fechada em quatro casos estruturais**, todos com código: menos clusters que folds
+   (`CLUSTERS_BELOW_FOLDS`), uma classe em menos clusters que folds
+   (`CLASS_CLUSTERS_BELOW_FOLDS`), metade de fold vazia (`FOLD_HALF_EMPTY`) e metade de treino
+   sem uma das classes (`TRAIN_MISSING_LABEL`). O `continue` que pulava fold degenerado saiu:
+   pular fold é rodar um desenho menor com o nome do congelado.
+6. **O erro é `ClusterFoldError` e não `ResamplingUnitError`.** A regra R6 é a mesma e nenhuma
+   das duas re-implementa a leitura dos três estados (ambas passam pelos acessores do schema),
+   mas `ResamplingUnitError` nomeia estimando e **unidade de reamostragem**, que é escolhida
+   por estimando e não é isto — reusá-la afirmaria que o cluster de split/exposição é unidade
+   de reamostragem, contra o glossário.
+7. **Arquivos além dos dois listados.** `benchmark/commands/fit.ts` trocou
+   `authorClusterKey(record)` por `clusterRootsOf(records)`: `FitSampleScores.authorGroup`
+   virou `clusterRoot`, e deixar o `fit` alimentando a CV com identidade de autor seria o
+   nome mentiroso que esta tarefa remove. `benchmark/schema.ts` ganhou
+   `groupAxisDeclaredState` (distingue "o produtor escreveu unknown" de "esta versão de schema
+   não tem esse eixo", sem o que todo corpus v2 seria recusado por eixos que seu schema nunca
+   ofereceu) e `isPseudonymToken`. `benchmark/split.ts` teve `CONNECTIVITY_AXES` tipado como
+   `readonly V3GroupAxis[]` para ser consumível sem cast — e ganhou assim seu primeiro
+   consumidor fora dos próprios testes.
+
+**A assimetria de linhagem do item 26 foi herdada explicitamente, com medição.** O átomo é
+`clusterAssignments`, isto é, a noção **mais fraca**: `humanSeed` e `derivationRoot` só unem
+quando a linha nomeada está no mesmo conjunto, e C2 mediu 782 de 783 referências de pai sem
+co-presença. C6 herda essa leitura de propósito — a CV tem de atomizar pelos mesmos
+componentes que o split usou —, mas não em silêncio: há teste que mede as duas metades (duas
+gerações que nomeiam a mesma semente **ausente** caem em clusters diferentes; com a linha-pai
+presente caem no mesmo), e o cabeçalho do módulo enuncia a condição. Ninguém deve ler
+independência amostral da construção dos folds. Decidir se `humanSeed` vira eixo de valor
+continua sendo de E2/E3.
+
+**O que a execução mediu e ninguém tinha medido.** As fixtures de `fit.test.ts` e
+`cli.test.ts` davam a **todas** as linhas o mesmo `domainSource` e o mesmo `collectionBatch`;
+como os dois são eixos de valor da conectividade, aqueles corpora eram **um único cluster
+indivisível** — não cross-validável e não separável em partições. A nota de C4 nessas fixtures
+já dizia que os dois eixos eram compartilhados por todas as linhas, mas o bootstrap não usa o
+cluster e ninguém tinha esbarrado nisso. As fixtures agora aninham os dois eixos por cluster
+(cinco por partição de ajuste, `development`/`calibration`/`test` disjuntos), e
+`promptTemplate` em `cli.test.ts` passou a ser por cluster pelo mesmo motivo: um template
+compartilhado por toda linha gerada reuniria de volta todos os clusters com linha gerada.
+Segundo achado, na fixture de `calibration-pipeline.test.ts`: átomos de cinco linhas punham
+um grupo de escore inteiro dentro de um ou dois átomos, e o fold que os valida treina sem
+nenhum deles — ECE-15 out-of-fold medido de 0,20, acima do 0,05 de admissão. Com átomos de
+duas linhas (cinco átomos por grupo de escore, um por fold) o ECE-15 medido fica em 0,023. O
+fato geral, que vale para o corpus real e não só para a fixture: **uma região de escore de uma
+classe carregada por menos átomos do que folds não pode ser held out com segurança**, qualquer
+que seja a contagem de linhas.
 
 ## Fase D — Dados
 

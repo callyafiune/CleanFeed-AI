@@ -23,6 +23,16 @@
 //     near-duplicate group or lineage parent spans them either, because each of
 //     those relations is already closed over inside the component. That is why
 //     there is NO second, hierarchical cross-validation: the component subsumes it.
+//   * The lineage half of that sentence has a CONDITION, and it is stated because
+//     the fold construction is not evidence of sampling independence (R7):
+//     `humanSeed` and `derivationRoot` are PARENT LINKAGE, so they union a row with
+//     the row they name and only when that row is present in the same record set.
+//     C2 measured 782 of 783 parent references resolving to no assembled row, so two
+//     generations grown from one human prompt whose row was never assembled can land
+//     in different folds. The exposure ledger reads those two axes more strongly (a
+//     value axis in a lineage MAC domain); this module inherits the splitter's weaker
+//     reading, on purpose, because it must atomise by the same components the split
+//     did. The inheritance is measured by a test rather than left to a reader.
 //   * `unknown` on any axis the component is built from FAILS, because a row whose
 //     author or thread was not recovered may belong to a cluster nobody can name,
 //     and a fold built over it would silently train on its own validation half.
