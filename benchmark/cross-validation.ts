@@ -82,17 +82,43 @@
 //
 // The ECE admission — dropping a candidate whose out-of-fold ECE exceeds a bound
 // BEFORE the Brier comparison — is NOT in that row. It is an additional constraint
-// THIS module imposes, it can override the frozen "menor Brier OOF" (a candidate with
-// the smallest Brier and an inadmissible ECE loses), and it is kept because a
-// calibrator the release gate would reject is not a calibrator worth selecting. Its
-// budget is therefore taken from `calibrationGate.eceMax` rather than invented, and
-// its bin count and BINNING from `calibrationGate.eceBins`/`eceBinning`, so the
-// selection measures the same quantity the gate does under the same binning. It is
-// NOT the gate's decision: `calibrationGate.eceBound` is a bootstrap simultaneous
-// upper bound and this is a point estimate, which runs BELOW that bound — so passing
-// here predicts nothing about passing there, and the direction is stated because the
-// reverse reading would be the reassuring one. Whether the admission belongs in the
-// frozen table at all is G1's to settle when it restructures the selection across
+// THIS module imposes, and it can override the frozen "menor Brier OOF" (a candidate
+// with the smallest Brier and an inadmissible ECE loses). Its BUDGET is taken from
+// `calibrationGate.eceMax` and its BIN COUNT and BINNING from
+// `calibrationGate.eceBins`/`eceBinning` rather than invented here.
+//
+// What that adoption does NOT buy, because the header said it did and it was false:
+// this is not the gate's quantity, and the three keys are the only thing the two
+// share. `calibrationGate.eceMax` is checked here against a DIFFERENT ESTIMATOR from
+// the one the gate reads (`metrics.calibration.eceEqualMass15`, computed by
+// `metrics.ts::eceEqualMass` and read at benchmark/gates.ts's
+// `warning.calibration-ece`), and they differ in two ways:
+//
+//   * TIES. `metrics.ts` sorts by probability and cuts the sorted array at index
+//     boundaries, so a group of rows the model scored identically is SPLIT across two
+//     bins. {@link equalMassEce} groups by exact clamped score and never splits a
+//     group (see its docstring for what splitting one measures instead).
+//   * WEIGHTS. `metrics.ts` weights per ROW. This module weights per CLUSTER, which
+//     is the aggregation the frozen contract states for this competition.
+//
+// NEITHER divergence has a sign, and that is measured rather than argued. Holding the
+// weights uniform (one row per cluster) over 400 random populations per setting: with
+// 2 distinct scores the two estimators agree exactly (400/400); with 5 distinct this
+// module's number is BELOW `metrics.ts`'s in 384 and ABOVE it in 5; with 40 distinct,
+// below in 195 and above in 198, the largest excess 0.062. And with fat clusters,
+// where the per-cluster weights actually bite, this module's number was ABOVE
+// `metrics.ts`'s in 480 of 500 populations. So "grouping ties makes this a lower bound
+// on the gate's estimator" is true only in the heavily tied regime and false as a
+// general claim: both estimators partition the score line into contiguous blocks but
+// neither partition refines the other, so the argument that merging bins cannot
+// increase the ECE does not apply between them.
+//
+// The admission is therefore a SCREEN against a grossly miscalibrated candidate at
+// the gate's budget and bin count, and NOT a prediction of the gate's verdict in
+// either direction — the more so because `calibrationGate.eceBound` says the gate
+// decides on a bootstrap simultaneous upper bound while this is a point estimate.
+// Whether the admission belongs in the frozen table at all, and which estimator it
+// should use, is G1's to settle when it restructures the selection across
 // `cal-A`/`cal-B`; that restructuring is deliberately not done here.
 //
 // The chosen family is then REFIT on the full calibration split (never on test).
@@ -134,9 +160,11 @@ const TIE_BREAK_ORDER: readonly CalibratorKind[] =
 /**
  * The three fields of the release gate's ECE specification that this module's own
  * admission guard adopts. The guard is not frozen (see the header): the frozen
- * calibrator row ranks by Brier and says nothing about ECE. What is frozen is the
- * gate's budget and estimator, and adopting them is what makes the guard mean
- * "this candidate would not survive release" instead of a number of our choosing.
+ * calibrator row ranks by Brier and says nothing about ECE. Adopting the gate's
+ * BUDGET, BIN COUNT and BINNING is what keeps the guard from being a number of our
+ * choosing — and it is all it does. The estimator behind the gate's number is a
+ * different one, in the two ways the header sets out with the measurement, so these
+ * three keys are shared parameters and not a shared quantity.
  *
  * `eceBound` is deliberately NOT read: the gate's bound is a bootstrap simultaneous
  * upper bound and {@link aggregateOutOfFold} computes a point estimate. Reading it
@@ -739,10 +767,13 @@ function bestFoldIndex(
  * `calibrationGate.eceMax` are dropped first, and the function throws when that leaves
  * nobody. The frozen calibrator row says only "vence menor Brier OOF" and mentions no
  * ECE, and this guard can OVERRIDE it — a candidate with the smallest Brier and an
- * inadmissible ECE loses to a worse-Brier admissible one. It is kept because a
- * calibrator the release gate would reject is not worth selecting, and its budget is
- * taken from the gate rather than invented. See this file's header for why it is not
- * the gate's decision, and G1 for whether it belongs in the frozen table.
+ * inadmissible ECE loses to a worse-Brier admissible one. It is kept as a SCREEN
+ * against a grossly miscalibrated candidate, at the gate's budget and bin count rather
+ * than at one of our choosing. It is NOT "a calibrator the release gate would reject",
+ * which is what this docstring used to say: the estimator behind `ece` differs from the
+ * gate's in two measured ways with no reliable sign, so admission here neither implies
+ * nor is implied by passing there. The header carries the measurement; G1 owns whether
+ * the admission belongs in the frozen table and which estimator it should use.
  */
 export function selectCandidateSummary<T extends CandidateScore>(
   candidates: readonly T[],
@@ -827,19 +858,27 @@ interface WeightedPoint {
  * TIES ARE NEVER SPLIT, and that is the load-bearing part of the definition. Rows are
  * grouped by their exact clamped score first, and a whole group goes into one bin: it
  * is placed where the MIDPOINT of the group's weight interval falls in the cumulative
- * weight, a weighted quantile rule that gives exactly equal mass per bin when the
- * weights are equal and no value repeats. Splitting a tie by anything else — the first
- * version of this sorted the tied rows by record-line id — makes bins that are pure in
- * label for a set of rows the model scored identically, and the estimator then reports
- * as calibration error what is only the id ordering. Measured: on the fit fixture,
- * where 108 rows share one raw score, the split version reported every candidate above
- * the 0.05 admission and the whole fit failed; grouped, the same fixture reports the
- * order of 0.02.
+ * weight. Splitting a tie by anything else — the first version of this sorted the tied
+ * rows by record-line id — makes bins that are pure in label for a set of rows the
+ * model scored identically, and the estimator then reports as calibration error what is
+ * only the id ordering. Measured: on the fit fixture, where 108 rows share one raw
+ * score, the split version reported every candidate above the 0.05 admission and the
+ * whole fit failed; grouped, the same fixture reports the order of 0.02.
  *
- * A consequence worth naming: with fewer distinct scores than bins, fewer than `bins`
- * bins are occupied. That is what equal-mass means on discrete scores, not a defect,
- * and it is why the bin count travels with the number instead of being read off the
- * name.
+ * "EQUAL MASS" IS THEREFORE AS EQUAL AS THE GROUPS ALLOW, never exact. Two ways it is
+ * inexact, and the module's own tests depend on both:
+ *
+ *   * an indivisible group carries whatever weight it carries, so with fewer distinct
+ *     scores than `bins` fewer than `bins` bins are occupied at all;
+ *   * even with equal weights and no repeated value, a count that is not a multiple of
+ *     `bins` cannot divide evenly — 16 distinct equally weighted scores over 15 bins
+ *     put ranks 7 and 8 in the same bin, their midpoints falling at 7.03/15 and
+ *     7.97/15, which is exactly what `aggregateOutOfFold`'s bin-count test relies on.
+ *     `metrics.ts::eceEqualMass` documents the same remainder the other way round, as
+ *     the first `count % bins` groups taking one extra point.
+ *
+ * That is what equal-mass means on discrete scores, not a defect, and it is why the bin
+ * count travels with the number instead of being read off the name.
  */
 function equalMassEce(points: readonly WeightedPoint[], bins: number): number {
   const totalWeight = points.reduce((sum, point) => sum + point.weight, 0);
@@ -925,10 +964,20 @@ function selectionEce(points: readonly WeightedPoint[]): number {
  * A cluster's contribution is the MEAN over its own record-lines, so the aggregate is
  * the unweighted mean over clusters. The ECE uses the same weights — each row carries
  * `1 / (clusters * rows in its cluster)` — under the frozen bin count and binning
- * ({@link selectionEce}). It is still a POINT estimate and not
- * `calibrationGate.eceBound`, which is a bootstrap simultaneous upper bound: the
- * number published here runs BELOW the gate's, so it must not be read as the gate's
- * quantity or as evidence a release would pass.
+ * ({@link selectionEce}). It is a POINT estimate and not `calibrationGate.eceBound`,
+ * which is a bootstrap simultaneous upper bound, and it is not the gate's ESTIMATOR
+ * either: see this file's header for the two divergences and the measurement showing
+ * neither has a reliable sign. So this number must not be read as the gate's quantity
+ * or as evidence a release would pass.
+ *
+ * ORDER INVARIANCE, made true rather than assumed. Clusters are visited in sorted root
+ * order and each cluster's rows in sorted record-line id order, so both the Brier's and
+ * the ECE's floating-point sums accumulate in an order that is a function of the rows
+ * and not of the array. Without that the result was invariant only up to floating point
+ * — which is the same non-associativity argument that made `createClusteredFolds` sort
+ * its halves, and the reason a small fixture can look order-invariant while a real
+ * population is not. It is exact only for DISTINCT ids inside a cluster, which
+ * `createClusteredFolds` enforces upstream (`DUPLICATE_ID`).
  *
  * Scores are clamped to [0, 1] for the calibration arithmetic, because a calibrated
  * score outside that range is not a probability and `applyCalibrator` clamps anyway;
@@ -959,7 +1008,11 @@ export function aggregateOutOfFold(
 
   let brier = 0;
   const points: WeightedPoint[] = [];
-  for (const bucket of byCluster.values()) {
+  const orderedRoots = [...byCluster.keys()].sort();
+  for (const root of orderedRoots) {
+    const bucket = [...(byCluster.get(root) as OutOfFoldPrediction[])].sort(
+      (a, b) => (a.id < b.id ? -1 : a.id > b.id ? 1 : 0),
+    );
     const rowWeight = 1 / (clusters * bucket.length);
     let squared = 0;
     for (const { prediction, label } of bucket) {

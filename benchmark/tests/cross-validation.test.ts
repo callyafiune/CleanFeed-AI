@@ -12,6 +12,7 @@ import {
   type ClusteredCalibrationSample,
   type FoldClassBalance,
 } from "../cross-validation.ts";
+import { eceEqualMass } from "../metrics.ts";
 import { REBUILD_V3_POLICY } from "../rebuild-v3-policy.ts";
 import { validateBenchmarkRecordV3, type BenchmarkRecord } from "../schema.ts";
 import {
@@ -814,15 +815,99 @@ describe("aggregateOutOfFold", () => {
     expect(aggregate.ece).toBeCloseTo(0, 12);
   });
 
-  it("does not depend on the order the out-of-fold rows arrive in", () => {
-    const rows = [
-      { id: "r_a", clusterRoot: "c_a", prediction: 0.2, label: 1 as const },
-      { id: "r_b", clusterRoot: "c_b", prediction: 0.2, label: 0 as const },
-      { id: "r_c", clusterRoot: "c_c", prediction: 0.9, label: 1 as const },
+  it("does not depend on the order the out-of-fold rows arrive in, on a fixture big enough to tell", () => {
+    // The three-row fixture this replaced could not tell: its sums are FP-exact either
+    // way, so it was green while `aggregateOutOfFold` accumulated the Brier in Map
+    // insertion order and each score group in arrival order — invariant only up to
+    // floating point, which is the very thing `createClusteredFolds` sorts its halves
+    // to avoid. 111 rows over 23 clusters of unequal size, with predictions on a /97
+    // grid, is a fixture where it matters: measured before the fix, reversing the input
+    // moved the Brier (0.27438300414394073 vs 0.2743830041439407) AND the ECE
+    // (0.2306558735850531 vs 0.23065587358505313).
+    const rows: {
+      id: string;
+      clusterRoot: string;
+      prediction: number;
+      label: 0 | 1;
+    }[] = [];
+    for (let cluster = 0; cluster < 23; cluster += 1) {
+      const size = 1 + ((cluster * 7) % 9);
+      for (let row = 0; row < size; row += 1) {
+        rows.push({
+          id: `w_${cluster}_${row}`,
+          clusterRoot: `cw_${cluster}`,
+          prediction: ((cluster * 31 + row * 17) % 97) / 97,
+          label: (cluster + row) % 3 === 0 ? 1 : 0,
+        });
+      }
+    }
+    expect(rows).toHaveLength(111);
+    const forward = aggregateOutOfFold(rows);
+    expect(forward.clusters).toBe(23);
+    // Bit-for-bit, not `toBeCloseTo`: the whole point is the last digit.
+    expect(aggregateOutOfFold([...rows].reverse())).toEqual(forward);
+    expect(
+      aggregateOutOfFold([...rows].sort((a, b) => (a.id < b.id ? 1 : -1))),
+    ).toEqual(forward);
+  });
+
+  it("is NOT the estimator the release gate reads, and the difference has no reliable sign", () => {
+    // Pins the claim this module's header used to get wrong — that adopting
+    // `eceBins`/`eceBinning` made the selection "measure the same quantity the gate
+    // does under the same binning". The gate reads
+    // `metrics.calibration.eceEqualMass15`, computed by `metrics.ts::eceEqualMass`,
+    // which SPLITS tied scores at index cut points and weights per ROW. This module
+    // groups ties and weights per CLUSTER.
+    //
+    // Two fixtures, opposite signs, so neither "same quantity" nor "a lower bound on
+    // the gate's estimator" can be restated without failing here.
+    const asPoints = (
+      rows: readonly { prediction: number; label: 0 | 1 }[],
+    ): { probability: number; label: 0 | 1 }[] =>
+      rows.map((row) => ({ probability: row.prediction, label: row.label }));
+
+    // (1) TIES. Twenty rows all scored 0.5, half positive, one cluster each — so the
+    // weights are uniform and only the tie handling differs. Grouped, the tie is one
+    // bin whose mean score and mean label are both 0.5, so the ECE is 0. Split across
+    // fifteen bins, the alternating label pattern makes bins that are label-pure for
+    // rows the model scored identically, and the estimator reports 0.25.
+    const tied = Array.from({ length: 20 }, (_unused, index) => ({
+      id: `t_${index}`,
+      clusterRoot: `ct_${index}`,
+      prediction: 0.5,
+      label: (index % 2 === 0 ? 1 : 0) as 0 | 1,
+    }));
+    expect(aggregateOutOfFold(tied).ece).toBeCloseTo(0, 12);
+    expect(
+      eceEqualMass(asPoints(tied), REBUILD_V3_POLICY.calibrationGate.eceBins),
+    ).toBeCloseTo(0.25, 12);
+
+    // (2) WEIGHTS, in the other direction. One well-calibrated cluster of sixty rows
+    // and five badly calibrated singletons: per-row weights give the singletons 5/65 of
+    // the mass and report 0.1, per-cluster weights give them 5/6 and report 0.75. This
+    // module's number is the LARGER one here, which is why the direction cannot be
+    // stated once and for all.
+    const fatCluster = [
+      ...Array.from({ length: 60 }, (_unused, index) => ({
+        id: `f_${index}`,
+        clusterRoot: "c_fat",
+        prediction: 0.5,
+        label: (index % 2 === 0 ? 1 : 0) as 0 | 1,
+      })),
+      ...Array.from({ length: 5 }, (_unused, index) => ({
+        id: `s_${index}`,
+        clusterRoot: `c_s_${index}`,
+        prediction: 0.9,
+        label: 0 as 0 | 1,
+      })),
     ];
-    expect(aggregateOutOfFold([...rows].reverse())).toEqual(
-      aggregateOutOfFold(rows),
-    );
+    expect(aggregateOutOfFold(fatCluster).ece).toBeCloseTo(0.75, 12);
+    expect(
+      eceEqualMass(
+        asPoints(fatCluster),
+        REBUILD_V3_POLICY.calibrationGate.eceBins,
+      ),
+    ).toBeCloseTo(0.1, 12);
   });
 });
 
