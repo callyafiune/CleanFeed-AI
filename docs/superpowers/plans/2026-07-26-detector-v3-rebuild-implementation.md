@@ -328,6 +328,27 @@ amostral primária que apareceu em uma partição anterior fica inelegível para
 teste futuros: o novo teste precisa ser formado por clusters nunca revelados. Ver H3b
 para o procedimento de uma segunda tentativa.
 
+**A assimetria entre cluster e registro-linha é REAL e está no código — declarada aqui para
+ninguém ler R2 como mais estrita do que ela é (R7).** São dois objetos com duas regras:
+
+| objeto | o que a exposição custa | onde está imposto |
+|---|---|---|
+| **cluster** | elegibilidade para `test` **e só** — cluster exposto continua elegível para `train`, `dev` e `cal` | `benchmark/cluster-exposure-ledger.ts` (`if (record.partition !== "test") continue;`) |
+| **registro-linha de teste consumido** | sai das **cinco** partições, de vez | H3b, item 2 |
+
+A razão de cada lado: um cluster em `train` não revelou nada ao desenvolvimento sobre o *teste*,
+então só a elegibilidade a teste futuro é queimada; um registro-linha de teste consumido foi
+**lido pelo processo** e não há partição em que ele volte a ser informativo. **Nenhuma das duas
+regras muda** — o que muda é que a assimetria passa a estar escrita.
+
+**E o que o ledger cobre é menos do que "independência".** Ele compara `author`, `source`,
+`humanSeed` e `derivationRoot`, com `source` significando **documento de origem** (thread,
+página, produto, arquivo-membro), **não** o estrato; exclui deliberadamente `domainSource`,
+`collectionBatch` e os eixos de receita/modelo; e a checagem histórica usa Jaccard **estimado por
+MinHash**, expressamente não exato. Logo: mesmo autor, thread, página, seed e linhagem estão
+cobertos; mesmo estrato, lote, época, receita ou dependência semântica **não** estão. Dizer
+"independente" sem essa lista é exatamente o que R7 proíbe.
+
 **R3 — Nenhum gate é afrouxado para passar.**
 Mudar um limite exige: evidência medida, justificativa escrita no plano, e registro no
 relatório. O único limite que este plano autoriza a mudar é
@@ -364,8 +385,30 @@ IberAuTexTification foi anotado neste plano como CC-BY-4.0 quando é
 
 **R7 — Declare o contrato, não a propriedade.**
 Nunca escreva "independente do treino", "sem leakage" ou "calibrado por faixa" sem
-dizer o que foi medido. `drop_seen()` verifica hash exato + Jaccard ≥ 0,82 sobre
-shingles de 5 tokens — não independência semântica.
+dizer o que foi medido. `drop_seen()` **pretende** verificar hash exato + Jaccard ≥ 0,82 sobre
+shingles de 5 tokens — o que já **não** é independência semântica.
+
+> **DEFEITO MEDIDO, alta severidade, aberto — `drop_seen()` não cumpre nem o contrato fraco.**
+> `benchmark/lab/near_dupes.py` descarta inteiramente buckets com mais de `MAX_BUCKET = 40`
+> entradas (`if bucket is not None and len(bucket) <= MAX_BUCKET:`), que passam a contribuir
+> **zero** candidatos, e `drop_seen()` **não tem** a união por hash exato de conteúdo que
+> `prune()` tem (*"Exact token-content duplicates always union"*). Reproduzido: candidato
+> **byte-idêntico** a 41 entradas de `seen_texts` devolveu `set()`. **A propriedade de segurança
+> está invertida** — quanto mais duplicado um texto estiver no treino, **menos** provável que
+> `drop_seen()` o pegue —, e `seen_texts` é `train` + `dev` = 36.971 textos de corpora raspados,
+> onde repetição é a norma. Agravante de R7 no próprio código: a docstring afirma *"Same contract
+> as prune()"*, e não é.
+>
+> **Por que isso é grave além de um bug:** a docstring da própria função declara que ela é o que
+> estabelece que *o corpus selado tem de ser independente do que o detector treinou, e podar
+> dentro do corpus não mostra isso*. É o **único** mecanismo dessa independência, para
+> **qualquer** tentativa.
+>
+> **Tarefa própria, ANTES do selamento do corpus:** acrescentar a união por hash exato de
+> conteúdo; tratar bucket superlotado por **amostragem** em vez de descarte; corrigir a
+> docstring; teste com o caso das 41 duplicatas. Até isso fechar, **nenhum texto deste plano
+> pode afirmar independência corpus↔treino** — nem como "verificada", nem como "por
+> construção".
 
 **R8 — Nenhuma alegação de qualidade antes de H1.**
 Não há número publicável antes de um holdout válido. Isso inclui material de
@@ -6760,6 +6803,13 @@ total**: a corrente e uma substituição independente. Modelar explicitamente:
 Não dividir inventário por tamanho de teste: cluster colocado em qualquer partição ativa
 também deixa de ser candidato a teste futuro.
 
+**`supportedReleaseAttempts >= 2` é PISO de capacidade, não teto de tentativas.** Menos que dois
+dá `insufficient-power`; **mais** que dois não é proibido, e o item 4 acima modela explicitamente
+cenários de **três**. A confusão custa caro nas duas direções: quem o lê como teto conclui que
+existe um limite a dividir alfa por, e quem o lê como cota conclui que há "duas chances no
+número". Nenhuma das duas é verdade — o que a reserva faz é impedir que as partições ativas
+consumam todos os clusters elegíveis, isto é, **reservar inventário**.
+
 **Arquivos:** `benchmark/lab/plan_cluster_inventory.py`,
 `benchmark/lab/test_cluster_inventory.py`, `benchmark/rebuild-v3-policy.json`,
 `docs/corpus-collection-runbook.md`.
@@ -8306,6 +8356,64 @@ Nova tentativa exige, cumulativamente:
 
 É caro de propósito. Se o custo parecer alto, a alternativa correta é não medir ainda —
 não medir de novo no mesmo material.
+
+**QUESTÃO ABERTA, para decisão do operador antes de G5: a família de hipóteses entre tentativas
+não está declarada.** Confirmado por dois revisores independentes: o único Bonferroni deste plano
+é **entre gates**, D0b reserva dois blocos de igual poder e **não aloca alfa entre tentativas**, e
+não existe teto de tentativas por onde dividir. Bonferroni **pode** agrupar modelos, dados e
+estimandos diferentes — desde que a alegação familiar seja explicitamente *"alguma tentativa foi
+falsamente aprovada"*. **Sem declarar isso, a correção não tem objeto.** As três leituras dão
+respostas diferentes:
+
+- se **só** a tentativa 2 produz alegação válida, e a 1 morreu por integridade **antes** de
+  decisão inferencial válida, não há necessariamente duas oportunidades de falso aceite;
+- se a política é *"publicar a primeira de até K tentativas que passar"*, **existe seleção**, e
+  Bonferroni por tentativa é defensável;
+- se as tentativas mudam população, gate ou estimando, contar tentativas não basta: cada limite
+  superior precisa continuar válido para a hipótese **efetivamente** testada.
+
+**Confusão de parâmetros a evitar, porque os dois não fazem a mesma coisa:**
+
+| parâmetro | pertence a | efeito de dividir |
+|---|---|---|
+| `alpha_família` | os limites superiores de certificação de H1/H2 | `0,05/(mK)` nos gates **e** redimensionamento de poder em D0b |
+| `epsilon` | o risco preditivo conformal de G2 (`0,025` / `0,02`) | muda o **FPR-alvo e o limiar implantado**; **não** corrige a confiança de H1 |
+
+E a garantia conformal é **marginal sob exchangeability** — não é cota simultânea sobre uma
+sequência adaptativa de releases; é por isso que existe literatura *anytime-valid* separada.
+**Decisão a tomar antes de G5:** declarar qual das três leituras vale e então (a) alocar alfa e
+redimensionar D0b, ou (b) declarar explicitamente que **não** há correção entre tentativas e por
+quê. **A divulgação é obrigatória nos dois ramos**, ao lado do número: índice da tentativa, o que
+mudou no candidato, e a decisão anterior. Prosseguir sem escolher é teatro de precisão.
+
+**O que NÃO justifica retry, e isto já é regra:** rearranjar os mesmos registros, sortear outro
+split com o mesmo candidato, ou trocar a seed de treino — variação de seed é seleção **dentro** de
+uma tentativa (F3 roda 3 seeds e escolhe pela regra mecânica). Retry que muda só o sorteio é
+**proibido**, não corrigido, porque é resorteio puro e nenhuma divisão de alfa o torna honesto.
+
+**Duas leituras a NÃO reintroduzir, ambas refutadas:** que uma tentativa reprovada deixa o
+processo "permanentemente contaminado" — isso é **desligamento, não controle**, e o frescor é
+propriedade verificável por registro e cluster no ledger; e que H3b é regra **por
+registro-linha** — ela exige registro aposentado **E** clusters nunca revelados, e chamá-la de
+"por registro" apaga o contrato por cluster (**R6**). Também não classificar informação revelada
+por **direção de viés**: o sinal do primeiro número não determina a direção da cobertura da
+medição seguinte. O que se registra, para cada item revelado, é **qual informação foi revelada,
+quais decisões ela informou, e qual estimando ou bloco futuro pode depender dela**.
+
+**Quarentena de artefato não é demonstrável por teste unitário — não a prometa.** Foi proposto
+"quarentenar" `frozen-calibration.json` numa nova tentativa. Duas razões pelas quais isso não se
+sustenta como está: o arquivo é escrito pelo **`fit`, antes de H1**, logo limiar e calibrador não
+são resultado a jusante de um teste (tornaram-se sensíveis **depois** da olhada, não foram
+produzidos por ela); e `FitOptions` aceita **caminhos arbitrários** para audit/readiness/split/
+parity, então passar o arquivo quarentenado como `datasetAuditPath` faz seus bytes serem lidos
+antes de o parser recusá-los. Qualquer alegação de "o `fit` não lê X" é, neste desenho, **não
+verificável** — e portanto proibida por **R7**. Garantia real exigiria fronteira de
+**capacidade**: processo separado, artefato derivado selado, e `fit` **sem** poder abrir o
+original (ACL, sandbox ou allowlist). "Mão única" no mesmo usuário e processo é convenção, não
+fronteira de confiança. E note que os digests **não enumeram registros**: `datasetDigest`,
+`datasetAuditDigest`, `splitDigest` e `partitionsUsed` são digests e nomes de partição, e os
+identificadores vivem nos eventos do split e do ledger — "extrair os IDs daquele arquivo" não é
+uma operação que exista.
 
 **Arquivos:** `benchmark/cluster-exposure-ledger.ts`,
 `benchmark/commands/split.ts`, `benchmark/tests/cluster-exposure-ledger.test.ts`.
