@@ -5874,13 +5874,12 @@ pontos em que a execução foi além do texto acima ou o precisou:
 3. **Pesos iguais por cluster ficaram NA CV**, em `aggregateOutOfFold` (exportada), porque é
    onde as predições out-of-fold nascem; `calibration-pipeline.ts` consome o escore, não as
    linhas. Vale para o Brier e para o ECE-15.
-4. **A tolerância de desbalanceamento é publicada como piso atingível, não como gate.**
-   `FoldClassBalance` traz `deviation` medido, `attainable` (excesso do maior átomo sobre a
-   fatia ideal de um fold + resíduo de um total que não é múltiplo de 5) e
-   `withinAttainable`. Não vira exceção: `attainable` é um piso sobre o que qualquer
-   empacotamento alcançaria, e afirmar que o guloso o atinge sempre seria a alegação sem
-   medida que R7 proíbe. Átomo grande demais para o balanceamento aparece em
-   `oversizedClusters`.
+4. **O desbalanceamento é publicado como medida ao lado de um piso, não como gate.**
+   `FoldClassBalance` traz `deviation` medido, `deviationFloor` (piso **provado**) e
+   `excessOverFloor`. Não vira exceção. Átomo grande demais para o balanceamento aparece em
+   `oversizedClusters`. *(A primeira entrega publicava `attainable` + `withinAttainable` com
+   a **soma** de dois limites inferiores, que não é limite inferior; corrigido na segunda
+   rodada — veja o item 3 dela.)*
 5. **Falha fechada em quatro casos estruturais**, todos com código: menos clusters que folds
    (`CLUSTERS_BELOW_FOLDS`), uma classe em menos clusters que folds
    (`CLASS_CLUSTERS_BELOW_FOLDS`), metade de fold vazia (`FOLD_HALF_EMPTY`) e metade de treino
@@ -5962,11 +5961,10 @@ deles bloqueante:
    deixaram de existir como literais. Isto **aperta** (1e-4 < 0,002) e não afrouxa nada (R3).
    Três testes de `selectCandidateSummary` foram reescritos porque a regra que codificavam
    passou a estar errada, inclusive um que nomeava 0,002 no título; um deles agora é regressão
-   do caso exato que a regra antiga errava. O limite de ECE é o **número** do gate e **não** o
-   estimador do gate: `calibrationGate` mede com bins de massa igual sob limite superior
-   simultâneo de bootstrap, e esta seleção usa estimativa pontual de largura fixa — está dito
-   no docstring de `aggregateOutOfFold` para ninguém ler um ECE-15 daqui como grandeza do gate.
-   Reestruturar a seleção por partição segue sendo de G1.
+   do caso exato que a regra antiga errava. *(Esta rodada também passou a ler `eceBins`/`eceMax`
+   do `calibrationGate` mantendo binning de largura fixa, e a atribuir a admissão por ECE à
+   tabela congelada. As duas coisas estavam erradas e foram corrigidas na segunda rodada —
+   itens 4 e 5 dela.)* Reestruturar a seleção por partição segue sendo de G1.
 3. **O cabeçalho dizia que o fold de um cluster é função do digest do id pseudonimizado.** Não
    é: o digest só desempata a **ordem** por tamanho; o fold é função do empacotamento guloso
    sobre a população inteira (tamanhos e contagens de classe de todos os outros átomos). A frase
@@ -5978,6 +5976,100 @@ deles bloqueante:
    como `unknown`) *vs* recusa por declaração (chave ausente é `undefined`, para não recusar
    corpus v2 por eixo que seu schema nunca ofereceu). Para v3 as duas concordam; divergem só em
    v2, e ali a divergência é o ponto. Nenhuma mudança de comportamento.
+
+**Segunda rodada de correção (a revisão de qualidade reprovou a primeira correção).** Um
+bloqueante sobre artefato persistido e cinco consertos importantes. Dois deles mudam
+**comportamento** e um muda a **forma do artefato**, então estão aqui e não só em docstring.
+
+1. **BLOQUEANTE — o bloco `crossValidation` estava dentro de `frozen-calibration.json` e
+   fora de `artifactDigest`, e seu docstring afirmava o contrário.** Ele chegava lá pelo
+   rest-spread `const { applyDocument, applyLocalized, ...artifactFields } = frozen` em
+   `fit.ts`, enquanto `artifactWithoutDigest()` enumera 15 campos e não o inclui: o arquivo
+   que `report.ts` chama de "selado por `artifactDigest` e imutável" tinha chave editável em
+   disco sem quebrar o próprio selo. Além disso era **morto** — nenhum leitor, nenhum teste —
+   logo o requisito 4 do brief ("átomo grande demais precisa aparecer") não fechava
+   ponta a ponta. Resolvido pelo lado de **fora** do selo, com as três pontas amarradas:
+   `calibration-pipeline.ts` exporta `sealedCalibrationArtifact()`, que constrói o objeto a
+   partir da **mesma** enumeração que o digest usa (um rest-spread não consegue expressar
+   "exatamente os campos selados"); `fit.ts` escreve o diagnóstico em
+   **`cross-validation.json`**, arquivo novo na saída do `fit`; e a mensagem de retorno do
+   `runFit` passa a **relatar** clusters, átomos oversized, degeneração por linha e excesso de
+   desbalanceamento acima do piso — é o leitor que faltava. O teste que faltava também existe:
+   `fit.test.ts` fixa o conjunto de chaves do arquivo **e** exige que remover **qualquer** uma
+   delas quebre a validação (uma chave fora do selo passa; era exatamente esse o caso).
+   Verificado em vermelho reintroduzindo o rest-spread — o teste acusa `crossValidation`.
+2. **O empacotamento por classe não tinha teste que o protegesse, e estava errado.** Mutação
+   aplicada e revertida: substituir o critério de escolha de fold por contagem total de linhas
+   deixava a suíte inteira verde (2209 testes), porque **todas** as fixtures dão a cada átomo a
+   mesma composição de classe — o teste "stratifies by class" espelhava a implementação. Ao
+   escrever a fixture que discrimina (dez átomos do **mesmo tamanho**, cinco só de positivos e
+   cinco só de negativos), o **packer real** mediu negativos por fold `[3, 3, 6, 3, 0]`: uma
+   metade de validação sem nenhum negativo, com desvio 0,2 onde 0 é atingível. Causa: o
+   critério comparava a carga corrente dos folds e ignorava o que estava sendo colocado, o que
+   é ciente de classe apenas enquanto todo átomo tem a mesma composição. Agora cada átomo vai
+   para o fold que **suas próprias** contagens deixam mais perto das metas por fold, com metas
+   **progressivas** (o que já foi colocado, dividido por 5) — contra metas finais todo fold
+   está sub-preenchido até o fim, então encher o fold 0 empata com abrir um vazio e o fold 4
+   ficava sem nada (`FOLD_HALF_EMPTY`). Empate de custo vai para o fold menor. A fixture nova
+   afirma contagens exatas por fold e foi verificada **vermelha** sob a mutação class-blind.
+3. **`attainable` não era piso.** Era a **soma** de dois limites inferiores, e soma de limites
+   inferiores não é limite inferior: media 0,08 (label 0) e 0,16 (label 1) na fixture cujo
+   desvio medido é **0** — piso acima de valor atingido —, e o termo de resíduo
+   `(F-1)/(F*total)` só é verdade quando `total % F == 1` (com `total` múltiplo de 5 o resíduo
+   verdadeiro é 0). `withinAttainable`, publicado ao lado, portanto não significava nada e a
+   asserção construída sobre ele não podia falhar. Agora é `deviationFloor` = **máximo** dos
+   dois limites (máximo de limites inferiores é limite inferior), com resíduo
+   `max(r, F-r)/(F*total)` e 0 quando `r == 0`, mais `excessOverFloor` ao lado. O invariante
+   `deviation >= deviationFloor` é testado nas três fixtures — é ele que estava falso.
+4. **A admissão por ECE não é da tabela congelada, e agora está dito.** A linha congelada do
+   calibrador diz só "vence menor Brier OOF; empate <= 1e-4 → Platt, beta, isotônico"; a
+   admissão por ECE é constraint **deste módulo**, pode **sobrepor** o "menor Brier OOF" (o teste
+   que exercita isso já existia) e é mantida porque calibrador que o gate de release recusaria
+   não vale selecionar. Cabeçalho, docstring e título de teste passaram a atribuí-la a quem a
+   impõe.
+5. **O estimador de ECE da seleção passou a ser o binning congelado.** Ler `eceBins` e `eceMax`
+   de um bloco que fixa `eceBinning: "equal-mass"` e medir com largura fixa era uma chave de
+   política servindo dois estimadores incompatíveis. `aggregateOutOfFold` agora mede
+   **equal-mass** com switch exaustivo sobre `eceBinning` (valor novo = erro de tipo, como
+   `gates.ts` faz com `eceBound`), e publica `eceBins`/`eceBinning` junto do número; o campo
+   `ece15` virou `ece` em `CandidateScore`/`CandidateCalibrationSummary` — **muda a forma de
+   `selectionEvidence` e portanto `artifactDigest`** — porque `metrics.ts` já publica um `ece15`
+   que é outra grandeza (largura fixa, peso por linha). `eceBound` continua **não** lido: o gate
+   usa limite superior simultâneo de bootstrap e isto é estimativa **pontual**, que corre
+   **abaixo** dele — está escrito, com a direção, para ninguém ler aprovação de release aqui.
+   Achado ao implementar: equal-mass ingênuo **parte empates** entre bins, e como o desempate
+   era por id de registro-linha, bins ficavam puros em rótulo para linhas que o modelo pontuou
+   igual — na fixture do `fit`, onde 108 linhas compartilham um escore, **todo** candidato
+   passou a exceder 0,05 e o `fit` inteiro falhou. O estimador agrupa por escore exato antes de
+   binar, e nenhum grupo é partido. Teste novo fixa um valor que só sai com 15 bins **e**
+   equal-mass (largura fixa dá 0,075; equal-mass com 8 bins dá 0,075; equal-mass com 15 dá 0).
+6. **A alegação de determinismo do cabeçalho era mais forte que o código.** Medido: os folds
+   **não** eram deep-equal sob inversão da entrada (a ordem dentro de cada metade seguia a ordem
+   de chegada) e `selectCalibrator` devolvia modelo diferente nos dois últimos dígitos
+   (`3.096515557863789` vs `3.0965155578637895`), porque os ajustes somam em ponto flutuante
+   sobre o array e soma FP não é associativa — ou seja, `artifactDigest` se movia para o mesmo
+   corpus permutado. Escolhido tornar a alegação **verdadeira**: as duas metades voltam
+   ordenadas por id de registro-linha, `selectCalibrator` reajusta sobre a população nessa
+   ordem, e id repetido passa a falhar (`DUPLICATE_ID`) porque sem isso a ordenação não é
+   total. Testes de deep-equal sob inversão para `createClusteredFolds`, `selectCalibrator` e
+   `aggregateOutOfFold`.
+7. **`clusterRootsOf` não é aplicação, é obrigação do chamador — e agora diz isso.** O
+   docstring afirmava ser "the only sanctioned way" de produzir o `clusterRoot`, e nada
+   impedia um chamador de passar `record.id`: é pseudônimo bem formado, atravessa todos os
+   guards e produz exatamente os folds por linha que a tarefa existe para remover. Recusar
+   `clusters === items` não é opção (R6 admite eixo legitimamente todo singleton), então a
+   degeneração passou a ser **publicada**: `FoldStratification.perRecordLineAtoms`, escrito em
+   `cross-validation.json` e relatado pelo `runFit`. Os dois docstrings (aqui e em
+   `FitSampleScores.clusterRoot`) foram reescritos para dizer o que é verificado e o que não é.
+8. **Dois consertos menores.** `selectCandidateSummary` recusa escore não finito em vez de
+   devolver `undefined` sob tipo de retorno `T` (medido: `brier` NaN ou tudo `+Infinity` fazia
+   o conjunto de empate ficar vazio e `[...tied].sort()[0]` ser `undefined`, com
+   `selectCalibrator` estourando `TypeError` em vez do erro codificado). E o comentário de
+   `fit.ts` que justificava computar o cluster sobre o corpus inteiro dava razão **falsa** —
+   componente não atravessa partição, porque `createBlockedSplit` atribui componente inteiro a
+   uma partição —; a razão verdadeira (defesa em profundidade + raiz independente de partição)
+   está escrita, junto com a consequência real: `fit` **aborta** com eixo `unknown` em qualquer
+   linha do corpus, inclusive do bloco cego.
 
 ## Fase D — Dados
 
