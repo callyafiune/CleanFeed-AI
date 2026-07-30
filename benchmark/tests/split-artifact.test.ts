@@ -333,6 +333,7 @@ const RELEASE_AUDIT = auditBlockedSplit(
   RELEASE_DATASET,
   RELEASE_SPLIT,
   AUDIT_POLICY,
+  POLICY.heldOutGeneratorFamilies,
 );
 
 const HEX64 = /^[0-9a-f]{64}$/;
@@ -506,7 +507,12 @@ describe("validateSplitArtifact", () => {
       seed: 1,
     };
     const split = createBlockedSplit(failingDataset, failingPolicy);
-    const audit = auditBlockedSplit(failingDataset, split, AUDIT_POLICY);
+    const audit = auditBlockedSplit(
+      failingDataset,
+      split,
+      AUDIT_POLICY,
+      failingPolicy.heldOutGeneratorFamilies,
+    );
     expect(audit.passed).toBe(false);
 
     const artifact = await buildSplitArtifact({

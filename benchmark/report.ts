@@ -384,7 +384,20 @@ export function renderReportMarkdown(report: BenchmarkReport): string {
   } else {
     lines.push(`- Declaradas e publicadas: \`${heldOut.join("`, `")}\``);
     lines.push(
-      `- Derivadas pela auditoria do split: \`${report.split.audit.heldOutGeneratorFamilies.join("`, `")}\``,
+      `- Reserva honrada pelas partições (auditoria do split): \`${report.split.audit.heldOutGeneratorFamilies.join("`, `")}\``,
+    );
+  }
+  // The incidental concentrations, printed as DIAGNOSIS and separated from the
+  // reservation above. A family whose every record-line landed in the blind block
+  // without anyone reserving it is not a reserve — it sustains no unseen-generator
+  // claim, it gates nothing, and it is not one of the hypotheses the family-wise
+  // correction counts. It is printed because it spends blind-block capacity, and
+  // because reading it as a reservation is exactly the inference A4-fix removed.
+  const incidental = report.split.audit.incidentalTestOnlyGeneratorFamilies;
+  if (incidental.length > 0) {
+    lines.push(
+      `- Concentradas no bloco cego sem reserva declarada (diagnóstico, não ` +
+        `reserva e não gate): \`${incidental.join("`, `")}\``,
     );
   }
   lines.push("");

@@ -585,6 +585,13 @@ const CAL_TIME = 2000;
 const TEST_TIME = 3000;
 const SEEN_FAMILY = "seen_family";
 const HELDOUT_FAMILY = "heldout_family";
+// A generated family whose every record-line lands in the blind block and that the
+// manifest NEVER declares. It reproduces, at corpus scale, what
+// `benchmark/data/corpus-build/out/split/split-artifact.json` holds: the corpus
+// builder deliberately leaves a family below the 200-positive floor undeclared, and
+// the split then has to accept it as an incidental concentration rather than read it
+// back as a reservation nobody made (A4-fix).
+const INCIDENTAL_FAMILY = "incidental_family";
 
 function buildText(id: string): string {
   return Array.from({ length: 12 }, (_, i) => `${id}_${i}`).join(" ");
@@ -758,9 +765,11 @@ interface Block {
   human: number;
   aiSeen: number;
   aiHeld: number;
+  aiIncidental: number;
   mixed: number;
   aiBatch: string;
   aiHeldBatch: string;
+  aiIncidentalBatch: string;
   mixedBatch: string;
   humanBatch: string;
 }
@@ -771,9 +780,11 @@ const BLOCKS: readonly Block[] = [
     human: 800,
     aiSeen: 800,
     aiHeld: 0,
+    aiIncidental: 0,
     mixed: 400,
     aiBatch: "gb_ai_dev",
     aiHeldBatch: "gb_ai_dev_held",
+    aiIncidentalBatch: "gb_ai_dev_incidental",
     mixedBatch: "gb_mx_dev",
     humanBatch: "hb_dev",
   },
@@ -782,20 +793,26 @@ const BLOCKS: readonly Block[] = [
     human: 1200,
     aiSeen: 1200,
     aiHeld: 0,
+    aiIncidental: 0,
     mixed: 600,
     aiBatch: "gb_ai_cal",
     aiHeldBatch: "gb_ai_cal_held",
+    aiIncidentalBatch: "gb_ai_cal_incidental",
     mixedBatch: "gb_mx_cal",
     humanBatch: "hb_cal",
   },
   {
     time: TEST_TIME,
     human: 2000,
-    aiSeen: 1500,
+    aiSeen: 1400,
     aiHeld: 500,
+    // Below the 200-positive floor a declaration would have to clear, which is why
+    // the manifest cannot declare it and the audit must not infer it.
+    aiIncidental: 100,
     mixed: 1000,
     aiBatch: "gb_ai_test_seen",
     aiHeldBatch: "gb_ai_test_held",
+    aiIncidentalBatch: "gb_ai_test_incidental",
     mixedBatch: "gb_mx_test",
     humanBatch: "hb_test",
   },
@@ -821,6 +838,11 @@ function generateCorpus(): BenchmarkRecordV2[] {
     }
     for (let n = 0; n < block.aiHeld; n += 1) {
       records.push(ai(nextId(), block.time, block.aiHeldBatch, HELDOUT_FAMILY));
+    }
+    for (let n = 0; n < block.aiIncidental; n += 1) {
+      records.push(
+        ai(nextId(), block.time, block.aiIncidentalBatch, INCIDENTAL_FAMILY),
+      );
     }
     for (let n = 0; n < block.mixed; n += 1) {
       const parentId = humanIds[n % humanIds.length];
@@ -855,6 +877,7 @@ function generationBatches(): GenerationBatchV1[] {
     batch("gb_ai_cal", SEEN_FAMILY, CAL_TIME),
     batch("gb_ai_test_seen", SEEN_FAMILY, TEST_TIME),
     batch("gb_ai_test_held", HELDOUT_FAMILY, TEST_TIME),
+    batch("gb_ai_test_incidental", INCIDENTAL_FAMILY, TEST_TIME),
     batch("gb_mx_dev", SEEN_FAMILY, DEV_TIME),
     batch("gb_mx_cal", SEEN_FAMILY, CAL_TIME),
     batch("gb_mx_test", SEEN_FAMILY, TEST_TIME),
@@ -937,6 +960,41 @@ describe("ingest -> validate -> split integration (10k)", () => {
     expect(artifact.audit.passed).toBe(true);
     expect(artifact.audit.leakages).toEqual([]);
     expect(artifact.splitDigest).toMatch(/^[0-9a-f]{64}$/u);
+
+    // The reservation is what the manifest declared and the partitions honored, and
+    // the family that merely concentrated itself in the blind block is published
+    // beside it as diagnosis. Under the inferred set this whole command failed with
+    // HELD_OUT_FAMILY_DISAGREEMENT ("derived adds [incidental_family]") over a
+    // family nobody reserved — the unsatisfiable gate A4-fix removes.
+    expect(artifact.audit.heldOutGeneratorFamilies).toEqual([HELDOUT_FAMILY]);
+    expect(artifact.audit.incidentalTestOnlyGeneratorFamilies).toEqual([
+      INCIDENTAL_FAMILY,
+    ]);
+
+    // 3b. The exact equality still has teeth in the direction that matters: a
+    // reservation the corpus stocks with nothing is refused by the command's own
+    // guard. Only manifest.json changes, so the sealed audit still binds the same
+    // records and the failure is the family disagreement rather than a digest
+    // mismatch.
+    const manifestPath = join(datasetDirectory, "manifest.json");
+    const declaredJson = await readFile(manifestPath, "utf8");
+    await writeFile(
+      manifestPath,
+      JSON.stringify({
+        ...JSON.parse(declaredJson),
+        heldOutGeneratorFamilies: ["never_generated_family"],
+      }),
+      "utf8",
+    );
+    await expect(
+      runSplit({
+        datasetDirectory,
+        datasetAuditPath: join(validateOut, "dataset-audit.json"),
+        outputDirectory: join(root, "out", "split-unstocked"),
+        seed: 712019,
+      }),
+    ).rejects.toThrow(/HELD_OUT_FAMILY_DISAGREEMENT|never_generated_family/u);
+    await writeFile(manifestPath, declaredJson, "utf8"); // restore for isolation
 
     // 4a. A later record change invalidates the split artifact's datasetDigest.
     const tampered = parsedRecords.map((r) => ({ ...r }));

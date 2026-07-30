@@ -486,7 +486,15 @@ function report(
       digest: SPLIT_DIGEST,
       strategy: "blocked-group-time-v1",
       heldOutGeneratorFamilies: [],
-      audit: {} as BenchmarkReport["split"]["audit"],
+      // The markdown renderer reads BOTH family lists off the audit — the
+      // reservation the partitions honored and the incidental blind-block
+      // concentrations — so the cast states those two rather than an empty object.
+      // A published report is sealed with the audit inside it, and a renderer that
+      // reads a key the fixture does not carry used to fail here as a TypeError.
+      audit: {
+        heldOutGeneratorFamilies: [],
+        incidentalTestOnlyGeneratorFamilies: [],
+      } as unknown as BenchmarkReport["split"]["audit"],
     },
     evaluatorDigest: EVALUATOR_DIGEST,
     runtimeParityDigest: "f".repeat(64),

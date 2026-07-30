@@ -245,29 +245,44 @@ function passingAudit(split: DatasetSplit<BenchmarkRecord>): SplitAudit {
     clusters: standInClusterReport(),
     declaredAxisGaps: [],
     criticalSliceSamples: [],
-    heldOutGeneratorFamilies: derivedHeldOutFamilies(split),
+    heldOutGeneratorFamilies: honoredReservation(
+      split,
+      // The reservation is the same in every `scientificUse`, so the stand-in reads
+      // it off the release manifest rather than taking the mode as a parameter it
+      // would never vary on.
+      datasetManifest("release").heldOutGeneratorFamilies,
+    ),
+    // No family concentrated itself in test without being reserved in these
+    // fixtures; the field is stated because a missing key cannot be told apart
+    // from a writer that never measured it.
+    incidentalTestOnlyGeneratorFamilies: [],
     passed: true,
     reasons: [],
   };
 }
 
-// The families present in the test partition and absent from development and
-// calibration — derived from the split exactly as benchmark/split-audit.ts derives
-// them, so this stand-in audit cannot claim a reservation the partitions do not
-// show. Hardcoding it was harmless only while nothing compared the four sets.
-function derivedHeldOutFamilies(
+// The reservation the partitions HONOR: every DECLARED family whose record-lines
+// all sit in test. Derived from the split exactly as benchmark/split-audit.ts
+// derives it, so this stand-in audit cannot claim a reservation the partitions do
+// not show. It takes the declaration rather than inferring it from test-only
+// membership — that inference reproved a split over a family nobody reserved
+// (A4-fix) — and hardcoding the answer was harmless only while nothing compared the
+// four sets.
+function honoredReservation(
   split: DatasetSplit<BenchmarkRecord>,
+  declared: readonly GeneratorFamily[],
 ): GeneratorFamily[] {
   const families = (rows: readonly BenchmarkRecord[]): GeneratorFamily[] =>
     rows
       .map((row) => generatorFamilyOf(row))
       .filter((family): family is GeneratorFamily => family !== undefined);
+  const inTest = new Set(families(split.test));
   const elsewhere = new Set<GeneratorFamily>([
     ...families(split.development),
     ...families(split.calibration),
   ]);
-  return [...new Set(families(split.test))]
-    .filter((family) => !elsewhere.has(family))
+  return declared
+    .filter((family) => inTest.has(family) && !elsewhere.has(family))
     .sort((a, b) => (a < b ? -1 : a > b ? 1 : 0));
 }
 

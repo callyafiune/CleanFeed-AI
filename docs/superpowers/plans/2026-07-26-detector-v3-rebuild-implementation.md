@@ -1469,6 +1469,65 @@ extraída **mantendo a leitura pontuada**, `AssertionError: {} != {'gemini-3_5-f
 `assemble_corpus.py`, que **grava** a receita do lote — o mesmo rótulo de provedor que o
 `recipeMatchesBatch` compara byte a byte, e nenhum teste de pertinência.
 
+#### A4-fix — a auditoria deriva reserva **honrada**, não reserva inferida
+
+**O bloqueante.** A igualdade exata comparava, no papel de "derivado", um conjunto
+**inferido**: "família presente em `test` e ausente de `development`+`calibration`". Isso
+é **sintoma** de reserva, não reserva. Sob igualdade exata com falha dura, qualquer
+família de IA que caia só no teste — por tempo, por acaso, por tamanho de bloco —
+reprovava o split sem nunca ter sido reservada. Não hipotético: em
+`benchmark/data/corpus-build/out/split/split-artifact.json` o derivado canônico tem
+`gemini-3_5-flash-medium`, jamais declarado, e o montador **deliberadamente** não declara
+família abaixo do piso de 200 positivos nem família de alias retirado
+(`HELD_OUT_INELIGIBLE`). Logo `validate` e `split` exigiam coisas contraditórias: a classe
+de **gate insatisfazível** de §4.1 que este plano existe para eliminar, e que R3 proíbe
+contornar afrouxando limite.
+
+**O que mudou (opção (i) do brief):** `auditBlockedSplit` recebe a reserva declarada
+(`manifest.heldOutGeneratorFamilies`) como **parâmetro obrigatório** e passa a derivar a
+propriedade que a reserva realmente afirma — *toda* linha-registro da família declarada
+está em `test` e *nenhuma* fora. É esse conjunto que entra na igualdade exata contra
+manifesto, marcação do split e relatório. Uma família declarada que o corpus estoca com
+**nada** não é honrada: verdade vácua sobre zero linhas publicaria reserva sem população.
+Família que cai só em `test` **sem** ter sido declarada vai para o campo próprio
+`incidentalTestOnlyGeneratorFamilies`, **fora** da igualdade: é diagnóstico, o relatório a
+publica como tal, e ela não reprova nada. O sentido da igualdade **não** inverteu — ela
+continua existindo e continua falhando duro; mudou **o que** é comparado.
+
+A direção que reprova continua fora de `audit.reasons`, de propósito: uma família
+declarada com linha fora de `test` simplesmente não entra no derivado, e os três gates de
+igualdade (`commands/split.ts`, `split-artifact.ts`, `report.ts`) falham nomeando-a.
+Restabelecê-la como razão de auditoria tornaria esses três gates inalcançáveis — e
+portanto não testáveis, que é como o mapeamento de erro ficou sem rede.
+
+O eixo `generatorExposure` da auditoria passou a ser chaveado pelo conjunto **declarado**
+(como `slices.ts` já faz com o publicado): chaveá-lo pelo honrado relabelaria uma reserva
+violada como `seen`, escondendo no artefato publicado a divergência que a igualdade está
+prestes a reprovar.
+
+**Restrição de corpus que a correção NÃO remove — para C2, E2 e E3:**
+
+> Toda família geradora **não declarada** precisa ter ao menos um registro fora de `test`;
+> caso contrário ela vira concentração acidental, e ainda que não reprove mais, ela consome
+> capacidade do bloco cego sem sustentar alegação de gerador não visto.
+
+Em **E3**, o gate de "igualdade exata entre heldouts declarados, marcados, auditados e
+publicados (A4)" herda esta semântica: compara **reserva honrada**, e
+`incidentalTestOnlyGeneratorFamilies` é diagnóstico que **não** entra em `m` (Bonferroni).
+
+**Testes (vermelho antes, verde depois).** No nível da função
+(`split-audit.test.ts`): deriva a declarada honrada; publica a incidental e a igualdade
+**passa**; retira a declarada com uma linha fora de `test` e a igualdade **falha** com
+`omits [family-reserved]`; não honra declarada que o corpus não estoca; `generatorExposure`
+lê a incidental como `seen`. Fim a fim (`corpus-import.test.ts`, corpus de 10k): uma
+família `incidental_family` de 100 positivos — abaixo do piso, portanto indeclarável — foi
+plantada só no bloco de teste. Com a derivação antiga o comando inteiro morria em
+`GENERATOR_FAMILY_DISAGREEMENT: derived omits [] and adds [incidental_family]`; agora o
+split congela, publica `heldOutGeneratorFamilies=[heldout_family]` e
+`incidentalTestOnlyGeneratorFamilies=[incidental_family]`. O mesmo teste passou a provar o
+mapeamento `HELD_OUT_FAMILY_DISAGREEMENT` reescrevendo só o `manifest.json` para declarar
+uma família que o corpus não estoca.
+
 ### A5 — Normalização Unicode no caminho de inferência
 
 **Depende de:** nada.

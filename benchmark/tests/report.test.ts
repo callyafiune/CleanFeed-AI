@@ -154,6 +154,7 @@ function splitAudit(): SplitAudit {
     declaredAxisGaps: [],
     criticalSliceSamples: [],
     heldOutGeneratorFamilies: [],
+    incidentalTestOnlyGeneratorFamilies: [],
     passed: true,
     reasons: [],
   };
@@ -890,7 +891,39 @@ describe("renderReportMarkdown", () => {
       "- Declaradas e publicadas: `gemini-3_5-flash-low`, `gemini-3_6-flash`",
     );
     expect(md).toContain(
-      "- Derivadas pela auditoria do split: `gemini-3_5-flash-low`, `gemini-3_6-flash`",
+      "- Reserva honrada pelas partições (auditoria do split): `gemini-3_5-flash-low`, `gemini-3_6-flash`",
+    );
+    // Nothing merely concentrated itself in the blind block here, so the diagnostic
+    // line is absent rather than printed empty.
+    expect(md).not.toContain("Concentradas no bloco cego");
+  });
+
+  // A4-fix: an undeclared family whose every record-line landed in test is
+  // DIAGNOSIS, printed apart from the reservation and gating nothing. Reading it as
+  // a reservation is what made the exact equality unsatisfiable.
+  it("publishes an incidental blind-block concentration apart from the reservation", async () => {
+    const declared = [asGeneratorFamily("gemini-3_5-flash-low")];
+    const input = baseInput();
+    const report = await buildBenchmarkReport({
+      ...input,
+      split: {
+        ...input.split,
+        heldOutGeneratorFamilies: declared,
+        audit: {
+          ...input.split.audit,
+          heldOutGeneratorFamilies: declared,
+          incidentalTestOnlyGeneratorFamilies: [
+            asGeneratorFamily("gemini-3_5-flash-medium"),
+          ],
+        },
+      },
+    });
+    const md = renderReportMarkdown(report);
+
+    expect(md).toContain("- Declaradas e publicadas: `gemini-3_5-flash-low`");
+    expect(md).toContain(
+      "- Concentradas no bloco cego sem reserva declarada (diagnóstico, não " +
+        "reserva e não gate): `gemini-3_5-flash-medium`",
     );
   });
 

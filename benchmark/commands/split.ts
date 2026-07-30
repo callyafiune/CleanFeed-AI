@@ -117,6 +117,7 @@ export async function runSplit(options: SplitOptions): Promise<string> {
     records,
     split,
     SPLIT_AUDIT_POLICY,
+    manifest.heldOutGeneratorFamilies,
     DECLARED_GROUP_AXES,
   );
   if (!splitAudit.passed) {
@@ -136,14 +137,19 @@ export async function runSplit(options: SplitOptions): Promise<string> {
 
   // The exact-equality invariant, at the one place where all four sets exist at
   // once: what the manifest RESERVED, what the splitter actually MARKED, what the
-  // independent audit DERIVED off the partitions, and what the sealed artifact
-  // PUBLISHES (which is the list the report prints, since report.ts reads it from
-  // this artifact). Hard failure, not a warning: a family the manifest reserved
-  // but the splitter never marked means the "unseen generator" measurement has no
-  // population at all, and a family the audit read back that nobody reserved means
-  // the report would publish a reservation that was never made. Both used to be
-  // silent — the spelling mismatch made every one of these comparisons impossible
-  // to satisfy.
+  // independent audit read back as HONORED by the partitions, and what the sealed
+  // artifact PUBLISHES (which is the list the report prints, since report.ts reads
+  // it from this artifact). Hard failure, not a warning: a family the manifest
+  // reserved but the splitter never marked means the "unseen generator" measurement
+  // has no population at all, and a reservation the partitions do not honor means
+  // the report would publish a reserve the blind block does not hold. Both used to
+  // be silent — the spelling mismatch made every one of these comparisons
+  // impossible to satisfy.
+  //
+  // What is NOT compared here: `audit.incidentalTestOnlyGeneratorFamilies`, the
+  // families that landed in `test` with nobody reserving them. Comparing those
+  // reproved a split for a concentration it was never asked to avoid (A4-fix), so
+  // they are published as diagnosis and gate nothing.
   try {
     assertGeneratorFamilyAgreement({
       declared: manifest.heldOutGeneratorFamilies,

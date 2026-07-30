@@ -26,8 +26,15 @@ import {
 import { known, v3Ai, withAxis } from "./helpers/v3-record-fixture.ts";
 import {
   asGeneratorFamily,
+  assertGeneratorFamiliesEqual,
   normalizeGeneratorFamily,
+  type GeneratorFamily,
 } from "../generator-family.ts";
+
+// A corpus that reserved nothing. Stated rather than omitted: the audit derives the
+// reservation the partitions HONOR, so it has to be told what was reserved, and an
+// empty list is the fact "no family was reserved" — not a forgotten argument.
+const NO_RESERVATION: readonly GeneratorFamily[] = [];
 
 const SHA = "a".repeat(64);
 
@@ -263,7 +270,12 @@ const AUDIT_POLICY: SplitAuditPolicy = {
 describe("auditBlockedSplit", () => {
   it("passes a leakage-safe release split and proves the minima", () => {
     const split = createBlockedSplit(RELEASE_DATASET, POLICY);
-    const audit = auditBlockedSplit(RELEASE_DATASET, split, AUDIT_POLICY);
+    const audit = auditBlockedSplit(
+      RELEASE_DATASET,
+      split,
+      AUDIT_POLICY,
+      POLICY.heldOutGeneratorFamilies,
+    );
 
     expect(audit.leakages).toEqual([]);
     expect(audit.passed).toBe(true);
@@ -302,7 +314,12 @@ describe("auditBlockedSplit", () => {
 
   it("marks large critical slices gate-eligible and small ones non-gating", () => {
     const split = createBlockedSplit(RELEASE_DATASET, POLICY);
-    const audit = auditBlockedSplit(RELEASE_DATASET, split, AUDIT_POLICY);
+    const audit = auditBlockedSplit(
+      RELEASE_DATASET,
+      split,
+      AUDIT_POLICY,
+      POLICY.heldOutGeneratorFamilies,
+    );
 
     const corporateFpr = audit.criticalSliceSamples.find(
       (slice) => slice.axis === "domain" && slice.key === "corporate",
@@ -339,7 +356,12 @@ describe("auditBlockedSplit", () => {
       calibration: split.calibration,
       test: [...split.test, victim!],
     };
-    const audit = auditBlockedSplit(RELEASE_DATASET, leaking, AUDIT_POLICY);
+    const audit = auditBlockedSplit(
+      RELEASE_DATASET,
+      leaking,
+      AUDIT_POLICY,
+      POLICY.heldOutGeneratorFamilies,
+    );
 
     expect(audit.leakages.length).toBeGreaterThan(0);
     expect(audit.leakages.some((entry) => entry.axis === "source")).toBe(true);
@@ -398,7 +420,12 @@ describe("auditBlockedSplit", () => {
       calibration: [],
       test: [c],
     };
-    const audit = auditBlockedSplit(records, split, AUDIT_POLICY);
+    const audit = auditBlockedSplit(
+      records,
+      split,
+      AUDIT_POLICY,
+      NO_RESERVATION,
+    );
 
     // No single grouping value-axis catches it...
     expect(
@@ -461,7 +488,12 @@ describe("auditBlockedSplit", () => {
       calibration: [cal],
       test: [test],
     };
-    const audit = auditBlockedSplit(records, split, AUDIT_POLICY);
+    const audit = auditBlockedSplit(
+      records,
+      split,
+      AUDIT_POLICY,
+      NO_RESERVATION,
+    );
 
     expect(audit.leakages).toEqual([]);
     expect(audit.cutoffs.earliestTest).toBeLessThanOrEqual(
@@ -531,7 +563,7 @@ describe("auditBlockedSplit", () => {
       seed: 1,
     };
     const split = createBlockedSplit(tiny, noHoldout);
-    const audit = auditBlockedSplit(tiny, split, AUDIT_POLICY);
+    const audit = auditBlockedSplit(tiny, split, AUDIT_POLICY, NO_RESERVATION);
 
     expect(audit.leakages).toEqual([]);
     expect(audit.passed).toBe(false);
@@ -544,7 +576,12 @@ describe("auditBlockedSplit", () => {
 describe("the cluster report the audit publishes", () => {
   it("counts independent clusters per axis and per slice, with the largest", () => {
     const split = createBlockedSplit(RELEASE_DATASET, POLICY);
-    const audit = auditBlockedSplit(RELEASE_DATASET, split, AUDIT_POLICY);
+    const audit = auditBlockedSplit(
+      RELEASE_DATASET,
+      split,
+      AUDIT_POLICY,
+      POLICY.heldOutGeneratorFamilies,
+    );
 
     // Every declared axis is reported, whether or not this corpus fills it: an
     // axis that is absent from the report is an axis nobody can gate on.
@@ -586,7 +623,12 @@ describe("the cluster report the audit publishes", () => {
 
   it("reports connectivity as the two relations it is, never as one flag", () => {
     const split = createBlockedSplit(RELEASE_DATASET, POLICY);
-    const audit = auditBlockedSplit(RELEASE_DATASET, split, AUDIT_POLICY);
+    const audit = auditBlockedSplit(
+      RELEASE_DATASET,
+      split,
+      AUDIT_POLICY,
+      POLICY.heldOutGeneratorFamilies,
+    );
     // The two RELATIONS alone: `linkage` is the measurement of the conditional one
     // and has its own test below. The return annotation is the re-exported
     // `AxisConnectivity`, so if split.ts ever adds a third relation this helper
@@ -652,7 +694,12 @@ describe("the cluster report the audit publishes", () => {
 
   it("does not fail an axis that is legitimately all singletons or absent", () => {
     const split = createBlockedSplit(RELEASE_DATASET, POLICY);
-    const audit = auditBlockedSplit(RELEASE_DATASET, split, AUDIT_POLICY);
+    const audit = auditBlockedSplit(
+      RELEASE_DATASET,
+      split,
+      AUDIT_POLICY,
+      POLICY.heldOutGeneratorFamilies,
+    );
 
     const nearDuplicate = audit.clusters.axes.find(
       (row) => row.axis === "nearDuplicate",
@@ -877,6 +924,7 @@ describe("the seed that produced a generation", () => {
       records,
       { development: [seed], calibration: [], test: [generated] },
       AUDIT_POLICY,
+      NO_RESERVATION,
     );
 
     expect(audit.leakages.some((entry) => entry.axis === "humanSeed")).toBe(
@@ -904,6 +952,7 @@ describe("the seed that produced a generation", () => {
       [generated, other],
       { development: [generated], calibration: [], test: [other] },
       AUDIT_POLICY,
+      NO_RESERVATION,
     );
     expect(
       roots.leakages.some((entry) => entry.axis === "connectedComponent"),
@@ -961,6 +1010,7 @@ describe("two rows naming a seed no record carries", () => {
       records,
       { development: [g1], calibration: [], test: [g2] },
       AUDIT_POLICY,
+      NO_RESERVATION,
     );
     const seed = audit.clusters.axes.find((row) => row.axis === "humanSeed")!;
 
@@ -1011,6 +1061,7 @@ describe("two rows naming a seed no record carries", () => {
       [seed, child],
       { development: [seed], calibration: [], test: [child] },
       AUDIT_POLICY,
+      NO_RESERVATION,
     );
     const humanSeed = audit.clusters.axes.find(
       (row) => row.axis === "humanSeed",
@@ -1032,6 +1083,7 @@ describe("two rows naming a seed no record carries", () => {
       RELEASE_DATASET,
       releaseSplit,
       AUDIT_POLICY,
+      POLICY.heldOutGeneratorFamilies,
     );
     const derivation = release.clusters.axes.find(
       (row) => row.axis === "derivationRoot",
@@ -1043,7 +1095,12 @@ describe("two rows naming a seed no record carries", () => {
 
   it("leaves `linkage` null for an axis that is not followed as linkage", () => {
     const split = createBlockedSplit(RELEASE_DATASET, POLICY);
-    const audit = auditBlockedSplit(RELEASE_DATASET, split, AUDIT_POLICY);
+    const audit = auditBlockedSplit(
+      RELEASE_DATASET,
+      split,
+      AUDIT_POLICY,
+      POLICY.heldOutGeneratorFamilies,
+    );
     for (const axis of ["source", "author", "generatorFamily"]) {
       expect(
         audit.clusters.axes.find((row) => row.axis === axis)!.connectivity
@@ -1070,7 +1127,13 @@ describe("two rows naming a seed no record carries", () => {
 describe("a grouping axis the source declared", () => {
   it("fails the audit when a record leaves it unknown", () => {
     const { records, split } = v3Split("unknown");
-    const audit = auditBlockedSplit(records, split, AUDIT_POLICY, DECLARED);
+    const audit = auditBlockedSplit(
+      records,
+      split,
+      AUDIT_POLICY,
+      NO_RESERVATION,
+      DECLARED,
+    );
 
     expect(audit.declaredAxisGaps).toEqual([
       {
@@ -1088,7 +1151,13 @@ describe("a grouping axis the source declared", () => {
 
   it("passes when the record states notApplicable, which is legitimate", () => {
     const { records, split } = v3Split("notApplicable");
-    const audit = auditBlockedSplit(records, split, AUDIT_POLICY, DECLARED);
+    const audit = auditBlockedSplit(
+      records,
+      split,
+      AUDIT_POLICY,
+      NO_RESERVATION,
+      DECLARED,
+    );
 
     expect(audit.declaredAxisGaps).toEqual([]);
     expect(audit.reasons.some((reason) => /declares axis/.test(reason))).toBe(
@@ -1098,11 +1167,147 @@ describe("a grouping axis the source declared", () => {
 
   it("says nothing about an axis no source declared", () => {
     const { records, split } = v3Split("unknown");
-    const audit = auditBlockedSplit(records, split, AUDIT_POLICY);
+    const audit = auditBlockedSplit(
+      records,
+      split,
+      AUDIT_POLICY,
+      NO_RESERVATION,
+    );
 
     expect(audit.declaredAxisGaps).toEqual([]);
     expect(audit.reasons.some((reason) => /declares axis/.test(reason))).toBe(
       false,
     );
+  });
+});
+
+describe("the reservation the partitions honor", () => {
+  const RESERVED = asGeneratorFamily("family-reserved");
+  const INCIDENTAL = asGeneratorFamily("family-incidental");
+
+  // Three generated families over five record-lines. `family-seen` is spread
+  // across the three partitions; `family-reserved` and `family-incidental` each
+  // hold one record-line and both sit ONLY in test. The two test-only families
+  // differ in exactly one respect — whether the reservation named them — which is
+  // the distinction the audit has to make and the one it used to be blind to.
+  function corpus(): {
+    records: BenchmarkRecord[];
+    split: DatasetSplit<BenchmarkRecord>;
+  } {
+    const ai = (
+      id: string,
+      createdAt: number,
+      family: string,
+    ): BenchmarkRecord =>
+      rec({
+        id,
+        label: "ai",
+        createdAt,
+        domain: "corporate",
+        wordCount: 120,
+        family,
+        author: `auth_${id}`,
+        source: `src_${id}`,
+        domainSource: `ds_${id}`,
+        collectionBatch: `cb_${id}`,
+        nearDuplicate: `nd_${id}`,
+        derivationRoot: id,
+        generatorVersion: `gv_${id}`,
+        promptTemplate: `pt_${id}`,
+      });
+    const development = [ai("dev_seen", 1, "family-seen")];
+    const calibration = [ai("cal_seen", 2, "family-seen")];
+    const test = [
+      ai("tst_seen", 3, "family-seen"),
+      ai("tst_reserved", 4, "family-reserved"),
+      ai("tst_incidental", 5, "family-incidental"),
+    ];
+    return {
+      records: [...development, ...calibration, ...test],
+      split: { development, calibration, test },
+    };
+  }
+
+  it("derives the declared families whose every record-line sits in test", () => {
+    const { records, split } = corpus();
+    const audit = auditBlockedSplit(records, split, AUDIT_POLICY, [RESERVED]);
+
+    expect(audit.heldOutGeneratorFamilies).toEqual([RESERVED]);
+  });
+
+  it("publishes an undeclared test-only family as incidental, and the exact equality still holds", () => {
+    const { records, split } = corpus();
+    const audit = auditBlockedSplit(records, split, AUDIT_POLICY, [RESERVED]);
+
+    expect(audit.incidentalTestOnlyGeneratorFamilies).toEqual([INCIDENTAL]);
+    expect(audit.heldOutGeneratorFamilies).not.toContain(INCIDENTAL);
+    // The whole point of the correction: a family that merely landed in test does
+    // NOT reprove the split. Under the inferred set this threw.
+    expect(() =>
+      assertGeneratorFamiliesEqual(
+        "declared",
+        [RESERVED],
+        "derived",
+        audit.heldOutGeneratorFamilies,
+      ),
+    ).not.toThrow();
+  });
+
+  it("withdraws a declared family with one record-line outside test, and that fails hard", () => {
+    const { records, split } = corpus();
+    const violated: DatasetSplit<BenchmarkRecord> = {
+      development: [
+        ...split.development,
+        ...split.test.filter((row) => row.id === "tst_reserved"),
+      ],
+      calibration: split.calibration,
+      test: split.test.filter((row) => row.id !== "tst_reserved"),
+    };
+    const audit = auditBlockedSplit(records, violated, AUDIT_POLICY, [
+      RESERVED,
+    ]);
+
+    expect(audit.heldOutGeneratorFamilies).toEqual([]);
+    expect(audit.incidentalTestOnlyGeneratorFamilies).toEqual([INCIDENTAL]);
+    expect(() =>
+      assertGeneratorFamiliesEqual(
+        "declared",
+        [RESERVED],
+        "derived",
+        audit.heldOutGeneratorFamilies,
+      ),
+    ).toThrow(/omits \[family-reserved\]/);
+  });
+
+  it("does not honor a declared family the corpus stocks with nothing", () => {
+    const { records, split } = corpus();
+    const audit = auditBlockedSplit(records, split, AUDIT_POLICY, [
+      asGeneratorFamily("family-absent"),
+    ]);
+
+    expect(audit.heldOutGeneratorFamilies).toEqual([]);
+    // A reservation nothing satisfies is still a hard failure: vacuous truth over
+    // zero record-lines must not publish a reserve with no population.
+    expect(() =>
+      assertGeneratorFamiliesEqual(
+        "declared",
+        [asGeneratorFamily("family-absent")],
+        "derived",
+        audit.heldOutGeneratorFamilies,
+      ),
+    ).toThrow(/omits \[family-absent\]/);
+  });
+
+  it("keys generatorExposure on the declared set, so an incidental family reads seen", () => {
+    const { records, split } = corpus();
+    const audit = auditBlockedSplit(records, split, AUDIT_POLICY, [RESERVED]);
+
+    const exposure = audit.criticalSliceSamples.filter(
+      (slice) => slice.axis === "generatorExposure",
+    );
+    expect(exposure.find((slice) => slice.key === "unseen")!.positives).toBe(1);
+    // `family-seen` and `family-incidental`: two positives that were never
+    // reserved, whatever partition they landed in.
+    expect(exposure.find((slice) => slice.key === "seen")!.positives).toBe(2);
   });
 });

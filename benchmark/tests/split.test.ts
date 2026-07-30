@@ -294,7 +294,12 @@ describe("createBlockedSplit", () => {
       heldOutGeneratorFamilies: [asGeneratorFamily("family-unseen")],
       seed: 712_019,
     });
-    const audit = auditBlockedSplit(DATASET, split, RELEASE_AUDIT_POLICY);
+    const audit = auditBlockedSplit(
+      DATASET,
+      split,
+      RELEASE_AUDIT_POLICY,
+      POLICY.heldOutGeneratorFamilies,
+    );
     expect(audit.leakages).toEqual([]);
     // Reads the CANONICAL field, like the splitter does. Asserting on
     // `generation.family` here would keep passing even if the held-out mark stopped
@@ -355,7 +360,12 @@ describe("createBlockedSplit", () => {
 
   it("splits every class 20/30/50 within the two-point tolerance", () => {
     const split = createBlockedSplit(DATASET, POLICY);
-    const audit = auditBlockedSplit(DATASET, split, RELEASE_AUDIT_POLICY);
+    const audit = auditBlockedSplit(
+      DATASET,
+      split,
+      RELEASE_AUDIT_POLICY,
+      POLICY.heldOutGeneratorFamilies,
+    );
     for (const label of ["human", "ai", "mixed"] as const) {
       expect(audit.classFractions[label].development).toBeCloseTo(0.2, 1);
       expect(

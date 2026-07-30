@@ -241,9 +241,45 @@ export interface SplitAudit {
     fprGateEligible: boolean;
     recallGateEligible: boolean;
   }>;
-  // Read back off the partitions, in canonical form, so it can be compared for
-  // exact equality against the declared, marked and published sets.
+  /**
+   * The reservation the partitions HONOR: every DECLARED family whose record-lines
+   * all sit in `test` and none of which sits anywhere else. Read back off the
+   * partitions, in canonical form, so it can be compared for exact equality against
+   * the declared, marked and published sets.
+   *
+   * It is not "the families that happen to be test-only", and the difference is the
+   * whole of A4-fix. That inference read a SYMPTOM of a reservation: under exact
+   * equality with a hard failure, any generated family the split concentrated in
+   * test — by time, by block size, by luck — reproved a split it was never reserved
+   * in. Measured on `benchmark/data/corpus-build/out/split/split-artifact.json`, the
+   * inferred set carried `gemini-3_5-flash-medium`, a family nobody declared, while
+   * the corpus builder DELIBERATELY leaves a family below the 200-positive floor
+   * undeclared: `validate` and `split` then demanded contradictory things, which is
+   * the unsatisfiable-gate class of §4.1 the rebuild exists to remove.
+   *
+   * A family with no record-line at all is NOT honored. Vacuous truth over zero rows
+   * would publish a reserve with no population, and the exact equality is what turns
+   * that into the hard failure it has to be.
+   *
+   * The failing direction stays here rather than in {@link SplitAudit.reasons}: a
+   * declared family found outside `test` is simply absent from this list, so the
+   * exact-equality gates in benchmark/commands/split.ts,
+   * benchmark/split-artifact.ts and benchmark/report.ts fail hard and name it.
+   * Restating it as an audit reason would make those three gates unreachable and
+   * therefore untestable, which is how the mapping went untested in the first place.
+   */
   heldOutGeneratorFamilies: GeneratorFamily[];
+  /**
+   * Families whose every record-line landed in `test` without anyone reserving
+   * them. DIAGNOSTIC, and deliberately outside the exact equality: the
+   * concentration may be design or accident, so the report publishes it and no gate
+   * reads it (it is not one of E3's `m` hypotheses either).
+   *
+   * The corpus restriction behind it survives the fix and belongs to C2/E2: an
+   * undeclared family needs at least one record-line outside `test`, or it consumes
+   * blind-block capacity without sustaining any unseen-generator claim.
+   */
+  incidentalTestOnlyGeneratorFamilies: GeneratorFamily[];
   passed: boolean;
   reasons: string[];
 }
@@ -267,7 +303,7 @@ const TARGETS: Record<Partition, number> = {
 };
 
 // The critical slices from the classifier design §6.4. `generatorExposure`
-// resolves to `unseen` for the reserved families and `seen` for the rest.
+// resolves to `unseen` for the DECLARED reserved families and `seen` for the rest.
 const FPR_AXES = [
   "lengthBucket",
   "domain",
@@ -284,6 +320,12 @@ const RECALL_AXES = [
 ] as const;
 
 /**
+ * @param declaredHeldOutGeneratorFamilies the reservation itself
+ *   (`manifest.heldOutGeneratorFamilies`). REQUIRED, and positioned ahead of the
+ *   axis map because the audit cannot check that a reservation was honored without
+ *   being told which families were reserved. An empty list states "nothing was
+ *   reserved", which is a legitimate corpus and not a missing argument: the audit
+ *   then honors nothing, and every test-only family is reported as incidental.
  * @param declaredGroupAxes `provenance.sourceId` -> the axes that source declares
  *   applicable (`HumanSourceRegistrationV1.declaredGroupAxes`). Passed in as a
  *   plain map rather than imported, for the same reason
@@ -296,6 +338,7 @@ export function auditBlockedSplit(
   records: readonly BenchmarkRecord[],
   split: DatasetSplitInput,
   policy: SplitAuditPolicy,
+  declaredHeldOutGeneratorFamilies: readonly GeneratorFamily[],
   declaredGroupAxes: ReadonlyMap<string, readonly V3GroupAxis[]> = new Map(),
 ): SplitAudit {
   const byPartition: Record<Partition, readonly BenchmarkRecord[]> = {
@@ -311,11 +354,20 @@ export function auditBlockedSplit(
   const clusters = auditClusters(records, byPartition);
   const declaredAxisGaps = auditDeclaredAxes(records, declaredGroupAxes);
 
-  const heldOutGeneratorFamilies = deriveHeldOutFamilies(byPartition);
+  const { honored, incidental } = auditReservation(
+    records,
+    split.test,
+    declaredHeldOutGeneratorFamilies,
+  );
+  // The exposure axis is keyed on the DECLARED set and not on the honored one, for
+  // the same reason benchmark/slices.ts keys it on the published list: the question
+  // is "was this family reserved", and answering it with the honored subset would
+  // relabel a violated reservation as `seen` — hiding, in the published audit, the
+  // very divergence the exact equality is about to fail on.
   const criticalSliceSamples = auditCriticalSlices(
     records,
     split.test,
-    heldOutGeneratorFamilies,
+    declaredHeldOutGeneratorFamilies,
     policy,
   );
 
@@ -336,7 +388,8 @@ export function auditBlockedSplit(
     clusters,
     declaredAxisGaps,
     criticalSliceSamples,
-    heldOutGeneratorFamilies,
+    heldOutGeneratorFamilies: honored,
+    incidentalTestOnlyGeneratorFamilies: incidental,
     passed: reasons.length === 0,
     reasons,
   };
@@ -724,42 +777,62 @@ function auditDeclaredAxes(
     );
 }
 
-// The reserved families are those present in test yet absent from development
-// and calibration — derived from the split itself so the audit never trusts an
-// external declaration.
-function deriveHeldOutFamilies(
-  byPartition: Record<Partition, readonly BenchmarkRecord[]>,
-): GeneratorFamily[] {
-  const inTest = familySet(byPartition.test);
-  const seenElsewhere = new Set<GeneratorFamily>([
-    ...familySet(byPartition.development),
-    ...familySet(byPartition.calibration),
-  ]);
-  return sortGeneratorFamilies(
-    [...inTest].filter((family) => !seenElsewhere.has(family)),
-  );
-}
-
-// Reads the CANONICAL field through the single accessor. Reading
-// `row.generation?.family` here would derive the provider's dotted labels, which
-// could never equal the underscore-spelled families the manifest declares — so
-// the audit's set and the declared set were incomparable by construction.
-function familySet(rows: readonly BenchmarkRecord[]): Set<GeneratorFamily> {
-  const families = new Set<GeneratorFamily>();
-  for (const row of rows) {
+/**
+ * Reads the reservation back off the partitions: which DECLARED families the split
+ * honored, and which families concentrated in `test` without being declared.
+ *
+ * The predicate is the property a reservation actually asserts — every record-line
+ * of the family is in `test` and none is anywhere else — and it is measured over
+ * the WHOLE record set rather than over `development + calibration`. A record-line
+ * assigned to no partition at all therefore withdraws the reservation too, instead
+ * of passing for "absent from the other two". (Such a row is separately refused as
+ * an incomplete assignment by benchmark/split-artifact.ts; the reservation must not
+ * be the one place it reads as harmless.)
+ *
+ * The canonical field is read through `generatorFamilyOf`. Reading
+ * `row.generation?.family` here would derive the provider's dotted labels, which
+ * could never equal the underscore-spelled families the manifest declares — so the
+ * audit's set and the declared set would be incomparable by construction.
+ */
+function auditReservation(
+  records: readonly BenchmarkRecord[],
+  test: readonly BenchmarkRecord[],
+  declared: readonly GeneratorFamily[],
+): { honored: GeneratorFamily[]; incidental: GeneratorFamily[] } {
+  const testIds = new Set(test.map((row) => row.id));
+  const tally = new Map<GeneratorFamily, { total: number; inTest: number }>();
+  for (const row of records) {
     const family = generatorFamilyOf(row);
-    if (family !== undefined) families.add(family);
+    if (family === undefined) continue;
+    const counts = tally.get(family) ?? { total: 0, inTest: 0 };
+    counts.total += 1;
+    if (testIds.has(row.id)) counts.inTest += 1;
+    tally.set(family, counts);
   }
-  return families;
+  const testOnly = (family: GeneratorFamily): boolean => {
+    const counts = tally.get(family);
+    return (
+      counts !== undefined && counts.total > 0 && counts.inTest === counts.total
+    );
+  };
+  const declaredSet = new Set(declared);
+  return {
+    honored: sortGeneratorFamilies(declared.filter(testOnly)),
+    incidental: sortGeneratorFamilies(
+      [...tally.keys()].filter(
+        (family) => !declaredSet.has(family) && testOnly(family),
+      ),
+    ),
+  };
 }
 
 function auditCriticalSlices(
   records: readonly BenchmarkRecord[],
   test: readonly BenchmarkRecord[],
-  heldOutGeneratorFamilies: readonly GeneratorFamily[],
+  declaredHeldOutGeneratorFamilies: readonly GeneratorFamily[],
   policy: SplitAuditPolicy,
 ): SplitAudit["criticalSliceSamples"] {
-  const held = new Set(heldOutGeneratorFamilies);
+  const held = new Set(declaredHeldOutGeneratorFamilies);
   const cohortOf = temporalCohortResolver(records);
   const extractors: Record<
     string,
