@@ -13,7 +13,12 @@ import {
   computeRuntimeParityDigest,
   type RuntimeParityManifestV1,
 } from "../../contracts/runtime-parity.ts";
+import {
+  validateFrozenCalibrationArtifact,
+  type FrozenCalibrationArtifact,
+} from "../calibration-pipeline.ts";
 import { runFit, type FitOptions } from "../commands/fit.ts";
+import { REBUILD_V3_POLICY } from "../rebuild-v3-policy.ts";
 import {
   emptyLabelBasisPublication,
   computeDatasetAuditDigest,
@@ -597,6 +602,114 @@ describe("runFit prediction completeness (fail closed)", () => {
         ),
       );
       expect(frozen.artifactDigest).toMatch(/^[0-9a-f]{64}$/u);
+    },
+    FIT_TIMEOUT_MS,
+  );
+
+  it(
+    "writes a frozen-calibration.json whose EVERY top-level key the digest covers",
+    async () => {
+      // The pin this file did not have, and the absence is why an unsealed key shipped:
+      // the assertion above checks `artifactDigest` against a hex regex, which a file
+      // with an extra key satisfies just as well. `crossValidation` rode the
+      // rest-spread in fit.ts into this file while `artifactWithoutDigest` omitted it,
+      // so the block could be rewritten on disk and the artifact still validated.
+      const options = await buildScenario(
+        await newRoot(),
+        defaultDevRows(),
+        defaultCalRows(),
+      );
+      await runFit(options);
+      const frozen = JSON.parse(
+        await readFile(
+          join(options.outputDirectory, "frozen-calibration.json"),
+          "utf8",
+        ),
+      ) as Record<string, unknown>;
+
+      expect(Object.keys(frozen).sort()).toEqual([
+        "artifactDigest",
+        "calibrators",
+        "datasetAuditDigest",
+        "datasetDigest",
+        "evaluatorDigest",
+        "fitSeed",
+        "model",
+        "partitionsUsed",
+        "predictionManifestDigests",
+        "schemaVersion",
+        "scoringRuntime",
+        "selectionEvidence",
+        "sourceReadinessDigest",
+        "splitDigest",
+        "thresholdEvidence",
+        "thresholds",
+      ]);
+      expect(frozen).not.toHaveProperty("crossValidation");
+
+      // The key set above is a list a future edit could extend in both places at once.
+      // This is the property that cannot be satisfied that way: removing ANY key must
+      // break the seal, which is false for exactly the keys the digest does not cover.
+      validateFrozenCalibrationArtifact(
+        frozen as unknown as FrozenCalibrationArtifact,
+      );
+      // Both refusals count and neither is available for an UNCOVERED key: a missing
+      // field the digest enumerates fails canonicalization, a missing field it hashes
+      // structurally fails the digest comparison, and a field outside the seal
+      // validates happily — which is the case this loop exists to catch.
+      for (const key of Object.keys(frozen)) {
+        if (key === "artifactDigest") continue;
+        const tampered = { ...frozen };
+        delete tampered[key];
+        expect(() =>
+          validateFrozenCalibrationArtifact(
+            tampered as unknown as FrozenCalibrationArtifact,
+          ),
+        ).toThrow(/artifactDigest|canonicaliz/u);
+      }
+    },
+    FIT_TIMEOUT_MS,
+  );
+
+  it(
+    "publishes the cross-validation diagnosis in its own file and in what fit returns",
+    async () => {
+      // Outside the seal by decision, so it must be somewhere a reader reaches: an
+      // oversized atom or an all-singleton atom set has to APPEAR (brief requirement 4)
+      // and before this it was a field with no file, no log and no consumer.
+      const options = await buildScenario(
+        await newRoot(),
+        defaultDevRows(),
+        defaultCalRows(),
+      );
+      const message = await runFit(options);
+      const crossValidation = JSON.parse(
+        await readFile(
+          join(options.outputDirectory, "cross-validation.json"),
+          "utf8",
+        ),
+      );
+      for (const path of ["document", "localized"] as const) {
+        const stratification = crossValidation[path];
+        expect(stratification.folds).toBe(
+          REBUILD_V3_POLICY.calibrator.crossValidationFolds,
+        );
+        expect(stratification.seed).toBe(
+          REBUILD_V3_POLICY.seeds.crossValidation,
+        );
+        expect(stratification.clusters).toBeGreaterThan(0);
+        expect(stratification.clusters).toBeLessThan(stratification.items);
+        expect(stratification.perRecordLineAtoms).toBe(false);
+        for (const balance of stratification.balance) {
+          expect(balance.deviation).toBeGreaterThanOrEqual(
+            balance.deviationFloor,
+          );
+        }
+      }
+      expect(message).toContain("Grouped CV");
+      expect(message).toContain(
+        `${crossValidation.document.clusters} cluster(s)`,
+      );
     },
     FIT_TIMEOUT_MS,
   );

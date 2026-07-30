@@ -57,8 +57,15 @@ export interface FitSampleScores {
    * (benchmark/cross-validation.ts) produced it. It replaced an `authorGroup`, and
    * the rename is the point: `groups.author` is `notApplicable` on every generated
    * row and was one singleton per row on the v2 corpus, so a fold keyed on it was a
-   * per-record-line fold. A caller must not synthesise this value; it is the atom
-   * the cross-validation refuses to divide.
+   * per-record-line fold.
+   *
+   * Deriving it through `clusterRootsOf` is a CALLER OBLIGATION that neither this
+   * module nor the cross-validation can check — a synthesised value passes every
+   * guard, because a record-line's own id is a well-formed pseudonym token and the
+   * pipeline never sees the records the axes live on. When the obligation is broken
+   * the folds silently become per-record-line ones; what surfaces it is
+   * `FoldStratification.perRecordLineAtoms`, reported by `fit` and written to
+   * `cross-validation.json`.
    */
   clusterRoot: string;
   documentRawScore: number;
@@ -432,15 +439,23 @@ export interface FrozenCalibrationResult extends FrozenCalibrationArtifact {
   applyLocalized(rawScore: number): number;
   /**
    * What the cluster-atomised cross-validation ACHIEVED for each path: how many
-   * split/exposure clusters the population held, the class deviation each fold
-   * ended with, and any atom too large for even balancing.
+   * split/exposure clusters the population held, whether every atom was a single
+   * record-line, the class deviation each fold ended with against the floor no
+   * packing could beat, and any atom too large for even balancing.
    *
-   * It sits beside the sealed artifact and not inside it, deliberately. The
-   * artifact's `selectionEvidence` is the competition's result, and restructuring
-   * that block across the `cal-A`/`cal-B` partitions is G1's task; adding fields to
-   * the digest-sealed object here would decide the shape G1 has to seal. What must
-   * not happen is the degeneracy going unpublished, and this is where a caller reads
-   * it from.
+   * It is NOT part of the sealed artifact and `artifactDigest` does not cover it.
+   * That is a decision with a consequence, so it is stated rather than implied: the
+   * block travels in its own file (`cross-validation.json`, written by
+   * `benchmark/commands/fit.ts`) and an auditor holding only
+   * `frozen-calibration.json` cannot verify it. The alternative was sealing it, which
+   * would fix the shape of a diagnostic block that G1 still has to restructure across
+   * `cal-A`/`cal-B`.
+   *
+   * What made this worth writing down: the block used to ride the rest-spread in
+   * `fit.ts` INTO `frozen-calibration.json` while `artifactWithoutDigest` omitted it,
+   * so the sealed file carried an unsealed key that could be edited on disk without
+   * breaking its own digest. {@link sealedCalibrationArtifact} exists so the file and
+   * the digest cannot drift apart again.
    */
   crossValidation: {
     document: FoldStratification;
@@ -972,6 +987,28 @@ function artifactWithoutDigest(
     thresholds: artifact.thresholds,
     thresholdEvidence: artifact.thresholdEvidence,
     fitSeed: artifact.fitSeed,
+  };
+}
+
+/**
+ * The sealed artifact and NOTHING else out of a fit result — the object that may be
+ * written to `frozen-calibration.json`.
+ *
+ * Its key set is `artifactWithoutDigest`'s plus `artifactDigest`, by construction and
+ * not by convention, so every key of the written file is a key the digest covers.
+ * `fit.ts` used to extract the same object with `const { applyDocument,
+ * applyLocalized, ...rest } = frozen`, which silently carried whatever else
+ * {@link FrozenCalibrationResult} grew — and it grew `crossValidation`, so the file
+ * `benchmark/report.ts` calls "selado por `artifactDigest` e imutável" had a key
+ * outside the seal. A rest-spread cannot express "exactly the sealed fields"; this
+ * function can.
+ */
+export function sealedCalibrationArtifact(
+  result: FrozenCalibrationArtifact,
+): FrozenCalibrationArtifact {
+  return {
+    ...artifactWithoutDigest(result),
+    artifactDigest: result.artifactDigest,
   };
 }
 

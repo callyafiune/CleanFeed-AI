@@ -19,6 +19,7 @@ import { parseCorpusSourceReadinessReport } from "../../contracts/source-readine
 import { parseRuntimeParityManifestV1 } from "../../contracts/runtime-parity.ts";
 import {
   fitFrozenCalibration,
+  sealedCalibrationArtifact,
   type FitSampleScores,
 } from "../calibration-pipeline.ts";
 import {
@@ -36,7 +37,10 @@ import {
   assertPredictionCompleteness,
   computePredictionManifestDigest,
 } from "../prediction-schema.ts";
-import { clusterRootsOf } from "../cross-validation.ts";
+import {
+  clusterRootsOf,
+  type FoldStratification,
+} from "../cross-validation.ts";
 import { parseBenchmarkDataset, type BenchmarkRecord } from "../schema.ts";
 import {
   validateSplitArtifact,
@@ -170,10 +174,18 @@ export async function runFit(options: FitOptions): Promise<string> {
   // Calibrator fitting is already clean: it consumes ONLY status === "scored"
   // records, mirroring metrics.ts `scoredBinary`, so an abstained/errored raw-0
   // never contaminates the calibration curve.
-  // The split/exposure cluster of every row, over the WHOLE corpus: connectivity is
-  // a property of the record set and not of a partition, so computing it over the
-  // fit population alone could split a component whose other half sits in test. It
-  // reads only the grouping axes — no test label and no test score.
+  // The split/exposure cluster of every row, over the WHOLE corpus. Restricting it
+  // to the fit population would give the SAME roots — `createBlockedSplit` assigns
+  // whole components to one partition, so no component straddles the test cut — and
+  // the reason for the whole set is therefore not that a component could be split:
+  // it is defence in depth, plus a root that does not depend on which partition a row
+  // landed in. It reads only the grouping axes: no test label and no test score.
+  //
+  // The price, stated because it is a real behaviour: `fit` now ABORTS when any row
+  // anywhere in the corpus declares an `unknown` connectivity axis, including a row
+  // of the blocked test block that enters neither the calibrator nor the thresholds
+  // nor the folds. That is fail-closed in the direction R6 asks for — a corpus with
+  // unnameable clusters is not one this fit should freeze a calibrator over.
   const clusterRootById = clusterRootsOf(records);
 
   const samples: FitSampleScores[] = [];
@@ -276,10 +288,11 @@ export async function runFit(options: FitOptions): Promise<string> {
     calibrationManifestDigest,
   });
 
-  // The apply* closures are not serialisable and not part of the sealed artifact.
-  const { applyDocument, applyLocalized, ...artifactFields } = frozen;
-  void applyDocument;
-  void applyLocalized;
+  // EXACTLY the digest-sealed fields, enumerated by the module that computes the
+  // digest. Not a rest-spread that drops the two closures: that shape wrote every
+  // field the fit result happened to carry, and `crossValidation` rode it into
+  // frozen-calibration.json without being covered by `artifactDigest`.
+  const artifactFields = sealedCalibrationArtifact(frozen);
 
   // Fail-closed: the frozen artifact must carry exactly the identities and
   // digests the preflight cleared — defense-in-depth over validateFitInputs.
@@ -288,6 +301,13 @@ export async function runFit(options: FitOptions): Promise<string> {
   await writeJsonAtomic(
     join(options.outputDirectory, "frozen-calibration.json"),
     artifactFields,
+  );
+  // The cross-validation diagnosis travels in its own file, outside the seal, for the
+  // reason `FrozenCalibrationResult.crossValidation` gives. It is written even when
+  // nothing is wrong, because "no file" and "no degeneracy" must not look alike.
+  await writeJsonAtomic(
+    join(options.outputDirectory, "cross-validation.json"),
+    frozen.crossValidation,
   );
   await writeJsonAtomic(
     join(options.outputDirectory, "fit-report.json"),
@@ -304,8 +324,54 @@ export async function runFit(options: FitOptions): Promise<string> {
 
   return (
     "Calibration frozen without test access; " +
-    "warning UCB target=0.05; action UCB target=0.02."
+    "warning UCB target=0.05; action UCB target=0.02. " +
+    describeCrossValidation(frozen.crossValidation)
   );
+}
+
+/**
+ * The one-line reading of the cross-validation diagnosis, so that a degenerate fold
+ * design reaches the operator who ran `fit` and not only a file nobody opens.
+ *
+ * Three things must be visible here rather than inferred: atoms that are all single
+ * record-lines (the per-record-line folds of assessment §3.6, which cannot be refused
+ * because R6 allows an all-singleton axis), an atom too large for the class balance to
+ * be reachable, and imbalance the packer left ABOVE the floor the atom sizes impose.
+ * The first two are corpus facts and the third is the packer's, which is exactly why
+ * they are reported apart.
+ */
+function describeCrossValidation(crossValidation: {
+  document: FoldStratification;
+  localized: FoldStratification;
+}): string {
+  const parts: string[] = [];
+  for (const [path, stratification] of Object.entries(crossValidation)) {
+    const notes: string[] = [
+      `${stratification.clusters} cluster(s) over ${stratification.items} record-line(s)`,
+    ];
+    if (stratification.perRecordLineAtoms) {
+      notes.push(
+        "EVERY atom is a single record-line: these folds are per-record-line folds, " +
+          "not grouped ones",
+      );
+    }
+    if (stratification.oversizedClusters.length > 0) {
+      notes.push(
+        `${stratification.oversizedClusters.length} atom(s) larger than one fold's ideal class share`,
+      );
+    }
+    const worstExcess = Math.max(
+      0,
+      ...stratification.balance.map((balance) => balance.excessOverFloor),
+    );
+    if (worstExcess > 0) {
+      notes.push(
+        `class imbalance ${worstExcess.toFixed(4)} above the floor the atom sizes impose`,
+      );
+    }
+    parts.push(`${path}: ${notes.join("; ")}`);
+  }
+  return `Grouped CV — ${parts.join(" | ")}.`;
 }
 
 // Warning positives, from the ONE definition (benchmark/metrics.ts): integral
