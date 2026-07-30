@@ -75,28 +75,54 @@ de uma tarefa não é satisfeito, a saída é `reject`, `indicator-only`,
 qual alternativa adotar**, não troca o estimando e não afrouxa gate.
 
 > **Nota de materialização — a tabela acima está ADIANTE do arquivo que a materializa.**
-> A6 já rodou e gravou `benchmark/rebuild-v3-policy.json` com os valores **anteriores** a
-> quatro linhas que foram alteradas depois: `fatias hard-negative`, `famílias geradoras (D3)`,
-> `receitas de geração` e as duas linhas novas de grade (`grade de F3`, `grade de F2`).
-> Enquanto **A6-REMAT** não rodar, o JSON e os validadores que o leem contradizem esta tabela,
-> e a contradição é **executável**:
+> `benchmark/rebuild-v3-policy.json` é a materialização desta tabela: A6 o criou, C1 acrescentou
+> `generationLanes` e C4 fez a última escrita. As emendas de 2026-07-30 moveram **cinco** linhas —
+> três alteradas (`fatias hard-negative`, `famílias geradoras (D3)`, `receitas de geração`) e duas
+> novas (`grade de F3`, `grade de F2`) — e o arquivo **não foi regravado**. Medido no disco, dessas
+> cinco linhas exatamente **uma** deixou o JSON com valor superado, e há **uma segunda** divergência
+> que não é linha desatualizada e sim nome que nunca existiu. São as duas, e só as duas, o escopo de
+> **A6-REMAT**:
 >
-> - `hardNegativeFamilies` no JSON e `RELEASE_CORPUS_POLICY.requiredHardNegativeFamilies`
->   ([`dataset-manifest.ts:103`](../../../benchmark/dataset-manifest.ts#L103)) ainda exigem as
->   **seis famílias perceptuais**, `non-native` inclusa — que esta tabela declara descartada;
-> - `FROZEN_GENERATION_LANES`
->   ([`rebuild-v3-policy.ts:719`](../../../benchmark/rebuild-v3-policy.ts#L719)) congela quatro
->   lanes e **nenhuma** delas é Anthropic, enquanto D3 põe duas famílias core em `claude -p`;
-> - `agy.effortConfigurable` está `false` no JSON, e a tabela de capacidade de D3 registra
->   `--effort` por flag com o id base.
+> 1. **Valor superado — `fatias hard-negative`.** `hardNegativeFamilies` no JSON e
+>    `RELEASE_CORPUS_POLICY.requiredHardNegativeFamilies`
+>    ([`dataset-manifest.ts:103`](../../../benchmark/dataset-manifest.ts#L103)) ainda exigem as
+>    **seis famílias perceptuais**, `non-native` inclusa — que esta tabela declara descartada. A
+>    contradição é **executável**: o laço de cobertura
+>    ([`dataset-manifest.ts:890`](../../../benchmark/dataset-manifest.ts#L890)) reprova com
+>    `DATASET_COVERAGE_INVALID` todo corpus de release em que uma família exigida tenha zero
+>    registros.
+> 2. **Vocabulário incompleto — lane Anthropic.** `FROZEN_GENERATION_LANES`
+>    ([`rebuild-v3-policy.ts:719`](../../../benchmark/rebuild-v3-policy.ts#L719)) admite exatamente
+>    `agy | codex | gemini-api | gemini-cli`, e **nenhuma** é Anthropic, enquanto D3 põe duas
+>    famílias core em `claude -p`. Os dois consumidores falham fechado
+>    ([`schema.ts:2003`](../../../benchmark/schema.ts#L2003) e
+>    [`assemble_corpus.py:441`](../../../benchmark/lab/assemble_corpus.py#L441)), logo hoje é
+>    impossível gravar `generationLane: "claude-cli"`.
 >
-> **As duas linhas de grade (F3 e F2) NÃO têm contraparte no JSON, e isso é deliberado.** A
-> política materializa o que o **avaliador selado** precisa verificar em tempo de execução; a
-> grade de ablação é insumo de **bancada** (`benchmark/lab/`), não entra em nenhum gate e não é
-> lida por `rebuild-v3-policy.ts`. Congelar seeds de ablação no JSON obrigaria o avaliador a
-> validar uma decisão que ele nunca consulta — a linha `seeds de ablação`, que já está no JSON,
-> é o que sustenta a rastreabilidade de F6. Se um gate futuro passar a depender da grade, ela
-> vira linha de política; até então, a fonte de verdade dela é **esta tabela**.
+> **As outras quatro linhas movidas NÃO pedem escrita no JSON, e isso é deliberado.** A política
+> materializa o que o **avaliador selado** precisa verificar em tempo de execução; decisão de
+> bancada fica fora dela para não obrigar o avaliador a validar o que nunca consulta.
+>
+> - `famílias geradoras (D3)` — **não existe chave de slate no JSON** e não existe
+>   `FROZEN_GENERATOR_FAMILIES` em `rebuild-v3-policy.ts`; o único FROZEN de família é
+>   `FROZEN_HARD_NEGATIVE_FAMILIES`
+>   ([`rebuild-v3-policy.ts:690`](../../../benchmark/rebuild-v3-policy.ts#L690)). O único uso de
+>   família geradora na política é `"axis": "groups.generatorFamily"` (`rebuild-v3-policy.json:201`),
+>   que congela o **eixo** de reamostragem e não a lista de modelos, e a forma canônica do nome vive
+>   em [`generator-family.ts`](../../../benchmark/generator-family.ts). Qual modelo é core, OOD ou
+>   reserva é decisão de **coleta**: entra no manifesto como fatia observada, não como constante que
+>   o avaliador confere.
+> - `receitas de geração` — a parte materializável **já está coerente**, verificada no JSON: as lane
+>   rows trazem `decodingConfigurable: true` só em `gemini-api` e `false` nas três lanes de CLI, com
+>   `effortScale` e `effortSources` por lane, que é exatamente o que a linha manda. A grade
+>   `temperature × top_p` em si não tem chave, pela mesma razão das grades de ablação abaixo.
+> - `grade de F3` e `grade de F2` — insumo de **bancada** (`benchmark/lab/`), não entram em nenhum
+>   gate e não são lidos por `rebuild-v3-policy.ts`. A linha `seeds de ablação`, que **já** está no
+>   JSON, é o que sustenta a rastreabilidade de F6.
+>
+> Condição de reversão, igual para as quatro: se um gate futuro passar a depender de uma delas, ela
+> vira linha de política e o JSON a materializa. Até então, a fonte de verdade delas é **esta
+> tabela**.
 
 `D0b` é um id deliberado, executado imediatamente após o piloto D0; não existe E1. A Fase E
 começa em E2 porque o dimensionamento precisa bloquear a coleta D1, e portanto pertence ao
@@ -2351,15 +2377,18 @@ número de gate se moveu.
     `humanCoreStrata: ["foo"]` passavam pelo validador. O comentário do módulo agora diz
     quais linhas são fixadas exatamente e quais só têm forma verificada.
 
-### A6-REMAT — Re-materializar a política congelada nas quatro linhas que mudaram depois de A6
+### A6-REMAT — Re-materializar a política congelada nas duas divergências que as emendas abriram
 
 **Depende de:** A6.
 **Bloqueia:** D1, D3, D5, E3 e **G5**.
 
-**Por que:** A6 materializou a tabela congelada como ela era em 2026-07-26. Depois disso, quatro
-linhas mudaram — as fatias hard-negative (D5), o slate de famílias geradoras e as receitas de
-geração (D3) — e **o arquivo não foi regravado**. A divergência não é editorial, é executável nos
-dois sentidos:
+**Por que:** `benchmark/rebuild-v3-policy.json` materializa a tabela congelada como ela era antes
+das emendas de 2026-07-30. Cinco linhas se moveram depois disso, mas — medido no disco, e a
+aritmética importa porque define o escopo desta tarefa — só **duas** exigem escrita: uma linha ficou
+com **valor superado** e um **nome nunca existiu**. As outras três (`famílias geradoras (D3)`,
+`grade de F3`, `grade de F2`) não têm contraparte no JSON e `receitas de geração` já está coerente;
+a nota de materialização sob a tabela congelada registra a razão de cada uma. A divergência que
+sobra não é editorial, é executável nos dois sentidos:
 
 1. `RELEASE_CORPUS_POLICY.requiredHardNegativeFamilies`
    ([`dataset-manifest.ts:103`](../../../benchmark/dataset-manifest.ts#L103)) e
@@ -2373,19 +2402,31 @@ dois sentidos:
    vocabulário de lanes em `agy | codex | gemini-api | gemini-cli`, sem lane Anthropic. Esse
    vocabulário é lido pelo schema
    ([`schema.ts:2003`](../../../benchmark/schema.ts#L2003)) e pelo montador de bancada
-   ([`assemble_corpus.py:426`](../../../benchmark/lab/assemble_corpus.py#L426)), que **falham
-   fechado** — logo a lane `claude -p` que D3 exige é hoje impossível de gravar;
-3. `agy.effortConfigurable: false` e `effortSources` sem `flag` contradizem a tabela de
-   capacidade de D3, que registra `--effort low|medium|high` com o id base.
+   (as linhas de lane vêm do próprio JSON em
+   [`assemble_corpus.py:426`](../../../benchmark/lab/assemble_corpus.py#L426), e a recusa está em
+   [`:441`](../../../benchmark/lab/assemble_corpus.py#L441)), e os dois **falham fechado** — logo a
+   lane `claude -p` que D3 exige é hoje impossível de gravar.
+
+**A linha `agy` NÃO entra nesta tarefa, e a direção fica declarada para que ninguém a "conserte".**
+`agy.effortConfigurable: false` com `effortSources` sem `flag` é **medição registrada**, não resíduo:
+a sondagem direta de 2026-07-27 está documentada em
+[`rebuild-v3-policy.ts:219`](../../../benchmark/rebuild-v3-policy.ts#L219) (`--effort` recusado em
+`claude-sonnet-4-6` e `claude-opus-4-6-thinking`, em conflito com ids que embutem o tier), e
+[`:778`](../../../benchmark/rebuild-v3-policy.ts#L778) registra que um validador mais estrito foi
+afrouxado justamente porque a recusa era a metade errada de uma medição real. A tabela de capacidade
+de D3 mede outra coisa — o caminho de **flag com id base**, que o slate da v3 não usa na lane `agy` —
+e por isso as duas não se contradizem; D3 traz a qualificação. Consequência: **A6-REMAT não regrava a
+linha `agy`.** Se um slate futuro puser um modelo de id base nessa lane, a linha muda depois de uma
+**nova sondagem registrada**, nunca por preferência de redação.
 
 **Mudança:** regravar `benchmark/rebuild-v3-policy.json` e atualizar as listas congeladas de
-`benchmark/rebuild-v3-policy.ts` e `benchmark/dataset-manifest.ts` para as quatro linhas
-vigentes — as seis fatias operacionais no lugar das seis famílias perceptuais, a lane
-`claude-cli` acrescentada ao vocabulário e à união `GenerationLane` com a sua linha de
-capacidade (`channel: "cli"`, `effortConfigurable: true`, `effortScale`
-`anthropic-low..max`, `effortSources` com `flag`), e a linha `agy` reconciliada. A regra do
-cabeçalho da tabela congelada continua valendo: **nada disso vira constante solta** — o JSON é a
-fonte, o `.ts` valida, o resto lê.
+`benchmark/rebuild-v3-policy.ts` e `benchmark/dataset-manifest.ts` nas duas divergências acima — as
+seis fatias operacionais no lugar das seis famílias perceptuais, e a lane `claude-cli` acrescentada
+ao vocabulário e à união `GenerationLane` com a sua linha de capacidade (`channel: "cli"`,
+`effortConfigurable: true`, `effortScale` `anthropic-low..max`, `effortSources` com `flag`). Nenhuma
+outra linha é tocada, e **nenhum slate de família geradora é gravado** — ele não tem contraparte na
+política. A regra do cabeçalho da tabela congelada continua valendo: **nada disso vira constante
+solta** — o JSON é a fonte, o `.ts` valida, o resto lê.
 
 **Prazo, e ele é duro.** Os três arquivos estão em `EVALUATOR_FILES`
 ([`digests.ts:84`](../../../benchmark/digests.ts#L84)), então editá-los depois do `fit` reprova
@@ -2406,12 +2447,13 @@ release **sem** `non-native` tem de passar, fixture sem uma fatia por proveniên
 reprovar com `DATASET_COVERAGE_INVALID`, e um registro com `generationLane: "claude-cli"` tem de
 validar. Em `assemble_corpus.py` as **linhas** de lane já vêm do próprio JSON
 ([`:426`](../../../benchmark/lab/assemble_corpus.py#L426)), logo só o mapa
-`PROVIDER_LANE` ([`:409`](../../../benchmark/lab/assemble_corpus.py#L409)) precisa da entrada
+`PROVIDER_LANE` ([`:411`](../../../benchmark/lab/assemble_corpus.py#L411)) precisa da entrada
 nova — não copie o vocabulário para lá.
 
-**Concluída quando:** o JSON, os validadores e as quatro linhas da tabela congelada dizem a mesma
-coisa; nenhum consumidor lê família ou lane de uma lista local; e o digest do avaliador foi
-recomputado **antes** de G5.
+**Concluída quando:** o JSON e os validadores dizem a mesma coisa que a linha `fatias
+hard-negative` da tabela congelada; `generationLane: "claude-cli"` é gravável; a linha `agy`
+está **byte a byte como estava**; nenhum consumidor lê família ou lane de uma lista local; e o
+digest do avaliador foi recomputado **antes** de G5.
 
 ### A7 — O `fprUpper95` do `fit` é diagnóstico, não garantia
 
@@ -7241,7 +7283,7 @@ nem no caminho de API. Portanto:
 | lane | batch não interativo | eixo de `effort` | decoding |
 |---|---|---|---|
 | `gemini` (API) | ✅ com `GEMINI_API_KEY` | n/a | ✅ `temperature` × `top_p` |
-| `agy` | ✅ `--print` | ✅ `--effort low\|medium\|high`, **só com o id base** | ❌ |
+| `agy` | ✅ `--print` | ✅ `--effort low\|medium\|high`, **só com o id base** — e o slate da v3 não põe nenhum id base nesta lane, por isso `effortConfigurable: false` no JSON está certo | ❌ |
 | `codex` | ✅ `exec` | ✅ `-c model_reasoning_effort=` (`light\|medium\|high\|xhigh`) | ❌ |
 | `claude` | ✅ `-p` (`claude.cmd` 2.1.220) | ✅ `--effort low\|medium\|high\|xhigh\|max` | ❌ |
 
@@ -7257,15 +7299,33 @@ buscar na web em vez de redigir) e o mesmo pipeline de normalização/janela/PII
 `FROZEN_GENERATION_LANES` ([`rebuild-v3-policy.ts:719`](../../../benchmark/rebuild-v3-policy.ts#L719))
 admite exatamente `agy | codex | gemini-api | gemini-cli` — quatro lanes, **nenhuma** Anthropic.
 Esse vocabulário é a fonte para o schema
-([`schema.ts:2003`](../../../benchmark/schema.ts#L2003)) e para o montador de bancada
-([`assemble_corpus.py:426`](../../../benchmark/lab/assemble_corpus.py#L426)), e os dois **falham
-fechado**: hoje é impossível gravar um registro com `generationLane: "claude-cli"`. Logo, antes de
-D3 rodar, **A6-REMAT** acrescenta a lane e a sua linha de capacidade ao
-`benchmark/rebuild-v3-policy.json` e à união `GenerationLane`, e **reconcilia a linha `agy`** —
-que hoje declara `effortConfigurable: false` e `effortSources` sem `flag`, contradizendo a tabela
-de capacidade acima. Enquanto isso não acontecer, as duas famílias core de `claude -p` são
-inalcançáveis pelo mesmo motivo pelo qual as famílias de API da OpenAI e da Anthropic o são: o
-caminho não existe, e o plano prefere dizer isso a presumir que existe.
+([`schema.ts:2003`](../../../benchmark/schema.ts#L2003)) e para o montador de bancada (as linhas de
+lane vêm do próprio JSON em
+[`assemble_corpus.py:426`](../../../benchmark/lab/assemble_corpus.py#L426); a recusa está em
+[`:441`](../../../benchmark/lab/assemble_corpus.py#L441)), e os dois **falham fechado**: hoje é
+impossível gravar um registro com `generationLane: "claude-cli"`. Logo, antes de D3 rodar,
+**A6-REMAT** acrescenta a lane e a sua linha de capacidade ao
+`benchmark/rebuild-v3-policy.json` e à união `GenerationLane`. Enquanto isso não acontecer, as duas
+famílias core de `claude -p` são inalcançáveis pelo mesmo motivo pelo qual as famílias de API da
+OpenAI e da Anthropic o são: o caminho não existe, e o plano prefere dizer isso a presumir que
+existe.
+
+**A linha `agy` do JSON está certa, e a tabela acima mede outra coisa — não "reconcilie" por
+redação.** `agy.effortConfigurable` é `false` no JSON, com `effortSources` = `["model-id",
+"not-supported"]` e **sem** `flag`. Isso não contradiz a linha `agy` da tabela de capacidade: as duas
+descrevem conjuntos de modelo **disjuntos**. A tabela registra o caminho de flag medido com **id
+base** (`agy --print ... --model gemini-3.6-flash --effort low` → exit 0); o JSON registra a
+sondagem de 2026-07-27 sobre os modelos que **o slate da v3 de fato roda nessa lane**
+([`rebuild-v3-policy.ts:219`](../../../benchmark/rebuild-v3-policy.ts#L219): `--effort` é recusado em
+`claude-sonnet-4-6` e em `claude-opus-4-6-thinking`, e **conflita** com ids que embutem o tier). A
+única família core em `agy` é `gpt-oss-120b-medium`, de tier embutido — para ela o effort **é** o id,
+`effortSource = model-id` e `configurable = false` é o valor correto. E o valor **é** verificado
+fechado por lane em [`schema.ts:3032`](../../../benchmark/schema.ts#L3032); o que não existe é
+registro que D3 precise gravar e que ele reprove. Por isso a divergência **não é executável** e
+**A6-REMAT não regrava a linha `agy`**; [`:778`](../../../benchmark/rebuild-v3-policy.ts#L778)
+registra que um validador mais estrito já foi afrouxado por causa dessa mesma medição. Se um slate
+futuro puser um modelo de **id base** nessa lane, o caminho é **nova sondagem registrada** antes de
+qualquer escrita — nunca preferência de redação sobre medição.
 
 **Restrição real que sobrou:** ids com tier embutido (`gemini-3.6-flash-low`,
 `gpt-oss-120b-medium`) **recusam** `--effort` e o harness **falha fechado** — é
@@ -8842,6 +8902,7 @@ de 180 dias que o runtime respeita sem apagar preferências.
 | E2 item 3, D1 | época sem sobreposição entre classes — risco medido e **não** encontrado (§7) | 6, item 5 |
 | **G5-ENSAIO** | a queima de 2026-07-25 foi **procedural** e nada exercitava a sequência inteira pela CLI real | — |
 | **H1-SMOKE** | `consume-holdout.ts` abre a concessão antes de ler o input e de subir o candidato; falha irrecuperável ali grava `failed` terminal | — |
+| **A6-REMAT** | a tabela congelada ficou adiante do arquivo que a materializa: `DATASET_COVERAGE_INVALID` ainda exige `non-native`, e o vocabulário de lanes não tem lane Anthropic | — |
 
 ### O critério pelo qual as tarefas foram enxugadas
 
@@ -8851,10 +8912,15 @@ teste em vez de intuição:
 
 | função da tarefa | tarefas |
 |---|---|
-| **(i) integridade do holdout** | D0b, E2, G5, **G5-ENSAIO**, H1, **H1-SMOKE**, H3b |
+| **(i) integridade do holdout** | D0b, E2, G5, **G5-ENSAIO**, H1, **H1-SMOKE**, **A6-REMAT**, H3b |
 | **(ii) alegação primária de FPR** | D0, D1, E3, E4, F1, F6, G2, G3, H2, H3, H4 |
 | **(iii) alegações secundárias** | D2, D3, D4, D5, F2, F3, F5a, F5b, G1, G4, I1–I3 |
 | **(iv) ritual de processo** | F4 como tarefa isolada — **absorvida** |
+
+**A6-REMAT entra em (i)** e não em (iii), embora o seu conteúdo seja lista de fatias: os três
+arquivos que ela regrava estão em `EVALUATOR_FILES`, logo o seu prazo é o de **R1** — antes do `fit`,
+sob pena de queimar a concessão. Uma tarefa cujo atraso queima holdout é tarefa de integridade de
+holdout, independentemente do que ela edita.
 
 **Nenhuma tarefa do grupo (iii) cria a cota conformal de FPR**, e é de lá que os cortes saem.
 O veredito explícito foi **não remodelar**: a espinha científica — clusters reais → split com
