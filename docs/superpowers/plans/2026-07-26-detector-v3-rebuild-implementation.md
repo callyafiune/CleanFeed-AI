@@ -7610,7 +7610,8 @@ mesmos digests e uma segunda gravação da exposição falha.
 
 ### E3 — Gates de composição do split
 
-**Depende de:** E2.
+**Depende de:** **A6-REMAT**, E2 (os gates de cobertura leem `RELEASE_CORPUS_POLICY`, e a lista
+de fatias exigidas tem de ser a de D5 antes de qualquer gate ser escrito sobre ela).
 
 **Arquivos:** `benchmark/gates.ts`, `benchmark/slices.ts`, `benchmark/report.ts`,
 `benchmark/tests/gates.test.ts`, `benchmark/tests/slices.test.ts`,
