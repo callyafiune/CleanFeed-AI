@@ -44,7 +44,7 @@ repeti-los como constantes soltas.
 | estratos humanos core | `qa-informal`, `encyclopedic`, `social-media`, `university`, `institutional` |
 | faixas de perfil | `50-79`, `80-199`, `200-plus`; menos de 50 palavras é abstenção |
 | coorte temporal | quartis de `createdAt` real dentro de cada fonte, congelados antes do split; fonte com menos de 4 timestamps distintos ou sem poder usa `notApplicable` |
-| famílias hard-negative | `formulaic`, `motivational`, `highly-polished`, `repetitive`, `non-native`, `corporate-structure` |
+| fatias hard-negative | por **proveniência**: `judicial`, `legislative`, `institutional`; por **medida**: `high-ngram-repetition`, `low-disfluency-low-typo`, `motivational-lexicon-density`. As seis famílias perceptuais originais (`formulaic`, `motivational`, `highly-polished`, `repetitive`, `non-native`, `corporate-structure`) foram substituídas em D5; `non-native` é **descartada** e declarada não medida |
 | famílias geradoras (D3) | core `gemini-2.0-flash` (lane de API), `claude-sonnet-4-6`, `claude-opus-4-6-thinking`, `gpt-oss-120b-medium`; OOD exclusivo de teste `gpt-5.4-mini`; reserva bloqueada `gemini-3.6-flash-low`; reserva da 2ª tentativa `gpt-5.5`, não exposta em nenhuma partição |
 | receitas de geração | `temperature ∈ {0,2; 0,7; 1,0}` × `top_p ∈ {0,8; 0,95}` **somente** na lane de API; nas lanes de CLI o eixo é `model` × `effort`, com `effortScale` e `effortSource` gravados, e `decodingConfigurable: false` |
 | fontes humanas v3 | somente os snapshots locais já presentes de pt.stackoverflow, ptwiki, B2W-Reviews01 e Carolina; cada byte é digestado, não há novo download |
@@ -93,9 +93,10 @@ e portanto pertence ao caminho D0 → D0b → D1.
    `reset`, descarte de alterações alheias nem consumo antecipado do holdout.
 
 Entradas operacionais obrigatórias, não decisões de desenho: GPU capaz de treinar o
-backbone, acesso às seis famílias fixadas em D3, dois revisores para D5, 20 GiB livres em
-H1 e o keyring/backup privado de C3. Ausência de uma delas deixa a tarefa `blocked`; o
-agente não substitui modelo, reduz revisão, diminui amostra nem troca fonte.
+backbone, acesso às famílias geradoras fixadas em D3, **o revisor único de L4** com as ~9–13 h
+de verificação que D1 e D5 exigem, 20 GiB livres em H1 e o keyring/backup privado de C3.
+Ausência de uma delas deixa a tarefa `blocked`; o agente não substitui modelo, reduz revisão,
+diminui amostra nem troca fonte.
 
 ---
 
@@ -226,6 +227,50 @@ declarou em B1 que o produto e o modelo **não têm e não terão ambição come
 Carolina permanece no inventário admissível, e o modelo, o bundle, os avisos e a
 documentação carregam atribuição, share-alike e restrição não comercial. Não há ramo
 comercial pendente neste plano.
+
+### L4 — Um desenvolvedor, sem equipe e sem capital
+
+Decidido em 2026-07-28. A restrição é **permanente**, não temporária: **um** revisor humano
+disponível, e nenhuma verba para contratar julgamento. O plano exigia ≥3.600 julgamentos em D5
+e ~9.000 recibos em C5/D1 — 100 a 160 h — e isso é inexequível. O que sobra é **≈ 9–13 h** de
+verificação humana, e a distribuição dessas horas é decisão de desenho, não de conveniência
+(ver D1 e D5).
+
+**Como toda limitação declarada, ela limita o que pode ser AFIRMADO e não invalida o que for
+medido.** Duas consequências concretas, e as duas são de nomenclatura antes de serem de método:
+
+1. **Concordância entre revisores deixa de ser mensurável, e nada a substitui.** `agreement` é
+   grandeza **relacional**: concordância de uma pessoa consigo mesma não é um valor de
+   concordância. Os dois estados de C5 (`agree` | `adjudicated`) permanecem intactos e
+   continuam **recusando** — ver o tipo de recibo de revisor único em C5.
+2. **A generalização sai da alegação.** Um julgamento de um revisor mede o que aquele revisor
+   julgou, sob critério publicado. Onde o plano dizia "revisado", passa a dizer quem revisou,
+   sob qual critério, e quantos itens.
+
+**O padrão de referência não é a prática comercial — é o escrutínio de par.** Como o código será
+legível publicamente, o parâmetro deixa de ser "o que um detector comercial faz" (opaco) e passa
+a ser **o que sobrevive a um revisor competente**. Isso **sobe** a barra em reprodutibilidade e
+**baixa** em mão de obra: um par pode re-rodar uma regra publicada, e **não** pode verificar
+1.800 julgamentos privados. O que um par exige, e este plano em grande parte já entrega:
+proveniência reconstruível, extração, pré-processamento, deduplicação, base do rótulo de classe,
+isolamento do split, limiares congelados, unidades amostrais, incerteza, multiplicidade e
+baselines versionados. Mais duas coisas que **faltavam** e passam a ser obrigatórias:
+
+- **evidência de que as fatias foram pré-registradas**, não escolhidas depois de ver o detector
+  falhar (D5);
+- um **data statement** dizendo o que **não** é reproduzível porque o corpus é privado (H2/H4).
+
+O que um par **não** cobra: igualar prática comercial, o orçamento de horas do operador, dois
+avaliadores para proveniência determinística, ou validade aparente de medida literalmente
+nomeada.
+
+**Dois erros registrados para não voltarem.** (a) "Rotular por percepção limita o modelo" é
+**falso**: as famílias de D5 são **estratos de avaliação**, não rótulo-alvo — o rótulo humano/IA
+vem de proveniência, e anotar uma fatia não ensina nada ao modelo, decide apenas como se
+**reporta** o FPR. A conclusão (fatias mecânicas) sobrevive **apenas** pelo argumento de
+reprodutibilidade para o par, não por esse. (b) "A amostra de PII protege terceiros" é **falso**:
+zero achados em n=300 limita a prevalência a ~0,994%, o que sobre ~9.000 registros-linha é
+compatível com **~90 registros contaminados**. A amostra **caracteriza**; não protege.
 
 ## §0 Regras invioláveis
 
@@ -2593,6 +2638,34 @@ Não existe variante comercial a preservar.
 **Mudança:** registrar `commercialUse: false`, a licença exata por fonte, atribuição,
 share-alike e o bloqueio de uso comercial no inventário, no review do modelo e no
 NOTICE. Fonte `NC` é admissível; fonte `ND` continua proibida para corpus derivado.
+
+**A licença por artefato, e ela não é uma só:**
+
+| artefato | licença |
+|---|---|
+| **código** | MIT ou Apache-2.0, **excluindo explicitamente pesos e dados** |
+| **pesos** | **não MIT.** Licença não comercial separada; CC BY-NC-SA 4.0 é coerente com a leitura conservadora do projeto |
+| **evidência / model card** | CC BY 4.0 ou CC0, com atribuição e **sem texto de corpus** |
+| **corpus** | não publicado, sem licença de distribuição |
+
+**Contradição VIVA a resolver, medida no disco:**
+[`models/cleanfeed-ptbr-v1/LICENSE`](../../../models/cleanfeed-ptbr-v1/LICENSE) é MIT e portanto
+**permite vender** ("to use, copy, modify, merge, publish, distribute, sublicense, and/or sell"),
+enquanto [`NOTICE.md`](../../../models/cleanfeed-ptbr-v1/NOTICE.md) declara uso **não comercial**
+e share-alike, e
+[`license-review.json`](../../../models/cleanfeed-ptbr-v1/license-review.json) está `pending`.
+Um `LICENSE` MIT ao lado de pesos treinados com Carolina CC BY-NC-SA contradiz a obrigação de
+licença, não só a política do projeto. O conserto é declarar o escopo de cada arquivo — MIT
+**para o código**, licença não comercial **para os pesos** — e o lançamento é
+**"open weights, non-commercial"**, nunca "open source" pela definição da OSI (ver H4).
+
+**Acoplamento de `redistribution`, e ele existe para tropeçar em quem mudar a política.**
+`CORPUS_USE_POLICY.redistribution` é `"not-published"`, e **é por isso** que a auditoria de PII
+de D1 pode ser por **amostragem** em vez de censo: o corpus não sai daqui. Se
+`redistribution` mudar para publicado, **o censo volta a ser exigível** — a taxa residual
+estimada deixa de bastar, porque o risco passa a ser de terceiros com o texto em mãos. Quem
+alterar esse campo altera o desenho da auditoria de PII no mesmo ato, e este parágrafo mora ao
+lado da declaração de propósito.
 
 **Verificar:** `vitest run benchmark/tests/source-manifest.test.ts` e `npm run
 docs:check`; fixture com `commercialUse: true` e Carolina deve falhar.
@@ -5763,8 +5836,25 @@ de PII, e justificativa ou código de exclusão. **Registro não revisado é
 `automated/unreviewed`** (R4). O gate passa a exigir coerência entre o recibo e a
 alegação, não a mera presença do campo.
 
+**Recibo de revisor único: tipo próprio, nunca um valor de `agreement`.** Sob **L4** existe um
+revisor, e os dois estados atuais são inalcançáveis com um: `agreement` é grandeza
+**relacional**, e concordância de uma pessoa consigo mesma não é um valor de concordância.
+`benchmark/schema.ts` (`"agree" | "adjudicated"`) e a exigência de adjudicador independente dos
+dois em `benchmark/dataset-manifest.ts` permanecem **intactos** e continuam recusando — não se
+afrouxa nenhum dos dois para caber a nova realidade. Entra um **terceiro tipo de recibo**,
+distinto: avaliação de **revisor único**, com revisor pseudonimizado, data real, critério e
+justificativa, **sem** `agreement` e **sem** `adjudicatorId`.
+
+Testes obrigatórios: recibo único **com** `agreement` é recusado; **com** `adjudicatorId` é
+recusado; e ele **não** satisfaz nenhuma checagem que exija duas decisões independentes. O
+estado `automated/unreviewed` continua sendo o estado honesto de tudo que ninguém olhou (R4), e
+recibo de revisor único **não** é sinônimo dele: um diz "uma pessoa julgou, sob este critério",
+o outro diz "ninguém julgou".
+
 **Concluída quando:** um registro sem revisão humana não pode carregar
-`agreement: agree`, e existe teste que prova isso.
+`agreement: agree`; existe o tipo de recibo de revisor único, que não pode carregar `agreement`
+nem `adjudicatorId` e não satisfaz checagem de duas decisões; e existe teste que prova as três
+recusas.
 
 **Verificar:** `vitest run benchmark/tests/source-manifest.test.ts
 benchmark/tests/corpus-source-audit.test.ts benchmark/tests/corpus-import.test.ts`.
@@ -6640,7 +6730,8 @@ registrada.
 
 **Por que:** cada fatia crítica de FPR precisa de **300 negativos humanos** e cada fatia
 de recall de 200 positivos antes do ajuste por desenho e multiplicidade. Marginalmente:
-`hardNegativeFamily` 6×300, `domain` 5–6×300, `humanSourceType` 5×300,
+`hardNegativeFamily` 6×300 — as **fatias operacionais** de D5, que podem se **sobrepor** —,
+`domain` 5–6×300, `humanSourceType` 5×300,
 `lengthBucket` (sem `0_49`) 5×300 e `temporalCohort` até 4×300. O piso otimista do
 bloco de teste é ≈ **1800 humanos + 1200 de IA + 300 mistos >= 0,5**, mas o total
 definitivo vem de clusters, células conjuntas core, Bonferroni de H2 e efeitos de desenho
@@ -6709,6 +6800,47 @@ alegação do conjunto inteiro.
    das bases públicas (autor de post do Stack Exchange, avaliador do B2W). Hash simples de
    identificador de baixa entropia é reversível por força bruta, e continua sendo dado
    pessoal mesmo vindo de fonte pública.
+
+**PII: amostragem, não censo — e o que isso obriga a publicar.** Sob **L4** o censo manual de
+50–100 h não existe, então a escolha é declarada: publica-se **taxa residual estimada** e
+**nunca** alegação de "zero PII". O desenho tem seis passos, e a estatística é moldada por um
+fato do código: o filtro **DESCARTA, não sinaliza** (`common.py:70-72` — *"It is a FILTER: it
+drops a candidate on a hit"*), logo não existe estrato sinalizado no corpus, todo registro
+sobrevivente é limpo-por-construção, e a **única incógnita é a taxa de escape**,
+`P(PII | o filtro disse limpo)`. O próprio arquivo nomeia os escapes: nome completo em prosa
+corrida, endereço, forma rara de *handle*.
+
+1. **Estágio 1 — censo automático** sobre 100% dos registros-linha: `pii_hits`, que já roda.
+2. **Triagem por NER português**, que é pré-requisito de código e **não existe hoje**. O regex
+   cobre cinco formatos e não acha nome em prosa corrida; sem NER a adjudicação não tem entrada
+   e volta-se ao censo. O piloto de 2026-07-29 (ver C5) mediu a taxa de apontamento e o custo.
+3. **Adjudicação humana de todo achado de NER** — é dado identificador de pessoa, ou figura
+   pública / nome de produto? Sob o resultado do piloto, **por estrato**: B2W e pt.stackoverflow
+   apontam 2,4% e 4,0% e cabem num censo de dezenas de itens; o custo inteiro está em ptwiki e
+   Carolina, e a decisão sobre o judiciário do Carolina (estrato de **PII conhecida**, não fila
+   de adjudicação) é de D1, com a nuance jurídica de que acórdão do STF é documento público e os
+   nomes nele já são públicos.
+4. **Amostra aleatória entre os NÃO apontados**, para limitar a taxa de escape do NER. **AAS**,
+   não estratificação desproporcional: a cota de ~0,994% para n=300 vale para amostra aleatória
+   simples ou probabilidade de inclusão igual, e ponderar a alocação **e** citar o limite da AAS
+   é erro. Sorteio determinístico e **pré-registrado**, seed declarada, usando `common.py:97`,
+   **antes de olhar**.
+5. **Caça dirigida** aos escapes nomeados, como busca de lacuna sistemática. Ela **não produz
+   cota** e vai declarada como busca, nunca como limite.
+6. **Regra de parada:** qualquer achado **anula** a cota de zero-achados. A resposta é corrigir
+   o padrão, **re-varrer o corpus inteiro e re-amostrar** — não alargar o intervalo.
+
+**Redação obrigatória (R7), e é esta, não uma paráfrase:**
+
+> "A varredura automática rodou sobre todos os N registros. Uma auditoria manual de n registros,
+> sorteados sob [desenho], não encontrou identificador coberto. Sob [modelo declarado], o limite
+> superior unilateral de 95% para a prevalência **no quadro amostral** é X%. Isto **não**
+> certifica nenhum registro não auditado, **não** estabelece que o corpus está livre de PII, e
+> **não** constitui passagem por `pii-review-v1` registro a registro."
+
+`benchmark/protocols/pii-review-v1.md` **não** precisa ser reescrito: ele já é honesto em dois
+estágios e já declara que registro só-de-estágio-1 não é auditado e não sustenta alegação. O que
+falta é o desenho de **quem recebe o estágio 2**, que é o de cima.
 
 **D1 não espera revisão para começar, e todo registro nasce `automated/unreviewed`.** Extrair
 dos quatro snapshots com proveniência real, corte de data verificado por fonte e
@@ -7028,22 +7160,69 @@ gêneros, sem classificação ou revisão que demonstre a característica declar
 **20 por família** onde os gates exigem 300 — `assemble_corpus.py:670` calcula
 `tag_per = 4000 // 200 = 20`, déficit de 15×.
 
-**Mudança:** curar a partir de critérios observáveis, com revisão, de múltiplas fontes e
-autores, atingindo `max(300, tamanho calculado em D0b)` por família. A família
-`non-native` merece atenção
-especial (ver §6.7 do assessment: o mecanismo do viés **inverte** em língua
-morfologicamente rica, e ninguém mediu isso em português).
+**Mudança:** curar a partir de critérios observáveis, de múltiplas fontes e autores, atingindo
+`max(300, tamanho calculado em D0b)` por fatia.
+
+**As seis famílias perceptuais viram fatias operacionais, nomeadas pelo que as define.** Sob L4
+não há como sustentar julgamento perceptual em escala, e — mais importante — **nenhum benchmark
+publicado da área implementa essas seis famílias**: elas eram invenção deste projeto. O padrão
+dominante é **proveniência mais geração controlada** (RAID, MultiSocial, MULTITuDE, M4, HC3,
+IberAuTexTification), nunca votação humana sobre estilo; onde a área usa humano em subconjunto
+adversarial, é para **validar saída mecânica**. A substituição:
+
+| família perceptual | vira | definida por |
+|---|---|---|
+| `formulaic` | `judicial`, `legislative` | **proveniência**: tipologias do Carolina (*judicial branch* 38, *legislative branch* 162 membros) |
+| `corporate-structure` | `institutional` | **proveniência** |
+| `highly-polished` | `low-disfluency-low-typo` | **medida**: disfluência, erro de digitação, variância de comprimento de frase |
+| `repetitive` | `high-ngram-repetition` | **medida**: repetição de n-gramas, type-token ratio |
+| `motivational` | `motivational-lexicon-density` | **medida**: densidade léxica declarada |
+| `non-native` | **descartada** | ver abaixo |
+
+**A regra do nome, e ela é load-bearing:** *nomeação reprodutível errada é pior que opinião
+claramente atribuída*. Baixa taxa de erro de digitação **não é** "altamente polido"; densidade
+léxica **não é** "motivacional". Definiu por medida, nomeia pela medida; por proveniência,
+nomeia pela proveniência. **Nunca definir de um jeito e nomear de outro** (R7).
+
+**Obrigatório:** publicar limiares, tokenizador, corpus de referência, léxico, versões e hashes;
+e **congelar tudo antes de qualquer escore de detector ser exposto**, com evidência do
+pré-registro — senão o limiar pode ser escolhido depois de ver o resultado, e o par não tem como
+distinguir as duas coisas. **Fatias podem se sobrepor**: um texto pode ser
+`high-ngram-repetition` **e** `low-disfluency-low-typo`, e forçar exclusividade distorceria a
+atribuição; mais fatias significam mais gates e `m` maior, o que vai reportado.
+
+**Separar evidência de autoria de atribuição de fatia.** São duas perguntas distintas — como se
+sabe que o texto é humano (proveniência, corte de data) e a qual estrato ele pertence —, e
+confundi-las foi parte do defeito original.
+
+**`non-native` é descartada e declarada não medida.** "Não nativo" é propriedade da **história
+linguística do autor**, não inferível do texto com segurança. Atribuição mecânica **codificaria
+estereótipo**; por revisor único, codificaria o estereótipo **de um operador**. E §6.7 do
+assessment registra que o mecanismo do viés **inverte** em língua morfologicamente rica, o que
+**não** foi medido em português. Uma fatia futura exigiria **evidência do lado do autor** —
+status autodeclarado e consentido, que L1 proíbe adquirir — nunca inferência estilística. Onde
+a área tem esse eixo (Liang et al., *Patterns* 2023), "não nativo" vem da **população de
+autores** de um corpus existente (TOEFL), não de julgamento de estilo.
+
+**A verificação humana que cabe nas horas de L4** é sanidade de limiar, não julgamento: 5 fatias
+× 20 itens × ~30 s ≈ **1 h**. Ela **não deve ser cortada** — se `high-ngram-repetition` estiver
+calibrado errado por ordem de magnitude, a regra roda, produz 300 itens e a fatia mede outra
+coisa, e nenhum teste automático percebe.
 
 **Arquivos:** `benchmark/lab/curate_hard_negatives.py`,
 `benchmark/lab/test_curate_hard_negatives.py`, `benchmark/source-manifest.ts`,
 `benchmark/corpus-source-audit.ts`, `docs/corpus-collection-runbook.md`.
 
 **Verificar:** `python -m unittest benchmark/lab/test_curate_hard_negatives.py` e
-`vitest run benchmark/tests/corpus-source-audit.test.ts`; item sem dois pareceres cegos
-ou sem adjudicação de desacordo permanece `automated/unreviewed` e não conta para gate.
+`vitest run benchmark/tests/corpus-source-audit.test.ts`; a atribuição de fatia por medida tem
+de ser reproduzível a partir dos limiares e hashes publicados, e o pré-registro tem de existir
+antes de qualquer escore de detector; item cuja fatia dependa de julgamento não registrado
+permanece `automated/unreviewed` e não conta para gate.
 
-**Concluída quando:** cada família atinge o tamanho de D0b, com ao menos duas fontes e
-unidades amostrais suficientes, critérios observáveis e recibos reais de revisão.
+**Concluída quando:** cada fatia atinge o tamanho de D0b, com ao menos duas fontes e unidades
+amostrais suficientes; a definição de cada uma é reproduzível por terceiro a partir do que foi
+publicado; `non-native` está declarada como não medida, com a razão; e a sanidade de limiar foi
+feita e registrada.
 
 ---
 
@@ -7184,6 +7363,14 @@ entrada endurece **todos** os gates de FPR e recall:
 
 Cada um destes é publicado; nenhum reprova release na v3, e é isso que reserva poder para os
 gates da alegação primária — FPR conformal por estrato.
+
+**`integrity.dataset-audit-sealed` tem de ser reformulado em termos da COTA, e conferir isso é
+trabalho desta tarefa.** A auditoria de PII passou a ser **por amostragem** (D1, sob L4), então
+um gate que exija **cobertura de auditoria por registro-linha** é insatisfazível por desenho — e
+sob **R3** a saída não é afrouxar o gate, é enunciá-lo sobre a grandeza que existe: o desenho
+de amostragem pré-registrado, o `n` efetivo, os achados, e o limite superior unilateral de 95%
+para a prevalência no quadro amostral, com a redação obrigatória de D1. Conferir o gate atual em
+vez de presumir: se ele hoje afirma cobertura, a alegação é mais forte que a evidência (R7).
 
 E uma correção de gate existente: **`action.fpr.slice.lengthBucket.0_49` é
 insatisfazível** — exige 300 negativos humanos com menos de 50 palavras, que a admissão
@@ -7809,6 +7996,32 @@ mesmo limiar congelado deu **7,12% em avaliações de produto, 2,68% em texto
 universitário e 0% em Wikipédia, judiciário e Stack Overflow** — e os dois registros
 ruins estavam ausentes do bloco de teste, então nenhum gate os viu.
 
+**Comparação frente a frente, e o que a sustenta.** "Melhor que modelos semelhantes" **não** é
+sustentado por transparência: transparência é **higiene mínima**, não diferencial. O que sustenta
+é comparação contra **detectores comparáveis pré-declarados**, sobre os **mesmos textos cegos**,
+em **pontos de operação equiparados**. Duas armadilhas registradas, ambas verificadas:
+
+- **ponto de operação, não limiar comum.** `benchmark/lab/compare_detectors.py:75` aplica limiar
+  **0,5 a todos** — isso **não** é comparação justa, porque cada detector tem a própria escala.
+  O mínimo é comparar a **FPR igualada**, ou publicar curvas ROC/DET inteiras. Sem isso o número
+  não sustenta alegação nenhuma, e citar o resultado do limiar comum como comparação é proibido;
+- **número publicado por terceiro não é frente a frente.** É comparar pré-processamentos,
+  subconjuntos e pontos de operação diferentes. Frente a frente exige **rodar os comparadores
+  nós mesmos** sobre textos idênticos — `desklib-v1` já está em disco e `compare_detectors.py`
+  existe, logo é factível. E a possível **contaminação de treino dos comparadores** vai
+  declarada, porque ela enviesa a comparação **a favor deles**: um detector que treinou num
+  benchmark público parecerá excelente nele, e o nosso nunca o viu. Se não for possível saber se
+  um comparador treinou no conjunto, isso vai dito como incerteza, não omitido.
+
+Corolário epistêmico, que vale para todo o relatório: **"um número verdadeiro" é linguagem
+ruim.** O que existe é estimativa condicionada a populações, rótulos e suposições declaradas. Se
+a discriminação for fraca, honestidade por estrato produz benchmark útil, resultado negativo ou
+model card confiável — **não** "melhor acurácia".
+
+**Data statement obrigatório (L4).** O relatório declara o que **não** é reproduzível por
+terceiro porque o corpus não é publicado, e o que é: código, limiares, definições de fatia,
+limiares e hashes das fatias por medida, e o desenho de amostragem da auditoria de PII.
+
 **Arquivos:** somente leitura em H2: `benchmark/report.ts`,
 `benchmark/metrics.ts`, `benchmark/slices.ts`,
 `benchmark/tests/report.test.ts`, `benchmark/tests/metrics.test.ts`. A implementação
@@ -7926,6 +8139,20 @@ da área.
 > teste cego de uso único **sobre os estratos públicos calibrados** — enciclopédico,
 > Q&A informal, avaliações de produto, institucional — e **com o número por estrato
 > nomeado, nunca agregado num só**.
+
+**A maior exposição ética, e a mitigação que a endereça.** O risco concreto é falso positivo
+contra pessoa identificável em **emprego ou educação**, usando os pesos abertos **fora dos
+estratos medidos**. A mitigação mais barata que funciona é **abstenção por padrão, sem veredito
+binário "escrito por IA", sempre que o registro não tiver calibração** — inclusive o feed
+profissional, que L1 já declara não medido. O lançamento é como **indicador de pesquisa, não
+motor de acusação**. E o ponto decisivo: **aviso legal é removível; abstenção no código não é.**
+O mecanismo já existe (`actionCeiling`, E4); o que faltava era declarar que ele **é** a
+mitigação, não preferência de UX.
+
+**Nomenclatura do lançamento (R7 aplicado ao próprio projeto):** se os pesos são não comerciais,
+isto **não é "open source"** pela definição da OSI — é **"open weights, non-commercial"**. O
+código é legível publicamente e pode ser MIT/Apache; a distinção vale para o **pacote**, e é o
+`NOTICE` que precisa estar certo, não a conversa. Ver B1 para a contradição viva a resolver.
 
 O que **não** se poderá afirmar: taxa de falso alarme em publicação profissional
 contemporânea (não medida, e não inferível dos estratos disponíveis, dada a dispersão de
