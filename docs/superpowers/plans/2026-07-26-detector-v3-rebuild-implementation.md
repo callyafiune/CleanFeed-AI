@@ -7069,9 +7069,9 @@ concessão foi gasta sem medição válida.
    arquivos enumerados por `EVALUATOR_FILES`; não usar contagem fixa. Se um caminho
    aparecer como modificado com `git diff` e `git diff --cached` vazios, é a marca
    fantasma de fim de linha: rode `git ls-files --eol | grep w/crlf` e, para cada caminho
-   listado, aplique a sequência de conserto da §10 (apagar, `git checkout-index -f --
-   <caminho>`, `git add <caminho>`) **antes** de rodar o `fit`. A saída esperada desse
-   `grep` é vazia; se não for, esta árvore não é a que a §10 descreve.
+   listado, aplique a sequência de conserto da §10 — apagar o arquivo,
+   `git checkout-index -f -- <caminho>`, `git add <caminho>` — **antes** de rodar o `fit`.
+   A saída esperada desse `grep` é vazia; se não for, esta árvore não é a que a §10 descreve.
 3. Rodar `fit`.
 4. Recomputar o digest do avaliador e conferir que casa com o gravado em
    `frozen-calibration.json`.
