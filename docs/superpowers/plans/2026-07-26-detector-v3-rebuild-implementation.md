@@ -6012,6 +6012,8 @@ bloqueante sobre artefato persistido e cinco consertos importantes. Dois deles m
    está sub-preenchido até o fim, então encher o fold 0 empata com abrir um vazio e o fold 4
    ficava sem nada (`FOLD_HALF_EMPTY`). Empate de custo vai para o fold menor. A fixture nova
    afirma contagens exatas por fold e foi verificada **vermelha** sob a mutação class-blind.
+   *(Esta regra estava errada por outro motivo e foi substituída na **terceira** rodada,
+   item 1: ela punia o fold pelo déficit da classe que o átomo **não** carrega.)*
 3. **`attainable` não era piso.** Era a **soma** de dois limites inferiores, e soma de limites
    inferiores não é limite inferior: media 0,08 (label 0) e 0,16 (label 1) na fixture cujo
    desvio medido é **0** — piso acima de valor atingido —, e o termo de resíduo
@@ -6026,7 +6028,8 @@ bloqueante sobre artefato persistido e cinco consertos importantes. Dois deles m
    admissão por ECE é constraint **deste módulo**, pode **sobrepor** o "menor Brier OOF" (o teste
    que exercita isso já existia) e é mantida porque calibrador que o gate de release recusaria
    não vale selecionar. Cabeçalho, docstring e título de teste passaram a atribuí-la a quem a
-   impõe.
+   impõe. *(A justificativa "que o gate recusaria" não se sustenta: os estimadores divergem sem
+   sinal confiável. Corrigida na **terceira** rodada, item 2.)*
 5. **O estimador de ECE da seleção passou a ser o binning congelado.** Ler `eceBins` e `eceMax`
    de um bloco que fixa `eceBinning: "equal-mass"` e medir com largura fixa era uma chave de
    política servindo dois estimadores incompatíveis. `aggregateOutOfFold` agora mede
@@ -6037,6 +6040,8 @@ bloqueante sobre artefato persistido e cinco consertos importantes. Dois deles m
    que é outra grandeza (largura fixa, peso por linha). `eceBound` continua **não** lido: o gate
    usa limite superior simultâneo de bootstrap e isto é estimativa **pontual**, que corre
    **abaixo** dele — está escrito, com a direção, para ninguém ler aprovação de release aqui.
+   *(O "mesmo binning que o gate" desta rodada é falso: `metrics.ts::eceEqualMass` parte empates
+   e pesa por linha. Terceira rodada, item 2.)*
    Achado ao implementar: equal-mass ingênuo **parte empates** entre bins, e como o desempate
    era por id de registro-linha, bins ficavam puros em rótulo para linhas que o modelo pontuou
    igual — na fixture do `fit`, onde 108 linhas compartilham um escore, **todo** candidato
@@ -6070,6 +6075,75 @@ bloqueante sobre artefato persistido e cinco consertos importantes. Dois deles m
    uma partição —; a razão verdadeira (defesa em profundidade + raiz independente de partição)
    está escrita, junto com a consequência real: `fit` **aborta** com eixo `unknown` em qualquer
    linha do corpus, inclusive do bloco cego.
+
+**Terceira rodada de correção (a revisão de qualidade reprovou a segunda).** Um bloqueante
+sobre o empacotamento, um conserto importante de alegação e dois menores. O item 1 muda
+**comportamento** — quais linhas caem em qual fold — e portanto o calibrador selecionado e os
+limiares em qualquer população cujos átomos difiram em tamanho e composição.
+
+1. **BLOQUEANTE — a regra de empacotamento da segunda rodada recusava populações que um
+   empacotamento de 5 folds válido comporta.** Ela media o erro quadrático **do fold que
+   recebe**, nas duas classes: para um átomo só de negativos o termo positivo degenerava em
+   `(fold.positivos - meta)^2`, que é **máximo para um fold vazio** e ~0 para um fold que já
+   está na meta corrente. Ou seja, o fold era punido pelo déficit de uma classe que o átomo
+   **não pode** reduzir, o guloso enchia um fold por vez e sobrava fold vazio, que
+   `FOLD_HALF_EMPTY` então recusava — culpando o corpus por condição criada pelo packer.
+   Medido com a regra da segunda rodada: as quatro formas com átomos de tamanho **desigual** e
+   composição **agrupada** que hoje são fixtures do teste abortavam todas, e 629 de 3000
+   populações fuzzeadas eram recusadas por `FOLD_HALF_EMPTY`. A regra agora é o minimizador
+   **exato**, passo a passo, do desbalanceamento de classe do **desenho inteiro** em unidades de
+   share — a mesma unidade de `FoldClassBalance.deviation`. Expandindo
+   `sum_c sum_j (count[j][c]/total[c] - 1/F)^2` para "o átomo vai ao fold i" sobra um único
+   termo dependente de `i`:
+
+   ```
+   cost(i) = sum_c (atom[c] / total[c]^2) * count[i][c]
+   ```
+
+   Duas propriedades saem da álgebra, não de heurística: classe que o átomo não carrega
+   contribui **zero** (`atom[c] = 0`), e **enquanto houver fold vazio, o fold vazio ganha**
+   (custo exatamente 0, o mínimo possível, e também vence o desempate por fold menor). Com
+   `CLUSTERS_BELOW_FOLDS` já recusando população com menos átomos que folds, nenhum fold pode
+   sair vazio. Medido nas **mesmas** populações: `FOLD_HALF_EMPTY` 629 → **0**, recusas 973 →
+   344 (todas `CLASS_CLUSTERS_BELOW_FOLDS`, que é fato do corpus), metades de validação sem
+   uma classe presente 690 → 8 entre as construídas, e 1 → **0** em escala de piloto (200
+   clusters). `FOLD_HALF_EMPTY` continua como recusa defensiva, e a mensagem agora **distingue**
+   as duas causas: dizer que os átomos não enchem cinco folds é de `CLUSTERS_BELOW_FOLDS`, que
+   já passou, então chegar ali é defeito **deste módulo**. Cinco testes novos (as quatro formas
+   + um átomo carregando 40 de 48 linhas com exatamente 5 átomos), verificados **vermelhos**
+   sob a regra da segunda rodada, todos com `FOLD_HALF_EMPTY`.
+2. **A admissão por ECE não mede a grandeza do gate, e o cabeçalho dizia que sim.** Ler
+   `eceBins`/`eceBinning` do `calibrationGate` foi documentado como fazer a seleção "medir a
+   mesma grandeza que o gate, sob o mesmo binning". Não faz: o gate lê
+   `metrics.calibration.eceEqualMass15`, e `metrics.ts::eceEqualMass` **parte** empates em
+   cortes por índice e pesa **por linha**, enquanto `equalMassEce` agrupa empates e pesa **por
+   cluster**. As três chaves são parâmetro compartilhado, não estimador compartilhado. A
+   **direção** foi medida em vez de argumentada, e a medição **refuta** a versão tentadora dela:
+   com pesos uniformes, 400 populações aleatórias por cenário — 2 escores distintos, os dois
+   estimadores coincidem (400/400); 5 distintos, este módulo fica **abaixo** em 384 e **acima**
+   em 5; 40 distintos, abaixo em 195 e acima em 198, excesso máximo 0,062. Com clusters gordos,
+   este módulo ficou **acima** em 480 de 500. Logo "agrupar empates faz disto um limite inferior
+   do estimador do gate" só vale no regime muito empatado: as duas partições da reta de escore
+   são contíguas e **nenhuma refina a outra**, então o argumento de que fundir bins não aumenta
+   ECE não atravessa. A admissão passou a ser declarada como **peneira** contra candidato
+   grosseiramente descalibrado, no orçamento e na contagem de bins do gate, e **não** como
+   previsão do veredito do gate. Duas fixtures de **sinais opostos** fixam isso (empate de 20
+   linhas em 0,5: 0 aqui, 0,25 lá; um cluster de 60 linhas + 5 singletons ruins: 0,75 aqui, 0,1
+   lá). Nem o orçamento 0,05 nem os 15 bins mudaram (R3). Qual estimador a admissão deve usar
+   segue sendo de G1.
+3. **`aggregateOutOfFold` não era invariante à ordem, e o teste não conseguia ver.** O Brier
+   acumulava na ordem de inserção do `Map` e cada grupo de escore na ordem de chegada, então a
+   invariância valia só a menos de ponto flutuante — o mesmo argumento de associatividade que
+   fez `createClusteredFolds` ordenar suas metades. Escolhido tornar a alegação **verdadeira**:
+   clusters visitados em ordem de raiz e linhas em ordem de id. A fixture do teste passou de 3
+   linhas (FP-exata nos dois sentidos, verde sem mérito) para 111 linhas em 23 clusters
+   desiguais, que **movia** Brier (`0.27438300414394073` vs `0.2743830041439407`) e ECE
+   (`0.2306558735850531` vs `0.23065587358505313`) antes do conserto; verificado vermelho.
+4. **Menor: o docstring de `equalMassEce` alegava "exatamente massa igual por bin".** Falso
+   sempre que a contagem de escores distintos não é múltiplo de `bins` — e o próprio teste novo
+   de contagem de bins **depende** de ser falso (16 escores distintos em 15 bins põem os ranks 7
+   e 8 no mesmo bin). Passou a dizer "tão igual quanto os grupos permitem", com as duas formas
+   de inexatidão e a referência ao resto que `metrics.ts::eceEqualMass` documenta.
 
 ## Fase D — Dados
 
