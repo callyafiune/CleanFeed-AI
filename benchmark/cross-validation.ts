@@ -43,10 +43,12 @@
 //     fold of a cluster is a deterministic function of the WHOLE POPULATION: atoms
 //     are ordered by size, then by the seeded digest of their pseudonymised root id
 //     under the frozen CV seed (`seeds.crossValidation`), then by that id, and each is
-//     placed in the fold its own class counts leave closest to the per-fold targets.
-//     The digest orders the atoms; it does not by itself decide the fold, which also
-//     depends on the sizes and class counts of every other atom, and stating it the
-//     shorter way would be the kind of almost-true claim this header exists to stop.
+//     placed in the fold that minimises the class imbalance of the WHOLE design in
+//     share units ({@link bestFoldIndex}, where the algebra and the two properties it
+//     yields are written out). The digest orders the atoms; it does not by itself
+//     decide the fold, which also depends on the sizes and class counts of every other
+//     atom, and stating it the shorter way would be the kind of almost-true claim this
+//     header exists to stop.
 //   * DETERMINISM, in the two senses that are not the same claim. Fold MEMBERSHIP is
 //     a function of the population and the seed alone and is invariant to input
 //     order. Member ORDER inside each half is not free to follow arrival order, and
@@ -390,8 +392,8 @@ interface FoldAccumulator {
  * ({@link selectCalibrator}) passes the frozen CV seed rather than a fit seed.
  *
  * Atoms are ordered by size descending, then by the seeded digest of their
- * pseudonymised root id, then by that id; each is placed in the fold that its own
- * class counts leave closest to the per-fold class targets ({@link bestFoldIndex}).
+ * pseudonymised root id, then by that id; each is placed in the fold that minimises
+ * the whole design's class imbalance in share units ({@link bestFoldIndex}).
  * Size-first ordering is what keeps a big atom from arriving last and forcing the
  * whole imbalance onto one fold, and the digest is what makes the order independent
  * of arrival order.
@@ -498,19 +500,12 @@ export function createClusteredFolds(
     { length: FOLD_COUNT },
     () => ({ validation: [], positives: 0, negatives: 0, total: 0 }),
   );
-  let placedPositives = 0;
-  let placedNegatives = 0;
+  const totalPositives = samples.filter((sample) => sample.label === 1).length;
+  const totalNegatives = samples.length - totalPositives;
   for (const atom of ordered) {
-    placedPositives += atom.positives;
-    placedNegatives += atom.negatives;
     const target =
       accumulators[
-        bestFoldIndex(
-          atom,
-          accumulators,
-          placedPositives / FOLD_COUNT,
-          placedNegatives / FOLD_COUNT,
-        )
+        bestFoldIndex(atom, accumulators, totalPositives, totalNegatives)
       ];
     target.validation.push(...atom.members);
     target.positives += atom.positives;
@@ -539,8 +534,14 @@ export function createClusteredFolds(
       throw new ClusterFoldError(
         "FOLD_HALF_EMPTY",
         `fold ${index} has ${fold.train.length} training and ${fold.validation.length} ` +
-          "validation record-line(s); an empty half is a fold that contributes no " +
-          "out-of-fold prediction, which is a smaller design wearing the frozen one's name",
+          `validation record-line(s) over ${byRoot.size} atoms and ${samples.length} ` +
+          "record-line(s); an empty half is a fold that contributes no out-of-fold " +
+          "prediction, which is a smaller design wearing the frozen one's name. This is " +
+          "NOT the corpus being too small for five folds — CLUSTERS_BELOW_FOLDS is the " +
+          "refusal that says that, and it already passed — so reaching here means the " +
+          "PACKING RULE in bestFoldIndex left a fold empty while atoms remained, which " +
+          "its second documented property says cannot happen. Report it as a defect in " +
+          "this module, not as a property of the population",
       );
     }
     for (const label of labels) {
@@ -652,52 +653,69 @@ function oversized(
 }
 
 /**
- * The fold this atom should join: the one whose class counts, AFTER the atom lands,
- * sit closest to the per-fold targets in squared error. Ties go to the lowest fold
- * index, because the scan is ascending and the comparison strict.
+ * The fold this atom should join: the exact minimiser, over the five choices, of the
+ * WHOLE design's class imbalance in share units.
  *
- * The atom's OWN class counts are what make this class-aware, and that is the part
- * the rule this replaced got wrong. It compared the folds' running
- * `[positives, negatives, total]` and ignored what was being placed, which is
- * class-aware only while every atom has the same composition. Measured on ten
- * same-size atoms — five all-positive, five all-negative — it produced negatives per
- * fold of `[3, 3, 6, 3, 0]`: one validation half with no negative at all, at a
- * deviation of 0.2 where 0 was attainable. It filled the folds by positives first
- * and then had no negatives left to place.
+ * The objective being minimised is `sum over classes c of sum over ALL folds j of
+ * (count[j][c]/total[c] - 1/folds)^2` — the same share units
+ * {@link FoldClassBalance.deviation} is measured in. Expanding it for "the atom goes
+ * to fold i" leaves only one term that depends on `i`, because every other fold's
+ * count is untouched and `(atom[c]/total[c])^2` is the same wherever the atom lands:
  *
- * The targets are PROGRESSIVE — the counts placed SO FAR, this atom included, divided
- * by the fold count — and not the whole population's. Against the final targets every
- * fold is under-filled until the packing is nearly done, so a fold already sitting on
- * target looks exactly as good as an empty one (both are one atom from the target, in
- * opposite directions) and the atoms pile onto the low indices. Measured on fifteen
- * singleton atoms against final targets: fold 0 absorbed five of them and fold 4 got
- * nothing, which `FOLD_HALF_EMPTY` then refuses. Progressive targets ask the right
- * question at each step — "which fold does this atom leave closest to the shape of
- * what has been placed" — and the last placements are compared against the final
- * targets anyway, since by then everything has been placed.
+ *   cost(i) = sum_c (atom[c] / total[c]^2) * count[i][c]
  *
- * Equal class cost is broken by the SMALLER resulting fold and only then by the lower
- * index, so identical atoms spread instead of stacking.
+ * Two properties fall out of that algebra rather than out of a heuristic, and both
+ * are the fix for defects measured on the two rules this replaced.
+ *
+ * FIRST: a class the atom does not carry contributes NOTHING, since `atom[c] = 0`
+ * zeroes its term. The rule this replaced scored only the RECEIVING fold's squared
+ * error, `(count[i][pos] + atom[pos] - target[pos])^2 + (...neg...)`, and for an
+ * all-negative atom the positive term degenerated to `(count[i][pos] - target[pos])^2`
+ * — largest for an EMPTY fold and near zero for a fold already holding its share of
+ * positives. So it penalised a fold for a shortfall the atom could not possibly
+ * reduce, filled one fold at a time and left later folds empty. Measured with that
+ * rule: one 12-row negative atom plus five positive and five negative singletons
+ * threw `FOLD_HALF_EMPTY` on fold 4, and 629 of 3000 fuzzed populations with unequal
+ * atom sizes and clumped class composition were refused the same way.
+ *
+ * SECOND, and stronger than a tendency: while any fold is still empty, an empty fold
+ * WINS. Every term of `cost` is non-negative and all of an empty fold's counts are
+ * zero, so its cost is exactly 0, the minimum available; a cost tie is broken by the
+ * smaller resulting fold, which an empty fold also wins. The first `folds` atoms
+ * therefore go round-robin into the `folds` folds, and since
+ * `CLUSTERS_BELOW_FOLDS` has already refused a population with fewer atoms than
+ * folds, no fold can come out empty. That is what makes `FOLD_HALF_EMPTY` below a
+ * defect report about this function rather than a statement about the corpus.
+ *
+ * What is NOT claimed: that greedy placement minimises the objective GLOBALLY. Each
+ * step is exact, the sequence of steps is not, and the residual is published as
+ * {@link FoldClassBalance.excessOverFloor} instead of being argued away here.
  */
 function bestFoldIndex(
   atom: Atom,
   accumulators: readonly FoldAccumulator[],
-  targetPositives: number,
-  targetNegatives: number,
+  totalPositives: number,
+  totalNegatives: number,
 ): number {
+  // A class absent from the whole population has `total === 0` and, necessarily,
+  // `atom === 0`: the weight is 0 rather than 0/0.
+  const positiveWeight =
+    totalPositives === 0 ? 0 : atom.positives / totalPositives ** 2;
+  const negativeWeight =
+    totalNegatives === 0 ? 0 : atom.negatives / totalNegatives ** 2;
   let bestIndex = 0;
   let bestCost = Number.POSITIVE_INFINITY;
   let bestTotal = Number.POSITIVE_INFINITY;
   for (const [index, accumulator] of accumulators.entries()) {
-    const positiveError =
-      accumulator.positives + atom.positives - targetPositives;
-    const negativeError =
-      accumulator.negatives + atom.negatives - targetNegatives;
-    const cost = positiveError ** 2 + negativeError ** 2;
-    const total = accumulator.total + atom.members.length;
-    if (cost < bestCost || (cost === bestCost && total < bestTotal)) {
+    const cost =
+      positiveWeight * accumulator.positives +
+      negativeWeight * accumulator.negatives;
+    if (
+      cost < bestCost ||
+      (cost === bestCost && accumulator.total < bestTotal)
+    ) {
       bestCost = cost;
-      bestTotal = total;
+      bestTotal = accumulator.total;
       bestIndex = index;
     }
   }

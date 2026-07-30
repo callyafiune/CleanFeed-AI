@@ -156,6 +156,58 @@ const classSkewedAtoms: ClusteredCalibrationSample[] = [
   ),
 ];
 
+function labelledAtom(
+  root: string,
+  label: 0 | 1,
+  rows: number,
+): ClusteredCalibrationSample[] {
+  return Array.from({ length: rows }, (_unused, row) => ({
+    id: `${root}_${row}`,
+    clusterRoot: root,
+    rawScore: label === 1 ? 0.9 : 0.1,
+    label,
+  }));
+}
+
+function singletons(
+  prefix: string,
+  label: 0 | 1,
+  count: number,
+): ClusteredCalibrationSample[] {
+  return Array.from({ length: count }, (_unused, index) =>
+    labelledAtom(`${prefix}${index}`, label, 1),
+  ).flat();
+}
+
+// UNEQUAL atom sizes with CLUMPED class composition — the shape `classSkewedAtoms`
+// cannot express, because its ten atoms are interchangeable in size and its
+// composition alternates, which is exactly where a class-aware heuristic looks
+// perfect. Each of these four aborted with FOLD_HALF_EMPTY under the receiving-fold
+// squared-error rule this replaced (measured; see `bestFoldIndex`).
+const unevenAtomShapes: Record<string, ClusteredCalibrationSample[]> = {
+  "one fat negative lineage against equal singleton counts": [
+    ...labelledAtom("big_neg", 0, 12),
+    ...singletons("p_", 1, 5),
+    ...singletons("n_", 0, 5),
+  ],
+  "the same fat lineage with more negative singletons than folds": [
+    ...labelledAtom("big_neg", 0, 12),
+    ...singletons("p_", 1, 5),
+    ...singletons("n_", 0, 8),
+  ],
+  "a fat negative lineage under a negative-majority population": [
+    ...labelledAtom("big_neg", 0, 8),
+    ...singletons("p_", 1, 6),
+    ...singletons("n_", 0, 10),
+  ],
+  "two fat positive lineages against a negative-majority tail": [
+    ...labelledAtom("lin_a", 1, 6),
+    ...labelledAtom("lin_b", 1, 6),
+    ...singletons("p_", 1, 5),
+    ...singletons("n_", 0, 6),
+  ],
+};
+
 // Six clusters, one of them carrying three positives while the other five carry one
 // each: no packing can give five folds an equal share of label 1.
 const skewedAtoms: ClusteredCalibrationSample[] = [
@@ -498,6 +550,99 @@ describe("createClusteredFolds", () => {
     expect(positives.deviation).toBe(0);
     expect(negatives.deviation).toBe(0);
     expect(stratification.oversizedClusters).toEqual([]);
+  });
+
+  it.each(Object.keys(unevenAtomShapes))(
+    "fills every fold with every present class when the atoms are UNEQUAL in size: %s",
+    (shape) => {
+      // The regression the previous packing rule needed and the suite could not see.
+      // `classSkewedAtoms` above has ten same-size atoms of alternating composition,
+      // which is the one shape where scoring only the receiving fold's squared error
+      // is perfect. Give the atoms unequal sizes and clumped class composition and
+      // that rule scored each fold on the class deficit the atom could NOT reduce —
+      // an empty fold looked worst — so it filled one fold at a time. All four of
+      // these threw CROSS_VALIDATION_FOLD_HALF_EMPTY under it.
+      const samples = unevenAtomShapes[shape];
+      const { folds, stratification } = createClusteredFolds(samples, CV_SEED);
+      const present = ([0, 1] as const).filter((label) =>
+        samples.some((sample) => sample.label === label),
+      );
+      expect(present).toEqual([0, 1]);
+      expect(folds).toHaveLength(FOLDS);
+      for (const fold of folds) {
+        expect(fold.validation.length).toBeGreaterThan(0);
+        expect(fold.train.length).toBeGreaterThan(0);
+        for (const label of present) {
+          // Both halves: a validation half with no negative measures the FPR of
+          // nothing, and a training half with one class fits a constant.
+          expect(fold.validation.some((sample) => sample.label === label)).toBe(
+            true,
+          );
+          expect(fold.train.some((sample) => sample.label === label)).toBe(
+            true,
+          );
+        }
+      }
+      // ...and whatever imbalance is left is the atoms', not the packer's. The
+      // comparison carries an ulp of slack on purpose: on two of these shapes the
+      // packing sits EXACTLY at the floor, and `deviation` and `deviationFloor`
+      // reach the same rational number through different expressions — `2/6 - 1/5`
+      // against `4/(5*6)` — so one lands 1 ulp below the other. A strict
+      // `>=` here fails on 0.1333333333333333 vs 0.13333333333333333, which is
+      // floating point and not a broken invariant.
+      for (const balance of stratification.balance) {
+        expect(balance.excessOverFloor).toBeGreaterThan(-1e-12);
+      }
+    },
+  );
+
+  it("leaves no fold empty while atoms remain, which is a property of the cost and not a tendency", () => {
+    // `bestFoldIndex`'s second documented property, asserted directly: every term of
+    // its cost is non-negative and an empty fold's counts are all zero, so an empty
+    // fold's cost is exactly 0 — the minimum available — and it also wins the
+    // smaller-fold tie-break. With `CLUSTERS_BELOW_FOLDS` already refusing fewer
+    // atoms than folds, the first FOLDS atoms therefore land one per fold.
+    //
+    // The witness is the hardest case for it: ONE atom carrying almost everything,
+    // with exactly FOLDS atoms in total, so there is no slack anywhere. Every atom
+    // carries both classes because `CLASS_CLUSTERS_BELOW_FOLDS` needs each class in
+    // at least FOLDS atoms, and with FOLDS atoms in total that leaves no choice.
+    const whale = [
+      ...labelledAtom("whale", 0, 38),
+      {
+        id: "whale_p0",
+        clusterRoot: "whale",
+        rawScore: 0.9,
+        label: 1 as const,
+      },
+      {
+        id: "whale_p1",
+        clusterRoot: "whale",
+        rawScore: 0.9,
+        label: 1 as const,
+      },
+    ];
+    const barelyEnough = [
+      ...whale,
+      ...[1, 2, 3, 4].flatMap((atom) => [
+        {
+          id: `pair_${atom}_p`,
+          clusterRoot: `pair_${atom}`,
+          rawScore: 0.9,
+          label: 1 as const,
+        },
+        {
+          id: `pair_${atom}_n`,
+          clusterRoot: `pair_${atom}`,
+          rawScore: 0.1,
+          label: 0 as const,
+        },
+      ]),
+    ];
+    const { folds } = createClusteredFolds(barelyEnough, CV_SEED);
+    expect(
+      folds.map((fold) => fold.validation.length).sort((a, b) => a - b),
+    ).toEqual([2, 2, 2, 2, 40]);
   });
 
   it("keeps the deviation floor BELOW the deviation actually achieved, on every fixture", () => {
