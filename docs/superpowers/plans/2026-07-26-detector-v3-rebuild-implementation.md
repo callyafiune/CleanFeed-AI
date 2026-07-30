@@ -50,6 +50,8 @@ repeti-los como constantes soltas.
 | fontes humanas v3 | somente os snapshots locais já presentes de pt.stackoverflow, ptwiki, B2W-Reviews01 e Carolina; cada byte é digestado, não há novo download |
 | backbone | `neuralmind/bert-base-portuguese-cased`; não haverá bake-off de backbone nesta reconstrução |
 | seeds de ablação | `712019`, `712020`, `712021`, `712022`, `712023`; checkpoint publicável usa `712019` |
+| grade de F3 | **6 corridas**: cross-entropy e label smoothing `0,05`, **3 seeds cada** (`712019`–`712021`), pela mesma regra mecânica de seleção. Focal, Brier e mixup saem da v3 |
+| grade de F2 | **3 seeds pareadas** (`712019`–`712021`), com e sem aumento por truncamento; duas seeds dariam mediana frágil |
 | seeds de infraestrutura | split `20260726`, CV `20260727`, bootstrap `20260728` |
 | bootstrap | 10.000 réplicas no piloto; 100.000 na medição de release; nunca reduzir por tempo |
 | treino | 3 épocas, batch 16 documentos, AdamW `lr=2e-5`, `weight_decay=0,01`, warmup linear 6%, gradiente em fp32/autocast só no forward; época escolhida pelo objetivo de F3 |
@@ -72,9 +74,16 @@ de uma tarefa não é satisfeito, a saída é `reject`, `indicator-only`,
 `insufficient-power` ou tarefa não concluída, conforme indicado. O agente **não pergunta
 qual alternativa adotar**, não troca o estimando e não afrouxa gate.
 
-Há 46 tarefas. `D0b` é um id deliberado, executado imediatamente após o piloto D0; não
-existe E1. A Fase E começa em E2 porque o dimensionamento precisa bloquear a coleta D1,
-e portanto pertence ao caminho D0 → D0b → D1.
+`D0b` é um id deliberado, executado imediatamente após o piloto D0; não existe E1. A Fase E
+começa em E2 porque o dimensionamento precisa bloquear a coleta D1, e portanto pertence ao
+caminho D0 → D0b → D1.
+
+**A contagem de tarefas mudou, e a aritmética fica escrita para ser verificável.** Eram 46.
+**F4 deixou de ser tarefa** e virou critério de aceitação de F5a/F6 (−1). Entraram **duas
+tarefas novas**, ambas antes de G5: o **ensaio geral sintético** e o **smoke pré-concessão de
+H1** (+2). **LAT** foi criada durante a execução (+1). Total: **48**. D2 continua existindo, com
+objeto trocado (avaliação externa em vez de suíte caseira), e I2/I3 continuam existindo como
+*fast-follow* — nenhuma das duas foi apagada.
 
 ### Protocolo comum de cada tarefa
 
@@ -7143,6 +7152,18 @@ sem `--add-dir`, e rodar fora de diretório com `CLAUDE.md` grande).
 significa gerar milhares de documentos novos, e foi onde a cota dos CLIs limitou a
 coleta anterior. Reservar famílias inteiras para o teste desde o início (E2).
 
+**Pareamento parcial do treino é PROIBIDO, e o mecanismo importa.** Foi proposto deixar 30–50%
+dos humanos de `train` sem par de IA para economizar geração. **Refutado:** isso **reabre o
+atalho tópico/registro → classe** que D3 existe para matar, e no corpus anterior aquele confound
+era **perfeito**. A regra certa é **parear 100% do que efetivamente entra em `train`**, e
+dimensionar os positivos de `dev`/`cal-A`/`cal-B`/`test` pelos **pisos de D0b**. Logo "50–70% de
+pareamento" só é seguro se descrever **100% do treino** sobre um treino menor — **nunca** 50–70%
+*dentro* do treino.
+
+**Paralelizar as lanes é livre.** Rodar `gemini` (API), `agy`, `codex` e `claude -p` ao mesmo
+tempo é orquestração e não custa nada cientificamente — o que não se pode variar é família,
+template ou pipeline por conveniência de agenda.
+
 **Arquivos:** `benchmark/lab/generate_ai.py`,
 `benchmark/lab/generation-plan-v3.json`, `benchmark/lab/test_extractors.py`,
 `benchmark/lab/assemble_corpus.py`, `docs/corpus-collection-runbook.md`.
@@ -7276,6 +7297,23 @@ assessment registra que o mecanismo do viés **inverte** em língua morfologicam
 status autodeclarado e consentido, que L1 proíbe adquirir — nunca inferência estilística. Onde
 a área tem esse eixo (Liang et al., *Patterns* 2023), "não nativo" vem da **população de
 autores** de um corpus existente (TOEFL), não de julgamento de estilo.
+
+**Quais fatias são GATE e quais são DIAGNÓSTICO na v3 — decidido, e a razão é Bonferroni:**
+
+- **fatias por proveniência → GATE.** `judicial`, `legislative` e `institutional` são
+  abundantes (162 membros legislativos e 38 judiciais no Carolina), custam **zero julgamento**
+  porque a tipologia vem do próprio header do documento, e sustentam alegação por estrato;
+- **fatias por medida → DIAGNÓSTICO na v3, gate na v3.1.** `high-ngram-repetition`,
+  `low-disfluency-low-typo` e `motivational-lexicon-density` continuam **publicadas e
+  reprodutíveis** (limiares, tokenizador, léxico, versões e hashes), só **não reprovam release**
+  nesta versão.
+
+**Por que isso importa mais do que parece:** cada gate estatístico obrigatório **divide o
+orçamento de Bonferroni** (`alpha_família = 0,05 / m`) e **consome poder de D0b**. Rebaixar as
+três fatias por medida a diagnóstico **libera `m`** e reserva poder para os gates que sustentam
+a alegação **primária** — FPR conformal por estrato. Poder é o recurso escasso deste projeto, e
+gastá-lo numa fatia cuja definição é nossa, e não da área, é a troca errada. Ver E3 para a lista
+completa do que não entra em `m`.
 
 **A verificação humana que cabe nas horas de L4** é sanidade de limiar, não julgamento: 5 fatias
 × 20 itens × ~30 s ≈ **1 h**. Ela **não deve ser cortada** — se `high-ngram-repetition` estiver
@@ -7586,10 +7624,17 @@ alternativa "inteligente" — perda PU sensível a comprimento — **custa 13,3 
 sozinha**. Fazer a coisa simples. Custo zero em inferência, e ataca de frente a faixa
 `50_79`, que é a maior do corpus (3026 registros).
 
-Rodar as cinco seeds congeladas, pareadas com e sem aumento. Adotar aumento somente se
+Rodar **três seeds pareadas** (`712019`–`712021`), com e sem aumento. Adotar aumento somente se
 a mediana do **pior estrato core em TPR@1%FPR** melhorar pelo menos `0,02`, nenhuma
 célula core degradar mais de `0,01` e a taxa de erro não aumentar. Caso contrário,
 `truncationAugmentation = false`; não há julgamento residual.
+
+**Três, e não cinco nem duas.** Cinco eram GPU gasta numa ablação que não protege cegueira nem
+validade de FPR. **Duas** seriam pior que barato: mediana de duas é frágil, e a decisão é
+mecânica sobre a mediana. Três é o menor número que dá mediana com um valor central, e a
+intervenção continua valendo o custo porque mira a **maior faixa do corpus** (`50-79`, 3.026
+registros-linha), que é o ponto fraco conhecido, e a guarda de regressão por célula já está
+pré-registrada.
 
 **Arquivos:** `benchmark/lab/train_detector.py`,
 `benchmark/lab/run_ablation.py`, `benchmark/lab/test_run_ablation.py`,
@@ -7618,18 +7663,26 @@ dos prompts, quantização INT8, e diferença de população entre fit e avalia�
 delas é corrigida por suavizamento de rótulo, e **nenhuma técnica de perda corrige
 confounding**.
 
-**Mudança:** comparar em `dev`, nas cinco seeds congeladas e com a decisão de F2 fixa:
+**Mudança:** comparar em `dev`, em **6 corridas** — duas perdas × **3 seeds** (`712019`–`712021`)
+— e com a decisão de F2 fixa:
 
 1. cross-entropy;
-2. label smoothing `0,05`;
-3. focal loss `gamma = 2`, `alpha = balanceamento da classe em train`;
-4. Brier loss;
-5. mixup no embedding, `Beta(0,4; 0,4)`.
+2. label smoothing `0,05`.
+
+**A grade caiu de 25 para 6, e o que saiu foi escopo, não proteção.** Focal loss, Brier loss e
+mixup no embedding saem da v3: nenhuma delas cria a cota conformal de FPR, que é a alegação
+primária, e 25 corridas de GPU são o item mais caro do calendário. **E não cair para
+cross-entropy sozinha:** os gates de recall existem (`benchmark/gates.ts` — aviso `>= 0,60`,
+ação `>= 0,35`) e este plano define **recall no limiar congelado como métrica primária de
+release**. Escolha de perda não invalida o controle conformal de FPR, que é construído em `cal-B`
+depois de o escore estar congelado — mas recall **não é descartável**, e comparar duas perdas é o
+mínimo para não adotar a primeira por omissão. Seis corridas é o compromisso, e ele é mecânico:
+se a regra de seleção não distinguir as duas, o desempate é pela ordem.
 
 Agregação não compete aqui: F1 fixou a regra idêntica ao runtime. Uma configuração é
 elegível se o erro de inferência em dev for `<= 0,001`. Vence a maior mediana, entre
 seeds, do **mínimo TPR@1%FPR entre células core**. Diferença absoluta `<= 0,005` é
-empate; desempatar por menor pior-Brier core, depois pela ordem 1→5. AUROC é diagnóstico.
+empate; desempatar por menor pior-Brier core, depois pela ordem 1→2. AUROC é diagnóstico.
 Dentro de cada execução, a época vence pela mesma ordem; empate escolhe a época mais
 cedo.
 Depois de escolher a configuração, treinar o checkpoint publicável com seed `712019`
@@ -7649,31 +7702,38 @@ restrito a Platt, beta e isotônico.
 **Verificar:** `python -m unittest benchmark/lab/test_run_ablation.py`; duas execuções
 sobre a mesma fixture escolhem a mesma configuração e seed, inclusive nos empates.
 
-**Concluída quando:** existe tabela das 25 execuções, seleção mecânica reproduzível e
+**Concluída quando:** existe tabela das **6** execuções, seleção mecânica reproduzível e
 checkpoint seed `712019` com hash registrado.
 
-### F4 — Confirmar o backbone e o orçamento congelados
+### F4 — ABSORVIDA: o backbone e o orçamento são critério de aceitação, não tarefa
 
-**Depende de:** F3.
+**F4 deixou de existir como tarefa.** A exigência **não** foi apagada; foi **movida**. Afirmar
+que o backbone é o congelado e que o ONNX INT8 cabe no orçamento não é trabalho — é verificação
+de duas condições que outras tarefas já produzem, e uma tarefa isolada para isso era ritual de
+processo.
 
-**Decisão:** usar `neuralmind/bert-base-portuguese-cased`. ModernBERT, mDeBERTa,
-mmBERT, poda de vocabulário e contexto longo ficam fora desta reconstrução. O ONNX INT8
-precisa ter no máximo **109.681.931 bytes**; exceder reprova o candidato em vez de abrir
-novo bake-off.
+**A decisão permanece congelada, e é a mesma:** usar `neuralmind/bert-base-portuguese-cased`.
+ModernBERT, mDeBERTa, mmBERT, poda de vocabulário e contexto longo ficam fora desta
+reconstrução. O ONNX INT8 tem no máximo **109.681.931 bytes**; exceder **reprova o candidato**,
+em vez de abrir novo bake-off.
 
-**Arquivos:** `benchmark/lab/train_detector.py`,
-`benchmark/lab/export_onnx.py`, `benchmark/rebuild-v3-policy.json`,
-`models/cleanfeed-ptbr-v1/source-lock.json`.
+**Para onde foi cada metade:**
 
-**Verificar:** o `training-run.json` registra exatamente o backbone e revisão resolvida;
-teste de política falha para outro id ou ONNX maior que o limite.
+- **F5a** passa a exigir, no seu critério de conclusão, que o artefato exportado seja o do
+  backbone congelado e que o ONNX INT8 respeite os 109.681.931 bytes — é F5a que roda sobre o
+  export real, logo é lá que o byte é medido;
+- **F6** passa a exigir que o `training-run.json` registre exatamente o backbone e a **revisão
+  resolvida** do modelo base, e que a verificação de release **reprove** id diferente ou ONNX
+  acima do limite — é F6 que amarra treino a artefato por digest, logo é lá que a identidade é
+  imposta.
 
-**Concluída quando:** checkpoint e export apontam para o backbone congelado e respeitam
-o orçamento em bytes.
+Os arquivos que eram de F4 (`benchmark/lab/train_detector.py`, `benchmark/lab/export_onnx.py`,
+`benchmark/rebuild-v3-policy.json`, `models/cleanfeed-ptbr-v1/source-lock.json`) já pertencem a
+F5a e F6. Nenhuma dependência declarada em F4 se perde: quem dependia de F4 depende de F5a e F6.
 
 ### F5a — Paridade bruta do export, sobre o pipeline com janelas
 
-**Depende de:** F1, **F3, F4** (é o checkpoint vencedor que se exporta; exportar outro
+**Depende de:** F1, **F3** (é o checkpoint vencedor que se exporta; exportar outro
 artefato e calibrar sobre ele não vale).
 
 **Arquivos:** `benchmark/lab/export_onnx.py`, `scripts/package-own-model.mjs`.
@@ -7687,7 +7747,9 @@ todo `dev`; exigir valores finitos e `meanAbsDelta <= 0,02`. Inversão em 0,5 é
 diagnóstico e não substitui F5b.
 
 **Concluída quando:** existe `parity_report.json` versionado do export real medido no
-pipeline com janelas, com `meanAbsDelta <= 0,02` e zero valor não finito.
+pipeline com janelas, com `meanAbsDelta <= 0,02` e zero valor não finito; **e** (absorvido de
+F4) o artefato exportado é o do backbone congelado `neuralmind/bert-base-portuguese-cased` e o
+ONNX INT8 tem no máximo **109.681.931 bytes** — exceder reprova o candidato, sem abrir bake-off.
 
 **Verificar:** `python -m unittest benchmark/lab/test_export_onnx.py` e
 `npm run model:verify`; fixture acima de `0,02` falha.
@@ -7698,7 +7760,7 @@ pipeline com janelas, com `meanAbsDelta <= 0,02` e zero valor não finito.
 
 ### F6 — Vínculo criptográfico entre treino e modelo publicado
 
-**Depende de:** F1, F3, F4, F5a.
+**Depende de:** F1, F3, F5a.
 
 **Por que:** o runbook já registra a lacuna e ela continua aberta: **nada amarra
 `train.jsonl` ao ONNX empacotado.** `release.json` carrega digests de bundle, tokenizer,
@@ -7789,7 +7851,9 @@ Toda publicação diz o que está dentro e o que está fora do relógio, e o per
 é medido pelo caminho da extensão, que o contaminaria com fila e lote.
 
 **Concluída quando:** `npm run model:verify` reprova um bundle cujo `training-run.json`
-não case, e existe teste que prova a reprovação; e existe artefato de perfil de latência
+não case, e existe teste que prova a reprovação; **(absorvido de F4)** o `training-run.json`
+registra exatamente o backbone congelado e a **revisão resolvida** do modelo base, e o teste de
+política **reprova** outro id ou ONNX acima de 109.681.931 bytes; e existe artefato de perfil de latência
 digestado à parte, com os dois coeficientes re-medidos num único build, carga desenhada nos
 dois regimes, hardware e protocolo declarados, e a verificação hasheando bytes canônicos sem
 re-medir.
@@ -7804,7 +7868,7 @@ precisa **recusar** a tentativa de colocar a medição de latência dentro do `b
 
 ### G1 — Calibrador em `cal-A`
 
-**Depende de:** E2, **F1, F3, F4, F5a** (é preciso o checkpoint vencedor e o ONNX INT8
+**Depende de:** E2, **F1, F3, F5a** (é preciso o checkpoint vencedor e o ONNX INT8
 exportado com paridade bruta verificada — calibrar sobre outro artefato que não o
 publicável não vale), **C6** (a seleção do calibrador usa CV agrupada).
 
@@ -7964,8 +8028,10 @@ faixa” e trazem os diagnósticos condicionais sem linguagem ambígua.
 
 ### G5 — Congelar e verificar antes do holdout
 
-**Depende de:** A1–A7, B1–B3, C1–C6, D0, D0b, D1–D5, E2–E4, F1–F4,
-**F5b**, F6, G1–G4.
+**Depende de:** A1–A7, **LAT**, B1–B3, C1–C6, D0, D0b, D1–D5, E2–E4, F1–F3,
+**F5b**, F6, G1–G4, **H1-SMOKE** e **G5-ENSAIO** (as duas fecham antes do congelamento:
+`consume-holdout.ts` está em `EVALUATOR_FILES` e o ensaio existe para achar falha de
+procedimento antes de ela custar a concessão).
 
 **Por que:** **este é o ponto onde a execução anterior falhou.** Editei
 `consume-holdout.ts` depois do `fit`, `integrity.evaluator-digest` reprovou, e a
@@ -7995,13 +8061,87 @@ model:verify`, `npm run test:model-benchmark`, `npm run docs:check`, `git status
 
 **Concluída quando:** o digest recomputado casa e a árvore está limpa.
 
+### G5-ENSAIO — Ensaio geral sintético da esteira selada (ANTES do G5 real)
+
+**Depende de:** o avaliador pronto (A1–A7, LAT, C1–C6, E2–E4, F1–F3, F5a, F6, G1–G4).
+**Bloqueia:** G5.
+
+**Por que existe, e a razão é a queima de 2026-07-25.** Aquela queima foi **procedural**: a
+esteira funcionou, o procedimento em volta dela não. Ensaio é a defesa **direta** contra falha
+procedural, e é a única que não custa concessão. Todo teste que existe hoje exercita as peças;
+nenhum exercita a **sequência inteira pela CLI construída de verdade**.
+
+**Mudança:** rodar `split → fit → freeze → consume-holdout` pela **CLI real**, sobre corpus
+**sintético**, com ledger e keyring em caminhos **isolados** (nunca os de produção, nunca
+`private/` do repositório). O ensaio inclui, obrigatoriamente:
+
+1. **crash e resume** no meio do consumo — provar que retomar a mesma sessão é o único caminho
+   permitido e que ele funciona;
+2. **deriva deliberada de digest** — editar um arquivo de `EVALUATOR_FILES` depois do `fit` e
+   confirmar que `integrity.evaluator-digest` **reprova**, isto é, reproduzir a falha de julho
+   de propósito, num ledger descartável;
+3. **falha antes da concessão** — provar que candidato que não sobe, ou identidade que não casa,
+   falha **sem** abrir concessão (é o smoke de H1-SMOKE);
+4. **conferência de que nada do ensaio tocou o estado real:** o ledger de produção,
+   `test-labels.jsonl` e a partição `test` permanecem intocados (R2), e o corpus sintético não
+   entra em nenhuma partição.
+
+**Arquivos:** nenhum arquivo de `EVALUATOR_FILES` é alterado. Script de ensaio e fixtures
+sintéticas; saídas em `benchmark/out/rebuild-v3/G5-ensaio/`.
+
+**Verificar:** o ensaio inteiro roda do zero num diretório temporário, duas vezes, com o mesmo
+resultado; e os três desfechos (resume, deriva de digest, falha pré-concessão) são **observados**,
+não presumidos.
+
+**Concluída quando:** existe recibo do ensaio com os quatro itens acima e nenhum deles precisou
+de intervenção manual fora do procedimento escrito. Um ensaio que só passa com ajuste ad-hoc
+significa que o procedimento está errado, e é isso que se quer descobrir aqui e não em H1.
+
+### H1-SMOKE — Smoke pré-concessão: verificar o candidato ANTES de abrir a concessão
+
+**Depende de:** nada. **PRAZO: obrigatoriamente antes de G5** —
+`benchmark/commands/consume-holdout.ts` está em `EVALUATOR_FILES`, e editá-lo depois do `fit` é
+**literalmente** a falha de 2026-07-25.
+
+**O defeito, verificado no código.** A ordem atual adquire a concessão antes de saber se há como
+usá-la:
+
+```
+:173  session = await beginHoldoutConsumption(...)   ← concessão ABERTA
+:192  const items = await readTestInput(...)          ← só agora lê o input de teste
+:198  const handle = await createTestPage(...)        ← só agora sobe o candidato (106 MB, WASM)
+:225  classifyIrrecoverable(error) → failHoldoutConsumption(... "failed")  ← TERMINAL
+```
+
+Falha classificada como irrecuperável na leitura do input ou na subida do candidato grava
+`failed` **terminal** — **concessão gasta sem um único documento pontuado**. É o segundo
+bloqueador de G5, e é do mesmo tipo do primeiro: o custo não vem do modelo, vem da ordem das
+operações.
+
+**Mudança:** imediatamente **antes** de `beginHoldoutConsumption`, subir o candidato real e
+fazer um smoke **sem rótulo** de identidade, paridade e runtime. Se o candidato não sobe, se o
+digest não casa ou se o input de teste não é legível, falha **antes** de a concessão existir. O
+smoke **não lê rótulo** e **não pontua documento de teste** (R2): ele exercita a subida, a
+identidade e o caminho de inferência com entrada própria.
+
+**Arquivos:** `benchmark/commands/consume-holdout.ts` (em `EVALUATOR_FILES`),
+`benchmark/tests/consume-holdout.test.ts`.
+
+**Verificar:** `vitest run benchmark/tests/consume-holdout.test.ts`; fixture em que o candidato
+falha ao subir precisa terminar **sem evento de concessão no ledger**, e fixture em que o smoke
+passa precisa abrir a concessão exatamente uma vez.
+
+**Concluída quando:** nenhum caminho de falha de subida, de identidade ou de leitura de input
+consegue gravar `failed` terminal, porque a concessão ainda não existe quando esses caminhos
+podem falhar; e existe teste que prova o ledger vazio nesse cenário.
+
 ---
 
 ## Fase H — Medição e publicação
 
 ### H1 — Consumir o holdout uma única vez
 
-**Depende de:** G5.
+**Depende de:** G5, e portanto de **H1-SMOKE** e **G5-ENSAIO**, que fecham antes dele.
 
 **Atenção:** o ledger de consumo registra a concessão por tupla
 `datasetDigest`+`splitDigest`, mas o consumo é **informacional** (R2): uma tupla nova não
@@ -8251,6 +8391,21 @@ as condições de exchangeability, sem alegação causal ou extrapolação de do
 Um plano "ponta a ponta" que termina na publicação não é ponta a ponta. Estas tarefas
 faltavam.
 
+**I2 e I3 são *fast-follow*, e I1 não é.** A publicação científica — H1 até H4 — não depende de
+nenhuma das duas, e mantê-las no caminho crítico atrasa a medição sem proteger nada dela. Elas
+**não** foram cortadas: saem do caminho crítico e entram depois da publicação. **Antes da
+ativação do produto**, porém, três itens de I3 são retidos, porque sem eles o produto opera com
+alegação vencida:
+
+1. **expiração de perfil** — o perfil vale 180 dias, e o runtime tem de sabê-lo;
+2. **rebaixamento sob perfil vencido, ausente ou incompatível** — o teto cai para `indicator`;
+3. **um bundle anterior conhecido-bom** disponível para rollback.
+
+O E2E de rollback e o fluxo completo de renovação são *fast-follow*. De I2, nada é retido para a
+ativação — mas as três decisões que LAT deixou nomeadas ali (separar o histograma por status,
+`processingTimeMs: 0` da abstenção por idioma, e os seis campos de estágio zerados) continuam
+sendo dela, e a segunda **contamina hoje** o diagnóstico local.
+
 ### I1 — Rollout gradual
 
 **Depende de:** H2, H3, H4.
@@ -8437,6 +8592,36 @@ de 180 dias que o runtime respeita sem apagar preferências.
 | F3 | saturação atribuída a causa não demonstrada | 6, item 3 |
 | G4 | três perfis por comprimento sem calibração por comprimento | 4.9 |
 | E2 item 3, D1 | época sem sobreposição entre classes — risco medido e **não** encontrado (§7) | 6, item 5 |
+| **G5-ENSAIO** | a queima de 2026-07-25 foi **procedural** e nada exercitava a sequência inteira pela CLI real | — |
+| **H1-SMOKE** | `consume-holdout.ts` abre a concessão antes de ler o input e de subir o candidato; falha irrecuperável ali grava `failed` terminal | — |
+
+### O critério pelo qual as tarefas foram enxugadas
+
+O enxugamento de 2026-07-30 saiu de **consulta adversarial** ao codex, que leu o plano e o
+assessment. Registrar o **critério**, e não só o resultado, para que um corte futuro use o mesmo
+teste em vez de intuição:
+
+| função da tarefa | tarefas |
+|---|---|
+| **(i) integridade do holdout** | D0b, E2, G5, **G5-ENSAIO**, H1, **H1-SMOKE**, H3b |
+| **(ii) alegação primária de FPR** | D0, D1, E3, E4, F1, F6, G2, G3, H2, H3, H4 |
+| **(iii) alegações secundárias** | D2, D3, D4, D5, F2, F3, F5a, F5b, G1, G4, I1–I3 |
+| **(iv) ritual de processo** | F4 como tarefa isolada — **absorvida** |
+
+**Nenhuma tarefa do grupo (iii) cria a cota conformal de FPR**, e é de lá que os cortes saem.
+O veredito explícito foi **não remodelar**: a espinha científica — clusters reais → split com
+poder → calibração independente → avaliador congelado → holdout de uma bala — está construída e
+revisada, e remodelá-la agora criaria **churn de avaliador perto da fronteira perigosa**, que é
+o oposto da lição de 2026-07-25.
+
+**O que NÃO foi cortado, e por quê:** G5, H1 e H3b previnem diretamente a falha observada; o
+ledger de exposição e a testemunha no keyring já estão construídos e revisados; a cegueira
+informacional de R2 e a proibição de ajustar olhando o teste; o bootstrap de 100.000 réplicas
+(nas caudas de Bonferroni é **evidência, não extravagância**, e está implementado sobre
+estatísticas suficientes por cluster, logo é barato); a reserva de duas tentativas (ela apenas
+impede que as partições ativas consumam todos os clusters elegíveis — **reserva inventário**, não
+dobra geração nem curadoria, e a matéria-prima abunda); o pareamento de 100% do treino; e a
+calibração conformal em `cal-B` com escolha pelo pior estrato.
 
 ## §6 Verificação
 
@@ -8565,6 +8750,31 @@ afirmações corrigidas do diagnóstico.
 
 Consulte-os antes de reabrir uma decisão deste plano: várias já foram discutidas e
 revertidas uma vez.
+
+### Quanta revisão cada mudança recebe — política, não improviso
+
+Medição que motivou esta política: dos ~215 agentes da sessão de reconstrução, **88% foram
+revisão e correção e 12% construção**, e a maior parte desse peso é do **processo de execução**,
+não das tarefas. Revisão é o item mais caro do projeto, e gastá-la uniformemente é o mesmo erro
+de gastar `alpha` uniformemente.
+
+**Revisão dupla** para tudo que afeta *elegibilidade de dados, tamanho amostral, split, scoring,
+limiares, identidade de bundle ou estado de concessão*. Essa fronteira é deliberadamente **mais
+larga** que `EVALUATOR_FILES` + `src/inference`: aquela versão deixava de fora os scripts de
+poder, os extratores, os construtores de geração e de misto, treino/export e empacotamento —
+todos claim-critical.
+
+**Revisão única combinada** para documentação, diagnósticos, avaliação externa e apresentação de
+relatório — e ela **tem de incluir verificação de números afirmados**. A tabela de frequências
+falsa que a revisão de qualidade de C6 pegou argumenta por **checagem de fato**, não por dois
+agentes separados.
+
+**Fan-out multi-lente só em dois momentos, com 3 a 5 lentes:** **pré-G5**, que audita **código**,
+e **pré-H1**, que audita os **artefatos congelados gerados**. São momentos distintos, não o mesmo
+duas vezes. **Não sete lentes:** as sete usadas em C3 custaram 43 agentes e renderam **3 achados
+confirmados de 18** — 40 agentes que a colheita medida não justifica. No resto do projeto, **uma
+passada adversarial** basta, e ela é obrigatória antes de fechar tarefa ou emenda, não depois de
+aplicada.
 
 ## §9 Trabalho herdado obrigatório da Fase A
 
