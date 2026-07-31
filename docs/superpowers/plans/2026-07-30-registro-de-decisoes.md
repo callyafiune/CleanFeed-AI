@@ -38,7 +38,7 @@ Com D0 = 1, o bloco B está vivo e o bloco C (estudo) fica arquivado como não a
 | A2 | **Eixo = 4 células por FONTE** (Wikipedia, B2W, Carolina×2 registros se couber; pooling justificado como perda de resolução) — consequência coerente de A1 | sem SO, "5 registros" perde a célula `qa-informal`; renomear o eixo para fonte é o que o codex prescreveu para esse caso | emenda de pré-registro (~horas) se A1 reverter | **selagem do corpus** |
 | A3 | `drop_seen()` = hash exato + Jaccard ≥0,82, descrito só como isso | R7; consenso de 3 revisões | trivial | — |
 | A4 | Antiartefato pré-treino; **família >2% contaminada → regenera a lane inteira** | contaminação de treino é o modo de falha nº 1 documentado (DetectRL 36,3%); poda seletiva mascara o viés da lane | regenerar custa API barata | — |
-| A5 | Revisão adversarial só em caminho selado; 1 rodada no resto, menores registrados | rodadas de revisão são onde os tokens moram; o selado protege a bala, o resto não | subir de nível a qualquer momento | — |
+| A5 | Revisão adversarial só em caminho selado; 1 rodada no resto, menores registrados. **Emendada em 2026-07-31** pela decisão de processo do operador (ver § "Processo de execução por unidade"): passou a haver uma etapa de verificação de DESENHO pelo Fable antes de qualquer código, em toda unidade | rodadas de revisão são onde os tokens moram; o selado protege a bala, o resto não | subir de nível a qualquer momento | — |
 | A6 | Colab Pro pré-autorizado até **R$60/mês** | destrava treino sem round-trip | cancelar | — |
 | A7 | Rajadas dimensionadas pelo rate limit; teto semanal bateu → fila pausa e retoma sozinha | `hasExtraUsageEnabled: False` — não há o que decidir quando bater | — | — |
 
@@ -123,7 +123,7 @@ externo em caminho selado mesmo depois de uma rodada adversarial grande.
 | — | `partitionFractions` era só verificado por domínio e soma, então qualquer permutação que somasse 1 passava — `test: 0.05` teria carregado limpo | as cinco fixadas com `frozenNumber`, mantendo a checagem de soma |
 
 **Um defeito meu que o conserto do P2 revelou:** a primeira versão de `CONTRAST_BOUNDARY` foi
-escrita com caracteres **backspace** (`0x08`) no lugar de ``, por escape perdido no pipeline de
+escrita com caracteres **backspace** (`0x08`) no lugar de `\b`, por escape perdido no pipeline de
 edição. Um regex com backspace simplesmente nunca casa, a suíte ficou verde, e o único sinal foi
 inspecionar os bytes. Registro porque a falha é invisível por construção: teste verde sobre padrão
 que não casa nada.
@@ -132,11 +132,168 @@ que não casa nada.
 `node_modules/.vite-temp`), então o veredito dele **não** inclui "a suíte passa". Essa parte é
 medição minha: 162 arquivos / 2307 testes verdes.
 
+## Decisões da Fase 1, tomadas pelo AGENTE
+
+### Unidade 1 — `drop_seen()` (2026-07-31)
+
+| # | decisão | razão | reversão | ratificar antes de |
+|---|---|---|---|---|
+| F1-1a | **O teto `MAX_BUCKET` sai de `drop_seen`** (segue no `prune`) | no `prune` o teto limita um passo genuinamente quadrático — ele forma todo PAR dentro do bucket, então bucket de n custa n²/2. No `drop_seen` o bucket só contribui membros para um `set` de candidatos, e o laço de Jaccard é linear nesse conjunto com `break` no primeiro que passa. O teto **comprava** custo — para um candidato mantido, um `set.update` e uma interseção Jaccard por membro do bucket, porque o `break` do laço só ajuda os registros que acabam descartados — e custava recall **em silêncio**: um documento cuja única ponte para o treino fosse um shingle presente em mais de 40 textos de treino nunca era comparado, e nenhuma estatística dizia isso. Como o índice é sobre train+dev (grande), shingles frequentes em pt-BR batem nesse teto muito mais do que qualquer coisa no `prune` | restaurar uma linha | **selagem do corpus** |
+| F1-1b | **`buckets_over_prune_cap` e `candidates_evaluated` passam a ser reportados** | a mudança acima aumenta o custo e pode aumentar os descartes; sem essas duas contagens ninguém consegue dizer se um número de descartes mudou por causa do corpus ou por causa do conserto | trivial | — |
+| F1-1c | **`contract` viaja dentro das próprias stats** | a linha de log é lida por humano no aceite da montagem, e um dicionário com `dropped` e `highest_similarity_kept` sem o contrato ao lado é exatamente onde "independência" reaparece | trivial | — |
+| F1-1d | **`worst` renomeada para `highest_kept`** | o nome sugeria pior caso; o valor é a maior similaridade entre os registros **mantidos**, e os descartados são excluídos de propósito — incluí-los faria um pool limpo reportar número acima da barra | trivial | — |
+| F1-1e | **Quarta tela: `trainingIndependenceOverclaimIn`** | o item 1 da Fase 1 diz "**nunca** como independência corpus↔treino". Os documentos já estavam certos quando a tela foi escrita — o runbook diz "não é independência semântica" com essas palavras. É justamente por isso: "nunca" pede imposição, e prosa correta hoje está a uma edição de virar alegação | remover a tela e a varredura | — |
+| F1-1f | **Predicado da tela restrito a `independente`/`independência`/`disjunto`** — sem `limpo`, sem `não visto` | `limpo` aparece numa frase que o runbook precisa manter ("um corpus limpo contra um treino não é limpo contra outro") e `não visto` enuncia a propriedade **através** de negação, então a janela de negação leria a alegação como sua própria denegação. Tela que recusa a primeira e é cega para a segunda seria pior que a estreita | ampliar com teste | — |
+| F1-1g | **`nada` saiu das DUAS telas; `INDEPENDENCE_DENIAL` é alias de `WIDENED_DENIAL`** (terceira e última posição sobre a palavra) | tentei consolidar numa só e o cross-review pegou a regressão: "Nada muda o fato de que os pesos herdam as obrigações das fontes" disparava antes e passou depois. Ali `nada` é sujeito de *muda* e **reforça** a alegação sobre *herdam*; em "nada aqui mede independência" é sujeito do próprio verbo cujo resultado se nega. Mesma palavra, força oposta. A terceira rodada produziu a MESMA forma para a tela de independência ("Nada muda o fato de que o corpus é independente do treino"), o que fechou a questão: `nada` é sujeito do verbo que o segue, então não serve de marcador em nenhuma tela lexical, e saiu das duas. O projeto escreve a denegação com `não`. **O achado aberto 1 NÃO foi resolvido por isso** e segue aberto: ele é sobre as duas telas antigas recusarem denegações corretas que usam `nenhum`/`nenhuma`, o que é defeito diferente. O que a rodada 4 consertou nelas foi outra coisa — as fronteiras Unicode | trivial | — |
+| F1-1h | **`benchmark/lab/test_near_dupes.py` criado** — não existia teste nenhum para a poda | `drop_seen` é a única coisa do pipeline que consegue ver sobreposição corpus↔treino, e tinha zero teste. O módulo tinha teste para os extratores e nenhum para a poda que eles alimentam | — | — |
+
+**Nota de fixture, porque custou duas tentativas e a lição é reusável:** o teste do teto só é
+determinístico porque os textos vistos são **curtos** (< `SAMPLE_MIN_SHINGLES`), e aí o índice
+guarda **todos** os shingles em vez de amostrar 1/16. Com textos longos os tamanhos de bucket
+dependem de valores de `crc32` e o teste passa ou falha por acidente. A primeira versão da fixture
+usava textos longos e reportava `buckets_over_prune_cap == 0` — a fixture não exercitava o caminho
+que dizia exercitar.
+
+### Unidade 2 — linhagem fail-closed (2026-07-31)
+
+| # | decisão | razão | reversão | ratificar antes de |
+|---|---|---|---|---|
+| F1-4a | **`assertDerivedParentsResolve(records)` é chamada em `runSplit`, antes de `createBlockedSplit`** | a função existia sem chamador de produção: só `benchmark/tests/schema-v3.test.ts` a alcançava, e `benchmark/split.ts` a nomeava num comentário como o lugar onde um pai não resolvido "pertence" — verdadeiro e não ligado | remover uma linha | **selagem** |
+| F1-4b | **A colocalização sai dessa chamada, não de um segundo mecanismo** | `buildClusters` une um registro ao pai só `if (ids.has(parent))`, porque pai ausente não deve inventar cluster nem recusar linha em silêncio. Com a recusa na frente, um corpus cujos pais não resolvem **nunca chega** ao splitter, então todo pai que o clusterizador procura está presente e pai + gerações + derivados caem sempre num cluster — logo, numa partição | — | **selagem** |
+| F1-4c | **`humanSeed` NÃO se torna eixo de valor** | o docstring de `AxisUnionRelation` deixava isso como "questão substantiva para E2/E3". Neste caminho ela se resolve pela chamada e não por um argumento sobre dependência: duas gerações do mesmo pai resolvem para um pai presente, então ambas são unidas a ele e portanto entre si. A questão sobrevive só para chamadores que particionam sem passar por `runSplit` | virar eixo de valor é uma linha | **selagem** |
+| F1-4d | **O guarda `ids.has(parent)` permanece** | `createBlockedSplit` também é chamada direto (testes e qualquer chamador futuro que não passou pelo gate de corpus inteiro), e um clusterizador que lançasse sobre pai ausente estaria respondendo uma pergunta de seleção sem ver a entrada inteira | — | — |
+
+**A cobertura que esta unidade NÃO tem, dita em vez de implícita:**
+`assertDerivedParentsResolve` retorna imediatamente para todo registro cujo `schemaVersion`
+não é 3, e o cenário ponta a ponta de `benchmark/tests/corpus-import.test.ts` monta corpus
+**v2** de 10 000 registros. Ou seja: nenhum teste do repositório roda a chamada nova sobre um
+corpus que ela realmente inspeciona. Os testes verdes desta unidade cobrem a ORDEM da chamada e a
+separação de responsabilidades; não cobrem o corpo da função no caminho do comando. Ver achado
+aberto 8.
+
+### As três rodadas de rejeição da unidade 1, e o que cada uma achou
+
+O cross-review do codex **rejeitou** esta unidade três vezes antes de ela ficar de pé. Nenhuma
+rodada repetiu achado da anterior, e cada uma encontrou uma classe diferente de erro — o que vale
+registrar porque o padrão é mais instrutivo que os consertos.
+
+**Rodada 1 — o conserto não era o conserto.** Seis P1. O pior: `drop_seen()` **nunca** havia usado
+`content_hash`. Ele propunha candidatos só pelos shingles amostrados 1/16, então um documento cujos
+shingles todos escapassem da amostra propunha zero candidatos e era mantido — inclusive sendo cópia
+byte a byte de um texto de treino. Medido pelo codex: 40 dos 36.971 textos vistos caem nesse
+buraco. Eu tinha tratado o teto de bucket como o defeito, consertado isso, e escrito no docstring
+que o contrato cobre "exact tokenized content" — alegação falsa, com um teste que a "provava" usando
+um texto curto que por sorte tinha shingles amostrados.
+
+**Rodada 2 — o relatório era falso.** Cinco achados. O mais sério não foi bug de código: eu havia
+reportado "11/11 casos corretos" para a quarta tela, medindo **antes** de estreitar o
+`CONJUNCTION_BOUNDARY`, e não re-medi depois de mudar o padrão. O caso central voltou a passar em
+silêncio porque `\b` em JavaScript é ASCII e não casa depois de `é`. Afirmar resultado de medição
+feita em outro estado do código é exatamente a falha que este projeto existe para não cometer.
+
+**Rodada 3 — erro de categoria.** O contrato publicado é **absoluto** ("para todo id não devolvido,
+nenhum texto visto alcança Jaccard ≥ 0,82") e o mecanismo era **probabilístico**. Nenhum valor de
+piso bottom-k fecha isso. Minha derivação de `0,18^k` estava correta como risco *por par* e foi
+apresentada como se fechasse a promessa; ela também assumia independência entre o hash e a edição,
+que nada estabelece. Contraexemplo do codex: 1.000 shingles, 12 edições, Jaccard 0,886792, zero
+candidatos, registro mantido.
+
+O conserto foi trocar a garantia probabilística por uma **determinística**, que não usa hipótese
+nenhuma sobre o hash: se `J(A,B) ≥ 0,82` então `|A ∩ B| ≥ 0,82·|A ∪ B| ≥ 0,82·|A|`, logo os shingles
+de `A` ausentes de `B` são no máximo `0,18·|A|`; um subconjunto com **mais** de 18% não cabe nessa
+lacuna, então a interseção é forçada e o candidato é sempre proposto.
+`MINWISE_FRACTION = 1 − JACCARD_THRESHOLD`, e o índice recebe `floor(0,18·|A|)+1` shingles por texto
+visto. Custa cerca de **3,7×** o índice — a união das duas fontes (18% mais a amostra de 1/16 sobre o resto, ou 23,125% dos shingles), não 18% isolados, e é o preço de a frase ser verdadeira em vez de provavelmente
+verdadeira.
+
+**A palavra `nada` custou três posições, e a lição ficou escrita no código.** Entrou como negação;
+saiu da tela de pesos quando o codex mostrou que "Nada muda o fato de que os pesos herdam as
+obrigações" **reforça** em vez de negar; saiu da tela de independência quando ele produziu a mesma
+forma para ela. `nada` é sujeito do verbo que o segue, então nega numa frase e reforça na seguinte —
+marcador que só se distingue com análise sintática não serve a nenhuma tela lexical. O projeto
+escreve "Independência semântica não é medida aqui".
+
+**Três erros meus de processo, registrados porque se repetiram:**
+
+1. **Escape perdido em heredoc.** Duas vezes um `\b` virou caractere **backspace** (`0x08`) no
+   arquivo. Um regex com backspace nunca casa, a suíte fica verde e o único sinal é inspecionar os
+   bytes. A segunda vez foi dentro do parágrafo que documenta a primeira. Passei a editar por
+   arquivo `.py` com raw strings e a checar `0x08` em todo arquivo rastreado.
+2. **`cd` do shell resetando.** Duas vezes o diretório voltou para o repositório principal, e numa
+   delas editei três arquivos lá em vez do worktree. `git status` nos dois é a única checagem
+   confiável.
+3. **Afirmar sem re-medir** — a rodada 2 acima.
+
+### Rodadas 4 a 6 do cross-review, e o que restou
+
+**Rodada 4 — `\b` é ASCII em JavaScript.** A palavra `sem` casava dentro de `semântica`,
+porque `â` não é caractere de palavra para `\b`. Os **dois** padrões de negação usavam `\b`,
+então o defeito atingia as **quatro** telas — inclusive `humanLabelOverclaimIn` e
+`reviewOverclaimIn`, que são caminho selado e existem desde antes desta fase. A tela ficava
+cega exatamente na palavra central do domínio. Todas as fronteiras passaram a ser Unicode
+explícitas (`(?<![\p{L}\p{N}])`). O mesmo `\b` já havia quebrado um lookahead depois de `é`
+na rodada 3: duas falhas de uma causa só.
+
+**Rodada 5 — teste verde sob mutação.** O codex mutou o código (removeu o `+1`, trocou a
+fração por `12`) e os 16 testes continuaram verdes. A causa não era fixture faltando:
+**nenhum teste construído a partir de texto** distingue aquelas mutações, porque um teste não
+escolhe quais shingles uma edição destrói. A seleção foi extraída para `indexed_keys()` e a
+propriedade passou a ser testada como operação de conjunto — o subconjunto indexado tem de
+sobreviver ao **pior buraco possível**, que é justamente o que um bottom-k escolheria.
+Verificado rodando as duas mutações: ambas falham, o código restaurado passa.
+
+**Rodada 6 — coerência textual.** Nenhum achado funcional novo ("a garantia funcional agora
+está presa"). Sobraram três lugares dizendo `3×` onde a conta da união dá `3,7×`, e
+comentários descrevendo a decisão sobre `nada` que já havia sido revertida duas rodadas
+antes.
+
+**A frase que o número corrige, porque errei duas vezes nela:** o custo do índice é a
+**união** das duas fontes, não uma delas. `18% + 6,25%·(1 − 18%) ≈ 23,125%` dos shingles,
+cerca de **3,7×** o índice antigo.
+
+### Incidente de edição, registrado porque quase custou trabalho
+
+Ao reescrever um bloco de comentário em `benchmark/source-manifest.ts` por índice de
+string, escolhi como fim um marcador que ocorria **antes** do início — e o recorte
+`s[:start] + novo + s[fim:]` duplicou 247 linhas do arquivo, incluindo declarações de
+constante. O `typecheck` pegou (`Cannot redeclare block-scoped variable`), mas a suíte teria
+pegado também; o risco real era eu ter tentado consertar com `git checkout`, que apagaria
+todo o trabalho não commitado do arquivo.
+
+O conserto foi por linhas, com verificação de que **cada** constante do módulo aparece
+exatamente uma vez, e conferindo depois que o comentário sobrevivente era a versão nova e que
+`git diff --stat` não estava inflado. Regra que fica: recorte por índice de string precisa
+verificar `fim > início` antes de escrever, e edição de bloco grande deve conferir unicidade
+das declarações depois.
+
+### Onde está o cross-review em curso (handoff)
+
+A **sétima rodada** foi disparada em 2026-07-31 e roda **desanexada** do processo do agente, para
+o resultado existir mesmo que a sessão termine antes dela:
+
+- prompt: `.codex-reviews/r7-prompt.txt`
+- veredito: `.codex-reviews/r7-veredito.txt` (o script anexa `EXIT=<código>` na última linha)
+- para redisparar: `./.codex-reviews/run-r7.sh`
+- o diretório está no `.gitignore` — é área de trabalho, não artefato
+
+**Regra de procedimento que faltava, e que custou uma sessão:** ao encerrar com uma unidade de
+caminho selado consertada mas não re-revisada, **dispare a rodada antes de encerrar**. A revisão
+roda em segundo plano e não consome atenção; não disparar troca tempo de máquina ocioso (que é de
+sobra no fim da sessão) por latência de sessão (que é escassa). D-2 diz que a unidade espera o
+cross-review — não o contrário. E como processo em segundo plano pode morrer no encerramento,
+desanexe com `nohup` e escreva em caminho estável do worktree, nunca no diretório temporário da
+sessão.
+
 **Achados abertos, registrados e não consertados** (rule 3 do bloco D):
 
-1. `HUMAN_LABEL_DENIAL` (`benchmark/source-manifest.ts`) não inclui `nenhum`/`nenhuma`, então
-   `humanLabelOverclaimIn` e `reviewOverclaimIn` recusam denegações corretas. Conserto é de uma
-   linha; o efeito é afrouxar duas telas de caminho selado, então quer rodada própria.
+1. **PRIORIDADE SUBIU (Fase 1).** `HUMAN_LABEL_DENIAL` (`benchmark/source-manifest.ts`) não
+   inclui `nenhum`/`nenhuma`, então `humanLabelOverclaimIn` e `reviewOverclaimIn` recusam
+   denegações corretas — "nenhuma evidência prova a autoria humana" lê como over-claim. (`nada`
+   NÃO faz parte deste achado: foi removido de todas as telas, porque nega numa frase e reforça na
+   seguinte — ver F1-1g.) Já são
+   **duas** telas que precisaram ampliar a negação localmente (`WIDENED_DENIAL`), o que é o sinal
+   de que o padrão compartilhado é que está errado. Conserto é de uma linha; o efeito é afrouxar
+   duas telas de caminho selado, então quer rodada própria com revisão.
 2. A janela de negação de 40 caracteres das duas telas antigas atravessa vírgula, então
    "X, e não Y, garante Z" lê como sua própria denegação. A tela nova usa
    `propagationIsDenied`, que corta na vírgula; as antigas não.
@@ -156,6 +313,33 @@ medição minha: 162 arquivos / 2307 testes verdes.
    ficou com um NOTICE de 749 bytes enquanto o rastreado tinha 3020, com todos os gates verdes.
    A Fase 0 corrigiu a **origem** (o script copiava o MIT da raiz sobre a licença dos pesos), não
    a ausência de verificação de conteúdo. Cabe na Fase 2 ou 3.
+10. **A linhagem fail-closed está PARCIAL, e o buraco é de desenho.** Achado da sétima rodada de
+   cross-review, reproduzido por ele: `assertDerivedParentsResolve` faz
+   `if (parentId === undefined) continue` (`benchmark/schema.ts:3450`), então um registro v3
+   gerado com **ambos** os eixos de linhagem em `notApplicable` passa pela guarda — e
+   `benchmark/lab/assemble_corpus.py:894` permite geração sem pai. O plano exige que "todo gerado
+   referencia pai humano presente" (plano v1, Fase 1 item 4), e o que está imposto hoje é mais
+   fraco: *todo gerado que DECLARA um pai referencia um pai presente*.
+   **Por que não foi consertado junto:** a pergunta é de desenho, não de código — existe geração
+   legítima sem semente humana? (o schema permite `notApplicable`, e a razão declarada pode ser
+   verdadeira). Decidir isso escrevendo o `if` é exatamente o erro que o processo decidido em
+   2026-07-31 existe para evitar. Vai para a etapa 1 (Fable) da próxima unidade que tocar
+   linhagem — provavelmente E3, que já deve o teste de integração v3 do achado 8.
+   O cross-review autorizou o commit com este achado registrado.
+9. **`benchmark/tests/consume-holdout.test.ts` é intermitente.** Três testes ("opens a fresh
+   lease for a genuinely different block under the same candidate" e duas ocorrências de
+   "refuses a resume whose evaluator drifted") falharam em UMA execução da suíte completa e
+   não reproduziram em duas seguintes, nem rodando o arquivo isolado. Não é desta unidade — o
+   arquivo não foi tocado — e o padrão sugere concorrência de fixture em diretório temporário.
+   Merece uma rodada própria, porque teste intermitente em caminho selado é pior que teste
+   ausente: ele ensina a ignorar vermelho.
+8. **Falta teste de integração v3 para a recusa de linhagem.** `assertDerivedParentsResolve` só
+   inspeciona registros `schemaVersion: 3`, e o único cenário ponta a ponta do repositório
+   (`corpus-import.test.ts`) é v2 — então a chamada acrescentada em `runSplit` passa por ali sem
+   nunca entrar no corpo. O teste que falta precisa de um dataset v3 com `manifest.json` e
+   `dataset-audit.json` de digests coerentes, o que significa selar um corpus v3 pequeno
+   (`sealDataset` com política própria, já que 4000/4000/2000 é a política de release). Desenho
+   pronto; é a próxima coisa a fazer em E3.
 7. **Os bundles em `public/` e `dist*/` seguem com os arquivos legais antigos.** A Fase 0 consertou
    o script; não reempacotou. Enquanto ninguém rodar `package-own-model`, o que está servido é o
    MIT como licença dos pesos e o NOTICE pré-Fase-0. Reempacotar é ação de release, não de Fase 0.
@@ -170,6 +354,64 @@ medição minha: 162 arquivos / 2307 testes verdes.
 6. Codex indisponível → fora do selado segue sem cross-review (registrado); selado espera.
 7. Plano × código divergem → o código medido vence; plano emendado na mesma unidade.
 8. Tocaria `test`/`cal-B`/ledger real → **para e pergunta. Sempre.**
+
+## Processo de execução por unidade — DECIDIDO PELO OPERADOR em 2026-07-31
+
+Três etapas, nesta ordem, para toda unidade de trabalho. **Decisão do operador**, não delegada:
+ele a tomou depois de ler o custo das seis rodadas de cross-review da unidade 1 da Fase 1.
+
+| ordem | quem | o que faz |
+|---|---|---|
+| 1 | **Fable** | verifica o **desenho**, antes de existir código |
+| 2 | **Opus** | implementa, tendo o achado da etapa 1 como contrato a cumprir |
+| 3 | **codex** | cross-review adversarial do que foi implementado |
+
+### Por que nesta ordem, e o que cada etapa pega
+
+A ordem vem de classificar os seis achados da unidade 1 por **causa**, não por gravidade. Três
+deles — "o contrato nunca foi implementado", "promessa absoluta com mecanismo probabilístico" e
+"teste que fica verde sob mutação" — têm a mesma forma: erro sobre **o que a promessa exige**
+versus **o que o mecanismo entrega**. Nenhum deles precisa de código para ser encontrado, e todos
+os três custaram uma rodada de revisão cada.
+
+**Etapa 1 (Fable) responde quatro perguntas fixas**, e o resultado é escrito antes de qualquer
+edição:
+
+1. Qual é exatamente a promessa — **universal ou probabilística**, e sobre qual população?
+2. O mecanismo planejado entrega essa promessa, ou uma **mais fraca**?
+3. Em que **nível** a propriedade é testável, e o teste planejado distingue a implementação
+   correta da errada? (teste de mutação feito de cabeça)
+4. Que **armadilhas de plataforma** este código pisa? (`\b` ASCII em texto acentuado, `toSorted`
+   fora do lib target, literal type onde se espera número, escape perdido em pipeline de edição)
+
+**Etapa 3 (codex) continua obrigatória** e não é redundante: erro de **execução** só existe depois
+de escrever. Os dois piores incidentes desta fase foram desse tipo — um regex com caracteres
+backspace (`0x08`), que nunca casa e deixa a suíte verde, e 247 linhas duplicadas por um recorte
+de string cujo fim vinha antes do início.
+
+### O que NENHUMA das três etapas conserta
+
+Dois dos seis achados foram falhas de **evidência** do agente, e para elas o conserto é checklist:
+
+- **nunca reportar medição feita em estado anterior do código.** Mudou o código, re-mede. A
+  afirmação "11 de 11 casos corretos" foi feita sobre uma versão que já havia sido substituída;
+- **todo número ou afirmação que aparece em mais de um lugar é conferido por `grep`** antes de
+  fechar a unidade. O custo do índice ficou dizendo `3×` em dois arquivos e `3,7×` num terceiro.
+
+### Por que o modelo de implementação NÃO muda
+
+Implementação é dominada por edição mecânica, onde capacidade extra de raciocínio não rende — e foi
+exatamente na edição mecânica que os dois incidentes de execução aconteceram. Além disso, o valor
+da etapa 3 vem da **independência** (outro modelo, outro contexto, sem os vieses de quem
+escreveu); concentrar desenho, implementação e revisão no mesmo modelo devolveria o ponto cego que
+o ciclo existe para cobrir.
+
+### Emenda a A5
+
+A5 continua valendo para o **nível** de revisão (adversarial só em caminho selado, uma rodada no
+resto). O que esta decisão acrescenta é a etapa 1, que passa a existir para **toda** unidade, e a
+expectativa de que o número de rodadas da etapa 3 caia — porque erro de categoria deixa de chegar
+lá. Se não cair, a hipótese está errada e isso é medível: basta contar as rodadas por unidade.
 
 ## Protocolo de exceção
 

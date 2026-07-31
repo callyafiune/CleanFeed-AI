@@ -13,10 +13,17 @@
 
 ## Princípios inegociáveis (herdados)
 
-1. **Treino ≠ avaliação.** O corpus de treino é DISJUNTO do corpus selado de
-   10k (que só nasce depois, com registro de deployment). Disjunção por
-   construção: partição determinística por hash + dedup near-dup na montagem
-   do selado + famílias de gerador reservadas (nunca treinadas).
+1. **Treino ≠ avaliação.** Nenhum registro do corpus de treino é registro do
+   corpus selado de 10k (que só nasce depois, com registro de deployment). Os
+   mecanismos: partição determinística por hash + poda de quase-duplicata na
+   montagem do selado + famílias de gerador reservadas (nunca treinadas).
+
+   ⚠️ **Redação corrigida em 2026-07-31 (Fase 1).** Dizia "DISJUNTO" e "disjunção
+   por construção", juntando duas coisas de força muito diferente: que os dois
+   conjuntos não compartilham registro (verdadeiro, e quase trivial) e que não há
+   sobreposição de conteúdo (um **contrato** — hash exato + Jaccard ≥ 0,82 —, nunca
+   independência semântica). Documento histórico; a formulação em vigor está em
+   `docs/corpus-collection-runbook.md`.
 2. **Zero-PII e licenças por fonte** valem para o treino também (pipeline
    `benchmark/lab` já aplica).
 3. O modelo final embarca **ONNX int8 local**; ciência selada continua no

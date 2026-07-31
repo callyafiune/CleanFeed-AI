@@ -534,3 +534,58 @@ describe("the connectivity axis lists", () => {
     });
   });
 });
+
+// F1-4: lineage is refused BEFORE anything is partitioned.
+//
+// WHAT IS ALREADY COVERED ELSEWHERE, so this block does not repeat it: the
+// colocation itself is "confines every grouping axis to a single partition (no leakage
+// on all eight axes)" above, which walks `derivationRoot` and `humanSeed` over a
+// dataset the temporal cut can actually satisfy; the refusal's own behaviour is pinned
+// in `benchmark/tests/schema-v3.test.ts`. What was missing is the wiring — the refusal
+// existed with no production caller and `benchmark/split.ts` named it in a comment as
+// where an unresolved parent "belongs".
+//
+// WHAT IS STILL NOT COVERED, stated rather than implied: `assertDerivedParentsResolve`
+// returns immediately for any record whose `schemaVersion` is not 3, and the
+// end-to-end scenario in `corpus-import.test.ts` builds a v2 corpus of 10 000 records.
+// So no test in this repository runs the new call over a corpus it actually inspects.
+// An integration test needs a v3 dataset with coherent manifest + audit digests, which
+// means sealing one; it is recorded as an open finding.
+describe("F1-4 — the refusal is wired ahead of the splitter", () => {
+  it("calls the refusal before the split, in the command itself", async () => {
+    // A source-order assertion, and worth saying why rather than apologizing for it:
+    // the plan's requirement is positional — "a execução chama
+    // `assertDerivedParentsResolve` ANTES do split". Behaviour lives in the two places
+    // named above; what this pins is that the call cannot drift below
+    // `createBlockedSplit`, where it would be refusing a corpus already partitioned.
+    const { readFile } = await import("node:fs/promises");
+    const { dirname, resolve } = await import("node:path");
+    const { fileURLToPath } = await import("node:url");
+    const source = await readFile(
+      resolve(dirname(fileURLToPath(import.meta.url)), "../commands/split.ts"),
+      "utf8",
+    );
+    const refusal = source.indexOf("assertDerivedParentsResolve(records)");
+    const partitioning = source.indexOf("createBlockedSplit(records");
+    expect(refusal, "the command calls the refusal").toBeGreaterThan(-1);
+    expect(partitioning, "the command partitions the records").toBeGreaterThan(
+      -1,
+    );
+    expect(refusal, "the refusal must precede the partitioning").toBeLessThan(
+      partitioning,
+    );
+  });
+
+  it("leaves the clusterer permissive about an absent parent, deliberately", () => {
+    // The two responsibilities stay apart, and this is the direction that matters:
+    // the clusterer sees ONE record set and cannot answer a selection question about
+    // the whole corpus, so it must not throw on a parent it simply cannot see. The
+    // `ids.has(parent)` guard in `buildClusters` is what keeps it permissive, and it
+    // stays even though the command path now guarantees every parent resolves.
+    expect(PARENT_LINKAGE_AXES).toContain("humanSeed");
+    expect(axisConnectivity("humanSeed")).toEqual({
+      sharedValue: false,
+      parentLinkage: true,
+    });
+  });
+});

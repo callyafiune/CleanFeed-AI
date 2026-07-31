@@ -502,6 +502,30 @@ Esta subseção não traz fonte nova: as fontes de Bonferroni (§ 2.2), de pré-
    reprovar. Precedente parcial: revogação em transparência de certificados (§ 9), onde o
    certificado revogado permanece listado. Não foi encontrado análogo em governança de corpus.
 
+### 2.2c O contrato de quase-duplicata, e o que ele não é (Fase 1, 2026-07-31)
+
+As fontes do contrato — shingles de 5 tokens, MinHash como *screen* com erro padrão declarado —
+já estão em "Técnicas de implementação" (Broder e seguintes). O que faltava aqui é a **âncora
+negativa**: o que o contrato não sustenta.
+
+- **Âncora:** `near_dupes.drop_seen()` prova, para todo id que ele não devolve, ausência de
+  duplicata exata de conteúdo tokenizado e ausência de quase-duplicata sob Jaccard ≥ 0,82 sobre
+  shingles de 5 tokens, medido contra `train.jsonl` + `dev.jsonl`. **Não** prova independência
+  semântica entre corpus e treino, e a distinção é imposta por
+  `trainingIndependenceOverclaimIn`, não confiada à prosa. _Onde no projeto:_
+  `benchmark/lab/near_dupes.py` (`drop_seen`); `benchmark/lab/test_near_dupes.py`;
+  `docs/corpus-collection-runbook.md`; plano v1 § Fase 1 item 1; registro § A3.
+
+**Sem precedente encontrado (2026-07-31)** para uma prática vizinha, que vale declarar porque é
+onde este projeto se afasta do que a literatura de deduplicação faz: **reportar o custo de recall
+de um corte de candidatos junto com o resultado do gate.** A literatura de MinHash/LSH trata o
+teto de bucket (ou o número de bandas) como parâmetro de custo e discute o *trade-off* de
+recall em agregado; não foi encontrada prática de publicar, por execução, quantos buckets o teto
+descartou — que é o número que torna auditável quanto o gate deixou de olhar. `drop_seen` deixou de
+aplicar o teto (a justificativa quadrática do `prune()` não vale nesse caminho) e passou a reportar
+`buckets_over_prune_cap` e `candidates_evaluated` para que a mudança seja mensurável e não uma
+afirmação.
+
 ### 2.3 Olhares repetidos nos dados e sequências sem teto
 
 - **Pocock, 1977 — Group sequential methods in the design and analysis of clinical trials**
@@ -1495,8 +1519,11 @@ oferece é o enquadramento, não a conclusão.
 
 **Sem precedente encontrado (2026-07-31):** a *tela de over-claim sobre documento de governança* —
 uma função sem chamador de produção, aplicada por teste a uma lista de arquivos, que recusa uma
-FRASE proibida em vez de um valor de campo (`humanLabelOverclaimIn`, `reviewOverclaimIn`,
-`weightInheritanceOverclaimIn`). O ancestral mais próximo dentro do próprio repositório é
+FRASE proibida em vez de um valor de campo. São **quatro**: `humanLabelOverclaimIn` (o rótulo
+humano), `reviewOverclaimIn` (a revisão que não houve), `weightInheritanceOverclaimIn` (a licença
+dos pesos) e `trainingIndependenceOverclaimIn` (independência corpus↔treino, acrescentada na Fase 1
+porque o plano diz que essa alegação **nunca** pode ser feita, e prosa correta hoje está a uma
+edição descuidada de virar alegação). O ancestral mais próximo dentro do próprio repositório é
 `src/shared/classification-copy.ts`, que faz o mesmo com a copy da interface. Fora dele não foi
 encontrada prática equivalente: lint de prosa existe (Vale, alex, write-good) mas sobre estilo e
 viés de linguagem, não sobre uma alegação técnica que o projeto se proibiu de fazer. Quem conhecer

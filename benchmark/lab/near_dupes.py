@@ -34,6 +34,35 @@ JACCARD_THRESHOLD = 0.82
 # than SAMPLE_MIN_SHINGLES shingles are indexed in full.
 SAMPLE_MOD = 16
 SAMPLE_MIN_SHINGLES = 64
+# The FRACTION of a seen document's shingles that must reach the drop_seen index, and
+# the reason it is a fraction rather than a count.
+#
+# The contract this function publishes is ABSOLUTE — for every id it does not return, no
+# seen text reaches Jaccard >= 0.82 — and an absolute contract cannot be honoured by a
+# probabilistic index. Two earlier attempts got this wrong in the same way. The 1/16
+# remainder sample can be empty, so a document proposed nothing at all. A bottom-k floor
+# (k=4, then k=12) made the miss unlikely instead of impossible: the cross-review built a
+# blind document of 1 000 shingles with 12 edits, Jaccard 0.886792, and drop_seen kept it
+# with zero candidates evaluated. `0.18^k` is a per-pair risk, not a guarantee, and it
+# also leans on crc32 being independent of the edit, which nothing here establishes.
+#
+# THE DETERMINISTIC BOUND. Let A be a seen document's shingles and B a candidate's. If
+# J(A, B) >= THRESHOLD then |A n B| >= THRESHOLD * |A u B| >= THRESHOLD * |A|, so the
+# shingles of A that B does NOT have number at most (1 - THRESHOLD) * |A|. Index any
+# subset S of A with |S| > (1 - THRESHOLD) * |A| and S cannot fit inside that gap: S and B
+# must share a shingle, so the candidate is always proposed. With THRESHOLD = 0.82 that is
+# more than 18% of each seen document, and the argument uses no assumption about the hash
+# at all — the subset may be chosen any way, so it stays the smallest-crc32 one for the
+# reason bottom-k was chosen originally.
+#
+# COST, as the UNION of the two sources and not one of them. The 1/16 remainder sample
+# stays, so a long document contributes about 18% + 6.25% * (1 - 18%) = 23.125% of its
+# shingles, which is roughly 3.7x the old index — not 3x, which is what this note said
+# while the runbook said 3.7x. For the real 36 971 seen texts averaging a few hundred
+# shingles that is order 10^6 postings. It is the price of the contract being true rather
+# than probably true, and it is the honest way round: the alternative is publishing the
+# absolute sentence while running a screen that can miss.
+MINWISE_FRACTION = 1.0 - JACCARD_THRESHOLD
 # A shingle shared by more documents than this is boilerplate, not evidence of
 # duplication; pairing them all would be quadratic. Reported by prune().
 MAX_BUCKET = 40
@@ -86,56 +115,161 @@ class _DisjointSet:
             self.parent[max(a, b)] = min(a, b)
 
 
+def indexed_keys(shingle_set: set[str]) -> set[int]:
+    """The crc32 keys of `shingle_set` that reach the drop_seen index.
+
+    Extracted from drop_seen so the GUARANTEE can be tested where it lives. The
+    cross-review mutation-tested the previous shape and found that dropping the `+1`, or
+    replacing the fraction with a fixed 12, left all 16 tests green — and it is not a
+    fixture that was missing. No test built out of TEXT can distinguish those mutations,
+    because a test cannot choose which shingles an edit destroys, and the mutations only
+    differ on inputs where the selected subset coincides with the destroyed one. As a set
+    operation the property is directly checkable; see `IndexedKeysPropertyTests`.
+
+    Two sources, unioned:
+
+      * the 1/16 remainder sample (all shingles for a short document), kept because it is
+        what lets two documents that share ARBITRARY shingles find each other rather than
+        only ones that agree on their minima;
+      * the smallest `floor(MINWISE_FRACTION * n) + 1` keys, which is the part carrying
+        the guarantee. Strictly MORE than the fraction, hence the `+1`: at exactly
+        `MINWISE_FRACTION * n` the selected subset could coincide with the gap.
+    """
+    keyed = sorted((crc32(shingle.encode("utf-8")), shingle) for shingle in shingle_set)
+    sample_all = len(shingle_set) < SAMPLE_MIN_SHINGLES
+    indexed = {key for key, _ in keyed if sample_all or key % SAMPLE_MOD == 0}
+    guaranteed = int(MINWISE_FRACTION * len(keyed)) + 1
+    indexed.update(key for key, _ in keyed[:guaranteed])
+    return indexed
+
+
 def drop_seen(
     docs: list[tuple[str, str]], seen_texts: list[str]
 ) -> tuple[set[str], dict]:
     """ids in `docs` that are near-duplicates of anything in `seen_texts`.
 
-    WHY: the sealed corpus must be independent of what the detector was trained
-    on, and pruning within the corpus cannot show that — a benchmark text can be
-    unique among its peers while being a near-copy of a training document. The
-    human pools are re-extractions of the same upstream sources used for
-    training, so a page revisited at a different revision reappears with small
-    edits: measured against train+dev, three records landed at jaccard 0.931,
-    0.897 and 0.855, all above the 0.82 refusal bar.
+    WHAT THIS PROVES, stated as the contract and not as the property (R7): for
+    every id NOT returned, no text in `seen_texts` shares its exact tokenized
+    content and none reaches Jaccard >= 0.82 over 5-token shingles. That is all.
 
-    Same contract as prune(): 5-token shingles, exact Jaccard >= 0.82, candidates
-    proposed by a shared-shingle inverted index over a 1/16 sample.
+    WHAT IT DOES NOT PROVE, and may never be described as: independence between
+    the corpus and the training set. Two texts can discuss the same subject, cite
+    the same source, or paraphrase one another and pass this bar comfortably.
+    Semantic independence is not measured here, is not measured anywhere in this
+    repository, and a report that calls this "independence" is over-claiming.
+
+    WHY IT EXISTS ANYWAY: pruning WITHIN the corpus cannot see this class of
+    overlap at all — a benchmark text can be unique among its peers while being a
+    near-copy of a training document. The human pools re-extract the same upstream
+    sources the training set came from, so a page revisited at a different revision
+    reappears with small edits: measured against train+dev, three records landed at
+    jaccard 0.931, 0.897 and 0.855, all above the refusal bar.
+
+    Same shingle contract as prune(): 5-token shingles, exact Jaccard >= 0.82,
+    candidates proposed by a shared-shingle inverted index over a 1/16 sample.
+
+    BOTH HALVES WERE BROKEN FOR THE SAME REASON and are fixed separately, because no
+    single mechanism covers both. See `MINWISE_FRACTION` for the near-duplicate half and
+    the bound that makes the promise below absolute rather than probable.
+
+    THE EXACT-CONTENT HALF IS ITS OWN INDEX, and that is a fix rather than a detail.
+    Until 2026-07-31 this function had no content-hash index at all: it proposed
+    candidates ONLY through sampled shingles, so a document whose shingles all missed
+    the 1/16 sample proposed nothing and was kept — including a byte-identical copy of
+    a training text. It is not hypothetical. Over the 36 971 real seen texts, 40 long
+    documents have zero sampled shingles, and an exact copy of 27 of them would have
+    produced zero candidate postings and passed. prune() never had this hole because it
+    always unioned exact `content_hash` duplicates outright; the contract said "exact
+    token content AND Jaccard" while neither half ran reliably here — the first not at
+    all, the second only for documents the sample happened to reach.
+
+    ONE DELIBERATE DIFFERENCE from prune(): the MAX_BUCKET cap is NOT applied here.
+    In prune() that cap bounds a genuinely quadratic step — it forms every PAIR inside a
+    bucket, so a bucket of n documents costs n^2/2 pairs. Here a bucket only contributes
+    its members to a candidate SET, so the growth is linear rather than quadratic.
+
+    It DOES cost something, and an earlier version of this note claimed otherwise. Each
+    extra candidate is one `set.update` member plus, for a document that is finally
+    KEPT, one full Jaccard intersection — the `break` only helps documents that are
+    dropped, because a kept document is compared against every candidate before the loop
+    ends. So the trade is recall for time on the clean majority, not a free lunch.
+
+    Measured on the real index (36 971 seen texts): 47 buckets exceed MAX_BUCKET, the
+    largest holds 209, and those buckets carry 4 138 postings in total. That is the
+    bound on the extra work per candidate document that shares one of those shingles —
+    material but not an explosion. The load over the full candidate pool has NOT been
+    measured, and if assembly time regresses noticeably this is the first place to look.
+
+    What the cap cost was recall, in silence: a document whose only bridge to the
+    training set ran through a shingle common to more than MAX_BUCKET training texts was
+    never compared against it, and no statistic said so. Since the index is built over
+    train+dev, frequent pt-BR shingles hit that cap far more often than anything in
+    prune() does. `buckets_over_prune_cap` reports how many buckets the old cap would
+    have dropped, so the change stays measurable.
     """
     index: dict[int, list[int]] = {}
     seen_shingles: list[set[str]] = []
+    # Exact tokenized content, indexed independently of the shingle sample. This is the
+    # half of the contract the sampled index cannot carry: sampling decides which
+    # shingles PROPOSE a candidate, and a document that proposes none is never compared,
+    # however identical it is.
+    seen_content: set[str] = set()
     for text in seen_texts:
-        shingle_set = shingles_of(tokens_of(text))
+        tokens = tokens_of(text)
+        seen_content.add(content_hash(tokens))
+        shingle_set = shingles_of(tokens)
         position = len(seen_shingles)
         seen_shingles.append(shingle_set)
-        sample_all = len(shingle_set) < SAMPLE_MIN_SHINGLES
-        for shingle in shingle_set:
-            key = crc32(shingle.encode("utf-8"))
-            if sample_all or key % SAMPLE_MOD == 0:
-                index.setdefault(key, []).append(position)
+        for key in indexed_keys(shingle_set):
+            index.setdefault(key, []).append(position)
 
     drop: set[str] = set()
-    worst = 0.0
+    # The highest similarity among the records KEPT. Named for what it holds: a
+    # previous name ("worst") read as a worst case, and the dropped records are
+    # deliberately excluded — including them would report a number above the bar
+    # and make a clean pool look contaminated.
+    highest_kept = 0.0
+    candidates_evaluated = 0
+    buckets_over_prune_cap = 0
+    exact_hits = 0
     for doc_id, text in docs:
-        shingle_set = shingles_of(tokens_of(text))
+        tokens = tokens_of(text)
+        # Exact content first, and unconditionally: it needs no candidate proposal, so
+        # it is the one check that cannot be silenced by sampling or by a bucket cap.
+        if content_hash(tokens) in seen_content:
+            drop.add(doc_id)
+            exact_hits += 1
+            continue
+        shingle_set = shingles_of(tokens)
         candidates: set[int] = set()
         for shingle in shingle_set:
             bucket = index.get(crc32(shingle.encode("utf-8")))
-            if bucket is not None and len(bucket) <= MAX_BUCKET:
-                candidates.update(bucket)
+            if bucket is None:
+                continue
+            if len(bucket) > MAX_BUCKET:
+                buckets_over_prune_cap += 1
+            candidates.update(bucket)
         best = 0.0
         for position in candidates:
+            candidates_evaluated += 1
             best = max(best, jaccard(shingle_set, seen_shingles[position]))
             if best >= JACCARD_THRESHOLD:
                 break
-        worst = max(worst, best if best < JACCARD_THRESHOLD else worst)
         if best >= JACCARD_THRESHOLD:
             drop.add(doc_id)
+        else:
+            highest_kept = max(highest_kept, best)
     return drop, {
         "seen_texts": len(seen_texts),
         "checked": len(docs),
         "dropped": len(drop),
-        "highest_similarity_kept": round(worst, 3),
+        "dropped_exact_content": exact_hits,
+        "highest_similarity_kept": round(highest_kept, 3),
+        "candidates_evaluated": candidates_evaluated,
+        "buckets_over_prune_cap": buckets_over_prune_cap,
+        # The contract this number is evidence FOR, carried next to it so a reader
+        # of the printed stats cannot mistake it for an independence claim.
+        "contract": "exact-token-content-and-jaccard-0.82-over-5-token-shingles",
     }
 
 

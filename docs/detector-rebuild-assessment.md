@@ -521,12 +521,12 @@ artefato de treino separado), enquanto `fit.ts` lê a partição `development` d
 selado (2000 registros). A seleção de checkpoint, portanto, não contamina a calibração,
 e o problema de seleção adaptativa acima existe por outro caminho — a busca de limiares.
 
-O que se pode afirmar sobre a relação entre os dois conjuntos é mais fraco do que
-"disjuntos", e vale registrar com precisão: `drop_seen()` prova **ausência de
-sobreposição por hash exato e ausência de quase-duplicata sob o contrato Jaccard ≥
-0,82**. Isso não é independência semântica. Um documento do teste pode tratar do mesmo
+O que se pode afirmar sobre a relação entre os dois conjuntos é mais fraco do que a
+palavra que se costuma usar, e vale registrar com precisão: `drop_seen()` prova
+**ausência de sobreposição por hash exato e ausência de quase-duplicata sob o contrato
+Jaccard ≥ 0,82**. Isso não é independência semântica. Um documento do teste pode tratar do mesmo
 assunto, citar a mesma fonte ou parafrasear um documento de treino e passar folgado
-pelo limiar de 0,82. A independência que temos é a que o contrato mede, e só ela.
+pelo limiar de 0,82. O que se tem é o que o contrato mede, e só isso — chamar esse resultado de independência, mesmo qualificando, já concede a palavra que a regra proíbe.
 
 ### 4.9 Os três perfis por comprimento não são calibrados por comprimento
 
@@ -553,9 +553,17 @@ load-bearing lá — remover as faixas custa −22% de TPR.
 
 O desenho atual tem três partições e **nenhuma de treino** — o detector foi
 treinado num artefato separado e não governado
-(`benchmark/data/dataset/train.jsonl`, 32 853 linhas), e a independência entre os
-dois é garantida por uma poda *a posteriori* (`near_dupes.drop_seen()`) contra um
-arquivo que nada amarra ao ONNX empacotado. O runbook já registra essa lacuna.
+(`benchmark/data/dataset/train.jsonl`, 32 853 linhas), e o que existe entre os dois
+é uma poda *a posteriori* (`near_dupes.drop_seen()`) contra um arquivo que nada
+amarra ao ONNX empacotado. O runbook já registra essa lacuna.
+
+⚠️ **Redação corrigida em 2026-07-31 (Fase 1).** Esta frase dizia que "a
+**independência** entre os dois é garantida" pela poda. Era over-claim (R7) em duas
+camadas: a poda garante um **contrato** — ausência de duplicata exata de conteúdo
+tokenizado e de quase-duplicata sob Jaccard ≥ 0,82 —, não independência semântica,
+porque paráfrase e mesmo assunto passam folgado; e mesmo esse contrato só vale contra
+o arquivo comparado, que é justamente o que o resto do parágrafo aponta. A distinção
+passou a ser imposta por `trainingIndependenceOverclaimIn`, que varre este arquivo.
 
 Proposta: **um pool governado, um split, cinco partições.** Cinco, e não quatro,
 porque a escolha do calibrador e a escolha do limiar são duas seleções distintas e
@@ -1028,9 +1036,9 @@ produção; e a inconsistência aritmética do meu dimensionamento (4.7).
    revisão. Escolher o limiar em `cal-B` e reportar um Wilson de `cal-B` continua
    sendo pós-seleção. A certificação tem de vir do teste cego, de controle simultâneo
    sobre a grade, ou de controle formal de risco (4.8).
-9. "Os dois conjuntos são disjuntos", sobre corpus e dados de treino — afirmação forte
-   demais. `drop_seen()` prova ausência de sobreposição por hash exato e de
-   quase-duplicata sob Jaccard ≥ 0,82; **não** prova independência semântica (4.8).
+9. A alegação de disjunção entre os dois conjuntos — afirmação forte demais.
+   `drop_seen()` prova ausência de sobreposição por hash exato e de quase-duplicata
+   sob Jaccard ≥ 0,82; esse contrato **não** sustenta a alegação mais forte (4.8).
 
 **Um ponto em que a revisão erra**, verificado: ela afirma que o `dev` usado por
 `train_detector.py` para selecionar o checkpoint é o mesmo `development` que o `fit`

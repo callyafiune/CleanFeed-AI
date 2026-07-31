@@ -20,6 +20,7 @@ import {
   WEIGHT_USE_POLICY,
   corpusLicenseObligations,
   weightInheritanceOverclaimIn,
+  trainingIndependenceOverclaimIn,
   assertLicenseInventoryAdmissible,
   assertNoIndividualAcquisition,
   assertPublicBaseLicensesOnly,
@@ -1839,5 +1840,103 @@ describe("position (a) — the weights carry their own policy, not the sources'"
       const body = await readFile(resolve(REPO_ROOT, relativePath), "utf8");
       expect(weightInheritanceOverclaimIn(body), relativePath).toBeNull();
     }
+  });
+});
+
+// R7 over the one property the pipeline can most easily be read as proving and does
+// not: independence between the sealed corpus and the detector's training set. What
+// `drop_seen` proves is a contract — no exact tokenized duplicate, nothing at Jaccard
+// >= 0.82 over 5-token shingles, against train+dev. Paraphrase and shared subject
+// matter clear that bar, so "independent" is an over-claim however tempting the
+// shorthand is.
+describe("R7 — the corpus is contract-clean against training, never independent of it", () => {
+  it("fires on the claim the plan says may never be made", () => {
+    for (const claim of [
+      "O corpus é independente do conjunto de treino.",
+      "As partições seladas são disjuntas do treino.",
+      "drop_seen prova a independência entre o corpus e o treino.",
+      "O dataset garante independência em relação ao que o detector treinou.",
+      "Os registros são independentes dos dados de treinamento.",
+    ]) {
+      expect(trainingIndependenceOverclaimIn(claim), claim).not.toBeNull();
+    }
+  });
+
+  it("does not fire on the denial, nor on the sentences the runbook must keep", () => {
+    for (const allowed of [
+      // The project's own correct formulations.
+      "O contrato verificado é hash exato + Jaccard ≥ 0,82, e não é independência semântica.",
+      "O corpus não é independente do treino: o que existe é uma poda sob contrato.",
+      // A forma que o projeto escreve desde a terceira rodada: `nada` saiu das duas
+      // telas porque nega numa frase e reforça na seguinte, então a denegação usa `não`.
+      "Independência semântica não é medida aqui, nem contra o treino.",
+      // The runbook sentence that a `limpo`-based predicate would have refused, and
+      // which is true and load-bearing: cleanliness is relative to ONE training set.
+      "Um corpus limpo contra um treino não é limpo contra outro.",
+      "O corpus não repete o que treinou o detector, sob contrato explícito.",
+      // Independence of something else entirely: the predicate alone is not a claim.
+      "Os componentes conectados são independentes entre si.",
+      "Dois revisores independentes avaliam cada registro.",
+    ]) {
+      expect(trainingIndependenceOverclaimIn(allowed), allowed).toBeNull();
+    }
+  });
+
+  it("sees through a soft line wrap, as the other three screens do", () => {
+    expect(
+      trainingIndependenceOverclaimIn(
+        "O corpus selado é independente\ndo conjunto de treino.",
+      ),
+    ).not.toBeNull();
+    // Two list items stay two clauses. The pair is chosen so that NEITHER half is a
+    // claim on its own: the earlier version used "- e o treino é independente", which
+    // asserts the forbidden thing by itself and must fire — it only passed while the
+    // screen still demanded a corpus subject in the same clause.
+    expect(
+      trainingIndependenceOverclaimIn(
+        "- O treino é o assunto\n- e a poda é obrigatória.",
+      ),
+    ).toBeNull();
+    // And the half that IS a claim fires even as a bare list item.
+    expect(
+      trainingIndependenceOverclaimIn("- o treino é independente do corpus."),
+    ).not.toBeNull();
+  });
+
+  // NOT named "every document", because it is not every document and the earlier name
+  // said so falsely. This is every document that describes the gate as CURRENT
+  // behaviour. Deliberately excluded, and this is a design constraint rather than an
+  // omission: a document that documents the PROHIBITION has to quote the forbidden
+  // sentence in order to explain it. `plano-v1-minima.md`, `registro-de-decisoes.md`,
+  // `estado-do-projeto.md`, the v3 rebuild plan and `references.md` all carry it between
+  // quotes for exactly that reason, and screening them would stop the project from
+  // writing down its own rule. Sweeping all 55 tracked markdown files confirms the
+  // split: five hit for that reason, and the two that hit for a real reason are fixed
+  // and are in the list below.
+  it("screens every document that describes the gate as current behaviour", async () => {
+    for (const relativePath of [
+      "docs/corpus-collection-runbook.md",
+      "docs/corpus-sources.md",
+      "docs/limitations.md",
+      // Added after the cross-review: both describe the gate, both were unprotected,
+      // and the assessment carried a live over-claim ("a independência entre os dois é
+      // garantida") that no test would have caught.
+      "docs/detector-rebuild-assessment.md",
+      "docs/detector-rebuild-critical-review.md",
+    ]) {
+      const body = await readFile(resolve(REPO_ROOT, relativePath), "utf8");
+      expect(trainingIndependenceOverclaimIn(body), relativePath).toBeNull();
+    }
+  });
+
+  it("keeps the runbook stating the contract where it states the invariant", async () => {
+    const runbook = (
+      await readFile(
+        resolve(REPO_ROOT, "docs/corpus-collection-runbook.md"),
+        "utf8",
+      )
+    ).replace(/\s+/gu, " ");
+    expect(runbook).toMatch(/Jaccard ≥ 0,82/u);
+    expect(runbook).toMatch(/n[ãa]o é independência semântica/iu);
   });
 });

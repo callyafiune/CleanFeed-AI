@@ -1446,11 +1446,14 @@ def main() -> None:
     print(f"near-dup prune: {nd_stats}")
     print(f"pools (near-dup): human={len(humans)} ai={len(ai)} mixed={len(mixed)}")
 
-    # The corpus must be independent of what the detector TRAINED on, which
-    # pruning within the corpus cannot establish. The human pools re-extract the
-    # same upstream sources the training set came from, so a revisited page
-    # reappears with small edits and reads as fresh here while the detector has
-    # effectively already seen it.
+    # Prune what the detector has already SEEN, under a stated contract: exact
+    # tokenized content plus Jaccard >= 0.82 over 5-token shingles, against
+    # train+dev. That contract is NOT independence between corpus and training set
+    # — paraphrase and shared subject matter pass it — and no report may call it
+    # that (R7). What it does catch is the overlap pruning WITHIN the corpus cannot
+    # see: the human pools re-extract the same upstream sources the training set
+    # came from, so a revisited page reappears with small edits and reads as fresh
+    # here while the detector has effectively already seen it.
     seen_texts: list[str] = []
     for split in ("train", "dev"):
         seen_texts.extend(r["text"] for r in read_jsonl(DATASET / f"{split}.jsonl"))

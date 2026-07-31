@@ -417,6 +417,15 @@ export function connectedComponentRoots(
   // corpus, and a missing parent must neither invent a cluster nor refuse the row.
   // Refusing an unresolved lineage is a SELECTION question, and it belongs to
   // `assertDerivedParentsResolve` on the whole-corpus path, not to connectivity.
+  //
+  // That refusal is now WIRED, which changes what this `ids.has(parent)` guard means
+  // without changing the code: `benchmark/commands/split.ts` calls
+  // `assertDerivedParentsResolve(records)` before `createBlockedSplit`, so on the
+  // command path every parent reference resolves and the guard never skips anything.
+  // It stays because this function is also called directly — by tests and by any
+  // future caller that has not passed the whole-corpus gate — and a clusterer that
+  // threw on an absent parent would be answering a selection question it cannot see
+  // the whole input for.
   const ids = new Set(records.map((record) => record.id));
   for (const record of records) {
     for (const axis of PARENT_LINKAGE_AXES) {

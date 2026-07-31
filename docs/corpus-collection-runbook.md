@@ -80,7 +80,7 @@ O `sealDataset` só produz um audit se a composição bater **exatamente**:
 | Revisores por registro | **≥ 2 distintos**; adjudicador (se `adjudicated`) independente dos dois | `DATASET_REVIEW_INVALID` |
 | Licenças | toda `provenance.licenseId` presente no inventário do manifest | `DATASET_LICENSE_INVALID` |
 
-### 1.1 Independência do conjunto de treino (verificação obrigatória)
+### 1.1 Contrato contra o conjunto de treino (verificação obrigatória)
 
 O corpus selado mede um detector já treinado. Se um registro do corpus também
 estiver no treino, o modelo foi otimizado justamente naquele texto: ele acerta
@@ -110,12 +110,49 @@ execução:
 
 ```
 vazamento vs train+dev: {'seen_texts': 36971, 'checked': 21506, 'dropped': 3,
-                         'highest_similarity_kept': 0.746}
+                         'highest_similarity_kept': 0.746,
+                         'candidates_evaluated': 184052,
+                         'buckets_over_prune_cap': 9317,
+                         'contract': 'exact-token-content-and-jaccard-0.82-over-5-token-shingles'}
 ```
 
 Ler `dropped` e `highest_similarity_kept` faz parte de aceitar a montagem. Se
 `highest_similarity_kept` chegar perto de 0,82, o pool está encostando no limite
 e merece investigação antes de selar.
+
+Os três campos seguintes existem por causa de um defeito consertado na Fase 1, e
+valem uma linha porque explicam por que o número de descartes pode subir em
+relação a execuções antigas. `drop_seen()` aplicava o teto `MAX_BUCKET` do
+`prune()`, e não deveria: no `prune()` esse teto limita um passo **quadrático**
+(ele forma todo PAR dentro do bucket), enquanto aqui o bucket só alimenta um
+conjunto de candidatos e o laço de Jaccard é linear com `break` no primeiro que
+passa. O teto **economizava** custo — para cada candidato mantido, um `set.update` e uma
+interseção Jaccard por membro do bucket descartado; o `break` do laço só ajuda os
+registros que acabam descartados, porque um mantido é comparado contra todos os
+candidatos. O que ele custava era recall, em silêncio: um documento cuja **única**
+ponte para o treino fosse um shingle presente em mais de 40 textos de treino nunca
+era comparado, e nenhuma estatística dizia isso. A troca é recall por tempo na
+maioria limpa, não almoço grátis. Como o índice é
+construído sobre train+dev, que é grande, shingles frequentes em pt-BR batiam
+nesse teto com muito mais frequência do que qualquer coisa no `prune()`.
+`buckets_over_prune_cap` conta quantos buckets o teto antigo teria descartado, e
+`candidates_evaluated` é o custo real que passou a ser pago. Os números acima são
+ilustrativos, não medidos.
+
+**A segunda mudança de custo, maior que a primeira.** O índice deixou de ser apenas a
+amostra de 1/16 (cerca de 6% dos shingles de cada texto visto): agora recebe
+`floor(0,18·n)+1` shingles por texto, porque **18% é o que a garantia exige** — em
+Jaccard ≥ 0,82, os shingles do visto ausentes do candidato são no máximo 18%, então um
+subconjunto maior que isso não cabe na lacuna e a interseção fica forçada.
+
+A conta do crescimento é da **união** das duas fontes, não de uma delas: a amostra de
+1/16 continua lá, e para um texto longo a união fica em torno de
+`18% + 6,25%·(1 − 18%) ≈ 23,125%` dos shingles — cerca de **3,7×** o índice antigo, não
+3×. É o preço de o contrato ser verdadeiro em vez de provavelmente verdadeiro: com amostragem, um texto cujos shingles todos escapassem da
+amostra nunca era comparado, por mais idêntico que um candidato fosse.
+
+`contract` viaja junto com os números de propósito: quem lê essa linha de log não
+pode confundi-la com alegação de independência.
 
 Descartar não custa cobertura: o pool humano tem ~15 mil candidatos para 4 mil
 vagas, então a poda é absorvida pelo excedente e a composição continua exata.
@@ -129,9 +166,15 @@ contra `benchmark/data/dataset/{train,dev}.jsonl`, mas **nada no repositório li
 esses arquivos ao modelo empacotado**: `models/cleanfeed-ptbr-v1/release.json`
 registra `bundleDigest`, `tokenizerDigest`, `calibrationSetDigest`,
 `profileDigests` e `evidenceDigest` — nenhum campo identifica os dados de treino.
-Enquanto isso não existir, "o corpus é independente do treino" só é verificável
-sob a premissa de que aqueles dois arquivos **são** o treino do ONNX em
-`public/models/cleanfeed-ptbr-v1`. Guardar contra o conjunto errado dá a mesma
+Enquanto isso não existir, mesmo o **contrato** — hash exato mais Jaccard ≥ 0,82 — só
+é verificável sob a premissa de que aqueles dois arquivos **são** o treino do ONNX em
+`public/models/cleanfeed-ptbr-v1`. E vale separar as duas lacunas, porque amarrar o
+digest resolve só uma: com os arquivos amarrados, o que passa a ser verificável
+continua sendo o contrato, e não a propriedade mais forte. A redação anterior desta
+frase punha a propriedade mais forte como a coisa que ficaria verificável, o que
+concede justamente a palavra que a regra proíbe — e note que esta nota também não pode
+citá-la, porque a tela não isenta texto entre aspas (uma isenção foi tentada e retirada:
+apagar aspas não distingue auditar uma frase de afirmá-la). Guardar contra o conjunto errado dá a mesma
 falsa tranquilidade que não guardar. O conserto durável é registrar um digest do
 conjunto de treino no metadado do modelo, para a checagem passar a ser *amarrada*
 em vez de *assumida*.

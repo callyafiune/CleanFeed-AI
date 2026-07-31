@@ -1375,7 +1375,24 @@ const HUMAN_LABEL_CLAIM =
 // A denial is not a claim. The window is 40 characters of the same clause, which
 // covers "não pode ser garantida", "nunca prova", "não é prova de" and "sem
 // garantia de" without reaching into the previous sentence.
-const HUMAN_LABEL_DENIAL = /\b(?:n[ãa]o|nunca|nem|jamais|sem)\b/iu;
+// Unicode word edges, NOT `\b`. `\b` in JavaScript is ASCII-only, so it sees a boundary
+// between `sem` and `â` — which means `sem` matched inside `semântica`, and every screen
+// reading this pattern treated "independência semântica" as containing a denial. The word
+// is central to this domain, so the blind spot sat exactly where it mattered: the sentence
+// asserting that very property was read as its own denial and returned null. The same
+// ASCII `\b` had already broken a lookahead after `é` one round earlier; two failures from
+// one cause is why every edge here is explicit now.
+//
+// This pattern is shared with `humanLabelOverclaimIn` and `reviewOverclaimIn`, so the fix
+// reaches two sealed-path screens that were blind the same way. That is NOT the same thing
+// as open finding 1, which is about those two screens refusing correct denials that use
+// `nenhum`/`nenhuma` — a separate defect, still open, and untouched by this.
+const WORD_EDGE_BEFORE = "(?<![\\p{L}\\p{N}])";
+const WORD_EDGE_AFTER = "(?![\\p{L}\\p{N}])";
+const HUMAN_LABEL_DENIAL = new RegExp(
+  `${WORD_EDGE_BEFORE}(?:n[ãa]o|nunca|nem|jamais|sem)${WORD_EDGE_AFTER}`,
+  "iu",
+);
 const DENIAL_WINDOW = 40;
 
 // Clause boundaries: blank lines, markdown table cell walls and sentence-final
@@ -1599,19 +1616,42 @@ const CONTRAST_BOUNDARY =
 const SOURCE_REFERENT =
   /\bfontes?\b|\bcorpus\b|\bdados\s+de\s+treino\b|\bconjunto\s+de\s+(?:treino|dados)\b|\bcc-by\b|\bodc-by\b|\blei9610\b|\bcarolina\b|\bwikip[ée]dia\b|\bb2w\b|\bstack\s*exchange\b|\bbases?\b|\bsnapshots?\b/iu;
 
-// The denial, widened by one word over {@link HUMAN_LABEL_DENIAL}: `nenhum` and
-// `nenhuma`. The project's own position is written as "NENHUMA obrigação de
-// licença de fonte é transferida ao modelo", and the shared pattern does not carry
-// the word, so the shared pattern would refuse the denial as though it were the
-// claim.
+// The denial, widened over {@link HUMAN_LABEL_DENIAL} by exactly two words: `nenhum` and
+// `nenhuma`. Both of the newest screens use it, which is why it is one constant.
 //
-// It is widened HERE and not in `HUMAN_LABEL_DENIAL` on purpose. The same gap
-// exists in the two older screens — "nenhuma evidência prova a autoria humana"
-// reads as an over-claim to them today — and that is a real defect, but it is a
-// defect in a sealed-path function this task was not asked to change, and fixing
-// it silently would alter what two other screens accept in a commit about
-// licences. It is recorded as an open finding instead.
-const WEIGHT_DENIAL = /\b(?:n[ãa]o|nunca|nem|jamais|sem|nenhum|nenhuma)\b/iu;
+// NOT `nada`. That word was in this pattern, then in a screen-local variant of it, and is
+// now in no screen at all — see {@link INDEPENDENCE_DENIAL}. Worth stating plainly because
+// this comment went on describing the previous position for a round after the code had
+// moved: the weights screen needs `nenhum`/`nenhuma` because the project's own position is
+// written as "NENHUMA obrigação de licença de fonte é transferida ao modelo", and the
+// independence screen writes its denial with `não` for exactly the reason `nada` was
+// dropped.
+//
+// It is widened HERE and not in `HUMAN_LABEL_DENIAL` on purpose, and open finding 1 is
+// still what that leaves behind: the two OLDER screens do not carry `nenhum`/`nenhuma`, so
+// "nenhuma evidência prova a autoria humana" still reads as an over-claim to them. That is
+// a real defect in sealed-path functions neither of these tasks was asked to change, and it
+// is NOT what the Unicode word edges below fixed — those fixed a different blindness in the
+// same two screens.
+const WIDENED_DENIAL = new RegExp(
+  `${WORD_EDGE_BEFORE}(?:n[ãa]o|nunca|nem|jamais|sem|nenhum|nenhuma)${WORD_EDGE_AFTER}`,
+  "iu",
+);
+
+// `nada` is in NEITHER screen, and it took three positions to get there — recorded as the
+// lesson rather than the conclusion. It was added because a denial the shared pattern
+// refused begins with it. It was then split out of the weights screen, because a sentence
+// of the form "Nada muda o fato de que os pesos herdam…" is a CLAIM the shared pattern let
+// through. The cross-review then produced the same shape for the independence screen, and
+// that settled it: `nada` is the subject of whatever verb follows it, so it negates in one
+// sentence and reinforces in the next. A marker that cannot be told apart without parsing
+// belongs in no lexical screen. The project writes its denials with `não`, which costs
+// nothing.
+//
+// So this is an alias, not a wider pattern. It is kept as a NAME because the independence
+// screen reads better saying what it denies, and because a future round that does need a
+// different denial there has an obvious place to put it.
+const INDEPENDENCE_DENIAL = WIDENED_DENIAL;
 
 /**
  * Is the propagation verb at `index` denied by something in front of it?
@@ -1624,13 +1664,13 @@ const WEIGHT_DENIAL = /\b(?:n[ãa]o|nunca|nem|jamais|sem|nenhum|nenhuma)\b/iu;
  * comma leaves an empty window there, so the claim fires.
  *
  * The two older screens have the same blind spot and it is not fixed here, for the
- * reason given on {@link WEIGHT_DENIAL}: they are sealed-path functions this task
+ * reason given on {@link WIDENED_DENIAL}: they are sealed-path functions this task
  * was not asked to change.
  */
 function propagationIsDenied(clause: string, index: number): boolean {
   const window = clause.slice(Math.max(0, index - DENIAL_WINDOW), index);
   const lastComma = window.lastIndexOf(",");
-  return WEIGHT_DENIAL.test(
+  return WIDENED_DENIAL.test(
     lastComma === -1 ? window : window.slice(lastComma + 1),
   );
 }
@@ -1662,6 +1702,135 @@ export function weightInheritanceOverclaimIn(text: string): string | null {
         if (propagationIsDenied(clause, match.index)) continue;
         return `${match[0]} @ ${clause.trim().slice(0, 160)}`;
       }
+    }
+  }
+  return null;
+}
+
+// --- the over-claim screen for corpus/training independence (R7) ------------
+//
+// The FOURTH screen, and the subject furthest from licences, which is why it earns a
+// note about why it lives here: the machinery is here (`unwrapSoftLines`,
+// `CLAUSE_BOUNDARY`, the denial window), the other three screens are here, and a
+// governance claim the project has forbidden itself is the same kind of object
+// wherever its subject comes from.
+//
+// What it refuses is the sentence that the sealed corpus is INDEPENDENT of the
+// detector's training set. What the pipeline actually proves is narrower and is
+// stated as a contract in `benchmark/lab/near_dupes.py` (`drop_seen`): no exact
+// tokenized-content duplicate and nothing reaching Jaccard >= 0.82 over 5-token
+// shingles, measured against `train.jsonl` + `dev.jsonl`. Two texts can share a
+// subject, cite the same source, or paraphrase one another and clear that bar
+// comfortably. Semantic independence is not measured here and is not measured
+// anywhere in this repository.
+//
+// The documents were already correct when this screen was added — the runbook says
+// "não é independência semântica" in as many words. That is exactly the reason to add
+// it: prose that is right today is one careless edit from being a claim, and the plan
+// says this one may NEVER be made, not that it is currently absent.
+//
+// SHAPE. A violation needs TWO things in one clause and no denial anywhere in it: an
+// independence predicate and a TRAINING referent. The training referent is what keeps
+// "não é independência semântica" out of range — that clause names no training set, so
+// it never reaches the predicate test.
+//
+// It asked for a corpus subject too, until the cross-review showed that requirement
+// creating a false negative through a conjunction. See the notes on
+// {@link CONJUNCTION_BOUNDARY} and {@link INDEPENDENCE_PREDICATE}.
+//
+// WHY THE PREDICATE LIST IS SHORT. Only `independente`/`independência`/`disjunto`,
+// and deliberately not `limpo` or `não visto`. `limpo` appears in a sentence the
+// runbook must keep — "um corpus limpo contra um treino não é limpo contra outro" —
+// and `não visto` states the property THROUGH a negation, so the denial window would
+// read the claim as its own denial. A screen that fires on the first and is blind to
+// the second would be worse than the narrow one: it would refuse a true sentence
+// while missing a false one.
+// `, mas` is here for the same reason `e é` is: the cross-review's "O corpus não contém
+// duplicatas, MAS é independente do treino" put the denial in the first half and the claim
+// in the second, and a whole-clause denial test reads the first half as covering both.
+//
+// A conjunction that starts a SECOND PREDICATION, and this screen splits on it where the
+// other three do not. The cross-review's false negative is why: "O corpus não contém
+// duplicatas E é independente do treino" carries a denial that belongs to the FIRST half,
+// and judged whole the clause looks like its own denial. Split there and the second half
+// — "é independente do treino" — stands alone with nothing denying it.
+//
+// The lookahead for a copula is load-bearing and was not in the first attempt. Splitting
+// on every `e` broke the opposite case immediately: "prova a independência entre o corpus
+// E o treino" is ONE predication whose subject list happens to be coordinated, and
+// cutting it left "…entre o corpus" (predicate, no training referent) beside "o treino"
+// (referent, no predicate), so the clearest form of the forbidden claim stopped firing.
+// Requiring a copula after the `e` distinguishes a new predication from a coordinated
+// noun: "e é", "e são", "e permanece" open a claim; "e o treino" continues a list.
+// `(?=\s)` and NOT `\b`, and this cost a false claim in a report: `\b` in JavaScript is
+// ASCII-only, so it does not match after `é`. The lookahead `(?:é|…)\b` therefore failed
+// on the exact string it was written for — "e é independente" — and the boundary never
+// fired. The 11-case check that "passed" had been run against the previous, wider
+// boundary and was never re-run after this pattern replaced it.
+const CONJUNCTION_BOUNDARY =
+  /\s+(?:e|mas|por[ée]m|todavia|contudo|entretanto)\s+(?=(?:é|s[ãa]o|est[áa]|est[ãa]o|foi|foram|permanece|permanecem|continua|continuam)(?=\s))|\s*[;,]\s*(?:mas|por[ée]m|todavia|contudo|entretanto)\s+|\s*;\s*/iu;
+
+// PREDICATIVE position only, plus the two nouns. Dropping the corpus-subject requirement
+// in an earlier round left `independentes` firing attributively, and the cross-review
+// found the sentence that matters: "No treinamento, dois revisores INDEPENDENTES avaliam
+// cada registro" — where the adjective qualifies the reviewers and the training referent
+// is incidental. Requiring a copula in front distinguishes "o corpus É independente"
+// (a claim) from "revisores independentes" (a description), which is the distinction the
+// corpus-subject test was reaching for without getting.
+//
+// The nouns `independência` and `disjunção` need no copula: naming the property IS the
+// claim, and "prova a independência entre o corpus e o treino" carries no copula at all.
+const INDEPENDENCE_PREDICATE =
+  /(?:é|s[ãa]o|est[áa]|est[ãa]o|permanece|permanecem|continua|continuam|fica|ficam|seria|seriam)\s+(?:mutuamente\s+)?(?:independentes?|disjunt[oa]s?)\b|\bindepend[êe]ncia\b|\bdisjun[çc][ãa]o\b/iu;
+
+// No corpus subject is required, and dropping that requirement is what closes the
+// cross-review's false negative. A clause pairing an independence predicate with a
+// TRAINING referent is specific enough on its own — "é independente do treino" is the
+// forbidden claim whether or not its subject survived the clause split — and requiring
+// the subject meant a conjunction could strand it in the other half. The training
+// referent is doing the discriminating work: it is what keeps "dois revisores
+// independentes" and "componentes conectados independentes" out of range.
+
+const TRAINING_REFERENT =
+  /\btreino\b|\btreinamento\b|\btreinou\b|\btreinad[oa]s?\b|\btrain\b|\btrain\.jsonl\b|\bdev\.jsonl\b|\bfine-?tune\b/iu;
+
+/**
+ * The first forbidden claim that the corpus is independent of the training set, or
+ * `null` when the text makes none. Same return shape as the other three screens: the
+ * claim and its clause, so a failing screen names what fired and where.
+ *
+ * It uses {@link WIDENED_DENIAL} — which is what {@link INDEPENDENCE_DENIAL} aliases —
+ * rather than the shared `HUMAN_LABEL_DENIAL`, because the denials this project writes
+ * use `nenhum`/`nenhuma` and the shared pattern reads those as the claim.
+ *
+ * This paragraph justified the choice with a sentence beginning `nada` for two rounds
+ * after that word had been removed from every screen. Kept as a note because it is the
+ * same failure the screens exist to catch, one level up: prose that outlives the decision
+ * it describes.
+ */
+export function trainingIndependenceOverclaimIn(text: string): string | null {
+  // No exemption for quoted text, and the second cross-review round is why one was
+  // tried and withdrawn. Blanking double-quoted spans looked like "a citation is
+  // attributed, not asserted", and it is not: `A garantia publicada é: "O corpus é
+  // independente do treino"` passed the screen while asserting exactly the claim. There
+  // is no lexical test that separates auditing a sentence from making it, so the screen
+  // stays severe and the DOCUMENT adapts — the audit in
+  // `docs/detector-rebuild-assessment.md` now names the claim without putting predicate
+  // and training referent in one clause.
+  for (const sentence of unwrapSoftLines(text).split(CLAUSE_BOUNDARY)) {
+    for (const clause of sentence.split(CONJUNCTION_BOUNDARY)) {
+      if (!INDEPENDENCE_PREDICATE.test(clause)) continue;
+      if (!TRAINING_REFERENT.test(clause)) continue;
+      // The denial is looked for across the WHOLE clause, not in a window before the
+      // predicate. The cross-review's false positive is why: "A independência semântica
+      // entre o corpus e o treino não é medida aqui" puts the predicate first and the
+      // denial last, so a backward window sees nothing and refuses a sentence the
+      // project must be able to write. Portuguese puts the negation on the verb, and the
+      // verb can sit on either side of the noun being denied.
+      if (INDEPENDENCE_DENIAL.test(clause)) continue;
+      const match = INDEPENDENCE_PREDICATE.exec(clause);
+      if (match === null) continue;
+      return `${match[0]} @ ${clause.trim().slice(0, 160)}`;
     }
   }
   return null;

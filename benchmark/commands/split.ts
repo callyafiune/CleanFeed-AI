@@ -22,6 +22,7 @@ import {
   assertGeneratorFamilyAgreement,
 } from "../generator-family.ts";
 import {
+  assertDerivedParentsResolve,
   parseBenchmarkDataset,
   type BenchmarkRecord,
   type V3GroupAxis,
@@ -104,6 +105,30 @@ export async function runSplit(options: SplitOptions): Promise<string> {
       "dataset audit file digests diverge from the manifest",
     );
   }
+
+  // Lineage is refused BEFORE anything is partitioned. The function existed and had
+  // no production caller: only `benchmark/tests/schema-v3.test.ts` reached it, and
+  // `benchmark/split.ts` mentioned it in a comment as the place where an unresolved
+  // parent "belongs" — which is true and was not wired.
+  //
+  // Calling it here is what turns the connectivity union from conditional into total,
+  // and that is the colocation the plan asks for rather than a second mechanism.
+  // `buildClusters` unions a record with its parent only `if (ids.has(parent))`,
+  // because a missing parent must neither invent a cluster nor silently refuse a row;
+  // C2 measured 782 of 783 parent references resolving to no row of the assembled
+  // corpus, so on that corpus the relation unioned almost nothing. With this call in
+  // front, a corpus whose parents do not resolve never REACHES the splitter, so every
+  // parent the clusterer looks for is present and parent + generations + derivatives
+  // always land in one cluster, hence one partition.
+  //
+  // It also settles, for this path, the question `AxisUnionRelation` left open for
+  // E2/E3: whether `humanSeed` should ALSO become a value axis, so two generations
+  // grown from the same human prompt stay together even when the seed row was never
+  // assembled. On this path it need not, and the reason is this call and not an
+  // argument about dependence — both generations resolve to a parent that is present,
+  // so both are unioned with it and therefore with each other. The open question
+  // survives only for callers that partition records without passing through here.
+  assertDerivedParentsResolve(records);
 
   const policy: BlockedSplitPolicy = {
     fractions: { development: 0.2, calibration: 0.3, test: 0.5 },
