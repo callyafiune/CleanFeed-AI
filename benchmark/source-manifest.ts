@@ -326,7 +326,11 @@ export const CORPUS_USE_POLICY = {
  */
 export const WEIGHT_USE_POLICY = {
   licenseId: "cleanfeed-weights-nc-1.0",
-  policyId: "noncommercial-v1",
+  // Its OWN id, not `CORPUS_USE_POLICY.policyId`. The two policies say the same thing
+  // about commercial use and are still two policies; reusing one identifier would
+  // leave the published artifacts unable to name which of them a given `false` came
+  // from, which is the confusion this whole constant exists to prevent.
+  policyId: "weights-noncommercial-v1",
   commercialUse: false,
   sourceObligationsPropagate: false,
   positionAuthority: "operator-risk-decision",
@@ -918,6 +922,7 @@ export interface HumanSourceRegistrationV1 {
 
 /** Why a human source is not admissible. Each reason is a distinct diagnosis. */
 export type HumanSourceBlockReason =
+  | "access-terms-unresolved"
   | "individual-acquisition"
   | "no-public-license"
   | "non-public-base-license"
@@ -1001,6 +1006,27 @@ export function humanSourceAdmissibility(
   if (ACQUISITION_IS_INDIVIDUAL[registration.acquisition]) {
     return refuse("individual-acquisition");
   }
+  // Step 1.5: the BASE itself is refused, whatever its licence or publication
+  // regime. Below the route because the route is the more general statement — B3
+  // refuses `recruited-donor` for every source, while this refuses one base — and
+  // above the licence because a base that may not be used at all cannot be admitted
+  // by what its clauses permit. Reporting the licence here would name a reason a
+  // caller could satisfy: the Stack Exchange dump really is `cc-by-sa-4.0` and
+  // really is a published base, and neither fact lifts the block.
+  //
+  // Distinct from `snapshot-not-frozen`, which lives in
+  // `assertV3HumanInventoryAdmissible` and means only "this corpus does not stock
+  // it". That one has to stay out of admissibility so a public instrumented base
+  // can be admissible while being absent from v3. This one belongs HERE, because
+  // the source is not allowed to exist as a source at all until the access terms
+  // get a verifiable legal disposition.
+  if (
+    REBUILD_V3_POLICY.humanSources.blockedSnapshots.some(
+      (blocked) => blocked.snapshot === registration.snapshot,
+    )
+  ) {
+    return refuse("access-terms-unresolved");
+  }
   if (registration.licenseId === null) {
     return refuse("no-public-license");
   }
@@ -1054,12 +1080,43 @@ export function humanSourceAdmissibility(
 }
 
 /**
+ * The human source A1 refused, kept with its declaration intact.
+ *
+ * It is here and not deleted for a reason the split audit makes concrete: the
+ * working tree still holds records under `src_ptso`, and an audit that no longer
+ * knows the source goes SILENT on them instead of failing. A registration the
+ * module can still see is a registration `humanSourceAdmissibility` can still
+ * refuse, by name and with a diagnosis.
+ *
+ * Keeping the anchor field and the axes is also what makes A1 cheap to revert: if
+ * the access terms ever get a verifiable legal disposition, the source returns by
+ * moving this entry back and dropping the blocked row from the frozen policy — not
+ * by rediscovering that a Stack Exchange answer belongs to a thread and an account.
+ *
+ * It is deliberately NOT part of {@link V3_HUMAN_SOURCE_INVENTORY}:
+ * `assertV3HumanInventoryAdmissible` throws on the first inadmissible entry, so a
+ * blocked source inside that list would make the whole inventory unusable rather
+ * than make one source refused.
+ */
+export const A1_BLOCKED_HUMAN_SOURCES: readonly HumanSourceRegistrationV1[] = [
+  {
+    sourceId: "src_ptso",
+    snapshot: "pt-stackoverflow",
+    acquisition: "public-dataset",
+    licenseId: "cc-by-sa-4.0",
+    labelBasis: "date-cutoff",
+    anchorDateField: "Posts.xml@CreationDate",
+    anchorDateScope: "document",
+    // An answer belongs to a THREAD and to an account.
+    declaredGroupAxes: ["author", "source"],
+  },
+];
+
+/**
  * The human sources v3 stocks, one per frozen snapshot, with the field each
  * extractor actually reads the date from. Every anchor field below was read out
  * of the extractor that uses it, not inferred from the format:
  *
- *   * `pt-stackoverflow` — `Posts.xml` attribute `CreationDate`
- *     (`benchmark/lab/extract_stackexchange.py`, `element.get("CreationDate")`).
  *   * `ptwiki` — `<revision><timestamp>` of the page
  *     (`benchmark/lab/extract_wikipedia.py`). Document-level, and bounded above
  *     by the dump: `pages-articles` carries only the current revision, so a
@@ -1072,33 +1129,23 @@ export function humanSourceAdmissibility(
  *   * `b2w-reviews01` — CSV column `submission_date` (`extract_b2w.py`, with
  *     `date`/`review_date` as the alternate spellings of the same column).
  *
- * All four sustain `date-cutoff` and none sustains `observed-process`: no
+ * All three sustain `date-cutoff` and none sustains `observed-process`: no
  * published instrumented pt-BR base of the required size exists, and inventing
  * one would be inventing provenance (R4). That is a limitation of this
  * inventory, recorded in `docs/limitations.md`, not a property of the field.
  *
  * BOTH keys here are join keys, and both are pinned by test. `snapshot` joins to
  * `REBUILD_V3_POLICY.humanSources.snapshots` (asserted set-equal). `sourceId`
- * joins to the `sourceId` of the reviewed source manifest, and these four values
- * are the ones the manifests an operator actually holds use — `src_ptso`,
- * `src_wikipedia_pt`, `src_carolina`, `src_b2w` in
+ * joins to the `sourceId` of the reviewed source manifest, and these values
+ * are the ones the manifests an operator actually holds use —
+ * `src_wikipedia_pt`, `src_carolina`, `src_b2w`, plus the refused `src_ptso` in
+ * {@link A1_BLOCKED_HUMAN_SOURCES}, in
  * `benchmark/data/corpus-build/**\/private/source-manifest.json`. That file is a
  * gitignored build artifact, so no test can read it; the ids are pinned as
  * literals by "declares the sourceId a reviewed manifest joins on" instead, and a
  * rename on either side has to move both.
  */
 export const V3_HUMAN_SOURCE_INVENTORY: readonly HumanSourceRegistrationV1[] = [
-  {
-    sourceId: "src_ptso",
-    snapshot: "pt-stackoverflow",
-    acquisition: "public-dataset",
-    licenseId: "cc-by-sa-4.0",
-    labelBasis: "date-cutoff",
-    anchorDateField: "Posts.xml@CreationDate",
-    anchorDateScope: "document",
-    // An answer belongs to a THREAD and to an account.
-    declaredGroupAxes: ["author", "source"],
-  },
   {
     sourceId: "src_wikipedia_pt",
     snapshot: "ptwiki",
@@ -1503,13 +1550,20 @@ export function reviewOverclaimIn(text: string): string | null {
 // fired on "o corpus derivado herda as obrigações" would refuse a true sentence.
 // The propagation-to-a-derivative claim is still caught, because the clause that
 // makes it names the artifact as the thing propagating.
-const WEIGHT_SUBJECT = /\bpesos?\b|\bmodelo\b|\bartefato\b|\bcheckpoints?\b/iu;
+const WEIGHT_SUBJECT =
+  /\bpesos?\b|\bmodelo\b|\bartefato\b|\bcheckpoints?\b|\bdetector\b|\bclassificador\b/iu;
 
+// `alcança`/`alcançam` and `recai`/`recaem` are in this list because they are the
+// verbs the shipped NOTICE and the weights licence use to STATE the position — "as
+// obrigações [...] NÃO alcançam o artefato treinado". A screen that does not carry
+// the project's own wording goes silent the moment someone deletes one `não` from
+// the sentence it was written to guard.
+//
 // The propagation verbs, written out rather than stemmed. `herd\w*` would fire on
 // "herdeiro" and `propag\w*` on "propagação de erro", and inflection in Portuguese
 // is regular enough to list.
 const WEIGHT_INHERITANCE_CLAIM =
-  /\b(?:herda|herdam|herdar|herdada|herdadas|herdado|herdados|propaga|propagam|propagar|propagada|propagadas|propagado|propagados|propaga[çc][ãa]o|transfere|transferem|transferir|transferida|transferidas|transferido|transferidos|estende|estendem|estender|estendida|estendidas|estendido|estendidos|vincula|vinculam|vincular|vinculada|vinculadas|vinculado|vinculados|sujeit[oa]s?|submetid[oa]s?)\b/giu;
+  /\b(?:herda|herdam|herdar|herdada|herdadas|herdado|herdados|propaga|propagam|propagar|propagada|propagadas|propagado|propagados|propaga[çc][ãa]o|transfere|transferem|transferir|transferida|transferidas|transferido|transferidos|estende|estendem|estender|estendida|estendidas|estendido|estendidos|vincula|vinculam|vincular|vinculada|vinculadas|vinculado|vinculados|sujeit[oa]s?|submetid[oa]s?|alcan[çc]a|alcan[çc]am|alcan[çc]ar|recai|recaem|recair|aplicam-se|aplica-se|valem\s+para|vale\s+para)\b/giu;
 
 // The object that makes it a licence claim rather than any other transfer: an
 // obligation, a licence, or one of the three clause names. Without it "o modelo
@@ -1531,7 +1585,7 @@ const LICENCE_OBJECT =
 // restrições acompanham qualquer derivado destes pesos" passes while "os pesos
 // herdam as obrigações das fontes" does not.
 const SOURCE_REFERENT =
-  /\bfontes?\b|\bcorpus\b|\bdados\s+de\s+treino\b|\bconjunto\s+de\s+(?:treino|dados)\b|\bcc-by\b|\bcarolina\b|\bwikip[ée]dia\b|\bb2w\b|\bstack\s*exchange\b/iu;
+  /\bfontes?\b|\bcorpus\b|\bdados\s+de\s+treino\b|\bconjunto\s+de\s+(?:treino|dados)\b|\bcc-by\b|\bodc-by\b|\blei9610\b|\bcarolina\b|\bwikip[ée]dia\b|\bb2w\b|\bstack\s*exchange\b|\bbases?\b|\bsnapshots?\b/iu;
 
 // The denial, widened by one word over {@link HUMAN_LABEL_DENIAL}: `nenhum` and
 // `nenhuma`. The project's own position is written as "NENHUMA obrigação de

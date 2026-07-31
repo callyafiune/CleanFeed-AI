@@ -3,6 +3,7 @@ import { dirname, join } from "node:path";
 
 import { describe, expect, it } from "vitest";
 
+import { RELEASE_CORPUS_POLICY } from "../dataset-manifest.ts";
 import { EVALUATOR_FILES } from "../digests.ts";
 import {
   laneRunsHarness,
@@ -130,12 +131,37 @@ describe("rebuild-v3-policy.json", () => {
       "non-native",
       "repetitive",
     ]);
+    // Three, not four: A1 refused the Stack Exchange dump. It is not absent, it
+    // is BLOCKED BY NAME, and the two lists may not both hold it.
     expect(policy.humanSources.snapshots).toEqual([
       "b2w-reviews01",
       "carolina",
-      "pt-stackoverflow",
       "ptwiki",
     ]);
+    expect(policy.humanSources.blockedSnapshots).toEqual([
+      {
+        blockedBy: "access-terms-unresolved",
+        snapshot: "pt-stackoverflow",
+        unblockRequires: expect.stringContaining("termo de acesso"),
+      },
+    ]);
+    // The stratum that base fed keeps its place in the record vocabulary and is
+    // declared uncovered, so the gap is data instead of a shrunken denominator.
+    expect(policy.uncoveredCoreStrata).toEqual(["qa-informal"]);
+    expect(policy.humanCoreStrata).toContain("qa-informal");
+    // The release seal must require exactly the strata the policy HAS a source for.
+    // The two lists are not coupled in code on purpose — `benchmark/dataset-manifest.ts`
+    // declares it depends only on the record schema and the canonical-json helper, and
+    // the policy module reads a file at load — so the agreement is held here, the same
+    // way the NOTICE is held to the licence registry. Requiring a stratum the policy
+    // refuses would make the seal unsatisfiable rather than strict.
+    expect([...RELEASE_CORPUS_POLICY.requiredHumanSourceTypes].sort()).toEqual(
+      [
+        ...policy.humanCoreStrata.filter(
+          (stratum) => !policy.uncoveredCoreStrata.includes(stratum),
+        ),
+      ].sort(),
+    );
     expect(policy.humanSources.newDownloadsAllowed).toBe(false);
     // Temporal cohort.
     expect(policy.temporalCohort.quartilesOf).toBe("createdAt");
@@ -187,6 +213,46 @@ describe("rebuild-v3-policy.json", () => {
     expect(policy.multiplicity.familyAlpha).toBe(0.05);
     expect(policy.multiplicity.correction).toBe("bonferroni");
     expect(policy.multiplicity.descriptiveConfidence).toBe(0.95);
+    // m, named. A range is not a pre-registration, and the per-hypothesis alpha
+    // is recomputed at load rather than trusted (see `derivedAlpha`).
+    expect(policy.multiplicity.primaryFamilySize).toBe(4);
+    expect(policy.multiplicity.primaryFamily).toEqual([
+      "calibration-global",
+      "fpr-worst-core-stratum",
+      "integrity",
+      "recall-at-threshold",
+    ]);
+    expect(policy.multiplicity.perHypothesisAlpha).toBe(0.0125);
+    // The pre-registration Phase 0.2 froze. `plannedCertifyingMeasurements` is 1
+    // while `blindReserveCompleteAttempts` above is still 2: the reserve sizing
+    // and the declared objective disagree, and the divergence is recorded here
+    // rather than resolved by quietly re-freezing the older field.
+    expect(policy.preRegistration.powerInventoryUnit).toBe(
+      "connected-components",
+    );
+    expect(policy.preRegistration.plannedCertifyingMeasurements).toBe(1);
+    expect(policy.preRegistration.publicFeedbackAdaptation).toBe("none");
+    expect(policy.preRegistration.quotaAxis.axis).toBe("source");
+    expect(policy.preRegistration.quotaAxis.cells).toHaveLength(4);
+    expect(policy.preRegistration.quotaAxis.poolingIsResolutionLoss).toBe(true);
+    expect(policy.preRegistration.partitionFractions).toEqual({
+      calA: 0.1,
+      calB: 0.2,
+      dev: 0.05,
+      test: 0.2,
+      train: 0.45,
+    });
+    expect(policy.powerFloors.samplingUnits).toBe(250);
+    // The two published ceilings, recomputed here from the formula the policy
+    // names — independently of the module's own derivation, so they cannot agree
+    // by being the same literal.
+    const alpha = policy.multiplicity.familyAlpha / 4;
+    expect(policy.preRegistration.zeroEventCeiling.ceilingAtAdoptedFloor).toBe(
+      Number((1 - alpha ** (1 / 250)).toFixed(6)),
+    );
+    expect(policy.preRegistration.zeroEventCeiling.ceilingAt512).toBe(
+      Number((1 - alpha ** (1 / 512)).toFixed(6)),
+    );
     expect(policy.calibrationGate).toEqual({
       eceBinning: "equal-mass",
       eceBins: 15,
@@ -303,10 +369,19 @@ describe("rebuild-v3-policy.json", () => {
       if (estimand.startsWith("separability.")) continue;
       expect(policy.resampling.estimandExtensions[estimand]).toBeUndefined();
     }
-    // Power floors: the two §6.4 minima, and an explicitly absent one.
+    // Power floors: the two §6.4 minima in ROWS, plus the one in independent
+    // SAMPLING UNITS that Phase 0.2 pre-registered. It was null until the primary
+    // family had a size, because a floor with no arithmetic behind it is a number
+    // somebody picked; now it is 250 connected components, the n at which
+    // `1 - alpha^(1/n)` gives the 1.7375% ceiling the project intends to publish.
+    // The two row minima are NOT the same quantity and stay as they are: 300 rows
+    // in one cluster is 300 rows and one unit.
     expect(policy.powerFloors.criticalFprHumanNegatives).toBe(300);
     expect(policy.powerFloors.criticalRecallPositives).toBe(200);
-    expect(policy.powerFloors.samplingUnits).toBeNull();
+    expect(policy.powerFloors.samplingUnits).toBe(250);
+    expect(policy.preRegistration.zeroEventCeiling.adoptedFloorPerCell).toBe(
+      policy.powerFloors.samplingUnits,
+    );
     // Prevalences for the PPV/NPV projection.
     expect(policy.predictiveValuePrevalences).toEqual([0.01, 0.05, 0.1]);
   });

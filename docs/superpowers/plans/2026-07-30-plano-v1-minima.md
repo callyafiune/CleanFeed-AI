@@ -1,6 +1,29 @@
 # Plano v1.0 mínima publicável — v2, pós-codex — PARA APROVAÇÃO DO OPERADOR
 
-**Estado: APROVADO para execução. Nada implementado ainda.** D0 foi decidido pelo operador em
+> **FASE 0 EXECUTADA em 2026-07-31.** O que mudou em relação ao que este plano previa está
+> registrado em `2026-07-30-registro-de-decisoes.md` § "Decisões da Fase 0" (F0-1 a F0-9) e
+> documentado em `docs/corpus-sources.md` (seções "Posição (a)", "A1" e "Fase 0.2"). Três
+> divergências entre o plano e o que foi implementado, com o código valendo (regra D-7):
+>
+> 1. **`license-review.json` ficou `pending`, não `approved`.** O plano pede a troca na Fase 0.
+>    Escrever `approved` seria o agente assinando a revisão do operador, e B1 não é delegável. O
+>    conteúdo da revisão está completo e o bloco `ratification` nomeia o bloqueio. Nada nas Fases
+>    0 a 2 depende da string; a Fase 3 depende, e B1 a bloqueia de todo modo.
+> 2. **`humanCoreStrata` manteve os cinco estratos.** A1 diz "descoberto e declarado", e apagar
+>    `qa-informal` encolheria os denominadores em silêncio. O eixo da COTA é fonte com quatro
+>    células, como o plano manda; o vocabulário de registro segue com cinco, e
+>    `uncoveredCoreStrata` declara a lacuna.
+> 3. **`blindReserveCompleteAttempts` continua 2.** O plano corta a reserva de segunda tentativa
+>    do escopo; isso é corte de engenharia, não ordem para recongelar um valor cuja janela fecha
+>    em G5. `preRegistration.plannedCertifyingMeasurements: 1` fica ao lado, e a divergência está
+>    registrada nos dois arquivos.
+>
+> Uma imprecisão de citação do próprio plano, corrigida: § 0.1 diz que os testes que prendem a
+> união das licenças de fonte estão em `source-manifest.test.ts:561`. Aquela linha prende o PISO
+> congelado; a união era prendida por "the model licence review carries the registry's terms
+> verbatim" (:739) e "the NOTICE states the non-commercial regime…" (:766). As três mudaram.
+
+**Estado: APROVADO para execução. Fase 0 implementada em 2026-07-31; Fase 1 é a próxima.** D0 foi decidido pelo operador em
 2026-07-30 (caminho 1, o detector) e as três decisões que antes bloqueavam a aprovação estão
 resolvidas por delegação no registro: **A1** (Stack Overflow sai), **A2** (eixo da cota) e **B6**
 (calendário, satisfeito pela própria escolha do caminho). Sobra **B1** — parecer jurídico —, que

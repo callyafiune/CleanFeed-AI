@@ -21,9 +21,9 @@ arquivo de teste automatizado. O artefato mediano da área é README + licença 
 
 | item | valor |
 |---|---|
-| branch | `cleanfeed-mvp`, HEAD `05bf5fb`, árvore limpa |
-| suíte | 162 arquivos / 2296 testes verdes |
-| `evaluatorDigest` | `99a993f1cc18243eed168db7bc804b931b25a0799a8ad0ec0c1bb9314cdf8b62` |
+| branch | `cleanfeed-mvp`, árvore limpa. HEAD `05bf5fb` quando isto foi escrito; a **Fase 0 foi executada em 2026-07-31** e moveu o que segue |
+| suíte | 162 arquivos / **2306** testes verdes (eram 2296 antes da Fase 0) |
+| `evaluatorDigest` | **movido de propósito pela Fase 0, antes de qualquer `fit`:** `99a993f1cc18…` → o valor atual sai de `computeEvaluatorDigest`, que é onde se deve ler em vez daqui |
 | ledger de consumo real | `2040fb7a…d88cd` — intocado; registra a concessão gasta em 2026-07-25 |
 | arquivado | `wip/holdout-witness-attestation` (`9e6fcc7`) — testemunha de altura; a mensagem do commit a reserva para uma eventual **v3.0** |
 | não tocar | `stash@{0}` (`wip: options-UI refactor`, de outra sessão) |
@@ -51,7 +51,12 @@ As alternativas ficam registradas como descartadas: estudo de bancada (1,5–3 s
 encerramento (2-3 dias). A recomendação do agente era o estudo; o operador decidiu pelo detector, que
 é prerrogativa dele — e a decisão está registrada com essa autoria, por R4.
 
-**Consequência: a execução está liberada.** Começa pela Fase 0 do plano da v1.0.
+**Consequência: a execução está liberada.** Começa pela Fase 0 do plano da v1.0 — **executada em
+2026-07-31**. As decisões que ela tomou estão em `2026-07-30-registro-de-decisoes.md`
+§ "Decisões da Fase 0" (F0-1 a F0-9), com quatro achados abertos listados ali. A próxima unidade é
+a **Fase 1** (corpus uma vez só). Uma coisa da Fase 0 termina esperando assinatura: `license-review
+.json` ficou `pending`, porque marcar `approved` seria o agente assinando a revisão de licença no
+lugar do operador.
 
 **Uma decisão permanece aberta, e não bloqueia agora:**
 

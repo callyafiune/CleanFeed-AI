@@ -321,6 +321,20 @@ export interface RebuildV3Policy {
   readonly hardNegativeFamilies: readonly string[];
   readonly humanCoreStrata: readonly string[];
   readonly humanSources: {
+    /**
+     * Snapshots refused BY NAME, with the reason and what would lift it.
+     *
+     * A source that leaves the corpus by being deleted from `snapshots` leaves no
+     * trace, and the audit that used to reason about its records goes quiet
+     * instead of failing. Naming the refusal is what makes re-adding the source a
+     * failure with a diagnosis (`access-terms-unresolved`) rather than a one-line
+     * edit that works.
+     */
+    readonly blockedSnapshots: readonly {
+      readonly blockedBy: "access-terms-unresolved";
+      readonly snapshot: string;
+      readonly unblockRequires: string;
+    }[];
     readonly newDownloadsAllowed: false;
     readonly snapshots: readonly string[];
   };
@@ -365,6 +379,11 @@ export interface RebuildV3Policy {
   };
   readonly mixedBelowHalfAiRole: "diagnostic-curve-only";
   readonly multiplicity: {
+    /** `familyAlpha / primaryFamilySize`, recomputed at load and never trusted. */
+    readonly perHypothesisAlpha: number;
+    /** The hypotheses the correction is over. Everything else is diagnostic. */
+    readonly primaryFamily: readonly string[];
+    readonly primaryFamilySize: number;
     readonly correction: "bonferroni";
     readonly descriptiveConfidence: number;
     readonly familyAlpha: number;
@@ -379,12 +398,84 @@ export interface RebuildV3Policy {
   readonly powerFloors: {
     readonly criticalFprHumanNegatives: number;
     readonly criticalRecallPositives: number;
-    // Deliberately absent: no floor on the NUMBER OF SAMPLING UNITS has been
-    // pre-registered. The count is published (A6) but never used as a pass
-    // criterion, because inventing the number here would be inventing evidence.
+    /**
+     * The floor on the NUMBER OF INDEPENDENT SAMPLING UNITS per cell, which is
+     * connected components and not rows (`preRegistration.powerInventoryUnit`).
+     *
+     * It was `null` until Phase 0.2, and the comment here said the number was
+     * deliberately absent because inventing it would be inventing evidence. That
+     * was right at the time and stopped being right once the arithmetic existed:
+     * with the primary family named, `1 - perHypothesisAlpha^(1/n)` gives a
+     * ceiling per `n`, so the floor is derived from the quota the project intends
+     * to publish rather than chosen. Still nullable, because a policy that has not
+     * pre-registered one must be able to say so.
+     */
     readonly samplingUnits: number | null;
   };
   readonly predictiveValuePrevalences: readonly number[];
+  /**
+   * The v2 pre-registration, frozen before the v1 publishes anything.
+   *
+   * Everything here is a decision with no implementation yet, and that is the
+   * point: the split, the power unit, the quota axis and the analysis have to be
+   * fixed BEFORE the corpus is sealed, or the choice among them can be made after
+   * seeing which one passes. The splitter this repository ships is structurally a
+   * three-partition splitter, so `partitionFractions` describes a migration Phase 1
+   * owes; the arithmetic is checked at load anyway, because an unimplemented
+   * decision has no runtime that would notice it does not add up.
+   */
+  readonly preRegistration: {
+    readonly eligibleCandidate: "same-weight-hash-as-v1";
+    readonly frozenBefore: "v1-publication";
+    readonly partitionFractions: {
+      readonly calA: number;
+      readonly calB: number;
+      readonly dev: number;
+      readonly test: number;
+      readonly train: number;
+    };
+    /**
+     * ONE. The reserve for a second complete attempt was cut from the v1.0 scope,
+     * and that cut is only defensible because the declared objective is literally a
+     * single blind measurement. Note that `blindReserveCompleteAttempts` above is
+     * still 2: it sizes the reserve, its window closes at G5, and re-freezing it
+     * was not this task's decision to make. The divergence is recorded rather than
+     * silently resolved.
+     */
+    readonly plannedCertifyingMeasurements: 1;
+    readonly powerInventoryUnit: "connected-components";
+    readonly primaryAnalysis: "one-sided-95-marginal-per-version";
+    /** Regime 2: no adaptation to public feedback between versions. */
+    readonly publicFeedbackAdaptation: "none";
+    readonly quotaAxis: {
+      readonly axis: "source";
+      readonly axisIfA1Reverted: "record";
+      readonly cells: readonly string[];
+      readonly cellsIfA1Reverted: number;
+      /**
+       * Four cells over THREE surviving sources, and the loss is declared rather
+       * than presented as a design.
+       *
+       * Read the cell list before trusting the axis name. `ptwiki` and `b2w` are one
+       * source each; `carolina-institutional` and `carolina-university` are two
+       * REGISTER strata of a single source, split because Carolina's institutional and
+       * university subcorpora are not comparable registers. So the axis is not purely
+       * "source", and calling it that is already an approximation — what it is
+       * exactly is "the coarsest partition of the surviving corpus whose cells are
+       * comparable". The resolution lost is `qa-informal`, which has no source at all
+       * after A1: a five-cell record axis would carry an empty cell, and a cell with
+       * no records cannot carry a quota.
+       */
+      readonly poolingIsResolutionLoss: true;
+    };
+    readonly zeroEventCeiling: {
+      readonly adoptedFloorPerCell: number;
+      readonly ceilingAt512: number;
+      readonly ceilingAtAdoptedFloor: number;
+      readonly formula: "1 - perHypothesisAlpha^(1/n)";
+      readonly unitsBelowFloorFailBeforeSealing: true;
+    };
+  };
   readonly productTarget: "textual-compatibility-with-ai-generation";
   readonly profileBands: readonly string[];
   readonly profileValidityDays: number;
@@ -439,6 +530,12 @@ export interface RebuildV3Policy {
     readonly warmupFraction: number;
     readonly weightDecay: number;
   };
+  /**
+   * Core strata this corpus has no source for. Subset of `humanCoreStrata`,
+   * checked at load: declaring uncovered a stratum the policy does not name is a
+   * contradiction, not a note.
+   */
+  readonly uncoveredCoreStrata: readonly string[];
   readonly wordFloor: {
     readonly abstainBelow: number;
   };
@@ -648,6 +745,218 @@ function frozenList(
   return Object.freeze([...frozen]);
 }
 
+/**
+ * The snapshots refused by name, with the reason and the condition that lifts it.
+ *
+ * A blocked snapshot may NOT also be a stocked one. That check is the whole reason
+ * this is a function and not a `frozenList`: a policy that names the same base in
+ * both lists says the source is simultaneously refused and in use, and whichever
+ * list a given consumer happens to read decides the answer. Refusing the pair is
+ * how the two lists stay one decision.
+ */
+function blockedSnapshots(
+  humanSources: Record<string, unknown>,
+  stocked: readonly string[],
+): readonly {
+  readonly blockedBy: "access-terms-unresolved";
+  readonly snapshot: string;
+  readonly unblockRequires: string;
+}[] {
+  const path = "humanSources.blockedSnapshots";
+  const value = humanSources.blockedSnapshots;
+  if (!Array.isArray(value)) {
+    throw new RebuildV3PolicyError(path, "must be an array");
+  }
+  const seen = new Set<string>();
+  const rows = value.map((entry, index) => {
+    const rowPath = `${path}[${index}]`;
+    const row = object(entry, rowPath, [
+      "blockedBy",
+      "snapshot",
+      "unblockRequires",
+    ]);
+    const snapshot = text(row, rowPath, "snapshot");
+    if (stocked.includes(snapshot)) {
+      throw new RebuildV3PolicyError(
+        rowPath,
+        `blocks "${snapshot}", which humanSources.snapshots still stocks: a source cannot be both refused and in use`,
+      );
+    }
+    if (seen.has(snapshot)) {
+      throw new RebuildV3PolicyError(
+        rowPath,
+        `repeats the snapshot "${snapshot}"`,
+      );
+    }
+    seen.add(snapshot);
+    return Object.freeze({
+      blockedBy: literal(row, rowPath, "blockedBy", "access-terms-unresolved"),
+      snapshot,
+      unblockRequires: text(row, rowPath, "unblockRequires"),
+    });
+  });
+  return Object.freeze(rows);
+}
+
+/**
+ * The core strata with no source, checked to be a SUBSET of `humanCoreStrata`.
+ *
+ * Declaring a stratum uncovered is a statement about the record vocabulary, so it
+ * has to name a stratum that vocabulary has. Without the subset check the field
+ * would accept a typo and report a gap nobody can find, which is the failure mode
+ * of every list that references another list without being joined to it.
+ */
+function uncoveredCoreStrata(root: Record<string, unknown>): readonly string[] {
+  const declared = frozenList(
+    root,
+    "",
+    "uncoveredCoreStrata",
+    FROZEN_UNCOVERED_CORE_STRATA,
+  );
+  for (const stratum of declared) {
+    if (!FROZEN_HUMAN_CORE_STRATA.includes(stratum as never)) {
+      throw new RebuildV3PolicyError(
+        "uncoveredCoreStrata",
+        `names "${stratum}", which is not one of the core strata`,
+      );
+    }
+  }
+  return declared;
+}
+
+// Floating-point slack for the derived numbers below. They are written in the JSON
+// rounded to six decimals, which is how a human reads a pre-registration, so an
+// exact comparison against the recomputed value would fail on the rounding and not
+// on a wrong decision.
+//
+// 1e-6 and not 5e-7. Rounding to six decimals moves a value by at most 5e-7, so a
+// tolerance OF 5e-7 is exactly the boundary: today's ceiling at n = 250 is
+// 0.017375382900 stored as 0.017375, which is 3.83e-7 away and passes with 1.17e-7
+// to spare, but a future frozen n whose true value sits near the half-ulp would be
+// rejected for how it was rounded rather than for being wrong. A gate that fails on
+// presentation teaches the next author to widen it under pressure, which is how a
+// coherence check turns into a formality.
+const DERIVED_TOLERANCE = 1e-6;
+
+/**
+ * `perHypothesisAlpha`, RECOMPUTED from `familyAlpha / primaryFamilySize` instead
+ * of trusted.
+ *
+ * The file's own contract is that no value is written down twice, and this one
+ * unavoidably is: the per-hypothesis alpha has to be readable straight from the
+ * pre-registration, because a reader checking whether the published quota is
+ * honest should not have to divide. So it is written AND derived, and a
+ * disagreement between the two is a hard failure rather than a value that wins.
+ *
+ * This is the gate that would have caught the defect the external audit found. The
+ * family alpha stayed 0.05 while `m` moved, so the per-hypothesis alpha and the
+ * ceilings computed from it silently belonged to a different family size than the
+ * one the plan was claiming.
+ */
+function derivedAlpha(multiplicity: Record<string, unknown>): number {
+  const familyAlpha = proportion(multiplicity, "multiplicity", "familyAlpha");
+  const size = integer(multiplicity, "multiplicity", "primaryFamilySize", 1);
+  const declared = proportion(
+    multiplicity,
+    "multiplicity",
+    "perHypothesisAlpha",
+  );
+  const derived = familyAlpha / size;
+  if (Math.abs(declared - derived) > DERIVED_TOLERANCE) {
+    throw new RebuildV3PolicyError(
+      "multiplicity.perHypothesisAlpha",
+      `is ${declared} but familyAlpha ${familyAlpha} over a family of ${size} is ${derived}: a Bonferroni alpha may not disagree with its own m`,
+    );
+  }
+  return declared;
+}
+
+/**
+ * The zero-event ceiling block, with both ceilings RECOMPUTED from
+ * `1 - perHypothesisAlpha^(1/n)`.
+ *
+ * Same reason as {@link derivedAlpha}, one step further along: a quota with no `n`
+ * is not a pre-registration, and a quota whose `n` and whose ceiling were computed
+ * at different times is worse than none — it reads as arithmetic and is not. The
+ * two numbers in the file are the ones a model card will publish, so they are
+ * checked against the formula the file itself names.
+ */
+function zeroEventCeiling(
+  block: Record<string, unknown>,
+  perHypothesisAlpha: number,
+  powerFloorSamplingUnits: number | null,
+): {
+  readonly adoptedFloorPerCell: number;
+  readonly ceilingAt512: number;
+  readonly ceilingAtAdoptedFloor: number;
+  readonly formula: "1 - perHypothesisAlpha^(1/n)";
+  readonly unitsBelowFloorFailBeforeSealing: true;
+} {
+  const path = "preRegistration.zeroEventCeiling";
+  const adoptedFloorPerCell = integer(block, path, "adoptedFloorPerCell", 1);
+  if (powerFloorSamplingUnits !== adoptedFloorPerCell) {
+    throw new RebuildV3PolicyError(
+      at(path, "adoptedFloorPerCell"),
+      `is ${adoptedFloorPerCell} but powerFloors.samplingUnits is ${String(powerFloorSamplingUnits)}: the floor per cell is one decision and may not be written twice with two values`,
+    );
+  }
+  const ceiling = (n: number): number => 1 - perHypothesisAlpha ** (1 / n);
+  const check = (key: string, n: number): number => {
+    const declared = proportion(block, path, key);
+    const derived = ceiling(n);
+    if (Math.abs(declared - derived) > DERIVED_TOLERANCE) {
+      throw new RebuildV3PolicyError(
+        at(path, key),
+        `is ${declared} but 1 - ${perHypothesisAlpha}^(1/${n}) is ${derived}`,
+      );
+    }
+    return declared;
+  };
+  return {
+    adoptedFloorPerCell,
+    ceilingAt512: check("ceilingAt512", 512),
+    ceilingAtAdoptedFloor: check("ceilingAtAdoptedFloor", adoptedFloorPerCell),
+    formula: literal(block, path, "formula", "1 - perHypothesisAlpha^(1/n)"),
+    unitsBelowFloorFailBeforeSealing: literal(
+      block,
+      path,
+      "unitsBelowFloorFailBeforeSealing",
+      true,
+    ),
+  };
+}
+
+/**
+ * The five partition fractions, refused unless they sum to exactly one.
+ *
+ * The splitter this repository ships is structurally a THREE-partition splitter
+ * (`benchmark/split.ts`), so these five fractions are a pre-registered decision
+ * that no code implements yet. That is deliberate — Phase 0 freezes the decision,
+ * Phase 1 migrates the splitter — and it is exactly why the sum is checked here:
+ * an unimplemented decision has no runtime that would notice it does not add up.
+ */
+function partitionFractions(block: Record<string, unknown>): {
+  readonly calA: number;
+  readonly calB: number;
+  readonly dev: number;
+  readonly test: number;
+  readonly train: number;
+} {
+  const path = "preRegistration.partitionFractions";
+  const fractions = {
+    calA: proportion(block, path, "calA"),
+    calB: proportion(block, path, "calB"),
+    dev: proportion(block, path, "dev"),
+    test: proportion(block, path, "test"),
+    train: proportion(block, path, "train"),
+  };
+  const total = Object.values(fractions).reduce((sum, part) => sum + part, 0);
+  if (Math.abs(total - 1) > DERIVED_TOLERANCE) {
+    throw new RebuildV3PolicyError(path, `sums to ${total}, not 1`);
+  }
+  return fractions;
+}
+
 function numberList(
   record: Record<string, unknown>,
   path: string,
@@ -687,6 +996,38 @@ const FROZEN_HUMAN_CORE_STRATA = [
   "social-media",
   "university",
 ] as const;
+// The record strata this corpus has NO source for, declared instead of deleted.
+// A1 removed the Stack Exchange dump (its 2024 access terms exclude LLM-training
+// projects), and with it the only source that fed `qa-informal`. Dropping the
+// stratum from `humanCoreStrata` would have been the quiet fix: the vocabulary
+// would shrink, every denominator would look complete, and the gap would be
+// invisible in the one file that is supposed to say what the evaluation covers.
+// It stays a core stratum with no source, and the power floor fails its cell
+// before sealing, which is the failure the operator is supposed to see.
+const FROZEN_UNCOVERED_CORE_STRATA = ["qa-informal"] as const;
+// The four hypotheses that carry a certifying claim, and therefore the four the
+// Bonferroni correction is over. Everything else the evaluation publishes is a
+// non-certifying diagnostic, published without adjustment and labelled as such.
+//
+// `m` is the whole point of this list existing. The plan carried "m = 3-6" for a
+// while, and a range is not a pre-registration: with alpha_family = 0.05 the
+// per-hypothesis alpha moves from 0.0167 to 0.0083 across that range, and the
+// zero-event ceiling at n = 250 moves with it. Naming the members is what fixes
+// the denominator, and the audit found the alternative was worse than vague —
+// an earlier m = 61 gave alpha = 0.00082 and a 2.80% ceiling at n = 250, so the
+// "conservative" choice was the self-defeating one.
+const FROZEN_PRIMARY_FAMILY = [
+  "calibration-global",
+  "fpr-worst-core-stratum",
+  "integrity",
+  "recall-at-threshold",
+] as const;
+const FROZEN_QUOTA_AXIS_CELLS = [
+  "b2w",
+  "carolina-institutional",
+  "carolina-university",
+  "ptwiki",
+] as const;
 const FROZEN_HARD_NEGATIVE_FAMILIES = [
   "corporate-structure",
   "formulaic",
@@ -696,12 +1037,11 @@ const FROZEN_HARD_NEGATIVE_FAMILIES = [
   "repetitive",
 ] as const;
 const FROZEN_PROFILE_BANDS = ["50-79", "80-199", "200-plus"] as const;
-const FROZEN_HUMAN_SNAPSHOTS = [
-  "b2w-reviews01",
-  "carolina",
-  "pt-stackoverflow",
-  "ptwiki",
-] as const;
+// A1 (2026-07-31) dropped "pt-stackoverflow" from this list. It did not vanish:
+// it moved to `humanSources.blockedSnapshots` with the reason and the condition
+// that would lift the block, and `blockedSnapshots` refuses a policy that names
+// the same base in both places.
+const FROZEN_HUMAN_SNAPSHOTS = ["b2w-reviews01", "carolina", "ptwiki"] as const;
 const FROZEN_ROLLOUT_STAGES = [
   "bundle-verified",
   "shadow",
@@ -891,6 +1231,7 @@ const POLICY_KEYS = [
   "parity",
   "policyVersion",
   "powerFloors",
+  "preRegistration",
   "predictiveValuePrevalences",
   "productTarget",
   "profileBands",
@@ -902,6 +1243,7 @@ const POLICY_KEYS = [
   "shareAlikeRequired",
   "temporalCohort",
   "training",
+  "uncoveredCoreStrata",
   "wordFloor",
 ] as const;
 
@@ -1154,6 +1496,7 @@ export function parseRebuildV3Policy(value: unknown): RebuildV3Policy {
     "warning",
   ]);
   const humanSources = object(root.humanSources, "humanSources", [
+    "blockedSnapshots",
     "newDownloadsAllowed",
     "snapshots",
   ]);
@@ -1191,6 +1534,9 @@ export function parseRebuildV3Policy(value: unknown): RebuildV3Policy {
     "descriptiveConfidence",
     "familyAlpha",
     "frozenAt",
+    "perHypothesisAlpha",
+    "primaryFamily",
+    "primaryFamilySize",
   ]);
   const parity = object(root.parity, "parity", [
     "operationalMaximumInversions",
@@ -1201,6 +1547,28 @@ export function parseRebuildV3Policy(value: unknown): RebuildV3Policy {
     "criticalRecallPositives",
     "samplingUnits",
   ]);
+  const preRegistration = object(root.preRegistration, "preRegistration", [
+    "eligibleCandidate",
+    "frozenBefore",
+    "partitionFractions",
+    "plannedCertifyingMeasurements",
+    "powerInventoryUnit",
+    "primaryAnalysis",
+    "publicFeedbackAdaptation",
+    "quotaAxis",
+    "zeroEventCeiling",
+  ]);
+  const quotaAxis = object(
+    preRegistration.quotaAxis,
+    "preRegistration.quotaAxis",
+    [
+      "axis",
+      "axisIfA1Reverted",
+      "cells",
+      "cellsIfA1Reverted",
+      "poolingIsResolutionLoss",
+    ],
+  );
   const resampling = object(root.resampling, "resampling", [
     "allowedUnitKinds",
     "estimandClasses",
@@ -1416,6 +1784,7 @@ export function parseRebuildV3Policy(value: unknown): RebuildV3Policy {
       FROZEN_HUMAN_CORE_STRATA,
     ),
     humanSources: {
+      blockedSnapshots: blockedSnapshots(humanSources, FROZEN_HUMAN_SNAPSHOTS),
       newDownloadsAllowed: literal(
         humanSources,
         "humanSources",
@@ -1553,6 +1922,19 @@ export function parseRebuildV3Policy(value: unknown): RebuildV3Policy {
       ),
       familyAlpha: proportion(multiplicity, "multiplicity", "familyAlpha"),
       frozenAt: literal(multiplicity, "multiplicity", "frozenAt", "G5"),
+      perHypothesisAlpha: derivedAlpha(multiplicity),
+      primaryFamily: frozenList(
+        multiplicity,
+        "multiplicity",
+        "primaryFamily",
+        FROZEN_PRIMARY_FAMILY,
+      ),
+      primaryFamilySize: frozenNumber(
+        multiplicity,
+        "multiplicity",
+        "primaryFamilySize",
+        FROZEN_PRIMARY_FAMILY.length,
+      ),
     },
     onnxMaximumInt8Bytes: integer(root, "", "onnxMaximumInt8Bytes", 1),
     parity: {
@@ -1583,6 +1965,99 @@ export function parseRebuildV3Policy(value: unknown): RebuildV3Policy {
         1,
       ),
       samplingUnits: nullableCount(powerFloors, "powerFloors", "samplingUnits"),
+    },
+    preRegistration: {
+      eligibleCandidate: literal(
+        preRegistration,
+        "preRegistration",
+        "eligibleCandidate",
+        "same-weight-hash-as-v1",
+      ),
+      frozenBefore: literal(
+        preRegistration,
+        "preRegistration",
+        "frozenBefore",
+        "v1-publication",
+      ),
+      partitionFractions: partitionFractions(
+        object(
+          preRegistration.partitionFractions,
+          "preRegistration.partitionFractions",
+          ["calA", "calB", "dev", "test", "train"],
+        ),
+      ),
+      plannedCertifyingMeasurements: frozenNumber(
+        preRegistration,
+        "preRegistration",
+        "plannedCertifyingMeasurements",
+        1,
+      ) as 1,
+      powerInventoryUnit: literal(
+        preRegistration,
+        "preRegistration",
+        "powerInventoryUnit",
+        "connected-components",
+      ),
+      primaryAnalysis: literal(
+        preRegistration,
+        "preRegistration",
+        "primaryAnalysis",
+        "one-sided-95-marginal-per-version",
+      ),
+      publicFeedbackAdaptation: literal(
+        preRegistration,
+        "preRegistration",
+        "publicFeedbackAdaptation",
+        "none",
+      ),
+      quotaAxis: {
+        axis: literal(quotaAxis, "preRegistration.quotaAxis", "axis", "source"),
+        axisIfA1Reverted: literal(
+          quotaAxis,
+          "preRegistration.quotaAxis",
+          "axisIfA1Reverted",
+          "record",
+        ),
+        cells: frozenList(
+          quotaAxis,
+          "preRegistration.quotaAxis",
+          "cells",
+          FROZEN_QUOTA_AXIS_CELLS,
+        ),
+        cellsIfA1Reverted: frozenNumber(
+          quotaAxis,
+          "preRegistration.quotaAxis",
+          "cellsIfA1Reverted",
+          FROZEN_HUMAN_CORE_STRATA.length,
+        ),
+        poolingIsResolutionLoss: literal(
+          quotaAxis,
+          "preRegistration.quotaAxis",
+          "poolingIsResolutionLoss",
+          true,
+        ),
+      },
+      zeroEventCeiling: zeroEventCeiling(
+        object(
+          preRegistration.zeroEventCeiling,
+          "preRegistration.zeroEventCeiling",
+          [
+            "adoptedFloorPerCell",
+            "ceilingAt512",
+            "ceilingAtAdoptedFloor",
+            "formula",
+            "unitsBelowFloorFailBeforeSealing",
+          ],
+        ),
+        derivedAlpha(multiplicity),
+        // The floor is ONE decision written in two places, so the two are joined
+        // here. `powerFloors.samplingUnits` is where a power gate would read it and
+        // `adoptedFloorPerCell` is what the ceiling is computed from, and a policy in
+        // which they disagree publishes a quota for an n it does not require. A test
+        // pinned the pair already; the parser is where it belongs, because the policy
+        // file is the authority and the test is not the thing consumers load.
+        nullableCount(powerFloors, "powerFloors", "samplingUnits"),
+      ),
     },
     predictiveValuePrevalences: numberList(
       root,
@@ -1678,6 +2153,7 @@ export function parseRebuildV3Policy(value: unknown): RebuildV3Policy {
       warmupFraction: proportion(training, "training", "warmupFraction"),
       weightDecay: proportion(training, "training", "weightDecay"),
     },
+    uncoveredCoreStrata: uncoveredCoreStrata(root),
     wordFloor: {
       abstainBelow: integer(wordFloor, "wordFloor", "abstainBelow", 1),
     },

@@ -15,6 +15,7 @@ import {
   FROZEN_CORPUS_OBLIGATIONS,
   LICENSE_OBLIGATION_LABEL_PT,
   PRE_CHATGPT_CUTOFF_ISO,
+  A1_BLOCKED_HUMAN_SOURCES,
   V3_HUMAN_SOURCE_INVENTORY,
   WEIGHT_USE_POLICY,
   corpusLicenseObligations,
@@ -833,13 +834,17 @@ describe("licence policy agreement across manifest, review and NOTICE", () => {
 // base that already carries instrumented sessions stays representable.
 // ---------------------------------------------------------------------------
 
+// `ptwiki` and not `pt-stackoverflow`, which this fixture used until A1 refused
+// that base: a registration naming a blocked snapshot is refused at the first
+// guard, so it can no longer stand in for "an ordinary admissible source" while
+// these tests pin the ORDER of the later guards.
 const publicSnapshot: HumanSourceRegistrationV1 = {
-  sourceId: "src_ptso",
-  snapshot: "pt-stackoverflow",
+  sourceId: "src_wikipedia_pt",
+  snapshot: "ptwiki",
   acquisition: "public-dataset",
   licenseId: "cc-by-sa-4.0",
   labelBasis: "date-cutoff",
-  anchorDateField: "Posts.xml@CreationDate",
+  anchorDateField: "page/revision/timestamp",
   anchorDateScope: "document",
   declaredGroupAxes: ["author", "source"],
 };
@@ -1018,7 +1023,6 @@ describe("B3 — the frozen v3 human inventory", () => {
     // B2W while succeeding for the other three. Those manifests are gitignored
     // build artifacts, so this is a literal and not a read.
     expect(V3_HUMAN_SOURCE_INVENTORY.map((entry) => entry.sourceId)).toEqual([
-      "src_ptso",
       "src_wikipedia_pt",
       "src_carolina",
       "src_b2w",
@@ -1056,7 +1060,7 @@ describe("B3 — the frozen v3 human inventory", () => {
       assertV3HumanInventoryAdmissible([
         { ...publicSnapshot, acquisition: "recruited-donor" },
       ]),
-    ).toThrow(/src_ptso.*individual-acquisition/u);
+    ).toThrow(/src_wikipedia_pt.*individual-acquisition/u);
   });
 });
 
@@ -1479,14 +1483,54 @@ describe("declaredGroupAxes on the v3 human inventory", () => {
         [...entry.declaredGroupAxes],
       ]),
     );
-    // Stack Overflow -> thread and author; Wikipedia -> page; B2W -> product and
-    // reviewer; Carolina -> member file. `source` IS the origin document in v3, so
-    // thread/page/product/member-file are one axis under four names, and `author`
-    // is declared only where a single person wrote the text.
-    expect(byId.get("src_ptso")).toEqual(["author", "source"]);
+    // Wikipedia -> page; B2W -> product and reviewer; Carolina -> member file.
+    // `source` IS the origin document in v3, so page/product/member-file are one
+    // axis under three names, and `author` is declared only where a single person
+    // wrote the text.
     expect(byId.get("src_b2w")).toEqual(["author", "source"]);
     expect(byId.get("src_wikipedia_pt")).toEqual(["source"]);
     expect(byId.get("src_carolina")).toEqual(["source"]);
+    expect(byId.has("src_ptso")).toBe(false);
+  });
+
+  it("keeps the refused source's declaration instead of deleting it", () => {
+    // A1 refused the Stack Exchange dump; the registration survives so
+    // `auditCorpusSources` can still recognise a manifest that declares `src_ptso`
+    // and BLOCK it (`SOURCE_BLOCKED_BY_ACCESS_TERMS`), rather than not know the
+    // source and report `ready`. Thread and author are
+    // the axes an answer really has, and rediscovering them is the cost A1 would
+    // otherwise charge to whoever reverts it.
+    expect(A1_BLOCKED_HUMAN_SOURCES.map((entry) => entry.sourceId)).toEqual([
+      "src_ptso",
+    ]);
+    expect([...A1_BLOCKED_HUMAN_SOURCES[0].declaredGroupAxes]).toEqual([
+      "author",
+      "source",
+    ]);
+    expect(A1_BLOCKED_HUMAN_SOURCES[0].anchorDateField).toBe(
+      "Posts.xml@CreationDate",
+    );
+  });
+
+  it("refuses the blocked base by name, not by absence, and above its licence", () => {
+    const verdict = humanSourceAdmissibility(A1_BLOCKED_HUMAN_SOURCES[0]);
+    expect(verdict).toMatchObject({
+      admissible: false,
+      blockedBy: "access-terms-unresolved",
+    });
+    // The licence and the route are both fine, which is exactly why neither may be
+    // reported: telling a caller the problem is the licence would tell them that
+    // `cc-by-sa-4.0` is the thing to fix, and it is not.
+    expect(sourceAdmissibility("cc-by-sa-4.0").admissible).toBe(true);
+    expect(licenseDescribesPublicBase("cc-by-sa-4.0")).toBe(true);
+    // And the route still wins when both could fire: B3 refuses recruitment for
+    // every source, which is the more general statement than one blocked base.
+    expect(
+      humanSourceAdmissibility({
+        ...A1_BLOCKED_HUMAN_SOURCES[0],
+        acquisition: "recruited-donor",
+      }),
+    ).toMatchObject({ blockedBy: "individual-acquisition" });
   });
 
   it("declares no axis a record cannot fill", () => {
@@ -1751,6 +1795,13 @@ describe("position (a) — the weights carry their own policy, not the sources'"
       "docs/corpus-sources.md",
       "docs/limitations.md",
       "docs/uso-responsavel.md",
+      // The repository's front-door statement of the position and the licence of the
+      // documentation. Both were created by the same commit as the screen and both
+      // were missing from this list, which is the shape of the failure the screen
+      // exists to prevent: the claim is not where you last removed it, it is in the
+      // file somebody writes next.
+      "LICENSES.md",
+      "docs/LICENSE-DOCS.md",
     ]) {
       const body = await readFile(resolve(REPO_ROOT, relativePath), "utf8");
       expect(weightInheritanceOverclaimIn(body), relativePath).toBeNull();

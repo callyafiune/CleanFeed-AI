@@ -466,6 +466,42 @@ acima é que ela entre junto.
   projeto:_ plano v3 § D0b; `benchmark/rebuild-v3-policy.json` (`powerFloors`). _Fato citado:_
   "evaluations are experiments"; formaliza erro-padrão agrupado e inferência pareada.
 
+### 2.2b Onde os números da Fase 0.2 passaram a viver (2026-07-31)
+
+Esta subseção não traz fonte nova: as fontes de Bonferroni (§ 2.2), de pré-registro
+(§ 2.1, Nosek et al. 2018) e da cota sob zero eventos (§ 3.2) já estavam aqui. O que faltava era a
+**âncora** — a decisão que elas sustentam existia como faixa, e faixa não é pré-registro.
+
+- **`m = 4`, com a família nomeada** — FPR do pior estrato core, recall no limiar, calibração
+  global, integridade. _Onde no projeto:_ `benchmark/rebuild-v3-policy.json`
+  (`multiplicity.primaryFamily`, `multiplicity.primaryFamilySize`); plano v1 § 0.2; registro § B3.
+  _Por que a âncora importa:_ o plano carregou "m = 3–6", e nesse intervalo o α por hipótese anda
+  de 0,0167 a 0,0083. Um `m = 61` anterior era pior que vago — α = 0,00082 dava cota de 2,8026 %
+  em n=250, quando publicar perto de 1 % exigiria 707 registros por célula.
+- **α por hipótese = 0,0125 e as cotas 1,7375 % (n=250) / 0,8522 % (n=512)** — recomputados no
+  load a partir de `familyAlpha / m` e de `1 − α^(1/n)`, e não conferidos à mão. _Onde no
+  projeto:_ `benchmark/rebuild-v3-policy.ts` (`derivedAlpha`, `zeroEventCeiling`);
+  `preRegistration.zeroEventCeiling`. _Fato citado:_ a construção da cota sob zero eventos é a de
+  § 3.2; o que este commit acrescenta é `n` explícito, sem o qual a cota não é pré-registro.
+- **Unidade do inventário de poder = componentes conectados** — não linhas. _Onde no projeto:_
+  `preRegistration.powerInventoryUnit`; `powerFloors.samplingUnits` (250, era `null`). A âncora de
+  inferência cluster-robusta é a de § 4.1: `criticalFprHumanNegatives: 300` conta **linhas** e
+  permanece, porque 300 linhas de um cluster são 300 linhas e uma unidade.
+
+**Sem precedente encontrado (2026-07-31)**, duas práticas de engenharia deste commit:
+
+1. **Valor derivado escrito E recomputado, com divergência fatal.** O α por hipótese e as duas
+   cotas estão no arquivo porque quem audita a cota não deveria precisar dividir, e são derivados
+   no load porque escrito-sem-derivar é o defeito que a auditoria externa encontrou: o α de
+   família ficou 0,05 enquanto `m` se mexia. Não foi encontrada prática equivalente em
+   pré-registro de ML — os registros da área são prosa ou formulário, sem validador.
+2. **Fonte recusada por nome, não por ausência.** A1 mantém `pt-stackoverflow` em
+   `humanSources.blockedSnapshots` com razão e condição de desbloqueio, e mantém a declaração da
+   fonte em `A1_BLOCKED_HUMAN_SOURCES`, em vez de apagar as duas. O motivo é que a auditoria de
+   vazamento que **não conhece** uma fonte fica quieta sobre os registros dela em vez de
+   reprovar. Precedente parcial: revogação em transparência de certificados (§ 9), onde o
+   certificado revogado permanece listado. Não foi encontrado análogo em governança de corpus.
+
 ### 2.3 Olhares repetidos nos dados e sequências sem teto
 
 - **Pocock, 1977 — Group sequential methods in the design and analysis of clinical trials**

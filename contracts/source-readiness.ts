@@ -16,7 +16,7 @@
 
 import { canonicalSha256 } from "./canonical-json.ts";
 
-/** The closed, ordered set of the nine corpus source blocking codes. */
+/** The closed, ordered set of the ten corpus source blocking codes. */
 export const CORPUS_SOURCE_BLOCKING_CODES = [
   "SOURCE_MANIFEST_INVALID",
   "SOURCE_REFERENCE_MISSING",
@@ -27,6 +27,11 @@ export const CORPUS_SOURCE_BLOCKING_CODES = [
   "COLLECTION_PROTOCOL_MISMATCH",
   "GENERATION_RECIPE_MISSING",
   "GENERATION_RECIPE_MISMATCH",
+  // A1: the source's own access terms are unresolved, whatever its licence permits.
+  // Its own code and not `EVALUATION_USE_NOT_APPROVED`, because approving the use is
+  // not what is missing — a verifiable legal disposition of the dump's 2024 access
+  // terms is, and no field of a manifest entry can supply one.
+  "SOURCE_BLOCKED_BY_ACCESS_TERMS",
 ] as const;
 
 export type CorpusSourceBlockingCode =

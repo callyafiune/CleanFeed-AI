@@ -91,7 +91,9 @@ const human: BenchmarkRecord = {
   platform: "generic",
   domain: "corporate",
   topic: "career",
-  humanSourceType: "qa-informal",
+  // `encyclopedic` and not `qa-informal`: A1 (2026-07-31) left that stratum with no
+  // source, so no fixture stamps it and `RELEASE_CORPUS_POLICY` no longer requires it.
+  humanSourceType: "encyclopedic",
   hardNegativeFamily: "formulaic",
   wordCount: 100,
   createdAt: 1_735_689_600_000,
@@ -761,7 +763,7 @@ describe("held-out generator-family coverage on a release corpus", () => {
   function releasePolicy(aiCount: number) {
     return {
       counts: { human: 1, ai: aiCount, mixed: 0 },
-      requiredHumanSourceTypes: ["qa-informal"],
+      requiredHumanSourceTypes: ["encyclopedic"],
       requiredHardNegativeFamilies: [],
     };
   }
@@ -1012,7 +1014,7 @@ describe("held-out generator-family coverage on a release corpus", () => {
       [human, ...v2Positives],
       {
         counts: { human: 1, ai: 200, mixed: 0 },
-        requiredHumanSourceTypes: ["qa-informal"],
+        requiredHumanSourceTypes: ["encyclopedic"],
         requiredHardNegativeFamilies: [],
       },
       validFileDigests,
@@ -1046,7 +1048,7 @@ describe("held-out generator-family coverage on a release corpus", () => {
       [human, ...v2Positives],
       {
         counts: { human: 1, ai: 200, mixed: 0 },
-        requiredHumanSourceTypes: ["qa-informal"],
+        requiredHumanSourceTypes: ["encyclopedic"],
         requiredHardNegativeFamilies: [],
       },
       validFileDigests,
@@ -1084,7 +1086,7 @@ describe("held-out generator-family coverage on a release corpus", () => {
       [human, ...thin],
       {
         counts: { human: 1, ai: 5, mixed: 0 },
-        requiredHumanSourceTypes: ["qa-informal"],
+        requiredHumanSourceTypes: ["encyclopedic"],
         requiredHardNegativeFamilies: [],
       },
       validFileDigests,
@@ -1122,7 +1124,7 @@ describe("held-out generator-family coverage on a release corpus", () => {
         [v3HumanRow(), v3AiRow(1), v2Positive],
         {
           counts: { human: 1, ai: 2, mixed: 0 },
-          requiredHumanSourceTypes: ["qa-informal"],
+          requiredHumanSourceTypes: ["encyclopedic"],
           requiredHardNegativeFamilies: [],
         },
         validFileDigests,
@@ -1153,7 +1155,7 @@ describe("held-out generator-family coverage on a release corpus", () => {
           [leaked, ai, mixed],
           {
             counts: { human: 1, ai: 1, mixed: 1 },
-            requiredHumanSourceTypes: ["qa-informal"],
+            requiredHumanSourceTypes: ["encyclopedic"],
             requiredHardNegativeFamilies: ["formulaic"],
           },
           validFileDigests,

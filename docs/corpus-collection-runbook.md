@@ -74,7 +74,7 @@ O `sealDataset` só produz um audit se a composição bater **exatamente**:
 | `mixed` | **2.000** | contagem exata |
 | Idioma | `pt-BR` (todos) | schema + manifest |
 | Plataforma / domínio | tokens livres por registro (ex.: `generic`); manifest: `datasetId: "ptbr-generic-v1"`, `intendedDomain: "generic"` | schema + manifest |
-| Tipos de fonte humana | pelo menos 1 registro de cada: `qa-informal` (SE-PT), `encyclopedic` (Wikipédia), `social-media` (Carolina social/datasets), `university` (Carolina university), `institutional` (Carolina judicial/legislative) | `DATASET_COVERAGE_INVALID` |
+| Tipos de fonte humana | pelo menos 1 registro de cada: `encyclopedic` (Wikipédia), `social-media` (Carolina social/datasets), `university` (Carolina university), `institutional` (Carolina judicial/legislative). **`qa-informal` saiu com A1 (2026-07-31)** — o SE-PT era sua única fonte, e exigi-lo tornaria o selo de release insatisfazível em vez de estrito | `DATASET_COVERAGE_INVALID` |
 | Famílias hard-negative | pelo menos 1 humano de cada: `formulaic`, `motivational`, `highly-polished`, `repetitive`, `non-native`, `corporate-structure` | `DATASET_COVERAGE_INVALID` |
 | Famílias de gerador held-out | cada família em `heldOutGeneratorFamilies` precisa de **≥ 200** positivos elegíveis (`ai`/`mixed`) e **não pode** aparecer em nenhum registro `human` | `DATASET_COVERAGE_INVALID` |
 | Revisores por registro | **≥ 2 distintos**; adjudicador (se `adjudicated`) independente dos dois | `DATASET_REVIEW_INVALID` |
@@ -305,7 +305,7 @@ errado, não o guarda.
   "schemaVersion": 1,
   "sources": [
     {
-      "sourceId": "src_ptso",
+      "sourceId": "src_wikipedia_pt",
       "sourceType": "licensed-corpus",          // acquisition = "licensed"
       "acquisition": "licensed",
       "evaluationUseApproved": true,
@@ -314,6 +314,8 @@ errado, não o guarda.
       "collectionProtocolVersion": "collection-v1",
       "legalReviewerIds": ["legal_a", "legal_b"]  // EXATAMENTE 2, distintos
     },
+    // NÃO escreva "src_ptso" aqui: A1 bloqueou a fonte, e auditCorpusSources
+    // reprova o manifesto com SOURCE_BLOCKED_BY_ACCESS_TERMS.
     {
       "sourceId": "src_carolina",
       "sourceType": "licensed-corpus",

@@ -2910,7 +2910,7 @@ Quatro divergências do texto acima, deliberadas:
    tem datas TEI de 2024 e 2025). A justificativa velha do rastreio por
    `licenseId` ("preserva a opcionalidade se a postura um dia mudar") foi
    removida: não há ramo comercial a preservar; o rastreio existe porque
-   atribuição e share-alike propagam para o artefato e porque é por ele que uma
+   atribuição e share-alike são obrigações do corpus (a posição (a), fixada na Fase 0.1 da v1.0, é que elas não alcançam os pesos) e porque é por ele que uma
    fonte `ND` é recusada.
 
 **Acordo entre os três lugares é testado, não prometido:**

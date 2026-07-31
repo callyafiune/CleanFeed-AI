@@ -120,7 +120,7 @@ describe("source readiness contract", () => {
     },
   );
 
-  it("exposes exactly nine closed blocking codes", () => {
+  it("exposes exactly ten closed blocking codes", () => {
     expect([...CORPUS_SOURCE_BLOCKING_CODES]).toEqual([
       "SOURCE_MANIFEST_INVALID",
       "SOURCE_REFERENCE_MISSING",
@@ -131,6 +131,7 @@ describe("source readiness contract", () => {
       "COLLECTION_PROTOCOL_MISMATCH",
       "GENERATION_RECIPE_MISSING",
       "GENERATION_RECIPE_MISMATCH",
+      "SOURCE_BLOCKED_BY_ACCESS_TERMS",
     ]);
   });
 

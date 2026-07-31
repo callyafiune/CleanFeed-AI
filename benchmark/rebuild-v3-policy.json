@@ -119,11 +119,17 @@
     "university"
   ],
   "humanSources": {
+    "blockedSnapshots": [
+      {
+        "blockedBy": "access-terms-unresolved",
+        "snapshot": "pt-stackoverflow",
+        "unblockRequires": "registro verificavel de data e mecanismo de aquisicao do dump, mais disposicao juridica explicita do termo de acesso de 2024 que exclui projetos de treino de LLM"
+      }
+    ],
     "newDownloadsAllowed": false,
     "snapshots": [
       "b2w-reviews01",
       "carolina",
-      "pt-stackoverflow",
       "ptwiki"
     ]
   },
@@ -164,7 +170,15 @@
     "correction": "bonferroni",
     "descriptiveConfidence": 0.95,
     "familyAlpha": 0.05,
-    "frozenAt": "G5"
+    "frozenAt": "G5",
+    "perHypothesisAlpha": 0.0125,
+    "primaryFamily": [
+      "calibration-global",
+      "fpr-worst-core-stratum",
+      "integrity",
+      "recall-at-threshold"
+    ],
+    "primaryFamilySize": 4
   },
   "onnxMaximumInt8Bytes": 109681931,
   "parity": {
@@ -175,7 +189,41 @@
   "powerFloors": {
     "criticalFprHumanNegatives": 300,
     "criticalRecallPositives": 200,
-    "samplingUnits": null
+    "samplingUnits": 250
+  },
+  "preRegistration": {
+    "eligibleCandidate": "same-weight-hash-as-v1",
+    "frozenBefore": "v1-publication",
+    "partitionFractions": {
+      "calA": 0.1,
+      "calB": 0.2,
+      "dev": 0.05,
+      "test": 0.2,
+      "train": 0.45
+    },
+    "plannedCertifyingMeasurements": 1,
+    "powerInventoryUnit": "connected-components",
+    "primaryAnalysis": "one-sided-95-marginal-per-version",
+    "publicFeedbackAdaptation": "none",
+    "quotaAxis": {
+      "axis": "source",
+      "axisIfA1Reverted": "record",
+      "cells": [
+        "b2w",
+        "carolina-institutional",
+        "carolina-university",
+        "ptwiki"
+      ],
+      "cellsIfA1Reverted": 5,
+      "poolingIsResolutionLoss": true
+    },
+    "zeroEventCeiling": {
+      "adoptedFloorPerCell": 250,
+      "ceilingAt512": 0.008522,
+      "ceilingAtAdoptedFloor": 0.017375,
+      "formula": "1 - perHypothesisAlpha^(1/n)",
+      "unitsBelowFloorFailBeforeSealing": true
+    }
   },
   "predictiveValuePrevalences": [
     0.01,
@@ -329,6 +377,9 @@
     "warmupFraction": 0.06,
     "weightDecay": 0.01
   },
+  "uncoveredCoreStrata": [
+    "qa-informal"
+  ],
   "wordFloor": {
     "abstainBelow": 50
   }

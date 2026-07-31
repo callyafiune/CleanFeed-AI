@@ -87,14 +87,26 @@ export interface CorpusPolicy {
 
 export const RELEASE_CORPUS_POLICY: CorpusPolicy = {
   counts: { human: 4_000, ai: 4_000, mixed: 2_000 },
-  // Generic pt-BR pivot: the five human source types map the licensed sources
-  // the sealed corpus is drawn from — Stack Exchange PT (qa-informal),
-  // Wikipedia PT (encyclopedic), Carolina social media/datasets (social-media),
-  // Carolina university (university) and Carolina judicial/legislative
-  // (institutional). Hard-negative families are STYLE families, not platform
-  // families, so they are unchanged by the pivot.
+  // The four human source types a release corpus must cover: Wikipedia PT
+  // (encyclopedic), Carolina social media/datasets (social-media), Carolina
+  // university (university) and Carolina judicial/legislative (institutional).
+  // Hard-negative families are STYLE families, not platform families, so they are
+  // untouched by this.
+  //
+  // `qa-informal` was the fifth until A1 (2026-07-31) refused the Stack Exchange
+  // dump, which was its only source. Leaving it here would have made the release seal
+  // UNSATISFIABLE rather than strict: the gate would demand at least one record from a
+  // source the frozen policy refuses, so no corpus could ever pass, and the failure
+  // would read as a corpus that is short rather than a requirement that cannot be met.
+  //
+  // This list is NOT derived from `REBUILD_V3_POLICY.humanCoreStrata` minus
+  // `uncoveredCoreStrata`, although that is what it equals. This module's header
+  // states it depends only on the record schema and the canonical-json helper, and the
+  // policy module reads a file at load — importing it here would make this module
+  // Node-side. The agreement is held by test instead
+  // ("requires exactly the core strata the frozen policy has a source for"), which is
+  // the same way the NOTICE is held to the licence registry.
   requiredHumanSourceTypes: [
-    "qa-informal",
     "encyclopedic",
     "social-media",
     "university",

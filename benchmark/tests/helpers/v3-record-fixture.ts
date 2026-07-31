@@ -5,8 +5,11 @@
 // (`benchmark/data/candidates/*.jsonl`), not invented: the AI fixture's lane,
 // family, prompt id and `seedNullReason` are the shapes `ai_fresh_agy.jsonl`
 // carries, and the human fixture's anchor date field is the one
-// `benchmark/lab/extract_stackexchange.py` reads. The ids are pseudonymised
-// tokens, as the schema requires.
+// `benchmark/lab/extract_wikipedia.py` reads. It named the Stack Exchange extractor
+// until A1 (2026-07-31) refused that base; the group tokens still spell `ptso` and
+// are left alone deliberately, because they are opaque pseudonyms that resolve
+// against the gitignored private manifest and against no registry. The ids are
+// pseudonymised tokens, as the schema requires.
 //
 // The builders return `Record<string, unknown>` on purpose: every refusal test
 // needs to DELETE a required key or write a contradictory value, which a typed
@@ -197,9 +200,9 @@ const V3_HUMAN: Record<string, unknown> = {
   label: "human",
   language: "pt-BR",
   platform: "generic",
-  domain: "qa-informal",
+  domain: "encyclopedic",
   topic: "programacao",
-  humanSourceType: "qa-informal",
+  humanSourceType: "encyclopedic",
   wordCount: 100,
   createdAt: 1_386_720_000_000,
   labelBasis: "date-cutoff",
@@ -207,14 +210,20 @@ const V3_HUMAN: Record<string, unknown> = {
     basis: "date-cutoff",
     entryId: "ev_ptso_0001",
     entryDigest: "1".repeat(64),
-    dateField: "Posts.xml@CreationDate",
+    dateField: "page/revision/timestamp",
     observedValue: "2013-12-11T00:00:00.000Z",
     cutoff: "2022-11-30T00:00:00.000Z",
-    snapshot: "pt-stackoverflow",
+    snapshot: "ptwiki",
   },
   provenance: {
+    // `src_wikipedia_pt` and not `src_ptso`: A1 refused the Stack Exchange dump, so
+    // a fixture standing for an ORDINARY admissible human record may not name it.
+    // The group tokens below still read `ptso` and are left alone deliberately —
+    // they are opaque pseudonyms that join to the gitignored private manifest, not
+    // to any registry, so renaming them would churn six test files to change the
+    // spelling of a string nothing resolves.
     sourceKind: "licensed-corpus",
-    sourceId: "src_ptso",
+    sourceId: "src_wikipedia_pt",
     sourceRevision: "rev_001",
     collectedAt: 1_784_900_000_000,
     licenseId: "cc-by-sa-4.0",

@@ -46,6 +46,7 @@ import {
   type BenchmarkRecord,
 } from "./schema.ts";
 import {
+  A1_BLOCKED_HUMAN_SOURCES,
   computeReviewedSourceManifestDigest,
   licenseDescribesPublicBase,
   type GenerationBatchV1,
@@ -166,6 +167,22 @@ function auditSources(
     if (source.collectionProtocolVersion !== "collection-v1") {
       reasons.push({
         code: "COLLECTION_PROTOCOL_MISMATCH",
+        sourceId: source.sourceId,
+      });
+    }
+
+    // A1: refused by name, and refused HERE and not only in
+    // `humanSourceAdmissibility`, because this audit reads a reviewed MANIFEST — which
+    // carries no snapshot — and it is what decides `status: "ready"`. Without it the
+    // audit authorizes a manifest declaring the blocked source, which is exactly the
+    // silence that keeping the registration was supposed to prevent.
+    if (
+      A1_BLOCKED_HUMAN_SOURCES.some(
+        (blocked) => blocked.sourceId === source.sourceId,
+      )
+    ) {
+      reasons.push({
+        code: "SOURCE_BLOCKED_BY_ACCESS_TERMS",
         sourceId: source.sourceId,
       });
     }

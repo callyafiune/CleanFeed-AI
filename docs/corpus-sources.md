@@ -117,7 +117,7 @@ Nenhum dos três pode trazer fonte que o manifesto recusa: registro cujo
 
 | sourceId (sugerido) | Fonte | Base legal / licenseId | Registro/estilo | NC? | Papel |
 | --- | --- | --- | --- | --- | --- |
-| `src_ptso` | pt.stackoverflow.com (dump oficial do Stack Exchange) | CC BY-SA 4.0 → `cc-by-sa-4.0` | Informal, curto, tech — **melhor proxy limpo do feed** | não | avaliação + treino |
+| ~~`src_ptso`~~ | ~~pt.stackoverflow.com (dump oficial do Stack Exchange)~~ | CC BY-SA 4.0 → `cc-by-sa-4.0` | Informal, curto, tech | não | **BLOQUEADA (A1, 2026-07-31)** — fora do corpus v1/v2, ver abaixo |
 | `src_wikipedia_pt` | Wikipédia PT (dumps oficiais dumps.wikimedia.org) | CC BY-SA 4.0 → `cc-by-sa-4.0` | Enciclopédico/formal | não | treino/volume |
 | `src_empresa` | Blog/comunicados corporativos próprios pré-nov/2022 | Autorização interna escrita → `autorizacao-interna-v1` | Corporativo — match com o feed | não | avaliação + treino |
 | `src_proprio` | Textos do próprio operador | Autoria própria → `autoria-propria-v1` | Variado | não | avaliação + treino |
@@ -175,7 +175,7 @@ que as duas não divirjam em silêncio.
 
 | sourceId | snapshot | campo que ancora os bytes | escopo | base do rótulo |
 | --- | --- | --- | --- | --- |
-| `src_ptso` | `pt-stackoverflow` | `Posts.xml`, atributo `CreationDate` | documento | `date-cutoff` |
+| ~~`src_ptso`~~ | ~~`pt-stackoverflow`~~ | `Posts.xml`, atributo `CreationDate` | documento | **bloqueada (A1)** — registro preservado em `A1_BLOCKED_HUMAN_SOURCES` |
 | `src_wikipedia_pt` | `ptwiki` | `page/revision/timestamp` | documento | `date-cutoff` |
 | `src_carolina` | `carolina` | `teiHeader//date[@type="Download"]`, por documento | documento | `date-cutoff` |
 | `src_b2w` | `b2w-reviews01` | coluna `submission_date` | documento | `date-cutoff` |
@@ -188,10 +188,13 @@ revisão corrente de cada página. Um snapshot recente de qualquer um dos dois �
 texto pós-LLM com nome antigo — daí o campo por documento ser *load-bearing* e
 não defesa em profundidade.
 
-**Quais destas são fontes humanas da v3.** Só quatro: `src_ptso`,
+**Quais destas são fontes humanas da v3.** Depois de A1 (2026-07-31), **três**:
 `src_wikipedia_pt`, `src_carolina` e `src_b2w` — exatamente os snapshots
 congelados em `benchmark/rebuild-v3-policy.json` (`humanSources.snapshots`), com
-`newDownloadsAllowed: false`. `src_empresa` (autorização interna escrita) e
+`newDownloadsAllowed: false`. `src_ptso` era a quarta e está **bloqueada**: o
+snapshot vive agora em `humanSources.blockedSnapshots` e a declaração da fonte em
+`A1_BLOCKED_HUMAN_SOURCES`, e `auditCorpusSources` reprova
+(`SOURCE_BLOCKED_BY_ACCESS_TERMS`) um manifesto que a declare. `src_empresa` (autorização interna escrita) e
 `src_proprio` (autoria do operador) **não** entram: nenhuma das duas é base
 pública licenciada, que é a única rota que B3 deixa aberta.
 
@@ -271,7 +274,8 @@ respostas do projeto — está em [limitations.md](limitations.md).
   (3) sem licença declarada no card.
 
 **Trio FECHADO para volume (2026-07-22): Stack Exchange PT + Wikimedia
-(CC BY-SA) + Carolina (CC BY-NC-SA).**
+(CC BY-SA) + Carolina (CC BY-NC-SA).** ⚠️ **Superado por A1 (2026-07-31):** o
+Stack Exchange saiu, e o volume vem de Wikimedia + Carolina + B2W.
 
 ## Blocos prontos para o `ingest`
 
@@ -438,7 +442,7 @@ baixados **manualmente pelo operador** para `benchmark/data/raw-sources/`
 
 | # | Fonte | Onde baixar | Arquivo | Destino local |
 | --- | --- | --- | --- | --- |
-| 1 | Stack Exchange PT | archive.org → item "Stack Exchange Data Dump", **snapshot ≤ set/2022** (evita os termos de acesso de 2024) | `pt.stackoverflow.com.7z` (centenas de MB); extrair `Posts.xml` com 7-Zip | `benchmark/data/raw-sources/stackexchange/Posts.xml` |
+| ~~1~~ | ~~Stack Exchange PT~~ | **NÃO BAIXAR — bloqueada por A1 (2026-07-31).** O argumento antigo desta linha era que um snapshot ≤ set/2022 "evita os termos de acesso de 2024"; a seção A1 o considera insuficiente, porque os dumps saíram do archive.org em jul/2024 e o que falta é disposição jurídica verificável, não um vintage anterior | — | — |
 | 2 | Wikipédia PT | espelhos de dumps no archive.org (buscar `ptwiki` de ~2022-03 a 2022-09) | `ptwiki-2022XXXX-pages-articles.xml.bz2` (~2–3 GB; **não extrair** — o extrator lê .bz2 em streaming) | `benchmark/data/raw-sources/wikipedia/` |
 | 3 | Carolina **Ada 1.1 (22/07/2022)** — preferida por ser inteiramente pré-ChatGPT | **Portulan CLARIN** (espelho da 1.1); alternativas: HuggingFace `carolina-c4ai/corpus-carolina` em revisão antiga (Ada 1.0, 08/04/2022) ou site USP (1.3, exige corte por data) | zips TEI por tipologia (**pular wikis**); o extrator ainda filtra data + licença do header TEI como defesa em profundidade | `benchmark/data/raw-sources/carolina/` |
 
@@ -533,6 +537,96 @@ No código a separação tem nome: `FROZEN_CORPUS_OBLIGATIONS` e
 `corpusLicenseObligations` respondem pelo corpus, `WEIGHT_USE_POLICY` responde
 pelos pesos, e `weightInheritanceOverclaimIn` é a terceira tela de over-claim —
 ela recusa, nestes documentos, a frase que diz o contrário.
+
+## A1 — o dump do Stack Exchange sai, e sai NOMEADO
+
+Decisão A1, em vigor por delegação desde 2026-07-30 e implementada em
+2026-07-31: **`pt-stackoverflow` está bloqueada para incorporação** no corpus v1
+e v2.
+
+O motivo é independente de qualquer tese sobre obra derivada. O conteúdo continua
+CC BY-SA 4.0 — a licença está limpa. O que não está limpo é o **termo de acesso**
+do dump: desde 12/07/2024 o download exige login sob termo que exclui "projects
+that [...] include training a large language model (LLM)", e os dumps saíram do
+archive.org. Sem registro verificável de data e mecanismo de aquisição **mais**
+disposição jurídica explícita desse termo, a fonte não entra. Documentar a
+limitação não concluiria a tarefa.
+
+**Bloqueada, não apagada.** Apagar a fonte da lista congelada teria sido o
+conserto silencioso: o inventário encolhe, todo denominador parece completo, e a
+auditoria de vazamento que hoje reconhece um registro `src_ptso` passa a **não
+conhecer** a fonte — deixa de reprovar e fica quieta, sobre linhas que existem no
+disco de trabalho. Então:
+
+- `humanSources.blockedSnapshots` (em `benchmark/rebuild-v3-policy.json`) nomeia o
+  snapshot, a razão (`access-terms-unresolved`) e a condição que levanta o
+  bloqueio. O validador recusa uma política que nomeie a mesma base nas duas
+  listas: uma fonte não pode estar recusada e em uso ao mesmo tempo;
+- `humanSourceAdmissibility` recusa por nome, **acima** da licença e do regime de
+  publicação, porque ambos estão corretos e apontar qualquer um deles diria ao
+  chamador que há algo a consertar ali. Abaixo da rota, porque B3 recusa a rota
+  para toda fonte, e isso é a afirmação mais geral;
+- `A1_BLOCKED_HUMAN_SOURCES` (em `benchmark/source-manifest.ts`) preserva a
+  declaração — campo de âncora e eixos de dependência —, o que torna a reversão
+  barata se a disposição jurídica aparecer.
+
+**Consequência declarada:** o estrato `qa-informal` perde a única fonte que o
+alimentava. Ele **continua** em `humanCoreStrata` e passa a constar em
+`uncoveredCoreStrata`, com o subconjunto verificado no load.
+
+O piso de poder **deve** reprovar essa célula antes da selagem. O número está
+congelado (`powerFloors.samplingUnits: 250`) e o gate que o lê é trabalho de E3
+na Fase 1 — a Fase 0.2 congela decisões, não as impõe, e dizer o contrário aqui
+seria alegar imposição que o código não tem. O que a declaração garante hoje é
+que a lacuna está escrita no arquivo onde o denominador vive, em vez de um
+denominador que encolheu sem aviso.
+
+A consequência já mecânica é outra:
+`RELEASE_CORPUS_POLICY.requiredHumanSourceTypes` deixou de exigir `qa-informal`.
+Exigir um estrato cuja única fonte a mesma política recusa não tornaria o selo
+estrito, tornaria-o **insatisfazível** — nenhum corpus passaria, e a falha leria
+como corpus incompleto em vez de requisito impossível.
+
+## Fase 0.2 — o que foi congelado antes de qualquer selagem
+
+Tudo em `benchmark/rebuild-v3-policy.json`, validado por
+`benchmark/rebuild-v3-policy.ts`, dentro de `EVALUATOR_FILES`.
+
+| decisão | valor | onde |
+| --- | --- | --- |
+| família primária, nomeada | FPR do pior estrato core · recall no limiar · calibração global · integridade | `multiplicity.primaryFamily` |
+| `m` | 4 | `multiplicity.primaryFamilySize` |
+| α por hipótese | 0,0125 — **recomputado** de `familyAlpha / m` no load | `multiplicity.perHypothesisAlpha` |
+| cota sob zero eventos | `1 − α^(1/n)`: **1,7375 %** em n=250, **0,8522 %** em n=512 — as duas **recomputadas** no load | `preRegistration.zeroEventCeiling` |
+| unidade do inventário de poder | componentes conectados, não linhas | `preRegistration.powerInventoryUnit` |
+| piso por célula | 250 unidades independentes; célula abaixo **deve** reprovar antes da selagem — número congelado na Fase 0.2, gate a implementar em E3 da Fase 1 | `powerFloors.samplingUnits` |
+| eixo da cota | **fonte**, quatro células, pooling declarado como perda de resolução | `preRegistration.quotaAxis` |
+| partições | `train 45 / dev 5 / cal-A 10 / cal-B 20 / test 20` — soma verificada no load | `preRegistration.partitionFractions` |
+| análise primária | 95 % unilateral, marginal por versão (Regime 2) | `preRegistration.primaryAnalysis` |
+| candidato elegível | mesmo hash de pesos da v1.0 | `preRegistration.eligibleCandidate` |
+| adaptação a feedback público | nenhuma | `preRegistration.publicFeedbackAdaptation` |
+
+Três coisas que valem dizer sobre esse quadro.
+
+**Por que `m` nomeado, e não uma faixa.** O plano carregou "m = 3–6" por um
+tempo, e faixa não é pré-registro: com α de família 0,05, o α por hipótese anda
+de 0,0167 a 0,0083 nesse intervalo, e a cota em n=250 anda com ele. Pior: a
+versão "conservadora" era a autodestrutiva — um `m = 61` anterior dava α =
+0,00082 e cota de **2,80 %** em n=250, quando publicar perto de 1 % exigiria 707
+registros por célula. Com m=4, 1 % exige n=436.
+
+**Por que a aritmética é recomputada e não conferida à mão.** Os dois tetos e o α
+por hipótese estão escritos no arquivo, porque quem audita a cota não deveria
+precisar dividir. E estão **derivados** no load, porque escritos-e-não-derivados
+é exatamente o defeito que a auditoria externa encontrou: o α de família ficou
+0,05 enquanto `m` se mexia, e os números publicados passaram a pertencer a uma
+família de tamanho diferente do que o plano alegava. Divergir agora é erro duro.
+
+**Uma divergência preservada de propósito.** `preRegistration
+.plannedCertifyingMeasurements` é **1**, e `blindReserveCompleteAttempts`
+continua **2**. O corte da reserva de segunda tentativa foi corte de escopo de
+engenharia da v1.0, não ordem para recongelar um valor cuja janela fecha em G5.
+A divergência fica registrada nos dois lugares em vez de resolvida em silêncio.
 
 ## Dependência pendente
 

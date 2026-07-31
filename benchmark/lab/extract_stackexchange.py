@@ -37,7 +37,18 @@ DROP_TAGS = {"code", "pre", "script", "style"}
 # whole point of that field is that an auditor can go back to the dump and read the
 # same attribute, so it names the file and the attribute rather than describing them.
 DATE_FIELD = "Posts.xml@CreationDate"
-# The frozen snapshot token (benchmark/rebuild-v3-policy.json humanSources.snapshots).
+# The snapshot token this extractor stamps. It is NO LONGER in
+# benchmark/rebuild-v3-policy.json humanSources.snapshots: decision A1 (2026-07-31)
+# moved it to humanSources.blockedSnapshots, because the 2024 access terms of the dump
+# exclude LLM-training projects and no verifiable legal disposition exists.
+#
+# This extractor is kept runnable on purpose, and that is a decision rather than an
+# oversight: A1 is reversible if the disposition arrives, and deleting the extractor
+# would put the cost of reversal on rediscovering how to read `Posts.xml`. What stops
+# its output is downstream and fail-closed — `benchmark/schema.ts` refuses a record
+# whose labelEvidenceRef.snapshot is not frozen, and `auditCorpusSources` blocks a
+# manifest declaring `src_ptso` with SOURCE_BLOCKED_BY_ACCESS_TERMS. Running this
+# script produces candidates that cannot be ingested.
 SNAPSHOT = "pt-stackoverflow"
 
 
