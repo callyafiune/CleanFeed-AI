@@ -71,10 +71,10 @@ Tudo em `docs/superpowers/plans/`:
 4. `2026-07-30-plano-v1-minima.md` — o plano da v1.0, pós-revisão do codex. **É o roteiro de execução**;
 5. `2026-07-30-auditorias-externas.md` — a auditoria da área e o veredito do codex sobre o plano, com
    fontes. É o lastro das afirmações dos outros documentos;
-6. `2026-07-26-detector-v3-rebuild-implementation.md` — o plano completo; **vira o caminho da v2.0**.
-
-A bibliografia deve viver em `docs/references.md`. **Ela ainda não existe** — criá-la é tarefa da
-Fase 0, e até existir nenhum documento deve citá-la como se existisse.
+6. `2026-07-26-detector-v3-rebuild-implementation.md` — o plano completo; **vira o caminho da v2.0**;
+7. `../../references.md` — a bibliografia: 242 entradas com link, ancoradas por decisão, com
+   *Âncora* / *Onde no projeto* / *Fato citado* em cada uma. Criada em `cd6f879`. Traz também a lista
+   das **24 práticas ainda sem referência** — trabalho aberto, não silêncio.
 
 ## 5. Escopo da v1.0 — o que ficou e o que a revisão do codex cortou
 
