@@ -736,6 +736,30 @@ describe("licence policy agreement across manifest, review and NOTICE", () => {
     expect(review.usePolicyId).toBe(CORPUS_USE_POLICY.policyId);
   });
 
+  // The cross-review's first P1: `WEIGHT_USE_POLICY.policyId` had been given its own
+  // value in the module while the published review carried no weights policy id at all
+  // and the NOTICE printed the CORPUS id under the weights heading. The separation was
+  // real in code and invisible in the contract a downstream user reads, which is the
+  // half that matters. Pinned here so the two can no longer drift.
+  it("publishes the weights policy under its OWN id, never the corpus's", async () => {
+    const review = await licenseReview();
+    const weightPolicy = review.weightPolicy as Record<string, unknown>;
+    expect(weightPolicy.policyId).toBe(WEIGHT_USE_POLICY.policyId);
+    expect(weightPolicy.licenseId).toBe(WEIGHT_USE_POLICY.licenseId);
+    expect(weightPolicy.commercialUse).toBe(WEIGHT_USE_POLICY.commercialUse);
+    expect(weightPolicy.sourceObligationsPropagate).toBe(
+      WEIGHT_USE_POLICY.sourceObligationsPropagate,
+    );
+    // Two policies, two identifiers. Equal ids would leave a reader of the published
+    // artifact unable to say which policy a given `commercialUse: false` came from.
+    expect(WEIGHT_USE_POLICY.policyId).not.toBe(CORPUS_USE_POLICY.policyId);
+    expect(review.usePolicyId).not.toBe(weightPolicy.policyId);
+    // And the NOTICE, which is the file that travels with the weights, has to name the
+    // weights' id where it states their regime.
+    const notice = await readFile(resolve(MODEL_DIR, "NOTICE.md"), "utf8");
+    expect(notice).toContain(WEIGHT_USE_POLICY.policyId);
+  });
+
   it("the model licence review carries the registry's terms verbatim", async () => {
     const review = await licenseReview();
     expect(review.sourceLicenses).toEqual(CORPUS_LICENSE_REGISTRY);
@@ -1734,6 +1758,9 @@ describe("position (a) — the weights carry their own policy, not the sources'"
       "A obrigação de atribuição do corpus é transferida ao modelo.",
       "Qualquer derivado dos pesos carrega as mesmas obrigações, propagadas do corpus.",
       "Os pesos, e não o corpus, herdam as obrigações.",
+      // Found by the codex cross-review, which the internal adversarial round of the
+      // same day did not catch: the verb list had no `recebem`.
+      "Os pesos recebem as obrigações das licenças das fontes.",
     ]) {
       expect(weightInheritanceOverclaimIn(claim), claim).not.toBeNull();
     }
@@ -1758,6 +1785,12 @@ describe("position (a) — the weights carry their own policy, not the sources'"
       // this would forbid the licence from being enforceable.
       "Estas restrições acompanham os pesos e se propagam a qualquer derivado deles.",
       "Quem redistribuir os pesos fica vinculado às mesmas obrigações desta licença.",
+      // Also from the codex cross-review, and the more interesting half: this is the
+      // CLEAREST way to state position (a), and lexical co-occurrence refused it. One
+      // sentence, two subjects, two predicates — `CONTRAST_BOUNDARY` splits on
+      // `enquanto` so each half is judged against its own subject.
+      "A licença própria vincula os pesos, enquanto as licenças das fontes vinculam o corpus.",
+      "As obrigações valem para o corpus, ao passo que os pesos seguem política própria.",
     ]) {
       expect(weightInheritanceOverclaimIn(allowed), allowed).toBeNull();
     }

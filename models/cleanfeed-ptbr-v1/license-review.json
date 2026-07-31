@@ -7,6 +7,7 @@
   "declaredLicense": "Pesos sob cleanfeed-weights-nc-1.0 (licença própria, não comercial, usos de alto risco proibidos; texto em models/cleanfeed-ptbr-v1/LICENSE). Código sob MIT (LICENSE, raiz). Documentação e evidência sob CC BY 4.0 (docs/LICENSE-DOCS.md). Base BERTimbau (MIT).",
   "weightPolicy": {
     "licenseId": "cleanfeed-weights-nc-1.0",
+    "policyId": "weights-noncommercial-v1",
     "licenseFile": "LICENSE",
     "family": "openrail-m",
     "osiApproved": false,
@@ -22,7 +23,8 @@
       "mass-screening"
     ],
     "restrictionsTravelWithArtifact": true,
-    "licenseFileNote": "O arquivo LICENSE deste diretório é a licença dos PESOS. O LICENSE da raiz do repositório é o MIT do código, e é outro arquivo."
+    "licenseFileNote": "O arquivo LICENSE deste diretório é a licença dos PESOS. O LICENSE da raiz do repositório é o MIT do código, e é outro arquivo.",
+    "policyIdNote": "NÃO é noncommercial-v1. Esse é o id da política do CORPUS, publicado no campo usePolicyId no topo deste arquivo. Os dois dizem a mesma coisa sobre uso comercial e são duas políticas: um identificador só deixaria o artefato publicado incapaz de nomear de qual delas um dado false veio, que é a confusão que a posição (a) existe para evitar."
   },
   "corpusObligations": ["attribution", "non-commercial", "share-alike"],
   "corpusObligationsScope": "acquisition-preparation-use",

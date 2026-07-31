@@ -1563,7 +1563,7 @@ const WEIGHT_SUBJECT =
 // "herdeiro" and `propag\w*` on "propagação de erro", and inflection in Portuguese
 // is regular enough to list.
 const WEIGHT_INHERITANCE_CLAIM =
-  /\b(?:herda|herdam|herdar|herdada|herdadas|herdado|herdados|propaga|propagam|propagar|propagada|propagadas|propagado|propagados|propaga[çc][ãa]o|transfere|transferem|transferir|transferida|transferidas|transferido|transferidos|estende|estendem|estender|estendida|estendidas|estendido|estendidos|vincula|vinculam|vincular|vinculada|vinculadas|vinculado|vinculados|sujeit[oa]s?|submetid[oa]s?|alcan[çc]a|alcan[çc]am|alcan[çc]ar|recai|recaem|recair|aplicam-se|aplica-se|valem\s+para|vale\s+para)\b/giu;
+  /\b(?:herda|herdam|herdar|herdada|herdadas|herdado|herdados|propaga|propagam|propagar|propagada|propagadas|propagado|propagados|propaga[çc][ãa]o|transfere|transferem|transferir|transferida|transferidas|transferido|transferidos|estende|estendem|estender|estendida|estendidas|estendido|estendidos|vincula|vinculam|vincular|vinculada|vinculadas|vinculado|vinculados|sujeit[oa]s?|submetid[oa]s?|alcan[çc]a|alcan[çc]am|alcan[çc]ar|recai|recaem|recair|recebe|recebem|recebeu|receber|herdam-se|passam\s+a\s+valer|aplicam-se|aplica-se|valem\s+para|vale\s+para)\b/giu;
 
 // The object that makes it a licence claim rather than any other transfer: an
 // obligation, a licence, or one of the three clause names. Without it "o modelo
@@ -1584,6 +1584,18 @@ const LICENCE_OBJECT =
 // the origin has to be named in the clause for the screen to fire, and "estas
 // restrições acompanham qualquer derivado destes pesos" passes while "os pesos
 // herdam as obrigações das fontes" does not.
+// Contrast markers, local to the weights screen. Each starts a second statement with a
+// subject of its own, which is what lets the project state the distinction in one
+// sentence without the screen reading the halves as a single claim.
+//
+// `, e não X,` is deliberately NOT here, although it looks like the same thing. It is an
+// appositive negation INSIDE one clause — "os pesos, e não o corpus, herdam as
+// obrigações" is a single assertion about the weights, and splitting on it gave two
+// harmless halves and let the claim through. That case belongs to
+// {@link propagationIsDenied}, which truncates the denial window at the comma instead.
+const CONTRAST_BOUNDARY =
+  /\b(?:enquanto|ao\s+passo\s+que|j[áa]\s+(?:o|a|os|as))\b/iu;
+
 const SOURCE_REFERENT =
   /\bfontes?\b|\bcorpus\b|\bdados\s+de\s+treino\b|\bconjunto\s+de\s+(?:treino|dados)\b|\bcc-by\b|\bodc-by\b|\blei9610\b|\bcarolina\b|\bwikip[ée]dia\b|\bb2w\b|\bstack\s*exchange\b|\bbases?\b|\bsnapshots?\b/iu;
 
@@ -1630,16 +1642,26 @@ function propagationIsDenied(clause: string, index: number): boolean {
  * names what fired and where.
  */
 export function weightInheritanceOverclaimIn(text: string): string | null {
-  for (const clause of unwrapSoftLines(text).split(CLAUSE_BOUNDARY)) {
-    // A weights subject is required, which is also what lets the true statement
-    // through: "o corpus herda as obrigações das fontes" names no weights subject
-    // and never reaches the verbs.
-    if (!WEIGHT_SUBJECT.test(clause)) continue;
-    if (!LICENCE_OBJECT.test(clause)) continue;
-    if (!SOURCE_REFERENT.test(clause)) continue;
-    for (const match of clause.matchAll(WEIGHT_INHERITANCE_CLAIM)) {
-      if (propagationIsDenied(clause, match.index)) continue;
-      return `${match[0]} @ ${clause.trim().slice(0, 160)}`;
+  for (const sentence of unwrapSoftLines(text).split(CLAUSE_BOUNDARY)) {
+    // A contrast marker starts a second statement, and this screen splits on it where
+    // the other two do not. The sentence that forced it is the correct one: "a licença
+    // própria vincula os pesos, ENQUANTO as licenças das fontes vinculam o corpus" —
+    // one sentence, two subjects, two predicates, and exactly the distinction position
+    // (a) exists to draw. Judged whole it carries a weights subject, a licence object,
+    // a source referent and a binding verb, so lexical co-occurrence refuses the
+    // clearest true statement anyone would write. Split on the contrast and each half
+    // is judged against its own subject.
+    for (const clause of sentence.split(CONTRAST_BOUNDARY)) {
+      // A weights subject is required, which is also what lets the true statement
+      // through: "o corpus herda as obrigações das fontes" names no weights subject
+      // and never reaches the verbs.
+      if (!WEIGHT_SUBJECT.test(clause)) continue;
+      if (!LICENCE_OBJECT.test(clause)) continue;
+      if (!SOURCE_REFERENT.test(clause)) continue;
+      for (const match of clause.matchAll(WEIGHT_INHERITANCE_CLAIM)) {
+        if (propagationIsDenied(clause, match.index)) continue;
+        return `${match[0]} @ ${clause.trim().slice(0, 160)}`;
+      }
     }
   }
   return null;

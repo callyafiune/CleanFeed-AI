@@ -444,7 +444,32 @@ export interface RebuildV3Policy {
      */
     readonly plannedCertifyingMeasurements: 1;
     readonly powerInventoryUnit: "connected-components";
-    readonly primaryAnalysis: "one-sided-95-marginal-per-version";
+    /**
+     * 95 % one-sided, FAMILY-WISE over the four primary hypotheses of ONE version.
+     *
+     * The earlier value said `marginal`, and the cross-review was right that it
+     * contradicted its own arithmetic: `perHypothesisAlpha` is 0.0125, so each
+     * individual interval is at 98.75 %, and a reader taking "marginal 95 %" at face
+     * value would understate every published ceiling.
+     *
+     * The two families are different and both are declared. WITHIN a version, the four
+     * certifying hypotheses are corrected by Bonferroni, so the 95 % is family-wise and
+     * the per-hypothesis level is 98.75 %. ACROSS versions there is no adjustment at
+     * all — see {@link crossVersionAdjustment} — which is exactly the concession Regime
+     * 2 makes: each release certifies only its own versioned hypothesis, and the claim
+     * of error control over the product's history is expressly abandoned. Collapsing
+     * the two into one word is what made the field read as a contradiction.
+     */
+    readonly primaryAnalysis: "one-sided-95-familywise-within-version";
+    /**
+     * Regime 2, as data: no multiplicity adjustment ACROSS versions or attempts.
+     *
+     * What buys this is publication, not silence — every certifying execution is
+     * published, pass or fail, so a reader sees the whole sequence and judges the
+     * history themselves. `alpha` is a bound on ONE version's decision; it was never a
+     * bound over K of them, and K is not knowable in advance anyway.
+     */
+    readonly crossVersionAdjustment: "none";
     /** Regime 2: no adaptation to public feedback between versions. */
     readonly publicFeedbackAdaptation: "none";
     readonly quotaAxis: {
@@ -943,12 +968,18 @@ function partitionFractions(block: Record<string, unknown>): {
   readonly train: number;
 } {
   const path = "preRegistration.partitionFractions";
+  // Pinned to the exact frozen values, not merely shape-checked. The module's contract
+  // is that a settled decision is pinned to its value, and `45/5/10/20/20` is settled:
+  // the cross-review pointed out that a sum check alone accepts any permutation, so a
+  // policy with `test: 0.05` would have loaded clean and published a quota computed for
+  // a test partition four times its real size. The sum check stays, because it is what
+  // catches a fifth fraction being edited without the others.
   const fractions = {
-    calA: proportion(block, path, "calA"),
-    calB: proportion(block, path, "calB"),
-    dev: proportion(block, path, "dev"),
-    test: proportion(block, path, "test"),
-    train: proportion(block, path, "train"),
+    calA: frozenNumber(block, path, "calA", 0.1),
+    calB: frozenNumber(block, path, "calB", 0.2),
+    dev: frozenNumber(block, path, "dev", 0.05),
+    test: frozenNumber(block, path, "test", 0.2),
+    train: frozenNumber(block, path, "train", 0.45),
   };
   const total = Object.values(fractions).reduce((sum, part) => sum + part, 0);
   if (Math.abs(total - 1) > DERIVED_TOLERANCE) {
@@ -1553,6 +1584,7 @@ export function parseRebuildV3Policy(value: unknown): RebuildV3Policy {
     "partitionFractions",
     "plannedCertifyingMeasurements",
     "powerInventoryUnit",
+    "crossVersionAdjustment",
     "primaryAnalysis",
     "publicFeedbackAdaptation",
     "quotaAxis",
@@ -1998,11 +2030,17 @@ export function parseRebuildV3Policy(value: unknown): RebuildV3Policy {
         "powerInventoryUnit",
         "connected-components",
       ),
+      crossVersionAdjustment: literal(
+        preRegistration,
+        "preRegistration",
+        "crossVersionAdjustment",
+        "none",
+      ),
       primaryAnalysis: literal(
         preRegistration,
         "preRegistration",
         "primaryAnalysis",
-        "one-sided-95-marginal-per-version",
+        "one-sided-95-familywise-within-version",
       ),
       publicFeedbackAdaptation: literal(
         preRegistration,

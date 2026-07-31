@@ -192,6 +192,7 @@
     "samplingUnits": 250
   },
   "preRegistration": {
+    "crossVersionAdjustment": "none",
     "eligibleCandidate": "same-weight-hash-as-v1",
     "frozenBefore": "v1-publication",
     "partitionFractions": {
@@ -203,7 +204,7 @@
     },
     "plannedCertifyingMeasurements": 1,
     "powerInventoryUnit": "connected-components",
-    "primaryAnalysis": "one-sided-95-marginal-per-version",
+    "primaryAnalysis": "one-sided-95-familywise-within-version",
     "publicFeedbackAdaptation": "none",
     "quotaAxis": {
       "axis": "source",

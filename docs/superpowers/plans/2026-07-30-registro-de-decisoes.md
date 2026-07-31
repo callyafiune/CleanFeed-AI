@@ -108,6 +108,30 @@ Rodada de 4 lentes + 34 verificadores céticos em 2026-07-31, mais cross-review 
 de `preRegistration`, e a imposição é E3 da Fase 1. O que foi ajustado é só o tempo verbal nos
 documentos, para que "reprova antes da selagem" leia como o que é: prospectivo.
 
+### Terceira rodada — cross-review do codex (`gpt-5.6-sol`, xhigh, read-only)
+
+**Veredito: (b) aprovar com modificações. Nenhum P0.** Dois P1 e um P2, todos consertados no
+mesmo commit. A rodada interna de 4 lentes e 34 céticos, do mesmo dia, **não** havia achado
+nenhum dos três — vale registrar isso, porque é o argumento a favor de manter o cross-review
+externo em caminho selado mesmo depois de uma rodada adversarial grande.
+
+| # | achado | conserto |
+|---|---|---|
+| P1 | **A separação de política era real no código e invisível no contrato publicado.** `WEIGHT_USE_POLICY.policyId` recebeu id próprio (`weights-noncommercial-v1`), mas `license-review.json` não tinha `policyId` em `weightPolicy` **nenhum**, e o `NOTICE.md` imprimia `noncommercial-v1` — o id do CORPUS — logo abaixo do cabeçalho dos pesos. Quem lê o artefato publicado não conseguia dizer de qual política o `commercialUse: false` vinha | `weightPolicy.policyId` publicado, NOTICE corrigido com a distinção explicada, e teste novo prendendo review + NOTICE ao módulo ("publishes the weights policy under its OWN id, never the corpus's") |
+| P1 | **O pré-registro contradizia o próprio nível de confiança.** `primaryAnalysis` dizia `one-sided-95-marginal-per-version` enquanto `perHypothesisAlpha` é 0,0125 — isto é, 98,75 % marginal. Quem lesse "marginal 95 %" ao pé da letra subestimaria **todo** teto publicado. As duas famílias são diferentes e só uma estava nomeada | `primaryAnalysis` virou `one-sided-95-familywise-within-version`, e o Regime 2 entrou como dado próprio: `crossVersionAdjustment: "none"`. Dentro da versão, Bonferroni sobre m=4 → 95 % familiar e 98,75 % por hipótese. Entre versões, nenhum ajuste — e o que compra isso é publicar toda execução, não silenciá-las |
+| P2 | Dois casos concretos da tela, ambos reais: **`recebem` não estava na lista de verbos** (frase proibida passava), e **"a licença própria vincula os pesos, enquanto as licenças das fontes vinculam o corpus" era recusada** — a maneira mais clara de enunciar a posição (a) | `recebe(m)` e mais quatro verbos adicionados; `CONTRAST_BOUNDARY` divide em `enquanto`/`ao passo que`/`já o`, e os dois casos entraram como regressão. `, e não X,` ficou **fora** do divisor de propósito: é aposto dentro de uma cláusula, e dividir ali deixava passar "os pesos, e não o corpus, herdam as obrigações" |
+| — | `partitionFractions` era só verificado por domínio e soma, então qualquer permutação que somasse 1 passava — `test: 0.05` teria carregado limpo | as cinco fixadas com `frozenNumber`, mantendo a checagem de soma |
+
+**Um defeito meu que o conserto do P2 revelou:** a primeira versão de `CONTRAST_BOUNDARY` foi
+escrita com caracteres **backspace** (`0x08`) no lugar de ``, por escape perdido no pipeline de
+edição. Um regex com backspace simplesmente nunca casa, a suíte ficou verde, e o único sinal foi
+inspecionar os bytes. Registro porque a falha é invisível por construção: teste verde sobre padrão
+que não casa nada.
+
+**Não afirmado pelo codex:** ele não conseguiu rodar a vitest (sandbox read-only bloqueou
+`node_modules/.vite-temp`), então o veredito dele **não** inclui "a suíte passa". Essa parte é
+medição minha: 162 arquivos / 2307 testes verdes.
+
 **Achados abertos, registrados e não consertados** (rule 3 do bloco D):
 
 1. `HUMAN_LABEL_DENIAL` (`benchmark/source-manifest.ts`) não inclui `nenhum`/`nenhuma`, então

@@ -10,8 +10,14 @@ Os pesos saem sob a licença própria do projeto, `cleanfeed-weights-nc-1.0`
 e proíbe usos de alto risco. Não é MIT: o `LICENSE` da **raiz** do repositório é
 outro arquivo e governa o **código**, não este artefato.
 
-`commercialUse: false` (política `noncommercial-v1`). O produto e o modelo não
-têm e não terão ambição comercial, e não existe variante comercial a preservar.
+`commercialUse: false`, sob a política própria dos pesos,
+`weights-noncommercial-v1`. O produto e o modelo não têm e não terão ambição
+comercial, e não existe variante comercial a preservar.
+
+Não confunda com `noncommercial-v1`: esse é o id da política do **corpus**. As
+duas dizem a mesma coisa sobre uso comercial e são duas políticas — um
+identificador só para as duas deixaria este arquivo incapaz de dizer de qual
+delas o `false` acima veio.
 
 O regime não comercial destes pesos é **política própria do projeto**. Uma
 licença de fonte não é a origem dele: as obrigações das licenças do corpus
