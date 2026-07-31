@@ -98,13 +98,20 @@ Frase R7-correta no lugar de "erro desconhecido":
 
 ### 0.2 Selagem — decisões exatas, não faixas
 
-- eixo da cota v2 = **registro linguístico, CINCO células**: `qa-informal`, `encyclopedic`,
-  `social-media`, `university`, `institutional` (`rebuild-v3-policy.json:114-120`). Meu rascunho
-  dizia "4 células" confundindo **fontes** com **registros** e omitindo `university`. Se o operador
-  preferir 4, o eixo é renomeado para **fonte** e o pooling é justificado como perda de resolução;
-- **a lista exata de gates da família primária é anexada antes da selagem** — "3–6" não é
-  pré-registro. Até existir, dimensiona-se com `m=6`: teto 1,7% sob zero eventos ⇒ **≥280 clusters
-  independentes por célula**;
+- **eixo da cota v2 = FONTE, quatro células.** A política congelada tem cinco estratos de registro —
+  `encyclopedic`, `institutional`, `qa-informal`, `social-media`, `university`
+  (`rebuild-v3-policy.json:114-120`) —, mas a decisão A1 remove o Stack Overflow do corpus e com ele a
+  fonte natural de `qa-informal`. Por isso o eixo é **renomeado para fonte**, com o pooling declarado
+  como **perda de resolução**, exatamente como o codex prescreveu para este caso. Se A1 for revertida,
+  o eixo volta a ser registro com cinco células;
+- **família primária `m=4`, com a lista nomeada:** FPR do pior estrato core · recall no limiar ·
+  calibração global · integridade. Todo o resto é **diagnóstico não certificador**, publicado sem
+  ajuste e rotulado como tal. Isto substitui o dimensionamento conservador por `m=6`: a faixa "3–6"
+  não era pré-registro, e agora a lista existe;
+- **aritmética congelada junto com a lista** — sem `n`, uma cota não é pré-registro: `m=4` ⇒
+  `α = 0,05/4 = 0,0125`; sob zero eventos, `1 − α^(1/n)` dá **1,7375 % em n=250** e **0,8522 % em
+  n=512** clusters independentes por célula. O piso adotado é **n ≥ 250 clusters por célula para teto
+  de 1,74 %**; quem quiser teto perto de 0,85 % precisa de 512;
 - partições `train 45 / dev 5 / cal-A 10 / cal-B 20 / test 20`;
 - inventário de poder por **componentes conectados reais**, não linhas; célula abaixo do piso
   **falha antes da selagem**;
