@@ -1,6 +1,6 @@
 # Registro de decisões — em vigor por delegação, ratificáveis nos marcos
 
-**Modelo de governança (pedido do operador em 2026-07-31):** o agente decide ancorado no escopo do
+**Modelo de governança (pedido do operador em 2026-07-30):** o agente decide ancorado no escopo do
 projeto, registra com razão e custo de reversão, e o trabalho **não para**. O operador ratifica ou
 reverte lendo este registro — e a ratificação só é *obrigatória* antes dos **marcos irreversíveis**
 (selagem do corpus, qualquer publicação externa, consumo de partição selada). Até lá, reverter
@@ -19,7 +19,7 @@ envelope A6.
 
 | # | decisão | por que não é delegável |
 |---|---|---|
-| ~~D0~~ | **DECIDIDA pelo operador em 2026-07-30/31: caminho 1, o detector.** A recomendação do agente era o caminho 2 (estudo); o operador decidiu pelo detector. Estudo e encerramento ficam descartados | — |
+| ~~D0~~ | **DECIDIDA pelo operador em 2026-07-30: caminho 1, o detector.** A recomendação do agente era o caminho 2 (estudo); o operador decidiu pelo detector. Estudo e encerramento ficam descartados | — |
 | **B1** | Posição (a) com parecer jurídico antes de publicar pesos, ou risco assumido por escrito | o risco é pessoal seu, não do projeto |
 | **B6** | Aceitar o calendário do caminho escolhido | idem |
 

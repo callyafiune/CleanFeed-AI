@@ -1,10 +1,10 @@
 # LEIA PRIMEIRO — escopo da v1.0 e retomada do trabalho
 
-Documento de entrada para quem retoma o CleanFeed AI. Escrito em 2026-07-30/31, no fim de uma sessão
+Documento de entrada para quem retoma o CleanFeed AI. Escrito em 2026-07-30, no fim de uma sessão
 longa, para que a próxima **não dependa do histórico dela**.
 
 > **Regra que atravessa tudo:** se algo aqui divergir do código, **o código medido vence**. Os
-> `file:line` foram verificados em `937dc80`; o repositório se moveu 24+ vezes no dia em que isto foi
+> `file:line` foram verificados em `05bf5fb`; o repositório se moveu 24+ vezes no dia em que isto foi
 > escrito. Confirme antes de agir — nesta sessão, oito afirmações de briefs escritos por mim estavam
 > erradas, e quem as verificou contra o disco acertou em todas.
 
@@ -12,26 +12,38 @@ longa, para que a próxima **não dependa do histórico dela**.
 
 Detector de texto gerado por IA em **português do Brasil**, extensão de navegador, modelo local de
 ~106 MB em WASM. Um desenvolvedor solo, sem verba, código público revisado por pares, política não
-comercial. O diferencial não é o detector — é o **avaliador**: uma auditoria de 10 benchmarks, 7
-shared tasks e 12 repositórios (2026-07-31) não achou na área uso único de teste, pré-registro,
-controle de FWER, inferência cluster-robusta, cota distribution-free, manchete de pior estrato, nem um
-único arquivo de teste automatizado. O artefato mediano da área é README + licença + paper.
+comercial. O diferencial não é o detector — é o **avaliador**: a auditoria registrada em
+`2026-07-30-auditorias-externas.md` não achou na área uso único de teste, pré-registro, controle de
+FWER, inferência cluster-robusta, cota distribution-free, manchete de pior estrato, nem um único
+arquivo de teste automatizado. O artefato mediano da área é README + licença + paper.
 
 ## 2. Estado
 
 | item | valor |
 |---|---|
-| branch | `cleanfeed-mvp`, HEAD `937dc80`, árvore limpa |
+| branch | `cleanfeed-mvp`, HEAD `05bf5fb`, árvore limpa |
 | suíte | 162 arquivos / 2296 testes verdes |
 | `evaluatorDigest` | `99a993f1cc18243eed168db7bc804b931b25a0799a8ad0ec0c1bb9314cdf8b62` |
 | ledger de consumo real | `2040fb7a…d88cd` — intocado; registra a concessão gasta em 2026-07-25 |
-| plano v3 | fases **A e C concluídas**; B são decisões; **D em diante não começou** |
-| arquivado | `wip/holdout-witness-attestation` (`9e6fcc7`) — testemunha de altura, fora de escopo |
+| arquivado | `wip/holdout-witness-attestation` (`9e6fcc7`) — testemunha de altura; a mensagem do commit a reserva para uma eventual **v3.0** |
 | não tocar | `stash@{0}` (`wip: options-UI refactor`, de outra sessão) |
+
+**Fases do plano v3 — o que está de fato fechado** (não diga "A e C concluídas"; o plano v3 registra o
+contrário em dois lugares):
+
+- **A:** A1 e A5 entregues. **A2 fecha como NÃO CONCLUÍDA contra a própria definição de pronto** —
+  falta medir `calibration` fim a fim, e o número que reprova está registrado
+  (`calibration/150_299 = 2/557 = 0,359 %` contra teto de 0,1 %). A3, A4, A6, A6-REMAT, A7 e LAT não
+  têm registro de entrega.
+- **B:** são decisões, não código.
+- **C:** C2 e C5 com artefatos em disco. **O piloto de C5 refutou o próprio dimensionamento** e
+  empurrou três saídas para a decisão de D1.
+- **D em diante:** não começou (nenhum diretório `d*` em `benchmark/out/rebuild-v3/`). Note que
+  `eol/` e `eol-review/` ali **não** são de A nem de C — vêm de `2225e37`.
 
 ## 3. D0 — DECIDIDO: caminho 1, o detector
 
-**O operador decidiu em 2026-07-30/31: continuar o detector.** v1.0 experimental, sem alegação de
+**O operador decidiu em 2026-07-30: continuar o detector.** v1.0 experimental, sem alegação de
 erro → v2.0 com **uma** medição cega. Estimativa: **4,5–7 semanas de engenharia** para a v1.0, mais
 2-3 semanas para a v2.0, mais prazo externo de parecer jurídico.
 
@@ -57,8 +69,12 @@ Tudo em `docs/superpowers/plans/`:
 3. `2026-07-30-registro-de-decisoes.md` — as decisões **em vigor por delegação**, com razão, custo de
    reversão e marco de ratificação;
 4. `2026-07-30-plano-v1-minima.md` — o plano da v1.0, pós-revisão do codex. **É o roteiro de execução**;
-5. `../../references.md` — bibliografia ancorada a cada decisão;
+5. `2026-07-30-auditorias-externas.md` — a auditoria da área e o veredito do codex sobre o plano, com
+   fontes. É o lastro das afirmações dos outros documentos;
 6. `2026-07-26-detector-v3-rebuild-implementation.md` — o plano completo; **vira o caminho da v2.0**.
+
+A bibliografia deve viver em `docs/references.md`. **Ela ainda não existe** — criá-la é tarefa da
+Fase 0, e até existir nenhum documento deve citá-la como se existisse.
 
 ## 5. Escopo da v1.0 — o que ficou e o que a revisão do codex cortou
 
@@ -84,9 +100,11 @@ licença `approved`, e **teto `indicator` estrutural**.
 
 **Três defeitos do produto atual que a v1.0 tem de corrigir antes de publicar:**
 
-1. o runtime experimental **permite `blur/collapse/hide`** (`inference-worker.ts:717-765`; um teste
-   *exige* `hide` em `inference-pipeline.test.ts:1041-1062`) — contradiz `model-validation.md:41-49`.
-   O teto `indicator` precisa ser estrutural, não copy;
+1. o runtime experimental **permite `blur/collapse/hide`** — `decideExperimentalUncalibrated`
+   (`inference-worker.ts:727-766`, com `actionCeiling: shortText ? "indicator" : "hide"` em `:760`); um
+   teste *exige* `hide` (`inference-pipeline.test.ts:1060`) — contradiz `model-validation.md:41-46`,
+   que promete "**nunca** desfoca, recolhe ou oculta um post". O teto `indicator` precisa ser
+   estrutural, não copy;
 2. **não existe estado publicável "experimental"** — `release-policy.mjs:66-75` recusa `pending`, e
    `indicator` exige decisão científica (`model-release.ts:217-235`). Precisa de **lane nova**, que
    não reutilize `indicator-only`;

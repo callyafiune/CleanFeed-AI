@@ -1,20 +1,20 @@
-# Estado do projeto — 2026-07-30/31
+# Estado do projeto — 2026-07-30
 
 **Para que serve:** este documento existe porque o raciocínio de três decisões grandes desta sessão
-vivia só na conversa. Uma sessão nova que leia isto, o `_registro-de-decisoes.md` e o
-`_plan-v1.0-minima.md` retoma o trabalho sem depender do histórico. Se algo aqui divergir do código,
-**o código medido vence** — os `file:line` abaixo foram verificados em `937dc80` e o repositório se
+vivia só na conversa. Uma sessão nova que leia isto, o `2026-07-30-registro-de-decisoes.md` e o
+`2026-07-30-plano-v1-minima.md` retoma o trabalho sem depender do histórico. Se algo aqui divergir do código,
+**o código medido vence** — os `file:line` abaixo foram verificados em `05bf5fb` e o repositório se
 moveu 24+ vezes no dia em que isto foi escrito.
 
 ## Onde as coisas estão
 
 | item | estado |
 |---|---|
-| branch de trabalho | `cleanfeed-mvp`, HEAD `937dc80`, árvore limpa |
+| branch de trabalho | `cleanfeed-mvp`, HEAD `05bf5fb`, árvore limpa |
 | suíte | 162 arquivos / 2296 testes verdes |
 | `evaluatorDigest` | `99a993f1cc18243eed168db7bc804b931b25a0799a8ad0ec0c1bb9314cdf8b62` (mudou 3× no dia: `afa31a9d` → `6948ed00` → `99a993f1`) |
 | ledger de consumo real | `2040fb7a…d88cd` — intocado; registra a concessão gasta em 2026-07-25 |
-| fases do plano v3 | A e C concluídas; B são decisões; **D em diante não começou** (`benchmark/out/rebuild-v3/` só tem saídas de A e C) |
+| fases do plano v3 | **A2 fecha como NÃO CONCLUÍDA** contra a própria definição de pronto (falta medir `calibration` fim a fim; `calibration/150_299 = 0,359 %` contra teto de 0,1 %); A1 e A5 entregues; o piloto de **C5 refutou** o próprio dimensionamento e empurrou três saídas para D1; **D em diante não começou**. Detalhe em `2026-07-30-v1-escopo-e-retomada.md` §2 |
 | WIP arquivado | `wip/holdout-witness-attestation` (`9e6fcc7`) — testemunha de altura, cortada do escopo |
 | `stash@{0}` | `wip: options-UI refactor`, de outra sessão — **não tocar** |
 
@@ -99,7 +99,7 @@ mover o `evaluatorDigest` deliberadamente — antes de qualquer `fit`.
 treino de LLM. Termo de acesso é **independente** da tese sobre obra derivada. Documentar não resolve:
 ou disposição jurídica verificável, ou a fonte sai. Decisão A1 do registro: **sai**.
 
-## O que a auditoria externa estabeleceu (2026-07-31)
+## O que a auditoria externa estabeleceu (2026-07-30)
 
 10 benchmarks, 7 shared tasks, 12 repositórios. Não existe na área: uso único de teste,
 pré-registro (**zero** ocorrências), controle de FWER, inferência cluster-robusta, cota
@@ -119,4 +119,4 @@ caminho 2 (estudo) como alternativa de valor equivalente e custo muito menor.
 Uma decisão: **D0** — caminho 1 (detector v1.0→v2.0, 4,5–7 semanas + parecer), caminho 2 (estudo,
 1,5–3 semanas, ~R$0), caminho 3 (encerrar bem, 2-3 dias). Recomendação registrada: **2**.
 
-Todo o resto está decidido e em vigor por delegação em `_registro-de-decisoes.md`.
+Todo o resto está decidido e em vigor por delegação em `2026-07-30-registro-de-decisoes.md`.

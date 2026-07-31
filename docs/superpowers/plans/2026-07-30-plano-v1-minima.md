@@ -1,8 +1,14 @@
 # Plano v1.0 mínima publicável — v2, pós-codex — PARA APROVAÇÃO DO OPERADOR
 
-**Estado: aguardando aprovação. Nada implementado.**
-Revisão codex: **(b) aprovar com modificações** (`codex-v1-plan-final.md`), todas incorporadas abaixo.
-O rascunho anterior está no histórico deste arquivo; onde o codex reescreveu, vale a reescrita dele.
+**Estado: APROVADO para execução. Nada implementado ainda.** D0 foi decidido pelo operador em
+2026-07-30 (caminho 1, o detector) e as três decisões que antes bloqueavam a aprovação estão
+resolvidas por delegação no registro: **A1** (Stack Overflow sai), **A2** (eixo da cota) e **B6**
+(calendário, satisfeito pela própria escolha do caminho). Sobra **B1** — parecer jurídico —, que
+bloqueia somente a Fase 3.
+
+Revisão codex: **(b) aprovar com modificações**, todas incorporadas abaixo. O veredito e suas
+prescrições estão registrados em `2026-07-30-auditorias-externas.md`; onde o codex reescreveu, vale a
+reescrita dele.
 
 ## O que a v1.0 É — e a frase que a governa
 
@@ -16,7 +22,10 @@ O rascunho anterior está no histórico deste arquivo; onde o codex reescreveu, 
 **commitments agregados** (`datasetDigest`, `splitDigest`, instante, contagens não reconstruíveis);
 seed, assignments e hashes por registro só saem **depois** da medição v2 (higiene contra membership
 inference — pesos sozinhos não queimam `cal-B`/`test`, mas pesos + universo candidato + hashes por
-registro estreitam demais). Paridade v1 = zero inversões em `dev + cal-A`; paridade v2 = zero
+registro estreitam demais). Três proibições que completam a higiene, e que faltavam: **não publicar o
+universo candidato reproduzível**; **não publicar relatório externo sobre o mesmo candidato antes da
+v2**; e **qualquer resultado de terceiro sobre este candidato que o operador vier a ver conta como
+exposição e é registrado como tal**. Paridade v1 = zero inversões em `dev + cal-A`; paridade v2 = zero
 inversões em `dev + cal-A + cal-B`. **São dois contratos por versão, não um contrato afrouxado** —
 emendam R3, F5b, dependências de G5 e a tabela congelada antes da selagem.
 
@@ -30,15 +39,24 @@ emendam R3, F5b, dependências de G5 e a tabela congelada antes da selagem.
   cria uma **lane experimental** que `release:assert-publishable` aceita somente com: opt-in,
   zero perfis, zero evidência científica, nenhuma ação visual, licença `approved`. **Não** reutiliza
   `indicator-only`, que significa decisão científica;
-- **R1 só começa na v2.0** — declarado. O limiar experimental é artefato não certificador, fora da
-  cadeia de concessão; nenhum `frozen-calibration.json` da v1 destina-se à v2.
+- **R1 só começa na v2.0** — declarado, e **somente depois de todos os arquivos do avaliador estarem
+  finais**. O limiar experimental é artefato não certificador, fora da cadeia de concessão; nenhum
+  `frozen-calibration.json` da v1 destina-se à v2.
 
 ### Piso ético (mais forte que "não seja evidência única"; fontes: Weber-Wulff 2023, Liang 2023)
 
 opt-in desligado por padrão · teto `indicator` estrutural · proibição explícita de uso disciplinar,
-acadêmico, empregatício ou decisório · nenhum rótulo de autoria nem confiança numérica · disclosure
-persistente em cada resultado · **os pesos viajam com a mesma política de uso** (a copy da extensão
-não acompanha pesos extraídos). Frase R7-correta no lugar de "erro desconhecido":
+acadêmico, empregatício ou decisório · **não iniciar acusação formal com base no sinal** · nenhum
+rótulo de autoria nem confiança numérica · disclosure persistente em cada resultado · **os pesos
+viajam com a mesma política de uso** (a copy da extensão não acompanha pesos extraídos) · e a
+ressalva que fecha o conjunto: **revisão humana não salva automaticamente um sinal não validado** —
+ela precisa usar evidência independente de processo, não apenas "confirmar" o detector.
+
+Fontes: Weber-Wulff et al. 2023 (detectores inadequados como evidência de misconduct), Liang et al.
+2023 (viés contra escritor não nativo) e a própria orientação do Turnitin, que posiciona o sinal como
+gatilho de conversa e não como veredito. Ver `2026-07-30-auditorias-externas.md`.
+
+Frase R7-correta no lugar de "erro desconhecido":
 
 > "A taxa de erro desta versão no domínio de uso não foi estimada em holdout independente.
 > Resultados de desenvolvimento não são estimativas publicáveis e não sustentam conclusão sobre
@@ -58,7 +76,17 @@ não acompanha pesos extraídos). Frase R7-correta no lugar de "erro desconhecid
   cópias no treino e jurisdições divergentes);
 - **`source-manifest.ts` e testes reescopados**: `source/corpus obligations` ≠ `weight/output
   policy`; nenhuma função ou teste volta a chamar a união das licenças de fonte de obrigação herdada
-  pelos pesos (`source-manifest.ts:263-297,536-557`; `source-manifest.test.ts:560-601,720-795`);
+  pelos pesos — `FROZEN_ARTIFACT_OBLIGATIONS` (`source-manifest.ts:274-297`) e
+  `artifactLicenseObligations`, que hoje faz literalmente `union.add(obligation)` sobre as licenças de
+  fonte (`:542-557`); os testes que prendem a união estão em `source-manifest.test.ts:561` e no
+  `describe` de `:720-795`;
+- **`models/cleanfeed-ptbr-v1/NOTICE.md` é item de trabalho, não consequência** — é o primeiro lugar
+  onde o repositório afirma o oposto da posição (a): `NOTICE.md:10-16` diz que as obrigações das
+  fontes são herdadas pelos pesos e propagadas a qualquer derivado. Reescrever é obrigatório, e sem
+  virar tratado jurídico;
+- **`license-review.json` também tem o campo errado, não só o status**: `artifactObligations`
+  (`:7-10`) lista `attribution + non-commercial + share-alike` como obrigação **do artefato**. Sob a
+  posição (a) esse campo é reescopado, e o NC passa a constar como política própria;
 - `commercialUse: false` permanece política própria; `attributionRequired`/`shareAlikeRequired`
   reescopados por tipo de artefato. **Move o `evaluatorDigest` deliberadamente** — antes de todo fit;
 - `license-review.json`: `pending → `**`approved`** (o gate exige literalmente `approved`,
@@ -93,8 +121,11 @@ não acompanha pesos extraídos). Frase R7-correta no lugar de "erro desconhecid
 3. D1 + D3 com todo registro nascendo `automated/unreviewed` (R4); auditoria amostral de PII **não
    produz `passed` por registro**;
 4. **linhagem fail-closed**: todo gerado referencia pai humano presente; a execução chama
-   `assertDerivedParentsResolve` **antes do split** (a função existe e o comando de split hoje não a
-   chama — `split.ts:208-225`) e colocaliza pai+gerações+derivados. Referência ausente reprova;
+   `assertDerivedParentsResolve` **antes do split** e colocaliza pai+gerações+derivados. Referência
+   ausente reprova. A função existe em **`benchmark/schema.ts:3440`** e hoje só é chamada por
+   `benchmark/tests/schema-v3.test.ts` — o comando de split **não** a chama, e `benchmark/split.ts:419`
+   apenas a menciona em comentário. A brecha declarada de `humanSeed` está em `split.ts:208-225`, que
+   registra "C2 measured 782 of 783 parent references resolving to no row";
 5. E2 congela as cinco partições (⚠️ **o splitter atual é estruturalmente de TRÊS partições** —
    `split.ts:143-155`, `commands/split.ts:108-115` — a migração é trabalho real, não configuração);
    E3 mínimo prova contagens por célula, componentes independentes, pareamento, resolução de
