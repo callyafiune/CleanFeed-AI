@@ -85,8 +85,9 @@ function canonicalArtifactRecords(records) {
  * rewriting a bundle on disk. What it may change is exactly three things — the
  * `modelId`, the review state (a fresh package has had no legal review, R4) and
  * the NOTICE heading. Everything else, including `commercialUse`, `usePolicyId`,
- * `sourceLicenses`, `sourceLicensesScope` and `artifactObligations`, is carried
- * through untouched, because this script is not an authority for any of it.
+ * `sourceLicenses`, `sourceLicensesScope`, `corpusObligations` and
+ * `weightPolicy`, is carried through untouched, because this script is not an
+ * authority for any of it.
  *
  * @param {{licenseReviewJson: string, noticeText: string, modelId: string}} input
  * @returns {{licenseReview: Record<string, unknown>, notice: string}}
@@ -241,7 +242,12 @@ function main() {
 
   writeFileSync(join(trackedDir, "NOTICE.md"), notice);
   writeFileSync(join(publicDir, "NOTICE.md"), notice);
-  const license = readFileSync(join(REPO_ROOT, "LICENSE"), "utf-8");
+  // The bundle's LICENSE is the WEIGHTS licence (`cleanfeed-weights-nc-1.0`),
+  // read from the policy directory — NOT the repository's root LICENSE, which is
+  // the MIT licence of the CODE. Copying the root file here is what put a licence
+  // permitting commercial resale in the same directory as a NOTICE declaring
+  // `commercialUse: false`, and it did it on every repackage.
+  const license = readFileSync(join(policyDirectory, "LICENSE"), "utf-8");
   writeFileSync(join(trackedDir, "LICENSE"), license);
   writeFileSync(join(publicDir, "LICENSE"), license);
 

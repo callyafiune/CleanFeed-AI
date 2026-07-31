@@ -46,6 +46,26 @@
 // admissible because the product and the model are non-commercial; `ND` is
 // blocked because assembling a corpus is the derivative it restricts.
 //
+// WHOSE obligations, and over WHAT — read this before adding anything that
+// returns a `LicenseObligation`. Every obligation this module computes is an
+// obligation over the CORPUS: acquiring the bytes, preparing them, using them.
+// None of them is an obligation over the trained WEIGHTS, and the naming says so
+// throughout (`FROZEN_CORPUS_OBLIGATIONS`, `corpusLicenseObligations`).
+//
+// The reason is not tidiness. If the weights were held to be a derivative of the
+// training sources, the registered licences would be jointly unsatisfiable:
+// `cc-by-sa-4.0` forbids adding a restriction, so it forbids `NC`, while
+// `cc-by-nc-sa-4.0` requires the derivative to carry the same licence, which
+// includes `NC`. A function that derived the weights' licence from the union of
+// the source licences would therefore be deriving the empty set and reporting it
+// as a licence. What governs the weights is {@link WEIGHT_USE_POLICY}: the
+// project's OWN policy, chosen rather than inherited, and its
+// `sourceObligationsPropagate: false` is a declared position of the operator and
+// NOT a legal finding — the Creative Commons primer says a model is frequently
+// not an adaptation but reserves the copies made during training, and Brazil has
+// no clear text-and-data-mining exception. `weightInheritanceOverclaimIn` is the
+// third over-claim screen and it refuses the sentence that says otherwise.
+//
 // On top of the licence it carries the B3 acquisition policy: a human source is
 // admissible only as a PUBLISHED base (`humanSourceAdmissibility`,
 // `assertV3HumanInventoryAdmissible`), it declares which basis its `human` label
@@ -70,15 +90,24 @@
 // `sealDataset` (`benchmark/dataset-manifest.ts`); this module only refuses the
 // SENTENCE.
 //
-// HOW BOTH SCREENS ARE ENFORCED, said plainly because the sentence above about
+// And a THIRD, `weightInheritanceOverclaimIn`, for the licence position stated
+// above. Same defect one subject over: the claim was removed from the data
+// (`license-review.json` no longer publishes a union of source obligations as the
+// artifact's own) and prose is where a removed claim comes back. It refuses the
+// sentence that the weights inherit or propagate the source licences'
+// obligations, in either direction — inherited FROM the sources, or imposed ON a
+// derivative.
+//
+// HOW THE THREE SCREENS ARE ENFORCED, said plainly because the sentence above about
 // `parseReviewedSourceManifest` is about the acquisition guards and does not carry
-// over: neither `humanLabelOverclaimIn` nor `reviewOverclaimIn` has a production
+// over: none of `humanLabelOverclaimIn`, `reviewOverclaimIn` and
+// `weightInheritanceOverclaimIn` has a production
 // caller, by design and not by oversight. They are lint rules over the governance
 // documents, and the enforcement is the sweep in
 // `benchmark/tests/source-manifest.test.ts`, which reads every screened file from
 // disk and fails the suite on a violation. Note the consequence for provenance of
 // the screen itself: this module IS in `EVALUATOR_FILES` (see
-// `benchmark/digests.ts`), so every byte of it — the two screens included — is part
+// `benchmark/digests.ts`), so every byte of it — the three screens included — is part
 // of the evaluator's identity, and editing it AFTER `fit` fails
 // `integrity.evaluator-digest` and burns the holdout grant (R1). It was added there
 // by C3, because `commands/split.ts` now feeds the audit the real source
@@ -92,10 +121,13 @@
 //     authority for the frozen decisions themselves — `commercialUse: false`,
 //     `attributionRequired`, `shareAlikeRequired`. The plan's frozen contract
 //     says code may not repeat them as loose constants, so this module READS
-//     them (`CORPUS_USE_POLICY.commercialUse`, `FROZEN_ARTIFACT_OBLIGATIONS`)
-//     and never writes them down a second time.
+//     them (`CORPUS_USE_POLICY.commercialUse`, `FROZEN_CORPUS_OBLIGATIONS`)
+//     and never writes them down a second time. All three are rows about the
+//     CORPUS; none of them is a row about the weights.
 //   * This module is the authority for the licence registry, the per-source
-//     admissibility verdict and the obligations each licence imposes.
+//     admissibility verdict and the obligations each licence imposes on the
+//     corpus, AND for the weights' own use policy ({@link WEIGHT_USE_POLICY}),
+//     which no source licence contributes to.
 //   * `models/cleanfeed-ptbr-v1/license-review.json` and `NOTICE.md` PUBLISH the
 //     result; `docs/corpus-sources.md` documents it.
 // Each link is enforced by a named test in
@@ -253,6 +285,61 @@ export const CORPUS_USE_POLICY = {
 } as const;
 
 /**
+ * What governs the published WEIGHTS, as the project's own policy.
+ *
+ * This constant exists because the alternative does not work. Held to be a
+ * derivative of its training sources, the model would owe `cc-by-sa-4.0` (which
+ * forbids adding restrictions) and `cc-by-nc-sa-4.0` (whose share-alike requires
+ * the derivative to carry `NC`, a restriction) at the same time; Creative Commons
+ * documents that pair as incompatible. So the project takes a position instead of
+ * deriving a contradiction, and the position is written down here rather than
+ * implied by an absence.
+ *
+ * `sourceObligationsPropagate: false` is the position. Read what it is and is not:
+ *
+ *   * it is a RISK DECISION OF THE OPERATOR, recorded as decision B2 and as
+ *     position (a) of `docs/superpowers/plans/2026-07-30-estado-do-projeto.md`;
+ *   * it is NOT a legal finding, NOT a consensus, and NOT a conclusion of
+ *     Creative Commons — the CC primer says a model is frequently not an
+ *     adaptation, and in the same breath reserves the copies made during training
+ *     and notes that jurisdictions diverge. Brazil has no clear text-and-data
+ *     mining exception;
+ *   * it says nothing about ACQUISITION. The obligations of the sources still
+ *     govern how the bytes were obtained, prepared and used, which is what
+ *     {@link FROZEN_CORPUS_OBLIGATIONS} and {@link corpusLicenseObligations} are
+ *     about, and it is why a source's access terms can block it whatever this
+ *     field says.
+ *
+ * `commercialUse: false` here agrees with `CORPUS_USE_POLICY.commercialUse` and is
+ * deliberately NOT read from it. Two policies that happen to say the same thing
+ * are not one policy: the corpus is non-commercial because the frozen contract
+ * says so, the weights are non-commercial because the project chose it, and
+ * threading one through the other would rebuild the inheritance this constant
+ * exists to deny. Both are pinned to `REBUILD_V3_POLICY.commercialUse` by test so
+ * they cannot drift apart in silence either.
+ *
+ * `prohibitedUses` is the reason the licence has to be its own named instrument
+ * rather than a permissive licence plus a paragraph in the extension: the copy
+ * shipped in `src/shared/classification-copy.ts` does not travel with weights
+ * somebody extracted from the bundle, and a use restriction that does not travel
+ * with the artifact restricts nothing.
+ */
+export const WEIGHT_USE_POLICY = {
+  licenseId: "cleanfeed-weights-nc-1.0",
+  policyId: "noncommercial-v1",
+  commercialUse: false,
+  sourceObligationsPropagate: false,
+  positionAuthority: "operator-risk-decision",
+  prohibitedUses: [
+    "academic-integrity",
+    "decisional",
+    "disciplinary",
+    "employment",
+    "mass-screening",
+  ],
+} as const;
+
+/**
  * The use a caller declares. Only `commercialUse` can change a verdict: the
  * `NC` clause is about use, not about the corpus.
  */
@@ -260,7 +347,17 @@ export interface DeclaredCorpusUse {
   commercialUse: boolean;
 }
 
-/** An obligation a licence imposes on the derived artifact. */
+/**
+ * An obligation a licence imposes on the derived CORPUS — on acquiring the bytes,
+ * preparing them and using them.
+ *
+ * Not on the weights. The weights carry {@link WEIGHT_USE_POLICY}, which is the
+ * project's own policy and takes no input from this type. The distinction is the
+ * whole reason the type is named for the licence rather than for the artifact: a
+ * value of this type answers "what does this licence require of the corpus", and
+ * there is no operation in this module that turns it into a requirement on the
+ * model.
+ */
 export type LicenseObligation =
   "attribution" | "non-commercial" | "share-alike";
 
@@ -272,19 +369,26 @@ const OBLIGATION_ORDER: readonly LicenseObligation[] = [
 ];
 
 /**
- * The obligations the frozen contract requires the artifact to carry, DERIVED
+ * The obligations the frozen contract requires the CORPUS to carry, DERIVED
  * from `benchmark/rebuild-v3-policy.json` instead of listed here: the row "uso e
  * licença" is `commercialUse: false` plus `attributionRequired` plus
  * `shareAlikeRequired`.
  *
- * It is not the same statement as `artifactLicenseObligations(...)`, which
+ * It is not the same statement as `corpusLicenseObligations(...)`, which
  * answers what a given set of licences happens to impose. This one is the floor:
  * a registry edit that dropped `shareAlike` from `cc-by-nc-sa-4.0` would lower
  * what the licences impose while the frozen requirement stayed, which is the
  * divergence the test "imposes every obligation the frozen contract requires"
  * exists to catch. C1/C5 should read this constant, not restate the flags.
+ *
+ * Its previous name said `ARTIFACT`, and that was the defect and not a wording
+ * preference: the same three flags were being read as the licence of the trained
+ * model. They are the corpus's. `non-commercial` appears here because the frozen
+ * `commercialUse: false` governs how the corpus may be used — the weights are
+ * non-commercial too, but by {@link WEIGHT_USE_POLICY} and not by this constant,
+ * so the two agree without one deriving from the other.
  */
-export const FROZEN_ARTIFACT_OBLIGATIONS: readonly LicenseObligation[] =
+export const FROZEN_CORPUS_OBLIGATIONS: readonly LicenseObligation[] =
   OBLIGATION_ORDER.filter((obligation) => {
     switch (obligation) {
       case "attribution":
@@ -534,12 +638,18 @@ export function sourceAdmissibility(
 }
 
 /**
- * The obligations the artifact inherits from a set of licence identifiers, in
+ * The obligations a set of licence identifiers imposes on the CORPUS, in
  * canonical order. Obligations do not depend on the declared use, so this
  * function does not take one; it fails closed on an unregistered identifier,
  * because a licence whose clauses are unknown cannot be said to impose none.
+ *
+ * The union is over the corpus and stops there. Passing this return value on as
+ * the licence of the trained weights is the one thing this module refuses to
+ * support: it would be reading a joint requirement out of licences that cannot
+ * jointly hold (see the header, "WHOSE obligations, and over WHAT"), and
+ * `weightInheritanceOverclaimIn` refuses the sentence that states it.
  */
-export function artifactLicenseObligations(
+export function corpusLicenseObligations(
   licenseIds: readonly string[],
 ): readonly LicenseObligation[] {
   const union = new Set<LicenseObligation>();
@@ -558,7 +668,7 @@ export function artifactLicenseObligations(
 
 /**
  * Refuses an inventory that contradicts `use`, and returns the obligations the
- * artifact must carry. A `commercialUse: true` declaration over an `NC` source
+ * corpus must carry. A `commercialUse: true` declaration over an `NC` source
  * (Carolina) is a contradiction this throws on — not an inconsistency it
  * records. Sources with a `null` licenceId are consent sources: their basis is
  * a receipt digest, not a licence, so they impose no licence obligation.
@@ -1344,6 +1454,137 @@ export function reviewOverclaimIn(text: string): string | null {
         match.index,
       );
       if (HUMAN_LABEL_DENIAL.test(before)) continue;
+      return `${match[0]} @ ${clause.trim().slice(0, 160)}`;
+    }
+  }
+  return null;
+}
+
+// --- the over-claim screen for the weights' licence (position (a)) ----------
+//
+// The THIRD screen, same machinery, one subject over. The claim was removed from
+// the DATA — `license-review.json` no longer publishes a union of source
+// obligations as the artifact's own, and the module no longer computes one — and
+// prose is the other place a removed claim comes back. The sentence it refuses is
+// "the weights inherit the obligations of the source licences", in either
+// direction: inherited FROM the sources, or propagated ON to a derivative.
+//
+// Why the sentence is the thing to refuse and not merely a wording slip: it is a
+// legal claim the project cannot make. Under it the model owes `NC` and owes not
+// adding `NC` at the same time, so a reader who believes the sentence cannot
+// comply with it, and a downstream user who relies on it inherits a defect they
+// have no way to detect. It is also the sentence the repository shipped: it stood
+// in `models/cleanfeed-ptbr-v1/NOTICE.md`, the file that travels with the weights.
+//
+// It reuses {@link unwrapSoftLines}, {@link CLAUSE_BOUNDARY} and
+// {@link HUMAN_LABEL_DENIAL} for the same reason `reviewOverclaimIn` does: prose
+// in `docs/` wraps at about 80 columns, a denial is not a claim, and three copies
+// of that logic would drift. What it does NOT reuse is `HUMAN_LABEL_CLAIM` — the
+// verbs that turn a mitigation into a proof ("prova", "garante") are not the verbs
+// that transfer an obligation ("herda", "propaga", "se estende a").
+//
+// WHAT IT DELIBERATELY DOES NOT FIRE ON, because the project must keep saying it:
+//   * the DENIAL, which is now the project's own position — "as obrigações das
+//     fontes NÃO se propagam aos pesos", "os pesos não herdam a licença";
+//   * inheritance predicated of the CORPUS, which is true and required — "o
+//     corpus herda as obrigações das fontes";
+//   * the BASE MODEL's licence, which really does travel with the weights:
+//     BERTimbau is MIT and saying so is provenance, not propagation.
+// So a violation needs a weights subject, a propagation verb, and no denial in
+// front of it, inside one clause.
+
+// The subject: the model, its weights, the artifact. `artefato` is included
+// because that is the word the removed `artifactObligations` field used, and it is
+// how the claim came back the last time it was removed.
+//
+// `derivado` is deliberately NOT a subject here, although the forbidden sentence
+// ends in "propaga para qualquer derivado". A DERIVED CORPUS really does inherit
+// the source obligations, the documents say so in those words, and a screen that
+// fired on "o corpus derivado herda as obrigações" would refuse a true sentence.
+// The propagation-to-a-derivative claim is still caught, because the clause that
+// makes it names the artifact as the thing propagating.
+const WEIGHT_SUBJECT = /\bpesos?\b|\bmodelo\b|\bartefato\b|\bcheckpoints?\b/iu;
+
+// The propagation verbs, written out rather than stemmed. `herd\w*` would fire on
+// "herdeiro" and `propag\w*` on "propagação de erro", and inflection in Portuguese
+// is regular enough to list.
+const WEIGHT_INHERITANCE_CLAIM =
+  /\b(?:herda|herdam|herdar|herdada|herdadas|herdado|herdados|propaga|propagam|propagar|propagada|propagadas|propagado|propagados|propaga[çc][ãa]o|transfere|transferem|transferir|transferida|transferidas|transferido|transferidos|estende|estendem|estender|estendida|estendidas|estendido|estendidos|vincula|vinculam|vincular|vinculada|vinculadas|vinculado|vinculados|sujeit[oa]s?|submetid[oa]s?)\b/giu;
+
+// The object that makes it a licence claim rather than any other transfer: an
+// obligation, a licence, or one of the three clause names. Without it "o modelo
+// herda o vocabulário do tokenizer" would fire, which is a sentence about
+// tokenizers.
+const LICENCE_OBJECT =
+  /\bobriga[çc][õo]es?\b|\blicen[çc]as?\b|\bcopyleft\b|\bshare-?alike\b|\bn[ãa]o\s+comercial\b|\batribui[çc][ãa]o\b|\bcl[áa]usulas?\b|\bNC\b|\bSA\b/iu;
+
+// WHERE the obligation is claimed to come from. Required, and this is the guard
+// that keeps the screen from refusing a sentence the weights licence has to make.
+//
+// `cleanfeed-weights-nc-1.0` is an OpenRAIL-M-shaped instrument: its use
+// restrictions bind downstream recipients and it says so, because a restriction
+// that stops at the first recipient restricts nothing. That sentence has a weights
+// subject, a propagation verb and a licence object — every ingredient of the
+// forbidden claim — and it is correct. What makes the forbidden claim forbidden is
+// the SOURCE as the origin: the obligation arriving from the training corpus. So
+// the origin has to be named in the clause for the screen to fire, and "estas
+// restrições acompanham qualquer derivado destes pesos" passes while "os pesos
+// herdam as obrigações das fontes" does not.
+const SOURCE_REFERENT =
+  /\bfontes?\b|\bcorpus\b|\bdados\s+de\s+treino\b|\bconjunto\s+de\s+(?:treino|dados)\b|\bcc-by\b|\bcarolina\b|\bwikip[ée]dia\b|\bb2w\b|\bstack\s*exchange\b/iu;
+
+// The denial, widened by one word over {@link HUMAN_LABEL_DENIAL}: `nenhum` and
+// `nenhuma`. The project's own position is written as "NENHUMA obrigação de
+// licença de fonte é transferida ao modelo", and the shared pattern does not carry
+// the word, so the shared pattern would refuse the denial as though it were the
+// claim.
+//
+// It is widened HERE and not in `HUMAN_LABEL_DENIAL` on purpose. The same gap
+// exists in the two older screens — "nenhuma evidência prova a autoria humana"
+// reads as an over-claim to them today — and that is a real defect, but it is a
+// defect in a sealed-path function this task was not asked to change, and fixing
+// it silently would alter what two other screens accept in a commit about
+// licences. It is recorded as an open finding instead.
+const WEIGHT_DENIAL = /\b(?:n[ãa]o|nunca|nem|jamais|sem|nenhum|nenhuma)\b/iu;
+
+/**
+ * Is the propagation verb at `index` denied by something in front of it?
+ *
+ * The window is the same 40 characters the other two screens use, TRUNCATED at the
+ * last comma. The truncation is what tells a denial of the verb apart from a
+ * denial of an appositive: in "os pesos, e não o corpus, herdam as obrigações" the
+ * `não` negates `o corpus`, the verb is asserted, and a plain 40-character window
+ * reads the sentence as its own denial and lets the claim through. Cutting at the
+ * comma leaves an empty window there, so the claim fires.
+ *
+ * The two older screens have the same blind spot and it is not fixed here, for the
+ * reason given on {@link WEIGHT_DENIAL}: they are sealed-path functions this task
+ * was not asked to change.
+ */
+function propagationIsDenied(clause: string, index: number): boolean {
+  const window = clause.slice(Math.max(0, index - DENIAL_WINDOW), index);
+  const lastComma = window.lastIndexOf(",");
+  return WEIGHT_DENIAL.test(
+    lastComma === -1 ? window : window.slice(lastComma + 1),
+  );
+}
+
+/**
+ * The first forbidden claim that the WEIGHTS inherit or propagate the source
+ * licences' obligations, or `null` when the text makes none. Same return shape as
+ * {@link humanLabelOverclaimIn}: the claim and its clause, so a failing screen
+ * names what fired and where.
+ */
+export function weightInheritanceOverclaimIn(text: string): string | null {
+  for (const clause of unwrapSoftLines(text).split(CLAUSE_BOUNDARY)) {
+    // A weights subject is required, which is also what lets the true statement
+    // through: "o corpus herda as obrigações das fontes" names no weights subject
+    // and never reaches the verbs.
+    if (!WEIGHT_SUBJECT.test(clause)) continue;
+    if (!LICENCE_OBJECT.test(clause)) continue;
+    if (!SOURCE_REFERENT.test(clause)) continue;
+    for (const match of clause.matchAll(WEIGHT_INHERITANCE_CLAIM)) {
+      if (propagationIsDenied(clause, match.index)) continue;
       return `${match[0]} @ ${clause.trim().slice(0, 160)}`;
     }
   }

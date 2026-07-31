@@ -1416,7 +1416,57 @@ acima é que ela entre junto.
   jul/2024 e ficam atrás de login com termo que exclui treino de LLM. _Nota de autoria:_ autor não
   identificado por nome.
 
-### 10.4 Backlog de corpora pt-BR
+### 10.4 Licença por artefato e uso comportamental (Fase 0.1 da v1.0)
+
+Nível de alegação: **(i) metodologia importada com fonte revisada**. A família de licença
+existe, é publicada e é usada em produção por terceiros; o que é do projeto é a escolha de
+aplicá-la aos pesos e **não** ao código, e essa escolha é engenharia, não teoria.
+
+- **Contractor, McDuff, Haines, Lee, Hines, Hecht, Vincent & Li, 2022 — Behavioral Use
+  Licensing for Responsible AI** (ACM FAccT 2022).
+  [link](https://arxiv.org/abs/2011.03116)
+  _Âncora:_ a decisão B2 — os pesos saem sob licença própria com **restrição de uso**, e não sob
+  licença permissiva mais um parágrafo de recomendação. _Onde no projeto:_ plano v1 § 0.1;
+  registro § B2; `models/cleanfeed-ptbr-v1/LICENSE` (`cleanfeed-weights-nc-1.0`);
+  `benchmark/source-manifest.ts` (`WEIGHT_USE_POLICY`). _Fato citado:_ defende "the use of
+  licensing to enable legally enforceable behavioral use conditions on software and code".
+  _Ressalva de verificação:_ o resumo **não** afirma que a restrição vincula usuários a jusante de
+  derivados — essa parte é ancorada pela entrada seguinte, não por esta. A versão publicada em
+  FAccT tem o título acima; um preprint anterior circulou como "…for Deep Learning Models".
+- **BigScience / licenses.ai, 2022 — The BigScience OpenRAIL-M License** (licenses.ai,
+  26/08/2022).
+  [link](https://www.licenses.ai/blog/2022/8/26/bigscience-open-rail-m-license)
+  _Âncora:_ a seção 4 de `cleanfeed-weights-nc-1.0` — as restrições acompanham o artefato e
+  alcançam qualquer derivado. É o mecanismo que responde ao achado do codex de que a cópia da
+  extensão não viaja com pesos extraídos do pacote. _Onde no projeto:_
+  `models/cleanfeed-ptbr-v1/LICENSE` § 4; `WEIGHT_USE_POLICY.restrictionsTravelWithArtifact`.
+  _Fato citado:_ "permit free and open access, re-use, and downstream distribution of derivatives
+  of AI artifacts as long as the behavioral-use restrictions always apply (including to derivative
+  works)".
+- **Creative Commons — Attribution 4.0 International (CC BY 4.0), texto legal**
+  (creativecommons.org). [link](https://creativecommons.org/licenses/by/4.0/legalcode)
+  _Âncora:_ a licença da documentação e da evidência. Escolhida **acima** de CC BY-NC porque a
+  evidência existe para ser checada, citada e republicada com correção, e acima de CC0 porque a
+  atribuição é o que liga um número desta bancada às ressalvas que o qualificam. _Onde no
+  projeto:_ `docs/LICENSE-DOCS.md`; `LICENSES.md`. _Fato citado:_ exige apenas atribuição, sem
+  restrição de campo de uso nem cláusula share-alike.
+
+Sobre a **posição (a)** propriamente — os pesos não herdam as obrigações das licenças das fontes
+— a referência é a orientação da Creative Commons já registrada em § 10.2, que a ancora nos dois
+sentidos: sustenta a leitura adotada **e** registra que ela não é conclusão da CC. Não há entrada
+nova aqui porque não há fonte nova: a posição é decisão de risco do operador, e o que a literatura
+oferece é o enquadramento, não a conclusão.
+
+**Sem precedente encontrado (2026-07-31):** a *tela de over-claim sobre documento de governança* —
+uma função sem chamador de produção, aplicada por teste a uma lista de arquivos, que recusa uma
+FRASE proibida em vez de um valor de campo (`humanLabelOverclaimIn`, `reviewOverclaimIn`,
+`weightInheritanceOverclaimIn`). O ancestral mais próximo dentro do próprio repositório é
+`src/shared/classification-copy.ts`, que faz o mesmo com a copy da interface. Fora dele não foi
+encontrada prática equivalente: lint de prosa existe (Vale, alex, write-good) mas sobre estilo e
+viés de linguagem, não sobre uma alegação técnica que o projeto se proibiu de fazer. Quem conhecer
+precedente, abra issue.
+
+### 10.5 Backlog de corpora pt-BR
 
 - **ajdavidl (curador) — Portuguese-NLP: índice curado de recursos** (GitHub, índice vivo).
   [link](https://github.com/ajdavidl/Portuguese-NLP)

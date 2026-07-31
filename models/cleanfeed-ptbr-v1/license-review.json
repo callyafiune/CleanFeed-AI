@@ -1,11 +1,32 @@
 {
-  "schemaVersion": 1,
+  "schemaVersion": 2,
   "modelId": "cleanfeed-ptbr-v1",
   "status": "pending",
   "usePolicyId": "noncommercial-v1",
   "commercialUse": false,
-  "declaredLicense": "Projeto e modelo NÃO COMERCIAIS (commercialUse: false, congelado); base BERTimbau (MIT); licenças das fontes em sourceLicenses e NOTICE.md",
-  "artifactObligations": ["attribution", "non-commercial", "share-alike"],
+  "declaredLicense": "Pesos sob cleanfeed-weights-nc-1.0 (licença própria, não comercial, usos de alto risco proibidos; texto em models/cleanfeed-ptbr-v1/LICENSE). Código sob MIT (LICENSE, raiz). Documentação e evidência sob CC BY 4.0 (docs/LICENSE-DOCS.md). Base BERTimbau (MIT).",
+  "weightPolicy": {
+    "licenseId": "cleanfeed-weights-nc-1.0",
+    "licenseFile": "LICENSE",
+    "family": "openrail-m",
+    "osiApproved": false,
+    "commercialUse": false,
+    "sourceObligationsPropagate": false,
+    "positionAuthority": "operator-risk-decision",
+    "positionNote": "Posição (a): as obrigações das licenças do corpus regem aquisição, preparação e uso dos dados; o projeto sustenta que não alcançam o artefato treinado. NÃO é parecer jurídico, NÃO é consenso e NÃO é conclusão da Creative Commons — o primer da CC ressalva as cópias feitas no treino e a divergência entre jurisdições, e o Brasil não tem exceção clara de mineração de dados. O regime não comercial dos pesos é política própria do projeto, escolhida, e não obrigação importada.",
+    "prohibitedUses": [
+      "academic-integrity",
+      "decisional",
+      "disciplinary",
+      "employment",
+      "mass-screening"
+    ],
+    "restrictionsTravelWithArtifact": true,
+    "licenseFileNote": "O arquivo LICENSE deste diretório é a licença dos PESOS. O LICENSE da raiz do repositório é o MIT do código, e é outro arquivo."
+  },
+  "corpusObligations": ["attribution", "non-commercial", "share-alike"],
+  "corpusObligationsScope": "acquisition-preparation-use",
+  "corpusObligationsNote": "Obrigações do CORPUS, não do artefato treinado. Substitui o campo artifactObligations, que publicava a união das licenças de fonte como obrigação do modelo — exatamente a leitura que a posição (a) nega, e que é insatisfazível: cc-by-sa-4.0 proíbe acrescentar restrição (logo proíbe NC) enquanto o share-alike de cc-by-nc-sa-4.0 exige que o derivado carregue NC.",
   "sourceLicensesScope": "corpus-inventory",
   "sourceLicensesNote": "sourceLicenses é o inventário de licenças revisadas do corpus (mesmo conteúdo de CORPUS_LICENSE_REGISTRY em benchmark/source-manifest.ts), NÃO a lista de licenças do conjunto de treino deste modelo: entradas com derivedCorpus \"blocked\" nunca foram incorporadas. As fontes que realmente treinaram cleanfeed-ptbr-v1 estão nomeadas em NOTICE.md. Uma lista por modelo é trabalho de C1/C5.",
   "sourceLicenses": [
@@ -94,6 +115,18 @@
       "blockedBy": null
     }
   ],
+  "ratification": {
+    "blockedBy": "B1",
+    "decidedBy": "agente, por delegação registrada em docs/superpowers/plans/2026-07-30-registro-de-decisoes.md",
+    "decidedAt": "2026-07-31",
+    "whyNotApproved": "O gate de publicação exige literalmente \"approved\" (scripts/assert-release-gates.mjs, scripts/run-release-build.mjs). Marcar approved aqui seria o agente assinando a revisão de licença no lugar do operador, e a decisão B1 — buscar parecer jurídico sobre a posição (a) antes de publicar pesos, ou assumir o risco por escrito — não é delegável: o risco é pessoal do operador. O conteúdo da revisão está completo neste arquivo; falta a assinatura. Só o operador move status para approved, e só isso destrava a publicação dos pesos. As Fases 0 a 2 correm sem essa assinatura.",
+    "evidenceForTheDecision": [
+      "docs/superpowers/plans/2026-07-30-estado-do-projeto.md — Decisão 3, posição (a) e o que ela não é",
+      "docs/superpowers/plans/2026-07-30-registro-de-decisoes.md — B1 (aberta, não delegável), B2 (licença própria estilo OpenRAIL-M)",
+      "docs/superpowers/plans/2026-07-30-plano-v1-minima.md — Fase 0.1",
+      "docs/references.md — §10.2 (orientação da Creative Commons: sustenta a posição (a) e registra que ela não é conclusão da CC) e §10.4 (licença por artefato, uso comportamental, CC BY 4.0)"
+    ]
+  },
   "reviewedAt": null,
   "reviewer": null,
   "evidence": []

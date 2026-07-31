@@ -41,9 +41,8 @@ describe("packaged licence-policy files", () => {
     expect(licenseReview.usePolicyId).toBe(tracked.usePolicyId);
     expect(licenseReview.sourceLicenses).toEqual(tracked.sourceLicenses);
     expect(licenseReview.sourceLicensesScope).toBe(tracked.sourceLicensesScope);
-    expect(licenseReview.artifactObligations).toEqual(
-      tracked.artifactObligations,
-    );
+    expect(licenseReview.corpusObligations).toEqual(tracked.corpusObligations);
+    expect(licenseReview.weightPolicy).toEqual(tracked.weightPolicy);
     expect(licenseReview.modelId).toBe("cleanfeed-ptbr-v2");
   });
 

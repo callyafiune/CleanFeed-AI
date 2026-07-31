@@ -18,7 +18,7 @@
 > `benchmark/rebuild-v3-policy.ts`, dentro de `EVALUATOR_FILES`) é a autoridade
 > do valor congelado `commercialUse: false` e das obrigações congeladas
 > `attributionRequired`/`shareAlikeRequired`; **`benchmark/source-manifest.ts`**
-> **lê** esse arquivo (`CORPUS_USE_POLICY`, `FROZEN_ARTIFACT_OBLIGATIONS`) e é a
+> **lê** esse arquivo (`CORPUS_USE_POLICY`, `FROZEN_CORPUS_OBLIGATIONS`) e é a
 > autoridade do registro de licenças, do veredito por fonte e das obrigações que
 > cada licença impõe (`CORPUS_LICENSE_REGISTRY`, `sourceAdmissibility`,
 > `assertLicenseInventoryAdmissible`); **`models/cleanfeed-ptbr-v1/NOTICE.md`** e
@@ -132,10 +132,16 @@ Fonte **ND** (`cc-by-nc-nd-4.0`, p. ex.) continua **proibida**: o corpus é um
 derivado, e é o derivado que ND restringe; declarar-se não comercial não
 destrava ND. O rastreio por `licenseId` por fonte permanece obrigatório por dois
 motivos que continuam valendo com a decisão congelada: **atribuição e
-share-alike propagam para o artefato** (é o que `NOTICE.md` e
-`license-review.json` publicam, por identificador exato), e é por ele que
+share-alike são obrigações do corpus, e o corpus tem de poder mostrar de qual
+fonte cada uma vem** (é o que `NOTICE.md` e `license-review.json` publicam, por
+identificador exato, sob `corpusObligations`), e é por ele que
 `assertLicenseInventoryAdmissible` recusa uma fonte ND antes de qualquer
 incorporação.
+
+A redação anterior deste parágrafo dizia que atribuição e share-alike "propagam
+para o artefato". Era a mesma inversão do `NOTICE.md`, num arquivo que ninguém
+tinha revisado com esse olhar, e foi a terceira tela de over-claim
+(`weightInheritanceOverclaimIn`) que a encontrou — não uma varredura manual.
 
 Nunca usar raspagem de plataformas com ToS restritivo (LinkedIn, X, Reddit,
 Instagram) nem derivados de Common Crawl (copyright subjacente não licenciado —
@@ -311,7 +317,7 @@ respostas do projeto — está em [limitations.md](limitations.md).
     "source": "https://creativecommons.org/licenses/by-nc-sa/4.0/",
     "evaluationUseApproved": true,
     "redistribution": "not-published",
-    "notice": "Cláusula NC satisfeita: commercialUse é false e congelado. Atribuição e share-alike propagam para o artefato; rastreada por fonte para que essa propagação seja auditável."
+    "notice": "Cláusula NC satisfeita: commercialUse é false e congelado. Atribuição e share-alike são obrigações do corpus; rastreada por fonte para que a origem de cada obrigação seja auditável."
   },
   {
     "id": "odc-by-1.0",
@@ -466,16 +472,67 @@ uso comercial**. Três consequências práticas:
 2. **Fontes NC destravadas.** Com o projeto não-comercial, CC BY-NC(-SA)
    (B2W-Reviews01, subcorpora do Carolina, etc.) entram no inventário sem
    segregação.
-3. **⚠️ A licença atual do repositório é MIT — e MIT PERMITE uso comercial por
-   terceiros.** "Aberto porém sem uso comercial" exige outra licença: para o
-   código, algo como PolyForm Noncommercial 1.0.0 (ou dual licensing); para
-   docs/dados publicáveis, CC BY-NC 4.0. Nota de precisão terminológica: uma
-   licença com restrição comercial não é "open source" pela definição OSI —
-   costuma-se dizer "source-available não-comercial". A troca do texto de
-   licença do repositório é uma tarefa pendente do operador; nada neste
-   inventário depende dela, e ela **não** é um ramo comercial pendente — o
-   regime `commercialUse: false` está congelado, e o que falta é apenas alinhar
-   o arquivo `LICENSE` a ele antes da publicação.
+3. **Uma licença por artefato — RESOLVIDO na Fase 0.1 da v1.0 (2026-07-31).** A
+   pergunta "qual licença" não tem uma resposta só, porque os três artefatos que
+   o projeto publica não correm o mesmo risco:
+
+   | artefato | licença | onde |
+   |---|---|---|
+   | código | MIT | `LICENSE`, na raiz |
+   | pesos treinados | `cleanfeed-weights-nc-1.0` (própria, não comercial, usos de alto risco proibidos) | `models/cleanfeed-ptbr-v1/LICENSE` |
+   | documentação e evidência | CC BY 4.0 | `docs/LICENSE-DOCS.md` |
+
+   O rascunho anterior deste item propunha PolyForm Noncommercial para o código
+   e CC BY-NC para docs. Foi descartado, e a razão importa: restrição comercial
+   no **código** não protege ninguém — quem quiser um detector comercial treina
+   o próprio, e a única coisa que a restrição consegue é impedir que a bancada
+   de avaliação (a parte do projeto que a auditoria de 2026-07-30 não encontrou
+   precedente) seja reusada por quem deveria reusá-la. A restrição pertence ao
+   artefato que pode causar dano a uma pessoa: os **pesos**.
+
+   Precisão terminológica, porque ela continua valendo: uma licença com
+   restrição de uso não é "open source" pela definição da OSI. O projeto diz
+   "pesos abertos, uso restrito", nunca "open source", e
+   `cleanfeed-weights-nc-1.0` declara `osiApproved: false`.
+
+   Duas afirmações do rascunho anterior eram falsas e ficam registradas como
+   tal: "nada neste inventário depende dela" (a semântica de obrigação neste
+   inventário mudou junto — ver a seção seguinte) e "o que falta é apenas
+   alinhar o arquivo `LICENSE`" (a Fase 0.1 foi retrabalho de código em
+   `benchmark/source-manifest.ts`, nos testes que o prendiam, no `NOTICE.md`, no
+   campo `artifactObligations` e no script de empacotamento).
+
+## Posição (a) — de quem são as obrigações, e sobre o quê
+
+Toda obrigação que este inventário calcula é obrigação sobre o **corpus**:
+adquirir os bytes, prepará-los, usá-los. Nenhuma é obrigação sobre os pesos
+treinados. Os pesos saem sob `cleanfeed-weights-nc-1.0`, que é política própria
+do projeto — escolhida, não importada.
+
+A razão não é organização. Lido o artefato treinado como derivado das suas
+fontes, as licenças registradas seriam conjuntamente insatisfazíveis:
+`cc-by-sa-4.0` proíbe acrescentar restrição, logo proíbe NC, enquanto o
+share-alike de `cc-by-nc-sa-4.0` exige que o derivado carregue a mesma licença,
+que inclui NC. A própria Creative Commons documenta o par como incompatível.
+Uma função que derivasse a licença do artefato da união das licenças de fonte
+estaria derivando o conjunto vazio e publicando o resultado como licença.
+
+**O que a posição (a) NÃO é:** não é parecer jurídico, não é consenso e não é
+conclusão da Creative Commons. O primer da CC diz que um modelo frequentemente
+não é adaptação, e na mesma passagem ressalva as cópias feitas durante o treino
+e registra que as jurisdições divergem; o Brasil não tem exceção clara de
+mineração de dados. É **decisão de risco do operador**, registrada como tal em
+`models/cleanfeed-ptbr-v1/license-review.json` (`weightPolicy.positionAuthority`)
+e sujeita à ratificação B1 antes de qualquer publicação de pesos.
+
+**O que ela não afrouxa:** nada na direção da aquisição. O termo de acesso de
+uma fonte é independente da tese sobre obra derivada, e continua bloqueando —
+é exatamente por isso que o dump do Stack Exchange está fora do corpus v1/v2.
+
+No código a separação tem nome: `FROZEN_CORPUS_OBLIGATIONS` e
+`corpusLicenseObligations` respondem pelo corpus, `WEIGHT_USE_POLICY` responde
+pelos pesos, e `weightInheritanceOverclaimIn` é a terceira tela de over-claim —
+ela recusa, nestes documentos, a frase que diz o contrário.
 
 ## Dependência pendente
 

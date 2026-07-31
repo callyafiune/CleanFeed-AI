@@ -1,21 +1,89 @@
-MIT License
+# CleanFeed Weights Licence 1.0 — não comercial, uso restrito
 
+Identificador: `cleanfeed-weights-nc-1.0`
 Copyright (c) 2026 Cally Afiune
+Artefato licenciado: os pesos treinados de `cleanfeed-ptbr-v1` e qualquer
+derivado deles (fine-tune, quantização, destilação, conversão de formato).
 
-Permission is hereby granted, free of charge, to any person obtaining a copy
-of this software and associated documentation files (the "Software"), to deal
-in the Software without restriction, including without limitation the rights
-to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
-copies of the Software, and to permit persons to whom the Software is
-furnished to do so, subject to the following conditions:
+Esta licença cobre **os pesos**. O código do projeto está sob MIT (`LICENSE`, na
+raiz do repositório) e a documentação e a evidência estão sob CC BY 4.0
+(`docs/LICENSE-DOCS.md`). Três artefatos, três licenças, de propósito.
 
-The above copyright notice and this permission notice shall be included in all
-copies or substantial portions of the Software.
+Ela é da família OpenRAIL-M: permissão ampla com restrições de uso que
+acompanham o artefato. Não é uma licença aprovada pela OSI, e o projeto não a
+chama de open source — os pesos são abertos, o uso é restrito.
 
-THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
-IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
-FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
-AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
-LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
-OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
-SOFTWARE.
+## 1. Concessão
+
+Concede-se, sem custo, permissão de usar, copiar, modificar, mesclar, publicar,
+distribuir e sublicenciar os pesos e seus derivados, sujeita às seções 2 e 3.
+
+## 2. Restrição não comercial
+
+Uso comercial é proibido: nada de vender os pesos, cobrar por acesso a eles ou
+a saídas deles, nem embuti-los em produto ou serviço pago.
+
+Esta restrição é **política do projeto**, escolhida. Ela não é obrigação
+importada de terceiro: as licenças do corpus de treino regem a aquisição, a
+preparação e o uso dos dados, e o projeto sustenta que não alcançam o artefato
+treinado — posição de risco assumida pelo operador, registrada no NOTICE e em
+`docs/corpus-sources.md`, e que não é parecer jurídico.
+
+Não existe variante comercial a preservar, então não há exceção a negociar.
+
+## 3. Usos proibidos
+
+É proibido usar os pesos, ou qualquer derivado deles, para:
+
+1. **integridade acadêmica** — decidir, sustentar ou instruir alegação sobre
+   autoria de redação, prova, tese, artigo ou trabalho escolar;
+2. **uso disciplinar** — sanção, advertência, processo interno ou qualquer
+   medida punitiva contra pessoa;
+3. **uso empregatício** — demissão, reprovação de entrega, avaliação de
+   desempenho, triagem ou seleção de candidato;
+4. **uso decisório sobre pessoas** — qualquer decisão com efeito jurídico,
+   financeiro, educacional ou reputacional sobre alguém;
+5. **triagem punitiva em massa** — varredura de um acervo ou de uma população
+   para produzir uma lista de suspeitos;
+6. **atribuição de autoria** — apresentar a saída como identificação de autor,
+   como confissão ou como prova, em qualquer procedimento.
+
+Duas ressalvas que fecham as brechas conhecidas:
+
+- **revisão humana não autoriza nenhum dos usos acima.** Um sinal não validado
+  revisado por uma pessoa continua não validado. Se houver revisão, ela precisa
+  de evidência independente de processo — não de "confirmar" o detector;
+- **o resultado nunca inicia acusação formal.** Ele pode iniciar uma conversa.
+
+## 4. Estas restrições acompanham o artefato
+
+Quem redistribuir os pesos, ou qualquer derivado deles, fica vinculado às
+mesmas obrigações desta licença, tem de entregar este arquivo junto e não pode
+relicenciar removendo as seções 2 e 3.
+
+Isto está aqui porque a alternativa não funciona: a interface da extensão
+declara os limites de uso na tela, e essa cópia não viaja com pesos extraídos
+do pacote. Restrição que para no primeiro destinatário não restringe nada.
+
+## 5. Sem garantia, e o que a ausência de garantia significa aqui
+
+O ARTEFATO É FORNECIDO "COMO ESTÁ", SEM GARANTIA DE QUALQUER TIPO, EXPRESSA OU
+IMPLÍCITA. EM NENHUMA HIPÓTESE O TITULAR RESPONDE POR QUALQUER DANO DECORRENTE
+DO USO DO ARTEFATO.
+
+E o específico, que uma cláusula genérica não diz: **a taxa de erro desta versão
+no domínio de uso não foi estimada em holdout independente.** Resultados de
+desenvolvimento não são estimativas publicáveis e não sustentam conclusão sobre
+autoria ou sobre pessoas. Quem usar o sinal como se ele tivesse erro conhecido
+está usando um número que não existe.
+
+## 6. Término
+
+A permissão termina automaticamente para quem violar as seções 2, 3 ou 4, e o
+término alcança as cópias já distribuídas por essa pessoa.
+
+## 7. Base
+
+O modelo é fine-tune de BERTimbau-base (`neuralmind/bert-base-portuguese-cased`),
+sob MIT. A licença da base é permissiva e continua valendo para a base; esta
+licença governa o artefato treinado pelo projeto.

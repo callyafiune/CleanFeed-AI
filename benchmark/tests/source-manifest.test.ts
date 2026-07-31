@@ -12,11 +12,13 @@ import {
 import {
   CORPUS_LICENSE_REGISTRY,
   CORPUS_USE_POLICY,
-  FROZEN_ARTIFACT_OBLIGATIONS,
+  FROZEN_CORPUS_OBLIGATIONS,
   LICENSE_OBLIGATION_LABEL_PT,
   PRE_CHATGPT_CUTOFF_ISO,
   V3_HUMAN_SOURCE_INVENTORY,
-  artifactLicenseObligations,
+  WEIGHT_USE_POLICY,
+  corpusLicenseObligations,
+  weightInheritanceOverclaimIn,
   assertLicenseInventoryAdmissible,
   assertNoIndividualAcquisition,
   assertPublicBaseLicensesOnly,
@@ -567,17 +569,17 @@ describe("non-commercial corpus use policy", () => {
       requiredByContract.push("non-commercial");
     if (REBUILD_V3_POLICY.shareAlikeRequired)
       requiredByContract.push("share-alike");
-    expect(FROZEN_ARTIFACT_OBLIGATIONS).toEqual(requiredByContract);
+    expect(FROZEN_CORPUS_OBLIGATIONS).toEqual(requiredByContract);
 
     // The registry must actually IMPOSE them: dropping `shareAlike` from
     // `cc-by-nc-sa-4.0` would otherwise leave a frozen obligation unenforced
     // while every other test stayed green.
-    const imposed = artifactLicenseObligations(
+    const imposed = corpusLicenseObligations(
       CORPUS_LICENSE_REGISTRY.filter(
         (terms) => terms.derivedCorpus === "admissible",
       ).map((terms) => terms.licenseId),
     );
-    for (const obligation of FROZEN_ARTIFACT_OBLIGATIONS) {
+    for (const obligation of FROZEN_CORPUS_OBLIGATIONS) {
       expect(imposed, `the registry imposes ${obligation}`).toContain(
         obligation,
       );
@@ -673,13 +675,14 @@ describe("non-commercial corpus use policy", () => {
     ).toEqual([]);
   });
 
-  it("unions the obligations the artifact must carry", () => {
+  it("unions the obligations the corpus must carry", () => {
+    expect(corpusLicenseObligations(["cc-by-sa-4.0", "lei9610-art8"])).toEqual([
+      "attribution",
+      "share-alike",
+    ]);
+    expect(corpusLicenseObligations(["lei9610-art8"])).toEqual([]);
     expect(
-      artifactLicenseObligations(["cc-by-sa-4.0", "lei9610-art8"]),
-    ).toEqual(["attribution", "share-alike"]);
-    expect(artifactLicenseObligations(["lei9610-art8"])).toEqual([]);
-    expect(
-      artifactLicenseObligations(
+      corpusLicenseObligations(
         CORPUS_LICENSE_REGISTRY.filter(
           (terms) => terms.derivedCorpus === "admissible",
         ).map((terms) => terms.licenseId),
@@ -735,13 +738,22 @@ describe("licence policy agreement across manifest, review and NOTICE", () => {
   it("the model licence review carries the registry's terms verbatim", async () => {
     const review = await licenseReview();
     expect(review.sourceLicenses).toEqual(CORPUS_LICENSE_REGISTRY);
-    expect(review.artifactObligations).toEqual(
-      artifactLicenseObligations(
+    expect(review.corpusObligations).toEqual(
+      corpusLicenseObligations(
         (review.sourceLicenses as CorpusLicenseTermsV1[])
           .filter((terms) => terms.derivedCorpus === "admissible")
           .map((terms) => terms.licenseId),
       ),
     );
+  });
+
+  // The field this replaced was `artifactObligations`, and the rename is the
+  // point: it published the union of source obligations as the OBLIGATION OF THE
+  // MODEL. Nothing may reintroduce it under the old name, because a consumer
+  // reading `artifactObligations` reads exactly the claim position (a) denies.
+  it("no longer publishes the source union as an obligation of the artifact", async () => {
+    const review = await licenseReview();
+    expect(review.artifactObligations).toBeUndefined();
   });
 
   it("the review scopes its licence list as the corpus inventory, not this model's training set", async () => {
@@ -760,10 +772,10 @@ describe("licence policy agreement across manifest, review and NOTICE", () => {
     ).toBe(true);
   });
 
-  it("the NOTICE states the non-commercial regime and its obligations", async () => {
+  it("the NOTICE states the non-commercial regime and the corpus obligations", async () => {
     const notice = await readFile(resolve(MODEL_DIR, "NOTICE.md"), "utf8");
     expect(notice).toMatch(/`commercialUse: false`/u);
-    for (const obligation of artifactLicenseObligations(
+    for (const obligation of corpusLicenseObligations(
       CORPUS_LICENSE_REGISTRY.filter(
         (terms) => terms.derivedCorpus === "admissible",
       ).map((terms) => terms.licenseId),
@@ -1025,9 +1037,9 @@ describe("B3 — the frozen v3 human inventory", () => {
     }
   });
 
-  it("returns the obligations the frozen inventory imposes on the artifact", () => {
+  it("returns the obligations the frozen inventory imposes on the corpus", () => {
     expect(assertV3HumanInventoryAdmissible(V3_HUMAN_SOURCE_INVENTORY)).toEqual(
-      FROZEN_ARTIFACT_OBLIGATIONS,
+      FROZEN_CORPUS_OBLIGATIONS,
     );
   });
 
@@ -1621,5 +1633,127 @@ describe("C5 — documentation may not claim a review that did not happen", () =
     );
     // And it may no longer point at the field that could only ever say "passed".
     expect(body).not.toMatch(/`status: "passed"`/u);
+  });
+});
+
+// Position (a): the obligations of the source licences govern the CORPUS, and the
+// project asserts they do not propagate to the WEIGHTS. Under the opposite reading
+// the model would owe `NC` (share-alike of `cc-by-nc-sa-4.0`) and owe not adding
+// `NC` (`cc-by-sa-4.0`) at once, so the reading is not merely disfavoured — it is
+// unsatisfiable. These tests hold the two policies apart, and the screen refuses
+// the sentence that collapses them.
+describe("position (a) — the weights carry their own policy, not the sources'", () => {
+  it("keeps the weights' non-commercial regime from being derived from the corpus", () => {
+    // Both say non-commercial and NEITHER reads the other: agreement by two
+    // independent derivations is the property, because a single shared read would
+    // rebuild the inheritance the position denies. What pins them together is the
+    // frozen flag, which is the one thing both are allowed to agree with.
+    expect(WEIGHT_USE_POLICY.commercialUse).toBe(false);
+    expect(CORPUS_USE_POLICY.commercialUse).toBe(false);
+    expect(REBUILD_V3_POLICY.commercialUse).toBe(false);
+    // And the position itself is data, not prose: a reader of the module can ask.
+    expect(WEIGHT_USE_POLICY.sourceObligationsPropagate).toBe(false);
+    expect(WEIGHT_USE_POLICY.positionAuthority).toBe("operator-risk-decision");
+  });
+
+  it("names the weights licence, because a use restriction that does not travel restricts nothing", () => {
+    // B2: the extension's own copy screen does not ship with weights somebody
+    // extracted from the bundle, so the prohibitions have to be a term of the
+    // artifact's own licence and that licence has to have a name.
+    expect(WEIGHT_USE_POLICY.licenseId).toBe("cleanfeed-weights-nc-1.0");
+    // The prohibited uses are the documented-harm categories, not a free list:
+    // Liang 2023 (bias against non-native writers) and Weber-Wulff 2023
+    // (detectors inadequate as misconduct evidence) are what make the academic and
+    // disciplinary entries mandatory rather than cautious.
+    expect([...WEIGHT_USE_POLICY.prohibitedUses]).toEqual([
+      "academic-integrity",
+      "decisional",
+      "disciplinary",
+      "employment",
+      "mass-screening",
+    ]);
+  });
+
+  it("does not register the weights licence as a corpus licence", () => {
+    // The two registries answer different questions, and the weights licence is
+    // not an instrument any source was published under. Registering it would make
+    // it selectable as a source licence and let a source claim it.
+    expect(corpusLicenseTerms(WEIGHT_USE_POLICY.licenseId)).toBeNull();
+  });
+
+  it("fires on the claims position (a) forbids", () => {
+    for (const claim of [
+      "Obrigações que este artefato herda das licenças das suas fontes.",
+      "O modelo herda as obrigações das fontes e propaga para qualquer derivado.",
+      "As licenças das fontes se estendem aos pesos.",
+      "Os pesos estão sujeitos ao share-alike da Carolina.",
+      "A obrigação de atribuição do corpus é transferida ao modelo.",
+      "Qualquer derivado dos pesos carrega as mesmas obrigações, propagadas do corpus.",
+      "Os pesos, e não o corpus, herdam as obrigações.",
+    ]) {
+      expect(weightInheritanceOverclaimIn(claim), claim).not.toBeNull();
+    }
+  });
+
+  it("does not fire on the denial, on the corpus, or on the base model's licence", () => {
+    for (const allowed of [
+      // The project's own position, which must be sayable.
+      "As obrigações das fontes não se propagam aos pesos.",
+      "Os pesos não herdam a licença das fontes: o regime não comercial é política própria.",
+      "Nenhuma obrigação de licença de fonte é transferida ao modelo.",
+      "O modelo nunca herda as cláusulas das licenças do corpus.",
+      // True and required: the corpus really does inherit them.
+      "O corpus herda as obrigações das licenças das suas fontes.",
+      "A aquisição e a preparação dos dados seguem as obrigações de cada licença.",
+      // Provenance of the base model is not propagation from the corpus.
+      "O detector é um fine-tune de BERTimbau-base, sob licença MIT.",
+      // A sentence about weights with no licence object at all.
+      "O modelo herda o vocabulário do tokenizer do BERTimbau.",
+      // The sentence `cleanfeed-weights-nc-1.0` has to make: its OWN restrictions
+      // bind downstream, with no source as their origin. A screen that refused
+      // this would forbid the licence from being enforceable.
+      "Estas restrições acompanham os pesos e se propagam a qualquer derivado deles.",
+      "Quem redistribuir os pesos fica vinculado às mesmas obrigações desta licença.",
+    ]) {
+      expect(weightInheritanceOverclaimIn(allowed), allowed).toBeNull();
+    }
+  });
+
+  it("sees through a soft line wrap, as the other two screens do", () => {
+    // The sentence that actually shipped, wrapped exactly as the NOTICE wrapped
+    // it: subject and verb on one line, object on the next. A per-line screen
+    // reads two harmless halves.
+    expect(
+      weightInheritanceOverclaimIn(
+        "Obrigações que este artefato herda das licenças das suas fontes e propaga para\nqualquer derivado: atribuição, não comercial e share-alike.",
+      ),
+    ).not.toBeNull();
+    expect(
+      weightInheritanceOverclaimIn(
+        "> Os pesos herdam\n> as obrigações das fontes.",
+      ),
+    ).not.toBeNull();
+    // And two list items stay two clauses.
+    expect(
+      weightInheritanceOverclaimIn(
+        "- Os pesos são o assunto\n- e as obrigações se propagam.",
+      ),
+    ).toBeNull();
+  });
+
+  it("screens every document that states the licence position", async () => {
+    // The NOTICE is first because it is the file that TRAVELS with the weights:
+    // whatever the repository says elsewhere, this is what a downstream user
+    // reads, and it is where the forbidden sentence actually stood.
+    for (const relativePath of [
+      "models/cleanfeed-ptbr-v1/NOTICE.md",
+      "models/cleanfeed-ptbr-v1/LICENSE",
+      "docs/corpus-sources.md",
+      "docs/limitations.md",
+      "docs/uso-responsavel.md",
+    ]) {
+      const body = await readFile(resolve(REPO_ROOT, relativePath), "utf8");
+      expect(weightInheritanceOverclaimIn(body), relativePath).toBeNull();
+    }
   });
 });
