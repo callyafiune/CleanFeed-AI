@@ -1966,3 +1966,58 @@ por R7. Três estados aparecem no arquivo, sempre na própria entrada:
 
 Link não verificado nunca é apresentado como verificado, e afirmação sem fonte é descartada em
 vez de suavizada.
+
+## Práticas ainda sem referência neste arquivo — trabalho aberto
+
+O levantamento retroativo de 2026-07-31 encontrou práticas em uso no projeto que **nenhuma entrada
+verificada acima cobre**. Registrá-las é obrigação de R7: a alternativa seria o silêncio, que se lê
+como cobertura completa. Elas são de duas naturezas, e só a primeira é trabalho de busca.
+
+### (a) Técnica com literatura conhecida — a referência falta e deve ser buscada
+
+Para cada uma, a obra canônica foi identificada mas **não** foi verificada nem incluída acima. São as
+buscas mais imediatas.
+
+- **Platt scaling** — `benchmark/calibrators.ts:48,:122`. Buscar Platt, 1999.
+- **Beta calibration** — `calibrators.ts:128-152`. Buscar Kull, Silva Filho & Flach, 2017.
+- **Regressão isotônica** — `fitIsotonic`. Buscar Zadrozny & Elkan, 2002.
+- **ECE com bins de massa igual (15 bins) e diagrama de confiabilidade.** Buscar Naeini et al., 2015;
+  DeGroot & Fienberg, 1983; Nixon et al., 2019.
+- **Brier score como critério de seleção de calibrador.** Buscar Brier, 1950.
+- **PPV/NPV em prevalências plausíveis** — a leitura bayesiana do valor preditivo.
+- **Coorte temporal por quartis de `createdAt` real.** Buscar TRIPOD; Riley et al.
+- **Dois revisores distintos com adjudicação por terceiro** — desenho original de C5, hoje substituído
+  por um revisor com amostragem. Buscar Cochrane Handbook.
+- **Escrita transacional pelo lado de write-ahead logging.** Buscar Mohan et al., ARIES, 1992.
+  Parcialmente coberta acima por POSIX `rename()` e Saltzer & Schroeder.
+
+### (b) Escolha de parâmetro ou composição própria — não há o que citar além do método
+
+Aqui o **método** já está referenciado acima (Bonferroni, conformal, bootstrap por cluster, taxonomia
+de dados faltantes); o que não tem citação é o **valor** ou a **combinação**, que são decisão do
+projeto. A justificativa vive no registro de decisões, não na literatura — e é exatamente o nível (ii)
+da hierarquia de alegação: a novidade é de engenharia, não de teoria. Não gaste tempo procurando
+citação para estas.
+
+- Separação entre `epsilon` (risco preditivo) e `alpha_familia` (confiança de certificação) — § H3b.
+- Célula sem poder permanece em `m` e reprova; `m` declarado menor que os gates observados reprova
+  tudo — § A6/§ H2.
+- Família primária nomeada `m = 4`, e o piso `n ≥ 250` clusters por célula — registro § B3.
+- Papéis nomeados no relatório: intervalo individual **descritivo** contra simultâneo como o único que
+  gateia (`missing-simultaneous-interval`) — § A6/§ A7.
+- Bootstrap sobre estatísticas suficientes por cluster — § C4.
+- Pesos iguais por cluster na agregação out-of-fold (Brier e ECE) — § C6.
+- Desbalanceamento de fold publicado como **medida** contra piso de empacotamento — § C6.
+- Pisos de poder pré-registrados por fatia (300 negativos / 200 positivos) e reserva de inventário
+  para duas tentativas completas — § D0b.
+- Cinco partições com dupla calibração (45/5/10/20/20) — § E2. Cawley & Talbot, citado acima, cobre
+  apenas a separação `cal-A` × `cal-B`.
+- Sorteio determinístico pré-registrado com seed declarada — § D1.
+- Regra de parada em que **qualquer** achado anula a cota de zero achados — § D1.
+- Redação obrigatória da cota de PII ("no quadro amostral") — § D1.
+- Acoplamento declarado entre `redistribution: "not-published"` e auditoria por amostragem — § B1.
+- Duas bases de evidência de rótulo (`labelBasis` + `labelEvidenceRef`, com contagens separadas) —
+  § C1/§ A6; e divergência `labelDispute` registrada e nunca apagada — § C5.
+- Log-loss publicado; gate de calibração sobre o limite superior de bootstrap simultâneo; regra de
+  seleção de calibrador pré-registrada (tolerância `1e-4`, ordem Platt → beta → isotônico);
+  `calibrationScope: "global"` por caminho — § A6/§ G1/§ G4.
