@@ -413,6 +413,64 @@ resto). O que esta decisão acrescenta é a etapa 1, que passa a existir para **
 expectativa de que o número de rodadas da etapa 3 caia — porque erro de categoria deixa de chegar
 lá. Se não cair, a hipótese está errada e isso é medível: basta contar as rodadas por unidade.
 
+### Primeira aplicação do processo — etapa 1 no E2 (2026-07-31)
+
+A etapa de desenho rodou **antes** de qualquer código do E2. Relatório completo em
+`.codex-reviews/e2-desenho-fable.md` (área de trabalho, fora do Git). O que ela produziu, e por
+que isso é evidência a favor da etapa existir:
+
+**A promessa, enunciada de forma falseável:** para o corpus apresentado ao comando, o split
+congelado atribui cada componente conectado inteiro a exatamente uma das cinco partições, com toda
+família held-out declarada inteiramente em `test`, `test` estritamente mais novo que as demais, e a
+fração de cada classe a no máximo `classTolerance` do alvo 45/5/10/20/20 — **ou o comando falha
+fechado sem escrever nada**. Universal e determinística sobre o corpus de entrada, não
+probabilística.
+
+**Seis riscos, dos quais quatro são exatamente as classes de erro que custaram rodada na unidade
+anterior:**
+
+1. **`cal-B` e `test` têm a MESMA fração (0,20).** Trocar as duas passa em **qualquer** teste de
+   fração; só o encadeamento temporal e a regra de held-out pegam. É a classe "teste que não
+   distingue a implementação correta da errada", que na unidade 1 só apareceu na quinta rodada.
+2. **Filtros negativos `partition !== "test"`.** `test` é o único nome que sobrevive à migração,
+   então esses filtros **compilam com significado alterado** e passariam a entregar `cal-B` ao
+   `fit` — partição que tem de ficar byte-intocada até a v2. O compilador não vê nada.
+   **Conferido no código, e a lista da etapa 1 estava incompleta em um e imprecisa em outro** (o
+   projeto manda medir; a etapa 1 é ferramenta, não oráculo). São CINCO ocorrências, não duas:
+   `benchmark/commands/fit.ts:132` (a etapa 1 escreveu `benchmark/fit.ts:132`, caminho que não
+   existe), `benchmark/candidate-preflight.ts:375`, `benchmark/cli.ts:605`,
+   `benchmark/cluster-exposure-ledger.ts:1951` e `benchmark/commands/evaluate.ts:163` — este
+   último é uma checagem positiva invertida, então muda de natureza mas pelo mesmo motivo. Toda a
+   lista tem de ser revista na migração.
+3. **Viabilidade não garantida no corpus real:** `dev` a 5% ±2pp com componentes indivisíveis por
+   `collectionBatch`; o piso de 2.000 negativos humanos em `test` a 20% passa a exigir **≥10 mil**
+   humanos no corpus (era ≥4 mil); e a busca de cortes é O(k²) hoje, com quatro cortes a
+   generalização ingênua vira O(k⁴). Redesenho real, como o plano avisa.
+4. **QUATRO vocabulários de partição selados no mesmo `evaluatorDigest`** — não três, como o
+   cross-review da Fase 0 estimou. E há restatements que o compilador **não** força
+   (`benchmark/prediction-schema.ts:134`, `benchmark/cli.ts:600-610`,
+   `benchmark/lab/assemble_corpus.py:1094`).
+5. **A ordenação temporal das partições do meio é latest-vs-latest por desenho**
+   (`benchmark/split-audit.ts:980-983`). Publicar "cinco blocos estritamente ordenados" seria
+   promessa universal falsa — a mesma classe de erro da unidade 1.
+6. **`classTolerance` para cinco partições não foi pré-registrada.** Ela não existe em
+   `rebuild-v3-policy.json`; vive como literal `0.02` em código. Mantê-la é decisão a registrar,
+   não herança automática.
+
+**DECISÃO A TOMAR ANTES DE CODIFICAR — grafia canônica dos cinco nomes.** Existem três grafias no
+repositório, duas delas congeladas em `EVALUATOR_FILES`:
+
+| grafia | onde | consequência de adotar |
+|---|---|---|
+| `train/dev/cal-A/cal-B/test` | ledger (`cluster-exposure-ledger.ts:104-110`) | recomendada pela etapa 1; move o digest ao alinhar o pré-registro |
+| `train/dev/calA/calB/test` | chaves do pré-registro (`rebuild-v3-policy.json:198-204`) | evita tocar o pré-registro recém-congelado; move o ledger |
+| `development/calibration/test` | tipo `Partition` (`split.ts:145`) | é o que sai |
+
+Não decidida aqui de propósito: nome de campo é delegado sem consulta, mas as duas candidatas
+estão dentro de arquivos do evaluator, então a escolha move o `evaluatorDigest` de um lado ou do
+outro e merece ser feita com o código aberto, não por preferência. Fica para o começo da
+implementação do E2.
+
 ## Protocolo de exceção
 
 Exceção genuína (fora deste registro): a unidade afetada pausa, as demais seguem, e as perguntas
