@@ -347,3 +347,120 @@ describe("parser de perfis — forma e política", () => {
     await recusa({ ...perfil, actionCeiling: "hide" }, "POLICY_INVALID");
   });
 });
+
+// ---------------------------------------------------------------------------
+// As sete que fecham `contracts/`: forma e campo dos outros tres parsers.
+//
+// Todas partem de um artefato VALIDO e alteram uma coisa so. Nos tres casos o parser confere forma
+// e campo ANTES do digest, entao a recusa nao cai no digest por acidente — e o teste do valido, em
+// cada bloco, e o que garante que a recusa e da mutacao.
+// ---------------------------------------------------------------------------
+
+describe("contratos selados — forma e campo dos outros tres parsers", () => {
+  async function paridadeValida(): Promise<Record<string, unknown>> {
+    const base = {
+      schemaVersion: 1 as const,
+      modelId: "cleanfeed-ptbr-v1",
+      modelVersion: "1.0.0",
+      bundleDigest: "1".repeat(64),
+      aggregationVersion: "tmr-aggregation-v3",
+      contentCompositionVersion: "lexical-content-v2",
+      tokenizerDigest: "2".repeat(64),
+      inferenceCoreDigest: "3".repeat(64),
+    };
+    return {
+      ...base,
+      runtimeParityDigest: await computeRuntimeParityDigest(base),
+    };
+  }
+
+  async function prontidaoValida(): Promise<Record<string, unknown>> {
+    const { input } = await bundleInputFor("pass");
+    const bruto = input.sourceReadiness as unknown as Record<string, unknown>;
+    const { reportDigest: _fachada, ...corpo } = bruto;
+    return {
+      ...corpo,
+      reportDigest: await computeSourceReadinessDigest(corpo as never),
+    };
+  }
+
+  it("refuses a release descriptor whose shape or schemaVersion drifted", async () => {
+    const { release } = await bundleInputFor("reject");
+    const valido = release as unknown as Record<string, unknown>;
+    await expect(
+      parseModelReleaseDescriptorV1({ ...valido, extra: 1 }),
+    ).rejects.toMatchObject({ code: "RELEASE_SCHEMA_INVALID" });
+    await expect(
+      parseModelReleaseDescriptorV1({ ...valido, schemaVersion: 2 }),
+    ).rejects.toMatchObject({ code: "RELEASE_SCHEMA_INVALID" });
+  });
+
+  it("refuses a rollout state outside the closed list", async () => {
+    const { release } = await bundleInputFor("reject");
+    await expect(
+      parseModelReleaseDescriptorV1({
+        ...(release as unknown as Record<string, unknown>),
+        rolloutState: "voando",
+      }),
+    ).rejects.toMatchObject({ code: "RELEASE_FIELD_INVALID" });
+  });
+
+  it("refuses a runtime parity manifest whose shape drifted", async () => {
+    const valido = await paridadeValida();
+    await expect(
+      parseRuntimeParityManifestV1({ ...valido, extra: 1 }),
+    ).rejects.toMatchObject({ code: "RUNTIME_PARITY_SCHEMA_INVALID" });
+    const { inferenceCoreDigest: _falta, ...semCampo } = valido;
+    await expect(parseRuntimeParityManifestV1(semCampo)).rejects.toMatchObject({
+      code: "RUNTIME_PARITY_SCHEMA_INVALID",
+    });
+  });
+
+  it("refuses a runtime parity field of the wrong shape", async () => {
+    const valido = await paridadeValida();
+    await expect(
+      parseRuntimeParityManifestV1({ ...valido, modelId: "" }),
+    ).rejects.toMatchObject({ code: "RUNTIME_PARITY_FIELD_INVALID" });
+    await expect(
+      parseRuntimeParityManifestV1({ ...valido, bundleDigest: "curto" }),
+    ).rejects.toMatchObject({ code: "RUNTIME_PARITY_FIELD_INVALID" });
+  });
+
+  it("refuses a readiness report whose shape drifted", async () => {
+    const valido = await prontidaoValida();
+    await expect(
+      parseCorpusSourceReadinessReport({ ...valido, extra: 1 }),
+    ).rejects.toMatchObject({ code: "SOURCE_READINESS_SCHEMA_INVALID" });
+  });
+
+  it("refuses a readiness status outside ready/blocked", async () => {
+    const valido = await prontidaoValida();
+    await expect(
+      parseCorpusSourceReadinessReport({ ...valido, status: "talvez" }),
+    ).rejects.toMatchObject({ code: "SOURCE_READINESS_FIELD_INVALID" });
+  });
+
+  it("refuses ready with blocking reasons, and blocked without any", async () => {
+    // O par e o ponto: `ready` com motivo de bloqueio e um relatorio que se contradiz, e `blocked`
+    // sem motivo e um bloqueio que ninguem pode contestar. As duas metades sao a mesma guarda.
+    const valido = await prontidaoValida();
+    await expect(
+      parseCorpusSourceReadinessReport({
+        ...valido,
+        // A razao admite `code`, `recordId` e `sourceId` — e mais nada. `detail` era invencao
+        // minha, e o parser recusou por chave desconhecida: teria provado a guarda de FORMA em
+        // vez da de ESTADO.
+        blockingReasons: [
+          { code: "SOURCE_LEGAL_REVIEW_MISSING", sourceId: "src_x" },
+        ],
+      }),
+    ).rejects.toMatchObject({ code: "SOURCE_READINESS_STATE_INVALID" });
+    await expect(
+      parseCorpusSourceReadinessReport({
+        ...valido,
+        status: "blocked",
+        blockingReasons: [],
+      }),
+    ).rejects.toMatchObject({ code: "SOURCE_READINESS_STATE_INVALID" });
+  });
+});

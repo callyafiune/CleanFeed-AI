@@ -1146,6 +1146,42 @@ Isso recalibra o resto do trabalho: **os 51 códigos sem menção não são 51 l
 triagem como resultado teria produzido o maior achado falso desta sessão. A ordem de trabalho
 continua a da triagem; a conclusão, só a da mutação.
 
+### `contracts/` FECHADO, e a superfície selada está medida inteira
+
+Os quatro módulos de contrato saíram de **1 guarda exercitada** para **todas**, em
+`benchmark/tests/contract-guards.test.ts`: 15 em `calibration-profile.ts`, 4 em
+`model-release.ts`, 3 em `runtime-parity.ts`, 4 em `source-readiness.ts`.
+
+**Três correções que só a execução deu, e as três do mesmo tipo — eu inventei estrutura que o
+contrato não tem:**
+
+1. o invariante de política que eu visei vive DENTRO de `decision === "indicator-only"`, e eu partia
+   do fixture `pass`, onde o bloco é pulado inteiro: a recusa vinha do digest e provaria outra
+   guarda. Com o perfil `indicator-only`, uma mudança só basta;
+2. o calibrador isotônico exige forma completa (`clamp: true` literal, dois knots) para que a recusa
+   seja por MONOTONICIDADE e não por forma malformada;
+3. a razão de bloqueio admite `code`, `recordId` e `sourceId` — e mais nada. Eu escrevi `detail`, e o
+   parser recusou por chave desconhecida: teria provado a guarda de FORMA em vez da de ESTADO.
+
+**Dois controles positivos que pagaram o próprio custo.** Cada bloco afirma que o artefato intocado
+PASSA antes de qualquer forja. O de prontidão de fontes recusou o artefato que devia ser válido e
+revelou que o fixture carrega `reportDigest` de fachada — sem ele o teste passaria pelo motivo
+errado, porque o código da recusa é o MESMO para "fixture inválido" e "guarda funcionando".
+
+**Estado final da superfície selada:**
+
+| superfície | estado |
+| --- | --- |
+| `benchmark/` (25 módulos) | medida e fechada |
+| `contracts/` (4 módulos) | medida e fechada |
+| `src/` (47 códigos) | **fora por decisão declarada** — risco de produto, não de medição |
+
+O que resta tem razão escrita, e nada foi silenciado: duas guardas **inalcançáveis com prova de uma
+linha** (`PREDICTION_UNKNOWN_ID`, `PROFILE_DIGESTS_MISMATCH`), quatro **invariantes internas nomeadas
+sem prova** (`FOLD_HALF_EMPTY`, `TRAIN_MISSING_LABEL` — buscada em 3800 populações com controle
+positivo —, `FIT_CLUSTER_MISSING`, `SCORE_MISSING_RECORD`) e a **aridade fixa da busca de cortes**,
+que é limite de desenho e não teste que falta.
+
 ### `contracts/`: 25 guardas sem teste, e é o maior achado da varredura
 
 Depois de fechar `benchmark/` inteiro (25 módulos), enumerei o que ficara fora e achei duas
