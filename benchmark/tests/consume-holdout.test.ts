@@ -38,6 +38,7 @@ import {
   type ConsumeHoldoutOptions,
   type ConsumeHoldoutTestPage,
 } from "../commands/consume-holdout.ts";
+import { runEvaluate } from "../commands/evaluate.ts";
 import type { DatasetManifest } from "../dataset-manifest.ts";
 import { computeDatasetDigest, computeEvaluatorDigest } from "../digests.ts";
 import {
@@ -1801,4 +1802,130 @@ describe("consume-holdout one-way lease", () => {
       TIMEOUT_MS,
     );
   }
+});
+
+// ---------------------------------------------------------------------------
+// As guardas que `evaluate` aplica ao ARTEFATO DE PREDICAO, dirigidas direto.
+//
+// `runEvaluate` e o passo que sela o relatorio de release e fecha o lease, e o CLI o
+// despacha por conta propria (`benchmark/cli.ts`), entao um artefato de outra particao ou de
+// outra sessao chega a ele por caminho normal, sem passar por `consume-holdout`.
+//
+// O arnes e barato porque `fitDirectory` sai de `dirname(frozenCalibrationPath)`, nao do
+// diretorio de predicoes: da para apontar as predicoes para qualquer lugar. E as tres guardas
+// abaixo ficam ANTES de qualquer comparacao de digest do manifesto, o que permite um
+// `datasetDigest` sintetico sem que a recusa venha pelo motivo errado.
+// ---------------------------------------------------------------------------
+
+describe("evaluate — guardas do artefato de predicao", () => {
+  const criados: string[] = [];
+
+  afterEach(async () => {
+    await Promise.all(
+      criados.splice(0).map((dir) => rm(dir, { recursive: true, force: true })),
+    );
+  });
+
+  async function raiz(): Promise<string> {
+    const dir = await mkdtemp(join(tmpdir(), "cf-evaluate-guardas-"));
+    criados.push(dir);
+    return dir;
+  }
+
+  const SPEC: ScenarioSpec = {
+    scientificUse: "release",
+    visualDocument: 0.8,
+    realEvaluator: false,
+    testNegatives: 4,
+    testPositives: 4,
+    negativeTag: "LOW",
+  };
+
+  const CONSUMO = "consumo-sob-teste";
+
+  async function comManifesto(
+    override: Partial<PredictionManifestV1>,
+  ): Promise<{ scenario: Scenario; predicoes: string }> {
+    const scenario = await buildScenario(await raiz(), SPEC);
+    const predicoes = join(scenario.workDirectory, "predicoes-sob-teste");
+    await mkdir(predicoes, { recursive: true });
+    // `shards: []` deixa o artefato SEM predicao nenhuma, que e valido de forma e e
+    // exatamente o que a guarda de completude tem de recusar.
+    const manifesto: PredictionManifestV1 = {
+      ...predictionManifest(
+        "test",
+        hex("dataset-sintetico"),
+        scenario.options.confirmSplitDigest,
+        BUNDLE,
+      ),
+      holdoutConsumptionId: CONSUMO,
+      ...override,
+    };
+    await writeFile(
+      join(predicoes, "manifest.json"),
+      `${JSON.stringify(manifesto, null, 2)}\n`,
+      "utf8",
+    );
+    return { scenario, predicoes };
+  }
+
+  function opcoes(scenario: Scenario, predicoes: string) {
+    return {
+      datasetDirectory: scenario.options.datasetDirectory,
+      splitArtifactPath: scenario.options.splitArtifactPath,
+      frozenCalibrationPath: scenario.options.frozenCalibrationPath,
+      testPredictionsDirectory: predicoes,
+      testLabelsPath: scenario.options.testLabelsPath,
+      ledgerPath: scenario.ledgerPath,
+      consumptionId: CONSUMO,
+      outputDirectory: join(scenario.workDirectory, "saida-sob-teste"),
+      bootstrapSeed: scenario.options.bootstrapSeed,
+      evaluatorRoot: scenario.evaluatorRoot,
+    };
+  }
+
+  it(
+    "refuses a prediction artifact that declares another partition",
+    async () => {
+      // Duas amarras do esquema de predicao estreitam a forja possivel: as particoes de
+      // pontuacao sao `dev`/`cal-A`/`test` (o modulo mantem enumeracao PROPRIA, para poder
+      // discordar do splitter), e fora do `test` o `holdoutConsumptionId` tem de ser nulo.
+      // Logo o unico artefato de outra particao que chega a esta guarda e um `dev` sem
+      // sessao — e e ele que ela recusa.
+      const { scenario, predicoes } = await comManifesto({
+        partition: "dev",
+        holdoutConsumptionId: null,
+      });
+      expect(
+        await rejectionCode(runEvaluate(opcoes(scenario, predicoes))),
+      ).toBe("TEST_PARTITION_EXPECTED");
+    },
+    TIMEOUT_MS,
+  );
+
+  it(
+    "refuses a test artifact sealed under another consumption id",
+    async () => {
+      const { scenario, predicoes } = await comManifesto({
+        holdoutConsumptionId: "outra-sessao-qualquer",
+      });
+      expect(
+        await rejectionCode(runEvaluate(opcoes(scenario, predicoes))),
+      ).toBe("HOLDOUT_SESSION_MISMATCH");
+    },
+    TIMEOUT_MS,
+  );
+
+  it(
+    "refuses a test artifact that covers only part of the partition",
+    async () => {
+      // Nenhuma predicao cobre nenhum id do `test`. E o caso extremo da selecao que
+      // melhora FPR: pontuar um subconjunto e relatar como se fosse a particao.
+      const { scenario, predicoes } = await comManifesto({});
+      expect(
+        await rejectionCode(runEvaluate(opcoes(scenario, predicoes))),
+      ).toBe("TEST_COMPLETENESS_FAILED");
+    },
+    TIMEOUT_MS,
+  );
 });
