@@ -1187,6 +1187,19 @@ defeito 1 era um **valor** (`actionCeiling: shortText ? "indicator" : "hide"`), 
 codificada. **A auditoria não o teria encontrado.** A lição do defeito 1 é sobre deriva entre promessa
 escrita e código — que pede outro tipo de verificação, não esta.
 
+**Refeita com o lançador certo, a medição de `src/inference/model-bundle.ts` dá 3 exercitadas e
+8 SEM TESTE:** `BUNDLE_VERIFIED_WITH_PROFILES`, `CALIBRATION_SET_MISMATCH`, `DUPLICATE_PROFILE`,
+`MANIFEST_SCHEMA_INVALID`, `PROFILE_IDENTITY_MISMATCH`, `PROFILE_SET_MISMATCH`,
+`ROLLOUT_WITHOUT_PROFILES`, `SOURCE_LOCK_INVALID`.
+
+São todas do bloco que amarra o pacote embarcado ao seu **source lock** e ao **release** — as guardas
+que garantem que a extensão executa o modelo que ela diz executar. Um pacote cujos artefatos não
+batem com o lock é falha de integridade de cadeia, não bug de apresentação, e nenhuma das oito tem
+teste que prenda a recusa.
+
+Isso responde, com medição, a pergunta de escopo que eu tinha errado nas duas direções: `src/` não é
+"só risco de produto". A primeira coisa medida ali é uma amarra de integridade.
+
 **Primeira medição de `src/`, e ela saiu NULA — registrada como nula.** `src/inference/model-bundle.ts`
 (12 códigos, fecho de 15 suítes) voltou com **zero mutável**: a detecção automática de lançador do meu
 lote escolheu `fail`, e aquele módulo usa `throw new RuntimeDescriptorError("CODIGO", ...)`. A
