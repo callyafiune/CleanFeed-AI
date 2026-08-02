@@ -1126,6 +1126,17 @@ superfície inteira — códigos que aparecem em posição de LANÇAMENTO, `thro
   `browser-scorer.ts` (8), `prediction-shards.ts` (6), `commands/verify-evidence.ts` (6),
   `commands/validate-predictions.ts` (6), `source-manifest.ts` (5) e `commands/fit.ts` (5).
 
+**Triagem por menção nos 16, para ordenar o trabalho:** **51 dos 70** códigos não são citados por
+teste algum. Os maiores blocos são `dataset-manifest.ts` (9 de 9), `prediction-shards.ts` (5 de 6),
+`commands/verify-evidence.ts` (5 de 6), `commands/validate-predictions.ts` (5 de 6) e
+`generator-family.ts` (4 de 4).
+
+**E a triagem tem viés declarado, na direção oposta à que eu já havia registrado.** Antes eu escrevi
+que "menção não prova exercício"; aqui aparece o outro lado: **ausência de menção não prova ausência
+de teste** quando a suíte afirma MENSAGEM em vez de código. `dataset-manifest.ts` é validado em várias
+suítes e ainda assim dá 9 de 9 sem menção — o mais provável é que ali se asserte a mensagem. Só a
+auditoria por mutação decide, e é ela que vai rodar; a triagem serve para ordenar, não para concluir.
+
 O erro é o mesmo que a ferramenta foi endurecida quatro vezes para impedir, agora cometido um nível
 acima: **medir o conjunto que alguém apontou e relatar como se fosse o conjunto todo.** A guarda por
 fecho transitivo protege a escolha de SUÍTES; nada protegia a escolha de MÓDULOS, e eu herdei a lista
