@@ -2425,3 +2425,77 @@ describe("validate-predictions — as seis recusas", () => {
     TIMEOUT_MS,
   );
 });
+
+// ---------------------------------------------------------------------------
+// As duas recusas de `consume-holdout` que a auditoria mediu sem teste.
+// ---------------------------------------------------------------------------
+
+describe("consume-holdout — confirmacao do split e forma do test-input", () => {
+  const criados: string[] = [];
+
+  afterEach(async () => {
+    await Promise.all(
+      criados.splice(0).map((dir) => rm(dir, { recursive: true, force: true })),
+    );
+  });
+
+  async function raiz(): Promise<string> {
+    const dir = await mkdtemp(join(tmpdir(), "cf-consume-duas-"));
+    criados.push(dir);
+    return dir;
+  }
+
+  const SPEC: ScenarioSpec = {
+    scientificUse: "release",
+    visualDocument: 0.8,
+    realEvaluator: false,
+    testNegatives: 4,
+    testPositives: 4,
+    negativeTag: "LOW",
+  };
+
+  it(
+    "refuses a fresh run with no split-digest confirmation",
+    async () => {
+      // A confirmacao e conferida ANTES de qualquer byte do ledger, e e isso que a torna barata:
+      // uma confirmacao errada nunca consome o holdout. Sem ela o operador abriria o lease sem
+      // ter declarado sobre qual split esta apostando.
+      const scenario = await buildScenario(await raiz(), SPEC);
+      expect(
+        await rejectionCode(
+          runConsumeHoldout(
+            { ...scenario.options, confirmSplitDigest: undefined },
+            holdoutDeps(scenario, stubPage(scenario.status).createTestPage),
+          ),
+        ),
+      ).toBe("SPLIT_DIGEST_CONFIRMATION_REQUIRED");
+      // E nada foi ESCRITO no ledger. O arquivo existe porque o cenario o cria; o que a guarda
+      // impede e o EVENTO — sem esta assercao o teste nao distinguiria "recusou antes de abrir o
+      // lease" de "recusou depois de abrir".
+      expect(readLedgerEvents(scenario.ledgerPath)).toEqual([]);
+    },
+    TIMEOUT_MS,
+  );
+
+  it(
+    "refuses a test-input line that is not an object with id and text",
+    async () => {
+      const scenario = await buildScenario(await raiz(), SPEC);
+      const original = await readFile(scenario.options.testInputPath, "utf8");
+      await writeFile(
+        scenario.options.testInputPath,
+        `${original}{"id":"sem-texto"}\n`,
+        "utf8",
+      );
+      expect(
+        await rejectionCode(
+          runConsumeHoldout(
+            scenario.options,
+            holdoutDeps(scenario, stubPage(scenario.status).createTestPage),
+          ),
+        ),
+      ).toBe("TEST_INPUT_INVALID");
+    },
+    TIMEOUT_MS,
+  );
+});
