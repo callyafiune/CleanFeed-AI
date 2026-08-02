@@ -875,3 +875,97 @@ describe("runFit excludes non-scored records from calibrator fitting", () => {
     FIT_TIMEOUT_MS,
   );
 });
+
+// ---------------------------------------------------------------------------
+// Tres das quatro recusas que a auditoria por mutacao mediu sem teste em `commands/fit.ts`.
+//
+// A quarta, `FIT_CLUSTER_MISSING`, fica FORA de proposito: o mapa de raizes e construido a partir
+// dos MESMOS registros que o laco percorre, entao um registro sem raiz exigiria que a construcao
+// do mapa tivesse deixado um de fora. E assercao de invariante interna, da mesma familia de
+// `FOLD_HALF_EMPTY`, e nao tenho prova de inalcancabilidade — fica nomeada, nao silenciada.
+// ---------------------------------------------------------------------------
+
+describe("fit — recusas de auditoria e de populacao de predicao", () => {
+  const criados: string[] = [];
+  afterEach(async () => {
+    await Promise.all(
+      criados.map((dir) => rm(dir, { recursive: true, force: true })),
+    );
+    criados.length = 0;
+  });
+  async function novaRaiz(): Promise<string> {
+    const root = await mkdtemp(join(tmpdir(), "cf-fit-recusas-"));
+    criados.push(root);
+    return root;
+  }
+
+  it(
+    "refuses a dataset audit whose digests are not the manifest's",
+    async () => {
+      // A forja tem de ser COMPETENTE: alterar o digest e RECOMPUTAR `auditDigest`, senao a
+      // checagem do auto-digest recusa antes e o teste prova coerencia interna em vez do vinculo
+      // ao dataset. E a mesma rota do caso 3e em corpus-import.
+      const root = await novaRaiz();
+      const options = await buildScenario(
+        root,
+        defaultDevRows(),
+        defaultCalRows(),
+      );
+      const bruto = JSON.parse(
+        await readFile(options.datasetAuditPath, "utf8"),
+      ) as Record<string, unknown>;
+      delete bruto.auditDigest;
+      const adulterado = { ...bruto, recordsSha256: "e".repeat(64) };
+      await writeFile(
+        options.datasetAuditPath,
+        `${JSON.stringify(
+          {
+            ...adulterado,
+            auditDigest: await computeDatasetAuditDigest(adulterado as never),
+          },
+          null,
+          2,
+        )}\n`,
+        "utf8",
+      );
+      await expect(runFit(options)).rejects.toMatchObject({
+        code: "DATASET_AUDIT_MISMATCH",
+      });
+    },
+    FIT_TIMEOUT_MS,
+  );
+
+  it(
+    "refuses the same prediction id in both fit partitions",
+    async () => {
+      // Uma predicao que aparece em `dev` e em `cal-A` seria contada duas vezes no ajuste, e a
+      // colisao e conferida ANTES da completude — que e o que a torna diagnosticavel.
+      const root = await novaRaiz();
+      const dev = defaultDevRows();
+      const options = await buildScenario(root, dev, [
+        ...defaultCalRows(),
+        dev[0],
+      ]);
+      await expect(runFit(options)).rejects.toMatchObject({
+        code: "FIT_PREDICTION_COLLISION",
+      });
+    },
+    FIT_TIMEOUT_MS,
+  );
+
+  it(
+    "refuses a fit population with a prediction missing",
+    async () => {
+      const root = await novaRaiz();
+      const options = await buildScenario(
+        root,
+        defaultDevRows().slice(1),
+        defaultCalRows(),
+      );
+      await expect(runFit(options)).rejects.toMatchObject({
+        code: "FIT_PREDICTIONS_INCOMPLETE",
+      });
+    },
+    FIT_TIMEOUT_MS,
+  );
+});
