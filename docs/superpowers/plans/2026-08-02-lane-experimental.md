@@ -75,3 +75,22 @@ Porque já é estrutural do outro lado, desde `218f3ca`: `decideExperimentalUnca
 retorno pinado em `actionCeiling: "indicator"`. O `maximumActionCeiling` da política de empacotamento é
 a segunda tranca, e as duas juntas são o que a promessa de `docs/model-validation.md` pede — nenhuma
 delas sozinha depende de alguém lembrar.
+
+## Efeito colateral sobre o defeito 3, a verificar antes de tratá-lo como resolvido
+
+O defeito 3 da v1.0 é: "R1 só começa na v2.0 — se a v1 usar o `fit` certificador, a janela congelada
+abre cedo demais e as edições da v2 em `EVALUATOR_FILES` a violam".
+
+**O mecanismo, verificado:** `benchmark/commands/fit.ts:279` computa `computeEvaluatorDigest(REPO_ROOT)`
+e o sela no artefato congelado (`:289`); dali em diante `assertEvaluatorIdentity` exige que a árvore do
+avaliador hasheie igual. É isso a janela.
+
+**A observação:** a lane `experimental` exige `profileDigests: []`, e sem perfil não há `fit`. Ou seja,
+publicar o preview da v1 **não precisa** abrir a janela — o defeito 3 pode estar dissolvido pelo
+conserto do defeito 2, e não por um conserto próprio.
+
+**O que falta para afirmar isso, e por que não afirmo agora:** dissolver a NECESSIDADE não é o mesmo que
+impedir o ato. Alguém ainda pode rodar `fit` na v1 e congelar a janela cedo. A pergunta da próxima
+unidade é se `fit` deve ganhar uma tranca estrutural — e essa tranca depende de existir um lugar que
+declare "R1 está aberto", que é decisão de regime e portanto do operador. Registrado como pergunta,
+não como pendência de código.
