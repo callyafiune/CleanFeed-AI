@@ -998,6 +998,67 @@ falha; os outros 61 do arquivo passam, o que prova que ele alcança a guarda e q
 
 **Ordem para o resto, por consequência e não por contagem:**
 
+### Retratação dupla: `evaluate.ts` não é intestabilidade estrutural
+
+Eu afirmei **duas vezes** que `commands/evaluate.ts` exigia mudança de desenho — extrair a
+sequência de validação — porque `runEvaluate` só seria alcançável com uma sessão de holdout real.
+As duas vezes estava errado, e a causa foi a mesma: confiei no cabeçalho da própria suíte mais uma
+medição estreita, em vez de conferir as entradas.
+
+O que o disco diz:
+
+- `benchmark/cli.ts:170` despacha `evaluate` direto, `runEvaluate(buildEvaluate(flags))`. Existe
+  entrada externa para apontar o diretório de predições.
+- `tests/consume-holdout.test.ts` e `tests/cli.test.ts` já escrevem manifestos de predição.
+- `commands/consume-holdout.ts:167` chama `assertEvaluatorIdentity`, e `:359` chama `runEvaluate`.
+  O módulo é dirigido pelas suítes, transitivamente.
+
+**O conserto é teste, não extração.** E a medição com o conjunto completo de suítes que o dirigem
+(cinco, achadas pelo fecho transitivo) dá **3 exercitadas e 10 sem teste** — não "2 de 13", que era
+o número da medição estreita reportada por agente.
+
+Lição, terceira aparição da mesma família: a intestabilidade que um comentário de teste declara é
+afirmação sobre o passado de quem escreveu, não invariante do código. Vale como pista, nunca como
+prova.
+
+### Uma guarda provavelmente inalcançável, e a diferença entre isso e lacuna
+
+Ao escrever o teste de `PROFILE_DIGESTS_MISMATCH` (em `verify-published-evidence.ts`) apareceu que
+ele **não é alcançável**, e a prova é curta:
+
+1. o contrato do descritor amarra `calibrationSetDigest` ao digest canônico de `profileDigests`
+   (`contracts/model-release.ts:159-167`), logo qualquer release que passe pelo contrato tem os dois
+   coerentes;
+2. o verificador compara `calibrationSetDigest` com o da decisão publicada ANTES de comparar
+   `profileDigests`;
+3. para chegar ao segundo, a lista teria de diferir com o digest igual — que é exatamente o que não
+   existe.
+
+Isso não é lacuna de cobertura: é redundância defensiva. Registrar como "guarda sem teste" seria
+achado falso, e o conserto certo foi virar o teste para o que o código faz de verdade — recusar
+pelo contrato, com `RELEASE_DIGEST_MISMATCH`.
+
+`ROLLOUT_STATE_INVALID`, ao lado, **é** alcançável, e por um caminho que o contrato deixa aberto de
+propósito: `rolloutState: "shadow"` é o único estado sem regra estrutural no contrato, porque roda
+só em desenvolvimento. `actions` não serviria, porque o contrato o recusa antes e o teste provaria o
+contrato em vez do verificador.
+
+### Três suposições minhas corrigidas por executar, não por ler
+
+Nesta rodada de escrita, três asserções que eu havia escolhido por leitura caíram ao rodar:
+
+1. `EVIDENCE_DIGEST_MISMATCH` pelo artefato congelado — `validateFrozenCalibrationArtifact` recusa
+   antes, com erro de outra família. Vetor correto: o relatório.
+2. `PROFILE_DIGESTS_MISMATCH` / `ROLLOUT_STATE_INVALID` — o contrato do descritor pega as duas
+   forjas antes do verificador.
+3. `consume-holdout.test.ts:1681` — eu afirmei o código da guarda, e o que rejeita ali é a escrita
+   do ANEXO do incidente (destino é um diretório, o rename falha). O teste existe justamente para
+   provar que o evento terminal do ledger sobrevive à falha do anexo, e a asserção certa nomeia a
+   classe de erro de E/S em vez de fixar um código por plataforma.
+
+Em nenhum dos três a leitura tinha me dado a resposta errada por descuido: ela deu a resposta
+plausível. Escrever o teste é o que separa plausível de verdadeiro.
+
 ### O mecanismo por trás das "guardas sem teste": `rejects.toThrow()` sem argumento
 
 Fui escrever os seis testes que faltavam em `commands/publish-evidence.ts` e o primeiro cenário já

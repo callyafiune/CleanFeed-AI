@@ -22,10 +22,12 @@ Exemplos:
   python .../auditoria-mutacao.py benchmark/holdout-ledger.ts fail \\
       benchmark/tests/consume-holdout.test.ts
 
-A lista de suites nao e escolha: a ferramenta ABORTA se qualquer suite que importa o modulo
-ficar de fora. Duas vezes a selecao por nome quase publicou lacuna inexistente — em
-`holdout-ledger.ts` (suite homonima omitida) e em `commands/publish-evidence.ts`, que nao TEM
-suite homonima e e exercitado por `tests/evidence-sanitizer.test.ts`.
+A lista de suites nao e escolha: a ferramenta ABORTA se qualquer suite que ALCANCA o modulo
+ficar de fora, e o alcance e calculado sobre o grafo de imports do codigo-fonte. Tres vezes a
+selecao estreita quase publicou lacuna inexistente — `holdout-ledger.ts` (suite homonima
+omitida), `commands/publish-evidence.ts` (nao tem homonima; quem o exercita e
+`tests/evidence-sanitizer.test.ts`) e `commands/evaluate.ts` (alcancado por
+`tests/consume-holdout.test.ts` por dentro de outro comando).
 
 Tres exigencias do arnes, aprendidas errando:
   1. conferir a LINHA DE BASE verde antes de mutar — senao "vermelho" nao distingue mutacao
@@ -67,30 +69,68 @@ else:
 
 FONTE = RAIZ / MODULO
 
-def quem_importa(modulo: str) -> tuple[set[str], set[str]]:
-    """Arquivos de `benchmark/tests/` que importam o modulo, separados em rodaveis e auxiliares.
+def _importados_por(arquivo: pathlib.Path) -> set[str]:
+    """Modulos de `benchmark/` que este arquivo importa, resolvidos a caminho do repositorio."""
+    texto = arquivo.read_text(encoding="utf-8")
+    alvos = set()
+    for relativo in re.findall(r'from\s+"((?:\./|\.\./)[^"]+\.ts)"', texto):
+        destino = (arquivo.parent / relativo).resolve()
+        try:
+            alvos.add(destino.relative_to(RAIZ).as_posix())
+        except ValueError:
+            continue
+    return alvos
 
-    A busca e pelo caminho relativo com que `tests/` alcanca o modulo, entao ela encontra tanto
-    `../split-artifact.ts` quanto `../commands/publish-evidence.ts`.
 
-    LIMITE DECLARADO: um nivel. Um arquivo de fixture que importa o modulo aparece como
-    auxiliar e nao e rodavel por si; quem o roda tem de ser conferido a mao.
+def quem_dirige(modulo: str) -> tuple[set[str], set[str]]:
+    """Suites que ALCANCAM o modulo, direta ou transitivamente, e os auxiliares.
+
+    Importador direto nao e a mesma coisa que quem dirige. `commands/evaluate.ts` e importado
+    por uma suite so, mas `commands/consume-holdout.ts` chama `assertEvaluatorIdentity` e
+    `runEvaluate`, e a suite daquele comando faz corridas completas com stubs — entao as guardas
+    de `evaluate.ts` SAO alcancadas por ela. Medir sem essa suite reporta lacuna que nao existe,
+    que e o mesmo defeito da suite homonima e do nome de arquivo, na terceira aparicao.
+
+    Por isso o fecho e calculado sobre o grafo de imports do codigo-fonte: parte do modulo, sobe
+    para todo modulo que o importa (transitivamente) e so entao pergunta quais arquivos de teste
+    tocam qualquer um deles.
+
+    CUSTO DECLARADO: para um modulo de base (`digests.ts`, por exemplo) o fecho tende a quase
+    todas as suites, e a auditoria fica caro. E o preco de medir certo; achado falso e pior.
     """
-    alvo = '"../' + modulo.replace("\\", "/").removeprefix("benchmark/") + '"'
+    modulo = modulo.replace("\\", "/")
+    fontes = [
+        f
+        for f in RAIZ.glob("benchmark/**/*.ts")
+        if "tests" not in f.relative_to(RAIZ).parts
+    ]
+    grafo = {f.relative_to(RAIZ).as_posix(): _importados_por(f) for f in fontes}
+
+    alcancam = {modulo}
+    mudou = True
+    while mudou:
+        mudou = False
+        for quem, importa in grafo.items():
+            if quem not in alcancam and importa & alcancam:
+                alcancam.add(quem)
+                mudou = True
+
     achados = set()
     for arquivo in sorted((RAIZ / "benchmark" / "tests").glob("*.ts")):
-        if alvo in arquivo.read_text(encoding="utf-8"):
+        if _importados_por(arquivo) & alcancam:
             achados.add(f"benchmark/tests/{arquivo.name}")
     rodaveis = {a for a in achados if a.endswith(".test.ts")}
     return rodaveis, achados - rodaveis
 
 
-# RECUSA rodar sem TODA suite que importa o modulo. A versao anterior desta guarda conferia so a
-# suite HOMONIMA (`tests/<modulo>.test.ts`), e isso deixa passar o caso que quase produziu o
-# segundo achado falso pelo mesmo mecanismo do primeiro: `commands/publish-evidence.ts` nao tem
-# suite homonima, e quem o exercita de ponta a ponta e `tests/evidence-sanitizer.test.ts`. Nome
-# de arquivo nao e prova de cobertura; quem importa o modulo e.
-_rodaveis, _auxiliares = quem_importa(MODULO)
+# RECUSA rodar sem TODA suite que ALCANCA o modulo. Esta guarda foi endurecida duas vezes, cada
+# vez porque a versao anterior quase publicou lacuna inexistente:
+#   1. conferia so a suite HOMONIMA — e `commands/publish-evidence.ts` nao tem homonima, sendo
+#      exercitado por `tests/evidence-sanitizer.test.ts`;
+#   2. conferia so o importador DIRETO — e `commands/evaluate.ts` e alcancado por
+#      `tests/consume-holdout.test.ts` atraves de `commands/consume-holdout.ts`.
+# Nem nome de arquivo nem import direto sao prova de cobertura. Quem alcanca o modulo e.
+_rodaveis, _auxiliares = quem_dirige(MODULO)
 _faltando = sorted(_rodaveis - {s.replace("\\", "/") for s in SUITES})
 if _faltando:
     raise SystemExit(

@@ -179,7 +179,9 @@ describe("holdout ledger one-way lease", () => {
     expect(done.terminalAt).toBe(LATER_TIME);
 
     // active-session.json is removed once terminal.
-    await expect(stat(activeSessionPath)).rejects.toThrow();
+    await expect(stat(activeSessionPath)).rejects.toMatchObject({
+      code: "ENOENT",
+    });
 
     // Terminal states remain consumed: neither begin nor resume reopens it.
     await expect(
@@ -240,7 +242,9 @@ describe("holdout ledger one-way lease", () => {
     expect(failed.reportDigest).toBeNull();
 
     // active-session.json gone, shard intact.
-    await expect(stat(activeSessionPath)).rejects.toThrow();
+    await expect(stat(activeSessionPath)).rejects.toMatchObject({
+      code: "ENOENT",
+    });
     expect(await readFile(shardPath, "utf8")).toBe('{"id":"r1"}\n');
 
     // Consumed forever: begin and resume both refuse.

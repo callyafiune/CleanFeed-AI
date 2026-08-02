@@ -1195,7 +1195,9 @@ describe("benchmark CLI holdout consumption via evaluate", () => {
     // Eight positives over eight resampling levels: every item is its own unit, which is
     // exactly the degeneracy this assertion guards.
     expect(recall.measured.degenerate).toBe(true);
-    await expect(stat(scenario.activeSessionPath)).rejects.toThrow();
+    await expect(stat(scenario.activeSessionPath)).rejects.toMatchObject({
+      code: "ENOENT",
+    });
 
     // The block is consumed once; neither begin nor resume reopens it.
     await expect(
@@ -1751,10 +1753,12 @@ describe("benchmark CLI fit freeze — holdout independence", () => {
       walk(fitReport);
 
       // The append-only holdout ledger is never opened by a fit.
-      await expect(stat(scenarioA.ledgerPath)).rejects.toThrow();
+      await expect(stat(scenarioA.ledgerPath)).rejects.toMatchObject({
+        code: "ENOENT",
+      });
       await expect(
         stat(join(scenarioA.datasetDir, "private", "active-session.json")),
-      ).rejects.toThrow();
+      ).rejects.toMatchObject({ code: "ENOENT" });
     },
     FIT_FREEZE_TIMEOUT_MS,
   );
@@ -1770,8 +1774,10 @@ describe("benchmark CLI fit freeze — holdout independence", () => {
       // Nothing was frozen and the ledger stays unopened.
       await expect(
         stat(join(scenario.options.outputDirectory, "frozen-calibration.json")),
-      ).rejects.toThrow();
-      await expect(stat(scenario.ledgerPath)).rejects.toThrow();
+      ).rejects.toMatchObject({ code: "ENOENT" });
+      await expect(stat(scenario.ledgerPath)).rejects.toMatchObject({
+        code: "ENOENT",
+      });
     },
     FIT_FREEZE_TIMEOUT_MS,
   );

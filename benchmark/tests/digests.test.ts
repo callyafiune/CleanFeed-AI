@@ -299,7 +299,9 @@ describe("computeEvaluatorDigest", () => {
     const root = await makeRoot();
     await writeEvaluatorFixture(root);
     await rm(join(root, "package-lock.json"));
-    await expect(computeEvaluatorDigest(root)).rejects.toThrow();
+    await expect(computeEvaluatorDigest(root)).rejects.toMatchObject({
+      code: "ENOENT",
+    });
   });
 });
 
@@ -348,7 +350,9 @@ describe("observeEvaluatorFiles", () => {
     // The aggregate must break on the same tree, and the pair of behaviours is the
     // contract: the aggregate is a claim about identity, while this table is the
     // attachment to a terminal ledger event and has to survive to name the deletion.
-    await expect(computeEvaluatorDigest(root)).rejects.toThrow();
+    await expect(computeEvaluatorDigest(root)).rejects.toMatchObject({
+      code: "ENOENT",
+    });
 
     const observed = await observeEvaluatorFiles(root);
     expect(observed.map((file) => file.path)).toEqual(

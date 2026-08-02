@@ -616,4 +616,84 @@ describe("publish-evidence end-to-end (reject run)", () => {
       code: "EVIDENCE_DIGEST_MISMATCH",
     });
   });
+
+  describe("and the published bundle re-verifies only while intact", () => {
+    async function publicado() {
+      const s = await scenario();
+      await runPublishEvidence(publishOptions(s));
+      return s;
+    }
+
+    it("refuses an evidence directory that does not exist", async () => {
+      const s = await publicado();
+      await expect(
+        runVerifyPublishedEvidence({
+          evidenceDirectory: join(s.root, "diretorio-que-nao-existe"),
+          modelDirectory: s.modelDir,
+        }),
+      ).rejects.toMatchObject({ code: "EVIDENCE_DIR_MISSING" });
+    });
+
+    it("refuses an inventory that does not name exactly the other six files", async () => {
+      const s = await publicado();
+      // A conferencia dos NOMES do inventario vem antes da dos digests, entao soltar uma
+      // entrada alcanca esta guarda em vez de parar na de arquivo alterado.
+      const caminho = join(s.outputDir, "evidence-digest.json");
+      const inventario = JSON.parse(await readFile(caminho, "utf8")) as {
+        files: { file: string; sha256: string }[];
+      };
+      inventario.files = inventario.files.slice(1);
+      await writeFile(caminho, JSON.stringify(inventario), "utf8");
+      await expect(
+        runVerifyPublishedEvidence({
+          evidenceDirectory: s.outputDir,
+          modelDirectory: s.modelDir,
+        }),
+      ).rejects.toMatchObject({ code: "EVIDENCE_INVENTORY_INVALID" });
+    });
+
+    it("refuses a profileDigests list the calibrationSetDigest does not cover", async () => {
+      const s = await publicado();
+      // O contrato do descritor amarra `calibrationSetDigest` ao digest canonico de
+      // `profileDigests`, entao mexer na lista e recusado uma camada ANTES do verificador.
+      // Por isso o `PROFILE_DIGESTS_MISMATCH` do verificador nao e alcancavel por esta forja:
+      // para passar pelo contrato a lista teria de ter o digest que o proprio verificador ja
+      // comparou antes, e digest igual com lista diferente e o que nao existe.
+      const caminho = join(s.modelDir, "release.json");
+      const release = JSON.parse(await readFile(caminho, "utf8")) as Record<
+        string,
+        unknown
+      >;
+      release.profileDigests = ["a".repeat(64)];
+      await writeFile(caminho, JSON.stringify(release), "utf8");
+      await expect(
+        runVerifyPublishedEvidence({
+          evidenceDirectory: s.outputDir,
+          modelDirectory: s.modelDir,
+        }),
+      ).rejects.toMatchObject({ code: "RELEASE_DIGEST_MISMATCH" });
+    });
+
+    it("refuses a rollout state the gate decision does not allow", async () => {
+      const s = await publicado();
+      // `shadow` e o unico estado que o contrato do descritor deixa SEM regra estrutural,
+      // porque roda so em desenvolvimento e nao autoriza apresentacao. Logo ele passa pelo
+      // contrato e chega a esta guarda, que e a camada onde um release shadow deixa de poder
+      // se apresentar como evidencia verificada. `actions` nao serviria: o contrato o recusa
+      // antes, e o teste provaria o contrato em vez do verificador.
+      const caminho = join(s.modelDir, "release.json");
+      const release = JSON.parse(await readFile(caminho, "utf8")) as Record<
+        string,
+        unknown
+      >;
+      release.rolloutState = "shadow";
+      await writeFile(caminho, JSON.stringify(release), "utf8");
+      await expect(
+        runVerifyPublishedEvidence({
+          evidenceDirectory: s.outputDir,
+          modelDirectory: s.modelDir,
+        }),
+      ).rejects.toMatchObject({ code: "ROLLOUT_STATE_INVALID" });
+    });
+  });
 });

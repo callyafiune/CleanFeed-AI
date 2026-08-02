@@ -827,7 +827,9 @@ describe("consume-holdout one-way lease", () => {
     expect(started).toHaveLength(1); // beginHoldoutConsumption called exactly once
     expect(completed).toHaveLength(1);
     // active-session.json is removed once the session is terminal.
-    await expect(stat(activeSessionPath)).rejects.toThrow();
+    await expect(stat(activeSessionPath)).rejects.toMatchObject({
+      code: "ENOENT",
+    });
 
     // The printed decision is delegated byte-for-byte to the Phase 2 gates.
     const gates = JSON.parse(
@@ -1397,7 +1399,7 @@ describe("consume-holdout one-way lease", () => {
         stale.options,
         holdoutDeps(stale, stubPage(stale.status).createTestPage),
       ),
-    ).rejects.toThrow();
+    ).rejects.toMatchObject({ code: "EVALUATOR_DIGEST_PRE_EXPOSURE_MISMATCH" });
 
     const provoked = await buildScenario(await newRoot(), {
       scientificUse: "release",
@@ -1425,7 +1427,9 @@ describe("consume-holdout one-way lease", () => {
           }).createTestPage,
         ),
       ),
-    ).rejects.toThrow();
+    ).rejects.toMatchObject({
+      code: "EVALUATOR_DIGEST_POST_EXPOSURE_MISMATCH",
+    });
 
     // The distinction is in the ledger and nowhere else: nothing at all for the
     // block that was never opened, `started` then `failed(identity-mismatch)` for
@@ -1678,7 +1682,7 @@ describe("consume-holdout one-way lease", () => {
             }).createTestPage,
           ),
         ),
-      ).rejects.toThrow();
+      ).rejects.toThrow(/EPERM|EACCES|EISDIR/u);
 
       const events = readLedgerEvents(scenario.ledgerPath);
       expect(events.map((event) => event.status)).toEqual([
