@@ -1146,6 +1146,35 @@ Isso recalibra o resto do trabalho: **os 51 códigos sem menção não são 51 l
 triagem como resultado teria produzido o maior achado falso desta sessão. A ordem de trabalho
 continua a da triagem; a conclusão, só a da mutação.
 
+### Defeito 1 da v1.0 corrigido: o teto `indicator` passou a ser estrutural
+
+O primeiro dos três defeitos que a seção 5 do plano nomeia. A citação do plano estava **correta**, e
+a leitura do código acrescentou a nuance que decide como consertar:
+
+- `decideExperimentalUncalibrated` devolvia `actionCeiling: shortText ? "indicator" : "hide"`;
+- existe um `capToIndicator` com o comentário certo, mas ele é aplicado **só** no ramo
+  `calibrateResult`. O ramo do preview experimental não passava por ele;
+- o caminho é tomado quando o usuário opta pelo preview e não há calibração — então a promessa de
+  `docs/model-validation.md` ("um classificador não calibrado **nunca** desfoca, recolhe ou oculta um
+  post") era violada para quem opta.
+
+**Um conflito de intenções declaradas, não um descuido.** O teste em
+`tests/integration/inference-pipeline.test.ts` **exigia** `hide`, e o comentário dele dizia por quê:
+"reaching the `hide` ceiling so the user's presentationMode governs blur/collapse/hide". Era desenho
+escrito, contradizendo o documento. O escopo da v1.0 é a autoridade e resolve a favor da promessa.
+
+**A forma do conserto é o que o plano pede — estrutural, não copy.** O tipo de retorno da função
+passou a pinar `actionCeiling: "indicator"`, então reintroduzir `hide` naquele caminho é **erro de
+compilação**, e não algo que um teto posterior precise lembrar de corrigir. O teste passou a afirmar
+`indicator`, com a mudança e o motivo escritos nele.
+
+**Dívida de processo minha, encontrada aqui:** eu havia commitado `contract-guards.test.ts` rodando
+typecheck e vitest mas **não** lint, e ele carregava três erros — o idioma de descartar por
+desestruturação (`const { x: _descarte, ...resto }`) não passa na regra do repositório. Consertado com
+o idioma que o resto do arquivo já usava (`delete` sobre a cópia), e o lint voltou aos 13 problemas
+pré-existentes. A lição: verde de typecheck e de suíte não é verde de lint, e eu tratei os três como
+um só.
+
 ### `contracts/` FECHADO, e a superfície selada está medida inteira
 
 Os quatro módulos de contrato saíram de **1 guarda exercitada** para **todas**, em

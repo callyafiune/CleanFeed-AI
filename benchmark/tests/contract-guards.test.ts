@@ -98,7 +98,8 @@ describe("contratos selados — amarras de digest e estado", () => {
     // que revelou isso, ao recusar o artefato que devia ser válido. Então ele é re-selado aqui, e
     // sem esse cuidado o teste passaria pelo motivo errado: o código da recusa é o MESMO nos dois
     // casos, então "fixture inválido" e "guarda funcionando" seriam indistinguíveis.
-    const { reportDigest: _fachada, ...corpo } = bruto;
+    const corpo = { ...bruto };
+    delete corpo.reportDigest;
     const relatorio = {
       ...corpo,
       reportDigest: await computeSourceReadinessDigest(corpo as never),
@@ -377,7 +378,8 @@ describe("contratos selados — forma e campo dos outros tres parsers", () => {
   async function prontidaoValida(): Promise<Record<string, unknown>> {
     const { input } = await bundleInputFor("pass");
     const bruto = input.sourceReadiness as unknown as Record<string, unknown>;
-    const { reportDigest: _fachada, ...corpo } = bruto;
+    const corpo = { ...bruto };
+    delete corpo.reportDigest;
     return {
       ...corpo,
       reportDigest: await computeSourceReadinessDigest(corpo as never),
@@ -410,7 +412,8 @@ describe("contratos selados — forma e campo dos outros tres parsers", () => {
     await expect(
       parseRuntimeParityManifestV1({ ...valido, extra: 1 }),
     ).rejects.toMatchObject({ code: "RUNTIME_PARITY_SCHEMA_INVALID" });
-    const { inferenceCoreDigest: _falta, ...semCampo } = valido;
+    const semCampo = { ...valido };
+    delete semCampo.inferenceCoreDigest;
     await expect(parseRuntimeParityManifestV1(semCampo)).rejects.toMatchObject({
       code: "RUNTIME_PARITY_SCHEMA_INVALID",
     });

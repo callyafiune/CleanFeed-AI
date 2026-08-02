@@ -724,9 +724,21 @@ const EXPERIMENTAL_STRONG_THRESHOLD = 0.9;
  * no profile digest/expiry is emitted, so a positive verdict is never cached
  * beyond the request that produced it.
  */
+/**
+ * O preview experimental so pode INDICAR, e o tipo de retorno e o que garante isso.
+ *
+ * `docs/model-validation.md` promete que um classificador sem calibracao verificada "nunca desfoca,
+ * recolhe ou oculta um post". A garantia existia como um teto aplicado adiante (`capToIndicator`),
+ * mas ele so cobre o ramo `calibrateResult` — este caminho nao passava por ele e devolvia `hide`
+ * para texto longo, o que contradizia a promessa para quem opta pelo preview.
+ *
+ * Pinar `actionCeiling` no literal aqui torna a promessa ESTRUTURAL: reintroduzir `hide` neste
+ * caminho passa a ser erro de compilacao, e nao algo que um teto posterior precisa lembrar de
+ * corrigir.
+ */
 function decideExperimentalUncalibrated(
   base: ClassificationResult,
-): DecisionOutcome {
+): DecisionOutcome & { actionCeiling: "indicator" } {
   const rawScore = base.aggregation?.documentRawScore ?? base.aiScore;
   const reasonCodes: DecisionReasonCode[] = ["TMR_EXPERIMENTAL_UNCALIBRATED"];
   if (base.evidence.quality === "unsupported") {
@@ -749,7 +761,6 @@ function decideExperimentalUncalibrated(
   // preview marks a post only when the model is highly confident it is AI.
   const positive = rawScore >= EXPERIMENTAL_STRONG_THRESHOLD;
   const strong = rawScore >= EXPERIMENTAL_STRONG_THRESHOLD;
-  const shortText = getLengthBucket(base.wordCount) === "50_79";
   return {
     status: strong
       ? "strong_ai_indication"
@@ -757,7 +768,7 @@ function decideExperimentalUncalibrated(
         ? "possibly_ai"
         : "probably_human",
     calibratedScore: rawScore,
-    actionCeiling: shortText ? "indicator" : "hide",
+    actionCeiling: "indicator",
     abstained: false,
     presentationAllowed: positive,
     triggers: positive ? ["document"] : [],

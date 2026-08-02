@@ -1042,8 +1042,14 @@ describe("bundle calibration profile binding", () => {
     // Same bundle runtime with NO calibration registry as the case above, but the
     // user enabled the experimental preview: instead of a fail-closed abstention
     // the pipeline maps the raw score to a verdict tagged
-    // TMR_EXPERIMENTAL_UNCALIBRATED, reaching the `hide` ceiling so the user's
-    // presentationMode governs blur/collapse/hide. It never claims calibration.
+    // TMR_EXPERIMENTAL_UNCALIBRATED. It never claims calibration.
+    //
+    // O teto e `indicator`, e esta assercao MUDOU de `hide`. A versao anterior deste teste dizia
+    // "reaching the `hide` ceiling so the user's presentationMode governs blur/collapse/hide" —
+    // intencao de desenho que contradizia `docs/model-validation.md`, onde o produto promete que um
+    // classificador sem calibracao verificada NUNCA desfoca, recolhe ou oculta. O escopo da v1.0
+    // resolve o conflito a favor da promessa, e o teto passou a ser pinado no tipo de retorno de
+    // `decideExperimentalUncalibrated` em vez de depender de um cap aplicado adiante.
     const runner = new PipelineRunner({
       classifier: bundleClassifier(),
       tokenizer: exactTokenizer,
@@ -1057,7 +1063,7 @@ describe("bundle calibration profile binding", () => {
     expect(classified.runtimeIdentity.kind).toBe("bundle");
     expect(classified.decision.abstained).toBe(false);
     expect(classified.decision.presentationAllowed).toBe(true);
-    expect(classified.decision.actionCeiling).toBe("hide");
+    expect(classified.decision.actionCeiling).toBe("indicator");
     expect(classified.decision.reasonCodes).toContain(
       "TMR_EXPERIMENTAL_UNCALIBRATED",
     );
