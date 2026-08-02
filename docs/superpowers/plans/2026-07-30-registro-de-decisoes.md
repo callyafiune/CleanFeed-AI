@@ -1096,7 +1096,7 @@ for feita — a falha é o sinal, não um defeito.
 (o prefixo `th_` do corpo real é de thread), um por registro. O resultado certo aparece quando o
 modelo sintético respeita isso — e o motivo do colapso é outro eixo.
 
-### A varredura FECHOU: dez módulos, tudo medido, nada estimado
+### A varredura fechou NOS DEZ MÓDULOS QUE A VARREDURA ANTERIOR APONTOU — e não no repositório
 
 | módulo | resultado final | o que resta, nomeado |
 | --- | --- | --- |
@@ -1111,7 +1111,28 @@ modelo sintético respeita isso — e o motivo do colapso é outro eixo.
 | `cross-validation.ts` | `EMPTY_POPULATION` fechada | `TRAIN_MISSING_LABEL` e `FOLD_HALF_EMPTY`, invariante interna |
 | `corpus-source-audit.ts` | nunca foi lacuna | — |
 
-Nenhuma linha diz "não medido". As duas que diziam foram medidas: `cluster-exposure-ledger.ts` por
+Nenhuma linha desta tabela diz "não medido".
+
+**RETRATAÇÃO DE ESCOPO, escrita no dia seguinte à tabela acima.** Eu declarei "a varredura fechou" e,
+pouco depois, que "o trabalho não bloqueado acabou". As duas afirmações valem para os dez módulos que
+uma varredura anterior apontou, e eu as escrevi como se valessem para o repositório. Medindo a
+superfície inteira — códigos que aparecem em posição de LANÇAMENTO, `throw new X("CODIGO"` ou
+`fail("CODIGO"` — o quadro é outro:
+
+- **25 módulos** de `benchmark/` têm guarda lançada;
+- **9 estão auditados** (o décimo, `corpus-source-audit.ts`, tem um único `throw` com código
+  variável, e por isso não aparece nessa contagem);
+- **16 módulos com 70 códigos nunca foram medidos**, entre eles `dataset-manifest.ts` (9),
+  `browser-scorer.ts` (8), `prediction-shards.ts` (6), `commands/verify-evidence.ts` (6),
+  `commands/validate-predictions.ts` (6), `source-manifest.ts` (5) e `commands/fit.ts` (5).
+
+O erro é o mesmo que a ferramenta foi endurecida quatro vezes para impedir, agora cometido um nível
+acima: **medir o conjunto que alguém apontou e relatar como se fosse o conjunto todo.** A guarda por
+fecho transitivo protege a escolha de SUÍTES; nada protegia a escolha de MÓDULOS, e eu herdei a lista
+de uma varredura anterior sem conferir o que ela deixara fora.
+
+Portanto: a tabela acima continua verdadeira sobre os dez, e o trabalho não bloqueado NÃO acabou — há
+70 códigos de superfície não medida, e medi-los não toca `GROUP_KEYS` nem o esquema. As duas que diziam foram medidas: `cluster-exposure-ledger.ts` por
 mutação com as onze suítes que o fecho transitivo aponta, e `corpus-source-audit.ts` por leitura —
 lá os dez códigos são motivos de bloqueio do relatório, há um único `throw` que reencaminha os
 códigos coletados, e o caso negativo dele já tinha teste. As lacunas que um agente havia reportado
