@@ -349,6 +349,46 @@ describe("dataset manifest", () => {
     ).rejects.toThrow(/expected human=4000, received human=1/);
   });
 
+  it("rejects a duplicated record, by id and by normalized text", async () => {
+    // A única guarda deste módulo que a auditoria por mutação achou sem teste. As duas
+    // condições compartilham o código, e as duas contam: id repetido é o mesmo registro
+    // entregue duas vezes, e hash repetido é o MESMO TEXTO sob dois ids — que infla a
+    // contagem de suporte de uma alegação sem acrescentar evidência.
+    //
+    // A contagem por classe é decidida depois do laço, então acrescentar um quarto registro
+    // não faz a política reclamar antes: a duplicidade recusa primeiro.
+    const policy = {
+      ...RELEASE_CORPUS_POLICY,
+      counts: { human: 1, ai: 1, mixed: 1 },
+    };
+    await expect(
+      sealDataset(
+        validManifest,
+        [human, ai, mixed, human],
+        policy,
+        validFileDigests,
+      ),
+    ).rejects.toMatchObject({ code: "DATASET_DUPLICATE" });
+
+    const mesmoTexto: BenchmarkRecord = {
+      ...human,
+      id: "human-0002",
+      groups: {
+        ...human.groups,
+        derivationRoot: "human-0002",
+        nearDuplicate: "near_h_002",
+      },
+    };
+    await expect(
+      sealDataset(
+        validManifest,
+        [human, ai, mixed, mesmoTexto],
+        policy,
+        validFileDigests,
+      ),
+    ).rejects.toMatchObject({ code: "DATASET_DUPLICATE" });
+  });
+
   it("rejects a record byte digest that drifts from the manifest", async () => {
     const policy = {
       ...RELEASE_CORPUS_POLICY,
