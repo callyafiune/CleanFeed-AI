@@ -998,9 +998,25 @@ falha; os outros 61 do arquivo passam, o que prova que ele alcança a guarda e q
 
 **Ordem para o resto, por consequência e não por contagem:**
 
-1. `commands/evaluate.ts` — `TEST_PARTITION_EXPECTED` aceita predições declaradas `development` como a
-   corrida do holdout, e `TEST_COMPLETENESS_FAILED` aceita um SUBCONJUNTO de `test`, que é precisamente
-   a seleção que melhora FPR. As duas selam relatório de release e gastam o lease.
+1. `commands/evaluate.ts` — **e aqui a natureza do achado é diferente das outras, o que só apareceu ao
+   ir escrever o teste.** As guardas EXISTEM e funcionam; o risco é regressão silenciosa, como no
+   `CLUSTER_LEDGER_LOCKED`. Corrigindo a minha própria formulação anterior: eu havia escrito que
+   "`evaluate.ts` aceita predições declaradas `development`", e isso descreve o estado MUTADO, não o
+   atual.
+
+   O que a leitura mostrou: `benchmark/tests/evaluate.test.ts` tem 130 linhas, **não chama
+   `runEvaluate`**, e o cabeçalho dela explica por quê — "`runEvaluate` needs a real open holdout
+   session", e `buildEvaluationItem` foi extraída exatamente para tornar a lógica testável sem sessão.
+   A intestabilidade é **estrutural e documentada**, não descuido.
+
+   Então o conserto não é escrever oito testes: é **repetir o padrão que o arquivo já usa** — extrair a
+   sequência de validação (partição declarada, vínculo da sessão, completude contra a partição, rótulos
+   duplicados/divergentes) para uma função exportada que receba manifestos e rótulos, e testá-la direto.
+   Isso é mudança de desenho, pequena mas real, e por isso unidade própria em vez de apêndice.
+
+   As duas de maior consequência continuam sendo `TEST_PARTITION_EXPECTED` (predição de outra partição
+   passando pela corrida do holdout) e `TEST_COMPLETENESS_FAILED` (subconjunto de `test`, que é a
+   seleção que melhora FPR), porque as duas selam relatório de release e gastam o lease.
 2. o resto de `cluster-exposure-ledger.ts` — restore de backup fabricado, `records: []` passando como
    evento válido, tipo de evento trocado.
 3. `corpus-import.ts` — `REVIEW_LEDGER_EMPTY`: um dataset com **zero** entradas de revisão humana sela
