@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import {
+  AUDITED_PARTITIONS,
   CLUSTER_SLICE_AXES,
   auditBlockedSplit,
   standInClusterReport,
@@ -10,11 +11,15 @@ import {
   type SplitAuditPolicy,
 } from "../split-audit.ts";
 import {
+  PARTITIONS,
   connectedComponentRoots,
   createBlockedSplit,
   type BlockedSplitPolicy,
   type DatasetSplit,
+  type Partition,
 } from "../split.ts";
+import { describeSplitProportions } from "../commands/split.ts";
+import { REBUILD_V3_POLICY } from "../rebuild-v3-policy.ts";
 import {
   V3_GROUP_AXES,
   validateBenchmarkRecordV3,
@@ -144,12 +149,17 @@ function rec(spec: RecordSpec): BenchmarkRecord {
   return record;
 }
 
-// A release-scale corpus: >=4000 human negatives so the 50% blocked test carries
-// >=2000, and every critical slice keeps >=300 negatives / >=200 positives.
+// A release-scale corpus: enough human negatives that the 20% blocked test still
+// carries >=2000, and every critical slice keeps >=300 negatives / >=200 positives.
 function buildReleaseDataset(): BenchmarkRecord[] {
   const records: BenchmarkRecord[] = [];
   const SLOTS = 100;
-  const perHuman = 46;
+  // 105 per slot, not 46. The reporting threshold is 2000 human negatives INSIDE the
+  // blocked test and test is 20% of the corpus, so the smallest corpus that can reach
+  // the threshold holds about 10k humans. That is a consequence of the five-partition
+  // proportions, not of this fixture, and it is the same arithmetic
+  // the real corpus has to satisfy.
+  const perHuman = 105;
   const perAi = 15;
   const perMixed = 10;
   const lengths = [40, 180, 520];
@@ -254,11 +264,28 @@ function buildReleaseDataset(): BenchmarkRecord[] {
 const RELEASE_DATASET = buildReleaseDataset();
 
 const POLICY: BlockedSplitPolicy = {
-  fractions: { development: 0.2, calibration: 0.3, test: 0.5 },
+  fractions: {
+    train: 0.45,
+    dev: 0.05,
+    "cal-A": 0.1,
+    "cal-B": 0.2,
+    test: 0.2,
+  },
   classTolerance: 0.02,
   heldOutGeneratorFamilies: [asGeneratorFamily("family-unseen")],
-  seed: 712_019,
+  seed: 20_260_726,
 };
+
+// The pre-registered proportions, restated here on purpose. A test that imports the
+// same constant the audit reads cannot fail when that constant moves, which is the one
+// failure this table exists to cause.
+const TARGET_FRACTIONS: ReadonlyArray<readonly [Partition, number]> = [
+  ["train", 0.45],
+  ["dev", 0.05],
+  ["cal-A", 0.1],
+  ["cal-B", 0.2],
+  ["test", 0.2],
+];
 
 const AUDIT_POLICY: SplitAuditPolicy = {
   minimumTestHumanNegatives: 2_000,
@@ -287,25 +314,27 @@ describe("auditBlockedSplit", () => {
     ).length;
     expect(testHumanNegatives).toBeGreaterThanOrEqual(2_000);
 
-    // Per-class 20/30/50 within two percentage points.
+    // Per-class 45/5/10/20/20 within two percentage points, every partition.
     for (const label of ["human", "ai", "mixed"] as const) {
-      expect(
-        Math.abs(audit.classFractions[label].development - 0.2),
-      ).toBeLessThanOrEqual(0.02);
-      expect(
-        Math.abs(audit.classFractions[label].calibration - 0.3),
-      ).toBeLessThanOrEqual(0.02);
-      expect(
-        Math.abs(audit.classFractions[label].test - 0.5),
-      ).toBeLessThanOrEqual(0.02);
+      for (const [partition, target] of TARGET_FRACTIONS) {
+        expect(
+          Math.abs(audit.classFractions[label][partition] - target),
+          `${label} ${partition}`,
+        ).toBeLessThanOrEqual(0.02);
+      }
     }
 
-    // Temporal ordering: the test is strictly the latest slice.
+    // Temporal ordering: test is strictly the latest slice, against EACH of the other
+    // four rather than against the newest of them.
     expect(audit.cutoffs.earliestTest).toBeGreaterThan(
-      audit.cutoffs.latestCalibration,
+      audit.cutoffs.latestTrain,
+    );
+    expect(audit.cutoffs.earliestTest).toBeGreaterThan(audit.cutoffs.latestDev);
+    expect(audit.cutoffs.earliestTest).toBeGreaterThan(
+      audit.cutoffs.latestCalA,
     );
     expect(audit.cutoffs.earliestTest).toBeGreaterThan(
-      audit.cutoffs.latestDevelopment,
+      audit.cutoffs.latestCalB,
     );
 
     // The reserved family is discovered as unseen straight from the split.
@@ -346,14 +375,14 @@ describe("auditBlockedSplit", () => {
 
   it("rejects a deliberately author-leaking split (teeth on grouping)", () => {
     const split = createBlockedSplit(RELEASE_DATASET, POLICY);
-    // Move one development record into test while its five slot siblings stay
-    // behind, so its author/source/domainSource values now straddle two
-    // partitions. A blind auditor would miss it; this one must not.
-    const victim = split.development.find((row) => row.label === "human");
+    // Move one train record into test while its slot siblings stay behind, so its
+    // author/source/domainSource values now straddle two partitions. A blind auditor
+    // would miss it; this one must not.
+    const victim = split.train.find((row) => row.label === "human");
     expect(victim).toBeDefined();
     const leaking: DatasetSplit<BenchmarkRecord> = {
-      development: split.development.filter((row) => row.id !== victim!.id),
-      calibration: split.calibration,
+      ...split,
+      train: split.train.filter((row) => row.id !== victim!.id),
       test: [...split.test, victim!],
     };
     const audit = auditBlockedSplit(
@@ -373,7 +402,7 @@ describe("auditBlockedSplit", () => {
     // A <- B <- C. A and B are self/child on ROOTAAA (share a derivationRoot
     // value); C is a child of B, so it only ever names B's id — never ROOTAAA.
     // No single value-axis reveals that C is a derivative of A's family. Put the
-    // grandparent chain in development and the grandchild in test.
+    // grandparent chain in train and the grandchild in test.
     const a = rec({
       id: "ROOTAAA",
       label: "human",
@@ -416,8 +445,10 @@ describe("auditBlockedSplit", () => {
     });
     const records = [a, b, c];
     const split: DatasetSplit<BenchmarkRecord> = {
-      development: [a, b],
-      calibration: [],
+      train: [a, b],
+      dev: [],
+      "cal-A": [],
+      "cal-B": [],
       test: [c],
     };
     const audit = auditBlockedSplit(
@@ -441,7 +472,7 @@ describe("auditBlockedSplit", () => {
 
   it("rejects a temporally leaking split even without group leakage (teeth on time)", () => {
     // Unique groups everywhere, so the only defect is a test record older than a
-    // calibration record. The audit must still refuse it.
+    // cal-A record. The audit must still refuse it.
     const dev = rec({
       id: "dev1",
       label: "human",
@@ -484,8 +515,10 @@ describe("auditBlockedSplit", () => {
     });
     const records = [dev, cal, test];
     const split: DatasetSplit<BenchmarkRecord> = {
-      development: [dev],
-      calibration: [cal],
+      train: [dev],
+      dev: [cal],
+      "cal-A": [],
+      "cal-B": [],
       test: [test],
     };
     const audit = auditBlockedSplit(
@@ -497,7 +530,7 @@ describe("auditBlockedSplit", () => {
 
     expect(audit.leakages).toEqual([]);
     expect(audit.cutoffs.earliestTest).toBeLessThanOrEqual(
-      audit.cutoffs.latestCalibration,
+      audit.cutoffs.latestDev,
     );
     expect(audit.passed).toBe(false);
     expect(audit.reasons.some((reason) => /temporal|newer/i.test(reason))).toBe(
@@ -505,8 +538,8 @@ describe("auditBlockedSplit", () => {
     );
   });
 
-  it("fails a split whose blocked test has too few human negatives", () => {
-    // A human-light corpus: only 100 human records total, so the 50% blocked
+  it("publishes an insufficient human-negative offer instead of failing on it", () => {
+    // A human-light corpus: only 100 human records total, so the 20% blocked
     // test can never reach the 2000-negative floor.
     const tiny: BenchmarkRecord[] = [];
     for (let slot = 1; slot <= 100; slot += 1) {
@@ -557,7 +590,13 @@ describe("auditBlockedSplit", () => {
     }
 
     const noHoldout: BlockedSplitPolicy = {
-      fractions: { development: 0.2, calibration: 0.3, test: 0.5 },
+      fractions: {
+        train: 0.45,
+        dev: 0.05,
+        "cal-A": 0.1,
+        "cal-B": 0.2,
+        test: 0.2,
+      },
       classTolerance: 0.02,
       heldOutGeneratorFamilies: [],
       seed: 1,
@@ -565,9 +604,20 @@ describe("auditBlockedSplit", () => {
     const split = createBlockedSplit(tiny, noHoldout);
     const audit = auditBlockedSplit(tiny, split, AUDIT_POLICY, NO_RESERVATION);
 
+    // The count is PUBLISHED and the split still freezes. As a failure it would be
+    // unsatisfiable by any corpus the repository can seal: the frozen composition is 4000
+    // human records and the blind block is 20% of it, so `test` holds at most 880 against
+    // a threshold of 2000. It would also put a power gate inside the audit, which this
+    // module's contract forbids. The sufficiency comparison lives outside it, against the
+    // pre-registered floor, and counts independent clusters per quota cell.
     expect(audit.leakages).toEqual([]);
-    expect(audit.passed).toBe(false);
-    expect(audit.reasons.some((reason) => /negative/i.test(reason))).toBe(true);
+    expect(audit.testHumanNegatives.count).toBeLessThan(2_000);
+    expect(audit.testHumanNegatives.reportingThreshold).toBe(2_000);
+    expect(audit.testHumanNegatives.sufficientForReleaseFpr).toBe(false);
+    expect(
+      audit.reasons.some((reason) => /negative/i.test(reason)),
+      "an insufficient offer is reported, never a refusal",
+    ).toBe(false);
   });
 });
 
@@ -841,7 +891,13 @@ function v3Split(authorState: "known" | "notApplicable" | "unknown"): {
   });
   return {
     records: [dev, cal, test],
-    split: { development: [dev], calibration: [cal], test: [test] },
+    split: {
+      train: [dev],
+      dev: [cal],
+      "cal-A": [],
+      "cal-B": [],
+      test: [test],
+    },
   };
 }
 
@@ -908,7 +964,7 @@ function v3Generated(spec: {
 
 describe("the seed that produced a generation", () => {
   it("glues the generation to its human seed, so the lineage cannot straddle partitions", () => {
-    // The human text is in development and the text it seeded is in test. No value
+    // The human text is in train and the text it seeded is in test. No value
     // axis is shared, and `derivationRoot` is notApplicable on the child because
     // the `original` recipe generates fresh text rather than deriving it — so the
     // ONLY thing that can catch this is the humanSeed parent linkage.
@@ -922,7 +978,13 @@ describe("the seed that produced a generation", () => {
     const records = [seed, generated];
     const audit = auditBlockedSplit(
       records,
-      { development: [seed], calibration: [], test: [generated] },
+      {
+        train: [seed],
+        dev: [],
+        "cal-A": [],
+        "cal-B": [],
+        test: [generated],
+      },
       AUDIT_POLICY,
       NO_RESERVATION,
     );
@@ -950,7 +1012,13 @@ describe("the seed that produced a generation", () => {
     });
     const roots = auditBlockedSplit(
       [generated, other],
-      { development: [generated], calibration: [], test: [other] },
+      {
+        train: [generated],
+        dev: [],
+        "cal-A": [],
+        "cal-B": [],
+        test: [other],
+      },
       AUDIT_POLICY,
       NO_RESERVATION,
     );
@@ -1008,7 +1076,13 @@ describe("two rows naming a seed no record carries", () => {
     const records = [g1, g2];
     const audit = auditBlockedSplit(
       records,
-      { development: [g1], calibration: [], test: [g2] },
+      {
+        train: [g1],
+        dev: [],
+        "cal-A": [],
+        "cal-B": [],
+        test: [g2],
+      },
       AUDIT_POLICY,
       NO_RESERVATION,
     );
@@ -1059,7 +1133,13 @@ describe("two rows naming a seed no record carries", () => {
     const child = seededRow("g_1", seed.id, 5);
     const audit = auditBlockedSplit(
       [seed, child],
-      { development: [seed], calibration: [], test: [child] },
+      {
+        train: [seed],
+        dev: [],
+        "cal-A": [],
+        "cal-B": [],
+        test: [child],
+      },
       AUDIT_POLICY,
       NO_RESERVATION,
     );
@@ -1221,13 +1301,19 @@ describe("the reservation the partitions honor", () => {
     ];
     return {
       records: [...development, ...calibration, ...test],
-      split: { development, calibration, test },
+      split: {
+        train: development,
+        dev: calibration,
+        "cal-A": [],
+        "cal-B": [],
+        test,
+      },
     };
   }
 
   // The same three families, except the reservation is only PARTLY violated:
   // `family-reserved` keeps a record-line in `test` and has a second one in
-  // `development`. This is the corpus that tells the two possible keyings of the
+  // `train`. This is the corpus that tells the two possible keyings of the
   // `generatorExposure` axis apart. In `corpus()` every declared family has all
   // its record-lines in `test`, so declared and honored are the same set and the
   // axis reads identically whichever one it is keyed on.
@@ -1239,7 +1325,7 @@ describe("the reservation the partitions honor", () => {
     const strayed = ai("dev_reserved", 0, "family-reserved");
     return {
       records: [strayed, ...records],
-      split: { ...split, development: [strayed, ...split.development] },
+      split: { ...split, train: [strayed, ...split.train] },
     };
   }
 
@@ -1271,11 +1357,11 @@ describe("the reservation the partitions honor", () => {
   it("withdraws a declared family with one record-line outside test, and that fails hard", () => {
     const { records, split } = corpus();
     const violated: DatasetSplit<BenchmarkRecord> = {
-      development: [
-        ...split.development,
+      ...split,
+      train: [
+        ...split.train,
         ...split.test.filter((row) => row.id === "tst_reserved"),
       ],
-      calibration: split.calibration,
       test: split.test.filter((row) => row.id !== "tst_reserved"),
     };
     const audit = auditBlockedSplit(records, violated, AUDIT_POLICY, [
@@ -1315,7 +1401,7 @@ describe("the reservation the partitions honor", () => {
 
   it("withdraws a declared family whose record-line is assigned to no partition", () => {
     const { records, split } = corpus();
-    // Present in the record set, absent from all three partitions. It must not
+    // Present in the record set, absent from every partition of this fixture. It must not
     // pass for "absent from development and calibration": the predicate is
     // measured over the whole record set exactly so this row withdraws the
     // reservation instead of reading as harmless here. (split-artifact.ts refuses
@@ -1366,5 +1452,317 @@ describe("the reservation the partitions honor", () => {
     );
     expect(exposure.find((slice) => slice.key === "unseen")?.positives).toBe(1);
     expect(exposure.find((slice) => slice.key === "seen")?.positives).toBe(2);
+  });
+});
+
+// --- the mutations a fraction test cannot see ---------------------------------
+//
+// Three mutations of the five-partition split, each chosen because the OBVIOUS test
+// stays green under it. They are written against `auditBlockedSplit` with splits built
+// by hand, because that is the level at which a transposed or omitted partition is
+// expressible at all — `createBlockedSplit` cannot be asked to produce one.
+describe("the five-partition audit has teeth on the mutations fractions miss", () => {
+  // No reservation, deliberately: with a held-out family declared, the reservation rule
+  // would also catch the transposition below, and the test would not prove that the
+  // temporal chain catches it on its own.
+  const UNRESERVED_POLICY: BlockedSplitPolicy = {
+    ...POLICY,
+    heldOutGeneratorFamilies: [],
+  };
+  const unreservedSplit = (): DatasetSplit<BenchmarkRecord> =>
+    createBlockedSplit(RELEASE_DATASET, UNRESERVED_POLICY);
+
+  const auditOf = (split: DatasetSplit<BenchmarkRecord>) =>
+    auditBlockedSplit(RELEASE_DATASET, split, AUDIT_POLICY, NO_RESERVATION);
+
+  it("passes the unreserved split, so the refusals below are about the mutation", () => {
+    const audit = auditOf(unreservedSplit());
+    expect(audit.reasons).toEqual([]);
+    expect(audit.passed).toBe(true);
+  });
+
+  it("refuses cal-B and test transposed, which every fraction target survives", () => {
+    // `cal-B` and `test` are the ONE pair of partitions that share a target (0.20), so
+    // swapping them lands all fifteen class fractions inside tolerance. Whole
+    // partitions are exchanged, so no connected component is broken either, and the
+    // blocked test still holds enough human negatives. Nothing but the temporal
+    // ordering can tell this split from the correct one.
+    const split = unreservedSplit();
+    const transposed: DatasetSplit<BenchmarkRecord> = {
+      ...split,
+      "cal-B": split.test,
+      test: split["cal-B"],
+    };
+    const audit = auditOf(transposed);
+
+    // The mutation is invisible to all three of the cheaper checks...
+    for (const label of ["human", "ai", "mixed"] as const) {
+      for (const [partition, target] of TARGET_FRACTIONS) {
+        expect(
+          Math.abs(audit.classFractions[label][partition] - target),
+          `${label} ${partition} still hits its target`,
+        ).toBeLessThanOrEqual(0.02);
+      }
+    }
+    expect(audit.leakages).toEqual([]);
+    expect(
+      transposed.test.filter((row) => row.label === "human").length,
+    ).toBeGreaterThanOrEqual(2_000);
+
+    // ...and the temporal ordering is the single reason that refuses it.
+    expect(audit.passed).toBe(false);
+    expect(audit.reasons).toHaveLength(1);
+    expect(audit.reasons[0]).toMatch(/temporal/i);
+  });
+
+  it("names EVERY partition whose class fraction is wrong, one at a time", () => {
+    // The mutation this defends against is an enumeration that covers four of the five
+    // partitions: the omitted one's fraction then goes unwatched and can drift by any
+    // amount. Emptying each partition in turn is the sharpest available probe, because
+    // a fraction of zero breaches the tolerance for every class and every target.
+    for (const partition of PARTITIONS) {
+      const split = unreservedSplit();
+      const sink: Partition = partition === "train" ? "test" : "train";
+      const mutated: DatasetSplit<BenchmarkRecord> = {
+        ...split,
+        [partition]: [],
+        [sink]: [...split[sink], ...split[partition]],
+      };
+      const audit = auditOf(mutated);
+
+      expect(audit.passed, `${partition} emptied`).toBe(false);
+      expect(
+        audit.reasons.some(
+          (reason) =>
+            reason.includes(`${partition} fraction`) &&
+            reason.includes("outside"),
+        ),
+        `a class-fraction reason names ${partition}: ${audit.reasons.join(" | ")}`,
+      ).toBe(true);
+    }
+  });
+
+  it("still refuses when two middle partitions are empty at the same time", () => {
+    // Every temporal comparison is guarded on both partitions being non-empty, so
+    // emptying two middle partitions at once makes several links of the chain
+    // vacuously true. What keeps that safe is arithmetic and not luck: all five targets
+    // are larger than `classTolerance`, so an empty partition ALWAYS breaks the
+    // class-fraction check. If a future target ever drops below the tolerance, this
+    // test is the one that should start failing.
+    const split = unreservedSplit();
+    const collapsed: DatasetSplit<BenchmarkRecord> = {
+      ...split,
+      dev: [],
+      "cal-A": [],
+      train: [...split.train, ...split.dev, ...split["cal-A"]],
+    };
+    const audit = auditOf(collapsed);
+
+    expect(audit.passed).toBe(false);
+    for (const partition of ["dev", "cal-A"] as const) {
+      expect(
+        audit.reasons.some((reason) =>
+          reason.includes(`${partition} fraction 0.000`),
+        ),
+        `${partition} is reported empty: ${audit.reasons.join(" | ")}`,
+      ).toBe(true);
+    }
+    for (const [, target] of TARGET_FRACTIONS) {
+      expect(target, "every target exceeds the tolerance").toBeGreaterThan(
+        0.02,
+      );
+    }
+  });
+});
+
+// --- the enumerations that must not drift apart -------------------------------
+describe("the five partition names are pinned, not repeated by hand", () => {
+  it("audits exactly the partitions the splitter produces, in the same order", () => {
+    // `AUDITED_PARTITIONS` IS the audit's only enumeration — the one the chain walks
+    // and the fraction check iterates — and it is read off a `Record<Partition,
+    // number>`, so dropping a partition from it is a compile error rather than a
+    // silently unchecked fraction. What the type cannot check is that its ORDER is the
+    // splitter's temporal order, and the chain check depends on that order, so it is
+    // asserted here as a sequence and not as a set.
+    expect([...AUDITED_PARTITIONS]).toEqual([...PARTITIONS]);
+  });
+
+  it("pins the splitter's frozen fractions to the pre-registered ones", () => {
+    // The missing link between a typed literal in `split.ts` and the decision that was
+    // actually frozen. The pre-registration keys its fractions by FIELD name and the
+    // splitter by partition VALUE, so the mapping is spelled out here too — a second
+    // reader of the correspondence the audit declares once.
+    const frozen = REBUILD_V3_POLICY.preRegistration.partitionFractions;
+    expect(POLICY.fractions).toEqual({
+      train: frozen.train,
+      dev: frozen.dev,
+      "cal-A": frozen.calA,
+      "cal-B": frozen.calB,
+      test: frozen.test,
+    });
+    // And the table the tests above assert against is the same set of numbers.
+    expect(Object.fromEntries(TARGET_FRACTIONS)).toEqual(POLICY.fractions);
+  });
+});
+
+// --- the success message, tested here because no end-to-end path renders it ------
+describe("the split command's proportions line", () => {
+  it("renders the five frozen proportions, in temporal order, with no float dust", () => {
+    // Worth a test of its own precisely because it is unreachable end to end: the
+    // command only emits this line after an audit that passes, and the human-negative
+    // floor makes no sealable corpus satisfy that.
+    //
+    // The literal is also the guard against float dust: the line multiplies frozen
+    // fractions by 100, and `0.05 * 100` is only exactly 5 because that product
+    // happens to round back to an integer — a different tolerance or fraction could
+    // print `5.000000000000001%` into an operator-facing message.
+    expect(describeSplitProportions(POLICY)).toBe(
+      "train=45%, dev=5%, cal-A=10%, cal-B=20%, test=20%",
+    );
+  });
+});
+
+// --- train is the fallback, so it has no temporal place in the chain ----------
+describe("the temporal chain excludes train, and that is load-bearing", () => {
+  it("accepts a split whose train holds a component spanning the middle bands", () => {
+    // A component glued across four timestamps lands in `train` because it fits no
+    // single band — that is exactly what a fallback is for. Its newest record is then
+    // newer than every middle partition's, and the split is still legal: nothing about
+    // training data being interleaved with dev or cal leaks the blocked test.
+    //
+    // A chain that required `latest(dev) > latest(train)` refused this split, which
+    // `createBlockedSplit` produces on purpose. The chain now covers the three middle
+    // partitions only.
+    const rows: BenchmarkRecord[] = [];
+    const spanning = (id: string, createdAt: number): BenchmarkRecord =>
+      rec({
+        id,
+        label: "human",
+        createdAt,
+        domain: "corporate",
+        wordCount: 100,
+        // One shared collectionBatch across four timestamps: this is the glue that
+        // makes the four rows a single indivisible component.
+        author: `auth_${id}`,
+        source: "src_span",
+        domainSource: "ds_span",
+        collectionBatch: "cb_span",
+        nearDuplicate: `nd_${id}`,
+        derivationRoot: id,
+      });
+    for (const [index, time] of [1, 2, 3, 4].entries()) {
+      rows.push(spanning(`span_${index}`, time));
+    }
+
+    const roots = connectedComponentRoots(rows);
+    expect(
+      new Set(roots.values()).size,
+      "the four rows are one component",
+    ).toBe(1);
+
+    // Hand-built so the case is expressible at all: the audit is what is under test,
+    // and it must not refuse this arrangement.
+    const later = (id: string, time: number): BenchmarkRecord =>
+      rec({
+        id,
+        label: "human",
+        createdAt: time,
+        domain: "corporate",
+        wordCount: 100,
+        author: `auth_${id}`,
+        source: `src_${id}`,
+        domainSource: `ds_${id}`,
+        collectionBatch: `cb_${id}`,
+        nearDuplicate: `nd_${id}`,
+        derivationRoot: id,
+      });
+    const dev = later("d1", 2);
+    const calA = later("a1", 3);
+    const calB = later("b1", 4);
+    const test = later("t1", 5);
+    const records = [...rows, dev, calA, calB, test];
+    const split: DatasetSplit<BenchmarkRecord> = {
+      train: rows,
+      dev: [dev],
+      "cal-A": [calA],
+      "cal-B": [calB],
+      test: [test],
+    };
+    const audit = auditBlockedSplit(
+      records,
+      split,
+      AUDIT_POLICY,
+      NO_RESERVATION,
+    );
+
+    // `train` ends at 4, later than dev (2) and cal-A (3) — by design.
+    expect(audit.cutoffs.latestTrain).toBeGreaterThan(audit.cutoffs.latestDev);
+    expect(audit.cutoffs.latestTrain).toBeGreaterThan(audit.cutoffs.latestCalA);
+    // And no temporal reason is raised, which is the whole point of this test.
+    expect(audit.reasons.filter((reason) => /temporal/.test(reason))).toEqual(
+      [],
+    );
+  });
+
+  it("still refuses train reaching past the start of the blocked test", () => {
+    // The direction that IS leakage: a spanning component in `train` carrying a record
+    // newer than the earliest test record puts test-period text into training data.
+    // Construction cannot prevent it, so the audit is the only thing that can.
+    const shared = (id: string, createdAt: number): BenchmarkRecord =>
+      rec({
+        id,
+        label: "human",
+        createdAt,
+        domain: "corporate",
+        wordCount: 100,
+        author: `auth_${id}`,
+        source: "src_leak",
+        domainSource: "ds_leak",
+        collectionBatch: "cb_leak",
+        nearDuplicate: `nd_${id}`,
+        derivationRoot: id,
+      });
+    const early = shared("leak_early", 1);
+    const late = shared("leak_late", 9);
+    const solo = (id: string, time: number): BenchmarkRecord =>
+      rec({
+        id,
+        label: "human",
+        createdAt: time,
+        domain: "corporate",
+        wordCount: 100,
+        author: `auth_${id}`,
+        source: `src_${id}`,
+        domainSource: `ds_${id}`,
+        collectionBatch: `cb_${id}`,
+        nearDuplicate: `nd_${id}`,
+        derivationRoot: id,
+      });
+    const dev = solo("d1", 2);
+    const calA = solo("a1", 3);
+    const calB = solo("b1", 4);
+    const test = solo("t1", 5);
+    const records = [early, late, dev, calA, calB, test];
+    const audit = auditBlockedSplit(
+      records,
+      {
+        train: [early, late],
+        dev: [dev],
+        "cal-A": [calA],
+        "cal-B": [calB],
+        test: [test],
+      },
+      AUDIT_POLICY,
+      NO_RESERVATION,
+    );
+
+    expect(audit.cutoffs.latestTrain).toBeGreaterThan(
+      audit.cutoffs.earliestTest,
+    );
+    expect(audit.passed).toBe(false);
+    expect(
+      audit.reasons.some((reason) => /strictly newer/.test(reason)),
+      audit.reasons.join(" | "),
+    ).toBe(true);
   });
 });

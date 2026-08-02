@@ -326,7 +326,7 @@ def cluster_report(records: list[dict]) -> dict:
 
     A slice is `<partition>/<label>`, and reporting per slice is not decoration:
     the aggregate hides the shape that actually leaks. One thread contributing two
-    human rows to `development` and one AI row derived from the same seed is ONE
+    human rows to `dev` and one AI row derived from the same seed is ONE
     cluster of three in the aggregate and looks like three well-behaved little
     clusters if you only ever look per class. E3's power criterion is evaluated per
     stratum, so the numbers have to exist per stratum.

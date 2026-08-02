@@ -152,12 +152,18 @@ Frase R7-correta no lugar de "erro desconhecido":
    produz `passed` por registro**;
 4. **linhagem fail-closed**: todo gerado referencia pai humano presente; a execução chama
    `assertDerivedParentsResolve` **antes do split** e colocaliza pai+gerações+derivados. Referência
-   ausente reprova. A função existe em **`benchmark/schema.ts:3440`** e hoje só é chamada por
-   `benchmark/tests/schema-v3.test.ts` — o comando de split **não** a chama, e `benchmark/split.ts:419`
-   apenas a menciona em comentário. A brecha declarada de `humanSeed` está em `split.ts:208-225`, que
+   ausente reprova. A função existe em **`benchmark/schema.ts:3440`** e o comando de split **a chama**, em
+   `benchmark/commands/split.ts`, antes de particionar — foi ligada na unidade E2, e por isso a
+   união de conectividade deixou de ser condicional no caminho do comando. A brecha declarada de `humanSeed` está em `split.ts:208-225`, que
    registra "C2 measured 782 of 783 parent references resolving to no row";
-5. E2 congela as cinco partições (⚠️ **o splitter atual é estruturalmente de TRÊS partições** —
-   `split.ts:143-155`, `commands/split.ts:108-115` — a migração é trabalho real, não configuração);
+5. **E2 congela as cinco partições — FEITO em 2026-07-31.** O splitter, a auditoria, o artefato,
+   o comando e o montador Python falam `train/dev/cal-A/cal-B/test` em 45/5/10/20/20; as decisões
+   estão no registro § "Unidade 3 — E2". A migração foi trabalho real, como avisado. Ela expôs
+   uma contradição entre três números congelados (composição do corpus, fração de `test`, piso de
+   negativos humanos), **resolvida pela decisão F1-5n emendada**: o piso de linhas virou medição
+   publicada e entrou um gate que recusa congelar corpus de `release` sem o atestado de composição
+   do E3. **O que fica de pé: release está bloqueado** até o corpus ser dimensionado (≈20 mil linhas
+   humanas) ou o piso do E3 ser formalmente revisto;
    E3 mínimo prova contagens por célula, componentes independentes, pareamento, resolução de
    linhagem e ausência de artefatos. Caminho selado ⇒ revisão adversarial.
 

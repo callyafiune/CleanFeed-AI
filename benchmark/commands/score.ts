@@ -10,8 +10,8 @@
 // at CLI parse time, so this command carries no ledger.
 //
 // Standalone benchmark module: MUST NOT import from the extension bundle (src/).
-// The real launch is an operator step (Phase 3 Step 9): the Vitest suite exercises
-// only the CLI guards, while the Playwright E2E spec proves the live path.
+// This command DOES launch a real browser (`chromium.launchPersistentContext` below), with
+// the candidate extension loaded, and it is the only benchmark command that does.
 
 import { resolve } from "node:path";
 
@@ -42,6 +42,7 @@ import { CommandError, readJsonFile, readTextFile } from "./io.ts";
 
 import { chromium, type BrowserContext, type Page } from "playwright";
 import { join } from "node:path";
+import type { FitPartition } from "../split.ts";
 
 /** The page and global the candidate extension publishes its API on. */
 const CANDIDATE_PAGE = "model-benchmark.html";
@@ -53,7 +54,7 @@ const CANDIDATE_READY_TIMEOUT_MS = 300_000;
 export interface ScoreOptions {
   datasetDirectory: string;
   splitArtifactPath: string;
-  partition: "development" | "calibration";
+  partition: FitPartition;
   candidateExtensionDir: string;
   outputDirectory: string;
   resume: boolean;
@@ -163,7 +164,7 @@ export async function runScore(options: ScoreOptions): Promise<string> {
 }
 
 /**
- * Navigates the development/calibration driver and waits until the candidate
+ * Navigates the dev/cal-A driver and waits until the candidate
  * has published its terminal API. Exported so the race regression is testable
  * without launching the 106M model bundle.
  */

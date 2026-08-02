@@ -235,7 +235,7 @@ function validManifest() {
     chromeVersion: RELEASE_CHROME_VERSION,
     datasetDigest: "f".repeat(64),
     splitDigest: "0".repeat(64),
-    partition: "development",
+    partition: "dev",
     shardSize: 100,
     shardCount: 2,
     shards: [
@@ -250,7 +250,7 @@ function validManifest() {
 describe("prediction manifest", () => {
   it("parses a well-formed development manifest", () => {
     const manifest = parsePredictionManifest(validManifest());
-    expect(manifest.partition).toBe("development");
+    expect(manifest.partition).toBe("dev");
     expect(manifest.holdoutConsumptionId).toBeNull();
   });
 
@@ -264,7 +264,7 @@ describe("prediction manifest", () => {
     expect(() =>
       parsePredictionManifest({
         ...validManifest(),
-        partition: "calibration",
+        partition: "cal-A",
         holdoutConsumptionId: "session-1",
       }),
     ).toThrow(/holdoutConsumptionId must be null/);

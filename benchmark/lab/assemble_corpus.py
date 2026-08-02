@@ -42,7 +42,7 @@ cleanfeed-canonical-assembly):
     (fractions sum to 1 at full float precision) + derivationRoot != id.
   * humanSourceType = register (5 required types). hardNegativeFamily tagged
     heuristically so all 6 required families are present on human records.
-  * createdAt assigns a dev/cal/test BLOCK (20/30/50 per class); held-out AI
+  * createdAt assigns a train/dev/cal-A/cal-B/test BLOCK (45/5/10/20/20 per class); held-out AI
     generator families are forced entirely into the test block (latest time),
     as the split requires them after the test cut.
 
@@ -90,15 +90,39 @@ SOURCE_SNAPSHOT = {
     "src_carolina": "carolina",
 }
 
-# Block timestamps drive the temporal split (dev < cal < test).
-BLOCK_TIME = {"development": 1_000_000, "calibration": 2_000_000, "test": 3_000_000}
-# The 20/30/50 blocks per class, and the ONLY place they are written down.
-# `assign_partitions` reads this dict instead of repeating 0.2/0.3 inline, which it
-# used to do while this constant sat here with no reader at all: two spellings of one
-# frozen decision, either of which could be edited without the other moving.
-# `test` carries no fraction because it is the REMAINDER — deriving it by rounding
-# too would let the three blocks fail to sum to the class size.
-CLASS_FRACTIONS = {"development": 0.2, "calibration": 0.3}
+# Block timestamps drive the temporal split, one per partition in temporal order
+# (train < dev < cal-A < cal-B < test). The splitter finds its four cuts between these
+# blocks, so the spacing only has to be strictly increasing.
+BLOCK_TIME = {
+    "train": 1_000_000,
+    "dev": 2_000_000,
+    "cal-A": 3_000_000,
+    "cal-B": 4_000_000,
+    "test": 5_000_000,
+}
+# The 45/5/10/20/20 blocks per class, and the ONLY place they are written down: a second
+# spelling of one frozen decision could be edited without the first moving, so
+# `assign_partitions` reads this dict rather than repeating the fractions inline.
+# `test` carries no fraction because it is the REMAINDER — deriving it by rounding too
+# would let the five blocks fail to sum to the class size.
+CLASS_FRACTIONS = {"train": 0.45, "dev": 0.05, "cal-A": 0.1, "cal-B": 0.2}
+
+# Mirrors `CLASS_TOLERANCE` in benchmark/split.ts, which is what the audit compares against.
+# Absolute, not relative to the target: two points is forty percent of `dev`'s 5%, so a `dev`
+# holding 3% or 7% of a class is legal, and a guard stricter than this refuses corpora the
+# splitter accepts. `test_extractors.py` compares it against the TypeScript constant.
+CLASS_TOLERANCE = 0.02
+
+# O epsilon que toda comparacao de tolerancia soma, espelhando `CLASS_TOLERANCE_EPSILON` em
+# benchmark/split.ts. A tolerancia e INCLUSIVA — 3% e 7% num `dev` sao legais pelo contrato — e
+# float binario nao representa a borda: `abs(0.03 - 0.05)` da 0.020000000000000004, maior que
+# 0.02. Comparar float cru recusa exactamente os dois valores que o contrato admite.
+CLASS_TOLERANCE_EPSILON = 1e-9
+
+
+def within_class_tolerance(fracao: float, alvo: float) -> bool:
+    """`|fracao - alvo| <= CLASS_TOLERANCE`, com a borda INCLUIDA."""
+    return abs(fracao - alvo) <= CLASS_TOLERANCE + CLASS_TOLERANCE_EPSILON
 
 # domainSource (candidate) -> humanSourceType (register). datasets set aside.
 REGISTER = {
@@ -260,7 +284,7 @@ def read_jsonl(path: Path) -> list[dict]:
 # All 10.000 rows of the sealed corpus therefore assert that two named reviewers
 # examined them and concurred, and that a third audited them for personal data and
 # cleared them — and no human ever looked at a single row. The review timestamps
-# were the three partition BLOCK TIMES (1.000.000 / 2.000.000 / 3.000.000 ms,
+# were the partition BLOCK TIMES (1.000.000 ms and up,
 # January 1970), so even the dates were the split's bookkeeping wearing a governance
 # label. `integrity.review-ledger-hash` and `integrity.dataset-audit-sealed` passed
 # over all of it, because both asked whether the field was PRESENT.
@@ -1085,28 +1109,351 @@ def thin_held_out_families(
     return {f: written[f] for f in sorted(held_out) if written[f] < minimum}
 
 
+class UnsplittableCorpus(RuntimeError):
+    """A stamped corpus the connected splitter cannot honor."""
+
+
+# The two union relations of `connectedComponentRoots` (benchmark/split.ts), mirrored.
+# They are DIFFERENT relations and the distinction is the whole point:
+#
+#   * SHARED VALUE (`GROUP_KEYS`): two record-lines carrying the same identity here are
+#     always one component. `generatorFamily` is deliberately NOT in this list — unioning
+#     on it would collapse a whole family into one indivisible block.
+#   * PARENT LINKAGE (`PARENT_LINKAGE_AXES`): a record-line whose identity NAMES ANOTHER
+#     record-line's id joins that row, and only when the named row is present. Naming
+#     itself unions nothing.
+#
+# Both lists are a COPY of the ones benchmark/split.ts declares, and a copy that drifts accepts
+# an axis the splitter unions on or refuses one it ignores.
+SPLIT_GROUP_KEYS: tuple[str, ...] = (
+    "author",
+    "source",
+    "domainSource",
+    "generatorVersion",
+    "promptTemplate",
+    "collectionBatch",
+    "nearDuplicate",
+    "derivationRoot",
+)
+
+SPLIT_PARENT_LINKAGE_AXES: tuple[str, ...] = ("derivationRoot", "humanSeed")
+
+
+def connected_components(records: list[dict]) -> dict[str, str]:
+    """Every record id -> its component root, by the splitter's own two relations.
+
+    Union-find with transitive closure, because a chain seed -> generation -> derivative is
+    ONE component even though no single axis links its ends.
+    """
+    parent: dict[str, str] = {rec["id"]: rec["id"] for rec in records}
+
+    def find(x: str) -> str:
+        while parent[x] != x:
+            parent[x] = parent[parent[x]]
+            x = parent[x]
+        return x
+
+    def union(a: str, b: str) -> None:
+        ra, rb = find(a), find(b)
+        if ra != rb:
+            parent[rb] = ra
+
+    for axis in SPLIT_GROUP_KEYS:
+        first_by_value: dict[str, str] = {}
+        for rec in records:
+            identity = group_axes.identity_of((rec.get("groups") or {}).get(axis))
+            if identity is None:
+                continue
+            seen = first_by_value.get(identity)
+            if seen is None:
+                first_by_value[identity] = rec["id"]
+            else:
+                union(seen, rec["id"])
+
+    ids = {rec["id"] for rec in records}
+    for rec in records:
+        for axis in SPLIT_PARENT_LINKAGE_AXES:
+            named = group_axes.identity_of((rec.get("groups") or {}).get(axis))
+            if named is not None and named != rec["id"] and named in ids:
+                union(rec["id"], named)
+
+    return {rec["id"]: find(rec["id"]) for rec in records}
+
+
+def declared_group_axes(corpo_injetado: str | None = None) -> dict[str, tuple[str, ...]]:
+    """`provenance.sourceId` -> the axes that source DECLARED applicable.
+
+    Read from `benchmark/source-manifest.ts`, the same frozen inventory the audit joins
+    against, instead of restated here: a second spelling of the join would let this side
+    accept an axis the audit refuses.
+    """
+    if corpo_injetado is not None:
+        # Só os testes injetam. Existe porque provar que o parse falha fechado exige um corpo
+        # malformado, e um teste que apenas chama a função contra o arquivo atual não prova nada.
+        fonte = corpo_injetado
+    else:
+        fonte = (
+            Path(__file__).resolve().parent.parent / "source-manifest.ts"
+        ).read_text(encoding="utf-8")
+    # SOMENTE o corpo de `V3_HUMAN_SOURCE_INVENTORY`, que e a autoridade que a auditoria
+    # usa. Varrer o arquivo inteiro colhe tambem `A1_BLOCKED_HUMAN_SOURCES` — foi medido
+    # trazendo `src_ptso`, que esta BLOQUEADO — e uma autoridade com fonte a mais aceita
+    # linha que a auditoria recusa.
+    marcador = "export const V3_HUMAN_SOURCE_INVENTORY"
+    if marcador not in fonte:
+        raise RuntimeError(
+            "source-manifest.ts nao expoe V3_HUMAN_SOURCE_INVENTORY: espelho nao pode "
+            "adivinhar a autoridade"
+        )
+    corpo = fonte.split(marcador, 1)[1]
+    fim = corpo.find(chr(10) + "];")
+    if fim == -1:
+        raise RuntimeError(
+            "V3_HUMAN_SOURCE_INVENTORY nao termina em ']' reconhecivel: parse incompleto"
+        )
+    corpo = corpo[:fim]
+
+    por_fonte: dict[str, tuple[str, ...]] = {}
+    for source_id, _meio, eixos in re.findall(
+        r'sourceId:\s*"([^"]+)"(.*?)declaredGroupAxes:\s*\[([^\]]*)\]',
+        corpo,
+        re.S,
+    ):
+        if source_id in por_fonte:
+            raise RuntimeError(
+                f"{source_id} aparece duas vezes no inventario: espelho ambiguo"
+            )
+        por_fonte[source_id] = tuple(re.findall(r'"([a-zA-Z]+)"', eixos))
+
+    # CONSUMO COMPLETO, nao "pelo menos uma". Uma entrada malformada faz a regex saltar
+    # sobre ela e o mapa volta MENOR, silenciosamente — e um mapa com fonte a menos deixa
+    # de recusar linha que a auditoria recusa. Contar os `sourceId` do corpo e exigir
+    # igualdade e o que transforma parse parcial em falha.
+    declarados = re.findall(r'sourceId:\s*"([^"]+)"', corpo)
+    if len(declarados) != len(por_fonte):
+        faltando = sorted(set(declarados) - set(por_fonte))
+        raise RuntimeError(
+            f"inventario tem {len(declarados)} sourceId e o espelho extraiu "
+            f"{len(por_fonte)}: parse parcial, faltando {faltando}"
+        )
+    if not por_fonte:
+        raise RuntimeError("nenhuma fonte extraida do inventario: parse falhou fechado")
+    return por_fonte
+
+
+def realized_blocks(records: list[dict]) -> dict[str, str]:
+    """Each record id -> the block the SPLITTER will actually place it in.
+
+    A component whose record-lines all carry one stamp keeps that block. One that straddles
+    falls through to `train`, because the splitter places a component only when its WHOLE
+    time range fits inside a band and `train` is its fallback. So the stamps are a proposal,
+    and this is what the proposal becomes.
+    """
+    roots = connected_components(records)
+    block_of_root: dict[str, str] = {}
+    for rec in records:
+        block = PARTITION_OF.get(rec["id"])
+        if block is None:
+            continue
+        root = roots[rec["id"]]
+        seen = block_of_root.get(root)
+        if seen is None:
+            block_of_root[root] = block
+        elif seen != block:
+            block_of_root[root] = "train"
+    return {
+        rec["id"]: block_of_root[roots[rec["id"]]]
+        for rec in records
+        if rec["id"] in PARTITION_OF
+    }
+
+
+def assert_stamped_corpus_is_splittable(
+    records: list[dict],
+    held_out: set[str] | None = None,
+    declared: dict[str, tuple[str, ...]] | None = None,
+) -> None:
+    """Refuse a stamped corpus the splitter or the audit would reject.
+
+    Mirrors the audit's failing conditions that a STAMPED corpus already determines, and all
+    of them rather than a subset — checking only one dimension refuses corpora the audit
+    accepts, or accepts corpora it rejects, depending on which dimension is missing:
+
+    * per-class fractions within `CLASS_TOLERANCE` of the targets, in all five partitions;
+    * `test` strictly newer than each of the other four, INCLUDING `train` — `train` is the
+      fallback, so a component straddling the last cut lands there carrying test-period text,
+      which is real leakage and the fraction check cannot see it;
+    * the three middle partitions ordered earliest-against-latest among themselves, with
+      `train` excluded because absorbing straddlers legitimately makes its newest record
+      exceed a middle partition's;
+    * held-out precedence: the splitter seats a reserved family in `test` regardless of time,
+      so a reserved component that realizes anywhere else is a constraint failure, not a
+      fraction one;
+    * no DECLARED group axis left `unknown`: the source states the dependence exists, and an
+      axis nobody recovered cannot support the split.
+
+    The audit refuses on five things, and the decision for each is stated rather than implied:
+
+    | condição da auditoria        | aqui           | por quê                                     |
+    |------------------------------|----------------|---------------------------------------------|
+    | vazamento de grupo           | NÃO espelhado  | `realized_blocks` põe o componente conexo   |
+    |                              |                | INTEIRO numa partição, então vazamento é    |
+    |                              |                | impossível por construção nesta simulação   |
+    | eixo declarado em `unknown`  | espelhado      | decidível dos registros e do inventário     |
+    | `test` estritamente mais novo| espelhado      | decidível dos tempos estampados             |
+    | meio ordenado                | espelhado      | idem                                        |
+    | frações por classe           | espelhado      | idem                                        |
+
+    Mais a precedência da reserva, que é do splitter e não da auditoria.
+
+    A straddling component is not by itself a defect: it lands in `train`, and whether that
+    breaks anything depends on its size and on which bands it spans.
+    """
+    blocks = realized_blocks(records)
+    if not blocks:
+        return
+
+    problemas: list[str] = []
+
+    targets = dict(CLASS_FRACTIONS)
+    targets["test"] = round(1.0 - sum(CLASS_FRACTIONS.values()), 10)
+
+    counts: dict[str, dict[str, int]] = {}
+    totals: dict[str, int] = {}
+    for rec in records:
+        block = blocks.get(rec["id"])
+        if block is None:
+            continue
+        label = rec["label"]
+        counts.setdefault(label, {})[block] = counts.setdefault(label, {}).get(block, 0) + 1
+        totals[label] = totals.get(label, 0) + 1
+    for label in sorted(counts):
+        for block, alvo in targets.items():
+            obtido = counts[label].get(block, 0) / totals[label]
+            if not within_class_tolerance(obtido, alvo):
+                problemas.append(
+                    f"fracao {label}/{block} realiza {obtido:.4f} contra alvo {alvo}"
+                )
+
+    # Stamped times, per REALIZED block. A straddling component keeps the times its
+    # record-lines were stamped with, so `train` can end up holding a test-band instant.
+    tempos: dict[str, list[int]] = {}
+    for rec in records:
+        block = blocks.get(rec["id"])
+        if block is None:
+            continue
+        tempos.setdefault(block, []).append(int(rec.get("createdAt", 0)))
+
+    def mais_novo(block: str) -> int | None:
+        return max(tempos[block]) if tempos.get(block) else None
+
+    def mais_antigo(block: str) -> int | None:
+        return min(tempos[block]) if tempos.get(block) else None
+
+    inicio_test = mais_antigo("test")
+    if inicio_test is not None:
+        for block in ("train", "dev", "cal-A", "cal-B"):
+            fim_bloco = mais_novo(block)
+            if fim_bloco is not None and not inicio_test > fim_bloco:
+                problemas.append(
+                    f"temporal: earliest(test)={inicio_test} nao e estritamente maior que "
+                    f"latest({block})={fim_bloco}"
+                )
+
+    meio = ("dev", "cal-A", "cal-B")
+    for i in range(1, len(meio)):
+        anterior, atual = meio[i - 1], meio[i]
+        fim_anterior, inicio_atual = mais_novo(anterior), mais_antigo(atual)
+        if fim_anterior is None or inicio_atual is None:
+            continue
+        if not inicio_atual > fim_anterior:
+            problemas.append(
+                f"temporal: earliest({atual})={inicio_atual} nao e estritamente maior que "
+                f"latest({anterior})={fim_anterior}"
+            )
+
+    if held_out:
+        for rec in records:
+            block = blocks.get(rec["id"])
+            if block is None or block == "test":
+                continue
+            familia = group_axes.identity_of(
+                (rec.get("groups") or {}).get("generatorFamily")
+            )
+            if familia in held_out:
+                problemas.append(
+                    f"reserva: {rec['id']} e da familia reservada {familia} e realiza em "
+                    f"{block} em vez de test"
+                )
+
+    autoridade = declared_group_axes() if declared is None else declared
+    for rec in records:
+        if rec["id"] not in blocks:
+            continue
+        source_id = (rec.get("provenance") or {}).get("sourceId")
+        for axis in autoridade.get(str(source_id), ()):  # type: ignore[arg-type]
+            estado = group_axes.state_of((rec.get("groups") or {}).get(axis))
+            if estado == group_axes.UNKNOWN:
+                problemas.append(
+                    f"eixo declarado: {rec['id']} vem de {source_id}, que declara "
+                    f"\"{axis}\" aplicavel, e a linha o deixa unknown"
+                )
+
+    if not problemas:
+        return
+
+    atravessando = sum(
+        1
+        for raiz, blocos in _blocos_por_componente(records).items()
+        if len(blocos) > 1
+    )
+    mostra = "; ".join(problemas[:6])
+    resto = "" if len(problemas) <= 6 else f" (+{len(problemas) - 6} mais)"
+    raise UnsplittableCorpus(
+        f"o corpus estampado nao e splitavel: {mostra}{resto}. "
+        f"{atravessando} componente(s) conectado(s) atravessam blocos e por isso caem em "
+        "train, que e o fallback do splitter."
+    )
+
+
+def _blocos_por_componente(records: list[dict]) -> dict[str, set[str]]:
+    roots = connected_components(records)
+    por_raiz: dict[str, set[str]] = {}
+    for rec in records:
+        block = PARTITION_OF.get(rec["id"])
+        if block is not None:
+            por_raiz.setdefault(roots[rec["id"]], set()).add(block)
+    return por_raiz
+
+
 def assign_partitions(records: list[dict], held_out: set[str]) -> None:
-    """Exact 20/30/50 blocks per class, with held-out families INSIDE the test
+    """Exact 45/5/10/20/20 blocks per class, with held-out families INSIDE the test
     block rather than on top of it.
 
     The split imposes two constraints at once: a held-out component whose time
-    reaches development/calibration is refused outright, AND the realized class
-    fractions must land within classTolerance (0.02) of 20/30/50. Forcing
-    held-out records into test on top of an independent 20/30/50 split of the
-    remainder satisfies the first and breaks the second — held-out families
-    reach the mixed class too (a mixing model is a generator), so 714 held-out
-    mixed records would have pushed mixed's test share to 68% and the split
-    would have refused the corpus. So size the test block first, seat the
-    held-out records in it, and top it up from the rest.
+    reaches any earlier partition is refused outright, AND the realized class
+    fractions must land within classTolerance (0.02) of 45/5/10/20/20. Forcing
+    held-out records into test on top of an independent split of the remainder
+    satisfies the first and breaks the second — held-out families reach the mixed
+    class too (a mixing model is a generator), so 714 held-out mixed records would
+    have pushed mixed's test share far past its 20% target and the split would have
+    refused the corpus. So size the test block first, seat the held-out records in
+    it, and top it up from the rest.
+
+    `test` is sized as the REMAINDER after the four rounded blocks, so the five always
+    sum to the class size exactly. That also means test absorbs the rounding error of
+    the other four — at 20% with a two-point tolerance there is room for it, and at
+    dev's 5% there would not have been.
     """
     by_class: dict[str, list[dict]] = {}
     for rec in records:
         by_class.setdefault(rec["label"], []).append(rec)
+    # Temporal order, and `test` last because it is the remainder.
+    blocks = ["train", "dev", "cal-A", "cal-B"]
     for label, recs in by_class.items():
         n = len(recs)
-        n_dev = round(n * CLASS_FRACTIONS["development"])
-        n_cal = round(n * CLASS_FRACTIONS["calibration"])
-        n_test = n - n_dev - n_cal
+        sizes = {block: round(n * CLASS_FRACTIONS[block]) for block in blocks}
+        n_test = n - sum(sizes.values())
         forced = [
             r
             for r in recs
@@ -1123,13 +1470,24 @@ def assign_partitions(records: list[dict], held_out: set[str]) -> None:
         for r in forced:
             stamp_block(r, "test")
         top_up = max(0, n_test - len(forced))
-        for i, r in enumerate(rest):
-            if i < top_up:
-                stamp_block(r, "test")
-            elif i < top_up + n_dev:
-                stamp_block(r, "development")
-            else:
-                stamp_block(r, "calibration")
+        # One cursor walked in temporal order: test first (it is being topped up),
+        # then each earlier block in turn. Written as a walk rather than as a chain of
+        # elif thresholds because five hand-written cumulative bounds is where an
+        # off-by-one silently starves `dev`, the block with the least room to lose.
+        cursor = 0
+        for r in rest[:top_up]:
+            stamp_block(r, "test")
+        cursor = top_up
+        for block in blocks:
+            for r in rest[cursor : cursor + sizes[block]]:
+                stamp_block(r, block)
+            cursor += sizes[block]
+        # Whatever rounding left over goes to train, the largest block and the one the
+        # splitter itself uses as its fallback.
+        for r in rest[cursor:]:
+            stamp_block(r, "train")
+
+    assert_stamped_corpus_is_splittable(records, held_out)
 
 
 # --- loading + selection -----------------------------------------------------
@@ -1571,8 +1929,13 @@ def main() -> None:
             per_family.setdefault(family, Counter())[r["label"]] += 1
     positives = {f: sum(c.values()) for f, c in per_family.items()}
     class_size = Counter(r["label"] for r in records)
+    # The SAME arithmetic `assign_partitions` uses, so the two cannot disagree about how
+    # much room the blind block has: test is the remainder after the four rounded blocks.
+    # A second, independently written copy of this sum would let a family be declared
+    # held-out with no room to hold it.
     test_capacity = {
-        lab: n - round(n * 0.2) - round(n * 0.3) for lab, n in class_size.items()
+        lab: n - sum(round(n * CLASS_FRACTIONS[b]) for b in CLASS_FRACTIONS)
+        for lab, n in class_size.items()
     }
 
     eligible = sorted(

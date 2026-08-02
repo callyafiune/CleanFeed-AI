@@ -4,7 +4,7 @@
 // It re-parses the closed prediction manifest, recomputes its digest, verifies
 // every shard hash, and asserts EXACT completeness against the partition's ids
 // (no missing, extra or duplicate). The RuntimeParityManifestV1 is parsed and
-// its digest must equal the manifest's. development/calibration forbid any
+// its digest must equal the manifest's. dev and cal-A forbid any
 // ledger/consumption id; test requires them and an active started session whose
 // holdoutConsumptionId matches.
 //
@@ -21,7 +21,7 @@ import {
   validateSplitArtifact,
   type SplitArtifact,
 } from "../split-artifact.ts";
-import type { Partition } from "../split.ts";
+import type { ScoringPartition } from "../split.ts";
 import {
   CommandError,
   readJsonFile,
@@ -32,7 +32,7 @@ import {
 export interface ValidatePredictionsOptions {
   datasetDirectory: string;
   splitArtifactPath: string;
-  partition: Partition;
+  partition: ScoringPartition;
   predictionsDirectory: string;
   runtimeParityPath: string;
   ledgerPath?: string;

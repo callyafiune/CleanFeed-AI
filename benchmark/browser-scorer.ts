@@ -7,8 +7,8 @@
 // It compares every identity and parity field of the page's `ModelBenchmarkStatusV1`
 // (embedded at build time) to the run (derived from the emitted runtime-parity
 // manifest) BEFORE sending any corpus text, so an embedded/emitted drift or a
-// stylometric/backend-selector substitution can never score. Development and
-// calibration use an opaque run id and a null consumption; the test partition is
+// stylometric/backend-selector substitution can never score. The dev and cal-A
+// runs carry an opaque run id and a null consumption; the test partition is
 // admitted only when the internal call already holds the active Phase 2
 // `HoldoutConsumption` whose id equals both the run id and the run's
 // holdoutConsumptionId.
@@ -28,6 +28,7 @@ import {
   type PredictionManifestV1,
   type StrictPredictionV2,
 } from "./prediction-schema.ts";
+import type { ScoringPartition } from "./split.ts";
 
 /**
  * The Node-side scoring run. Every scientific identity field appears exactly
@@ -39,7 +40,7 @@ export interface BrowserScoreRun {
   runId: string;
   datasetDigest: string;
   splitDigest: string;
-  partition: "development" | "calibration" | "test";
+  partition: ScoringPartition;
   modelId: string;
   modelVersion: string;
   bundleDigest: string;
@@ -134,7 +135,7 @@ function fail(code: string, message: string): never {
 }
 
 /**
- * Guards the holdout lease. Development and calibration use an opaque run id and
+ * Guards the holdout lease. dev and cal-A use an opaque run id and
  * MUST carry no consumption; the test partition is admitted only when the caller
  * already holds the active `HoldoutConsumption` whose id equals both the run id
  * and the run's declared holdoutConsumptionId.
@@ -164,13 +165,13 @@ export function assertBrowserScoreRunConsumption(
   if (consumption !== null && consumption !== undefined) {
     fail(
       "SCORE_RUN_FORBIDS_CONSUMPTION",
-      "development and calibration scoring must not carry a holdout consumption",
+      "dev and cal-A scoring must not carry a holdout consumption",
     );
   }
   if (run.holdoutConsumptionId !== null) {
     fail(
       "SCORE_RUN_FORBIDS_CONSUMPTION",
-      "development and calibration runs must declare a null holdoutConsumptionId",
+      "dev and cal-A runs must declare a null holdoutConsumptionId",
     );
   }
 }

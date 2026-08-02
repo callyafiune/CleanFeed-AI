@@ -4,9 +4,8 @@
 // Every governance input is re-parsed and cross-checked before any calibration:
 // the sealed dataset audit (digest recomputed and bound to the manifest bytes),
 // the source readiness report, the frozen split artifact and the runtime parity
-// manifest. The development and calibration prediction artifacts supply the raw
-// path scores; the test partition ids are passed only so the fit can REFUSE any
-// of them. The output frozen-calibration.json seals it all, and the two consumed
+// manifest. The dev and cal-A prediction artifacts supply the raw path scores; the
+// test partition ids are passed only so the fit can REFUSE any of them. The output frozen-calibration.json seals it all, and the two consumed
 // prediction manifests are written alongside so evaluate can re-bind them into
 // the report.
 //
@@ -46,6 +45,7 @@ import {
   validateSplitArtifact,
   type SplitArtifact,
 } from "../split-artifact.ts";
+import { FIT_PARTITIONS, type Partition } from "../split.ts";
 import {
   CommandError,
   readJsonFile,
@@ -123,13 +123,18 @@ export async function runFit(options: FitOptions): Promise<string> {
 
   // Fail closed on prediction completeness, exactly like validate-predictions
   // (assertPredictionCompleteness) and evaluate (assertTestCoverage): the union
-  // of the development and calibration prediction ids must cover EXACTLY the set
-  // of non-test split-assigned ids — one row per id (ANY status counts for
-  // coverage), no missing, no extra, and no duplicate/cross-artifact id
-  // collision — so the sealed thresholds are never fit over a denominator that
-  // diverges from the frozen split.
-  const nonTestIds = artifact.assignments
-    .filter((assignment) => assignment.partition !== "test")
+  // of the two prediction id sets must cover EXACTLY the dev + cal-A split-assigned
+  // ids — one row per id (ANY status counts for coverage), no missing, no extra, and
+  // no duplicate/cross-artifact id collision — so the sealed thresholds are never fit
+  // over a denominator that diverges from the frozen split.
+  // A POSITIVE allowlist, and it must stay one: a negative filter over partition names
+  // admits `train` — data the detector trained on — and `cal-B`, which stays
+  // byte-untouched until the v2 blind measurement. Neither exclusion is visible to the
+  // compiler, because every partition name is the same type.
+  const fitPopulationIds = artifact.assignments
+    .filter((assignment) =>
+      (FIT_PARTITIONS as readonly Partition[]).includes(assignment.partition),
+    )
     .map((assignment) => assignment.id);
   const combinedPredictions = [
     ...development.predictions,
@@ -146,7 +151,7 @@ export async function runFit(options: FitOptions): Promise<string> {
     seenPredictionIds.add(prediction.id);
   }
   try {
-    assertPredictionCompleteness(nonTestIds, combinedPredictions);
+    assertPredictionCompleteness(fitPopulationIds, combinedPredictions);
   } catch (error) {
     throw new CommandError(
       "FIT_PREDICTIONS_INCOMPLETE",
@@ -160,17 +165,14 @@ export async function runFit(options: FitOptions): Promise<string> {
     ),
   );
 
-  // KNOWN DEFECT, retained on purpose pending plan tasks G1/G2: threshold
-  // selection below consumes ALL non-test records with null raw scores coerced
-  // to 0 (`documentRawScore ?? 0`). That coercion is the R5 violation A3
-  // removed everywhere else, and the symmetry it used to claim with
-  // evaluate.ts's decision metrics ENDED with A3: evaluate.ts no longer scores
-  // an undecided row at all, so nothing here mirrors it any more. Direction of
-  // the bias, so nobody preserves it by accident: padding the human sample with
-  // fake 0s pulls the one-sided quantile DOWN, which LOWERS the threshold and
-  // RAISES the real FPR. It breaks the accusation budget rather than flattering
-  // it. G2 rewrites this population wholesale (conformal quantile over
-  // date-cutoff core humans of cal-B) and must NOT carry the `?? 0` over.
+  // Threshold selection below coerces a null raw score to 0 (`documentRawScore ?? 0`) over
+  // the fit population (`dev` and `cal-A`). A null raw score means the document was NOT
+  // scored, so the coercion counts an abstention as a confident negative.
+  //
+  // The DIRECTION of the resulting bias is the part that must not be lost: padding the
+  // human sample with fake 0s pulls the one-sided quantile DOWN, which LOWERS the threshold
+  // and RAISES the real false-positive rate. It breaks the accusation budget rather than
+  // flattering it, so the number it produces is not a safe over-estimate.
   // Calibrator fitting is already clean: it consumes ONLY status === "scored"
   // records, mirroring metrics.ts `scoredBinary`, so an abstained/errored raw-0
   // never contaminates the calibration curve.
@@ -196,6 +198,14 @@ export async function runFit(options: FitOptions): Promise<string> {
   for (const assignment of artifact.assignments) {
     if (assignment.partition === "test") {
       testIds.push(assignment.id);
+      continue;
+    }
+    // Explicitly, not by absence of a prediction: `train` and `cal-B` reach this loop,
+    // and skipping them because nobody supplied their scores would make the exclusion
+    // an accident of the inputs instead of a rule.
+    if (
+      !(FIT_PARTITIONS as readonly Partition[]).includes(assignment.partition)
+    ) {
       continue;
     }
     const record = recordsById.get(assignment.id);
@@ -269,7 +279,7 @@ export async function runFit(options: FitOptions): Promise<string> {
   const evaluatorDigest = await computeEvaluatorDigest(REPO_ROOT);
 
   const frozen = fitFrozenCalibration({
-    partition: "calibration",
+    partition: "cal-A",
     fitSeed: options.seed,
     samples,
     positives,

@@ -7,7 +7,7 @@
 //     `wilsonOneSided(unionFalsePositives, negatives, "upper") <= 0.05`.
 //   - The VISUAL ACTION scans ONLY the document score, requires a threshold at
 //     or above the warning document threshold, and obeys a stricter 2% budget.
-//   - The fit runs on development + calibration ONLY. It NEVER reads the blocked
+//   - The fit runs on dev + cal-A ONLY. It NEVER reads the blocked
 //     test: any id assigned to the test partition is refused, no test scores or
 //     labels are accepted, and `partitionsUsed` is frozen to the two fit splits.
 //
@@ -23,7 +23,10 @@
 
 import { canonicalJson } from "../contracts/canonical-json.ts";
 import type { CorpusSourceReadinessReport } from "../contracts/source-readiness.ts";
-import type { RuntimeParityManifestV1 } from "../contracts/runtime-parity.ts";
+import type {
+  RuntimeParityDigestInput,
+  RuntimeParityManifestV1,
+} from "../contracts/runtime-parity.ts";
 import type { SerializedCalibratorV1 } from "../contracts/calibration-profile.ts";
 import { applyCalibrator } from "./calibrators.ts";
 import {
@@ -40,6 +43,7 @@ import {
   RELEASE_CHROME_VERSION,
   type PredictionManifestV1,
 } from "./prediction-schema.ts";
+import type { FitPartition } from "./split.ts";
 
 const WARNING_FPR_BUDGET = 0.05;
 const VISUAL_FPR_BUDGET = 0.02;
@@ -74,7 +78,7 @@ export interface FitSampleScores {
 
 export interface FitFrozenCalibrationInput {
   /** Guard: the blocked test partition may never drive a fit. */
-  partition: "development" | "calibration";
+  partition: FitPartition;
   fitSeed: number;
   /** Human negatives (label 0) that define the false-positive budget. */
   samples: readonly FitSampleScores[];
@@ -387,6 +391,94 @@ export function readThresholdEvidence(
   );
 }
 
+/**
+ * The three governance identities that a self-digest covers, in ONE place each.
+ *
+ * Each is declared as `Record<keyof T, boolean>` — every field of the contract classified as
+ * inside the identity or outside it. A field added to the contract and not classified is a
+ * COMPILE error, which is the only thing that keeps a projection from silently going stale
+ * while its digest still recomputes. The canonical serialization sorts keys, so selecting the
+ * fields moves no digest.
+ */
+
+const DATASET_AUDIT_IDENTITY: Record<keyof DatasetAudit, boolean> = {
+  datasetId: true,
+  scientificUse: true,
+  releaseEligible: true,
+  recordCount: true,
+  counts: true,
+  sourceTypes: true,
+  hardNegativeFamilies: true,
+  generatorFamilies: true,
+  labelBasisCounts: true,
+  licenses: true,
+  recordsSha256: true,
+  reviewLedgerSha256: true,
+  sourceManifestSha256: true,
+  sealed: true,
+  auditDigest: false,
+};
+
+const SOURCE_READINESS_IDENTITY: Record<
+  keyof CorpusSourceReadinessReport,
+  boolean
+> = {
+  schemaVersion: true,
+  status: true,
+  sourceManifestDigest: true,
+  recordCount: true,
+  sourceCount: true,
+  acquisitionCounts: true,
+  protocols: true,
+  blockingReasons: true,
+  reportDigest: false,
+};
+
+function identityOf<T extends object>(
+  value: T,
+  fields: Record<keyof T, boolean>,
+): Record<string, unknown> {
+  const projected: Record<string, unknown> = {};
+  for (const key of Object.keys(fields) as (keyof T)[]) {
+    if (fields[key]) projected[key as string] = value[key];
+  }
+  return projected;
+}
+
+/**
+ * The identity fields `runtimeParityDigest` seals. Typed by the contract's own
+ * `RuntimeParityDigestInput`, so a field added to the manifest and omitted here is a compile
+ * error rather than a projection that quietly stops covering it.
+ */
+export function runtimeParityIdentity(
+  parity: RuntimeParityManifestV1,
+): RuntimeParityDigestInput {
+  return {
+    schemaVersion: parity.schemaVersion,
+    modelId: parity.modelId,
+    modelVersion: parity.modelVersion,
+    bundleDigest: parity.bundleDigest,
+    aggregationVersion: parity.aggregationVersion,
+    contentCompositionVersion: parity.contentCompositionVersion,
+    tokenizerDigest: parity.tokenizerDigest,
+    inferenceCoreDigest: parity.inferenceCoreDigest,
+  };
+}
+
+/** The identity fields `auditDigest` seals. */
+export function datasetAuditIdentity(
+  audit: DatasetAudit,
+): Record<string, unknown> {
+  return identityOf(audit, DATASET_AUDIT_IDENTITY);
+}
+
+/** The identity fields `reportDigest` seals. */
+export function sourceReadinessIdentity(
+  readiness: CorpusSourceReadinessReport,
+): Record<string, unknown> {
+  return identityOf(readiness, SOURCE_READINESS_IDENTITY);
+}
+
 export interface FrozenCalibrationArtifact {
   schemaVersion: 1;
   model: {
@@ -412,7 +504,7 @@ export interface FrozenCalibrationArtifact {
   sourceReadinessDigest: string;
   splitDigest: string;
   evaluatorDigest: string;
-  partitionsUsed: ["development", "calibration"];
+  partitionsUsed: ["dev", "cal-A"];
   calibrators: {
     document: SerializedCalibratorV1;
     localized: SerializedCalibratorV1;
@@ -526,7 +618,7 @@ const IDENTITY_FIELDS = [
  * are bridged to the same source-manifest bytes.
  */
 function validateFitInputs(input: FitFrozenCalibrationInput): FrozenIdentity {
-  if (input.partition !== "development" && input.partition !== "calibration") {
+  if (input.partition !== "dev" && input.partition !== "cal-A") {
     fail("test partition is forbidden during fit");
   }
 
@@ -534,11 +626,11 @@ function validateFitInputs(input: FitFrozenCalibrationInput): FrozenIdentity {
   const development = parsePredictionManifest(input.developmentManifest);
   const calibration = parsePredictionManifest(input.calibrationManifest);
 
-  if (development.partition !== "development") {
-    fail("development manifest must declare the development partition");
+  if (development.partition !== "dev") {
+    fail("development manifest must declare the dev partition");
   }
-  if (calibration.partition !== "calibration") {
-    fail("calibration manifest must declare the calibration partition");
+  if (calibration.partition !== "cal-A") {
+    fail("calibration manifest must declare the cal-A partition");
   }
 
   for (const manifest of [development, calibration]) {
@@ -569,16 +661,7 @@ function validateFitInputs(input: FitFrozenCalibrationInput): FrozenIdentity {
 
   // Runtime parity binds the SAME inference core as benchmark and release.
   const parity = input.runtimeParity;
-  const parityIdentity = {
-    schemaVersion: parity.schemaVersion,
-    modelId: parity.modelId,
-    modelVersion: parity.modelVersion,
-    bundleDigest: parity.bundleDigest,
-    aggregationVersion: parity.aggregationVersion,
-    contentCompositionVersion: parity.contentCompositionVersion,
-    tokenizerDigest: parity.tokenizerDigest,
-    inferenceCoreDigest: parity.inferenceCoreDigest,
-  };
+  const parityIdentity = runtimeParityIdentity(parity);
   if (canonicalDigest(parityIdentity) !== parity.runtimeParityDigest) {
     fail("runtime parity digest does not match its identity fields");
   }
@@ -601,22 +684,7 @@ function validateFitInputs(input: FitFrozenCalibrationInput): FrozenIdentity {
   if (audit.sealed !== true) {
     fail("dataset audit must be sealed before a fit");
   }
-  const auditIdentity = {
-    datasetId: audit.datasetId,
-    scientificUse: audit.scientificUse,
-    releaseEligible: audit.releaseEligible,
-    recordCount: audit.recordCount,
-    counts: audit.counts,
-    sourceTypes: audit.sourceTypes,
-    hardNegativeFamilies: audit.hardNegativeFamilies,
-    generatorFamilies: audit.generatorFamilies,
-    labelBasisCounts: audit.labelBasisCounts,
-    licenses: audit.licenses,
-    recordsSha256: audit.recordsSha256,
-    reviewLedgerSha256: audit.reviewLedgerSha256,
-    sourceManifestSha256: audit.sourceManifestSha256,
-    sealed: audit.sealed,
-  };
+  const auditIdentity = datasetAuditIdentity(audit);
   if (canonicalDigest(auditIdentity) !== audit.auditDigest) {
     fail("dataset auditDigest does not match the recomputed audit");
   }
@@ -640,16 +708,7 @@ function validateFitInputs(input: FitFrozenCalibrationInput): FrozenIdentity {
   if (readiness.status !== "ready") {
     fail("source readiness report must be ready before a fit");
   }
-  const readinessIdentity = {
-    schemaVersion: readiness.schemaVersion,
-    status: readiness.status,
-    sourceManifestDigest: readiness.sourceManifestDigest,
-    recordCount: readiness.recordCount,
-    sourceCount: readiness.sourceCount,
-    acquisitionCounts: readiness.acquisitionCounts,
-    protocols: readiness.protocols,
-    blockingReasons: readiness.blockingReasons,
-  };
+  const readinessIdentity = sourceReadinessIdentity(readiness);
   if (canonicalDigest(readinessIdentity) !== readiness.reportDigest) {
     fail("source readiness reportDigest does not match the recomputed report");
   }
@@ -681,13 +740,26 @@ function validateFitInputs(input: FitFrozenCalibrationInput): FrozenIdentity {
   if (typeof declaredSourceDigest !== "string") {
     fail("source manifest must carry a sourceManifestDigest");
   }
-  const strippedSource: Record<string, unknown> = {};
+  // `Object.create(null)`, not `{}`: the keys come from a parsed manifest, and assigning to
+  // `__proto__` on a plain object replaces the prototype instead of creating a key — the key
+  // would disappear from the canonical identity the digest is computed over.
+  const strippedSource = Object.create(null) as Record<string, unknown>;
   for (const key of Object.keys(sourceObject)) {
     if (key !== "sourceManifestDigest") {
       strippedSource[key] = sourceObject[key];
     }
   }
-  if (canonicalDigest(strippedSource) !== declaredSourceDigest) {
+  // Canonicalization can THROW on a hostile key — `__proto__` survives the copy above and
+  // the canonical serializer refuses it. This path is fail-closed, so the refusal is right;
+  // what matters is that it carries this module's coded error instead of leaking a
+  // serializer exception to the caller.
+  let recomputedSourceDigest: string;
+  try {
+    recomputedSourceDigest = canonicalDigest(strippedSource);
+  } catch {
+    fail("source manifest carries a key the canonical serialization refuses");
+  }
+  if (recomputedSourceDigest !== declaredSourceDigest) {
     fail("source manifest sourceManifestDigest is inconsistent with its body");
   }
   if (declaredSourceDigest !== readiness.sourceManifestDigest) {
@@ -1113,7 +1185,7 @@ export function fitFrozenCalibration(
     sourceReadinessDigest: identity.sourceReadinessDigest,
     splitDigest: identity.splitDigest,
     evaluatorDigest: input.evaluatorDigest,
-    partitionsUsed: ["development", "calibration"],
+    partitionsUsed: ["dev", "cal-A"],
     calibrators: {
       document: documentSelection.model,
       localized: localizedSelection.model,

@@ -46,7 +46,9 @@ import {
   type MetricEstimate,
 } from "../metrics.ts";
 import type { SliceSummary } from "../slices.ts";
-import type { SplitArtifact } from "../split-artifact.ts";
+import type { SplitArtifact, SplitAssignment } from "../split-artifact.ts";
+import { withoutSplitDigest } from "../split-artifact.ts";
+import { PARTITIONS } from "../split.ts";
 import type { EvidenceInput } from "../evidence-sanitizer.ts";
 import type { ReleaseDecision } from "../gates.ts";
 import {
@@ -133,48 +135,130 @@ function lightReadiness(report: BenchmarkReport): CorpusSourceReadinessReport {
     reportDigest: report.sourceReadinessDigest,
   };
 }
+// `counts` and `audit.sizes` are checked against the assignments they summarise, so the
+// assignments are generated here and the counts DERIVED from them. Typing the three
+// numbers separately lets them describe different partitionings while every digest
+// still recomputes.
+const SPLIT_FIXTURE_COUNTS = {
+  train: 45,
+  dev: 5,
+  "cal-A": 10,
+  "cal-B": 20,
+  test: 20,
+} as const;
 
-function lightSplitArtifact(report: BenchmarkReport): SplitArtifact {
-  return {
-    schemaVersion: 1,
+function splitFixtureAssignments(): SplitAssignment[] {
+  const rows: SplitAssignment[] = [];
+  for (const partition of PARTITIONS) {
+    for (let index = 0; index < SPLIT_FIXTURE_COUNTS[partition]; index += 1) {
+      rows.push({ id: `${partition}-${index}`, partition });
+    }
+  }
+  return rows;
+}
+
+async function lightSplitArtifact(
+  report: BenchmarkReport,
+): Promise<SplitArtifact> {
+  // `algorithmDigest` is REAL, not a stub: `publish-evidence` recomputes it from the
+  // algorithm plus the policy, because that pair is what a re-sealed forgery cannot fake.
+  const artifact: SplitArtifact = {
+    schemaVersion: 4,
     datasetDigest: report.dataset.digest,
-    algorithm: "blocked-group-time-v1",
-    algorithmDigest: hex("algorithm"),
-    seed: 712_019,
+    algorithm: "blocked-group-time-v2",
+    algorithmDigest: "",
+    seed: 20_260_726,
+    compositionAttestation: hex("composition-attestation"),
     policy: {
-      fractions: { development: 0.2, calibration: 0.3, test: 0.5 },
+      fractions: {
+        train: 0.45,
+        dev: 0.05,
+        "cal-A": 0.1,
+        "cal-B": 0.2,
+        test: 0.2,
+      },
       classTolerance: 0.02,
       heldOutGeneratorFamilies: [asGeneratorFamily("heldout_family")],
-      seed: 712_019,
+      seed: 20_260_726,
     },
-    assignments: [],
+    assignments: splitFixtureAssignments(),
     assignmentsDigest: hex("assignments"),
     splitDigest: report.split.digest,
-    cutoffs: { calibrationCut: 100, testCut: 200 },
-    counts: { development: 2_000, calibration: 3_000, test: 5_000 },
+    cutoffs: {
+      latestTrain: 100,
+      latestDev: 200,
+      latestCalA: 300,
+      latestCalB: 400,
+
+      earliestCalA: 250,
+
+      earliestCalB: 350,
+      earliestTest: 500,
+    },
+    counts: { ...SPLIT_FIXTURE_COUNTS },
     heldOutGeneratorFamilies: [asGeneratorFamily("heldout_family")],
     audit: {
-      sizes: { development: 2_000, calibration: 3_000, test: 5_000 },
+      sizes: { ...SPLIT_FIXTURE_COUNTS },
       classFractions: {
-        human: { development: 0.2, calibration: 0.3, test: 0.5 },
-        ai: { development: 0.2, calibration: 0.3, test: 0.5 },
-        mixed: { development: 0.2, calibration: 0.3, test: 0.5 },
+        human: {
+          train: 0.45,
+          dev: 0.05,
+          "cal-A": 0.1,
+          "cal-B": 0.2,
+          test: 0.2,
+        },
+        ai: {
+          train: 0.45,
+          dev: 0.05,
+          "cal-A": 0.1,
+          "cal-B": 0.2,
+          test: 0.2,
+        },
+        mixed: {
+          train: 0.45,
+          dev: 0.05,
+          "cal-A": 0.1,
+          "cal-B": 0.2,
+          test: 0.2,
+        },
       },
       cutoffs: {
-        latestDevelopment: 100,
-        latestCalibration: 200,
-        earliestTest: 300,
+        latestTrain: 100,
+        latestDev: 200,
+        latestCalA: 300,
+        latestCalB: 400,
+
+        earliestCalA: 250,
+
+        earliestCalB: 350,
+        earliestTest: 500,
       },
       leakages: [],
       clusters: standInClusterReport(),
       declaredAxisGaps: [],
       criticalSliceSamples: [],
+      // Consistent with THIS fixture's twenty test assignments, and it has to be stated
+      // by hand: a count of 2000 over a blind block of twenty rows is cryptographically
+      // sealed and semantically impossible, and the publication path cannot detect it
+      // because it has no dataset to check against. Only `validateSplitArtifact`
+      // re-derives the audit, so a
+      // fixture on the publication path has to be honest by construction.
+      testHumanNegatives: {
+        count: SPLIT_FIXTURE_COUNTS.test,
+        reportingThreshold: 2_000,
+        sufficientForReleaseFpr: false,
+      },
       heldOutGeneratorFamilies: [asGeneratorFamily("heldout_family")],
       incidentalTestOnlyGeneratorFamilies: [],
       passed: true,
       reasons: [],
     },
   };
+  artifact.algorithmDigest = await canonicalSha256({
+    algorithm: artifact.algorithm,
+    policy: artifact.policy,
+  });
+  return artifact;
 }
 
 function lightFitReport(frozen: FrozenCalibrationArtifact): FitReport {
@@ -207,7 +291,7 @@ function lightFitReport(frozen: FrozenCalibrationArtifact): FitReport {
     },
     calibrationArtifactDigest: frozen.artifactDigest,
     fitSeed: frozen.fitSeed,
-    partitionsUsed: ["development", "calibration"],
+    partitionsUsed: ["dev", "cal-A"],
     model: frozen.model,
     scoringRuntime: frozen.scoringRuntime,
     predictionManifestDigests: frozen.predictionManifestDigests,
@@ -240,7 +324,7 @@ export async function bundleInputFor(
     input: {
       datasetAudit: lightDatasetAudit(report),
       sourceReadiness: lightReadiness(report),
-      splitArtifact: lightSplitArtifact(report),
+      splitArtifact: await lightSplitArtifact(report),
       frozenCalibration: frozen,
       fitReport: lightFitReport(frozen),
       report,
@@ -533,7 +617,6 @@ export async function buildRejectScenario(
   }) => Promise<string>,
 ): Promise<RejectScenario> {
   const datasetDigest = hex("reject-dataset");
-  const splitDigest = hex("reject-split");
 
   const auditBase: Omit<DatasetAudit, "auditDigest"> = {
     datasetId: "ptbr-generic-v1",
@@ -578,54 +661,124 @@ export async function buildRejectScenario(
   };
 
   const splitArtifact: SplitArtifact = {
-    schemaVersion: 1,
+    schemaVersion: 4,
     datasetDigest,
-    algorithm: "blocked-group-time-v1",
-    algorithmDigest: hex("reject-algorithm"),
-    seed: 712_019,
+    algorithm: "blocked-group-time-v2",
+    // Sealed below, from the algorithm plus the policy: `publish-evidence` recomputes it.
+    algorithmDigest: "",
+    seed: 20_260_726,
+    compositionAttestation: hex("composition-attestation"),
     policy: {
-      fractions: { development: 0.2, calibration: 0.3, test: 0.5 },
+      fractions: {
+        train: 0.45,
+        dev: 0.05,
+        "cal-A": 0.1,
+        "cal-B": 0.2,
+        test: 0.2,
+      },
       classTolerance: 0.02,
       heldOutGeneratorFamilies: [asGeneratorFamily("heldout_family")],
-      seed: 712_019,
+      seed: 20_260_726,
     },
-    assignments: [],
-    assignmentsDigest: hex("reject-assignments"),
-    splitDigest,
-    cutoffs: { calibrationCut: 100, testCut: 200 },
-    counts: { development: 2_000, calibration: 3_000, test: 5_000 },
+    assignments: splitFixtureAssignments(),
+    assignmentsDigest: "",
+    splitDigest: "",
+    cutoffs: {
+      latestTrain: 100,
+      latestDev: 200,
+      latestCalA: 300,
+      latestCalB: 400,
+
+      earliestCalA: 250,
+
+      earliestCalB: 350,
+      earliestTest: 500,
+    },
+    counts: { ...SPLIT_FIXTURE_COUNTS },
     heldOutGeneratorFamilies: [asGeneratorFamily("heldout_family")],
     audit: {
-      sizes: { development: 2_000, calibration: 3_000, test: 5_000 },
+      sizes: { ...SPLIT_FIXTURE_COUNTS },
       classFractions: {
-        human: { development: 0.2, calibration: 0.3, test: 0.5 },
-        ai: { development: 0.2, calibration: 0.3, test: 0.5 },
-        mixed: { development: 0.2, calibration: 0.3, test: 0.5 },
+        human: {
+          train: 0.45,
+          dev: 0.05,
+          "cal-A": 0.1,
+          "cal-B": 0.2,
+          test: 0.2,
+        },
+        ai: {
+          train: 0.45,
+          dev: 0.05,
+          "cal-A": 0.1,
+          "cal-B": 0.2,
+          test: 0.2,
+        },
+        mixed: {
+          train: 0.45,
+          dev: 0.05,
+          "cal-A": 0.1,
+          "cal-B": 0.2,
+          test: 0.2,
+        },
       },
       cutoffs: {
-        latestDevelopment: 100,
-        latestCalibration: 200,
-        earliestTest: 300,
+        latestTrain: 100,
+        latestDev: 200,
+        latestCalA: 300,
+        latestCalB: 400,
+
+        earliestCalA: 250,
+
+        earliestCalB: 350,
+        earliestTest: 500,
       },
       leakages: [],
       clusters: standInClusterReport(),
       declaredAxisGaps: [],
       criticalSliceSamples: [],
+      // Consistent with THIS fixture's twenty test assignments. A count of 2000
+      // over a blind block of twenty rows: cryptographically sealed and semantically
+      // impossible, which the publication path cannot detect because it has no dataset
+      // to check against. Only `validateSplitArtifact` re-derives the audit, so a
+      // fixture on the publication path has to be honest by construction.
+      testHumanNegatives: {
+        count: SPLIT_FIXTURE_COUNTS.test,
+        reportingThreshold: 2_000,
+        sufficientForReleaseFpr: false,
+      },
       heldOutGeneratorFamilies: [asGeneratorFamily("heldout_family")],
       incidentalTestOnlyGeneratorFamilies: [],
       passed: true,
       reasons: [],
     },
   };
+  // Sealed in dependency order, because each digest covers the ones before it. The
+  // fixture cannot carry hand-written hex stubs here, because `publish-evidence`
+  // recomputes — and recomputing them is the whole point: a declared digest is exactly
+  // what a tampered artifact keeps.
+  splitArtifact.assignments.sort((a, b) =>
+    a.id < b.id ? -1 : a.id > b.id ? 1 : 0,
+  );
+  splitArtifact.assignmentsDigest = await canonicalSha256(
+    splitArtifact.assignments,
+  );
+  splitArtifact.algorithmDigest = await canonicalSha256({
+    algorithm: splitArtifact.algorithm,
+    policy: splitArtifact.policy,
+  });
+  splitArtifact.splitDigest = await canonicalSha256(
+    withoutSplitDigest(splitArtifact),
+  );
+  const splitDigest = splitArtifact.splitDigest;
 
   const devManifest = predictionManifest(
-    "development",
+    "dev",
     datasetDigest,
     splitDigest,
     null,
   );
   const calManifest = predictionManifest(
-    "calibration",
+    "cal-A",
     datasetDigest,
     splitDigest,
     null,
@@ -664,7 +817,7 @@ export async function buildRejectScenario(
     sourceReadinessDigest: sourceReadiness.reportDigest,
     splitDigest,
     evaluatorDigest: EVALUATOR,
-    partitionsUsed: ["development", "calibration"],
+    partitionsUsed: ["dev", "cal-A"],
     calibrators: {
       document: { kind: "platt", slope: 2, intercept: -1 },
       localized: { kind: "platt", slope: 2, intercept: -1 },
@@ -724,7 +877,7 @@ export async function buildRejectScenario(
     },
     split: {
       digest: splitDigest,
-      strategy: "blocked-group-time-v1",
+      strategy: "blocked-group-time-v2",
       heldOutGeneratorFamilies: splitArtifact.heldOutGeneratorFamilies,
       audit: splitArtifact.audit,
     },

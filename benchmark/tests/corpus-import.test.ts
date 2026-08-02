@@ -21,6 +21,7 @@ import {
   type IngestRequest,
 } from "../corpus-import.ts";
 import {
+  RELEASE_CORPUS_POLICY,
   validateDatasetManifest,
   type DatasetManifest,
 } from "../dataset-manifest.ts";
@@ -580,9 +581,14 @@ const ANNOTATION: BenchmarkRecordV2["annotation"] = {
   agreement: "agree",
 };
 
-const DEV_TIME = 1000;
-const CAL_TIME = 2000;
-const TEST_TIME = 3000;
+// One block per partition, in temporal order. The splitter looks for four cuts
+// BETWEEN these, so only the strict increase matters — the same values the corpus
+// assembler stamps (benchmark/lab/assemble_corpus.py BLOCK_TIME).
+const TRAIN_TIME = 1000;
+const DEV_TIME = 2000;
+const CAL_A_TIME = 3000;
+const CAL_B_TIME = 4000;
+const TEST_TIME = 5000;
 const SEEN_FAMILY = "seen_family";
 const HELDOUT_FAMILY = "heldout_family";
 // A generated family whose every record-line lands in the blind block and that the
@@ -774,14 +780,32 @@ interface Block {
   humanBatch: string;
 }
 
+// 45/5/10/20/20 of every class, one block per partition, over the composition the
+// frozen corpus policy pins: human 4000 / ai 4000 / mixed 2000.
+//
+// `aiSeen` in the test block is 200 rather than 800 because the held-out (500) and
+// incidental (100) families are already seated there and count toward ai's 20%.
 const BLOCKS: readonly Block[] = [
   {
-    time: DEV_TIME,
-    human: 800,
-    aiSeen: 800,
+    time: TRAIN_TIME,
+    human: 1800,
+    aiSeen: 1800,
     aiHeld: 0,
     aiIncidental: 0,
-    mixed: 400,
+    mixed: 900,
+    aiBatch: "gb_ai_train",
+    aiHeldBatch: "gb_ai_train_held",
+    aiIncidentalBatch: "gb_ai_train_incidental",
+    mixedBatch: "gb_mx_train",
+    humanBatch: "hb_train",
+  },
+  {
+    time: DEV_TIME,
+    human: 200,
+    aiSeen: 200,
+    aiHeld: 0,
+    aiIncidental: 0,
+    mixed: 100,
     aiBatch: "gb_ai_dev",
     aiHeldBatch: "gb_ai_dev_held",
     aiIncidentalBatch: "gb_ai_dev_incidental",
@@ -789,27 +813,40 @@ const BLOCKS: readonly Block[] = [
     humanBatch: "hb_dev",
   },
   {
-    time: CAL_TIME,
-    human: 1200,
-    aiSeen: 1200,
+    time: CAL_A_TIME,
+    human: 400,
+    aiSeen: 400,
     aiHeld: 0,
     aiIncidental: 0,
-    mixed: 600,
-    aiBatch: "gb_ai_cal",
-    aiHeldBatch: "gb_ai_cal_held",
-    aiIncidentalBatch: "gb_ai_cal_incidental",
-    mixedBatch: "gb_mx_cal",
-    humanBatch: "hb_cal",
+    mixed: 200,
+    aiBatch: "gb_ai_cal_a",
+    aiHeldBatch: "gb_ai_cal_a_held",
+    aiIncidentalBatch: "gb_ai_cal_a_incidental",
+    mixedBatch: "gb_mx_cal_a",
+    humanBatch: "hb_cal_a",
+  },
+  {
+    time: CAL_B_TIME,
+    human: 800,
+    aiSeen: 800,
+    aiHeld: 0,
+    aiIncidental: 0,
+    mixed: 400,
+    aiBatch: "gb_ai_cal_b",
+    aiHeldBatch: "gb_ai_cal_b_held",
+    aiIncidentalBatch: "gb_ai_cal_b_incidental",
+    mixedBatch: "gb_mx_cal_b",
+    humanBatch: "hb_cal_b",
   },
   {
     time: TEST_TIME,
-    human: 2000,
-    aiSeen: 1400,
+    human: 800,
+    aiSeen: 200,
     aiHeld: 500,
     // Below the 200-positive floor a declaration would have to clear, which is why
     // the manifest cannot declare it and the audit must not infer it.
     aiIncidental: 100,
-    mixed: 1000,
+    mixed: 400,
     aiBatch: "gb_ai_test_seen",
     aiHeldBatch: "gb_ai_test_held",
     aiIncidentalBatch: "gb_ai_test_incidental",
@@ -873,13 +910,17 @@ function generationBatches(): GenerationBatchV1[] {
     seedNullReason: null,
   });
   return [
+    batch("gb_ai_train", SEEN_FAMILY, TRAIN_TIME),
     batch("gb_ai_dev", SEEN_FAMILY, DEV_TIME),
-    batch("gb_ai_cal", SEEN_FAMILY, CAL_TIME),
+    batch("gb_ai_cal_a", SEEN_FAMILY, CAL_A_TIME),
+    batch("gb_ai_cal_b", SEEN_FAMILY, CAL_B_TIME),
     batch("gb_ai_test_seen", SEEN_FAMILY, TEST_TIME),
     batch("gb_ai_test_held", HELDOUT_FAMILY, TEST_TIME),
     batch("gb_ai_test_incidental", INCIDENTAL_FAMILY, TEST_TIME),
+    batch("gb_mx_train", SEEN_FAMILY, TRAIN_TIME),
     batch("gb_mx_dev", SEEN_FAMILY, DEV_TIME),
-    batch("gb_mx_cal", SEEN_FAMILY, CAL_TIME),
+    batch("gb_mx_cal_a", SEEN_FAMILY, CAL_A_TIME),
+    batch("gb_mx_cal_b", SEEN_FAMILY, CAL_B_TIME),
     batch("gb_mx_test", SEEN_FAMILY, TEST_TIME),
   ];
 }
@@ -912,6 +953,14 @@ describe("ingest -> validate -> split integration (10k)", () => {
     const sealMessage = await runValidate({
       datasetDirectory,
       outputDirectory: validateOut,
+      // This corpus is `infrastructure-only`, so it declares its own composition. Pinned
+      // to the release 4000/4000/2000, no corpus this test can build satisfies the power
+      // floors, and the pipeline could not be exercised end to end at all. The override is
+      // refused for a release corpus, which is what keeps it from loosening anything.
+      corpusPolicy: {
+        ...RELEASE_CORPUS_POLICY,
+        counts: { human: 4_000, ai: 4_000, mixed: 2_000 },
+      },
     });
     expect(sealMessage).toBe(
       "Dataset sealed: 10000 records (human=4000, ai=4000, mixed=2000).",
@@ -943,10 +992,10 @@ describe("ingest -> validate -> split integration (10k)", () => {
       datasetDirectory,
       datasetAuditPath: join(validateOut, "dataset-audit.json"),
       outputDirectory: splitOut,
-      seed: 712019,
+      seed: 20260726,
     });
     expect(splitMessage).toBe(
-      "Split frozen: development=20%, calibration=30%, test=50%; leakage=0.",
+      "Split frozen: train=45%, dev=5%, cal-A=10%, cal-B=20%, test=20%; leakage=0.",
     );
     const artifact = JSON.parse(
       await readFile(join(splitOut, "split-artifact.json"), "utf8"),
@@ -960,22 +1009,49 @@ describe("ingest -> validate -> split integration (10k)", () => {
     expect(artifact.audit.passed).toBe(true);
     expect(artifact.audit.leakages).toEqual([]);
     expect(artifact.splitDigest).toMatch(/^[0-9a-f]{64}$/u);
+    expect(artifact.schemaVersion).toBe(4);
+    expect(artifact.algorithm).toBe("blocked-group-time-v2");
+
+    // Every partition file is published, and the two that must never be readable are
+    // under private/ — the directory IS the enforcement, so this asserts the layout
+    // rather than trusting the writer.
+    for (const file of [
+      "train.jsonl",
+      "dev.jsonl",
+      "cal-A.jsonl",
+      "test-input.jsonl",
+    ]) {
+      await expect(
+        readFile(join(splitOut, file), "utf8"),
+      ).resolves.toBeTruthy();
+    }
+    for (const file of ["cal-B.jsonl", "test-labels.jsonl"]) {
+      await expect(
+        readFile(join(splitOut, "private", file), "utf8"),
+      ).resolves.toBeTruthy();
+    }
+
+    // The human-negative count is PUBLISHED and not gated on: this corpus holds 800 in
+    // the blind block against a reporting threshold of 2000, so the offer is
+    // insufficient for a released FPR bound and the split still freezes. Refusing here
+    // would be a power gate inside the audit; what refuses a corpus is the
+    // pre-registered floor, on independent clusters per quota cell.
+    expect(artifact.audit.testHumanNegatives.count).toBe(800);
+    expect(artifact.audit.testHumanNegatives.sufficientForReleaseFpr).toBe(
+      false,
+    );
 
     // The reservation is what the manifest declared and the partitions honored, and
     // the family that merely concentrated itself in the blind block is published
-    // beside it as diagnosis. Under the inferred set this whole command failed with
-    // HELD_OUT_FAMILY_DISAGREEMENT ("derived adds [incidental_family]") over a
-    // family nobody reserved — the unsatisfiable gate A4-fix removes.
+    // beside it as diagnosis.
     expect(artifact.audit.heldOutGeneratorFamilies).toEqual([HELDOUT_FAMILY]);
     expect(artifact.audit.incidentalTestOnlyGeneratorFamilies).toEqual([
       INCIDENTAL_FAMILY,
     ]);
 
-    // 3b. The exact equality still has teeth in the direction that matters: a
-    // reservation the corpus stocks with nothing is refused by the command's own
+    // 3b. A reservation the corpus stocks with nothing is refused by the command's own
     // guard. Only manifest.json changes, so the sealed audit still binds the same
-    // records and the failure is the family disagreement rather than a digest
-    // mismatch.
+    // records and the failure is the family disagreement rather than a digest mismatch.
     const manifestPath = join(datasetDirectory, "manifest.json");
     const declaredJson = await readFile(manifestPath, "utf8");
     await writeFile(
@@ -991,10 +1067,33 @@ describe("ingest -> validate -> split integration (10k)", () => {
         datasetDirectory,
         datasetAuditPath: join(validateOut, "dataset-audit.json"),
         outputDirectory: join(root, "out", "split-unstocked"),
-        seed: 712019,
+        seed: 20260726,
       }),
     ).rejects.toThrow(/HELD_OUT_FAMILY_DISAGREEMENT|never_generated_family/u);
     await writeFile(manifestPath, declaredJson, "utf8"); // restore for isolation
+
+    // 3c. The same corpus, declared `release`, is REFUSED — the composition attestation
+    // the pre-registration demands does not exist yet, so a release freeze is unavailable
+    // by design. Only `scientificUse` changes, so the sealed audit still binds the same
+    // bytes and the refusal is the attestation, not a digest mismatch.
+    const releaseJson = await readFile(manifestPath, "utf8");
+    await writeFile(
+      manifestPath,
+      JSON.stringify({
+        ...JSON.parse(releaseJson),
+        scientificUse: "release",
+      }),
+      "utf8",
+    );
+    await expect(
+      runSplit({
+        datasetDirectory,
+        datasetAuditPath: join(validateOut, "dataset-audit.json"),
+        outputDirectory: join(root, "out", "split-release"),
+        seed: 20260726,
+      }),
+    ).rejects.toThrow(/COMPOSITION_FLOOR_NOT_APPLIED|pre-registered floor/u);
+    await writeFile(manifestPath, releaseJson, "utf8"); // restore for isolation
 
     // 4a. A later record change invalidates the split artifact's datasetDigest.
     const tampered = parsedRecords.map((r) => ({ ...r }));
@@ -1029,5 +1128,37 @@ describe("ingest -> validate -> split integration (10k)", () => {
       ).rejects.toThrow(code);
       await writeFile(path, original, "utf8"); // restore for isolation
     }
+  }, 180_000);
+
+  it("refuses a composition override for a release corpus", async () => {
+    // The override exists so an infrastructure corpus can be exercised at a size the
+    // release floors cannot reach. Reachable for a release corpus, it would be a way to
+    // seal a release against a composition nobody froze — so it is refused there, and
+    // there is no CLI flag for it at all.
+    const root = await scratch();
+    const records = generateCorpus();
+    const manifest = await sealedManifest(
+      [LICENSED_HUMAN_SOURCE, GEN_SOURCE],
+      generationBatches(),
+    );
+    const { request, datasetDirectory } = await buildRequest(root, {
+      recordLines: records.map((r) => JSON.stringify(r)),
+      ledgerLines: records.map((r) => ledgerLine(r)),
+      sourceManifest: manifest,
+      template: template({ scientificUse: "release" }),
+    });
+    await ingestAuthorizedRecords(request);
+    await expect(
+      runValidate({
+        datasetDirectory,
+        outputDirectory: join(root, "out", "validate-override"),
+        corpusPolicy: {
+          ...RELEASE_CORPUS_POLICY,
+          counts: { human: 4_000, ai: 4_000, mixed: 2_000 },
+        },
+      }),
+    ).rejects.toThrow(
+      /CORPUS_POLICY_OVERRIDE_FORBIDDEN|only for scientificUse/u,
+    );
   }, 180_000);
 });

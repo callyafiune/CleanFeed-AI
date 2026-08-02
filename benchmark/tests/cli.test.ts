@@ -51,13 +51,15 @@ import {
 } from "../prediction-schema.ts";
 import type { BenchmarkRecord } from "../schema.ts";
 import { buildSplitArtifact } from "../split-artifact.ts";
-import { standInClusterReport, type SplitAudit } from "../split-audit.ts";
+import {
+  DECLARED_GROUP_AXES,
+  FROZEN_SPLIT_AUDIT_POLICY,
+  auditBlockedSplit,
+} from "../split-audit.ts";
 import type { DatasetSplit } from "../split.ts";
 import {
   asGeneratorFamily,
-  generatorFamilyOf,
   normalizeGeneratorFamily,
-  type GeneratorFamily,
 } from "../generator-family.ts";
 
 /** The same argument list with one `--flag value` pair removed. */
@@ -219,10 +221,25 @@ describe("benchmark CLI partition and ledger flag guards", () => {
     "712019",
   ];
 
-  it("prevents fit from receiving test labels", async () => {
+  it("prevents fit from receiving test labels, and still accepts the two it needs", async () => {
     await expect(
       runCli(["fit", ...FIT_ARGS, "--partition", "test"]),
-    ).rejects.toThrow(/fit accepts only development and calibration/u);
+    ).rejects.toThrow(/fit accepts only dev and cal-A/u);
+    await expect(
+      runCli(["fit", ...FIT_ARGS, "--partition", "cal-B"]),
+    ).rejects.toThrow(/fit accepts only dev and cal-A/u);
+    await expect(
+      runCli(["fit", ...FIT_ARGS, "--partition", "train"]),
+    ).rejects.toThrow(/fit accepts only dev and cal-A/u);
+
+    // The other direction, without which this test would also pass if the allowlist
+    // rejected EVERY name: `dev` and `cal-A` must get past the partition guard. They
+    // still fail afterwards on absent input files, which is a different message.
+    for (const accepted of ["dev", "cal-A"]) {
+      await expect(
+        runCli(["fit", ...FIT_ARGS, "--partition", accepted]),
+      ).rejects.not.toThrow(/fit accepts only/u);
+    }
   });
 
   it("forbids a ledger/consumption id on a development prediction validation", async () => {
@@ -234,7 +251,7 @@ describe("benchmark CLI partition and ledger flag guards", () => {
         "--split-artifact",
         "split.json",
         "--partition",
-        "development",
+        "dev",
         "--predictions",
         "dev",
         "--runtime-parity",
@@ -282,12 +299,7 @@ describe("benchmark CLI score guards", () => {
   ];
 
   it("parses the score subcommand and its flags", () => {
-    const parsed = parseCliArgs([
-      "score",
-      ...SCORE_ARGS,
-      "--partition",
-      "development",
-    ]);
+    const parsed = parseCliArgs(["score", ...SCORE_ARGS, "--partition", "dev"]);
     expect(parsed.command).toBe("score");
     expect(parsed.flags.get("candidate-extension-dir")).toBe(
       "dist-model-benchmark",
@@ -313,21 +325,14 @@ describe("benchmark CLI score guards", () => {
         "--output",
         "out/predictions/development",
         "--partition",
-        "development",
+        "dev",
       ]),
     ).rejects.toThrow(/production|dist/iu);
   });
 
   it("rejects an unknown flag on score", async () => {
     await expect(
-      runCli([
-        "score",
-        ...SCORE_ARGS,
-        "--partition",
-        "development",
-        "--bogus",
-        "x",
-      ]),
+      runCli(["score", ...SCORE_ARGS, "--partition", "dev", "--bogus", "x"]),
     ).rejects.toThrow(/unknown flag --bogus/u);
   });
 });
@@ -618,7 +623,7 @@ function record(
     // batch, and an absent axis is `unknown`, which is not a resampling unit.
     // Derived from the RECIPE and never from the record-line: a template id per row
     // makes that middle level one unit per row by construction, which is the
-    // degeneration C4 exists to remove arriving through a fixture. It is scoped to
+    // degeneration the resampling design exists to remove arriving through a fixture. It is scoped to
     // the CLUSTER, not to the whole corpus: `promptTemplate` is a value axis of the
     // split connectivity, so one template shared by every generated row would union
     // every cluster holding a generated row back into one component.
@@ -685,65 +690,6 @@ function datasetManifest(): DatasetManifest {
       },
     ],
   };
-}
-
-function passingAudit(split: DatasetSplit<BenchmarkRecord>): SplitAudit {
-  return {
-    sizes: {
-      development: split.development.length,
-      calibration: split.calibration.length,
-      test: split.test.length,
-    },
-    classFractions: {
-      human: { development: 0.2, calibration: 0.3, test: 0.5 },
-      ai: { development: 0.2, calibration: 0.3, test: 0.5 },
-      mixed: { development: 0.2, calibration: 0.3, test: 0.5 },
-    },
-    cutoffs: {
-      latestDevelopment: 100,
-      latestCalibration: 200,
-      earliestTest: 300,
-    },
-    leakages: [],
-    clusters: standInClusterReport(),
-    declaredAxisGaps: [],
-    criticalSliceSamples: [],
-    heldOutGeneratorFamilies: honoredReservation(
-      split,
-      datasetManifest().heldOutGeneratorFamilies,
-    ),
-    // No family concentrated itself in test without being reserved in these
-    // fixtures; the field is stated because a missing key cannot be told apart
-    // from a writer that never measured it.
-    incidentalTestOnlyGeneratorFamilies: [],
-    passed: true,
-    reasons: [],
-  };
-}
-
-// The reservation the partitions HONOR: every DECLARED family whose record-lines
-// all sit in test. Derived from the split exactly as benchmark/split-audit.ts
-// derives it, so this stand-in audit cannot claim a reservation the partitions do
-// not show. It takes the declaration rather than inferring it from test-only
-// membership — that inference reproved a split over a family nobody reserved
-// (A4-fix) — and hardcoding the answer was harmless only while nothing compared the
-// four sets.
-function honoredReservation(
-  split: DatasetSplit<BenchmarkRecord>,
-  declared: readonly GeneratorFamily[],
-): GeneratorFamily[] {
-  const families = (rows: readonly BenchmarkRecord[]): GeneratorFamily[] =>
-    rows
-      .map((row) => generatorFamilyOf(row))
-      .filter((family): family is GeneratorFamily => family !== undefined);
-  const inTest = new Set(families(split.test));
-  const elsewhere = new Set<GeneratorFamily>([
-    ...families(split.development),
-    ...families(split.calibration),
-  ]);
-  return declared
-    .filter((family) => inTest.has(family) && !elsewhere.has(family))
-    .sort((a, b) => (a < b ? -1 : a > b ? 1 : 0));
 }
 
 const PLATT: SerializedCalibratorV1 = {
@@ -813,7 +759,7 @@ async function frozenCalibration(
     sourceReadinessDigest: SOURCE_READINESS,
     splitDigest,
     evaluatorDigest: await evaluatorDigest(),
-    partitionsUsed: ["development", "calibration"],
+    partitionsUsed: ["dev", "cal-A"],
     calibrators: { document: PLATT, localized: PLATT },
     selectionEvidence: { document: [], localized: [] },
     thresholds: {
@@ -850,6 +796,8 @@ async function frozenCalibration(
 
 interface Scenario {
   datasetDir: string;
+  /** Ids of the blind block, read off the split the scenario sealed. */
+  testIds: string[];
   splitArtifactPath: string;
   frozenCalibrationPath: string;
   testPredictionsDir: string;
@@ -862,15 +810,77 @@ interface Scenario {
 
 async function buildScenario(root: string): Promise<Scenario> {
   recordCounter = 0;
+  // The eight rows the assertions below name, plus filler that makes the split satisfy
+  // the frozen 45/5/10/20/20 per class. The sealed audit is re-derived from these records
+  // by `validateSplitArtifact`, so the proportions have to be real: a class needs at least
+  // twenty rows for 5% to land inside a two-point tolerance at all (1/20 = 0.05 exactly),
+  // and every partition then takes its own share of that twenty.
+  //
+  // The named rows keep their partitions and their times. Filler goes to `train`, `cal-B`
+  // and the tail of `test`, and each filler row gets its OWN cluster so the leakage audit
+  // stays non-vacuous over it.
+  // One cluster per PARTITION, never the default shared by all eight: `domainSource` and
+  // `collectionBatch` are nested in the cluster, so a single cluster spanning dev, cal-A
+  // and test is a group value crossing partitions. Per partition keeps the prompt-template
+  // unit multi-row — the non-degeneracy the resampling needs — without crossing a
+  // boundary.
+  const named: BenchmarkRecord[] = [
+    record("human", 10, "acme_family", "dv"),
+    record("ai", 20, "acme_family", "dv"),
+    record("human", 110, "acme_family", "ca"),
+    record("mixed", 120, "acme_family", "ca"),
+    record("human", 310, "acme_family", "ts"),
+    record("human", 320, "acme_family", "ts"),
+    record("ai", 330, "heldout_family", "ts_held"),
+    record("mixed", 340, "acme_family", "ts"),
+  ];
+  const pad = (
+    label: BenchmarkRecord["label"],
+    count: number,
+    createdAt: number,
+    tag: string,
+  ): BenchmarkRecord[] =>
+    Array.from({ length: count }, (_unused, index) =>
+      record(label, createdAt, "acme_family", `${tag}_${label}_${index}`),
+    );
+  // train 45% = 9 of each class, oldest band.
+  const trainPad = [
+    ...pad("human", 9, 2, "trn"),
+    ...pad("ai", 9, 3, "trn"),
+    ...pad("mixed", 9, 4, "trn"),
+  ];
+  // dev 5% = 1: human and ai are already there, mixed is not.
+  const devPad = pad("mixed", 1, 12, "dvp");
+  // cal-A 10% = 2: mixed has one, human has one, ai has none.
+  const calAPad = [
+    ...pad("human", 1, 112, "cla"),
+    ...pad("ai", 2, 113, "cla"),
+    // Mixed reaches twenty only with this row: cal-A's 10% is two and `named` gives one.
+    ...pad("mixed", 1, 114, "cla"),
+  ];
+  // cal-B 20% = 4 of each class.
+  const calBPad = [
+    ...pad("human", 4, 200, "clb"),
+    ...pad("ai", 4, 201, "clb"),
+    ...pad("mixed", 4, 202, "clb"),
+  ];
+  // test 20% = 4: human has two, ai one, mixed one.
+  // A cluster per ROW, which is what makes the resampling DEGENERATE — and degenerate is
+  // `levels === items.length` (benchmark/bootstrap.ts), i.e. every item is its own
+  // resampling unit, so there is nothing to resample over. Sharing one cluster across the
+  // pad is what destroys it, not what creates it.
+  const testPad = [
+    ...pad("human", 2, 350, "tst"),
+    ...pad("ai", 3, 351, "tst"),
+    ...pad("mixed", 3, 352, "tst"),
+  ];
   const records: BenchmarkRecord[] = [
-    record("human", 10),
-    record("ai", 20),
-    record("human", 110),
-    record("mixed", 120),
-    record("human", 310),
-    record("human", 320),
-    record("ai", 330, "heldout_family"),
-    record("mixed", 340),
+    ...trainPad,
+    ...named,
+    ...devPad,
+    ...calAPad,
+    ...calBPad,
+    ...testPad,
   ];
   const manifest = datasetManifest();
   const datasetDir = join(root, "dataset");
@@ -885,22 +895,46 @@ async function buildScenario(root: string): Promise<Scenario> {
   );
 
   const split: DatasetSplit<BenchmarkRecord> = {
-    development: [records[0], records[1]],
-    calibration: [records[2], records[3]],
-    test: [records[4], records[5], records[6], records[7]],
+    train: trainPad,
+    dev: [named[0] as BenchmarkRecord, named[1] as BenchmarkRecord, ...devPad],
+    "cal-A": [
+      named[2] as BenchmarkRecord,
+      named[3] as BenchmarkRecord,
+      ...calAPad,
+    ],
+    "cal-B": calBPad,
+    test: [
+      named[4] as BenchmarkRecord,
+      named[5] as BenchmarkRecord,
+      named[6] as BenchmarkRecord,
+      named[7] as BenchmarkRecord,
+      ...testPad,
+    ],
   };
   const policy = {
-    fractions: { development: 0.2, calibration: 0.3, test: 0.5 },
+    fractions: {
+      train: 0.45,
+      dev: 0.05,
+      "cal-A": 0.1,
+      "cal-B": 0.2,
+      test: 0.2,
+    },
     classTolerance: 0.02,
     heldOutGeneratorFamilies: [asGeneratorFamily("heldout_family")],
-    seed: 712019,
+    seed: 20260726,
   } as const;
   const artifact = await buildSplitArtifact({
     manifest,
     records,
     split,
     policy,
-    audit: passingAudit(split),
+    audit: auditBlockedSplit(
+      records,
+      split,
+      FROZEN_SPLIT_AUDIT_POLICY,
+      policy.heldOutGeneratorFamilies,
+      DECLARED_GROUP_AXES,
+    ),
   });
   const splitArtifactPath = join(root, "split-artifact.json");
   await writeFile(splitArtifactPath, `${JSON.stringify(artifact, null, 2)}\n`);
@@ -913,14 +947,14 @@ async function buildScenario(root: string): Promise<Scenario> {
   const fitDir = join(root, "fit");
   await mkdir(fitDir, { recursive: true });
   const devManifest = predictionManifest(
-    "development",
+    "dev",
     datasetDigest,
     splitDigest,
     null,
     [],
   );
   const calManifest = predictionManifest(
-    "calibration",
+    "cal-A",
     datasetDigest,
     splitDigest,
     null,
@@ -986,6 +1020,7 @@ async function buildScenario(root: string): Promise<Scenario> {
     datasetDir,
     splitArtifactPath,
     frozenCalibrationPath,
+    testIds: split.test.map((r) => r.id),
     // filled in after the session id is known
     testPredictionsDir: "",
     testLabelsPath,
@@ -1005,13 +1040,18 @@ async function writeTestPredictions(
   const splitDigest = scenario.identity.splitDigest;
   const dir = join(root, "work", "holdout", consumptionId, "predictions");
   await mkdir(dir, { recursive: true });
-  const rows = ["r5", "r6", "r7", "r8"].map((id, index) =>
+  // Every id the blind block holds, not the four named ones: `evaluate` demands exactly
+  // one row per test assignment, and the block grew so the split satisfies the frozen
+  // proportions per class.
+  const rows = scenario.testIds.map((id, index) =>
     JSON.stringify({
       schemaVersion: 2,
       id,
       status: "scored",
-      documentRawScore: 0.4 + index * 0.1,
-      localizedRawScore: 0.3 + index * 0.1,
+      // Cycled, not accumulated: the blind block grew past ten rows and a running
+      // increment leaves [0,1], which the closed prediction schema refuses.
+      documentRawScore: 0.4 + (index % 5) * 0.1,
+      localizedRawScore: 0.3 + (index % 5) * 0.1,
       evidenceQuality: "sufficient",
       reasonCode: "SCORED",
       coverage: 1,
@@ -1133,17 +1173,27 @@ describe("benchmark CLI holdout consumption via evaluate", () => {
       "groups.promptTemplate",
       "groups.collectionBatch",
     ]);
-    expect(recall.measured.items).toBe(2);
+    // Positives in the blind block: four ai plus four mixed. The block holds 20% of each
+    // class because the sealed audit is now re-derived from the records, so the split has
+    // to satisfy the frozen proportions instead of asserting them.
+    expect(recall.measured.items).toBe(8);
     expect(
       recall.measured.levels.map(
         (level: { axis: string; levels: number }) =>
           `${level.axis}=${level.levels}`,
       ),
+      // Two generator families, eight prompt templates, eight batches. The template and batch
+      // counts exceed the family count because a mechanistic mixed row takes `pt_${id}` — one
+      // template per row, by design — so they scale with the number of mixed rows, and the
+      // blind block carries 20% of every class
+      // had a single mixed row.
     ).toEqual([
       "groups.generatorFamily=2",
-      "groups.promptTemplate=2",
-      "groups.collectionBatch=2",
+      "groups.promptTemplate=8",
+      "groups.collectionBatch=8",
     ]);
+    // Eight positives over eight resampling levels: every item is its own unit, which is
+    // exactly the degeneracy this assertion guards.
     expect(recall.measured.degenerate).toBe(true);
     await expect(stat(scenario.activeSessionPath)).rejects.toThrow();
 
@@ -1223,7 +1273,7 @@ function aiScore(index: number): number {
 
 async function writeFitPredictions(
   dir: string,
-  partition: "development" | "calibration",
+  partition: "dev" | "cal-A",
   rows: readonly FitScoreRow[],
   parityDigest: string,
 ): Promise<void> {
@@ -1304,12 +1354,46 @@ async function buildFitScenario(
     record("ai", 320, "heldout_family", "tst_1"),
     record("ai", 321, "heldout_family", "tst_1"),
   ];
+  // Filler that makes the split satisfy the frozen proportions per class, since the sealed
+  // audit is re-derived from these records. Reading off the two fixed dev populations:
+  // 35 dev humans at 5% pin human to 700, and 10 dev AI rows pin ai to 200. `cal-A` needs
+  // twice `dev` because its target is twice as large.
+  const padB = (
+    label: BenchmarkRecord["label"],
+    count: number,
+    createdAt: number,
+    tag: string,
+  ): BenchmarkRecord[] =>
+    Array.from({ length: count }, (_u, i) =>
+      record(label, createdAt, "acme_family", `${tag}_${label}_${i}`),
+    );
+  const trainPadB = [
+    ...padB("human", 315, 2, "trn"),
+    ...padB("ai", 90, 3, "trn"),
+  ];
+  const calAPadB = [
+    ...padB("human", 35, 180, "cla"),
+    ...padB("ai", 10, 181, "cla"),
+  ];
+  const calBPadB = [
+    ...padB("human", 140, 200, "clb"),
+    ...padB("ai", 40, 201, "clb"),
+  ];
+  // Never the reserved family outside the block it belongs to.
+  const testPadB = [
+    ...padB("human", 138, 350, "tst"),
+    ...padB("ai", 38, 351, "tst"),
+  ];
   const allRecords = [
+    ...trainPadB,
     ...devHumans,
     ...devAis,
     ...calHumans,
     ...calAis,
+    ...calAPadB,
+    ...calBPadB,
     ...testRecords,
+    ...testPadB,
   ];
 
   // Source manifest: raw bytes gate the audit/manifest raw SHA; the canonical
@@ -1372,22 +1456,36 @@ async function buildFitScenario(
   );
 
   const split: DatasetSplit<BenchmarkRecord> = {
-    development: [...devHumans, ...devAis],
-    calibration: [...calHumans, ...calAis],
-    test: testRecords,
+    train: trainPadB,
+    dev: [...devHumans, ...devAis],
+    "cal-A": [...calHumans, ...calAis, ...calAPadB],
+    "cal-B": calBPadB,
+    test: [...testRecords, ...testPadB],
   };
   const policy = {
-    fractions: { development: 0.2, calibration: 0.3, test: 0.5 },
+    fractions: {
+      train: 0.45,
+      dev: 0.05,
+      "cal-A": 0.1,
+      "cal-B": 0.2,
+      test: 0.2,
+    },
     classTolerance: 0.02,
     heldOutGeneratorFamilies: [asGeneratorFamily("heldout_family")],
-    seed: 712019,
+    seed: 20260726,
   } as const;
   const splitArtifact = await buildSplitArtifact({
     manifest,
     records: allRecords,
     split,
     policy,
-    audit: passingAudit(split),
+    audit: auditBlockedSplit(
+      allRecords,
+      split,
+      FROZEN_SPLIT_AUDIT_POLICY,
+      policy.heldOutGeneratorFamilies,
+      DECLARED_GROUP_AXES,
+    ),
   });
   const splitArtifactPath = join(root, "split-artifact.json");
   await writeFile(
@@ -1467,7 +1565,7 @@ async function buildFitScenario(
   const calibrationPredictionsDirectory = join(root, "cal");
   await writeFitPredictions(
     developmentPredictionsDirectory,
-    "development",
+    "dev",
     [
       ...devHumans.map((r, i) => fitScored(r.id, humanScore(i), humanScore(i))),
       ...devAis.map((r, i) => fitScored(r.id, aiScore(i), aiScore(i))),
@@ -1476,10 +1574,16 @@ async function buildFitScenario(
   );
   await writeFitPredictions(
     calibrationPredictionsDirectory,
-    "calibration",
+    "cal-A",
     [
       ...calHumans.map((r, i) => fitScored(r.id, humanScore(i), humanScore(i))),
       ...calAis.map((r, i) => fitScored(r.id, aiScore(i), aiScore(i))),
+      // The cal-A filler is inside the fit population, so `fit` demands a row per id.
+      ...calAPadB.map((r, i) =>
+        r.label === "human"
+          ? fitScored(r.id, humanScore(i), humanScore(i))
+          : fitScored(r.id, aiScore(i), aiScore(i)),
+      ),
     ],
     parity.runtimeParityDigest,
   );
@@ -1623,7 +1727,7 @@ describe("benchmark CLI fit freeze — holdout independence", () => {
       // The fit report binds the ready preflight and carries no test metric.
       const fitReport = JSON.parse(fitReportA);
       expect(fitReport.preflight.status).toBe("ready");
-      expect(fitReport.partitionsUsed).toEqual(["development", "calibration"]);
+      expect(fitReport.partitionsUsed).toEqual(["dev", "cal-A"]);
       const frozen = JSON.parse(frozenA);
       expect(fitReport.calibrationArtifactDigest).toBe(frozen.artifactDigest);
       expect(fitReport.datasetAuditDigest).toBe(

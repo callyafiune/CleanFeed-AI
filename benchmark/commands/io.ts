@@ -8,7 +8,7 @@
 // (src/). Node-only (node:fs). Deterministic: no Date, no randomness in any
 // bytes it writes; temp-file names use pid/counter only.
 
-import { mkdir, open, readFile, rename } from "node:fs/promises";
+import { mkdir, open, readFile, rename, rm } from "node:fs/promises";
 import { dirname, join } from "node:path";
 
 import { sha256BytesHex } from "../digests.ts";
@@ -96,6 +96,55 @@ export async function writeJsonAtomic(
   value: unknown,
 ): Promise<void> {
   await writeFileAtomic(path, `${JSON.stringify(value, null, 2)}\n`);
+}
+
+/**
+ * Writes a SET of files so the last entry cannot appear before the others.
+ *
+ * `writeFileAtomic` makes each file atomic on its own, which is not the same promise:
+ * a command that writes six files one at a time and fails on the fourth leaves three
+ * complete files behind, and if the first of them was the manifest describing all six,
+ * the directory reads as a finished output. Here every payload is written and fsynced
+ * to its temporary file FIRST, and only then are they renamed into place in the order
+ * given — so the caller puts the file that certifies the set last, and its presence
+ * means the rest is already there.
+ *
+ * What this still does not promise, because a rename sequence is not one operation: a
+ * crash between renames can leave earlier files published without the final one. That
+ * direction is the recoverable one — the certifying file is absent, so nothing reads
+ * the output as complete.
+ */
+export async function writeFileSetAtomic(
+  entries: readonly { path: string; content: string }[],
+): Promise<void> {
+  // The last entry is the certifier, and on a RE-RUN one may already be on disk from a
+  // previous run. Publishing the new set around a surviving old certifier is the worst
+  // outcome available: a failure part-way through leaves the old file vouching for a
+  // mixture of old and new partitions. So it is unlinked FIRST — the directory then has
+  // no certifier at all until the new one lands, which is the recoverable state.
+  const certifier = entries.at(-1);
+  if (certifier !== undefined) {
+    await rm(certifier.path, { force: true });
+  }
+
+  const staged: { tempPath: string; path: string }[] = [];
+  for (const entry of entries) {
+    const directory = dirname(entry.path);
+    await mkdir(directory, { recursive: true });
+    tempCounter += 1;
+    const tempPath = join(directory, `.${process.pid}.${tempCounter}.tmp`);
+    const handle = await open(tempPath, "w");
+    try {
+      await handle.writeFile(entry.content, "utf8");
+      await handle.sync();
+    } finally {
+      await handle.close();
+    }
+    staged.push({ tempPath, path: entry.path });
+  }
+  for (const { tempPath, path } of staged) {
+    await rename(tempPath, path);
+  }
 }
 
 /**

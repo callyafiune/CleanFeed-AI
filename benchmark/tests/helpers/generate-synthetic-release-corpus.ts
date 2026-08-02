@@ -1,21 +1,26 @@
 // Deterministic synthetic release-corpus generator for the Task 13 scale smoke.
 //
 // It writes a 10,000-record infrastructure corpus (4,000 human / 4,000 ai /
-// 2,000 mixed) whose records seal under the closed schema and split cleanly into
-// the 20/30/50 blocked partitions with zero leakage. Determinism is total: every
-// byte is a pure function of the record index and the seed — no Date, no
-// randomness — so re-running produces byte-identical files and digests.
+// 2,000 mixed) whose records seal under the closed schema, laid out in the five
+// blocked partitions with zero leakage. Determinism is total: every byte is a pure
+// function of the record index and the seed — no Date, no randomness — so
+// re-running produces byte-identical files and digests.
 //
 // The corpus is `scientificUse: "infrastructure-only"` and can NEVER be release
 // eligible; it exists solely to exercise the pipeline at scale. It writes ONLY
 // under benchmark/work/ and refuses any output path outside it.
 //
-// Layout of the three temporal blocks maps directly onto the partitions:
-//   - development records carry createdAt = DEV_TIME  (first 20%)
-//   - calibration records carry createdAt = CAL_TIME  (next 30%)
-//   - test records carry createdAt = TEST_TIME        (last 50%)
-// so the blocked splitter finds a single clean cut pair and the audit measures
-// exactly 20/30/50 per class with >= 2,000 human negatives in the test block.
+// One temporal block per partition, so the splitter finds its four cuts BETWEEN
+// them and the audit measures exactly 45/5/10/20/20 per class.
+//
+// WHAT THIS CORPUS CANNOT REACH, and it is not a defect of this file: the pre-registered
+// human-negative threshold for a released FPR bound is 2,000 inside the blocked test,
+// and test holds at most (0.20 + 0.02) x 4,000 = 880 of them. The audit PUBLISHES that
+// count rather than failing on it, so the corpus still seals. Raising the human count is
+// not available here either — `sealDataset` pins the composition at 4,000 / 4,000 /
+// 2,000 for every corpus, release or not. So this corpus seals and splits, and publishes a
+// human-negative count below the threshold for a released FPR bound — which is a true
+// description of it, not a failure of this generator.
 //
 // Standalone benchmark support: MUST NOT import from the extension bundle (src/).
 
@@ -45,9 +50,11 @@ const DATASET_ID = "ptbr-generic-synthetic-v1";
 const LICENSE_ID = "synthetic-consent-v1";
 const HELDOUT_FAMILY = "synthetic-heldout-family";
 
-const DEV_TIME = 1_000;
-const CAL_TIME = 2_000;
-const TEST_TIME = 3_000;
+const TRAIN_TIME = 1_000;
+const DEV_TIME = 2_000;
+const CAL_A_TIME = 3_000;
+const CAL_B_TIME = 4_000;
+const TEST_TIME = 5_000;
 
 const HUMAN_SOURCE_TYPES = [
   "qa-informal",
@@ -72,11 +79,13 @@ interface Block {
   mixed: number;
 }
 
-// 4,000 / 4,000 / 2,000 spread 20/30/50 across the three temporal blocks.
+// 4,000 / 4,000 / 2,000 spread 45/5/10/20/20 across the five temporal blocks.
 const BLOCKS: readonly Block[] = [
-  { createdAt: DEV_TIME, human: 800, ai: 800, mixed: 400 },
-  { createdAt: CAL_TIME, human: 1_200, ai: 1_200, mixed: 600 },
-  { createdAt: TEST_TIME, human: 2_000, ai: 2_000, mixed: 1_000 },
+  { createdAt: TRAIN_TIME, human: 1_800, ai: 1_800, mixed: 900 },
+  { createdAt: DEV_TIME, human: 200, ai: 200, mixed: 100 },
+  { createdAt: CAL_A_TIME, human: 400, ai: 400, mixed: 200 },
+  { createdAt: CAL_B_TIME, human: 800, ai: 800, mixed: 400 },
+  { createdAt: TEST_TIME, human: 800, ai: 800, mixed: 400 },
 ];
 
 function sha256Hex(text: string): string {

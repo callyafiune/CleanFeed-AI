@@ -526,6 +526,172 @@ aplicar o teto (a justificativa quadrática do `prune()` não vale nesse caminho
 `buckets_over_prune_cap` e `candidates_evaluated` para que a mudança seja mensurável e não uma
 afirmação.
 
+### 2.2d As cinco partições, e o que o mecanismo delas garante (E2, 2026-07-31)
+
+As fontes já estão aqui: a colocalização por componente conexa é § 4.1, o `cal-B` conformal é
+§ 3.1 e o pré-registro das frações é § 2.1. O que esta subseção acrescenta é a **âncora do que o
+mecanismo entrega**, porque a promessa mais forte que o splitter de cinco partições sustenta é
+mais fraca que a leitura natural de "cinco blocos temporais".
+
+- **Âncora:** para o corpus entregue ao comando, `createBlockedSplit` atribui cada componente
+  conexo inteiro a exatamente uma de `train/dev/cal-A/cal-B/test`, com toda família held-out
+  declarada inteiramente em `test`, `earliest(test) > latest(cada uma das outras quatro)`, `dev`,
+  `cal-A` e `cal-B` estritamente ordenados entre si, e `|fração − alvo| ≤ 0,02` para toda classe e
+  toda partição sobre 45/5/10/20/20 — **ou lança sem escrever nenhuma SAÍDA**. Duas correções de
+  alcance, ambas porque a forma universal era falsa: o comando abre as ENTRADAS antes de calcular,
+  então a promessa é sobre saídas e não sobre todo acesso a arquivo; e a publicação renomeia
+  `split-artifact.json` por último, então uma falha ao publicar pode deixar partições sem artefato,
+  nunca artefato sem partições. _Onde no projeto:_ `benchmark/split.ts` (`PARTITIONS`, `assignPartition`),
+  `benchmark/split-audit.ts` (a cadeia temporal e a checagem de frações); plano v1 § Fase 1 item 5;
+  registro § "Unidade 3 — E2".
+- **Âncora negativa, que é a que importa:** `train` **não integra a cadeia** das três partições
+  médias. É o fallback e recebe todo componente que atravessa um corte, então um registro de `train`
+  pode ser mais novo que um de `cal-B` por desenho. As três partições do MEIO (`dev`, `cal-A`,
+  `cal-B`) são estritamente ordenadas `earliest` contra `latest`, porque cada uma só contém
+  componentes inteiramente dentro da sua banda. **A separação estrita contra `test` vale para as
+  quatro, `train` incluída** — precisamente porque, sendo o fallback, `train` alcançar o início de
+  `test` é vazamento real. Publicar "cinco blocos estritamente ordenados" seria promessa universal
+  falsa; omitir a exceção de `test` seria a promessa oposta, igualmente falsa. _Onde no projeto:_ `benchmark/split-audit.ts` (`middleIsOrdered` e
+  `testIsStrictlyNewest`, com os comentários que dizem por quê).
+- **`classTolerance` continua 0,02 ABSOLUTO para as cinco.** _Fato citado:_ nenhuma fonte desta
+  bibliografia fixa tolerância de fração de classe; o número vem do desenho da Fase 2 e foi
+  mantido. _Consequência declarada:_ o alvo de `dev` é 0,05, logo ±0,02 é ±40% relativo, e um
+  `dev` com 3% ou 7% dos registros de uma classe é legal. Isso está escrito no tipo, em
+  `BlockedSplitPolicy.classTolerance`.
+
+**Sem precedente encontrado (2026-07-31)** para a prática de engenharia que a migração exigiu:
+
+1. **Busca de cortes com grade de tamanho FIXO e poda admissível, num caminho selado.** A busca
+   de dois cortes enumerava todo tempo distinto numa janela (O(k²)); com quatro cortes a mesma
+   forma é O(k⁴) e não termina. A generalização usa uma grade de tamanho fixo por corte — então o
+   número de folhas é limitado por construção e nenhum corpus é recusado por ser grande — mais
+   duas cotas de infactibilidade que são admissíveis e não heurísticas: `train` só RECEBE massa
+   (é o fallback), logo seu realizado é ≥ a banda; as partições do meio só PERDEM massa para
+   `train`, logo o realizado é ≤ a banda. As duas valem sobre a fração agregada porque ela é média
+   ponderada das frações por classe. A técnica de cota admissível é a de *branch and bound*
+   (Land & Doig, 1960, Econometrica 28(3):497–520,
+   [DOI](https://doi.org/10.2307/1910129)); o que não foi encontrado é o uso dela para tornar
+   **auditável** um split de corpus — a literatura de detecção de MGT descreve splits como
+   aleatórios ou por título e não publica o procedimento de busca. _Ressalva de verificação:_ a
+   referência Land & Doig é citada de conhecimento estabelecido; o DOI **não** foi aberto nesta
+   sessão, e a atribuição da técnica (não o seu uso aqui) permanece **não verificada em fonte**.
+2. **Buscar heurístico e verificar o contrato inteiro depois.** O mecanismo de busca é heurístico
+   e a promessa não é: o que a busca devolve é checado por inteiro pelo chamador e pela auditoria
+   independente, e restrição não satisfeita vira recusa e não alegação publicada. O preço, dito
+   porque é real: uma busca mais estreita recusa mais corpora **factíveis**. Não foi encontrada
+   prática equivalente em montagem de corpus; a área publica o split, não a recusa.
+
+### 2.2e Onde o piso de poder do split passou a viver (F1-5n, 2026-08-01)
+
+Esta subseção não traz fonte nova: a cota sob zero eventos é § 3.2, a inferência cluster-robusta é
+§ 4.1 e o pré-registro é § 2.1. O que faltava é a **âncora da unidade** — qual objeto o piso conta.
+
+- **Âncora:** o piso que vincula o split conta **componentes conectados independentes por célula de
+  cota, em cada partição** (`n ≥ 250`, para teto de 1,7375% sob zero eventos), e **não** linhas
+  humanas agregadas no bloco cego. _Onde no projeto:_
+  `benchmark/rebuild-v3-policy.json` (`preRegistration.powerInventoryUnit`,
+  `preRegistration.zeroEventCeiling`); gate em `benchmark/commands/split.ts`
+  (`COMPOSITION_FLOOR_NOT_APPLIED`, renomeado por F1-5o); registro § "Unidade 3 — E2", F1-5n e F1-5o.
+- **Âncora negativa, que é a razão da decisão:** uma contagem de linhas não sustenta a cota. Ela
+  erra nas duas direções — recusa um corpus que TEM 250 componentes por célula, e aceita 2.000
+  linhas colapsadas em poucos componentes ou concentradas numa única célula. É a mesma distinção que
+  § 4.1 estabelece para o HC3 e o MGTBench, aplicada ao piso em vez de ao split.
+  `powerFloors.criticalFprHumanNegatives: 300` permanece em LINHAS de propósito e continua publicado
+  como elegibilidade de fatia, não como reprovação — 300 linhas de um cluster são 300 linhas e uma
+  unidade, como § 2.2b já registrava.
+- **A contagem de linhas continua publicada**, em `audit.testHumanNegatives`
+  (`count`, `reportingThreshold`, `sufficientForReleaseFpr`). Publicar a oferta e não gatear nela é
+  a mesma separação que `benchmark/split-audit.ts` já aplica às fatias críticas.
+
+**Sem precedente encontrado (2026-08-01)** para a prática de engenharia da decisão: **um gate
+deliberadamente insatisfazível, em código, no lugar de um gate mal dimensionado.** O congelamento de
+corpus de `release` passa a ser recusado até existir o atestado de composição — então a
+indisponibilidade do release é uma decisão explícita e testada, e não uma consequência silenciosa de
+um número que ninguém conseguia satisfazer. A literatura de pré-registro descreve critérios de
+parada e de exclusão; não foi encontrada prática de deixar o gate no repositório **falhando por
+desenho** enquanto a evidência que ele exige não existe. A alternativa usual — afrouxar o número até
+o corpus passar — é a cota frouxa que a regra 1 do bloco D deste projeto proíbe.
+
+> **Emendado em 2026-08-01 por F1-5o (ver § 2.2f).** O parágrafo acima descrevia o atestado como
+> evidência que "não existe". Isso valia enquanto o atestado era uma `string` fornecida pelo chamador
+> — e era justamente o defeito: um gate satisfeito por qualquer texto não recusa nada. O atestado
+> passou a ser **derivado** do corpus, logo é verificável hoje. O que continua fora desta unidade é o
+> JULGAMENTO de suficiência do inventário, e é lá, não na existência do atestado, que a
+> indisponibilidade do release se decide.
+
+### 2.2f Atestado derivado e seed vinculada à pré-registração (F1-5o e F1-5p, 2026-08-01)
+
+Duas decisões do mesmo diagnóstico: **um parâmetro que o chamador escolhe não é evidência de nada.**
+
+- **F1-5o — o atestado de composição é DERIVADO, não fornecido.** _Âncora:_ o atestado é o digest
+  canônico do inventário por partição e por classe de **linhas-registro e componentes conectados
+  independentes**, recomputado dos registros e das atribuições; o validador o recalcula e recusa
+  divergência. _Por que os dois números:_ é a mesma distinção de unidade de § 4.1 e § 2.2e — linhas
+  dizem quanto texto existe, componentes dizem quantas observações independentes ele carrega, e as
+  duas divergem por ordens de magnitude num corpus cujas linhas compartilham gerador, lote de coleta
+  ou cadeia de derivação. _Onde no projeto:_ `benchmark/split-artifact.ts`
+  (`compositionAttestationOf`, `SPLIT_ARTIFACT_COMPOSITION_ATTESTATION_MISMATCH`), e
+  `benchmark/commands/publish-evidence.ts` para a metade decidível sem dataset (o pareamento
+  `release` ⇒ atestado não-nulo). _Âncora negativa:_ a versão anterior aceitava qualquer string com
+  `length > 0`, então `"x"` bastava — medido pelo cross-review.
+- **F1-5p — a seed do split é vinculada à autoridade congelada, e deixa de ser apresentada como
+  proveniência causal.** _Âncora:_ § 2.1 (pré-registro) — parâmetro fixado de antemão é lido do
+  documento que o fixou, não aceito do chamador. `REBUILD_V3_POLICY.seeds.split` (20260726) passa a
+  ser o único valor aceito pelo comando e pelo validador. _Fato medido que motiva a segunda metade:_
+  o splitter **não consome aleatoriedade** — a colocação é função pura dos registros, das frações, da
+  tolerância e da reserva, porque `assignPartition` decide por banda temporal e cortes e cada
+  partição é reordenada por `id` no fim. A seed alimenta apenas o desempate de ordenação de
+  componentes, que não altera `id → partição`. Publicá-la como proveniência causal seria alegação
+  vazia; o que a torna verificável é a pré-registração nomear o valor. _Âncora negativa:_ os fixtures
+  usavam `712019`, que é `seeds.publishableCheckpoint` — autoridade de outro propósito — e a
+  documentação operacional mandava `--seed 1` e `--seed 712019` para o split.
+
+**Sem precedente encontrado (2026-08-01)** para a prática de engenharia das duas: **derivar o
+atestado do próprio objeto atestado** (em vez de recebê-lo de um produtor externo) e **recusar em
+código qualquer seed que não seja a pré-registrada**. A literatura de pré-registro e de
+reprodutibilidade trata a semente como algo a *declarar*; não foi encontrada prática de o artefato
+verificar, contra o documento de pré-registro, que a semente declarada é a permitida — nem de
+declarar explicitamente que a semente não seleciona entre resultados quando o algoritmo é
+determinístico. A alternativa usual é publicar a semente e confiar, o que é exatamente a alegação
+vazia que F1-5p remove.
+
+### 2.2g Abandonar uma pré-inscrição inviável em vez de emendá-la (F1-5q, 2026-08-01)
+
+A decisão não é sobre qual número usar; é sobre **quando é legítimo trocar o alvo**. Descobriu-se que a
+estrutura de GRUPOS do corpus não admite o split pré-registrado, e havia duas formas de reagir: emendar
+a proporção até caber, ou abandonar a pré-inscrição e publicar outra, prospectiva.
+
+- **Âncora:** a distinção que sustenta a pré-inscrição é entre **predição e postdição** — o valor do
+  documento é registrar o que foi decidido ANTES de ver os dados, e uma emenda feita depois de observar
+  a estrutura converte predição em postdição sem deixar rastro. _Fonte:_ **Nosek, Ebersole, DeHaven &
+  Mellor, 2018 — The preregistration revolution** (PNAS 115(11):2600–2606).
+  [link](https://doi.org/10.1073/pnas.1708274114) _Fato citado:_ a pré-inscrição não é camisa de força e
+  desvios são aceitáveis, mas têm de ser **transparentes**, porque o que ela protege é a possibilidade
+  de distinguir hipótese de descoberta pós-hoc.
+- **Âncora do formato:** o mecanismo de registrar o desenho antes da coleta e submetê-lo a revisão
+  independente é o Registered Report. _Fonte:_ **Chambers, 2013 — Registered Reports: a new publishing
+  initiative at Cortex** (Cortex 49(3):609–610).
+  [link](https://doi.org/10.1016/j.cortex.2012.12.016) _Fato citado:_ o desenho e o plano analítico são
+  fixados e avaliados antes de os resultados existirem.
+- **O que a decisão explora, e é a razão de ela ser legítima:** a inviabilidade foi constatada sobre a
+  estrutura de agrupamento — tamanhos de componentes conectados — e **não sobre resultados do bloco
+  cego**, que não foi consultado. Trocar o alvo por causa dos resultados seria postdição; abandonar por
+  causa da estrutura, antes de qualquer medição de desempenho, não é. _Onde no projeto:_ registro
+  § "F1-5q"; a inviabilidade medida em § "Consenso sobre o garfo do `collectionBatch`".
+- **Âncora da separação de eixos:** um eixo que é ao mesmo tempo unidade de dependência e estrato de
+  relato impede que aquisições independentes ajudem o split. A distinção entre **unidade de
+  amostragem** e **variável de estratificação** é a mesma de § 4.1, aplicada agora à identidade do
+  material e não à inferência: `domainSource` fica como estrato, e a dependência passa a
+  `sourceMaterialBatch`.
+
+**Sem precedente encontrado (2026-08-01)** para a prática de engenharia específica: **preservar a
+pré-inscrição abandonada como artefato imutável no repositório, marcada com o motivo e os números da
+inviabilidade, e publicar a nova sob novo dataset ID** — em vez de editar o documento existente. A
+literatura trata de desvio declarado e de retirada de estudo; não foi encontrada prática de manter as
+duas versões coexistindo no mesmo repositório de código, com a antiga legível e explicitamente morta.
+O motivo de fazer assim é o mesmo que vale para o resto deste projeto: uma autoridade editada em
+silêncio é indistinguível de uma autoridade que sempre disse aquilo.
+
 ### 2.3 Olhares repetidos nos dados e sequências sem teto
 
 - **Pocock, 1977 — Group sequential methods in the design and analysis of clinical trials**
@@ -743,22 +909,22 @@ afirmação.
   Experts? Comparison Corpus, Evaluation, and Detection (HC3)** (arXiv 2301.07597).
   [link](https://ar5iv.labs.arxiv.org/html/2301.07597)
   _Âncora:_ a unidade de reamostragem por **componente conexa** — o HC3 é o exemplo canônico do
-  problema que essa unidade resolve. _Onde no projeto:_ `benchmark/split.ts:203`
-  (`CONNECTIVITY_AXES`), `:375-397` (`connectedComponentRoots`); plano v3 § C3. _Fato citado:_
+  problema que essa unidade resolve. _Onde no projeto:_ `benchmark/split.ts:150`
+  (`CONNECTIVITY_AXES`), `:351-414` (`connectedComponentRoots`); plano v3 § C3. _Fato citado:_
   "held-out test sets" sem holdout oculto, totalmente público; os autores reconhecem dependência
   por cluster de pergunta sem ajustar a análise para isso.
 - **He, Shen, Chen, Backes & Zhang, 2024 — MGTBench: Benchmarking Machine-Generated Text
   Detection** (ACM CCS 2024). [link](https://ar5iv.labs.arxiv.org/html/2303.14822)
   _Âncora:_ o tratamento de autor como eixo de agrupamento — o MGTBench ignora um agrupamento
   óbvio no próprio dataset, exatamente o erro que o desenho por componente conexa evita. _Onde
-  no projeto:_ `benchmark/split.ts:203`; plano v3 § "§0" R6 e § C3. _Fato citado:_ split 80/20
+  no projeto:_ `benchmark/split.ts:150`; plano v3 § "§0" R6 e § C3. _Fato citado:_ split 80/20
   aleatório reutilizável; 13 detectores × 6 LLMs × 3 datasets sem correção de multiplicidade;
   Reuters 50-50 tem 50 jornalistas como agrupamento óbvio não tratado.
 - **Paes, Negrão, Silva, Junior, Luz & Silva (UFOP), 2025 — Detecção de textos gerados por LLM
   em português (PT-Detect)** (ENIAC 2025, DOI 10.5753/eniac.2025.13952).
   [link](https://sol.sbc.org.br/index.php/eniac/article/view/38755)
   _Âncora:_ a unidade de reamostragem por componente conexa — é o exemplo negativo exato de
-  vazamento de cluster em pt-BR. _Onde no projeto:_ `benchmark/split.ts:375-397`; plano v3 § C3
+  vazamento de cluster em pt-BR. _Onde no projeto:_ `benchmark/split.ts:351-414`; plano v3 § C3
   e § C6. _Fato citado:_ alega 98,18% de acurácia. _Ressalva de verificação:_ título, autoria,
   veículo, DOI e o índice de 98,18% foram confirmados no resumo; a metodologia exata do split
   (aleatório por exemplo em vez de por título, que causaria vazamento entre o trio
@@ -1589,8 +1755,8 @@ integridade e, por fim, texto e modelo.
 - **Tarjan, 1975 — Efficiency of a Good But Not Linear Set Union Algorithm** (Journal of the ACM
   22(2):215–225). [link](https://dl.acm.org/doi/10.1145/321879.321884)
   _Âncora:_ cluster de split e de exposição como **componente conexo** (union-find) sobre a união
-  dos eixos de agrupamento aplicáveis. _Onde no projeto:_ `benchmark/split.ts:203`
-  (`CONNECTIVITY_AXES`), `:375-397` (`connectedComponentRoots`); plano v3 § C3. _Fato citado:_
+  dos eixos de agrupamento aplicáveis. _Onde no projeto:_ `benchmark/split.ts:150`
+  (`CONNECTIVITY_AXES`), `:351-414` (`connectedComponentRoots`); plano v3 § C3. _Fato citado:_
   union-find com union-by-rank e path compression tem custo quase-linear (função de Ackermann
   inversa).
 - **Kohavi, 1995 — A Study of Cross-Validation and Bootstrap for Accuracy Estimation and Model

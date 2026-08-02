@@ -90,8 +90,8 @@ como resultado bom.
 
 **Nenhum gate da esteira pega isso.** O `sealDataset`, o `source-readiness` e o
 `split` operam apenas sobre o corpus e o manifest; o conjunto de treino não é
-entrada de nenhum deles. A auditoria de vazamento do `split` é **entre
-partições** (dev/cal/test), não contra o treino. É uma checagem que só existe se
+entrada de nenhum deles. A auditoria de vazamento do `split` é **entre partições**
+(train, dev, cal-A, cal-B, test), não contra o conjunto de treino do detector. É uma checagem que só existe se
 alguém a fizer.
 
 **Comparar hash exato não basta.** Os pools humanos re-extraem as mesmas fontes
@@ -213,19 +213,31 @@ Regras que evitam a repetição:
    família limpa: o corpus terminou com 2 alegações sustentáveis em vez de 3
    frágeis.
 
-### Bloqueio temporal (para o split cego 20/30/50)
+### Bloqueio temporal (para o split cego 45/5/10/20/20)
 
-O `split` corta o corpus por tempo em **development 20% / calibration 30% /
-test 50%** e a auditoria recusa qualquer vazamento entre partições. Para o corte
-existir de forma limpa, os `createdAt` precisam formar **três blocos temporais
-separados** (desenvolvimento mais antigo → teste mais recente), e componentes
-ligados por `derivationRoot`/near-duplicate precisam ficar dentro do mesmo bloco.
+O `split` corta o corpus por tempo em **train 45% / dev 5% / cal-A 10% / cal-B 20%
+/ test 20%** e a auditoria recusa qualquer vazamento entre partições. Para os
+quatro cortes existirem de forma limpa, os `createdAt` precisam formar **cinco
+blocos temporais separados** (train mais antigo → test mais recente).
+Um componente ligado por `derivationRoot`/near-duplicate que atravesse um corte
+**não reprova por si**: ele cai inteiro em `train`, que é o fallback do splitter. O
+que decide é o resultado — se as frações por classe, a reserva e as relações
+temporais **realizadas** continuam legais. Distinga bloco ESTAMPADO de partição
+REALIZADA: o carimbo é proposta, a partição é o que o splitter produz.
+
+Só `test` é bloco estrito: `train` é o fallback do splitter e recebe todo
+componente que atravessa um corte, então um registro de `train` pode ser mais novo
+que um de `cal-B` por desenho.
 Consequência prática: um registro `mixed` que aponta para um pai `human` via
 `groups.derivationRoot` deve compartilhar o bloco temporal do pai.
 
-Com 4.000 humanos, os 50% do bloco de teste dão **2.000 negativos humanos** — o
-suficiente para os pisos de amostra por slice (≥ 300 negativos por slice crítico
-para autorizar ação visual; ver §5).
+Com 4.000 humanos, os 20% do bloco de teste dão **800 negativos humanos**. O
+`split` PUBLICA esse número em `audit.testHumanNegatives` e **não reprova** por
+ele: quem aplica piso de poder é o gate de composição do E3, sobre a unidade
+pré-registrada (componentes conectados independentes por célula de cota), e é ele
+que falha antes da selagem. Os pisos por slice (≥ 300 negativos por slice crítico
+para autorizar ação visual; ver §5) continuam publicados como elegibilidade, não
+como reprovação.
 
 ## 2. O registro (`records.jsonl`) — schema v2 fechado
 
@@ -473,32 +485,32 @@ npm run benchmark -- validate \
   --dataset-dir benchmark/data/ptbr-generic-v1 \
   --output benchmark/work/validate
 
-# 3) SPLIT — corte temporal 20/30/50 + auditoria de vazamento (seed fixo)
+# 3) SPLIT — corte temporal 45/5/10/20/20 + auditoria de vazamento (seed fixo)
 npm run benchmark -- split \
   --dataset-dir benchmark/data/ptbr-generic-v1 \
   --dataset-audit benchmark/work/validate/dataset-audit.json \
   --output benchmark/work/split \
-  --seed 1
+  --seed 20260726
 
-# 4) SCORE — pontua no browser SOMENTE development e calibration (nunca test)
-npm run benchmark -- score --partition development \
+# 4) SCORE — pontua no browser SOMENTE dev e cal-A (nunca test, train ou cal-B)
+npm run benchmark -- score --partition dev \
   --dataset-dir benchmark/data/ptbr-generic-v1 \
   --split-artifact benchmark/work/split/split-artifact.json \
   --candidate-extension-dir dist-model-benchmark \
-  --output benchmark/work/predictions/development
-npm run benchmark -- score --partition calibration \
+  --output benchmark/work/predictions/dev
+npm run benchmark -- score --partition cal-A \
   --dataset-dir benchmark/data/ptbr-generic-v1 \
   --split-artifact benchmark/work/split/split-artifact.json \
   --candidate-extension-dir dist-model-benchmark \
-  --output benchmark/work/predictions/calibration
+  --output benchmark/work/predictions/cal-A
 
 # 5) VALIDATE-PREDICTIONS — completude/identidade das previsões (dev e cal)
-npm run benchmark -- validate-predictions --partition development \
+npm run benchmark -- validate-predictions --partition dev \
   --dataset-dir benchmark/data/ptbr-generic-v1 \
   --split-artifact benchmark/work/split/split-artifact.json \
-  --predictions benchmark/work/predictions/development \
+  --predictions benchmark/work/predictions/dev \
   --runtime-parity <runtime-parity.json>
-#   (idem para --partition calibration)
+#   (idem para --partition cal-A)
 
 # 6) FIT — calibração (Platt/beta/isotônico + CV) e congelamento dos limiares
 npm run benchmark -- fit \
@@ -507,8 +519,8 @@ npm run benchmark -- fit \
   --source-readiness <source-readiness.json> \
   --split-artifact benchmark/work/split/split-artifact.json \
   --runtime-parity <runtime-parity.json> \
-  --development-predictions benchmark/work/predictions/development \
-  --calibration-predictions benchmark/work/predictions/calibration \
+  --development-predictions benchmark/work/predictions/dev \
+  --calibration-predictions benchmark/work/predictions/cal-A \
   --output benchmark/work/fit \
   --seed 1
 

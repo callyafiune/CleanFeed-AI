@@ -36,6 +36,7 @@ import {
 } from "../prediction-schema.ts";
 import type { SplitArtifact } from "../split-artifact.ts";
 import { asGeneratorFamily } from "../generator-family.ts";
+import type { ScoringPartition } from "../split.ts";
 
 // ---------------------------------------------------------------------------
 // Shared identity fixtures. Every digest is COMPUTED so the preflight's own
@@ -166,7 +167,7 @@ const DATASET_AUDIT = await buildAudit();
 const SOURCE_READINESS = await buildReadiness();
 
 function makeManifest(
-  partition: "development" | "calibration" | "test",
+  partition: ScoringPartition,
   overrides: Record<string, unknown> = {},
 ): PredictionManifestV1 {
   return parsePredictionManifest({
@@ -193,23 +194,31 @@ function makeManifest(
   });
 }
 
-const developmentManifest = makeManifest("development");
-const calibrationManifest = makeManifest("calibration");
+const developmentManifest = makeManifest("dev");
+const calibrationManifest = makeManifest("cal-A");
 const DEV_DIGEST = await computePredictionManifestDigest(developmentManifest);
 const CAL_DIGEST = await computePredictionManifestDigest(calibrationManifest);
 
 // A split artifact whose only preflight-relevant surface is the assignment set
 // (for coverage) and the leakage audit's verdict.
+//
+// It ALWAYS carries a `train` and a `cal-B` assignment, and that is what makes the
+// coverage assertions mean something: with those two partitions absent, the fixture
+// cannot tell an allowlist of `dev + cal-A` apart from a filter of "not test", and the
+// two describe different sets.
 function makeSplit(
-  nonTest: readonly string[],
+  fitPopulation: readonly string[],
   test: readonly string[],
   passed = true,
 ): SplitArtifact {
   const assignments = [
-    ...nonTest.map((id, index) => ({
+    ...fitPopulation.map((id, index) => ({
       id,
-      partition: index % 2 === 0 ? "development" : "calibration",
+      partition: index % 2 === 0 ? "dev" : "cal-A",
     })),
+    // Present, and never expected among the fit population.
+    { id: "train_only_row", partition: "train" },
+    { id: "cal_b_only_row", partition: "cal-B" },
     ...test.map((id) => ({ id, partition: "test" })),
   ];
   return { assignments, audit: { passed } } as unknown as SplitArtifact;
@@ -271,7 +280,7 @@ async function buildFrozen(): Promise<FrozenCalibrationArtifact> {
     sourceReadinessDigest: SOURCE_READINESS.reportDigest,
     splitDigest: SPLIT_DIGEST,
     evaluatorDigest: EVALUATOR_DIGEST,
-    partitionsUsed: ["development", "calibration"],
+    partitionsUsed: ["dev", "cal-A"],
     calibrators: { document: PLATT, localized: PLATT },
     selectionEvidence: { document: [], localized: [] },
     thresholds: {
@@ -357,7 +366,7 @@ describe("runCandidatePreflight — blocking reasons", () => {
       chromeVersion: RELEASE_CHROME_VERSION,
       datasetDigest: DATASET_DIGEST,
       splitDigest: SPLIT_DIGEST,
-      partition: "calibration",
+      partition: "cal-A",
       shardSize: 100,
       shardCount: 0,
       shards: [],
@@ -429,7 +438,7 @@ describe("runCandidatePreflight — blocking reasons", () => {
   });
 
   it("blocks divergent identity between the two candidate manifests", async () => {
-    const diverging = makeManifest("calibration", {
+    const diverging = makeManifest("cal-A", {
       bundleDigest: "a".repeat(64),
     });
     const report = runCandidatePreflight(
@@ -552,7 +561,7 @@ describe("buildFitReport", () => {
 
     expect(fitReport.preflight.status).toBe("ready");
     expect(fitReport.calibrationArtifactDigest).toBe(frozen.artifactDigest);
-    expect(fitReport.partitionsUsed).toEqual(["development", "calibration"]);
+    expect(fitReport.partitionsUsed).toEqual(["dev", "cal-A"]);
     expect(fitReport.thresholds).toEqual(frozen.thresholds);
 
     // No key anywhere in the fit report names the blocked test or the holdout.

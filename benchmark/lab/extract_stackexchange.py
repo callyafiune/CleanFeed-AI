@@ -94,7 +94,7 @@ def thread_of(element: ET.Element) -> str:
     This is the dependence structure the corpus actually has and the v2 assembler
     could not express. A question and its eight answers discuss one problem, in one
     voice-community, often quoting each other — so they are one cluster, and a split
-    that puts the question in `development` and an answer in `test` has leaked. The
+    that puts the question in `dev` and an answer in `test` has leaked. The
     old `g_<recordId>` made every post its own thread, which is why the blocked
     split found nothing to complain about.
 

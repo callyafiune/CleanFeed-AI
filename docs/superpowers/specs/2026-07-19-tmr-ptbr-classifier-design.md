@@ -402,8 +402,22 @@ Os segmentos críticos de FPR são faixa de tamanho, domínio LinkedIn, tipo de
 fonte humana, coorte temporal e família de hard negative. Os segmentos críticos
 de recall são faixa de tamanho, domínio, gerador visto/não visto, transformação
 e proporção mista; cada um precisa de ao menos 200 positivos para servir como
-gate. As proporções de 20/30/50 são aplicadas por classe com tolerância máxima
-de dois pontos percentuais depois do agrupamento.
+gate. As proporções são aplicadas por classe com tolerância máxima de dois pontos
+percentuais depois do agrupamento.
+
+> **Superseded em 2026-07-31/08-01 (E2).** As proporções deste parágrafo eram
+> `development 20 / calibration 30 / test 50`. O pré-registro da v3 congelou cinco
+> partições — `train 45 / dev 5 / cal-A 10 / cal-B 20 / test 20`
+> (`benchmark/rebuild-v3-policy.json`, `preRegistration.partitionFractions`) — e o
+> splitter as implementa. A tolerância de dois pontos é a que sobreviveu, absoluta.
+> O resto desta seção (segmentos críticos, pisos por segmento, o teste bloqueado
+> não escolher nada) continua valendo.
+>
+> **O piso de 2.000 negativos humanos no bloco cego também foi superseded** (decisão F1-5n): ele
+> conta linhas agregadas, unidade que o pré-registro da v3 substituiu por componentes conectados
+> independentes — `n ≥ 250` por célula de cota, em cada partição. A contagem de linhas segue
+> publicada como medição em `audit.testHumanNegatives`; o que RECUSA passou a ser o atestado de
+> composição do E3, exigido antes de congelar qualquer corpus de `release`.
 
 O teste bloqueado não é usado para escolher calibrador, agregação, limiar ou
 regra OOD. Uma tentativa reprovada consome o holdout; a próxima tentativa exige

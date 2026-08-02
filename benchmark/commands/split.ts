@@ -1,13 +1,17 @@
-// `split`: freeze the leakage-safe 20/30/50 temporal split and its audit.
+// `split`: freeze the leakage-safe 45/5/10/20/20 temporal split and its audit.
 //
 // It re-parses the sealed dataset audit, recomputes its digest and confirms it
 // belongs to the same manifest/bytes, then runs the blocked group-time splitter
 // and the INDEPENDENT leakage audit. A split that leaks or misses the class
-// proportions / sampling floors is refused, never relaxed. The frozen
-// split-artifact.json binds the dataset digest, the algorithm/policy, the
-// assignments and the audit under one self-verifying splitDigest. The blind
-// test-input.jsonl (no labels) is written for Phase 3 to score; the private test
-// labels are written separately.
+// proportions is refused, never relaxed. The precise scope of "nothing
+// is written": a constraint failure writes no OUTPUT — inputs are opened first, so the
+// claim is about outputs and not about all file access. A failure during publication can
+// leave partition files without the artifact that certifies them, never the reverse,
+// because the artifact is renamed into place last. The frozen split-artifact.json binds
+// the dataset digest, the algorithm/policy, the assignments and the audit under one
+// self-verifying splitDigest. The blind test-input.jsonl carries NO labels, so it can be
+// scored without revealing them; the test labels and the whole of cal-B are written under
+// private/, which is what keeps both off the readable path.
 //
 // Standalone benchmark module: MUST NOT import from the extension bundle (src/).
 
@@ -25,12 +29,16 @@ import {
   assertDerivedParentsResolve,
   parseBenchmarkDataset,
   type BenchmarkRecord,
-  type V3GroupAxis,
 } from "../schema.ts";
-import { V3_HUMAN_SOURCE_INVENTORY } from "../source-manifest.ts";
+import { REBUILD_V3_POLICY } from "../rebuild-v3-policy.ts";
 import { buildSplitArtifact } from "../split-artifact.ts";
-import { auditBlockedSplit, type SplitAuditPolicy } from "../split-audit.ts";
 import {
+  DECLARED_GROUP_AXES,
+  FROZEN_SPLIT_AUDIT_POLICY,
+  auditBlockedSplit,
+} from "../split-audit.ts";
+import {
+  PARTITIONS,
   createBlockedSplit,
   markedHeldOutGeneratorFamilies,
   type BlockedSplitPolicy,
@@ -39,8 +47,7 @@ import {
   CommandError,
   readJsonFile,
   readTextFile,
-  writeFileAtomic,
-  writeJsonAtomic,
+  writeFileSetAtomic,
 } from "./io.ts";
 
 export interface SplitOptions {
@@ -49,32 +56,6 @@ export interface SplitOptions {
   outputDirectory: string;
   seed: number;
 }
-
-const SPLIT_AUDIT_POLICY: SplitAuditPolicy = {
-  minimumTestHumanNegatives: 2_000,
-  minimumCriticalFprNegatives: 300,
-  minimumCriticalRecallPositives: 200,
-  classTolerance: 0.02,
-};
-
-/**
- * The join C3 owes the audit: `provenance.sourceId` -> the axes that source
- * DECLARED applicable. This is the only place both halves exist at once — the
- * declaration is a frozen constant of the inventory, and the filling is a property
- * of each record — so it is the only place the comparison can be made.
- *
- * Built from `V3_HUMAN_SOURCE_INVENTORY` and NOT from `private/source-manifest.json`:
- * the declaration is versioned in the tree, so the check needs no private file and
- * cannot be softened by one. A source the inventory does not name contributes no
- * declaration, and the audit stays silent about it rather than inventing one.
- */
-const DECLARED_GROUP_AXES: ReadonlyMap<string, readonly V3GroupAxis[]> =
-  new Map(
-    V3_HUMAN_SOURCE_INVENTORY.map((entry) => [
-      entry.sourceId,
-      entry.declaredGroupAxes,
-    ]),
-  );
 
 export async function runSplit(options: SplitOptions): Promise<string> {
   const { datasetDirectory, datasetAuditPath, outputDirectory, seed } = options;
@@ -106,32 +87,64 @@ export async function runSplit(options: SplitOptions): Promise<string> {
     );
   }
 
-  // Lineage is refused BEFORE anything is partitioned. The function existed and had
-  // no production caller: only `benchmark/tests/schema-v3.test.ts` reached it, and
-  // `benchmark/split.ts` mentioned it in a comment as the place where an unresolved
-  // parent "belongs" — which is true and was not wired.
-  //
-  // Calling it here is what turns the connectivity union from conditional into total,
+  // Lineage is refused BEFORE anything is partitioned, which is what turns the
+  // connectivity union from conditional into total,
   // and that is the colocation the plan asks for rather than a second mechanism.
   // `buildClusters` unions a record with its parent only `if (ids.has(parent))`,
   // because a missing parent must neither invent a cluster nor silently refuse a row;
-  // C2 measured 782 of 783 parent references resolving to no row of the assembled
+  // 782 of 783 parent references in the assembled corpus resolve to no row of the
   // corpus, so on that corpus the relation unioned almost nothing. With this call in
   // front, a corpus whose parents do not resolve never REACHES the splitter, so every
   // parent the clusterer looks for is present and parent + generations + derivatives
   // always land in one cluster, hence one partition.
   //
-  // It also settles, for this path, the question `AxisUnionRelation` left open for
-  // E2/E3: whether `humanSeed` should ALSO become a value axis, so two generations
-  // grown from the same human prompt stay together even when the seed row was never
-  // assembled. On this path it need not, and the reason is this call and not an
+  // It also settles, for this path, whether `humanSeed` would need to be a value axis
+  // as well — so two generations grown from the same human prompt stay together even
+  // when the seed row itself was never assembled. On this path it need not, and the
+  // reason is this call rather than an
   // argument about dependence — both generations resolve to a parent that is present,
   // so both are unioned with it and therefore with each other. The open question
   // survives only for callers that partition records without passing through here.
+  // Sealing a release corpus is refused HERE, and the reason is what the artifact cannot
+  // supply: the artifact RECORDS its composition (the derived attestation), but recording an
+  // inventory is not judging it. The pre-registered floor demands a number of independent
+  // sampling units per quota cell per partition, and nothing in this stage applies that
+  // comparison — so a release seal produced here would publish a composition against which
+  // no floor was ever checked. Refused early, before any work happens.
+  if (manifest.scientificUse === "release") {
+    const preRegistration = REBUILD_V3_POLICY.preRegistration;
+    throw new CommandError(
+      "COMPOSITION_FLOOR_NOT_APPLIED",
+      "a release corpus cannot be frozen by this stage: the pre-registered floor of " +
+        `${preRegistration.zeroEventCeiling.adoptedFloorPerCell} independent sampling units ` +
+        `in each of the ${preRegistration.quotaAxis.cells.length} quota cells of every ` +
+        "partition is not applied here, and the artifact records its composition without " +
+        "judging it; seal as scientificUse: infrastructure-only to exercise the pipeline",
+    );
+  }
+
   assertDerivedParentsResolve(records);
 
+  // The split seed is PRE-REGISTERED, so it is not a caller's choice: a flag that accepts any
+  // number lets an arbitrary value into an artifact whose whole point is that its parameters
+  // were fixed in advance. The value also collides in the neighbourhood — `publishableCheckpoint`
+  // is a different seed for a different purpose — so the authority is named rather than copied.
+  if (seed !== REBUILD_V3_POLICY.seeds.split) {
+    throw new CommandError(
+      "SPLIT_SEED_NOT_PRE_REGISTERED",
+      `--seed ${seed} is not the pre-registered split seed ` +
+        `${REBUILD_V3_POLICY.seeds.split}`,
+    );
+  }
+
   const policy: BlockedSplitPolicy = {
-    fractions: { development: 0.2, calibration: 0.3, test: 0.5 },
+    fractions: {
+      train: 0.45,
+      dev: 0.05,
+      "cal-A": 0.1,
+      "cal-B": 0.2,
+      test: 0.2,
+    },
     classTolerance: 0.02,
     heldOutGeneratorFamilies: manifest.heldOutGeneratorFamilies,
     seed,
@@ -141,7 +154,7 @@ export async function runSplit(options: SplitOptions): Promise<string> {
   const splitAudit = auditBlockedSplit(
     records,
     split,
-    SPLIT_AUDIT_POLICY,
+    FROZEN_SPLIT_AUDIT_POLICY,
     manifest.heldOutGeneratorFamilies,
     DECLARED_GROUP_AXES,
   );
@@ -189,30 +202,56 @@ export async function runSplit(options: SplitOptions): Promise<string> {
     );
   }
 
-  await writeJsonAtomic(join(outputDirectory, "split-artifact.json"), artifact);
-  await writeFileAtomic(
-    join(outputDirectory, "development.jsonl"),
-    toJsonl(split.development),
-  );
-  await writeFileAtomic(
-    join(outputDirectory, "calibration.jsonl"),
-    toJsonl(split.calibration),
-  );
-  await writeFileAtomic(
-    join(outputDirectory, "test-input.jsonl"),
-    toJsonl(split.test.map(toBlindInput)),
-  );
-  await writeFileAtomic(
-    join(outputDirectory, "private", "test-labels.jsonl"),
-    toJsonl(
-      split.test.map((record) => ({ id: record.id, label: record.label })),
-    ),
-  );
+  // One set, published so `split-artifact.json` lands LAST. Six independent atomic
+  // writes would let a failure on the fourth leave a directory that already carried the
+  // artifact certifying all six — which reads as a frozen split that does not exist.
+  // With the artifact last, its presence means the five partition files are in place.
+  await writeFileSetAtomic([
+    {
+      path: join(outputDirectory, "train.jsonl"),
+      content: toJsonl(split.train),
+    },
+    { path: join(outputDirectory, "dev.jsonl"), content: toJsonl(split.dev) },
+    {
+      path: join(outputDirectory, "cal-A.jsonl"),
+      content: toJsonl(split["cal-A"]),
+    },
+    // `cal-B` goes under `private/` with the test labels, and the directory IS the
+    // enforcement: everything below it is already off-limits to read until the v2
+    // measurement, so the "byte-untouched" invariant stops depending on anyone
+    // remembering which of the five files it applies to.
+    {
+      path: join(outputDirectory, "private", "cal-B.jsonl"),
+      content: toJsonl(split["cal-B"]),
+    },
+    {
+      path: join(outputDirectory, "test-input.jsonl"),
+      content: toJsonl(split.test.map(toBlindInput)),
+    },
+    {
+      path: join(outputDirectory, "private", "test-labels.jsonl"),
+      content: toJsonl(
+        split.test.map((record) => ({ id: record.id, label: record.label })),
+      ),
+    },
+    {
+      path: join(outputDirectory, "split-artifact.json"),
+      content: `${JSON.stringify(artifact, null, 2)}
+`,
+    },
+  ]);
 
-  return (
-    "Split frozen: development=20%, calibration=30%, test=50%; " +
-    `leakage=${splitAudit.leakages.length}.`
-  );
+  return `Split frozen: ${describeSplitProportions(policy)}; leakage=${splitAudit.leakages.length}.`;
+}
+
+/**
+ * The proportions line of the success message, derived from the policy rather than
+ * restated so a frozen number has one spelling.
+ */
+export function describeSplitProportions(policy: BlockedSplitPolicy): string {
+  return PARTITIONS.map(
+    (partition) => `${partition}=${policy.fractions[partition] * 100}%`,
+  ).join(", ");
 }
 
 function toJsonl(rows: readonly unknown[]): string {

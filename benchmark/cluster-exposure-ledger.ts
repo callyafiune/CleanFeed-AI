@@ -94,12 +94,15 @@ export const CLUSTER_EXPOSURE_PRIVATE_DIRECTORY = join(
 export const CLUSTER_EXPOSURE_SCHEMA_VERSION = 1 as const;
 
 /**
- * The five ACTIVE partitions of the frozen split (E2). Written here rather than
- * imported from `split.ts` on purpose: `Partition` there is the MVP splitter's
- * three-way vocabulary, and conflating the two is how a `calibration` event would
- * silently stand in for `cal-A` and `cal-B`. `future-holdout-reserve` is
- * deliberately ABSENT — the reserve is not a partition, generates no exposure
- * event, and enters this ledger only as `reserveManifestDigest`.
+ * The five ACTIVE partitions of the frozen split.
+ *
+ * Declared here rather than imported from `split.ts` because this list validates
+ * PERSISTED exposure events: a ledger whose accepted vocabulary tracked a code module
+ * could retroactively accept or reject history already written to disk. The dependency
+ * therefore runs one way only.
+ *
+ * `future-holdout-reserve` is deliberately ABSENT — the reserve is not a partition,
+ * generates no exposure event, and enters this ledger only as `reserveManifestDigest`.
  */
 export const LEDGER_PARTITIONS = [
   "train",
@@ -499,7 +502,11 @@ export function parseExposureRequest(value: unknown): ExposureRequest {
         `records[${index}].groups must be an object of axis -> pseudonym`,
       );
     }
-    const groups: Record<string, string | undefined> = {};
+    // `Object.create(null)`, not `{}`: the axis names come from a parsed file, and
+    // assigning to `__proto__` on a plain object replaces the prototype instead of
+    // creating a key — so an unknown axis would VANISH here, before the allowlist below
+    // could refuse it.
+    const groups = Object.create(null) as Record<string, string | undefined>;
     for (const [axis, identity] of Object.entries(
       row.groups as Record<string, unknown>,
     )) {

@@ -11,8 +11,8 @@
 // redundancy is deliberate defense-in-depth so a candidate can never be frozen
 // on inputs that would not, independently, survive both gates.
 //
-// What is checked (all over development/calibration ONLY — the blocked test is
-// never read):
+// What is checked (all over dev/cal-A ONLY — the blocked test is never read, and
+// neither is train or cal-B):
 //   - the dataset audit is sealed, self-consistent and bound to the manifest;
 //   - the source readiness report is `ready` and self-consistent, and its
 //     source-manifest self-digest bridges to the sealed raw file SHA-256;
@@ -20,12 +20,12 @@
 //     prediction identities;
 //   - the two prediction manifests share one model/tokenizer/aggregation/
 //     composition/build/parity identity, are WASM + the pinned Chrome, declare
-//     the development and calibration partitions (never test, never a holdout
-//     consumption id), and their recorded digests recompute;
+//     the dev and cal-A partitions (never test, never a holdout consumption id),
+//     and their recorded digests recompute;
 //   - the reviewed licenses are present and approved (verified bundle/license);
-//   - the union of the two prediction id sets covers EXACTLY the non-test split
-//     assignments (no missing, no extra, no cross-artifact collision) — so no
-//     test prediction is ever an accepted input;
+//   - the union of the two prediction id sets covers EXACTLY the dev + cal-A split
+//     assignments (no missing, no extra, no cross-artifact collision) — so no test,
+//     train or cal-B prediction is ever an accepted input;
 //   - the leakage audit of the split passed;
 //   - at least 20 GiB of disk is free.
 //
@@ -39,6 +39,11 @@ import { canonicalJson } from "../contracts/canonical-json.ts";
 import type { CorpusSourceReadinessReport } from "../contracts/source-readiness.ts";
 import type { RuntimeParityManifestV1 } from "../contracts/runtime-parity.ts";
 import type { FrozenCalibrationArtifact } from "./calibration-pipeline.ts";
+import {
+  datasetAuditIdentity,
+  runtimeParityIdentity,
+  sourceReadinessIdentity,
+} from "./calibration-pipeline.ts";
 import type { DatasetAudit, DatasetManifest } from "./dataset-manifest.ts";
 import { sha256BytesHex } from "./digests.ts";
 import {
@@ -46,6 +51,7 @@ import {
   type PredictionManifestV1,
 } from "./prediction-schema.ts";
 import type { SplitArtifact } from "./split-artifact.ts";
+import { FIT_PARTITIONS, type Partition } from "./split.ts";
 
 /** At least this many free bytes (20 GiB) must be available before a freeze. */
 export const MIN_FREE_DISK_BYTES = 20 * 1024 ** 3;
@@ -107,7 +113,7 @@ export interface FitReport {
   preflight: CandidatePreflightReport;
   calibrationArtifactDigest: string;
   fitSeed: number;
-  partitionsUsed: ["development", "calibration"];
+  partitionsUsed: ["dev", "cal-A"];
   model: FrozenCalibrationArtifact["model"];
   scoringRuntime: FrozenCalibrationArtifact["scoringRuntime"];
   predictionManifestDigests: FrozenCalibrationArtifact["predictionManifestDigests"];
@@ -166,15 +172,11 @@ export function runCandidatePreflight(
   const calibration = input.calibrationManifest;
 
   // --- prediction identity, parity and WASM/Chrome shell --------------------
-  if (development.partition !== "development") {
-    add(
-      "development prediction manifest does not declare the development partition",
-    );
+  if (development.partition !== "dev") {
+    add("development prediction manifest does not declare the dev partition");
   }
-  if (calibration.partition !== "calibration") {
-    add(
-      "calibration prediction manifest does not declare the calibration partition",
-    );
+  if (calibration.partition !== "cal-A") {
+    add("calibration prediction manifest does not declare the cal-A partition");
   }
   // Absence of any test-prediction input: a test manifest carries a holdout
   // consumption id, and no fit manifest ever does.
@@ -223,16 +225,7 @@ export function runCandidatePreflight(
 
   // Runtime parity binds the SAME inference core as benchmark and release.
   const parity = input.runtimeParity;
-  const parityIdentity = {
-    schemaVersion: parity.schemaVersion,
-    modelId: parity.modelId,
-    modelVersion: parity.modelVersion,
-    bundleDigest: parity.bundleDigest,
-    aggregationVersion: parity.aggregationVersion,
-    contentCompositionVersion: parity.contentCompositionVersion,
-    tokenizerDigest: parity.tokenizerDigest,
-    inferenceCoreDigest: parity.inferenceCoreDigest,
-  };
+  const parityIdentity = runtimeParityIdentity(parity);
   if (canonicalDigest(parityIdentity) !== parity.runtimeParityDigest) {
     add("runtime parity digest does not match its identity fields");
   }
@@ -256,22 +249,7 @@ export function runCandidatePreflight(
   if (audit.sealed !== true) {
     add("dataset audit is not sealed");
   }
-  const auditIdentity = {
-    datasetId: audit.datasetId,
-    scientificUse: audit.scientificUse,
-    releaseEligible: audit.releaseEligible,
-    recordCount: audit.recordCount,
-    counts: audit.counts,
-    sourceTypes: audit.sourceTypes,
-    hardNegativeFamilies: audit.hardNegativeFamilies,
-    generatorFamilies: audit.generatorFamilies,
-    labelBasisCounts: audit.labelBasisCounts,
-    licenses: audit.licenses,
-    recordsSha256: audit.recordsSha256,
-    reviewLedgerSha256: audit.reviewLedgerSha256,
-    sourceManifestSha256: audit.sourceManifestSha256,
-    sealed: audit.sealed,
-  };
+  const auditIdentity = datasetAuditIdentity(audit);
   if (canonicalDigest(auditIdentity) !== audit.auditDigest) {
     add("dataset auditDigest does not match the recomputed audit");
   }
@@ -306,16 +284,7 @@ export function runCandidatePreflight(
   if (readiness.status !== "ready") {
     add("source readiness report is not ready");
   }
-  const readinessIdentity = {
-    schemaVersion: readiness.schemaVersion,
-    status: readiness.status,
-    sourceManifestDigest: readiness.sourceManifestDigest,
-    recordCount: readiness.recordCount,
-    sourceCount: readiness.sourceCount,
-    acquisitionCounts: readiness.acquisitionCounts,
-    protocols: readiness.protocols,
-    blockingReasons: readiness.blockingReasons,
-  };
+  const readinessIdentity = sourceReadinessIdentity(readiness);
   if (canonicalDigest(readinessIdentity) !== readiness.reportDigest) {
     add("source readiness reportDigest does not match the recomputed report");
   }
@@ -348,13 +317,30 @@ export function runCandidatePreflight(
       if (typeof declaredSourceDigest !== "string") {
         add("source manifest must carry a sourceManifestDigest");
       } else {
-        const strippedSource: Record<string, unknown> = {};
+        // `Object.create(null)`, not `{}`: the keys come from a parsed manifest, and assigning to
+        // `__proto__` on a plain object replaces the prototype instead of creating a key — the key
+        // would disappear from the canonical identity the digest is computed over.
+        const strippedSource = Object.create(null) as Record<string, unknown>;
         for (const key of Object.keys(sourceObject)) {
           if (key !== "sourceManifestDigest") {
             strippedSource[key] = sourceObject[key];
           }
         }
-        if (canonicalDigest(strippedSource) !== declaredSourceDigest) {
+        // Canonicalization can THROW on a hostile key — `__proto__` survives the copy above
+        // and the canonical serializer refuses it — and this function's contract is that a
+        // governance failure comes back as a blocking reason, never as an exception.
+        let recomputedSourceDigest: string | null = null;
+        try {
+          recomputedSourceDigest = canonicalDigest(strippedSource);
+        } catch {
+          add(
+            "source manifest carries a key the canonical serialization refuses",
+          );
+        }
+        if (
+          recomputedSourceDigest !== null &&
+          recomputedSourceDigest !== declaredSourceDigest
+        ) {
           add(
             "source manifest sourceManifestDigest is inconsistent with its body",
           );
@@ -371,10 +357,14 @@ export function runCandidatePreflight(
     add("split artifact carries a leakage audit that did not pass");
   }
 
-  const nonTestIds = input.splitArtifact.assignments
-    .filter((assignment) => assignment.partition !== "test")
+  // POSITIVE allowlist, for the same reason as in `commands/fit.ts`: a negative filter
+  // over partition names admits `train` and `cal-B`, and the compiler cannot see it.
+  const fitPopulationIds = input.splitArtifact.assignments
+    .filter((assignment) =>
+      (FIT_PARTITIONS as readonly Partition[]).includes(assignment.partition),
+    )
     .map((assignment) => assignment.id);
-  const expected = new Set(nonTestIds);
+  const expected = new Set(fitPopulationIds);
   const combined = [
     ...input.developmentPredictionIds,
     ...input.calibrationPredictionIds,
@@ -394,7 +384,8 @@ export function runCandidatePreflight(
   }
   if (missing.length > 0 || extra.length > 0) {
     add(
-      `prediction coverage does not match the non-test split: missing=${missing.join(",")} extra=${extra.join(",")}`,
+      `prediction coverage does not match the fit split (dev + cal-A): ` +
+        `missing=${missing.join(",")} extra=${extra.join(",")}`,
     );
   }
 
@@ -516,7 +507,7 @@ export function verifyFrozenAgainstPreflight(
 
 /**
  * Assembles the sealed fit report from the ready preflight and the frozen
- * artifact. It carries only development/calibration evidence — the CV selection
+ * artifact. It carries only dev/cal-A evidence — the CV selection
  * summaries, the joint thresholds and their fit evidence, and the bound
  * identities — and NEVER any test score, label or metric.
  */
@@ -529,7 +520,7 @@ export function buildFitReport(
     preflight,
     calibrationArtifactDigest: frozen.artifactDigest,
     fitSeed: frozen.fitSeed,
-    partitionsUsed: ["development", "calibration"],
+    partitionsUsed: ["dev", "cal-A"],
     model: frozen.model,
     scoringRuntime: frozen.scoringRuntime,
     predictionManifestDigests: frozen.predictionManifestDigests,

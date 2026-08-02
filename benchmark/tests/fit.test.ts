@@ -29,13 +29,15 @@ import { sha256BytesHex } from "../digests.ts";
 import { RELEASE_CHROME_VERSION } from "../prediction-schema.ts";
 import type { BenchmarkRecord } from "../schema.ts";
 import { buildSplitArtifact } from "../split-artifact.ts";
-import { standInClusterReport, type SplitAudit } from "../split-audit.ts";
+import {
+  DECLARED_GROUP_AXES,
+  FROZEN_SPLIT_AUDIT_POLICY,
+  auditBlockedSplit,
+} from "../split-audit.ts";
 import type { DatasetSplit } from "../split.ts";
 import {
   asGeneratorFamily,
-  generatorFamilyOf,
   normalizeGeneratorFamily,
-  type GeneratorFamily,
 } from "../generator-family.ts";
 
 // ---------------------------------------------------------------------------
@@ -44,9 +46,9 @@ import {
 // runtime parity) and two sharded prediction artifacts. Every digest is
 // COMPUTED so fit's own recomputation matches; nothing is a hand-typed hash.
 //
-// The fit set carries 70 human negatives so that a zero-false-positive warning
-// threshold clears the 5% Wilson-upper budget (wilsonOneSided(0,70,"upper") is
-// ~0.037), plus 20 positives with clearly higher raw scores.
+// The fit set carries 105 human negatives so that a zero-false-positive warning
+// threshold clears the 5% Wilson-upper budget (wilsonOneSided(0,105,"upper") is
+// ~0.025), plus 20 positives with clearly higher raw scores.
 // ---------------------------------------------------------------------------
 
 function hex(label: string): string {
@@ -199,12 +201,84 @@ const testRecords = [
   makeRecord("test-a-0", "ai", 320, "heldout_family", "tst_1"),
   makeRecord("test-a-1", "ai", 321, "heldout_family", "tst_1"),
 ];
+// `train` and `cal-B` are PRESENT and outside the fit population, which is the whole
+// point: with them empty, the coverage assertions could not tell an allowlist of
+// `dev + cal-A` from a filter of "not test", and the fixture would stay green if the
+// production filter regressed to the negative form.
+//
+// Their SIZES are not free. The sealed audit is re-derived from these records by
+// `validateSplitArtifact`, so the split has to satisfy the frozen proportions per class —
+// 45/5/10/20/20 — or the audit refuses it. Reading off the two fixed populations: 35 dev
+// humans at 5% pins human to 700, and 10 dev AI rows pin ai to 200. Everything below is
+// that arithmetic, and `cal-A` needs twice `dev` because its target is twice as large.
+//
+// The audit here is DERIVED from these records, never hand-written: a hand-written one
+// can assert proportions the records do not have, and nothing compares the two.
+const HUMAN_TOTAL = 700;
+const AI_TOTAL = 200;
+
+// Every filler row of a group shares ONE timestamp, inside its partition's band. Adding
+// the index instead would spread `train` across four hundred ticks and into the test
+// band, which the audit refuses — `earliest(test)` must exceed `latest(train)`.
+function filler(
+  prefix: string,
+  label: BenchmarkRecord["label"],
+  count: number,
+  createdAt: number,
+): BenchmarkRecord[] {
+  return Array.from({ length: count }, (_unused, index) =>
+    makeRecord(
+      `${prefix}-${index}`,
+      label,
+      createdAt,
+      "acme_family",
+      // One cluster per row: a shared cluster would straddle nothing here, but a
+      // distinct one keeps the leakage audit non-vacuous over the filler too.
+      `${prefix}_${index}`,
+    ),
+  );
+}
+
+// train: 45% of each class, oldest band.
+const trainRecords = [
+  ...filler("train-h", "human", Math.round(HUMAN_TOTAL * 0.45), 3),
+  ...filler("train-a", "ai", Math.round(AI_TOTAL * 0.45), 5),
+];
+// cal-A: 10% of each class. 35 humans and 10 AI rows already carry predictions, so the
+// remainder is filler that carries predictions too — it is inside the fit population.
+const calAFillerHumans = filler(
+  "cala-h",
+  "human",
+  Math.round(HUMAN_TOTAL * 0.1) - calHumans.length,
+  140,
+);
+const calAFillerAis = filler(
+  "cala-a",
+  "ai",
+  Math.round(AI_TOTAL * 0.1) - calAis.length,
+  145,
+);
+// cal-B: 20% of each class, between cal-A and test.
+const calBRecords = [
+  ...filler("calb-h", "human", Math.round(HUMAN_TOTAL * 0.2), 250),
+  ...filler("calb-a", "ai", Math.round(AI_TOTAL * 0.2), 255),
+];
+// test: 20% of each class. `testRecords` already holds four rows in this band.
+const testFiller = [
+  ...filler("tfill-h", "human", Math.round(HUMAN_TOTAL * 0.2) - 2, 350),
+  ...filler("tfill-a", "ai", Math.round(AI_TOTAL * 0.2) - 2, 355),
+];
 const allRecords = [
+  ...trainRecords,
   ...devHumans,
   ...devAis,
   ...calHumans,
   ...calAis,
+  ...calAFillerHumans,
+  ...calAFillerAis,
+  ...calBRecords,
   ...testRecords,
+  ...testFiller,
 ];
 
 interface PredictionRow {
@@ -270,6 +344,13 @@ function defaultCalRows(): PredictionRow[] {
   return [
     ...calHumans.map((r, i) => scoredRow(r.id, humanScore(i), humanScore(i))),
     ...calAis.map((r, i) => scoredRow(r.id, aiScore(i), aiScore(i))),
+    // The cal-A filler is inside the fit population, so it needs rows too. The score
+    // pattern cycles the same way, so the threshold and calibrator populations grow
+    // without changing shape.
+    ...calAFillerHumans.map((r, i) =>
+      scoredRow(r.id, humanScore(i), humanScore(i)),
+    ),
+    ...calAFillerAis.map((r, i) => scoredRow(r.id, aiScore(i), aiScore(i))),
   ];
 }
 
@@ -290,7 +371,7 @@ function datasetManifest(): DatasetManifest {
     schemaVersion: 1,
     datasetId: DATASET_ID,
     version: "1.0.0",
-    scientificUse: "release",
+    scientificUse: "infrastructure-only",
     intendedLanguage: "pt-BR",
     intendedDomain: "generic",
     createdAt: "2026-07-19T00:00:00.000Z",
@@ -316,72 +397,15 @@ function datasetManifest(): DatasetManifest {
   };
 }
 
-function passingAudit(split: DatasetSplit<BenchmarkRecord>): SplitAudit {
-  return {
-    sizes: {
-      development: split.development.length,
-      calibration: split.calibration.length,
-      test: split.test.length,
-    },
-    classFractions: {
-      human: { development: 0.2, calibration: 0.3, test: 0.5 },
-      ai: { development: 0.2, calibration: 0.3, test: 0.5 },
-      mixed: { development: 0.2, calibration: 0.3, test: 0.5 },
-    },
-    cutoffs: {
-      latestDevelopment: 100,
-      latestCalibration: 200,
-      earliestTest: 300,
-    },
-    leakages: [],
-    clusters: standInClusterReport(),
-    declaredAxisGaps: [],
-    criticalSliceSamples: [],
-    heldOutGeneratorFamilies: honoredReservation(
-      split,
-      datasetManifest().heldOutGeneratorFamilies,
-    ),
-    // No family concentrated itself in test without being reserved in these
-    // fixtures; the field is stated because a missing key cannot be told apart
-    // from a writer that never measured it.
-    incidentalTestOnlyGeneratorFamilies: [],
-    passed: true,
-    reasons: [],
-  };
-}
-
-// The reservation the partitions HONOR: every DECLARED family whose record-lines
-// all sit in test. Derived from the split exactly as benchmark/split-audit.ts
-// derives it, so this stand-in audit cannot claim a reservation the partitions do
-// not show. It takes the declaration rather than inferring it from test-only
-// membership — that inference reproved a split over a family nobody reserved
-// (A4-fix) — and hardcoding the answer was harmless only while nothing compared the
-// four sets.
-function honoredReservation(
-  split: DatasetSplit<BenchmarkRecord>,
-  declared: readonly GeneratorFamily[],
-): GeneratorFamily[] {
-  const families = (rows: readonly BenchmarkRecord[]): GeneratorFamily[] =>
-    rows
-      .map((row) => generatorFamilyOf(row))
-      .filter((family): family is GeneratorFamily => family !== undefined);
-  const inTest = new Set(families(split.test));
-  const elsewhere = new Set<GeneratorFamily>([
-    ...families(split.development),
-    ...families(split.calibration),
-  ]);
-  return declared
-    .filter((family) => inTest.has(family) && !elsewhere.has(family))
-    .sort((a, b) => (a < b ? -1 : a > b ? 1 : 0));
-}
-
 async function buildAudit(): Promise<DatasetAudit> {
   const human = allRecords.filter((r) => r.label === "human").length;
   const ai = allRecords.filter((r) => r.label === "ai").length;
   const base: Omit<DatasetAudit, "auditDigest"> = {
     datasetId: DATASET_ID,
-    scientificUse: "release",
-    releaseEligible: true,
+    scientificUse: "infrastructure-only",
+    // Coupled to `scientificUse` by the manifest contract: this is an infrastructure
+    // corpus, so it is not release eligible. It never was — it carries no `mixed` class.
+    releaseEligible: false,
     recordCount: allRecords.length,
     counts: { human, ai, mixed: 0 },
     sourceTypes: { "qa-informal": 1 },
@@ -404,7 +428,13 @@ async function buildReadiness(): Promise<CorpusSourceReadinessReport> {
     sourceManifestDigest: SOURCE_MANIFEST_DIGEST,
     recordCount: allRecords.length,
     sourceCount: 3,
-    acquisitionCounts: { consent: 40, licensed: 40, generated: 14 },
+    // Derived, never typed: the corpus grew to satisfy the frozen proportions, and a
+    // hand-written triple would silently stop summing to the record count.
+    acquisitionCounts: {
+      consent: 40,
+      licensed: allRecords.length - 40 - 14,
+      generated: 14,
+    },
     protocols: {
       corpus: "corpus-v1" as const,
       collection: "collection-v1" as const,
@@ -445,7 +475,7 @@ interface ShardDescriptor {
 }
 
 function predictionManifest(
-  partition: "development" | "calibration",
+  partition: "dev" | "cal-A",
   shards: ShardDescriptor[],
 ): Record<string, unknown> {
   return {
@@ -473,7 +503,7 @@ function predictionManifest(
 
 async function writePredictionArtifact(
   dir: string,
-  partition: "development" | "calibration",
+  partition: "dev" | "cal-A",
   rows: readonly PredictionRow[],
 ): Promise<void> {
   await mkdir(dir, { recursive: true });
@@ -517,22 +547,38 @@ async function buildScenario(
   );
 
   const split: DatasetSplit<BenchmarkRecord> = {
-    development: [...devHumans, ...devAis],
-    calibration: [...calHumans, ...calAis],
-    test: testRecords,
+    train: trainRecords,
+    dev: [...devHumans, ...devAis],
+    "cal-A": [...calHumans, ...calAis, ...calAFillerHumans, ...calAFillerAis],
+    "cal-B": calBRecords,
+    test: [...testRecords, ...testFiller],
   };
   const policy = {
-    fractions: { development: 0.2, calibration: 0.3, test: 0.5 },
+    fractions: {
+      train: 0.45,
+      dev: 0.05,
+      "cal-A": 0.1,
+      "cal-B": 0.2,
+      test: 0.2,
+    },
     classTolerance: 0.02,
     heldOutGeneratorFamilies: [asGeneratorFamily("heldout_family")],
-    seed: FIT_SEED,
+    seed: REBUILD_V3_POLICY.seeds.split,
   } as const;
   const artifact = await buildSplitArtifact({
     manifest,
     records: allRecords,
     split,
     policy,
-    audit: passingAudit(split),
+    // Measured from these records, never hand-written: `validateSplitArtifact` re-derives
+    // it and refuses an audit that does not reproduce, so a fabricated one cannot pass.
+    audit: auditBlockedSplit(
+      allRecords,
+      split,
+      FROZEN_SPLIT_AUDIT_POLICY,
+      policy.heldOutGeneratorFamilies,
+      DECLARED_GROUP_AXES,
+    ),
   });
   const splitArtifactPath = join(root, "split-artifact.json");
   await writeFile(splitArtifactPath, `${JSON.stringify(artifact, null, 2)}\n`);
@@ -557,12 +603,12 @@ async function buildScenario(
   const calibrationPredictionsDirectory = join(root, "cal");
   await writePredictionArtifact(
     developmentPredictionsDirectory,
-    "development",
+    "dev",
     devRows,
   );
   await writePredictionArtifact(
     calibrationPredictionsDirectory,
-    "calibration",
+    "cal-A",
     calRows,
   );
 
@@ -809,10 +855,13 @@ describe("runFit excludes non-scored records from calibrator fitting", () => {
       );
 
       // The false-positive denominator is unchanged: both runs count the record
-      // among the 70 human negatives, with a raw-0 coercion (symmetry with
+      // among the 105 human negatives, with a raw-0 coercion (symmetry with
       // evaluate.ts's decision metrics).
-      expect(frozenA.thresholdEvidence.warning.negatives).toBe(70);
-      expect(frozenB.thresholdEvidence.warning.negatives).toBe(70);
+      // 35 in dev plus 70 in cal-A. The corpus grew so the split satisfies the frozen
+      // proportions per class, and cal-A's target is twice dev's — so its human population
+      // is twice as large, and this denominator follows from that arithmetic.
+      expect(frozenA.thresholdEvidence.warning.negatives).toBe(105);
+      expect(frozenB.thresholdEvidence.warning.negatives).toBe(105);
 
       // But the FITTED CALIBRATORS diverge: A drops the abstained record from
       // the calibration curve, B keeps it as a raw-0 point. The calibrator is a

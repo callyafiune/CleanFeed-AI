@@ -30,7 +30,10 @@ import {
   type EvidenceInput,
 } from "../evidence-sanitizer.ts";
 import type { BenchmarkReport } from "../report.ts";
-import type { SplitArtifact } from "../split-artifact.ts";
+import {
+  assertSplitArtifactSelfConsistent,
+  type SplitArtifact,
+} from "../split-artifact.ts";
 import { CommandError, readJsonFile, readTextFile } from "./io.ts";
 import { runVerifyEvidence } from "./verify-evidence.ts";
 
@@ -132,9 +135,28 @@ export async function runPublishEvidence(
   const sourceReadiness = await parseCorpusSourceReadinessReport(
     await readJsonFile(options.sourceReadinessPath),
   );
-  const splitArtifact = (await readJsonFile(
-    options.splitArtifactPath,
-  )) as SplitArtifact;
+  // Self-consistency BEFORE anything is compared. The comparison below is against the
+  // artifact's DECLARED `splitDigest`, which a tampered file satisfies simply by keeping
+  // the old string — so without this the sealed `algorithm`, `counts`, `cutoffs` and the
+  // whole `audit` reach public evidence unchecked. The dataset is not available here, so
+  // this is the record-independent half; `validateSplitArtifact` is the full one.
+  const splitArtifact = await assertSplitArtifactSelfConsistent(
+    (await readJsonFile(options.splitArtifactPath)) as SplitArtifact,
+  );
+  // Release requires a composition attestation, and this is the one half of that invariant
+  // decidable without the dataset: the pairing. Recomputing the attestation needs the records
+  // (`validateSplitArtifact` does it); refusing a release artifact that carries none does not,
+  // and the audit read above is where `scientificUse` is available.
+  if (
+    datasetAudit.scientificUse === "release" &&
+    splitArtifact.compositionAttestation === null
+  ) {
+    throw new CommandError(
+      "SPLIT_ARTIFACT_COMPOSITION_ATTESTATION_MISSING",
+      "the dataset audit declares scientificUse: release but the split artifact carries no " +
+        "composition attestation",
+    );
+  }
   const fitReport = (await readJsonFile(options.fitReportPath)) as FitReport;
 
   const release = await parseModelReleaseDescriptorV1(

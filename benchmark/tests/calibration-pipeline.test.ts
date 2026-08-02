@@ -33,6 +33,7 @@ import {
   type RuntimeParityManifestV1,
 } from "../../contracts/runtime-parity.ts";
 import { asGeneratorFamily } from "../generator-family.ts";
+import type { ScoringPartition } from "../split.ts";
 
 // ---------------------------------------------------------------------------
 // Shared identity fixtures. Every digest below is COMPUTED so that fit's own
@@ -165,7 +166,7 @@ async function buildRuntimeParity(): Promise<RuntimeParityManifestV1> {
 const RUNTIME_PARITY = await buildRuntimeParity();
 
 function makeManifest(
-  partition: "development" | "calibration" | "test",
+  partition: ScoringPartition,
   overrides: Record<string, unknown> = {},
 ) {
   return {
@@ -293,10 +294,10 @@ async function buildBaseInput(
   scores: { samples: FitSampleScores[]; positives: FitSampleScores[] },
   overrides: Partial<FitFrozenCalibrationInput> = {},
 ): Promise<FitFrozenCalibrationInput> {
-  const developmentManifest = makeManifest("development");
-  const calibrationManifest = makeManifest("calibration");
+  const developmentManifest = makeManifest("dev");
+  const calibrationManifest = makeManifest("cal-A");
   return {
-    partition: "calibration",
+    partition: "cal-A",
     fitSeed: FIT_SEED,
     samples: scores.samples,
     positives: scores.positives,
@@ -392,7 +393,7 @@ describe("fitFrozenCalibration", () => {
       // guard rejects it at runtime.
       fitFrozenCalibration({
         ...calibrationFixture,
-        partition: "test" as unknown as "calibration",
+        partition: "test" as unknown as "cal-A",
       }),
     ).toThrow(/test partition is forbidden during fit/);
   });
@@ -405,10 +406,7 @@ describe("fitFrozenCalibration", () => {
     expect(() => fitFrozenCalibration(clash)).toThrow(/blocked test/);
 
     // A clean fit only ever declares the two non-holdout partitions.
-    expect(calibrationResult.partitionsUsed).toEqual([
-      "development",
-      "calibration",
-    ]);
+    expect(calibrationResult.partitionsUsed).toEqual(["dev", "cal-A"]);
   });
 
   it(
@@ -469,14 +467,14 @@ describe("fitFrozenCalibration", () => {
 describe("fitFrozenCalibration governance guards", () => {
   it("refuses a WebGPU backend", async () => {
     const input = await buildBaseInput(calibrationScores, {
-      calibrationManifest: makeManifest("calibration", { backend: "webgpu" }),
+      calibrationManifest: makeManifest("cal-A", { backend: "webgpu" }),
     });
     expect(() => fitFrozenCalibration(input)).toThrow(/backend must be wasm/);
   });
 
   it("refuses a Chrome build that diverges from the pinned release", async () => {
     const input = await buildBaseInput(calibrationScores, {
-      calibrationManifest: makeManifest("calibration", {
+      calibrationManifest: makeManifest("cal-A", {
         chromeVersion: "150.0.7871.130",
       }),
     });
@@ -485,7 +483,7 @@ describe("fitFrozenCalibration governance guards", () => {
 
   it("refuses a divergent runtimeParityDigest between the two paths", async () => {
     const input = await buildBaseInput(calibrationScores, {
-      calibrationManifest: makeManifest("calibration", {
+      calibrationManifest: makeManifest("cal-A", {
         runtimeParityDigest: "a".repeat(64),
       }),
     });
@@ -494,13 +492,13 @@ describe("fitFrozenCalibration governance guards", () => {
 
   it("refuses a divergent tokenizer or build digest", async () => {
     const tokenizer = await buildBaseInput(calibrationScores, {
-      calibrationManifest: makeManifest("calibration", {
+      calibrationManifest: makeManifest("cal-A", {
         tokenizerDigest: "7".repeat(64),
       }),
     });
     expect(() => fitFrozenCalibration(tokenizer)).toThrow(/divergent/);
     const build = await buildBaseInput(calibrationScores, {
-      calibrationManifest: makeManifest("calibration", {
+      calibrationManifest: makeManifest("cal-A", {
         extensionBuildDigest: "8".repeat(64),
       }),
     });
@@ -509,7 +507,7 @@ describe("fitFrozenCalibration governance guards", () => {
 
   it("refuses a tampered prediction manifest under a stale digest", async () => {
     const input = await buildBaseInput(calibrationScores, {
-      calibrationManifest: makeManifest("calibration", {
+      calibrationManifest: makeManifest("cal-A", {
         createdAt: "2020-01-01T00:00:00.000Z",
       }),
     });
@@ -520,7 +518,7 @@ describe("fitFrozenCalibration governance guards", () => {
 
   it("refuses a non-null holdoutConsumptionId on a fit manifest", async () => {
     const input = await buildBaseInput(calibrationScores, {
-      calibrationManifest: makeManifest("calibration", {
+      calibrationManifest: makeManifest("cal-A", {
         holdoutConsumptionId: "session-1",
       }),
     });

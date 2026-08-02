@@ -14,6 +14,10 @@
 
 import { canonicalSha256 } from "../contracts/canonical-json.ts";
 import { isSanitizedFailureDetail } from "../contracts/failure-detail.ts";
+// Type-only, so this parser gains no runtime dependency on the splitter: the NAMES a
+// manifest may declare cannot drift from the narrowed scoring vocabulary, while the
+// runtime list below stays this module's own (see PARTITIONS).
+import type { ScoringPartition } from "./split.ts";
 
 /** The exact Chrome for Testing Stable build that release-eligible scoring uses. */
 export const RELEASE_CHROME_VERSION = "150.0.7871.129" as const;
@@ -60,7 +64,7 @@ export interface PredictionManifestV1 {
   chromeVersion: string;
   datasetDigest: string;
   splitDigest: string;
-  partition: "development" | "calibration" | "test";
+  partition: ScoringPartition;
   shardSize: 100;
   shardCount: number;
   shards: PredictionShardDescriptor[];
@@ -131,7 +135,10 @@ const SHARD_KEYS = ["index", "file", "sha256", "recordCount"] as const;
 
 const PREDICTION_STATUSES = ["scored", "abstained", "error"] as const;
 const EVIDENCE_QUALITIES = ["sufficient", "limited", "unsupported"] as const;
-const PARTITIONS = ["development", "calibration", "test"] as const;
+// This module's OWN runtime enumeration, deliberately not the imported array. The validator
+// has to be able to DISAGREE with the splitter: sharing one list means a name dropped on one
+// side silently stops being refused on the other, and the disagreement is the signal.
+const PARTITIONS = ["dev", "cal-A", "test"] as const;
 const BACKENDS = ["wasm", "webgpu"] as const;
 
 function isPlainObject(value: unknown): value is Record<string, unknown> {
@@ -469,9 +476,7 @@ export function parsePredictionManifest(
       fail("test manifest requires a holdoutConsumptionId session id");
     }
   } else if (holdoutConsumptionId !== null) {
-    fail(
-      "holdoutConsumptionId must be null for development and calibration manifests",
-    );
+    fail("holdoutConsumptionId must be null for dev and cal-A manifests");
   }
 
   const createdAt = nonEmptyString(root.createdAt, "createdAt");

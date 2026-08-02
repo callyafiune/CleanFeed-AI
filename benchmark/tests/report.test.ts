@@ -69,7 +69,7 @@ const BUILD = hex("extension-build");
 const DATASET_DIGEST = hex("dataset-digest");
 const SPLIT_DIGEST = hex("split-digest");
 const EVALUATOR = hex("evaluator");
-const CALIBRATION = hex("calibration");
+const CALIBRATION = hex("cal-A");
 
 function seal(): GovernanceSeal {
   return {
@@ -138,21 +138,56 @@ function manifest(
 
 function splitAudit(): SplitAudit {
   return {
-    sizes: { development: 2_000, calibration: 3_000, test: 5_000 },
+    sizes: {
+      train: 4_500,
+      dev: 500,
+      "cal-A": 1_000,
+      "cal-B": 2_000,
+      test: 2_000,
+    },
     classFractions: {
-      human: { development: 0.2, calibration: 0.3, test: 0.5 },
-      ai: { development: 0.2, calibration: 0.3, test: 0.5 },
-      mixed: { development: 0.2, calibration: 0.3, test: 0.5 },
+      human: {
+        train: 0.45,
+        dev: 0.05,
+        "cal-A": 0.1,
+        "cal-B": 0.2,
+        test: 0.2,
+      },
+      ai: {
+        train: 0.45,
+        dev: 0.05,
+        "cal-A": 0.1,
+        "cal-B": 0.2,
+        test: 0.2,
+      },
+      mixed: {
+        train: 0.45,
+        dev: 0.05,
+        "cal-A": 0.1,
+        "cal-B": 0.2,
+        test: 0.2,
+      },
     },
     cutoffs: {
-      latestDevelopment: 100,
-      latestCalibration: 200,
-      earliestTest: 300,
+      latestTrain: 100,
+      latestDev: 200,
+      latestCalA: 300,
+      latestCalB: 400,
+
+      earliestCalA: 250,
+
+      earliestCalB: 350,
+      earliestTest: 500,
     },
     leakages: [],
     clusters: standInClusterReport(),
     declaredAxisGaps: [],
     criticalSliceSamples: [],
+    testHumanNegatives: {
+      count: 2_000,
+      reportingThreshold: 2_000,
+      sufficientForReleaseFpr: true,
+    },
     heldOutGeneratorFamilies: [],
     incidentalTestOnlyGeneratorFamilies: [],
     passed: true,
@@ -629,7 +664,7 @@ function baseInput(overrides: InputOverrides = {}): BenchmarkReportInput {
     dataset: { id: "ptbr-generic", version: "v1", digest: DATASET_DIGEST },
     split: {
       digest: SPLIT_DIGEST,
-      strategy: "blocked-group-time-v1",
+      strategy: "blocked-group-time-v2",
       heldOutGeneratorFamilies: [],
       audit: splitAudit(),
     },
@@ -638,8 +673,8 @@ function baseInput(overrides: InputOverrides = {}): BenchmarkReportInput {
     frozen: overrides.frozen ?? seal(),
     observed: overrides.observed ?? seal(),
     predictionManifests: {
-      development: manifest("development", null, "dev-shard"),
-      calibration: manifest("calibration", null, "cal-shard"),
+      development: manifest("dev", null, "dev-shard"),
+      calibration: manifest("cal-A", null, "cal-shard"),
       test: manifest("test", SESSION, overrides.testShard ?? "test-shard"),
     },
     metrics: overrides.metrics ?? metrics(),
@@ -676,13 +711,11 @@ describe("buildBenchmarkReport governance sealing", () => {
     expect(report.releaseDecision).toBe("pass");
 
     expect(report.predictionManifestDigests.development).toBe(
-      await computePredictionManifestDigest(
-        manifest("development", null, "dev-shard"),
-      ),
+      await computePredictionManifestDigest(manifest("dev", null, "dev-shard")),
     );
     expect(report.predictionManifestDigests.calibration).toBe(
       await computePredictionManifestDigest(
-        manifest("calibration", null, "cal-shard"),
+        manifest("cal-A", null, "cal-shard"),
       ),
     );
     expect(report.predictionManifestDigests.test).toBe(

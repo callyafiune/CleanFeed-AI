@@ -1771,7 +1771,7 @@ class GenerationBatchAxisTests(unittest.TestCase):
         """
         from assemble_corpus import assign_generation_batches, stamp_block
 
-        blocks = partitions or ["development"] * len(records)
+        blocks = partitions or ["dev"] * len(records)
         for record, partition in zip(records, blocks):
             stamp_block(record, partition)
         return assign_generation_batches(records)
@@ -1870,13 +1870,13 @@ class GenerationBatchAxisTests(unittest.TestCase):
 
         left = ai_record(self._api_candidate("src_ai_gemini_aaaaaaaaaaaa"))
         right = ai_record(self._api_candidate("src_ai_gemini_bbbbbbbbbbbb"))
-        batches = self._batched([left, right], ["development", "calibration"])
+        batches = self._batched([left, right], ["dev", "cal-A"])
         # THE PROPERTY THAT MAKES A SHARED AXIS SAFE, and it was asserted nowhere.
         # `collectionBatch` IS a grouping axis, so two rows sharing it form one split
         # component; the docstring's argument that this cannot leak across blocks is
         # that `generatedAt` is part of the key and equals the record's block time, so
         # an identical recipe stamped into two blocks yields TWO batches. If that ever
-        # stopped holding, a single batch would span development and test and the
+        # stopped holding, a single batch would span dev and test and the
         # split would be refused — with the corpus already written.
         self.assertEqual(len(batches), 2)
         self.assertNotEqual(
@@ -2104,10 +2104,10 @@ class ClusterDistributionReportTests(unittest.TestCase):
         from group_axes import cluster_report
 
         records = [
-            self._record("h1", "human", "development", source="t1", author="a1"),
-            self._record("h2", "human", "development", source="t1", author="a1"),
-            self._record("h3", "human", "development", source="t1", author="a2"),
-            self._record("h4", "human", "calibration", source="t2", author="a3"),
+            self._record("h1", "human", "dev", source="t1", author="a1"),
+            self._record("h2", "human", "dev", source="t1", author="a1"),
+            self._record("h3", "human", "dev", source="t1", author="a2"),
+            self._record("h4", "human", "cal-A", source="t2", author="a3"),
         ]
         report = cluster_report(records)
         source = report["axes"]["source"]
@@ -2135,9 +2135,9 @@ class ClusterDistributionReportTests(unittest.TestCase):
         # The other fixtures fill unspecified axes with not_applicable("fixture") and
         # then assert only on the axes they set, which is why nothing observed it.
         records = [
-            self._record("h1", "human", "development", source="t1"),
-            self._record("h2", "human", "development", source="t1"),
-            self._record("h3", "human", "calibration", source="t2"),
+            self._record("h1", "human", "dev", source="t1"),
+            self._record("h2", "human", "dev", source="t1"),
+            self._record("h3", "human", "cal-A", source="t2"),
         ]
         author = cluster_report(records)["axes"]["author"]
         self.assertEqual(author["clusters"], 0)
@@ -2156,8 +2156,8 @@ class ClusterDistributionReportTests(unittest.TestCase):
         # another — so an `unknown` value must not become a cluster either, whichever
         # direction the guard is weakened in.
         rows = [
-            self._record("h1", "human", "development", source="t1"),
-            self._record("h2", "human", "development", source="t1"),
+            self._record("h1", "human", "dev", source="t1"),
+            self._record("h2", "human", "dev", source="t1"),
         ]
         rows[0]["groups"]["author"] = unknown("conta removida")
         rows[1]["groups"]["author"] = unknown("conta removida")
@@ -2170,8 +2170,8 @@ class ClusterDistributionReportTests(unittest.TestCase):
         from group_axes import cluster_report, unknown
 
         records = [
-            self._record("h1", "human", "development", source="t1"),
-            self._record("h2", "human", "development", source="t1"),
+            self._record("h1", "human", "dev", source="t1"),
+            self._record("h2", "human", "dev", source="t1"),
         ]
         records[1]["groups"]["source"] = unknown("nao recuperado")
         report = cluster_report(records)
@@ -2187,22 +2187,22 @@ class ClusterDistributionReportTests(unittest.TestCase):
         from group_axes import cluster_report
 
         records = [
-            self._record("h1", "human", "development", source="t1"),
-            self._record("h2", "human", "development", source="t1"),
-            self._record("a1", "ai", "development", source="t1"),
-            self._record("h3", "human", "calibration", source="t2"),
+            self._record("h1", "human", "dev", source="t1"),
+            self._record("h2", "human", "dev", source="t1"),
+            self._record("a1", "ai", "dev", source="t1"),
+            self._record("h3", "human", "cal-A", source="t2"),
         ]
         report = cluster_report(records)
         # A slice is (partition, label): the aggregate hides that `t1` is one
         # cluster of three ACROSS two classes, which is the shape that leaks.
         slices = report["slices"]
         self.assertEqual(
-            slices["development/human"]["axes"]["source"]["largestCluster"],
+            slices["dev/human"]["axes"]["source"]["largestCluster"],
             {"id": "t1", "size": 2},
         )
-        self.assertEqual(slices["development/ai"]["axes"]["source"]["clusters"], 1)
+        self.assertEqual(slices["dev/ai"]["axes"]["source"]["clusters"], 1)
         self.assertEqual(
-            slices["calibration/human"]["axes"]["source"]["sizeDistribution"], {"1": 1}
+            slices["cal-A/human"]["axes"]["source"]["sizeDistribution"], {"1": 1}
         )
         self.assertEqual(report["axes"]["source"]["largestCluster"]["size"], 3)
 
@@ -2214,8 +2214,8 @@ class ClusterDistributionReportTests(unittest.TestCase):
         # 100% singletons" criterion would reward artificial grouping. The report
         # DESCRIBES; sufficient power per stratum is E3's criterion.
         records = [
-            self._record("h1", "human", "development", nearDuplicate="nd1"),
-            self._record("h2", "human", "development", nearDuplicate="nd2"),
+            self._record("h1", "human", "dev", nearDuplicate="nd1"),
+            self._record("h2", "human", "dev", nearDuplicate="nd2"),
         ]
         report = cluster_report(records)
         rendered = json.dumps(report)
@@ -2799,3 +2799,366 @@ class NerPilotTests(unittest.TestCase):
         # 1800 names x 10 s = 5 h; 3600 x 30 s = 30 h.
         self.assertEqual(out["hours"], [5.0, 30.0])
         self.assertEqual(out["unit"], "distinct-name")
+
+
+class StampedCorpusSplittabilityTest(unittest.TestCase):
+    """O montador tem de recusar corpus que o splitter OU a auditoria rejeitariam.
+
+    A auditoria reprova por cinco coisas, e a guarda espelha as que um corpus ESTAMPADO ja
+    determina: fracoes por classe dentro de `CLASS_TOLERANCE`; `test` estritamente mais novo
+    que cada uma das outras QUATRO, inclusive `train`; as tres do meio ordenadas
+    earliest-contra-latest entre si; e precedencia da reserva held-out. Checar so uma dessas
+    dimensoes erra nas duas direcoes, dependendo de qual falta.
+
+    Um componente que atravessa carimbos NAO e defeito por si: ele cai em `train`, que e o
+    fallback do splitter, e o que decide e o tamanho dele e quais bandas ele cruza.
+    """
+
+    @staticmethod
+    def _rec(rid, *, label, block, **eixos):
+        import group_axes
+        from assemble_corpus import BLOCK_TIME
+
+        grupos = {
+            axis: group_axes.known(valor) for axis, valor in eixos.items() if valor
+        }
+        # O tempo vem do bloco, como `stamp_block` faz. Sem isso o corpus de teste nao tem
+        # bandas temporais e a guarda nao pode decidir a ordem.
+        return {
+            "id": rid,
+            "label": label,
+            "groups": grupos,
+            "createdAt": BLOCK_TIME[block],
+            "_block": block,
+        }
+
+    def _corpus(self, por_classe=200):
+        """Corpus estampado exatamente nas fracoes alvo, cada linha em seu componente."""
+        from assemble_corpus import CLASS_FRACTIONS
+
+        blocos = []
+        for bloco, fr in CLASS_FRACTIONS.items():
+            blocos.extend([bloco] * round(por_classe * fr))
+        blocos.extend(["test"] * (por_classe - len(blocos)))
+        recs = []
+        for label in ("human", "ai"):
+            for i, bloco in enumerate(blocos):
+                recs.append(
+                    self._rec(
+                        f"{label}_{i}",
+                        label=label,
+                        block=bloco,
+                        author=f"a_{label}_{i}",
+                    )
+                )
+        return recs
+
+    def _guardar(self, recs):
+        from assemble_corpus import PARTITION_OF
+
+        self._anterior = dict(PARTITION_OF)
+        for r in recs:
+            PARTITION_OF[r["id"]] = r["_block"]
+
+    def tearDown(self):
+        from assemble_corpus import PARTITION_OF
+
+        if hasattr(self, "_anterior"):
+            PARTITION_OF.clear()
+            PARTITION_OF.update(self._anterior)
+
+    @staticmethod
+    def _unir(a, b, token="componente_unido"):
+        """Poe duas linhas no mesmo componente, por valor compartilhado em `author`."""
+        import group_axes
+
+        a["groups"]["author"] = group_axes.known(token)
+        b["groups"]["author"] = group_axes.known(token)
+
+    def _de(self, recs, block, label="human"):
+        return next(r for r in recs if r["_block"] == block and r["label"] == label)
+
+    def test_the_target_fractions_are_accepted(self):
+        from assemble_corpus import assert_stamped_corpus_is_splittable
+
+        recs = self._corpus()
+        self._guardar(recs)
+        assert_stamped_corpus_is_splittable(recs)
+
+    def test_a_small_train_dev_straddle_is_ACCEPTED(self):
+        """Atravessar carimbos nao implica corpus inviavel.
+
+        A linha de `dev` cai em `train` junto com a outra: `dev` perde uma em 200, meio ponto,
+        dentro dos dois de tolerancia. E o tempo dela, sendo de banda anterior a `test`, nao
+        quebra nenhuma das relacoes temporais.
+        """
+        from assemble_corpus import assert_stamped_corpus_is_splittable
+
+        recs = self._corpus()
+        self._unir(self._de(recs, "train"), self._de(recs, "dev"))
+        self._guardar(recs)
+        assert_stamped_corpus_is_splittable(recs)
+
+    def test_a_train_test_straddle_LEGAL_IN_FRACTIONS_is_refused(self):
+        """O caso que uma guarda so de fracoes aceita, e a auditoria reprova.
+
+        A linha de `test` cai em `train` levando o TEMPO da banda de teste consigo. As fracoes
+        continuam legais — `test` perde uma em 200 — mas `earliest(test)` deixa de ser
+        estritamente maior que `latest(train)`, que e texto do periodo de teste dentro do
+        treino: vazamento real.
+        """
+        from assemble_corpus import (
+            UnsplittableCorpus,
+            assert_stamped_corpus_is_splittable,
+        )
+
+        recs = self._corpus()
+        self._unir(self._de(recs, "train"), self._de(recs, "test"))
+        self._guardar(recs)
+        with self.assertRaises(UnsplittableCorpus) as ctx:
+            assert_stamped_corpus_is_splittable(recs)
+        self.assertIn("temporal", str(ctx.exception))
+        self.assertIn("latest(train)", str(ctx.exception))
+
+    def test_a_held_out_component_reaching_an_earlier_block_is_refused(self):
+        """A reserva tem PRECEDENCIA: o splitter a senta em `test` seja qual for o tempo.
+
+        Uma linha reservada que realiza fora de `test` e falha de restricao, nao de fracao, e
+        uma guarda que ignora a reserva a aceita.
+        """
+        import group_axes
+        from assemble_corpus import (
+            UnsplittableCorpus,
+            assert_stamped_corpus_is_splittable,
+        )
+
+        recs = self._corpus()
+        reservada = self._de(recs, "train")
+        reservada["groups"]["generatorFamily"] = group_axes.known("family_reservada")
+        self._guardar(recs)
+        with self.assertRaises(UnsplittableCorpus) as ctx:
+            assert_stamped_corpus_is_splittable(recs, {"family_reservada"})
+        self.assertIn("reserva", str(ctx.exception))
+
+    def test_a_straddle_large_enough_to_break_a_class_is_refused(self):
+        import group_axes
+        from assemble_corpus import (
+            UnsplittableCorpus,
+            assert_stamped_corpus_is_splittable,
+        )
+
+        recs = self._corpus()
+        token = "componente_grande"
+        group_axes_known = group_axes.known
+        self._de(recs, "train")["groups"]["author"] = group_axes_known(token)
+        for r in recs:
+            if r["_block"] == "dev" and r["label"] == "human":
+                r["groups"]["author"] = group_axes_known(token)
+        self._guardar(recs)
+        with self.assertRaises(UnsplittableCorpus) as ctx:
+            assert_stamped_corpus_is_splittable(recs)
+        self.assertIn("human/dev", str(ctx.exception))
+
+    def test_a_non_connective_axis_shared_across_blocks_is_ACCEPTED(self):
+        """`generatorFamily` nao conecta: unir por ela colapsaria uma familia inteira."""
+        import group_axes
+        from assemble_corpus import assert_stamped_corpus_is_splittable
+
+        recs = self._corpus()
+        for r in recs:
+            r["groups"]["generatorFamily"] = group_axes.known("acme_family")
+        self._guardar(recs)
+        assert_stamped_corpus_is_splittable(recs)
+
+    def test_a_parent_reference_unions_and_can_break_a_class(self):
+        """`humanSeed` une por REFERENCIA, e a uniao conta para as fracoes realizadas."""
+        import group_axes
+        from assemble_corpus import (
+            UnsplittableCorpus,
+            assert_stamped_corpus_is_splittable,
+        )
+
+        recs = self._corpus()
+        pai = self._de(recs, "train")
+        for r in recs:
+            if r["_block"] == "dev" and r["label"] == "human":
+                r["groups"]["humanSeed"] = group_axes.known(pai["id"])
+        self._guardar(recs)
+        with self.assertRaises(UnsplittableCorpus):
+            assert_stamped_corpus_is_splittable(recs)
+
+    def test_a_parent_reference_to_an_absent_row_unions_nothing(self):
+        import group_axes
+        from assemble_corpus import assert_stamped_corpus_is_splittable
+
+        recs = self._corpus()
+        for r in recs:
+            if r["_block"] == "dev":
+                r["groups"]["humanSeed"] = group_axes.known("fora_do_corpus")
+        self._guardar(recs)
+        assert_stamped_corpus_is_splittable(recs)
+
+    def test_a_transitive_chain_is_one_component(self):
+        """A liga B por valor compartilhado, B liga C por referencia: os tres sao um so."""
+        from assemble_corpus import connected_components
+
+        recs = [
+            self._rec("a", label="human", block="train", collectionBatch="lote_1"),
+            self._rec("b", label="human", block="train", collectionBatch="lote_1"),
+            self._rec("c", label="human", block="test", derivationRoot="b"),
+        ]
+        self._guardar(recs)
+        roots = connected_components(recs)
+        self.assertEqual(roots["a"], roots["c"])
+
+    def test_a_declared_axis_left_unknown_is_refused(self):
+        """A quinta reprovacao da auditoria, que a guarda omitia.
+
+        A fonte DECLARA que o eixo se aplica; a linha o deixa `unknown`. As fracoes ficam
+        perfeitas, entao a unica coisa que pega este caso e consultar o inventario de fontes.
+        """
+        import group_axes
+        from assemble_corpus import (
+            UnsplittableCorpus,
+            assert_stamped_corpus_is_splittable,
+        )
+
+        recs = self._corpus()
+        for r in recs:
+            r["provenance"] = {"sourceId": "src_b2w"}
+            r["groups"]["source"] = group_axes.known(f"g_{r['id']}")
+        alvo = self._de(recs, "train")
+        alvo["groups"]["source"] = group_axes.unknown("nao recuperado")
+        self._guardar(recs)
+        with self.assertRaises(UnsplittableCorpus) as ctx:
+            assert_stamped_corpus_is_splittable(recs)
+        self.assertIn("eixo declarado", str(ctx.exception))
+        self.assertIn("src_b2w", str(ctx.exception))
+
+    def test_the_declared_axes_authority_equals_the_inventory_exactly(self):
+        """Igualdade EXATA, e a ausencia das bloqueadas faz parte da igualdade.
+
+        Checar apenas que uma fonte esta presente deixa passar o defeito real: a primeira
+        versao varria o arquivo inteiro e colhia `A1_BLOCKED_HUMAN_SOURCES`, trazendo
+        `src_ptso`, que esta BLOQUEADO. Uma autoridade com fonte a mais aceita linha que a
+        auditoria recusa.
+        """
+        import re as _re
+
+        from assemble_corpus import declared_group_axes
+
+        fonte = (Path(__file__).resolve().parent.parent / "source-manifest.ts").read_text(
+            encoding="utf-8"
+        )
+        corpo = fonte.split("export const V3_HUMAN_SOURCE_INVENTORY", 1)[1]
+        corpo = corpo[: corpo.find(chr(10) + "];")]
+        esperado = {
+            source_id: tuple(_re.findall(r'"([a-zA-Z]+)"', eixos))
+            for source_id, _meio, eixos in _re.findall(
+                r'sourceId:\s*"([^"]+)"(.*?)declaredGroupAxes:\s*\[([^\]]*)\]',
+                corpo,
+                _re.S,
+            )
+        }
+        self.assertEqual(declared_group_axes(), esperado)
+        self.assertNotIn("src_ptso", declared_group_axes())
+
+    def test_the_authority_fails_closed_on_partial_parse(self):
+        """Uma entrada malformada nao pode devolver mapa MENOR em silencio.
+
+        A regex salta sobre a entrada quebrada, entao "pelo menos uma reconhecida" aceita um
+        mapa incompleto — e mapa com fonte a menos deixa de recusar linha que a auditoria
+        recusa. O que transforma isso em falha e contar os `sourceId` do corpo.
+        """
+        from assemble_corpus import declared_group_axes
+
+        corpo = (
+            "export const V3_HUMAN_SOURCE_INVENTORY = [\n"
+            '  { sourceId: "src_ok", declaredGroupAxes: ["source"] },\n'
+            '  { sourceId: "src_quebrado", declaredGroupAxesERRADO: ["source"] },\n'
+            "];\n"
+        )
+        with self.assertRaises(RuntimeError) as ctx:
+            declared_group_axes(corpo)
+        self.assertIn("parse parcial", str(ctx.exception))
+        self.assertIn("src_quebrado", str(ctx.exception))
+
+    def test_the_authority_fails_closed_on_a_duplicate_source(self):
+        from assemble_corpus import declared_group_axes
+
+        corpo = (
+            "export const V3_HUMAN_SOURCE_INVENTORY = [\n"
+            '  { sourceId: "src_dup", declaredGroupAxes: ["source"] },\n'
+            '  { sourceId: "src_dup", declaredGroupAxes: ["author"] },\n'
+            "];\n"
+        )
+        with self.assertRaises(RuntimeError) as ctx:
+            declared_group_axes(corpo)
+        self.assertIn("duas vezes", str(ctx.exception))
+
+    def test_the_authority_fails_closed_without_a_terminator(self):
+        """Sem `];` o corpo nao tem fim reconhecivel, e adivinhar seria pior que falhar."""
+        from assemble_corpus import declared_group_axes
+
+        corpo = (
+            "export const V3_HUMAN_SOURCE_INVENTORY = [\n"
+            '  { sourceId: "src_ok", declaredGroupAxes: ["source"] },\n'
+        )
+        with self.assertRaises(RuntimeError) as ctx:
+            declared_group_axes(corpo)
+        self.assertIn("parse incompleto", str(ctx.exception))
+
+    def test_the_authority_fails_closed_when_the_inventory_is_absent(self):
+        from assemble_corpus import declared_group_axes
+
+        with self.assertRaises(RuntimeError) as ctx:
+            declared_group_axes("export const OUTRA_COISA = [];")
+        self.assertIn("nao expoe", str(ctx.exception))
+
+    def test_the_tolerance_boundary_is_INCLUSIVE_in_python(self):
+        """3% e 7% num `dev` de alvo 5% sao LEGAIS pelo contrato.
+
+        Float binario nao representa a borda: `abs(0.03 - 0.05)` da 0.020000000000000004,
+        maior que 0.02. Comparar float cru recusa exactamente os dois valores que o contrato
+        admite.
+        """
+        from assemble_corpus import within_class_tolerance
+
+        self.assertTrue(within_class_tolerance(0.03, 0.05))
+        self.assertTrue(within_class_tolerance(0.07, 0.05))
+        self.assertFalse(within_class_tolerance(0.0299, 0.05))
+        self.assertFalse(within_class_tolerance(0.0701, 0.05))
+
+    def test_the_epsilon_mirrors_split_ts(self):
+        from assemble_corpus import CLASS_TOLERANCE_EPSILON
+
+        fonte = (Path(__file__).resolve().parent.parent / "split.ts").read_text(
+            encoding="utf-8"
+        )
+        declarado = fonte.split("export const CLASS_TOLERANCE_EPSILON = ", 1)[1].split(
+            ";", 1
+        )[0]
+        self.assertEqual(CLASS_TOLERANCE_EPSILON, float(declarado))
+
+    def test_the_two_relations_and_the_tolerance_mirror_split_ts(self):
+        """As listas e a tolerancia sao copia; sem estes pinos elas envelhecem em silencio."""
+        import re as _re
+
+        from assemble_corpus import (
+            CLASS_TOLERANCE,
+            SPLIT_GROUP_KEYS,
+            SPLIT_PARENT_LINKAGE_AXES,
+        )
+
+        fonte = (Path(__file__).resolve().parent.parent / "split.ts").read_text(
+            encoding="utf-8"
+        )
+        chaves = fonte.split("export const GROUP_KEYS = [", 1)[1].split("]", 1)[0]
+        self.assertEqual(list(SPLIT_GROUP_KEYS), _re.findall(r'"([a-zA-Z]+)"', chaves))
+        linkage = fonte.split("export const PARENT_LINKAGE_AXES = [", 1)[1].split("]", 1)[0]
+        self.assertEqual(
+            list(SPLIT_PARENT_LINKAGE_AXES),
+            _re.findall(r'"([a-zA-Z]+)"', linkage),
+        )
+        declarado = fonte.split("export const CLASS_TOLERANCE = ", 1)[1].split(";", 1)[0]
+        self.assertEqual(CLASS_TOLERANCE, float(declarado))

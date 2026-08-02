@@ -29,7 +29,7 @@ function devRun(overrides: Partial<BrowserScoreRun> = {}): BrowserScoreRun {
     runId: "run-development-0001",
     datasetDigest: hex("dataset"),
     splitDigest: hex("split"),
-    partition: "development",
+    partition: "dev",
     modelId: "cleanfeed-ptbr-v1",
     modelVersion: "1.0.0",
     bundleDigest: hex("bundle"),
@@ -230,7 +230,7 @@ describe("assertBrowserScoreRunConsumption", () => {
     ).not.toThrow();
     expect(() =>
       assertBrowserScoreRunConsumption(
-        devRun({ partition: "calibration" }),
+        devRun({ partition: "cal-A" }),
         undefined,
       ),
     ).not.toThrow();
@@ -329,7 +329,7 @@ describe("runBrowserScore", () => {
     expect(store.writes.get(0)?.length).toBe(100);
     expect(store.writes.get(1)?.length).toBe(50);
     expect(page.scoreCalls).toBe(150);
-    expect(manifest.partition).toBe("development");
+    expect(manifest.partition).toBe("dev");
     expect(store.finalizedWith).toEqual(items.map((item) => item.id));
   });
 

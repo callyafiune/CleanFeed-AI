@@ -1,14 +1,9 @@
-// Dataset splitting for the benchmark. Two splitters live here:
+// The leakage-safe blocked temporal split: `createBlockedSplit` partitions a sealed
+// corpus into train/dev/cal-A/cal-B/test, the five proportions the v3 pre-registration
+// froze (45/5/10/20/20) for the classifier design §6.4.
 //
-//   * groupTimeSplit — the MVP group-time split (train/calibration/test),
-//     still consumed by the monolithic cli.ts pending its migration to the
-//     seven-command layout. Kept intentionally, not dead: cli.ts imports it.
-//   * createBlockedSplit — the Phase 2 leakage-safe temporal split
-//     (development/calibration/test) mandated by the classifier design §6.4.
-//
-// Both refuse the leakage that would inflate benchmark scores. The Phase 2
-// splitter is fail-closed: it never relaxes grouping or time to hit a target,
-// it throws instead.
+// It refuses the leakage that would inflate benchmark scores, and it is fail-closed:
+// it never relaxes grouping or time to hit a target, it throws instead.
 //
 // Standalone module: MUST NOT import from the extension bundle (src/).
 
@@ -26,136 +21,142 @@ import {
   type V3GroupAxis,
 } from "./schema.ts";
 
-// --- Legacy MVP group-time split -------------------------------------------
+/**
+ * The five partitions, in TEMPORAL order — the order is load-bearing, not cosmetic:
+ * `CUT_PARTITIONS` is derived from it, and the audit's chain check reads the same
+ * sequence.
+ *
+ * `Partition` is derived from this tuple rather than written twice. Two spellings of
+ * one closed vocabulary is how a partition ends up in the type and out of the
+ * enumeration a loop iterates, which leaves its class fraction unwatched.
+ *
+ * The hyphenated spelling is the one the exposure ledger validates persisted events
+ * against (`LEDGER_PARTITIONS`), so it is the spelling that cannot move without
+ * rewriting history. NOTHING may validate these names with `\w`, `\b` or `/^[a-z]+$/`:
+ * `cal-A` carries a hyphen and a capital, and every one of those would reject it.
+ */
+export const PARTITIONS = ["train", "dev", "cal-A", "cal-B", "test"] as const;
 
-export interface SplitFractions {
-  train: number;
-  calibration: number;
-  test: number;
+/**
+ * The frozen class-fraction tolerance, as a VALUE and not only as a literal type.
+ *
+ * A sealed artifact is loaded from JSON by every command, so `classTolerance: 0.02`
+ * on the policy type says nothing about a file on disk. This is what a runtime check
+ * can compare against.
+ */
+export const CLASS_TOLERANCE = 0.02;
+
+/**
+ * The epsilon every tolerance comparison adds, and the ONE place it is written.
+ *
+ * The tolerance is INCLUSIVE — the contract states that a `dev` holding exactly 3% or 7% of a
+ * class is legal — and binary floats make the boundary unrepresentable: in IEEE-754,
+ * `Math.abs(0.03 - 0.05)` is `0.020000000000000004`, strictly greater than `0.02`. Comparing
+ * raw floats therefore refuses precisely the two values the contract admits.
+ *
+ * EVERY comparison against `classTolerance` goes through {@link withinClassTolerance},
+ * {@link atMostWithinTolerance} or {@link atLeastWithinTolerance}. A comparison written inline
+ * reopens the boundary for that one cut, which is invisible to a test that exercises only the
+ * helper.
+ */
+export const CLASS_TOLERANCE_EPSILON = 1e-9;
+
+/** `|fraction - target| <= tolerance`, with the boundary INCLUDED. */
+export function withinClassTolerance(
+  fraction: number,
+  target: number,
+  tolerance: number = CLASS_TOLERANCE,
+): boolean {
+  return Math.abs(fraction - target) <= tolerance + CLASS_TOLERANCE_EPSILON;
 }
 
-export interface GroupTimeSplitOptions<T> {
-  groupBy: keyof T & string;
-  timeBy: keyof T & string;
-  fractions?: SplitFractions;
+/**
+ * The two HALVES of the same tolerance, for the places that only bound one side.
+ *
+ * The search prunes on one side at a time — a train share cannot exceed its ceiling, a middle
+ * band cannot fall under its floor — and writing those as `share > target + tolerance` reopens
+ * the boundary bug one comparison at a time. Both go through the same epsilon as
+ * {@link withinClassTolerance}, so there is ONE numeric semantics and not three.
+ */
+export function atMostWithinTolerance(
+  share: number,
+  target: number,
+  tolerance: number = CLASS_TOLERANCE,
+): boolean {
+  return share <= target + tolerance + CLASS_TOLERANCE_EPSILON;
 }
 
-export interface GroupTimeSplit<T> {
-  train: T[];
-  calibration: T[];
-  test: T[];
+export function atLeastWithinTolerance(
+  share: number,
+  target: number,
+  tolerance: number = CLASS_TOLERANCE,
+): boolean {
+  return share >= target - tolerance - CLASS_TOLERANCE_EPSILON;
 }
 
-const DEFAULT_FRACTIONS: SplitFractions = {
-  train: 0.6,
-  calibration: 0.2,
-  test: 0.2,
-};
+export type Partition = (typeof PARTITIONS)[number];
 
-export function groupTimeSplit<T>(
-  records: readonly T[],
-  options: GroupTimeSplitOptions<T>,
-): GroupTimeSplit<T> {
-  const split: GroupTimeSplit<T> = { train: [], calibration: [], test: [] };
-  if (records.length === 0) return split;
+/**
+ * The partitions a prediction manifest may name — the three the scoring lane ever
+ * touches, and a NARROWING of {@link Partition} rather than a vocabulary beside it.
+ *
+ * The narrowing is the point: it makes `cal-B` and `train` UNREPRESENTABLE in a
+ * prediction artifact, so no scoring path can name either one even by mistake. `cal-B`
+ * has to stay byte-untouched until the v2 blind measurement, and `train` is the
+ * detector's own training data — fitting a threshold on it is precisely the leak the
+ * split exists to prevent.
+ */
+export const SCORING_PARTITIONS = [
+  "dev",
+  "cal-A",
+  "test",
+] as const satisfies readonly Partition[];
 
-  const fractions = normaliseFractions(options.fractions ?? DEFAULT_FRACTIONS);
-  const times = records
-    .map((record) => toTime(record, options.timeBy))
-    .sort((a, b) => a - b);
+export type ScoringPartition = (typeof SCORING_PARTITIONS)[number];
 
-  // Records strictly after testCut are eligible for test; records in
-  // (calibrationCut, testCut] are eligible for calibration.
-  const testCut = quantile(times, 1 - fractions.test);
-  const calibrationCut = quantile(
-    times,
-    1 - fractions.test - fractions.calibration,
-  );
+/**
+ * The partitions `fit` may consume: the scoring partitions minus the blind block.
+ * Named POSITIVELY on purpose. The negative form `partition !== "test"` describes the same
+ * set only while there are three names; with five it silently admits `train` and `cal-B`.
+ */
+export const FIT_PARTITIONS = [
+  "dev",
+  "cal-A",
+] as const satisfies readonly Partition[];
 
-  for (const bucket of groupRecords(records, options.groupBy).values()) {
-    const bucketTimes = bucket.map((record) => toTime(record, options.timeBy));
-    const min = Math.min(...bucketTimes);
-    const max = Math.max(...bucketTimes);
+export type FitPartition = (typeof FIT_PARTITIONS)[number];
 
-    if (min > testCut) {
-      split.test.push(...bucket);
-    } else if (max <= testCut && min > calibrationCut) {
-      split.calibration.push(...bucket);
-    } else {
-      split.train.push(...bucket);
-    }
-  }
-
-  return split;
-}
-
-function groupRecords<T>(
-  records: readonly T[],
-  groupBy: keyof T & string,
-): Map<string, T[]> {
-  const groups = new Map<string, T[]>();
-  for (const record of records) {
-    const key = String(record[groupBy]);
-    const bucket = groups.get(key);
-    if (bucket === undefined) {
-      groups.set(key, [record]);
-    } else {
-      bucket.push(record);
-    }
-  }
-  return groups;
-}
-
-function normaliseFractions(fractions: SplitFractions): SplitFractions {
-  const { train, calibration, test } = fractions;
-  if (
-    !Number.isFinite(train) ||
-    !Number.isFinite(calibration) ||
-    !Number.isFinite(test) ||
-    train <= 0 ||
-    calibration <= 0 ||
-    test <= 0
-  ) {
-    throw new Error("SPLIT_FRACTIONS_INVALID: fractions must be positive");
-  }
-  const total = train + calibration + test;
-  return {
-    train: train / total,
-    calibration: calibration / total,
-    test: test / total,
-  };
-}
-
-function quantile(sortedAscending: readonly number[], p: number): number {
-  const clamped = Math.min(1, Math.max(0, p));
-  const index = Math.floor(clamped * (sortedAscending.length - 1));
-  return sortedAscending[index];
-}
-
-function toTime<T>(record: T, timeBy: keyof T & string): number {
-  const value = Number(record[timeBy]);
-  if (!Number.isFinite(value)) {
-    throw new Error(`SPLIT_TIME_INVALID: ${timeBy} is not a finite number`);
-  }
-  return value;
-}
-
-// --- Phase 2 blocked temporal split ----------------------------------------
-
-export type Partition = "development" | "calibration" | "test";
+/**
+ * The four cuts, each named by the partition it CLOSES. `test` closes none: it is
+ * everything after the last cut. Derived from {@link PARTITIONS} so the cut list
+ * cannot fall out of step with the partition list.
+ */
+const CUT_PARTITIONS: readonly Partition[] = PARTITIONS.slice(0, -1);
 
 export interface DatasetSplit<T> {
-  development: T[];
-  calibration: T[];
+  train: T[];
+  dev: T[];
+  "cal-A": T[];
+  "cal-B": T[];
   test: T[];
 }
 
 export interface BlockedSplitPolicy {
-  fractions: { development: 0.2; calibration: 0.3; test: 0.5 };
+  fractions: {
+    train: 0.45;
+    dev: 0.05;
+    "cal-A": 0.1;
+    "cal-B": 0.2;
+    test: 0.2;
+  };
+  // Absolute, not relative to the target, and therefore NOT uniform across the five:
+  // fifteen constraints over four degrees of freedom in aggregate, but `dev`'s target
+  // is 0.05, so two absolute points is forty percent of it — a `dev` holding 3% or 7%
+  // of a class is legal here. That band is a consequence of the number, not a defect.
   classTolerance: 0.02;
-  // Canonical families only (benchmark/generator-family.ts). The nominal type is
-  // what makes the old defect — matching this set against `generation.family`,
-  // the provider's dotted label — a compile error instead of a silent no-op.
+  // Canonical families only (benchmark/generator-family.ts). The nominal type makes
+  // matching this set against `generation.family` — the provider's dotted label — a
+  // compile error instead of a silent no-op.
   heldOutGeneratorFamilies: readonly GeneratorFamily[];
   seed: number;
 }
@@ -213,16 +214,17 @@ export const CONNECTIVITY_AXES: readonly V3GroupAxis[] = [
  *   SAME identity here are always placed in one cluster, unconditionally.
  * - `parentLinkage` — the axis is in `PARENT_LINKAGE_AXES`: a record-line whose
  *   identity here NAMES ANOTHER RECORD-LINE'S ID is unioned with that row, and
- *   **only when that row is present in the same record set**. C2 measured 782 of
- *   783 parent references resolving to no row of the assembled corpus, so for the
+ *   **only when that row is present in the same record set**. In the assembled corpus
+ *   782 of 783 parent references resolve to no row, so for the
  *   corpus that exists this relation usually unions nothing — which is why the
  *   audit publishes a resolution count next to the flag instead of a bare `true`.
  *
  * A reader must therefore NOT infer from `parentLinkage: true` that two rows
  * sharing a seed value are kept together. Whether `humanSeed` should also become a
  * VALUE axis — two generations grown from the same human prompt are dependent
- * whether or not the seed row was assembled — is a substantive question for E2/E3
- * and is deliberately not decided here.
+ * whether or not the seed row was assembled — is resolved on the command path by
+ * the whole-corpus lineage refusal, and remains open only for callers that
+ * partition records without passing through it.
  *
  * The TYPE lives here too, with the function, and not only the values. It was once
  * an anonymous inline return here plus a hand-restated interface in
@@ -250,8 +252,6 @@ export function axisConnectivity(axis: string): AxisConnectivity {
   };
 }
 
-const PARTITIONS: readonly Partition[] = ["development", "calibration", "test"];
-
 export class SplitConstraintError extends Error {
   constructor(message: string) {
     super(`SPLIT_CONSTRAINT: ${message}`);
@@ -262,6 +262,16 @@ export class SplitConstraintError extends Error {
 interface Component {
   ids: string[];
   records: BenchmarkRecord[];
+  /**
+   * How many record-lines of each class this component holds — a property of the
+   * component alone, so it is computed once instead of per candidate cut.
+   *
+   * This is what keeps the four-cut search affordable. Scoring re-tallies every
+   * component for every candidate quadruple; walking each component's RECORDS there
+   * made the cost proportional to corpus size times the number of leaves, which on a
+   * ten-thousand-record corpus is hundreds of millions of visits.
+   */
+  labelCounts: Map<BenchmarkLabel, number>;
   minCreatedAt: number;
   maximumCreatedAt: number;
   smallestId: string;
@@ -269,12 +279,28 @@ interface Component {
   heldOut: boolean;
 }
 
+/**
+ * The four cut timestamps, each named by the partition it closes. Carried as one
+ * object rather than four positional numbers because four same-typed parameters in a
+ * row is an argument-order defect waiting to happen, and transposing two cuts is the
+ * one mutation no fraction test can see: `cal-B` and `test` share the target 0.20, so
+ * a split with the two swapped hits all fifteen fraction targets exactly.
+ */
+interface Cuts {
+  trainCut: number;
+  devCut: number;
+  calACut: number;
+  calBCut: number;
+}
+
 type SplitObjective = readonly [
   maximumClassFractionError: number,
   totalClassFractionError: number,
-  developmentOverflow: number,
-  calibrationCut: number,
-  testCut: number,
+  trainOverflow: number,
+  trainCut: number,
+  devCut: number,
+  calACut: number,
+  calBCut: number,
 ];
 
 export function createBlockedSplit(
@@ -282,8 +308,10 @@ export function createBlockedSplit(
   policy: BlockedSplitPolicy,
 ): DatasetSplit<BenchmarkRecord> {
   const split: DatasetSplit<BenchmarkRecord> = {
-    development: [],
-    calibration: [],
+    train: [],
+    dev: [],
+    "cal-A": [],
+    "cal-B": [],
     test: [],
   };
   if (records.length === 0) return split;
@@ -292,8 +320,10 @@ export function createBlockedSplit(
   const { components } = buildComponents(records, heldOutFamilies, policy.seed);
 
   const targets: Record<Partition, number> = {
-    development: policy.fractions.development,
-    calibration: policy.fractions.calibration,
+    train: policy.fractions.train,
+    dev: policy.fractions.dev,
+    "cal-A": policy.fractions["cal-A"],
+    "cal-B": policy.fractions["cal-B"],
     test: policy.fractions.test,
   };
 
@@ -301,38 +331,43 @@ export function createBlockedSplit(
   const totals = classTotals(records, labels);
 
   const times = records.map((record) => record.createdAt).sort((a, b) => a - b);
-  const { calibrationCuts, testCuts } = candidateCuts(times, targets);
+  const distinct = [...new Set(times)].sort((a, b) => a - b);
+  const shareByTime = cumulativeShares(times, distinct);
+  const candidates = candidateCuts(distinct, shareByTime, targets);
 
-  let best:
-    { objective: SplitObjective; calCut: number; testCut: number } | undefined;
-  for (const calCut of calibrationCuts) {
-    for (const testCut of testCuts) {
-      if (calCut >= testCut) continue;
-      const objective = scoreCut(
-        components,
-        labels,
-        totals,
-        targets,
-        calCut,
-        testCut,
-      );
-      if (best === undefined || isBetter(objective, best.objective)) {
-        best = { objective, calCut, testCut };
-      }
-    }
-  }
+  // Held-out components go to test whatever the cuts say, so they are the one mass
+  // the test band's feasibility bound has to be told about.
+  const heldOutShare =
+    components
+      .filter((component) => component.heldOut)
+      .reduce((count, component) => count + component.records.length, 0) /
+    records.length;
+
+  const best = searchCuts({
+    components,
+    labels,
+    totals,
+    targets,
+    candidates,
+    shareByTime,
+    heldOutShare,
+    tolerance: policy.classTolerance,
+  });
 
   if (best === undefined) {
+    // Deliberately not "no temporal cut exists": the candidate grid is bounded, so
+    // an empty result proves only that nothing IN THE GRID worked. Blaming the corpus
+    // for a limit of the search would be the stronger claim, and it is not available.
     throw new SplitConstraintError(
-      "no temporal cut can realise the development/calibration/test proportions",
+      "no candidate cut quadruple realises the train/dev/cal-A/cal-B/test proportions",
     );
   }
 
-  // Held-out families must sit entirely after the test cut. If any reserved
-  // component reaches into calibration/development time, forcing it into test
-  // would leak the future — refuse rather than relax.
+  // Held-out families must sit entirely after the last cut. If any reserved
+  // component reaches into an earlier partition's time, forcing it into test would
+  // leak the future — refuse rather than relax.
   for (const component of components) {
-    if (component.heldOut && component.minCreatedAt <= best.testCut) {
+    if (component.heldOut && component.minCreatedAt <= best.cuts.calBCut) {
       throw new SplitConstraintError(
         "held-out generator family is not temporally eligible for test",
       );
@@ -340,14 +375,10 @@ export function createBlockedSplit(
   }
 
   const [maximumClassFractionError] = best.objective;
-  if (maximumClassFractionError > policy.classTolerance) {
-    const fractions = describeFractions(
-      components,
-      labels,
-      totals,
-      best.calCut,
-      best.testCut,
-    );
+  if (
+    !atMostWithinTolerance(maximumClassFractionError, 0, policy.classTolerance)
+  ) {
+    const fractions = describeFractions(components, labels, totals, best.cuts);
     throw new SplitConstraintError(
       `class split fractions unreachable within tolerance ${policy.classTolerance}: ${fractions}`,
     );
@@ -360,7 +391,7 @@ export function createBlockedSplit(
     return a.order < b.order ? -1 : a.order > b.order ? 1 : 0;
   });
   for (const component of ordered) {
-    const partition = assignPartition(component, best.calCut, best.testCut);
+    const partition = assignPartition(component, best.cuts);
     split[partition].push(...component.records);
   }
 
@@ -408,13 +439,13 @@ export function connectedComponentRoots(
   // human row it started from. Following only `derivationRoot` therefore left the
   // commonest lineage in v3 — human text in one partition, the generation it
   // seeded in another — glued by nothing, and no VALUE axis reveals it because the
-  // two rows share no axis value at all. This is E2's invariant 4 ("the whole
-  // lineage seed -> generation -> derivatives in one partition"), enforced where
-  // the connectivity is defined.
+  // two rows share no axis value at all. Keeping the whole lineage
+  // seed -> generation -> derivatives in one partition is enforced here, where the
+  // connectivity is defined.
   //
-  // A parent that is ABSENT from these records is skipped, deliberately: C2
-  // measured 782 of 783 parent references resolving to no row of the assembled
-  // corpus, and a missing parent must neither invent a cluster nor refuse the row.
+  // A parent that is ABSENT from these records is skipped, deliberately: 782 of 783
+  // parent references in the assembled corpus resolve to no row, and a missing parent
+  // must neither invent a cluster nor refuse the row.
   // Refusing an unresolved lineage is a SELECTION question, and it belongs to
   // `assertDerivedParentsResolve` on the whole-corpus path, not to connectivity.
   //
@@ -485,6 +516,7 @@ function buildComponents(
       component = {
         ids: [],
         records: [],
+        labelCounts: new Map<BenchmarkLabel, number>(),
         minCreatedAt: record.createdAt,
         maximumCreatedAt: record.createdAt,
         smallestId: record.id,
@@ -495,6 +527,10 @@ function buildComponents(
     }
     component.ids.push(record.id);
     component.records.push(record);
+    component.labelCounts.set(
+      record.label,
+      (component.labelCounts.get(record.label) ?? 0) + 1,
+    );
     component.minCreatedAt = Math.min(component.minCreatedAt, record.createdAt);
     component.maximumCreatedAt = Math.max(
       component.maximumCreatedAt,
@@ -512,8 +548,10 @@ function buildComponents(
     }
   }
 
-  // Deterministic order tie-break: a seeded digest of the smallest id. The seed
-  // is recorded in the policy so the ordering is reproducible.
+  // Tie-break for the ITERATION order of components with identical `minCreatedAt`, from a
+  // seeded digest of the smallest id. It does not select a placement: `assignPartition`
+  // decides from the component's own time range against the cuts, and each partition is
+  // re-sorted by id afterwards, so iteration order cannot change `id -> partition`.
   for (const component of byRoot.values()) {
     component.order = createHash("sha256")
       .update(`${seed}:${component.smallestId}`, "utf8")
@@ -522,20 +560,37 @@ function buildComponents(
   return { components: [...byRoot.values()], marked };
 }
 
-function assignPartition(
-  component: Component,
-  calibrationCut: number,
-  testCut: number,
-): Partition {
+/**
+ * A component belongs to a middle partition only when its WHOLE time range fits
+ * inside that partition's band; anything straddling a cut falls through to `train`.
+ *
+ * `train` is the fallback because it is the largest target (0.45) and therefore the
+ * one that absorbs bridging components without leaving its tolerance. The objective
+ * penalises train overflow for the same reason: without that term the excess drains
+ * into `train` unpriced until it breaches the tolerance outright.
+ */
+function assignPartition(component: Component, cuts: Cuts): Partition {
   if (component.heldOut) return "test";
-  if (component.minCreatedAt > testCut) return "test";
+  if (component.minCreatedAt > cuts.calBCut) return "test";
   if (
-    component.minCreatedAt > calibrationCut &&
-    component.maximumCreatedAt <= testCut
+    component.minCreatedAt > cuts.calACut &&
+    component.maximumCreatedAt <= cuts.calBCut
   ) {
-    return "calibration";
+    return "cal-B";
   }
-  return "development";
+  if (
+    component.minCreatedAt > cuts.devCut &&
+    component.maximumCreatedAt <= cuts.calACut
+  ) {
+    return "cal-A";
+  }
+  if (
+    component.minCreatedAt > cuts.trainCut &&
+    component.maximumCreatedAt <= cuts.devCut
+  ) {
+    return "dev";
+  }
+  return "train";
 }
 
 function classTotals(
@@ -550,19 +605,150 @@ function classTotals(
   return totals;
 }
 
+interface SearchInput {
+  components: readonly Component[];
+  labels: ReadonlySet<BenchmarkLabel>;
+  totals: ReadonlyMap<BenchmarkLabel, number>;
+  targets: Record<Partition, number>;
+  candidates: readonly (readonly number[])[];
+  shareByTime: ReadonlyMap<number, number>;
+  heldOutShare: number;
+  tolerance: number;
+}
+
+/**
+ * Exhaustive over a BOUNDED candidate grid, monotone by construction, with two
+ * feasibility bounds that are admissible rather than heuristic.
+ *
+ * Why bounded at all: the three-partition search enumerated every distinct time in a
+ * ±10-point window for each of two cuts, which is O(k²). Four cuts make the same
+ * shape O(k⁴), and on a corpus with hundreds of distinct times per window that does
+ * not finish. The grid has a fixed size per cut, so the leaf count is bounded by
+ * construction and no corpus is ever refused merely for being large.
+ *
+ * Why the bounds are sound. Both are stated over the ALL-CLASS share, and that is
+ * legitimate: the overall share is a weighted mean of the per-class shares, so if
+ * every class sits within the tolerance the overall does too — hence an overall share
+ * outside the tolerance proves some class is outside it, and the split is infeasible.
+ *
+ *   - `train` only ever RECEIVES mass, since it is the fallback for every straddling
+ *     component. So its realised share is at least its band share, and a band share
+ *     above `target + tolerance` can never come back down. The ONE exception is a
+ *     held-out component sitting inside train's band, which leaves for `test` — and
+ *     that costs nothing, because a held-out component anywhere at or before the last
+ *     cut makes the caller refuse the split outright. The bound therefore holds for
+ *     every cut vector that could be accepted, which is the only place it is used.
+ *   - the middle partitions only ever LOSE mass, to `train`. So a realised share is
+ *     at most the band share, and a band share below `target - tolerance` can never
+ *     be topped up.
+ *   - `test` also gains the held-out components, wherever they sit in time, so its
+ *     bound has to add that mass before comparing.
+ *
+ * The search is a heuristic and the contract is not: whatever it returns is checked
+ * in full by the caller and by the independent audit, and an unmet constraint becomes
+ * a refusal rather than a published claim. The price of a narrower search is that
+ * more FEASIBLE corpora get refused — fail-closed in the right direction.
+ */
+function searchCuts(
+  input: SearchInput,
+): { objective: SplitObjective; cuts: Cuts } | undefined {
+  const {
+    components,
+    labels,
+    totals,
+    targets,
+    candidates,
+    shareByTime,
+    heldOutShare,
+    tolerance,
+  } = input;
+  const share = (time: number): number => shareByTime.get(time) ?? 0;
+  const [trainCandidates, devCandidates, calACandidates, calBCandidates] =
+    candidates;
+  if (
+    trainCandidates === undefined ||
+    devCandidates === undefined ||
+    calACandidates === undefined ||
+    calBCandidates === undefined
+  ) {
+    // One list per cut, always. Defaulting a missing list to empty instead would
+    // make a wrong candidate list indistinguishable from an unsplittable corpus:
+    // the search would return nothing and the caller would refuse the corpus with
+    // "no temporal cut can realise the proportions", which would be a lie.
+    throw new Error(
+      `expected one candidate list per cut, received ${candidates.length}`,
+    );
+  }
+
+  let best: { objective: SplitObjective; cuts: Cuts } | undefined;
+  for (const trainCut of trainCandidates) {
+    if (!atMostWithinTolerance(share(trainCut), targets.train, tolerance))
+      continue;
+    for (const devCut of devCandidates) {
+      if (devCut <= trainCut) continue;
+      if (
+        !atLeastWithinTolerance(
+          share(devCut) - share(trainCut),
+          targets.dev,
+          tolerance,
+        )
+      )
+        continue;
+      for (const calACut of calACandidates) {
+        if (calACut <= devCut) continue;
+        if (
+          !atLeastWithinTolerance(
+            share(calACut) - share(devCut),
+            targets["cal-A"],
+            tolerance,
+          )
+        ) {
+          continue;
+        }
+        for (const calBCut of calBCandidates) {
+          if (calBCut <= calACut) continue;
+          if (
+            !atLeastWithinTolerance(
+              share(calBCut) - share(calACut),
+              targets["cal-B"],
+              tolerance,
+            )
+          ) {
+            continue;
+          }
+          if (
+            !atLeastWithinTolerance(
+              1 - share(calBCut) + heldOutShare,
+              targets.test,
+              tolerance,
+            )
+          ) {
+            continue;
+          }
+          const cuts: Cuts = { trainCut, devCut, calACut, calBCut };
+          const objective = scoreCut(components, labels, totals, targets, cuts);
+          if (best === undefined || isBetter(objective, best.objective)) {
+            best = { objective, cuts };
+          }
+        }
+      }
+    }
+  }
+  return best;
+}
+
 function scoreCut(
   components: readonly Component[],
   labels: ReadonlySet<BenchmarkLabel>,
   totals: ReadonlyMap<BenchmarkLabel, number>,
   targets: Record<Partition, number>,
-  calibrationCut: number,
-  testCut: number,
+  cuts: Cuts,
 ): SplitObjective {
-  const counts = tally(components, calibrationCut, testCut);
+  const counts = tally(components, cuts);
 
   let maximumError = 0;
   let totalError = 0;
-  let developmentOverflow = 0;
+  let trainOverflow = 0;
   for (const label of labels) {
     const total = totals.get(label) ?? 0;
     if (total === 0) continue;
@@ -571,35 +757,45 @@ function scoreCut(
       const error = Math.abs(fraction - targets[partition]);
       if (error > maximumError) maximumError = error;
       totalError += error;
-      if (partition === "development") {
-        developmentOverflow += Math.max(0, fraction - targets.development);
+      if (partition === "train") {
+        trainOverflow += Math.max(0, fraction - targets.train);
       }
     }
   }
   return [
     maximumError,
     totalError,
-    developmentOverflow,
-    calibrationCut,
-    testCut,
+    trainOverflow,
+    cuts.trainCut,
+    cuts.devCut,
+    cuts.calACut,
+    cuts.calBCut,
   ];
+}
+
+/**
+ * Zeroed counts for every partition. `Record<Partition, number>` is what makes a
+ * forgotten partition a compile error instead of an unwatched fraction: with four of
+ * the five counted, the fifth could drift eight points and nothing would refuse it.
+ */
+function emptyPartitionCounts(): Record<Partition, number> {
+  return { train: 0, dev: 0, "cal-A": 0, "cal-B": 0, test: 0 };
 }
 
 function tally(
   components: readonly Component[],
-  calibrationCut: number,
-  testCut: number,
+  cuts: Cuts,
 ): Map<BenchmarkLabel, Record<Partition, number>> {
   const counts = new Map<BenchmarkLabel, Record<Partition, number>>();
   for (const component of components) {
-    const partition = assignPartition(component, calibrationCut, testCut);
-    for (const record of component.records) {
-      let row = counts.get(record.label);
+    const partition = assignPartition(component, cuts);
+    for (const [label, count] of component.labelCounts) {
+      let row = counts.get(label);
       if (row === undefined) {
-        row = { development: 0, calibration: 0, test: 0 };
-        counts.set(record.label, row);
+        row = emptyPartitionCounts();
+        counts.set(label, row);
       }
-      row[partition] += 1;
+      row[partition] += count;
     }
   }
   return counts;
@@ -609,24 +805,18 @@ function describeFractions(
   components: readonly Component[],
   labels: ReadonlySet<BenchmarkLabel>,
   totals: ReadonlyMap<BenchmarkLabel, number>,
-  calibrationCut: number,
-  testCut: number,
+  cuts: Cuts,
 ): string {
-  const counts = tally(components, calibrationCut, testCut);
+  const counts = tally(components, cuts);
   const parts: string[] = [];
   for (const label of labels) {
     const total = totals.get(label) ?? 0;
     if (total === 0) continue;
-    const row = counts.get(label) ?? {
-      development: 0,
-      calibration: 0,
-      test: 0,
-    };
-    parts.push(
-      `${label}=[dev ${(row.development / total).toFixed(3)}, ` +
-        `cal ${(row.calibration / total).toFixed(3)}, ` +
-        `test ${(row.test / total).toFixed(3)}]`,
+    const row = counts.get(label) ?? emptyPartitionCounts();
+    const shares = PARTITIONS.map(
+      (partition) => `${partition} ${(row[partition] / total).toFixed(3)}`,
     );
+    parts.push(`${label}=[${shares.join(", ")}]`);
   }
   return parts.join(" ");
 }
@@ -639,57 +829,82 @@ function isBetter(a: SplitObjective, b: SplitObjective): boolean {
   return false;
 }
 
-// Candidate cut timestamps: every distinct time whose cumulative record share
-// falls within ±10% of the target quantile, plus the closest distinct time as a
-// fallback so a legal pair always exists. A component is placed in test only
-// when its minimum time is strictly greater than testCut, so cuts are real
-// record times acting as exclusive lower bounds.
-function candidateCuts(
+/**
+ * The cumulative record share at each distinct time, in one ascending pass over both
+ * lists. Both MUST be sorted ascending, and `distinct` MUST be the distinct values of
+ * `sortedTimes`: the walk never rewinds.
+ */
+function cumulativeShares(
   sortedTimes: readonly number[],
-  targets: Record<Partition, number>,
-): { calibrationCuts: number[]; testCuts: number[] } {
-  const distinct = [...new Set(sortedTimes)].sort((a, b) => a - b);
+  distinct: readonly number[],
+): Map<number, number> {
   const total = sortedTimes.length;
-  const cumulative = (time: number): number => {
-    let count = 0;
-    for (const value of sortedTimes) {
-      if (value <= time) count += 1;
-      else break;
+  const shares = new Map<number, number>();
+  let index = 0;
+  let count = 0;
+  for (const time of distinct) {
+    while (index < total && (sortedTimes[index] as number) <= time) {
+      index += 1;
+      count += 1;
     }
-    return count / total;
-  };
-  const fractionByTime = new Map<number, number>();
-  for (const time of distinct) fractionByTime.set(time, cumulative(time));
-
-  const testTarget = targets.development + targets.calibration; // 0.5
-  const calibrationTarget = targets.development; // 0.2
-
-  return {
-    calibrationCuts: window(distinct, fractionByTime, calibrationTarget),
-    testCuts: window(distinct, fractionByTime, testTarget),
-  };
+    shares.set(time, count / total);
+  }
+  return shares;
 }
 
-function window(
+// How far either side of a cut's cumulative target the grid reaches, and how many
+// levels it places inside that span.
+const CUT_WINDOW = 0.1;
+const CUT_GRID_STEPS = 12;
+
+/**
+ * One candidate list per cut, in the temporal order of {@link CUT_PARTITIONS}.
+ *
+ * The levels are spaced evenly in CUMULATIVE-SHARE space, not ranked by proximity to
+ * the target. Proximity ranking is what a two-cut search could afford and a four-cut
+ * one cannot: the cumulative targets 0.45 and 0.50 are five points apart, so the
+ * times nearest either of them are largely the same times, and a list of the nearest
+ * k would explore almost nothing. The exact target is added last so the single best
+ * cut of the narrower search is always among the candidates.
+ */
+function candidateCuts(
   distinct: readonly number[],
-  fractionByTime: ReadonlyMap<number, number>,
-  target: number,
-): number[] {
-  const selected = distinct.filter((time) => {
-    const fraction = fractionByTime.get(time) ?? 0;
-    return Math.abs(fraction - target) <= 0.1 + 1e-9;
-  });
-  let closest = distinct[0];
+  shareByTime: ReadonlyMap<number, number>,
+  targets: Record<Partition, number>,
+): number[][] {
+  let cumulative = 0;
+  const lists: number[][] = [];
+  for (const partition of CUT_PARTITIONS) {
+    cumulative += targets[partition];
+    const selected = new Set<number>();
+    for (let step = 0; step <= CUT_GRID_STEPS; step += 1) {
+      const level =
+        cumulative - CUT_WINDOW + (2 * CUT_WINDOW * step) / CUT_GRID_STEPS;
+      selected.add(nearestTime(distinct, shareByTime, level));
+    }
+    selected.add(nearestTime(distinct, shareByTime, cumulative));
+    lists.push([...selected].sort((a, b) => a - b));
+  }
+  return lists;
+}
+
+function nearestTime(
+  distinct: readonly number[],
+  shareByTime: ReadonlyMap<number, number>,
+  level: number,
+): number {
+  let best = distinct[0] as number;
   let bestDistance = Number.POSITIVE_INFINITY;
   for (const time of distinct) {
-    const distance = Math.abs((fractionByTime.get(time) ?? 0) - target);
+    const distance = Math.abs((shareByTime.get(time) ?? 0) - level);
+    // Strictly-less keeps the EARLIEST time on a tie, so the grid is a function of
+    // the timestamps alone rather than of iteration order.
     if (distance < bestDistance) {
       bestDistance = distance;
-      closest = time;
+      best = time;
     }
   }
-  if (!selected.includes(closest)) selected.push(closest);
-  return selected;
+  return best;
 }
 
 // Local union-find over string ids: the smaller root always becomes the parent,

@@ -40,7 +40,7 @@ function devRun(overrides: Partial<BrowserScoreRun> = {}): BrowserScoreRun {
     runId: "run-development-0001",
     datasetDigest: hex("dataset"),
     splitDigest: hex("split"),
-    partition: "development",
+    partition: "dev",
     modelId: "cleanfeed-ptbr-v1",
     modelVersion: "1.0.0",
     bundleDigest: hex("bundle"),
@@ -110,7 +110,7 @@ describe("prediction shard store", () => {
     expect(manifest.shards[0].recordCount).toBe(100);
     expect(manifest.shards[1].file).toBe("000001.jsonl");
     expect(manifest.shards[1].recordCount).toBe(50);
-    expect(manifest.partition).toBe("development");
+    expect(manifest.partition).toBe("dev");
     expect(manifest.holdoutConsumptionId).toBeNull();
 
     // The written manifest round-trips through the closed parser, and each shard

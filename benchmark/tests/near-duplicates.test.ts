@@ -29,7 +29,7 @@ const OPTIONS: NearDuplicateOptions = {
   permutations: 128,
   bands: 32,
   jaccardThreshold: 0.82,
-  seed: 712_019,
+  seed: 20_260_726,
 };
 
 const records: NearDuplicateInput[] = [
@@ -65,7 +65,7 @@ describe("clusterNearDuplicates", () => {
         permutations: 128,
         bands: 32,
         jaccardThreshold: 0.82,
-        seed: 712_019,
+        seed: 20_260_726,
       },
     );
     expect(result.clusterById.get("a")).toBe(result.clusterById.get("b"));

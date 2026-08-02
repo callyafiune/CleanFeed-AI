@@ -1,14 +1,22 @@
 // Scientific audit of a blocked temporal split. The splitter (benchmark/split.ts)
-// produces the partition; this module PROVES, independently, that the partition
-// is release-worthy:
+// produces the partition; this module re-derives, independently, the structural
+// properties a release claim rests on, and FAILS on those no later stage can
+// repair:
 //
 //   1. zero group leakage on all eight connected-component axes,
-//   2. a strictly-latest blocked test (no future -> train/calibration leak),
-//   3. per-class 20/30/50 within a two-point tolerance, and
-//   4. the sampling floors that let a slice gate a release: at least 2000 human
-//      negatives in test, 300 negatives for a critical FPR slice, 200 positives
-//      for a critical recall slice. Under-powered slices stay in the report but
-//      are flagged non-gating rather than silently dropped.
+//   2. a strictly-latest blocked test (no future -> earlier-partition leak),
+//   3. dev, cal-A and cal-B in temporal order among themselves,
+//   4. per-class 45/5/10/20/20 within a two-point tolerance, and
+//   5. no declared group axis left `unknown`: the source states the dependence
+//      exists, so an axis nobody recovered cannot support the split.
+//
+// The sampling floors are NOT failures. `minimumTestHumanNegatives` counts
+// aggregate record-lines while a power claim needs sampling units, so it is
+// published as a measurement (`testHumanNegatives`, carrying its threshold and
+// whether it suffices for a release FPR claim), and a per-slice floor marks the
+// slice non-gating instead of dropping it. Whether a corpus may be sealed for release is
+// not decided here either: the artifact RECORDS its composition, and comparing that
+// composition against the pre-registered floor happens outside this module.
 //
 // The audit is deliberately separate from the splitter so a leaking split (even
 // a hand-crafted one) is caught rather than trusted. Standalone module: MUST NOT
@@ -20,6 +28,7 @@ import {
   type GeneratorFamily,
 } from "./generator-family.ts";
 import { REBUILD_V3_POLICY } from "./rebuild-v3-policy.ts";
+import { V3_HUMAN_SOURCE_INVENTORY } from "./source-manifest.ts";
 import {
   V3_GROUP_AXES,
   groupAxisIdentity,
@@ -32,12 +41,53 @@ import {
 import {
   axisConnectivity,
   connectedComponentRoots,
+  withinClassTolerance,
   GROUP_KEYS,
   type AxisConnectivity,
   type Partition,
 } from "./split.ts";
 
+/**
+ * The frozen audit policy, and the ONE copy of it.
+ *
+ * It lives here rather than beside the command because two consumers need it: the command
+ * that produces an audit and the validator that re-derives one from a sealed artifact. A
+ * sealed audit and a re-derived audit are therefore produced under identical policy by
+ * construction, which is what makes comparing them meaningful.
+ */
+export const FROZEN_SPLIT_AUDIT_POLICY: SplitAuditPolicy = {
+  minimumTestHumanNegatives: 2_000,
+  minimumCriticalFprNegatives: 300,
+  minimumCriticalRecallPositives: 200,
+  classTolerance: 0.02,
+};
+
+/**
+ * The join the audit owes itself: `provenance.sourceId` -> the axes that source DECLARED
+ * applicable. Built from the frozen inventory in the tree, so the check needs no private
+ * file and cannot be softened by one.
+ */
+export const DECLARED_GROUP_AXES: ReadonlyMap<string, readonly V3GroupAxis[]> =
+  new Map(
+    V3_HUMAN_SOURCE_INVENTORY.map((entry) => [
+      entry.sourceId,
+      entry.declaredGroupAxes,
+    ]),
+  );
+
 export interface SplitAuditPolicy {
+  /**
+   * The human-negative count the blind block needs to support a released FPR bound.
+   *
+   * REPORTING threshold, not a gate — the same standing as the two slice floors below.
+   * This module measures the offer and does not compute power: a hard failure here would
+   * wire a power gate into the audit that the audit's own inputs cannot decide.
+   *
+   * It is also unmeetable as a gate: the frozen corpus composition is 4000 human records
+   * and the blind block is 20% of it, so `test` holds at most 880 of them. The floor that
+   * binds is the pre-registered
+   * one — 250 independent clusters per quota cell — applied before sealing, elsewhere.
+   */
   minimumTestHumanNegatives: 2_000;
   minimumCriticalFprNegatives: 300;
   minimumCriticalRecallPositives: 200;
@@ -46,9 +96,9 @@ export interface SplitAuditPolicy {
 
 /**
  * The slices the cluster report is broken down by. `partition` first, because
- * "how many independent clusters does each partition hold" is the question E3's
- * composition gate asks; the rest are the slices a per-stratum power calculation
- * (D0b) needs an OFFER for.
+ * "how many independent clusters does each partition hold" is the question the
+ * composition gate asks; the rest are the slices a per-stratum power calculation needs an
+ * OFFER for.
  */
 export const CLUSTER_SLICE_AXES = [
   "partition",
@@ -69,9 +119,9 @@ export type ClusterSliceAxis = (typeof CLUSTER_SLICE_AXES)[number];
  * A degenerate reading is not a defect. After pruning, `nearDuplicate` is
  * expected to be all singletons, and generated text has no human author, so an
  * axis whose `groups` is 0 or whose `largest` is 1 is a DESCRIPTION of the corpus
- * (R6). Nothing here fails on it, and nothing here computes power: C3 measures the
- * offer, D0b computes the power and E3 applies the gate. Wiring a power gate here
- * would create exactly the circular dependency the plan split apart.
+ * of the corpus. Nothing here fails on it, and nothing here computes power: this module
+ * measures the OFFER, and computing power and applying a gate happen outside it. A power
+ * gate wired in here would make the audit turn on a decision its own inputs cannot make.
  */
 export interface ClusterCount {
   groups: number;
@@ -97,8 +147,8 @@ export interface ClusterSliceCount {
  *
  * The single boolean this replaced could not tell them apart, and the conflation
  * published a FALSE independence claim: `humanSeed` is linkage-only, linkage
- * unions only when the named row is present, and C2 measured 782 of 783 parent
- * references resolving to no row — so `true` next to `largest: 2` read as "one
+ * unions only when the named row is present, and 782 of 783 parent references in the
+ * assembled corpus resolve to no row — so `true` next to `largest: 2` read as "one
  * indivisible block of two record-lines" about two rows the splitter had just put
  * on opposite sides of the test cut.
  *
@@ -119,11 +169,11 @@ export type { AxisConnectivity };
  * - `selfReference` — the identity names the row's own id (the shape a v2 record
  *   carries on `derivationRoot`), which unions nothing.
  * - `absentFromRecordSet` — the named row is in no record of this set, which unions
- *   nothing either, and is the case C2 measured for 782 of 783 references.
+ *   nothing either, and is the case for 782 of 783 references in the assembled corpus.
  *
  * It exists so a consumer never has to guess how strong `parentLinkage: true` is
- * for the corpus in front of it. C3 publishes the number; it computes no power and
- * applies no gate (D0b and E3 own those).
+ * for the corpus in front of it. This module publishes the number; it computes no power
+ * and applies no gate.
  */
 export interface LinkageResolution {
   references: number;
@@ -168,7 +218,7 @@ export interface AxisClusterReport {
    * never one flag: see {@link AxisConnectivityReport}.
    */
   connectivity: AxisConnectivityReport;
-  /** How many record-lines state each of R6's three states on this axis. */
+  /** How many record-lines state each of the three axis states on this axis. */
   states: Record<GroupAxisState, number>;
   overall: ClusterCount;
   bySlice: ClusterSliceCount[];
@@ -195,7 +245,7 @@ export interface SplitClusterReport {
  * Only `unknown` is reported, and the precision is deliberate: `notApplicable` is
  * legitimate (Wikipedia has no single author) and does NOT make a record
  * ineligible, while `unknown` means the axis was not recovered and the record-line
- * is ineligible (R6). `assertDeclaredAxesResolved` (benchmark/schema.ts) is
+ * is ineligible. `assertDeclaredAxesResolved` (benchmark/schema.ts) is
  * STRICTER — it also refuses `notApplicable` as a contradiction of the source's
  * own declaration — and that stricter rule belongs to the ingest path, where a
  * record is being accepted into the corpus. The audit's question is whether the
@@ -212,9 +262,25 @@ export interface DeclaredAxisGap {
 export interface SplitAudit {
   sizes: Record<Partition, number>;
   classFractions: Record<BenchmarkLabel, Record<Partition, number>>;
+  /**
+   * The OBSERVED temporal boundaries, one per partition — not the cuts the search
+   * chose. The distinction matters: `train` is the splitter's fallback and collects
+   * every component that straddles a cut, so `latestTrain` can legitimately exceed
+   * every other boundary, and reading it back as "the first cut" would be false.
+   */
   cutoffs: {
-    latestDevelopment: number;
-    latestCalibration: number;
+    latestTrain: number;
+    latestDev: number;
+    latestCalA: number;
+    latestCalB: number;
+    /**
+     * The EARLIEST of the two later middle partitions, published because the relation the
+     * audit asserts about them is earliest-against-latest and `latest` alone cannot express
+     * it: monotonic `latest` values follow from ordered ranges but do not imply them, so two
+     * overlapping middle ranges satisfy `latestDev < latestCalA` while violating the order.
+     */
+    earliestCalA: number;
+    earliestCalB: number;
     earliestTest: number;
   };
   /**
@@ -226,7 +292,7 @@ export interface SplitAudit {
    * generations grown from the same unassembled human prompt. That is not a leakage
    * under the current definition of a cluster, because the splitter does not union
    * on the value; whether it SHOULD (the two generations are dependent regardless)
-   * is a substantive question for E2/E3, not one C3 decides. It is visible in
+   * is a substantive question this module does not decide. It is visible in
    * {@link AxisConnectivityReport}'s `linkage`, which counts exactly those references.
    */
   leakages: Array<{ axis: string; value: string; partitions: Partition[] }>;
@@ -241,6 +307,20 @@ export interface SplitAudit {
     fprGateEligible: boolean;
     recallGateEligible: boolean;
   }>;
+  /**
+   * Human negatives in the blind block, measured and PUBLISHED rather than gated on.
+   *
+   * `sufficientForReleaseFpr` is an offer, exactly like `fprGateEligible` on a slice:
+   * it says whether this block could carry a released FPR bound at the reporting
+   * threshold. Nothing in this module fails on `false`; the composition gate is what
+   * refuses a corpus, and it does so on the pre-registered unit (independent clusters
+   * per quota cell) rather than on a raw row count.
+   */
+  testHumanNegatives: {
+    count: number;
+    reportingThreshold: number;
+    sufficientForReleaseFpr: boolean;
+  };
   /**
    * The reservation the partitions HONOR: every DECLARED family whose record-lines
    * all sit in `test` and none of which sits anywhere else. Read back off the
@@ -266,16 +346,16 @@ export interface SplitAudit {
    * exact-equality gates in benchmark/commands/split.ts,
    * benchmark/split-artifact.ts and benchmark/report.ts fail hard and name it.
    * Restating it as an audit reason would make those three gates unreachable and
-   * therefore untestable, which is how the mapping went untested in the first place.
+   * therefore untestable.
    */
   heldOutGeneratorFamilies: GeneratorFamily[];
   /**
    * Families whose every record-line landed in `test` without anyone reserving
    * them. DIAGNOSTIC, and deliberately outside the exact equality: the
    * concentration may be design or accident, so the report publishes it and no gate
-   * reads it (it is not one of E3's `m` hypotheses either).
+   * reads it (it is not one of the pre-registered `m` hypotheses either).
    *
-   * The corpus restriction behind it survives the fix and belongs to C2/E2: an
+   * The corpus restriction behind it is a property of the corpus, not of this check: an
    * undeclared family needs at least one record-line outside `test`, or it consumes
    * blind-block capacity without sustaining any unseen-generator claim.
    */
@@ -285,22 +365,80 @@ export interface SplitAudit {
 }
 
 interface DatasetSplitInput {
-  development: readonly BenchmarkRecord[];
-  calibration: readonly BenchmarkRecord[];
+  train: readonly BenchmarkRecord[];
+  dev: readonly BenchmarkRecord[];
+  "cal-A": readonly BenchmarkRecord[];
+  "cal-B": readonly BenchmarkRecord[];
   test: readonly BenchmarkRecord[];
 }
 
-const PARTITIONS: readonly Partition[] = ["development", "calibration", "test"];
-const LABELS: readonly BenchmarkLabel[] = ["human", "ai", "mixed"];
+/**
+ * The label vocabulary, EXHAUSTIVE by type.
+ *
+ * `readonly BenchmarkLabel[]` checks each element and not the coverage, so a label added to
+ * `BenchmarkLabel` would leave this list short — and `auditClassFractions` builds its map with
+ * `{} as Record<BenchmarkLabel, ...>`, a cast that then lies: the missing label reads back
+ * `undefined` and every fraction derived from it is `NaN`. Keyed by the union instead, an
+ * unlisted label is a compile error.
+ */
+const LABEL_COVERAGE: Record<BenchmarkLabel, true> = {
+  human: true,
+  ai: true,
+  mixed: true,
+};
+const LABELS = Object.keys(LABEL_COVERAGE) as readonly BenchmarkLabel[];
 // Composite-map key separator: the unit separator cannot occur in a slice name,
 // a source id or an axis name, so no pair of parts can be re-parenthesised into
 // another pair. Written as an escape, never as a literal control byte.
 const KEY_SEP = "\u001f";
-const TARGETS: Record<Partition, number> = {
-  development: 0.2,
-  calibration: 0.3,
-  test: 0.5,
+/**
+ * The class-fraction targets, READ from the frozen pre-registration and never
+ * restated here.
+ *
+ * Deriving them rather than copying them is what closes the last gap between the
+ * splitter's typed literal and the decision that was actually frozen:
+ * `partitionFractions` is pinned value by value by `frozenNumber`, covered by its own
+ * test, and in `.prettierignore` so no formatter can move it — none of which is true
+ * of a number retyped in this file.
+ *
+ * They are deliberately NOT read from the splitter's policy object. The audit exists
+ * to disagree with the splitter, and a shared source of targets is exactly how a
+ * partition omitted on one side stops being caught on the other.
+ *
+ * This object is also the single declaration of the field/value correspondence: the
+ * pre-registration keys its fractions by FIELD name (`calA`, a JS identifier) while a
+ * partition is a VALUE (`cal-A`, the spelling the exposure ledger validates persisted
+ * events against). Those are different lexical layers, and the mapping is written
+ * once, here.
+ */
+export const PARTITION_TARGETS: Record<Partition, number> = {
+  train: REBUILD_V3_POLICY.preRegistration.partitionFractions.train,
+  dev: REBUILD_V3_POLICY.preRegistration.partitionFractions.dev,
+  "cal-A": REBUILD_V3_POLICY.preRegistration.partitionFractions.calA,
+  "cal-B": REBUILD_V3_POLICY.preRegistration.partitionFractions.calB,
+  test: REBUILD_V3_POLICY.preRegistration.partitionFractions.test,
 };
+
+/**
+ * The ONLY partition enumeration in this module, and it is derived rather than typed.
+ *
+ * There is no second hand-written list on purpose. A list written out by hand can drop
+ * a partition, and a dropped partition is not a loud failure — its class fraction
+ * simply stops being checked, so it can drift by any amount while the audit still
+ * passes. Reading the enumeration off `PARTITION_TARGETS` makes that unexpressible, because
+ * `Record<Partition, number>` refuses to compile with an entry missing.
+ *
+ * The ORDER is `PARTITION_TARGETS`' insertion order, which is the temporal order the literal is
+ * written in, and the chain check depends on that order. `Object.keys` preserves it
+ * for string keys by specification; it would only reorder integer-like keys, and none
+ * of these five is one.
+ */
+const PARTITIONS: readonly Partition[] = Object.keys(
+  PARTITION_TARGETS,
+) as readonly Partition[];
+
+/** Exported only so a test can pin this enumeration to the splitter's. */
+export const AUDITED_PARTITIONS: readonly Partition[] = PARTITIONS;
 
 // The critical slices from the classifier design §6.4. `generatorExposure`
 // resolves to `unseen` for the DECLARED reserved families and `seen` for the rest.
@@ -342,9 +480,21 @@ export function auditBlockedSplit(
   declaredGroupAxes: ReadonlyMap<string, readonly V3GroupAxis[]> = new Map(),
 ): SplitAudit {
   const byPartition: Record<Partition, readonly BenchmarkRecord[]> = {
-    development: split.development,
-    calibration: split.calibration,
+    train: split.train,
+    dev: split.dev,
+    "cal-A": split["cal-A"],
+    "cal-B": split["cal-B"],
     test: split.test,
+  };
+
+  const testHumanNegativeCount = byPartition.test.filter(
+    (row) => row.label === "human",
+  ).length;
+  const testHumanNegatives = {
+    count: testHumanNegativeCount,
+    reportingThreshold: policy.minimumTestHumanNegatives,
+    sufficientForReleaseFpr:
+      testHumanNegativeCount >= policy.minimumTestHumanNegatives,
   };
 
   const sizes = auditSizes(byPartition);
@@ -371,6 +521,10 @@ export function auditBlockedSplit(
     policy,
   );
 
+  const corpusTotals = new Map<BenchmarkLabel, number>();
+  for (const record of records) {
+    corpusTotals.set(record.label, (corpusTotals.get(record.label) ?? 0) + 1);
+  }
   const reasons = collectReasons(
     classFractions,
     cutoffs,
@@ -378,6 +532,7 @@ export function auditBlockedSplit(
     declaredAxisGaps,
     byPartition,
     policy,
+    corpusTotals,
   );
 
   return {
@@ -388,6 +543,7 @@ export function auditBlockedSplit(
     clusters,
     declaredAxisGaps,
     criticalSliceSamples,
+    testHumanNegatives,
     heldOutGeneratorFamilies: honored,
     incidentalTestOnlyGeneratorFamilies: incidental,
     passed: reasons.length === 0,
@@ -430,8 +586,10 @@ function auditSizes(
   byPartition: Record<Partition, readonly BenchmarkRecord[]>,
 ): Record<Partition, number> {
   return {
-    development: byPartition.development.length,
-    calibration: byPartition.calibration.length,
+    train: byPartition.train.length,
+    dev: byPartition.dev.length,
+    "cal-A": byPartition["cal-A"].length,
+    "cal-B": byPartition["cal-B"].length,
     test: byPartition.test.length,
   };
 }
@@ -446,7 +604,7 @@ function auditClassFractions(
   }
   const fractions = {} as Record<BenchmarkLabel, Record<Partition, number>>;
   for (const label of LABELS) {
-    fractions[label] = { development: 0, calibration: 0, test: 0 };
+    fractions[label] = { train: 0, dev: 0, "cal-A": 0, "cal-B": 0, test: 0 };
   }
   for (const partition of PARTITIONS) {
     for (const record of byPartition[partition]) {
@@ -457,20 +615,28 @@ function auditClassFractions(
   return fractions;
 }
 
+const latestOf = (rows: readonly BenchmarkRecord[]): number =>
+  rows.length === 0
+    ? Number.NEGATIVE_INFINITY
+    : Math.max(...rows.map((row) => row.createdAt));
+
+const earliestOf = (rows: readonly BenchmarkRecord[]): number =>
+  rows.length === 0
+    ? Number.POSITIVE_INFINITY
+    : Math.min(...rows.map((row) => row.createdAt));
+
 function auditCutoffs(
   byPartition: Record<Partition, readonly BenchmarkRecord[]>,
 ): SplitAudit["cutoffs"] {
-  const latest = (rows: readonly BenchmarkRecord[]): number =>
-    rows.length === 0
-      ? Number.NEGATIVE_INFINITY
-      : Math.max(...rows.map((row) => row.createdAt));
-  const earliest = (rows: readonly BenchmarkRecord[]): number =>
-    rows.length === 0
-      ? Number.POSITIVE_INFINITY
-      : Math.min(...rows.map((row) => row.createdAt));
+  const latest = latestOf;
+  const earliest = earliestOf;
   return {
-    latestDevelopment: latest(byPartition.development),
-    latestCalibration: latest(byPartition.calibration),
+    latestTrain: latest(byPartition.train),
+    latestDev: latest(byPartition.dev),
+    latestCalA: latest(byPartition["cal-A"]),
+    latestCalB: latest(byPartition["cal-B"]),
+    earliestCalA: earliest(byPartition["cal-A"]),
+    earliestCalB: earliest(byPartition["cal-B"]),
     earliestTest: earliest(byPartition.test),
   };
 }
@@ -509,7 +675,7 @@ function auditLeakages(
   // Full-connectivity check. Re-derive the exact connected components the
   // splitter builds — value-axes AND the parent/derivative chain linkage — and
   // flag any component whose records straddle partitions. This catches a
-  // depth->=2 derivation chain (child in test, parent in development) that no
+  // depth->=2 derivation chain (child in test, parent in train) that no
   // single value-axis reveals, because grandparent and grandchild never share a
   // derivationRoot value directly.
   const roots = connectedComponentRoots(records);
@@ -783,9 +949,10 @@ function auditDeclaredAxes(
  *
  * The predicate is the property a reservation actually asserts — every record-line
  * of the family is in `test` and none is anywhere else — and it is measured over
- * the WHOLE record set rather than over `development + calibration`. A record-line
+ * the WHOLE record set rather than over the non-test partitions. A record-line
  * assigned to no partition at all therefore withdraws the reservation too, instead
- * of passing for "absent from the other two". (Such a row is separately refused as
+ * of passing for "absent from the partitions that were checked". (Such a row is separately
+ * refused as
  * an incomplete assignment by benchmark/split-artifact.ts; the reservation must not
  * be the one place it reads as harmless.)
  *
@@ -945,6 +1112,15 @@ function collectReasons(
   declaredAxisGaps: readonly DeclaredAxisGap[],
   byPartition: Record<Partition, readonly BenchmarkRecord[]>,
   policy: SplitAuditPolicy,
+  /**
+   * How many record-lines of each class the CORPUS holds — not the split.
+   *
+   * It has to come from the corpus and not from `byPartition`, because the two differ in
+   * exactly the case that matters: a class with no records at all has no fraction to
+   * check, while a class that HAS records none of which reached a partition must fail.
+   * Both read as all-zero fractions, and only the corpus count separates them.
+   */
+  corpusTotals: ReadonlyMap<BenchmarkLabel, number>,
 ): string[] {
   const reasons: string[] = [];
 
@@ -966,52 +1142,87 @@ function collectReasons(
     );
   }
 
-  const testAfterCalibration =
-    byPartition.test.length === 0 ||
-    byPartition.calibration.length === 0 ||
-    cutoffs.earliestTest > cutoffs.latestCalibration;
-  const testAfterDevelopment =
-    byPartition.test.length === 0 ||
-    byPartition.development.length === 0 ||
-    cutoffs.earliestTest > cutoffs.latestDevelopment;
-  // Complete the temporal chain development < calibration < test, so a
-  // grouping-glued spanning component cannot silently leave a development record
-  // newer than a calibration record.
-  const calibrationAfterDevelopment =
-    byPartition.calibration.length === 0 ||
-    byPartition.development.length === 0 ||
-    cutoffs.latestCalibration > cutoffs.latestDevelopment;
-  if (
-    !testAfterCalibration ||
-    !testAfterDevelopment ||
-    !calibrationAfterDevelopment
-  ) {
+  // `test` is the only STRICT block: nothing anywhere else may be as new as its
+  // earliest record, against all four other partitions. Comparing against the newest of the
+  // four would be EQUIVALENT — `x > max(a,b,c,d)` is the four comparisons — so the four are
+  // written out for the message they produce, naming which partition `test` reaches into. What
+  // would NOT be equivalent is a CHAIN of neighbour-to-neighbour comparisons, which says
+  // nothing about a partition that is not `test`'s immediate neighbour.
+  //
+  // This is the check that catches transposing `cal-B` with `test` — the one mutation
+  // no fraction test can see, since the two share the target 0.20 and a swapped pair
+  // hits all fifteen fraction targets exactly.
+  // `test` strictly newer than every one of the other four, each compared separately.
+  //
+  // `train` is in this comparison deliberately, and NOT because construction guarantees it:
+  // `train` is the fallback, so a component straddling the last cut lands there with records
+  // on both sides of it. That is test-period text sitting in training data, which is real
+  // leakage, and the audit is the only place that can refuse it.
+  const testIsStrictlyNewest = PARTITIONS.every((partition) => {
+    if (partition === "test") return true;
+    if (byPartition.test.length === 0) return true;
+    if (byPartition[partition].length === 0) return true;
+    return cutoffs.earliestTest > latestOf(byPartition[partition]);
+  });
+
+  // The three MIDDLE partitions are strictly ordered EARLIEST against LATEST, which is
+  // both stronger and true: each holds only components lying entirely inside its own
+  // band, so `latest(dev) <= devCut < earliest(cal-A)`.
+  //
+  // `train` is excluded, and that exclusion is the whole point. It absorbs every
+  // straddling component, so its newest record can exceed any middle partition's while
+  // the split is perfectly legal — a chain that included it refused splits
+  // `createBlockedSplit` legitimately produces. `test` is excluded because the check
+  // above already states the stronger thing about it.
+  const middlePartitions = PARTITIONS.slice(1, -1);
+  const middleIsOrdered = middlePartitions.every((partition, index) => {
+    if (index === 0) return true;
+    const previous = middlePartitions[index - 1] as Partition;
+    if (byPartition[partition].length === 0) return true;
+    if (byPartition[previous].length === 0) return true;
+    return earliestOf(byPartition[partition]) > latestOf(byPartition[previous]);
+  });
+
+  // Every vacuity guard above is safe ONLY because an empty partition is refused
+  // elsewhere: all five targets exceed `classTolerance`, so a partition holding no
+  // record fails the class-fraction check below for every class. Weaken a target below
+  // the tolerance and these guards start hiding a real temporal defect.
+  if (!testIsStrictlyNewest) {
     reasons.push(
-      "temporal leakage: the blocked split is not strictly ordered development < calibration < test in time",
+      "temporal leakage: the blocked test is not strictly newer than every other partition",
+    );
+  }
+  if (!middleIsOrdered) {
+    reasons.push(
+      "temporal leakage: dev, cal-A and cal-B are not strictly ordered in time",
     );
   }
 
+  // A class the corpus does not contain has no fraction to check. `scoreCut` in the
+  // splitter already skips it (`if (total === 0) continue`), so checking it here made the
+  // two halves disagree about the same corpus: the splitter would produce a split the
+  // audit then refused for a class that has no records at all.
+  //
+  // This cannot hide a release corpus missing a class: `sealDataset` pins the per-class
+  // counts exactly for `scientificUse: "release"`, so a class of zero is refused before
+  // the split runs. For an `infrastructure-only` corpus a missing class is legitimate, and
+  // `classFractions` still publishes the zeros.
   for (const label of LABELS) {
+    if ((corpusTotals.get(label) ?? 0) === 0) continue;
     for (const partition of PARTITIONS) {
       const fraction = classFractions[label][partition];
       if (
-        Math.abs(fraction - TARGETS[partition]) >
-        policy.classTolerance + 1e-9
+        !withinClassTolerance(
+          fraction,
+          PARTITION_TARGETS[partition],
+          policy.classTolerance,
+        )
       ) {
         reasons.push(
-          `class ${label} ${partition} fraction ${fraction.toFixed(3)} is outside ±${policy.classTolerance} of ${TARGETS[partition]}`,
+          `class ${label} ${partition} fraction ${fraction.toFixed(3)} is outside ±${policy.classTolerance} of ${PARTITION_TARGETS[partition]}`,
         );
       }
     }
-  }
-
-  const testHumanNegatives = byPartition.test.filter(
-    (row) => row.label === "human",
-  ).length;
-  if (testHumanNegatives < policy.minimumTestHumanNegatives) {
-    reasons.push(
-      `blocked test holds ${testHumanNegatives} human negatives, below the required minimum ${policy.minimumTestHumanNegatives}`,
-    );
   }
 
   return reasons;

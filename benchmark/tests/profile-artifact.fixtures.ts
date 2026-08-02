@@ -446,7 +446,7 @@ function frozen(thresholds: {
     sourceReadinessDigest: "4".repeat(64),
     splitDigest: SPLIT_DIGEST,
     evaluatorDigest: EVALUATOR_DIGEST,
-    partitionsUsed: ["development", "calibration"],
+    partitionsUsed: ["dev", "cal-A"],
     calibrators: { document: PLATT_DOCUMENT, localized: PLATT_LOCALIZED },
     selectionEvidence: { document: [], localized: [] },
     thresholds,
@@ -495,7 +495,7 @@ function report(
     sourceReadinessDigest: "4".repeat(64),
     split: {
       digest: SPLIT_DIGEST,
-      strategy: "blocked-group-time-v1",
+      strategy: "blocked-group-time-v2",
       heldOutGeneratorFamilies: [],
       // The markdown renderer reads BOTH family lists off the audit — the
       // reservation the partitions honored and the incidental blind-block

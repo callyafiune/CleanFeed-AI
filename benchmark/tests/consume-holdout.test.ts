@@ -47,13 +47,15 @@ import {
 } from "../prediction-schema.ts";
 import type { BenchmarkRecord } from "../schema.ts";
 import { buildSplitArtifact } from "../split-artifact.ts";
-import { standInClusterReport, type SplitAudit } from "../split-audit.ts";
+import {
+  DECLARED_GROUP_AXES,
+  FROZEN_SPLIT_AUDIT_POLICY,
+  auditBlockedSplit,
+} from "../split-audit.ts";
 import type { DatasetSplit } from "../split.ts";
 import {
   asGeneratorFamily,
-  generatorFamilyOf,
   normalizeGeneratorFamily,
-  type GeneratorFamily,
 } from "../generator-family.ts";
 import { writeEvaluatorFixture } from "./helpers/evaluator-tree.ts";
 
@@ -165,8 +167,13 @@ function record(
     groups: {
       author: `${authorMarker}_${id}`,
       source: `src_${id}`,
-      domainSource: "linkedin_batch_01",
-      collectionBatch: "batch_001",
+      // Per record, like `collectionBatch` above and for the same reason: a value axis shared
+      // corpus-wide unions every row into ONE component, and no split separates one component.
+      domainSource: `linkedin_${id}`,
+      // Per record, not one shared batch: `collectionBatch` is a value axis, so a single
+      // batch across the corpus is ONE connected component and the split cannot separate
+      // it. The fabricated audit hid that for as long as it existed.
+      collectionBatch: `batch_${id}`,
       nearDuplicate: `nd_${id}`,
       derivationRoot: id,
     },
@@ -191,12 +198,16 @@ function record(
     // batch, and an absent axis is `unknown`, which is not a resampling unit.
     // Derived from the RECIPE and never from the record-line: a template id per row
     // makes that middle level one unit per row by construction, which is the
-    // degeneration C4 exists to remove arriving through a fixture. It adds no split
-    // connectivity either — `domainSource` and `collectionBatch` above are already
-    // shared by every row of this corpus.
+    // degeneration the resampling design exists to remove arriving through a fixture.
+    //
+    // Keyed by family AND by the partition's block time, because it IS a value axis: one
+    // template per family alone is a single connected component spanning every partition
+    // that family reaches, and no split can separate it. Each block time has several rows,
+    // so the unit stays multi-row — the non-degeneracy the resampling needs — without crossing a
+    // boundary.
     base.groups.promptTemplate = `pt_${normalizeGeneratorFamily(
       options.family ?? "acme_family",
-    )}`;
+    )}_${createdAt}`;
   }
   return base;
 }
@@ -232,68 +243,6 @@ function datasetManifest(
       },
     ],
   };
-}
-
-function passingAudit(split: DatasetSplit<BenchmarkRecord>): SplitAudit {
-  return {
-    sizes: {
-      development: split.development.length,
-      calibration: split.calibration.length,
-      test: split.test.length,
-    },
-    classFractions: {
-      human: { development: 0.2, calibration: 0.3, test: 0.5 },
-      ai: { development: 0.2, calibration: 0.3, test: 0.5 },
-      mixed: { development: 0.2, calibration: 0.3, test: 0.5 },
-    },
-    cutoffs: {
-      latestDevelopment: 100,
-      latestCalibration: 200,
-      earliestTest: 300,
-    },
-    leakages: [],
-    clusters: standInClusterReport(),
-    declaredAxisGaps: [],
-    criticalSliceSamples: [],
-    heldOutGeneratorFamilies: honoredReservation(
-      split,
-      // The reservation is the same in every `scientificUse`, so the stand-in reads
-      // it off the release manifest rather than taking the mode as a parameter it
-      // would never vary on.
-      datasetManifest("release").heldOutGeneratorFamilies,
-    ),
-    // No family concentrated itself in test without being reserved in these
-    // fixtures; the field is stated because a missing key cannot be told apart
-    // from a writer that never measured it.
-    incidentalTestOnlyGeneratorFamilies: [],
-    passed: true,
-    reasons: [],
-  };
-}
-
-// The reservation the partitions HONOR: every DECLARED family whose record-lines
-// all sit in test. Derived from the split exactly as benchmark/split-audit.ts
-// derives it, so this stand-in audit cannot claim a reservation the partitions do
-// not show. It takes the declaration rather than inferring it from test-only
-// membership — that inference reproved a split over a family nobody reserved
-// (A4-fix) — and hardcoding the answer was harmless only while nothing compared the
-// four sets.
-function honoredReservation(
-  split: DatasetSplit<BenchmarkRecord>,
-  declared: readonly GeneratorFamily[],
-): GeneratorFamily[] {
-  const families = (rows: readonly BenchmarkRecord[]): GeneratorFamily[] =>
-    rows
-      .map((row) => generatorFamilyOf(row))
-      .filter((family): family is GeneratorFamily => family !== undefined);
-  const inTest = new Set(families(split.test));
-  const elsewhere = new Set<GeneratorFamily>([
-    ...families(split.development),
-    ...families(split.calibration),
-  ]);
-  return declared
-    .filter((family) => inTest.has(family) && !elsewhere.has(family))
-    .sort((a, b) => (a < b ? -1 : a > b ? 1 : 0));
 }
 
 function predictionManifest(
@@ -359,7 +308,7 @@ async function frozenCalibration(input: {
     sourceReadinessDigest: SOURCE_READINESS,
     splitDigest: input.splitDigest,
     evaluatorDigest: input.evaluatorDigest,
-    partitionsUsed: ["development", "calibration"],
+    partitionsUsed: ["dev", "cal-A"],
     calibrators: { document: PLATT, localized: PLATT },
     selectionEvidence: { document: [], localized: [] },
     thresholds: {
@@ -453,8 +402,30 @@ async function buildScenario(
     textMarker: spec.textMarker,
     authorMarker: spec.authorMarker,
   };
-  const dev = [record("human", 10, marker), record("human", 11, marker)];
-  const cal = [record("human", 110, marker), record("human", 111, marker)];
+  // Sizes follow from `test` being 20% of each class: with two fixed dev rows the split
+  // could only satisfy the frozen proportions for one exact corpus size.
+  const humanTotal = spec.testNegatives * 5;
+  const aiTotal = spec.testPositives * 5;
+  const share = (total: number, fraction: number): number =>
+    Math.round(total * fraction);
+  const fill = (
+    label: "human" | "ai",
+    count: number,
+    createdAt: number,
+  ): BenchmarkRecord[] =>
+    Array.from({ length: Math.max(0, count) }, () =>
+      // Never the reserved family: a held-out row outside `test` makes the split refuse.
+      record(label, createdAt, marker),
+    );
+
+  const dev = [
+    ...fill("human", share(humanTotal, 0.05), 10),
+    ...fill("ai", share(aiTotal, 0.05), 11),
+  ];
+  const cal = [
+    ...fill("human", share(humanTotal, 0.1), 110),
+    ...fill("ai", share(aiTotal, 0.1), 111),
+  ];
 
   const testNegativeRecords: BenchmarkRecord[] = [];
   for (let i = 0; i < spec.testNegatives; i += 1) {
@@ -467,7 +438,29 @@ async function buildScenario(
     );
   }
   const testRecords = [...testNegativeRecords, ...testPositiveRecords];
-  const records = [...dev, ...cal, ...testRecords];
+
+  // `test` is 20% of each class by construction, so the remaining partitions are the
+  // class total times their own targets, and `train` absorbs the rounding remainder.
+  const calBFill = [
+    ...fill("human", share(humanTotal, 0.2), 200),
+    ...fill("ai", share(aiTotal, 0.2), 201),
+  ];
+  const humansPlaced =
+    dev.filter((r) => r.label === "human").length +
+    cal.filter((r) => r.label === "human").length +
+    calBFill.filter((r) => r.label === "human").length +
+    spec.testNegatives;
+  const aisPlaced =
+    dev.filter((r) => r.label === "ai").length +
+    cal.filter((r) => r.label === "ai").length +
+    calBFill.filter((r) => r.label === "ai").length +
+    spec.testPositives;
+  const trainFill = [
+    ...fill("human", humanTotal - humansPlaced, 2),
+    ...fill("ai", aiTotal - aisPlaced, 3),
+  ];
+
+  const records = [...trainFill, ...dev, ...cal, ...calBFill, ...testRecords];
 
   const manifest = datasetManifest(spec.scientificUse);
   const datasetDir = join(root, "dataset");
@@ -482,22 +475,38 @@ async function buildScenario(
   );
 
   const split: DatasetSplit<BenchmarkRecord> = {
-    development: dev,
-    calibration: cal,
+    train: trainFill,
+    dev,
+    "cal-A": cal,
+    "cal-B": calBFill,
     test: testRecords,
   };
   const policy = {
-    fractions: { development: 0.2, calibration: 0.3, test: 0.5 },
+    fractions: {
+      train: 0.45,
+      dev: 0.05,
+      "cal-A": 0.1,
+      "cal-B": 0.2,
+      test: 0.2,
+    },
     classTolerance: 0.02,
     heldOutGeneratorFamilies: [asGeneratorFamily("heldout_family")],
-    seed: 712019,
+    seed: 20260726,
   } as const;
   const artifact = await buildSplitArtifact({
     manifest,
     records,
     split,
     policy,
-    audit: passingAudit(split),
+    // Measured, never written: `validateSplitArtifact` re-derives it and refuses an audit
+    // that does not reproduce from these records.
+    audit: auditBlockedSplit(
+      records,
+      split,
+      FROZEN_SPLIT_AUDIT_POLICY,
+      policy.heldOutGeneratorFamilies,
+      DECLARED_GROUP_AXES,
+    ),
   });
   const splitArtifactPath = join(root, "split-artifact.json");
   await writeFile(splitArtifactPath, `${JSON.stringify(artifact, null, 2)}\n`);
@@ -508,13 +517,13 @@ async function buildScenario(
   const fitDir = join(root, "fit");
   await mkdir(fitDir, { recursive: true });
   const devManifest = predictionManifest(
-    "development",
+    "dev",
     datasetDigest,
     splitDigest,
     bundleDigest,
   );
   const calManifest = predictionManifest(
-    "calibration",
+    "cal-A",
     datasetDigest,
     splitDigest,
     bundleDigest,
@@ -757,7 +766,7 @@ describe("consume-holdout one-way lease", () => {
       visualDocument: 0.8,
       realEvaluator: false,
       testNegatives: 4,
-      testPositives: 2,
+      testPositives: 4,
       negativeTag: "LOW",
     });
     const page = stubPage(scenario.status);
@@ -786,7 +795,7 @@ describe("consume-holdout one-way lease", () => {
       visualDocument: 0.8,
       realEvaluator: false,
       testNegatives: 4,
-      testPositives: 2,
+      testPositives: 4,
       negativeTag: "LOW",
     });
     let startedVisibleAtFirstInteraction = false;
@@ -840,7 +849,7 @@ describe("consume-holdout one-way lease", () => {
       visualDocument: 0.8,
       realEvaluator: false,
       testNegatives: 4,
-      testPositives: 2,
+      testPositives: 4,
       negativeTag: "LOW",
     });
     const activeSessionPath = join(
@@ -908,7 +917,7 @@ describe("consume-holdout one-way lease", () => {
       visualDocument: 0.8,
       realEvaluator: false,
       testNegatives: 4,
-      testPositives: 2,
+      testPositives: 4,
       negativeTag: "LOW",
     });
     // A candidate whose runtime parity diverges from the frozen identity fails
@@ -955,7 +964,7 @@ describe("consume-holdout one-way lease", () => {
       visualDocument: 0.8,
       realEvaluator: false,
       testNegatives: 4,
-      testPositives: 2,
+      testPositives: 4,
       negativeTag: "LOW",
       omitInputIds: 1,
     });
@@ -1170,7 +1179,7 @@ describe("consume-holdout one-way lease", () => {
       visualDocument: 0.8,
       realEvaluator: false,
       testNegatives: 4,
-      testPositives: 2,
+      testPositives: 4,
       negativeTag: "LOW",
     });
     expect(
@@ -1188,7 +1197,7 @@ describe("consume-holdout one-way lease", () => {
       visualDocument: 0.8,
       realEvaluator: false,
       testNegatives: 4,
-      testPositives: 2,
+      testPositives: 4,
       negativeTag: "LOW",
       bundleDigest: hex("bundle-2"),
     });
@@ -1215,7 +1224,7 @@ describe("consume-holdout one-way lease", () => {
       visualDocument: 0.8,
       realEvaluator: false,
       testNegatives: 4,
-      testPositives: 2,
+      testPositives: 4,
       negativeTag: "LOW",
     });
     await runConsumeHoldout(
@@ -1230,7 +1239,7 @@ describe("consume-holdout one-way lease", () => {
       visualDocument: 0.8,
       realEvaluator: false,
       testNegatives: 6,
-      testPositives: 2,
+      testPositives: 4,
       negativeTag: "LOW",
     });
     expect(second.options.confirmSplitDigest).not.toBe(
@@ -1260,7 +1269,7 @@ describe("consume-holdout one-way lease", () => {
       visualDocument: 0.8,
       realEvaluator: false,
       testNegatives: 4,
-      testPositives: 2,
+      testPositives: 4,
       negativeTag: "LOW",
       frozenEvaluatorDigest: hex("stale-evaluator"),
     });
@@ -1379,7 +1388,7 @@ describe("consume-holdout one-way lease", () => {
       visualDocument: 0.8,
       realEvaluator: false,
       testNegatives: 4,
-      testPositives: 2,
+      testPositives: 4,
       negativeTag: "LOW",
       frozenEvaluatorDigest: hex("stale-evaluator"),
     });
@@ -1395,7 +1404,7 @@ describe("consume-holdout one-way lease", () => {
       visualDocument: 0.8,
       realEvaluator: false,
       testNegatives: 4,
-      testPositives: 2,
+      testPositives: 4,
       negativeTag: "LOW",
     });
     const drifted = join(provoked.evaluatorRoot, "benchmark", "report.ts");
@@ -1434,7 +1443,7 @@ describe("consume-holdout one-way lease", () => {
       visualDocument: 0.8,
       realEvaluator: false,
       testNegatives: 4,
-      testPositives: 2,
+      testPositives: 4,
       negativeTag: "LOW",
     });
     const crashing = stubPage(scenario.status, { throwOnFirstScore: true });
@@ -1502,7 +1511,7 @@ describe("consume-holdout one-way lease", () => {
     visualDocument: 0.8,
     realEvaluator: false,
     testNegatives: 4,
-    testPositives: 2,
+    testPositives: 4,
     negativeTag: "LOW",
   };
 

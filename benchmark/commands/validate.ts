@@ -17,6 +17,7 @@ import { join } from "node:path";
 import { auditCorpusSources } from "../corpus-source-audit.ts";
 import {
   RELEASE_CORPUS_POLICY,
+  type CorpusPolicy,
   sealDataset,
   validateDatasetManifest,
   type DatasetFileDigests,
@@ -34,6 +35,12 @@ import {
 export interface ValidateOptions {
   datasetDirectory: string;
   outputDirectory: string;
+  /**
+   * Composition policy for an `infrastructure-only` corpus. PROGRAMMATIC ONLY — there is
+   * deliberately no CLI flag, because a flag would let an operator seal a release corpus
+   * against a composition nobody froze. `runValidate` refuses it for a release corpus.
+   */
+  corpusPolicy?: CorpusPolicy;
 }
 
 export async function runValidate(options: ValidateOptions): Promise<string> {
@@ -80,10 +87,27 @@ export async function runValidate(options: ValidateOptions): Promise<string> {
     );
   }
 
+  // A release corpus is sealed against the frozen release composition, always. An
+  // `infrastructure-only` corpus may declare its own, because its composition proves
+  // nothing about a release and pinning it to 4000/4000/2000 made the whole pipeline
+  // unexercisable end to end — no corpus of that size can satisfy the power floors.
+  //
+  // The narrowness is the safety: the override is refused for a release corpus, it is
+  // not reachable from the CLI, and it is never derived from the records in front of it.
+  // Any of those three would turn a test convenience into a way to loosen a release.
+  if (
+    options.corpusPolicy !== undefined &&
+    manifest.scientificUse === "release"
+  ) {
+    throw new CommandError(
+      "CORPUS_POLICY_OVERRIDE_FORBIDDEN",
+      "a release corpus is sealed against the frozen release composition; an explicit corpus policy is accepted only for scientificUse: infrastructure-only",
+    );
+  }
   const audit = await sealDataset(
     manifest,
     records,
-    RELEASE_CORPUS_POLICY,
+    options.corpusPolicy ?? RELEASE_CORPUS_POLICY,
     observed,
   );
 

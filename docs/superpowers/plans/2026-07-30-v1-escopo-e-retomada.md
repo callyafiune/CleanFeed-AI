@@ -141,6 +141,138 @@ projeto **não tem e não deve ter** nada nesta categoria.
 **Cross-review pelo codex** antes de fechar unidade do caminho selado:
 `codex exec --sandbox read-only -m gpt-5.6-sol -c model_reasoning_effort=xhigh "<prompt>"`.
 
+## 6b. Como NÃO deixar o trabalho parado (obrigatório, medido em 2026-08-01)
+
+Entre 2026-07-31 e 08-01 o trabalho parou repetidamente, e **sempre o operador foi quem notou**.
+Quatro causas distintas foram diagnosticadas e consertadas; o desenho abaixo é o que sobrou de pé e
+vale para toda sessão, não só para a unidade que o descobriu.
+
+**Trabalho externo longo (`codex exec`, build, suíte grande) vai com TRÊS camadas, e cada uma cobre
+a falha da anterior. Nenhuma isolada basta.**
+
+1. **`nohup`, para sobreviver ao timeout da ferramenta.** O `timeout` do Bash tem **máximo de 10
+   minutos** e uma revisão do codex leva ~1,5 h — `run_in_background` sozinho corre o risco de ser
+   morto no meio, em silêncio. `nohup <cmd> > saida.txt 2>&1 &`.
+2. **Sentinela na saída, para conclusão detectável por CONTEÚDO.** O comando anexa
+   `===<NOME>-CONCLUIDA status=$?===` ao terminar, e também a `.codex-reviews/.sentinelas.log`.
+   Assim um `tail` responde "acabou?" mesmo se o rastreamento se perder, e o status separa conclusão
+   de crash.
+3. **`Monitor` com `persistent: true`, condicionado à SENTINELA** — é a ferramenta feita para watch
+   de duração de sessão:
+   `tail -f -n 0 .codex-reviews/.sentinelas.log | grep --line-buffered -E 'CONCLUIDA|VEREDITO|FALHOU'`.
+
+**E a regra que engloba as três: nunca encerre um turno sem trabalho em voo.** Termine lançando a
+próxima verificação em background, para que o fim de um turno *cause* o início do próximo — o harness
+re-invoca na conclusão. Encadeamento, não vigilância.
+
+4. **Interruptor de homem morto, para a falha que as três não conseguem VER.** As camadas 1 a 3 são
+   detectores de trabalho que EXISTE: sentinela e Monitor precisam de algo rodando para observar. A
+   falha medida em 2026-08-02 foi outra — **turno encerrado com nada em voo**, terminando numa
+   pergunta ao operador. Nenhuma sentinela existia, então nenhuma camada podia disparar, e quem notou
+   foi o operador. Outra vez.
+
+   A regra acima ("nunca encerre um turno sem trabalho em voo") era **resolução, não mecanismo**, e o
+   único mecanismo que a implementaria — cron — está listado abaixo como morto. O conserto é um
+   temporizador feito **só** de mecanismos já provados aqui:
+
+   ```bash
+   nohup bash armar-retomada.sh <segundos> <MOTIVO> > /dev/null 2>&1 &
+   # sleep N; echo "===RETOMAR-AGORA-CONCLUIDA motivo=... ===" >> .codex-reviews/.sentinelas.log
+   ```
+
+   `nohup` (camada 1) + sentinela (camada 2) + o `Monitor persistent` que já observa o log (camada 3).
+   Nenhum mecanismo novo. ~~Quando um turno terminaria sem nada em voo, arme isto antes de terminar.~~ — **esta instrução
+   FALHOU; ver a correção logo abaixo.**
+
+**A instrução "arme antes de terminar o turno" FALHOU, medida em 2026-08-02.** O mecanismo estava
+   pronto e provado, e eu simplesmente não o armei — o operador voltou a perguntar "o que está
+   rodando?" e a resposta era nada. **Um mecanismo que depende do agente lembrar de acioná-lo não
+   conserta esquecimento: ele move o ponto de falha para dentro do agente.**
+
+   **O que vale é BATIMENTO PERMANENTE, armado UMA vez por sessão:**
+
+   ```bash
+   nohup bash batimento.sh 1200 > /dev/null 2>&1 &
+   # while true; do sleep 1200; echo "===BATIMENTO-CONCLUIDA n=N===" >> .sentinelas.log; done
+   ```
+
+   A diferença não é o mecanismo — é ONDE a decisão acontece. Com o interruptor por turno, "continuar
+   ou parar" era decidido no fim do turno, que é precisamente o momento em que o agente erra. Com o
+   batimento, nunca existe turno sem fonte de despertar pendente, e a decisão passa a ser tomada
+   **acordado**, ao receber o batimento, olhando o estado real: há item pendente no todo? há bloqueio
+   externo? Se o trabalho realmente acabou, mate o batimento (`pkill -f batimento.sh`) — parar passa a
+   ser um ATO explícito, e não a ausência de um.
+
+   Continua feito só do que foi provado aqui: `nohup`, sentinela com token que casa o padrão vivo do
+   Monitor, e `Monitor persistent`. Nada de cron.
+
+   **O token TEM de casar o padrão do Monitor.** A primeira versão emitia `RETOMAR-AGORA` e o padrão
+   vivo é `CONCLUIDA|VEREDITO|FALHOU` — a sentinela cairia num log que ninguém observa, que é a mesma
+   guarda inalcançável que o E2 passou dez rodadas consertando. **Medir o padrão pelo que de fato
+   acordou a sessão, não pelo que este documento afirma**, e provar a camada com um disparo curto antes
+   de confiar nela: a prova de 90 s foi feita em 2026-08-02 e o Monitor acordou.
+
+   Vale também como rede para morte silenciosa: a primeira tentativa da rodada 10 do cross-review morreu
+   por refresh de token (`EXIT=1`) e a notificação de conclusão chegou normalmente — mas se não tivesse
+   chegado, só um temporizador traria a sessão de volta.
+
+**E o teste de conteúdo, porque a falha de 2026-08-02 foi volitiva e não mecânica:** se a última frase
+do turno é uma pergunta ao operador, o item está na lista fechada de nunca-delegado (§ "Emenda ao
+decidir–registrar–ratificar")? Se **não** está, a pergunta é a falha — decida, registre e siga. Disparar
+uma rodada de revisão, escolher entre duas implementações, ordenar consertos: nada disso está na lista.
+
+**AUDITORIA DE MUTAÇÃO EM LOTE, para a família de defeito mais frequente desta unidade.** "Teste que
+passa pelo motivo errado" apareceu em quatro rodadas de cross-review. Ela é automatizável: para cada
+código de erro do módulo, desligue TODOS os `throw` daquele código trocando `throw new X(` por
+`void new X(` — mesma aridade, mesmo construtor, sem lançar — rode a suíte e registre se algo ficou
+vermelho. Guarda cuja remoção deixa tudo verde não tem teste que a exercite.
+
+Medido em `benchmark/split-artifact.ts` (2026-08-02): **29 guardas, 17 exercitadas, 7 sem teste
+nenhum** — entre elas as duas do atestado de composição, que são o centro da regra que exige o
+atestado derivado. Sete testes foram escritos a partir disso.
+
+Três exigências que o arnês precisa ter, aprendidas errando:
+
+1. **Verifique a LINHA DE BASE verde antes de mutar.** Sem isso, "suíte vermelha" não distingue
+   mutação eficaz de suíte já quebrada.
+2. **Restaure num `finally`, com backup conferido por `diff` depois.** O script muta o mesmo arquivo
+   dezenas de vezes; a restauração é a única parte que não pode falhar.
+3. **Capture BYTES e decodifique à mão.** `text=True` no Python usa cp1252 no Windows e o vitest emite
+   UTF-8 — isso matou duas tentativas, e é falha do arnês, não do alvo.
+
+E o limite do método, que precisa ser dito: o padrão só muta `throw` cujo código é literal ali. Guarda
+que lança de dentro de um helper (o código vira parâmetro) aparece como "não mutável" e tem de ser
+conferida à mão — foi o caso de quatro delas.
+
+**O que NÃO funciona, medido, para ninguém tentar de novo:**
+
+- **`nohup` dentro de chamada em primeiro plano.** Entrega o processo ao SO e não deixa nada para o
+  harness rastrear.
+- **Esperar por NOME de processo.** `ps -W | grep -ci codex` casa o `codex.exe` da extensão do VS
+  Code, que **nunca morre** — a condição fica insatisfazível por construção e o laço gira até o
+  timeout sem avisar nada.
+- **Cron (`CronCreate`) como rede de segurança.** Um watchdog `*/5 * * * *` foi criado e **nunca
+  disparou nem uma vez**, mesmo com intervalos bem maiores que cinco minutos entre prompts. A causa
+  está fora do que o agente consegue observar (não há log de disparos legível), então cron **não** é
+  confiável aqui. `Monitor persistent` é — e foi observado funcionando.
+- **Encerrar turno em RELATÓRIO.** Foi a segunda causa mais frequente: dimensionar a tarefa e
+  resumi-la virou substituto de fazê-la. Relatório não é entregável; se há o que dizer, diga em
+  poucas linhas **junto com** a próxima ação, nunca em lugar dela.
+- **Cron continua morto, e o watchdog fantasma é pior que nenhum.** O job `*/5 * * * *` criado em
+  2026-08-01 **ainda existia em 2026-08-02**, nunca disparou uma vez, e o conteúdo dele esperava por
+  NOME de processo — a técnica que esta mesma lista já marcava como quebrada. Deletado. Watchdog que
+  não dispara não é rede de segurança: é falsa garantia, e faz o agente confiar numa camada inexistente.
+
+**Duas regras de evidência que vêm no mesmo pacote:**
+
+- Só afirme "estou aguardando X" **depois** de ter conferido X pelo menos uma vez naquele turno.
+  Aguardar não é estado que se presume; é estado que se verifica. Afirmei duas vezes estar aguardando
+  revisões que já estavam prontas.
+- Imprima `pwd` na **mesma invocação** de qualquer medição que valha como evidência. A cwd derivou
+  para o tree principal **três vezes**, e numa delas eu li o arquivo errado e conclui errado por
+  várias chamadas. Uma varredura que devolve "limpo" é indistinguível de uma varredura no diretório
+  errado.
+
 ## 7. Regras invioláveis do repositório
 
 - **NUNCA** ler a partição `test`, `test-labels.jsonl`, nem nada sob
@@ -169,5 +301,7 @@ projeto **não tem e não deve ter** nada nesta categoria.
   (`rebuild-v3-policy.json:114-120`), não quatro; quatro é o número de *fontes*;
 - **`license-review.json` precisa de `approved`**, não `reviewed` — o gate exige a string literal
   (`assert-release-gates.mjs:273-297`);
-- **o splitter atual é estruturalmente de três partições** (`split.ts:143-155`,
-  `commands/split.ts:108-115`). Migrar para cinco é trabalho real, não configuração.
+- **o splitter era estruturalmente de três partições, e a migração foi trabalho real** — feita
+  em 2026-07-31 (E2). Hoje `split.ts` deriva `Partition` de uma tupla única de cinco nomes e a
+  auditoria lê os alvos do pré-registro. A citação `commands/split.ts:108-115` que este documento
+  trazia caía num comentário de linhagem, não na evidência estrutural.

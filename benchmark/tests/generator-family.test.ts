@@ -246,10 +246,16 @@ function buildDataset(options: { unseenFromSlot: number }): BenchmarkRecord[] {
 const DATASET = buildDataset({ unseenFromSlot: 96 });
 
 const POLICY: BlockedSplitPolicy = {
-  fractions: { development: 0.2, calibration: 0.3, test: 0.5 },
+  fractions: {
+    train: 0.45,
+    dev: 0.05,
+    "cal-A": 0.1,
+    "cal-B": 0.2,
+    test: 0.2,
+  },
   classTolerance: 0.02,
   heldOutGeneratorFamilies: [asGeneratorFamily(CANONICAL_SPELLING)],
-  seed: 712_019,
+  seed: 20_260_726,
 };
 
 function item(record: BenchmarkRecord): EvaluationItem {
@@ -417,10 +423,15 @@ describe("createBlockedSplit and the held-out family", () => {
     expect(
       split.test.filter((row) => generatorFamilyOf(row) === CANONICAL_SPELLING),
     ).not.toHaveLength(0);
+    // All FOUR non-test partitions: a reservation leaking into `cal-A` or `cal-B` reads
+    // as honored if only `train` and `dev` are examined.
     expect(
-      [...split.development, ...split.calibration].filter(
-        (row) => generatorFamilyOf(row) === CANONICAL_SPELLING,
-      ),
+      [
+        ...split.train,
+        ...split.dev,
+        ...split["cal-A"],
+        ...split["cal-B"],
+      ].filter((row) => generatorFamilyOf(row) === CANONICAL_SPELLING),
     ).toHaveLength(0);
   });
 

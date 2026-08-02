@@ -232,6 +232,7 @@ function splitSummary(input: EvidenceInput): unknown {
     seed: split.seed,
     splitDigest: split.splitDigest,
     assignmentsDigest: split.assignmentsDigest,
+    compositionAttestation: split.compositionAttestation,
     cutoffs: { ...split.cutoffs },
     counts: { ...split.counts },
     heldOutGeneratorFamilies: [...split.heldOutGeneratorFamilies],

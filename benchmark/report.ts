@@ -3,7 +3,7 @@
 // A release evaluation binds together three things that must never drift apart:
 // the governance decision (the sealed dataset audit and source-readiness
 // digests), the atomic holdout session (the active consume-holdout id) and the
-// three scoring runs (the development/calibration/test prediction manifest
+// three scoring runs (the dev/cal-A/test prediction manifest
 // digests). Before anything is assembled, `buildBenchmarkReport` re-checks that
 // the identity recomputed at evaluate time (`observed`) is byte-identical to the
 // identity frozen at fit/consume time (`frozen`) — the dataset audit, source
@@ -57,7 +57,7 @@ import { REBUILD_V3_POLICY } from "./rebuild-v3-policy.ts";
 import type { SliceSummary } from "./slices.ts";
 import type { SplitAudit } from "./split-audit.ts";
 
-export const SPLIT_STRATEGY = "blocked-group-time-v1" as const;
+export const SPLIT_STRATEGY = "blocked-group-time-v2" as const;
 export type SplitStrategy = typeof SPLIT_STRATEGY;
 
 // The two FPR upper bounds the frozen-threshold table publishes per row. They

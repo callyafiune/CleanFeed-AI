@@ -7,9 +7,12 @@ import {
   createBlockedSplit,
   GROUP_KEYS,
   PARENT_LINKAGE_AXES,
+  PARTITIONS,
   SplitConstraintError,
   type BlockedSplitPolicy,
   type Partition,
+  withinClassTolerance,
+  CLASS_TOLERANCE_EPSILON,
 } from "../split.ts";
 import {
   groupAxisIdentity,
@@ -25,7 +28,7 @@ import {
 
 // The blocked split is exercised through the public API only (no lower-level
 // hooks), so every fixture is a full, self-consistent dataset that the temporal
-// 20/30/50 cut can actually satisfy within tolerance. A record factory keeps the
+// 45/5/10/20/20 cuts can actually satisfy within tolerance. A record factory keeps the
 // closed schema fields realistic while leaving the axes the splitter reads
 // (label, createdAt, domain, the canonical generator family and every groups.* key)
 // under
@@ -139,9 +142,11 @@ function rec(spec: RecordSpec): BenchmarkRecord {
 }
 
 // Even class interleaving across 100 time slots. Because human, ai and mixed are
-// each spread uniformly over time, one global temporal cut lands every class at
-// ~20/30/50, and every (slot, class) shares all eight grouping axes so the audit
-// exercises real — never vacuous — cohesion. Mixed records point their
+// each spread uniformly over time, four global temporal cuts land every class at
+// ~45/5/10/20/20, and every (slot, class) shares all eight grouping axes so the audit
+// exercises real — never vacuous — cohesion. One hundred slots is not decoration: the
+// `dev` target is 0.05, so a coarser timeline could not place a cut pair that lands
+// dev inside two points of it at all. Mixed records point their
 // derivationRoot at the slot's human parent, so parent + derivatives cluster.
 // The unseen generator family appears only in the newest slots so it is both
 // held-out-eligible and temporally in test.
@@ -262,10 +267,16 @@ const DATASET = buildDataset({
 });
 
 const POLICY: BlockedSplitPolicy = {
-  fractions: { development: 0.2, calibration: 0.3, test: 0.5 },
+  fractions: {
+    train: 0.45,
+    dev: 0.05,
+    "cal-A": 0.1,
+    "cal-B": 0.2,
+    test: 0.2,
+  },
   classTolerance: 0.02,
   heldOutGeneratorFamilies: [asGeneratorFamily("family-unseen")],
-  seed: 712_019,
+  seed: 20_260_726,
 };
 
 const RELEASE_AUDIT_POLICY: SplitAuditPolicy = {
@@ -286,13 +297,120 @@ const GROUP_AXES = [
   "derivationRoot",
 ] as const;
 
+describe("the inclusive boundary holds through the real search, not just the helper", () => {
+  // O helper sozinho nao prova nada sobre a busca: cada poda que reescreve a aritmetica
+  // inline reabre a borda para UM corte, e um teste que chama so o helper nao ve isso. Este
+  // vai pela API publica.
+  //
+  // O corpus tem cinco blocos temporais com 45, 5, 8, 22 e 20 registros, cada linha em seu
+  // proprio componente. Como os unicos cortes possiveis sao as fronteiras dos blocos, a UNICA
+  // colocacao alcancavel realiza `45/5/8/22/20` — `cal-A` a 0,08 e `cal-B` a 0,22, ambos
+  // exatamente nos dois pontos de tolerancia. Comparar float cru recusa: `0.58 - 0.50` da
+  // `0.07999999999999996`.
+  function corpusNasBordas(): BenchmarkRecord[] {
+    const porBloco = [45, 5, 8, 22, 20];
+    const registros: BenchmarkRecord[] = [];
+    let indice = 0;
+    porBloco.forEach((quantos, bloco) => {
+      for (let i = 0; i < quantos; i += 1) {
+        registros.push(
+          rec({
+            id: `b${bloco}_${i}`,
+            label: "human",
+            createdAt: (bloco + 1) * 1_000,
+            domain: "corporate",
+            wordCount: 180,
+            humanSourceType: "employee-post",
+            author: `a_${indice}`,
+            source: `s_${indice}`,
+            domainSource: `ds_${indice}`,
+            collectionBatch: `cb_${indice}`,
+            nearDuplicate: `nd_${indice}`,
+            derivationRoot: `b${bloco}_${i}`,
+          }),
+        );
+        indice += 1;
+      }
+    });
+    return registros;
+  }
+
+  it("accepts a distribution sitting exactly on both tolerance edges", () => {
+    const split = createBlockedSplit(corpusNasBordas(), POLICY);
+    expect({
+      train: split.train.length,
+      dev: split.dev.length,
+      "cal-A": split["cal-A"].length,
+      "cal-B": split["cal-B"].length,
+      test: split.test.length,
+    }).toEqual({ train: 45, dev: 5, "cal-A": 8, "cal-B": 22, test: 20 });
+  });
+
+  it("still refuses a distribution genuinely outside the tolerance", () => {
+    // Mesma construcao, `cal-A` com 5 de 100: 0,05 contra alvo 0,10 e cinco pontos fora.
+    const porBloco = [45, 5, 5, 25, 20];
+    const registros: BenchmarkRecord[] = [];
+    let indice = 0;
+    porBloco.forEach((quantos, bloco) => {
+      for (let i = 0; i < quantos; i += 1) {
+        registros.push(
+          rec({
+            id: `x${bloco}_${i}`,
+            label: "human",
+            createdAt: (bloco + 1) * 1_000,
+            domain: "corporate",
+            wordCount: 180,
+            humanSourceType: "employee-post",
+            author: `xa_${indice}`,
+            source: `xs_${indice}`,
+            domainSource: `xds_${indice}`,
+            collectionBatch: `xcb_${indice}`,
+            nearDuplicate: `xnd_${indice}`,
+            derivationRoot: `x${bloco}_${i}`,
+          }),
+        );
+        indice += 1;
+      }
+    });
+    expect(() => createBlockedSplit(registros, POLICY)).toThrow(
+      /proportions|unreachable/iu,
+    );
+  });
+});
+
+describe("class tolerance is inclusive at the boundary", () => {
+  // 3% and 7% of a class in `dev` are LEGAL by the frozen contract, and binary floats do not
+  // represent the boundary: `Math.abs(0.03 - 0.05)` is 0.020000000000000004, strictly greater
+  // than 0.02. Comparing raw floats refuses exactly the two values the contract admits, which
+  // is what the cross-review measured across four independent comparisons.
+  it("accepts exactly 3% and 7% against a 5% target", () => {
+    expect(withinClassTolerance(0.03, 0.05)).toBe(true);
+    expect(withinClassTolerance(0.07, 0.05)).toBe(true);
+  });
+
+  it("still refuses fractions genuinely outside the tolerance", () => {
+    expect(withinClassTolerance(0.0299, 0.05)).toBe(false);
+    expect(withinClassTolerance(0.0701, 0.05)).toBe(false);
+  });
+
+  it("pins the epsilon so the Python mirror can be compared against it", () => {
+    expect(CLASS_TOLERANCE_EPSILON).toBe(1e-9);
+  });
+});
+
 describe("createBlockedSplit", () => {
   it("keeps connected groups together and the holdout family in test", () => {
     const split = createBlockedSplit(DATASET, {
-      fractions: { development: 0.2, calibration: 0.3, test: 0.5 },
+      fractions: {
+        train: 0.45,
+        dev: 0.05,
+        "cal-A": 0.1,
+        "cal-B": 0.2,
+        test: 0.2,
+      },
       classTolerance: 0.02,
       heldOutGeneratorFamilies: [asGeneratorFamily("family-unseen")],
-      seed: 712_019,
+      seed: 20_260_726,
     });
     const audit = auditBlockedSplit(
       DATASET,
@@ -308,20 +426,21 @@ describe("createBlockedSplit", () => {
       split.test.filter((row) => generatorFamilyOf(row) === "family-unseen"),
     ).not.toHaveLength(0);
     expect(
-      [...split.development, ...split.calibration].filter(
-        (row) => generatorFamilyOf(row) === "family-unseen",
-      ),
+      [
+        ...split.train,
+        ...split.dev,
+        ...split["cal-A"],
+        ...split["cal-B"],
+      ].filter((row) => generatorFamilyOf(row) === "family-unseen"),
     ).toHaveLength(0);
   });
 
   it("does not collapse every linkedin record or every seen family into one component", () => {
     const split = createBlockedSplit(DATASET, POLICY);
-    expect(split.development.some((row) => row.domain === "corporate")).toBe(
-      true,
-    );
+    expect(split.train.some((row) => row.domain === "corporate")).toBe(true);
     expect(split.test.some((row) => row.domain === "corporate")).toBe(true);
     expect(
-      split.calibration.some((row) => generatorFamilyOf(row) === "family-seen"),
+      split["cal-A"].some((row) => generatorFamilyOf(row) === "family-seen"),
     ).toBe(true);
     expect(
       split.test.some((row) => generatorFamilyOf(row) === "family-seen"),
@@ -331,8 +450,10 @@ describe("createBlockedSplit", () => {
   it("confines every grouping axis to a single partition (no leakage on all eight axes)", () => {
     const split = createBlockedSplit(DATASET, POLICY);
     const partitions: Array<[Partition, BenchmarkRecord[]]> = [
-      ["development", split.development],
-      ["calibration", split.calibration],
+      ["train", split.train],
+      ["dev", split.dev],
+      ["cal-A", split["cal-A"]],
+      ["cal-B", split["cal-B"]],
       ["test", split.test],
     ];
     for (const axis of GROUP_AXES) {
@@ -358,7 +479,7 @@ describe("createBlockedSplit", () => {
     }
   });
 
-  it("splits every class 20/30/50 within the two-point tolerance", () => {
+  it("splits every class 45/5/10/20/20 within the two-point tolerance", () => {
     const split = createBlockedSplit(DATASET, POLICY);
     const audit = auditBlockedSplit(
       DATASET,
@@ -366,28 +487,42 @@ describe("createBlockedSplit", () => {
       RELEASE_AUDIT_POLICY,
       POLICY.heldOutGeneratorFamilies,
     );
+    // Restated here on purpose rather than imported from the audit: a test that reads
+    // the same constant the implementation reads cannot fail when that constant moves.
+    const expected: Array<[Partition, number]> = [
+      ["train", 0.45],
+      ["dev", 0.05],
+      ["cal-A", 0.1],
+      ["cal-B", 0.2],
+      ["test", 0.2],
+    ];
+    // Every partition, not a subset: with four of five checked the fifth can drift
+    // eight points and still leave this test green.
+    expect(expected.map(([partition]) => partition)).toEqual([...PARTITIONS]);
     for (const label of ["human", "ai", "mixed"] as const) {
-      expect(audit.classFractions[label].development).toBeCloseTo(0.2, 1);
-      expect(
-        Math.abs(audit.classFractions[label].development - 0.2),
-      ).toBeLessThanOrEqual(0.02);
-      expect(
-        Math.abs(audit.classFractions[label].calibration - 0.3),
-      ).toBeLessThanOrEqual(0.02);
-      expect(
-        Math.abs(audit.classFractions[label].test - 0.5),
-      ).toBeLessThanOrEqual(0.02);
+      for (const [partition, target] of expected) {
+        expect(
+          Math.abs(audit.classFractions[label][partition] - target),
+          `${label} ${partition}`,
+        ).toBeLessThanOrEqual(0.02);
+      }
     }
   });
 
-  it("keeps the blocked test strictly newer than calibration and development", () => {
+  it("keeps the blocked test strictly newer than every other partition", () => {
     const split = createBlockedSplit(DATASET, POLICY);
-    const latestNonTest = Math.max(
-      ...split.development.map((row) => row.createdAt),
-      ...split.calibration.map((row) => row.createdAt),
-    );
     const earliestTest = Math.min(...split.test.map((row) => row.createdAt));
-    expect(earliestTest).toBeGreaterThan(latestNonTest);
+    // Against each partition individually. Comparing only against the newest of the
+    // four would let test overlap a partition that is not its immediate neighbour.
+    for (const partition of PARTITIONS) {
+      if (partition === "test") continue;
+      const rows = split[partition];
+      expect(rows.length, `${partition} is non-empty`).toBeGreaterThan(0);
+      expect(
+        earliestTest,
+        `test starts after all of ${partition}`,
+      ).toBeGreaterThan(Math.max(...rows.map((row) => row.createdAt)));
+    }
   });
 
   it("is deterministic for a fixed seed", () => {
@@ -395,9 +530,9 @@ describe("createBlockedSplit", () => {
     const second = createBlockedSplit(DATASET, POLICY);
     const ids = (rows: BenchmarkRecord[]): string[] =>
       rows.map((row) => row.id);
-    expect(ids(first.development)).toEqual(ids(second.development));
-    expect(ids(first.calibration)).toEqual(ids(second.calibration));
-    expect(ids(first.test)).toEqual(ids(second.test));
+    for (const partition of PARTITIONS) {
+      expect(ids(first[partition]), partition).toEqual(ids(second[partition]));
+    }
   });
 
   it("throws when a held-out family is not temporally eligible for test", () => {
@@ -417,8 +552,13 @@ describe("createBlockedSplit", () => {
   });
 
   it("throws when no temporal cut exists at all (single timestamp)", () => {
-    // Every record shares one timestamp, so no legal (calibrationCut < testCut)
-    // pair exists: fail closed at the no-cut branch rather than relax anything.
+    // Every record shares one timestamp, so no strictly increasing quadruple of cuts
+    // exists at all: fail closed at the no-cut branch rather than relax anything.
+    //
+    // The message says "no candidate cut quadruple", not "no temporal cut exists". The
+    // candidate grid is bounded, so an empty result proves only that nothing in the grid
+    // worked — here that happens to coincide with genuine impossibility, but the message
+    // must not claim the stronger thing in the cases where it does not.
     const degenerate = Array.from({ length: 12 }, (_, index) =>
       rec({
         id: `d_${index}`,
@@ -435,16 +575,16 @@ describe("createBlockedSplit", () => {
       }),
     );
     expect(() => createBlockedSplit(degenerate, POLICY)).toThrow(
-      /no temporal cut can realise/,
+      /no candidate cut quadruple realises/,
     );
   });
 
-  it("throws the class-fraction error when 20/30/50 is unreachable within tolerance", () => {
+  it("throws the class-fraction error when 45/5/10/20/20 is unreachable within tolerance", () => {
     // Human lives entirely in the oldest half of the timeline, AI entirely in
-    // the newest half. Candidate cuts exist (many distinct timestamps), the
-    // search finds its best pair, but NO single global cut can put ~50% of both
-    // classes in test — so the per-class ±2pp guard must throw, exercising the
-    // class-fraction path (not the no-cut branch).
+    // the newest half. Candidate cuts exist (many distinct timestamps) and the
+    // search finds a legal quadruple, but no set of global cuts can give both
+    // classes a 20% test block — so the per-class ±2pp guard must throw,
+    // exercising the class-fraction path and not the no-cut branch.
     const skewed: BenchmarkRecord[] = [];
     for (let slot = 1; slot <= 10; slot += 1) {
       skewed.push(

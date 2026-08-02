@@ -57,7 +57,11 @@ import {
 } from "./commands/verify-published-evidence.ts";
 import { defaultClusterLedgerPaths } from "./cluster-exposure-ledger.ts";
 import { defaultHoldoutLedgerPath } from "./holdout-ledger.ts";
-import type { Partition } from "./split.ts";
+import {
+  FIT_PARTITIONS,
+  SCORING_PARTITIONS,
+  type ScoringPartition,
+} from "./split.ts";
 
 export const BENCHMARK_COMMANDS = [
   "cluster-ledger",
@@ -179,6 +183,18 @@ async function dispatch(
 }
 
 type FlagMap = Map<string, string | boolean>;
+
+/**
+ * Membership against a frozen tuple, as a TYPE GUARD so the narrowing comes from the same
+ * authority the refusal message names. Written once because the alternative — repeating the
+ * names in an `if` — lets a partition dropped from the tuple stay accepted.
+ */
+function isOneOf<T extends string>(
+  allowed: readonly T[],
+  value: string,
+): value is T {
+  return (allowed as readonly string[]).includes(value);
+}
 
 function parseFlagTokens(tokens: readonly string[]): FlagMap {
   const flags: FlagMap = new Map();
@@ -373,12 +389,14 @@ function buildScore(flags: FlagMap): ScoreOptions {
     // The blocked temporal test is consumed exactly once, and only through the
     // dedicated holdout consume command — never through routine scoring.
     throw new CliError(
-      "HOLDOUT_REQUIRES_CONSUME_COMMAND: score reads only development and calibration",
+      "HOLDOUT_REQUIRES_CONSUME_COMMAND: score reads only dev and cal-A",
     );
   }
-  if (partition !== "development" && partition !== "calibration") {
+  // The check reads the SAME authority the message names. Repeating the names inline lets a
+  // partition dropped from `FIT_PARTITIONS` stay accepted while the message says otherwise.
+  if (!isOneOf(FIT_PARTITIONS, partition)) {
     throw new CliError(
-      "--partition must be development or calibration for score",
+      `--partition must be one of ${FIT_PARTITIONS.join(", ")} for score`,
     );
   }
   const candidateExtensionDir = requireFlag(flags, "candidate-extension-dir");
@@ -430,13 +448,15 @@ async function buildFit(flags: FlagMap): Promise<FitOptions> {
     "seed",
     "partition",
   ]);
+  // Read from the allowlist, never compared against literals: `optionalFlag` returns a
+  // bare string, so a comparison with a name outside the union is legal TypeScript and
+  // the compiler cannot flag it here.
   const partition = optionalFlag(flags, "partition");
   if (
     partition !== undefined &&
-    partition !== "development" &&
-    partition !== "calibration"
+    !(FIT_PARTITIONS as readonly string[]).includes(partition)
   ) {
-    throw new CliError("fit accepts only development and calibration");
+    throw new CliError(`fit accepts only ${FIT_PARTITIONS.join(" and ")}`);
   }
   const datasetDirectory = requireFlag(flags, "dataset-dir");
   return {
@@ -597,14 +617,14 @@ function buildVerifyPublishedEvidence(
   };
 }
 
-function requirePartition(flags: FlagMap): Partition {
+// Explicit value comparisons, never a character-class pattern: `cal-A` carries a
+// hyphen and a capital, so `/^\w+$/` or `/^[a-z]+$/` would reject a legal partition.
+function requirePartition(flags: FlagMap): ScoringPartition {
   const partition = requireFlag(flags, "partition");
-  if (
-    partition !== "development" &&
-    partition !== "calibration" &&
-    partition !== "test"
-  ) {
-    throw new CliError("--partition must be development, calibration or test");
+  if (!isOneOf(SCORING_PARTITIONS, partition)) {
+    throw new CliError(
+      `--partition must be one of ${SCORING_PARTITIONS.join(", ")}`,
+    );
   }
   return partition;
 }
@@ -628,7 +648,7 @@ function usage(): string {
     "  validate-predictions --dataset-dir --split-artifact --partition --predictions",
     "                       --runtime-parity [test: --ledger --consumption-id]",
     "  score                --dataset-dir --split-artifact --partition --candidate-extension-dir",
-    "                       --output [--resume]  (development/calibration only)",
+    "                       --output [--resume]  (dev/cal-A only)",
     "  fit                  --dataset-dir --dataset-audit --source-readiness --split-artifact",
     "                       --runtime-parity --development-predictions --calibration-predictions",
     "                       --output --seed",
