@@ -137,9 +137,56 @@ describe("prediction shard store", () => {
     });
     await store.open(devRun());
     const forbidden = { ...row("post-0001"), text: "conteúdo privado" };
+    // A asserção nomeia o CÓDIGO. Antes ela era `toThrow(/forbidden|text/iu)`, e a auditoria por
+    // mutação mostrou o efeito: com a guarda desligada o teste seguia verde, porque a regex é
+    // larga o bastante para casar a mensagem de qualquer outra recusa que fale de "text". Matcher
+    // presente não é matcher específico.
     await expect(
       store.writeAtomic(0, [forbidden as unknown as StrictPredictionV2]),
-    ).rejects.toThrow(/forbidden|text/iu);
+    ).rejects.toMatchObject({ code: "SHARD_FORBIDDEN_FIELD" });
+  });
+
+  it("refuses to write or finalize before open", async () => {
+    // O estado `run === null` é o da loja recém-criada. As duas portas de escrita têm de recusar,
+    // e não só uma: `writeAtomic` sem `open` gravaria shard sem corrida declarada, e `finalize`
+    // sem `open` selaria manifesto sobre identidade nenhuma.
+    const store = createPredictionShardStore({
+      directory: await tempDir(),
+      createdAt: CREATED_AT,
+    });
+    await expect(
+      store.writeAtomic(0, [row("post-0001")]),
+    ).rejects.toMatchObject({ code: "SHARD_STORE_NOT_OPEN" });
+    await expect(store.finalize(["post-0001"])).rejects.toMatchObject({
+      code: "SHARD_STORE_NOT_OPEN",
+    });
+  });
+
+  it("refuses a shard index that is not a non-negative integer", async () => {
+    const store = createPredictionShardStore({
+      directory: await tempDir(),
+      createdAt: CREATED_AT,
+    });
+    await store.open(devRun());
+    for (const indice of [-1, 1.5, Number.NaN]) {
+      await expect(
+        store.writeAtomic(indice, [row("post-0001")]),
+      ).rejects.toMatchObject({ code: "SHARD_INDEX_INVALID" });
+    }
+  });
+
+  it("refuses a shard larger than the declared shard size", async () => {
+    // O tamanho do shard entra no manifesto e é o que o leitor usa para conferir a contagem, então
+    // um shard maior que o declarado é manifesto que descreve outro arquivo.
+    const store = createPredictionShardStore({
+      directory: await tempDir(),
+      createdAt: CREATED_AT,
+    });
+    await store.open(devRun());
+    const demais = ids(101, 0).map((id) => row(id));
+    await expect(store.writeAtomic(0, demais)).rejects.toMatchObject({
+      code: "SHARD_TOO_LARGE",
+    });
   });
 
   it("rejects a duplicate id across shards at finalize", async () => {
