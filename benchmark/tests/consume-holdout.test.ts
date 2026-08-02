@@ -1851,11 +1851,14 @@ describe("evaluate — guardas do artefato de predicao", () => {
     await mkdir(predicoes, { recursive: true });
     // `shards: []` deixa o artefato SEM predicao nenhuma, que e valido de forma e e
     // exatamente o que a guarda de completude tem de recusar.
+    const { splitDigest } = JSON.parse(
+      await readFile(scenario.options.splitArtifactPath, "utf8"),
+    ) as { splitDigest: string };
     const manifesto: PredictionManifestV1 = {
       ...predictionManifest(
         "test",
         hex("dataset-sintetico"),
-        scenario.options.confirmSplitDigest,
+        splitDigest,
         BUNDLE,
       ),
       holdoutConsumptionId: CONSUMO,
