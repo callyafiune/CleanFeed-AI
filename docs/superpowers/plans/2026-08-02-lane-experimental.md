@@ -19,17 +19,23 @@ calibrado** é decisão de governança, não detalhe de implementação.
 verificados. Publicar o preview exige isso, e `pending` — o único `gateDecision` honesto para "não há
 decisão científica" — é justamente o que o empacotamento recusa.
 
-## A pergunta ABERTA que a implementação tem de resolver primeiro
+## A pergunta que estava aberta — RESOLVIDA por medição, contra a minha hipótese
 
 O caminho experimental em `inference-worker.ts` exige `runtimeIdentity.kind === "bundle"`, e a
 identidade vem da seleção do catálogo. Como o catálogo só escolhe TMR com ≥1 perfil, **o preview de
 hoje parece só ser alcançável num release já promovido cujo perfil não casa as coordenadas exatas** —
 um MISS de perfil, não a ausência de decisão.
 
-Se isso se confirmar, a lane nova não é só um estado a mais: é a diferença entre "preview de modelo
-sem decisão científica" e "release promovido com perfil que não casa", que são situações diferentes e
-merecem recusas diferentes. **Medir isso é o primeiro passo da implementação**, e o desenho abaixo
-vale sob a hipótese de que a lane precisa existir para o primeiro caso.
+**Não se confirmou.** A medição mostra o contrário, e o próprio código o diz:
+`src/inference/runtime-activation.ts:104-133` calcula `experimental = !calibrated && flag === true` e,
+nesse caso, **carrega o manifesto do modelo** — o comentário da função é explícito, "in the
+experimental case the release is still `pending`, so the worker loads the model but runs it
+UNCALIBRATED".
+
+Ou seja: o preview **já funciona hoje num release não promovido**, por um caminho de ativação que
+**não passa** por `selectCatalogRuntime`. Minha hipótese estava errada, e a consequência é que o
+defeito 2 não é de runtime: **é de empacotamento**. O runtime já implementa a lane; o que falta é um
+estado de descritor que a política de empacotamento aceite, para que a coisa possa ser publicada.
 
 ## O estado proposto: `experimental`
 
@@ -47,8 +53,10 @@ No empacotamento (`resolveReleasePolicy`): `pending` **continua** lançando, com
 escrita — `rolloutState === "experimental"` devolve
 `{ includeTmr: true, activeRuntimeKind: "bundle", maximumActionCeiling: "indicator" }`.
 
-No catálogo (`selectCatalogRuntime`): `experimental` ⇒ `primary: "tmr"` com zero perfis, e nenhum
-outro estado ganha essa permissão.
+No catálogo (`selectCatalogRuntime`): **nada muda**, e este item do desenho original estava errado.
+A ativação do preview não passa pelo catálogo — `buildWorkerInitializePayload` carrega o manifesto por
+conta própria quando não há calibração e o usuário optou. Dar ao catálogo uma permissão nova seria
+acrescentar um segundo caminho para a mesma coisa, e o segundo caminho é onde as promessas se perdem.
 
 ## O que este desenho NÃO decide
 
