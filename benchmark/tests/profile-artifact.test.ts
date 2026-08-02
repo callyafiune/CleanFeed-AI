@@ -78,3 +78,58 @@ describe("calibration profile artifact", () => {
     }
   });
 });
+
+// ---------------------------------------------------------------------------
+// As tres recusas que a auditoria por mutacao mediu em zero.
+//
+// A ORDEM dentro de `buildModelPublication` decide cada forja: os templates sao parseados,
+// depois a identidade e cruzada, depois `issuedAt` vira expiracao, e so entao a evidencia de
+// gate e montada. Nenhuma delas valida o auto-digest do artefato congelado — o modulo nao chama
+// `validateFrozenCalibrationArtifact` —, entao aqui o congelado pode ser mexido sem re-selar, ao
+// contrario do que outros comandos exigem.
+// ---------------------------------------------------------------------------
+
+describe("profile artifact — recusas de identidade, data e evidencia", () => {
+  it("refuses a frozen artifact whose digests diverge from the report", async () => {
+    // O cruzamento cobre tres digests, e cada um sozinho basta: dataset, split e avaliador. Se
+    // apenas um fosse conferido, um artefato congelado de outra corrida passaria pelos outros.
+    for (const campo of [
+      "datasetDigest",
+      "splitDigest",
+      "evaluatorDigest",
+    ] as const) {
+      await expect(
+        buildModelPublication({
+          ...passInput,
+          frozen: { ...passInput.frozen, [campo]: "d".repeat(64) },
+        }),
+      ).rejects.toMatchObject({ code: "IDENTITY_DIVERGENCE" });
+    }
+  });
+
+  it("refuses an issuedAt that is not a timestamp", async () => {
+    // A expiracao e exatamente `issuedAt + 180 dias`, entao um `issuedAt` ilegivel produziria
+    // uma validade que ninguem pode conferir.
+    await expect(
+      buildModelPublication({ ...passInput, issuedAt: "ontem de manha" }),
+    ).rejects.toMatchObject({ code: "ISSUED_AT_INVALID" });
+  });
+
+  it("refuses gate evidence with a non-finite ECE-15", async () => {
+    // NaN e expressavel aqui porque a entrada e um OBJETO, nao um arquivo: JSON nao carrega NaN,
+    // e por isso esta guarda so tem estado alcancavel no caminho em memoria.
+    const relatorio = passInput.report;
+    await expect(
+      buildModelPublication({
+        ...passInput,
+        report: {
+          ...relatorio,
+          metrics: {
+            ...relatorio.metrics,
+            ece15: { ...relatorio.metrics.ece15, value: Number.NaN },
+          },
+        },
+      }),
+    ).rejects.toMatchObject({ code: "GATE_EVIDENCE_INCOMPLETE" });
+  });
+});
