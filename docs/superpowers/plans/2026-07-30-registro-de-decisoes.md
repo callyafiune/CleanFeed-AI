@@ -950,6 +950,35 @@ achados. **Regra: guarda que decide por um critério enuncia o critério do cont
 suficiente que eu deduzi dele** — e o teste tem de conter um caso que a condição deduzida recusaria e o
 contrato aceita, que é exactamente o teste que faltava.
 
+### Retratação: o achado do ledger era metade do que eu disse (2026-08-02)
+
+**O que eu afirmei e commitei em `dbf52f7`:** quatro guardas do ledger do holdout sem teste, com
+`HOLDOUT_TUPLE_MISMATCH` — a que vincula o consumo à configuração arrendada — apresentada como a mais
+consequente, e a falha dela descrita como "bloco cego consumido para a configuração errada".
+
+**O que é verdade, medido depois:** duas sem teste, `HOLDOUT_LEDGER_CORRUPT` e `HOLDOUT_LEDGER_LOCKED`.
+`HOLDOUT_TUPLE_MISMATCH` e `HOLDOUT_FAILURE_CODE_INVALID` **estão testadas**, em
+`benchmark/tests/holdout-ledger.test.ts` — uma suíte DEDICADA ao módulo que eu não incluí na auditoria.
+
+**A causa, e é a terceira vez na mesma sessão:** eu escolhi as suítes por conveniência
+(`consume-holdout.test.ts` e `cli.test.ts`, as que eu já conhecia) em vez de por cobertura do módulo. A
+rodada 12 do cross-review já havia me pegado nisto com os comentários, e eu registrei a lição — "uma
+contagem só sustenta a afirmação quando o predicado da contagem é o predicado da regra" — e repeti o
+erro na medição seguinte.
+
+**Como peguei antes do operador:** fui ao disco ler a assinatura da função para escrever o teste, e o
+`grep` de arquivos mostrou a suíte que eu havia ignorado. **Ir implementar é o que revelou o erro de
+medição** — ler para escrever encontra o que ler para concluir não encontra.
+
+**O conserto é mecânico, não uma resolução.** A ferramenta passou a **RECUSAR** rodar quando existe
+`benchmark/tests/<modulo>.test.ts` e ela não está nas suítes, com a mensagem dizendo que rodar sem a
+suíte dedicada reporta lacuna inexistente. Testado: a recusa dispara. É a mesma forma da checagem de
+linha de base verde — transformar a disciplina que eu falho em cumprir numa condição que o arnês impõe.
+
+**O que sobra de achado, e continua valendo:** `HOLDOUT_LEDGER_CORRUPT` (ledger danificado passando por
+válido) e `HOLDOUT_LEDGER_LOCKED` (proteção contra consumo concorrente) não têm teste. Duas guardas, não
+quatro, e nenhuma delas é a identidade do lease. A unidade encolhe junto com o achado.
+
 ### A ferranta de mutação entendia o idioma minoritário — e o ledger do holdout tem quatro guardas sem teste (2026-08-02)
 
 **Primeiro, um erro de método meu, porque ele quase virou conclusão falsa.** Apontei a auditoria para
@@ -969,8 +998,15 @@ injetado no módulo. Fiz ensaio a seco antes de rodar, porque mutação que prod
 suíte falhar por compilação e eu leria isso como "guarda exercitada" — falso positivo, que aqui é pior
 que falso negativo.
 
-**O resultado, em `benchmark/holdout-ledger.ts`: oito guardas mutáveis, quatro exercitadas, QUATRO sem
-teste.**
+> ⚠️ **RETRATAÇÃO PARCIAL, 2026-08-02, poucos minutos depois: a tabela abaixo estava ERRADA, e o erro
+> era meu, de novo por escopo de medição.** Existe `benchmark/tests/holdout-ledger.test.ts`, uma suíte
+> DEDICADA ao módulo, e eu rodei a auditoria sem ela. Com a suíte incluída são **seis exercitadas e
+> duas sem teste** — e `HOLDOUT_TUPLE_MISMATCH`, que eu apresentei como a mais consequente e
+> descoberta, **estava testada desde sempre**, como `HOLDOUT_FAILURE_CODE_INVALID`. Ver a correção
+> completa em § "Retratação: o achado do ledger era metade do que eu disse".
+
+**O resultado que eu reportei, em `benchmark/holdout-ledger.ts`: oito guardas mutáveis, quatro
+exercitadas, quatro sem teste** — e duas dessas quatro não eram lacuna:
 
 | guarda | estado | por que importa |
 |---|---|---|

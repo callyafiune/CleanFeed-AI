@@ -55,6 +55,19 @@ else:
     ]
 
 FONTE = RAIZ / MODULO
+
+# RECUSA rodar sem a suite dedicada ao modulo, se ela existir. Este erro foi cometido: a
+# auditoria de `holdout-ledger.ts` rodou sem `tests/holdout-ledger.test.ts` e reportou QUATRO
+# guardas sem teste; com a suite incluida sao duas, e a mais consequente
+# (`HOLDOUT_TUPLE_MISMATCH`) estava testada desde sempre. Escolher suites por conveniencia
+# produz achado falso, e achado falso publicado e pior que nenhum.
+irma = pathlib.Path("benchmark/tests") / (FONTE.stem + ".test.ts")
+if (RAIZ / irma).exists() and irma.as_posix() not in [s.replace("\\", "/") for s in SUITES]:
+    raise SystemExit(
+        f"ABORTADO: existe {irma.as_posix()} e ela nao esta nas suites. "
+        "Rodar sem a suite dedicada ao modulo reporta lacuna que nao existe."
+    )
+
 original = FONTE.read_text(encoding="utf-8")
 codigos = sorted(set(re.findall(r'"([A-Z][A-Z0-9_]{5,})"', original)))
 print(f"alvo: {MODULO} ({ERRO})", flush=True)

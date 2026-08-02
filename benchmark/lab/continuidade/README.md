@@ -54,7 +54,12 @@ Para o helper, não serve `void fail(...)`: `fail` lança por dentro e `void` s�
 substitui o lançador por um inerte injetado no módulo.
 
 Medições até agora: `split-artifact.ts` 7 de 29 sem teste; `commands/split.ts` 3 de 5;
-`holdout-ledger.ts` 4 de 8.
+`holdout-ledger.ts` **2 de 8**.
+
+**A ferramenta RECUSA rodar sem a suíte dedicada ao módulo**, quando existe
+`benchmark/tests/<modulo>.test.ts`. Isso não é zelo: a auditoria de `holdout-ledger.ts` rodou sem ela e
+reportou QUATRO lacunas; com a suíte, são duas, e a mais consequente estava testada desde sempre.
+Escolher suítes por conveniência produz achado falso, e achado falso publicado é pior que nenhum.
 
 Limite do método: só muta lançamento cujo código é literal ali. Guarda que lança de dentro de um helper
 aparece como "não mutável" e tem de ser conferida à mão.
