@@ -1175,6 +1175,30 @@ o idioma que o resto do arquivo já usava (`delete` sobre a cópia), e o lint vo
 pré-existentes. A lição: verde de typecheck e de suíte não é verde de lint, e eu tratei os três como
 um só.
 
+### A decisão de deixar `src/` fora merece revisão, e a evidência é do meu próprio trabalho
+
+Eu declarei `src/` fora do escopo da varredura com este argumento: 47 códigos de runtime de extensão,
+onde "um defeito é bug de produto e não medição científica que passa verde estando errada".
+
+**O defeito 1 da v1.0 refuta o argumento.** Era uma guarda de runtime em `src/inference/` —
+o teto `indicator` — que, sem teste que a prendesse, deixou o produto poder OCULTAR posts contra uma
+promessa pública escrita em `docs/model-validation.md`. E havia um teste que fixava o comportamento
+violador. É o mesmo mecanismo da varredura (guarda cuja recusa ninguém exercita), com consequência de
+outra natureza: quebra de promessa ao usuário em vez de medição corrompida.
+
+Então a prioridade de `src/` não é "menor", é **diferente** — e a distinção que eu usei para excluí-lo
+não se sustenta como escrita.
+
+**Um limite de ferramenta a resolver antes:** o fecho transitivo de `auditoria-mutacao.py` varre
+`benchmark/tests/`. Os testes de `src/` vivem em `tests/unit/` e `tests/integration/`, então hoje a
+ferramenta apontaria zero suítes e pularia todo módulo de `src/` — silenciosamente, o que é
+exatamente o balde de erro que ela já foi endurecida seis vezes para não ter. Estender a busca de
+suítes é pré-requisito, não detalhe.
+
+Fica como unidade nomeada, com a ordem sugerida por consequência: os módulos que **fazem cumprir
+promessa** primeiro (`inference-worker`, `runtime-activation`, `model-catalog`,
+`calibration-registry`), não os de maior contagem.
+
 ### `contracts/` FECHADO, e a superfície selada está medida inteira
 
 Os quatro módulos de contrato saíram de **1 guarda exercitada** para **todas**, em
