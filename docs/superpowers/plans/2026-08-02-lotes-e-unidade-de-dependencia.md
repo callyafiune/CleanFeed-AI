@@ -72,9 +72,29 @@ segundo gargalo que o cross-review mediu, e o que torna insuficiente mexer só e
 
 ## O que segue de imediato para o código
 
-1. `sourceMaterialBatch` entra como eixo de conectividade por VALOR compartilhado, em `GROUP_KEYS`.
-2. `domainSource` sai de `GROUP_KEYS` e passa a estrato de relato — **depende da ratificação**.
-3. `extractionRun` existe como campo de diagnóstico e **não** entra em `GROUP_KEYS`.
+**A ordem abaixo estava errada, e a medição corrigiu.** Ver
+`benchmark/lab/test_connectivity_feasibility.py`, que mede com o código de produção: hoje
+`domainSource` está em `GROUP_KEYS` e une por valor compartilhado, então **todo registro de um
+domínio cai num único componente** — quatro domínios dão quatro componentes de 25% do corpo. O
+splitter coloca componente inteiro numa só partição, e a menor partição do desenho de cinco é 5%.
+Logo o tamanho do maior componente é um limite superior de viabilidade, e 25% > 5%.
+
+Acrescentar lote **não muda nada** enquanto isso valer: cinco lotes por domínio produzem os mesmos
+quatro componentes, porque o estrato já uniu tudo. A contraprova está no mesmo arquivo — sem o
+estrato agrupando, os cinco lotes dão vinte componentes de 5%.
+
+Quem sustenta a viabilidade é o item 2, não o 1. E há ainda uma imprecisão a corrigir: o campo
+`collectionBatch` de hoje **já é a execução de extração** — o comentário em `assemble_corpus.py`
+diz isso com todas as letras ("The EXTRACTION RUN that produced the row"), e o preenchimento é
+`extraction_{fname}` ou `extraction_{domainSource}`. Portanto o trabalho não é acrescentar um eixo
+ao lado dele: é PARTIR o que ele carrega em dois campos com papéis distintos.
+
+1. `collectionBatch` deixa de significar execução: o que carrega dependência passa a ser
+   `sourceMaterialBatch`, com os cinco campos do termo 2.
+2. `domainSource` sai de `GROUP_KEYS` e passa a estrato de relato — **é o item que decide a
+   viabilidade**, e depende da ratificação. Enquanto ele não sai, 1 e 3 são reorganização de nome.
+3. `extractionRun` recebe o que sobra de `collectionBatch` — diagnóstico, e **não** entra em
+   `GROUP_KEYS`.
 4. O manifesto revisado ganha inventário de lotes, com os cinco campos do termo 2.
 5. Extratores recusam linha cujo lote esteja ausente ou ambíguo — fail-closed, como o resto do projeto.
 6. O fallback `extraction_{fname}` é eliminado **depois** de 1 a 5, quando houver para onde as linhas
