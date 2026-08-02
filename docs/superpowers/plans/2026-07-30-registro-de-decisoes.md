@@ -998,6 +998,64 @@ falha; os outros 61 do arquivo passam, o que prova que ele alcança a guarda e q
 
 **Ordem para o resto, por consequência e não por contagem:**
 
+### Uma terceira categoria: guarda sem estado alcançável
+
+Eu vinha classificando cada guarda em duas caixas — exercitada por teste, ou lacuna. Ao escrever os
+testes apareceu a terceira, e ela apareceu **três vezes**:
+
+| guarda | por que não tem estado alcançável |
+| --- | --- |
+| `PROFILE_DIGESTS_MISMATCH` | o contrato amarra `calibrationSetDigest` ao digest canônico de `profileDigests`, e o verificador compara aquele digest ANTES desta guarda: chegar aqui exigiria lista diferente com digest igual |
+| `PREDICTION_UNKNOWN_ID` | a completude compara CONJUNTOS, então um id a mais é recusado antes; chegar aqui exigiria conjunto exatamente igual ao do `test` contendo um id sem registro, e `validateSplitArtifact` amarra cada assignment a um registro |
+| `OBSERVED_CHROME_INVALID` | os dois lados estão pinados — o manifesto de release pelo parser em runtime, o artefato congelado pelo próprio TIPO, que fixa `chromeVersion` no literal do release |
+
+As duas primeiras são **redundância defensiva**: nenhum teste pode alcançá-las sem quebrar um
+invariante anterior. Chamar isso de "guarda sem teste" seria achado falso — e eu quase publiquei os
+três assim. A terceira tem estado alcançável, mas só num **arquivo adulterado em disco**, que é
+precisamente a ameaça que ela defende; o teste dela forja o JSON e re-sela o `artifactDigest`,
+porque sem re-selar a recusa vem da guarda vizinha.
+
+O que muda no método: a ferramenta de mutação sabe dizer PEGA, SEM TESTE e NÃO-MUTÁVEL, e nenhuma
+dessas é "inalcançável". Essa distinção não é automatizável — ela exige a prova de que um invariante
+anterior fecha o caminho — então fica no registro, com a prova escrita, e não numa contagem.
+
+### `commands/evaluate.ts` fechado, e a tupla exportada em vez de copiada
+
+Medido pelo mesmo método, com as cinco suítes que o dirigem:
+
+| | guardas exercitadas | sem teste |
+| --- | --- | --- |
+| linha de base | 3 | 10 |
+| depois dos três primeiros testes | 6 | 7 |
+| depois dos sete restantes | 12 | 1 |
+
+A única guarda que sobra sem teste é `PREDICTION_UNKNOWN_ID` — a mesma que a prova acima diz ser
+inalcançável. As duas medições são independentes e concordam: a auditoria por mutação diz que
+nenhum teste a pega, e a prova diz que nenhum teste pode. É a diferença entre lacuna e código
+defensivo morto, e aqui ela está estabelecida por dois caminhos em vez de um.
+
+Os testes de governança ficam DEPOIS da retomada do lease, então precisam de sessão aberta com a
+mesma tupla de dezesseis campos que o comando exige. `buildIdentity` passou a ser exportada, pelo
+precedente da própria unidade: copiar projeção selada à mão já custou 27 falhas aqui e foi
+consertado exportando `withoutSplitDigest`. E no teste do Chrome a sessão tem de abrir **depois** da
+forja, porque `chromeVersion` entra na tupla — abrir antes faz a retomada divergir e o teste prova a
+guarda vizinha.
+
+### Dois erros meus de arnês nesta etapa, os dois de substituição sem guarda
+
+1. **Fronteira por heurística.** Para regerar um bloco de teste, procurei o cabeçalho varrendo o
+   arquivo do topo por `// ---` com "evaluate" nas linhas seguintes. Casou com um cabeçalho muito
+   anterior e **truncou metade da suíte**. O conserto foi achar o `describe` e subir enquanto for
+   comentário ou linha vazia, com `assert` na faixa esperada.
+2. **Substring que contém a si mesma.** `"function buildIdentity("` é substring de
+   `"export function buildIdentity("`, então a segunda passada do script duplicou o `export` e o
+   comentário. O conserto foi ancorar em `"\nfunction buildIdentity(\n"` e exigir
+   `count == 1`.
+
+Os dois são a mesma regra que já está registrada — `replace` sem `assert` é aposta —, agora em duas
+formas novas: heurística de fronteira e substring auto-contida. E os dois foram baratos porque a
+recuperação era `git checkout` de um commit verde; teriam sido caros numa árvore não commitada.
+
 ### Retratação dupla: `evaluate.ts` não é intestabilidade estrutural
 
 Eu afirmei **duas vezes** que `commands/evaluate.ts` exigia mudança de desenho — extrair a
