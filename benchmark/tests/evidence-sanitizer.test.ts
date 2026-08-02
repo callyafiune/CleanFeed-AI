@@ -428,6 +428,30 @@ describe("verifyPublishedEvidence on a clean clone", () => {
       }),
     ).rejects.toMatchObject({ code: "PUBLISHED_EVIDENCE_MISMATCH" });
   });
+
+  it("rejects a profiles file holding fewer profiles than the release declares", async () => {
+    const fixture = await bundleInputFor("pass");
+    const bundle = await buildEvidenceBundle(fixture.input);
+    const { evidenceDir, modelDir } = await writeBundleToDisk(
+      bundle,
+      fixture.release,
+      fixture.profiles,
+    );
+    // Um perfil A MENOS no arquivo, sem tocar em `profileDigests`: a lista continua igual a
+    // publicada, entao a guarda de conjunto passa e so a CONTAGEM diverge. Sintetizar um perfil
+    // seria o contrario — fabricar artefato cientifico dentro do teste.
+    await writeFile(
+      join(modelDir, "calibration-profiles.json"),
+      `${JSON.stringify({ schemaVersion: 1, profiles: [] }, null, 2)}\n`,
+      "utf8",
+    );
+    await expect(
+      runVerifyPublishedEvidence({
+        evidenceDirectory: evidenceDir,
+        modelDirectory: modelDir,
+      }),
+    ).rejects.toMatchObject({ code: "PROFILE_COUNT_MISMATCH" });
+  });
 });
 
 // ---------------------------------------------------------------------------
