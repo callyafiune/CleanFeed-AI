@@ -998,6 +998,51 @@ falha; os outros 61 do arquivo passam, o que prova que ele alcança a guarda e q
 
 **Ordem para o resto, por consequência e não por contagem:**
 
+### Estado da varredura, por medição e não por estimativa
+
+| módulo | linha de base | agora | o que sobra |
+| --- | --- | --- | --- |
+| `split-artifact.ts` | — | fechado antes desta sessão | `SPLIT_AUDIT_FAILED` como dívida nomeada |
+| `commands/split.ts` | — | fechado antes desta sessão | aridade fixa da busca de cortes |
+| `holdout-ledger.ts` | — | fechado (após retratar 2 falsas) | — |
+| `commands/publish-evidence.ts` | 2 / 6 | **8 / 0** | — |
+| `commands/verify-published-evidence.ts` | não medido | **8 / 1** | `PROFILE_DIGESTS_MISMATCH`, inalcançável |
+| `commands/evaluate.ts` | 3 / 10 | **12 / 1** | `PREDICTION_UNKNOWN_ID`, inalcançável |
+| `corpus-import.ts` | 0 / 6 | **6 / 0** | — |
+| `cross-validation.ts` | — | `EMPTY_POPULATION` fechada | `TRAIN_MISSING_LABEL` e `FOLD_HALF_EMPTY` |
+| `cluster-exposure-ledger.ts` | 9 candidatas por menção | não medido por mutação | — |
+| `corpus-source-audit.ts` | 0 sem menção | não medido por mutação | — |
+
+Duas linhas dessa tabela dizem **não medido** de propósito. Zero código sem menção não é zero
+lacuna, e enquanto a auditoria por mutação não rodar naqueles dois módulos eu não tenho medição —
+só ausência de evidência.
+
+**O terceiro balde da ferramenta estava mentindo por omissão.** Ela reportava "não mutáveis pelo
+padrão", juntando duas coisas muito diferentes: um motivo de REJEIÇÃO (o módulo devolve o código em
+vez de lançar, e a suíte o confere no resultado) e uma guarda que lança de dentro de um helper. Em
+`corpus-import.ts` os oito não-mutáveis são todos do primeiro tipo — `rejected.push({code})` e
+`return "CODIGO"` —, e a suíte os confere em onze pontos. Só o segundo tipo é candidato a lacuna, e
+agora a saída da ferramenta diz isso.
+
+**`TRAIN_MISSING_LABEL` e `FOLD_HALF_EMPTY` ficam como dívida nomeada, não como lacuna.** A
+mensagem de `FOLD_HALF_EMPTY` declara, no próprio código, que alcançá-la significa defeito naquele
+módulo e não propriedade da população — é asserção de invariante interna. `TRAIN_MISSING_LABEL` está
+no mesmo laço e depende da mesma regra de empacotamento mais `CLASS_CLUSTERS_BELOW_FOLDS`. Eu não
+tenho prova de inalcançabilidade como nos outros dois casos, então não a declaro: fica nomeada, com
+a construção escrita — seria preciso todos os clusters de uma classe caírem na mesma dobra.
+
+### A guarda que eu instalei é METADE da guarda
+
+Instalei o detector de `rejects.toThrow()` pelado e fechei os 21 sítios. Ao escrever o teste de
+`cross-validation` (que é síncrono) descobri que existem **22 `toThrow()` SÍNCRONOS pelados** no
+repositório, e o meu detector não olha para eles — ele exige o prefixo `rejects`.
+
+É a mesma falha epistêmica, com a mesma consequência: `expect(() => f()).toThrow()` passa se
+qualquer coisa estourar, inclusive um erro anterior e sem relação. Fica como a próxima unidade,
+declarada aqui para não virar dívida silenciosa: estender o detector e percorrer os 22 sítios um
+por um, porque cada asserção precisa do código que aquele cenário quis afirmar — e três das minhas
+escolhas por leitura já caíram ao rodar.
+
 ### Uma terceira categoria: guarda sem estado alcançável
 
 Eu vinha classificando cada guarda em duas caixas — exercitada por teste, ou lacuna. Ao escrever os

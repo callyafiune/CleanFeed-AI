@@ -267,6 +267,11 @@ print(f"guardas SEM teste: {len(sem)}")
 for c in sem:
     print("  -", c)
 if nao:
-    print(f"nao mutaveis pelo padrao (conferir a mao): {len(nao)}")
+    print(
+        f"sem `throw` literal deste codigo: {len(nao)} — CONFERIR A MAO. Cada um e uma de "
+        "duas coisas MUITO diferentes: um motivo de REJEICAO (o modulo devolve o codigo em "
+        "vez de lancar, e a suite o confere no resultado) ou uma guarda que lanca de dentro "
+        "de um helper. So o segundo caso e candidato a lacuna."
+    )
     for c in nao:
         print("  -", c)

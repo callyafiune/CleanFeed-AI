@@ -497,6 +497,15 @@ describe("clusterRootsOf", () => {
 });
 
 describe("createClusteredFolds", () => {
+  it("refuses an empty population, and says so as a population fact", () => {
+    // Populacao vazia nao e "corpus pequeno para cinco dobras" — essa recusa e
+    // CLUSTERS_BELOW_FOLDS. Aqui nao ha atomo algum, entao nao existe dobramento a definir.
+    expect(() => createClusteredFolds([], CV_SEED)).toThrow(ClusterFoldError);
+    expect(() => createClusteredFolds([], CV_SEED)).toThrow(
+      /at least one record-line/u,
+    );
+  });
+
   it("never lets a split/exposure cluster span a fold's train and validation halves", () => {
     const { folds } = createClusteredFolds(chainedSamples, CV_SEED);
 

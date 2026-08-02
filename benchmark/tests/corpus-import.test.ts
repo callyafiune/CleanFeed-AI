@@ -1271,6 +1271,20 @@ describe("ingestAuthorizedRecords — template e ledger de revisao", () => {
     ).rejects.toMatchObject({ code: "REVIEW_LEDGER_INVALID" });
   });
 
+  it("refuses a source manifest the parser cannot read", async () => {
+    // A coercao existe porque o que esta corrompido e o ARQUIVO, e o tipo do arnes nao tem como
+    // expressar isso. `loadSourceManifest` embrulha qualquer falha do parser neste codigo, para
+    // que o operador veja de qual dos quatro insumos veio a recusa.
+    await expect(
+      ingestAuthorizedRecords(
+        await pedido({
+          template: template(),
+          sourceManifest: {} as unknown as ReviewedSourceManifestV1,
+        }),
+      ),
+    ).rejects.toMatchObject({ code: "SOURCE_MANIFEST_INVALID" });
+  });
+
   it("refuses a review ledger with no entries at all", async () => {
     // Esta e a guarda que impede selar um dataset sem UMA entrada de revisao humana. O ledger e
     // tratado como dado opaco de governanca — o importador prova que parseia e nunca inspeciona
