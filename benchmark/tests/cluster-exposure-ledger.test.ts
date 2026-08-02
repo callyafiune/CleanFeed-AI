@@ -42,6 +42,7 @@ import {
   commitSplitFreeze,
   exposureInputsFromRecords,
   initClusterLedger,
+  parseExposureRequest,
   preflightExposure,
   readClusterLedger,
   recordPilotExposure,
@@ -2278,5 +2279,141 @@ describe("ClusterLedgerError", () => {
     expect((error as ClusterLedgerError).code).toBe(
       "CLUSTER_LEDGER_KEYRING_ABSENT",
     );
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Guardas de FORMA, TRAVA e ROTACAO.
+//
+// Uma medicao por mencao mostrou que nenhum teste citava estes codigos. Eles nao protegem a
+// elegibilidade de um cluster — essa parte e coberta a exaustao acima — e sim as bordas: o pedido
+// que chega de um arquivo escrito a mao, a identidade que o ledger teria de adivinhar, o tipo de
+// evento que nao corresponde a transacao, a trava que impede duas escritas concorrentes, a versao
+// de chave repetida, e as duas formas de um arquivo de ledger ilegivel.
+// ---------------------------------------------------------------------------
+
+describe("cluster ledger — guardas de forma, trava e rotacao", () => {
+  function capturado(acao: () => unknown): unknown {
+    try {
+      acao();
+    } catch (erro) {
+      return erro;
+    }
+    throw new Error("esperava que a chamada lancasse");
+  }
+
+  it("refuses a request that is not even an object", () => {
+    // `parseExposureRequest` existe para que um arquivo escrito a mao nao chegue a transacao com
+    // campo que o ledger teria de adivinhar. A entrada mais crua e o caso mais facil de esquecer.
+    expect(capturado(() => parseExposureRequest(42))).toMatchObject({
+      code: "CLUSTER_LEDGER_REQUEST_INVALID",
+    });
+  });
+
+  it("refuses an identity outside the shape the ledger can hash", async () => {
+    await init();
+    await expect(
+      commitSplitFreeze(
+        paths(),
+        request({
+          records: [record({ id: "r1", author: "pessoa com espaco" })],
+        }),
+      ),
+    ).rejects.toMatchObject({ code: "CLUSTER_LEDGER_IDENTITY_INVALID" });
+  });
+
+  it("refuses a request whose eventType is not the transaction being run", async () => {
+    await init();
+    await expect(
+      commitSplitFreeze(paths(), request({ eventType: "pilot-exposure" })),
+    ).rejects.toMatchObject({ code: "CLUSTER_LEDGER_EVENT_TYPE_INVALID" });
+  });
+
+  it("refuses a transaction while another holds the lock", async () => {
+    await init();
+    // A trava e um arquivo criado com `wx`, entao pre-criar equivale a outra transacao em curso.
+    await writeFile(`${paths().ledgerPath}.lock`, "", "utf8");
+    await expect(commitSplitFreeze(paths(), request())).rejects.toMatchObject({
+      code: "CLUSTER_LEDGER_LOCKED",
+    });
+  });
+
+  it("refuses rotating onto a key version the keyring already has", async () => {
+    await init();
+    // A versao vem do proprio chaveiro em vez de constante: fixar 1 aqui amarraria o teste a um
+    // detalhe da inicializacao que nao e o que se quer provar.
+    const keyring = JSON.parse(await readFile(paths().keyringPath, "utf8")) as {
+      keys: { keyVersion: string }[];
+    };
+    const existente = keyring.keys[0].keyVersion;
+    await expect(
+      rotateClusterExposureKey(paths(), {
+        keyVersion: existente,
+        createdAt: "2026-07-28T11:00:00.000Z",
+      }),
+    ).rejects.toMatchObject({ code: "CLUSTER_LEDGER_KEY_VERSION_DUPLICATE" });
+  });
+
+  it("refuses a ledger line that is not valid JSON", async () => {
+    await init();
+    const original = await readFile(paths().ledgerPath, "utf8");
+    await writeFile(paths().ledgerPath, `${original}isto nao e json\n`, "utf8");
+    await expect(preflightExposure(paths(), request())).rejects.toMatchObject({
+      code: "CLUSTER_LEDGER_CORRUPT",
+    });
+  });
+
+  async function backupDe(): Promise<string> {
+    await init();
+    await commitSplitFreeze(paths(), request());
+    const recibo = await backupClusterLedger(
+      paths(),
+      "2026-07-28T13:00:00.000Z",
+    );
+    return recibo.directory;
+  }
+
+  it("refuses a backup whose ledger no longer hashes to its manifest", async () => {
+    const diretorio = await backupDe();
+    // Adultera o CONTEUDO e nao o manifesto: o MAC do manifesto continua valido, e o que quebra
+    // e o digest declarado. E a metade do par que a guarda de digest tem de pegar.
+    const copia = join(diretorio, CLUSTER_EXPOSURE_LEDGER_FILE);
+    await writeFile(
+      copia,
+      `${await readFile(copia, "utf8")}
+`,
+      "utf8",
+    );
+    await expect(
+      restoreClusterLedger(paths(), diretorio),
+    ).rejects.toMatchObject({ code: "CLUSTER_LEDGER_BACKUP_INVALID" });
+  });
+
+  it("refuses a backup manifest no key in the keyring MACed", async () => {
+    const diretorio = await backupDe();
+    // A outra metade, e a que fecha a saida obvia do teste acima: "consertar" o digest declarado
+    // exige reescrever o manifesto, e o manifesto e autenticado. Sem a chave nao ha como
+    // reescrever e continuar autentico.
+    const caminho = join(diretorio, "backup-manifest.json");
+    const manifesto = JSON.parse(await readFile(caminho, "utf8")) as Record<
+      string,
+      unknown
+    >;
+    manifesto.ledgerSha256 = "0".repeat(64);
+    await writeFile(caminho, JSON.stringify(manifesto, null, 2), "utf8");
+    await expect(
+      restoreClusterLedger(paths(), diretorio),
+    ).rejects.toMatchObject({ code: "CLUSTER_LEDGER_BACKUP_UNAUTHENTIC" });
+  });
+
+  it("refuses a ledger line that parses but is not an object", async () => {
+    await init();
+    // Distinto do anterior: aqui o JSON e valido, entao a recusa nao pode vir do parser. E a
+    // guarda de FORMA do evento que tem de pegar.
+    const original = await readFile(paths().ledgerPath, "utf8");
+    await writeFile(paths().ledgerPath, `${original}123\n`, "utf8");
+    await expect(preflightExposure(paths(), request())).rejects.toMatchObject({
+      code: "CLUSTER_LEDGER_EVENT_INVALID",
+    });
   });
 });
