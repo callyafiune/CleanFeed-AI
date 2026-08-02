@@ -1197,6 +1197,26 @@ que garantem que a extensão executa o modelo que ela diz executar. Um pacote cu
 batem com o lock é falha de integridade de cadeia, não bug de apresentação, e nenhuma das oito tem
 teste que prenda a recusa.
 
+**O mapa de mutações das oito, levantado para que a implementação não precise redescobri-lo.** Todas
+passam por `crossValidateRuntimeDescriptor`, que é exportada, e o arnês de
+`tests/unit/inference/model-bundle.test.ts` já tem `validSources()` — um clone dos quatro artefatos
+embarcados. Cada teste muda UMA coisa:
+
+| guarda | mutação |
+|---|---|
+| `BUNDLE_VERIFIED_WITH_PROFILES` | `release.rolloutState = "bundle-verified"` com perfis não vazios |
+| `ROLLOUT_WITHOUT_PROFILES` | release promovido com `profiles.profiles = []` |
+| `DUPLICATE_PROFILE` | dois perfis com o mesmo digest de arquivo |
+| `PROFILE_SET_MISMATCH` | `release.profileDigests` diferente do conjunto do arquivo |
+| `CALIBRATION_SET_MISMATCH` | `release.calibrationSetDigest` fora do digest canônico da lista |
+| `PROFILE_IDENTITY_MISMATCH` | um campo de identidade do perfil diferente do manifesto |
+| `MANIFEST_SCHEMA_INVALID` | manifesto malformado (`runtimeManifestInvalid`, helper em `:556`) |
+| `SOURCE_LOCK_INVALID` | source lock malformado (`sourceLockInvalid`, helper em `:563`) |
+
+Duas cautelas que a sessão inteira ensinou e que valem aqui: um teste do descritor VÁLIDO passando
+antes de cada forja, senão a recusa pode ser do artefato; e uma mutação por teste, senão fica ambíguo
+qual guarda recusou.
+
 Isso responde, com medição, a pergunta de escopo que eu tinha errado nas duas direções: `src/` não é
 "só risco de produto". A primeira coisa medida ali é uma amarra de integridade.
 
