@@ -55,6 +55,18 @@ import sys
 # Derivada do proprio arquivo, para a ferramenta sobreviver a clone: .../benchmark/lab/continuidade
 RAIZ = pathlib.Path(__file__).resolve().parents[3]
 
+# RECUSA invocacao pela metade. Com 2 ou 3 argumentos a versao anterior caia no alvo PADRAO em
+# silencio, entao `... auditoria-mutacao.py benchmark/dataset-manifest.ts fail` calculava o fecho de
+# `split-artifact.ts` e imprimia uma lista de suites que nada tinha a ver com o modulo pedido. Foi
+# esse silencio que me fez ler uma lista errada como se fosse a do modulo. Alvo pela metade agora
+# aborta.
+if len(sys.argv) in (2, 3):
+    raise SystemExit(
+        "ABORTADO: alvo pela metade. Use nenhum argumento (alvo padrao) ou "
+        "<modulo> <lancador> <suite> [suite...]. Com 2 ou 3 argumentos a versao anterior media "
+        "o alvo PADRAO em silencio."
+    )
+
 if len(sys.argv) >= 4:
     MODULO = sys.argv[1]
     ERRO = sys.argv[2]
