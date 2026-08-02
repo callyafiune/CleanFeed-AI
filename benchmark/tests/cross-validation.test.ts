@@ -1148,3 +1148,112 @@ describe("selectCalibrator", () => {
     }
   });
 });
+
+// ---------------------------------------------------------------------------
+// `TRAIN_MISSING_LABEL`: busca limitada por testemunha.
+//
+// A guarda estava listada como dívida sem prova de inalcançabilidade. A leitura do empacotador dá
+// um argumento — para um átomo de classe pura o custo é
+// `peso_da_classe × acumulado_daquela_classe_na_dobra`, então o guloso põe cada um onde há MENOS
+// daquela classe, o que os espalha — mas o fechamento depende de uma propriedade ao longo de uma
+// SEQUÊNCIA de colocações, e `bestFoldIndex` declara que otimalidade global não é reivindicada.
+//
+// Então em vez de declarar prova, mede-se: busca EXAUSTIVA num espaço declarado. Não achar
+// testemunha é evidência, não prova, e o teste diz isso no nome e no comentário.
+// ---------------------------------------------------------------------------
+
+describe("TRAIN_MISSING_LABEL — busca limitada por testemunha", () => {
+  it("não encontra população admissível que deixe uma dobra sem classe no treino", () => {
+    // O espaço: N átomos, de FOLDS a FOLDS+3, cada um puro-positivo, puro-negativo ou misto.
+    // Cada classe tem de aparecer em pelo menos FOLDS átomos — senão a recusa vem de
+    // `CLASS_CLUSTERS_BELOW_FOLDS` e a busca mediria outra guarda.
+    const MAX_ATOMOS = FOLDS + 3;
+    let admissiveis = 0;
+    let aceitas = 0;
+    const porCodigo = new Map<string, number>();
+    const testemunhas: string[] = [];
+
+    for (let n = FOLDS; n <= MAX_ATOMOS; n += 1) {
+      const combinacoes = 3 ** n;
+      for (let mascara = 0; mascara < combinacoes; mascara += 1) {
+        const tipos: number[] = [];
+        let resto = mascara;
+        for (let i = 0; i < n; i += 1) {
+          tipos.push(resto % 3);
+          resto = Math.floor(resto / 3);
+        }
+        // 0 = puro-positivo, 1 = puro-negativo, 2 = misto.
+        const comPositivo = tipos.filter((tipo) => tipo !== 1).length;
+        const comNegativo = tipos.filter((tipo) => tipo !== 0).length;
+        if (comPositivo < FOLDS || comNegativo < FOLDS) continue;
+        admissiveis += 1;
+
+        const amostras: ClusteredCalibrationSample[] = [];
+        tipos.forEach((tipo, indice) => {
+          const raiz = `atomo_${n}_${mascara}_${indice}`;
+          const adicionar = (rotulo: 0 | 1, sufixo: string): void => {
+            amostras.push({
+              id: `${raiz}_${sufixo}`,
+              clusterRoot: raiz,
+              rawScore: rotulo === 1 ? 0.9 : 0.1,
+              label: rotulo,
+            });
+          };
+          if (tipo === 0) adicionar(1, "p");
+          else if (tipo === 1) adicionar(0, "n");
+          else {
+            adicionar(1, "p");
+            adicionar(0, "n");
+          }
+        });
+
+        try {
+          createClusteredFolds(amostras, CV_SEED);
+          aceitas += 1;
+        } catch (erro) {
+          const codigo = (erro as { code?: string }).code ?? "SEM_CODIGO";
+          porCodigo.set(codigo, (porCodigo.get(codigo) ?? 0) + 1);
+          if (codigo === "TRAIN_MISSING_LABEL") {
+            testemunhas.push(
+              `n=${n} mascara=${mascara} tipos=${tipos.join("")}`,
+            );
+          }
+        }
+      }
+    }
+
+    // O espaço medido, fixado em número exato em vez de piso: as 3800 populações admissíveis
+    // foram TODAS aceitas, e nenhuma guarda recusou nenhuma. Fixar o número faz qualquer mudança
+    // no espaço aparecer como falha em vez de passar em silêncio.
+    expect(admissiveis).toBe(3_800);
+    expect(aceitas).toBe(3_800);
+    expect([...porCodigo]).toEqual([]);
+
+    expect(testemunhas).toEqual([]);
+
+    // CONTROLE POSITIVO. Sem ele o resultado acima não valeria nada: um arnês que nunca capturou
+    // recusa alguma não demonstrou que VERIA uma testemunha. Aqui uma população deliberadamente
+    // inadmissível — uma classe com menos de FOLDS clusters — passa pelo MESMO caminho de captura,
+    // e o código dela tem de chegar ao mapa.
+    const controle = new Map<string, number>();
+    try {
+      createClusteredFolds(
+        [
+          { id: "c_p", clusterRoot: "c_p", rawScore: 0.9, label: 1 },
+          ...Array.from({ length: FOLDS }, (_, i) => ({
+            id: `c_n_${i}`,
+            clusterRoot: `c_n_${i}`,
+            rawScore: 0.1,
+            label: 0 as const,
+          })),
+        ],
+        CV_SEED,
+      );
+    } catch (erro) {
+      const codigo = (erro as { code?: string }).code ?? "SEM_CODIGO";
+      controle.set(codigo, (controle.get(codigo) ?? 0) + 1);
+    }
+    expect([...controle.keys()]).toEqual(["CLASS_CLUSTERS_BELOW_FOLDS"]);
+    expect(porCodigo.get("TRAIN_MISSING_LABEL")).toBeUndefined();
+  });
+});

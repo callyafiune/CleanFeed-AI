@@ -998,6 +998,47 @@ falha; os outros 61 do arquivo passam, o que prova que ele alcança a guarda e q
 
 **Ordem para o resto, por consequência e não por contagem:**
 
+### As dívidas restantes, medidas em vez de estimadas
+
+**`artifactWithoutDigest` não exportado — RETIRADA.** Eu a listei porque re-selar o artefato
+congelado parecia exigir aquele helper. Não exige: o teste do Chrome em `consume-holdout.test.ts`
+forja o artefato pelo JSON — apaga `artifactDigest`, substitui o campo e re-sela com
+`canonicalSha256` sobre o resto. A dívida estava paga por um teste que eu mesmo escrevi nesta
+sessão, e continuar listando-a seria inventário desatualizado.
+
+**`TRAIN_MISSING_LABEL` — buscada, não achada, e não declarada inalcançável.** A leitura do
+empacotador dá o argumento: para um átomo de classe pura o custo é
+`peso_da_classe × acumulado_daquela_classe_na_dobra`, então o guloso põe cada um onde há MENOS
+daquela classe, o que os espalha. Mas o fechamento depende de uma propriedade ao longo de uma
+SEQUÊNCIA de colocações, e `bestFoldIndex` declara que otimalidade global não é reivindicada — ao
+contrário das duas guardas que eu declarei inalcançáveis, onde um invariante anterior fecha o caminho
+em uma linha.
+
+Então mediu-se. Busca **exaustiva num espaço declarado**: N átomos de `FOLDS` a `FOLDS+3`, cada um
+puro-positivo, puro-negativo ou misto, exigindo cada classe em ao menos `FOLDS` átomos para que a
+recusa não venha de `CLASS_CLUSTERS_BELOW_FOLDS`. Resultado, com os números fixados no teste em vez
+de piso:
+
+- **3800** populações admissíveis, **3800 aceitas**, nenhuma recusada por guarda alguma;
+- **zero** testemunhas de `TRAIN_MISSING_LABEL`.
+
+**E um controle positivo, porque sem ele o resultado não valeria nada.** Um arnês que nunca capturou
+recusa alguma não demonstrou que VERIA uma testemunha. O teste passa uma população deliberadamente
+inadmissível pelo MESMO caminho de captura e exige que o código dela chegue ao mapa. Foi o furo que
+a sonda revelou: eu ia registrar "zero testemunhas em 3800 populações" sem ter provado que o detector
+detecta.
+
+Conclusão registrada com a força que tem: **evidência, não prova.** A guarda fica, e o que mudou é
+que agora existe um espaço medido em vez de uma impressão.
+
+**Aridade fixa da busca de cortes** segue nomeada e intocada — não é lacuna de teste, é limite de
+desenho: a busca tem quatro cortes porque o desenho tem cinco partições, e generalizar é outra
+unidade.
+
+**Nota sobre a guarda do fecho transitivo:** ela já abortou **quatro** medições minhas por suíte de
+fora, a última na própria auditoria de `commands/split.ts`, que exigia `split-audit.test.ts` e
+`cluster-exposure-ledger.test.ts`. Quatro achados falsos evitados é o que ela custou de tempo.
+
 ### Dívida fechada: `SPLIT_AUDIT_FAILED`, e a armadilha estava na conectividade
 
 A última guarda sem teste de `commands/split.ts`. Ela exige a combinação que nenhum outro teste
