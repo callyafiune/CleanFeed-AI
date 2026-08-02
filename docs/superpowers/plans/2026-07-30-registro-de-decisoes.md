@@ -998,6 +998,32 @@ falha; os outros 61 do arquivo passam, o que prova que ele alcança a guarda e q
 
 **Ordem para o resto, por consequência e não por contagem:**
 
+### Dívida fechada: `SPLIT_AUDIT_FAILED`, e a armadilha estava na conectividade
+
+A última guarda sem teste de `commands/split.ts`. Ela exige a combinação que nenhum outro teste
+produz — splitter com SUCESSO e auditoria reprovando — e a construção estava escrita: um componente
+que atravessa o último corte cai em `train` levando tempo da banda de teste, e
+`earliest(test) > latest(train)` falha.
+
+**Duas correções de atribuição, ambas minhas.** A tabela dizia que a dívida era de
+`split-artifact.ts`; a guarda vive em `commands/split.ts:163`. E o custo que eu havia registrado
+("mexer no gerador de 10k linhas") era menor do que parecia: bastou uma opção no gerador do
+fixture, porque a suíte já dirige `runSplit` no caminho de integração.
+
+**O que quase fez o teste provar outra coisa.** A primeira tentativa mudou o lote do PRIMEIRO
+humano do bloco de teste, e o splitter recusou antes por proporção — `human test 0.000`,
+`train 0.650`. O bloco inteiro havia sido absorvido: aquele humano é pai de um registro `mixed`, o
+filho compartilha `mixedBatch` com todos os outros `mixed` do bloco, esses apontam para os demais
+humanos, e o fecho transitivo fundiu teste com treino.
+
+O atravessador tem de ser um humano SEM filho. Os pais são `humanIds[n % humanIds.length]` para n
+em [0, mixed), então o primeiro sem filho é o índice `mixed`. Com ele, um único registro muda de
+componente, a proporção se mantém, o splitter não vê nada e a auditoria recusa — que é exatamente o
+estado que a guarda existe para pegar.
+
+A lição é a mesma que a medição de conectividade deu hoje: **em corpo com fecho transitivo, mexer
+em um registro raramente mexe em um registro.**
+
 ### Decisão: a unidade nova começa pelo estrato, não pelo lote
 
 **Decido e registro** (classe do agente; o operador ratifica no marco): a ordem dos passos da metade
@@ -1033,8 +1059,8 @@ modelo sintético respeita isso — e o motivo do colapso é outro eixo.
 
 | módulo | resultado final | o que resta, nomeado |
 | --- | --- | --- |
-| `split-artifact.ts` | fechado | `SPLIT_AUDIT_FAILED`: a forja exige mexer no gerador de 10k linhas |
-| `commands/split.ts` | fechado | aridade fixa da busca de cortes |
+| `split-artifact.ts` | fechado | — |
+| `commands/split.ts` | **fechado, agora inteiro** | aridade fixa da busca de cortes |
 | `holdout-ledger.ts` | fechado | — (2 achados falsos retratados) |
 | `commands/publish-evidence.ts` | **8 / 0** | — |
 | `commands/verify-published-evidence.ts` | **8 / 1** | `PROFILE_DIGESTS_MISMATCH`, inalcançável com prova |

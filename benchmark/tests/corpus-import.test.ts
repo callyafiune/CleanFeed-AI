@@ -857,7 +857,19 @@ const BLOCKS: readonly Block[] = [
   },
 ];
 
-function generateCorpus(): BenchmarkRecordV2[] {
+/**
+ * `straddleLastCut` faz UM humano do bloco de `test` declarar o lote do bloco de `train`.
+ *
+ * Os humanos de um bloco compartilham `collectionBatch`, e `collectionBatch` une por valor, então
+ * cada bloco humano já é um componente e os componentes se alinham às bandas de tempo. Mover um
+ * único registro de lote faz o componente do treino ATRAVESSAR o último corte: ele passa a conter
+ * texto com tempo da banda de teste. O splitter constrói isso sem notar, porque proporção e
+ * conectividade continuam satisfeitas; a auditoria é o único lugar que recusa, por
+ * `earliest(test) > latest(train)`.
+ */
+function generateCorpus(
+  opts: { straddleLastCut?: boolean } = {},
+): BenchmarkRecordV2[] {
   const records: BenchmarkRecordV2[] = [];
   let index = 0;
   const nextId = (): string => {
@@ -870,7 +882,19 @@ function generateCorpus(): BenchmarkRecordV2[] {
     for (let n = 0; n < block.human; n += 1) {
       const id = nextId();
       humanIds.push(id);
-      records.push(human(id, block.time, block.humanBatch));
+      // O atravessador tem de ser um humano SEM filho `mixed`. Os pais são
+      // `humanIds[n % humanIds.length]` para n em [0, block.mixed), ou seja os índices
+      // 0..mixed-1, então o primeiro sem filho é o índice `block.mixed`. Escolher o índice 0
+      // arrastava o bloco INTEIRO: o filho dele compartilha `mixedBatch` com todos os outros
+      // mixed, que apontam para os demais humanos, e o fecho transitivo fundia teste com treino
+      // — aí o splitter recusa por proporção antes de a auditoria ver qualquer coisa.
+      const lote =
+        opts.straddleLastCut === true &&
+        block.time === TEST_TIME &&
+        n === block.mixed
+          ? BLOCKS[0].humanBatch
+          : block.humanBatch;
+      records.push(human(id, block.time, lote));
     }
     for (let n = 0; n < block.aiSeen; n += 1) {
       records.push(ai(nextId(), block.time, block.aiBatch, SEEN_FAMILY));
@@ -928,6 +952,61 @@ function generationBatches(): GenerationBatchV1[] {
 }
 
 describe("ingest -> validate -> split integration (10k)", () => {
+  async function preparar(
+    root: string,
+    records: BenchmarkRecordV2[],
+  ): Promise<{ datasetDirectory: string; datasetAuditPath: string }> {
+    const manifest = await sealedManifest(
+      [LICENSED_HUMAN_SOURCE, GEN_SOURCE],
+      generationBatches(),
+    );
+    const { request, datasetDirectory } = await buildRequest(root, {
+      recordLines: records.map((r) => JSON.stringify(r)),
+      ledgerLines: records.map((r) => ledgerLine(r)),
+      sourceManifest: manifest,
+      template: template(),
+    });
+    const ingestResult = await ingestAuthorizedRecords(request);
+    expect(ingestResult.rejected).toEqual([]);
+
+    const validateOut = join(root, "out", "validate");
+    await runValidate({
+      datasetDirectory,
+      outputDirectory: validateOut,
+      corpusPolicy: {
+        ...RELEASE_CORPUS_POLICY,
+        counts: { human: 4_000, ai: 4_000, mixed: 2_000 },
+      },
+    });
+    return {
+      datasetDirectory,
+      datasetAuditPath: join(validateOut, "dataset-audit.json"),
+    };
+  }
+
+  it("refuses a corpus the splitter accepts and the audit does not", async () => {
+    // A ÚNICA guarda de `commands/split.ts` que ficou sem teste, e a razão de ter ficado é
+    // que ela exige exatamente esta combinação: splitter com SUCESSO e auditoria reprovando.
+    // Um componente que atravessa o último corte cai em `train` levando tempo da banda de
+    // teste; proporção e conectividade seguem satisfeitas, então o splitter não vê nada.
+    const root = await scratch();
+    const records = generateCorpus({ straddleLastCut: true });
+    expect(records).toHaveLength(10_000);
+    const { datasetDirectory, datasetAuditPath } = await preparar(
+      root,
+      records,
+    );
+
+    await expect(
+      runSplit({
+        datasetDirectory,
+        datasetAuditPath,
+        outputDirectory: join(root, "out", "split-atravessado"),
+        seed: 20260726,
+      }),
+    ).rejects.toMatchObject({ code: "SPLIT_AUDIT_FAILED" });
+  }, 180_000);
+
   it("materializes a sealable, splittable corpus with chained digests and downstream invalidation", async () => {
     const root = await scratch();
     const records = generateCorpus();
