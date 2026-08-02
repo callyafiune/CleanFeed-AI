@@ -1208,3 +1208,77 @@ describe("ingest -> validate -> split integration (10k)", () => {
     );
   }, 180_000);
 });
+
+// ---------------------------------------------------------------------------
+// As guardas do TEMPLATE e do LEDGER DE REVISAO.
+//
+// A ordem dentro de `ingestAuthorizedRecords` decide o que cada teste precisa montar: template
+// primeiro, manifesto de fontes depois, ledger de revisao em terceiro e so entao os registros.
+// Por isso os dois primeiros nao precisam de ledger valido, e os dois ultimos precisam de
+// template valido.
+// ---------------------------------------------------------------------------
+
+describe("ingestAuthorizedRecords — template e ledger de revisao", () => {
+  async function pedido(
+    incoming: Partial<Incoming> & Pick<Incoming, "template">,
+  ): Promise<IngestRequest> {
+    const root = await scratch();
+    const record = humanRecord("rec1");
+    const { request } = await buildRequest(root, {
+      recordLines: [JSON.stringify(record)],
+      ledgerLines: [ledgerLine(record)],
+      sourceManifest: await validSources(),
+      ...incoming,
+    });
+    return request;
+  }
+
+  it("refuses a template that is not a JSON object", async () => {
+    await expect(
+      ingestAuthorizedRecords(await pedido({ template: [] })),
+    ).rejects.toMatchObject({ code: "TEMPLATE_INVALID" });
+  });
+
+  it("refuses a template carrying a field the importer generates", async () => {
+    // Os seis campos derivados (arquivo e sha256 de registros, ledger e manifesto) sao
+    // computados no ingest. Aceitar um deles no template deixaria o operador DECLARAR o digest
+    // do que ele mesmo entregou.
+    await expect(
+      ingestAuthorizedRecords(
+        await pedido({
+          template: { ...template(), recordsSha256: "0".repeat(64) },
+        }),
+      ),
+    ).rejects.toMatchObject({ code: "TEMPLATE_HAS_DERIVED_FIELD" });
+  });
+
+  it("refuses a template declaring another datasetId", async () => {
+    await expect(
+      ingestAuthorizedRecords(
+        await pedido({ template: template({ datasetId: "outro-dataset" }) }),
+      ),
+    ).rejects.toMatchObject({ code: "DATASET_ID_MISMATCH" });
+  });
+
+  it("refuses a review ledger line that is not JSON", async () => {
+    await expect(
+      ingestAuthorizedRecords(
+        await pedido({
+          template: template(),
+          ledgerLines: ["isto nao e json"],
+        }),
+      ),
+    ).rejects.toMatchObject({ code: "REVIEW_LEDGER_INVALID" });
+  });
+
+  it("refuses a review ledger with no entries at all", async () => {
+    // Esta e a guarda que impede selar um dataset sem UMA entrada de revisao humana. O ledger e
+    // tratado como dado opaco de governanca — o importador prova que parseia e nunca inspeciona
+    // valor de campo —, entao "vazio" e a unica coisa que ele pode recusar sobre o conteudo.
+    await expect(
+      ingestAuthorizedRecords(
+        await pedido({ template: template(), ledgerLines: [] }),
+      ),
+    ).rejects.toMatchObject({ code: "REVIEW_LEDGER_EMPTY" });
+  });
+});
