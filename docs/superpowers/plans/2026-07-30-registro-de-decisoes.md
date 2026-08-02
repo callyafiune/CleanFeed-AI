@@ -1146,6 +1146,41 @@ Isso recalibra o resto do trabalho: **os 51 códigos sem menção não são 51 l
 triagem como resultado teria produzido o maior achado falso desta sessão. A ordem de trabalho
 continua a da triagem; a conclusão, só a da mutação.
 
+### O lote fechado: 21 das 23 escritas, 2 nomeadas como invariante interna
+
+| módulo | antes | agora |
+| --- | --- | --- |
+| `commands/verify-evidence.ts` | 0 / 6 | **6 / 6** |
+| `commands/validate-predictions.ts` | 0 / 6 | **6 / 6** |
+| `profile-artifact.ts` | 0 / 3 | **3 / 3** |
+| `commands/consume-holdout.ts` | 2 / 4 | **4 / 4** |
+| `commands/fit.ts` | 1 / 5 | **4 / 5** |
+| `commands/ingest.ts` | 0 / 1 | **1 / 1** |
+| `commands/score.ts` | 0 / 1 | 0 / 1 |
+
+**As duas que sobram são da mesma família, e a razão está escrita no código agora.**
+`FIT_CLUSTER_MISSING` e `SCORE_MISSING_RECORD` exigiriam um id de partição sem registro
+correspondente — e nos dois casos `validateSplitArtifact` roda ANTES, amarrando cada assignment a
+um registro do dataset (em `score.ts`, linha 81 contra linha 90). São asserções de invariante
+interna, da família de `FOLD_HALF_EMPTY`. Não declaro prova de inalcançabilidade como fiz nas duas
+que tinham prova de uma linha; ficam nomeadas.
+
+**O que a escrita ensinou, e que a leitura não teria dado:**
+
+- o artefato congelado dos fixtures de evidência carrega `artifactDigest` de fachada, porque o
+  caminho do pacote nunca o valida e `runVerifyEvidence` é o primeiro consumidor que valida. As sete
+  recusas daquele comando falharam todas por auto-digest até o arnês RE-SELAR o artefato;
+- `profile-artifact.ts` **não** chama `validateFrozenCalibrationArtifact`, então lá o congelado pode
+  ser mexido sem re-selar. A mesma forja tem custo diferente em módulos diferentes, e supor um
+  custo único produz teste que prova a guarda vizinha;
+- `NaN` só é expressável no caminho em memória: JSON não o carrega. `GATE_EVIDENCE_INCOMPLETE` tem
+  estado alcançável porque a entrada de `buildModelPublication` é objeto, não arquivo;
+- para `RUNTIME_PARITY_MISMATCH` a divergência tem de ser entre dois artefatos VÁLIDOS. Um digest
+  de paridade escrito à mão daria manifesto que o parser recusa, e o teste mediria o parser;
+- a asserção "o ledger não existe" era falsa: o arquivo é criado pelo cenário. O que a guarda da
+  confirmação do split impede é o EVENTO, e sem separar as duas coisas o teste não distinguiria
+  "recusou antes de abrir o lease" de "recusou depois".
+
 ### O lote dos dez baratos: 23 guardas sem teste, e três módulos limpos como controle
 
 | módulo | exercitadas / total |

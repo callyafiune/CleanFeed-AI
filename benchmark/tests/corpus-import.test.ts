@@ -35,6 +35,7 @@ import {
   type ReviewedSourceManifestV1,
 } from "../source-manifest.ts";
 import { runValidate } from "../commands/validate.ts";
+import { runIngest } from "../commands/ingest.ts";
 import { runSplit } from "../commands/split.ts";
 import { validateSplitArtifact } from "../split-artifact.ts";
 import { normalizeGeneratorFamily } from "../generator-family.ts";
@@ -1373,5 +1374,37 @@ describe("ingestAuthorizedRecords — template e ledger de revisao", () => {
         await pedido({ template: template(), ledgerLines: [] }),
       ),
     ).rejects.toMatchObject({ code: "REVIEW_LEDGER_EMPTY" });
+  });
+});
+
+// ---------------------------------------------------------------------------
+// `ingest`: a recusa do COMANDO, distinta das rejeicoes da biblioteca.
+//
+// `ingestAuthorizedRecords` COLETA rejeicoes e devolve; o comando as transforma em recusa. A
+// distincao e o ponto: a biblioteca serve quem quer o relatorio, e o comando serve quem nao pode
+// selar um dataset parcialmente aceito sem notar.
+// ---------------------------------------------------------------------------
+
+describe("runIngest", () => {
+  it("refuses the whole run when any record was rejected", async () => {
+    const root = await scratch();
+    const record = humanRecord("rec1");
+    const { request } = await buildRequest(root, {
+      // O MESMO registro duas vezes: `DUPLICATE_ID` e motivo de rejeicao, nao lancamento, entao a
+      // biblioteca aceitaria um e rejeitaria o outro. O comando tem de recusar a corrida.
+      recordLines: [JSON.stringify(record), JSON.stringify(record)],
+      ledgerLines: [ledgerLine(record)],
+      sourceManifest: await validSources(),
+      template: template(),
+    });
+    await expect(
+      runIngest({
+        inputRecordsPath: request.inputRecordsPath,
+        reviewLedgerPath: request.inputReviewLedgerPath,
+        sourceManifestPath: request.inputSourceManifestPath,
+        datasetManifestTemplatePath: request.inputDatasetManifestTemplatePath,
+        datasetDirectory: request.datasetDirectory,
+      }),
+    ).rejects.toMatchObject({ code: "INGEST_REJECTED" });
   });
 });
