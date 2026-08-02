@@ -1146,6 +1146,39 @@ Isso recalibra o resto do trabalho: **os 51 códigos sem menção não são 51 l
 triagem como resultado teria produzido o maior achado falso desta sessão. A ordem de trabalho
 continua a da triagem; a conclusão, só a da mutação.
 
+### O lote dos dez baratos: 23 guardas sem teste, e três módulos limpos como controle
+
+| módulo | exercitadas / total |
+| --- | --- |
+| `commands/validate-predictions.ts` | **0 / 6** |
+| `commands/verify-evidence.ts` | **0 / 6** |
+| `commands/fit.ts` | 1 / 5 |
+| `profile-artifact.ts` | **0 / 3** |
+| `commands/consume-holdout.ts` | 2 / 4 |
+| `commands/ingest.ts` | 0 / 1 |
+| `commands/score.ts` | 0 / 1 |
+| `commands/cluster-ledger.ts` | 1 / 1 — limpo |
+| `evidence-sanitizer.ts` | 4 / 4 — limpo |
+| `commands/validate.ts` | 4 / 4 — limpo |
+
+**Os três limpos são o controle, e valem tanto quanto os outros sete.** Eles provam que a mutação
+funciona nos dois idiomas do repositório — `fail(` e `throw new CommandError(` — então os zeros das
+outras linhas são medição e não artefato de ferramenta. Sem eles, sete zeros seguidos seriam
+indistinguíveis de uma ferramenta que parou de mutar.
+
+O mais consequente é `verify-evidence.ts` em 0 de 6: é o comando que verifica evidência antes da
+publicação, e nenhuma das seis recusas dele tem teste. Depois vem `validate-predictions.ts`, também
+0 de 6, que amarra o artefato de predição ao dataset, ao split e à paridade de runtime.
+
+O lote rodou em SEQUÊNCIA, de propósito: cada rodada compila o grafo inteiro, e um módulo mutado
+enquanto outro é medido produz resultado que não vale. E cada módulo PERGUNTOU o fecho à própria
+ferramenta em vez de eu listar suítes à mão — foi a seleção à mão que ela abortou quatro vezes.
+
+**Nota de método:** três dos sete têm fecho de apenas duas suítes (`cli` e
+`cluster-exposure-ledger`), o que significa que aqueles comandos não são dirigidos por suíte
+dedicada alguma — a `cli` os alcança só na validação de bandeiras, sem entrar no corpo. É a mesma
+forma do achado de `evaluate.ts`, e desta vez a leitura do fecho já a antecipa.
+
 **Nota de honestidade sobre o commit anterior:** a mensagem de `765c567` diz que registra esta
 medição, e o commit contém apenas o teste — o patch do registro falhou na âncora e eu não conferi
 antes de commitar. Este parágrafo é o conserto, e a mensagem daquele commit fica imprecisa no
