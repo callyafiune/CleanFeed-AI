@@ -6,6 +6,7 @@ import { afterEach, describe, expect, it } from "vitest";
 
 import { runPublishEvidence } from "../commands/publish-evidence.ts";
 import { runPublishProfile } from "../commands/publish-profile.ts";
+import { runVerifyEvidence } from "../commands/verify-evidence.ts";
 import { runVerifyPublishedEvidence } from "../commands/verify-published-evidence.ts";
 import {
   assertSanitized,
@@ -718,6 +719,156 @@ describe("publish-evidence end-to-end (reject run)", () => {
           modelDirectory: s.modelDir,
         }),
       ).rejects.toMatchObject({ code: "ROLLOUT_STATE_INVALID" });
+    });
+  });
+});
+
+// ---------------------------------------------------------------------------
+// `verify-evidence`: as seis recusas do comando que confere a evidência ANTES da publicação.
+//
+// A auditoria por mutação mediu 0 de 6 exercitadas. O fecho daquele módulo tem só três suítes, e
+// nenhuma o dirigia: a `cli` o alcança na validação de bandeiras e para ali.
+//
+// A ORDEM interna dita cada forja, e é o que separa provar a guarda de provar a vizinha: o ramo da
+// decisão vem primeiro (reject de um lado, o resto do outro), depois o digest da evidência, e só
+// então a igualdade de gateDecision. Mexer em `profileDigests` está fora de questão em todas elas —
+// o contrato do descritor amarra `calibrationSetDigest` à lista, e a recusa viria de lá.
+// ---------------------------------------------------------------------------
+
+describe("verify-evidence", () => {
+  async function mundo(decision: ReleaseDecision): Promise<{
+    opcoes: {
+      reportPath: string;
+      frozenCalibrationPath: string;
+      modelDirectory: string;
+    };
+    release: Record<string, unknown>;
+    profiles: unknown;
+    modelDir: string;
+  }> {
+    const fixture = await bundleInputFor(decision);
+    const root = await newRoot("cf-verify-evidence-");
+    const modelDir = join(root, "models", "cleanfeed-ptbr-v1");
+    await mkdir(modelDir, { recursive: true });
+    await writeFile(
+      join(modelDir, "release.json"),
+      `${JSON.stringify(fixture.release, null, 2)}\n`,
+      "utf8",
+    );
+    await writeFile(
+      join(modelDir, "calibration-profiles.json"),
+      `${JSON.stringify(fixture.profiles, null, 2)}\n`,
+      "utf8",
+    );
+    const reportPath = join(root, "report.json");
+    await writeFile(
+      reportPath,
+      `${JSON.stringify(fixture.input.report, null, 2)}\n`,
+      "utf8",
+    );
+    // O artefato congelado do fixture carrega `artifactDigest` de fachada: o caminho do
+    // pacote de evidencia nunca o valida, e `runVerifyEvidence` e o primeiro consumidor que
+    // valida. Ele e RE-SELADO aqui — sem isso as sete recusas abaixo viriam todas do
+    // auto-digest, e o teste provaria a validacao do congelado em vez das guardas deste
+    // comando.
+    const frozenCalibrationPath = join(root, "frozen-calibration.json");
+    const baseCongelada = {
+      ...(fixture.input.frozenCalibration as unknown as Record<
+        string,
+        unknown
+      >),
+    };
+    delete baseCongelada.artifactDigest;
+    await writeFile(
+      frozenCalibrationPath,
+      `${JSON.stringify({ ...baseCongelada, artifactDigest: await canonicalSha256(baseCongelada) }, null, 2)}\n`,
+      "utf8",
+    );
+    return {
+      opcoes: { reportPath, frozenCalibrationPath, modelDirectory: modelDir },
+      release: fixture.release as unknown as Record<string, unknown>,
+      profiles: fixture.profiles,
+      modelDir,
+    };
+  }
+
+  async function reescreveRelease(
+    modelDir: string,
+    release: Record<string, unknown>,
+    campos: Record<string, unknown>,
+  ): Promise<void> {
+    await writeFile(
+      join(modelDir, "release.json"),
+      `${JSON.stringify({ ...release, ...campos }, null, 2)}\n`,
+      "utf8",
+    );
+  }
+
+  it("accepts a coherent reject world, which is what makes the refusals below mean anything", async () => {
+    const { opcoes } = await mundo("reject");
+    await expect(runVerifyEvidence(opcoes)).resolves.toContain(
+      "Evidence verified",
+    );
+  });
+
+  it("refuses a reject release whose rollout state is not bundle-verified", async () => {
+    // `shadow` é o único estado que o contrato do descritor deixa sem regra estrutural, então
+    // passa por ele e chega aqui. `actions` seria recusado antes, pelo contrato.
+    const { opcoes, release, modelDir } = await mundo("reject");
+    await reescreveRelease(modelDir, release, { rolloutState: "shadow" });
+    await expect(runVerifyEvidence(opcoes)).rejects.toMatchObject({
+      code: "REJECT_STATE_INVALID",
+    });
+  });
+
+  it("refuses a promoted release with no profile at all", async () => {
+    const { opcoes, modelDir } = await mundo("indicator-only");
+    await writeFile(
+      join(modelDir, "calibration-profiles.json"),
+      `${JSON.stringify({ schemaVersion: 1, profiles: [] }, null, 2)}\n`,
+      "utf8",
+    );
+    await expect(runVerifyEvidence(opcoes)).rejects.toMatchObject({
+      code: "PROFILES_MISSING",
+    });
+  });
+
+  it("refuses an indicator-only release outside the indicator rollout state", async () => {
+    const { opcoes, release, modelDir } = await mundo("indicator-only");
+    await reescreveRelease(modelDir, release, { rolloutState: "shadow" });
+    await expect(runVerifyEvidence(opcoes)).rejects.toMatchObject({
+      code: "INDICATOR_STATE_INVALID",
+    });
+  });
+
+  it("refuses a pass release outside indicator or actions", async () => {
+    // O par pass/indicator é o início da vida científica e pass/actions a promoção monotônica da
+    // Fase 4; qualquer outro estado é release que se apresenta sem ter sido promovido.
+    const { opcoes, release, modelDir } = await mundo("pass");
+    await reescreveRelease(modelDir, release, { rolloutState: "shadow" });
+    await expect(runVerifyEvidence(opcoes)).rejects.toMatchObject({
+      code: "PASS_STATE_INVALID",
+    });
+  });
+
+  it("refuses a release whose evidenceDigest is not the report digest", async () => {
+    const { opcoes, release, modelDir } = await mundo("reject");
+    await reescreveRelease(modelDir, release, {
+      evidenceDigest: "f".repeat(64),
+    });
+    await expect(runVerifyEvidence(opcoes)).rejects.toMatchObject({
+      code: "EVIDENCE_DIGEST_MISMATCH",
+    });
+  });
+
+  it("refuses a release whose gateDecision is not the report decision", async () => {
+    // Precisa de um relatório NÃO-reject: para um reject o ramo anterior já exigiria
+    // `gateDecision === "reject"` e a recusa viria dele. Aqui o descritor declara `pass` com
+    // rollout `indicator`, que o contrato aceita, e o relatório diz `indicator-only`.
+    const { opcoes, release, modelDir } = await mundo("indicator-only");
+    await reescreveRelease(modelDir, release, { gateDecision: "pass" });
+    await expect(runVerifyEvidence(opcoes)).rejects.toMatchObject({
+      code: "GATE_DECISION_MISMATCH",
     });
   });
 });
