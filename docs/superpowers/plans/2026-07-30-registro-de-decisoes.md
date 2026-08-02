@@ -1137,6 +1137,20 @@ de teste** quando a suíte afirma MENSAGEM em vez de código. `dataset-manifest.
 suítes e ainda assim dá 9 de 9 sem menção — o mais provável é que ali se asserte a mensagem. Só a
 auditoria por mutação decide, e é ela que vai rodar; a triagem serve para ordenar, não para concluir.
 
+**PRECISÃO da triagem, medida no primeiro módulo.** `dataset-manifest.ts` tinha **9 de 9 sem
+menção**, e a auditoria por mutação com as 21 suítes do fecho mediu **8 exercitadas e 1 sem teste** —
+só `DATASET_DUPLICATE`. A triagem previu nove lacunas e havia uma. O viés que eu declarei antes de
+rodar se confirmou na proporção: aquelas suítes afirmam MENSAGEM em vez de código.
+
+Isso recalibra o resto do trabalho: **os 51 códigos sem menção não são 51 lacunas**, e tratar a
+triagem como resultado teria produzido o maior achado falso desta sessão. A ordem de trabalho
+continua a da triagem; a conclusão, só a da mutação.
+
+**Nota de honestidade sobre o commit anterior:** a mensagem de `765c567` diz que registra esta
+medição, e o commit contém apenas o teste — o patch do registro falhou na âncora e eu não conferi
+antes de commitar. Este parágrafo é o conserto, e a mensagem daquele commit fica imprecisa no
+histórico.
+
 O erro é o mesmo que a ferramenta foi endurecida quatro vezes para impedir, agora cometido um nível
 acima: **medir o conjunto que alguém apontou e relatar como se fosse o conjunto todo.** A guarda por
 fecho transitivo protege a escolha de SUÍTES; nada protegia a escolha de MÓDULOS, e eu herdei a lista
