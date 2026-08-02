@@ -998,6 +998,53 @@ falha; os outros 61 do arquivo passam, o que prova que ele alcança a guarda e q
 
 **Ordem para o resto, por consequência e não por contagem:**
 
+### O mecanismo por trás das "guardas sem teste": `rejects.toThrow()` sem argumento
+
+Fui escrever os seis testes que faltavam em `commands/publish-evidence.ts` e o primeiro cenário já
+tinha teste. `it("refuses an unfinished ledger")` existe, trunca o ledger no evento `started` e
+afirma `rejects.toThrow()` — sem código. Com a guarda desligada a execução segue e estoura adiante
+por outro motivo, e o `toThrow()` pelado continua verde. O teste passa pelo motivo errado.
+
+O vizinho prova que é acidente e não critério: `HOLDOUT_REPORT_DIGEST_MISMATCH`, escrito no mesmo
+estilo, deu **PEGA** na auditoria — porque ali desligar a guarda faz o comando *concluir*, e então
+o `rejects` falha. Dois testes idênticos em forma: um real por acidente, outro decorativo por
+acidente. O veredito não depende do que o teste afirma, e sim de haver ou não um estouro posterior.
+
+A varredura do repositório: **21 `rejects.toThrow()` pelados contra 128 com matcher.** A convenção
+já é afirmar o código; os 21 são a exceção, concentrados exatamente nos módulos onde eu vinha
+"encontrando guardas sem teste". Boa parte do que eu chamaria de lacuna era asserção incapaz de
+distinguir a guarda de um estouro posterior.
+
+Conserto e **medição do conserto, pelo mesmo método antes e depois**, em `publish-evidence.ts`:
+
+| | guardas exercitadas | sem teste |
+| --- | --- | --- |
+| antes | 2 | 6 |
+| depois | 8 | 0 |
+
+Foram oito asserções especificadas em `evidence-sanitizer.test.ts` (no idioma do repositório,
+`rejects.toMatchObject({ code })`, porque a mensagem do `CommandError` não contém o código) e cinco
+testes novos. Duas coisas que só apareceram ao escrever:
+
+- `EVIDENCE_DIGEST_MISMATCH` não é alcançável mutando o artefato congelado:
+  `validateFrozenCalibrationArtifact` recusa antes, com erro de outra família — defesa em
+  profundidade que eu não sabia estar ali. Re-selar o congelado não está disponível ao teste porque
+  `artifactWithoutDigest` não é exportado. O vetor que funciona é o relatório, porque a comparação
+  de digests roda antes da conferência do ledger.
+- `SPLIT_ARTIFACT_COMPOSITION_ATTESTATION_MISSING` exige forja competente: anular o atestado sem
+  re-selar o `splitDigest` pararia na auto-consistência, que é outra guarda.
+
+Os treze `toThrow()` pelados restantes, classificados por leitura (a contagem sozinha os
+confundiria): **dez são asserção de ausência de arquivo** (`stat(...)` rejeitando com ENOENT — não
+são guarda de comando, e o conserto é precisão, não consequência) e **três são guarda de verdade**,
+em `consume-holdout.test.ts`, onde o cenário afirma `identity-mismatch` no ledger.
+
+**Medição nula registrada como nula.** A auditoria de `commands/verify-published-evidence.ts`
+devolveu 9 de 9 NÃO-MUTÁVEL, porque o módulo usa o idioma `fail("CODIGO", ...)` e eu apontei a
+ferramenta para `CommandError`. Zero mutável não é zero lacuna: aquele módulo continua **não
+medido**, e vai ser remedido com o lançador certo. É o mesmo erro que o docstring da própria
+ferramenta descreve, o que mostra que aviso em documentação não substitui a guarda que recusa.
+
 ### Medição: as lacunas restantes são de dois tipos, e a razão de linhas não distingue
 
 Registrei como primeira pergunta da unidade nova se as 29 lacunas restantes eram intestabilidade

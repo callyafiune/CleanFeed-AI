@@ -18,6 +18,9 @@ import {
   type EvidenceBundle,
 } from "../evidence-sanitizer.ts";
 import { sha256BytesHex } from "../digests.ts";
+import { canonicalSha256 } from "../../contracts/canonical-json.ts";
+import { withoutSplitDigest } from "../split-artifact.ts";
+import type { SplitArtifact } from "../split-artifact.ts";
 import { bundleInputFor, buildRejectScenario } from "./evidence.fixtures.ts";
 import type { FrozenCalibrationArtifact } from "../calibration-pipeline.ts";
 import type { ReleaseDecision } from "../gates.ts";
@@ -368,7 +371,7 @@ describe("verifyPublishedEvidence on a clean clone", () => {
         evidenceDirectory: evidenceDir,
         modelDirectory: modelDir,
       }),
-    ).rejects.toThrow();
+    ).rejects.toMatchObject({ code: "EVIDENCE_FILE_ALTERED" });
   });
 
   it("rejects missing evidence (a deleted file)", async () => {
@@ -385,7 +388,7 @@ describe("verifyPublishedEvidence on a clean clone", () => {
         evidenceDirectory: evidenceDir,
         modelDirectory: modelDir,
       }),
-    ).rejects.toThrow();
+    ).rejects.toMatchObject({ code: "EVIDENCE_MISSING_FILE" });
   });
 
   it("rejects extra evidence (an unexpected file)", async () => {
@@ -402,7 +405,7 @@ describe("verifyPublishedEvidence on a clean clone", () => {
         evidenceDirectory: evidenceDir,
         modelDirectory: modelDir,
       }),
-    ).rejects.toThrow();
+    ).rejects.toMatchObject({ code: "EVIDENCE_EXTRA_FILE" });
   });
 
   it("rejects a stale model release whose evidence digest no longer matches", async () => {
@@ -423,7 +426,7 @@ describe("verifyPublishedEvidence on a clean clone", () => {
         evidenceDirectory: evidenceDir,
         modelDirectory: modelDir,
       }),
-    ).rejects.toThrow();
+    ).rejects.toMatchObject({ code: "PUBLISHED_EVIDENCE_MISMATCH" });
   });
 });
 
@@ -495,7 +498,9 @@ describe("publish-evidence end-to-end (reject run)", () => {
       .split(/\r?\n/)
       .filter((line) => line.trim() !== "");
     await writeFile(s.ledgerPath, `${lines[0]}\n`, "utf8");
-    await expect(runPublishEvidence(publishOptions(s))).rejects.toThrow();
+    await expect(runPublishEvidence(publishOptions(s))).rejects.toMatchObject({
+      code: "HOLDOUT_SESSION_UNFINISHED",
+    });
   });
 
   it("refuses a report digest that the ledger does not attest", async () => {
@@ -510,7 +515,9 @@ describe("publish-evidence end-to-end (reject run)", () => {
       `${lines[0]}\n${JSON.stringify(completed)}\n`,
       "utf8",
     );
-    await expect(runPublishEvidence(publishOptions(s))).rejects.toThrow();
+    await expect(runPublishEvidence(publishOptions(s))).rejects.toMatchObject({
+      code: "HOLDOUT_REPORT_DIGEST_MISMATCH",
+    });
   });
 
   it("refuses an unapproved model license", async () => {
@@ -532,7 +539,9 @@ describe("publish-evidence end-to-end (reject run)", () => {
       )}\n`,
       "utf8",
     );
-    await expect(runPublishEvidence(publishOptions(s))).rejects.toThrow();
+    await expect(runPublishEvidence(publishOptions(s))).rejects.toMatchObject({
+      code: "MODEL_LICENSE_NOT_APPROVED",
+    });
   });
 
   it("refuses a missing report", async () => {
@@ -542,6 +551,69 @@ describe("publish-evidence end-to-end (reject run)", () => {
         ...publishOptions(s),
         reportPath: join(s.root, "out", "does-not-exist.json"),
       }),
-    ).rejects.toThrow();
+    ).rejects.toMatchObject({ code: "FILE_MISSING" });
+  });
+
+  it("refuses a consumption id the ledger never saw", async () => {
+    const s = await scenario();
+    await expect(
+      runPublishEvidence({
+        ...publishOptions(s),
+        consumptionId: "consumo-que-nao-existe",
+      }),
+    ).rejects.toMatchObject({ code: "HOLDOUT_SESSION_UNKNOWN" });
+  });
+
+  it("refuses a ledger line that is not valid JSON", async () => {
+    const s = await scenario();
+    const raw = await readFile(s.ledgerPath, "utf8");
+    await writeFile(s.ledgerPath, `${raw}isto nao e json\n`, "utf8");
+    await expect(runPublishEvidence(publishOptions(s))).rejects.toMatchObject({
+      code: "HOLDOUT_LEDGER_CORRUPT",
+    });
+  });
+
+  it("refuses to publish into a directory holding a non-allowlisted file", async () => {
+    const s = await scenario();
+    await mkdir(s.outputDir, { recursive: true });
+    await writeFile(join(s.outputDir, "sobra.json"), "{}\n", "utf8");
+    await expect(runPublishEvidence(publishOptions(s))).rejects.toMatchObject({
+      code: "EVIDENCE_OUTPUT_DIRTY",
+    });
+  });
+
+  it("refuses a release artifact carrying no composition attestation", async () => {
+    const s = await scenario();
+    // O `splitDigest` cobre a projecao do artefato, entao anular o atestado sem re-selar
+    // pararia na auto-consistencia — que e outra guarda. A forja tem de ser COMPETENTE para
+    // que o teste prove a guarda do atestado e nao a vizinha.
+    const artifact = JSON.parse(
+      await readFile(s.splitArtifactPath, "utf8"),
+    ) as SplitArtifact;
+    artifact.compositionAttestation = null;
+    artifact.splitDigest = await canonicalSha256(withoutSplitDigest(artifact));
+    await writeFile(s.splitArtifactPath, JSON.stringify(artifact), "utf8");
+    await expect(runPublishEvidence(publishOptions(s))).rejects.toMatchObject({
+      code: "SPLIT_ARTIFACT_COMPOSITION_ATTESTATION_MISSING",
+    });
+  });
+
+  it("refuses a report whose datasetDigest disagrees with the frozen calibration", async () => {
+    const s = await scenario();
+    // A divergencia e injetada no RELATORIO, nao no artefato congelado: o congelado carrega
+    // `artifactDigest` proprio, e `validateFrozenCalibrationArtifact` recusa antes com
+    // `CalibrationPipelineError` — outra guarda. Re-selar o congelado nao esta disponivel aqui
+    // porque `artifactWithoutDigest` nao e exportado.
+    //
+    // Pelo relatorio o alcance existe porque a comparacao de digests roda ANTES da conferencia
+    // do ledger, que so entao notaria que o digest do relatorio deixou de ser o atestado.
+    const report = JSON.parse(await readFile(s.reportPath, "utf8")) as {
+      dataset: { digest: string };
+    };
+    report.dataset.digest = "d".repeat(64);
+    await writeFile(s.reportPath, JSON.stringify(report), "utf8");
+    await expect(runPublishEvidence(publishOptions(s))).rejects.toMatchObject({
+      code: "EVIDENCE_DIGEST_MISMATCH",
+    });
   });
 });
