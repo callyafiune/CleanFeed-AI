@@ -95,7 +95,21 @@ ao lado dele: é PARTIR o que ele carrega em dois campos com papéis distintos.
    viabilidade**, e depende da ratificação. Enquanto ele não sai, 1 e 3 são reorganização de nome.
 3. `extractionRun` recebe o que sobra de `collectionBatch` — diagnóstico, e **não** entra em
    `GROUP_KEYS`.
-4. O manifesto revisado ganha inventário de lotes, com os cinco campos do termo 2.
+4. ~~O manifesto revisado ganha inventário de lotes, com os cinco campos do termo 2.~~ **FEITO.**
+   `SourceMaterialBatchV1` em `benchmark/source-manifest.ts`, com os cinco campos, parser fecha-a-porta
+   e sete testes. Duas decisões que a implementação obrigou a tomar:
+
+   - o campo é **admitido e não exigido** no esquema v1, por razão de DIGEST e não de rigor: a
+     projeção que `computeReviewedSourceManifestDigest` hasheia é escrita à mão, e `canonicalJson`
+     **recusa** `undefined` em vez de omitir. Incluir a chave sempre derrubaria todo manifesto que não
+     declara lote, inclusive o inventário v3 congelado. A chave entra na projeção **condicionalmente**
+     — fora dela o inventário nasceria forjável, que é o defeito que o atestado de composição do E2
+     fechou. Os dois primeiros testes prendem esse par;
+   - os lotes de material dividem o **namespace de `batchId`** com os de geração, de propósito: a
+     auditoria recusa registro não gerado que nomeie lote de GERAÇÃO, e essa recusa só é decidível
+     enquanto um id pertence a um dos dois e nunca aos dois.
+
+   Passa a **obrigatório** junto do bump de esquema, na pré-inscrição nova.
 5. Extratores recusam linha cujo lote esteja ausente ou ambíguo — fail-closed, como o resto do projeto.
 6. O fallback `extraction_{fname}` é eliminado **depois** de 1 a 5, quando houver para onde as linhas
    recuarem. Removê-lo antes deixaria registros sem lote.

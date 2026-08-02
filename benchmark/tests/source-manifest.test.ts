@@ -1940,3 +1940,113 @@ describe("R7 — the corpus is contract-clean against training, never independen
     expect(runbook).toMatch(/n[ãa]o é independência semântica/iu);
   });
 });
+
+// ---------------------------------------------------------------------------
+// O inventário de lotes de material.
+//
+// Campo ADMITIDO e não exigido no esquema v1, e a razão é de digest: a projeção que
+// `computeReviewedSourceManifestDigest` hasheia é escrita à mão, então incluir a chave sempre
+// mudaria o digest de todo manifesto que não declara lote — inclusive o inventário v3 congelado.
+// Os dois primeiros testes abaixo prendem exatamente esse par: o digest de quem não declara não
+// mudou, e o de quem declara COBRE o que foi declarado.
+// ---------------------------------------------------------------------------
+
+describe("inventário de lotes de material", () => {
+  const lote = {
+    batchId: "smb_licenciado_2024",
+    sourceId: "src_licensed",
+    materialVersion: "dump-2024-06-01",
+    acquisitionWindow: {
+      startedAt: 1_717_200_000_000,
+      endedAt: 1_717_286_400_000,
+    },
+    evidence: ["https://exemplo.invalido/dump-2024-06-01.sha256"],
+  };
+
+  function comLote(overrides: Record<string, unknown> = {}): ManifestBody {
+    return {
+      ...validBody,
+      materialBatches: [{ ...lote, ...overrides }],
+    } as ManifestBody;
+  }
+
+  it("keeps the digest of a manifest that declares no batch unchanged", async () => {
+    // A guarda da decisão: se algum dia a chave entrar na projeção sem condição, este teste cai
+    // junto com o inventário v3 congelado — e é ele que explica por quê.
+    const semLote = await computeReviewedSourceManifestDigest(validBody);
+    const comChaveAusente = await computeReviewedSourceManifestDigest({
+      ...validBody,
+    });
+    expect(comChaveAusente).toBe(semLote);
+    await expect(
+      parseReviewedSourceManifest(await sealManifest()),
+    ).resolves.toMatchObject({ schemaVersion: 1 });
+  });
+
+  it("covers the declared inventory with the self-digest", async () => {
+    // A forja: selar COM o lote e depois trocar o lote sem re-selar. Se a projeção não cobrisse o
+    // campo, isto passaria — que é o defeito que o atestado de composição do E2 fechou.
+    const selado = await sealManifest(comLote());
+    await expect(parseReviewedSourceManifest(selado)).resolves.toMatchObject({
+      materialBatches: [{ batchId: "smb_licenciado_2024" }],
+    });
+
+    const forjado = {
+      ...selado,
+      materialBatches: [{ ...lote, materialVersion: "dump-2025-01-01" }],
+    };
+    await expect(parseReviewedSourceManifest(forjado)).rejects.toMatchObject({
+      code: "SOURCE_MANIFEST_DIGEST_MISMATCH",
+    });
+  });
+
+  it("refuses a batch whose sourceId this manifest does not declare", async () => {
+    const selado = await sealManifest(comLote({ sourceId: "src_inexistente" }));
+    await expect(parseReviewedSourceManifest(selado)).rejects.toMatchObject({
+      code: "SOURCE_MANIFEST_FIELD_INVALID",
+    });
+  });
+
+  it("refuses a material batchId a generation batch already uses", async () => {
+    // Os dois inventários dividem o namespace de propósito: a auditoria recusa registro não
+    // gerado que nomeie lote de GERAÇÃO, e essa recusa só é decidível se um id pertence a um dos
+    // dois e nunca aos dois.
+    const selado = await sealManifest(comLote({ batchId: "batch_gen" }));
+    await expect(parseReviewedSourceManifest(selado)).rejects.toThrow(
+      /duplicate batchId/u,
+    );
+  });
+
+  it("refuses a batch with no evidence at all", async () => {
+    const selado = await sealManifest(comLote({ evidence: [] }));
+    await expect(parseReviewedSourceManifest(selado)).rejects.toThrow(
+      /evidence must be a non-empty array/u,
+    );
+  });
+
+  it("refuses an acquisition window that ends before it starts", async () => {
+    const selado = await sealManifest(
+      comLote({
+        acquisitionWindow: {
+          startedAt: 1_717_286_400_000,
+          endedAt: 1_717_200_000_000,
+        },
+      }),
+    );
+    await expect(parseReviewedSourceManifest(selado)).rejects.toThrow(
+      /ends before it starts/u,
+    );
+  });
+
+  it("accepts a point acquisition, where the window starts and ends together", async () => {
+    const instante = 1_717_200_000_000;
+    const selado = await sealManifest(
+      comLote({
+        acquisitionWindow: { startedAt: instante, endedAt: instante },
+      }),
+    );
+    await expect(parseReviewedSourceManifest(selado)).resolves.toMatchObject({
+      materialBatches: [{ acquisitionWindow: { startedAt: instante } }],
+    });
+  });
+});

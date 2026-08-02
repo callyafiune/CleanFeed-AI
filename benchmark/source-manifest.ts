@@ -219,10 +219,45 @@ export interface GenerationBatchV1 {
   seedNullReason: string | null;
 }
 
+/**
+ * Um LOTE DE MATERIAL: o conjunto de documentos que vieram do mesmo material, adquirido no mesmo
+ * evento, na mesma versão imutável.
+ *
+ * É a unidade de DEPENDÊNCIA do lado humano, e existe porque a pré-inscrição abandonada
+ * confundia lote com execução de extração: reextrair o mesmo material não produz material novo, e
+ * tratar duas execuções como duas unidades independentes conta a mesma dependência duas vezes. O
+ * vocabulário completo está em
+ * `docs/superpowers/plans/2026-08-02-lotes-e-unidade-de-dependencia.md`.
+ *
+ * O campo é OPCIONAL neste esquema v1 por uma razão de digest, não de rigor: a projeção que
+ * `computeReviewedSourceManifestDigest` hasheia é escrita à mão, e incluir a chave sempre mudaria
+ * o digest de todo manifesto que não declara lote — inclusive o inventário v3 congelado. Ele
+ * passa a ser OBRIGATÓRIO na pré-inscrição nova, junto do bump de esquema.
+ */
+export interface SourceMaterialBatchV1 {
+  batchId: string;
+  /** Uma fonte DECLARADA neste mesmo manifesto: o parser recusa lote órfão. */
+  sourceId: string;
+  /**
+   * A versão concreta e imutável do que foi adquirido — número de dump, tag de release, digest do
+   * arquivo. É o que torna "o mesmo material" verificável em vez de declarado.
+   */
+  materialVersion: string;
+  /** A janela de aquisição. Um evento pontual é `startedAt === endedAt`, e isso é legítimo. */
+  acquisitionWindow: { startedAt: number; endedAt: number };
+  /**
+   * O que torna os quatro campos acima verificáveis por terceiro. Não pode ser vazia: um lote sem
+   * evidência é uma declaração sobre a qual ninguém pode discordar, que é exatamente o que a
+   * governança deste projeto recusa em toda parte.
+   */
+  evidence: string[];
+}
+
 export interface ReviewedSourceManifestV1 {
   schemaVersion: 1;
   sources: ReviewedSourceEntryV1[];
   generationBatches: GenerationBatchV1[];
+  materialBatches?: SourceMaterialBatchV1[];
   sourceManifestDigest: string;
 }
 
@@ -1846,8 +1881,23 @@ const MANIFEST_KEYS = [
   "schemaVersion",
   "sources",
   "generationBatches",
+  "materialBatches",
   "sourceManifestDigest",
 ] as const;
+// `materialBatches` e ADMITIDA e nao EXIGIDA: um manifesto que nao declara lote continua valido,
+// e o digest dele continua o mesmo. A distincao entre as duas listas e o que permite acrescentar
+// o inventario sem reescrever o inventario v3 congelado.
+const MANIFEST_REQUIRED_KEYS = MANIFEST_KEYS.filter(
+  (key) => key !== "materialBatches",
+);
+const MATERIAL_BATCH_KEYS = [
+  "batchId",
+  "sourceId",
+  "materialVersion",
+  "acquisitionWindow",
+  "evidence",
+] as const;
+const ACQUISITION_WINDOW_KEYS = ["startedAt", "endedAt"] as const;
 const ENTRY_KEYS = [
   "sourceId",
   "sourceType",
@@ -2166,6 +2216,74 @@ function validateBatch(value: unknown, index: number): GenerationBatchV1 {
   };
 }
 
+function validateMaterialBatch(
+  value: unknown,
+  index: number,
+  declaredSourceIds: ReadonlySet<string>,
+): SourceMaterialBatchV1 {
+  const obj = assertExactObject(
+    value,
+    `materialBatches[${index}]`,
+    MATERIAL_BATCH_KEYS,
+    MATERIAL_BATCH_KEYS,
+  );
+  const batchId = pseudonym(obj.batchId, `materialBatches[${index}].batchId`);
+  const sourceId = pseudonym(
+    obj.sourceId,
+    `materialBatches[${index}].sourceId`,
+  );
+  if (!declaredSourceIds.has(sourceId)) {
+    fail(
+      "SOURCE_MANIFEST_FIELD_INVALID",
+      `material batch ${batchId} names sourceId "${sourceId}", which this manifest does not ` +
+        "declare: a batch whose source is undeclared has no reviewed provenance",
+    );
+  }
+  const materialVersion = nonEmptyString(
+    obj.materialVersion,
+    `material batch ${batchId} materialVersion`,
+  );
+
+  const window = assertExactObject(
+    obj.acquisitionWindow,
+    `material batch ${batchId} acquisitionWindow`,
+    ACQUISITION_WINDOW_KEYS,
+    ACQUISITION_WINDOW_KEYS,
+  );
+  const startedAt = finiteNumber(
+    window.startedAt,
+    `material batch ${batchId} acquisitionWindow.startedAt`,
+  );
+  const endedAt = finiteNumber(
+    window.endedAt,
+    `material batch ${batchId} acquisitionWindow.endedAt`,
+  );
+  if (endedAt < startedAt) {
+    fail(
+      "SOURCE_MANIFEST_FIELD_INVALID",
+      `material batch ${batchId} acquisitionWindow ends before it starts`,
+    );
+  }
+
+  if (!Array.isArray(obj.evidence) || obj.evidence.length === 0) {
+    fail(
+      "SOURCE_MANIFEST_FIELD_INVALID",
+      `material batch ${batchId} evidence must be a non-empty array`,
+    );
+  }
+  const evidence = obj.evidence.map((item, position) =>
+    nonEmptyString(item, `material batch ${batchId} evidence[${position}]`),
+  );
+
+  return {
+    batchId,
+    sourceId,
+    materialVersion,
+    acquisitionWindow: { startedAt, endedAt },
+    evidence,
+  };
+}
+
 /** SHA-256 (hex) of the canonical bytes of the manifest without its digest. */
 export async function computeReviewedSourceManifestDigest(
   body: ReviewedSourceManifestBody,
@@ -2174,6 +2292,14 @@ export async function computeReviewedSourceManifestDigest(
     schemaVersion: body.schemaVersion,
     sources: body.sources,
     generationBatches: body.generationBatches,
+    // Entra SO quando existe, e as duas metades desta condicao sao necessarias. Fora da projecao
+    // o inventario de lotes nasceria FORJAVEL — o mesmo defeito que o atestado de composicao do
+    // E2 fechou. Dentro dela SEMPRE seria pior de outra forma: `canonicalJson` RECUSA `undefined`
+    // em vez de omitir, entao a chave presente com valor ausente derrubaria todo manifesto que
+    // nao declara lote.
+    ...(body.materialBatches === undefined
+      ? {}
+      : { materialBatches: body.materialBatches }),
   });
 }
 
@@ -2185,7 +2311,7 @@ export async function parseReviewedSourceManifest(
     value,
     "reviewed source manifest",
     MANIFEST_KEYS,
-    MANIFEST_KEYS,
+    MANIFEST_REQUIRED_KEYS,
   );
 
   if (root.schemaVersion !== 1) {
@@ -2238,6 +2364,30 @@ export async function parseReviewedSourceManifest(
     return parsed;
   });
 
+  // Os lotes de material dividem o NAMESPACE de `batchId` com os de geracao, e de proposito: a
+  // auditoria recusa um registro nao gerado que nomeie um lote de GERACAO, e essa recusa so e
+  // decidivel enquanto um id pertence a um dos dois e nunca aos dois.
+  let materialBatches: SourceMaterialBatchV1[] | undefined;
+  if (root.materialBatches !== undefined) {
+    if (!Array.isArray(root.materialBatches)) {
+      fail(
+        "SOURCE_MANIFEST_FIELD_INVALID",
+        "materialBatches must be an array when present",
+      );
+    }
+    materialBatches = root.materialBatches.map((entry, index) => {
+      const parsed = validateMaterialBatch(entry, index, seenSourceIds);
+      if (seenBatchIds.has(parsed.batchId)) {
+        fail(
+          "SOURCE_MANIFEST_FIELD_INVALID",
+          `duplicate batchId "${parsed.batchId}"`,
+        );
+      }
+      seenBatchIds.add(parsed.batchId);
+      return parsed;
+    });
+  }
+
   const sourceManifestDigest = lowercaseSha256(
     root.sourceManifestDigest,
     "sourceManifestDigest",
@@ -2246,6 +2396,7 @@ export async function parseReviewedSourceManifest(
     schemaVersion: 1,
     sources,
     generationBatches,
+    ...(materialBatches === undefined ? {} : { materialBatches }),
   };
   const expected = await computeReviewedSourceManifestDigest(body);
   if (expected !== sourceManifestDigest) {
