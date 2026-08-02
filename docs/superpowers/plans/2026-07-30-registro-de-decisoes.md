@@ -1180,7 +1180,17 @@ um só.
 Eu declarei `src/` fora do escopo da varredura com este argumento: 47 códigos de runtime de extensão,
 onde "um defeito é bug de produto e não medição científica que passa verde estando errada".
 
-**O defeito 1 da v1.0 refuta o argumento.** Era uma guarda de runtime em `src/inference/` —
+**CORREÇÃO da justificativa, escrita no mesmo dia.** Eu argumentei que o defeito 1 refutava a
+exclusão de `src/`. Refuta o argumento de PRIORIDADE, mas não serve como razão para a varredura por
+mutação, e a diferença importa: aquela ferramenta muta `fail("CODIGO")` e `throw new X("CODIGO")`, e o
+defeito 1 era um **valor** (`actionCeiling: shortText ? "indicator" : "hide"`), não uma recusa
+codificada. **A auditoria não o teria encontrado.** A lição do defeito 1 é sobre deriva entre promessa
+escrita e código — que pede outro tipo de verificação, não esta.
+
+A razão que sustenta a varredura de `src/` é mais simples e sobrevive: são **47 guardas codificadas
+nunca medidas**, e a ferramenta agora as alcança. Nada além disso.
+
+**O argumento original, que fica registrado como parcialmente errado:** **O defeito 1 da v1.0 refuta o argumento.** Era uma guarda de runtime em `src/inference/` —
 o teto `indicator` — que, sem teste que a prendesse, deixou o produto poder OCULTAR posts contra uma
 promessa pública escrita em `docs/model-validation.md`. E havia um teste que fixava o comportamento
 violador. É o mesmo mecanismo da varredura (guarda cuja recusa ninguém exercita), com consequência de
