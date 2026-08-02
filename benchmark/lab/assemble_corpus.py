@@ -1268,6 +1268,75 @@ def realized_blocks(records: list[dict]) -> dict[str, str]:
     }
 
 
+# As cinco frações-alvo do desenho de cinco partições. `CLASS_FRACTIONS` declara quatro e `test`
+# é o resto, então a lista abaixo não pode ser escrita à mão: um alvo a menos aqui aceitaria
+# corpo que o splitter recusa.
+FIVE_TARGETS: tuple[float, ...] = (
+    *CLASS_FRACTIONS.values(),
+    round(1.0 - sum(CLASS_FRACTIONS.values()), 10),
+)
+
+
+def component_fractions(records: list[dict]) -> list[float]:
+    """A fração do corpo que cada componente conexo vale, em ordem crescente."""
+    tamanhos: dict[str, int] = {}
+    for raiz in connected_components(records).values():
+        tamanhos[raiz] = tamanhos.get(raiz, 0) + 1
+    total = len(records)
+    return sorted(n / total for n in tamanhos.values())
+
+
+def assert_components_can_fill_five_partitions(records: list[dict]) -> None:
+    """PREFLIGHT: recusa antes da montagem um corpo cujos componentes não podem realizar 45/5/10/20/20.
+
+    O splitter põe o componente conexo INTEIRO numa única partição. Disso saem duas condições
+    NECESSÁRIAS, e a razão de cada uma está no desenho e não em heurística:
+
+    1. **Todo componente cabe em alguma partição.** Um componente maior que o maior alvo mais a
+       tolerância não tem onde ser posto inteiro.
+    2. **Toda partição pode ser preenchida.** Qualquer subconjunto não vazio inclui pelo menos um
+       componente, então para haver subconjunto que realize o MENOR alvo é preciso existir um
+       componente que caiba nele. Logo o menor componente tem de caber no menor alvo mais a
+       tolerância.
+
+    | o que este preflight decide            | o que ele NÃO decide                              |
+    |----------------------------------------|---------------------------------------------------|
+    | as duas condições necessárias acima    | se existe atribuição completa dos componentes     |
+    |                                        | às cinco partições — isso é soma de subconjuntos, |
+    |                                        | e passar aqui não é garantia de viabilidade       |
+    | granularidade grosseira demais         | ordenação temporal, precedência de held-out e     |
+    |                                        | frações POR CLASSE, que só um corpo ESTAMPADO     |
+    |                                        | determina (`assert_stamped_corpus_is_splittable`) |
+
+    Necessária e não suficiente é o que se pode afirmar sem resolver soma de subconjuntos, e
+    afirmar mais que isso seria a suposição que a pré-inscrição abandonada fez.
+    """
+    if not records:
+        raise UnsplittableCorpus("corpo vazio: não há componente a distribuir")
+
+    fracoes = component_fractions(records)
+    menor, maior = fracoes[0], fracoes[-1]
+    maior_alvo = max(FIVE_TARGETS)
+    menor_alvo = min(FIVE_TARGETS)
+    limite_max = maior_alvo + CLASS_TOLERANCE + CLASS_TOLERANCE_EPSILON
+    limite_min = menor_alvo + CLASS_TOLERANCE + CLASS_TOLERANCE_EPSILON
+
+    if maior > limite_max:
+        raise UnsplittableCorpus(
+            f"o maior componente vale {maior:.4f} do corpo e o maior alvo é {maior_alvo:.2f} "
+            f"(±{CLASS_TOLERANCE}): não há partição que o receba inteiro. "
+            f"{len(fracoes)} componente(s), frações {fracoes[:8]}"
+        )
+
+    if menor > limite_min:
+        raise UnsplittableCorpus(
+            f"o MENOR componente vale {menor:.4f} do corpo e o menor alvo é {menor_alvo:.2f} "
+            f"(±{CLASS_TOLERANCE}): nenhum subconjunto não vazio realiza a menor partição, "
+            f"porque todo subconjunto inclui ao menos um componente. Isto é granularidade, "
+            f"não tamanho de corpo: {len(fracoes)} componente(s), frações {fracoes[:8]}"
+        )
+
+
 def assert_stamped_corpus_is_splittable(
     records: list[dict],
     held_out: set[str] | None = None,
