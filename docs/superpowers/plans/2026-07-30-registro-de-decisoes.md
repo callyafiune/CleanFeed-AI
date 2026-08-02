@@ -977,10 +977,11 @@ trabalho (`corpus-import.test.ts`, caso 3d).
 
 **Registrado em vez de entregue meia-boca**, com a construção exata que provaria cada uma:
 
-- **`DATASET_AUDIT_MISMATCH`** exige que os digests do `dataset-audit.json` divirjam do manifesto
-  **sem** quebrar o auto-digest da auditoria — ou seja, alterar `recordsSha256` E recomputar
-  `auditDigest` sobre a identidade. Sem recomputar, uma checagem de digest anterior recusa e o teste
-  provaria outra coisa.
+- **`DATASET_AUDIT_MISMATCH` — FEITO** (caso 3e). A rota era exatamente a prevista: alterar a
+  identidade e **recomputar** `auditDigest`, senão a checagem do auto-digest recusa antes e o teste
+  provaria coerência interna em vez do vínculo ao dataset. Ficou tratável porque
+  `computeDatasetAuditDigest` já é exportado; a forja troca o `datasetId` e re-sela. Reauditoria
+  confirma: **4 das 5 guardas do comando exercitadas**.
 - **`SPLIT_AUDIT_FAILED`** precisa de um corpus em que o splitter TENHA SUCESSO e a auditoria reprove.
   O caminho conhecido é o que o próprio cross-review usou na rodada 9: um componente que atravessa o
   último corte cai em `train` levando o tempo da banda de teste, e `earliest(test) > latest(train)`

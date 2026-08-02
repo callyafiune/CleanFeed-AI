@@ -24,6 +24,8 @@ import {
   RELEASE_CORPUS_POLICY,
   validateDatasetManifest,
   type DatasetManifest,
+  computeDatasetAuditDigest,
+  type DatasetAudit,
 } from "../dataset-manifest.ts";
 import { parseBenchmarkDataset, type BenchmarkRecordV2 } from "../schema.ts";
 import {
@@ -1109,6 +1111,35 @@ describe("ingest -> validate -> split integration (10k)", () => {
     ).rejects.toThrow(
       /SPLIT_SEED_NOT_PRE_REGISTERED|pre-registered split seed/u,
     );
+
+    // 3e. Uma auditoria selada para OUTRO dataset e recusada, e a forja e competente: o
+    // `auditDigest` e RECOMPUTADO sobre a identidade alterada, senao a checagem do auto-digest
+    // recusaria primeiro e o teste provaria coerencia interna em vez do vinculo ao dataset.
+    const auditPath = join(validateOut, "dataset-audit.json");
+    const auditJson = await readFile(auditPath, "utf8");
+    const auditObjeto = JSON.parse(auditJson) as Record<string, unknown>;
+    delete auditObjeto.auditDigest;
+    const outroDataset = {
+      ...auditObjeto,
+      datasetId: "outro-dataset-qualquer",
+    } as unknown as Omit<DatasetAudit, "auditDigest">;
+    await writeFile(
+      auditPath,
+      JSON.stringify({
+        ...outroDataset,
+        auditDigest: await computeDatasetAuditDigest(outroDataset),
+      }),
+      "utf8",
+    );
+    await expect(
+      runSplit({
+        datasetDirectory,
+        datasetAuditPath: auditPath,
+        outputDirectory: join(root, "out", "split-outro-dataset"),
+        seed: 20260726,
+      }),
+    ).rejects.toThrow(/DATASET_AUDIT_MISMATCH|different dataset/u);
+    await writeFile(auditPath, auditJson, "utf8"); // restore for isolation
 
     // 4a. A later record change invalidates the split artifact's datasetDigest.
     const tampered = parsedRecords.map((r) => ({ ...r }));
