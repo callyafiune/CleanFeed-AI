@@ -183,6 +183,28 @@ describe("assertBenchmarkStatusMatchesRun", () => {
     ).not.toThrow();
   });
 
+  it("rejects a backend the run did not declare", () => {
+    // O backend faz parte da identidade da corrida: uma pagina que pontuou em `webgpu` nao pode
+    // reportar resultado para uma corrida declarada `wasm`, porque o numero nao e comparavel.
+    //
+    // Os DOIS lados sao tipados como o literal `"wasm"`, entao esta divergencia nao existe em
+    // programa tipado — e a guarda nao e redundante por isso. O `status` atravessa a fronteira
+    // de uma PAGINA do navegador, onde o tipo nao amarra nada, e e contra esse produtor que ela
+    // vale. A coercao abaixo modela esse payload de fora, no mesmo idioma que
+    // `prediction-shards.test.ts` usa para uma linha com campo proibido.
+    const run = devRun();
+    let capturado: unknown;
+    try {
+      assertBenchmarkStatusMatchesRun(
+        statusFor(run, { backend: "webgpu" } as never),
+        run,
+      );
+    } catch (erro) {
+      capturado = erro;
+    }
+    expect(capturado).toMatchObject({ code: "SCORER_BACKEND_MISMATCH" });
+  });
+
   it("rejects a runtime-parity digest mismatch (embedded vs emitted)", () => {
     const run = devRun();
     expect(() =>

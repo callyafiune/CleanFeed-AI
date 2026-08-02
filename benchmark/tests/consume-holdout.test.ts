@@ -2314,6 +2314,51 @@ describe("validate-predictions — as seis recusas", () => {
   }
 
   it(
+    "refuses a shard whose bytes do not hash to the manifest",
+    async () => {
+      // Guarda de `commands/io.ts`, no leitor que TODO consumidor de predicao usa. O manifesto
+      // declara um sha256 e os bytes sao outros: sem esta recusa, um shard trocado depois da
+      // selagem passaria por todos os comandos rio abaixo.
+      const scenario = await buildScenario(await raiz(), SPEC);
+      const { caminho } = await paridadeCoerente(scenario);
+      const predicoes = await predicoesDoTest(scenario);
+      const manifesto = JSON.parse(
+        await readFile(join(predicoes, "manifest.json"), "utf8"),
+      ) as PredictionManifestV1;
+      manifesto.shards[0].sha256 = "a".repeat(64);
+      await writeFile(
+        join(predicoes, "manifest.json"),
+        `${JSON.stringify(manifesto, null, 2)}\n`,
+        "utf8",
+      );
+      expect(
+        await rejectionCode(
+          runValidatePredictions(opcoes(scenario, predicoes, caminho)),
+        ),
+      ).toBe("SHARD_DIGEST_MISMATCH");
+    },
+    TIMEOUT_MS,
+  );
+
+  it(
+    "refuses a file that is not valid JSON, naming the file",
+    async () => {
+      // A outra guarda de `io.ts`: o leitor de JSON. Qualquer insumo serve para alcanca-la, e o
+      // manifesto de paridade e o mais barato de corromper sem tocar em digest algum.
+      const scenario = await buildScenario(await raiz(), SPEC);
+      const { caminho } = await paridadeCoerente(scenario);
+      const predicoes = await predicoesDoTest(scenario);
+      await writeFile(caminho, "{ isto nao fecha", "utf8");
+      expect(
+        await rejectionCode(
+          runValidatePredictions(opcoes(scenario, predicoes, caminho)),
+        ),
+      ).toBe("JSON_INVALID");
+    },
+    TIMEOUT_MS,
+  );
+
+  it(
     "refuses an artifact that declares another partition",
     async () => {
       const scenario = await buildScenario(await raiz(), SPEC);
