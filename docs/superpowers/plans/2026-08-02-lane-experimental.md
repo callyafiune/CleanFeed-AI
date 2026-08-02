@@ -15,9 +15,12 @@ calibrado** é decisão de governança, não detalhe de implementação.
 | a TMR só é primária em `indicator`/`actions` **e** com ≥1 perfil | `src/inference/model-catalog.ts:99-108` |
 | `bundle-verified` e qualquer estado não promovido ⇒ só estilométrico | `src/inference/model-catalog.ts:118` |
 
-**A capacidade que falta, exatamente:** nenhum estado produz TMR primária com **zero** perfis
-verificados. Publicar o preview exige isso, e `pending` — o único `gateDecision` honesto para "não há
-decisão científica" — é justamente o que o empacotamento recusa.
+**A capacidade que falta, exatamente — e isto foi reescrito depois da medição da seção seguinte.**
+Pelo CATÁLOGO nenhum estado produz TMR primária com zero perfis; mas a ativação não passa pelo
+catálogo, e por lá o preview já roda. O que falta, então, não é capacidade de runtime: é um
+`gateDecision` que diga "não há decisão científica" **e** seja aceito no empacotamento. Hoje o único
+valor honesto para isso é `pending`, e `pending` é justamente o que a política recusa — daí a lane
+travar na publicação, não na execução.
 
 ## A pergunta que estava aberta — RESOLVIDA por medição, contra a minha hipótese
 
