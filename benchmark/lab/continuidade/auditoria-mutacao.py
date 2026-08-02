@@ -22,13 +22,23 @@ Exemplos:
   python .../auditoria-mutacao.py benchmark/holdout-ledger.ts fail \\
       benchmark/tests/consume-holdout.test.ts
 
+A lista de suites nao e escolha: a ferramenta ABORTA se qualquer suite que importa o modulo
+ficar de fora. Duas vezes a selecao por nome quase publicou lacuna inexistente — em
+`holdout-ledger.ts` (suite homonima omitida) e em `commands/publish-evidence.ts`, que nao TEM
+suite homonima e e exercitado por `tests/evidence-sanitizer.test.ts`.
+
 Tres exigencias do arnes, aprendidas errando:
   1. conferir a LINHA DE BASE verde antes de mutar — senao "vermelho" nao distingue mutacao
      eficaz de suite ja quebrada;
   2. restaurar num `finally`, e conferir por `diff` depois — o script muta o mesmo arquivo
      dezenas de vezes, e a restauracao e a unica parte que nao pode falhar;
   3. capturar BYTES e decodificar a mao — `text=True` usa cp1252 no Windows e o vitest emite
-     UTF-8, o que matou duas tentativas por falha do arnes e nao do alvo.
+     UTF-8, o que matou duas tentativas por falha do arnes e nao do alvo;
+  4. sobreviver a MORTE VIOLENTA. `finally` nao roda sob SIGTERM, e um `timeout 30` em volta desta
+     ferramenta deixou `commands/publish-evidence.ts` mutado na arvore. Daqui em diante a fonte
+     original vai para um arquivo `.auditoria-original` antes da primeira mutacao, SIGTERM/SIGINT
+     restauram, e a existencia do arquivo na entrada ABORTA — porque auditar um modulo que ficou
+     mutado mede a linha de base com uma guarda desligada, o que e pior que nao medir.
 
 Limite do metodo: so muta `throw` cujo codigo e literal ali. Guarda que lanca de dentro de um
 helper (o codigo vira parametro) aparece como NAO-MUTAVEL e tem de ser conferida a mao.
@@ -36,6 +46,7 @@ helper (o codigo vira parametro) aparece como NAO-MUTAVEL e tem de ser conferida
 
 import pathlib
 import re
+import signal
 import subprocess
 import sys
 
@@ -56,19 +67,70 @@ else:
 
 FONTE = RAIZ / MODULO
 
-# RECUSA rodar sem a suite dedicada ao modulo, se ela existir. Este erro foi cometido: a
-# auditoria de `holdout-ledger.ts` rodou sem `tests/holdout-ledger.test.ts` e reportou QUATRO
-# guardas sem teste; com a suite incluida sao duas, e a mais consequente
-# (`HOLDOUT_TUPLE_MISMATCH`) estava testada desde sempre. Escolher suites por conveniencia
-# produz achado falso, e achado falso publicado e pior que nenhum.
-irma = pathlib.Path("benchmark/tests") / (FONTE.stem + ".test.ts")
-if (RAIZ / irma).exists() and irma.as_posix() not in [s.replace("\\", "/") for s in SUITES]:
+def quem_importa(modulo: str) -> tuple[set[str], set[str]]:
+    """Arquivos de `benchmark/tests/` que importam o modulo, separados em rodaveis e auxiliares.
+
+    A busca e pelo caminho relativo com que `tests/` alcanca o modulo, entao ela encontra tanto
+    `../split-artifact.ts` quanto `../commands/publish-evidence.ts`.
+
+    LIMITE DECLARADO: um nivel. Um arquivo de fixture que importa o modulo aparece como
+    auxiliar e nao e rodavel por si; quem o roda tem de ser conferido a mao.
+    """
+    alvo = '"../' + modulo.replace("\\", "/").removeprefix("benchmark/") + '"'
+    achados = set()
+    for arquivo in sorted((RAIZ / "benchmark" / "tests").glob("*.ts")):
+        if alvo in arquivo.read_text(encoding="utf-8"):
+            achados.add(f"benchmark/tests/{arquivo.name}")
+    rodaveis = {a for a in achados if a.endswith(".test.ts")}
+    return rodaveis, achados - rodaveis
+
+
+# RECUSA rodar sem TODA suite que importa o modulo. A versao anterior desta guarda conferia so a
+# suite HOMONIMA (`tests/<modulo>.test.ts`), e isso deixa passar o caso que quase produziu o
+# segundo achado falso pelo mesmo mecanismo do primeiro: `commands/publish-evidence.ts` nao tem
+# suite homonima, e quem o exercita de ponta a ponta e `tests/evidence-sanitizer.test.ts`. Nome
+# de arquivo nao e prova de cobertura; quem importa o modulo e.
+_rodaveis, _auxiliares = quem_importa(MODULO)
+_faltando = sorted(_rodaveis - {s.replace("\\", "/") for s in SUITES})
+if _faltando:
     raise SystemExit(
-        f"ABORTADO: existe {irma.as_posix()} e ela nao esta nas suites. "
-        "Rodar sem a suite dedicada ao modulo reporta lacuna que nao existe."
+        "ABORTADO: estas suites importam o modulo e nao estao na lista:\n  "
+        + "\n  ".join(_faltando)
+        + "\nRodar sem elas reporta lacuna que nao existe."
+    )
+if _auxiliares:
+    print(
+        "AVISO: arquivos auxiliares importam o modulo e nao sao rodaveis por si; "
+        "confira a mao quem os roda:",
+        flush=True,
+    )
+    for _aux in sorted(_auxiliares):
+        print("  -", _aux, flush=True)
+
+RESGATE = FONTE.with_suffix(FONTE.suffix + ".auditoria-original")
+if RESGATE.exists():
+    raise SystemExit(
+        f"ABORTADO: {RESGATE.name} existe, entao uma execucao anterior morreu antes de restaurar.\n"
+        f"Restaure primeiro:  git checkout -- {MODULO}   (e apague {RESGATE.name})\n"
+        "Auditar um modulo mutado mede a linha de base com uma guarda desligada."
     )
 
 original = FONTE.read_text(encoding="utf-8")
+
+
+def restaura() -> None:
+    FONTE.write_text(original, encoding="utf-8", newline="")
+    RESGATE.unlink(missing_ok=True)
+
+
+def _restaura_e_morre(_sinal: int, _quadro: object) -> None:
+    restaura()
+    print("\nINTERROMPIDO: fonte restaurada", flush=True)
+    raise SystemExit(130)
+
+
+for _s in (signal.SIGINT, signal.SIGTERM):
+    signal.signal(_s, _restaura_e_morre)
 codigos = sorted(set(re.findall(r'"([A-Z][A-Z0-9_]{5,})"', original)))
 print(f"alvo: {MODULO} ({ERRO})", flush=True)
 print(f"suites: {', '.join(SUITES)}", flush=True)
@@ -146,13 +208,14 @@ try:
             resultados.append((codigo, "NAO-MUTAVEL"))
             print(f"  {codigo}: NAO-MUTAVEL", flush=True)
             continue
+        RESGATE.write_text(original, encoding="utf-8", newline="")
         FONTE.write_text(mutado, encoding="utf-8", newline="")
         saida = roda_suites()
         estado = "PEGA" if "failed" in saida else "SEM TESTE"
         resultados.append((codigo, estado))
         print(f"  {codigo}: {estado}", flush=True)
 finally:
-    FONTE.write_text(original, encoding="utf-8", newline="")
+    restaura()
     print("fonte restaurada", flush=True)
 
 pega = [c for c, s in resultados if s == "PEGA"]

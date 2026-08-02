@@ -998,6 +998,44 @@ falha; os outros 61 do arquivo passam, o que prova que ele alcança a guarda e q
 
 **Ordem para o resto, por consequência e não por contagem:**
 
+### Medição: as lacunas restantes são de dois tipos, e a razão de linhas não distingue
+
+Registrei como primeira pergunta da unidade nova se as 29 lacunas restantes eram intestabilidade
+estrutural (como `evaluate.ts`) ou lacuna simples. A pergunta é respondível por medição, e a
+medição é qual suíte importa quais pontos de entrada do módulo — não a razão de linhas, que aqui
+teria dado a resposta certa por acidente e a errada no caso que importa.
+
+| módulo | pontos de entrada | importados pela suíte | tipo |
+| --- | --- | --- | --- |
+| `cluster-exposure-ledger.ts` | 12 | 11 (fora: `parseExposureRequest` e dois auxiliares de caminho) | lacuna simples |
+| `corpus-import.ts` | 3 | 3 | lacuna simples |
+| `cross-validation.ts` | 5 | 5 | lacuna simples |
+| `corpus-source-audit.ts` | 2 | 2 | lacuna simples |
+| `commands/evaluate.ts` | 4 | 1 (`buildEvaluationItem`) | **estrutural** |
+| `commands/publish-evidence.ts` | 1 (`runPublishEvidence`) | 1, por suíte de OUTRO nome | lacuna simples |
+
+Ou seja: das lacunas restantes, a esmagadora maioria é **teste que falta**, não desenho que
+impede. Só `evaluate.ts` exige extrair a sequência de validação antes de poder ser testada.
+
+**E a última linha da tabela é um quase-erro meu, pelo mesmo mecanismo do primeiro.**
+`commands/publish-evidence.ts` não tem suíte homônima, então eu ia auditá-lo escolhendo suítes
+pelo nome — e quem o exercita de ponta a ponta é `tests/evidence-sanitizer.test.ts`, que importa
+`runPublishEvidence` e mantém um `describe` end-to-end, mais um arquivo de fixtures construído
+para isso. Eu estava a um comando de publicar "o comando que publica evidência não é exercitado",
+que é falso. A retratação anterior tinha me feito endurecer a ferramenta contra medição estreita,
+mas a guarda que eu escrevi confere só a suíte HOMÔNIMA — e nome de arquivo não é prova de
+cobertura. Agora a ferramenta calcula **quem importa o módulo** e recusa qualquer seleção que
+deixe um importador de fora. A mesma família de defeito, na segunda aparição, exigiu guarda mais
+forte que a primeira: o conserto mecânico de antes não tinha resolvido, como eu havia dito.
+
+**Segundo furo, este de arnês.** Rodei a ferramenta sob `timeout 30` para ver só o preâmbulo, e
+`timeout` mata com SIGTERM, que não roda `finally`: o módulo ficou **mutado na árvore**. Se eu
+tivesse rodado a auditoria em seguida, a linha de base seria "verde com uma guarda desligada" e
+todo resultado depois dela, lixo. A ferramenta passou a gravar a fonte original num arquivo de
+resgate antes da primeira mutação, a restaurar sob SIGTERM/SIGINT, e a **abortar** se encontrar o
+resgate na entrada — porque sobrevivente de morte violenta tem de ser tratado como árvore suja,
+não como ponto de partida.
+
 1. `commands/evaluate.ts` — **e aqui a natureza do achado é diferente das outras, o que só apareceu ao
    ir escrever o teste.** As guardas EXISTEM e funcionam; o risco é regressão silenciosa, como no
    `CLUSTER_LEDGER_LOCKED`. Corrigindo a minha própria formulação anterior: eu havia escrito que

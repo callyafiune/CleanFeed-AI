@@ -61,3 +61,6 @@ __pycache__/
 .pytest_cache/
 .ruff_cache/
 .codex-reviews/
+
+# resgate transitorio da auditoria de mutacao; se sobrar, a fonte ficou mutada
+*.auditoria-original
