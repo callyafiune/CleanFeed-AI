@@ -1187,6 +1187,21 @@ defeito 1 era um **valor** (`actionCeiling: shortText ? "indicator" : "hide"`), 
 codificada. **A auditoria não o teria encontrado.** A lição do defeito 1 é sobre deriva entre promessa
 escrita e código — que pede outro tipo de verificação, não esta.
 
+**Primeira medição de `src/`, e ela saiu NULA — registrada como nula.** `src/inference/model-bundle.ts`
+(12 códigos, fecho de 15 suítes) voltou com **zero mutável**: a detecção automática de lançador do meu
+lote escolheu `fail`, e aquele módulo usa `throw new RuntimeDescriptorError("CODIGO", ...)`. A
+ferramenta reportou zero-mutável em vez de fingir medição — que é o comportamento que ela deve ter —,
+mas a INVOCAÇÃO estava errada e o resultado não vale.
+
+Duas coisas para a próxima sessão, escritas para não serem redescobertas:
+
+1. o lançador de `src/` é uma CLASSE de erro codificado por módulo (`RuntimeDescriptorError` em
+   `model-bundle.ts`), não o helper `fail`. A detecção por contagem de `fail(` contra `throw new` erra
+   aqui, e o lote precisa passar a classe explicitamente;
+2. **ler saída truncada e agir sobre ela** me custou uma rodada inteira: montei a primeira invocação
+   sobre um fecho cortado por `head -12` quando ele tinha 15 suítes. O fecho passou a ser computado e
+   repassado por variável, sem eu olhar no meio. É a mesma família do `$?` depois de um pipe.
+
 A razão que sustenta a varredura de `src/` é mais simples e sobrevive: são **47 guardas codificadas
 nunca medidas**, e a ferramenta agora as alcança. Nada além disso.
 
