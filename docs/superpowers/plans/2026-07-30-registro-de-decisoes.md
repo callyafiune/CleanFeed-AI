@@ -1197,6 +1197,23 @@ que garantem que a extensão executa o modelo que ela diz executar. Um pacote cu
 batem com o lock é falha de integridade de cadeia, não bug de apresentação, e nenhuma das oito tem
 teste que prenda a recusa.
 
+### Parada explícita da sessão, e por quê
+
+O batimento foi **desarmado de propósito** (35 pulsos). Não foi falta de trabalho: as oito guardas de
+integridade estão mapeadas e disponíveis. Foi falta de capacidade de fazê-las COM VERIFICAÇÃO nesta
+sessão — escrever oito testes sem contexto para levá-los ao verde produziria exatamente o tipo de
+afirmação não medida que esta sessão passou corrigindo, e a regra que vale aqui é a das duas medições
+ou nenhuma alegação.
+
+Pela regra registrada, parar é ato explícito e não deriva. Fica então dito: nada em execução, árvore
+limpa, e o próximo passo é o mapa acima — direto, sem redescobrir.
+
+**O que esta sessão corrigiu de mim, para o próximo que ler:** duas retratações de escopo (dez módulos
+relatados como se fossem o repositório; dois módulos perdidos entre lotes), uma justificativa errada
+(o defeito 1 não sustenta a varredura por mutação, porque era um VALOR e não uma recusa codificada),
+uma medição nula por lançador errado, e três invocações montadas sobre saída truncada. Todas
+encontradas por medir de novo, nenhuma por lembrar melhor.
+
 **O mapa de mutações das oito, levantado para que a implementação não precise redescobri-lo.** Todas
 passam por `crossValidateRuntimeDescriptor`, que é exportada, e o arnês de
 `tests/unit/inference/model-bundle.test.ts` já tem `validSources()` — um clone dos quatro artefatos
