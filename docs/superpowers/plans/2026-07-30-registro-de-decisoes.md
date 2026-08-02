@@ -1031,17 +1031,24 @@ no mesmo laço e depende da mesma regra de empacotamento mais `CLASS_CLUSTERS_BE
 tenho prova de inalcançabilidade como nos outros dois casos, então não a declaro: fica nomeada, com
 a construção escrita — seria preciso todos os clusters de uma classe caírem na mesma dobra.
 
-### A guarda que eu instalei é METADE da guarda
+### RETRATAÇÃO: não havia 22 sítios, e a contagem sem leitura foi o erro
 
-Instalei o detector de `rejects.toThrow()` pelado e fechei os 21 sítios. Ao escrever o teste de
-`cross-validation` (que é síncrono) descobri que existem **22 `toThrow()` SÍNCRONOS pelados** no
-repositório, e o meu detector não olha para eles — ele exige o prefixo `rejects`.
+No commit anterior eu escrevi que a guarda anti-recaída era "metade da guarda", porque existiriam
+**22 `toThrow()` síncronos pelados** no repositório. Está errado, e o erro é meu e do mesmo tipo que
+eu venho perseguindo.
 
-É a mesma falha epistêmica, com a mesma consequência: `expect(() => f()).toThrow()` passa se
-qualquer coisa estourar, inclusive um erro anterior e sem relação. Fica como a próxima unidade,
-declarada aqui para não virar dívida silenciosa: estender o detector e percorrer os 22 sítios um
-por um, porque cada asserção precisa do código que aquele cenário quis afirmar — e três das minhas
-escolhas por leitura já caíram ao rodar.
+Contei com um regex que excluía apenas o prefixo `rejects`. Ao LER os 22 sítios, todos são
+`.not.toThrow()` — asserção positiva de que nada estourou, uso correto, e não existe erro a nomear
+ali. Medido direito, o repositório tem **zero** `toThrow()` pelado, síncrono ou assíncrono.
+
+Isso não anula o furo, só o descreve certo: a guarda cobria só o lado `rejects`, então um
+`expect(() => f()).toThrow()` pelado escrito amanhã passaria. O detector foi ampliado para as duas
+formas, com `.not.toThrow()` explicitamente fora, e provado contra amostra nas duas direções — e o
+conjunto de violações continua vazio, então a ampliação não pediu conserto de sítio algum.
+
+A lição é a que eu já tinha registrado e desobedeci: **contagem não é leitura.** Um regex que casa
+22 linhas não sabe o que aquelas linhas afirmam, e eu publiquei a conclusão antes de abrir uma. A
+regra das duas medições existe exatamente para isto, e aqui a segunda medição foi ler.
 
 ### Uma terceira categoria: guarda sem estado alcançável
 

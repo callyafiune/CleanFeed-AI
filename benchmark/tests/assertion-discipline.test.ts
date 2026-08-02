@@ -13,17 +13,32 @@ import { describe, expect, it } from "vitest";
 //
 // Daqui em diante a assercao tem de nomear o que recusa: `toMatchObject({ code })` para erro
 // codificado, ou `toThrow(/.../)` quando o que importa e a mensagem.
-const PELADO = /rejects\s*\.\s*toThrow\s*\(\s*\)/u;
+//
+// O detector cobre `rejects.toThrow()` E o sincrono `expect(() => f()).toThrow()`, porque a falha
+// e a mesma nos dois. Nao ha sitio sincrono a consertar hoje — a arvore esta em zero —, e a guarda
+// existe para o que alguem escreva amanha.
+//
+// `.not.toThrow()` fica FORA: aquilo afirma que nada estourou, e nao existe erro a nomear. A
+// distincao nao e cosmetica. Eu contei 22 sitios sincronos "pelados" com um regex que so excluia o
+// prefixo `rejects`, escrevi no registro que a guarda era metade, e ao LER os 22 vi que todos eram
+// `.not.toThrow()` — uso correto. A contagem sem leitura produziu o achado errado.
+const PELADO = /(?<!\.not)\s*\.\s*toThrow\s*\(\s*\)/u;
 
 const AQUI = dirname(fileURLToPath(import.meta.url));
 
 describe("assertion discipline", () => {
-  it("detects a bare rejects.toThrow() and accepts the specified forms", () => {
+  it("detects both bare forms and accepts the specified ones", () => {
     // O detector e provado contra amostra, nao so contra a arvore: uma arvore limpa passaria
     // por um detector que nunca casa com nada.
     expect(PELADO.test("await expect(f()).rejects.toThrow();")).toBe(true);
     expect(PELADO.test("await expect(f()).rejects.toThrow( );")).toBe(true);
+    expect(PELADO.test("expect(() => f()).toThrow();")).toBe(true);
+
+    expect(PELADO.test("expect(() => f()).not.toThrow();")).toBe(false);
     expect(PELADO.test("await expect(f()).rejects.toThrow(/CODE/u);")).toBe(
+      false,
+    );
+    expect(PELADO.test("expect(() => f()).toThrow(ClusterFoldError);")).toBe(
       false,
     );
     expect(
