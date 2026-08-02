@@ -276,6 +276,43 @@ describe("holdout ledger one-way lease", () => {
     );
     expect(alsoOther.status).toBe("started");
   });
+
+  // --- integridade do arquivo do ledger ------------------------------------------
+  //
+  // Uma auditoria de mutacao mostrou que estas duas guardas nao eram exercitadas por
+  // teste nenhum. Nao protegem a identidade do lease — essa e coberta —, e sim a
+  // integridade do arquivo que registra o lease: um ledger corrompido lido como valido, ou
+  // duas transicoes concorrentes sobre o mesmo arquivo.
+
+  it("refuses a ledger whose bytes are not valid JSONL, naming the line", async () => {
+    const { ledger } = await workspace();
+    // Uma linha valida e uma corrompida: o parser tem de recusar em vez de ignorar a
+    // segunda, senao um ledger truncado por escrita interrompida passa por completo.
+    await writeFile(
+      ledger,
+      '{"consumptionId":"c1","status":"started"}\nisto nao e json\n',
+      "utf8",
+    );
+    await expect(
+      assertHoldoutAvailable(ledger, identity()),
+    ).rejects.toMatchObject({ code: "HOLDOUT_LEDGER_CORRUPT" });
+    await expect(assertHoldoutAvailable(ledger, identity())).rejects.toThrow(
+      /line 2/u,
+    );
+  });
+
+  it("refuses a transition while another holds the lock", async () => {
+    const { ledger, activeSessionPath } = await workspace();
+    // O lock e um arquivo criado com `wx`, entao pre-criar equivale a outra transicao em
+    // curso. Sem esta guarda, dois processos escreveriam o mesmo lease.
+    await mkdir(dirname(ledger), { recursive: true });
+    await writeFile(`${ledger}.lock`, "", "utf8");
+    await expect(
+      beginHoldoutConsumption(ledger, identity(), FIXED_TIME, {
+        activeSessionPath,
+      }),
+    ).rejects.toMatchObject({ code: "HOLDOUT_LEDGER_LOCKED" });
+  });
 });
 
 // The one-use guarantee is over the blind BLOCK, not over the pair

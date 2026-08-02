@@ -976,8 +976,21 @@ suíte dedicada reporta lacuna inexistente. Testado: a recusa dispara. É a mesm
 linha de base verde — transformar a disciplina que eu falho em cumprir numa condição que o arnês impõe.
 
 **O que sobra de achado, e continua valendo:** `HOLDOUT_LEDGER_CORRUPT` (ledger danificado passando por
-válido) e `HOLDOUT_LEDGER_LOCKED` (proteção contra consumo concorrente) não têm teste. Duas guardas, não
-quatro, e nenhuma delas é a identidade do lease. A unidade encolhe junto com o achado.
+válido) e `HOLDOUT_LEDGER_LOCKED` (proteção contra consumo concorrente) não tinham teste. Duas guardas,
+não quatro, e nenhuma delas é a identidade do lease.
+
+**FECHADO no mesmo dia: as oito guardas mutáveis do ledger agora são exercitadas.** `LEDGER_CORRUPT`
+com uma linha válida seguida de uma corrompida — ignorar a segunda em silêncio é como um ledger truncado
+por escrita interrompida passaria por completo —, asserindo também que a mensagem nomeia a linha 2. E
+`LEDGER_LOCKED` pré-criando o arquivo de lock, que o módulo abre com `wx`, o que equivale a outra
+transição em curso.
+
+**E a lição que a comparação entre as três auditorias dá, mais forte que "inclua as suítes certas":**
+`commands/split.ts` estava correto porque só uma suíte exercita `runSplit` e eu a incluí.
+`split-artifact.ts` foi medido estreito — 2 de 6 suítes — **e o achado sobreviveu**, porque naquele eu
+havia feito uma SEGUNDA medição independente: grep pelos códigos em todo `benchmark/tests/`, vazio para
+os sete. O do ledger caiu porque teve **uma só** medição. O endurecimento da ferramenta (recusar sem a
+suíte irmã) é necessário e insuficiente; o que salvou foi **corroborar por método diferente**.
 
 ### A ferranta de mutação entendia o idioma minoritário — e o ledger do holdout tem quatro guardas sem teste (2026-08-02)
 

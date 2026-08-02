@@ -61,5 +61,10 @@ Medições até agora: `split-artifact.ts` 7 de 29 sem teste; `commands/split.ts
 reportou QUATRO lacunas; com a suíte, são duas, e a mais consequente estava testada desde sempre.
 Escolher suítes por conveniência produz achado falso, e achado falso publicado é pior que nenhum.
 
+**Corrobore por um SEGUNDO método antes de publicar lacuna.** A recusa por suíte irmã é necessária e
+insuficiente: o achado que caiu (ledger, quatro viraram duas) teve uma medição só; o que sobreviveu a
+uma seleção estreita de suítes (artefato, 2 de 6) sobreviveu porque também passou por um `grep` do
+código em todo `benchmark/tests/`. Duas medições por métodos diferentes, ou nenhuma afirmação.
+
 Limite do método: só muta lançamento cujo código é literal ali. Guarda que lança de dentro de um helper
 aparece como "não mutável" e tem de ser conferida à mão.
