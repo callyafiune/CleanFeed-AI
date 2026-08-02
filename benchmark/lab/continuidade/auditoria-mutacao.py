@@ -9,11 +9,18 @@ que apareceu em quatro rodadas de cross-review desta unidade.
 
 Uso:
   python benchmark/lab/continuidade/auditoria-mutacao.py                 # alvo padrao
-  python .../auditoria-mutacao.py <modulo> <ClasseDeErro> <suite> [suite...]
+  python .../auditoria-mutacao.py <modulo> <lancador> <suite> [suite...]
 
-Exemplo:
+O `lancador` e a CLASSE de erro quando o modulo faz `throw new XError("CODIGO", ...)`, ou o
+nome do HELPER quando faz `fail("CODIGO", ...)`. Os dois idiomas existem no repositorio, e a
+primeira versao desta ferramenta so entendia o primeiro: apontada para `holdout-ledger.ts`, que
+usa helper, ela devolveu dez "NAO-MUTAVEL" e ZERO informacao. Zero mutavel nao e zero lacuna.
+
+Exemplos:
   python .../auditoria-mutacao.py benchmark/commands/split.ts CommandError \\
       benchmark/tests/cli.test.ts benchmark/tests/corpus-import.test.ts
+  python .../auditoria-mutacao.py benchmark/holdout-ledger.ts fail \\
+      benchmark/tests/consume-holdout.test.ts
 
 Tres exigencias do arnes, aprendidas errando:
   1. conferir a LINHA DE BASE verde antes de mutar — senao "vermelho" nao distingue mutacao
@@ -67,6 +74,51 @@ def roda_suites() -> str:
     return (proc.stdout or b"").decode("utf-8", errors="replace")
 
 
+def muta(fonte: str, codigo: str) -> str:
+    """Desliga o lancamento daquele codigo, cobrindo os dois idiomas do repositorio.
+
+    `throw new XError("CODIGO"` -> `void new XError("CODIGO"`: mesmo construtor, sem lancar.
+
+    `fail("CODIGO"` -> `voidFail("CODIGO"`, com um `voidFail` inerte injetado. Nao serve trocar
+    por `void fail(...)`: `fail` lanca por dentro, e `void` avalia a chamada. O que desliga e
+    substituir o proprio lancador.
+    """
+    alvo = re.sub(
+        r"throw new " + re.escape(ERRO) + r"\(\s*\n(\s*)\"" + re.escape(codigo) + '"',
+        lambda m: "void new " + ERRO + "(\n" + m.group(1) + '"' + codigo + '"',
+        fonte,
+    )
+    if alvo != fonte:
+        return alvo
+
+    # idioma do helper: a chamada pode ter o codigo na mesma linha ou na seguinte
+    alvo = re.sub(
+        re.escape(ERRO) + r"\(\s*\n(\s*)\"" + re.escape(codigo) + '"',
+        lambda m: "voidFail(\n" + m.group(1) + '"' + codigo + '"',
+        fonte,
+    )
+    alvo = re.sub(
+        re.escape(ERRO) + r'\("' + re.escape(codigo) + '"',
+        'voidFail("' + codigo + '"',
+        alvo,
+    )
+    if alvo == fonte:
+        return fonte
+    # injeta o lancador inerte depois dos imports, sem depender de assinatura
+    linhas = alvo.split("\n")
+    for i, linha in enumerate(linhas):
+        if linha.startswith("import ") or linha.startswith("} from"):
+            continue
+        if linha.strip() == "" and i > 0:
+            linhas.insert(
+                i,
+                "const voidFail = (..._ignorado: unknown[]): never =>\n"
+                "  undefined as unknown as never;",
+            )
+            break
+    return "\n".join(linhas)
+
+
 resultados = []
 try:
     base = roda_suites()
@@ -76,11 +128,7 @@ try:
     print("linha de base verde", flush=True)
 
     for codigo in codigos:
-        mutado = re.sub(
-            r"throw new " + re.escape(ERRO) + r"\(\s*\n(\s*)\"" + re.escape(codigo) + '"',
-            lambda m: "void new " + ERRO + "(\n" + m.group(1) + '"' + codigo + '"',
-            original,
-        )
+        mutado = muta(original, codigo)
         if mutado == original:
             resultados.append((codigo, "NAO-MUTAVEL"))
             print(f"  {codigo}: NAO-MUTAVEL", flush=True)

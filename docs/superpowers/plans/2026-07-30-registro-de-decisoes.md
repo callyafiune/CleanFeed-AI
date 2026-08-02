@@ -950,6 +950,55 @@ achados. **Regra: guarda que decide por um critério enuncia o critério do cont
 suficiente que eu deduzi dele** — e o teste tem de conter um caso que a condição deduzida recusaria e o
 contrato aceita, que é exactamente o teste que faltava.
 
+### A ferranta de mutação entendia o idioma minoritário — e o ledger do holdout tem quatro guardas sem teste (2026-08-02)
+
+**Primeiro, um erro de método meu, porque ele quase virou conclusão falsa.** Apontei a auditoria para
+`benchmark/holdout-ledger.ts` e ela devolveu **dez "NAO-MUTAVEL" e zero informação**. Se eu tivesse
+lido isso como "nenhuma lacuna", teria publicado o oposto da verdade. **Zero mutável não é zero
+lacuna.**
+
+A causa: o repositório tem DOIS idiomas de lançamento — `throw new XError("CODIGO", ...)` e
+`fail("CODIGO", ...)` por helper — e a ferramenta só entendia o primeiro. Pior, o primeiro é o
+**minoritário**: 14 módulos usam o helper. Os dois módulos em que a ferramenta funcionou
+(`split-artifact.ts` e `commands/split.ts`) eram a exceção, e eu concluí sobre o alcance dela em vez de
+sobre o repositório.
+
+Generalizada, com um detalhe que importa: **não serve trocar `fail(...)` por `void fail(...)`**, porque
+`fail` lança por dentro e `void` apenas avalia. O que desliga é substituir o lançador por um inerte
+injetado no módulo. Fiz ensaio a seco antes de rodar, porque mutação que produz código inválido faz a
+suíte falhar por compilação e eu leria isso como "guarda exercitada" — falso positivo, que aqui é pior
+que falso negativo.
+
+**O resultado, em `benchmark/holdout-ledger.ts`: oito guardas mutáveis, quatro exercitadas, QUATRO sem
+teste.**
+
+| guarda | estado | por que importa |
+|---|---|---|
+| `HOLDOUT_ALREADY_CONSUMED` | exercitada | — |
+| `HOLDOUT_LEDGER_ABSENT` | exercitada | — |
+| `HOLDOUT_SESSION_TERMINAL` | exercitada | — |
+| `HOLDOUT_SESSION_UNKNOWN` | exercitada | — |
+| **`HOLDOUT_TUPLE_MISMATCH`** | **sem teste** | é a guarda que vincula o consumo à CONFIGURAÇÃO arrendada; sem ela, o bloco cego pode ser consumido para uma configuração diferente da que pediu o lease |
+| **`HOLDOUT_LEDGER_CORRUPT`** | **sem teste** | ledger danificado passando por válido |
+| **`HOLDOUT_LEDGER_LOCKED`** | **sem teste** | proteção contra consumo concorrente |
+| **`HOLDOUT_FAILURE_CODE_INVALID`** | **sem teste** | código de falha arbitrário entrando no ledger |
+
+`EEXIST` e `ENOENT` não são guardas do módulo — são códigos de erro do sistema de arquivos, e a
+ferramenta os lista como não mutáveis corretamente.
+
+**Isto NÃO é do E2**, que está commitado. É fluxo de achados novo, num módulo que a unidade não tocou, e
+o mérito é da ferramenta ser versionada e repetível sem depender da cota do revisor.
+
+**Fica como UNIDADE PRÓPRIA, com a ordem ditada por consequência e não por facilidade:**
+`HOLDOUT_TUPLE_MISMATCH` primeiro, porque a falha dela não é teste vermelho — é holdout consumido para
+a configuração errada, e isso é irreversível. Depois `LEDGER_CORRUPT` e `LEDGER_LOCKED`, e por fim
+`FAILURE_CODE_INVALID`.
+
+**E fica um alvo maior medido:** há guardas codificadas em pelo menos dez módulos, com
+`cluster-exposure-ledger.ts` em 29 e `corpus-import.ts` em 14. A ferramenta agora alcança os dois
+idiomas, então essa varredura é possível — e a hipótese de trabalho, depois de dois módulos medidos com
+7/29 e 4/8 sem teste, é que a taxa não é baixa.
+
 ### A auditoria de mutação aplicada ao caminho do COMANDO (2026-08-02)
 
 Com a rodada 13 bloqueada por cota, a ferramenta versionada foi generalizada (módulo, classe de erro e

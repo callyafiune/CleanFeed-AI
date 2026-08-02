@@ -45,5 +45,16 @@ Três exigências do arnês, aprendidas errando:
    de vezes;
 3. **capturar bytes e decodificar à mão** — `text=True` usa cp1252 no Windows e o vitest emite UTF-8.
 
-Limite do método: só muta `throw` cujo código é literal ali. Guarda que lança de dentro de um helper
+**Dois idiomas de lançamento**, e o segundo argumento diz qual: a CLASSE de erro para
+`throw new XError("CODIGO", ...)`, ou o nome do HELPER para `fail("CODIGO", ...)`. O idioma do helper é
+o majoritário — 14 módulos — e a primeira versão desta ferramenta só entendia o outro, devolvendo dez
+"NAO-MUTAVEL" e zero informação em `holdout-ledger.ts`. **Zero mutável não é zero lacuna.**
+
+Para o helper, não serve `void fail(...)`: `fail` lança por dentro e `void` só avalia. A mutação
+substitui o lançador por um inerte injetado no módulo.
+
+Medições até agora: `split-artifact.ts` 7 de 29 sem teste; `commands/split.ts` 3 de 5;
+`holdout-ledger.ts` 4 de 8.
+
+Limite do método: só muta lançamento cujo código é literal ali. Guarda que lança de dentro de um helper
 aparece como "não mutável" e tem de ser conferida à mão.
