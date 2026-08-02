@@ -16,7 +16,10 @@
 import { describe, expect, it } from "vitest";
 
 import { parseCalibrationProfilesFileV1 } from "../../contracts/calibration-profile.ts";
-import { parseModelReleaseDescriptorV1 } from "../../contracts/model-release.ts";
+import {
+  computeCalibrationSetDigest,
+  parseModelReleaseDescriptorV1,
+} from "../../contracts/model-release.ts";
 import {
   computeRuntimeParityDigest,
   parseRuntimeParityManifestV1,
@@ -465,5 +468,76 @@ describe("contratos selados — forma e campo dos outros tres parsers", () => {
         blockingReasons: [],
       }),
     ).rejects.toMatchObject({ code: "SOURCE_READINESS_STATE_INVALID" });
+  });
+});
+
+// ---------------------------------------------------------------------------
+// A lane `experimental`: o estado publicavel do preview NAO CALIBRADO.
+//
+// Desenho em `docs/superpowers/plans/2026-08-02-lane-experimental.md`. Cada invariante recusa uma
+// forma diferente de alegar o que o preview nao tem, e o teste do valido vem primeiro para que as
+// quatro recusas sejam da mutacao e nao do artefato.
+// ---------------------------------------------------------------------------
+
+describe("lane experimental", () => {
+  async function previewValido(): Promise<Record<string, unknown>> {
+    const { release } = await bundleInputFor("reject");
+    const base = release as unknown as Record<string, unknown>;
+    // Um reject tem `profileDigests: []` e evidencia/data preenchidas; o preview e o mesmo corpo
+    // com decisao `pending`, sem evidencia, e com o `calibrationSetDigest` da lista VAZIA — que o
+    // contrato recomputa, entao ele nao pode ser copiado de outro descritor.
+    return {
+      ...base,
+      gateDecision: "pending",
+      rolloutState: "experimental",
+      evidenceDigest: null,
+    };
+  }
+
+  it("accepts a coherent experimental preview", async () => {
+    await expect(
+      parseModelReleaseDescriptorV1(await previewValido()),
+    ).resolves.toMatchObject({ rolloutState: "experimental" });
+  });
+
+  it("refuses a preview that claims a scientific decision", async () => {
+    await expect(
+      parseModelReleaseDescriptorV1({
+        ...(await previewValido()),
+        gateDecision: "indicator-only",
+      }),
+    ).rejects.toMatchObject({ code: "RELEASE_STATE_INVALID" });
+  });
+
+  it("refuses a preview that declares a profile", async () => {
+    // Nao basta trocar a lista: o contrato amarra `calibrationSetDigest` ao digest canonico dela,
+    // entao a forja tem de re-selar — senao a recusa vem da amarra do digest e prova outra guarda.
+    const preview = await previewValido();
+    const perfis = ["a".repeat(64)];
+    await expect(
+      parseModelReleaseDescriptorV1({
+        ...preview,
+        profileDigests: perfis,
+        calibrationSetDigest: await computeCalibrationSetDigest(perfis),
+      }),
+    ).rejects.toMatchObject({ code: "RELEASE_STATE_INVALID" });
+  });
+
+  it("refuses a preview that binds scientific evidence", async () => {
+    await expect(
+      parseModelReleaseDescriptorV1({
+        ...(await previewValido()),
+        evidenceDigest: "b".repeat(64),
+      }),
+    ).rejects.toMatchObject({ code: "RELEASE_STATE_INVALID" });
+  });
+
+  it("refuses a preview with no issuedAt, because nothing could expire it", async () => {
+    await expect(
+      parseModelReleaseDescriptorV1({
+        ...(await previewValido()),
+        issuedAt: null,
+      }),
+    ).rejects.toMatchObject({ code: "RELEASE_STATE_INVALID" });
   });
 });

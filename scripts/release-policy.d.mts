@@ -7,10 +7,21 @@ export interface ReleasePackagingPolicy {
   maximumActionCeiling: MaximumActionCeiling;
 }
 
-/** The structural slice of the release descriptor the policy reads. */
+/**
+ * The structural slice of the release descriptor the policy reads.
+ *
+ * ATENCAO: as duas enumeracoes abaixo sao COPIA A MAO de `RolloutState` e `GateDecision` em
+ * `contracts/model-release.ts`, e acrescentar um estado exige mexer nos DOIS lugares.
+ *
+ * Importar o tipo foi tentado e nao serve: este `.d.mts` pertence ao projeto `tsconfig.node.json`,
+ * e importar de `contracts/` arrasta aquele diretorio para um projeto com alvo e flags diferentes —
+ * o resultado sao dezenas de erros sem relacao com esta mudanca. A copia fica, declarada, porque
+ * copia silenciosa e o que envelhece.
+ */
 export interface ReleasePolicyDescriptor {
   gateDecision: "pending" | "reject" | "indicator-only" | "pass";
-  rolloutState: "bundle-verified" | "shadow" | "indicator" | "actions";
+  rolloutState:
+    "bundle-verified" | "shadow" | "experimental" | "indicator" | "actions";
   profileDigests: readonly string[];
   tokenizerDigest: string;
   evidenceDigest: string | null;

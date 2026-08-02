@@ -87,6 +87,37 @@ describe("resolveReleasePolicy — the pure decision matrix", () => {
       "RELEASE_DECISION_PENDING",
     );
   });
+
+  it("pending in the experimental lane packages the bundle capped at indicator", async () => {
+    // A UNICA excecao ao `pending` fecha-a-porta, e ela existe porque o runtime ja executa o
+    // preview nao calibrado: sem este estado a lane travava na PUBLICACAO, nao na execucao.
+    // Desenho em docs/superpowers/plans/2026-08-02-lane-experimental.md.
+    const { release, profilesFile } = await loadBranch("pending");
+    const preview = clone(release);
+    preview.rolloutState = "experimental";
+    expect(resolveReleasePolicy(preview, profilesFile, FUTURE)).toEqual({
+      includeTmr: true,
+      activeRuntimeKind: "bundle",
+      maximumActionCeiling: "indicator",
+    });
+  });
+
+  it("keeps every other pending rollout state failing closed", async () => {
+    // A excecao e do ESTADO, nao do `pending`: trocar a decisao sem trocar o estado nao abre nada.
+    const { release, profilesFile } = await loadBranch("pending");
+    for (const estado of [
+      "bundle-verified",
+      "shadow",
+      "indicator",
+      "actions",
+    ]) {
+      const mutated = clone(release);
+      mutated.rolloutState = estado as typeof mutated.rolloutState;
+      expect(() => resolveReleasePolicy(mutated, profilesFile, FUTURE)).toThrow(
+        "RELEASE_DECISION_PENDING",
+      );
+    }
+  });
 });
 
 describe("resolveReleasePolicy — teeth on every bypass", () => {

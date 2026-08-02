@@ -33,6 +33,9 @@ export async function requestModelDiagnostics(
 export const ROLLOUT_COPY: Record<RolloutState, string> = {
   "bundle-verified": "Bundle verificado; inativo no feed",
   shadow: "Modo sombra; sem apresentação",
+  // Diz o que e, sem alegar qualidade: o preview roda sem calibracao verificada, entao o
+  // texto nao pode sugerir medicao alguma.
+  experimental: "Preview experimental; sem calibração verificada",
   indicator: "Avisos autorizados",
   actions: "Ações visuais autorizadas",
 };

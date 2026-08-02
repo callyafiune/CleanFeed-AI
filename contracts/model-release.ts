@@ -7,7 +7,23 @@ import { computeCalibrationSetDigest } from "./calibration-profile.ts";
 const SHA256_PATTERN = /^[a-f0-9]{64}$/u;
 
 export type RolloutState =
-  "bundle-verified" | "shadow" | "indicator" | "actions";
+  | "bundle-verified"
+  | "shadow"
+  /**
+   * O preview NAO CALIBRADO, publicavel e sem alegacao cientifica.
+   *
+   * Existe porque o runtime ja o executa — `buildWorkerInitializePayload` carrega o manifesto
+   * quando nao ha calibracao e o usuario optou — mas nenhum `gateDecision` dizia "nao ha decisao"
+   * de forma que o empacotamento aceitasse: `pending` era recusado de saida. Sem este estado a
+   * lane travava na PUBLICACAO, nao na execucao.
+   *
+   * Deliberadamente NAO reutiliza `indicator-only`: aquele rotulo afirma uma decisao cientifica, e
+   * o preview nao tem nenhuma. O desenho esta em
+   * `docs/superpowers/plans/2026-08-02-lane-experimental.md`.
+   */
+  | "experimental"
+  | "indicator"
+  | "actions";
 export type GateDecision = "pending" | "reject" | "indicator-only" | "pass";
 
 export interface ModelReleaseDescriptorV1 {
@@ -86,6 +102,7 @@ const DESCRIPTOR_KEYS = [
 const ROLLOUT_STATES: readonly RolloutState[] = [
   "bundle-verified",
   "shadow",
+  "experimental",
   "indicator",
   "actions",
 ];
@@ -206,6 +223,35 @@ function assertRolloutInvariants(descriptor: ModelReleaseDescriptorV1): void {
         fail(
           "RELEASE_STATE_INVALID",
           "bundle-verified only pairs with a pending or reject gate",
+        );
+      }
+      break;
+    case "experimental":
+      // As quatro amarras que impedem o preview de alegar o que nao tem. Cada uma recusa uma
+      // forma diferente de mentira: decisao que nao existe, perfil que nao existe, evidencia que
+      // nao existe, e data de empacotamento ausente (sem ela nada pode expirar).
+      if (gateDecision !== "pending") {
+        fail(
+          "RELEASE_STATE_INVALID",
+          "an experimental preview carries no scientific decision, so gateDecision must be pending",
+        );
+      }
+      if (profileDigests.length !== 0) {
+        fail(
+          "RELEASE_STATE_INVALID",
+          "an experimental preview is uncalibrated and declares no profile",
+        );
+      }
+      if (evidenceDigest !== null) {
+        fail(
+          "RELEASE_STATE_INVALID",
+          "an experimental preview has no scientific evidence to bind",
+        );
+      }
+      if (issuedAt === null) {
+        fail(
+          "RELEASE_STATE_INVALID",
+          "an experimental preview requires issuedAt: it is a build fact, and what lets it expire",
         );
       }
       break;

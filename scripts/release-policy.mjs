@@ -67,6 +67,18 @@ export function resolveReleasePolicy(release, profilesFile, now = Date.now()) {
   const profiles = profilesFile.profiles;
 
   if (release.gateDecision === "pending") {
+    // Excecao UNICA e escrita: o preview experimental e o unico `pending` publicavel, e o contrato
+    // ja garantiu que ele nao declara perfil nem evidencia. O teto e `indicator` aqui e tambem no
+    // tipo de retorno de `decideExperimentalUncalibrated` — duas trancas, porque a promessa de
+    // `docs/model-validation.md` nao pode depender de uma so lembrar.
+    if (release.rolloutState === "experimental") {
+      assertTokenizerLocked(release.tokenizerDigest, "release");
+      return {
+        includeTmr: true,
+        activeRuntimeKind: "bundle",
+        maximumActionCeiling: "indicator",
+      };
+    }
     throw new Error("RELEASE_DECISION_PENDING");
   }
 
