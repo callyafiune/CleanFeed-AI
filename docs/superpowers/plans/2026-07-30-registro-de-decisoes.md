@@ -998,6 +998,37 @@ falha; os outros 61 do arquivo passam, o que prova que ele alcança a guarda e q
 
 **Ordem para o resto, por consequência e não por contagem:**
 
+### Decisão: a unidade nova começa pelo estrato, não pelo lote
+
+**Decido e registro** (classe do agente; o operador ratifica no marco): a ordem dos passos da metade
+em código da F1-5q muda, e `collectionBatch` é PARTIDO em vez de acompanhado.
+
+A razão é medida, não argumentada — `benchmark/lab/test_connectivity_feasibility.py`, com o código
+de produção:
+
+- `domainSource` está em `GROUP_KEYS` e une por valor compartilhado, então todo registro de um
+  domínio cai num único componente. Quatro domínios ⇒ quatro componentes de 25% do corpo.
+- O splitter do E2 coloca componente inteiro numa só partição, e a menor do desenho de cinco é 5%.
+  Logo o maior componente é **limite superior de viabilidade**, e 25% não cabe em 5%.
+- Cinco lotes por domínio produzem os MESMOS quatro componentes: o lote não compra viabilidade
+  enquanto o estrato unir. A contraprova, no mesmo arquivo, dá vinte componentes de 5% com o estrato
+  fora do agrupamento.
+
+Portanto o item que sustenta a viabilidade é a saída do `domainSource` do `GROUP_KEYS` — o que
+estava marcado como "depende da ratificação" e listado em segundo lugar. Enquanto ele não sai, os
+outros passos são reorganização de nome.
+
+**O que NÃO faço agora, e por quê.** Não mexo em `GROUP_KEYS`. Aquele contrato de conectividade é a
+peça central do E2, que está commitado e com rodada 13 de revisão adversarial pendente por cota até
+8 de agosto. Mudá-lo agora faria a rodada 13 revisar outra árvore que não a declarada. A mudança
+pertence à nova pré-inscrição, e o teste de estado que acompanha a medição falha no dia em que ela
+for feita — a falha é o sinal, não um defeito.
+
+**Erro meu na primeira medição, registrado porque quase virou achado publicado:** dei a mesma
+`source` a todas as linhas sintéticas e obtive "um componente só". `source` é o DOCUMENTO de origem
+(o prefixo `th_` do corpo real é de thread), um por registro. O resultado certo aparece quando o
+modelo sintético respeita isso — e o motivo do colapso é outro eixo.
+
 ### A varredura FECHOU: dez módulos, tudo medido, nada estimado
 
 | módulo | resultado final | o que resta, nomeado |
