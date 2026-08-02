@@ -1325,6 +1325,50 @@ describe("the ledger reads as empty only when it is provably new", () => {
     return sha256BytesHex(new TextEncoder().encode(canonicalJson(hashed)));
   }
 
+  it("refuses an event edited WITHOUT touching its declared eventDigest", async () => {
+    // A cadeia fecha contra o `eventDigest` DECLARADO do evento anterior
+    // (`expected = events[index - 1].eventDigest`), nao contra um recalculo dele. Logo o
+    // unico lugar que amarra o CONTEUDO de um evento ao seu digest e a checagem
+    // `computeEventDigest(event) !== event.eventDigest` em `validateEventShape`.
+    //
+    // Esta forja explora exatamente essa divisao: esvazia os `records` de um evento
+    // `holdout-consumed` e NAO mexe no `eventDigest` declarado. A cadeia continua fechada, a
+    // testemunha do keyring continua citando o mesmo digest de cauda, e o indice passaria a
+    // ver zero unidades queimadas — toda unidade que o test consumiu voltaria elegivel.
+    await burnATestClusterInTheTail();
+
+    const linhas = await ledgerLines();
+    const eventos = linhas.map(
+      (linha) => JSON.parse(linha) as Record<string, unknown>,
+    );
+    let alvo = -1;
+    for (let i = eventos.length - 1; i >= 0; i -= 1) {
+      const candidato = eventos[i] as Record<string, unknown>;
+      if (Array.isArray(candidato.records) && candidato.records.length > 0) {
+        alvo = i;
+        break;
+      }
+    }
+    expect(alvo).toBeGreaterThanOrEqual(0);
+    const evento = eventos[alvo] as Record<string, unknown>;
+    const digestDeclarado = evento.eventDigest;
+
+    // Esvazia o conteudo, preserva o digest declarado.
+    evento.records = [];
+    expect(evento.eventDigest).toBe(digestDeclarado);
+    // E a forja e COMPETENTE: o digest declarado deixou de casar o conteudo, mas a cadeia
+    // continua intacta, porque ninguem recalcula o elo anterior.
+    expect(eventDigestOf(evento)).not.toBe(digestDeclarado);
+
+    await writeFile(
+      paths().ledgerPath,
+      `${eventos.map((e) => JSON.stringify(e)).join("\n")}\n`,
+      "utf8",
+    );
+
+    await refusesEveryPath(paths(), "CLUSTER_LEDGER_EVENT_DIGEST_MISMATCH");
+  });
+
   it("refuses every eligibility path when the LAST line was removed", async () => {
     // The tail is where the newest exposures live, and it is the one direction the
     // hash chain cannot see: dropping the last line leaves a prefix whose every

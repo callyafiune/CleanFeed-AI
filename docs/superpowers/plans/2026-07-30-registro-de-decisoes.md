@@ -950,6 +950,75 @@ achados. **Regra: guarda que decide por um critério enuncia o critério do cont
 suficiente que eu deduzi dele** — e o teste tem de conter um caso que a condição deduzida recusaria e o
 contrato aceita, que é exactamente o teste que faltava.
 
+### Varredura de mutação em sete módulos, em worktrees isolados (2026-08-02)
+
+Sete agentes, um por módulo, **cada um em worktree próprio** — o único uso de paralelismo que a regra
+de concorrência desta sessão admite, porque a auditoria muta fontes e agentes na mesma árvore veriam as
+mutações uns dos outros. Isolamento **verificado durante a corrida**, não assumido: 8 worktrees ativos,
+24 processos, e a minha árvore em zero arquivos modificados. É o conserto da falha da rodada 5, onde eu
+soube do estrago pelo veredito.
+
+O mandato exigiu, por agente, as três coisas que me custaram erro nesta sessão: descobrir o idioma de
+lançamento (tudo "NÃO-MUTÁVEL" é zero informação, não zero lacuna), descobrir as suítes por `grep` em
+vez de adivinhar, e **duas medições por lacuna** — auditoria mais `grep` do código em todo
+`benchmark/tests/`. O agregador descartou o que não passou pelas duas.
+
+**Resultado: zero "sem medição", zero agentes com erro, e 31 lacunas corroboradas.**
+
+| módulo | exercitadas | lacunas corroboradas |
+|---|---|---|
+| `cluster-exposure-ledger.ts` | 17 | **10** |
+| `commands/evaluate.ts` | 2 | **8** |
+| `commands/publish-evidence.ts` | 2 | **5** |
+| `corpus-import.ts` | 2 | **3** (uma quarta caiu na corroboração) |
+| `cross-validation.ts` | 2 | **3** |
+| `corpus-source-audit.ts` | 10 | **1** |
+| `dataset-manifest.ts` | 9 | **0** |
+
+**O que eu VERIFIQUEI por leitura própria, porque relatório de agente não é medição.** Duas alegações
+do `cluster-exposure-ledger.ts`, e as duas se confirmam:
+
+1. **A cadeia do ledger fecha contra o digest DECLARADO, não contra um recálculo:**
+   `const expected = index === 0 ? null : events[index - 1].eventDigest`. Logo o único lugar que amarra
+   o CONTEÚDO de um evento ao seu digest é `computeEventDigest(event) !== event.eventDigest` em
+   `validateEventShape` — e **nenhum teste mencionava esse código**. Consequência concreta: esvaziar os
+   `records` de um evento `holdout-consumed` sem tocar o `eventDigest` declarado mantém a cadeia fechada
+   e a testemunha do keyring citando a mesma cauda, e o índice passaria a ver zero unidades queimadas —
+   tudo que o `test` consumiu voltaria elegível.
+2. **A regressão de `CLUSTER_LEDGER_LOCKED` seria DESTRUTIVA, não permissiva.** Sem a guarda, o
+   `EEXIST` cai adiante, `handle` fica `undefined`, `handle.close()` estoura, e o `finally` executa
+   `rm(lockPath, { force: true })` — apagando o lock da transação em andamento. A maioria das lacunas de
+   teste arrisca "entrada inválida aceita"; esta arrisca duas transações intercalando escrita num
+   arquivo append-only.
+
+**FECHADO agora, o de maior consequência:** teste para a amarração conteúdo↔digest, com forja competente
+— esvazia `records` e **preserva** o `eventDigest` declarado, de modo que a cadeia continua íntegra e só
+a checagem de conteúdo pode recusar. **Provado por mutação:** com a guarda desligada, apenas esse teste
+falha; os outros 61 do arquivo passam, o que prova que ele alcança a guarda e que nada mais a cobria.
+
+**Ordem para o resto, por consequência e não por contagem:**
+
+1. `commands/evaluate.ts` — `TEST_PARTITION_EXPECTED` aceita predições declaradas `development` como a
+   corrida do holdout, e `TEST_COMPLETENESS_FAILED` aceita um SUBCONJUNTO de `test`, que é precisamente
+   a seleção que melhora FPR. As duas selam relatório de release e gastam o lease.
+2. o resto de `cluster-exposure-ledger.ts` — restore de backup fabricado, `records: []` passando como
+   evento válido, tipo de evento trocado.
+3. `corpus-import.ts` — `REVIEW_LEDGER_EMPTY`: um dataset com **zero** entradas de revisão humana sela
+   como válido e assinado, e nada a jusante pega, porque `validate` só recomputa o digest dos bytes que
+   estão lá.
+4. `commands/publish-evidence.ts`, `cross-validation.ts`, `corpus-source-audit.ts`.
+
+**Nada disso é do E2**, que está commitado. É unidade própria, e o mérito é de a ferramenta ser
+versionada e repetível sem depender da cota do revisor.
+
+**Resíduo do paralelismo, e a limpeza é parte do trabalho.** A corrida deixou **seis worktrees** e
+**sete branches** de agente. Todos os seis worktrees estavam LIMPOS — o `finally` da ferramenta
+restaurou a fonte em cada cópia isolada, o que é a confirmação independente de que o arnês aguenta ser
+usado em paralelo. Antes de apagar as branches conferi `git rev-list --count cleanfeed-mvp..<branch>`
+para cada uma: zero commits à frente, então nada de trabalho único se perdeu. Branch de agente apagada
+sem essa conferência é trabalho jogado fora, e a pressa de limpar é o jeito mais fácil de destruir o que
+a corrida produziu.
+
 ### Retratação: o achado do ledger era metade do que eu disse (2026-08-02)
 
 **O que eu afirmei e commitei em `dbf52f7`:** quatro guardas do ledger do holdout sem teste, com
