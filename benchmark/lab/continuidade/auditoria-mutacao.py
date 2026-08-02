@@ -82,15 +82,33 @@ else:
 FONTE = RAIZ / MODULO
 
 def _importados_por(arquivo: pathlib.Path) -> set[str]:
-    """Modulos de `benchmark/` que este arquivo importa, resolvidos a caminho do repositorio."""
+    """Modulos de fonte que este arquivo importa, resolvidos a caminho do repositorio.
+
+    Cobre as TRES formas que o repositorio usa, e as tres foram necessarias:
+      * relativo com extensao — `../split.ts`, o idioma de `benchmark/`;
+      * relativo sem extensao;
+      * alias `@/x` -> `src/x`, o idioma de `tests/unit` e `tests/integration`.
+
+    A terceira forma foi o que revelou o furo: sem ela, um modulo de `src/` apontava ZERO suites e
+    a ferramenta o auditava em silencio, sem nada para medir.
+    """
     texto = arquivo.read_text(encoding="utf-8")
     alvos = set()
-    for relativo in re.findall(r'from\s+"((?:\./|\.\./)[^"]+\.ts)"', texto):
-        destino = (arquivo.parent / relativo).resolve()
-        try:
-            alvos.add(destino.relative_to(RAIZ).as_posix())
-        except ValueError:
-            continue
+
+    def registra(caminho: pathlib.Path) -> None:
+        for tentativa in (caminho, caminho.with_suffix(".ts"), caminho.with_suffix(".tsx")):
+            if tentativa.suffix in (".ts", ".tsx") and tentativa.exists():
+                try:
+                    alvos.add(tentativa.resolve().relative_to(RAIZ).as_posix())
+                except ValueError:
+                    pass
+                return
+
+    for relativo in re.findall(r'from\s+"((?:\./|\.\./)[^"]+)"', texto):
+        registra((arquivo.parent / relativo).resolve())
+    for aliased in re.findall(r'from\s+"@/([^"]+)"', texto):
+        registra((RAIZ / "src" / aliased).resolve())
+
     return alvos
 
 
@@ -111,10 +129,16 @@ def quem_dirige(modulo: str) -> tuple[set[str], set[str]]:
     todas as suites, e a auditoria fica caro. E o preco de medir certo; achado falso e pior.
     """
     modulo = modulo.replace("\\", "/")
+    # Tres arvores de FONTE, e nao so `benchmark/`: `contracts/` guarda os contratos selados e
+    # `src/` o runtime que faz cumprir as promessas do produto. Enquanto o grafo cobria so uma
+    # delas, uma aresta contrato->contrato ou src->src ficava invisivel, e um modulo de `src/`
+    # apontaria ZERO suites — a ferramenta o pularia em silencio, que e o balde de erro que ela ja
+    # foi endurecida para nao ter.
     fontes = [
         f
-        for f in RAIZ.glob("benchmark/**/*.ts")
-        if "tests" not in f.relative_to(RAIZ).parts
+        for arvore in ("benchmark", "contracts", "src")
+        for f in RAIZ.glob(f"{arvore}/**/*.ts")
+        if "tests" not in f.relative_to(RAIZ).parts and not f.name.endswith(".d.ts")
     ]
     grafo = {f.relative_to(RAIZ).as_posix(): _importados_por(f) for f in fontes}
 
@@ -127,10 +151,15 @@ def quem_dirige(modulo: str) -> tuple[set[str], set[str]]:
                 alcancam.add(quem)
                 mudou = True
 
+    # Duas arvores de TESTE: `benchmark/tests/` e `tests/` (unit e integration). A resolucao de
+    # import ja lida com qualquer profundidade, entao o que faltava era so procurar nos dois lugares.
     achados = set()
-    for arquivo in sorted((RAIZ / "benchmark" / "tests").glob("*.ts")):
+    candidatos = sorted((RAIZ / "benchmark" / "tests").glob("*.ts"))
+    if (RAIZ / "tests").exists():
+        candidatos += sorted((RAIZ / "tests").rglob("*.ts"))
+    for arquivo in candidatos:
         if _importados_por(arquivo) & alcancam:
-            achados.add(f"benchmark/tests/{arquivo.name}")
+            achados.add(arquivo.relative_to(RAIZ).as_posix())
     rodaveis = {a for a in achados if a.endswith(".test.ts")}
     return rodaveis, achados - rodaveis
 
