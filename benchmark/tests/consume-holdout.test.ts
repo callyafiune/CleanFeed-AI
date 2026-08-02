@@ -38,7 +38,10 @@ import {
   type ConsumeHoldoutOptions,
   type ConsumeHoldoutTestPage,
 } from "../commands/consume-holdout.ts";
-import { runEvaluate } from "../commands/evaluate.ts";
+import { buildIdentity, runEvaluate } from "../commands/evaluate.ts";
+import { sha256OfFile } from "../commands/io.ts";
+import { beginHoldoutConsumption } from "../holdout-ledger.ts";
+import type { SplitArtifact } from "../split-artifact.ts";
 import type { DatasetManifest } from "../dataset-manifest.ts";
 import { computeDatasetDigest, computeEvaluatorDigest } from "../digests.ts";
 import {
@@ -1807,14 +1810,16 @@ describe("consume-holdout one-way lease", () => {
 // ---------------------------------------------------------------------------
 // As guardas que `evaluate` aplica ao ARTEFATO DE PREDICAO, dirigidas direto.
 //
-// `runEvaluate` e o passo que sela o relatorio de release e fecha o lease, e o CLI o
-// despacha por conta propria (`benchmark/cli.ts`), entao um artefato de outra particao ou de
-// outra sessao chega a ele por caminho normal, sem passar por `consume-holdout`.
+// `runEvaluate` sela o relatorio de release e fecha o lease, e o CLI o despacha por conta
+// propria (`benchmark/cli.ts`), entao um artefato de outra particao ou de outra sessao chega a
+// ele por caminho normal, sem passar por `consume-holdout`.
 //
-// O arnes e barato porque `fitDirectory` sai de `dirname(frozenCalibrationPath)`, nao do
-// diretorio de predicoes: da para apontar as predicoes para qualquer lugar. E as tres guardas
-// abaixo ficam ANTES de qualquer comparacao de digest do manifesto, o que permite um
-// `datasetDigest` sintetico sem que a recusa venha pelo motivo errado.
+// O arnes e barato porque `fitDirectory` sai de `dirname(frozenCalibrationPath)`, e nao do
+// diretorio de predicoes: as predicoes podem morar em qualquer lugar.
+//
+// A ORDEM interna do comando decide o que cada teste precisa montar: particao, sessao declarada
+// no manifesto, completude, rotulos, retomada do lease e so entao o selo de governanca. Por isso
+// os testes de rotulo nao abrem sessao, e os de governanca abrem.
 // ---------------------------------------------------------------------------
 
 describe("evaluate — guardas do artefato de predicao", () => {
@@ -1842,18 +1847,41 @@ describe("evaluate — guardas do artefato de predicao", () => {
   };
 
   const CONSUMO = "consumo-sob-teste";
+  const SHARD = "shard-000.jsonl";
 
-  async function comManifesto(
+  function opcoes(scenario: Scenario, predicoes: string, consumo = CONSUMO) {
+    return {
+      datasetDirectory: scenario.options.datasetDirectory,
+      splitArtifactPath: scenario.options.splitArtifactPath,
+      frozenCalibrationPath: scenario.options.frozenCalibrationPath,
+      testPredictionsDirectory: predicoes,
+      testLabelsPath: scenario.options.testLabelsPath,
+      ledgerPath: scenario.ledgerPath,
+      consumptionId: consumo,
+      outputDirectory: join(scenario.workDirectory, "saida-sob-teste"),
+      bootstrapSeed: scenario.options.bootstrapSeed,
+      evaluatorRoot: scenario.evaluatorRoot,
+    };
+  }
+
+  async function congelado(
+    scenario: Scenario,
+  ): Promise<FrozenCalibrationArtifact> {
+    return JSON.parse(
+      await readFile(scenario.options.frozenCalibrationPath, "utf8"),
+    ) as FrozenCalibrationArtifact;
+  }
+
+  // Um manifesto SEM shard nenhum: valido de forma, e suficiente para as guardas que ficam antes
+  // de qualquer comparacao de digest do manifesto — o que permite digest sintetico aqui sem que a
+  // recusa venha pelo motivo errado.
+  async function escreveManifestoVazio(
+    scenario: Scenario,
     override: Partial<PredictionManifestV1>,
-  ): Promise<{ scenario: Scenario; predicoes: string }> {
-    const scenario = await buildScenario(await raiz(), SPEC);
+  ): Promise<string> {
     const predicoes = join(scenario.workDirectory, "predicoes-sob-teste");
     await mkdir(predicoes, { recursive: true });
-    // `shards: []` deixa o artefato SEM predicao nenhuma, que e valido de forma e e
-    // exatamente o que a guarda de completude tem de recusar.
-    const { splitDigest } = JSON.parse(
-      await readFile(scenario.options.splitArtifactPath, "utf8"),
-    ) as { splitDigest: string };
+    const { splitDigest } = await congelado(scenario);
     const manifesto: PredictionManifestV1 = {
       ...predictionManifest(
         "test",
@@ -1869,33 +1897,104 @@ describe("evaluate — guardas do artefato de predicao", () => {
       `${JSON.stringify(manifesto, null, 2)}\n`,
       "utf8",
     );
-    return { scenario, predicoes };
+    return predicoes;
   }
 
-  function opcoes(scenario: Scenario, predicoes: string) {
-    return {
-      datasetDirectory: scenario.options.datasetDirectory,
-      splitArtifactPath: scenario.options.splitArtifactPath,
-      frozenCalibrationPath: scenario.options.frozenCalibrationPath,
-      testPredictionsDirectory: predicoes,
-      testLabelsPath: scenario.options.testLabelsPath,
-      ledgerPath: scenario.ledgerPath,
-      consumptionId: CONSUMO,
-      outputDirectory: join(scenario.workDirectory, "saida-sob-teste"),
-      bootstrapSeed: scenario.options.bootstrapSeed,
-      evaluatorRoot: scenario.evaluatorRoot,
+  // Um artefato COMPLETO: uma predicao por id do `test`, num shard cujo sha256 e computado com a
+  // MESMA funcao que o leitor usa. Aqui os digests saem do artefato congelado, porque as guardas
+  // alcancadas daqui pra frente ficam DEPOIS das comparacoes de digest.
+  async function escrevePredicoes(
+    scenario: Scenario,
+    override: Partial<PredictionManifestV1> = {},
+    extras: { idExtra?: string; consumo?: string } = {},
+  ): Promise<string> {
+    const frozen = await congelado(scenario);
+    const predicoes = join(scenario.workDirectory, "predicoes-completas");
+    await mkdir(predicoes, { recursive: true });
+
+    const ids = [...scenario.testIds];
+    if (extras.idExtra !== undefined) ids.push(extras.idExtra);
+    const corpo = `${ids
+      .map((id) =>
+        JSON.stringify({
+          schemaVersion: 2,
+          id,
+          status: "scored",
+          documentRawScore: 0.9,
+          localizedRawScore: 0.9,
+          evidenceQuality: "sufficient",
+          reasonCode: "SCORED",
+          coverage: 1,
+          latencyMs: 20,
+          memoryBytes: 1000,
+        }),
+      )
+      .join("\n")}\n`;
+    await writeFile(join(predicoes, SHARD), corpo, "utf8");
+
+    const manifesto: PredictionManifestV1 = {
+      ...predictionManifest(
+        "test",
+        frozen.datasetDigest,
+        frozen.splitDigest,
+        frozen.model.bundleDigest,
+      ),
+      shardCount: 1,
+      shards: [
+        {
+          index: 0,
+          file: SHARD,
+          sha256: await sha256OfFile(join(predicoes, SHARD)),
+          recordCount: ids.length,
+        },
+      ],
+      holdoutConsumptionId: extras.consumo ?? CONSUMO,
+      ...override,
     };
+    await writeFile(
+      join(predicoes, "manifest.json"),
+      `${JSON.stringify(manifesto, null, 2)}\n`,
+      "utf8",
+    );
+    return predicoes;
+  }
+
+  // Os rotulos sao SINTETICOS, gravados pelo proprio cenario num diretorio temporario. Nada
+  // nestes testes le os rotulos reais do `test`.
+  async function comRotulos(
+    scenario: Scenario,
+    transforma: (linhas: string[]) => string[],
+  ): Promise<void> {
+    const caminho = scenario.options.testLabelsPath;
+    const linhas = (await readFile(caminho, "utf8"))
+      .split(/\r?\n/u)
+      .filter((linha) => linha.trim() !== "");
+    await writeFile(caminho, `${transforma(linhas).join("\n")}\n`, "utf8");
+  }
+
+  async function abreSessao(scenario: Scenario): Promise<string> {
+    const frozen = await congelado(scenario);
+    const artifact = JSON.parse(
+      await readFile(scenario.options.splitArtifactPath, "utf8"),
+    ) as SplitArtifact;
+    const sessao = await beginHoldoutConsumption(
+      scenario.ledgerPath,
+      buildIdentity(frozen, artifact),
+      FIXED_TIME,
+      { activeSessionPath: join(scenario.workDirectory, ACTIVE_SESSION_FILE) },
+    );
+    return sessao.consumptionId;
   }
 
   it(
     "refuses a prediction artifact that declares another partition",
     async () => {
-      // Duas amarras do esquema de predicao estreitam a forja possivel: as particoes de
-      // pontuacao sao `dev`/`cal-A`/`test` (o modulo mantem enumeracao PROPRIA, para poder
-      // discordar do splitter), e fora do `test` o `holdoutConsumptionId` tem de ser nulo.
-      // Logo o unico artefato de outra particao que chega a esta guarda e um `dev` sem
-      // sessao — e e ele que ela recusa.
-      const { scenario, predicoes } = await comManifesto({
+      // Duas amarras do esquema estreitam a forja possivel: as particoes de pontuacao sao
+      // `dev`/`cal-A`/`test` (o modulo mantem enumeracao PROPRIA, para poder discordar do
+      // splitter), e fora do `test` o `holdoutConsumptionId` tem de ser nulo. Logo o unico
+      // artefato de outra particao que chega a esta guarda e um `dev` sem sessao.
+      const scenario = await buildScenario(await raiz(), SPEC);
+      const predicoes = await escreveManifestoVazio(scenario, {
         partition: "dev",
         holdoutConsumptionId: null,
       });
@@ -1909,7 +2008,8 @@ describe("evaluate — guardas do artefato de predicao", () => {
   it(
     "refuses a test artifact sealed under another consumption id",
     async () => {
-      const { scenario, predicoes } = await comManifesto({
+      const scenario = await buildScenario(await raiz(), SPEC);
+      const predicoes = await escreveManifestoVazio(scenario, {
         holdoutConsumptionId: "outra-sessao-qualquer",
       });
       expect(
@@ -1922,12 +2022,157 @@ describe("evaluate — guardas do artefato de predicao", () => {
   it(
     "refuses a test artifact that covers only part of the partition",
     async () => {
-      // Nenhuma predicao cobre nenhum id do `test`. E o caso extremo da selecao que
-      // melhora FPR: pontuar um subconjunto e relatar como se fosse a particao.
-      const { scenario, predicoes } = await comManifesto({});
+      // Nenhuma predicao cobre nenhum id do `test`: o caso extremo da selecao que melhora FPR,
+      // pontuar um subconjunto e relatar como se fosse a particao.
+      const scenario = await buildScenario(await raiz(), SPEC);
+      const predicoes = await escreveManifestoVazio(scenario, {});
       expect(
         await rejectionCode(runEvaluate(opcoes(scenario, predicoes))),
       ).toBe("TEST_COMPLETENESS_FAILED");
+    },
+    TIMEOUT_MS,
+  );
+
+  it(
+    "refuses a prediction for an id outside the partition, by completeness",
+    async () => {
+      // A completude compara CONJUNTOS, entao um id a mais e recusado aqui. E por isso que
+      // `PREDICTION_UNKNOWN_ID`, logo adiante, nao tem estado alcancavel: para chegar la o
+      // conjunto predito teria de ser exatamente o do `test` e ainda conter um id sem registro,
+      // e `validateSplitArtifact` amarra cada assignment a um registro do dataset.
+      const scenario = await buildScenario(await raiz(), SPEC);
+      const predicoes = await escrevePredicoes(
+        scenario,
+        {},
+        { idExtra: "id-que-nao-pertence-ao-test" },
+      );
+      expect(
+        await rejectionCode(runEvaluate(opcoes(scenario, predicoes))),
+      ).toBe("TEST_COMPLETENESS_FAILED");
+    },
+    TIMEOUT_MS,
+  );
+
+  it(
+    "refuses a labels file holding a line that is not JSON",
+    async () => {
+      const scenario = await buildScenario(await raiz(), SPEC);
+      const predicoes = await escrevePredicoes(scenario);
+      await comRotulos(scenario, (linhas) => [...linhas, "isto nao e json"]);
+      expect(
+        await rejectionCode(runEvaluate(opcoes(scenario, predicoes))),
+      ).toBe("TEST_LABELS_INVALID");
+    },
+    TIMEOUT_MS,
+  );
+
+  it(
+    "refuses a labels file naming the same id twice",
+    async () => {
+      const scenario = await buildScenario(await raiz(), SPEC);
+      const predicoes = await escrevePredicoes(scenario);
+      await comRotulos(scenario, (linhas) => [...linhas, linhas[0]]);
+      expect(
+        await rejectionCode(runEvaluate(opcoes(scenario, predicoes))),
+      ).toBe("TEST_LABELS_DUPLICATE");
+    },
+    TIMEOUT_MS,
+  );
+
+  it(
+    "refuses a labels file that leaves a test id unlabelled",
+    async () => {
+      const scenario = await buildScenario(await raiz(), SPEC);
+      const predicoes = await escrevePredicoes(scenario);
+      await comRotulos(scenario, (linhas) => linhas.slice(1));
+      expect(
+        await rejectionCode(runEvaluate(opcoes(scenario, predicoes))),
+      ).toBe("TEST_LABELS_INCOMPLETE");
+    },
+    TIMEOUT_MS,
+  );
+
+  it(
+    "refuses a label that disagrees with the dataset record",
+    async () => {
+      const scenario = await buildScenario(await raiz(), SPEC);
+      const predicoes = await escrevePredicoes(scenario);
+      await comRotulos(scenario, (linhas) => {
+        const entradas = linhas.map(
+          (linha) => JSON.parse(linha) as { id: string; label: string },
+        );
+        // O outro rotulo vem do PROPRIO arquivo, para a divergencia ser entre valores do
+        // dominio em vez de uma string inventada, que cairia na guarda de forma.
+        const outro = entradas.find(
+          (entrada) => entrada.label !== entradas[0].label,
+        );
+        expect(outro).toBeDefined();
+        return [
+          JSON.stringify({ id: entradas[0].id, label: outro?.label }),
+          ...linhas.slice(1),
+        ];
+      });
+      expect(
+        await rejectionCode(runEvaluate(opcoes(scenario, predicoes))),
+      ).toBe("TEST_LABELS_DIVERGENT");
+    },
+    TIMEOUT_MS,
+  );
+
+  it(
+    "refuses a manifest declaring a backend the frozen run did not use",
+    async () => {
+      const scenario = await buildScenario(await raiz(), SPEC);
+      const consumo = await abreSessao(scenario);
+      const predicoes = await escrevePredicoes(
+        scenario,
+        { backend: "webgpu" },
+        { consumo },
+      );
+      expect(
+        await rejectionCode(runEvaluate(opcoes(scenario, predicoes, consumo))),
+      ).toBe("OBSERVED_BACKEND_INVALID");
+    },
+    TIMEOUT_MS,
+  );
+
+  it(
+    "refuses a Chrome the frozen run did not use",
+    async () => {
+      const scenario = await buildScenario(await raiz(), SPEC);
+      // Os dois lados desta comparacao estao pinados: o manifesto de release pelo parser, em
+      // runtime, e o artefato congelado pelo proprio TIPO, que fixa `chromeVersion` no literal
+      // do release. O estado so existe num ARQUIVO adulterado, e a forja tem de ser re-selada
+      // porque `artifactDigest` cobre o artefato sem ele.
+      const caminho = scenario.options.frozenCalibrationPath;
+      const bruto = JSON.parse(await readFile(caminho, "utf8")) as Record<
+        string,
+        unknown
+      >;
+      delete bruto.artifactDigest;
+      const adulterado = {
+        ...bruto,
+        scoringRuntime: {
+          ...(bruto.scoringRuntime as Record<string, unknown>),
+          chromeVersion: "999.0.0.0",
+        },
+      };
+      await writeFile(
+        caminho,
+        `${JSON.stringify(
+          { ...adulterado, artifactDigest: await canonicalSha256(adulterado) },
+          null,
+          2,
+        )}\n`,
+        "utf8",
+      );
+      // A sessao abre DEPOIS da forja: `chromeVersion` entra na tupla de identidade, entao uma
+      // sessao aberta antes divergiria na retomada e o teste provaria a guarda vizinha.
+      const consumo = await abreSessao(scenario);
+      const predicoes = await escrevePredicoes(scenario, {}, { consumo });
+      expect(
+        await rejectionCode(runEvaluate(opcoes(scenario, predicoes, consumo))),
+      ).toBe("OBSERVED_CHROME_INVALID");
     },
     TIMEOUT_MS,
   );

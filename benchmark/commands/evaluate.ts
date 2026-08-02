@@ -478,7 +478,11 @@ async function readTestLabels(
   return labels;
 }
 
-function buildIdentity(
+// Exportada para que um teste possa ABRIR a sessao com a mesma tupla que este comando exige
+// ao retomar. Copiar os dezesseis campos no teste seria a mesma copia a mao que a projecao
+// selada do split ja custou uma vez: envelhece em silencio e o teste passa afirmando outra
+// coisa.
+export function buildIdentity(
   frozen: FrozenCalibrationArtifact,
   artifact: SplitArtifact,
 ): HoldoutIdentity {
