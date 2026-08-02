@@ -1146,6 +1146,42 @@ Isso recalibra o resto do trabalho: **os 51 códigos sem menção não são 51 l
 triagem como resultado teria produzido o maior achado falso desta sessão. A ordem de trabalho
 continua a da triagem; a conclusão, só a da mutação.
 
+### `contracts/`: 25 guardas sem teste, e é o maior achado da varredura
+
+Depois de fechar `benchmark/` inteiro (25 módulos), enumerei o que ficara fora e achei duas
+superfícies: `contracts/` (26 códigos) e `src/` (47). `contracts/` **entra**, e não por simetria: são
+os contratos selados de que as afirmações científicas dependem — descritor de release, perfil de
+calibração, paridade de runtime, prontidão de fontes — e eu **dependi deles nesta própria sessão**,
+ao raciocinar que `actions` seria recusado pelo contrato e por isso usar `shadow` nos testes de
+`verify-evidence`.
+
+| módulo | exercitadas / sem teste |
+| --- | --- |
+| `contracts/calibration-profile.ts` | **0 / 15** |
+| `contracts/model-release.ts` | 1 / 3 |
+| `contracts/runtime-parity.ts` | **0 / 3** |
+| `contracts/source-readiness.ts` | **0 / 4** (mais 10 sem `throw` literal) |
+
+**Uma exercitada em quatro módulos de contrato.** A razão é estrutural e vale registrar: as suítes
+atravessam esses parsers a cada teste, sempre pelo caminho VÁLIDO. Parsear artefato bom prova que o
+parser aceita; não prova nenhuma das recusas. É a diferença entre cobertura de linha e cobertura de
+GUARDA, e é exatamente a distinção que a auditoria por mutação existe para medir.
+
+**A verificação que isso me obrigou a fazer contra mim mesmo:** `RELEASE_STATE_INVALID` aparece sem
+teste, e eu raciocinei com ela ao escrever `verify-evidence` — foi por confiar nela que escolhi
+`shadow` em vez de `actions`. O raciocínio estava certo (a leitura do contrato o sustenta), mas ele
+apoiava-se numa guarda cuja existência eu conferi e cujo funcionamento nenhum teste prendia.
+
+**Ordem de trabalho, por consequência e não por tamanho:** primeiro as quatro amarras de DIGEST e
+ESTADO — `PROFILE_DIGEST_MISMATCH`, `RELEASE_STATE_INVALID`, `RUNTIME_PARITY_DIGEST_MISMATCH`,
+`SOURCE_READINESS_DIGEST_MISMATCH` —, porque amarra de digest sem teste é o portão forjável que esta
+sessão passou fechando em todo o resto. As de campo e esquema vêm depois.
+
+**`src/` fica FORA por decisão declarada**, não por descuido: 47 códigos no runtime da extensão, onde
+um defeito é bug de produto e não medição científica que passa verde estando errada. Se o operador
+quiser aquela superfície medida, é outra unidade, e o custo é conhecido — ferramenta e método já
+existem.
+
 ### O lote fechado: 21 das 23 escritas, 2 nomeadas como invariante interna
 
 | módulo | antes | agora |
