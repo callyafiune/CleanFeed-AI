@@ -40,6 +40,8 @@ import {
 } from "../commands/consume-holdout.ts";
 import { buildIdentity, runEvaluate } from "../commands/evaluate.ts";
 import { sha256OfFile } from "../commands/io.ts";
+import { runValidatePredictions } from "../commands/validate-predictions.ts";
+import { computeRuntimeParityDigest } from "../../contracts/runtime-parity.ts";
 import { beginHoldoutConsumption } from "../holdout-ledger.ts";
 import type { SplitArtifact } from "../split-artifact.ts";
 import type { DatasetManifest } from "../dataset-manifest.ts";
@@ -2173,6 +2175,252 @@ describe("evaluate — guardas do artefato de predicao", () => {
       expect(
         await rejectionCode(runEvaluate(opcoes(scenario, predicoes, consumo))),
       ).toBe("OBSERVED_CHROME_INVALID");
+    },
+    TIMEOUT_MS,
+  );
+});
+
+// ---------------------------------------------------------------------------
+// `validate-predictions`: as seis recusas do comando que amarra o artefato de predicao ao
+// dataset, ao split e a paridade de runtime.
+//
+// A auditoria por mutacao mediu 0 de 6. O fecho daquele modulo tem duas suites — `cli` e
+// `cluster-exposure-ledger` — e nenhuma o dirige: a `cli` o alcanca na validacao de bandeiras.
+//
+// A ORDEM interna decide o que cada teste precisa ter valido: particao, dataset, split,
+// paridade, completude e so entao a sessao de holdout. Por isso as duas ultimas exigem um mundo
+// inteiro coerente, e as tres primeiras nao.
+// ---------------------------------------------------------------------------
+
+describe("validate-predictions — as seis recusas", () => {
+  const criados: string[] = [];
+
+  afterEach(async () => {
+    await Promise.all(
+      criados.splice(0).map((dir) => rm(dir, { recursive: true, force: true })),
+    );
+  });
+
+  async function raiz(): Promise<string> {
+    const dir = await mkdtemp(join(tmpdir(), "cf-validate-predicoes-"));
+    criados.push(dir);
+    return dir;
+  }
+
+  const SPEC: ScenarioSpec = {
+    scientificUse: "release",
+    visualDocument: 0.8,
+    realEvaluator: false,
+    testNegatives: 4,
+    testPositives: 4,
+    negativeTag: "LOW",
+  };
+  const SHARD = "shard-000.jsonl";
+  const CONSUMO = "consumo-validate-predicoes";
+
+  // Um manifesto de paridade COERENTE: o digest sai de `computeRuntimeParityDigest` sobre os oito
+  // campos, e nao de constante. Fixar um hex a mao daria um manifesto que o parser recusa, e o
+  // teste mediria o parser em vez da guarda.
+  async function paridadeCoerente(
+    scenario: Scenario,
+  ): Promise<{ caminho: string; digest: string }> {
+    const base = {
+      schemaVersion: 1 as const,
+      modelId: MODEL_ID,
+      modelVersion: MODEL_VERSION,
+      bundleDigest: BUNDLE,
+      aggregationVersion: AGGREGATION,
+      contentCompositionVersion: COMPOSITION,
+      tokenizerDigest: TOKENIZER,
+      inferenceCoreDigest: hex("inference-core"),
+    };
+    const digest = await computeRuntimeParityDigest(base);
+    const caminho = join(scenario.workDirectory, "runtime-parity.json");
+    await writeFile(
+      caminho,
+      `${JSON.stringify({ ...base, runtimeParityDigest: digest }, null, 2)}\n`,
+      "utf8",
+    );
+    return { caminho, digest };
+  }
+
+  async function predicoesDoTest(
+    scenario: Scenario,
+    override: Partial<PredictionManifestV1> = {},
+  ): Promise<string> {
+    const frozen = JSON.parse(
+      await readFile(scenario.options.frozenCalibrationPath, "utf8"),
+    ) as FrozenCalibrationArtifact;
+    const dir = join(scenario.workDirectory, "predicoes-validadas");
+    await mkdir(dir, { recursive: true });
+    const corpo = `${scenario.testIds
+      .map((id) =>
+        JSON.stringify({
+          schemaVersion: 2,
+          id,
+          status: "scored",
+          documentRawScore: 0.9,
+          localizedRawScore: 0.9,
+          evidenceQuality: "sufficient",
+          reasonCode: "SCORED",
+          coverage: 1,
+          latencyMs: 20,
+          memoryBytes: 1000,
+        }),
+      )
+      .join("\n")}\n`;
+    await writeFile(join(dir, SHARD), corpo, "utf8");
+    const manifesto: PredictionManifestV1 = {
+      ...predictionManifest(
+        "test",
+        frozen.datasetDigest,
+        frozen.splitDigest,
+        frozen.model.bundleDigest,
+      ),
+      shardCount: 1,
+      shards: [
+        {
+          index: 0,
+          file: SHARD,
+          sha256: await sha256OfFile(join(dir, SHARD)),
+          recordCount: scenario.testIds.length,
+        },
+      ],
+      holdoutConsumptionId: CONSUMO,
+      ...override,
+    };
+    await writeFile(
+      join(dir, "manifest.json"),
+      `${JSON.stringify(manifesto, null, 2)}\n`,
+      "utf8",
+    );
+    return dir;
+  }
+
+  function opcoes(
+    scenario: Scenario,
+    predicoes: string,
+    paridade: string,
+    extra: Record<string, unknown> = {},
+  ) {
+    return {
+      datasetDirectory: scenario.options.datasetDirectory,
+      splitArtifactPath: scenario.options.splitArtifactPath,
+      partition: "test" as const,
+      predictionsDirectory: predicoes,
+      runtimeParityPath: paridade,
+      ...extra,
+    };
+  }
+
+  it(
+    "refuses an artifact that declares another partition",
+    async () => {
+      const scenario = await buildScenario(await raiz(), SPEC);
+      const { caminho } = await paridadeCoerente(scenario);
+      const predicoes = await predicoesDoTest(scenario);
+      expect(
+        await rejectionCode(
+          runValidatePredictions({
+            ...opcoes(scenario, predicoes, caminho),
+            partition: "dev",
+          }),
+        ),
+      ).toBe("PREDICTION_PARTITION_MISMATCH");
+    },
+    TIMEOUT_MS,
+  );
+
+  it(
+    "refuses an artifact whose datasetDigest is not the split artifact's",
+    async () => {
+      const scenario = await buildScenario(await raiz(), SPEC);
+      const { caminho } = await paridadeCoerente(scenario);
+      const predicoes = await predicoesDoTest(scenario, {
+        datasetDigest: hex("outro-dataset"),
+      });
+      expect(
+        await rejectionCode(
+          runValidatePredictions(opcoes(scenario, predicoes, caminho)),
+        ),
+      ).toBe("PREDICTION_DATASET_MISMATCH");
+    },
+    TIMEOUT_MS,
+  );
+
+  it(
+    "refuses an artifact whose splitDigest is not the split artifact's",
+    async () => {
+      const scenario = await buildScenario(await raiz(), SPEC);
+      const { caminho } = await paridadeCoerente(scenario);
+      const predicoes = await predicoesDoTest(scenario, {
+        splitDigest: hex("outro-split"),
+      });
+      expect(
+        await rejectionCode(
+          runValidatePredictions(opcoes(scenario, predicoes, caminho)),
+        ),
+      ).toBe("PREDICTION_SPLIT_MISMATCH");
+    },
+    TIMEOUT_MS,
+  );
+
+  it(
+    "refuses an artifact scored under another runtime parity",
+    async () => {
+      // O manifesto de predicao declara o `PARITY` do cenario; o de paridade e coerente e portanto
+      // declara OUTRO digest. A divergencia e entre dois artefatos validos, que e a unica forma de
+      // provar esta guarda em vez do parser.
+      const scenario = await buildScenario(await raiz(), SPEC);
+      const { caminho } = await paridadeCoerente(scenario);
+      const predicoes = await predicoesDoTest(scenario);
+      expect(
+        await rejectionCode(
+          runValidatePredictions(opcoes(scenario, predicoes, caminho)),
+        ),
+      ).toBe("RUNTIME_PARITY_MISMATCH");
+    },
+    TIMEOUT_MS,
+  );
+
+  it(
+    "refuses test predictions with no ledger and no consumption id",
+    async () => {
+      // Daqui em diante o mundo tem de ser coerente ATE a completude, senao a recusa vem de uma
+      // guarda anterior: a paridade do manifesto passa a ser a computada.
+      const scenario = await buildScenario(await raiz(), SPEC);
+      const { caminho, digest } = await paridadeCoerente(scenario);
+      const predicoes = await predicoesDoTest(scenario, {
+        runtimeParityDigest: digest,
+      });
+      expect(
+        await rejectionCode(
+          runValidatePredictions(opcoes(scenario, predicoes, caminho)),
+        ),
+      ).toBe("HOLDOUT_SESSION_REQUIRED");
+    },
+    TIMEOUT_MS,
+  );
+
+  it(
+    "refuses test predictions sealed under another consumption id",
+    async () => {
+      const scenario = await buildScenario(await raiz(), SPEC);
+      const { caminho, digest } = await paridadeCoerente(scenario);
+      const predicoes = await predicoesDoTest(scenario, {
+        runtimeParityDigest: digest,
+        holdoutConsumptionId: "outra-sessao",
+      });
+      expect(
+        await rejectionCode(
+          runValidatePredictions(
+            opcoes(scenario, predicoes, caminho, {
+              ledgerPath: scenario.ledgerPath,
+              consumptionId: CONSUMO,
+            }),
+          ),
+        ),
+      ).toBe("HOLDOUT_SESSION_MISMATCH");
     },
     TIMEOUT_MS,
   );
