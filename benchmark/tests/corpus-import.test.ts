@@ -1095,6 +1095,21 @@ describe("ingest -> validate -> split integration (10k)", () => {
     ).rejects.toThrow(/COMPOSITION_FLOOR_NOT_APPLIED|pre-registered floor/u);
     await writeFile(manifestPath, releaseJson, "utf8"); // restore for isolation
 
+    // 3d. A seed que nao e a PRE-REGISTRADA e recusada, e a recusa vem antes de qualquer
+    // trabalho. O numero pre-registrado vive em `REBUILD_V3_POLICY.seeds.split`; aceitar
+    // outro poria um parametro escolhido pelo chamador num artefato cuja razao de existir e
+    // que os parametros foram fixados de antemao.
+    await expect(
+      runSplit({
+        datasetDirectory,
+        datasetAuditPath: join(validateOut, "dataset-audit.json"),
+        outputDirectory: join(root, "out", "split-seed-errada"),
+        seed: 999_999,
+      }),
+    ).rejects.toThrow(
+      /SPLIT_SEED_NOT_PRE_REGISTERED|pre-registered split seed/u,
+    );
+
     // 4a. A later record change invalidates the split artifact's datasetDigest.
     const tampered = parsedRecords.map((r) => ({ ...r }));
     tampered[0] = { ...tampered[0], text: `${tampered[0].text} adulterado` };

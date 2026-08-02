@@ -950,6 +950,47 @@ achados. **Regra: guarda que decide por um critério enuncia o critério do cont
 suficiente que eu deduzi dele** — e o teste tem de conter um caso que a condição deduzida recusaria e o
 contrato aceita, que é exactamente o teste que faltava.
 
+### A auditoria de mutação aplicada ao caminho do COMANDO (2026-08-02)
+
+Com a rodada 13 bloqueada por cota, a ferramenta versionada foi generalizada (módulo, classe de erro e
+suítes como argumento) e apontada para o módulo irmão mais consequente. A escolha do alvo foi por
+medição: `benchmark/split.ts` tem três `SplitConstraintError` **sem código nomeado** e
+`benchmark/split-audit.ts` **não lança** — empilha razões. O único irmão com guardas codificadas é
+`benchmark/commands/split.ts`, e é o caminho que o operador executa.
+
+**Resultado: cinco guardas, duas exercitadas, TRÊS sem teste.**
+
+| guarda | estado |
+|---|---|
+| `COMPOSITION_FLOOR_NOT_APPLIED` | exercitada |
+| `HELD_OUT_FAMILY_DISAGREEMENT` | exercitada |
+| `SPLIT_SEED_NOT_PRE_REGISTERED` | **sem teste** — e é a guarda que eu escrevi na rodada 11 para fechar um P1 |
+| `DATASET_AUDIT_MISMATCH` | **sem teste** |
+| `SPLIT_AUDIT_FAILED` | **sem teste** |
+
+A da seed dói: ela entrou como conserto de um P1 do cross-review, com registro e tudo, e **nunca foi
+exercitada**. É a mesma família que a rodada 12 me apontou — declarar conserto sem que nada alcance a
+guarda — e agora encontrada por ferramenta em vez de por revisor.
+
+**Feito:** teste no caminho do comando para a seed, com `seed: 999_999` recusada antes de qualquer
+trabalho (`corpus-import.test.ts`, caso 3d).
+
+**Registrado em vez de entregue meia-boca**, com a construção exata que provaria cada uma:
+
+- **`DATASET_AUDIT_MISMATCH`** exige que os digests do `dataset-audit.json` divirjam do manifesto
+  **sem** quebrar o auto-digest da auditoria — ou seja, alterar `recordsSha256` E recomputar
+  `auditDigest` sobre a identidade. Sem recomputar, uma checagem de digest anterior recusa e o teste
+  provaria outra coisa.
+- **`SPLIT_AUDIT_FAILED`** precisa de um corpus em que o splitter TENHA SUCESSO e a auditoria reprove.
+  O caminho conhecido é o que o próprio cross-review usou na rodada 9: um componente que atravessa o
+  último corte cai em `train` levando o tempo da banda de teste, e `earliest(test) > latest(train)`
+  falha. O splitter constrói isso sem notar; a auditoria é o único lugar que recusa. Montar esse corpus
+  no caminho de integração (diretório de dataset real, digests encadeados) é o custo, não a ideia.
+
+**Reachability, não cobertura:** as duas são alcançáveis — não são segundas fechaduras como
+`SPLIT_ARTIFACT_CUTOFFS_INVALID`. Portanto são lacuna de teste de verdade, e ficam como dívida nomeada
+com o caminho escrito, para não voltarem a ser descobertas de novo.
+
 ### Decisão: COMMITAR sem o PASS da rodada 13, porque a cota só volta em 8 de agosto (2026-08-02)
 
 **Medido:** a sonda do codex devolve "try again at Aug 8th, 2026 4:25 AM" — seis dias. Não é espera de

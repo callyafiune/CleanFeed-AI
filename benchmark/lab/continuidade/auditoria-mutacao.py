@@ -1,31 +1,58 @@
-"""Auditoria de mutacao das guardas do artefato de split.
+"""Auditoria de mutacao das guardas de um modulo.
 
-Para cada codigo de erro, desliga TODOS os `throw` daquele codigo trocando
-`throw new SplitArtifactError(` por `void new SplitArtifactError(` — mesma aridade, mesmo
-construtor, sem lancar — roda as suites e registra se algum teste ficou vermelho.
+Para cada codigo de erro do modulo, desliga TODOS os `throw` daquele codigo trocando
+`throw new <Erro>(` por `void new <Erro>(` — mesma aridade, mesmo construtor, sem lancar —
+roda as suites e registra se algum teste ficou vermelho.
 
-Guarda cuja remocao deixa a suite VERDE nao tem teste que a exercite: e o defeito que este
-cross-review encontrou quatro vezes, agora medido em lote em vez de um por vez.
+Guarda cuja remocao deixa a suite VERDE nao tem teste que a exercite: e a familia de defeito
+que apareceu em quatro rodadas de cross-review desta unidade.
 
-Captura BYTES e decodifica a mao: `text=True` usa cp1252 no Windows e o vitest emite UTF-8,
-o que matou as duas primeiras tentativas — falha do arnes, nao do alvo.
+Uso:
+  python benchmark/lab/continuidade/auditoria-mutacao.py                 # alvo padrao
+  python .../auditoria-mutacao.py <modulo> <ClasseDeErro> <suite> [suite...]
+
+Exemplo:
+  python .../auditoria-mutacao.py benchmark/commands/split.ts CommandError \\
+      benchmark/tests/cli.test.ts benchmark/tests/corpus-import.test.ts
+
+Tres exigencias do arnes, aprendidas errando:
+  1. conferir a LINHA DE BASE verde antes de mutar — senao "vermelho" nao distingue mutacao
+     eficaz de suite ja quebrada;
+  2. restaurar num `finally`, e conferir por `diff` depois — o script muta o mesmo arquivo
+     dezenas de vezes, e a restauracao e a unica parte que nao pode falhar;
+  3. capturar BYTES e decodificar a mao — `text=True` usa cp1252 no Windows e o vitest emite
+     UTF-8, o que matou duas tentativas por falha do arnes e nao do alvo.
+
+Limite do metodo: so muta `throw` cujo codigo e literal ali. Guarda que lanca de dentro de um
+helper (o codigo vira parametro) aparece como NAO-MUTAVEL e tem de ser conferida a mao.
 """
 
 import pathlib
 import re
 import subprocess
+import sys
 
 # Derivada do proprio arquivo, para a ferramenta sobreviver a clone: .../benchmark/lab/continuidade
 RAIZ = pathlib.Path(__file__).resolve().parents[3]
-FONTE = RAIZ / "benchmark/split-artifact.ts"
-SUITES = [
-    "benchmark/tests/split-artifact.test.ts",
-    "benchmark/tests/evidence-sanitizer.test.ts",
-]
 
+if len(sys.argv) >= 4:
+    MODULO = sys.argv[1]
+    ERRO = sys.argv[2]
+    SUITES = sys.argv[3:]
+else:
+    MODULO = "benchmark/split-artifact.ts"
+    ERRO = "SplitArtifactError"
+    SUITES = [
+        "benchmark/tests/split-artifact.test.ts",
+        "benchmark/tests/evidence-sanitizer.test.ts",
+    ]
+
+FONTE = RAIZ / MODULO
 original = FONTE.read_text(encoding="utf-8")
-codigos = sorted(set(re.findall(r'"(SPLIT_ARTIFACT_[A-Z_]+)"', original)))
-print(f"guardas encontradas: {len(codigos)}", flush=True)
+codigos = sorted(set(re.findall(r'"([A-Z][A-Z0-9_]{5,})"', original)))
+print(f"alvo: {MODULO} ({ERRO})", flush=True)
+print(f"suites: {', '.join(SUITES)}", flush=True)
+print(f"codigos encontrados: {len(codigos)}", flush=True)
 
 
 def roda_suites() -> str:
@@ -35,7 +62,7 @@ def roda_suites() -> str:
         stdout=subprocess.PIPE,
         stderr=subprocess.STDOUT,
         shell=True,
-        timeout=900,
+        timeout=1800,
     )
     return (proc.stdout or b"").decode("utf-8", errors="replace")
 
@@ -50,8 +77,8 @@ try:
 
     for codigo in codigos:
         mutado = re.sub(
-            r"throw new SplitArtifactError\(\s*\n(\s*)\"" + re.escape(codigo) + '"',
-            lambda m: "void new SplitArtifactError(\n" + m.group(1) + '"' + codigo + '"',
+            r"throw new " + re.escape(ERRO) + r"\(\s*\n(\s*)\"" + re.escape(codigo) + '"',
+            lambda m: "void new " + ERRO + "(\n" + m.group(1) + '"' + codigo + '"',
             original,
         )
         if mutado == original:
