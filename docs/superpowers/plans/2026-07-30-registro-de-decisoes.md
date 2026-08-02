@@ -998,38 +998,40 @@ falha; os outros 61 do arquivo passam, o que prova que ele alcança a guarda e q
 
 **Ordem para o resto, por consequência e não por contagem:**
 
-### Estado da varredura, por medição e não por estimativa
+### A varredura FECHOU: dez módulos, tudo medido, nada estimado
 
-| módulo | linha de base | agora | o que sobra |
-| --- | --- | --- | --- |
-| `split-artifact.ts` | — | fechado antes desta sessão | `SPLIT_AUDIT_FAILED` como dívida nomeada |
-| `commands/split.ts` | — | fechado antes desta sessão | aridade fixa da busca de cortes |
-| `holdout-ledger.ts` | — | fechado (após retratar 2 falsas) | — |
-| `commands/publish-evidence.ts` | 2 / 6 | **8 / 0** | — |
-| `commands/verify-published-evidence.ts` | não medido | **8 / 1** | `PROFILE_DIGESTS_MISMATCH`, inalcançável |
-| `commands/evaluate.ts` | 3 / 10 | **12 / 1** | `PREDICTION_UNKNOWN_ID`, inalcançável |
-| `corpus-import.ts` | 0 / 6 | **6 / 0** | — |
-| `cross-validation.ts` | — | `EMPTY_POPULATION` fechada | `TRAIN_MISSING_LABEL` e `FOLD_HALF_EMPTY` |
-| `cluster-exposure-ledger.ts` | 9 candidatas por menção | não medido por mutação | — |
-| `corpus-source-audit.ts` | 0 sem menção | não medido por mutação | — |
+| módulo | resultado final | o que resta, nomeado |
+| --- | --- | --- |
+| `split-artifact.ts` | fechado | `SPLIT_AUDIT_FAILED`: a forja exige mexer no gerador de 10k linhas |
+| `commands/split.ts` | fechado | aridade fixa da busca de cortes |
+| `holdout-ledger.ts` | fechado | — (2 achados falsos retratados) |
+| `commands/publish-evidence.ts` | **8 / 0** | — |
+| `commands/verify-published-evidence.ts` | **8 / 1** | `PROFILE_DIGESTS_MISMATCH`, inalcançável com prova |
+| `commands/evaluate.ts` | **12 / 1** | `PREDICTION_UNKNOWN_ID`, inalcançável com prova |
+| `corpus-import.ts` | **6 / 0** | 8 códigos que são motivos de rejeição, não guardas |
+| `cluster-exposure-ledger.ts` | **27 / 0** | `EEXIST`/`ENOENT`, que são errno em `catch` |
+| `cross-validation.ts` | `EMPTY_POPULATION` fechada | `TRAIN_MISSING_LABEL` e `FOLD_HALF_EMPTY`, invariante interna |
+| `corpus-source-audit.ts` | nunca foi lacuna | — |
 
-Duas linhas dessa tabela dizem **não medido** de propósito. Zero código sem menção não é zero
-lacuna, e enquanto a auditoria por mutação não rodar naqueles dois módulos eu não tenho medição —
-só ausência de evidência.
+Nenhuma linha diz "não medido". As duas que diziam foram medidas: `cluster-exposure-ledger.ts` por
+mutação com as onze suítes que o fecho transitivo aponta, e `corpus-source-audit.ts` por leitura —
+lá os dez códigos são motivos de bloqueio do relatório, há um único `throw` que reencaminha os
+códigos coletados, e o caso negativo dele já tinha teste. As lacunas que um agente havia reportado
+naquele módulo eram falsas, o que confirma a divergência que eu já havia sinalizado ao ver zero
+código sem menção.
 
-**O terceiro balde da ferramenta estava mentindo por omissão.** Ela reportava "não mutáveis pelo
-padrão", juntando duas coisas muito diferentes: um motivo de REJEIÇÃO (o módulo devolve o código em
-vez de lançar, e a suíte o confere no resultado) e uma guarda que lança de dentro de um helper. Em
-`corpus-import.ts` os oito não-mutáveis são todos do primeiro tipo — `rejected.push({code})` e
-`return "CODIGO"` —, e a suíte os confere em onze pontos. Só o segundo tipo é candidato a lacuna, e
-agora a saída da ferramenta diz isso.
+**O par de backup é o achado que mais valeu a pena escrever.** Adulterar o CONTEÚDO do ledger
+copiado deixa o MAC do manifesto válido e quebra o digest declarado; "consertar" o digest exige
+reescrever o manifesto, que é autenticado. Os dois testes juntos dizem o que nenhum diria sozinho:
+não há saída sem a chave. Restaurar um backup forjado é como se esconderia cluster queimado, e essa
+era a borda sem teste.
 
-**`TRAIN_MISSING_LABEL` e `FOLD_HALF_EMPTY` ficam como dívida nomeada, não como lacuna.** A
-mensagem de `FOLD_HALF_EMPTY` declara, no próprio código, que alcançá-la significa defeito naquele
-módulo e não propriedade da população — é asserção de invariante interna. `TRAIN_MISSING_LABEL` está
-no mesmo laço e depende da mesma regra de empacotamento mais `CLASS_CLUSTERS_BELOW_FOLDS`. Eu não
-tenho prova de inalcançabilidade como nos outros dois casos, então não a declaro: fica nomeada, com
-a construção escrita — seria preciso todos os clusters de uma classe caírem na mesma dobra.
+**O que a varredura custou em erros meus, todos de arnês e todos corrigidos:** `$?` capturado depois
+de um pipe (três `EXIT=0` que mediam o `tail`), uma fronteira por heurística que truncou metade de
+uma suíte, uma substring que continha a si mesma e duplicou um `export`, escape de heredoc aninhado,
+e âncoras envelhecidas pelo formatador entre a escrita e o patch seguinte. Nenhum deles chegou a um
+commit verde sem conserto, e a recuperação foi sempre `git checkout` — o que só funcionou porque
+cada passo virou commit antes do seguinte.
 
 ### RETRATAÇÃO: não havia 22 sítios, e a contagem sem leitura foi o erro
 
