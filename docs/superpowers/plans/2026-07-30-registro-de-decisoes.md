@@ -2979,6 +2979,21 @@ tipologia rende. Um XML de 20 MB com dez documentos dentro rende dez, não dez m
 arquivos) e `social-media` (3 arquivos) são os candidatos a vincular, e é isso que a medição seguinte
 apura.
 
+## FORMA DO ARTEFATO — DECIDIDA PELO OPERADOR em 2026-08-03: opção C, e a entrega é o MODELO
+
+O operador preencheu o campo do documento de corte, em sessão: *"a principal entrega agora é o modelo,
+não a extensão do chrome. e o modelo deve ser abstraído de toda questão técnica envolvendo a extensão do
+navegador."*
+
+É a **opção C** — detector com a tabela escopada por célula (ESTADO.md § 3.1) — com uma precisão de
+forma que A e B não tinham: o artefato é o **modelo** (pesos + tokenizer + model card + tabela), e a
+extensão vira consumidora downstream, fora da entrega principal. Com o campo preenchido, o gate de
+parada se dissolve; a fila de endurecimento **permanece** parada até o artefato existir, e o único
+documento de plano autorizado é o plano de entrega do modelo.
+
+Custo de reversão: escolher A ou B depois custa só o descarte do plano; o corpus e o pré-registro que C
+exige servem a qualquer caminho futuro (C4 preserva os blocos).
+
 ## Regras condicionais (bloco D) — decididas, executam sozinhas
 
 1. Célula < n mínimo → **sem cota**, nunca cota frouxa.

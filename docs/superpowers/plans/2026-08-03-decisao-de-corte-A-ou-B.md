@@ -168,18 +168,22 @@ uma contribuição de método, que é o que a área não tem.
 Nada abaixo é delegável: define o que é publicado externamente.
 
 ```
-Opção escolhida:        [ A ]  [ B ]  [ C — detector com a tabela escopada, ESTADO.md § 3.1 ]  [ nenhuma / encerrar ]
-Data:
-Decidida por:
+Opção escolhida:        [ A ]  [ B ]  [X] C — detector com a tabela escopada, ESTADO.md § 3.1
+Data: 2026-08-03
+Decidida por: operador, em sessão ("a principal entrega agora é o modelo, não a extensão do chrome")
+
+Sob C: a ENTREGA é o MODELO (pesos + tokenizer + model card + tabela por célula), abstraído de toda
+questão técnica de navegador. A extensão vira consumidora downstream, fora da entrega principal.
 
 Se A — B1 resolvido como:   [ parecer jurídico obtido ]  [ risco assumido por escrito ]
 Se A — piso ético julgado suficiente:  [ sim ]  [ não → vai para B ]
 
 Fora de escopo por esta decisão (marcar):
-  [ ] corpus dimensionado e ratificação de domainSource
-  [ ] pré-registro, cota m=4, cal-B, bloco cego, v2.0
-  [ ] fila de endurecimento
-  [ ] documentos de plano novos até o artefato existir
+  [ ] corpus dimensionado e ratificação de domainSource   → EM ESCOPO sob C
+  [ ] pré-registro, cota, bloco cego                       → EM ESCOPO sob C
+  [X] a extensão como entrega principal
+  [X] fila de endurecimento (parada até o artefato principal existir)
+  [X] documentos de plano novos — exceto o plano único de entrega do modelo
 ```
 
 **Enquanto este documento não estiver preenchido, o agente não abre unidade nova.** Parar é ato

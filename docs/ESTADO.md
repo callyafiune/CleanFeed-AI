@@ -113,6 +113,8 @@ O que "corpus inutilizado" significa — a semântica é **graduada**, nunca tud
 
 | vigente | quem |
 |---|---|
+| **a entrega principal é o MODELO** — pesos + tokenizer + model card + tabela por célula —, **abstraído de toda questão técnica de navegador**. A extensão é consumidora downstream, fora da entrega principal | OP |
+|---|---|
 | o preview experimental **não faz alegação de erro**, não executa `fit` certificador e não abre concessão; **R1 só começa na v2.0** | OP |
 | a única descrição de erro publicável antes de medição é a frase R7-correta: *"A taxa de erro desta versão no domínio de uso não foi estimada em holdout independente. Resultados de desenvolvimento não são estimativas publicáveis e não sustentam conclusão sobre autoria ou sobre pessoas."* | OP |
 | teto de ação **`indicator` estrutural** no caminho não calibrado (tipo de retorno pinado); a lane `experimental` é o único `pending` publicável — `profileDigests: []`, `evidenceDigest: null`, `issuedAt` obrigatório | código |
@@ -145,7 +147,7 @@ O que "corpus inutilizado" significa — a semântica é **graduada**, nunca tud
 | # | vigente | quem |
 |---|---|---|
 | | **decidir–registrar–ratificar**: o agente decide ancorado no escopo, registra com razão e custo de reversão, e não para. Ratificação obrigatória só antes de marco irreversível | OP |
-| | **GATE DE PARADA — exceção ao "não para":** enquanto o campo de `2026-08-03-decisao-de-corte-A-ou-B.md` estiver em branco, **nenhuma unidade nova**, a fila de endurecimento fica parada, e **nenhum plano novo** é escrito | OP |
+| | a **fila de endurecimento permanece parada** até o artefato principal existir; nenhum documento de plano além do plano único de entrega do modelo | OP |
 | | **nunca delegado**: D0; risco jurídico pessoal (B1); calendário; apertar botão de publicação externa; ler `test`/`cal-B`/ledger real; dinheiro além de R$60/mês | OP |
 | | **três etapas por unidade**: verificação de desenho antes do código · implementação contra o contrato · cross-review adversarial | OP |
 | | a etapa 3 é do **Fable** enquanto o crédito do codex não voltar; rodada do Fable não fecha dívida de codex | OP |
@@ -180,7 +182,6 @@ O que "corpus inutilizado" significa — a semântica é **graduada**, nunca tud
 | ratificar a **barreira de `cal-B`** (cluster exposto barrado das duas cegas, § 3.3) | a montagem do corpus novo |
 | re-rodar ou não o codex nas unidades do caminho selado revisadas **só pelo Fable** | no retorno do crédito do codex |
 | teto pretendido: 1,45 % (300 linhas em `test` por célula) ou 0,55 % (800) | o volume de coleta |
-| forma do artefato: **A** (preview sem alegação), **B** (avaliador), ou **detector com a tabela escopada** (§ 3.1) — o documento `2026-08-03-decisao-de-corte-A-ou-B.md` antecede a terceira forma e segue com o campo em branco | o escopo do repositório |
 
 ---
 
