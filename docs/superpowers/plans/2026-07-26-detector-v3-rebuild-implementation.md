@@ -1181,9 +1181,9 @@ passou a `tmr-aggregation-v3-other`. Além disso, os `profileDigest` das fixture
 `tests/fixtures/model-release/**` são o SHA-256 canônico do perfil **incluindo** as duas
 coordenadas, então foram recomputados (e com eles `release.calibrationSetDigest`); sem
 isso 34 testes em 7 arquivos ficam vermelhos com `profileDigest does not match the
-canonical digest`. Os dois planos de 2026-07-19 (fases 1 e 4) ainda citam
-`tmr-aggregation-v2` / `lexical-content-v1` em trechos de código: são **registro
-histórico** do que aquelas fases especificaram e não foram reescritos.
+canonical digest`. Os dois planos de 2026-07-19 (fases 1 e 4) citavam
+`tmr-aggregation-v2` / `lexical-content-v1` em trechos de código como registro histórico; foram
+**apagados na limpeza de 2026-08-03** e sobrevivem só no histórico do git.
 
 **A reversão da composição arrastou a mesma cadeia, e recomputá-la é o trabalho de verdade.**
 Voltar a `lexical-content-v1` moveu os oito digests derivados de novo — cinco `profileDigest`

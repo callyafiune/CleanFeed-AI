@@ -1,5 +1,9 @@
 # Manifesto de transplante — o dia zero do repositório novo
 
+> O estado vigente vive em `docs/ESTADO.md`, que vence este arquivo. Em particular, a decisão do § 5
+> tem hoje **três** formas (A, B, ou detector com a tabela escopada — `ESTADO.md` § 4), não as duas
+> abaixo.
+
 Escrito em 2026-08-03. O nome `cleanfeed` foi batizado para um filtro de feed do LinkedIn, produto que
 o projeto deixou de ser. O repo novo recebe o que faz sentido, sem o histórico de tentativa e erro, com
 o corpus zerado e com a alegação decidida **antes** da montagem.

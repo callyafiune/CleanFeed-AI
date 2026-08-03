@@ -1,5 +1,8 @@
 # CleanFeed AI
 
+> **O estado vigente do projeto vive em [docs/ESTADO.md](docs/ESTADO.md), que vence este arquivo** —
+> inclusive a seção "Estado atual" abaixo, que descreve o código como implementado.
+
 Extensão Chrome Manifest V3 que reduz ruído no feed com classificação **local e
 probabilística**. O MVP opera no LinkedIn e marca posts longos elegíveis com uma
 apresentação reversível. A classificação é probabilística e local: ela

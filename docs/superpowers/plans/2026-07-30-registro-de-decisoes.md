@@ -1,5 +1,9 @@
 # Registro de decisões — em vigor por delegação, ratificáveis nos marcos
 
+> **O estado vigente vive em `docs/ESTADO.md`, que é sobrescrito e vence este arquivo.** Este registro é
+> append-only e guarda razão, medição e retratação; parte do que ele contém já foi superada, e a lista do
+> que NÃO aplicar está em `ESTADO.md` § 6.
+
 **Modelo de governança (pedido do operador em 2026-07-30):** o agente decide ancorado no escopo do
 projeto, registra com razão e custo de reversão, e o trabalho **não para**. O operador ratifica ou
 reverte lendo este registro — e a ratificação só é *obrigatória* antes dos **marcos irreversíveis**

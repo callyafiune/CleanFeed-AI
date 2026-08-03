@@ -168,7 +168,7 @@ uma contribuição de método, que é o que a área não tem.
 Nada abaixo é delegável: define o que é publicado externamente.
 
 ```
-Opção escolhida:        [ A ]  [ B ]  [ nenhuma / encerrar ]
+Opção escolhida:        [ A ]  [ B ]  [ C — detector com a tabela escopada, ESTADO.md § 3.1 ]  [ nenhuma / encerrar ]
 Data:
 Decidida por:
 

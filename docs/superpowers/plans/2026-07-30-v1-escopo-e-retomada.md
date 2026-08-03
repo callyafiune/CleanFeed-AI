@@ -1,5 +1,9 @@
 # LEIA PRIMEIRO — escopo da v1.0 e retomada do trabalho
 
+> **Desde 2026-08-03, leia `docs/ESTADO.md` ANTES deste arquivo** — ele é a fonte da verdade e vence este
+> documento onde divergirem. O que segue valendo daqui é o COMO trabalhar (§ 6, § 6b, § 7, § 8); o estado
+> e o escopo descritos abaixo estão parcialmente superados.
+
 Documento de entrada para quem retoma o CleanFeed AI. Escrito em 2026-07-30, no fim de uma sessão
 longa, para que a próxima **não dependa do histórico dela**.
 
@@ -65,6 +69,9 @@ lugar do operador.
   delegável — o risco é pessoal do operador, não do projeto.
 
 ## 4. Ordem de leitura
+
+> **Superada em 2026-08-03: a ordem vigente é a de `docs/ESTADO.md` § 8.** A lista abaixo permanece
+> como estava por honestidade de registro.
 
 Tudo em `docs/superpowers/plans/`:
 

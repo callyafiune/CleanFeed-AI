@@ -1,5 +1,9 @@
 # Estado do projeto — 2026-07-30
 
+> **SUPERADO COMO ESTADO em 2026-08-03: o estado vigente vive em `docs/ESTADO.md`.** Este arquivo
+> permanece como a RAZÃO das três decisões de 2026-07-30 (Regime 2; a proteção escala com a alegação;
+> posição (a)) — não o leia como descrição do que vale hoje.
+
 **Para que serve:** este documento existe porque o raciocínio de três decisões grandes desta sessão
 vivia só na conversa. Uma sessão nova que leia isto, o `2026-07-30-registro-de-decisoes.md` e o
 `2026-07-30-plano-v1-minima.md` retoma o trabalho sem depender do histórico. Se algo aqui divergir do código,
