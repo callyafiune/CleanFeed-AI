@@ -1214,6 +1214,11 @@ relatados como se fossem o repositório; dois módulos perdidos entre lotes), um
 uma medição nula por lançador errado, e três invocações montadas sobre saída truncada. Todas
 encontradas por medir de novo, nenhuma por lembrar melhor.
 
+> **⚠️ ESTE MAPA FOI REFUTADO EM CINCO PONTOS pela etapa 1 de 2026-08-02.** Fica legível e não
+> editado — medição registrada não se corrige em silêncio —, mas **não o siga**: ver
+> § "As oito guardas de integridade do pacote, e o mapa que estava errado" abaixo. Ele foi escrito de
+> LEITURA e não de execução, e a frase de abertura contradiz a própria tabela dele.
+
 **O mapa de mutações das oito, levantado para que a implementação não precise redescobri-lo.** Todas
 passam por `crossValidateRuntimeDescriptor`, que é exportada, e o arnês de
 `tests/unit/inference/model-bundle.test.ts` já tem `validSources()` — um clone dos quatro artefatos
@@ -2427,6 +2432,123 @@ carrega, o splitter fecha o corpus por nada. Não há leitura em que os dois est
 splitter, com 782 de 783 referências não resolvendo) mostra que não é o ledger sendo simplesmente mais
 frouxo: são **duas teorias diferentes de unidade amostral** convivendo, cada uma argumentada no seu
 próprio docstring.
+
+## As oito guardas de integridade do pacote, e o mapa que estava errado (2026-08-02)
+
+Unidade só de teste: `tests/unit/inference/model-bundle.test.ts`. Nada em `src/`, `contracts/`,
+`models/` nem nos helpers mudou. **De 3 exercitadas / 8 sem teste para 11 / 0.**
+
+### O mapa anterior estava errado em cinco pontos, e a etapa 1 os achou
+
+O mapa foi escrito por mim, de leitura, na sessão anterior. Os erros, na ordem em que teriam custado:
+
+1. **"Todas passam por `crossValidateRuntimeDescriptor`" é falso para duas.**
+   `MANIFEST_SCHEMA_INVALID` e `SOURCE_LOCK_INVALID` são lançadas pelos parsers dentro de
+   `loadRuntimeDescriptor`, que o cross-validator **nunca chama**. A frase de abertura contradizia a
+   tabela do próprio mapa, cujas referências de linha apontavam para os helpers certos.
+2. **Silêncio sobre interceptação de parser — o caminho mais provável para oito testes verdes e
+   inúteis.** Mutar campo de release ou de perfil nas **fontes cruas** faz
+   `ModelReleaseError`/`CalibrationProfileError` dispararem antes, e a guarda nunca executa. Para
+   `CALIBRATION_SET_MISMATCH` a mutação sugerida pelo mapa **não toca a guarda**.
+3. **A mutação de `ROLLOUT_WITHOUT_PROFILES` descrevia um estado final, não uma forja de uma
+   mudança.** "Release promovido com `profiles.profiles = []`" é interceptado por
+   `PROFILE_SET_MISMATCH`. A única mutação única que alcança a guarda é virar `rolloutState` no
+   descritor selado **vazio**.
+4. **`validSources()` não alcança cinco das oito em uma mutação** — a baseline selada é
+   `bundle-verified` com zero perfis. O helper que fecha a lacuna, `tests/helpers/promoted-descriptor.ts`,
+   **já existia** e o mapa não o mencionava.
+5. **Omitia a alcançabilidade de três guardas** — o item abaixo, que é o achado maior.
+
+### Três guardas são inalcançáveis pelo caminho parseado, e mesmo assim NÃO são código morto
+
+`CALIBRATION_SET_MISMATCH`, `ROLLOUT_WITHOUT_PROFILES` e `BUNDLE_VERIFIED_WITH_PROFILES` **não podem
+disparar** num descritor vindo de `loadRuntimeDescriptor`. **Mas a razão não é o parser de release, e
+a minha primeira redação disto estava errada — a etapa 3 a corrigiu.**
+
+`parseModelReleaseDescriptorV1` constrange `rolloutState` contra `release.profileDigests` e **nunca
+contra o ARQUIVO de perfis**, que é de outro parser. Então um descritor plenamente parseado **pode**
+carregar `indicator` com arquivo vazio. O que fecha o caminho das duas guardas de rollout é
+`PROFILE_SET_MISMATCH` recusar antes delas — e isso significa que **reordenar as guardas reabre o
+caminho**, coisa que atribuir a prova ao parser esconderia.
+
+E para `CALIBRATION_SET_MISMATCH` não é "uma guarda anterior recusa": a igualdade de conjuntos que
+`PROFILE_SET_MISMATCH` força, mais o sort-e-dedupe dentro de `computeCalibrationSetDigest`, tornam a
+**condição em si** falsa. Ali nada recusa, porque não há o que recusar. Minha frase "sempre há uma
+guarda anterior que recusa primeiro" era exata em dois terços.
+
+**Mas elas têm chamador de produção:** `src/inference/inference-worker.ts` revalida o descritor que
+chega por `postMessage`, e o comentário dele já carrega a regra — o worker não pode verificar quem
+validou antes dele. Ali o domínio de entrada é "qualquer objeto clonável", incluindo releases que o
+parser nunca viu. Então **chamada direta ao cross-validator é o modelo fiel desse chamador**, não um
+atalho em volta do parser, e é materialmente diferente dos precedentes de guarda inalcançável do
+`benchmark/` (`PREDICTION_UNKNOWN_ID`, `PROFILE_DIGESTS_MISMATCH`), que não tinham entrada não
+confiável nenhuma. Os três testes dizem isso em comentário e **nenhum afirma alcançabilidade pelo
+caminho parseado**.
+
+### A armadilha de asserção, específica deste módulo
+
+`RuntimeDescriptorError` **não repete o código na mensagem** — ao contrário de
+`CleanFeedError("MODEL_LOAD_FAILED", "MODEL_LOAD_FAILED")`. Então `rejects.toThrowError("CODIGO")`
+falha **até contra o erro correto**, e essa falha empurra quem escreve para o `rejects` pelado, que
+passa para qualquer rejeição — inclusive a de outra guarda. Toda forja afirma `code` exato.
+
+A prova de que o mascaramento é real e já aconteceu aqui: o teste existente "never constructs the host
+when the descriptor JSON is invalid" **pretendia** `MANIFEST_SCHEMA_INVALID` com
+`bundleDigest = "not-a-sha"`, mas com aquele `throw` desligado o manifesto malformado seguia e
+`RELEASE_IDENTITY_MISMATCH` recusava de todo modo — `rejects.toBeDefined()` ficava verde. É por isso
+que a guarda constava sem teste apesar de o teste existir.
+
+### Medição de mutação: 8 de 8, um vermelho cada
+
+Linha de base verde antes de mutar (2497 na suíte inteira), uma guarda por corrida
+(`throw new RuntimeDescriptorError("CODIGO"` → `void new ...`, mesma aridade), fecho = **suíte
+inteira** para que nenhum consumidor do módulo fique fora, restauração em `finally` conferida por
+`diff` — idêntica.
+
+| guarda | vermelhos |
+|---|---:|
+| `MANIFEST_SCHEMA_INVALID` | 1 |
+| `SOURCE_LOCK_INVALID` | 1 |
+| `PROFILE_IDENTITY_MISMATCH` | 1 |
+| `DUPLICATE_PROFILE` | 1 |
+| `PROFILE_SET_MISMATCH` | 1 |
+| `CALIBRATION_SET_MISMATCH` | 1 |
+| `ROLLOUT_WITHOUT_PROFILES` | 1 |
+| `BUNDLE_VERIFIED_WITH_PROFILES` | 1 |
+
+**Exatamente um vermelho em cada** é o sinal que se queria: cada guarda é pega por um único teste, sem
+ambiguidade sobre qual teste exercita qual — e sem nenhum teste ficando vermelho por dano colateral.
+
+### Etapa 3 (Fable) — veredito (b), nenhum defeito de comportamento
+
+Ela reproduziu a linha de base rodando a suíte (2497) e verificou a tabela 8×1 analiticamente: desligar
+um `throw` só converte recusa em resolução, então só teste que **espera** recusa por aquela guarda pode
+ficar vermelho — e um `grep` dos oito códigos em `tests/` mostra que os únicos outros usos miram as
+reimplementações `.mjs` de `scripts/`, intocadas por mutação em `src/`. Nenhuma forja recusa pela guarda
+errada, nenhuma mutação toca dois campos, nenhuma violação de `structuredClone`.
+
+**O P1 era meu, e do exato tipo que esta unidade existe para eliminar: um comentário ensinando ordem de
+guardas falsa.** Eu escrevi que forjar o digest do arquivo "seria pego por `CALIBRATION_SET_MISMATCH`
+primeiro". Não seria — `PROFILE_SET_MISMATCH` dispara antes, porque está antes. A razão verdadeira de a
+mutação no lado do RELEASE ser superior é outra: com o `throw` desta guarda apagado, a forja pelo release
+**resolve** (vermelho mais forte), enquanto a forja pelo arquivo cairia numa recusa de código errado.
+O teste estava certo; o comentário ensinava mentira, no único lugar cujo produto é verdade sobre ordem.
+
+### Dívida registrada, fora do escopo desta unidade (regra condicional 3)
+
+As três guardas que **já** eram exercitadas — `ARTIFACT_MISMATCH`, `RELEASE_IDENTITY_MISMATCH`,
+`PROFILE_EXPIRED` — seguem afirmadas por `rejects.toBeDefined()` pelado. Elas passam sob a ordem atual,
+mas passariam também pela guarda errada se a ordem mudasse: é o mesmo padrão que manteve
+`MANIFEST_SCHEMA_INVALID` "com teste" e sem cobertura. Quatro asserções a apertar, unidade própria — não
+alarguei o escopo desta para não misturar medição.
+
+### Observação fora do escopo desta unidade, registrada para não se perder
+
+A cross-validação amarra o source lock **somente** por `sourceLock.artifacts`. `modelId`, `revision` e
+`baseUrl` são checados de esquema e **nunca cruzados** com o manifesto: um lock nomeando outro modelo
+com lista de artefatos idêntica passa. E `experimental` com perfis passa a cross-validação — só o
+parser o proíbe —, então o backstop do worker para aquele estado é apenas as checagens de conjunto.
+Não consertado aqui: é mudança em `src/`, e esta unidade é só de teste.
 
 ## Regras condicionais (bloco D) — decididas, executam sozinhas
 

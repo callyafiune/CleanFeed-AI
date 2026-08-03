@@ -15,6 +15,7 @@ import {
   selectCatalogRuntime,
 } from "@/inference/model-catalog";
 import { computeCalibrationSetDigest } from "../../../contracts/calibration-profile";
+import { promotedDescriptor } from "../../helpers/promoted-descriptor";
 import validManifest from "../../fixtures/models/valid/cleanfeed-model.json";
 import bundledManifest from "../../../models/cleanfeed-ptbr-v1/cleanfeed-model.json";
 import bundledRelease from "../../../models/cleanfeed-ptbr-v1/release.json";
@@ -255,6 +256,140 @@ describe("runtime descriptor cross-validation", () => {
       ),
     ).rejects.toBeDefined();
     expect(createWorkerHost).not.toHaveBeenCalled();
+  });
+});
+
+describe("chain-of-integrity guards of the runtime descriptor", () => {
+  // Every forgery asserts the `code`, never a message substring: a
+  // `RuntimeDescriptorError` message does not carry its own code, so
+  // `rejects.toThrowError("PROFILE_SET_MISMATCH")` fails even against the correct
+  // error and pressures the assertion down to a bare `rejects`, which passes for
+  // any rejection — including the one a DIFFERENT guard raises.
+  const rejectsWith = (code: string) => ({
+    name: "RuntimeDescriptorError",
+    code,
+  });
+
+  it("passes the promoted baseline untouched", async () => {
+    const { descriptor } = await promotedDescriptor();
+
+    await expect(
+      crossValidateRuntimeDescriptor(descriptor, NOW),
+    ).resolves.toBeUndefined();
+    expect(descriptor.release.rolloutState).toBe("actions");
+    expect(descriptor.profiles.profiles).toHaveLength(1);
+  });
+
+  it("refuses a manifest that does not match the sealed schema", async () => {
+    const sources = validSources();
+    // `task` is chosen because nothing downstream reads it: with the schema guard
+    // disabled the whole pipeline resolves, so this test can only be green because
+    // of the guard.
+    (sources.manifest as { task: string }).task = "";
+
+    await expect(loadRuntimeDescriptor(sources)).rejects.toMatchObject(
+      rejectsWith("MANIFEST_SCHEMA_INVALID"),
+    );
+  });
+
+  it("refuses a source lock that does not match the sealed schema", async () => {
+    const sources = validSources();
+    // `revision` and not `artifacts`: cross-validation compares only the artifact
+    // list, so an `artifacts` forgery would be caught by ARTIFACT_MISMATCH whether
+    // or not the schema guard exists.
+    (sources.sourceLock as { revision: string }).revision = "";
+
+    await expect(loadRuntimeDescriptor(sources)).rejects.toMatchObject(
+      rejectsWith("SOURCE_LOCK_INVALID"),
+    );
+  });
+
+  it("refuses a profile whose identity diverges from the manifest", async () => {
+    // `promotedDescriptor` embeds the shared manifest and source-lock singletons,
+    // so a mutation without cloning first would leak into every other test in the
+    // process.
+    const { descriptor } = await promotedDescriptor();
+    const forged = structuredClone(descriptor);
+    forged.profiles.profiles[0].aggregationVersion = "forged";
+
+    await expect(
+      crossValidateRuntimeDescriptor(forged, NOW),
+    ).rejects.toMatchObject(rejectsWith("PROFILE_IDENTITY_MISMATCH"));
+  });
+
+  it("refuses two profiles carrying one digest", async () => {
+    const { descriptor } = await promotedDescriptor();
+    const forged = structuredClone(descriptor);
+    forged.profiles.profiles.push(structuredClone(forged.profiles.profiles[0]));
+
+    await expect(
+      crossValidateRuntimeDescriptor(forged, NOW),
+    ).rejects.toMatchObject(rejectsWith("DUPLICATE_PROFILE"));
+  });
+
+  it("refuses a release naming a profile set the file does not carry", async () => {
+    const { descriptor } = await promotedDescriptor();
+    const forged = structuredClone(descriptor);
+    // The RELEASE side is mutated and `calibrationSetDigest` left alone. Forging
+    // the file's digest instead would reach this same guard first — but only the
+    // release-side forgery RESOLVES once this guard's throw is deleted, which is
+    // the strongest red. The file-side one would fall through to
+    // CALIBRATION_SET_MISMATCH: a rejection carrying the wrong code, not a pass.
+    forged.release.profileDigests = ["b".repeat(64)];
+
+    await expect(
+      crossValidateRuntimeDescriptor(forged, NOW),
+    ).rejects.toMatchObject(rejectsWith("PROFILE_SET_MISMATCH"));
+  });
+
+  // The three guards below cannot fire on a descriptor that came through
+  // `loadRuntimeDescriptor` — but the release parser is not what closes the path.
+  // It constrains `rolloutState` against `release.profileDigests` only, never
+  // against the profiles FILE, which a different parser handles: a parsed
+  // descriptor can carry a promoted state with an empty file. What makes the two
+  // rollout guards unfireable is PROFILE_SET_MISMATCH refusing before them, so
+  // reordering the guards reopens the path. For CALIBRATION_SET_MISMATCH the set
+  // equality that same guard forces, plus the sort-and-dedupe inside the digest,
+  // makes the condition itself false — there nothing refuses, because there is
+  // nothing to refuse.
+  //
+  // They exist for the descriptor that arrives over `postMessage` at the inference
+  // worker, which revalidates because it cannot verify who validated before it. A
+  // direct call is the faithful model of that caller, not a shortcut around the
+  // parser.
+
+  it("refuses a release whose calibration digest is not the digest of its profile set", async () => {
+    const { descriptor } = await promotedDescriptor();
+    const forged = structuredClone(descriptor);
+    forged.release.calibrationSetDigest = "0".repeat(64);
+
+    await expect(
+      crossValidateRuntimeDescriptor(forged, NOW),
+    ).rejects.toMatchObject(rejectsWith("CALIBRATION_SET_MISMATCH"));
+  });
+
+  it("refuses a promoted rollout state carrying no profile", async () => {
+    const descriptor = await loadRuntimeDescriptor(validSources());
+    const forged = structuredClone(descriptor);
+    // Flipping the state on the EMPTY sealed descriptor is the only single
+    // mutation that reaches this guard: emptying the profiles of a promoted
+    // release is caught by PROFILE_SET_MISMATCH before it.
+    (forged.release as { rolloutState: string }).rolloutState = "indicator";
+
+    await expect(
+      crossValidateRuntimeDescriptor(forged, NOW),
+    ).rejects.toMatchObject(rejectsWith("ROLLOUT_WITHOUT_PROFILES"));
+  });
+
+  it("refuses a bundle-verified rollout state carrying a profile", async () => {
+    const { descriptor } = await promotedDescriptor();
+    const forged = structuredClone(descriptor);
+    (forged.release as { rolloutState: string }).rolloutState =
+      "bundle-verified";
+
+    await expect(
+      crossValidateRuntimeDescriptor(forged, NOW),
+    ).rejects.toMatchObject(rejectsWith("BUNDLE_VERIFIED_WITH_PROFILES"));
   });
 });
 
