@@ -1,5 +1,25 @@
 # Reconstrução do detector — plano de implementação ponta a ponta
 
+> ## ⚠️ DORMENTE desde 2026-08-03 — não execute daqui
+>
+> Este arquivo tem 9.5 mil linhas e era 39 % de todo o planejamento do projeto. Três coisas o tiram
+> do caminho de execução:
+>
+> 1. **a pré-inscrição em que ele se apoia está ABANDONADA** — ele cita `rebuild-v3-policy` 60 vezes,
+>    e essa política está marcada morta em `benchmark/rebuild-v3-policy.ABANDONADA.md` desde
+>    2026-08-01, por inviabilidade estrutural do split;
+> 2. **ele cresceu por acréscimo e não por revisão** — carrega as próprias correções embutidas
+>    ("superada por A5", "valor superado", "morta em silêncio"), então partes dele são revogadas por
+>    partes posteriores **dele mesmo**. Cite por âncora, nunca por linha;
+> 3. **ele é o caminho da v2.0**, e a v2.0 não está em escopo até a decisão de corte
+>    (`2026-08-03-decisao-de-corte-A-ou-B.md`) ser preenchida.
+>
+> **Para que serve agora:** consulta. O que ele tem de insubstituível são as regras R1–R9 (§0), o
+> desenho da bancada, e a aritmética de cota. Isso está referenciado de fora e continua valendo.
+>
+> **O que fazer antes de reativá-lo:** uma pré-inscrição nova, e uma revisão que apague as partes
+> que as correções internas já revogaram — o que este arquivo nunca teve.
+
 > **Origem.** A execução selada de 2026-07-25 terminou em `reject` (13 de 61 gates).
 > O diagnóstico está em [`docs/detector-rebuild-assessment.md`](../../detector-rebuild-assessment.md);
 > a revisão crítica e as errata em [`docs/detector-rebuild-critical-review.md`](../../detector-rebuild-critical-review.md).
@@ -3187,8 +3207,7 @@ Misto com `aiFraction < 0.50` não é negativo humano nem positivo de release. T
 é agregado ao mecanístico.
 
 **Arquivos:** `benchmark/schema.ts`, `benchmark/metrics.ts`, `benchmark/gates.ts`,
-`src/shared/classification-copy.ts`, `src/shared/classification-copy.json`,
-`docs/superpowers/specs/2026-07-19-tmr-ptbr-classifier-design.md`.
+`src/shared/classification-copy.ts`, `src/shared/classification-copy.json`.
 
 **Verificar:** `vitest run benchmark/tests/schema.test.ts
 benchmark/tests/metrics.test.ts benchmark/tests/gates.test.ts`; testes provam que misto
@@ -8558,11 +8577,10 @@ aditiva e não alimenta o agregado.
 o novo `benchmark/tests/helpers/evaluator-tree.ts`. O guarda mora em arquivos que **já** estão no
 inventário: um módulo novo fora dele seria editável sem mover o digest.
 
-**Documentação obsoleta identificada e não editada:** o plano da Fase 2
-(`docs/superpowers/plans/2026-07-19-cleanfeed-ai-tmr-ptbr-phase-2-benchmark-calibration.md`,
-parágrafo que começa «`assertHoldoutAvailable` compara a tupla científica sem os campos de
-lifecycle, incluindo `datasetAuditDigest` e `sourceReadinessDigest`») descreve o comportamento
-anterior. Fica como registro histórico da Fase 2; esta seção é a que vale.
+**Documentação obsoleta:** o plano da Fase 2 do TMR descrevia o comportamento anterior de
+`assertHoldoutAvailable` — comparar a tupla científica sem os campos de lifecycle. Aquele plano foi
+**apagado** na limpeza de 2026-08-03, junto com as duas gerações que ninguém lia; o git o preserva.
+Esta seção é a que vale.
 
 #### H1-SMOKE — as duas evasões que contornavam o par (2026-07-30)
 

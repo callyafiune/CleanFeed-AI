@@ -1987,9 +1987,8 @@ integridade e, por fim, texto e modelo.
   [link](https://aclanthology.org/2020.acl-main.747/)
   _Âncora:_ candidato de backbone no bake-off contra o BERTimbau, **descartado** como bake-off na
   v3. _Onde no projeto:_
-  `docs/superpowers/plans/2026-07-22-cleanfeed-ptbr-detector-v2-finetune.md` (tabela linhas
-  73-78, linha 107, T4 linha 141); `benchmark/lab/train_detector.py` (`--model
-  xlm-roberta-base`); `benchmark/lab/README.md`; plano v3 linha 51. _Fato citado:_ apresenta o
+  `benchmark/lab/train_detector.py` (`--model xlm-roberta-base`); `benchmark/lab/README.md`;
+  plano v3 linha 51. _Fato citado:_ apresenta o
   XLM-R, um RoBERTa multilíngue pré-treinado em CommonCrawl filtrado sobre 100 línguas.
 - **Szegedy, Vanhoucke, Ioffe, Shlens & Wojna, 2016 — Rethinking the Inception Architecture for
   Computer Vision** (CVPR 2016, seção 7 "Model Regularization via Label Smoothing").
