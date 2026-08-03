@@ -3213,3 +3213,70 @@ Você responde quando sentar.
 
 **Delegado sem consulta:** nomes de campos/códigos de erro, parsers para nomes antigos, redação de
 comentários dentro das regras do projeto, ordem interna das unidades numa fase, retry técnico.
+
+## Conformidade do implementado com o ESTADO.md — medida em 2026-08-03, para o plano de entrega do modelo
+
+Workflow de 4 verificadores (lab, bancada, abstração do modelo, treino/medição). **36 divergências,
+18 conformes.** Esta é a medição que a Etapa 1 do plano consome; o plano referencia por D-número.
+
+### Divergências
+
+| # | tam | item | mudança |
+|---|---|---|---|
+| D0 | P | REGISTER/HUMAN_SOURCE ainda montam as 5 células antigas, não as 4 da moldura | Reduzir REGISTER/HUMAN_SOURCE às 4 células (ptwiki_lead, carolina_judicial_branch, carolina_university_domains, carolina_social_media), removendo ptso_qa/b2w_reviews/carolina_legislative_branch e as entradas correspondentes em SOURCE_SNAPSHOT, load_humans e governance; remapear HN_REGISTER para os 4 registros vigentes (mixed com pais B2W/PT.SO saem junto, via MissingRecipe/filtro de parentFamily). |
+| D1 | M | Reserva OpenAI-para-OOD não é imposta em lugar nenhum do lab | Trocar o predicado por política explícita: toda família OpenAI (gpt-*) presente nos pools é assentada integralmente no bloco de teste (tratamento held-out/OOD) ou excluída da montagem; a lista de famílias core vs OOD deve vir do slate D3, não de um prefixo hardcoded. |
+| D2 | P | Fallback de governança reinstala a família held-out retirada | Remover o fallback: held-out vazio deve ser um estado legal da governança (ou uma reprovação explícita da montagem), nunca a reinstalação silenciosa da alegação retirada. |
+| D3 | M | Frações 45/5/10/20/20 congeladas no código | Parametrizar as frações a partir do artefato da pré-inscrição nova (como as lanes já vêm de rebuild-v3-policy.json), mantendo o vocabulário train/dev/cal-A/cal-B/test que É vigente; até lá, qualquer montagem real com esses valores realiza um desenho que o ESTADO diz não valer. |
+| D4 | M | TARGET humano (4.000) não sustenta o piso de 300 negativos por célula em test | Dimensionar o alvo humano por célula a partir do piso (≥1.500/célula ⇒ human ≥ 6.000 para o teto de 1,45%; 4.000/célula se o operador escolher 0,55%); atenção ao material: Carolina social media tem só 8.863 documentos antes dos filtros (MINIMUM_WORDS=50 corta texto curto de rede social). |
+| D5 | M | drop_seen é aplicado tudo-ou-nada, sem a graduação de §3.4 | Duas listas de seen com escopos distintos: conteúdo do test consumido (artefato fornecido pelo operador — o agente não lê a partição test) ⇒ drop total; material exposto (train/dev antigos + o resto dos 10.000) ⇒ barrado apenas de test e cal-B, o que exige aplicar o resultado do drop_seen como restrição de partição, não como poda global. |
+| D6 | P | generate_ai ainda oferece --provider openai/anthropic e morre por KeyError no meio da lane | Restringir --provider às quatro lanes congeladas (derivar choices de PROVIDER_LANE) e recusar na argparse com mensagem apontando a reserva OOD; remover openai/anthropic de DEFAULT_MODELS/keys ou marcá-los explicitamente como canal OOD. |
+| D7 | P | extract_carolina não extrai uma tipologia por vez nem exclui as fora-da-moldura | Adicionar allowlist de tipologias (flag --typologies ou constante com as 3 da moldura) para que tipologias fora da moldura não sejam emitidas nem consumam cota; a rotulagem por documento já é suficiente para separar as células downstream. |
+| D8 | P | Licença lida por documento não viaja até o registro montado | human_record deve ler cand["licenseId"] (com HUMAN_SOURCE apenas como validação de sourceId) e o manifesto de licenças da governança deve listar as 4 licenças que o allowlist admite. |
+| D9 | P | datasetId ainda é ptbr-generic-v1 | O corpus novo nasce com id novo (parâmetro ou constante da pré-inscrição nova); manter o id morto faria digest novo sobre nome velho, que §3.4 diz não restaurar cegueira nenhuma. |
+| D10 | G | Medição certificadora roda no navegador, não no modelo | Um scorer de nível de modelo (onnxruntime/PyTorch sobre pesos+tokenizer) que produza os shards e manifests selados, e uma identidade de runtime ancorada no hash dos pesos em vez do tuple bundle/Chrome; o navegador sai do caminho certificador |
+| D11 | G | Números congelados ainda vêm da pré-inscrição v3 abandonada | Criar o módulo da pré-inscrição nova com as 4 células de § 2, frações re-derivadas, seeds novos e só os valores herdados; apontar gates/split/fit para ele e aposentar o policy morto como fonte |
+| D12 | M | Multiplicidade: nenhum m declarado e inventário de gates >> família m=4 | Depois da decisão da manchete (§ 4), fixar m na pré-inscrição nova, passá-lo em evaluate.ts, e reconciliar o inventário de gates com a família primária (quais gates são estatísticos obrigatórios sob o α familiar e quais são diagnósticos) |
+| D13 | M | Gate antiartefato pré-treino (A4) é só decisão — não existe em código | Script de gate pré-treino que varre as linhas geradas por família/lane (eco de prompt vs seed, léxico de recusa/metaconversa, disclaimers), calcula a taxa por família e emite veredito regenerar-lane quando >2%, rodando antes de qualquer dataset de treino ser montado |
+| D14 | G | fit congela calibradores probabilísticos que a v1 não tem | Redesenhar o estágio fit para a v1 sem calibrador: congelar limiar experimental provisório versionado e definir sobre que escore a 'calibração global' da família B3 é medida |
+| D15 | M | F6: treino sem manifesto e sem consumidor do split selado | Manifesto de treino F6 (digests do dataset e do split, seed, hiperparâmetros, versões, hash sha256 dos pesos produzidos) escrito pelo próprio train_detector, mais um conversor que leia train.jsonl/dev.jsonl do split selado e verifique o splitDigest |
+| D16 | M | Vocabulário de estratos do selo conflita com as 4 células | Estratos = as 4 células novas: separar judicial de legislative (e excluir legislative), tirar datasets de social-media; ajustar extratores que estampam humanSourceType e os testes que fixam a lista |
+| D17 | P | Seed 712019 e backbone XLM-R não estão pinados no treino | Pinar seed 712019 recusando outro valor (o padrão que split.ts:132-138 já usa para o seed de split), fixar xlm-roberta-base como backbone e apagar a instrução de bake-off |
+| D18 | P | export_onnx é BERT-shaped e quebra com XLM-R | Condicionar as entradas do export ao model_input_names do tokenizer, documentar os artefatos sentencepiece e rever o teto de bytes na pré-inscrição nova |
+| D19 | P | baseline_tfidf não serve como detector de vazamento sem adaptação | Adaptador de entrada para o dataset selado, relatório de AUC por família de geração e por célula, e um critério pré-registrado de 'separação alta demais' que dispare o A4 |
+| D20 | P | Vocabulário de gateDecision do verificador Node diverge do contrato | Alinhar KNOWN_GATE_DECISIONS a {pending, reject, indicator-only, pass} e prender com teste que passe o fixture pass-indicator pelo verificador Node. |
+| D21 | M | Vínculo F6 treino→modelo inexistente no release | Acrescentar ao release agnóstico um bloco de proveniência de treino (datasetDigest+splitDigest do corpus consumido, seed, modelo base, commit) produzido no treino e exigido pelo empacotamento — é a dívida F6 declarada, confirmada ainda aberta. |
+| D22 | M | Empacotamento standalone do modelo (fora do layout da extensão) não existe | Criar alvo de empacotamento próprio do modelo (layout HF: os 6 assets + LICENSE + NOTICE + model card + release/proveniência), reusando verifyReleaseModelDirectory — a verificação já é agnóstica, falta só o alvo. |
+| D23 | M | Model card e tabela por célula não existem nem como esqueleto | Criar o model card como artefato do release (com seção datasheet, moldura de 4 células, frase R7-correta e a tabela FPR por célula vazia até a medição). |
+| D24 | M | Pipeline de documento (normalização+janelamento+agregação) só existe dentro da árvore da extensão | Mover chunker+aggregator para contracts/ (são puros, sem API de navegador — a dependência é só de path alias @/shared) e decidir se a entrega inclui implementação de referência consumível (port Python com prova de paridade seria G) ou spec no model card. |
+| D25 | P | Treino não fixa a seed 712019 nem emite recibo | Fixar 712019 como default/assert do checkpoint publicável e gravar recibo de treino (seed, digests dos jsonl consumidos, modelo base) junto ao checkpoint — é o insumo do vínculo F6. |
+| D26 | P | Prova de paridade fp32→int8 é gerada e depois descartada | Rastrear o parity report em models/<id>/ (fora do inventário do bundle servível) e referenciá-lo (digest) no release agnóstico. |
+| D27 | P | Bundle servido em public/ carrega LICENSE MIT e NOTICE pré-Fase-0, e o verificador não pega | Re-materializar public/models/ a partir dos rastreados e fazer o verificador de bundle comparar LICENSE/NOTICE byte a byte com models/<id>/ (como verifyReleaseModelDirectory já faz para release.json/calibration-profiles.json). |
+| D28 | G | Parser da política congela a pré-inscrição v3 e todo o runtime carrega no import | A pré-inscrição nova exige arquivo de política novo (ou id novo) + parser com pins novos, trocados no mesmo commit: 4 células, frações re-deriváveis, estratos sem qa-informal, snapshots sem b2w. O JSON e o .ts estão em EVALUATOR_FILES (digests.ts:85-86), então o evaluatorDigest muda junto — esperado |
+| D29 | G | GROUP_KEYS ainda une por domainSource — inviabiliza o split de 5 partições | Após a ratificação: tirar domainSource de GROUP_KEYS (fica só como eixo de relato/fatia), pôr sourceMaterialBatch como eixo de conectividade, partir collectionBatch em lote (dependência) + extractionRun (diagnóstico). É o item que decide a viabilidade do split novo — os passos 1-3 e 5-7 do plano 2026-08-02 ainda não têm código |
+| D30 | G | sourceMaterialBatch existe só no manifesto; não é eixo de registro; extractionRun não existe | Bump de esquema de registro: eixo sourceMaterialBatch novo em V3_GROUP_AXES + regra de estado + GROUP_KEYS; materialBatches passa a obrigatório no manifesto; extractionRun recebe o resto de collectionBatch como diagnóstico. Move digests (schema.ts está em EVALUATOR_FILES) |
+| D31 | M | RELEASE_CORPUS_POLICY assume composição do plano morto e estratos que misturam o que a moldura exclui | Re-derivar counts da pré-inscrição nova; redefinir o vocabulário de humanSourceType para as 4 células (judiciário sem legislativo; rede social sem B2W) em RELEASE_CORPUS_POLICY + assemble_corpus.py + teste de igualdade; os slices (benchmark/slices.ts:158) são data-driven e seguem sozinhos |
+| D32 | G | Piso de 300 negativos por célula em test não reprova selagem nenhuma — o gate de composição não existe | Implementar o gate de composição pré-selagem: por célula × partição test, contar negativos humanos (e unidades independentes) contra o piso da pré-inscrição nova e reprovar a selagem release — é a unidade que destrava o caminho hoje fechado de propósito em commands/split.ts. Corrigir a mensagem para o piso vigente e ler o 300 de slices.ts da política |
+| D33 | M | Frações de partição pinadas em três lugares — re-derivar frações exige tocar parser, tipo e comando juntos | Frações novas = editar o JSON + os pins do parser + o tipo literal em split.ts + a restatement em commands/split.ts no mesmo commit; o typecheck pega a transposição. Auditoria e testes (split-audit.test.ts:1595, rebuild-v3-policy.test.ts:238-244) seguem/ajustam |
+| D34 | G | Remover cal-B do desenho não é expressável no código atual | Se a pré-inscrição nova remover cal-B: rework de split.ts (tuple, interface, busca de cortes vira 3), commands/split.ts, parser (partitionFractions e conformal), BLIND_PARTITIONS→[test] e testes — sem tocar LEDGER_PARTITIONS nem os artefatos selados. Se mantiver cal-B, nada disso é necessário |
+| D35 | P | Ingest pina o dataset ID morto ptbr-generic-v1 como tipo literal | Trocar o id esperado pelo novo (ou parametrizá-lo pela política nova) em ingest.ts + corpus-import.ts; decidir se intendedDomain "generic" sobrevive à moldura escopada de 4 células ou ganha vocabulário próprio |
+
+### Conformes — o que o plano NÃO toca
+
+- **C0** — extract_wikipedia serve a célula enciclopédica como está
+- **C1** — extract_carolina: licença por documento e corte de data conformes
+- **C2** — near_dupes.drop_seen está mecanicamente pronto para os 10.000 textos antigos
+- **C3** — pseudonymize: as células novas não têm identidade de pessoa que precise de HMAC
+- **C4** — generate_ai: as 4 lanes congeladas conformes
+- **C5** — F0-6: Stack Overflow bloqueado por nome, não apagado
+- **C6** — Cross-entropy e hiperparâmetros congelados no treino
+- **C7** — Export INT8 com gate de paridade nos valores congelados
+- **C8** — Piso de 300 negativos humanos aplicado por célula, com assimetria correta
+- **C9** — Gates de fatia não fixam nomes de célula — as 4 células entram sem quebrar
+- **C10** — Caminho fit → consume-holdout → gates → publish-evidence existe e é fail-closed
+- **C11** — CONFORME — os 7 artefatos de models/cleanfeed-ptbr-v1 são agnósticos de extensão
+- **C12** — CONFORME — chrome-extension:// é exigido só pelo runtime em src/, nunca pelo manifesto
+- **C13** — CONFORME — package-own-model, model-lock e verify-model-bundle rodam sem a extensão
+- **C14** — CONFORME — contracts/model-release.ts e calibration-profile.ts são puros
+- **C15** — CONFORME — ONNX+tokenizer são consumíveis standalone (por janela) em Python puro
+- **C16** — Barreira de cal-B (BLIND_PARTITIONS) implementada e testada
+- **C17** — Consumidores de runtime de quotaAxis/zeroEventCeiling são só a recusa do split — não quebram com 4 células

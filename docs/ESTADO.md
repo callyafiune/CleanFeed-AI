@@ -277,13 +277,15 @@ não como resultado.
 ## 8. Ordem de leitura
 
 1. **este arquivo**;
-2. `MANIFESTO-DE-TRANSPLANTE.md` — o dia zero de um repo novo, se houver;
-3. `superpowers/plans/2026-08-03-decisao-de-corte-A-ou-B.md` — a decisão de corte, em branco;
-4. `superpowers/plans/2026-07-30-v1-escopo-e-retomada.md` — **como trabalhar** e as armadilhas. A parte
+2. `superpowers/plans/2026-08-03-plano-entrega-modelo.md` — **o roteiro de execução**: sete fases até o
+   modelo publicado, com os gates do operador na Etapa 0;
+3. `superpowers/plans/2026-08-03-decisao-de-corte-A-ou-B.md` — a decisão de corte, preenchida (opção C);
+4. `MANIFESTO-DE-TRANSPLANTE.md` — o dia zero de um repo novo; ocorre **depois** da entrega, se ocorrer;
+5. `superpowers/plans/2026-07-30-v1-escopo-e-retomada.md` — **como trabalhar** e as armadilhas. A parte
    de estado dele está **superada por este arquivo**;
-5. `superpowers/plans/2026-07-30-registro-de-decisoes.md` — a **razão** de cada decisão; procure a seção;
-6. `detector-rebuild-assessment.md` — os oito defeitos de 25/07;
-7. `references.md` — 270 entradas, 222 links, ancoradas por decisão.
+6. `superpowers/plans/2026-07-30-registro-de-decisoes.md` — a **razão** de cada decisão; procure a seção;
+7. `detector-rebuild-assessment.md` — os oito defeitos de 25/07;
+8. `references.md` — 270 entradas, 222 links, ancoradas por decisão.
 
 Superado como estado: `superpowers/plans/2026-07-30-estado-do-projeto.md` — permanece como razão das três
 decisões de 2026-07-30. Dormente, consulta e não execução:
