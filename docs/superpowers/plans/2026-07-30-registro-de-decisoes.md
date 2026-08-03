@@ -2191,6 +2191,147 @@ independência passa a depender de `domainSource`.
 
 **Referência obrigatória:** `docs/references.md` § 2.2g.
 
+## "Gasto" tem três pareceres na arquitetura, e só um deles é contradição (2026-08-02)
+
+Levantamento pedido pelo operador, que contestou a afirmação de que o `ptbr-generic-v1` estaria
+gasto. **Ele estava certo e eu estava errado.** As fontes foram lidas uma por uma; o resultado é que
+a arquitetura é **coerente quanto à granularidade** e **incoerente quanto ao conjunto de partições
+protegidas**.
+
+| fonte | sobre o que emite parecer | o que diz |
+|---|---|---|
+| `holdout-ledger.ts` | a tupla `datasetDigest`+`splitDigest` | aquela execução já rodou. Re-cortar o mesmo material gera outra tupla e **este ledger a aceitaria** |
+| `cluster-exposure-ledger.ts` | cluster e conteúdo | graduado: linha de `test` consumido sai de tudo; cluster exposto perde **só** `test` |
+| R2 (plano v3 §0, linhas 375-405) | a cegueira informacional | é a autoridade, e existe **para ninguém a ler como mais estrita do que ela é** |
+
+O ledger de exposição declara ele mesmo que a identidade do ledger de holdout é "the right identity
+for 'was THIS evaluation already run', and the **wrong** one for 'is this block still blind'". Os dois
+coexistem por desenho e não se contradizem: respondem perguntas diferentes.
+
+### A assimetria de R2, que é a resposta
+
+| objeto | o que a exposição custa | imposição no código |
+|---|---|---|
+| cluster exposto em qualquer partição | elegibilidade para `test` **e só** | `cluster-exposure-ledger.ts:1958` (`if (record.partition !== "test") continue;`) |
+| registro-linha de `test` consumido | sai das cinco partições, de vez | `:1940-1955`, via `consumedContent` |
+
+Verificado no código de hoje: a regra de conteúdo roda para **qualquer** partição proposta; a de
+cluster roda **somente** quando a partição proposta é `test`.
+
+E o parágrafo de R2 que fecha a questão, porque nomeia o que o ledger **não** cobre: "mesmo autor,
+thread, página, seed e linhagem estão cobertos; **mesmo estrato, lote, época, receita ou dependência
+semântica não estão.** Dizer 'independente' sem essa lista é exatamente o que R7 proíbe."
+
+### RETRATAÇÃO: quatro erros meus nesta conversa, todos na mesma direção
+
+1. **"o `ptbr-generic-v1` não pode mais ser usado"** — largo demais. Metade das linhas é material
+   recuperável, com prova por registro e por cluster.
+2. **"o material está descegado, porque sabemos quais registros o modelo erra"** — este é
+   conhecimento de nível de **estrato**, que R2 declara fora de cobertura e cuja exclusão o ledger
+   justifica como "a shutdown, not a control". Eu li R2 como mais estrita do que ela é, que é
+   precisamente o erro contra o qual o parágrafo 386-397 foi escrito.
+3. **"código de produção"**, dito de `cluster-exposure-ledger.ts` para lhe dar autoridade sobre o
+   splitter. **Não existe produção:** zero tags de git, `issuedAt: null`, `evidenceDigest: null`,
+   `gateDecision: pending`. Nunca foi empacotado. Os dois módulos são rascunhos não exercitados e o
+   argumento de cada um vale pelo mérito, sem deferência por antiguidade.
+4. **"não existe mecanismo para aposentar material"** — `retirement` já é um dos quatro
+   `CLUSTER_EXPOSURE_EVENT_TYPES`. Faltava a regra de quando disparar, não o mecanismo.
+
+O padrão dos quatro é o mesmo: presumir a leitura estrita sem medir. Todos foram achados pela
+insistência do operador, nenhum por eu reler o que havia escrito.
+
+### DECISÃO DO AGENTE: `cal-B` herda a barreira de `test`
+
+| campo | conteúdo |
+|---|---|
+| decidida por | agente, 2026-08-02, por delegação |
+| o quê | a barreira de cluster exposto passa a cobrir **as duas partições cegas**, `test` e `cal-B`, e não só `test` |
+| razão | a tabela de R2 diz que cluster exposto segue elegível para "train, dev e **cal**". Foi escrita quando `cal` era **uma** partição, olhada. O E2 partiu `cal` em `cal-A` (olhada) e `cal-B` (**privada e byte-intocada até a v2.0**, plano da v1.0). Uma barreira que nomeia partições pelo vocabulário anterior à migração protege o conjunto errado — e `cal-B` é onde a calibração conformal da medição v2 é construída |
+| custo de reversão | uma linha de predicado mais os testes. **Mas o custo real é de viabilidade, e vai contra a escassez:** barrar cluster exposto de `cal-B` retira as linhas recuperadas de 20 % do corpus, não só de 20 % |
+| a alternativa, para o operador poder revertê-la | se o papel de `cal-B` for julgado como não exigindo cegueira de cluster, a barreira fica em `test` e **R2 tem de trocar "cal" por `cal-A` explicitamente, com o argumento escrito**. O que não pode ficar é a palavra ambígua |
+| ratificar antes de | **a montagem do corpus novo** — decide quais linhas podem entrar em `cal-B` |
+
+**Referências obrigatórias:** `docs/references.md` § 3 (Vovk, Gammerman & Shafer 2005 — exchangeability
+como *condição* da cota conformal; Papadopoulos et al. 2002 — o quantil em `cal-B`) e § 2.4 (Cawley &
+Talbot 2010 — a separação `cal-A` × `cal-B` e a proibição de verificar cobertura conformal no próprio
+`cal-B`). A âncora de R2 permanece Dwork et al. 2015, § 1.1.
+
+### Inventário de recuperação do `ptbr-generic-v1`, por célula
+
+Calculado da tabela de distribuição já publicada em `docs/detector-rebuild-assessment.md` (§1) e da
+composição do corpus medida em `records.jsonl` — **nenhuma leitura de `test` foi feita para isto**.
+
+| fonte (célula da cota) | linhas humanas | onde estavam | recuperável | morto |
+|---|---:|---|---:|---:|
+| Wikipédia (`encyclopedic`) | 800 | `test` | 0 | **800** |
+| PT.SO (`qa-informal`) | 800 | 400 `dev` + 400 `test` | 400 | 400 |
+| B2W (`social-media`) | 800 | 400 `dev` + 400 `cal` | **800** | 0 |
+| Carolina (`university` + `institutional`) | 1.600 | 800 `cal` + 800 `test` | **800** | 800 |
+| **total** | **4.000** | — | **2.000** | **2.000** |
+
+**E o número que vale é 1.600, não 2.000:** as 400 linhas recuperáveis do PT.SO estão bloqueadas por
+A1 (termo de acesso de 2024), então são recuperáveis pela cegueira e indisponíveis pela licença.
+
+**O que isso muda no dimensionamento**, contra o piso de ≈20 mil linhas humanas:
+
+- partições não cegas (`train` 45 + `dev` 5 + `cal-A` 10 = 60 %) ⇒ 12.000 linhas, e é só aqui que as
+  1.600 entram — cobrem **13 %** desta necessidade;
+- partições cegas (`cal-B` 20 + `test` 20 = 40 %) ⇒ 8.000 linhas, **todas de cluster nunca exposto**.
+  As 1.600 cobrem **zero** aqui, e sob a decisão acima isso passa a valer para `cal-B` também;
+- **material novo necessário: 18.400 linhas humanas**, das quais 8.000 de cluster inédito.
+
+Ou seja: a recuperação encurta a coleta em **8 %**, não em um sexto como eu havia estimado a olho.
+Ela não é o alívio que a conversa sugeriu — mas é uma medição, e substitui a presunção de que o
+corpus inteiro havia queimado.
+
+**Uma leitura minha, marcada como leitura:** o piso `samplingUnits: 250` por célula, lido junto com a
+aritmética da cota (`1 − α^(1/n)` com n = componentes por célula) e com o fato de o FPR ser medido em
+`test`, implica **≥250 componentes independentes por célula dentro de `test`** — ou seja ≥1.000
+componentes inéditos só ali, com 4 células. Não achei essa leitura escrita em lugar nenhum, e ela é
+mais restritiva que a contagem de linhas. Vale conferir antes de dimensionar a coleta.
+
+### O que fica DEFERIDO, e por qual regra
+
+A enumeração **por registro** das linhas sobreviventes exige ler a atribuição de partições em
+`out/split/split-artifact.json`, que é pertença de `test`. Regra condicional 8 ("tocaria
+`test`/`cal-B`/ledger real → para e pergunta. Sempre.") se aplica, e o inventário por célula acima é
+suficiente para dimensionar a coleta. **Não foi feito, e não deve ser feito sem autorização
+explícita** — o pedido de rodar o inventário não é autorização para isso, porque a conversa não o
+nomeou.
+
+### O silêncio que a varredura encontrou, e que não é contradição
+
+Nada na arquitetura trata da liberdade de escolher **eixos, semente ou alvos** já conhecendo
+desfechos. Não é vazamento: o splitter é determinístico e nenhum humano coloca linhas. Mas a escolha
+dos eixos é humana, e o único mecanismo contra isso é prospectividade — que é exatamente o que a
+F1-5q faz ao declarar a pré-inscrição nova antes de tocar em qualquer coisa. Registrado como silêncio
+nomeado, não como pendência de código.
+
+### E a contradição irmã, que esta varredura confirmou de outro ângulo
+
+`GROUP_KEYS` (splitter) e `EXPOSURE_IDENTITY_AXES` (ledger) discordam sobre os mesmos eixos:
+
+```
+GROUP_KEYS            = author, source, domainSource, generatorVersion,
+                        promptTemplate, collectionBatch, nearDuplicate, derivationRoot
+EXPOSURE_IDENTITY_AXES = author, source, humanSeed, derivationRoot
+```
+
+`domainSource` e `collectionBatch` **unem** no splitter e são **excluídos** no ledger, cuja razão
+escrita é: "both shared by design across thousands of rows, so comparing them would make every future
+record-line test-ineligible the moment one row of its stratum was ever exposed. **That is a shutdown,
+not a control.**"
+
+Isso muda o texto da ratificação pendente de `domainSource`: ela não adota posição nova — **faz o
+splitter concordar com o ledger**. E aperta a decisão, porque exatamente um dos dois está errado: se
+`domainSource` carrega dependência, o ledger devolve elegibilidade a `test` que deveria barrar; se não
+carrega, o splitter fecha o corpus por nada. Não há leitura em que os dois estejam certos.
+
+`humanSeed` divergindo na direção contrária (identidade plena no ledger, só `parentLinkage` no
+splitter, com 782 de 783 referências não resolvendo) mostra que não é o ledger sendo simplesmente mais
+frouxo: são **duas teorias diferentes de unidade amostral** convivendo, cada uma argumentada no seu
+próprio docstring.
+
 ## Regras condicionais (bloco D) — decididas, executam sozinhas
 
 1. Célula < n mínimo → **sem cota**, nunca cota frouxa.
