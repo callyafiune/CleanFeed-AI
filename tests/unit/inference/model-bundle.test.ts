@@ -304,6 +304,31 @@ describe("chain-of-integrity guards of the runtime descriptor", () => {
     );
   });
 
+  it("refuses a source lock naming a different model than the manifest", async () => {
+    const { descriptor } = await promotedDescriptor();
+    const forged = structuredClone(descriptor);
+    // Only the identity field moves: the artifact lists stay equal, so with this
+    // guard's throw deleted the descriptor resolves instead of falling through to
+    // ARTIFACT_MISMATCH.
+    (forged.sourceLock as { modelId: string }).modelId = "other-model";
+
+    await expect(
+      crossValidateRuntimeDescriptor(forged, NOW),
+    ).rejects.toMatchObject(rejectsWith("SOURCE_LOCK_IDENTITY_MISMATCH"));
+  });
+
+  it("refuses a source lock pinning a revision other than the manifest's modelVersion", async () => {
+    const { descriptor } = await promotedDescriptor();
+    const forged = structuredClone(descriptor);
+    // Non-empty, so the schema parser could not have intercepted it, and distinct
+    // from `modelId`, so a guard comparing the wrong pair would not pass.
+    (forged.sourceLock as { revision: string }).revision = "e".repeat(40);
+
+    await expect(
+      crossValidateRuntimeDescriptor(forged, NOW),
+    ).rejects.toMatchObject(rejectsWith("SOURCE_LOCK_IDENTITY_MISMATCH"));
+  });
+
   it("refuses a profile whose identity diverges from the manifest", async () => {
     // `promotedDescriptor` embeds the shared manifest and source-lock singletons,
     // so a mutation without cloning first would leak into every other test in the

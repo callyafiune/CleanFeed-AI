@@ -417,6 +417,29 @@ export async function crossValidateRuntimeDescriptor(
     );
   }
 
+  // The lock's `revision` and the manifest's `modelVersion` are two spellings of
+  // one coordinate: packaging derives the revision from the model version, which is
+  // itself the leading 40 hex of the ONNX digest. Equal artifact lists do not imply
+  // equal identity — a lock naming another model can carry the same inventory — and
+  // the caller that needs this is the worker, which revalidates a descriptor that
+  // arrived over `postMessage` and cannot verify who validated before it.
+  //
+  // `baseUrl` is deliberately NOT compared: the manifest has no counterpart field,
+  // and its exact value is pinned at build time. A runtime rule derived from the
+  // self-trained URL scheme would reject a lock that legitimately points upstream.
+  if (sourceLock.modelId !== manifest.modelId) {
+    throw new RuntimeDescriptorError(
+      "SOURCE_LOCK_IDENTITY_MISMATCH",
+      "sourceLock.modelId does not match the manifest",
+    );
+  }
+  if (sourceLock.revision !== manifest.modelVersion) {
+    throw new RuntimeDescriptorError(
+      "SOURCE_LOCK_IDENTITY_MISMATCH",
+      "sourceLock.revision does not match the manifest's modelVersion",
+    );
+  }
+
   for (const key of RUNTIME_IDENTITY_KEYS) {
     if (manifest[key] !== release[key]) {
       throw new RuntimeDescriptorError(

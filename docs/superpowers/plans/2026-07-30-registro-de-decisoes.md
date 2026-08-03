@@ -2550,6 +2550,92 @@ com lista de artefatos idêntica passa. E `experimental` com perfis passa a cros
 parser o proíbe —, então o backstop do worker para aquele estado é apenas as checagens de conjunto.
 Não consertado aqui: é mudança em `src/`, e esta unidade é só de teste.
 
+## O source lock ganha checagem de identidade, e `baseUrl` fica como não-objetivo declarado (2026-08-02/03)
+
+A cross-validação amarrava o source lock **só** por `artifacts`. `modelId`, `revision` e `baseUrl` eram
+checados de esquema e nunca cruzados com o manifesto: um lock nomeando outro modelo, com lista de
+artefatos idêntica, passava. Achado pela etapa 1 da unidade das oito guardas e diferido ali por ser
+mudança em `src/`.
+
+### A severidade, dita com honestidade — não é buraco de integridade de bytes
+
+Isto fica escrito porque vender o conserto como maior do que é seria a mesma classe de over-claim que
+R7 proíbe:
+
+- **"a extensão roda bytes que não fixou": NÃO.** Os bytes seguem fixados por `verifyModelBundle`, que
+  verifica SHA-256 de todo artefato buscado, e os digests do lock continuam comparados registro a
+  registro. Forjar `modelId`/`revision` não muda byte nenhum;
+- **"rotula errado a procedência": também não, em nada observável** — nada a jusante lê esses campos; a
+  identidade emitida vem do manifesto;
+- **o que é de fato:** ponto cego na prova de coerência **na fronteira de confiança do worker**, onde o
+  domínio de entrada é "qualquer objeto clonável". O acidente realista é descritor montado de peças
+  desencontradas — manifesto re-fixado com lock velho, ou ferramenta combinando objetos de dois bundles;
+- **e o que o conserto NÃO compra:** quem consegue postar no worker já pode forjar um descritor
+  **plenamente coerente**, porque nenhuma guarda ali compara o descritor com as constantes embarcadas.
+  Barra forja incoerente e acidente, não adversário competente — mesma natureza de toda outra guarda
+  daquela função.
+
+O que o torna defeito e não não-objetivo: o docstring afirma provar que "os três níveis concordam", e o
+nível de identidade do lock estava silenciosamente fora dessa prova, enquanto o de identidade do
+release — mesma forma de checagem — estava dentro. Assimetria sem razão escrita é assinatura de
+omissão, não de decisão.
+
+### `baseUrl` NÃO é cruzado, e isso é decisão da etapa 1, com argumento que eu não tinha
+
+O manifesto não tem campo correspondente. No bundle atual o valor é
+`https://self-trained.invalid/<id>/<rev>/` — o TLD `.invalid` é o sinal documentado de que não existe
+upstream de onde buscar. Derivar uma regra de runtime desse esquema faria a extensão **recusar um lock
+que legitimamente apontasse para upstream**. Fica: checado de esquema no parser, fixado exatamente no
+build por `scripts/model-lock.mjs`, ignorado em runtime — e o comentário na guarda diz isso como regra
+de domínio.
+
+### Código novo, e por que não reusar
+
+`SOURCE_LOCK_IDENTITY_MISMATCH`. Reusar `ARTIFACT_MISMATCH` ou `RELEASE_IDENTITY_MISMATCH` destruiria o
+mapeamento uma-guarda-um-código que a tabela 8×1 da unidade anterior mede — e aquela tabela é o
+artefato de prova dela. Não há união fechada a estender (`code` é `string`), e `serializeWorkerError`
+mapeia qualquer não-`CleanFeedError` para `INFERENCE_FAILED`, então nenhum protocolo muda.
+
+### O que NÃO quebrou, medido e não presumido
+
+- **o bundle selado satisfaz a checagem hoje:** `manifest.modelId === lock.modelId`
+  (`cleanfeed-ptbr-v1`) e `manifest.modelVersion === lock.revision`
+  (`d8f77f870fbd35a17add2498b73d906bbc299026`). Se não batesse, a guarda invalidaria o pacote embarcado
+  e a unidade seria outra;
+- `tests/helpers/promoted-descriptor.ts` e as fixtures: sem mudança — embutem o par selado real;
+- **a ordem relativa das guardas anteriores não se move**, então as três provas de inalcançabilidade
+  registradas continuam valendo verbatim. A nova entra depois de `ARTIFACT_MISMATCH` e antes do laço de
+  `RUNTIME_IDENTITY_KEYS`;
+- `scripts/` e as variantes de e2e: sem mudança. As reimplementações `.mjs` já impõem checagem
+  estritamente mais forte (constantes exatas), em família de código separada.
+
+### Medição de mutação: cada comparação tem o seu próprio teste, e o vermelho é por RESOLUÇÃO
+
+As duas lançam o MESMO código, então mutá-las juntas provaria menos. Mutadas separadamente pela
+mensagem, fecho igual à suíte inteira, linha de base verde em 2499:
+
+| comparação mutada | vermelhos | como o vermelho veio |
+|---|---:|---|
+| `sourceLock.modelId` | **1** | `promise resolved "undefined" instead of rejecting` |
+| `sourceLock.revision` | **1** | `promise resolved "undefined" instead of rejecting` |
+
+O sinal que importa não é a contagem — é o vermelho vir de **resolução**. Com a guarda apagada o
+descritor passa inteiro, o que prova que nada mais a cobria. Vermelho por recusa alheia significaria
+que a forja não isola a guarda, e é exatamente o modo como um teste fica verde pelo motivo errado.
+
+### O espelho da lição do lint: suíte verde não é typecheck verde
+
+A primeira versão destes dois testes atribuía direto a `forged.sourceLock.modelId`. **A suíte passou
+com 2499 verdes e o typecheck reprovou** — `TS2540: Cannot assign to 'modelId' because it is a read-only
+property`, nos dois. A vitest transpila sem typechecar, então o erro de tipo não aparece em teste
+nenhum.
+
+O registro já carregava a lição na direção do lint ("verde de typecheck e de suíte não é verde de
+lint"). Esta é a direção que faltava, e fecha a regra: **as três verificações são independentes e
+nenhuma cobre a outra.** Consertado com o idioma de cast que o resto do arquivo já usa
+(`(x as { campo: string }).campo = v`), que é apagado na emissão — o comportamento é idêntico, e a
+medição de mutação foi refeita de todo modo, porque a regra é medir e não argumentar.
+
 ## Regras condicionais (bloco D) — decididas, executam sozinhas
 
 1. Célula < n mínimo → **sem cota**, nunca cota frouxa.
