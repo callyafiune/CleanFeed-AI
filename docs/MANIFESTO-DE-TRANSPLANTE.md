@@ -15,10 +15,22 @@ perdeu uma vez.
 **O repo novo continua TypeScript para a bancada, e Python para o lab.** É o que o repo atual já faz, e
 funciona.
 
-Razão: a bancada e seus **2.499 testes** são o único diferencial medido do projeto — a auditoria de
-2026-07-30 varreu 10 benchmarks, 7 shared tasks e 12 repositórios sem achar *um* arquivo de teste
-automatizado. Reescrever a bancada em Python reinicia do zero a única coisa que a área não tem, para
-ganhar uniformidade de linguagem que o repo atual prova ser dispensável.
+Razão: a bancada e os seus testes são o único diferencial medido do projeto — a auditoria de 2026-07-30
+varreu 10 benchmarks, 7 shared tasks e 12 repositórios sem achar *um* arquivo de teste automatizado.
+Reescrever a bancada em Python reinicia do zero a única coisa que a área não tem, para ganhar
+uniformidade de linguagem que o repo atual prova ser dispensável.
+
+**E o número certo é 1.265, não 2.499** — a comparação com a área exige a quebra, porque os projetos
+auditados são código de pesquisa sem produto, e o total do repo infla com testes de extensão:
+
+| área | testes | o que cobre |
+|---|---:|---|
+| `benchmark/tests` | **1.099** | o avaliador: ledger de cegueira, gates, aritmética de cota, congelamento de split, obrigações de licença, telas de over-claim, esquema e regras de estado dos eixos |
+| `benchmark/lab/test_*.py` | **166** | extratores (137), quase-duplicatas (20), viabilidade de conectividade (9) |
+| `tests/unit` + `inference` + `integration` + `contract` | 1.234 | a **extensão** — não é o diferencial, e boa parte não viaja |
+
+**1.265 contra zero** é a comparação honesta. Continua sendo a alegação mais forte do projeto; era
+2,0× menos do que eu havia escrito.
 
 Reversão: se a decisão de alegação for B e o relatório pedir stack única, a bancada pode ser portada
 depois — mas então é port de código verde, não reescrita de desenho.

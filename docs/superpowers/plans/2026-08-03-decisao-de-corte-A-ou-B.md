@@ -100,7 +100,10 @@ inferência cluster-robusta, cota distribution-free, manchete de pior estrato, t
 inferência, estado epistêmico de grupo, **nem um único arquivo de teste automatizado**. Artefato
 mediano da área: README + licença + paper.
 
-Nós temos tudo isso funcionando, com 2.499 testes verdes.
+Nós temos tudo isso funcionando, com **1.265 testes do avaliador** verdes — 1.099 em `benchmark/tests`
+e 166 em `benchmark/lab/test_*.py`. A suíte inteira tem 2.499, mas os outros 1.234 são da **extensão** e
+não entram nesta comparação: os projetos auditados são código de pesquisa sem produto. Ver
+`MANIFESTO-DE-TRANSPLANTE.md` § 1.
 
 ### O que já existe
 
