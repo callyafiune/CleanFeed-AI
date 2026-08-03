@@ -2782,6 +2782,199 @@ E o survey do outro lado: `tests/integration/inference-pipeline.test.ts` inicial
 **helpers**, não com payloads degenerados montados à mão — então nenhum teste de integração depende de
 um descritor que o parse recusaria. A unidade 2 está liberada como desenhada.
 
+## Escopo da alegação: tabela por estrato, e a correção do dimensionamento (2026-08-03)
+
+Decidido pelo operador nesta sessão, depois de ele refutar duas alegações minhas. Registro na ordem em
+que as coisas foram derrubadas, porque a ordem é o argumento.
+
+### O que o operador refutou, e é a base de tudo abaixo
+
+Eu dizia que a cota era **inviável** com três fontes. Ele respondeu que alegar sobre "texto em pt-BR em
+geral" seria **indeterminado** — literatura, poesia, prosa, conto, uma infinidade de estilos que este
+modelo e estes dados nunca alcançam.
+
+Ele está certo, e é objeção de categoria diferente da minha. Uma cota `1 − α^(1/n)` é sobre sorteios **de
+uma população**. Sem moldura amostral não há estimando: a cota não é difícil, **não é sobre nada**. Com
+250 componentes por célula você teria rigor sobre uma população que não sabe nomear.
+
+Então eu errei duas vezes na mesma frase: **forte demais** para a alegação escopada, que é alcançável, e
+**fraca demais** para a ampla, que eu tratei como difícil quando nunca esteve disponível — com nenhum
+volume de dados.
+
+O projeto já havia achado o mesmo por outro caminho: assessment § 3.8, resolvido como L1 em 26/07, com
+`platform = generic` e `topic = geral` nos 10.000 registros e a frase *"não existe base pública licenciada
+de publicação profissional pt-BR"*. A moldura não cobre nem o domínio do produto.
+
+### RETRATAÇÃO: o "20 mil" foi coincidência aritmética vestida de convergência
+
+Eu apresentei "20 mil linhas humanas" como convergência entre a minha derivação e o piso do E3. **São
+dois cálculos sem relação:**
+
+| derivação | conta | unidade | partição que dirige |
+|---|---|---|---|
+| E3, registrada na linha 248 | 4 células × 250 ÷ 5 % | **componentes** | `dev`, a **menor** |
+| minha, desta sessão | 800 ÷ 20 % × 5 estratos | **linhas** | `test` |
+
+Caírem no mesmo número é acidente. Dizer "note que é exactamente o piso do E3" foi ornamento sobre
+acidente — a mesma família de defeito que esta sessão passou corrigindo em mim.
+
+**E a coincidência escondia a consequência real:** sob a alegação escopada, a derivação do E3
+**dissolve**. Os 250 componentes por célula existiam para sustentar generalização, que é a alegação
+indeterminada. Ela sai, o piso de componentes sai com ela, e o 20 mil do E3 sai também. O que passa a
+vincular não é piso — é **escolha de teto**.
+
+### O piso É por célula, e a razão é a hipótese do pior estrato
+
+Confirmado na política, e o nome é explícito:
+
+```json
+"zeroEventCeiling": {
+  "adoptedFloorPerCell": 250,
+  "formula": "1 - perHypothesisAlpha^(1/n)",
+  "unitsBelowFloorFailBeforeSealing": true
+}
+```
+
+A hipótese certificadora de FPR é **"FPR do pior estrato core"** — uma, singular. É por isso que `m=4` e
+não `m = 4 + número de células`. E porque a alegação é sobre o **pior**, e não se sabe qual é o pior antes
+de medir, **toda célula tem de poder sustentá-la**: se uma célula tem 100 unidades e acaba sendo a pior, o
+teto inteiro colapsa para o que 100 sustenta.
+
+**Isso corrige a minha tabela, e para melhor.** Eu montei o dial como se cada estrato fosse alegação
+separada com α próprio. O desenho registrado é mais simples e mais honesto:
+
+- **uma** alegação certificadora — teto válido em todos os estratos declarados, porque calculado no pior;
+- os números por estrato publicados como **diagnóstico não certificador, sem ajuste, rotulados como tal**.
+
+Não precisa inflar `m`, e a manchete vale para o pior, logo para todos.
+
+### O dial, com o único ponto que não é arbitrário
+
+FPR medido em `test` a 20 %, e `criticalFprHumanNegatives: 300` é piso de **linhas** que a política já
+tem, separado do de unidades amostrais:
+
+| linhas em `test` | teto | por célula | 5 células | origem |
+|---:|---:|---:|---:|---|
+| 250 | 1,74 % | 1.250 | 6.250 | escolha |
+| **300** | **1,45 %** | **1.500** | **7.500** | **piso da própria política** |
+| 400 | 1,09 % | 2.000 | 10.000 | escolha |
+| 800 | 0,55 % | 4.000 | 20.000 | escolha minha, arbitrária |
+
+### E as frações de partição ficam re-deriváveis
+
+`dev` = 5 % foi dimensionada para caber 1.000 componentes. Sem o piso de componentes, `dev` volta a ser
+dimensionada para o que serve — ajustar limiar e hiperparâmetro — e o `45/5/10/20/20` inteiro se re-deriva.
+`cal-B` a 20 % existia para a calibração conformal da cota que saiu de cena, então pode nem ser necessária.
+Isso é desenho novo para a pré-inscrição nova, não conserto do antigo.
+
+### O escopo escolhido: cinco estratos
+
+| estrato | fonte | em disco |
+|---|---|---:|
+| `encyclopedic` | Wikipédia, dump direto | 1,96 GB |
+| `legislative` | Carolina | 4,48 GB (162 arq.) |
+| `judicial` | Carolina | 994 MB (38 arq.) |
+| `university` | Carolina | 169 MB (8 arq.) |
+| `social-media` | Carolina — **tipologia nunca usada** | 51 MB (3 arq.) |
+
+Duas tipologias da Carolina estavam em disco e sem uso, e a medição das tipologias é o que revelou:
+`social media` (51 MB) e `public domain works` (4,7 MB). A primeira fecha a lacuna de "rede social", que
+até agora era preenchida por **resenha de produto da B2W**. A segunda ficou fora, e foi sorte: 4,7 MB em
+**2 arquivos** seria a célula vinculante e travaria tudo em ~2 obras.
+
+`wikis` (5,59 GB) fica fora porque o runbook manda pular — near-dup com a Wikipédia direta. `datasets and
+other corpora` (4,52 GB) fica fora por ser saco de gatos: é onde a variância de licença mora, e "other
+corpora" levanta risco de contaminação com benchmark público.
+
+### A B2W sai, e a razão NÃO é o resultado
+
+O operador escolheu excluir a resenha de produto, cujo FPR medido em 25/07 foi 7,12 % (teto 9,43 %). A
+opção que ele marcou já avisava que excluir depois de ver resultado é suspeito. **Mas há razão que não
+depende do número, e é ela que fica registrada:**
+
+A B2W era **substituta**. Ela preenchia `social-media` porque a tipologia de rede social da Carolina não
+estava sendo extraída — B2W entrou com 800 linhas e Carolina com **zero**. Com a tipologia real
+disponível, a substituta é **redundante**: troca-se resenha de produto por texto de rede social de
+verdade, no estrato que sempre foi de rede social.
+
+Isso é escopo prospectivo. E o 7,12 % entra publicado como **a razão pela qual a substituta era ruim** —
+resenha tem forma retórica fixa e não é o que o estrato dizia ser —, em vez de virar número omitido.
+
+### O que muda no pré-registro
+
+O `quotaAxis` congelado tem **4 células por fonte**: `["b2w", "carolina-institutional", "carolina-university",
+"ptwiki"]`. A lista nova tem **5**, quatro delas da Carolina e sem a B2W. Muda conteúdo e cardinalidade —
+e como a pré-inscrição antiga está abandonada, entra na nova em vez de ser emenda.
+
+### A célula institucional: judiciário sozinho, e a legislativa sai
+
+Medido: `legislative` tem 4,48 GB — a maior em bytes — e **3.982 documentos**, porque texto legislativo é
+lei e projeto inteiros: 0,89 documento por megabyte. Era a célula vinculante, e falhava o teto de 0,55 %
+por **18 documentos** (precisa 4.000).
+
+O operador pediu para juntar `legislative` com `judicial` e alegar sobre "FPR em texto judiciário".
+**Juntar e rotular assim declararia 3.982 documentos legislativos como judiciários** — over-claim de
+moldura, que é a classe de erro que a alegação escopada existe para não cometer.
+
+Três saídas, e a escolhida é a terceira:
+
+| | célula | documentos | a alegação diz |
+|---|---|---:|---|
+| 1 | juntar, nome honesto `institutional` | 42.171 | "institucional (judiciário e legislativo)" |
+| 2 | juntar e chamar de judiciário | 42.171 | **over-claim** |
+| 3 | **só judiciário** | **38.189** | "texto judiciário" — exato |
+
+**Judiciário sozinho é melhor que o pooling que eu havia recomendado.** 38.189 documentos dão folga de
+9,5× até o teto agressivo de 0,55 %; a célula vinculante **desaparece**; e o rótulo fica exato sem
+negociação. O que se perde é o estrato legislativo, que era justamente o frágil.
+
+Eu recomendei juntar porque estava tratando cobertura como valor. Com o rótulo em jogo, **descartar a
+legislativa é mais limpo que diluí-la** — e é o operador quem tem prerrogativa sobre a troca, que fica
+nomeada: se a cobertura legislativa valer mais que a exatidão do rótulo, junte e chame de `institutional`.
+
+### Política de melhoria do modelo ao longo do tempo
+
+Pergunta do operador, e a resposta divide-se em duas operações de custo muito diferente. `eligibleCandidate:
+"same-weight-hash-as-v1"` é o que as separa: a medição está amarrada a **um hash de pesos**.
+
+**Acrescentar domínio à AVALIAÇÃO — barato.** Pesos idênticos: sela-se um bloco cego só para o estrato
+novo, medem-se os mesmos pesos, e a tabela ganha uma linha. As linhas antigas continuam válidas porque
+nada no modelo mudou. `crossVersionAdjustment: "none"` torna isso limpo, e o preço é publicar **toda**
+execução, inclusive a ruim.
+
+**Acrescentar domínio ao TREINO — caro, e mais do que parece.** Hash novo ⇒ **todo teto publicado morre**,
+não só o do domínio novo, porque o modelo mudou em todos os estratos. E se os resultados de `test` da v1
+foram vistos, `test` está contaminado para a v2 — não porque as linhas mudaram, mas porque houve
+adaptação sabendo. `blindReserveCompleteAttempts: 2` existe para isso, e a segunda tentativa consome a
+reserva.
+
+**Política que segue:** **agrupar** melhorias de modelo, não iterar. Cada retreino é evento de release que
+custa re-medição completa; iterar queima a reserva em duas rodadas.
+
+**E a consequência contraintuitiva:** reservar material cego na **aquisição**, não no corte — no momento do
+corte todo o material já entrou no ledger. `future-holdout-reserve` já existe no vocabulário, tratado como
+digest de manifesto e não como partição.
+
+**A tensão de desenho que a pergunta revelou, e que fica ABERTA:** a alegação certificadora é "FPR do pior
+estrato", então acrescentar estrato só pode **piorar ou empatar** a manchete — o desenho **pune cobertura**.
+A alternativa é teto por estrato com `m` crescendo: seis estratos ⇒ `m=9`, α=0,0056, e o teto a n=300 vai
+de 1,45 % para 1,72 %. Trinta centésimos de ponto é o preço de cobertura não punir o projeto. Decidir
+**antes da primeira medição**, porque muda o pré-registro.
+
+**Literatura ficcional, medida:** `public domain works` da Carolina tem **26 documentos**, inutilizável. O
+Domínio Público tem milhares de obras pré-1922, com licença resolvida e **rótulo humano de graça** — obra
+de 1900 satisfaz o corte pré-ChatGPT sem depender de declaração de ninguém. Mas o estilo está um século
+longe do pt-BR contemporâneo, então medir ali mistura **registro literário com época**, e não se sabe qual
+o número reflete. É teste de estresse, não cobertura. Ficção **contemporânea** licenciada cai no muro do
+§ 3.8: não existe base pública em pt-BR.
+
+### A célula que vincula é a menor, e megabyte não é a unidade
+
+O que decide não é tamanho: é **quantos valores independentes de `source` (documento de origem)** cada
+tipologia rende. Um XML de 20 MB com dez documentos dentro rende dez, não dez mil. `university` (8
+arquivos) e `social-media` (3 arquivos) são os candidatos a vincular, e é isso que a medição seguinte
+apura.
+
 ## Regras condicionais (bloco D) — decididas, executam sozinhas
 
 1. Célula < n mínimo → **sem cota**, nunca cota frouxa.
