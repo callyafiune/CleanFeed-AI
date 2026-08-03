@@ -320,9 +320,13 @@ describe("chain-of-integrity guards of the runtime descriptor", () => {
   it("refuses a source lock pinning a revision other than the manifest's modelVersion", async () => {
     const { descriptor } = await promotedDescriptor();
     const forged = structuredClone(descriptor);
-    // Non-empty, so the schema parser could not have intercepted it, and distinct
-    // from `modelId`, so a guard comparing the wrong pair would not pass.
-    (forged.sourceLock as { revision: string }).revision = "e".repeat(40);
+    // The forged revision is the manifest's own `modelId`, which is what kills a
+    // guard comparing the wrong pair: against `modelVersion` this diverges and the
+    // guard fires, while a guard comparing `revision` to `modelId` would find them
+    // equal and let the descriptor through. A merely arbitrary value would satisfy
+    // both pairings and prove only that some comparison exists.
+    (forged.sourceLock as { revision: string }).revision =
+      forged.manifest.modelId;
 
     await expect(
       crossValidateRuntimeDescriptor(forged, NOW),

@@ -400,9 +400,10 @@ export async function loadRuntimeDescriptor(
 }
 
 /**
- * Proves the manifest, the release and every calibration profile agree, that
- * the manifest artifacts equal the source lock, that the calibration set digest
- * is coherent, and that no listed profile is already expired at `now`.
+ * Proves the manifest, the release and every calibration profile agree, that the
+ * manifest artifacts equal the source lock AND carry the same model identity as it,
+ * that the calibration set digest is coherent, and that no listed profile is
+ * already expired at `now`.
  */
 export async function crossValidateRuntimeDescriptor(
   descriptor: RuntimeDescriptor,
@@ -425,8 +426,11 @@ export async function crossValidateRuntimeDescriptor(
   // arrived over `postMessage` and cannot verify who validated before it.
   //
   // `baseUrl` is deliberately NOT compared: the manifest has no counterpart field,
-  // and its exact value is pinned at build time. A runtime rule derived from the
-  // self-trained URL scheme would reject a lock that legitimately points upstream.
+  // and its exact value is pinned at build time by `scripts/model-lock.mjs`. A
+  // runtime rule derived from the self-trained URL scheme would reject a lock that
+  // legitimately points upstream. Nothing in the runtime reads it — every fetch
+  // derives from the extension's own `modelsBaseUrl` — and that absence of a reader
+  // is what makes leaving it uncompared safe.
   if (sourceLock.modelId !== manifest.modelId) {
     throw new RuntimeDescriptorError(
       "SOURCE_LOCK_IDENTITY_MISMATCH",

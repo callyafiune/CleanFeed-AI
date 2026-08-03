@@ -2614,14 +2614,64 @@ mapeia qualquer não-`CleanFeedError` para `INFERENCE_FAILED`, então nenhum pro
 As duas lançam o MESMO código, então mutá-las juntas provaria menos. Mutadas separadamente pela
 mensagem, fecho igual à suíte inteira, linha de base verde em 2499:
 
-| comparação mutada | vermelhos | como o vermelho veio |
+| mutação | vermelhos | como o vermelho veio |
 |---|---:|---|
-| `sourceLock.modelId` | **1** | `promise resolved "undefined" instead of rejecting` |
-| `sourceLock.revision` | **1** | `promise resolved "undefined" instead of rejecting` |
+| `throw` da comparação de `modelId` desligado | **1** | `promise resolved "undefined" instead of rejecting` |
+| `throw` da comparação de `revision` desligado | **1** | idem |
+| **PAR ERRADO** — `revision` comparado a `modelId` em vez de `modelVersion` | **12** na suíte / **9** no arquivo | resolução, e **o teste de `revision` está entre eles** |
 
-O sinal que importa não é a contagem — é o vermelho vir de **resolução**. Com a guarda apagada o
-descritor passa inteiro, o que prova que nada mais a cobria. Vermelho por recusa alheia significaria
-que a forja não isola a guarda, e é exatamente o modo como um teste fica verde pelo motivo errado.
+O sinal que importa nas duas primeiras não é a contagem — é o vermelho vir de **resolução**. Com a
+guarda apagada o descritor passa inteiro, o que prova que nada mais a cobria. Vermelho por recusa alheia
+significaria que a forja não isola a guarda, e é exatamente o modo como um teste fica verde pelo motivo
+errado.
+
+**A terceira mutação existe porque a minha própria correção era uma alegação, e alegação minha nesta
+sessão já errou duas vezes.** Ela testa o par errado diretamente. Verificado no arquivo alvo: 9 de 38
+vermelhos, e a lista inclui `refuses a source lock pinning a revision other than the manifest's
+modelVersion` — o teste que eu havia reescrito para essa finalidade. Ou seja a fixture nova mata o par
+errado **por si**, e não por dependência dos baselines; os baselines também ficam vermelhos, o que é
+segurança a mais e não o mecanismo.
+
+Nota de arnês: o `UnicodeEncodeError` de cp1252 voltou a aparecer, agora no **print** da saída e não na
+captura. A restauração havia acontecido no `finally` antes dele, e o `diff` contra o backup confirmou —
+o que vale registrar é que a conferência por `diff` é o que separou "arnês falhou" de "alvo corrompido".
+
+### Etapa 3: o P1 era um comentário meu afirmando o CONTRÁRIO do que a fixture faz
+
+Eu pedi explicitamente que a etapa 3 checasse o **bug do par errado** — uma guarda comparando
+`sourceLock.revision` contra `manifest.modelId` em vez de contra `modelVersion` passaria pelos meus dois
+testes? **Passaria**, e o meu comentário afirmava a defesa exatamente ao contrário.
+
+O comentário dizia que o valor forjado ser "distinto de `modelId`" impediria uma guarda mispareada de
+passar. **Faz o oposto:** sendo distinto de `modelId`, a guarda mispareada também acha divergência, lança
+o código **certo pelo motivo errado**, e o teste fica verde. Quem de fato mata o par errado são os
+**testes de baseline** sobre o descritor intocado — porque a família slug (`cleanfeed-ptbr-v1`) e a
+família hex (`d8f77f…`) são valores distintos, então qualquer comparação cruzada dispara no descritor
+que deveria passar.
+
+**Consertado nos dois níveis, e o segundo é o que importa:** o comentário foi corrigido, e a fixture
+passou a forjar `revision` com **o próprio `manifest.modelId`**. Agora contra `modelVersion` diverge e a
+guarda dispara; contra `modelId` seriam iguais e a guarda deixaria passar — então o teste mata o par
+errado **diretamente**, em vez de depender do baseline três blocos acima. Valor arbitrário satisfaz as
+duas leituras e prova só que alguma comparação existe.
+
+A lição, que vale além desta unidade: **um comentário que afirma propriedade defensiva que a fixture não
+tem é defeito no artefato de prova**, mesmo com o comportamento entregue correto. É a segunda vez nesta
+sessão que a etapa 3 acha isso em mim — a primeira foi a ordem de guardas falsa na unidade das oito.
+
+### Liberdade residual, nomeada em vez de testada
+
+Uma guarda comparando contra `release.modelId`/`release.modelVersion` em vez do manifesto passaria a
+suíte inteira. É equivalente para o desfecho fail-closed — o laço de `RELEASE_IDENTITY_MISMATCH` fecha o
+triângulo transitivamente — e difere só em qual código é culpado quando release **e** lock divergem
+juntos. Não vale teste; vale esta frase.
+
+### Dívida pré-existente, fora do escopo desta unidade (regra condicional 3)
+
+`src/inference/worker-protocol.ts` admite `sourceLock === undefined` na porta de forma do transporte,
+então a revalidação do worker sobre um payload assim morre como `TypeError` **sem código** dentro de
+`crossValidateRuntimeDescriptor`. Fail-closed, mas fora da disciplina de erro codificado que o resto do
+módulo mantém. Não introduzido nem agravado aqui.
 
 ### O espelho da lição do lint: suíte verde não é typecheck verde
 
