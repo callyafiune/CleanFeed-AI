@@ -379,22 +379,33 @@ depuração usam `development` e `calibration`. A concessão é registrada em
 concessão protege é a informação, não o identificador.** Rearranjar os mesmos registros
 gera outra tupla e o ledger aceitaria; a cegueira, não. Todo registro de um teste
 consumido fica inelegível para qualquer partição futura. Além disso, qualquer unidade
-amostral primária que apareceu em uma partição anterior fica inelegível para blocos de
-teste futuros: o novo teste precisa ser formado por clusters nunca revelados. Ver H3b
-para o procedimento de uma segunda tentativa.
+amostral primária que apareceu em uma partição anterior fica inelegível para as
+**partições cegas** futuras: um bloco cego novo precisa ser formado por clusters nunca
+revelados. Ver H3b para o procedimento de uma segunda tentativa.
+
+**As partições cegas são DUAS, `test` e `cal-B`.** São as que o plano da v1.0 mantém privadas e
+byte-intocadas até a v2.0, e a barreira cobre as duas porque o quantil conformal da v2 é construído
+em `cal-B` — onde exchangeability é *condição* da cota, não consequência. `cal-A` é olhada durante o
+desenvolvimento e fica deliberadamente fora: barrar cluster exposto dela fecharia o corpus sem
+comprar cegueira em lugar nenhum.
 
 **A assimetria entre cluster e registro-linha é REAL e está no código — declarada aqui para
 ninguém ler R2 como mais estrita do que ela é (R7).** São dois objetos com duas regras:
 
 | objeto | o que a exposição custa | onde está imposto |
 |---|---|---|
-| **cluster** | elegibilidade para `test` **e só** — cluster exposto continua elegível para `train`, `dev` e `cal` | `benchmark/cluster-exposure-ledger.ts` (`if (record.partition !== "test") continue;`) |
+| **cluster** | elegibilidade para as **partições cegas** (`test` e `cal-B`) **e só** — cluster exposto continua elegível para `train`, `dev` e `cal-A` | `benchmark/cluster-exposure-ledger.ts`, o gate de `collectRefusals` sobre `BLIND_PARTITIONS` |
 | **registro-linha de teste consumido** | sai das **cinco** partições, de vez | H3b, item 2 |
 
-A razão de cada lado: um cluster em `train` não revelou nada ao desenvolvimento sobre o *teste*,
-então só a elegibilidade a teste futuro é queimada; um registro-linha de teste consumido foi
-**lido pelo processo** e não há partição em que ele volte a ser informativo. **Nenhuma das duas
-regras muda** — o que muda é que a assimetria passa a estar escrita.
+A razão de cada lado: um cluster em `train` não revelou nada ao desenvolvimento sobre um bloco cego,
+então só a elegibilidade a bloco cego futuro é queimada; um registro-linha de teste consumido foi
+**lido pelo processo** e não há partição em que ele volte a ser informativo.
+
+**A primeira regra MUDOU, por decisão registrada de 2026-08-02**, e a segunda não. A tabela anterior
+dizia que cluster exposto seguia elegível para "`cal`" — palavra escrita quando `cal` era uma
+partição só, olhada. O E2 a partiu em `cal-A` olhada e `cal-B` cega, e a barreira ficou nomeando uma
+das duas cegas. **O registro-linha de `cal-B` continua sem a proteção do registro-linha de `test`**, e
+isso é lacuna nomeada, não simetria: ver o registro de decisões, § '"Gasto" tem três pareceres'.
 
 **E o que o ledger cobre é menos do que "independência".** Ele compara `author`, `source`,
 `humanSeed` e `derivationRoot`, com `source` significando **documento de origem** (thread,
@@ -6933,7 +6944,8 @@ inelegível para a coleta futura — o dado que faltar hoje não volta. Portanto
 orça 6×300 e a **multiplicidade** conta 3: são grandezas diferentes, e a que a decisão de D5
 altera é a segunda. `m` é `alpha_família = 0,05 / m` em H2; o piso de 300 é inventário em D0b.
 
-R2 torna inelegível para testes futuros toda unidade amostral já exposta em qualquer
+R2 torna inelegível para blocos cegos futuros (`test` e `cal-B`) toda unidade amostral já
+exposta em qualquer
 partição. O cálculo precisa reservar capacidade para **duas tentativas completas no
 total**: a corrente e uma substituição independente. Modelar explicitamente:
 
@@ -7258,7 +7270,8 @@ o relatório declarando que em `agy` família e harness são colineares e que o 
 **não** é o provedor da família — nunca atribuindo a "gerador não visto" uma queda que a lane
 explica igualmente bem.
 
-**Reserva da segunda tentativa.** R2 torna inelegível toda unidade amostral já exposta e D0b
+**Reserva da segunda tentativa.** R2 torna inelegível para os blocos cegos toda unidade amostral
+já exposta e D0b
 **reprova** com `supportedReleaseAttempts < 2`. Até aqui a reserva prevista era só humana
 (`future-holdout-reserve`) mais `gemini-3.6-flash-low`; **não havia família geradora reservada
 para a segunda tentativa**. `gpt-5.5` fecha a lacuna: não entra em `train`, `dev`, `cal-A`,

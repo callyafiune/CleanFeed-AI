@@ -11,10 +11,12 @@
 //
 //   * the CLUSTER — the sampling unit (person, thread/page/product/member file,
 //     lineage) the record-line belongs to. A unit exposed in any previous
-//     partition is ineligible for a future TEST block.
+//     partition is ineligible for the BLIND partitions (`test`, `cal-B`); the
+//     looked-at ones stay open to it.
 //   * the CONTENT — an exact hash plus a MinHash signature, so a record-line that
 //     sat in a consumed test is ineligible for EVERY future partition, and a
-//     near-duplicate of it is barred from test even under a brand-new id.
+//     near-duplicate of it is barred from the blind partitions even under a
+//     brand-new id.
 //
 // `_exclude_ids.txt` remains useful and is NOT replaced: it is a defence by
 // RECORD ID, which stops a re-ingested row and stops nothing else. This module is
@@ -114,6 +116,27 @@ export const LEDGER_PARTITIONS = [
 
 export type LedgerPartition = (typeof LEDGER_PARTITIONS)[number];
 
+/**
+ * The partitions that stay sealed and unread until v2.0, and therefore the ones a
+ * previously exposed sampling unit may not enter.
+ *
+ * `cal-A` is deliberately absent: it is looked at during development, so barring
+ * exposed clusters from it would close the corpus without buying blindness
+ * anywhere. That asymmetry is the whole control — widened to every partition it
+ * becomes a shutdown.
+ *
+ * Annotated as `LedgerPartition[]` rather than left as a bare literal so a member
+ * outside the five active partitions is a type error here rather than a silent
+ * mismatch at the gate. The `cal-A`/`cal-B` swap types fine; what catches it is the
+ * equality check on this list, plus the tests that offer to one partition expecting
+ * admission and the other expecting refusal.
+ *
+ * OFFER-TIME policy only. It decides what a request may claim now and never
+ * reinterprets events already on disk: a record already recorded against `cal-B`
+ * keeps the meaning it had when it was written.
+ */
+export const BLIND_PARTITIONS: readonly LedgerPartition[] = ["cal-B", "test"];
+
 export const CLUSTER_EXPOSURE_EVENT_TYPES = [
   "pilot-exposure",
   "split-freeze",
@@ -133,10 +156,11 @@ export type ClusterExposureEventType =
  * no re-derivation of history. But the comparison is deliberately narrow, and the
  * reason is measurable rather than aesthetic: `domainSource` is a STRATUM and
  * `collectionBatch` is a RUN, both shared by design across thousands of rows, so
- * comparing them would make every future record-line test-ineligible the moment
- * one row of its stratum was ever exposed. That is a shutdown, not a control. The
- * recipe axes (`promptTemplate`, `generatorFamily`, `generatorVersion`,
- * `generationLane`, `harnessVersion`) are shared for the same reason.
+ * comparing them would bar every future record-line from the blind partitions the
+ * moment one row of its stratum was ever exposed. That is a shutdown, not a
+ * control. The recipe axes (`promptTemplate`, `generatorFamily`,
+ * `generatorVersion`, `generationLane`, `harnessVersion`) are shared for the same
+ * reason.
  *
  * `nearDuplicate` is excluded because after pruning it is the record's own id
  * (C2's assembler note), so it carries nothing the content fingerprint does not
@@ -264,8 +288,9 @@ export interface ClusterExposureKeyring {
  * `previousEventDigest` in the surviving PREFIX still matches. So the chain sees a
  * removal from the head and from the middle and never one from the TAIL — which is
  * where the newest exposures live. Read as "nothing was exposed", that hands full
- * test eligibility back to every cluster and every record-line a consumed test
- * already burned, and `verify` passes green over it. It is the failure that cost
+ * blind-partition eligibility back to every cluster any earlier run exposed, and
+ * every partition back to every record-line a consumed test burned, and `verify`
+ * passes green over it. It is the failure that cost
  * the 2026-07-25 measurement, arriving through the file path instead of the tuple.
  *
  * The witness lives in the KEYRING because the keyring is the artifact `init`
@@ -1496,8 +1521,8 @@ async function readAttestedLedgerText(paths: ClusterLedgerPaths): Promise<{
  * "Provably" means the keyring — the durable artifact of this ledger, the one
  * `init` refuses to overwrite — attests a height of zero. Anything else that reads
  * as shorter than the attestation is a LOST HISTORY and fails hard, because the
- * alternative is handing test eligibility back to clusters a consumed test already
- * burned. See {@link ClusterLedgerWitness} for why the hash chain cannot do this
+ * alternative is handing blind-partition eligibility back to clusters an earlier
+ * run already exposed. See {@link ClusterLedgerWitness} for why the hash chain cannot do this
  * on its own.
  *
  * A height ABOVE the attestation fails just as hard, and for the mirror reason:
@@ -1534,7 +1559,7 @@ async function assertAttestedHistory(
         "point --ledger at the canonical artifact " +
         `(${join(CLUSTER_EXPOSURE_PRIVATE_DIRECTORY, CLUSTER_EXPOSURE_LEDGER_FILE)}) ` +
         'or restore it with "cluster-ledger restore". Reading it as empty would ' +
-        "return test eligibility to every cluster a consumed test already burned. " +
+        "return blind-partition eligibility to every cluster an earlier run exposed. " +
         interruptedWriteNote(staged, witness, true),
     );
   }
@@ -1955,11 +1980,11 @@ function collectRefusals(
       continue;
     }
 
-    if (record.partition !== "test") continue;
+    if (!BLIND_PARTITIONS.includes(record.partition)) continue;
 
-    // A sampling unit exposed in ANY previous partition cannot enter a future
-    // test block. Any digest in common counts, so a key rotation cannot mint a
-    // "new" cluster.
+    // A sampling unit exposed in ANY previous partition cannot enter a partition
+    // that stays sealed until v2.0. Any digest in common counts, so a key rotation
+    // cannot mint a "new" cluster.
     const exposedAxes: string[] = EXPOSURE_IDENTITY_AXES.filter((axis) =>
       (record.groupDigests[axis] ?? []).some((digest) =>
         index.clusterDigests.has(digest.digest),
@@ -2401,7 +2426,7 @@ async function appendEvent(
 
 /**
  * Records a `pilot-exposure`: the pilot's clusters become exposed, and therefore
- * ineligible for any future test block. Backs up on both sides of the mutation and
+ * ineligible for the blind partitions. Backs up on both sides of the mutation and
  * transacts; the returned {@link ClusterExposureCommit} names the restore point of
  * the state it committed.
  */

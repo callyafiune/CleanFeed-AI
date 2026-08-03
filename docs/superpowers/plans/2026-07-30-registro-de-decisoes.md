@@ -2256,6 +2256,102 @@ como *condição* da cota conformal; Papadopoulos et al. 2002 — o quantil em `
 Talbot 2010 — a separação `cal-A` × `cal-B` e a proibição de verificar cobertura conformal no próprio
 `cal-B`). A âncora de R2 permanece Dwork et al. 2015, § 1.1.
 
+#### Etapa 1 (Fable) sobre este desenho, e o que ela achou que eu não havia visto
+
+Rodada em 2026-08-02, antes de qualquer código, com o Fable no lugar do codex (ver § "Substituição
+temporária do revisor"). Três achados que mudaram a implementação:
+
+1. **O gate carrega DUAS checagens, e a decisão nomeava uma.** `partition !== "test"` guardava a
+   checagem de cluster **e** o rastreio de quase-duplicata histórica. **Resolvido: as duas estendem
+   juntas.** A razão que aceitei: uma paráfrase de documento exposto em `dev` quebra a exchangeability
+   de `cal-B` exatamente como quebraria a cegueira de `test`; e estender só uma criaria uma **terceira
+   regra que ninguém argumentou**, dentro de uma tabela que existe justamente por enumerar duas.
+2. **Nenhum teste ficava vermelho ao reverter a barreira.** Toda asserção de
+   `cluster-exposed-previously` no arnês nomeia `partition: "test"`; nenhuma fixture oferecia a
+   `cal-B`. É a mesma mina que as listas do `fit` já pisaram — fixture que deixa `cal-B` vazia deixa a
+   guarda verde sob mutação.
+3. **Uma sobre-extensão perigosa, que eu poderia ter feito por simetria:** alargar `inTest` em
+   `buildIndex` para "qualquer partição cega" **reinterpretaria eventos já em disco** como consumidos
+   em todo lugar. Estender o gate de OFERTA é forward-only e não reinterpreta byte nenhum; estender o
+   índice não é. Fiz a primeira e **não** a segunda, e o teste R5a existe para prender isso.
+
+#### Medição de mutação, feita e não estimada
+
+Linha de base verde confirmada antes de mutar (78 testes no arquivo), restauração em `finally`,
+backup conferido por `diff` depois — idêntico. Bytes capturados e decodificados à mão, porque
+`text=True` no Windows usa cp1252 e a vitest emite UTF-8.
+
+| mutação | vermelhos | quais |
+|---|---:|---|
+| gate revertido para `partition !== "test"` | **4** | as quatro de `cal-B`: cluster sob id/tupla/texto novos, quase-duplicata sob cluster novo, filho de linhagem, e o cluster de linha congelada em `cal-B` |
+| gate removido (o alargamento) | **8** | as de admissão — a assimetria morre e o "shutdown, not a control" aparece |
+
+#### LACUNA NOMEADA, registrada e deliberadamente NÃO implementada
+
+A proteção de "esteve numa partição cega" é **assimétrica entre as duas cegas**, e a decisão acima é
+silenciosa sobre isso. Registro-linha congelado em `test` sai das cinco partições para sempre;
+registro-linha congelado em `cal-B` não ganha proteção nenhuma — nada o impede de entrar no `dev` de um
+corpus posterior, ser olhado lá, e descegar retroativamente o `cal-B` ainda vivo em que ele está.
+Silencioso também: o que a **consumação** de `cal-B` pela v2.0 faz com os registros-linha dele, já que
+o quantil conformal é literalmente "lido pelo processo", que é o critério da própria tabela.
+
+**Não implementado agora de propósito:** consertar qualquer das duas exigiria alargar `inTest`, que é a
+reinterpretação retroativa do achado 3. Precisa de decisão própria, e ela vence **antes da v2.0 ou
+antes de um segundo corpus sobrepor um split vivo** — o que vier primeiro. O teste R5a fixa o escopo
+registrado, para que qualquer alargamento futuro seja ato consciente e não deriva.
+
+#### Consequência operacional que a decisão implica e não operacionalizava
+
+`eligible` é tudo-ou-nada: uma recusa reprova o `commit-split` inteiro. Depois desta mudança, **o
+primeiro `commit-split` após qualquer exposição-piloto será recusado por inteiro** se o splitter tiver
+posto um cluster recuperado em `cal-B`. E o splitter não pode saber o conjunto barrado sozinho — os
+digests vivem sob o keyring privado. O laço é **preflight → reatribuir as linhas recusadas fora das
+partições cegas → re-cortar**, e ele precisa estar no runbook de montagem antes da primeira tentativa.
+
+#### Correção do custo de reversão que eu havia registrado
+
+"Uma linha de predicado mais os testes" **subcontava**. São também quatro docstrings e uma linha de
+tabela normativa em R2 — e a metade documental é exactamente a que foi pulada quando o vocabulário se
+moveu no E2, que é a origem deste achado inteiro.
+
+#### Etapa 3 (Fable, no lugar do codex) — veredito (b), nenhum P0
+
+Nove itens do contrato **entregues**, com `file:line` de prova em cada um; os sete testes exigidos
+presentes e discriminando de verdade. As duas contagens de mutação foram verificadas
+**analiticamente** por ele (não podia rodar mutação, por ser leitura-apenas) e batem exatamente — e
+ele explicou os 8 do alargamento melhor do que eu: três admissões explícitas mais **cinco testes de
+ciclo de vida** cuja segunda mutação compartilha o `author` default com um registro já exposto, um
+deles recusando dentro da transação antes de chegar ao escritor que o teste queria exercitar.
+
+**O P1, e ele é sobre mim.** A varredura de vocabulário consertou **exatamente os quatro comentários
+que o contrato listou e parou ali**. Sobraram três irmãos no mesmo módulo dizendo "test eligibility"
+onde agora está em jogo elegibilidade às duas cegas — e **um deles é a mensagem de recusa que o
+operador lê durante um incidente** de histórico perdido (`CLUSTER_LEDGER_HISTORY_ABSENT`). Um operador
+triando aquela recusa concluiria que só `test` está em risco e trataria re-cortar `cal-B` como seguro.
+
+Isso é **a mesma falha que originou esta unidade**: quando o vocabulário se moveu no E2, a metade
+documental ficou para trás. Eu a repeti dentro do conserto dela, com a lista do contrato funcionando
+como teto em vez de piso. A regra que tiro: **lista de contrato é piso; a varredura é por termo, no
+módulo inteiro, e se prova com `grep` do termo antigo saindo vazio.**
+
+**E a regra se pagou no mesmo commit em que foi escrita.** Rodado o `grep` que ela exige
+(`test eligibility|test-ineligible|future test block|barred from test|non-test`), ele **não** saiu
+vazio: achou **três sítios a mais no arquivo de teste**, que nem a minha varredura nem a etapa 3
+haviam pegado — o nome do `describe` da aceitação 1, o comentário do argumento do shutdown, e o
+docstring do bloco de cauda perdida. A etapa 3 varreu o módulo por este termo e o teste só por
+"non-test", que era o que o contrato listava. Sem o `grep`, a regra teria nascido falsa no commit que
+a escreve. Os três estão consertados e o `grep` sai vazio agora — é essa saída vazia, e não a lista de
+achados de ninguém, que é a evidência.
+
+Os quatro P2, todos consertados: o docstring de `BLIND_PARTITIONS` afirmava que só os testes de
+oferta pegam a troca `cal-A`/`cal-B` — falso, o teste de igualdade também pega; R5b iterava a
+**constante de produção**, ficando vacuoso sob constante vazia e acompanhando a troca sob troca
+(fraqueza que eu havia levantado e ele confirmou — agora está fixo em literal, como R3 já fazia);
+cabeçalho do arquivo de teste dizendo "oito testes de aceitação"; e vocabulário residual de
+`test`-apenas em dois outros pontos do plano v3.
+
+Nenhum dos cinco toca comportamento, formato persistido nem o gate.
+
 ### Inventário de recuperação do `ptbr-generic-v1`, por célula
 
 Calculado da tabela de distribuição já publicada em `docs/detector-rebuild-assessment.md` (§1) e da
@@ -2340,6 +2436,9 @@ próprio docstring.
 4. Suíte quebra em arquivo alheio → 1h de investigação; pré-existente = registra e segue.
 5. Lane de geração cai → lane reserva; todas caírem → pausa só a fila de corpus.
 6. Codex indisponível → fora do selado segue sem cross-review (registrado); selado espera.
+   **SUSPENSA em 2026-08-02 pelo operador** enquanto o crédito do codex não voltar: o selado anda com
+   revisão do Fable em vez de esperar. Ver § "Substituição temporária do revisor" para a perda de
+   independência que isso custa e para a regra de que rodada do Fable não fecha dívida de codex.
 7. Plano × código divergem → o código medido vence; plano emendado na mesma unidade.
 8. Tocaria `test`/`cal-B`/ledger real → **para e pergunta. Sempre.**
 
@@ -2400,6 +2499,49 @@ A5 continua valendo para o **nível** de revisão (adversarial só em caminho se
 resto). O que esta decisão acrescenta é a etapa 1, que passa a existir para **toda** unidade, e a
 expectativa de que o número de rodadas da etapa 3 caia — porque erro de categoria deixa de chegar
 lá. Se não cair, a hipótese está errada e isso é medível: basta contar as rodadas por unidade.
+
+### SUBSTITUIÇÃO TEMPORÁRIA DO REVISOR — DECIDIDA PELO OPERADOR em 2026-08-02
+
+O crédito do codex acabou. **O operador decidiu:** o Fable assume a etapa 3 até o crédito voltar, e a
+implementação segue. Registrado com a autoria dele por R4 — eu não decidi isto.
+
+**O que esta decisão substitui.** A regra condicional 6 diz "Codex indisponível → fora do selado segue
+sem cross-review (registrado); **selado espera**". Ela deixaria a barreira de `cal-B` parada até 8 de
+agosto. A decisão do operador a suspende: o selado passa a andar com revisão do Fable em vez de
+esperar.
+
+**A perda, nomeada, porque ela é real e está escrita neste mesmo documento.** A justificativa da etapa
+3 é: "o valor da etapa 3 vem da **independência** (outro modelo, outro contexto, sem os vieses de quem
+escreveu); concentrar desenho, implementação e revisão no mesmo modelo devolveria o ponto cego que o
+ciclo existe para cobrir." O Fable **é a etapa 1**. Então:
+
+| independência | com codex | com Fable |
+|---|---|---|
+| de quem **implementou** (Opus) | preservada | **preservada** |
+| de quem **desenhou** (Fable) | preservada | **perdida** |
+
+A consequência é previsível e vale escrever antes de acontecer: **erro de categoria — promessa
+universal com mecanismo probabilístico, contrato nunca implementado, teste verde sob mutação — não
+será pego duas vezes.** É exactamente a classe que a etapa 1 existe para achar, e o mesmo modelo que
+aprovou o desenho não é quem a acha de novo. O que a etapa 3 pelo Fable **ainda** pega é erro de
+execução: implementação que não entrega o contrato que a própria etapa 1 escreveu, e as armadilhas de
+plataforma.
+
+**Enquadramento adotado para as rodadas do Fable**, para extrair o que resta de valor: a etapa 3 dele
+pergunta primeiro "a implementação entrega o contrato numerado que a etapa 1 escreveu?", e só depois
+procura defeito livre. Contrato escrito antes vira lista de verificação, e essa parte não depende de
+independência.
+
+**Rodada do Fable NÃO fecha dívida de codex.** As duas ficam contadas separadamente no registro. Duas
+razões: o E2 tem doze rodadas de codex rejeitadas e uma décima terceira por outro revisor não é
+comparável à sequência; e quando o crédito voltar, o operador precisa poder ver quais unidades do
+selado carregam **só** revisão do Fable, para decidir se re-roda o codex nelas ou se declara
+explicitamente que não vai. **Essa decisão não é tomada agora** — só a visibilidade dela é garantida.
+
+| campo | conteúdo |
+|---|---|
+| custo de reversão | zero: volta a D-6 quando o crédito voltar |
+| ratificar antes de | é decisão do operador, já ratificada na origem. O que fica pendente é a decisão de re-rodar ou não o codex nas unidades revisadas só pelo Fable, **no marco do retorno do crédito** |
 
 ### Primeira aplicação do processo — etapa 1 no E2 (2026-07-31)
 

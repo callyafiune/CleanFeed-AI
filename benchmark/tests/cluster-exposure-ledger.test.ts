@@ -1,5 +1,5 @@
-// The eight named acceptance tests of C3's exposure ledger, plus the boundary
-// checks the ledger owes its callers.
+// The named acceptance tests of C3's exposure ledger, plus the boundary checks
+// the ledger owes its callers.
 //
 // Every test runs against a TEMPORARY fixture directory. Nothing here touches
 // `benchmark/data/private/`: freezing a real split is E2's, and a real exposure
@@ -33,10 +33,12 @@ import {
   withAxis,
 } from "./helpers/v3-record-fixture.ts";
 import {
+  BLIND_PARTITIONS,
   CLUSTER_EXPOSURE_KEYRING_FILE,
   CLUSTER_EXPOSURE_LEDGER_FILE,
   ClusterLedgerError,
   EXPOSURE_IDENTITY_AXES,
+  LEDGER_PARTITIONS,
   backupClusterLedger,
   clusterAssignments,
   commitSplitFreeze,
@@ -171,7 +173,7 @@ describe("cluster-exposure ledger — keyring and initialisation", () => {
   });
 });
 
-describe("acceptance 1 — a new id or a new tuple does not restore test eligibility", () => {
+describe("acceptance 1 — a new id or a new tuple does not restore blind-partition eligibility", () => {
   it("refuses a previously exposed cluster for test under a fresh id and a fresh tuple", async () => {
     await init();
     await recordPilotExposure(
@@ -202,7 +204,65 @@ describe("acceptance 1 — a new id or a new tuple does not restore test eligibi
     );
   });
 
-  it("still admits that cluster into a non-test partition", async () => {
+  it("still admits that cluster into every looked-at partition", async () => {
+    await init();
+    await recordPilotExposure(
+      paths(),
+      request({
+        eventType: "pilot-exposure",
+        records: [record({ id: "r1", partition: "dev" })],
+      }),
+    );
+
+    // The asymmetry IS the control: barred from the blind partitions, open
+    // wherever development already reads. Widened to all five it closes the
+    // corpus and buys blindness nowhere.
+    for (const partition of ["train", "dev", "cal-A"] as const) {
+      const decision = await preflightExposure(
+        paths(),
+        request({
+          datasetDigest: DATASET_B,
+          splitDigest: SPLIT_B,
+          records: [record({ id: "r2", text: FAR_TEXT, partition })],
+        }),
+      );
+
+      expect(decision.refusals).toEqual([]);
+      expect(decision.eligible).toBe(true);
+    }
+  });
+});
+
+describe("acceptance 1b — cal-B is blind too, and the asymmetry survives", () => {
+  const SEED_TEXT = words("beta", 200);
+  const CHILD_TEXT = words("gamma", 200);
+
+  function generation(
+    id: string,
+    partition: ExposureRecordInput["partition"],
+    humanSeed: string,
+  ): ExposureRecordInput {
+    return {
+      id,
+      text: CHILD_TEXT,
+      partition,
+      groups: {
+        humanSeed,
+        promptTemplate: `pt_${id}`,
+        generatorFamily: "gemini-3_5-flash-medium",
+      },
+    };
+  }
+
+  it("names exactly the two partitions sealed until v2.0, both of them active", () => {
+    expect([...BLIND_PARTITIONS].sort()).toEqual(["cal-B", "test"]);
+    for (const partition of BLIND_PARTITIONS) {
+      expect(LEDGER_PARTITIONS).toContain(partition);
+    }
+    expect(BLIND_PARTITIONS).not.toContain("cal-A");
+  });
+
+  it("refuses a previously exposed cluster for cal-B under a fresh id, tuple and far text", async () => {
     await init();
     await recordPilotExposure(
       paths(),
@@ -217,12 +277,164 @@ describe("acceptance 1 — a new id or a new tuple does not restore test eligibi
       request({
         datasetDigest: DATASET_B,
         splitDigest: SPLIT_B,
-        records: [record({ id: "r2", text: FAR_TEXT, partition: "cal-A" })],
+        records: [
+          record({ id: "brand-new-id", text: FAR_TEXT, partition: "cal-B" }),
+        ],
+      }),
+    );
+
+    expect(decision.eligible).toBe(false);
+    expect(decision.refusals.map((refusal) => refusal.reason)).toContain(
+      "cluster-exposed-previously",
+    );
+  });
+
+  it("refuses a near-duplicate of exposed text for cal-B under a fresh cluster", async () => {
+    await init();
+    await recordPilotExposure(
+      paths(),
+      request({
+        eventType: "pilot-exposure",
+        records: [record({ id: "r1", partition: "dev" })],
+      }),
+    );
+
+    // A disjoint sampling unit, so the refusal can only come from the content
+    // screen — the second check the same gate carries.
+    const decision = await preflightExposure(
+      paths(),
+      request({
+        datasetDigest: DATASET_B,
+        splitDigest: SPLIT_B,
+        records: [
+          record({
+            id: "r2",
+            text: NEAR_TEXT,
+            partition: "cal-B",
+            author: "person_fedcba9876543210",
+            source: "th_ptso_999999",
+          }),
+        ],
+      }),
+    );
+
+    expect(decision.eligible).toBe(false);
+    expect(decision.refusals.map((refusal) => refusal.reason)).toContain(
+      "historical-near-duplicate",
+    );
+  });
+
+  it("still admits a near-duplicate into cal-A", async () => {
+    await init();
+    await recordPilotExposure(
+      paths(),
+      request({
+        eventType: "pilot-exposure",
+        records: [record({ id: "r1", partition: "dev" })],
+      }),
+    );
+
+    const decision = await preflightExposure(
+      paths(),
+      request({
+        datasetDigest: DATASET_B,
+        splitDigest: SPLIT_B,
+        records: [
+          record({
+            id: "r2",
+            text: NEAR_TEXT,
+            partition: "cal-A",
+            author: "person_fedcba9876543210",
+            source: "th_ptso_999999",
+          }),
+        ],
       }),
     );
 
     expect(decision.refusals).toEqual([]);
     expect(decision.eligible).toBe(true);
+  });
+
+  it("refuses the lineage child of an exposed seed for cal-B", async () => {
+    await init();
+    await recordPilotExposure(
+      paths(),
+      request({
+        eventType: "pilot-exposure",
+        records: [
+          record({
+            id: "h1",
+            partition: "dev",
+            text: SEED_TEXT,
+            source: "th_h1",
+          }),
+        ],
+      }),
+    );
+
+    const decision = await preflightExposure(
+      paths(),
+      request({
+        datasetDigest: DATASET_B,
+        splitDigest: SPLIT_B,
+        records: [generation("g1", "cal-B", "h1")],
+      }),
+    );
+
+    expect(decision.eligible).toBe(false);
+    expect(decision.refusals.map((refusal) => refusal.reason)).toContain(
+      "cluster-exposed-previously",
+    );
+  });
+
+  it("does not consume a record-line frozen into cal-B", async () => {
+    await init();
+    await commitSplitFreeze(
+      paths(),
+      request({ records: [record({ id: "b1", partition: "cal-B" })] }),
+    );
+
+    // Only a line that sat in `test` leaves all five partitions. Reading `cal-B`
+    // as consuming would give events already on disk a meaning they were not
+    // written with.
+    const decision = await preflightExposure(
+      paths(),
+      request({
+        datasetDigest: DATASET_B,
+        splitDigest: SPLIT_B,
+        records: [record({ id: "b1", partition: "dev" })],
+      }),
+    );
+
+    expect(decision.refusals).toEqual([]);
+    expect(decision.eligible).toBe(true);
+  });
+
+  it("bars the cluster of a cal-B line from the next blind block", async () => {
+    await init();
+    await commitSplitFreeze(
+      paths(),
+      request({ records: [record({ id: "b1", partition: "cal-B" })] }),
+    );
+
+    // Hardcoded rather than iterating `BLIND_PARTITIONS`: driving the loop from
+    // the production constant would make an empty constant pass vacuously and a
+    // swapped one track the swap.
+    for (const partition of ["cal-B", "test"] as const) {
+      const decision = await preflightExposure(
+        paths(),
+        request({
+          datasetDigest: DATASET_B,
+          splitDigest: SPLIT_B,
+          records: [record({ id: "b2", text: FAR_TEXT, partition })],
+        }),
+      );
+
+      expect(decision.eligible).toBe(false);
+      expect(decision.refusals.map((refusal) => refusal.reason)).toContain(
+        "cluster-exposed-previously",
+      );
+    }
   });
 });
 
@@ -940,8 +1152,8 @@ describe("the identity boundary the ledger enforces itself", () => {
 
   it("compares only the sampling-unit axes, never a stratum or a batch", () => {
     // A stratum (`domainSource`) or a batch (`collectionBatch`) is shared by
-    // design across the whole corpus: comparing it would make every future
-    // record test-ineligible after the first exposure, which is a shutdown and
+    // design across the whole corpus: comparing it would bar every future record
+    // from the blind partitions after the first exposure, which is a shutdown and
     // not a control.
     expect([...EXPOSURE_IDENTITY_AXES]).toEqual([
       "author",
@@ -1267,8 +1479,8 @@ describe("the ledger reads as empty only when it is provably new", () => {
 
   /**
    * The tail burns a cluster NOTHING ELSE in the ledger names, so losing the tail
-   * really does hand that cluster's test eligibility back — the two tests below
-   * would pass vacuously against a cluster the head also exposes.
+   * really does hand that cluster's blind-partition eligibility back — the two
+   * tests below would pass vacuously against a cluster the head also exposes.
    */
   const TAIL_AUTHOR = "person_aaaabbbbccccdddd";
   const TAIL_SOURCE = "th_9";

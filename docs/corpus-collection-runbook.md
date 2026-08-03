@@ -580,6 +580,34 @@ npm run release:activate     # só é válido para pass; libera blur/collapse/hi
 `reject` escreve perfis vazios + `bundle-verified` (o TMR não entra no pacote) e o
 fallback estilométrico permanece.
 
+### 4b. O passo 3 é um LAÇO quando o ledger de exposição já tem histórico
+
+`commit-split` é tudo-ou-nada: uma única linha recusada reprova o congelamento inteiro. E as
+duas partições cegas — `test` e `cal-B` — recusam qualquer cluster já exposto em qualquer
+partição anterior. Então, se houver exposição-piloto ou congelamento anterior no ledger, o
+primeiro `commit-split` **será** recusado se o splitter tiver posto um cluster exposto numa
+delas.
+
+O splitter não consegue evitar isso sozinho: os digests de cluster vivem sob o keyring
+privado, que ele não lê. Ele coloca componentes por tamanho e por intervalo temporal, não por
+histórico de exposição. Portanto:
+
+1. `cluster-ledger preflight` sobre a atribuição proposta — não escreve nada e devolve cada
+   recusa com `recordId` e `partition`;
+2. reatribuir as linhas recusadas **fora** das duas partições cegas — elas seguem elegíveis
+   para `train`, `dev` e `cal-A`, e é essa assimetria que torna o corpus divisível;
+3. re-cortar e repetir o preflight até vir `eligible`;
+4. só então `commit-split`.
+
+**Não reatribua uma linha recusada para a outra partição cega.** As duas carregam a mesma
+barreira, a recusa reaparece no preflight seguinte, e o custo é uma rodada inteira de
+re-corte.
+
+**Consequência de dimensionamento, para a conta antes da coleta:** toda linha recuperada de um
+corpus anterior serve apenas aos 60 % não cegos. `test` (20 %) e `cal-B` (20 %) exigem cluster
+inédito, e nenhuma recuperação os alimenta. O inventário está no registro de decisões,
+§ '"Gasto" tem três pareceres'.
+
 ## 5. A decisão (gates §6.5, verbatim de [gates.ts](../benchmark/gates.ts))
 
 Ramos: **qualquer** gate de integridade ou de *warning* falho → `reject`; todos os
