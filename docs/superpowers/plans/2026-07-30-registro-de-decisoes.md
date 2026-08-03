@@ -2994,6 +2994,18 @@ documento de plano autorizado é o plano de entrega do modelo.
 Custo de reversão: escolher A ou B depois custa só o descarte do plano; o corpus e o pré-registro que C
 exige servem a qualquer caminho futuro (C4 preserva os blocos).
 
+## Etapa 0 do plano de entrega — DECIDIDA PELO OPERADOR em 2026-08-03 (G0.1–G0.3)
+
+As três, na mesma resposta, todas na direção recomendada:
+
+| # | decisão | consequência |
+|---|---|---|
+| G0.1 | **`domainSource` RATIFICADO como estrato de relato**; `sourceMaterialBatch` carrega a dependência | a decisão do agente de 2026-08-01 passa de `EM-VIGOR (delegada)` a `RATIFICADA`; a Fase 1 (eixos) destrava |
+| G0.2 | **manchete POR ESTRATO, `m=7`** — quatro tetos de FPR (um por célula) + recall + calibração global + integridade; α = 0,05/7 ≈ 0,0071 | supera a família `m=4` do pior estrato (B3); célula futura acrescenta linha sem degradar a manchete, alinhado à política de melhoria |
+| G0.3 | **teto pretendido 1,45 %** — 300 negativos humanos por célula em `test`, 1.500 linhas por célula, **6.000 humanas no total**; com `m=7` o teto sob zero eventos é ≈ **1,63 %** por célula | dimensiona a coleta da Fase 2/3; 0,55 % fica disponível para uma v2 com o mesmo desenho |
+
+Custo de reversão: até o congelamento da pré-inscrição nova, emenda simples; depois, R3 tranca.
+
 ## Regras condicionais (bloco D) — decididas, executam sozinhas
 
 1. Célula < n mínimo → **sem cota**, nunca cota frouxa.

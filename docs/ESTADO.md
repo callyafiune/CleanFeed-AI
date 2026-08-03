@@ -56,10 +56,10 @@ Stack Overflow pt, resenha de produto (B2W).
 |---|---|---|
 | | a alegação é **escopada e publicada como tabela por célula**, com a moldura declarada | OP |
 | | "texto em pt-BR em geral" **não é alegável** — sem moldura amostral não há estimando | OP |
-| | **uma** alegação certificadora, calculada no **pior** estrato — o desenho da manchete está sob decisão aberta, ver § 4 | OP |
+| | a família certificadora é **por estrato**: quatro tetos de FPR (um por célula) + recall no limiar + calibração global + integridade — **`m=7`**, α = 0,05/7 ≈ 0,0071 | OP |
 | Regime 2 | cada release certifica **só a própria hipótese versionada**; erro familiar ao longo da história do produto **não é alegado**. Toda execução certificadora é publicada, passe ou reprove | OP |
-| B3 | família primária `m=4`: FPR do pior estrato · recall no limiar · calibração global · integridade | OP |
-| | piso de linhas: 300 negativos humanos (`criticalFprHumanNegatives`), aplicado **por célula** em `test` na pré-inscrição nova | herdado |
+| | piso de linhas: 300 negativos humanos por célula em `test` (`criticalFprHumanNegatives`) | herdado |
+| | alvo de coleta: **1.500 linhas humanas por célula** (300 em `test` a 20 %), **6.000 no total**; teto sob zero eventos ≈ **1,63 %** por célula | OP |
 | | teto sob zero eventos: `1 − α^(1/n)`; célula abaixo do piso **reprova antes da selagem** | herdado |
 
 ### 3.2 Modelo e melhoria
@@ -87,7 +87,7 @@ Stack Overflow pt, resenha de produto (B2W).
 | R4 | todo registro gerado nasce **`automated/unreviewed`**; a auditoria de PII é **amostral** e não produz `passed` por registro | OP |
 | | linhagem: todo gerado **que declara pai** referencia pai presente; `assertDerivedParentsResolve` roda antes do split. A admissão de pai `notApplicable` é lacuna aberta (§ 7) | AG |
 | | famílias OpenAI ficam **reservadas ao teste de gerador não visto** (OOD); nenhuma entra em treino | AG |
-| | `domainSource` é **estrato**; a dependência é carregada por `sourceMaterialBatch` | AG · ratificar |
+| | `domainSource` é **estrato**; a dependência é carregada por `sourceMaterialBatch` | OP |
 | | partições cegas = `test` e `cal-B`, privadas e byte-intocadas até a v2.0 | OP |
 | | cluster exposto é barrado das **duas** partições cegas | AG · ratificar |
 | | o vocabulário de partições do código é `train / dev / cal-A / cal-B / test`; o **desenho** de partições da pré-inscrição nova é re-derivável, incluindo a existência de `cal-B` | AG |
@@ -176,12 +176,10 @@ O que "corpus inutilizado" significa — a semântica é **graduada**, nunca tud
 
 | decisão | trava |
 |---|---|
-| **B1** — parecer jurídico da posição (a), ou risco assumido por escrito | publicação de pesos; `license-review.json` → `approved` |
-| ratificar `domainSource` como estrato | o corpus |
-| manchete: **pior estrato** (desenho atual, § 3.1) ou **por estrato** — na moldura de 4 células (§ 2): `m=7`, α≈0,0071, teto a n=300 vai de 1,45 % para ≈1,63 % — decidir antes da primeira medição | o pré-registro |
-| ratificar a **barreira de `cal-B`** (cluster exposto barrado das duas cegas, § 3.3) | a montagem do corpus novo |
+| **B1** — parecer jurídico da posição (a), ou risco assumido por escrito | publicação de pesos (Fase 7); `license-review.json` → `approved` |
+| ratificar a **barreira de `cal-B`** (cluster exposto barrado das duas cegas, § 3.3) | a montagem do corpus novo (Fase 3) |
+| **`consume-holdout`** — o botão irreversível da medição | Fase 5 |
 | re-rodar ou não o codex nas unidades do caminho selado revisadas **só pelo Fable** | no retorno do crédito do codex |
-| teto pretendido: 1,45 % (300 linhas em `test` por célula) ou 0,55 % (800) | o volume de coleta |
 
 ---
 
@@ -244,7 +242,8 @@ não como resultado.
 ## 6. NÃO APLICAR — aparecem no registro e não valem
 
 - `A2` (eixo de 4 células por fonte, com B2W);
-- de `B3`, o piso de **250 componentes por célula** — a família `m=4` segue vigente (§ 3.1);
+- de `B3`, o piso de **250 componentes por célula** e a manchete do **pior estrato** com `m=4` — a
+  família vigente é `m=7` por estrato (§ 3.1, decisão G0.2 de 2026-08-03);
 - `F0-5` (cinco estratos com `qa-informal` declarado);
 - piso de **≈20 mil linhas humanas**;
 - frações `45/5/10/20/20`;
