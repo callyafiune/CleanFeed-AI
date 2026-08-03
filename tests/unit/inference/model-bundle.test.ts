@@ -24,6 +24,16 @@ import bundledSourceLock from "../../../models/cleanfeed-ptbr-v1/source-lock.jso
 
 const NOW = Date.parse("2026-07-20T00:00:00.000Z");
 
+// Every refusal asserts the `code`, never a message substring: a
+// `RuntimeDescriptorError` message does not carry its own code, so
+// `rejects.toThrowError("PROFILE_SET_MISMATCH")` fails even against the correct
+// error and pressures the assertion down to a bare `rejects`, which passes for any
+// rejection — including the one a DIFFERENT guard raises.
+const rejectsWith = (code: string) => ({
+  name: "RuntimeDescriptorError",
+  code,
+});
+
 function validSources(): RuntimeDescriptorSources {
   return structuredClone({
     manifest: bundledManifest,
@@ -180,9 +190,12 @@ describe("runtime descriptor cross-validation", () => {
     const sources = validSources();
     (sources.manifest as { bundleDigest: unknown }).bundleDigest = "not-a-sha";
 
+    // The code is pinned because a bare rejection here was green for the wrong
+    // reason: with the schema guard off, the malformed digest flows on and
+    // RELEASE_IDENTITY_MISMATCH refuses in its place.
     await expect(
       createValidatedRuntimeHost(createWorkerHost, sources, NOW),
-    ).rejects.toBeDefined();
+    ).rejects.toMatchObject(rejectsWith("MANIFEST_SCHEMA_INVALID"));
     expect(createWorkerHost).not.toHaveBeenCalled();
   });
 
@@ -193,7 +206,7 @@ describe("runtime descriptor cross-validation", () => {
 
     await expect(
       createValidatedRuntimeHost(createWorkerHost, sources, NOW),
-    ).rejects.toBeDefined();
+    ).rejects.toMatchObject(rejectsWith("RELEASE_IDENTITY_MISMATCH"));
     expect(createWorkerHost).not.toHaveBeenCalled();
   });
 
@@ -208,7 +221,7 @@ describe("runtime descriptor cross-validation", () => {
 
     await expect(
       createValidatedRuntimeHost(createWorkerHost, sources, NOW),
-    ).rejects.toBeDefined();
+    ).rejects.toMatchObject(rejectsWith("ARTIFACT_MISMATCH"));
     expect(createWorkerHost).not.toHaveBeenCalled();
   });
 
@@ -254,22 +267,12 @@ describe("runtime descriptor cross-validation", () => {
         NOW,
         async () => descriptor,
       ),
-    ).rejects.toBeDefined();
+    ).rejects.toMatchObject(rejectsWith("PROFILE_EXPIRED"));
     expect(createWorkerHost).not.toHaveBeenCalled();
   });
 });
 
 describe("chain-of-integrity guards of the runtime descriptor", () => {
-  // Every forgery asserts the `code`, never a message substring: a
-  // `RuntimeDescriptorError` message does not carry its own code, so
-  // `rejects.toThrowError("PROFILE_SET_MISMATCH")` fails even against the correct
-  // error and pressures the assertion down to a bare `rejects`, which passes for
-  // any rejection — including the one a DIFFERENT guard raises.
-  const rejectsWith = (code: string) => ({
-    name: "RuntimeDescriptorError",
-    code,
-  });
-
   it("passes the promoted baseline untouched", async () => {
     const { descriptor } = await promotedDescriptor();
 

@@ -2686,6 +2686,86 @@ nenhuma cobre a outra.** Consertado com o idioma de cast que o resto do arquivo 
 (`(x as { campo: string }).campo = v`), que é apagado na emissão — o comportamento é idêntico, e a
 medição de mutação foi refeita de todo modo, porque a regra é medir e não argumentar.
 
+## As quatro asserções peladas, e o escopo que a etapa 1 decidiu (2026-08-03)
+
+Dívida registrada em `70a14bd`. Unidade só de teste: nada em `src/`.
+
+### A etapa 1 decidiu o escopo, e disse "não vale fazer" a uma das três
+
+Eu levei três dívidas da mesma vizinhança e pedi que ela decidisse se eram uma, duas ou três unidades,
+**argumentando pelo que teria de ser re-verificado junto** e não por conveniência. Veredito: **duas**.
+
+| dívida | veredito |
+|---|---|
+| A — quatro asserções `rejects.toBeDefined()` peladas | **vale**, e vai primeiro: é só teste, e afia o instrumento em que todas as provas desta vizinhança se apoiam |
+| B — `worker-protocol` admite `sourceLock: undefined` | **vale**, mas como registrada ela sub-entrega: o conserto do gate sozinho codifica **um** `TypeError` de uma família |
+| C — `experimental` com perfis passa a cross-validação | **NÃO vale como registrada** |
+
+**Por que A não pode ir junto com B/C:** A se verifica re-rodando a tabela de mutação por guarda, que é
+o artefato de prova das duas unidades anteriores. Misturar com mudança em `src/` deixaria todo vermelho
+ambíguo — "asserção apertada" ou "fronteira mudou". É literalmente a razão que eu havia escrito ao
+diferir a dívida.
+
+**E por que B e C são UMA:** as duas só existem no caminho de `postMessage`, as duas se provam com o
+mesmo arnês, e o conserto certo de C **está dentro** do conserto certo de B.
+
+### O veredito sobre C, que é o achado mais valioso desta etapa
+
+C como registrada era "acrescentar guarda de `experimental`-com-perfis ao cross-validator". A etapa 1
+recusa, com três razões medidas:
+
+1. **a carga forjada é inerte no worker** — `experimental` cai no ramo "estado não promovido ⇒ só
+   estilométrico" do catálogo, `calibrated` fica falso, e o registro de calibração só é construído
+   quando `calibrated`. Os perfis forjados nunca se ligam a decisão nenhuma;
+2. **é inalcançável em todo caminho parseado**, pelo mesmo argumento das outras três provas;
+3. **e cura uma assimetria criando a próxima:** `assertRolloutInvariants` possui **cinco** invariantes
+   de rollout, e o cross-validator não re-litiga nenhum dos outros quatro — um release `actions` com
+   `gateDecision: "reject"` passa por ele igualmente. Re-litigar um e ignorar quatro exigiria um
+   docstring que não se consegue escrever.
+
+**O conserto certo, que dissolve C dentro de B:** o runtime não deve re-litigar invariante que o parser
+possui — deve **parar de contornar** o parser na única fronteira onde entra input não confiável. Com o
+worker chamando `loadRuntimeDescriptor` antes de cross-validar, a forja de C morre como
+`RELEASE_STATE_INVALID` **vinda do dono do invariante**, junto com a família inteira, e o cross-validator
+não muda uma linha.
+
+**Custo já nomeado para a unidade 2:** a história de chamador das três guardas inalcançáveis — "existem
+para o descritor que chega por `postMessage`" — **fica falsa** quando o worker passar a parsear. As
+guardas ficam (função exportada, chamador direto não é conhecível), a tabela 11×1 segue medível, e a
+ordem não se move; mas o bloco de comentário e este registro têm de ser emendados na mesma unidade.
+
+### O que cada pino compra, dito sem inflar
+
+A etapa 1 foi explícita e eu registro na íntegra, porque a tentação seria dizer "quatro guardas ganharam
+cobertura":
+
+- **o teste do manifesto (`MANIFEST_SCHEMA_INVALID`) pega mascaramento demonstrado**, não hipotético: com
+  a guarda desligada, o digest malformado seguia e `RELEASE_IDENTITY_MISMATCH` recusava no lugar;
+- **os outros três são seguro de ORDEM, e não pegam nenhuma mutação única de hoje** que a forma pelada já
+  não pegasse. Desligar cada guarda faz a forja **resolver**, e `rejects` pelado vê isso. O que os pinos
+  passam a ver é guarda **inserida ou reordenada** interceptando com outro código — recusa com nome
+  errado, que a forma pelada não distingue.
+
+### Medição: o teste antes mascarado passa a pegar
+
+Uma guarda por corrida, `throw` → `void`, restauração conferida por `diff` — idêntica.
+
+| guarda desligada | vermelhos | quais |
+|---|---:|---|
+| `MANIFEST_SCHEMA_INVALID` | **2** | `never constructs the host when the descriptor JSON is invalid` **e** `refuses a manifest that does not match the sealed schema` |
+| `RELEASE_IDENTITY_MISMATCH` | 1 | o teste correspondente |
+| `ARTIFACT_MISMATCH` | 1 | idem |
+| `PROFILE_EXPIRED` | 1 | idem |
+
+**Os 2 do primeiro são o resultado.** Antes desta unidade aquele teste ficava verde com a guarda
+desligada; agora ele é um dos vermelhos. É a mesma medição que havia diagnosticado o mascaramento,
+repetida do outro lado do conserto.
+
+Nota: os `toThrowError("MODEL_LOAD_FAILED")` que sobraram no arquivo são de **outra família** —
+`CleanFeedError`, cuja mensagem repete o próprio código —, então ali o substring casa por construção e
+não é a armadilha. `rejectsWith` foi içado para escopo de módulo, porque os quatro testes vivem no
+primeiro `describe` e ele estava definido no segundo.
+
 ## Regras condicionais (bloco D) — decididas, executam sozinhas
 
 1. Célula < n mínimo → **sem cota**, nunca cota frouxa.
