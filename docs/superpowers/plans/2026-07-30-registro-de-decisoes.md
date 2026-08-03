@@ -2763,8 +2763,24 @@ repetida do outro lado do conserto.
 
 Nota: os `toThrowError("MODEL_LOAD_FAILED")` que sobraram no arquivo são de **outra família** —
 `CleanFeedError`, cuja mensagem repete o próprio código —, então ali o substring casa por construção e
-não é a armadilha. `rejectsWith` foi içado para escopo de módulo, porque os quatro testes vivem no
-primeiro `describe` e ele estava definido no segundo.
+não é a armadilha. `rejectsWith` foi içado para escopo de módulo: os quatro testes vivem no `describe` de
+cross-validação e ele estava definido no de guardas de integridade, que vem depois.
+
+### Medição pré-código da unidade 2, feita antes de escrever uma linha dela
+
+A unidade 2 vai fazer o worker chamar `loadRuntimeDescriptor` sobre o payload que chega por
+`postMessage`. Isso só é viável se um descritor **já parseado** sobreviver a um segundo parse — e se não
+sobrevivesse, a unidade seria outra. Medido com andaime descartável, criado, rodado e apagado:
+
+| descritor | sobrevive ao reparse |
+|---|---|
+| par selado (`models/cleanfeed-ptbr-v1/`) | **sim** |
+| `promotedDescriptor()` | **sim** |
+| `bundleVerifiedDescriptor()` | **sim** |
+
+E o survey do outro lado: `tests/integration/inference-pipeline.test.ts` inicializa o worker com os
+**helpers**, não com payloads degenerados montados à mão — então nenhum teste de integração depende de
+um descritor que o parse recusaria. A unidade 2 está liberada como desenhada.
 
 ## Regras condicionais (bloco D) — decididas, executam sozinhas
 
