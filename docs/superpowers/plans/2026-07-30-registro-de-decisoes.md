@@ -3028,7 +3028,9 @@ desvio ~15 — o gate reprovaria metade das montagens honestas por sorteio. A co
 célula (~7.000 total)**; o piso derivado de 1.500 permanece como mínimo, e o gate de 300 fica inalterado.
 
 O contrato completo da unidade (16 itens, 6 commits A–F, 15 testes com a mutação que cada um pega, e a
-tabela de ratificação da política) está no relatório da etapa 1 desta data. Dois pontos do contrato que
+tabela de ratificação da política) está persistido em
+`.codex-reviews/fase1-preinscricao-desenho-fable.md` (área de trabalho, fora do Git, mesma convenção do
+desenho do E2); a ordem de commits está no plano de entrega, Fase 1. Dois pontos do contrato que
 o desenho acertou e valem destaque: `gates.ts` deriva o inventário obrigatório de `policy.primaryFamily`
 (hoje `evaluate.ts` não passa multiplicidade nenhuma e todo gate de intervalo falha fechado — D12 era
 maior do que o plano dizia); e `backbone`/`onnxMaximumInt8Bytes` congelam na Fase 1 com valores de

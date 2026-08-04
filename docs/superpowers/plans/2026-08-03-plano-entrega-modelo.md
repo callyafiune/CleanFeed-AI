@@ -35,6 +35,10 @@ não repete o detalhe.
 
 ## Etapa 0 — decisões do operador que precedem a Fase 1
 
+> **DECIDIDAS em 2026-08-03**, todas na direção recomendada — mais duas ratificações da etapa de
+> desenho: **G0.1-bis** (`sourceMaterialBatch` fora da união do split; unidades = documentos de origem)
+> e **G0.3-bis** (coleta ~1.750/célula, ~7.000 total, piso de 300 inalterado). Ver ESTADO.md § 3.
+
 | # | decisão | recomendação do agente | bloqueia |
 |---|---|---|---|
 | G0.1 | ratificar `domainSource` como estrato (`sourceMaterialBatch` carrega dependência) | ratificar — é a decisão de 2026-08-01, medida | Fase 1 (eixos) |
@@ -46,30 +50,40 @@ As Fases 1–6 correm com G0.1–G0.3 decididas; B1 só trava a publicação.
 
 ---
 
-## Fase 1 — pré-inscrição nova (caminho SELADO; ~1 semana)
+## Fase 1 — pré-inscrição nova (caminho SELADO; ~1 semana) — EM EXECUÇÃO
 
-A unidade que substitui a política abandonada. Tudo num desenho, revisado (etapa 1 Fable) antes do código.
+A etapa 1 (desenho, Fable) rodou em 2026-08-03 e produziu o contrato completo — 16 itens, 15 testes
+nomeados pela mutação que pegam, os pins do parser e a tabela de ratificação da política. **Relatório
+verbatim em `.codex-reviews/fase1-preinscricao-desenho-fable.md`** (área de trabalho, fora do Git);
+o veredito está resumido no registro (§ "A etapa 1 da Fase 1 refutou o item 3").
 
-1. **Política nova + parser novo** (D28, D11, D3, D33): arquivo novo com **dataset ID novo** (D9, D35),
-   4 células, frações **re-derivadas** — `test` dimensionada por G0.3, `dev` pelo que `dev` serve;
-   estratos sem `qa-informal`, snapshots sem `b2w`. JSON + parser trocados no mesmo commit
-   (`EVALUATOR_FILES` ⇒ o `evaluatorDigest` move junto, esperado).
-2. **`cal-B` FICA** (D34): mantê-la evita rework de splitter/parser/testes e preserva a opção de
-   calibração conformal na v2. Nada a fazer — a decisão fica escrita na pré-inscrição.
-3. **Eixos** (D29, D30 — após G0.1): `domainSource` sai de `GROUP_KEYS` (vira eixo de relato);
-   `sourceMaterialBatch` entra como eixo de conectividade no esquema de registro (bump de esquema);
-   `collectionBatch` é partido em lote (dependência) + `extractionRun` (diagnóstico). São os passos
-   1–3 e 5–7 do vocabulário de 2026-08-02, que ainda não têm código.
-4. **Vocabulário de estratos e composição** (D16, D31): selo e `RELEASE_CORPUS_POLICY` recompostos
-   para as 4 células.
-5. **Família primária e m** (D12 — após G0.2): declarar `m` na pré-inscrição, passar em `evaluate.ts`,
-   e reconciliar o inventário de gates — quais são estatísticos sob o α familiar, quais são diagnóstico.
-6. **Gate de composição pré-selagem** (D32): por célula × `test`, contar negativos humanos e unidades
-   independentes contra o piso; célula abaixo **reprova a selagem** — o gate que hoje não existe.
-7. **Redesenho do `fit` sem calibrador probabilístico** (D14): congela limiar experimental provisório
-   versionado; a pergunta "sobre que escore a calibração global de B3 é medida" é a pergunta 1 da
-   etapa de desenho.
-8. **Preflight de viabilidade** antes de qualquer montagem (o laço do runbook § 4b).
+**Correções que o desenho impôs ao plano original desta fase:**
+
+- o item 3 original ("`sourceMaterialBatch` entra como eixo de conectividade") era **inviável medido**
+  — um evento de aquisição por fonte ⇒ um bloco por célula, a mesma morte do `domainSource`. Ratificado
+  (G0.1-bis): o lote é eixo de **registro/manifesto/ledger**, nunca de união; unidades independentes =
+  componentes por **documento de origem**, ≤ 1 linha por documento por célula;
+- `evaluate.ts` hoje não passa multiplicidade **nenhuma** (D12 era maior que o escrito): o inventário
+  obrigatório de gates passa a ser **derivado** de `policy.primaryFamily`;
+- `backbone` e `onnxMaximumInt8Bytes` congelam **aqui** com valores de XLM-R — copiar os do JSON morto
+  tornaria o export da Fase 4 impassável sob política selada;
+- o piso de 300 é de **linhas** (denominador do FPR); o piso de **unidades** (componentes) é decisão
+  nova, e o gate de composição conta os dois.
+
+**Ordem de execução — 6 commits, cada um pela tríade desenho→implementação→revisão:**
+
+| commit | conteúdo | move `evaluatorDigest`? |
+|---|---|---|
+| **A** | esquema **v4** (− `collectionBatch`; + `sourceMaterialBatch`, `generationBatch`, `extractionRun`; `AXIS_STATE_RULE` completo) + manifesto **v2** (`materialBatches` obrigatório, projeção incondicional) + espelhos Python | sim (`schema.ts`, `source-manifest.ts`) |
+| **B** | conectividade: `GROUP_KEYS` v4 (sem `domainSource`, sem lote), auditoria reporta os dois como inventário, contraprova de viabilidade com lote-único-por-célula | sim (`split.ts`, `split-audit.ts`) |
+| **C** | **a troca atômica**: `preregistration-v4.{json,ts}` com os pins, 11 sítios de import, `EVALUATOR_FILES` atualizado, identidade de dataset da política, estratos recompostos, `fit` sem calibrador | sim (por desenho) |
+| **D** | fiação `m=7`: inventário de gates derivado de `primaryFamily`; `evaluate.ts` passa a multiplicidade; 300 threaded em `slices.ts` | sim (`gates.ts`, `commands/evaluate.ts`) |
+| **E** | **gate de composição** (D32): linhas E componentes por célula × `test`, recusa nomeando célula/contagem/piso; substitui `COMPOSITION_FLOOR_NOT_APPLIED` no mesmo commit | sim (`commands/split.ts`) |
+| **F** | comando `preflight-viability` (runbook § 4b) + guarda do lab alinhada | não |
+
+**Ratificação da pré-inscrição:** antes do Commit C ser commitado, a tabela de valores congelados (no
+relatório da etapa 1) vai ao operador — inclui `dataset.id` proposto (`cleanfeed-ptbr-cells-v1`) e os
+counts ai 4000 / mixed 2000.
 
 ## Fase 2 — alinhamento do lab (2–4 dias)
 
