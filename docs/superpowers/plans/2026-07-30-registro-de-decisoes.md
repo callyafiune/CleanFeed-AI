@@ -3006,6 +3006,35 @@ As três, na mesma resposta, todas na direção recomendada:
 
 Custo de reversão: até o congelamento da pré-inscrição nova, emenda simples; depois, R3 tranca.
 
+## A etapa 1 da Fase 1 refutou o item 3 do plano, e o operador ratificou a releitura (2026-08-03)
+
+O desenho da pré-inscrição nova (etapa 1, Fable) mediu que **`sourceMaterialBatch` como eixo de união do
+split reproduz exatamente a degenerescência do `domainSource`**: cada fonte tem UM evento de aquisição,
+então cada célula viraria um bloco indivisível, `dev` a 5 % ± 2 pp é inalcançável por construção, e o
+gate de composição leria 1 < 300 para sempre. A contraprova que fazia a troca parecer viável
+(`test_connectivity_feasibility.py`) usava **cinco lotes por domínio** — inventário que não existe e que
+o próprio documento de lotes proíbe fabricar por fatiamento.
+
+**Ratificado pelo operador (G0.1-bis):** `sourceMaterialBatch` carrega a dependência como eixo de
+**registro, manifesto e ledger** — é o que bloqueia supercontagem e ancora a cegueira quando uma v2
+acrescentar uma segunda aquisição — e **não** entra em `GROUP_KEYS`. A dependência intra-célula fica com
+os eixos finos (`author`, `source`, `nearDuplicate`, linhagem). "Unidades independentes" = componentes
+conexos por **documento de origem**, com ≤ 1 linha por documento por célula. A política congela
+`splitUnionsOnDependencyAxis: false` como dado legível por máquina, e o preflight recusa a reintrodução
+do eixo grosso.
+
+**E a margem do piso (G0.3-bis), também ratificada:** 1.500/célula dá 300 **esperados** em `test` com
+desvio ~15 — o gate reprovaria metade das montagens honestas por sorteio. A coleta mira **~1.750 por
+célula (~7.000 total)**; o piso derivado de 1.500 permanece como mínimo, e o gate de 300 fica inalterado.
+
+O contrato completo da unidade (16 itens, 6 commits A–F, 15 testes com a mutação que cada um pega, e a
+tabela de ratificação da política) está no relatório da etapa 1 desta data. Dois pontos do contrato que
+o desenho acertou e valem destaque: `gates.ts` deriva o inventário obrigatório de `policy.primaryFamily`
+(hoje `evaluate.ts` não passa multiplicidade nenhuma e todo gate de intervalo falha fechado — D12 era
+maior do que o plano dizia); e `backbone`/`onnxMaximumInt8Bytes` congelam na Fase 1 com valores de
+XLM-R, porque copiar os do JSON morto (BERTimbau, 109 MB) tornaria o gate de export da Fase 4
+impassável sob política selada.
+
 ## Regras condicionais (bloco D) — decididas, executam sozinhas
 
 1. Célula < n mínimo → **sem cota**, nunca cota frouxa.

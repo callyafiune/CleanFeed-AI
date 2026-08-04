@@ -59,7 +59,7 @@ Stack Overflow pt, resenha de produto (B2W).
 | | a família certificadora é **por estrato**: quatro tetos de FPR (um por célula) + recall no limiar + calibração global + integridade — **`m=7`**, α = 0,05/7 ≈ 0,0071 | OP |
 | Regime 2 | cada release certifica **só a própria hipótese versionada**; erro familiar ao longo da história do produto **não é alegado**. Toda execução certificadora é publicada, passe ou reprove | OP |
 | | piso de linhas: 300 negativos humanos por célula em `test` (`criticalFprHumanNegatives`) | herdado |
-| | alvo de coleta: **1.500 linhas humanas por célula** (300 em `test` a 20 %), **6.000 no total**; teto sob zero eventos ≈ **1,63 %** por célula | OP |
+| | alvo de coleta: **~1.750 linhas humanas por célula** (~7.000 no total) — o piso derivado permanece 1.500/célula, e a folga existe para o sorteio não reprovar o gate de 300 em `test` por flutuação; teto sob zero eventos ≈ **1,63 %** por célula | OP |
 | | teto sob zero eventos: `1 − α^(1/n)`; célula abaixo do piso **reprova antes da selagem** | herdado |
 
 ### 3.2 Modelo e melhoria
@@ -87,7 +87,8 @@ Stack Overflow pt, resenha de produto (B2W).
 | R4 | todo registro gerado nasce **`automated/unreviewed`**; a auditoria de PII é **amostral** e não produz `passed` por registro | OP |
 | | linhagem: todo gerado **que declara pai** referencia pai presente; `assertDerivedParentsResolve` roda antes do split. A admissão de pai `notApplicable` é lacuna aberta (§ 7) | AG |
 | | famílias OpenAI ficam **reservadas ao teste de gerador não visto** (OOD); nenhuma entra em treino | AG |
-| | `domainSource` é **estrato**; a dependência é carregada por `sourceMaterialBatch` | OP |
+| | `domainSource` é **estrato**; `sourceMaterialBatch` carrega a dependência como eixo de **registro, manifesto e ledger** — **não** entra na união do split (`splitUnionsOnDependencyAxis: false`); a dependência intra-célula fica com `author`, `source`, `nearDuplicate` e linhagem | OP |
+| | **unidades independentes** = componentes conexos por **documento de origem**, com ≤ 1 linha por documento por célula | OP |
 | | partições cegas = `test` e `cal-B`, privadas e byte-intocadas até a v2.0 | OP |
 | | cluster exposto é barrado das **duas** partições cegas | AG · ratificar |
 | | o vocabulário de partições do código é `train / dev / cal-A / cal-B / test`; o **desenho** de partições da pré-inscrição nova é re-derivável, incluindo a existência de `cal-B` | AG |
