@@ -22,10 +22,17 @@ python -m unittest -v                     # fixtures dos 3 parsers + pipeline
 python extract_stackexchange.py --input <Posts.xml> \
   --output ../data/candidates/ptso.jsonl --limit 4000 --sample-rate 7
 python extract_wikipedia.py --input <ptwiki-...-pages-articles.xml.bz2> \
-  --output ../data/candidates/wikipedia.jsonl --limit 4000 --sample-rate 40
+  --output ../data/candidates/wikipedia.jsonl --limit 4000 --sample-rate 40 \
+  --snapshot-version ptwiki-20220301
 python extract_carolina.py --input <carolina.zip> \
-  --output ../data/candidates/carolina.jsonl --limit 4000
+  --output ../data/candidates/carolina.jsonl --limit 4000 \
+  --snapshot-version carolina-v2.0
 ```
+
+`--snapshot-version` é obrigatório nos dois: é dele que sai
+`groups.sourceMaterialBatch`, o evento de aquisição contra o qual o manifesto
+revisado resolve. Sem ele o extrator recusa a corrida inteira — um lote batizado
+na base do snapshot fundiria dois downloads num único bloco indistinguível.
 
 Notas por fonte: SE-PT descarta `<code>/<pre>` inteiros (payload de programação
 não é prosa); Wikipédia usa só a seção-lede de artigos ns=0 sem redirect;

@@ -77,11 +77,24 @@ import {
 } from "./near-duplicates.ts";
 import {
   V3_GROUP_AXES,
+  V4_GROUP_AXES,
   groupAxisIdentity,
+  recordGroupAxes,
   type BenchmarkRecord,
-  type V3GroupAxis,
+  type GroupAxis,
 } from "./schema.ts";
 import { connectedComponentRoots } from "./split.ts";
+
+// Every axis any record version declares. A ledger holds events written from
+// corpora of more than one version, so the vocabulary a stored event is checked
+// against is the union: an event naming an axis of the OTHER version is a real
+// event, not a typo, and refusing it would make history unreadable.
+const LEDGER_AXIS_NAMES: readonly string[] = [
+  ...V3_GROUP_AXES,
+  ...V4_GROUP_AXES.filter(
+    (axis) => !(V3_GROUP_AXES as readonly string[]).includes(axis),
+  ),
+];
 
 /** The canonical file names. The DATA is one artifact for the whole project. */
 export const CLUSTER_EXPOSURE_LEDGER_FILE = "cluster-exposure-ledger.v1.jsonl";
@@ -154,11 +167,14 @@ export type ClusterExposureEventType =
  * The event still RECORDS every axis a record fills (see
  * {@link ClusterExposureRecord.groupDigests}), so widening this set later needs
  * no re-derivation of history. But the comparison is deliberately narrow, and the
- * reason is measurable rather than aesthetic: `domainSource` is a STRATUM and
- * `collectionBatch` is a RUN, both shared by design across thousands of rows, so
- * comparing them would bar every future record-line from the blind partitions the
- * moment one row of its stratum was ever exposed. That is a shutdown, not a
- * control. The recipe axes (`promptTemplate`, `generatorFamily`,
+ * reason is measurable rather than aesthetic: `domainSource` is a STRATUM and the
+ * batch axes (`collectionBatch` in v3; `sourceMaterialBatch`, `generationBatch` and
+ * `extractionRun` in v4) name a LOT or a RUN, all shared by design across thousands
+ * of rows, so comparing them would bar every future record-line from the blind
+ * partitions the moment one row of its stratum was ever exposed. That is a
+ * shutdown, not a control — and § 3.4 of docs/ESTADO.md says it as policy:
+ * knowledge at the level of stratum, lot, recipe or semantics does not invalidate
+ * material. The recipe axes (`promptTemplate`, `generatorFamily`,
  * `generatorVersion`, `generationLane`, `harnessVersion`) are shared for the same
  * reason.
  *
@@ -166,7 +182,7 @@ export type ClusterExposureEventType =
  * (C2's assembler note), so it carries nothing the content fingerprint does not
  * carry better.
  */
-export const EXPOSURE_IDENTITY_AXES: readonly V3GroupAxis[] = [
+export const EXPOSURE_IDENTITY_AXES: readonly GroupAxis[] = [
   "author",
   "source",
   "humanSeed",
@@ -192,7 +208,7 @@ export const EXPOSURE_IDENTITY_AXES: readonly V3GroupAxis[] = [
  * seed and a row that names `h1` as its derivation root both depend on `h1`, so
  * they belong to one cluster and one MAC domain.
  */
-export const LINEAGE_AXES: readonly V3GroupAxis[] = [
+export const LINEAGE_AXES: readonly GroupAxis[] = [
   "humanSeed",
   "derivationRoot",
 ];
@@ -213,7 +229,7 @@ const LINEAGE_MAC_DOMAIN = "lineage";
  * refuses to accept in raw form. See the boundary note on
  * {@link assertLedgerIdentity}.
  */
-const PERSON_AXES: readonly V3GroupAxis[] = ["author"];
+const PERSON_AXES: readonly GroupAxis[] = ["author"];
 
 /**
  * The MAC purpose, mixed into the message exactly as C2's
@@ -1881,11 +1897,11 @@ function buildEventRecords(
     }
     const groupDigests: Record<string, ClusterDigest[]> = {};
     for (const [axis, identity] of Object.entries(input.groups)) {
-      if (!(V3_GROUP_AXES as readonly string[]).includes(axis)) {
+      if (!LEDGER_AXIS_NAMES.includes(axis)) {
         fail(
           "CLUSTER_LEDGER_AXIS_UNKNOWN",
           `record ${input.id} names the grouping axis "${axis}", which the schema ` +
-            `does not declare (${V3_GROUP_AXES.join(", ")})`,
+            `does not declare (${LEDGER_AXIS_NAMES.join(", ")})`,
         );
       }
       if (identity === undefined) continue;
@@ -2498,7 +2514,7 @@ export function exposureInputsFromRecords(
 ): ExposureRecordInput[] {
   return records.map((record) => {
     const groups: Record<string, string | undefined> = {};
-    for (const axis of V3_GROUP_AXES) {
+    for (const axis of recordGroupAxes(record)) {
       const identity = groupAxisIdentity(record, axis);
       if (identity !== undefined) groups[axis] = identity;
     }

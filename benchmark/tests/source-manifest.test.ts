@@ -25,6 +25,7 @@ import {
   assertNoIndividualAcquisition,
   assertPublicBaseLicensesOnly,
   assertV3HumanInventoryAdmissible,
+  batchNamespaceOf,
   computeReviewedSourceManifestDigest,
   corpusLicenseTerms,
   determinedHumanAcquisition,
@@ -2048,5 +2049,154 @@ describe("inventário de lotes de material", () => {
     await expect(parseReviewedSourceManifest(selado)).resolves.toMatchObject({
       materialBatches: [{ acquisitionWindow: { startedAt: instante } }],
     });
+  });
+});
+
+// ---------------------------------------------------------------------------
+// O esquema v2: `materialBatches` obrigatória, e na projeção do digest SEM condição.
+//
+// As duas metades são a mesma decisão vista de dois lados, e cada uma tem a sua mutação. Opcional,
+// um manifesto declararia zero lote e continuaria válido, e nenhum registro v4 teria contra o que
+// resolver `groups.sourceMaterialBatch`. Fora da projeção, o inventário nasceria FORJÁVEL —
+// acrescentar, remover ou reescrever um lote não mexeria no digest que a evidência publica.
+// ---------------------------------------------------------------------------
+
+describe("inventário revisado v2", () => {
+  const lote = {
+    batchId: "smb_licenciado_2024",
+    sourceId: "src_licensed",
+    materialVersion: "dump-2024-06-01",
+    acquisitionWindow: {
+      startedAt: 1_717_200_000_000,
+      endedAt: 1_717_286_400_000,
+    },
+    evidence: ["https://exemplo.invalido/dump-2024-06-01.sha256"],
+  };
+
+  function corpoV2(materialBatches: unknown[] = [lote]): ManifestBody {
+    return {
+      ...validBody,
+      schemaVersion: 2,
+      materialBatches,
+    } as unknown as ManifestBody;
+  }
+
+  it("aceita e reproduz um manifesto v2 selado", async () => {
+    const manifesto = await sealManifest(corpoV2());
+    await expect(parseReviewedSourceManifest(manifesto)).resolves.toEqual(
+      manifesto,
+    );
+  });
+
+  it("recusa um manifesto v2 que não declara a lista", async () => {
+    const semLista = corpoV2() as Record<string, unknown>;
+    delete semLista.materialBatches;
+    // O digest é um valor qualquer de propósito: a recusa é de CHAVE AUSENTE e vem ANTES
+    // da conferência do digest, porque o que o v2 elimina é a ausência da declaração —
+    // indistinguível de ninguém ter escrito — e não uma divergência de bytes.
+    await expect(
+      parseReviewedSourceManifest({
+        ...semLista,
+        sourceManifestDigest: "0".repeat(64),
+      }),
+    ).rejects.toThrow(/is missing key "materialBatches"/u);
+    // E um corpo v2 sem a lista não é nem hasheável: `canonicalJson` RECUSA `undefined`
+    // em vez de omitir, então a projeção incondicional não tem forma degenerada.
+    await expect(
+      computeReviewedSourceManifestDigest(semLista as unknown as ManifestBody),
+    ).rejects.toThrow(/"materialBatches" is undefined/u);
+  });
+
+  it("recusa a chave presente com valor ausente, e não a lê como zero lote", async () => {
+    // A outra metade da ausência, e a que `assertExactObject` NÃO pega: `Object.hasOwn`
+    // considera `{materialBatches: undefined}` uma chave declarada, então sem esta recusa o
+    // parser traduziria a única forma que o bump v2 existe para tornar inexpressável em "zero
+    // lote declarado". JSON em disco não escreve `undefined`; um chamador em memória escreve,
+    // e `benchmark/lab/audit_sources.ts` chega ao audit com `JSON.parse` + cast.
+    await expect(
+      parseReviewedSourceManifest({
+        ...corpoV2(),
+        materialBatches: undefined,
+        sourceManifestDigest: "0".repeat(64),
+      }),
+    ).rejects.toMatchObject({
+      code: "SOURCE_MANIFEST_FIELD_INVALID",
+      message: expect.stringMatching(
+        /materialBatches must be an array: schemaVersion 2 requires the declaration/u,
+      ),
+    });
+    // E a recusa vem ANTES da conferência do digest, como a de chave ausente: o defeito é a
+    // declaração e não uma divergência de bytes.
+    const selado = await sealManifest(corpoV2([]));
+    await expect(
+      parseReviewedSourceManifest({ ...selado, materialBatches: undefined }),
+    ).rejects.toMatchObject({ code: "SOURCE_MANIFEST_FIELD_INVALID" });
+  });
+
+  it("aceita a lista VAZIA, que continua dizendo algo conferível", async () => {
+    // Zero lote declarado é uma afirmação: nenhum registro v4 humano resolve contra este
+    // manifesto. É a AUSÊNCIA da chave que deixa de ser expressável, não a lista vazia.
+    const manifesto = await sealManifest(corpoV2([]));
+    await expect(parseReviewedSourceManifest(manifesto)).resolves.toMatchObject(
+      { schemaVersion: 2, materialBatches: [] },
+    );
+  });
+
+  it("cobre a lista vazia com o digest, então acrescentar lote sem re-selar cai", async () => {
+    // A metade INCONDICIONAL da decisão. Se a chave só entrasse na projeção "quando existe", o
+    // digest de um v2 com lista vazia seria igual ao de um v2 com lote — e o inventário seria
+    // forjável exatamente onde ele é obrigatório.
+    const selado = await sealManifest(corpoV2([]));
+    const forjado = { ...selado, materialBatches: [lote] };
+    await expect(parseReviewedSourceManifest(forjado)).rejects.toMatchObject({
+      code: "SOURCE_MANIFEST_DIGEST_MISMATCH",
+    });
+    expect(await computeReviewedSourceManifestDigest(corpoV2([]))).not.toBe(
+      await computeReviewedSourceManifestDigest(corpoV2([lote])),
+    );
+  });
+
+  it("mantém o digest do v1 sem lote distinto do v2 com lista vazia", async () => {
+    // O bump de esquema é parte do digest, então o inventário v3 congelado (v1, sem a chave) não
+    // pode colidir com um v2 que declara nada.
+    expect(await computeReviewedSourceManifestDigest(validBody)).not.toBe(
+      await computeReviewedSourceManifestDigest(corpoV2([])),
+    );
+  });
+
+  it("recusa uma versão fora do par admitido", async () => {
+    const selado = await sealManifest(corpoV2());
+    await expect(
+      parseReviewedSourceManifest({ ...selado, schemaVersion: 3 }),
+    ).rejects.toThrow(/schemaVersion must be 1 or 2/u);
+  });
+
+  it("mantém a exclusividade de namespace de batchId no v2", async () => {
+    const selado = await sealManifest(
+      corpoV2([{ ...lote, batchId: "batch_gen" }]),
+    );
+    await expect(parseReviewedSourceManifest(selado)).rejects.toThrow(
+      /duplicate batchId/u,
+    );
+  });
+
+  it("recusa no v2 um lote órfão, como no v1", async () => {
+    const selado = await sealManifest(
+      corpoV2([{ ...lote, sourceId: "src_inexistente" }]),
+    );
+    await expect(parseReviewedSourceManifest(selado)).rejects.toMatchObject({
+      code: "SOURCE_MANIFEST_FIELD_INVALID",
+    });
+  });
+
+  it("entrega as duas metades do namespace ao lado do registro", async () => {
+    const manifesto = await parseReviewedSourceManifest(
+      await sealManifest(corpoV2()),
+    );
+    const namespace = batchNamespaceOf(manifesto);
+    expect(namespace.material.get("smb_licenciado_2024")).toBe("src_licensed");
+    expect(namespace.generation.has("batch_gen")).toBe(true);
+    // Só ids opacos atravessam: a entrada do manifesto não sai daqui.
+    expect(namespace.material.get("smb_licenciado_2024")).not.toBe(lote);
   });
 });

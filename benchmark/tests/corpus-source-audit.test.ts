@@ -18,12 +18,18 @@ import {
   type ReviewedSourceEntryV1,
   type ReviewedSourceManifestV1,
 } from "../source-manifest.ts";
-import { validateBenchmarkRecordV3, type BenchmarkRecord } from "../schema.ts";
+import {
+  validateBenchmarkRecordV3,
+  validateBenchmarkRecordV4,
+  type BenchmarkRecord,
+} from "../schema.ts";
 import { asGeneratorFamily } from "../generator-family.ts";
 import {
   known,
+  notApplicable,
   v3Ai,
   v3ApiAi,
+  v4Human,
   withAxis,
   withGeneration,
 } from "./helpers/v3-record-fixture.ts";
@@ -857,5 +863,222 @@ describe("the recipe comparison on an agent-CLI lane, which applies no temperatu
       }),
     );
     expect(codesOf(report)).toEqual(["GENERATION_RECIPE_MISMATCH"]);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// The batch axis is a VERSION fact.
+//
+// v2 and v3 conflate the generation batch and the extraction run in one
+// `collectionBatch`; v4 separates them. Reading one axis name whatever the version
+// declares is a silent failure in the flattering direction on one side and the
+// harsh one on the other: on a v4 corpus every generated row would report
+// GENERATION_RECIPE_MISSING even when its recipe matches its declared batch.
+// ---------------------------------------------------------------------------
+
+/** The same CLI-lane generated row as `v3CliRecord`, as a v4 record. */
+function v4CliRecord(): BenchmarkRecord {
+  const raw = { ...v3CliRecord() } as unknown as Record<string, unknown>;
+  const groups = { ...(raw.groups as Record<string, unknown>) };
+  delete groups.collectionBatch;
+  return validateBenchmarkRecordV4({
+    ...raw,
+    schemaVersion: 4,
+    groups: {
+      ...groups,
+      sourceMaterialBatch: notApplicable(
+        "generated text was produced, not acquired",
+      ),
+      generationBatch: known(cliLaneBatch.batchId),
+      extractionRun: notApplicable("no extraction run read this row"),
+    },
+  });
+}
+
+describe("the generation batch is read off the axis the record's version declares", () => {
+  it("matches a v4 row against its reviewed batch", async () => {
+    const report = await auditCorpusSources(
+      await buildInput({
+        batches: [await sealedBatch()],
+        records: [v4CliRecord()],
+      }),
+    );
+    expect(codesOf(report)).toEqual([]);
+    expect(report.status).toBe("ready");
+  });
+
+  it("still reports a v4 row whose recipe diverges from its batch", async () => {
+    // The other direction, so "ready" above is not the audit having stopped asking.
+    const report = await auditCorpusSources(
+      await buildInput({
+        batches: [
+          await sealedBatch({ temperature: 0.7, temperatureNullReason: null }),
+        ],
+        records: [v4CliRecord()],
+      }),
+    );
+    expect(codesOf(report)).toEqual(["GENERATION_RECIPE_MISMATCH"]);
+  });
+});
+
+// The recomputed self-digest is the manifest's own BODY, `materialBatches`
+// included. A projection that dropped a key the parser hashed would report a valid
+// manifest as SOURCE_MANIFEST_INVALID — the audit disagreeing with the parser about
+// what the manifest is.
+describe("the recomputed manifest digest covers the declared material inventory", () => {
+  const materialBatch = {
+    batchId: "smb_licenciado_2024",
+    sourceId: "src_licensed",
+    materialVersion: "dump-2024-06-01",
+    acquisitionWindow: {
+      startedAt: 1_717_200_000_000,
+      endedAt: 1_717_286_400_000,
+    },
+    evidence: ["https://exemplo.invalido/dump-2024-06-01.sha256"],
+  };
+
+  it("accepts a v1 manifest that declares material batches", async () => {
+    const body = {
+      schemaVersion: 1 as const,
+      sources: [licensedHumanSource, licensedSource, generatedSource],
+      generationBatches: [batch],
+      materialBatches: [materialBatch],
+    };
+    const manifest = await parseReviewedSourceManifest({
+      ...body,
+      sourceManifestDigest: await computeReviewedSourceManifestDigest(body),
+    });
+    const report = await auditCorpusSources({
+      records: [humanFromLicensedBase, humanLicensed, aiGenerated],
+      sourceManifest: manifest,
+    });
+    expect(codesOf(report)).toEqual([]);
+    expect(report.sourceManifestDigest).toBe(manifest.sourceManifestDigest);
+  });
+
+  it("accepts a v2 manifest, whose inventory is unconditional", async () => {
+    const body = {
+      schemaVersion: 2 as const,
+      sources: [licensedHumanSource, licensedSource, generatedSource],
+      generationBatches: [batch],
+      materialBatches: [materialBatch],
+    };
+    const manifest = await parseReviewedSourceManifest({
+      ...body,
+      sourceManifestDigest: await computeReviewedSourceManifestDigest(body),
+    });
+    const report = await auditCorpusSources({
+      records: [humanFromLicensedBase, humanLicensed, aiGenerated],
+      sourceManifest: manifest,
+    });
+    expect(codesOf(report)).toEqual([]);
+    expect(report.sourceManifestDigest).toBe(manifest.sourceManifestDigest);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// The cross-check the material axis exists for: every batch a RECORD declares
+// resolves against the manifest's material inventory. Wired here because this is the
+// step that holds the records and the reviewed manifest at once. Both directions,
+// because "ready" on the resolving case is only evidence if the non-resolving case
+// blocks.
+// ---------------------------------------------------------------------------
+
+describe("a record's material batch is crossed against the reviewed inventory", () => {
+  const wikiMaterialBatch = {
+    batchId: "smb_ptwiki_20220301",
+    sourceId: "src_human_licensed",
+    materialVersion: "ptwiki-20220301",
+    acquisitionWindow: {
+      startedAt: 1_717_200_000_000,
+      endedAt: 1_717_286_400_000,
+    },
+    evidence: ["https://exemplo.invalido/ptwiki-20220301.sha256"],
+  };
+
+  /** A v4 human row naming `batchId` as its acquisition event. */
+  function v4HumanRow(batchId: string): BenchmarkRecord {
+    return validateBenchmarkRecordV4({
+      ...v4Human(),
+      id: "h_material_0001",
+      provenance: {
+        ...(v4Human().provenance as Record<string, unknown>),
+        sourceId: "src_human_licensed",
+      },
+      groups: {
+        ...(withAxis(v4Human(), "sourceMaterialBatch", known(batchId))
+          .groups as Record<string, unknown>),
+      },
+    });
+  }
+
+  async function auditWithInventory(
+    records: BenchmarkRecord[],
+    materialBatches: (typeof wikiMaterialBatch)[],
+  ) {
+    const body = {
+      schemaVersion: 2 as const,
+      sources: [licensedHumanSource, licensedSource, generatedSource],
+      generationBatches: [batch],
+      materialBatches,
+    };
+    const manifest = await parseReviewedSourceManifest({
+      ...body,
+      sourceManifestDigest: await computeReviewedSourceManifestDigest(body),
+    });
+    return auditCorpusSources({ records, sourceManifest: manifest });
+  }
+
+  it("passes a row whose batch the inventory declares for its own source", async () => {
+    const report = await auditWithInventory(
+      [v4HumanRow("smb_ptwiki_20220301")],
+      [wikiMaterialBatch],
+    );
+    expect(codesOf(report)).toEqual([]);
+    expect(report.status).toBe("ready");
+  });
+
+  it("blocks a row whose batch the inventory does not declare", async () => {
+    const report = await auditWithInventory(
+      [v4HumanRow("smb_ptwiki_20220301")],
+      [],
+    );
+    expect(codesOf(report)).toEqual(["SOURCE_REFERENCE_MISSING"]);
+    expect(report.blockingReasons).toEqual([
+      { code: "SOURCE_REFERENCE_MISSING", recordId: "h_material_0001" },
+    ]);
+  });
+
+  // Namespace exclusivity, spent by the report: a row naming a declared GENERATION
+  // batch where the axis asks for a material one is the same fact the recipe branch
+  // reports for a human row linking one, read on the other axis.
+  it("blocks a row whose material batch is a declared generation batch", async () => {
+    const report = await auditWithInventory(
+      [v4HumanRow(batch.batchId)],
+      [wikiMaterialBatch],
+    );
+    expect(codesOf(report)).toContain("GENERATION_RECIPE_MISMATCH");
+  });
+
+  // The batch resolves and belongs to another source: a disagreement inside one row,
+  // not a gap. Reported per record, so an operator knows which row to fix.
+  it("blocks a human row whose batch is declared for another source", async () => {
+    const report = await auditWithInventory(
+      [v4HumanRow("smb_ptwiki_20220301")],
+      [{ ...wikiMaterialBatch, sourceId: "src_licensed" }],
+    );
+    expect(report.blockingReasons).toEqual([
+      { code: "SOURCE_REFERENCE_MISSING", recordId: "h_material_0001" },
+    ]);
+  });
+
+  // A v2/v3 corpus states no acquisition at all, so the cross-check has nothing to
+  // ask and must not invent a block for an axis those versions never had.
+  it("says nothing about a corpus whose version has no material axis", async () => {
+    const report = await auditWithInventory(
+      [humanFromLicensedBase, humanLicensed, aiGenerated],
+      [],
+    );
+    expect(codesOf(report)).toEqual([]);
   });
 });

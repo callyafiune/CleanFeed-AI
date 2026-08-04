@@ -46,7 +46,7 @@ import {
 } from "./schema.ts";
 import {
   parseReviewedSourceManifest,
-  type ReviewedSourceManifestV1,
+  type ReviewedSourceManifest,
 } from "./source-manifest.ts";
 import {
   readJsonFile,
@@ -333,7 +333,7 @@ async function loadTemplate(
 
 async function loadSourceManifest(
   path: string,
-): Promise<ReviewedSourceManifestV1> {
+): Promise<ReviewedSourceManifest> {
   try {
     return await parseReviewedSourceManifest(await readJsonFile(path));
   } catch (error) {
@@ -376,7 +376,7 @@ async function writeDataset(
   template: Omit<DatasetManifest, (typeof DERIVED_MANIFEST_KEYS)[number]>,
   records: readonly BenchmarkRecord[],
   reviewLedger: string,
-  sourceManifest: ReviewedSourceManifestV1,
+  sourceManifest: ReviewedSourceManifest,
 ): Promise<string> {
   const recordsJsonl = `${records
     .map((record) => JSON.stringify(record))

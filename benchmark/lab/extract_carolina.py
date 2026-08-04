@@ -12,6 +12,7 @@ never read. Stdlib only; memory-safe via iterparse + clearing.
 Usage:
   python benchmark/lab/extract_carolina.py \
     --input <archive.zip> --output benchmark/data/candidates/carolina.jsonl \
+    --snapshot-version carolina-v2.0 \
     [--limit 4000] [--sample-rate 1]
 """
 
@@ -92,9 +93,18 @@ def extract(
     input_path: Path,
     writer: CandidateWriter,
     per_typology_limit: int | None = None,
+    snapshot_version: str = "",
 ) -> None:
     """Fills candidates per typology (capped) so no typology monopolizes the
-    overall limit just for coming first in the archive order."""
+    overall limit just for coming first in the archive order.
+
+    `snapshot_version` is the concrete package version (`carolina-v2.0`) and is
+    MANDATORY: it names the acquisition event that `groups.sourceMaterialBatch`
+    resolves against, and one download of the package is ONE batch — the typologies
+    are partitions of it, not separate acquisitions, so all three cells that come
+    out of this archive share the batch.
+    """
+    material_batch = group_axes.material_batch_id(snapshot_version)
     with zipfile.ZipFile(str(input_path)) as archive:
         members = [
             info
@@ -139,6 +149,13 @@ def extract(
                                     created.isoformat() if created else ""
                                 ),
                                 "snapshot": SNAPSHOT,
+                                "snapshotVersion": snapshot_version,
+                                # The acquisition event: one download of the package,
+                                # shared by all three cells it feeds. The assembler
+                                # REFUSES a human candidate that names none rather
+                                # than deriving one from the stratum, so this is the
+                                # only place the value can come from.
+                                "sourceMaterialBatch": material_batch,
                                 "groupAxes": {
                                     # The MEMBER FILE, which is the axis the plan
                                     # fixes for Carolina. It is a real cluster and
@@ -193,6 +210,12 @@ def main() -> None:
         help="arquivo de candidate_ids (um por linha) a pular na emissão — "
         "extração fresca disjunta do que já foi usado",
     )
+    parser.add_argument(
+        "--snapshot-version",
+        required=True,
+        help="versão concreta do pacote (ex.: carolina-v2.0). Registrada na "
+        "proveniência e é o que nomeia o lote de material",
+    )
     args = parser.parse_args()
 
     writer = CandidateWriter(
@@ -203,7 +226,12 @@ def main() -> None:
         exclude_ids=read_id_file(args.exclude) if args.exclude else None,
     )
     try:
-        extract(args.input, writer, per_typology_limit=args.per_typology_limit)
+        extract(
+            args.input,
+            writer,
+            per_typology_limit=args.per_typology_limit,
+            snapshot_version=args.snapshot_version,
+        )
     finally:
         writer.close()
     print(f"{SOURCE_ID}: kept={writer.stats.kept} scanned={writer.stats.scanned}")

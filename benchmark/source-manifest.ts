@@ -1,4 +1,4 @@
-// Closed reviewed-source manifest (v1) for the PT-BR/LinkedIn corpus. Like
+// Closed reviewed-source manifest (v1 and v2) for the PT-BR/LinkedIn corpus. Like
 // schema.ts and dataset-manifest.ts this module MUST NOT import from the
 // extension bundle (src/).
 //
@@ -229,10 +229,11 @@ export interface GenerationBatchV1 {
  * vocabulário completo está em
  * `docs/superpowers/plans/2026-08-02-lotes-e-unidade-de-dependencia.md`.
  *
- * O campo é OPCIONAL neste esquema v1 por uma razão de digest, não de rigor: a projeção que
+ * O campo é OPCIONAL no esquema v1 por uma razão de digest, não de rigor: a projeção que
  * `computeReviewedSourceManifestDigest` hasheia é escrita à mão, e incluir a chave sempre mudaria
- * o digest de todo manifesto que não declara lote — inclusive o inventário v3 congelado. Ele
- * passa a ser OBRIGATÓRIO na pré-inscrição nova, junto do bump de esquema.
+ * o digest de todo manifesto v1 que não declara lote — inclusive o inventário v3 congelado. No
+ * esquema **v2** ele é OBRIGATÓRIO e entra na projeção INCONDICIONALMENTE, porque um registro v4
+ * nomeia `groups.sourceMaterialBatch` e o único inventário contra o qual esse nome resolve é este.
  */
 export interface SourceMaterialBatchV1 {
   batchId: string;
@@ -261,10 +262,39 @@ export interface ReviewedSourceManifestV1 {
   sourceManifestDigest: string;
 }
 
-export type ReviewedSourceManifestBody = Omit<
-  ReviewedSourceManifestV1,
-  "sourceManifestDigest"
->;
+/**
+ * O inventário revisado na versão que a pré-inscrição nova exige.
+ *
+ * A única diferença com o v1 é `materialBatches`: aqui a chave é OBRIGATÓRIA e entra na projeção
+ * do digest sem condição. As duas metades são necessárias e são a mesma decisão vista de dois
+ * lados. Opcional, um manifesto poderia declarar zero lote e continuar válido, e nenhum registro
+ * v4 teria contra o que resolver `groups.sourceMaterialBatch`. Fora da projeção, o inventário
+ * nasceria FORJÁVEL — acrescentar, remover ou reescrever um lote não mexeria no `sourceManifestDigest`
+ * que a evidência publica.
+ *
+ * Uma lista VAZIA continua expressável e continua significando algo verificável: nenhum lote de
+ * material foi declarado, e portanto nenhum registro v4 humano resolve. O que deixa de ser
+ * expressável é a AUSÊNCIA da declaração, que é indistinguível de ninguém ter escrito.
+ */
+export interface ReviewedSourceManifestV2 {
+  schemaVersion: 2;
+  sources: ReviewedSourceEntryV1[];
+  generationBatches: GenerationBatchV1[];
+  materialBatches: SourceMaterialBatchV1[];
+  sourceManifestDigest: string;
+}
+
+/** Qualquer versão do inventário. `schemaVersion` é o discriminante. */
+export type ReviewedSourceManifest =
+  ReviewedSourceManifestV1 | ReviewedSourceManifestV2;
+
+// Discriminada de propósito, e não `Omit` sobre a união: `Omit` funde as duas versões em uma
+// forma só, e aí `schemaVersion` deixa de estreitar — o que faria a projeção do digest tratar
+// `materialBatches` como opcional nas DUAS versões, que é exatamente a condicional que o v2
+// existe para eliminar.
+export type ReviewedSourceManifestBody =
+  | Omit<ReviewedSourceManifestV1, "sourceManifestDigest">
+  | Omit<ReviewedSourceManifestV2, "sourceManifestDigest">;
 
 /** Coded, fail-closed error thrown by the reviewed-source manifest parser. */
 export class ReviewedSourceManifestError extends Error {
@@ -1884,9 +1914,10 @@ const MANIFEST_KEYS = [
   "materialBatches",
   "sourceManifestDigest",
 ] as const;
-// `materialBatches` e ADMITIDA e nao EXIGIDA: um manifesto que nao declara lote continua valido,
-// e o digest dele continua o mesmo. A distincao entre as duas listas e o que permite acrescentar
-// o inventario sem reescrever o inventario v3 congelado.
+// No esquema v1 `materialBatches` e ADMITIDA e nao EXIGIDA: um manifesto v1 que nao declara lote
+// continua valido, e o digest dele continua o mesmo. A distincao entre as duas listas e o que
+// permite acrescentar o inventario sem reescrever o inventario v3 congelado. No v2 a chave e
+// exigida, e la a lista exigida e `MANIFEST_KEYS` inteira.
 const MANIFEST_REQUIRED_KEYS = MANIFEST_KEYS.filter(
   (key) => key !== "materialBatches",
 );
@@ -2292,31 +2323,38 @@ export async function computeReviewedSourceManifestDigest(
     schemaVersion: body.schemaVersion,
     sources: body.sources,
     generationBatches: body.generationBatches,
-    // Entra SO quando existe, e as duas metades desta condicao sao necessarias. Fora da projecao
-    // o inventario de lotes nasceria FORJAVEL — o mesmo defeito que o atestado de composicao do
-    // E2 fechou. Dentro dela SEMPRE seria pior de outra forma: `canonicalJson` RECUSA `undefined`
-    // em vez de omitir, entao a chave presente com valor ausente derrubaria todo manifesto que
-    // nao declara lote.
-    ...(body.materialBatches === undefined
-      ? {}
-      : { materialBatches: body.materialBatches }),
+    // No v2 a chave entra SEMPRE, porque lá ela é obrigatória. No v1 ela entra só quando existe,
+    // e as duas metades dessa condicional são necessárias: fora da projeção o inventário de lotes
+    // nasceria FORJÁVEL, e dentro dela sem condição `canonicalJson` RECUSA `undefined` em vez de
+    // omitir, então a chave presente com valor ausente derrubaria todo manifesto v1 que não
+    // declara lote — inclusive o inventário v3 congelado, cujo digest é byte selado.
+    ...(body.schemaVersion === 2
+      ? { materialBatches: body.materialBatches }
+      : body.materialBatches === undefined
+        ? {}
+        : { materialBatches: body.materialBatches }),
   });
 }
 
 /** Closed parser for the reviewed-source manifest. Rejects any drift. */
 export async function parseReviewedSourceManifest(
   value: unknown,
-): Promise<ReviewedSourceManifestV1> {
+): Promise<ReviewedSourceManifest> {
+  // A versão é lida ANTES do conjunto de chaves, porque é ela que decide se
+  // `materialBatches` é exigida: fechar o objeto contra a lista errada produz
+  // diagnóstico enganoso — um manifesto v2 sem lote sairia como "missing key" de um
+  // esquema que o admite, escondendo o bump.
+  const version = isPlainObject(value) ? value.schemaVersion : undefined;
+  if (version !== 1 && version !== 2) {
+    fail("SOURCE_MANIFEST_SCHEMA_INVALID", "schemaVersion must be 1 or 2");
+  }
   const root = assertExactObject(
     value,
     "reviewed source manifest",
     MANIFEST_KEYS,
-    MANIFEST_REQUIRED_KEYS,
+    version === 2 ? MANIFEST_KEYS : MANIFEST_REQUIRED_KEYS,
   );
 
-  if (root.schemaVersion !== 1) {
-    fail("SOURCE_MANIFEST_SCHEMA_INVALID", "schemaVersion must be 1");
-  }
   if (!Array.isArray(root.sources)) {
     fail("SOURCE_MANIFEST_FIELD_INVALID", "sources must be an array");
   }
@@ -2368,6 +2406,19 @@ export async function parseReviewedSourceManifest(
   // auditoria recusa um registro nao gerado que nomeie um lote de GERACAO, e essa recusa so e
   // decidivel enquanto um id pertence a um dos dois e nunca aos dois.
   let materialBatches: SourceMaterialBatchV1[] | undefined;
+  // No v2 a chave é EXIGIDA como lista, e a distinção contra o v1 é o valor `undefined`:
+  // `assertExactObject` usa `Object.hasOwn`, então `{materialBatches: undefined}` satisfaz a
+  // exigência da chave. Sem esta recusa o v2 leria a chave presente-com-valor-ausente como
+  // "zero lote declarado", que é exatamente a única forma que o bump v2 existe para tornar
+  // inexpressável. JSON em disco não escreve `undefined`; um chamador em memória escreve, e
+  // `benchmark/lab/audit_sources.ts` chega ao audit com `JSON.parse` + cast.
+  if (version === 2 && !Array.isArray(root.materialBatches)) {
+    fail(
+      "SOURCE_MANIFEST_FIELD_INVALID",
+      "materialBatches must be an array: schemaVersion 2 requires the declaration, and a " +
+        "key present with no value states nothing rather than zero batches",
+    );
+  }
   if (root.materialBatches !== undefined) {
     if (!Array.isArray(root.materialBatches)) {
       fail(
@@ -2392,12 +2443,23 @@ export async function parseReviewedSourceManifest(
     root.sourceManifestDigest,
     "sourceManifestDigest",
   );
-  const body: ReviewedSourceManifestBody = {
-    schemaVersion: 1,
-    sources,
-    generationBatches,
-    ...(materialBatches === undefined ? {} : { materialBatches }),
-  };
+  const body: ReviewedSourceManifestBody =
+    version === 2
+      ? {
+          schemaVersion: 2,
+          sources,
+          generationBatches,
+          // Não é `?? []`: a recusa de `!Array.isArray` acima já garantiu que o ramo v2 só
+          // chega aqui com a lista parseada, então um `??` seria um caminho morto que
+          // reintroduziria a leitura de "chave ausente = zero lote".
+          materialBatches: materialBatches as SourceMaterialBatchV1[],
+        }
+      : {
+          schemaVersion: 1,
+          sources,
+          generationBatches,
+          ...(materialBatches === undefined ? {} : { materialBatches }),
+        };
   const expected = await computeReviewedSourceManifestDigest(body);
   if (expected !== sourceManifestDigest) {
     fail(
@@ -2406,5 +2468,46 @@ export async function parseReviewedSourceManifest(
     );
   }
 
-  return { ...body, sourceManifestDigest };
+  // `Omit` sobre uma união funde os dois corpos em UMA forma (a chave é a mesma nas duas
+  // versões, só a obrigatoriedade muda), então o discriminante não estreita o spread. O campo
+  // de digest é idêntico nas duas versões, e a asserção reúne as duas metades em um lugar em
+  // vez de duplicar o retorno.
+  return { ...body, sourceManifestDigest } as ReviewedSourceManifest;
+}
+
+/**
+ * As duas metades do NAMESPACE de `batchId`, como o lado do registro precisa delas para cruzar
+ * `groups.sourceMaterialBatch` contra o inventário (`materialBatchDefects` em
+ * benchmark/schema.ts, consumida por `auditCorpusSources`).
+ *
+ * Duas coleções e não uma, e é a exclusividade entre elas que a auditoria gasta: um registro que
+ * nomeie um lote de GERAÇÃO onde o eixo pede um lote de MATERIAL está declarando que o material
+ * dele foi produzido em vez de adquirido, e essa contradição só é decidível enquanto um id pertence
+ * a exatamente uma das duas listas — o que `parseReviewedSourceManifest` impõe recusando
+ * `batchId` duplicado entre elas.
+ *
+ * Só ids opacos saem daqui, nunca a entrada do manifesto: é a mesma fronteira de privacidade do
+ * índice `entryId -> digest` de `assertLabelEvidenceResolves`, e é o que mantém a direção desta
+ * dependência a única existente.
+ */
+export function batchNamespaceOf(manifest: ReviewedSourceManifest): {
+  /** `batchId` -> a `sourceId` que o lote declara. */
+  material: ReadonlyMap<string, string>;
+  generation: ReadonlySet<string>;
+} {
+  return {
+    // O `?? []` cobre a OPCIONALIDADE do v1, que é real: um manifesto v1 pode legitimamente
+    // não declarar lote nenhum, e aí o namespace de material é vazio — todo registro v4 que
+    // nomeie um lote cai, que é a resposta correta. No v2 o parser já recusou a chave ausente,
+    // então este ramo nunca é o v2 lendo "zero lote" de uma declaração que não existe.
+    material: new Map(
+      (manifest.materialBatches ?? []).map((batch) => [
+        batch.batchId,
+        batch.sourceId,
+      ]),
+    ),
+    generation: new Set(
+      manifest.generationBatches.map((batch) => batch.batchId),
+    ),
+  };
 }

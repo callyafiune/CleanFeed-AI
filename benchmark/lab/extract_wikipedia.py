@@ -11,6 +11,7 @@ Usage:
   python benchmark/lab/extract_wikipedia.py \
     --input <ptwiki-...-pages-articles.xml.bz2> \
     --output benchmark/data/candidates/wikipedia.jsonl \
+    --snapshot-version ptwiki-20220301 \
     [--limit 4000] [--sample-rate 40]
 """
 
@@ -100,9 +101,11 @@ def extract(
     `snapshot_version` is the concrete dump name (`ptwiki-20220301`) and is recorded
     rather than presumed: the shared context is explicit that the version must be
     registered in the provenance, and the extractor is the only place that has seen
-    the file. It is empty when the caller did not say, and empty is a truthful
-    "nobody wrote it down" rather than a guessed date.
+    the file. It is now MANDATORY, because it is also what names the acquisition
+    event: `groups.sourceMaterialBatch` is derived from it here, and no later layer
+    can name a batch it never saw the material of.
     """
+    material_batch = group_axes.material_batch_id(snapshot_version)
     with bz2.open(str(input_path), "rb") as stream:
         for _, element in ET.iterparse(stream, events=("end",)):
             if element.tag != f"{MW_NS}page":
@@ -136,6 +139,12 @@ def extract(
                                 ),
                                 "snapshot": SNAPSHOT,
                                 "snapshotVersion": snapshot_version,
+                                # The acquisition event, shared by every row of this
+                                # dump. The assembler REFUSES a human candidate that
+                                # names none rather than deriving one from the
+                                # stratum, so this is the only place the value can
+                                # come from.
+                                "sourceMaterialBatch": material_batch,
                                 "groupAxes": {
                                     # The PAGE. Two lead sections never come from one
                                     # page (we take one per page), so this axis is
@@ -178,9 +187,9 @@ def main() -> None:
     )
     parser.add_argument(
         "--snapshot-version",
-        default="",
+        required=True,
         help="nome concreto do dump (ex.: ptwiki-20220301). Registrado na "
-        "proveniência; não é inferido do arquivo",
+        "proveniência e é o que nomeia o lote de material; não é inferido do arquivo",
     )
     args = parser.parse_args()
 

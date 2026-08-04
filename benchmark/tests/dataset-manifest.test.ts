@@ -14,6 +14,7 @@ import {
 import {
   recordEligibility,
   validateBenchmarkRecordV3,
+  validateBenchmarkRecordV4,
   type BenchmarkRecord,
 } from "../schema.ts";
 import { asGeneratorFamily } from "../generator-family.ts";
@@ -25,6 +26,9 @@ import {
   v3Ai,
   v3Human,
   v3Mixed,
+  v4Ai,
+  v4Human,
+  v4Mixed,
   withAxis,
   withReview,
 } from "./helpers/v3-record-fixture.ts";
@@ -1221,6 +1225,162 @@ describe("held-out generator-family coverage on a release corpus", () => {
       ),
     ).toThrow(
       /groups\.generatorFamily of a human record must be notApplicable/u,
+    );
+  });
+});
+
+// ---------------------------------------------------------------------------
+// The v4 half of every block above.
+//
+// Each guard in this module asks "is this v2", never "is this v3", and the two
+// predicates are extensionally IDENTICAL on v2 and v3 — only a v4 record separates
+// them. Without a v4 fixture the whole file is blind to the difference: reverting
+// `=== 2` to `!== 3` leaves the suite green while a v4 corpus publishes an empty
+// label basis and certifies a reserved family on rows the same module calls
+// ineligible.
+// ---------------------------------------------------------------------------
+
+describe("the sealed audit judges a v4 corpus by the axes v4 declares", () => {
+  const HELD_OUT_V4 = asGeneratorFamily("gemini-3_5-flash-medium");
+
+  const twoLicenses = [
+    {
+      id: "cc-by-sa-4.0",
+      name: "Creative Commons Attribution-ShareAlike 4.0",
+      source: "https://creativecommons.org/licenses/by-sa/4.0/",
+      evaluationUseApproved: true as const,
+      redistribution: "not-published" as const,
+      notice: "Atribuição e share-alike obrigatórios.",
+    },
+    {
+      id: "autoria-propria-v1",
+      name: "Autoria própria do operador",
+      source: "declaração do operador",
+      evaluationUseApproved: true as const,
+      redistribution: "not-published" as const,
+      notice: "Gerado pelo próprio operador para avaliação interna.",
+    },
+  ];
+
+  const v4Manifest: DatasetManifest = {
+    ...validManifest,
+    licenses: twoLicenses,
+  };
+
+  const v4ReleaseManifest: DatasetManifest = {
+    ...validManifest,
+    scientificUse: "release",
+    heldOutGeneratorFamilies: [HELD_OUT_V4],
+    licenses: twoLicenses,
+  };
+
+  function v4AiRow(n: number, axisPatch?: [string, unknown]): BenchmarkRecord {
+    let raw = withReview(v4Ai(), humanReviewed("ai"));
+    if (axisPatch !== undefined)
+      raw = withAxis(raw, axisPatch[0], axisPatch[1]);
+    raw.id = `a_agy_${n.toString().padStart(4, "0")}`;
+    raw.normalizedTextSha256 = n.toString(16).padStart(64, "0");
+    return validateBenchmarkRecordV4(raw);
+  }
+
+  function v4ReleaseCorpus(
+    aiCount: number,
+    axisPatch?: [string, unknown],
+  ): BenchmarkRecord[] {
+    const records: BenchmarkRecord[] = [
+      validateBenchmarkRecordV4(withReview(v4Human(), humanReviewed("human"))),
+    ];
+    for (let n = 1; n <= aiCount; n += 1) records.push(v4AiRow(n, axisPatch));
+    return records;
+  }
+
+  const releasePolicyV4 = (aiCount: number) => ({
+    counts: { human: 1, ai: aiCount, mixed: 0 },
+    requiredHumanSourceTypes: ["encyclopedic"],
+    requiredHardNegativeFamilies: [],
+  });
+
+  it("publishes the label basis of a v4 corpus, over the axes v4 has", async () => {
+    const audit = await sealDataset(
+      v4Manifest,
+      [
+        validateBenchmarkRecordV4(v4Human()),
+        validateBenchmarkRecordV4(v4Ai()),
+        validateBenchmarkRecordV4(v4Mixed()),
+      ],
+      { ...RELEASE_CORPUS_POLICY, counts: { human: 1, ai: 1, mixed: 1 } },
+      validFileDigests,
+    );
+    // Publishing this block only for v3 would report a v4 corpus as having recorded
+    // no label basis at all — the same over-claim as the v2 zeros, with the versions
+    // swapped, and this time FALSE rather than merely uninformative.
+    expect(audit.labelBasisCounts.records).toEqual({
+      "date-cutoff": 1,
+      "observed-process": 0,
+    });
+    const units = audit.labelBasisCounts.samplingUnits["date-cutoff"];
+    // The three axes v4 introduces are counted, and the axis it retired is absent.
+    // Collecting over a pinned v3 tuple loses them; emitting over one keeps them out
+    // of the published block after collecting them — two different mutations, both
+    // visible here.
+    expect(units).toEqual({
+      author: 1,
+      source: 1,
+      domainSource: 1,
+      sourceMaterialBatch: 1,
+      extractionRun: 1,
+      nearDuplicate: 1,
+    });
+    expect(units).not.toHaveProperty("collectionBatch");
+  });
+
+  it("counts the positives of a v4 held-out family by eligibility", async () => {
+    const audit = await sealDataset(
+      v4ReleaseManifest,
+      v4ReleaseCorpus(200),
+      releasePolicyV4(200),
+      validFileDigests,
+    );
+    expect(audit.releaseEligible).toBe(true);
+    expect(audit.generatorFamilies[HELD_OUT_V4]).toBe(200);
+  });
+
+  it("refuses a v4 reserved family whose 200 positives are all ineligible", async () => {
+    // The floor's promise is "eligible positives". Judged by presence instead, these
+    // 200 rows certify a reservation on records that cannot enter a split cluster or
+    // a resampling unit — §3.3's empty-unseen-generator failure arriving THROUGH the
+    // gate, on the version the corpus will actually be written in.
+    const records = v4ReleaseCorpus(200, [
+      "humanSeed",
+      unknownAxis("the human seed was not recovered"),
+    ]);
+    expect(recordEligibility(records[1]!).eligible).toBe(false);
+    await expect(
+      sealDataset(
+        v4ReleaseManifest,
+        records,
+        releasePolicyV4(200),
+        validFileDigests,
+      ),
+    ).rejects.toThrow(
+      /requires at least 200 eligible positives, received 0 eligible of 200 positive rows/u,
+    );
+  });
+
+  it("names eligibility as the criterion when a v4 family is thin", async () => {
+    // Every row of a v4 corpus STATES eligibility, so the shortfall says "eligible"
+    // and says it truthfully. Read as v3-only, `stateEligibility` would be 0 and an
+    // operator would be told "no positive row states eligibility: schemaVersion 2 has
+    // no axis states" about a corpus with no v2 row in it.
+    await expect(
+      sealDataset(
+        v4ReleaseManifest,
+        v4ReleaseCorpus(199),
+        releasePolicyV4(199),
+        validFileDigests,
+      ),
+    ).rejects.toThrow(
+      /requires at least 200 eligible positives, received 199 eligible of 199 positive rows/u,
     );
   });
 });

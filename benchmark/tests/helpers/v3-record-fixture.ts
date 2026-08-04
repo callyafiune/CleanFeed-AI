@@ -487,6 +487,96 @@ export function v3EvidenceIndex(): Map<string, string> {
   return new Map([["ev_ptso_0001", "1".repeat(64)]]);
 }
 
+// --- v4: the three axes that replace `collectionBatch` -----------------------
+//
+// Derived from the v3 fixtures rather than respelled, so a field added to a record
+// cannot reach one version's fixture only and leave the other's refusal untested.
+// Only `schemaVersion` and the three batch axes differ, which is exactly the
+// difference between the two contracts.
+
+const NO_ACQUISITION =
+  "generated text was produced, not acquired: the material it depends on is named by the human row it was seeded from";
+const NOT_EXTRACTED =
+  "the row was written from a generation pool: no extraction run read it out of a source document";
+
+function toV4(
+  record: Record<string, unknown>,
+  batchAxes: Record<string, unknown>,
+): Record<string, unknown> {
+  const groups = { ...(record.groups as Record<string, unknown>) };
+  delete groups.collectionBatch;
+  return {
+    ...clone(record),
+    schemaVersion: 4,
+    groups: { ...groups, ...batchAxes },
+  };
+}
+
+const V4_HUMAN = toV4(V3_HUMAN, {
+  sourceMaterialBatch: known("smb_ptwiki_20220301"),
+  generationBatch: notApplicable(HUMAN_NO_GENERATOR),
+  extractionRun: known("er_ptwiki_20260727"),
+});
+
+const V4_AI = toV4(V3_AI, {
+  sourceMaterialBatch: notApplicable(NO_ACQUISITION),
+  generationBatch: known("gb_agy_20260724"),
+  extractionRun: notApplicable(NOT_EXTRACTED),
+});
+
+const V4_MIXED = toV4(V3_MIXED, {
+  // A mechanistic mixed row IS the parent's text with generated stretches, so the
+  // material it depends on is the parent's acquisition event.
+  sourceMaterialBatch: known("smb_ptwiki_20220301"),
+  generationBatch: known("gb_mixed_20260724"),
+  extractionRun: notApplicable(NOT_EXTRACTED),
+});
+
+const V4_MIXED_ECOLOGICAL = toV4(V3_MIXED_ECOLOGICAL, {
+  // An observed coauthored document was ACQUIRED, not produced, so both halves of
+  // the acquisition are ours to name: the batch it came in and the run that read it
+  // out. Writing `notApplicable` on the run while holding the batch is the pair the
+  // validator now refuses.
+  sourceMaterialBatch: known("smb_ptwiki_20220301"),
+  generationBatch: notApplicable(ECOLOGICAL_NOT_OURS),
+  extractionRun: known("er_ptwiki_20260727"),
+});
+delete V4_MIXED_ECOLOGICAL.generation;
+
+/** A v4 human record: one acquisition event, one extraction run, no generation batch. */
+export function v4Human(): Record<string, unknown> {
+  return clone(V4_HUMAN);
+}
+
+/** A v4 fully generated record on the `agy` agent-CLI lane. */
+export function v4Ai(): Record<string, unknown> {
+  return clone(V4_AI);
+}
+
+/** A v4 mechanistic mixed record derived from {@link v4Human}. */
+export function v4Mixed(): Record<string, unknown> {
+  return clone(V4_MIXED);
+}
+
+/** A v4 `ecological` mixed record: observed coauthorship, no recipe of ours. */
+export function v4MixedEcological(): Record<string, unknown> {
+  return clone(V4_MIXED_ECOLOGICAL);
+}
+
+/**
+ * The two halves of the manifest's `batchId` namespace as
+ * `assertMaterialBatchesResolve` takes them, coherent with the v4 fixtures above.
+ */
+export function v4BatchNamespace(): {
+  material: Map<string, string>;
+  generation: Set<string>;
+} {
+  return {
+    material: new Map([["smb_ptwiki_20220301", "src_wikipedia_pt"]]),
+    generation: new Set(["gb_agy_20260724", "gb_mixed_20260724"]),
+  };
+}
+
 /** Replaces one axis of a record's `groups` block, returning a fresh record. */
 export function withAxis(
   record: Record<string, unknown>,

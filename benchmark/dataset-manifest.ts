@@ -37,11 +37,25 @@ import {
   groupAxisIdentity,
   LABEL_DISPUTE_UNRESOLVED,
   recordEligibility,
+  recordGroupAxes,
   reviewClaimSupport,
   V3_GROUP_AXES,
+  V4_GROUP_AXES,
   validateBenchmarkRecord,
   type BenchmarkRecord,
+  type GroupAxis,
 } from "./schema.ts";
+
+// Every axis any record version declares, in one fixed order, so a mixed-version
+// array publishes every axis it actually holds instead of the axes of whichever
+// version was hard-coded here. `canonicalJson` sorts keys, so this order decides
+// nothing about a digest — it decides that no axis is silently dropped.
+const PUBLISHED_AXES: readonly GroupAxis[] = [
+  ...V3_GROUP_AXES,
+  ...V4_GROUP_AXES.filter(
+    (axis) => !(V3_GROUP_AXES as readonly string[]).includes(axis),
+  ),
+];
 
 export interface DatasetManifest {
   schemaVersion: 1;
@@ -494,8 +508,9 @@ export function emptyLabelBasisPublication(): LabelBasisPublication {
  * the gate instead of around it. Measured before the fix: 200 such rows sealed
  * with `releaseEligible: true` and `generatorFamilies[family] === 200`.
  *
- * The filter is asked of v3 rows ONLY, and that is not a loophole left for v2 to
- * slip through. On v2 `recordEligibility` is constant false for STRUCTURAL reasons
+ * The filter is asked of the AXIS-STATED versions only, and that is not a loophole
+ * left for v2 to slip through. On v2 `recordEligibility` is constant false for
+ * STRUCTURAL reasons
  * rather than per-record ones: a v2 `groups` block is a closed object of nine keys
  * with no `humanSeed`, `generationLane` or `harnessVersion`, so `groupAxisState`
  * reads those three as `unknown` on every v2 record that has ever been written
@@ -505,13 +520,13 @@ export function emptyLabelBasisPublication(): LabelBasisPublication {
  * corpus on disk, which is `scientificUse: "release"` and v2. That is precisely
  * the defect this block was just repaired for, with the versions swapped.
  *
- * So the rule is the honest one: eligibility is a statement only a v3 record is
- * able to make, and it is only asked of the records that can make it. When the
- * corpus is v3 there is no v2 row to exempt, and until then a v2 corpus is judged
- * by the only criterion its schema can express — presence.
+ * So the rule is the honest one: eligibility is a statement only a record with axis
+ * states is able to make, and it is only asked of the records that can make it. Once
+ * the corpus carries states there is no v2 row to exempt, and until then a v2 corpus
+ * is judged by the only criterion its schema can express — presence.
  */
 function countsTowardHeldOutFloor(record: BenchmarkRecord): boolean {
-  if (record.schemaVersion !== 3) return true;
+  if (record.schemaVersion === 2) return true;
   return recordEligibility(record).eligible;
 }
 
@@ -548,7 +563,7 @@ function heldOutFloorShortfall(
   positiveRows: readonly BenchmarkRecord[],
 ): string {
   const stateEligibility = positiveRows.filter(
-    (record) => record.schemaVersion === 3,
+    (record) => record.schemaVersion !== 2,
   ).length;
   const head = `held-out generator family "${family}" requires at least ${HELD_OUT_POSITIVES_FLOOR}`;
   // BOTH numbers in every case, because they answer different questions. "0 of
@@ -675,7 +690,7 @@ function publishLabelBasis(
   }
 
   for (const record of records) {
-    if (record.schemaVersion !== 3) continue;
+    if (record.schemaVersion === 2) continue;
     const basis = record.labelBasis;
     if (basis === undefined) continue;
     publication.records[basis] = (publication.records[basis] ?? 0) + 1;
@@ -684,7 +699,7 @@ function publishLabelBasis(
     }
     const perAxis = identities.get(basis);
     if (perAxis === undefined) continue;
-    for (const axis of V3_GROUP_AXES) {
+    for (const axis of recordGroupAxes(record)) {
       const identity = groupAxisIdentity(record, axis);
       if (identity === undefined) continue;
       const set = perAxis.get(axis) ?? new Set<string>();
@@ -697,9 +712,9 @@ function publishLabelBasis(
     const perAxis = identities.get(basis);
     if (perAxis === undefined || perAxis.size === 0) continue;
     const counts: Record<string, number> = {};
-    // V3_GROUP_AXES order, not insertion order, so the published block is stable
-    // across corpora and its canonical digest does not depend on row order.
-    for (const axis of V3_GROUP_AXES) {
+    // A fixed axis order, not insertion order, so the published block is stable
+    // across corpora and does not depend on row order.
+    for (const axis of PUBLISHED_AXES) {
       const set = perAxis.get(axis);
       if (set !== undefined) counts[axis] = set.size;
     }

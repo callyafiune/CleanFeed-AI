@@ -36,6 +36,12 @@ import extract_wikipedia
 
 PROSE_60 = " ".join(f"palavra{i}" for i in range(60))
 
+# The concrete acquisition each extractor test declares. Both extractors REFUSE to run
+# without it, because it is what names `groups.sourceMaterialBatch`; the values are the
+# real snapshots (ESTADO.md § 2: ptwiki dump 2022-03-01, Carolina Bea 2.0).
+WIKI_SNAPSHOT_VERSION = "ptwiki-20220301"
+CAROLINA_SNAPSHOT_VERSION = "carolina-v2.0"
+
 # The two person-carrying sources fail closed without a cluster-exposure keyring
 # (pseudonymize.require_keyring), so every extractor test that reaches them has to
 # supply one. A FIXTURE secret, deliberately not the operator's: the pseudonyms it
@@ -243,7 +249,9 @@ class WikipediaTests(unittest.TestCase):
             with bz2.open(dump, "wt", encoding="utf-8") as handle:
                 handle.write(xml)
             rows, _ = run_writer(
-                tmp, "wiki", lambda w: extract_wikipedia.extract(dump, w)
+                tmp, "wiki", lambda w: extract_wikipedia.extract(
+                    dump, w, snapshot_version=WIKI_SNAPSHOT_VERSION
+                ),
             )
         self.assertEqual(len(rows), 1)
         self.assertEqual(rows[0]["domainSource"], "ptwiki_lead")
@@ -293,7 +301,12 @@ class CarolinaTests(unittest.TestCase):
             rows, _ = run_writer(
                 tmp,
                 "carolina_bal",
-                lambda w: extract_carolina(archive, w, per_typology_limit=2),
+                lambda w: extract_carolina(
+                    archive,
+                    w,
+                    per_typology_limit=2,
+                    snapshot_version=CAROLINA_SNAPSHOT_VERSION,
+                ),
             )
         from collections import Counter
 
@@ -321,7 +334,9 @@ class CarolinaTests(unittest.TestCase):
                 z.writestr("Corpus/social media/SOCa.xml", corpus)
                 z.writestr("Corpus/wikis/pt/WIKaa.xml", wiki_corpus)
             rows, stats = run_writer(
-                tmp, "carolina", lambda w: extract_carolina(archive, w)
+                tmp, "carolina", lambda w: extract_carolina(
+                    archive, w, snapshot_version=CAROLINA_SNAPSHOT_VERSION
+                ),
             )
         self.assertEqual(len(rows), 1)
         self.assertEqual(rows[0]["licenseId"], "cc-by-nc-sa-4.0")
@@ -787,13 +802,34 @@ class GroupAxisStateTests(unittest.TestCase):
     def test_the_axis_list_mirrors_the_sealed_schema(self) -> None:
         import re as _re
 
-        from group_axes import V3_GROUP_AXES
+        from group_axes import V3_GROUP_AXES, V4_GROUP_AXES
 
         source = (
             Path(__file__).resolve().parent.parent / "schema.ts"
         ).read_text(encoding="utf-8")
-        block = source.split("export const V3_GROUP_AXES = [", 1)[1].split("]", 1)[0]
-        self.assertEqual(list(V3_GROUP_AXES), _re.findall(r'"([a-zA-Z]+)"', block))
+        # BOTH tuples, and the v3 one is not vestigial: the dead corpus is still read to
+        # seed `drop_seen`, so a reader that lost the v3 vocabulary would report
+        # `collectionBatch` as an axis nobody declares.
+        for name, mirror in (
+            ("V3_GROUP_AXES", V3_GROUP_AXES),
+            ("V4_GROUP_AXES", V4_GROUP_AXES),
+        ):
+            with self.subTest(tuple=name):
+                block = source.split(f"export const {name} = [", 1)[1].split("]", 1)[0]
+                self.assertEqual(
+                    list(mirror), _re.findall(r'"([a-zA-Z]+)"', block), name
+                )
+        # The RELATION between the two, which neither pin above states on its own: v4 is
+        # v3 minus the one axis that conflated three facts, plus the three that separate
+        # them. Without this, dropping an axis from both sides at once passes both pins.
+        self.assertEqual(
+            set(V3_GROUP_AXES) - set(V4_GROUP_AXES), {"collectionBatch"}
+        )
+        self.assertEqual(
+            set(V4_GROUP_AXES) - set(V3_GROUP_AXES),
+            {"sourceMaterialBatch", "generationBatch", "extractionRun"},
+        )
+        self.assertEqual(len(V4_GROUP_AXES), 14)
 
     def test_known_carries_an_id_and_the_others_carry_a_reason(self) -> None:
         from group_axes import known, not_applicable, unknown
@@ -927,7 +963,9 @@ class SourceIdentityTests(unittest.TestCase):
             path = Path(raw) / "ptwiki.xml.bz2"
             path.write_bytes(bz2.compress(page.encode("utf-8")))
             rows, _ = run_writer(
-                Path(raw), "wiki", lambda w: extract_wikipedia.extract(path, w)
+                Path(raw), "wiki", lambda w: extract_wikipedia.extract(
+                    path, w, snapshot_version=WIKI_SNAPSHOT_VERSION
+                ),
             )
         axes = rows[0]["meta"]["groupAxes"]
         self.assertEqual(axes["source"], {"state": "known", "id": "ptwiki_page_99"})
@@ -1008,7 +1046,9 @@ class SourceIdentityTests(unittest.TestCase):
             with zipfile.ZipFile(path, "w") as archive:
                 archive.writestr(member, tei)
             rows, _ = run_writer(
-                Path(raw), "carolina", lambda w: extract_carolina.extract(path, w)
+                Path(raw), "carolina", lambda w: extract_carolina.extract(
+                    path, w, snapshot_version=CAROLINA_SNAPSHOT_VERSION
+                ),
             )
         self.assertEqual(len(rows), 2)
         axes = [r["meta"]["groupAxes"] for r in rows]
@@ -1025,6 +1065,111 @@ class SourceIdentityTests(unittest.TestCase):
         # The extractor deliberately never reads TEI header names, so there is no
         # author to pseudonymise and nothing was lost.
         self.assertEqual(axes[0]["author"]["state"], "notApplicable")
+
+
+class MaterialBatchProducerTests(unittest.TestCase):
+    """The EXTRACTOR is where `sourceMaterialBatch` comes from, and nowhere else.
+
+    `assemble_corpus.human_record` refuses a candidate that names no acquisition event,
+    so a pipeline whose extractors do not emit one writes a corpus of `ai` rows only —
+    and it does it QUIETLY, because `main()` counts the drops. Asserting the assembler's
+    refusal is therefore not enough: something has to assert the PRODUCER, or the
+    refusal is the only half that exists.
+    """
+
+    def test_wikipedia_names_the_acquisition_event_on_every_candidate(self) -> None:
+        page = (
+            '<mediawiki xmlns="http://www.mediawiki.org/xml/export-0.10/">'
+            "<page><title>T</title><ns>0</ns><id>77</id><revision>"
+            "<timestamp>2021-05-01T00:00:00Z</timestamp>"
+            f"<text>{PROSE_60}</text>"
+            "</revision></page></mediawiki>"
+        )
+        with tempfile.TemporaryDirectory() as raw:
+            path = Path(raw) / "ptwiki.xml.bz2"
+            path.write_bytes(bz2.compress(page.encode("utf-8")))
+            rows, _ = run_writer(
+                Path(raw), "wiki", lambda w: extract_wikipedia.extract(
+                    path, w, snapshot_version=WIKI_SNAPSHOT_VERSION
+                ),
+            )
+        # The batch is keyed on the concrete DUMP, so two dumps of the Wikipedia are
+        # two acquisitions and not one indistinguishable block.
+        self.assertEqual(rows[0]["meta"]["sourceMaterialBatch"], "smb_ptwiki-20220301")
+
+    def test_wikipedia_refuses_a_run_whose_acquisition_has_no_name(self) -> None:
+        with tempfile.TemporaryDirectory() as raw:
+            path = Path(raw) / "ptwiki.xml.bz2"
+            path.write_bytes(bz2.compress(b"<mediawiki/>"))
+            with self.assertRaises(ValueError) as caught:
+                run_writer(
+                    Path(raw),
+                    "wiki",
+                    lambda w: extract_wikipedia.extract(path, w),
+                )
+        self.assertIn("--snapshot-version", str(caught.exception))
+        self.assertIn("groups.sourceMaterialBatch", str(caught.exception))
+
+    def test_carolina_gives_every_typology_of_one_download_one_batch(self) -> None:
+        import extract_carolina
+
+        tei = (
+            '<teiCorpus xmlns="http://www.tei-c.org/ns/1.0">'
+            "<TEI><teiHeader><fileDesc><publicationStmt>"
+            '<date type="Download">2021-05-21</date>'
+            "<availability><licence>CC BY-NC-SA 4.0</licence></availability>"
+            "</publicationStmt></fileDesc></teiHeader>"
+            f"<text><body><p>{PROSE_60}</p></body></text></TEI>"
+            "</teiCorpus>"
+        )
+        with tempfile.TemporaryDirectory() as raw:
+            path = Path(raw) / "archive.zip"
+            with zipfile.ZipFile(path, "w") as archive:
+                archive.writestr("Corpus/university domains/uni.xml", tei)
+                archive.writestr("Corpus/social media/soc.xml", tei)
+            rows, _ = run_writer(
+                Path(raw), "carolina", lambda w: extract_carolina.extract(
+                    path, w, snapshot_version=CAROLINA_SNAPSHOT_VERSION
+                ),
+            )
+        self.assertEqual(len(rows), 2)
+        # ONE batch for both cells: the typologies partition a single download, they
+        # are not separate acquisitions. Two blocks here would state a dependence
+        # boundary that no acquisition event supports.
+        self.assertEqual(
+            {r["meta"]["sourceMaterialBatch"] for r in rows}, {"smb_carolina-v2_0"}
+        )
+        self.assertNotEqual(
+            rows[0]["domainSource"], rows[1]["domainSource"]
+        )
+
+    def test_carolina_refuses_a_run_whose_acquisition_has_no_name(self) -> None:
+        import extract_carolina
+
+        with tempfile.TemporaryDirectory() as raw:
+            path = Path(raw) / "archive.zip"
+            with zipfile.ZipFile(path, "w") as archive:
+                archive.writestr("Corpus/social media/soc.xml", "<teiCorpus/>")
+            with self.assertRaises(ValueError) as caught:
+                run_writer(
+                    Path(raw),
+                    "carolina",
+                    lambda w: extract_carolina.extract(path, w),
+                )
+        self.assertIn("--snapshot-version", str(caught.exception))
+
+    def test_the_batch_id_survives_the_assembler_that_consumes_it(self) -> None:
+        """The producer's spelling is a pseudonym the sealed schema accepts.
+
+        The two halves are written in different languages and compared by nobody at
+        runtime, so a batch id that the axis validator refuses would only show up
+        after a full assembly run.
+        """
+        from group_axes import known, material_batch_id
+
+        for version in (WIKI_SNAPSHOT_VERSION, CAROLINA_SNAPSHOT_VERSION):
+            batch = material_batch_id(version)
+            self.assertEqual(known(batch), {"state": "known", "id": batch})
 
     def test_every_source_declares_the_axes_the_plan_fixes_for_it(self) -> None:
         from group_axes import SOURCE_DECLARED_AXES
@@ -1104,7 +1249,9 @@ class CandidateIdStabilityTests(unittest.TestCase):
             path = Path(raw) / "ptwiki.xml.bz2"
             path.write_bytes(bz2.compress(page.encode("utf-8")))
             rows, _ = run_writer(
-                Path(raw), "wiki", lambda w: extract_wikipedia.extract(path, w)
+                Path(raw), "wiki", lambda w: extract_wikipedia.extract(
+                    path, w, snapshot_version=WIKI_SNAPSHOT_VERSION
+                ),
             )
         # sha1("ptwiki:99")[:12]. The page id is the whole natural key, so this is
         # the tightest possible pin on that extractor.
@@ -1133,7 +1280,9 @@ class CandidateIdStabilityTests(unittest.TestCase):
             with zipfile.ZipFile(path, "w") as archive:
                 archive.writestr(member, tei)
             rows, _ = run_writer(
-                Path(raw), "carolina", lambda w: extract_carolina.extract(path, w)
+                Path(raw), "carolina", lambda w: extract_carolina.extract(
+                    path, w, snapshot_version=CAROLINA_SNAPSHOT_VERSION
+                ),
             )
         # sha1("carolina:<member>:<sequence>")[:12] for sequence 1 and 2. The
         # SEQUENCE is in the key, which is why two TEI documents of one member get
@@ -1245,6 +1394,10 @@ class AssemblerRealGroupTests(unittest.TestCase):
                 "dateField": "Posts.xml@CreationDate",
                 "observedValue": "2013-12-11T00:00:00+00:00",
                 "groupAxes": {"source": known(thread), "author": known(author)},
+                # The acquisition event and the extraction run, which v4 holds apart:
+                # re-reading one dump produces a second run and no second material.
+                "sourceMaterialBatch": "smb_ptso_2013",
+                "extractionRun": "extraction_ptso_qa",
             },
         }
 
@@ -1300,21 +1453,104 @@ class AssemblerRealGroupTests(unittest.TestCase):
         with self.assertRaises(TypeError):
             near_duplicate_axis("src_ptso_aaa", "src_ptso_bbb")  # type: ignore[call-arg]
 
-    def test_a_human_record_states_all_twelve_axes(self) -> None:
+    def test_a_row_naming_no_material_batch_leaves_the_corpus(self) -> None:
+        from assemble_corpus import MissingMaterialBatch, human_record
+
+        candidate = self._human_candidate("src_ptso_aaa", "ptso_thread_2", "person_x")
+        del candidate["meta"]["sourceMaterialBatch"]
+        # No eligibility-priced escape exists on this axis: the rule admits only `known`
+        # on a human row, so the row is unwritable and leaves. The mutation this catches
+        # is the one the dead corpus shipped — key a fallback on the stratum
+        # (`extraction_<domainSource>`) so every row of one stratum shares an invented
+        # acquisition event. That fallback makes every downstream check pass and resolves
+        # against no declared `materialBatches` entry.
+        with self.assertRaises(MissingMaterialBatch) as caught:
+            human_record(candidate, "qa-informal", None)
+        self.assertIn("sourceMaterialBatch", str(caught.exception))
+        self.assertIn("src_ptso_aaa", str(caught.exception))
+
+    def test_a_row_naming_no_extraction_run_leaves_the_corpus(self) -> None:
+        from assemble_corpus import MissingExtractionRun, human_record
+
+        candidate = self._human_candidate("src_ptso_aaa", "ptso_thread_2", "person_x")
+        del candidate["meta"]["extractionRun"]
+        # Diagnostic axis, non-negotiable state: the run is our own execution, so a gap
+        # is a defect in a pipeline we control. The loader is the layer that knows it —
+        # the pool FILE is the run — and deriving it from the stratum would merge rows
+        # written by different executions into one invented run, destroying the only
+        # handle that traces a defect back to the execution that produced it.
+        with self.assertRaises(MissingExtractionRun) as caught:
+            human_record(candidate, "qa-informal", None)
+        self.assertIn("extractionRun", str(caught.exception))
+
+    def test_the_loader_stamps_the_run_and_never_the_acquisition(self) -> None:
+        from assemble_corpus import load_humans
+
+        # Asserted over the ROWS the loader returns, not over its source text: a stamp
+        # written under a computed key (`"source" + "MaterialBatch"`, a module constant,
+        # a helper called from here) is the same defect and reads nothing like the
+        # literal spelling.
+        with tempfile.TemporaryDirectory() as raw:
+            cand = Path(raw)
+            (cand / "wikipedia_fresh.jsonl").write_text(
+                json.dumps(
+                    {
+                        "candidateId": "ptwiki_0001",
+                        "text": PROSE_60,
+                        "wordCount": 60,
+                        "domainSource": "ptwiki_lead",
+                        "meta": {"snapshot": "ptwiki"},
+                    }
+                )
+                + "\n",
+                encoding="utf-8",
+            )
+            rows = [
+                r for r in load_humans(cand) if r["candidateId"] == "ptwiki_0001"
+            ]
+        self.assertEqual(len(rows), 1)
+        meta = rows[0]["meta"]
+        # The loader knows WHICH FILE it opened, so it can name the run.
+        self.assertEqual(meta["extractionRun"], "extraction_wikipedia_fresh")
+        # It does NOT know the acquisition event. A stamp here would invent one lot per
+        # pool file — the same invented cluster the per-record token was, one level up —
+        # and it would resolve against no declared `materialBatches` entry.
+        self.assertNotIn("sourceMaterialBatch", meta)
+
+    def test_a_human_record_states_all_fourteen_axes(self) -> None:
         from assemble_corpus import human_record
-        from group_axes import V3_GROUP_AXES
+        from group_axes import V4_GROUP_AXES
 
         record = human_record(
             self._human_candidate("src_ptso_aaa", "ptso_thread_2", "person_x"),
             "qa-informal",
             None,
         )
-        self.assertEqual(sorted(record["groups"]), sorted(V3_GROUP_AXES))
-        self.assertEqual(record["schemaVersion"], 3)
+        self.assertEqual(sorted(record["groups"]), sorted(V4_GROUP_AXES))
+        self.assertEqual(record["schemaVersion"], 4)
         # Every generation axis genuinely does not apply to a human row, and saying
-        # so is a statement, not a gap: it costs the record nothing.
-        for axis in ("promptTemplate", "generatorFamily", "generationLane"):
+        # so is a statement, not a gap: it costs the record nothing. `generationBatch`
+        # is in the list because that is what makes "a human row can never name a
+        # declared generation batch" structural instead of a naming convention.
+        for axis in (
+            "promptTemplate",
+            "generatorFamily",
+            "generationLane",
+            "generationBatch",
+        ):
             self.assertEqual(record["groups"][axis]["state"], "notApplicable")
+        # The two batch axes a human row DOES fill, and they are different facts: one
+        # acquisition event, one execution that read it. Re-extracting the same dump
+        # yields a second run and no second material, which is why one axis cannot
+        # carry both.
+        self.assertEqual(
+            record["groups"]["sourceMaterialBatch"],
+            {"state": "known", "id": "smb_ptso_2013"},
+        )
+        self.assertEqual(
+            record["groups"]["extractionRun"],
+            {"state": "known", "id": "extraction_ptso_qa"},
+        )
 
     def test_an_unknown_axis_is_carried_and_never_synthesized(self) -> None:
         from assemble_corpus import human_record
@@ -1619,6 +1855,7 @@ class DerivationLineageTests(unittest.TestCase):
             "promptTemplateId": "edit_v1",
             "promptTemplateDigest": hashlib.sha256(b"edit").hexdigest(),
             "parentFamily": "ptso_qa",
+            "sourceMaterialBatch": "smb_ptso_2013",
             "mixture": {
                 "spans": [
                     {"start": 0, "end": 200, "origin": "human"},
@@ -1660,9 +1897,42 @@ class DerivationLineageTests(unittest.TestCase):
         with self.assertRaises(MissingRecipe):
             mixed_record(candidate)
 
+    def test_a_mixed_pair_that_lost_the_parent_s_material_batch_is_refused(self) -> None:
+        import hashlib
+
+        from assemble_corpus import MissingMaterialBatch, mixed_record
+
+        candidate = {
+            "parentId": "src_ptso_0f89e00a4836",
+            "text": PROSE_60,
+            "provider": "antigravity",
+            "model": "gemini-3.6-flash-low",
+            "generatedAt": "2026-07-23T18:53:31.606876+00:00",
+            "promptTemplateId": "edit_v1",
+            "promptTemplateDigest": hashlib.sha256(b"edit").hexdigest(),
+            "parentFamily": "ptso_qa",
+            "mixture": {
+                "spans": [
+                    {"start": 0, "end": 200, "origin": "human"},
+                    {"start": 200, "end": len(PROSE_60), "origin": "ai"},
+                ]
+            },
+        }
+        # The material a mixed row depends on is the PARENT's acquisition event, and the
+        # axis rule admits only `known` on a mechanistic mixed row — so there is no
+        # eligibility-priced escape and no value to derive. A placeholder here
+        # (`smb_unknown`, or the parent id) would pool every pair whose parent's batch was
+        # lost into one invented acquisition, and it would resolve against no declared
+        # `materialBatches` entry. The pair file has to carry it; a pair that does not
+        # leaves the corpus.
+        with self.assertRaises(MissingMaterialBatch) as caught:
+            mixed_record(candidate)
+        self.assertIn("sourceMaterialBatch", str(caught.exception))
+        self.assertIn("mix_src_ptso_0f89e00a4836", str(caught.exception))
+
 
 class GenerationBatchAxisTests(unittest.TestCase):
-    """`groups.collectionBatch` — the `batch` axis requirement 2 fixes for the IA source.
+    """`groups.generationBatch` — the `batch` axis requirement 2 fixes for the IA source.
 
     THIS AXIS WAS REACHED BY NO TEST IN ANY LANGUAGE before this class. `ai_record`
     and `mixed_record` both write `unknown("the generation batch is derived after
@@ -1672,8 +1942,8 @@ class GenerationBatchAxisTests(unittest.TestCase):
     lab suite at 86 tests OK:
 
       * `return []` at the top of `assign_generation_batches`: every generated row
-        keeps `collectionBatch: unknown`, so all 540 generated records of the
-        delivered run become UNWRITABLE — `AXIS_STATE_RULE.collectionBatch` allows
+        keeps `generationBatch: unknown`, so all 540 generated records of the
+        delivered run become UNWRITABLE — `AXIS_STATE_RULE.generationBatch` allows
         only `known` in every axis class, so `validate` refuses each one — while on
         the bench side the axis that feeds E3's power gate goes from the 27 clusters
         the delivered cluster-report.json publishes to **4**, over 246 grouped rows
@@ -1750,6 +2020,7 @@ class GenerationBatchAxisTests(unittest.TestCase):
             "promptTemplateId": "original",
             "promptTemplateDigest": self.TEMPLATE_DIGEST,
             "parentFamily": "ptso_qa",
+            "sourceMaterialBatch": "smb_ptso_2013",
             "temperature": "0.8",
             "mixture": {
                 "spans": [
@@ -1790,10 +2061,10 @@ class GenerationBatchAxisTests(unittest.TestCase):
         # GENERATION_RECIPE_MISSING.
         self.assertNotEqual(rows[0]["id"], rows[1]["id"])
         self.assertEqual(len(batches), 1)
-        axis = rows[0]["groups"]["collectionBatch"]
+        axis = rows[0]["groups"]["generationBatch"]
         self.assertEqual(axis["state"], "known")
         self.assertTrue(axis["id"].startswith("gb_ai_"), axis)
-        self.assertEqual(axis, rows[1]["groups"]["collectionBatch"])
+        self.assertEqual(axis, rows[1]["groups"]["generationBatch"])
         # The axis names the batch that was actually declared, byte for byte. Without
         # this the two could agree with each other and match nothing published.
         self.assertEqual(axis["id"], batches[0]["batchId"])
@@ -1826,8 +2097,8 @@ class GenerationBatchAxisTests(unittest.TestCase):
                 batches = self._batched([left, right])
                 self.assertEqual(len(batches), 2, component)
                 self.assertNotEqual(
-                    left["groups"]["collectionBatch"]["id"],
-                    right["groups"]["collectionBatch"]["id"],
+                    left["groups"]["generationBatch"]["id"],
+                    right["groups"]["generationBatch"]["id"],
                     f"{component} is part of the recipe a batch declares: two rows "
                     "differing in it were generated under different conditions and "
                     "cannot be certified by one declared batch",
@@ -1856,8 +2127,8 @@ class GenerationBatchAxisTests(unittest.TestCase):
         batches = self._batched([left, right])
         self.assertEqual(len(batches), 2)
         self.assertNotEqual(
-            left["groups"]["collectionBatch"]["id"],
-            right["groups"]["collectionBatch"]["id"],
+            left["groups"]["generationBatch"]["id"],
+            right["groups"]["generationBatch"]["id"],
         )
         # In v2 the key carried a bare temperature and no effort at all, so two runs
         # at different reasoning tiers — a real difference in what the provider was
@@ -1872,7 +2143,7 @@ class GenerationBatchAxisTests(unittest.TestCase):
         right = ai_record(self._api_candidate("src_ai_gemini_bbbbbbbbbbbb"))
         batches = self._batched([left, right], ["dev", "cal-A"])
         # THE PROPERTY THAT MAKES A SHARED AXIS SAFE, and it was asserted nowhere.
-        # `collectionBatch` IS a grouping axis, so two rows sharing it form one split
+        # `generationBatch` IS a grouping axis, so two rows sharing it form one split
         # component; the docstring's argument that this cannot leak across blocks is
         # that `generatedAt` is part of the key and equals the record's block time, so
         # an identical recipe stamped into two blocks yields TWO batches. If that ever
@@ -1880,8 +2151,8 @@ class GenerationBatchAxisTests(unittest.TestCase):
         # split would be refused — with the corpus already written.
         self.assertEqual(len(batches), 2)
         self.assertNotEqual(
-            left["groups"]["collectionBatch"]["id"],
-            right["groups"]["collectionBatch"]["id"],
+            left["groups"]["generationBatch"]["id"],
+            right["groups"]["generationBatch"]["id"],
         )
         self.assertEqual(
             {b["generatedAt"] for b in batches},
@@ -1900,8 +2171,8 @@ class GenerationBatchAxisTests(unittest.TestCase):
         # batch published as `gb_ai_...` — a record whose class disagrees with the
         # batch it names.
         self.assertEqual(len(batches), 2)
-        self.assertTrue(ai["groups"]["collectionBatch"]["id"].startswith("gb_ai_"))
-        self.assertTrue(mixed["groups"]["collectionBatch"]["id"].startswith("gb_mixed_"))
+        self.assertTrue(ai["groups"]["generationBatch"]["id"].startswith("gb_ai_"))
+        self.assertTrue(mixed["groups"]["generationBatch"]["id"].startswith("gb_mixed_"))
         self.assertEqual(
             {b["sourceId"] for b in batches}, {"src_ai", "src_mixed"}
         )
@@ -1929,7 +2200,7 @@ class GenerationBatchAxisTests(unittest.TestCase):
         # is a true statement while it is true — `main()` closes it in the same run.
         for record in records[:-1]:
             self.assertEqual(
-                record["groups"]["collectionBatch"]["state"], "unknown", record["id"]
+                record["groups"]["generationBatch"]["state"], "unknown", record["id"]
             )
         self._batched(records)
         # THE ASSERTION THAT CATCHES THE SILENT DIRECTION: after the pass, no
@@ -1951,9 +2222,9 @@ class GenerationBatchAxisTests(unittest.TestCase):
         # artifact exactly (clusters 27, largest gb_mixed_0020/90, ineligible 503), and
         # the mutant reports FOUR clusters, not zero:
         #
-        #   BASELINE  collectionBatch clusters=27 registros_agrupados=786
+        #   BASELINE  generationBatch clusters=27 registros_agrupados=786
         #             maior=gb_mixed_0020/90 estados={'known': 786}
-        #   MUTANT    collectionBatch clusters=4  registros_agrupados=246
+        #   MUTANT    generationBatch clusters=4  registros_agrupados=246
         #             maior=extraction_wikipedia_fresh/73
         #             estados={'known': 246, 'unknown': 540}
         #
@@ -1989,11 +2260,11 @@ class GenerationBatchAxisTests(unittest.TestCase):
         #     generated rows are already ineligible on `harnessVersion`; the axis line's
         #     `estados` map goes {known: 786} to {known: 246, unknown: 540}, the loudest
         #     of the columns. The cluster count is the QUIETEST of them: 27 -> 4.
-        #   * NOT SILENT on the sealed side. `AXIS_STATE_RULE.collectionBatch` in
+        #   * NOT SILENT on the sealed side. `AXIS_STATE_RULE.generationBatch` in
         #     benchmark/schema.ts allows ONLY `known`, in all four axis classes, so
         #     `validate` -> `parseBenchmarkDataset` -> `validateBenchmarkRecordV3`
         #     refuses the record itself. Measured verbatim by forcing the axis back on
-        #     each fixture above: `BENCHMARK_RECORD_INVALID: groups.collectionBatch of
+        #     each fixture above: `BENCHMARK_RECORD_INVALID: groups.generationBatch of
         #     an ai record must be known, received unknown
         #     (id=src_ai_gemini_aaaaaaaaaaaa)`, `... of a mechanistic mixed record must
         #     be known, received unknown (id=mix_src_ptso_0f89e00a4836)`, and `... of a
@@ -2006,7 +2277,7 @@ class GenerationBatchAxisTests(unittest.TestCase):
         # It is not that the row stops being eligible: THIS axis's `unknown` costs the
         # record, not eligibility. A record may well be ineligible for other reasons —
         # 503 of the delivered 540 are, on `harnessVersion` — but `recordEligibility`
-        # is never REACHED for an `unknown` `collectionBatch`, because the parse throws
+        # is never REACHED for an `unknown` `generationBatch`, because the parse throws
         # first. Measured on the valid fixtures, eligibility varies and is beside the
         # point: the three api rows and the human row are {eligible: true, unknownAxes:
         # []}, the mixed row is {eligible: false, unknownAxes: ["author", "source"]},
@@ -2015,56 +2286,65 @@ class GenerationBatchAxisTests(unittest.TestCase):
         # consequences for whoever reads this next: this test is NOT the only defence,
         # and the schema entry is NOT redundant with it. The reason the generalisation
         # does not carry is the rule itself: `harnessVersion` admits `unknown` for ai,
-        # so there the price is eligibility; `collectionBatch` admits only `known` in
+        # so there the price is eligibility; `generationBatch` admits only `known` in
         # every class, so here the price is the record.
-        for record in records:
-            axis = record["groups"]["collectionBatch"]
-            self.assertEqual(axis["state"], "known", record["id"])
         for record in records[:-1]:
-            self.assertTrue(
-                record["groups"]["collectionBatch"]["id"].startswith("gb_"),
-                record["groups"]["collectionBatch"],
-            )
+            axis = record["groups"]["generationBatch"]
+            self.assertEqual(axis["state"], "known", record["id"])
+            self.assertTrue(axis["id"].startswith("gb_"), axis)
+        # The human row is the one that does NOT become `known` here, and the axis rule
+        # is what makes it so: `generationBatch` admits only `notApplicable` on a human
+        # record, so the pass cannot reach it even by accident.
+        self.assertEqual(
+            records[-1]["groups"]["generationBatch"]["state"], "notApplicable"
+        )
 
-    def test_a_human_row_keeps_its_extraction_batch_and_never_a_gb_id(self) -> None:
+    def test_a_human_row_keeps_its_two_batch_axes_and_can_name_no_gb_id(self) -> None:
         from assemble_corpus import human_record
 
         candidate = AssemblerRealGroupTests()._human_candidate(
             "src_ptso_aaa", "ptso_thread_2", "person_x"
         )
         record = human_record(candidate, "qa-informal", None)
-        # The EXTRACTION run that produced the row — `extraction_<domainSource>`,
-        # shared by every candidate of one pool file, `known` from the start and never
-        # touched by `assign_generation_batches`.
+        # The EXTRACTION run that wrote the row — shared by every candidate of one pool
+        # file, `known` from the start and never touched by `assign_generation_batches`
+        # — and the ACQUISITION event it was read out of, which is a different fact.
         self.assertEqual(
-            record["groups"]["collectionBatch"],
+            record["groups"]["extractionRun"],
             {"state": "known", "id": "extraction_ptso_qa"},
         )
-        before = dict(record["groups"]["collectionBatch"])
+        self.assertEqual(
+            record["groups"]["sourceMaterialBatch"],
+            {"state": "known", "id": "smb_ptso_2013"},
+        )
+        before = {
+            axis: dict(record["groups"][axis])
+            for axis in ("sourceMaterialBatch", "extractionRun", "generationBatch")
+        }
         batches = self._batched([record])
         self.assertEqual(batches, [])
-        self.assertEqual(record["groups"]["collectionBatch"], before)
-        # THE NON-COLLISION THE DOCSTRING CALLS STRUCTURAL, asserted instead of
-        # asserted-about: the governance audit rejects a non-generated record that
-        # names a declared GENERATION batch, so the prefix carries a real obligation.
-        # A fallback rewritten to a bare token (`batch_x`) satisfies every other test
-        # in this file and breaks that obligation the first time a `gb_`-shaped value
-        # appears on a human row.
-        self.assertTrue(
-            record["groups"]["collectionBatch"]["id"].startswith("extraction_"),
-            record["groups"]["collectionBatch"],
+        for axis, value in before.items():
+            self.assertEqual(record["groups"][axis], value, axis)
+        # THE NON-COLLISION, now structural rather than a prefix convention: the
+        # governance audit rejects a non-generated record that names a declared
+        # GENERATION batch, and `generationBatch` admits only `notApplicable` on a human
+        # row, so there is no value at all a human record could carry there. The dead
+        # corpus bought this obligation with `extraction_` not colliding with `gb_`, and
+        # a fallback rewritten to a bare token (`batch_x`) broke it silently.
+        self.assertEqual(
+            record["groups"]["generationBatch"]["state"], "notApplicable"
         )
-        self.assertFalse(record["groups"]["collectionBatch"]["id"].startswith("gb_"))
+        self.assertNotIn("id", record["groups"]["generationBatch"])
 
-    def test_an_ai_record_states_all_twelve_axes(self) -> None:
+    def test_an_ai_record_states_all_fourteen_axes(self) -> None:
         from assemble_corpus import ai_record
-        from group_axes import V3_GROUP_AXES
+        from group_axes import V4_GROUP_AXES
 
         record = ai_record(self._api_candidate("src_ai_gemini_aaaaaaaaaaaa"))
-        # The counterpart of test_a_human_record_states_all_twelve_axes. Without it no
+        # The counterpart of test_a_human_record_states_all_fourteen_axes. Without it no
         # test stated the IA axis SET at all — only individual axes of it.
-        self.assertEqual(sorted(record["groups"]), sorted(V3_GROUP_AXES))
-        self.assertEqual(record["schemaVersion"], 3)
+        self.assertEqual(sorted(record["groups"]), sorted(V4_GROUP_AXES))
+        self.assertEqual(record["schemaVersion"], 4)
         for axis, value in record["groups"].items():
             self.assertIn(
                 value["state"], ("known", "notApplicable", "unknown"), axis
@@ -2077,28 +2357,124 @@ class GenerationBatchAxisTests(unittest.TestCase):
         # `batch` is `unknown` HERE and `known` after `assign_generation_batches`,
         # because `generatedAt` is part of the batch key and is only fixed by
         # partitioning. Both halves are asserted so neither can be read as the whole.
-        self.assertEqual(record["groups"]["collectionBatch"]["state"], "unknown")
+        self.assertEqual(record["groups"]["generationBatch"]["state"], "unknown")
         self._batched([record])
-        self.assertEqual(record["groups"]["collectionBatch"]["state"], "known")
+        self.assertEqual(record["groups"]["generationBatch"]["state"], "known")
         # Generated text has no human author and no origin document. Both are facts
         # about the row, not gaps in what we recorded, so neither costs eligibility.
         self.assertEqual(record["groups"]["author"]["state"], "notApplicable")
         self.assertEqual(record["groups"]["source"]["state"], "notApplicable")
+        # The other two batch axes are facts too, and this is the pair the axis split
+        # exists for: no acquisition event produced this text (its material dependence
+        # travels through humanSeed/derivationRoot to the row that WAS acquired), and no
+        # extractor read it out of a source document. Writing a material batch here
+        # would claim the text was acquired rather than produced.
+        for axis in ("sourceMaterialBatch", "extractionRun"):
+            self.assertEqual(record["groups"][axis]["state"], "notApplicable", axis)
+            self.assertNotIn("id", record["groups"][axis])
 
 
 class ClusterDistributionReportTests(unittest.TestCase):
     """Counts, size distribution and the largest cluster, per axis and slice."""
 
-    def _record(self, rid: str, label: str, partition: str, **axes) -> dict:
+    def _record(
+        self, rid: str, label: str, partition: str, version: int = 4, **axes
+    ) -> dict:
         import group_axes
 
+        tuple_of_version = (
+            group_axes.V4_GROUP_AXES if version == 4 else group_axes.V3_GROUP_AXES
+        )
         groups = {
-            axis: group_axes.not_applicable("fixture")
-            for axis in group_axes.V3_GROUP_AXES
+            axis: group_axes.not_applicable("fixture") for axis in tuple_of_version
         }
         for axis, value in axes.items():
             groups[axis] = group_axes.known(value)
-        return {"id": rid, "label": label, "partition": partition, "groups": groups}
+        return {
+            "schemaVersion": version,
+            "id": rid,
+            "label": label,
+            "partition": partition,
+            "groups": groups,
+        }
+
+    def test_the_report_carries_the_axes_the_ROWS_declare(self) -> None:
+        from group_axes import V3_GROUP_AXES, V4_GROUP_AXES, cluster_report
+
+        v4 = cluster_report([self._record("a", "human", "dev", source="t1")])
+        self.assertEqual(sorted(v4["axes"]), sorted(V4_GROUP_AXES))
+        # A v3 corpus reports TWELVE, and none of the three v4 axes appears as an axis
+        # whose state is `unknown`. Pinning either tuple here instead would publish
+        # `clusters: 0, states: {unknown: N}` for every axis the corpus's own version
+        # does not have — which reads as a broken axis rather than an absent one, and it
+        # would also count every row of the other version as ineligible.
+        v3 = cluster_report(
+            [self._record("a", "human", "dev", version=3, source="t1")]
+        )
+        self.assertEqual(sorted(v3["axes"]), sorted(V3_GROUP_AXES))
+        self.assertEqual(v3["ineligibleRecords"], 0)
+        self.assertEqual(v4["ineligibleRecords"], 0)
+        # A MIXED array reports the union, and each row is still judged against its own
+        # tuple: neither row is ineligible for an axis its version never had.
+        mixed = cluster_report(
+            [
+                self._record("a", "human", "dev", source="t1"),
+                self._record("b", "human", "dev", version=3, source="t1"),
+            ]
+        )
+        self.assertEqual(
+            sorted(mixed["axes"]),
+            sorted(set(V3_GROUP_AXES) | set(V4_GROUP_AXES)),
+        )
+        self.assertEqual(mixed["ineligibleRecords"], 0)
+
+    def test_the_projection_the_RUN_builds_reaches_the_v4_branch(self) -> None:
+        """The report of a real run, through `assemble_corpus.cluster_report_rows`.
+
+        `axes_of` branches on `schemaVersion`, so a projection that omits the key makes
+        every v4 row read against the v3 tuple: the published report then carries the
+        twelve v3 axes, `collectionBatch` as `{"unknown": n}` with zero clusters, none
+        of the three axes v4 exists to introduce, and `ineligibleRecords == records`.
+        Asserting `cluster_report` over a hand-written dict cannot see that, because the
+        hand-written dict is exactly where the missing key was supplied.
+        """
+        from assemble_corpus import PARTITION_OF, cluster_report_rows
+        from group_axes import V4_GROUP_AXES, cluster_report
+
+        rows = [
+            self._record("h1", "human", "dev", source="t1"),
+            self._record("h2", "human", "dev", source="t1"),
+        ]
+        PARTITION_OF.clear()
+        PARTITION_OF.update({"h1": "dev", "h2": "dev"})
+        try:
+            report = cluster_report(cluster_report_rows(rows))
+        finally:
+            PARTITION_OF.clear()
+        self.assertEqual(sorted(report["axes"]), sorted(V4_GROUP_AXES))
+        self.assertNotIn("collectionBatch", report["axes"])
+        for axis in ("sourceMaterialBatch", "generationBatch", "extractionRun"):
+            self.assertIn(axis, report["axes"])
+        self.assertEqual(report["ineligibleRecords"], 0)
+        self.assertEqual(report["records"], 2)
+        # The slice key comes from the projection too, so a partition dropped there
+        # would publish every row under "unassigned".
+        self.assertIn("dev/human", report["slices"])
+
+    def test_a_slice_with_no_row_reports_no_axis_rather_than_a_version_s_tuple(
+        self,
+    ) -> None:
+        from group_axes import cluster_report
+
+        # An array with no row declares no schemaVersion, so there is no tuple to
+        # report: naming one would pick a version arbitrarily and publish twelve or
+        # fourteen axes with `clusters: 0` about a slice that has nothing in it. Pinned
+        # because it is the one input where "the axes the ROWS declare" is empty.
+        report = cluster_report([])
+        self.assertEqual(report["records"], 0)
+        self.assertEqual(report["ineligibleRecords"], 0)
+        self.assertEqual(report["axes"], {})
+        self.assertEqual(report["slices"], {})
 
     def test_it_reports_count_distribution_and_largest_per_axis(self) -> None:
         from group_axes import cluster_report
@@ -2313,6 +2689,7 @@ class GeneratorCaptureTests(unittest.TestCase):
                 "id": "src_ptso_abc",
                 "text": "uma frase. outra frase. terceira frase.",
                 "family": "ptso_qa",
+                "sourceMaterialBatch": "smb_ptso_2013",
             },
             "uma frase reescrita. outra frase. terceira frase.",
             provider="antigravity",
@@ -2324,15 +2701,89 @@ class GeneratorCaptureTests(unittest.TestCase):
         self.assertEqual(row["promptTemplateId"], "mix_change_less_v1")
         self.assertEqual(row["promptTemplateDigest"], digests["mix_change_less_v1"])
         self.assertEqual(row["harnessVersion"], "1.2.3")
-        # And that row is now writable as v3, which the legacy pools are not.
+        # The PARENT's acquisition event travels on the pair row. Without it the pair is
+        # unwritable: the axis admits only `known` on a mechanistic mixed row, and the
+        # parent id alone resolves no acquisition at assembly time.
+        self.assertEqual(row["sourceMaterialBatch"], "smb_ptso_2013")
+        # And that row is now writable as a sealed record, which the legacy pools are not.
         from assemble_corpus import mixed_record
 
         record = mixed_record(row)
+        self.assertEqual(
+            record["groups"]["sourceMaterialBatch"],
+            {"state": "known", "id": "smb_ptso_2013"},
+        )
         self.assertEqual(record["groups"]["generationLane"]["id"], "agy")
         self.assertEqual(record["groups"]["harnessVersion"],
                          {"state": "known", "id": "1_2_3"})
         self.assertEqual(record["groups"]["derivationRoot"]["id"], "src_ptso_abc")
         self.assertEqual(record["groups"]["domainSource"]["id"], "ptso_qa")
+
+    def test_the_production_projection_of_a_parent_carries_its_material_batch(
+        self,
+    ) -> None:
+        """The projection BOTH mixing paths build, not a dict written beside it.
+
+        A test that hands `emit` a parent dict with the key already in it proves the
+        plumbing inside `emit` and nothing about who fills it. The two production
+        callers read two different files — the reserved pool (`id`/`text`) and a pairs
+        file (`parentId`/`parentText`) — and a projection that drops the batch makes
+        every mixed row unwritable while the assembler merely counts the drop.
+        """
+        import io
+
+        import make_mixed
+
+        pool_row = {
+            "id": "src_ptso_abc",
+            "text": "uma frase. outra frase. terceira frase.",
+            "family": "ptso_qa",
+            "label": 0,
+            "sourceMaterialBatch": "smb_ptwiki-20220301",
+        }
+        pair_row = {
+            "parentId": "src_ptso_abc",
+            "parentText": "uma frase. outra frase. terceira frase.",
+            "family": "ptso_qa",
+            "editedText": "uma frase reescrita. outra frase. terceira frase.",
+            "sourceMaterialBatch": "smb_ptwiki-20220301",
+        }
+        projections = [
+            make_mixed.parent_projection(pool_row),
+            make_mixed.parent_projection(
+                pair_row, id_key="parentId", text_key="parentText"
+            ),
+        ]
+        for projected in projections:
+            self.assertEqual(
+                set(projected), set(make_mixed.PARENT_PROJECTION_KEYS), projected
+            )
+            self.assertEqual(projected["sourceMaterialBatch"], "smb_ptwiki-20220301")
+            buffer = io.StringIO()
+            make_mixed.emit(
+                buffer,
+                projected,
+                pair_row["editedText"],
+                provider="antigravity",
+                model="gemini-3.6-flash-low",
+                template_id="mix_edit_v1",
+                harness_version="1.2.3",
+            )
+            record = json.loads(buffer.getvalue())
+            self.assertEqual(record["sourceMaterialBatch"], "smb_ptwiki-20220301")
+
+    def test_a_parent_that_names_no_acquisition_projects_none_and_is_not_invented(
+        self,
+    ) -> None:
+        import make_mixed
+
+        # The reserved pool predates the extractors that emit a batch, so `None` is the
+        # truthful projection. The row is dropped at assembly, never filed under a
+        # batch this projection made up.
+        projected = make_mixed.parent_projection(
+            {"id": "res_0001", "text": "uma frase. outra.", "label": 0}
+        )
+        self.assertIsNone(projected["sourceMaterialBatch"])
 
     def test_an_uncaptured_editor_version_stays_unknown_and_has_no_cli_override(
         self,
@@ -2352,6 +2803,7 @@ class GeneratorCaptureTests(unittest.TestCase):
                 "id": "src_ptso_abc",
                 "text": "uma frase. outra frase. terceira frase.",
                 "family": "ptso_qa",
+                "sourceMaterialBatch": "smb_ptso_2013",
             },
             "uma frase reescrita. outra frase. terceira frase.",
             provider="antigravity",

@@ -24,12 +24,17 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { canonicalJson } from "../../contracts/canonical-json.ts";
 import { runCli } from "../cli.ts";
 import { sha256BytesHex } from "../digests.ts";
-import { validateBenchmarkRecordV3, type BenchmarkRecord } from "../schema.ts";
+import {
+  validateBenchmarkRecordV3,
+  validateBenchmarkRecordV4,
+  type BenchmarkRecord,
+} from "../schema.ts";
 import {
   known,
   unknownAxis,
   v3Ai,
   v3Human,
+  v4Human,
   withAxis,
 } from "./helpers/v3-record-fixture.ts";
 import {
@@ -2413,6 +2418,80 @@ describe("exposureInputsFromRecords — R6's three states at the boundary", () =
     expect(decision.refusals.map((refusal) => refusal.reason)).toContain(
       "cluster-exposed-previously",
     );
+  });
+});
+
+// The ledger's two v4 halves, and the reason each needs a fixture of its own: the
+// adapter DECIDES which axes an event carries, the loader DECIDES which axis names a
+// stored event may name, and on v2/v3 corpora the v3 tuple and the union are
+// extensionally identical — only a v4 record separates them. The module's own promise
+// is that "the event still RECORDS every axis a record fills", and a lost axis is
+// unrecoverable: history would have to be re-derived from a corpus that no longer
+// exists.
+describe("the exposure ledger reads a v4 record by the axes v4 declares", () => {
+  it("carries the three axes v4 introduces and not the one it retired", () => {
+    const inputs = exposureInputsFromRecords(
+      [validateBenchmarkRecordV4(v4Human())],
+      () => "dev",
+    );
+    expect(inputs[0].groups.sourceMaterialBatch).toBe("smb_ptwiki_20220301");
+    expect(inputs[0].groups.extractionRun).toBe("er_ptwiki_20260727");
+    // `generationBatch` is `notApplicable` on a human row, so it is ABSENT rather
+    // than a synthetic id — the same rule the three-states test above pins.
+    expect(inputs[0].groups.generationBatch).toBeUndefined();
+    expect(inputs[0].groups.collectionBatch).toBeUndefined();
+  });
+
+  it("stores the three axes in the event's groupDigests", async () => {
+    await init();
+    // The keyed person pseudonym the ledger requires on `groups.author`; the fixture
+    // pool's shorter token is refused there, and that refusal is another test's.
+    const row = validateBenchmarkRecordV4(
+      withAxis(v4Human(), "author", known("person_0123456789abcdef")),
+    );
+    const decision = await preflightExposure(
+      paths(),
+      request({ records: exposureInputsFromRecords([row], () => "dev") }),
+    );
+    expect(Object.keys(decision.event.records[0].groupDigests).sort()).toEqual(
+      [
+        "author",
+        "domainSource",
+        "extractionRun",
+        "nearDuplicate",
+        "source",
+        "sourceMaterialBatch",
+      ].sort(),
+    );
+  });
+
+  it("accepts a stored event naming an axis only v4 declares", async () => {
+    await init();
+    // The loader's vocabulary is the UNION and not one version's tuple: a ledger
+    // outlives a schema bump, so an event written from a v4 corpus and read back
+    // after — or before — must not be a `CLUSTER_LEDGER_AXIS_UNKNOWN`.
+    const decision = await preflightExposure(
+      paths(),
+      request({
+        records: [
+          {
+            id: "r_v4",
+            text: BASE_TEXT,
+            partition: "dev",
+            groups: {
+              sourceMaterialBatch: "smb_ptwiki_20220301",
+              generationBatch: "gb_agy_20260724",
+              extractionRun: "er_ptwiki_20260727",
+            },
+          },
+        ],
+      }),
+    );
+    expect(Object.keys(decision.event.records[0].groupDigests).sort()).toEqual([
+      "extractionRun",
+      "generationBatch",
+      "sourceMaterialBatch",
+    ]);
   });
 });
 

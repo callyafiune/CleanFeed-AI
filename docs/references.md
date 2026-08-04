@@ -692,6 +692,81 @@ duas versões coexistindo no mesmo repositório de código, com a antiga legíve
 O motivo de fazer assim é o mesmo que vale para o resto deste projeto: uma autoridade editada em
 silêncio é indistinguível de uma autoridade que sempre disse aquilo.
 
+### 2.2h Um eixo por fato: lote de material, lote de geração e execução de extração (Commit A da Fase 1, 2026-08-04)
+
+O esquema v3 tinha **um** eixo de lote (`collectionBatch`) e deixava a classe da linha decidir o que ele
+significava: `gb_*` numa linha gerada (uma receita que o manifesto revisado publica), `extraction_*` numa
+humana (uma execução de extrator), e o **material** de onde a linha humana veio não era registrado em
+lugar nenhum. O v4 separa os três: `sourceMaterialBatch`, `generationBatch` e `extractionRun`.
+
+- **Âncora da separação entre lote e execução:** o que conta como uma unidade independente é o **evento
+  de aquisição**, não a execução que leu os bytes — reextrair o mesmo dump não produz material novo, e
+  tratar duas execuções como duas unidades conta a mesma dependência duas vezes. É a distinção entre
+  **unidade de amostragem** e operação de processamento, a mesma de § 4.1 aplicada à identidade do
+  material. _Fonte:_ **Gebru et al., 2021 — Datasheets for Datasets** (Communications of the ACM
+  64(12):86–92). [link](https://doi.org/10.1145/3458723) _Fato citado:_ o datasheet exige declarar
+  **quando e como** cada porção foi coletada e a **versão/instantâneo** de onde veio, como fatos
+  distintos do pipeline que os processou.
+- **Âncora da rastreabilidade da execução:** um identificador de execução existe para que um defeito
+  volte à corrida que o produziu, e é por isso que ele é **diagnóstico** e não unidade de dependência.
+  _Fonte:_ **W3C PROV-DM, 2013 — The PROV Data Model** (W3C Recommendation).
+  [link](https://www.w3.org/TR/prov-dm/) _Fato citado:_ o modelo distingue `Entity` (o material),
+  `Activity` (a execução que o usou) e `Agent`, e a proveniência de uma entidade é dada pela atividade
+  que a gerou — duas atividades sobre a mesma entidade não criam duas entidades.
+- **Âncora do inventário obrigatório e coberto por digest:** o lote declarado no manifesto é o que torna
+  a dependência conferível por terceiro; fora da projeção do digest, o inventário seria forjável.
+  _Fonte:_ **Merkle, 1988 — A digital signature based on a conventional encryption function**
+  (CRYPTO '87, LNCS 293:369–378). [link](https://doi.org/10.1007/3-540-48184-2_32) _Fato citado:_ a
+  cobertura por digest é o que faz uma declaração ser verificável em vez de apenas afirmada; a chave
+  fora da projeção não é coberta e a declaração volta a valer apenas pela palavra de quem escreveu.
+- **O que a decisão explora:** a dependência de material de uma linha GERADA não é perdida ao marcar
+  `sourceMaterialBatch: notApplicable` — ela viaja por `humanSeed`/`derivationRoot` até a linha humana
+  que foi adquirida, e é ELA que nomeia o lote. Escrever um lote na linha gerada afirmaria que o texto
+  foi adquirido, quando foi produzido. _Onde no projeto:_ `benchmark/schema.ts` (`V4_GROUP_AXES`,
+  `AXIS_STATE_RULE`), `benchmark/source-manifest.ts` (`ReviewedSourceManifestV2`), e o vocabulário
+  completo em `docs/superpowers/plans/2026-08-02-lotes-e-unidade-de-dependencia.md`.
+
+**Sem precedente encontrado (2026-08-04)** para a regra de estado específica: **recusar o registro por
+inteiro quando o eixo de lote de material não resolve, em vez de admitir `unknown` com custo de
+elegibilidade**. A literatura de proveniência trata de campos ausentes como lacuna documentada; não foi
+encontrada prática de tornar a linha *inescrevível*. O motivo de fazer assim é medido no próprio
+projeto: um valor derivado do estrato (`extraction_<domainSource>`) faz toda verificação a jusante passar
+e resolve contra nenhum lote declarado, então a alternativa a recusar é publicar um agrupamento que
+ninguém pode conferir.
+
+#### 2.2h-bis Quem nomeia o lote, e o que segurar a aquisição implica (cross-review do Commit A, 2026-08-04)
+
+Três decisões que a revisão adversarial do Commit A forçou a escrever, todas ancoradas nas mesmas fontes
+de 2.2h:
+
+- **O EXTRATOR nomeia o evento de aquisição, e recusa a corrida sem ele.** O lote sai de
+  `--snapshot-version` (a versão concreta do dump ou do pacote) no extrator, não do carregador nem do
+  montador: só quem abriu o material sabe qual material abriu. Uma acquisição de um instantâneo é **um**
+  lote, e as tipologias que o extrator recorta depois dele são partições daquele download, não aquisições
+  separadas — é a mesma medição de G0.1-bis que manteve o eixo fora da união do split. _Fato citado
+  (PROV-DM):_ a `Activity` que `used` a `Entity` é o único ponto do grafo que pode atestar qual entidade
+  foi usada; uma etapa a jusante que batize a entidade está inventando a aresta. _Fato citado (Gebru et
+  al.):_ o datasheet exige a **versão/instantâneo** de onde a porção veio, registrada por quem coletou.
+  **Custo de reversão:** baixo — `--snapshot-version` volta a ser opcional e o campo volta a sair do
+  carimbo do carregador; mas aí o lote passa a ser um por ARQUIVO DE POOL, que é um agrupamento inventado.
+- **Segurar a aquisição implica que uma execução nossa a leu.** Na coorte `mixed-ecological` — a única em
+  que a tabela admite as duas metades independentemente — `sourceMaterialBatch: known` com
+  `extractionRun` não-`known` é uma contradição: ou detemos o evento de aquisição do documento e alguma
+  execução nossa o leu, ou não detemos nenhum dos dois. _Fato citado (PROV-DM):_ `wasDerivedFrom` entre
+  duas entidades pressupõe a atividade que fez a derivação; uma entidade nossa sem atividade nenhuma é
+  uma aresta sem nó. **Custo de reversão:** baixo (uma condição e dois testes), e reverter volta a
+  admitir o par que a revisão mediu no próprio fixture canônico.
+- **A auditoria de governança é onde o cruzamento registro↔manifesto roda.** `auditCorpusSources` é a
+  única etapa que tem os registros E o inventário revisado na mesma chamada, e o vocabulário fechado de
+  `contracts/source-readiness.ts` já tem os dois códigos necessários — `SOURCE_REFERENCE_MISSING` para
+  "a referência que o registro declara para dentro do manifesto não resolve" e
+  `GENERATION_RECIPE_MISMATCH` para "uma linha não gerada nomeia um lote de geração", que é o mesmo fato
+  que o ramo de linha humana já reporta com esse código. _Fato citado (Merkle):_ a declaração só vale
+  como verificável enquanto está coberta pelo digest — e é por isso que o cruzamento tem de ser contra o
+  inventário selado, não contra uma lista passada à parte. **Custo de reversão:** baixo (um sítio de
+  chamada), e o custo de NÃO fiar é o medido pela revisão: a propriedade existiria numa função e em
+  nenhum pipeline.
+
 ### 2.3 Olhares repetidos nos dados e sequências sem teto
 
 - **Pocock, 1977 — Group sequential methods in the design and analysis of clinical trials**

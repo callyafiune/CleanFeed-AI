@@ -75,7 +75,7 @@ o veredito está resumido no registro (§ "A etapa 1 da Fase 1 refutou o item 3"
 | commit | conteúdo | move `evaluatorDigest`? |
 |---|---|---|
 | **A** | esquema **v4** (− `collectionBatch`; + `sourceMaterialBatch`, `generationBatch`, `extractionRun`; `AXIS_STATE_RULE` completo) + manifesto **v2** (`materialBatches` obrigatório, projeção incondicional) + espelhos Python | sim (`schema.ts`, `source-manifest.ts`) |
-| **B** | conectividade: `GROUP_KEYS` v4 (sem `domainSource`, sem lote), auditoria reporta os dois como inventário, contraprova de viabilidade com lote-único-por-célula | sim (`split.ts`, `split-audit.ts`) |
+| **B** | conectividade: `GROUP_KEYS` v4 (sem `domainSource`, sem lote), auditoria reporta os dois como inventário, contraprova de viabilidade com lote-único-por-célula. **Inclui**: `auditClusters`/`standInClusterReport` (split-audit.ts:766, :564) ainda iteram `V3_GROUP_AXES` sem condição, então sobre corpus v4 o relatório de cluster do split publica `collectionBatch` com `states.unknown = N` e **omite** os três eixos novos — o espelho Python já é ciente da versão (`group_axes.axes_of`), e é o lado TS que está atrás. `DECLARED_GROUP_AXES` e o parser fechado do audit mudam com ele | sim (`split.ts`, `split-audit.ts`) |
 | **C** | **a troca atômica**: `preregistration-v4.{json,ts}` com os pins, 11 sítios de import, `EVALUATOR_FILES` atualizado, identidade de dataset da política, estratos recompostos, `fit` sem calibrador | sim (por desenho) |
 | **D** | fiação `m=7`: inventário de gates derivado de `primaryFamily`; `evaluate.ts` passa a multiplicidade; 300 threaded em `slices.ts` | sim (`gates.ts`, `commands/evaluate.ts`) |
 | **E** | **gate de composição** (D32): linhas E componentes por célula × `test`, recusa nomeando célula/contagem/piso; substitui `COMPOSITION_FLOOR_NOT_APPLIED` no mesmo commit | sim (`commands/split.ts`) |
@@ -84,6 +84,17 @@ o veredito está resumido no registro (§ "A etapa 1 da Fase 1 refutou o item 3"
 **Ratificação da pré-inscrição:** antes do Commit C ser commitado, a tabela de valores congelados (no
 relatório da etapa 1) vai ao operador — inclui `dataset.id` proposto (`cleanfeed-ptbr-cells-v1`) e os
 counts ai 4000 / mixed 2000.
+
+**Dívida que o Commit A abre, com dono (Fase 3, item 1):** o cruzamento
+`groups.sourceMaterialBatch` → inventário está fiado em `auditCorpusSources`, e o **produtor do
+inventário não existe**. `benchmark/lab/build_governance.ts` escreve manifesto v1 sem `materialBatches`,
+então um corpus v4 sai `blocked` com `SOURCE_REFERENCE_MISSING` por linha humana até o inventário ser
+declarado. Isso é o gate funcionando, não um defeito a contornar: dos cinco campos que
+`SourceMaterialBatchV1` exige, três — `materialVersion`, `acquisitionWindow` e `evidence` — são fatos
+que **nenhum código deste repositório detém** (quando o dump foi baixado, qual o digest do arquivo), e
+sintetizá-los em `build_governance.ts` seria a proveniência inventada que R4 proíbe. O inventário
+entra na Fase 3 com **entrada declarada pelo operador** por lote de aquisição (dois lotes: ptwiki e
+carolina), e `build_governance.ts` passa a escrever manifesto **v2** no mesmo item.
 
 ## Fase 2 — alinhamento do lab (2–4 dias)
 
@@ -99,7 +110,10 @@ harness — família >2 % contaminada regenera a lane, A4).
 ## Fase 3 — corpus, uma vez (1–2 semanas)
 
 1. extração das 4 células (Wikipédia + 3 tipologias da Carolina), com corte de data, licença por
-   documento e `drop_seen` global;
+   documento e `drop_seen` global. **Inclui o inventário de material** (dívida do Commit A): o operador
+   declara os dois lotes de aquisição — `materialVersion`, `acquisitionWindow`, `evidence` —, e
+   `build_governance.ts` passa a escrever manifesto **v2** com `materialBatches`. Sem isso a auditoria
+   bloqueia toda linha humana v4, e é isso que ela deve fazer;
 2. geração IA pelas 4 lanes; famílias OpenAI **não entram** (reserva OOD); todo registro nasce
    `automated/unreviewed`; PII amostral; gate antiartefato roda **antes** do treino;
 3. montagem com preflight; **congelamento do split** via ledger (barreira das duas cegas em vigor);

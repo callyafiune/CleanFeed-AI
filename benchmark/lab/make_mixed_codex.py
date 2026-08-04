@@ -157,6 +157,11 @@ def main() -> None:
                         "parentText": parent["text"],
                         "editedText": edited,
                         "family": parent.get("family", "?"),
+                        # The parent's acquisition event. It has to travel on the PAIR
+                        # because `--from-pairs` reassembles the mixed row from this
+                        # file alone, and a parent id does not resolve to a batch at
+                        # assembly time.
+                        "sourceMaterialBatch": parent.get("sourceMaterialBatch"),
                         "provider": "openai",
                         # The LANE, stated outright, because `provider` here does NOT
                         # name it: this script writes "openai" while the text came out

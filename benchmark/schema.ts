@@ -1,4 +1,4 @@
-// Closed benchmark record schema (v2 and v3) and cross-field validation. This
+// Closed benchmark record schema (v2, v3 and v4) and cross-field validation. This
 // module is intentionally standalone and MUST NOT import from the extension
 // bundle (src/): the benchmark lives outside the shipped extension and only
 // depends on plain data.
@@ -10,7 +10,7 @@
 // from a detector's opinion, so the schema only records provenance and never a
 // predicted score.
 //
-// TWO VERSIONS, ONE MODULE, AND WHY (C1). `schemaVersion` is a discriminant, not
+// THREE VERSIONS, ONE MODULE, AND WHY (C1). `schemaVersion` is a discriminant, not
 // a formality: `BenchmarkRecord` is the union and `validateBenchmarkRecord`
 // dispatches on it.
 //
@@ -27,6 +27,15 @@
 //     bootstrap degenerated into i.i.d. over 10.000 singleton authors. How much
 //     that narrowed every published interval is IRRECOVERABLE, because the real
 //     cluster identity was never persisted.
+//   * v4 splits v3's one `collectionBatch` axis into the three distinct facts it
+//     was conflating — which MATERIAL a row came from, which GENERATION batch
+//     produced it, and which EXTRACTION RUN wrote it. The three are not
+//     interchangeable: only the first is a unit of dependence between
+//     acquisitions, only the second is a recipe a reviewed manifest can publish,
+//     and the third is diagnostic (re-extracting the same material yields no new
+//     material, so counting two runs as two units counts one dependence twice).
+//     V3_GROUP_AXES survives untouched because the v3 records on disk are read to
+//     seed `drop_seen`, and a tuple edited in place would make them unparseable.
 //
 // A dataset is ONE version: `parseBenchmarkDataset` refuses a file that mixes
 // them, so a half-migrated corpus cannot be sealed and then read as if it were
@@ -292,21 +301,24 @@ const PSEUDONYM = /^[A-Za-z0-9_-]+$/;
 const SHA256_HEX = /^[0-9a-f]{64}$/;
 
 /**
- * Validates a record of EITHER version, dispatching on `schemaVersion`.
+ * Validates a record of ANY declared version, dispatching on `schemaVersion`.
  *
- * The version is read before the key set, because the two versions have different
- * key sets and closing the object against the wrong one produces a misleading
+ * The version is read before the key set, because the versions have different key
+ * sets and closing the object against the wrong one produces a misleading
  * diagnostic — a v3 record checked as v2 fails with "unknown field labelBasis",
- * which names a symptom and hides the version mismatch.
+ * which names a symptom and hides the version mismatch. v3 and v4 share their key
+ * set and differ in the AXIS TUPLE, so there the misleading diagnostic would be
+ * "unknown field groups.sourceMaterialBatch" instead.
  */
 export function validateBenchmarkRecord(value: unknown): BenchmarkRecord {
   if (typeof value !== "object" || value === null || Array.isArray(value)) {
     throw new BenchmarkRecordError("record must be an object");
   }
   const version = (value as Record<string, unknown>).schemaVersion;
+  if (version === 4) return validateBenchmarkRecordV4(value);
   if (version === 3) return validateBenchmarkRecordV3(value);
   if (version === 2) return validateBenchmarkRecordV2(value);
-  throw new BenchmarkRecordError("schemaVersion must be 2 or 3");
+  throw new BenchmarkRecordError("schemaVersion must be 2, 3 or 4");
 }
 
 export function validateBenchmarkRecordV2(value: unknown): BenchmarkRecordV2 {
@@ -344,7 +356,7 @@ export function validateBenchmarkRecordV2(value: unknown): BenchmarkRecordV2 {
   const generation = validateGeneration(root.generation, id);
   const mixture = validateMixture(root.mixture, id, text.length);
   const transformation = validateTransformation(root.transformation, id);
-  const groups = validateGroups(root.groups, id);
+  const groups = validateV2Groups(root.groups, id);
 
   // Cross-field rules. Ground truth is the provenance-derived label, so the
   // generation recipe, mixture metadata and adjudication must be consistent
@@ -757,7 +769,7 @@ function validateTransformation(
   return transformation;
 }
 
-function validateGroups(
+function validateV2Groups(
   value: unknown,
   id: string,
 ): BenchmarkRecordV2["groups"] {
@@ -1026,6 +1038,58 @@ export const V3_GROUP_AXES = [
 
 export type V3GroupAxis = (typeof V3_GROUP_AXES)[number];
 
+/**
+ * The dependence axes a v4 record declares: {@link V3_GROUP_AXES} without
+ * `collectionBatch`, plus the three facts that axis was conflating. Fourteen
+ * MANDATORY keys, on the same rule as v3 — an absent key is not an answer.
+ *
+ *   * `sourceMaterialBatch` — the set of documents that came from the SAME
+ *     material, acquired in ONE event, at ONE immutable version (dump number,
+ *     release tag, file digest). It is the unit of dependence BETWEEN
+ *     acquisitions, and the reviewed source manifest declares the inventory it
+ *     resolves against (`materialBatches` in benchmark/source-manifest.ts).
+ *   * `generationBatch` — the declared generation batch (`gb_*`) whose recipe a
+ *     reviewed manifest publishes and whose fields the governance audit matches
+ *     against the record's own `generation` block.
+ *   * `extractionRun` — WHICH execution of an extractor wrote this row. Held
+ *     apart from `sourceMaterialBatch` because re-extracting the same material
+ *     produces no new material: treating two runs over one dump as two
+ *     independent units counts the same dependence twice. It is therefore
+ *     DIAGNOSTIC — it exists so a defect can be traced back to the run that wrote
+ *     the row, and it names no dependence of its own.
+ *
+ * The three replace one axis because a single value cannot answer the three
+ * questions at once: the v3 corpus wrote `gb_*` on generated rows and
+ * `extraction_*` on human ones, so "which batch is this" had two incompatible
+ * meanings decided by the row's class, and the material a human row came from was
+ * recorded nowhere at all.
+ */
+export const V4_GROUP_AXES = [
+  "author",
+  "source",
+  "domainSource",
+  "humanSeed",
+  "promptTemplate",
+  "generatorFamily",
+  "generatorVersion",
+  "generationLane",
+  "harnessVersion",
+  "sourceMaterialBatch",
+  "generationBatch",
+  "extractionRun",
+  "nearDuplicate",
+  "derivationRoot",
+] as const;
+
+export type V4GroupAxis = (typeof V4_GROUP_AXES)[number];
+
+/**
+ * Any axis any version declares. The accessors take this rather than
+ * {@link V3GroupAxis} so a consumer can read a v4-only axis off a record without
+ * a cast, and so {@link AXIS_STATE_RULE} is total over both tuples.
+ */
+export type GroupAxis = V3GroupAxis | V4GroupAxis;
+
 /** The three states R6 allows, and no fourth. */
 export type GroupAxisState = "known" | "notApplicable" | "unknown";
 
@@ -1075,6 +1139,16 @@ export type GroupAxisValue<Id extends string = string> =
 export type V3Groups = {
   [
     A in Exclude<V3GroupAxis, "generatorFamily" | "generationLane">
+  ]: GroupAxisValue;
+} & {
+  generatorFamily: GroupAxisValue<GeneratorFamily>;
+  generationLane: GroupAxisValue<GenerationLane>;
+};
+
+/** The `groups` block of a v4 record: {@link V3Groups} over the v4 tuple. */
+export type V4Groups = {
+  [
+    A in Exclude<V4GroupAxis, "generatorFamily" | "generationLane">
   ]: GroupAxisValue;
 } & {
   generatorFamily: GroupAxisValue<GeneratorFamily>;
@@ -1537,7 +1611,11 @@ const REVIEW_RECEIPT_PROTOCOL_FROM_MS = Date.parse(
  * as a review.
  */
 export function reviewOf(record: BenchmarkRecord): RecordReview {
-  return record.schemaVersion === 3 ? record.review : V2_ANNOTATION_DOWNGRADE;
+  // Asked as "is this v2", never as "is this v3": a version that carries a real
+  // `review` block and is compared against one version number would silently be
+  // downgraded to `automated/unreviewed`, which reads as a FACT about the record
+  // ("nobody looked") rather than as the version mismatch it is.
+  return record.schemaVersion === 2 ? V2_ANNOTATION_DOWNGRADE : record.review;
 }
 
 const V2_ANNOTATION_DOWNGRADE: AutomatedUnreviewedReview = Object.freeze({
@@ -1669,10 +1747,46 @@ export interface BenchmarkRecordV3 {
   groups: V3Groups;
 }
 
-/** Either version. `schemaVersion` is the discriminant. */
-export type BenchmarkRecord = BenchmarkRecordV2 | BenchmarkRecordV3;
+/**
+ * A v4 record: a v3 record over {@link V4_GROUP_AXES}. Every other block — the
+ * label evidence pair, the review receipt, the recipe, the mixture — is the v3
+ * contract unchanged, because none of them was what v4 corrects.
+ */
+export interface BenchmarkRecordV4 extends Omit<
+  BenchmarkRecordV3,
+  "schemaVersion" | "groups"
+> {
+  schemaVersion: 4;
+  groups: V4Groups;
+}
 
-const V3_RECORD_KEYS = [
+/**
+ * The versions whose axes carry a STATE. Named because most consumers branch on
+ * exactly this question — "can this record say `notApplicable`" — and comparing
+ * against one version number silently excludes the other.
+ */
+export type AxisStatedRecord = BenchmarkRecordV3 | BenchmarkRecordV4;
+
+/** Any version. `schemaVersion` is the discriminant. */
+export type BenchmarkRecord = BenchmarkRecordV2 | AxisStatedRecord;
+
+/**
+ * The axis tuple THIS record's version declares.
+ *
+ * A v2 record is judged against the v3 tuple: it has no states, so an axis absent
+ * from its nine-key `groups` block reads as `unknown`, which is the truthful
+ * mapping {@link groupAxisState} documents. Reading a v4 record against the v3
+ * tuple instead would report `collectionBatch` unknown on every row and make the
+ * whole corpus ineligible.
+ */
+export function recordGroupAxes(record: BenchmarkRecord): readonly GroupAxis[] {
+  return record.schemaVersion === 4 ? V4_GROUP_AXES : V3_GROUP_AXES;
+}
+
+// v3 and v4 share their key set exactly: the difference between them lives inside
+// `groups`, so closing the root against two lists would let a field reach one
+// version only.
+const AXIS_STATED_RECORD_KEYS = [
   "schemaVersion",
   "id",
   "text",
@@ -1852,9 +1966,15 @@ export function v3AxisClass(
 
 /**
  * WHICH states each axis may take, per class. A decision table and not a list of
- * `if`s: `satisfies` makes an axis added to {@link V3_GROUP_AXES} without a rule a
- * compile error, and makes a class added to {@link V3AxisClass} one too. No axis is
- * permissive by default.
+ * `if`s: `satisfies` makes an axis added to {@link V3_GROUP_AXES} or to
+ * {@link V4_GROUP_AXES} without a rule a compile error, and makes a class added to
+ * {@link V3AxisClass} one too. No axis is permissive by default.
+ *
+ * ONE table over BOTH axis tuples, keyed on {@link GroupAxis}. The axes v3 and v4
+ * share are governed by one row each, so a rule cannot be tightened for one
+ * version and left loose in the other; the four version-specific axes
+ * (`collectionBatch`, and v4's three) simply never appear on a record of the other
+ * version, because `validateGroups` closes the block against that version's tuple.
  *
  * The entries that carry an argument rather than an obvious answer:
  *
@@ -1913,6 +2033,42 @@ export function v3AxisClass(
  *     eligibility instead of refused. If a source ever genuinely cannot yield one
  *     of the three, the fix is the extractor or this table, argued — not a
  *     `notApplicable` written to get a row accepted.
+ *   * `sourceMaterialBatch` (v4) is `known` on `human` and `mixed-mechanistic`,
+ *     `notApplicable` on `ai`, and `known`-or-`unknown` on `mixed-ecological`. A
+ *     generated row's dependence on material is NOT lost by the `notApplicable`:
+ *     it travels through `humanSeed`/`derivationRoot` to the human row that was
+ *     seeded, and THAT row names the material batch. Writing a material batch on a
+ *     generated row would claim it was acquired, when it was produced. The
+ *     ecological cohort is the one case where the acquisition is real and its
+ *     record may not be — an observed coauthored document exists, and whether we
+ *     hold the acquisition evidence for it is a fact about our records, so
+ *     `unknown` is admitted at the cost of eligibility rather than dodged with
+ *     `notApplicable`.
+ *   * `generationBatch` (v4) is `known` exactly where a recipe of ours ran and
+ *     `notApplicable` on `human`, so a human row can no longer name a generation
+ *     batch AT ALL — a class of refusal the v3 corpus had to buy with a naming
+ *     convention (`extraction_` cannot collide with `gb_`) is now structural. On
+ *     `mixed-ecological` it joins the other generation-apparatus axes: `known`
+ *     there could only be a batch of ours attached to text no tool of ours
+ *     produced.
+ *   * `extractionRun` (v4) is `known` on `human`, `notApplicable` on the two rows
+ *     written from a generation pool, and `known`-or-`unknown` on
+ *     `mixed-ecological`. It is the only DIAGNOSTIC axis in the table: it names no
+ *     dependence, it is not a resampling unit, and its whole job is to point at the
+ *     execution that wrote a row. `known` is required of `human` for the same reason
+ *     `domainSource` is — the run is our own, so a gap there is a defect in a
+ *     pipeline we control. An `ai` row and a `mixed-mechanistic` row come out of a
+ *     generation pool and no extractor of ours read either out of a source document;
+ *     an ECOLOGICAL row is the opposite case, an observed document we ACQUIRED, so
+ *     some execution of ours did read it out and `notApplicable` there would be
+ *     false. It reads `unknown` at the cost of eligibility when the run was not
+ *     recorded, exactly as `sourceMaterialBatch` does on the same class.
+ *   * ...and on the ecological cohort the two are CROSS-CONSTRAINED, below:
+ *     `sourceMaterialBatch` `known` requires `extractionRun` `known`. Holding the
+ *     acquisition event of a document while claiming no execution of ours read it
+ *     out are two statements that cannot both be true, and this is the only pair in
+ *     the table where one class admits both halves independently — every other
+ *     coupling is decided by the class itself.
  */
 const AXIS_STATE_RULE = {
   author: {
@@ -1975,6 +2131,24 @@ const AXIS_STATE_RULE = {
     "mixed-mechanistic": ["known"],
     "mixed-ecological": ["known"],
   },
+  sourceMaterialBatch: {
+    human: ["known"],
+    ai: ["notApplicable"],
+    "mixed-mechanistic": ["known"],
+    "mixed-ecological": ["known", "unknown"],
+  },
+  generationBatch: {
+    human: ["notApplicable"],
+    ai: ["known"],
+    "mixed-mechanistic": ["known"],
+    "mixed-ecological": ["notApplicable", "unknown"],
+  },
+  extractionRun: {
+    human: ["known"],
+    ai: ["notApplicable"],
+    "mixed-mechanistic": ["notApplicable"],
+    "mixed-ecological": ["known", "unknown"],
+  },
   nearDuplicate: {
     human: ["known"],
     ai: ["known"],
@@ -1988,7 +2162,7 @@ const AXIS_STATE_RULE = {
     "mixed-ecological": ["known", "notApplicable", "unknown"],
   },
 } as const satisfies Record<
-  V3GroupAxis,
+  GroupAxis,
   Record<V3AxisClass, readonly GroupAxisState[]>
 >;
 
@@ -2009,10 +2183,34 @@ const GENERATION_LANES = Object.keys(
  * problem, naming the field; never coerces and never fills a value in.
  */
 export function validateBenchmarkRecordV3(value: unknown): BenchmarkRecordV3 {
-  const root = assertClosedObject(value, "", V3_RECORD_KEYS);
+  return validateAxisStatedRecord(value, 3);
+}
 
-  if (root.schemaVersion !== 3) {
-    throw new BenchmarkRecordError("schemaVersion must be 3");
+/**
+ * Validates a v4 record. Every rule is v3's; the difference is the axis tuple
+ * `groups` is closed against, and therefore which axes {@link AXIS_STATE_RULE} is
+ * consulted for.
+ */
+export function validateBenchmarkRecordV4(value: unknown): BenchmarkRecordV4 {
+  return validateAxisStatedRecord(value, 4);
+}
+
+function validateAxisStatedRecord(
+  value: unknown,
+  version: 3,
+): BenchmarkRecordV3;
+function validateAxisStatedRecord(
+  value: unknown,
+  version: 4,
+): BenchmarkRecordV4;
+function validateAxisStatedRecord(
+  value: unknown,
+  version: 3 | 4,
+): AxisStatedRecord {
+  const root = assertClosedObject(value, "", AXIS_STATED_RECORD_KEYS);
+
+  if (root.schemaVersion !== version) {
+    throw new BenchmarkRecordError(`schemaVersion must be ${version}`);
   }
 
   const id = pseudonym(root, "id", "");
@@ -2138,7 +2336,12 @@ export function validateBenchmarkRecordV3(value: unknown): BenchmarkRecordV3 {
   }
 
   const axisClass = v3AxisClass(label, mixture?.generationMode);
-  const groups = validateV3Groups(root.groups, id, axisClass);
+  const groups = validateGroups(
+    root.groups,
+    id,
+    axisClass,
+    version === 4 ? V4_GROUP_AXES : V3_GROUP_AXES,
+  );
 
   // NEW in v3, and conditioned on the COHORT rather than on the class. A
   // `mechanistic` mixed row's AI stretches came out of a generator WE ran, so the
@@ -2277,8 +2480,45 @@ export function validateBenchmarkRecordV3(value: unknown): BenchmarkRecordV3 {
     }
   }
 
-  const record: BenchmarkRecordV3 = {
-    schemaVersion: 3,
+  // --- holding the acquisition means an execution of ours read it out --------
+  //
+  // The one pair the table admits both halves of independently, so the class cannot
+  // decide it: on an ECOLOGICAL row `sourceMaterialBatch` `known` asserts an
+  // acquisition event of OURS, and `extractionRun` `unknown` then says no execution
+  // of ours is recoverable for a document we hold the acquisition of. Both cannot be
+  // true, and a row asserting them would publish an acquisition nobody can trace to
+  // a run.
+  //
+  // ECOLOGICAL ONLY, and that is not laxity elsewhere. On a `mixed-mechanistic` row
+  // the batch is the PARENT's acquisition, inherited rather than this row's own, so
+  // `known` there with `extractionRun` `notApplicable` is coherent — the execution
+  // that read the material out belongs to the parent's row. Extending this rule to
+  // that class would refuse every valid mechanistic mixed record.
+  if (axisClass === "mixed-ecological" && "extractionRun" in groups) {
+    const material = groups.sourceMaterialBatch;
+    const run = groups.extractionRun;
+    if (material.state === "known" && run.state !== "known") {
+      throw new BenchmarkRecordError(
+        `groups.sourceMaterialBatch is known ("${material.id}") but groups.extractionRun is ${run.state}: an observed row whose acquisition event we hold was read out by an execution of ours`,
+        id,
+      );
+    }
+  }
+
+  // The one place `version` and the axis tuple `groups` was validated against are
+  // re-joined. TypeScript cannot correlate the two through a `3 | 4` parameter, and
+  // assembling this tail twice would be two copies of every optional-field rule
+  // below, so the discriminant is attached once and the overloads above are what
+  // callers see.
+  //
+  // `satisfies` on the FIELDS and `as` on the two the assertion is for, in that order,
+  // deliberately. A bare `as` over the whole literal only needs sufficient overlap, so a
+  // field missing or misspelled here would compile — and this is the one place the
+  // fourteen shared fields of a record are written out, which makes it the one place
+  // that net matters. `satisfies` keeps exact-shape checking on them; the assertion
+  // then covers only `schemaVersion` and `groups`, which is exactly what TypeScript
+  // cannot correlate.
+  const shared = {
     id,
     text,
     normalizedTextSha256,
@@ -2292,8 +2532,22 @@ export function validateBenchmarkRecordV3(value: unknown): BenchmarkRecordV3 {
     provenance,
     review,
     transformation,
+  } satisfies Omit<
+    BenchmarkRecordV3,
+    | "schemaVersion"
+    | "groups"
+    | "humanSourceType"
+    | "hardNegativeFamily"
+    | "labelBasis"
+    | "labelEvidenceRef"
+    | "generation"
+    | "mixture"
+  >;
+  const record = {
+    schemaVersion: version,
+    ...shared,
     groups,
-  };
+  } as AxisStatedRecord;
   if (humanSourceType !== undefined) record.humanSourceType = humanSourceType;
   if (hardNegativeFamily !== undefined) {
     record.hardNegativeFamily = hardNegativeFamily;
@@ -2307,14 +2561,15 @@ export function validateBenchmarkRecordV3(value: unknown): BenchmarkRecordV3 {
   return record;
 }
 
-function validateV3Groups(
+function validateGroups(
   value: unknown,
   id: string,
   axisClass: V3AxisClass,
-): V3Groups {
-  const obj = assertClosedObject(value, "groups", V3_GROUP_AXES, id);
+  axes: readonly GroupAxis[],
+): V3Groups | V4Groups {
+  const obj = assertClosedObject(value, "groups", axes, id);
   const groups: Record<string, GroupAxisValue> = {};
-  for (const axis of V3_GROUP_AXES) {
+  for (const axis of axes) {
     // Absent is its OWN refusal and not "unknown by default": a producer that
     // never wrote the key made no statement at all, and reading that as `unknown`
     // would silently mark the record ineligible instead of failing the write.
@@ -2354,7 +2609,7 @@ function validateV3Groups(
     }
     groups[axis] = parsed;
   }
-  return groups as unknown as V3Groups;
+  return groups as unknown as V3Groups | V4Groups;
 }
 
 function validateGroupAxisValue(
@@ -2982,7 +3237,9 @@ function validateEffortConfig(value: unknown, id: string): EffortConfig {
 function assertLaneAgreement(
   lane: GenerationLane,
   generation: GenerationV3,
-  groups: V3Groups,
+  // Only the generation-apparatus axes are read, and v3 and v4 declare the same
+  // ones, so the lane rule is written once over the axes both versions share.
+  groups: Pick<V3Groups, "harnessVersion" | "promptTemplate">,
   id: string,
 ): void {
   const row = generationLaneRow(lane);
@@ -3158,7 +3415,7 @@ function validateLabelEvidenceRef(
  */
 export function groupAxisIdentity(
   record: BenchmarkRecord,
-  axis: V3GroupAxis,
+  axis: GroupAxis,
 ): string | undefined {
   const value = (
     record.groups as Record<string, string | GroupAxisValue | undefined>
@@ -3190,7 +3447,7 @@ export function groupAxisIdentity(
  */
 export function groupAxisDeclaredState(
   record: BenchmarkRecord,
-  axis: V3GroupAxis,
+  axis: GroupAxis,
 ): GroupAxisState | undefined {
   const value = (
     record.groups as Record<string, string | GroupAxisValue | undefined>
@@ -3257,12 +3514,14 @@ export function recipeTemperature(
  *     `benchmark/cross-validation.ts`). It returns `undefined` for an absent key, so
  *     a refusal does not fire over an axis the record's schema version never offered.
  *
- * For a v3 record the two agree, since v3 requires all nine connectivity axes to be
- * declared. They diverge only on v2, and there the divergence is the point.
+ * They agree on every axis the record's OWN version declares, and diverge on every
+ * axis it does not: v2 on all nine connectivity axes, v3 on the three v4 introduced,
+ * v4 on `collectionBatch`. The divergence is the point — it is the difference between
+ * "not known" and "not asked", and only the second may be read as a refusal.
  */
 export function groupAxisState(
   record: BenchmarkRecord,
-  axis: V3GroupAxis,
+  axis: GroupAxis,
 ): GroupAxisState {
   const value = (
     record.groups as Record<string, string | GroupAxisValue | undefined>
@@ -3317,14 +3576,15 @@ export function authorClusterKey(record: BenchmarkRecord): string {
  * `notApplicable` does not. It is DERIVED and never stored, because a stored
  * eligibility flag is a second copy of the axes that can disagree with them.
  *
- * The axes are returned in {@link V3_GROUP_AXES} order so the answer is stable
- * and a report can name them without sorting.
+ * The axes are returned in the order of the tuple the record's own version
+ * declares ({@link recordGroupAxes}), so the answer is stable and a report can
+ * name them without sorting.
  */
 export function recordEligibility(record: BenchmarkRecord): {
   eligible: boolean;
-  unknownAxes: V3GroupAxis[];
+  unknownAxes: GroupAxis[];
 } {
-  const unknownAxes = V3_GROUP_AXES.filter(
+  const unknownAxes = recordGroupAxes(record).filter(
     (axis) => groupAxisState(record, axis) === "unknown",
   );
   return { eligible: unknownAxes.length === 0, unknownAxes };
@@ -3354,7 +3614,7 @@ export function recordEligibility(record: BenchmarkRecord): {
  */
 export function assertDeclaredAxesResolved(
   record: BenchmarkRecord,
-  declaredAxes: readonly V3GroupAxis[],
+  declaredAxes: readonly GroupAxis[],
 ): void {
   for (const axis of declaredAxes) {
     const state = groupAxisState(record, axis);
@@ -3395,7 +3655,7 @@ export function assertLabelEvidenceResolves(
   index: ReadonlyMap<string, string>,
 ): void {
   for (const record of records) {
-    if (record.schemaVersion !== 3) continue;
+    if (record.schemaVersion === 2) continue;
     const ref = record.labelEvidenceRef;
     if (ref === undefined) continue;
     const digest = index.get(ref.entryId);
@@ -3411,6 +3671,158 @@ export function assertLabelEvidenceResolves(
         record.id,
       );
     }
+  }
+}
+
+/** Which of the four material-batch facts a record got wrong. */
+export type MaterialBatchDefectKind =
+  /** The id is in neither half of the manifest's batch namespace. */
+  | "unresolved"
+  /** The id names a declared GENERATION batch. */
+  | "generation-batch"
+  /** A human row's batch resolves, to another source. */
+  | "foreign-source"
+  /** A derived row's batch disagrees with the batch of the parent it names. */
+  | "parent-disagreement";
+
+export interface MaterialBatchDefect {
+  recordId: string;
+  kind: MaterialBatchDefectKind;
+  /** Written for a human reader, naming both ids the disagreement is between. */
+  reason: string;
+}
+
+/**
+ * Every record whose `groups.sourceMaterialBatch` does not RESOLVE against the
+ * reviewed source manifest's material inventory.
+ *
+ * `namespace` is the two halves of the manifest's `batchId` namespace, built by the
+ * caller (`batchNamespaceOf` in benchmark/source-manifest.ts): material batches as
+ * `batchId -> sourceId`, generation batch ids as a bare set. Only opaque ids cross,
+ * which is the same privacy boundary the `entryId -> digest` index above draws, and
+ * it is what keeps this module from importing the manifest.
+ *
+ * ALL defects and not the first, because the two callers need different things and
+ * only one of them can throw: `auditCorpusSources` reports a whole corpus and must
+ * not stop at row one, while {@link assertMaterialBatchesResolve} refuses. One
+ * implementation, so the audit and the assertion cannot come to disagree about what
+ * resolving means.
+ *
+ * FOUR defects, because they are four different facts:
+ *
+ *   * the id is in neither list — the record points at nothing, and the dependence
+ *     it declares between acquisitions is checkable by no one;
+ *   * the id is a GENERATION batch — this is what the namespace exclusivity buys. A
+ *     row naming a generation batch where the axis asks for a material one declares
+ *     that its material was PRODUCED rather than acquired, and the contradiction is
+ *     only decidable while an id belongs to exactly one of the two lists;
+ *   * on a `human` row, the batch resolves and names a different `sourceId` than the
+ *     record's own — the batch exists and belongs to another source. That is a
+ *     disagreement, not a gap, exactly as `assertDeclaredAxesResolved` separates the
+ *     two;
+ *   * on a DERIVED row, the batch resolves and disagrees with the batch of the parent
+ *     the row's own lineage names.
+ *
+ * The third is asked of `human` rows ONLY, and that is not a loophole. On a human row
+ * the record's own provenance IS the acquisition, so naming another source's batch is
+ * a contradiction inside one row. On a MIXED row the material is the PARENT's, while
+ * `provenance.sourceId` is the row's own controlled generation, so the two names
+ * legitimately differ and comparing them would refuse every valid mixed record.
+ *
+ * The fourth is what takes its place there, and it is strictly stronger than the
+ * comparison it replaces: it asks the row to agree with the acquisition its OWN
+ * lineage resolves to, instead of with a source id that names a generation. Without
+ * it a mechanistic mixed row could name any declared batch of any other cell and
+ * pass — `assertDerivedParentsResolve` only checks that the parent exists and carries
+ * a `labelBasis`, so nothing else compares the two acquisitions.
+ *
+ * A parent absent from `records` is NOT a refusal here: this array may be one
+ * partition and a parent legitimately lives in another. Parent presence is
+ * {@link assertDerivedParentsResolve}'s question, and answering it twice, in two
+ * places, with two messages would make the same gap read as two different defects.
+ *
+ * Read through {@link groupAxisIdentity}, so only a `known` axis is asked to
+ * resolve. A record whose axis is `notApplicable` (every `ai` row) or whose version
+ * has no such axis at all (v2, v3) yields no defect: there is no reference.
+ */
+export function materialBatchDefects(
+  records: readonly BenchmarkRecord[],
+  namespace: {
+    material: ReadonlyMap<string, string>;
+    generation: ReadonlySet<string>;
+  },
+): readonly MaterialBatchDefect[] {
+  const byId = new Map<string, BenchmarkRecord>();
+  for (const record of records) byId.set(record.id, record);
+
+  const defects: MaterialBatchDefect[] = [];
+  for (const record of records) {
+    const batchId = groupAxisIdentity(record, "sourceMaterialBatch");
+    if (batchId === undefined) continue;
+    const declaredSourceId = namespace.material.get(batchId);
+    if (declaredSourceId === undefined) {
+      defects.push(
+        namespace.generation.has(batchId)
+          ? {
+              recordId: record.id,
+              kind: "generation-batch",
+              reason: `groups.sourceMaterialBatch "${batchId}" is a declared GENERATION batch, so the row claims its material was produced rather than acquired`,
+            }
+          : {
+              recordId: record.id,
+              kind: "unresolved",
+              reason: `groups.sourceMaterialBatch "${batchId}" resolves to no declared material batch, so the dependence it states between acquisitions resolves to nothing`,
+            },
+      );
+      continue;
+    }
+    if (record.label === "human") {
+      if (declaredSourceId !== record.provenance.sourceId) {
+        defects.push({
+          recordId: record.id,
+          kind: "foreign-source",
+          reason: `groups.sourceMaterialBatch "${batchId}" is declared for sourceId "${declaredSourceId}", and the record's provenance names "${record.provenance.sourceId}": the batch resolves, to another source`,
+        });
+      }
+      continue;
+    }
+    for (const axis of ["humanSeed", "derivationRoot"] as const) {
+      const parentId = groupAxisIdentity(record, axis);
+      if (parentId === undefined) continue;
+      const parent = byId.get(parentId);
+      if (parent === undefined) continue;
+      const parentBatchId = groupAxisIdentity(parent, "sourceMaterialBatch");
+      if (parentBatchId === undefined) continue;
+      if (parentBatchId !== batchId) {
+        defects.push({
+          recordId: record.id,
+          kind: "parent-disagreement",
+          reason: `groups.sourceMaterialBatch "${batchId}" disagrees with the batch "${parentBatchId}" of the parent groups.${axis} names ("${parentId}"): a derived row's material is its parent's acquisition event`,
+        });
+      }
+    }
+  }
+  return defects;
+}
+
+/**
+ * Throws on the FIRST defect {@link materialBatchDefects} finds.
+ *
+ * The refusing face of the same question, for a caller that has no report to fill
+ * and must not proceed: the corpus assembly. `auditCorpusSources` uses the query
+ * instead, because a report that stopped at the first bad row would make an operator
+ * re-run the whole audit once per defect.
+ */
+export function assertMaterialBatchesResolve(
+  records: readonly BenchmarkRecord[],
+  namespace: {
+    material: ReadonlyMap<string, string>;
+    generation: ReadonlySet<string>;
+  },
+): void {
+  const [first] = materialBatchDefects(records, namespace);
+  if (first !== undefined) {
+    throw new BenchmarkRecordError(first.reason, first.recordId);
   }
 }
 
@@ -3444,7 +3856,7 @@ export function assertDerivedParentsResolve(
   for (const record of records) byId.set(record.id, record);
 
   for (const record of records) {
-    if (record.schemaVersion !== 3) continue;
+    if (record.schemaVersion === 2) continue;
     if (record.label === "human") continue;
     for (const axis of ["humanSeed", "derivationRoot"] as const) {
       const parentId = groupAxisIdentity(record, axis);
@@ -3466,7 +3878,7 @@ export function assertDerivedParentsResolve(
           record.id,
         );
       }
-      if (parent.schemaVersion !== 3 || parent.labelBasis === undefined) {
+      if (parent.schemaVersion === 2 || parent.labelBasis === undefined) {
         throw new BenchmarkRecordError(
           `groups.humanSeed "${parentId}" resolves to a human record carrying no labelBasis, so the derived row's provenance ends in nothing`,
           record.id,

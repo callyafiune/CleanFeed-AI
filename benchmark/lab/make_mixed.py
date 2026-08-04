@@ -182,6 +182,35 @@ def mix_template_digest(template_id: str) -> str:
     ).hexdigest()
 
 
+# The keys a parent row contributes to a mixed pair, in ONE place because there are
+# two callers reading two different files: the reserved pool (`id`/`text`) and a pairs
+# file written by another lane (`parentId`/`parentText`).
+PARENT_PROJECTION_KEYS = ("id", "text", "family", "sourceMaterialBatch")
+
+
+def parent_projection(
+    row: dict, *, id_key: str = "id", text_key: str = "text"
+) -> dict:
+    """The parent fields a mixed record needs, projected from the row that holds them.
+
+    `sourceMaterialBatch` belongs HERE and not further downstream: a mechanistic mixed
+    row is the parent's text with generated stretches, so the material it depends on is
+    the PARENT's acquisition event, and `AXIS_STATE_RULE.sourceMaterialBatch` admits
+    only `known` on that class. A projection that drops the key makes every mixed row
+    unwritable and does it QUIETLY — the assembler counts the drop and keeps going.
+
+    `None` is the truthful value for a parent that names no acquisition (the reserved
+    pool predates the extractors that emit one). The row is then dropped at assembly
+    rather than filed under an invented batch.
+    """
+    return {
+        "id": row[id_key],
+        "text": row[text_key],
+        "family": row.get("family", "?"),
+        "sourceMaterialBatch": row.get("sourceMaterialBatch"),
+    }
+
+
 def emit(
     output,
     parent_row,
@@ -219,6 +248,13 @@ def emit(
         "harnessVersion": harness_version,
         "generatedAt": datetime.now(timezone.utc).isoformat(),
         "parentFamily": parent_row.get("family", "?"),
+        # A mixed row IS the parent's text with generated stretches, so the material it
+        # depends on is the PARENT's acquisition event. It travels on the pair row
+        # because the parent id alone does not resolve one at assembly time, and the
+        # axis admits only `known` on a mechanistic mixed row: a pair whose parent
+        # carries no batch produces a row the assembler drops rather than one filed
+        # under an invented acquisition.
+        "sourceMaterialBatch": parent_row.get("sourceMaterialBatch"),
     }
     output.write(json.dumps(record, ensure_ascii=False) + "\n")
     # Cada registro custou cota real — nada pode viver só no buffer.
@@ -309,11 +345,9 @@ def main() -> None:
                     )
                 emit(
                     output,
-                    {
-                        "id": pair["parentId"],
-                        "text": pair["parentText"],
-                        "family": pair.get("family", "?"),
-                    },
+                    parent_projection(
+                        pair, id_key="parentId", text_key="parentText"
+                    ),
                     pair["editedText"],
                     provider=pair.get("provider", "external"),
                     model=pair.get("model", "external"),
@@ -375,7 +409,7 @@ def main() -> None:
 
         # Sealed rule: parents come from the RESERVED split (label 0 only).
         parents = [
-            {"id": r["id"], "text": r["text"], "family": r.get("family", "?")}
+            parent_projection(r)
             for r in read_jsonl(args.parents)
             if r.get("label") == 0 and 50 <= len(r["text"].split()) <= 450
         ]

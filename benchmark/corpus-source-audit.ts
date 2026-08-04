@@ -42,23 +42,26 @@ import {
 } from "../contracts/source-readiness.ts";
 import {
   groupAxisIdentity,
+  materialBatchDefects,
   recipeTemperature,
   type BenchmarkRecord,
+  type MaterialBatchDefectKind,
 } from "./schema.ts";
 import {
   A1_BLOCKED_HUMAN_SOURCES,
+  batchNamespaceOf,
   computeReviewedSourceManifestDigest,
   licenseDescribesPublicBase,
   type GenerationBatchV1,
   type ReviewedSourceEntryV1,
-  type ReviewedSourceManifestV1,
+  type ReviewedSourceManifest,
 } from "./source-manifest.ts";
 
 export interface CorpusSourceAuditInput {
   /** The closed benchmark records; may be supplied in any order. */
   records: readonly BenchmarkRecord[];
   /** The reviewed source manifest (private/source-manifest.json). */
-  sourceManifest: ReviewedSourceManifestV1;
+  sourceManifest: ReviewedSourceManifest;
 }
 
 /** Thrown by {@link assertCorpusSourcesReady} when readiness is blocked. */
@@ -287,6 +290,49 @@ function recipeMatchesBatch(
   );
 }
 
+// Which closed code each material-batch defect is REPORTED as. The closed vocabulary
+// already distinguishes the two facts that matter to a report: a reference into the
+// manifest that does not resolve to the acquisition it must, and a non-generated row
+// linking a declared generation batch — which is the same fact the human-record branch
+// below already reports as GENERATION_RECIPE_MISMATCH, read on the material axis
+// instead of the recipe one. The four-way distinction survives in
+// `materialBatchDefects`, for the caller that refuses rather than reports.
+const MATERIAL_BATCH_DEFECT_CODE: Record<
+  MaterialBatchDefectKind,
+  CorpusSourceBlockingReason["code"]
+> = {
+  unresolved: "SOURCE_REFERENCE_MISSING",
+  "generation-batch": "GENERATION_RECIPE_MISMATCH",
+  "foreign-source": "SOURCE_REFERENCE_MISSING",
+  "parent-disagreement": "SOURCE_REFERENCE_MISSING",
+};
+
+// The cross-check the material axis exists for: every `groups.sourceMaterialBatch` a
+// record declares resolves against the manifest's material inventory. It lives here
+// because this is the step that holds the records AND the reviewed manifest, and
+// because a v4 corpus whose acquisitions are undeclared is not ready to seal —
+// reporting `blocked` is the truthful answer, not an inconvenience.
+//
+// The manifest that DECLARES the inventory is still owed: `materialVersion`, the
+// acquisition window and the evidence are facts no code in this repository holds, and
+// synthesising them would be the fabricated provenance R4 forbids. See Fase 3 of
+// docs/superpowers/plans/2026-08-03-plano-entrega-modelo.md.
+function auditMaterialBatches(
+  records: readonly BenchmarkRecord[],
+  sourceManifest: ReviewedSourceManifest,
+  reasons: CorpusSourceBlockingReason[],
+): void {
+  for (const defect of materialBatchDefects(
+    records,
+    batchNamespaceOf(sourceManifest),
+  )) {
+    reasons.push({
+      code: MATERIAL_BATCH_DEFECT_CODE[defect.kind],
+      recordId: defect.recordId,
+    });
+  }
+}
+
 function auditRecords(
   records: readonly BenchmarkRecord[],
   sourceById: ReadonlyMap<string, ReviewedSourceEntryV1>,
@@ -306,10 +352,16 @@ function auditRecords(
       });
     }
 
-    // The declared collection/generation batch, read through the version-aware
-    // accessor: in v3 the axis is a three-valued object and only a `known` state
-    // names a batch a manifest entry could match.
-    const batchId = groupAxisIdentity(record, "collectionBatch");
+    // The declared generation batch, read through the version-aware accessor: from
+    // v3 on the axis is a three-valued object and only a `known` state names a batch
+    // a manifest entry could match. WHICH axis carries it is a version fact: v2 and
+    // v3 conflate the generation batch and the extraction run in `collectionBatch`,
+    // and v4 splits them, so reading one name on a v4 row would report every
+    // generated record as GENERATION_RECIPE_MISSING.
+    const batchId = groupAxisIdentity(
+      record,
+      record.schemaVersion === 4 ? "generationBatch" : "collectionBatch",
+    );
 
     if (generated) {
       const linked = batchId === undefined ? undefined : batchById.get(batchId);
@@ -369,11 +421,26 @@ export async function auditCorpusSources(
 
   // The report binds the recalculated canonical self-digest, distinct from the
   // raw file SHA-256 held by the DatasetManifest/DatasetAudit.
-  const sourceManifestDigest = await computeReviewedSourceManifestDigest({
-    schemaVersion: sourceManifest.schemaVersion,
-    sources: sourceManifest.sources,
-    generationBatches: sourceManifest.generationBatches,
-  });
+  // The projection is the manifest's own body, `materialBatches` included: dropping
+  // a key the parser hashed would recompute a different digest and report a valid
+  // manifest as SOURCE_MANIFEST_INVALID.
+  const sourceManifestDigest = await computeReviewedSourceManifestDigest(
+    sourceManifest.schemaVersion === 2
+      ? {
+          schemaVersion: 2,
+          sources: sourceManifest.sources,
+          generationBatches: sourceManifest.generationBatches,
+          materialBatches: sourceManifest.materialBatches,
+        }
+      : {
+          schemaVersion: 1,
+          sources: sourceManifest.sources,
+          generationBatches: sourceManifest.generationBatches,
+          ...(sourceManifest.materialBatches === undefined
+            ? {}
+            : { materialBatches: sourceManifest.materialBatches }),
+        },
+  );
   if (sourceManifestDigest !== sourceManifest.sourceManifestDigest) {
     reasons.push({ code: "SOURCE_MANIFEST_INVALID" });
   }
@@ -394,6 +461,7 @@ export async function auditCorpusSources(
   auditSources(sourceManifest.sources, reasons);
   auditBatches(sourceManifest.generationBatches, sourceById, reasons);
   auditRecords(records, sourceById, batchById, reasons);
+  auditMaterialBatches(records, sourceManifest, reasons);
 
   // Sort into the contract's canonical order and drop exact duplicates.
   reasons.sort(compareReasons);

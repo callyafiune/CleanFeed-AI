@@ -376,7 +376,7 @@ def review_state(cand: dict | None = None) -> dict:
 
 
 class UnwritableInV3(ValueError):
-    """The pool row cannot be expressed as a v3 record, so it leaves the corpus.
+    """The pool row cannot be expressed as a sealed record, so it leaves the corpus.
 
     A shared base so the assembler has ONE drop path: every subclass means the same
     thing operationally ("count it, name the reason, do not write it"), and none of
@@ -415,6 +415,35 @@ class MissingRecipe(UnwritableInV3):
     may not be the one that ran months ago, and a digest that merely looks plausible
     is worse than an absent row: it would make `promptTemplate` a cluster nobody can
     verify, which is the same class of defect as the per-record token above.
+    """
+
+
+class MissingMaterialBatch(UnwritableInV3):
+    """The row does not name the MATERIAL it came from, and no value can be invented.
+
+    `AXIS_STATE_RULE.sourceMaterialBatch` admits only `known` on a human row and on a
+    mechanistic mixed one, so there is no eligibility-priced escape here: a row with no
+    resolvable acquisition event is unwritable and leaves the corpus.
+
+    The alternative is what the dead corpus did with `collectionBatch` — key a fallback
+    on the stratum (`extraction_<domainSource>`) and let every row of one stratum share
+    it. That is an invented cluster: it declares that rows acquired in different events
+    depend on each other, and it declares it in the one axis the reviewed manifest is
+    supposed to be the authority on. A batch this assembler makes up resolves against no
+    `materialBatches` entry, so `assertMaterialBatchesResolve` would refuse it anyway —
+    later, and after a full assembly run.
+    """
+
+
+class MissingExtractionRun(UnwritableInV3):
+    """A human row that does not name the extraction RUN that wrote it.
+
+    Diagnostic axis, non-negotiable state: `known` on every human row. The run is our
+    own execution, so a gap there is a defect in a pipeline we control, and the loader
+    is the layer that knows it — the pool FILE is the run, and only the reader knows
+    which file it opened. Deriving the run from the stratum instead would merge rows
+    written by different executions into one invented run and destroy the only handle
+    that traces a defect back to the execution that produced it.
     """
 
 
@@ -763,10 +792,28 @@ def human_record(
     meta = cand.get("meta") or {}
     axes = dict(meta.get("groupAxes") or {})
     ref, entry = label_evidence(cand, source_id, license_id)
+    material_batch = str(meta.get("sourceMaterialBatch") or "")
+    if not material_batch:
+        raise MissingMaterialBatch(
+            f"human candidate {rec_id!r} names no sourceMaterialBatch, so the acquisition "
+            "event its material came from is not recoverable from the row. The extractor "
+            "reads it from the material it opened and the reviewed manifest declares it; "
+            "a value derived here from the stratum would be a cluster nobody can verify"
+        )
+    extraction_run = str(meta.get("extractionRun") or "")
+    if not extraction_run:
+        raise MissingExtractionRun(
+            f"human candidate {rec_id!r} names no extractionRun. The pool FILE is the run "
+            "and the loader stamps it; deriving one from the stratum would merge rows "
+            "written by different executions into one invented run"
+        )
+    # AFTER every refusal, so a dropped candidate contributes no entry: the index is
+    # the evidence for rows that exist, and a registration listed there for a row the
+    # corpus does not contain is a claim about nothing.
     if evidence_sink is not None:
         evidence_sink.append(entry)
     rec = {
-        "schemaVersion": 3,
+        "schemaVersion": 4,
         "id": rec_id,
         "text": cand["text"],
         "label": "human",
@@ -826,14 +873,25 @@ def human_record(
             "harnessVersion": group_axes.not_applicable(
                 group_axes.NOT_A_GENERATED_ROW
             ),
-            # The EXTRACTION RUN that produced the row: a real batch shared by every
-            # candidate of one pool file, not a per-record token. The audit refuses a
-            # non-generated record that names a declared GENERATION batch, so this
-            # deliberately reads `extraction_*` and can never collide with a `gb_*`.
-            "collectionBatch": group_axes.known(
-                group_axes.axis_token(
-                    str(meta.get("collectionBatch") or f"extraction_{cand['domainSource']}")
-                )
+            # The ACQUISITION EVENT the material came from: the unit of dependence
+            # between acquisitions, declared in the reviewed manifest's
+            # `materialBatches` and resolved against it by
+            # `assertMaterialBatchesResolve`. Re-extracting the same dump does NOT
+            # produce a new one, which is why the run below is a separate axis.
+            "sourceMaterialBatch": group_axes.known(
+                group_axes.axis_token(material_batch)
+            ),
+            # A human row can no longer name a generation batch at all: the rule admits
+            # only `notApplicable` here, so the non-collision the dead corpus bought with
+            # an `extraction_` prefix is now structural.
+            "generationBatch": group_axes.not_applicable(
+                group_axes.NOT_A_GENERATED_ROW
+            ),
+            # The EXTRACTION RUN that wrote the row: a real execution shared by every
+            # candidate of one pool file, not a per-record token. Diagnostic — it names
+            # no dependence, and it exists so a defect traces back to the run.
+            "extractionRun": group_axes.known(
+                group_axes.axis_token(extraction_run)
             ),
             "nearDuplicate": near_duplicate_axis(rec_id),
             "derivationRoot": group_axes.not_applicable(
@@ -872,7 +930,7 @@ def ai_record(cand: dict) -> dict:
     version = str(meta.get("version") or family_raw)
     axes = generation_axes(lane, str(family_raw), version, recipe, template_digest, meta)
     rec = {
-        "schemaVersion": 3,
+        "schemaVersion": 4,
         "id": rec_id,
         "text": cand["text"],
         "label": "ai",
@@ -923,11 +981,15 @@ def ai_record(cand: dict) -> dict:
                 )
             ),
             **axes,
+            "sourceMaterialBatch": group_axes.not_applicable(
+                group_axes.NO_MATERIAL_ACQUIRED
+            ),
             # Filled by assign_generation_batches once every record knows its
             # temporal block, because generatedAt is part of the batch key.
-            "collectionBatch": group_axes.unknown(
+            "generationBatch": group_axes.unknown(
                 "the generation batch is derived after partitioning"
             ),
+            "extractionRun": group_axes.not_applicable(group_axes.NOT_EXTRACTED),
             "nearDuplicate": near_duplicate_axis(rec_id),
             "derivationRoot": (
                 group_axes.known(group_axes.axis_token(str(parent)))
@@ -973,8 +1035,19 @@ def mixed_record(cand: dict) -> dict:
             "counted under. The parent's family is on the parent row; re-emit the pair "
             "from a parents file that carries it"
         )
+    # A mechanistic mixed row IS a human text with generated stretches, so the material
+    # it depends on is the PARENT's material — and the axis rule admits only `known`
+    # here, so there is no eligibility-priced escape. The pair row carries the parent's
+    # batch; a value derived here would claim an acquisition event this row never had.
+    material_batch = str(cand.get("sourceMaterialBatch") or "")
+    if not material_batch:
+        raise MissingMaterialBatch(
+            f"mixed row {rec_id!r} names no sourceMaterialBatch. The material is the "
+            "parent's, so the pair file has to carry the parent's batch; the parent id "
+            "alone does not resolve an acquisition event at assembly time"
+        )
     rec = {
-        "schemaVersion": 3,
+        "schemaVersion": 4,
         "id": rec_id,
         "text": text,
         "label": "mixed",
@@ -1042,9 +1115,15 @@ def mixed_record(cand: dict) -> dict:
             "humanSeed": group_axes.known(parent),
             "derivationRoot": group_axes.known(parent),
             **generation_axes(lane, model, model, recipe, str(template_digest), cand),
-            "collectionBatch": group_axes.unknown(
+            "sourceMaterialBatch": group_axes.known(
+                group_axes.axis_token(material_batch)
+            ),
+            "generationBatch": group_axes.unknown(
                 "the generation batch is derived after partitioning"
             ),
+            # No extractor read this row out of a source document: it was written by
+            # editing a parent row that an extractor had already produced.
+            "extractionRun": group_axes.not_applicable(group_axes.NOT_EXTRACTED),
             "nearDuplicate": near_duplicate_axis(rec_id),
         },
     }
@@ -1052,7 +1131,7 @@ def mixed_record(cand: dict) -> dict:
 
 
 # recordId -> the partition its block time places it in. A SIDE map and not a field:
-# V3_RECORD_KEYS is a closed object and `partition` is not one of its keys, and the
+# the record's key set is closed and `partition` is not one of its keys, and the
 # partition is a DERIVED fact (which block `createdAt` falls in) that would become a
 # second copy able to disagree with the timestamp if it were stored on the record.
 PARTITION_OF: dict[str, str] = {}
@@ -1576,13 +1655,14 @@ def load_humans(cand: Path = CAND) -> list[dict]:
     for fname in ("ptso_fresh", "wikipedia_fresh", "carolina_fresh", "b2w_fresh"):
         for r in read_jsonl(cand / f"{fname}.jsonl"):
             if r["domainSource"] in REGISTER:
-                # The EXTRACTION RUN this row came out of, which is a real batch
-                # shared by every candidate of one pool file — the identity the
-                # per-record cb- token stood in for. Stamped by the loader rather
-                # than the extractor because the pool FILE is the batch, and only
-                # the reader knows which file it opened.
+                # The EXTRACTION RUN this row came out of: a real execution shared by
+                # every candidate of one pool file. Stamped by the loader rather than the
+                # extractor because the pool FILE is the run, and only the reader knows
+                # which file it opened. `sourceMaterialBatch` is deliberately NOT stamped
+                # here — the loader knows the file, not the acquisition event, and only
+                # the extractor that opened the material can name it.
                 meta = r.setdefault("meta", {})
-                meta.setdefault("collectionBatch", f"extraction_{fname}")
+                meta.setdefault("extractionRun", f"extraction_{fname}")
                 rows.append(r)
     # reserved-clean humans (never trained, not mixed parents) reuse the same
     # candidate shape; their family field is the domainSource.
@@ -1600,13 +1680,14 @@ def load_humans(cand: Path = CAND) -> list[dict]:
                         "text": r["text"],
                         "wordCount": len(r["text"].split()),
                         "domainSource": fam,
-                        # No meta: these rows predate the extractors that emit an
-                        # identity, so their author/source axes are `unknown` and the
-                        # rows carry no date evidence. human_record refuses them with
-                        # MissingLabelEvidence, and main() counts them — a v2 corpus
-                        # could take them and a v3 one cannot, which is a real cost of
-                        # the reserved pool and not something to fill in by hand.
-                        "meta": {"collectionBatch": "extraction_reserved"},
+                        # No identity meta: these rows predate the extractors that emit
+                        # one, so their author/source axes are `unknown`, they carry no
+                        # date evidence and they name no acquisition event.
+                        # `human_record` refuses them (MissingLabelEvidence,
+                        # MissingMaterialBatch) and main() counts them — a v2 corpus
+                        # could take them and a sealed one cannot, which is a real cost
+                        # of the reserved pool and not something to fill in by hand.
+                        "meta": {"extractionRun": "extraction_reserved"},
                     }
                 )
     return rows
@@ -1653,24 +1734,23 @@ def assign_generation_batches(records: list[dict]) -> list[dict]:
     """Group generated records into declared generation batches, in place.
 
     The governance audit refuses every controlled-generation record whose
-    groups.collectionBatch does not name a batch in the reviewed source manifest
+    groups.generationBatch does not name a batch in the reviewed source manifest
     whose declared recipe matches the record's generation block EXACTLY —
     sourceId, provider, family, model, version, prompt digest, temperature,
     generatedAt and seed. So batches are derived FROM the records: one per
     distinct recipe, which makes the match hold by construction.
 
-    This is why collectionBatch cannot be unique per record, as it was: a
-    per-record token names no declared batch, and all 5726 generated records
-    were blocked with GENERATION_RECIPE_MISSING. Sharing it is safe for the
-    split even though collectionBatch is a grouping axis — generatedAt is part
-    of the batch key and equals the record's temporal block, so a batch is an
-    indivisible component that can never straddle two blocks.
+    This is why the axis cannot be unique per record, as it was: a per-record token
+    names no declared batch, and all 5726 generated records of the dead corpus were
+    blocked with GENERATION_RECIPE_MISSING. Sharing it is safe for the split even
+    though generationBatch is a grouping axis — generatedAt is part of the batch key
+    and equals the record's temporal block, so a batch is an indivisible component
+    that can never straddle two blocks.
 
-    Human records are untouched here and keep the `extraction_<domainSource>` batch
-    their builder assigned — the extraction RUN that produced them, shared by every
-    candidate of one pool. It must NOT name a declared generation batch (the audit
-    rejects a non-generated record that links one), which the `extraction_` prefix
-    makes structural rather than incidental: it cannot collide with a `gb_` id.
+    Human records are untouched here, and no longer by convention: the axis rule admits
+    only `notApplicable` for `generationBatch` on a human row, so a human record cannot
+    name a declared generation batch at all. Its own two batch axes —
+    `sourceMaterialBatch` and `extractionRun` — are assigned by its builder.
     """
     batches: dict[tuple, dict] = {}
     for rec in records:
@@ -1728,11 +1808,11 @@ def assign_generation_batches(records: list[dict]) -> list[dict]:
                 ),
             }
             batches[key] = batch
-        # The axis, in the v3 shape. Sharing it across a batch is safe for the split
-        # even though collectionBatch IS a grouping axis: generatedAt is part of the
-        # batch key and equals the record's temporal block, so a batch is an
-        # indivisible component that can never straddle two blocks.
-        rec["groups"]["collectionBatch"] = group_axes.known(batch["batchId"])
+        # Sharing it across a batch is safe for the split even though generationBatch IS
+        # a grouping axis: generatedAt is part of the batch key and equals the record's
+        # temporal block, so a batch is an indivisible component that can never straddle
+        # two blocks.
+        rec["groups"]["generationBatch"] = group_axes.known(batch["batchId"])
     return list(batches.values())
 
 
@@ -1816,6 +1896,29 @@ def balanced_humans(cands: list[dict], total: int) -> list[dict]:
         if idx > total * 4:
             break
     return chosen[:total]
+
+
+def cluster_report_rows(records: list[dict]) -> list[dict]:
+    """The projection `group_axes.cluster_report` reads, and the only one.
+
+    `schemaVersion` is IN the projection because `group_axes.axes_of` branches on it:
+    without it every v4 row is read against the v3 tuple, so the report publishes
+    `collectionBatch` with `{"unknown": n}` and clusters 0, omits the three axes v4
+    introduced, and counts every row as ineligible. A named function rather than a
+    literal inside `main` so the report the tests exercise is the report the run
+    writes — a projection tested only through a hand-written dict is a projection
+    nothing checks.
+    """
+    return [
+        {
+            "schemaVersion": r["schemaVersion"],
+            "id": r["id"],
+            "label": r["label"],
+            "partition": PARTITION_OF.get(r["id"], "unassigned"),
+            "groups": r["groups"],
+        }
+        for r in records
+    ]
 
 
 def main() -> None:
@@ -2079,17 +2182,7 @@ def main() -> None:
     # impossible to reintroduce unnoticed: under `base_groups` every axis would read
     # `clusters == records`, `sizeDistribution == {"1": n}` and largest size 1 —
     # which is what this report would have said all along, had anyone asked it.
-    report = group_axes.cluster_report(
-        [
-            {
-                "id": r["id"],
-                "label": r["label"],
-                "partition": PARTITION_OF.get(r["id"], "unassigned"),
-                "groups": r["groups"],
-            }
-            for r in records
-        ]
-    )
+    report = group_axes.cluster_report(cluster_report_rows(records))
 
     out = args.out_dir
     (out / "private").mkdir(parents=True, exist_ok=True)

@@ -1,12 +1,17 @@
-"""The v3 grouping axes on the lab bench: how a state is written, and how the
+"""The grouping axes on the lab bench: how a state is written, and how the
 realized cluster structure is reported.
 
-THE PYTHON MIRROR of `V3_GROUP_AXES` / `GroupAxisValue` in `benchmark/schema.ts`.
-The TypeScript side is the enforcement — `validateBenchmarkRecordV3` refuses any
-record whose axes disagree with `AXIS_STATE_RULE` — so this module exists to make
-the assembler WRITE what the sealed schema will accept, never to be a second
-authority. `test_the_axis_list_mirrors_the_sealed_schema` reads the axis list out
-of `schema.ts` and compares, so the two cannot drift apart silently.
+THE PYTHON MIRROR of `V3_GROUP_AXES` / `V4_GROUP_AXES` / `GroupAxisValue` in
+`benchmark/schema.ts`. The TypeScript side is the enforcement —
+`validateBenchmarkRecordV4` refuses any record whose axes disagree with
+`AXIS_STATE_RULE` — so this module exists to make the assembler WRITE what the
+sealed schema will accept, never to be a second authority.
+`test_the_axis_list_mirrors_the_sealed_schema` reads both axis lists out of
+`schema.ts` and compares, so the two cannot drift apart silently.
+
+BOTH TUPLES LIVE HERE, and the v3 one is not vestigial: the 10.000 records of the
+dead corpus are still read to seed `drop_seen`, and a reader that only knew the v4
+tuple would report `collectionBatch` as an axis nobody declared.
 
 WHAT THIS REPLACES. `assemble_corpus.base_groups` used to return
 
@@ -72,6 +77,33 @@ V3_GROUP_AXES: tuple[str, ...] = (
     "collectionBatch",
     "nearDuplicate",
     "derivationRoot",
+)
+
+# Byte-for-byte the order of `V4_GROUP_AXES` in benchmark/schema.ts: the v3 tuple with
+# `collectionBatch` replaced by the three facts it conflated — which MATERIAL the row
+# came from, which GENERATION batch produced it, which EXTRACTION RUN wrote it. Pinned
+# against schema.ts by test, so an axis added on one side fails on the other.
+V4_GROUP_AXES: tuple[str, ...] = (
+    "author",
+    "source",
+    "domainSource",
+    "humanSeed",
+    "promptTemplate",
+    "generatorFamily",
+    "generatorVersion",
+    "generationLane",
+    "harnessVersion",
+    "sourceMaterialBatch",
+    "generationBatch",
+    "extractionRun",
+    "nearDuplicate",
+    "derivationRoot",
+)
+
+# Every axis any version declares, in one fixed order. Used only to ORDER a report;
+# which axes a report actually carries comes from the rows (`axes_of`).
+ALL_GROUP_AXES: tuple[str, ...] = V3_GROUP_AXES + tuple(
+    axis for axis in V4_GROUP_AXES if axis not in V3_GROUP_AXES
 )
 
 # The three states R6 allows, and no fourth.
@@ -163,6 +195,42 @@ def axis_token(value: str) -> str:
             "into one invented cluster"
         )
     return out
+
+
+def material_batch_id(snapshot_version: str) -> str:
+    """The acquisition event's id, keyed on the concrete version acquired.
+
+    ONE acquisition of one snapshot is ONE batch, whatever an extractor later slices
+    out of it: the typologies inside a Carolina package are partitions of a single
+    download and not separate acquisitions, so they share this id. That is the same
+    fact G0.1-bis measured when it kept the axis out of the split union — one
+    acquisition per source means one indivisible block per cell.
+
+    An empty version is REFUSED and never defaulted to the snapshot base. The reviewed
+    manifest declares this batch by its `materialVersion`, so a batch keyed on
+    "ptwiki" alone would make two dumps of the Wikipedia one unit that no one can
+    tell apart, and the dependence the axis states would be unverifiable.
+    """
+    version = snapshot_version.strip()
+    if not version:
+        raise ValueError(
+            "the acquisition event has no name without the concrete snapshot version "
+            "(--snapshot-version, e.g. ptwiki-20220301): groups.sourceMaterialBatch "
+            "resolves against the reviewed manifest's materialVersion, and a batch "
+            "keyed on the snapshot base alone would merge two acquisitions into one"
+        )
+    return "smb_" + axis_token(version)
+
+
+def axes_of(record: dict) -> tuple[str, ...]:
+    """The axis tuple THIS record's own schemaVersion declares.
+
+    Mirrors `recordGroupAxes` in benchmark/schema.ts. Reading a v4 row against the v3
+    tuple would report `collectionBatch` as `unknown` on every row and make the whole
+    corpus ineligible; reading a v3 row against the v4 tuple would do the same to the
+    three axes v3 never had.
+    """
+    return V4_GROUP_AXES if record.get("schemaVersion") == 4 else V3_GROUP_AXES
 
 
 def state_of(axis_value: dict | str | None) -> str:
@@ -277,6 +345,17 @@ AUTHOR_NOT_RECOVERED = (
 )
 NO_HUMAN_AUTHOR = "generated text has no human author"
 NOT_A_GENERATED_ROW = "the record is human text: no generation apparatus produced it"
+# The generated row's dependence on material is NOT lost with this `notApplicable`: it
+# travels through humanSeed/derivationRoot to the human row that was seeded, and THAT
+# row names the material batch. Writing one here would claim the text was acquired.
+NO_MATERIAL_ACQUIRED = (
+    "generated text was produced, not acquired: the material it depends on is named by "
+    "the human row it was seeded from, through groups.humanSeed/derivationRoot"
+)
+NOT_EXTRACTED = (
+    "the row was written from a generation pool: no extraction run of ours read it out "
+    "of a source document"
+)
 NO_DERIVATION = (
     "the recipe writes new text from a seed rather than rewriting it, so this row "
     "is a derivation of nothing"
@@ -349,16 +428,23 @@ def cluster_report(records: list[dict]) -> dict:
 
     def summarize(rows: list[dict]) -> dict:
         groups = [row.get("groups") or {} for row in rows]
+        # The axes the ROWS declare, in a fixed order — never a version's tuple pinned
+        # here. A v4 corpus reports fourteen and a v3 one twelve; a hard-coded tuple
+        # would publish `clusters: 0, states: {unknown: N}` for every axis the corpus's
+        # own version does not have, which reads as a broken axis rather than an absent
+        # one.
+        declared = {axis for row in rows for axis in axes_of(row)}
+        reported = [axis for axis in ALL_GROUP_AXES if axis in declared]
         return {
             "records": len(rows),
             "ineligibleRecords": sum(
                 1
-                for group in groups
-                if any(state_of(group.get(axis)) == UNKNOWN for axis in V3_GROUP_AXES)
+                for row, group in zip(rows, groups)
+                if any(state_of(group.get(axis)) == UNKNOWN for axis in axes_of(row))
             ),
             "axes": {
                 axis: _axis_summary([group.get(axis) for group in groups])
-                for axis in V3_GROUP_AXES
+                for axis in reported
             },
         }
 
@@ -382,7 +468,7 @@ def render_cluster_report(report: dict) -> str:
         largest = summary["largestCluster"]
         singletons = summary["sizeDistribution"].get("1", 0)
         lines.append(
-            f"  {axis:17s} clusters={summary['clusters']:<6d} "
+            f"  {axis:21s} clusters={summary['clusters']:<6d} "
             f"registros_agrupados={summary['records']:<6d} "
             f"singletons={singletons:<6d} "
             f"maior={largest['id'] + '/' + str(largest['size']) if largest else '-'} "
@@ -395,7 +481,7 @@ def render_cluster_report(report: dict) -> str:
                 continue
             largest = axis_summary["largestCluster"]
             lines.append(
-                f"    {axis:15s} clusters={axis_summary['clusters']:<6d} "
+                f"    {axis:19s} clusters={axis_summary['clusters']:<6d} "
                 f"maior={largest['id']}/{largest['size']} "
                 f"dist={axis_summary['sizeDistribution']}"
             )
