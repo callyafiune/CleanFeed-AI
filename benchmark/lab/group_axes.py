@@ -248,6 +248,31 @@ def state_of(axis_value: dict | str | None) -> str:
     return str(axis_value.get("state") or UNKNOWN)
 
 
+def declared_state_of(record: dict, axis: str) -> str | None:
+    """The state one axis DECLARES on this record, or None when its version lacks the axis.
+
+    Mirrors the version-aware reading `auditDeclaredAxes` does in
+    benchmark/split-audit.ts, and it is a DIFFERENT question from `state_of`: this one
+    answers "may an `unknown` here be read as a gap the source promised to fill", and
+    `state_of` answers "is the row eligible". They diverge on every axis the record's
+    own version does not declare, and reading eligibility where a REFUSAL is meant
+    faults every v3 row for leaving `sourceMaterialBatch` unrecovered when v3 has no
+    such key to fill.
+
+    Two readings of "this version has the axis", because the versions answer it two
+    ways. v3 and v4 make every axis key MANDATORY, so their own tuple is exact and an
+    ABSENT key is a malformed row rather than a version never asked — which is why it
+    stays a gap. A v2 `groups` block carries nine keys and no states, and `axes_of`
+    answers for it with the v3 tuple, so only the key's own presence can be read.
+    """
+    valor = (record.get("groups") or {}).get(axis)
+    if record.get("schemaVersion") == 2:
+        return None if valor is None else state_of(valor)
+    if axis not in axes_of(record):
+        return None
+    return state_of(valor)
+
+
 def identity_of(axis_value: dict | str | None) -> str | None:
     """The identity of one axis, or None when the axis is not `known`.
 
@@ -288,6 +313,16 @@ def identity_of(axis_value: dict | str | None) -> str | None:
 # extractor failed to recover something the source HAS, while an axis listed here
 # and marked `notApplicable` means the record CONTRADICTS its own source — two
 # different mistakes.
+#
+# WHAT IT IS NOT: the AUTHORITY on what a source declares. That is
+# `assemble_corpus.declared_group_axes()`, parsed from the reviewed inventory in
+# benchmark/source-manifest.ts, and the two are keyed at DIFFERENT granularities on
+# purpose — this table by domain source (one typology), the authority by `sourceId`
+# (one base). The difference is not cosmetic: `sourceMaterialBatch` is an ACQUISITION
+# EVENT, one download of the Carolina package covers the three typologies below, so the
+# axis is a fact about the base and has no per-typology value to state here. Only the
+# authority is read when a corpus is refused; adding the axis to these rows would
+# fabricate three acquisitions where the inventory records one.
 #
 # WHY C2 DID NOT TURN IT INTO A REFUSAL, since the table was sitting right here:
 #   * refusing a row for `unknown` on a declared axis would contradict R6 outright.

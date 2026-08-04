@@ -553,12 +553,15 @@ function record(
   // names a family the corpus actually contains — the four-way invariant in
   // benchmark/generator-family.ts refuses a reservation nothing satisfies.
   family = "acme_family",
-  // The SPLIT/EXPOSURE CLUSTER this row belongs to: `domainSource` and
-  // `collectionBatch` are shared inside one cluster and nested in it, so the
-  // connected component of the union of the grouping axes is this cluster. The
-  // eight-record evaluate scenario leaves the default and is therefore one cluster,
-  // which is all it needs; the fit scenario names clusters, because a corpus of one
-  // indivisible cluster cannot be cross-validated at all.
+  // The SPLIT/EXPOSURE CLUSTER this row belongs to: the ORIGIN DOCUMENT (`source`) is
+  // shared by every row of one cluster, and `domainSource`/`collectionBatch` are nested
+  // in it, so the connected component of the union of the grouping axes is this cluster.
+  // `source` is what carries it and not the other two: those name a stratum and an
+  // acquisition event, which the splitter reports and never unions on, so keying the
+  // cluster on them would make every row its own atom. The eight-record evaluate
+  // scenario leaves the default and is therefore one cluster, which is all it needs;
+  // the fit scenario names clusters, because a corpus of one indivisible cluster cannot
+  // be cross-validated at all.
   cluster = "c0",
 ): BenchmarkRecord {
   recordCounter += 1;
@@ -598,7 +601,7 @@ function record(
     transformation: { kind: "none", severity: "none" },
     groups: {
       author: `author_${id}`,
-      source: `src_${id}`,
+      source: `doc_${cluster}`,
       domainSource: `ds_${cluster}`,
       collectionBatch: `batch_${cluster}`,
       nearDuplicate: `nd_${id}`,
@@ -819,11 +822,10 @@ async function buildScenario(root: string): Promise<Scenario> {
   // The named rows keep their partitions and their times. Filler goes to `train`, `cal-B`
   // and the tail of `test`, and each filler row gets its OWN cluster so the leakage audit
   // stays non-vacuous over it.
-  // One cluster per PARTITION, never the default shared by all eight: `domainSource` and
-  // `collectionBatch` are nested in the cluster, so a single cluster spanning dev, cal-A
-  // and test is a group value crossing partitions. Per partition keeps the prompt-template
-  // unit multi-row — the non-degeneracy the resampling needs — without crossing a
-  // boundary.
+  // One cluster per PARTITION, never one cluster shared by every row: the cluster token
+  // is what the union axes carry, so a single cluster spanning dev, cal-A and test is a
+  // group value crossing partitions. Per partition keeps the prompt-template unit
+  // multi-row — the non-degeneracy the resampling needs — without crossing a boundary.
   const named: BenchmarkRecord[] = [
     record("human", 10, "acme_family", "dv"),
     record("ai", 20, "acme_family", "dv"),

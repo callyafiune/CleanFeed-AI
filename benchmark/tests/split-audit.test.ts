@@ -3,6 +3,8 @@ import { describe, expect, it } from "vitest";
 import {
   AUDITED_PARTITIONS,
   CLUSTER_SLICE_AXES,
+  DECLARED_GROUP_AXES,
+  REPORTED_GROUP_AXES,
   auditBlockedSplit,
   standInClusterReport,
   type AxisClusterReport,
@@ -11,7 +13,9 @@ import {
   type SplitAuditPolicy,
 } from "../split-audit.ts";
 import {
+  GROUP_KEYS,
   PARTITIONS,
+  axisConnectivity,
   connectedComponentRoots,
   createBlockedSplit,
   type BlockedSplitPolicy,
@@ -21,14 +25,24 @@ import {
 import { describeSplitProportions } from "../commands/split.ts";
 import { REBUILD_V3_POLICY } from "../rebuild-v3-policy.ts";
 import {
+  ALL_GROUP_AXES,
   V3_GROUP_AXES,
+  V4_GROUP_AXES,
   validateBenchmarkRecordV3,
+  validateBenchmarkRecordV4,
   type BenchmarkLabel,
   type BenchmarkRecord,
+  type GroupAxis,
   type TransformationKind,
-  type V3GroupAxis,
 } from "../schema.ts";
-import { known, v3Ai, withAxis } from "./helpers/v3-record-fixture.ts";
+import {
+  known,
+  unknownAxis,
+  v3Ai,
+  v4Human,
+  v4MixedEcological,
+  withAxis,
+} from "./helpers/v3-record-fixture.ts";
 import {
   asGeneratorFamily,
   assertGeneratorFamiliesEqual,
@@ -376,8 +390,8 @@ describe("auditBlockedSplit", () => {
   it("rejects a deliberately author-leaking split (teeth on grouping)", () => {
     const split = createBlockedSplit(RELEASE_DATASET, POLICY);
     // Move one train record into test while its slot siblings stay behind, so its
-    // author/source/domainSource values now straddle two partitions. A blind auditor
-    // would miss it; this one must not.
+    // author, source and near-duplicate values now straddle two partitions. A blind
+    // auditor would miss it; this one must not.
     const victim = split.train.find((row) => row.label === "human");
     expect(victim).toBeDefined();
     const leaking: DatasetSplit<BenchmarkRecord> = {
@@ -727,7 +741,7 @@ describe("the cluster report the audit publishes", () => {
 
     // The fixture stand-in must agree, or a hand-built audit would carry a
     // different claim from a measured one.
-    const standIn = standInClusterReport();
+    const standIn = standInClusterReport(V3_GROUP_AXES);
     expect(
       standIn.axes.find((row) => row.axis === "humanSeed")!.connectivity,
     ).toEqual({
@@ -863,8 +877,8 @@ function v3Human(spec: V3Spec): BenchmarkRecord {
   } as unknown as BenchmarkRecord;
 }
 
-const DECLARED: ReadonlyMap<string, readonly V3GroupAxis[]> = new Map([
-  ["src_ptso", ["author", "source"] as readonly V3GroupAxis[]],
+const DECLARED: ReadonlyMap<string, readonly GroupAxis[]> = new Map([
+  ["src_ptso", ["author", "source"] as readonly GroupAxis[]],
 ]);
 
 function v3Split(authorState: "known" | "notApplicable" | "unknown"): {
@@ -1188,7 +1202,7 @@ describe("two rows naming a seed no record carries", () => {
       ).toBeNull();
     }
     // The stand-in agrees, and is all-zero rather than plausible.
-    const standIn = standInClusterReport();
+    const standIn = standInClusterReport(V3_GROUP_AXES);
     expect(
       standIn.axes.find((row) => row.axis === "source")!.connectivity.linkage,
     ).toBeNull();
@@ -1258,6 +1272,320 @@ describe("a grouping axis the source declared", () => {
     expect(audit.reasons.some((reason) => /declares axis/.test(reason))).toBe(
       false,
     );
+  });
+
+  it("says nothing about an axis the record's schema version never had", () => {
+    // `src_wikipedia_pt` declares `sourceMaterialBatch`, and a v3 record has no such
+    // KEY in its contract at all. Reading the plain eligibility state here would map the
+    // absent key to `unknown` and fail every v3 corpus over an axis its schema never
+    // offered. What the join asks instead is whether the RECORD'S OWN VERSION declares
+    // the axis, which is also why the v4 row missing that key further down IS a gap.
+    const row = v3Human({
+      id: "w1",
+      createdAt: 1,
+      sourceId: "src_wikipedia_pt",
+      authorState: "known",
+    });
+    const later = v3Human({
+      id: "w2",
+      createdAt: 2,
+      sourceId: "src_wikipedia_pt",
+      authorState: "known",
+    });
+    // Non-vacuous: the declaration really does name the axis this corpus cannot have.
+    expect(DECLARED_GROUP_AXES.get("src_wikipedia_pt")).toContain(
+      "sourceMaterialBatch",
+    );
+    const audit = auditBlockedSplit(
+      [row, later],
+      { train: [row], dev: [], "cal-A": [], "cal-B": [], test: [later] },
+      AUDIT_POLICY,
+      NO_RESERVATION,
+      DECLARED_GROUP_AXES,
+    );
+
+    expect(audit.declaredAxisGaps).toEqual([]);
+    expect(audit.reasons.some((reason) => /declares axis/.test(reason))).toBe(
+      false,
+    );
+  });
+});
+
+// --- the axes the split REPORTS instead of unioning on -----------------------
+
+/**
+ * A v4 human row of ONE quota cell: its own origin document, author and
+ * near-duplicate cluster, and the cell's single acquisition event and single stratum.
+ *
+ * Built through the validator, so the axis states are the ones a real v4 human row is
+ * allowed to carry: `domainSource` and `sourceMaterialBatch` are `known` on every
+ * human row BY RULE, which is precisely why a union on either would collapse the cell
+ * into one indivisible component.
+ */
+function v4CellRow(id: string, createdAt: number): BenchmarkRecord {
+  let raw: Record<string, unknown> = { ...v4Human(), id, createdAt };
+  raw = withAxis(raw, "author", known(`au_hmac_${id}`));
+  raw = withAxis(raw, "source", known(`th_doc_${id}`));
+  raw = withAxis(raw, "nearDuplicate", known(`nd_${id}`));
+  return validateBenchmarkRecordV4(raw) as unknown as BenchmarkRecord;
+}
+
+describe("an axis the splitter does not union on", () => {
+  it("stays out of the splitter's union list, and says so per axis", () => {
+    // The CONTENT, restated, before anything iterates it. Every other assertion in
+    // this file about the reported axes is a loop over this tuple, so an empty tuple
+    // would satisfy all of them by executing nothing, and a tuple that lost
+    // `sourceMaterialBatch` would silently drop the dependence axis from the
+    // inventory the composition gate reads. Equality and not `length`: a length check
+    // accepts one axis swapped for another.
+    expect([...REPORTED_GROUP_AXES]).toEqual([
+      "domainSource",
+      "sourceMaterialBatch",
+    ]);
+
+    for (const axis of REPORTED_GROUP_AXES) {
+      // A real axis of some record version, not a name only this module knows.
+      expect(ALL_GROUP_AXES, axis).toContain(axis);
+      expect(GROUP_KEYS as readonly string[], axis).not.toContain(axis);
+      // Published per axis, so a reader of the sealed artifact does not have to
+      // consult the splitter to learn that it did not group by this identity.
+      expect(axisConnectivity(axis), axis).toEqual({
+        sharedValue: false,
+        parentLinkage: false,
+      });
+    }
+  });
+
+  it("is published as an inventory per partition, and crossing a cut is not leakage", () => {
+    // One row per partition, ALL FIVE populated. `auditClusters` creates a `bySlice`
+    // bucket only for a partition that holds a record, so a fixture leaving `cal-A` and
+    // `cal-B` empty pins their ABSENCE from the inventory — and those two are the blind
+    // partitions whose inventory the composition gate is the one that will read.
+    const rows = [
+      v4CellRow("h_train", 1),
+      v4CellRow("h_dev", 2),
+      v4CellRow("h_cal_a", 3),
+      v4CellRow("h_cal_b", 4),
+      v4CellRow("h_test", 5),
+    ];
+    const [train, dev, calA, calB, test] = rows as [
+      BenchmarkRecord,
+      BenchmarkRecord,
+      BenchmarkRecord,
+      BenchmarkRecord,
+      BenchmarkRecord,
+    ];
+    const audit = auditBlockedSplit(
+      rows,
+      {
+        train: [train],
+        dev: [dev],
+        "cal-A": [calA],
+        "cal-B": [calB],
+        test: [test],
+      },
+      AUDIT_POLICY,
+      NO_RESERVATION,
+      DECLARED_GROUP_AXES,
+    );
+
+    // A v4 corpus publishes exactly the v4 axes: `collectionBatch` is an axis no record
+    // here declares, and reporting it would publish `states.unknown = N` for an axis
+    // that is absent rather than broken.
+    //
+    // The ORDER is restated rather than derived from the constant the implementation
+    // reads. `clusters.axes` is an ARRAY inside the `splitDigest`-sealed artifact, so a
+    // reordering moves the digest, and it is `ALL_GROUP_AXES` order — the shared axes
+    // in v3's order, then the three v4 introduced — which is also the order the Python
+    // mirror (`benchmark/lab/group_axes.py`) reports in.
+    expect(audit.clusters.axes.map((row) => row.axis)).toEqual([
+      "author",
+      "source",
+      "domainSource",
+      "humanSeed",
+      "promptTemplate",
+      "generatorFamily",
+      "generatorVersion",
+      "generationLane",
+      "harnessVersion",
+      "nearDuplicate",
+      "derivationRoot",
+      "sourceMaterialBatch",
+      "generationBatch",
+      "extractionRun",
+    ]);
+    // Exactly the v4 axes as a SET, which the order above cannot state on its own: a
+    // list that dropped one axis and added another would still be "in order".
+    expect(new Set(audit.clusters.axes.map((row) => row.axis))).toEqual(
+      new Set(V4_GROUP_AXES),
+    );
+
+    for (const axis of REPORTED_GROUP_AXES) {
+      const report = audit.clusters.axes.find((row) => row.axis === axis);
+      expect(report, axis).toBeDefined();
+      // ONE identity over the five record-lines — the cell as an acquisition really
+      // offers it — so the inventory is a measurement and not a tautology.
+      expect(report!.states, axis).toEqual({
+        known: 5,
+        notApplicable: 0,
+        unknown: 0,
+      });
+      expect(report!.overall, axis).toEqual({
+        groups: 1,
+        largest: 5,
+        singletons: 0,
+        recordLines: 5,
+      });
+      expect(report!.connectivity.sharedValue, axis).toBe(false);
+      // The inventory the composition gate will read: how many distinct acquisition
+      // events and strata each partition holds. All five keys, the two BLIND ones
+      // included — a partition dropped from `sliceKeysOf` or from `AUDITED_PARTITIONS`
+      // vanishes from this list silently otherwise.
+      const perPartition = report!.bySlice.filter(
+        (row) => row.slice === "partition",
+      );
+      expect(
+        perPartition.map((row) => row.key),
+        axis,
+      ).toEqual(["cal-A", "cal-B", "dev", "test", "train"]);
+      for (const row of perPartition) {
+        expect(row.count, `${axis} ${row.key}`).toEqual({
+          groups: 1,
+          largest: 1,
+          singletons: 1,
+          recordLines: 1,
+        });
+      }
+    }
+
+    // The identity spans all five partitions and that is NOT leakage: the splitter
+    // does not union on it, so nothing was kept together and nothing crossed a cluster
+    // boundary. A union on either axis would make this list non-empty — and would make
+    // the cell one component, which the roots below refuse.
+    expect(audit.leakages).toEqual([]);
+    expect(new Set(connectedComponentRoots(rows).values()).size).toBe(5);
+  });
+
+  it("fails the audit when a source declares the acquisition event and a row leaves it unknown", () => {
+    // The `mixed-ecological` cohort is the one class where `unknown` is a LEGAL state
+    // for the acquisition event: the observed coauthored document exists, and whether
+    // we hold its acquisition record is a fact about our records. So this row passes
+    // the validator, and the audit is the stage that refuses it — which is the whole
+    // point of declaring the axis on a source the splitter does not union by.
+    let raw: Record<string, unknown> = {
+      ...v4MixedEcological(),
+      id: "m_eco_carolina",
+      createdAt: 3,
+    };
+    raw = withAxis(
+      raw,
+      "sourceMaterialBatch",
+      unknownAxis(
+        "the coauthored document was acquired with the package and its acquisition event was not recorded",
+      ),
+    );
+    raw = {
+      ...raw,
+      provenance: {
+        ...(raw.provenance as Record<string, unknown>),
+        sourceId: "src_carolina",
+      },
+    };
+    const ecological = validateBenchmarkRecordV4(
+      raw,
+    ) as unknown as BenchmarkRecord;
+    // The five partitions are populated, `cal-A` and `cal-B` included, so the gap is
+    // counted over a corpus shaped like the one the gate will read and not over three
+    // partitions with two vacuous ones.
+    const filler = [
+      v4CellRow("h_train", 1),
+      v4CellRow("h_dev", 2),
+      v4CellRow("h_cal_a", 4),
+      v4CellRow("h_cal_b", 5),
+    ] as const;
+    const [train, dev, calA, calB] = filler;
+
+    const audit = auditBlockedSplit(
+      [...filler, ecological],
+      {
+        train: [train],
+        dev: [dev],
+        "cal-A": [calA],
+        "cal-B": [calB],
+        test: [ecological],
+      },
+      AUDIT_POLICY,
+      NO_RESERVATION,
+      DECLARED_GROUP_AXES,
+    );
+
+    expect(audit.declaredAxisGaps).toEqual([
+      {
+        sourceId: "src_carolina",
+        axis: "sourceMaterialBatch",
+        state: "unknown",
+        recordLines: 1,
+      },
+    ]);
+    expect(
+      audit.reasons.some((reason) =>
+        /declares axis "sourceMaterialBatch"/.test(reason),
+      ),
+    ).toBe(true);
+    expect(audit.passed).toBe(false);
+  });
+
+  it("fails the audit when a v4 row has no key at all for the axis its source declared", () => {
+    // The version-aware half of the join, in the direction that is NOT about v2/v3.
+    // `sourceMaterialBatch` is a MANDATORY key of v4, so a v4 row without it has not
+    // answered the declaration with `unknown` — it has not answered at all, and reading
+    // only "did the producer WRITE unknown" would let it through. The row is built by
+    // hand and past the validator on purpose: `parseBenchmarkDataset` refuses it on the
+    // command path, and this is the audit's own depth behind that.
+    const carolina = v4CellRow("h_carolina", 2);
+    const groups = { ...(carolina.groups as Record<string, unknown>) };
+    delete groups.sourceMaterialBatch;
+    const missing = {
+      ...carolina,
+      id: "h_no_batch_key",
+      groups,
+      provenance: { ...carolina.provenance, sourceId: "src_carolina" },
+    } as unknown as BenchmarkRecord;
+    // Non-vacuous: the key really is gone, and the anchor really does carry it.
+    expect(Object.hasOwn(missing.groups as object, "sourceMaterialBatch")).toBe(
+      false,
+    );
+    const anchor = {
+      ...v4CellRow("h_with_batch_key", 1),
+      provenance: {
+        ...v4CellRow("h_with_batch_key", 1).provenance,
+        sourceId: "src_carolina",
+      },
+    } as unknown as BenchmarkRecord;
+
+    const audit = auditBlockedSplit(
+      [anchor, missing],
+      {
+        train: [anchor],
+        dev: [],
+        "cal-A": [],
+        "cal-B": [],
+        test: [missing],
+      },
+      AUDIT_POLICY,
+      NO_RESERVATION,
+      DECLARED_GROUP_AXES,
+    );
+
+    expect(audit.declaredAxisGaps).toEqual([
+      {
+        sourceId: "src_carolina",
+        axis: "sourceMaterialBatch",
+        state: "unknown",
+        recordLines: 1,
+      },
+    ]);
+    expect(audit.passed).toBe(false);
   });
 });
 

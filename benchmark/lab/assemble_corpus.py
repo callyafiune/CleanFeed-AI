@@ -1202,15 +1202,22 @@ class UnsplittableCorpus(RuntimeError):
 #     record-line's id joins that row, and only when the named row is present. Naming
 #     itself unions nothing.
 #
+# `domainSource` and `sourceMaterialBatch` are absent, and that is arithmetic rather than
+# taste: there is ONE acquisition event per source and one stratum per quota cell, so
+# either axis unions a whole cell into a single indivisible component — human partition
+# fractions in multiples of ~25%, `dev`'s 0.05 unreachable, and a unit floor counted in
+# components reading 1 per cell forever. Both stay axes of REGISTRATION, MANIFEST and
+# LEDGER, and `extractionRun` never unions at all: re-extracting one dump produces no new
+# material, so unioning on it would count one dependence twice.
+#
 # Both lists are a COPY of the ones benchmark/split.ts declares, and a copy that drifts accepts
 # an axis the splitter unions on or refuses one it ignores.
 SPLIT_GROUP_KEYS: tuple[str, ...] = (
     "author",
     "source",
-    "domainSource",
     "generatorVersion",
     "promptTemplate",
-    "collectionBatch",
+    "generationBatch",
     "nearDuplicate",
     "derivationRoot",
 )
@@ -1540,7 +1547,12 @@ def assert_stamped_corpus_is_splittable(
             continue
         source_id = (rec.get("provenance") or {}).get("sourceId")
         for axis in autoridade.get(str(source_id), ()):  # type: ignore[arg-type]
-            estado = group_axes.state_of((rec.get("groups") or {}).get(axis))
+            # `declared_state_of` e nao `state_of`: a autoridade e parseada do
+            # source-manifest.ts, que declara `sourceMaterialBatch` para toda fonte
+            # humana, e `state_of` le chave AUSENTE como unknown. Ler elegibilidade aqui
+            # recusaria todo corpo v3 por um eixo que a versao dele nao tem — e a
+            # auditoria TS, que esta guarda espelha, aceita esse corpo.
+            estado = group_axes.declared_state_of(rec, axis)
             if estado == group_axes.UNKNOWN:
                 problemas.append(
                     f"eixo declarado: {rec['id']} vem de {source_id}, que declara "

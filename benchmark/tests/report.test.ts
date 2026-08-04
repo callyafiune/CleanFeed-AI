@@ -20,6 +20,7 @@ import {
 import type { SliceSummary } from "../slices.ts";
 import { REBUILD_V3_POLICY } from "../rebuild-v3-policy.ts";
 import { standInClusterReport, type SplitAudit } from "../split-audit.ts";
+import { V3_GROUP_AXES } from "../schema.ts";
 import { asGeneratorFamily } from "../generator-family.ts";
 
 // --- fixture builders ------------------------------------------------------
@@ -180,7 +181,7 @@ function splitAudit(): SplitAudit {
       earliestTest: 500,
     },
     leakages: [],
-    clusters: standInClusterReport(),
+    clusters: standInClusterReport(V3_GROUP_AXES),
     declaredAxisGaps: [],
     criticalSliceSamples: [],
     testHumanNegatives: {

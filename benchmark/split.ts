@@ -18,7 +18,7 @@ import {
   groupAxisIdentity,
   type BenchmarkLabel,
   type BenchmarkRecord,
-  type V3GroupAxis,
+  type GroupAxis,
 } from "./schema.ts";
 
 /**
@@ -161,20 +161,44 @@ export interface BlockedSplitPolicy {
   seed: number;
 }
 
-// The connected-component axes. `domain` and `groups.generatorFamily` are
-// DELIBERATELY excluded: unioning on them would collapse every LinkedIn record
-// or a whole generator family into one indivisible block. The reserved holdout
-// family is enforced separately, as an explicit test-only constraint.
+/**
+ * The connected-component axes: every axis two record-lines are unioned by when
+ * they carry the SAME identity on it.
+ *
+ * `domain` and `groups.generatorFamily` are DELIBERATELY excluded: unioning on them
+ * would collapse every LinkedIn record or a whole generator family into one
+ * indivisible block. The reserved holdout family is enforced separately, as an
+ * explicit test-only constraint.
+ *
+ * `domainSource` and `sourceMaterialBatch` are excluded for a stronger reason, and it
+ * is arithmetic rather than taste. There is ONE acquisition event per source and one
+ * stratum per quota cell, so either axis unions a whole cell into a single
+ * indivisible component. Four cells then make every human partition fraction a
+ * multiple of ~25%, `dev`'s 0.05 target is unreachable by construction, every corpus
+ * is refused with `SplitConstraintError`, and a floor counted in independent units
+ * reads 1 per cell forever. Both axes still carry dependence — `sourceMaterialBatch`
+ * is the declared unit of dependence BETWEEN acquisitions — and they carry it as axes
+ * of REGISTRATION, MANIFEST and LEDGER, published as an inventory by the audit
+ * (`REPORTED_GROUP_AXES` in benchmark/split-audit.ts). Neither may be unioned on
+ * here. Dependence INSIDE a cell is carried by `author`, `source` (the origin
+ * document), `nearDuplicate` and the lineage axes.
+ *
+ * `extractionRun` is never a union axis either: re-extracting one dump produces no
+ * new material, so unioning on it would count one dependence twice. It is diagnostic.
+ *
+ * `satisfies` ties the list to the record schema, so an axis no version declares —
+ * a typo, or a renamed axis — is a compile error rather than a key that reads
+ * `undefined` on every row and silently unions nothing.
+ */
 export const GROUP_KEYS = [
   "author",
   "source",
-  "domainSource",
   "generatorVersion",
   "promptTemplate",
-  "collectionBatch",
+  "generationBatch",
   "nearDuplicate",
   "derivationRoot",
-] as const;
+] as const satisfies readonly GroupAxis[];
 
 export type GroupKey = (typeof GROUP_KEYS)[number];
 
@@ -200,9 +224,12 @@ export const PARENT_LINKAGE_AXES = ["derivationRoot", "humanSeed"] as const;
  * {@link groupAxisDeclaredState}: the cross-validation atom is this same connected
  * component, so the axes whose `unknown` state makes the atom unknowable are exactly
  * the ones named here, and restating the list there would let the two drift.
+ *
+ * The type is {@link GroupAxis} and not one version's tuple: `GROUP_KEYS` names a
+ * v4-only axis, so narrowing this to the v3 vocabulary would not compile.
  */
-export const CONNECTIVITY_AXES: readonly V3GroupAxis[] = [
-  ...new Set<V3GroupAxis>([...GROUP_KEYS, ...PARENT_LINKAGE_AXES]),
+export const CONNECTIVITY_AXES: readonly GroupAxis[] = [
+  ...new Set<GroupAxis>([...GROUP_KEYS, ...PARENT_LINKAGE_AXES]),
 ];
 
 /**

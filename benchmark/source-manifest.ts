@@ -13,9 +13,9 @@
 //   * `./rebuild-v3-policy.ts` — reads the frozen policy file at load, which is
 //     what makes this module Node-side; see "WHO OWNS WHICH VALUE" below and
 //     the load-cost note at the end of this header.
-//   * `./schema.ts` — the record-side axis vocabulary (`V3GroupAxis`), imported
-//     as a TYPE only so a source's `declaredGroupAxes` cannot name an axis no
-//     record can fill. The comparison itself lives on the record side
+//   * `./schema.ts` — the record-side axis vocabulary (`GroupAxis`, the union over
+//     every record version), imported as a TYPE only so a source's
+//     `declaredGroupAxes` cannot name an axis no record can fill. The comparison itself lives on the record side
 //     (`assertDeclaredAxesResolved`), which is what keeps this direction of the
 //     dependency the only one.
 // DEPENDENCIES (END)
@@ -143,7 +143,7 @@ import {
   REBUILD_V3_POLICY,
   type LabelBasisValue,
 } from "./rebuild-v3-policy.ts";
-import type { V3GroupAxis } from "./schema.ts";
+import type { GroupAxis } from "./schema.ts";
 
 export type ReviewedSourceEntryV1 =
   | {
@@ -981,8 +981,30 @@ export interface HumanSourceRegistrationV1 {
    * B2W review belongs to a PRODUCT and to a reviewer; a Carolina text belongs to
    * a MEMBER FILE of the package, whose own authorship the TEI header does not
    * give per document.
+   *
+   * `sourceMaterialBatch` is declared by EVERY human source, and what the declaration
+   * adds is narrower than "the axis's teeth" — say which refusal belongs to whom, or
+   * the next reader will trust the wrong one. The axis is not a split-union axis (one
+   * acquisition event per source would make each quota cell one indivisible component),
+   * so nothing in the PARTITIONING notices a missing material batch. Of the two
+   * refusals that do:
+   *
+   *   * on a HUMAN row the state table admits only `known`, so `unknown` there is a
+   *     VALIDATOR error and the declaration adds nothing to it; and a batch that names
+   *     no declared lot is refused by `auditCorpusSources` against `materialBatches`,
+   *     which is also not this list;
+   *   * what THIS declaration reaches is the one cohort whose acquisition event may
+   *     legitimately be `unknown` — `mixed-ecological`, an observed coauthored document
+   *     — plus a row of any cohort that has no such key at all. Both pass the validator
+   *     and both leave the dependence BETWEEN acquisitions unnamed, and the audit is the
+   *     only stage that refuses them.
+   *
+   * An axis a record's own schema version does not HAVE is not a gap: v2 and v3
+   * records have no `sourceMaterialBatch` key at all, so the audit asks whether the
+   * RECORD'S VERSION declares the axis before reading its state, which separates "this
+   * row did not answer" from "this version was never asked".
    */
-  declaredGroupAxes: readonly V3GroupAxis[];
+  declaredGroupAxes: readonly GroupAxis[];
 }
 
 /** Why a human source is not admissible. Each reason is a distinct diagnosis. */
@@ -1172,8 +1194,9 @@ export const A1_BLOCKED_HUMAN_SOURCES: readonly HumanSourceRegistrationV1[] = [
     labelBasis: "date-cutoff",
     anchorDateField: "Posts.xml@CreationDate",
     anchorDateScope: "document",
-    // An answer belongs to a THREAD and to an account.
-    declaredGroupAxes: ["author", "source"],
+    // An answer belongs to a THREAD and to an account, and the dump it was read
+    // out of is one acquisition event.
+    declaredGroupAxes: ["author", "source", "sourceMaterialBatch"],
   },
 ];
 
@@ -1220,8 +1243,9 @@ export const V3_HUMAN_SOURCE_INVENTORY: readonly HumanSourceRegistrationV1[] = [
     anchorDateField: "page/revision/timestamp",
     anchorDateScope: "document",
     // An article belongs to a PAGE and to no single author: collectively
-    // written, so `author` is legitimately notApplicable on those records.
-    declaredGroupAxes: ["source"],
+    // written, so `author` is legitimately notApplicable on those records. One
+    // dump is one acquisition event.
+    declaredGroupAxes: ["source", "sourceMaterialBatch"],
   },
   {
     sourceId: "src_carolina",
@@ -1232,8 +1256,9 @@ export const V3_HUMAN_SOURCE_INVENTORY: readonly HumanSourceRegistrationV1[] = [
     anchorDateField: 'teiHeader//date[@type="Download"]',
     anchorDateScope: "document",
     // A text belongs to a MEMBER FILE of the package; the TEI header gives no
-    // per-document authorship, so `author` is not declared.
-    declaredGroupAxes: ["source"],
+    // per-document authorship, so `author` is not declared. The typologies inside
+    // one package are partitions of a SINGLE acquisition, not separate ones.
+    declaredGroupAxes: ["source", "sourceMaterialBatch"],
   },
   {
     sourceId: "src_b2w",
@@ -1243,8 +1268,9 @@ export const V3_HUMAN_SOURCE_INVENTORY: readonly HumanSourceRegistrationV1[] = [
     labelBasis: "date-cutoff",
     anchorDateField: "submission_date",
     anchorDateScope: "document",
-    // A review belongs to a PRODUCT and to a reviewer.
-    declaredGroupAxes: ["author", "source"],
+    // A review belongs to a PRODUCT and to a reviewer; the CSV release it was read
+    // out of is one acquisition event.
+    declaredGroupAxes: ["author", "source", "sourceMaterialBatch"],
   },
 ];
 

@@ -767,6 +767,62 @@ de 2.2h:
   chamada), e o custo de NÃO fiar é o medido pela revisão: a propriedade existiria numa função e em
   nenhum pipeline.
 
+### 2.2i Eixo REPORTADO contra eixo de UNIÃO: a lista de conectividade v4 (Commit B da Fase 1, 2026-08-04)
+
+`GROUP_KEYS` (`benchmark/split.ts`) passa a nomear sete eixos — `author`, `source`,
+`generatorVersion`, `promptTemplate`, `generationBatch`, `nearDuplicate`, `derivationRoot`.
+`domainSource` sai, `sourceMaterialBatch` não entra, `extractionRun` nunca entra. Os dois primeiros
+viram eixos **reportados**: a auditoria publica o inventário deles por partição
+(`REPORTED_GROUP_AXES` em `benchmark/split-audit.ts`) e nenhum é usado para unir componente.
+
+Esta subseção não traz fonte nova: as âncoras são § 2.2g (unidade de amostragem contra variável de
+estratificação), § 2.2h (um eixo por fato) e as entradas de inferência clusterizada de § 4.1.
+
+- **Âncora do número de unidades, não de linhas:** o inventário real é **um evento de aquisição por
+  fonte** — um download do dump da Wikipédia, um download do pacote da Carolina, cujas tipologias são
+  partições daquele download e não aquisições separadas. Unir por qualquer dos dois eixos grossos faz
+  cada célula de cota virar **um** componente indivisível: as frações humanas por partição passam a ser
+  múltiplos de ~25 %, o alvo de `dev` (0,05) fica inalcançável por construção, e um piso contado em
+  **unidades independentes** lê 1 por célula para sempre. _Fonte:_ **Cameron & Miller, 2015**
+  (§ 4.1). [link](https://doi.org/10.3368/jhr.50.2.317) _Fato citado:_ a unidade de inferência é o
+  cluster inteiro, e é o **número de clusters** — não o número de linhas — que governa o que se pode
+  afirmar. _Fonte:_ **Kish, 1965** (§ 4.1).
+  [link](https://www.wiley.com/en-us/Survey+Sampling-p-9780471109495) _Fato citado:_ efeito de desenho
+  `1 + (m̄ − 1)·ICC`: com m̄ igual à célula inteira, o tamanho efetivo colapsa para a contagem de
+  clusters.
+- **O que a decisão explora:** a dependência que os dois eixos declaram **não é perdida**. Ela é
+  registrada: `sourceMaterialBatch` é a unidade declarada de dependência ENTRE aquisições, resolve
+  contra o inventário do manifesto revisado (§ 2.2h) e é declarado por toda fonte humana em
+  `declaredGroupAxes`. O que essa declaração alcança é **estreito e vale dizer qual recusa é de quem**:
+  numa linha humana `unknown` é erro do **validador** (a tabela de estados só admite `known` ali), e um
+  lote que não resolve contra o inventário é recusado por `auditCorpusSources`; a lacuna declarada
+  alcança a coorte `mixed-ecological`, cujo evento de aquisição pode legitimamente ser `unknown`, e a
+  linha que não tem a chave. As duas passam pelo validador, e a auditoria é o único estágio que as
+  reprova. A dependência INTRA-célula continua
+  com `author`, `source` (o documento de origem), `nearDuplicate` e a linhagem. _Fonte:_ **Cochran,
+  1977** (§ 4.1). [link](https://www.wiley.com/en-us/Sampling+Techniques,+3rd+Edition-p-9780471162407)
+  _Fato citado:_ estrato e unidade de amostragem são papéis distintos do desenho; um estrato descreve a
+  população e não é a unidade cuja variabilidade se estima. **Custo de reversão:** baixo em linhas (uma
+  tupla em `split.ts` e o espelho em `benchmark/lab/assemble_corpus.py`) e alto em consequência:
+  `benchmark/lab/test_connectivity_feasibility.py` mede as duas direções, e devolver qualquer dos dois
+  eixos à união torna o corpo de lote-único-por-célula inviável — pelo MENOR componente com o estrato
+  (quatro de 25 %), pelo MAIOR com o lote (um de 75 %, porque as três tipologias da Carolina saem do
+  mesmo download).
+- **`extractionRun` é diagnóstico e nunca une:** reextrair o mesmo dump não produz material novo, então
+  tratar duas execuções como duas unidades conta a mesma dependência duas vezes — a mesma âncora de
+  PROV-DM que § 2.2h usa para separar `Entity` de `Activity`.
+  [link](https://www.w3.org/TR/prov-dm/)
+
+**Sem precedente encontrado (2026-08-04)** para a prática específica: **publicar, no artefato de
+auditoria selado, o inventário por partição de um eixo que o particionador deliberadamente NÃO usa para
+agrupar, com a relação de união declarada por eixo (`sharedValue: false`) ao lado da contagem**. A
+literatura de amostragem distingue estrato de cluster no desenho, e a de proveniência exige declarar os
+campos; não foi encontrada prática de publicar as duas coisas na mesma linha de um relatório verificável.
+O motivo de fazer assim é medido: um eixo com uma contagem alta ao lado de nenhuma declaração de relação
+foi lido, neste projeto, como "um bloco indivisível" sobre linhas que o particionador havia acabado de
+pôr em lados opostos do corte — e um eixo ausente do relatório é um eixo que ninguém a jusante pode
+conferir.
+
 ### 2.3 Olhares repetidos nos dados e sequências sem teto
 
 - **Pocock, 1977 — Group sequential methods in the design and analysis of clinical trials**

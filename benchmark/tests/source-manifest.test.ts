@@ -43,7 +43,7 @@ import {
   type ReviewedSourceEntryV1,
   type ReviewedSourceManifestV1,
 } from "../source-manifest.ts";
-import { V3_GROUP_AXES } from "../schema.ts";
+import { ALL_GROUP_AXES } from "../schema.ts";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const REPO_ROOT = resolve(HERE, "../..");
@@ -1512,10 +1512,19 @@ describe("declaredGroupAxes on the v3 human inventory", () => {
     // Wikipedia -> page; B2W -> product and reviewer; Carolina -> member file.
     // `source` IS the origin document in v3, so page/product/member-file are one
     // axis under three names, and `author` is declared only where a single person
-    // wrote the text.
-    expect(byId.get("src_b2w")).toEqual(["author", "source"]);
-    expect(byId.get("src_wikipedia_pt")).toEqual(["source"]);
-    expect(byId.get("src_carolina")).toEqual(["source"]);
+    // wrote the text. `sourceMaterialBatch` is declared by EVERY human source: the
+    // splitter does not union on it, so the declaration is the only thing that turns
+    // an unrecovered acquisition event into an audit failure.
+    expect(byId.get("src_b2w")).toEqual([
+      "author",
+      "source",
+      "sourceMaterialBatch",
+    ]);
+    expect(byId.get("src_wikipedia_pt")).toEqual([
+      "source",
+      "sourceMaterialBatch",
+    ]);
+    expect(byId.get("src_carolina")).toEqual(["source", "sourceMaterialBatch"]);
     expect(byId.has("src_ptso")).toBe(false);
   });
 
@@ -1532,6 +1541,7 @@ describe("declaredGroupAxes on the v3 human inventory", () => {
     expect([...A1_BLOCKED_HUMAN_SOURCES[0].declaredGroupAxes]).toEqual([
       "author",
       "source",
+      "sourceMaterialBatch",
     ]);
     expect(A1_BLOCKED_HUMAN_SOURCES[0].anchorDateField).toBe(
       "Posts.xml@CreationDate",
@@ -1560,9 +1570,15 @@ describe("declaredGroupAxes on the v3 human inventory", () => {
   });
 
   it("declares no axis a record cannot fill", () => {
-    for (const entry of V3_HUMAN_SOURCE_INVENTORY) {
+    // Against the union over every record version, not against one tuple: a source
+    // may declare an axis only v4 names, and the property that matters is that SOME
+    // version of a record can fill it.
+    for (const entry of [
+      ...V3_HUMAN_SOURCE_INVENTORY,
+      ...A1_BLOCKED_HUMAN_SOURCES,
+    ]) {
       for (const axis of entry.declaredGroupAxes) {
-        expect(V3_GROUP_AXES).toContain(axis);
+        expect(ALL_GROUP_AXES).toContain(axis);
       }
     }
   });

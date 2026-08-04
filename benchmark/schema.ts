@@ -1090,6 +1090,27 @@ export type V4GroupAxis = (typeof V4_GROUP_AXES)[number];
  */
 export type GroupAxis = V3GroupAxis | V4GroupAxis;
 
+/**
+ * Every axis ANY version declares, in one fixed order: the v3 tuple, then the axes
+ * only v4 has.
+ *
+ * It is what a consumer reporting over a corpus of mixed versions orders by, taking
+ * an axis only when a record actually declares it ({@link recordGroupAxes}). The two
+ * halves of that rule answer two different failures: a hard-coded single-version
+ * tuple publishes `unknown` for every axis the corpus's own version never had, and an
+ * insertion-ordered union makes the report depend on record order, which a
+ * digest-sealed artifact cannot afford.
+ *
+ * The ORDER decides no digest — `canonicalJson` sorts keys — it decides that the two
+ * tuples are concatenated in ONE place instead of once per consumer.
+ */
+export const ALL_GROUP_AXES: readonly GroupAxis[] = [
+  ...V3_GROUP_AXES,
+  ...V4_GROUP_AXES.filter(
+    (axis) => !(V3_GROUP_AXES as readonly string[]).includes(axis),
+  ),
+];
+
 /** The three states R6 allows, and no fourth. */
 export type GroupAxisState = "known" | "notApplicable" | "unknown";
 
@@ -3604,6 +3625,15 @@ export function recordEligibility(record: BenchmarkRecord): {
  * recover a value the source says exists, while `notApplicable` CONTRADICTS the
  * source's own declaration — one is a gap, the other is a disagreement.
  *
+ * An axis the record's OWN VERSION does not declare is skipped, on the same reading
+ * `auditDeclaredAxes` (benchmark/split-audit.ts) uses, and the two must not diverge:
+ * they are one join with one authority. Every human source declares
+ * `sourceMaterialBatch`, which only v4 has, so without this gate wiring the function
+ * would throw on every v2 and v3 row of `src_carolina`, `src_wikipedia_pt` and
+ * `src_b2w` for failing to fill a key their schema never offered. Within a version
+ * that DOES declare the axis an absent key still refuses, because v3 and v4 make every
+ * axis key mandatory — the row answered with nothing rather than with `unknown`.
+ *
  * NOT WIRED YET, and deliberately named as such: no production path calls this.
  * The obligation is C3's — it is the task that reads
  * `private/source-manifest.json`, so it is the only one that can pair a record
@@ -3617,6 +3647,11 @@ export function assertDeclaredAxesResolved(
   declaredAxes: readonly GroupAxis[],
 ): void {
   for (const axis of declaredAxes) {
+    const versionHasAxis =
+      record.schemaVersion === 2
+        ? groupAxisDeclaredState(record, axis) !== undefined
+        : (recordGroupAxes(record) as readonly string[]).includes(axis);
+    if (!versionHasAxis) continue;
     const state = groupAxisState(record, axis);
     if (state === "known") continue;
     throw new BenchmarkRecordError(

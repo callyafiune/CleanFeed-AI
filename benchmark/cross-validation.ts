@@ -8,7 +8,7 @@
 // was a per-record-line fold: the folds were random by row and the calibrator this
 // module returns inherited that degeneration (assessment §3.6). And the atom was
 // never the author to begin with — a thread, a page, a prompt template, a
-// collection batch or a lineage seed makes two rows dependent without their sharing
+// generation batch or a lineage seed makes two rows dependent without their sharing
 // an author at all.
 //
 // What this module contracts now, stated as what is measured (R7) and not as a
@@ -18,11 +18,20 @@
 //     (benchmark/cluster-exposure-ledger.ts, which delegates to
 //     `connectedComponentRoots`). No connectivity is re-derived here. A whole
 //     cluster lands in exactly ONE fold's validation half, so no cluster spans a
-//     fold's train and validation halves — and therefore no author, source,
-//     domainSource, prompt template, generator version, collection batch,
-//     near-duplicate group or lineage parent spans them either, because each of
-//     those relations is already closed over inside the component. That is why
-//     there is NO second, hierarchical cross-validation: the component subsumes it.
+//     fold's train and validation halves — and therefore no identity on an axis of
+//     `CLUSTER_ATOM_AXES` spans them either, because those are exactly the relations
+//     the component is closed over. That is why there is NO second, hierarchical
+//     cross-validation: the component subsumes it.
+//   * The closure claim stops at that list, and the two axes OUTSIDE it are NAMED
+//     rather than left to a reader, because a reader who assumes closure over them
+//     states a false independence claim. `domainSource` (the stratum) and
+//     `sourceMaterialBatch` (the acquisition event) are not union axes: one value of
+//     either covers a whole quota cell, so unioning on them would make the cell a
+//     single indivisible atom and leave nothing to cross-validate. Both therefore
+//     span every fold freely. They carry dependence BETWEEN cells, and the audit
+//     publishes them as an inventory per partition; what makes rows inside one cell
+//     dependent — `author`, `source`, `nearDuplicate`, the generation axes and
+//     lineage — is in the list above.
 //   * The lineage half of that sentence has a CONDITION, and it is stated because
 //     the fold construction is not evidence of sampling independence (R7):
 //     `humanSeed` and `derivationRoot` are PARENT LINKAGE, so they union a row with

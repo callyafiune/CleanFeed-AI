@@ -24,6 +24,7 @@ import {
   V3_GROUP_AXES,
   validateBenchmarkRecord,
   validateBenchmarkRecordV3,
+  validateBenchmarkRecordV4,
   type BenchmarkRecordV3,
 } from "../schema.ts";
 import {
@@ -36,6 +37,7 @@ import {
   v3Human,
   v3Mixed,
   v3MixedEcological,
+  v4Human,
   withAxis,
   withGeneration,
 } from "./helpers/v3-record-fixture.ts";
@@ -151,6 +153,29 @@ describe("v3 grouping axes carry an explicit three-valued state", () => {
     expect(() =>
       assertDeclaredAxesResolved(missing, ["author", "source"]),
     ).toThrow(/declares axis "author".*unknown/u);
+  });
+
+  it("skips an axis a v3 record's version never had, and refuses a v4 row missing its key", () => {
+    // The join is ONE join with one authority, so this function reads the declaration
+    // the way `auditDeclaredAxes` (benchmark/split-audit.ts) does. Every human source in
+    // the reviewed inventory declares `sourceMaterialBatch`, an axis only v4 has: reading
+    // the plain eligibility state would map the absent key to `unknown` and make wiring
+    // this function throw on every v3 row of every human source.
+    const v3 = validateBenchmarkRecordV3(v3Human());
+    expect(Object.hasOwn(v3.groups, "sourceMaterialBatch")).toBe(false);
+    expect(() =>
+      assertDeclaredAxesResolved(v3, ["source", "sourceMaterialBatch"]),
+    ).not.toThrow();
+
+    // Within a version that DOES declare the axis, an absent key still refuses: v4
+    // makes all fourteen keys mandatory, so the row answered with nothing at all.
+    const v4 = validateBenchmarkRecordV4(v4Human());
+    const groups = { ...(v4.groups as Record<string, unknown>) };
+    delete groups.sourceMaterialBatch;
+    const stripped = { ...v4, groups } as unknown as typeof v4;
+    expect(() =>
+      assertDeclaredAxesResolved(stripped, ["source", "sourceMaterialBatch"]),
+    ).toThrow(/declares axis "sourceMaterialBatch".*unknown/u);
   });
 });
 

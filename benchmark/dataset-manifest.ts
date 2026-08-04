@@ -33,14 +33,13 @@ import {
 } from "./generator-family.ts";
 import { REBUILD_V3_POLICY } from "./rebuild-v3-policy.ts";
 import {
+  ALL_GROUP_AXES,
   AUTOMATED_UNREVIEWED,
   groupAxisIdentity,
   LABEL_DISPUTE_UNRESOLVED,
   recordEligibility,
   recordGroupAxes,
   reviewClaimSupport,
-  V3_GROUP_AXES,
-  V4_GROUP_AXES,
   validateBenchmarkRecord,
   type BenchmarkRecord,
   type GroupAxis,
@@ -50,12 +49,7 @@ import {
 // array publishes every axis it actually holds instead of the axes of whichever
 // version was hard-coded here. `canonicalJson` sorts keys, so this order decides
 // nothing about a digest — it decides that no axis is silently dropped.
-const PUBLISHED_AXES: readonly GroupAxis[] = [
-  ...V3_GROUP_AXES,
-  ...V4_GROUP_AXES.filter(
-    (axis) => !(V3_GROUP_AXES as readonly string[]).includes(axis),
-  ),
-];
+const PUBLISHED_AXES: readonly GroupAxis[] = ALL_GROUP_AXES;
 
 export interface DatasetManifest {
   schemaVersion: 1;

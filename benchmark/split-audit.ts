@@ -3,12 +3,18 @@
 // properties a release claim rests on, and FAILS on those no later stage can
 // repair:
 //
-//   1. zero group leakage on all eight connected-component axes,
+//   1. zero group leakage on every connected-component axis (`GROUP_KEYS`),
 //   2. a strictly-latest blocked test (no future -> earlier-partition leak),
 //   3. dev, cal-A and cal-B in temporal order among themselves,
 //   4. per-class 45/5/10/20/20 within a two-point tolerance, and
 //   5. no declared group axis left `unknown`: the source states the dependence
 //      exists, so an axis nobody recovered cannot support the split.
+//
+// The axes the splitter does NOT union on are still REPORTED here, per partition, and
+// `REPORTED_GROUP_AXES` names the two whose dependence is carried that way on purpose.
+// An inventory is what a coarse axis can honestly support: unioning on it would put a
+// whole quota cell in one partition (see `GROUP_KEYS` in benchmark/split.ts), while an
+// axis absent from this report is an axis nobody downstream can gate on.
 //
 // The sampling floors are NOT failures. `minimumTestHumanNegatives` counts
 // aggregate record-lines while a power claim needs sampling units, so it is
@@ -30,13 +36,15 @@ import {
 import { REBUILD_V3_POLICY } from "./rebuild-v3-policy.ts";
 import { V3_HUMAN_SOURCE_INVENTORY } from "./source-manifest.ts";
 import {
-  V3_GROUP_AXES,
+  ALL_GROUP_AXES,
+  groupAxisDeclaredState,
   groupAxisIdentity,
   groupAxisState,
+  recordGroupAxes,
   type BenchmarkLabel,
   type BenchmarkRecord,
+  type GroupAxis,
   type GroupAxisState,
-  type V3GroupAxis,
 } from "./schema.ts";
 import {
   axisConnectivity,
@@ -67,13 +75,37 @@ export const FROZEN_SPLIT_AUDIT_POLICY: SplitAuditPolicy = {
  * applicable. Built from the frozen inventory in the tree, so the check needs no private
  * file and cannot be softened by one.
  */
-export const DECLARED_GROUP_AXES: ReadonlyMap<string, readonly V3GroupAxis[]> =
+export const DECLARED_GROUP_AXES: ReadonlyMap<string, readonly GroupAxis[]> =
   new Map(
     V3_HUMAN_SOURCE_INVENTORY.map((entry) => [
       entry.sourceId,
       entry.declaredGroupAxes,
     ]),
   );
+
+/**
+ * The axes the splitter refuses to UNION on and this audit therefore has to
+ * REPORT — an inventory per partition, never a cluster the split rests on.
+ *
+ * Both name a real dependence and neither can carry it through the partitioning.
+ * There is one acquisition event per source and one stratum per quota cell, so
+ * unioning on either would make a whole cell a single indivisible component: the
+ * human partition fractions become multiples of ~25%, `dev`'s 0.05 is unreachable,
+ * and a unit floor counted in components reads 1 per cell forever (the argument is
+ * written out at `GROUP_KEYS` in benchmark/split.ts, which is where the exclusion is
+ * enforced). What remains available is an inventory — how many distinct strata and
+ * acquisition events each partition holds — and that is what the cluster report
+ * publishes for them, with `connectivity.sharedValue: false` stating outright that
+ * the splitter did not group by them.
+ *
+ * This list may never intersect `GROUP_KEYS`. It is not a second vocabulary the audit
+ * enforces on the splitter; it is the pair whose REPORTED standing the audit is
+ * responsible for, and a test pins the disjointness against the splitter's own list.
+ */
+export const REPORTED_GROUP_AXES = [
+  "domainSource",
+  "sourceMaterialBatch",
+] as const satisfies readonly GroupAxis[];
 
 export interface SplitAuditPolicy {
   /**
@@ -212,7 +244,7 @@ export type AxisConnectivityReport =
     });
 
 export interface AxisClusterReport {
-  axis: V3GroupAxis;
+  axis: GroupAxis;
   /**
    * The two union relations and the measured resolution of the conditional one,
    * never one flag: see {@link AxisConnectivityReport}.
@@ -254,7 +286,7 @@ export interface SplitClusterReport {
  */
 export interface DeclaredAxisGap {
   sourceId: string;
-  axis: V3GroupAxis;
+  axis: GroupAxis;
   state: "unknown";
   recordLines: number;
 }
@@ -477,7 +509,7 @@ export function auditBlockedSplit(
   split: DatasetSplitInput,
   policy: SplitAuditPolicy,
   declaredHeldOutGeneratorFamilies: readonly GeneratorFamily[],
-  declaredGroupAxes: ReadonlyMap<string, readonly V3GroupAxis[]> = new Map(),
+  declaredGroupAxes: ReadonlyMap<string, readonly GroupAxis[]> = new Map(),
 ): SplitAudit {
   const byPartition: Record<Partition, readonly BenchmarkRecord[]> = {
     train: split.train,
@@ -552,16 +584,41 @@ export function auditBlockedSplit(
 }
 
 /**
+ * The axes a cluster report over THESE record-lines carries, in {@link ALL_GROUP_AXES}
+ * order.
+ *
+ * Derived from the records and never pinned to one version's tuple. A v4 corpus read
+ * against the v3 tuple publishes `collectionBatch` with `states.unknown = N` — an axis
+ * nobody declared, reported as broken rather than as absent — and OMITS the three axes
+ * v4 introduced, including both members of {@link REPORTED_GROUP_AXES} that only v4
+ * names. A mixed-version corpus carries the union, because each record answers for its
+ * own version.
+ */
+function reportedAxesOf(records: readonly BenchmarkRecord[]): GroupAxis[] {
+  const declared = new Set<GroupAxis>();
+  for (const record of records) {
+    for (const axis of recordGroupAxes(record)) declared.add(axis);
+  }
+  return ALL_GROUP_AXES.filter((axis) => declared.has(axis));
+}
+
+/**
  * A stand-in cluster report for a HAND-BUILT audit object in a test fixture.
  *
  * `auditBlockedSplit` never returns this: it measures. It exists so a fixture that
  * only needs a structurally valid `SplitAudit` does not have to fabricate counts,
  * and it is deliberately all-zero so a fixture that leaks into a real assertion is
  * obviously empty rather than plausibly wrong.
+ *
+ * `axes` is REQUIRED, and a default would defeat the purpose: a fixture standing in
+ * for a v4 audit has to say so, because the axis list is exactly what the two versions
+ * disagree about. Pass the tuple of the version the fixture models.
  */
-export function standInClusterReport(): SplitClusterReport {
+export function standInClusterReport(
+  axes: readonly GroupAxis[],
+): SplitClusterReport {
   return {
-    axes: V3_GROUP_AXES.map((axis) => {
+    axes: axes.map((axis) => {
       return {
         axis,
         connectivity: connectivityReport(axis, () => ({
@@ -647,7 +704,7 @@ function auditLeakages(
 ): SplitAudit["leakages"] {
   const leakages: SplitAudit["leakages"] = [];
 
-  // Per-value checks on each of the eight grouping axes.
+  // Per-value checks on each grouping axis the splitter unions by VALUE.
   for (const axis of GROUP_KEYS) {
     const partitionsByValue = new Map<string, Set<Partition>>();
     for (const partition of PARTITIONS) {
@@ -763,7 +820,7 @@ function auditClusters(
   // completeness check in split-artifact.ts refuses, not a cluster.
   const assigned = records.filter((record) => partitionOf.has(record.id));
 
-  const axes = V3_GROUP_AXES.map((axis) => {
+  const axes = reportedAxesOf(assigned).map((axis) => {
     const states: Record<GroupAxisState, number> = {
       known: 0,
       notApplicable: 0,
@@ -834,7 +891,7 @@ function auditClusters(
  * {@link standInClusterReport} cannot disagree about which axes carry a resolution.
  */
 function connectivityReport(
-  axis: V3GroupAxis,
+  axis: GroupAxis,
   measure: () => LinkageResolution,
 ): AxisConnectivityReport {
   const connectivity = axisConnectivity(axis);
@@ -854,7 +911,7 @@ function connectivityReport(
  */
 function measureLinkage(
   records: readonly BenchmarkRecord[],
-  axis: V3GroupAxis,
+  axis: GroupAxis,
 ): LinkageResolution {
   const ids = new Set(records.map((record) => record.id));
   const resolution: LinkageResolution = {
@@ -907,16 +964,36 @@ function toSliceCounts(
  * not mention is not examined: there is no declaration to contradict, and
  * inventing one would be inventing the very thing the declaration exists to make
  * checkable.
+ *
+ * The reading is VERSION-AWARE, and that is load-bearing now that a source may
+ * declare an axis only v4 has. Plain {@link groupAxisState} maps an ABSENT key to
+ * `unknown`, which is the truthful reading for ELIGIBILITY and the wrong one for a
+ * refusal: it would fault every v2 and v3 record for leaving `sourceMaterialBatch`
+ * unrecovered when their schema version has no such key to fill.
+ *
+ * Version awareness is asked two ways because the versions answer it two ways, and
+ * reading only the key's presence ({@link groupAxisDeclaredState} alone) is too weak:
+ * v3 and v4 make every axis key MANDATORY, so their own tuple is exact and an absent
+ * key there is a MALFORMED row rather than a version that was never asked — a v4 row
+ * whose `sourceMaterialBatch` key went missing answers the declaration with nothing at
+ * all, and must still be a gap. A v2 `groups` block carries nine keys and no states,
+ * and {@link recordGroupAxes} answers for it with the v3 tuple, so for v2 only the
+ * key's own presence can be read.
  */
 function auditDeclaredAxes(
   records: readonly BenchmarkRecord[],
-  declaredGroupAxes: ReadonlyMap<string, readonly V3GroupAxis[]>,
+  declaredGroupAxes: ReadonlyMap<string, readonly GroupAxis[]>,
 ): DeclaredAxisGap[] {
   const counts = new Map<string, number>();
   for (const record of records) {
     const declared = declaredGroupAxes.get(record.provenance.sourceId);
     if (declared === undefined) continue;
     for (const axis of declared) {
+      const versionHasAxis =
+        record.schemaVersion === 2
+          ? groupAxisDeclaredState(record, axis) !== undefined
+          : (recordGroupAxes(record) as readonly string[]).includes(axis);
+      if (!versionHasAxis) continue;
       if (groupAxisState(record, axis) !== "unknown") continue;
       const key = `${record.provenance.sourceId}${KEY_SEP}${axis}`;
       counts.set(key, (counts.get(key) ?? 0) + 1);
@@ -927,7 +1004,7 @@ function auditDeclaredAxes(
       const [sourceId, axis] = key.split(KEY_SEP);
       return {
         sourceId,
-        axis: axis as V3GroupAxis,
+        axis: axis as GroupAxis,
         state: "unknown" as const,
         recordLines,
       };

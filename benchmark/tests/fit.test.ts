@@ -97,14 +97,14 @@ function makeRecord(
   // four-way invariant in benchmark/generator-family.ts refuses a reservation
   // nothing satisfies.
   family = "acme_family",
-  // The SPLIT/EXPOSURE CLUSTER this row belongs to. `domainSource` and
-  // `collectionBatch` are shared inside one cluster and NESTED in it (a collection
-  // batch belongs to one stratum), so the connected component of the union of the
-  // grouping axes is this cluster. Giving every row of a corpus the SAME value on
-  // those two axes — which this fixture used to do — describes a corpus that is ONE
-  // indivisible cluster, and a corpus of one cluster can be neither split nor
-  // cross-validated. Development, calibration and test clusters are disjoint, so no
-  // component straddles a partition either.
+  // The SPLIT/EXPOSURE CLUSTER this row belongs to, carried by `source` — the ORIGIN
+  // DOCUMENT, which is a union axis: several rows read out of one document are one
+  // component. `domainSource` and `collectionBatch` are shared inside the cluster and
+  // NESTED in it (a collection batch belongs to one stratum), and they are REPORTED
+  // axes rather than union axes, so nothing but `source` glues these rows. Giving
+  // every row of a corpus the same cluster describes a corpus that is ONE indivisible
+  // cluster, which can be neither split nor cross-validated. Development, calibration
+  // and test clusters are disjoint, so no component straddles a partition either.
   cluster = "c0",
 ): BenchmarkRecord {
   const base: BenchmarkRecord = {
@@ -142,7 +142,7 @@ function makeRecord(
     transformation: { kind: "none", severity: "none" },
     groups: {
       author: `author_${id}`,
-      source: `src_${id}`,
+      source: `doc_${cluster}`,
       domainSource: `ds_${cluster}`,
       collectionBatch: `batch_${cluster}`,
       nearDuplicate: `nd_${id}`,

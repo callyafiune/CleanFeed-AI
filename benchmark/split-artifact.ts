@@ -219,7 +219,7 @@ export class SplitArtifactError extends Error {
  * Both numbers, because they answer different questions and only their pair is honest. Lines
  * say how much text there is; components say how many independent observations it carries,
  * and the two diverge by orders of magnitude on a corpus whose rows share generator,
- * collection batch or derivation chain.
+ * generation batch or derivation chain.
  *
  * `connectedComponentRoots` is the single source of connectivity truth (benchmark/split.ts),
  * the same one the splitter and the audit call, so this inventory cannot disagree with the

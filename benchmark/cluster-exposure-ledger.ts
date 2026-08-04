@@ -76,8 +76,7 @@ import {
   nearDuplicateFingerprint,
 } from "./near-duplicates.ts";
 import {
-  V3_GROUP_AXES,
-  V4_GROUP_AXES,
+  ALL_GROUP_AXES,
   groupAxisIdentity,
   recordGroupAxes,
   type BenchmarkRecord,
@@ -89,12 +88,7 @@ import { connectedComponentRoots } from "./split.ts";
 // corpora of more than one version, so the vocabulary a stored event is checked
 // against is the union: an event naming an axis of the OTHER version is a real
 // event, not a typo, and refusing it would make history unreadable.
-const LEDGER_AXIS_NAMES: readonly string[] = [
-  ...V3_GROUP_AXES,
-  ...V4_GROUP_AXES.filter(
-    (axis) => !(V3_GROUP_AXES as readonly string[]).includes(axis),
-  ),
-];
+const LEDGER_AXIS_NAMES: readonly string[] = ALL_GROUP_AXES;
 
 /** The canonical file names. The DATA is one artifact for the whole project. */
 export const CLUSTER_EXPOSURE_LEDGER_FILE = "cluster-exposure-ledger.v1.jsonl";

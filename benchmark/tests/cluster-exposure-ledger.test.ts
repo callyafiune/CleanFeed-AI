@@ -2291,8 +2291,10 @@ function humanRow(
   let raw: Record<string, unknown> = { ...v3Human(), id };
   raw = withAxis(raw, "author", known(axes.author));
   raw = withAxis(raw, "source", known(axes.source));
-  // Everything else that GROUP_KEYS unions on is made per-row, so the only
-  // connectivity in the fixture is the connectivity the test asks for.
+  // Every other axis is made per-row, so the only connectivity in the fixture is the
+  // connectivity the test asks for. `domainSource` and `collectionBatch` are not axes
+  // the splitter unions on, and both admit `known` and nothing else in every class
+  // (schema AXIS_STATE_RULE), so per-row values are the only way to write them.
   raw = withAxis(raw, "domainSource", known(`ds_${id}`));
   raw = withAxis(raw, "collectionBatch", known(`cb_${id}`));
   raw = withAxis(raw, "nearDuplicate", known(`nd_${id}`));

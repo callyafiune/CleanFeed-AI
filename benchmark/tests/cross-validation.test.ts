@@ -15,13 +15,18 @@ import {
 } from "../cross-validation.ts";
 import { eceEqualMass } from "../metrics.ts";
 import { REBUILD_V3_POLICY } from "../rebuild-v3-policy.ts";
-import { validateBenchmarkRecordV3, type BenchmarkRecord } from "../schema.ts";
+import {
+  validateBenchmarkRecordV3,
+  validateBenchmarkRecordV4,
+  type BenchmarkRecord,
+} from "../schema.ts";
 import {
   known,
   notApplicable,
   unknownAxis,
   v3Ai,
   v3Human,
+  v4MixedEcological,
   withAxis,
 } from "./helpers/v3-record-fixture.ts";
 
@@ -40,25 +45,22 @@ const ECE_MAXIMUM = REBUILD_V3_POLICY.calibrationGate.eceMax;
 // split/exposure clusters of three record-lines each, where a cluster shares an
 // `author`/`source` chain AND a per-cluster `domainSource` and `collectionBatch`.
 // Per-cluster is what a corpus really looks like — a collection batch belongs to one
-// stratum — and it is also what keeps the five components from collapsing into one:
-// those two axes are shared by design across many rows, so a fixture giving EVERY
-// row the same value describes a corpus that is one indivisible cluster and cannot
-// be cross-validated at all.
+// stratum — and giving EVERY row of a corpus the same value on those two would
+// describe a corpus that is one indivisible cluster and cannot be cross-validated at
+// all.
 //
-// But precisely because `domainSource` and `collectionBatch` are `GROUP_KEYS` value
-// axes, a per-cluster value ALREADY unions each trio through a single axis. Measured
-// on this fixture with `author` and `source` made distinct per row: still one root
-// per trio. So it cannot show that the CONNECTED COMPONENT is the atom rather than
-// some one axis — the chain in it is load-bearing for nothing, and an earlier comment
-// here claiming "rows 0 and 2 share no axis value at all" was false against the four
-// lines below it.
+// The CHAIN is what unions each trio here: `domainSource` and `collectionBatch` are
+// not axes the splitter unions on (benchmark/split.ts `GROUP_KEYS`), so a per-cluster
+// value on either of them groups nothing. The trio is one atom because
+// author(0,1) + source(1,2) closes transitively, and the atom is the connected
+// component of that union.
 //
 // `isolatedChain` is the discriminating one, used only for that claim: every
 // non-chain axis is per-ROW, so the ONLY relation joining row 0 to row 2 is
 // author(0,1) + source(1,2). All three of `domainSource`, `collectionBatch` and
 // `nearDuplicate` admit `known` and nothing else in every class (schema
-// AXIS_STATE_RULE), so per-row distinct values are the only way to neutralise them —
-// `notApplicable` is refused by the validator, which was measured before writing
+// AXIS_STATE_RULE), so per-row distinct values are the only way to write them at all
+// — `notApplicable` is refused by the validator, which was measured before writing
 // this. Distinct-per-row here models "each row came from its own source and batch"
 // in a three-row fixture; it is not the R6 defect of minting a synthetic id per
 // record-line to make a real corpus splittable.
@@ -411,9 +413,9 @@ describe("clusterRootsOf", () => {
 
   it("keeps the realistic per-cluster fixture whole, through the axes it really shares", () => {
     // The fold fixture, stated for what it IS: each trio shares an author/source
-    // chain AND a per-cluster `domainSource` and `collectionBatch`, either of which
-    // alone would already union the trio. That makes it the right fixture for fold
-    // behaviour and the wrong one for the connected-component claim above.
+    // chain, and the per-cluster `domainSource` and `collectionBatch` union nothing
+    // because the splitter does not group by them. So the trio is whole through the
+    // chain's transitive closure, which is the same relation the claim above rests on.
     const rootById = clusterRootsOf(chainedRecords);
     for (let cluster = 0; cluster < FOLDS; cluster += 1) {
       const first = rootById.get(`h_${cluster}_0`);
@@ -451,6 +453,40 @@ describe("clusterRootsOf", () => {
       ...chainedRecords,
     ];
     expect(() => clusterRootsOf(withNotApplicable)).not.toThrow();
+  });
+
+  it("refuses the generation batch left unknown, because it is a v4 union axis too", () => {
+    // `CLUSTER_ATOM_AXES` is `CONNECTIVITY_AXES`, so the seventh union axis v4
+    // introduced has to make the atom unknowable exactly like the other six. Written
+    // over `mixed-ecological` because that is the ONE cohort the state table lets write
+    // `unknown` on this axis: on an `ai` row it is a validator error, so a fixture there
+    // would be refused a stage earlier and would measure the validator instead.
+    let raw: Record<string, unknown> = {
+      ...v4MixedEcological(),
+      id: "m_eco_batch_unknown",
+    };
+    raw = withAxis(
+      raw,
+      "generationBatch",
+      unknownAxis(
+        "the coauthor's tool ran outside our recipes and named no batch",
+      ),
+    );
+    const ecological = validateBenchmarkRecordV4(
+      raw,
+    ) as unknown as BenchmarkRecord;
+
+    expect(() => clusterRootsOf([ecological])).toThrow(ClusterFoldError);
+    expect(() => clusterRootsOf([ecological])).toThrow(
+      /groups\.generationBatch/u,
+    );
+    expect(() => clusterRootsOf([ecological])).toThrow(/m_eco_batch_unknown/u);
+    // Non-vacuous in the other direction: `notApplicable` on the same axis and cohort
+    // is legitimate and must pass, so the refusal is about the STATE and not the axis.
+    const notOurs = validateBenchmarkRecordV4(
+      v4MixedEcological(),
+    ) as unknown as BenchmarkRecord;
+    expect(() => clusterRootsOf([notOurs])).not.toThrow();
   });
 
   it("does NOT join two rows grown from the same ABSENT lineage seed, and that is measured here rather than assumed away", () => {

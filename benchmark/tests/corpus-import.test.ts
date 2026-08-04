@@ -37,6 +37,7 @@ import {
 import { runValidate } from "../commands/validate.ts";
 import { runIngest } from "../commands/ingest.ts";
 import { runSplit } from "../commands/split.ts";
+import { connectedComponentRoots } from "../split.ts";
 import { validateSplitArtifact } from "../split-artifact.ts";
 import { normalizeGeneratorFamily } from "../generator-family.ts";
 
@@ -617,10 +618,22 @@ function baseGroups(id: string, batch: string): BenchmarkRecordV2["groups"] {
   };
 }
 
+// How many human record-lines come out of ONE origin document. `source` is the origin
+// document and it unions by value, so this is what gives the 10k corpus components
+// larger than a record-line — without it every human row is its own atom and the
+// audit's leakage check over `GROUP_KEYS` is satisfied by identifiers minted never to
+// collide, which is the tautology the audit exists not to be.
+const HUMAN_ROWS_PER_DOCUMENT = 10;
+
+function humanDocument(batch: string, index: number): string {
+  return `doc_${batch}_${Math.floor(index / HUMAN_ROWS_PER_DOCUMENT)}`;
+}
+
 function human(
   id: string,
   createdAt: number,
   batch: string,
+  document: string,
 ): BenchmarkRecordV2 {
   const text = buildText(id);
   return {
@@ -652,7 +665,7 @@ function human(
     },
     annotation: ANNOTATION,
     transformation: { kind: "none", severity: "none" },
-    groups: baseGroups(id, batch),
+    groups: { ...baseGroups(id, batch), source: document },
   };
 }
 
@@ -859,14 +872,22 @@ const BLOCKS: readonly Block[] = [
 ];
 
 /**
- * `straddleLastCut` faz UM humano do bloco de `test` declarar o lote do bloco de `train`.
+ * `straddleLastCut` faz UM humano do bloco de `test` declarar o DOCUMENTO DE ORIGEM de um
+ * humano do bloco de `train`.
  *
- * Os humanos de um bloco compartilham `collectionBatch`, e `collectionBatch` une por valor, então
- * cada bloco humano já é um componente e os componentes se alinham às bandas de tempo. Mover um
- * único registro de lote faz o componente do treino ATRAVESSAR o último corte: ele passa a conter
- * texto com tempo da banda de teste. O splitter constrói isso sem notar, porque proporção e
- * conectividade continuam satisfeitas; a auditoria é o único lugar que recusa, por
- * `earliest(test) > latest(train)`.
+ * `source` é o documento de origem e une por valor, então os dois passam a ser UM componente,
+ * cujo intervalo de tempo vai de `TRAIN_TIME` a `TEST_TIME`. O splitter só coloca um
+ * componente numa partição do meio quando o intervalo INTEIRO cabe na banda dela, e `train` é
+ * o fallback — então o componente cai em `train` levando texto com tempo da banda de teste. O
+ * splitter constrói isso sem notar, porque uma linha em dez mil não move fração alguma para
+ * fora da tolerância e a conectividade continua satisfeita; a auditoria é o único lugar que
+ * recusa, por `earliest(test) > latest(train)`.
+ *
+ * As duas linhas são escolhidas entre os humanos SEM filho `mixed` dos dois blocos, para que o
+ * componente atravessador seja o documento do treino (dez linhas, nenhuma com filho) mais a
+ * única linha de `test`, e o que a auditoria recusa fique legível. Os pais são
+ * `humanIds[n % humanIds.length]` para n em [0, block.mixed), ou seja os índices
+ * 0..mixed-1, então o primeiro sem filho é o índice `block.mixed`.
  */
 function generateCorpus(
   opts: { straddleLastCut?: boolean } = {},
@@ -877,25 +898,33 @@ function generateCorpus(
     index += 1;
     return `r${index.toString().padStart(6, "0")}`;
   };
+  // Capturado do registro construído, nunca escrito à mão: o token vem de `baseGroups`, e
+  // uma segunda grafia dele aqui aceitaria a mudança de `baseGroups` sem unir nada.
+  let documentoDoTreino: string | undefined;
 
   for (const block of BLOCKS) {
     const humanIds: string[] = [];
     for (let n = 0; n < block.human; n += 1) {
       const id = nextId();
       humanIds.push(id);
-      // O atravessador tem de ser um humano SEM filho `mixed`. Os pais são
-      // `humanIds[n % humanIds.length]` para n em [0, block.mixed), ou seja os índices
-      // 0..mixed-1, então o primeiro sem filho é o índice `block.mixed`. Escolher o índice 0
-      // arrastava o bloco INTEIRO: o filho dele compartilha `mixedBatch` com todos os outros
-      // mixed, que apontam para os demais humanos, e o fecho transitivo fundia teste com treino
-      // — aí o splitter recusa por proporção antes de a auditoria ver qualquer coisa.
-      const lote =
+      const registro = human(
+        id,
+        block.time,
+        block.humanBatch,
+        humanDocument(block.humanBatch, n),
+      );
+      if (block.time === TRAIN_TIME && n === block.mixed) {
+        documentoDoTreino = registro.groups.source;
+      }
+      if (
         opts.straddleLastCut === true &&
         block.time === TEST_TIME &&
-        n === block.mixed
-          ? BLOCKS[0].humanBatch
-          : block.humanBatch;
-      records.push(human(id, block.time, lote));
+        n === block.mixed &&
+        documentoDoTreino !== undefined
+      ) {
+        registro.groups = { ...registro.groups, source: documentoDoTreino };
+      }
+      records.push(registro);
     }
     for (let n = 0; n < block.aiSeen; n += 1) {
       records.push(ai(nextId(), block.time, block.aiBatch, SEEN_FAMILY));
@@ -953,6 +982,27 @@ function generationBatches(): GenerationBatchV1[] {
 }
 
 describe("ingest -> validate -> split integration (10k)", () => {
+  it("carries components larger than a record-line, so the leakage check is not a tautology", () => {
+    // Measured on the fixture rather than on the pipeline, because the property being
+    // measured is the fixture's: every OTHER assertion in this file about grouping
+    // ("`leakages` empty", the sealed audit re-deriving) is satisfied for free by a
+    // corpus of ten thousand atoms whose identities were minted never to collide.
+    const records = generateCorpus();
+    const roots = connectedComponentRoots(records);
+    const sizes = new Map<string, number>();
+    for (const root of roots.values()) {
+      sizes.set(root, (sizes.get(root) ?? 0) + 1);
+    }
+    // 400 human documents (4000 human rows, ten per document) with their `mixed`
+    // children folded in by `derivationRoot`, plus 4000 generated singletons. The
+    // arithmetic is restated rather than derived so that losing a union axis moves it.
+    expect(records).toHaveLength(10_000);
+    expect(sizes.size).toBe(4_400);
+    expect(sizes.size).toBeLessThan(records.length);
+    // Ten rows of one document plus the ten `mixed` rows derived from them.
+    expect(Math.max(...sizes.values())).toBe(20);
+  });
+
   async function preparar(
     root: string,
     records: BenchmarkRecordV2[],
@@ -998,6 +1048,9 @@ describe("ingest -> validate -> split integration (10k)", () => {
       records,
     );
 
+    // A RAZÃO, e não só o código: o mecanismo do atravessador é o documento de origem, e
+    // qualquer outra reprovação da auditoria — um vazamento de grupo, uma fração fora da
+    // tolerância — satisfaria `code` sozinho e deixaria esta guarda medindo outra coisa.
     await expect(
       runSplit({
         datasetDirectory,
@@ -1005,7 +1058,12 @@ describe("ingest -> validate -> split integration (10k)", () => {
         outputDirectory: join(root, "out", "split-atravessado"),
         seed: 20260726,
       }),
-    ).rejects.toMatchObject({ code: "SPLIT_AUDIT_FAILED" });
+    ).rejects.toMatchObject({
+      code: "SPLIT_AUDIT_FAILED",
+      message: expect.stringContaining(
+        "temporal leakage: the blocked test is not strictly newer than every other partition",
+      ) as unknown as string,
+    });
   }, 180_000);
 
   it("materializes a sealable, splittable corpus with chained digests and downstream invalidation", async () => {

@@ -25,6 +25,7 @@ import {
 } from "../calibration-pipeline.ts";
 import { emptyLabelBasisPublication } from "../dataset-manifest.ts";
 import { standInClusterReport } from "../split-audit.ts";
+import { V3_GROUP_AXES } from "../schema.ts";
 import type { DatasetAudit } from "../dataset-manifest.ts";
 import type { FitReport } from "../candidate-preflight.ts";
 import {
@@ -234,7 +235,7 @@ async function lightSplitArtifact(
         earliestTest: 500,
       },
       leakages: [],
-      clusters: standInClusterReport(),
+      clusters: standInClusterReport(V3_GROUP_AXES),
       declaredAxisGaps: [],
       criticalSliceSamples: [],
       // Consistent with THIS fixture's twenty test assignments, and it has to be stated
@@ -733,7 +734,7 @@ export async function buildRejectScenario(
         earliestTest: 500,
       },
       leakages: [],
-      clusters: standInClusterReport(),
+      clusters: standInClusterReport(V3_GROUP_AXES),
       declaredAxisGaps: [],
       criticalSliceSamples: [],
       // Consistent with THIS fixture's twenty test assignments. A count of 2000

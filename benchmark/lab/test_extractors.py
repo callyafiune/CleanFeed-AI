@@ -831,6 +831,45 @@ class GroupAxisStateTests(unittest.TestCase):
         )
         self.assertEqual(len(V4_GROUP_AXES), 14)
 
+    def test_the_total_order_over_both_tuples_mirrors_schema_ts(self) -> None:
+        """`ALL_GROUP_AXES` e copia, e o que ela ordena entra num artefato SELADO.
+
+        Os dois lados ordenam o relatorio de cluster por esta lista, e `clusters.axes` e um
+        ARRAY dentro do artefato selado por `splitDigest`. Reordenar de um lado so move o
+        digest de um lado so, e as duas tuplas por si nao dizem a ordem da CONCATENACAO:
+        `V4_GROUP_AXES` poe os tres eixos novos antes de `nearDuplicate`/`derivationRoot`, e
+        a concatenacao os poe no fim.
+        """
+        import re as _re
+
+        from group_axes import ALL_GROUP_AXES
+
+        source = (Path(__file__).resolve().parent.parent / "schema.ts").read_text(
+            encoding="utf-8"
+        )
+        bloco = source.split("export const ALL_GROUP_AXES: readonly GroupAxis[] = [", 1)[
+            1
+        ]
+        bloco = " ".join(bloco[: bloco.index("\n];")].split())
+        # A DERIVACAO lida do fonte: o v3 inteiro primeiro, depois o v4 filtrado contra ele.
+        # Sem isto, trocar a ordem dos dois spreads no TS passa pela igualdade de valor
+        # abaixo, que le as TUPLAS e nao esta lista.
+        self.assertEqual(
+            _re.findall(r"\.\.\.(\w+)", bloco), ["V3_GROUP_AXES", "V4_GROUP_AXES"]
+        )
+        self.assertIn("V4_GROUP_AXES.filter(", bloco)
+        self.assertIn("!(V3_GROUP_AXES as readonly string[]).includes(axis)", bloco)
+        # E o VALOR que essa derivacao produz sobre as tuplas do proprio fonte.
+        tuplas = {}
+        for nome in ("V3_GROUP_AXES", "V4_GROUP_AXES"):
+            corpo = source.split(f"export const {nome} = [", 1)[1].split("]", 1)[0]
+            tuplas[nome] = _re.findall(r'"([a-zA-Z]+)"', corpo)
+        self.assertEqual(
+            list(ALL_GROUP_AXES),
+            tuplas["V3_GROUP_AXES"]
+            + [a for a in tuplas["V4_GROUP_AXES"] if a not in tuplas["V3_GROUP_AXES"]],
+        )
+
     def test_known_carries_an_id_and_the_others_carry_a_reason(self) -> None:
         from group_axes import known, not_applicable, unknown
 
@@ -3451,23 +3490,50 @@ class StampedCorpusSplittabilityTest(unittest.TestCase):
         assert_stamped_corpus_is_splittable(recs)
 
     def test_a_transitive_chain_is_one_component(self):
-        """A liga B por valor compartilhado, B liga C por referencia: os tres sao um so."""
+        """A liga B por valor compartilhado, B liga C por referencia: os tres sao um so.
+
+        O valor compartilhado e `generationBatch` — o lote de GERACAO, que une por valor —,
+        e por isso as tres linhas sao `ai`: a tabela de estados admite `generationBatch`
+        conhecido so onde uma receita nossa rodou, e numa linha humana ele e
+        `notApplicable`.
+        """
         from assemble_corpus import connected_components
 
         recs = [
-            self._rec("a", label="human", block="train", collectionBatch="lote_1"),
-            self._rec("b", label="human", block="train", collectionBatch="lote_1"),
-            self._rec("c", label="human", block="test", derivationRoot="b"),
+            self._rec("a", label="ai", block="train", generationBatch="gb_lote_1"),
+            self._rec("b", label="ai", block="train", generationBatch="gb_lote_1"),
+            self._rec("c", label="ai", block="test", derivationRoot="b"),
         ]
         self._guardar(recs)
         roots = connected_components(recs)
         self.assertEqual(roots["a"], roots["c"])
+
+    def _corpus_de_uma_fonte(self, source_id="src_b2w"):
+        """O corpus das fracoes alvo, todo ele atribuido a UMA fonte declarada.
+
+        `source` fica `known` em toda linha porque src_b2w o declara: e o eixo que a
+        mutacao de cada teste abaixo derruba, e comecar com ele preenchido e o que
+        separa "a guarda pegou a mutacao" de "a guarda recusa o fixture inteiro".
+        """
+        import group_axes
+
+        recs = self._corpus()
+        for r in recs:
+            r["provenance"] = {"sourceId": source_id}
+            r["groups"]["source"] = group_axes.known(f"g_{r['id']}")
+        return recs
 
     def test_a_declared_axis_left_unknown_is_refused(self):
         """A quinta reprovacao da auditoria, que a guarda omitia.
 
         A fonte DECLARA que o eixo se aplica; a linha o deixa `unknown`. As fracoes ficam
         perfeitas, entao a unica coisa que pega este caso e consultar o inventario de fontes.
+
+        O EIXO e a CONTAGEM sao afirmados, nao so o prefixo da mensagem: src_b2w declara
+        tres eixos, e uma reprovacao vinda de qualquer um dos outros dois satisfaz
+        `assertIn("eixo declarado")` sem que a mutacao deliberada tenha participado. Um
+        eixo a mais no inventario basta para mascarar a injecao, e ai a guarda fica verde
+        por construcao do fixture em vez de por medicao.
         """
         import group_axes
         from assemble_corpus import (
@@ -3475,17 +3541,74 @@ class StampedCorpusSplittabilityTest(unittest.TestCase):
             assert_stamped_corpus_is_splittable,
         )
 
-        recs = self._corpus()
-        for r in recs:
-            r["provenance"] = {"sourceId": "src_b2w"}
-            r["groups"]["source"] = group_axes.known(f"g_{r['id']}")
+        recs = self._corpus_de_uma_fonte()
         alvo = self._de(recs, "train")
         alvo["groups"]["source"] = group_axes.unknown("nao recuperado")
         self._guardar(recs)
         with self.assertRaises(UnsplittableCorpus) as ctx:
             assert_stamped_corpus_is_splittable(recs)
-        self.assertIn("eixo declarado", str(ctx.exception))
-        self.assertIn("src_b2w", str(ctx.exception))
+        msg = str(ctx.exception)
+        self.assertIn("eixo declarado", msg)
+        self.assertIn("src_b2w", msg)
+        self.assertIn('"source" aplicavel', msg)
+        self.assertIn(alvo["id"], msg)
+        # UMA linha, e nao 400: a recusa e da mutacao e de nada mais.
+        self.assertEqual(msg.count("eixo declarado"), 1)
+        self.assertNotIn("sourceMaterialBatch", msg)
+
+    def test_the_declared_axis_join_ignores_an_axis_the_version_lacks(self):
+        """O corpo SAO da fonte declarada passa, e e isso que torna o teste acima uma guarda.
+
+        Toda fonte humana declara `sourceMaterialBatch`, que e eixo de v4 apenas; estas
+        linhas sao v3 e nao tem a chave. Ler o estado de ELEGIBILIDADE aqui (chave ausente
+        => unknown) recusaria o corpo inteiro, enquanto `auditDeclaredAxes` em
+        benchmark/split-audit.ts o aceita — uma guarda que se declara espelho e recusa o que
+        o espelhado aceita.
+
+        As TRES fontes, porque a autoridade e por fonte: ptwiki e carolina declaram
+        ('source', 'sourceMaterialBatch') e b2w declara `author` tambem, entao uma so delas
+        nao mede a tabela inteira.
+        """
+        from assemble_corpus import assert_stamped_corpus_is_splittable, declared_group_axes
+
+        autoridade = declared_group_axes()
+        for source_id in ("src_wikipedia_pt", "src_carolina", "src_b2w"):
+            with self.subTest(fonte=source_id):
+                # Nao vacuo: o eixo esta na autoridade, e nenhuma linha carrega a chave.
+                self.assertIn("sourceMaterialBatch", autoridade[source_id])
+                recs = self._corpus_de_uma_fonte(source_id)
+                self.assertTrue(
+                    all("sourceMaterialBatch" not in r["groups"] for r in recs)
+                )
+                self._guardar(recs)
+                assert_stamped_corpus_is_splittable(recs)
+
+    def test_a_v4_row_that_WRITES_the_batch_unknown_is_still_refused(self):
+        """A outra direcao: consciencia de versao nao pode virar afrouxamento.
+
+        A linha e v4, entao a versao dela TEM o eixo, e ela escreve `unknown` nele. A
+        recusa tem de sobreviver a troca de leitura — senao o conserto do espelho apagou a
+        quinta reprovacao em vez de corrigi-la.
+        """
+        import group_axes
+        from assemble_corpus import (
+            UnsplittableCorpus,
+            assert_stamped_corpus_is_splittable,
+        )
+
+        recs = self._corpus_de_uma_fonte()
+        alvo = self._de(recs, "train")
+        alvo["schemaVersion"] = 4
+        alvo["groups"]["sourceMaterialBatch"] = group_axes.unknown(
+            "lote de aquisicao nao recuperado"
+        )
+        self._guardar(recs)
+        with self.assertRaises(UnsplittableCorpus) as ctx:
+            assert_stamped_corpus_is_splittable(recs)
+        msg = str(ctx.exception)
+        self.assertIn('"sourceMaterialBatch" aplicavel', msg)
+        self.assertIn(alvo["id"], msg)
+        self.assertEqual(msg.count("eixo declarado"), 1)
 
     def test_the_declared_axes_authority_equals_the_inventory_exactly(self):
         """Igualdade EXATA, e a ausencia das bloqueadas faz parte da igualdade.

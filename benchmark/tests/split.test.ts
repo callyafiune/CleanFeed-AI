@@ -3,6 +3,7 @@ import { describe, expect, it } from "vitest";
 import { auditBlockedSplit, type SplitAuditPolicy } from "../split-audit.ts";
 import {
   axisConnectivity,
+  connectedComponentRoots,
   CONNECTIVITY_AXES,
   createBlockedSplit,
   GROUP_KEYS,
@@ -16,10 +17,12 @@ import {
 } from "../split.ts";
 import {
   groupAxisIdentity,
+  validateBenchmarkRecordV4,
   type BenchmarkLabel,
   type BenchmarkRecord,
   type TransformationKind,
 } from "../schema.ts";
+import { known, v4Ai, v4Human, withAxis } from "./helpers/v3-record-fixture.ts";
 import {
   asGeneratorFamily,
   generatorFamilyOf,
@@ -143,8 +146,8 @@ function rec(spec: RecordSpec): BenchmarkRecord {
 
 // Even class interleaving across 100 time slots. Because human, ai and mixed are
 // each spread uniformly over time, four global temporal cuts land every class at
-// ~45/5/10/20/20, and every (slot, class) shares all eight grouping axes so the audit
-// exercises real — never vacuous — cohesion. One hundred slots is not decoration: the
+// ~45/5/10/20/20, and every (slot, class) shares every grouping axis it can carry, so the
+// audit exercises real — never vacuous — cohesion. One hundred slots is not decoration: the
 // `dev` target is 0.05, so a coarser timeline could not place a cut pair that lands
 // dev inside two points of it at all. Mixed records point their
 // derivationRoot at the slot's human parent, so parent + derivatives cluster.
@@ -286,13 +289,19 @@ const RELEASE_AUDIT_POLICY: SplitAuditPolicy = {
   classTolerance: 0.02,
 };
 
+// The axes the splitter unions on that a v2 record can CARRY, restated here rather
+// than imported: a list read off `GROUP_KEYS` cannot fail when `GROUP_KEYS` moves, and
+// that failure is the whole reason this list exists.
+//
+// `generationBatch` is the seventh union axis and is v4-only — a v2 `groups` block has
+// no such key — so its cohesion is exercised on v4 fixtures further down.
+// `domainSource` is absent because the splitter no longer unions on it, and the same
+// v4 fixtures prove it.
 const GROUP_AXES = [
   "author",
   "source",
-  "domainSource",
   "generatorVersion",
   "promptTemplate",
-  "collectionBatch",
   "nearDuplicate",
   "derivationRoot",
 ] as const;
@@ -447,7 +456,7 @@ describe("createBlockedSplit", () => {
     ).toBe(true);
   });
 
-  it("confines every grouping axis to a single partition (no leakage on all eight axes)", () => {
+  it("confines every grouping axis to a single partition (no leakage on any union axis)", () => {
     const split = createBlockedSplit(DATASET, POLICY);
     const partitions: Array<[Partition, BenchmarkRecord[]]> = [
       ["train", split.train],
@@ -627,6 +636,195 @@ describe("createBlockedSplit", () => {
   });
 });
 
+// --- what the v4 union does and does not glue --------------------------------
+
+/**
+ * A quota cell as the corpus really offers it: ONE acquisition event and ONE stratum
+ * for every row, each row its own origin document, author and near-duplicate cluster.
+ *
+ * The rows are built through `validateBenchmarkRecordV4`, so the axis states are the
+ * ones a real v4 human row is allowed to carry — `sourceMaterialBatch` and
+ * `domainSource` are `known` on every human row BY RULE, which is exactly why a union
+ * on either of them would collapse the cell.
+ */
+function cellFromOneAcquisition(rows: number): BenchmarkRecord[] {
+  return Array.from({ length: rows }, (_, index) => {
+    let raw: Record<string, unknown> = { ...v4Human(), id: `h_cell_${index}` };
+    raw = withAxis(raw, "author", known(`au_hmac_cell_${index}`));
+    raw = withAxis(raw, "source", known(`th_doc_${index}`));
+    raw = withAxis(raw, "nearDuplicate", known(`nd_cell_${index}`));
+    return validateBenchmarkRecordV4(raw) as unknown as BenchmarkRecord;
+  });
+}
+
+/** A generated row whose ONLY shareable identity is its generation batch. */
+function generatedInBatch(id: string, batch: string): BenchmarkRecord {
+  let raw: Record<string, unknown> = { ...v4Ai(), id };
+  raw = withAxis(raw, "promptTemplate", known(`pt_${id}`));
+  raw = withAxis(raw, "generatorVersion", known(`gv_${id}`));
+  raw = withAxis(raw, "nearDuplicate", known(`nd_${id}`));
+  // Parent linkage, and the named row is absent from every record set below, so it
+  // unions nothing — which is what leaves the batch as the only candidate.
+  raw = withAxis(raw, "humanSeed", known(`h_absent_${id}`));
+  raw = withAxis(raw, "generationBatch", known(batch));
+  return validateBenchmarkRecordV4(raw) as unknown as BenchmarkRecord;
+}
+
+describe("the coarse axes carry dependence without unioning", () => {
+  it("leaves one component per record-line when only the cell is shared", () => {
+    const cell = cellFromOneAcquisition(8);
+    // Non-vacuous: the two coarse axes really do carry ONE value across the whole
+    // cell, so a union on either would have to produce a single component.
+    for (const axis of ["domainSource", "sourceMaterialBatch"] as const) {
+      const identities = new Set(
+        cell.map((row) => groupAxisIdentity(row, axis)),
+      );
+      expect(identities.size, axis).toBe(1);
+      expect([...identities][0], axis).not.toBeUndefined();
+    }
+    const roots = connectedComponentRoots(cell);
+    expect(new Set(roots.values()).size).toBe(8);
+  });
+
+  it("still unions the generation batch, which is the axis that replaced the v3 one", () => {
+    const together = [
+      generatedInBatch("a_1", "gb_agy_20260724"),
+      generatedInBatch("a_2", "gb_agy_20260724"),
+    ];
+    expect(new Set(connectedComponentRoots(together).values()).size).toBe(1);
+
+    const apart = [
+      generatedInBatch("a_3", "gb_agy_20260724"),
+      generatedInBatch("a_4", "gb_agy_20260725"),
+    ];
+    expect(new Set(connectedComponentRoots(apart).values()).size).toBe(2);
+  });
+
+  it("never unions the extraction run, so re-reading one dump is not new material", () => {
+    // Every row of the cell above shares its extraction run as well as its batch:
+    // the run is DIAGNOSTIC, and unioning on it would count one dependence twice.
+    const cell = cellFromOneAcquisition(4);
+    const runs = new Set(
+      cell.map((row) => groupAxisIdentity(row, "extractionRun")),
+    );
+    expect(runs.size).toBe(1);
+    expect(axisConnectivity("extractionRun")).toEqual({
+      sharedValue: false,
+      parentLinkage: false,
+    });
+  });
+});
+
+// --- the seventh union axis, through the splitter and not only the components -
+
+/**
+ * A hundred temporal slots, one human and one generated row each, all v4 and all
+ * validated. The only shareable identity across rows is the generated batch, and it
+ * is shared by exactly ONE pair — placed in the OLDEST and the NEWEST band, so the
+ * pair only lands in one partition if the splitter unions on the batch.
+ *
+ * Everything else is per row: `author`, `source` and `nearDuplicate` on the human
+ * rows; `promptTemplate`, `generatorVersion` and `nearDuplicate` on the generated
+ * ones. `domainSource` and `sourceMaterialBatch` are shared cell-wide BY RULE and
+ * union nothing, which is what leaves the batch as the single axis under test.
+ * `humanSeed` names a row absent from the corpus, so the linkage relation resolves to
+ * nothing here.
+ */
+function v4CorpusSharingOneBatch(): {
+  records: BenchmarkRecord[];
+  sharedBatch: string;
+} {
+  const sharedBatch = "gb_agy_shared_pair";
+  const records: BenchmarkRecord[] = [];
+  for (let slot = 1; slot <= 100; slot += 1) {
+    let human: Record<string, unknown> = {
+      ...v4Human(),
+      id: `hb_${slot}`,
+      createdAt: slot,
+    };
+    human = withAxis(human, "author", known(`au_hmac_hb_${slot}`));
+    human = withAxis(human, "source", known(`th_doc_hb_${slot}`));
+    human = withAxis(human, "nearDuplicate", known(`nd_hb_${slot}`));
+    records.push(
+      validateBenchmarkRecordV4(human) as unknown as BenchmarkRecord,
+    );
+
+    // Slot 3 is inside the oldest band and slot 98 inside the blocked test band.
+    const shared = slot === 3 || slot === 98;
+    let ai: Record<string, unknown> = {
+      ...v4Ai(),
+      id: `ab_${slot}`,
+      createdAt: slot,
+    };
+    ai = withAxis(ai, "promptTemplate", known(`pt_ab_${slot}`));
+    ai = withAxis(ai, "generatorVersion", known(`gv_ab_${slot}`));
+    ai = withAxis(ai, "nearDuplicate", known(`nd_ab_${slot}`));
+    ai = withAxis(
+      ai,
+      "generationBatch",
+      known(shared ? sharedBatch : `gb_agy_ab_${slot}`),
+    );
+    records.push(validateBenchmarkRecordV4(ai) as unknown as BenchmarkRecord);
+  }
+  return { records, sharedBatch };
+}
+
+const V4_BATCH_POLICY: BlockedSplitPolicy = {
+  fractions: { train: 0.45, dev: 0.05, "cal-A": 0.1, "cal-B": 0.2, test: 0.2 },
+  classTolerance: 0.02,
+  heldOutGeneratorFamilies: [],
+  seed: 20_260_804,
+};
+
+describe("the generation batch, taken through the splitter", () => {
+  it("keeps one batch inside a single partition, so the seventh union axis binds", () => {
+    const { records, sharedBatch } = v4CorpusSharingOneBatch();
+    const split = createBlockedSplit(records, V4_BATCH_POLICY);
+    const partitions: Array<[Partition, BenchmarkRecord[]]> = [
+      ["train", split.train],
+      ["dev", split.dev],
+      ["cal-A", split["cal-A"]],
+      ["cal-B", split["cal-B"]],
+      ["test", split.test],
+    ];
+
+    // The axis name is RESTATED, never read off `GROUP_KEYS`. A loop over the
+    // splitter's own list cannot fail when that list loses the axis, and the audit's
+    // `leakages` reads the same list — so both go BLIND rather than red under exactly
+    // the mutation this test exists to catch.
+    const partitionsByBatch = new Map<string, Set<Partition>>();
+    const rowsByBatch = new Map<string, number>();
+    for (const [partition, rows] of partitions) {
+      for (const row of rows) {
+        const value = groupAxisIdentity(row, "generationBatch");
+        if (value === undefined) continue;
+        const seen = partitionsByBatch.get(value) ?? new Set<Partition>();
+        seen.add(partition);
+        partitionsByBatch.set(value, seen);
+        rowsByBatch.set(value, (rowsByBatch.get(value) ?? 0) + 1);
+      }
+    }
+    // Non-vacuous: exactly one batch really does bind two rows, and those two rows sit
+    // in temporal bands the cuts fall between, so nothing but the union holds them
+    // together.
+    expect(rowsByBatch.get(sharedBatch)).toBe(2);
+    expect(Math.max(...rowsByBatch.values())).toBe(2);
+    for (const [batch, seen] of partitionsByBatch) {
+      expect([...seen], batch).toHaveLength(1);
+    }
+
+    // Evidence, not the guard: the audit enumerates `GROUP_KEYS` too, so an empty
+    // leakage list here is only as strong as that list is.
+    const audit = auditBlockedSplit(
+      records,
+      split,
+      RELEASE_AUDIT_POLICY,
+      V4_BATCH_POLICY.heldOutGeneratorFamilies,
+    );
+    expect(audit.leakages).toEqual([]);
+  });
+});
+
 // --- the axis lists the audit and D0b read ----------------------------------
 
 describe("the connectivity axis lists", () => {
@@ -679,7 +877,7 @@ describe("the connectivity axis lists", () => {
 //
 // WHAT IS ALREADY COVERED ELSEWHERE, so this block does not repeat it: the
 // colocation itself is "confines every grouping axis to a single partition (no leakage
-// on all eight axes)" above, which walks `derivationRoot` and `humanSeed` over a
+// on any union axis)" above, which walks `derivationRoot` and `humanSeed` over a
 // dataset the temporal cut can actually satisfy; the refusal's own behaviour is pinned
 // in `benchmark/tests/schema-v3.test.ts`. What was missing is the wiring — the refusal
 // existed with no production caller and `benchmark/split.ts` named it in a comment as
