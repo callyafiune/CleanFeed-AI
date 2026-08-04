@@ -14,8 +14,8 @@
 > **Regime de uso congelado (B1):** `commercialUse: false`, política
 > `noncommercial-v1`. O produto e o modelo não têm e não terão ambição
 > comercial, e **não existe variante comercial a preservar**. A cadeia de
-> autoridade, em ordem: **`benchmark/rebuild-v3-policy.json`** (validado por
-> `benchmark/rebuild-v3-policy.ts`, dentro de `EVALUATOR_FILES`) é a autoridade
+> autoridade, em ordem: **`benchmark/preregistration-v4.json`** (validado por
+> `benchmark/preregistration-v4.ts`, dentro de `EVALUATOR_FILES`) é a autoridade
 > do valor congelado `commercialUse: false` e das obrigações congeladas
 > `attributionRequired`/`shareAlikeRequired`; **`benchmark/source-manifest.ts`**
 > **lê** esse arquivo (`CORPUS_USE_POLICY`, `FROZEN_CORPUS_OBLIGATIONS`) e é a
@@ -188,10 +188,13 @@ revisão corrente de cada página. Um snapshot recente de qualquer um dos dois �
 texto pós-LLM com nome antigo — daí o campo por documento ser *load-bearing* e
 não defesa em profundidade.
 
-**Quais destas são fontes humanas da v3.** Depois de A1 (2026-07-31), **três**:
-`src_wikipedia_pt`, `src_carolina` e `src_b2w` — exatamente os snapshots
-congelados em `benchmark/rebuild-v3-policy.json` (`humanSources.snapshots`), com
-`newDownloadsAllowed: false`. `src_ptso` era a quarta e está **bloqueada**: o
+**Quais destas são fontes humanas estocadas.** Depois de A1 (2026-07-31) eram
+**três**; depois da recomposição em quatro células são **duas**:
+`src_wikipedia_pt` e `src_carolina` — exatamente os snapshots congelados em
+`benchmark/preregistration-v4.json` (`humanSources.snapshots`), com
+`newDownloadsAllowed: false`. `src_b2w` continua **declarada e admissível** por
+rota e licença, em `OUT_OF_FRAME_HUMAN_SOURCES`: resenha de produto não é uma das
+quatro células, e isso não é o mesmo que estar recusada. `src_ptso` era a quarta e está **bloqueada**: o
 snapshot vive agora em `humanSources.blockedSnapshots` e a declaração da fonte em
 `A1_BLOCKED_HUMAN_SOURCES`, e `auditCorpusSources` reprova
 (`SOURCE_BLOCKED_BY_ACCESS_TERMS`) um manifesto que a declare. `src_empresa` (autorização interna escrita) e
@@ -558,7 +561,7 @@ auditoria de vazamento que hoje reconhece um registro `src_ptso` passa a **não
 conhecer** a fonte — deixa de reprovar e fica quieta, sobre linhas que existem no
 disco de trabalho. Então:
 
-- `humanSources.blockedSnapshots` (em `benchmark/rebuild-v3-policy.json`) nomeia o
+- `humanSources.blockedSnapshots` (em `benchmark/preregistration-v4.json`) nomeia o
   snapshot, a razão (`access-terms-unresolved`) e a condição que levanta o
   bloqueio. O validador recusa uma política que nomeie a mesma base nas duas
   listas: uma fonte não pode estar recusada e em uso ao mesmo tempo;
@@ -589,8 +592,13 @@ como corpus incompleto em vez de requisito impossível.
 
 ## Fase 0.2 — o que foi congelado antes de qualquer selagem
 
-Tudo em `benchmark/rebuild-v3-policy.json`, validado por
-`benchmark/rebuild-v3-policy.ts`, dentro de `EVALUATOR_FILES`.
+> **Seção HISTÓRICA.** Descreve a pré-inscrição v3, hoje `ABANDONADA`, e os valores
+> abaixo **não valem** — `m = 4` e a manchete do pior estrato estão em ESTADO.md § 6
+> (NÃO APLICAR). O que vale é `benchmark/preregistration-v4.json`, validado por
+> `benchmark/preregistration-v4.ts`, dentro de `EVALUATOR_FILES`: família por estrato,
+> `m = 7`.
+
+Tudo em `benchmark/rebuild-v3-policy.json`, o par que saiu de `EVALUATOR_FILES`.
 
 | decisão | valor | onde |
 | --- | --- | --- |

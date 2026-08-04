@@ -10,9 +10,13 @@ test-results/
 docs/
 # Third-party model bundles must stay byte-exact (sha256-verified against upstream).
 public/models/
-# The frozen rebuild contract is a member of EVALUATOR_FILES: its BYTES are hashed
+# The frozen pre-registration is a member of EVALUATOR_FILES: its BYTES are hashed
 # into the evaluator digest, so exactly one tool may decide its shape. That tool is
 # `JSON.stringify(canonical, null, 2)`, pinned byte-for-byte by
-# benchmark/tests/rebuild-v3-policy.test.ts. Prettier inlines short arrays, which
+# benchmark/tests/preregistration-v4.test.ts. Prettier inlines short arrays, which
 # would rewrite the file (and move the digest) on every `npm run format`.
+benchmark/preregistration-v4.json
+# The abandoned v3 contract. No longer hashed, but it stays byte-exact: an
+# abandoned pre-registration that gets reformatted is indistinguishable from one
+# that was edited.
 benchmark/rebuild-v3-policy.json

@@ -37,6 +37,10 @@ import {
   computePredictionManifestDigest,
 } from "../prediction-schema.ts";
 import {
+  freezeProvisionalThreshold,
+  type ThresholdSample,
+} from "../provisional-threshold.ts";
+import {
   clusterRootsOf,
   type FoldStratification,
 } from "../cross-validation.ts";
@@ -191,6 +195,11 @@ export async function runFit(options: FitOptions): Promise<string> {
   const clusterRootById = clusterRootsOf(records);
 
   const samples: FitSampleScores[] = [];
+  // The v1 threshold population: human negatives of `dev` + `cal-A` that were
+  // actually SCORED, keeping their partition so the freeze can refuse a row from
+  // outside the frozen fit partitions. Held apart from `samples` because that array
+  // coerces a null raw score to 0, which the threshold may not do.
+  const thresholdSamples: ThresholdSample[] = [];
   const positives: FitSampleScores[] = [];
   const calibratorSamples: FitSampleScores[] = [];
   const calibratorPositives: FitSampleScores[] = [];
@@ -231,6 +240,14 @@ export async function runFit(options: FitOptions): Promise<string> {
     } else if (record.label === "human") {
       samples.push(scores);
       if (scored) calibratorSamples.push(scores);
+      if (scored && prediction.documentRawScore !== null) {
+        thresholdSamples.push({
+          id: record.id,
+          label: record.label,
+          partition: assignment.partition,
+          documentRawScore: prediction.documentRawScore,
+        });
+      }
     }
   }
 
@@ -298,6 +315,25 @@ export async function runFit(options: FitOptions): Promise<string> {
     calibrationManifestDigest,
   });
 
+  // The ONE cut the v1 publishes: a one-sided quantile of the raw document score over
+  // the human negatives of `dev` + `cal-A`, with no calibrator anywhere in it. It is
+  // frozen from the SAME governance digests the calibration artifact binds to, and it
+  // refuses the blocked test ids rather than relying on their absence.
+  const provisionalThreshold = freezeProvisionalThreshold({
+    samples: thresholdSamples,
+    testIds,
+    seed: options.seed,
+    digests: {
+      datasetDigest: frozen.datasetDigest,
+      datasetAuditDigest: frozen.datasetAuditDigest,
+      splitDigest: frozen.splitDigest,
+      evaluatorDigest,
+      sourceReadinessDigest: frozen.sourceReadinessDigest,
+      developmentManifestDigest,
+      calibrationManifestDigest,
+    },
+  });
+
   // EXACTLY the digest-sealed fields, enumerated by the module that computes the
   // digest. Not a rest-spread that drops the two closures: that shape wrote every
   // field the fit result happened to carry, and `crossValidation` rode it into
@@ -320,6 +356,10 @@ export async function runFit(options: FitOptions): Promise<string> {
     frozen.crossValidation,
   );
   await writeJsonAtomic(
+    join(options.outputDirectory, "provisional-threshold.json"),
+    provisionalThreshold,
+  );
+  await writeJsonAtomic(
     join(options.outputDirectory, "fit-report.json"),
     buildFitReport(preflight, artifactFields),
   );
@@ -333,8 +373,10 @@ export async function runFit(options: FitOptions): Promise<string> {
   );
 
   return (
-    "Calibration frozen without test access; " +
-    "warning UCB target=0.05; action UCB target=0.02. " +
+    `Provisional threshold frozen at ${provisionalThreshold.threshold} on ` +
+    `${provisionalThreshold.thresholdBasis} (${provisionalThreshold.thresholdVersion}, ` +
+    `${provisionalThreshold.population.humanNegatives} human negatives, no calibrator); ` +
+    "no test access. " +
     describeCrossValidation(frozen.crossValidation)
   );
 }

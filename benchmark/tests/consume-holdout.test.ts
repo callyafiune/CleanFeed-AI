@@ -21,7 +21,10 @@ import { fileURLToPath } from "node:url";
 
 import { afterEach, describe, expect, it } from "vitest";
 
-import { canonicalSha256 } from "../../contracts/canonical-json.ts";
+import {
+  canonicalJson,
+  canonicalSha256,
+} from "../../contracts/canonical-json.ts";
 import type { SerializedCalibratorV1 } from "../../contracts/calibration-profile.ts";
 import type {
   BenchmarkPage,
@@ -43,9 +46,18 @@ import { sha256OfFile } from "../commands/io.ts";
 import { runValidatePredictions } from "../commands/validate-predictions.ts";
 import { computeRuntimeParityDigest } from "../../contracts/runtime-parity.ts";
 import { beginHoldoutConsumption } from "../holdout-ledger.ts";
+import { PREREGISTRATION_V4 } from "../preregistration-v4.ts";
+import {
+  freezeProvisionalThreshold,
+  type ProvisionalThresholdArtifact,
+} from "../provisional-threshold.ts";
 import type { SplitArtifact } from "../split-artifact.ts";
 import type { DatasetManifest } from "../dataset-manifest.ts";
-import { computeDatasetDigest, computeEvaluatorDigest } from "../digests.ts";
+import {
+  computeDatasetDigest,
+  computeEvaluatorDigest,
+  sha256BytesHex,
+} from "../digests.ts";
 import {
   computePredictionManifestDigest,
   RELEASE_CHROME_VERSION,
@@ -223,11 +235,11 @@ function datasetManifest(
 ): DatasetManifest {
   return {
     schemaVersion: 1,
-    datasetId: "ptbr-generic-v1",
+    datasetId: "cleanfeed-ptbr-cells-v1",
     version: "1.0.0",
     scientificUse,
     intendedLanguage: "pt-BR",
-    intendedDomain: "generic",
+    intendedDomain: "scoped-cells",
     createdAt: FIXED_TIME,
     normalizationVersion: "cleanfeed-text-v1",
     annotationProtocolVersion: "annotation-v1",
@@ -278,6 +290,39 @@ function predictionManifest(
     holdoutConsumptionId: null,
     createdAt: FIXED_TIME,
   };
+}
+
+// A real provisional-threshold artifact over the same governance digests the frozen
+// calibration binds to. Frozen by the shipped function, so the digest, the restated
+// pre-registration and the fit partitions are exactly the ones `evaluate` cross-checks.
+function provisionalThresholdFixture(digests: {
+  datasetDigest: string;
+  splitDigest: string;
+  evaluatorDigest: string;
+  developmentDigest: string;
+  calibrationDigest: string;
+}): ProvisionalThresholdArtifact {
+  const partitions = PREREGISTRATION_V4.threshold.quantilePartitions;
+  const count = 100;
+  return freezeProvisionalThreshold({
+    samples: Array.from({ length: count }, (_unused, index) => ({
+      id: `fit_${String(index).padStart(3, "0")}`,
+      label: "human",
+      partition: partitions[index % partitions.length],
+      documentRawScore: index / count,
+    })),
+    testIds: [],
+    seed: PREREGISTRATION_V4.seeds.split,
+    digests: {
+      datasetDigest: digests.datasetDigest,
+      datasetAuditDigest: DATASET_AUDIT,
+      splitDigest: digests.splitDigest,
+      evaluatorDigest: digests.evaluatorDigest,
+      sourceReadinessDigest: SOURCE_READINESS,
+      developmentManifestDigest: digests.developmentDigest,
+      calibrationManifestDigest: digests.calibrationDigest,
+    },
+  });
 }
 
 async function frozenCalibration(input: {
@@ -497,7 +542,7 @@ async function buildScenario(
     },
     classTolerance: 0.02,
     heldOutGeneratorFamilies: [asGeneratorFamily("heldout_family")],
-    seed: 20260726,
+    seed: 20260804,
   } as const;
   const artifact = await buildSplitArtifact({
     manifest,
@@ -563,6 +608,20 @@ async function buildScenario(
   await writeFile(
     frozenCalibrationPath,
     `${JSON.stringify(frozen, null, 2)}\n`,
+  );
+  // The pre-registered cut lives beside the frozen calibration and `evaluate` REQUIRES
+  // it, so the fixture freezes a real one over the same governance digests instead of
+  // hand-writing an artifact whose digest chain would not close.
+  const provisional = provisionalThresholdFixture({
+    datasetDigest,
+    splitDigest,
+    evaluatorDigest,
+    developmentDigest,
+    calibrationDigest,
+  });
+  await writeFile(
+    join(fitDir, "provisional-threshold.json"),
+    `${JSON.stringify(provisional, null, 2)}\n`,
   );
 
   const testLabelsPath = join(datasetDir, "private", "test-labels.jsonl");
@@ -724,6 +783,19 @@ interface LedgerEvent {
 }
 
 /** The `code` of a coded rejection, so a test pins the code and not the prose. */
+// A copy without `artifactDigest`, which is the payload the digest is taken over.
+function semDigest(value: Record<string, unknown>): Record<string, unknown> {
+  const copy = { ...value };
+  delete copy.artifactDigest;
+  return copy;
+}
+
+// Byte-identical to `canonicalSha256`, but synchronous, so a test can re-seal an edited
+// artifact inside an object literal.
+function canonicalSha256Sync(value: unknown): string {
+  return sha256BytesHex(new TextEncoder().encode(canonicalJson(value)));
+}
+
 async function rejectionCode(promise: Promise<unknown>): Promise<string> {
   try {
     await promise;
@@ -2051,6 +2123,101 @@ describe("evaluate — guardas do artefato de predicao", () => {
       expect(
         await rejectionCode(runEvaluate(opcoes(scenario, predicoes))),
       ).toBe("TEST_COMPLETENESS_FAILED");
+    },
+    TIMEOUT_MS,
+  );
+
+  // The pre-registered cut is a REQUIRED input of the certifying run, not a file the fit
+  // happens to leave behind. Three refusals, because a threshold that is absent, edited
+  // or bound to another split are three different pieces of news — and without them the
+  // `probabilisticCalibrator: "none"` in the sealed policy is a claim nothing checks.
+  async function comLimiar(
+    scenario: Scenario,
+    muta: (artifact: Record<string, unknown>) => Record<string, unknown> | null,
+  ): Promise<void> {
+    const caminho = join(
+      dirname(scenario.options.frozenCalibrationPath),
+      "provisional-threshold.json",
+    );
+    const atual = JSON.parse(await readFile(caminho, "utf8")) as Record<
+      string,
+      unknown
+    >;
+    const proximo = muta(atual);
+    if (proximo === null) {
+      await rm(caminho);
+      return;
+    }
+    await writeFile(caminho, `${JSON.stringify(proximo, null, 2)}\n`);
+  }
+
+  it(
+    "refuses a run whose fit never froze the pre-registered cut",
+    async () => {
+      const scenario = await buildScenario(await raiz(), SPEC);
+      const predicoes = await escrevePredicoes(scenario);
+      await comLimiar(scenario, () => null);
+      expect(
+        await rejectionCode(runEvaluate(opcoes(scenario, predicoes))),
+      ).toBe("FILE_MISSING");
+    },
+    TIMEOUT_MS,
+  );
+
+  it(
+    "refuses a pre-registered cut whose bytes were edited after the freeze",
+    async () => {
+      const scenario = await buildScenario(await raiz(), SPEC);
+      const predicoes = await escrevePredicoes(scenario);
+      await comLimiar(scenario, (artifact) => ({
+        ...artifact,
+        threshold: 0.5,
+      }));
+      expect(
+        await rejectionCode(runEvaluate(opcoes(scenario, predicoes))),
+      ).toBe("THRESHOLD_ARTIFACT_DIGEST_MISMATCH");
+    },
+    TIMEOUT_MS,
+  );
+
+  it(
+    "refuses a pre-registered cut bound to a different split",
+    async () => {
+      // Re-digested, so the refusal comes from the governance cross-check and not from
+      // the digest — a threshold frozen over ANOTHER split is the failure that matters.
+      const scenario = await buildScenario(await raiz(), SPEC);
+      const predicoes = await escrevePredicoes(scenario);
+      await comLimiar(scenario, (artifact) => {
+        const digests = {
+          ...(artifact.digests as Record<string, unknown>),
+          splitDigest: "1".repeat(64),
+        };
+        const resto = semDigest({ ...artifact, digests });
+        return { ...resto, artifactDigest: canonicalSha256Sync(resto) };
+      });
+      expect(
+        await rejectionCode(runEvaluate(opcoes(scenario, predicoes))),
+      ).toBe("THRESHOLD_GOVERNANCE_MISMATCH");
+    },
+    TIMEOUT_MS,
+  );
+
+  it(
+    "refuses a pre-registered cut that declares a calibrator the policy forbids",
+    async () => {
+      const scenario = await buildScenario(await raiz(), SPEC);
+      const predicoes = await escrevePredicoes(scenario);
+      await comLimiar(scenario, (artifact) => {
+        const preRegistration = {
+          ...(artifact.preRegistration as Record<string, unknown>),
+          probabilisticCalibrator: "platt",
+        };
+        const resto = semDigest({ ...artifact, preRegistration });
+        return { ...resto, artifactDigest: canonicalSha256Sync(resto) };
+      });
+      expect(
+        await rejectionCode(runEvaluate(opcoes(scenario, predicoes))),
+      ).toBe("THRESHOLD_PREREGISTRATION_DRIFT");
     },
     TIMEOUT_MS,
   );

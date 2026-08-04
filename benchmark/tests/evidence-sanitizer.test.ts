@@ -108,7 +108,7 @@ describe("assertSanitized privacy allowlist", () => {
     ).toThrow(EvidenceSanitizerError);
     expect(() =>
       assertSanitized({
-        path: "benchmark/data/ptbr-generic-v1/records.jsonl",
+        path: "benchmark/data/cleanfeed-ptbr-cells-v1/records.jsonl",
       }),
     ).toThrow(EvidenceSanitizerError);
     expect(() =>

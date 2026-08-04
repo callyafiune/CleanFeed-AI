@@ -48,7 +48,7 @@
 //     `notApplicable` does NOT fail: it is a legitimate state and R6 forbids
 //     treating it as a defect.
 //   * The number of folds is the frozen one, read from
-//     `benchmark/rebuild-v3-policy.json` (`calibrator.crossValidationFolds`), and the
+//     `benchmark/preregistration-v4.json` (`calibrator.crossValidationFolds`), and the
 //     fold of a cluster is a deterministic function of the WHOLE POPULATION: atoms
 //     are ordered by size, then by the seeded digest of their pseudonymised root id
 //     under the frozen CV seed (`seeds.crossValidation`), then by that id, and each is
@@ -83,7 +83,7 @@
 // says: "Platt, beta e isotônico em CV agrupada de 5 folds; vence menor Brier OOF;
 // empate <= 1e-4 → Platt, beta, isotônico". So `calibrator.candidates`,
 // `calibrator.tieToleranceAbsolute` and `calibrator.tieBreakOrder` are read from
-// `benchmark/rebuild-v3-policy.json` and implemented literally — the frozen table
+// `benchmark/preregistration-v4.json` and implemented literally — the frozen table
 // materialised there says code may not repeat its values as loose constants, and this
 // module did: it carried a 0.002 "Platt preference margin", 20x the frozen tie
 // tolerance, so a Platt 0.0019 worse than the best candidate won on a tie the contract
@@ -164,7 +164,7 @@ import {
   type CalibratorKind,
 } from "./calibrators.ts";
 import { clusterAssignments } from "./cluster-exposure-ledger.ts";
-import { REBUILD_V3_POLICY } from "./rebuild-v3-policy.ts";
+import { PREREGISTRATION_V4 } from "./preregistration-v4.ts";
 import {
   groupAxisDeclaredState,
   isPseudonymToken,
@@ -175,17 +175,17 @@ import type { SerializedCalibratorV1 } from "../contracts/calibration-profile.ts
 
 /**
  * Every settled number of the calibrator competition, read from the policy and none
- * of them written down again here: `benchmark/rebuild-v3-policy.json` is the single
+ * of them written down again here: `benchmark/preregistration-v4.json` is the single
  * place the frozen values of the rebuild live (A6), and its own header states that
  * code may not repeat them as loose constants.
  */
-const FOLD_COUNT = REBUILD_V3_POLICY.calibrator.crossValidationFolds;
-const CV_SEED = REBUILD_V3_POLICY.seeds.crossValidation;
+const FOLD_COUNT = PREREGISTRATION_V4.calibrator.crossValidationFolds;
+const CV_SEED = PREREGISTRATION_V4.seeds.crossValidation;
 const FAMILIES: readonly CalibratorKind[] =
-  REBUILD_V3_POLICY.calibrator.candidates;
-const TIE_TOLERANCE = REBUILD_V3_POLICY.calibrator.tieToleranceAbsolute;
+  PREREGISTRATION_V4.calibrator.candidates;
+const TIE_TOLERANCE = PREREGISTRATION_V4.calibrator.tieToleranceAbsolute;
 const TIE_BREAK_ORDER: readonly CalibratorKind[] =
-  REBUILD_V3_POLICY.calibrator.tieBreakOrder;
+  PREREGISTRATION_V4.calibrator.tieBreakOrder;
 
 /**
  * The three fields of the release gate's ECE specification that this module's own
@@ -200,9 +200,9 @@ const TIE_BREAK_ORDER: readonly CalibratorKind[] =
  * upper bound and {@link aggregateOutOfFold} computes a point estimate. Reading it
  * would claim this module computes the gate's quantity.
  */
-const SELECTION_ECE_BUDGET = REBUILD_V3_POLICY.calibrationGate.eceMax;
-const ECE_BINS = REBUILD_V3_POLICY.calibrationGate.eceBins;
-const ECE_BINNING = REBUILD_V3_POLICY.calibrationGate.eceBinning;
+const SELECTION_ECE_BUDGET = PREREGISTRATION_V4.calibrationGate.eceMax;
+const ECE_BINS = PREREGISTRATION_V4.calibrationGate.eceBins;
+const ECE_BINNING = PREREGISTRATION_V4.calibrationGate.eceBinning;
 
 /**
  * A candidate's position in the frozen tie-break order, refusing a family the order

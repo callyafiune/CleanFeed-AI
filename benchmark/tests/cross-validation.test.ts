@@ -14,7 +14,7 @@ import {
   type OutOfFoldPrediction,
 } from "../cross-validation.ts";
 import { eceEqualMass } from "../metrics.ts";
-import { REBUILD_V3_POLICY } from "../rebuild-v3-policy.ts";
+import { PREREGISTRATION_V4 } from "../preregistration-v4.ts";
 import {
   validateBenchmarkRecordV3,
   validateBenchmarkRecordV4,
@@ -32,11 +32,11 @@ import {
 
 // Read from the policy rather than from the module under test, so a test asserting
 // the frozen number cannot be satisfied by the module agreeing with itself.
-const FOLDS = REBUILD_V3_POLICY.calibrator.crossValidationFolds;
-const CV_SEED = REBUILD_V3_POLICY.seeds.crossValidation;
-const TIE_TOLERANCE = REBUILD_V3_POLICY.calibrator.tieToleranceAbsolute;
-const TIE_BREAK_ORDER = REBUILD_V3_POLICY.calibrator.tieBreakOrder;
-const ECE_MAXIMUM = REBUILD_V3_POLICY.calibrationGate.eceMax;
+const FOLDS = PREREGISTRATION_V4.calibrator.crossValidationFolds;
+const CV_SEED = PREREGISTRATION_V4.seeds.crossValidation;
+const TIE_TOLERANCE = PREREGISTRATION_V4.calibrator.tieToleranceAbsolute;
+const TIE_BREAK_ORDER = PREREGISTRATION_V4.calibrator.tieBreakOrder;
+const ECE_MAXIMUM = PREREGISTRATION_V4.calibrationGate.eceMax;
 
 // ---------------------------------------------------------------------------
 // TWO record fixtures, because one cannot answer both questions this file asks.
@@ -293,12 +293,12 @@ describe("selectCandidateSummary", () => {
     // settled values may not be repeated in code. These are the frozen ones it needs.
     expect(TIE_TOLERANCE).toBe(1e-4);
     expect(TIE_BREAK_ORDER).toEqual(["platt", "beta", "isotonic"]);
-    expect(REBUILD_V3_POLICY.calibrator.candidates).toEqual(TIE_BREAK_ORDER);
+    expect(PREREGISTRATION_V4.calibrator.candidates).toEqual(TIE_BREAK_ORDER);
     // And the ECE admission's budget, which is NOT frozen as a selection rule: it is
     // adopted from the release gate so the selection never prefers a calibrator the
     // gate would reject. The gate's BOUND is deliberately not adopted.
     expect(ECE_MAXIMUM).toBe(0.05);
-    expect(REBUILD_V3_POLICY.calibrationGate.eceBound).toBe(
+    expect(PREREGISTRATION_V4.calibrationGate.eceBound).toBe(
       "bootstrap-simultaneous-upper",
     );
   });
@@ -975,9 +975,9 @@ describe("aggregateOutOfFold", () => {
     ];
     const aggregate = aggregateOutOfFold(rows);
     expect(aggregate.clusters).toBe(16);
-    expect(aggregate.eceBins).toBe(REBUILD_V3_POLICY.calibrationGate.eceBins);
+    expect(aggregate.eceBins).toBe(PREREGISTRATION_V4.calibrationGate.eceBins);
     expect(aggregate.eceBinning).toBe(
-      REBUILD_V3_POLICY.calibrationGate.eceBinning,
+      PREREGISTRATION_V4.calibrationGate.eceBinning,
     );
     expect(aggregate.ece).toBeCloseTo(0, 12);
   });
@@ -1103,7 +1103,7 @@ describe("aggregateOutOfFold", () => {
     }));
     expect(aggregateOutOfFold(tied).ece).toBeCloseTo(0, 12);
     expect(
-      eceEqualMass(asPoints(tied), REBUILD_V3_POLICY.calibrationGate.eceBins),
+      eceEqualMass(asPoints(tied), PREREGISTRATION_V4.calibrationGate.eceBins),
     ).toBeCloseTo(0.25, 12);
 
     // (2) WEIGHTS, in the other direction. One well-calibrated cluster of sixty rows
@@ -1129,7 +1129,7 @@ describe("aggregateOutOfFold", () => {
     expect(
       eceEqualMass(
         asPoints(fatCluster),
-        REBUILD_V3_POLICY.calibrationGate.eceBins,
+        PREREGISTRATION_V4.calibrationGate.eceBins,
       ),
     ).toBeCloseTo(0.1, 12);
   });

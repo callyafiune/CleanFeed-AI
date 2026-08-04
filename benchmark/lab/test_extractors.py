@@ -2697,13 +2697,21 @@ class GeneratorCaptureTests(unittest.TestCase):
         import generate_ai
 
         policy = _json.loads(
-            (Path(__file__).resolve().parent.parent / "rebuild-v3-policy.json")
+            (Path(__file__).resolve().parent.parent / "preregistration-v4.json")
             .read_text(encoding="utf-8")
         )
         frozen = set(policy["generationLanes"])
         # Read against the POLICY rather than a retyped list, so a lane renamed in the
         # frozen file fails here instead of producing rows no corpus can accept.
         self.assertEqual(set(generate_ai.PROVIDER_LANE.values()), frozen)
+        # And against the LIVE pre-registration by name. The abandoned rebuild-v3-policy
+        # left EVALUATOR_FILES, so a byte changed there no longer moves the
+        # evaluatorDigest — an authority outside the evaluator's identity decides without
+        # being watched, which is why nothing may read it.
+        import assemble_corpus
+
+        self.assertEqual(assemble_corpus.POLICY_PATH.name, "preregistration-v4.json")
+        self.assertTrue(assemble_corpus.POLICY_PATH.exists())
         self.assertEqual(
             set(generate_ai.PROVIDER_LANE), set(generate_ai.CLI_PROVIDERS) | {"gemini"}
         )
@@ -3508,10 +3516,10 @@ class StampedCorpusSplittabilityTest(unittest.TestCase):
         roots = connected_components(recs)
         self.assertEqual(roots["a"], roots["c"])
 
-    def _corpus_de_uma_fonte(self, source_id="src_b2w"):
+    def _corpus_de_uma_fonte(self, source_id="src_carolina"):
         """O corpus das fracoes alvo, todo ele atribuido a UMA fonte declarada.
 
-        `source` fica `known` em toda linha porque src_b2w o declara: e o eixo que a
+        `source` fica `known` em toda linha porque src_carolina o declara: e o eixo que a
         mutacao de cada teste abaixo derruba, e comecar com ele preenchido e o que
         separa "a guarda pegou a mutacao" de "a guarda recusa o fixture inteiro".
         """
@@ -3529,8 +3537,8 @@ class StampedCorpusSplittabilityTest(unittest.TestCase):
         A fonte DECLARA que o eixo se aplica; a linha o deixa `unknown`. As fracoes ficam
         perfeitas, entao a unica coisa que pega este caso e consultar o inventario de fontes.
 
-        O EIXO e a CONTAGEM sao afirmados, nao so o prefixo da mensagem: src_b2w declara
-        tres eixos, e uma reprovacao vinda de qualquer um dos outros dois satisfaz
+        O EIXO e a CONTAGEM sao afirmados, nao so o prefixo da mensagem: a fonte declara
+        mais de um eixo, e uma reprovacao vinda de qualquer um dos outros satisfaz
         `assertIn("eixo declarado")` sem que a mutacao deliberada tenha participado. Um
         eixo a mais no inventario basta para mascarar a injecao, e ai a guarda fica verde
         por construcao do fixture em vez de por medicao.
@@ -3549,7 +3557,7 @@ class StampedCorpusSplittabilityTest(unittest.TestCase):
             assert_stamped_corpus_is_splittable(recs)
         msg = str(ctx.exception)
         self.assertIn("eixo declarado", msg)
-        self.assertIn("src_b2w", msg)
+        self.assertIn("src_carolina", msg)
         self.assertIn('"source" aplicavel', msg)
         self.assertIn(alvo["id"], msg)
         # UMA linha, e nao 400: a recusa e da mutacao e de nada mais.
@@ -3565,14 +3573,16 @@ class StampedCorpusSplittabilityTest(unittest.TestCase):
         benchmark/split-audit.ts o aceita — uma guarda que se declara espelho e recusa o que
         o espelhado aceita.
 
-        As TRES fontes, porque a autoridade e por fonte: ptwiki e carolina declaram
-        ('source', 'sourceMaterialBatch') e b2w declara `author` tambem, entao uma so delas
-        nao mede a tabela inteira.
+        AS DUAS fontes estocadas, porque a autoridade e por fonte: uma so delas nao mede a
+        tabela inteira. `src_b2w` saiu do inventario com a moldura nova — resenha de produto
+        nao e celula da alegacao —, entao pedir o eixo dele aqui levantaria KeyError em vez
+        de medir o que este teste mede.
         """
         from assemble_corpus import assert_stamped_corpus_is_splittable, declared_group_axes
 
         autoridade = declared_group_axes()
-        for source_id in ("src_wikipedia_pt", "src_carolina", "src_b2w"):
+        self.assertEqual(sorted(autoridade), ["src_carolina", "src_wikipedia_pt"])
+        for source_id in ("src_wikipedia_pt", "src_carolina"):
             with self.subTest(fonte=source_id):
                 # Nao vacuo: o eixo esta na autoridade, e nenhuma linha carrega a chave.
                 self.assertIn("sourceMaterialBatch", autoridade[source_id])
@@ -3582,6 +3592,52 @@ class StampedCorpusSplittabilityTest(unittest.TestCase):
                 )
                 self._guardar(recs)
                 assert_stamped_corpus_is_splittable(recs)
+
+    def test_a_human_row_from_a_source_outside_the_authority_is_REFUSED(self):
+        """Fonte fora do inventario: recusada, nao saltada.
+
+        `autoridade.get(source_id, ())` devolvia tupla vazia, entao a linha atravessava sem
+        UM eixo conferido — e retirar uma fonte do inventario DESLIGAVA a checagem para as
+        linhas dela em vez de recusa-las. O lado espelhado (corpus-source-audit.ts) recusa
+        por nome, logo o espelho aceitava mais que o espelhado.
+
+        A linha carrega um eixo declarado em `unknown` de proposito: sob o comportamento
+        antigo isso passava em silencio, que e exatamente o que se quer ver falhar.
+        """
+        import group_axes
+        from assemble_corpus import (
+            UnsplittableCorpus,
+            assert_stamped_corpus_is_splittable,
+        )
+
+        recs = self._corpus_de_uma_fonte()
+        alvo = self._de(recs, "train")
+        alvo["provenance"] = {"sourceId": "src_b2w"}
+        alvo["groups"]["source"] = group_axes.unknown("nao recuperado")
+        self._guardar(recs)
+        with self.assertRaises(UnsplittableCorpus) as ctx:
+            assert_stamped_corpus_is_splittable(recs)
+        msg = str(ctx.exception)
+        self.assertIn("fonte nao inventariada", msg)
+        self.assertIn("src_b2w", msg)
+        self.assertIn(alvo["id"], msg)
+        # UMA linha: as outras 199 seguem em src_carolina e nao podem ser arrastadas.
+        self.assertEqual(msg.count("fonte nao inventariada"), 1)
+
+    def test_a_GENERATED_row_outside_the_human_authority_is_accepted(self):
+        """O contra-caso que impede a guarda acima de recusar todo corpus.
+
+        Fonte gerada nao tem registro humano e nao declara eixo nenhum por desenho, entao
+        `src_gen_*` fora da autoridade e o estado normal e nao um defeito.
+        """
+        from assemble_corpus import assert_stamped_corpus_is_splittable
+
+        recs = self._corpus_de_uma_fonte()
+        for r in recs:
+            if r["label"] != "human":
+                r["provenance"] = {"sourceId": "src_gen_lane_agy"}
+        self._guardar(recs)
+        assert_stamped_corpus_is_splittable(recs)
 
     def test_a_v4_row_that_WRITES_the_batch_unknown_is_still_refused(self):
         """A outra direcao: consciencia de versao nao pode virar afrouxamento.

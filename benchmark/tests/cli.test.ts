@@ -24,6 +24,11 @@ import {
   type CorpusSourceReadinessReport,
 } from "../../contracts/source-readiness.ts";
 import { parseCliArgs, runCli } from "../cli.ts";
+import { PREREGISTRATION_V4 } from "../preregistration-v4.ts";
+import {
+  freezeProvisionalThreshold,
+  type ProvisionalThresholdArtifact,
+} from "../provisional-threshold.ts";
 import {
   selectionThresholdEvidence,
   type FrozenCalibrationArtifact,
@@ -289,7 +294,7 @@ describe("benchmark CLI partition and ledger flag guards", () => {
 describe("benchmark CLI score guards", () => {
   const SCORE_ARGS = [
     "--dataset-dir",
-    "benchmark/data/ptbr-generic-v1",
+    "benchmark/data/cleanfeed-ptbr-cells-v1",
     "--split-artifact",
     "split.json",
     "--candidate-extension-dir",
@@ -317,7 +322,7 @@ describe("benchmark CLI score guards", () => {
       runCli([
         "score",
         "--dataset-dir",
-        "benchmark/data/ptbr-generic-v1",
+        "benchmark/data/cleanfeed-ptbr-cells-v1",
         "--split-artifact",
         "split.json",
         "--candidate-extension-dir",
@@ -341,13 +346,13 @@ describe("benchmark CLI consume-holdout parsing", () => {
   const CONSUME_ARGS = [
     "consume-holdout",
     "--dataset-dir",
-    "benchmark/data/ptbr-generic-v1",
+    "benchmark/data/cleanfeed-ptbr-cells-v1",
     "--split-artifact",
     "benchmark/out/ptbr-v1/split/split-artifact.json",
     "--frozen-calibration",
     "benchmark/out/ptbr-v1/fit/frozen-calibration.json",
     "--ledger",
-    "benchmark/data/ptbr-generic-v1/private/holdout-ledger.jsonl",
+    "benchmark/data/cleanfeed-ptbr-cells-v1/private/holdout-ledger.jsonl",
     "--candidate-extension-dir",
     "dist-model-benchmark",
     "--work-dir",
@@ -667,11 +672,11 @@ function record(
 function datasetManifest(): DatasetManifest {
   return {
     schemaVersion: 1,
-    datasetId: "ptbr-generic-v1",
+    datasetId: "cleanfeed-ptbr-cells-v1",
     version: "1.0.0",
     scientificUse: "infrastructure-only",
     intendedLanguage: "pt-BR",
-    intendedDomain: "generic",
+    intendedDomain: "scoped-cells",
     createdAt: "2026-07-19T00:00:00.000Z",
     normalizationVersion: "cleanfeed-text-v1",
     annotationProtocolVersion: "annotation-v1",
@@ -729,6 +734,37 @@ function predictionManifest(
     holdoutConsumptionId,
     createdAt: "2026-07-19T00:00:00.000Z",
   };
+}
+
+// A real provisional-threshold artifact, frozen by the shipped function so its digest
+// and its restated pre-registration are the ones `evaluate` cross-checks.
+async function provisionalThresholdFixture(
+  datasetDigest: string,
+  splitDigest: string,
+  developmentDigest: string,
+  calibrationDigest: string,
+): Promise<ProvisionalThresholdArtifact> {
+  const partitions = PREREGISTRATION_V4.threshold.quantilePartitions;
+  const count = 100;
+  return freezeProvisionalThreshold({
+    samples: Array.from({ length: count }, (_unused, index) => ({
+      id: `fit_${String(index).padStart(3, "0")}`,
+      label: "human",
+      partition: partitions[index % partitions.length],
+      documentRawScore: index / count,
+    })),
+    testIds: [],
+    seed: PREREGISTRATION_V4.seeds.split,
+    digests: {
+      datasetDigest,
+      datasetAuditDigest: DATASET_AUDIT,
+      splitDigest,
+      evaluatorDigest: await evaluatorDigest(),
+      sourceReadinessDigest: SOURCE_READINESS,
+      developmentManifestDigest: developmentDigest,
+      calibrationManifestDigest: calibrationDigest,
+    },
+  });
 }
 
 async function frozenCalibration(
@@ -923,7 +959,7 @@ async function buildScenario(root: string): Promise<Scenario> {
     },
     classTolerance: 0.02,
     heldOutGeneratorFamilies: [asGeneratorFamily("heldout_family")],
-    seed: 20260726,
+    seed: 20260804,
   } as const;
   const artifact = await buildSplitArtifact({
     manifest,
@@ -984,6 +1020,12 @@ async function buildScenario(root: string): Promise<Scenario> {
   await writeFile(
     frozenCalibrationPath,
     `${JSON.stringify(frozen, null, 2)}\n`,
+  );
+  // `evaluate` REQUIRES the pre-registered cut beside the frozen calibration, over the
+  // same dataset, split and evaluator digests.
+  await writeFile(
+    join(fitDir, "provisional-threshold.json"),
+    `${JSON.stringify(await provisionalThresholdFixture(datasetDigest, splitDigest, devDigest, calDigest), null, 2)}\n`,
   );
 
   // Private test labels for the four test records.
@@ -1173,7 +1215,7 @@ describe("benchmark CLI holdout consumption via evaluate", () => {
     expect(recall.unitAxes).toEqual([
       "groups.generatorFamily",
       "groups.promptTemplate",
-      "groups.collectionBatch",
+      "groups.generationBatch",
     ]);
     // Positives in the blind block: four ai plus four mixed. The block holds 20% of each
     // class because the sealed audit is now re-derived from the records, so the split has
@@ -1192,7 +1234,7 @@ describe("benchmark CLI holdout consumption via evaluate", () => {
     ).toEqual([
       "groups.generatorFamily=2",
       "groups.promptTemplate=8",
-      "groups.collectionBatch=8",
+      "groups.generationBatch=8",
     ]);
     // Eight positives over eight resampling levels: every item is its own unit, which is
     // exactly the degeneracy this assertion guards.
@@ -1404,7 +1446,7 @@ async function buildFitScenario(
   // self-digest (its own field excluded) gates the readiness report.
   const sourceBase = {
     schemaVersion: 1,
-    corpus: "ptbr-generic-v1",
+    corpus: "cleanfeed-ptbr-cells-v1",
     note: "fixture source manifest",
   };
   const sourceDigest = await canonicalSha256(sourceBase);
@@ -1417,11 +1459,11 @@ async function buildFitScenario(
 
   const manifest: DatasetManifest = {
     schemaVersion: 1,
-    datasetId: "ptbr-generic-v1",
+    datasetId: "cleanfeed-ptbr-cells-v1",
     version: "1.0.0",
     scientificUse: "infrastructure-only",
     intendedLanguage: "pt-BR",
-    intendedDomain: "generic",
+    intendedDomain: "scoped-cells",
     createdAt: "2026-07-19T00:00:00.000Z",
     normalizationVersion: "cleanfeed-text-v1",
     annotationProtocolVersion: "annotation-v1",
@@ -1476,7 +1518,7 @@ async function buildFitScenario(
     },
     classTolerance: 0.02,
     heldOutGeneratorFamilies: [asGeneratorFamily("heldout_family")],
-    seed: 20260726,
+    seed: 20260804,
   } as const;
   const splitArtifact = await buildSplitArtifact({
     manifest,
@@ -1500,7 +1542,7 @@ async function buildFitScenario(
   const humanCount = allRecords.filter((r) => r.label === "human").length;
   const aiCount = allRecords.filter((r) => r.label === "ai").length;
   const auditBase: Omit<DatasetAudit, "auditDigest"> = {
-    datasetId: "ptbr-generic-v1",
+    datasetId: "cleanfeed-ptbr-cells-v1",
     scientificUse: "infrastructure-only",
     releaseEligible: false,
     recordCount: allRecords.length,
@@ -1697,7 +1739,7 @@ describe("benchmark CLI fit freeze — holdout independence", () => {
       const rootA = await newRoot();
       const scenarioA = await buildFitScenario(rootA, 0, SUFFICIENT_DISK);
       await expect(runFit(scenarioA.options)).resolves.toContain(
-        "Calibration frozen without test access",
+        "no test access",
       );
       const frozenA = await readFile(
         join(scenarioA.options.outputDirectory, "frozen-calibration.json"),

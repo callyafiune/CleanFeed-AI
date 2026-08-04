@@ -18,7 +18,11 @@ import {
   type FrozenCalibrationArtifact,
 } from "../calibration-pipeline.ts";
 import { runFit, type FitOptions } from "../commands/fit.ts";
-import { REBUILD_V3_POLICY } from "../rebuild-v3-policy.ts";
+import {
+  validateProvisionalThresholdArtifact,
+  type ProvisionalThresholdArtifact,
+} from "../provisional-threshold.ts";
+import { PREREGISTRATION_V4 } from "../preregistration-v4.ts";
 import {
   emptyLabelBasisPublication,
   computeDatasetAuditDigest,
@@ -57,7 +61,7 @@ function hex(label: string): string {
   return out.padEnd(64, "0").slice(0, 64);
 }
 
-const DATASET_ID = "ptbr-generic-v1";
+const DATASET_ID = "cleanfeed-ptbr-cells-v1";
 const MODEL_ID = "cleanfeed-ptbr-v1";
 const MODEL_VERSION = "1.0.0";
 const BUNDLE = hex("bundle");
@@ -373,7 +377,7 @@ function datasetManifest(): DatasetManifest {
     version: "1.0.0",
     scientificUse: "infrastructure-only",
     intendedLanguage: "pt-BR",
-    intendedDomain: "generic",
+    intendedDomain: "scoped-cells",
     createdAt: "2026-07-19T00:00:00.000Z",
     normalizationVersion: "cleanfeed-text-v1",
     annotationProtocolVersion: "annotation-v1",
@@ -563,7 +567,7 @@ async function buildScenario(
     },
     classTolerance: 0.02,
     heldOutGeneratorFamilies: [asGeneratorFamily("heldout_family")],
-    seed: REBUILD_V3_POLICY.seeds.split,
+    seed: PREREGISTRATION_V4.seeds.split,
   } as const;
   const artifact = await buildSplitArtifact({
     manifest,
@@ -638,6 +642,23 @@ describe("runFit prediction completeness (fail closed)", () => {
     );
     created.length = 0;
   });
+  // Every dotted key path of an object, so a `/calibrat/i` key can be ENUMERATED
+  // instead of merely absent from the top level.
+  function keysDeep(value: unknown, path = ""): string[] {
+    if (value === null || typeof value !== "object" || Array.isArray(value)) {
+      return [];
+    }
+    const found: string[] = [];
+    for (const [key, nested] of Object.entries(
+      value as Record<string, unknown>,
+    )) {
+      const here = path === "" ? key : `${path}.${key}`;
+      found.push(here);
+      found.push(...keysDeep(nested, here));
+    }
+    return found;
+  }
+
   async function newRoot(): Promise<string> {
     const root = await mkdtemp(join(tmpdir(), "cf-fit-"));
     created.push(root);
@@ -652,7 +673,9 @@ describe("runFit prediction completeness (fail closed)", () => {
         defaultDevRows(),
         defaultCalRows(),
       );
-      await expect(runFit(options)).resolves.toContain("Calibration frozen");
+      await expect(runFit(options)).resolves.toContain(
+        "Provisional threshold frozen",
+      );
       const frozen = JSON.parse(
         await readFile(
           join(options.outputDirectory, "frozen-calibration.json"),
@@ -660,6 +683,78 @@ describe("runFit prediction completeness (fail closed)", () => {
         ),
       );
       expect(frozen.artifactDigest).toMatch(/^[0-9a-f]{64}$/u);
+    },
+    FIT_TIMEOUT_MS,
+  );
+
+  it(
+    "writes the pre-registered cut to disk, with no calibrator field anywhere in it",
+    async () => {
+      // Read from DISK and not from the return value: the run summary already names the
+      // threshold, so a test that only matched that string stayed green with the write
+      // deleted, and the artifact `evaluate` re-reads would simply be absent.
+      const options = await buildScenario(
+        await newRoot(),
+        defaultDevRows(),
+        defaultCalRows(),
+      );
+      await runFit(options);
+      const raw = await readFile(
+        join(options.outputDirectory, "provisional-threshold.json"),
+        "utf8",
+      );
+      const artifact = JSON.parse(raw) as Record<string, unknown>;
+
+      expect(Object.keys(artifact).sort()).toEqual([
+        "artifactDigest",
+        "digests",
+        "fitPartitions",
+        "population",
+        "preRegistration",
+        "schemaVersion",
+        "seed",
+        "threshold",
+        "thresholdBasis",
+        "thresholdVersion",
+      ]);
+      // The three legitimate /calibrat/i keys ENUMERATED rather than pattern-excluded,
+      // so a FOURTH one — a fitted calibrator, a selection-evidence block — fails here.
+      // The v1 fits no probabilistic calibrator, and the absence is the decision. Note
+      // which three survive: two NAME the pre-registered non-calibration and one is a
+      // manifest digest of the `cal-A` predictions. None of them is a fitted model.
+      expect(
+        keysDeep(artifact).filter((key) => /calibrat/iu.test(key)),
+      ).toEqual([
+        "digests.calibrationManifestDigest",
+        "preRegistration.calibrationScoreBasis",
+        "preRegistration.probabilisticCalibrator",
+      ]);
+      expect(artifact.thresholdBasis).toBe(PREREGISTRATION_V4.threshold.basis);
+      expect(
+        (artifact.preRegistration as Record<string, unknown>)
+          .probabilisticCalibrator,
+      ).toBe("none");
+      expect(artifact.fitPartitions).toEqual([
+        ...PREREGISTRATION_V4.threshold.quantilePartitions,
+      ]);
+      // And the artifact the certifying path re-reads passes its own re-read, bound to
+      // the governance digests the frozen calibration declares.
+      const frozen = JSON.parse(
+        await readFile(
+          join(options.outputDirectory, "frozen-calibration.json"),
+          "utf8",
+        ),
+      ) as Record<string, string>;
+      expect(() =>
+        validateProvisionalThresholdArtifact(
+          artifact as unknown as ProvisionalThresholdArtifact,
+          {
+            datasetDigest: frozen.datasetDigest,
+            splitDigest: frozen.splitDigest,
+            evaluatorDigest: frozen.evaluatorDigest,
+          },
+        ),
+      ).not.toThrow();
     },
     FIT_TIMEOUT_MS,
   );
@@ -750,10 +845,10 @@ describe("runFit prediction completeness (fail closed)", () => {
       for (const path of ["document", "localized"] as const) {
         const stratification = crossValidation[path];
         expect(stratification.folds).toBe(
-          REBUILD_V3_POLICY.calibrator.crossValidationFolds,
+          PREREGISTRATION_V4.calibrator.crossValidationFolds,
         );
         expect(stratification.seed).toBe(
-          REBUILD_V3_POLICY.seeds.crossValidation,
+          PREREGISTRATION_V4.seeds.crossValidation,
         );
         expect(stratification.clusters).toBeGreaterThan(0);
         expect(stratification.clusters).toBeLessThan(stratification.items);

@@ -18,7 +18,7 @@ import {
   type GovernanceSeal,
 } from "../report.ts";
 import type { SliceSummary } from "../slices.ts";
-import { REBUILD_V3_POLICY } from "../rebuild-v3-policy.ts";
+import { PREREGISTRATION_V4 } from "../preregistration-v4.ts";
 import { standInClusterReport, type SplitAudit } from "../split-audit.ts";
 import { V3_GROUP_AXES } from "../schema.ts";
 import { asGeneratorFamily } from "../generator-family.ts";
@@ -203,7 +203,7 @@ function gateReport(overrides: Partial<GateReport> = {}): GateReport {
       correction: "bonferroni",
       familyAlpha: 0.05,
       descriptiveConfidence: 0.95,
-      frozenAt: "G5",
+      frozenAt: "G0.2",
       declared: 40,
       observed: 1,
       gateIds: ["warning.fpr.overall"],
@@ -1172,7 +1172,7 @@ describe("renderReportMarkdown publishes the A6 evidence with its roles named", 
                     executed: "percentile-bootstrap" as const,
                     publishedBound: {
                       kind: "envelope" as const,
-                      rule: REBUILD_V3_POLICY.resampling.publishedBound,
+                      rule: PREREGISTRATION_V4.resampling.publishedBound,
                       individual: {
                         lowerFrom: "resampled" as const,
                         upperFrom: "resampled" as const,
@@ -1188,7 +1188,7 @@ describe("renderReportMarkdown publishes the A6 evidence with its roles named", 
                     executed: "percentile-bootstrap" as const,
                     publishedBound: {
                       kind: "envelope" as const,
-                      rule: REBUILD_V3_POLICY.resampling.publishedBound,
+                      rule: PREREGISTRATION_V4.resampling.publishedBound,
                       individual: {
                         lowerFrom: "resampled" as const,
                         upperFrom: "analytic" as const,
@@ -1314,7 +1314,7 @@ describe("renderReportMarkdown publishes the A6 evidence with its roles named", 
     expect(units).toMatch(
       /`groups\.promptTemplate` no lugar de "operação de edição"/u,
     );
-    expect(units).toMatch(/nenhum eixo do schema v3 registra/u);
+    expect(units).toMatch(/nenhum eixo do schema v4 registra/u);
     // The section says which estimands the plan covers, and that the rest declare
     // no unit at all — the claim `MetricEstimate.method` backs per number.
     expect(units).toMatch(/não têm unidade declarada em nenhum lugar/u);
@@ -1325,7 +1325,7 @@ describe("renderReportMarkdown publishes the A6 evidence with its roles named", 
     // a third extension (or one fewer) cannot leave the report asserting a number
     // the file no longer says.
     const extensionCount = Object.keys(
-      REBUILD_V3_POLICY.resampling.estimandExtensions,
+      PREREGISTRATION_V4.resampling.estimandExtensions,
     ).length;
     expect(units).toMatch(
       new RegExp(

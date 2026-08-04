@@ -18,10 +18,18 @@ em `GROUP_KEYS`: o resultado são cinco blocos de 800, com o mesmo impedimento e
 
 ## O que substitui
 
-Uma nova pré-inscrição, sob **novo dataset ID**, prospectiva, que precisa definir e exigir
-`sourceMaterialBatch` como a identidade que carrega dependência — separada de `extractionRun`, porque a
-execução local de um extrator determinístico não é unidade estatística — e rodar um preflight de
-viabilidade sobre tamanhos e intervalos temporais dos componentes ANTES da montagem.
+`benchmark/preregistration-v4.json` + `.ts`, sob o dataset ID `cleanfeed-ptbr-cells-v1`. É ela que está
+em `EVALUATOR_FILES`; este par saiu de lá, **nenhum módulo de produção o importa e nenhum lê o JSON** —
+inclusive do lado Python, onde `assemble_corpus.POLICY_PATH` aponta para a política viva. O arquivo
+continua legível e byte-exato — permanece no `.prettierignore` por isso, e não porque ainda seja hasheado.
+Um byte alterado aqui não move mais o `evaluatorDigest`, o que é exatamente por que nada pode lê-lo:
+autoridade fora da identidade do avaliador decide sem ser vigiada.
+
+A nova pré-inscrição define e exige `sourceMaterialBatch` como a identidade que carrega dependência —
+separada de `extractionRun`, porque a execução local de um extrator determinístico não é unidade
+estatística —, mantém esse eixo FORA da união do split (`splitUnionsOnDependencyAxis: false`, medido:
+unir por ali faz cada célula um componente indivisível) e roda um preflight de viabilidade sobre
+tamanhos e intervalos temporais dos componentes ANTES da montagem.
 
 `pt-stackoverflow` permanece fora até a condição jurídica do termo de acesso de 2024 ser satisfeita.
 

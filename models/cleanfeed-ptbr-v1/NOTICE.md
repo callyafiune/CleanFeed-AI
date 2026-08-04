@@ -86,13 +86,14 @@ Anthropic via APIs/CLI).
 Stack Exchange PT **não** é dado de treino desta versão. O termo de acesso do
 dump (2024) exclui projetos de treino de LLM, e sem disposição jurídica
 verificável a fonte fica bloqueada para incorporação — decisão A1. O estrato
-`qa-informal` fica, por consequência, sem fonte própria, e essa lacuna é
-declarada e não coberta.
+`qa-informal`, que era a única célula que a fonte cobria, deixou de existir: as
+células alegadas são quatro — enciclopédico, judiciário, universitário e rede
+social — e `uncoveredCoreStrata` está vazio porque nenhuma delas ficou sem fonte.
 
 ## De onde vem cada valor
 
 `commercialUse: false` é decisão congelada em
-`benchmark/rebuild-v3-policy.json` (validada por `benchmark/rebuild-v3-policy.ts`,
+`benchmark/preregistration-v4.json` (validada por `benchmark/preregistration-v4.ts`,
 dentro de `EVALUATOR_FILES`); `benchmark/source-manifest.ts` a lê e é a autoridade
 do registro de licenças, do veredito por fonte e das obrigações do corpus, e
 também de `WEIGHT_USE_POLICY`, que é o que governa os pesos; este NOTICE e

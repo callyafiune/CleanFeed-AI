@@ -76,14 +76,25 @@ o veredito está resumido no registro (§ "A etapa 1 da Fase 1 refutou o item 3"
 |---|---|---|
 | **A** | esquema **v4** (− `collectionBatch`; + `sourceMaterialBatch`, `generationBatch`, `extractionRun`; `AXIS_STATE_RULE` completo) + manifesto **v2** (`materialBatches` obrigatório, projeção incondicional) + espelhos Python | sim (`schema.ts`, `source-manifest.ts`) |
 | **B** | conectividade: `GROUP_KEYS` v4 (sem `domainSource`, sem lote), auditoria reporta os dois como inventário, contraprova de viabilidade com lote-único-por-célula. **Inclui**: `auditClusters`/`standInClusterReport` (split-audit.ts:766, :564) ainda iteram `V3_GROUP_AXES` sem condição, então sobre corpus v4 o relatório de cluster do split publica `collectionBatch` com `states.unknown = N` e **omite** os três eixos novos — o espelho Python já é ciente da versão (`group_axes.axes_of`), e é o lado TS que está atrás. `DECLARED_GROUP_AXES` e o parser fechado do audit mudam com ele | sim (`split.ts`, `split-audit.ts`) |
-| **C** | **a troca atômica**: `preregistration-v4.{json,ts}` com os pins, 11 sítios de import, `EVALUATOR_FILES` atualizado, identidade de dataset da política, estratos recompostos, `fit` sem calibrador | sim (por desenho) |
-| **D** | fiação `m=7`: inventário de gates derivado de `primaryFamily`; `evaluate.ts` passa a multiplicidade; 300 threaded em `slices.ts` | sim (`gates.ts`, `commands/evaluate.ts`) |
+| **C** | **a troca atômica**: `preregistration-v4.{json,ts}` com os pins, 11 sítios de import, `EVALUATOR_FILES` atualizado, identidade de dataset da política, estratos recompostos, `fit` sem calibrador. **Inclui o que o Commit A deferiu**: a tabela `resampling` re-derivada sobre os eixos v4 (o estimando `ai-recall` deixa de nomear `groups.collectionBatch`, que v4 apagou, e passa a nomear `groups.generationBatch`) **junto** do alargamento de `metrics.ts` — `V3_AXIS_NAMES` (metrics.ts:1304) era a tupla v3 e `axisLevel` estourava `RangeError` para qualquer outro eixo, então a política nova era inalcançável e a política velha congelaria um eixo morto no selado; as DUAS falhavam, e é por isso que os dois entram no mesmo commit | sim (por desenho) |
+| **D** | fiação `m=7`: inventário de gates derivado de `primaryFamily`; `evaluate.ts` passa a multiplicidade; 300 threaded em `slices.ts`. **Inclui a metade que o Commit C não fechou** (achado do cross-review): o corte publicado da v1 passa a ser o **limiar provisório sobre `documentRawScore`**, o ECE-15 passa a ser medido sobre esse mesmo escore, e o `fit` para de ajustar calibrador e evidência de seleção. Não caberia no C: `buildEvaluationItem`, `profile-artifact.ts` (que publica o perfil de runtime a partir de `frozen.calibrators`), `contracts/calibration-profile.ts` e `src/inference/calibration.ts` mudam JUNTOS, e meia troca — escore bruto com corte calibrado, ou corte bruto com perfil de runtime calibrado — é pior que qualquer das duas pontas. O que o C entregou é a **guarda**: `evaluate` exige e confere `provisional-threshold.json` (digest, restatement da política, digests de governança), então um `fit` sem o corte pré-inscrito não alcança a medição | sim (`gates.ts`, `commands/evaluate.ts`) |
 | **E** | **gate de composição** (D32): linhas E componentes por célula × `test`, recusa nomeando célula/contagem/piso; substitui `COMPOSITION_FLOOR_NOT_APPLIED` no mesmo commit | sim (`commands/split.ts`) |
 | **F** | comando `preflight-viability` (runbook § 4b) + guarda do lab alinhada | não |
 
 **Ratificação da pré-inscrição:** antes do Commit C ser commitado, a tabela de valores congelados (no
 relatório da etapa 1) vai ao operador — inclui `dataset.id` proposto (`cleanfeed-ptbr-cells-v1`) e os
-counts ai 4000 / mixed 2000.
+counts ai 4000 / mixed 2000. **Ratificado em 2026-08-04**, com duas correções que o cross-review do
+Commit C impôs à tabela:
+
+- `collection.humanLinesTotal` e `counts.human` são **7.000** e não 6.000 — quatro células vezes o ALVO de
+  1.750, não vezes o piso de 1.500. `sealDataset` compara a composição por igualdade EXATA, então derivar
+  o total do piso recusaria justamente todo corpus que carrega a margem de G0.3-bis. Medido: no piso, a
+  média de negativos humanos por célula em `test` é exatamente 300 (sd ≈ 15) e **metade dos sorteios
+  reprova** o gate de composição; no alvo são ~350, três desvios acima. Total do corpus: 13.000;
+- o lado **Python** da troca não era atômico: `assemble_corpus.py` lia `rebuild-v3-policy.json` no import
+  e decidia `generation.decoding` a partir dele, com o par morto **já fora** de `EVALUATOR_FILES` — isto
+  é, uma autoridade que decide sem que o `evaluatorDigest` a vigie. Os dois blocos `generationLanes` são
+  idênticos, medido, então o conserto é troca de caminho e não de valor.
 
 **Dívida que o Commit A abre, com dono (Fase 3, item 1):** o cruzamento
 `groups.sourceMaterialBatch` → inventário está fiado em `auditCorpusSources`, e o **produtor do

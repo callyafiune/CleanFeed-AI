@@ -143,7 +143,7 @@ def gemini_command() -> list[str]:
 
 
 # The provider label this script uses -> the frozen generation lane
-# (benchmark/rebuild-v3-policy.json). Recorded on every row so the assembler reads a
+# (benchmark/preregistration-v4.json). Recorded on every row so the assembler reads a
 # lane the GENERATOR observed instead of inferring one from a provider string, and so
 # a provider that is not one of the four frozen lanes fails HERE rather than silently
 # producing rows no v3 corpus can accept.

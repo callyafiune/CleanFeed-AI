@@ -10,7 +10,7 @@
 // above: two rounds of such a summary went stale and contradicted the imports.
 //   * `../contracts/canonical-json.ts` — the Phase 1 canonical-json digest
 //     helper, shared with the runtime through contracts/.
-//   * `./rebuild-v3-policy.ts` — reads the frozen policy file at load, which is
+//   * `./preregistration-v4.ts` — reads the frozen policy file at load, which is
 //     what makes this module Node-side; see "WHO OWNS WHICH VALUE" below and
 //     the load-cost note at the end of this header.
 //   * `./schema.ts` — the record-side axis vocabulary (`GroupAxis`, the union over
@@ -116,8 +116,8 @@
 // that closes is G5.
 //
 // WHO OWNS WHICH VALUE (this module is not the authority for all of it):
-//   * `benchmark/rebuild-v3-policy.json`, validated by
-//     `benchmark/rebuild-v3-policy.ts` and inside `EVALUATOR_FILES`, is the
+//   * `benchmark/preregistration-v4.json`, validated by
+//     `benchmark/preregistration-v4.ts` and inside `EVALUATOR_FILES`, is the
 //     authority for the frozen decisions themselves — `commercialUse: false`,
 //     `attributionRequired`, `shareAlikeRequired`. The plan's frozen contract
 //     says code may not repeat them as loose constants, so this module READS
@@ -140,9 +140,9 @@
 
 import { canonicalSha256 } from "../contracts/canonical-json.ts";
 import {
-  REBUILD_V3_POLICY,
+  PREREGISTRATION_V4,
   type LabelBasisValue,
-} from "./rebuild-v3-policy.ts";
+} from "./preregistration-v4.ts";
 import type { GroupAxis } from "./schema.ts";
 
 export type ReviewedSourceEntryV1 =
@@ -322,8 +322,8 @@ function fail(code: string, message: string): never {
  * no flag, no override, no branch kept open.
  *
  * `commercialUse` is NOT decided here. It is the frozen-table row materialized
- * in `benchmark/rebuild-v3-policy.json` and validated by
- * `benchmark/rebuild-v3-policy.ts`, and it is read from there so the decision
+ * in `benchmark/preregistration-v4.json` and validated by
+ * `benchmark/preregistration-v4.ts`, and it is read from there so the decision
  * exists in exactly one place. `policyId` and `redistribution` are local: they
  * are not rows of the frozen table, they name THIS module's regime.
  *
@@ -345,7 +345,7 @@ function fail(code: string, message: string): never {
  */
 export const CORPUS_USE_POLICY = {
   policyId: "noncommercial-v1",
-  commercialUse: REBUILD_V3_POLICY.commercialUse,
+  commercialUse: PREREGISTRATION_V4.commercialUse,
   redistribution: "not-published",
 } as const;
 
@@ -380,7 +380,7 @@ export const CORPUS_USE_POLICY = {
  * are not one policy: the corpus is non-commercial because the frozen contract
  * says so, the weights are non-commercial because the project chose it, and
  * threading one through the other would rebuild the inheritance this constant
- * exists to deny. Both are pinned to `REBUILD_V3_POLICY.commercialUse` by test so
+ * exists to deny. Both are pinned to `PREREGISTRATION_V4.commercialUse` by test so
  * they cannot drift apart in silence either.
  *
  * `prohibitedUses` is the reason the licence has to be its own named instrument
@@ -439,7 +439,7 @@ const OBLIGATION_ORDER: readonly LicenseObligation[] = [
 
 /**
  * The obligations the frozen contract requires the CORPUS to carry, DERIVED
- * from `benchmark/rebuild-v3-policy.json` instead of listed here: the row "uso e
+ * from `benchmark/preregistration-v4.json` instead of listed here: the row "uso e
  * licença" is `commercialUse: false` plus `attributionRequired` plus
  * `shareAlikeRequired`.
  *
@@ -461,11 +461,11 @@ export const FROZEN_CORPUS_OBLIGATIONS: readonly LicenseObligation[] =
   OBLIGATION_ORDER.filter((obligation) => {
     switch (obligation) {
       case "attribution":
-        return REBUILD_V3_POLICY.attributionRequired;
+        return PREREGISTRATION_V4.attributionRequired;
       case "non-commercial":
-        return !REBUILD_V3_POLICY.commercialUse;
+        return !PREREGISTRATION_V4.commercialUse;
       case "share-alike":
-        return REBUILD_V3_POLICY.shareAlikeRequired;
+        return PREREGISTRATION_V4.shareAlikeRequired;
     }
   });
 
@@ -887,8 +887,8 @@ export function licenseDescribesPublicBase(licenseId: string): boolean | null {
 
 /**
  * The evidence basis of a `human` label. The vocabulary is NOT written down here:
- * `benchmark/rebuild-v3-policy.json` is the authority (`labelBasis.allowed`) and
- * `benchmark/rebuild-v3-policy.ts` types it, so this module re-exports the type
+ * `benchmark/preregistration-v4.json` is the authority (`labelBasis.allowed`) and
+ * `benchmark/preregistration-v4.ts` types it, so this module re-exports the type
  * and validates against the frozen list.
  *
  * `observed-process` is STRONGER evidence than `date-cutoff`, not a synonym for
@@ -1108,7 +1108,7 @@ export function humanSourceAdmissibility(
   // the source is not allowed to exist as a source at all until the access terms
   // get a verifiable legal disposition.
   if (
-    REBUILD_V3_POLICY.humanSources.blockedSnapshots.some(
+    PREREGISTRATION_V4.humanSources.blockedSnapshots.some(
       (blocked) => blocked.snapshot === registration.snapshot,
     )
   ) {
@@ -1143,7 +1143,7 @@ export function humanSourceAdmissibility(
   // Membership is checked against the frozen list rather than against this
   // module's own type, so a policy that stops allowing a basis takes effect here
   // without an edit, and a value smuggled past the type is still refused.
-  if (!REBUILD_V3_POLICY.labelBasis.allowed.includes(labelBasis)) {
+  if (!PREREGISTRATION_V4.labelBasis.allowed.includes(labelBasis)) {
     return refuse("label-basis-not-allowed", licence.obligations);
   }
   if (labelBasis === "date-cutoff") {
@@ -1214,19 +1214,21 @@ export const A1_BLOCKED_HUMAN_SOURCES: readonly HumanSourceRegistrationV1[] = [
  *     (`benchmark/lab/extract_carolina.py`). Per document, not per package: the
  *     2.0 (Bea) package header is one thing and its documents carry dates of
  *     2024 and 2025, which is exactly why the package vintage may not stand in.
- *   * `b2w-reviews01` — CSV column `submission_date` (`extract_b2w.py`, with
- *     `date`/`review_date` as the alternate spellings of the same column).
+ * `b2w-reviews01` is NOT here: product review is outside the declared frame, so it
+ * moved to {@link OUT_OF_FRAME_HUMAN_SOURCES} with the reason rather than being
+ * deleted.
  *
- * All three sustain `date-cutoff` and none sustains `observed-process`: no
+ * Both sustain `date-cutoff` and neither sustains `observed-process`: no
  * published instrumented pt-BR base of the required size exists, and inventing
  * one would be inventing provenance (R4). That is a limitation of this
  * inventory, recorded in `docs/limitations.md`, not a property of the field.
  *
  * BOTH keys here are join keys, and both are pinned by test. `snapshot` joins to
- * `REBUILD_V3_POLICY.humanSources.snapshots` (asserted set-equal). `sourceId`
+ * `PREREGISTRATION_V4.humanSources.snapshots` (asserted set-equal). `sourceId`
  * joins to the `sourceId` of the reviewed source manifest, and these values
  * are the ones the manifests an operator actually holds use —
- * `src_wikipedia_pt`, `src_carolina`, `src_b2w`, plus the refused `src_ptso` in
+ * `src_wikipedia_pt` and `src_carolina`, plus the out-of-frame `src_b2w` in
+ * {@link OUT_OF_FRAME_HUMAN_SOURCES} and the refused `src_ptso` in
  * {@link A1_BLOCKED_HUMAN_SOURCES}, in
  * `benchmark/data/corpus-build/**\/private/source-manifest.json`. That file is a
  * gitignored build artifact, so no test can read it; the ids are pinned as
@@ -1260,19 +1262,38 @@ export const V3_HUMAN_SOURCE_INVENTORY: readonly HumanSourceRegistrationV1[] = [
     // one package are partitions of a SINGLE acquisition, not separate ones.
     declaredGroupAxes: ["source", "sourceMaterialBatch"],
   },
-  {
-    sourceId: "src_b2w",
-    snapshot: "b2w-reviews01",
-    acquisition: "public-dataset",
-    licenseId: "cc-by-nc-sa-4.0",
-    labelBasis: "date-cutoff",
-    anchorDateField: "submission_date",
-    anchorDateScope: "document",
-    // A review belongs to a PRODUCT and to a reviewer; the CSV release it was read
-    // out of is one acquisition event.
-    declaredGroupAxes: ["author", "source", "sourceMaterialBatch"],
-  },
 ];
+
+/**
+ * A human source whose route and licence are admissible and whose SNAPSHOT is
+ * outside the declared frame.
+ *
+ * Held apart from both other lists because the reason is a third one. `src_ptso` in
+ * {@link A1_BLOCKED_HUMAN_SOURCES} is refused on access terms — a legal condition
+ * that could be satisfied. `src_b2w` is not refused at all: product review is simply
+ * not one of the four cells the claim is published over
+ * (`preRegistration.quotaAxis.cells`), so there is no cell for its records to carry
+ * a quota in and `humanSources.snapshots` does not stock its base.
+ *
+ * Declared rather than deleted, for the reason `blockedSnapshots` gives: a source
+ * that leaves by being erased leaves no trace, and re-admitting it becomes a one-line
+ * edit that works instead of a decision that has to name the cell it would add.
+ */
+export const OUT_OF_FRAME_HUMAN_SOURCES: readonly HumanSourceRegistrationV1[] =
+  [
+    {
+      sourceId: "src_b2w",
+      snapshot: "b2w-reviews01",
+      acquisition: "public-dataset",
+      licenseId: "cc-by-nc-sa-4.0",
+      labelBasis: "date-cutoff",
+      anchorDateField: "submission_date",
+      anchorDateScope: "document",
+      // A review belongs to a PRODUCT and to a reviewer; the CSV release it was read
+      // out of is one acquisition event.
+      declaredGroupAxes: ["author", "source", "sourceMaterialBatch"],
+    },
+  ];
 
 /**
  * Refuses a v3 human inventory and returns the obligations it imposes.
@@ -1288,7 +1309,7 @@ export function assertV3HumanInventoryAdmissible(
   registrations: readonly HumanSourceRegistrationV1[],
   use: DeclaredCorpusUse = CORPUS_USE_POLICY,
 ): readonly LicenseObligation[] {
-  const frozen = REBUILD_V3_POLICY.humanSources.snapshots;
+  const frozen = PREREGISTRATION_V4.humanSources.snapshots;
   const union = new Set<LicenseObligation>();
   for (const registration of registrations) {
     const verdict = humanSourceAdmissibility(registration, use);

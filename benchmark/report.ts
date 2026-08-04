@@ -53,7 +53,7 @@ import {
   computePredictionManifestDigest,
   type PredictionManifestV1,
 } from "./prediction-schema.ts";
-import { REBUILD_V3_POLICY } from "./rebuild-v3-policy.ts";
+import { PREREGISTRATION_V4 } from "./preregistration-v4.ts";
 import type { SliceSummary } from "./slices.ts";
 import type { SplitAudit } from "./split-audit.ts";
 
@@ -1031,7 +1031,7 @@ function resamplingUnitLabel(
 // the frozen contract, so the list cannot drift from the file that decides it.
 function resamplingExtensionLines(): string[] {
   const extensions = Object.entries(
-    REBUILD_V3_POLICY.resampling.estimandExtensions,
+    PREREGISTRATION_V4.resampling.estimandExtensions,
   );
   if (extensions.length === 0) return [];
   // The COUNT comes from the list, never from prose: the contract owns how many

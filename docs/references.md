@@ -2430,3 +2430,195 @@ citação para estas.
 - Log-loss publicado; gate de calibração sobre o limite superior de bootstrap simultâneo; regra de
   seleção de calibrador pré-registrada (tolerância `1e-4`, ordem Platt → beta → isotônico);
   `calibrationScope: "global"` por caminho — § A6/§ G1/§ G4.
+
+---
+
+## § K — a pré-inscrição v4: escopo por célula, limiar por quantil e teto de export (Commit C, 2026-08-04)
+
+Nível 1 e 2 da hierarquia. O que segue cobre as decisões metodológicas que a troca atômica da
+pré-inscrição introduziu; as decisões de **valor** entram na lista (b) do § J, não aqui.
+
+### K1 — moldura amostral declarada em vez de "domínio geral"
+
+O `intendedDomain` sai de `generic` para `scoped-cells` e a alegação é publicada como tabela por célula.
+A prática de declarar a **população-alvo** e recusar extrapolação para fora dela é o núcleo das fichas
+de documentação de dataset e modelo:
+
+- Gebru et al., *Datasheets for Datasets*, CACM 64(12), 2021 — "Intended Uses" e "Composition" existem
+  para impedir exatamente a leitura genérica. [link](https://doi.org/10.1145/3458723)
+- Mitchell et al., *Model Cards for Model Reporting*, FAT* 2019 — desempenho **desagregado** por grupo
+  declarado, e não um número único. [link](https://doi.org/10.1145/3287560.3287596)
+- Bender & Friedman, *Data Statements for NLP*, TACL 6, 2018 — a "curation rationale" e a variedade
+  linguística como parte da alegação. [link](https://doi.org/10.1162/tacl_a_00041)
+
+**A transferência:** as três fontes tratam de *documentar* a população; aqui a moldura também **gateia**
+— o parser recusa a política que nomeia um estrato sem fonte, e o selo recusa o corpus que não cobre as
+quatro células. Documentação que não reprova nada é o modo de falha que essas fichas descrevem.
+
+### K2 — família de sete hipóteses por célula, em vez de manchete do pior estrato
+
+Bonferroni já está referenciado no § H; o que é novo é **escolher a família por célula** em vez de por
+pior estrato. A razão é a que a literatura de subgrupos descreve: um máximo sobre estratos é uma
+estatística cuja distribuição depende do número de estratos, então acrescentar cobertura **piora** a
+manchete sem que nada tenha piorado.
+
+- Barnett, van der Pols & Dobson, *Regression to the mean: what it is and how to deal with it*,
+  IJE 34(1), 2005 — o extremo de um conjunto de estimativas é enviesado por seleção.
+  [link](https://doi.org/10.1093/ije/dyh299)
+- Efron, *Large-Scale Inference*, CUP, 2010, cap. 1–2 — por que o máximo sobre m estimativas não é uma
+  estimativa do máximo. [link](https://doi.org/10.1017/CBO9780511761362)
+
+**A transferência:** as fontes tratam de seleção pós-hoc do extremo; aqui a família é **nomeada antes**
+(`multiplicity.primaryFamily`, sete membros, conteúdo e ordem congelados), e o parser recomputa
+`alpha/m` em vez de confiar no valor escrito. O que a citação sustenta é a **direção** da escolha, não o
+valor de `m`.
+
+### K3 — limiar como ordem-estatística de um quantil unilateral, sem calibrador
+
+A v1 não ajusta calibrador probabilístico: o corte é a ordem-estatística do quantil `1 − orçamento` sobre
+os negativos humanos de `dev + cal-A`, aplicada ao escore cru de documento.
+
+- Hyndman & Fan, *Sample Quantiles in Statistical Packages*, The American Statistician 50(4), 1996 — as
+  nove definições de quantil empírico e por que a escolha tem de ser declarada.
+  [link](https://doi.org/10.1080/00031305.1996.10473566)
+- Scheffé & Tukey, *A formula for sample sizes for population tolerance limits*, Annals of Mathematical
+  Statistics 15, 1944 — limites de tolerância não paramétricos por ordem-estatística, que é a família à
+  qual este corte pertence. [link](https://doi.org/10.1214/aoms/1177731267)
+- Guo, Pleiss, Sun & Weinberger, *On Calibration of Modern Neural Networks*, ICML 2017 — o softmax cru
+  de uma rede moderna é **mal calibrado**, o que é precisamente por que este projeto mede ECE sobre ele e
+  ainda assim não o chama de probabilidade. [link](https://proceedings.mlr.press/v70/guo17a.html)
+
+**A transferência:** Hyndman & Fan catalogam definições para estimar um quantil da população; aqui a
+escolha é a **conservadora sob o comparador do runtime** (`score >= threshold`), que desloca a posição em
+um passo — o índice é `ceil(q·n)` e não `ceil(q·n) − 1`, porque o sorteio *no* corte é uma acusação.
+Scheffé & Tukey dão o piso amostral: sem `n ≥ 1/(1 − q)` não existe cauda para o limite descrever, e é
+esse o piso que o freeze exige. Guo et al. justificam a **recusa de linguagem de probabilidade**: um ECE
+limitado sobre escore cru limita descalibração, não converte o escore em probabilidade.
+
+**Sem precedente encontrado (2026-08-04)** para a regra de conferir o quantil da política contra
+`1 − fprBudgets.warning` no *parser*, e para publicar `atOrAboveThreshold` no artefato em vez de reprovar
+o freeze. As duas são engenharia de coerência interna: a primeira impede uma política que aponta o limiar
+para uma taxa que ela não publica, a segunda separa "congelar o quantil" de "decidir o orçamento", que é
+decisão de gate sobre `test`.
+
+### K4 — teto de bytes do export como restrição declarada, não como medição
+
+`onnxMaximumInt8Bytes` é congelado por **aritmética de parâmetros**, não por medição de arquivo, e é
+declarado teto.
+
+- Conneau et al., *Unsupervised Cross-lingual Representation Learning at Scale* (XLM-R), ACL 2020 — as
+  contagens do backbone: vocabulário de 250k, `base` com 12 camadas e dimensão 768.
+  [link](https://doi.org/10.18653/v1/2020.acl-main.747)
+- Jacob et al., *Quantization and Training of Neural Networks for Efficient Integer-Arithmetic-Only
+  Inference*, CVPR 2018 — um peso int8 mais escala/zero-point por canal, que é a aritmética de tamanho
+  usada aqui. [link](https://doi.org/10.1109/CVPR.2018.00286)
+
+**A transferência:** as fontes dão as contagens e o custo por peso; o **teto** é decisão do projeto, com
+a folga escrita e a consequência nomeada (um export que deixe a matriz de embeddings em fp32 reprova).
+Nada aqui alega ter medido um export.
+
+### K5 — identificador retirado por recusa nomeada, não por deleção
+
+`ptbr-generic-v1` continua nomeado em `dataset.refusedIds` e é recusado com código próprio, do mesmo modo
+que `pt-stackoverflow` continua em `blockedSnapshots`. O princípio — remover por *tombstone* explícito em
+vez de apagar, para que a reutilização falhe com diagnóstico — é o de esquemas de dados com campos
+reservados:
+
+- Google, *Protocol Buffers Language Guide*, seção `reserved` — números e nomes de campo retirados são
+  **reservados**, não liberados, porque a reutilização silenciosa corrompe leitores antigos.
+  [link](https://protobuf.dev/programming-guides/proto3/#deleting)
+- Nygard, *Release It!*, 2ª ed., 2018, cap. sobre versionamento — um identificador reaproveitado é
+  indistinguível de um identificador nunca mudado.
+
+**Sem precedente acadêmico encontrado (2026-08-04)** para aplicar a regra a um **identificador de
+dataset de pré-inscrição**. A analogia com campos reservados de esquema é de engenharia, e é o que
+sustenta a escolha; a alegação fica nesse nível.
+
+### K6 — eixo de dependência declarado sem entrar na união de agrupamento
+
+O bloco `connectivity` declara `sourceMaterialBatch` como unidade de dependência **entre** aquisições e
+ao mesmo tempo o mantém fora de `splitUnionAxes`. A distinção entre "há dependência nesse nível" e "este
+é o nível pelo qual eu agrupo" é a mesma que a literatura de amostragem por conglomerados faz entre
+**unidade de amostragem** e **fonte de correlação**:
+
+- Kish, *Survey Sampling*, Wiley, 1965, cap. 5–6 — conglomerado como unidade de seleção, distinto do
+  estrato e do efeito de desenho que a correlação intraclasse produz.
+- Cameron & Miller, *A Practitioner's Guide to Cluster-Robust Inference*, Journal of Human Resources
+  50(2), 2015 — escolher o nível de agrupamento é um trade-off, e agrupar grosso demais destrói os graus
+  de liberdade. [link](https://doi.org/10.3368/jhr.50.2.317)
+
+**A transferência:** Cameron & Miller descrevem o custo em variância; aqui o custo é **viabilidade do
+split** — medido, um evento de aquisição por fonte faz cada célula um componente indivisível e o alvo de
+5 % de `dev` fica inalcançável por construção. A dependência não é ignorada: ela é publicada como
+inventário por partição pela auditoria, com `connectivity.sharedValue: false` dizendo em voz alta que o
+splitter não agrupou ali.
+
+### K7 — ler o eixo de uma versão anterior do esquema como o MESMO fato, dentro do bootstrap por conglomerado
+
+A tabela congelada nomeia `groups.generationBatch`, que só o esquema v4 declara, e todo corpus em disco é
+v2 ou v3, onde o mesmo fato se escreve `collectionBatch`. `metrics.ts` consulta a grafia antiga quando a
+versão do registro não declara a nova, **restrito a linhas não humanas** — numa linha humana aquela chave
+guardava a execução de extração, que é outro fato.
+
+O que a decisão é, em vocabulário de dados: **rastreamento de identidade entre versões de esquema**, e o
+que ela compra é que a unidade de reamostragem de um intervalo publicado continue sendo o lote de geração
+em vez de virar `unknown` por uma renomeação.
+
+- Kimball & Ross, *The Data Warehouse Toolkit*, 3ª ed., 2013, cap. 5 — *durable supersedent key*: a
+  identidade de uma entidade sobrevive à mudança de esquema porque é mapeada, não redescoberta. É a forma
+  do alias: um mapa explícito com uma entrada, não uma cadeia de fallback.
+- Cameron & Miller, *A Practitioner's Guide to Cluster-Robust Inference*, Journal of Human Resources
+  50(2), 2015 — o nível de agrupamento decide a largura do intervalo; agrupar por uma variável **errada**
+  não é conservador, é aleatório. [link](https://doi.org/10.3368/jhr.50.2.317) É por isso que a restrição
+  a linhas não humanas é a fronteira e não um detalhe: ler a corrida de extração como lote fabricaria
+  conglomerados a partir de invocações de extrator e **estreitaria** os intervalos.
+
+**Sem precedente encontrado (2026-08-04)** para o caso específico — mapear o nome de um eixo entre versões
+de esquema *dentro do desenho de reamostragem de uma pré-inscrição*. O que existe é a prática de
+identidade durável em armazém de dados e a teoria de escolha de conglomerado; a junção das duas é decisão
+deste projeto e está registrada como tal (registro § C-11).
+
+**O que o alias NÃO compra**, escrito porque a assimetria é o risco: ele não torna um corpus v2/v3
+equivalente a um v4. Os outros dois eixos que o v4 acrescentou (`sourceMaterialBatch`, `extractionRun`)
+**não** têm alias, e o mapa tem exatamente uma entrada, verificada por teste.
+
+### K8 — fonte fora da moldura recusada com código próprio, distinto de "recusada"
+
+`OUT_OF_FRAME_HUMAN_SOURCES` (`src_b2w`) tem rota e licença admissíveis e **nenhuma célula**; `src_ptso`
+está recusada por termo de acesso. As duas bloqueiam o manifesto, com códigos diferentes
+(`SOURCE_OUT_OF_DECLARED_FRAME` e `SOURCE_BLOCKED_BY_ACCESS_TERMS`), porque juntá-las apagaria a
+diferença entre uma condição jurídica satisfazível e uma decisão de escopo.
+
+- Gebru et al., *Datasheets for Datasets*, CACM 64(12), 2021 — a documentação de um dataset tem de dizer
+  o que **não** está nele e por quê; "ausente" e "excluído por razão X" não são a mesma linha.
+  [link](https://doi.org/10.1145/3458723)
+- Google, *Protocol Buffers Language Guide*, seção `reserved` — o mesmo argumento de K5, aplicado agora à
+  fonte e não ao identificador de dataset. [link](https://protobuf.dev/programming-guides/proto3/#deleting)
+
+**Sem precedente encontrado (2026-08-04)** para a distinção em três níveis (estocada / fora da moldura /
+recusada) num inventário de fontes de benchmark. O que sustenta a escolha é o princípio do datasheet — a
+lacuna é declarada e categorizada — mais a medição de que a lista puramente declarativa reproduzia o
+silêncio que manter o registro devia evitar: retirar `src_b2w` do inventário estocado **desligou** a
+checagem de eixo declarado para as linhas dele, em vez de recusá-las.
+
+### K9 — o selo do corpus compara contra o ALVO de coleta, não contra o piso
+
+`collection.humanLinesTotal` é 4 x 1.750 = **7.000**, e não 4 x 1.500 = 6.000, porque `sealDataset` compara
+a composição por **igualdade exata**: derivar o total do piso recusaria justamente todo corpus que carrega
+a margem. O piso continua sendo o número do gate (300 linhas por célula em `test`); o alvo é o número da
+coleta.
+
+A aritmética que decide: 1.750 linhas por célula, `test` = 20 %, dá ~350 esperadas com desvio-padrão
+`sqrt(1750 x 0,2 x 0,8)` ≈ 16,7 — o piso de 300 fica ~3 desvios abaixo da média. No piso (1.500/célula) a
+média em `test` é exatamente 300, então **metade dos sorteios reprova** o gate sem que nada esteja errado
+com o corpus.
+
+- Cochran, *Sampling Techniques*, 3ª ed., Wiley, 1977, cap. 4 — dimensionamento de amostra a partir da
+  variância do estimador, e não a partir do valor mínimo aceitável: um tamanho igual ao mínimo entrega
+  cobertura ~50 %.
+- Kish, *Survey Sampling*, Wiley, 1965, § 2.5 — a distinção entre tamanho **planejado** e tamanho
+  **realizado**, e por que o planejamento carrega folga para a perda do sorteio.
+
+**Sem precedente encontrado (2026-08-04)** para o caso específico de uma pré-inscrição de benchmark que
+congela as duas quantidades e as cruza no parser. A regra é aritmética de amostragem elementar; o que é
+decisão deste projeto é **qual das duas o selo compara**, e essa é a linha registrada (registro § C-14).

@@ -8,10 +8,10 @@ import {
   type ResamplingIdentity,
   type ResamplingLevel,
 } from "../bootstrap.ts";
-import { REBUILD_V3_POLICY } from "../rebuild-v3-policy.ts";
+import { PREREGISTRATION_V4 } from "../preregistration-v4.ts";
 
-const PILOT = REBUILD_V3_POLICY.bootstrapReplicates.pilot;
-const SEED = REBUILD_V3_POLICY.seeds.bootstrap;
+const PILOT = PREREGISTRATION_V4.bootstrapReplicates.pilot;
+const SEED = PREREGISTRATION_V4.seeds.bootstrap;
 
 interface Row {
   id?: string;

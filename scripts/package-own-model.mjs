@@ -210,8 +210,8 @@ function main() {
     evidenceDigest: null,
   };
   // The non-commercial licence policy (B1) is NOT authored here. The frozen
-  // `commercialUse: false` lives in benchmark/rebuild-v3-policy.json (validated
-  // by benchmark/rebuild-v3-policy.ts, inside EVALUATOR_FILES);
+  // `commercialUse: false` lives in benchmark/preregistration-v4.json (validated
+  // by benchmark/preregistration-v4.ts, inside EVALUATOR_FILES);
   // benchmark/source-manifest.ts reads it and owns the licence registry and the
   // obligations; the two tracked files below PUBLISH that result and are pinned
   // to the module by benchmark/tests/source-manifest.test.ts. Packaging a new

@@ -22,7 +22,7 @@ import {
   type MetricEstimate,
   type Prediction,
 } from "../metrics.ts";
-import { REBUILD_V3_POLICY } from "../rebuild-v3-policy.ts";
+import { PREREGISTRATION_V4 } from "../preregistration-v4.ts";
 import { ResamplingUnitError } from "../bootstrap.ts";
 import type { BenchmarkRecord } from "../schema.ts";
 
@@ -51,7 +51,7 @@ interface RecordFields {
   // Defaulted per label by `record` below; named here so a fixture that wants
   // several generators, templates, batches or parents can say so.
   promptTemplate?: string;
-  collectionBatch?: string;
+  generationBatch?: string;
   humanSeed?: string;
   humanSourceType?: string;
   hardNegativeFamily?: string;
@@ -106,7 +106,7 @@ function record(fields: RecordFields): BenchmarkRecord {
     const groups = base.groups as Record<string, unknown>;
     groups.generatorFamily = fields.generatorFamily ?? "gpt";
     groups.promptTemplate = fields.promptTemplate ?? "tpl-generic";
-    groups.collectionBatch = fields.collectionBatch ?? "batch-generic";
+    groups.generationBatch = fields.generationBatch ?? "batch-generic";
     if (
       fields.label === "mixed" &&
       (fields.generationMode ?? "mechanistic") === "mechanistic"
@@ -261,7 +261,7 @@ describe("the weighted replicate statistics mirror the exported definitions", ()
     expect(metrics.calibration.eceEqualMass15.lower95).toBeCloseTo(
       eceEqualMass(
         SINGLE_UNIT_POINTS,
-        REBUILD_V3_POLICY.calibrationGate.eceBins,
+        PREREGISTRATION_V4.calibrationGate.eceBins,
       ),
       12,
     );
@@ -344,21 +344,21 @@ describe("the frozen replicate count is a floor, not a default", () => {
     expect(() =>
       computeEvaluationMetrics(SEPARABLE, {
         ...OPTIONS,
-        bootstrapReplicates: REBUILD_V3_POLICY.bootstrapReplicates.pilot - 1,
+        bootstrapReplicates: PREREGISTRATION_V4.bootstrapReplicates.pilot - 1,
       }),
     ).toThrow(
-      new RegExp(String(REBUILD_V3_POLICY.bootstrapReplicates.pilot), "u"),
+      new RegExp(String(PREREGISTRATION_V4.bootstrapReplicates.pilot), "u"),
     );
   });
 
   it("accepts the release count, which is higher", () => {
     const plan = computeEvaluationMetrics(SEPARABLE, {
       ...OPTIONS,
-      bootstrapReplicates: REBUILD_V3_POLICY.bootstrapReplicates.release,
+      bootstrapReplicates: PREREGISTRATION_V4.bootstrapReplicates.release,
     }).resampling;
     for (const entry of plan.entries) {
       expect(entry.replicates).toBe(
-        REBUILD_V3_POLICY.bootstrapReplicates.release,
+        PREREGISTRATION_V4.bootstrapReplicates.release,
       );
     }
   });
@@ -379,7 +379,7 @@ describe("the published plan declares a unit for every estimand", () => {
     expect(byEstimand.get("warning.recall")?.unitAxes).toEqual([
       "groups.generatorFamily",
       "groups.promptTemplate",
-      "groups.collectionBatch",
+      "groups.generationBatch",
     ]);
     expect(byEstimand.get("mixed.warning.recall")?.unitKind).toBe("multiway");
     expect(byEstimand.get("mixed.warning.recall")?.unitAxes).toEqual([
@@ -408,7 +408,7 @@ describe("the published plan declares a unit for every estimand", () => {
     // No entry may declare fewer replicates than the pre-registered pilot count.
     for (const entry of plan.entries) {
       expect(entry.replicates).toBeGreaterThanOrEqual(
-        REBUILD_V3_POLICY.bootstrapReplicates.pilot,
+        PREREGISTRATION_V4.bootstrapReplicates.pilot,
       );
     }
   });
@@ -433,7 +433,7 @@ describe("the published plan declares a unit for every estimand", () => {
         `expected an envelope provenance, got ${provenance?.kind}`,
       );
     }
-    expect(provenance.rule).toBe(REBUILD_V3_POLICY.resampling.publishedBound);
+    expect(provenance.rule).toBe(PREREGISTRATION_V4.resampling.publishedBound);
     // The plan's provenance is the estimate's, not a second opinion about it.
     const envelope = metrics.warning.endToEnd.falsePositiveRate.boundEnvelope;
     expect(provenance.individual).toEqual({
@@ -558,7 +558,7 @@ describe("the published plan declares a unit for every estimand", () => {
         method: "wilson-one-sided",
       },
       boundEnvelope: {
-        rule: REBUILD_V3_POLICY.resampling.publishedBound,
+        rule: PREREGISTRATION_V4.resampling.publishedBound,
         analytic: { lower: 0.02, upper: 0.041, method: "wilson-one-sided" },
         resampled: {
           lower: 0.021,
@@ -621,7 +621,7 @@ describe("the published plan declares a unit for every estimand", () => {
       {
         axis: "groups.promptTemplate",
         standsInFor: "operação de edição",
-        reason: expect.stringMatching(/nenhum eixo do schema v3/u),
+        reason: expect.stringMatching(/nenhum eixo do schema v4/u),
       },
     ]);
     // Measured, not resampled: the bound beside `mixed.atLeastHalfAi` is analytic.
@@ -824,7 +824,7 @@ describe("computeEvaluationMetrics", () => {
       expect(estimate.resampling?.axes).toEqual([
         "groups.generatorFamily",
         "groups.promptTemplate",
-        "groups.collectionBatch",
+        "groups.generationBatch",
       ]);
     }
   });
@@ -839,7 +839,7 @@ describe("computeEvaluationMetrics", () => {
     expect(fpr.value).toBe(0);
     // The rule is READ from the frozen contract, not written down in the estimator.
     expect(fpr.boundEnvelope?.rule).toBe(
-      REBUILD_V3_POLICY.resampling.publishedBound,
+      PREREGISTRATION_V4.resampling.publishedBound,
     );
     expect(fpr.boundEnvelope?.resampled.upper).toBe(0);
     expect(fpr.boundEnvelope?.analytic.upper).toBeGreaterThan(0);
@@ -1412,7 +1412,7 @@ describe("predictive values at plausible prevalences", () => {
     expect(metrics.predictiveValue.benchmarkPrevalence).toBeCloseTo(0.5, 10);
     expect(
       metrics.predictiveValue.byPrevalence.map((row) => row.prevalence),
-    ).toEqual([...REBUILD_V3_POLICY.predictiveValuePrevalences]);
+    ).toEqual([...PREREGISTRATION_V4.predictiveValuePrevalences]);
     for (const row of metrics.predictiveValue.byPrevalence) {
       expect(row.ppv).toBeGreaterThan(0);
       expect(row.npv).toBeGreaterThan(0);
@@ -1631,7 +1631,7 @@ describe("human negative label bases", () => {
   });
 
   it("marks an under-powered basis as supplementary diagnostic, and a powered one as gating", () => {
-    const floor = REBUILD_V3_POLICY.powerFloors.criticalFprHumanNegatives;
+    const floor = PREREGISTRATION_V4.powerFloors.criticalFprHumanNegatives;
     const powered = Array.from({ length: floor }, (_, index) =>
       item({
         author: `p${index}`,
@@ -1660,7 +1660,7 @@ describe("human negative label bases", () => {
     expect(observed?.count).toBe(4);
     expect(observed?.powered).toBe(false);
     expect(observed?.evidenceRole).toBe(
-      REBUILD_V3_POLICY.labelBasis.underPoweredRole,
+      PREREGISTRATION_V4.labelBasis.underPoweredRole,
     );
     expect(observed?.powerFloor).toBe(floor);
   });
@@ -1671,7 +1671,7 @@ describe("human negative label bases", () => {
     // corpus has far more than the 300-row floor, so the count check alone would
     // wave it through. The basis guard is the only thing between a nonexistent
     // evidence basis and an approved FPR budget (R4/R6).
-    const floor = REBUILD_V3_POLICY.powerFloors.criticalFprHumanNegatives;
+    const floor = PREREGISTRATION_V4.powerFloors.criticalFprHumanNegatives;
     const unlabelled = Array.from({ length: floor + 5 }, (_, index) =>
       item({
         author: `u${index}`,
@@ -1689,7 +1689,7 @@ describe("human negative label bases", () => {
     expect(unknown.count).toBeGreaterThan(unknown.powerFloor);
     expect(unknown.powered).toBe(false);
     expect(unknown.evidenceRole).toBe(
-      REBUILD_V3_POLICY.labelBasis.underPoweredRole,
+      PREREGISTRATION_V4.labelBasis.underPoweredRole,
     );
   });
 
@@ -1724,10 +1724,10 @@ describe("simultaneous (Bonferroni) bounds", () => {
     expect(declaration).not.toBeNull();
     expect(declaration?.correction).toBe("bonferroni");
     expect(declaration?.familyAlpha).toBe(
-      REBUILD_V3_POLICY.multiplicity.familyAlpha,
+      PREREGISTRATION_V4.multiplicity.familyAlpha,
     );
     expect(declaration?.descriptiveConfidence).toBe(
-      REBUILD_V3_POLICY.multiplicity.descriptiveConfidence,
+      PREREGISTRATION_V4.multiplicity.descriptiveConfidence,
     );
     expect(declaration?.m).toBe(8);
     expect(declaration?.perGateAlpha).toBeCloseTo(0.05 / 8, 12);
@@ -1788,7 +1788,7 @@ describe("the three product targets (B2)", () => {
   ];
 
   it("keeps a mixed row below the frozen AI fraction out of every gate population", () => {
-    const floor = REBUILD_V3_POLICY.materialAssistance.minimumAiFraction;
+    const floor = PREREGISTRATION_V4.materialAssistance.minimumAiFraction;
     expect(floor).toBe(0.5);
     // A row that WOULD move every one of these numbers if it were counted: it is
     // warned and visual-actioned, so counting it as a positive would raise both
@@ -1835,13 +1835,13 @@ describe("the three product targets (B2)", () => {
     expect(after.mixed.byFraction.map((segment) => segment.key)).toContain(
       "mechanistic/25_49",
     );
-    expect(REBUILD_V3_POLICY.mixedBelowHalfAiRole).toBe(
+    expect(PREREGISTRATION_V4.mixedBelowHalfAiRole).toBe(
       "diagnostic-curve-only",
     );
   });
 
   it("never lets material assistance raise the action ceiling above indicator", () => {
-    expect(REBUILD_V3_POLICY.materialAssistance.authorizes).toBe(
+    expect(PREREGISTRATION_V4.materialAssistance.authorizes).toBe(
       "warning-only",
     );
     // A corpus whose ONLY visual-actioned positives are material assistance:
@@ -1888,7 +1888,7 @@ describe("the three product targets (B2)", () => {
   });
 
   it("never aggregates the mechanistic and ecological cohorts", () => {
-    expect(REBUILD_V3_POLICY.materialAssistance.cohortsAggregated).toBe(false);
+    expect(PREREGISTRATION_V4.materialAssistance.cohortsAggregated).toBe(false);
     const fixture = [
       item({ author: "h1", label: "human", documentScore: 0.1 }),
       item({ author: "a1", label: "ai", documentScore: 0.95, warned: true }),
@@ -2023,8 +2023,8 @@ describe("span localization metrics are diagnostic (B2)", () => {
     expect(localization.gates).toBe(false);
     expect(localization.authorizesVisualAction).toBe(false);
     expect(localization.unit).toBe("character-offset");
-    expect(REBUILD_V3_POLICY.localization.metricsRole).toBe("diagnostic");
-    expect(REBUILD_V3_POLICY.localization.authorizesVisualAction).toBe(false);
+    expect(PREREGISTRATION_V4.localization.metricsRole).toBe("diagnostic");
+    expect(PREREGISTRATION_V4.localization.authorizesVisualAction).toBe(false);
 
     // There is no cross-cohort aggregate to misread: only cohorts.
     expect(

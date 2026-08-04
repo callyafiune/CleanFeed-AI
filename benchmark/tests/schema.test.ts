@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { REBUILD_V3_POLICY } from "../rebuild-v3-policy.ts";
+import { PREREGISTRATION_V4 } from "../preregistration-v4.ts";
 import { parseBenchmarkDataset, validateBenchmarkRecord } from "../schema.ts";
 
 const HUMAN_TEXT = Array.from(
@@ -173,7 +173,7 @@ describe("mixture.generationMode", () => {
   });
 
   it("accepts both cohorts, and the vocabulary comes from the frozen policy", () => {
-    for (const mode of REBUILD_V3_POLICY.materialAssistance.generationModes) {
+    for (const mode of PREREGISTRATION_V4.materialAssistance.generationModes) {
       const record = validateBenchmarkRecord(
         mixed({
           aiFraction: 0.6,
@@ -184,7 +184,7 @@ describe("mixture.generationMode", () => {
       );
       expect(record.mixture?.generationMode).toBe(mode);
     }
-    expect([...REBUILD_V3_POLICY.materialAssistance.generationModes]).toEqual([
+    expect([...PREREGISTRATION_V4.materialAssistance.generationModes]).toEqual([
       "mechanistic",
       "ecological",
     ]);

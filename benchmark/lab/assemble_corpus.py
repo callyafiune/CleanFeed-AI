@@ -1,4 +1,4 @@
-"""Assembles the corpus ptbr-generic-v1 from candidate pools into the canonical
+"""Assembles the corpus cleanfeed-ptbr-cells-v1 from candidate pools into the canonical
 BenchmarkRecord **v3** shape that `ingest` + `validate` accept.
 
 Emits (into --out-dir):
@@ -78,7 +78,7 @@ DATASET = Path(__file__).resolve().parent.parent / "data" / "dataset"
 CUTOFF_ISO = "2022-11-30T00:00:00+00:00"
 
 # provenance.sourceId -> the frozen snapshot token it was extracted from
-# (benchmark/rebuild-v3-policy.json humanSources.snapshots). The fallback for a
+# (benchmark/preregistration-v4.json humanSources.snapshots). The fallback for a
 # candidate whose own meta does not carry the snapshot, which is every pool written
 # before C2. It maps SOURCE to SNAPSHOT and nothing else: it does not record which
 # concrete dump version, because that is a fact only the extractor saw and D1 is
@@ -196,11 +196,11 @@ HELD_OUT_INELIGIBLE = {"gemini-3_5-flash-lite", "gemini-3_1-flash-lite"}
 SEED_NULL_REASON = "provider API does not expose a sampling seed"
 # The other half of the same pair, on the axis where an agent-CLI lane genuinely
 # applies nothing: `agy`, `codex` and `gemini-cli` take no sampling flag at all
-# (rebuild-v3-policy.json, `decodingConfigurable: false`), so a batch of one of
+# (preregistration-v4.json, `decodingConfigurable: false`), so a batch of one of
 # those lanes must say that instead of a number nothing applied.
 TEMPERATURE_NULL_REASON = "agent-CLI lane: the binary accepts no sampling flag"
 # The mixed cohort this lane produces. The frozen contract
-# (benchmark/rebuild-v3-policy.json, `materialAssistance.generationMode`) closes
+# (benchmark/preregistration-v4.json, `materialAssistance.generationMode`) closes
 # the vocabulary at "mechanistic" | "ecological", and only the first is a fact
 # about anything this project makes.
 MECHANISTIC_GENERATION_MODE = "mechanistic"
@@ -469,10 +469,10 @@ PROVIDER_LANE = {
     "gemini_cli": "gemini-cli",
 }
 
-# The frozen lane rows, read from benchmark/rebuild-v3-policy.json rather than
+# The frozen lane rows, read from benchmark/preregistration-v4.json rather than
 # retyped. The policy file is the single source of truth for what each lane accepts,
 # and a copy here would be a second authority that can disagree with the schema.
-POLICY_PATH = Path(__file__).resolve().parent.parent / "rebuild-v3-policy.json"
+POLICY_PATH = Path(__file__).resolve().parent.parent / "preregistration-v4.json"
 
 
 def lane_rows() -> dict[str, dict]:
@@ -1546,6 +1546,25 @@ def assert_stamped_corpus_is_splittable(
         if rec["id"] not in blocks:
             continue
         source_id = (rec.get("provenance") or {}).get("sourceId")
+        # Uma linha HUMANA que NOMEIA uma fonte fora da autoridade nao tem eixo algum
+        # conferido: `get(..., ())` salta o laco inteiro em silencio, entao tirar uma
+        # fonte do inventario DESLIGA a checagem de lacuna para as linhas dela em vez de
+        # recusa-las. O lado espelhado (corpus-source-audit.ts) recusa; o espelho passaria
+        # a aceitar mais que o espelhado. Duas exclusoes, ambas deliberadas: linha gerada
+        # (fonte gerada nao tem registro humano e nao declara eixo nenhum por desenho) e
+        # linha sem `provenance.sourceId` (nao nomear fonte e outro defeito, e o schema
+        # fechado o recusa antes — o corpo estampado dos fixtures do lab e mais frouxo).
+        if (
+            rec.get("label") == "human"
+            and source_id is not None
+            and str(source_id) not in autoridade
+        ):
+            problemas.append(
+                f"fonte nao inventariada: {rec['id']} e humana e vem de {source_id}, "
+                "que nao esta em V3_HUMAN_SOURCE_INVENTORY — nenhum eixo declarado dela "
+                "pode ser conferido"
+            )
+            continue
         for axis in autoridade.get(str(source_id), ()):  # type: ignore[arg-type]
             # `declared_state_of` e nao `state_of`: a autoridade e parseada do
             # source-manifest.ts, que declara `sourceMaterialBatch` para toda fonte
@@ -2171,7 +2190,10 @@ def main() -> None:
     }
     used_sources = {r["provenance"]["sourceId"] for r in records}
     governance = {
-        "datasetId": "ptbr-generic-v1",
+        # The live corpus identity, spelled once. `ptbr-generic-v1` is refused BY NAME by
+        # `ingestAuthorizedRecords` (`dataset.refusedIds` in the pre-registration), so a
+        # producer that still wrote it would build a corpus the importer cannot accept.
+        "datasetId": "cleanfeed-ptbr-cells-v1",
         "sources": [
             {"sourceId": sid, "sourceType": sources[sid][0], "licenseId": sources[sid][1]}
             for sid in sorted(used_sources)

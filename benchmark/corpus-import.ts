@@ -35,6 +35,7 @@ import {
   type DatasetManifest,
 } from "./dataset-manifest.ts";
 import { computeDatasetDigest } from "./digests.ts";
+import { PREREGISTRATION_V4 } from "./preregistration-v4.ts";
 import {
   NEAR_DUPLICATE_V1_OPTIONS,
   clusterNearDuplicates,
@@ -61,7 +62,18 @@ export interface IngestRequest {
   inputSourceManifestPath: string;
   inputDatasetManifestTemplatePath: string;
   datasetDirectory: string;
-  expectedDatasetId: "ptbr-generic-v1";
+  /**
+   * The corpus this ingestion is building. Not a free label and not merely
+   * not-refused: the pre-registration names ONE live identifier, so the id is checked
+   * for equality against it. Three failures with three codes, because they are three
+   * different pieces of news — an abandoned id (`DATASET_ID_ABANDONED`), an id that is
+   * neither the live one nor a named dead one (`DATASET_ID_UNKNOWN`), and a template
+   * that disagrees with the request (`DATASET_ID_MISMATCH`).
+   *
+   * Typed as the frozen literal so the compiler holds it too. Widening it to `string`
+   * is what let a caller build a corpus under an identity nothing pinned.
+   */
+  expectedDatasetId: typeof PREREGISTRATION_V4.dataset.id;
 }
 
 export interface IngestRejection {
@@ -131,6 +143,22 @@ interface Accepted {
 export async function ingestAuthorizedRecords(
   request: IngestRequest,
 ): Promise<IngestResult> {
+  // 0. The identifier itself, before any file is opened. A caller that asks for an
+  // abandoned corpus is refused by name rather than by the equality check below,
+  // which would otherwise report a template/request mismatch for what is really a
+  // request for a dataset that no longer exists.
+  assertDatasetIdNotRefused(request.expectedDatasetId, "expectedDatasetId");
+  // And then POSITIVELY: the pre-registration names one live corpus, so an id that is
+  // merely absent from the refusal list is not thereby a corpus this ingest may build.
+  // Only the abandoned ids are named, and nothing else can be — refusing by absence
+  // would make the identity of the sealed corpus depend on what the list remembered.
+  if (request.expectedDatasetId !== PREREGISTRATION_V4.dataset.id) {
+    throw new CorpusImportError(
+      "DATASET_ID_UNKNOWN",
+      `expectedDatasetId is "${request.expectedDatasetId}" but the pre-registration names "${PREREGISTRATION_V4.dataset.id}" as the one live corpus`,
+    );
+  }
+
   // 1. Closed dataset-manifest template — parsed and constrained before records.
   const template = await loadTemplate(
     request.inputDatasetManifestTemplatePath,
@@ -299,9 +327,29 @@ function refuseCrossLineageNearDuplicates(
   }
 }
 
+/**
+ * Refuses a dataset identifier the pre-registration retired.
+ *
+ * The dead id is REFUSED, not merely absent: an abandoned pre-registration whose
+ * identifier still builds is indistinguishable from one that was never abandoned, and
+ * the corpus it names carried a claim ("pt-BR text in general") that has no sampling
+ * frame behind it.
+ */
+function assertDatasetIdNotRefused(datasetId: string, where: string): void {
+  const refused = PREREGISTRATION_V4.dataset.refusedIds.find(
+    (entry) => entry.id === datasetId,
+  );
+  if (refused !== undefined) {
+    throw new CorpusImportError(
+      "DATASET_ID_ABANDONED",
+      `${where} names the abandoned dataset "${refused.id}": ${refused.refusedBecause}. The live corpus is "${PREREGISTRATION_V4.dataset.id}"`,
+    );
+  }
+}
+
 async function loadTemplate(
   path: string,
-  expectedDatasetId: "ptbr-generic-v1",
+  expectedDatasetId: string,
 ): Promise<Omit<DatasetManifest, (typeof DERIVED_MANIFEST_KEYS)[number]>> {
   const value = await readJsonFile(path);
   if (typeof value !== "object" || value === null || Array.isArray(value)) {
@@ -318,6 +366,9 @@ async function loadTemplate(
         `dataset-manifest template must not carry the generated field "${key}"`,
       );
     }
+  }
+  if (typeof object.datasetId === "string") {
+    assertDatasetIdNotRefused(object.datasetId, "template datasetId");
   }
   if (object.datasetId !== expectedDatasetId) {
     throw new CorpusImportError(

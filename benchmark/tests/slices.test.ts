@@ -36,7 +36,7 @@ interface RecordFields {
   // The inner two levels of the ai-recall row and the human parent of the mixed
   // row. Defaulted per label by `record`; named here so a fixture can vary them.
   promptTemplate?: string;
-  collectionBatch?: string;
+  generationBatch?: string;
   humanSeed?: string;
 }
 
@@ -90,7 +90,7 @@ function record(fields: RecordFields): BenchmarkRecord {
       groups.generatorFamily = normalizeGeneratorFamily("gen-generic");
     }
     groups.promptTemplate = fields.promptTemplate ?? "tpl-generic";
-    groups.collectionBatch = fields.collectionBatch ?? "batch-generic";
+    groups.generationBatch = fields.generationBatch ?? "batch-generic";
     if (
       fields.label === "mixed" &&
       (fields.generationMode ?? "mechanistic") === "mechanistic"

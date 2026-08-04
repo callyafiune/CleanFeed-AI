@@ -38,7 +38,7 @@ DROP_TAGS = {"code", "pre", "script", "style"}
 # same attribute, so it names the file and the attribute rather than describing them.
 DATE_FIELD = "Posts.xml@CreationDate"
 # The snapshot token this extractor stamps. It is NO LONGER in
-# benchmark/rebuild-v3-policy.json humanSources.snapshots: decision A1 (2026-07-31)
+# benchmark/preregistration-v4.json humanSources.snapshots: decision A1 (2026-07-31)
 # moved it to humanSources.blockedSnapshots, because the 2024 access terms of the dump
 # exclude LLM-training projects and no verifiable legal disposition exists.
 #

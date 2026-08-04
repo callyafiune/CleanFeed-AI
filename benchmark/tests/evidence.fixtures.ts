@@ -23,6 +23,7 @@ import {
   selectionThresholdEvidence,
   type FrozenCalibrationArtifact,
 } from "../calibration-pipeline.ts";
+import { PREREGISTRATION_V4 } from "../preregistration-v4.ts";
 import { emptyLabelBasisPublication } from "../dataset-manifest.ts";
 import { standInClusterReport } from "../split-audit.ts";
 import { V3_GROUP_AXES } from "../schema.ts";
@@ -168,7 +169,7 @@ async function lightSplitArtifact(
     datasetDigest: report.dataset.digest,
     algorithm: "blocked-group-time-v2",
     algorithmDigest: "",
-    seed: 20_260_726,
+    seed: PREREGISTRATION_V4.seeds.split,
     compositionAttestation: hex("composition-attestation"),
     policy: {
       fractions: {
@@ -180,7 +181,7 @@ async function lightSplitArtifact(
       },
       classTolerance: 0.02,
       heldOutGeneratorFamilies: [asGeneratorFamily("heldout_family")],
-      seed: 20_260_726,
+      seed: PREREGISTRATION_V4.seeds.split,
     },
     assignments: splitFixtureAssignments(),
     assignmentsDigest: hex("assignments"),
@@ -523,7 +524,7 @@ function rejectGates(): GateReport {
       correction: "bonferroni",
       familyAlpha: 0.05,
       descriptiveConfidence: 0.95,
-      frozenAt: "G5",
+      frozenAt: "G0.2",
       declared: 40,
       observed: 1,
       gateIds: ["warning.fpr.overall"],
@@ -620,7 +621,7 @@ export async function buildRejectScenario(
   const datasetDigest = hex("reject-dataset");
 
   const auditBase: Omit<DatasetAudit, "auditDigest"> = {
-    datasetId: "ptbr-generic-v1",
+    datasetId: "cleanfeed-ptbr-cells-v1",
     scientificUse: "release",
     releaseEligible: true,
     recordCount: 10_000,
@@ -667,7 +668,7 @@ export async function buildRejectScenario(
     algorithm: "blocked-group-time-v2",
     // Sealed below, from the algorithm plus the policy: `publish-evidence` recomputes it.
     algorithmDigest: "",
-    seed: 20_260_726,
+    seed: PREREGISTRATION_V4.seeds.split,
     compositionAttestation: hex("composition-attestation"),
     policy: {
       fractions: {
@@ -679,7 +680,7 @@ export async function buildRejectScenario(
       },
       classTolerance: 0.02,
       heldOutGeneratorFamilies: [asGeneratorFamily("heldout_family")],
-      seed: 20_260_726,
+      seed: PREREGISTRATION_V4.seeds.split,
     },
     assignments: splitFixtureAssignments(),
     assignmentsDigest: "",
@@ -872,7 +873,7 @@ export async function buildRejectScenario(
   const report = await buildBenchmarkReport({
     generatedAt: GENERATED_AT,
     dataset: {
-      id: "ptbr-generic-v1",
+      id: "cleanfeed-ptbr-cells-v1",
       version: "1.0.0",
       digest: datasetDigest,
     },

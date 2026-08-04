@@ -27,6 +27,7 @@ import {
   computeDatasetAuditDigest,
   type DatasetAudit,
 } from "../dataset-manifest.ts";
+import { PREREGISTRATION_V4 } from "../preregistration-v4.ts";
 import { parseBenchmarkDataset, type BenchmarkRecordV2 } from "../schema.ts";
 import {
   computeReviewedSourceManifestDigest,
@@ -85,7 +86,7 @@ interface TemplateLike {
   version: string;
   scientificUse: "release" | "infrastructure-only";
   intendedLanguage: "pt-BR";
-  intendedDomain: "generic";
+  intendedDomain: "scoped-cells";
   createdAt: string;
   normalizationVersion: string;
   annotationProtocolVersion: "annotation-v1";
@@ -96,11 +97,11 @@ interface TemplateLike {
 function template(overrides: Partial<TemplateLike> = {}): TemplateLike {
   return {
     schemaVersion: 1,
-    datasetId: "ptbr-generic-v1",
+    datasetId: "cleanfeed-ptbr-cells-v1",
     version: "1.0.0",
     scientificUse: "infrastructure-only",
     intendedLanguage: "pt-BR",
-    intendedDomain: "generic",
+    intendedDomain: "scoped-cells",
     createdAt: "2026-07-19T00:00:00.000Z",
     normalizationVersion: "cleanfeed-text-v1",
     annotationProtocolVersion: "annotation-v1",
@@ -243,7 +244,7 @@ async function buildRequest(
     `${JSON.stringify(incoming.template, null, 2)}\n`,
     "utf8",
   );
-  const datasetDirectory = join(root, "ptbr-generic-v1");
+  const datasetDirectory = join(root, "cleanfeed-ptbr-cells-v1");
   return {
     datasetDirectory,
     request: {
@@ -252,7 +253,7 @@ async function buildRequest(
       inputSourceManifestPath: join(inDir, "sources.json"),
       inputDatasetManifestTemplatePath: join(inDir, "template.json"),
       datasetDirectory,
-      expectedDatasetId: "ptbr-generic-v1",
+      expectedDatasetId: "cleanfeed-ptbr-cells-v1",
     },
   };
 }
@@ -1056,7 +1057,7 @@ describe("ingest -> validate -> split integration (10k)", () => {
         datasetDirectory,
         datasetAuditPath,
         outputDirectory: join(root, "out", "split-atravessado"),
-        seed: 20260726,
+        seed: 20260804,
       }),
     ).rejects.toMatchObject({
       code: "SPLIT_AUDIT_FAILED",
@@ -1132,7 +1133,7 @@ describe("ingest -> validate -> split integration (10k)", () => {
       datasetDirectory,
       datasetAuditPath: join(validateOut, "dataset-audit.json"),
       outputDirectory: splitOut,
-      seed: 20260726,
+      seed: 20260804,
     });
     expect(splitMessage).toBe(
       "Split frozen: train=45%, dev=5%, cal-A=10%, cal-B=20%, test=20%; leakage=0.",
@@ -1207,7 +1208,7 @@ describe("ingest -> validate -> split integration (10k)", () => {
         datasetDirectory,
         datasetAuditPath: join(validateOut, "dataset-audit.json"),
         outputDirectory: join(root, "out", "split-unstocked"),
-        seed: 20260726,
+        seed: 20260804,
       }),
     ).rejects.toThrow(/HELD_OUT_FAMILY_DISAGREEMENT|never_generated_family/u);
     await writeFile(manifestPath, declaredJson, "utf8"); // restore for isolation
@@ -1230,13 +1231,13 @@ describe("ingest -> validate -> split integration (10k)", () => {
         datasetDirectory,
         datasetAuditPath: join(validateOut, "dataset-audit.json"),
         outputDirectory: join(root, "out", "split-release"),
-        seed: 20260726,
+        seed: 20260804,
       }),
     ).rejects.toThrow(/COMPOSITION_FLOOR_NOT_APPLIED|pre-registered floor/u);
     await writeFile(manifestPath, releaseJson, "utf8"); // restore for isolation
 
     // 3d. A seed que nao e a PRE-REGISTRADA e recusada, e a recusa vem antes de qualquer
-    // trabalho. O numero pre-registrado vive em `REBUILD_V3_POLICY.seeds.split`; aceitar
+    // trabalho. O numero pre-registrado vive em `PREREGISTRATION_V4.seeds.split`; aceitar
     // outro poria um parametro escolhido pelo chamador num artefato cuja razao de existir e
     // que os parametros foram fixados de antemao.
     await expect(
@@ -1274,7 +1275,7 @@ describe("ingest -> validate -> split integration (10k)", () => {
         datasetDirectory,
         datasetAuditPath: auditPath,
         outputDirectory: join(root, "out", "split-outro-dataset"),
-        seed: 20260726,
+        seed: 20260804,
       }),
     ).rejects.toThrow(/DATASET_AUDIT_MISMATCH|different dataset/u);
     await writeFile(auditPath, auditJson, "utf8"); // restore for isolation
@@ -1464,5 +1465,124 @@ describe("runIngest", () => {
         datasetDirectory: request.datasetDirectory,
       }),
     ).rejects.toMatchObject({ code: "INGEST_REJECTED" });
+  });
+
+  // T14 — the abandoned corpus identity is refused BY NAME, in both places that can
+  // carry it. The dead id named a claim about "pt-BR text in general", which has no
+  // sampling frame; a pipeline handed that id would build the corpus of a claim nobody
+  // makes any more, and it would build it successfully.
+  it("reads the live dataset id from the pre-registration instead of a literal", async () => {
+    const root = await scratch();
+    const record = humanRecord("rec1");
+    const { request } = await buildRequest(root, {
+      recordLines: [JSON.stringify(record)],
+      ledgerLines: [ledgerLine(record)],
+      sourceManifest: await validSources(),
+      template: template(),
+    });
+    expect(request.expectedDatasetId).toBe(PREREGISTRATION_V4.dataset.id);
+    await expect(
+      runIngest({
+        inputRecordsPath: request.inputRecordsPath,
+        reviewLedgerPath: request.inputReviewLedgerPath,
+        sourceManifestPath: request.inputSourceManifestPath,
+        datasetManifestTemplatePath: request.inputDatasetManifestTemplatePath,
+        datasetDirectory: request.datasetDirectory,
+      }),
+    ).resolves.toContain("Ingested 1 records");
+  });
+});
+
+describe("the abandoned dataset identity", () => {
+  const deadId = PREREGISTRATION_V4.dataset.refusedIds[0].id;
+  // `expectedDatasetId` is typed as the frozen literal, so a caller cannot reach these
+  // refusals by accident any more — which is the point. The cast is what a test needs
+  // to prove the RUNTIME guard still fires for a caller that defeats the type.
+  const asRequestedId = (id: string) =>
+    id as typeof PREREGISTRATION_V4.dataset.id;
+
+  it("refuses a request that asks for the abandoned corpus", async () => {
+    const root = await scratch();
+    const record = humanRecord("rec1");
+    const { request } = await buildRequest(root, {
+      recordLines: [JSON.stringify(record)],
+      ledgerLines: [ledgerLine(record)],
+      sourceManifest: await validSources(),
+      template: template(),
+    });
+    await expect(
+      ingestAuthorizedRecords({
+        ...request,
+        expectedDatasetId: asRequestedId(deadId),
+      }),
+    ).rejects.toMatchObject({ code: "DATASET_ID_ABANDONED" });
+    // And the diagnosis names the live corpus, so the refusal is actionable.
+    await expect(
+      ingestAuthorizedRecords({
+        ...request,
+        expectedDatasetId: asRequestedId(deadId),
+      }),
+    ).rejects.toThrow(
+      new RegExp(`${deadId}.*${PREREGISTRATION_V4.dataset.id}`, "su"),
+    );
+  });
+
+  // The template is the second carrier, and it is refused with the SAME code rather
+  // than as a mismatch against the live id: "you asked for a dataset that no longer
+  // exists" and "your template disagrees with your request" are different failures.
+  it("refuses a template that declares the abandoned corpus", async () => {
+    const root = await scratch();
+    const record = humanRecord("rec1");
+    const { request } = await buildRequest(root, {
+      recordLines: [JSON.stringify(record)],
+      ledgerLines: [ledgerLine(record)],
+      sourceManifest: await validSources(),
+      template: { ...template(), datasetId: deadId },
+    });
+    await expect(ingestAuthorizedRecords(request)).rejects.toMatchObject({
+      code: "DATASET_ID_ABANDONED",
+    });
+  });
+
+  it("still reports a plain mismatch when the template names a live-looking id", async () => {
+    const root = await scratch();
+    const record = humanRecord("rec1");
+    const { request } = await buildRequest(root, {
+      recordLines: [JSON.stringify(record)],
+      ledgerLines: [ledgerLine(record)],
+      sourceManifest: await validSources(),
+      template: { ...template(), datasetId: "cleanfeed-ptbr-cells-v2" },
+    });
+    await expect(ingestAuthorizedRecords(request)).rejects.toMatchObject({
+      code: "DATASET_ID_MISMATCH",
+    });
+  });
+
+  // The hole the refusal list alone leaves: an id that is neither the live corpus nor
+  // any NAMED dead one. Written into BOTH carriers, so the template agrees with the
+  // request and the mismatch check has nothing to say — the ingest used to build a
+  // corpus whose identity nothing pinned.
+  it("refuses an id that is neither live nor a named dead one, in both carriers", async () => {
+    const root = await scratch();
+    const record = humanRecord("rec1");
+    const invented = "cleanfeed-ptbr-cells-v9";
+    const { request } = await buildRequest(root, {
+      recordLines: [JSON.stringify(record)],
+      ledgerLines: [ledgerLine(record)],
+      sourceManifest: await validSources(),
+      template: { ...template(), datasetId: invented },
+    });
+    const asked = {
+      ...request,
+      expectedDatasetId: asRequestedId(invented),
+    };
+    await expect(ingestAuthorizedRecords(asked)).rejects.toMatchObject({
+      code: "DATASET_ID_UNKNOWN",
+    });
+    // A code of its own, distinct from both neighbours: this is not an abandoned
+    // corpus and not a disagreement between request and template.
+    await expect(ingestAuthorizedRecords(asked)).rejects.toThrow(
+      new RegExp(`${invented}.*${PREREGISTRATION_V4.dataset.id}`, "su"),
+    );
   });
 });

@@ -1,0 +1,414 @@
+{
+  "attributionRequired": true,
+  "backbone": "xlm-roberta-base",
+  "backboneBakeOff": false,
+  "blindReserveCompleteAttempts": 2,
+  "bootstrapReplicates": {
+    "pilot": 10000,
+    "release": 100000
+  },
+  "calibrationGate": {
+    "eceBinning": "equal-mass",
+    "eceBins": 15,
+    "eceBound": "bootstrap-simultaneous-upper",
+    "eceMax": 0.05,
+    "scoreBasis": "document-raw-score"
+  },
+  "calibrator": {
+    "candidates": [
+      "platt",
+      "beta",
+      "isotonic"
+    ],
+    "crossValidationFolds": 5,
+    "reservedFor": "v2",
+    "tieBreakOrder": [
+      "platt",
+      "beta",
+      "isotonic"
+    ],
+    "tieToleranceAbsolute": 0.0001
+  },
+  "collection": {
+    "humanLinesPerCellMinimum": 1500,
+    "humanLinesPerCellTarget": 1750,
+    "humanLinesTotal": 7000,
+    "maximumLinesPerOriginDocument": 1
+  },
+  "commercialUse": false,
+  "conformal": {
+    "population": "cal-b-humans",
+    "reservedFor": "v2"
+  },
+  "connectivity": {
+    "dependencyAxis": "sourceMaterialBatch",
+    "diagnosticAxes": [
+      "extractionRun"
+    ],
+    "independentUnit": "origin-document-components",
+    "reportedAxes": [
+      "domainSource",
+      "sourceMaterialBatch"
+    ],
+    "splitUnionAxes": [
+      "author",
+      "source",
+      "generatorVersion",
+      "promptTemplate",
+      "generationBatch",
+      "nearDuplicate",
+      "derivationRoot"
+    ],
+    "splitUnionsOnDependencyAxis": false
+  },
+  "dataset": {
+    "id": "cleanfeed-ptbr-cells-v1",
+    "intendedDomain": "scoped-cells",
+    "refusedIds": [
+      {
+        "id": "ptbr-generic-v1",
+        "refusedBecause": "a alegacao de um dominio pt-BR generico nao tem moldura amostral; a pre-inscricao v4 alega por celula declarada e este identificador nomeia o corpus de uma alegacao que nao se faz mais"
+      }
+    ]
+  },
+  "fprBudgets": {
+    "visualAction": 0.02,
+    "warning": 0.05
+  },
+  "generationLanes": {
+    "agy": {
+      "channel": "agent-cli",
+      "decodingConfigurable": false,
+      "effortConfigurable": false,
+      "effortLevels": [
+        "low",
+        "medium",
+        "high"
+      ],
+      "effortScale": "agy-model-id-tier",
+      "effortSources": [
+        "model-id",
+        "not-supported"
+      ]
+    },
+    "codex": {
+      "channel": "agent-cli",
+      "decodingConfigurable": false,
+      "effortConfigurable": true,
+      "effortLevels": [
+        "low",
+        "medium",
+        "high",
+        "xhigh"
+      ],
+      "effortScale": "codex-reasoning-effort",
+      "effortSources": [
+        "flag",
+        "provider-default"
+      ]
+    },
+    "gemini-api": {
+      "channel": "api",
+      "decodingConfigurable": true,
+      "effortConfigurable": false,
+      "effortLevels": [],
+      "effortScale": null,
+      "effortSources": [
+        "not-supported"
+      ]
+    },
+    "gemini-cli": {
+      "channel": "cli",
+      "decodingConfigurable": false,
+      "effortConfigurable": false,
+      "effortLevels": [],
+      "effortScale": null,
+      "effortSources": [
+        "not-supported"
+      ]
+    }
+  },
+  "hardNegativeFamilies": [
+    "corporate-structure",
+    "formulaic",
+    "highly-polished",
+    "motivational",
+    "non-native",
+    "repetitive"
+  ],
+  "humanCoreStrata": [
+    "encyclopedic",
+    "judicial",
+    "social-media",
+    "university"
+  ],
+  "humanSources": {
+    "blockedSnapshots": [
+      {
+        "blockedBy": "access-terms-unresolved",
+        "snapshot": "pt-stackoverflow",
+        "unblockRequires": "registro verificavel de data e mecanismo de aquisicao do dump, mais disposicao juridica explicita do termo de acesso de 2024 que exclui projetos de treino de LLM"
+      }
+    ],
+    "newDownloadsAllowed": false,
+    "snapshots": [
+      "carolina",
+      "ptwiki"
+    ]
+  },
+  "infersAuthorship": false,
+  "integralPositive": {
+    "label": "ai",
+    "requiresRegisteredPipeline": true,
+    "visualActionRequiresDocumentGates": true
+  },
+  "labelBasis": {
+    "allowed": [
+      "date-cutoff",
+      "observed-process"
+    ],
+    "appliesToLabel": "human",
+    "pooledClaimAllowed": false,
+    "underPoweredRole": "supplementary-diagnostic"
+  },
+  "localization": {
+    "authorizesVisualAction": false,
+    "metricsRole": "diagnostic",
+    "standaloneClaim": false,
+    "trainsAuxiliaryHead": true
+  },
+  "materialAssistance": {
+    "authorizes": "warning-only",
+    "cohortsAggregated": false,
+    "generationMode": "mechanistic",
+    "generationModes": [
+      "mechanistic",
+      "ecological"
+    ],
+    "minimumAiFraction": 0.5,
+    "minimumWarningRecall": 0.5
+  },
+  "mixedBelowHalfAiRole": "diagnostic-curve-only",
+  "multiplicity": {
+    "correction": "bonferroni",
+    "descriptiveConfidence": 0.95,
+    "familyAlpha": 0.05,
+    "frozenAt": "G0.2",
+    "perHypothesisAlpha": 0.007143,
+    "primaryFamily": [
+      "calibration-global",
+      "fpr-carolina-judicial",
+      "fpr-carolina-social-media",
+      "fpr-carolina-university",
+      "fpr-ptwiki",
+      "integrity",
+      "recall-at-threshold"
+    ],
+    "primaryFamilySize": 7
+  },
+  "onnxMaximumInt8Bytes": 340000000,
+  "parity": {
+    "operationalMaximumInversions": 0,
+    "rawMaximumMeanAbsDelta": 0.02
+  },
+  "policyVersion": "preregistration-v4-v1",
+  "powerFloors": {
+    "criticalFprHumanNegatives": 300,
+    "criticalRecallPositives": 200,
+    "samplingUnits": 300
+  },
+  "preRegistration": {
+    "crossVersionAdjustment": "none",
+    "eligibleCandidate": "weights-hash-from-f6-receipt",
+    "frozenBefore": "v1-publication",
+    "partitionFractions": {
+      "calA": 0.1,
+      "calB": 0.2,
+      "dev": 0.05,
+      "test": 0.2,
+      "train": 0.45
+    },
+    "plannedCertifyingMeasurements": 1,
+    "powerInventoryUnit": "connected-components",
+    "primaryAnalysis": "one-sided-95-familywise-within-version",
+    "publicFeedbackAdaptation": "none",
+    "quotaAxis": {
+      "axis": "cell",
+      "cells": [
+        "carolina-judicial",
+        "carolina-social-media",
+        "carolina-university",
+        "ptwiki"
+      ],
+      "poolingIsResolutionLoss": true
+    },
+    "zeroEventCeiling": {
+      "adoptedFloorPerCell": 300,
+      "ceilingAtAdoptedFloor": 0.016337,
+      "formula": "1 - perHypothesisAlpha^(1/n)",
+      "unitsBelowFloorFailBeforeSealing": true
+    }
+  },
+  "predictiveValuePrevalences": [
+    0.01,
+    0.05,
+    0.1
+  ],
+  "productTarget": "textual-compatibility-with-ai-generation",
+  "profileBands": [
+    "50-79",
+    "80-199",
+    "200-plus"
+  ],
+  "profileValidityDays": 180,
+  "recallFloor": 0.6,
+  "resampling": {
+    "allowedUnitKinds": [
+      "hierarchical",
+      "multiway"
+    ],
+    "estimandClasses": {
+      "ai-recall": {
+        "levels": [
+          {
+            "axis": "groups.generatorFamily",
+            "fallbacks": []
+          },
+          {
+            "axis": "groups.promptTemplate",
+            "fallbacks": []
+          },
+          {
+            "axis": "groups.generationBatch",
+            "fallbacks": []
+          }
+        ],
+        "unitKind": "hierarchical"
+      },
+      "calibration": {
+        "levels": [
+          {
+            "axis": "groups.domainSource",
+            "fallbacks": []
+          },
+          {
+            "axis": "groups.author",
+            "fallbacks": [
+              "groups.promptTemplate",
+              "groups.source"
+            ]
+          }
+        ],
+        "unitKind": "hierarchical"
+      },
+      "human-specificity": {
+        "levels": [
+          {
+            "axis": "groups.domainSource",
+            "fallbacks": []
+          },
+          {
+            "axis": "groups.author",
+            "fallbacks": [
+              "groups.source"
+            ]
+          }
+        ],
+        "unitKind": "hierarchical"
+      },
+      "mixed": {
+        "levels": [
+          {
+            "axis": "groups.humanSeed",
+            "fallbacks": []
+          },
+          {
+            "axis": "groups.promptTemplate",
+            "fallbacks": [],
+            "proxyFor": "operação de edição",
+            "proxyReason": "nenhum eixo do schema v4 registra a operação de edição aplicada a uma linha mista; groups.promptTemplate é o eixo mais próximo e tem um único nível sobre as linhas mistas montadas, logo este fator é degenerado por construção até um eixo de operação existir"
+          }
+        ],
+        "unitKind": "multiway"
+      }
+    },
+    "estimandExtensions": {
+      "separability.auroc": {
+        "reason": "AUROC não é estatística de calibração e nenhuma linha da tabela congelada a nomeia; ela é reamostrada sobre a mesma população binária e o mesmo estrato que ECE e Brier, logo herda a unidade da linha de calibração como extensão declarada. Não tem gate (separability.gates = false), então a extensão não afrouxa limite algum",
+        "standsInFor": "calibração (ECE, Brier)"
+      },
+      "separability.prAuc": {
+        "reason": "PR-AUC não é estatística de calibração e nenhuma linha da tabela congelada a nomeia; ela é reamostrada sobre a mesma população binária e o mesmo estrato que ECE e Brier, logo herda a unidade da linha de calibração como extensão declarada. Não tem gate (separability.gates = false), então a extensão não afrouxa limite algum",
+        "standsInFor": "calibração (ECE, Brier)"
+      }
+    },
+    "estimands": {
+      "action.clearanceRate": "human-specificity",
+      "action.fpr": "human-specificity",
+      "action.fpr.labelBasis": "human-specificity",
+      "action.fpr.slice": "human-specificity",
+      "action.recall": "ai-recall",
+      "calibration.brier": "calibration",
+      "calibration.ece": "calibration",
+      "calibration.ece15": "calibration",
+      "mixed.warning.recall": "mixed",
+      "separability.auroc": "calibration",
+      "separability.prAuc": "calibration",
+      "warning.clearanceRate": "human-specificity",
+      "warning.fpr": "human-specificity",
+      "warning.fpr.labelBasis": "human-specificity",
+      "warning.fpr.slice": "human-specificity",
+      "warning.recall": "ai-recall"
+    },
+    "fallbackToIndependentRows": false,
+    "publishedBound": "wider-of-analytic-and-resampled",
+    "required": true
+  },
+  "rollout": {
+    "actionsPromoted": false,
+    "maximumStage": "indicator",
+    "stages": [
+      "bundle-verified",
+      "shadow",
+      "indicator"
+    ]
+  },
+  "runtimeComparator": "score-ge-next-up-quantile",
+  "seeds": {
+    "bootstrap": 20260728,
+    "crossValidation": 20260727,
+    "publishableCheckpoint": 712019,
+    "split": 20260804
+  },
+  "shareAlikeRequired": true,
+  "temporalCohort": {
+    "insufficientPowerLabel": "notApplicable",
+    "minimumDistinctTimestamps": 4,
+    "perSource": true,
+    "quartilesOf": "createdAt"
+  },
+  "threshold": {
+    "basis": "document-raw-score",
+    "population": "human-negatives",
+    "probabilisticCalibrator": "none",
+    "quantile": 0.95,
+    "quantilePartitions": [
+      "dev",
+      "cal-A"
+    ],
+    "side": "upper",
+    "version": "provisional-v1"
+  },
+  "training": {
+    "batchDocuments": 16,
+    "epochs": 3,
+    "learningRate": 0.00002,
+    "optimizer": "adamw",
+    "warmupFraction": 0.06,
+    "weightDecay": 0.01
+  },
+  "uncoveredCoreStrata": [],
+  "wordFloor": {
+    "abstainBelow": 50
+  }
+}

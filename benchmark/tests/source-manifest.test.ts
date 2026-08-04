@@ -6,9 +6,9 @@ import { describe, expect, it } from "vitest";
 
 import { EVALUATOR_FILES } from "../digests.ts";
 import {
-  REBUILD_V3_POLICY,
-  REBUILD_V3_POLICY_PATH,
-} from "../rebuild-v3-policy.ts";
+  PREREGISTRATION_V4,
+  PREREGISTRATION_V4_PATH,
+} from "../preregistration-v4.ts";
 import {
   CORPUS_LICENSE_REGISTRY,
   CORPUS_USE_POLICY,
@@ -16,6 +16,7 @@ import {
   LICENSE_OBLIGATION_LABEL_PT,
   PRE_CHATGPT_CUTOFF_ISO,
   A1_BLOCKED_HUMAN_SOURCES,
+  OUT_OF_FRAME_HUMAN_SOURCES,
   V3_HUMAN_SOURCE_INVENTORY,
   WEIGHT_USE_POLICY,
   corpusLicenseObligations,
@@ -406,23 +407,23 @@ describe("non-commercial corpus use policy", () => {
   });
 
   // The frozen table row "uso e licença" is materialized in
-  // benchmark/rebuild-v3-policy.json, which the plan designates as the ONLY
+  // benchmark/preregistration-v4.json, which the plan designates as the ONLY
   // place a frozen value is written down ("código não pode repeti-los como
   // constantes soltas"). These two tests pin the chain from that file to what
   // this module publishes, so `commercialUse: false` exists once and not twice.
   it("reads the frozen non-commercial decision from the policy file, not a copy of it", async () => {
     const frozenFile = JSON.parse(
-      await readFile(REBUILD_V3_POLICY_PATH, "utf8"),
+      await readFile(PREREGISTRATION_V4_PATH, "utf8"),
     ) as { commercialUse: unknown };
     // file bytes -> validated policy -> the use policy this module publishes.
-    expect(REBUILD_V3_POLICY.commercialUse).toBe(frozenFile.commercialUse);
+    expect(PREREGISTRATION_V4.commercialUse).toBe(frozenFile.commercialUse);
     expect(CORPUS_USE_POLICY.commercialUse).toBe(
-      REBUILD_V3_POLICY.commercialUse,
+      PREREGISTRATION_V4.commercialUse,
     );
     // And the verdict on the NC source follows that flag rather than a local
     // decision: Carolina is admissible BECAUSE the frozen use is not commercial.
     expect(sourceAdmissibility("cc-by-nc-sa-4.0").admissible).toBe(
-      !REBUILD_V3_POLICY.commercialUse,
+      !PREREGISTRATION_V4.commercialUse,
     );
   });
 
@@ -436,7 +437,7 @@ describe("non-commercial corpus use policy", () => {
       "utf8",
     );
     expect(source).toMatch(
-      /commercialUse:\s*REBUILD_V3_POLICY\.commercialUse/u,
+      /commercialUse:\s*PREREGISTRATION_V4\.commercialUse/u,
     );
   });
 
@@ -482,7 +483,7 @@ describe("non-commercial corpus use policy", () => {
   // phrase and searched the header for each imported BASENAME — which a simple
   // rewording walked around ("its sole dependency is"), while the basename
   // search stayed green on the unrelated WHO-OWNS bullet that names
-  // `benchmark/rebuild-v3-policy.ts` as the owner of a frozen value, not as a
+  // `benchmark/preregistration-v4.ts` as the owner of a frozen value, not as a
   // dependency. A bare basename over 50 lines of prose is satisfiable by
   // accident: "digests" already appears in a sentence about digesting sources,
   // so even an honestly-updated expectation list could not catch an undeclared
@@ -531,7 +532,7 @@ describe("non-commercial corpus use policy", () => {
     ].map((match) => match[1]);
     expect(imported).toEqual([
       "../contracts/canonical-json.ts",
-      "./rebuild-v3-policy.ts",
+      "./preregistration-v4.ts",
       "./schema.ts",
     ]);
     // EXACTLY: an import missing from the block fails, and a block entry that is
@@ -566,11 +567,11 @@ describe("non-commercial corpus use policy", () => {
     // Rebuilt here from the frozen flags, independently of the module's own
     // derivation, so the two cannot agree by being the same literal.
     const requiredByContract: LicenseObligation[] = [];
-    if (REBUILD_V3_POLICY.attributionRequired)
+    if (PREREGISTRATION_V4.attributionRequired)
       requiredByContract.push("attribution");
-    if (!REBUILD_V3_POLICY.commercialUse)
+    if (!PREREGISTRATION_V4.commercialUse)
       requiredByContract.push("non-commercial");
-    if (REBUILD_V3_POLICY.shareAlikeRequired)
+    if (PREREGISTRATION_V4.shareAlikeRequired)
       requiredByContract.push("share-alike");
     expect(FROZEN_CORPUS_OBLIGATIONS).toEqual(requiredByContract);
 
@@ -977,7 +978,7 @@ describe("B3 — only public licensed bases enter as human sources", () => {
       }).blockedBy,
     ).toBe("label-basis-not-allowed");
     // The allowed list is READ from the frozen policy, not restated here.
-    expect([...REBUILD_V3_POLICY.labelBasis.allowed].sort()).toEqual([
+    expect([...PREREGISTRATION_V4.labelBasis.allowed].sort()).toEqual([
       "date-cutoff",
       "observed-process",
     ]);
@@ -1034,25 +1035,49 @@ describe("B3 — only public licensed bases enter as human sources", () => {
 
 describe("B3 — the frozen v3 human inventory", () => {
   it("covers exactly the frozen snapshot list, with no new download", () => {
-    expect(REBUILD_V3_POLICY.humanSources.newDownloadsAllowed).toBe(false);
+    expect(PREREGISTRATION_V4.humanSources.newDownloadsAllowed).toBe(false);
     expect(
       V3_HUMAN_SOURCE_INVENTORY.map((entry) => entry.snapshot).sort(),
-    ).toEqual([...REBUILD_V3_POLICY.humanSources.snapshots].sort());
+    ).toEqual([...PREREGISTRATION_V4.humanSources.snapshots].sort());
   });
 
   it("declares the sourceId a reviewed manifest joins on", () => {
     // The inventory is keyed twice — by `snapshot` against the frozen policy
     // (asserted above) and by `sourceId` against the reviewed source manifest.
-    // These are the ids the manifests an operator holds actually use; the fourth
-    // was written `src_b2w_reviews` for one round, which would have made a
-    // by-sourceId join to `benchmark/data/corpus-build/**` silently empty for
-    // B2W while succeeding for the other three. Those manifests are gitignored
-    // build artifacts, so this is a literal and not a read.
+    // These are the ids the manifests an operator holds actually use. Those
+    // manifests are gitignored build artifacts, so this is a literal and not a read.
     expect(V3_HUMAN_SOURCE_INVENTORY.map((entry) => entry.sourceId)).toEqual([
       "src_wikipedia_pt",
       "src_carolina",
+    ]);
+  });
+
+  it("keeps the out-of-frame source declared instead of deleting it, and out of the stocked inventory", () => {
+    // B2W is not refused: its route and licence are admissible, and
+    // `humanSourceAdmissibility` still says so. What it lacks is a CELL — product
+    // review is not one of the four the claim is published over — so its base left
+    // `humanSources.snapshots` and its registration left this inventory while staying
+    // readable, with the axes a review really has.
+    expect(OUT_OF_FRAME_HUMAN_SOURCES.map((entry) => entry.sourceId)).toEqual([
       "src_b2w",
     ]);
+    for (const entry of OUT_OF_FRAME_HUMAN_SOURCES) {
+      expect(humanSourceAdmissibility(entry).admissible, entry.sourceId).toBe(
+        true,
+      );
+      expect(
+        [...PREREGISTRATION_V4.humanSources.snapshots],
+        entry.sourceId,
+      ).not.toContain(entry.snapshot);
+      expect(
+        V3_HUMAN_SOURCE_INVENTORY.map((stocked) => stocked.sourceId),
+      ).not.toContain(entry.sourceId);
+    }
+    // And the stocking rule is what refuses it, naming the snapshot: a source with
+    // no frozen base has no bytes on disk, however admissible it is.
+    expect(() =>
+      assertV3HumanInventoryAdmissible([...OUT_OF_FRAME_HUMAN_SOURCES]),
+    ).toThrow(/src_b2w draws on "b2w-reviews01": snapshot-not-frozen/u);
   });
 
   it("registers every entry as a public base with a document-level cutoff field", () => {
@@ -1509,17 +1534,13 @@ describe("declaredGroupAxes on the v3 human inventory", () => {
         [...entry.declaredGroupAxes],
       ]),
     );
-    // Wikipedia -> page; B2W -> product and reviewer; Carolina -> member file.
-    // `source` IS the origin document in v3, so page/product/member-file are one
-    // axis under three names, and `author` is declared only where a single person
-    // wrote the text. `sourceMaterialBatch` is declared by EVERY human source: the
+    // Wikipedia -> page; Carolina -> member file. `source` IS the origin document in
+    // v3, so page and member-file are one axis under two names, and `author` is
+    // declared only where a single person wrote the text — which neither stocked
+    // source has. `sourceMaterialBatch` is declared by EVERY human source: the
     // splitter does not union on it, so the declaration is the only thing that turns
     // an unrecovered acquisition event into an audit failure.
-    expect(byId.get("src_b2w")).toEqual([
-      "author",
-      "source",
-      "sourceMaterialBatch",
-    ]);
+    expect(byId.has("src_b2w")).toBe(false);
     expect(byId.get("src_wikipedia_pt")).toEqual([
       "source",
       "sourceMaterialBatch",
@@ -1576,6 +1597,7 @@ describe("declaredGroupAxes on the v3 human inventory", () => {
     for (const entry of [
       ...V3_HUMAN_SOURCE_INVENTORY,
       ...A1_BLOCKED_HUMAN_SOURCES,
+      ...OUT_OF_FRAME_HUMAN_SOURCES,
     ]) {
       for (const axis of entry.declaredGroupAxes) {
         expect(ALL_GROUP_AXES).toContain(axis);
@@ -1736,7 +1758,7 @@ describe("position (a) — the weights carry their own policy, not the sources'"
     // frozen flag, which is the one thing both are allowed to agree with.
     expect(WEIGHT_USE_POLICY.commercialUse).toBe(false);
     expect(CORPUS_USE_POLICY.commercialUse).toBe(false);
-    expect(REBUILD_V3_POLICY.commercialUse).toBe(false);
+    expect(PREREGISTRATION_V4.commercialUse).toBe(false);
     // And the position itself is data, not prose: a reader of the module can ask.
     expect(WEIGHT_USE_POLICY.sourceObligationsPropagate).toBe(false);
     expect(WEIGHT_USE_POLICY.positionAuthority).toBe("operator-risk-decision");

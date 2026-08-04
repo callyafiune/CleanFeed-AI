@@ -52,11 +52,11 @@
 // Pure apart from the caller-supplied seed: no Date, no wall-clock, no I/O.
 
 import { percentileInterval } from "./intervals.ts";
-import { REBUILD_V3_POLICY } from "./rebuild-v3-policy.ts";
+import { PREREGISTRATION_V4 } from "./preregistration-v4.ts";
 import type {
   PublishedBoundRule,
   ResamplingUnitKind,
-} from "./rebuild-v3-policy.ts";
+} from "./preregistration-v4.ts";
 
 /**
  * One axis of one item, in the three states R6 allows and no fourth. It mirrors
@@ -414,7 +414,7 @@ const MINIMUM_VALID_REPLICATES = 1_000;
 
 // The pre-registered pilot count. Read from the frozen contract, never written
 // down here: 10.000 in the pilot and 100.000 in the release are frozen values.
-const MINIMUM_REPLICATES = REBUILD_V3_POLICY.bootstrapReplicates.pilot;
+const MINIMUM_REPLICATES = PREREGISTRATION_V4.bootstrapReplicates.pilot;
 
 interface ResolvedLevel {
   axis: string;

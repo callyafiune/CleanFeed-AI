@@ -401,7 +401,7 @@ function gateReport(
       correction: "bonferroni",
       familyAlpha: 0.05,
       descriptiveConfidence: 0.95,
-      frozenAt: "G5",
+      frozenAt: "G0.2",
       declared: 40,
       observed: actionSliceGates.length,
       gateIds: actionSliceGates.map((gate) => gate.id),
@@ -490,7 +490,11 @@ function report(
     schemaVersion: 2,
     generatedAt: ISSUED_AT,
     holdoutConsumptionId: "consume-holdout-0001",
-    dataset: { id: "ptbr-generic-v1", version: "1", digest: DATASET_DIGEST },
+    dataset: {
+      id: "cleanfeed-ptbr-cells-v1",
+      version: "1",
+      digest: DATASET_DIGEST,
+    },
     datasetAuditDigest: "3".repeat(64),
     sourceReadinessDigest: "4".repeat(64),
     split: {

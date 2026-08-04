@@ -68,13 +68,13 @@ O `sealDataset` só produz um audit se a composição bater **exatamente**:
 
 | Requisito | Valor | Verificado por |
 | --- | --- | --- |
-| Total | **10.000** registros | `sealDataset` |
-| `human` | **4.000** | contagem exata |
+| Total | **13.000** registros | `sealDataset` |
+| `human` | **7.000** (4 células x o ALVO de 1.750/célula; o piso de 1.500/célula é o número do gate, não o do selo) | contagem exata |
 | `ai` | **4.000** | contagem exata |
 | `mixed` | **2.000** | contagem exata |
 | Idioma | `pt-BR` (todos) | schema + manifest |
-| Plataforma / domínio | tokens livres por registro (ex.: `generic`); manifest: `datasetId: "ptbr-generic-v1"`, `intendedDomain: "generic"` | schema + manifest |
-| Tipos de fonte humana | pelo menos 1 registro de cada: `encyclopedic` (Wikipédia), `social-media` (Carolina social/datasets), `university` (Carolina university), `institutional` (Carolina judicial/legislative). **`qa-informal` saiu com A1 (2026-07-31)** — o SE-PT era sua única fonte, e exigi-lo tornaria o selo de release insatisfazível em vez de estrito | `DATASET_COVERAGE_INVALID` |
+| Plataforma / domínio | tokens livres por registro (ex.: `generic`); manifest: `datasetId: "cleanfeed-ptbr-cells-v1"`, `intendedDomain: "scoped-cells"` | schema + manifest |
+| Tipos de fonte humana | pelo menos 1 registro de cada: `encyclopedic` (Wikipédia), `social-media` (Carolina social media), `university` (Carolina university domains), `judicial` (Carolina judicial branch). **`judicial` e não `institutional`**: a moldura nomeia UMA tipologia da Carolina, e a legislativa está fora dela — um estrato que juntasse as duas nomearia uma população de que o corpus não amostra. **`qa-informal` saiu com A1 (2026-07-31)** — o SE-PT era sua única fonte, e exigi-lo tornaria o selo de release insatisfazível em vez de estrito | `DATASET_COVERAGE_INVALID` |
 | Famílias hard-negative | pelo menos 1 humano de cada: `formulaic`, `motivational`, `highly-polished`, `repetitive`, `non-native`, `corporate-structure` | `DATASET_COVERAGE_INVALID` |
 | Famílias de gerador held-out | cada família em `heldOutGeneratorFamilies` precisa de **≥ 200** positivos elegíveis (`ai`/`mixed`) e **não pode** aparecer em nenhum registro `human` | `DATASET_COVERAGE_INVALID` |
 | Revisores por registro | **≥ 2 distintos**; adjudicador (se `adjudicated`) independente dos dois | `DATASET_REVIEW_INVALID` |
@@ -231,15 +231,22 @@ que um de `cal-B` por desenho.
 Consequência prática: um registro `mixed` que aponta para um pai `human` via
 `groups.derivationRoot` deve compartilhar o bloco temporal do pai.
 
-Com 4.000 humanos, os 20% do bloco de teste dão **800 negativos humanos**. O
-`split` PUBLICA esse número em `audit.testHumanNegatives` e **não reprova** por
-ele: quem aplica piso de poder é o gate de composição do E3, sobre a unidade
-pré-registrada (componentes conectados independentes por célula de cota), e é ele
-que falha antes da selagem. Os pisos por slice (≥ 300 negativos por slice crítico
+Com 7.000 humanos, os 20% do bloco de teste dão **1.400 negativos humanos** —
+cerca de 350 por célula, contra o piso pré-registrado de 300. O `split` PUBLICA
+esse número em `audit.testHumanNegatives` e **não reprova** por ele: quem aplica
+piso de poder é o gate de composição do E3, sobre as DUAS unidades pré-registradas
+(linhas-registro negativas humanas E componentes conectados independentes, por
+célula de cota), e é ele que falha antes da selagem. Os pisos por slice (≥ 300 negativos por slice crítico
 para autorizar ação visual; ver §5) continuam publicados como elegibilidade, não
 como reprovação.
 
 ## 2. O registro (`records.jsonl`) — schema v2 fechado
+
+> **O schema vigente é o v4** (`benchmark/schema.ts`), e o corpo desta seção descreve o
+> v2. O v4 acrescenta `sourceMaterialBatch`, `generationBatch` e `extractionRun` e
+> apaga `collectionBatch`; `validateBenchmarkRecord` ainda despacha 2 | 3 | 4, então o
+> v2 abaixo continua parseável, mas **um corpus novo é montado em v4**. A autoridade é o
+> arquivo, nunca esta seção — a reescrita do campo-a-campo é dívida declarada.
 
 Um JSON por linha, validado por [validateBenchmarkRecord](../benchmark/schema.ts).
 **Chaves desconhecidas são recusadas.** Campos:
@@ -423,11 +430,12 @@ derivados (o ingest os gera: `recordsFile`, `recordsSha256`, `reviewLedgerFile`,
 ```jsonc
 {
   "schemaVersion": 1,
-  "datasetId": "ptbr-generic-v1",        // DEVE ser exatamente isto (DATASET_ID_MISMATCH)
+  "datasetId": "cleanfeed-ptbr-cells-v1", // DEVE ser exatamente isto (DATASET_ID_MISMATCH);
+                                        // "ptbr-generic-v1" é recusado por nome (DATASET_ID_ABANDONED)
   "version": "1.0.0",
   "scientificUse": "release",            // "release" p/ elegibilidade; "infrastructure-only" nunca promove
   "intendedLanguage": "pt-BR",
-  "intendedDomain": "generic",
+  "intendedDomain": "scoped-cells",
   "createdAt": "2026-08-01T00:00:00.000Z",  // ISO válido
   "normalizationVersion": "cleanfeed-text-v1",
   "annotationProtocolVersion": "annotation-v1",
@@ -478,43 +486,46 @@ npm run benchmark -- ingest \
   --review-ledger <review-ledger.jsonl> \
   --sources <source-manifest.json> \
   --dataset-manifest-template <template.json> \
-  --dataset-dir benchmark/data/ptbr-generic-v1
+  --dataset-dir benchmark/data/cleanfeed-ptbr-cells-v1
 
 # 2) VALIDATE — sela o dataset e emite o DatasetAudit
 npm run benchmark -- validate \
-  --dataset-dir benchmark/data/ptbr-generic-v1 \
+  --dataset-dir benchmark/data/cleanfeed-ptbr-cells-v1 \
   --output benchmark/work/validate
 
 # 3) SPLIT — corte temporal 45/5/10/20/20 + auditoria de vazamento (seed fixo)
 npm run benchmark -- split \
-  --dataset-dir benchmark/data/ptbr-generic-v1 \
+  --dataset-dir benchmark/data/cleanfeed-ptbr-cells-v1 \
   --dataset-audit benchmark/work/validate/dataset-audit.json \
   --output benchmark/work/split \
-  --seed 20260726
+  --seed 20260804
 
 # 4) SCORE — pontua no browser SOMENTE dev e cal-A (nunca test, train ou cal-B)
 npm run benchmark -- score --partition dev \
-  --dataset-dir benchmark/data/ptbr-generic-v1 \
+  --dataset-dir benchmark/data/cleanfeed-ptbr-cells-v1 \
   --split-artifact benchmark/work/split/split-artifact.json \
   --candidate-extension-dir dist-model-benchmark \
   --output benchmark/work/predictions/dev
 npm run benchmark -- score --partition cal-A \
-  --dataset-dir benchmark/data/ptbr-generic-v1 \
+  --dataset-dir benchmark/data/cleanfeed-ptbr-cells-v1 \
   --split-artifact benchmark/work/split/split-artifact.json \
   --candidate-extension-dir dist-model-benchmark \
   --output benchmark/work/predictions/cal-A
 
 # 5) VALIDATE-PREDICTIONS — completude/identidade das previsões (dev e cal)
 npm run benchmark -- validate-predictions --partition dev \
-  --dataset-dir benchmark/data/ptbr-generic-v1 \
+  --dataset-dir benchmark/data/cleanfeed-ptbr-cells-v1 \
   --split-artifact benchmark/work/split/split-artifact.json \
   --predictions benchmark/work/predictions/dev \
   --runtime-parity <runtime-parity.json>
 #   (idem para --partition cal-A)
 
-# 6) FIT — calibração (Platt/beta/isotônico + CV) e congelamento dos limiares
+# 6) FIT — congela o limiar provisório da v1 (quantil unilateral do escore BRUTO de
+#    documento sobre os negativos humanos de dev + cal-A) em provisional-threshold.json.
+#    O bloco `calibrator` da pré-inscrição está marcado `reservedFor: "v2"`; a competição
+#    de calibrador que o fit ainda roda pertence à v2 e não ao corte pré-inscrito da v1.
 npm run benchmark -- fit \
-  --dataset-dir benchmark/data/ptbr-generic-v1 \
+  --dataset-dir benchmark/data/cleanfeed-ptbr-cells-v1 \
   --dataset-audit benchmark/work/validate/dataset-audit.json \
   --source-readiness <source-readiness.json> \
   --split-artifact benchmark/work/split/split-artifact.json \
@@ -533,7 +544,7 @@ npm run benchmark -- fit \
 #    isso um corpus `release` RECUSA (HOLDOUT_LEDGER_ABSENT) um --ledger ausente
 #    em vez de criá-lo.
 npm run benchmark -- consume-holdout \
-  --dataset-dir benchmark/data/ptbr-generic-v1 \
+  --dataset-dir benchmark/data/cleanfeed-ptbr-cells-v1 \
   --split-artifact benchmark/work/split/split-artifact.json \
   --frozen-calibration benchmark/work/fit/frozen-calibration.json \
   --candidate-extension-dir dist-model-benchmark \

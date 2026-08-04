@@ -33,7 +33,7 @@ import {
   sortGeneratorFamilies,
   type GeneratorFamily,
 } from "./generator-family.ts";
-import { REBUILD_V3_POLICY } from "./rebuild-v3-policy.ts";
+import { PREREGISTRATION_V4 } from "./preregistration-v4.ts";
 import { V3_HUMAN_SOURCE_INVENTORY } from "./source-manifest.ts";
 import {
   ALL_GROUP_AXES,
@@ -115,10 +115,10 @@ export interface SplitAuditPolicy {
    * This module measures the offer and does not compute power: a hard failure here would
    * wire a power gate into the audit that the audit's own inputs cannot decide.
    *
-   * It is also unmeetable as a gate: the frozen corpus composition is 4000 human records
-   * and the blind block is 20% of it, so `test` holds at most 880 of them. The floor that
-   * binds is the pre-registered
-   * one — 250 independent clusters per quota cell — applied before sealing, elsewhere.
+   * It is also unmeetable as a gate: the frozen corpus composition is 7000 human records
+   * and the blind block is 20% of it, so `test` holds at most 1400 of them. The floors
+   * that bind are the pre-registered ones — 300 human-negative record-lines AND 300
+   * independent sampling units per quota cell — applied before sealing, elsewhere.
    */
   minimumTestHumanNegatives: 2_000;
   minimumCriticalFprNegatives: 300;
@@ -444,11 +444,11 @@ const KEY_SEP = "\u001f";
  * once, here.
  */
 export const PARTITION_TARGETS: Record<Partition, number> = {
-  train: REBUILD_V3_POLICY.preRegistration.partitionFractions.train,
-  dev: REBUILD_V3_POLICY.preRegistration.partitionFractions.dev,
-  "cal-A": REBUILD_V3_POLICY.preRegistration.partitionFractions.calA,
-  "cal-B": REBUILD_V3_POLICY.preRegistration.partitionFractions.calB,
-  test: REBUILD_V3_POLICY.preRegistration.partitionFractions.test,
+  train: PREREGISTRATION_V4.preRegistration.partitionFractions.train,
+  dev: PREREGISTRATION_V4.preRegistration.partitionFractions.dev,
+  "cal-A": PREREGISTRATION_V4.preRegistration.partitionFractions.calA,
+  "cal-B": PREREGISTRATION_V4.preRegistration.partitionFractions.calB,
+  test: PREREGISTRATION_V4.preRegistration.partitionFractions.test,
 };
 
 /**
@@ -1117,7 +1117,7 @@ function auditCriticalSlices(
       record.mixture === undefined
         ? undefined
         : record.mixture.aiFraction >=
-            REBUILD_V3_POLICY.materialAssistance.minimumAiFraction
+            PREREGISTRATION_V4.materialAssistance.minimumAiFraction
           ? "ai-ge-50"
           : "ai-lt-50",
   };

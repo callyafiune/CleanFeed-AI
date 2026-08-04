@@ -23,7 +23,7 @@ import {
 } from "./generator-family.ts";
 import type { DatasetManifest } from "./dataset-manifest.ts";
 import type { BenchmarkLabel, BenchmarkRecord } from "./schema.ts";
-import { REBUILD_V3_POLICY } from "./rebuild-v3-policy.ts";
+import { PREREGISTRATION_V4 } from "./preregistration-v4.ts";
 import {
   DECLARED_GROUP_AXES,
   FROZEN_SPLIT_AUDIT_POLICY,
@@ -849,11 +849,11 @@ async function assertDatasetIndependentInvariants(
   // The pre-registered seed HERE, not only in the full validator: the publication path
   // reaches this guard alone, and an arbitrary seed sealed into an artifact is decidable
   // without the dataset.
-  if (artifact.policy.seed !== REBUILD_V3_POLICY.seeds.split) {
+  if (artifact.policy.seed !== PREREGISTRATION_V4.seeds.split) {
     throw new SplitArtifactError(
       "SPLIT_ARTIFACT_SEED_NOT_PRE_REGISTERED",
       `policy.seed ${String(artifact.policy.seed)} is not the pre-registered split seed ` +
-        `${REBUILD_V3_POLICY.seeds.split}`,
+        `${PREREGISTRATION_V4.seeds.split}`,
     );
   }
 

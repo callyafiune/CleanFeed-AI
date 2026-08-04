@@ -3,7 +3,6 @@ import { dirname, join } from "node:path";
 
 import { describe, expect, it } from "vitest";
 
-import { RELEASE_CORPUS_POLICY } from "../dataset-manifest.ts";
 import { EVALUATOR_FILES } from "../digests.ts";
 import {
   laneRunsHarness,
@@ -13,9 +12,11 @@ import {
   RebuildV3PolicyError,
 } from "../rebuild-v3-policy.ts";
 
-// The frozen table lives in the plan ("Contrato de execução sem decisões
-// pendentes"). These tests are the only place that repeats its values as
-// literals: everywhere else in the benchmark must read them from the policy.
+// The ABANDONED v3 contract (`rebuild-v3-policy.ABANDONADA.md`). It is kept readable
+// and byte-exact, so these tests still pin its values as literals — an abandoned
+// pre-registration that got quietly reformatted or edited would be
+// indistinguishable from one that always said that. What they no longer assert is
+// that anything READS it: the live contract is `benchmark/preregistration-v4.json`.
 
 async function rawPolicyText(): Promise<string> {
   // CRLF is normalized away: this repo is checked out on Windows with
@@ -57,13 +58,11 @@ describe("rebuild-v3-policy.json", () => {
     expect(text).toBe(`${JSON.stringify(canonicalize(parsed), null, 2)}\n`);
   });
 
-  it("has exactly one formatting authority, so `npm run format` cannot move the evaluator digest", async () => {
-    // Two tools may not decide the bytes of an EVALUATOR_FILES member.
-    // `computeEvaluatorDigest` hashes this file raw, the canonical form asserted
-    // above is `JSON.stringify(canonical, null, 2)`, and prettier would inline the
-    // short arrays — so the file is in .prettierignore and the test above is the
-    // only authority. If someone deletes that entry, `npm run format` starts
-    // rewriting a hashed file and this fails first.
+  it("has exactly one formatting authority, so `npm run format` cannot rewrite an abandoned contract", async () => {
+    // The canonical form asserted above is `JSON.stringify(canonical, null, 2)`, and
+    // prettier would inline the short arrays. The file is no longer hashed into the
+    // evaluator digest, so the stake changed rather than disappeared: a reformatted
+    // abandoned pre-registration cannot be told apart from an edited one.
     // Resolved off the policy path, not off `import.meta.url`: Vite rewrites a
     // `new URL(..., import.meta.url)` literal into an asset URL that is not a
     // `file:` URL under vitest.
@@ -79,9 +78,12 @@ describe("rebuild-v3-policy.json", () => {
     ).toContain("benchmark/rebuild-v3-policy.json");
   });
 
-  it("is part of the evaluator's identity, together with its validator", () => {
-    expect(EVALUATOR_FILES).toContain("benchmark/rebuild-v3-policy.json");
-    expect(EVALUATOR_FILES).toContain("benchmark/rebuild-v3-policy.ts");
+  it("is OUT of the evaluator's identity, together with its validator", () => {
+    // The swap is atomic: the live pair is in and the dead pair is out. A dead policy
+    // left inside `EVALUATOR_FILES` would keep moving the evaluator digest every time
+    // someone touched a file nothing reads.
+    expect(EVALUATOR_FILES).not.toContain("benchmark/rebuild-v3-policy.json");
+    expect(EVALUATOR_FILES).not.toContain("benchmark/rebuild-v3-policy.ts");
   });
 
   it("carries the frozen table verbatim", () => {
@@ -149,19 +151,6 @@ describe("rebuild-v3-policy.json", () => {
     // declared uncovered, so the gap is data instead of a shrunken denominator.
     expect(policy.uncoveredCoreStrata).toEqual(["qa-informal"]);
     expect(policy.humanCoreStrata).toContain("qa-informal");
-    // The release seal must require exactly the strata the policy HAS a source for.
-    // The two lists are not coupled in code on purpose — `benchmark/dataset-manifest.ts`
-    // declares it depends only on the record schema and the canonical-json helper, and
-    // the policy module reads a file at load — so the agreement is held here, the same
-    // way the NOTICE is held to the licence registry. Requiring a stratum the policy
-    // refuses would make the seal unsatisfiable rather than strict.
-    expect([...RELEASE_CORPUS_POLICY.requiredHumanSourceTypes].sort()).toEqual(
-      [
-        ...policy.humanCoreStrata.filter(
-          (stratum) => !policy.uncoveredCoreStrata.includes(stratum),
-        ),
-      ].sort(),
-    );
     expect(policy.humanSources.newDownloadsAllowed).toBe(false);
     // Temporal cohort.
     expect(policy.temporalCohort.quartilesOf).toBe("createdAt");

@@ -16,7 +16,7 @@ import type {
   LabelBasisSlice,
   MetricEstimate,
 } from "../metrics.ts";
-import { REBUILD_V3_POLICY } from "../rebuild-v3-policy.ts";
+import { PREREGISTRATION_V4 } from "../preregistration-v4.ts";
 import type { BenchmarkRecord } from "../schema.ts";
 import type { SliceAxis, SliceResult, SliceSummary } from "../slices.ts";
 
@@ -137,7 +137,7 @@ function point(value: number): MetricEstimate {
 // number of replicates it was read from. `"undeclared"` is a bound that never said
 // what its effort was — a literal, not `undefined`, because `undefined` would just
 // select the default parameter.
-const PILOT_REPLICATES = REBUILD_V3_POLICY.bootstrapReplicates.pilot;
+const PILOT_REPLICATES = PREREGISTRATION_V4.bootstrapReplicates.pilot;
 
 function resampled(
   estimate: MetricEstimate,
@@ -192,7 +192,7 @@ function plan(overrides: Partial<ResamplingPlan> = {}): ResamplingPlan {
       estimand,
       unitKind: "hierarchical" as const,
       unitAxes: [...PLAN_AXES],
-      replicates: REBUILD_V3_POLICY.bootstrapReplicates.pilot,
+      replicates: PREREGISTRATION_V4.bootstrapReplicates.pilot,
       executed: "percentile-bootstrap" as const,
     })),
     ...overrides,
@@ -403,7 +403,7 @@ function basis(
       degenerate: true,
     },
     powered: options.powered,
-    powerFloor: REBUILD_V3_POLICY.powerFloors.criticalFprHumanNegatives,
+    powerFloor: PREREGISTRATION_V4.powerFloors.criticalFprHumanNegatives,
     evidenceRole: options.powered ? "gating" : "supplementary-diagnostic",
     falsePositiveRate: resampled(
       analyticUpper(options.fprUpper ?? 0.01),
@@ -669,14 +669,14 @@ describe("gate thresholds match the §6.5 table", () => {
       scope: "overall",
       bound: "simultaneous-upper",
       operator: "<=",
-      required: REBUILD_V3_POLICY.fprBudgets.warning,
+      required: PREREGISTRATION_V4.fprBudgets.warning,
       evidence: "present",
       descriptive: { bound: "upper95", confidence: 0.95, role: "descriptive" },
     });
     expect(gateById(report.gates, "action.fpr.overall")).toMatchObject({
       bound: "simultaneous-upper",
       operator: "<=",
-      required: REBUILD_V3_POLICY.fprBudgets.visualAction,
+      required: PREREGISTRATION_V4.fprBudgets.visualAction,
     });
     expect(gateById(report.gates, "warning.recall.overall")).toMatchObject({
       bound: "simultaneous-lower",
@@ -694,13 +694,13 @@ describe("gate thresholds match the §6.5 table", () => {
     });
     expect(gateById(report.gates, "warning.calibration-ece")).toMatchObject({
       operator: "<=",
-      required: REBUILD_V3_POLICY.calibrationGate.eceMax,
+      required: PREREGISTRATION_V4.calibrationGate.eceMax,
       bound: "simultaneous-upper",
       estimand: "calibration.ece",
     });
     // The frozen contract names the bound this gate reads, and it names the one
     // the gate actually read: a Bonferroni percentile, not the individual 95%.
-    expect(REBUILD_V3_POLICY.calibrationGate.eceBound).toBe(
+    expect(PREREGISTRATION_V4.calibrationGate.eceBound).toBe(
       "bootstrap-simultaneous-upper",
     );
     expect(gateById(report.gates, "warning.mixed-recall")).toMatchObject({
@@ -1451,12 +1451,12 @@ describe("Bonferroni simultaneous bounds", () => {
     const multiplicity = report.multiplicity;
     expect(multiplicity.correction).toBe("bonferroni");
     expect(multiplicity.familyAlpha).toBe(
-      REBUILD_V3_POLICY.multiplicity.familyAlpha,
+      PREREGISTRATION_V4.multiplicity.familyAlpha,
     );
     expect(multiplicity.descriptiveConfidence).toBe(
-      REBUILD_V3_POLICY.multiplicity.descriptiveConfidence,
+      PREREGISTRATION_V4.multiplicity.descriptiveConfidence,
     );
-    expect(multiplicity.frozenAt).toBe("G5");
+    expect(multiplicity.frozenAt).toBe("G0.2");
     for (const id of multiplicity.gateIds) {
       expect(id.startsWith("integrity.")).toBe(false);
     }
@@ -1590,7 +1590,7 @@ describe("human-negative label bases as gate evidence", () => {
     // 300-row floor, so nothing but the basis guard stops an evidence basis that
     // does not exist from approving the FPR budget (R4/R6). The label-basis block
     // here is the REAL one, computed by metrics.ts over 305 unlabelled negatives.
-    const floor = REBUILD_V3_POLICY.powerFloors.criticalFprHumanNegatives;
+    const floor = PREREGISTRATION_V4.powerFloors.criticalFprHumanNegatives;
     const computed = computeEvaluationMetrics(
       Array.from({ length: floor + 5 }, (_, index) =>
         humanNegativeWithoutBasis(`u${index}`),
@@ -1677,7 +1677,7 @@ describe("integrity tier teeth", () => {
 
 describe("the mixed-recall gate reads the frozen policy (B2)", () => {
   it("takes its floor from the policy, not from a local constant", () => {
-    const floor = REBUILD_V3_POLICY.materialAssistance.minimumWarningRecall;
+    const floor = PREREGISTRATION_V4.materialAssistance.minimumWarningRecall;
     expect(floor).toBe(0.5);
     const report = evaluateReleaseGates({
       integrity: integrity(),

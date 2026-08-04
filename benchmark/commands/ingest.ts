@@ -11,6 +11,7 @@ import {
   ingestAuthorizedRecords,
   type IngestRequest,
 } from "../corpus-import.ts";
+import { PREREGISTRATION_V4 } from "../preregistration-v4.ts";
 import { CommandError } from "./io.ts";
 
 export interface IngestOptions {
@@ -21,7 +22,10 @@ export interface IngestOptions {
   datasetDirectory: string;
 }
 
-const EXPECTED_DATASET_ID = "ptbr-generic-v1" as const;
+// Read from the pre-registration, not written here: the corpus identity and the
+// claim it carries are one decision, and a second spelling of the id would let this
+// command build a corpus the pre-registration does not describe.
+const EXPECTED_DATASET_ID = PREREGISTRATION_V4.dataset.id;
 
 export async function runIngest(options: IngestOptions): Promise<string> {
   const request: IngestRequest = {

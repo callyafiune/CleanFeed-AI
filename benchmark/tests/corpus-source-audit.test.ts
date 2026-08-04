@@ -18,6 +18,7 @@ import {
   type ReviewedSourceEntryV1,
   type ReviewedSourceManifestV1,
 } from "../source-manifest.ts";
+import { OUT_OF_FRAME_HUMAN_SOURCES } from "../source-manifest.ts";
 import {
   validateBenchmarkRecordV3,
   validateBenchmarkRecordV4,
@@ -373,6 +374,29 @@ describe("auditCorpusSources", () => {
         sourceId: "src_licensed",
       }),
     );
+  });
+
+  // The out-of-frame source is DECLARED and not refused — its route and licence stay
+  // admissible — but a corpus that draws from it has records with no quota cell, so the
+  // audit blocks the manifest that declares it. Its own code: "not refused, just
+  // outside the frame" is a different fact from A1's "refused on access terms", and
+  // collapsing them would erase what re-admitting it costs.
+  it("blocks a source the frame does not cover, with its own code", async () => {
+    const outOfFrame = OUT_OF_FRAME_HUMAN_SOURCES[0].sourceId;
+    const report = await auditCorpusSources(
+      await buildInput({
+        sources: [{ ...licensedSource, sourceId: outOfFrame }, generatedSource],
+      }),
+    );
+    expect(report.status).toBe("blocked");
+    expect(report.blockingReasons).toContainEqual(
+      expect.objectContaining({
+        code: "SOURCE_OUT_OF_DECLARED_FRAME",
+        sourceId: outOfFrame,
+      }),
+    );
+    // And NOT as an access-terms refusal, which is the conflation this exists against.
+    expect(codesOf(report)).not.toContain("SOURCE_BLOCKED_BY_ACCESS_TERMS");
   });
 
   it("keeps an unregistered licence id authorized", async () => {
@@ -755,7 +779,7 @@ describe("the recipe comparison reads a v3 record's applied temperature", () => 
 // three of the four frozen lanes and was UNSATISFIABLE.
 //
 // `recipeTemperature` returns `null` whenever `decoding.configurable` is false,
-// and `benchmark/rebuild-v3-policy.json` sets `decodingConfigurable: false` on
+// and `benchmark/preregistration-v4.json` sets `decodingConfigurable: false` on
 // `agy`, `codex` and `gemini-cli` — only `gemini-api` is true. While
 // `GenerationBatchV1.temperature` was a required `number`, the comparison
 // `recipeTemperature(generation) === batch.temperature` was `null === <number>` on

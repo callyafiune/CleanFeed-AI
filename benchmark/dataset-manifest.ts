@@ -1,8 +1,9 @@
 // Corpus manifest, license inventory, human review rules and the closed
-// 4k/4k/2k release sealing. Like schema.ts this module is standalone and MUST
-// NOT import from the extension bundle (src/); it depends only on the closed
-// benchmark record schema and on the Phase 1 canonical-json digest helper shared
-// through contracts/.
+// 6k/4k/2k release sealing. Like schema.ts this module is standalone and MUST
+// NOT import from the extension bundle (src/); it depends on the closed benchmark
+// record schema, on the Phase 1 canonical-json digest helper shared through
+// contracts/, and on the frozen pre-registration (which makes it Node-side, since
+// that module reads its own JSON at load).
 //
 // "Sealed" means sealDataset only produces a DatasetAudit when the observed file
 // bytes match the manifest exactly, the composition equals the policy counts, the
@@ -31,7 +32,7 @@ import {
   generatorFamilyOf,
   type GeneratorFamily,
 } from "./generator-family.ts";
-import { REBUILD_V3_POLICY } from "./rebuild-v3-policy.ts";
+import { PREREGISTRATION_V4 } from "./preregistration-v4.ts";
 import {
   ALL_GROUP_AXES,
   AUTOMATED_UNREVIEWED,
@@ -57,7 +58,14 @@ export interface DatasetManifest {
   version: string;
   scientificUse: "release" | "infrastructure-only";
   intendedLanguage: "pt-BR";
-  intendedDomain: "generic";
+  /**
+   * The FRAME the corpus draws from, and never "any pt-BR text": the claim is
+   * published as a table of declared cells, so a manifest that called its domain
+   * generic would name a population with no sampling frame behind it. Read from the
+   * pre-registration rather than written here, so the vocabulary and the corpus
+   * identity move together.
+   */
+  intendedDomain: typeof PREREGISTRATION_V4.dataset.intendedDomain;
   createdAt: string;
   normalizationVersion: string;
   annotationProtocolVersion: "annotation-v1";
@@ -94,31 +102,35 @@ export interface CorpusPolicy {
 }
 
 export const RELEASE_CORPUS_POLICY: CorpusPolicy = {
-  counts: { human: 4_000, ai: 4_000, mixed: 2_000 },
-  // The four human source types a release corpus must cover: Wikipedia PT
-  // (encyclopedic), Carolina social media/datasets (social-media), Carolina
-  // university (university) and Carolina judicial/legislative (institutional).
-  // Hard-negative families are STYLE families, not platform families, so they are
-  // untouched by this.
+  // 7.000 human lines is `collection.humanLinesTotal`: four quota cells at the
+  // per-cell TARGET of 1.750, not at the 1.500 floor. `sealDataset` compares the
+  // composition for EXACT equality, so the number written here is the number the
+  // corpus must hold — and writing the floor instead would refuse every corpus that
+  // carries the collection margin. The margin is not slack: 1.750 lines put roughly
+  // 350 into a 20 % blind block whose standard deviation is about 15, so a cell
+  // collected at the floor lands under the 300-line FPR denominator about half the
+  // time. The floor stays the gate's number; this one is the collection's.
+  counts: { human: 7_000, ai: 4_000, mixed: 2_000 },
+  // The four cells of the declared frame: Wikipedia pt (encyclopedic), Carolina
+  // social media (social-media), Carolina university domains (university) and
+  // Carolina judicial branch (judicial). Hard-negative families are STYLE families,
+  // not platform families, so they are untouched by this.
   //
-  // `qa-informal` was the fifth until A1 (2026-07-31) refused the Stack Exchange
-  // dump, which was its only source. Leaving it here would have made the release seal
-  // UNSATISFIABLE rather than strict: the gate would demand at least one record from a
-  // source the frozen policy refuses, so no corpus could ever pass, and the failure
-  // would read as a corpus that is short rather than a requirement that cannot be met.
+  // `judicial` and not `institutional`: the frame names ONE Carolina typology, and
+  // the legislative typology is outside it. A stratum that pooled the two would name
+  // a population the corpus does not draw from.
   //
-  // This list is NOT derived from `REBUILD_V3_POLICY.humanCoreStrata` minus
-  // `uncoveredCoreStrata`, although that is what it equals. This module's header
-  // states it depends only on the record schema and the canonical-json helper, and the
-  // policy module reads a file at load — importing it here would make this module
-  // Node-side. The agreement is held by test instead
-  // ("requires exactly the core strata the frozen policy has a source for"), which is
-  // the same way the NOTICE is held to the licence registry.
+  // This list is written out rather than filtered out of
+  // `PREREGISTRATION_V4.humanCoreStrata`, although that is what it equals: a derived
+  // list cannot disagree with its source, so nothing would notice a stratum
+  // renamed in one place and not the other. The agreement is held by test
+  // ("requires exactly the core strata the frozen policy has a source for"), the
+  // same way the NOTICE is held to the licence registry.
   requiredHumanSourceTypes: [
     "encyclopedic",
+    "judicial",
     "social-media",
     "university",
-    "institutional",
   ],
   requiredHardNegativeFamilies: [
     "formulaic",
@@ -337,7 +349,11 @@ export function validateDatasetManifest(value: unknown): DatasetManifest {
   }
   const scientificUse = root.scientificUse;
   literal(root.intendedLanguage, "intendedLanguage", "pt-BR");
-  literal(root.intendedDomain, "intendedDomain", "generic");
+  literal(
+    root.intendedDomain,
+    "intendedDomain",
+    PREREGISTRATION_V4.dataset.intendedDomain,
+  );
   const createdAt = nonEmptyString(root.createdAt, "createdAt");
   if (!Number.isFinite(Date.parse(createdAt))) {
     fail("DATASET_FIELD_INVALID", "createdAt must be a valid ISO timestamp");
@@ -457,7 +473,7 @@ export function validateDatasetManifest(value: unknown): DatasetManifest {
     version,
     scientificUse,
     intendedLanguage: "pt-BR",
-    intendedDomain: "generic",
+    intendedDomain: PREREGISTRATION_V4.dataset.intendedDomain,
     createdAt,
     normalizationVersion,
     annotationProtocolVersion: "annotation-v1",
@@ -670,7 +686,7 @@ function reviewClaimShortfall(
 function publishLabelBasis(
   records: readonly BenchmarkRecord[],
 ): LabelBasisPublication {
-  const bases = REBUILD_V3_POLICY.labelBasis.allowed;
+  const bases = PREREGISTRATION_V4.labelBasis.allowed;
   const publication: LabelBasisPublication = {
     records: {},
     samplingUnits: {},

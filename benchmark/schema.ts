@@ -52,14 +52,14 @@ import {
   normalizeGeneratorFamily,
   type GeneratorFamily,
 } from "./generator-family.ts";
-import { REBUILD_V3_POLICY, laneRunsHarness } from "./rebuild-v3-policy.ts";
+import { PREREGISTRATION_V4, laneRunsHarness } from "./preregistration-v4.ts";
 import type {
   EffortSource,
   GenerationLane,
   GenerationLaneRow,
   GenerationMode,
   LabelBasisValue,
-} from "./rebuild-v3-policy.ts";
+} from "./preregistration-v4.ts";
 
 export type BenchmarkLabel = "human" | "ai" | "mixed";
 
@@ -150,7 +150,7 @@ export interface BenchmarkRecordV2 {
     // is known but the coauthorship DISTRIBUTION is ours), `ecological` is
     // reserved for a sample whose writing process was observed. The two are
     // never added together — see `materialAssistance.cohortsAggregated: false`
-    // in benchmark/rebuild-v3-policy.json and the cohort split in
+    // in benchmark/preregistration-v4.json and the cohort split in
     // benchmark/metrics.ts. Absent the field there is nothing to infer: a
     // mixture whose cohort is unknown would be pooled into whichever one the
     // consumer assumed, which is exactly the aggregation the frozen table
@@ -275,9 +275,9 @@ const GENERATION_KEYS = [
 ];
 const MIXTURE_KEYS = ["aiFraction", "humanFraction", "spans", "generationMode"];
 // The closed vocabulary comes from the frozen contract, never from a literal
-// repeated here (benchmark/rebuild-v3-policy.ts is the single source).
+// repeated here (benchmark/preregistration-v4.ts is the single source).
 const GENERATION_MODES: readonly GenerationMode[] =
-  REBUILD_V3_POLICY.materialAssistance.generationModes;
+  PREREGISTRATION_V4.materialAssistance.generationModes;
 const SPAN_KEYS = ["start", "end", "origin"];
 const TRANSFORMATION_KEYS = ["kind", "severity", "operatorId"];
 const GROUPS_KEYS = [
@@ -1377,7 +1377,7 @@ export const REVIEW_STATES: readonly ReviewStateName[] = [
 /**
  * The closed vocabulary of automated filters this project actually runs.
  *
- * It lives here and NOT in `benchmark/rebuild-v3-policy.json` on purpose: the
+ * It lives here and NOT in `benchmark/preregistration-v4.json` on purpose: the
  * frozen policy is the authority for decisions (budgets, seeds, thresholds), and
  * these three are facts about which of OUR scripts saw the row. A filter added to
  * the lab is a change to this list in the same commit, and the point of the list
@@ -2188,15 +2188,15 @@ const AXIS_STATE_RULE = {
 >;
 
 const V3_LABEL_BASES: readonly LabelBasisValue[] =
-  REBUILD_V3_POLICY.labelBasis.allowed;
+  PREREGISTRATION_V4.labelBasis.allowed;
 
 /** The frozen lane row of `lane`. Total by construction over the lane union. */
 export function generationLaneRow(lane: GenerationLane): GenerationLaneRow {
-  return REBUILD_V3_POLICY.generationLanes[lane];
+  return PREREGISTRATION_V4.generationLanes[lane];
 }
 
 const GENERATION_LANES = Object.keys(
-  REBUILD_V3_POLICY.generationLanes,
+  PREREGISTRATION_V4.generationLanes,
 ) as GenerationLane[];
 
 /**
@@ -3366,9 +3366,9 @@ function validateLabelEvidenceRef(
       );
     }
     const snapshot = nonEmptyString(obj, "snapshot", "labelEvidenceRef", id);
-    if (!REBUILD_V3_POLICY.humanSources.snapshots.includes(snapshot)) {
+    if (!PREREGISTRATION_V4.humanSources.snapshots.includes(snapshot)) {
       throw new BenchmarkRecordError(
-        `labelEvidenceRef.snapshot must be one of ${REBUILD_V3_POLICY.humanSources.snapshots.join(", ")}, received "${snapshot}"`,
+        `labelEvidenceRef.snapshot must be one of ${PREREGISTRATION_V4.humanSources.snapshots.join(", ")}, received "${snapshot}"`,
         id,
       );
     }

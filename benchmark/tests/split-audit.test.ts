@@ -23,7 +23,7 @@ import {
   type Partition,
 } from "../split.ts";
 import { describeSplitProportions } from "../commands/split.ts";
-import { REBUILD_V3_POLICY } from "../rebuild-v3-policy.ts";
+import { PREREGISTRATION_V4 } from "../preregistration-v4.ts";
 import {
   ALL_GROUP_AXES,
   V3_GROUP_AXES,
@@ -1920,7 +1920,7 @@ describe("the five partition names are pinned, not repeated by hand", () => {
     // actually frozen. The pre-registration keys its fractions by FIELD name and the
     // splitter by partition VALUE, so the mapping is spelled out here too — a second
     // reader of the correspondence the audit declares once.
-    const frozen = REBUILD_V3_POLICY.preRegistration.partitionFractions;
+    const frozen = PREREGISTRATION_V4.preRegistration.partitionFractions;
     expect(POLICY.fractions).toEqual({
       train: frozen.train,
       dev: frozen.dev,

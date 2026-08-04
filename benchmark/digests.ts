@@ -79,11 +79,15 @@ export const EVALUATOR_FILES = [
   // forces into the blocked test, so a changed byte here changes what the
   // evaluator measures.
   "benchmark/generator-family.ts",
-  // The frozen execution contract of the v3 rebuild and its validator. Every
-  // budget, epsilon, seed and threshold a gate reads comes from these two files,
-  // so a changed byte in either changes the evaluator's identity.
-  "benchmark/rebuild-v3-policy.json",
-  "benchmark/rebuild-v3-policy.ts",
+  // The frozen pre-registration of the v1 release and its validator. Every budget,
+  // floor, seed and threshold a gate reads comes from these two files, so a changed
+  // byte in either changes the evaluator's identity.
+  "benchmark/preregistration-v4.json",
+  "benchmark/preregistration-v4.ts",
+  // The one provisional threshold the v1 freezes. It decides which documents are
+  // called positive at all, so its bytes belong to the evaluator's identity exactly
+  // as much as the policy that pins the quantile.
+  "benchmark/provisional-threshold.ts",
   "benchmark/dataset-manifest.ts",
   "benchmark/prediction-schema.ts",
   "benchmark/near-duplicates.ts",

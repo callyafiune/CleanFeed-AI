@@ -30,7 +30,7 @@ import {
   parseBenchmarkDataset,
   type BenchmarkRecord,
 } from "../schema.ts";
-import { REBUILD_V3_POLICY } from "../rebuild-v3-policy.ts";
+import { PREREGISTRATION_V4 } from "../preregistration-v4.ts";
 import { buildSplitArtifact } from "../split-artifact.ts";
 import {
   DECLARED_GROUP_AXES,
@@ -112,7 +112,7 @@ export async function runSplit(options: SplitOptions): Promise<string> {
   // comparison — so a release seal produced here would publish a composition against which
   // no floor was ever checked. Refused early, before any work happens.
   if (manifest.scientificUse === "release") {
-    const preRegistration = REBUILD_V3_POLICY.preRegistration;
+    const preRegistration = PREREGISTRATION_V4.preRegistration;
     throw new CommandError(
       "COMPOSITION_FLOOR_NOT_APPLIED",
       "a release corpus cannot be frozen by this stage: the pre-registered floor of " +
@@ -129,11 +129,11 @@ export async function runSplit(options: SplitOptions): Promise<string> {
   // number lets an arbitrary value into an artifact whose whole point is that its parameters
   // were fixed in advance. The value also collides in the neighbourhood — `publishableCheckpoint`
   // is a different seed for a different purpose — so the authority is named rather than copied.
-  if (seed !== REBUILD_V3_POLICY.seeds.split) {
+  if (seed !== PREREGISTRATION_V4.seeds.split) {
     throw new CommandError(
       "SPLIT_SEED_NOT_PRE_REGISTERED",
       `--seed ${seed} is not the pre-registered split seed ` +
-        `${REBUILD_V3_POLICY.seeds.split}`,
+        `${PREREGISTRATION_V4.seeds.split}`,
     );
   }
 

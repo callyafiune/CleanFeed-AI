@@ -15,7 +15,7 @@ import {
   type SplitAuditPolicy,
 } from "../split-audit.ts";
 import { canonicalSha256 } from "../../contracts/canonical-json.ts";
-import { REBUILD_V3_POLICY } from "../rebuild-v3-policy.ts";
+import { PREREGISTRATION_V4 } from "../preregistration-v4.ts";
 import {
   PARTITIONS,
   createBlockedSplit,
@@ -39,11 +39,11 @@ const SHA = "a".repeat(64);
 
 const MANIFEST: DatasetManifest = {
   schemaVersion: 1,
-  datasetId: "ptbr-generic-v1",
+  datasetId: "cleanfeed-ptbr-cells-v1",
   version: "1.0.0",
   scientificUse: "infrastructure-only",
   intendedLanguage: "pt-BR",
-  intendedDomain: "generic",
+  intendedDomain: "scoped-cells",
   createdAt: "2026-07-19T00:00:00.000Z",
   normalizationVersion: "cleanfeed-text-v1",
   annotationProtocolVersion: "annotation-v1",
@@ -294,7 +294,7 @@ const POLICY: BlockedSplitPolicy = {
   },
   classTolerance: 0.02,
   heldOutGeneratorFamilies: [asGeneratorFamily("family-unseen")],
-  seed: 20_260_726,
+  seed: PREREGISTRATION_V4.seeds.split,
 };
 
 const AUDIT_POLICY: SplitAuditPolicy = {
@@ -901,10 +901,10 @@ describe("validateSplitArtifact reproduces the sealed audit", () => {
     // swapped seed produces the identical placement. What makes the seed verifiable is the
     // frozen pre-registration naming the value, so the refusal comes from that authority.
     const forged = await resealed((artifact) => {
-      artifact.seed = REBUILD_V3_POLICY.seeds.split + 1;
+      artifact.seed = PREREGISTRATION_V4.seeds.split + 1;
       artifact.policy = {
         ...artifact.policy,
-        seed: REBUILD_V3_POLICY.seeds.split + 1,
+        seed: PREREGISTRATION_V4.seeds.split + 1,
       };
     });
     expect(await codeOfFull(forged)).toBe(

@@ -7,7 +7,9 @@
 // blocking reason, or a `reportDigest` that no longer matches the recomputed
 // self-digest is a hard failure. The contract is the single source of the nine
 // blocking codes and of the report shape; Phase 3 imports and produces, never
-// redeclares.
+// redeclares. A code ADDED here is refused by an older parser, which is fail-closed in
+// the right direction: a report naming a reason the reader has no vocabulary for must
+// not read as a clean one.
 //
 // `sourceManifestDigest` is the canonical self-digest of Phase 3's reviewed
 // source manifest (its own digest field excluded), NOT the raw file SHA. The raw
@@ -16,7 +18,7 @@
 
 import { canonicalSha256 } from "./canonical-json.ts";
 
-/** The closed, ordered set of the ten corpus source blocking codes. */
+/** The closed, ordered set of the eleven corpus source blocking codes. */
 export const CORPUS_SOURCE_BLOCKING_CODES = [
   "SOURCE_MANIFEST_INVALID",
   "SOURCE_REFERENCE_MISSING",
@@ -32,6 +34,12 @@ export const CORPUS_SOURCE_BLOCKING_CODES = [
   // not what is missing — a verifiable legal disposition of the dump's 2024 access
   // terms is, and no field of a manifest entry can supply one.
   "SOURCE_BLOCKED_BY_ACCESS_TERMS",
+  // The source's route and licence are admissible and its SNAPSHOT is outside the
+  // declared frame, so its records have no quota cell to be counted in. Its own code
+  // and not `SOURCE_BLOCKED_BY_ACCESS_TERMS`, because nothing about it is refused: the
+  // two would be conflated into "this source is not allowed", which is false of one of
+  // them and erases what re-admitting it would cost — naming the cell it would add.
+  "SOURCE_OUT_OF_DECLARED_FRAME",
 ] as const;
 
 export type CorpusSourceBlockingCode =

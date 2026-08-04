@@ -26,11 +26,11 @@ const SHA = "a".repeat(64);
 
 const manifest: DatasetManifest = {
   schemaVersion: 1,
-  datasetId: "ptbr-generic-v1",
+  datasetId: "cleanfeed-ptbr-cells-v1",
   version: "1.0.0",
   scientificUse: "infrastructure-only",
   intendedLanguage: "pt-BR",
-  intendedDomain: "generic",
+  intendedDomain: "scoped-cells",
   createdAt: "2026-07-19T00:00:00.000Z",
   normalizationVersion: "cleanfeed-text-v1",
   annotationProtocolVersion: "annotation-v1",

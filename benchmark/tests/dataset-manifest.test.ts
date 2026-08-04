@@ -45,11 +45,11 @@ const validFileDigests: DatasetFileDigests = {
 
 const validManifest: DatasetManifest = {
   schemaVersion: 1,
-  datasetId: "ptbr-generic-v1",
+  datasetId: "cleanfeed-ptbr-cells-v1",
   version: "1.0.0",
   scientificUse: "infrastructure-only",
   intendedLanguage: "pt-BR",
-  intendedDomain: "generic",
+  intendedDomain: "scoped-cells",
   createdAt: "2026-07-19T00:00:00.000Z",
   normalizationVersion: "cleanfeed-text-v1",
   annotationProtocolVersion: "annotation-v1",
@@ -252,7 +252,7 @@ const mixed: BenchmarkRecord = {
 describe("dataset manifest", () => {
   it("accepts the fully specified infrastructure manifest", () => {
     expect(validateDatasetManifest(validManifest).datasetId).toBe(
-      "ptbr-generic-v1",
+      "cleanfeed-ptbr-cells-v1",
     );
   });
 
@@ -298,11 +298,11 @@ describe("dataset manifest", () => {
     expect(() =>
       validateDatasetManifest({
         schemaVersion: 1,
-        datasetId: "ptbr-generic-v1",
+        datasetId: "cleanfeed-ptbr-cells-v1",
         version: "1.0.0",
         scientificUse: "release",
         intendedLanguage: "pt-BR",
-        intendedDomain: "generic",
+        intendedDomain: "scoped-cells",
         createdAt: "2026-07-19T00:00:00.000Z",
         normalizationVersion: "cleanfeed-text-v1",
         annotationProtocolVersion: "annotation-v1",
@@ -342,7 +342,7 @@ describe("dataset manifest", () => {
     ).rejects.toThrow(/expected ai=1, received ai=0/);
   });
 
-  it("enforces the sealed 4k/4k/2k release quota", async () => {
+  it("enforces the sealed 6k/4k/2k release quota", async () => {
     await expect(
       sealDataset(
         validManifest,
@@ -350,7 +350,7 @@ describe("dataset manifest", () => {
         RELEASE_CORPUS_POLICY,
         validFileDigests,
       ),
-    ).rejects.toThrow(/expected human=4000, received human=1/);
+    ).rejects.toThrow(/expected human=7000, received human=1/);
   });
 
   it("rejects a duplicated record, by id and by normalized text", async () => {

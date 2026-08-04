@@ -1,6 +1,6 @@
 # Benchmark científico do CleanFeed AI
 
-> Os números deste arquivo (frações `45/5/10/20/20`, corpus `4k/4k/2k`) descrevem o **código como
+> Os números deste arquivo (frações `45/5/10/20/20`, corpus `6k/4k/2k`) descrevem o **código como
 > implementado**. O desenho vigente de partições e corpus vive em `docs/ESTADO.md` (§ 3.3 e § 6), que
 > vence este arquivo.
 

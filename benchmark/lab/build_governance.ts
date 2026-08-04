@@ -17,6 +17,7 @@ import {
   asGeneratorFamily,
   type GeneratorFamily,
 } from "../generator-family.ts";
+import { PREREGISTRATION_V4 } from "../preregistration-v4.ts";
 import {
   computeReviewedSourceManifestDigest,
   type ReviewedSourceManifestBody,
@@ -83,7 +84,7 @@ async function main(): Promise<void> {
     version: "1.0.0",
     scientificUse: "release",
     intendedLanguage: "pt-BR",
-    intendedDomain: "generic",
+    intendedDomain: PREREGISTRATION_V4.dataset.intendedDomain,
     createdAt: "2026-07-24T00:00:00.000Z",
     normalizationVersion: "cleanfeed-text-v1",
     annotationProtocolVersion: "annotation-v1",

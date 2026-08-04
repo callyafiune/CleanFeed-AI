@@ -74,12 +74,13 @@
 //     evidence, not a faster measurement. Every bound that reaches this check is
 //     already a percentile: the step above refused the analytic ones.
 //
-// Frozen numbers come from benchmark/rebuild-v3-policy.json through
-// benchmark/rebuild-v3-policy.ts; the FPR budgets, the ECE ceiling, the family
-// alpha and — since B2 — the material-assistance recall floor are not written down
-// here. The remaining §6.5 thresholds (the two recall floors, coverage, the
-// inference error ceiling) are not rows of that frozen table and stay as named
-// constants below.
+// Frozen numbers come from benchmark/preregistration-v4.json through
+// benchmark/preregistration-v4.ts: the FPR budgets, the ECE ceiling, the family
+// alpha, the material-assistance recall floor and the WARNING recall floor — the
+// last one is `recall-at-threshold`, a member of `multiplicity.primaryFamily`, so
+// its number is a certifying value and not a §6.5 threshold this file may set. What
+// remains as named constants below is only what no row of that table names: the
+// action recall floor, coverage and the inference error ceiling.
 //
 // WHICH POPULATION AUTHORIZES WHAT (B2). The frozen three-target table gives each
 // target its own ceiling, and two of the three consequences are enforced here:
@@ -112,8 +113,8 @@ import type {
   LabelBasisSlice,
   MetricEstimate,
 } from "./metrics.ts";
-import { REBUILD_V3_POLICY } from "./rebuild-v3-policy.ts";
-import type { EceGateBound } from "./rebuild-v3-policy.ts";
+import { PREREGISTRATION_V4 } from "./preregistration-v4.ts";
+import type { EceGateBound } from "./preregistration-v4.ts";
 import type { SliceAxis, SliceResult, SliceSummary } from "./slices.ts";
 
 export type ReleaseDecision = "pass" | "indicator-only" | "reject";
@@ -192,7 +193,7 @@ export interface MultiplicityReport {
   correction: "bonferroni";
   familyAlpha: number;
   descriptiveConfidence: number;
-  frozenAt: "G5";
+  frozenAt: "G0.2";
   // The pre-registered count the metrics were computed with; null when the caller
   // declared none, in which case no interval gate can read a corrected bound.
   declared: number | null;
@@ -251,31 +252,36 @@ export interface GateInput {
   resampling: ResamplingPlan | null;
 }
 
-// §6.5 thresholds that are NOT rows of the frozen rebuild table.
-const WARNING_RECALL_MIN = 0.6;
+// §6.5 thresholds that are NOT rows of the frozen pre-registration.
 const ACTION_RECALL_MIN = 0.35;
 const COVERAGE_MIN = 0.8;
 const MAX_ERROR_RATE = 0.01;
 
-// Frozen rebuild contract.
-const WARNING_FPR_MAX = REBUILD_V3_POLICY.fprBudgets.warning;
-const ACTION_FPR_MAX = REBUILD_V3_POLICY.fprBudgets.visualAction;
-const ECE_MAX = REBUILD_V3_POLICY.calibrationGate.eceMax;
+// Frozen pre-registration.
+//
+// The recall floor is one of the SEVEN certifying hypotheses ("recall-at-threshold"
+// in `multiplicity.primaryFamily`), so its number is a pre-registered value and not
+// a §6.5 threshold this file may set. The VALUE is unchanged at 0.60 — R3 forbids
+// loosening a limit, and nothing here was loosened.
+const WARNING_RECALL_MIN = PREREGISTRATION_V4.recallFloor;
+const WARNING_FPR_MAX = PREREGISTRATION_V4.fprBudgets.warning;
+const ACTION_FPR_MAX = PREREGISTRATION_V4.fprBudgets.visualAction;
+const ECE_MAX = PREREGISTRATION_V4.calibrationGate.eceMax;
 // The material-assistance recall floor and the cohort it is measured over. B2
 // made both rows of the frozen table: the FORMULATION changed (the denominator is
 // now the `mechanistic` cohort at or above `aiFraction >= 0.50`, per assessment
 // §4.5), so the number moved out of this file and into the policy. The VALUE is
 // unchanged at 0.50 — R3 forbids loosening a limit, and nothing here was loosened.
 const MIXED_WARNING_RECALL_MIN =
-  REBUILD_V3_POLICY.materialAssistance.minimumWarningRecall;
+  PREREGISTRATION_V4.materialAssistance.minimumWarningRecall;
 const MATERIAL_ASSISTANCE_MODE =
-  REBUILD_V3_POLICY.materialAssistance.generationMode;
+  PREREGISTRATION_V4.materialAssistance.generationMode;
 // The frozen contract NAMES the bound the ECE gate reads, and the gate derives its
 // direction from that name instead of restating it. The switch is exhaustive: a
 // different declared bound stops compiling here rather than drifting away from the
 // behaviour, which is the whole reason the field exists.
 const ECE_DIRECTION: "upper" | "lower" = eceDirection(
-  REBUILD_V3_POLICY.calibrationGate.eceBound,
+  PREREGISTRATION_V4.calibrationGate.eceBound,
 );
 
 function eceDirection(declared: EceGateBound): "upper" | "lower" {
@@ -285,9 +291,10 @@ function eceDirection(declared: EceGateBound): "upper" | "lower" {
   }
 }
 const ALLOWED_UNIT_KINDS: ReadonlySet<string> = new Set(
-  REBUILD_V3_POLICY.resampling.allowedUnitKinds,
+  PREREGISTRATION_V4.resampling.allowedUnitKinds,
 );
-const MINIMUM_DECLARED_REPLICATES = REBUILD_V3_POLICY.bootstrapReplicates.pilot;
+const MINIMUM_DECLARED_REPLICATES =
+  PREREGISTRATION_V4.bootstrapReplicates.pilot;
 
 // The estimand names the resampling plan must cover. One per family of gate, not
 // one per cell: the unit of resampling is a property of the estimand, and every
@@ -366,9 +373,10 @@ export function evaluateReleaseGates(input: GateInput): GateReport {
   const declared = input.metrics.multiplicity;
   const multiplicity: MultiplicityReport = {
     correction: "bonferroni",
-    familyAlpha: REBUILD_V3_POLICY.multiplicity.familyAlpha,
-    descriptiveConfidence: REBUILD_V3_POLICY.multiplicity.descriptiveConfidence,
-    frozenAt: REBUILD_V3_POLICY.multiplicity.frozenAt,
+    familyAlpha: PREREGISTRATION_V4.multiplicity.familyAlpha,
+    descriptiveConfidence:
+      PREREGISTRATION_V4.multiplicity.descriptiveConfidence,
+    frozenAt: PREREGISTRATION_V4.multiplicity.frozenAt,
     declared: declared === null ? null : declared.m,
     observed: intervalSpecs.length,
     gateIds: intervalSpecs.map((spec) => spec.id),
@@ -640,7 +648,7 @@ function warningIntervalSpecs(
     // the eligible set: the denominator of the statistic is the n of the gate.
     sampleSize: metrics.calibration.scored,
     populationSize: metrics.calibration.populationSize,
-    subject: `equal-mass ECE-${REBUILD_V3_POLICY.calibrationGate.eceBins}`,
+    subject: `equal-mass ECE-${PREREGISTRATION_V4.calibrationGate.eceBins}`,
     eligible: true,
     ineligible: { passed: true, reason: null },
   });
@@ -714,7 +722,7 @@ function mixedRecallGate(
     reasons: passed
       ? []
       : [
-          `${MATERIAL_ASSISTANCE_MODE} mixed >=${REBUILD_V3_POLICY.materialAssistance.minimumAiFraction} AI warning recall ${show(observed)} is below ${MIXED_WARNING_RECALL_MIN} (lower95 ${mixed.warningRecallLower95} reported, not gating)`,
+          `${MATERIAL_ASSISTANCE_MODE} mixed >=${PREREGISTRATION_V4.materialAssistance.minimumAiFraction} AI warning recall ${show(observed)} is below ${MIXED_WARNING_RECALL_MIN} (lower95 ${mixed.warningRecallLower95} reported, not gating)`,
         ],
   };
 }

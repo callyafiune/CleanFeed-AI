@@ -38,6 +38,10 @@ import {
   type StrictPredictionV2,
 } from "../prediction-schema.ts";
 import {
+  validateProvisionalThresholdArtifact,
+  type ProvisionalThresholdArtifact,
+} from "../provisional-threshold.ts";
+import {
   buildBenchmarkReport,
   renderReportMarkdown,
   SPLIT_STRATEGY,
@@ -155,6 +159,25 @@ export async function runEvaluate(options: EvaluateOptions): Promise<string> {
       join(fitDirectory, "calibration-prediction-manifest.json"),
     ),
   );
+
+  // The pre-registered cut of the v1, read from the same fit directory and REQUIRED.
+  // It is what `threshold.probabilisticCalibrator: "none"` refers to, and reading it
+  // here is what stops that field from being a claim nothing checks: a fit that never
+  // froze the cut, or froze it under a different policy or over a different split,
+  // cannot reach a certifying measurement.
+  //
+  // What this does NOT yet do is decide: `buildEvaluationItem` still cuts on the
+  // calibrated score, and the report says so (`thresholdSource`). Moving the published
+  // decision onto this cut is a change to `evaluate`, `profile-artifact.ts` and the
+  // runtime calibration contract together, and it is Commit D's item.
+  const provisionalThreshold = (await readJsonFile(
+    join(fitDirectory, "provisional-threshold.json"),
+  )) as ProvisionalThresholdArtifact;
+  validateProvisionalThresholdArtifact(provisionalThreshold, {
+    datasetDigest: frozen.datasetDigest,
+    splitDigest: frozen.splitDigest,
+    evaluatorDigest: frozen.evaluatorDigest,
+  });
 
   const { manifest: testManifest, predictions } = await readPredictionArtifact(
     options.testPredictionsDirectory,
@@ -341,7 +364,12 @@ export async function runEvaluate(options: EvaluateOptions): Promise<string> {
 
   return (
     "Holdout session concluded; " +
-    `decision=${report.releaseDecision}; reportDigest=${report.reportDigest}.`
+    `decision=${report.releaseDecision}; reportDigest=${report.reportDigest}. ` +
+    // Named on the same line as the decision because the two are not the same cut yet:
+    // the decision above came from the frozen calibration, and this is the cut the
+    // pre-registration froze. A reader who sees only the decision cannot tell.
+    `Pre-registered cut: ${provisionalThreshold.threshold} on ` +
+    `${provisionalThreshold.thresholdBasis} (${provisionalThreshold.thresholdVersion}).`
   );
 }
 

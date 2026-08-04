@@ -69,18 +69,20 @@ import {
   wilsonOneSided,
   wilsonOneSidedAtAlpha,
 } from "./intervals.ts";
-import { REBUILD_V3_POLICY } from "./rebuild-v3-policy.ts";
+import { PREREGISTRATION_V4 } from "./preregistration-v4.ts";
 import type {
   GenerationMode,
   PublishedBoundRule,
+  ResamplingClassRow,
   ResamplingLevelRow,
-} from "./rebuild-v3-policy.ts";
+} from "./preregistration-v4.ts";
 import {
+  ALL_GROUP_AXES,
+  groupAxisDeclaredState,
   groupAxisIdentity,
   groupAxisState,
-  V3_GROUP_AXES,
   type BenchmarkRecord,
-  type V3GroupAxis,
+  type GroupAxis,
 } from "./schema.ts";
 
 export interface Prediction {
@@ -1258,25 +1260,26 @@ export interface EvaluationOptions {
 }
 
 // Every threshold below comes from the frozen contract
-// (benchmark/rebuild-v3-policy.json); none of them is a local constant.
-const ECE_BINS = REBUILD_V3_POLICY.calibrationGate.eceBins;
+// (benchmark/preregistration-v4.json); none of them is a local constant.
+const ECE_BINS = PREREGISTRATION_V4.calibrationGate.eceBins;
 // The pre-registered pilot replicate count, and the FLOOR: 10.000 in the pilot,
 // 100.000 in the release, "nunca reduzir por tempo".
-const PILOT_REPLICATES = REBUILD_V3_POLICY.bootstrapReplicates.pilot;
-const RESAMPLING_TABLE = REBUILD_V3_POLICY.resampling;
-const DEFAULT_MINIMUM_ELIGIBLE_WORDS = REBUILD_V3_POLICY.wordFloor.abstainBelow;
+const PILOT_REPLICATES = PREREGISTRATION_V4.bootstrapReplicates.pilot;
+const RESAMPLING_TABLE = PREREGISTRATION_V4.resampling;
+const DEFAULT_MINIMUM_ELIGIBLE_WORDS =
+  PREREGISTRATION_V4.wordFloor.abstainBelow;
 const MATERIAL_ASSISTANCE_AI_FRACTION =
-  REBUILD_V3_POLICY.materialAssistance.minimumAiFraction;
+  PREREGISTRATION_V4.materialAssistance.minimumAiFraction;
 // The ONE cohort the material-assistance target is defined over. `ecological` is
 // a separate cohort and is never added to it (`cohortsAggregated: false`).
 const MATERIAL_ASSISTANCE_MODE =
-  REBUILD_V3_POLICY.materialAssistance.generationMode;
-const GENERATION_MODES = REBUILD_V3_POLICY.materialAssistance.generationModes;
+  PREREGISTRATION_V4.materialAssistance.generationMode;
+const GENERATION_MODES = PREREGISTRATION_V4.materialAssistance.generationModes;
 const LABEL_BASIS_POWER_FLOOR =
-  REBUILD_V3_POLICY.powerFloors.criticalFprHumanNegatives;
+  PREREGISTRATION_V4.powerFloors.criticalFprHumanNegatives;
 // The legacy `simulatedPrecision` trio is the first three policy prevalences; the
 // `predictiveValue` block publishes all of them, with NPV beside every PPV.
-const POLICY_PREVALENCES = REBUILD_V3_POLICY.predictiveValuePrevalences;
+const POLICY_PREVALENCES = PREREGISTRATION_V4.predictiveValuePrevalences;
 const DEFAULT_PREVALENCES: SimulatedPrevalences = {
   prevalence01: POLICY_PREVALENCES[0],
   prevalence05: POLICY_PREVALENCES[1],
@@ -1291,7 +1294,7 @@ const LOG_LOSS_EPSILON = 1e-12;
 // --- the resampling unit, per estimand (C4) --------------------------------
 //
 // The unit of resampling is NOT a property of this module: it is a row of the
-// frozen table in `benchmark/rebuild-v3-policy.json`, read here and turned into a
+// frozen table in `benchmark/preregistration-v4.json`, read here and turned into a
 // design over evaluation items. Nothing below names an axis as a local constant.
 //
 // One thing this replaces deserves naming, because it is the defect C4 exists to
@@ -1301,8 +1304,40 @@ const LOG_LOSS_EPSILON = 1e-12;
 // bootstrap was an i.i.d. row bootstrap wearing a cluster's name, and every
 // interval in the report was too narrow by an unrecoverable amount.
 
-const V3_AXIS_NAMES: ReadonlySet<string> = new Set(V3_GROUP_AXES);
+// EVERY axis any record version declares, not one version's tuple. The frozen table
+// names `groups.generationBatch` on the AI-recall row, which only v4 has, so a set
+// built from the v3 tuple would make `resamplingDesignFor("warning.recall")` throw
+// on the shipped policy. What the set still refuses is an axis NO version declares —
+// a typo, or a synthetic per-row key, which is the one thing R6 forbids outright.
+const AXIS_NAMES: ReadonlySet<string> = new Set(ALL_GROUP_AXES);
 const AXIS_PREFIX = "groups.";
+
+// The name an OLDER record version gives the same fact a v4 axis names.
+//
+// DOMAIN FACT the code cannot show: schema v4 split v3's single `collectionBatch`
+// into three axes, and on a GENERATED row that axis already held the generation
+// batch (`gb_*`) — exactly what `generationBatch` names now. On a HUMAN row it held
+// the extraction run instead, which is a different fact and must not be read as a
+// batch, so the alias is restricted to non-human rows. No row of the frozen table
+// reads the batch level over a human population, so the restriction costs nothing.
+const OLDER_VERSION_AXIS_NAME: ReadonlyMap<GroupAxis, GroupAxis> = new Map([
+  ["generationBatch", "collectionBatch"],
+]);
+
+/**
+ * WHICH key of this record answers for `axis`, or `null` when none does.
+ *
+ * Version-aware in the same way the audit is: an axis the record's version does not
+ * DECLARE has not answered `unknown` — it has not answered at all — so the older
+ * spelling of the same fact is consulted before the level is failed. Inside a version
+ * that declares the axis, an absent key stays a gap.
+ */
+function axisKeyOn(record: BenchmarkRecord, axis: GroupAxis): GroupAxis | null {
+  if (groupAxisDeclaredState(record, axis) !== undefined) return axis;
+  const older = OLDER_VERSION_AXIS_NAME.get(axis);
+  if (older === undefined || record.label === "human") return null;
+  return groupAxisDeclaredState(record, older) === undefined ? null : older;
+}
 
 // Reads one declared axis of one item in its three R6 states. `known` is the only
 // state that is an identity two rows can share; `notApplicable` demotes to the
@@ -1312,19 +1347,21 @@ function axisLevel(declared: string): ResamplingLevel<EvaluationItem> {
   const axis = declared.startsWith(AXIS_PREFIX)
     ? declared.slice(AXIS_PREFIX.length)
     : declared;
-  if (!V3_AXIS_NAMES.has(axis)) {
+  if (!AXIS_NAMES.has(axis)) {
     throw new RangeError(
       `the resampling table names "${declared}", which is not a record grouping axis`,
     );
   }
-  const typed = axis as V3GroupAxis;
+  const typed = axis as GroupAxis;
   return {
     axis: declared,
     identity: (item): ResamplingIdentity => {
-      const state = groupAxisState(item.record, typed);
+      const key = axisKeyOn(item.record, typed);
+      if (key === null) return { state: "unknown" };
+      const state = groupAxisState(item.record, key);
       if (state === "unknown") return { state: "unknown" };
       if (state === "notApplicable") return { state: "notApplicable" };
-      const id = groupAxisIdentity(item.record, typed);
+      const id = groupAxisIdentity(item.record, key);
       // An axis that says `known` and yields no identity contradicts itself;
       // treating it as unknown is the fail-closed reading, not a substitution.
       return id === undefined ? { state: "unknown" } : { state: "known", id };
@@ -1369,6 +1406,25 @@ function proxiesOf(estimand: string): ResamplingProxy[] {
 }
 
 /**
+ * The design one CLASS ROW declares, for one estimand name.
+ *
+ * Separate from {@link resamplingDesignFor} because the two failures are different:
+ * an estimand with no row is a gap in the contract, while a row naming something that
+ * is not a grouping axis is a malformed row. Only the row is needed to build a design,
+ * so the row is the parameter — which also makes the axis-name refusal reachable
+ * without a malformed policy on disk.
+ */
+export function resamplingDesignOf(
+  estimand: string,
+  declared: ResamplingClassRow,
+): ResamplingDesign<EvaluationItem> {
+  const chains = declared.levels.map(levelChain);
+  return declared.unitKind === "hierarchical"
+    ? { method: "hierarchical", estimand, levels: chains }
+    : { method: "multiway", estimand, factors: chains };
+}
+
+/**
  * The design of one estimand, straight from the frozen table. Throws when no row
  * covers the estimand, because a missing row is a gap in the contract and not a
  * licence to resample rows.
@@ -1382,11 +1438,7 @@ export function resamplingDesignFor(
       `no row of the frozen resampling table covers the estimand "${estimand}"`,
     );
   }
-  const declared = RESAMPLING_TABLE.estimandClasses[row];
-  const chains = declared.levels.map(levelChain);
-  return declared.unitKind === "hierarchical"
-    ? { method: "hierarchical", estimand, levels: chains }
-    : { method: "multiway", estimand, factors: chains };
+  return resamplingDesignOf(estimand, RESAMPLING_TABLE.estimandClasses[row]);
 }
 
 /** The unit of one population under one estimand, or null when it is empty. */
@@ -1464,8 +1516,8 @@ export function declaredResamplingPlan(
       };
     });
   return {
-    planId: `c4-resampling-plan/${REBUILD_V3_POLICY.policyVersion}`,
-    source: "benchmark/rebuild-v3-policy.json#resampling",
+    planId: `c4-resampling-plan/${PREREGISTRATION_V4.policyVersion}`,
+    source: "benchmark/preregistration-v4.json#resampling",
     entries,
   };
 }
@@ -1930,8 +1982,8 @@ function resampledRates(
 // The rule that picks the published limit, read from the frozen contract. It is
 // NOT a decision of this module: it shapes release verdicts, so it is a contract
 // value like `fallbackToIndependentRows` beside it, and `PublishedBoundRule` in
-// benchmark/rebuild-v3-policy.ts carries the measured reason it is what it is.
-const PUBLISHED_BOUND_RULE = REBUILD_V3_POLICY.resampling.publishedBound;
+// benchmark/preregistration-v4.ts carries the measured reason it is what it is.
+const PUBLISHED_BOUND_RULE = PREREGISTRATION_V4.resampling.publishedBound;
 
 // The outer of two limits at one alpha, plus which estimator supplied each side.
 function envelopeOf(
@@ -2080,7 +2132,7 @@ function perCluster(
 
 /** A document generated integrally by a registered pipeline (`label = "ai"`). */
 export function isIntegralPositive(record: BenchmarkRecord): boolean {
-  return record.label === REBUILD_V3_POLICY.integralPositive.label;
+  return record.label === PREREGISTRATION_V4.integralPositive.label;
 }
 
 /**
@@ -2966,13 +3018,13 @@ function calibrationSlices(
 // record when a producer already wrote it and is NEVER invented. A row without a
 // readable basis lands in `unknown`, which is not evidence about either basis.
 function labelBasisOf(record: BenchmarkRecord): LabelBasisKey {
-  if (record.label !== REBUILD_V3_POLICY.labelBasis.appliesToLabel) {
+  if (record.label !== PREREGISTRATION_V4.labelBasis.appliesToLabel) {
     return "unknown";
   }
   const raw = (record as { labelBasis?: unknown }).labelBasis;
   if (
     typeof raw === "string" &&
-    (REBUILD_V3_POLICY.labelBasis.allowed as readonly string[]).includes(raw)
+    (PREREGISTRATION_V4.labelBasis.allowed as readonly string[]).includes(raw)
   ) {
     return raw as LabelBasisKey;
   }
@@ -3057,7 +3109,7 @@ function labelBasisBreakdown(
         powerFloor: LABEL_BASIS_POWER_FLOOR,
         evidenceRole: powered
           ? ("gating" as const)
-          : REBUILD_V3_POLICY.labelBasis.underPoweredRole,
+          : PREREGISTRATION_V4.labelBasis.underPoweredRole,
         falsePositiveRate: resampledFpr ?? analyticFpr,
         errorRate: proportionEstimate(
           bucket.filter((item) => item.status === "error").length,
@@ -3102,7 +3154,7 @@ function labelBasisBreakdown(
   return {
     role: "human-negative-label-evidence",
     fieldPresent: bases.some((slice) => slice.basis !== "unknown"),
-    pooledClaimAllowed: REBUILD_V3_POLICY.labelBasis.pooledClaimAllowed,
+    pooledClaimAllowed: PREREGISTRATION_V4.labelBasis.pooledClaimAllowed,
     bases,
   };
 }
@@ -3143,12 +3195,13 @@ function multiplicityFrom(
       "preRegisteredStatisticalGates must be a positive integer count of gates",
     );
   }
-  const familyAlpha = REBUILD_V3_POLICY.multiplicity.familyAlpha;
+  const familyAlpha = PREREGISTRATION_V4.multiplicity.familyAlpha;
   const perGateAlpha = familyAlpha / preRegisteredStatisticalGates;
   return {
     correction: "bonferroni",
     familyAlpha,
-    descriptiveConfidence: REBUILD_V3_POLICY.multiplicity.descriptiveConfidence,
+    descriptiveConfidence:
+      PREREGISTRATION_V4.multiplicity.descriptiveConfidence,
     m: preRegisteredStatisticalGates,
     perGateAlpha,
     z: oneSidedZ(perGateAlpha),
@@ -3907,7 +3960,7 @@ function localizationDiagnostics(
     role: "diagnostic",
     gates: false,
     authorizesVisualAction:
-      REBUILD_V3_POLICY.localization.authorizesVisualAction,
+      PREREGISTRATION_V4.localization.authorizesVisualAction,
     unit: "character-offset",
     byGenerationMode: sortedGenerationModes().map((mode) =>
       localizationCohort(items, mode, spanProducer),

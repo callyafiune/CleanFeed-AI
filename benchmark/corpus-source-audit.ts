@@ -49,6 +49,7 @@ import {
 } from "./schema.ts";
 import {
   A1_BLOCKED_HUMAN_SOURCES,
+  OUT_OF_FRAME_HUMAN_SOURCES,
   batchNamespaceOf,
   computeReviewedSourceManifestDigest,
   licenseDescribesPublicBase,
@@ -186,6 +187,23 @@ function auditSources(
     ) {
       reasons.push({
         code: "SOURCE_BLOCKED_BY_ACCESS_TERMS",
+        sourceId: source.sourceId,
+      });
+    }
+
+    // Out of frame, refused HERE for the same reason A1 is: the registration was kept
+    // rather than deleted so that a manifest declaring the source FAILS instead of the
+    // audit not knowing the id. Leaving the list purely declarative reproduced exactly
+    // the silence it exists to prevent — and worse than before, because dropping the
+    // source from the stocked inventory ALSO stops `auditDeclaredAxes` from checking
+    // its declared axes, which skips a sourceId it has no entry for.
+    if (
+      OUT_OF_FRAME_HUMAN_SOURCES.some(
+        (outside) => outside.sourceId === source.sourceId,
+      )
+    ) {
+      reasons.push({
+        code: "SOURCE_OUT_OF_DECLARED_FRAME",
         sourceId: source.sourceId,
       });
     }

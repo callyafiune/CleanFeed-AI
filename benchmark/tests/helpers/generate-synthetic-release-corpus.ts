@@ -337,7 +337,7 @@ async function writeCorpus(
     version: "1.0.0",
     scientificUse: "infrastructure-only",
     intendedLanguage: "pt-BR",
-    intendedDomain: "generic",
+    intendedDomain: "scoped-cells",
     createdAt: "2026-07-19T00:00:00.000Z",
     normalizationVersion: "cleanfeed-text-v1",
     annotationProtocolVersion: "annotation-v1",

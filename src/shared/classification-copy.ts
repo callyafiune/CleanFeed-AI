@@ -30,7 +30,7 @@ import type {
  * What the detector estimates, as the frozen contract names it. It is NOT
  * user-facing copy: it is the identifier a surface can assert against, so the
  * claim the copy is allowed to make has one written form. Mirrors
- * `productTarget` in benchmark/rebuild-v3-policy.json; the benchmark is
+ * `productTarget` in benchmark/preregistration-v4.json; the benchmark is
  * standalone and cannot be imported from the extension bundle, so the string is
  * pinned on both sides by test rather than shared by import.
  */
