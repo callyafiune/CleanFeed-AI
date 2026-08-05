@@ -11,10 +11,10 @@
 > § 5, cada um com a data ou o artefato da medição.
 >
 > Coluna **quem**: `OP` = operador, não reversível pelo agente · `AG` = agente, ratificável ·
-> `código` = imposto por código medido · `herdado` = valor da pré-inscrição v3 abandonada que a nova
-> reafirma, até a nova dizer diferente.
+> `código` = imposto por código medido. Um valor que a pré-inscrição vigente congela e algum módulo lê
+> é `código`, qualquer que tenha sido a política que o escreveu primeiro.
 
-**Última reescrita:** 2026-08-03
+**Última reescrita:** 2026-08-05
 
 ---
 
@@ -22,13 +22,14 @@
 
 | item | valor |
 |---|---|
-| branch | `cleanfeed-mvp`, árvore limpa |
-| suíte | 164 arquivos / 2.499 testes verdes (vitest) + 166 pytest no lab |
-| dos quais, o avaliador | 1.265 — 1.099 em `benchmark/tests`, 166 no lab |
+| branch | `cleanfeed-mvp` |
+| suíte | 169 arquivos / 2.760 testes verdes (vitest) + 304 testes e 19 subtests verdes (pytest, lab) |
+| dos quais, o avaliador | 1.694 — 1.390 em 43 arquivos de `benchmark/tests`, 304 no lab |
 | typecheck | limpo |
-| lint | 13 problemas pré-existentes |
+| lint | 13 problemas (11 erros, 2 avisos) |
 | tags de release | 0 |
-| `issuedAt` no descritor | `null` |
+| `issuedAt` no descritor | `null` (`models/cleanfeed-ptbr-v1/release.json`, com `gateDecision: "pending"` e `profileDigests: []`) |
+| verificador de links de docs | 200 links relativos em 34 arquivos, todos resolvem |
 
 ---
 
@@ -43,8 +44,14 @@ A alegação é publicada como tabela, uma linha por célula.
 | **texto de domínio universitário** | Carolina, tipologia *university domains* |
 | **rede social** | Carolina, tipologia *social media* |
 
-Fora da moldura: *legislative branch*, *public domain works*, *wikis*, *datasets and other corpora*,
-Stack Overflow pt, resenha de produto (B2W).
+Fora da moldura, em **duas** listas que o código mantém separadas porque exigem ações diferentes:
+
+| lista | membros | o que destrava |
+|---|---|---|
+| recusado por condição legal (`A1_BLOCKED_DOMAIN_SOURCES`, `humanSources.blockedSnapshots`) | Stack Overflow pt | registro verificável da aquisição do dump **mais** disposição do termo de acesso de 2024 |
+| fora da moldura amostral (`OUT_OF_FRAME_DOMAIN_SOURCES`, `OUT_OF_FRAME_TYPOLOGIES`) | resenha de produto (B2W), Carolina *legislative branch*, *public domain works*, *wikis*, *datasets and other corpora* | emenda da moldura |
+
+A rota e a licença dos membros da segunda lista permanecem admissíveis; o que falta a eles é célula.
 
 ---
 
@@ -56,42 +63,58 @@ Stack Overflow pt, resenha de produto (B2W).
 |---|---|---|
 | | a alegação é **escopada e publicada como tabela por célula**, com a moldura declarada | OP |
 | | "texto em pt-BR em geral" **não é alegável** — sem moldura amostral não há estimando | OP |
-| | a família certificadora é **por estrato**: quatro tetos de FPR (um por célula) + recall no limiar + calibração global + integridade — **`m=7`**, α = 0,05/7 ≈ 0,0071 | OP |
+| | a pré-inscrição vigente é **`benchmark/preregistration-v4.{json,ts}`** (`PREREGISTRATION_V4`, `policyVersion: "preregistration-v4-v1"`) | código |
+| | a família certificadora é **por estrato**, `m=7`: `calibration-global`, `integrity`, `recall-at-threshold` e um teto de FPR por célula (`fpr-ptwiki`, `fpr-carolina-judicial`, `fpr-carolina-social-media`, `fpr-carolina-university`). α familiar 0,05; α por hipótese **0,007143**; correção de Bonferroni | OP |
 | Regime 2 | cada release certifica **só a própria hipótese versionada**; erro familiar ao longo da história do produto **não é alegado**. Toda execução certificadora é publicada, passe ou reprove | OP |
-| | piso de linhas: 300 negativos humanos por célula em `test` (`criticalFprHumanNegatives`) | herdado |
-| | alvo de coleta: **~1.750 linhas humanas por célula** (~7.000 no total) — o piso derivado permanece 1.500/célula, e a folga existe para o sorteio não reprovar o gate de 300 em `test` por flutuação; teto sob zero eventos ≈ **1,63 %** por célula | OP |
-| | teto sob zero eventos: `1 − α^(1/n)`; célula abaixo do piso **reprova antes da selagem** | herdado |
+| | pisos de poder: **300** negativos humanos por célula em `test` (`criticalFprHumanNegatives`), **300** unidades de amostragem (`samplingUnits`), **200** positivos para recall (`criticalRecallPositives`) | código |
+| | coleta: alvo de **1.750** linhas humanas por célula, piso de **1.500**, total de **7.000**, **1** linha por documento de origem (`collection`) | OP |
+| | teto sob zero eventos: `1 − perHypothesisAlpha^(1/n)`; ao piso de 300 vale **1,6337 %** por célula (`zeroEventCeiling.ceilingAtAdoptedFloor`); célula abaixo do piso **reprova antes da selagem** (`unitsBelowFloorFailBeforeSealing: true`) | código |
+| | o inventário obrigatório de gates é **derivado** de `multiplicity.primaryFamily`, não escrito à mão: hipótese sem gate reprova | código |
+| | frações de partição **45 / 5 / 10 / 20 / 20** (`train`/`dev`/`cal-A`/`cal-B`/`test`): campo `preRegistration.partitionFractions` da pré-inscrição vigente, de onde `split-audit.ts` deriva `PARTITION_TARGETS` | código |
+| | unidade do inventário de poder = **componentes conexos** (`powerInventoryUnit`) | código |
 
 ### 3.2 Modelo e melhoria
 
 | vigente | quem |
 |---|---|
-| a medição vale para **um** hash de pesos (`eligibleCandidate: same-weight-hash-as-v1`) | herdado |
+| a medição vale para **um** hash de pesos, e o hash vem do recibo F6 (`eligibleCandidate: weights-hash-from-f6-receipt`) | código |
 | acrescentar domínio à **avaliação**: pesos idênticos, bloco cego novo só para a célula nova, linha nova na tabela. As linhas antigas seguem válidas | AG |
 | acrescentar domínio ao **treino**: hash novo, **todo teto publicado morre**, e é preciso material cego fresco em toda célula alegada | AG |
 | melhorias de modelo são **agrupadas**, não iteradas — cada retreino custa re-medição completa | AG |
 | material cego é reservado na **aquisição**, não no corte | AG |
-| `blindReserveCompleteAttempts: 2` · `plannedCertifyingMeasurements: 1` | herdado |
+| `blindReserveCompleteAttempts: 2` · `plannedCertifyingMeasurements: 1` — ambos pinados na leitura da pré-inscrição vigente, o segundo como valor congelado | código |
 
 ### 3.3 Corpus
 
 | # | vigente | quem |
 |---|---|---|
+| | esquema do benchmark na **v4**: **14 eixos** de grupo (`V4_GROUP_AXES`), com `sourceMaterialBatch`, `generationBatch` e `extractionRun`; `collectionBatch` não existe. `validateBenchmarkRecord` despacha `2 \| 3 \| 4`; o espelho Python (`benchmark/lab/group_axes.py`, `axes_of`) é ciente da versão | código |
+| | `AXIS_STATE_RULE` é total sobre os dois tuplos e sobre as quatro classes de linha: para cada eixo, quais dos três estados (`known`, `notApplicable`, `unknown`) a classe pode escrever | código |
+| | a união do split roda sobre **sete** chaves (`GROUP_KEYS`): `author`, `source`, `generatorVersion`, `promptTemplate`, `generationBatch`, `nearDuplicate`, `derivationRoot` — duas linhas com o mesmo valor caem no mesmo agrupamento, sem condição. `derivationRoot` entra **também** por linhagem de pai (`PARENT_LINKAGE_AXES`), que é a única relação de `humanSeed`: une quando o valor **nomeia o id de outra linha presente no mesmo conjunto**, e 782 de 783 referências de pai não resolvem. `axisConnectivity` é a função que separa as duas relações; ler indivisibilidade da lista de pertença já publicou alegação falsa de independência uma vez | código |
+| | `domainSource` e `sourceMaterialBatch` são eixos **reportados** (`REPORTED_GROUP_AXES`), nunca de união: a dependência do lote é carregada por registro, manifesto e ledger (`splitUnionsOnDependencyAxis: false`) | OP |
+| | **unidades independentes** = componentes conexos por **documento de origem**, com ≤ 1 linha por documento por célula | OP |
+| | identidade do dataset: `dataset.id` = **`cleanfeed-ptbr-cells-v1`**, `intendedDomain` = **`scoped-cells`**. `ptbr-generic-v1` é **recusado por nome** (`dataset.refusedIds`, código `DATASET_ID_ABANDONED`), não apagado | OP |
+| | composição de release comparada por **igualdade exata** em `sealDataset`: `human` **7.000** (4 células × o alvo de 1.750), `ai` **4.000**, `mixed` **2.000** — total 13.000 (`RELEASE_CORPUS_POLICY.counts`) | OP |
+| | manifesto de fontes na **v2**: `materialBatches` é obrigatório e entra na projeção do `sourceManifestDigest` sem condição. Um lote declara `batchId`, `sourceId`, `materialVersion`, `acquisitionWindow` e `evidence` não vazia | código |
+| | **gate de composição** (`benchmark/composition-gate.ts`): três quantidades por célula, só em `test` — linhas de negativo humano elegíveis, unidades de amostragem, e linhas por documento de origem. A recusa nomeia célula, contagem e piso | código |
+| | **preflight de viabilidade** (`benchmark/viability-preflight.ts`, `preflight-viability`): condições necessárias antes do split, comparadas **por classe** e também sobre o corpus inteiro — passar não prova que o corpus é divisível | código |
 | | rótulo `human` = corte de data **pré-ChatGPT** (`< 2022-11-30`), por campo do documento — nunca por declaração. Na Carolina o corte pelo header TEI é **load-bearing**: a Bea 2.0 contém datas de 2024 e 2025 | OP |
-| | licença lida **por documento** (header TEI), com allowlist fail-closed no extrator | AG |
+| | licença lida **por documento** (header TEI), com allowlist fail-closed no extrator (4 licenças) e `document_license` como **única** origem da licença de um registro humano. Licença não revisada derruba a linha contada; licença que nenhuma lista nomeia **para a corrida**; fonte com duas licenças **recusa** | AG |
+| | a licença de um registro **gerado** é a concessão deste repositório, e candidato que declare outra **aborta** a montagem | AG |
+| | o extrator da Carolina só abre as **três tipologias da moldura** (`FRAME_TYPOLOGIES`), e recusa tipologia fora dela **antes** de abrir o arquivo | AG |
 | A1 | Stack Overflow está fora do corpus | OP |
 | F0-6 | Stack Overflow bloqueado **por nome**, não apagado | AG |
 | A3 | `drop_seen()` = hash exato + Jaccard ≥ 0,82 sobre shingles de 5 tokens, descrito só como isso | OP |
-| A4 | gate antiartefato **pré-treino** | OP |
-| | família com >2 % contaminada **regenera a lane inteira** — poda seletiva mascara o viés da lane | AG |
+| | a poda é **global** contra o corpus morto, sem restrição por partição: o insumo é um artefato de digests e chaves de shingle (`seen-index.v2.jsonl`), conferido contra a contagem **e** o digest do corpus indexado. Artefato ausente, parcial ou de outro corpus **recusa** a montagem de release | AG |
+| A4 | gate antiartefato **pré-treino**, em código (`benchmark/lab/artifact_gate.py`): quatro detecções — eco de prompt, recusa, metaconversa, assinatura de harness —, teto de contaminação em `Fraction(2, 100)`, comparado **por família geradora** e nunca com o agregado do conjunto gerado, relatório escrito **antes** do veredito e sem nomear linha | OP |
+| | família acima do teto **regenera a lane inteira** — poda seletiva mascara o viés da lane, e o relatório não dá o que podar | AG |
 | R4 | todo registro gerado nasce **`automated/unreviewed`**; a auditoria de PII é **amostral** e não produz `passed` por registro | OP |
-| | linhagem: todo gerado **que declara pai** referencia pai presente; `assertDerivedParentsResolve` roda antes do split. A admissão de pai `notApplicable` é lacuna aberta (§ 7) | AG |
-| | famílias OpenAI ficam **reservadas ao teste de gerador não visto** (OOD); nenhuma entra em treino | AG |
-| | `domainSource` é **estrato**; `sourceMaterialBatch` carrega a dependência como eixo de **registro, manifesto e ledger** — **não** entra na união do split (`splitUnionsOnDependencyAxis: false`); a dependência intra-célula fica com `author`, `source`, `nearDuplicate` e linhagem | OP |
-| | **unidades independentes** = componentes conexos por **documento de origem**, com ≤ 1 linha por documento por célula | OP |
+| | linhagem: todo gerado **que declara pai** referencia pai presente; `assertDerivedParentsResolve` roda antes do split. A admissão de pai `notApplicable` numa linha `ai` é lacuna aberta (§ 7) | AG |
+| | famílias OpenAI ficam **reservadas ao teste de gerador não visto** (OOD): a reserva é política nomeada do slate (`OOD_RESERVED_FAMILIES`), não prefixo, e todo papel de família geradora é **declarado** — `core`, `ood-reserved` ou `excluded` —, com censo dos pools conferido por guarda. Reserva vazia **recusa** a montagem | AG |
+| | `--provider` recusa na **argparse**, com as quatro lanes congeladas como `choices`: nenhuma chamada de provedor fora do slate é gasta | AG |
 | | partições cegas = `test` e `cal-B`, privadas e byte-intocadas até a v2.0 | OP |
 | | cluster exposto é barrado das **duas** partições cegas | AG · ratificar |
-| | o vocabulário de partições do código é `train / dev / cal-A / cal-B / test`; o **desenho** de partições da pré-inscrição nova é re-derivável, incluindo a existência de `cal-B` | AG |
+| | o vocabulário de partições do código é `train / dev / cal-A / cal-B / test` | código |
 | | só bases públicas; sem coleta autorizada individual | OP |
 | | `ptbr-generic-v1` está morto como dataset | OP |
 | C4 | `test` e `cal-B` selados ficam preservados | AG |
@@ -107,6 +130,7 @@ O que "corpus inutilizado" significa — a semântica é **graduada**, nunca tud
 | cluster exposto em **qualquer** partição anterior: fora **só** das cegas — segue elegível para `train`, `dev` e `cal-A` | código |
 | conhecimento de nível de **estrato, lote, receita ou semântica** não invalida material. A comparação de exposição lê `author`, `source`, `humanSeed`, `derivationRoot` e conteúdo — nada mais | código |
 | a lease do holdout é consumida no **`started`**, de mão única; `completed` e `failed` são terminais; **ledger ausente ≠ bloco não gasto** | código |
+| o corpus novo não reaproveita material do morto: a poda global é superconjunto da graduação acima, e dispensa restrição por partição | AG |
 | abandonar pré-inscrição depois de ver a **estrutura dos grupos** é legítimo; depois de ver **resultados**, não | OP |
 | resultado de **terceiro** sobre o candidato que o operador venha a ver conta como **exposição** e é registrado como tal | OP |
 
@@ -115,15 +139,17 @@ O que "corpus inutilizado" significa — a semântica é **graduada**, nunca tud
 | vigente | quem |
 |---|---|
 | **a entrega principal é o MODELO** — pesos + tokenizer + model card + tabela por célula —, **abstraído de toda questão técnica de navegador**. A extensão é consumidora downstream, fora da entrega principal | OP |
-|---|---|
 | o preview experimental **não faz alegação de erro**, não executa `fit` certificador e não abre concessão; **R1 só começa na v2.0** | OP |
 | a única descrição de erro publicável antes de medição é a frase R7-correta: *"A taxa de erro desta versão no domínio de uso não foi estimada em holdout independente. Resultados de desenvolvimento não são estimativas publicáveis e não sustentam conclusão sobre autoria ou sobre pessoas."* | OP |
-| teto de ação **`indicator` estrutural** no caminho não calibrado (tipo de retorno pinado); a lane `experimental` é o único `pending` publicável — `profileDigests: []`, `evidenceDigest: null`, `issuedAt` obrigatório | código |
+| teto de ação **`indicator`** no caminho não calibrado: a política o declara (`rollout.maximumStage`, `actionsPromoted: false`, pinados por `literal()`) e o runtime o torna **estrutural** — `src/inference/inference-worker.ts` devolve `DecisionOutcome & { actionCeiling: "indicator" }`, então reintroduzir uma ação mais forte não compila; a lane `experimental` é o único `pending` publicável — `profileDigests: []`, `evidenceDigest: null`, `issuedAt` obrigatório | código |
 | opt-in **desligado por padrão**; disclosure persistente em cada resultado; nenhum rótulo de autoria nem confiança numérica | OP |
 | proibição de uso disciplinar, acadêmico, empregatício ou decisório; não iniciar acusação formal com base no sinal; revisão humana não salva sinal não validado — exige evidência independente do processo | OP |
 | os pesos viajam com a mesma política de uso — a copy da extensão não acompanha pesos extraídos | OP |
-| treino: **cross-entropy + seed `712019` pré-fixadas, sem ablação**; segunda corrida só como retry técnico, nunca seleção | OP |
-| **sem calibrador probabilístico na v1**: limiar experimental provisório, versionado, jamais descrito como "conservador", "alta confiança" ou probabilidade | OP |
+| backbone **`xlm-roberta-base`**; teto de export int8 congelado em **340 000 000** bytes (`onnxMaximumInt8Bytes`) — é teto, não alvo, e nenhum export foi medido | código |
+| treino: **cross-entropy + seed `712019` pré-fixadas, sem ablação** (adamw, 3 épocas, lr 2 × 10⁻⁵, 16 documentos por batch, warmup 0,06, weight decay 0,01); segunda corrida só como retry técnico, nunca seleção | OP |
+| **sem calibrador probabilístico na v1** (`threshold.probabilisticCalibrator: "none"`): o corte publicado é o **limiar provisório `provisional-v1`** — quantil 0,95 superior de `document-raw-score` sobre os negativos humanos de `dev` + `cal-A` —, versionado, jamais descrito como "conservador", "alta confiança" ou probabilidade. `evaluate` exige e confere `provisional-threshold.json`, então um `fit` sem o corte pré-inscrito não alcança a medição | OP |
+| o gate de calibração mede **ECE-15 sobre o mesmo `document-raw-score`**, em bins de massa igual, com limite superior simultâneo por bootstrap e `eceMax` 0,05 | código |
+| calibrador probabilístico e conformal ficam **reservados à v2** (`calibrator.reservedFor`, `conformal.reservedFor`) | código |
 | probe adversarial de FPR: **v2** | OP |
 | datasheet = **seção do model card**, não artefato separado | OP |
 | reserva dedicada de segunda tentativa: **fora do escopo da v1** — o valor congelado `2` permanece (F0-8), a divergência é declarada | OP |
@@ -150,10 +176,11 @@ O que "corpus inutilizado" significa — a semântica é **graduada**, nunca tud
 | | **decidir–registrar–ratificar**: o agente decide ancorado no escopo, registra com razão e custo de reversão, e não para. Ratificação obrigatória só antes de marco irreversível | OP |
 | | a **fila de endurecimento permanece parada** até o artefato principal existir; nenhum documento de plano além do plano único de entrega do modelo | OP |
 | | **nunca delegado**: D0; risco jurídico pessoal (B1); calendário; apertar botão de publicação externa; ler `test`/`cal-B`/ledger real; dinheiro além de R$60/mês | OP |
-| | **três etapas por unidade**: verificação de desenho antes do código · implementação contra o contrato · cross-review adversarial | OP |
+| | **três etapas por unidade** no caminho selado: verificação de desenho antes do código · implementação contra o contrato · cross-review adversarial. Fora do selado, uma rodada | OP |
 | | a etapa 3 é do **Fable** enquanto o crédito do codex não voltar; rodada do Fable não fecha dívida de codex | OP |
 | A5 | revisão adversarial em caminho selado, uma rodada no resto | OP |
-| | toda decisão metodológica entra em `references.md` no mesmo commit, com link | OP |
+| | guarda nova exige **prova por mutação**: linha de base verde, mutação, vermelho no teste nomeado, restauração e conferência byte a byte | OP |
+| | toda decisão metodológica entra em `references.md` no mesmo commit, com link; sem precedente na literatura, a declaração explícita entra no lugar | OP |
 | A6 | Colab Pro até R$60/mês | OP |
 | A7 | rajadas pelo rate limit; teto semanal bateu, a fila pausa e retoma | AG |
 | B5 | mismatch pós-exposição é terminal | AG · ratificar |
@@ -204,21 +231,34 @@ O que "corpus inutilizado" significa — a semântica é **graduada**, nunca tud
 
 Megabyte não é a unidade: *legislative branch* rende 0,89 documento por megabyte.
 
+Os dois lotes de aquisição, medidos em 2026-08-04 e reconferidos em 2026-08-05:
+
+| lote | arquivo | bytes | sha256 |
+|---|---|---:|---|
+| `smb_ptwiki-20220301` | `ptwiki-20220301-pages-articles.xml.bz2` | 1.955.910.144 | `70c9ec4f700205ab586ab86dd21a5fe62fc543a5341770c84a28c343225f8b52` |
+| `smb_carolina-2_0-bea` | `archive.zip` | 3.131.075.648 | `3fde823cc3abe9521d2bff119732f1c0bce52bf8ccc15cc893fba5f7531dbc19` |
+
+Versão da Carolina, medida no header TEI dos **46** arquivos das três tipologias da moldura (2026-08-05):
+`Version 2.0 (Bea)` em 46/46 e `xml-model` apontando para `v2.0/corpus/schema.rng` em 46/46, zero
+divergência. Janela de aquisição pontual (`startedAt === endedAt`), ancorada no mtime dos arquivos:
+ptwiki `1784753446707`, carolina `1784752441472`.
+
 ### 5.2 Aritmética da cota
 
-`1 − α^(1/n)`, α = 0,0125. A coluna "por célula" assume `test` = 20 % do corpus — suposição provisória
-até a pré-inscrição nova fixar as frações (§ 3.3); mudá-las muda a coluna.
+`1 − perHypothesisAlpha^(1/n)`, `perHypothesisAlpha` = 0,007143 (α = 0,05 sobre `m=7`). A coluna "por
+célula" lê `partitionFractions.test` = 0,20.
 
 | linhas em `test` | teto | por célula |
 |---:|---:|---:|
-| 250 | 1,74 % | 1.250 |
-| 300 | 1,45 % | 1.500 |
-| 800 | 0,55 % | 4.000 |
+| 250 | 1,96 % | 1.250 |
+| 300 (o piso) | 1,63 % | 1.500 |
+| 350 (o alvo de coleta) | 1,40 % | 1.750 |
+| 800 | 0,62 % | 4.000 |
 
 ### 5.3 Medição de 25/07
 
-Modelo **calibrado**, num limiar que o pacote atual não tem. Vale como prova de que a aritmética fecha,
-não como resultado.
+Modelo **calibrado**, num limiar que o pacote atual não tem, sob a família `m=4` de então. Vale como
+prova de que a aritmética fecha, não como resultado.
 
 | estrato | FP / n | teto 98,75 % |
 |---|---:|---:|
@@ -227,34 +267,58 @@ não como resultado.
 | Carolina universitário | 20 / 745 | ≤ 4,34 % |
 | B2W resenha | 57 / 800 | ≤ 9,43 % |
 
-### 5.4 Outros
+### 5.4 Pools em disco e o que a montagem faz com eles
+
+Medido em 2026-08-05 sobre os pools de candidatos, por execução da montagem — exceto as duas linhas
+marcadas **sonda**, medidas fora dela.
 
 | fato | valor |
 |---|---|
-| componentes independentes por célula, hoje | 1 |
+| candidatos nos pools, depois da dedup | 13.887 (`human` 7.704 · `ai` 4.048 · `mixed` 2.135) |
+| duplicata exata ou quase-duplicata do corpus morto | **8.133 dos 13.880 telados** (59 %); maior similaridade mantida 0,534. 13.880 e não 13.887 porque a poda **intra-pool** de quase-duplicata roda antes e colapsa 6 agrupamentos, tirando 7 linhas |
+| artefato de índice de vistos | `benchmark/data/seen-index.v2.jsonl` — 10.000 documentos, 3.323.576 chaves de shingle, digest do corpus indexado pinado em código |
+| documentos de origem conhecidos por célula | **0** nas quatro — a montagem de release recusa em `CellBelowOriginDocumentFloor` antes da seleção |
+| linhas geradas com ao menos uma detecção de artefato (**sonda**) | 148 de 4.048 (**3,656 %**) no pool `ai` — agregado de sonda, **não** veredito do gate: o teto de 2 % é comparado **por família geradora**, e a única família acima dele é `madras_synthetic_corpusqwn`, 146 de 150 (97,33 %), que `EXCLUDED_GENERATOR_FAMILIES` recusa por proveniência não registrada |
+| veredito do gate antiartefato, no caminho da montagem | **nenhuma lane a regenerar.** Depois da poda global sobram 19 candidatos `ai` e 135 mistos, e os 154 são recusados em `MissingRecipe`/`UnmappableLane`: **0** registro gerado chega ao gate. Sem a poda global a montagem constrói 1.170, e as 5 famílias que chegam saem todas `clear` (0 de 1.170) |
+| licenças por documento na Carolina em disco (**sonda**) | `cc-by-nc-sa-4.0` em 7.997 e `cc-by-sa-4.0` em 3 dos 8.000 de `carolina.jsonl` — arquivo que a montagem **não** lê, e é o que torna `SourceCarriesTwoLicenses` alcançável; as 3 estão fora da moldura. O pool que `load_humans` lê é `carolina_fresh.jsonl`, 3.600 linhas, licença única |
+| famílias geradoras nos pools | 23, somando 6.183 linhas (`POOL_GENERATOR_FAMILIES`) |
+| linhas mistas escrevíveis hoje | **0** — as 2.135 recusam, 1.898 em `MissingRecipe` (a linha não carrega o digest do template de mistura) e 237 em `UnmappableLane` (provedor fora das quatro lanes congeladas) |
+
+### 5.5 Outros
+
+| fato | valor |
+|---|---|
+| componentes independentes por célula, hoje | 1 — sem documento de origem conhecido, toda linha da célula cai no balde único de origem irrecuperável |
 | guardas de integridade do pacote | 11 exercitadas, 0 sem teste |
-| linhas humanas recuperáveis do corpus morto | ~1.600 após A1 |
 | ledger de exposição real | **0 bytes** — nenhum evento real foi escrito |
 | holdout-ledger real | 2.638 bytes — o consumo de 2026-07-25, `decision: reject` |
 | memória da exposição por linha | `benchmark/data/corpus-build/out/split/split-artifact.json` — pertença de `test`, só o operador lê |
+| referências | 304 links em 17 seções de `references.md`, com 43 declarações de "sem precedente" |
 
 ---
 
 ## 6. NÃO APLICAR — aparecem no registro e não valem
 
+- a **pré-inscrição v3 inteira** (`benchmark/rebuild-v3-policy.{json,ts}`, marcada em
+  `.ABANDONADA.md`): está em árvore, é importada por **nenhum** módulo de produção e por nenhum membro
+  de `EVALUATOR_FILES`. Os valores que a pré-inscrição vigente reafirma estão em § 3, com o rótulo da
+  autoridade que hoje os impõe — o arquivo v3 não é autoridade sobre nenhum deles;
 - `A2` (eixo de 4 células por fonte, com B2W);
-- de `B3`, o piso de **250 componentes por célula** e a manchete do **pior estrato** com `m=4` — a
-  família vigente é `m=7` por estrato (§ 3.1, decisão G0.2 de 2026-08-03);
+- de `B3`, o piso de **250 componentes por célula** e a manchete do **pior estrato** com `m=4`;
 - `F0-5` (cinco estratos com `qa-informal` declarado);
 - piso de **≈20 mil linhas humanas**;
-- frações `45/5/10/20/20`;
+- o piso de **6.000** linhas humanas como número da composição de release — `RELEASE_CORPUS_POLICY.counts.human` é **7.000**, o alvo;
+- os **3,656 %** agregados de contaminação lidos como veredito do gate, ou como lane a regenerar: o teto de
+  2 % é por família, e o agregado do conjunto gerado não é quantidade que o gate compare;
+- `derivationRoot` lido como eixo **só** de linhagem de pai: ele está em `GROUP_KEYS` e une por valor
+  compartilhado, sem condição. Só `humanSeed` é exclusivamente linhagem de pai;
+- `blindReserveCompleteAttempts` lido como reserva **executada** na v1;
 - regra condicional 6 (codex indisponível → selado espera);
 - bloco C inteiro, exceto `C4`;
-- a pré-inscrição v3 (`benchmark/rebuild-v3-policy.json`, marcada em `.ABANDONADA.md`) — os valores que a
-  nova reafirma estão marcados `herdado` em § 3;
 - **qualquer leitura de "gasto" sem a graduação de § 3.4** — inclusive afirmações anteriores, no registro
   e em memórias de sessão, de que o `ptbr-generic-v1` "não pode mais ser usado" ou de que o material
-  estaria "descegado" por conhecimento de estrato.
+  estaria "descegado" por conhecimento de estrato;
+- as **~1.600 linhas humanas recuperáveis** do corpus morto: são abdicadas de propósito pela poda global.
 
 ---
 
@@ -262,15 +326,24 @@ não como resultado.
 
 | dívida | vence |
 |---|---|
-| registro-linha congelado em `cal-B` não tem a proteção do de `test` | antes da v2.0, ou antes de um segundo corpus sobrepor um split vivo |
-| `worker-protocol` admite `sourceLock: undefined`; a revalidação morre como `TypeError` sem código | — |
+| byte NUL literal em arquivo de `EVALUATOR_FILES` (`near-duplicates.ts`) | commit próprio — o conserto move o `evaluatorDigest` |
+| **inventário de material**: `build_governance.ts` escreve manifesto v1 sem `materialBatches`, então todo corpus v4 sai `blocked` com `SOURCE_REFERENCE_MISSING` por linha humana | Fase 3, item 1 — entrada declarada pelo operador para os dois lotes, e o manifesto passa a v2 |
 | nenhum vínculo F6 prova em que corpus os pesos atuais foram treinados | antes de publicar pesos |
 | rodada 13 do cross-review do E2 | crédito do codex, 8 de agosto |
+| o lado **selado** não impõe a reserva OOD: `sealDataset` confere positivos por família declarada, não que as reservadas estejam fora do treino | Fase 3, item 3 |
+| o lado **selado** não confere licença registro↔fonte: `auditRecords` junta `sourceId` e ignora a licença | Fase 3, item 1 |
+| fonte da Carolina sob **duas** licenças recusa a montagem, e o remédio (dividir `src_carolina` por licença, ou licença por registro no esquema selado) é decisão de esquema | Fase 3, item 1 |
+| a reserva OOD não foi **dimensionada**: com os pools de hoje ela encheria o bloco cego e seria recusada | Fase 3, item 2 |
+| `generatorVersion` na união do split colapsa a classe gerada por versão | Fase 3 |
+| `cc-by-4.0` e `public-domain` sem termos revisados em `CORPUS_LICENSE_REGISTRY` — custo zero hoje, medido | quando um documento em moldura declarar uma delas |
+| `train_detector.py` não confere o relatório do gate antiartefato; hoje o único caminho até um `train.jsonl` passa pela montagem | segundo produtor de corpus |
+| README do benchmark está **3 subcomandos atrás** do CLI | unidade que reescrever o README |
+| linhagem admite pai `notApplicable` numa linha `ai` sem recusa — a pergunta de desenho está aberta | unidade que tocar linhagem ou E3 |
+| registro-linha congelado em `cal-B` não tem a proteção do de `test` | antes da v2.0, ou antes de um segundo corpus sobrepor um split vivo |
+| `worker-protocol` admite `sourceLock: undefined`; a revalidação morre como `TypeError` sem código | — |
 | F0-9 — duas telas antigas com over-claim de autoria humana | — |
-| linhagem admite pai `notApplicable` sem recusa — a pergunta de desenho está aberta | unidade que tocar linhagem ou E3 |
 | bundles servidos (`public/`, `dist*`) carregam arquivos legais pré-Fase-0 (MIT como licença dos pesos) | antes de empacotar qualquer release |
 | teste intermitente em caminho selado (`consume-holdout.test.ts`) | rodada própria |
-| byte NUL literal em arquivo de `EVALUATOR_FILES` (`near-duplicates.ts`) | commit próprio — o conserto move o `evaluatorDigest` |
 
 ---
 
@@ -278,14 +351,15 @@ não como resultado.
 
 1. **este arquivo**;
 2. `superpowers/plans/2026-08-03-plano-entrega-modelo.md` — **o roteiro de execução**: sete fases até o
-   modelo publicado, com os gates do operador na Etapa 0;
+   modelo publicado;
 3. `superpowers/plans/2026-08-03-decisao-de-corte-A-ou-B.md` — a decisão de corte, preenchida (opção C);
 4. `MANIFESTO-DE-TRANSPLANTE.md` — o dia zero de um repo novo; ocorre **depois** da entrega, se ocorrer;
 5. `superpowers/plans/2026-07-30-v1-escopo-e-retomada.md` — **como trabalhar** e as armadilhas. A parte
    de estado dele está **superada por este arquivo**;
 6. `superpowers/plans/2026-07-30-registro-de-decisoes.md` — a **razão** de cada decisão; procure a seção;
-7. `detector-rebuild-assessment.md` — os oito defeitos de 25/07;
-8. `references.md` — 270 entradas, 222 links, ancoradas por decisão.
+7. `corpus-collection-runbook.md` — a ordem dos comandos da coleta e da montagem;
+8. `detector-rebuild-assessment.md` — os oito defeitos de 25/07;
+9. `references.md` — as referências, ancoradas por decisão.
 
 Superado como estado: `superpowers/plans/2026-07-30-estado-do-projeto.md` — permanece como razão das três
 decisões de 2026-07-30. Dormente, consulta e não execução:

@@ -3342,9 +3342,12 @@ razão e o custo de reversão.
 | `intendedDomain` | **`scoped-cells`** (sai `generic`) | manter `generic` | consequência direta do id: "genérico" nomeia uma população sem moldura amostral, e é exatamente a alegação que a Etapa 0 recusou. Um manifesto que se declara genérico contradiz a tabela por célula que a release publica |
 | `ptbr-generic-v1` | **recusado POR NOME** em `ingest`/`corpus-import` | apagar o id | um identificador que sai por deleção não deixa rastro: quem passasse o id velho construiria o corpus de uma alegação que ninguém faz mais, e construiria **com sucesso**. Vive em `dataset.refusedIds`, com a razão, e o código `DATASET_ID_ABANDONED` diagnostica |
 
-Counts humanos: **6.000 de piso** (4 células × 1.500), alvo de coleta ~1.750/célula (G0.3-bis). O piso
-é o que `RELEASE_CORPUS_POLICY.counts.human` exige — e `sealDataset` compara composição por igualdade
-exata, então a folga de coleta existe para o **sorteio**, não para o selo.
+Counts humanos: `RELEASE_CORPUS_POLICY.counts.human` e `collection.humanLinesTotal` exigem **7.000**, que
+são 4 células × o **ALVO** de 1.750 (G0.3-bis). O piso de 1.500/célula é o número do **gate**, não o da
+composição: `sealDataset` compara a composição por igualdade **exata**, então escrever o total derivado
+do piso (6.000) recusaria justamente todo corpus que carrega a margem de coleta — o comentário em
+`benchmark/dataset-manifest.ts:104-113` é onde essa aritmética vive no código. A folga não é sobra: ela
+existe para o **sorteio** cumprir o piso de 300 em `test`. Ver C-14, abaixo, para a medição.
 
 ### `onnxMaximumInt8Bytes` = 340 000 000 — decidido pelo agente, com a aritmética
 
@@ -3847,9 +3850,10 @@ Medido em 2026-08-05, sobre os pools em disco:
 | `madras_synthetic_corpusqwn` | 146 de 150 (**97,33 %**) → regenerar a lane |
 | `madras_synthetic_corpus_openrouter23` | 2 de 147 (1,36 %) → limpa |
 | controle humano, que o gate nunca lê | 0 de 42.100 no marcador de turno; 2 de 8.600 no total (0,023 %) |
-| registros gerados que a montagem consegue construir hoje | 1.170 |
-| famílias que chegam ao gate | 5, todas `clear`, 0 de 1.170 |
-| lanes a regenerar hoje | nenhuma |
+| registros gerados que a montagem constrói **sem** a poda global | 1.170 |
+| famílias que chegam ao gate, nessa condição | 5, todas `clear`, 0 de 1.170 |
+| registros gerados que chegam ao gate **com** a poda global | 0 — sobram 19 candidatos `ai` e 135 mistos, e os 154 são recusados em `MissingRecipe`/`UnmappableLane` |
+| lanes a regenerar hoje | nenhuma, nas duas condições |
 
 O gate está verde hoje, e a razão é boa: a única família acima do teto é
 `madras_synthetic_corpusqwn`, que **L2 já exclui** por proveniência não registrada, e as demais famílias
@@ -3941,3 +3945,57 @@ linha mista sem vão gerado (L3-9b); e o teto sem denominador mínimo (L3-11c).
   que esta unidade torna verdadeiras no código são as duas de § 3.3: "licença lida por documento (header
   TEI), com allowlist fail-closed no extrator" e "gate antiartefato pré-treino" / "família com >2 %
   contaminada regenera a lane inteira".
+
+---
+
+## O inventário de material: a janela ratificada e a versão medida (2026-08-04/05)
+
+**Status:** a janela de aquisição é **RATIFICADA PELO OPERADOR** (2026-08-04); as quatro decisões de
+grafia e de recorte são `EM-VIGOR (delegada)`. Nada aqui é para implementar agora — o produtor do
+inventário é a **Fase 3, item 1**, com dono e entrada declarada. O que esta seção resolve é outra coisa:
+os fatos abaixo eram a única parte do estado do projeto que vivia num arquivo **fora do Git**, e um lote
+de material cujos campos só existem fora do repositório é a proveniência inventada que R4 proíbe,
+atrasada em um passo.
+
+`SourceMaterialBatchV1` exige cinco campos (`benchmark/source-manifest.ts:238`), e três deles —
+`materialVersion`, `acquisitionWindow` e `evidence` — são fatos que **nenhum código deste repositório
+detém**. É por isso que a entrada é declarada e não sintetizada.
+
+### Ratificado pelo operador — a janela de aquisição dos dois lotes
+
+| lote | janela | âncora |
+|---|---|---|
+| `smb_ptwiki-20220301` | pontual, `startedAt === endedAt` = `1784753446707` | mtime de `ptwiki-20220301-pages-articles.xml.bz2` |
+| `smb_carolina-2_0-bea` | pontual, `startedAt === endedAt` = `1784752441472` | mtime de `archive.zip` |
+
+`acquisitionWindow` admite o evento pontual por desenho — o comentário do campo diz que
+`startedAt === endedAt` é legítimo —, então a forma não foi forçada para caber.
+
+**Por que foi PEDIDA em vez de assumida.** O mtime é **evidência**, não declaração: nada nele distingue
+"baixado naquele instante" de "copiado naquele instante". A diferença é material, porque um lote é a
+identidade do que foi adquirido, e um instante de cópia nomeia a última movimentação do arquivo e não a
+aquisição. Assumir seria o agente decidindo, por inferência do sistema de arquivos, um fato sobre o mundo
+de que só o operador é testemunha. Custo de reversão da ratificação: reemitir o lote com outra janela move
+o `sourceManifestDigest`, logo move toda evidência publicada sobre o corpus — barato hoje (`issuedAt` é
+nulo, 0 tags, nenhum corpus selado existe), irreversível depois da Fase 5.
+
+### Decisões do agente, com razão e custo de reversão
+
+| # | decisão | razão | custo de reversão |
+|---|---|---|---|
+| M-1 | a versão da Carolina é **MEDIÇÃO** e não declaração: o header TEI a carrega em **dois lugares independentes** — `<title type="sub">Version 2.0 (Bea)</title>` e o `href` do `xml-model` apontando para `.../corpus-carolina/raw/v2.0/corpus/schema.rng` —, e a varredura dos **46** arquivos das três tipologias da moldura deu `v2.0` em 46/46 e `Version 2.0 (Bea)` em 46/46, zero divergência | a hipótese que a varredura exclui é **pacote de versão mista**, e ela não é remota: um zip é um contêiner, e nada impede que membros tenham sido montados de releases diferentes. Sob versão mista um `batchId` só seria uma **mentira** — declararia uma versão imutável para material que não a tem, e todo registro humano resolveria contra um lote que não descreve a linha. Duas âncoras e não uma porque um `<title>` é texto editável e um `href` de schema é o contrato de validação: divergirem é o sinal, concordarem nos 46 é a medição | reabrir a varredura, que custa a leitura dos 46 headers e nada mais |
+| M-2 | `materialVersion` = **`carolina-2.0-bea`**, e não o verbatim `Version 2.0 (Bea)` | o verbatim vira o `batchId` `smb_Version_2_0_Bea` sob a canonização de identificadores, e esse nome tem dois defeitos que se somam: **não nomeia a fonte** (um lote é lido ao lado de outros, e "Version 2.0" não diz de quê) e **colide** com qualquer corpus futuro que também se chame "Version 2.0". A verificabilidade não mora na grafia: mora nas duas âncoras do TEI, que entram em `evidence`. Trocar a grafia pelo verbatim não acrescenta prova nenhuma e perde a desambiguação | um literal, enquanto nenhum manifesto v2 estiver escrito |
+| M-3 | **um** `batchId` para as três tipologias da Carolina, e não três | as tipologias são **partições de um download**, não três aquisições: um arquivo, um instante, um digest. Três lotes declarariam três eventos de aquisição que não ocorreram, e o campo é sobre aquisição. É a mesma medição de G0.1-bis vista do outro lado — um evento de aquisição por fonte é exatamente o que mantém `sourceMaterialBatch` **fora** da união do split; se cada tipologia fosse um lote, o eixo recuperaria granularidade e a tentação de unir sobre ele voltaria com ela, com o mesmo desfecho já medido (um bloco por célula) | dividir em três exige refazer janela e digest por tipologia, o que o arquivo em disco não sustenta |
+| M-4 | o digest do lote é do **arquivo adquirido**, não do extraído | `materialVersion` pede "a versão concreta e imutável do que foi adquirido"; o extraído é derivado e muda com o extrator, então um digest do extraído dataria o **nosso** código e não o material | recomputar, ao custo da leitura dos dois arquivos |
+
+### Os digests, medidos em 2026-08-04 e reconferidos em 2026-08-05
+
+| lote | `sourceId` | arquivo | bytes | sha256 |
+|---|---|---|---:|---|
+| `smb_ptwiki-20220301` | `src_wikipedia_pt` | `ptwiki-20220301-pages-articles.xml.bz2` | 1.955.910.144 | `70c9ec4f700205ab586ab86dd21a5fe62fc543a5341770c84a28c343225f8b52` |
+| `smb_carolina-2_0-bea` | `src_carolina` | `archive.zip` | 3.131.075.648 | `3fde823cc3abe9521d2bff119732f1c0bce52bf8ccc15cc893fba5f7531dbc19` |
+
+Os dois arquivos vivem **fora** do repositório, e é por isso que o digest é o que os torna verificáveis
+por terceiro. `src_wikipedia_pt` e `src_carolina` são as duas fontes que `HUMAN_SOURCE`
+(`benchmark/lab/assemble_corpus.py`) já declara, então o lote não introduz fonte nova: ele data e
+identifica as que existem.

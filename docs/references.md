@@ -3516,3 +3516,81 @@ continua não nomeando linha nenhuma.
 inteira, e o relatório do gate deliberadamente não nomeia as linhas para tornar a poda inalcançável". A
 literatura mede a contaminação (Dingfelder, Dugan) e formaliza o viés de remoção (Rubin); nenhuma das duas
 propõe suprimir o identificador da linha no artefato de saída como forma de impedir a remediação errada.
+
+## § M — o lote de material: versão medida, aquisição pontual e fixidez do adquirido (2026-08-04/05)
+
+As decisões metodológicas do inventário de material — o que um `SourceMaterialBatchV1` declara e como cada
+campo dele se torna verificável por terceiro. Nenhuma está implementada ainda: o produtor é a Fase 3,
+item 1. O que elas decidem é qual fato conta como prova de proveniência.
+
+### M1 — a versão do material é MEDIDA no header, em duas âncoras independentes
+
+A versão da Carolina não é aceita da declaração de quem entrega o pacote: é lida do header TEI de cada
+arquivo, em dois lugares que existem por razões diferentes — o `<title type="sub">` da descrição
+bibliográfica e o `href` do `xml-model`, que é o schema contra o qual o documento valida. A varredura dos
+46 arquivos das três tipologias da moldura deu concordância em 46/46 nas duas âncoras.
+
+O que a medição exclui é o **pacote de versão mista**. Um contêiner pode ter sido montado de releases
+diferentes, e sob essa hipótese um único `materialVersion` seria falso sobre parte das linhas — o mesmo
+modo de falha que `SourceCarriesTwoLicenses` recusa no eixo da licença.
+
+- TEI Consortium, *TEI P5: Guidelines for Electronic Text Encoding and Interchange*, cap. 2 ("The TEI
+  Header") — o header é o lugar canônico da descrição bibliográfica e da declaração de edição do
+  documento, e é parte do documento e não metadado externo.
+  [link](https://tei-c.org/release/doc/tei-p5-doc/en/html/HD.html)
+- Wilkinson et al., *The FAIR Guiding Principles for scientific data management and stewardship*,
+  Scientific Data 3:160018, 2016, princípios F1 e R1.2 — identificador globalmente único para o dado e
+  proveniência detalhada como requisito de reusabilidade.
+  [link](https://doi.org/10.1038/sdata.2016.18)
+- Bender & Friedman, *Data Statements for NLP*, TACL 6, 2018 — a caracterização da fonte é parte do
+  artefato publicado, não do processo. [link](https://doi.org/10.1162/tacl_a_00041)
+
+**Sem precedente encontrado (2026-08-05)** para a forma específica: usar **duas âncoras independentes
+dentro do mesmo header** como a medição que exclui o pacote de versão mista, e tratar a divergência entre
+elas como o sinal. A literatura de proveniência exige que a versão seja registrada; qual evidência a
+sustenta, e o que fazer quando o pacote pode ser heterogêneo, é engenharia deste projeto.
+
+### M2 — a aquisição é um evento pontual, e o mtime é evidência e não declaração
+
+`acquisitionWindow` admite `startedAt === endedAt`. O instante vem do mtime do arquivo adquirido, e o
+registro diz explicitamente o que o mtime **não** prova: nada nele separa "baixado então" de "copiado
+então". É por isso que o valor é ratificado pelo operador em vez de inferido pelo agente.
+
+- IEEE Std 1003.1 (POSIX), `<sys/stat.h>` — `st_mtime` é o instante da última **modificação de conteúdo**
+  do arquivo, atualizado por escrita; nenhum campo de `stat` registra origem ou meio de obtenção.
+  [link](https://pubs.opengroup.org/onlinepubs/9699919799/basedefs/sys_stat.h.html)
+- W3C, *PROV-DM: The PROV Data Model*, 2013 — a aquisição é uma **Activity** com início e fim, distinta da
+  **Entity** que ela gera; um instante de arquivo é atributo da entidade e não da atividade.
+  [link](https://www.w3.org/TR/prov-dm/)
+- Gebru et al., *Datasheets for Datasets*, CACM 64(12), 2021, § "Collection Process" — *"over what
+  timeframe was the data collected?"* é campo do datasheet, e a resposta é declarada por quem coletou.
+  [link](https://doi.org/10.1145/3458723)
+
+### M3 — um lote por evento de aquisição, e não um por partição do que foi adquirido
+
+As três tipologias da Carolina saem de um arquivo, um instante e um digest: são partições do download, não
+três aquisições. O recorte do lote é o **evento**, e é isso que mantém `sourceMaterialBatch` com um valor
+por fonte — a propriedade medida em G0.1-bis que o tira da união do split.
+
+- W3C, *PROV-DM*, 2013 — `wasGeneratedBy` liga cada entidade à atividade que a gerou; subdividir uma
+  atividade que ocorreu uma vez cria atividades que não ocorreram.
+  [link](https://www.w3.org/TR/prov-dm/)
+- IETF RFC 8493, *The BagIt File Packaging Format (V1.0)*, 2018 — a unidade de transferência é o **bag**,
+  com um manifesto de checksums sobre o payload; a estrutura interna do payload não multiplica a
+  transferência. [link](https://www.rfc-editor.org/rfc/rfc8493)
+
+### M4 — a fixidez é do arquivo adquirido, não do extraído
+
+O sha256 do lote é do bitstream que entrou, porque é ele que "o mesmo material" nomeia. Um digest do
+extraído data o extrator: mudaria a cada mudança do nosso código, sobre material que não mudou.
+
+- CCSDS 650.0-M-2, *Reference Model for an Open Archival Information System (OAIS)*, 2012 — *Fixity
+  Information* é componente da Preservation Description Information, mantida sobre o objeto de conteúdo
+  arquivado e distinta da *Provenance Information*.
+  [link](https://public.ccsds.org/pubs/650x0m2.pdf)
+- IETF RFC 8493, *The BagIt File Packaging Format (V1.0)*, 2018 — o manifesto declara checksum por arquivo
+  do payload como recebido, e a verificação é contra esses bytes.
+  [link](https://www.rfc-editor.org/rfc/rfc8493)
+- Wilkinson et al., 2016, princípio R1.2 — proveniência detalhada; a versão do dado precisa ser
+  verificável contra o artefato, não contra uma etapa derivada dele.
+  [link](https://doi.org/10.1038/sdata.2016.18)
