@@ -13,15 +13,20 @@ promptSha256/generatedAt) plus a batch metadata file for the source-manifest.
 Outputs run through the shared candidate pipeline (normalize -> word window ->
 PII drop), with the pre-ChatGPT date cutoff disabled (these are generated NOW).
 
-Stdlib only (urllib against the three REST APIs). Keys come from the
-environment and are NEVER printed or stored:
-  OPENAI_API_KEY, ANTHROPIC_API_KEY, GEMINI_API_KEY (or GOOGLE_API_KEY)
+`--provider` admits the FOUR frozen lanes and nothing else, and refuses the rest at the
+parser: `agy`, `codex` and `gemini_cli` authenticate through the operator's own login,
+`gemini` is the one REST endpoint. Its key comes from the environment and is NEVER
+printed or stored: GEMINI_API_KEY (or GOOGLE_API_KEY). The OpenAI and Anthropic API
+surfaces are named in `OUT_OF_SLATE_PROVIDERS` with the reason each is outside.
+
+Stdlib only (urllib against the one REST API).
 
 Usage (pilot):
-  python benchmark/lab/generate_ai.py --provider anthropic \
-    --humans ../data/candidates/ptso.jsonl ../data/candidates/carolina.jsonl \
-    --output ../data/candidates/ai_anthropic.jsonl --per-provider 60
-  (idem para --provider openai | gemini; --dry-run mostra o plano sem chamar API)
+  python benchmark/lab/generate_ai.py --provider agy \
+    --humans ../data/candidates/carolina.jsonl \
+    --output ../data/candidates/ai_agy.jsonl --per-provider 60
+  (idem para --provider codex | gemini | gemini_cli; --dry-run mostra o plano sem
+   chamar API)
 """
 
 from __future__ import annotations
@@ -153,6 +158,44 @@ PROVIDER_LANE = {
     "gemini": "gemini-api",
     "gemini_cli": "gemini-cli",
 }
+# The two API surfaces this script used to offer that the frozen slate does NOT contain,
+# kept by name with the reason. Refused at the parser and refused again in
+# `call_provider`, because the row a lane outside the slate produces can name no frozen
+# `generationLane` and the assembler drops it — after the call was paid for.
+OUT_OF_SLATE_PROVIDERS = {
+    "openai": (
+        "the OpenAI families are reserved for the unseen-generator test (OOD) and reach "
+        "the corpus only through the frozen `codex` lane; none may enter training"
+    ),
+    "anthropic": (
+        "the Anthropic API is not one of the four frozen lanes; the claude families are "
+        "generated through the `agy` lane, whose harness version the row records"
+    ),
+}
+
+
+def frozen_lane(value: str) -> str:
+    """`--provider`'s type: a label of the frozen slate, or a refusal on the way in.
+
+    The refusal has to be at the ENTRY. `PROVIDER_LANE[provider]` is read once per
+    generated row, inside the loop, after the API call — so a provider outside the slate
+    used to die with a `KeyError` on the first row it wrote, having already spent a real
+    call, and to die again on every retry of the lane.
+    """
+    if value in PROVIDER_LANE:
+        return value
+    reason = OUT_OF_SLATE_PROVIDERS.get(
+        value, "it is not one of the four frozen generation lanes"
+    )
+    admissible = ", ".join(
+        f"{label} ({PROVIDER_LANE[label]})" for label in sorted(PROVIDER_LANE)
+    )
+    raise argparse.ArgumentTypeError(
+        f"provider {value!r} is outside the frozen slate: {reason}. "
+        f"Admissible lanes: {admissible}"
+    )
+
+
 # argv that asks each CLI lane for its own version. `agy` is a single executable;
 # codex and gemini are resolved through the npm entrypoint, so the prefix has to come
 # from the same resolver that will actually run the generation — asking a shim on PATH
@@ -330,9 +373,9 @@ def recipe_for(provider: str, candidate_id: str) -> str:
 def template_digest(recipe: str) -> str:
     return hashlib.sha256(RECIPES[recipe]["template"].encode("utf-8")).hexdigest()
 
+# One default per lane the parser admits, and the sets are pinned equal by test: a lane
+# without an entry here fails at `DEFAULT_MODELS[provider]` after the parser accepted it.
 DEFAULT_MODELS = {
-    "openai": "gpt-4o-mini",
-    "anthropic": "claude-haiku-4-5-20251001",
     "gemini": "gemini-2.0-flash",
     # CLI channels — held-out families via the user's login (no key).
     "agy": "claude-sonnet-4-6",
@@ -343,8 +386,12 @@ DEFAULT_MODELS = {
     # across the gemini-3.x buckets.
     "gemini_cli": "gemini-3-flash-preview",
 }
-# Only OpenAI exposes a sampling seed on this API surface.
-SEEDED_PROVIDERS = {"openai"}
+# EMPTY, and it is a fact about the slate rather than a gap: no provider on any of the
+# four frozen lanes exposes a sampling seed, so every row records the reason instead of a
+# number. The set stays because it is the mechanism — a lane that ever offered a seed
+# would be one entry, and `seed_pair` on the assembler side already expects exactly one
+# of the two.
+SEEDED_PROVIDERS: set[str] = set()
 SEED_NULL_REASON = "provider API does not expose a sampling seed"
 TEMPERATURE = 0.8
 MAX_OUTPUT_TOKENS = 1024
@@ -369,44 +416,16 @@ class GenerationRefused(Exception):
 def call_provider(
     provider: str, model: str, prompt: str, seed: int | None, keys: dict[str, str]
 ) -> str:
-    if provider == "openai":
-        payload = {
-            "model": model,
-            "messages": [{"role": "user", "content": prompt}],
-            "temperature": TEMPERATURE,
-            "max_tokens": MAX_OUTPUT_TOKENS,
-        }
-        if seed is not None:
-            payload["seed"] = seed
-        data = http_json(
-            "https://api.openai.com/v1/chat/completions",
-            payload,
-            {"Authorization": f"Bearer {keys['openai']}"},
+    # The transports of the two out-of-slate API surfaces are GONE from this function,
+    # and the names are not: a caller that asks for one gets the reason, where before it
+    # got a generation this corpus cannot accept. Reinstating a transport is a slate
+    # amendment, not an edit here.
+    if provider in OUT_OF_SLATE_PROVIDERS:
+        raise ValueError(
+            f"provider {provider!r} is outside the frozen slate: "
+            f"{OUT_OF_SLATE_PROVIDERS[provider]}. Admissible lanes: "
+            + ", ".join(sorted(PROVIDER_LANE))
         )
-        choices = data.get("choices") or []
-        content = (choices[0].get("message") or {}).get("content") if choices else None
-        if not content:
-            raise GenerationRefused(f"openai sem conteudo: {str(data)[:160]}")
-        return content
-    if provider == "anthropic":
-        data = http_json(
-            "https://api.anthropic.com/v1/messages",
-            {
-                "model": model,
-                "max_tokens": MAX_OUTPUT_TOKENS,
-                "temperature": TEMPERATURE,
-                "messages": [{"role": "user", "content": prompt}],
-            },
-            {"x-api-key": keys["anthropic"], "anthropic-version": "2023-06-01"},
-        )
-        text = "".join(
-            part.get("text", "")
-            for part in data.get("content") or []
-            if part.get("type") == "text"
-        )
-        if not text:
-            raise GenerationRefused(f"anthropic sem conteudo: {str(data)[:160]}")
-        return text
     if provider == "gemini":
         data = http_json(
             "https://generativelanguage.googleapis.com/v1beta/models/"
@@ -678,7 +697,13 @@ def select_pairs(humans: list[dict], provider: str, count: int, done: set[str]) 
 
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--provider", required=True, choices=sorted(DEFAULT_MODELS))
+    parser.add_argument(
+        "--provider",
+        required=True,
+        type=frozen_lane,
+        choices=sorted(PROVIDER_LANE),
+        metavar="{" + ",".join(sorted(PROVIDER_LANE)) + "}",
+    )
     parser.add_argument("--humans", required=True, nargs="+", type=Path)
     parser.add_argument("--output", required=True, type=Path)
     parser.add_argument("--per-provider", type=int, default=60)
@@ -723,9 +748,10 @@ def main() -> None:
         else [args.model or DEFAULT_MODELS[provider]]
     )
     model = models[0]
+    # One key, because one frozen lane is an API endpoint and the other three
+    # authenticate through the operator's own login. A dict entry for a provider the
+    # parser cannot admit would be an environment variable this project never has.
     keys = {
-        "openai": os.environ.get("OPENAI_API_KEY", ""),
-        "anthropic": os.environ.get("ANTHROPIC_API_KEY", ""),
         "gemini": os.environ.get("GEMINI_API_KEY", "")
         or os.environ.get("GOOGLE_API_KEY", ""),
     }

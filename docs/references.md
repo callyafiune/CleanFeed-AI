@@ -2922,3 +2922,184 @@ fala de granularidade, que é a razão de o comando existir — e aceita um, que
 é aprovado pelo preflight e recusado pelo splitter, e é a insuficiência medida. Que **tudo o que o
 splitter aceita é aprovado aqui** é asserção do próprio teste, e é ela que dá sentido à prova por mutação
 de cada condição.
+
+---
+
+## § L — o alinhamento do lab à moldura de quatro células (Fase 2, unidade L1, 2026-08-05)
+
+As quatro decisões metodológicas que a unidade L1 implementou no lab Python (divergências D0, D4, D6 e
+D7 da medição de conformidade). Nenhuma delas toca o caminho selado: o lab produz CANDIDATOS, e o que
+sela ciência é o pipeline TypeScript. O que elas decidem é qual material chega ao selo.
+
+### L1 — a moldura amostral como ALLOWLIST fail-closed, com a tipologia indecidida recusando a corrida
+
+`extract_carolina.py` deixa de excluir uma tipologia por denylist (`wikis`) e passa a extrair **só** as
+três da moldura (`FRAME_TYPOLOGIES`). As quatro restantes ficam declaradas com a razão
+(`OUT_OF_FRAME_TYPOLOGIES`), não são abertas e por isso não consomem cota da corrida; uma tipologia que
+**nenhuma das duas listas nomeia** recusa a extração inteira (`TypologyOutOfFrame`).
+
+A assimetria é a decisão: exclusão DECIDIDA é silenciosa (a lista já é a declaração), exclusão
+INDECIDIDA para a corrida. A razão é de domínio e é medida: o diretório da mesma tipologia vem grafado
+com espaço em algumas releases da Carolina e com underscore em outras, então uma tipologia da moldura
+renomeada produziria **zero linha** de uma célula cujo teto de FPR a release publica — e produziria em
+silêncio, porque uma allowlist que pula o que não reconhece não distingue "não quero" de "não sei".
+
+- Saltzer & Schroeder, *The Protection of Information in Computer Systems*, Proc. IEEE 63(9), 1975,
+  § I.A.3 ("fail-safe defaults") — a decisão de acesso parte da negação e a permissão é a exceção
+  enumerada. [link](https://doi.org/10.1109/PROC.1975.9939)
+- Gebru et al., *Datasheets for Datasets*, CACM 64(12), 2021 — a documentação diz o que **não** está no
+  dataset e por quê; "ausente" e "excluído pela razão X" não são a mesma linha.
+  [link](https://doi.org/10.1145/3458723)
+- Bender & Friedman, *Data Statements for NLP*, TACL 6, 2018, § 4.1 (*curation rationale*) — o critério
+  de inclusão da amostra é parte do artefato, não do processo que o produziu.
+  [link](https://doi.org/10.1162/tacl_a_00041)
+
+**Sem precedente encontrado (2026-08-05)** para a terceira via — a categoria que **para a corrida** em
+vez de aceitar ou de pular. A literatura de curadoria trata inclusão e exclusão; o estado "indecidido"
+como falha ruidosa é analogia do fail-safe default, não citação.
+
+### L2 — a cota humana é POR CÉLULA, lida da pré-inscrição, e não se transfere entre células
+
+`TARGET["human"]` deixa de ser literal e passa a ser `collection.humanLinesTotal`
+(`collection_targets()`, que confere total = células x alvo e alvo > piso). `balanced_humans` divide pelo
+número de células que a **moldura declara** — não pelas que os pools contêm — e **não** completa uma
+célula curta com material de outra: o top-up entre células foi retirado.
+
+A razão é a estrutura da alegação, e ela é aritmética de amostragem estratificada com alocação fixa por
+estrato: cada célula publica o próprio teto de FPR sobre o próprio denominador de negativos humanos, logo
+uma linha coletada na célula A não substitui uma linha ausente na célula B. Um top-up alcança o total,
+gasta o orçamento de coleta em material que o teto da célula faltante não pode usar, e o gate de
+composição recusa a selagem no fim da corrida (K14) — com a diferença de que agora a falta aparece na
+contagem de coleta, que é o número sobre o qual o operador ainda pode agir.
+
+- Cochran, *Sampling Techniques*, 3ª ed., Wiley, 1977, cap. 5 (*Stratified random sampling*), § 5.3–5.6 —
+  a alocação por estrato é decisão do desenho, e o estimador é por estrato antes de ser combinado; o
+  tamanho realizado de um estrato não é compensável por outro.
+- Kish, *Survey Sampling*, Wiley, 1965, § 2.5 e § 3.4 — tamanho **planejado** contra **realizado**, e por
+  que o planejamento carrega folga para a perda do sorteio (é a mesma folga de K9).
+- Neyman, *On the Two Different Aspects of the Representative Method*, JRSS 97(4), 1934 — a estratificação
+  existe para que cada estrato tenha precisão própria; a alocação é sobre o estrato.
+  [link](https://doi.org/10.2307/2342192)
+
+**Transferência declarada:** as três fontes tratam de estimar sobre estratos; o que esta unidade decide é
+que o **coletor** também é por estrato, e que a falta de um estrato permanece visível em vez de ser
+absorvida. **Sem precedente encontrado (2026-08-05)** para essa regra num coletor de corpus de detecção;
+a regra vizinha citável é a de K9 (o selo compara contra o alvo, não contra o piso).
+
+### L3 — a lane fora do slate é recusada na ENTRADA do programa, não no meio da lane
+
+`--provider` deriva as opções admissíveis de `PROVIDER_LANE` (as quatro lanes congeladas) e recusa na
+argparse, nomeando as lanes e a razão. `openai` e `anthropic` permanecem nomeadas em
+`OUT_OF_SLATE_PROVIDERS`, e os transportes REST das duas saíram de `call_provider`.
+
+O que decide o **lugar** da recusa é uma medição, não estética: `PROVIDER_LANE[provider]` é lido uma vez
+por linha gerada, **dentro do laço e depois da chamada ao provedor**, então uma lane fora do slate gastava
+uma chamada real (dinheiro e cota) e morria com `KeyError` na primeira linha que escreveu — e morria de
+novo em cada retomada. Falhar na entrada é o análogo, para um programa de linha de comando, do
+*fail-fast* de configuração inválida: a validação da entrada acontece antes de qualquer efeito.
+
+- Saltzer & Schroeder, 1975, § I.A.3 (*fail-safe defaults*) — mesma âncora de L1, aplicada agora à
+  entrada do programa. [link](https://doi.org/10.1109/PROC.1975.9939)
+- Nygard, *Release It!*, 2ª ed., Pragmatic Bookshelf, 2018, cap. 4 (*Stability patterns*, "fail fast") —
+  validar tudo o que a operação exige **antes** de consumir recurso remoto; falhar no meio custa o
+  recurso e deixa estado parcial.
+- Google, *Protocol Buffers Language Guide*, seção `reserved` — o identificador retirado continua
+  nomeado, para que pedi-lo dê erro em vez de significar outra coisa (o argumento de K5 e K8).
+  [link](https://protobuf.dev/programming-guides/proto3/#deleting)
+
+**Sem precedente encontrado (2026-08-05)** na literatura de benchmarks de MGT para "o conjunto de
+geradores admissíveis é validado na entrada da ferramenta de coleta". Pré-registrar o slate de geradores
+é a prática de § 2.2 e § 4; o que é decisão deste projeto é onde a violação falha.
+
+### L4 — a fonte fora da moldura é NOMEADA no lab, com as três razões separadas
+
+O lab passa a espelhar a distinção que o lado selado já fazia (K8), em três listas: as quatro células de
+`REGISTER`/`HUMAN_SOURCE`; `A1_BLOCKED_DOMAIN_SOURCES` (`ptso_qa`, recusada por termo de acesso —
+condição jurídica satisfazível); e `OUT_OF_FRAME_DOMAIN_SOURCES` (resenha de produto e as tipologias
+Carolina fora da moldura — rota e licença admissíveis, **nenhuma célula**). Um candidato de fonte fora da
+moldura é recusado por nome, com a razão, e **contado** (`OutOfFrameDomainSource`, subclasse de
+`UnwritableInV3`) em vez de derrubar a montagem; o mesmo vale para a linha mista cujo **pai** está fora.
+
+Duas consequências que a separação compra e que a deleção não compraria: (i) o vocabulário que ainda
+nomeia B2W diz que ele está FORA, então quem reencontrar o nome num pool antigo lê a razão em vez de
+descobrir silêncio; (ii) as duas razões exigem ações diferentes — parecer jurídico contra emenda da
+moldura —, e juntá-las apagaria qual delas se aplica.
+
+- Gebru et al., *Datasheets for Datasets*, CACM 64(12), 2021 — o dataset declara o que ficou fora e por
+  quê. [link](https://doi.org/10.1145/3458723)
+- Google, *Protocol Buffers Language Guide*, seção `reserved` — a mesma âncora de K5/K8, aplicada agora à
+  fonte no lado do coletor. [link](https://protobuf.dev/programming-guides/proto3/#deleting)
+
+**Sem precedente encontrado (2026-08-05)**, e é o mesmo vazio de K8: a distinção em três níveis
+(estocada / fora da moldura / recusada) num inventário de fontes de benchmark não tem precedente
+localizado. Esta entrada é o espelho, do lado Python, de uma decisão já registrada.
+
+### L5 — o vocabulário da célula é o das duas listas que GATEIAM, não o dos nomes de registro
+
+O campo que carrega a célula de uma linha humana é `humanSourceType`, e a pré-inscrição congelada nomeia
+a mesma partição de quatro populações em DOIS vocabulários: `humanCoreStrata`
+(`encyclopedic`/`judicial`/`social-media`/`university`) e `preRegistration.quotaAxis.cells`
+(`carolina-judicial`/`carolina-social-media`/`carolina-university`/`ptwiki`). O lab escreve o segundo.
+
+A escolha é medida e não estética. Quem lê o campo em produção são o gate de composição (que só conta
+sobre `quotaAxis.cells`) e o gate de FPR por célula, que nomeia a hipótese que decide `fpr-<valor>` e a
+procura em `multiplicity.primaryFamily` — cujos quatro membros certificadores são `fpr-carolina-*` e
+`fpr-ptwiki`. Escrito com os nomes de registro, um corpus de 320 negativos humanos por célula em `test`
+conta **zero** linha nas quatro células, reprova com oito quebras, e as quatro hipóteses pré-inscritas
+ficam em `missingHypotheses` enquanto quatro que a família não nomeia entram em `unexpectedHypotheses`.
+`humanCoreStrata` não tem consumidor que decida nada: é declaração, e o subconjunto
+`uncoveredCoreStrata` é conferido contra ela no parser.
+
+- Nosek, Ebersole, DeHaven & Mellor, *The preregistration revolution*, PNAS 115(11), 2018 — a família de
+  hipóteses é nomeada ANTES, e a medição tem de ser a das hipóteses nomeadas; um dado que não alcança a
+  hipótese pré-registrada não a decide. [link](https://doi.org/10.1073/pnas.1708274114)
+- Sculley et al., *Hidden Technical Debt in Machine Learning Systems*, NeurIPS 2015, § 3 e § 5
+  (*entanglement*, *undeclared consumers*, *configuration debt*) — dois consumidores do mesmo campo com
+  vocabulários diferentes é a dívida que não aparece em teste porque cada lado é internamente coerente.
+  [link](https://papers.nips.cc/paper_files/paper/2015/hash/86df7dcfd896fcaf2674f757a2463eba-Abstract.html)
+- Google, *Protocol Buffers Language Guide*, seção `reserved` — a mesma âncora de K5/K8: o nome que
+  sobrevive é o que faz o pedido errado falhar em vez de significar outra coisa.
+  [link](https://protobuf.dev/programming-guides/proto3/#deleting)
+
+**Sem precedente encontrado (2026-08-05)** para a regra de desempate propriamente dita — quando duas
+listas congeladas do MESMO artefato nomeiam a mesma partição com grafias diferentes, vence a que tem
+consumidor que reprova. É decisão de engenharia ancorada na dívida que Sculley et al. descrevem, não
+citação. Consequência registrada: `RELEASE_CORPUS_POLICY.requiredHumanSourceTypes` (o único outro leitor
+do campo, na cobertura do selo) passa à mesma grafia no mesmo commit, porque exigir os nomes de registro
+ali recusaria exatamente todo corpus que o gate de composição aprova.
+
+### L6 — a viabilidade do piso por célula é conferida na COLETA, e a condição é necessária
+
+`assert_cells_can_meet_the_origin_document_floor` conta, por célula, quantos documentos de origem
+(`groups.source`) DISTINTOS o pool humano entrega, e recusa a montagem de release abaixo de
+`powerFloors.samplingUnits`. A derivação é o que permite conferir tão cedo:
+`collection.maximumLinesPerOriginDocument` é 1 e as linhas de origem irrecuperável compartilham UM balde,
+então uma célula carrega no máximo (documentos distintos + 1) linhas no bloco cego — por mais linhas que o
+pool tenha. Uma célula com menos documentos que o piso não alcança o piso de negativos humanos, e nenhuma
+reseleção muda isso.
+
+A condição é **necessária e não suficiente**: os pisos são medidos em `test` e é o split que decide onde os
+documentos caem. O gate de composição (K14) continua sendo a autoridade; o que muda é o **momento** em que
+a mesma aritmética é ouvida.
+
+- Cochran, *Sampling Techniques*, 3ª ed., Wiley, 1977, cap. 9 (*Cluster sampling*) — a unidade sorteada é
+  o conglomerado; muitas linhas de um documento são um sorteio, e nenhuma correção posterior recupera a
+  informação que não foi amostrada.
+- Kish, *Survey Sampling*, Wiley, 1965, § 5 (efeito de desenho e correlação intraclasse) — o `n` efetivo de
+  uma amostra conglomerada é menor que a contagem de linhas, e é o efetivo que sustenta o intervalo.
+- Lachin, *Introduction to sample size determination and power analysis for clinical trials*, Controlled
+  Clinical Trials 2(2), 1981 — o tamanho de amostra é decidido **antes** da coleta, e um desenho que não
+  alcança o poder pretendido é redesenhado, não reanalisado.
+  [link](https://doi.org/10.1016/0197-2456(81)90001-5)
+
+**Medição que motivou a guarda (2026-08-05):** o pacote Carolina v2.0 tem 37 membros na tipologia
+judiciária, 7 em domínios universitários e 2 em rede social — e o `source` que o extrator emite é o MEMBRO
+do zip. Contra piso de 300 unidades, 300 negativos humanos por célula e teto de 1 linha por documento, as
+três células Carolina são **inviáveis na granularidade atual**, e a guarda passa a dizer isso antes de a
+extração ser gasta. A escolha entre reduzir a granularidade do eixo (documento TEI em vez de membro) e
+emendar o piso ou o teto é decisão sobre a UNIÃO do split e sobre a pré-inscrição, e não cabe no lab.
+
+**Sem precedente encontrado (2026-08-05)** para a guarda como *check* de viabilidade rodado pelo coletor
+contra o piso pré-inscrito; a prática citável é a de Lachin (decidir o tamanho antes) e a de Cochran
+(contar conglomerados e não linhas). O que é deste projeto é fazer as duas valerem no programa que monta o
+corpus.

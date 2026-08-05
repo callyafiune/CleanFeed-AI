@@ -1,19 +1,19 @@
 """Streams Corpus Carolina TEI zips into human-text candidates.
 
-Reads every `Corpus/<typology>/**.xml` member EXCEPT the wikis typology (we
-ingest Wikipedia directly; taking both would create cross-source near-dups).
-For each <TEI> document it reads the CAROLINA-level availability (license) and
-the `<date type="Download">` — the download date anchors the pre-ChatGPT
-guarantee per document, which is what makes the v2.0 (Bea) package usable — and
-keeps only documents whose license is in the allowlist. Only the body text and
-non-identifying metadata (typology) are extracted; header names/authors are
-never read. Stdlib only; memory-safe via iterparse + clearing.
+Reads the `Corpus/<typology>/**.xml` members of the THREE typologies the declared
+frame draws on, and no others (`FRAME_TYPOLOGIES`). For each <TEI> document it reads
+the CAROLINA-level availability (license) and the `<date type="Download">` — the
+download date anchors the pre-ChatGPT guarantee per document, which is what makes the
+v2.0 (Bea) package usable — and keeps only documents whose license is in the
+allowlist. Only the body text and non-identifying metadata (typology) are extracted;
+header names/authors are never read. Stdlib only; memory-safe via iterparse +
+clearing.
 
 Usage:
   python benchmark/lab/extract_carolina.py \
     --input <archive.zip> --output benchmark/data/candidates/carolina.jsonl \
     --snapshot-version carolina-v2.0 \
-    [--limit 4000] [--sample-rate 1]
+    [--limit 4000] [--sample-rate 1] [--typologies judicial_branch,social_media]
 """
 
 from __future__ import annotations
@@ -29,7 +29,51 @@ from common import CandidateWriter, parse_iso_date, read_id_file
 
 SOURCE_ID = "src_carolina"
 TEI_NS = "{http://www.tei-c.org/ns/1.0}"
-EXCLUDED_TYPOLOGY_DIRS = {"wikis"}
+# The typologies of the declared frame, as the archive's directory names slug to. Three
+# of the four quota cells come out of this one package, one typology each, and each of
+# them publishes its own FPR ceiling — so this list IS the sampling frame on the
+# Carolina side, not a convenience filter.
+FRAME_TYPOLOGIES: tuple[str, ...] = (
+    "judicial_branch",
+    "social_media",
+    "university_domains",
+)
+# The typologies the package also holds and the frame does NOT draw on, with the reason
+# each one is outside. Declared rather than deleted: an allowlist alone cannot tell a
+# typology that was DECIDED against from one nobody has looked at, and the second case
+# has to stop the run (see `TypologyOutOfFrame`).
+OUT_OF_FRAME_TYPOLOGIES = {
+    "legislative_branch": (
+        "the frame names the judicial typology alone; legislative text is a different "
+        "population and is outside the sampling frame"
+    ),
+    "public_domain_works": (
+        "literary and historical works, which none of the four cells describes"
+    ),
+    "wikis": (
+        "outside the sampling frame, and the encyclopedic cell is served by the "
+        "Wikipedia dump directly: taking both bases would make cross-source "
+        "near-duplicates of the same articles"
+    ),
+    "datasets_and_other_corpora": (
+        "a compilation of other corpora is not a register: the provenance is whatever "
+        "each compiled base was, and it overlaps the other typologies"
+    ),
+}
+
+
+class TypologyOutOfFrame(ValueError):
+    """The archive holds a typology this module has no decision about.
+
+    Fail-closed, and it stops the RUN rather than skipping the member. A typology that
+    is neither in the frame nor in the declared exclusions is undecided, and deciding it
+    by silence is the reverse of fail-closed in the direction that hurts: the Carolina
+    directory names carry spaces in some releases and underscores in others, so a
+    renamed in-frame directory would produce ZERO rows for a cell whose FPR ceiling the
+    release publishes, and produce them quietly.
+    """
+
+
 # The date field as the TEI header names it, for the record's labelEvidenceRef. The
 # download date is what makes the v2.0 (Bea) package usable at all — the package
 # carries TEI dates from 2024 and 2025, so this filter is load-bearing, not a
@@ -54,6 +98,34 @@ def typology_dir(member_name: str) -> str:
 
 def slug(value: str) -> str:
     return re.sub(r"[^a-z0-9]+", "_", value.lower()).strip("_")
+
+
+def selected_typologies(requested: str | None) -> tuple[str, ...]:
+    """The typologies one run extracts: all three of the frame, or a named subset.
+
+    Refuses on the WAY IN, naming the typology, why it is outside the frame when that is
+    written down, and the admissible names. The refusal has to happen before the archive
+    is opened: a multi-gigabyte pass that discovers on the last member that it was asked
+    for the legislative branch has already spent the run.
+    """
+    if requested is None:
+        return FRAME_TYPOLOGIES
+    asked = tuple(slug(name) for name in requested.split(",") if name.strip())
+    if not asked:
+        raise argparse.ArgumentTypeError(
+            "--typologies was given no name; omit it to extract the whole frame "
+            f"({', '.join(FRAME_TYPOLOGIES)})"
+        )
+    for name in asked:
+        if name not in FRAME_TYPOLOGIES:
+            reason = OUT_OF_FRAME_TYPOLOGIES.get(
+                name, "the declared frame does not draw on it"
+            )
+            raise argparse.ArgumentTypeError(
+                f"typology {name!r} is outside the declared frame: {reason}. "
+                f"Admissible: {', '.join(FRAME_TYPOLOGIES)}"
+            )
+    return asked
 
 
 def parse_document(element: ET.Element) -> tuple[str | None, str | None, str]:
@@ -94,6 +166,7 @@ def extract(
     writer: CandidateWriter,
     per_typology_limit: int | None = None,
     snapshot_version: str = "",
+    typologies: tuple[str, ...] = FRAME_TYPOLOGIES,
 ) -> None:
     """Fills candidates per typology (capped) so no typology monopolizes the
     overall limit just for coming first in the archive order.
@@ -103,19 +176,35 @@ def extract(
     resolves against, and one download of the package is ONE batch — the typologies
     are partitions of it, not separate acquisitions, so all three cells that come
     out of this archive share the batch.
+
+    A member of a typology outside `typologies` is never opened, so it emits nothing and
+    consumes none of the run's quota — the whole point of an allowlist over a per-cell
+    cap is that out-of-frame material cannot crowd out in-frame material. A typology
+    that is neither in the frame nor in `OUT_OF_FRAME_TYPOLOGIES` refuses the run.
     """
     material_batch = group_axes.material_batch_id(snapshot_version)
     with zipfile.ZipFile(str(input_path)) as archive:
-        members = [
-            info
-            for info in archive.infolist()
-            if not info.is_dir()
-            and info.filename.endswith(".xml")
-            and typology_dir(info.filename) not in EXCLUDED_TYPOLOGY_DIRS
-        ]
+        members: list[tuple[zipfile.ZipInfo, str]] = []
+        for info in archive.infolist():
+            if info.is_dir() or not info.filename.endswith(".xml"):
+                continue
+            # Compared as the SLUG, because that is the form the candidate's
+            # `domainSource` carries and the releases spell the same typology two ways
+            # ("social media" and "social_media"): matching the raw directory name would
+            # admit one spelling and refuse the other.
+            found = slug(typology_dir(info.filename))
+            if found in typologies:
+                members.append((info, found))
+            elif found not in FRAME_TYPOLOGIES and found not in OUT_OF_FRAME_TYPOLOGIES:
+                raise TypologyOutOfFrame(
+                    f"member {info.filename!r} belongs to the typology {found!r}, which "
+                    "this extractor has no decision about: it is neither one of the "
+                    f"frame's ({', '.join(FRAME_TYPOLOGIES)}) nor one of the declared "
+                    f"exclusions ({', '.join(sorted(OUT_OF_FRAME_TYPOLOGIES))}). "
+                    "Declare it in one of the two before extracting from this package"
+                )
         kept_by_typology: dict[str, int] = {}
-        for info in members:
-            typology = slug(typology_dir(info.filename)) or "unknown"
+        for info, typology in members:
             if (
                 per_typology_limit is not None
                 and kept_by_typology.get(typology, 0) >= per_typology_limit
@@ -216,6 +305,14 @@ def main() -> None:
         help="versão concreta do pacote (ex.: carolina-v2.0). Registrada na "
         "proveniência e é o que nomeia o lote de material",
     )
+    parser.add_argument(
+        "--typologies",
+        type=selected_typologies,
+        default=FRAME_TYPOLOGIES,
+        help="lista separada por vírgula, subconjunto da moldura "
+        f"({', '.join(FRAME_TYPOLOGIES)}); omitida, extrai as três. Tipologia fora da "
+        "moldura é recusada AQUI, antes de o arquivo ser aberto",
+    )
     args = parser.parse_args()
 
     writer = CandidateWriter(
@@ -231,6 +328,7 @@ def main() -> None:
             writer,
             per_typology_limit=args.per_typology_limit,
             snapshot_version=args.snapshot_version,
+            typologies=args.typologies,
         )
     finally:
         writer.close()

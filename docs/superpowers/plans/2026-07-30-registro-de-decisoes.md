@@ -3416,3 +3416,140 @@ número exige emenda da política selada, com a medição na mão.
   mudam **juntos**, e metade da troca — escore bruto com corte calibrado, ou corte bruto com perfil de
   runtime calibrado — é pior que qualquer das duas pontas. **Dono: Commit D, junto do item 13**, que já
   reescreve `evaluate.ts` para passar a multiplicidade.
+
+---
+
+## Fase 2, unidade L1 — as células e as lanes: D0, D4, D6 e D7 resolvidas no lab (2026-08-05)
+
+**Status:** `EM-VIGOR (delegada)`. Nenhuma das quatro divergências está na lista de nunca-delegado, e
+nenhuma toca o caminho selado — o lab produz candidatos e não sela ciência. O estado vigente vive em
+`ESTADO.md`; a razão metodológica, com referência, em `references.md` § L (L1–L4); aqui está a razão de
+engenharia e o custo de reversão.
+
+**Medido antes de decidir:** o lab estava numa moldura de CINCO células (`qa-informal`, `encyclopedic`,
+`social-media` servida por B2W, `university`, `institutional` pondo judiciário e legislativo no mesmo
+estrato) enquanto a Fase 1 já havia congelado QUATRO (`humanCoreStrata` = encyclopedic, judicial,
+social-media, university). O `humanSourceType` que o lab escrevia — `institutional`, `qa-informal` — não
+existe no vocabulário que os gates fatiam, então a montagem produzia estrato que nenhum teto de FPR cobre.
+
+### Decisões do agente, com a razão e o custo de reversão
+
+| # | decisão | razão | custo de reversão |
+|---|---|---|---|
+| L1-1 | `REGISTER`/`HUMAN_SOURCE` passam às 4 células, na grafia de `preRegistration.quotaAxis.cells` (`ptwiki`, `carolina-judicial`, `carolina-social-media`, `carolina-university`) | o campo `humanSourceType` é lido pelos gates, e o de FPR por célula procura `fpr-<valor>` em `multiplicity.primaryFamily`: qualquer outra grafia conta ZERO linha nas quatro células do gate de composição e deixa as quatro hipóteses certificadoras sem gate (medido, ver L1-18). As duas listas ficam keyed igual e o pino é contra as DUAS autoridades que reprovam, mais a lista de cobertura do selo | editar dois dicts; o teste que junta com a política amarra |
+| L1-2 | fonte fora da moldura é **nomeada** em duas listas distintas — `A1_BLOCKED_DOMAIN_SOURCES` (`ptso_qa`) e `OUT_OF_FRAME_DOMAIN_SOURCES` (B2W + 4 tipologias Carolina) | espelho de C-10/C-16 do lado Python: as razões exigem ações diferentes (parecer jurídico contra emenda da moldura) e juntá-las apaga qual se aplica. Deletar o nome faria a fonte reaparecer num pool antigo e ser descartada **sem razão reportada** | mover a entrada de volta |
+| L1-3 | `human_record` recusa por `OutOfFrameDomainSource` (subclasse de `UnwritableInV3`), não por `KeyError` | a recusa é **contada** pelo `build()` do `main`, que é a disciplina do módulo inteiro ("a row the v3 contract cannot express is DROPPED AND COUNTED"). Um `KeyError` derrubaria a montagem e não diria qual das duas razões se aplica | trocar a classe da exceção |
+| L1-4 | o argumento `register` de `human_record` passa a ser **conferido** contra a célula derivada da fonte | um rótulo de célula que discorda da fonte conta o negativo humano sob população de que ele não foi sorteado, e move DOIS tetos publicados de uma vez. O argumento permanece porque é o que a montagem **afirma** estar coletando; conferido, ele deixa de poder mentir | apagar quatro linhas |
+| L1-5 | a linha **mista** cujo pai está fora da moldura sai junto, pelo `parentFamily` | uma mista mecanicista É o texto humano do pai com trechos gerados, então ela é contada na célula do pai. Medido nos pools: dos 2.135 pares, 1.337 têm pai fora da moldura — `ptso_qa` 1.111, `carolina_datasets_and_other_corpora` 223, `carolina_legislative_branch` 3 — e **zero** vem de B2W; a classe cai a 798 contra a cota de 2.000 comparada por igualdade exata (ver L1-22) | apagar a guarda |
+| L1-6 | `HN_REGISTER` remapeado às quatro células: formulaic→carolina-judicial, corporate-structure→carolina-university, highly-polished→ptwiki, as outras três→carolina-social-media | não é bookkeeping: `tag_hard_negatives` tira as linhas de cada família do pool DAQUELA célula, então estilo apontando para célula morta não etiqueta nada, e a família fica ausente de `requiredHardNegativeFamilies` — selo recusado no fim de uma montagem inteira, por uma entrada de dict que parece inócua. Com as 5 células antigas, `motivational` já apontava para `qa-informal`, que morreu na Fase 1 | reescrever o dict; o teste de contradomínio amarra |
+| L1-7 | `SOURCE_SNAPSHOT` perde `src_ptso` e `src_b2w` | é o **fallback** de `label_evidence`: uma entrada aqui data a linha contra um snapshot, e `pt-stackoverflow` está em `humanSources.blockedSnapshots`. O conjunto de valores é pinado contra `humanSources.snapshots` | reinserir a linha |
+| L1-8 | `load_humans` lê só os pools da moldura, e o filtro de `REGISTER` permanece | duas telas para dois casos diferentes: o arquivo de pool fora da moldura não é aberto (não gasta cota), e o filtro pega a linha **de tipologia fora da moldura dentro de um pool da moldura** — que é o caso real, porque um arquivo Carolina tem a tipologia legislativa ao lado das três | reinserir o nome do pool |
+| L1-9 | `TARGET["human"]` deriva de `collection.humanLinesTotal`; `collection_targets()` confere total = células × alvo e alvo > piso | o alvo literal de 4.000 dava 1.000 por célula, ~200 em `test`: um terço do denominador de 300 que o teto publicado exige. As duas conferências recusam no lab o que `sealDataset` recusaria por igualdade exata, e recusam **antes** da corrida de montagem | editar o JSON e o parser juntos |
+| L1-10 | `ai`/`mixed` seguem literais no lab, e os TRÊS são pinados por teste contra `RELEASE_CORPUS_POLICY.counts` lido de `dataset-manifest.ts` | os counts gerados são ratificados e vivem no TypeScript, que é o artefato que o selo lê. Ler TS no import do módulo (o precedente existe em `declared_group_axes`, mas como função) tornaria o lab inimportável por uma reformatação; a junção entre linguagens fica no teste, como a de `CLASS_TOLERANCE` | mover os counts para o JSON da política |
+| L1-11 | `balanced_humans` divide pelas células **declaradas** e o top-up entre células SAI | cada célula publica o próprio teto sobre o próprio denominador, então linha da célula A não substitui linha ausente na B. Dividir pelas células presentes transforma uma célula faltante em três sobrecoletadas; o top-up alcança o total e gasta o orçamento em material que o teto faltante não pode usar. A falta agora aparece na contagem de coleta, que é o número sobre o qual o operador ainda pode agir. Efeito colateral removido: o top-up antigo indexava `p[per + k]` e podia estourar `IndexError` num pool curto | reescrever a função |
+| L1-12 | `--provider` recusa na **argparse**, com `type=frozen_lane` + `choices` derivados de `PROVIDER_LANE` | medido: `PROVIDER_LANE[provider]` é lido dentro do laço, **depois** da chamada ao provedor, então `--provider openai` gastava chamada real e morria com `KeyError` na primeira linha escrita — e de novo em cada retomada. A recusa nomeia as quatro lanes admissíveis e a razão (reserva OOD; slate congelado) | trocar o `type` por `choices` de `DEFAULT_MODELS` |
+| L1-13 | os transportes REST de `openai`/`anthropic` **saem** de `call_provider`; os nomes ficam em `OUT_OF_SLATE_PROVIDERS`, que passa a ter consumidor de produção | manter transporte inalcançável exige manter `keys` com duas variáveis de ambiente que este projeto não tem (só `GEMINI_API_KEY`), e um `keys[provider]` incompleto é o mesmo `KeyError` uma camada abaixo. Restaurar transporte é emenda de slate, não edição | ~30 linhas de urllib, recuperáveis do git |
+| L1-14 | `SEEDED_PROVIDERS` fica VAZIO, com o fato escrito | nenhuma das quatro lanes congeladas expõe seed de amostragem — é o que `assemble_corpus.SEED_NULL_REASON` já afirmava. A constante permanece porque é o mecanismo: uma lane que passasse a oferecer seed é uma entrada | uma entrada |
+| L1-15 | `extract_carolina` troca denylist por **allowlist** de tipologia; as 4 fora da moldura ficam declaradas com a razão | uma denylist de `wikis` deixava passar legislativo, public domain works e datasets-and-other-corpora, e o legislativo é 4.477 MB do pacote. Membro fora da seleção não é aberto, então não gasta cota — que é o ponto da allowlist sobre o cap por tipologia | reescrever o filtro |
+| L1-16 | tipologia que **nenhuma** das duas listas nomeia **recusa a corrida** (`TypologyOutOfFrame`) | exclusão DECIDIDA é silenciosa (a lista é a declaração); exclusão INDECIDIDA para tudo. Razão de domínio: o diretório vem grafado com espaço em algumas releases e underscore em outras, e uma tipologia da moldura renomeada produziria zero linha de uma célula cujo teto a release publica, **em silêncio**. A comparação é sobre o SLUG por isso mesmo | trocar o `elif` por um `continue` |
+| L1-17 | `--typologies` valida na entrada e só **estreita** dentro da moldura | uma passada de vários gigabytes que descobre no último membro que foi pedido o legislativo já gastou a corrida | remover o `type=` |
+| L1-18 | o vocabulário da célula é `preRegistration.quotaAxis.cells`, e `RELEASE_CORPUS_POLICY.requiredHumanSourceTypes` passa à mesma grafia | achado BLOQUEANTE da revisão, confirmado por medição própria: `humanSourceType` tem três vocabulários candidatos na árvore e só dois decidem. Probe em node sobre os módulos da árvore, 4 x 320 negativos humanos em `test`, cada um com `source` distinto — com os nomes de registro, `auditReleaseComposition` conta `carolina-judicial=0L/0U … ptwiki=0L/0U` e reprova com 8 quebras; com a grafia das células, 320L/320U em cada uma e `passed: true`. E `gates.test.ts` já tinha, em HEAD, o teste "refuses a corpus whose humanSourceType carries the stratum names instead of the quota cells" — o lado selado já havia decidido, e L1 escrevera justamente o vocabulário que ele recusa. `requiredHumanSourceTypes` move no mesmo commit porque lê o MESMO campo: nos nomes de registro ele recusaria todo corpus que o gate de composição aprova (defeito A4, duas grafias que nunca se encontram, pré-existente em HEAD) | três listas e dois testes; `preregistration-v4.json` NÃO é tocado (congelado) |
+| L1-19 | a inviabilidade da moldura na granularidade atual é MEDIDA e registrada, e não delegada ao preflight | achado BLOQUEANTE da revisão, confirmado: o `source` que `extract_carolina` emite é o MEMBRO do zip, e o pacote v2.0 tem 37 membros em `judicial branch`, 7 em `university domains` e 2 em `social media` (46 na moldura; 361 é o total não-wiki, que inclui as quatro tipologias de fora). Contra `powerFloors.samplingUnits` = 300, `criticalFprHumanNegatives` = 300 e `maximumLinesPerOriginDocument` = 1, as três células Carolina carregam no máximo 37, 7 e 2 linhas no bloco cego. Nenhuma re-extração muda: `ESTADO.md` § 5.1 conta DOCUMENTOS TEI, unidade que o gate não lê. O alvo de 1.750 linhas/célula é inalcançável sob o teto por documento, então a recusa nova de L1-9/L1-11 dispararia contra a política e não contra erro de coleta | nenhum: é registro. A escolha entre baixar a granularidade do eixo (documento TEI) e emendar piso/teto toca a UNIÃO do split e a pré-inscrição, e é da Fase 3 |
+| L1-20 | `assert_cells_can_meet_the_origin_document_floor` recusa a montagem de release antes da seleção | a mesma aritmética do gate de composição, ouvida no começo da corrida em vez do fim. Derivação: com teto de 1 linha por documento e um balde único para origem irrecuperável, a célula carrega no máximo (documentos distintos + 1) linhas no bloco cego, logo documentos < piso é impossibilidade e não escassez. NECESSÁRIA e não suficiente (os pisos são medidos em `test` e é o split que decide onde os documentos caem). Só contra a cota de release: `--sample` coleta uma fração dela por construção, e comparar um smoke contra 300 recusaria todo smoke pela única razão que não é defeito. Medido nos pools de hoje: 0 documentos conhecidos nas quatro células, e a recusa imprime os quatro números | apagar a chamada; o teste que confere a ordem em `main` fica vermelho |
+| L1-21 | `domainSource` que NENHUMA das três listas nomeia recusa a corrida (`UndecidedDomainSource`, fora de `UnwritableInV3`) | a assimetria de L1-16 no eixo da fonte, que L1 tinha construído só no extrator: exclusão DECIDIDA é descarte contado, exclusão INDECIDIDA para tudo. A razão de domínio é a mesma e é medida — `domainSource` é cunhado como `carolina_<tipologia>` e o diretório vem grafado com espaço em algumas releases e underscore em outras, então uma re-extração que sluga diferente escreve linhas de uma célula cujo teto a release publica, e o descarte genérico as apagaria em silêncio | trocar a classe da exceção pela razão genérica |
+| L1-22 | `tag_hard_negatives` extraído de `main` e recusando por demanda de célula; `mixed_parents_by_frame` reporta o déficit da classe mista por pai | dois laços que só o `main` executava. O de etiquetagem tira `tag_per` linhas por família do pool da célula daquela família, então as demandas SOMAM (uma linha não carrega duas famílias) e uma célula curta deixava a última família com zero — ausência que `sealDataset` recusa no fim. O da mistura: 1.337 de 2.135 pares saem e ninguém contava por pai, então o desbloqueio inclui a REGERAÇÃO da lane de mistura (Fase 3, item 2) ao lado da re-extração humana | reinserir os laços em `main`; os testes das duas funções ficam vermelhos |
+| L1-23 | REFUTADO: "nenhuma célula concentra mais de duas famílias hard-negative". No lugar dela, a regra é de COBERTURA: toda célula é fonte de ao menos uma família | a revisão pediu a regra de concentração junto da aritmética. A aritmética entrou (L1-22); o teto por célula não. A família é um ESTILO e a célula é o MATERIAL: repetição, fraseado não nativo e registro motivacional ocorrem em texto informal curto, e mover uma delas para material judiciário ou enciclopédico só para equilibrar contagem etiquetaria um hard negative sobre texto que não exibe o estilo — que é a única coisa que o hard negative afirma. O que a mutação pedida DEVE pegar, e passou a pegar, é a outra direção: cada célula publica o próprio teto de FPR, então célula de que nenhum estilo é tirado publica teto medido sobre material que nunca carrega o registro adversarial que as outras três carregam. A mutação da revisão (`formulaic` → rede social) esvazia a célula judiciária e agora fica vermelha | inverter a inclusão no teste de contradomínio |
+
+### Fixtures migradas, e por que a migração não é cosmética
+
+`AssemblerRealGroupTests._human_candidate` produzia candidato `ptso_qa` com `author` **`known`**, e todo
+teste de `human_record` passava por ele. Migrado para material da célula judiciária, com `author`
+`notApplicable` pela razão da Carolina: **nenhuma** célula da moldura vigente rende autor conhecido — a
+lede da Wikipédia é obra coletiva e o extrator da Carolina nunca lê nome de header. Manter um autor
+`known` numa fixture da moldura seria contrafactual, e a asserção que ela sustentava ("dois registros de
+uma thread compartilham o eixo") sobrevive melhor no eixo que a célula tem de verdade: dois documentos TEI
+de um MEMBER FILE compartilham `source`. O teste foi renomeado para dizer isso
+(`test_two_records_of_one_member_file_share_the_source_axis`). Os pares mistos e as fixtures de
+`make_mixed` que chegam ao montador migraram para pai `carolina_judicial_branch`.
+
+**Consequência a registrar:** com as quatro células, `groups.author` é `notApplicable` em toda linha
+humana do corpus novo. `author` continua em `GROUP_KEYS` (união do split) e não custa nada ali — um eixo
+`notApplicable` não une —, mas a dependência intra-célula passa a repousar em `source`, `nearDuplicate` e
+linhagem, e `source` é o eixo grosso da Carolina (46 member files na moldura carregam a contribuição
+inteira). **A granularidade não está em aberto para o preflight decidir: ela já está decidida CONTRA a
+moldura**, e o número está em L1-19.
+
+### Achado fora do escopo desta unidade, registrado para não se perder
+
+`load_humans(cand)` honra `cand` para os pools frescos e para os arquivos de mistura, mas lê
+`reserved.jsonl` de `benchmark/data/dataset` **sempre**, por constante de módulo — o parâmetro promete
+que uma re-extração pode ser montada sem tocar os pools da corrida reprovada, e a reserva escapa da
+promessa. Medido de lado: as linhas da reserva são recusadas de todo modo (`MissingLabelEvidence`,
+`MissingMaterialBatch`), então o efeito hoje é contagem de descarte, não corpus contaminado. Não
+consertado: mexer no caminho da reserva é decisão sobre o que o corpus contém, e esta unidade é sobre a
+moldura. O teste novo de `load_humans` filtra pelos ids plantados por causa disso.
+
+### O que esta unidade NÃO fez, de propósito
+
+- **D1, D2, D5, D8 e D13 seguem abertas** — são as outras unidades da Fase 2. Em particular, a reserva
+  OpenAI-para-OOD (D1) continua sem política explícita no montador: o que L1 fez foi impedir que a
+  superfície de API da OpenAI seja PEDIDA, não decidir onde as famílias `gpt-*` são assentadas;
+- o fallback de governança que reinstala família held-out retirada (D2) continua lá, uma linha abaixo do
+  que L1 tocou em `main` (`sorted(held_out) or ["gemini-3_5-flash-lite"]`);
+- `SOURCE_DECLARED_AXES` (`group_axes.py`) continua listando `ptso_qa` e `b2w_reviews`. É declaração
+  consumida só por teste, e o que ela declara — que uma resenha pertence a um produto e a um resenhista —
+  é fato da fonte, não alegação de moldura. A autoridade que recusa é `declared_group_axes()`, parseada
+  do inventário revisado, e o teste novo junta as duas pontas;
+- `ner_pilot.py` continua amostrando `ptso_fresh.jsonl` e `b2w_fresh.jsonl` na medição de custo da
+  triagem de PII. É medição de custo sobre pools em disco, não montagem de corpus;
+- `ESTADO.md` **não foi reescrito**: a reescrita das seções 1 e 5 é a última unidade desta fila.
+
+### A rodada de revisão: o que ela pegou, e o que foi refutado
+
+Veredito da revisão: **BLOCK**, dois bloqueantes e três menores. Os dois bloqueantes eram reais e foram
+reconferidos por medição própria antes de mexer no código — nenhum foi aceito pelo relato.
+
+- **bloqueante 1 aplicado (L1-18).** A unidade tinha ancorado a célula em `humanCoreStrata`, a única das
+  três listas sem consumidor que reprova, e o registro afirmava "a célula É o estrato cujo teto a release
+  publica" — falso para as duas autoridades que publicam teto. O pino novo junta as três pontas que
+  decidem (`quotaAxis.cells`, os sufixos `fpr-*` de `multiplicity.primaryFamily` e
+  `requiredHumanSourceTypes` lido do TypeScript) e é vermelho nas duas direções da troca de grafia;
+- **bloqueante 2 aplicado (L1-19 + L1-20).** A causa registrada da reprovação do smoke ("não é a
+  moldura") estava incompleta e o número registrado (361 member files) era o total não-wiki e não o da
+  moldura (46). A infeasibilidade por célula entrou no registro e a guarda que a diz na coleta entrou no
+  código;
+- **menor 3 aplicado.** O caso de célula com ZERO candidato entrou no teste da cota: as quatro células
+  presentes tornavam "declaradas" e "chegadas" o mesmo número, e a mutação do denominador sobrevivia à
+  suíte inteira (a revisão mediu isso em cópia no scratchpad, e a medição confere);
+- **menor 4 aplicado (L1-5 + L1-22).** A razão registrada nomeava B2W, que contribui zero par. Números
+  corrigidos e a consequência da classe mista registrada;
+- **menor 5 aplicado.** A asserção de `author` compartilhado voltou como fixture de CONTRATO do builder,
+  nomeada pelo que é, e a asserção que sobrevivia por construção passou a dizer que é declaração da
+  célula. O eixo `author` volta a ter um caso em que duas linhas chegam com o mesmo `known`;
+- **`extraMutationsRequested` #6 parcialmente refutado (L1-23), e a mutação SOBREVIVEU na primeira
+  tentativa.** A metade aritmética entrou; a regra "no máximo duas famílias por célula" não, porque
+  equilibrar contagem move um estilo para material que não o exibe. E a primeira versão da prova nasceu
+  VERDE, por circularidade do fixture: ele dimensionava o pool a partir de `hard_negative_demand_per_cell`,
+  isto é, do próprio mapa que a mutação altera, então o pool crescia junto com a demanda. O conserto é a
+  guarda de COBERTURA (toda célula é fonte de ao menos uma família), que não depende de fixture nenhum e
+  fica vermelha sob a mutação exata que a revisão pediu;
+- **duas observações da revisão que NÃO viraram mudança.** (i) o argumento `register` de `human_record` é
+  inverificável em produção porque o único chamador o deriva do mesmo `cell_of` — é o que L1-4 já diz, e
+  a conferência continua valendo como contrato da assinatura; (ii) `make_mixed.py` ainda monta um dict de
+  `keys` com OPENAI/ANTHROPIC e chama `call_provider(..., "gemini", ...)` fixo: dívida morta, declarada,
+  fora do escopo de D6.
+
+**O `evaluatorDigest` MOVE, e isto é fato registrado e não efeito colateral escondido.**
+`benchmark/dataset-manifest.ts` é membro de `EVALUATOR_FILES` (`digests.ts`), e a lista de cobertura do
+selo muda de bytes nele. Medido com os 52 membros lidos de HEAD numa raiz sombra fora da árvore:
+35041bfa4f13719e7015c5ede03a1b994a3a54d64bcd93318278bafb0ebb1396 →
+9bc4e7494d31cd023985d34818574b179cc2aabfa13f7562749a09be10d2783f. Nenhum arquivo NOVO entra na lista,
+então nada em `references.md` § K15 muda; e é inócuo hoje pela mesma razão de K15: `issuedAt` nulo,
+zero tags, nenhum `fit` selado.
+
+**Consequência operacional medida:** o smoke `--sample 40` continua reprovando, e agora reprova MAIS
+CEDO e nomeando a causa. Antes: `UnsplittableCorpus` em `assert_components_can_fill_five_partitions`
+(1 componente). Agora: `HardNegativeCellUnderfilled`, dizendo que as quatro células têm 0 linha humana
+porque as 16 selecionadas saíram em `MissingLabelEvidence`. É o mesmo defeito de pool — os 16.100
+candidatos humanos em disco não carregam `dateField`, `sourceMaterialBatch` nem `groupAxes` — dito uma
+etapa antes.

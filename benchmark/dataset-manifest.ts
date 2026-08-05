@@ -111,26 +111,28 @@ export const RELEASE_CORPUS_POLICY: CorpusPolicy = {
   // collected at the floor lands under the 300-line FPR denominator about half the
   // time. The floor stays the gate's number; this one is the collection's.
   counts: { human: 7_000, ai: 4_000, mixed: 2_000 },
-  // The four cells of the declared frame: Wikipedia pt (encyclopedic), Carolina
-  // social media (social-media), Carolina university domains (university) and
-  // Carolina judicial branch (judicial). Hard-negative families are STYLE families,
-  // not platform families, so they are untouched by this.
+  // The four cells of the declared frame: Wikipedia pt, Carolina judicial branch,
+  // Carolina social media and Carolina university domains. Hard-negative families
+  // are STYLE families, not platform families, so they are untouched by this.
   //
-  // `judicial` and not `institutional`: the frame names ONE Carolina typology, and
-  // the legislative typology is outside it. A stratum that pooled the two would name
-  // a population the corpus does not draw from.
+  // The spelling is `preRegistration.quotaAxis.cells` and NOT the register words of
+  // `humanCoreStrata`, because coverage here is checked over the same field the
+  // per-cell ceilings are measured on (`CELL_FPR_AXIS`), and that field's vocabulary
+  // is decided by the gate that names its hypothesis `fpr-<value>` against the frozen
+  // `multiplicity.primaryFamily`. Requiring the register words would refuse every
+  // corpus the composition gate can pass, and passing this check with them would seal
+  // a corpus in which all four cells count zero lines.
   //
-  // This list is written out rather than filtered out of
-  // `PREREGISTRATION_V4.humanCoreStrata`, although that is what it equals: a derived
-  // list cannot disagree with its source, so nothing would notice a stratum
+  // Written out rather than derived from the policy, although that is what it equals:
+  // a derived list cannot disagree with its source, so nothing would notice a cell
   // renamed in one place and not the other. The agreement is held by test
-  // ("requires exactly the core strata the frozen policy has a source for"), the
+  // ("requires exactly the quota cells the frozen policy has a source for"), the
   // same way the NOTICE is held to the licence registry.
   requiredHumanSourceTypes: [
-    "encyclopedic",
-    "judicial",
-    "social-media",
-    "university",
+    "carolina-judicial",
+    "carolina-social-media",
+    "carolina-university",
+    "ptwiki",
   ],
   requiredHardNegativeFamilies: [
     "formulaic",

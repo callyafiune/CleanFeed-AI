@@ -334,17 +334,22 @@ describe("preregistration-v4.json", () => {
     ]);
   });
 
-  // The release seal must require exactly the strata the policy HAS a source for.
-  // The two lists are not derived from each other on purpose — a derived list cannot
-  // disagree with its source, so nothing would notice a rename on one side.
-  it("requires exactly the core strata the frozen policy has a source for", () => {
+  // The release seal must require exactly the quota cells the policy HAS a source
+  // for. The two lists are not derived from each other on purpose — a derived list
+  // cannot disagree with its source, so nothing would notice a rename on one side.
+  //
+  // The cells and NOT `humanCoreStrata`: the seal's coverage check reads the same
+  // field the per-cell ceilings are measured on, and that field's vocabulary is the
+  // one `cellFprHypothesis` turns into a member of `multiplicity.primaryFamily`.
+  // `uncoveredCoreStrata` is asserted empty here because that is what makes "every
+  // declared cell has a source" a fact and not an assumption.
+  it("requires exactly the quota cells the frozen policy has a source for", () => {
     expect([...RELEASE_CORPUS_POLICY.requiredHumanSourceTypes].sort()).toEqual(
-      [
-        ...PREREGISTRATION_V4.humanCoreStrata.filter(
-          (stratum) =>
-            !PREREGISTRATION_V4.uncoveredCoreStrata.includes(stratum),
-        ),
-      ].sort(),
+      [...PREREGISTRATION_V4.preRegistration.quotaAxis.cells].sort(),
+    );
+    expect(PREREGISTRATION_V4.uncoveredCoreStrata).toEqual([]);
+    expect(RELEASE_CORPUS_POLICY.requiredHumanSourceTypes).toHaveLength(
+      PREREGISTRATION_V4.humanCoreStrata.length,
     );
     // And the human count the seal enforces is the total the pre-registration derives
     // from the collection TARGET, not from the per-cell floor: `sealDataset` compares

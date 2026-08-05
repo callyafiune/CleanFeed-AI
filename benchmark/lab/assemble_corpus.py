@@ -22,11 +22,15 @@ its three measured consequences. Now:
   * every axis carries a STATE — `known` with an identity, `notApplicable` with a
     written reason, or `unknown` with a written reason and the cost of the record's
     eligibility (R6). Nothing is ever substituted;
-  * the identities are the ones the sources have: the Stack Overflow THREAD, the
-    Wikipedia PAGE, the B2W PRODUCT, the Carolina MEMBER FILE, the extraction RUN,
-    the generation BATCH, the human SEED, the prompt TEMPLATE, the LANE;
-  * person identifiers (SE author, B2W reviewer) are HMAC pseudonyms keyed by C3's
-    keyring, never bare digests, and the extractors fail closed without it;
+  * the identities are the ones the sources have: the Wikipedia PAGE, the Carolina
+    MEMBER FILE, the extraction RUN, the generation BATCH, the human SEED, the prompt
+    TEMPLATE, the LANE. The Stack Overflow THREAD and the B2W PRODUCT are still named,
+    in `A1_BLOCKED_DOMAIN_SOURCES` and `OUT_OF_FRAME_DOMAIN_SOURCES`, because those two
+    bases are OUTSIDE the declared frame — not because they have no identity;
+  * where a person identifier exists it is an HMAC pseudonym keyed by C3's keyring,
+    never a bare digest, and the extractor fails closed without it. No cell of the
+    declared frame yields one: a Wikipedia lead section has no single author and the
+    Carolina extractor never reads TEI header names;
   * a human row states the basis of its `human` label — which date field, what value,
     against which cutoff, out of which snapshot — instead of asserting it;
   * a row the v3 contract cannot express is DROPPED AND COUNTED, never patched. v2
@@ -40,8 +44,9 @@ cleanfeed-canonical-assembly):
   * Pseudonyms /^[A-Za-z0-9_-]+$/ everywhere ids/groups live; families slugged.
   * label cross-rules: human->no generation; ai->generation; mixed->mixture
     (fractions sum to 1 at full float precision) + derivationRoot != id.
-  * humanSourceType = register (5 required types). hardNegativeFamily tagged
-    heuristically so all 6 required families are present on human records.
+  * humanSourceType = the QUOTA CELL, one of the four the declared frame has a source
+    for. hardNegativeFamily tagged heuristically so all 6 required families are
+    present on human records.
   * createdAt assigns a train/dev/cal-A/cal-B/test BLOCK (45/5/10/20/20 per class); held-out AI
     generator families are forced entirely into the test block (latest time),
     as the split requires them after the test cut.
@@ -72,6 +77,14 @@ import near_dupes
 CAND = Path(__file__).resolve().parent.parent / "data" / "candidates"
 DATASET = Path(__file__).resolve().parent.parent / "data" / "dataset"
 
+# The frozen pre-registration, READ and never retyped. It is the single authority for
+# the generation lanes and for the human collection targets, and a copy on this side
+# would be a second authority that can disagree with the sealed one. It has to be the
+# LIVE file: the abandoned rebuild-v3-policy pair left `EVALUATOR_FILES`, so a byte
+# changed there no longer moves the `evaluatorDigest`, and reading it would put an
+# unwatched authority in charge of what a sealed corpus contains.
+POLICY_PATH = Path(__file__).resolve().parent.parent / "preregistration-v4.json"
+
 # The cutoff every human label in this corpus rests on, as the ISO instant the
 # record's labelEvidenceRef carries. Same value as common.CHATGPT_CUTOFF; spelled
 # here because the record needs the string form and the extractor needs the datetime.
@@ -83,10 +96,14 @@ CUTOFF_ISO = "2022-11-30T00:00:00+00:00"
 # before C2. It maps SOURCE to SNAPSHOT and nothing else: it does not record which
 # concrete dump version, because that is a fact only the extractor saw and D1 is
 # what registers it.
+#
+# The two bases outside the declared frame are NOT here, and their absence is a
+# refusal rather than a gap: `label_evidence` falls back to this map, so an entry for
+# `pt-stackoverflow` or `b2w-reviews01` would date a row against a snapshot the frozen
+# policy does not stock (the first is in `humanSources.blockedSnapshots`). They stay
+# named, with the reason, in the two dicts below.
 SOURCE_SNAPSHOT = {
-    "src_ptso": "pt-stackoverflow",
     "src_wikipedia_pt": "ptwiki",
-    "src_b2w": "b2w-reviews01",
     "src_carolina": "carolina",
 }
 
@@ -124,26 +141,78 @@ def within_class_tolerance(fracao: float, alvo: float) -> bool:
     """`|fracao - alvo| <= CLASS_TOLERANCE`, com a borda INCLUIDA."""
     return abs(fracao - alvo) <= CLASS_TOLERANCE + CLASS_TOLERANCE_EPSILON
 
-# domainSource (candidate) -> humanSourceType (register). datasets set aside.
+# domainSource (candidate) -> humanSourceType, which IS the quota cell: the population
+# the release publishes one FPR ceiling for, over its own denominator of human
+# negatives. Four cells, one material each — Wikipedia pt plus three Carolina
+# typologies.
+#
+# The VOCABULARY is `preRegistration.quotaAxis.cells`, and the choice is load-bearing
+# rather than cosmetic: the gates read this very field (`CELL_FPR_AXIS` in
+# benchmark/gates.ts) and name the hypothesis they decide `fpr-<value>`, so a value
+# outside the cell list produces four hypotheses the frozen
+# `multiplicity.primaryFamily` does not carry, leaves the four it does carry
+# undecided, and counts zero lines in every cell of the composition gate.
+# `humanCoreStrata` names the same four populations in register words
+# (encyclopedic/judicial/social-media/university) and is read by no gate.
 REGISTER = {
-    "ptso_qa": "qa-informal",
-    "ptwiki_lead": "encyclopedic",
-    "b2w_reviews": "social-media",
-    "carolina_social_media": "social-media",
-    "carolina_university_domains": "university",
-    "carolina_judicial_branch": "institutional",
-    "carolina_legislative_branch": "institutional",
+    "ptwiki_lead": "ptwiki",
+    "carolina_judicial_branch": "carolina-judicial",
+    "carolina_social_media": "carolina-social-media",
+    "carolina_university_domains": "carolina-university",
 }
-# Register -> (provenance.sourceId, licenseId). sourceId must appear in the
-# source-manifest sources[]; licenseId in the manifest licenses[].
+# The cells, in name order. Derived rather than retyped because it is the DENOMINATOR
+# of the per-cell collection quota: a fifth cell added to the register above without
+# this list moving would keep dividing the total four ways.
+QUOTA_CELLS: tuple[str, ...] = tuple(sorted(set(REGISTER.values())))
+# The human source A1 REFUSED, kept with its name and its reason, mirroring
+# `A1_BLOCKED_HUMAN_SOURCES` (benchmark/source-manifest.ts). The condition is legal and
+# satisfiable — a verifiable record of how and when the dump was acquired, plus a
+# disposition of the 2024 access term that excludes LLM-training projects — so the
+# entry has to survive in order to be refused BY NAME (F0-6). A source that leaves by
+# deletion is a source the pipeline goes silent on: it would read a pool of it, find no
+# cell, and drop the rows with no reason to report.
+A1_BLOCKED_DOMAIN_SOURCES = {
+    "ptso_qa": (
+        "src_ptso is blocked by access terms: the 2024 term excludes LLM-training "
+        "projects and no verifiable record of the dump's acquisition exists"
+    ),
+}
+# Domain sources whose route and licence are admissible and that have NO CELL. A third
+# fact, held apart from the two above for the reason `SOURCE_OUT_OF_DECLARED_FRAME`
+# exists on the sealed side: "refused on a legal condition" and "outside the sampling
+# frame" are different things to act on, and merging them erases which one applies.
+OUT_OF_FRAME_DOMAIN_SOURCES = {
+    "b2w_reviews": (
+        "product review is not one of the four cells the claim is published over, so "
+        "no cell can carry its quota — the route and the licence stay admissible"
+    ),
+    "carolina_legislative_branch": (
+        "the frame names the judicial typology alone; the legislative one is a "
+        "different population and is outside the sampling frame"
+    ),
+    "carolina_public_domain_works": (
+        "public-domain works are literary and historical texts, which none of the four "
+        "cells describes, and the typology holds 26 documents"
+    ),
+    "carolina_wikis": (
+        "outside the sampling frame, and the encyclopedic cell is served by the "
+        "Wikipedia dump directly: taking both bases would make cross-source "
+        "near-duplicates of the same articles"
+    ),
+    "carolina_datasets_and_other_corpora": (
+        "a compilation of other corpora is not a register: the material's provenance "
+        "is whatever each compiled base was, and it overlaps the other typologies"
+    ),
+}
+# domainSource -> (provenance.sourceId, licenseId). sourceId must appear in the
+# source-manifest sources[]; licenseId in the manifest licenses[]. Keyed exactly like
+# REGISTER — the two are pinned key-for-key by test, because a candidate admitted by
+# one and unknown to the other would be a row with a cell and no provenance.
 HUMAN_SOURCE = {
-    "ptso_qa": ("src_ptso", "cc-by-sa-4.0"),
     "ptwiki_lead": ("src_wikipedia_pt", "cc-by-sa-4.0"),
-    "b2w_reviews": ("src_b2w", "cc-by-nc-sa-4.0"),
+    "carolina_judicial_branch": ("src_carolina", "cc-by-nc-sa-4.0"),
     "carolina_social_media": ("src_carolina", "cc-by-nc-sa-4.0"),
     "carolina_university_domains": ("src_carolina", "cc-by-nc-sa-4.0"),
-    "carolina_judicial_branch": ("src_carolina", "cc-by-nc-sa-4.0"),
-    "carolina_legislative_branch": ("src_carolina", "cc-by-nc-sa-4.0"),
 }
 GENERATED_LICENSE = "geracao-propria-v1"
 HARD_NEGATIVE_FAMILIES = [
@@ -154,16 +223,73 @@ HARD_NEGATIVE_FAMILIES = [
     "non-native",
     "corporate-structure",
 ]
-# Which register a hard-negative style is drawn from (heuristic, presence-level).
+# Which CELL a hard-negative style is drawn from (heuristic, presence-level). Every
+# value has to be a cell the register above produces, and that is not bookkeeping:
+# `tag_hard_negatives` takes each family's rows out of THAT cell's pool, so a style
+# pointing at a cell no material feeds tags nothing, and the family it names is then
+# missing from `requiredHardNegativeFamilies` — a release seal refused at the very end
+# of an assembly, by a dict entry that looks harmless.
+#
+# Three styles are drawn from social media and one from each of the others, and the
+# imbalance is the material rather than an oversight: informal short-form text is where
+# repetition, non-native phrasing and motivational register actually occur, and moving one
+# of them onto judicial or encyclopedic material to even the counts out would tag a hard
+# negative onto text that does not exhibit the style. What the concentration costs is
+# arithmetic, and `hard_negative_demand_per_cell` is where it is charged.
 HN_REGISTER = {
-    "formulaic": "institutional",
-    "corporate-structure": "institutional",
-    "highly-polished": "encyclopedic",
-    "repetitive": "social-media",
-    "non-native": "social-media",
-    "motivational": "qa-informal",
+    "formulaic": "carolina-judicial",
+    "corporate-structure": "carolina-university",
+    "highly-polished": "ptwiki",
+    "repetitive": "carolina-social-media",
+    "non-native": "carolina-social-media",
+    "motivational": "carolina-social-media",
 }
-TARGET = {"human": 4000, "ai": 4000, "mixed": 2000}
+
+
+def collection_targets(policy_path: Path = POLICY_PATH) -> dict[str, int]:
+    """The human collection quantities of the frozen pre-registration, cross-checked.
+
+    `{"perCell", "perCellFloor", "total"}`, read from `collection` and never retyped.
+    The two refusals are the sampling decision G0.3-bis, and they fire here because the
+    corpus that violates either is refused far later and far more expensively:
+
+      * the total has to be the per-cell target times the number of cells, because
+        `sealDataset` compares the release composition by EXACT equality — a total
+        derived from anything else describes a corpus no seal can accept;
+      * the target has to be ABOVE the floor. The floor is the gate's number (human
+        negatives per cell in `test`); the target is the collection's, and the margin
+        between them is what the blind block's sampling variation needs. Collected at
+        the floor, the expected count in `test` IS the floor and half the draws land
+        under it.
+    """
+    collection = json.loads(policy_path.read_text(encoding="utf-8"))["collection"]
+    per_cell = int(collection["humanLinesPerCellTarget"])
+    floor = int(collection["humanLinesPerCellMinimum"])
+    total = int(collection["humanLinesTotal"])
+    if per_cell <= floor:
+        raise ValueError(
+            f"collection target of {per_cell} lines per cell is not above the floor of "
+            f"{floor}: the margin the blind block's sampling variation needs would be "
+            "zero, and half the draws would land under the per-cell FPR denominator"
+        )
+    if total != per_cell * len(QUOTA_CELLS):
+        raise ValueError(
+            f"collection total of {total} human lines is not {len(QUOTA_CELLS)} cells "
+            f"x {per_cell}: the seal compares the composition by exact equality, so a "
+            "total derived from anything but the per-cell target refuses every corpus "
+            "that carries the collection margin"
+        )
+    return {"perCell": per_cell, "perCellFloor": floor, "total": total}
+
+
+HUMAN_COLLECTION = collection_targets()
+# The class quotas of one assembly. `human` is the pre-registration's collection total
+# and is never a literal here; `ai` and `mixed` are the ratified generated counts of
+# `RELEASE_CORPUS_POLICY.counts` (benchmark/dataset-manifest.ts), which is the artifact
+# the seal compares against — the three are pinned against it by test, because the seal
+# compares by exact equality and a lab that collects another composition builds a corpus
+# it cannot seal.
+TARGET = {"human": HUMAN_COLLECTION["total"], "ai": 4000, "mixed": 2000}
 # validate rejects any DECLARED held-out family with fewer positives.
 HELD_OUT_MINIMUM = 200
 # Families that CANNOT be claimed as unseen by the detector, and therefore must
@@ -447,6 +573,37 @@ class MissingExtractionRun(UnwritableInV3):
     """
 
 
+class OutOfFrameDomainSource(UnwritableInV3):
+    """The row's `domainSource` is not one of the cells the declared frame contains.
+
+    A counted drop and not an abort, for the same reason as every other subclass: the
+    pools on disk hold material extracted before the frame was narrowed to four cells,
+    and the honest outcome is a smaller corpus plus a count of what left.
+
+    A refusal and not a `KeyError`, because the two facts an operator acts on are
+    different and the message carries them: a source blocked on ACCESS TERMS needs a
+    legal disposition to come back, a source with NO CELL needs an amendment of the
+    frame itself. Both are named — no source leaves this pipeline by deletion.
+    """
+
+
+class UndecidedDomainSource(RuntimeError):
+    """The row names a `domainSource` NO list of this module has decided about.
+
+    Not an `UnwritableInV3`, on purpose: it stops the run instead of being counted as a
+    drop. The asymmetry mirrors `extract_carolina.TypologyOutOfFrame` and it is the whole
+    value of declaring exclusions instead of deleting them — an allowlist alone cannot
+    tell a source that was DECIDED against from one nobody has looked at yet.
+
+    The case that makes it fail-closed: `domainSource` is minted by the extractors as
+    `carolina_<typology>`, and the Carolina typology directories are spelled with a space
+    in some releases and an underscore in others. A re-extraction that slugs a name
+    differently writes a pool whose rows belong to a cell whose FPR ceiling the release
+    publishes — and dropping them as "outside the frame" would empty that cell in
+    silence.
+    """
+
+
 class MissingLabelEvidence(UnwritableInV3):
     """A human row whose candidate does not carry the date it was labelled on.
 
@@ -469,12 +626,10 @@ PROVIDER_LANE = {
     "gemini_cli": "gemini-cli",
 }
 
-# The frozen lane rows, read from benchmark/preregistration-v4.json rather than
-# retyped. The policy file is the single source of truth for what each lane accepts,
-# and a copy here would be a second authority that can disagree with the schema.
-POLICY_PATH = Path(__file__).resolve().parent.parent / "preregistration-v4.json"
 
-
+# The frozen lane rows, read from the policy above rather than retyped: it is the single
+# source of truth for what each lane accepts, and a copy here would be a second
+# authority that can disagree with the schema.
 def lane_rows() -> dict[str, dict]:
     return json.loads(POLICY_PATH.read_text(encoding="utf-8"))["generationLanes"]
 
@@ -778,6 +933,53 @@ def near_duplicate_axis(cand_id: str) -> dict:
     return group_axes.known(group_axes.axis_token(cand_id))
 
 
+def out_of_frame_reason(domain_source: str) -> str:
+    """Why a `domainSource` is outside the declared frame, in the frame's own words.
+
+    One lookup for both refusals below, so a human row and a mixed row of the same base
+    cannot be dropped with two different explanations.
+
+    A source in NEITHER declared list has no reason to report, and this is where that
+    becomes an abort instead of a sentence: the two lists are the decision, so a name
+    outside both is undecided (`UndecidedDomainSource`).
+    """
+    reason = OUT_OF_FRAME_DOMAIN_SOURCES.get(
+        domain_source
+    ) or A1_BLOCKED_DOMAIN_SOURCES.get(domain_source)
+    if reason is None:
+        raise UndecidedDomainSource(
+            f"the domainSource {domain_source!r} is in no list this module decides "
+            "with: it is not one of the four cells "
+            f"({', '.join(sorted(REGISTER))}), it is not refused on access terms "
+            f"({', '.join(sorted(A1_BLOCKED_DOMAIN_SOURCES))}), and it is not declared "
+            f"outside the frame ({', '.join(sorted(OUT_OF_FRAME_DOMAIN_SOURCES))}). "
+            "Decide it in one of the three before assembling: dropping it as generically "
+            "out of frame is how a renamed pool empties a cell whose ceiling the release "
+            "publishes"
+        )
+    return reason
+
+
+def cell_of(cand: dict) -> tuple[str, str, str]:
+    """(quota cell, provenance.sourceId, licenseId) of one human candidate.
+
+    The single place a `domainSource` is turned into the frame's vocabulary, so the
+    register, the source and the licence of a row cannot be decided by three different
+    lookups that disagree. Refuses a source the frame does not contain, naming it, WHY
+    it is outside, and the sources that are admissible.
+    """
+    domain_source = str(cand.get("domainSource") or "")
+    if domain_source not in HUMAN_SOURCE:
+        raise OutOfFrameDomainSource(
+            f"candidate {cand.get('candidateId')!r} names the domainSource "
+            f"{domain_source!r}, which is outside the declared frame: "
+            f"{out_of_frame_reason(domain_source)}. "
+            f"Admissible: {', '.join(sorted(HUMAN_SOURCE))}"
+        )
+    source_id, license_id = HUMAN_SOURCE[domain_source]
+    return REGISTER[domain_source], source_id, license_id
+
+
 # --- record builders (return the canonical dict, block_time filled later) ----
 
 
@@ -788,7 +990,18 @@ def human_record(
     evidence_sink: list | None = None,
 ) -> dict:
     rec_id = slug(cand["candidateId"])
-    source_id, license_id = HUMAN_SOURCE[cand["domainSource"]]
+    cell, source_id, license_id = cell_of(cand)
+    if register != cell:
+        # The cell decides WHICH FPR ceiling counts this row, so a label that disagrees
+        # with the row's own source would count a human negative under a population it
+        # was not drawn from — and the published ceiling for both cells would then be
+        # about a mixture. Caller-supplied and cross-checked rather than only derived:
+        # the argument is what the assembly states it is collecting.
+        raise OutOfFrameDomainSource(
+            f"candidate {cand.get('candidateId')!r} is material of the cell {cell!r} "
+            f"and was passed the cell {register!r}: the two decide different FPR "
+            "ceilings, and a row counted under the wrong one moves both"
+        )
     meta = cand.get("meta") or {}
     axes = dict(meta.get("groupAxes") or {})
     ref, entry = label_evidence(cand, source_id, license_id)
@@ -1034,6 +1247,15 @@ def mixed_record(cand: dict) -> dict:
             f"{cand.get('parentFamily')!r}), so it has no domainSource stratum to be "
             "counted under. The parent's family is on the parent row; re-emit the pair "
             "from a parents file that carries it"
+        )
+    if parent_family not in REGISTER:
+        raise OutOfFrameDomainSource(
+            f"mixed row {rec_id!r} was mixed from a parent of the domainSource "
+            f"{parent_family!r}, which is outside the declared frame: "
+            f"{out_of_frame_reason(parent_family)}. A mechanistic mixed row IS its "
+            "parent's human text with generated stretches, so it is counted in the "
+            "parent's cell, and that cell does not exist. Admissible: "
+            f"{', '.join(sorted(REGISTER))}"
         )
     # A mechanistic mixed row IS a human text with generated stretches, so the material
     # it depends on is the PARENT's material — and the axis rule admits only `known`
@@ -1726,17 +1948,23 @@ def assign_partitions(records: list[dict], held_out: set[str]) -> None:
 
 
 def load_humans(cand: Path = CAND) -> list[dict]:
-    """Fresh pools + reserved-clean humans, each tagged with its register.
+    """Fresh pools + reserved-clean humans, each tagged with its quota cell.
 
-    Only domainSources present in REGISTER are kept (carolina_datasets and
-    public-domain are set aside — social-media is B2W-backed now).
+    TWO screens, and both are needed. The pool FILES read are the frame's own: the
+    Stack Overflow and B2W pools are not opened, so their rows never enter the
+    selection and never consume a cell's quota (they are named, with the reason, in
+    `A1_BLOCKED_DOMAIN_SOURCES` and `OUT_OF_FRAME_DOMAIN_SOURCES`). The `REGISTER`
+    filter then catches a row of an out-of-frame stratum INSIDE a frame pool file,
+    which is the real case: one Carolina archive holds the legislative typology next
+    to the three the frame draws from, and a re-extraction that forgets the typology
+    allowlist writes them into `carolina_fresh.jsonl`.
 
     `cand` is a parameter so a RE-EXTRACTION can be assembled without overwriting
     the pools of the failed run: §7 of the plan puts benchmark/data/corpus-build in
     "Descarte", and reading from a fresh directory is how C2 proves the identity
     comes out right end to end without destroying the evidence of the diagnosis."""
     rows: list[dict] = []
-    for fname in ("ptso_fresh", "wikipedia_fresh", "carolina_fresh", "b2w_fresh"):
+    for fname in ("wikipedia_fresh", "carolina_fresh"):
         for r in read_jsonl(cand / f"{fname}.jsonl"):
             if r["domainSource"] in REGISTER:
                 # The EXTRACTION RUN this row came out of: a real execution shared by
@@ -1960,26 +2188,190 @@ def dedup(records: list[dict], text_key, seen: set[str]) -> list[dict]:
     return out
 
 
+class HardNegativeCellUnderfilled(RuntimeError):
+    """A cell cannot hand the tagging pass the rows the families drawn from it need.
+
+    The failure it forestalls is silent: the pass takes `tag_per` rows per family out of
+    that family's own cell, so a cell shorter than the sum of its families' demands leaves
+    the last family with fewer rows — possibly none. A required family with no row at all
+    is absent from the corpus, and `sealDataset` refuses a release corpus for it at the
+    very end of the assembly.
+    """
+
+
+def hard_negative_demand_per_cell(tag_per: int) -> dict[str, int]:
+    """How many DISTINCT human rows each cell has to hand the tagging pass.
+
+    Families are STYLE families and each is drawn from the cell whose material exhibits
+    it, so the demands of the families pointing at one cell ADD UP: two rows cannot carry
+    two families.
+    """
+    demand = {cell: 0 for cell in QUOTA_CELLS}
+    for family in HARD_NEGATIVE_FAMILIES:
+        demand[HN_REGISTER[family]] += tag_per
+    return demand
+
+
+def tag_hard_negatives(records: list[dict], tag_per: int) -> dict[str, int]:
+    """Tags `tag_per` human rows per required family, from that family's own cell.
+
+    Returns the count per family, and refuses BEFORE tagging anything when a cell cannot
+    cover the families drawn from it — a partially tagged corpus would otherwise travel
+    all the way to the seal to be refused there.
+    """
+    by_cell: dict[str, list[dict]] = {}
+    for record in records:
+        if record["label"] == "human":
+            by_cell.setdefault(record["humanSourceType"], []).append(record)
+    families_of: dict[str, list[str]] = {cell: [] for cell in QUOTA_CELLS}
+    for family in HARD_NEGATIVE_FAMILIES:
+        families_of[HN_REGISTER[family]].append(family)
+    short = {
+        cell: (len(by_cell.get(cell, [])), need)
+        for cell, need in hard_negative_demand_per_cell(tag_per).items()
+        if len(by_cell.get(cell, [])) < need
+    }
+    if short:
+        detail = "; ".join(
+            f"{cell} holds {have} human rows and the families drawn from it "
+            f"({', '.join(families_of[cell])}) need {need}"
+            for cell, (have, need) in sorted(short.items())
+        )
+        raise HardNegativeCellUnderfilled(
+            f"{len(short)} cell(s) cannot carry their hard-negative families at "
+            f"{tag_per} rows each: {detail}. A family that gets no row is absent from "
+            "the corpus, and the release seal refuses a corpus missing a required "
+            "hard-negative family"
+        )
+    tagged: dict[str, int] = {}
+    used: set[int] = set()
+    for family in HARD_NEGATIVE_FAMILIES:
+        picked = 0
+        for record in by_cell.get(HN_REGISTER[family], []):
+            if id(record) in used or "hardNegativeFamily" in record:
+                continue
+            record["hardNegativeFamily"] = family
+            used.add(id(record))
+            picked += 1
+            if picked >= tag_per:
+                break
+        tagged[family] = picked
+    return tagged
+
+
+def mixed_parents_by_frame(rows: list[dict]) -> tuple[dict[str, int], dict[str, int]]:
+    """(mixed lines per in-frame parent CELL, mixed lines per out-of-frame parent).
+
+    A mechanistic mixed line IS its parent's human text with generated stretches, so it is
+    counted in the parent's cell. The two dicts partition the pool: the second one is the
+    deficit `mixed_record` produces, per parent, which is the number that says WHICH
+    parents a regeneration of the mixing lane has to draw on.
+    """
+    inside: Counter = Counter()
+    outside: Counter = Counter()
+    for row in rows:
+        family = str(row.get("parentFamily") or "")
+        cell = REGISTER.get(family)
+        if cell is None:
+            outside[family or "?"] += 1
+        else:
+            inside[cell] += 1
+    return dict(inside), dict(outside)
+
+
+class CellBelowOriginDocumentFloor(RuntimeError):
+    """A quota cell whose pool cannot deliver the pre-registered number of draws.
+
+    Stops the run, and it stops it BEFORE the assembly rather than at the composition
+    gate: the gate runs on the finished corpus at sealing time, so the same refusal costs
+    a whole extraction and assembly to hear.
+    """
+
+
+def power_floors(policy_path: Path = POLICY_PATH) -> dict[str, int]:
+    """The pre-registered power floors, read and never retyped."""
+    floors = json.loads(policy_path.read_text(encoding="utf-8"))["powerFloors"]
+    return {name: int(value) for name, value in floors.items()}
+
+
+def origin_documents_per_cell(cands: list[dict]) -> dict[str, int]:
+    """Distinct `known` origin documents each cell's pool can draw on.
+
+    The origin document is the `source` axis, which for Carolina is the MEMBER FILE and
+    for Wikipedia the page. Rows naming no `known` source are not counted, and that is
+    the gate's own arithmetic rather than a convenience: two lines that cannot be shown
+    to come from different documents share ONE bucket of the per-document cap, so they
+    are one draw and not two.
+    """
+    documents: dict[str, set[str]] = {cell: set() for cell in QUOTA_CELLS}
+    for cand in cands:
+        identity = group_axes.identity_of(
+            ((cand.get("meta") or {}).get("groupAxes") or {}).get("source")
+        )
+        if identity is not None:
+            documents[cell_of(cand)[0]].add(identity)
+    return {cell: len(ids) for cell, ids in documents.items()}
+
+
+def assert_cells_can_meet_the_origin_document_floor(
+    cands: list[dict], floor: int | None = None
+) -> None:
+    """Refuses a human pool whose cells cannot reach the pre-registered floor of draws.
+
+    NECESSARY and not sufficient, and the derivation is the reason it can be checked this
+    early. `collection.maximumLinesPerOriginDocument` is 1, and every line of a cell whose
+    origin document is unrecoverable falls into ONE shared bucket, so a cell holds at most
+    (distinct origin documents) + 1 record-lines in the blind block — no matter how many
+    rows its pool carries. A cell whose whole pool draws on fewer distinct documents than
+    `powerFloors.samplingUnits` therefore cannot reach the floor of human negatives, and
+    no re-selection or re-balancing changes it. What this does NOT decide is the blind
+    block's own count: the floors are measured on `test` alone, and the split is what
+    decides how the documents land.
+    """
+    if floor is None:
+        floor = power_floors()["samplingUnits"]
+    documents = origin_documents_per_cell(cands)
+    short = {cell: n for cell, n in documents.items() if n < floor}
+    if short:
+        detail = ", ".join(f"{cell}={n}" for cell, n in sorted(short.items()))
+        raise CellBelowOriginDocumentFloor(
+            f"the pool draws on fewer than {floor} distinct origin documents in "
+            f"{len(short)} of {len(documents)} cells ({detail}). One line per origin "
+            "document is the pre-registered cap, so these cells cannot hold the "
+            f"{floor} human negatives their published FPR ceilings are computed over. "
+            "Either the extraction has to reach more origin documents or the "
+            "granularity of the `source` axis has to be amended — and the second is a "
+            "decision about the split's union, not about this pool"
+        )
+
+
 def balanced_humans(cands: list[dict], total: int) -> list[dict]:
-    by_reg: dict[str, list[dict]] = {}
-    for c in cands:
-        by_reg.setdefault(REGISTER[c["domainSource"]], []).append(c)
-    per = total // len(by_reg)
+    """`total` human lines split over the DECLARED cells, never across them.
+
+    The quota is per cell because the claim is per cell: each cell publishes its own FPR
+    ceiling over its own denominator of human negatives, so a line collected in one cell
+    does not stand in for a line missing from another. That is why a short cell stays
+    short here instead of being topped up out of a richer pool — the top-up reaches the
+    total, spends the collection budget on material the missing cell's ceiling cannot
+    use, and the composition gate refuses the seal at the end of the run anyway. The
+    shortfall is printed by `main`, which is the number the operator has to act on.
+
+    The denominator is the cells the FRAME declares, not the cells the pools happen to
+    contain: dividing by what arrived is what turns one missing cell into three
+    over-collected ones.
+
+    A remainder the cells cannot divide goes to the first cells in name order, so a
+    smoke run whose total is smaller than the number of cells still selects something,
+    and selects it deterministically.
+    """
+    per_cell, remainder = divmod(total, len(QUOTA_CELLS))
+    by_cell: dict[str, list[dict]] = {cell: [] for cell in QUOTA_CELLS}
+    for cand in cands:
+        by_cell[cell_of(cand)[0]].append(cand)
     chosen: list[dict] = []
-    for reg, pool in sorted(by_reg.items()):
-        chosen.extend(pool[:per])
-    # top up to exactly `total` from the largest pools if rounding left a gap
-    idx = 0
-    pools = [p for _, p in sorted(by_reg.items())]
-    while len(chosen) < total:
-        p = pools[idx % len(pools)]
-        if len(p) > per:
-            extra = p[per + (idx // len(pools))]
-            chosen.append(extra)
-        idx += 1
-        if idx > total * 4:
-            break
-    return chosen[:total]
+    for index, cell in enumerate(QUOTA_CELLS):
+        chosen.extend(by_cell[cell][: per_cell + (1 if index < remainder else 0)])
+    return chosen
 
 
 def cluster_report_rows(records: list[dict]) -> list[dict]:
@@ -2107,6 +2499,27 @@ def main() -> None:
         print(f"pais de topico reusados (descartados primeiro): {len(repeat_parent)}")
     ai = unique_parent + repeat_parent
 
+    documents = origin_documents_per_cell(humans)
+    print(f"documentos de origem distintos por celula: {documents}")
+    if not args.sample:
+        # Only against the RELEASE quota: the pre-registered floor is a count over the
+        # corpus a release is sealed on, and a `--sample` run collects a fraction of that
+        # quota by construction, so comparing a smoke against it would refuse every smoke
+        # for the one reason that is not a defect.
+        assert_cells_can_meet_the_origin_document_floor(humans)
+
+    inside, outside = mixed_parents_by_frame(mixed)
+    print(f"mistas por celula do pai: {inside}")
+    if outside:
+        print(f"!! mistas cujo pai esta fora da moldura (saem): {outside}")
+    mixed_shortfall = counts["mixed"] - sum(inside.values())
+    if mixed_shortfall > 0:
+        print(
+            f"!! classe mista {mixed_shortfall} linhas abaixo da cota de "
+            f"{counts['mixed']}: o selo compara por igualdade exata, entao a lane de "
+            "mistura tem de ser regerada a partir de pais das quatro celulas"
+        )
+
     human_sel = balanced_humans(humans, counts["human"])
     ai_sel = ai[: counts["ai"]]
     mixed_sel = mixed[: counts["mixed"]]
@@ -2136,7 +2549,7 @@ def main() -> None:
     records = build(
         human_sel,
         lambda c: human_record(
-            c, REGISTER[c["domainSource"]], None, evidence_sink=evidence_entries
+            c, cell_of(c)[0], None, evidence_sink=evidence_entries
         ),
     )
     records += build(ai_sel, ai_record)
@@ -2146,24 +2559,8 @@ def main() -> None:
         for reason, count in sorted(refused.items()):
             print(f"   {reason}: {count} — ex.: {refused_examples[reason][:160]}")
 
-    # Hard-negative tagging: ensure every required family present on >=1 human.
-    by_reg_recs: dict[str, list[dict]] = {}
-    for r in records:
-        if r["label"] == "human":
-            by_reg_recs.setdefault(r["humanSourceType"], []).append(r)
-    tag_per = max(1, counts["human"] // 200)
-    tagged: set[int] = set()
-    for fam in HARD_NEGATIVE_FAMILIES:
-        pool = by_reg_recs.get(HN_REGISTER[fam], [])
-        picked = 0
-        for r in pool:
-            if id(r) in tagged or "hardNegativeFamily" in r:
-                continue
-            r["hardNegativeFamily"] = fam
-            tagged.add(id(r))
-            picked += 1
-            if picked >= tag_per:
-                break
+    tagged = tag_hard_negatives(records, max(1, counts["human"] // 200))
+    print(f"hard-negatives etiquetados por familia: {tagged}")
 
     # Held-out candidates: the gemini-3.x generators. validate enforces >= 200
     # positives per DECLARED held-out family (DATASET_COVERAGE_INVALID), so a
@@ -2232,12 +2629,14 @@ def main() -> None:
     # only be derived once each record knows its temporal block.
     batches = assign_generation_batches(records)
 
-    # Governance inputs for build_governance.ts.
+    # Governance inputs for build_governance.ts. The two human sources are the ones the
+    # frame draws on, and they are the ones `V3_HUMAN_SOURCE_INVENTORY` stocks: a
+    # manifest listing `src_ptso` or `src_b2w` would declare a source the audit refuses
+    # by name (SOURCE_BLOCKED_BY_ACCESS_TERMS / SOURCE_OUT_OF_DECLARED_FRAME), so the
+    # rows would be blocked one step later with the manifest asserting them.
     sources = {
-        "src_ptso": ("licensed-corpus", "cc-by-sa-4.0"),
         "src_wikipedia_pt": ("licensed-corpus", "cc-by-sa-4.0"),
         "src_carolina": ("licensed-corpus", "cc-by-nc-sa-4.0"),
-        "src_b2w": ("licensed-corpus", "cc-by-nc-sa-4.0"),
         "src_ai": ("controlled-generation", GENERATED_LICENSE),
         "src_mixed": ("controlled-generation", GENERATED_LICENSE),
     }
@@ -2325,6 +2724,15 @@ def main() -> None:
     realized = Counter(r["label"] for r in records)
     parts = " ".join(f"{k} {realized[k]}/{counts[k]}" for k in ("human", "ai", "mixed"))
     print(f"records: {len(records)}/{sum(counts.values())} ({parts})")
+    # PER CELL, because the aggregate human count hides the only shortfall that matters:
+    # each cell's FPR ceiling is computed over that cell's own human negatives, so a cell
+    # under the floor reproves the seal however large the total is.
+    by_cell = Counter(r["humanSourceType"] for r in records if r["label"] == "human")
+    print(
+        f"humanas por celula (cota {counts['human'] // len(QUOTA_CELLS)}, piso da "
+        f"politica {HUMAN_COLLECTION['perCellFloor']}): "
+        + " ".join(f"{cell} {by_cell[cell]}" for cell in QUOTA_CELLS)
+    )
     print(f"lotes de geracao declarados: {len(batches)}")
     short = {k: counts[k] - realized[k] for k in counts if realized[k] < counts[k]}
     if short:

@@ -19,6 +19,9 @@ determinística. Cada saída ganha um `.stats.json` com as contagens de descarte
 cd benchmark/lab
 python -m unittest -v                     # fixtures dos 3 parsers + pipeline
 
+# NÃO é passo da montagem: a fonte está BLOQUEADA por termo de acesso (A1/F0-6)
+# e o montador a recusa por nome. O extrator fica na árvore para que a recusa
+# tenha o que recusar, e volta a ser passo se a condição jurídica se resolver.
 python extract_stackexchange.py --input <Posts.xml> \
   --output ../data/candidates/ptso.jsonl --limit 4000 --sample-rate 7
 python extract_wikipedia.py --input <ptwiki-...-pages-articles.xml.bz2> \
@@ -26,7 +29,8 @@ python extract_wikipedia.py --input <ptwiki-...-pages-articles.xml.bz2> \
   --snapshot-version ptwiki-20220301
 python extract_carolina.py --input <carolina.zip> \
   --output ../data/candidates/carolina.jsonl --limit 4000 \
-  --snapshot-version carolina-v2.0
+  --snapshot-version carolina-v2.0 \
+  [--typologies judicial_branch,social_media,university_domains]
 ```
 
 `--snapshot-version` é obrigatório nos dois: é dele que sai
@@ -37,8 +41,49 @@ na base do snapshot fundiria dois downloads num único bloco indistinguível.
 Notas por fonte: SE-PT descarta `<code>/<pre>` inteiros (payload de programação
 não é prosa); Wikipédia usa só a seção-lede de artigos ns=0 sem redirect;
 Carolina lê licença + `<date type="Download">` POR DOCUMENTO (o que torna o
-pacote v2.0 utilizável), exclui a tipologia `wikis` e nunca lê os campos de
-nomes/autores dos headers.
+pacote v2.0 utilizável) e nunca lê os campos de nomes/autores dos headers.
+
+**A moldura amostral é uma allowlist, não um filtro de conveniência.** O
+`extract_carolina.py` extrai as TRÊS tipologias da moldura
+(`judicial_branch`, `social_media`, `university_domains`) e nenhuma outra:
+`legislative_branch`, `public_domain_works`, `wikis` e
+`datasets_and_other_corpora` estão declaradas em `OUT_OF_FRAME_TYPOLOGIES` com
+a razão de cada uma, não são abertas e por isso **não consomem cota**. Pedir
+uma delas em `--typologies` é recusado na entrada; uma tipologia que **nenhuma
+das duas listas nomeia** recusa a corrida inteira (`TypologyOutOfFrame`) — o
+diretório vem grafado com espaço em algumas releases e com underscore em
+outras, e uma tipologia da moldura renomeada produziria zero linha de uma
+célula cujo teto de FPR a release publica, em silêncio.
+
+O lado do montador espelha isso: `assemble_corpus.py` só admite as quatro
+células da moldura (`REGISTER`/`HUMAN_SOURCE`), e Stack Overflow, resenha de
+produto (B2W) e as tipologias fora da moldura seguem **nomeadas** em
+`A1_BLOCKED_DOMAIN_SOURCES` e `OUT_OF_FRAME_DOMAIN_SOURCES`. As razões são
+diferentes e o código as mantém separadas: termo de acesso é condição jurídica
+satisfazível; "sem célula" é decisão de escopo. Um `domainSource` que **nenhuma
+das três listas** nomeia recusa a corrida (`UndecidedDomainSource`), pelo mesmo
+motivo da tipologia indecidida.
+
+O vocabulário das células é `preRegistration.quotaAxis.cells` —
+`carolina-judicial`, `carolina-social-media`, `carolina-university`, `ptwiki` —
+e não os nomes de registro de `humanCoreStrata`. É o campo `humanSourceType`
+que os gates fatiam, e o gate de FPR por célula procura a hipótese que decide
+(`fpr-<célula>`) em `multiplicity.primaryFamily`: escrito com o outro
+vocabulário, o corpus conta zero linha nas quatro células do gate de composição
+e deixa as quatro hipóteses certificadoras sem gate.
+
+Duas recusas do montador acontecem **antes** da montagem gastar a corrida, e as
+duas repetem uma comparação que o gate de composição só faria no fim:
+
+- `assert_cells_can_meet_the_origin_document_floor` conta, por célula, quantos
+  documentos de origem (`groups.source`) DISTINTOS o pool entrega e recusa
+  abaixo de `powerFloors.samplingUnits`. Uma linha por documento é o teto
+  pré-inscrito, então uma célula com poucos documentos não alcança o piso de
+  negativos humanos por mais linhas que o pool carregue. Só vale contra a cota
+  de release: `--sample` coleta uma fração dela por construção;
+- `tag_hard_negatives` recusa quando uma célula não cobre as famílias de estilo
+  tiradas dela (`hard_negative_demand_per_cell`). Três das seis vêm da célula de
+  rede social, e as demandas somam porque uma linha não carrega duas famílias.
 
 ## Classe IA — `generate_ai.py` (pareada por tópico)
 
@@ -52,15 +97,24 @@ seedNullReason/promptId/promptSha256/generatedAt + `pairedWith`) e um
 `.batch.json` para o source-manifest. Retries com backoff; resume por
 `pairedWith`; o corte pré-ChatGPT fica DESLIGADO (gerados agora).
 
-Chaves só por variável de ambiente (nunca impressas/gravadas):
-`OPENAI_API_KEY`, `ANTHROPIC_API_KEY`, `GEMINI_API_KEY` (ou `GOOGLE_API_KEY`).
+`--provider` aceita as **quatro lanes congeladas** e recusa o resto na entrada:
+`agy`, `codex` e `gemini_cli` autenticam pelo login do operador e `gemini` é o
+único endpoint REST. Chave só por variável de ambiente (nunca impressa/gravada):
+`GEMINI_API_KEY` (ou `GOOGLE_API_KEY`). As superfícies de API da OpenAI e da
+Anthropic ficam nomeadas em `OUT_OF_SLATE_PROVIDERS`, com a razão — as famílias
+OpenAI estão reservadas ao teste de gerador não visto (OOD) e chegam ao corpus
+só pela lane `codex`; as famílias claude vêm pela lane `agy`. A recusa é na
+argparse porque `PROVIDER_LANE[provider]` é lido **dentro do laço, depois da
+chamada**: pedir uma lane fora do slate gastava uma chamada real e morria com
+`KeyError` na primeira linha escrita.
 
 ```bash
-python generate_ai.py --provider anthropic \
-  --humans ../data/candidates/ptso.jsonl ../data/candidates/carolina.jsonl \
+python generate_ai.py --provider agy \
+  --humans ../data/candidates/carolina.jsonl \
            ../data/candidates/wikipedia.jsonl \
-  --output ../data/candidates/ai_anthropic.jsonl --per-provider 60
-# idem --provider openai | gemini; --dry-run mostra o plano sem chamar API
+  --output ../data/candidates/ai_agy.jsonl --per-provider 60
+# idem --provider codex | gemini | gemini_cli; --dry-run mostra o plano sem
+# chamar API
 ```
 
 ## Piloto de triagem de PII por NER — `ner_pilot.py`
