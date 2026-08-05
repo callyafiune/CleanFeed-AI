@@ -255,6 +255,14 @@ describe("computeEvaluatorDigest", () => {
     }
   });
 
+  it("binds the corpus-composition gate into the evaluator identity", () => {
+    const files = new Set<string>(EVALUATOR_FILES);
+    // It decides whether a `release` corpus may be frozen at all, so its bytes decide
+    // which corpus the evaluator is ever allowed to measure. A future removal
+    // regresses this test.
+    expect(files.has("benchmark/composition-gate.ts")).toBe(true);
+  });
+
   it("is deterministic for two identical evaluator trees", async () => {
     const first = await makeRoot();
     const second = await makeRoot();
@@ -288,6 +296,23 @@ describe("computeEvaluatorDigest", () => {
     await writeEvaluatorFixture(tampered, (relativePath, content) =>
       relativePath === "benchmark/browser-scorer.ts"
         ? `${content}// clamp\n`
+        : content,
+    );
+    expect(await computeEvaluatorDigest(tampered)).not.toBe(
+      await computeEvaluatorDigest(clean),
+    );
+  });
+
+  it("changes when a composition-gate byte changes", async () => {
+    // Load-bearing proof that the gate is inside the hashed set: without the
+    // EVALUATOR_FILES entry the fixture never writes this file and the mutation is
+    // invisible, so the two digests come out equal.
+    const clean = await makeRoot();
+    const tampered = await makeRoot();
+    await writeEvaluatorFixture(clean);
+    await writeEvaluatorFixture(tampered, (relativePath, content) =>
+      relativePath === "benchmark/composition-gate.ts"
+        ? `${content}// floor\n`
         : content,
     );
     expect(await computeEvaluatorDigest(tampered)).not.toBe(

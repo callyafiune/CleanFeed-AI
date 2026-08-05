@@ -38,6 +38,8 @@ import {
 import { runValidate } from "../commands/validate.ts";
 import { runIngest } from "../commands/ingest.ts";
 import { runSplit } from "../commands/split.ts";
+import type { CommandError } from "../commands/io.ts";
+import { COMPOSITION_BOUNDS_NOT_MET } from "../composition-gate.ts";
 import { connectedComponentRoots } from "../split.ts";
 import { validateSplitArtifact } from "../split-artifact.ts";
 import { normalizeGeneratorFamily } from "../generator-family.ts";
@@ -1213,10 +1215,12 @@ describe("ingest -> validate -> split integration (10k)", () => {
     ).rejects.toThrow(/HELD_OUT_FAMILY_DISAGREEMENT|never_generated_family/u);
     await writeFile(manifestPath, declaredJson, "utf8"); // restore for isolation
 
-    // 3c. The same corpus, declared `release`, is REFUSED — the composition attestation
-    // the pre-registration demands does not exist yet, so a release freeze is unavailable
-    // by design. Only `scientificUse` changes, so the sealed audit still binds the same
-    // bytes and the refusal is the attestation, not a digest mismatch.
+    // 3c. The same corpus, declared `release`, is REFUSED by the composition gate: this
+    // fixture's `humanSourceType` is `qa-informal`, so every declared quota cell holds
+    // zero human negatives in the blind block, against a floor of
+    // `powerFloors.criticalFprHumanNegatives`. Only `scientificUse` changes, so the
+    // sealed audit still binds the same bytes and the refusal is the composition, not a
+    // digest mismatch.
     const releaseJson = await readFile(manifestPath, "utf8");
     await writeFile(
       manifestPath,
@@ -1226,14 +1230,28 @@ describe("ingest -> validate -> split integration (10k)", () => {
       }),
       "utf8",
     );
-    await expect(
-      runSplit({
-        datasetDirectory,
-        datasetAuditPath: join(validateOut, "dataset-audit.json"),
-        outputDirectory: join(root, "out", "split-release"),
-        seed: 20260804,
-      }),
-    ).rejects.toThrow(/COMPOSITION_FLOOR_NOT_APPLIED|pre-registered floor/u);
+    const refusal = await runSplit({
+      datasetDirectory,
+      datasetAuditPath: join(validateOut, "dataset-audit.json"),
+      outputDirectory: join(root, "out", "split-release"),
+      seed: 20260804,
+    }).then(
+      () => null,
+      (error: unknown) => error as CommandError,
+    );
+    expect(refusal).toMatchObject({ code: COMPOSITION_BOUNDS_NOT_MET });
+    // The message names the cell, the count MEASURED and the floor — the three things a
+    // reader needs to know which cell to collect more of.
+    for (const cell of PREREGISTRATION_V4.preRegistration.quotaAxis.cells) {
+      expect(refusal?.message).toContain(`cell "${cell}" holds 0`);
+    }
+    expect(refusal?.message).toContain(
+      `floor of ${PREREGISTRATION_V4.powerFloors.criticalFprHumanNegatives}`,
+    );
+    // The blind block is NOT empty of human negatives: the fixture puts 800 of them in
+    // `test`, all under an axis value the declared vocabulary does not name. So the
+    // refusal is the cell vocabulary, not an absent partition.
+    expect(artifact.audit.testHumanNegatives.count).toBe(800);
     await writeFile(manifestPath, releaseJson, "utf8"); // restore for isolation
 
     // 3d. A seed que nao e a PRE-REGISTRADA e recusada, e a recusa vem antes de qualquer

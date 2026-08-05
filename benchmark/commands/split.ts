@@ -3,7 +3,9 @@
 // It re-parses the sealed dataset audit, recomputes its digest and confirms it
 // belongs to the same manifest/bytes, then runs the blocked group-time splitter
 // and the INDEPENDENT leakage audit. A split that leaks or misses the class
-// proportions is refused, never relaxed. The precise scope of "nothing
+// proportions is refused, never relaxed, and a `release` corpus is refused as well
+// when the blind block falls outside any pre-registered composition bound per quota
+// cell (benchmark/composition-gate.ts). The precise scope of "nothing
 // is written": a constraint failure writes no OUTPUT — inputs are opened first, so the
 // claim is about outputs and not about all file access. A failure during publication can
 // leave partition files without the artifact that certifies them, never the reverse,
@@ -17,6 +19,11 @@
 
 import { join } from "node:path";
 
+import {
+  COMPOSITION_BOUNDS_NOT_MET,
+  auditReleaseComposition,
+  describeCompositionBreaches,
+} from "../composition-gate.ts";
 import {
   parseDatasetAudit,
   validateDatasetManifest,
@@ -105,23 +112,6 @@ export async function runSplit(options: SplitOptions): Promise<string> {
   // argument about dependence — both generations resolve to a parent that is present,
   // so both are unioned with it and therefore with each other. The open question
   // survives only for callers that partition records without passing through here.
-  // Sealing a release corpus is refused HERE, and the reason is what the artifact cannot
-  // supply: the artifact RECORDS its composition (the derived attestation), but recording an
-  // inventory is not judging it. The pre-registered floor demands a number of independent
-  // sampling units per quota cell per partition, and nothing in this stage applies that
-  // comparison — so a release seal produced here would publish a composition against which
-  // no floor was ever checked. Refused early, before any work happens.
-  if (manifest.scientificUse === "release") {
-    const preRegistration = PREREGISTRATION_V4.preRegistration;
-    throw new CommandError(
-      "COMPOSITION_FLOOR_NOT_APPLIED",
-      "a release corpus cannot be frozen by this stage: the pre-registered floor of " +
-        `${preRegistration.zeroEventCeiling.adoptedFloorPerCell} independent sampling units ` +
-        `in each of the ${preRegistration.quotaAxis.cells.length} quota cells of every ` +
-        "partition is not applied here, and the artifact records its composition without " +
-        "judging it; seal as scientificUse: infrastructure-only to exercise the pipeline",
-    );
-  }
 
   assertDerivedParentsResolve(records);
 
@@ -163,6 +153,27 @@ export async function runSplit(options: SplitOptions): Promise<string> {
       "SPLIT_AUDIT_FAILED",
       `split audit failed: ${splitAudit.reasons.join("; ")}`,
     );
+  }
+
+  // A release seal needs the blind block to carry the power the pre-registration
+  // promised, per quota cell, in all three quantities: the FPR denominator in
+  // record-lines, the independent sampling units behind it, and the cap of one line per
+  // origin document that makes the first two the same draws. The artifact RECORDS its
+  // composition (`compositionAttestation`), and recording an inventory is not judging
+  // it — so the comparison happens here, over the assignment in memory, and a corpus
+  // outside any bound never reaches the artifact.
+  //
+  // After the leakage audit and before any output: a corpus that leaks has a worse
+  // problem than a short cell, and the composition verdict would only bury it.
+  if (manifest.scientificUse === "release") {
+    const composition = auditReleaseComposition(split);
+    if (!composition.passed) {
+      throw new CommandError(
+        COMPOSITION_BOUNDS_NOT_MET,
+        "a release corpus cannot be frozen outside the pre-registered composition " +
+          `bounds: ${describeCompositionBreaches(composition)}`,
+      );
+    }
   }
 
   const artifact = await buildSplitArtifact({

@@ -93,6 +93,11 @@ export const EVALUATOR_FILES = [
   "benchmark/near-duplicates.ts",
   "benchmark/split.ts",
   "benchmark/split-audit.ts",
+  // The composition gate. It decides whether a `release` corpus may be frozen at
+  // all, by comparing the blind block's per-cell lines and independent units against
+  // the pre-registered floors, so its bytes decide which corpus the evaluator is
+  // ever allowed to measure.
+  "benchmark/composition-gate.ts",
   // The cluster-exposure ledger and its CLI validation. They decide which
   // record-lines and which sampling units are still eligible for a blind test
   // block, so a post-freeze edit could hand back eligibility that was already

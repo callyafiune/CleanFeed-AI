@@ -430,8 +430,20 @@ const INTEGRITY_HYPOTHESIS = "integrity";
 const RECALL_HYPOTHESIS = "recall-at-threshold";
 const CALIBRATION_HYPOTHESIS = "calibration-global";
 const CELL_FPR_HYPOTHESIS_PREFIX = "fpr-";
-// The slice axis the per-cell ceilings are measured on.
-const CELL_FPR_AXIS: SliceAxis = "humanSourceType";
+/**
+ * The slice axis the per-cell ceilings are measured on, and the record field a
+ * quota cell is read out of.
+ *
+ * Exported because the composition gate (benchmark/composition-gate.ts) defends the
+ * DENOMINATOR of these same ceilings at sealing time: if the two named the axis
+ * separately, a corpus could satisfy a floor counted on one field while the ceiling
+ * was measured on another.
+ *
+ * `as const satisfies` and not a `SliceAxis` annotation: the literal type is what lets
+ * a consumer index a record with it, and the `satisfies` keeps it inside the closed
+ * slice vocabulary.
+ */
+export const CELL_FPR_AXIS = "humanSourceType" as const satisfies SliceAxis;
 // How many record-lines one origin document may contribute to a cell. It is what
 // makes a floor counted in LINES also a floor counted in independent units, and it is
 // pre-registered collection policy: the count is imposed by the composition gate at

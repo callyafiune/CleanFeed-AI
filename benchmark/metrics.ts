@@ -3806,7 +3806,24 @@ function simulatedPrecisionAt(
   });
 }
 
-function isEligible(record: BenchmarkRecord, minimumWords: number): boolean {
+/**
+ * Whether a record enters the measured population at all: every rate in this module
+ * is computed over the rows this predicate admits.
+ *
+ * Exported so a consumer that must count the DENOMINATOR of one of those rates before
+ * the rows are ever scored — `benchmark/composition-gate.ts`, at sealing time — admits
+ * the same rows this module will. A re-spelling there could pass a cell whose lines are
+ * discarded here, and the published zero-event ceiling `1 - (alpha/m)^(1/n)` would be
+ * read off an `n` the corpus never had.
+ *
+ * `language` is pinned to the literal `pt-BR` by the schema, so on a validated record
+ * the predicate reduces to the word floor; the comparison stays because the population
+ * is defined by both conditions and a future off-language corpus must not slip in.
+ */
+export function isEligible(
+  record: BenchmarkRecord,
+  minimumWords: number,
+): boolean {
   return record.language === "pt-BR" && record.wordCount >= minimumWords;
 }
 

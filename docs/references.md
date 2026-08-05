@@ -592,6 +592,9 @@ Esta subseção não traz fonte nova: a cota sob zero eventos é § 3.2, a infer
   `benchmark/rebuild-v3-policy.json` (`preRegistration.powerInventoryUnit`,
   `preRegistration.zeroEventCeiling`); gate em `benchmark/commands/split.ts`
   (`COMPOSITION_FLOOR_NOT_APPLIED`, renomeado por F1-5o); registro § "Unidade 3 — E2", F1-5n e F1-5o.
+  **Superado por § K14 (2026-08-04):** o piso vigente é 300 (não 250), vale por célula × `test` (não por
+  partição), conta TRÊS quantidades, e o gate vive em `benchmark/composition-gate.ts` sob
+  `COMPOSITION_BOUNDS_NOT_MET`. O 250 está em ESTADO.md § 6, NÃO APLICAR.
 - **Âncora negativa, que é a razão da decisão:** uma contagem de linhas não sustenta a cota. Ela
   erra nas duas direções — recusa um corpus que TEM 250 componentes por célula, e aceita 2.000
   linhas colapsadas em poucos componentes ou concentradas numa única célula. É a mesma distinção que
@@ -2737,3 +2740,84 @@ bruto.
 automatizado que **recusa a corrida** por incoerência entre a base pré-inscrita e a medida. Essa parte é
 **sem precedente encontrado (2026-08-04)**, e o desenho segue o resto do módulo: evidência ausente ou de
 outra quantidade reprova fechado, e nunca cai para o número mais próximo.
+
+### K14 — o piso de composição REPROVA O CONGELAMENTO, e conta três quantidades
+
+`benchmark/composition-gate.ts` conta, por célula de cota × `test`, as **linhas negativas humanas
+elegíveis**, as **unidades independentes** (componentes conexos, `preRegistration.powerInventoryUnit`) e as
+**linhas por documento de origem**, e recusa (`COMPOSITION_BOUNDS_NOT_MET`, em
+`benchmark/commands/split.ts`) o selo de corpus `release` fora de qualquer um dos três limites, nomeando
+célula, contagem medida e limite. Cinco decisões distintas vivem aqui:
+
+1. **A verificação é de DESENHO e não de relatório.** O piso é conferido antes de o split ser congelado —
+   nada foi pontuado, nenhum limiar foi ajustado, nenhum byte cego foi lido —, então um corpus que não
+   sustenta a alegação pré-inscrita não chega a existir como artefato selado. Poder conferido depois da
+   medição só produz ressalva; conferido no congelamento, produz outro corpus.
+2. **`test` e só `test`.** Os dois pisos limitam o denominador de um teto de FPR por célula, e essa taxa é
+   medida no bloco cego: `dev` e `cal-A` ajustam o limiar, `train` treina, `cal-B` está reservada. Ler o
+   piso como por-partição exigiria um corpus várias vezes maior para satisfazer quantidades que nenhuma
+   alegação publicada usa.
+3. **As três quantidades, e qualquer uma reprova.** Linhas respondem "quanto texto"; unidades respondem
+   "quantas observações independentes"; linhas por documento responde "uma página foi fatiada em muitos
+   sorteios". 300 linhas fatiadas de um documento de origem são 300 linhas e uma unidade, e é por isso que
+   a conjunção — e não a disjunção — é o critério. Os **dois pisos não pegam** a violação da regra de
+   coleta: 600 linhas sobre 300 documentos são 300 componentes, passam os dois, e publicariam o teto sobre
+   `n = 600` com 300 sorteios independentes. O teto de `collection.maximumLinesPerOriginDocument` é, por
+   isso, comparação própria — e é ele que torna verdadeira a frase que `benchmark/gates.ts` já escreve na
+   evidência selada ("a imposição é do gate de composição", `gates.ts` na recusa de célula sem poder).
+4. **A população contada é a MEDIDA.** As linhas contam pelo mesmo predicado que a medição usa
+   (`isEligible`, `benchmark/metrics.ts`, no piso pré-inscrito `wordFloor.abstainBelow` = 50): uma linha em
+   que o escore se abstém não está no denominador do FPR, então contá-la aqui defenderia uma população que
+   nunca é medida — e a célula reprovaria por falta de poder **depois** de o bloco cego existir. A célula
+   `carolina-social-media` é a tipologia em que documento abaixo de 50 palavras é o caso comum, então a
+   folga não era teórica. Resíduo declarado: `slices.ts` registra que `negatives` ainda sobredeclara o `n`
+   de um intervalo de FPR por `undecidedNegatives` — quantidade que **não é conhecível antes da pontuação**
+   e portanto não pode ser conferida no congelamento; dono, a unidade que tocar a publicação de `n` no
+   model card (A6/G2 em § 2.2).
+5. **Origem não recuperada não vira sorteio.** Linha cujo eixo `source` não é `known` não tem documento de
+   origem recuperável, e todas as de uma célula compartilham **um** balde: duas linhas que não se pode
+   mostrar vindas de documentos diferentes não são dois sorteios. Lê-las como documentos distintos é a
+   direção que superestima poder. **Sem precedente encontrado (2026-08-04)** — a literatura de amostragem
+   trata o conglomerado como conhecido por desenho, não como campo que pode faltar.
+
+- ICH E9, § 3.5 (*Sample Size*) — o tamanho da amostra é fixado e **justificado no protocolo**, antes dos
+  dados; a quantidade sobre a qual o poder é calculado tem de ser a variável primária.
+  [link](https://database.ich.org/sites/default/files/E9_Guideline.pdf)
+- FDA, *Multiple Endpoints in Clinical Trials*, 2022 (K10) — a família que controla o erro familiar é
+  declarada antes, e cada membro dela precisa do seu próprio denominador.
+  [link](https://www.fda.gov/media/162416/download)
+- Kish, *Survey Sampling*, Wiley, 1965, § 5.2 (K11) — a unidade de seleção é o conglomerado; contar
+  elementos onde o desenho sorteia conglomerados infla o `n` efetivo.
+- Cameron & Miller, *A Practitioner's Guide to Cluster-Robust Inference*, JHR 50(2), 2015 (K11) — agrupar
+  errado não é conservador. [link](https://doi.org/10.3368/jhr.50.2.317)
+
+**A transferência e o limite dela.** As diretrizes ancoram *justificar o tamanho antes*; nenhuma delas
+descreve um **gate automatizado que recusa materializar o dataset** por não alcançar o próprio piso —
+**sem precedente encontrado (2026-08-04)**, e é a mesma ausência que § 2.2 registra do outro lado: a área
+publica o split, não a recusa. Também **sem precedente** a comparação **inclusiva**: as contagens são
+inteiras, `300` é o piso ADOTADO, e uma célula com exatamente 300 satisfaz o que a pré-inscrição
+congelou — comparar por `>` reprovaria o valor que o próprio documento nomeia. Kish § 5.2 e
+Cameron & Miller cobrem o **porquê** do teto por documento (contar elementos onde o desenho sorteia
+conglomerados infla o `n` efetivo); o teto **em si** é regra de coleta desta pré-inscrição, não achado
+da literatura.
+
+**A consequência medida, dita porque é real.** O eixo de que a célula é lida é `humanSourceType`
+(`CELL_FPR_AXIS` em `benchmark/gates.ts`, o mesmo eixo em que os tetos são medidos). Um corpus cujo eixo
+carrega o vocabulário de **estrato** (`humanCoreStrata`) em vez do de **célula**
+(`preRegistration.quotaAxis.cells`) preenche célula nenhuma: as quatro declaradas leem zero e o selo é
+recusado. Isso é o gate funcionando — a divergência de vocabulário aparece como célula vazia, nunca como
+piso satisfeito — e é a mesma incoerência que `benchmark/gates.ts` já reprova a jusante
+(`missingHypotheses` + `unexpectedHypotheses`). O que muda é o instante: passa a aparecer no
+congelamento, não na medição.
+
+**O outro lado do vocabulário, com o arquivo e o dono.** `sealDataset`
+(`benchmark/dataset-manifest.ts`, o laço de `RELEASE_CORPUS_POLICY.requiredHumanSourceTypes`) exige, para
+`release`, contagem **> 0** em cada um dos quatro **estratos** (`encyclopedic`, `judicial`, `social-media`,
+`university`), enquanto este gate exige 300 em cada uma das quatro **células**. A afirmação forte de que
+os dois lados são mutuamente insatisfazíveis é **falsa** e não deve circular: o limiar é `> 0`, não o alvo
+de coleta, então um corpus que carregue os dois vocabulários no MESMO campo (quatro linhas com nome de
+estrato, o resto com nome de célula) satisfaz os dois. A afirmação verdadeira é mais fraca: **nenhum corpus
+com vocabulário coerente satisfaz os dois**, e uma coleta natural das quatro células é recusada antes do
+split por `DATASET_COVERAGE_INVALID`. Dono: **Fase 2, D0** (`REGISTER`/`HUMAN_SOURCE` → 4 células), que
+move `requiredHumanSourceTypes` junto do remapeamento do lab, ou declara a tradução estrato→célula num
+lugar só.
