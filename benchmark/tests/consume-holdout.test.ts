@@ -111,11 +111,25 @@ const SOURCE_READINESS = hex("source-readiness");
 // The part of the sealed gate report these tests read back off disk.
 interface GateReportShape {
   decision: string;
-  gates: Array<{ id: string; evidence: string; passed: boolean }>;
-  multiplicity: { declared: number | null; observed: number };
+  gates: Array<{
+    id: string;
+    role: string;
+    hypothesis?: string;
+    evidence: string;
+    passed: boolean;
+  }>;
+  multiplicity: {
+    declared: number | null;
+    observed: number;
+    gateIds: string[];
+    missingHypotheses: string[];
+    unexpectedHypotheses: string[];
+    covers: boolean;
+  };
   failedIntegrity: string[];
   failedWarning: string[];
   failedAction: string[];
+  failedCertifying: string[];
 }
 
 const FIXED_TIME = "2026-07-19T00:00:00.000Z";
@@ -1113,16 +1127,51 @@ describe("consume-holdout one-way lease", () => {
       // supplementary-diagnostic and cannot authorize visual action. That is the
       // one failure here that is about power rather than about missing evidence.
       expect(gates.failedAction).toContain("action.fpr.labelBasis.unknown");
-      for (const id of [...gates.failedWarning, ...gates.failedAction]) {
-        if (id.startsWith("action.fpr.labelBasis.")) continue;
+      // EVERY warning failure — diagnostic ones included — names missing evidence and
+      // not a breached budget. The loop is over the whole tier and not over
+      // `failedCertifying`, because narrowing it to the certifying layer would stop
+      // constraining the diagnostics this run publishes. The one exception is named:
+      // the ECE is measured over the calibrated score while the pre-registration is
+      // about `document-raw-score`, and the gate refuses the basis rather than
+      // certifying a statistic about another quantity.
+      for (const id of gates.failedWarning) {
         const gate = gates.gates.find((candidate) => candidate.id === id);
         expect(gate?.evidence).toMatch(
-          /missing-resampling-plan|missing-simultaneous-interval|insufficient-resampling-effort/u,
+          /missing-resampling-plan|missing-simultaneous-interval|insufficient-resampling-effort|score-basis-mismatch/u,
         );
       }
-      // And the divisor was never quietly recomputed to fit.
-      expect(gates.multiplicity.declared).toBeNull();
+      const ece = gates.gates.find(
+        (candidate) => candidate.id === "warning.calibration-ece",
+      );
+      expect(ece?.role).toBe("certifying");
+      expect(ece?.evidence).toBe("score-basis-mismatch");
+      // And every certifying failure is a warning-tier one: the family has no member
+      // in the action tier, so nothing certifying can fail with the ceiling of another
+      // tier.
+      for (const id of gates.failedCertifying) {
+        const gate = gates.gates.find((candidate) => candidate.id === id);
+        expect(gate?.role).toBe("certifying");
+        expect(gates.failedWarning.concat(gates.failedIntegrity)).toContain(id);
+      }
+      // The measurement declared the PRE-REGISTERED family size. A run that reaches
+      // the gate without it publishes no simultaneous bound at all, so every
+      // certifying gate fails for missing multiplicity and the reject reads exactly
+      // like a breached budget — which is the one failure this assertion exists to
+      // tell apart from the others.
+      expect(gates.multiplicity.declared).toBe(
+        PREREGISTRATION_V4.multiplicity.primaryFamilySize,
+      );
       expect(gates.multiplicity.observed).toBeGreaterThan(0);
+      // And what this corpus is still missing is named rather than absorbed: it
+      // carries no `humanSourceType`, so none of the four per-cell hypotheses of the
+      // family was decided by anything.
+      expect(gates.multiplicity.covers).toBe(false);
+      expect(gates.multiplicity.missingHypotheses).toEqual(
+        PREREGISTRATION_V4.preRegistration.quotaAxis.cells.map(
+          (cell) => `fpr-${cell}`,
+        ),
+      );
+      expect(gates.multiplicity.unexpectedHypotheses).toEqual([]);
 
       // Exactly one lease over the real evaluator, opened once and concluded once,
       // with no exposure incident anywhere.
@@ -1206,13 +1255,24 @@ describe("consume-holdout one-way lease", () => {
       expect(message).toBe("HOLDOUT_COMPLETED decision=reject");
       expect(gates.failedAction).toContain("action.available");
       expect(gates.failedIntegrity).toEqual([]);
-      // Every warning failure is a missing-evidence failure, not a breach.
-      for (const id of gates.failedWarning) {
+      // Every CERTIFYING failure is a missing-evidence or refused-basis failure, not a
+      // breached budget. The diagnostics are not: at 60 human negatives the pooled
+      // FPR's simultaneous upper bound is above the 5% budget with zero false positives
+      // in it, which is a published diagnostic — and it rejects all the same, because a
+      // gate that certifies nothing still describes the population the release acts on.
+      for (const id of gates.failedCertifying) {
         const gate = gates.gates.find((candidate) => candidate.id === id);
         expect(gate?.evidence).toMatch(
-          /missing-resampling-plan|missing-simultaneous-interval|insufficient-resampling-effort/u,
+          /missing-resampling-plan|missing-simultaneous-interval|insufficient-resampling-effort|score-basis-mismatch/u,
         );
       }
+      const pooled = gates.gates.find(
+        (candidate) => candidate.id === "warning.fpr.overall",
+      );
+      expect(pooled?.role).toBe("diagnostic");
+      expect(pooled?.passed).toBe(false);
+      expect(gates.failedWarning).toContain("warning.fpr.overall");
+      expect(gates.failedCertifying).not.toContain("warning.fpr.overall");
     },
     TIMEOUT_MS,
   );

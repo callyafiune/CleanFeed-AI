@@ -197,17 +197,22 @@ function splitAudit(): SplitAudit {
 }
 
 function gateReport(overrides: Partial<GateReport> = {}): GateReport {
+  const family = PREREGISTRATION_V4.multiplicity.primaryFamily;
   return {
-    schemaVersion: 2,
+    schemaVersion: 3,
     multiplicity: {
       correction: "bonferroni",
       familyAlpha: 0.05,
       descriptiveConfidence: 0.95,
       frozenAt: "G0.2",
-      declared: 40,
-      observed: 1,
-      gateIds: ["warning.fpr.overall"],
-      perGateAlpha: 0.05 / 40,
+      declared: PREREGISTRATION_V4.multiplicity.primaryFamilySize,
+      observed: family.length,
+      gateIds: [],
+      primaryFamily: family,
+      hypotheses: [...family],
+      missingHypotheses: [],
+      unexpectedHypotheses: [],
+      perGateAlpha: PREREGISTRATION_V4.multiplicity.perHypothesisAlpha,
       covers: true,
     },
     decision: "pass",
@@ -215,6 +220,9 @@ function gateReport(overrides: Partial<GateReport> = {}): GateReport {
       {
         id: "warning.fpr.overall",
         tier: "warning",
+        // The pooled FPR is not a member of the primary family: the four per-cell
+        // ceilings are.
+        role: "diagnostic",
         scope: "overall",
         estimand: "warning.fpr",
         evidence: "present",
@@ -237,6 +245,7 @@ function gateReport(overrides: Partial<GateReport> = {}): GateReport {
     failedIntegrity: [],
     failedWarning: [],
     failedAction: [],
+    failedCertifying: [],
     ...overrides,
   };
 }
@@ -859,13 +868,19 @@ describe("reportDigest seals governance, session and the three executions", () =
       baseInput({
         gates: gateReport({
           decision: "reject",
-          failedWarning: ["warning.fpr.overall"],
+          // A `reject` is a CERTIFYING failure by construction of the policy, so the
+          // gate that fails here is a member of the primary family.
+          failedWarning: ["warning.fpr.slice.humanSourceType.ptwiki"],
+          failedCertifying: ["warning.fpr.slice.humanSourceType.ptwiki"],
           gates: [
             {
-              id: "warning.fpr.overall",
+              id: "warning.fpr.slice.humanSourceType.ptwiki",
               tier: "warning",
-              scope: "overall",
-              estimand: "warning.fpr",
+              role: "certifying",
+              hypothesis: "fpr-ptwiki",
+              scope: "slice",
+              slice: { axis: "humanSourceType", key: "ptwiki" },
+              estimand: "warning.fpr.slice",
               evidence: "present",
               observed: 0.08,
               bound: "simultaneous-upper",
@@ -874,7 +889,10 @@ describe("reportDigest seals governance, session and the three executions", () =
               sampleSize: 2_000,
               eligible: true,
               passed: false,
-              reasons: ["overall warning FPR upper95 0.08 exceeds 0.05"],
+              reasons: [
+                "critical FPR slice humanSourceType/ptwiki warning FPR " +
+                  "simultaneous upper bound 0.08 exceeds 0.05",
+              ],
             },
           ],
         }),
@@ -882,6 +900,61 @@ describe("reportDigest seals governance, session and the three executions", () =
     );
     expect(rejected.reportDigest).not.toBe(base.reportDigest);
     expect(rejected.releaseDecision).toBe("reject");
+  });
+
+  // The multiplicity block is the layer that says WHICH hypotheses the run decided and
+  // under which divisor. Every gate can read green with `covers: false` — that is the
+  // fail-closed shape of a run whose inventory is not the family — so a digest blind to
+  // this block would let the two most consequential edits in the sealed report pass
+  // unnoticed.
+  it("changes when the multiplicity block changes, gates untouched", async () => {
+    const base = await buildBenchmarkReport(baseInput());
+    const family = PREREGISTRATION_V4.multiplicity.primaryFamily;
+    const coversFlipped = await buildBenchmarkReport(
+      baseInput({
+        gates: gateReport({
+          multiplicity: {
+            ...gateReport().multiplicity,
+            covers: false,
+            missingHypotheses: ["fpr-ptwiki"],
+            hypotheses: family.filter((member) => member !== "fpr-ptwiki"),
+            observed: family.length - 1,
+          },
+        }),
+      }),
+    );
+    const divisorChanged = await buildBenchmarkReport(
+      baseInput({
+        gates: gateReport({
+          multiplicity: { ...gateReport().multiplicity, declared: 40 },
+        }),
+      }),
+    );
+    for (const digest of [
+      coversFlipped.reportDigest,
+      divisorChanged.reportDigest,
+    ]) {
+      expect(digest).not.toBe(base.reportDigest);
+    }
+    // And the two are not the same edit.
+    expect(coversFlipped.reportDigest).not.toBe(divisorChanged.reportDigest);
+  });
+
+  it("changes when a gate's role or hypothesis changes, outcome untouched", async () => {
+    const base = await buildBenchmarkReport(baseInput());
+    const promoted = await buildBenchmarkReport(
+      baseInput({
+        gates: gateReport({
+          gates: gateReport().gates.map((gate) => ({
+            ...gate,
+            role: "certifying" as const,
+            hypothesis: "calibration-global",
+          })),
+        }),
+      }),
+    );
+    expect(promoted.reportDigest).not.toBe(base.reportDigest);
+    expect(promoted.releaseDecision).toBe("pass");
   });
 });
 
@@ -1387,6 +1460,61 @@ describe("renderReportMarkdown publishes the A6 evidence with its roles named", 
     );
     expect(multiplicity).toContain(
       "Esforço de reamostragem do limite simultâneo (ECE): 2000 réplicas em alpha=0.00125, cauda de 2 réplicas.",
+    );
+  });
+
+  // The document an operator reads before an irreversible button. Two facts about the
+  // gate report used to be invisible in it: which of the published gates decides a
+  // pre-registered hypothesis, and WHY the inventory does not cover the family.
+  it("says which gates certify, and names the hypotheses behind a covers: não", async () => {
+    const family = PREREGISTRATION_V4.multiplicity.primaryFamily;
+    const markdown = renderReportMarkdown(
+      await buildBenchmarkReport(
+        baseInput({
+          gates: gateReport({
+            gates: [
+              {
+                ...gateReport().gates[0],
+                id: "warning.calibration-ece",
+                role: "certifying",
+                hypothesis: "calibration-global",
+                passed: false,
+                reasons: ["equal-mass ECE-15: refused"],
+              },
+            ],
+            failedWarning: ["warning.calibration-ece"],
+            failedCertifying: ["warning.calibration-ece"],
+            multiplicity: {
+              ...gateReport().multiplicity,
+              covers: false,
+              observed: family.length - 1,
+              hypotheses: family.filter((member) => member !== "fpr-ptwiki"),
+              missingHypotheses: ["fpr-ptwiki"],
+              unexpectedHypotheses: ["fpr-b2w-reviews"],
+            },
+          }),
+        }),
+      ),
+    );
+    const gates = section(markdown, "Gates");
+    expect(gates).toMatch(/\| Papel \| Hipótese \|/u);
+    expect(gates).toMatch(/\| certifying \| calibration-global \|/u);
+    // The role travels with the reason too, where a single line used to say only the
+    // tier beside a decision the tier no longer explains alone.
+    expect(section(markdown, "Razões dos gates")).toContain(
+      "[warning] [certifying: calibration-global] warning.calibration-ece",
+    );
+    const multiplicity = section(markdown, "Multiplicidade");
+    expect(multiplicity).toContain("cobre: não");
+    expect(multiplicity).toMatch(
+      /nenhum gate deste relatório decidiu: `fpr-ptwiki`/u,
+    );
+    expect(multiplicity).toMatch(
+      /fora da família pré-registrada: `fpr-b2w-reviews`/u,
+    );
+    // And the label of the count says what it counts: hypotheses, integrity included.
+    expect(multiplicity).toMatch(
+      /hipóteses obrigatórias decididas neste relatório: 6/u,
     );
   });
 });

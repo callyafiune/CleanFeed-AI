@@ -8,21 +8,55 @@
 // comparison operator, the required threshold, the sample size behind it,
 // whether it was gate-eligible and whether it passed, with a human-readable
 // reason on every failure. Nothing else — no isolated high score, no model-card
-// metric, no partial result — can move the decision: it is a pure function of
-// the failed-gate lists.
+// metric, no partial result — can move the decision: it is a pure function of the
+// failed-gate lists and of which of those gates certify a pre-registered hypothesis.
 //
-// The three §6.5 decision branches:
-//   - a failed INTEGRITY or WARNING gate            => reject (stylometric stays)
-//   - all warning gates pass but an ACTION gate fails => indicator-only
-//   - every required warning and action gate passing  => pass
+// WHICH GATES DECIDE. The mandatory inventory is DERIVED from
+// `multiplicity.primaryFamily` and is never a list kept here, so the count that
+// divides `alpha_família` and the set of gates that decide a release are one
+// object. Its seven members are the four per-cell FPR ceilings on the
+// `humanSourceType` axis, the overall recall at the frozen threshold, the global
+// ECE, and integrity — and integrity is ONE member however many booleans it holds,
+// because alpha/7 spent on a boolean conjunction is pure conservatism.
 //
-// The warning and action tiers treat under-powered critical cells asymmetrically
-// and on purpose: an FPR cell below the pre-registered floor never blocks the
-// warning budget (it is not gate-eligible), but it also cannot AUTHORIZE visual
-// action, so it fails the action tier and caps the decision at indicator-only.
-// That is the rule for the critical slices and, since A6, for the human-negative
-// label bases too: a handful of `observed-process` rows cannot approve a gate,
-// lift the action ceiling or back a stronger claim about the aggregate.
+// Every other gate is published as a DIAGNOSTIC. What a diagnostic does NOT do is
+// certify: it holds no share of `alpha_família`, so its bound is not evidence at the
+// pre-registered level and it backs no published claim about the population. It still
+// BLOCKS, and by its tier, exactly as before the roles existed.
+//
+// The three §6.5 decision branches, unchanged by the roles:
+//   - a failed CERTIFYING, INTEGRITY or WARNING gate  => reject (stylometric stays)
+//   - every one of those passes and an ACTION gate fails => indicator-only
+//   - nothing fails at all                            => pass
+//
+// `indicator-only` is not a lower ceiling than `reject` — it is the frontier between
+// not publishing and publishing. `reject` yields no calibration profile at all
+// (benchmark/profile-artifact.ts builds them only for `pass`/`indicator-only`), a
+// `bundle-verified` rollout state that authorizes nothing, and a release package whose
+// active runtime stays the built-in stylometric scorer (scripts/release-policy.mjs).
+// `indicator-only` publishes the profile set and makes the weights the active runtime.
+// So a diagnostic that stops deciding the CLAIM must not stop blocking the RELEASE:
+// coverage, the pooled FPR, the label bases and a critical cell off the certifying
+// axis all describe the population the release would act on, and none of them became
+// safe by losing its share of the alpha.
+//
+// UNDER-POWERED CELLS, asymmetric between the two ROLES rather than between the two
+// tiers. A CERTIFYING cell below the pre-registered negative floor FAILS: the
+// hypothesis stays inside `m` (a divisor that shrinks with the evidence is not a
+// correction) and a cell without power cannot certify it. A diagnostic FPR cell
+// below the floor never blocks the warning budget, but it also cannot AUTHORIZE
+// visual action, so it fails the action tier and caps the decision at
+// indicator-only. Same rule for the human-negative label bases: a handful of
+// `observed-process` rows cannot approve a gate, lift the action ceiling or back a
+// stronger claim about the aggregate.
+//
+// WHY A CELL'S n COUNTS INDEPENDENT UNITS. The denominator of a per-cell FPR is
+// human-negative record-lines, and the pre-registration admits at most ONE line per
+// origin document per cell (`collection.maximumLinesPerOriginDocument`). Without
+// that rule a cell could be filled with many slices of one page: n would count
+// correlated draws while the interval assumes exchangeable ones, and the published
+// zero-event ceiling `1 - (alpha/7)^(1/n)` would be read off a sample size the
+// corpus never had.
 //
 // Every operating-point gate reads the END-TO-END metric family
 // (benchmark/metrics.ts): its denominator is the whole eligible set and a record
@@ -30,7 +64,7 @@
 // than the conditional family on recall or clearance. Reading the conditional
 // family here would let a fragile run buy a pass with its own failures.
 //
-// FOUR KINDS OF MISSING EVIDENCE FAIL A GATE, AND NONE DEGRADES QUIETLY (A6/C4):
+// SIX KINDS OF MISSING EVIDENCE FAIL A GATE, AND NONE DEGRADES QUIETLY (A6/C4):
 //
 //   * The RESAMPLING PLAN. A Wilson or percentile interval over rows assumes the
 //     rows are exchangeable. The corpus is not: authors, pages, threads, prompts
@@ -60,11 +94,13 @@
 //     family-wise error rate. Each interval gate reads the Bonferroni bound at
 //     `alpha_família / m` that benchmark/metrics.ts publishes on the estimate; the
 //     individual 95% bound stays in the report, marked descriptive, and is never
-//     the verdict. `m` is the caller's PRE-REGISTERED count (frozen in G5), never
+//     the verdict. `m` is the caller's PRE-REGISTERED count (frozen at G0.2), never
 //     derived from the data: if a cell loses power it stays inside `m` and fails,
 //     because a divisor that shrinks with the evidence is not a correction. When
-//     the declared `m` does not cover the mandatory gates this report produced,
-//     every interval gate fails — the alpha is never quietly recomputed.
+//     the mandatory inventory is not the pre-registered family — a member missing, a
+//     hypothesis the family does not name, or a declared `m` below the count — every
+//     CERTIFYING gate fails and the report names which of the three it was; the
+//     alpha is never quietly recomputed.
 //   * The RESAMPLING EFFORT behind that bound. A percentile read at
 //     `alpha_família / m` sits `alpha * (n - 1)` order statistics from the extreme
 //     of the replicate distribution: with m = 40 and the 2000 replicates
@@ -73,6 +109,18 @@
 //     says never to reduce the count, so a bound thinner than that is missing
 //     evidence, not a faster measurement. Every bound that reaches this check is
 //     already a percentile: the step above refused the analytic ones.
+//   * The BOUND AND THE REPORT AGREEING ON `m`. The divisor reaches the aggregate
+//     metrics and every slice's metrics through separate arguments, so a slice
+//     interval can carry a divisor the report never published — and 0.05/40 is a
+//     WIDER limit than 0.05/7 against the same budget. The gate refuses any bound
+//     whose `m` differs from the declared one instead of comparing a number to a
+//     budget it was not corrected for.
+//   * The SCORE the statistic was measured over. The global calibration hypothesis
+//     is about `calibrationGate.scoreBasis` and nothing in an ECE number says which
+//     score produced it, so the caller declares it and the gate refuses a basis that
+//     is not the pre-registered one: an ECE over a calibrated score answers a
+//     different question at the same alpha, and the sealed evidence would carry the
+//     pre-registered basis beside it.
 //
 // Frozen numbers come from benchmark/preregistration-v4.json through
 // benchmark/preregistration-v4.ts: the FPR budgets, the ECE ceiling, the family
@@ -114,12 +162,34 @@ import type {
   MetricEstimate,
 } from "./metrics.ts";
 import { PREREGISTRATION_V4 } from "./preregistration-v4.ts";
-import type { EceGateBound } from "./preregistration-v4.ts";
+import type { EceGateBound, ScoreBasis } from "./preregistration-v4.ts";
 import type { SliceAxis, SliceResult, SliceSummary } from "./slices.ts";
 
 export type ReleaseDecision = "pass" | "indicator-only" | "reject";
 
 export type GateTier = "integrity" | "warning" | "action";
+
+/**
+ * Whether a gate decides the pre-registered claim or is published beside it.
+ *
+ * A `certifying` gate is one of the members of `multiplicity.primaryFamily` and is
+ * the only kind that consumes a share of `alpha_família`. A `diagnostic` gate holds no
+ * share of it, so its bound is not evidence at the pre-registered level and backs no
+ * published claim — which is not the same as being inert: a failed diagnostic blocks
+ * by its tier, exactly as it did before the roles existed.
+ */
+export type GateRole = "certifying" | "diagnostic";
+
+/**
+ * The score a run's calibration statistic was actually measured over.
+ *
+ * {@link ScoreBasis} is the pre-registration's vocabulary — the scores a policy may
+ * NAME — and a run can also have measured the calibrated score, which is not a
+ * pre-registrable basis and is exactly the mismatch the ECE gate has to refuse. The
+ * gate cannot read it off the number: an ECE is a number either way.
+ */
+export type MeasuredScoreBasis = ScoreBasis | "document-calibrated-score";
+
 export type GateScope = "overall" | "slice";
 export type GateBound =
   | "point"
@@ -136,8 +206,8 @@ export type GateEvidence =
   | "present"
   // No C4 plan declares a resampling unit for this estimand.
   | "missing-resampling-plan"
-  // No multiplicity-corrected bound was published for this estimate, or the
-  // declared `m` does not cover this report's mandatory gates.
+  // No multiplicity-corrected bound was published for this estimate, or the mandatory
+  // inventory of this report is not the pre-registered family.
   | "missing-simultaneous-interval"
   // A bound was published, the plan declares a unit for the estimand — and the
   // bound was not produced BY resampling that unit. An analytic Wilson bound over
@@ -148,6 +218,14 @@ export type GateEvidence =
   // A percentile bound was published, but it was read from fewer replicates than
   // the frozen contract pre-registers, so at alpha_family / m it has no resolution.
   | "insufficient-resampling-effort"
+  // A bound was published at a DIFFERENT `m` than the report declares. The aggregate
+  // and every slice receive the divisor separately, so this is the shape a mis-wired
+  // call site takes, and a wider limit compared to the same budget passes cells the
+  // pre-registered alpha would fail.
+  | "divergent-multiplicity"
+  // The statistic was measured over a score other than the pre-registered basis, so
+  // the bound answers a different question at the same alpha.
+  | "score-basis-mismatch"
   // The gate reads no interval (a boolean or an approved point gate), or the cell
   // has no pre-registered power and therefore no bound was read.
   | "not-applicable";
@@ -163,6 +241,11 @@ export interface DescriptiveBound {
 export interface GateResult {
   id: string;
   tier: GateTier;
+  role: GateRole;
+  // Which member of `multiplicity.primaryFamily` this gate decides. Present exactly
+  // on the certifying gates, and the same value on every boolean of the integrity
+  // conjunction: they are one hypothesis, not seventeen.
+  hypothesis?: string;
   scope: GateScope;
   slice?: { axis: SliceAxis; key: string };
   // The estimand whose resampling unit C4's plan must declare. Absent on the
@@ -195,24 +278,43 @@ export interface MultiplicityReport {
   descriptiveConfidence: number;
   frozenAt: "G0.2";
   // The pre-registered count the metrics were computed with; null when the caller
-  // declared none, in which case no interval gate can read a corrected bound.
+  // declared none, in which case no certifying gate can read a corrected bound.
   declared: number | null;
-  // The mandatory interval gates this run produced, under-powered cells included.
+  // The hypotheses this run's mandatory inventory produced, under-powered cells
+  // included. Integrity counts ONCE, so on a coherent run this is the family size.
   observed: number;
+  // The certifying INTERVAL gates, in the order the specs were built. Six of the
+  // seven members: integrity is the boolean conjunction and has no single id.
   gateIds: string[];
+  // The pre-registered family the inventory is derived from, and the hypotheses the
+  // inventory actually named.
+  primaryFamily: readonly string[];
+  hypotheses: string[];
+  // The two directions in which the inventory can stop BEING the family: a member no
+  // gate of this run decided, and a hypothesis the family does not name (a repeated
+  // one lands here too).
+  missingHypotheses: string[];
+  unexpectedHypotheses: string[];
   perGateAlpha: number | null;
-  // Whether `declared` covers `observed`. False fails every interval gate.
+  // Whether the inventory is the pre-registered family and `declared` covers it.
+  // False fails every certifying gate.
   covers: boolean;
 }
 
 export interface GateReport {
-  schemaVersion: 2;
+  schemaVersion: 3;
   decision: ReleaseDecision;
   gates: GateResult[];
   multiplicity: MultiplicityReport;
   failedIntegrity: string[];
   failedWarning: string[];
   failedAction: string[];
+  // The failures that fall on a member of the primary family, across tiers: the
+  // subset of the three lists above that speaks at the pre-registered level. A
+  // non-empty list means no certifying claim of this version stands; it is a
+  // SUFFICIENT condition for `reject` and not a necessary one, because a failed
+  // diagnostic of the warning tier rejects too.
+  failedCertifying: string[];
 }
 
 // The outcomes of every upstream governance/identity validation the evaluate
@@ -250,6 +352,10 @@ export interface GateInput {
   // C4's plan, or `null` when it does not exist yet. Required, not optional: a
   // caller must state that it has no plan rather than omit the question.
   resampling: ResamplingPlan | null;
+  // Which score `metrics.calibration.eceEqualMass15` was measured over. Required for
+  // the same reason as `resampling`: the number carries no trace of the score behind
+  // it, and the global calibration hypothesis is about one specific score.
+  calibrationScoreBasis: MeasuredScoreBasis;
 }
 
 // §6.5 thresholds that are NOT rows of the frozen pre-registration.
@@ -309,6 +415,38 @@ const ESTIMAND_ACTION_FPR_SLICE = "action.fpr.slice";
 const ESTIMAND_ACTION_FPR_LABEL_BASIS = "action.fpr.labelBasis";
 const ESTIMAND_ACTION_RECALL = "action.recall";
 
+// --- the certifying family -------------------------------------------------
+//
+// The seven hypotheses, read from the frozen pre-registration. The names are the
+// inventory: a member is `integrity`, `recall-at-threshold`, `calibration-global` or
+// `fpr-<quota cell>`, and the cell part is the key of the `humanSourceType` slice
+// that measures it. So a corpus whose `humanSourceType` does not carry the
+// quota-cell vocabulary produces hypotheses this family does not name, and the
+// report says WHICH — in both directions — instead of deciding a different family
+// under the same alpha.
+const PRIMARY_FAMILY: readonly string[] =
+  PREREGISTRATION_V4.multiplicity.primaryFamily;
+const INTEGRITY_HYPOTHESIS = "integrity";
+const RECALL_HYPOTHESIS = "recall-at-threshold";
+const CALIBRATION_HYPOTHESIS = "calibration-global";
+const CELL_FPR_HYPOTHESIS_PREFIX = "fpr-";
+// The slice axis the per-cell ceilings are measured on.
+const CELL_FPR_AXIS: SliceAxis = "humanSourceType";
+// How many record-lines one origin document may contribute to a cell. It is what
+// makes a floor counted in LINES also a floor counted in independent units, and it is
+// pre-registered collection policy: the count is imposed by the composition gate at
+// sealing time, never re-derived from the numbers a gate sees.
+const MAXIMUM_LINES_PER_ORIGIN_DOCUMENT =
+  PREREGISTRATION_V4.collection.maximumLinesPerOriginDocument;
+// The score the global calibration hypothesis is about.
+const CALIBRATION_SCORE_BASIS: ScoreBasis =
+  PREREGISTRATION_V4.calibrationGate.scoreBasis;
+
+/** The family member a per-cell FPR gate on the certifying axis decides. */
+function cellFprHypothesis(cell: string): string {
+  return `${CELL_FPR_HYPOTHESIS_PREFIX}${cell}`;
+}
+
 // The critical FPR axes: only these need the pre-registered negative floor to
 // gate the warning budget and to authorize visual action. Mirrors
 // benchmark/slices.ts.
@@ -329,6 +467,10 @@ const FPR_AXES: ReadonlySet<SliceAxis> = new Set([
 interface IntervalGateSpec {
   id: string;
   tier: "warning" | "action";
+  // The family member this spec decides, or `undefined` for a diagnostic. Its
+  // presence is what makes the gate certifying, so there is one source of truth for
+  // the role and for the inventory.
+  hypothesis?: string;
   scope: GateScope;
   slice?: { axis: SliceAxis; key: string };
   estimand: string;
@@ -341,6 +483,10 @@ interface IntervalGateSpec {
   eligible: boolean;
   // What an ineligible cell means in this tier.
   ineligible: { passed: boolean; reason: string | null };
+  // A fact about WHAT was measured that disqualifies the number before any question
+  // about how much of it there was: no sample size and no interval repairs a
+  // statistic computed over the wrong quantity.
+  refusal?: { evidence: GateEvidence; reason: string };
 }
 
 interface DecidedContext {
@@ -366,11 +512,34 @@ type ResamplingLookup =
 
 export function evaluateReleaseGates(input: GateInput): GateReport {
   const intervalSpecs = [
-    ...warningIntervalSpecs(input.metrics, input.slices),
+    ...warningIntervalSpecs(
+      input.metrics,
+      input.slices,
+      input.calibrationScoreBasis,
+    ),
     ...actionIntervalSpecs(input.metrics, input.slices),
   ];
 
   const declared = input.metrics.multiplicity;
+  // The integrity conjunction is always produced, so the member is always in the
+  // inventory; the certifying intervals are whichever specs claim a hypothesis.
+  const certifyingIds = intervalSpecs
+    .filter((spec) => spec.hypothesis !== undefined)
+    .map((spec) => spec.id);
+  const hypotheses = [
+    INTEGRITY_HYPOTHESIS,
+    ...intervalSpecs
+      .map((spec) => spec.hypothesis)
+      .filter((hypothesis): hypothesis is string => hypothesis !== undefined),
+  ];
+  const missingHypotheses = PRIMARY_FAMILY.filter(
+    (member) => !hypotheses.includes(member),
+  );
+  const unexpectedHypotheses = hypotheses.filter(
+    (hypothesis, index) =>
+      !PRIMARY_FAMILY.includes(hypothesis) ||
+      hypotheses.indexOf(hypothesis) !== index,
+  );
   const multiplicity: MultiplicityReport = {
     correction: "bonferroni",
     familyAlpha: PREREGISTRATION_V4.multiplicity.familyAlpha,
@@ -378,10 +547,21 @@ export function evaluateReleaseGates(input: GateInput): GateReport {
       PREREGISTRATION_V4.multiplicity.descriptiveConfidence,
     frozenAt: PREREGISTRATION_V4.multiplicity.frozenAt,
     declared: declared === null ? null : declared.m,
-    observed: intervalSpecs.length,
-    gateIds: intervalSpecs.map((spec) => spec.id),
+    observed: hypotheses.length,
+    gateIds: certifyingIds,
+    primaryFamily: PRIMARY_FAMILY,
+    hypotheses,
+    missingHypotheses,
+    unexpectedHypotheses,
     perGateAlpha: declared === null ? null : declared.perGateAlpha,
-    covers: declared !== null && declared.m >= intervalSpecs.length,
+    // A LARGER declared `m` is conservative and is not refused here; equality with
+    // the frozen family size is enforced where the number enters the measurement
+    // (benchmark/commands/evaluate.ts reads `primaryFamilySize`).
+    covers:
+      declared !== null &&
+      missingHypotheses.length === 0 &&
+      unexpectedHypotheses.length === 0 &&
+      declared.m >= hypotheses.length,
   };
 
   const context: DecidedContext = { plan: input.resampling, multiplicity };
@@ -401,22 +581,32 @@ export function evaluateReleaseGates(input: GateInput): GateReport {
   const failedIntegrity = failedIds(gates, "integrity");
   const failedWarning = failedIds(gates, "warning");
   const failedAction = failedIds(gates, "action");
+  const failedCertifying = gates
+    .filter((gate) => gate.role === "certifying" && !gate.passed)
+    .map((gate) => gate.id);
 
+  // `failedCertifying` is named in the branch and not left implicit: every certifying
+  // gate built here belongs to the integrity or warning tier, so the first two terms
+  // already cover it today — and a member of the family added to the action tier
+  // tomorrow must reject rather than inherit that tier's ceiling.
   const decision: ReleaseDecision =
-    failedIntegrity.length > 0 || failedWarning.length > 0
+    failedCertifying.length > 0 ||
+    failedIntegrity.length > 0 ||
+    failedWarning.length > 0
       ? "reject"
       : failedAction.length > 0
         ? "indicator-only"
         : "pass";
 
   return {
-    schemaVersion: 2,
+    schemaVersion: 3,
     decision,
     gates,
     multiplicity,
     failedIntegrity,
     failedWarning,
     failedAction,
+    failedCertifying,
   };
 }
 
@@ -517,10 +707,15 @@ function integrityGates(
   ];
 }
 
+// Every integrity gate carries the SAME hypothesis: the conjunction is member 7 of
+// the family, not one member per boolean, so the inventory counts it once however
+// many digests, seals and leases it holds.
 function booleanGate(id: string, ok: boolean, detail: string): GateResult {
   return {
     id,
     tier: "integrity",
+    role: "certifying",
+    hypothesis: INTEGRITY_HYPOTHESIS,
     scope: "overall",
     evidence: "not-applicable",
     observed: null,
@@ -543,6 +738,8 @@ function errorRateGate(value: number): GateResult {
   return {
     id: "integrity.error-rate",
     tier: "integrity",
+    role: "certifying",
+    hypothesis: INTEGRITY_HYPOTHESIS,
     scope: "overall",
     evidence: "not-applicable",
     observed,
@@ -563,7 +760,9 @@ function errorRateGate(value: number): GateResult {
 // The two approved POINT gates of the warning tier. They read no interval, so
 // there is no interval to correct for multiplicity and no resampling unit to
 // declare; both facts are recorded as `evidence: "not-applicable"` rather than
-// left to inference.
+// left to inference. Neither is a member of the primary family — coverage and
+// material-assistance recall are not hypotheses the version certifies — so both are
+// published diagnostic and cap the decision without rejecting it.
 function pointWarningGates(metrics: EvaluationMetrics): GateResult[] {
   return [
     pointGate(
@@ -581,6 +780,7 @@ function pointWarningGates(metrics: EvaluationMetrics): GateResult[] {
 function warningIntervalSpecs(
   metrics: EvaluationMetrics,
   slices: SliceSummary,
+  measuredScoreBasis: MeasuredScoreBasis,
 ): IntervalGateSpec[] {
   const specs: IntervalGateSpec[] = [
     {
@@ -599,9 +799,14 @@ function warningIntervalSpecs(
   ];
 
   for (const critical of criticalFprSlices(slices)) {
+    // The per-cell ceilings of the family are measured on ONE axis; a critical slice
+    // on any other axis is the same statistic over a grouping the version does not
+    // certify.
+    const certifying = critical.axis === CELL_FPR_AXIS;
     specs.push({
       id: `warning.fpr.slice.${critical.axis}.${critical.key}`,
       tier: "warning",
+      ...(certifying ? { hypothesis: cellFprHypothesis(critical.key) } : {}),
       scope: "slice",
       slice: { axis: critical.axis, key: critical.key },
       estimand: ESTIMAND_WARNING_FPR_SLICE,
@@ -610,9 +815,26 @@ function warningIntervalSpecs(
       threshold: WARNING_FPR_MAX,
       sampleSize: critical.negatives,
       subject: `critical FPR slice ${critical.axis}/${critical.key} warning FPR`,
-      // Under-powered critical slices never gate the warning budget.
       eligible: critical.fprGateEligible,
-      ineligible: { passed: true, reason: null },
+      ineligible: certifying
+        ? {
+            // A certifying cell stays inside `m` and FAILS when it has no power:
+            // the hypothesis was pre-registered and an under-sampled cell does not
+            // certify it. The floor named is the one the eligibility verdict was
+            // DECIDED against — `SliceOptions.minimumFprNegatives` lets a caller
+            // raise it — and never the pre-registered row, which would put a number
+            // in sealed evidence that nothing compared this cell to.
+            passed: false,
+            reason:
+              `a célula ${critical.key} tem ${critical.negatives} negativos ` +
+              `humanos, abaixo do piso aplicado de ${critical.fprNegativeFloor} ` +
+              `(a pré-inscrição conta o piso em documentos de origem, admitindo ` +
+              `≤${MAXIMUM_LINES_PER_ORIGIN_DOCUMENT} linha por documento por ` +
+              `célula; a imposição é do gate de composição): a hipótese ` +
+              `${cellFprHypothesis(critical.key)} permanece dentro de m e reprova`,
+          }
+        : // A diagnostic FPR cell below the floor never blocks the warning budget.
+          { passed: true, reason: null },
     });
   }
 
@@ -623,6 +845,7 @@ function warningIntervalSpecs(
   specs.push({
     id: "warning.recall.overall",
     tier: "warning",
+    hypothesis: RECALL_HYPOTHESIS,
     scope: "overall",
     estimand: ESTIMAND_WARNING_RECALL,
     estimate: metrics.warning.endToEnd.recall,
@@ -637,6 +860,7 @@ function warningIntervalSpecs(
   specs.push({
     id: "warning.calibration-ece",
     tier: "warning",
+    hypothesis: CALIBRATION_HYPOTHESIS,
     scope: "overall",
     estimand: ESTIMAND_CALIBRATION_ECE,
     // Equal-mass bins and an INTERVAL: the point estimate of ECE was the one
@@ -651,6 +875,19 @@ function warningIntervalSpecs(
     subject: `equal-mass ECE-${PREREGISTRATION_V4.calibrationGate.eceBins}`,
     eligible: true,
     ineligible: { passed: true, reason: null },
+    ...(measuredScoreBasis === CALIBRATION_SCORE_BASIS
+      ? {}
+      : {
+          refusal: {
+            evidence: "score-basis-mismatch" as GateEvidence,
+            reason:
+              `equal-mass ECE-${PREREGISTRATION_V4.calibrationGate.eceBins}: a ` +
+              `estatística foi medida sobre ${measuredScoreBasis}, e a hipótese ` +
+              `${CALIBRATION_HYPOTHESIS} é sobre ${CALIBRATION_SCORE_BASIS} — o ` +
+              "escore que o limiar congelado corta; um limite sobre outro escore " +
+              "não decide essa hipótese ao mesmo alpha",
+          },
+        }),
   });
 
   return specs;
@@ -708,6 +945,7 @@ function mixedRecallGate(
   return {
     id: "warning.mixed-recall",
     tier: "warning",
+    role: "diagnostic",
     scope: "overall",
     evidence: "not-applicable",
     observed,
@@ -747,6 +985,7 @@ function actionAvailabilityGate(metrics: EvaluationMetrics): GateResult[] {
     {
       id: "action.available",
       tier: "action",
+      role: "diagnostic",
       scope: "overall",
       evidence: "not-applicable",
       observed: null,
@@ -860,6 +1099,10 @@ function decideInterval(
   const base = {
     id: spec.id,
     tier: spec.tier,
+    role: (spec.hypothesis === undefined
+      ? "diagnostic"
+      : "certifying") as GateRole,
+    ...(spec.hypothesis === undefined ? {} : { hypothesis: spec.hypothesis }),
     scope: spec.scope,
     ...(spec.slice === undefined ? {} : { slice: spec.slice }),
     estimand: spec.estimand,
@@ -873,6 +1116,20 @@ function decideInterval(
       : { populationSize: spec.populationSize }),
     descriptive,
   };
+
+  // 0. The wrong QUANTITY was measured. This precedes the power question because no
+  //    sample size repairs it: the gate would otherwise publish a verdict about the
+  //    number it had rather than about the hypothesis it names.
+  if (spec.refusal !== undefined) {
+    return {
+      ...base,
+      evidence: spec.refusal.evidence,
+      observed: null,
+      eligible: true,
+      passed: false,
+      reasons: [spec.refusal.reason],
+    };
+  }
 
   // 1. No pre-registered power in this cell: nothing was read, and what that
   //    means is a property of the tier (§6.5), not of the evidence.
@@ -906,10 +1163,15 @@ function decideInterval(
     };
   }
 
-  // 3. No simultaneous bound to read (or a divisor that does not cover this
-  //    report's mandatory gates): fail, never read the 95% bound instead.
+  // 3. No simultaneous bound to read, or — for a CERTIFYING gate only — an inventory
+  //    that is not the pre-registered family: fail, never read the 95% bound instead.
+  //    The inventory check is scoped to the certifying gates because a diagnostic
+  //    holds no share of the alpha the inventory divides; failing it here is what
+  //    made a wrong wiring look like a statistical verdict.
   const simultaneous = spec.estimate?.simultaneous;
-  if (!context.multiplicity.covers || simultaneous === undefined) {
+  const inventoryRefused =
+    spec.hypothesis !== undefined && !context.multiplicity.covers;
+  if (inventoryRefused || simultaneous === undefined) {
     return {
       ...base,
       evidence: "missing-simultaneous-interval",
@@ -917,6 +1179,35 @@ function decideInterval(
       eligible: true,
       passed: false,
       reasons: [missingSimultaneousReason(spec, context)],
+    };
+  }
+
+  // 3b. A bound corrected for a DIFFERENT family than the one the report publishes.
+  //     The divisor reaches the aggregate metrics and each slice's metrics through
+  //     separate arguments, so the two can disagree while every number looks well
+  //     formed — and the direction of the mistake is not safe: alpha/40 is a wider
+  //     one-sided limit than alpha/7, compared against the very same budget. The
+  //     equality with the FROZEN family size is enforced at the call site
+  //     (benchmark/commands/evaluate.ts); what is checked here is that the number the
+  //     verdict rests on is the number the report claims.
+  const declaredM = context.multiplicity.declared;
+  if (declaredM !== null && simultaneous.m !== declaredM) {
+    return {
+      ...base,
+      evidence: "divergent-multiplicity",
+      observed: null,
+      eligible: true,
+      passed: false,
+      simultaneous: {
+        familyAlpha: simultaneous.familyAlpha,
+        m: simultaneous.m,
+        alpha: simultaneous.alpha,
+      },
+      reasons: [
+        `${spec.subject}: o limite simultâneo foi corrigido para m=${simultaneous.m} ` +
+          `(alpha=${simultaneous.alpha}) enquanto o relatório declara m=${declaredM}; ` +
+          "um limite lido em outro divisor não é o limite que este relatório publica",
+      ],
     };
   }
 
@@ -1159,10 +1450,25 @@ function missingSimultaneousReason(
       "e não decide gate"
     );
   }
+  if (multiplicity.missingHypotheses.length > 0) {
+    return (
+      `${spec.subject}: o inventário obrigatório não é a família primária — ` +
+      `nenhum gate deste relatório decide ${multiplicity.missingHypotheses.join(", ")}; ` +
+      "a família é pré-registrada e não se encolhe para caber no que a corrida produziu"
+    );
+  }
+  if (multiplicity.unexpectedHypotheses.length > 0) {
+    return (
+      `${spec.subject}: o inventário obrigatório não é a família primária — ` +
+      `${multiplicity.unexpectedHypotheses.join(", ")} não está entre os ` +
+      `${multiplicity.primaryFamily.length} membros pré-registrados; alpha_família ` +
+      "não se divide por uma hipótese que a pré-inscrição não nomeia"
+    );
+  }
   if (multiplicity.declared < multiplicity.observed) {
     return (
-      `${spec.subject}: o m declarado (${multiplicity.declared}) não cobre os ` +
-      `${multiplicity.observed} gates estatísticos obrigatórios deste relatório; ` +
+      `${spec.subject}: o m declarado (${multiplicity.declared}) não cobre as ` +
+      `${multiplicity.observed} hipóteses obrigatórias deste relatório; ` +
       "o divisor não é recalculado para caber"
     );
   }
@@ -1253,6 +1559,9 @@ function pointGate(
   return {
     id,
     tier,
+    // The integrity conjunction has its own constructors, so every gate built here
+    // is outside the family by construction.
+    role: "diagnostic",
     scope: "overall",
     evidence: "not-applicable",
     observed,

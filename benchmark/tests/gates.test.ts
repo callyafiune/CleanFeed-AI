@@ -17,27 +17,46 @@ import type {
   MetricEstimate,
 } from "../metrics.ts";
 import { PREREGISTRATION_V4 } from "../preregistration-v4.ts";
+import { buildModelPublication } from "../profile-artifact.ts";
 import type { BenchmarkRecord } from "../schema.ts";
-import type { SliceAxis, SliceResult, SliceSummary } from "../slices.ts";
+import { publicationInputFor } from "./profile-artifact.fixtures.ts";
+import {
+  buildSlices,
+  summarizeSlices,
+  type SliceAxis,
+  type SliceResult,
+  type SliceSummary,
+} from "../slices.ts";
 
 // --- fixture builders ------------------------------------------------------
+
+// Which score every fixture of this file declares its calibration statistic was
+// measured over: the PRE-REGISTERED one, so the two tests that are about the mismatch
+// are the only ones that can fail for it.
+const CERTIFYING_SCORE_BASIS = PREREGISTRATION_V4.calibrationGate.scoreBasis;
 
 // The FPR gates read the SIMULTANEOUS upper bound and the recall gates the
 // simultaneous lower bound; the individual 95% bounds stay in the estimate as the
 // descriptive interval. `upper`/`lower` set both to the same number so a fixture
 // reads like the budget it means; `splitBound` sets them apart, which is how a
 // test proves which one the verdict used.
-const M = 40;
+//
+// `M` is the divisor of the BOUNDS and the default divisor the fixture DECLARES: the
+// gate refuses a bound corrected for one `m` while the report publishes another, so a
+// fixture with two numbers would fail for its own incoherence. `boundM` sets them
+// apart, which is how the test for that refusal is written.
+const M = PREREGISTRATION_V4.multiplicity.primaryFamilySize;
 
 function simultaneousBound(
   lowerBound: number,
   upperBound: number,
+  m: number = M,
 ): NonNullable<MetricEstimate["simultaneous"]> {
   return {
     correction: "bonferroni",
     familyAlpha: 0.05,
-    m: M,
-    alpha: 0.05 / M,
+    m,
+    alpha: 0.05 / m,
     z: 3.2,
     lower: lowerBound,
     upper: upperBound,
@@ -75,13 +94,13 @@ function unitDeclaration(
 // unit, so that is what a gate fixture has to look like: `analyticUpper` /
 // `analyticLower` keep the OLD analytic shape, and they exist for the tests that
 // prove a gate refuses one.
-function analyticUpper(bound: number): MetricEstimate {
+function analyticUpper(bound: number, m: number = M): MetricEstimate {
   return {
     value: bound,
     lower95: 0,
     upper95: bound,
     method: "wilson-one-sided",
-    simultaneous: simultaneousBound(0, bound),
+    simultaneous: simultaneousBound(0, bound, m),
   };
 }
 function analyticLower(bound: number): MetricEstimate {
@@ -93,8 +112,8 @@ function analyticLower(bound: number): MetricEstimate {
     simultaneous: simultaneousBound(bound, 1),
   };
 }
-function upper(bound: number): MetricEstimate {
-  return resampled(analyticUpper(bound));
+function upper(bound: number, m: number = M): MetricEstimate {
+  return resampled(analyticUpper(bound, m));
 }
 function lower(bound: number): MetricEstimate {
   return resampled(analyticLower(bound));
@@ -276,6 +295,19 @@ function humanNegativeWithoutBasis(author: string): EvaluationItem {
     documentScore: 0.1,
     warned: false,
     visualActioned: false,
+  };
+}
+
+// The same human negative carrying a QUOTA CELL on the certifying axis, so
+// `buildSlices` produces the slice a per-cell hypothesis is measured on.
+function cellNegative(cell: string, author: string): EvaluationItem {
+  const item = humanNegativeWithoutBasis(author);
+  return {
+    ...item,
+    record: {
+      ...item.record,
+      humanSourceType: cell,
+    } as unknown as BenchmarkRecord,
   };
 }
 
@@ -501,11 +533,17 @@ interface SliceOverrides {
   recallGateEligible?: boolean;
   warningFprUpper?: number;
   actionFprUpper?: number;
+  // The floor the eligibility verdict above was decided against, which a caller of
+  // `buildSlices` may raise above the pre-registered row.
+  fprNegativeFloor?: number;
+  // The divisor of THIS slice's bounds, apart from the one the report declares.
+  boundM?: number;
 }
 
 function slice(overrides: SliceOverrides): SliceResult {
   const negatives = overrides.negatives ?? 0;
   const positives = overrides.positives ?? 0;
+  const boundM = overrides.boundM ?? M;
   return {
     axis: overrides.axis ?? "domain",
     key: overrides.key,
@@ -514,18 +552,51 @@ function slice(overrides: SliceOverrides): SliceResult {
     negatives,
     fprGateEligible: overrides.fprGateEligible ?? false,
     recallGateEligible: overrides.recallGateEligible ?? false,
+    fprNegativeFloor:
+      overrides.fprNegativeFloor ??
+      PREREGISTRATION_V4.powerFloors.criticalFprHumanNegatives,
+    recallPositiveFloor: PREREGISTRATION_V4.powerFloors.criticalRecallPositives,
     metrics: {
       warning: families(
-        decision(upper(overrides.warningFprUpper ?? 0.01), lower(0.75)),
+        decision(upper(overrides.warningFprUpper ?? 0.01, boundM), lower(0.75)),
       ),
       visualAction: families(
-        decision(upper(overrides.actionFprUpper ?? 0.005), lower(0.5)),
+        decision(upper(overrides.actionFprUpper ?? 0.005, boundM), lower(0.5)),
       ),
     } as unknown as EvaluationMetrics,
   };
 }
 
+// The quota cells whose FPR ceilings the primary family names, and the axis they are
+// measured on. A run that does not produce all four is a run whose mandatory
+// inventory is not the family, which fails every certifying gate — so every scenario
+// below starts from the four cells at full power, and the tests that are ABOUT the
+// inventory build their slice list with `bareSummary`.
+const CERTIFYING_CELLS = PREREGISTRATION_V4.preRegistration.quotaAxis.cells;
+
+function cellSlice(key: string, overrides: Partial<SliceOverrides> = {}) {
+  return slice({
+    axis: "humanSourceType",
+    key,
+    negatives: 400,
+    positives: 400,
+    fprGateEligible: true,
+    warningFprUpper: 0.02,
+    actionFprUpper: 0.01,
+    ...overrides,
+  });
+}
+
+function certifyingCellSlices(): SliceResult[] {
+  return CERTIFYING_CELLS.map((cell) => cellSlice(cell));
+}
+
 function summary(slices: SliceResult[]): SliceSummary {
+  return bareSummary([...certifyingCellSlices(), ...slices]);
+}
+
+// The slice list exactly as given, four certifying cells or not.
+function bareSummary(slices: SliceResult[]): SliceSummary {
   return {
     slices,
     macro: {
@@ -586,6 +657,7 @@ function gateById(gates: readonly GateResult[], id: string): GateResult {
 
 const passingEvidence: GateInput = {
   integrity: integrity(),
+  calibrationScoreBasis: CERTIFYING_SCORE_BASIS,
   resampling: plan(),
   metrics: metrics(),
   slices: summary([passingSlice()]),
@@ -593,6 +665,7 @@ const passingEvidence: GateInput = {
 
 const actionFprFailure: GateInput = {
   integrity: integrity(),
+  calibrationScoreBasis: CERTIFYING_SCORE_BASIS,
   resampling: plan(),
   // Warning FPR still under 5%, but the visual-action matrix breaks the 2% budget.
   metrics: metrics({ visual: { fpr: upper(0.03), recall: lower(0.5) } }),
@@ -601,6 +674,7 @@ const actionFprFailure: GateInput = {
 
 const actionSampleGap: GateInput = {
   integrity: integrity(),
+  calibrationScoreBasis: CERTIFYING_SCORE_BASIS,
   resampling: plan(),
   metrics: metrics(),
   slices: summary([
@@ -620,6 +694,7 @@ const actionSampleGap: GateInput = {
 
 const warningFprFailure: GateInput = {
   integrity: integrity(),
+  calibrationScoreBasis: CERTIFYING_SCORE_BASIS,
   resampling: plan(),
   metrics: metrics({ warningFpr: upper(0.08) }),
   slices: summary([passingSlice()]),
@@ -627,6 +702,7 @@ const warningFprFailure: GateInput = {
 
 const incompletePredictions: GateInput = {
   integrity: integrity({ predictionCompleteness: false }),
+  calibrationScoreBasis: CERTIFYING_SCORE_BASIS,
   resampling: plan(),
   metrics: metrics(),
   slices: summary([passingSlice()]),
@@ -634,9 +710,25 @@ const incompletePredictions: GateInput = {
 
 const lowCoverage: GateInput = {
   integrity: integrity(),
+  calibrationScoreBasis: CERTIFYING_SCORE_BASIS,
   resampling: plan(),
   metrics: metrics({ coverage: 0.5 }),
   slices: summary([passingSlice()]),
+};
+
+// The same 5% breach INSIDE the family: the pooled FPR is a diagnostic — the family
+// names four per-cell ceilings and no pooled one — and both reject, because a failed
+// warning gate blocks whatever its role is. What the role changes is the CLAIM: only
+// this one lands in `failedCertifying`.
+const certifyingCellBreach: GateInput = {
+  integrity: integrity(),
+  calibrationScoreBasis: CERTIFYING_SCORE_BASIS,
+  resampling: plan(),
+  metrics: metrics(),
+  slices: bareSummary([
+    ...CERTIFYING_CELLS.slice(1).map((cell) => cellSlice(cell)),
+    cellSlice(CERTIFYING_CELLS[0], { warningFprUpper: 0.09 }),
+  ]),
 };
 
 describe("release decision", () => {
@@ -648,11 +740,28 @@ describe("release decision", () => {
       actionSampleGap,
       "indicator-only",
     ],
-    ["warning FPR fails", warningFprFailure, "reject"],
+    ["the pooled warning FPR fails", warningFprFailure, "reject"],
+    ["a per-cell FPR ceiling fails", certifyingCellBreach, "reject"],
     ["prediction completeness fails", incompletePredictions, "reject"],
     ["coverage falls below 80%", lowCoverage, "reject"],
   ] as const)("%s -> %s", (_name, evidence, expected) => {
     expect(evaluateReleaseGates(evidence).decision).toBe(expected);
+  });
+
+  // The role decides the CLAIM, not the branch: the two warning breaches above reject
+  // alike, and only one of them says a pre-registered hypothesis of this version fell.
+  it("separates what fell from what it certified", () => {
+    expect(evaluateReleaseGates(warningFprFailure)).toMatchObject({
+      decision: "reject",
+      failedWarning: ["warning.fpr.overall"],
+      failedCertifying: [],
+    });
+    expect(evaluateReleaseGates(certifyingCellBreach)).toMatchObject({
+      decision: "reject",
+      failedCertifying: [
+        `warning.fpr.slice.humanSourceType.${CERTIFYING_CELLS[0]}`,
+      ],
+    });
   });
 });
 
@@ -712,6 +821,7 @@ describe("gate thresholds match the §6.5 table", () => {
   it("reports the denominator of the statistic it decided, not a wider population", () => {
     const report = evaluateReleaseGates({
       integrity: integrity(),
+      calibrationScoreBasis: CERTIFYING_SCORE_BASIS,
       resampling: plan(),
       metrics: metrics({
         labelBases: [
@@ -755,9 +865,10 @@ describe("gate thresholds match the §6.5 table", () => {
 });
 
 describe("warning tier teeth", () => {
-  it("rejects when an eligible critical slice breaches the 5% warning budget", () => {
+  it("rejects when an eligible critical slice off the certifying axis breaches the 5% warning budget, certifying nothing", () => {
     const report = evaluateReleaseGates({
       integrity: integrity(),
+      calibrationScoreBasis: CERTIFYING_SCORE_BASIS,
       resampling: plan(),
       metrics: metrics(),
       slices: summary([
@@ -771,6 +882,9 @@ describe("warning tier teeth", () => {
         }),
       ]),
     });
+    // A hard-negative family is not a quota cell, so the breach certifies nothing —
+    // and it blocks the release all the same: the cell describes the population the
+    // release would act on.
     expect(report.decision).toBe("reject");
     const gate = gateById(
       report.gates,
@@ -778,6 +892,7 @@ describe("warning tier teeth", () => {
     );
     expect(gate).toMatchObject({
       tier: "warning",
+      role: "diagnostic",
       scope: "slice",
       slice: { axis: "hardNegativeFamily", key: "citation-heavy" },
       bound: "simultaneous-upper",
@@ -785,13 +900,35 @@ describe("warning tier teeth", () => {
       eligible: true,
       passed: false,
     });
+    expect(gate.hypothesis).toBeUndefined();
     expect(gate.observed).toBeCloseTo(0.09, 10);
     expect(gate.reasons[0]).toMatch(/exceeds 0\.05/u);
+    expect(report.failedCertifying).toEqual([]);
+  });
+
+  it("rejects when a per-cell ceiling of the family breaches the 5% budget", () => {
+    const report = evaluateReleaseGates(certifyingCellBreach);
+    const gate = gateById(
+      report.gates,
+      `warning.fpr.slice.humanSourceType.${CERTIFYING_CELLS[0]}`,
+    );
+    expect(gate).toMatchObject({
+      tier: "warning",
+      role: "certifying",
+      hypothesis: `fpr-${CERTIFYING_CELLS[0]}`,
+      required: 0.05,
+      eligible: true,
+      passed: false,
+    });
+    expect(gate.observed).toBeCloseTo(0.09, 10);
+    expect(report.decision).toBe("reject");
+    expect(report.failedCertifying).toEqual([gate.id]);
   });
 
   it("rejects on a warning recall shortfall", () => {
     const report = evaluateReleaseGates({
       integrity: integrity(),
+      calibrationScoreBasis: CERTIFYING_SCORE_BASIS,
       resampling: plan(),
       metrics: metrics({ warningRecall: lower(0.5) }),
       slices: summary([passingSlice()]),
@@ -805,6 +942,7 @@ describe("warning tier teeth", () => {
     // not. Before A6 this gate read the point and passed.
     const report = evaluateReleaseGates({
       integrity: integrity(),
+      calibrationScoreBasis: CERTIFYING_SCORE_BASIS,
       resampling: plan(),
       metrics: metrics({
         ece: resampled(
@@ -830,6 +968,7 @@ describe("warning tier teeth", () => {
   it("fails the ECE gate when no interval was produced at all", () => {
     const report = evaluateReleaseGates({
       integrity: integrity(),
+      calibrationScoreBasis: CERTIFYING_SCORE_BASIS,
       resampling: plan(),
       metrics: metrics({ ece: withoutSimultaneous(0.01) }),
       slices: summary([passingSlice()]),
@@ -848,6 +987,7 @@ describe("warning tier teeth", () => {
     // says never to reduce the count, so this is missing evidence.
     const report = evaluateReleaseGates({
       integrity: integrity(),
+      calibrationScoreBasis: CERTIFYING_SCORE_BASIS,
       resampling: plan(),
       metrics: metrics({ ece: resampled(analyticUpper(0.01), 2_000) }),
       slices: summary([passingSlice()]),
@@ -870,6 +1010,7 @@ describe("warning tier teeth", () => {
   it("fails the ECE gate when the percentile bound never says how many replicates produced it", () => {
     const report = evaluateReleaseGates({
       integrity: integrity(),
+      calibrationScoreBasis: CERTIFYING_SCORE_BASIS,
       resampling: plan(),
       metrics: metrics({ ece: resampled(analyticUpper(0.01), "undeclared") }),
       slices: summary([passingSlice()]),
@@ -898,6 +1039,7 @@ describe("warning tier teeth", () => {
   it("rejects on mixed >=50% AI warning-recall below 50%, reporting the IC without substituting the point gate", () => {
     const report = evaluateReleaseGates({
       integrity: integrity(),
+      calibrationScoreBasis: CERTIFYING_SCORE_BASIS,
       resampling: plan(),
       metrics: metrics({
         mixed: {
@@ -908,9 +1050,14 @@ describe("warning tier teeth", () => {
       }),
       slices: summary([passingSlice()]),
     });
+    // Material-assistance recall is not one of the seven hypotheses: it authorizes a
+    // warning and certifies no bound. It still blocks — the cohort it describes is one
+    // the release would act on.
     expect(report.decision).toBe("reject");
+    expect(report.failedCertifying).toEqual([]);
     const gate = gateById(report.gates, "warning.mixed-recall");
     expect(gate.bound).toBe("point");
+    expect(gate.role).toBe("diagnostic");
     expect(gate.passed).toBe(false);
     expect(gate.reasons[0]).toMatch(/lower95/u);
   });
@@ -920,6 +1067,7 @@ describe("action tier teeth", () => {
   it("caps at indicator-only when an eligible slice breaks only the 2% action budget", () => {
     const report = evaluateReleaseGates({
       integrity: integrity(),
+      calibrationScoreBasis: CERTIFYING_SCORE_BASIS,
       resampling: plan(),
       metrics: metrics(),
       slices: summary([
@@ -949,6 +1097,7 @@ describe("action tier teeth", () => {
   it("caps at indicator-only on an action recall shortfall", () => {
     const report = evaluateReleaseGates({
       integrity: integrity(),
+      calibrationScoreBasis: CERTIFYING_SCORE_BASIS,
       resampling: plan(),
       metrics: metrics({ visual: { fpr: upper(0.01), recall: lower(0.2) } }),
       slices: summary([passingSlice()]),
@@ -960,6 +1109,7 @@ describe("action tier teeth", () => {
   it("caps at indicator-only when no visual-action threshold was frozen", () => {
     const report = evaluateReleaseGates({
       integrity: integrity(),
+      calibrationScoreBasis: CERTIFYING_SCORE_BASIS,
       resampling: plan(),
       metrics: metrics({ visual: null }),
       slices: summary([passingSlice()]),
@@ -981,6 +1131,7 @@ describe("action tier teeth", () => {
     const base = metrics();
     const report = evaluateReleaseGates({
       integrity: integrity(),
+      calibrationScoreBasis: CERTIFYING_SCORE_BASIS,
       resampling: plan(),
       metrics: { ...base, actionAuthorization: null },
       slices: summary([passingSlice()]),
@@ -1002,6 +1153,7 @@ describe("eligible-slice gating (undersized slices do not block the warning budg
   it("ignores an undersized critical slice with a catastrophic FPR for the warning budget", () => {
     const report = evaluateReleaseGates({
       integrity: integrity(),
+      calibrationScoreBasis: CERTIFYING_SCORE_BASIS,
       resampling: plan(),
       metrics: metrics(),
       slices: summary([
@@ -1028,6 +1180,7 @@ describe("eligible-slice gating (undersized slices do not block the warning budg
   it("fully ignores an undersized non-FPR-axis slice", () => {
     const report = evaluateReleaseGates({
       integrity: integrity(),
+      calibrationScoreBasis: CERTIFYING_SCORE_BASIS,
       resampling: plan(),
       metrics: metrics(),
       slices: summary([
@@ -1067,6 +1220,7 @@ describe("C4's real plan closes the gap A6 left open", () => {
     );
     const report = evaluateReleaseGates({
       integrity: integrity(),
+      calibrationScoreBasis: CERTIFYING_SCORE_BASIS,
       resampling: computed.resampling,
       metrics: computed,
       slices: summary([passingSlice()]),
@@ -1104,6 +1258,66 @@ describe("C4's real plan closes the gap A6 left open", () => {
       )?.executed,
     ).toBe("percentile-bootstrap");
   });
+
+  // The floor reaches the gate through THREE hands — the policy, `buildSlices`, and the
+  // gate composing the reason — and every fixture above writes `fprGateEligible` by
+  // hand, which exercises none of them. Here the eligibility verdict is the one
+  // `buildSlices` computed over real rows, one line below the floor.
+  it("fails a certifying cell that buildSlices found one line below the floor", () => {
+    const floor = PREREGISTRATION_V4.powerFloors.criticalFprHumanNegatives;
+    const [starved, ...rest] = CERTIFYING_CELLS;
+    const items = [
+      ...Array.from({ length: floor - 1 }, (_, index) =>
+        cellNegative(starved, `s${index}`),
+      ),
+      // The other three cells exist so the inventory IS the family and the refusal
+      // under test is about power and not about a missing hypothesis.
+      ...rest.flatMap((cell) => [
+        cellNegative(cell, `${cell}-0`),
+        cellNegative(cell, `${cell}-1`),
+      ]),
+      ...Array.from({ length: 10 }, (_, index) => aiPositive(`p${index}`)),
+    ];
+    const options = {
+      bootstrapSeed: 20260804,
+      preRegisteredStatisticalGates: M,
+    };
+    const computed = computeEvaluationMetrics(items, options);
+    const slices = summarizeSlices(
+      buildSlices(items, { ...options, heldOutGeneratorFamilies: [] }),
+    );
+    const cell = slices.slices.find(
+      (candidate) =>
+        candidate.axis === "humanSourceType" && candidate.key === starved,
+    );
+    expect(cell?.negatives).toBe(floor - 1);
+    expect(cell?.fprGateEligible).toBe(false);
+    expect(cell?.fprNegativeFloor).toBe(floor);
+
+    const report = evaluateReleaseGates({
+      integrity: integrity(),
+      calibrationScoreBasis: CERTIFYING_SCORE_BASIS,
+      resampling: computed.resampling,
+      metrics: computed,
+      slices,
+    });
+    expect(report.multiplicity.missingHypotheses).toEqual([]);
+    const gate = gateById(
+      report.gates,
+      `warning.fpr.slice.humanSourceType.${starved}`,
+    );
+    expect(gate.role).toBe("certifying");
+    expect(gate.eligible).toBe(false);
+    expect(gate.passed).toBe(false);
+    expect(gate.reasons[0]).toMatch(
+      new RegExp(
+        `a célula ${starved} tem ${floor - 1} negativos humanos, abaixo do piso aplicado de ${floor}`,
+        "u",
+      ),
+    );
+    expect(report.decision).toBe("reject");
+    expect(report.failedCertifying).toContain(gate.id);
+  });
 });
 
 describe("a declared unit is not a property of the number (R7)", () => {
@@ -1116,11 +1330,16 @@ describe("a declared unit is not a property of the number (R7)", () => {
   it("fails the gate when the bound is analytic and the plan only declares the unit", () => {
     const report = evaluateReleaseGates({
       integrity: integrity(),
+      calibrationScoreBasis: CERTIFYING_SCORE_BASIS,
       resampling: plan(),
       metrics: metrics({ warningFpr: analyticUpper(0.02) }),
       slices: summary([passingSlice()]),
     });
+    // The refusal is the subject here, and it blocks whether or not the number was
+    // going to certify anything: the pooled FPR is a diagnostic, so it rejects without
+    // adding to `failedCertifying`.
     expect(report.decision).toBe("reject");
+    expect(report.failedCertifying).toEqual([]);
     const fpr = gateById(report.gates, "warning.fpr.overall");
     expect(fpr.evidence).toBe("unresampled-interval");
     expect(fpr.passed).toBe(false);
@@ -1136,6 +1355,7 @@ describe("a declared unit is not a property of the number (R7)", () => {
     const overOtherAxes = upper(0.02);
     const report = evaluateReleaseGates({
       integrity: integrity(),
+      calibrationScoreBasis: CERTIFYING_SCORE_BASIS,
       resampling: plan(),
       metrics: metrics({
         warningFpr: {
@@ -1164,6 +1384,7 @@ describe("a declared unit is not a property of the number (R7)", () => {
     const withoutPair = upper(0.02);
     const report = evaluateReleaseGates({
       integrity: integrity(),
+      calibrationScoreBasis: CERTIFYING_SCORE_BASIS,
       resampling: plan(),
       metrics: metrics({
         warningFpr: {
@@ -1197,6 +1418,7 @@ describe("a declared unit is not a property of the number (R7)", () => {
     const narrowed = upper(0.02);
     const report = evaluateReleaseGates({
       integrity: integrity(),
+      calibrationScoreBasis: CERTIFYING_SCORE_BASIS,
       resampling: plan(),
       metrics: metrics({
         warningFpr: {
@@ -1245,6 +1467,7 @@ describe("a declared unit is not a property of the number (R7)", () => {
     const mismatched = upper(0.02);
     const report = evaluateReleaseGates({
       integrity: integrity(),
+      calibrationScoreBasis: CERTIFYING_SCORE_BASIS,
       resampling: plan(),
       metrics: metrics({
         warningFpr: {
@@ -1286,6 +1509,7 @@ describe("a declared unit is not a property of the number (R7)", () => {
     const nested = upper(0.02);
     const report = evaluateReleaseGates({
       integrity: integrity(),
+      calibrationScoreBasis: CERTIFYING_SCORE_BASIS,
       resampling: plan({
         entries: plan().entries.map((entry) =>
           entry.estimand === "warning.fpr"
@@ -1306,6 +1530,7 @@ describe("missing resampling evidence fails the gate, never falls back to i.i.d.
   it("fails every interval gate when no plan backs its estimand", () => {
     const report = evaluateReleaseGates({
       integrity: integrity(),
+      calibrationScoreBasis: CERTIFYING_SCORE_BASIS,
       // C4 has not run: there is no hierarchical or multiway plan.
       resampling: null,
       metrics: metrics(),
@@ -1335,6 +1560,7 @@ describe("missing resampling evidence fails the gate, never falls back to i.i.d.
     const partial = plan();
     const report = evaluateReleaseGates({
       integrity: integrity(),
+      calibrationScoreBasis: CERTIFYING_SCORE_BASIS,
       resampling: {
         ...partial,
         entries: partial.entries.filter(
@@ -1359,6 +1585,7 @@ describe("missing resampling evidence fails the gate, never falls back to i.i.d.
     const partial = plan();
     const report = evaluateReleaseGates({
       integrity: integrity(),
+      calibrationScoreBasis: CERTIFYING_SCORE_BASIS,
       resampling: {
         ...partial,
         entries: partial.entries.map((entry) =>
@@ -1384,6 +1611,7 @@ describe("missing resampling evidence fails the gate, never falls back to i.i.d.
     const noAxis = plan();
     const withoutAxes = evaluateReleaseGates({
       integrity: integrity(),
+      calibrationScoreBasis: CERTIFYING_SCORE_BASIS,
       resampling: {
         ...noAxis,
         entries: noAxis.entries.map((entry) => ({ ...entry, unitAxes: [] })),
@@ -1400,6 +1628,7 @@ describe("missing resampling evidence fails the gate, never falls back to i.i.d.
     const thin = plan();
     const tooFewReplicates = evaluateReleaseGates({
       integrity: integrity(),
+      calibrationScoreBasis: CERTIFYING_SCORE_BASIS,
       resampling: {
         ...thin,
         entries: thin.entries.map((entry) => ({ ...entry, replicates: 500 })),
@@ -1423,6 +1652,7 @@ describe("Bonferroni simultaneous bounds", () => {
   it("decides on the simultaneous bound, not on the individual 95% one", () => {
     const report = evaluateReleaseGates({
       integrity: integrity(),
+      calibrationScoreBasis: CERTIFYING_SCORE_BASIS,
       resampling: plan(),
       // 4% individually — inside the 5% budget — and 6% simultaneously.
       metrics: metrics({
@@ -1446,7 +1676,7 @@ describe("Bonferroni simultaneous bounds", () => {
     });
   });
 
-  it("counts only the mandatory interval gates in m, never integrity or diagnostics", () => {
+  it("counts only the certifying interval gates in m, never integrity, diagnostics or the pooled cells", () => {
     const report = evaluateReleaseGates(passingEvidence);
     const multiplicity = report.multiplicity;
     expect(multiplicity.correction).toBe("bonferroni");
@@ -1460,55 +1690,144 @@ describe("Bonferroni simultaneous bounds", () => {
     for (const id of multiplicity.gateIds) {
       expect(id.startsWith("integrity.")).toBe(false);
     }
-    // Not every gate is in m: the point gates (coverage, mixed recall) read no
-    // interval, so there is no interval to correct.
-    expect(multiplicity.gateIds).not.toContain("warning.coverage");
-    expect(multiplicity.gateIds).not.toContain("warning.mixed-recall");
-    expect(multiplicity.observed).toBe(multiplicity.gateIds.length);
+    // The inventory is the SIX interval gates of the family: four per-cell ceilings,
+    // the overall recall and the global ECE. Integrity is member seven and has no
+    // single id, so `observed` is one more than the list.
+    expect(multiplicity.gateIds).toEqual([
+      ...CERTIFYING_CELLS.map(
+        (cell) => `warning.fpr.slice.humanSourceType.${cell}`,
+      ),
+      "warning.recall.overall",
+      "warning.calibration-ece",
+    ]);
+    expect(multiplicity.observed).toBe(multiplicity.gateIds.length + 1);
+    expect(multiplicity.observed).toBe(
+      PREREGISTRATION_V4.multiplicity.primaryFamilySize,
+    );
+    // Neither the point gates (no interval to correct), nor the pooled FPR, nor the
+    // label bases, nor any action gate: none of them is a hypothesis of this version.
+    for (const id of [
+      "warning.coverage",
+      "warning.mixed-recall",
+      "warning.fpr.overall",
+      "warning.fpr.labelBasis.date-cutoff",
+      "action.fpr.overall",
+      "action.recall.overall",
+    ]) {
+      expect(multiplicity.gateIds).not.toContain(id);
+      expect(gateById(report.gates, id).role).toBe("diagnostic");
+    }
     const intervalGates = report.gates.filter(
       (gate) =>
         gate.bound === "simultaneous-upper" ||
         gate.bound === "simultaneous-lower",
     );
-    expect(multiplicity.observed).toBe(intervalGates.length);
+    // Far more interval gates are PUBLISHED than are counted: that gap is the whole
+    // point of a derived inventory.
+    expect(intervalGates.length).toBeGreaterThan(multiplicity.gateIds.length);
     expect(multiplicity.covers).toBe(true);
   });
 
-  it("keeps an under-powered cell inside m and fails it, instead of shrinking the divisor", () => {
-    const powered = evaluateReleaseGates(passingEvidence).multiplicity.observed;
-    const withUnderPowered = evaluateReleaseGates({
-      integrity: integrity(),
-      resampling: plan(),
-      metrics: metrics(),
-      slices: summary([
-        passingSlice(),
-        slice({
-          axis: "domain",
-          key: "legal",
-          negatives: 12,
-          fprGateEligible: false,
-          warningFprUpper: 0.01,
-          actionFprUpper: 0.01,
-        }),
-      ]),
-    });
-    // Two more gates (a warning cell and an action cell), both counted in m.
-    expect(withUnderPowered.multiplicity.observed).toBe(powered + 2);
-    expect(withUnderPowered.multiplicity.gateIds).toContain(
-      "action.fpr.slice.domain.legal",
-    );
-    // And the powerless cell fails the action tier rather than leaving m.
-    expect(withUnderPowered.failedAction).toContain(
-      "action.fpr.slice.domain.legal",
-    );
-    expect(withUnderPowered.decision).toBe("indicator-only");
-  });
-
-  it("fails every interval gate when the declared m does not cover the mandatory gates", () => {
+  it("keeps an under-powered cell of the family inside m and fails it, instead of shrinking the divisor", () => {
+    const starved = CERTIFYING_CELLS[1];
     const report = evaluateReleaseGates({
       integrity: integrity(),
+      calibrationScoreBasis: CERTIFYING_SCORE_BASIS,
       resampling: plan(),
-      // One declared gate against a report full of them: the divisor is wrong and
+      metrics: metrics(),
+      slices: bareSummary(
+        CERTIFYING_CELLS.map((cell) =>
+          cell === starved
+            ? cellSlice(cell, { negatives: 12, fprGateEligible: false })
+            : cellSlice(cell),
+        ),
+      ),
+    });
+    // The hypothesis is still in the inventory — the family is pre-registered — and
+    // the divisor is still the family size.
+    expect(report.multiplicity.observed).toBe(
+      PREREGISTRATION_V4.multiplicity.primaryFamilySize,
+    );
+    expect(report.multiplicity.hypotheses).toContain(`fpr-${starved}`);
+    expect(report.multiplicity.covers).toBe(true);
+    // And the powerless cell FAILS rather than passing for want of evidence.
+    const gate = gateById(
+      report.gates,
+      `warning.fpr.slice.humanSourceType.${starved}`,
+    );
+    expect(gate.eligible).toBe(false);
+    expect(gate.passed).toBe(false);
+    expect(gate.reasons[0]).toMatch(
+      new RegExp(
+        `a célula ${starved} tem 12 negativos humanos, abaixo do piso ` +
+          `aplicado de ${PREREGISTRATION_V4.powerFloors.criticalFprHumanNegatives}`,
+        "u",
+      ),
+    );
+    // The floor counts origin documents because the pre-registration admits one line
+    // per document per cell, and the reason attributes the rule rather than claiming it
+    // was verified here: the count is the composition gate's.
+    expect(gate.reasons[0]).toMatch(
+      new RegExp(
+        `a pré-inscrição conta o piso em documentos de origem, admitindo ` +
+          `≤${PREREGISTRATION_V4.collection.maximumLinesPerOriginDocument} linha por documento`,
+        "u",
+      ),
+    );
+    expect(gate.reasons[0]).toMatch(/a imposição é do gate de composição/u);
+    expect(report.decision).toBe("reject");
+    expect(report.failedCertifying).toEqual([gate.id]);
+  });
+
+  it("names the floor the eligibility was decided against, not the pre-registered row", () => {
+    // A caller may RAISE the floor (`SliceOptions.minimumFprNegatives`) for a narrower
+    // question. The cell below is ineligible against 500 with 400 negatives — a count
+    // ABOVE the pre-registered 300 — so a reason composed from the policy row would
+    // publish, in sealed evidence, a comparison this cell never lost.
+    const starved = CERTIFYING_CELLS[2];
+    const raised = 500;
+    const report = evaluateReleaseGates({
+      integrity: integrity(),
+      calibrationScoreBasis: CERTIFYING_SCORE_BASIS,
+      resampling: plan(),
+      metrics: metrics(),
+      slices: bareSummary(
+        CERTIFYING_CELLS.map((cell) =>
+          cell === starved
+            ? cellSlice(cell, {
+                negatives: 400,
+                fprGateEligible: false,
+                fprNegativeFloor: raised,
+              })
+            : cellSlice(cell),
+        ),
+      ),
+    });
+    const gate = gateById(
+      report.gates,
+      `warning.fpr.slice.humanSourceType.${starved}`,
+    );
+    expect(gate.passed).toBe(false);
+    expect(gate.reasons[0]).toMatch(
+      new RegExp(
+        `a célula ${starved} tem 400 negativos humanos, abaixo do piso aplicado de ${raised}`,
+        "u",
+      ),
+    );
+    expect(gate.reasons[0]).not.toMatch(
+      new RegExp(
+        `piso aplicado de ${PREREGISTRATION_V4.powerFloors.criticalFprHumanNegatives}`,
+        "u",
+      ),
+    );
+  });
+
+  it("fails every certifying gate when the declared m does not cover the family", () => {
+    const report = evaluateReleaseGates({
+      integrity: integrity(),
+      calibrationScoreBasis: CERTIFYING_SCORE_BASIS,
+      resampling: plan(),
+      // One declared hypothesis against a family of seven: the divisor is wrong and
       // the answer is a failure, never a recomputed alpha.
       metrics: metrics({ declaredM: 1 }),
       slices: summary([passingSlice()]),
@@ -1516,21 +1835,337 @@ describe("Bonferroni simultaneous bounds", () => {
     expect(report.multiplicity.declared).toBe(1);
     expect(report.multiplicity.covers).toBe(false);
     expect(report.decision).toBe("reject");
-    expect(gateById(report.gates, "warning.fpr.overall").passed).toBe(false);
+    const cell = gateById(
+      report.gates,
+      `warning.fpr.slice.humanSourceType.${CERTIFYING_CELLS[0]}`,
+    );
+    expect(cell.passed).toBe(false);
+    expect(cell.evidence).toBe("missing-simultaneous-interval");
+    expect(cell.reasons[0]).toMatch(
+      /o m declarado \(1\) não cobre as 7 hipóteses obrigatórias/u,
+    );
   });
 
-  it("fails every interval gate when no multiplicity was declared at all", () => {
+  it("fails every certifying gate when no multiplicity was declared at all, naming the absent m", () => {
     const report = evaluateReleaseGates({
       integrity: integrity(),
+      calibrationScoreBasis: CERTIFYING_SCORE_BASIS,
       resampling: plan(),
       metrics: metrics({ declaredM: null }),
       slices: summary([passingSlice()]),
     });
     expect(report.multiplicity.declared).toBeNull();
+    expect(report.multiplicity.perGateAlpha).toBeNull();
+    expect(report.multiplicity.covers).toBe(false);
     expect(report.decision).toBe("reject");
-    expect(gateById(report.gates, "warning.fpr.overall").evidence).toBe(
-      "missing-simultaneous-interval",
+    // Every one of the seven, and the reason names the MULTIPLICITY rather than a
+    // budget: this is the shape a run takes when the measurement was computed without
+    // the pre-registered family size.
+    expect(report.failedCertifying).toEqual(report.multiplicity.gateIds);
+    for (const id of report.multiplicity.gateIds) {
+      const gate = gateById(report.gates, id);
+      expect(gate.evidence).toBe("missing-simultaneous-interval");
+      expect(gate.reasons[0]).toMatch(
+        /nenhum m pré-registrado foi declarado, então não há limite unilateral simultâneo/u,
+      );
+    }
+    // And the diagnostics are untouched by it: they hold no share of the alpha the
+    // inventory divides.
+    expect(gateById(report.gates, "warning.fpr.overall").passed).toBe(true);
+  });
+
+  // Declaring the divisor is not using it. The number reaches the aggregate metrics
+  // and each slice's metrics through separate arguments, so the report can publish
+  // m=7 while a cell's ceiling was decided at 0.05/40 — a WIDER limit against the very
+  // same budget, which is a pass no pre-registered alpha bought.
+  it("refuses a per-cell ceiling whose bound was corrected for another m", () => {
+    const divergent = 40;
+    const target = CERTIFYING_CELLS[0];
+    const report = evaluateReleaseGates({
+      integrity: integrity(),
+      calibrationScoreBasis: CERTIFYING_SCORE_BASIS,
+      resampling: plan(),
+      metrics: metrics({
+        declaredM: PREREGISTRATION_V4.multiplicity.primaryFamilySize,
+      }),
+      slices: bareSummary(
+        CERTIFYING_CELLS.map((cell) =>
+          cell === target
+            ? cellSlice(cell, { boundM: divergent })
+            : cellSlice(cell),
+        ),
+      ),
+    });
+    // The inventory IS the family: nothing about the count is wrong here.
+    expect(report.multiplicity.covers).toBe(true);
+    expect(report.multiplicity.declared).toBe(
+      PREREGISTRATION_V4.multiplicity.primaryFamilySize,
     );
+    const gate = gateById(
+      report.gates,
+      `warning.fpr.slice.humanSourceType.${target}`,
+    );
+    expect(gate.evidence).toBe("divergent-multiplicity");
+    expect(gate.passed).toBe(false);
+    // The refused bound is PUBLISHED with the divisor it came from, so the mismatch is
+    // legible in the sealed report and not only in the message.
+    expect(gate.simultaneous).toMatchObject({ m: divergent });
+    expect(gate.observed).toBeNull();
+    expect(gate.reasons[0]).toMatch(
+      new RegExp(
+        `o limite simultâneo foi corrigido para m=${divergent} .* enquanto o relatório declara m=${PREREGISTRATION_V4.multiplicity.primaryFamilySize}`,
+        "u",
+      ),
+    );
+    expect(report.decision).toBe("reject");
+    expect(report.failedCertifying).toEqual([gate.id]);
+    // The three coherent cells are decided as usual.
+    for (const cell of CERTIFYING_CELLS.filter((key) => key !== target)) {
+      expect(
+        gateById(report.gates, `warning.fpr.slice.humanSourceType.${cell}`)
+          .evidence,
+      ).toBe("present");
+    }
+  });
+});
+
+// ===========================================================================
+// The global calibration hypothesis is about ONE score (Q1/Q2(b)): ECE-15 equal-mass
+// over `document-raw-score`, the same number the frozen cut cuts. An ECE is a number
+// whichever score produced it, so the gate cannot read the basis off it — the caller
+// declares it and the gate refuses anything but the pre-registered one.
+// ===========================================================================
+
+describe("the ECE gate refuses a score basis that is not the pre-registered one", () => {
+  it("fails the certifying calibration gate when the statistic came off the calibrated score", () => {
+    const report = evaluateReleaseGates({
+      ...passingEvidence,
+      calibrationScoreBasis: "document-calibrated-score",
+    });
+    const gate = gateById(report.gates, "warning.calibration-ece");
+    expect(gate.role).toBe("certifying");
+    expect(gate.hypothesis).toBe("calibration-global");
+    expect(gate.evidence).toBe("score-basis-mismatch");
+    expect(gate.passed).toBe(false);
+    // No number is published as the verdict: a comfortable ECE over the wrong score is
+    // not a weaker piece of evidence, it is evidence about something else.
+    expect(gate.observed).toBeNull();
+    expect(gate.reasons[0]).toMatch(
+      /a estatística foi medida sobre document-calibrated-score, e a hipótese calibration-global é sobre document-raw-score/u,
+    );
+    expect(report.decision).toBe("reject");
+    expect(report.failedCertifying).toEqual(["warning.calibration-ece"]);
+    // The mismatch is confined to the hypothesis it is about: the other six members
+    // are decided normally.
+    for (const id of report.multiplicity.gateIds.filter(
+      (candidate) => candidate !== "warning.calibration-ece",
+    )) {
+      expect(gateById(report.gates, id).evidence).toBe("present");
+    }
+  });
+
+  it("reads the basis from the policy rather than from a literal", () => {
+    expect(PREREGISTRATION_V4.calibrationGate.scoreBasis).toBe(
+      "document-raw-score",
+    );
+    // And the threshold cuts the SAME score, which is what makes an ECE over it a
+    // statement about the published decision.
+    expect(PREREGISTRATION_V4.threshold.basis).toBe(
+      PREREGISTRATION_V4.calibrationGate.scoreBasis,
+    );
+    const gate = gateById(
+      evaluateReleaseGates(passingEvidence).gates,
+      "warning.calibration-ece",
+    );
+    expect(gate.evidence).toBe("present");
+  });
+});
+
+// ===========================================================================
+// The mandatory inventory IS the primary family (T12). Both directions, because a
+// wrong wiring is silent in both: an inventory larger than `m` fails every
+// certifying gate as if a budget had been breached, and an inventory smaller than
+// the family certifies fewer hypotheses than the version promised while every gate
+// reads green.
+// ===========================================================================
+
+describe("the mandatory inventory is derived from policy.primaryFamily", () => {
+  it("names the four per-cell hypotheses after the frozen quota cells", () => {
+    const cellHypotheses = PREREGISTRATION_V4.multiplicity.primaryFamily
+      .filter((member) => member.startsWith("fpr-"))
+      .map((member) => member.slice("fpr-".length));
+    expect([...cellHypotheses].sort()).toEqual([...CERTIFYING_CELLS].sort());
+    expect(PREREGISTRATION_V4.multiplicity.primaryFamily).toContain(
+      "recall-at-threshold",
+    );
+    expect(PREREGISTRATION_V4.multiplicity.primaryFamily).toContain(
+      "calibration-global",
+    );
+    expect(PREREGISTRATION_V4.multiplicity.primaryFamily).toContain(
+      "integrity",
+    );
+  });
+
+  it("covers the family at the frozen m of 7, and passes", () => {
+    const report = evaluateReleaseGates({
+      ...passingEvidence,
+      metrics: metrics({
+        declaredM: PREREGISTRATION_V4.multiplicity.primaryFamilySize,
+      }),
+    });
+    expect(report.multiplicity.declared).toBe(7);
+    expect(report.multiplicity.observed).toBe(7);
+    expect([...report.multiplicity.hypotheses].sort()).toEqual(
+      [...PREREGISTRATION_V4.multiplicity.primaryFamily].sort(),
+    );
+    expect(report.multiplicity.missingHypotheses).toEqual([]);
+    expect(report.multiplicity.unexpectedHypotheses).toEqual([]);
+    expect(report.multiplicity.covers).toBe(true);
+    expect(report.decision).toBe("pass");
+    expect(report.failedCertifying).toEqual([]);
+  });
+
+  it("an eighth mandatory gate makes covers false and names the hypothesis the family does not have", () => {
+    const report = evaluateReleaseGates({
+      integrity: integrity(),
+      calibrationScoreBasis: CERTIFYING_SCORE_BASIS,
+      resampling: plan(),
+      metrics: metrics({
+        declaredM: PREREGISTRATION_V4.multiplicity.primaryFamilySize,
+      }),
+      // A fifth cell on the certifying axis: an eighth hypothesis, at full power and
+      // with a flawless FPR, which is exactly why it must not be absorbed silently.
+      slices: bareSummary([
+        ...certifyingCellSlices(),
+        cellSlice("b2w-reviews"),
+      ]),
+    });
+    expect(report.multiplicity.observed).toBe(8);
+    expect(report.multiplicity.unexpectedHypotheses).toEqual([
+      "fpr-b2w-reviews",
+    ]);
+    expect(report.multiplicity.missingHypotheses).toEqual([]);
+    expect(report.multiplicity.covers).toBe(false);
+    expect(report.decision).toBe("reject");
+    // Every certifying gate fails, and none of them for a breached budget.
+    expect(report.failedCertifying.length).toBeGreaterThan(0);
+    for (const id of report.multiplicity.gateIds) {
+      const gate = gateById(report.gates, id);
+      expect(gate.evidence).toBe("missing-simultaneous-interval");
+      expect(gate.reasons[0]).toMatch(
+        /o inventário obrigatório não é a família primária/u,
+      );
+      expect(gate.reasons[0]).toMatch(/fpr-b2w-reviews não está entre os 7/u);
+    }
+  });
+
+  it("refuses an eighth hypothesis even under a divisor large enough to cover the count", () => {
+    // A larger `m` is conservative and is accepted — it only widens every bound — but
+    // it buys no membership: the family has seven members whatever the divisor is, and
+    // a count check alone would let the eighth hypothesis through here.
+    const report = evaluateReleaseGates({
+      integrity: integrity(),
+      calibrationScoreBasis: CERTIFYING_SCORE_BASIS,
+      resampling: plan(),
+      metrics: metrics({ declaredM: 40 }),
+      slices: bareSummary([
+        ...certifyingCellSlices(),
+        cellSlice("b2w-reviews"),
+      ]),
+    });
+    expect(report.multiplicity.declared).toBe(40);
+    expect(report.multiplicity.observed).toBe(8);
+    expect(report.multiplicity.unexpectedHypotheses).toEqual([
+      "fpr-b2w-reviews",
+    ]);
+    expect(report.multiplicity.covers).toBe(false);
+    expect(report.decision).toBe("reject");
+  });
+
+  it("a missing cell makes covers false and names the hypothesis nothing decided", () => {
+    const absent = CERTIFYING_CELLS[3];
+    const report = evaluateReleaseGates({
+      integrity: integrity(),
+      calibrationScoreBasis: CERTIFYING_SCORE_BASIS,
+      resampling: plan(),
+      metrics: metrics({
+        declaredM: PREREGISTRATION_V4.multiplicity.primaryFamilySize,
+      }),
+      slices: bareSummary(
+        CERTIFYING_CELLS.filter((cell) => cell !== absent).map((cell) =>
+          cellSlice(cell),
+        ),
+      ),
+    });
+    expect(report.multiplicity.observed).toBe(6);
+    expect(report.multiplicity.missingHypotheses).toEqual([`fpr-${absent}`]);
+    expect(report.multiplicity.unexpectedHypotheses).toEqual([]);
+    expect(report.multiplicity.covers).toBe(false);
+    expect(report.decision).toBe("reject");
+    const gate = gateById(report.gates, "warning.recall.overall");
+    expect(gate.reasons[0]).toMatch(
+      new RegExp(`nenhum gate deste relatório decide fpr-${absent}`, "u"),
+    );
+  });
+
+  it("refuses a corpus whose humanSourceType carries the stratum names instead of the quota cells", () => {
+    // The FPR ceilings are named after quota CELLS. A corpus whose axis carries the
+    // core-stratum vocabulary produces four hypotheses the family does not name and
+    // leaves its own four undecided, and the report says both.
+    const report = evaluateReleaseGates({
+      integrity: integrity(),
+      calibrationScoreBasis: CERTIFYING_SCORE_BASIS,
+      resampling: plan(),
+      metrics: metrics({
+        declaredM: PREREGISTRATION_V4.multiplicity.primaryFamilySize,
+      }),
+      slices: bareSummary(
+        PREREGISTRATION_V4.humanCoreStrata.map((stratum) => cellSlice(stratum)),
+      ),
+    });
+    expect(report.multiplicity.covers).toBe(false);
+    expect(report.multiplicity.missingHypotheses).toEqual(
+      CERTIFYING_CELLS.map((cell) => `fpr-${cell}`),
+    );
+    expect(report.multiplicity.unexpectedHypotheses).toEqual(
+      PREREGISTRATION_V4.humanCoreStrata.map((stratum) => `fpr-${stratum}`),
+    );
+    expect(report.decision).toBe("reject");
+  });
+
+  it("reads the certifying ceilings off ONE axis: the same cell key elsewhere is a diagnostic", () => {
+    const cell = CERTIFYING_CELLS[0];
+    const report = evaluateReleaseGates({
+      integrity: integrity(),
+      calibrationScoreBasis: CERTIFYING_SCORE_BASIS,
+      resampling: plan(),
+      metrics: metrics({
+        declaredM: PREREGISTRATION_V4.multiplicity.primaryFamilySize,
+      }),
+      slices: summary([
+        slice({
+          axis: "domain",
+          key: cell,
+          negatives: 400,
+          fprGateEligible: true,
+          warningFprUpper: 0.02,
+          actionFprUpper: 0.01,
+        }),
+      ]),
+    });
+    // Seven hypotheses, not eight: the cell key on another axis buys no membership.
+    expect(report.multiplicity.observed).toBe(7);
+    expect(report.multiplicity.covers).toBe(true);
+    const elsewhere = gateById(
+      report.gates,
+      `warning.fpr.slice.domain.${cell}`,
+    );
+    expect(elsewhere.role).toBe("diagnostic");
+    expect(elsewhere.hypothesis).toBeUndefined();
+    expect(
+      gateById(report.gates, `warning.fpr.slice.humanSourceType.${cell}`)
+        .hypothesis,
+    ).toBe(`fpr-${cell}`);
   });
 });
 
@@ -1538,6 +2173,7 @@ describe("human-negative label bases as gate evidence", () => {
   it("gates on a powered basis that breaches the warning budget", () => {
     const report = evaluateReleaseGates({
       integrity: integrity(),
+      calibrationScoreBasis: CERTIFYING_SCORE_BASIS,
       resampling: plan(),
       metrics: metrics({
         labelBases: [
@@ -1546,9 +2182,14 @@ describe("human-negative label bases as gate evidence", () => {
       }),
       slices: summary([passingSlice()]),
     });
+    // A label basis is evidence ABOUT the human label and not one of the seven
+    // hypotheses, so a breach certifies nothing — and blocks: the basis is the evidence
+    // the whole human-negative denominator rests on.
     expect(report.decision).toBe("reject");
+    expect(report.failedCertifying).toEqual([]);
     const gate = gateById(report.gates, "warning.fpr.labelBasis.date-cutoff");
     expect(gate.eligible).toBe(true);
+    expect(gate.role).toBe("diagnostic");
     expect(gate.passed).toBe(false);
     expect(gate.sampleSize).toBe(900);
   });
@@ -1556,6 +2197,7 @@ describe("human-negative label bases as gate evidence", () => {
   it("lets an under-powered observed-process basis neither approve a gate nor lift the action ceiling", () => {
     const report = evaluateReleaseGates({
       integrity: integrity(),
+      calibrationScoreBasis: CERTIFYING_SCORE_BASIS,
       resampling: plan(),
       metrics: metrics({
         labelBases: [
@@ -1603,6 +2245,7 @@ describe("human-negative label bases as gate evidence", () => {
 
     const report = evaluateReleaseGates({
       integrity: integrity(),
+      calibrationScoreBasis: CERTIFYING_SCORE_BASIS,
       resampling: plan(),
       metrics: metrics({ labelBases: [...computed.labelBasis.bases] }),
       slices: summary([passingSlice()]),
@@ -1623,6 +2266,7 @@ describe("integrity tier teeth", () => {
   it("rejects a non-release scientific use", () => {
     const report = evaluateReleaseGates({
       integrity: integrity({ scientificUse: "diagnostic" }),
+      calibrationScoreBasis: CERTIFYING_SCORE_BASIS,
       resampling: plan(),
       metrics: metrics(),
       slices: summary([passingSlice()]),
@@ -1634,6 +2278,7 @@ describe("integrity tier teeth", () => {
   it("rejects an error rate at or above 1%", () => {
     const report = evaluateReleaseGates({
       integrity: integrity(),
+      calibrationScoreBasis: CERTIFYING_SCORE_BASIS,
       resampling: plan(),
       metrics: metrics({ errorRate: 0.02 }),
       slices: summary([passingSlice()]),
@@ -1647,6 +2292,7 @@ describe("integrity tier teeth", () => {
     // is not below 1% and must fail the gate.
     const report = evaluateReleaseGates({
       integrity: integrity(),
+      calibrationScoreBasis: CERTIFYING_SCORE_BASIS,
       resampling: plan(),
       metrics: metrics({ errorRate: 0.01 }),
       slices: summary([passingSlice()]),
@@ -1662,12 +2308,56 @@ describe("integrity tier teeth", () => {
   it("passes an error rate just below 1%", () => {
     const report = evaluateReleaseGates({
       integrity: integrity(),
+      calibrationScoreBasis: CERTIFYING_SCORE_BASIS,
       resampling: plan(),
       metrics: metrics({ errorRate: 0.009 }),
       slices: summary([passingSlice()]),
     });
     expect(gateById(report.gates, "integrity.error-rate").passed).toBe(true);
     expect(report.decision).toBe("pass");
+  });
+
+  // Member seven of the family is the whole CONJUNCTION, and it is the one member the
+  // inventory does not derive from the presence of a gate: it is always counted. So
+  // what the inventory cannot notice is the conjunction SHRINKING — dropping a boolean
+  // leaves `observed` at seven and `covers` true — and this list is the guard. Every id
+  // is named, so removing or renaming one fails here with the id in the diff.
+  it("names every boolean of the integrity conjunction, the member the inventory always counts", () => {
+    const report = evaluateReleaseGates(passingEvidence);
+    const integrityIds = report.gates
+      .filter((gate) => gate.tier === "integrity")
+      .map((gate) => gate.id);
+    expect(integrityIds).toEqual([
+      "integrity.scientific-use",
+      "integrity.license-inventory",
+      "integrity.review-ledger-hash",
+      "integrity.source-manifest-hash",
+      "integrity.dataset-audit-sealed",
+      "integrity.source-readiness-ready",
+      "integrity.schema",
+      "integrity.dataset-digest",
+      "integrity.split-digest",
+      "integrity.evaluator-digest",
+      "integrity.calibration-digest",
+      "integrity.split-audit",
+      "integrity.prediction-completeness",
+      "integrity.prediction-manifest-digests",
+      "integrity.runtime-identity",
+      "integrity.holdout-session",
+      "integrity.error-rate",
+    ]);
+    // One hypothesis, seventeen booleans: alpha/7 spent on a boolean conjunction is
+    // conservatism, and one share per boolean would divide the alpha by 23.
+    for (const id of integrityIds) {
+      expect(gateById(report.gates, id)).toMatchObject({
+        role: "certifying",
+        hypothesis: "integrity",
+      });
+    }
+    expect(
+      report.multiplicity.hypotheses.filter((h) => h === "integrity"),
+    ).toEqual(["integrity"]);
+    expect(report.multiplicity.gateIds).not.toContain("integrity.error-rate");
   });
 });
 
@@ -1681,6 +2371,7 @@ describe("the mixed-recall gate reads the frozen policy (B2)", () => {
     expect(floor).toBe(0.5);
     const report = evaluateReleaseGates({
       integrity: integrity(),
+      calibrationScoreBasis: CERTIFYING_SCORE_BASIS,
       resampling: plan(),
       metrics: metrics(),
       slices: summary([passingSlice()]),
@@ -1693,6 +2384,7 @@ describe("the mixed-recall gate reads the frozen policy (B2)", () => {
   it("fails when the mechanistic cohort misses the floor", () => {
     const report = evaluateReleaseGates({
       integrity: integrity(),
+      calibrationScoreBasis: CERTIFYING_SCORE_BASIS,
       resampling: plan(),
       metrics: metrics({
         mixed: {
@@ -1715,6 +2407,7 @@ describe("material assistance never authorizes visual action (B2)", () => {
     // second number, so a material-assistance cohort can never lift the ceiling.
     const report = evaluateReleaseGates({
       integrity: integrity(),
+      calibrationScoreBasis: CERTIFYING_SCORE_BASIS,
       resampling: plan(),
       metrics: metrics({
         visual: { fpr: upper(0.01), recall: lower(0.95) },
@@ -1731,6 +2424,7 @@ describe("material assistance never authorizes visual action (B2)", () => {
   it("passes when the integral positives carry the recall themselves", () => {
     const report = evaluateReleaseGates({
       integrity: integrity(),
+      calibrationScoreBasis: CERTIFYING_SCORE_BASIS,
       resampling: plan(),
       metrics: metrics({
         visual: { fpr: upper(0.01), recall: lower(0.36) },
@@ -1791,6 +2485,7 @@ describe("mixed below the AI-fraction floor enters no gate denominator (B2)", ()
   const of = (items: readonly EvaluationItem[]): GateResult[] =>
     evaluateReleaseGates({
       integrity: integrity(),
+      calibrationScoreBasis: CERTIFYING_SCORE_BASIS,
       resampling: plan(),
       metrics: metricsOf(items),
       slices: summary([passingSlice()]),
@@ -1851,29 +2546,60 @@ describe("mixed below the AI-fraction floor enters no gate denominator (B2)", ()
 });
 
 describe("decision is driven only by gate outcomes", () => {
-  it("does not let a perfect isolated score override a failed warning gate", () => {
+  it("does not let a perfect isolated score override a failed certifying gate", () => {
     const report = evaluateReleaseGates({
-      integrity: integrity(),
-      resampling: plan(),
-      // AUROC pinned to a perfect 1, yet the warning FPR budget is broken.
-      metrics: metrics({ warningFpr: upper(0.08), auroc: 1 }),
-      slices: summary([passingSlice()]),
+      ...certifyingCellBreach,
+      // AUROC pinned to a perfect 1, yet a per-cell FPR ceiling is broken.
+      metrics: metrics({ auroc: 1 }),
     });
     expect(report.decision).toBe("reject");
   });
 
-  it("prefers reject when both warning and action gates fail", () => {
+  it("prefers reject when both a certifying and an action gate fail", () => {
     const report = evaluateReleaseGates({
-      integrity: integrity(),
-      resampling: plan(),
+      ...certifyingCellBreach,
       metrics: metrics({
-        warningFpr: upper(0.08),
         visual: { fpr: upper(0.09), recall: lower(0.5) },
       }),
-      slices: summary([passingSlice()]),
     });
     expect(report.failedWarning.length).toBeGreaterThan(0);
     expect(report.failedAction.length).toBeGreaterThan(0);
     expect(report.decision).toBe("reject");
+  });
+});
+
+// ===========================================================================
+// What the decision AUTHORIZES, measured through the consumer instead of asserted
+// about the string. `indicator-only` is not a lower ceiling than `reject`: it is the
+// frontier between not publishing and publishing, and the only way to see that is to
+// hand `buildModelPublication` a report `evaluateReleaseGates` produced.
+// ===========================================================================
+
+describe("the decision reaches the publisher", () => {
+  it("publishes nothing for a diagnostic warning breach, and the whole profile set for a pass", async () => {
+    const rejected = evaluateReleaseGates(warningFprFailure);
+    // A pooled FPR over budget: it certifies nothing — and it blocks.
+    expect(rejected.failedWarning).toEqual(["warning.fpr.overall"]);
+    expect(rejected.failedCertifying).toEqual([]);
+    expect(rejected.decision).toBe("reject");
+
+    const blocked = await buildModelPublication(publicationInputFor(rejected));
+    // `bundle-verified` authorizes nothing: the active runtime stays the built-in
+    // stylometric scorer and no calibration profile exists for the weights.
+    expect(blocked.profiles.profiles).toEqual([]);
+    expect(blocked.release.profileDigests).toEqual([]);
+    expect(blocked.release.rolloutState).toBe("bundle-verified");
+    expect(blocked.release.gateDecision).toBe("reject");
+
+    // The contrast, so the assertion above is a difference and not a constant: a
+    // clean run publishes the profile set and makes the weights the active runtime.
+    const passed = evaluateReleaseGates(passingEvidence);
+    expect(passed.decision).toBe("pass");
+    const published = await buildModelPublication(publicationInputFor(passed));
+    expect(published.profiles.profiles.length).toBeGreaterThan(0);
+    expect(published.release.profileDigests.length).toBe(
+      published.profiles.profiles.length,
+    );
+    expect(published.release.rolloutState).toBe("indicator");
   });
 });

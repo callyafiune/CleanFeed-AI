@@ -24,13 +24,22 @@ import {
 } from "../calibration-pipeline.ts";
 import { validateDatasetManifest } from "../dataset-manifest.ts";
 import { computeEvaluatorDigest } from "../digests.ts";
-import { evaluateReleaseGates, type IntegrityEvidence } from "../gates.ts";
+import {
+  evaluateReleaseGates,
+  type IntegrityEvidence,
+  type MeasuredScoreBasis,
+} from "../gates.ts";
 import {
   completeHoldoutConsumption,
   resumeHoldoutConsumption,
   type HoldoutIdentity,
 } from "../holdout-ledger.ts";
-import { computeEvaluationMetrics, type EvaluationItem } from "../metrics.ts";
+import {
+  computeEvaluationMetrics,
+  type EvaluationItem,
+  type EvaluationOptions,
+} from "../metrics.ts";
+import { PREREGISTRATION_V4 } from "../preregistration-v4.ts";
 import {
   computePredictionManifestDigest,
   parsePredictionManifest,
@@ -82,6 +91,51 @@ export interface EvaluateOptions {
 }
 
 const REPO_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..", "..");
+
+/**
+ * Metric options that carry the pre-registered divisor. The property is required in
+ * this type — and optional on {@link EvaluationOptions}, which diagnostic callers use
+ * — so that spreading these options into `buildSlices` satisfies `SliceOptions`
+ * without an assertion, and dropping them stops compiling.
+ */
+export type CertifyingEvaluationOptions = EvaluationOptions & {
+  preRegisteredStatisticalGates: number;
+};
+
+/**
+ * The metric options of a CERTIFYING measurement, in one place because the
+ * multiplicity has to reach both the aggregate and every slice.
+ *
+ * `preRegisteredStatisticalGates` is the frozen family size and not a caller's
+ * choice: it is the divisor of `alpha_família`, so a run that omits it publishes no
+ * simultaneous bound at all and benchmark/gates.ts then fails every certifying gate
+ * for missing evidence — a wrong wiring that reads exactly like a breached budget.
+ */
+export function certifyingEvaluationOptions(
+  bootstrapSeed: number,
+  visualActionAvailable: boolean,
+): CertifyingEvaluationOptions {
+  return {
+    bootstrapSeed,
+    visualActionAvailable,
+    preRegisteredStatisticalGates:
+      PREREGISTRATION_V4.multiplicity.primaryFamilySize,
+  };
+}
+
+/**
+ * Which score the calibration statistic of this command is measured over.
+ *
+ * It is a fact about {@link buildEvaluationItem}, not a preference: it applies the
+ * frozen calibrator to every raw score, and no serialized calibrator kind is the
+ * identity (contracts/calibration-profile.ts admits `platt`, `beta` and `isotonic`),
+ * so `documentScore` is the CALIBRATED score. The pre-registered global calibration
+ * hypothesis is about `document-raw-score` — the score the frozen cut cuts — so the
+ * ECE gate refuses this basis, and it is the refusal that keeps the mismatch out of a
+ * certified claim.
+ */
+const MEASURED_CALIBRATION_SCORE_BASIS: MeasuredScoreBasis =
+  "document-calibrated-score";
 
 /** The injected evaluator tree, or the repository this code was loaded from. */
 export function resolveEvaluatorRoot(root: string | undefined): string {
@@ -166,10 +220,10 @@ export async function runEvaluate(options: EvaluateOptions): Promise<string> {
   // froze the cut, or froze it under a different policy or over a different split,
   // cannot reach a certifying measurement.
   //
-  // What this does NOT yet do is decide: `buildEvaluationItem` still cuts on the
-  // calibrated score, and the report says so (`thresholdSource`). Moving the published
-  // decision onto this cut is a change to `evaluate`, `profile-artifact.ts` and the
-  // runtime calibration contract together, and it is Commit D's item.
+  // What this does NOT yet do is decide: `buildEvaluationItem` cuts on the calibrated
+  // score, and the report says so (`thresholdSource`). While that holds, the score the
+  // ECE is measured over is not the pre-registered basis and the global calibration
+  // gate refuses — see `MEASURED_CALIBRATION_SCORE_BASIS`.
   const provisionalThreshold = (await readJsonFile(
     join(fitDirectory, "provisional-threshold.json"),
   )) as ProvisionalThresholdArtifact;
@@ -232,14 +286,20 @@ export async function runEvaluate(options: EvaluateOptions): Promise<string> {
   void labels;
 
   const visualActionAvailable = frozen.thresholds.visualDocument !== null;
-  const metrics = computeEvaluationMetrics(items, {
-    bootstrapSeed: options.bootstrapSeed,
+  const certifyingOptions = certifyingEvaluationOptions(
+    options.bootstrapSeed,
     visualActionAvailable,
-  });
+  );
+  const metrics = computeEvaluationMetrics(items, certifyingOptions);
+  // The SAME options object, and the multiplicity is why: every per-cell FPR ceiling
+  // of the primary family is decided on a bound drawn inside its own slice's metrics,
+  // so a slice set built at another `m` — or at none — is decided at an alpha the
+  // report does not publish. `SliceOptions` requires the field so dropping it here
+  // stops compiling, and benchmark/gates.ts refuses a bound whose `m` differs from the
+  // declared one so passing a different number reaches no verdict either.
   const slices = summarizeSlices(
     buildSlices(items, {
-      bootstrapSeed: options.bootstrapSeed,
-      visualActionAvailable,
+      ...certifyingOptions,
       heldOutGeneratorFamilies: artifact.heldOutGeneratorFamilies,
     }),
   );
@@ -295,6 +355,7 @@ export async function runEvaluate(options: EvaluateOptions): Promise<string> {
     metrics,
     slices,
     resampling: metrics.resampling,
+    calibrationScoreBasis: MEASURED_CALIBRATION_SCORE_BASIS,
   });
 
   const frozenSeal = frozenGovernanceSeal(frozen, options.consumptionId);

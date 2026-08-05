@@ -2,8 +2,9 @@
 //
 // Each slice is a subset of the holdout along one axis (the §6.4 critical slices
 // plus transformation severity), carrying its full EvaluationMetrics and the
-// sampling-floor verdict: an FPR slice can gate a release only with at least 300
-// human negatives; a recall slice only with at least 200 positives. Those floors
+// sampling-floor verdict: an FPR slice can gate a release only at or above
+// `powerFloors.criticalFprHumanNegatives` human negatives, a recall slice only at or
+// above `powerFloors.criticalRecallPositives` positives. Those floors
 // count the population the matrix was MEASURED over (the eligible subset), not
 // the raw bucket, so a slice is never declared powered on rows its rate never
 // saw. Under-powered slices stay in the report but are flagged non-gating rather
@@ -29,6 +30,7 @@ import {
   type EvaluationOptions,
 } from "./metrics.ts";
 import { generatorFamilyOf, type GeneratorFamily } from "./generator-family.ts";
+import { PREREGISTRATION_V4 } from "./preregistration-v4.ts";
 import type { BenchmarkRecord } from "./schema.ts";
 
 export type SliceAxis =
@@ -70,6 +72,12 @@ export interface SliceResult {
   negatives: number;
   fprGateEligible: boolean;
   recallGateEligible: boolean;
+  // The floors the two verdicts above were decided AGAINST. Published because a
+  // caller may raise them (`SliceOptions.minimumFprNegatives`): a consumer that
+  // composes a message from the pre-registered row instead would name a number this
+  // slice was never compared to.
+  fprNegativeFloor: number;
+  recallPositiveFloor: number;
   metrics: EvaluationMetrics;
 }
 
@@ -90,6 +98,13 @@ export interface SliceSummary {
 }
 
 export interface SliceOptions extends EvaluationOptions {
+  // REQUIRED here and optional on EvaluationOptions, and the asymmetry is the guard:
+  // a per-cell FPR ceiling of the primary family is decided on the simultaneous bound
+  // drawn INSIDE its own slice, so a slice set built without the divisor publishes no
+  // simultaneous bound at all and every one of those hypotheses reaches
+  // benchmark/gates.ts as missing evidence — a wiring mistake shaped exactly like a
+  // breached budget. Omitting it has to stop compiling, not produce a report.
+  preRegisteredStatisticalGates: number;
   // The generator families reserved to the blocked test as unseen, from the
   // split. A record's generator family is "unseen" when it is in this set.
   // Canonical values only (benchmark/generator-family.ts): the nominal type is
@@ -98,13 +113,22 @@ export interface SliceOptions extends EvaluationOptions {
   // bucket at all, reporting every record seeded to measure an unseen generator
   // as seen.
   heldOutGeneratorFamilies: readonly GeneratorFamily[];
-  // Sampling floors. Default to the §6.4 minima of 300 negatives / 200 positives.
+  // Sampling floors. Default to the PRE-REGISTERED power floors; a caller may raise
+  // them for a narrower question but never has to restate them to get the frozen
+  // ones.
   minimumFprNegatives?: number;
   minimumRecallPositives?: number;
 }
 
-const DEFAULT_MINIMUM_FPR_NEGATIVES = 300;
-const DEFAULT_MINIMUM_RECALL_POSITIVES = 200;
+// The floors are rows of the frozen pre-registration, not §6.4 minima this module
+// may choose: `criticalFprHumanNegatives` is the denominator floor of every per-cell
+// FPR ceiling the release certifies, and the same number is the `n` the published
+// zero-event ceiling is computed at. A literal here would be a second copy of a
+// value the pre-registration already cross-checks against that ceiling.
+const DEFAULT_MINIMUM_FPR_NEGATIVES =
+  PREREGISTRATION_V4.powerFloors.criticalFprHumanNegatives;
+const DEFAULT_MINIMUM_RECALL_POSITIVES =
+  PREREGISTRATION_V4.powerFloors.criticalRecallPositives;
 
 const AXIS_ORDER: readonly SliceAxis[] = [
   "lengthBucket",
@@ -227,6 +251,8 @@ export function buildSlices(
         fprGateEligible: FPR_AXES.has(axis) && negatives >= minimumFprNegatives,
         recallGateEligible:
           RECALL_AXES.has(axis) && positives >= minimumRecallPositives,
+        fprNegativeFloor: minimumFprNegatives,
+        recallPositiveFloor: minimumRecallPositives,
         metrics,
       });
     }

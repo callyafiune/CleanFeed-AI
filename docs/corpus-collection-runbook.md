@@ -621,21 +621,34 @@ inédito, e nenhuma recuperação os alimenta. O inventário está no registro d
 
 ## 5. A decisão (gates §6.5, verbatim de [gates.ts](../benchmark/gates.ts))
 
-Ramos: **qualquer** gate de integridade ou de *warning* falho → `reject`; todos os
-*warning* passam mas um *action* falha → `indicator-only`; todos passam → `pass`.
+Ramos: **qualquer** gate de integridade, de *warning* ou **certificador** falho → `reject`;
+todos esses passam mas um *action* falha → `indicator-only`; todos passam → `pass`.
+
+**Papel ≠ tier.** O *tier* diz o que a falha bloqueia; o **papel** diz se ela decide uma
+hipótese pré-registrada. O inventário obrigatório é **derivado** de
+`multiplicity.primaryFamily` — quatro tetos de FPR por célula no eixo `humanSourceType`,
+recall geral, ECE global e a conjunção de integridade como membro sétimo — e só esses gates
+gastam cota de `alpha_família`. Todo o resto é publicado como **diagnóstico**: não sustenta
+alegação no nível pré-registrado e **bloqueia igual**, pelo tier.
 
 - **Integridade** (booleanos + erro): scientificUse=release, inventário de licença,
   hashes de review-ledger/source-manifest, audit selado, source-readiness ready,
   schema, digests de dataset/split/evaluator/calibração, split-audit, completude e
   digests das previsões, identidade única de runtime, sessão de holdout ativa, e
   **error rate < 1%** (estrito).
-- **Warning:** FPR overall e por slice crítico **upper95 ≤ 5%**; recall overall
-  **lower95 ≥ 0.6**; cobertura **≥ 0.8**; ECE-15 **≤ 0.05**; recall de `mixed`
+- **Warning:** FPR overall e por slice crítico **upper simultâneo ≤ 5%**; recall overall
+  **lower simultâneo ≥ 0.6**; cobertura **≥ 0.8**; ECE-15 **≤ 0.05**; recall de `mixed`
   (≥50% IA) **≥ 0.5**.
 - **Action:** limiar de ação congelado presente; FPR overall e por slice crítico
-  **upper95 ≤ 2%**; recall overall **lower95 ≥ 0.35**. Um slice crítico de FPR com
-  **< 300 negativos** não é elegível: não bloqueia o warning, mas **impede** ação
+  **upper ≤ 2%**; recall overall **lower ≥ 0.35**. Um slice crítico de FPR **diagnóstico**
+  com **< 300 negativos** não é elegível: não bloqueia o warning, mas **impede** ação
   visual (limita a decisão a `indicator-only`).
+- **Célula certificadora sem poder reprova.** No eixo `humanSourceType`, uma célula de cota
+  abaixo do piso aplicado **reprova dentro de `m`** — a hipótese é pré-registrada e o divisor
+  não encolhe com a evidência. A razão publicada nomeia célula, contagem e o piso que decidiu.
+- **Duas recusas que não são orçamento estourado:** um limite corrigido para um `m` diferente
+  do que o relatório declara (`divergent-multiplicity`) e uma estatística de calibração medida
+  sobre escore que não é o pré-inscrito (`score-basis-mismatch`) reprovam sem publicar número.
 
 Slices críticos de FPR: `lengthBucket`, `domain`, `humanSourceType`,
 `temporalCohort`, `hardNegativeFamily`.

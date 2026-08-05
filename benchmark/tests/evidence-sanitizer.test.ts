@@ -247,6 +247,18 @@ describe("buildEvidenceBundle", () => {
       } else {
         expect(decision.profileDigests.length).toBeGreaterThan(0);
       }
+      // The four layers of the failure, the last of which is what says whether a
+      // pre-registered hypothesis of this version fell: a summary with the three tiers
+      // alone publishes what was blocked and not what was un-certified.
+      expect(Object.keys(decision.failedGates).sort()).toEqual([
+        "action",
+        "certifying",
+        "integrity",
+        "warning",
+      ]);
+      expect(decision.failedGates.certifying).toEqual(
+        input.report.gates.failedCertifying,
+      );
     });
   }
 

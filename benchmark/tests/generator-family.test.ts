@@ -22,6 +22,7 @@ import {
   normalizeGeneratorFamily,
 } from "../generator-family.ts";
 import type { EvaluationItem } from "../metrics.ts";
+import { PREREGISTRATION_V4 } from "../preregistration-v4.ts";
 import { validateBenchmarkRecord } from "../schema.ts";
 import { buildSlices } from "../slices.ts";
 import {
@@ -520,6 +521,8 @@ describe("the generatorExposure slice", () => {
     const slices = buildSlices(items, {
       bootstrapSeed: 424_242,
       heldOutGeneratorFamilies: [asGeneratorFamily(CANONICAL_SPELLING)],
+      preRegisteredStatisticalGates:
+        PREREGISTRATION_V4.multiplicity.primaryFamilySize,
     });
     const exposure = slices.filter(
       (slice) => slice.axis === "generatorExposure",

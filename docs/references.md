@@ -2622,3 +2622,118 @@ com o corpus.
 **Sem precedente encontrado (2026-08-04)** para o caso específico de uma pré-inscrição de benchmark que
 congela as duas quantidades e as cruza no parser. A regra é aritmética de amostragem elementar; o que é
 decisão deste projeto é **qual das duas o selo compara**, e essa é a linha registrada (registro § C-14).
+
+### K10 — o inventário que gasta alpha é DERIVADO da família, e o que sobra publica sem certificar
+
+`benchmark/gates.ts` deixa de manter uma lista local de gates obrigatórios e passa a derivar o inventário
+de `multiplicity.primaryFamily`: seis gates de intervalo (quatro tetos de FPR por célula no eixo
+`humanSourceType`, o recall geral no limiar e o ECE global) mais a conjunção de integridade, que é **um**
+membro por mais booleanos que tenha. Todo o resto — o FPR agregado, os outros eixos críticos, as bases de
+rótulo, a cobertura, o recall de assistência material e a camada de ação inteira — é publicado como
+**diagnóstico**: não gasta cota de alpha, não sustenta alegação no nível pré-registrado, e **bloqueia
+exatamente como antes**, pelo tier a que pertence.
+
+A distinção é a de família **confirmatória** versus **secundária/exploratória**, e ela é normativa fora
+desta área:
+
+- ICH E9, § 2.2.5–2.2.6 e § 5.6 — variáveis primárias pré-especificadas, ajuste de multiplicidade sobre
+  elas, e a assimetria explícita: variáveis de **segurança** normalmente não entram no ajuste e ainda assim
+  restringem o programa. [link](https://database.ich.org/sites/default/files/E9_Guideline.pdf)
+- FDA, *Multiple Endpoints in Clinical Trials: Guidance for Industry*, 2022 — a família que controla o erro
+  familiar é declarada antes; um endpoint fora dela **não sustenta alegação**, e é reportado sem alpha.
+  [link](https://www.fda.gov/media/162416/download)
+- Dmitrienko & D'Agostino, *Traditional multiplicity adjustment methods in clinical trials*, Statistics in
+  Medicine 32(29), 2013 — por que o conjunto de hipóteses tem de ser fixado antes de olhar os dados.
+  [link](https://doi.org/10.1002/sim.5990)
+- Bretz, Maurer, Brannath & Posch, *A graphical approach to sequentially rejective multiple test
+  procedures*, Statistics in Medicine 28(4), 2009 — realocar alpha entre hipóteses só é válido sob regra
+  pré-especificada; encolher `m` depois de uma célula perder poder não é uma delas.
+  [link](https://doi.org/10.1002/sim.3495)
+
+**A transferência, e o limite dela — medido.** O gate faz o que a diretriz descreve para a **alegação**: só
+a família a decide, e `failedCertifying` é a lista que a nomeia. O que a diretriz NÃO autoriza é tratar o
+secundário como inerte, e a medição diz por quê: em `benchmark/profile-artifact.ts` só `reject` produz
+`profiles: []` e `rolloutState: "bundle-verified"`, e `scripts/release-policy.mjs` mapeia `reject` para
+`includeTmr: false` com `activeRuntimeKind: "builtin"` — o scorer estilométrico embutido, que se abstém —
+enquanto `indicator-only` publica o conjunto de perfis, entra no pacote com `includeTmr: true` e faz dos
+pesos o runtime ativo. `indicator-only` não é um teto mais baixo que `reject`: é a fronteira entre **não
+publicar** e **publicar**. Por isso a regra de decisão de §6.5 permanece intacta — integridade, warning ou
+certificador falho ⇒ `reject`; só falha de ação ⇒ `indicator-only` — e a assimetria de segurança do E9 é
+respeitada na direção em que ela existe: a variável fora do ajuste **restringe** o programa.
+
+O que a derivação MUDA, então, é o que se afirma e não o que se libera: (i) a cobertura da família é medida
+nas duas direções (membro sem gate, gate sem membro) e uma incoerência reprova fechado; (ii) uma célula
+certificadora sem poder **permanece em `m` e reprova**, em vez de deixar de gatear; (iii) o relatório e o
+resumo publicado dizem qual camada caiu.
+
+**Sem precedente encontrado (2026-08-04)** para duas partes: (i) derivar o inventário obrigatório do
+próprio objeto que declara a família — em ensaio clínico a família vive no protocolo e a conferência é
+humana, aqui as duas direções são medidas e reprovam; (ii) publicar o papel por gate no artefato selado. A
+célula sem poder que permanece em `m` e reprova segue de Bretz et al. por contraposição, não de um
+precedente direto.
+
+### K11 — no máximo uma linha por documento de origem por célula, como condição do n
+
+O denominador de cada teto de FPR por célula é linha-registro de negativo humano, e a pré-inscrição admite
+**uma** linha por documento de origem por célula (`collection.maximumLinesPerOriginDocument`). Sem essa
+regra a mesma página poderia preencher a célula em fatias: `n` contaria sorteios correlacionados enquanto o
+intervalo supõe permutabilidade, e o teto publicado sob zero eventos — `1 − (alpha/7)^(1/n)` — seria lido
+de um tamanho de amostra que o corpus nunca teve.
+
+- Kish, *Survey Sampling*, Wiley, 1965, § 5.2 (efeito de desenho) — o efeito de conglomerado infla a
+  variância na razão `1 + (b − 1)ρ`; com uma unidade por conglomerado, `b = 1` e o fator desaparece por
+  construção em vez de ser estimado.
+- Cameron & Miller, *A Practitioner's Guide to Cluster-Robust Inference*, JHR 50(2), 2015 — o nível de
+  agrupamento decide a largura do intervalo, e agrupar errado não é conservador.
+  [link](https://doi.org/10.3368/jhr.50.2.317)
+
+**A transferência:** as duas fontes tratam de **corrigir** a dependência depois de amostrar; aqui a regra
+de coleta a **elimina** na origem, e é por isso que o piso de linhas e o piso de unidades independentes são
+o mesmo número (`powerFloors.criticalFprHumanNegatives` = `powerFloors.samplingUnits` = 300). A razão de
+domínio vive escrita no gate que a usa (`benchmark/gates.ts`, § "WHY A CELL'S n COUNTS INDEPENDENT
+UNITS"), porque é ela que autoriza o denominador que o gate publica.
+
+### K12 — o limite tem de ter sido corrigido para o `m` que o relatório publica
+
+Cada teto de FPR por célula é decidido sobre um limite simultâneo **desenhado dentro da própria fatia**, e o
+divisor chega ao agregado e a cada fatia por argumentos separados (`benchmark/commands/evaluate.ts`). Um
+limite lido em `alpha/40` comparado ao mesmo orçamento é **mais largo** que o lido em `alpha/7`: passa
+célula que o alpha pré-registrado reprovaria, sem que nada no relatório fique malformado. `benchmark/gates.ts`
+recusa (`divergent-multiplicity`) qualquer limite cujo `m` difira do declarado, e `SliceOptions` exige o
+divisor no tipo — omiti-lo deixa de compilar.
+
+- Bretz, Maurer, Brannath & Posch, 2009 (K10) — o procedimento é definido pelo conjunto de hipóteses E pelos
+  pesos de alpha; um limite que não pertence ao procedimento declarado não é evidência dele.
+  [link](https://doi.org/10.1002/sim.3495)
+- Ioannidis, *Why Most Published Research Findings Are False*, PLoS Medicine 2(8), 2005 — a análise que se
+  afasta do plano na direção favorável é o mecanismo, não o acidente.
+  [link](https://doi.org/10.1371/journal.pmed.0020124)
+
+**Sem precedente encontrado (2026-08-04)** para a forma da guarda: a literatura estatística supõe UM
+procedimento executado por UM analista, e não a fiação de um divisor entre dois sítios de chamada. A regra
+aqui é a de R7 aplicada ao alpha — declarar a unidade não é medi-la — e é decisão deste projeto.
+
+### K13 — o gate de calibração recusa a base de escore que a pré-inscrição não nomeia
+
+A hipótese `calibration-global` é ECE-15 equal-mass **sobre `document-raw-score`** (K/Q2(b)): o softmax
+agregado do próprio head, o mesmo número que o corte congelado corta. Um ECE é um número qualquer que seja o
+escore que o produziu, então o gate não consegue lê-lo do valor: quem mediu declara a base
+(`GateInput.calibrationScoreBasis`) e o gate recusa (`score-basis-mismatch`) qualquer uma que não seja a
+pré-inscrita. Hoje o caminho certificador aplica o calibrador congelado antes de medir
+(`benchmark/commands/evaluate.ts`, `applyFrozenCalibration`; nenhum `kind` de calibrador serializado é a
+identidade), então a recusa é a resposta correta e permanente até o corte publicado passar a ser o do escore
+bruto.
+
+- Guo, Pleiss, Sun & Weinberger, *On Calibration of Modern Neural Networks*, ICML 2017 — ECE é uma
+  propriedade de um escore específico; recalibrar muda a quantidade medida, não apenas o seu valor.
+  [link](https://proceedings.mlr.press/v70/guo17a.html)
+- Naeini, Cooper & Hauskrecht, *Obtaining Well Calibrated Probabilities Using Bayesian Binning*, AAAI 2015 —
+  o estimador de ECE por binning é definido sobre a distribuição do escore de entrada.
+  [link](https://doi.org/10.1609/aaai.v29i1.9602)
+- ICH E9 § 5.6 e FDA 2022 (K10) — uma hipótese pré-especificada é sobre um estimando; medir outro estimando
+  não a decide, ainda que ao mesmo alpha.
+
+**A transferência:** as duas primeiras fontes dizem o que o ECE é medido sobre; nenhuma trata de um gate
+automatizado que **recusa a corrida** por incoerência entre a base pré-inscrita e a medida. Essa parte é
+**sem precedente encontrado (2026-08-04)**, e o desenho segue o resto do módulo: evidência ausente ou de
+outra quantidade reprova fechado, e nunca cai para o número mais próximo.

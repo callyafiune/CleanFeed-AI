@@ -351,6 +351,10 @@ function decisionSummary(input: EvidenceInput): unknown {
       integrity: [...report.gates.failedIntegrity],
       warning: [...report.gates.failedWarning],
       action: [...report.gates.failedAction],
+      // The cross-tier subset that falls on a pre-registered hypothesis. A summary
+      // with the three tiers and not this one publishes what was blocked without
+      // publishing which certified claim of the version fell with it.
+      certifying: [...report.gates.failedCertifying],
     },
     notes: [...report.notes],
   };

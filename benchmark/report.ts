@@ -252,20 +252,30 @@ export async function buildBenchmarkReport(
 }
 
 // A stable, NaN-free projection of the gate report for the sealing digest: the
-// decision, the failed-gate lists and each gate's identity plus its eligibility
-// and pass/fail outcome. Observed statistics can be NaN and are excluded, but the
-// pass/fail flag captures every gate change that matters to the seal.
+// decision, the failed-gate lists, the multiplicity block and each gate's identity
+// plus its role, eligibility and pass/fail outcome. Observed statistics can be NaN and
+// are excluded, but the pass/fail flag captures every gate change that matters to the
+// seal.
+//
+// The multiplicity block is projected WHOLE because it is the layer that says which
+// hypotheses this run decided and under which divisor: without it, editing `covers`
+// or `declared` in a sealed gate report leaves the digest where it was.
 function gateFingerprint(gates: GateReport): unknown {
   return {
     decision: gates.decision,
     failedIntegrity: gates.failedIntegrity,
     failedWarning: gates.failedWarning,
     failedAction: gates.failedAction,
+    failedCertifying: gates.failedCertifying,
+    multiplicity: gates.multiplicity,
     gates: gates.gates.map((gate) => ({
       id: gate.id,
       tier: gate.tier,
+      role: gate.role,
+      hypothesis: gate.hypothesis ?? null,
       scope: gate.scope,
       slice: gate.slice ?? null,
+      evidence: gate.evidence,
       eligible: gate.eligible,
       passed: gate.passed,
     })),
@@ -414,7 +424,14 @@ export function renderReportMarkdown(report: BenchmarkReport): string {
           ? "overall"
           : `${gate.slice.axis}/${gate.slice.key}`;
       const reason = gate.reasons[0] ?? "gate reprovado";
-      lines.push(`- [${gate.tier}] ${gate.id} (${scope}): ${reason}`);
+      // The ROLE beside the tier, because the two answer different questions: the tier
+      // says what the failure blocks, the role says whether a pre-registered
+      // hypothesis of this version was decided by it.
+      const role =
+        gate.hypothesis === undefined
+          ? gate.role
+          : `${gate.role}: ${gate.hypothesis}`;
+      lines.push(`- [${gate.tier}] [${role}] ${gate.id} (${scope}): ${reason}`);
     }
   }
   lines.push("");
@@ -427,9 +444,11 @@ export function renderReportMarkdown(report: BenchmarkReport): string {
   );
   lines.push("");
   lines.push(
-    "| Gate | Tier | Escopo | Limite | Observado | 95% (descritivo) | n (denominador) | Evidência | Elegível | Resultado |",
+    "| Gate | Tier | Papel | Hipótese | Escopo | Limite | Observado | 95% (descritivo) | n (denominador) | Evidência | Elegível | Resultado |",
   );
-  lines.push("| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |");
+  lines.push(
+    "| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |",
+  );
   for (const gate of report.gates.gates) {
     const scope =
       gate.slice === undefined
@@ -442,7 +461,8 @@ export function renderReportMarkdown(report: BenchmarkReport): string {
         ? String(gate.sampleSize)
         : `${gate.sampleSize} de ${gate.populationSize}`;
     lines.push(
-      `| ${gate.id} | ${gate.tier} | ${scope} | ${gate.bound} | ${fmt(gate.observed)} | ` +
+      `| ${gate.id} | ${gate.tier} | ${gate.role} | ${gate.hypothesis ?? "—"} | ${scope} | ` +
+        `${gate.bound} | ${fmt(gate.observed)} | ` +
         `${fmt(gate.descriptive?.value)} | ${denominator} | ${gate.evidence} | ` +
         `${gate.eligible ? "sim" : "não"} | ${gate.passed ? "passou" : "reprovou"} |`,
     );
@@ -461,12 +481,30 @@ export function renderReportMarkdown(report: BenchmarkReport): string {
     lines.push(`- alpha_família: ${multiplicity.familyAlpha}`);
     lines.push(
       `- m pré-registrado: ${multiplicity.declared ?? "não declarado"} · ` +
-        `gates estatísticos obrigatórios neste relatório: ${multiplicity.observed} · ` +
+        `hipóteses obrigatórias decididas neste relatório: ${multiplicity.observed} · ` +
         `cobre: ${multiplicity.covers ? "sim" : "não"}`,
     );
     lines.push(
       `- alpha por gate: ${multiplicity.perGateAlpha ?? "n/a"} · ` +
         `intervalos de ${multiplicity.descriptiveConfidence} são descritivos`,
+    );
+    // WHY covers is false, in the document the operator reads before an irreversible
+    // button: without both lists "cobre: não" is a verdict with no subject.
+    if (multiplicity.missingHypotheses.length > 0) {
+      lines.push(
+        `- Membros da família que nenhum gate deste relatório decidiu: ` +
+          `\`${multiplicity.missingHypotheses.join("`, `")}\``,
+      );
+    }
+    if (multiplicity.unexpectedHypotheses.length > 0) {
+      lines.push(
+        `- Hipóteses fora da família pré-registrada: ` +
+          `\`${multiplicity.unexpectedHypotheses.join("`, `")}\``,
+      );
+    }
+    lines.push(
+      `- Família primária (${multiplicity.primaryFamily.length}): ` +
+        `\`${multiplicity.primaryFamily.join("`, `")}\``,
     );
     lines.push(
       "- Uma célula sem poder permanece em m e reprova; o divisor nunca encolhe.",

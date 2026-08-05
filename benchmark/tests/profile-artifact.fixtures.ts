@@ -29,6 +29,7 @@ import {
   type MetricEstimate,
 } from "../metrics.ts";
 import type { GateReport, GateResult, ReleaseDecision } from "../gates.ts";
+import { PREREGISTRATION_V4 } from "../preregistration-v4.ts";
 import type { BenchmarkReport } from "../report.ts";
 import type { SliceResult, SliceSummary } from "../slices.ts";
 import type { ModelPublicationInput } from "../profile-artifact.ts";
@@ -323,6 +324,11 @@ function overallMetrics(withVisual: boolean): EvaluationMetrics {
   return fullMetrics(warning, visualAction);
 }
 
+const FPR_NEGATIVE_FLOOR =
+  PREREGISTRATION_V4.powerFloors.criticalFprHumanNegatives;
+const RECALL_POSITIVE_FLOOR =
+  PREREGISTRATION_V4.powerFloors.criticalRecallPositives;
+
 function lengthSlice(
   key: string,
   negatives: number,
@@ -349,8 +355,10 @@ function lengthSlice(
     sampleSize: positives + negatives,
     positives,
     negatives,
-    fprGateEligible: negatives >= 300,
-    recallGateEligible: positives >= 200,
+    fprGateEligible: negatives >= FPR_NEGATIVE_FLOOR,
+    recallGateEligible: positives >= RECALL_POSITIVE_FLOOR,
+    fprNegativeFloor: FPR_NEGATIVE_FLOOR,
+    recallPositiveFloor: RECALL_POSITIVE_FLOOR,
     metrics: fullMetrics(warning, visualAction),
   };
 }
@@ -376,6 +384,9 @@ function actionSliceGate(key: string, passed: boolean): GateResult {
   return {
     id: `action.fpr.slice.lengthBucket.${key}`,
     tier: "action",
+    // The action tier holds no member of the primary family: its budget authorizes,
+    // it never certifies.
+    role: "diagnostic",
     scope: "slice",
     slice: { axis: "lengthBucket", key },
     estimand: "action.fpr.slice",
@@ -391,28 +402,71 @@ function actionSliceGate(key: string, passed: boolean): GateResult {
   };
 }
 
+// The per-cell FPR ceiling of a quota cell: a member of the primary family, and the
+// kind of gate whose failure a `reject` fixture has to carry.
+const REJECTED_CELL = PREREGISTRATION_V4.preRegistration.quotaAxis.cells[0];
+const REJECTED_GATE = `warning.fpr.slice.humanSourceType.${REJECTED_CELL}`;
+
+function breachedCellGate(): GateResult {
+  return {
+    id: REJECTED_GATE,
+    tier: "warning",
+    role: "certifying",
+    hypothesis: `fpr-${REJECTED_CELL}`,
+    scope: "slice",
+    slice: { axis: "humanSourceType", key: REJECTED_CELL },
+    estimand: "warning.fpr.slice",
+    evidence: "present",
+    observed: 0.09,
+    bound: "simultaneous-upper",
+    operator: "<=",
+    required: 0.05,
+    sampleSize: 400,
+    eligible: true,
+    passed: false,
+    reasons: [
+      `critical FPR slice humanSourceType/${REJECTED_CELL} warning FPR ` +
+        "simultaneous upper bound 0.09 exceeds 0.05",
+    ],
+  };
+}
+
+// The failure lists follow FROM the decision, because the two are not independent in
+// the policy that emits them: `reject` is a failed integrity, warning or certifying
+// gate, and `indicator-only` is an action failure with none of those. A fixture that
+// declares a decision no gate policy can produce proves nothing about the consumer.
 function gateReport(
   decision: ReleaseDecision,
   actionSliceGates: GateResult[],
 ): GateReport {
+  const family = PREREGISTRATION_V4.multiplicity.primaryFamily;
+  const rejected = decision === "reject";
   return {
-    schemaVersion: 2,
+    schemaVersion: 3,
     multiplicity: {
       correction: "bonferroni",
       familyAlpha: 0.05,
       descriptiveConfidence: 0.95,
       frozenAt: "G0.2",
-      declared: 40,
-      observed: actionSliceGates.length,
-      gateIds: actionSliceGates.map((gate) => gate.id),
-      perGateAlpha: 0.05 / 40,
+      declared: PREREGISTRATION_V4.multiplicity.primaryFamilySize,
+      observed: family.length,
+      // The action slice gates are diagnostic, so none of them is in the inventory.
+      gateIds: rejected ? [REJECTED_GATE] : [],
+      primaryFamily: family,
+      hypotheses: [...family],
+      missingHypotheses: [],
+      unexpectedHypotheses: [],
+      perGateAlpha: PREREGISTRATION_V4.multiplicity.perHypothesisAlpha,
       covers: true,
     },
     decision,
-    gates: [...actionSliceGates],
+    gates: rejected
+      ? [breachedCellGate(), ...actionSliceGates]
+      : [...actionSliceGates],
     failedIntegrity: [],
-    failedWarning: [],
-    failedAction: decision === "pass" ? [] : ["action.fpr.overall"],
+    failedWarning: rejected ? [REJECTED_GATE] : [],
+    failedAction: decision === "indicator-only" ? ["action.fpr.overall"] : [],
+    failedCertifying: rejected ? [REJECTED_GATE] : [],
   };
 }
 
@@ -598,8 +652,39 @@ export const indicatorInput: ModelPublicationInput = makeInput(
   },
 );
 
-// REJECT: the warning gate fails, the TMR is not promoted, and no profile is
-// published.
+/**
+ * A publication input carrying a gate report the caller PRODUCED, instead of a decision
+ * this file hands over as a parameter.
+ *
+ * Every fixture above takes `decision` as an argument, so none of them can observe the
+ * gate policy changing its mind about which failures publish: that link is only
+ * exercised by feeding `buildModelPublication` the output of `evaluateReleaseGates`.
+ */
+export function publicationInputFor(gates: GateReport): ModelPublicationInput {
+  const metrics = overallMetrics(true);
+  return {
+    frozen: frozen({
+      warningDocument: 0.7,
+      warningLocalized: 0.65,
+      visualDocument: 0.85,
+    }),
+    report: report(
+      gates.decision,
+      metrics,
+      [
+        lengthSlice("80_99", 400, 250, true),
+        lengthSlice("300_PLUS", 350, 220, true),
+      ],
+      gates,
+    ),
+    issuedAt: ISSUED_AT,
+    profilesTemplate: PROFILES_TEMPLATE,
+    releaseTemplate: RELEASE_TEMPLATE,
+  };
+}
+
+// REJECT: a per-cell FPR ceiling of the primary family fails, the TMR is not promoted,
+// and no profile is published.
 export const rejectInput: ModelPublicationInput = makeInput(
   "reject",
   { warningDocument: 0.7, warningLocalized: 0.65, visualDocument: null },

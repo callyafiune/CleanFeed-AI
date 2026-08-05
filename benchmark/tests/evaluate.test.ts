@@ -9,9 +9,13 @@
 import { describe, expect, it } from "vitest";
 
 import type { FrozenCalibrationArtifact } from "../calibration-pipeline.ts";
-import { buildEvaluationItem } from "../commands/evaluate.ts";
+import {
+  buildEvaluationItem,
+  certifyingEvaluationOptions,
+} from "../commands/evaluate.ts";
 import { CommandError } from "../commands/io.ts";
 import type { StrictPredictionV2 } from "../prediction-schema.ts";
+import { PREREGISTRATION_V4 } from "../preregistration-v4.ts";
 import type { BenchmarkRecord } from "../schema.ts";
 
 // A steep Platt calibrator (sigmoid(20*raw - 10)) with low thresholds: a raw 0.9
@@ -53,6 +57,25 @@ function prediction(
     ...overrides,
   } as StrictPredictionV2;
 }
+
+describe("certifying metric options", () => {
+  // The cheap half of the guard against a measurement computed with NO multiplicity:
+  // the divisor of `alpha_família` is the frozen family size, so a missing
+  // `preRegisteredStatisticalGates` publishes no simultaneous bound at all and every
+  // certifying gate then fails for missing evidence — indistinguishable, at the gate
+  // report, from a breached budget. The end-to-end half is in
+  // consume-holdout.test.ts, which reads `multiplicity.declared` off the sealed gate
+  // report and so also catches a call site that bypasses this helper.
+  it("declares the pre-registered family size as m", () => {
+    const options = certifyingEvaluationOptions(20260804, true);
+    expect(options.preRegisteredStatisticalGates).toBe(
+      PREREGISTRATION_V4.multiplicity.primaryFamilySize,
+    );
+    expect(options.preRegisteredStatisticalGates).toBe(7);
+    expect(options.bootstrapSeed).toBe(20260804);
+    expect(options.visualActionAvailable).toBe(true);
+  });
+});
 
 describe("buildEvaluationItem", () => {
   it("carries the score and both decisions for a scored row", () => {

@@ -12,6 +12,14 @@ import {
   type SliceAxis,
   type SliceResult,
 } from "../slices.ts";
+import { PREREGISTRATION_V4 } from "../preregistration-v4.ts";
+
+const FAMILY_SIZE = PREREGISTRATION_V4.multiplicity.primaryFamilySize;
+// The two sampling floors, read from the frozen pre-registration. The fixture below is
+// built AT the boundary from these numbers rather than from literals, so the counts and
+// the module under test have one source between them.
+const FPR_FLOOR = PREREGISTRATION_V4.powerFloors.criticalFprHumanNegatives;
+const RECALL_FLOOR = PREREGISTRATION_V4.powerFloors.criticalRecallPositives;
 import type { BenchmarkRecord } from "../schema.ts";
 import {
   asGeneratorFamily,
@@ -157,16 +165,21 @@ function find(
   return slices.find((slice) => slice.axis === axis && slice.key === key);
 }
 
+// `preRegisteredStatisticalGates` is not optional on `SliceOptions`: a slice's own
+// simultaneous bound is what a per-cell hypothesis of the primary family is decided
+// on, so a slice set built without the divisor is one no certifying gate can read.
 const SEED = {
   bootstrapSeed: 424242,
   heldOutGeneratorFamilies: [asGeneratorFamily("gpt")],
+  preRegisteredStatisticalGates: FAMILY_SIZE,
 };
 
 // A fixture whose buckets are single-class on every axis, so building slices
-// stays cheap while exercising the 300-negative / 200-positive gate floors.
+// stays cheap while exercising the two gate floors AT their boundary: one bucket
+// exactly at each floor and one exactly one row below it.
 function eligibilityFixture(): EvaluationItem[] {
   const items: EvaluationItem[] = [];
-  for (let i = 0; i < 300; i += 1) {
+  for (let i = 0; i < FPR_FLOOR; i += 1) {
     items.push(
       item({
         author: `corp_${i}`,
@@ -179,7 +192,7 @@ function eligibilityFixture(): EvaluationItem[] {
       }),
     );
   }
-  for (let i = 0; i < 299; i += 1) {
+  for (let i = 0; i < FPR_FLOOR - 1; i += 1) {
     items.push(
       item({
         author: `startup_${i}`,
@@ -188,11 +201,11 @@ function eligibilityFixture(): EvaluationItem[] {
         wordCount: 85,
         humanSourceType: "blogger",
         hardNegativeFamily: "hn_b",
-        createdAt: 300 + i,
+        createdAt: FPR_FLOOR + i,
       }),
     );
   }
-  for (let i = 0; i < 200; i += 1) {
+  for (let i = 0; i < RECALL_FLOOR; i += 1) {
     items.push(
       item({
         author: `tech_${i}`,
@@ -206,7 +219,7 @@ function eligibilityFixture(): EvaluationItem[] {
       }),
     );
   }
-  for (let i = 0; i < 199; i += 1) {
+  for (let i = 0; i < RECALL_FLOOR - 1; i += 1) {
     items.push(
       item({
         author: `media_${i}`,
@@ -306,45 +319,56 @@ describe("buildSlices declared sample size", () => {
 });
 
 describe("buildSlices gate eligibility", () => {
-  it("marks slices gate-eligible per the 300-negative / 200-positive floors", () => {
+  it("marks slices gate-eligible per the pre-registered negative / positive floors", () => {
+    // The values, pinned once: `criticalFprHumanNegatives` is the denominator floor of
+    // every per-cell FPR ceiling the release certifies, and the same number is the `n`
+    // of the published zero-event ceiling. The fixture derives its counts from these,
+    // so a pre-registration that moved either floor fails here saying which one.
+    expect(FPR_FLOOR).toBe(300);
+    expect(RECALL_FLOOR).toBe(200);
     const slices = buildSlices(eligibilityFixture(), SEED);
 
     const corp = find(slices, "domain", "corp");
-    expect(corp?.negatives).toBe(300);
+    expect(corp?.negatives).toBe(FPR_FLOOR);
     expect(corp?.fprGateEligible).toBe(true);
+    // The floor the verdict was decided against travels WITH it: the gate composes its
+    // published refusal from this number, not from the policy row.
+    expect(corp?.fprNegativeFloor).toBe(FPR_FLOOR);
+    expect(corp?.recallPositiveFloor).toBe(RECALL_FLOOR);
 
     const startup = find(slices, "domain", "startup");
-    expect(startup?.negatives).toBe(299);
+    expect(startup?.negatives).toBe(FPR_FLOOR - 1);
     expect(startup?.fprGateEligible).toBe(false);
 
     const tech = find(slices, "domain", "tech");
-    expect(tech?.positives).toBe(200);
+    expect(tech?.positives).toBe(RECALL_FLOOR);
     expect(tech?.recallGateEligible).toBe(true);
 
     const media = find(slices, "domain", "media");
-    expect(media?.positives).toBe(199);
+    expect(media?.positives).toBe(RECALL_FLOOR - 1);
     expect(media?.recallGateEligible).toBe(false);
 
     // humanSourceType is an FPR-only axis.
     const journalist = find(slices, "humanSourceType", "journalist");
-    expect(journalist?.negatives).toBe(300);
+    expect(journalist?.negatives).toBe(FPR_FLOOR);
     expect(journalist?.fprGateEligible).toBe(true);
     expect(journalist?.recallGateEligible).toBe(false);
 
-    // severity is a recall-only axis: 599 negatives never make it FPR-eligible.
+    // severity is a recall-only axis: every human negative of the fixture lands in
+    // `none` and the bucket still never becomes FPR-eligible.
     const cleanSeverity = find(slices, "severity", "none");
-    expect(cleanSeverity?.negatives).toBe(599);
+    expect(cleanSeverity?.negatives).toBe(2 * FPR_FLOOR - 1);
     expect(cleanSeverity?.fprGateEligible).toBe(false);
     const highSeverity = find(slices, "severity", "high");
-    expect(highSeverity?.positives).toBe(200);
+    expect(highSeverity?.positives).toBe(RECALL_FLOOR);
     expect(highSeverity?.recallGateEligible).toBe(true);
 
     // generatorExposure compares family to the held-out set.
     const unseen = find(slices, "generatorExposure", "unseen");
-    expect(unseen?.positives).toBe(200);
+    expect(unseen?.positives).toBe(RECALL_FLOOR);
     expect(unseen?.recallGateEligible).toBe(true);
     const seen = find(slices, "generatorExposure", "seen");
-    expect(seen?.positives).toBe(199);
+    expect(seen?.positives).toBe(RECALL_FLOOR - 1);
     expect(seen?.recallGateEligible).toBe(false);
   }, 60_000);
 
@@ -363,6 +387,7 @@ describe("buildSlices gate eligibility", () => {
     const slices = buildSlices(items, {
       bootstrapSeed: 7,
       heldOutGeneratorFamilies: [],
+      preRegisteredStatisticalGates: FAMILY_SIZE,
       minimumFprNegatives: 3,
       minimumRecallPositives: 2,
     });
@@ -371,6 +396,15 @@ describe("buildSlices gate eligibility", () => {
     expect(find(slices, "domain", "small")?.fprGateEligible).toBe(false);
     expect(find(slices, "domain", "pos")?.recallGateEligible).toBe(true);
     expect(find(slices, "domain", "posSmall")?.recallGateEligible).toBe(false);
+
+    // And the OVERRIDDEN floors travel with the verdicts, not the pre-registered rows:
+    // benchmark/gates.ts composes its published refusal from these numbers, so a slice
+    // that carried the policy row instead would name a floor this bucket was never
+    // compared to.
+    expect(find(slices, "domain", "small")?.fprNegativeFloor).toBe(3);
+    expect(find(slices, "domain", "posSmall")?.recallPositiveFloor).toBe(2);
+    expect(FPR_FLOOR).not.toBe(3);
+    expect(RECALL_FLOOR).not.toBe(2);
   });
 
   it("counts >=50% mixed records as slice positives", () => {
@@ -383,6 +417,7 @@ describe("buildSlices gate eligibility", () => {
     const slices = buildSlices(items, {
       bootstrapSeed: 7,
       heldOutGeneratorFamilies: [],
+      preRegisteredStatisticalGates: FAMILY_SIZE,
     });
 
     // Keys are `"<mode>/<bucket>"`, the SAME format as
@@ -430,6 +465,7 @@ describe("buildSlices gate eligibility", () => {
     const slices = buildSlices(items, {
       bootstrapSeed: 7,
       heldOutGeneratorFamilies: [],
+      preRegisteredStatisticalGates: FAMILY_SIZE,
     });
     const mixedKeys = slices
       .filter((slice) => slice.axis === "mixedFraction")
@@ -460,7 +496,11 @@ describe("buildSlices gate eligibility", () => {
       item({ author: "b", label: "human" }),
       item({ author: "b", label: "ai" }),
     ];
-    const options = { bootstrapSeed: 99, heldOutGeneratorFamilies: [] };
+    const options = {
+      bootstrapSeed: 99,
+      heldOutGeneratorFamilies: [],
+      preRegisteredStatisticalGates: FAMILY_SIZE,
+    };
     expect(buildSlices(items, options)).toEqual(buildSlices(items, options));
   });
 
@@ -474,6 +514,7 @@ describe("buildSlices gate eligibility", () => {
     const slices = buildSlices(items, {
       bootstrapSeed: 7,
       heldOutGeneratorFamilies: [],
+      preRegisteredStatisticalGates: FAMILY_SIZE,
     });
     const domainKeys = slices
       .filter((slice) => slice.axis === "domain")
@@ -554,6 +595,8 @@ function slice(
     negatives: 1,
     fprGateEligible,
     recallGateEligible,
+    fprNegativeFloor: PREREGISTRATION_V4.powerFloors.criticalFprHumanNegatives,
+    recallPositiveFloor: PREREGISTRATION_V4.powerFloors.criticalRecallPositives,
     metrics: metrics(warningFpr, warningRecall, visual),
   };
 }

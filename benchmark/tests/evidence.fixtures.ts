@@ -517,27 +517,41 @@ function emptySlices(): SliceSummary {
   };
 }
 
+// A rejected run, and the failing gate is a CERTIFYING one: only a member of the
+// primary family produces `reject`, so a fixture whose single failure is a diagnostic
+// would be a decision no gate policy can emit.
+const REJECTED_CELL = "carolina-judicial";
+const REJECTED_GATE = `warning.fpr.slice.humanSourceType.${REJECTED_CELL}`;
+
 function rejectGates(): GateReport {
+  const family = PREREGISTRATION_V4.multiplicity.primaryFamily;
   return {
-    schemaVersion: 2,
+    schemaVersion: 3,
     multiplicity: {
       correction: "bonferroni",
       familyAlpha: 0.05,
       descriptiveConfidence: 0.95,
       frozenAt: "G0.2",
-      declared: 40,
-      observed: 1,
-      gateIds: ["warning.fpr.overall"],
-      perGateAlpha: 0.05 / 40,
+      declared: PREREGISTRATION_V4.multiplicity.primaryFamilySize,
+      observed: family.length,
+      gateIds: [REJECTED_GATE],
+      primaryFamily: family,
+      hypotheses: [...family],
+      missingHypotheses: [],
+      unexpectedHypotheses: [],
+      perGateAlpha: PREREGISTRATION_V4.multiplicity.perHypothesisAlpha,
       covers: true,
     },
     decision: "reject",
     gates: [
       {
-        id: "warning.fpr.overall",
+        id: REJECTED_GATE,
         tier: "warning",
-        scope: "overall",
-        estimand: "warning.fpr",
+        role: "certifying",
+        hypothesis: `fpr-${REJECTED_CELL}`,
+        scope: "slice",
+        slice: { axis: "humanSourceType", key: REJECTED_CELL },
+        estimand: "warning.fpr.slice",
         evidence: "present",
         observed: 0.1,
         bound: "simultaneous-upper",
@@ -546,12 +560,16 @@ function rejectGates(): GateReport {
         sampleSize: 2_000,
         eligible: true,
         passed: false,
-        reasons: ["overall warning FPR upper95 0.1 exceeds 0.05"],
+        reasons: [
+          `critical FPR slice humanSourceType/${REJECTED_CELL} warning FPR ` +
+            "simultaneous upper bound 0.1 exceeds 0.05",
+        ],
       },
     ],
     failedIntegrity: [],
-    failedWarning: ["warning.fpr.overall"],
+    failedWarning: [REJECTED_GATE],
     failedAction: [],
+    failedCertifying: [REJECTED_GATE],
   };
 }
 
