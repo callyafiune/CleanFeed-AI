@@ -18,6 +18,7 @@ import tempfile
 import unittest
 import zipfile
 from collections import Counter
+from fractions import Fraction
 from pathlib import Path
 
 from common import (
@@ -37,6 +38,16 @@ from extract_wikipedia import lead_section, strip_templates
 import extract_wikipedia
 
 PROSE_60 = " ".join(f"palavra{i}" for i in range(60))
+
+
+def document_license_of(domain_source: str) -> str:
+    """The licence the extractor of that base writes on a document of it.
+
+    Fixtures carry it because the RECORD carries it: the assembler reads the licence off
+    the pool row and has nothing to fall back on, so a fixture without one is a fixture
+    of a row the assembler refuses.
+    """
+    return "cc-by-sa-4.0" if domain_source.startswith("ptwiki") else "cc-by-nc-sa-4.0"
 
 # The concrete acquisition each extractor test declares. Both extractors REFUSE to run
 # without it, because it is what names `groups.sourceMaterialBatch`; the values are the
@@ -1632,6 +1643,7 @@ class AssemblerRealGroupTests(unittest.TestCase):
             "text": PROSE_60,
             "wordCount": 60,
             "domainSource": "carolina_judicial_branch",
+            "licenseId": document_license_of("carolina_judicial_branch"),
             "createdAt": 1621555200000,
             "meta": {
                 "dateField": (
@@ -1868,6 +1880,7 @@ class DeclaredFrameTests(unittest.TestCase):
             "text": PROSE_60,
             "wordCount": 60,
             "domainSource": domain_source,
+            "licenseId": document_license_of(domain_source),
             "meta": {
                 "dateField": (
                     "TEI@teiHeader/fileDesc/publicationStmt/date[@type=Download]"
@@ -1927,7 +1940,7 @@ class DeclaredFrameTests(unittest.TestCase):
         # stocks — parsed from `source-manifest.ts`, which is the authority the corpus
         # audit joins against, so the two cannot drift apart silently.
         self.assertEqual(
-            {source for source, _ in assemble_corpus.HUMAN_SOURCE.values()},
+            set(assemble_corpus.HUMAN_SOURCE.values()),
             set(assemble_corpus.declared_group_axes()),
         )
 
@@ -5307,7 +5320,9 @@ class AssemblyRunTests(unittest.TestCase):
         # seen prune collapses two fixture rows into one another.
         return " ".join(f"{tag}palavra{n}" for n in range(60))
 
-    def _human(self, domain_source: str, index: int) -> dict:
+    def _human(
+        self, domain_source: str, index: int, license_id: str | None = None
+    ) -> dict:
         from group_axes import NO_AUTHOR_READ, known, not_applicable
 
         return {
@@ -5315,6 +5330,7 @@ class AssemblyRunTests(unittest.TestCase):
             "text": self._prose(f"h{domain_source}{index}"),
             "wordCount": 60,
             "domainSource": domain_source,
+            "licenseId": license_id or document_license_of(domain_source),
             "meta": {
                 "dateField": "teiHeader/publicationStmt/date",
                 "observedValue": "2019-05-04",
@@ -5379,8 +5395,15 @@ class AssemblyRunTests(unittest.TestCase):
         reserved_family: str | None = None,
         excluded_rows: int = 0,
         excluded_family: str = "madras:synthetic_corpusqwn",
+        carolina_license: str | None = None,
     ) -> dict:
-        """The four pool files, and the planted line a seen set may already hold."""
+        """The four pool files, and the planted line a seen set may already hold.
+
+        `carolina_license` overrides what the Carolina DOCUMENTS declare. By default the
+        two bases declare different licences, which is the state a per-stratum constant
+        happens to reproduce; pass the encyclopedic licence to get the case where the
+        constant and the reading disagree.
+        """
         cand = tmp / "candidates"
         family = reserved_family or self.RESERVED_FAMILY
         # 11 encyclopedic rows against a quota of 10, with the planted one FIRST: it is
@@ -5388,7 +5411,7 @@ class AssemblyRunTests(unittest.TestCase):
         wiki = [self._human("ptwiki_lead", index) for index in range(11)]
         self._write(cand / "wikipedia_fresh.jsonl", wiki)
         carolina = [
-            self._human(source, index)
+            self._human(source, index, carolina_license)
             for source in (
                 "carolina_judicial_branch",
                 "carolina_social_media",
@@ -5633,3 +5656,926 @@ class AssemblyRunTests(unittest.TestCase):
         self.assertEqual(len(records), 80)
         self.assertIn("sem indice de vistos", self.stdout)
         self.assertNotIn("vazamento vs corpus morto", self.stdout)
+
+    # --- the anti-artifact gate ON the path a real assembly takes (D13/A4) ----
+
+    def _family(self, spelling: str) -> str:
+        import assemble_corpus
+
+        return assemble_corpus.generator_family(spelling)
+
+    def _contaminate(self, tmp: Path, pool: str, rows: int) -> int:
+        """Prefixes `rows` lines of one AI pool with an assistant-voice delivery."""
+        path = tmp / "candidates" / f"{pool}.jsonl"
+        lines = [
+            json.loads(line)
+            for line in path.read_text(encoding="utf-8").splitlines()
+            if line.strip()
+        ]
+        for row in lines[:rows]:
+            row["text"] = "Aqui está o texto que você pediu: " + row["text"]
+        self._write(path, lines)
+        return len(lines)
+
+    def test_a_contaminated_family_refuses_the_assembly_before_the_split(self) -> None:
+        import artifact_gate
+
+        with tempfile.TemporaryDirectory() as raw:
+            tmp = Path(raw)
+            self._pools(tmp)
+            # 1 of the 6 codex rows = 16.67 %, far above the 2 % ceiling.
+            self.assertEqual(self._contaminate(tmp, "ai_fresh_codex", 1), 6)
+            with self.assertRaises(artifact_gate.ArtifactContamination) as caught:
+                self._main(tmp, seen_texts=[])
+            # Nothing was written: the refusal sits ahead of records.jsonl, so a
+            # contaminated corpus never exists on disk to be trained on by accident.
+            self.assertFalse((tmp / "out" / "records.jsonl").exists())
+        message = str(caught.exception)
+        self.assertIn(self._family(self.RESERVED_FAMILY), message)
+        self.assertIn("1/6", message)
+        self.assertIn("16.67%", message)
+        self.assertIn("codex", message)
+        self.assertIn("REGENERATED", message)
+        # The lane's other five lines are not offered as a corpus, and stdout says the
+        # same thing in the same words.
+        self.assertIn("regenerate-lane", self.stdout)
+
+    def test_the_refusal_publishes_the_gate_report_too(self) -> None:
+        import artifact_gate
+
+        # The refusal message names the detections and the counts; the PROBES that matched
+        # are the actionable half ("this family echoes the word-count directive" tells a lane
+        # owner what to change) and they live only in the report. Published before the
+        # verdict, so the diagnosis of a refused run survives on disk.
+        with tempfile.TemporaryDirectory() as raw:
+            tmp = Path(raw)
+            self._pools(tmp)
+            self.assertEqual(self._contaminate(tmp, "ai_fresh_codex", 1), 6)
+            with self.assertRaises(artifact_gate.ArtifactContamination):
+                self._main(tmp, seen_texts=[])
+            report = json.loads(
+                (tmp / "out" / "artifact-gate.json").read_text(encoding="utf-8")
+            )
+            # And it is the ONLY thing written: the corpus a training run could read does
+            # not exist.
+            self.assertFalse((tmp / "out" / "records.jsonl").exists())
+            self.assertFalse((tmp / "out" / "governance-inputs.json").exists())
+        self.assertEqual(report["lanesToRegenerate"], ["codex"])
+        breached = [
+            entry
+            for entry in report["families"]
+            if entry["verdict"] == artifact_gate.VERDICT_REGENERATE_LANE
+        ]
+        self.assertEqual(
+            [entry["family"] for entry in breached],
+            [self._family(self.RESERVED_FAMILY)],
+        )
+        self.assertEqual(
+            (breached[0]["contaminated"], breached[0]["lines"]), (1, 6)
+        )
+        self.assertEqual(
+            breached[0]["byDetection"][artifact_gate.DETECTION_METACONVERSATION][
+                "probes"
+            ],
+            ["aqui esta o texto"],
+        )
+        # Still no line id anywhere: publishing the report must not make the pruning A4
+        # forbids reachable.
+        serialized = json.dumps(report, ensure_ascii=False)
+        self.assertNotIn("cand_ai_", serialized)
+
+    def test_the_manifest_licenses_are_the_ones_the_records_of_the_same_run_carry(
+        self,
+    ) -> None:
+        import assemble_corpus
+
+        # The projection, end to end. The fixture is the case a per-stratum constant CANNOT
+        # reproduce: the Carolina documents declare the encyclopedic licence, so a constant
+        # keyed on the stratum says `cc-by-nc-sa-4.0` for rows whose headers say
+        # `cc-by-sa-4.0` — and with the pools' default licences the two agree, which is
+        # exactly the accident that hid the defect in the first place.
+        declared = document_license_of("ptwiki_lead")
+        self.assertNotEqual(declared, document_license_of("carolina_judicial_branch"))
+        with tempfile.TemporaryDirectory() as raw:
+            tmp = Path(raw)
+            self._pools(tmp, carolina_license=declared)
+            self._main(tmp, seen_texts=[])
+            records, governance = self._outputs(tmp)
+
+        by_source: dict[str, set[str]] = {}
+        for record in records:
+            provenance = record["provenance"]
+            by_source.setdefault(provenance["sourceId"], set()).add(
+                provenance["licenseId"]
+            )
+        self.assertEqual(by_source["src_carolina"], {declared})
+        self.assertEqual(by_source["src_wikipedia_pt"], {declared})
+        self.assertEqual(
+            {entry["sourceId"]: entry["licenseId"] for entry in governance["sources"]},
+            {source: next(iter(licenses)) for source, licenses in by_source.items()},
+        )
+        # And `licenses[]` is exactly the set the rows carry, with the reviewed terms of
+        # each: an entry more declares terms the corpus is not under, one fewer makes the
+        # seal refuse the whole corpus (DATASET_LICENSE_INVALID). Two entries here, out of an
+        # inventory of three.
+        used = {licence for licenses in by_source.values() for licence in licenses}
+        self.assertEqual({entry["id"] for entry in governance["licenses"]}, used)
+        self.assertLess(len(used), len(assemble_corpus.LICENSE_INVENTORY))
+        for entry in governance["licenses"]:
+            self.assertEqual(
+                entry,
+                {"id": entry["id"], **assemble_corpus.LICENSE_INVENTORY[entry["id"]]},
+            )
+
+    def test_a_clean_assembly_publishes_the_gate_report_anyway(self) -> None:
+        import artifact_gate
+
+        with tempfile.TemporaryDirectory() as raw:
+            tmp = Path(raw)
+            self._pools(tmp)
+            self._main(tmp, seen_texts=[])
+            report = json.loads(
+                (tmp / "out" / "artifact-gate.json").read_text(encoding="utf-8")
+            )
+        # "Clean" is a measurement over named families with named denominators, so the
+        # artifact exists for a passing corpus too — otherwise the only evidence the gate
+        # ran at all would be the absence of a refusal.
+        self.assertEqual(report["rule"], "A4")
+        self.assertEqual(report["lanesToRegenerate"], [])
+        self.assertEqual(
+            sorted(entry["family"] for entry in report["families"]),
+            sorted(
+                {
+                    self._family(self.CORE_FAMILY),
+                    self._family(self.RESERVED_FAMILY),
+                }
+            ),
+        )
+        for entry in report["families"]:
+            self.assertEqual(entry["verdict"], artifact_gate.VERDICT_CLEAR)
+            self.assertGreater(entry["lines"], 0)
+            self.assertEqual(entry["contaminated"], 0)
+
+
+class DocumentLicenseTests(unittest.TestCase):
+    """D8: the licence read from the DOCUMENT reaches the assembled record.
+
+    The extractor reads the TEI availability element per document against a fail-closed
+    allowlist (C1), and until now the assembler threw that reading away: it looked the
+    licence up from the row's stratum, so every Carolina record said `cc-by-nc-sa-4.0`
+    whatever its header declared. These tests are about the rest of the journey.
+    """
+
+    def _candidate(self, license_id: str | None, source: str) -> dict:
+        from group_axes import NO_AUTHOR_READ, known, not_applicable
+
+        candidate = {
+            "candidateId": f"cand_{source}_0001",
+            "text": PROSE_60,
+            "wordCount": 60,
+            "domainSource": source,
+            "meta": {
+                "dateField": "teiHeader/publicationStmt/date",
+                "observedValue": "2019-05-04",
+                "snapshot": "carolina" if source.startswith("carolina") else "ptwiki",
+                "sourceMaterialBatch": "smb_carolina-v2_0",
+                "extractionRun": "extraction_carolina_fresh",
+                "groupAxes": {
+                    "source": known(f"doc_{source}"),
+                    "author": not_applicable(NO_AUTHOR_READ),
+                },
+            },
+        }
+        if license_id is not None:
+            candidate["licenseId"] = license_id
+        return candidate
+
+    def test_a_record_with_no_resolved_license_is_refused_naming_the_document(
+        self,
+    ) -> None:
+        from assemble_corpus import (
+            MissingDocumentLicense,
+            UnwritableInV3,
+            human_record,
+        )
+
+        # A counted drop and not an abort: the pools written before the extractors emitted
+        # a licence hold rows in exactly this state, and the honest outcome is a smaller
+        # corpus plus a count — the same treatment `MissingLabelEvidence` gets.
+        self.assertTrue(issubclass(MissingDocumentLicense, UnwritableInV3))
+        candidate = self._candidate(None, "carolina_judicial_branch")
+        with self.assertRaises(MissingDocumentLicense) as caught:
+            human_record(candidate, "carolina-judicial", None)
+        message = str(caught.exception)
+        self.assertIn("cand_carolina_judicial_branch_0001", message)
+        self.assertIn("licenseId", message)
+
+    def test_the_license_the_document_declared_reaches_the_record(self) -> None:
+        from assemble_corpus import human_record
+
+        # `cc-by-sa-4.0` on a CAROLINA row, which is the case the old code could not
+        # express: the stratum lookup said `cc-by-nc-sa-4.0` for every Carolina document,
+        # so a header declaring anything else was overwritten on the way in.
+        entries: list[dict] = []
+        record = human_record(
+            self._candidate("cc-by-sa-4.0", "carolina_judicial_branch"),
+            "carolina-judicial",
+            None,
+            evidence_sink=entries,
+        )
+        self.assertEqual(record["provenance"]["licenseId"], "cc-by-sa-4.0")
+        # And the label-evidence registration says the same thing, because the licence is
+        # part of what the entry digest covers.
+        self.assertEqual(len(entries), 1)
+        self.assertEqual(entries[0]["licenseId"], "cc-by-sa-4.0")
+        self.assertIn("cc-by-sa-4_0", entries[0]["entryId"])
+
+    def test_a_license_the_inventory_cannot_publish_drops_the_row_by_name(self) -> None:
+        from assemble_corpus import MissingDocumentLicense, human_record
+
+        candidate = self._candidate("cc-by-4.0", "carolina_judicial_branch")
+        with self.assertRaises(MissingDocumentLicense) as caught:
+            human_record(candidate, "carolina-judicial", None)
+        message = str(caught.exception)
+        self.assertIn("cand_carolina_judicial_branch_0001", message)
+        self.assertIn("cc-by-4.0", message)
+        # The reason, and the licences that ARE publishable — a drop with neither is a row
+        # that vanished under a name nobody can act on.
+        self.assertIn("no terms for it", message)
+        self.assertIn("cc-by-nc-sa-4.0", message)
+
+    def test_a_license_no_list_decided_about_stops_the_run(self) -> None:
+        from assemble_corpus import (
+            UndecidedDocumentLicense,
+            UnwritableInV3,
+            document_license,
+        )
+
+        # The asymmetry `UndecidedDomainSource` already has, on the licence axis: a DECIDED
+        # exclusion is counted, an UNDECIDED one halts. A source that starts shipping a new
+        # availability string is the real case, and a counted drop would hide it.
+        self.assertFalse(issubclass(UndecidedDocumentLicense, UnwritableInV3))
+        candidate = self._candidate("wtfpl-2.0", "carolina_judicial_branch")
+        with self.assertRaises(UndecidedDocumentLicense) as caught:
+            document_license(candidate)
+        message = str(caught.exception)
+        self.assertIn("wtfpl-2.0", message)
+        for named in ("cc-by-nc-sa-4.0", "cc-by-4.0", "public-domain"):
+            self.assertIn(named, message)
+
+    def test_two_licenses_of_one_snapshot_are_two_evidence_entries(self) -> None:
+        from assemble_corpus import human_record
+
+        # `assertLabelEvidenceResolves` indexes entryId -> ONE digest, and the licence is
+        # inside the digested bytes. An entryId that omitted it would give these two rows
+        # one key and two digests, and whichever entry lost the dedup would take its
+        # records down with a digest divergence that names no document.
+        entries: list[dict] = []
+        for license_id in ("cc-by-nc-sa-4.0", "cc-by-sa-4.0"):
+            candidate = self._candidate(license_id, "carolina_judicial_branch")
+            candidate["candidateId"] = f"cand_{license_id}"
+            human_record(candidate, "carolina-judicial", None, evidence_sink=entries)
+        self.assertEqual(len(entries), 2)
+        self.assertEqual(len({entry["entryId"] for entry in entries}), 2)
+        self.assertEqual(len({entry["entryDigest"] for entry in entries}), 2)
+
+    def test_the_manifest_inventory_is_the_licenses_the_records_carry(self) -> None:
+        from assemble_corpus import LICENSE_INVENTORY, used_license_inventory
+
+        records = [
+            {"id": "r1", "provenance": {"licenseId": "cc-by-sa-4.0"}},
+            {"id": "r2", "provenance": {"licenseId": "cc-by-sa-4.0"}},
+        ]
+        inventory = used_license_inventory(records)
+        # Exactly what the rows carry: an entry the corpus does not use declares terms the
+        # corpus is not under, and a missing one refuses the whole seal.
+        self.assertEqual([entry["id"] for entry in inventory], ["cc-by-sa-4.0"])
+        self.assertEqual(
+            inventory[0]["name"], LICENSE_INVENTORY["cc-by-sa-4.0"]["name"]
+        )
+
+    def test_a_license_with_no_inventory_entry_stops_the_projection(self) -> None:
+        from assemble_corpus import UndecidedDocumentLicense, used_license_inventory
+
+        with self.assertRaises(UndecidedDocumentLicense) as caught:
+            used_license_inventory(
+                [{"id": "r9", "provenance": {"licenseId": "cc-by-nd-4.0"}}]
+            )
+        message = str(caught.exception)
+        self.assertIn("r9", message)
+        self.assertIn("cc-by-nd-4.0", message)
+
+    def test_a_source_under_two_licenses_refuses_the_manifest(self) -> None:
+        from assemble_corpus import SourceCarriesTwoLicenses, source_licenses
+
+        records = [
+            {
+                "id": "r1",
+                "provenance": {"sourceId": "src_carolina", "licenseId": "cc-by-sa-4.0"},
+            },
+            {
+                "id": "r2",
+                "provenance": {
+                    "sourceId": "src_carolina",
+                    "licenseId": "cc-by-nc-sa-4.0",
+                },
+            },
+        ]
+        with self.assertRaises(SourceCarriesTwoLicenses) as caught:
+            source_licenses(records)
+        message = str(caught.exception)
+        self.assertIn("src_carolina", message)
+        self.assertIn("cc-by-sa-4.0", message)
+        self.assertIn("cc-by-nc-sa-4.0", message)
+
+    def test_one_license_per_source_is_projected_from_the_records(self) -> None:
+        from assemble_corpus import source_licenses
+
+        self.assertEqual(
+            source_licenses(
+                [
+                    {
+                        "id": "r1",
+                        "provenance": {
+                            "sourceId": "src_wikipedia_pt",
+                            "licenseId": "cc-by-sa-4.0",
+                        },
+                    },
+                    {
+                        "id": "r2",
+                        "provenance": {
+                            "sourceId": "src_ai",
+                            "licenseId": "geracao-propria-v1",
+                        },
+                    },
+                ]
+            ),
+            {"src_ai": "geracao-propria-v1", "src_wikipedia_pt": "cc-by-sa-4.0"},
+        )
+
+    def test_every_license_the_extractor_admits_is_decided_by_one_of_the_two_lists(
+        self,
+    ) -> None:
+        import assemble_corpus
+        import extract_carolina
+
+        admitted = set(extract_carolina.LICENSE_MAP.values())
+        publishable = set(assemble_corpus.LICENSE_INVENTORY)
+        unreviewed = set(assemble_corpus.UNREVIEWED_DOCUMENT_LICENSES)
+        # Declared AND disjoint, the F0-6 discipline on the licence axis: naming a licence
+        # must not admit it. The pin is against the EXTRACTOR's allowlist, so a licence
+        # added there without a decision here surfaces as this failure instead of as a
+        # counted drop nobody asked for.
+        self.assertEqual(publishable & unreviewed, set())
+        self.assertEqual(admitted - publishable, unreviewed)
+        # And the generated class writes its own licence directly, so that one needs an
+        # entry too or the projection refuses every assembly.
+        self.assertIn(assemble_corpus.GENERATED_LICENSE, publishable)
+
+    def test_a_generated_candidate_that_declares_another_license_stops_the_run(
+        self,
+    ) -> None:
+        import assemble_corpus
+
+        # The generated classes do NOT read the licence off the row: the text was produced
+        # here and the grant is this repository's to make. That holds only while every
+        # generated pool is this repository's own generation, and `import_public_corpus.py`
+        # is a live producer of the other case — it writes a third party's generated corpus
+        # under that party's licence (`odc-by-1.0`). Republishing those rows as
+        # `geracao-propria-v1` would publish a grant nobody here can issue.
+        candidate = {
+            "candidateId": "cand_ai_public_0001",
+            "text": PROSE_60,
+            "wordCount": 60,
+            "meta": {"family": "madras:qwen", "provider": "codex",
+                     "promptTemplateDigest": "a" * 64},
+        }
+        # The same row without a licence is a DROP, and it is the drop that makes the
+        # ordering matter: the refusal has to sit ahead of it, or a mislicensed pool leaves
+        # the corpus row by row with the licence never named.
+        with self.assertRaises(assemble_corpus.MissingRecipe):
+            assemble_corpus.ai_record(candidate)
+        candidate["licenseId"] = "odc-by-1.0"
+        with self.assertRaises(
+            assemble_corpus.GeneratedRowDeclaresAnotherLicense
+        ) as caught:
+            assemble_corpus.ai_record(candidate)
+        message = str(caught.exception)
+        self.assertIn("cand_ai_public_0001", message)
+        self.assertIn("odc-by-1.0", message)
+        self.assertIn(assemble_corpus.GENERATED_LICENSE, message)
+        # It ABORTS rather than dropping: a counted drop of every row of a mislicensed pool
+        # is a silent way to end up with a corpus written under the wrong grant.
+        self.assertFalse(
+            issubclass(
+                assemble_corpus.GeneratedRowDeclaresAnotherLicense,
+                assemble_corpus.UnwritableInV3,
+            )
+        )
+        # The repository's OWN grant on the row is not a contradiction, and neither is a row
+        # that names none — which is the shape of every generated pool on disk today.
+        for declared in (assemble_corpus.GENERATED_LICENSE, "", None):
+            self.assertEqual(
+                assemble_corpus.generated_license(
+                    {"candidateId": "c", "licenseId": declared}
+                ),
+                assemble_corpus.GENERATED_LICENSE,
+            )
+
+
+class AntiArtifactGateTests(unittest.TestCase):
+    """D13/A4: the pre-training anti-artifact gate, in code.
+
+    Four detections, each asserted by the NAME it puts in the diagnosis, because the name
+    is what a lane owner acts on: an echo of the prompt is fixed in the template, a
+    refusal in the seed selection, a harness signature in how the lane captures output.
+    """
+
+    def _line(self, text: str, *, index: int = 0, family: str = "fam-a",
+              lane: str = "codex"):
+        from artifact_gate import GeneratedLine
+
+        return GeneratedLine(
+            record_id=f"rec_{index:05d}", family=family, lane=lane, text=text
+        )
+
+    def _clean(self, index: int) -> str:
+        return " ".join(f"palavra{index}x{n}" for n in range(60))
+
+    def test_a_line_that_repeats_the_prompt_is_named_prompt_echo(self) -> None:
+        import artifact_gate
+
+        # The probe is the template's own sentence, so this is the prompt this repository
+        # issues coming back out of the model.
+        found = artifact_gate.detections_in(
+            "Responda apenas com o texto, sem titulo e sem comentarios. "
+            + self._clean(1)
+        )
+        self.assertIn(artifact_gate.DETECTION_PROMPT_ECHO, found)
+        self.assertEqual(list(found), [artifact_gate.DETECTION_PROMPT_ECHO])
+        self.assertIn(
+            "responda apenas com o texto",
+            found[artifact_gate.DETECTION_PROMPT_ECHO],
+        )
+
+    def test_a_line_that_declines_the_task_is_named_refusal(self) -> None:
+        import artifact_gate
+
+        found = artifact_gate.detections_in(
+            "Desculpe, mas não posso ajudar com isso. " + self._clean(2)
+        )
+        self.assertIn(artifact_gate.DETECTION_REFUSAL, found)
+        self.assertIn(
+            "nao posso ajudar com isso", found[artifact_gate.DETECTION_REFUSAL]
+        )
+
+    def test_prose_that_merely_says_it_cannot_help_is_not_a_refusal(self) -> None:
+        import artifact_gate
+
+        # Measured on the pools: the bare phrasings match human prose — a review saying
+        # "não posso avaliar o produto", a forum answer saying "eu não posso te ajudar
+        # porém tenho uma informação", a note saying "não posso ajudar ninguém". What
+        # separates a refusal is the object it declines, not the modal verb.
+        for prose in (
+            "Não posso avaliar o produto, pois ele já não estava disponível. ",
+            "Joguei dinheiro fora e ainda por cima não posso ajudar ninguém. ",
+            "Se for esse o caso eu não posso te ajudar porém tenho uma informação. ",
+        ):
+            found = artifact_gate.detections_in(prose + self._clean(3))
+            self.assertEqual(found, {}, prose)
+
+    def test_a_line_that_talks_about_the_task_is_named_metaconversation(self) -> None:
+        import artifact_gate
+
+        found = artifact_gate.detections_in(
+            "Aqui está o texto que você pediu: " + self._clean(4)
+        )
+        self.assertIn(artifact_gate.DETECTION_METACONVERSATION, found)
+        self.assertIn(
+            "aqui esta o texto", found[artifact_gate.DETECTION_METACONVERSATION]
+        )
+
+    def test_a_line_carrying_the_harness_mark_is_named_harness_signature(self) -> None:
+        import artifact_gate
+        import generate_ai
+
+        # Three shapes of the same fact, and all three are the BINARY and not the model:
+        # the CLI banner (whose list is the generator's own), the chat-template turn
+        # marker, and a terminal control byte. Only the `gemini-cli` lane strips banners
+        # before writing, so the other three lanes can carry one into the pool.
+        banner = artifact_gate.detections_in(
+            f"{generate_ai.CLI_BANNER_PREFIXES[0]} injecting env\n" + self._clean(5)
+        )
+        self.assertIn(artifact_gate.DETECTION_HARNESS_SIGNATURE, banner)
+        turn = artifact_gate.detections_in(
+            "800-1200 palavras em portugues brasileiro. assistant ### Introducao "
+            + self._clean(6)
+        )
+        self.assertIn(artifact_gate.DETECTION_HARNESS_SIGNATURE, turn)
+        self.assertIn(
+            "role-turn:assistant", turn[artifact_gate.DETECTION_HARNESS_SIGNATURE]
+        )
+        control = artifact_gate.detections_in("\x1b[2K Texto. " + self._clean(7))
+        self.assertIn(artifact_gate.DETECTION_HARNESS_SIGNATURE, control)
+        self.assertIn(
+            "terminal-control-bytes",
+            control[artifact_gate.DETECTION_HARNESS_SIGNATURE],
+        )
+
+    def test_a_turn_marker_on_its_own_line_is_a_harness_signature(self) -> None:
+        import artifact_gate
+
+        # The CANONICAL shape of a chat-template leak is the marker ALONE on its own line,
+        # and it is the common one: measured over the pools, sentence punctuation alone
+        # reaches 24 of the 4.048 generated rows and the line boundary reaches 146. A probe
+        # run against the flat fold cannot see it — every newline is a space there, so the
+        # marker has no boundary in front of it.
+        for text in (
+            "Escreva um texto sobre gatos\nassistant\n" + self._clean(17),
+            "Escreva um texto sobre gatos\n   assistant\n" + self._clean(18),
+            "Escreva um texto sobre gatos. assistant " + self._clean(19),
+        ):
+            found = artifact_gate.detections_in(text)
+            self.assertIn(
+                artifact_gate.DETECTION_HARNESS_SIGNATURE, found, repr(text[:44])
+            )
+            self.assertIn(
+                "role-turn:assistant",
+                found[artifact_gate.DETECTION_HARNESS_SIGNATURE],
+                repr(text[:44]),
+            )
+        # And the word mid-sentence is not a turn boundary, which is what the anchor buys:
+        # zero matches in 42.100 human pool rows.
+        self.assertEqual(
+            artifact_gate.detections_in(
+                "O assistant virtual da empresa respondeu ao cliente. " + self._clean(20)
+            ),
+            {},
+        )
+
+    def test_a_clean_line_trips_nothing(self) -> None:
+        import artifact_gate
+
+        self.assertEqual(artifact_gate.detections_in(self._clean(8)), {})
+
+    def test_a_word_count_directive_from_a_foreign_prompt_is_still_prompt_echo(
+        self,
+    ) -> None:
+        import artifact_gate
+
+        # The echoes MEASURED in the pools are echoes of a third party's prompt: the
+        # `madras` rows carry "aproximadamente 1000 palavras em portugues brasileiro", a
+        # sentence no template of this repository contains. Deriving the probes from our
+        # own templates alone would name those rows harness-signature and miss the echo
+        # that is right next to the marker.
+        found = artifact_gate.detections_in(
+            "Definicoes, contexto e implicacoes praticas. Aproximadamente 1000 "
+            "palavras em portugues brasileiro. " + self._clean(14)
+        )
+        self.assertIn(artifact_gate.DETECTION_PROMPT_ECHO, found)
+        self.assertIn(
+            "palavras em portugues brasileiro",
+            found[artifact_gate.DETECTION_PROMPT_ECHO],
+        )
+
+    def test_a_call_for_keywords_is_not_a_word_count_directive(self) -> None:
+        import artifact_gate
+
+        # Measured false positive, from a Carolina university document: a call for papers
+        # asking for "de 3 a 5 palavras-chave" reads as a word-count instruction unless the
+        # probe refuses the hyphen. `palavras-chave` is the compound; a word count is never
+        # followed by one.
+        #
+        # Both halves of the mapping are exercised, because the compound has to be refused
+        # in the DERIVED template probes too: two recipe chunks end in `palavras`, and the
+        # second sentence here matches one of them character for character up to the hyphen.
+        for prose in (
+            "O participante deve enviar um resumo e de 3 a 5 palavras-chave. ",
+            "Enviar resumo com aproximadamente 5 palavras-chave e titulo em ingles. ",
+        ):
+            self.assertEqual(
+                artifact_gate.detections_in(prose + self._clean(15)), {}, prose
+            )
+        # The counter-case that keeps this about the compound and not about the probe being
+        # dead: the same directive with the bare noun IS an echo.
+        self.assertIn(
+            artifact_gate.DETECTION_PROMPT_ECHO,
+            artifact_gate.detections_in(
+                "Escreva com aproximadamente 500 palavras sobre o tema. " + self._clean(21)
+            ),
+        )
+
+    def test_a_curly_apostrophe_does_not_hide_a_refusal(self) -> None:
+        import artifact_gate
+
+        # Models write "can't" with U+2019 as often as with U+0027, and a probe list
+        # spelled both ways twice is a list that gets half-updated.
+        found = artifact_gate.detections_in(
+            "I’m sorry, but I can’t help with that. " + self._clean(16)
+        )
+        self.assertIn(artifact_gate.DETECTION_REFUSAL, found)
+
+    def _family_at(self, contaminated: int, total: int) -> dict:
+        import artifact_gate
+
+        lines = [
+            self._line(
+                "Aqui está o texto: " + self._clean(index)
+                if index < contaminated
+                else self._clean(index),
+                index=index,
+            )
+            for index in range(total)
+        ]
+        return artifact_gate.measure(lines)
+
+    def test_a_family_above_two_percent_sends_its_whole_lane_to_regeneration(
+        self,
+    ) -> None:
+        import artifact_gate
+
+        report = self._family_at(21, 1000)
+        entry = report["families"][0]
+        self.assertEqual((entry["contaminated"], entry["lines"]), (21, 1000))
+        self.assertAlmostEqual(entry["fraction"], 0.021)
+        self.assertEqual(entry["verdict"], artifact_gate.VERDICT_REGENERATE_LANE)
+        # The LANE, whole. A4: the family is what is measured and the lane is what is
+        # remade, because the artifact rate is a property of how the lane was run.
+        self.assertEqual(report["lanesToRegenerate"], ["codex"])
+        with self.assertRaises(artifact_gate.ArtifactContamination) as caught:
+            artifact_gate.assert_no_lane_needs_regeneration(report)
+        message = str(caught.exception)
+        # Family, count and measured fraction, which are the three quantities A4 asks the
+        # report to name.
+        self.assertIn("fam-a", message)
+        self.assertIn("21/1000", message)
+        self.assertIn("2.10%", message)
+        self.assertIn("codex", message)
+        self.assertIn(artifact_gate.DETECTION_METACONVERSATION, message)
+
+    def test_a_family_below_two_percent_is_clear(self) -> None:
+        import artifact_gate
+
+        report = self._family_at(19, 1000)
+        entry = report["families"][0]
+        self.assertEqual((entry["contaminated"], entry["lines"]), (19, 1000))
+        self.assertEqual(entry["verdict"], artifact_gate.VERDICT_CLEAR)
+        self.assertEqual(report["lanesToRegenerate"], [])
+        # No refusal, and the family is still REPORTED with its count: "clear" is a
+        # measurement over a named denominator, not a silence.
+        artifact_gate.assert_no_lane_needs_regeneration(report)
+        self.assertEqual(entry["byDetection"]["metaconversation"]["lines"], 19)
+
+    def test_the_ceiling_is_exclusive_at_exactly_two_percent(self) -> None:
+        import artifact_gate
+
+        # A4 says "more than 2 %". The comparison is exact rational arithmetic, so the
+        # boundary is not decided by whether 0.02 is representable in binary.
+        report = self._family_at(20, 1000)
+        self.assertEqual(
+            report["families"][0]["verdict"], artifact_gate.VERDICT_CLEAR
+        )
+        self.assertEqual(artifact_gate.CONTAMINATION_CEILING, Fraction(2, 100))
+
+    def test_a_smoke_denominator_gives_zero_tolerance_and_that_is_the_rule(self) -> None:
+        import artifact_gate
+
+        # There is NO minimum denominator, and at smoke sizes the ceiling degenerates to
+        # zero tolerance by arithmetic: 1 of 6 is 16.67 %, so one detection refuses. Pinned
+        # because it is a decision and not a side effect — a family the gate measures and
+        # declines to act on would be a third outcome besides passing and refusing, and the
+        # one an operator under deadline reaches for.
+        report = self._family_at(1, 6)
+        entry = report["families"][0]
+        self.assertEqual((entry["contaminated"], entry["lines"]), (1, 6))
+        self.assertEqual(entry["verdict"], artifact_gate.VERDICT_REGENERATE_LANE)
+        with self.assertRaises(artifact_gate.ArtifactContamination) as caught:
+            artifact_gate.assert_no_lane_needs_regeneration(report)
+        self.assertIn("1/6", str(caught.exception))
+        # Clean at the same denominator is still clean: the rule is the fraction, not the
+        # size of the family.
+        self.assertEqual(
+            self._family_at(0, 6)["families"][0]["verdict"],
+            artifact_gate.VERDICT_CLEAR,
+        )
+        # And no knob names a family size below which the gate reports without refusing.
+        self.assertEqual(
+            [
+                name
+                for name in dir(artifact_gate)
+                if any(
+                    word in name.upper()
+                    for word in ("DENOMINATOR", "MIN_LINES", "MINLINES", "SMOKE")
+                )
+            ],
+            [],
+        )
+
+    def test_a_mixed_row_with_no_generated_span_stops_the_run(self) -> None:
+        import artifact_gate
+
+        # `mixed_record` computes `aiFraction` from these spans and does not refuse zero, so
+        # a controlled-generation row with no `origin: "ai"` stretch is constructible. It
+        # must not be SKIPPED: the row goes into training and the family's denominator would
+        # be smaller than the corpus the gate was handed, with nothing saying so.
+        record = self._generated_record(
+            4, "Aqui está o texto: " + self._clean(22), mixture={"spans": []}
+        )
+        with self.assertRaises(artifact_gate.GeneratedRowCarriesNoGeneratedSpan) as caught:
+            artifact_gate.generated_lines([record])
+        message = str(caught.exception)
+        self.assertIn("rec_00004", message)
+        self.assertIn("fam-a", message)
+        self.assertIn("origin='ai'", message)
+        # Human-only spans are the same fact spelled differently, and refuse the same way.
+        human_only = self._generated_record(
+            5,
+            self._clean(23),
+            mixture={"spans": [{"start": 0, "end": 10, "origin": "human"}]},
+        )
+        with self.assertRaises(artifact_gate.GeneratedRowCarriesNoGeneratedSpan):
+            artifact_gate.generated_lines([human_only])
+
+    def test_selective_pruning_is_not_an_outcome_the_gate_offers(self) -> None:
+        import artifact_gate
+
+        # A4 forbids pruning the contaminated lines: what survives is then selected by
+        # what the detector missed, and the lane's bias enters the corpus unrecorded. The
+        # gate makes that unreachable rather than merely discouraged — the report names no
+        # line, so there is nothing downstream to drop.
+        report = self._family_at(21, 1000)
+        serialized = json.dumps(report, ensure_ascii=False)
+        for index in range(1000):
+            self.assertNotIn(f"rec_{index:05d}", serialized)
+        # And the module exposes no entry point that removes lines and continues.
+        surface = [
+            name
+            for name in dir(artifact_gate)
+            if not name.startswith("_")
+            and any(verb in name.lower() for verb in ("prune", "drop", "filter", "clean"))
+        ]
+        self.assertEqual(surface, [])
+        # The refusal states the remedy, and states that pruning is not it.
+        with self.assertRaises(artifact_gate.ArtifactContamination) as caught:
+            artifact_gate.assert_no_lane_needs_regeneration(report)
+        message = str(caught.exception)
+        self.assertIn("REGENERATED", message)
+        self.assertIn("not the remedy", message)
+
+    def _generated_record(
+        self, index: int, text: str, *, family: str = "fam-a", lane: str = "codex",
+        mixture: dict | None = None,
+    ) -> dict:
+        from group_axes import known
+
+        record = {
+            "id": f"rec_{index:05d}",
+            "text": text,
+            "provenance": {"sourceKind": "controlled-generation"},
+            "groups": {
+                "generatorFamily": known(family),
+                "generationLane": known(lane),
+            },
+        }
+        if mixture is not None:
+            record["mixture"] = mixture
+        return record
+
+    def test_only_the_generated_spans_of_a_mixed_row_are_scanned(self) -> None:
+        import artifact_gate
+
+        # A mixed row IS a human text with generated stretches, and `mixture.spans` says
+        # which is which. Measured on the pools: scanning the whole text of the 2.135 mixed
+        # rows finds 15 assistant-voice closers and scanning only the AI spans finds 1 —
+        # the other 14 are Stack Overflow answers that genuinely end "espero ter ajudado",
+        # so the human half would have decided the lane's verdict.
+        human_half = "Use o modificador protected nesse caso. Espero ter ajudado. "
+        ai_half = self._clean(9)
+        text = human_half + ai_half
+        record = self._generated_record(
+            1,
+            text,
+            mixture={
+                "spans": [
+                    {"start": 0, "end": len(human_half), "origin": "human"},
+                    {"start": len(human_half), "end": len(text), "origin": "ai"},
+                ]
+            },
+        )
+        report = artifact_gate.measure(artifact_gate.generated_lines([record]))
+        self.assertEqual(report["families"][0]["contaminated"], 0)
+        # Without the span restriction the same row reads as contaminated, which is what
+        # makes the restriction load-bearing rather than tidy.
+        self.assertIn(
+            artifact_gate.DETECTION_METACONVERSATION,
+            artifact_gate.detections_in(text),
+        )
+
+    def test_a_mixed_row_counts_once_however_many_ai_spans_it_has(self) -> None:
+        import artifact_gate
+
+        # The denominator is RECORDS: a row cut into ten generated stretches must not
+        # outvote ten rows, in either direction.
+        meta = "Aqui está o texto: "
+        text = meta + self._clean(10)
+        spans = [{"start": 0, "end": len(meta), "origin": "ai"}] + [
+            {"start": len(meta), "end": len(text), "origin": "ai"}
+        ]
+        report = artifact_gate.measure(
+            artifact_gate.generated_lines(
+                [self._generated_record(2, text, mixture={"spans": spans})]
+            )
+        )
+        entry = report["families"][0]
+        self.assertEqual((entry["lines"], entry["contaminated"]), (1, 1))
+
+    def test_a_human_record_is_not_scanned_at_all(self) -> None:
+        import artifact_gate
+
+        human = {
+            "id": "rec_human",
+            "text": "Espero ter ajudado. " + self._clean(11),
+            "provenance": {"sourceKind": "licensed-corpus"},
+            "groups": {},
+        }
+        self.assertEqual(artifact_gate.generated_lines([human]), [])
+
+    def test_a_generated_row_whose_family_is_unreadable_stops_the_run(self) -> None:
+        import artifact_gate
+        from group_axes import unknown
+
+        # Fail-closed and NOT skipped: a family the gate cannot name is a family whose
+        # fraction goes unmeasured, and the gate's entire output is a per-family fraction.
+        record = self._generated_record(3, self._clean(12))
+        record["groups"]["generatorFamily"] = unknown("the pool recorded no family")
+        with self.assertRaises(artifact_gate.LineNotAttributable) as caught:
+            artifact_gate.generated_lines([record])
+        message = str(caught.exception)
+        self.assertIn("rec_00003", message)
+        self.assertIn("generatorFamily", message)
+
+    def test_the_probes_are_the_generators_own_constants(self) -> None:
+        import artifact_gate
+        import generate_ai
+
+        # "The output repeats the prompt" means the prompts THIS repository issues, so the
+        # echo probes are derived from the recipe templates rather than guessed. A recipe
+        # added to `generate_ai` without a probe of its own would be an echo nobody looks
+        # for, so what is asserted is the DERIVATION and not the resulting list: read over
+        # `ECHO_PROBES` this passes on the hand-written directive labels alone, because
+        # "responda apenas com" happens to sit in all four templates.
+        derived = artifact_gate._echo_probes_from_templates()
+        self.assertNotEqual(derived, {})
+        for spec in generate_ai.RECIPES.values():
+            instruction = str(spec["template"]).split("{reference}")[0]
+            folded = artifact_gate.fold(instruction)
+            contributed = [label for label in derived if label in folded]
+            self.assertNotEqual(contributed, [], spec["template"][:40])
+            # And every derived label is reachable through the mapping the gate runs, so a
+            # derivation whose output the merge drops is not a passing state either.
+            for label in contributed:
+                self.assertIn(label, artifact_gate.ECHO_PROBES, label)
+        # Same for the harness banners: one list, two readers, and only one of the four
+        # lanes strips them before writing.
+        for prefix in generate_ai.CLI_BANNER_PREFIXES:
+            found = artifact_gate.detections_in(f"{prefix} something\n" + self._clean(13))
+            self.assertIn(artifact_gate.DETECTION_HARNESS_SIGNATURE, found, prefix)
+
+    def test_the_banner_filter_of_the_gemini_lane_reads_the_same_list(self) -> None:
+        import generate_ai
+
+        # `GEMINI_NOISE` is COMPILED from `CLI_BANNER_PREFIXES` so the lane that strips
+        # banners and the gate that detects them cannot know different lists. Asserted at
+        # the pattern and not at the constant, because what the lane does is filter: a
+        # prefix dropped from the tuple would silently start reaching the pool as text.
+        for prefix in generate_ai.CLI_BANNER_PREFIXES:
+            self.assertIsNotNone(
+                generate_ai.GEMINI_NOISE.match(f"  {prefix} rest of the line"), prefix
+            )
+            self.assertIsNotNone(
+                generate_ai.GEMINI_NOISE.match(prefix.upper()), prefix
+            )
+        # And it is anchored: the same words inside a sentence are not a banner.
+        self.assertIsNone(
+            generate_ai.GEMINI_NOISE.match(
+                "A pesquisa mostrou que Data collection e um problema"
+            )
+        )
+
+    def test_the_ceiling_is_a_constant_and_the_sealed_policy_carries_no_field_for_it(
+        self,
+    ) -> None:
+        import artifact_gate
+
+        # The threshold reads from a constant BECAUSE the frozen pre-registration has no
+        # field for it, and adding one would be a change of policy rather than a reading of
+        # one. This is the assertion that makes the choice re-derivable: the day the policy
+        # gains the field, this test is what says so.
+        policy = frozen_policy()
+        flat = json.dumps(policy)
+        for absent in ("contamination", "artifactCeiling", "antiArtifact"):
+            self.assertNotIn(absent, flat)
+        self.assertEqual(
+            artifact_gate.measure([])["ceilingSource"],
+            "constant:artifact_gate.CONTAMINATION_CEILING",
+        )

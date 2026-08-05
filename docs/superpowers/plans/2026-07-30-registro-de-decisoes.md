@@ -3739,3 +3739,205 @@ nenhuma delas honrar a frase que publicam.
 - `ESTADO.md` **não foi reescrito**: a reescrita das seções 1 e 5 é a última unidade desta fila. As linhas
   que esta unidade torna verdadeiras no código são a de § 3.3 ("famílias OpenAI ficam reservadas ao teste
   de gerador não visto; nenhuma entra em treino") e a de § 3.3/A3 (`drop_seen`), cuja descrição não muda.
+
+## Fase 2, unidade L3 — licença por documento e gate antiartefato: D8 e D13 (2026-08-05)
+
+Duas divergências, e as duas eram frase publicada sem código por baixo: o ESTADO.md § 3.3 diz "licença
+lida **por documento** (header TEI), com allowlist fail-closed no extrator" e diz "gate antiartefato
+**pré-treino**" — a primeira metade era verdadeira e a segunda não existia.
+
+### D8 — onde a licença morria, medido
+
+`cell_of` devolvia `HUMAN_SOURCE[domainSource]`, e o segundo elemento da tupla era a licença. Isto é: a
+licença do registro vinha do **ESTRATO**, e o `licenseId` que o extrator escreveu na linha do pool nunca
+era lido — `grep licenseId assemble_corpus.py` não tinha uma única leitura do candidato. Todo registro da
+Carolina saía `cc-by-nc-sa-4.0` qualquer que fosse o header que o documento declarou.
+
+A perda era silenciosa por acidente do pool e não por desenho, e o acidente é **estreito** — medido por par
+(`domainSource`, `licenseId`) sobre os 11.600 documentos da Carolina em disco, e não sobre uma amostra:
+
+| escopo | documentos | licenças |
+|---|---:|---|
+| em moldura (judicial + social + universitário) | 7.774 | `cc-by-nc-sa-4.0` só |
+| `carolina.jsonl` inteiro | 8.000 | `cc-by-nc-sa-4.0` 7.997, `cc-by-sa-4.0` **3** |
+| `carolina_fresh.jsonl` inteiro | 3.600 | `cc-by-nc-sa-4.0` só |
+| Wikipédia (`wikipedia_fresh.jsonl`) | 5.000 | `cc-by-sa-4.0` só |
+
+Os 3 heterogêneos estão em `carolina_public_domain_works`, tipologia FORA da moldura: é só por isso que a
+constante e a leitura concordavam. `SourceCarriesTwoLicenses` é portanto **alcançável e já está em disco**,
+não é defensiva — o primeiro documento em moldura com header diferente aborta a montagem inteira, e a Fase 3
+re-extrai de 38.189 + 26.409 + 8.863 documentos. Os dois remédios que a recusa nomeia ficam fora do lab e
+são da Fase 3: dividir `src_carolina` por licença (uma fonte por licença no manifesto revisado), ou levar a
+licença a um caminho por registro no esquema selado. O extrator admite **quatro** licenças
+(`extract_carolina.LICENSE_MAP`), e é a primeira Carolina com um documento `cc by 4.0` que teria publicado
+NC sobre material que não é NC.
+
+O conserto e as três decisões que ele forçou:
+
+| # | decisão | razão | custo de reversão |
+|---|---|---|---|
+| L3-1 | `HUMAN_SOURCE` passa a `domainSource -> sourceId`, e a licença sai dele. `document_license(cand)` é a única origem da licença de um registro **humano** | um mapa do estrato para a licença é a constante que engoliu a leitura; mantê-lo como conferência per-fonte seria a mesma constante mais gentil, e recusaria justamente a fonte que legitimamente passe a trazer duas | uma tupla |
+| L3-1b | a licença de um registro **gerado** é a concessão deste repositório (`GENERATED_LICENSE`), e `generated_license(cand)` RECUSA o candidato que declare outra | o texto foi produzido aqui, então a licença não é lida da linha — mas isso vale só enquanto todo pool gerado é geração NOSSA, e `import_public_corpus.py` é produtor VIVO do outro caso: escreve o corpus gerado de um terceiro sob a licença desse terceiro (`odc-by-1.0`, 12.000 linhas em `ai_public_madras.jsonl`). Republicar aquelas linhas como `geracao-propria-v1` seria publicar uma concessão que ninguém aqui pode fazer. Aborta, e à FRENTE de todo descarte: uma queda contada linha por linha é o jeito silencioso de acabar com um corpus sob a licença errada | uma função |
+| L3-2 | o `entryId` da evidência de rótulo passa a nomear a licença | `assertLabelEvidenceResolves` indexa `entryId -> UM digest` e a licença está DENTRO dos bytes digeridos. Sem ela no id, dois documentos de um snapshot sob licenças diferentes dão uma chave e dois digests: a dedução por `entryId` guarda o último e todo registro apontando para o outro reprova por divergência de digest — a única recusa desse caminho que não nomeia nada em que agir | uma f-string; nenhum corpus selado existe, `issuedAt` é nulo |
+| L3-3 | `governance-inputs.licenses[]` e a licença de cada `sources[]` passam a ser PROJETADOS dos registros, contra a allowlist `LICENSE_INVENTORY` | `validateDatasetManifest` recusa registro cuja licença não esteja no inventário (`DATASET_LICENSE_INVALID`), e um inventário com entrada que nenhuma linha usa declara termos a que o corpus não está sujeito. As duas direções são guarda | duas funções |
+
+**A recusa é graduada, e a graduação é a de `UndecidedDomainSource`.** Licença ausente ou que o inventário
+revisado não publica: `MissingDocumentLicense`, subclasse de `UnwritableInV3` — a linha sai, contada, com o
+nome do documento. Licença que **nenhuma** das duas listas nomeia: `UndecidedDocumentLicense`, que para a
+corrida. `cc-by-4.0` e `public-domain` ficam nomeadas em `UNREVIEWED_DOCUMENT_LICENSES` com a razão:
+registrar os termos de uma licença é ato do inventário do corpus (`CORPUS_LICENSE_REGISTRY`, que não tem
+nenhuma das duas), e "domínio público" é um **status** e não um instrumento — qual regime coloca o
+documento lá é o que decide as obrigações. A conferência é contra a allowlist do EXTRATOR, então uma
+licença acrescentada lá sem decisão aqui aparece como teste vermelho.
+
+**A fonte sob duas licenças RECUSA** (`SourceCarriesTwoLicenses`). `ReviewedSourceEntryV1.licenseId` é uma
+string: o manifesto revisado declara uma licença por fonte. Quando os documentos de uma base declaram
+duas, toda escolha é falsa sobre parte das linhas e escolher a maioria é a pior delas por ser invisível.
+Levantar o limite é decisão de esquema no lado **selado** (caminho de licença por registro), então o lab
+recusa em vez de escolher — e este é o achado de desenho que o transporte revelou.
+
+**Efeito medido na corrida real** (smoke 400 sobre os pools de hoje): as 160 linhas que morriam com
+`MissingLabelEvidence` agora morrem 40 com `MissingDocumentLicense` + 120 com `MissingLabelEvidence`. São
+as MESMAS linhas, recusadas um passo mais cedo pelo primeiro fato ausente: as 40 são os humanos
+"reservados-limpos" que `load_humans` sintetiza de `reserved.jsonl`, que não carregam licença nem data.
+
+### D13 — o gate antiartefato, em código
+
+`benchmark/lab/artifact_gate.py`, chamado por `main()` **depois** da exclusão de famílias do slate e
+**antes** de toda contagem por família e de `assign_partitions`. "Pré-treino" tem um significado exato
+aqui: o conjunto de treino é o `train.jsonl` do split, o split é cortado destes registros, logo um corpus
+que passe daqui é um corpus que um treino pode ler. A recusa fica **à frente de `records.jsonl`**: um
+corpus contaminado não chega a existir em disco.
+
+**Não é condicionado a `--sample`**, diferente do piso de documentos de origem (L1-6) e da reserva magra
+(L2). A distinção é de tipo de grandeza e está registrada: um PISO é uma contagem sobre a cota de release
+e uma fumaça carrega uma fração dela por construção, então comparar fumaça com piso reprova toda fumaça
+pela única razão que não é defeito; uma FRAÇÃO de contaminação não tem essa propriedade, e um artefato
+detectado é um artefato tenha sido achado em fumaça ou em release.
+
+| # | decisão | razão | custo de reversão |
+|---|---|---|---|
+| L3-4 | as sondas de `prompt-echo` derivam de `generate_ai.RECIPES`, só da parte anterior a `{reference}` | "a saída repete o prompt" significa os prompts que ESTE repositório emite. O eco da referência é quase-duplicata de linha humana, decisão do `near_dupes`, e contá-lo aqui seria o mesmo fato com dois nomes | uma função |
+| L3-5 | mais quatro sondas de FORMA de instrução, independentes de quem emitiu o prompt | os ecos MEDIDOS nos pools são ecos do prompt de um TERCEIRO: as linhas `madras` carregam "aproximadamente 1000 palavras em portugues brasileiro", sentença que nenhum template nosso contém. Só com os templates, essas linhas sairiam classificadas como `harness-signature` e o eco ao lado do marcador passaria | um dicionário de 4 entradas |
+| L3-6 | as sondas de `refusal` exigem o OBJETO da recusa ("com isso", "esse pedido"), e posição não é usada | medido: as três frases de recusa que casam prosa HUMANA nos pools ("não posso ajudar ninguém", "não posso escrever aqui um testamento", "eu não posso te ajudar porém tenho uma informação") estão nos offsets 10, 67 e 214 — dentro de qualquer janela de abertura que valha a pena. O que separa recusa de prosa é o objeto, não o lugar | uma tupla |
+| L3-7 | as sondas de `metaconversation` são FRAMES (entrega, oferta, autoidentificação em primeira pessoa) | "inteligência artificial" é TEMA de 26 das 4.048 linhas geradas, todas prosa sobre IA; "aqui está" casa "aqui está o bean responsável"; "segue abaixo" casa "segue abaixo a relação dos agrupamentos". O frame nomeia o artefato entregue, a frase solta nomeia o assunto | uma tupla |
+| L3-8 | as sondas de `harness-signature` são `CLI_BANNER_PREFIXES` + `GEMINI_AUTH_MARKERS` do próprio gerador, o marcador de turno `assistant`, os tokens `<\|…\|>`/`[INST]` e bytes de controle de terminal | uma lista copiada seria segunda autoridade capaz de divergir. Das quatro lanes congeladas só a `gemini-cli` filtra banner antes de escrever e a `agy` grava `proc.stdout` cru — a assimetria é medida no código, não suposta. `<s>`/`</s>` ficam FORA: são HTML válido e os pools carregam respostas com HTML. `user`/`system` soltos ficam fora: casam "user-agent: *" e "System.ArgumentOutOfRangeException" | duas tuplas e uma regex |
+| L3-8b | a fronteira do marcador de turno é a **LINHA** (`fold_lines` sob `re.MULTILINE`), não a pontuação de frase | a forma canônica do vazamento de chat template é o marcador SOZINHO na própria linha, e o fold achatado colapsa toda quebra em espaço — a forma canônica fica sem fronteira à frente e não é detectada. Medido: pontuação de frase alcança 24 das 4.048 linhas geradas, a fronteira de linha alcança 146, e as duas dão ZERO nas 42.100 linhas dos pools humanos. Sem isso, 95 linhas com a forma canônica não disparavam detecção nenhuma | um argumento de `re.search` |
+| L3-9 | numa linha mista, só os VÃOS `origin: "ai"` são varridos | medido: varrer as 2.135 mistas inteiras acha 15 despedidas de assistente e varrer só os vãos gerados acha 1 — as outras 14 são respostas de fórum em pt-BR que terminam em "espero ter ajudado", vindas do PAI humano. Sem a restrição, a metade humana decide o veredito da lane | uma função |
+| L3-9b | linha de geração controlada cuja projeção de vãos gerados seja VAZIA recusa (`GeneratedRowCarriesNoGeneratedSpan`) | `mixed_record` calcula `aiFraction` desses mesmos vãos e não recusa zero, então a forma é construível: uma linha que vai para treino como geração controlada e que sai do denominador da própria família em silêncio. O gate cuja saída inteira é uma fração por família não pode ter linha fora do denominador sem dizer — é o mesmo fail-closed de `LineNotAttributable`, no eixo do vão | três linhas |
+| L3-10 | o teto lê CONSTANTE (`Fraction(2, 100)`) e não a política | `preregistration-v4.json` está congelada e não tem campo de contaminação; acrescentar um seria mudança de política e não leitura dela. `Fraction` e não `float` porque A4 diz "mais de 2 %" e a fronteira não pode depender de 0,02 ser representável em binário | uma constante, no dia em que a pré-inscrição ganhar o campo |
+| L3-11 | o relatório **não nomeia linha nenhuma** | é assim que a poda seletiva que A4 proíbe deixa de ser alcançável em vez de apenas desaconselhada: não há o que derrubar a jusante. O que o relatório publica por detecção é a SONDA que casou, que é o diagnóstico acionável ("esta família ecoa a diretiva de contagem de palavras"), sem identificar a linha | um campo |
+| L3-11b | `artifact-gate.json` é escrito **antes** do veredito, então a recusa também o publica | a mensagem da recusa carrega o nome das detecções e as contagens; as SONDAS que casaram — o diagnóstico que L3-11 chama de acionável — vivem só no relatório, e publicá-lo só quando o gate PASSA é publicar diagnóstico exatamente quando não há o que diagnosticar. É o único artefato que uma corrida recusada escreve: nem `records.jsonl`, nem `governance-inputs.json`. Não reabre a poda, porque continua sem nomear linha | duas linhas movidas |
+| L3-11c | **não há denominador mínimo**, e em fumaça o teto degenera a tolerância zero — declarado, com teste que pina o comportamento em n pequeno | com 6 linhas numa família a menor fração não nula é 1/6, então uma detecção recusa. A alternativa é uma família que o gate MEDE e sobre a qual não age: um terceiro desfecho além de passar e recusar, e é para ele que se estende a mão sob prazo. Uma fração é adimensional e um artefato é artefato em qualquer n; e o remédio custa menos exatamente quando a lane é pequena. É a diferença deliberada em relação ao piso de L1-6, que é uma CONTAGEM sobre a cota de release | uma condição |
+
+**Por que regenerar a lane e não podar, formalmente.** Derrubar as linhas contaminadas deixa como corpus
+justamente as que o detector NÃO pegou: a seleção passa a depender do mecanismo de detecção — dado
+faltante não aleatório (Rubin, 1976) — e o viés da lane entra no corpus sem registro. É o Ponto 3 de
+Deming aplicado a um pipeline de geração: a triagem em massa não muda o processo que produziu o defeito, e
+aqui o processo É a lane.
+
+### O que o gate mede hoje, e a convergência com L2
+
+Medido em 2026-08-05, sobre os pools em disco:
+
+| medição | valor |
+|---|---:|
+| linhas geradas com ao menos uma detecção | 148 de 4.048 (3,656 %) |
+| por detecção | `harness-signature` 146, `prompt-echo` 42, `metaconversation` 5 |
+| `madras_synthetic_corpusqwn` | 146 de 150 (**97,33 %**) → regenerar a lane |
+| `madras_synthetic_corpus_openrouter23` | 2 de 147 (1,36 %) → limpa |
+| controle humano, que o gate nunca lê | 0 de 42.100 no marcador de turno; 2 de 8.600 no total (0,023 %) |
+| registros gerados que a montagem consegue construir hoje | 1.170 |
+| famílias que chegam ao gate | 5, todas `clear`, 0 de 1.170 |
+| lanes a regenerar hoje | nenhuma |
+
+O gate está verde hoje, e a razão é boa: a única família acima do teto é
+`madras_synthetic_corpusqwn`, que **L2 já exclui** por proveniência não registrada, e as demais famílias
+contaminadas morrem antes em `MissingRecipe`/`UnmappableLane` por metadado ausente. Duas guardas
+independentes recusam a mesma família por razões diferentes — a de L2 é sobre o PROVEDOR que a linha não
+registra, a de L3 é sobre o ARTEFATO que o texto carrega —, e é isso que faz de 97,33 % um número a
+publicar em vez de uma hipótese: se a re-extração da Fase 3 revivesse aquelas linhas com metadado
+completo, o gate as pegaria.
+
+O controle de falso positivo de 0,023 % sobre 8.600 linhas humanas é 87 vezes menor que o teto, e é ele
+que sustenta manter as frases de despedida como sonda em vez de descartá-las: mesmo se a classe IA
+carregasse a mesma taxa de registro de fórum, ela não chegaria perto de 2 %.
+
+Um falso positivo medido foi consertado no desenho: `de 3 a 5 palavras-chave`, numa chamada de trabalhos
+de documento universitário da Carolina, casava a sonda de contagem de palavras. `palavras(?![-\w])` entra
+na sonda de diretiva **e na derivação dos chunks de template**, e é a segunda metade que mata a classe:
+dois chunks de `generate_ai.RECIPES` terminam nessa palavra, então `com aproximadamente 5 palavras-chave`
+casava a sonda DERIVADA mesmo com a de diretiva consertada. Medido: das 8.600 linhas humanas, 4 contêm o
+composto e nenhuma casa.
+
+### O que a rodada adversarial pegou, e o que ela mediu
+
+Um bloqueante e sete menores; **nenhum refutado**, os oito eram verdadeiros e sete viraram guarda nova.
+O padrão é o mesmo das duas unidades anteriores: frase publicada que o código não sustentava.
+
+O **bloqueante** era o marcador de turno (L3-8b acima). A sonda rodava contra o texto ACHATADO, onde toda
+quebra de linha virou espaço, exigindo `.!?:` à frente — então a forma canônica do vazamento não era
+detectada, e o docstring publicava 24 como censo do que existe. Reproduzido e medido: 141 das 4.048 linhas
+carregam a forma de linha, a sonda alcançava 24, e **95 linhas não disparavam detecção nenhuma**.
+`madras_synthetic_corpusqwn` vai de 51/150 a 146/150. Nenhum veredito de HOJE muda, porque as 95 estão
+todas na família que o slate já exclui — e é bloqueante por isso mesmo: o gate existe para a re-extração da
+Fase 3, que o próprio registro diz que revive aquelas linhas.
+
+As outras sete, e o que cada uma consertou: a derivação de template sem o lookahead do composto (a frase
+"mata a classe inteira" era falsa em três documentos de produção); `artifact-gate.json` nunca escrito na
+recusa (L3-11b); `test_the_probes_are_the_generators_own_constants` que passava com
+`_echo_probes_from_templates()` devolvendo `{}` inteiro, porque o rótulo escrito à mão `responda apenas com`
+está nos quatro templates — quem pegava a mutação era outro teste, e o comentário prometia o que a asserção
+não guardava; a licença constante da classe GERADA contra o L3-1 sem qualificação (L3-1b); a medição
+"3.600 candidatos" que media 3.600 de 11.600 e escondia que o caso de duas licenças **está em disco**; a
+linha mista sem vão gerado (L3-9b); e o teto sem denominador mínimo (L3-11c).
+
+### Verificação
+
+- `pytest`: **304 passed + 19 subtests** (base da unidade 266 + 19; +38 no total, +6 no fechamento).
+  `ruff check` limpo nos quatro arquivos;
+- `npx vitest run`: 169 arquivos / 2.760 testes (linha de base — nenhum arquivo TypeScript foi tocado);
+- `npm run typecheck` limpo; `npm run lint` 13 problemas pré-existentes; `format:check` verde;
+  `docs:check` OK; `git ls-files --eol | grep w/crlf` vazio;
+- **`evaluatorDigest` NÃO move**: nenhum dos quatro arquivos tocados é membro de `EVALUATOR_FILES`
+  (conferido em node contra os 52 membros — interseção vazia);
+- **prova por mutação: 26 na unidade + 9 no fechamento**, base verde nas duas pontas e restauração
+  conferida por sha256. Na unidade, duas tentativas iniciais sobreviveram por defeito do DRIVER
+  (`{} or {...}` avalia para o segundo operando: a mutação era no-op) e uma sobreviveu de verdade — o
+  refator de `GEMINI_NOISE` não tinha teste e ganhou um. No fechamento, duas sobreviveram na primeira
+  rodada e as duas são achados honestos:
+  - **M33 era falso-verde do meu próprio fixture**, e o defeito é exatamente o que D8 nomeia: com as
+    licenças que os pools declaram por padrão, a constante por estrato CONCORDA com a leitura, então o
+    teste de ponta a ponta passava com a projeção revertida. O fixture ganhou um parâmetro que faz os
+    documentos da Carolina declararem a licença enciclopédica — o caso que a constante não consegue
+    reproduzir — e a mutação passou a vermelho;
+  - **M35 (`>` vira `>=`) é no-op no teste de n pequeno, por aritmética**: `ratio == 2/100` exige
+    denominador múltiplo de 50, e com n=6 nenhuma fração alcançável está na fronteira. A mutação não está
+    indetectada — ela sai VERMELHA em `test_the_ceiling_is_exclusive_at_exactly_two_percent`, que é o teste
+    a quem a fronteira pertence (20/1000), conferido.
+
+### O que esta unidade NÃO fez, de propósito
+
+- **o lado SELADO não confere licença por registro contra a fonte.** `auditRecords` junta
+  `provenance.sourceId` ao manifesto e não compara a licença; quem recusa uma licença fora do inventário é
+  `validateDatasetManifest`. Uma guarda que exigisse concordância registro↔fonte é caminho selado e move o
+  `evaluatorDigest`; fica como **dívida com dono na Fase 3, item 1**, junto do inventário de material;
+- **`cc-by-4.0` e `public-domain` continuam sem termos revisados.** Entram no
+  `CORPUS_LICENSE_REGISTRY` quando o inventário do corpus as revisar; hoje custam zero, medido — nenhum
+  dos **11.600** documentos da Carolina em disco declara qualquer uma das duas;
+- **a fonte sob duas licenças recusa, e a Fase 3 vai bater nisso.** Está em disco hoje (3 documentos em
+  `carolina_public_domain_works`), fora da moldura por sorte da tipologia, não por desenho. O remédio —
+  dividir `src_carolina` por licença, ou licença por registro no manifesto selado — é decisão de esquema e
+  fica com dono na Fase 3, ao lado do inventário de material;
+- **o gate não roda sobre os POOLS, só sobre os registros.** O número de 3,656 % foi medido por sonda
+  fora da montagem; pôr o gate na coleta seria uma segunda autoridade sobre a mesma pergunta, e a que
+  decide é a que roda antes do treino;
+- **`train_detector.py` não confere o relatório do gate.** Hoje o único caminho até um `train.jsonl` passa
+  pela montagem, então a guarda está onde precisa estar; um segundo produtor de corpus tornaria isso
+  falso, e é a mesma dívida de "o lado selado não impõe a reserva" (L2);
+- **a montagem de release continua reprovando antes do gate**, em `CellBelowOriginDocumentFloor` com zero
+  documento de origem por célula — blocker de L1, desbloqueado pela re-extração da Fase 3;
+- `ESTADO.md` **não foi reescrito**: a reescrita das seções 1 e 5 é a última unidade desta fila. As linhas
+  que esta unidade torna verdadeiras no código são as duas de § 3.3: "licença lida por documento (header
+  TEI), com allowlist fail-closed no extrator" e "gate antiartefato pré-treino" / "família com >2 %
+  contaminada regenera a lane inteira".

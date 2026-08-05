@@ -63,10 +63,20 @@ MAX_THROTTLE_WAITS = 8
 # Per-item ceiling for the gemini CLI. Kept modest because an unauthenticated
 # CLI blocks forever on its consent prompt, and the lane should say so fast.
 GEMINI_CLI_TIMEOUT = 180.0
-# Banner/telemetry lines the gemini CLI prints around the answer.
+# Banner/telemetry lines the gemini CLI prints around the answer, as LINE PREFIXES.
+# The tuple is the authority and the pattern is built from it, because the anti-artifact
+# gate reads the same list: only the `gemini-cli` lane strips these before writing, and a
+# second copy of the list could leave the gate blind to a banner this lane already knows.
+CLI_BANNER_PREFIXES = (
+    "[dotenv",
+    "Loaded cached credentials",
+    "Data collection",
+    "Flushing",
+    "MCP STDERR",
+    "Opening authentication",
+)
 GEMINI_NOISE = re.compile(
-    r"^\s*(\[dotenv|Loaded cached credentials|Data collection|Flushing|"
-    r"MCP STDERR|Opening authentication)",
+    r"^\s*(?:" + "|".join(re.escape(prefix) for prefix in CLI_BANNER_PREFIXES) + ")",
     re.IGNORECASE,
 )
 # Substrings that mean the CLI is not logged in. It then prints an interactive

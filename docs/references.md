@@ -3322,3 +3322,197 @@ partir do slate de geração e lida como se fosse a partir dos pools.
 do corpus por declaração, em vez de entrar como IA genérica". A literatura de contaminação trata do
 vazamento treino↔teste; excluir por não se poder atribuir o PROVEDOR é consequência da alegação de gerador
 não visto deste release, e não uma prática encontrada.
+
+### L11 — a licença é do DOCUMENTO e viaja no registro, e a fonte que carrega duas recusa
+
+D8. A licença já era lida por documento (header TEI, allowlist fail-closed — C1) e morria no montador:
+`cell_of` a derivava do ESTRATO, então todo registro da Carolina dizia `cc-by-nc-sa-4.0` qualquer que
+fosse o header. A perda era silenciosa por acidente do pool e não por desenho, e o acidente é ESTREITO —
+medido em 2026-08-05, por par (`domainSource`, `licenseId`), sobre os 11.600 documentos da Carolina em
+disco:
+
+| escopo | documentos | licenças declaradas |
+|---|---:|---|
+| em moldura (`carolina_judicial_branch`, `carolina_social_media`, `carolina_university_domains`) | 7.774 | `cc-by-nc-sa-4.0` só |
+| `carolina.jsonl` inteiro | 8.000 | `cc-by-nc-sa-4.0` 7.997, `cc-by-sa-4.0` 3 |
+| `carolina_fresh.jsonl` inteiro | 3.600 | `cc-by-nc-sa-4.0` só |
+
+Os 3 documentos heterogêneos estão em `carolina_public_domain_works`, tipologia FORA da moldura — é só
+por isso que a constante e a leitura concordavam. `SourceCarriesTwoLicenses` é portanto **alcançável e não
+hipotética**: um único documento em moldura com header diferente aborta a montagem inteira, e a Fase 3
+re-extrai de 38.189 + 26.409 + 8.863 documentos. Os dois remédios que a própria recusa nomeia ficam fora
+do lab e são da Fase 3 — dividir `src_carolina` por licença (uma fonte por licença no manifesto revisado),
+ou levar a licença a um caminho por registro no esquema selado. A escolha entre os dois é decisão de
+esquema; o que o lab garante é que ela seja tomada em vez de sofrida.
+
+Nenhum dos 11.600 declara `cc-by-4.0` ou `public-domain`, as duas licenças que o extrator admite e o
+inventário revisado não publica: o custo medido de as manter nomeadas em vez de admitidas é ZERO linha.
+
+Três consequências de desenho, cada uma com custo de reversão de uma entrada de dicionário:
+
+**O `entryId` da evidência de rótulo nomeia a licença.** `assertLabelEvidenceResolves` indexa
+`entryId -> UM digest`, e a licença está dentro dos bytes digeridos. Sem a licença no id, dois documentos
+de um snapshot sob licenças diferentes dariam uma chave e dois digests: a deduplicação por `entryId`
+guardaria o último e todo registro apontando para o outro reprovaria por divergência de digest — a única
+recusa do caminho que não nomeia nada em que se possa agir.
+
+**O inventário `licenses[]` é PROJETADO dos registros, contra uma allowlist.** `validateDatasetManifest`
+recusa registro cuja `provenance.licenseId` não esteja no inventário (`DATASET_LICENSE_INVALID`), então
+uma licença sem entrada é uma licença que nenhum registro pode carregar; e um inventário com entrada que
+nenhuma linha usa declara termos a que o corpus não está sujeito. As duas direções são guarda.
+
+**Licença que o inventário revisado não publica DERRUBA A LINHA, contada; licença que nenhuma lista
+decidiu PARA A CORRIDA.** A assimetria é a de `UndecidedDomainSource` no eixo da licença. `cc-by-4.0` e
+`public-domain` são admitidas pelo extrator e não estão no `CORPUS_LICENSE_REGISTRY`: registrar os termos
+de uma licença é ato do inventário do corpus, não do montador, e "domínio público" é um status e não um
+instrumento — qual regime coloca o documento lá é o que decide as obrigações. A conferência é contra a
+allowlist do EXTRATOR (`extract_carolina.LICENSE_MAP`), então uma licença acrescentada lá sem decisão aqui
+aparece como teste vermelho e não como descarte silencioso.
+
+**A fonte sob duas licenças recusa.** `ReviewedSourceEntryV1.licenseId` é uma string: o manifesto revisado
+declara UMA licença por fonte. Quando os documentos de uma base declaram duas, toda escolha é falsa sobre
+parte das linhas, e escolher a maioria é a pior delas por ser invisível. Levantar o limite é decisão de
+esquema no lado selado (caminho de licença por registro), então o lab recusa em vez de escolher.
+
+- **Longpre, Mahari, Hooker et al., 2024 — A large-scale audit of dataset licensing and attribution in AI
+  (Data Provenance Initiative)** (Nature Machine Intelligence, 30/08/2024).
+  [link](https://www.nature.com/articles/s42256-024-00878-8)
+  _Âncora:_ a licença tem de VIAJAR com o registro, e não ficar no agregador — é o modo de falha medido
+  como norma do campo. _Onde no projeto:_ `assemble_corpus.document_license`,
+  `used_license_inventory`. _Fato citado:_ auditoria de mais de 1.800 datasets, omissão de licença acima
+  de 70% e taxa de erro acima de 50% nos sites populares.
+- **USP — Corpus Carolina, página oficial de download e licenças por documento**
+  (sites.usp.br/corpuscarolina). [link](https://sites.usp.br/corpuscarolina/corpus/)
+  _Âncora:_ a base cujo header diz CC BY-NC-SA 4.0 e cujos documentos declaram licenças heterogêneas é
+  exatamente esta — a leitura por documento não é zelo, é a única leitura correta desta fonte. _Onde no
+  projeto:_ `extract_carolina.LICENSE_MAP` (leitura) e `document_license` (transporte). _Fato citado:_
+  header CC BY-NC-SA 4.0, mas documentos individuais têm licenças heterogêneas que devem ser observadas.
+- **Gebru, Morgenstern, Vecchione, Vaughan, Wallach, Daumé III & Crawford, 2021 — Datasheets for Datasets**
+  (Communications of the ACM 64(12), pp. 86–92). [link](https://doi.org/10.1145/3458723)
+  _Âncora:_ a licença é item de composição POR SUBCONJUNTO, e uma lacuna se declara em vez de se
+  preencher — é o que sustenta `UNREVIEWED_DOCUMENT_LICENSES` existir nomeada em vez de ser apagada.
+  _Onde no projeto:_ `UNREVIEWED_DOCUMENT_LICENSES`, `SourceCarriesTwoLicenses`. _Fato citado:_ o
+  datasheet exige composição, fonte e termos de uso de cada subconjunto, com as lacunas declaradas.
+
+**Sem precedente encontrado (2026-08-05)** para "a fonte cujos documentos declaram duas licenças recusa a
+montagem em vez de o manifesto nomear uma". A literatura documenta a heterogeneidade (Longpre) e exige a
+declaração (Gebru); nenhuma das duas transforma o limite de cardinalidade do esquema de manifesto numa
+recusa da montagem, e é isso que esta unidade faz.
+
+### L12 — o gate antiartefato mede FRAÇÃO POR FAMÍLIA e regenera a LANE, e não nomeia linha
+
+D13/A4. Quatro detecções, cada uma com o seu nome no diagnóstico — `prompt-echo`, `refusal`,
+`metaconversation`, `harness-signature` —, medidas sobre os registros de geração controlada antes do
+split, que é o que "pré-treino" significa aqui: o conjunto de treino é o `train.jsonl` do split e o split
+é cortado desses registros.
+
+**A poda seletiva não é uma saída que este módulo consiga produzir.** O relatório não nomeia linha
+nenhuma, então não há o que derrubar a jusante; o único desfecho além de passar é a recusa que nomeia
+família, contagem, fração medida e a lane a regenerar. O argumento é de amostragem e não de gosto:
+derrubar as linhas contaminadas de uma lane deixa como corpus justamente as linhas que o detector NÃO
+pegou, e a seleção passa a depender do mecanismo de detecção — dado faltante não aleatório, com o viés da
+lane entrando no corpus sem registro.
+
+**As sondas são as constantes do próprio gerador.** `prompt-echo` deriva de `generate_ai.RECIPES` (só a
+parte anterior a `{reference}`: o eco da referência é quase-duplicata de linha humana, que é decisão do
+`near_dupes` e não pode ser contada duas vezes com outro nome) e `harness-signature` de
+`CLI_BANNER_PREFIXES` e `GEMINI_AUTH_MARKERS`. Uma lista copiada seria uma segunda autoridade capaz de
+divergir: das quatro lanes congeladas, só a `gemini-cli` filtra banner antes de escrever, e a `agy` grava
+`proc.stdout` cru.
+
+**Posição não é usada, e a razão é medida.** As três frases de recusa que casam prosa HUMANA nos pools
+estão nos offsets 10, 67 e 214, dentro de qualquer janela de abertura que valha a pena. O que separa
+recusa de prosa é o OBJETO da recusa ("com isso", "esse pedido"), não onde ela aparece: com o objeto
+exigido, as três somem e nenhuma recusa real é perdida.
+
+**A fronteira do marcador de turno é a LINHA, e não a pontuação de frase.** A forma canônica do vazamento
+de chat template é o marcador `assistant` SOZINHO na própria linha, e o fold achatado — que colapsa toda
+quebra de linha em espaço — deixa essa forma sem fronteira nenhuma à frente. A sonda roda contra
+`fold_lines` sob `re.MULTILINE`, e a diferença é a maior parte do sinal: medido, a pontuação de frase
+alcança 24 das 4.048 linhas geradas e a fronteira de linha alcança 146, com ZERO casamento nas 42.100
+linhas dos pools humanos.
+
+**Medições que decidiram o desenho** (2026-08-05, sobre os pools em disco):
+
+| medição | valor |
+|---|---:|
+| linhas geradas com ao menos uma detecção | 148 de 4.048 (3,656 %) |
+| `madras_synthetic_corpusqwn` | 146 de 150 (97,33 %) → regenerar a lane |
+| segunda família mais contaminada (`…openrouter23`) | 2 de 147 (1,36 %) → limpa |
+| famílias core (gemini-3.x, agy e gemini-api) | 0 de 1.170 (0,00 %) |
+| mistas varridas INTEIRAS | 15 de 2.135 (0,703 %) |
+| mistas varridas só nos VÃOS gerados | 1 de 2.135 (0,047 %) |
+| controle humano (o gate nunca lê) | 0 de 42.100 no marcador de turno; 2 de 8.600 no total (0,023 %) |
+
+Os 14 achados que a restrição a vãos elimina são respostas de fórum em pt-BR terminando em "espero ter
+ajudado" — o pai humano da linha mista, não a metade gerada. E a taxa do controle humano, 0,023 %, é 87
+vezes menor que o teto de 2 %: é ela que sustenta manter as frases de despedida como sonda em vez de
+descartá-las por risco de falso positivo.
+
+**O composto é recusado nas sondas escritas à mão E nas DERIVADAS.** `palavras(?![-\w])` entra na própria
+derivação dos chunks de template, porque dois chunks de `generate_ai.RECIPES` terminam nessa palavra: sem
+isso, `com aproximadamente 5 palavras-chave` casaria a sonda derivada mesmo com a sonda de diretiva
+consertada, e a classe de falso positivo continuaria viva por outra porta. Medido, das 8.600 linhas
+humanas 4 contêm o composto e nenhuma casa.
+
+**O teto lê CONSTANTE e não política, com registro.** `preregistration-v4.json` está congelada e não tem
+campo de contaminação; acrescentar um seria mudança de política e não leitura dela. A comparação é
+`Fraction(contaminados, linhas) > Fraction(2, 100)`, aritmética racional exata, porque A4 diz "mais de
+2 %" e a fronteira não pode depender de 0,02 ser representável em binário. Custo de reversão: uma
+constante, no dia em que a pré-inscrição ganhar o campo.
+
+**Não há denominador mínimo, e em fumaça isso é tolerância zero — declarado.** Com seis linhas numa
+família a menor fração não nula é 1/6, então uma detecção recusa. É a leitura pretendida: a alternativa é
+uma família que o gate MEDE e sobre a qual não age, isto é, um terceiro desfecho além de passar e recusar —
+e é para ele que se estende a mão sob prazo. Uma fração é adimensional, um artefato detectado é artefato em
+qualquer n, e o remédio (regenerar a lane) custa menos exatamente quando a lane é pequena. É a diferença
+deliberada em relação ao piso de documentos de origem (L6), que é uma CONTAGEM sobre a cota de release e
+por isso só vale fora de `--sample`.
+
+**O relatório é publicado inclusive na recusa.** A mensagem da recusa carrega o nome das detecções e as
+contagens; as SONDAS que casaram — o diagnóstico acionável, "esta família ecoa a diretiva de contagem de
+palavras" — vivem só no `artifact-gate.json`. Escrevê-lo antes do veredito é o que faz o diagnóstico de uma
+corrida recusada sobreviver em disco, e ele é o único artefato que uma corrida recusada escreve: nem
+`records.jsonl`, nem `governance-inputs.json`. Publicar não reabre a poda que A4 proíbe, porque o relatório
+continua não nomeando linha nenhuma.
+
+- **Dingfelder & Riess (FAU Erlangen-Nürnberg), 2025 — Contamination in Generated Text Detection
+  Benchmarks** (arXiv 2511.09200). [link](https://arxiv.org/html/2511.09200)
+  _Âncora:_ a evidência primária de que as quatro detecções são o modo de falha nº 1 e de que acurácia
+  alta em teste limpo não o detecta. _Onde no projeto:_ `artifact_gate.METACONVERSATION_FRAMES`,
+  `ECHO_PROBES`. _Fato citado:_ 20.325 de 56.000 amostras do DetectRL contaminadas (36,3 %); "Here is..."
+  em 94,7 % do texto do Claude; RoBERTa cai de 99,9 % para 12,1 % de acurácia quando a frase-artefato é
+  anexada a texto **humano**.
+- **Dugan, Zhu, Alam, Nakov, Apidianaki & Callison-Burch, 2025 — GenAI Content Detection Task 3:
+  Cross-Domain Machine-Generated Text Detection Challenge** (1st Workshop on GenAI Content Detection,
+  COLING 2025; arXiv 2501.08913). [link](https://arxiv.org/html/2501.08913v1)
+  _Âncora:_ retreinar com dado limpo DERRUBA o desempenho, que é o custo que o gate cobra de propósito —
+  um gate que não custasse nada não estaria medindo nada. _Onde no projeto:_
+  `artifact_gate.assert_no_lane_needs_regeneration`. _Fato citado:_ inspeção manual achou confundidor
+  (lista numerada em receitas geradas) e retreinar com dado limpo derrubou o desempenho de 92,67 % para
+  89,67 %.
+- **Rubin, 1976 — Inference and missing data** (Biometrika 63(3):581–592).
+  [link](https://doi.org/10.1093/biomet/63.3.581)
+  _Âncora:_ a proibição de poda seletiva, formalmente — remover linhas por um critério correlacionado com
+  o próprio artefato é MNAR, e a lane sobrevivente deixa de ser amostra da lane. _Onde no projeto:_ a
+  ausência de identificador de linha no relatório de `artifact_gate.measure`. _Fato citado:_ taxonomia
+  MCAR/MAR/MNAR de mecanismos de dados faltantes.
+- **Deming, 1986 — Out of the Crisis** (MIT Press; reimpressão 2000, ISBN 0-262-54115-7).
+  [link](https://mitpress.mit.edu/9780262541152/out-of-the-crisis/)
+  _Âncora:_ regenerar a lane em vez de triar as linhas é o Ponto 3 aplicado a um pipeline de geração — a
+  triagem em massa não muda o processo que produziu o defeito, e aqui o processo É a lane. _Onde no
+  projeto:_ A4; `VERDICT_REGENERATE_LANE`. _Fato citado:_ "Cease dependence on inspection to achieve
+  quality. Eliminate the need for inspection on a mass basis by building quality into the product in the
+  first place" (Ponto 3 dos 14).
+- **Liang, Yuksekgonul, Mao, Wu & Zou, 2023 — GPT detectors are biased against non-native English
+  writers** (Patterns 4(7):100779). [link](https://doi.org/10.1016/j.patter.2023.100779)
+  _Âncora:_ por que o controle de falso positivo roda sobre prosa HUMANA e por que as sondas exigem o
+  frame e não a frase — registro, e não autoria, é o que uma sonda frouxa mede. _Onde no projeto:_ o
+  controle de 8.600 linhas humanas; `REFUSAL_FRAMES` com objeto obrigatório. _Fato citado:_ detectores
+  classificam erroneamente texto de escritores não nativos como gerado, com viés atribuído a marcadores
+  de registro e não de autoria.
+
+**Sem precedente encontrado (2026-08-05)** para "a família contaminada acima de um teto invalida a LANE
+inteira, e o relatório do gate deliberadamente não nomeia as linhas para tornar a poda inalcançável". A
+literatura mede a contaminação (Dingfelder, Dugan) e formaliza o viés de remoção (Rubin); nenhuma das duas
+propõe suprimir o identificador da linha no artefato de saída como forma de impedir a remediação errada.

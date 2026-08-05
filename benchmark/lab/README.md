@@ -173,6 +173,86 @@ sobrevivia; a 64 bits o número esperado de pares em colisão sobre as 3.323.576
 chaves do artefato real é ~3e-7, e é esse resíduo que a frase declara em vez de
 alegar ausência.
 
+### A licença é do documento e viaja no registro
+
+`document_license(cand)` é a **única** origem da licença de um registro humano: a
+Carolina declara disponibilidade por `<TEI>`, então o extrator lê uma licença por
+documento e o montador a transporta. `HUMAN_SOURCE` mapeia estrato → `sourceId` e
+mais nada — um mapa estrato → licença é a constante que engolia a leitura.
+
+Três desfechos, e a graduação é a de `UndecidedDomainSource`:
+
+- licença **ausente** ou que o inventário revisado não publica → `MissingDocumentLicense`
+  (subclasse de `UnwritableInV3`): a linha sai, contada, com o nome do documento;
+- licença que **nenhuma** lista nomeia → `UndecidedDocumentLicense`, que para a corrida;
+- `cc-by-4.0` e `public-domain` ficam nomeadas em `UNREVIEWED_DOCUMENT_LICENSES`:
+  registrar os termos de uma licença é ato do inventário do corpus
+  (`CORPUS_LICENSE_REGISTRY`), e "domínio público" é status e não instrumento.
+
+O inventário `licenses[]` da governança e a licença de cada `sources[]` são
+**projetados dos registros**, contra a allowlist `LICENSE_INVENTORY`: registro cuja
+licença falte no inventário reprova o selo inteiro (`DATASET_LICENSE_INVALID`), e uma
+entrada que nenhuma linha usa declara termos a que o corpus não está sujeito.
+
+Fonte cujos documentos declaram **duas** licenças recusa
+(`SourceCarriesTwoLicenses`): `ReviewedSourceEntryV1.licenseId` é uma string, então
+nomear uma seria publicá-la para linhas que não a carregam. Não é hipotético — medido,
+`carolina.jsonl` tem 3 documentos `cc-by-sa-4.0` contra 7.997 `cc-by-nc-sa-4.0`, e os 3
+estão numa tipologia fora da moldura.
+
+Um registro **gerado** não lê licença da linha: o texto foi produzido aqui e a concessão
+é `GENERATED_LICENSE`. `generated_license(cand)` recusa o candidato que declare outra
+(`GeneratedRowDeclaresAnotherLicense`), porque `import_public_corpus.py` escreve o corpus
+gerado de um terceiro sob a licença desse terceiro — republicá-lo como geração própria
+seria publicar uma concessão que ninguém aqui pode fazer.
+
+### O gate antiartefato roda antes do treino, e regenera a lane
+
+`artifact_gate.py`, chamado por `assemble_corpus.main()` depois da exclusão de
+famílias do slate e antes de toda contagem por família e do carimbo de partição. O
+conjunto de treino é o `train.jsonl` do split e o split é cortado desses registros,
+então um corpus que passe daqui é um corpus que um treino pode ler; a recusa fica à
+frente de `records.jsonl`.
+
+Quatro detecções, cada uma nomeada no diagnóstico:
+
+| detecção            | o que é                     | de onde vem a sonda                                                                                                |
+| ------------------- | --------------------------- | ------------------------------------------------------------------------------------------------------------------ |
+| `prompt-echo`       | a saída repete a instrução  | `generate_ai.RECIPES` (antes de `{reference}`) + 4 formas de diretiva de contagem de palavras                      |
+| `refusal`           | o modelo declinou a tarefa  | frames que exigem o OBJETO recusado ("com isso", "esse pedido")                                                    |
+| `metaconversation`  | a linha fala sobre a tarefa | frames de entrega, de oferta e de autoidentificação em 1ª pessoa                                                   |
+| `harness-signature` | marca do binário/CLI        | `CLI_BANNER_PREFIXES`, `GEMINI_AUTH_MARKERS`, marcador de turno `assistant`, `<\|…\|>`/`[INST]`, bytes de controle |
+
+O marcador de turno é procurado com a **linha** como fronteira, não a pontuação de frase:
+a forma canônica do vazamento é `assistant` sozinho na própria linha. Medido, a pontuação
+alcança 24 das 4.048 linhas geradas e a linha alcança 146, com zero nas 42.100 humanas.
+
+Família acima de **2 %** manda a **lane inteira** para regeneração (A4). Poda seletiva
+não é desfecho que o módulo consiga produzir: o relatório não nomeia linha nenhuma, só
+família, contagem, fração e as sondas que casaram — derrubar as contaminadas deixaria
+como corpus as que o detector não pegou. Não há denominador mínimo, então em `--sample`
+a regra é tolerância zero: com 6 linhas numa família a menor fração não nula é 1/6.
+
+Numa linha mista só os vãos `origin: "ai"` são varridos, e uma linha de geração
+controlada SEM vão gerado recusa (`GeneratedRowCarriesNoGeneratedSpan`) em vez de sair do
+denominador. Medido: as 2.135 mistas varridas inteiras dão 15 despedidas de assistente e
+varridas nos vãos dão 1 — as outras 14 vêm do pai humano, que é resposta de fórum em pt-BR.
+
+O relatório sai em `<out>/artifact-gate.json` **também** quando o corpus passa e **também**
+quando o gate recusa — na recusa é o único arquivo escrito, porque as sondas que casaram
+são o diagnóstico e a mensagem da recusa só carrega nomes e contagens.
+
+```bash
+# o gate roda dentro da montagem; para inspecionar o relatório de uma corrida:
+py -3.13 -c "import json;print(json.load(open('<out>/artifact-gate.json'))['families'])"
+```
+
+Medido em 2026-08-05 sobre os pools: 148 de 4.048 linhas geradas (3,656 %) casam ao menos
+uma detecção, e `madras_synthetic_corpusqwn` casa 146 de 150 (97,33 %) — família que o
+slate já exclui por proveniência não registrada. Das 1.170 que a montagem consegue
+construir hoje, 0 casam: as contaminadas morrem antes em `MissingRecipe`/`UnmappableLane`.
+Controle de falso positivo em 8.600 linhas humanas, que o gate nunca lê: 2 (0,023 %).
+
 ## Classe IA — `generate_ai.py` (pareada por tópico)
 
 Gera a contraparte IA de candidatos humanos amostrados deterministicamente:

@@ -12,6 +12,11 @@ Emits (into --out-dir):
   governance-inputs.json           sourceIds + held-out families + licenses, for
                                    build_governance.ts to mint the digest-bound
                                    source-manifest.json and template manifest.json
+  artifact-gate.json               the A4 pre-training anti-artifact measurement: one
+                                   entry per generator family, with its contamination
+                                   fraction and its verdict (see artifact_gate.py). The
+                                   ONE output written even when the run is refused, and
+                                   the only one: it is the diagnosis of the refusal
 
 WHAT CHANGED IN v3, AND WHY (C2). The v2 assembler wrote a fresh identifier per
 record on five of the grouping axes, so the blocked split had nothing to find, the
@@ -72,6 +77,7 @@ from collections import Counter
 from collections.abc import Iterable
 from pathlib import Path
 
+import artifact_gate
 import group_axes
 import near_dupes
 
@@ -205,17 +211,62 @@ OUT_OF_FRAME_DOMAIN_SOURCES = {
         "is whatever each compiled base was, and it overlaps the other typologies"
     ),
 }
-# domainSource -> (provenance.sourceId, licenseId). sourceId must appear in the
-# source-manifest sources[]; licenseId in the manifest licenses[]. Keyed exactly like
-# REGISTER — the two are pinned key-for-key by test, because a candidate admitted by
-# one and unknown to the other would be a row with a cell and no provenance.
+# domainSource -> provenance.sourceId, which must appear in the source-manifest
+# sources[]. Keyed exactly like REGISTER — the two are pinned key-for-key by test,
+# because a candidate admitted by one and unknown to the other would be a row with a
+# cell and no provenance.
+#
+# The LICENCE is deliberately not here. Carolina declares availability per TEI
+# document, so the base has no single licence and the extractor reads one per document;
+# a map from the stratum to a licence overwrites that reading with a constant, which is
+# how the per-document licence stopped travelling. `document_license` is the only place
+# a record's licence comes from.
 HUMAN_SOURCE = {
-    "ptwiki_lead": ("src_wikipedia_pt", "cc-by-sa-4.0"),
-    "carolina_judicial_branch": ("src_carolina", "cc-by-nc-sa-4.0"),
-    "carolina_social_media": ("src_carolina", "cc-by-nc-sa-4.0"),
-    "carolina_university_domains": ("src_carolina", "cc-by-nc-sa-4.0"),
+    "ptwiki_lead": "src_wikipedia_pt",
+    "carolina_judicial_branch": "src_carolina",
+    "carolina_social_media": "src_carolina",
+    "carolina_university_domains": "src_carolina",
 }
 GENERATED_LICENSE = "geracao-propria-v1"
+# licenseId -> the inventory entry the dataset manifest publishes. It is an ALLOWLIST
+# and not a lookup table: `validateDatasetManifest` refuses a record whose
+# `provenance.licenseId` is absent from `manifest.licenses[]`
+# (`DATASET_LICENSE_INVALID`), so a licence with no entry here is a licence no record
+# may carry. The entries are the ones the corpus inventory has REVIEWED
+# (docs/corpus-sources.md, mirrored in `CORPUS_LICENSE_REGISTRY`); the terms of a
+# licence are that inventory's fact, and the assembler is not where a licence is
+# reviewed for the first time.
+LICENSE_INVENTORY = {
+    "cc-by-sa-4.0": {
+        "name": "CC BY-SA 4.0",
+        "url": "https://creativecommons.org/licenses/by-sa/4.0/",
+    },
+    "cc-by-nc-sa-4.0": {
+        "name": "CC BY-NC-SA 4.0",
+        "url": "https://creativecommons.org/licenses/by-nc-sa/4.0/",
+    },
+    GENERATED_LICENSE: {
+        "name": "Geracao propria (nao comercial)",
+        "url": "https://cleanfeed.local/license/geracao-propria-v1",
+    },
+}
+# The licences `extract_carolina.LICENSE_MAP` admits at the document and the corpus
+# inventory has NOT reviewed, each with the reason it cannot be carried yet. Declared
+# rather than deleted, for the reason every other exclusion in this module is: an
+# allowlist alone cannot tell a licence that was decided against from one nobody has
+# looked at, and only the second case may stop the run
+# (`UndecidedDocumentLicense`).
+UNREVIEWED_DOCUMENT_LICENSES = {
+    "cc-by-4.0": (
+        "the extractor admits it at the document and the reviewed inventory carries no "
+        "terms for it, so a record naming it would publish a licence whose clauses no "
+        "artifact of this repository states"
+    ),
+    "public-domain": (
+        "'public domain' is a status and not an instrument: which regime places the "
+        "document there decides the obligations, and the TEI availability does not say"
+    ),
+}
 HARD_NEGATIVE_FAMILIES = [
     "formulaic",
     "motivational",
@@ -753,6 +804,45 @@ class MissingLabelEvidence(UnwritableInV3):
     """
 
 
+class MissingDocumentLicense(UnwritableInV3):
+    """A human row whose candidate carries no licence, or one the inventory cannot
+    publish.
+
+    The licence is read from the DOCUMENT — Carolina declares availability per TEI
+    header — and it is the document's own fact, so there is nothing to derive it from
+    once the pool row omits it. A row whose licence the reviewed inventory has no entry
+    for is the same case one step further along: the record would name a licence
+    `manifest.licenses[]` cannot declare, and the seal refuses the whole corpus for it
+    (`DATASET_LICENSE_INVALID`) rather than the one row.
+    """
+
+
+class GeneratedRowDeclaresAnotherLicense(RuntimeError):
+    """A generated candidate whose pool row names a licence other than this repo's grant.
+
+    A generated record's licence is not read from the row, because the text was produced
+    here and the grant is this repository's to make (`GENERATED_LICENSE`). That holds only
+    while every generated pool is this repository's own generation, and it is not a
+    property of the loader: `import_public_corpus.py` writes a THIRD PARTY's generated
+    corpus under that party's licence, and a pool of it reaching the generated builders
+    would be republished under a grant nobody here can issue.
+
+    Aborts rather than dropping the row: the wrong outcome is a corpus that is written and
+    mislicensed, and a counted drop of every row of a pool is a silent way to get one.
+    """
+
+
+class UndecidedDocumentLicense(RuntimeError):
+    """A licence NO list of this module has decided about, on a candidate or a record.
+
+    Same asymmetry as `UndecidedDomainSource`, and the same reason: the two declared
+    lists ARE the decision, so a licence in neither is one nobody has looked at.
+    Dropping it as generically unreviewed is what would hide a source that started
+    shipping a new availability string — the counted drop would grow and the reason
+    would be a licence name nobody had read.
+    """
+
+
 # provider label in the pools -> the frozen lane it corresponds to. Data, not
 # heuristics: `antigravity` is the name make_mixed_agy.py records for the SAME agy
 # binary generate_ai.py calls `agy`, which is why both map onto one lane.
@@ -987,9 +1077,17 @@ def label_evidence(cand: dict, source_id: str, license_id: str) -> tuple[dict, d
     `entryId`/`entryDigest` name an entry of the PRIVATE manifest and the digest of
     that entry's canonical bytes; only the digest crosses into the record, which is
     what keeps the private file out of every published artifact. The entry is per
-    SOURCE (a registration: this base, this snapshot, this licence, this date field)
-    while the payload is per RECORD (the value read for this row), and that split is
-    the schema's, not ours.
+    REGISTRATION (this base, this snapshot, this licence, this date field) while the
+    payload is per RECORD (the value read for this row), and that split is the
+    schema's, not ours.
+
+    The `entryId` names the LICENCE for a reason the resolution contract forces:
+    `assertLabelEvidenceResolves` indexes `entryId -> entryDigest`, one digest per id,
+    and the licence is inside the digested bytes. Two documents of one snapshot under
+    different licences are two registrations, so an id that omitted the licence would
+    give them one key and two digests — the index would keep whichever was written last
+    and every record pointing at the other would fail resolution on a digest
+    divergence, which is the one refusal that names nothing an operator can act on.
 
     SCOPE: the canonical private source manifest is D1's artifact. What this function
     writes is the assembler's own evidence index, digest-consistent by construction
@@ -1019,7 +1117,11 @@ def label_evidence(cand: dict, source_id: str, license_id: str) -> tuple[dict, d
     # Canonical bytes: sorted keys, no spaces. The digest has to be reproducible by
     # anyone holding the entry, so the serialization is pinned rather than incidental.
     canonical = json.dumps(entry, sort_keys=True, separators=(",", ":"))
-    entry_id = f"ev_{group_axes.axis_token(source_id)}_{group_axes.axis_token(snapshot)}"
+    entry_id = (
+        f"ev_{group_axes.axis_token(source_id)}"
+        f"_{group_axes.axis_token(snapshot)}"
+        f"_{group_axes.axis_token(license_id)}"
+    )
     entry_digest = hashlib.sha256(canonical.encode("utf-8")).hexdigest()
     ref = {
         "basis": "date-cutoff",
@@ -1098,13 +1200,13 @@ def out_of_frame_reason(domain_source: str) -> str:
     return reason
 
 
-def cell_of(cand: dict) -> tuple[str, str, str]:
-    """(quota cell, provenance.sourceId, licenseId) of one human candidate.
+def cell_of(cand: dict) -> tuple[str, str]:
+    """(quota cell, provenance.sourceId) of one human candidate.
 
     The single place a `domainSource` is turned into the frame's vocabulary, so the
-    register, the source and the licence of a row cannot be decided by three different
-    lookups that disagree. Refuses a source the frame does not contain, naming it, WHY
-    it is outside, and the sources that are admissible.
+    register and the source of a row cannot be decided by two different lookups that
+    disagree. Refuses a source the frame does not contain, naming it, WHY it is outside,
+    and the sources that are admissible.
     """
     domain_source = str(cand.get("domainSource") or "")
     if domain_source not in HUMAN_SOURCE:
@@ -1114,8 +1216,69 @@ def cell_of(cand: dict) -> tuple[str, str, str]:
             f"{out_of_frame_reason(domain_source)}. "
             f"Admissible: {', '.join(sorted(HUMAN_SOURCE))}"
         )
-    source_id, license_id = HUMAN_SOURCE[domain_source]
-    return REGISTER[domain_source], source_id, license_id
+    return REGISTER[domain_source], HUMAN_SOURCE[domain_source]
+
+
+def document_license(cand: dict) -> str:
+    """The licence THIS DOCUMENT declared, on its way to the assembled record.
+
+    The extractor reads it out of the document — the Carolina TEI availability element,
+    per `<TEI>`, against a fail-closed allowlist — and writes it on the pool row. This
+    function is the rest of that journey, and it is the whole of D8: there is no second
+    authority to fall back on, because a licence derived from the stratum describes the
+    base and the base is not what the header declared.
+
+    Three outcomes, and the split is the one every other declared exclusion in this
+    module uses: a licence the inventory publishes travels; a licence the inventory has
+    DECIDED it cannot publish yet drops the row and is counted; a licence NO list names
+    stops the run.
+    """
+    license_id = str(cand.get("licenseId") or "")
+    if not license_id:
+        raise MissingDocumentLicense(
+            f"candidate {cand.get('candidateId')!r} carries no licenseId, so the record "
+            "would name no licence at all. The licence is the document's own — the "
+            "extractor reads it from the header — and re-extracting the pool is the only "
+            "way to recover it"
+        )
+    if license_id in LICENSE_INVENTORY:
+        return license_id
+    if license_id in UNREVIEWED_DOCUMENT_LICENSES:
+        raise MissingDocumentLicense(
+            f"candidate {cand.get('candidateId')!r} declares the licence "
+            f"{license_id!r}, which the reviewed inventory cannot publish: "
+            f"{UNREVIEWED_DOCUMENT_LICENSES[license_id]}. Publishable: "
+            f"{', '.join(sorted(LICENSE_INVENTORY))}"
+        )
+    raise UndecidedDocumentLicense(
+        f"candidate {cand.get('candidateId')!r} declares the licence {license_id!r}, "
+        "which is in no list this module decides with: it is not in the reviewed "
+        f"inventory ({', '.join(sorted(LICENSE_INVENTORY))}) and it is not declared "
+        f"unreviewed ({', '.join(sorted(UNREVIEWED_DOCUMENT_LICENSES))}). Decide it in "
+        "one of the two before assembling: a source that starts shipping a new "
+        "availability string would otherwise grow the counted drop under a licence name "
+        "nobody has read"
+    )
+
+
+def generated_license(cand: dict) -> str:
+    """This repository's own grant, after checking the row does not contradict it.
+
+    The counterpart of `document_license` for the two generated classes, and the reason it
+    is a function rather than the constant inline: a generated pool row that names a licence
+    is naming somebody else's, and the only safe reading of that is a refusal.
+    """
+    declared = str(cand.get("licenseId") or "")
+    if declared and declared != GENERATED_LICENSE:
+        raise GeneratedRowDeclaresAnotherLicense(
+            f"generated candidate {cand.get('candidateId') or cand.get('parentId')!r} "
+            f"declares the licence {declared!r}, and a generated record is written under "
+            f"{GENERATED_LICENSE!r} — the grant this repository can make for text it "
+            "produced. A pool carrying another licence is another party's generation, and "
+            "its rows may not be republished under ours: give it its own sourceId and "
+            "licence in the reviewed inventory, or keep it out of the generated pools"
+        )
+    return GENERATED_LICENSE
 
 
 # --- record builders (return the canonical dict, block_time filled later) ----
@@ -1128,7 +1291,8 @@ def human_record(
     evidence_sink: list | None = None,
 ) -> dict:
     rec_id = slug(cand["candidateId"])
-    cell, source_id, license_id = cell_of(cand)
+    cell, source_id = cell_of(cand)
+    license_id = document_license(cand)
     if register != cell:
         # The cell decides WHICH FPR ceiling counts this row, so a label that disagrees
         # with the row's own source would count a human negative under a population it
@@ -1257,6 +1421,10 @@ def human_record(
 
 
 def ai_record(cand: dict) -> dict:
+    # AHEAD of every drop path: a mislicensed pool must abort rather than leave by
+    # `UnmappableLane` or `MissingRecipe`, which would take it out row by row with the
+    # licence never mentioned.
+    license_id = generated_license(cand)
     meta = cand.get("meta") or {}
     rec_id = slug(cand.get("candidateId") or cand["id"])
     family_raw = meta.get("family") or cand.get("family") or "unknown"
@@ -1294,7 +1462,7 @@ def ai_record(cand: dict) -> dict:
             "sourceKind": "controlled-generation",
             "sourceId": "src_ai",
             "sourceRevision": "rev_001",
-            "licenseId": GENERATED_LICENSE,
+            "licenseId": license_id,
             "legalBasis": "generated",
         },
         "review": review_state(),
@@ -1353,6 +1521,7 @@ def ai_record(cand: dict) -> dict:
 
 
 def mixed_record(cand: dict) -> dict:
+    license_id = generated_license(cand)
     parent = slug(cand["parentId"])
     rec_id = f"mix_{parent}"
     text = cand["text"]
@@ -1420,7 +1589,7 @@ def mixed_record(cand: dict) -> dict:
             "sourceKind": "controlled-generation",
             "sourceId": "src_mixed",
             "sourceRevision": "rev_001",
-            "licenseId": GENERATED_LICENSE,
+            "licenseId": license_id,
             "legalBasis": "generated",
         },
         "review": review_state(),
@@ -2479,13 +2648,14 @@ def load_humans(cand: Path = CAND) -> list[dict]:
                         "text": r["text"],
                         "wordCount": len(r["text"].split()),
                         "domainSource": fam,
-                        # No identity meta: these rows predate the extractors that emit
-                        # one, so their author/source axes are `unknown`, they carry no
-                        # date evidence and they name no acquisition event.
-                        # `human_record` refuses them (MissingLabelEvidence,
-                        # MissingMaterialBatch) and main() counts them — a v2 corpus
-                        # could take them and a sealed one cannot, which is a real cost
-                        # of the reserved pool and not something to fill in by hand.
+                        # No identity meta and no licence: these rows predate the
+                        # extractors that emit either, so their author/source axes are
+                        # `unknown`, they carry no date evidence, they name no acquisition
+                        # event and no document licence. `human_record` refuses them
+                        # (MissingDocumentLicense is the first of the four to fire) and
+                        # main() counts them — a v2 corpus could take them and a sealed
+                        # one cannot, which is a real cost of the reserved pool and not
+                        # something to fill in by hand.
                         "meta": {"extractionRun": "extraction_reserved"},
                     }
                 )
@@ -2884,6 +3054,72 @@ def cluster_report_rows(records: list[dict]) -> list[dict]:
     ]
 
 
+class SourceCarriesTwoLicenses(RuntimeError):
+    """One source's records declare more than one licence, and the manifest holds one.
+
+    `ReviewedSourceEntryV1.licenseId` is a single string, so the reviewed source manifest
+    can state exactly one licence per source. When the documents of one base declare two,
+    every choice is a false statement about part of the rows, and picking the majority is
+    the worst of them because it is invisible.
+
+    This is a real limit and not a defensive check: Carolina declares availability per
+    TEI document, so a package that ships two availabilities makes it reachable. Lifting
+    it is a schema decision on the sealed side (a per-record licence path through the
+    manifest), which is why the lab refuses instead of choosing.
+    """
+
+
+def source_licenses(records: Iterable[dict]) -> dict[str, str]:
+    """sourceId -> the one licence its records declare, or a refusal.
+
+    Derived from the records and not declared beside them: a constant per source is what
+    D8 removed, and a second authority here could disagree with the licence the very rows
+    it describes carry.
+    """
+    by_source: dict[str, set[str]] = {}
+    for record in records:
+        provenance = record["provenance"]
+        by_source.setdefault(provenance["sourceId"], set()).add(provenance["licenseId"])
+    resolved: dict[str, str] = {}
+    for source_id, licenses in sorted(by_source.items()):
+        if len(licenses) > 1:
+            raise SourceCarriesTwoLicenses(
+                f"the source {source_id!r} has records under {len(licenses)} licences "
+                f"({', '.join(sorted(licenses))}), and the reviewed source manifest "
+                "states one licence per source. Split the source, or take the licence "
+                "to a per-record path in the manifest schema; naming one of the two here "
+                "would publish it for rows that do not carry it"
+            )
+        resolved[source_id] = next(iter(licenses))
+    return resolved
+
+
+def used_license_inventory(records: Iterable[dict]) -> list[dict]:
+    """The `licenses[]` inventory of the dataset manifest, projected from the records.
+
+    Every licence some record carries and nothing else. Both directions matter: an
+    inventory missing one refuses the whole corpus at the seal
+    (`DATASET_LICENSE_INVALID`), and an inventory carrying one no row uses declares terms
+    the corpus is not under.
+    """
+    used: dict[str, str] = {}
+    for record in records:
+        used.setdefault(record["provenance"]["licenseId"], record["id"])
+    for license_id, record_id in sorted(used.items()):
+        if license_id not in LICENSE_INVENTORY:
+            raise UndecidedDocumentLicense(
+                f"record {record_id!r} carries the licence {license_id!r}, which the "
+                f"inventory has no entry for ({', '.join(sorted(LICENSE_INVENTORY))}). "
+                "The seal refuses the whole corpus for a licence absent from "
+                "`manifest.licenses[]`, so the entry is what has to exist — not this "
+                "projection guessing a name and a URL for it"
+            )
+    return [
+        {"id": license_id, **LICENSE_INVENTORY[license_id]}
+        for license_id in sorted(used)
+    ]
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--out-dir", required=True, type=Path)
@@ -3083,6 +3319,38 @@ def main() -> None:
         )
         for family in excluded_rows:
             print(f"   {family}: {EXCLUDED_GENERATOR_FAMILIES[family]}")
+
+    # THE ANTI-ARTIFACT GATE (A4/D13), and this is what "pre-training" means for it: the
+    # training set is `train.jsonl` of the split, and the split is cut from these records,
+    # so a corpus that gets past here is a corpus a training run may read.
+    #
+    # After the excluded families and before every per-family count, for the same reason
+    # the exclusion sits where it does: rows the corpus will not contain must not be in
+    # anyone's denominator. Not conditioned on `--sample`, unlike the origin-document
+    # floor: that floor is a COUNT over the release quota and a smoke holds a fraction of
+    # it by construction, while a contamination FRACTION is scale-free and a detected
+    # artifact is one whether it was found in a smoke or a release.
+    artifact_report = artifact_gate.measure(artifact_gate.generated_lines(records))
+    for entry in artifact_report["families"]:
+        if entry["contaminated"]:
+            print(
+                f"artefato: {entry['family']} "
+                f"{entry['contaminated']}/{entry['lines']} "
+                f"({entry['fraction'] * 100:.2f}%) — {entry['verdict']}"
+            )
+    # Published BEFORE the verdict, so the diagnosis survives the refusal. The probes that
+    # matched are the actionable half of the gate's output — "this family echoes the
+    # word-count directive" tells a lane owner what to change — and the refusal message
+    # carries only the detection names and the counts. It is also written for a corpus that
+    # PASSES: "no family is contaminated" is a measurement over named families with named
+    # denominators, and only the artifact says which families were measured.
+    args.out_dir.mkdir(parents=True, exist_ok=True)
+    (args.out_dir / "artifact-gate.json").write_text(
+        json.dumps(artifact_report, ensure_ascii=False, indent=2) + "\n",
+        encoding="utf-8",
+    )
+    artifact_gate.assert_no_lane_needs_regeneration(artifact_report)
+
     per_family = positive_rows_per_family(records)
     positives = {f: sum(c.values()) for f, c in per_family.items()}
     class_size = Counter(r["label"] for r in records)
@@ -3142,32 +3410,33 @@ def main() -> None:
     # manifest listing `src_ptso` or `src_b2w` would declare a source the audit refuses
     # by name (SOURCE_BLOCKED_BY_ACCESS_TERMS / SOURCE_OUT_OF_DECLARED_FRAME), so the
     # rows would be blocked one step later with the manifest asserting them.
-    sources = {
-        "src_wikipedia_pt": ("licensed-corpus", "cc-by-sa-4.0"),
-        "src_carolina": ("licensed-corpus", "cc-by-nc-sa-4.0"),
-        "src_ai": ("controlled-generation", GENERATED_LICENSE),
-        "src_mixed": ("controlled-generation", GENERATED_LICENSE),
+    #
+    # The licence of each entry, and the whole inventory, are PROJECTED from the records:
+    # the licence the documents declared is what the manifest states, so the manifest
+    # cannot describe a corpus other than the one written next to it.
+    source_types = {
+        "src_wikipedia_pt": "licensed-corpus",
+        "src_carolina": "licensed-corpus",
+        "src_ai": "controlled-generation",
+        "src_mixed": "controlled-generation",
     }
-    used_sources = {r["provenance"]["sourceId"] for r in records}
+    licenses_by_source = source_licenses(records)
     governance = {
         # The live corpus identity, spelled once. `ptbr-generic-v1` is refused BY NAME by
         # `ingestAuthorizedRecords` (`dataset.refusedIds` in the pre-registration), so a
         # producer that still wrote it would build a corpus the importer cannot accept.
         "datasetId": "cleanfeed-ptbr-cells-v1",
         "sources": [
-            {"sourceId": sid, "sourceType": sources[sid][0], "licenseId": sources[sid][1]}
-            for sid in sorted(used_sources)
+            {
+                "sourceId": sid,
+                "sourceType": source_types[sid],
+                "licenseId": licenses_by_source[sid],
+            }
+            for sid in sorted(licenses_by_source)
         ],
         "heldOutGeneratorFamilies": declared_held_out_families(held_out, withdrawn),
         "generationBatches": batches,
-        "licenses": [
-            {"id": "cc-by-sa-4.0", "name": "CC BY-SA 4.0",
-             "url": "https://creativecommons.org/licenses/by-sa/4.0/"},
-            {"id": "cc-by-nc-sa-4.0", "name": "CC BY-NC-SA 4.0",
-             "url": "https://creativecommons.org/licenses/by-nc-sa/4.0/"},
-            {"id": GENERATED_LICENSE, "name": "Geracao propria (nao comercial)",
-             "url": "https://cleanfeed.local/license/geracao-propria-v1"},
-        ],
+        "licenses": used_license_inventory(records),
     }
 
     # THE CLUSTER DISTRIBUTION REPORT (requirement 7). Counts, size distribution and
@@ -3184,8 +3453,8 @@ def main() -> None:
         json.dumps(report, ensure_ascii=False, indent=2) + "\n", encoding="utf-8"
     )
     # The private evidence index every human row's labelEvidenceRef resolves against.
-    # Deduplicated by entryId: it is one entry per SOURCE registration and not one per
-    # record, so thousands of human rows point at four entries.
+    # Deduplicated by entryId: it is one entry per REGISTRATION and not one per record, so
+    # thousands of human rows point at a handful of entries.
     by_entry = {entry["entryId"]: entry for entry in evidence_entries}
     (out / "private" / "label-evidence.jsonl").write_text(
         "".join(
