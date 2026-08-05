@@ -189,12 +189,14 @@ texto pós-LLM com nome antigo — daí o campo por documento ser *load-bearing*
 não defesa em profundidade.
 
 **Quais destas são fontes humanas estocadas.** Depois de A1 (2026-07-31) eram
-**três**; depois da recomposição em quatro células são **duas**:
-`src_wikipedia_pt` e `src_carolina` — exatamente os snapshots congelados em
-`benchmark/preregistration-v4.json` (`humanSources.snapshots`), com
-`newDownloadsAllowed: false`. `src_b2w` continua **declarada e admissível** por
-rota e licença, em `OUT_OF_FRAME_HUMAN_SOURCES`: resenha de produto não é uma das
-quatro células, e isso não é o mesmo que estar recusada. `src_ptso` era a quarta e está **bloqueada**: o
+**três**; depois da emenda da moldura (2026-08-05) é **uma**: `src_wikipedia_pt` —
+exatamente o snapshot congelado em `benchmark/preregistration-v4.json`
+(`humanSources.snapshots` é `["ptwiki"]`), com `newDownloadsAllowed: false`.
+`src_b2w` e `src_carolina` continuam **declaradas e admissíveis** por rota e
+licença, em `OUT_OF_FRAME_HUMAN_SOURCES`: resenha de produto não é a célula da
+moldura, e as três tipologias da Carolina saíram dela por proveniência — instituição
+única, nenhum autor declarado (ESTADO.md § 5.5) —, e nada disso é o mesmo que estar
+recusada. `src_ptso` está **bloqueada**: o
 snapshot vive agora em `humanSources.blockedSnapshots` e a declaração da fonte em
 `A1_BLOCKED_HUMAN_SOURCES`, e `auditCorpusSources` reprova
 (`SOURCE_BLOCKED_BY_ACCESS_TERMS`) um manifesto que a declare. `src_empresa` (autorização interna escrita) e
@@ -574,15 +576,17 @@ disco de trabalho. Então:
   barata se a disposição jurídica aparecer.
 
 **Consequência declarada:** o estrato `qa-informal` perde a única fonte que o
-alimentava. Ele **continua** em `humanCoreStrata` e passa a constar em
-`uncoveredCoreStrata`, com o subconjunto verificado no load.
+alimentava. Na pré-inscrição v4 ele não existe mais em vocabulário nenhum:
+`humanCoreStrata` e `preRegistration.quotaAxis.cells` são a MESMA lista de uma
+string (`ptwiki`) desde a emenda da moldura de 2026-08-05, e `uncoveredCoreStrata`
+está vazio — uma população fora da moldura não é um estrato descoberto, e as duas
+listas que as separam são `OUT_OF_FRAME_HUMAN_SOURCES` e `humanSources.blockedSnapshots`.
 
 O piso de poder **deve** reprovar essa célula antes da selagem. O número está
-congelado (`powerFloors.samplingUnits: 250`) e o gate que o lê é trabalho de E3
-na Fase 1 — a Fase 0.2 congela decisões, não as impõe, e dizer o contrário aqui
-seria alegar imposição que o código não tem. O que a declaração garante hoje é
-que a lacuna está escrita no arquivo onde o denominador vive, em vez de um
-denominador que encolheu sem aviso.
+congelado (`powerFloors.samplingUnits: 300`) e o gate que o lê é o gate de
+composição (`benchmark/composition-gate.ts`), que conta as duas unidades por
+célula em `test`. O que a declaração garante é que a lacuna está escrita no
+arquivo onde o denominador vive, em vez de um denominador que encolheu sem aviso.
 
 A consequência já mecânica é outra:
 `RELEASE_CORPUS_POLICY.requiredHumanSourceTypes` deixou de exigir `qa-informal`.
@@ -593,10 +597,14 @@ como corpus incompleto em vez de requisito impossível.
 ## Fase 0.2 — o que foi congelado antes de qualquer selagem
 
 > **Seção HISTÓRICA.** Descreve a pré-inscrição v3, hoje `ABANDONADA`, e os valores
-> abaixo **não valem** — `m = 4` e a manchete do pior estrato estão em ESTADO.md § 6
-> (NÃO APLICAR). O que vale é `benchmark/preregistration-v4.json`, validado por
-> `benchmark/preregistration-v4.ts`, dentro de `EVALUATOR_FILES`: família por estrato,
-> `m = 7`.
+> abaixo **não valem**: a **manchete do pior estrato**, o piso de **250** unidades por
+> célula, o eixo de cota **por fonte com quatro células** e a cota em **n=250 / n=512**
+> estão em ESTADO.md § 6 (NÃO APLICAR). O que vale é
+> `benchmark/preregistration-v4.json`, validado por `benchmark/preregistration-v4.ts`,
+> dentro de `EVALUATOR_FILES`: família **por célula** sobre **uma** célula, `m = 4`, piso
+> de **300**, e a cota em **n=300** (1,4501 %) e **n=800** (0,5463 %). Que o `m` desta
+> tabela também seja 4 é coincidência de contagem, não continuidade: a família v3 tinha o
+> pior estrato como manchete, a v4 tem um `fpr-<célula>` por célula.
 
 Tudo em `benchmark/rebuild-v3-policy.json`, o par que saiu de `EVALUATOR_FILES`.
 
@@ -607,7 +615,7 @@ Tudo em `benchmark/rebuild-v3-policy.json`, o par que saiu de `EVALUATOR_FILES`.
 | α por hipótese | 0,0125 — **recomputado** de `familyAlpha / m` no load | `multiplicity.perHypothesisAlpha` |
 | cota sob zero eventos | `1 − α^(1/n)`: **1,7375 %** em n=250, **0,8522 %** em n=512 — as duas **recomputadas** no load | `preRegistration.zeroEventCeiling` |
 | unidade do inventário de poder | componentes conectados, não linhas | `preRegistration.powerInventoryUnit` |
-| piso por célula | 250 unidades independentes; célula abaixo **deve** reprovar antes da selagem — número congelado na Fase 0.2, gate a implementar em E3 da Fase 1 | `powerFloors.samplingUnits` |
+| piso por célula | 250 unidades independentes; célula abaixo **deve** reprovar antes da selagem — número congelado na Fase 0.2. O piso vigente é 300, e o gate que o lê existe: `benchmark/composition-gate.ts` | `powerFloors.samplingUnits` |
 | eixo da cota | **fonte**, quatro células, pooling declarado como perda de resolução | `preRegistration.quotaAxis` |
 | partições | `train 45 / dev 5 / cal-A 10 / cal-B 20 / test 20` — soma verificada no load | `preRegistration.partitionFractions` |
 | análise primária | 95 % unilateral, marginal por versão (Regime 2) | `preRegistration.primaryAnalysis` |

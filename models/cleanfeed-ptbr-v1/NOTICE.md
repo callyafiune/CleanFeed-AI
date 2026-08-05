@@ -78,17 +78,34 @@ exigir dele duas coisas que não coexistem.
 
 ## Dados de treino
 
-Wikipédia PT (CC BY-SA 4.0, snapshot pré-2022-11), Corpus Carolina/USP
-(CC BY-NC-SA 4.0), B2W-Reviews01 (CC BY-NC-SA 4.0), subset sintético de
-Madras1/corpus-ptbr-v1 (ODC-By 1.0) e gerações próprias (OpenAI/Gemini/
-Anthropic via APIs/CLI).
+As bases que o corpus desta versão estoca, uma por linha — cada fonte humana
+nomeada pelo id que o manifesto de fontes usa:
 
-Stack Exchange PT **não** é dado de treino desta versão. O termo de acesso do
-dump (2024) exclui projetos de treino de LLM, e sem disposição jurídica
-verificável a fonte fica bloqueada para incorporação — decisão A1. O estrato
-`qa-informal`, que era a única célula que a fonte cobria, deixou de existir: as
-células alegadas são quatro — enciclopédico, judiciário, universitário e rede
-social — e `uncoveredCoreStrata` está vazio porque nenhuma delas ficou sem fonte.
+- Wikipédia pt — `src_wikipedia_pt`, `cc-by-sa-4.0`, dump 2022-03-01 (pré-2022-11)
+- subset sintético de Madras1/corpus-ptbr-v1 — `odc-by-1.0`, classe IA
+- gerações próprias — `geracao-propria-v1` (OpenAI/Gemini/Anthropic via APIs/CLI)
+
+Fora dessa lista, e por isso fora do treino: Corpus Carolina/USP e B2W-Reviews01
+estão em `OUT_OF_FRAME_HUMAN_SOURCES` — rota e licença admissíveis, sem célula —, e
+Stack Exchange PT está bloqueado por condição legal. O termo de acesso do dump
+(2024) exclui projetos de treino de LLM, e sem disposição jurídica verificável a
+fonte fica bloqueada para incorporação — decisão A1. O estrato `qa-informal`, que
+era a única célula que a fonte cobria, deixou de existir.
+
+Com a Carolina fora da moldura, **nenhuma licença deste corpus impõe
+`non-commercial`**: as obrigações medidas do inventário estocado são atribuição e
+compartilhamento pela mesma licença. A restrição comercial dos pesos é decisão
+própria deste projeto (`commercialUse: false`), não obrigação herdada de licença de
+fonte — que é exatamente o que a posição (a) afirma.
+
+A célula alegada é **uma**: texto enciclopédico, Wikipédia pt, dump 2022-03-01
+(emenda da moldura, 2026-08-05). As três tipologias da Carolina — judiciário,
+domínio universitário e rede social — saíram da moldura porque o material é de
+instituição única e não declara autor: publicar "FPR em texto judiciário" a partir
+de um só tribunal nomearia uma população de que o pacote não amostra. Elas
+permanecem declaradas em `OUT_OF_FRAME_HUMAN_SOURCES`, não apagadas, e
+`uncoveredCoreStrata` está vazio porque a célula que ficou tem fonte. **Fora da
+moldura não há alegação de erro** — nem melhor, nem pior.
 
 ## De onde vem cada valor
 

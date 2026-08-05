@@ -1474,7 +1474,7 @@ describe("an axis the splitter does not union on", () => {
     // point of declaring the axis on a source the splitter does not union by.
     let raw: Record<string, unknown> = {
       ...v4MixedEcological(),
-      id: "m_eco_carolina",
+      id: "m_eco_coauthored",
       createdAt: 3,
     };
     raw = withAxis(
@@ -1488,7 +1488,7 @@ describe("an axis the splitter does not union on", () => {
       ...raw,
       provenance: {
         ...(raw.provenance as Record<string, unknown>),
-        sourceId: "src_carolina",
+        sourceId: "src_wikipedia_pt",
       },
     };
     const ecological = validateBenchmarkRecordV4(
@@ -1521,7 +1521,7 @@ describe("an axis the splitter does not union on", () => {
 
     expect(audit.declaredAxisGaps).toEqual([
       {
-        sourceId: "src_carolina",
+        sourceId: "src_wikipedia_pt",
         axis: "sourceMaterialBatch",
         state: "unknown",
         recordLines: 1,
@@ -1542,14 +1542,14 @@ describe("an axis the splitter does not union on", () => {
     // only "did the producer WRITE unknown" would let it through. The row is built by
     // hand and past the validator on purpose: `parseBenchmarkDataset` refuses it on the
     // command path, and this is the audit's own depth behind that.
-    const carolina = v4CellRow("h_carolina", 2);
-    const groups = { ...(carolina.groups as Record<string, unknown>) };
+    const stocked = v4CellRow("h_stocked", 2);
+    const groups = { ...(stocked.groups as Record<string, unknown>) };
     delete groups.sourceMaterialBatch;
     const missing = {
-      ...carolina,
+      ...stocked,
       id: "h_no_batch_key",
       groups,
-      provenance: { ...carolina.provenance, sourceId: "src_carolina" },
+      provenance: { ...stocked.provenance, sourceId: "src_wikipedia_pt" },
     } as unknown as BenchmarkRecord;
     // Non-vacuous: the key really is gone, and the anchor really does carry it.
     expect(Object.hasOwn(missing.groups as object, "sourceMaterialBatch")).toBe(
@@ -1559,7 +1559,7 @@ describe("an axis the splitter does not union on", () => {
       ...v4CellRow("h_with_batch_key", 1),
       provenance: {
         ...v4CellRow("h_with_batch_key", 1).provenance,
-        sourceId: "src_carolina",
+        sourceId: "src_wikipedia_pt",
       },
     } as unknown as BenchmarkRecord;
 
@@ -1579,7 +1579,7 @@ describe("an axis the splitter does not union on", () => {
 
     expect(audit.declaredAxisGaps).toEqual([
       {
-        sourceId: "src_carolina",
+        sourceId: "src_wikipedia_pt",
         axis: "sourceMaterialBatch",
         state: "unknown",
         recordLines: 1,

@@ -32,6 +32,7 @@ from common import (
 )
 from extract_b2w import extract as extract_b2w
 from pseudonymize import ClusterKeyring
+import extract_carolina as extract_carolina_module
 from extract_carolina import extract as extract_carolina
 from extract_stackexchange import extract as extract_stackexchange, html_to_text
 from extract_wikipedia import lead_section, strip_templates
@@ -288,7 +289,44 @@ class B2WTests(unittest.TestCase):
         self.assertEqual(stats["drop_date"], 1)  # o review de 2024
 
 
+@contextlib.contextmanager
+def readmitted_typologies(*typologies: str):
+    """Stands in for an amendment that puts `typologies` back in the declared frame.
+
+    The Carolina extractor refuses every run since the frame amendment, so the tests that
+    measure HOW it reads a TEI package — the per-typology cap, the licence allowlist, the
+    download-date cutoff, the axes it emits, the candidate ids it builds — have to say
+    which future frame they are reading under. It patches the FRAME and nothing else: no
+    licence, no cutoff and no axis is muted by it, so a refusal the extractor owes still
+    fires inside the block.
+    """
+    original = extract_carolina_module.FRAME_TYPOLOGIES
+    extract_carolina_module.FRAME_TYPOLOGIES = typologies
+    try:
+        yield
+    finally:
+        extract_carolina_module.FRAME_TYPOLOGIES = original
+
+
 class CarolinaTests(unittest.TestCase):
+    """The Carolina extractor AFTER the frame amendment: kept, and refusing.
+
+    The declared frame draws on no typology of this package (`FRAME_TYPOLOGIES` is
+    empty), so every run refuses. The tests split in two:
+
+      * the REFUSAL tests run against the shipped frame, which is the state of the tree;
+      * the READING tests (per-typology cap, licence and date filters) run under
+        `readmitted`, which patches `FRAME_TYPOLOGIES` to stand in for a future amendment.
+        They are what makes "kept, not deleted" worth anything: the reason the module
+        survives is that re-admitting the base must cost an amendment and not a
+        rediscovery of how to read a TEI package, and an unread module rots. The patch
+        moves the FRAME, never the licence allowlist or the date cutoff, so no refusal
+        the extractor owes is muted by it.
+    """
+
+    def readmitted(self, *typologies: str):
+        return readmitted_typologies(*typologies)
+
     def make_tei(self, *, license_text: str, download: str, body: str) -> str:
         return (
             "<TEI><teiHeader><fileDesc><publicationStmt>"
@@ -311,16 +349,18 @@ class CarolinaTests(unittest.TestCase):
             with zipfile.ZipFile(archive, "w") as z:
                 z.writestr("Corpus/university domains/UNIa.xml", many)
                 z.writestr("Corpus/social media/SOCa.xml", many)
-            rows, _ = run_writer(
-                tmp,
-                "carolina_bal",
-                lambda w: extract_carolina(
-                    archive,
-                    w,
-                    per_typology_limit=2,
-                    snapshot_version=CAROLINA_SNAPSHOT_VERSION,
-                ),
-            )
+            with self.readmitted("university_domains", "social_media"):
+                rows, _ = run_writer(
+                    tmp,
+                    "carolina_bal",
+                    lambda w: extract_carolina(
+                        archive,
+                        w,
+                        per_typology_limit=2,
+                        snapshot_version=CAROLINA_SNAPSHOT_VERSION,
+                        typologies=("university_domains", "social_media"),
+                    ),
+                )
         from collections import Counter
 
         dist = Counter(r["domainSource"] for r in rows)
@@ -346,75 +386,116 @@ class CarolinaTests(unittest.TestCase):
             with zipfile.ZipFile(archive, "w") as z:
                 z.writestr("Corpus/social media/SOCa.xml", corpus)
                 z.writestr("Corpus/wikis/pt/WIKaa.xml", wiki_corpus)
-            rows, stats = run_writer(
-                tmp, "carolina", lambda w: extract_carolina(
-                    archive, w, snapshot_version=CAROLINA_SNAPSHOT_VERSION
-                ),
-            )
+            with self.readmitted("social_media"):
+                rows, stats = run_writer(
+                    tmp, "carolina", lambda w: extract_carolina(
+                        archive,
+                        w,
+                        snapshot_version=CAROLINA_SNAPSHOT_VERSION,
+                        typologies=("social_media",),
+                    ),
+                )
         self.assertEqual(len(rows), 1)
         self.assertEqual(rows[0]["licenseId"], "cc-by-nc-sa-4.0")
         self.assertEqual(rows[0]["domainSource"], "carolina_social_media")
         self.assertEqual(stats["drop_license"], 1)
         self.assertEqual(stats["drop_date"], 1)
 
-    def test_a_typology_outside_the_frame_is_neither_emitted_nor_scanned(self) -> None:
-        """D7: the allowlist, measured on the two things it has to do at once.
+    def test_the_whole_package_is_out_of_frame_and_the_run_refuses_before_opening_it(
+        self,
+    ) -> None:
+        """The frame amendment, at the entry point.
 
-        The mutation this catches is adding `legislative_branch` (or any of the other
-        three declared exclusions) to `FRAME_TYPOLOGIES`: the rows appear, and they
-        appear as a `carolina_legislative_branch` stratum that no cell counts, in a
-        typology that is 4.477 MB of the package. The SCAN assertion is the second half —
-        an out-of-frame member that is opened and then dropped still consumes the run's
-        quota, so in-frame material would be crowded out by the frame's own exclusions.
+        `FRAME_TYPOLOGIES` is empty, so a run refuses instead of finishing empty — a
+        3,1 GB pass that writes zero rows reads as a bad archive, and the operator goes
+        looking for the file instead of reading the frame. The refusal is what carries the
+        reason.
+
+        The archive path does NOT exist, and that is the assertion about ordering:
+        `zipfile.ZipFile` would raise `FileNotFoundError`, so `CarolinaOutOfFrame`
+        proves nothing was opened.
         """
-        ns = "http://www.tei-c.org/ns/1.0"
-        good = self.make_tei(
-            license_text="CC BY-NC-SA 4.0", download="2021-11-18", body=PROSE_60
-        )
-        corpus = f"<teiCorpus xmlns=\"{ns}\"><teiHeader/>{good}</teiCorpus>"
-        with tempfile.TemporaryDirectory() as raw:
-            tmp = Path(raw)
-            archive = tmp / "carolina.zip"
-            with zipfile.ZipFile(archive, "w") as z:
-                z.writestr("Corpus/judicial branch/JUDa.xml", corpus)
-                z.writestr("Corpus/legislative branch/LEGa.xml", corpus)
-                z.writestr("Corpus/public domain works/PDWa.xml", corpus)
-                z.writestr("Corpus/datasets and other corpora/DSa.xml", corpus)
-            rows, stats = run_writer(
-                tmp, "carolina_frame", lambda w: extract_carolina(
-                    archive, w, snapshot_version=CAROLINA_SNAPSHOT_VERSION
-                ),
-            )
-        self.assertEqual([r["domainSource"] for r in rows], ["carolina_judicial_branch"])
-        self.assertEqual(stats["scanned"], 1)
-
-    def test_a_narrowed_run_still_refuses_a_typology_outside_the_frame(self) -> None:
         import extract_carolina
 
-        # `--typologies` narrows WITHIN the frame and cannot widen past it. Refused on the
-        # way in — before the archive is opened — because a multi-gigabyte pass that
-        # discovers on its last member that it was asked for the legislative branch has
-        # already spent the run.
-        self.assertEqual(
-            extract_carolina.selected_typologies("social media,judicial_branch"),
-            ("social_media", "judicial_branch"),
-        )
+        self.assertEqual(extract_carolina.FRAME_TYPOLOGIES, ())
+        with tempfile.TemporaryDirectory() as raw:
+            tmp = Path(raw)
+            missing = tmp / "never-opened.zip"
+            with self.assertRaises(extract_carolina.CarolinaOutOfFrame) as caught:
+                run_writer(
+                    tmp, "carolina_out", lambda w: extract_carolina.extract(
+                        missing, w, snapshot_version=CAROLINA_SNAPSHOT_VERSION
+                    ),
+                )
+            self.assertFalse(missing.exists())
+        message = str(caught.exception)
+        # Every typology of the package is named with its reason, and the three that used
+        # to be in the frame carry the MEASUREMENT that took them out.
+        for typology in extract_carolina.OUT_OF_FRAME_TYPOLOGIES:
+            self.assertIn(typology, message)
+        self.assertIn("stf.jus.br", message)
+        self.assertIn("jornal.usp.br", message)
+        self.assertIn("wattpad.com", message)
+        self.assertIn("104 authors", message)
+        # And what it would take to come back, which is not a flag.
+        self.assertIn("preRegistration.quotaAxis.cells", message)
+        self.assertIn("multiplicity.primaryFamily", message)
+
+    def test_every_typology_name_is_refused_on_the_way_in(self) -> None:
+        import extract_carolina
+
+        # With an empty frame `--typologies` has no admissible value at all, and the three
+        # names that were in frame until the amendment are refused with the measurement
+        # that removed them — not with a generic "not in the list".
+        measured = {
+            "judicial_branch": "stf.jus.br",
+            "university_domains": "jornal.usp.br",
+            "social_media": "wattpad.com",
+        }
+        for typology, evidence in measured.items():
+            with self.assertRaises(argparse.ArgumentTypeError) as caught:
+                extract_carolina.selected_typologies(typology)
+            message = str(caught.exception)
+            self.assertIn(typology, message)
+            self.assertIn(evidence, message)
+            self.assertIn("amendment of the frame", message)
+        # The typologies that were never in frame are still refused with their own reason.
         with self.assertRaises(argparse.ArgumentTypeError) as caught:
             extract_carolina.selected_typologies("legislative_branch")
-        message = str(caught.exception)
-        self.assertIn("legislative_branch", message)
-        self.assertIn("outside the sampling frame", message)
-        for admissible in extract_carolina.FRAME_TYPOLOGIES:
-            self.assertIn(admissible, message)
+        self.assertIn("outside the sampling frame", str(caught.exception))
+
+    def test_the_function_refuses_an_out_of_frame_typology_handed_to_it_directly(
+        self,
+    ) -> None:
+        import extract_carolina
+
+        # The argparse type is not the only door: `extract` takes `typologies`, so the
+        # frame is checked there too. Without this, the command line would be the only
+        # thing between an out-of-frame typology and a pool file no cell counts.
+        with tempfile.TemporaryDirectory() as raw:
+            tmp = Path(raw)
+            with self.assertRaises(extract_carolina.CarolinaOutOfFrame) as caught:
+                run_writer(
+                    tmp, "carolina_direct", lambda w: extract_carolina.extract(
+                        tmp / "never-opened.zip",
+                        w,
+                        snapshot_version=CAROLINA_SNAPSHOT_VERSION,
+                        typologies=("judicial_branch",),
+                    ),
+                )
+        self.assertIn("judicial_branch", str(caught.exception))
+        self.assertIn("stf.jus.br", str(caught.exception))
 
     def test_a_typology_nobody_decided_about_refuses_the_run_by_name(self) -> None:
         import extract_carolina
 
-        # The fail-closed half. A typology that is neither in the frame nor in the
-        # declared exclusions is UNDECIDED, and skipping it silently is the dangerous
-        # direction: the releases spell the same typology with spaces and with
+        # The fail-closed half, exercised under `readmitted` because it can only fire
+        # while the frame draws on something: a typology that is neither in the frame nor
+        # in the declared exclusions is UNDECIDED, and skipping it silently is the
+        # dangerous direction — the releases spell the same typology with spaces and with
         # underscores, so a renamed in-frame directory would yield zero rows for a cell
-        # whose FPR ceiling the release publishes, quietly.
+        # whose FPR ceiling the release publishes, quietly. The guard is what a future
+        # re-admission lands on, so it stays measured now.
         ns = "http://www.tei-c.org/ns/1.0"
         good = self.make_tei(
             license_text="CC BY-NC-SA 4.0", download="2021-11-18", body=PROSE_60
@@ -426,22 +507,23 @@ class CarolinaTests(unittest.TestCase):
             with zipfile.ZipFile(archive, "w") as z:
                 z.writestr("Corpus/judicial branch/JUDa.xml", corpus)
                 z.writestr("Corpus/poetry/POEa.xml", corpus)
-            with self.assertRaises(extract_carolina.TypologyOutOfFrame) as caught:
-                run_writer(
-                    tmp, "carolina_undecided", lambda w: extract_carolina.extract(
-                        archive, w, snapshot_version=CAROLINA_SNAPSHOT_VERSION
-                    ),
-                )
+            with self.readmitted("judicial_branch"):
+                with self.assertRaises(extract_carolina.TypologyOutOfFrame) as caught:
+                    run_writer(
+                        tmp, "carolina_undecided", lambda w: extract_carolina.extract(
+                            archive,
+                            w,
+                            snapshot_version=CAROLINA_SNAPSHOT_VERSION,
+                            typologies=("judicial_branch",),
+                        ),
+                    )
         message = str(caught.exception)
         self.assertIn("poetry", message)
-        for admissible in extract_carolina.FRAME_TYPOLOGIES:
-            self.assertIn(admissible, message)
+        self.assertIn("judicial_branch", message)
 
     def test_a_typology_outside_the_frame_is_refused_by_the_command_line(self) -> None:
         import subprocess
         import sys
-
-        import extract_carolina
 
         # The refusal has to live on the PARSER, not only in the function: a
         # multi-gigabyte pass that discovers on its last member that it was asked for the
@@ -456,7 +538,7 @@ class CarolinaTests(unittest.TestCase):
                     sys.executable,
                     str(script),
                     "--typologies",
-                    "legislative_branch",
+                    "judicial_branch",
                     "--input",
                     str(Path(raw) / "archive.zip"),
                     "--output",
@@ -471,10 +553,37 @@ class CarolinaTests(unittest.TestCase):
             # the archive, which does not even exist here.
             self.assertFalse(output.exists())
         self.assertEqual(proc.returncode, 2, proc.stderr)
-        self.assertIn("legislative_branch", proc.stderr)
+        self.assertIn("judicial_branch", proc.stderr)
         self.assertIn("outside the declared frame", proc.stderr)
-        for admissible in extract_carolina.FRAME_TYPOLOGIES:
-            self.assertIn(admissible, proc.stderr)
+        self.assertIn("amendment of the frame", proc.stderr)
+
+    def test_a_default_run_refuses_from_the_command_line_too(self) -> None:
+        import subprocess
+        import sys
+
+        # No `--typologies` at all: the default is the frame, the frame is empty, and the
+        # run has to say so rather than write an empty pool file. A traceback is the
+        # honest exit here — the message names every typology and its reason.
+        script = Path(__file__).with_name("extract_carolina.py")
+        with tempfile.TemporaryDirectory() as raw:
+            output = Path(raw) / "carolina.jsonl"
+            proc = subprocess.run(
+                [
+                    sys.executable,
+                    str(script),
+                    "--input",
+                    str(Path(raw) / "archive.zip"),
+                    "--output",
+                    str(output),
+                    "--snapshot-version",
+                    CAROLINA_SNAPSHOT_VERSION,
+                ],
+                capture_output=True,
+                text=True,
+            )
+        self.assertNotEqual(proc.returncode, 0)
+        self.assertIn("CarolinaOutOfFrame", proc.stderr)
+        self.assertIn("draws on no Carolina typology", proc.stderr)
 
 
 class GenerateAiTests(unittest.TestCase):
@@ -1293,11 +1402,15 @@ class SourceIdentityTests(unittest.TestCase):
             path = Path(raw) / "archive.zip"
             with zipfile.ZipFile(path, "w") as archive:
                 archive.writestr(member, tei)
-            rows, _ = run_writer(
-                Path(raw), "carolina", lambda w: extract_carolina.extract(
-                    path, w, snapshot_version=CAROLINA_SNAPSHOT_VERSION
-                ),
-            )
+            with readmitted_typologies("university_domains"):
+                rows, _ = run_writer(
+                    Path(raw), "carolina", lambda w: extract_carolina.extract(
+                        path,
+                        w,
+                        snapshot_version=CAROLINA_SNAPSHOT_VERSION,
+                        typologies=("university_domains",),
+                    ),
+                )
         self.assertEqual(len(rows), 2)
         axes = [r["meta"]["groupAxes"] for r in rows]
         # The MEMBER FILE is the axis the plan fixes for Carolina, and two TEI
@@ -1375,11 +1488,15 @@ class MaterialBatchProducerTests(unittest.TestCase):
             with zipfile.ZipFile(path, "w") as archive:
                 archive.writestr("Corpus/university domains/uni.xml", tei)
                 archive.writestr("Corpus/social media/soc.xml", tei)
-            rows, _ = run_writer(
-                Path(raw), "carolina", lambda w: extract_carolina.extract(
-                    path, w, snapshot_version=CAROLINA_SNAPSHOT_VERSION
-                ),
-            )
+            with readmitted_typologies("university_domains", "social_media"):
+                rows, _ = run_writer(
+                    Path(raw), "carolina", lambda w: extract_carolina.extract(
+                        path,
+                        w,
+                        snapshot_version=CAROLINA_SNAPSHOT_VERSION,
+                        typologies=("university_domains", "social_media"),
+                    ),
+                )
         self.assertEqual(len(rows), 2)
         # ONE batch for both cells: the typologies partition a single download, they
         # are not separate acquisitions. Two blocks here would state a dependence
@@ -1398,12 +1515,15 @@ class MaterialBatchProducerTests(unittest.TestCase):
             path = Path(raw) / "archive.zip"
             with zipfile.ZipFile(path, "w") as archive:
                 archive.writestr("Corpus/social media/soc.xml", "<teiCorpus/>")
-            with self.assertRaises(ValueError) as caught:
-                run_writer(
-                    Path(raw),
-                    "carolina",
-                    lambda w: extract_carolina.extract(path, w),
-                )
+            with readmitted_typologies("social_media"):
+                with self.assertRaises(ValueError) as caught:
+                    run_writer(
+                        Path(raw),
+                        "carolina",
+                        lambda w: extract_carolina.extract(
+                            path, w, typologies=("social_media",)
+                        ),
+                    )
         self.assertIn("--snapshot-version", str(caught.exception))
 
     def test_the_batch_id_survives_the_assembler_that_consumes_it(self) -> None:
@@ -1527,11 +1647,15 @@ class CandidateIdStabilityTests(unittest.TestCase):
             path = Path(raw) / "archive.zip"
             with zipfile.ZipFile(path, "w") as archive:
                 archive.writestr(member, tei)
-            rows, _ = run_writer(
-                Path(raw), "carolina", lambda w: extract_carolina.extract(
-                    path, w, snapshot_version=CAROLINA_SNAPSHOT_VERSION
-                ),
-            )
+            with readmitted_typologies("university_domains"):
+                rows, _ = run_writer(
+                    Path(raw), "carolina", lambda w: extract_carolina.extract(
+                        path,
+                        w,
+                        snapshot_version=CAROLINA_SNAPSHOT_VERSION,
+                        typologies=("university_domains",),
+                    ),
+                )
         # sha1("carolina:<member>:<sequence>")[:12] for sequence 1 and 2. The
         # SEQUENCE is in the key, which is why two TEI documents of one member get
         # two ids while sharing the `source` axis — and why re-ordering the
@@ -1629,57 +1753,56 @@ class AssemblerRealGroupTests(unittest.TestCase):
         for minted in ('f"a_{', 'f"g_{', 'f"ds_{', 'f"cb_{', 'f"nd_{'):
             self.assertNotIn(minted, source)
 
-    def _human_candidate(self, candidate_id: str, member: str) -> dict:
-        """A candidate of the JUDICIAL cell, shaped as `extract_carolina` emits it.
+    def _human_candidate(self, candidate_id: str, page: str) -> dict:
+        """A candidate of the ONE cell, shaped as `extract_wikipedia` emits it.
 
         Material of the declared frame, because that is the only material the assembler
-        accepts now: `author` is `notApplicable` with the Carolina reason (the extractor
-        never reads TEI header names), and no cell of the frame yields a known author.
+        accepts: `author` is `notApplicable` with the Wikipedia reason (a lead section is
+        the accreted work of many editors), and the cell yields no known author.
         """
-        from group_axes import NO_AUTHOR_READ, known, not_applicable
+        from group_axes import NO_SINGLE_AUTHOR, known, not_applicable
 
         return {
             "candidateId": candidate_id,
             "text": PROSE_60,
             "wordCount": 60,
-            "domainSource": "carolina_judicial_branch",
-            "licenseId": document_license_of("carolina_judicial_branch"),
+            "domainSource": "ptwiki_lead",
+            "licenseId": document_license_of("ptwiki_lead"),
             "createdAt": 1621555200000,
             "meta": {
-                "dateField": (
-                    "TEI@teiHeader/fileDesc/publicationStmt/date[@type=Download]"
-                ),
+                "dateField": "pages-articles.xml@revision/timestamp",
                 "observedValue": "2021-05-21T00:00:00+00:00",
                 "groupAxes": {
-                    "source": known(member),
-                    "author": not_applicable(NO_AUTHOR_READ),
+                    "source": known(page),
+                    "author": not_applicable(NO_SINGLE_AUTHOR),
                 },
                 # The acquisition event and the extraction run, which v4 holds apart:
                 # re-reading one dump produces a second run and no second material.
-                "sourceMaterialBatch": "smb_carolina-v2_0",
-                "extractionRun": "extraction_carolina_fresh",
+                "sourceMaterialBatch": "smb_ptwiki-20220301",
+                "extractionRun": "extraction_wikipedia_fresh",
             },
         }
 
-    def test_two_records_of_one_member_file_share_the_source_axis(self) -> None:
+    def test_two_records_of_one_page_share_the_source_axis(self) -> None:
         from assemble_corpus import human_record
 
         first = human_record(
-            self._human_candidate("src_carolina_aaa", "carolina_member_judicial_2"),
-            "carolina-judicial",
+            self._human_candidate("src_wiki_aaa", "ptwiki_page_9042"),
+            "ptwiki",
             None,
         )
         second = human_record(
-            self._human_candidate("src_carolina_bbb", "carolina_member_judicial_2"),
-            "carolina-judicial",
+            self._human_candidate("src_wiki_bbb", "ptwiki_page_9042"),
+            "ptwiki",
             None,
         )
         self.assertNotEqual(first["id"], second["id"])
         # The point of the whole task: ONE cluster of two on the origin-document axis.
-        # A member file holds many TEI documents drawn from one crawl of one domain, so
-        # this is a real cluster and the axis is what states it.
+        # The extractor takes one lead section per page, so two rows of one page is a
+        # LATER revision of it — which is exactly the dependence the axis exists to state,
+        # and the reason the identity is the page and not the row.
         self.assertEqual(first["groups"]["source"], second["groups"]["source"])
-        self.assertEqual(first["groups"]["source"]["id"], "carolina_member_judicial_2")
+        self.assertEqual(first["groups"]["source"]["id"], "ptwiki_page_9042")
         # The author axis is `notApplicable` on both. That is a statement about the CELL
         # and not a proof about the axis — both fixtures carry the same literal, so the
         # equality holds by construction. The axis itself is exercised by
@@ -1705,21 +1828,20 @@ class AssemblerRealGroupTests(unittest.TestCase):
         from assemble_corpus import human_record
         from group_axes import known
 
-        # A CONTRACT fixture for the builder, not a claim about the corpus: no cell of
-        # the declared frame yields a known author (the Wikipedia lede is collective work
-        # and the Carolina extractor never opens a TEI header), so the value below is
-        # hypothetical material. What it pins is that the builder carries the axis the
+        # A CONTRACT fixture for the builder, not a claim about the corpus: the declared
+        # cell yields no known author (a Wikipedia lede is collective work), so the value
+        # below is hypothetical material. What it pins is that the builder carries the axis the
         # extractor wrote instead of re-deriving it — two rows an extractor states share
         # an author have to come out sharing it, because that is the dependence the split
         # unions on.
         candidates = [
-            self._human_candidate(f"src_carolina_{tag}", "carolina_member_judicial_9")
+            self._human_candidate(f"src_wiki_{tag}", "ptwiki_page_9099")
             for tag in ("ccc", "ddd")
         ]
         for candidate in candidates:
             candidate["meta"]["groupAxes"]["author"] = known("au_hmac_shared")
         first, second = (
-            human_record(candidate, "carolina-judicial", None)
+            human_record(candidate, "ptwiki", None)
             for candidate in candidates
         )
         self.assertEqual(first["groups"]["author"], {"state": "known", "id": "au_hmac_shared"})
@@ -1746,7 +1868,7 @@ class AssemblerRealGroupTests(unittest.TestCase):
     def test_a_row_naming_no_material_batch_leaves_the_corpus(self) -> None:
         from assemble_corpus import MissingMaterialBatch, human_record
 
-        candidate = self._human_candidate("src_carolina_aaa", "carolina_member_judicial_2")
+        candidate = self._human_candidate("src_wiki_aaa", "ptwiki_page_9042")
         del candidate["meta"]["sourceMaterialBatch"]
         # No eligibility-priced escape exists on this axis: the rule admits only `known`
         # on a human row, so the row is unwritable and leaves. The mutation this catches
@@ -1755,14 +1877,14 @@ class AssemblerRealGroupTests(unittest.TestCase):
         # acquisition event. That fallback makes every downstream check pass and resolves
         # against no declared `materialBatches` entry.
         with self.assertRaises(MissingMaterialBatch) as caught:
-            human_record(candidate, "carolina-judicial", None)
+            human_record(candidate, "ptwiki", None)
         self.assertIn("sourceMaterialBatch", str(caught.exception))
-        self.assertIn("src_carolina_aaa", str(caught.exception))
+        self.assertIn("src_wiki_aaa", str(caught.exception))
 
     def test_a_row_naming_no_extraction_run_leaves_the_corpus(self) -> None:
         from assemble_corpus import MissingExtractionRun, human_record
 
-        candidate = self._human_candidate("src_carolina_aaa", "carolina_member_judicial_2")
+        candidate = self._human_candidate("src_wiki_aaa", "ptwiki_page_9042")
         del candidate["meta"]["extractionRun"]
         # Diagnostic axis, non-negotiable state: the run is our own execution, so a gap
         # is a defect in a pipeline we control. The loader is the layer that knows it —
@@ -1770,7 +1892,7 @@ class AssemblerRealGroupTests(unittest.TestCase):
         # written by different executions into one invented run, destroying the only
         # handle that traces a defect back to the execution that produced it.
         with self.assertRaises(MissingExtractionRun) as caught:
-            human_record(candidate, "carolina-judicial", None)
+            human_record(candidate, "ptwiki", None)
         self.assertIn("extractionRun", str(caught.exception))
 
     def test_the_loader_stamps_the_run_and_never_the_acquisition(self) -> None:
@@ -1812,8 +1934,8 @@ class AssemblerRealGroupTests(unittest.TestCase):
         from group_axes import V4_GROUP_AXES
 
         record = human_record(
-            self._human_candidate("src_carolina_aaa", "carolina_member_judicial_2"),
-            "carolina-judicial",
+            self._human_candidate("src_wiki_aaa", "ptwiki_page_9042"),
+            "ptwiki",
             None,
         )
         self.assertEqual(sorted(record["groups"]), sorted(V4_GROUP_AXES))
@@ -1835,11 +1957,11 @@ class AssemblerRealGroupTests(unittest.TestCase):
         # carry both.
         self.assertEqual(
             record["groups"]["sourceMaterialBatch"],
-            {"state": "known", "id": "smb_carolina-v2_0"},
+            {"state": "known", "id": "smb_ptwiki-20220301"},
         )
         self.assertEqual(
             record["groups"]["extractionRun"],
-            {"state": "known", "id": "extraction_carolina_fresh"},
+            {"state": "known", "id": "extraction_wikipedia_fresh"},
         )
 
     def test_an_unknown_axis_is_carried_and_never_synthesized(self) -> None:
@@ -1847,10 +1969,10 @@ class AssemblerRealGroupTests(unittest.TestCase):
         from group_axes import unknown
 
         candidate = self._human_candidate(
-            "src_carolina_ccc", "carolina_member_judicial_2"
+            "src_wiki_ccc", "ptwiki_page_9042"
         )
         candidate["meta"]["groupAxes"]["author"] = unknown("conta removida")
-        record = human_record(candidate, "carolina-judicial", None)
+        record = human_record(candidate, "ptwiki", None)
         self.assertEqual(record["groups"]["author"]["state"], "unknown")
         self.assertNotIn("id", record["groups"]["author"])
 
@@ -1863,17 +1985,17 @@ def frozen_policy() -> dict:
 
 
 class DeclaredFrameTests(unittest.TestCase):
-    """D0 — the four cells of the frame are what the lab collects, and the rest is
+    """D0 — the ONE cell of the frame is what the lab collects, and the rest is
     NAMED as outside rather than deleted.
 
-    The frame is `ESTADO.md` § 2: Wikipedia pt (encyclopedic), Carolina judicial branch,
-    Carolina university domains, Carolina social media. Stack Overflow is refused on
-    access terms (A1/F0-6), product review has no cell, and the other Carolina
-    typologies are outside the sampling frame.
+    The frame is `ESTADO.md` § 2: Wikipedia pt, encyclopedic text, and nothing else.
+    Stack Overflow is refused on access terms (A1/F0-6), product review has no cell, and
+    every Carolina typology — including the three the frame drew on until the amendment -
+    is outside the sampling frame.
     """
 
     def _candidate(self, candidate_id: str, domain_source: str) -> dict:
-        from group_axes import NO_AUTHOR_READ, known, not_applicable
+        from group_axes import NO_SINGLE_AUTHOR, known, not_applicable
 
         return {
             "candidateId": candidate_id,
@@ -1882,16 +2004,14 @@ class DeclaredFrameTests(unittest.TestCase):
             "domainSource": domain_source,
             "licenseId": document_license_of(domain_source),
             "meta": {
-                "dateField": (
-                    "TEI@teiHeader/fileDesc/publicationStmt/date[@type=Download]"
-                ),
+                "dateField": "pages-articles.xml@revision/timestamp",
                 "observedValue": "2021-05-21T00:00:00+00:00",
-                "snapshot": "carolina",
-                "sourceMaterialBatch": "smb_carolina-v2_0",
-                "extractionRun": "extraction_carolina_fresh",
+                "snapshot": "ptwiki",
+                "sourceMaterialBatch": "smb_ptwiki-20220301",
+                "extractionRun": "extraction_wikipedia_fresh",
                 "groupAxes": {
-                    "source": known("carolina_member_1"),
-                    "author": not_applicable(NO_AUTHOR_READ),
+                    "source": known("ptwiki_page_1"),
+                    "author": not_applicable(NO_SINGLE_AUTHOR),
                 },
             },
         }
@@ -1900,24 +2020,60 @@ class DeclaredFrameTests(unittest.TestCase):
         import assemble_corpus
 
         policy = frozen_policy()
-        # THREE authorities name a per-cell population, and only two of them decide
-        # anything. `quotaAxis.cells` is what the composition gate tallies over, and
+        # THE PIN whose absence let the defect through: every list that reaches a
+        # record's `humanSourceType` has to hold the SAME strings, and each assertion
+        # names the place that disagrees — "the vocabularies differ" is useless without
+        # knowing which one moved.
+        #
+        # `quotaAxis.cells` is what the composition gate tallies over,
         # `multiplicity.primaryFamily` is what the per-cell FPR gate looks its own
-        # hypothesis up in (`fpr-<cell>`); a corpus written in the third vocabulary
-        # (`humanCoreStrata`) counts zero lines in all four cells and leaves all four
-        # certifying hypotheses undecided. So the two that gate are pinned, and they
-        # have to agree with each other.
+        # hypothesis up in (`fpr-<cell>`), `REGISTER` is what the lab WRITES, and
+        # `requiredHumanSourceTypes` is what the seal demands. A corpus written in a
+        # vocabulary any one of them does not share counts zero lines in the cell and
+        # leaves the certifying hypothesis undecided — which is what two spellings of
+        # this list did once, with `humanCoreStrata` on one side and the cells on the
+        # other.
         cells = set(policy["preRegistration"]["quotaAxis"]["cells"])
         certifying = {
             member.removeprefix("fpr-")
             for member in policy["multiplicity"]["primaryFamily"]
             if member.startswith("fpr-")
         }
-        self.assertEqual(cells, certifying)
-        self.assertEqual(set(assemble_corpus.REGISTER.values()), cells)
-        self.assertEqual(assemble_corpus.QUOTA_CELLS, tuple(sorted(cells)))
+        self.assertEqual(
+            cells,
+            certifying,
+            "multiplicity.primaryFamily nao carrega um fpr-<cell> por celula de "
+            "preRegistration.quotaAxis.cells",
+        )
+        self.assertEqual(
+            set(assemble_corpus.REGISTER.values()),
+            cells,
+            "assemble_corpus.REGISTER escreve uma grafia que "
+            "preRegistration.quotaAxis.cells nao declara",
+        )
+        self.assertEqual(
+            assemble_corpus.QUOTA_CELLS,
+            tuple(sorted(cells)),
+            "assemble_corpus.QUOTA_CELLS divergiu de preRegistration.quotaAxis.cells",
+        )
+        # And QUOTA_CELLS is the DERIVATION over REGISTER, not a list that happens to
+        # match it today: with one cell in frame a hand-typed tuple agrees with the
+        # derivation, and it stops agreeing the moment REGISTER gains a cell.
+        self.assertEqual(
+            assemble_corpus.QUOTA_CELLS,
+            assemble_corpus.quota_cells_of(assemble_corpus.REGISTER),
+            "assemble_corpus.QUOTA_CELLS nao e mais a derivacao de REGISTER",
+        )
+        # `humanCoreStrata` is the fourth list, and since the frame amendment it holds the
+        # SAME single string instead of a second vocabulary. Pinned here so a policy that
+        # re-opens the second spelling fails in the test that exists for it.
+        self.assertEqual(
+            set(policy["humanCoreStrata"]),
+            cells,
+            "humanCoreStrata voltou a ser uma segunda grafia da mesma lista",
+        )
         # And the seal's coverage check reads the SAME field, so its list has to carry
-        # the same spelling: requiring the register words would refuse every corpus the
+        # the same spelling: requiring another vocabulary would refuse every corpus the
         # composition gate can pass. Parsed out of the TypeScript constant because that
         # is the artifact `sealDataset` reads.
         source = (
@@ -1929,7 +2085,12 @@ class DeclaredFrameTests(unittest.TestCase):
         self.assertIsNotNone(
             required, "RELEASE_CORPUS_POLICY.requiredHumanSourceTypes nao foi encontrado"
         )
-        self.assertEqual(set(re.findall(r'"([^"]+)"', required.group(1))), cells)
+        self.assertEqual(
+            set(re.findall(r'"([^"]+)"', required.group(1))),
+            cells,
+            "RELEASE_CORPUS_POLICY.requiredHumanSourceTypes divergiu de "
+            "preRegistration.quotaAxis.cells",
+        )
         # Keyed alike, because one map decides the cell and the other the provenance: a
         # candidate admitted by one and unknown to the other is a row with a cell and no
         # source, or a source counted under no ceiling.
@@ -1942,6 +2103,35 @@ class DeclaredFrameTests(unittest.TestCase):
         self.assertEqual(
             set(assemble_corpus.HUMAN_SOURCE.values()),
             set(assemble_corpus.declared_group_axes()),
+        )
+
+    def test_the_quota_denominator_follows_the_register_past_one_cell(self) -> None:
+        """`quota_cells_of` counts the register's cells, and is measured where it can fail.
+
+        The frame declares one cell, so over the shipped `REGISTER` every wrong
+        derivation of the denominator returns the right answer — a hand-typed
+        `("ptwiki",)` included. Two registers that the shipped one cannot distinguish
+        are what make the derivation falsifiable.
+        """
+        import assemble_corpus
+
+        self.assertEqual(
+            assemble_corpus.quota_cells_of({"ptwiki_lead": "ptwiki"}), ("ptwiki",)
+        )
+        # Two writing keys, two cells, in NAME order and not insertion order.
+        self.assertEqual(
+            assemble_corpus.quota_cells_of(
+                {"wattpad_story": "social-media", "ptwiki_lead": "ptwiki"}
+            ),
+            ("ptwiki", "social-media"),
+        )
+        # Two writing keys into ONE cell is one cell: the denominator counts cells, not
+        # the ways material reaches them.
+        self.assertEqual(
+            assemble_corpus.quota_cells_of(
+                {"ptwiki_lead": "ptwiki", "ptwiki_body": "ptwiki"}
+            ),
+            ("ptwiki",),
         )
 
     def test_no_source_outside_the_frame_is_admitted_by_either_map(self) -> None:
@@ -1970,19 +2160,22 @@ class DeclaredFrameTests(unittest.TestCase):
         from assemble_corpus import load_humans
 
         # TWO screens, and the fixture separates them. The register filter has to drop a
-        # legislative row planted INSIDE the Carolina pool, which is what a re-extraction
-        # that forgets the typology allowlist writes. The FILE screen is measured by the
-        # row planted in `b2w_fresh.jsonl` carrying an in-frame `domainSource`: the filter
-        # would admit it, so it can only be absent if the file was never opened. A
-        # mislabelled row is exactly the case where the two screens differ.
+        # Carolina row planted INSIDE the frame's own pool file, which is what the
+        # reserved pool actually hands the loader now that the frame draws on one cell.
+        # The FILE screen is measured by the rows planted in `carolina_fresh.jsonl`,
+        # `b2w_fresh.jsonl` and `ptso_fresh.jsonl` carrying an IN-FRAME `domainSource`:
+        # the register filter would admit them, so they can only be absent if those files
+        # were never opened. A mislabelled row is exactly the case where the two screens
+        # differ.
         with tempfile.TemporaryDirectory() as raw:
             cand = Path(raw)
             rows = {
-                "carolina_fresh": [
-                    ("src_carolina_in", "carolina_judicial_branch"),
-                    ("src_carolina_leg", "carolina_legislative_branch"),
+                "wikipedia_fresh": [
+                    ("src_wiki_in", "ptwiki_lead"),
+                    ("src_wiki_jud", "carolina_judicial_branch"),
                 ],
-                "b2w_fresh": [("src_b2w_mislabelled", "carolina_social_media")],
+                "carolina_fresh": [("src_carolina_mislabelled", "ptwiki_lead")],
+                "b2w_fresh": [("src_b2w_mislabelled", "ptwiki_lead")],
                 "ptso_fresh": [("src_ptso_1", "ptso_qa")],
             }
             for name, entries in rows.items():
@@ -1998,24 +2191,21 @@ class DeclaredFrameTests(unittest.TestCase):
         # `benchmark/data/dataset`, which the `cand` parameter does not redirect, so an
         # assertion over everything it returns would depend on a gitignored file.
         planted = {
-            "src_carolina_in",
-            "src_carolina_leg",
+            "src_wiki_in",
+            "src_wiki_jud",
+            "src_carolina_mislabelled",
             "src_b2w_mislabelled",
             "src_ptso_1",
         }
         self.assertEqual(
             [r["candidateId"] for r in loaded if r["candidateId"] in planted],
-            ["src_carolina_in"],
+            ["src_wiki_in"],
         )
         # The run stamp is the loader's own record of WHICH FILE it opened, so this holds
         # over every row it returns, planted or not.
         self.assertEqual(
             {r["meta"]["extractionRun"] for r in loaded}
-            - {
-                "extraction_wikipedia_fresh",
-                "extraction_carolina_fresh",
-                "extraction_reserved",
-            },
+            - {"extraction_wikipedia_fresh", "extraction_reserved"},
             set(),
         )
 
@@ -2033,11 +2223,16 @@ class DeclaredFrameTests(unittest.TestCase):
         for domain_source, expected in (
             ("b2w_reviews", "no cell"),
             ("ptso_qa", "access terms"),
-            ("carolina_legislative_branch", "outside the sampling frame"),
+            ("carolina_legislative_branch", "outside the frame"),
+            # The three the frame drew on until the amendment, each refused with the
+            # MEASUREMENT that took it out and not with a generic "not in the list".
+            ("carolina_judicial_branch", "stf.jus.br"),
+            ("carolina_university_domains", "jornal.usp.br"),
+            ("carolina_social_media", "wattpad.com"),
         ):
             candidate = self._candidate("src_x_1", domain_source)
             with self.assertRaises(OutOfFrameDomainSource) as caught:
-                human_record(candidate, "carolina-judicial", None)
+                human_record(candidate, "ptwiki", None)
             message = str(caught.exception)
             self.assertIn(domain_source, message)
             self.assertIn(expected, message)
@@ -2070,7 +2265,7 @@ class DeclaredFrameTests(unittest.TestCase):
         # Both builders, because both are the drop-and-count path: a run that swallows
         # this as an ordinary out-of-frame drop empties a cell in silence.
         with self.assertRaises(UndecidedDomainSource):
-            human_record(candidate, "carolina-judicial", None)
+            human_record(candidate, "ptwiki", None)
         pair = {
             "parentId": "src_carolina_zzz",
             "text": PROSE_60,
@@ -2079,7 +2274,7 @@ class DeclaredFrameTests(unittest.TestCase):
             "promptTemplateId": "mix_edit_v1",
             "promptTemplateDigest": hashlib.sha256(b"edit").hexdigest(),
             "parentFamily": "carolina_judicial_branch_v2",
-            "sourceMaterialBatch": "smb_carolina-v2_0",
+            "sourceMaterialBatch": "smb_ptwiki-20220301",
             "mixture": {
                 "spans": [
                     {"start": 0, "end": 200, "origin": "human"},
@@ -2093,14 +2288,16 @@ class DeclaredFrameTests(unittest.TestCase):
     def test_a_row_labelled_with_another_cells_name_is_refused(self) -> None:
         from assemble_corpus import OutOfFrameDomainSource, human_record
 
-        # The cell decides WHICH ceiling counts the row. A judicial line counted as
-        # university moves two published ceilings at once, and neither is then about the
-        # population it names.
+        # The cell decides WHICH ceiling counts the row, and with one cell the mislabel
+        # that matters is the reverse one: an OUT-OF-FRAME row handed in under the name of
+        # the cell that exists. Accepting it would fill the published ceiling's
+        # denominator with a population the frame does not sample.
         candidate = self._candidate("src_carolina_in", "carolina_judicial_branch")
         with self.assertRaises(OutOfFrameDomainSource) as caught:
-            human_record(candidate, "carolina-university", None)
-        self.assertIn("carolina-judicial", str(caught.exception))
-        self.assertIn("carolina-university", str(caught.exception))
+            human_record(candidate, "ptwiki", None)
+        message = str(caught.exception)
+        self.assertIn("carolina_judicial_branch", message)
+        self.assertIn("ptwiki_lead", message)
 
     def test_a_mixed_row_whose_parent_is_outside_the_frame_leaves_too(self) -> None:
         import hashlib
@@ -2149,11 +2346,10 @@ class DeclaredFrameTests(unittest.TestCase):
         )
         # And the OTHER direction, which is about the published claim rather than about
         # an empty pool: every cell publishes its own FPR ceiling, so a cell no style
-        # family is drawn from publishes a ceiling measured on material that never
-        # carries the adversarial register the other three cells carry. The families are
-        # STYLE families and the assignment is a judgement about the material, so the
-        # concentration is admissible (three come from social media) and the ABSENCE is
-        # not.
+        # family is drawn from publishes a ceiling measured on material that never carries
+        # the adversarial register. The families are STYLE families and the assignment is a
+        # judgement about the material, so CONCENTRATION is admissible — with one cell in
+        # frame all six families point at it — and the ABSENCE is not.
         self.assertEqual(
             set(assemble_corpus.QUOTA_CELLS) - set(assemble_corpus.HN_REGISTER.values()),
             set(),
@@ -2204,9 +2400,11 @@ class DeclaredFrameTests(unittest.TestCase):
 class CollectionTargetTests(unittest.TestCase):
     """D4 — the human target per cell is READ from the pre-registration.
 
-    `TARGET["human"]` was 4.000 for a frame of four cells whose blind block has to hold
-    300 human negatives each: 1.000 lines per cell put ~200 into `test`, a third under
-    the denominator the published ceiling needs.
+    A literal here is not a duplicate but a second authority: the target sets the `n` of
+    the published zero-event ceiling, and a lab that wrote its own would collect for one
+    ceiling while the release published another. The two numbers 4.000 and 4.000 agreeing
+    today is the frame having one cell, not the check being vacuous — the per-cell target
+    and the total are separate fields and the test compares both.
     """
 
     def test_the_human_target_is_the_policys_and_never_a_literal(self) -> None:
@@ -2264,7 +2462,10 @@ class CollectionTargetTests(unittest.TestCase):
                     )
                 )
             self.assertIn("6000", str(caught.exception).replace("_", ""))
-            self.assertIn("1750", str(caught.exception))
+            self.assertIn(
+                str(policy["collection"]["humanLinesPerCellTarget"]),
+                str(caught.exception),
+            )
 
             # And a target AT the floor, which removes the margin: the expected count in
             # a 20 % blind block is then exactly the floor, so half the draws fail the
@@ -2276,7 +2477,8 @@ class CollectionTargetTests(unittest.TestCase):
                         {
                             **policy["collection"],
                             "humanLinesPerCellTarget": floor,
-                            "humanLinesTotal": floor * 4,
+                            "humanLinesTotal": floor
+                            * len(assemble_corpus.QUOTA_CELLS),
                         }
                     )
                 )
@@ -2312,39 +2514,22 @@ class CollectionTargetTests(unittest.TestCase):
             dict(counted), {cell: per_cell for cell in assemble_corpus.QUOTA_CELLS}
         )
 
-        # ...and a SHORT cell stays short. Topping it up out of another cell's pool
-        # reaches the total, spends the budget on material the missing cell's ceiling
-        # cannot use, and the composition gate refuses the seal at the end of the run.
-        short = [row for row in pool if row["domainSource"] != "carolina_social_media"]
-        short += by_cell["carolina_social_media"][:5]
-        thin = assemble_corpus.balanced_humans(short, assemble_corpus.TARGET["human"])
-        thin_counted = Counter(
-            assemble_corpus.REGISTER[row["domainSource"]] for row in thin
+        # ...and a SHORT cell stays short: the selection stops at what the cell has
+        # instead of reaching the total, which is what makes the shortfall visible in the
+        # run's own report rather than at the seal.
+        thin_pool = by_cell["ptwiki_lead"][:5]
+        thin = assemble_corpus.balanced_humans(
+            thin_pool, assemble_corpus.TARGET["human"]
         )
-        self.assertEqual(thin_counted["carolina-social-media"], 5)
-        self.assertEqual(len(thin), per_cell * 3 + 5)
+        self.assertEqual(len(thin), 5)
 
-        # The DENOMINATOR, which the case above cannot see: with four cells present,
-        # "declared" and "arrived" are the same number. A cell contributing NOTHING
-        # separates them — declared keeps the other three at the per-cell target
-        # (3 x 1.750 = 5.250 selected), while dividing by what arrived would raise each
-        # of them to 2.334/2.333/2.333 and reach the total out of the wrong material.
-        absent = [row for row in pool if row["domainSource"] != "carolina_social_media"]
-        without = assemble_corpus.balanced_humans(
-            absent, assemble_corpus.TARGET["human"]
-        )
-        without_counted = Counter(
-            assemble_corpus.REGISTER[row["domainSource"]] for row in without
-        )
-        self.assertEqual(
-            dict(without_counted),
-            {
-                cell: per_cell
-                for cell in assemble_corpus.QUOTA_CELLS
-                if cell != "carolina-social-media"
-            },
-        )
-        self.assertEqual(len(without), per_cell * 3)
+        # The DENOMINATOR, which the case above cannot see, and with ONE cell the pool
+        # that separates "declared" from "arrived" is the EMPTY one: declared is 1, so the
+        # quota is the whole total and nothing is selected; dividing by the cells that
+        # arrived would divide by zero. A run that survives an empty cell by rescaling is
+        # a run that fills a ceiling's denominator out of another population.
+        without = assemble_corpus.balanced_humans([], assemble_corpus.TARGET["human"])
+        self.assertEqual(without, [])
 
 
 class PowerFloorFeasibilityTests(unittest.TestCase):
@@ -2356,7 +2541,7 @@ class PowerFloorFeasibilityTests(unittest.TestCase):
     """
 
     def _rows(self, documents: dict[str, int], lines_each: int = 1) -> list[dict]:
-        from group_axes import NO_AUTHOR_READ, known, not_applicable
+        from group_axes import NO_SINGLE_AUTHOR, known, not_applicable
 
         return [
             {
@@ -2365,11 +2550,11 @@ class PowerFloorFeasibilityTests(unittest.TestCase):
                 "wordCount": 60,
                 "domainSource": source,
                 "meta": {
-                    "sourceMaterialBatch": "smb_carolina-v2_0",
-                    "extractionRun": "extraction_carolina_fresh",
+                    "sourceMaterialBatch": "smb_ptwiki-20220301",
+                    "extractionRun": "extraction_wikipedia_fresh",
                     "groupAxes": {
-                        "source": known(f"{source}_member_{document:05d}"),
-                        "author": not_applicable(NO_AUTHOR_READ),
+                        "source": known(f"{source}_document_{document:05d}"),
+                        "author": not_applicable(NO_SINGLE_AUTHOR),
                     },
                 },
             }
@@ -2384,40 +2569,22 @@ class PowerFloorFeasibilityTests(unittest.TestCase):
         import assemble_corpus
 
         floor = frozen_policy()["powerFloors"]["samplingUnits"]
-        # The numbers are the MEASURED ones: the Carolina package holds 37 member files
-        # under the judicial typology, 7 under university domains and 2 under social
-        # media, and the member file is the `source` axis this counts.
-        rows = self._rows(
-            {
-                "ptwiki_lead": floor,
-                "carolina_judicial_branch": 37,
-                "carolina_university_domains": 7,
-                "carolina_social_media": 2,
-            },
-            lines_each=3,
-        )
-        self.assertEqual(
-            assemble_corpus.origin_documents_per_cell(rows),
-            {
-                "ptwiki": floor,
-                "carolina-judicial": 37,
-                "carolina-university": 7,
-                "carolina-social-media": 2,
-            },
-        )
+        # The count is what the MEASUREMENT of the old frame produced on its thinnest
+        # cell: the Carolina package held 2 member files under the social-media typology
+        # against this floor, and that is the shape a cell short of documents has. The
+        # cell is the surviving one because it is the only one a row can name.
+        rows = self._rows({"ptwiki_lead": 2}, lines_each=3)
+        self.assertEqual(assemble_corpus.origin_documents_per_cell(rows), {"ptwiki": 2})
         with self.assertRaises(assemble_corpus.CellBelowOriginDocumentFloor) as caught:
             assemble_corpus.assert_cells_can_meet_the_origin_document_floor(rows)
         message = str(caught.exception)
-        for expected in (
-            "carolina-judicial=37",
-            "carolina-university=7",
-            "carolina-social-media=2",
-            str(floor),
-        ):
+        # The cell, its count and the floor: without all three the message does not say
+        # which extraction has to grow, or by how much.
+        for expected in ("ptwiki=2", str(floor)):
             self.assertIn(expected, message)
-        # The cell that reaches the floor is not named: the refusal is per cell, and a
-        # message that listed all four would not say which extraction has to grow.
-        self.assertNotIn("ptwiki", message)
+        # ...and a cell AT the floor is not named at all, because it is not a breach.
+        enough = self._rows({"ptwiki_lead": floor})
+        assemble_corpus.assert_cells_can_meet_the_origin_document_floor(enough)
 
     def test_lines_never_stand_in_for_origin_documents(self) -> None:
         import assemble_corpus
@@ -2430,7 +2597,7 @@ class PowerFloorFeasibilityTests(unittest.TestCase):
         rows = self._rows(
             {source: 5 for source in assemble_corpus.REGISTER}, lines_each=100
         )
-        self.assertEqual(len(rows), 4 * 5 * 100)
+        self.assertEqual(len(rows), len(assemble_corpus.REGISTER) * 5 * 100)
         with self.assertRaises(assemble_corpus.CellBelowOriginDocumentFloor) as caught:
             assemble_corpus.assert_cells_can_meet_the_origin_document_floor(rows)
         self.assertIn("=5", str(caught.exception))
@@ -2456,8 +2623,9 @@ class PowerFloorFeasibilityTests(unittest.TestCase):
 class HardNegativeTaggingTests(unittest.TestCase):
     """Every required style family is tagged out of the cell it is drawn from.
 
-    The demands ADD UP per cell, because one row cannot carry two families — and three of
-    the six styles are drawn from social media, which is the thinnest cell of the frame.
+    The demands ADD UP per cell, because one row cannot carry two families — and with a
+    one-cell frame all six styles are drawn from the same cell, so its pool has to cover
+    six times the per-family count on its own.
     """
 
     def _humans(self, per_cell: dict[str, int]) -> list[dict]:
@@ -2536,8 +2704,16 @@ class MixedFrameAccountingTests(unittest.TestCase):
             + [{"parentId": "src_orphan", "parentFamily": "?", "text": PROSE_60}]
         )
         inside, outside = assemble_corpus.mixed_parents_by_frame(rows)
-        self.assertEqual(inside, {"carolina-judicial": 3, "ptwiki": 2})
-        self.assertEqual(outside, {"ptso_qa": 7, "b2w_reviews": 1, "?": 1})
+        self.assertEqual(inside, {"ptwiki": 2})
+        self.assertEqual(
+            outside,
+            {
+                "carolina_judicial_branch": 3,
+                "ptso_qa": 7,
+                "b2w_reviews": 1,
+                "?": 1,
+            },
+        )
         # A partition, so no row is counted twice and none disappears: a screen that
         # empties the class in silence is the failure being reported against.
         self.assertEqual(sum(inside.values()) + sum(outside.values()), len(rows))
@@ -2833,15 +3009,15 @@ class DerivationLineageTests(unittest.TestCase):
         from assemble_corpus import mixed_record
 
         candidate = {
-            "parentId": "src_carolina_0f89e00a4836",
+            "parentId": "src_wiki_0f89e00a4836",
             "text": PROSE_60,
             "provider": "antigravity",
             "model": "gemini-3.6-flash-low",
             "generatedAt": "2026-07-23T18:53:31.606876+00:00",
             "promptTemplateId": "edit_v1",
             "promptTemplateDigest": hashlib.sha256(b"edit").hexdigest(),
-            "parentFamily": "carolina_judicial_branch",
-            "sourceMaterialBatch": "smb_carolina-v2_0",
+            "parentFamily": "ptwiki_lead",
+            "sourceMaterialBatch": "smb_ptwiki-20220301",
             "mixture": {
                 "spans": [
                     {"start": 0, "end": 200, "origin": "human"},
@@ -2850,7 +3026,7 @@ class DerivationLineageTests(unittest.TestCase):
             },
         }
         record = mixed_record(candidate)
-        parent = "src_carolina_0f89e00a4836"
+        parent = "src_wiki_0f89e00a4836"
         self.assertEqual(
             record["groups"]["derivationRoot"], {"state": "known", "id": parent}
         )
@@ -2867,12 +3043,12 @@ class DerivationLineageTests(unittest.TestCase):
         from assemble_corpus import MissingRecipe, mixed_record
 
         candidate = {
-            "parentId": "src_carolina_0f89e00a4836",
+            "parentId": "src_wiki_0f89e00a4836",
             "text": PROSE_60,
             "provider": "antigravity",
             "model": "gemini-3.6-flash-low",
             "generatedAt": "2026-07-23T18:53:31.606876+00:00",
-            "parentFamily": "carolina_judicial_branch",
+            "parentFamily": "ptwiki_lead",
             "mixture": {
                 "spans": [{"start": 0, "end": len(PROSE_60), "origin": "human"}]
             },
@@ -2889,14 +3065,14 @@ class DerivationLineageTests(unittest.TestCase):
         from assemble_corpus import MissingMaterialBatch, mixed_record
 
         candidate = {
-            "parentId": "src_carolina_0f89e00a4836",
+            "parentId": "src_wiki_0f89e00a4836",
             "text": PROSE_60,
             "provider": "antigravity",
             "model": "gemini-3.6-flash-low",
             "generatedAt": "2026-07-23T18:53:31.606876+00:00",
             "promptTemplateId": "edit_v1",
             "promptTemplateDigest": hashlib.sha256(b"edit").hexdigest(),
-            "parentFamily": "carolina_judicial_branch",
+            "parentFamily": "ptwiki_lead",
             "mixture": {
                 "spans": [
                     {"start": 0, "end": 200, "origin": "human"},
@@ -2914,7 +3090,7 @@ class DerivationLineageTests(unittest.TestCase):
         with self.assertRaises(MissingMaterialBatch) as caught:
             mixed_record(candidate)
         self.assertIn("sourceMaterialBatch", str(caught.exception))
-        self.assertIn("mix_src_carolina_0f89e00a4836", str(caught.exception))
+        self.assertIn("mix_src_wiki_0f89e00a4836", str(caught.exception))
 
 
 class GenerationBatchAxisTests(unittest.TestCase):
@@ -3005,8 +3181,8 @@ class GenerationBatchAxisTests(unittest.TestCase):
             "model": "gemini-3.5-flash-lite",
             "promptTemplateId": "original",
             "promptTemplateDigest": self.TEMPLATE_DIGEST,
-            "parentFamily": "carolina_judicial_branch",
-            "sourceMaterialBatch": "smb_carolina-v2_0",
+            "parentFamily": "ptwiki_lead",
+            "sourceMaterialBatch": "smb_ptwiki-20220301",
             "temperature": "0.8",
             "mixture": {
                 "spans": [
@@ -3149,7 +3325,7 @@ class GenerationBatchAxisTests(unittest.TestCase):
         from assemble_corpus import ai_record, mixed_record
 
         ai = ai_record(self._api_candidate("src_ai_gemini_aaaaaaaaaaaa"))
-        mixed = mixed_record(self._mixed_candidate("src_carolina_0f89e00a4836"))
+        mixed = mixed_record(self._mixed_candidate("src_wiki_0f89e00a4836"))
         batches = self._batched([ai, mixed])
         # The two recipes are identical in every component EXCEPT sourceId, which is
         # what this pins. The batch ID embeds `rec["label"]` while the batch KEY does
@@ -3168,9 +3344,9 @@ class GenerationBatchAxisTests(unittest.TestCase):
 
         human = human_record(
             AssemblerRealGroupTests()._human_candidate(
-                "src_carolina_aaa", "carolina_member_judicial_2"
+                "src_wiki_aaa", "ptwiki_page_9042"
             ),
-            "carolina-judicial",
+            "ptwiki",
             None,
         )
         records = [
@@ -3179,7 +3355,7 @@ class GenerationBatchAxisTests(unittest.TestCase):
             ai_record(
                 self._api_candidate("src_ai_gemini_cccccccccccc", temperature="0.5")
             ),
-            mixed_record(self._mixed_candidate("src_carolina_0f89e00a4836")),
+            mixed_record(self._mixed_candidate("src_wiki_0f89e00a4836")),
             human,
         ]
         # Every generated row carries `unknown` UNTIL the batches are derived, which
@@ -3289,19 +3465,19 @@ class GenerationBatchAxisTests(unittest.TestCase):
         from assemble_corpus import human_record
 
         candidate = AssemblerRealGroupTests()._human_candidate(
-            "src_carolina_aaa", "carolina_member_judicial_2"
+            "src_wiki_aaa", "ptwiki_page_9042"
         )
-        record = human_record(candidate, "carolina-judicial", None)
+        record = human_record(candidate, "ptwiki", None)
         # The EXTRACTION run that wrote the row — shared by every candidate of one pool
         # file, `known` from the start and never touched by `assign_generation_batches`
         # — and the ACQUISITION event it was read out of, which is a different fact.
         self.assertEqual(
             record["groups"]["extractionRun"],
-            {"state": "known", "id": "extraction_carolina_fresh"},
+            {"state": "known", "id": "extraction_wikipedia_fresh"},
         )
         self.assertEqual(
             record["groups"]["sourceMaterialBatch"],
-            {"state": "known", "id": "smb_carolina-v2_0"},
+            {"state": "known", "id": "smb_ptwiki-20220301"},
         )
         before = {
             axis: dict(record["groups"][axis])
@@ -3680,10 +3856,10 @@ class GeneratorCaptureTests(unittest.TestCase):
         make_mixed.emit(
             buffer,
             {
-                "id": "src_carolina_abc",
+                "id": "src_wiki_abc",
                 "text": "uma frase. outra frase. terceira frase.",
-                "family": "carolina_judicial_branch",
-                "sourceMaterialBatch": "smb_carolina-v2_0",
+                "family": "ptwiki_lead",
+                "sourceMaterialBatch": "smb_ptwiki-20220301",
             },
             "uma frase reescrita. outra frase. terceira frase.",
             provider="antigravity",
@@ -3698,23 +3874,23 @@ class GeneratorCaptureTests(unittest.TestCase):
         # The PARENT's acquisition event travels on the pair row. Without it the pair is
         # unwritable: the axis admits only `known` on a mechanistic mixed row, and the
         # parent id alone resolves no acquisition at assembly time.
-        self.assertEqual(row["sourceMaterialBatch"], "smb_carolina-v2_0")
+        self.assertEqual(row["sourceMaterialBatch"], "smb_ptwiki-20220301")
         # And that row is now writable as a sealed record, which the legacy pools are not.
         from assemble_corpus import mixed_record
 
         record = mixed_record(row)
         self.assertEqual(
             record["groups"]["sourceMaterialBatch"],
-            {"state": "known", "id": "smb_carolina-v2_0"},
+            {"state": "known", "id": "smb_ptwiki-20220301"},
         )
         self.assertEqual(record["groups"]["generationLane"]["id"], "agy")
         self.assertEqual(record["groups"]["harnessVersion"],
                          {"state": "known", "id": "1_2_3"})
         self.assertEqual(
-            record["groups"]["derivationRoot"]["id"], "src_carolina_abc"
+            record["groups"]["derivationRoot"]["id"], "src_wiki_abc"
         )
         self.assertEqual(
-            record["groups"]["domainSource"]["id"], "carolina_judicial_branch"
+            record["groups"]["domainSource"]["id"], "ptwiki_lead"
         )
 
     def test_the_production_projection_of_a_parent_carries_its_material_batch(
@@ -3798,10 +3974,10 @@ class GeneratorCaptureTests(unittest.TestCase):
         make_mixed.emit(
             buffer,
             {
-                "id": "src_carolina_abc",
+                "id": "src_wiki_abc",
                 "text": "uma frase. outra frase. terceira frase.",
-                "family": "carolina_judicial_branch",
-                "sourceMaterialBatch": "smb_carolina-v2_0",
+                "family": "ptwiki_lead",
+                "sourceMaterialBatch": "smb_ptwiki-20220301",
             },
             "uma frase reescrita. outra frase. terceira frase.",
             provider="antigravity",
@@ -3904,18 +4080,18 @@ class ReviewStateTests(unittest.TestCase):
 
     def _human(self) -> dict:
         return AssemblerRealGroupTests()._human_candidate(
-            "src_carolina_aaa", "carolina_member_judicial_2"
+            "src_wiki_aaa", "ptwiki_page_9042"
         )
 
     def test_every_record_class_states_automated_unreviewed(self) -> None:
         from assemble_corpus import ai_record, human_record, mixed_record
 
         rows = [
-            human_record(self._human(), "carolina-judicial", None),
+            human_record(self._human(), "ptwiki", None),
             ai_record(
                 GenerationBatchAxisTests()._api_candidate("src_ai_gemini_aaaaaaaaaaaa")
             ),
-            mixed_record(GenerationBatchAxisTests()._mixed_candidate("src_carolina_aaa")),
+            mixed_record(GenerationBatchAxisTests()._mixed_candidate("src_wiki_aaa")),
         ]
         for row in rows:
             self.assertEqual(row["review"]["state"], "automated/unreviewed", row["id"])
@@ -3960,7 +4136,7 @@ class ReviewStateTests(unittest.TestCase):
                 "outcome": "passed",
             }
         ]
-        record = human_record(candidate, "carolina-judicial", None)
+        record = human_record(candidate, "ptwiki", None)
         self.assertEqual(
             record["review"]["automatedFilters"],
             candidate["meta"]["automatedFilters"],
@@ -3974,7 +4150,7 @@ class ReviewStateTests(unittest.TestCase):
         # screens saw the row, and naming one here would be the old constant again on
         # a smaller scale. The state's own claim — no human audit happened — is still
         # made, and the reason is still written down.
-        record = human_record(self._human(), "carolina-judicial", None)
+        record = human_record(self._human(), "ptwiki", None)
         self.assertEqual(record["review"]["automatedFilters"], [])
         self.assertIn("no human reviewer", record["review"]["humanAuditAbsentReason"])
 
@@ -4467,11 +4643,11 @@ class StampedCorpusSplittabilityTest(unittest.TestCase):
         roots = connected_components(recs)
         self.assertEqual(roots["a"], roots["c"])
 
-    def _corpus_de_uma_fonte(self, source_id="src_carolina"):
+    def _corpus_de_uma_fonte(self, source_id="src_wikipedia_pt"):
         """O corpus das fracoes alvo, todo ele atribuido a UMA fonte declarada.
 
-        `source` fica `known` em toda linha porque src_carolina o declara: e o eixo que a
-        mutacao de cada teste abaixo derruba, e comecar com ele preenchido e o que
+        `source` fica `known` em toda linha porque src_wikipedia_pt o declara: e o eixo que
+        a mutacao de cada teste abaixo derruba, e comecar com ele preenchido e o que
         separa "a guarda pegou a mutacao" de "a guarda recusa o fixture inteiro".
         """
         import group_axes
@@ -4508,7 +4684,7 @@ class StampedCorpusSplittabilityTest(unittest.TestCase):
             assert_stamped_corpus_is_splittable(recs)
         msg = str(ctx.exception)
         self.assertIn("eixo declarado", msg)
-        self.assertIn("src_carolina", msg)
+        self.assertIn("src_wikipedia_pt", msg)
         self.assertIn('"source" aplicavel', msg)
         self.assertIn(alvo["id"], msg)
         # UMA linha, e nao 400: a recusa e da mutacao e de nada mais.
@@ -4524,16 +4700,18 @@ class StampedCorpusSplittabilityTest(unittest.TestCase):
         benchmark/split-audit.ts o aceita — uma guarda que se declara espelho e recusa o que
         o espelhado aceita.
 
-        AS DUAS fontes estocadas, porque a autoridade e por fonte: uma so delas nao mede a
-        tabela inteira. `src_b2w` saiu do inventario com a moldura nova — resenha de produto
-        nao e celula da alegacao —, entao pedir o eixo dele aqui levantaria KeyError em vez
-        de medir o que este teste mede.
+        A autoridade e por fonte, e com a moldura de uma celula ela tem UMA entrada:
+        `src_b2w` e `src_carolina` sairam do inventario — resenha de produto nao e celula da
+        alegacao, e as tres tipologias da Carolina sao de instituicao unica —, entao pedir o
+        eixo de qualquer um dos dois aqui levantaria KeyError em vez de medir o que este
+        teste mede. A lista e afirmada por igualdade para que uma fonte que volte ao
+        inventario sem passar pela emenda apareca aqui.
         """
         from assemble_corpus import assert_stamped_corpus_is_splittable, declared_group_axes
 
         autoridade = declared_group_axes()
-        self.assertEqual(sorted(autoridade), ["src_carolina", "src_wikipedia_pt"])
-        for source_id in ("src_wikipedia_pt", "src_carolina"):
+        self.assertEqual(sorted(autoridade), ["src_wikipedia_pt"])
+        for source_id in ("src_wikipedia_pt",):
             with self.subTest(fonte=source_id):
                 # Nao vacuo: o eixo esta na autoridade, e nenhuma linha carrega a chave.
                 self.assertIn("sourceMaterialBatch", autoridade[source_id])
@@ -4572,7 +4750,7 @@ class StampedCorpusSplittabilityTest(unittest.TestCase):
         self.assertIn("fonte nao inventariada", msg)
         self.assertIn("src_b2w", msg)
         self.assertIn(alvo["id"], msg)
-        # UMA linha: as outras 199 seguem em src_carolina e nao podem ser arrastadas.
+        # UMA linha: as outras 199 seguem em src_wikipedia_pt e nao podem ser arrastadas.
         self.assertEqual(msg.count("fonte nao inventariada"), 1)
 
     def test_a_GENERATED_row_outside_the_human_authority_is_accepted(self):
@@ -5323,7 +5501,7 @@ class AssemblyRunTests(unittest.TestCase):
     def _human(
         self, domain_source: str, index: int, license_id: str | None = None
     ) -> dict:
-        from group_axes import NO_AUTHOR_READ, known, not_applicable
+        from group_axes import NO_SINGLE_AUTHOR, known, not_applicable
 
         return {
             "candidateId": f"cand_{domain_source}_{index:04d}",
@@ -5337,7 +5515,7 @@ class AssemblyRunTests(unittest.TestCase):
                 "sourceMaterialBatch": "smb_fixture_v1",
                 "groupAxes": {
                     "source": known(f"doc_{domain_source}_{index:04d}"),
-                    "author": not_applicable(NO_AUTHOR_READ),
+                    "author": not_applicable(NO_SINGLE_AUTHOR),
                 },
             },
         }
@@ -5374,7 +5552,7 @@ class AssemblyRunTests(unittest.TestCase):
     def _mixed(self, index: int) -> dict:
         return {
             "parentId": f"pai_ausente_{index:04d}",
-            "parentFamily": "carolina_judicial_branch",
+            "parentFamily": "ptwiki_lead",
             "text": self._prose(f"m{index}"),
             "provider": "gemini",
             "model": "gemini-3.1-flash-lite",
@@ -5395,31 +5573,46 @@ class AssemblyRunTests(unittest.TestCase):
         reserved_family: str | None = None,
         excluded_rows: int = 0,
         excluded_family: str = "madras:synthetic_corpusqwn",
-        carolina_license: str | None = None,
+        document_license: str | None = None,
     ) -> dict:
-        """The four pool files, and the planted line a seen set may already hold.
+        """The pool files, and the planted line a seen set may already hold.
 
-        `carolina_license` overrides what the Carolina DOCUMENTS declare. By default the
-        two bases declare different licences, which is the state a per-stratum constant
-        happens to reproduce; pass the encyclopedic licence to get the case where the
-        constant and the reading disagree.
+        41 rows of the ONE declared cell, each its own origin document: the human class
+        has to reach five partitions, and the smallest of them is 5 % of the class, so a
+        pool of 11 components cannot be split at all (`assert_components_can_fill_five_
+        partitions` refuses it as granularity, not size). The Carolina pool file is
+        written too and must NOT be read — the frame no longer draws on it, and this is
+        where the loader's file screen is measured end to end.
+
+        `document_license` overrides what every encyclopedic DOCUMENT declares. It is what
+        a per-stratum constant cannot reproduce: keyed on the stratum, the licence of a
+        ptwiki row is always `cc-by-sa-4.0`, so a pool whose documents declare the other
+        reviewed licence is the case where the constant and the reading disagree. One
+        value for the whole pool and not a mixture, because a source under two licences is
+        refused outright (`SourceCarriesTwoLicenses`) and that refusal is its own test.
         """
         cand = tmp / "candidates"
         family = reserved_family or self.RESERVED_FAMILY
-        # 11 encyclopedic rows against a quota of 10, with the planted one FIRST: it is
+        # 41 encyclopedic rows against a quota of 10, with the planted one FIRST: it is
         # selected unless the global prune removes it.
-        wiki = [self._human("ptwiki_lead", index) for index in range(11)]
-        self._write(cand / "wikipedia_fresh.jsonl", wiki)
-        carolina = [
-            self._human(source, index, carolina_license)
-            for source in (
-                "carolina_judicial_branch",
-                "carolina_social_media",
-                "carolina_university_domains",
-            )
-            for index in range(10)
+        wiki = [
+            self._human("ptwiki_lead", index, document_license) for index in range(41)
         ]
-        self._write(cand / "carolina_fresh.jsonl", carolina)
+        self._write(cand / "wikipedia_fresh.jsonl", wiki)
+        # Out of frame since the amendment, and written anyway: a run that opened it would
+        # take these rows, and no cell counts them.
+        self._write(
+            cand / "carolina_fresh.jsonl",
+            [
+                self._human(source, index)
+                for source in (
+                    "carolina_judicial_branch",
+                    "carolina_social_media",
+                    "carolina_university_domains",
+                )
+                for index in range(10)
+            ],
+        )
         core = [
             self._ai("gemini", self.CORE_FAMILY, index)
             for index in range(40 - reserved_rows - excluded_rows)
@@ -5550,9 +5743,14 @@ class AssemblyRunTests(unittest.TestCase):
 
         self.assertNotIn(planted["plantedId"], {r["id"] for r in records})
         # The quota is still met out of the rest of the cell's pool, so the absence is the
-        # prune and not a short pool.
+        # prune and not a short pool. The quota is the sampled one and the pool carries one
+        # spare row, so the count is what the run asks for and the planted line is the one
+        # left out.
+        import assemble_corpus
+
+        quota = round(assemble_corpus.TARGET["human"] * 100 / 10_000)
         self.assertEqual(
-            sum(1 for r in records if r.get("humanSourceType") == "ptwiki"), 10
+            sum(1 for r in records if r.get("humanSourceType") == "ptwiki"), quota
         )
         self.assertIn("vazamento vs corpus morto", self.stdout)
         self.assertIn("'dropped': 1", self.stdout)
@@ -5750,15 +5948,15 @@ class AssemblyRunTests(unittest.TestCase):
         import assemble_corpus
 
         # The projection, end to end. The fixture is the case a per-stratum constant CANNOT
-        # reproduce: the Carolina documents declare the encyclopedic licence, so a constant
-        # keyed on the stratum says `cc-by-nc-sa-4.0` for rows whose headers say
-        # `cc-by-sa-4.0` — and with the pools' default licences the two agree, which is
-        # exactly the accident that hid the defect in the first place.
-        declared = document_license_of("ptwiki_lead")
-        self.assertNotEqual(declared, document_license_of("carolina_judicial_branch"))
+        # reproduce: every encyclopedic DOCUMENT declares `cc-by-nc-sa-4.0` while the
+        # licence a constant keyed on the stratum would name is `cc-by-sa-4.0`. With the
+        # base's usual licence the two agree, which is exactly the accident that hid the
+        # defect in the first place.
+        declared = "cc-by-nc-sa-4.0"
+        self.assertNotEqual(declared, document_license_of("ptwiki_lead"))
         with tempfile.TemporaryDirectory() as raw:
             tmp = Path(raw)
-            self._pools(tmp, carolina_license=declared)
+            self._pools(tmp, document_license=declared)
             self._main(tmp, seen_texts=[])
             records, governance = self._outputs(tmp)
 
@@ -5768,8 +5966,10 @@ class AssemblyRunTests(unittest.TestCase):
             by_source.setdefault(provenance["sourceId"], set()).add(
                 provenance["licenseId"]
             )
-        self.assertEqual(by_source["src_carolina"], {declared})
         self.assertEqual(by_source["src_wikipedia_pt"], {declared})
+        # And no row of a source outside the frame reached the corpus at all: the loader
+        # never opened the Carolina pool the fixture also wrote.
+        self.assertNotIn("src_carolina", by_source)
         self.assertEqual(
             {entry["sourceId"]: entry["licenseId"] for entry in governance["sources"]},
             {source: next(iter(licenses)) for source, licenses in by_source.items()},
@@ -5820,14 +6020,16 @@ class AssemblyRunTests(unittest.TestCase):
 class DocumentLicenseTests(unittest.TestCase):
     """D8: the licence read from the DOCUMENT reaches the assembled record.
 
-    The extractor reads the TEI availability element per document against a fail-closed
+    The extractor reads the availability element per document against a fail-closed
     allowlist (C1), and until now the assembler threw that reading away: it looked the
-    licence up from the row's stratum, so every Carolina record said `cc-by-nc-sa-4.0`
-    whatever its header declared. These tests are about the rest of the journey.
+    licence up from the row's stratum, so every record of a base said that base's usual
+    licence whatever its own document declared. These tests are about the rest of the
+    journey, and they hand the builder a document licence the stratum would NOT have
+    produced — otherwise the constant and the reading agree and nothing is measured.
     """
 
     def _candidate(self, license_id: str | None, source: str) -> dict:
-        from group_axes import NO_AUTHOR_READ, known, not_applicable
+        from group_axes import NO_SINGLE_AUTHOR, known, not_applicable
 
         candidate = {
             "candidateId": f"cand_{source}_0001",
@@ -5838,11 +6040,11 @@ class DocumentLicenseTests(unittest.TestCase):
                 "dateField": "teiHeader/publicationStmt/date",
                 "observedValue": "2019-05-04",
                 "snapshot": "carolina" if source.startswith("carolina") else "ptwiki",
-                "sourceMaterialBatch": "smb_carolina-v2_0",
-                "extractionRun": "extraction_carolina_fresh",
+                "sourceMaterialBatch": "smb_ptwiki-20220301",
+                "extractionRun": "extraction_wikipedia_fresh",
                 "groupAxes": {
                     "source": known(f"doc_{source}"),
-                    "author": not_applicable(NO_AUTHOR_READ),
+                    "author": not_applicable(NO_SINGLE_AUTHOR),
                 },
             },
         }
@@ -5863,41 +6065,43 @@ class DocumentLicenseTests(unittest.TestCase):
         # a licence hold rows in exactly this state, and the honest outcome is a smaller
         # corpus plus a count — the same treatment `MissingLabelEvidence` gets.
         self.assertTrue(issubclass(MissingDocumentLicense, UnwritableInV3))
-        candidate = self._candidate(None, "carolina_judicial_branch")
+        candidate = self._candidate(None, "ptwiki_lead")
         with self.assertRaises(MissingDocumentLicense) as caught:
-            human_record(candidate, "carolina-judicial", None)
+            human_record(candidate, "ptwiki", None)
         message = str(caught.exception)
-        self.assertIn("cand_carolina_judicial_branch_0001", message)
+        self.assertIn("cand_ptwiki_lead_0001", message)
         self.assertIn("licenseId", message)
 
     def test_the_license_the_document_declared_reaches_the_record(self) -> None:
         from assemble_corpus import human_record
 
-        # `cc-by-sa-4.0` on a CAROLINA row, which is the case the old code could not
-        # express: the stratum lookup said `cc-by-nc-sa-4.0` for every Carolina document,
-        # so a header declaring anything else was overwritten on the way in.
+        # `cc-by-nc-sa-4.0` on an ENCYCLOPEDIC row, which is the case the old code could
+        # not express: the stratum lookup said `cc-by-sa-4.0` for every ptwiki document, so
+        # a document declaring anything else was overwritten on the way in.
+        declared = "cc-by-nc-sa-4.0"
+        self.assertNotEqual(declared, document_license_of("ptwiki_lead"))
         entries: list[dict] = []
         record = human_record(
-            self._candidate("cc-by-sa-4.0", "carolina_judicial_branch"),
-            "carolina-judicial",
+            self._candidate(declared, "ptwiki_lead"),
+            "ptwiki",
             None,
             evidence_sink=entries,
         )
-        self.assertEqual(record["provenance"]["licenseId"], "cc-by-sa-4.0")
+        self.assertEqual(record["provenance"]["licenseId"], declared)
         # And the label-evidence registration says the same thing, because the licence is
         # part of what the entry digest covers.
         self.assertEqual(len(entries), 1)
-        self.assertEqual(entries[0]["licenseId"], "cc-by-sa-4.0")
-        self.assertIn("cc-by-sa-4_0", entries[0]["entryId"])
+        self.assertEqual(entries[0]["licenseId"], declared)
+        self.assertIn("cc-by-nc-sa-4_0", entries[0]["entryId"])
 
     def test_a_license_the_inventory_cannot_publish_drops_the_row_by_name(self) -> None:
         from assemble_corpus import MissingDocumentLicense, human_record
 
-        candidate = self._candidate("cc-by-4.0", "carolina_judicial_branch")
+        candidate = self._candidate("cc-by-4.0", "ptwiki_lead")
         with self.assertRaises(MissingDocumentLicense) as caught:
-            human_record(candidate, "carolina-judicial", None)
+            human_record(candidate, "ptwiki", None)
         message = str(caught.exception)
-        self.assertIn("cand_carolina_judicial_branch_0001", message)
+        self.assertIn("cand_ptwiki_lead_0001", message)
         self.assertIn("cc-by-4.0", message)
         # The reason, and the licences that ARE publishable — a drop with neither is a row
         # that vanished under a name nobody can act on.
@@ -5915,7 +6119,7 @@ class DocumentLicenseTests(unittest.TestCase):
         # exclusion is counted, an UNDECIDED one halts. A source that starts shipping a new
         # availability string is the real case, and a counted drop would hide it.
         self.assertFalse(issubclass(UndecidedDocumentLicense, UnwritableInV3))
-        candidate = self._candidate("wtfpl-2.0", "carolina_judicial_branch")
+        candidate = self._candidate("wtfpl-2.0", "ptwiki_lead")
         with self.assertRaises(UndecidedDocumentLicense) as caught:
             document_license(candidate)
         message = str(caught.exception)
@@ -5932,9 +6136,9 @@ class DocumentLicenseTests(unittest.TestCase):
         # records down with a digest divergence that names no document.
         entries: list[dict] = []
         for license_id in ("cc-by-nc-sa-4.0", "cc-by-sa-4.0"):
-            candidate = self._candidate(license_id, "carolina_judicial_branch")
+            candidate = self._candidate(license_id, "ptwiki_lead")
             candidate["candidateId"] = f"cand_{license_id}"
-            human_record(candidate, "carolina-judicial", None, evidence_sink=entries)
+            human_record(candidate, "ptwiki", None, evidence_sink=entries)
         self.assertEqual(len(entries), 2)
         self.assertEqual(len({entry["entryId"] for entry in entries}), 2)
         self.assertEqual(len({entry["entryDigest"] for entry in entries}), 2)

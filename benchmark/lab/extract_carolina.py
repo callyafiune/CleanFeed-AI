@@ -1,19 +1,34 @@
-"""Streams Corpus Carolina TEI zips into human-text candidates.
+"""Streams Corpus Carolina TEI zips into human-text candidates — OUTSIDE THE FRAME.
 
-Reads the `Corpus/<typology>/**.xml` members of the THREE typologies the declared
-frame draws on, and no others (`FRAME_TYPOLOGIES`). For each <TEI> document it reads
-the CAROLINA-level availability (license) and the `<date type="Download">` — the
+The declared frame draws on NO Carolina typology (`FRAME_TYPOLOGIES` is empty), so this
+extractor emits nothing: `extract` refuses with `CarolinaOutOfFrame` before opening the
+archive. The module is kept, not deleted, for the reason every other exclusion in this
+lab is kept — an extractor that disappears leaves no trace of why it left, and
+re-admitting the base becomes a one-line edit that works instead of an amendment that
+has to name the cell it would add. What was measured over the package on 2026-08-05
+(member headers only, never a body) is written per typology in
+`OUT_OF_FRAME_TYPOLOGIES`.
+
+What still stops the output if someone runs it anyway, downstream and fail-closed:
+`humanSources.snapshots` no longer stocks `carolina`, so `benchmark/schema.ts` refuses
+every record whose `labelEvidenceRef.snapshot` names it; `auditCorpusSources` blocks a
+manifest declaring `src_carolina` with `SOURCE_OUT_OF_DECLARED_FRAME`; and the
+assembler's `REGISTER` has no cell for `carolina_*`.
+
+How it reads the material, kept intact so re-admission costs an amendment and not a
+rediscovery: the `Corpus/<typology>/**.xml` members, one <TEI> document at a time,
+taking the CAROLINA-level availability (license) and the `<date type="Download">` — the
 download date anchors the pre-ChatGPT guarantee per document, which is what makes the
-v2.0 (Bea) package usable — and keeps only documents whose license is in the
+v2.0 (Bea) package usable — and keeping only documents whose license is in the
 allowlist. Only the body text and non-identifying metadata (typology) are extracted;
 header names/authors are never read. Stdlib only; memory-safe via iterparse +
 clearing.
 
-Usage:
+Usage (refuses, by design):
   python benchmark/lab/extract_carolina.py \
     --input <archive.zip> --output benchmark/data/candidates/carolina.jsonl \
     --snapshot-version carolina-v2.0 \
-    [--limit 4000] [--sample-rate 1] [--typologies judicial_branch,social_media]
+    [--limit 4000] [--sample-rate 1]
 """
 
 from __future__ import annotations
@@ -29,26 +44,43 @@ from common import CandidateWriter, parse_iso_date, read_id_file
 
 SOURCE_ID = "src_carolina"
 TEI_NS = "{http://www.tei-c.org/ns/1.0}"
-# The typologies of the declared frame, as the archive's directory names slug to. Three
-# of the four quota cells come out of this one package, one typology each, and each of
-# them publishes its own FPR ceiling — so this list IS the sampling frame on the
-# Carolina side, not a convenience filter.
-FRAME_TYPOLOGIES: tuple[str, ...] = (
-    "judicial_branch",
-    "social_media",
-    "university_domains",
-)
-# The typologies the package also holds and the frame does NOT draw on, with the reason
-# each one is outside. Declared rather than deleted: an allowlist alone cannot tell a
-# typology that was DECIDED against from one nobody has looked at, and the second case
-# has to stop the run (see `TypologyOutOfFrame`).
+# EMPTY: the declared frame draws on no typology of this package. It stays a list rather
+# than becoming a boolean because it is the shape a re-admission takes — one name here,
+# one cell in `preRegistration.quotaAxis.cells`, one `fpr-<cell>` member in
+# `multiplicity.primaryFamily` — and every message below reads its emptiness.
+FRAME_TYPOLOGIES: tuple[str, ...] = ()
+# Every typology the package holds, with the reason it is outside the frame. Declared
+# rather than deleted: an allowlist alone cannot tell a typology that was DECIDED against
+# from one nobody has looked at, and the second case has to stop the run (see
+# `TypologyOutOfFrame`).
+#
+# The first three were IN the frame until the frame amendment, and their reasons are
+# measurements over this package (2026-08-05, member headers and URLs only): each is a
+# single-institution corpus that declares no author, so the population a per-cell FPR
+# would name is one institution and the number of independent units is undecidable
+# between one and tens of thousands. That is not a claim about the register's quality —
+# it is that the material does not carry the provenance the claim needs.
 OUT_OF_FRAME_TYPOLOGIES = {
+    "judicial_branch": (
+        "single institution: 38.187 documents over 5 hosts, all *.stf.jus.br, and ZERO "
+        "declare an author — one court is not 'judicial text', and between 1 and 38.187 "
+        "independent units the package gives no basis to choose"
+    ),
+    "university_domains": (
+        "single institution: 26.409 documents from jornal.usp.br alone, ZERO with an "
+        "author — one newspaper is not 'university-domain text'"
+    ),
+    "social_media": (
+        "single platform: 3.294 documents from wattpad.com alone, whose 104 authors are "
+        "below the 300-unit floor — and fiction posted to one site is not the "
+        "social-media register the cell claimed"
+    ),
     "legislative_branch": (
-        "the frame names the judicial typology alone; legislative text is a different "
-        "population and is outside the sampling frame"
+        "a different population from every cell the frame has ever declared, and outside "
+        "the sampling frame"
     ),
     "public_domain_works": (
-        "literary and historical works, which none of the four cells describes"
+        "literary and historical works, which the declared cell does not describe"
     ),
     "wikis": (
         "outside the sampling frame, and the encyclopedic cell is served by the "
@@ -69,8 +101,17 @@ class TypologyOutOfFrame(ValueError):
     is neither in the frame nor in the declared exclusions is undecided, and deciding it
     by silence is the reverse of fail-closed in the direction that hurts: the Carolina
     directory names carry spaces in some releases and underscores in others, so a
-    renamed in-frame directory would produce ZERO rows for a cell whose FPR ceiling the
-    release publishes, and produce them quietly.
+    renamed directory would produce ZERO rows without saying so.
+    """
+
+
+class CarolinaOutOfFrame(ValueError):
+    """This whole package is outside the declared frame, so the run refuses.
+
+    Raised at the ENTRY POINT rather than letting the pass finish empty: a run that reads
+    3,1 GB and writes zero rows looks like a bad archive, and the operator would go
+    looking for the file instead of reading the frame. The refusal is where the reason
+    lives.
     """
 
 
@@ -100,11 +141,23 @@ def slug(value: str) -> str:
     return re.sub(r"[^a-z0-9]+", "_", value.lower()).strip("_")
 
 
+def admissible_typologies() -> str:
+    """What `--typologies` may name, as prose — including the empty-frame case."""
+    if not FRAME_TYPOLOGIES:
+        return (
+            "none: the declared frame draws on no typology of this package, so there is "
+            "no admissible value. Re-admitting one is an amendment of the frame "
+            "(preRegistration.quotaAxis.cells and multiplicity.primaryFamily), not a "
+            "flag"
+        )
+    return ", ".join(FRAME_TYPOLOGIES)
+
+
 def selected_typologies(requested: str | None) -> tuple[str, ...]:
-    """The typologies one run extracts: all three of the frame, or a named subset.
+    """The typologies one run extracts: the frame's own, or a named subset of them.
 
     Refuses on the WAY IN, naming the typology, why it is outside the frame when that is
-    written down, and the admissible names. The refusal has to happen before the archive
+    written down, and what is admissible. The refusal has to happen before the archive
     is opened: a multi-gigabyte pass that discovers on the last member that it was asked
     for the legislative branch has already spent the run.
     """
@@ -114,7 +167,7 @@ def selected_typologies(requested: str | None) -> tuple[str, ...]:
     if not asked:
         raise argparse.ArgumentTypeError(
             "--typologies was given no name; omit it to extract the whole frame "
-            f"({', '.join(FRAME_TYPOLOGIES)})"
+            f"({admissible_typologies()})"
         )
     for name in asked:
         if name not in FRAME_TYPOLOGIES:
@@ -123,7 +176,7 @@ def selected_typologies(requested: str | None) -> tuple[str, ...]:
             )
             raise argparse.ArgumentTypeError(
                 f"typology {name!r} is outside the declared frame: {reason}. "
-                f"Admissible: {', '.join(FRAME_TYPOLOGIES)}"
+                f"Admissible: {admissible_typologies()}"
             )
     return asked
 
@@ -181,7 +234,38 @@ def extract(
     consumes none of the run's quota — the whole point of an allowlist over a per-cell
     cap is that out-of-frame material cannot crowd out in-frame material. A typology
     that is neither in the frame nor in `OUT_OF_FRAME_TYPOLOGIES` refuses the run.
+
+    An EMPTY `typologies` refuses too, and that is the state the frame amendment left the
+    module in: it is the difference between "this package contributes nothing" said out
+    loud and a silent zero-row pass over 3,1 GB.
     """
+    if not typologies:
+        raise CarolinaOutOfFrame(
+            "the declared frame draws on no Carolina typology, so this extractor emits "
+            "nothing. Every typology of the package is declared outside the frame with "
+            "its measured reason: "
+            + "; ".join(
+                f"{name} — {reason}"
+                for name, reason in sorted(OUT_OF_FRAME_TYPOLOGIES.items())
+            )
+            + ". Re-admitting one is an amendment of preRegistration.quotaAxis.cells and "
+            "multiplicity.primaryFamily, and it moves every published ceiling"
+        )
+    # A caller may hand `typologies` in directly, so the frame is checked HERE and not
+    # only in the argparse type: the refusal has to hold for the function, or the
+    # command line is the only thing standing between an out-of-frame typology and a
+    # pool file that no cell counts.
+    outside = tuple(name for name in typologies if name not in FRAME_TYPOLOGIES)
+    if outside:
+        raise CarolinaOutOfFrame(
+            "asked for "
+            + ", ".join(
+                f"{name} ({OUT_OF_FRAME_TYPOLOGIES.get(name, 'undeclared')})"
+                for name in outside
+            )
+            + f", which the declared frame does not draw on (admissible: "
+            f"{admissible_typologies()})"
+        )
     material_batch = group_axes.material_batch_id(snapshot_version)
     with zipfile.ZipFile(str(input_path)) as archive:
         members: list[tuple[zipfile.ZipInfo, str]] = []
@@ -199,7 +283,7 @@ def extract(
                 raise TypologyOutOfFrame(
                     f"member {info.filename!r} belongs to the typology {found!r}, which "
                     "this extractor has no decision about: it is neither one of the "
-                    f"frame's ({', '.join(FRAME_TYPOLOGIES)}) nor one of the declared "
+                    f"frame's ({admissible_typologies()}) nor one of the declared "
                     f"exclusions ({', '.join(sorted(OUT_OF_FRAME_TYPOLOGIES))}). "
                     "Declare it in one of the two before extracting from this package"
                 )
@@ -240,21 +324,25 @@ def extract(
                                 "snapshot": SNAPSHOT,
                                 "snapshotVersion": snapshot_version,
                                 # The acquisition event: one download of the package,
-                                # shared by all three cells it feeds. The assembler
+                                # shared by every typology it feeds. The assembler
                                 # REFUSES a human candidate that names none rather
                                 # than deriving one from the stratum, so this is the
                                 # only place the value can come from.
                                 "sourceMaterialBatch": material_batch,
                                 "groupAxes": {
-                                    # The MEMBER FILE, which is the axis the plan
-                                    # fixes for Carolina. It is a real cluster and
-                                    # not a formality: one member holds many TEI
-                                    # documents drawn from one crawl of one domain,
-                                    # so they share topic, register and often
-                                    # boilerplate. 361 non-wiki members carry the
-                                    # whole Carolina contribution, so these are large
-                                    # clusters — exactly the dependence `g_<recordId>`
-                                    # erased.
+                                    # The MEMBER FILE. One member holds many TEI
+                                    # documents from one crawl of one domain, so they
+                                    # share topic, register and often boilerplate,
+                                    # and treating them as one cluster is the
+                                    # conservative reading of the dependence.
+                                    #
+                                    # It is ALSO why this package cannot carry a cell:
+                                    # the frame's three typologies held 37, 7 and 2
+                                    # member files against a floor of 300 units, so
+                                    # the coarse axis that is right for dependence is
+                                    # also too coarse for the interval. The finer axis
+                                    # the claim would need is the author, and the TEI
+                                    # header declares none on any document.
                                     "source": group_axes.known(
                                         "carolina_member_"
                                         + group_axes.axis_token(info.filename)
@@ -310,8 +398,8 @@ def main() -> None:
         type=selected_typologies,
         default=FRAME_TYPOLOGIES,
         help="lista separada por vírgula, subconjunto da moldura "
-        f"({', '.join(FRAME_TYPOLOGIES)}); omitida, extrai as três. Tipologia fora da "
-        "moldura é recusada AQUI, antes de o arquivo ser aberto",
+        f"({admissible_typologies()}); tipologia fora da moldura é recusada AQUI, antes "
+        "de o arquivo ser aberto",
     )
     args = parser.parse_args()
 

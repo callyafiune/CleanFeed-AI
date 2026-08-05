@@ -812,6 +812,32 @@ describe("licence policy agreement across manifest, review and NOTICE", () => {
     }
   });
 
+  it("the NOTICE's training-data list names every stocked source and no out-of-frame or blocked one", async () => {
+    const notice = await readFile(resolve(MODEL_DIR, "NOTICE.md"), "utf8");
+    // Only the BULLET LIST under the heading, not the whole section: the prose below it
+    // names the excluded bases on purpose, saying they are out. Reading the section
+    // whole would make the assertion pass or fail on that sentence instead of on the
+    // list a consumer reads as this model's provenance.
+    const section = notice
+      .split(/\r?\n/u)
+      .slice(notice.split(/\r?\n/u).indexOf("## Dados de treino") + 1);
+    const end = section.findIndex((line) => line.startsWith("## "));
+    const bullets = section
+      .slice(0, end === -1 ? section.length : end)
+      .filter((line) => line.startsWith("- "));
+    expect(bullets.length).toBeGreaterThan(0);
+    const list = bullets.join("\n");
+    for (const entry of V3_HUMAN_SOURCE_INVENTORY) {
+      expect(list, entry.sourceId).toContain(`\`${entry.sourceId}\``);
+    }
+    for (const entry of [
+      ...OUT_OF_FRAME_HUMAN_SOURCES,
+      ...A1_BLOCKED_HUMAN_SOURCES,
+    ]) {
+      expect(list, entry.sourceId).not.toContain(`\`${entry.sourceId}\``);
+    }
+  });
+
   it("the NOTICE lists every registered licence with exactly its obligations", async () => {
     const notice = await readFile(resolve(MODEL_DIR, "NOTICE.md"), "utf8");
     const labels = Object.values(LICENSE_OBLIGATION_LABEL_PT);
@@ -1048,18 +1074,19 @@ describe("B3 — the frozen v3 human inventory", () => {
     // manifests are gitignored build artifacts, so this is a literal and not a read.
     expect(V3_HUMAN_SOURCE_INVENTORY.map((entry) => entry.sourceId)).toEqual([
       "src_wikipedia_pt",
-      "src_carolina",
     ]);
   });
 
-  it("keeps the out-of-frame source declared instead of deleting it, and out of the stocked inventory", () => {
-    // B2W is not refused: its route and licence are admissible, and
-    // `humanSourceAdmissibility` still says so. What it lacks is a CELL — product
-    // review is not one of the four the claim is published over — so its base left
-    // `humanSources.snapshots` and its registration left this inventory while staying
-    // readable, with the axes a review really has.
+  it("keeps the out-of-frame sources declared instead of deleting them, and out of the stocked inventory", () => {
+    // Neither is refused: their routes and licences are admissible, and
+    // `humanSourceAdmissibility` still says so. What they lack is a CELL — product review
+    // is not the one the claim is published over, and the three Carolina typologies left
+    // the frame because each is a single institution that declares no author — so their
+    // bases left `humanSources.snapshots` and their registrations left this inventory
+    // while staying readable, with the axes the material really has.
     expect(OUT_OF_FRAME_HUMAN_SOURCES.map((entry) => entry.sourceId)).toEqual([
       "src_b2w",
+      "src_carolina",
     ]);
     for (const entry of OUT_OF_FRAME_HUMAN_SOURCES) {
       expect(humanSourceAdmissibility(entry).admissible, entry.sourceId).toBe(
@@ -1073,11 +1100,18 @@ describe("B3 — the frozen v3 human inventory", () => {
         V3_HUMAN_SOURCE_INVENTORY.map((stocked) => stocked.sourceId),
       ).not.toContain(entry.sourceId);
     }
-    // And the stocking rule is what refuses it, naming the snapshot: a source with
-    // no frozen base has no bytes on disk, however admissible it is.
-    expect(() =>
-      assertV3HumanInventoryAdmissible([...OUT_OF_FRAME_HUMAN_SOURCES]),
-    ).toThrow(/src_b2w draws on "b2w-reviews01": snapshot-not-frozen/u);
+    // And the stocking rule is what refuses them, naming the snapshot: a source with
+    // no frozen base has no bytes on disk, however admissible it is. Both are checked,
+    // because the amendment added the second one and a check that stopped at the first
+    // would not notice.
+    for (const entry of OUT_OF_FRAME_HUMAN_SOURCES) {
+      expect(() => assertV3HumanInventoryAdmissible([entry])).toThrow(
+        new RegExp(
+          `${entry.sourceId} draws on "${entry.snapshot}": snapshot-not-frozen`,
+          "u",
+        ),
+      );
+    }
   });
 
   it("registers every entry as a public base with a document-level cutoff field", () => {
@@ -1092,10 +1126,26 @@ describe("B3 — the frozen v3 human inventory", () => {
     }
   });
 
-  it("returns the obligations the frozen inventory imposes on the corpus", () => {
-    expect(assertV3HumanInventoryAdmissible(V3_HUMAN_SOURCE_INVENTORY)).toEqual(
-      FROZEN_CORPUS_OBLIGATIONS,
-    );
+  it("returns the obligations the frozen inventory imposes, and names the one only the policy imposes", () => {
+    const imposed = assertV3HumanInventoryAdmissible(V3_HUMAN_SOURCE_INVENTORY);
+    // The inventory's own obligations: `cc-by-sa-4.0` on the one stocked source, so
+    // attribution and share-alike.
+    expect(imposed).toEqual(["attribution", "share-alike"]);
+    // And a SUBSET of what the corpus is under, which is the fact the frame amendment
+    // created: `non-commercial` used to arrive with the Carolina licence
+    // (`cc-by-nc-sa-4.0`), and with that source out of frame NO licence in frame imposes
+    // it. It survives because `commercialUse: false` is this project's own decision — the
+    // NC regime is policy, not a licence obligation, which is exactly what position (a)
+    // says and now has nothing to lean on.
+    for (const obligation of imposed) {
+      expect(FROZEN_CORPUS_OBLIGATIONS, obligation).toContain(obligation);
+    }
+    expect(
+      FROZEN_CORPUS_OBLIGATIONS.filter(
+        (obligation) => !imposed.includes(obligation),
+      ),
+    ).toEqual(["non-commercial"]);
+    expect(PREREGISTRATION_V4.commercialUse).toBe(false);
   });
 
   it("refuses a snapshot the frozen list does not name", () => {
@@ -1381,6 +1431,27 @@ describe("B3 — a non-public authorization licence is not a public base", () =>
       assertV3HumanInventoryAdmissible(V3_HUMAN_SOURCE_INVENTORY),
     ).not.toThrow();
   });
+
+  it("makes the source inventory doc state the frozen snapshot list and the frozen m", async () => {
+    // `docs/corpus-sources.md` is the file the assembler cites as the authority for the
+    // reviewed inventory, and it is prose: nothing about it moves when the policy does.
+    // It published `src_carolina` as a frozen snapshot, and a pointer saying the frame in
+    // force was `m = 7`, through a whole amendment — both exactly inverted, with the
+    // suite green. Rendering the list and the m from the policy is what reads them.
+    const sources = await readFile(
+      resolve(REPO_ROOT, "docs/corpus-sources.md"),
+      "utf8",
+    );
+    const snapshots = JSON.stringify([
+      ...PREREGISTRATION_V4.humanSources.snapshots,
+    ]);
+    expect(sources, `renders humanSources.snapshots as ${snapshots}`).toContain(
+      `\`${snapshots}\``,
+    );
+    expect(sources).toContain(
+      `\`m = ${PREREGISTRATION_V4.multiplicity.primaryFamilySize}\``,
+    );
+  });
 });
 
 // Requirement 3: confirm and document the Python default; do NOT reimplement it.
@@ -1545,7 +1616,10 @@ describe("declaredGroupAxes on the v3 human inventory", () => {
       "source",
       "sourceMaterialBatch",
     ]);
-    expect(byId.get("src_carolina")).toEqual(["source", "sourceMaterialBatch"]);
+    // Out of frame since the amendment, so the axis authority no longer carries it: a
+    // row of it is refused by name (`SOURCE_OUT_OF_DECLARED_FRAME`) rather than having
+    // its axes checked.
+    expect(byId.has("src_carolina")).toBe(false);
     expect(byId.has("src_ptso")).toBe(false);
   });
 

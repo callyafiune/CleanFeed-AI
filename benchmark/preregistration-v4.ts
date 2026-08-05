@@ -1,10 +1,18 @@
 // The frozen pre-registration of the v1 model release, as data.
 //
-// The claim this file pre-registers is SCOPED: four declared cells (Wikipedia pt
-// dump 2022-03-01, and three Carolina typologies), one FPR ceiling per cell, recall
-// at the frozen threshold, one global calibration statistic and integrity — seven
-// hypotheses, Bonferroni at alpha_family = 0.05. There is no claim about "pt-BR text
-// in general", because without a sampling frame there is no estimand.
+// The claim this file pre-registers is SCOPED: ONE declared cell (encyclopedic text,
+// Wikipedia pt dump 2022-03-01), its FPR ceiling, recall at the frozen threshold, one
+// global calibration statistic and integrity — four hypotheses, Bonferroni at
+// alpha_family = 0.05. There is no claim about "pt-BR text in general", because
+// without a sampling frame there is no estimand.
+//
+// The frame is one cell and not four because the material of the other three did not
+// carry the provenance the claim needs: the Carolina typologies are single-institution
+// corpora (judicial = 5 hosts, all *.stf.jus.br; university = jornal.usp.br alone;
+// social media = wattpad.com alone), they declare no author on any document, and
+// between "one unit" and "38 187 units" the package offers no basis for choosing. A
+// cell whose independence cannot be established at the scale the interval assumes is
+// not a narrower claim, it is an unsupported one.
 //
 // This module is the only place the benchmark may read those values from, and
 // `benchmark/preregistration-v4.json` is the only place they are written down.
@@ -26,7 +34,7 @@
 //     (`commercialUse`, `backbone`, `threshold.probabilisticCalibrator`,
 //     `connectivity.splitUnionsOnDependencyAxis`, `parity.operationalMaximumInversions`,
 //     `powerFloors.criticalFprHumanNegatives`, ...).
-//   * LISTS pinned by `frozenList`, content and order: the core strata, the seven
+//   * LISTS pinned by `frozenList`, content and order: the core strata, the four
 //     primary hypotheses, the quota cells, the human snapshots, the hard-negative
 //     families, the profile bands, the rollout stages, the two mixed generation
 //     modes and the split-union axes. A reordered family or a dropped stratum is a
@@ -63,16 +71,22 @@ export type ResamplingUnitKind = "hierarchical" | "multiway";
 /**
  * The four rows of the frozen resampling table, named by what they estimate.
  *
- *   * `human-specificity` — FPR and specificity over human text: the cell's
- *     stratum, then author/origin document inside the drawn cell.
+ *   * `human-specificity` — FPR and specificity over human text: the author, falling
+ *     back to the origin document.
  *   * `ai-recall` — recall over AI text: generator, then prompt template, then
  *     generation batch, nested in that order.
  *   * `mixed` — statistics over mixed text: the human parent CROSSED with the edit
  *     operation, never nested, because nesting what is crossed understates the
  *     variance.
- *   * `calibration` — ECE and Brier inherit the unit of the stratum under analysis,
- *     so the row nests the stratum outside the stratum's own unit and lets the inner
- *     level fall back per row.
+ *   * `calibration` — ECE and Brier inherit the unit of the population under
+ *     analysis, so the row names that unit and lets it fall back per row.
+ *
+ * Neither human row nests the STRATUM any more, and that is the one-cell frame read
+ * onto the table: `groups.domainSource` holds a single value over the whole corpus, a
+ * level with one value draws the same unit in every replicate, and a table that names
+ * it would read as if the published bound had accounted for between-stratum variation
+ * it never saw. The level comes back with the second cell, which is the arithmetic
+ * cost of adding one.
  */
 export type ResamplingEstimandClass =
   "ai-recall" | "calibration" | "human-specificity" | "mixed";
@@ -301,6 +315,13 @@ export interface PreregistrationV4 {
    * split is a random draw, the per-cell count in `test` has a standard deviation of
    * roughly 15 lines at these sizes, and a collection that stops exactly at the
    * floor fails the composition gate on sampling noise alone.
+   *
+   * The two per-cell numbers answer different questions, and with one cell the gap
+   * between them is the whole published ceiling: the MINIMUM is the collection floor
+   * whose 20 % blind block is exactly the 300-line FPR denominator
+   * (`powerFloors.criticalFprHumanNegatives`), and the TARGET is what the collection
+   * aims at, whose blind block is `zeroEventCeiling.blindBlockLinesAtCollectionTarget`
+   * — the `n` the published ceiling under zero events is read at.
    */
   readonly collection: {
     readonly humanLinesPerCellMinimum: number;
@@ -510,11 +531,11 @@ export interface PreregistrationV4 {
     readonly plannedCertifyingMeasurements: 1;
     readonly powerInventoryUnit: "connected-components";
     /**
-     * 95 % one-sided, FAMILY-WISE over the seven primary hypotheses of ONE version.
+     * 95 % one-sided, FAMILY-WISE over the four primary hypotheses of ONE version.
      *
      * The two families are different and both are declared. WITHIN a version the
-     * seven certifying hypotheses are corrected by Bonferroni, so the 95 % is
-     * family-wise and the per-hypothesis level is 1 - 0.05/7. ACROSS versions there
+     * four certifying hypotheses are corrected by Bonferroni, so the 95 % is
+     * family-wise and the per-hypothesis level is 1 - 0.05/4. ACROSS versions there
      * is no adjustment at all — see {@link crossVersionAdjustment} — which is the
      * concession Regime 2 makes: each release certifies only its own versioned
      * hypothesis, and the claim of error control over the product's history is
@@ -536,18 +557,38 @@ export interface PreregistrationV4 {
       readonly axis: "cell";
       readonly cells: readonly string[];
       /**
-       * Four cells over TWO surviving snapshots. `ptwiki` is one snapshot;
-       * `carolina-judicial`, `carolina-social-media` and `carolina-university` are
-       * three REGISTER strata of a single snapshot, split because the three Carolina
-       * subcorpora are not comparable registers. So the axis is not "source": what
-       * it is exactly is the coarsest partition of the corpus whose cells are
-       * comparable, and pooling them would lose that resolution.
+       * ONE cell over ONE surviving snapshot, so there is nothing left to pool and
+       * this flag has no comparison to make TODAY. It stays frozen at `true` because
+       * it is the rule a second cell would arrive under: cells enter the frame only
+       * when they are comparable registers, and a release that pooled two of them
+       * would publish one rate over two populations whose resolution the frame paid
+       * for. A flag that leaves when the situation it governs is vacuous is a
+       * decision a later amendment gets to make silently.
        */
       readonly poolingIsResolutionLoss: true;
     };
+    /**
+     * The ceiling a cell with ZERO false positives publishes, at TWO values of `n`,
+     * because the two answer different questions and publishing only one of them is
+     * how a reader ends up with the wrong number.
+     *
+     *   * `adoptedFloorPerCell` / `ceilingAtAdoptedFloor` — the REFUSAL criterion. The
+     *     floor is what the composition gate enforces before sealing, so this ceiling
+     *     is the worst one the release can publish and still be sealed at all.
+     *   * `blindBlockLinesAtCollectionTarget` / `ceilingAtCollectionTarget` — the
+     *     EXPECTATION. The collection aims at `collection.humanLinesPerCellTarget`,
+     *     of which `partitionFractions.test` lands in the blind block, and that is
+     *     the `n` the model card is expected to print. It is an expectation and not a
+     *     promise: what the corpus actually holds is measured at sealing time.
+     *
+     * Both are recomputed from the formula at load, and the line count is recomputed
+     * from the target and the test fraction, so no third value can drift in.
+     */
     readonly zeroEventCeiling: {
       readonly adoptedFloorPerCell: number;
+      readonly blindBlockLinesAtCollectionTarget: number;
       readonly ceilingAtAdoptedFloor: number;
+      readonly ceilingAtCollectionTarget: number;
       readonly formula: "1 - perHypothesisAlpha^(1/n)";
       readonly unitsBelowFloorFailBeforeSealing: true;
     };
@@ -1025,19 +1066,27 @@ function derivedAlpha(multiplicity: Record<string, unknown>): number {
 }
 
 /**
- * The zero-event ceiling block, with the ceiling RECOMPUTED from
- * `1 - perHypothesisAlpha^(1/n)`.
+ * The zero-event ceiling block, with BOTH ceilings RECOMPUTED from
+ * `1 - perHypothesisAlpha^(1/n)` and the second `n` recomputed from the collection
+ * target.
  *
  * A quota with no `n` is not a pre-registration, and a quota whose `n` and whose
  * ceiling were computed at different times is worse than none — it reads as
- * arithmetic and is not. The number in the file is the one a model card will
- * publish, so it is checked against the formula the file itself names.
+ * arithmetic and is not. The numbers in the file are the ones a model card will
+ * publish, so they are checked against the formula the file itself names.
+ *
+ * Two points and not one, because the release publishes two different statements: the
+ * ceiling at the FLOOR is what the gate will still accept, and the ceiling at the
+ * COLLECTION TARGET is what the collection is sized for. Deriving only the first would
+ * leave the number the model card actually prints unchecked.
  */
 function zeroEventCeiling(
   block: Record<string, unknown>,
   perHypothesisAlpha: number,
   powerFloorSamplingUnits: number,
   powerFloorFprLines: number,
+  humanLinesPerCellTarget: number,
+  testFraction: number,
 ): PreregistrationV4["preRegistration"]["zeroEventCeiling"] {
   const path = "preRegistration.zeroEventCeiling";
   const adoptedFloorPerCell = frozenNumber(
@@ -1070,9 +1119,45 @@ function zeroEventCeiling(
       `is ${declared} but 1 - ${perHypothesisAlpha}^(1/${powerFloorFprLines}) is ${derived}`,
     );
   }
+  // The second point: the blind-block size the COLLECTION target implies, and the
+  // ceiling at it. The line count is derived from the target and the test fraction
+  // rather than written independently — a third number for the same quantity is the
+  // drift this whole block exists to refuse.
+  const targetLines = integer(
+    block,
+    path,
+    "blindBlockLinesAtCollectionTarget",
+    1,
+  );
+  const derivedTargetLines = humanLinesPerCellTarget * testFraction;
+  if (Math.abs(targetLines - derivedTargetLines) > DERIVED_TOLERANCE) {
+    throw new PreregistrationV4Error(
+      at(path, "blindBlockLinesAtCollectionTarget"),
+      `is ${targetLines} but ${humanLinesPerCellTarget} lines per cell at a test fraction of ${testFraction} is ${derivedTargetLines}: the blind block of the collection target is derived, never declared beside it`,
+    );
+  }
+  const declaredAtTarget = proportion(block, path, "ceilingAtCollectionTarget");
+  const derivedAtTarget = 1 - perHypothesisAlpha ** (1 / targetLines);
+  if (Math.abs(declaredAtTarget - derivedAtTarget) > DERIVED_TOLERANCE) {
+    throw new PreregistrationV4Error(
+      at(path, "ceilingAtCollectionTarget"),
+      `is ${declaredAtTarget} but 1 - ${perHypothesisAlpha}^(1/${targetLines}) is ${derivedAtTarget}`,
+    );
+  }
+  // The ceiling at the target is STRICTLY tighter than the ceiling at the floor, and
+  // nothing here compares them because no admissible policy can make it false: the
+  // collection floor is frozen at 1500 lines, the target is refused unless it exceeds
+  // the floor (`collection`), the `test` fraction is frozen, and `1 - alpha^(1/n)` is
+  // strictly decreasing in `n`. The relation the ordering actually rests on is the one
+  // between three separately frozen scalars — floor lines x `test` fraction = the FPR
+  // denominator — and that one is pinned by test against the shipped literals, where
+  // moving any of the three breaks the equality; a comparison here would be a branch no
+  // input reaches.
   return Object.freeze({
     adoptedFloorPerCell,
+    blindBlockLinesAtCollectionTarget: targetLines,
     ceilingAtAdoptedFloor: declared,
+    ceilingAtCollectionTarget: declaredAtTarget,
     formula: literal(block, path, "formula", "1 - perHypothesisAlpha^(1/n)"),
     unitsBelowFloorFailBeforeSealing: literal(
       block,
@@ -1111,6 +1196,24 @@ function partitionFractions(
 }
 
 /**
+ * The human-line total a collection of `quotaCells` cells at `perCellTarget` lines each
+ * comes to.
+ *
+ * The quota is PER CELL because the claim is per cell: a line collected in one cell does
+ * not stand in for a line missing from another, so the total is the per-cell target
+ * summed over the cells and never the per-cell target itself. Exported because with one
+ * declared cell the two coincide, and a derivation whose only exercised input makes it
+ * an identity is a derivation no policy can disagree with — the factor is pinned by
+ * test at more than one cell instead.
+ */
+export function derivedHumanLinesTotal(
+  perCellTarget: number,
+  quotaCells: number,
+): number {
+  return perCellTarget * quotaCells;
+}
+
+/**
  * The collection targets, with the total DERIVED from the per-cell TARGET and the
  * number of quota cells.
  *
@@ -1146,10 +1249,11 @@ function collection(
     );
   }
   const total = integer(block, path, "humanLinesTotal", 1);
-  if (total !== target * cells) {
+  const derivedTotal = derivedHumanLinesTotal(target, cells);
+  if (total !== derivedTotal) {
     throw new PreregistrationV4Error(
       at(path, "humanLinesTotal"),
-      `is ${total} but ${cells} quota cells at the TARGET of ${target} lines each is ${target * cells}; the total the corpus is sealed against is the target, not the floor of ${minimum} — sealing at the floor would refuse the very margin the target exists to create`,
+      `is ${total} but ${cells} quota cells at the TARGET of ${target} lines each is ${derivedTotal}; the total the corpus is sealed against is the target, not the floor of ${minimum} — sealing at the floor would refuse the very margin the target exists to create`,
     );
   }
   return Object.freeze({
@@ -1316,7 +1420,7 @@ function numberList(
 // The rows whose exact content AND order are the decision. Repeating them here is
 // not duplication of the JSON: it is what makes the JSON checkable, the same way
 // `literal` repeats a frozen scalar.
-// The recall floor is the bound of `recall-at-threshold`, one of the seven members of
+// The recall floor is the bound of `recall-at-threshold`, one of the four members of
 // the certifying family, so it is a DECISION and not a magnitude: 0.55 is inside the
 // (0,1) a proportion check admits and would move a gate the family publishes.
 const FROZEN_RECALL_FLOOR = 0.6;
@@ -1325,21 +1429,36 @@ const FROZEN_INTENDED_DOMAIN = "scoped-cells";
 const FROZEN_REFUSED_DATASET_ID = "ptbr-generic-v1";
 const FROZEN_CALIBRATOR_CANDIDATES = ["platt", "beta", "isotonic"] as const;
 const FROZEN_CALIBRATOR_TIE_BREAK = ["platt", "beta", "isotonic"] as const;
-// The four cells of the declared frame, as record strata. `judicial` and not
-// `institutional`: the frame names ONE Carolina typology (judicial branch), and the
-// legislative typology is outside it, so a stratum that pooled the two would name a
-// population the corpus does not draw from.
-const FROZEN_HUMAN_CORE_STRATA = [
-  "encyclopedic",
-  "judicial",
-  "social-media",
-  "university",
-] as const;
-// EMPTY: every core stratum of this frame has a declared snapshot. The list stays a
+// The ONE cell of the declared frame, and the ONE string that reaches a record's
+// `humanSourceType`.
+//
+// There used to be two spellings of this list — register words in `humanCoreStrata`
+// (`encyclopedic`, `judicial`, ...) and cell ids in `preRegistration.quotaAxis.cells`
+// (`ptwiki`, `carolina-judicial`, ...) — and neither side measured the other, so the
+// lab wrote one vocabulary while every gate read the other and counted zero lines in
+// every cell. The two are now ONE constant, and the surviving spelling is the CELL id
+// because three authorities already read it: the slice value of `CELL_FPR_AXIS`
+// (benchmark/gates.ts), this `cells` list, and the `fpr-<cell>` suffix of
+// `multiplicity.primaryFamily`. `humanCoreStrata` had no gate consumer at all, so it
+// is the side that yields.
+//
+// Shared by both fields rather than cross-checked at runtime: with one constant behind
+// both `frozenList` calls no policy can make them disagree, and a comparison no input
+// can fail reads as a defence without being one.
+const FROZEN_QUOTA_AXIS_CELLS = ["ptwiki"] as const;
+const FROZEN_HUMAN_CORE_STRATA = FROZEN_QUOTA_AXIS_CELLS;
+// EMPTY: the one core stratum of this frame has a declared snapshot. The list stays a
 // field rather than being deleted, because a future frame that loses a source has to
 // be able to say so instead of shrinking its own vocabulary.
+//
+// The three Carolina typologies are NOT here, and the parser is what settles that:
+// this list is checked to be a SUBSET of `humanCoreStrata`, so it can only name a
+// stratum the frame still declares. "Declared cell whose material is missing" and
+// "population the frame does not draw on" are different facts with different remedies
+// — the first is a collection problem, the second is an amendment — and the second
+// lives in `OUT_OF_FRAME_HUMAN_SOURCES` / `OUT_OF_FRAME_TYPOLOGIES`.
 const FROZEN_UNCOVERED_CORE_STRATA: readonly string[] = [];
-// The seven hypotheses that carry a certifying claim, and therefore the seven the
+// The four hypotheses that carry a certifying claim, and therefore the four the
 // Bonferroni correction is over: one FPR ceiling per quota cell, recall at the
 // frozen threshold, the global calibration statistic and integrity. Everything else
 // the evaluation publishes is a non-certifying diagnostic, published without
@@ -1351,20 +1470,17 @@ const FROZEN_UNCOVERED_CORE_STRATA: readonly string[] = [];
 // worst-stratum, because a worst-stratum headline punishes coverage — adding a cell
 // can only lower it — while a table of cells lets a later release add a row without
 // degrading the rows already published.
+//
+// Narrowing the frame from four cells to one TIGHTENED the published ceiling instead
+// of loosening it, which is worth stating because it reads backwards: `m` fell from 7
+// to 4, so the per-hypothesis alpha rose from 0.05/7 to 0.05/4, and the whole
+// collection budget now lands in one cell (4 000 lines instead of 1 750), so the `n`
+// of the ceiling grew while its alpha grew too.
 const FROZEN_PRIMARY_FAMILY = [
   "calibration-global",
-  "fpr-carolina-judicial",
-  "fpr-carolina-social-media",
-  "fpr-carolina-university",
   "fpr-ptwiki",
   "integrity",
   "recall-at-threshold",
-] as const;
-const FROZEN_QUOTA_AXIS_CELLS = [
-  "carolina-judicial",
-  "carolina-social-media",
-  "carolina-university",
-  "ptwiki",
 ] as const;
 const FROZEN_HARD_NEGATIVE_FAMILIES = [
   "corporate-structure",
@@ -1375,10 +1491,14 @@ const FROZEN_HARD_NEGATIVE_FAMILIES = [
   "repetitive",
 ] as const;
 const FROZEN_PROFILE_BANDS = ["50-79", "80-199", "200-plus"] as const;
-// Two snapshots. `b2w-reviews01` is not in the frame — product review is outside the
-// declared cells — and `pt-stackoverflow` is refused BY NAME in `blockedSnapshots`
-// rather than deleted, with the condition that would lift it.
-const FROZEN_HUMAN_SNAPSHOTS = ["carolina", "ptwiki"] as const;
+// ONE snapshot. `b2w-reviews01` and `carolina` are not in the frame — product review
+// and the three single-institution Carolina typologies are outside the declared cell —
+// and `pt-stackoverflow` is refused BY NAME in `blockedSnapshots` rather than deleted,
+// with the condition that would lift it. The two kinds of exit are not the same: a
+// blocked snapshot could come back on a legal disposition, an out-of-frame one only on
+// an amendment that names the cell it would add, and `OUT_OF_FRAME_HUMAN_SOURCES`
+// (benchmark/source-manifest.ts) is where the second kind stays named.
+const FROZEN_HUMAN_SNAPSHOTS = ["ptwiki"] as const;
 const FROZEN_ROLLOUT_STAGES = [
   "bundle-verified",
   "shadow",
@@ -1974,6 +2094,17 @@ export function parsePreregistrationV4(value: unknown): PreregistrationV4 {
     "scoreBasis",
     "document-raw-score",
   );
+  // Parsed here rather than inline in the policy literal below: the zero-event ceiling
+  // is derived from the collection TARGET and the `test` fraction, so both have to be
+  // validated before the block that reads them.
+  const parsedCollection = collection(root.collection, cells.length);
+  const parsedPartitionFractions = partitionFractions(
+    object(
+      preRegistration.partitionFractions,
+      "preRegistration.partitionFractions",
+      ["calA", "calB", "dev", "test", "train"],
+    ),
+  );
   const parsedThreshold = threshold(root.threshold, warningFprBudget);
   if (parsedThreshold.basis !== scoreBasis) {
     throw new PreregistrationV4Error(
@@ -2046,7 +2177,7 @@ export function parsePreregistrationV4(value: unknown): PreregistrationV4 {
         "tieToleranceAbsolute",
       ),
     },
-    collection: collection(root.collection, cells.length),
+    collection: parsedCollection,
     commercialUse: literal(root, "", "commercialUse", false),
     conformal: {
       population: literal(conformal, "conformal", "population", "cal-b-humans"),
@@ -2275,13 +2406,7 @@ export function parsePreregistrationV4(value: unknown): PreregistrationV4 {
         "frozenBefore",
         "v1-publication",
       ),
-      partitionFractions: partitionFractions(
-        object(
-          preRegistration.partitionFractions,
-          "preRegistration.partitionFractions",
-          ["calA", "calB", "dev", "test", "train"],
-        ),
-      ),
+      partitionFractions: parsedPartitionFractions,
       plannedCertifyingMeasurements: frozenNumber(
         preRegistration,
         "preRegistration",
@@ -2328,7 +2453,9 @@ export function parsePreregistrationV4(value: unknown): PreregistrationV4 {
           "preRegistration.zeroEventCeiling",
           [
             "adoptedFloorPerCell",
+            "blindBlockLinesAtCollectionTarget",
             "ceilingAtAdoptedFloor",
+            "ceilingAtCollectionTarget",
             "formula",
             "unitsBelowFloorFailBeforeSealing",
           ],
@@ -2347,6 +2474,8 @@ export function parsePreregistrationV4(value: unknown): PreregistrationV4 {
           "criticalFprHumanNegatives",
           FROZEN_FLOOR_PER_CELL,
         ),
+        parsedCollection.humanLinesPerCellTarget,
+        parsedPartitionFractions.test,
       ),
     },
     productTarget: literal(

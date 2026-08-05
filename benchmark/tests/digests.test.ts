@@ -1,7 +1,8 @@
 import { afterAll, describe, expect, it } from "vitest";
 
-import { rm } from "node:fs/promises";
-import { join } from "node:path";
+import { readFile, rm } from "node:fs/promises";
+import { dirname, join, resolve } from "node:path";
+import { fileURLToPath } from "node:url";
 
 import {
   canonicalJson,
@@ -197,10 +198,13 @@ describe("computeDatasetDigest", () => {
   });
 });
 
-// computeEvaluatorDigest reads the real evaluator source tree; several listed
-// modules belong to later Phase 2 tasks and do not exist yet, so the digest is
-// exercised against controlled temporary trees rather than the live repo.
+// computeEvaluatorDigest reads the real evaluator source tree. The RECIPE is exercised
+// against controlled temporary trees, because the properties being measured are
+// differences — one file's bytes moved, one file is absent — and a fixture is the only
+// way to move one thing at a time. The NUMBER over the live tree is a separate
+// assertion, below.
 const tempRoots: string[] = [];
+const REPO_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "../..");
 
 async function makeRoot(): Promise<string> {
   const root = await makeEvaluatorRoot();
@@ -327,6 +331,19 @@ describe("computeEvaluatorDigest", () => {
     await expect(computeEvaluatorDigest(root)).rejects.toMatchObject({
       code: "ENOENT",
     });
+  });
+
+  it("is published in the ESTADO at the value the LIVE tree hashes to", async () => {
+    // § 5.6 of `docs/ESTADO.md` is where this number is published as MEASURED, and prose
+    // does not recompute: a digest read before the last edit to an evaluator file stays
+    // in the document, agreeing with nothing, and the whole suite passes over it. Which
+    // happened. Reading it here is the only thing that makes the published value a
+    // measurement rather than a memory.
+    const digest = await computeEvaluatorDigest(REPO_ROOT);
+    const estado = await readFile(resolve(REPO_ROOT, "docs/ESTADO.md"), "utf8");
+    expect(estado, `docs/ESTADO.md must publish \`${digest}\``).toContain(
+      `\`${digest}\``,
+    );
   });
 });
 

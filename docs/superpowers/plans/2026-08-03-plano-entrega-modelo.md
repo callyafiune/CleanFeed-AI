@@ -29,7 +29,8 @@ não repete o detalhe.
 2. **Corpus novo = zero reuso do material antigo** (simplifica D5): `drop_seen` contra **os 10.000
    textos** do corpus morto, poda global. É superconjunto da graduação de § 3.4 e dispensa restrição
    por partição. As ~1.600 linhas recuperáveis são abdicadas de propósito — o material fresco é
-   abundante (38k/26k/8,8k documentos por célula) e a prova de "nada visto" fica trivial.
+   abundante (o dump de 1,96 GB rende página por página, e o piso é de 300 unidades) e a prova de
+   "nada visto" fica trivial.
 
 ---
 
@@ -37,13 +38,15 @@ não repete o detalhe.
 
 > **DECIDIDAS em 2026-08-03**, todas na direção recomendada — mais duas ratificações da etapa de
 > desenho: **G0.1-bis** (`sourceMaterialBatch` fora da união do split; unidades = documentos de origem)
-> e **G0.3-bis** (coleta ~1.750/célula, ~7.000 total, piso de 300 inalterado). Ver ESTADO.md § 3.
+> e **G0.3-bis** (coleta ~1.750/célula, ~7.000 total, piso de 300 inalterado). **Os dois números da
+> coleta estão superados pela emenda da moldura de 2026-08-05:** com uma célula são **4.000** por célula
+> e **4.000** de total, e o piso de 300 segue inalterado. Ver ESTADO.md § 3.
 
 | # | decisão | recomendação do agente | bloqueia |
 |---|---|---|---|
 | G0.1 | ratificar `domainSource` como estrato (`sourceMaterialBatch` carrega dependência) | ratificar — é a decisão de 2026-08-01, medida | Fase 1 (eixos) |
-| G0.2 | manchete: pior estrato **ou** por estrato (`m=7`, teto 1,45 %→≈1,63 % a n=300) | **por estrato** — cobertura deixa de ser punida, e melhorias futuras acrescentam linha sem degradar a manchete (§ 3.2 do ESTADO) | Fase 1 (m, α) |
-| G0.3 | teto pretendido: **1,45 %** (1.500 linhas/célula ⇒ 6.000 humanas) ou **0,55 %** (4.000/célula ⇒ 16.000) | **1,45 %** — é o piso da própria política, e 6.000 humanas cabem no material com folga; 0,55 % é alcançável numa v2 com o mesmo desenho | Fase 2 (alvos) |
+| G0.2 | manchete: pior estrato **ou** por estrato | **por estrato** — cobertura deixa de ser punida, e melhorias futuras acrescentam linha sem degradar a manchete (§ 3.2 do ESTADO) | Fase 1 (m, α) |
+| G0.3 | teto pretendido: **1,45 %** (1.500 linhas/célula ⇒ 6.000 humanas) ou **0,55 %** (4.000/célula ⇒ 16.000) | **1,45 %** — 6.000 humanas cabiam no material com folga sob quatro células. **Superado pela emenda da moldura de 2026-08-05:** com uma célula, os 0,55 % custam 4.000 linhas e não 16.000, e é esse o valor vigente | Fase 2 (alvos) |
 | B1 | parecer jurídico da posição (a) ou risco assumido por escrito | — (pessoal) | **só a Fase 7** |
 
 As Fases 1–6 correm com G0.1–G0.3 decididas; B1 só trava a publicação.
@@ -86,11 +89,14 @@ relatório da etapa 1) vai ao operador — inclui `dataset.id` proposto (`cleanf
 counts ai 4000 / mixed 2000. **Ratificado em 2026-08-04**, com duas correções que o cross-review do
 Commit C impôs à tabela:
 
-- `collection.humanLinesTotal` e `counts.human` são **7.000** e não 6.000 — quatro células vezes o ALVO de
-  1.750, não vezes o piso de 1.500. `sealDataset` compara a composição por igualdade EXATA, então derivar
-  o total do piso recusaria justamente todo corpus que carrega a margem de G0.3-bis. Medido: no piso, a
-  média de negativos humanos por célula em `test` é exatamente 300 (sd ≈ 15) e **metade dos sorteios
-  reprova** o gate de composição; no alvo são ~350, três desvios acima. Total do corpus: 13.000;
+- `collection.humanLinesTotal` e `counts.human` são o número de células vezes o **ALVO** por célula, não
+  vezes o piso de 1.500. `sealDataset` compara a composição por igualdade EXATA, então derivar o total do
+  piso recusaria justamente todo corpus que carrega a margem de G0.3-bis. Medido: no piso, a média de
+  negativos humanos por célula em `test` é exatamente 300 (sd ≈ 15) e **metade dos sorteios reprova** o
+  gate de composição; no alvo fica três desvios acima. **Os números ratificados em 2026-08-04 eram 7.000
+  humanas (4 × 1.750) e corpus de 13.000, e estão superados pela emenda da moldura de 2026-08-05:** hoje
+  são **4.000** humanas (1 × 4.000) e corpus de **10.000** — o raciocínio da derivação é o que
+  sobreviveu, não a aritmética;
 - o lado **Python** da troca não era atômico: `assemble_corpus.py` lia `rebuild-v3-policy.json` no import
   e decidia `generation.decoding` a partir dele, com o par morto **já fora** de `EVALUATOR_FILES` — isto
   é, uma autoridade que decide sem que o `evaluatorDigest` a vigie. Os dois blocos `generationLanes` são
@@ -104,13 +110,14 @@ declarado. Isso é o gate funcionando, não um defeito a contornar: dos cinco ca
 `SourceMaterialBatchV1` exige, três — `materialVersion`, `acquisitionWindow` e `evidence` — são fatos
 que **nenhum código deste repositório detém** (quando o dump foi baixado, qual o digest do arquivo), e
 sintetizá-los em `build_governance.ts` seria a proveniência inventada que R4 proíbe. O inventário
-entra na Fase 3 com **entrada declarada pelo operador** por lote de aquisição (dois lotes: ptwiki e
-carolina), e `build_governance.ts` passa a escrever manifesto **v2** no mesmo item.
+entra na Fase 3 com **entrada declarada pelo operador** por lote de aquisição — **um** lote,
+`smb_ptwiki-20220301`, desde a emenda da moldura —, e `build_governance.ts` passa a escrever manifesto
+**v2** no mesmo item.
 
 ## Fase 2 — alinhamento do lab (2–4 dias)
 
-Contra a medição, itens P/M do lab: **D0** (REGISTER/HUMAN_SOURCE → 4 células; B2W/PT.SO/legislativo
-saem de `load_humans`, governança e `HN_REGISTER` remapeado), **D2** (fallback que reinstala família
+Contra a medição, itens P/M do lab: **D0** (REGISTER/HUMAN_SOURCE → a célula da moldura; B2W, PT.SO e
+toda a Carolina saem de `load_humans`, governança e `HN_REGISTER` remapeado), **D2** (fallback que reinstala família
 held-out retirada — remover), **D6** (`--provider` restrito às 4 lanes; openai/anthropic recusados na
 argparse), **D7** (allowlist de tipologias no `extract_carolina`), **D8** (licença por documento viaja
 até o registro montado), **D1** (reserva OpenAI-OOD por política explícita do slate, não prefixo),
@@ -120,11 +127,17 @@ harness — família >2 % contaminada regenera a lane, A4).
 
 ## Fase 3 — corpus, uma vez (1–2 semanas)
 
-1. extração das 4 células (Wikipédia + 3 tipologias da Carolina), com corte de data, licença por
-   documento e `drop_seen` global. **Inclui o inventário de material** (dívida do Commit A): o operador
-   declara os dois lotes de aquisição — `materialVersion`, `acquisitionWindow`, `evidence` —, e
-   `build_governance.ts` passa a escrever manifesto **v2** com `materialBatches`. Sem isso a auditoria
-   bloqueia toda linha humana v4, e é isso que ela deve fazer;
+> **A moldura tem UMA célula** desde a emenda de 2026-08-05 (ESTADO § 2 e § 5.5): texto enciclopédico,
+> Wikipédia pt, dump 2022-03-01. As três tipologias da Carolina saíram — instituição única, zero autor
+> declarado — e o lote `smb_carolina-2_0-bea` deixa de ser necessário para esta fase.
+
+1. extração de **uma** célula (Wikipédia pt), com corte de data, licença por documento e `drop_seen`
+   global. **Inclui o inventário de material** (dívida do Commit A): o operador declara **um** lote de
+   aquisição — `smb_ptwiki-20220301`, `materialVersion` `ptwiki-20220301`, `sourceId`
+   `src_wikipedia_pt`, janela pontual `startedAt = endedAt = 1784753446707` (ratificada em 2026-08-04),
+   `evidence` com sha256 `70c9ec4f700205ab586ab86dd21a5fe62fc543a5341770c84a28c343225f8b52` e
+   1.955.910.144 bytes —, e `build_governance.ts` passa a escrever manifesto **v2** com `materialBatches`.
+   Sem isso a auditoria bloqueia toda linha humana v4, e é isso que ela deve fazer;
 2. geração IA pelas 4 lanes; famílias OpenAI **não entram** (reserva OOD); todo registro nasce
    `automated/unreviewed`; PII amostral; gate antiartefato roda **antes** do treino;
 3. montagem com preflight; **congelamento do split** via ledger (barreira das duas cegas em vigor);

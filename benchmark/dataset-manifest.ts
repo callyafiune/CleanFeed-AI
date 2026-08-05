@@ -102,38 +102,33 @@ export interface CorpusPolicy {
 }
 
 export const RELEASE_CORPUS_POLICY: CorpusPolicy = {
-  // 7.000 human lines is `collection.humanLinesTotal`: four quota cells at the
-  // per-cell TARGET of 1.750, not at the 1.500 floor. `sealDataset` compares the
-  // composition for EXACT equality, so the number written here is the number the
-  // corpus must hold — and writing the floor instead would refuse every corpus that
-  // carries the collection margin. The margin is not slack: 1.750 lines put roughly
-  // 350 into a 20 % blind block whose standard deviation is about 15, so a cell
-  // collected at the floor lands under the 300-line FPR denominator about half the
-  // time. The floor stays the gate's number; this one is the collection's.
-  counts: { human: 7_000, ai: 4_000, mixed: 2_000 },
-  // The four cells of the declared frame: Wikipedia pt, Carolina judicial branch,
-  // Carolina social media and Carolina university domains. Hard-negative families
-  // are STYLE families, not platform families, so they are untouched by this.
+  // 4.000 human lines is `collection.humanLinesTotal`: ONE quota cell at the per-cell
+  // TARGET of 4.000, not at the 1.500 floor. `sealDataset` compares the composition
+  // for EXACT equality, so the number written here is the number the corpus must hold
+  // — and writing the floor instead would refuse every corpus that carries the
+  // collection margin. The margin is not slack: 4.000 lines put 800 into a 20 % blind
+  // block, which is the `n` the published zero-event ceiling of 0,55 % is read at,
+  // while the floor's block is exactly the 300-line FPR denominator. The floor stays
+  // the gate's number; this one is the collection's.
+  counts: { human: 4_000, ai: 4_000, mixed: 2_000 },
+  // The ONE cell of the declared frame: encyclopedic text, Wikipedia pt. Hard-negative
+  // families are STYLE families, not platform families, so they are untouched by this.
   //
-  // The spelling is `preRegistration.quotaAxis.cells` and NOT the register words of
-  // `humanCoreStrata`, because coverage here is checked over the same field the
-  // per-cell ceilings are measured on (`CELL_FPR_AXIS`), and that field's vocabulary
-  // is decided by the gate that names its hypothesis `fpr-<value>` against the frozen
-  // `multiplicity.primaryFamily`. Requiring the register words would refuse every
-  // corpus the composition gate can pass, and passing this check with them would seal
-  // a corpus in which all four cells count zero lines.
+  // The spelling is `preRegistration.quotaAxis.cells`, which since the frame amendment
+  // is the ONLY spelling — `humanCoreStrata` names the same single string. Coverage
+  // here is checked over the same field the per-cell ceilings are measured on
+  // (`CELL_FPR_AXIS`), and that field's vocabulary is decided by the gate that names
+  // its hypothesis `fpr-<value>` against the frozen `multiplicity.primaryFamily`.
+  // Requiring a second vocabulary would refuse every corpus the composition gate can
+  // pass, and passing this check with it would seal a corpus in which the cell counts
+  // zero lines — which is what two spellings did once already.
   //
   // Written out rather than derived from the policy, although that is what it equals:
   // a derived list cannot disagree with its source, so nothing would notice a cell
   // renamed in one place and not the other. The agreement is held by test
   // ("requires exactly the quota cells the frozen policy has a source for"), the
   // same way the NOTICE is held to the licence registry.
-  requiredHumanSourceTypes: [
-    "carolina-judicial",
-    "carolina-social-media",
-    "carolina-university",
-    "ptwiki",
-  ],
+  requiredHumanSourceTypes: ["ptwiki"],
   requiredHardNegativeFamilies: [
     "formulaic",
     "motivational",

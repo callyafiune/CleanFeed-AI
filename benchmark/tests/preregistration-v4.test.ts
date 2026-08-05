@@ -12,6 +12,7 @@ import {
   type EvaluationItem,
 } from "../metrics.ts";
 import {
+  derivedHumanLinesTotal,
   laneRunsHarness,
   parsePreregistrationV4,
   PREREGISTRATION_V4,
@@ -123,24 +124,22 @@ describe("preregistration-v4.json", () => {
       "textual-compatibility-with-ai-generation",
     );
     expect(policy.infersAuthorship).toBe(false);
-    // The four cells of the declared frame, and the strata that name them.
-    expect(policy.humanCoreStrata).toEqual([
-      "encyclopedic",
-      "judicial",
-      "social-media",
-      "university",
+    // The ONE cell of the declared frame, and the ONE spelling of it: since the frame
+    // amendment `humanCoreStrata` and `quotaAxis.cells` are the same string, because two
+    // vocabularies for the field a gate reads is what made the lab write a corpus every
+    // gate counted as empty.
+    expect(policy.humanCoreStrata).toEqual(["ptwiki"]);
+    expect(policy.preRegistration.quotaAxis.cells).toEqual(["ptwiki"]);
+    expect([...policy.humanCoreStrata]).toEqual([
+      ...policy.preRegistration.quotaAxis.cells,
     ]);
-    // EMPTY, and that is a value: every cell of the frame has a declared snapshot.
+    // EMPTY, and that is a value: the cell of the frame has a declared snapshot. The
+    // three Carolina typologies are NOT here — they are out of frame, which is a
+    // different fact from a declared cell with no material.
     expect(policy.uncoveredCoreStrata).toEqual([]);
     expect(policy.preRegistration.quotaAxis.axis).toBe("cell");
-    expect(policy.preRegistration.quotaAxis.cells).toEqual([
-      "carolina-judicial",
-      "carolina-social-media",
-      "carolina-university",
-      "ptwiki",
-    ]);
-    // Two snapshots: B2W is outside the frame, PT.SO is refused by name.
-    expect(policy.humanSources.snapshots).toEqual(["carolina", "ptwiki"]);
+    // ONE snapshot: B2W and Carolina are outside the frame, PT.SO is refused by name.
+    expect(policy.humanSources.snapshots).toEqual(["ptwiki"]);
     expect(policy.humanSources.newDownloadsAllowed).toBe(false);
     expect(policy.humanSources.blockedSnapshots).toEqual([
       {
@@ -167,29 +166,37 @@ describe("preregistration-v4.json", () => {
       "mechanistic",
       "ecological",
     ]);
-    // The seven certifying hypotheses: one FPR ceiling per cell, recall, calibration
+    // The four certifying hypotheses: one FPR ceiling per cell, recall, calibration
     // and integrity. Content AND order, because `m` is derived from the length.
     expect(policy.multiplicity.primaryFamily).toEqual([
       "calibration-global",
-      "fpr-carolina-judicial",
-      "fpr-carolina-social-media",
-      "fpr-carolina-university",
       "fpr-ptwiki",
       "integrity",
       "recall-at-threshold",
     ]);
-    expect(policy.multiplicity.primaryFamilySize).toBe(7);
+    expect(policy.multiplicity.primaryFamilySize).toBe(4);
+    // And the family carries exactly one `fpr-<cell>` per declared cell: the gate derives
+    // its hypothesis name that way (`cellFprHypothesis` in benchmark/gates.ts), so a cell
+    // with no member is a hypothesis nothing decides and a member with no cell is a
+    // hypothesis no corpus can produce.
+    expect(
+      policy.multiplicity.primaryFamily.filter((member) =>
+        member.startsWith("fpr-"),
+      ),
+    ).toEqual(
+      policy.preRegistration.quotaAxis.cells.map((cell) => `fpr-${cell}`),
+    );
     expect(policy.multiplicity.familyAlpha).toBe(0.05);
     expect(policy.multiplicity.correction).toBe("bonferroni");
     expect(policy.multiplicity.frozenAt).toBe("G0.2");
     // Derived and conferred, recomputed here from the formula the policy names so it
     // cannot agree by being the same literal.
-    expect(policy.multiplicity.perHypothesisAlpha).toBe(0.007143);
+    expect(policy.multiplicity.perHypothesisAlpha).toBe(0.0125);
     expect(
-      Math.abs(policy.multiplicity.perHypothesisAlpha - 0.05 / 7),
+      Math.abs(policy.multiplicity.perHypothesisAlpha - 0.05 / 4),
     ).toBeLessThan(1e-6);
     expect(policy.preRegistration.zeroEventCeiling.ceilingAtAdoptedFloor).toBe(
-      0.016337,
+      0.014501,
     );
     expect(
       Math.abs(
@@ -197,6 +204,36 @@ describe("preregistration-v4.json", () => {
           (1 - policy.multiplicity.perHypothesisAlpha ** (1 / 300)),
       ),
     ).toBeLessThan(1e-6);
+    // The SECOND point of the same formula: the ceiling the collection is sized for, at
+    // the blind block the target implies. Both are recomputed here from the formula the
+    // policy names, so neither can agree by being the same literal.
+    expect(
+      policy.preRegistration.zeroEventCeiling.blindBlockLinesAtCollectionTarget,
+    ).toBe(800);
+    expect(
+      policy.preRegistration.zeroEventCeiling.ceilingAtCollectionTarget,
+    ).toBe(0.005463);
+    expect(
+      Math.abs(
+        policy.preRegistration.zeroEventCeiling.ceilingAtCollectionTarget -
+          (1 - policy.multiplicity.perHypothesisAlpha ** (1 / 800)),
+      ),
+    ).toBeLessThan(1e-6);
+    // The blind block of the target is DERIVED, not a third number: 4.000 lines per cell
+    // at a test fraction of 0.20.
+    expect(
+      policy.preRegistration.zeroEventCeiling.blindBlockLinesAtCollectionTarget,
+    ).toBe(
+      policy.collection.humanLinesPerCellTarget *
+        policy.preRegistration.partitionFractions.test,
+    );
+    // More lines can only TIGHTEN a zero-event ceiling, and publishing the pair in the
+    // wrong order is how the looser number reaches a model card.
+    expect(
+      policy.preRegistration.zeroEventCeiling.ceilingAtCollectionTarget,
+    ).toBeLessThan(
+      policy.preRegistration.zeroEventCeiling.ceilingAtAdoptedFloor,
+    );
     // The floor per cell, written twice and joined by the parser.
     expect(policy.powerFloors.criticalFprHumanNegatives).toBe(300);
     expect(policy.powerFloors.criticalRecallPositives).toBe(200);
@@ -225,11 +262,11 @@ describe("preregistration-v4.json", () => {
       policy.preRegistration.zeroEventCeiling.unitsBelowFloorFailBeforeSealing,
     ).toBe(true);
     // Collection: the floor per cell, the TARGET per cell, and the total the target
-    // implies over the four cells. The total rests on the target and not on the floor,
+    // implies over the ONE cell. The total rests on the target and not on the floor,
     // because the seal compares the composition for exact equality.
     expect(policy.collection.humanLinesPerCellMinimum).toBe(1500);
-    expect(policy.collection.humanLinesPerCellTarget).toBe(1750);
-    expect(policy.collection.humanLinesTotal).toBe(7000);
+    expect(policy.collection.humanLinesPerCellTarget).toBe(4000);
+    expect(policy.collection.humanLinesTotal).toBe(4000);
     expect(policy.collection.humanLinesTotal).toBe(
       policy.collection.humanLinesPerCellTarget *
         policy.preRegistration.quotaAxis.cells.length,
@@ -655,12 +692,12 @@ describe("parsePreregistrationV4 fails closed", () => {
     );
   });
 
-  // T2 — the family moved to m = 7 and the per-hypothesis alpha stayed at the m = 4
+  // T2 — the family moved to m = 4 and the per-hypothesis alpha stayed at the m = 7
   // value. The two are written down separately because a reader must not have to
   // divide, and this is exactly the defect that pairing exists to catch.
-  it("refuses an alpha stranded at the m = 4 value", () => {
+  it("refuses an alpha stranded at the m = 7 value", () => {
     const policy = validPolicyObject();
-    block(policy, "multiplicity").perHypothesisAlpha = 0.0125;
+    block(policy, "multiplicity").perHypothesisAlpha = 0.007143;
     let thrown: unknown = null;
     try {
       parsePreregistrationV4(policy);
@@ -722,6 +759,29 @@ describe("parsePreregistrationV4 fails closed", () => {
     expect(
       PREREGISTRATION_V4.collection.humanLinesPerCellMinimum * fractions.test,
     ).toBe(PREREGISTRATION_V4.powerFloors.criticalFprHumanNegatives);
+    // This equality is also what ORDERS the two published ceilings, and it is the ONLY
+    // thing asserted about that ordering: the floor's blind block IS the FPR denominator,
+    // the target is refused unless it exceeds the floor, and `1 - alpha^(1/n)` is strictly
+    // decreasing in `n`. So neither a parser check nor a second assertion comparing the
+    // target's blind block against the denominator can fail — both would be branches no
+    // admissible policy reaches, and this equality is what a re-derivation would break.
+  });
+
+  it("derives the collection total by SUMMING the per-cell target over the cells", () => {
+    // The factor is asserted at more than one cell because at the one cell the frame
+    // declares the derivation is an identity, and the shipped policy therefore cannot
+    // tell `target * cells` from `target`. Two and three cells can.
+    expect(derivedHumanLinesTotal(4_000, 1)).toBe(4_000);
+    expect(derivedHumanLinesTotal(4_000, 2)).toBe(8_000);
+    expect(derivedHumanLinesTotal(1_750, 4)).toBe(7_000);
+    // And the shipped total IS that derivation over the shipped cells, so the parser and
+    // this pin cannot drift apart.
+    expect(PREREGISTRATION_V4.collection.humanLinesTotal).toBe(
+      derivedHumanLinesTotal(
+        PREREGISTRATION_V4.collection.humanLinesPerCellTarget,
+        PREREGISTRATION_V4.preRegistration.quotaAxis.cells.length,
+      ),
+    );
   });
 
   // T4 — the floor per cell is ONE decision written in two places.
@@ -760,27 +820,140 @@ describe("parsePreregistrationV4 fails closed", () => {
     );
   });
 
-  // T5 — the published ceiling carried over from the v3 pre-registration, where the
-  // family was m = 4 and the floor was n = 250.
-  it("refuses the v3 ceiling under the v4 family and floor", () => {
-    const policy = validPolicyObject();
+  // T5 — the ceiling of the PREVIOUS family (m = 7 at n = 300 was 0.016337) left behind
+  // by an amendment that moved `m`. This is the number a model card prints, so it is the
+  // one an amendment is likeliest to forget.
+  it("refuses the m = 7 ceiling under the m = 4 family", () => {
+    for (const stale of [0.016337, 0.017375]) {
+      const policy = validPolicyObject();
+      (
+        block(block(policy, "preRegistration"), "zeroEventCeiling") as Record<
+          string,
+          unknown
+        >
+      ).ceilingAtAdoptedFloor = stale;
+      let thrown: unknown = null;
+      try {
+        parsePreregistrationV4(policy);
+      } catch (error) {
+        thrown = error;
+      }
+      expect(thrown, String(stale)).toBeInstanceOf(PreregistrationV4Error);
+      expect((thrown as PreregistrationV4Error).path).toBe(
+        "preRegistration.zeroEventCeiling.ceilingAtAdoptedFloor",
+      );
+      expect((thrown as Error).message).toMatch(/1 - 0\.0125\^\(1\/300\)/u);
+    }
+  });
+
+  // The ceiling at the COLLECTION TARGET is the other published number, and it is
+  // derived from a line count that is itself derived. Two ways to get it wrong, two
+  // paths named.
+  it("refuses a collection-target ceiling that is not the formula at its own n", () => {
+    const stale = validPolicyObject();
     (
-      block(block(policy, "preRegistration"), "zeroEventCeiling") as Record<
+      block(block(stale, "preRegistration"), "zeroEventCeiling") as Record<
         string,
         unknown
       >
-    ).ceilingAtAdoptedFloor = 0.017375;
+    ).ceilingAtCollectionTarget = 0.006158;
     let thrown: unknown = null;
     try {
-      parsePreregistrationV4(policy);
+      parsePreregistrationV4(stale);
     } catch (error) {
       thrown = error;
     }
     expect(thrown).toBeInstanceOf(PreregistrationV4Error);
     expect((thrown as PreregistrationV4Error).path).toBe(
-      "preRegistration.zeroEventCeiling.ceilingAtAdoptedFloor",
+      "preRegistration.zeroEventCeiling.ceilingAtCollectionTarget",
     );
-    expect((thrown as Error).message).toMatch(/1 - 0\.007143\^\(1\/300\)/u);
+    expect((thrown as Error).message).toMatch(/1 - 0\.0125\^\(1\/800\)/u);
+
+    // The line count itself: 350 was the blind block of the FOUR-cell collection target,
+    // and it is arithmetically impeccable against the wrong target.
+    const staleLines = validPolicyObject();
+    const ceiling = block(
+      block(staleLines, "preRegistration"),
+      "zeroEventCeiling",
+    ) as Record<string, unknown>;
+    ceiling.blindBlockLinesAtCollectionTarget = 350;
+    ceiling.ceilingAtCollectionTarget = 0.012442;
+    let linesThrown: unknown = null;
+    try {
+      parsePreregistrationV4(staleLines);
+    } catch (error) {
+      linesThrown = error;
+    }
+    expect(linesThrown).toBeInstanceOf(PreregistrationV4Error);
+    expect((linesThrown as PreregistrationV4Error).path).toBe(
+      "preRegistration.zeroEventCeiling.blindBlockLinesAtCollectionTarget",
+    );
+  });
+
+  // The family and the cells are ONE decision, and the amendment that moved them is the
+  // reason each of these is refused by its own path rather than by the alpha check.
+  it("refuses the m = 7 family and the four-cell quota axis", () => {
+    const sevenFamily = validPolicyObject();
+    const multiplicity = block(sevenFamily, "multiplicity");
+    multiplicity.primaryFamily = [
+      "calibration-global",
+      "fpr-carolina-judicial",
+      "fpr-carolina-social-media",
+      "fpr-carolina-university",
+      "fpr-ptwiki",
+      "integrity",
+      "recall-at-threshold",
+    ];
+    multiplicity.primaryFamilySize = 7;
+    multiplicity.perHypothesisAlpha = 0.007143;
+    let familyThrown: unknown = null;
+    try {
+      parsePreregistrationV4(sevenFamily);
+    } catch (error) {
+      familyThrown = error;
+    }
+    expect(familyThrown).toBeInstanceOf(PreregistrationV4Error);
+    expect((familyThrown as PreregistrationV4Error).path).toBe(
+      "multiplicity.primaryFamily",
+    );
+
+    const fourCells = validPolicyObject();
+    (
+      block(block(fourCells, "preRegistration"), "quotaAxis") as Record<
+        string,
+        unknown
+      >
+    ).cells = [
+      "carolina-judicial",
+      "carolina-social-media",
+      "carolina-university",
+      "ptwiki",
+    ];
+    let cellsThrown: unknown = null;
+    try {
+      parsePreregistrationV4(fourCells);
+    } catch (error) {
+      cellsThrown = error;
+    }
+    expect(cellsThrown).toBeInstanceOf(PreregistrationV4Error);
+    expect((cellsThrown as PreregistrationV4Error).path).toBe(
+      "preRegistration.quotaAxis.cells",
+    );
+
+    // And the register words the amendment collapsed: `humanCoreStrata` is the same
+    // single string now, so the old vocabulary is refused where it is written.
+    const registerWords = validPolicyObject();
+    registerWords.humanCoreStrata = ["encyclopedic"];
+    let strataThrown: unknown = null;
+    try {
+      parsePreregistrationV4(registerWords);
+    } catch (error) {
+      strataThrown = error;
+    }
+    expect(strataThrown).toBeInstanceOf(PreregistrationV4Error);
+    expect((strataThrown as PreregistrationV4Error).path).toBe(
+      "humanCoreStrata",
+    );
   });
 
   // T6 — the empty list is a VALUE the parser accepts, and the two ways of getting it
@@ -791,7 +964,9 @@ describe("parsePreregistrationV4 fails closed", () => {
     expect(() => parsePreregistrationV4(shipped)).not.toThrow();
 
     const notAStratum = validPolicyObject();
-    notAStratum.uncoveredCoreStrata = ["qa-informal"];
+    // `judicial` is the case the amendment created: a population that WAS a cell and is
+    // now out of frame is not an uncovered stratum, because it is not a stratum at all.
+    notAStratum.uncoveredCoreStrata = ["judicial"];
     let thrown: unknown = null;
     try {
       parsePreregistrationV4(notAStratum);
@@ -801,13 +976,13 @@ describe("parsePreregistrationV4 fails closed", () => {
     expect(thrown).toBeInstanceOf(PreregistrationV4Error);
     expect((thrown as PreregistrationV4Error).path).toBe("uncoveredCoreStrata");
     expect((thrown as Error).message).toMatch(
-      /names "qa-informal", which is not one of the core strata/u,
+      /names "judicial", which is not one of the core strata/u,
     );
 
-    // A real stratum declared uncovered is a different mistake: the frame has a
-    // source for all four, so the list is frozen empty.
+    // A real stratum declared uncovered is a different mistake: the frame has a source
+    // for its one cell, so the list is frozen empty.
     const realStratum = validPolicyObject();
-    realStratum.uncoveredCoreStrata = ["judicial"];
+    realStratum.uncoveredCoreStrata = ["ptwiki"];
     expect(() => parsePreregistrationV4(realStratum)).toThrow(
       /uncoveredCoreStrata is frozen at \[\]/u,
     );
@@ -877,10 +1052,10 @@ describe("parsePreregistrationV4 fails closed", () => {
   });
 
   // The mutation that MATTERS here is the one the abandoned design made by hand: a
-  // total derived from the per-cell FLOOR instead of the target. 4 x 1500 = 6000 is
-  // arithmetically impeccable and still wrong, because the seal compares the
-  // composition for exact equality and would then refuse every corpus that carries
-  // the collection margin.
+  // total derived from the per-cell FLOOR instead of the target. 1500 (and, under the
+  // four-cell frame, 6000) is arithmetically impeccable and still wrong, because the seal
+  // compares the composition for exact equality and would then refuse every corpus that
+  // carries the collection margin.
   it("refuses a total taken over the per-cell FLOOR instead of the target", () => {
     const policy = validPolicyObject();
     block(policy, "collection").humanLinesTotal = 6000;
@@ -895,7 +1070,7 @@ describe("parsePreregistrationV4 fails closed", () => {
       "collection.humanLinesTotal",
     );
     expect((thrown as Error).message).toMatch(
-      /at the TARGET of 1750 lines each is 7000/u,
+      /at the TARGET of 4000 lines each is 4000/u,
     );
   });
 
@@ -908,13 +1083,13 @@ describe("parsePreregistrationV4 fails closed", () => {
   });
 
   // Equality, not just being under: a target EQUAL to the floor keeps every
-  // arithmetic identity intact (4 x 1500 = 6000) and erases the margin silently,
+  // arithmetic identity intact (1 x 1500 = 1500) and erases the margin silently,
   // which is the direction a re-derivation actually drifts in.
   it("refuses a collection target that merely EQUALS the floor", () => {
     const policy = validPolicyObject();
     const collection = block(policy, "collection");
     collection.humanLinesPerCellTarget = 1500;
-    collection.humanLinesTotal = 6000;
+    collection.humanLinesTotal = 1500;
     let thrown: unknown = null;
     try {
       parsePreregistrationV4(policy);
@@ -953,23 +1128,37 @@ describe("the resampling table names v4 axes and metrics.ts accepts them", () =>
     );
   });
 
-  it("keeps domainSource legal as a table axis while it is no longer a union axis", () => {
-    // Two different questions. `domainSource` is the cell's stratum and the outer
-    // level of the human rows; it stopped being an axis the SPLITTER unions on, which
-    // is what `connectivity.splitUnionAxes` says.
+  it("names no degenerate stratum level now that the frame has one cell", () => {
+    // A level with ONE value draws the same unit in every replicate: it adds no
+    // variance, and a table that named it would read as if the published bound had
+    // accounted for between-stratum variation it never saw. With one declared cell
+    // `groups.domainSource` is exactly that, so neither human row nests it.
+    expect(PREREGISTRATION_V4.preRegistration.quotaAxis.cells).toHaveLength(1);
     for (const estimand of ["human-specificity", "calibration"] as const) {
-      expect(
-        PREREGISTRATION_V4.resampling.estimandClasses[estimand].levels[0].axis,
-      ).toBe("groups.domainSource");
+      const levels =
+        PREREGISTRATION_V4.resampling.estimandClasses[estimand].levels;
+      expect(levels.map((level) => level.axis)).not.toContain(
+        "groups.domainSource",
+      );
+      // ...and the row still declares a unit: dropping the degenerate level must not
+      // leave the estimand resampling independent rows, which is what
+      // `fallbackToIndependentRows: false` refuses.
+      expect(levels.length).toBeGreaterThan(0);
     }
+    // The unit that remains is the author, falling back to the origin document — the
+    // dependence the corpus actually has inside the cell.
+    expect(
+      PREREGISTRATION_V4.resampling.estimandClasses["human-specificity"]
+        .levels[0],
+    ).toEqual({ axis: "groups.author", fallbacks: ["groups.source"] });
+    // `domainSource` is still a REPORTED axis and still not a union axis: what changed is
+    // the table, not the axis vocabulary.
+    expect([...PREREGISTRATION_V4.connectivity.reportedAxes]).toContain(
+      "domainSource",
+    );
     expect([...PREREGISTRATION_V4.connectivity.splitUnionAxes]).not.toContain(
       "domainSource",
     );
-    // The human outer level is the cell, and the inner unit is the author inside it.
-    expect(
-      PREREGISTRATION_V4.resampling.estimandClasses["human-specificity"]
-        .levels[1],
-    ).toEqual({ axis: "groups.author", fallbacks: ["groups.source"] });
   });
 
   it("builds the design of every mapped estimand instead of throwing on a v4 axis", () => {

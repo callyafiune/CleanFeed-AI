@@ -173,10 +173,12 @@ export interface BlockedSplitPolicy {
  * `domainSource` and `sourceMaterialBatch` are excluded for a stronger reason, and it
  * is arithmetic rather than taste. There is ONE acquisition event per source and one
  * stratum per quota cell, so either axis unions a whole cell into a single
- * indivisible component. Four cells then make every human partition fraction a
- * multiple of ~25%, `dev`'s 0.05 target is unreachable by construction, every corpus
- * is refused with `SplitConstraintError`, and a floor counted in independent units
- * reads 1 per cell forever. Both axes still carry dependence — `sourceMaterialBatch`
+ * indivisible component. With the one cell the frame declares that component IS the
+ * whole `human` class, so its fraction is 100% of the class, `dev`'s 0.05 target is
+ * unreachable by construction, every corpus is refused with `SplitConstraintError`, and
+ * a floor counted in independent units reads 1 per cell forever. More cells only soften
+ * the arithmetic without repairing it — four would read ~25% each, still above `dev`'s
+ * target plus tolerance. Both axes still carry dependence — `sourceMaterialBatch`
  * is the declared unit of dependence BETWEEN acquisitions — and they carry it as axes
  * of REGISTRATION, MANIFEST and LEDGER, published as an inventory by the audit
  * (`REPORTED_GROUP_AXES` in benchmark/split-audit.ts). Neither may be unioned on

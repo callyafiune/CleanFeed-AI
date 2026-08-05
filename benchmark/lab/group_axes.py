@@ -319,10 +319,10 @@ def identity_of(axis_value: dict | str | None) -> str | None:
 # benchmark/source-manifest.ts, and the two are keyed at DIFFERENT granularities on
 # purpose — this table by domain source (one typology), the authority by `sourceId`
 # (one base). The difference is not cosmetic: `sourceMaterialBatch` is an ACQUISITION
-# EVENT, one download of the Carolina package covers the three typologies below, so the
+# EVENT, one download of the Carolina package covers every typology below, so the
 # axis is a fact about the base and has no per-typology value to state here. Only the
 # authority is read when a corpus is refused; adding the axis to these rows would
-# fabricate three acquisitions where the inventory records one.
+# fabricate one acquisition per typology where the inventory records one in total.
 #
 # WHY C2 DID NOT TURN IT INTO A REFUSAL, since the table was sitting right here:
 #   * refusing a row for `unknown` on a declared axis would contradict R6 outright.

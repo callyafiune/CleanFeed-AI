@@ -69,13 +69,13 @@ O `sealDataset` só produz um audit se a composição bater **exatamente**:
 
 | Requisito | Valor | Verificado por |
 | --- | --- | --- |
-| Total | **13.000** registros | `sealDataset` |
-| `human` | **7.000** (4 células x o ALVO de 1.750/célula; o piso de 1.500/célula é o número do gate, não o do selo) | contagem exata |
+| Total | **10.000** registros | `sealDataset` |
+| `human` | **4.000** (1 célula x o ALVO de 4.000; o piso de 1.500/célula é o número da coleta, e os 300 do gate são os 20 % dele que caem no bloco cego) | contagem exata |
 | `ai` | **4.000** | contagem exata |
 | `mixed` | **2.000** | contagem exata |
 | Idioma | `pt-BR` (todos) | schema + manifest |
 | Plataforma / domínio | tokens livres por registro (ex.: `generic`); manifest: `datasetId: "cleanfeed-ptbr-cells-v1"`, `intendedDomain: "scoped-cells"` | schema + manifest |
-| Tipos de fonte humana | pelo menos 1 registro de cada: `encyclopedic` (Wikipédia), `social-media` (Carolina social media), `university` (Carolina university domains), `judicial` (Carolina judicial branch). **`judicial` e não `institutional`**: a moldura nomeia UMA tipologia da Carolina, e a legislativa está fora dela — um estrato que juntasse as duas nomearia uma população de que o corpus não amostra. **`qa-informal` saiu com A1 (2026-07-31)** — o SE-PT era sua única fonte, e exigi-lo tornaria o selo de release insatisfazível em vez de estrito | `DATASET_COVERAGE_INVALID` |
+| Tipos de fonte humana | pelo menos 1 registro de **`ptwiki`** (Wikipédia pt, dump 2022-03-01) — a moldura tem UMA célula desde a emenda de 2026-08-05, e a grafia é a do `quotaAxis.cells`, que é o mesmo campo que os tetos por célula medem. As três tipologias da Carolina saíram da moldura (instituição única, zero autor declarado); `qa-informal` saiu com A1 (2026-07-31) | `DATASET_COVERAGE_INVALID` |
 | Famílias hard-negative | pelo menos 1 humano de cada: `formulaic`, `motivational`, `highly-polished`, `repetitive`, `non-native`, `corporate-structure` | `DATASET_COVERAGE_INVALID` |
 | Famílias de gerador held-out | cada família em `heldOutGeneratorFamilies` precisa de **≥ 200** positivos elegíveis (`ai`/`mixed`) e **não pode** aparecer em nenhum registro `human` | `DATASET_COVERAGE_INVALID` |
 | Revisores por registro | **≥ 2 distintos**; adjudicador (se `adjudicated`) independente dos dois | `DATASET_REVIEW_INVALID` |
@@ -307,8 +307,9 @@ que um de `cal-B` por desenho.
 Consequência prática: um registro `mixed` que aponta para um pai `human` via
 `groups.derivationRoot` deve compartilhar o bloco temporal do pai.
 
-Com 7.000 humanos, os 20% do bloco de teste dão **1.400 negativos humanos** —
-cerca de 350 por célula, contra o piso pré-registrado de 300. O `split` PUBLICA
+Com 4.000 humanos numa célula, os 20% do bloco de teste dão **800 negativos
+humanos** na célula, contra o piso pré-registrado de 300 — e é esse n que o teto
+publicado sob zero eventos (0,55 %) lê. O `split` PUBLICA
 esse número em `audit.testHumanNegatives` e **não reprova** por ele: quem aplica
 piso de poder é o gate de composição do E3, sobre as DUAS unidades pré-registradas
 (linhas-registro negativas humanas E componentes conectados independentes, por
@@ -741,11 +742,13 @@ partição e compara fração POR CLASSE:**
    inclui ao menos um componente — quem limita a menor partição é o **menor** componente, não o
    maior.
 
-**Por que a classe, e não só o corpo.** No corpus ratificado (7.000 humanas + 4.000 ai + 2.000
+**Por que a classe, e não só o corpo.** No corpus ratificado (4.000 humanas + 4.000 ai + 2.000
 mistas) a metade gerada é fina e derruba toda fração agregada: uma metade **humana** degenerada
-em um componente por célula vale 13,46 % do corpo — cabe em `train` com folga — e ainda assim
-`dev` precisa de 5 % da classe `human` e só existem blocos de 25 % dela. Medido: sem a
-comparação por classe esse corpo PASSA. O escopo do corpo também não é dedutível dos escopos de
+em um componente por célula vale **40 %** do corpo — cabe em `train` (45 % ± 2 pp) — e ainda
+assim `dev` precisa de 5 % da classe `human` e, com **uma** célula, o único bloco dela vale
+**100 %** da classe. Medido: sem a comparação por classe esse corpo PASSA
+(`test_com_UMA_celula_a_recusa_e_da_CLASSE_humana_e_nao_do_corpo` em
+`benchmark/lab/test_connectivity_feasibility.py`). O escopo do corpo também não é dedutível dos escopos de
 classe: um corpo cujos componentes são todos grossos no agregado, com componente fino em cada
 classe, satisfaz todas as condições por classe e não preenche a menor partição. Os dois estão
 escritos porque nenhum implica o outro.

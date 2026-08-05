@@ -18,13 +18,14 @@ agregado e cada classe —, e vale escrever as duas porque a primeira e a frouxa
 Nenhuma das duas e suficiente: a atribuicao completa e soma de subconjuntos, e o preflight
 declara que nao a decide.
 
-O INVENTARIO QUE EXISTE e um lote de aquisicao por fonte: um download do dump da Wikipedia,
-um download do pacote da Carolina — e as tipologias da Carolina sao particoes desse unico
-pacote, nao aquisicoes separadas. Um fixture com cinco lotes por dominio descreveria material
-que ninguem tem, e usa-lo para provar viabilidade seria provar sobre um corpus imaginario. Por
-isso as duas direcoes abaixo rodam sobre o MESMO fixture de lote-unico-por-celula: com as
+O INVENTARIO QUE EXISTE e um lote de aquisicao por fonte, e a moldura declara UMA fonte
+estocada: um download do dump da Wikipedia. Um fixture com um lote por dominio descreveria
+material que ninguem tem, e usa-lo para provar viabilidade seria provar sobre um corpus
+imaginario — e por isso as celulas do fixture sao DERIVADAS do register do montador, nao
+retypadas. As duas direcoes abaixo rodam sobre o MESMO corpo de lote-unico-por-celula: com as
 chaves v4 ele e viavel, e devolver `domainSource` OU `sourceMaterialBatch` a uniao o torna
-inviavel.
+inviavel. Com uma celula as duas direcoes colapsam no MESMO componente — um estrato, uma
+aquisicao —, e e essa coincidencia que faz o corpo inteiro virar um bloco indivisivel.
 """
 
 from __future__ import annotations
@@ -51,17 +52,27 @@ from assemble_corpus import (  # noqa: E402
 # A menor particao do desenho de cinco (45/5/10/20/20).
 MENOR_PARTICAO = 0.05
 
-# As quatro celulas da moldura e o lote de aquisicao de cada uma. Carolina aparece tres vezes
-# com o MESMO lote porque um download do pacote e um evento de aquisicao, e as tipologias sao
-# particoes dele.
-CELULAS: tuple[tuple[str, str], ...] = (
-    ("ptwiki_lead", "smb_ptwiki_20220301"),
-    ("carolina_judicial_branch", "smb_carolina_2_0"),
-    ("carolina_social_media", "smb_carolina_2_0"),
-    ("carolina_university_domains", "smb_carolina_2_0"),
+# O lote de AQUISICAO de cada fonte humana estocada: um download por fonte, que e o
+# inventario que existe. Nao ha lote por dominio, e e por isso que devolver o lote a uniao
+# funde celulas em vez de as separar.
+LOTE_POR_FONTE = {
+    "src_wikipedia_pt": "smb_ptwiki_20220301",
+}
+
+# As celulas da moldura e o lote de cada uma, DERIVADAS do register do montador em vez de
+# retypadas. Uma lista a parte aqui e exatamente o erro que o docstring acima declara nao
+# cometer: ela sobrevive a uma emenda da moldura, e o fixture passa a provar viabilidade
+# sobre celulas que nenhuma autoridade declara.
+CELULAS: tuple[tuple[str, str], ...] = tuple(
+    (chave, LOTE_POR_FONTE[assemble_corpus.HUMAN_SOURCE[chave]])
+    for chave in sorted(assemble_corpus.REGISTER)
 )
 
-LINHAS_POR_CELULA = 10
+# Quarenta linhas no CORPO, e nao por celula. Com uma celula, dez linhas dariam componentes
+# de 10 % cada, e 10 % nao cabe na particao de 5 %: o fixture VIAVEL recusaria por tamanho de
+# corpo em vez de medir granularidade, que e a coisa errada de medir aqui.
+LINHAS_NO_CORPO = 40
+LINHAS_POR_CELULA = LINHAS_NO_CORPO // len(CELULAS)
 
 
 def linha(rec_id: str, dominio: str, autor: str, lote: str) -> dict:
@@ -129,7 +140,7 @@ def linha_gerada(rec_id: str, semente: str, estrato: str) -> dict:
 
 
 def corpo_de_lote_unico() -> list[dict]:
-    """As quatro celulas, um evento de aquisicao por fonte, cada linha em seu documento."""
+    """As celulas da moldura, um evento de aquisicao por fonte, cada linha em seu documento."""
     return [
         linha(f"r{c}_{i}", dominio, f"a_aut_{c}_{i}", lote)
         for c, (dominio, lote) in enumerate(CELULAS)
@@ -180,6 +191,31 @@ class ConectividadeSobAsChavesV4(unittest.TestCase):
         # O eixo diagnostico nunca une: reextrair o mesmo dump nao produz material novo.
         self.assertNotIn("extractionRun", SPLIT_GROUP_KEYS)
 
+    def test_o_fixture_roda_sobre_as_celulas_DA_MOLDURA(self):
+        """Guarda de estado do proprio fixture: as celulas vem do register, nao de uma lista a parte.
+
+        Sem esta assercao, uma emenda da moldura deixa o fixture inteiro medindo celulas
+        aposentadas e a suite verde — foi o estado em que este arquivo ficou quando as tres
+        tipologias da Carolina sairam da moldura.
+        """
+        self.assertEqual(
+            tuple(chave for chave, _ in CELULAS),
+            tuple(sorted(assemble_corpus.REGISTER)),
+        )
+        self.assertEqual(
+            {lote for _, lote in CELULAS},
+            {LOTE_POR_FONTE[fonte] for fonte in assemble_corpus.HUMAN_SOURCE.values()},
+        )
+        # E o lote e o de uma fonte ESTOCADA, uma entrada por fonte que o montador le: uma
+        # fonte fora da moldura nao tem bytes em disco para o fixture descrever.
+        self.assertEqual(
+            sorted(LOTE_POR_FONTE),
+            sorted(set(assemble_corpus.HUMAN_SOURCE.values())),
+        )
+        # O corpo tem de ser fino o bastante para a menor particao, senao o caso VIAVEL
+        # recusaria por tamanho de corpo e nao mediria granularidade alguma.
+        self.assertLess(1 / LINHAS_NO_CORPO, MENOR_PARTICAO)
+
     def test_o_fixture_de_lote_unico_e_VIAVEL_sob_v4(self):
         """Quarenta linhas, quarenta componentes: 2,5% cada, e as duas condicoes passam.
 
@@ -188,12 +224,12 @@ class ConectividadeSobAsChavesV4(unittest.TestCase):
         """
         registros = corpo_de_lote_unico()
         self.assertEqual(len(registros), len(CELULAS) * LINHAS_POR_CELULA)
-        # Nao vacuo: o estrato e o lote realmente carregam UM valor por celula, e o lote da
-        # Carolina cobre TRES celulas.
+        # Nao vacuo: o estrato e o lote realmente carregam UM valor por celula, e o numero de
+        # lotes e o numero de AQUISICOES, que pode ser menor que o de celulas.
         estratos = {r["groups"]["domainSource"]["id"] for r in registros}
         lotes = {r["groups"]["sourceMaterialBatch"]["id"] for r in registros}
-        self.assertEqual(len(estratos), 4)
-        self.assertEqual(len(lotes), 2)
+        self.assertEqual(len(estratos), len(CELULAS))
+        self.assertEqual(len(lotes), len({lote for _, lote in CELULAS}))
 
         quantos, maior = maior_componente(registros)
         self.assertEqual(quantos, len(registros))
@@ -202,10 +238,11 @@ class ConectividadeSobAsChavesV4(unittest.TestCase):
         assert_components_can_fill_five_partitions(registros)
 
     def test_devolver_o_ESTRATO_a_uniao_torna_o_mesmo_corpo_INVIAVEL(self):
-        """Um componente por celula: 25% cada, e nenhum cabe na particao de 5%.
+        """Um componente por celula: com a moldura de uma celula, o corpo INTEIRO num bloco.
 
-        A recusa nomeia granularidade e nao tamanho de corpo, porque aumentar o corpo mantendo
-        quatro celulas nao muda fracao alguma.
+        A recusa nomeia fracao e nao tamanho de corpo, porque aumentar o corpo mantendo o
+        numero de celulas nao muda fracao alguma. Com uma celula o unico componente vale 100 %,
+        entao a condicao violada primeiro e a do MAIOR — nao ha particao que o receba inteiro.
         """
         registros = corpo_de_lote_unico()
         with mock.patch.object(
@@ -214,39 +251,57 @@ class ConectividadeSobAsChavesV4(unittest.TestCase):
             SPLIT_GROUP_KEYS + ("domainSource",),
         ):
             quantos, maior = maior_componente(registros)
-            self.assertEqual(quantos, 4)
-            self.assertAlmostEqual(maior, 0.25, places=6)
+            self.assertEqual(quantos, len(CELULAS))
+            self.assertAlmostEqual(maior, 1 / len(CELULAS), places=6)
             self.assertGreater(min_frac(registros), MENOR_PARTICAO + 0.02)
             with self.assertRaises(UnsplittableCorpus) as erro:
                 assert_components_can_fill_five_partitions(registros)
-        self.assertIn("MENOR componente", str(erro.exception))
-        self.assertIn("granularidade", str(erro.exception))
+        self.assertIn("maior componente", str(erro.exception))
 
     def test_devolver_o_LOTE_a_uniao_torna_o_mesmo_corpo_INVIAVEL(self):
-        """Um componente por AQUISICAO: 25% e 75%, e o de 75% nao cabe em particao alguma.
+        """Um componente por AQUISICAO, e com uma fonte estocada isso e o corpo inteiro.
 
-        Esta e a direcao que o inventario real decide: as tres tipologias da Carolina saem do
-        mesmo download, entao o lote as funde numa celula unica de 75% — pior que o estrato, e
-        nao melhor.
+        Esta e a direcao que o inventario real decide: um download por fonte, e as tipologias
+        de um pacote sao particoes dele e nao aquisicoes separadas. Com uma fonte em moldura o
+        lote nao pode fundir MENOS que o estrato — no maximo tanto —, e e por isso que a
+        direcao continua escrita mesmo coincidindo com a de cima.
 
-        Este corpo viola AS DUAS condicoes necessarias (o menor componente tambem vale 25%, e
-        25% > 5% + 2%), e o preflight relata a PRIMEIRA que checa. Entao o que se afirma aqui
-        e qual das duas roda primeiro; o ramo do maior fica isolado em
-        `test_recusa_SO_pelo_maior_componente`, que e o unico corpo onde o do menor nao pode
-        disparar.
+        A recusa e a do MAIOR: o unico componente vale 100 %, e nenhuma particao o recebe
+        inteiro. O ramo do MENOR fica isolado em
+        `test_recusa_granularidade_grosseira_pelo_MENOR_componente`, que e um corpo onde o do
+        maior nao pode disparar.
         """
         registros = corpo_de_lote_unico()
+        aquisicoes = len({lote for _, lote in CELULAS})
         with mock.patch.object(
             assemble_corpus,
             "SPLIT_GROUP_KEYS",
             SPLIT_GROUP_KEYS + ("sourceMaterialBatch",),
         ):
             quantos, maior = maior_componente(registros)
-            self.assertEqual(quantos, 2)
-            self.assertAlmostEqual(maior, 0.75, places=6)
+            self.assertEqual(quantos, aquisicoes)
+            self.assertLessEqual(quantos, len(CELULAS))
+            self.assertAlmostEqual(maior, 1 / aquisicoes, places=6)
             with self.assertRaises(UnsplittableCorpus) as erro:
                 assert_components_can_fill_five_partitions(registros)
         self.assertIn("maior componente", str(erro.exception))
+
+    def test_devolver_o_ESTRATO_colapsa_a_CLASSE_gerada_tambem(self):
+        """O estrato na uniao nao e defeito so do lado humano: a lane tambem e um valor unico.
+
+        Sem esta medicao a recusa acima se leria como propriedade da celula humana, e devolver
+        o estrato a uniao pareceria seguro para o corpus gerado. Sessenta linhas geradas de uma
+        lane, cada uma com template, versao e lote proprios — grao fino sob as chaves v4 —,
+        caem num componente unico quando `domainSource` une.
+        """
+        geradas = [linha_gerada(f"g{i}", f"ausente_{i}", "ai_agy") for i in range(60)]
+        self.assertEqual(len(componentes(geradas)), len(geradas))
+        with mock.patch.object(
+            assemble_corpus,
+            "SPLIT_GROUP_KEYS",
+            SPLIT_GROUP_KEYS + ("domainSource",),
+        ):
+            self.assertEqual(len(componentes(geradas)), 1)
 
     def test_o_lote_de_GERACAO_continua_unindo(self):
         """O eixo de lote que sobrou na uniao une de verdade — senao a troca perdeu um eixo.
@@ -306,6 +361,36 @@ class PreflightDeViabilidade(unittest.TestCase):
         self.assertIn("MENOR componente", str(erro.exception))
         self.assertIn("granularidade", str(erro.exception))
 
+    def test_com_UMA_celula_a_recusa_e_da_CLASSE_humana_e_nao_do_corpo(self):
+        """A comparacao POR CLASSE, sob a moldura de uma celula, e sem tocar a lista de uniao.
+
+        Este e o corpo caro: a metade gerada de grao fino derruba toda fracao agregada, entao a
+        comparacao so agregada PASSA e a degeneracao humana atravessa. Quarenta linhas humanas
+        compartilhando autor — `author` E eixo de uniao v4, logo a degeneracao e alcancavel sem
+        mock nenhum — mais sessenta geradas finas: no CORPO o maior componente vale 40 %, que
+        cabe em `train` (45 % ± 2 %), e na classe `human` vale 100 %, que nao cabe em particao
+        alguma. Com uma celula em moldura, um componente por celula E a classe humana inteira.
+        """
+        humanas = [
+            linha(f"h{i}", CELULAS[0][0], "a_aut_unico", CELULAS[0][1])
+            for i in range(40)
+        ]
+        geradas = [linha_gerada(f"g{i}", f"ausente_{i}", "ai_agy") for i in range(60)]
+        registros = humanas + geradas
+        # O escopo AGREGADO passa nas duas condicoes: 40 % cabe no maior alvo, e o menor
+        # componente vale 1 %, que cabe no menor.
+        _, maior_no_corpo = maior_componente(registros)
+        self.assertAlmostEqual(maior_no_corpo, 0.40, places=6)
+        self.assertLess(maior_no_corpo, max(FIVE_TARGETS) + 0.02)
+        self.assertLess(min_frac(registros), MENOR_PARTICAO)
+        # E na classe `human` o mesmo componente e a classe inteira.
+        _, maior_na_classe = maior_componente(humanas)
+        self.assertAlmostEqual(maior_na_classe, 1.0, places=6)
+        with self.assertRaises(UnsplittableCorpus) as erro:
+            assert_components_can_fill_five_partitions(registros)
+        self.assertIn('da classe "human"', str(erro.exception))
+        self.assertIn("maior componente", str(erro.exception))
+
     def test_recusa_componente_que_nao_cabe_em_particao_alguma(self):
         """Um componente de 60% não cabe nem no maior alvo (45% + 0,02).
 
@@ -356,8 +441,8 @@ class PreflightDeViabilidade(unittest.TestCase):
         """A guarda tem CHAMADOR DE PRODUCAO, e nao so testes.
 
         `assign_partitions` e o caminho da montagem real. Sem esta assercao, apagar a chamada
-        de la deixaria a suite inteira verde e o diagnostico de granularidade existiria apenas
-        no benchmark — o operador veria, no lado Python, so "fracao por classe".
+        de la deixaria a suite inteira verde e o diagnostico de componente existiria apenas no
+        benchmark — o operador veria, no lado Python, so "fracao por classe".
 
         O corpo e um componente por celula: a guarda estoura ANTES de qualquer carimbo, entao
         nada aqui escreve bloco em registro algum.
@@ -370,7 +455,7 @@ class PreflightDeViabilidade(unittest.TestCase):
         ):
             with self.assertRaises(UnsplittableCorpus) as erro:
                 assemble_corpus.assign_partitions(registros, set())
-        self.assertIn("granularidade", str(erro.exception))
+        self.assertIn("maior componente", str(erro.exception))
         self.assertNotIn("block", registros[0])
 
 

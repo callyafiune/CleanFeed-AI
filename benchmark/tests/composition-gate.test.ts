@@ -29,6 +29,10 @@ import {
 } from "./helpers/v3-record-fixture.ts";
 
 const CELLS = PREREGISTRATION_V4.preRegistration.quotaAxis.cells;
+// A `humanSourceType` value the frame does NOT declare, and deliberately the register
+// word the frame amendment retired: it is the spelling a corpus written against the old
+// vocabulary would carry, which is the mismatch that once counted every cell as empty.
+const UNDECLARED_KEY = "encyclopedic";
 const LINE_FLOOR = PREREGISTRATION_V4.powerFloors.criticalFprHumanNegatives;
 const UNIT_FLOOR = PREREGISTRATION_V4.powerFloors.samplingUnits;
 const LINE_CAP = PREREGISTRATION_V4.collection.maximumLinesPerOriginDocument;
@@ -176,7 +180,10 @@ function splitWith(
 ): DatasetSplit<BenchmarkRecord> {
   const filler = (partition: string): BenchmarkRecord[] => [
     humanNegative(`h_${partition}_0`, CELLS[0], `th_doc_${partition}_0`),
-    humanNegative(`h_${partition}_1`, CELLS[1], `th_doc_${partition}_1`),
+    // A key with NO quota in every partition: the gate has to ignore it wherever it
+    // appears, and a fixture that never carried one could not tell "ignored" from
+    // "absent".
+    humanNegative(`h_${partition}_1`, UNDECLARED_KEY, `th_doc_${partition}_1`),
     aiPositive(`a_${partition}_0`),
   ];
   return {
@@ -285,7 +292,7 @@ describe("composition gate — the three bounds per quota cell in test", () => {
 
   // T10, segunda metade: linhas no piso e unidades abaixo dele reprova POR UNIDADES.
   it("refuses on units when the lines reach the floor and the documents do not", () => {
-    const clustered = CELLS[2];
+    const clustered = CELLS[0];
     const units = 250;
     const report = auditReleaseComposition(
       splitWith([
@@ -324,7 +331,7 @@ describe("composition gate — the three bounds per quota cell in test", () => {
 
   // A regra `collection.maximumLinesPerOriginDocument`: os dois pisos NÃO a pegam.
   it("refuses a cell whose lines are sliced two to an origin document, with both floors clear", () => {
-    const sliced = CELLS[1];
+    const sliced = CELLS[0];
     const documents = LINE_FLOOR;
     const report = auditReleaseComposition(
       splitWith([
@@ -367,7 +374,7 @@ describe("composition gate — the three bounds per quota cell in test", () => {
 
   // O denominador é a população ELEGÍVEL: abaixo do piso de palavras o escore abstém.
   it("does not count a line the measurement abstains on, and says how many it dropped", () => {
-    const thin = CELLS[3];
+    const thin = CELLS[0];
     const abstained = 100;
     const report = auditReleaseComposition(
       splitWith([
@@ -512,24 +519,36 @@ describe("composition gate — the three bounds per quota cell in test", () => {
     ).toBe(2);
   });
 
-  it("reads a component that spans two cells as ONE unit inside each of them", () => {
-    const [first, second] = [CELLS[0], CELLS[1]];
+  it("reads a component that spans two partitions as ONE unit inside the blind block", () => {
+    const cell = CELLS[0];
     const shared = "th_doc_shared";
     const coauthor = "au_hmac_shared";
-    // r1 and r3 share NO axis with each other: they are one component only through
-    // r2, which sits in the other cell. Re-deriving connectivity inside the cell's
-    // rows would read them as two units.
-    const r1 = humanNegative("h_span_1", first, "th_doc_span_1", {
+    // r1 and r3 are both in `test` and share NO axis with each other: they are one
+    // component only through r2, which sits in `train`. Connectivity is derived over the
+    // UNION of the five partitions and then restricted, so the blind block holds one
+    // unit; re-deriving it inside the blind block would read them as two, which is the
+    // direction that over-states power.
+    const r1 = humanNegative("h_span_1", cell, "th_doc_span_1", {
       author: coauthor,
     });
-    const r2 = humanNegative("h_span_2", second, shared, { author: coauthor });
-    const r3 = humanNegative("h_span_3", first, shared);
-    const report = auditReleaseComposition(splitWith([r1, r2, r3]));
+    const r2 = humanNegative("h_span_2", cell, shared, { author: coauthor });
+    const r3 = humanNegative("h_span_3", cell, shared);
+    const split = splitWith([r1, r3]);
+    const report = auditReleaseComposition({
+      ...split,
+      train: [...split.train, r2],
+    });
 
-    expect(rowOf(report, first)?.humanNegativeLines).toBe(2);
-    expect(rowOf(report, first)?.independentUnits).toBe(1);
-    expect(rowOf(report, second)?.humanNegativeLines).toBe(1);
-    expect(rowOf(report, second)?.independentUnits).toBe(1);
+    const row = rowOf(report, cell);
+    // Two lines of the blind block, ONE unit, two distinct origin documents: the three
+    // quantities disagree here, which is what makes the assertion about the unit.
+    expect(row?.humanNegativeLines).toBe(2);
+    expect(row?.independentUnits).toBe(1);
+    expect(row?.originDocuments).toBe(2);
+    // Non-vacuous: without the bridge row in `train` the same two lines are two units.
+    const withoutBridge = auditReleaseComposition(splitWith([r1, r3]));
+    expect(rowOf(withoutBridge, cell)?.humanNegativeLines).toBe(2);
+    expect(rowOf(withoutBridge, cell)?.independentUnits).toBe(2);
   });
 
   // T11: os pisos vêm da política CARREGADA, e cada um do SEU campo.
@@ -607,8 +626,13 @@ describe("composition gate — the three bounds per quota cell in test", () => {
     // A corpus whose axis carries the core-stratum names instead of the quota cells
     // fills no cell, so every declared cell reads zero and the seal is refused. The
     // vocabulary mismatch surfaces as an empty cell, never as a satisfied one.
-    const undeclared = PREREGISTRATION_V4.humanCoreStrata[0];
+    // `humanCoreStrata` IS the cell list since the frame amendment, so the undeclared
+    // key can no longer be read out of the policy: it is the retired register word,
+    // written down here because that is the spelling a corpus built before the amendment
+    // carries.
+    const undeclared = UNDECLARED_KEY;
     expect(CELLS).not.toContain(undeclared);
+    expect([...PREREGISTRATION_V4.humanCoreStrata]).not.toContain(undeclared);
     const report = auditReleaseComposition(
       splitWith([
         ...cellRows(undeclared, LINE_FLOOR, "t"),

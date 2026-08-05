@@ -1210,24 +1210,21 @@ export const A1_BLOCKED_HUMAN_SOURCES: readonly HumanSourceRegistrationV1[] = [
  *     by the dump: `pages-articles` carries only the current revision, so a
  *     recent dump drops everything instead of admitting recent text — the
  *     failure is closed, which is why the field still qualifies.
- *   * `carolina` — TEI header `<date type="Download">` of that one document
- *     (`benchmark/lab/extract_carolina.py`). Per document, not per package: the
- *     2.0 (Bea) package header is one thing and its documents carry dates of
- *     2024 and 2025, which is exactly why the package vintage may not stand in.
- * `b2w-reviews01` is NOT here: product review is outside the declared frame, so it
- * moved to {@link OUT_OF_FRAME_HUMAN_SOURCES} with the reason rather than being
- * deleted.
  *
- * Both sustain `date-cutoff` and neither sustains `observed-process`: no
- * published instrumented pt-BR base of the required size exists, and inventing
- * one would be inventing provenance (R4). That is a limitation of this
- * inventory, recorded in `docs/limitations.md`, not a property of the field.
+ * `b2w-reviews01` and `carolina` are NOT here: product review and the three Carolina
+ * typologies are outside the declared frame, so they sit in
+ * {@link OUT_OF_FRAME_HUMAN_SOURCES} with the reason rather than being deleted.
+ *
+ * It sustains `date-cutoff` and not `observed-process`: no published instrumented
+ * pt-BR base of the required size exists, and inventing one would be inventing
+ * provenance (R4). That is a limitation of this inventory, recorded in
+ * `docs/limitations.md`, not a property of the field.
  *
  * BOTH keys here are join keys, and both are pinned by test. `snapshot` joins to
  * `PREREGISTRATION_V4.humanSources.snapshots` (asserted set-equal). `sourceId`
  * joins to the `sourceId` of the reviewed source manifest, and these values
  * are the ones the manifests an operator actually holds use —
- * `src_wikipedia_pt` and `src_carolina`, plus the out-of-frame `src_b2w` in
+ * `src_wikipedia_pt`, plus the out-of-frame `src_carolina` and `src_b2w` in
  * {@link OUT_OF_FRAME_HUMAN_SOURCES} and the refused `src_ptso` in
  * {@link A1_BLOCKED_HUMAN_SOURCES}, in
  * `benchmark/data/corpus-build/**\/private/source-manifest.json`. That file is a
@@ -1249,19 +1246,6 @@ export const V3_HUMAN_SOURCE_INVENTORY: readonly HumanSourceRegistrationV1[] = [
     // dump is one acquisition event.
     declaredGroupAxes: ["source", "sourceMaterialBatch"],
   },
-  {
-    sourceId: "src_carolina",
-    snapshot: "carolina",
-    acquisition: "public-dataset",
-    licenseId: "cc-by-nc-sa-4.0",
-    labelBasis: "date-cutoff",
-    anchorDateField: 'teiHeader//date[@type="Download"]',
-    anchorDateScope: "document",
-    // A text belongs to a MEMBER FILE of the package; the TEI header gives no
-    // per-document authorship, so `author` is not declared. The typologies inside
-    // one package are partitions of a SINGLE acquisition, not separate ones.
-    declaredGroupAxes: ["source", "sourceMaterialBatch"],
-  },
 ];
 
 /**
@@ -1270,14 +1254,27 @@ export const V3_HUMAN_SOURCE_INVENTORY: readonly HumanSourceRegistrationV1[] = [
  *
  * Held apart from both other lists because the reason is a third one. `src_ptso` in
  * {@link A1_BLOCKED_HUMAN_SOURCES} is refused on access terms — a legal condition
- * that could be satisfied. `src_b2w` is not refused at all: product review is simply
- * not one of the four cells the claim is published over
- * (`preRegistration.quotaAxis.cells`), so there is no cell for its records to carry
- * a quota in and `humanSources.snapshots` does not stock its base.
+ * that could be satisfied. The two here are not refused at all: product review and the
+ * three Carolina typologies are simply not the cell the claim is published over
+ * (`preRegistration.quotaAxis.cells`), so there is no cell for their records to carry
+ * a quota in and `humanSources.snapshots` does not stock their bases.
+ *
+ * WHY `src_carolina` is here, measured over the package on 2026-08-05 (headers only,
+ * never a document body): the three typologies the frame used to draw on are
+ * SINGLE-INSTITUTION corpora — judicial branch is 5 hosts, all `*.stf.jus.br`;
+ * university domains is `jornal.usp.br` alone; social media is `wattpad.com` alone —
+ * and no document declares an author. So "FPR in judicial text" read off the STF, or
+ * "in university-domain text" read off one newspaper, names a population the material
+ * does not sample, and the count of independent units is not merely small: between one
+ * (the institution) and 38 187 (the documents) the package offers no basis to choose.
+ * A frame cell whose independence cannot be established at the scale the interval
+ * assumes is not a narrower claim, it is an unsupported one. No `n` repairs it.
  *
  * Declared rather than deleted, for the reason `blockedSnapshots` gives: a source
  * that leaves by being erased leaves no trace, and re-admitting it becomes a one-line
- * edit that works instead of a decision that has to name the cell it would add.
+ * edit that works instead of a decision that has to name the cell it would add. Both
+ * keep their anchor field and axes, so re-admission costs an amendment and not a
+ * rediscovery of how to read the material.
  */
 export const OUT_OF_FRAME_HUMAN_SOURCES: readonly HumanSourceRegistrationV1[] =
   [
@@ -1292,6 +1289,19 @@ export const OUT_OF_FRAME_HUMAN_SOURCES: readonly HumanSourceRegistrationV1[] =
       // A review belongs to a PRODUCT and to a reviewer; the CSV release it was read
       // out of is one acquisition event.
       declaredGroupAxes: ["author", "source", "sourceMaterialBatch"],
+    },
+    {
+      sourceId: "src_carolina",
+      snapshot: "carolina",
+      acquisition: "public-dataset",
+      licenseId: "cc-by-nc-sa-4.0",
+      labelBasis: "date-cutoff",
+      anchorDateField: 'teiHeader//date[@type="Download"]',
+      anchorDateScope: "document",
+      // A text belongs to a MEMBER FILE of the package; the TEI header gives no
+      // per-document authorship, so `author` is not declared. The typologies inside
+      // one package are partitions of a SINGLE acquisition, not separate ones.
+      declaredGroupAxes: ["source", "sourceMaterialBatch"],
     },
   ];
 

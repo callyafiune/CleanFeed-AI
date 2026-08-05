@@ -14,10 +14,11 @@
 // WHICH GATES DECIDE. The mandatory inventory is DERIVED from
 // `multiplicity.primaryFamily` and is never a list kept here, so the count that
 // divides `alpha_família` and the set of gates that decide a release are one
-// object. Its seven members are the four per-cell FPR ceilings on the
-// `humanSourceType` axis, the overall recall at the frozen threshold, the global
-// ECE, and integrity — and integrity is ONE member however many booleans it holds,
-// because alpha/7 spent on a boolean conjunction is pure conservatism.
+// object. Its four members are the ONE per-cell FPR ceiling on the `humanSourceType`
+// axis, the overall recall at the frozen threshold, the global ECE, and integrity —
+// and integrity is ONE member however many booleans it holds, because alpha/m spent on
+// a boolean conjunction is pure conservatism. The count follows the family: a cell
+// added to `quotaAxis.cells` and to `primaryFamily` moves it without an edit here.
 //
 // Every other gate is published as a DIAGNOSTIC. What a diagnostic does NOT do is
 // certify: it holds no share of `alpha_família`, so its bound is not evidence at the
@@ -283,8 +284,8 @@ export interface MultiplicityReport {
   // The hypotheses this run's mandatory inventory produced, under-powered cells
   // included. Integrity counts ONCE, so on a coherent run this is the family size.
   observed: number;
-  // The certifying INTERVAL gates, in the order the specs were built. Six of the
-  // seven members: integrity is the boolean conjunction and has no single id.
+  // The certifying INTERVAL gates, in the order the specs were built. Every member of
+  // the family but one: integrity is the boolean conjunction and has no single id.
   gateIds: string[];
   // The pre-registered family the inventory is derived from, and the hypotheses the
   // inventory actually named.
@@ -417,7 +418,7 @@ const ESTIMAND_ACTION_RECALL = "action.recall";
 
 // --- the certifying family -------------------------------------------------
 //
-// The seven hypotheses, read from the frozen pre-registration. The names are the
+// The certifying hypotheses, read from the frozen pre-registration. The names are the
 // inventory: a member is `integrity`, `recall-at-threshold`, `calibration-global` or
 // `fpr-<quota cell>`, and the cell part is the key of the `humanSourceType` slice
 // that measures it. So a corpus whose `humanSourceType` does not carry the

@@ -29,11 +29,14 @@
 //     coarse in the aggregate while every CLASS has a fine component satisfies all
 //     per-class conditions and still cannot fill the smallest partition;
 //   * and the per-class conditions are NOT implied by it either. That direction is the
-//     expensive one: at the ratified composition (7.000 human + 4.000 ai + 2.000 mixed)
-//     a fine-grained generated half drags every aggregate fraction down, so a human
-//     half degenerated into one component per quota cell — the degeneracy this command
-//     exists to catch — passes an aggregate-only test and surfaces only as
-//     `SplitConstraintError` after the whole assembly has run.
+//     expensive one: at the ratified composition (4.000 human + 4.000 ai + 2.000 mixed,
+//     `RELEASE_CORPUS_POLICY.counts`) a fine-grained generated half drags every aggregate
+//     fraction down, so a human half degenerated into one component per quota cell — the
+//     degeneracy this command exists to catch — passes an aggregate-only test and
+//     surfaces only as `SplitConstraintError` after the whole assembly has run. With the
+//     one cell the frame declares, that degenerate component is 40% of the corpus and
+//     100% of the `human` class: coarse enough for `train` in the aggregate, and it still
+//     leaves `dev` with no block of the class small enough to take.
 //
 // On a single-label corpus the corpus scope and that label's scope are the same
 // comparison over the same rows, so a refusal there names both. That is a property of

@@ -2455,10 +2455,11 @@ de documentação de dataset e modelo:
   linguística como parte da alegação. [link](https://doi.org/10.1162/tacl_a_00041)
 
 **A transferência:** as três fontes tratam de *documentar* a população; aqui a moldura também **gateia**
-— o parser recusa a política que nomeia um estrato sem fonte, e o selo recusa o corpus que não cobre as
-quatro células. Documentação que não reprova nada é o modo de falha que essas fichas descrevem.
+— o parser recusa a política que nomeia um estrato sem fonte, e o selo recusa o corpus que não cobre a
+célula declarada. Documentação que não reprova nada é o modo de falha que essas fichas descrevem. Quantas
+células a moldura declara é decisão de escopo e não de método: hoje é **uma** (§ N1).
 
-### K2 — família de sete hipóteses por célula, em vez de manchete do pior estrato
+### K2 — família de hipóteses por célula, em vez de manchete do pior estrato
 
 Bonferroni já está referenciado no § H; o que é novo é **escolher a família por célula** em vez de por
 pior estrato. A razão é a que a literatura de subgrupos descreve: um máximo sobre estratos é uma
@@ -2472,9 +2473,9 @@ manchete sem que nada tenha piorado.
   estimativa do máximo. [link](https://doi.org/10.1017/CBO9780511761362)
 
 **A transferência:** as fontes tratam de seleção pós-hoc do extremo; aqui a família é **nomeada antes**
-(`multiplicity.primaryFamily`, sete membros, conteúdo e ordem congelados), e o parser recomputa
-`alpha/m` em vez de confiar no valor escrito. O que a citação sustenta é a **direção** da escolha, não o
-valor de `m`.
+(`multiplicity.primaryFamily`, conteúdo e ordem congelados), e o parser recomputa `alpha/m` em vez de
+confiar no valor escrito. O que a citação sustenta é a **direção** da escolha, não o valor de `m` — que é
+**4** desde a emenda da moldura (§ N2), e cujo preço medido está lá.
 
 ### K3 — limiar como ordem-estatística de um quantil unilateral, sem calibrador
 
@@ -2606,7 +2607,11 @@ checagem de eixo declarado para as linhas dele, em vez de recusá-las.
 
 ### K9 — o selo do corpus compara contra o ALVO de coleta, não contra o piso
 
-`collection.humanLinesTotal` é 4 x 1.750 = **7.000**, e não 4 x 1.500 = 6.000, porque `sealDataset` compara
+> **Os números abaixo são os de quatro células e estão superados** (§ N2): hoje é 1 x 4.000 = **4.000**, e
+> o bloco cego do alvo é 800 linhas. A regra — o total repousa no alvo e não no piso — é o que permanece, e
+> é o que a citação sustenta.
+
+`collection.humanLinesTotal` era 4 x 1.750 = **7.000**, e não 4 x 1.500 = 6.000, porque `sealDataset` compara
 a composição por **igualdade exata**: derivar o total do piso recusaria justamente todo corpus que carrega
 a margem. O piso continua sendo o número do gate (300 linhas por célula em `test`); o alvo é o número da
 coleta.
@@ -2810,7 +2815,8 @@ piso satisfeito — e é a mesma incoerência que `benchmark/gates.ts` já repro
 (`missingHypotheses` + `unexpectedHypotheses`). O que muda é o instante: passa a aparecer no
 congelamento, não na medição.
 
-**O outro lado do vocabulário, com o arquivo e o dono.** `sealDataset`
+**O outro lado do vocabulário, com o arquivo e o dono** — resolvido em § N3, que colapsou as duas listas
+numa constante única em vez de traduzir entre elas. `sealDataset`
 (`benchmark/dataset-manifest.ts`, o laço de `RELEASE_CORPUS_POLICY.requiredHumanSourceTypes`) exige, para
 `release`, contagem **> 0** em cada um dos quatro **estratos** (`encyclopedic`, `judicial`, `social-media`,
 `university`), enquanto este gate exige 300 em cada uma das quatro **células**. A afirmação forte de que
@@ -2871,14 +2877,17 @@ corpo agregado e cada classe (`human`, `ai`, `mixed`), cada uma sobre o próprio
    uma partição é a **combinação convexa** das frações por classe, com pesos iguais aos totais de classe,
    logo cai na mesma faixa de tolerância, e a faixa exclui o zero —, e **nenhum dos dois se deduz do
    outro**, o que é a razão de os dois estarem escritos:
-   - por classe **não** se deduz do agregado, e essa é a direção caríssima: na composição ratificada
-     (7.000 humanas + 4.000 ai + 2.000 mistas) a metade gerada é fina e derruba toda fração agregada, então
-     uma metade humana degenerada em um componente por célula vale 13,46 % do corpo, cabe em `train` e
-     **passa** num teste só agregado — enquanto `dev` precisa de 5 % da classe `human` e só existem blocos
-     de 25 % dela. **Medido** (probe read-only, 2026-08-04): corpo de 100 linhas, 40 humanas em 4
-     componentes de 25 % da classe mais 60 geradas de grão fino → preflight agregado `passed: true`,
-     `createBlockedSplit` recusando com `human=[train 1.000, dev 0.000, …]`. Esta versão recusa esse corpo
-     nomeando a classe;
+   - por classe **não** se deduz do agregado, e essa é a direção caríssima: a metade gerada é fina e
+     derruba toda fração agregada, então uma metade humana degenerada em um componente por célula cabe em
+     `train` no agregado e **passa** num teste só agregado — enquanto `dev` precisa de 5 % da classe
+     `human` e não existe bloco dela pequeno o bastante. **Medido** (probe read-only, 2026-08-04, na
+     composição de quatro células então ratificada — 7.000 humanas + 4.000 ai + 2.000 mistas): corpo de
+     100 linhas, 40 humanas em 4 componentes de 25 % da classe mais 60 geradas de grão fino → preflight
+     agregado `passed: true`, `createBlockedSplit` recusando com `human=[train 1.000, dev 0.000, …]`. A
+     aritmética do probe é a das quatro células e está superada (§ N2), a **direção** não: sob a moldura
+     de uma célula o mesmo corpo de 100 linhas dá um componente humano de 40 % do corpo e **100 %** da
+     classe, e a recusa por classe fica mais folgada e não menos (medido em
+     `benchmark/lab/test_connectivity_feasibility.py`). Esta versão recusa esse corpo nomeando a classe;
    - o agregado **não** se deduz do por classe: um corpo cujos componentes são todos grossos no agregado,
      tendo cada classe um componente fino, satisfaz todas as condições por classe e não preenche a menor
      partição. Está no catálogo como `corpo-grosso-classes-finas`.
@@ -2925,7 +2934,10 @@ de cada condição.
 
 ---
 
-## § L — o alinhamento do lab à moldura de quatro células (Fase 2, unidade L1, 2026-08-05)
+## § L — o alinhamento do lab à moldura declarada (Fase 2, unidade L1, 2026-08-05)
+
+> Escrito sob a moldura de **quatro** células. As regras de L1–L12 valem como método; a contagem de
+> células e o vocabulário estão em § N.
 
 As quatro decisões metodológicas que a unidade L1 implementou no lab Python (divergências D0, D4, D6 e
 D7 da medição de conformidade). Nenhuma delas toca o caminho selado: o lab produz CANDIDATOS, e o que
@@ -3036,7 +3048,12 @@ localizado. Esta entrada é o espelho, do lado Python, de uma decisão já regis
 
 ### L5 — o vocabulário da célula é o das duas listas que GATEIAM, não o dos nomes de registro
 
-O campo que carrega a célula de uma linha humana é `humanSourceType`, e a pré-inscrição congelada nomeia
+> **Superado por § N3.** A regra de desempate abaixo continua valendo e é o que decidiu qual grafia
+> sobrevive; o que mudou é que as duas listas deixaram de existir separadas — a emenda da moldura de
+> 2026-08-05 as colapsou numa constante única, então não há mais dois vocabulários para desempatar. O que
+> segue é a medição que produziu a regra.
+
+O campo que carrega a célula de uma linha humana é `humanSourceType`, e a pré-inscrição congelada nomeava
 a mesma partição de quatro populações em DOIS vocabulários: `humanCoreStrata`
 (`encyclopedic`/`judicial`/`social-media`/`university`) e `preRegistration.quotaAxis.cells`
 (`carolina-judicial`/`carolina-social-media`/`carolina-university`/`ptwiki`). O lab escreve o segundo.
@@ -3594,3 +3611,193 @@ extraído data o extrator: mudaria a cada mudança do nosso código, sobre mater
 - Wilkinson et al., 2016, princípio R1.2 — proveniência detalhada; a versão do dado precisa ser
   verificável contra o artefato, não contra uma etapa derivada dele.
   [link](https://doi.org/10.1038/sdata.2016.18)
+
+## § N — a emenda da moldura: uma célula, proveniência como condição da alegação (2026-08-05)
+
+Nível 1 e 2 da hierarquia. Cobre as decisões metodológicas que reduzir a moldura de quatro células a uma
+introduziu. As decisões de **valor** (qual célula, qual alvo) são do operador e estão no registro, não aqui.
+
+### N1 — a proveniência do material é CONDIÇÃO da alegação por célula, e não um atributo de qualidade
+
+A decisão: três células saem da moldura porque o material é de **instituição única** e não declara autor —
+não porque o registro seja ruim, e não porque `n` seja pequeno. O que falta é a base para contar unidades
+independentes na escala que o intervalo assume: entre 1 (a instituição) e 38.187 (os documentos) o pacote
+não oferece critério. Um intervalo cuja unidade de amostragem não se estabelece não é um intervalo mais
+largo — é um intervalo cuja cobertura nominal não se sustenta.
+
+- Bender & Friedman, *Data Statements for NLP*, TACL 6, 2018 — a *curation rationale*, a *speaker
+  demography* e a *provenance* fazem parte da alegação: sem elas o leitor não sabe sobre qual população o
+  número fala. [link](https://doi.org/10.1162/tacl_a_00041)
+- Gebru et al., *Datasheets for Datasets*, CACM 64(12), 2021 — "Composition" pergunta explicitamente se as
+  instâncias são uma amostra de um conjunto maior e como a amostra foi tirada; "não sabemos" é uma resposta
+  que limita o uso. [link](https://doi.org/10.1145/3458723)
+- Kish, *Survey Sampling*, Wiley, 1965, cap. 5 — o **efeito de conglomerado**: com conglomerados grandes e
+  homogêneos, o `n` efetivo é o número de conglomerados e não o de elementos, e a variância se inflaciona
+  por `1 + (m − 1)ρ`. É por isso que 38.187 documentos de cinco hosts não são 38.187 unidades.
+  [link](https://archive.org/details/surveysampling0000kish)
+- Cameron & Miller, *A Practitioner's Guide to Cluster-Robust Inference*, JHR 50(2), 2015, § 6 — com poucos
+  conglomerados a inferência robusta a conglomerado **sub-rejeita e sub-cobre**; o problema não é
+  precisão, é a validade do intervalo. [link](https://doi.org/10.3368/jhr.50.2.317)
+- Cornfield, *Randomization by group: a formal analysis*, AJE 108(2), 1978 — analisar por elemento o que
+  foi amostrado por grupo é o erro de unidade de análise, e ele produz intervalo anticonservador.
+  [link](https://doi.org/10.1093/oxfordjournals.aje.a112597)
+
+**A transferência:** a literatura de amostragem trata do caso em que a estrutura de conglomerado é
+**conhecida** e se corrige por ela. Aqui o material não permite nem isso: sem autor por documento, o eixo
+mais fino disponível é o arquivo-membro do pacote (37 / 7 / 2 arquivos nas três tipologias), e o mais grosso
+é a instituição (1). **Sem precedente encontrado (2026-08-05)** para a regra propriamente dita — quando o
+material não determina a unidade de amostragem dentro de uma ordem de grandeza, a célula sai da moldura em
+vez de entrar com intervalo mais largo. É decisão de engenharia ancorada em Cornfield e Cameron & Miller:
+a alternativa (publicar com a unidade grosseira) daria um `n` de 1 a 5 e reprovaria o piso de qualquer
+forma; a alternativa oposta (publicar por documento) é exatamente o erro de unidade de análise.
+
+### N2 — estreitar a moldura ESTREITA o teto publicado, e a direção é aritmética e não retórica
+
+A decisão: reduzir de quatro células a uma **aperta** o teto sob zero eventos, de 1,63 % para 0,55 %, por
+duas vias que se somam — `m` cai de 7 para 4, então o α de Bonferroni por hipótese sobe de 0,05/7 para
+0,05/4; e o orçamento de coleta concentra numa célula, então o `n` do bloco cego vai de 350 para 800.
+
+- Bonferroni já está referenciado no § H; o que é novo aqui é que **`m` é uma escolha de desenho com preço
+  medido**, e que reduzir cobertura compra poder por hipótese. É o trade-off que Rothman descreve ao
+  argumentar contra o ajuste automático: cada hipótese removida da família devolve α às que ficam.
+  Rothman, *No adjustments are needed for multiple comparisons*, Epidemiology 1(1), 1990.
+  [link](https://doi.org/10.1097/00001648-199001000-00010)
+- Clopper & Pearson, *The use of confidence or fiducial limits illustrated in the case of the binomial*,
+  Biometrika 26(4), 1934 — o limite superior exato com zero eventos é `1 − α^(1/n)`, monótono decrescente
+  em `n` e crescente em α. É a fórmula que a pré-inscrição nomeia.
+  [link](https://doi.org/10.1093/biomet/26.4.404)
+- Louis, *Confidence intervals for a binomial parameter after observing no successes*, The American
+  Statistician 35(3), 1981 — a leitura da "regra dos três" e por que ela é o caso `n` grande de
+  `1 − α^(1/n)`. [link](https://doi.org/10.1080/00031305.1981.10479337)
+
+**A transferência:** as fontes dão a monotonicidade; a decisão é publicar os **dois** pontos da mesma
+fórmula em vez de um. **Sem precedente encontrado (2026-08-05)** para declarar dois `n` na pré-inscrição —
+o do piso, como critério de recusa, e o do alvo de coleta, como expectativa impressa no model card. A razão
+é que os dois respondem perguntas diferentes e publicar só um é o modo de o leitor ficar com o número
+errado: o do piso é o pior teto que ainda sela, e o do alvo é o que a coleta foi dimensionada para.
+
+### N3 — duas grafias congeladas da mesma partição colapsam numa constante, e não num cross-check
+
+A decisão: `humanCoreStrata` e `preRegistration.quotaAxis.cells` passam a ser a **mesma constante**
+(`FROZEN_HUMAN_CORE_STRATA = FROZEN_QUOTA_AXIS_CELLS`), em vez de duas listas conferidas em runtime. A
+grafia que sobrevive é a que tem consumidor que reprova (o id de célula), e é a regra de desempate que o
+§ L5 registrou depois de a divergência ter sido medida.
+
+- Sculley et al., *Hidden Technical Debt in Machine Learning Systems*, NeurIPS 2015, § 3 e § 5 —
+  *entanglement*, *undeclared consumers* e *configuration debt*: dois consumidores do mesmo campo com
+  vocabulários diferentes é a dívida que não aparece em teste porque cada lado é internamente coerente.
+  [link](https://papers.nips.cc/paper_files/paper/2015/hash/86df7dcfd896fcaf2674f757a2463eba-Abstract.html)
+- Nosek, Ebersole, DeHaven & Mellor, *The preregistration revolution*, PNAS 115(11), 2018 — a família é
+  nomeada ANTES, e a medição tem de ser a das hipóteses nomeadas; dado que não alcança a hipótese
+  pré-registrada não a decide. [link](https://doi.org/10.1073/pnas.1708274114)
+
+**Sem precedente encontrado (2026-08-05)** para preferir a constante compartilhada ao cross-check: a razão
+é que uma comparação que nenhuma entrada consegue reprovar se lê como defesa sem ser uma, o que é o mesmo
+argumento que este arquivo já usa em K10 e o que fez sair a comparação de ordem entre os dois tetos
+(registro, E-8).
+
+### N4 — extrator de fonte fora da moldura recusa no PONTO DE ENTRADA, não numa passada vazia
+
+A decisão: `FRAME_TYPOLOGIES` fica **vazia** e `extract_carolina.py` levanta `CarolinaOutOfFrame` antes de
+abrir o arquivo, em vez de terminar com zero linha. É a mesma âncora de K5 e K8 — o nome que sobrevive é o
+que faz o pedido errado **falhar** em vez de significar outra coisa —, aplicada a um módulo inteiro.
+
+- Google, *Protocol Buffers Language Guide*, seção `reserved` — o campo retirado é reservado por nome para
+  que a releitura falhe em vez de significar outra coisa.
+  [link](https://protobuf.dev/programming-guides/proto3/#deleting)
+- Saltzer & Schroeder, *The Protection of Information in Computer Systems*, Proc. IEEE 63(9), 1975 —
+  *fail-safe defaults*: a decisão por omissão é a recusa, e a recusa carrega a razão.
+  [link](https://doi.org/10.1109/PROC.1975.9939)
+
+**Sem precedente encontrado (2026-08-05)** para a forma específica: a razão registrada é operacional e
+medida — uma corrida que lê 3,1 GB e escreve zero linha se lê como arquivo corrompido, e o operador vai
+procurar o arquivo em vez de ler a moldura. A recusa é onde a razão mora.
+
+### N5 — nível degenerado sai da tabela de reamostragem em vez de ficar declarado
+
+A decisão: com uma célula, `groups.domainSource` carrega um único valor no corpus, e as duas linhas humanas
+da tabela de reamostragem deixam de nomeá-lo — caem por fallback para `groups.source`, com
+`fallbackToIndependentRows: false`.
+
+- Davison & Hinkley, *Bootstrap Methods and their Application*, CUP, 1997, § 3.8 — o bootstrap hierárquico
+  reamostra no nível em que a dependência vive; um nível com um único valor não contribui variância.
+  [link](https://doi.org/10.1017/CBO9780511802843)
+- Field & Welsh, *Bootstrapping clustered data*, JRSS-B 69(3), 2007 — as variantes do bootstrap por
+  conglomerado e o que cada uma assume sobre o número de conglomerados; com um conglomerado o
+  procedimento não estima nada.
+  [link](https://doi.org/10.1111/j.1467-9868.2007.00593.x)
+
+**A transferência:** as fontes descrevem a inflação de variância que o nível captura. A decisão é a
+consequência de publicação: uma tabela que nomeasse o nível degenerado se leria como se o limite publicado
+tivesse contabilizado variação entre estratos que o desenho não sorteou. **Sem precedente encontrado
+(2026-08-05)** para a regra de remover o nível do artefato publicado em vez de o declarar com um valor —
+a razão é que a tabela é lida como declaração do desenho, e declarar um fator não variado **em silêncio**
+é over-claim de desenho, não conservadorismo.
+
+**A qualificação, e ela é necessária.** A regra não é "nenhum fator degenerado na tabela": é "nenhum fator
+degenerado **sem a declaração de que é degenerado**". A mesma tabela carrega o caso contrário e ele fica:
+`resampling.estimandClasses.mixed.levels[1]` nomeia `groups.promptTemplate` **com** `proxyFor` e
+`proxyReason`, e o `proxyReason` diz por escrito que o fator "tem um único nível sobre as linhas mistas
+montadas, logo este fator é degenerado por construção até um eixo de operação existir". As duas linhas
+diferem no que o leitor pode concluir: `groups.domainSource` nomeado sem qualificação afirmaria variação
+entre estratos que o sorteio não viu; `groups.promptTemplate` declarado como **proxy com a lacuna
+nomeada** afirma o oposto — que o eixo que a classe precisaria não existe no esquema, e que o nível está
+ali como marcador da lacuna. Remover essa linha esconderia a lacuna, que é o erro simétrico. O critério é
+portanto **declaração**, não presença, e é isso que distingue os dois casos.
+
+### N6 — derivação degenerada sob a política vigente é pinada num insumo NÃO degenerado, não removida
+
+A decisão: quando a política congelada torna uma derivação uma **identidade** — `total = alvo × células`
+com uma célula, `QUOTA_CELLS = cells(REGISTER)` com um registro de uma entrada —, o fator não sai do
+código; ele ganha nome e é exercitado num insumo que a política vigente não oferece (duas e quatro
+células, um registro de duas entradas). Sob a política vigente **toda derivação errada devolve a resposta
+certa**, então nenhum corpus e nenhuma política admissível distinguem `alvo × células` de `alvo`.
+
+É o **oposto** da regra que E-8 aplicou, e a diferença é qual coisa é inalcançável. Em E-8 o que nenhuma
+entrada alcançava era a **comparação** — o ramo não decidia nada, e mantê-lo era publicar defesa que não
+defende. Aqui o que a política vigente não alcança é um **valor do insumo**: a comparação decide (um total
+errado é recusado), e é só o fator que fica sem exercício. Remover o fator não retira defesa morta — grava
+no código a coincidência de que hoje há uma célula, que é a classe de erro que a emenda inteira existe
+para desfazer.
+
+- **DeMillo, Lipton & Sayward, *Hints on Test Data Selection*, IEEE Computer 11(4), 1978** — a hipótese do
+  programador competente e o acoplamento: o mutante que nenhum dado de teste mata é ou equivalente ao
+  original **sob os dados disponíveis** ou uma falha de cobertura, e a distinção é o que decide o remédio.
+  [link](https://doi.org/10.1109/C-M.1978.218136)
+- **Jia & Harman, *An Analysis and Survey of the Development of Mutation Testing*, IEEE TSE 37(5), 2011** —
+  o problema do **mutante equivalente**: mutante indistinguível por qualquer entrada do domínio de teste
+  vigente não é ruído a descartar, e ampliar o domínio é uma das duas saídas.
+  [link](https://doi.org/10.1109/TSE.2010.62)
+
+**A transferência:** as fontes tratam de equivalência de mutantes num domínio de teste; a decisão aqui é
+qual das duas saídas se toma quando o domínio é uma **política congelada**. Ampliar o domínio significa
+extrair a derivação para uma função pura e a exercitar fora da política — e não relaxar a política, que
+seria afrouxar o próprio congelamento que o pré-registro existe para impor. **Sem precedente encontrado
+(2026-08-05)** para a regra aplicada a um artefato de pré-registro: a literatura de mutação supõe que o
+domínio de entrada é do testador, e aqui ele é congelado por decisão de publicação.
+
+### N7 — valor MEDIDO publicado em documento é lido por teste, ou envelhece em silêncio
+
+A decisão: o `evaluatorDigest` que `docs/ESTADO.md` § 5.6 publica passa a ser conferido contra a árvore
+viva por teste nomeado, e a composição ratificada citada em comentário de módulo do bench passa a ser
+conferida contra `RELEASE_CORPUS_POLICY.counts`. **Medido** nesta unidade: o digest publicado como medido
+divergia do que a árvore hasheava (`b705f062…` publicado, `87d7a9a0…` medido) e a suíte inteira estava
+verde; dois membros de `EVALUATOR_FILES` afirmavam a composição de 7.000 humanas com um bloco cego de
+1.400 linhas — números que a mesma emenda acabara de mover para 4.000 e 800 — também com a suíte verde.
+
+O argumento não é que prosa erra mais que código; é que **prosa não recomputa**. Um número medido escrito
+num documento tem exatamente a validade do instante em que foi lido, e um comentário dentro de
+`EVALUATOR_FILES` é pior: seus bytes decidem a identidade do avaliador enquanto nada os lê.
+
+- **Knuth, *Literate Programming*, The Computer Journal 27(2), 1984** — programa e explicação como um só
+  artefato; o corolário que interessa aqui é o inverso do usual: se a explicação é parte do artefato, ela
+  precisa da mesma disciplina de verificação que o código.
+  [link](https://doi.org/10.1093/comjnl/27.2.97)
+- **Ratner et al., *Snorkel*, VLDB 11(3), 2017** — o padrão de tratar regra declarada como código
+  executável e versionado, em vez de descrição, para que ela possa reprovar.
+  [link](https://doi.org/10.14778/3157794.3157797)
+
+**A transferência:** nenhuma das duas fontes trata de digest de código publicado em documento de estado.
+O que se transfere é o princípio: declaração que decide algo tem de ser executável. **Sem precedente
+encontrado (2026-08-05)** para o caso específico — um teste que lê o documento de estado do projeto e
+reprova quando o número medido nele discorda da medição da árvore.

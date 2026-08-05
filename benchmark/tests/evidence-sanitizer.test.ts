@@ -22,7 +22,12 @@ import { sha256BytesHex } from "../digests.ts";
 import { canonicalSha256 } from "../../contracts/canonical-json.ts";
 import { withoutSplitDigest } from "../split-artifact.ts";
 import type { SplitArtifact } from "../split-artifact.ts";
-import { bundleInputFor, buildRejectScenario } from "./evidence.fixtures.ts";
+import {
+  bundleInputFor,
+  buildRejectScenario,
+  rejectGates,
+} from "./evidence.fixtures.ts";
+import { PREREGISTRATION_V4 } from "../preregistration-v4.ts";
 import type { FrozenCalibrationArtifact } from "../calibration-pipeline.ts";
 import type { ReleaseDecision } from "../gates.ts";
 
@@ -470,6 +475,27 @@ describe("verifyPublishedEvidence on a clean clone", () => {
 // ---------------------------------------------------------------------------
 // publish-evidence end-to-end on a self-consistent reject run.
 // ---------------------------------------------------------------------------
+
+describe("the reject fixture's gate report", () => {
+  it("names only hypotheses the frozen primary family carries, which is what `covers` claims", () => {
+    // A gate report that says `covers: true` while naming a hypothesis outside
+    // `multiplicity.primaryFamily` is a report no gate policy can emit: the inventory is
+    // DERIVED from the family, so an extra hypothesis makes `covers` false by
+    // construction. Testing the sanitizer against a decision the evaluator cannot
+    // produce proves nothing about the sanitizer, and a cell spelled by hand becomes
+    // exactly that report the moment the frame is amended.
+    const report = rejectGates();
+    const family: readonly string[] =
+      PREREGISTRATION_V4.multiplicity.primaryFamily;
+    expect(report.multiplicity.covers).toBe(true);
+    for (const hypothesis of report.multiplicity.hypotheses) {
+      expect(family, hypothesis).toContain(hypothesis);
+    }
+    for (const gate of report.gates) {
+      expect(family, gate.id).toContain(gate.hypothesis);
+    }
+  });
+});
 
 describe("publish-evidence end-to-end (reject run)", () => {
   async function scenario() {

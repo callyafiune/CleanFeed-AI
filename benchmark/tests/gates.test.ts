@@ -568,10 +568,12 @@ function slice(overrides: SliceOverrides): SliceResult {
 }
 
 // The quota cells whose FPR ceilings the primary family names, and the axis they are
-// measured on. A run that does not produce all four is a run whose mandatory
+// measured on. A run that does not produce every one of them is a run whose mandatory
 // inventory is not the family, which fails every certifying gate — so every scenario
-// below starts from the four cells at full power, and the tests that are ABOUT the
-// inventory build their slice list with `bareSummary`.
+// below starts from the declared cells at full power, and the tests that are ABOUT the
+// inventory build their slice list with `bareSummary`. The frame declares ONE cell since
+// the amendment, and nothing here is written for that count: the list is read from the
+// policy, so a cell added later moves every scenario with it.
 const CERTIFYING_CELLS = PREREGISTRATION_V4.preRegistration.quotaAxis.cells;
 
 function cellSlice(key: string, overrides: Partial<SliceOverrides> = {}) {
@@ -595,7 +597,7 @@ function summary(slices: SliceResult[]): SliceSummary {
   return bareSummary([...certifyingCellSlices(), ...slices]);
 }
 
-// The slice list exactly as given, four certifying cells or not.
+// The slice list exactly as given, the certifying cells or not.
 function bareSummary(slices: SliceResult[]): SliceSummary {
   return {
     slices,
@@ -1729,7 +1731,7 @@ describe("Bonferroni simultaneous bounds", () => {
   });
 
   it("keeps an under-powered cell of the family inside m and fails it, instead of shrinking the divisor", () => {
-    const starved = CERTIFYING_CELLS[1];
+    const starved = CERTIFYING_CELLS[0];
     const report = evaluateReleaseGates({
       integrity: integrity(),
       calibrationScoreBasis: CERTIFYING_SCORE_BASIS,
@@ -1784,7 +1786,7 @@ describe("Bonferroni simultaneous bounds", () => {
     // question. The cell below is ineligible against 500 with 400 negatives — a count
     // ABOVE the pre-registered 300 — so a reason composed from the policy row would
     // publish, in sealed evidence, a comparison this cell never lost.
-    const starved = CERTIFYING_CELLS[2];
+    const starved = CERTIFYING_CELLS[0];
     const raised = 500;
     const report = evaluateReleaseGates({
       integrity: integrity(),
@@ -1827,7 +1829,7 @@ describe("Bonferroni simultaneous bounds", () => {
       integrity: integrity(),
       calibrationScoreBasis: CERTIFYING_SCORE_BASIS,
       resampling: plan(),
-      // One declared hypothesis against a family of seven: the divisor is wrong and
+      // One declared hypothesis against the whole family: the divisor is wrong and
       // the answer is a failure, never a recomputed alpha.
       metrics: metrics({ declaredM: 1 }),
       slices: summary([passingSlice()]),
@@ -1842,7 +1844,10 @@ describe("Bonferroni simultaneous bounds", () => {
     expect(cell.passed).toBe(false);
     expect(cell.evidence).toBe("missing-simultaneous-interval");
     expect(cell.reasons[0]).toMatch(
-      /o m declarado \(1\) não cobre as 7 hipóteses obrigatórias/u,
+      new RegExp(
+        `o m declarado \\(1\\) não cobre as ${PREREGISTRATION_V4.multiplicity.primaryFamilySize} hipóteses obrigatórias`,
+        "u",
+      ),
     );
   });
 
@@ -2006,15 +2011,20 @@ describe("the mandatory inventory is derived from policy.primaryFamily", () => {
     );
   });
 
-  it("covers the family at the frozen m of 7, and passes", () => {
+  it("covers the family at the frozen m, and passes", () => {
     const report = evaluateReleaseGates({
       ...passingEvidence,
       metrics: metrics({
         declaredM: PREREGISTRATION_V4.multiplicity.primaryFamilySize,
       }),
     });
-    expect(report.multiplicity.declared).toBe(7);
-    expect(report.multiplicity.observed).toBe(7);
+    // m = 4 since the frame amendment, and the count is asserted as a LITERAL beside the
+    // policy read: the divisor of alpha_família is the whole reason the family list is
+    // frozen, so a test that only compared the report against the policy would follow it
+    // anywhere.
+    expect(PREREGISTRATION_V4.multiplicity.primaryFamilySize).toBe(4);
+    expect(report.multiplicity.declared).toBe(4);
+    expect(report.multiplicity.observed).toBe(4);
     expect([...report.multiplicity.hypotheses].sort()).toEqual(
       [...PREREGISTRATION_V4.multiplicity.primaryFamily].sort(),
     );
@@ -2025,7 +2035,7 @@ describe("the mandatory inventory is derived from policy.primaryFamily", () => {
     expect(report.failedCertifying).toEqual([]);
   });
 
-  it("an eighth mandatory gate makes covers false and names the hypothesis the family does not have", () => {
+  it("a fifth mandatory gate makes covers false and names the hypothesis the family does not have", () => {
     const report = evaluateReleaseGates({
       integrity: integrity(),
       calibrationScoreBasis: CERTIFYING_SCORE_BASIS,
@@ -2033,14 +2043,16 @@ describe("the mandatory inventory is derived from policy.primaryFamily", () => {
       metrics: metrics({
         declaredM: PREREGISTRATION_V4.multiplicity.primaryFamilySize,
       }),
-      // A fifth cell on the certifying axis: an eighth hypothesis, at full power and
+      // A second cell on the certifying axis: a FIFTH hypothesis, at full power and
       // with a flawless FPR, which is exactly why it must not be absorbed silently.
       slices: bareSummary([
         ...certifyingCellSlices(),
         cellSlice("b2w-reviews"),
       ]),
     });
-    expect(report.multiplicity.observed).toBe(8);
+    expect(report.multiplicity.observed).toBe(
+      PREREGISTRATION_V4.multiplicity.primaryFamilySize + 1,
+    );
     expect(report.multiplicity.unexpectedHypotheses).toEqual([
       "fpr-b2w-reviews",
     ]);
@@ -2055,14 +2067,19 @@ describe("the mandatory inventory is derived from policy.primaryFamily", () => {
       expect(gate.reasons[0]).toMatch(
         /o inventário obrigatório não é a família primária/u,
       );
-      expect(gate.reasons[0]).toMatch(/fpr-b2w-reviews não está entre os 7/u);
+      expect(gate.reasons[0]).toMatch(
+        new RegExp(
+          `fpr-b2w-reviews não está entre os ${PREREGISTRATION_V4.multiplicity.primaryFamilySize}`,
+          "u",
+        ),
+      );
     }
   });
 
-  it("refuses an eighth hypothesis even under a divisor large enough to cover the count", () => {
+  it("refuses a fifth hypothesis even under a divisor large enough to cover the count", () => {
     // A larger `m` is conservative and is accepted — it only widens every bound — but
-    // it buys no membership: the family has seven members whatever the divisor is, and
-    // a count check alone would let the eighth hypothesis through here.
+    // it buys no membership: the family has its frozen members whatever the divisor is,
+    // and a count check alone would let the extra hypothesis through here.
     const report = evaluateReleaseGates({
       integrity: integrity(),
       calibrationScoreBasis: CERTIFYING_SCORE_BASIS,
@@ -2074,7 +2091,9 @@ describe("the mandatory inventory is derived from policy.primaryFamily", () => {
       ]),
     });
     expect(report.multiplicity.declared).toBe(40);
-    expect(report.multiplicity.observed).toBe(8);
+    expect(report.multiplicity.observed).toBe(
+      PREREGISTRATION_V4.multiplicity.primaryFamilySize + 1,
+    );
     expect(report.multiplicity.unexpectedHypotheses).toEqual([
       "fpr-b2w-reviews",
     ]);
@@ -2083,7 +2102,7 @@ describe("the mandatory inventory is derived from policy.primaryFamily", () => {
   });
 
   it("a missing cell makes covers false and names the hypothesis nothing decided", () => {
-    const absent = CERTIFYING_CELLS[3];
+    const absent = CERTIFYING_CELLS[0];
     const report = evaluateReleaseGates({
       integrity: integrity(),
       calibrationScoreBasis: CERTIFYING_SCORE_BASIS,
@@ -2097,7 +2116,9 @@ describe("the mandatory inventory is derived from policy.primaryFamily", () => {
         ),
       ),
     });
-    expect(report.multiplicity.observed).toBe(6);
+    expect(report.multiplicity.observed).toBe(
+      PREREGISTRATION_V4.multiplicity.primaryFamilySize - 1,
+    );
     expect(report.multiplicity.missingHypotheses).toEqual([`fpr-${absent}`]);
     expect(report.multiplicity.unexpectedHypotheses).toEqual([]);
     expect(report.multiplicity.covers).toBe(false);
@@ -2108,10 +2129,20 @@ describe("the mandatory inventory is derived from policy.primaryFamily", () => {
     );
   });
 
-  it("refuses a corpus whose humanSourceType carries the stratum names instead of the quota cells", () => {
+  it("refuses a corpus whose humanSourceType carries the retired register names instead of the quota cells", () => {
     // The FPR ceilings are named after quota CELLS. A corpus whose axis carries the
-    // core-stratum vocabulary produces four hypotheses the family does not name and
-    // leaves its own four undecided, and the report says both.
+    // register vocabulary the frame amendment retired produces hypotheses the family does
+    // not name and leaves its own undecided, and the report says both.
+    //
+    // The register words are written down here rather than read from the policy, and that
+    // is the point of the test after the amendment: `humanCoreStrata` IS the cell list
+    // now, so reading the "other" vocabulary out of the policy would compare the cells
+    // against themselves and pass without measuring anything.
+    const retired = ["encyclopedic", "judicial", "social-media", "university"];
+    for (const word of retired) {
+      expect([...PREREGISTRATION_V4.humanCoreStrata]).not.toContain(word);
+      expect([...CERTIFYING_CELLS]).not.toContain(word);
+    }
     const report = evaluateReleaseGates({
       integrity: integrity(),
       calibrationScoreBasis: CERTIFYING_SCORE_BASIS,
@@ -2119,16 +2150,14 @@ describe("the mandatory inventory is derived from policy.primaryFamily", () => {
       metrics: metrics({
         declaredM: PREREGISTRATION_V4.multiplicity.primaryFamilySize,
       }),
-      slices: bareSummary(
-        PREREGISTRATION_V4.humanCoreStrata.map((stratum) => cellSlice(stratum)),
-      ),
+      slices: bareSummary(retired.map((stratum) => cellSlice(stratum))),
     });
     expect(report.multiplicity.covers).toBe(false);
     expect(report.multiplicity.missingHypotheses).toEqual(
       CERTIFYING_CELLS.map((cell) => `fpr-${cell}`),
     );
     expect(report.multiplicity.unexpectedHypotheses).toEqual(
-      PREREGISTRATION_V4.humanCoreStrata.map((stratum) => `fpr-${stratum}`),
+      retired.map((stratum) => `fpr-${stratum}`),
     );
     expect(report.decision).toBe("reject");
   });
@@ -2153,8 +2182,10 @@ describe("the mandatory inventory is derived from policy.primaryFamily", () => {
         }),
       ]),
     });
-    // Seven hypotheses, not eight: the cell key on another axis buys no membership.
-    expect(report.multiplicity.observed).toBe(7);
+    // The family and nothing more: the cell key on another axis buys no membership.
+    expect(report.multiplicity.observed).toBe(
+      PREREGISTRATION_V4.multiplicity.primaryFamilySize,
+    );
     expect(report.multiplicity.covers).toBe(true);
     const elsewhere = gateById(
       report.gates,
@@ -2182,8 +2213,8 @@ describe("human-negative label bases as gate evidence", () => {
       }),
       slices: summary([passingSlice()]),
     });
-    // A label basis is evidence ABOUT the human label and not one of the seven
-    // hypotheses, so a breach certifies nothing — and blocks: the basis is the evidence
+    // A label basis is evidence ABOUT the human label and not a member of the certifying
+    // family, so a breach certifies nothing — and blocks: the basis is the evidence
     // the whole human-negative denominator rests on.
     expect(report.decision).toBe("reject");
     expect(report.failedCertifying).toEqual([]);

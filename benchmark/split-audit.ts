@@ -115,8 +115,9 @@ export interface SplitAuditPolicy {
    * This module measures the offer and does not compute power: a hard failure here would
    * wire a power gate into the audit that the audit's own inputs cannot decide.
    *
-   * It is also unmeetable as a gate: the frozen corpus composition is 7000 human records
-   * and the blind block is 20% of it, so `test` holds at most 1400 of them. The floors
+   * It is also unmeetable as a gate: the frozen corpus composition is 4000 human records
+   * and the blind block is 20% of it, so `test` holds at most 800 of them — the count the
+   * policy publishes as `zeroEventCeiling.blindBlockLinesAtCollectionTarget`. The floors
    * that bind are the pre-registered ones — 300 human-negative record-lines AND 300
    * independent sampling units per quota cell — applied before sealing, elsewhere.
    */

@@ -71,7 +71,7 @@ describe("certifying metric options", () => {
     expect(options.preRegisteredStatisticalGates).toBe(
       PREREGISTRATION_V4.multiplicity.primaryFamilySize,
     );
-    expect(options.preRegisteredStatisticalGates).toBe(7);
+    expect(options.preRegisteredStatisticalGates).toBe(4);
     expect(options.bootstrapSeed).toBe(20260804);
     expect(options.visualActionAvailable).toBe(true);
   });

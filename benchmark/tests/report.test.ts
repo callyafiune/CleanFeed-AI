@@ -1331,8 +1331,19 @@ describe("renderReportMarkdown publishes the A6 evidence with its roles named", 
     expect(units).toMatch(/mixed\.warning\.recall/u);
     expect(units).toMatch(/hierarchical/u);
     expect(units).toMatch(/multiway/u);
-    // The declared unit is spelled out, nested and crossed differently.
-    expect(units).toMatch(/groups\.domainSource ⊃ groups\.author/u);
+    // The declared unit is spelled out, nested and crossed differently. The human rows
+    // nest nothing since the frame amendment — one cell means `groups.domainSource` holds
+    // one value, and a level with one value is not a level — so the nesting the report
+    // prints is the one the AI-recall row still has.
+    expect(units).toMatch(
+      /groups\.generatorFamily ⊃ groups\.promptTemplate ⊃ groups\.generationBatch/u,
+    );
+    // ...and the DECLARED UNIT column of a human row is the author alone. The level
+    // inventory beside it still counts `groups.domainSource`, because that column reports
+    // what the corpus HOLDS on every axis and not what the design drew on.
+    expect(units).toMatch(
+      /\| warning\.fpr \| hierarchical \| groups\.author \|/u,
+    );
     expect(units).toMatch(/groups\.humanSeed × groups\.promptTemplate/u);
     // Whether the DESIGN ran, in its own column.
     expect(units).toMatch(/Desenho executado/u);
@@ -1514,7 +1525,7 @@ describe("renderReportMarkdown publishes the A6 evidence with its roles named", 
     );
     // And the label of the count says what it counts: hypotheses, integrity included.
     expect(multiplicity).toMatch(
-      /hipóteses obrigatórias decididas neste relatório: 6/u,
+      /hipóteses obrigatórias decididas neste relatório: 3/u,
     );
   });
 });

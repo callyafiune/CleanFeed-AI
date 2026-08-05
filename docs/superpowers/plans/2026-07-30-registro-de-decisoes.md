@@ -3424,6 +3424,14 @@ número exige emenda da política selada, com a medição na mão.
 
 ## Fase 2, unidade L1 — as células e as lanes: D0, D4, D6 e D7 resolvidas no lab (2026-08-05)
 
+> **RETRATADO EM PARTE pela emenda da moldura** (seção "A emenda da moldura", no fim deste arquivo). Duas
+> afirmações desta seção não valem mais: (i) a moldura tem **uma** célula e não quatro, então as quatro
+> grafias `carolina-*` de L1-1 e o remapeamento de `HN_REGISTER` de L1-6 foram refeitos; e (ii) a
+> afirmação de L1-1 de que "a célula É o estrato cujo teto a release publica" era **falsa** para as duas
+> autoridades que publicam teto — `humanCoreStrata` não gateava nada, e a revisão adversarial mediu o
+> corpus contando zero linha em toda célula. O mecanismo que L1 descreve continua correto; o vocabulário e
+> a contagem de células estão superados.
+
 **Status:** `EM-VIGOR (delegada)`. Nenhuma das quatro divergências está na lista de nunca-delegado, e
 nenhuma toca o caminho selado — o lab produz candidatos e não sela ciência. O estado vigente vive em
 `ESTADO.md`; a razão metodológica, com referência, em `references.md` § L (L1–L4); aqui está a razão de
@@ -3999,3 +4007,210 @@ Os dois arquivos vivem **fora** do repositório, e é por isso que o digest é o
 por terceiro. `src_wikipedia_pt` e `src_carolina` são as duas fontes que `HUMAN_SOURCE`
 (`benchmark/lab/assemble_corpus.py`) já declara, então o lote não introduz fonte nova: ele data e
 identifica as que existem.
+
+---
+
+## A emenda da moldura: a alegação passa a UMA célula — DECIDIDA PELO OPERADOR em 2026-08-05
+
+**Status:** `EM-VIGOR`. A decisão da moldura é do operador; a medição que a sustenta e as escolhas de
+grafia, de aritmética e de recusa são do agente, registradas abaixo com razão e custo de reversão.
+
+A moldura amostral publicada passa a ter **uma** célula: **texto enciclopédico, Wikipédia pt, dump
+2022-03-01**. As três tipologias da Carolina — *judicial branch*, *university domains*, *social media* —
+saem da moldura. Com elas saem `m=7`, α por hipótese 0,007143 e o teto de 1,6337 %; entram `m=4`,
+α 0,0125 e **dois** pontos declarados do teto.
+
+### A cadeia de evidência, medida
+
+A revisão adversarial da Fase 2 (unidade L1, `.codex-reviews/fase2-L1-review.md`) achou duas coisas, e a
+segunda é a que abriu esta emenda:
+
+1. o gate de composição lê como **documento de origem** o eixo `source`
+   (`benchmark/composition-gate.ts`, `ORIGIN_DOCUMENT_AXIS = "source"`), e o extrator da Carolina emite
+   nesse eixo o **arquivo-membro** do pacote (`extract_carolina.py`, `carolina_member_<arquivo>`). As três
+   tipologias da moldura têm **37 / 7 / 2** arquivos-membro contra piso de **300** unidades, sob
+   `collection.maximumLinesPerOriginDocument = 1`. Nenhuma re-extração muda isso: o pacote não tem mais
+   arquivo-membro;
+2. o vocabulário da célula estava escrito em **duas** grafias que ninguém comparava — `humanCoreStrata`
+   (`encyclopedic`/`judicial`/…) e `preRegistration.quotaAxis.cells` (`ptwiki`/`carolina-judicial`/…) —, e
+   nenhum gate lia a primeira.
+
+A medição própria sobre `snapshots/archive.zip`, **por header de documento** (2026-08-05, nunca corpo):
+
+| tipologia | documentos | pré-corte | autores declarados | hosts |
+|---|---:|---:|---:|---|
+| *judicial branch* | 38.187 | 38.187 | **0** | 5, todos `*.stf.jus.br` (redir 31.713 · portal 4.241 · notícias 1.089 · stf 611 · 533 sem URL) |
+| *university domains* | 26.409 | 26.409 | **0** | 1, `jornal.usp.br` |
+| *social media* | 8.862 | 3.294 | 104 (o maior com 200 documentos) | 1, `wattpad.com` |
+
+As três células da Carolina são de **instituição única**. Isso tem duas consequências, e elas são
+independentes: **unidades insuficientes** (104 contra 300 na melhor delas; zero nas outras duas, porque
+sem autor a unidade recua ao arquivo-membro) e **população mal declarada** — publicar "FPR em texto
+judiciário" a partir do STF, "em domínio universitário" a partir de um jornal e "em rede social" a partir
+de ficção do Wattpad é over-claim.
+
+A afirmação precisa, nestes termos: **o material não carrega a proveniência necessária para estabelecer
+independência na escala que a alegação exige.** Não é que o STF valha uma unidade; é que entre 1 e 38.187
+o material não oferece base para escolher. Célula cuja independência não se estabelece na escala que o
+intervalo assume não é alegação mais estreita — é alegação sem sustentação, e nenhum `n` a conserta.
+
+O **contraste** que justifica a célula que fica: `extract_wikipedia.py` emite
+`source = known("ptwiki_page_" + page_id)` — a **página** — e `author = not_applicable(NO_SINGLE_AUTHOR)`.
+A unidade é a página, o piso de 300 é trivial, e o dump de 1,96 GB é a reserva.
+
+### O ganho, que é contraintuitivo e vai ser questionado
+
+**Reduzir a moldura ESTREITOU o teto publicado**, de 1,63 % para 0,55 %. Duas coisas se somam:
+
+- `m` cai de 7 para 4, então α por hipótese sobe de 0,05/7 = 0,007143 para 0,05/4 = 0,0125, e um α maior
+  aperta o teto sob zero eventos; e
+- o orçamento de coleta **concentra numa célula**: 4.000 linhas em vez de 1.750, então o bloco cego vai de
+  350 para 800 linhas, e `1 − α^(1/n)` decresce em `n`.
+
+Medido: `1 − 0,0125^(1/800) = 0,0054626` contra `1 − 0,007143^(1/300) = 0,0163372`. A opção de 0,55 % da
+Etapa 0 (G0.3) custava **16.000** linhas humanas a quatro células; ela agora custa **4.000** a uma.
+
+### O que NÃO se alega mais
+
+- FPR em **texto judiciário**, em **texto de domínio universitário** e em **rede social** — em nenhum `n`,
+  com nenhum material deste pacote. Não há linha na tabela publicada para essas populações;
+- que a Carolina cubra a moldura de qualquer forma: `FRAME_TYPOLOGIES` está **vazia**,
+  `humanSources.snapshots` não estoca `carolina`, e `V3_HUMAN_SOURCE_INVENTORY` não a registra;
+- cobertura de **quatro** registros comparáveis. `poolingIsResolutionLoss` fica congelado em `true` porque
+  é a regra sob a qual uma segunda célula entraria, não uma comparação que hoje tenha o que fazer.
+
+O que **continua** alegável é o que sempre foi: uma linha, uma população declarada, e "fora da moldura não
+há alegação de erro — nem melhor, nem pior".
+
+### Decisões do agente, com razão e custo de reversão
+
+| # | decisão | razão | custo de reversão |
+|---|---|---|---|
+| E-1 | as duas grafias da célula **colapsam numa constante única**, e a que sobrevive é o **id de célula** (`ptwiki`), não a palavra de registro (`encyclopedic`) | três autoridades já leem o id: o valor de fatia de `CELL_FPR_AXIS` (`gates.ts`), `quotaAxis.cells` e o sufixo `fpr-<célula>` de `multiplicity.primaryFamily`. `humanCoreStrata` não tinha consumidor que decidisse nada, então é o lado que cede. **Compartilhada** (`FROZEN_HUMAN_CORE_STRATA = FROZEN_QUOTA_AXIS_CELLS`) e não conferida em runtime: com uma constante atrás dos dois `frozenList` nenhuma política consegue fazê-las discordar, e comparação que nenhuma entrada reprova se lê como defesa sem ser uma | um literal, enquanto nenhuma evidência estiver publicada |
+| E-2 | o teto sob zero eventos passa a declarar **DOIS** pontos, e os dois são **re-derivados no load** | os dois respondem perguntas diferentes e publicar só um é como o leitor fica com o número errado: o teto no **piso** (300 linhas) é o **critério de recusa** — o pior teto que ainda sela —, e o teto no **alvo** (800 linhas) é a **expectativa**, o número que o model card imprime. Derivar só o primeiro deixaria justamente o número publicado sem conferência. A contagem de linhas do segundo é derivada de `humanLinesPerCellTarget × partitionFractions.test`, nunca escrita ao lado: um terceiro número para a mesma quantidade é a deriva que o bloco existe para recusar | mexer em qualquer dos dois move o `evaluatorDigest`; hoje é barato (`issuedAt` nulo, 0 tags, nenhum `fit` selado) |
+| E-3 | os valores são **0,014501** e **0,005463**, calculados e não copiados | `1 − 0,0125^(1/300) = 0,0145006` e `1 − 0,0125^(1/800) = 0,0054626`. O contrato desta unidade trazia 0,014497 e 0,005464, errados no último dígito; `DERIVED_TOLERANCE` é 1e-6 e os dois são **recusados** pelo parser (medido: mutações M5a e M5b) | recomputar, ao custo de duas exponenciações |
+| E-4 | `extract_carolina.py` **fica na árvore**, com `FRAME_TYPOLOGIES` vazia e recusa em `CarolinaOutOfFrame` no ponto de entrada | mesma convenção do PT.SO (bloqueado por nome) e do B2W: extrator que desaparece não deixa rastro do motivo, e readmitir a base viraria edição de uma linha que funciona em vez de emenda que tem de nomear a célula que acrescentaria. A recusa é no **ponto de entrada** e não uma passada que termina vazia, porque uma corrida que lê 3,1 GB e escreve zero linha se lê como arquivo ruim, e o operador iria procurar o arquivo em vez de ler a moldura. Como `typologies` pode chegar por chamada direta, a moldura é conferida **na função** e não só no tipo do argparse | um nome em `FRAME_TYPOLOGIES` mais a célula em `quotaAxis.cells` e o membro `fpr-<célula>` em `primaryFamily` — que é exatamente o preço que a convenção quer cobrar |
+| E-5 | a tabela de reamostragem é **re-derivada**: `groups.domainSource` deixa de ser nível em `human-specificity` e em `calibration`, e as duas linhas caem por **fallback** para `groups.source` com `fallbackToIndependentRows: false` | com uma célula declarada, `groups.domainSource` carrega **um** valor no corpus inteiro: um nível de um valor sorteia a mesma unidade em toda réplica, e uma tabela que o nomeasse se leria como se o intervalo publicado tivesse contabilizado variação entre estratos que ele nunca viu. `fallbackToIndependentRows: false` mantém fechada a rota para o bootstrap i.i.d. que o C4 removeu | o nível volta com a segunda célula, e é o custo aritmético de acrescentar uma |
+| E-6 | as seis famílias hard-negative **ficam** e todas passam a apontar para `ptwiki` | `RELEASE_CORPUS_POLICY.requiredHardNegativeFamilies` exige as seis, e derrubar uma seria mover decisão selada para desviar de escassez. O custo é aritmético e está cobrado em `hard_negative_demand_per_cell`: a demanda sobre a célula é 6 × `tag_per`. Três das seis (`repetitive`, `non-native`, `motivational`) são de texto curto informal e passam a ser procuradas em lede de Wikipédia, onde são mais raras — dívida declarada no ESTADO § 7, não silêncio | remapear é um dict, mas a cota por célula muda com ele |
+| E-7 | o **pino cross-lista** é um teste único que compara as **seis** listas que alcançam `humanSourceType` — `preRegistration.quotaAxis.cells`, os sufixos `fpr-*` de `multiplicity.primaryFamily`, `assemble_corpus.REGISTER`, `assemble_corpus.QUOTA_CELLS`, `humanCoreStrata` e `RELEASE_CORPUS_POLICY.requiredHumanSourceTypes` (esta última parseada de `dataset-manifest.ts`, que é o artefato que `sealDataset` lê) — e cada asserção nomeia o lugar que discorda | "os vocabulários divergem" é inútil sem saber qual deles se moveu. Provado nas três direções por mutação (M6a/M6b/M6c) | é teste, custo zero |
+| E-8 | a comparação `ceilingAtCollectionTarget >= ceilingAtAdoptedFloor` **sai** do parser | é ramo que nenhuma política admissível alcança: o piso de coleta está congelado em 1.500 linhas, o alvo é recusado se não o exceder, a fração de `test` é congelada, e `1 − α^(1/n)` decresce estritamente em `n`. Medido: removê-la deixava a suíte **verde** (mutação M10), e o caso que a testava era satisfeito pela recusa **errada** (`collection.humanLinesPerCellTarget`) sob um `toBeInstanceOf` sem `path`. A relação em que a ordem realmente se apoia — piso × fração de `test` = denominador do FPR — já é pinada por teste. O próprio módulo enuncia o padrão: comparação que nenhuma entrada alcança se lê como defesa e não é uma | reintroduzir é três linhas; o que não volta é a falsa cobertura |
+| E-9 | `REJECTED_CELL` do fixture de evidência passa a ser **lido** de `quotaAxis.cells[0]` | estava cravado em `carolina-judicial`, então o fixture publicava `covers: true` ao lado de uma hipótese que a família não carrega — relatório que nenhuma política de gate consegue emitir, que é exatamente o que o comentário do próprio fixture proíbe. O irmão (`profile-artifact.fixtures.ts`) já lia da política | é fixture, custo zero |
+
+### O custo de reversão da emenda inteira
+
+Baixo **hoje** e irreversível depois da Fase 5. Hoje: `issuedAt` é nulo, há 0 tags de release,
+`gateDecision` é `pending`, `profileDigests` está vazio, nenhum corpus selado existe e nenhum `fit`
+certificador rodou. O que a emenda move é o `evaluatorDigest`, que em HEAD era `9bc4e749…` — o valor
+vigente vive em ESTADO § 5.6 e é lido por teste, e **não** é repetido aqui, porque um número que se move
+a cada edição de arquivo do avaliador transformado em fato histórico é a forma de envelhecer em silêncio
+que esta unidade acabou de consertar. Mover o digest antes de existir evidência publicada não custa
+nada. Depois de `consume-holdout`, mover a moldura mata todo teto publicado e exige material cego
+fresco em toda célula alegada (ESTADO § 3.2).
+
+Voltar a quatro células **não é** uma edição: exige a célula em `quotaAxis.cells`, o membro `fpr-<célula>`
+em `primaryFamily`, `primaryFamilySize`, α recomputado, os dois pontos do teto recomputados, o alvo e o
+total de coleta, `RELEASE_CORPUS_POLICY.counts`, `requiredHumanSourceTypes`, `humanSources.snapshots`,
+`V3_HUMAN_SOURCE_INVENTORY`, `FRAME_TYPOLOGIES`, `REGISTER`, `HUMAN_SOURCE`, `HN_REGISTER` e a tabela de
+reamostragem — e, antes de tudo isso, uma proveniência que o pacote da Carolina não tem. É o preço que a
+convenção de "declarado, não apagado" quer cobrar.
+
+### Consequência que a emenda cria e que ninguém pediu
+
+Com a Carolina fora, **nenhuma licença em moldura impõe `non-commercial`**: as obrigações medidas do
+inventário estocado são `attribution` e `share-alike`, e o `non-commercial` chegava com o
+`cc-by-nc-sa-4.0` da Carolina. O regime NC sobrevive porque é decisão própria deste projeto
+(`commercialUse: false`) — o que é exatamente o que a posição (a) afirma, e agora não tem em que se
+apoiar. Está no ESTADO § 7 com dono: é B1, e B1 é do operador.
+
+### Prova por mutação
+
+Doze mutações, cada uma aplicada ao arquivo de **produção**, com linha de base verde antes, vermelho no
+teste nomeado, restauração e conferência sha256 byte a byte. O log dos cinco passos está no relatório da
+unidade (`.codex-reviews/emenda-moldura-implementacao.md`).
+
+| # | mutação | resultado |
+|---|---|---|
+| M1 | `m` volta a 7 (família, `primaryFamilySize`, α, quatro células) | recusa em `preRegistration.quotaAxis.cells` |
+| M2 | α volta a 0,007143 | recusa em `multiplicity.perHypothesisAlpha`, com o `m=4` na mensagem |
+| M3 | `quotaAxis.cells` com quatro células | recusa em `preRegistration.quotaAxis.cells` |
+| M4 | teto antigo 0,016337 no piso | recusa em `ceilingAtAdoptedFloor`, com `1 - 0.0125^(1/300)` na mensagem |
+| M5a | teto no piso a 0,014497 (o valor errado do contrato) | recusa em `ceilingAtAdoptedFloor` |
+| M5b | teto no alvo a 0,005464 (o valor errado do contrato) | recusa em `ceilingAtCollectionTarget`, com `1 - 0.0125^(1/800)` |
+| M5c | bloco cego do alvo a 350 linhas, com o teto coerente | recusa em `blindBlockLinesAtCollectionTarget` |
+| M6a | `REGISTER` do lab muda de grafia | vermelho nomeando `assemble_corpus.REGISTER` |
+| M6b | `quotaAxis.cells` muda de grafia | vermelho nomeando `assemble_corpus.REGISTER` contra `quotaAxis.cells` |
+| M6c | sufixo `fpr-*` de `primaryFamily` muda | vermelho nomeando `multiplicity.primaryFamily` |
+| M7 | inventário de gates escrito à mão com a família de 7 | vermelho em "covers the family at the frozen m, and passes" e em 13 outros |
+| M8/M9 | guarda do teto no alvo e do bloco cego derivado removidas | vermelho em "refuses a collection-target ceiling that is not the formula at its own n" |
+| M10 | guarda do **aperto** removida | **verde** — achado, e é o que E-8 resolve |
+| M11 | piso de coleta a 1.000 linhas nas DUAS autoridades (o literal congelado e o JSON) | vermelho em "keeps the five fractions summing to one, which is what a fifth edit would break", com `expected 200 to be 300` — é esta asserção, **pré-existente**, que carrega a ordem dos dois tetos |
+
+### A emenda da moldura, FECHADA: o que as duas lentes acharam (2026-08-05)
+
+Duas revisões adversariais (contrato e mutação) deram **block**, com 8 bloqueantes e 22 menores entre as
+duas. O padrão dos bloqueantes é um só e vale nomear: **a emenda mudou os números e não mudou tudo que os
+repetia.** Nenhum era erro de política; todos eram a mesma quantidade escrita duas vezes com dois valores.
+
+| # | achado bloqueante | veredito |
+|---|---|---|
+| 1 | `evaluatorDigest` publicado no ESTADO e no registro divergia do que a árvore hasheia | **procede** — recomputado, e agora **lido por teste** (references § N7) |
+| 2 | `split-audit.ts:118` (membro de `EVALUATOR_FILES`) afirmava 7.000 humanas e bloco cego de 1.400 | **procede** — reescrito para 4.000 / 800, e varrido contra `counts` |
+| 3 | `corpus-collection-runbook.md` ficou com 13,46 % e "blocos de 25 %", aritmética de quatro células | **procede** — re-derivado: 40 % do corpo, 100 % da classe |
+| 4 | `corpus-sources.md` dava `src_carolina` como snapshot congelado e apontava `m = 7` como vigente | **procede em parte** — ver E-18 |
+| 5 | `NOTICE.md` seguia listando Carolina e B2W como dado de treino | **procede** — reescrito e varrido contra o inventário estocado |
+| 6 | `test_connectivity_feasibility.py` era guarda de estado verde sobre a moldura aposentada | **procede** — células derivadas de `REGISTER`, e a viabilidade sob UMA célula passou a ser medida |
+| 7 | `total !== target * cells`: o fator não é alcançado por política admissível | **procede** — e a saída é o contrário de E-8; ver E-10 |
+| 8 | a asserção nova de `preregistration-v4.test.ts` não podia reprovar, e M11 provava a pré-existente | **procede** — ver E-11 |
+
+### Decisões do agente ao fechar a emenda
+
+| # | decisão | razão | custo de reversão |
+|---|---|---|---|
+| E-10 | a derivação do total de coleta ganha **nome** (`derivedHumanLinesTotal`, exportada) e é pinada em **duas e quatro** células, em vez de o fator sair do parser | não é o caso de E-8, e a diferença é qual coisa é inalcançável: em E-8 era a **comparação** — o ramo não decidia nada. Aqui é um **valor do insumo**: a comparação decide (um total errado é recusado) e só o fator fica sem exercício, porque a moldura tem uma célula. Tirar o fator gravaria no código a coincidência de haver hoje uma célula, que é a classe de erro que a emenda existe para desfazer. Metodologia em `references.md` § N6. Provado: M12 fica **vermelho** em teste nomeado | uma função de uma linha |
+| E-11 | a asserção `blindBlockLinesAtCollectionTarget > criticalFprHumanNegatives` **sai** do teste, e a atribuição da prova é corrigida | os três escalares são congelados: o lado esquerdo é sempre > 300, e a asserção só pode reprovar junto da pré-existente, nunca sozinha. **Medido** (M20b, réplica de M11): o vermelho nomeado é "keeps the five fractions summing to one…" com `expected 200 to be 300` — a asserção **pré-existente**, exatamente como a revisão afirmou. A ordem dos dois tetos continua pinada por ela, e o invariante fica enunciado no comentário | duas linhas; o que não volta é a redundância |
+| E-12 | a composição ratificada citada em **prosa** dentro dos módulos do bench passa a ser varrida contra `RELEASE_CORPUS_POLICY.counts` | comentário não se muta, e dois módulos carregaram a composição aposentada por uma emenda inteira com a suíte verde. A varredura roda sobre **todo** módulo do bench e não só sobre `EVALUATOR_FILES`, porque o gêmeo que também divergiu (`viability-preflight.ts`) **não** é arquivo do avaliador — uma varredura escopada ao digest teria deixado sem leitura justamente a cópia que derivou | é teste, custo zero |
+| E-13 | o `evaluatorDigest` que o ESTADO publica é conferido contra a **árvore viva** por teste nomeado | é o conserto do bloqueante 1 na raiz: o número estava errado e nada reprovava. **Medido** (M22): trocado por zeros, o teste nomeado fica vermelho e `docs:check` continua **verde** — isto é, `docs:check` nunca guardou o número. Caiu com ele o comentário de `digests.test.ts` que dizia haver arquivo declarado ainda inexistente: os 52 existem, e a recomputação sobre a árvore real corre | é teste; o preço recorrente é uma linha do ESTADO por commit que toque arquivo do avaliador, e é o preço certo |
+| E-14 | a lista `## Dados de treino` do NOTICE é varrida contra `V3_HUMAN_SOURCE_INVENTORY`, `OUT_OF_FRAME_HUMAN_SOURCES` e `A1_BLOCKED_HUMAN_SOURCES`, e passa a nomear cada fonte pelo `sourceId` | as varreduras que existiam liam a lista de licenças e a frase do regime NC, não a lista de bases — então o NOTICE afirmava treinar em Carolina e B2W três parágrafos acima de a própria emenda declarar as duas fora da moldura. A varredura lê só os **itens da lista** e não a seção: a prosa abaixo nomeia as excluídas de propósito. Provado: M15 vermelho | é teste; o NOTICE fica com um id por base |
+| E-15 | `docs/corpus-sources.md` passa a **renderizar** `humanSources.snapshots` e o `m` vigente, e os dois são varridos | é o arquivo que o montador cita como autoridade do inventário revisado (`assemble_corpus.py`), e ele publicava a lista de snapshots errada e um ponteiro de "o que vale" invertido. Provado: M16 vermelho | é teste, custo zero |
+| E-16 | o fixture de viabilidade **deriva** as células de `assemble_corpus.REGISTER`/`HUMAN_SOURCE`, e a viabilidade das cinco partições **por classe com UMA célula** passa a ser medida | o arquivo se apresenta como guarda de estado e condena no próprio docstring provar sobre "corpus imaginário" — e cravava quatro células e o lote da Carolina, material que nenhuma autoridade declara. Sob uma célula as duas direções (estrato e lote) colapsam no MESMO componente de 100 %, e a recusa troca de ramo: passa a ser a do **maior**, não a do menor. A medição que faltava usa `author`, que É eixo de união v4, então a degenerescência humana é alcançável **sem mock**: 40 % do corpo (cabe em `train`) e 100 % da classe `human`. Provado: M19 e M23 vermelhos | é teste; o fixture passa a acompanhar a moldura sem edição |
+| E-17 | a regra N5 ganha **qualificação**: o proibido é fator degenerado **sem declaração**, não fator degenerado | a mesma tabela carrega o caso contrário e ele fica — `resampling.estimandClasses.mixed.levels[1]` nomeia `groups.promptTemplate` **com** `proxyFor` e `proxyReason`, e o `proxyReason` diz que o fator é degenerado por construção até um eixo de operação existir. Remover essa linha esconderia a lacuna, que é o erro simétrico. E o lado declarado **já tem guarda de parser**: medido (M21b), apagar `proxyReason` recusa com "`proxyReason` is required whenever the other is present"; renomear a chave (M21) recusa por chave fora do conjunto fechado | é prosa de `references.md` |
+| E-18 | **refutação parcial** do bloqueante 4: a tabela "Fase 0.2" de `corpus-sources.md` **mantém** 250 unidades, `n=250`, `n=512` e o eixo de quatro células | ela se declara **seção HISTÓRICA da pré-inscrição v3** no próprio cabeçalho, e esses são os valores que a v3 congelou; corrigi-los para os vigentes apagaria o registro do que foi abandonado, contra a convenção "declarado, não apagado". O que estava errado e foi consertado é outra coisa: o **blockquote que diz qual moldura vale** estava invertido (dizia que o vigente é `m = 7` e que `m = 4` não se aplica; é o contrário), e a cláusula "gate a implementar em E3 da Fase 1" era falsa — o gate existe (`benchmark/composition-gate.ts`). O blockquote agora nomeia os quatro valores superados e diz que o `m = 4` das duas tabelas é **coincidência de contagem** e não continuidade: a família v3 tinha o pior estrato como manchete, a v4 tem um `fpr-<célula>` por célula | é prosa |
+| E-19 | a queda da população que ajusta o limiar (1.050 → 600 linhas) é **registrada como dívida** e **não** consertada com piso pré-inscrito novo | acrescentar entrada a `powerFloors` é mudar a política **selada** e decidir sobre poder do quantil — número que a tabela ratificada pelo operador não carregava e que ninguém mediu. Inventá-lo aqui seria congelar um piso sem medição para fechar um achado. O que a unidade deve é nomear a consequência: está no ESTADO § 7, com vencimento | reabrir é a mesma dívida |
+
+### Refutações e o que ficou de fora, com razão
+
+- **`viability-agreement.json` continua com células `carolina-*`** e não foi tocado: é catálogo de corpos
+  **hipotéticos** que o preflight julga, e o preflight não lê a moldura. Mutar ali seria mutar a forma da
+  política em vez do corpus.
+- **A tabela histórica da v3** fica com os valores da v3 (E-18).
+- **`graphify-out/`**, não rastreado no início da sessão anterior, não está mais em disco. Nenhum comando
+  desta unidade nem da anterior remove diretório não rastreado; é saída de skill e não trabalho do projeto,
+  e a regeneração é decisão do operador.
+- **A intermitência de `consume-holdout.test.ts` e `digests.test.ts`** não foi consertada: é dívida de
+  rodada própria (ESTADO § 7, agora generalizada para os dois arquivos).
+
+### Prova por mutação — segunda bateria (fechamento)
+
+Doze mutações, os mesmos cinco passos: base verde, mutação no arquivo de produção, rodada do teste alvo,
+restauração e conferência sha256 byte a byte.
+
+| # | mutação | resultado |
+|---|---|---|
+| M12 | `derivedHumanLinesTotal` perde o fator de células | vermelho em "derives the collection total by SUMMING the per-cell target over the cells", `expected 4000 to be 8000` |
+| M13 | `REJECTED_CELL` cravado numa célula aposentada | vermelho em "names only hypotheses the frozen primary family carries", nomeando `fpr-carolina-judicial` |
+| M14 | `quota_cells_of` devolve tupla escrita à mão | vermelho em `test_the_quota_denominator_follows_the_register_past_one_cell` |
+| M15 | NOTICE nomeia `src_carolina` na lista de dado de treino | vermelho em "the NOTICE's training-data list names every stocked source and no out-of-frame or blocked one" |
+| M16 | `corpus-sources.md` põe `carolina` de volta na lista de snapshots | vermelho em "makes the source inventory doc state the frozen snapshot list and the frozen m" |
+| M17 | comentário de `split-audit.ts` volta a 7.000 | vermelho na varredura, nomeando `benchmark/split-audit.ts` |
+| M17b | `RELEASE_CORPUS_POLICY.counts.human` 4.000 → 7.000 | dois vermelhos: o pino da cota selada **e** a varredura, nomeando `split-audit.ts` — a direção que antes passava calada |
+| M18 | comentário de `viability-preflight.ts` volta a 7.000 | vermelho na varredura, nomeando `benchmark/viability-preflight.ts` |
+| M19 | células do fixture de viabilidade escritas à mão com uma célula aposentada | vermelho em `test_o_fixture_roda_sobre_as_celulas_DA_MOLDURA` |
+| M20b | piso de coleta a 1.000 nas duas autoridades (réplica de M11) | vermelho em "keeps the five fractions summing to one…", `expected 200 to be 300` — confirma a atribuição de E-11 |
+| M21 / M21b | `proxyReason` renomeado / apagado | recusa no load: chave fora do conjunto fechado, e "`proxyReason` is required whenever the other is present" |
+| M22 | digest publicado no ESTADO trocado por zeros | vermelho em "is published in the ESTADO at the value the LIVE tree hashes to"; `docs:check` **verde** sob a mesma mutação |
+| M23 | a guarda de viabilidade perde o escopo por CLASSE | vermelho em `test_com_UMA_celula_a_recusa_e_da_CLASSE_humana_e_nao_do_corpo` |
+
+Uma mutação **não** isolou o que se pretendia, e está registrada como tal: **M20** (`FROZEN_FLOOR_PER_CELL`
+300 → 900 sozinho) recusa no **load** — "`powerFloors.samplingUnits` is frozen at 900" — antes de qualquer
+teste rodar, então não diz nada sobre asserção alguma. É por isso que M20b move as **duas** autoridades
+juntas.

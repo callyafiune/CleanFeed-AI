@@ -519,11 +519,14 @@ function emptySlices(): SliceSummary {
 
 // A rejected run, and the failing gate is a CERTIFYING one: only a member of the
 // primary family produces `reject`, so a fixture whose single failure is a diagnostic
-// would be a decision no gate policy can emit.
-const REJECTED_CELL = "carolina-judicial";
+// would be a decision no gate policy can emit. The cell is READ from the frozen quota
+// axis for the same reason: `covers: true` beside a hypothesis the family does not
+// carry is also a report no gate policy can emit, and a hard-coded cell becomes one the
+// moment the frame is amended.
+const REJECTED_CELL = PREREGISTRATION_V4.preRegistration.quotaAxis.cells[0];
 const REJECTED_GATE = `warning.fpr.slice.humanSourceType.${REJECTED_CELL}`;
 
-function rejectGates(): GateReport {
+export function rejectGates(): GateReport {
   const family = PREREGISTRATION_V4.multiplicity.primaryFamily;
   return {
     schemaVersion: 3,

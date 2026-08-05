@@ -342,12 +342,35 @@ describe("dataset manifest", () => {
     ).rejects.toThrow(/expected ai=1, received ai=0/);
   });
 
-  it("enforces the sealed 6k/4k/2k release quota", async () => {
+  // The composition of the frame amendment: 4.000 human lines in the ONE declared cell,
+  // 4.000 AI and 2.000 mixed. Pinned as the numbers a corpus must hold rather than by
+  // reading the policy back, because `sealDataset` compares by EXACT equality and this is
+  // the test that would notice the quota moving with nothing else.
+  it("enforces the sealed 4k/4k/2k release quota", async () => {
+    expect(RELEASE_CORPUS_POLICY.counts).toEqual({
+      human: 4000,
+      ai: 4000,
+      mixed: 2000,
+    });
     await expect(
       sealDataset(
         validManifest,
         [human, ai, mixed],
         RELEASE_CORPUS_POLICY,
+        validFileDigests,
+      ),
+    ).rejects.toThrow(/expected human=4000, received human=1/);
+    // And a composition of the PREVIOUS frame is refused by the same comparison: four
+    // cells at 1.750 was 7.000 human lines, which is what a corpus assembled before the
+    // amendment would carry.
+    await expect(
+      sealDataset(
+        validManifest,
+        [human, ai, mixed],
+        {
+          ...RELEASE_CORPUS_POLICY,
+          counts: { human: 7000, ai: 4000, mixed: 2000 },
+        },
         validFileDigests,
       ),
     ).rejects.toThrow(/expected human=7000, received human=1/);
@@ -1382,5 +1405,52 @@ describe("the sealed audit judges a v4 corpus by the axes v4 declares", () => {
     ).rejects.toThrow(
       /requires at least 200 eligible positives, received 199 eligible of 199 positive rows/u,
     );
+  });
+});
+
+describe("the ratified composition is not written twice with two values", () => {
+  it("makes every evaluator file that states the human count state RELEASE_CORPUS_POLICY.counts", async () => {
+    // A comment cannot be muted, so a frozen count written in prose inside
+    // `EVALUATOR_FILES` ages in silence: its bytes decide the `evaluatorDigest` while no
+    // test reads them. Two members carried the retired composition for a whole amendment
+    // — `split-audit.ts` said 7000 human records and a 1400-line blind block, and
+    // `viability-preflight.ts` said 7.000 — with the suite green. This sweep is the read.
+    const { readdir, readFile } = await import("node:fs/promises");
+    const { resolve, dirname } = await import("node:path");
+    const { fileURLToPath } = await import("node:url");
+    const benchmarkDir = resolve(dirname(fileURLToPath(import.meta.url)), "..");
+    // Every module of the bench, not only `EVALUATOR_FILES`: the twin that states the
+    // same composition (`viability-preflight.ts`) is NOT an evaluator file, and a sweep
+    // scoped to the digest would have left exactly the copy that drifted unread.
+    const modules = [
+      ...(await readdir(benchmarkDir)).map((name) => `benchmark/${name}`),
+      ...(await readdir(resolve(benchmarkDir, "commands"))).map(
+        (name) => `benchmark/commands/${name}`,
+      ),
+    ];
+    const repoRoot = resolve(benchmarkDir, "..");
+    // Both phrasings the two files use, and a count with either separator: the point is
+    // to catch the NUMBER, so the pattern may not be stricter than the prose.
+    const patterns = [
+      /composition is ([\d_.]+) human/gu,
+      /composition \(([\d_.]+) human/gu,
+    ];
+    let found = 0;
+    for (const relativePath of modules) {
+      if (!relativePath.endsWith(".ts")) continue;
+      const body = await readFile(resolve(repoRoot, relativePath), "utf8");
+      for (const pattern of patterns) {
+        for (const match of body.matchAll(pattern)) {
+          found += 1;
+          expect(
+            Number(match[1].replaceAll(/[_.]/gu, "")),
+            `${relativePath}: ${match[0]}`,
+          ).toBe(RELEASE_CORPUS_POLICY.counts.human);
+        }
+      }
+    }
+    // Non-vacuous: if the prose is reworded so no pattern matches, this fails instead of
+    // passing over an empty sweep.
+    expect(found).toBeGreaterThanOrEqual(2);
   });
 });

@@ -43,20 +43,20 @@ não é prosa); Wikipédia usa só a seção-lede de artigos ns=0 sem redirect;
 Carolina lê licença + `<date type="Download">` POR DOCUMENTO (o que torna o
 pacote v2.0 utilizável) e nunca lê os campos de nomes/autores dos headers.
 
-**A moldura amostral é uma allowlist, não um filtro de conveniência.** O
-`extract_carolina.py` extrai as TRÊS tipologias da moldura
-(`judicial_branch`, `social_media`, `university_domains`) e nenhuma outra:
-`legislative_branch`, `public_domain_works`, `wikis` e
-`datasets_and_other_corpora` estão declaradas em `OUT_OF_FRAME_TYPOLOGIES` com
-a razão de cada uma, não são abertas e por isso **não consomem cota**. Pedir
-uma delas em `--typologies` é recusado na entrada; uma tipologia que **nenhuma
-das duas listas nomeia** recusa a corrida inteira (`TypologyOutOfFrame`) — o
-diretório vem grafado com espaço em algumas releases e com underscore em
-outras, e uma tipologia da moldura renomeada produziria zero linha de uma
-célula cujo teto de FPR a release publica, em silêncio.
+**A moldura amostral é uma allowlist, não um filtro de conveniência.** Desde a
+emenda de 2026-08-05 ela não tem nenhuma tipologia da Carolina:
+`FRAME_TYPOLOGIES` está VAZIA, as SETE tipologias do pacote estão declaradas em
+`OUT_OF_FRAME_TYPOLOGIES` com a razão medida de cada uma, e `extract_carolina.py`
+recusa qualquer corrida em `CarolinaOutOfFrame` antes de abrir o arquivo — um
+passe de 3,1 GB que escreve zero linha se lê como arquivo ruim, e a recusa é o
+que carrega a razão. O módulo fica na árvore, não é apagado: readmitir a base tem
+de custar uma emenda da moldura, não uma redescoberta de como ler um pacote TEI.
+Uma tipologia que **nenhuma das duas listas nomeia** ainda recusa a corrida
+(`TypologyOutOfFrame`) — o diretório vem grafado com espaço em algumas releases e
+com underscore em outras, e é nisso que uma readmissão futura aterra.
 
-O lado do montador espelha isso: `assemble_corpus.py` só admite as quatro
-células da moldura (`REGISTER`/`HUMAN_SOURCE`), e Stack Overflow, resenha de
+O lado do montador espelha isso: `assemble_corpus.py` só admite a célula da
+moldura (`REGISTER`/`HUMAN_SOURCE`), e Stack Overflow, resenha de
 produto (B2W) e as tipologias fora da moldura seguem **nomeadas** em
 `A1_BLOCKED_DOMAIN_SOURCES` e `OUT_OF_FRAME_DOMAIN_SOURCES`. As razões são
 diferentes e o código as mantém separadas: termo de acesso é condição jurídica
@@ -64,13 +64,13 @@ satisfazível; "sem célula" é decisão de escopo. Um `domainSource` que **nenh
 das três listas** nomeia recusa a corrida (`UndecidedDomainSource`), pelo mesmo
 motivo da tipologia indecidida.
 
-O vocabulário das células é `preRegistration.quotaAxis.cells` —
-`carolina-judicial`, `carolina-social-media`, `carolina-university`, `ptwiki` —
-e não os nomes de registro de `humanCoreStrata`. É o campo `humanSourceType`
-que os gates fatiam, e o gate de FPR por célula procura a hipótese que decide
-(`fpr-<célula>`) em `multiplicity.primaryFamily`: escrito com o outro
-vocabulário, o corpus conta zero linha nas quatro células do gate de composição
-e deixa as quatro hipóteses certificadoras sem gate.
+O vocabulário da célula é `preRegistration.quotaAxis.cells` — **uma** string,
+`ptwiki`, desde a emenda da moldura de 2026-08-05 —, e `humanCoreStrata` carrega
+a MESMA string: as duas grafias que existiam foram colapsadas porque nenhum lado
+media o outro. É o campo `humanSourceType` que os gates fatiam, e o gate de FPR
+por célula procura a hipótese que decide (`fpr-<célula>`) em
+`multiplicity.primaryFamily`: escrito com outro vocabulário, o corpus conta zero
+linha na célula do gate de composição e deixa a hipótese certificadora sem gate.
 
 Duas recusas do montador acontecem **antes** da montagem gastar a corrida, e as
 duas repetem uma comparação que o gate de composição só faria no fim:

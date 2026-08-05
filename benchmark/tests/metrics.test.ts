@@ -285,11 +285,18 @@ describe("a resampling unit that cannot be resolved fails loudly", () => {
     // `unknown` — the truthful mapping, not a flattering one. The frozen contract
     // forbids falling back to independent rows, so the whole computation fails
     // instead of publishing an interval that would look valid.
+    // The row that remains on the human estimands is `groups.author` with
+    // `groups.source` behind it, so the record has to lose BOTH for the unit to be
+    // unresolvable — which is what makes the refusal about the declared unit and not
+    // about a missing stratum.
     const withoutUnit = SEPARABLE.map((entry) => ({
       ...entry,
       record: {
         ...entry.record,
-        groups: { author: (entry.record.groups as { author: string }).author },
+        groups: {
+          domainSource: (entry.record.groups as { domainSource?: string })
+            .domainSource,
+        },
       } as BenchmarkRecord,
     }));
     let thrown: unknown;
@@ -299,7 +306,7 @@ describe("a resampling unit that cannot be resolved fails loudly", () => {
       thrown = error;
     }
     expect(thrown).toBeInstanceOf(ResamplingUnitError);
-    expect((thrown as ResamplingUnitError).axis).toBe("groups.domainSource");
+    expect((thrown as ResamplingUnitError).axis).toBe("groups.author");
     // The FPR of the warning decision is the first estimand resolved, so it is the
     // one that names itself; every other design over these rows is unusable too.
     expect((thrown as ResamplingUnitError).estimand).toBe("warning.fpr");
@@ -312,7 +319,7 @@ describe("a resampling unit that cannot be resolved fails loudly", () => {
   it("refuses positives with no generator axis, naming the ai-recall row", () => {
     // The human negatives resolve fine here: only the AI positives lose the outer
     // level of the ai-recall row. So the failure has to name THAT estimand and THAT
-    // axis — an operator sent to `groups.domainSource` would find nothing wrong.
+    // axis — an operator sent to `groups.author` would find nothing wrong.
     const withoutGenerator = SEPARABLE.map((entry) =>
       entry.record.label === "human"
         ? entry
@@ -372,10 +379,10 @@ describe("the published plan declares a unit for every estimand", () => {
     );
     // The frozen table, estimand by estimand.
     expect(byEstimand.get("warning.fpr")?.unitKind).toBe("hierarchical");
-    expect(byEstimand.get("warning.fpr")?.unitAxes).toEqual([
-      "groups.domainSource",
-      "groups.author",
-    ]);
+    // ONE level, because the frame declares one cell: `groups.domainSource` would draw
+    // the same stratum in every replicate, and the published plan may not name a factor
+    // the design did not vary.
+    expect(byEstimand.get("warning.fpr")?.unitAxes).toEqual(["groups.author"]);
     expect(byEstimand.get("warning.recall")?.unitAxes).toEqual([
       "groups.generatorFamily",
       "groups.promptTemplate",
@@ -798,8 +805,9 @@ describe("computeEvaluationMetrics", () => {
 
   it("draws the gated rates over the unit their row of the frozen table declares", () => {
     const metrics = computeEvaluationMetrics(SEPARABLE, OPTIONS);
-    // Row 1 — FPR and its specificity companion over human text — nests source
-    // outside author/donor.
+    // Row 1 — FPR and its specificity companion over human text — resamples the author,
+    // falling back to the origin document. It nests no stratum: with one declared cell
+    // that level holds a single value, and a level with one value is not a level.
     for (const [estimand, estimate] of [
       ["warning.fpr", metrics.warning.endToEnd.falsePositiveRate],
       ["warning.clearanceRate", metrics.warning.endToEnd.clearanceRate],
@@ -807,10 +815,7 @@ describe("computeEvaluationMetrics", () => {
     ] as ReadonlyArray<readonly [string, MetricEstimate]>) {
       expect(estimate.method).toBe("hierarchical-cluster-percentile");
       expect(estimate.resampling?.estimand).toBe(estimand);
-      expect(estimate.resampling?.axes).toEqual([
-        "groups.domainSource",
-        "groups.author",
-      ]);
+      expect(estimate.resampling?.axes).toEqual(["groups.author"]);
     }
     // Row 2 — recall over AI text — nests generator, prompt template and batch, in
     // that order, over the POSITIVES, which is a different population and therefore
@@ -850,10 +855,7 @@ describe("computeEvaluationMetrics", () => {
     expect(fpr.boundEnvelope?.lowerFrom).toBe("resampled");
     // And the design is still named: the unit was resampled, its bound just lost
     // the comparison.
-    expect(fpr.resampling?.axes).toEqual([
-      "groups.domainSource",
-      "groups.author",
-    ]);
+    expect(fpr.resampling?.axes).toEqual(["groups.author"]);
   });
 
   it("names the estimator behind the SIMULTANEOUS limit, which is the one a gate decides on", () => {
@@ -908,7 +910,9 @@ describe("computeEvaluationMetrics", () => {
       envelope?.analytic.upper as number,
     );
     expect(fpr.upper95).toBe(envelope?.resampled.upper);
-    expect(fpr.resampling?.levels[0].levels).toBe(12);
+    // The outer level IS the author now, so the count of drawn units is the number of
+    // authors and not the number of strata: 60 authors over the correlated fixture.
+    expect(fpr.resampling?.levels[0].levels).toBe(60);
   });
 
   it("bootstraps AUROC, PR-AUC, Brier and both ECEs over the unit their estimand declares", () => {
@@ -931,10 +935,7 @@ describe("computeEvaluationMetrics", () => {
       // Every published estimate NAMES its unit; none of them is implicit.
       expect(estimate.resampling?.estimand).toBe(estimand);
       expect(estimate.resampling?.method).toBe("hierarchical");
-      expect(estimate.resampling?.axes).toEqual([
-        "groups.domainSource",
-        "groups.author",
-      ]);
+      expect(estimate.resampling?.axes).toEqual(["groups.author"]);
     }
     expect(metrics.separability.auroc.value).toBeCloseTo(1, 10);
     expect(metrics.separability.prAuc.value).toBeCloseTo(1, 10);
@@ -1609,10 +1610,7 @@ describe("human negative label bases", () => {
     // Three human negatives under two authors, one of them errored.
     expect(dateCutoff.count).toBe(3);
     expect(dateCutoff.resamplingUnit?.units).toBe(2);
-    expect(dateCutoff.resamplingUnit?.axes).toEqual([
-      "groups.domainSource",
-      "groups.author",
-    ]);
+    expect(dateCutoff.resamplingUnit?.axes).toEqual(["groups.author"]);
     expect(dateCutoff.resamplingUnit?.method).toBe("hierarchical");
     expect(dateCutoff.errored).toBe(1);
     expect(dateCutoff.falsePositiveRate.value).toBeCloseTo(0.5, 10);

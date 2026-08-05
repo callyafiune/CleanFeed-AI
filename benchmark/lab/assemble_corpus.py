@@ -49,8 +49,8 @@ cleanfeed-canonical-assembly):
   * Pseudonyms /^[A-Za-z0-9_-]+$/ everywhere ids/groups live; families slugged.
   * label cross-rules: human->no generation; ai->generation; mixed->mixture
     (fractions sum to 1 at full float precision) + derivationRoot != id.
-  * humanSourceType = the QUOTA CELL, one of the four the declared frame has a source
-    for. hardNegativeFamily tagged heuristically so all 6 required families are
+  * humanSourceType = the QUOTA CELL the declared frame has a source for.
+    hardNegativeFamily tagged heuristically so all 6 required families are
     present on human records.
   * createdAt assigns a train/dev/cal-A/cal-B/test BLOCK (45/5/10/20/20 per class); held-out AI
     generator families are forced entirely into the test block (latest time),
@@ -104,14 +104,14 @@ CUTOFF_ISO = "2022-11-30T00:00:00+00:00"
 # concrete dump version, because that is a fact only the extractor saw and D1 is
 # what registers it.
 #
-# The two bases outside the declared frame are NOT here, and their absence is a
-# refusal rather than a gap: `label_evidence` falls back to this map, so an entry for
-# `pt-stackoverflow` or `b2w-reviews01` would date a row against a snapshot the frozen
-# policy does not stock (the first is in `humanSources.blockedSnapshots`). They stay
-# named, with the reason, in the two dicts below.
+# The bases outside the declared frame are NOT here, and their absence is a refusal
+# rather than a gap: `label_evidence` falls back to this map, so an entry for
+# `pt-stackoverflow`, `b2w-reviews01` or `carolina` would date a row against a snapshot
+# the frozen policy does not stock (the first is in `humanSources.blockedSnapshots`,
+# the other two are out of frame). They stay named, with the reason, in the two dicts
+# below.
 SOURCE_SNAPSHOT = {
     "src_wikipedia_pt": "ptwiki",
-    "src_carolina": "carolina",
 }
 
 # Block timestamps drive the temporal split, one per partition in temporal order
@@ -150,27 +150,33 @@ def within_class_tolerance(fracao: float, alvo: float) -> bool:
 
 # domainSource (candidate) -> humanSourceType, which IS the quota cell: the population
 # the release publishes one FPR ceiling for, over its own denominator of human
-# negatives. Four cells, one material each — Wikipedia pt plus three Carolina
-# typologies.
+# negatives. ONE cell, one material — encyclopedic text, Wikipedia pt.
 #
 # The VOCABULARY is `preRegistration.quotaAxis.cells`, and the choice is load-bearing
 # rather than cosmetic: the gates read this very field (`CELL_FPR_AXIS` in
 # benchmark/gates.ts) and name the hypothesis they decide `fpr-<value>`, so a value
-# outside the cell list produces four hypotheses the frozen
-# `multiplicity.primaryFamily` does not carry, leaves the four it does carry
-# undecided, and counts zero lines in every cell of the composition gate.
-# `humanCoreStrata` names the same four populations in register words
-# (encyclopedic/judicial/social-media/university) and is read by no gate.
+# outside the cell list produces a hypothesis the frozen `multiplicity.primaryFamily`
+# does not carry, leaves the one it does carry undecided, and counts zero lines in the
+# cell of the composition gate. Since the frame amendment `humanCoreStrata` holds the
+# SAME single string, so there is no second vocabulary left to pick the wrong one from.
 REGISTER = {
     "ptwiki_lead": "ptwiki",
-    "carolina_judicial_branch": "carolina-judicial",
-    "carolina_social_media": "carolina-social-media",
-    "carolina_university_domains": "carolina-university",
 }
+def quota_cells_of(register: dict[str, str]) -> tuple[str, ...]:
+    """The cells a register writes, in name order and without repetition.
+
+    A named function and not an inline expression because it is the DENOMINATOR of the
+    per-cell collection quota, and with ONE cell in frame the expression is degenerate:
+    every wrong derivation — including a hand-typed one-element tuple — agrees with the
+    right one. Exercised at more than one cell, it stops agreeing.
+    """
+    return tuple(sorted(set(register.values())))
+
+
 # The cells, in name order. Derived rather than retyped because it is the DENOMINATOR
-# of the per-cell collection quota: a fifth cell added to the register above without
-# this list moving would keep dividing the total four ways.
-QUOTA_CELLS: tuple[str, ...] = tuple(sorted(set(REGISTER.values())))
+# of the per-cell collection quota: a second cell added to the register above without
+# this list moving would keep dividing the whole total into the one cell.
+QUOTA_CELLS: tuple[str, ...] = quota_cells_of(REGISTER)
 # The human source A1 REFUSED, kept with its name and its reason, mirroring
 # `A1_BLOCKED_HUMAN_SOURCES` (benchmark/source-manifest.ts). The condition is legal and
 # satisfiable — a verifiable record of how and when the dump was acquired, plus a
@@ -188,18 +194,38 @@ A1_BLOCKED_DOMAIN_SOURCES = {
 # fact, held apart from the two above for the reason `SOURCE_OUT_OF_DECLARED_FRAME`
 # exists on the sealed side: "refused on a legal condition" and "outside the sampling
 # frame" are different things to act on, and merging them erases which one applies.
+#
+# The three Carolina typologies the frame USED to draw on are here since the frame
+# amendment, each with what was measured over the package rather than a judgment about
+# the register: the material is single-institution, declares no author, and offers no
+# basis for counting independent units between one and tens of thousands.
 OUT_OF_FRAME_DOMAIN_SOURCES = {
     "b2w_reviews": (
-        "product review is not one of the four cells the claim is published over, so "
-        "no cell can carry its quota — the route and the licence stay admissible"
+        "product review is not the cell the claim is published over, so no cell can "
+        "carry its quota — the route and the licence stay admissible"
+    ),
+    "carolina_judicial_branch": (
+        "single institution: 38.187 documents over 5 hosts, all *.stf.jus.br, and ZERO "
+        "declare an author, so 'FPR in judicial text' would be read off one court and "
+        "the count of independent units is undecidable between 1 and 38.187"
+    ),
+    "carolina_university_domains": (
+        "single institution: 26.409 documents from jornal.usp.br alone, ZERO with an "
+        "author, so the population would be one newspaper and not university-domain "
+        "text"
+    ),
+    "carolina_social_media": (
+        "single platform: 3.294 documents from wattpad.com alone, and its 104 authors "
+        "are below the 300-unit floor — fiction posted to one site is also not the "
+        "social-media register the cell claimed"
     ),
     "carolina_legislative_branch": (
-        "the frame names the judicial typology alone; the legislative one is a "
-        "different population and is outside the sampling frame"
+        "the frame drew on the judicial typology alone while it drew on Carolina at "
+        "all; the legislative one is a different population and outside the frame"
     ),
     "carolina_public_domain_works": (
-        "public-domain works are literary and historical texts, which none of the four "
-        "cells describes, and the typology holds 26 documents"
+        "public-domain works are literary and historical texts, which the declared "
+        "cell does not describe, and the typology holds 26 documents"
     ),
     "carolina_wikis": (
         "outside the sampling frame, and the encyclopedic cell is served by the "
@@ -223,9 +249,6 @@ OUT_OF_FRAME_DOMAIN_SOURCES = {
 # a record's licence comes from.
 HUMAN_SOURCE = {
     "ptwiki_lead": "src_wikipedia_pt",
-    "carolina_judicial_branch": "src_carolina",
-    "carolina_social_media": "src_carolina",
-    "carolina_university_domains": "src_carolina",
 }
 GENERATED_LICENSE = "geracao-propria-v1"
 # licenseId -> the inventory entry the dataset manifest publishes. It is an ALLOWLIST
@@ -282,19 +305,20 @@ HARD_NEGATIVE_FAMILIES = [
 # missing from `requiredHardNegativeFamilies` — a release seal refused at the very end
 # of an assembly, by a dict entry that looks harmless.
 #
-# Three styles are drawn from social media and one from each of the others, and the
-# imbalance is the material rather than an oversight: informal short-form text is where
-# repetition, non-native phrasing and motivational register actually occur, and moving one
-# of them onto judicial or encyclopedic material to even the counts out would tag a hard
-# negative onto text that does not exhibit the style. What the concentration costs is
+# With ONE cell every style is drawn from encyclopedic text, and that is a COST of the
+# one-cell frame rather than a tidy result: three of the six styles (`repetitive`,
+# `non-native`, `motivational`) occur in informal short-form text and are being looked
+# for in Wikipedia lead sections, where they are rarer. The six families stay because
+# `RELEASE_CORPUS_POLICY.requiredHardNegativeFamilies` requires all six and dropping one
+# would move a sealed decision to dodge a scarcity; what the concentration costs is
 # arithmetic, and `hard_negative_demand_per_cell` is where it is charged.
 HN_REGISTER = {
-    "formulaic": "carolina-judicial",
-    "corporate-structure": "carolina-university",
+    "formulaic": "ptwiki",
+    "corporate-structure": "ptwiki",
     "highly-polished": "ptwiki",
-    "repetitive": "carolina-social-media",
-    "non-native": "carolina-social-media",
-    "motivational": "carolina-social-media",
+    "repetitive": "ptwiki",
+    "non-native": "ptwiki",
+    "motivational": "ptwiki",
 }
 
 
@@ -766,8 +790,8 @@ class OutOfFrameDomainSource(UnwritableInV3):
     """The row's `domainSource` is not one of the cells the declared frame contains.
 
     A counted drop and not an abort, for the same reason as every other subclass: the
-    pools on disk hold material extracted before the frame was narrowed to four cells,
-    and the honest outcome is a smaller corpus plus a count of what left.
+    pools on disk hold material extracted before the frame was narrowed to one cell, and
+    the honest outcome is a smaller corpus plus a count of what left.
 
     A refusal and not a `KeyError`, because the two facts an operator acts on are
     different and the message carries them: a source blocked on ACCESS TERMS needs a
@@ -1189,7 +1213,7 @@ def out_of_frame_reason(domain_source: str) -> str:
     if reason is None:
         raise UndecidedDomainSource(
             f"the domainSource {domain_source!r} is in no list this module decides "
-            "with: it is not one of the four cells "
+            "with: it is not the declared cell "
             f"({', '.join(sorted(REGISTER))}), it is not refused on access terms "
             f"({', '.join(sorted(A1_BLOCKED_DOMAIN_SOURCES))}), and it is not declared "
             f"outside the frame ({', '.join(sorted(OUT_OF_FRAME_DOMAIN_SOURCES))}). "
@@ -2607,20 +2631,20 @@ def load_humans(cand: Path = CAND) -> list[dict]:
     """Fresh pools + reserved-clean humans, each tagged with its quota cell.
 
     TWO screens, and both are needed. The pool FILES read are the frame's own: the
-    Stack Overflow and B2W pools are not opened, so their rows never enter the
-    selection and never consume a cell's quota (they are named, with the reason, in
+    Stack Overflow, B2W and Carolina pools are not opened, so their rows never enter the
+    selection and never consume the cell's quota (they are named, with the reason, in
     `A1_BLOCKED_DOMAIN_SOURCES` and `OUT_OF_FRAME_DOMAIN_SOURCES`). The `REGISTER`
-    filter then catches a row of an out-of-frame stratum INSIDE a frame pool file,
-    which is the real case: one Carolina archive holds the legislative typology next
-    to the three the frame draws from, and a re-extraction that forgets the typology
-    allowlist writes them into `carolina_fresh.jsonl`.
+    filter then catches a row of an out-of-frame stratum INSIDE a frame pool file, which
+    is the real case: the reserved pool below is keyed by the OLD frame's strata, so its
+    Carolina rows arrive at this loader and have to be dropped by cell rather than by
+    file name.
 
     `cand` is a parameter so a RE-EXTRACTION can be assembled without overwriting
     the pools of the failed run: §7 of the plan puts benchmark/data/corpus-build in
     "Descarte", and reading from a fresh directory is how C2 proves the identity
     comes out right end to end without destroying the evidence of the diagnosis."""
     rows: list[dict] = []
-    for fname in ("wikipedia_fresh", "carolina_fresh"):
+    for fname in ("wikipedia_fresh",):
         for r in read_jsonl(cand / f"{fname}.jsonl"):
             if r["domainSource"] in REGISTER:
                 # The EXTRACTION RUN this row came out of: a real execution shared by
@@ -2859,9 +2883,10 @@ class HardNegativeCellUnderfilled(RuntimeError):
 def hard_negative_demand_per_cell(tag_per: int) -> dict[str, int]:
     """How many DISTINCT human rows each cell has to hand the tagging pass.
 
-    Families are STYLE families and each is drawn from the cell whose material exhibits
-    it, so the demands of the families pointing at one cell ADD UP: two rows cannot carry
-    two families.
+    Families are STYLE families drawn from the cell `HN_REGISTER` points them at, and the
+    demands of the families pointing at one cell ADD UP: two rows cannot carry two
+    families. With a one-cell frame all six point at the same cell, so the demand on it is
+    six times `tag_per` and this function is the only place that arithmetic is charged.
     """
     demand = {cell: 0 for cell in QUOTA_CELLS}
     for family in HARD_NEGATIVE_FAMILIES:
@@ -3014,8 +3039,10 @@ def balanced_humans(cands: list[dict], total: int) -> list[dict]:
     shortfall is printed by `main`, which is the number the operator has to act on.
 
     The denominator is the cells the FRAME declares, not the cells the pools happen to
-    contain: dividing by what arrived is what turns one missing cell into three
-    over-collected ones.
+    contain: dividing by what arrived is what spends a missing cell's budget on the cells
+    that did arrive. With the ONE cell the frame declares the two denominators are the
+    same number, so no corpus can tell them apart — the choice is written here and pinned
+    in the frame's own list, and it starts biting again at the second cell (ESTADO § 7).
 
     A remainder the cells cannot divide goes to the first cells in name order, so a
     smoke run whose total is smaller than the number of cells still selects something,
@@ -3259,7 +3286,8 @@ def main() -> None:
         print(
             f"!! classe mista {mixed_shortfall} linhas abaixo da cota de "
             f"{counts['mixed']}: o selo compara por igualdade exata, entao a lane de "
-            "mistura tem de ser regerada a partir de pais das quatro celulas"
+            "mistura tem de ser regerada a partir de pais nas celulas da moldura "
+            f"({', '.join(QUOTA_CELLS)})"
         )
 
     human_sel = balanced_humans(humans, counts["human"])

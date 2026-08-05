@@ -31,8 +31,8 @@
   },
   "collection": {
     "humanLinesPerCellMinimum": 1500,
-    "humanLinesPerCellTarget": 1750,
-    "humanLinesTotal": 7000,
+    "humanLinesPerCellTarget": 4000,
+    "humanLinesTotal": 4000,
     "maximumLinesPerOriginDocument": 1
   },
   "commercialUse": false,
@@ -137,10 +137,7 @@
     "repetitive"
   ],
   "humanCoreStrata": [
-    "encyclopedic",
-    "judicial",
-    "social-media",
-    "university"
+    "ptwiki"
   ],
   "humanSources": {
     "blockedSnapshots": [
@@ -152,7 +149,6 @@
     ],
     "newDownloadsAllowed": false,
     "snapshots": [
-      "carolina",
       "ptwiki"
     ]
   },
@@ -194,17 +190,14 @@
     "descriptiveConfidence": 0.95,
     "familyAlpha": 0.05,
     "frozenAt": "G0.2",
-    "perHypothesisAlpha": 0.007143,
+    "perHypothesisAlpha": 0.0125,
     "primaryFamily": [
       "calibration-global",
-      "fpr-carolina-judicial",
-      "fpr-carolina-social-media",
-      "fpr-carolina-university",
       "fpr-ptwiki",
       "integrity",
       "recall-at-threshold"
     ],
-    "primaryFamilySize": 7
+    "primaryFamilySize": 4
   },
   "onnxMaximumInt8Bytes": 340000000,
   "parity": {
@@ -235,16 +228,15 @@
     "quotaAxis": {
       "axis": "cell",
       "cells": [
-        "carolina-judicial",
-        "carolina-social-media",
-        "carolina-university",
         "ptwiki"
       ],
       "poolingIsResolutionLoss": true
     },
     "zeroEventCeiling": {
       "adoptedFloorPerCell": 300,
-      "ceilingAtAdoptedFloor": 0.016337,
+      "blindBlockLinesAtCollectionTarget": 800,
+      "ceilingAtAdoptedFloor": 0.014501,
+      "ceilingAtCollectionTarget": 0.005463,
       "formula": "1 - perHypothesisAlpha^(1/n)",
       "unitsBelowFloorFailBeforeSealing": true
     }
@@ -288,10 +280,6 @@
       "calibration": {
         "levels": [
           {
-            "axis": "groups.domainSource",
-            "fallbacks": []
-          },
-          {
             "axis": "groups.author",
             "fallbacks": [
               "groups.promptTemplate",
@@ -303,10 +291,6 @@
       },
       "human-specificity": {
         "levels": [
-          {
-            "axis": "groups.domainSource",
-            "fallbacks": []
-          },
           {
             "axis": "groups.author",
             "fallbacks": [
