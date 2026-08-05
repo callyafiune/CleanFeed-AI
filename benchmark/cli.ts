@@ -33,6 +33,10 @@ import { runEvaluate, type EvaluateOptions } from "./commands/evaluate.ts";
 import { runFit, type FitOptions } from "./commands/fit.ts";
 import { runIngest, type IngestOptions } from "./commands/ingest.ts";
 import {
+  runPreflightViability,
+  type PreflightViabilityOptions,
+} from "./commands/preflight-viability.ts";
+import {
   runPublishEvidence,
   type PublishEvidenceOptions,
 } from "./commands/publish-evidence.ts";
@@ -67,6 +71,7 @@ export const BENCHMARK_COMMANDS = [
   "cluster-ledger",
   "ingest",
   "validate",
+  "preflight-viability",
   "split",
   "validate-predictions",
   "score",
@@ -159,6 +164,8 @@ async function dispatch(
       return runIngest(buildIngest(flags));
     case "validate":
       return runValidate(buildValidate(flags));
+    case "preflight-viability":
+      return runPreflightViability(buildPreflightViability(flags));
     case "split":
       return runSplit(buildSplit(flags));
     case "validate-predictions":
@@ -327,6 +334,13 @@ function buildValidate(flags: FlagMap): ValidateOptions {
     datasetDirectory: requireFlag(flags, "dataset-dir"),
     outputDirectory: requireFlag(flags, "output"),
   };
+}
+
+// No `--output`: the preflight writes nothing, so a flag naming a destination would
+// promise an artifact that never appears. The verdict is the exit status and the text.
+function buildPreflightViability(flags: FlagMap): PreflightViabilityOptions {
+  assertKnownFlags(flags, ["dataset-dir"]);
+  return { datasetDirectory: requireFlag(flags, "dataset-dir") };
 }
 
 function buildSplit(flags: FlagMap): SplitOptions {
@@ -644,6 +658,9 @@ function usage(): string {
     "  ingest               --input --review-ledger --sources",
     "                       --dataset-manifest-template --dataset-dir",
     "  validate             --dataset-dir --output",
+    "  preflight-viability  --dataset-dir   (before split; writes nothing)",
+    "                       necessary conditions only: passing does NOT prove the",
+    "                       corpus is splittable",
     "  split                --dataset-dir --dataset-audit --output --seed",
     "  validate-predictions --dataset-dir --split-artifact --partition --predictions",
     "                       --runtime-parity [test: --ledger --consumption-id]",

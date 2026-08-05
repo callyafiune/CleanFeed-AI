@@ -437,11 +437,15 @@ const KEY_SEP = "\u001f";
  * to disagree with the splitter, and a shared source of targets is exactly how a
  * partition omitted on one side stops being caught on the other.
  *
- * This object is also the single declaration of the field/value correspondence: the
- * pre-registration keys its fractions by FIELD name (`calA`, a JS identifier) while a
- * partition is a VALUE (`cal-A`, the spelling the exposure ledger validates persisted
- * events against). Those are different lexical layers, and the mapping is written
- * once, here.
+ * This object also declares the field/value correspondence: the pre-registration keys
+ * its fractions by FIELD name (`calA`, a JS identifier) while a partition is a VALUE
+ * (`cal-A`, the spelling the exposure ledger validates persisted events against). Those
+ * are different lexical layers. It is declared TWICE in the benchmark, and the second
+ * one is not a copy of this one: `FRACTION_KEY_BY_PARTITION` in
+ * `benchmark/viability-preflight.ts` maps a partition to the KEY rather than to the
+ * resolved target, because that module is handed a policy as a parameter and has to read
+ * the field off whichever policy it received. Both halves are total by `satisfies`, so
+ * neither can lose a partition silently.
  */
 export const PARTITION_TARGETS: Record<Partition, number> = {
   train: PREREGISTRATION_V4.preRegistration.partitionFractions.train,

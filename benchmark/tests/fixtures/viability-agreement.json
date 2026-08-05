@@ -1,0 +1,323 @@
+{
+  "purpose": "O catálogo de corpos que o preflight de viabilidade do benchmark (benchmark/viability-preflight.ts) e a guarda do assembler (benchmark/lab/assemble_corpus.py::assert_components_can_fill_five_partitions) têm de julgar IGUAL. Os dois lados leem este arquivo, materializam o corpo pela regra abaixo, conferem o histograma de componentes e as contagens por classe medidos contra os declarados, e só então comparam o veredito. Se discordarem, um dos dois está medindo outra coisa.",
+  "materialization": "Cada célula rende, para cada entrada de `components`, `count` componentes com as linhas declaradas em `lines` (por classe). As linhas HUMANAS de um componente COMPARTILHAM o autor (`author` é eixo de união v4); as linhas GERADAS do mesmo componente apontam `humanSeed` para o id da primeira linha humana do componente, que é o eixo de LINHAGEM DE PAI — é assim que uma linha gerada fica dependente do material de que foi semeada. Componente sem linha humana tem `humanSeed` nomeando registro ausente, então não une nada. Cada linha carrega seu próprio documento de origem (`source`), seu próprio grupo de quase-duplicata (`nearDuplicate`) e, quando gerada, seu próprio `promptTemplate`, `generatorVersion` e `generationBatch`. `stratum` (domainSource) e `materialBatch` (sourceMaterialBatch) valem para as linhas HUMANAS da célula e carregam UM valor por célula — é isso que o fixture de lote único prova que NÃO une; linha gerada carrega sempre `generatedStratum` e `sourceMaterialBatch` notApplicable, porque geração não adquire material. Autores, documentos e ids são prefixados pelo índice da célula, então nada gruda entre células por acidente.",
+  "generatedStratum": "ds_ai_agy",
+  "expectedBreachVocabulary": [
+    "largest-component-exceeds-largest-target",
+    "smallest-component-exceeds-smallest-target"
+  ],
+  "extremeTargets": {
+    "comment": "Os dois alvos extremos do desenho de cinco partições, afirmados pelos DOIS lados. Sem isto a concordância seria só sobre vereditos, e dois lados que derivassem alvos diferentes ainda poderiam coincidir por acidente nos corpos deste catálogo.",
+    "largest": { "partition": "train", "fraction": 0.45 },
+    "smallest": { "partition": "dev", "fraction": 0.05 },
+    "tolerance": 0.02
+  },
+  "cases": [
+    {
+      "name": "lote-unico-por-celula",
+      "why": "O INVENTÁRIO QUE EXISTE: um evento de aquisição por fonte, e as três tipologias da Carolina são partições de um único download. Quarenta linhas em quarenta componentes de 2,5 %, e as duas condições passam em todo escopo.",
+      "cells": [
+        {
+          "cell": "ptwiki",
+          "stratum": "ds_ptwiki_lead",
+          "materialBatch": "smb_ptwiki_20220301",
+          "components": [{ "count": 10, "lines": { "human": 1 } }]
+        },
+        {
+          "cell": "carolina-judicial",
+          "stratum": "ds_carolina_judicial_branch",
+          "materialBatch": "smb_carolina_2_0",
+          "components": [{ "count": 10, "lines": { "human": 1 } }]
+        },
+        {
+          "cell": "carolina-social-media",
+          "stratum": "ds_carolina_social_media",
+          "materialBatch": "smb_carolina_2_0",
+          "components": [{ "count": 10, "lines": { "human": 1 } }]
+        },
+        {
+          "cell": "carolina-university",
+          "stratum": "ds_carolina_university_domains",
+          "materialBatch": "smb_carolina_2_0",
+          "components": [{ "count": 10, "lines": { "human": 1 } }]
+        }
+      ],
+      "expected": {
+        "recordLines": 40,
+        "classLines": { "human": 40 },
+        "distinctStrata": 4,
+        "distinctMaterialBatches": 2,
+        "breaches": [],
+        "splitterRefuses": false,
+        "splitterRefusal": null,
+        "splitSizes": {
+          "train": 18,
+          "dev": 2,
+          "cal-A": 4,
+          "cal-B": 8,
+          "test": 8
+        }
+      }
+    },
+    {
+      "name": "um-componente-por-celula",
+      "why": "A degenerescência do eixo grosso, escrita como geometria e sem tocar na lista de união: um componente por célula, 25 % cada. Cabem no maior alvo (45 %) e nenhum cabe no de 5 %, então só a condição afiada recusa. Corpo mono-classe: o escopo do corpo e o da classe `human` são a MESMA comparação, e a recusa nomeia os dois.",
+      "cells": [
+        {
+          "cell": "ptwiki",
+          "stratum": "ds_ptwiki_lead",
+          "materialBatch": "smb_ptwiki_20220301",
+          "components": [{ "count": 1, "lines": { "human": 10 } }]
+        },
+        {
+          "cell": "carolina-judicial",
+          "stratum": "ds_carolina_judicial_branch",
+          "materialBatch": "smb_carolina_2_0",
+          "components": [{ "count": 1, "lines": { "human": 10 } }]
+        },
+        {
+          "cell": "carolina-social-media",
+          "stratum": "ds_carolina_social_media",
+          "materialBatch": "smb_carolina_2_0",
+          "components": [{ "count": 1, "lines": { "human": 10 } }]
+        },
+        {
+          "cell": "carolina-university",
+          "stratum": "ds_carolina_university_domains",
+          "materialBatch": "smb_carolina_2_0",
+          "components": [{ "count": 1, "lines": { "human": 10 } }]
+        }
+      ],
+      "expected": {
+        "recordLines": 40,
+        "classLines": { "human": 40 },
+        "distinctStrata": 4,
+        "distinctMaterialBatches": 2,
+        "breaches": [
+          {
+            "scope": "corpus",
+            "kind": "smallest-component-exceeds-smallest-target"
+          },
+          {
+            "scope": "human",
+            "kind": "smallest-component-exceeds-smallest-target"
+          }
+        ],
+        "splitterRefuses": true,
+        "splitterRefusal": "class split fractions unreachable"
+      }
+    },
+    {
+      "name": "so-o-maior-componente",
+      "why": "O único corpo em que o ramo do MENOR não pode disparar: 60 linhas num componente (60 %) e 40 componentes de uma linha (1 % cada). O menor CABE no alvo de 5 %, então a única recusa possível é a do maior — e é este corpo que mede o ramo do maior isoladamente.",
+      "cells": [
+        {
+          "cell": "ptwiki",
+          "stratum": "ds_ptwiki_lead",
+          "materialBatch": "smb_ptwiki_20220301",
+          "components": [
+            { "count": 1, "lines": { "human": 60 } },
+            { "count": 40, "lines": { "human": 1 } }
+          ]
+        }
+      ],
+      "expected": {
+        "recordLines": 100,
+        "classLines": { "human": 100 },
+        "distinctStrata": 1,
+        "distinctMaterialBatches": 1,
+        "breaches": [
+          {
+            "scope": "corpus",
+            "kind": "largest-component-exceeds-largest-target"
+          },
+          {
+            "scope": "human",
+            "kind": "largest-component-exceeds-largest-target"
+          }
+        ],
+        "splitterRefuses": true,
+        "splitterRefusal": "class split fractions unreachable"
+      }
+    },
+    {
+      "name": "so-o-menor-componente",
+      "why": "O espelho do anterior: cinco componentes de 20 %. Todos cabem no maior alvo (45 %) e nenhum cabe no de 5 %, então a única recusa possível é a do menor — e é este corpo que mede o ramo afiado isoladamente.",
+      "cells": [
+        {
+          "cell": "ptwiki",
+          "stratum": "ds_ptwiki_lead",
+          "materialBatch": "smb_ptwiki_20220301",
+          "components": [{ "count": 5, "lines": { "human": 2 } }]
+        }
+      ],
+      "expected": {
+        "recordLines": 10,
+        "classLines": { "human": 10 },
+        "distinctStrata": 1,
+        "distinctMaterialBatches": 1,
+        "breaches": [
+          {
+            "scope": "corpus",
+            "kind": "smallest-component-exceeds-smallest-target"
+          },
+          {
+            "scope": "human",
+            "kind": "smallest-component-exceeds-smallest-target"
+          }
+        ],
+        "splitterRefuses": true,
+        "splitterRefusal": "class split fractions unreachable"
+      }
+    },
+    {
+      "name": "duas-aquisicoes-25-75",
+      "why": "A direção que o inventário real decide: as três tipologias da Carolina saem do mesmo download, então unir pelo lote as fundiria numa célula de 75 % contra 25 % da Wikipédia — pior que o estrato, e não melhor. Viola AS DUAS condições, e o relato começa pela do maior.",
+      "cells": [
+        {
+          "cell": "ptwiki",
+          "stratum": "ds_ptwiki_lead",
+          "materialBatch": "smb_ptwiki_20220301",
+          "components": [{ "count": 1, "lines": { "human": 25 } }]
+        },
+        {
+          "cell": "carolina-judicial",
+          "stratum": "ds_carolina_judicial_branch",
+          "materialBatch": "smb_carolina_2_0",
+          "components": [{ "count": 1, "lines": { "human": 75 } }]
+        }
+      ],
+      "expected": {
+        "recordLines": 100,
+        "classLines": { "human": 100 },
+        "distinctStrata": 2,
+        "distinctMaterialBatches": 2,
+        "breaches": [
+          {
+            "scope": "corpus",
+            "kind": "largest-component-exceeds-largest-target"
+          },
+          {
+            "scope": "corpus",
+            "kind": "smallest-component-exceeds-smallest-target"
+          },
+          {
+            "scope": "human",
+            "kind": "largest-component-exceeds-largest-target"
+          },
+          {
+            "scope": "human",
+            "kind": "smallest-component-exceeds-smallest-target"
+          }
+        ],
+        "splitterRefuses": true,
+        "splitterRefusal": "class split fractions unreachable"
+      }
+    },
+    {
+      "name": "misto-com-degenerescencia-humana",
+      "why": "A FORMA QUE O CORPUS RATIFICADO TEM: metade humana grossa, metade gerada fina. Quatro componentes humanos de 25 % da classe `human` mais trinta linhas geradas de um componente cada. No escopo do CORPO tudo cabe — o maior componente vale 10 % e o menor 2 % —, então uma comparação só agregada APROVA a degenerescência que o comando existe para pegar. É a classe `human` que a recusa, e o splitter concorda com human=[dev 0.000].",
+      "cells": [
+        {
+          "cell": "ptwiki",
+          "stratum": "ds_ptwiki_lead",
+          "materialBatch": "smb_ptwiki_20220301",
+          "components": [{ "count": 1, "lines": { "human": 5 } }]
+        },
+        {
+          "cell": "carolina-judicial",
+          "stratum": "ds_carolina_judicial_branch",
+          "materialBatch": "smb_carolina_2_0",
+          "components": [{ "count": 1, "lines": { "human": 5 } }]
+        },
+        {
+          "cell": "carolina-social-media",
+          "stratum": "ds_carolina_social_media",
+          "materialBatch": "smb_carolina_2_0",
+          "components": [{ "count": 1, "lines": { "human": 5 } }]
+        },
+        {
+          "cell": "carolina-university",
+          "stratum": "ds_carolina_university_domains",
+          "materialBatch": "smb_carolina_2_0",
+          "components": [{ "count": 1, "lines": { "human": 5 } }]
+        },
+        {
+          "cell": "geracao-agy",
+          "stratum": null,
+          "materialBatch": null,
+          "components": [{ "count": 30, "lines": { "ai": 1 } }]
+        }
+      ],
+      "expected": {
+        "recordLines": 50,
+        "classLines": { "human": 20, "ai": 30 },
+        "distinctStrata": 5,
+        "distinctMaterialBatches": 2,
+        "breaches": [
+          {
+            "scope": "human",
+            "kind": "smallest-component-exceeds-smallest-target"
+          }
+        ],
+        "splitterRefuses": true,
+        "splitterRefusal": "class split fractions unreachable"
+      }
+    },
+    {
+      "name": "corpo-grosso-classes-finas",
+      "why": "A direção contrária, e a razão de o escopo do CORPO não ser decoração: dez componentes de quatro linhas, cada um com linhas das duas classes. Toda classe tem componente fino (5 % dela), então nenhuma condição por classe dispara; no agregado todo componente vale 10 % e nenhuma partição de 5 % pode ser preenchida. A fração agregada de uma partição é a combinação convexa das frações por classe, então a condição do corpo é necessária, e este corpo mostra que ela não se deduz das outras.",
+      "cells": [
+        {
+          "cell": "ptwiki",
+          "stratum": "ds_ptwiki_lead",
+          "materialBatch": "smb_ptwiki_20220301",
+          "components": [
+            { "count": 1, "lines": { "human": 1, "ai": 3 } },
+            { "count": 1, "lines": { "human": 3, "ai": 1 } },
+            { "count": 8, "lines": { "human": 2, "ai": 2 } }
+          ]
+        }
+      ],
+      "expected": {
+        "recordLines": 40,
+        "classLines": { "human": 20, "ai": 20 },
+        "distinctStrata": 2,
+        "distinctMaterialBatches": 1,
+        "breaches": [
+          {
+            "scope": "corpus",
+            "kind": "smallest-component-exceeds-smallest-target"
+          }
+        ],
+        "splitterRefuses": true,
+        "splitterRefusal": "class split fractions unreachable"
+      }
+    },
+    {
+      "name": "bordas-inclusivas-47-e-7",
+      "why": "As DUAS bordas inclusivas no mesmo corpo, e a prova de que a tolerância é carga: o maior componente vale exatamente 47 % (= 45 % + 2 pp) e o menor exatamente 7 % (= 5 % + 2 pp), então as duas condições passam RASPANDO e uma tolerância zero recusaria as duas. É também o corpo que mede a INSUFICIÊNCIA: o preflight aprova e o splitter recusa, porque 23 % não realiza nem `cal-A` (10 %) nem `cal-B` (20 %) dentro da tolerância — passar aqui não é viabilidade provada.",
+      "cells": [
+        {
+          "cell": "ptwiki",
+          "stratum": "ds_ptwiki_lead",
+          "materialBatch": "smb_ptwiki_20220301",
+          "components": [
+            { "count": 1, "lines": { "human": 47 } },
+            { "count": 1, "lines": { "human": 7 } },
+            { "count": 2, "lines": { "human": 23 } }
+          ]
+        }
+      ],
+      "expected": {
+        "recordLines": 100,
+        "classLines": { "human": 100 },
+        "distinctStrata": 1,
+        "distinctMaterialBatches": 1,
+        "breaches": [],
+        "splitterRefuses": true,
+        "splitterRefusal": "class split fractions unreachable"
+      }
+    }
+  ]
+}

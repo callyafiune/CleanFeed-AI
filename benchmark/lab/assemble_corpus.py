@@ -1363,36 +1363,81 @@ FIVE_TARGETS: tuple[float, ...] = (
 )
 
 
-def component_fractions(records: list[dict]) -> list[float]:
-    """A fração do corpo que cada componente conexo vale, em ordem crescente."""
-    tamanhos: dict[str, int] = {}
-    for raiz in connected_components(records).values():
-        tamanhos[raiz] = tamanhos.get(raiz, 0) + 1
-    total = len(records)
-    return sorted(n / total for n in tamanhos.values())
+# O escopo agregado, ao lado de cada classe, e a ORDEM em que os dois são checados.
+# Espelham `CORPUS_SCOPE` e `LABEL_REPORT_ORDER` de benchmark/viability-preflight.ts: a guarda
+# e o preflight do benchmark recusam pela MESMA condição no MESMO escopo, e o catálogo de
+# corpos compartilhado (em `benchmark/tests/fixtures/`, lido pelos dois lados) afirma isso das
+# duas pontas. Uma ordem diferente aqui faria os dois discordarem sobre QUAL condição recusa.
+CORPUS_SCOPE = "corpus"
+LABEL_REPORT_ORDER: tuple[str, ...] = ("human", "ai", "mixed")
+
+
+def component_fractions_by_scope(
+    records: list[dict],
+) -> list[tuple[str, int, list[float]]]:
+    """(escopo, denominador, frações crescentes) — o corpo, e depois cada classe presente.
+
+    A fração de uma classe é sobre o TOTAL DA CLASSE, que é o denominador que o splitter
+    divide por (`classTotals` em benchmark/split.ts), e conta só os componentes que têm linha
+    dessa classe: um componente sem linha da classe não contribui e pode ir a qualquer
+    partição, então incluí-lo como zero inventaria uma granularidade que não existe.
+    """
+    raizes = connected_components(records)
+    por_escopo: dict[str, dict[str, int]] = {CORPUS_SCOPE: {}}
+    for rec in records:
+        raiz = raizes[rec["id"]]
+        agregado = por_escopo[CORPUS_SCOPE]
+        agregado[raiz] = agregado.get(raiz, 0) + 1
+        classe = rec["label"]
+        if classe not in LABEL_REPORT_ORDER:
+            raise UnsplittableCorpus(
+                f"registro {rec['id']} tem classe {classe!r}, fora do vocabulário "
+                f"{LABEL_REPORT_ORDER}: sem escopo declarado a fração dela não seria checada"
+            )
+        da_classe = por_escopo.setdefault(classe, {})
+        da_classe[raiz] = da_classe.get(raiz, 0) + 1
+    ordem = (CORPUS_SCOPE, *LABEL_REPORT_ORDER)
+    saida: list[tuple[str, int, list[float]]] = []
+    for escopo in sorted(por_escopo, key=ordem.index):
+        tamanhos = por_escopo[escopo]
+        total = sum(tamanhos.values())
+        saida.append((escopo, total, sorted(n / total for n in tamanhos.values())))
+    return saida
 
 
 def assert_components_can_fill_five_partitions(records: list[dict]) -> None:
     """PREFLIGHT: recusa antes da montagem um corpo cujos componentes não podem realizar 45/5/10/20/20.
 
-    O splitter põe o componente conexo INTEIRO numa única partição. Disso saem duas condições
-    NECESSÁRIAS, e a razão de cada uma está no desenho e não em heurística:
+    O splitter põe o componente conexo INTEIRO numa única partição E compara fração POR CLASSE
+    (uma linha de cinco alvos por classe presente, sobre o total daquela classe). Dos dois fatos
+    saem duas condições NECESSÁRIAS, e elas valem em TODO escopo — o corpo agregado e cada
+    classe:
 
-    1. **Todo componente cabe em alguma partição.** Um componente maior que o maior alvo mais a
-       tolerância não tem onde ser posto inteiro.
-    2. **Toda partição pode ser preenchida.** Qualquer subconjunto não vazio inclui pelo menos um
-       componente, então para haver subconjunto que realize o MENOR alvo é preciso existir um
-       componente que caiba nele. Logo o menor componente tem de caber no menor alvo mais a
-       tolerância.
+    1. **Todo componente cabe em alguma partição.** Um componente que vale, num escopo, mais que
+       o maior alvo mais a tolerância não tem onde ser posto inteiro.
+    2. **Toda partição pode ser preenchida.** Todo alvo excede a tolerância, então toda partição
+       tem de receber fração NÃO NULA de todo escopo, e qualquer conjunto de componentes que
+       realize o MENOR alvo inclui pelo menos um componente que carrega aquele escopo. Logo o que
+       limita é a menor contribuição NÃO NULA, não a maior.
+
+    O ESCOPO DO CORPO não é duplicata dos escopos de classe, nas duas direções: a fração agregada
+    de uma partição é a combinação convexa das frações por classe, então ela cai na mesma faixa de
+    tolerância e a condição agregada é necessária; mas um corpo cujos componentes são todos
+    grossos no agregado, tendo cada classe um componente fino, satisfaz todas as condições por
+    classe e ainda assim não preenche a menor partição. Na direção contrária — a caro — uma
+    metade gerada fina derruba toda fração agregada, então uma metade humana degenerada em um
+    componente por célula passa por um teste só agregado. Num corpo mono-classe os dois escopos
+    são a MESMA comparação, e a recusa nomeia os dois.
 
     | o que este preflight decide            | o que ele NÃO decide                              |
     |----------------------------------------|---------------------------------------------------|
-    | as duas condições necessárias acima    | se existe atribuição completa dos componentes     |
-    |                                        | às cinco partições — isso é soma de subconjuntos, |
+    | as duas condições necessárias acima,   | se existe atribuição completa dos componentes     |
+    | no corpo e em cada classe              | às cinco partições — isso é soma de subconjuntos, |
     |                                        | e passar aqui não é garantia de viabilidade       |
-    | granularidade grosseira demais         | ordenação temporal, precedência de held-out e     |
-    |                                        | frações POR CLASSE, que só um corpo ESTAMPADO     |
-    |                                        | determina (`assert_stamped_corpus_is_splittable`) |
+    | granularidade grosseira demais         | ordenação temporal, precedência de held-out e a   |
+    |                                        | realização conjunta das frações por classe, que   |
+    |                                        | só um corpo ESTAMPADO determina                   |
+    |                                        | (`assert_stamped_corpus_is_splittable`)           |
 
     Necessária e não suficiente é o que se pode afirmar sem resolver soma de subconjuntos, e
     afirmar mais que isso seria a suposição que a pré-inscrição abandonada fez.
@@ -1400,27 +1445,30 @@ def assert_components_can_fill_five_partitions(records: list[dict]) -> None:
     if not records:
         raise UnsplittableCorpus("corpo vazio: não há componente a distribuir")
 
-    fracoes = component_fractions(records)
-    menor, maior = fracoes[0], fracoes[-1]
     maior_alvo = max(FIVE_TARGETS)
     menor_alvo = min(FIVE_TARGETS)
     limite_max = maior_alvo + CLASS_TOLERANCE + CLASS_TOLERANCE_EPSILON
     limite_min = menor_alvo + CLASS_TOLERANCE + CLASS_TOLERANCE_EPSILON
 
-    if maior > limite_max:
-        raise UnsplittableCorpus(
-            f"o maior componente vale {maior:.4f} do corpo e o maior alvo é {maior_alvo:.2f} "
-            f"(±{CLASS_TOLERANCE}): não há partição que o receba inteiro. "
-            f"{len(fracoes)} componente(s), frações {fracoes[:8]}"
-        )
+    for escopo, total, fracoes in component_fractions_by_scope(records):
+        menor, maior = fracoes[0], fracoes[-1]
+        onde = "do corpo" if escopo == CORPUS_SCOPE else f'da classe "{escopo}"'
 
-    if menor > limite_min:
-        raise UnsplittableCorpus(
-            f"o MENOR componente vale {menor:.4f} do corpo e o menor alvo é {menor_alvo:.2f} "
-            f"(±{CLASS_TOLERANCE}): nenhum subconjunto não vazio realiza a menor partição, "
-            f"porque todo subconjunto inclui ao menos um componente. Isto é granularidade, "
-            f"não tamanho de corpo: {len(fracoes)} componente(s), frações {fracoes[:8]}"
-        )
+        if maior > limite_max:
+            raise UnsplittableCorpus(
+                f"o maior componente vale {maior:.4f} {onde} ({total} linha(s)) e o maior "
+                f"alvo é {maior_alvo:.2f} (±{CLASS_TOLERANCE}): não há partição que o receba "
+                f"inteiro. {len(fracoes)} componente(s), frações {fracoes[:8]}"
+            )
+
+        if menor > limite_min:
+            raise UnsplittableCorpus(
+                f"o MENOR componente vale {menor:.4f} {onde} ({total} linha(s)) e o menor "
+                f"alvo é {menor_alvo:.2f} (±{CLASS_TOLERANCE}): nenhum subconjunto não vazio "
+                f"realiza a menor partição, porque todo subconjunto inclui ao menos um "
+                f"componente. Isto é granularidade, não tamanho de corpo: "
+                f"{len(fracoes)} componente(s), frações {fracoes[:8]}"
+            )
 
 
 def assert_stamped_corpus_is_splittable(
@@ -1624,6 +1672,11 @@ def assign_partitions(records: list[dict], held_out: set[str]) -> None:
     the other four — at 20% with a two-point tolerance there is room for it, and at
     dev's 5% there would not have been.
     """
+    # A GEOMETRIA antes do carimbo: um corpo cujos componentes não podem realizar as cinco
+    # frações não fica divisível por ser estampado, e a recusa daqui nomeia granularidade — a
+    # guarda do corpo estampado, abaixo, só sabe dizer "fração por classe".
+    assert_components_can_fill_five_partitions(records)
+
     by_class: dict[str, list[dict]] = {}
     for rec in records:
         by_class.setdefault(rec["label"], []).append(rec)

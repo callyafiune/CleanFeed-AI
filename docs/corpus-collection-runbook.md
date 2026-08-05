@@ -493,6 +493,11 @@ npm run benchmark -- validate \
   --dataset-dir benchmark/data/cleanfeed-ptbr-cells-v1 \
   --output benchmark/work/validate
 
+# 2b) PREFLIGHT-VIABILITY — condições NECESSÁRIAS de geometria antes de cortar.
+#     Não escreve nada. Passar não prova que o corpus é divisível (§ 4b-bis).
+npm run benchmark -- preflight-viability \
+  --dataset-dir benchmark/data/cleanfeed-ptbr-cells-v1
+
 # 3) SPLIT — corte temporal 45/5/10/20/20 + auditoria de vazamento (seed fixo)
 npm run benchmark -- split \
   --dataset-dir benchmark/data/cleanfeed-ptbr-cells-v1 \
@@ -618,6 +623,84 @@ re-corte.
 corpus anterior serve apenas aos 60 % não cegos. `test` (20 %) e `cal-B` (20 %) exigem cluster
 inédito, e nenhuma recuperação os alimenta. O inventário está no registro de decisões,
 § '"Gasto" tem três pareceres'.
+
+### 4b-bis. `preflight-viability` — o irmão que mede GEOMETRIA, não exposição
+
+Os dois preflights do passo 3 são irmãos e nenhum substitui o outro:
+
+| preflight | mede | lê | quando |
+|---|---|---|---|
+| `cluster-ledger preflight` | **exposição** — que linha uma partição cega ainda pode receber | ledger + keyring privados | sobre a atribuição **proposta**, depois do corte |
+| `preflight-viability` | **geometria de partição** — se as frações 45/5/10/20/20 são alcançáveis | `records.jsonl` carimbado | **antes** do corte, sobre o inventário real |
+
+Um corpus passa num e reprova no outro sem contradição alguma.
+
+```bash
+# Entre os passos 2 e 3. Não escreve nada, não sela nada, não abre partição cega.
+npm run benchmark -- preflight-viability \
+  --dataset-dir benchmark/data/cleanfeed-ptbr-cells-v1
+```
+
+O comando conta os componentes conexos pelos **eixos de conectividade v4**
+(`CONNECTIVITY_AXES` em [split.ts](../benchmark/split.ts)), que são de dois tipos e não um:
+
+- por **valor compartilhado** (`GROUP_KEYS`): `author`, `source`, `generatorVersion`,
+  `promptTemplate`, `generationBatch`, `nearDuplicate`, `derivationRoot`;
+- por **linhagem de pai** (`PARENT_LINKAGE_AXES`): `derivationRoot` e `humanSeed` — uma linha
+  cujo valor nomeia o **id de outra linha presente** entra no componente dela.
+
+Quem recomputar componentes só pela primeira lista chega a outro número que o comando, num corpus
+com linha gerada cuja semente humana está no corpo.
+
+A comparação é feita **por escopo**: o corpo agregado e **cada classe** (`human`, `ai`, `mixed`),
+cada uma sobre o próprio total — que é o denominador que o splitter divide por. Em cada escopo,
+**duas condições, as duas necessárias porque o splitter põe o componente conexo INTEIRO numa única
+partição e compara fração POR CLASSE:**
+
+1. **todo componente cabe em alguma partição** — o maior não excede o maior alvo (`train`, 45 %)
+   mais a tolerância de 2 pp. É a condição frouxa: só recusa escopo dominado por um bloco;
+2. **toda partição pode ser preenchida** — a **menor contribuição não nula** cabe no menor alvo
+   (`dev`, 5 %) mais a tolerância. É a afiada, e é contraintuitiva: todo alvo excede a tolerância,
+   então toda partição precisa de fração não nula de todo escopo, e todo subconjunto não vazio
+   inclui ao menos um componente — quem limita a menor partição é o **menor** componente, não o
+   maior.
+
+**Por que a classe, e não só o corpo.** No corpus ratificado (7.000 humanas + 4.000 ai + 2.000
+mistas) a metade gerada é fina e derruba toda fração agregada: uma metade **humana** degenerada
+em um componente por célula vale 13,46 % do corpo — cabe em `train` com folga — e ainda assim
+`dev` precisa de 5 % da classe `human` e só existem blocos de 25 % dela. Medido: sem a
+comparação por classe esse corpo PASSA. O escopo do corpo também não é dedutível dos escopos de
+classe: um corpo cujos componentes são todos grossos no agregado, com componente fino em cada
+classe, satisfaz todas as condições por classe e não preenche a menor partição. Os dois estão
+escritos porque nenhum implica o outro.
+
+**Passar é necessário e NÃO suficiente, e a saída do comando diz isso.** A atribuição completa
+dos componentes às cinco partições é soma de subconjuntos, que o preflight não decide; e o split
+ainda pode ser recusado por **tolerância de fração por classe**, por ordenação temporal ou por
+precedência de família reservada. Um corpus que passa aqui e é recusado por `split` não é
+contradição: é a insuficiência declarada, e há corpo assim medido no catálogo de testes
+(componentes de 47 %, 7 %, 23 % e 23 % passam nas duas bordas e o splitter recusa).
+
+Uma recusa nomeia o **escopo** (o corpo ou a classe), o **componente** (pela raiz, que é um id de
+registro do próprio componente), o **tamanho** em linhas e o **alvo** contra o qual foi comparado
+— o suficiente para achar o bloco no corpus. O código é `PARTITION_VIABILITY_NOT_MET`.
+
+**Por que o comando existe.** A degenerescência do eixo grosso — um componente por célula, que é
+o que unir por `domainSource` ou `sourceMaterialBatch` produziria — aparece hoje só como
+`SPLIT_CONSTRAINT` depois de a montagem inteira rodar, e a mensagem fala de fração por classe, não
+de granularidade. O preflight lê o inventário **real** antes disso e nomeia a causa.
+
+A guarda equivalente do lado do assembler é
+`assert_components_can_fill_five_partitions` em [assemble_corpus.py](../benchmark/lab/assemble_corpus.py),
+que roda em `assign_partitions` **antes** de qualquer carimbo, e as duas **têm de concordar**: se
+discordarem, uma das duas está medindo outra coisa. A concordância é mantida por teste sobre um
+catálogo de corpos que os dois lados leem
+(`benchmark/tests/fixtures/viability-agreement.json`), afirmando não só o veredito mas **qual**
+condição recusa e em **qual escopo**.
+
+**A única recusa mais estrita que o splitter é `corpo vazio`.** `createBlockedSplit` devolve cinco
+partições vazias para corpo sem registro em vez de recusar; o preflight recusa, porque um corpo sem
+componente satisfaz todas as comparações e passaria por vacuidade.
 
 ## 5. A decisão (gates §6.5, verbatim de [gates.ts](../benchmark/gates.ts))
 

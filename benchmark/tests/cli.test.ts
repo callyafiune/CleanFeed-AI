@@ -80,13 +80,13 @@ function withoutFlag(args: readonly string[], flag: string): string[] {
 describe("benchmark CLI parsing and dispatch", () => {
   it("requires a named subcommand", () => {
     expect(() => parseCliArgs([])).toThrow(
-      /expected one of cluster-ledger, ingest, validate, split, validate-predictions, score, fit, evaluate, consume-holdout, publish-profile, verify-evidence/u,
+      /expected one of cluster-ledger, ingest, validate, preflight-viability, split, validate-predictions, score, fit, evaluate, consume-holdout, publish-profile, verify-evidence/u,
     );
   });
 
   it("rejects an unknown subcommand", () => {
     expect(() => parseCliArgs(["frobnicate"])).toThrow(
-      /expected one of cluster-ledger, ingest, validate, split, validate-predictions, score, fit, evaluate, consume-holdout, publish-profile, verify-evidence/u,
+      /expected one of cluster-ledger, ingest, validate, preflight-viability, split, validate-predictions, score, fit, evaluate, consume-holdout, publish-profile, verify-evidence/u,
     );
   });
 
@@ -119,6 +119,31 @@ describe("benchmark CLI parsing and dispatch", () => {
   it("requires validate's mandatory flags", async () => {
     await expect(runCli(["validate", "--dataset-dir", "d"])).rejects.toThrow(
       /--output/u,
+    );
+  });
+
+  it("parses preflight-viability, which takes the dataset directory and nothing else", () => {
+    const parsed = parseCliArgs([
+      "preflight-viability",
+      "--dataset-dir",
+      "benchmark/data/cleanfeed-ptbr-cells-v1",
+    ]);
+    expect(parsed.command).toBe("preflight-viability");
+    expect(parsed.flags.get("dataset-dir")).toBe(
+      "benchmark/data/cleanfeed-ptbr-cells-v1",
+    );
+  });
+
+  it("rejects --output on preflight-viability, which writes nothing", async () => {
+    // A flag naming a destination would promise an artifact that never appears.
+    await expect(
+      runCli(["preflight-viability", "--dataset-dir", "d", "--output", "o"]),
+    ).rejects.toThrow(/unknown flag --output/u);
+  });
+
+  it("requires preflight-viability's dataset directory", async () => {
+    await expect(runCli(["preflight-viability"])).rejects.toThrow(
+      /--dataset-dir/u,
     );
   });
 
@@ -156,6 +181,11 @@ describe("benchmark CLI parsing and dispatch", () => {
     ]) {
       expect(usage).toContain(action);
     }
+    // The viability preflight is a NECESSARY condition, and the usage text is where an
+    // operator meets the command: a line that only named the flag would let it be read
+    // as a viability check that decides the question.
+    expect(usage).toContain("preflight-viability");
+    expect(usage).toContain("passing does NOT prove the");
   });
 
   it("parses cluster-ledger's positional action and its flags", () => {
@@ -460,7 +490,7 @@ describe("benchmark CLI evidence-publication parsing", () => {
 
   it("still lists the Phase 2 subcommands in the dispatch error", () => {
     expect(() => parseCliArgs(["frobnicate"])).toThrow(
-      /expected one of cluster-ledger, ingest, validate, split, validate-predictions, score, fit, evaluate, consume-holdout, publish-profile, verify-evidence/u,
+      /expected one of cluster-ledger, ingest, validate, preflight-viability, split, validate-predictions, score, fit, evaluate, consume-holdout, publish-profile, verify-evidence/u,
     );
   });
 

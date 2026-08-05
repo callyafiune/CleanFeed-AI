@@ -2821,3 +2821,104 @@ com vocabulário coerente satisfaz os dois**, e uma coleta natural das quatro c�
 split por `DATASET_COVERAGE_INVALID`. Dono: **Fase 2, D0** (`REGISTER`/`HUMAN_SOURCE` → 4 células), que
 move `requiredHumanSourceTypes` junto do remapeamento do lab, ou declara a tradução estrato→célula num
 lugar só.
+
+### K15 — um preflight de condições NECESSÁRIAS, por classe, que declara a própria insuficiência (Commit F, 2026-08-04)
+
+`benchmark/viability-preflight.ts` (comando `preflight-viability`) roda sobre o corpo carimbado **antes**
+do split, conta os componentes conexos pelos eixos de conectividade v4 e compara, **em cada escopo** — o
+corpo agregado e cada classe (`human`, `ai`, `mixed`), cada uma sobre o próprio total —, os dois
+**extremos** com os dois **alvos extremos** das frações pré-inscritas: o maior componente contra `train`
+(45 %) e a menor contribuição não nula contra `dev` (5 %), os dois com a tolerância de 2 pp de
+`CLASS_TOLERANCE`. Cinco decisões distintas vivem aqui:
+
+1. **Só condições NECESSÁRIAS, e a saída diz que são só isso.** Atribuir componentes indivisíveis a cinco
+   blocos de tamanho-alvo é **partição multivias de números** — soma de subconjuntos com cinco caixas —,
+   e resolvê-la é o que o preflight se recusa a fazer. As duas condições são as que se pode afirmar sem
+   resolvê-la, e afirmar mais que isso é exatamente a suposição que a pré-inscrição v3 abandonada fez
+   (§ 2.2g). Por isso a frase "necessário e NÃO suficiente" é **texto de saída** e não comentário: um
+   preflight verde é a saída que um leitor pode tomar por corpus divisível. A insuficiência é **medida** e
+   não só declarada — o catálogo de testes carrega um corpo (componentes de 47 %, 7 %, 23 % e 23 %) que
+   passa nas duas condições e que `createBlockedSplit` recusa.
+   _Fonte:_ **Karp, 1972 — Reducibility Among Combinatorial Problems**, em *Complexity of Computer
+   Computations*, Plenum. [link](https://doi.org/10.1007/978-1-4684-2001-2_9) _Fato citado:_ KNAPSACK
+   (soma de subconjuntos) está entre os 21 problemas NP-completos originais, então decidir existência de
+   atribuição exata não é passo barato de um pipeline. _Estado do link:_ **não verificado em texto
+   integral** nesta sessão (capítulo de livro, sem rede).
+   _Fonte:_ **Garey & Johnson, 1979 — Computers and Intractability**, W. H. Freeman, problemas SP12
+   (3-PARTITION) e SR1. [link](https://dl.acm.org/doi/book/10.5555/578533) _Fato citado:_ 3-PARTITION é
+   NP-completo no sentido FORTE, isto é, permanece difícil mesmo com números limitados por um polinômio no
+   tamanho da entrada — que é precisamente o regime deste corpus (tamanhos de componente pequenos, muitos
+   componentes). _Estado do link:_ **não verificado em texto integral** nesta sessão.
+2. **A condição frouxa é a do MAIOR, e é a padrão.** "Nenhum item excede a capacidade de uma caixa" é a
+   condição elementar de viabilidade de empacotamento, e é a base do limite inferior L1 de bin packing.
+   Ela só recusa escopo dominado por um bloco. _Fonte:_ **Martello & Toth, 1990 — Knapsack Problems:
+   Algorithms and Computer Implementations**, Wiley, cap. 8 (*Bin-packing problem*).
+   [link](http://www.or.deis.unibo.it/knapsack.html) _Fato citado:_ a viabilidade de um empacotamento
+   exige que todo item caiba numa caixa, e essa é a primeira condição que qualquer limite inferior
+   pressupõe. _Estado do link:_ **não verificado em texto integral** nesta sessão.
+3. **A condição AFIADA é a do MENOR, e é contraintuitiva.** Todo alvo excede a tolerância, então toda
+   partição tem de receber fração não nula de todo escopo; e todo subconjunto não vazio inclui ao menos um
+   componente, então para existir subconjunto que realize o **menor** alvo é preciso existir componente que
+   caiba nele. Quem limita a menor partição é o menor componente, não o maior — e a recusa é de
+   **granularidade**, não de tamanho de corpo, porque crescer o corpo mantendo o número de componentes não
+   muda fração alguma. A aritmética é elementar; **sem precedente encontrado (2026-08-04)** para o uso
+   dela como **preflight de split de dataset**: a literatura de split agrupado (§ 2.2i, § 4.1) trata o
+   grupo como átomo e mede vazamento *depois* do corte, e a de empacotamento raciocina sobre o maior item
+   porque o objetivo dela é caber, não é realizar um alvo pequeno.
+4. **A unidade da comparação é a CLASSE, e o corpo agregado é um escopo à parte.** O splitter compara
+   fração **por classe** (`classTotals`/`scoreCut` em `benchmark/split.ts`), então as duas condições valem
+   por classe, sobre o total daquela classe. O escopo agregado é necessário também — a fração agregada de
+   uma partição é a **combinação convexa** das frações por classe, com pesos iguais aos totais de classe,
+   logo cai na mesma faixa de tolerância, e a faixa exclui o zero —, e **nenhum dos dois se deduz do
+   outro**, o que é a razão de os dois estarem escritos:
+   - por classe **não** se deduz do agregado, e essa é a direção caríssima: na composição ratificada
+     (7.000 humanas + 4.000 ai + 2.000 mistas) a metade gerada é fina e derruba toda fração agregada, então
+     uma metade humana degenerada em um componente por célula vale 13,46 % do corpo, cabe em `train` e
+     **passa** num teste só agregado — enquanto `dev` precisa de 5 % da classe `human` e só existem blocos
+     de 25 % dela. **Medido** (probe read-only, 2026-08-04): corpo de 100 linhas, 40 humanas em 4
+     componentes de 25 % da classe mais 60 geradas de grão fino → preflight agregado `passed: true`,
+     `createBlockedSplit` recusando com `human=[train 1.000, dev 0.000, …]`. Esta versão recusa esse corpo
+     nomeando a classe;
+   - o agregado **não** se deduz do por classe: um corpo cujos componentes são todos grossos no agregado,
+     tendo cada classe um componente fino, satisfaz todas as condições por classe e não preenche a menor
+     partição. Está no catálogo como `corpo-grosso-classes-finas`.
+   **Sem precedente encontrado (2026-08-04)** para a formulação por classe: a literatura de split agrupado
+   mede *leakage* e balanceamento de rótulo **depois** do corte, e não publica condição necessária de
+   granularidade por classe antes dele.
+5. **Concordância entre duas linguagens, provada sobre um corpo comum.** A guarda equivalente do
+   assembler (`assert_components_can_fill_five_partitions` em `benchmark/lab/assemble_corpus.py`, chamada
+   em `assign_partitions` antes de qualquer carimbo) e este preflight têm de dar o mesmo veredito, e a
+   concordância é mantida por um catálogo de corpos que os dois lados leem
+   (`benchmark/tests/fixtures/viability-agreement.json`). O catálogo declara **geometria** e não registros
+   prontos, porque os dois lados escrevem registro em idiomas diferentes; cada lado confere o histograma de
+   componentes e as contagens por classe **medidos** contra os **declarados** antes de comparar veredito, e
+   a lista de violações é **ordenada e escopada**, então os dois concordam sobre *qual* condição recusa e
+   em *qual* escopo, não apenas sobre passar ou reprovar. **Sem precedente encontrado (2026-08-04)** para
+   essa forma específica — catálogo de fixtures compartilhado entre implementações em duas linguagens, com
+   o histograma de conectividade afirmado dos dois lados antes do veredito. A prática vizinha que existe no
+   projeto é o espelho por REGEX sobre o fonte TypeScript (`test_extractors.py`), que pina **constante** e
+   não **comportamento**.
+
+**O que este preflight NÃO é, dito porque a confusão custa uma rodada de montagem.** Ele é irmão do
+`cluster-ledger preflight`, não substituto: aquele mede **exposição** (que linha uma partição cega ainda
+pode receber, lendo ledger e keyring privados) e este mede **geometria de partição** (lendo o
+`records.jsonl` carimbado). Um corpus passa num e reprova no outro sem contradição. Os dois estão no
+runbook § 4b e § 4b-bis. E há UMA entrada em que ele é deliberadamente **mais estrito** que o splitter:
+corpo vazio, que `createBlockedSplit` aceita devolvendo cinco partições vazias e que aqui é recusado,
+porque um corpo sem componente satisfaz todas as comparações e passaria por vacuidade.
+
+**Custo de reversão:** baixo. O comando não escreve nada, não sela nada e não muda veredito de gate algum
+— apagá-lo devolve o projeto ao estado em que a degenerescência do eixo grosso aparece só como
+`SPLIT_CONSTRAINT` depois da montagem inteira, com mensagem de fração por classe em vez de granularidade.
+**Nenhum arquivo novo entra em `EVALUATOR_FILES`, mas o `evaluatorDigest` MOVE**: `benchmark/cli.ts` e
+`benchmark/split-audit.ts` são membros da lista (`digests.ts`) e os dois mudam de bytes — o dispatcher do
+subcomando num, um comentário no outro. Medido:
+`76e81ba0521f68c31d796da87fad4d9099993fdb0aca31c2fc10426a918ccf65` →
+`35041bfa4f13719e7015c5ede03a1b994a3a54d64bcd93318278bafb0ebb1396`. É inevitável — um subcomando tem de
+ser fiado no dispatcher — e inócuo hoje: `issuedAt` é `null`, há 0 tags de release e nenhum `fit` selado
+(ESTADO § 1). **Medido** também: dos oito corpos do
+catálogo, `createBlockedSplit` recusa sete com `class split fractions unreachable` — nenhuma mensagem dele
+fala de granularidade, que é a razão de o comando existir — e aceita um, que o preflight aprova; o oitavo
+é aprovado pelo preflight e recusado pelo splitter, e é a insuficiência medida. Que **tudo o que o
+splitter aceita é aprovado aqui** é asserção do próprio teste, e é ela que dá sentido à prova por mutação
+de cada condição.
