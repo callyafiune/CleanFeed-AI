@@ -214,14 +214,49 @@ conjunto de treino é o `train.jsonl` do split e o split é cortado desses regis
 então um corpus que passe daqui é um corpus que um treino pode ler; a recusa fica à
 frente de `records.jsonl`.
 
-Quatro detecções, cada uma nomeada no diagnóstico:
+Dez detecções, cada uma nomeada no diagnóstico. As quatro primeiras vêm das constantes do próprio
+gerador; as seis seguintes foram calibradas por sonda sobre os pools em disco, e cada linha traz a taxa
+medida como `humano em moldura / ai / mistas nos vãos` (11.000 linhas ptwiki, 19.673 `ai`, 2.135 mistas):
 
-| detecção            | o que é                     | de onde vem a sonda                                                                                                |
-| ------------------- | --------------------------- | ------------------------------------------------------------------------------------------------------------------ |
-| `prompt-echo`       | a saída repete a instrução  | `generate_ai.RECIPES` (antes de `{reference}`) + 4 formas de diretiva de contagem de palavras                      |
-| `refusal`           | o modelo declinou a tarefa  | frames que exigem o OBJETO recusado ("com isso", "esse pedido")                                                    |
-| `metaconversation`  | a linha fala sobre a tarefa | frames de entrega, de oferta e de autoidentificação em 1ª pessoa                                                   |
-| `harness-signature` | marca do binário/CLI        | `CLI_BANNER_PREFIXES`, `GEMINI_AUTH_MARKERS`, marcador de turno `assistant`, `<\|…\|>`/`[INST]`, bytes de controle |
+| detecção              | o que é                              | de onde vem a sonda                                                                                                                                                                                        | taxa medida                   |
+| --------------------- | ------------------------------------ | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------- |
+| `prompt-echo`         | a saída repete a instrução           | `generate_ai.RECIPES` (antes de `{reference}`) + 4 formas de diretiva de contagem de palavras                                                                                                              | 0 / 2,23 % / 0                |
+| `refusal`             | o modelo declinou a tarefa           | frames que exigem o OBJETO recusado ("com isso", "esse pedido")                                                                                                                                            | 0 / 0 / 0                     |
+| `metaconversation`    | a linha fala sobre a tarefa          | frames de entrega, de oferta e de autoidentificação em 1ª pessoa                                                                                                                                           | 0 / 0,33 % / 0,05 %           |
+| `harness-signature`   | marca do binário/CLI                 | `CLI_BANNER_PREFIXES`, `GEMINI_AUTH_MARKERS`, marcador de turno `assistant`, `<\|…\|>`/`[INST]`, controle                                                                                                  | 0 / 8,18 % / 0                |
+| `spacing-anomaly`     | espaço que nenhum escritor deixa     | corrida de espaço, espaço terminal antes de `\n`, tab dentro da linha                                                                                                                                      | **0** / 0 / **8,76 %**        |
+| `encoding-corruption` | mojibake, dupla codificação, U+FFFD  | cabeça `Ã`/`Â` mais cauda Latin-1 (ou controle C1, que é a dupla), e U+FFFD                                                                                                                                | 0 / 0,05 % / 0                |
+| `invisible-character` | code point que não renderiza         | os **27** code points que o contrato de normalização remove: ZWSP, ZWNJ, ZWJ em palavra, NBSP em corrida, hífen suave, BOM, word joiner, marcas de direção, operadores invisíveis, enchimentos Hangul, CGJ | 0,59 % / 0,02 % / 0,05 %      |
+| `markdown-formatting` | sintaxe de Markdown                  | cerca de código, marcador de lista, ênfase por asterisco, tabela de pipe (separadora ou duas linhas)                                                                                                       | 0,11 % / **44,72 %** / 4,12 % |
+| `heading-line`        | linha de título                      | `## `, `Título:`/`Resposta:`, numeração de seção, sublinha setext                                                                                                                                          | 0,06 % / **20,72 %** / 1,55 % |
+| `prompt-boilerplate`  | a FORMA de uma instrução de template | diretiva com o artefato como objeto, atribuição de papel, referência ao material do prompt, orçamento de palavras                                                                                          | 0,05 % / 3,11 % / 0,05 %      |
+
+**O gate acusa o que a normalização de inferência apaga, e isso é deliberado.**
+`contracts/text-normalization.ts` remove os invisíveis, dobra separadores e roda NFKC **antes** da
+tokenização — então o modelo pode nunca ver um ZWSP. O que o gate mede não é a entrada do modelo: é
+contaminação da **lane**. Uma lane que emite uma marca a uma taxa que a classe humana não tem entrega o
+rótulo de graça, e o remédio de A4 é regenerar a lane, não filtrar o caractere. Um teste do lab parseia
+`REMOVED_INVISIBLE_CHARACTERS` do lado TypeScript e afirma, por **igualdade de conjuntos**, que o gate
+acusa cada um dos 27 code points que o contrato remove: um code point acrescentado lá sem sonda aqui
+seria apagado antes do modelo e nunca contado contra a lane, e é essa a diferença que o teste recusa.
+
+**A fração é por LINHA.** Uma linha que é eco de prompt E tem cabeçalho é UMA linha contaminada com as
+duas razões nomeadas; a soma por detecção pode passar da contagem de contaminadas, e é isso que o teste
+`test_a_line_with_two_detections_is_one_contaminated_line` fixa — com números em que a diferença muda o
+veredito (2 % limpo contra 4 % de recusa).
+
+**Duas sondas foram medidas e RECUSADAS**, e a recusa está pinada por teste: espaço antes de pontuação
+(7,15 % no humano em moldura contra 0,55 % no gerado — direção invertida e acima do teto no lado humano) e
+NBSP **nu** (1,45 % contra 0,005 %, que sozinho levava a união humana a 2,18 %). A regra que sobrou está
+escrita no módulo: a **união** das dez detecções sobre a classe humana em moldura fica abaixo do teto, ou
+o gate estaria recusando lanes por serem humanas. Medido: **0,809 %**.
+
+E a regra é **imposta**, não só escrita: `test_the_union_over_the_in_frame_human_class_stays_below_the_ceiling`
+roda o gate sobre 1.000 linhas com a composição medida da classe humana em moldura — as quatro formas
+recusadas incluídas, na taxa em que a Wikipédia pt as escreve — e exige veredito `clear` (1,0 % contra teto
+de 2 %). Uma sonda nova cuja taxa no lado humano passe do teto deixa esse teste vermelho. Os pools não
+estão no repo (`benchmark/data/*` é gitignored), então o que o checkout guarda é a composição medida, não
+o pool.
 
 O marcador de turno é procurado com a **linha** como fronteira, não a pontuação de frase:
 a forma canônica do vazamento é `assistant` sozinho na própria linha. Medido, a pontuação
@@ -247,11 +282,22 @@ são o diagnóstico e a mensagem da recusa só carrega nomes e contagens.
 py -3.13 -c "import json;print(json.load(open('<out>/artifact-gate.json'))['families'])"
 ```
 
-Medido em 2026-08-05 sobre os pools: 148 de 4.048 linhas geradas (3,656 %) casam ao menos
-uma detecção, e `madras_synthetic_corpusqwn` casa 146 de 150 (97,33 %) — família que o
-slate já exclui por proveniência não registrada. Das 1.170 que a montagem consegue
-construir hoje, 0 casam: as contaminadas morrem antes em `MissingRecipe`/`UnmappableLane`.
-Controle de falso positivo em 8.600 linhas humanas, que o gate nunca lê: 2 (0,023 %).
+Medido em 2026-08-05 sobre os pools, com as **quatro** detecções de então e sobre os 4.048
+candidatos `ai` **depois** da dedup: 148 casam ao menos uma detecção (3,656 %), e
+`madras_synthetic_corpusqwn` casa 146 de 150 (97,33 %) — família que o slate já exclui por
+proveniência não registrada. Das 1.170 que a montagem consegue construir hoje, 0 casam: as
+contaminadas morrem antes em `MissingRecipe`/`UnmappableLane`. Controle de falso positivo em
+8.600 linhas humanas, que o gate nunca lê: 2 (0,023 %).
+
+As dez detecções foram medidas num denominador **diferente** — as linhas dos arquivos de pool,
+sem dedup —, e é a coluna "taxa medida" da tabela acima. Os dois números não se comparam: um é
+quatro detecções sobre o conjunto deduplicado, o outro é dez sobre os arquivos.
+
+Sobre as mesmas 1.170, com as **dez**, o veredito muda: **24 contaminadas (2,05 %)** e
+`gemini-3_1-flash-lite` em **16/256 = 6,25 %**, acima do teto, o que manda a lane `gemini-api`
+para regeneração. A única detecção que dispara é `markdown-formatting`. Não é efeito de hoje —
+com a poda global ligada nenhum registro gerado chega ao gate —, mas é o veredito que vale no dia
+em que a classe gerada voltar a existir.
 
 ## Classe IA — `generate_ai.py` (pareada por tópico)
 

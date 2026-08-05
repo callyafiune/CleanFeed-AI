@@ -6783,3 +6783,494 @@ class AntiArtifactGateTests(unittest.TestCase):
             artifact_gate.measure([])["ceilingSource"],
             "constant:artifact_gate.CONTAMINATION_CEILING",
         )
+
+    # Invisible code points as ESCAPES, never as themselves — a literal ZWSP in a fixture
+    # is a test nobody can review and an editor can delete without a diff.
+    _ZWSP = "\u200b"
+    _NBSP = "\u00a0"
+    _LRM = "\u200e"
+    _SOFT_HYPHEN = "\u00ad"
+    _C1_CONTROL = "\u0083"
+    _SECTION_SIGN = "\u00a7"
+    _REPLACEMENT = "\ufffd"
+
+    def test_anomalous_whitespace_is_named_spacing_anomaly(self) -> None:
+        import artifact_gate
+
+        # `common.normalize_text` collapses `[ \t]+` inside a line and strips every line,
+        # and every pool written through `CandidateWriter.offer` has run it — so a space
+        # run reaching the gate means a writer that skipped it. `make_mixed.emit` is that
+        # writer: 185 of its 2.135 AI spans carry one, against 0 of 11.000 ptwiki rows.
+        run = artifact_gate.detections_in("Texto com espaco  duplo. " + self._clean(24))
+        self.assertIn(artifact_gate.DETECTION_SPACING, run)
+        self.assertEqual(["space-run"], run[artifact_gate.DETECTION_SPACING])
+        trailing = artifact_gate.detections_in(
+            "Primeira linha \nsegunda linha. " + self._clean(25)
+        )
+        self.assertEqual(
+            ["trailing-space-before-newline"],
+            trailing[artifact_gate.DETECTION_SPACING],
+        )
+
+    def test_a_space_before_punctuation_is_not_a_spacing_anomaly(self) -> None:
+        import artifact_gate
+
+        # MEASURED AND REFUSED, which is why it is pinned: the shape fires on 7,15 % of the
+        # in-frame human rows and 0,55 % of the generated ones — 13 times more often on the
+        # class the label would be free against, and above the 2 % ceiling on the human
+        # side. A probe whose direction is inverted would regenerate lanes for a shape
+        # ptwiki writes.
+        self.assertEqual(
+            artifact_gate.detections_in(
+                "Texto com espaco antes do ponto . " + self._clean(26)
+            ),
+            {},
+        )
+
+    def test_a_space_at_the_end_of_the_span_is_not_a_trailing_space(self) -> None:
+        import artifact_gate
+
+        # A mixed row's span is a SLICE, so a span that ends in a space may be where
+        # `mixture.spans` cut it and not something the lane emitted. Measured, anchoring the
+        # probe to the end of the text instead of a newline would have added 2 rows of
+        # 2.135 and both are cuts.
+        self.assertEqual(
+            artifact_gate.detections_in(self._clean(27) + " "),
+            {},
+        )
+
+    def test_broken_encoding_is_named_encoding_corruption(self) -> None:
+        import artifact_gate
+
+        single = artifact_gate.detections_in(
+            "O cora" + "Ã" + self._SECTION_SIGN + "ao quebrado. " + self._clean(28)
+        )
+        self.assertEqual(
+            ["mojibake-utf8-as-latin1"],
+            single[artifact_gate.DETECTION_ENCODING],
+        )
+        double = artifact_gate.detections_in(
+            "O cora" + "Ã" + self._C1_CONTROL + "ao quebrado. " + self._clean(29)
+        )
+        self.assertEqual(
+            ["double-encoded-utf8"], double[artifact_gate.DETECTION_ENCODING]
+        )
+        lost = artifact_gate.detections_in(
+            "O texto perdeu um " + self._REPLACEMENT + " caractere. " + self._clean(30)
+        )
+        self.assertEqual(
+            ["replacement-character"], lost[artifact_gate.DETECTION_ENCODING]
+        )
+
+    def test_a_capital_a_tilde_of_ordinary_portuguese_is_not_mojibake(self) -> None:
+        import artifact_gate
+
+        # `Ã` and `Â` are pt-BR capitals — `SÃO`, `MÃE`, `CÂMARA` — and in every one of them
+        # the next character is an ASCII letter. That is why the probe requires the
+        # Latin-1/C1 tail and not the lead alone.
+        self.assertEqual(
+            artifact_gate.detections_in(
+                "SÃO PAULO e a CÂMARA municipal. " + self._clean(31)
+            ),
+            {},
+        )
+
+    def test_an_invisible_code_point_is_named_invisible_character(self) -> None:
+        import artifact_gate
+
+        found = artifact_gate.detections_in(
+            "Pala" + self._ZWSP + "vra partida. " + self._clean(32)
+        )
+        self.assertEqual(
+            ["zero-width-space"], found[artifact_gate.DETECTION_INVISIBLE]
+        )
+        padded = artifact_gate.detections_in(
+            "Texto" + self._NBSP + self._NBSP + "com enchimento. " + self._clean(33)
+        )
+        self.assertEqual(
+            ["no-break-space-run"], padded[artifact_gate.DETECTION_INVISIBLE]
+        )
+
+    def test_one_no_break_space_is_typography_and_not_an_artifact(self) -> None:
+        import artifact_gate
+
+        # A single NBSP is the one between a number and its unit, and pt Wikipedia writes it
+        # in 1,45 % of the in-frame human rows against 0,005 % of the generated ones. Probed
+        # bare it put the line-level union over the human class at 2,18 % — above the
+        # ceiling — so the gate would have refused a lane for being as clean as the negative
+        # class. The RUN is what padding produces: 0,04 % human, 0 generated.
+        self.assertEqual(
+            artifact_gate.detections_in(
+                "A cidade tem 468" + self._NBSP + "km de estradas. " + self._clean(34)
+            ),
+            {},
+        )
+
+    def test_markdown_syntax_is_named_markdown_formatting(self) -> None:
+        import artifact_gate
+
+        # The highest-yield detection of the six: 0,11 % of the in-frame human rows against
+        # 44,72 % of the 19.673 `ai` rows.
+        emphasis = artifact_gate.detections_in(
+            "O termo **central** do assunto. " + self._clean(35)
+        )
+        self.assertEqual(
+            ["emphasis-double-asterisk"],
+            emphasis[artifact_gate.DETECTION_MARKDOWN],
+        )
+        listing = artifact_gate.detections_in(
+            "Os pontos:\n- primeiro item\n- segundo item\n" + self._clean(36)
+        )
+        self.assertEqual(["list-marker"], listing[artifact_gate.DETECTION_MARKDOWN])
+        fence = artifact_gate.detections_in(
+            "Segue o exemplo:\n```\numa linha\n```\n" + self._clean(37)
+        )
+        self.assertEqual(["code-fence"], fence[artifact_gate.DETECTION_MARKDOWN])
+        table = artifact_gate.detections_in(
+            "| coluna | outra |\n| --- | --- |\n| a | b |\n" + self._clean(38)
+        )
+        self.assertIn("pipe-table", table[artifact_gate.DETECTION_MARKDOWN])
+
+    def test_a_dash_inside_a_sentence_is_not_a_list_marker(self) -> None:
+        import artifact_gate
+
+        # The list probes are anchored to the START of a line, which is what keeps an
+        # ordinary dash out: 0,06 % of the in-frame human rows against 22,06 % of the `ai`
+        # rows.
+        self.assertEqual(
+            artifact_gate.detections_in(
+                "O termo - usado assim - nao abre lista. " + self._clean(39)
+            ),
+            {},
+        )
+
+    def test_a_title_line_is_named_heading_line(self) -> None:
+        import artifact_gate
+
+        atx = artifact_gate.detections_in("## Introducao\n" + self._clean(40))
+        self.assertEqual(["atx-heading"], atx[artifact_gate.DETECTION_HEADING])
+        # The probes read `fold_lines`, which strips accents, so `Título:` arrives as
+        # `titulo:` and the list carries one spelling of each word.
+        label = artifact_gate.detections_in("Título: o assunto\n" + self._clean(41))
+        self.assertEqual(["label-line"], label[artifact_gate.DETECTION_HEADING])
+        numbered = artifact_gate.detections_in(
+            "1. Contexto historico\n" + self._clean(42)
+        )
+        self.assertEqual(
+            ["section-numbering"], numbered[artifact_gate.DETECTION_HEADING]
+        )
+
+    def test_a_reproduced_instruction_is_named_prompt_boilerplate(self) -> None:
+        import artifact_gate
+
+        # Where `prompt-echo` cannot reach: that detection is derived from this
+        # repository's generator constants, so it only ever finds a prompt somebody here or
+        # in `madras` issued. These frames are the SHAPE of an instruction, and they catch a
+        # lane whose upstream prompt this repository never sees.
+        directive = artifact_gate.detections_in(
+            "Escreva um texto sobre o assunto. " + self._clean(43)
+        )
+        self.assertEqual(
+            ["write-the-artifact"], directive[artifact_gate.DETECTION_BOILERPLATE]
+        )
+        role = artifact_gate.detections_in(
+            "Atue como um especialista na materia. " + self._clean(44)
+        )
+        self.assertEqual(["assume-a-role"], role[artifact_gate.DETECTION_BOILERPLATE])
+
+    def test_an_ordinary_verb_of_prose_is_not_a_role_assignment(self) -> None:
+        import artifact_gate
+
+        # Measured false positive: a bare "atue como" is a verb of ordinary prose and
+        # reached 2 in-frame human rows. The ROLE noun is what makes the frame an
+        # instruction.
+        self.assertEqual(
+            artifact_gate.detections_in(
+                "Atue como mediador do conflito entre as partes. " + self._clean(45)
+            ),
+            {},
+        )
+
+    def test_a_line_with_two_detections_is_one_contaminated_line(self) -> None:
+        import artifact_gate
+
+        # A4's 2 % is a fraction of LINES. A line that echoes the prompt AND carries a
+        # heading is ONE contaminated line with two named reasons — the denominator of the
+        # ceiling cannot grow with the number of things wrong with a row.
+        #
+        # The numbers are chosen so the difference changes the VERDICT: 2 of 100 is exactly
+        # the ceiling and passes, while counting the same two rows once per detection gives
+        # 4 % and refuses.
+        both = "## Resposta\nResponda apenas com o texto, sem titulo e sem comentarios. "
+        named = artifact_gate.detections_in(both + self._clean(46))
+        self.assertEqual(
+            [artifact_gate.DETECTION_PROMPT_ECHO, artifact_gate.DETECTION_HEADING],
+            list(named),
+        )
+        lines = [
+            self._line(
+                both + self._clean(index) if index < 2 else self._clean(index),
+                index=index,
+            )
+            for index in range(100)
+        ]
+        report = artifact_gate.measure(lines)
+        entry = report["families"][0]
+        self.assertEqual((entry["contaminated"], entry["lines"]), (2, 100))
+        self.assertEqual(entry["verdict"], artifact_gate.VERDICT_CLEAR)
+        # Both reasons are still NAMED on the same two rows, and they sum to more than the
+        # contaminated count — which is the whole point of counting per line.
+        self.assertEqual(
+            entry["byDetection"][artifact_gate.DETECTION_PROMPT_ECHO]["lines"], 2
+        )
+        self.assertEqual(
+            entry["byDetection"][artifact_gate.DETECTION_HEADING]["lines"], 2
+        )
+        self.assertEqual(
+            sum(counts["lines"] for counts in entry["byDetection"].values()), 4
+        )
+
+    def _family_on_a_heading_at(self, contaminated: int, total: int) -> dict:
+        import artifact_gate
+
+        return artifact_gate.measure(
+            [
+                self._line(
+                    "## Introducao\n" + self._clean(index)
+                    if index < contaminated
+                    else self._clean(index),
+                    index=index,
+                )
+                for index in range(total)
+            ]
+        )
+
+    def test_a_family_over_the_ceiling_on_an_added_detection_regenerates_its_lane(
+        self,
+    ) -> None:
+        import artifact_gate
+
+        over = self._family_on_a_heading_at(21, 1000)
+        entry = over["families"][0]
+        self.assertEqual((entry["contaminated"], entry["lines"]), (21, 1000))
+        self.assertAlmostEqual(entry["fraction"], 0.021)
+        self.assertEqual(entry["verdict"], artifact_gate.VERDICT_REGENERATE_LANE)
+        self.assertEqual(over["lanesToRegenerate"], ["codex"])
+        with self.assertRaises(artifact_gate.ArtifactContamination) as caught:
+            artifact_gate.assert_no_lane_needs_regeneration(over)
+        message = str(caught.exception)
+        self.assertIn("21/1000", message)
+        self.assertIn("2.10%", message)
+        # The ADDED detection is what the refusal names, so the six are inside the verdict
+        # and not a second report beside it.
+        self.assertIn(artifact_gate.DETECTION_HEADING, message)
+        under = self._family_on_a_heading_at(19, 1000)
+        self.assertEqual(
+            under["families"][0]["verdict"], artifact_gate.VERDICT_CLEAR
+        )
+        self.assertEqual(under["lanesToRegenerate"], [])
+        artifact_gate.assert_no_lane_needs_regeneration(under)
+
+    def test_the_report_publishes_all_ten_detection_names(self) -> None:
+        import artifact_gate
+
+        # The report's inventory IS the list the verdict was computed over, so a detection
+        # added to the module and left out of the canonical order would be measured and
+        # never published.
+        self.assertEqual(
+            artifact_gate.measure([])["detections"],
+            [
+                "prompt-echo",
+                "refusal",
+                "metaconversation",
+                "harness-signature",
+                "spacing-anomaly",
+                "encoding-corruption",
+                "invisible-character",
+                "markdown-formatting",
+                "heading-line",
+                "prompt-boilerplate",
+            ],
+        )
+        for detection, probes, _ in artifact_gate._ADDED_PROBES:
+            self.assertIn(detection, artifact_gate.DETECTION_NAMES, detection)
+            self.assertNotEqual(probes, (), detection)
+
+    def _in_frame_human_shapes(self) -> tuple[tuple[str, int], ...]:
+        """The shapes the in-frame human class writes, with the count each has per 1.000.
+
+        NOT the ptwiki pool: `benchmark/data/` is outside the repository, so what a
+        checkout can hold is the pool's measured composition. Every rate is rounded UP to a
+        whole row, which puts the fixture's union (1,0 %) a little above the pool's measured
+        0,809 % — the safe direction for a ceiling guard.
+
+        The four shapes the measurement REFUSED as probes are in here at their measured
+        rates, and that is what makes re-adding a refused probe turn the guard red.
+        """
+        return (
+            # 7,15 % — a space before punctuation, the refused probe's shape
+            ("A vila foi fundada em 1554 , conforme o registro da paroquia. ", 72),
+            # 1,63 % — a short line closed by a colon, refused as a heading probe
+            ("Ver tambem:\nA divisao administrativa do municipio. ", 16),
+            # 1,45 % — ONE no-break space, the one between a number and its unit
+            ("O rio percorre 320" + self._NBSP + "km ate a foz. ", 15),
+            # 0,38 % — a zero-width space, which comes from the wiki source
+            ("A grafia do topo" + self._ZWSP + "nimo mudou em 1943. ", 4),
+            # 0,12 % — a direction mark, from a quotation in Arabic script
+            ("O titulo aparece como " + self._LRM + "kitab al-jabr na fonte. ", 1),
+            # 0,10 % — one line with two pipes: pt Wikipedia writes table syntax
+            ("| populacao | 12 mil habitantes na ultima contagem. ", 1),
+            # 0,06 % — a list marker, from a list section of the article
+            ("Bairros:\n- centro historico da cidade\n", 1),
+            # 0,055 % — a soft hyphen, from a hyphenated heading
+            ("A palavra hidro" + self._SOFT_HYPHEN + "grafia esta no verbete. ", 1),
+            # 0,055 % — a section number
+            ("2. Historia do municipio\n", 1),
+            # 0,045 % — asterisk emphasis around a scientific name
+            ("O nome cientifico *Panthera onca* consta do verbete. ", 1),
+            # 0,045 % — an article ABOUT the language, which is what these rows are
+            ("O verbete descreve variantes em portugues brasileiro. ", 1),
+        )
+
+    def test_the_union_over_the_in_frame_human_class_stays_below_the_ceiling(
+        self,
+    ) -> None:
+        import artifact_gate
+
+        # THE CALIBRATION RULE, as a guard instead of a sentence: run the gate over the
+        # human class the frame publishes and the verdict has to be `clear`. A probe whose
+        # direction is inverted — more frequent in the human class than in the generated
+        # one — puts the negative class itself over the ceiling, and a gate in that state
+        # regenerates lanes for being human-like. The bare NBSP probe did exactly that, at
+        # 2,18 % against a 2 % ceiling.
+        texts: list[str] = []
+        for shape, count in self._in_frame_human_shapes():
+            for _ in range(count):
+                texts.append(shape + self._clean(len(texts)))
+        shaped = len(texts)
+        while len(texts) < 1000:
+            texts.append(self._clean(len(texts)))
+        report = artifact_gate.measure(
+            [self._line(text, index=index) for index, text in enumerate(texts)]
+        )
+        entry = report["families"][0]
+        self.assertEqual((shaped, entry["lines"]), (114, 1000))
+        detected = {
+            name: counts["lines"] for name, counts in entry["byDetection"].items()
+        }
+        self.assertLess(
+            Fraction(entry["contaminated"], entry["lines"]),
+            artifact_gate.CONTAMINATION_CEILING,
+            f"the in-frame human class is at {entry['contaminated']}/1000, at or above "
+            f"the ceiling — which means the gate refuses a lane for being as clean as "
+            f"the negative class. Detections: {detected}",
+        )
+        self.assertEqual(entry["verdict"], artifact_gate.VERDICT_CLEAR)
+        artifact_gate.assert_no_lane_needs_regeneration(report)
+        # The fixture CARRIES the refused shapes at their measured counts. Without them the
+        # guard is green whatever probe is added, and the rule stops being enforced.
+        self.assertEqual(sum(1 for text in texts if " ," in text), 72)
+        self.assertEqual(sum(1 for text in texts if self._NBSP in text), 15)
+        self.assertEqual(sum(1 for text in texts if text.startswith("Ver tambem:")), 16)
+
+    def _characters_the_inference_normalization_removes(self) -> set[str]:
+        """The code points `contracts/text-normalization.ts` drops before tokenization.
+
+        Parsed from the contract's own set literal rather than copied, because a copy is a
+        second list that goes stale: the point of the test below is that the gate keeps
+        accusing whatever THAT file removes.
+        """
+        import artifact_gate
+
+        contract = (
+            Path(artifact_gate.__file__).resolve().parents[2]
+            / "contracts"
+            / "text-normalization.ts"
+        )
+        source = contract.read_text(encoding="utf-8")
+        # The DECLARATION and not the first mention: the file's header comment names the
+        # set two hundred lines above it, and anchoring there reads the confusable table.
+        start = source.index("export const REMOVED_INVISIBLE_CHARACTERS")
+        body = source[start : source.index("]);", start)]
+        return {
+            chr(int(code_point, 16))
+            for code_point in re.findall(r'"\\u([0-9A-Fa-f]{4})"', body)
+        }
+
+    def test_the_invisible_detection_fires_on_what_the_normalization_removes(
+        self,
+    ) -> None:
+        import artifact_gate
+
+        # THE HEART OF D13. `contracts/text-normalization.ts` removes these code points
+        # BEFORE tokenization, so the detector may never see one — and the gate has to keep
+        # accusing them, because what it measures is not what the model sees: it is
+        # contamination of the LANE. A lane that emits a mark the human class does not hands
+        # the label away for free whatever the tokenizer later erases, and A4's remedy is to
+        # regenerate the lane, not to filter the character.
+        removed = self._characters_the_inference_normalization_removes()
+        self.assertGreaterEqual(len(removed), 20, "the contract's set failed to parse")
+        accused: dict[str, list[str]] = {}
+        for code_point in sorted(removed):
+            found = artifact_gate.detections_in(
+                "Pala" + code_point + "vra seguinte. " + self._clean(47)
+            )
+            if artifact_gate.DETECTION_INVISIBLE in found:
+                accused[code_point] = found[artifact_gate.DETECTION_INVISIBLE]
+        # EVERY code point of the contract's set, and not a named sample of it: a sample
+        # leaves a code point added to the contract with no probe here silently unaccused,
+        # and unaccused is precisely the hole — the inference path erases it before the
+        # model while the lane that padded with it keeps its rows.
+        self.assertEqual(
+            sorted(hex(ord(char)) for char in removed if char not in accused),
+            [],
+            "the inference normalization removes these before tokenization and no probe "
+            "of artifact_gate.INVISIBLE_PROBES accuses them, so a lane could pad with "
+            "one and hand the label away for free",
+        )
+        self.assertEqual(accused.get(self._ZWSP), ["zero-width-space"])
+        for code_point, probe in (
+            ("\u200c", "zero-width-non-joiner"),
+            ("\u00ad", "soft-hyphen"),
+            ("\ufeff", "byte-order-mark"),
+            ("\u2060", "word-joiner"),
+            ("\u200e", "direction-mark"),
+            ("\u200f", "direction-mark"),
+            ("\u202e", "direction-mark"),
+            ("\u061c", "direction-mark"),
+            ("\u034f", "combining-grapheme-joiner"),
+            ("\u115f", "hangul-filler"),
+            ("\u3164", "hangul-filler"),
+            ("\u180e", "mongolian-vowel-separator"),
+            ("\u2062", "invisible-operator"),
+        ):
+            with self.subTest(code_point=hex(ord(code_point))):
+                self.assertIn(code_point, removed)
+                self.assertEqual(accused.get(code_point), [probe])
+        # And the other half of the same fact: the text the MODEL gets — the one with the
+        # character removed — trips nothing. The gate is accusing the character and not
+        # something else in the fixture.
+        self.assertEqual(
+            artifact_gate.detections_in("Pala" + "vra seguinte. " + self._clean(47)),
+            {},
+        )
+
+    def test_no_probe_is_spelled_with_a_literal_invisible_character(self) -> None:
+        import artifact_gate
+
+        # A probe written as the character itself is a probe nobody can review in a diff and
+        # an editor can delete without leaving one. Asserted over the module's own source,
+        # because that is the only place the spelling exists.
+        #
+        # The forbidden set is DERIVED from the contract's own removal set rather than
+        # listed here: a hand-kept list goes stale exactly when a probe for a new invisible
+        # code point is added, which is the moment the rule has to hold. The three extras
+        # are the marks the gate probes and the contract does not remove unconditionally.
+        source = Path(artifact_gate.__file__).resolve().read_text(encoding="utf-8")
+        forbidden = (
+            self._characters_the_inference_normalization_removes()
+            | {chr(point) for point in range(0x0080, 0x00A1)}
+            | {"\u200d", "\u202f", "\ufffd"}
+        )
+        present = sorted(hex(ord(char)) for char in forbidden if char in source)
+        self.assertEqual(present, [])

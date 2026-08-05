@@ -1,12 +1,20 @@
 """The pre-training anti-artifact gate (A4), over the generated rows of an assembly.
 
-WHAT IT DECIDES. Four detections, each named in the diagnosis it produces:
+WHAT IT DECIDES. Ten detections, each named in the diagnosis it produces:
 
   * `prompt-echo` — the line repeats the instruction it was given;
   * `refusal` — the model declined the task instead of performing it;
   * `metaconversation` — the line talks ABOUT the task (delivers it, offers to revise
     it, identifies itself as a model) instead of being the text;
-  * `harness-signature` — the mark of the binary or CLI that produced the line.
+  * `harness-signature` — the mark of the binary or CLI that produced the line;
+  * `spacing-anomaly` — whitespace the candidate writers' own normalization does not
+    leave behind;
+  * `encoding-corruption` — mojibake, double-encoded UTF-8, U+FFFD;
+  * `invisible-character` — a code point that renders as nothing;
+  * `markdown-formatting` — fences, list markers, asterisk emphasis, pipe tables;
+  * `heading-line` — a title line, a label line, a section number;
+  * `prompt-boilerplate` — the line reproduces the SHAPE of a template instruction
+    instead of executing it.
 
 A generator family above `CONTAMINATION_CEILING` sends its whole LANE back for
 regeneration. Selective pruning is not an outcome this module can produce: it names no
@@ -14,6 +22,33 @@ line, so nothing downstream can drop the lines it counted. That is A4's rule and
 reason for it — dropping the contaminated lines of a lane leaves a lane whose surviving
 lines are the ones the artifact detector missed, and the corpus then carries the lane's
 bias with no record of it.
+
+WHAT IT MEASURES IS NOT WHAT THE MODEL SEES, and the last six detections only make
+sense read that way. `contracts/text-normalization.ts` neutralizes part of this before
+tokenization — it removes the invisible code points of
+`REMOVED_INVISIBLE_CHARACTERS`, folds every separator to U+0020/U+000A, and runs NFKC
+per grapheme — so a detector trained on this corpus may never see a ZWSP or an NBSP at
+all. The gate accuses them anyway, because the quantity it measures is LANE
+CONTAMINATION: a lane that emits a mark at a rate the human class does not is a lane
+that hands the label away for free, whatever the tokenizer later erases. Neutralization
+downstream is not a reason to stop counting upstream, and A4's remedy is to regenerate
+the lane, not to filter the character.
+
+The counting is PER LINE and never per detection: a line that is both a prompt echo and
+a heading is ONE contaminated line with two named reasons, which is what
+`CONTAMINATION_CEILING` is a fraction of.
+
+HOW THE SIX ADDED PROBES WERE CALIBRATED: measured over the pool candidates
+on disk, and stated as the rate in the IN-FRAME human material (11.000 ptwiki rows)
+beside the rate in the generated pools (19.673 `ai` rows, 2.135 mixed rows scanned on
+their AI spans alone). The in-frame human rate is the one that decides, because the
+célula the frame publishes is ptwiki and that is the negative class a free label would
+be free against; the out-of-frame human pools (Stack Overflow markdown, B2W reviews)
+were measured too and are reported in the register, not used to calibrate.
+
+Two shapes were MEASURED AND REFUSED rather than added, and both are recorded where
+they were rejected: a space before punctuation (`SPACING_PROBES`) and anchoring the
+trailing-space probe to the end of the span instead of a newline (same place).
 
 WHERE THE PROBES COME FROM. `prompt-echo` and `harness-signature` are anchored in the
 generator's own constants (`generate_ai.RECIPES`, `generate_ai.CLI_BANNER_PREFIXES`,
@@ -48,6 +83,12 @@ DETECTION_PROMPT_ECHO = "prompt-echo"
 DETECTION_REFUSAL = "refusal"
 DETECTION_METACONVERSATION = "metaconversation"
 DETECTION_HARNESS_SIGNATURE = "harness-signature"
+DETECTION_SPACING = "spacing-anomaly"
+DETECTION_ENCODING = "encoding-corruption"
+DETECTION_INVISIBLE = "invisible-character"
+DETECTION_MARKDOWN = "markdown-formatting"
+DETECTION_HEADING = "heading-line"
+DETECTION_BOILERPLATE = "prompt-boilerplate"
 # Canonical order, used by every report and message so two runs over one corpus produce
 # the same bytes.
 DETECTION_NAMES: tuple[str, ...] = (
@@ -55,6 +96,12 @@ DETECTION_NAMES: tuple[str, ...] = (
     DETECTION_REFUSAL,
     DETECTION_METACONVERSATION,
     DETECTION_HARNESS_SIGNATURE,
+    DETECTION_SPACING,
+    DETECTION_ENCODING,
+    DETECTION_INVISIBLE,
+    DETECTION_MARKDOWN,
+    DETECTION_HEADING,
+    DETECTION_BOILERPLATE,
 )
 
 # A4, frozen 2026-07-26: a family above this fraction regenerates its whole lane. A
@@ -281,6 +328,251 @@ _HARNESS_ROLE_TURN = r"(?:^|[.!?:]\s)assistant\b"
 # ends and does not touch these, so an escape sequence a CLI wrote survives into the pool.
 _HARNESS_CONTROL = r"[\x00-\x08\x0b\x0c\x0e-\x1f]"
 
+# --- the six detections added by D13 ----------------------------------------
+#
+# Each probe below carries the rate it was MEASURED at, as
+# `in-frame human / ai pools / mixed AI spans` over 11.000 ptwiki rows, 19.673 `ai`
+# rows and 2.135 mixed rows. The in-frame human rate is the number that decides
+# whether a probe may exist at all: above the 2 % ceiling on the human side, the probe
+# would send lanes to regeneration for a shape the negative class carries.
+#
+# Every invisible code point is written as an escape and never as itself. A literal ZWSP
+# in this file is a probe nobody can review and an editor can delete without a diff.
+
+# Whitespace no candidate writer leaves behind. `common.normalize_text` collapses
+# `[ \t]+` inside a line, strips each line and trims the text, and EVERY pool written
+# through `CandidateWriter.offer` has run it — the human extractors, `generate_ai` and
+# `import_public_corpus` alike. `make_mixed.emit` does NOT: it writes `text: edited`
+# straight from the editor's output. That asymmetry is why these probes discriminate at
+# all, and it is the measurement: 0 of 11.000 ptwiki rows and 0 of 19.673 `ai` rows
+# carry a space run, against 185 of 2.135 mixed AI spans (8,67 %).
+#
+# A SPACE BEFORE PUNCTUATION IS NOT HERE, and that is measured, not an omission. It
+# fires on 7,15 % of the in-frame human rows against 0,55 % of the generated ones — 13
+# times more often on the class the label would be free against, and above the ceiling
+# on the human side. A probe whose direction is inverted cannot be a contamination
+# probe: it would regenerate lanes for a shape ptwiki writes.
+#
+# The trailing-space probe requires a real NEWLINE and never the end of the text. A
+# mixed row's span is a SLICE of the text, so a span that ends in a space may just be
+# where `mixture.spans` cut it. Measured, the end-of-text arm would have added 2 rows of
+# 2.135 and both of them are a cut, while the newline arm finds 113.
+SPACING_PROBES: dict[str, str] = {
+    # 0 / 0 / 8,67 %
+    "space-run": r"  +",
+    # 0 / 0 / 0 — no measured occurrence; a tab inside a line is a shape no writer emits
+    "tab-inside-line": r"\S\t",
+    # 0 / 0 / 5,29 %
+    "trailing-space-before-newline": r"[ \t]+\n",
+}
+
+# UTF-8 read as Latin-1 produces a lead of `Ã`/`Â` followed by a code point in
+# U+0080-U+00BF, and doing it TWICE puts a C1 control there instead of a Latin-1
+# punctuation character — which is what separates the two probes. The lead-plus-tail
+# shape is required because `Ã` and `Â` are ordinary pt-BR capitals: `SÃO`, `MÃE` and
+# `CÂMARA` all write one, and in every one of them the next character is an ASCII letter.
+ENCODING_PROBES: dict[str, str] = {
+    # 0 / 0 / 0 — the shape of a re-encoded mojibake, with no measured occurrence
+    "double-encoded-utf8": r"[ÃÂ][\u0080-\u009f]",
+    # 0 / 0,005 % / 0
+    "mojibake-utf8-as-latin1": r"[ÃÂ][\u00a0-\u00bf]",
+    # 0 / 0,04 % / 0
+    "replacement-character": r"\ufffd",
+}
+
+# Code points that render as nothing. THE POINT OF THIS DETECTION is stated in the module
+# docstring: `contracts/text-normalization.ts` removes most of these before tokenization,
+# so the model may never see one, and the gate accuses them anyway because what it
+# measures is the lane and not the model's input.
+#
+# EVERY ONE OF THESE PROBES RUNS INVERTED ON TODAY'S POOLS, and the numbers belong here
+# rather than in a document because they are what the detection's value rests on: on the
+# in-frame human material ZWSP reaches 0,38 %, the direction marks 0,12 % and the soft
+# hyphen 0,05 %, against 0,02 % over the `ai` rows and 0,05 % over the mixed ones. In the
+# ptwiki célula an invisible character is a HUMAN-side mark — it comes from the wiki
+# source, and no extractor strips it — so this detection is a guard against a FUTURE
+# harness that pads with one, not a description of what the lanes emit now. Each probe is
+# far enough below the ceiling that keeping it costs nothing, and the whole detection is
+# 0,59 % on ptwiki.
+#
+# The union of the ten detections over the in-frame human class must stay BELOW the
+# ceiling, and that is a calibration rule and not a coincidence: a lane refused for being
+# as clean as the negative class is a gate refusing lanes for being human-like. A bare
+# NBSP probe broke it (see `no-break-space-run`) and is the reason the rule is written
+# down.
+#
+# The ZWJ probe requires an ALPHANUMERIC neighbour. A ZWJ between two pictographs is the
+# joiner of an emoji sequence — `text-normalization.ts` keeps exactly those, for a
+# measured reason — and 158 of the 19.673 `ai` rows carry one, none of them inside a
+# word. What splits a token is the ZWJ in a word, and that is 0 everywhere measured.
+#
+# THIS TABLE COVERS EVERY CODE POINT `REMOVED_INVISIBLE_CHARACTERS` REMOVES, and a test
+# asserts the two sets are the same one. The coupling is not incidental: the contract's set
+# is "invisible code points removed unconditionally" and this detection's subject is "a code
+# point that renders as nothing", so a code point the inference path has to strip is by
+# construction a code point a lane can pad with. One added there and not here would be
+# erased before the model and never counted against the lane — the exact hole this
+# detection exists to close — so the difference is refused and the fix is a probe here.
+INVISIBLE_PROBES: dict[str, str] = {
+    # 0 / 0 / 0
+    "byte-order-mark": r"\ufeff",
+    # 0 / 0 / 0, and 1 of the 31.100 out-of-frame human rows — U+034F, whose only
+    # standardized use is forcing a grapheme boundary that renders as nothing
+    "combining-grapheme-joiner": r"\u034f",
+    # 0,12 % / 0 / 0 — LRM, RLM, ALM, the embedding/override run and the isolate run
+    "direction-mark": r"[\u061c\u200e\u200f\u202a-\u202e\u2066-\u2069]",
+    # 0 / 0 / 0 — the Hangul fillers. U+3164 and U+FFA0 fold to U+1160 under NFKC, so
+    # the four are one shape: a syllable block with no glyph, in a pt-BR corpus
+    "hangul-filler": r"[\u115f\u1160\u3164\uffa0]",
+    # 0 / 0 / 0 — U+2061 to U+2064, the invisible math operators
+    "invisible-operator": r"[\u2061-\u2064]",
+    # 0 / 0 / 0 — U+180E, reclassified from space to format in Unicode 6.3.0, which is
+    # why no whitespace probe reaches it
+    "mongolian-vowel-separator": r"\u180e",
+    # 0,04 % / 0 / 0 — the RUN and not a bare NBSP. Bare, it is 1,45 % of the in-frame
+    # human rows against 0,005 % of the generated ones: inverted, and on its own it put
+    # the whole line-level union over the in-frame human class at 2,18 % — ABOVE the
+    # ceiling, which would mean refusing a lane for being as clean as the negative class.
+    # A typographic NBSP does not repeat — it is the one between a number and its unit,
+    # and pt Wikipedia writes exactly one of them. Padding repeats.
+    "no-break-space-run": r"\u00a0\u00a0+",
+    # 0,05 % / 0,005 % / 0
+    "soft-hyphen": r"\u00ad",
+    # 0 / 0 / 0
+    "word-joiner": r"\u2060",
+    # 0 / 0 / 0 (a bare ZWJ: 0 / 0,80 % / 0, all of it emoji)
+    "zero-width-joiner-in-word": r"(?:\w\u200d|\u200d\w)",
+    # 0,02 % / 0 / 0
+    "zero-width-non-joiner": r"\u200c",
+    # 0,38 % / 0,02 % / 0,05 %
+    "zero-width-space": r"\u200b",
+}
+
+# Markdown, matched against `fold_lines` because four of the five shapes are anchored to
+# the start of a line. This is the highest-yield detection of the six by an order of
+# magnitude: 0,11 % of the in-frame human rows against 44,72 % of the `ai` rows.
+#
+# ORDERED numbering is NOT here — it is `heading-line`'s `section-numbering`. `1. ` is
+# the same syntax in both readings, and in generated pt-BR prose it is a section number
+# far more often than a Markdown ordered list; one home keeps the diagnosis a lane owner
+# reads unambiguous.
+#
+# The pipe-table probe demands the SEPARATOR row or two consecutive rows with two pipes
+# each. A single line with two pipes reaches 0,10 % of the in-frame human rows (pt
+# Wikipedia writes table syntax) against 0,49 % of the generated ones, which is too
+# little separation to act on; the stricter shape is 0 against 0,40 %.
+MARKDOWN_PROBES: dict[str, str] = {
+    # 0 / 0,46 % / 0,05 %
+    "code-fence": r"^(?:```|~~~)",
+    # 0 / 39,74 % / 0,23 %
+    "emphasis-double-asterisk": r"\*\*[^*\n]+\*\*",
+    # 0,05 % / 17,09 % / 3,75 %
+    "emphasis-single-asterisk": r"(?<![*\w])\*[^*\n]+\*(?!\w)",
+    # 0,06 % / 22,06 % / 3,28 %
+    "list-marker": r"^[-*+•] \S",
+    # 0 / 0,40 % / 0
+    "pipe-table": (
+        r"(?:^\|? *:?-{3,}:? *\|)"
+        r"|(?:^[^\n|]*\|[^\n|]*\|[^\n]*\n[^\n|]*\|[^\n|]*\|)"
+    ),
+}
+
+# A title line. Matched against `fold_lines`, which strips accents, so `Título:` reaches
+# the probe as `titulo:` and the list carries one spelling of each word.
+#
+# `colon-terminated-short-line` — any short line ending in a colon — was measured and
+# REFUSED: 1,63 % of the in-frame human rows and 33,18 % of the out-of-frame ones. It is
+# the shape of a colon, not of a heading.
+HEADING_PROBES: dict[str, str] = {
+    # 0 / 6,70 % / 0
+    "atx-heading": r"^#{1,6} +\S",
+    # 0,01 % / 3,60 % / 0
+    "label-line": (
+        r"^(?:titulo|resposta|texto|saida|resultado|introducao|conclusao|resumo) *:"
+    ),
+    # 0,05 % / 12,84 % / 1,55 %
+    "section-numbering": r"^\d+(?:\.\d+)*[.)] +\S",
+    # 0 / 0,005 % / 0
+    "setext-underline": r"^={3,} *$",
+}
+
+# The line reproduces the SHAPE of a template instruction instead of executing it. This
+# is where `prompt-echo` cannot reach, and the difference is the anchor and not the
+# wording: `prompt-echo` is derived from this repository's own generator constants plus
+# the third-party directives measured in the pools, so it can only ever find a prompt
+# somebody here or in `madras` issued. These frames are the shape of an instruction — a
+# second-person directive whose object is the artifact being asked for, a role
+# assignment, a reference to the prompt's own material — and they are what catch a lane
+# whose upstream prompt this repository never sees.
+#
+# A line can trip both, and then it is ONE contaminated line with two named reasons.
+_ARTIFACT_NOUNS = r"(?:texto|artigo|redacao|paragrafo|post|resenha|conteudo)"
+BOILERPLATE_PROBES: dict[str, str] = {
+    # 0 / 0,005 % / 0 — the ROLE nouns are required: a bare "atue como" is a verb of
+    # ordinary prose ("atue como mediador") and reached 2 in-frame human rows
+    "assume-a-role": (
+        r"(?:(?:atue|aja) como (?:um|uma) (?:especialista|assistente|jornalista"
+        r"|redator|redatora|escritor|escritora|editor|editora|professor|professora)"
+        r"|voce e (?:um|uma) (?:assistente|especialista|redator|redatora))"
+    ),
+    # 0 / 0,08 % / 0
+    "follow-the-instructions": r"(?:siga|seguindo) as instrucoes",
+    # 0 / 0,05 % / 0
+    "keep-the-tone": r"mantenha (?:o mesmo |a mesma )?(?:tom|estilo|registro|linguagem)",
+    # 0 / 0 / 0
+    "no-heading-directive": (
+        r"(?:sem incluir|nao inclua|nao coloque|sem colocar) (?:titulo|titulos|cabecalho)"
+    ),
+    # 0 / 0 / 0
+    "reference-the-prompt-material": (
+        r"com base no (?:texto|trecho|conteudo) (?:acima|abaixo|a seguir)"
+    ),
+    # 0 / 0,01 % / 0 — `no formato` alone was refused: 0,20 % of the in-frame human rows
+    "requested-format": r"(?:formato solicitado|conforme o formato solicitado)",
+    # 0 / 0,005 % / 0
+    "rewrite-the-artifact": r"reescreva (?:o|a|este|esta|esse|essa) ",
+    # 0,05 % / 2,99 % / 0,05 % — the highest-yield frame of the six, and the in-frame
+    # human hits are pt Wikipedia articles ABOUT the language
+    "target-language": r"em portugues (?:brasileiro|do brasil)",
+    # 0 / 0 / 0 — the compound is refused for the reason in `_PALAVRAS_NOT_COMPOUNDED`
+    "word-budget": (
+        r"(?:no maximo|no minimo|ate|limite de) \d+ " + _PALAVRAS_NOT_COMPOUNDED
+    ),
+    # 0 / 0,005 % / 0
+    "write-the-artifact": (
+        r"(?:escreva|gere|produza|crie|elabore|redija) (?:um|uma) " + _ARTIFACT_NOUNS
+    ),
+}
+
+# Which comparison form each probe table reads. The RAW text is a subject in its own
+# right and not an oversight: `fold` collapses every whitespace run and `fold_lines`
+# strips each line, so a probe for a space run or a trailing space against either of them
+# can never match. It is the same reason `_HARNESS_CONTROL` reads the raw text.
+_SUBJECT_RAW = "raw"
+_SUBJECT_LINED = "lined"
+_SUBJECT_FLAT = "flat"
+
+
+def _compiled(probes: dict[str, str]) -> tuple[tuple[str, re.Pattern[str]], ...]:
+    """label -> compiled probe, in LABEL order.
+
+    Sorted rather than in declaration order, so the probe list a report publishes does
+    not depend on how the table above happens to be typed.
+    """
+    return tuple(
+        (label, re.compile(probes[label], re.MULTILINE)) for label in sorted(probes)
+    )
+
+
+_ADDED_PROBES: tuple[tuple[str, tuple[tuple[str, re.Pattern[str]], ...], str], ...] = (
+    (DETECTION_SPACING, _compiled(SPACING_PROBES), _SUBJECT_RAW),
+    (DETECTION_ENCODING, _compiled(ENCODING_PROBES), _SUBJECT_RAW),
+    (DETECTION_INVISIBLE, _compiled(INVISIBLE_PROBES), _SUBJECT_RAW),
+    (DETECTION_MARKDOWN, _compiled(MARKDOWN_PROBES), _SUBJECT_LINED),
+    (DETECTION_HEADING, _compiled(HEADING_PROBES), _SUBJECT_LINED),
+    (DETECTION_BOILERPLATE, _compiled(BOILERPLATE_PROBES), _SUBJECT_FLAT),
+)
+
 
 @dataclass(frozen=True)
 class GeneratedLine:
@@ -434,6 +726,14 @@ def detections_in(text: str) -> dict[str, list[str]]:
         harness.append("terminal-control-bytes")
     if harness:
         found[DETECTION_HARNESS_SIGNATURE] = sorted(harness)
+
+    subjects = {_SUBJECT_RAW: text, _SUBJECT_LINED: lined, _SUBJECT_FLAT: flat}
+    for detection, probes, subject in _ADDED_PROBES:
+        matched = [
+            label for label, pattern in probes if pattern.search(subjects[subject])
+        ]
+        if matched:
+            found[detection] = matched
 
     return {name: found[name] for name in DETECTION_NAMES if name in found}
 

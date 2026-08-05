@@ -4492,3 +4492,196 @@ observável por `inspect.getsource` (MW12): exercitá-lo de verdade exigiria `on
 checkpoint real de ~440 MB. E a mutação silenciosa que a revisão descreveu — tirar `token_type_ids` do
 fallback e publicar um grafo de duas entradas — agora é recusada em execução por
 `assert_inputs_are_the_emitted_shape`, mas **não** por teste: nada no lab abre uma sessão ONNX.
+
+## O gate antiartefato passa a DEZ detecções (W2, D13) — 2026-08-05
+
+**Status:** `EM-VIGOR`. Nenhuma decisão desta unidade é da lista de nunca-delegado: o teto continua em
+`Fraction(2, 100)`, a política selada não foi tocada, nada foi publicado. O que é do agente — os padrões
+concretos de cada sonda, as sondas recusadas por medição, e a regra de calibração que as recusas
+produziram — está registrado abaixo com razão e custo de reversão.
+
+As quatro detecções de **L12** (`prompt-echo`, `refusal`, `metaconversation`, `harness-signature`)
+permanecem exatamente como estavam. O que deixou de valer é o **número quatro**: são dez.
+
+| detecção nova | o que acusa | humano em moldura | `ai` | mistas (vãos) |
+|---|---|---:|---:|---:|
+| `spacing-anomaly` | corrida de espaço, espaço terminal por linha, tab dentro da linha | **0 %** | 0 % | 8,76 % |
+| `encoding-corruption` | mojibake, dupla codificação UTF-8, U+FFFD | **0 %** | 0,05 % | 0 % |
+| `invisible-character` | ZWSP, ZWNJ, ZWJ em palavra, corrida de NBSP, hífen suave, BOM, word joiner, marcas de direção | 0,59 % | 0,02 % | 0,05 % |
+| `markdown-formatting` | cerca de código, marcador de lista, ênfase por asterisco, tabela de pipe | 0,11 % | **44,72 %** | 4,12 % |
+| `heading-line` | `## `, `Título:`, numeração de seção, sublinha setext | 0,06 % | **20,72 %** | 1,55 % |
+| `prompt-boilerplate` | o texto reproduz a FORMA de uma instrução de template | 0,05 % | 3,11 % | 0,05 % |
+
+União das dez, por linha: **0,809 %** nas 11.000 linhas ptwiki · 9,71 % nas 31.100 humanas fora de moldura
+· **49,07 %** nas 19.673 linhas `ai` · 10,30 % nas 2.135 mistas. Denominadores são linhas de ARQUIVO de
+pool, sem dedup — não são os 4.048 candidatos `ai` de § 5.4 do ESTADO, onde os 3,656 % de quatro detecções
+foram medidos.
+
+### A decisão central: o gate acusa o que a normalização de inferência apaga
+
+`contracts/text-normalization.ts` remove os invisíveis de `REMOVED_INVISIBLE_CHARACTERS`, dobra todo
+separador em U+0020/U+000A e roda NFKC por grafema **antes** da tokenização. Logo o modelo pode nunca ver
+um ZWSP — e o gate tem de continuar acusando, porque **o que ele mede não é o que o modelo vê**: é
+contaminação da lane. Uma lane que emite uma marca a uma taxa que a classe humana não tem entrega o rótulo
+de graça, e A4 manda regenerar a lane inteira acima de 2 %. Poda seletiva continua inalcançável: o
+relatório não nomeia linha.
+
+Isso está pinado por um teste que **lê o outro lado**: `_characters_the_inference_normalization_removes`
+parseia o literal de `REMOVED_INVISIBLE_CHARACTERS` do arquivo TypeScript e afirma que, para cada code
+point que o contrato remove e o gate sonda, o gate ainda acusa — e que o texto **sem** o caractere (o que o
+modelo recebe) não dispara nada. Custo de reversão: nenhum, é teste.
+
+### As sondas que a medição RECUSOU, e a regra que elas produziram
+
+Cinco formas foram medidas e ficaram fora. Duas delas o parente desta unidade pediu explicitamente, e a
+medição as derrubou:
+
+| recusada | humano em moldura | gerado | razão |
+|---|---:|---:|---|
+| **espaço antes de pontuação** | **7,15 %** | 0,55 % | direção invertida (13×) e acima do teto no lado humano |
+| **NBSP nu**, em vez de corrida | **1,45 %** | 0,005 % | sozinha levava a união humana a **2,18 %**, acima do teto |
+| linha curta terminada em dois-pontos | 1,63 % | 5,25 % | é a forma de um dois-pontos, não de um cabeçalho |
+| `no formato` solto | 0,20 % | 0,13 % | prosa comum |
+| `atue como` sem substantivo de papel | 0,02 % | 0,01 % | verbo de prosa: "atue como mediador" |
+
+**A regra de calibração, agora escrita no módulo:** a união das dez detecções sobre a classe humana **em
+moldura** fica ABAIXO do teto de recusa. Uma lane recusada por ser tão limpa quanto a classe negativa é um
+gate que recusa lanes por serem humanas — e com o NBSP nu era exatamente isso que aconteceria, a 2,18 %
+contra um teto de 2 %. A classe que calibra é a **em moldura** (ptwiki) e não os pools fora de moldura:
+Stack Overflow escreve Markdown de verdade e a célula publicada não é Stack Overflow.
+
+O NBSP não foi apagado: virou **corrida** de dois ou mais, 0,04 % no humano e 0 no gerado. Um NBSP
+tipográfico não se repete — é o que fica entre número e unidade; enchimento se repete. Custo de reversão
+de cada recusa: **uma linha** na tabela de sondas, e os testes que pinam a recusa apontam a linha.
+
+### O que a medição refutou e não estava no roteiro
+
+**Os invisíveis rodam invertidos na célula publicada.** Não é só o NBSP: ZWSP 0,38 %, marcas de direção
+0,12 %, hífen suave 0,05 % no humano em moldura, contra 0,02 % nas linhas `ai`. Na moldura ptwiki um
+invisível é marca do lado HUMANO — vem da fonte wiki, e nenhum extrator o remove. A detecção fica como
+guarda contra um harness FUTURO, com a inversão declarada no próprio módulo em vez de implícita.
+
+**A assimetria de `spacing-anomaly` é do pipeline, não das lanes.** Todo pool escrito por
+`CandidateWriter.offer` passou por `common.normalize_text`; `make_mixed.emit` escreve `text: edited` cru.
+Daí 8,67 % de corrida de espaço e 5,29 % de espaço terminal nos vãos mistos contra 0 em tudo mais. O gate
+acusa corretamente — a marca está no corpus e o rótulo sai de graça —, mas o remédio verdadeiro é o
+escritor, não regenerar a lane. Fica como dívida no ESTADO, e a decisão de qual remédio aplicar é da
+Fase 3, quando um pool misto novo existir.
+
+**A sonda de espaço terminal não pode ler o fim do vão.** Um vão misto é FATIA: um vão que termina em
+espaço pode ser só onde `mixture.spans` cortou. Medido, o braço `\Z` acrescentaria 2 linhas de 2.135 e as
+duas são corte. A sonda exige `\n`.
+
+### Decisões do agente, com razão e custo de reversão
+
+| decisão | razão | custo de reversão |
+|---|---|---|
+| o teto continua **constante em código**, não campo de política | `preregistration-v4.json` está selada e não tem campo de contaminação; acrescentar um é mudança de política, não leitura dela. Reconfirmado, não redecidido: o teste que afirma a ausência do campo já existia (L12) e segue verde | uma constante, no dia em que a pré-inscrição ganhar o campo |
+| ordem canônica **acrescenta** as seis ao fim, sem intercalar | a ordem é o que faz duas corridas sobre um corpus produzirem os mesmos bytes; intercalar mexeria em todo relatório já escrito sem ganho | reordenar a tupla |
+| numeração ordinada (`1. `) mora em `heading-line`, não em `markdown-formatting` | é a mesma sintaxe nas duas leituras, e em prosa pt-BR gerada é número de seção muito mais vezes que lista ordenada; uma casa só mantém o diagnóstico inequívoco para o dono da lane | mover uma entrada de tabela |
+| tabela de pipe exige linha SEPARADORA ou duas linhas seguidas com dois pipes | uma linha com dois pipes chega a 0,10 % do humano em moldura (a Wikipédia pt escreve sintaxe de tabela) contra 0,49 % do gerado — separação insuficiente para agir; a forma estrita é 0 contra 0,40 % | frouxar o padrão |
+| ZWJ só conta com vizinho **alfanumérico** | um ZWJ entre pictogramas é o juntador de uma sequência de emoji, que `text-normalization.ts` preserva por razão medida; 158 das 19.673 linhas `ai` carregam um e nenhum está dentro de palavra. O que parte token é o ZWJ em palavra: 0 em tudo medido | tirar o lookaround |
+| mojibake exige a **cauda** Latin-1/C1 e não a cabeça | `Ã` e `Â` são maiúsculas de pt-BR (`SÃO`, `MÃE`, `CÂMARA`) e nelas o caractere seguinte é letra ASCII | frouxar a classe |
+| todo code point invisível é escrito como **escape**, no módulo e nos testes | uma sonda escrita com o caractere é sonda que ninguém revisa em diff e que um editor apaga sem deixar um. Guardado por teste sobre o fonte do próprio módulo | tirar o teste |
+| a classe que calibra é a humana **em moldura** | é a classe negativa contra a qual o rótulo sairia de graça; os pools fora de moldura foram medidos e ficam no registro, não na calibração | trocar o conjunto de calibração |
+
+### O que esta unidade NÃO fez, de propósito
+
+- **não** acrescentou campo ao JSON selado, nem tocou `preregistration-v4.{json,ts}`;
+- **não** consertou `make_mixed.emit` — normalizar lá muda o texto de 2.135 candidatos e é decisão de
+  pipeline de corpus, não de gate; ficou como dívida com o número medido;
+- **não** normalizou o caminho de treino (`train_detector.py`, `build_dataset.py` não normalizam, e
+  `contracts/text-normalization.ts` roda só na inferência): é train/serving skew medido nesta unidade e
+  registrado como dívida, e mexer nele move o texto que o treino lê;
+- **não** tocou `license-review.json`, nem o byte NUL de `near-duplicates.ts`;
+- **não** rodou o gate sobre partição cega nenhuma: as sondas leram pools de candidatos e imprimiram
+  contagens, nunca conteúdo.
+
+### Prova por mutação — vinte e seis mutações, cinco passos cada
+
+Base verde antes e depois (`41 passed, 237 deselected, 13 subtests` em `-k AntiArtifact`), com
+`sha256(artifact_gate.py) = 29f253b4be9a325d713d53645ebd22b8b3ebe6cda11b5d4a68f059e00f7001d0` e
+`sha256(contracts/text-normalization.ts) = 5e608c45e349601818003b1d9f3e804fd3707fb24effd0e29dc1b00292dae55b`
+idênticos nos dois extremos e depois de cada uma das 26 restaurações. A bateria **inteira** foi rerodada
+sobre os bytes finais, depois das duas guardas que a revisão cruzada exigiu: um hash que certifica 24
+mutações não certifica a árvore que ganhou uma sonda depois. Cada mutação é **um** sítio de código de
+produção, e o vermelho é sempre no teste NOMEADO.
+
+| # | mutação | vermelho em |
+|---|---|---|
+| MW1 | sonda `space-run` apagada | `test_anomalous_whitespace_is_named_spacing_anomaly` |
+| MW2 | sonda `trailing-space-before-newline` apagada | idem |
+| MW3 | sonda recusada de espaço antes de pontuação **re-adicionada** | `test_a_space_before_punctuation_is_not_a_spacing_anomaly` |
+| MW4 | espaço terminal ancorado no fim do vão (`\Z`) | `test_a_space_at_the_end_of_the_span_is_not_a_trailing_space` |
+| MW5 | sonda de mojibake apagada | `test_broken_encoding_is_named_encoding_corruption` |
+| MW6 | mojibake frouxada para a cabeça sozinha | `test_a_capital_a_tilde_of_ordinary_portuguese_is_not_mojibake` |
+| MW7 | sonda de dupla codificação apagada | `test_broken_encoding_is_named_encoding_corruption` |
+| MW8 | sonda de U+FFFD apagada | idem |
+| MW9 | sonda `zero-width-space` apagada | `test_an_invisible_code_point_is_named_invisible_character` |
+| MW9b | a mesma deleção, vista pelo pin da normalização | `test_the_invisible_detection_fires_on_what_the_normalization_removes` |
+| MW10 | NBSP sondado **nu** em vez de corrida | `test_one_no_break_space_is_typography_and_not_an_artifact` |
+| MW11 | sonda de corrida de NBSP apagada | `test_an_invisible_code_point_is_named_invisible_character` |
+| MW12 | ênfase `**…**` apagada | `test_markdown_syntax_is_named_markdown_formatting` |
+| MW13 | marcador de lista perde a âncora de linha | `test_a_dash_inside_a_sentence_is_not_a_list_marker` |
+| MW14 | cerca de código apagada | `test_markdown_syntax_is_named_markdown_formatting` |
+| MW15 | `## ` apagado | `test_a_title_line_is_named_heading_line` |
+| MW16 | numeração de seção apagada | idem |
+| MW17 | linha de rótulo (`Título:`) apagada | idem |
+| MW18 | frame `write-the-artifact` apagado | `test_a_reproduced_instruction_is_named_prompt_boilerplate` |
+| MW19 | `assume-a-role` frouxado para o verbo nu | `test_an_ordinary_verb_of_prose_is_not_a_role_assignment` |
+| MW20 | contaminação contada **por detecção** em vez de por linha | `test_a_line_with_two_detections_is_one_contaminated_line` |
+| MW21 | a recusa para de nomear quais detecções dispararam | `test_a_family_over_the_ceiling_on_an_added_detection_regenerates_its_lane` |
+| MW22 | `heading-line` tirada da ordem canônica | `test_the_report_publishes_all_ten_detection_names` |
+| MW23 | sonda escrita com o caractere **literal** | `test_no_probe_is_spelled_with_a_literal_invisible_character` |
+| MW24 | 11.ª sonda com 7,15 % medido no humano em moldura (espaço antes de pontuação) acrescentada | `test_the_union_over_the_in_frame_human_class_stays_below_the_ceiling` |
+| MW25 | code point novo (U+206A) em `REMOVED_INVISIBLE_CHARACTERS`, no lado TypeScript, sem sonda no gate | `test_the_invisible_detection_fires_on_what_the_normalization_removes` |
+
+**MW20 é a que prova a contagem por linha**, e os números do teste foram escolhidos para que a mutação
+mude o VEREDITO e não só uma contagem: duas linhas em cem que casam duas detecções dão 2 % (limpo) e, contadas
+uma vez por detecção, 4 % (recusa).
+
+**MW24 e MW25 são as duas mutações que a revisão cruzada mostrou SILENCIOSAS**, e é por elas que existem as
+duas guardas novas. Antes, acrescentar uma sonda invertida deixava a suíte inteira verde (só as duas recusas
+pontuais estavam pinadas, por MW3 e MW10) e acrescentar um code point ao contrato do lado TypeScript não
+alcançava teste nenhum do lab (o pin afirmava 8 dos 27, nomeados à mão). Depois: MW24 dá
+`AssertionError: Fraction(41, 500) not less than Fraction(1, 50)` — a classe humana em moldura a 82/1000 —
+e MW25 dá `Lists differ: ['0x206a'] != []`.
+
+### O que a revisão cruzada pegou, e o que virou guarda
+
+Nenhum achado foi aceito por deferência: cada um foi remedido contra o código antes de qualquer edição.
+
+**(1) Um veredito publicado ficou falso, e era do ESTADO.** § 5.4 dizia que, sem a poda global, "as 5
+famílias que chegam saem todas `clear` (0 de 1.170)" — medido com **quatro** detecções. Remedido com as dez,
+rodando a montagem com a poda global desligada: **24 de 1.170** (2,05 %), `gemini-3_1-flash-lite` em
+**16/256 = 6,25 %**, acima do teto, veredito `regenerate-lane`, lane `gemini-api`. A única detecção que
+dispara é `markdown-formatting`. A linha foi emendada e a armadilha entrou em § 6. Com ela cai metade do
+que o relatório de implementação declarava como incompleto ("as dez não têm efeito de produção hoje"): a
+segunda metade continua verdadeira — com a poda global ligada, 0 registro gerado chega ao gate — e a
+primeira não, porque o efeito existe sobre o material de hoje e atinge `gemini-api`, não a lane mista.
+
+**(2) O pin cross-linguagem afirmava menos do que o README prometia.** O README dizia que o teste garante
+que o gate acusa **cada** code point que `REMOVED_INVISIBLE_CHARACTERS` remove; medido, o gate acusava 16
+dos 27 e o teste afirmava 8, nomeados à mão. Escolhido o remédio forte em vez do hedge: quatro sondas novas
+fecham o conjunto — CGJ, separador vogal mongol, os quatro enchimentos Hangul e os operadores invisíveis
+U+2061–U+2064 — e o teste passou a afirmar **igualdade de conjuntos**. As quatro dão **0** nas 11.000 linhas
+em moldura, **0** nas 19.673 `ai` e **0** nas 2.135 mistas (1 linha entre as 31.100 fora de moldura, que já
+contaminava por outra marca), então nenhuma união publicada se move: 0,809 % · 9,71 % · 49,07 % · 10,30 %
+remedidos idênticos. Custo de reversão: quatro linhas de tabela e uma asserção.
+
+**(3) Três taxas congeladas estavam escritas com dois valores diferentes.** O comentário do teste de
+Markdown dizia 0,21 %/44,73 % onde o módulo diz 0,11 %/44,72 %; remedido, 12/11.000 = 0,109 % e
+8.798/19.673 = 44,721 %, e o módulo é que estava certo. `references.md` e este registro escreviam hífen
+suave 0,06 % onde 6/11.000 = 0,0545 % arredonda para 0,05 %, e `atue como` nu no lado gerado como 0,02 %
+onde 2/19.673 = 0,010 %. Os três passaram ao valor medido.
+
+**A regra de calibração deixou de ser só uma frase.** O achado menor e certo era que a regra central — a
+união das dez sobre a classe humana em moldura fica abaixo do teto — não era imposta por nada: uma 11.ª
+sonda com 3 % no lado humano entrava com a suíte verde. Agora
+`test_the_union_over_the_in_frame_human_class_stays_below_the_ceiling` roda o próprio `measure` sobre 1.000
+linhas com a composição medida da classe, as quatro formas recusadas incluídas na taxa em que a Wikipédia pt
+as escreve, e exige `clear`. A fixture **contém o excluído**, que é o que faz a guarda morder: 1,0 % hoje,
+8,2 % com a sonda recusada de volta. O que **fica como dívida** é o medidor: as taxas vêm de script de sonda
+que não está no repositório, porque os pools são gitignored, e nenhuma das ~50 é reproduzível de um
+checkout (§ 7 do ESTADO). Cada número desta unidade foi remedido por sonda própria antes da emenda — união
+89/11.000 = 0,809 %, e com o NBSP nu 240/11.000 = 2,182 %, idênticos ao publicado.

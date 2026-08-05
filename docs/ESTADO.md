@@ -23,8 +23,8 @@
 | item | valor |
 |---|---|
 | branch | `cleanfeed-mvp` |
-| suíte | 169 arquivos / 2.771 testes (vitest) + 343 testes e 18 subtests (pytest, lab). Verde em rodada limpa; sob contenção de I/O, dois arquivos de caminho selado batem no timeout de 20 s — dívida de § 7, não de política |
-| dos quais, o avaliador | 1.744 — 1.401 em 43 arquivos de `benchmark/tests`, 343 no lab |
+| suíte | 169 arquivos / 2.771 testes (vitest) + 361 testes e 31 subtests (pytest, lab). Verde em rodada limpa; sob contenção de I/O, dois arquivos de caminho selado batem no timeout de 20 s — dívida de § 7, não de política |
+| dos quais, o avaliador | 1.762 — 1.401 em 43 arquivos de `benchmark/tests`, 361 no lab |
 | typecheck | limpo |
 | lint | 13 problemas (11 erros, 2 avisos) |
 | tags de release | 0 |
@@ -116,7 +116,10 @@ de abrir o arquivo — o módulo fica na árvore, declarado, pela mesma convenç
 | F0-6 | Stack Overflow bloqueado **por nome**, não apagado | AG |
 | A3 | `drop_seen()` = hash exato + Jaccard ≥ 0,82 sobre shingles de 5 tokens, descrito só como isso | OP |
 | | a poda é **global** contra o corpus morto, sem restrição por partição: o insumo é um artefato de digests e chaves de shingle (`seen-index.v2.jsonl`), conferido contra a contagem **e** o digest do corpus indexado. Artefato ausente, parcial ou de outro corpus **recusa** a montagem de release | AG |
-| A4 | gate antiartefato **pré-treino**, em código (`benchmark/lab/artifact_gate.py`): quatro detecções — eco de prompt, recusa, metaconversa, assinatura de harness —, teto de contaminação em `Fraction(2, 100)`, comparado **por família geradora** e nunca com o agregado do conjunto gerado, relatório escrito **antes** do veredito e sem nomear linha | OP |
+| A4 | gate antiartefato **pré-treino**, em código (`benchmark/lab/artifact_gate.py`): **dez** detecções — eco de prompt, recusa, metaconversa, assinatura de harness, espaço anômalo, encoding, caractere invisível, Markdown, cabeçalho, frase-padrão de prompt —, teto de contaminação em `Fraction(2, 100)`, comparado **por família geradora** e nunca com o agregado do conjunto gerado, relatório escrito **antes** do veredito e sem nomear linha | OP |
+| | a fração do teto é **por LINHA**: uma linha com duas detecções é UMA linha contaminada com as duas razões nomeadas, e a soma por detecção pode exceder a contagem de contaminadas | código |
+| | o gate acusa o que `contracts/text-normalization.ts` **remove** antes da tokenização: o que ele mede é contaminação da lane, não a entrada do modelo. A tabela de sondas cobre os **27** code points do contrato, afirmado por **igualdade de conjuntos** contra o literal do lado TypeScript: um code point acrescentado lá sem sonda aqui deixa o teste vermelho | código |
+| | calibração das sondas: a **união** das dez detecções sobre a classe humana **em moldura** (ptwiki) fica **abaixo** do teto — 0,809 % medido. Sonda cuja direção é invertida e cujo lado humano passa do teto é **recusada**, e a regra é imposta por teste que roda o gate sobre uma fixture de 1.000 linhas com as formas recusadas dentro (1,0 % contra teto de 2 %) | AG |
 | | família acima do teto **regenera a lane inteira** — poda seletiva mascara o viés da lane, e o relatório não dá o que podar | AG |
 | R4 | todo registro gerado nasce **`automated/unreviewed`**; a auditoria de PII é **amostral** e não produz `passed` por registro | OP |
 | | linhagem: todo gerado **que declara pai** referencia pai presente; `assertDerivedParentsResolve` roda antes do split. A admissão de pai `notApplicable` numa linha `ai` é lacuna aberta (§ 7) | AG |
@@ -304,10 +307,14 @@ abre depois da emenda da moldura é só `wikipedia_fresh.jsonl` (5.000 linhas) m
 | artefato de índice de vistos | `benchmark/data/seen-index.v2.jsonl` — 10.000 documentos, 3.323.576 chaves de shingle, digest do corpus indexado pinado em código |
 | documentos de origem conhecidos na célula | **0** — nenhuma linha de `wikipedia_fresh.jsonl` carrega `groupAxes`, então a montagem de release recusa em `CellBelowOriginDocumentFloor` antes da seleção |
 | linhas geradas com ao menos uma detecção de artefato (**sonda**) | 148 de 4.048 (**3,656 %**) no pool `ai` — agregado de sonda, **não** veredito do gate: o teto de 2 % é comparado **por família geradora**, e a única família acima dele é `madras_synthetic_corpusqwn`, 146 de 150 (97,33 %), que `EXCLUDED_GENERATOR_FAMILIES` recusa por proveniência não registrada |
-| veredito do gate antiartefato, no caminho da montagem | **nenhuma lane a regenerar.** Depois da poda global sobram 19 candidatos `ai` e 135 mistos, e os 154 são recusados em `MissingRecipe`/`UnmappableLane`: **0** registro gerado chega ao gate. Sem a poda global a montagem constrói 1.170, e as 5 famílias que chegam saem todas `clear` (0 de 1.170) |
+| veredito do gate antiartefato, no caminho da montagem | **nenhuma lane a regenerar, e por vacuidade.** Depois da poda global sobram 19 candidatos `ai` e 135 mistos, e os 154 são recusados em `MissingRecipe`/`UnmappableLane`: **0** registro gerado chega ao gate. Sem a poda global a montagem constrói 1.170 em 5 famílias, e aí o veredito **muda** com as dez detecções: **24 de 1.170** (2,05 %), `gemini-3_1-flash-lite` em **16/256 = 6,25 %** acima do teto → lane **`gemini-api` a regenerar**. Eram 0 de 1.170 com as **quatro** detecções de então, e a única que dispara é `markdown-formatting` |
 | licenças por documento na Carolina em disco (**sonda**) | `cc-by-nc-sa-4.0` em 7.997 e `cc-by-sa-4.0` em 3 dos 8.000 de `carolina.jsonl`. A montagem não abre nenhum arquivo Carolina depois da emenda da moldura, então `SourceCarriesTwoLicenses` deixa de ser alcançável **por esta fonte**: a guarda fica, e a divida de esquema que ela abre (§ 7) não vence mais na Fase 3 |
 | obrigações de licença que a moldura impõe | **`attribution` + `share-alike`**, de `cc-by-sa-4.0` na única fonte estocada. `non-commercial` chegava com `cc-by-nc-sa-4.0` da Carolina e **nenhuma licença em moldura o impõe hoje** — o regime NC sobrevive porque é decisão própria (`commercialUse: false`), que é exatamente o que a posição (a) afirma e agora não tem em que se apoiar |
 | famílias geradoras nos pools | 23, somando 6.183 linhas (`POOL_GENERATOR_FAMILIES`) |
+| as **dez** detecções do gate sobre as linhas de ARQUIVO de pool, sem dedup (2026-08-05) | união por linha: **0,809 %** em 11.000 humanas em moldura (ptwiki) · 9,71 % em 31.100 humanas fora de moldura · **49,07 %** em 19.673 `ai` · 10,30 % em 2.135 mistas varridas só nos vãos gerados. Denominador **diferente** dos 3,656 % acima, que são quatro detecções sobre os 4.048 candidatos `ai` **depois** da dedup |
+| a detecção que separa | `markdown-formatting`: 0,11 % no humano em moldura contra **44,72 %** nas `ai` — ênfase `**…**` sozinha em 39,74 %. Depois dela, `heading-line` (0,06 % contra 20,72 %) |
+| a detecção **invertida**, medida | `invisible-character`: 0,59 % no humano em moldura contra 0,02 % nas `ai`. Na célula ptwiki o invisível é marca do lado **humano** — vem da fonte wiki e nenhum extrator o remove —, então a detecção é guarda contra harness futuro, não descrição dos pools de hoje |
+| espaço anômalo, e de onde vem | 0 de 11.000 linhas ptwiki e 0 de 19.673 `ai`, contra 185 de 2.135 vãos mistos (8,67 % corrida de espaço) e 113 (5,29 % espaço terminal): `make_mixed.emit` escreve `text: edited` cru, e todo pool escrito por `CandidateWriter.offer` passou por `common.normalize_text` |
 | linhas mistas escrevíveis hoje | **0** — as 2.135 recusam, 1.898 em `MissingRecipe` (a linha não carrega o digest do template de mistura) e 237 em `UnmappableLane` (provedor fora das quatro lanes congeladas) |
 
 ### 5.5 Proveniência das tipologias da Carolina — a medição que tirou três células da moldura
@@ -366,6 +373,13 @@ A unidade é a página, o piso de 300 é trivial, e o dump de 1,96 GB é a reser
   0,55 %, porque `m` caiu e o orçamento de coleta concentrou numa célula (§ 5.2);
 - os **3,656 %** agregados de contaminação lidos como veredito do gate, ou como lane a regenerar: o teto de
   2 % é por família, e o agregado do conjunto gerado não é quantidade que o gate compare;
+- o gate antiartefato com **quatro** detecções (L12 do registro): as quatro seguem em vigor, o **número**
+  não — são dez desde W2. E duas sondas que o roteiro de W2 nomeava estão **medidas e recusadas**: espaço
+  antes de pontuação (7,15 % no humano em moldura contra 0,55 % no gerado, direção invertida e acima do
+  teto) e NBSP **nu**, que virou corrida de dois ou mais;
+- o `0 de 1.170` que § 5.4 publicava como veredito do gate: era das **quatro** detecções. Com as dez são
+  24 de 1.170 e `gemini-api` iria para regeneração — o que não acontece hoje só porque a poda global não
+  deixa registro gerado nenhum chegar ao gate;
 - `derivationRoot` lido como eixo **só** de linhagem de pai: ele está em `GROUP_KEYS` e une por valor
   compartilhado, sem condição. Só `humanSeed` é exclusivamente linhagem de pai;
 - `blindReserveCompleteAttempts` lido como reserva **executada** na v1;
@@ -395,6 +409,9 @@ A unidade é a página, o piso de 300 é trivial, e o dump de 1,96 GB é a reser
 | `generatorVersion` na união do split colapsa a classe gerada por versão | Fase 3 |
 | `cc-by-4.0` e `public-domain` sem termos revisados em `CORPUS_LICENSE_REGISTRY` — custo zero hoje, medido | quando um documento em moldura declarar uma delas |
 | `train_detector.py` não confere o relatório do gate antiartefato; hoje o único caminho até um `train.jsonl` passa pela montagem | segundo produtor de corpus |
+| `make_mixed.emit` escreve `text: edited` **sem** `common.normalize_text`, enquanto todo pool escrito por `CandidateWriter.offer` normaliza: 8,67 % dos vãos mistos carregam corrida de espaço e 5,29 % espaço terminal, contra 0 em 11.000 linhas ptwiki e 0 em 19.673 `ai`. O gate acusa corretamente (é rótulo de graça), mas o remédio verdadeiro é o escritor, e regenerar a lane não conserta escritor | Fase 3, quando existir pool misto novo |
+| **train/serving skew de normalização, medido**: `contracts/text-normalization.ts` roda só na **inferência**; `train_detector.py` e `build_dataset.py` não normalizam. Então os invisíveis chegam ao treino (0,59 % das linhas humanas em moldura os carregam) e **não** chegam ao serviço, e o texto que ajusta o limiar não é o texto que o runtime pontua | unidade que tocar treino ou limiar, ou a Fase 5 |
+| as taxas por sonda do gate (§ 5.4 e L12b) foram medidas por **script de sonda que não está no repo**: os pools são `benchmark/data/*`, gitignored, então nenhuma das taxas é reproduzível de um checkout. A regra de calibração está imposta por fixture e as duas recusas por teste nomeado — o que falta é o **medidor** | unidade que voltar ao gate, ou a Fase 3 quando os pools forem reconstruídos |
 | README do benchmark está **3 subcomandos atrás** do CLI | unidade que reescrever o README |
 | linhagem admite pai `notApplicable` numa linha `ai` sem recusa — a pergunta de desenho está aberta | unidade que tocar linhagem ou E3 |
 | registro-linha congelado em `cal-B` não tem a proteção do de `test` | antes da v2.0, ou antes de um segundo corpus sobrepor um split vivo |

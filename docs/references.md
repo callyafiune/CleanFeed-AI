@@ -3564,6 +3564,146 @@ inteira, e o relatório do gate deliberadamente não nomeia as linhas para torna
 literatura mede a contaminação (Dingfelder, Dugan) e formaliza o viés de remoção (Rubin); nenhuma das duas
 propõe suprimir o identificador da linha no artefato de saída como forma de impedir a remediação errada.
 
+### L12b — as seis detecções que D13 acrescenta, e por que o gate acusa o que a normalização apaga
+
+D13/W2. As quatro detecções de L12 seguem válidas; o que deixou de valer é o número. São **dez**:
+`spacing-anomaly`, `encoding-corruption`, `invisible-character`, `markdown-formatting`, `heading-line` e
+`prompt-boilerplate` entram com o seu nome no diagnóstico, sob a mesma regra e o mesmo teto.
+
+**O que o gate mede não é o que o modelo vê, e é essa a decisão central.**
+`contracts/text-normalization.ts` remove os invisíveis de `REMOVED_INVISIBLE_CHARACTERS`, dobra todo
+separador em U+0020/U+000A e roda NFKC por grafema **antes** da tokenização — então o detector pode nunca
+ver um ZWSP. O gate acusa mesmo assim, porque a quantidade que ele mede é **contaminação da lane**: uma
+lane que emite uma marca a uma taxa que a classe humana não tem entrega o rótulo de graça, e o remédio de
+A4 é regenerar a lane, não filtrar o caractere. Neutralizar a jusante não é razão para parar de contar a
+montante.
+
+**A fração é por LINHA, e a soma por detecção pode ser maior que ela.** Uma linha que é eco de prompt E
+tem cabeçalho é UMA linha contaminada com duas razões nomeadas. Medido no teste: duas linhas em cem que
+casam as duas detecções dão 2 % (limpo), e contá-las uma vez por detecção daria 4 % (recusa) — a diferença
+muda o veredito, então a regra é verificável e não decorativa.
+
+**Duas sondas foram MEDIDAS E RECUSADAS, e a recusa está pinada por teste.**
+
+| sonda recusada | humano em moldura | gerado | por que sai |
+|---|---:|---:|---|
+| espaço antes de pontuação | **7,15 %** | 0,55 % | direção invertida e ACIMA do teto no lado humano |
+| NBSP nu (em vez de corrida) | **1,45 %** | 0,005 % | sozinha levava a união a 2,18 %, acima do teto |
+| linha curta terminada em dois-pontos | 1,63 % | 5,25 % | é a forma de um dois-pontos, não de um cabeçalho |
+| `no formato` solto | 0,20 % | 0,13 % | prosa comum |
+| `atue como` sem substantivo de papel | 0,02 % | 0,01 % | verbo de prosa ("atue como mediador") |
+
+A regra de calibração que essas recusas produziram, e que agora está escrita: **a união das dez detecções
+sobre a classe humana em moldura tem de ficar ABAIXO do teto.** Uma lane recusada por ser tão limpa quanto
+a classe negativa é um gate que recusa lanes por serem humanas. Medido depois da correção do NBSP: 89 de
+11.000 linhas ptwiki (**0,809 %**), contra 49,07 % das 19.673 linhas `ai` e 10,30 % das 2.135 mistas
+varridas só nos vãos gerados.
+
+**A regra é IMPOSTA por teste, e a fixture é a composição medida da classe.** Uma regra de calibração que
+só existe como frase num comentário não impede a próxima sonda invertida: a suíte fica verde e a sonda
+entra. Os pools estão fora do repositório (`benchmark/data/*` é gitignored), então o que um checkout pode
+guardar não é o pool e sim a sua composição — 1.000 linhas com cada forma na taxa em que a Wikipédia pt a
+escreve, as quatro formas **recusadas** incluídas, submetidas ao próprio `artifact_gate.measure`, com
+exigência de veredito `clear` (1,0 % contra teto de 2 %). É a mesma disciplina de allowlist já usada no
+projeto: a fixture tem de conter o excluído, ou a guarda não morde. Acrescentar a sonda recusada de espaço
+antes de pontuação leva a fixture a 8,2 % e o teste a vermelho.
+
+**O conjunto de sondas de invisível é mantido em trava com o contrato de inferência.** O teste não afirma
+uma amostra nomeada e sim **igualdade de conjuntos** contra os 27 code points de
+`REMOVED_INVISIBLE_CHARACTERS`: um acrescentado no contrato sem sonda no gate seria apagado antes do
+modelo e nunca contado contra a lane, que é exatamente o buraco que a detecção existe para fechar. A trava
+custou quatro sondas novas — CGJ, separador vogal mongol, enchimentos Hangul e os operadores invisíveis
+U+2061–U+2064 —, medidas em **0** nas 11.000 linhas em moldura, **0** nas 19.673 `ai` e **0** nas 2.135
+mistas (1 linha entre as 31.100 fora de moldura), então a união publicada de 0,809 % não se move.
+
+**A assimetria que faz `spacing-anomaly` discriminar é do próprio pipeline.** Todo pool escrito por
+`CandidateWriter.offer` passou por `common.normalize_text`, que colapsa `[ \t]+` dentro da linha e faz
+`strip()` por linha — os extratores humanos, `generate_ai` e `import_public_corpus`. `make_mixed.emit`
+**não**: escreve `text: edited` cru. Medido: 0 de 11.000 linhas ptwiki e 0 de 19.673 linhas `ai` têm
+corrida de espaço, contra 185 de 2.135 vãos mistos (8,67 %) e 113 com espaço terminal (5,29 %).
+
+**A sonda de espaço terminal exige quebra de linha REAL e nunca o fim do texto.** O vão de uma linha mista
+é uma FATIA, então um vão que termina em espaço pode ser só onde `mixture.spans` cortou. Medido, o braço
+`\Z` acrescentaria 2 linhas de 2.135 e as duas são corte.
+
+**Os invisíveis rodam invertidos nos pools de hoje, e isso está declarado.** Na moldura ptwiki o ZWSP
+chega a 0,38 %, as marcas de direção a 0,12 % e o hífen suave a 0,05 %, contra 0,02 % nas linhas `ai`.
+Nessa célula um invisível é marca do lado HUMANO — vem da fonte wiki e nenhum extrator o remove —, então a
+detecção é guarda contra um harness FUTURO, não descrição do que as lanes emitem agora. Cada sonda fica
+longe o bastante do teto para que manter custe nada: 0,59 % a detecção inteira.
+
+**Denominadores.** As taxas acima são sobre as LINHAS DOS ARQUIVOS de pool, sem dedup: 11.000 ptwiki
+(`wikipedia_fresh` + `wikipedia`), 31.100 humanas fora de moldura, 19.673 `ai` em 12 arquivos, 2.135
+mistas. Não são o mesmo denominador dos 3,656 % de § 5.4 do ESTADO, que é a contagem de quatro detecções
+sobre os 4.048 candidatos `ai` **depois** da dedup.
+
+- **Lapuschkin, Wäldchen, Binder, Montavon, Samek & Müller, 2019 — Unmasking Clever Hans predictors and
+  assessing what machines really learn** (Nature Communications 10:1096).
+  [link](https://doi.org/10.1038/s41467-019-08987-4)
+  _Âncora:_ a definição operacional de "rótulo de graça" — um artefato de aquisição presente numa classe e
+  ausente na outra é aprendido em vez do conceito, e a medida certa é a taxa POR CLASSE. _Onde no
+  projeto:_ a calibração de cada sonda contra a classe humana em moldura; a regra de que a união fica
+  abaixo do teto. _Fato citado:_ um classificador Fisher-vector no PASCAL VOC 2007 detectava a classe
+  "cavalo" por uma marca d'água de copyright presente nas imagens de cavalo, e a acurácia colapsava quando
+  a marca era removida ou transplantada.
+- **Geirhos, Jacobsen, Michaelis, Zemel, Brendel, Bethge & Wichmann, 2020 — Shortcut Learning in Deep
+  Neural Networks** (Nature Machine Intelligence 2:665–673; arXiv 2004.07780).
+  [link](https://arxiv.org/abs/2004.07780)
+  _Âncora:_ por que o gate roda ANTES do treino e por que o remédio é a lane e não a linha — um atalho é
+  regra de decisão que vai bem no benchmark e falha fora dele, e ele entra pelo dado, não pelo modelo.
+  _Onde no projeto:_ `artifact_gate` no caminho de `assemble_corpus.main()`, antes do split. _Fato
+  citado:_ taxonomia de shortcut learning e a analogia do Clever Hans para regras de decisão que exploram
+  correlações espúrias do conjunto de dados.
+- **Dugan, Hwang, Trhlík, Ludan, Zhu, Xu, Ippolito & Callison-Burch, 2024 — RAID** (ACL 2024; arXiv
+  2405.07940). [link](https://arxiv.org/html/2405.07940v1)
+  _Âncora:_ as classes de caractere que `invisible-character` e `spacing-anomaly` acusam são ataques
+  NOMEADOS no benchmark mais rigoroso da área — é o precedente de que essas marcas mexem em detector, e é
+  a mesma razão pela qual `contracts/text-normalization.ts` existe. _Onde no projeto:_
+  `artifact_gate.INVISIBLE_PROBES`, `SPACING_PROBES`. _Fato citado:_ entre os 11 ataques adversariais do
+  RAID estão `whitespace addition`, `zero-width space` e `homoglyph`.
+- **Dugan, Zhu, Alam, Nakov, Apidianaki & Callison-Burch, 2025 — GenAI Content Detection Task 3**
+  (COLING 2025; arXiv 2501.08913). [link](https://arxiv.org/html/2501.08913v1)
+  _Âncora:_ `markdown-formatting` e `heading-line` como confundidores medidos, e não suspeitos — a
+  inspeção manual dos organizadores achou exatamente estrutura de lista em texto gerado. _Onde no
+  projeto:_ `artifact_gate.MARKDOWN_PROBES`, `HEADING_PROBES`. _Fato citado:_ inspeção manual achou
+  confundidor (lista numerada em receitas geradas) e retreinar com dado limpo derrubou o desempenho de
+  92,67 % para 89,67 %.
+- **Speer et al. — ftfy: fixes text for you** (documentação oficial; Luminoso/rspeer).
+  [link](https://ftfy.readthedocs.io/en/latest/)
+  _Âncora:_ a forma da sonda de mojibake — UTF-8 lido como Latin-1/CP1252 produz uma cabeça `Ã`/`Â`
+  seguida de um code point da faixa Latin-1, e repetir o erro põe um controle C1 nessa posição. É por isso
+  que a sonda exige a cauda e não a cabeça sozinha: `SÃO`, `MÃE` e `CÂMARA` são maiúsculas de pt-BR.
+  _Onde no projeto:_ `artifact_gate.ENCODING_PROBES`. _Fato citado:_ mojibake é a decodificação de bytes
+  UTF-8 sob uma codificação de byte único, e a biblioteca a desfaz detectando exatamente essas sequências.
+- **Kreutzer, Caswell, Wang, Wahab, van Esch, Ulzii-Orshikh, … & Adeyemi, 2022 — Quality at a Glance: An
+  Audit of Web-Crawled Multilingual Datasets** (TACL 10:50–72; arXiv 2103.12028).
+  [link](https://doi.org/10.1162/tacl_a_00447)
+  _Âncora:_ por que a auditoria de artefato de corpus é MANUAL e por classe, e por que um corpus grande
+  não é limpo por ser grande. _Onde no projeto:_ a sonda por pool que calibrou as dez sondas; A4. _Fato
+  citado:_ auditoria manual de cinco corpora multilíngues de larga escala encontrou problemas sistemáticos
+  de qualidade em línguas de menor recurso, com frações grandes de conteúdo não linguístico ou em língua
+  errada.
+- **Zinkevich (Google), Rules of Machine Learning: Best Practices for ML Engineering** (Google Developers).
+  [link](https://developers.google.com/machine-learning/guides/rules-of-ml)
+  _Âncora:_ a dívida que esta unidade mediu e não consertou — `train_detector.py` e `build_dataset.py` não
+  normalizam, e `contracts/text-normalization.ts` roda só na inferência, então os invisíveis chegam ao
+  treino e não chegam ao serviço. É train/serving skew nomeado. _Onde no projeto:_ § 7 do ESTADO. _Fato
+  citado:_ training-serving skew é tratado como modo de falha próprio, com a recomendação de que o
+  processamento de features do treino e do serviço venha do mesmo código.
+
+**Sem precedente encontrado (2026-08-05)** para quatro coisas desta unidade: (i) um gate de corpus que
+acusa deliberadamente caracteres que a normalização de inferência do MESMO projeto remove, pela razão de
+que a quantidade medida é contaminação da lane e não entrada do modelo; (ii) a regra de calibração "a união
+das detecções sobre a classe negativa em moldura fica abaixo do teto de recusa", que é o que derrubou a
+sonda de NBSP nu, e a sua imposição por uma fixture que reproduz a **composição medida** da classe negativa
+em vez do corpus; (iii) recusar uma sonda por **direção invertida** medida — mais frequente na classe
+humana que na gerada — em vez de por falso positivo absoluto; (iv) travar o conjunto de sondas de um gate
+de corpus ao conjunto de remoção do contrato de normalização de inferência, por igualdade de conjuntos
+afirmada através da fronteira de linguagem. A literatura mede contaminação (Dingfelder, Dugan), formaliza
+atalho (Geirhos, Lapuschkin) e audita corpus à mão (Kreutzer); nenhuma das três trata o gate como
+instrumento cuja calibração é uma comparação de taxa entre classes com o próprio teto de recusa como
+critério.
+
 ## § M — o lote de material: versão medida, aquisição pontual e fixidez do adquirido (2026-08-04/05)
 
 As decisões metodológicas do inventário de material — o que um `SourceMaterialBatchV1` declara e como cada
