@@ -2110,20 +2110,27 @@ integridade e, por fim, texto e modelo.
   sobrescritos/subscritos, indicadores ordinais, elipse, formas de largura plena).
 - **Souza, Nogueira & Lotufo, 2020 — BERTimbau: Pretrained BERT Models for Brazilian
   Portuguese** (BRACIS 2020, LNCS 12319). [link](https://doi.org/10.1007/978-3-030-61377-8_28)
-  _Âncora:_ o backbone efetivamente selado (`neuralmind/bert-base-portuguese-cased`, sem bake-off
-  na v3), e o tokenizer WordPiece cujo comportamento (`[UNK]` por ideograma CJK isolado) a
-  normalização contorna explicitamente. _Onde no projeto:_ plano v3 linha 51;
-  `contracts/text-normalization.ts` linhas 208-210, 505-507. _Fato citado:_ pré-treina BERT
-  base/large para português do Brasil no corpus BrWaC (2,68B tokens), com estado da arte à época
-  em NER, STS e RTE para pt-BR.
+  _Âncora:_ o backbone selado da v1 (`neuralmind/bert-base-portuguese-cased`, `backboneBakeOff:
+  false`), e o tokenizer WordPiece cujo comportamento (`[UNK]` por ideograma CJK isolado, porque o
+  vocabulário não tem ideograma nu) o derivador de offsets do runtime contorna explicitamente.
+  _Onde no projeto:_ `benchmark/preregistration-v4.json` (`backbone`) e o pin do parser em
+  `benchmark/preregistration-v4.ts`; `src/inference/model-runtime.ts` linhas 208-210 e 505-507, e o mesmo
+  comportamento no fake de teste em `tests/helpers/wordpiece-tokenizer.ts` linhas 1-14;
+  `benchmark/lab/train_detector.py` (`assert_model_is_the_sealed_backbone`);
+  `benchmark/lab/export_onnx.py` (`BACKBONE_CONFIG_SHAPE`, onde o vocabulário de 29 794 é o que
+  identifica o checkpoint); `models/cleanfeed-ptbr-v1/NOTICE.md`. _Fato citado:_ pré-treina BERT base/large para português do
+  Brasil no corpus BrWaC (2,68B tokens), com estado da arte à época em NER, STS e RTE para pt-BR.
 - **Conneau, Khandelwal, Goyal, Chaudhary, Wenzek, Guzmán, Grave, Ott, Zettlemoyer & Stoyanov,
   2020 — Unsupervised Cross-lingual Representation Learning at Scale (XLM-R)** (ACL 2020).
   [link](https://aclanthology.org/2020.acl-main.747/)
-  _Âncora:_ candidato de backbone no bake-off contra o BERTimbau, **descartado** como bake-off na
-  v3. _Onde no projeto:_
-  `benchmark/lab/train_detector.py` (`--model xlm-roberta-base`); `benchmark/lab/README.md`;
-  plano v3 linha 51. _Fato citado:_ apresenta o
-  XLM-R, um RoBERTa multilíngue pré-treinado em CommonCrawl filtrado sobre 100 línguas.
+  _Âncora:_ candidato de backbone **descartado** — o bake-off não roda na v3, e a emenda W1 abdica
+  de propósito da única vantagem não medida que o XLM-R teria (encoder pré-treinado em corpus muito
+  maior). As contagens do artigo são também a aritmética que o teto de bytes usa para recusar a
+  família RoBERTa. _Onde no projeto:_ `benchmark/lab/export_onnx.py`
+  (`BACKBONE_CONFIG_MODEL_TYPE`, que o nomeia para recusá-lo);
+  `benchmark/tests/preregistration-v4.test.ts` ("refuses the discarded bake-off candidate");
+  registro § "A emenda do backbone (W1)". _Fato citado:_ apresenta o XLM-R, um RoBERTa multilíngue
+  pré-treinado em CommonCrawl filtrado sobre 100 línguas, com vocabulário de 250k.
 - **Szegedy, Vanhoucke, Ioffe, Shlens & Wojna, 2016 — Rethinking the Inception Architecture for
   Computer Vision** (CVPR 2016, seção 7 "Model Regularization via Label Smoothing").
   [link](https://arxiv.org/abs/1512.00567)
@@ -2505,21 +2512,44 @@ o freeze. As duas são engenharia de coerência interna: a primeira impede uma p
 para uma taxa que ela não publica, a segunda separa "congelar o quantil" de "decidir o orçamento", que é
 decisão de gate sobre `test`.
 
-### K4 — teto de bytes do export como restrição declarada, não como medição
+### K4 — teto de bytes do export ancorado em export medido, com a folga declarada
 
-`onnxMaximumInt8Bytes` é congelado por **aritmética de parâmetros**, não por medição de arquivo, e é
-declarado teto.
+`onnxMaximumInt8Bytes` = **130 000 000**, ancorado num export int8 real desta arquitetura que mede
+**109 681 931 bytes** (`snapshots/cleanfeed-ptbr-v1/onnx/model_int8.onnx`, fora do repositório, com
+`parity_report.json` ao lado: 120 amostras, `meanAbsDelta` 0,000595, `verdictFlips` 0). O mesmo número está
+**rastreado na árvore**, com `sha256`, em `models/cleanfeed-ptbr-v1/source-lock.json` e
+`models/cleanfeed-ptbr-v1/cleanfeed-model.json` — é contra esses descritores que um teste confere o teto,
+porque teto que nada mede não é teto. A folga de 20 318 069 bytes (18,5% do medido) é **declarada**, e o
+campo é teto — não alvo. O `opset_import` do próprio artefato ancorante é **18** (ir_version 8, produtor
+`onnx.quantize`), enquanto o fallback de `benchmark/lab/export_onnx.py` emite 14: a diferença de opset está
+**dentro** da folga, e o campo não afirma nada sobre opset.
 
+- Souza, Nogueira & Lotufo, *BERTimbau*, BRACIS 2020 — as contagens do backbone selado: `base` com 12
+  camadas, dimensão 768 e vocabulário WordPiece de 29 794 (`config.json` do checkpoint).
+  [link](https://doi.org/10.1007/978-3-030-61377-8_28)
 - Conneau et al., *Unsupervised Cross-lingual Representation Learning at Scale* (XLM-R), ACL 2020 — as
-  contagens do backbone: vocabulário de 250k, `base` com 12 camadas e dimensão 768.
-  [link](https://doi.org/10.18653/v1/2020.acl-main.747)
+  contagens da família recusada: vocabulário de 250k, o que põe o export int8 correspondente em ~2,8 ×
+  10⁸ bytes, mais que o dobro deste teto. [link](https://doi.org/10.18653/v1/2020.acl-main.747)
 - Jacob et al., *Quantization and Training of Neural Networks for Efficient Integer-Arithmetic-Only
   Inference*, CVPR 2018 — um peso int8 mais escala/zero-point por canal, que é a aritmética de tamanho
   usada aqui. [link](https://doi.org/10.1109/CVPR.2018.00286)
 
-**A transferência:** as fontes dão as contagens e o custo por peso; o **teto** é decisão do projeto, com
-a folga escrita e a consequência nomeada (um export que deixe a matriz de embeddings em fp32 reprova).
-Nada aqui alega ter medido um export.
+**A transferência:** o medido dá a ordem de grandeza e a paridade de **um** export desta arquitetura; as
+fontes dão as contagens que explicam por que 130 MB nomeia **uma** arquitetura e não uma faixa. A folga
+existe porque um teto de ajuste exato reprovaria um re-export legítimo que difira por poucos KB (opset,
+configuração de quantização, forma da cabeça de classificação), e ela é pequena o suficiente para as duas
+recusas que justificam o campo continuarem valendo: matriz de embeddings deixada em fp32 (22 881 792
+bytes int8 contra 91 527 168 em fp32 ⇒ ~1,78 × 10⁸) e encoder de família RoBERTa.
+
+**Sem precedente encontrado (2026-08-05)** para ancorar um teto de artefato num export de *fine-tune
+anterior* da mesma arquitetura. O que esse artefato sustenta é explicitamente o **tamanho** e a paridade
+de um export desta forma, não qualquer alegação sobre a qualidade do candidato da v1.
+
+**Sem precedente encontrado (2026-08-05)**, e são engenharia de coerência interna, para as duas regras que
+a revisão da emenda exigiu: identificar o checkpoint pelo **tamanho do vocabulário** (29 794) e não por
+`model_type` — que vale `"bert"` para todo BERT, então um fine-tune de `bert-base-cased` (28 996) exporta
+limpo, concorda consigo mesmo na paridade e **cabe** no teto —, e **perguntar à sessão ONNX** quais são
+suas entradas em vez de presumir a forma do grafo, já que só o fallback do exportador as nomeia.
 
 ### K5 — identificador retirado por recusa nomeada, não por deleção
 

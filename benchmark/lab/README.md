@@ -318,7 +318,19 @@ Saída em `../out/rebuild-v3/ner-pilot/` (gitignored). `tally` exige que o arqui
 vereditos declare em prosa a **origem** dos segundos por item: é o único insumo que não é
 medição deste corpus.
 
-## T4 — treino no Colab (bake-off)
+## T4 — treino no Colab
+
+Um backbone e uma seed, os dois congelados pela pré-inscrição
+(`../preregistration-v4.json`: `backbone`, `backboneBakeOff: false`,
+`seeds.publishableCheckpoint`). O script **lê** os dois de lá e recusa `--model` ou
+`--seed` divergente — não há bake-off na v3, e um segundo checkpoint seria elegível ao
+mesmo gate de export e à mesma medição certificadora.
+
+**A pré-inscrição selada sobe com o script.** O upload do Colab cai num diretório plano, e
+o script procura `preregistration-v4.json` um nível acima (layout do checkout) **e** ao seu
+lado (layout do Colab); sem o arquivo, recusa com o path nomeado antes do argparse. Não há
+default embarcado para cair: um espelho no lab seria autoridade que o `evaluatorDigest` não
+vigia.
 
 O smoke local (CPU) valida o script; o treino real roda num Colab T4 grátis:
 
@@ -326,15 +338,32 @@ O smoke local (CPU) valida o script; o treino real roda num Colab T4 grátis:
 # na sua máquina: empacotar o dataset final (após as lanes fecharem)
 tar -czf dataset.tgz -C ../data/dataset train.jsonl dev.jsonl
 
-# no Colab (Runtime > T4 GPU): subir dataset.tgz e train_detector.py, então
+# no Colab (Runtime > T4 GPU): subir dataset.tgz, train_detector.py E
+# ../preregistration-v4.json (a política selada), então
 !pip -q install torch transformers scikit-learn
 !tar -xzf dataset.tgz
-!python train_detector.py --train train.jsonl --dev dev.jsonl \
-  --model neuralmind/bert-base-portuguese-cased --outdir bertimbau
-!python train_detector.py --train train.jsonl --dev dev.jsonl \
-  --model xlm-roberta-base --outdir xlmr
-# baixar: {bertimbau,xlmr}/best/ + metrics.json  (o melhor AUC vence o bake-off)
+!python train_detector.py --train train.jsonl --dev dev.jsonl --outdir bertimbau
+# baixar: bertimbau/best/ + metrics.json
 ```
 
-Métrica de decisão: `metrics.json` (AUC dev + FPR@recall>=0,6). O checkpoint
-`best/` do vencedor segue para o T5 (export ONNX int8).
+`metrics.json` (AUC dev + FPR@recall>=0,6) é diagnóstico da corrida, não critério de
+escolha entre modelos: o checkpoint `best/` segue para o T5.
+
+## T5 — export ONNX int8 no Colab
+
+```bash
+# no Colab: subir bertimbau/best/, dev.jsonl, export_onnx.py E
+# ../preregistration-v4.json, então
+!pip -q install optimum onnx onnxruntime
+!python export_onnx.py --checkpoint bertimbau/best --eval dev.jsonl --out cleanfeed-ptbr-v1
+# baixar: cleanfeed-ptbr-v1-artifacts.zip (~110 MB)
+```
+
+Quatro recusas, todas nomeando o valor selado: política que sele backbone de outra **forma**
+(o grafo emitido tem `input_ids`, `attention_mask`, `token_type_ids` e `vocab.txt`);
+checkpoint cujo `config.json` divirja em `model_type`, `vocab_size`, `hidden_size` ou
+`num_hidden_layers` — `model_type` sozinho é `"bert"` para todo BERT, e um fine-tune de
+outro BERT passaria pela paridade e caberia no teto; grafo cujas entradas não sejam
+exatamente as três (a paridade não pega, porque compara o grafo com os mesmos pesos torch);
+e artefato acima de `onnxMaximumInt8Bytes`, que fica em staging e é apagado sem chegar ao
+diretório de onde o empacotamento lê.

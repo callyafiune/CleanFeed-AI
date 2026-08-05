@@ -68,8 +68,10 @@ o veredito está resumido no registro (§ "A etapa 1 da Fase 1 refutou o item 3"
   componentes por **documento de origem**, ≤ 1 linha por documento por célula;
 - `evaluate.ts` hoje não passa multiplicidade **nenhuma** (D12 era maior que o escrito): o inventário
   obrigatório de gates passa a ser **derivado** de `policy.primaryFamily`;
-- `backbone` e `onnxMaximumInt8Bytes` congelam **aqui** com valores de XLM-R — copiar os do JSON morto
-  tornaria o export da Fase 4 impassável sob política selada;
+- `backbone` e `onnxMaximumInt8Bytes` congelam **aqui**. Congelaram primeiro com valores de XLM-R, e a
+  **emenda do backbone (W1, 2026-08-05)** os refez: o selado é `neuralmind/bert-base-portuguese-cased`
+  e o teto volta a ancorar num export medido, com a folga declarada. A justificativa original era
+  circular — o teto foi elevado para acomodar o backbone e depois apresentado como razão de escolhê-lo;
 - o piso de 300 é de **linhas** (denominador do FPR); o piso de **unidades** (componentes) é decisão
   nova, e o gate de composição conta os dois.
 
@@ -148,7 +150,11 @@ harness — família >2 % contaminada regenera a lane, A4).
 
 **D17/D25** (seed `712019` pinada + recibo de treino), **D15/D21** (manifesto F6: digests do dataset e
 do split selado + hiperparâmetros + hash dos pesos resultantes — o vínculo treino→modelo que hoje não
-existe), **D18** (`export_onnx` ganha XLM-R), **D26** (prova de paridade fp32→int8 **persistida** como
+existe), **D18 FECHADA pela emenda W1** (o export BERT-shaped **corresponde** ao backbone selado, então
+não há forma nova a acomodar; `export_onnx` passou a recusar checkpoint que divirja em arquitetura **ou
+em vocabulário** — `model_type` sozinho é `"bert"` para todo BERT —, grafo cujas entradas não sejam
+exatamente as três e artefato acima do teto de bytes: export com a forma errada é pior que nenhum, porque
+passa pelo gate de paridade e entrega artefato que não é o medido), **D26** (prova de paridade fp32→int8 **persistida** como
 artefato), **D19** (baseline TF-IDF rodado como detector de vazamento: desempenho alto demais = artefato
 de fonte), gate de não degeneração em `dev + cal-A` com valores **não publicados** (R8).
 

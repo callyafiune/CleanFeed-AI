@@ -23,8 +23,8 @@
 | item | valor |
 |---|---|
 | branch | `cleanfeed-mvp` |
-| suíte | 169 arquivos / 2.768 testes (vitest) + 310 testes e 18 subtests (pytest, lab). Verde em rodada limpa; sob contenção de I/O, dois arquivos de caminho selado batem no timeout de 20 s — dívida de § 7, não de política |
-| dos quais, o avaliador | 1.708 — 1.398 em 43 arquivos de `benchmark/tests`, 310 no lab |
+| suíte | 169 arquivos / 2.771 testes (vitest) + 343 testes e 18 subtests (pytest, lab). Verde em rodada limpa; sob contenção de I/O, dois arquivos de caminho selado batem no timeout de 20 s — dívida de § 7, não de política |
+| dos quais, o avaliador | 1.744 — 1.401 em 43 arquivos de `benchmark/tests`, 343 no lab |
 | typecheck | limpo |
 | lint | 13 problemas (11 erros, 2 avisos) |
 | tags de release | 0 |
@@ -155,7 +155,8 @@ O que "corpus inutilizado" significa — a semântica é **graduada**, nunca tud
 | opt-in **desligado por padrão**; disclosure persistente em cada resultado; nenhum rótulo de autoria nem confiança numérica | OP |
 | proibição de uso disciplinar, acadêmico, empregatício ou decisório; não iniciar acusação formal com base no sinal; revisão humana não salva sinal não validado — exige evidência independente do processo | OP |
 | os pesos viajam com a mesma política de uso — a copy da extensão não acompanha pesos extraídos | OP |
-| backbone **`xlm-roberta-base`**; teto de export int8 congelado em **340 000 000** bytes (`onnxMaximumInt8Bytes`) — é teto, não alvo, e nenhum export foi medido | código |
+| backbone **`neuralmind/bert-base-portuguese-cased`** (BERTimbau base), `backboneBakeOff: false` — a escolha é por literatura e pela forma do pipeline, **não** por comparação de qualidade sobre os nossos dados, e nenhuma vantagem de detecção foi medida. `train_detector.py` recusa `--model` e `--seed` divergentes **em `main()`**; `export_onnx.py` recusa checkpoint que divirja em `model_type`, `vocab_size` (29 794), `hidden_size` ou `num_hidden_layers`, e grafo cujas entradas não sejam exatamente `input_ids`/`attention_mask`/`token_type_ids` | código |
+| teto de export int8 **130 000 000** bytes (`onnxMaximumInt8Bytes`) — **teto, não alvo**, ancorado num export int8 real desta arquitetura de **109 681 931** bytes (fora do repositório, com `parity_report.json`: 120 amostras, `meanAbsDelta` 0,000595, 0 inversões; o mesmo número rastreado com `sha256` em `models/cleanfeed-ptbr-v1/source-lock.json` e `cleanfeed-model.json`, onde um teste o confere contra o teto), com **18,5 % de folga declarada** para opset (o artefato ancorante é opset 18; o fallback do exportador emite 14), configuração de quantização e forma da cabeça. `export_onnx.py` quantiza em staging e só publica o artefato se o teto aceitar | código |
 | treino: **cross-entropy + seed `712019` pré-fixadas, sem ablação** (adamw, 3 épocas, lr 2 × 10⁻⁵, 16 documentos por batch, warmup 0,06, weight decay 0,01); segunda corrida só como retry técnico, nunca seleção | OP |
 | **sem calibrador probabilístico na v1** (`threshold.probabilisticCalibrator: "none"`): o corte publicado é o **limiar provisório `provisional-v1`** — quantil 0,95 superior de `document-raw-score` sobre os negativos humanos de `dev` + `cal-A` —, versionado, jamais descrito como "conservador", "alta confiança" ou probabilidade. `evaluate` exige e confere `provisional-threshold.json`, então um `fit` sem o corte pré-inscrito não alcança a medição | OP |
 | o gate de calibração mede **ECE-15 sobre o mesmo `document-raw-score`**, em bins de massa igual, com limite superior simultâneo por bootstrap e `eceMax` 0,05 | código |
@@ -337,7 +338,7 @@ A unidade é a página, o piso de 300 é trivial, e o dump de 1,96 GB é a reser
 |---|---|
 | componentes independentes na célula, hoje | 1 — sem documento de origem conhecido, toda linha da célula cai no balde único de origem irrecuperável |
 | guardas de integridade do pacote | 11 exercitadas, 0 sem teste |
-| `evaluatorDigest` da árvore | `9c68b884abec152d29465af731e3f20e6c09b8c82ed7234fe7c4caeea3c1297b` — 52 arquivos, recomputado pela função de produção e **lido por teste nomeado** (`digests.test.ts`, "is published in the ESTADO at the value the LIVE tree hashes to"), então este número não pode envelhecer em silêncio. Moveu de `9bc4e749…` com a emenda da moldura, e mover é barato enquanto `issuedAt` é nulo |
+| `evaluatorDigest` da árvore | `18b8465f9071c35b8efa0cfc24f96d231229452715d5177b5b99ce3a06342ba6` — 52 arquivos, recomputado pela função de produção e **lido por teste nomeado** (`digests.test.ts`, "is published in the ESTADO at the value the LIVE tree hashes to"), então este número não pode envelhecer em silêncio. Moveu de `9c68b884…` com a emenda do backbone, e mover é barato enquanto `issuedAt` é nulo |
 | ledger de exposição real | **0 bytes** — nenhum evento real foi escrito |
 | holdout-ledger real | 2.638 bytes — o consumo de 2026-07-25, `decision: reject` |
 | memória da exposição por linha | `benchmark/data/corpus-build/out/split/split-artifact.json` — pertença de `test`, só o operador lê |

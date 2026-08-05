@@ -272,7 +272,20 @@ export type ScoreBasis = "document-raw-score";
 
 export interface PreregistrationV4 {
   readonly attributionRequired: true;
-  readonly backbone: "xlm-roberta-base";
+  /**
+   * The frozen base encoder. The served path is BERT-shaped and cannot carry a
+   * RoBERTa: the graph `benchmark/lab/export_onnx.py` publishes takes exactly three
+   * inputs (`input_ids`, `attention_mask`, `token_type_ids`) and ships `vocab.txt`,
+   * while a RoBERTa has no segment ids and a SentencePiece model instead of a
+   * WordPiece vocabulary. `public/models/cleanfeed-ptbr-v1/` delivers `vocab.txt`,
+   * and `src/inference/model-runtime.ts` splits every CJK ideograph into its own
+   * basic word because THIS vocabulary holds no bare ideograph.
+   *
+   * The shape is refused HERE, not just checked downstream: only the exporter's
+   * fallback names the three inputs itself — the `optimum` path delegates the graph
+   * to the library and is asked afterwards what it produced.
+   */
+  readonly backbone: "neuralmind/bert-base-portuguese-cased";
   readonly backboneBakeOff: false;
   readonly blindReserveCompleteAttempts: number;
   readonly bootstrapReplicates: {
@@ -467,19 +480,27 @@ export interface PreregistrationV4 {
     readonly frozenAt: "G0.2";
   };
   /**
-   * The ceiling on the INT8 ONNX export, in bytes. A ceiling, not a target, and not
-   * a measurement: nothing in this repository has exported these weights yet.
+   * The ceiling on the INT8 ONNX export, in bytes. A CEILING and not a target: an
+   * export smaller than this passes, and no artifact is required to approach it.
    *
-   * The arithmetic it has to be compatible with: xlm-roberta-base holds ~2.78e8
-   * parameters, of which the 250 002 x 768 embedding matrix is ~1.92e8. At one byte
-   * per weight plus per-channel scales and zero-points, an INT8 export is ~2.8e8
-   * bytes. The headroom above that covers graph and initializer overhead and the
-   * tensors a dynamic quantizer leaves in fp32 (LayerNorm gains and biases).
+   * Anchored on a measurement, with the slack declared. A real int8 export of this
+   * architecture — `neuralmind/bert-base-portuguese-cased` with a 2-label
+   * sequence-classification head, dynamic quantization — measures 109 681 931
+   * bytes, and 130 000 000 leaves 20 318 069 bytes of headroom (18.5% of the
+   * measured size). The slack exists because an exact-fit ceiling would fail a
+   * legitimate re-export that differs by a few KB: opset version, per-channel
+   * versus per-tensor quantization parameters, and the head's own shape all move the
+   * byte count without changing which weights the artifact carries. That anchor's own
+   * `opset_import` is 18 (ir_version 8, producer `onnx.quantize`), while the fallback
+   * path of `benchmark/lab/export_onnx.py` emits opset 14 — the headroom covers
+   * exactly that kind of difference, and the ceiling asserts nothing about the opset.
    *
-   * What it decides: an export that leaves the embedding table in fp32 is ~8.5e8
-   * bytes and FAILS this ceiling. That is the ceiling working — the embedding matrix
-   * is two thirds of the model, and an export that skips it is not the artifact this
-   * pre-registration froze.
+   * What it still refuses, which is why it is not simply generous. The 29 794 x 768
+   * embedding matrix is 22 881 792 int8 bytes and 91 527 168 in fp32, so an export
+   * that leaves the embedding table unquantized measures ~1.78e8 bytes and FAILS.
+   * And a RoBERTa-family encoder with a 250 002-row embedding matrix is ~2.8e8 bytes
+   * int8 — more than twice this ceiling — so the number names ONE architecture
+   * rather than admitting whichever one happens to get exported.
    */
   readonly onnxMaximumInt8Bytes: number;
   readonly parity: {
@@ -1529,6 +1550,17 @@ const FROZEN_THRESHOLD_PARTITIONS = ["dev", "cal-A"] as const;
 const FROZEN_BLOCKED_SNAPSHOT = "pt-stackoverflow";
 const FROZEN_FLOOR_PER_CELL = 300;
 const FROZEN_HUMAN_LINES_PER_CELL_MINIMUM = 1500;
+// The base encoder, and the export ceiling that belongs to it. The two are ONE
+// decision and are frozen next to each other because the ceiling is architecture
+// specific: a policy that named this backbone with a ceiling sized for a
+// 250 002-row embedding matrix would admit an artifact whose weights nobody
+// measured, and the export gate would pass it.
+//
+// The ceiling is a `frozenNumber` and not a positive integer: a magnitude the parser
+// admits by shape is a magnitude any value can occupy, and this one decides whether
+// the Phase 4 export is publishable at all.
+const FROZEN_BACKBONE = "neuralmind/bert-base-portuguese-cased";
+const FROZEN_ONNX_MAXIMUM_INT8_BYTES = 130_000_000;
 
 // The lane names, frozen as a SET (the JSON block is keyed by them, and object key
 // order is not a decision the way a list's is). Four lanes: one API and three CLIs,
@@ -2115,7 +2147,7 @@ export function parsePreregistrationV4(value: unknown): PreregistrationV4 {
 
   const policy: PreregistrationV4 = {
     attributionRequired: literal(root, "", "attributionRequired", true),
-    backbone: literal(root, "", "backbone", "xlm-roberta-base"),
+    backbone: literal(root, "", "backbone", FROZEN_BACKBONE),
     backboneBakeOff: literal(root, "", "backboneBakeOff", false),
     blindReserveCompleteAttempts: integer(
       root,
@@ -2355,7 +2387,12 @@ export function parsePreregistrationV4(value: unknown): PreregistrationV4 {
         FROZEN_PRIMARY_FAMILY.length,
       ),
     },
-    onnxMaximumInt8Bytes: integer(root, "", "onnxMaximumInt8Bytes", 1),
+    onnxMaximumInt8Bytes: frozenNumber(
+      root,
+      "",
+      "onnxMaximumInt8Bytes",
+      FROZEN_ONNX_MAXIMUM_INT8_BYTES,
+    ),
     parity: {
       operationalMaximumInversions: frozenNumber(
         parity,

@@ -308,12 +308,20 @@ describe("preregistration-v4.json", () => {
       population: "cal-b-humans",
       reservedFor: "v2",
     });
-    // Backbone and the export ceiling. The ONNX number is a CEILING for
-    // xlm-roberta-base and not the 109 681 931 of a backbone that is not ours.
-    expect(policy.backbone).toBe("xlm-roberta-base");
+    // Backbone and the export ceiling, which are ONE decision: the ceiling is sized
+    // for THIS architecture's embedding matrix. The ONNX number is a CEILING and not
+    // the target — a measured int8 export of this backbone is 109 681 931 bytes, and
+    // the headroom is what a legitimate re-export (opset, quantization parameters,
+    // head shape) is allowed to differ by.
+    expect(policy.backbone).toBe("neuralmind/bert-base-portuguese-cased");
     expect(policy.backboneBakeOff).toBe(false);
-    expect(policy.onnxMaximumInt8Bytes).toBe(340_000_000);
-    expect(policy.onnxMaximumInt8Bytes).toBeGreaterThan(278_000_000);
+    expect(policy.onnxMaximumInt8Bytes).toBe(130_000_000);
+    expect(policy.onnxMaximumInt8Bytes).toBeGreaterThan(109_681_931);
+    // Still refuses the two failure modes it exists for: an export that leaves the
+    // 29 794 x 768 embedding table in fp32 (~1.78e8 bytes) and any encoder with a
+    // 250 002-row embedding matrix (~2.8e8 int8).
+    expect(policy.onnxMaximumInt8Bytes).toBeLessThan(178_327_307);
+    expect(policy.onnxMaximumInt8Bytes).toBeLessThan(280_000_000);
     // Seeds. The SPLIT seed is new — the abandoned pre-registration's draw was
     // inspected — while the bootstrap and cross-validation seeds are the inherited
     // ones, never spent on any measurement.
@@ -488,7 +496,13 @@ describe("parsePreregistrationV4 fails closed", () => {
       {
         path: "backbone",
         mutate: (policy) => {
-          policy.backbone = "neuralmind/bert-base-portuguese-cased";
+          policy.backbone = "xlm-roberta-base";
+        },
+      },
+      {
+        path: "onnxMaximumInt8Bytes",
+        mutate: (policy) => {
+          policy.onnxMaximumInt8Bytes = 340_000_000;
         },
       },
       {
@@ -690,6 +704,74 @@ describe("parsePreregistrationV4 fails closed", () => {
     expect(() => parsePreregistrationV4(policy)).toThrow(
       /must still block "pt-stackoverflow" by name/u,
     );
+  });
+
+  // W1 — the backbone amendment. The two values are the pair that made the previous
+  // freeze circular: the ceiling was RAISED to fit a backbone, and then the raised
+  // ceiling was offered as the reason for choosing it. Refusing each one by name is
+  // what stops either half from surviving the other.
+  it("refuses the discarded bake-off candidate as the backbone", () => {
+    const policy = validPolicyObject();
+    policy.backbone = "xlm-roberta-base";
+    let thrown: unknown = null;
+    try {
+      parsePreregistrationV4(policy);
+    } catch (error) {
+      thrown = error;
+    }
+    expect(thrown).toBeInstanceOf(PreregistrationV4Error);
+    expect((thrown as PreregistrationV4Error).path).toBe("backbone");
+    expect((thrown as Error).message).toMatch(
+      /is frozen at "neuralmind\/bert-base-portuguese-cased"/u,
+    );
+  });
+
+  // The ceiling is only a ceiling where something is measured against it. The served
+  // artifact itself is gitignored, but its size is declared in two TRACKED descriptors,
+  // and those are the in-tree witnesses of the measurement the ceiling is anchored on.
+  it("keeps the shipped artifact descriptors under the export ceiling", async () => {
+    const modelDirectory = join(
+      dirname(PREREGISTRATION_V4_PATH),
+      "..",
+      "models",
+      "cleanfeed-ptbr-v1",
+    );
+    const declaredBytes = await Promise.all(
+      ["source-lock.json", "cleanfeed-model.json"].map(async (name) => {
+        const descriptor = JSON.parse(
+          await readFile(join(modelDirectory, name), "utf8"),
+        ) as { artifacts: { path: string; bytes: number }[] };
+        const onnx = descriptor.artifacts.find(
+          (artifact) => artifact.path === "onnx/model_int8.onnx",
+        );
+        expect(onnx, `${name} must declare onnx/model_int8.onnx`).toBeDefined();
+        return onnx!.bytes;
+      }),
+    );
+    // Both descriptors describe ONE file, so they must agree before either can witness
+    // anything.
+    expect(new Set(declaredBytes).size).toBe(1);
+    expect(declaredBytes[0]).toBeLessThanOrEqual(
+      PREREGISTRATION_V4.onnxMaximumInt8Bytes,
+    );
+    // The anchor itself: the ceiling was chosen as this number plus declared headroom.
+    expect(declaredBytes[0]).toBe(109_681_931);
+  });
+
+  it("refuses the export ceiling that was sized for the discarded candidate", () => {
+    const policy = validPolicyObject();
+    policy.onnxMaximumInt8Bytes = 340_000_000;
+    let thrown: unknown = null;
+    try {
+      parsePreregistrationV4(policy);
+    } catch (error) {
+      thrown = error;
+    }
+    expect(thrown).toBeInstanceOf(PreregistrationV4Error);
+    expect((thrown as PreregistrationV4Error).path).toBe(
+      "onnxMaximumInt8Bytes",
+    );
+    expect((thrown as Error).message).toMatch(/is frozen at 130000000/u);
   });
 
   // T2 — the family moved to m = 4 and the per-hypothesis alpha stayed at the m = 7

@@ -1,6 +1,6 @@
 {
   "attributionRequired": true,
-  "backbone": "xlm-roberta-base",
+  "backbone": "neuralmind/bert-base-portuguese-cased",
   "backboneBakeOff": false,
   "blindReserveCompleteAttempts": 2,
   "bootstrapReplicates": {
@@ -199,7 +199,7 @@
     ],
     "primaryFamilySize": 4
   },
-  "onnxMaximumInt8Bytes": 340000000,
+  "onnxMaximumInt8Bytes": 130000000,
   "parity": {
     "operationalMaximumInversions": 0,
     "rawMaximumMeanAbsDelta": 0.02

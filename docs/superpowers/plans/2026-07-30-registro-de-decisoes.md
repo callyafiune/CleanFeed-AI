@@ -3037,6 +3037,12 @@ maior do que o plano dizia); e `backbone`/`onnxMaximumInt8Bytes` congelam na Fas
 XLM-R, porque copiar os do JSON morto (BERTimbau, 109 MB) tornaria o gate de export da Fase 4
 impassável sob política selada.
 
+> **RETRATADO pela emenda do backbone (W1)**, seção no fim deste arquivo. A segunda metade do parágrafo
+> acima é **circular** e não é razão: o teto de bytes foi elevado de 1,09 × 10⁸ para 3,4 × 10⁸ *para
+> acomodar* o XLM-R, e a elevação foi então apresentada como razão de escolhê-lo. O "JSON morto" carregava
+> o tamanho **medido** de um export real desta arquitetura, e um teto que reprova o candidato é
+> consequência da escolha do candidato, nunca argumento a favor dela.
+
 ## Regras condicionais (bloco D) — decididas, executam sozinhas
 
 1. Célula < n mínimo → **sem cota**, nunca cota frouxa.
@@ -3283,8 +3289,8 @@ Workflow de 4 verificadores (lab, bancada, abstração do modelo, treino/mediç�
 | D14 | G | fit congela calibradores probabilísticos que a v1 não tem | Redesenhar o estágio fit para a v1 sem calibrador: congelar limiar experimental provisório versionado e definir sobre que escore a 'calibração global' da família B3 é medida |
 | D15 | M | F6: treino sem manifesto e sem consumidor do split selado | Manifesto de treino F6 (digests do dataset e do split, seed, hiperparâmetros, versões, hash sha256 dos pesos produzidos) escrito pelo próprio train_detector, mais um conversor que leia train.jsonl/dev.jsonl do split selado e verifique o splitDigest |
 | D16 | M | Vocabulário de estratos do selo conflita com as 4 células | Estratos = as 4 células novas: separar judicial de legislative (e excluir legislative), tirar datasets de social-media; ajustar extratores que estampam humanSourceType e os testes que fixam a lista |
-| D17 | P | Seed 712019 e backbone XLM-R não estão pinados no treino | Pinar seed 712019 recusando outro valor (o padrão que split.ts:132-138 já usa para o seed de split), fixar xlm-roberta-base como backbone e apagar a instrução de bake-off |
-| D18 | P | export_onnx é BERT-shaped e quebra com XLM-R | Condicionar as entradas do export ao model_input_names do tokenizer, documentar os artefatos sentencepiece e rever o teto de bytes na pré-inscrição nova |
+| D17 | P | Seed 712019 e backbone não estão pinados no treino | **RESOLVIDA pela emenda W1** (2026-08-05): `train_detector.py` lê `backbone` e `seeds.publishableCheckpoint` da pré-inscrição selada, recusa `--model` e `--seed` divergentes nomeando o selado, e a instrução de bake-off saiu do docstring. O remédio original dizia "fixar xlm-roberta-base"; a emenda o corrigiu para o BERTimbau |
+| D18 | P | export_onnx é BERT-shaped e quebra com XLM-R | **FECHADA pela emenda W1** (2026-08-05): não há forma nova a acomodar, porque o backbone selado **é** BERT. `export_onnx.py` passou a recusar política que nomeie backbone de outra forma, checkpoint de `model_type` divergente e artefato acima de `onnxMaximumInt8Bytes` |
 | D19 | P | baseline_tfidf não serve como detector de vazamento sem adaptação | Adaptador de entrada para o dataset selado, relatório de AUC por família de geração e por célula, e um critério pré-registrado de 'separação alta demais' que dispare o A4 |
 | D20 | P | Vocabulário de gateDecision do verificador Node diverge do contrato | Alinhar KNOWN_GATE_DECISIONS a {pending, reject, indicator-only, pass} e prender com teste que passe o fixture pass-indicator pelo verificador Node. |
 | D21 | M | Vínculo F6 treino→modelo inexistente no release | Acrescentar ao release agnóstico um bloco de proveniência de treino (datasetDigest+splitDigest do corpus consumido, seed, modelo base, commit) produzido no treino e exigido pelo empacotamento — é a dívida F6 declarada, confirmada ainda aberta. |
@@ -3350,6 +3356,13 @@ do piso (6.000) recusaria justamente todo corpus que carrega a margem de coleta 
 existe para o **sorteio** cumprir o piso de 300 em `test`. Ver C-14, abaixo, para a medição.
 
 ### `onnxMaximumInt8Bytes` = 340 000 000 — decidido pelo agente, com a aritmética
+
+> **RETRATADO pela emenda do backbone (W1)**, seção no fim deste arquivo. O campo selado é
+> **130 000 000** (`benchmark/preregistration-v4.json`), ancorado no export medido de
+> 109 681 931 bytes que esta seção descarta como "não é o mesmo backbone" — e o backbone voltou a ser
+> exatamente esse. Toda a seção abaixo, incluindo a aritmética de 250 002 × 768 e a frase "nenhum export
+> foi medido", descreve uma política que não existe mais. Fica registrada, não corrigida: o parser recusa
+> 340 000 000 nomeando o path.
 
 O valor v3 (109 681 931) era o tamanho medido de um export de `neuralmind/bert-base-portuguese-cased`.
 Copiá-lo tornaria o export da Fase 4 **impassável sob política selada**, porque o backbone não é o mesmo.
@@ -4214,3 +4227,268 @@ Uma mutação **não** isolou o que se pretendia, e está registrada como tal: *
 300 → 900 sozinho) recusa no **load** — "`powerFloors.samplingUnits` is frozen at 900" — antes de qualquer
 teste rodar, então não diz nada sobre asserção alguma. É por isso que M20b move as **duas** autoridades
 juntas.
+
+---
+
+## A emenda do backbone (W1): o selado passa a BERTimbau — DECIDIDA PELO OPERADOR em 2026-08-05
+
+**Status:** `EM-VIGOR`. A troca do backbone é decisão do operador. A cadeia de evidência, a aritmética do
+teto de bytes, as recusas em código e a separação entre medido e não medido são do agente, registradas
+abaixo com razão e custo de reversão.
+
+O backbone congelado passa de `xlm-roberta-base` para **`neuralmind/bert-base-portuguese-cased`**
+(BERTimbau base). `backboneBakeOff` **permanece `false`**: a troca se decide por literatura e pela forma
+do pipeline existente, **não** por medição sobre os nossos dados. Nenhuma comparação de qualidade entre
+backbones foi rodada, e nenhuma será na v3.
+
+### A cadeia de evidência, conferida antes de mexer
+
+Três sítios já diziam que o selado era o BERTimbau, e um dizia o contrário:
+
+- `docs/references.md` (§ "Normalização de texto, backbone e sinal") registrava o BERTimbau como "o
+  backbone efetivamente selado … sem bake-off na v3", e o XLM-R como "candidato … **descartado** como
+  bake-off";
+- `benchmark/lab/train_detector.py:54` tinha o BERTimbau como **default** do `--model`; o
+  `xlm-roberta-base` aparecia na linha 13, dentro de um **exemplo** de bake-off no docstring;
+- `benchmark/preregistration-v4.json` congelava `xlm-roberta-base`.
+
+A divergência **D17** leu a linha de exemplo e pinou o XLM-R; o Commit C o congelou e **elevou** o teto de
+bytes de 1,09 × 10⁸ para 3,4 × 10⁸ para acomodá-lo. A justificativa registrada é **circular** — o teto foi
+apresentado como razão da escolha quando era consequência dela — e está retratada na seção da Fase 1.
+
+**Uma divergência medida contra a própria cadeia (D-W1-1).** O item que atribuía a exceção do WordPiece do
+BERTimbau (`[UNK]` por ideograma CJK isolado) a `contracts/text-normalization.ts` linhas 208-210 e 505-507
+é **falso**: esse arquivo não menciona tokenizer nem `[UNK]` em nenhuma linha, e a única vez que diz
+"IDEOGRAPH" (linha 600) é o nome Unicode de `㈠ U+3220`, num contexto de dobra NFKC e não de tokenizer. A
+exceção existe, com exatamente esses números de linha, em **`src/inference/model-runtime.ts`** — que
+**não** é membro de `EVALUATOR_FILES` — e um terceiro sítio a repete para o fake de teste
+(`tests/helpers/wordpiece-tokenizer.ts:6`). A substância da restrição sobrevive intacta e até mais forte (o
+código fixa a semântica do `BasicTokenizer` com `handle_chinese_chars` e afirma que o vocabulário do
+BERTimbau não tem ideograma nu); o que estava errado era o ponteiro, e ele foi corrigido em
+`references.md`. Nenhum byte de `contracts/text-normalization.ts` foi tocado, e o `evaluatorDigest` não se
+move por essa causa.
+
+### A restrição técnica que a emenda preserva: o pipeline inteiro é BERT-shaped
+
+Não é preferência de arquitetura, é a forma dos artefatos que a entrega já produz:
+
+- `benchmark/lab/export_onnx.py` **publica** um grafo de exatamente **três** entradas — `input_ids`,
+  `attention_mask`, `token_type_ids` — e emite `vocab.txt`. Só o **fallback** (sem `optimum`) as nomeia ao
+  exportar; o caminho via `optimum` delega a forma à biblioteca, e é por isso que a revisão exigiu
+  **perguntar ao artefato**: a sessão é aberta e `assert_inputs_are_the_emitted_shape` recusa qualquer
+  conjunto que não seja o das três. O XLM-R é da família RoBERTa: **não tem** `token_type_ids` e usa
+  SentencePiece, não `vocab.txt`;
+- `public/models/cleanfeed-ptbr-v1/` entrega `vocab.txt`;
+- `src/inference/model-runtime.ts` parte **todo ideograma CJK em palavra própria** porque o vocabulário do
+  BERTimbau não tem ideograma nu, e sem isso `deriveWordPieceOffsets` degrada o documento inteiro.
+
+O custo de ignorar isso é pior do que uma falha: um export com a forma errada **passa pelo gate de
+paridade**. A paridade compara o grafo exportado contra os mesmos pesos torch, então um grafo cuja terceira
+entrada o runtime nunca alimenta concorda consigo mesmo e é publicado como se tivesse sido medido. É por
+isso que a recusa entrou no `export_onnx.py`, e não como nota no README.
+
+### O teto de bytes volta a ser medido, com a folga declarada
+
+`onnxMaximumInt8Bytes` = **130 000 000**, e a aritmética é esta:
+
+| quantidade | valor | origem |
+|---|---:|---|
+| export int8 real desta arquitetura | 109 681 931 bytes | `snapshots/cleanfeed-ptbr-v1/onnx/model_int8.onnx`, medido em 2026-08-05 |
+| o mesmo número, **rastreado** | 109 681 931 bytes, `sha256 d8f77f87…` | `models/cleanfeed-ptbr-v1/source-lock.json` e `cleanfeed-model.json` — conferidos contra o teto por teste, porque um teto que nada mede não é teto |
+| paridade do mesmo export | 120 amostras, `meanAbsDelta` 0,000595, `maxAbsDelta` 0,00895, 0 inversões | `parity_report.json` ao lado |
+| teto adotado | 130 000 000 bytes | decisão do agente |
+| folga | 20 318 069 bytes (18,5 % do medido) | 130 000 000 − 109 681 931 |
+
+**Por que não o medido cru.** Um teto de ajuste exato reprova um re-export legítimo que difira por poucos
+KB: versão de opset, escala/zero-point por canal contra por tensor, e a forma da cabeça de classificação
+mudam a contagem de bytes sem mudar quais pesos o artefato carrega. O campo é **teto, não alvo** — um
+export menor passa, e nada exige aproximar-se dele.
+
+**Por que a folga é pequena.** As duas recusas que justificam o campo continuam valendo: a matriz de
+embeddings de 29 794 × 768 é 22 881 792 bytes em int8 e 91 527 168 em fp32, logo um export que a deixe
+sem quantizar mede ~1,78 × 10⁸ e **reprova**; e um encoder de família RoBERTa com 250 002 linhas de
+embedding é ~2,8 × 10⁸ em int8, mais que o dobro do teto. O número nomeia **uma** arquitetura.
+
+**O que o artefato medido sustenta e o que não sustenta.** Ele é de um fine-tune **antigo**. O que ele
+mede é o **tamanho** e a **paridade** de um export desta arquitetura, e é só nisso que o teto ancora.
+Nenhuma alegação sobre a qualidade do candidato da v1 sai dele.
+
+### Medido × não medido, sem confundir os dois
+
+**MEDIDO neste repositório:**
+
+- o `config.json` do checkpoint dá `vocab_size` **29 794**, `hidden_size` 768, 12 camadas, e o `vocab.txt`
+  servido tem exatamente 29 794 linhas — é esse número, e não `model_type`, que identifica o backbone;
+- export int8 de **109 681 931 bytes** com paridade de **zero** inversões, e o mesmo número declarado em
+  dois descritores **rastreados** (`models/cleanfeed-ptbr-v1/source-lock.json` e `cleanfeed-model.json`,
+  com `sha256`), que é onde o teto passou a ser conferido por teste;
+- o `opset_import` do artefato ancorante é **18** (ir_version 8, produtor `onnx.quantize`) — não 14, que
+  era literal do fallback do exportador copiado para dentro da descrição da medição;
+- o pipeline BERT-shaped: `token_type_ids`, `vocab.txt`, a exceção de normalização por ideograma.
+
+**DERIVADO das contagens publicadas, não medido aqui:**
+
+- 110 M parâmetros contra 278 M, e o **encoder idêntico** nas duas arquiteturas (~85 M: 12 × (4 × 768² +
+  2 × 768 × 3072)). Nenhum XLM-R foi baixado nem exportado neste projeto: os 250 002 × 768 e os 278 M vêm
+  de Conneau et al. (2020). **Praticamente** toda a diferença está na matriz de embeddings — 22,9 M contra
+  192 M —, e o "praticamente" é literal: embeddings de posição (512 contra 514), `type_vocab_size`
+  (2 contra 1) e a forma da cabeça também diferem, em ordens de grandeza irrelevantes para o teto.
+
+**NÃO MEDIDO, e registrado como tal:**
+
+- **nenhuma vantagem de qualidade de detecção** foi medida, e não será. `backboneBakeOff: false` não é
+  "ainda não medimos": é a decisão de não medir;
+- a **latência não muda**. O encoder é idêntico e a busca de embedding é O(1) por token; o ganho é de
+  **tamanho**;
+- a **fertilidade do tokenizer** (palavras por janela de 512) foi levantada como argumento e **retirada**
+  por não ter sido medida. Não deve ser reintroduzida como fato.
+
+**O que a emenda abdica de propósito, e isto tem de estar escrito:** o único ganho real do XLM-R — encoder
+pré-treinado em corpus muito maior (CommonCrawl filtrado, 100 línguas) — é abandonado. É uma perda
+possível de qualidade que o projeto aceita **sem medir**, em troca da forma do pipeline, de um teto
+ancorado em medição e de um artefato três vezes menor.
+
+### As recusas em código, e por que cada uma é recusa
+
+| onde | recusa | razão de ser recusa e não aviso |
+|---|---|---|
+| `preregistration-v4.ts`, `literal(root, "", "backbone", …)` | qualquer backbone fora do selado, nomeando o path | o campo é lido por gate; um valor "válido por forma" é um valor que qualquer política pode ocupar |
+| `preregistration-v4.ts`, `frozenNumber(… "onnxMaximumInt8Bytes" …)` | o teto de 3,4 × 10⁸, e todo outro valor | era `integer(… ≥ 1)`: a magnitude que decide se o export da Fase 4 é publicável passava a qualquer valor positivo |
+| `train_detector.py`, `assert_model_is_the_sealed_backbone` | `--model` divergente, e política com `backboneBakeOff: true` | um segundo modelo base não é corrida extra: o checkpoint dele é elegível ao mesmo gate de export e à mesma medição, e escolher entre dois depois de ver o `dev` é a seleção que a pré-inscrição existe para proibir |
+| `train_detector.py`, `assert_seed_is_the_publishable_one` | `--seed` fora de `seeds.publishableCheckpoint` | o default embarcado era **42**, não 712019 — a seed pré-fixada existia só em prosa. Uma segunda seed é um segundo sorteio |
+| `export_onnx.py`, `assert_sealed_backbone_is_exportable` | política que nomeie backbone de outra forma, ou backbone cuja forma o script nunca viu | falha fechada: uma arquitetura desconhecida não pode ser *presumida* como a que o grafo fixa |
+| `export_onnx.py`, `assert_checkpoint_matches_sealed_backbone` | checkpoint cujo `config.json` divirja em `model_type`, `vocab_size`, `hidden_size` ou `num_hidden_layers` | é o caso que passa pela paridade e entrega artefato que não é o medido. `model_type` **sozinho não identifica**: vale `"bert"` para todo BERT, e a revisão mostrou `bert-base-cased` (28 996) sendo aceito como o selado. O vocabulário é o que separa, e ele está no mesmo arquivo |
+| `export_onnx.py`, `assert_inputs_are_the_emitted_shape` | grafo (ou tokenizer) cujas entradas não sejam exatamente as três | a forma era **presumida**: só o fallback nomeia as entradas, o caminho via `optimum` delega à biblioteca, e a montagem do feed da paridade *descartava em silêncio* a entrada ausente. Agora a sessão é perguntada |
+| `export_onnx.py`, `assert_export_is_within_the_sealed_ceiling` via `quantize_within_the_ceiling` | artefato acima do teto, que fica em **staging** e é apagado | **decisão do agente**, além do pedido: o teto era número que nenhum código lia, e quantidade escrita e não lida é exatamente o defeito que a emenda da moldura corrigiu em oito sítios. O staging é da revisão: a guarda só roda **depois** de quantizar, e o reprovado não pode ficar onde o empacotamento lê |
+| `export_onnx.py`, fim do passo 3 | `out/vocab.txt` ausente | o bundle servido é carregado por tokenizer WordPiece; checkpoint cujo tokenizer não escreve `vocab.txt` não é o do backbone selado |
+| ambos os scripts, `sealed_policy_path` | política selada ausente, nomeando os **dois** paths tentados | o pedido "suba só o script" do README quebrava com `FileNotFoundError` cru. Não há default embarcado para cair: a recusa diz qual arquivo subir |
+
+Os dois scripts do lab **leem** a pré-inscrição viva (`benchmark/preregistration-v4.json`) em vez de
+retypar valor, pelo mesmo motivo de `assemble_corpus.POLICY_PATH`: os bytes desse arquivo estão em
+`EVALUATOR_FILES`, e um espelho no lab seria autoridade que o `evaluatorDigest` não vigia. Os defaults de
+`--model` e `--seed` no argparse também vêm de lá — não há literal repetido do lado do lab.
+
+**Custo de reversão.** Baixo e mecânico enquanto `issuedAt` é nulo e não há tag: dois valores no JSON
+selado, dois pins no parser, as tabelas declaradas nos dois scripts do lab, e os pinos de teste. O que
+**não** é reversível de graça é a escolha em si depois de treinar: um checkpoint de outro backbone não é o
+artefato para o qual o teto e a medição certificadora foram congelados.
+
+### `license-review.json` — conferido, não tocado
+
+`declaredLicense` já dizia "Base BERTimbau (MIT)", e com a emenda voltou a ser **verdadeiro**. `status`
+permanece `pending`, `reviewer` e `reviewedAt` permanecem `null`: a assinatura é do operador e espera o
+pacote da Fase 6.
+
+### O que a revisão cruzada pegou, e que está consertado neste mesmo commit
+
+Seis achados bloqueantes, todos conferidos contra o código antes de mexer e todos confirmados:
+
+1. **A conferência byte a byte de seis das nove provas certificava bytes inexistentes.** Os hashes
+   publicados de `train_detector.py` (`7d897a03…`) e `export_onnx.py` (`b3b2d3cc…`) não eram os da árvore
+   (`3d21ad66…` e `b57157af…`): os arquivos foram editados **depois** da bateria — "rodado de novo após o
+   apara de dois comentários" — e a suíte foi rerodada, as provas não. O quinto passo estava vazio.
+   Remédio: a bateria inteira foi rerodada sobre os bytes **finais**, e os hashes abaixo são os que a
+   árvore carrega.
+2. **As quatro guardas podiam sair de `main()` sem um único vermelho.** Medido em cópia isolada: apagados
+   os quatro sítios de chamada, `18 passed`. Os testes chamavam as funções `assert_*` diretamente e nada
+   exercitava o sítio. Remédio: `GuardCallSites` dirige `main()` com `sys.argv` remendado — é barato porque
+   toda recusa acontece **antes** do `import torch`/`numpy`, então nenhum teste baixa modelo.
+3. **`assert_checkpoint_matches_sealed_backbone` não identificava o modelo.** Medido: `bert-base-cased`
+   (`vocab_size` 28 996) e um BERT de 6 camadas foram **aceitos** como o selado, porque só `model_type` era
+   comparado — e `"bert"` é o que todo BERT declara. Nenhum dos dois é pego pelo teto: 28 996 × 768 dá
+   ~1,09 × 10⁸ bytes em int8, **abaixo** de 130 000 000. Remédio: `BACKBONE_CONFIG_SHAPE` compara também
+   `vocab_size`, `hidden_size` e `num_hidden_layers`, recusando nomeando 29 794.
+4. **O T4 documentado quebrou.** O README mandava subir só `dataset.tgz` e o script, e `main()` passou a
+   ler a política na primeira instrução: `FileNotFoundError` cru, inclusive em `--help` (reproduzido num
+   diretório plano). Remédio: `sealed_policy_path` recusa nomeando os **dois** paths tentados e dizendo
+   qual arquivo subir; o layout plano do Colab é encontrado ao lado do script (o path do checkout tem
+   precedência, para que uma cópia solta nunca sombreie o arquivo rastreado); e o README lista o terceiro
+   upload, com o T5 finalmente documentado.
+5. **O registro afirmava duas vezes o mesmo campo selado, uma delas falsa.** A seção de 340 000 000
+   (Fase 1) seguia sem marca de retratação, e quem navega por grep a encontra primeiro. Remédio: marca de
+   **RETRATADO** no cabeçalho dela.
+6. **O parágrafo 1 do ESTADO ficou falso pelas adições desta unidade.** Quatro números medidos errados
+   (2.768 / 310 / 1.708 / 1.398 contra 2.771 / 343+18 / 1.744 / 1.401), e **nenhum teste os lê** — MW19
+   confirma: falsificados os quatro, a suíte fica verde. Remédio: os quatro corrigidos aqui. Guarda
+   **recusada** com razão: um teste que afirme a própria contagem de testes é circular (acrescentá-lo muda
+   o número que ele afirma) e quebraria a cada teste futuro; o que dá para vigiar sem circularidade — o
+   `evaluatorDigest` — já é vigiado.
+
+E os menores aplicados: `opset 14` era literal do fallback do exportador copiado para dentro da descrição
+da medição — o `opset_import` do artefato ancorante é **18** (decodificado do `ModelProto`: `ir_version` 8,
+produtor `onnx.quantize`, um único `opset_import` de domínio vazio); o "caminho de export inteiro é
+BERT-shaped" ganhou o qualificador de que só o **fallback** fixa as três entradas; o bloco MEDIDO devolveu
+à literatura os 278 M do XLM-R e a identidade do encoder; o teto passou a ser conferido contra os
+descritores **rastreados**; o artefato reprovado não fica mais no diretório de onde o empacotamento lê; e o
+docstring do teto perdeu a promessa de pertencimento, que um limite **superior** não pode cumprir (medido:
+um artefato de 55 MB passa, e deve passar).
+
+**Menores recusados, com razão.** (i) **Piso de bytes** ancorado no medido: exigiria campo selado novo
+(`onnxMinimumInt8Bytes`) ou um literal de 109 681 931 no lab — a segunda autoridade que esta unidade existe
+para fechar. O que responde "pertence?" é identidade, e identidade agora é `vocab_size` + forma do grafo;
+o docstring deixou de prometer o que o teto não faz. (ii) **Recusa por forma no treino** (`train_detector`
+chamando a tabela do exportador): acoplaria os dois scripts e somaria um upload ao T4, para um cenário que
+o `literal()` do parser já torna inalcançável — uma política que sele backbone inexportável não passa pelo
+parser. (iii) **Verificador de docs** que falhe quando o registro afirma, para campo selado, valor que a
+política viva contradiz: é análise de prosa, e a marca de retratação resolve o caso concreto.
+
+### Prova por mutação — vinte mutações, cinco passos cada
+
+Base verde, mutação no arquivo de produção, rodada do teste alvo, restauração, conferência sha256 byte a
+byte. Hashes **medidos na árvore entregue**, idênticos antes e depois de cada mutação:
+
+| arquivo | sha256 |
+|---|---|
+| `benchmark/preregistration-v4.ts` | `fa9c3d92c95e6ec1769ee30a0b17345d0e1f690f8d415d9cef3cc9f356b9c8a7` |
+| `benchmark/preregistration-v4.json` | `71046cea188cf63f4ce05d775a30e882231048284a60890c6b1ccfdf8b263207` |
+| `benchmark/lab/train_detector.py` | `961eb1f716be3a0cb19656a091629847c6af77e3d2c7e55cc4cf94d0a1a69ca0` |
+| `benchmark/lab/export_onnx.py` | `f1e5d82af88e5f5ef828f4f90810e52ea74ff461546688da772ec3496f87b6ef` |
+| `models/cleanfeed-ptbr-v1/source-lock.json` | `688394cf2e4d303671fde4a1e28a6956f8a2b18b0e8d15fe2e7b304fb058a6e9` |
+| `models/cleanfeed-ptbr-v1/cleanfeed-model.json` | `872d6093a86ec8374a76d8d550d08e0293d18b7116651e999a8881b950219dcd` |
+
+Base dos alvos: `test_backbone_policy.py` **33 passed**; `benchmark/tests/preregistration-v4.test.ts`
+**48 passed**.
+
+| # | mutação | resultado |
+|---|---|---|
+| MW1 | `backbone` volta a `text()` no parser (aceita qualquer string) | 2 failed / 46 passed: "refuses the discarded bake-off candidate as the backbone" e "pins each frozen field to its value, naming the path" (`backbone: expected null to be an instance of PreregistrationV4Error`) |
+| MW2 | `onnxMaximumInt8Bytes` volta a `integer(… ≥ 1)` | 2 failed / 46 passed: "refuses the export ceiling that was sized for the discarded candidate" e a tabela de pins, nomeando `onnxMaximumInt8Bytes` |
+| MW3 | guarda de `--model` deixa de comparar | 2 failed / 31 passed: `test_it_refuses_the_discarded_candidate_naming_the_sealed_one` (`ValueError not raised`) e `GuardCallSites::test_train_main_refuses_the_discarded_candidate` |
+| MW4 | guarda de seed compara `< 0` em vez de igualdade | 2 failed / 31 passed: `test_it_refuses_the_argparse_default_that_used_to_be_shipped` e o mesmo caso via `main()` |
+| MW5 | comparação de `model_type` do checkpoint deixa de comparar | 3 failed / 30 passed: `…_of_another_architecture`, `…_that_declares_no_architecture` e `GuardCallSites::test_export_main_refuses_a_checkpoint_of_another_architecture` |
+| MW6 | teto do export compara contra `ceiling * 2` | 2 failed / 31 passed: `test_it_refuses_an_artifact_one_byte_above_the_ceiling` (65 bytes aceitos contra teto 64) e `test_a_rejected_export_is_not_left_where_the_packaging_reads` |
+| MW7 | `onnxMaximumInt8Bytes` do **JSON** volta a 340 000 000 | recusa no **load**: `PREREGISTRATION_V4_INVALID: onnxMaximumInt8Bytes is frozen at 130000000` — o arquivo de teste inteiro não roda |
+| MW8 | tabela de formas mapeia o BERTimbau para `xlm-roberta` | 10 failed / 23 passed, entre eles `test_the_sealed_backbone_is_exportable_by_the_shape_this_script_emits` e `test_the_exporter_pins_the_sealed_backbone_shape` |
+| MW9 | docstring do treino recebe de volta a instrução de bake-off | 1 failed / 32 passed: `test_the_docstring_carries_no_bake_off_instruction` (`'Bake-off' unexpectedly found`) |
+| MW10 | os **dois** `assert_*` saem de `train_detector.main()` | 2 failed / 31 passed: os dois `GuardCallSites` do treino. O vermelho é `ModuleNotFoundError: transformers` em vez de `ValueError` — a execução **passou** da guarda e chegou ao import, que é exatamente o que a mutação nega |
+| MW11 | `assert_checkpoint_matches_sealed_backbone` sai de `export_onnx.main()` | 1 failed / 32 passed: `GuardCallSites::test_export_main_refuses_a_checkpoint_of_another_architecture`, `ModuleNotFoundError: onnxruntime` |
+| MW12 | `main()` volta a chamar `quantize_dynamic` direto, sem o teto | 1 failed / 32 passed: `test_export_main_publishes_the_int8_artifact_through_the_ceiling_guard` (`'quantize_within_the_ceiling(' not found`) |
+| MW13 | comparação de `vocab_size`/`hidden_size`/`num_hidden_layers` desaparece | 3 failed / 30 passed: `…_a_fine_tune_of_another_bert_by_vocabulary`, `…_with_half_the_encoder`, `…_that_declares_no_vocabulary_size` |
+| MW14 | `EMITTED_GRAPH_INPUTS` perde `token_type_ids` | 2 failed / 31 passed: `test_a_graph_without_segment_ids_is_refused_naming_the_missing_input` e o pin das três entradas |
+| MW16 | `sealed_policy_path` volta a devolver o path sem conferir | 2 failed / 31 passed: `test_neither_script_falls_back_when_the_policy_is_absent` (`FileNotFoundError` cru) e `test_the_colab_layout_finds_the_policy_beside_the_script` |
+| MW17 | `onnxMaximumInt8Bytes` do JSON vai a 150 000 000 | 1 failed / 32 passed **do lado Python**: `test_the_policy_seals_bertimbau_without_a_bake_off` (`150000000 != 130000000`) — o pin literal do lab, não só o do parser |
+| MW20a | `source-lock.json` declara 130 000 001 bytes | 1 failed / 47 passed: "keeps the shipped artifact descriptors under the export ceiling" (`expected 2 to be 1` — os dois descritores discordam) |
+| MW20b | **os dois** descritores declaram 130 000 001 | 1 failed / 47 passed: o mesmo teste, agora na comparação com o teto (`expected 130000001 to be less than or equal to 130000000`) |
+
+Três "mutações" pedidas pela revisão **não são de código**, e ficam registradas como o que são. **MW15**:
+medido que um artefato de 55 MB passa pelo teto — e deve passar, porque um limite superior não é
+pertencimento; o remédio foi tirar a promessa do docstring, e um piso selado foi recusado acima com razão.
+**MW18**: marca de retratação em prosa, sem teste. **MW19**: falsificados os quatro números do parágrafo 1
+do ESTADO, `169 arquivos / 2.771 testes` e `343 passed, 18 subtests` seguem **verdes** — nenhum teste os lê,
+e é por isso que envelheceram; corrigidos aqui, com a guarda recusada por circularidade.
+
+Três mutações **não** isolaram o que se pretendia, e estão registradas como tais. **MW7** recusa no load,
+antes de qualquer asserção rodar — mesma classe de M20 na emenda da moldura, e prova que o pin alcança o
+dado selado, não que algum teste o afirme. **MW8** derruba dez testes, vários deles asserções de recusa que
+passam a falhar pela razão errada: `assert_checkpoint_matches_sealed_backbone` chama
+`assert_sealed_backbone_is_exportable` primeiro, então a guarda da política dispara antes da do checkpoint.
+Isso é a ordem correta — a política é a autoridade — e o preço é que a mutação da tabela não isola.
+**MW10** e **MW11** ficam vermelhas por `ModuleNotFoundError` e não pela recusa esperada: o teste afirma
+`ValueError`, a mutação deixa a execução seguir até o import de `transformers`/`onnxruntime`, e o vermelho é
+"a guarda não estava lá". É o vermelho certo pela razão certa, com a mensagem de outra classe.
+
+**O que nenhum teste desta unidade alcança, declarado.** O sítio de chamada do teto em `main()` só é
+observável por `inspect.getsource` (MW12): exercitá-lo de verdade exigiria `onnxruntime`, `torch` e um
+checkpoint real de ~440 MB. E a mutação silenciosa que a revisão descreveu — tirar `token_type_ids` do
+fallback e publicar um grafo de duas entradas — agora é recusada em execução por
+`assert_inputs_are_the_emitted_shape`, mas **não** por teste: nada no lab abre uma sessão ONNX.
