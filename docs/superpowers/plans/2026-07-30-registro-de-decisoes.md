@@ -3553,3 +3553,189 @@ CEDO e nomeando a causa. Antes: `UnsplittableCorpus` em `assert_components_can_f
 porque as 16 selecionadas saíram em `MissingLabelEvidence`. É o mesmo defeito de pool — os 16.100
 candidatos humanos em disco não carregam `dateField`, `sourceMaterialBatch` nem `groupAxes` — dito uma
 etapa antes.
+
+---
+
+## Fase 2, unidade L2 — held-out, reserva OOD e cegueira: D2, D1 e D5 (2026-08-05)
+
+**Status:** `EM-VIGOR (delegada)`. Nenhuma das três divergências está na lista de nunca-delegado e
+nenhuma toca o caminho selado — o lab produz candidatos, e nenhum arquivo de `EVALUATOR_FILES` é tocado
+(medido: os 52 membros da lista não contêm arquivo do lab, e `git status` mostra mudança só em
+`benchmark/lab/*.py` e em documentação, logo **o `evaluatorDigest` NÃO move nesta unidade**). O estado
+vigente vive em `ESTADO.md`; a razão metodológica, com referência, em `references.md` § L (L7–L9); aqui
+está a razão de engenharia e o custo de reversão.
+
+**Medido antes de decidir.** As famílias geradoras que os pools em disco entregam ao montador, por
+`(provider, family)`: `gemini`→`gemini-3.5-flash-lite` (493), `gemini-3.1-flash-lite` (256),
+`gemini-3-flash-preview` (2); `agy`→`gemini-3.5-flash-low` (320), `gemini-3.5-flash-medium` (99);
+`codex`→`gpt-5.6-luna` (1.402). Nos pools de mistura: `antigravity`→`claude-sonnet-4-6` (177),
+`gemini-3.6-flash-low` (449), `gpt-oss-120b-medium` (451); `gemini`→sete famílias gemini/gemma;
+`openai`→`gpt-5.6-luna` (177) e `anthropic`→`claude-fable-5` (60), as duas recusadas por `UnmappableLane`.
+
+**O censo acima estava INCOMPLETO, e a rodada adversarial pegou.** Faltava o sétimo arquivo que `load_ai`
+lê, `ai_reserved.jsonl` (1.476 linhas): `claude-fable-5` (16), `gemini-flash-lite-latest` (94),
+`gpt-5.6-luna` (181) e **nove famílias `madras_*` que nenhum papel nomeava** — 1.185 linhas. O censo
+completo, canonizado e conferido por guarda, é `POOL_GENERATOR_FAMILIES` (23 famílias, 6.183 linhas, soma
+igual a `load_ai` + `load_mixed`); a decisão sobre as nove está em L2-22. A omissão tem uma causa que vale
+registrar: as listas de papel foram escritas a partir do **slate de geração** e lidas como se tivessem sido
+escritas a partir dos pools — três das quatro entradas core que não vêm das quatro lanes vivem justamente
+no arquivo que o censo não cobriu.
+**Nenhuma linha de mistura é escrevível hoje**: as 2.135 não carregam `promptTemplateDigest` nem
+`sourceMaterialBatch`, então a classe mista sai ZERO por `MissingRecipe`/`MissingMaterialBatch` — e é por
+isso que o fixture de ponta a ponta desta unidade reproduz um corpus de duas classes.
+
+### D2 — o fallback que reinstalava família held-out retirada
+
+Estava em `main`, uma linha: `"heldOutGeneratorFamilies": sorted(held_out) or ["gemini-3_5-flash-lite"]`.
+O nome do fallback é uma das DUAS famílias de `HELD_OUT_INELIGIBLE` — as que foram rebaixadas em
+2026-07-24 porque o treino tinha 721 registros do alias `gemini-flash-lite-latest` e o ônus é de quem
+alega. Isto é, quando a reserva saía vazia, a governança declarava exatamente a alegação que a corrida
+havia retirado por falta de prova, e um `validate` posterior teria conferido só a contagem de positivos.
+
+| # | decisão | razão | custo de reversão |
+|---|---|---|---|
+| L2-1 | o fallback SAI, e reserva vazia **recusa** a montagem (`HeldOutReserveEmpty`) | a escolha entre "vazio legal na governança" e "recusa explícita" não é gosto: `parseDatasetManifest` (`benchmark/dataset-manifest.ts`) recusa por nome uma `heldOutGeneratorFamilies` vazia, então não existe estado vazio a que cair. A recusa carrega a razão de CADA candidata retirada, que é o número sobre o qual o operador age | reinserir uma linha; o teste de ponta a ponta e o do sítio de chamada ficam vermelhos |
+| L2-2 | a declaração é uma função (`declared_held_out_families`) e não um literal no dict de governança | uma guarda que só existe dentro de `main` não tem teste que a distinga de um literal. Com a função, o teste de comportamento (recusa) e o do sítio de chamada (a `main` a usa) pegam as duas metades da regressão | remover a função e inlinear |
+
+### D1 — a reserva OpenAI-OOD passa a ser política do slate, por nome
+
+O predicado que estava lá era `f.startswith("gemini-3") and f not in HELD_OUT_INELIGIBLE`: a candidatura
+a held-out era deduzida de prefixo de nome, e a reserva OpenAI de ESTADO.md § 3.3 **não era imposta em
+lugar nenhum** do montador.
+
+| # | decisão | razão | custo de reversão |
+|---|---|---|---|
+| L2-3 | duas listas de PAPÉIS (`OOD_RESERVED_FAMILIES`, `CORE_GENERATOR_FAMILIES`), comparadas por igualdade exata sobre `groups.generatorFamily` | é o eixo canônico, e `generator-family.ts` já tem o tipo nominal e a invariante do lado selado; `generation.family` carrega a grafia pontuada do provedor e nunca casaria uma entrada do slate — é a comparação que deixava a marca de held-out do splitter inerte antes do tipo nominal existir | editar dois dicts |
+| L2-4 | família geradora que NENHUMA das duas listas nomeia **para a corrida** (`UndeclaredGeneratorFamily`) | é a assimetria de L1-16/L1-21 no eixo do gerador, e é ela que responde ao problema do renome. Igualdade exata não é imune a renome — nada é —, mas ela FALHA FECHADO: sob prefixo, `gpt-5.7-luna` deixa de casar `gpt-5.6`, é lida como core e entra no treino em silêncio; sob declaração, cai fora das duas listas e a montagem para nomeando a família | trocar o `raise` por um default |
+| L2-5 | nem lane nem prefixo decidem o papel, e a razão é MEDIDA | `gpt-5.6-luna` chega pela lane `codex` e `gpt-oss-120b-medium` só é alcançável pelo `agy`, que é o harness do **Google**: a fronteira de provedor cruza a de lane, então fatiar por lane não é fatiar por provedor. Um teto por lane classificaria `gpt-oss` como core por acidente de canal | — |
+| L2-6 | `gpt-oss-120b-medium` é **reservada**, divergindo da tabela de D3 do plano dormente | ESTADO.md § 3.3 diz "famílias OpenAI ficam reservadas ao teste de gerador não visto (OOD); nenhuma entra em treino", sem exceção por lane, e o remédio de D1 na medição de conformidade fala em "toda família OpenAI (gpt-*)". Precedência: código medido > ESTADO > plano, e o plano de 2026-07-26 está declarado **dormente, consulta e não execução**. Custo hoje: ZERO medido — a família só aparece nos pools de mistura, cujas linhas são todas recusadas | mover uma entrada entre dois dicts |
+| L2-7 | as famílias gemini-3.x passam a **core**; a alegação de gerador não visto repousa num PROVEDOR inteiro ausente do treino | é a alegação mais forte disponível e é a que o próprio slate D3 defende ("com a lane OpenAI reservada, o gerador não visto passa a ser um provedor inteiro ausente do treino"). Duas delas já estavam em `HELD_OUT_INELIGIBLE`; as outras (`gemini-3.5-flash-low`, `gemini-3.6-flash-low`) eram defensáveis pelo canal, e continuam sendo — o que muda é que a reserva agora tem um critério declarado em vez de um prefixo | mover entradas entre os dois dicts |
+| L2-8 | `assert_slate_roles_are_consistent()` roda no começo de `main` e recusa três contradições do próprio slate | as três são silenciosas em tempo de montagem: família nos dois papéis (o assento sai da consulta que rodar primeiro), família reservada cuja alegação foi retirada (`HELD_OUT_INELIGIBLE` — reservá-la é publicar resultado de gerador não visto para um gerador que o treino pode ter visto), e nome que não é ponto fixo de `generator_family` (a grafia pontuada nunca casa o eixo, então o papel nunca se aplica). Roda antes dos pools porque a contradição é barata de ouvir agora e cara depois de uma montagem | apagar a chamada; o teste que confere a ordem em `main` fica vermelho |
+| L2-9 | a reserva tem de caber no bloco cego **e deixar lugar ao lado** (`assert_the_blind_block_holds_both_roles`, comparação estrita) | o bloco cego carrega DUAS hipóteses: recall no limiar, cuja população são positivos de famílias que o treino contém, e a fatia de gerador não visto, cuja população é a reserva. Reserva igual ao bloco deixa a primeira sem população, e o montador não pode resolver isso escolhendo quais linhas reservadas descartar — quanto de cada papel o bloco carrega é cota de COLETA. Medido: 1.402 linhas frescas de `gpt-5.6-luna` contra bloco de teste de 800 na cota ratificada de 4.000 `ai`, logo a reserva **tem** de ser dimensionada na coleta (Fase 3) | trocar `>=` por `>`; o teste da borda fica vermelho |
+| L2-10 | reserva **magra** (< 200 positivos) tem as linhas DESCARTADAS e contadas, e só em corrida de release | declarar é recusado por `validate` (`DATASET_COVERAGE_INVALID`) e treinar é proibido pela reserva: sobra uma saída só, e a contagem impressa é quanto uma regeração tem de fechar. Só em release pela razão de L1-20: um `--sample` coleta uma fração da cota por construção, então toda família de um smoke está abaixo de um piso escrito para corpus selado. Se o descarte esvaziar a reserva, L2-1 recusa — é a rede | remover o filtro |
+| L2-11 | o print antigo "held-out nao cabem no bloco de teste" que seguia adiante vira **recusa** (`ReserveFillsTheBlindBlock`, dentro de `assign_partitions`) | imprimir e continuar produzia um corpus que o splitter recusaria depois, o que é a mesma espécie de defeito do fallback de D2: uma alegação degradada em silêncio. **Corrigido na rodada de fechamento:** este registro dizia que o print "sai" e ele estava intocado no arquivo — o que o diff havia removido era um print DIFERENTE (`nao declaradas held-out (bloco de teste cheio)`). O ramo é inalcançável a partir de `main`, porque `assert_the_blind_block_holds_both_roles` roda antes com a mesma aritmética e comparação estrita (provado por mutação: trocá-lo por `raise` deixou a suíte inteira verde), mas `assign_partitions` é chamável sozinha e é ali que os dois números são reais em vez de previstos | trocar o `raise` pelo `print`; `test_a_reserve_that_overflows_the_block_refuses_at_stamping_too` fica vermelho |
+
+### D5 — o conjunto de vistos são os 10.000 do corpus morto, poda global, lido como artefato
+
+| # | decisão | razão | custo de reversão |
+|---|---|---|---|
+| L2-12 | o conjunto de vistos passa a ser `benchmark/data/corpus-build/dataset/records.jsonl` — os **10.000** registros do corpus morto, todas as cinco partições — e a poda é **global** | é a decisão de desenho 2 do plano de entrega: superconjunto da graduação de § 3.4 (que readmitiria a linha casada em `train`, `dev` e `cal-A`), e o que se compra é que "nada deste corpus foi visto" seja UMA comparação em vez de restrição por partição. As ~1.600 linhas recuperáveis são abdicadas de propósito | trocar o caminho do artefato |
+| L2-13 | **consequência declarada:** os 36.971 textos de `benchmark/data/dataset/{train,dev}.jsonl` deixam de ser telados | eram o treino do detector de 25/07, e o modelo de registro é retreinado **de zero** sobre o corpus novo (Fase 4), então aqueles textos não são "vistos pelo candidato". O que a graduação de § 3.4 grada é a exposição das cinco partições do corpus MORTO, e é isso que a tela nova cobre. Se a Fase 4 vier a reusar aquele dataset, esta linha é a que se retrata | acrescentar os dois arquivos à construção do índice |
+| L2-14 | a montagem lê um **artefato** (`near_dupes.build_seen_index` / `write_seen_index` / `read_seen_index`), nunca o corpus morto | parte das 10.000 linhas esteve em partição cega. O artefato carrega, por documento, o digest do conteúdo tokenizado e as chaves de 8 bytes de blake2b dos shingles de 5 tokens — nenhum token do material —, e é a mesma lógica de "calcular sha256 do ledger é permitido": um PROGRAMA que lê bytes e emite digest não expõe conteúdo. Uma implementação que exigisse alguém ler uma linha de partição cega estaria errada | — |
+| L2-15 | o lado visto é comparado como CHAVES e não como cadeias, e a **largura da chave é parte do contrato** | é o que permite uma implementação só: `drop_seen(docs, textos)` passa a ser `drop_seen_against(docs, build_seen_index(textos))`, sem bifurcar o algoritmo entre o caminho de texto e o de artefato. **A justificativa original desta linha estava ERRADA e a rodada adversarial provou com um par construído:** "colisão só pode ACRESCENTAR à interseção" é falso, porque colisão entre dois shingles que os dois documentos COMPARTILHAM tira um elemento da interseção e um da união ao mesmo tempo — 82/100 = 0,82 vira 81/99 = 0,8181 sob barra de 0,82, e a quase-duplicata SOBREVIVE. Sob crc32 o par saía de uma busca de segundos. Conserto em L2-20 | — |
+| L2-16 | vocabulário FECHADO no cabeçalho e na linha de documento do artefato | um campo livre é onde alguém põe "só uma amostra para saber de que corpus veio", e a amostra É o material. Fechado nos dois lados, nenhum campo pode carregar texto — é asserção estrutural, e não confiança na disciplina de quem escreve. `read_seen_index` recusa contrato divergente, campo extra, índice truncado e blob de largura errada | remover as quatro conferências |
+| L2-17 | o artefato é declarado **estritamente menos exposto** que o arquivo de que deriva, e não incondicionalmente opaco | chave de 64 bits de um 5-grama não é texto e não se inverte sozinha, mas um dicionário de 5-gramas de pt-BR poderia testar candidatos contra ela. O artefato vive em `benchmark/data/` (nunca no Git, nunca em pacote de evidência), no mesmo lugar onde o material já vive. Declarar o resíduo é mais honesto que alegar opacidade | usar hash com chave do keyring C3 — o que amarra a montagem ao keyring, que ela hoje não lê |
+| L2-18 | montagem de **release** recusa sem o artefato (`SeenIndexMissing`) e recusa artefato com menos de 10.000 documentos (`SeenIndexIncomplete`) | o modo de falha substituído era pular a poda em silêncio: a guarda anterior era `if seen_texts:`, um teste de veracidade, então insumo ausente produzia corpus que não passara por tela nenhuma e não dizia nada. `DEAD_CORPUS_DOCUMENTS = 10_000` é medido (sha256 `595739107e895cfc7b09409f29c13b998d195e921f1ca7eec1e5c8406772116a`, 10.000 linhas) e o corpus morto é artefato congelado da corrida reprovada | uma constante |
+| L2-19 | um smoke `--sample` sem artefato **avisa** e segue | um smoke não sela corpus, e exigir o índice de 10.000 documentos num fixture tornaria a montagem de fumaça intestável. O aviso é impresso, então a corrida não se apresenta como podada | trocar o `print` por `raise` |
+
+**Medição do artefato real (v2, chave de 8 bytes):** 10.000 documentos, 3.323.576 chaves de shingle,
+36.425.322 bytes, ~8 s para construir. A v1 (crc32) media 18.699.290 bytes e ~5 s; dobrar o arquivo local
+é o preço da largura de chave de L2-20. O programa imprimiu apenas
+contagens e o digest do arquivo de origem; nenhuma linha de conteúdo foi lida, impressa ou amostrada.
+
+**Consequência operacional MEDIDA, e é grande.** `--sample 100` sobre os pools em disco contra o índice
+real: `{'seen_texts': 10000, 'checked': 13880, 'dropped': 8133, 'dropped_exact_content': 8400,
+'highest_similarity_kept': 0.534, 'candidates_evaluated': 425486}`. Isto é, **8.133 dos 13.880 candidatos
+em disco (59 %) são duplicata exata ou quase-duplicata do corpus morto** — o que é esperado, porque os
+pools de hoje são em boa parte o material de que o corpus morto foi montado, e é exatamente a razão pela
+qual a Fase 3 re-extrai em vez de reaproveitar. A poda global não é um detalhe de higiene: ela é a
+diferença entre um corpus novo e uma remontagem do abandonado.
+
+Duas leituras da linha, para quem a for auditar: `dropped_exact_content` (8.400) é maior que `dropped`
+(8.133) porque o primeiro conta OCORRÊNCIAS e o segundo é um CONJUNTO de chaves, e `enforce_unique_keys`
+só roda depois — dois pools que carregam a mesma chave são contados duas vezes e descartados uma. É
+propriedade preexistente da estatística, não efeito desta unidade. E `highest_similarity_kept: 0.534` diz
+que o que sobrou não está encostando na barra de 0,82.
+
+A corrida ainda reprova depois disso, pela mesma razão de pool que L1 registrou: em release,
+`CellBelowOriginDocumentFloor` com **zero** documento de origem distinto nas quatro células; em smoke,
+`HardNegativeCellUnderfilled`, porque as humanas selecionadas saem em `MissingLabelEvidence`. Os dois têm
+uma causa só — os candidatos em disco não carregam `dateField`/`sourceMaterialBatch`/`groupAxes` —, e o
+desbloqueio é a re-extração da Fase 3.
+
+### O fixture de ponta a ponta, e por que os números dele são derivados
+
+`AssemblyRunTests` roda `main()` inteiro sobre pools de fumaça e é o que dá dentes às três guardas nos
+seus SÍTIOS DE CHAMADA. `--sample 100` pede 40 humanas, 40 `ai` e 20 mistas, e **40 é escolhido por
+aritmética**: as quatro frações arredondadas de 40 (0,45/0,05/0,10/0,20) são inteiras e `test` é o resto,
+então todas caem dentro de `CLASS_TOLERANCE`; em 12 ou 15 não caem e o corpo estampado é recusado antes
+de a corrida alcançar o que se quer testar. Cada linha gerada carrega o próprio `version` e o próprio
+digest de template porque os dois são eixos de UNIÃO (`SPLIT_GROUP_KEYS`): linhas que os compartilham são
+um componente, e uma classe colapsada num componente reprova a guarda de geometria. Cada linha humana
+carrega o próprio documento de origem pelo mesmo motivo. As cinco partições ficam povoadas.
+
+**Achado do fixture, registrado porque vale para a Fase 3:** com `generatorVersion` na união do split, um
+corpus REAL em que uma família compartilha uma versão entre suas linhas produz **um componente por
+versão** — o mesmo problema de granularidade que L1-19 mediu no eixo `source`, no eixo do gerador. O
+fixture escapa dando versão distinta a cada linha; um corpus de release não pode escapar assim, e a
+escolha (versão por lote de geração, ou o eixo sair da união) é da Fase 3, junto da granularidade humana.
+
+### Rodada de fechamento — as três correções que a revisão adversarial arrancou
+
+A implementação acima foi submetida a uma rodada adversarial que **bloqueou** com três achados. Nenhum
+deles foi refutado: os três eram verdadeiros e estão consertados. O padrão dos três é o mesmo, e vale
+nomeá-lo — **frase publicada que o código não sustentava**: um contrato absoluto sobre shingles rodando
+sobre chaves de 32 bits, uma guarda chamada `covers_the_dead_corpus` que só contava linhas, e um comentário
+alegando cobertura dos pools sobre uma lista escrita a partir do slate.
+
+| # | decisão | razão | custo de reversão |
+|---|---|---|---|
+| L2-20 | a chave de shingle passa de crc32 a **8 bytes de blake2b**, e a largura é parte declarada do contrato (`shingle_key`, `SEEN_SHINGLE_ENCODING`, artefato v2) | o par `aa7275 bb7275 cc7275 dd7275 ee7275` / `aa47144 bb47144 cc47144 dd47144 ee47144` colide em crc32 (232429220), e um par de documentos montado em torno dele media **exatamente 0,82** sobre cadeias e era MANTIDO: colisão dentro da interseção tira um elemento da interseção e um da união ao mesmo tempo, e 82/100 vira 81/99. Das três saídas — declarar a tela mais fraca, bifurcar texto/artefato, ou alargar a chave —, alargar mantém UMA implementação e põe o resíduo em `n²/2⁶⁵ ≈ 3e-7` sobre as 3,3 M chaves reais. Bifurcar deixaria o caminho que a release roda com a tela mais fraca; declarar sem alargar deixaria um par construtível em segundos atravessando a barra. Uma tela por chaves nunca é absoluta sobre shingles — para ser, teria de guardar os shingles, isto é, o texto —, então o honesto é dizer a largura e o número | trocar a função de chave; o artefato v1 é recusado por nome (`shingleEncoding`, `version` e nome de arquivo) |
+| L2-21 | `assert_the_seen_index_covers_the_dead_corpus` confere o **digest** do que foi indexado contra `DEAD_CORPUS_SHA256` (`SeenIndexOfAnotherCorpus`) | contagem de documentos não identifica material: um índice construído por engano sobre os pools frescos (13.880 candidatos em disco) satisfaz `documents >= 10.000`, a montagem segue, e imprime como contaminação o resultado de comparar os pools contra si mesmos. É o mesmo modo de falha que `SeenIndexMissing` existe para eliminar, nas palavras do próprio código: um corpus montado sem tela nenhuma é indistinguível, pelos próprios artefatos, de um que passou pela tela. E o digest medido estava no repositório como **prosa em comentário** — medição que nada compara é folclore | apagar três linhas |
+| L2-22 | **terceiro papel** — `EXCLUDED_GENERATOR_FAMILIES`: nove famílias `madras_*` de proveniência indeterminada, cujas linhas SAEM do corpus, contadas por família | os dois papéis não cobriam `ai_reserved.jsonl`: 1.185 linhas em nove famílias que a linha identifica por nome de corpus e nenhum provedor (`openrouter*` é ROTEADOR entre provedores, `victory_*` não diz nada, `gptoss5` nomeia justamente o provedor reservado). Core treinaria numa linha possivelmente OpenAI e destruiria a alegação de provedor ausente — a única alegação de gerador não visto deste release; reservar publicaria "gerador ausente do treino" sem saber o provedor, e as nove estão sob o piso de 200. É a leitura fail-safe de § 3.3. Distinto de `HELD_OUT_INELIGIBLE`: lá o provedor é conhecido (Google) e só a resolução do alias não é, e as linhas FICAM como IA comum | mover entradas entre dicts, no dia em que a linha registrar provedor |
+| L2-23 | `POOL_GENERATOR_FAMILIES` — censo medido dos pools — e a cobertura conferida nos DOIS sentidos | "as listas cobrem os pools" era alegação de comentário, e falsa nas duas direções: a lista continha famílias que as lanes não põem e deixava nove famílias do pool fora. Agora família do pool sem papel recusa (`SlateContradiction`) e papel sobre família que o pool não entrega recusa também — a segunda é a que produziu o erro, porque uma lista escrita a partir do slate de geração passa a ser lida como derivada dos pools. O censo é literal porque os pools não estão no Git; o comentário carrega o comando de re-medição, e a guarda de igualdade força re-medir quando os pools mudarem | apagar as duas conferências |
+| L2-24 | a ordem ascendente das chaves é conferida na **leitura** do artefato | é a única invariante do artefato cuja violação enfraquece **em silêncio** o único limite absoluto do módulo: `indexed_keys_from` lê a fatia INICIAL da ordem, então uma linha fora de ordem indexa subconjunto arbitrário e o limite de `MINWISE_FRACTION` deixa de valer, com todo o resto do contrato batendo. A mutação registrada antes cobria só o escritor | apagar a conferência |
+| L2-25 | `read_seen_index` passa a **streamar** de fato — cabeçalho, depois linha a linha | a justificativa de formato descrevia um leitor que não existia: o comentário dizia "uma linha por documento para que um índice de 10.000 documentos STREAME em vez de ser mantido como um valor JSON" e a leitura materializava o arquivo inteiro antes de interpretar qualquer coisa. Consertar o leitor é mais barato que rebaixar a frase, e o arquivo dobrou de tamanho nesta rodada | voltar a materializar |
+| L2-26 | `positive_rows_per_family` é função nomeada, e a docstring declara **qual população** o piso da reserva magra conta | o piso do lab conta LINHAS e o selado conta linhas ELEGÍVEIS (`countsTowardHeldOutFloor` -> `recordEligibility`), então o lab é limite superior e o raciocínio de L2-10 ("sobra uma saída só") dependia de as duas contagens serem a mesma. O lab NÃO passa a espelhar elegibilidade, e a razão é medida: no ponto da corrida em que o piso roda, `generationBatch` é `unknown` em toda linha gerada — é derivado depois do particionamento, porque `generatedAt` entra na chave do lote —, então a contagem por elegibilidade daria ZERO para toda família, e espelhar exigiria uma segunda cópia PARCIAL da regra selada: exatamente o defeito "duas grafias que nunca se encontram" pelo qual o módulo selado já está anotado. `harnessVersion` é o eixo que faz as duas contagens diferirem de verdade nos pools de hoje | o lab passa a contar elegibilidade; `test_the_floor_counts_lines_and_not_the_sealed_eligible_population` fica vermelho |
+| L2-27 | o `MANIFESTO-DE-TRANSPLANTE.md` deixa de mandar apontar `seen_texts` para os textos do corpus antigo | era o procedimento que L2-14 acabara de proibir, num documento de produção. A varredura repo-wide de alegações é da Fase 7, mas uma frase que contradiz regra em vigor custa uma linha | — |
+
+### Prova por mutação
+
+**Unidade:** 20 mutações, 20 vermelhas no teste NOMEADO, base verde nas duas pontas (255 testes + 19
+subtests) e restauração conferida por sha256 idêntico nos dois arquivos de produção. Cobrem: o fallback de
+governança de volta (2 vermelhos); `declared_held_out_families` substituindo em vez de recusar (3); o papel
+voltando a prefixo de nome (2); o papel lendo `generation.family` (2); a reserva não sendo assentada no
+bloco cego; `>=`→`>` na borda do bloco cego; o bloco cego conferindo só a classe `ai`; as três conferências
+do slate, uma a uma; a poda global não filtrando os pools; release sem artefato deixando de recusar; índice
+parcial deixando de recusar; as quatro conferências de leitura do artefato; a proveniência voltando a ser
+livre; o `+1` do subconjunto garantido na versão por chaves; e as chaves de shingle deixando de sair
+ordenadas.
+
+**Rodada de fechamento:** 14 mutações, base verde nas duas pontas (266 testes + 19 subtests) e restauração
+conferida por sha256 nos dois arquivos de produção. As sete que a revisão pediu: a chave voltando a crc32
+(**vermelho no par de colisão pinado — é a prova de que o achado 1 era real e de que o conserto o mata**);
+o digest do corpus morto deixando de ser conferido; chaves em ordem descendente aceitas na leitura; família
+de pool classificada por DEFAULT em vez de parar a corrida; a cobertura do censo deixando de ser conferida;
+`drop_seen` voltando a comparar cadeias enquanto `drop_seen_against` compara chaves; o print inalcançável
+trocado por `raise` (**verde, como pedido — é a prova de que estava morto, e é por isso que ele virou
+recusa**); e o piso passando a contar elegibilidade. Mais seis re-provas sobre o código que esta rodada
+refatorou: o fallback de reserva vazia, o papel por prefixo, o `+1` do subconjunto garantido, as chaves não
+ordenadas na escrita, release sem artefato, e a recusa nova no carimbo.
+
+**Uma ressalva honesta sobre a mutação "`drop_seen` volta a cadeias".** Ela fica vermelha, mas o que a mata
+é a igualdade das ESTATÍSTICAS (`candidates_evaluated`) e não a divergência de veredito: com a chave a 64
+bits, uma implementação por cadeias e uma por chaves concordam em todo par construtível, e essa concordância
+É o que a largura compra. O teste ganhou uma expectativa calculada sobre as CADEIAS dentro do próprio teste,
+que é o que o achado 5 pedia — duas implementações por chave concordando entre si não dizem nada sobre
+nenhuma delas honrar a frase que publicam.
+
+### O que esta unidade NÃO fez, de propósito
+
+- **o lado SELADO não impõe a reserva.** `sealDataset` confere a contagem de positivos por família
+  declarada, não que as famílias reservadas pela política estejam na lista. Hoje o lab é o único produtor
+  e a guarda vive nele; um gate selado é caminho selado (tríade completa, e move o `evaluatorDigest`), e
+  fica **como dívida com dono na Fase 3, item 3**, junto do congelamento do split;
+- **a reserva não foi dimensionada.** L2-9 recusa uma reserva que enche o bloco cego, e com os pools de
+  hoje ela recusaria: 1.402 contra 800. Quantas linhas cada lane gera é cota de coleta, da Fase 3;
+- **`benchmark/data/dataset/{train,dev}.jsonl` deixam de ser telados** (L2-13), com a retratação escrita;
+- `load_humans` continua lendo `reserved.jsonl` por constante de módulo — achado de L1, ainda aberto; o
+  fixture desta unidade redireciona `DATASET` para não montar a reserva real;
+- **o lado selado não conhece o terceiro papel.** `sealDataset` não sabe que existe família excluída; a
+  exclusão é do produtor, e um corpus montado por outra ferramenta poderia trazer as nove. Mesma dívida de
+  "o lado selado não impõe a reserva", mesmo dono (Fase 3, item 3);
+- **as 1.185 linhas excluídas são cota de coleta que a Fase 3 tem de fechar**, junto do dimensionamento da
+  reserva. Custo hoje: zero medido — as nove famílias já morriam em `UnmappableLane` por metadado ausente,
+  e é exatamente a re-extração que as reviveria sem papel, se a cobertura não fosse conferida;
+- `ESTADO.md` **não foi reescrito**: a reescrita das seções 1 e 5 é a última unidade desta fila. As linhas
+  que esta unidade torna verdadeiras no código são a de § 3.3 ("famílias OpenAI ficam reservadas ao teste
+  de gerador não visto; nenhuma entra em treino") e a de § 3.3/A3 (`drop_seen`), cuja descrição não muda.

@@ -5,7 +5,10 @@ corpus and the training set, and until this file it had no test at all — the m
 had tests for the extractors and none for the pruning they feed.
 
 What is pinned here is the CONTRACT, not independence: exact tokenized content plus
-Jaccard >= 0.82 over 5-token shingles.
+Jaccard >= 0.82 over 5-token shingles, compared as `shingle_key` keys. Where the
+distinction bites, the expectation is derived from the shingle STRINGS inside the test
+(`_verdict_over_strings`), because two key-based implementations agreeing with each other
+say nothing about either honouring the sentence they publish.
 `test_a_bucket_over_the_prune_cap_is_now_compared_instead_of_skipped` is the
 regression for a real recall hole: `drop_seen` used to apply prune()'s MAX_BUCKET cap,
 so a document whose only bridge to the training set ran through a shingle shared by
@@ -15,7 +18,13 @@ statistic said so.
 
 from __future__ import annotations
 
+import base64
+import json
+import re
+import tempfile
 import unittest
+from pathlib import Path
+from zlib import crc32
 
 import near_dupes
 
@@ -91,7 +100,7 @@ class DropSeenTests(unittest.TestCase):
         `MAX_BUCKET + 5` seen texts share one boilerplate opening, and each is short
         enough (< SAMPLE_MIN_SHINGLES) that the index keeps ALL its shingles rather
         than a 1/16 sample — that is what makes the bucket sizes exact instead of
-        dependent on crc32 values. The candidate then shares ONLY the boilerplate.
+        dependent on key values. The candidate then shares ONLY the boilerplate.
 
         Under the old cap those buckets were skipped, so the candidate proposed zero
         candidates and was compared against nothing. What this pins is that the
@@ -159,9 +168,13 @@ class DropSeenTests(unittest.TestCase):
         self.assertEqual(drop, {"d1"})
         # The contract travels WITH the number, so a printed stats line cannot be
         # read as an independence claim.
+        # Spelled out and not read off the module: the sentence the stats carry names the
+        # key comparison, because that is what the screen runs. A contract string that
+        # said "over-5-token-shingles" while the comparison ran over keys is the
+        # over-claim this literal exists to catch.
         self.assertEqual(
             stats["contract"],
-            "exact-token-content-and-jaccard-0.82-over-5-token-shingles",
+            "exact-token-content-and-jaccard-0.82-over-5-token-shingle-keys",
         )
         self.assertGreater(stats["candidates_evaluated"], 0)
         self.assertEqual(stats["dropped_exact_content"], 0)
@@ -191,7 +204,7 @@ class DropSeenTests(unittest.TestCase):
             if len(shingles) < near_dupes.SAMPLE_MIN_SHINGLES:
                 continue
             if any(
-                near_dupes.crc32(shingle.encode("utf-8")) % near_dupes.SAMPLE_MOD == 0
+                near_dupes.shingle_key(shingle) % near_dupes.SAMPLE_MOD == 0
                 for shingle in shingles
             ):
                 continue
@@ -271,7 +284,7 @@ class DeterministicReachTests(unittest.TestCase):
             if len(shingles) < near_dupes.SAMPLE_MIN_SHINGLES:
                 continue
             if any(
-                near_dupes.crc32(sh.encode("utf-8")) % near_dupes.SAMPLE_MOD == 0
+                near_dupes.shingle_key(sh) % near_dupes.SAMPLE_MOD == 0
                 for sh in shingles
             ):
                 continue
@@ -358,9 +371,7 @@ class IndexedKeysPropertyTests(unittest.TestCase):
             shingles = self.shingle_set(size)
             indexed = near_dupes.indexed_keys(shingles)
             gap = int(near_dupes.MINWISE_FRACTION * size)
-            keyed = sorted(
-                near_dupes.crc32(sh.encode("utf-8")) for sh in shingles
-            )
+            keyed = sorted(near_dupes.shingle_key(sh) for sh in shingles)
             smallest = set(keyed[: gap + 1])
             self.assertTrue(
                 smallest <= indexed,
@@ -376,16 +387,14 @@ class IndexedKeysPropertyTests(unittest.TestCase):
         """The guarantee itself, adversarially: the worst gap is the smallest keys.
 
         A gap of at most `floor(0.18 * n)` keys is chosen to be the WORST possible one —
-        the lowest-crc32 keys, exactly what a bottom-k selection would have picked — and
+        the lowest keys, exactly what a bottom-k selection would have picked — and
         the indexed set still has to survive it. Fails under a fixed floor as soon as the
         floor is smaller than the gap, which is what `guaranteed = 12` is for n >= 67.
         """
         for size in [64, 67, 100, 200, 1000]:
             shingles = self.shingle_set(size, salt=f"s{size}")
             indexed = near_dupes.indexed_keys(shingles)
-            keyed = sorted(
-                near_dupes.crc32(sh.encode("utf-8")) for sh in shingles
-            )
+            keyed = sorted(near_dupes.shingle_key(sh) for sh in shingles)
             worst_gap = set(keyed[: int(near_dupes.MINWISE_FRACTION * size)])
             self.assertTrue(
                 indexed - worst_gap,
@@ -403,7 +412,7 @@ class IndexedKeysPropertyTests(unittest.TestCase):
         """
         size = 1000
         shingles = self.shingle_set(size, salt="fixo")
-        keyed = sorted(near_dupes.crc32(sh.encode("utf-8")) for sh in shingles)
+        keyed = sorted(near_dupes.shingle_key(sh) for sh in shingles)
         worst_gap = set(keyed[: int(near_dupes.MINWISE_FRACTION * size)])
         rejected_floor = set(keyed[:12])
         self.assertTrue(
@@ -420,6 +429,330 @@ class IndexedKeysPropertyTests(unittest.TestCase):
         shingles = self.shingle_set(near_dupes.SAMPLE_MIN_SHINGLES - 1, salt="curto")
         indexed = near_dupes.indexed_keys(shingles)
         self.assertEqual(len(indexed), len(shingles))
+
+
+class SeenIndexArtifactTests(unittest.TestCase):
+    """The artifact carries the screen and NOT the material.
+
+    The seen set is the dead corpus, and part of it sat in a blind partition, so the
+    assembly reads this artifact instead of those record-lines. Two things therefore have
+    to hold at once: the screen has to give the same verdicts as the text-fed one, and the
+    file has to contain no token of the material.
+    """
+
+    # Tokens no pt-BR text would carry, so their absence from the artifact is evidence
+    # rather than coincidence — a short marker could appear inside base64 by chance.
+    RARE = ("zyzzyvamalucofuligem", "petrichorvaporwaveimbondeiro", "quixotescaefemeride")
+
+    def _blind_text(self) -> str:
+        return " ".join(
+            [*self.RARE, *(f"{token}{n}" for n in range(60) for token in self.RARE[:1])]
+        )
+
+    def _artifact(self, texts: list[str]) -> tuple[Path, dict, str]:
+        directory = Path(tempfile.mkdtemp())
+        path = directory / "seen-index.jsonl"
+        index = near_dupes.build_seen_index(texts)
+        header = near_dupes.write_seen_index(
+            index, path, {"path": "fixture", "sha256": "0" * 64, "lines": len(texts)}
+        )
+        return path, header, path.read_text(encoding="utf-8")
+
+    def test_the_artifact_carries_no_clear_text(self) -> None:
+        blind = self._blind_text()
+        path, header, body = self._artifact([blind, words(200, prefix="outro")])
+
+        # Nothing structural can carry text: the header and the document lines both admit
+        # a closed field set, one field a 64-hex digest and the other base64 of whole
+        # fixed-width keys.
+        lines = body.splitlines()
+        self.assertEqual(json.loads(lines[0]), header)
+        self.assertEqual(
+            sorted(header),
+            [
+                "artifact",
+                "contract",
+                "documents",
+                "jaccardThreshold",
+                "shingleEncoding",
+                "shingleKeys",
+                "shingleSize",
+                "source",
+                "version",
+            ],
+        )
+        self.assertEqual(sorted(header["source"]), list(near_dupes.SEEN_SOURCE_FIELDS))
+        self.assertEqual(len(lines), 3)
+        for line in lines[1:]:
+            row = json.loads(line)
+            self.assertEqual(set(row), set(near_dupes.SEEN_INDEX_FIELDS))
+            self.assertRegex(row["content"], r"^[0-9a-f]{64}$")
+            raw = base64.b64decode(row["shingles"], validate=True)
+            self.assertEqual(len(raw) % near_dupes.SHINGLE_KEY_BYTES, 0)
+            self.assertGreater(len(raw), 0)
+
+        # And nothing incidental either: neither a token of the material nor any of its
+        # 5-token shingles appears anywhere in the artifact's bytes.
+        haystack = body.lower()
+        for token in self.RARE:
+            self.assertNotIn(token, haystack)
+        for shingle in near_dupes.shingles_of(near_dupes.tokens_of(blind)):
+            self.assertNotIn(shingle, haystack)
+        # A last, blunt check on the alphabet: no line outside the header holds a letter
+        # sequence that is not hex or base64 payload.
+        self.assertFalse(re.search(r'"[^"]*\b(zyzzyva|petrichor|quixotesca)', haystack))
+        path.unlink()
+
+    def test_a_provenance_field_outside_the_declared_set_is_refused(self) -> None:
+        # The provenance is where a caller would reach for "just a sample so we can tell
+        # which corpus this came from", and a sample IS the material.
+        index = near_dupes.build_seen_index([words(120)])
+        with self.assertRaises(near_dupes.SeenIndexUnreadable) as caught:
+            near_dupes.seen_index_header(
+                index,
+                {
+                    "path": "records.jsonl",
+                    "sha256": "0" * 64,
+                    "lines": 1,
+                    "sample": "acordo coletivo de trabalho firmado entre as partes",
+                },
+            )
+        self.assertIn("could carry text", str(caught.exception))
+        self.assertIn("sample", str(caught.exception))
+
+    def _shingles(self, text: str) -> set[str]:
+        return near_dupes.shingles_of(near_dupes.tokens_of(text))
+
+    def _verdict_over_strings(self, text: str, seen: list[str]) -> bool:
+        """What the CONTRACT owes, computed here over shingle strings.
+
+        The screen compares keys. Comparing the two key-based implementations to each
+        other cannot say whether either honours the sentence they publish, so the
+        expectation is derived from the strings instead.
+        """
+        return max(
+            (
+                near_dupes.jaccard(self._shingles(text), self._shingles(other))
+                for other in seen
+            ),
+            default=0.0,
+        ) >= near_dupes.JACCARD_THRESHOLD
+
+    def test_the_artifact_screens_exactly_as_the_texts_do(self) -> None:
+        seen = [words(200), words(200, start=5000, prefix="outro")]
+        candidates = [
+            ("copia", seen[0]),
+            ("editado", seen[1].rsplit(" ", 1)[0] + " trocada"),
+            ("limpo", words(200, start=90_000, prefix="alvo")),
+        ]
+        path, _header, _body = self._artifact(seen)
+        try:
+            from_index, index_stats = near_dupes.drop_seen_against(
+                candidates, near_dupes.read_seen_index(path)[0]
+            )
+        finally:
+            path.unlink()
+        from_texts, text_stats = near_dupes.drop_seen(candidates, seen)
+        self.assertEqual(from_index, {"copia", "editado"})
+        self.assertEqual(from_index, from_texts)
+        self.assertEqual(index_stats, text_stats)
+        # And both against the arithmetic of the published contract, not against each
+        # other: `drop_seen` delegates to `drop_seen_against`, so the two equalities above
+        # move together under any mutation of the shared comparator.
+        for doc_id, text in candidates:
+            self.assertEqual(doc_id in from_index, self._verdict_over_strings(text, seen))
+
+    # Two 5-token shingles with the SAME crc32, found by search in seconds. The pair is
+    # the regression fixture for a screen that compared 32-bit keys while publishing a
+    # sentence about shingles.
+    CRC32_COLLIDING_SHINGLES = (
+        "aa7275 bb7275 cc7275 dd7275 ee7275",
+        "aa47144 bb47144 cc47144 dd47144 ee47144",
+    )
+
+    def _pair_at_the_bar(self) -> tuple[str, str]:
+        """(seen, candidate) whose shingle-string Jaccard is EXACTLY 0.82.
+
+        The two colliding 5-grams are windows 0 and 5 of a shared 86-token opening, so
+        both documents hold both of them; the tails are disjoint. 91 shingles each, 82
+        shared, 100 in the union. Under a colliding key the pair reads 81/99 = 0.8181 and
+        survives a bar of 0.82 — one collision inside the intersection is enough.
+        """
+        shared = [
+            *self.CRC32_COLLIDING_SHINGLES[0].split(),
+            *self.CRC32_COLLIDING_SHINGLES[1].split(),
+            *(f"enchimento{n}" for n in range(76)),
+        ]
+        return (
+            " ".join([*shared, *(f"caudavista{n}" for n in range(9))]),
+            " ".join([*shared, *(f"caudanova{n}" for n in range(9))]),
+        )
+
+    def test_a_pair_at_the_bar_is_dropped_even_where_crc32_conflates_two_shingles(
+        self,
+    ) -> None:
+        left, right = self.CRC32_COLLIDING_SHINGLES
+        self.assertEqual(crc32(left.encode("utf-8")), crc32(right.encode("utf-8")))
+        # The screen's own key has to SEPARATE them, or the pair below is one shingle.
+        self.assertNotEqual(near_dupes.shingle_key(left), near_dupes.shingle_key(right))
+
+        seen, candidate = self._pair_at_the_bar()
+        over_strings = near_dupes.jaccard(
+            self._shingles(candidate), self._shingles(seen)
+        )
+        self.assertEqual(over_strings, 0.82)
+        self.assertGreaterEqual(over_strings, near_dupes.JACCARD_THRESHOLD)
+        self.assertTrue(self._verdict_over_strings(candidate, [seen]))
+
+        drop, stats = near_dupes.drop_seen([("cand", candidate)], [seen])
+        self.assertEqual(drop, {"cand"})
+        self.assertEqual(stats["dropped"], 1)
+        # And the same verdict off the artifact, which is the path a release runs.
+        path, _header, _body = self._artifact([seen])
+        try:
+            from_index, _stats = near_dupes.drop_seen_against(
+                [("cand", candidate)], near_dupes.read_seen_index(path)[0]
+            )
+        finally:
+            path.unlink()
+        self.assertEqual(from_index, {"cand"})
+
+    def test_keys_out_of_ascending_order_are_refused_instead_of_indexed(self) -> None:
+        # The one invariant of the artifact whose violation weakens the reach bound in
+        # SILENCE: `indexed_keys_from` reads the LEADING slice of the order.
+        path, header, body = self._artifact([words(200)])
+        lines = body.splitlines()
+        row = json.loads(lines[1])
+        keys = near_dupes._unpack_keys(row["shingles"])
+        self.assertEqual(keys, sorted(keys))
+        try:
+            path.write_text(
+                "\n".join(
+                    [
+                        lines[0],
+                        json.dumps(
+                            {**row, "shingles": near_dupes._pack_keys(keys[::-1])}
+                        ),
+                    ]
+                )
+                + "\n",
+                encoding="utf-8",
+            )
+            with self.assertRaises(near_dupes.SeenIndexUnreadable) as caught:
+                near_dupes.read_seen_index(path)
+        finally:
+            path.unlink()
+        message = str(caught.exception)
+        self.assertIn("ascending order", message)
+        self.assertIn("line 2", message)
+
+    def test_an_artifact_of_another_contract_is_refused_rather_than_read(self) -> None:
+        path, header, body = self._artifact([words(120)])
+        lines = body.splitlines()
+        try:
+            for field, wrong in (
+                ("contract", "jaccard-0.70-over-3-token-shingles"),
+                ("shingleSize", 3),
+                ("jaccardThreshold", 0.7),
+                ("shingleEncoding", "sha256-hex"),
+                ("version", 99),
+                ("artifact", "something-else"),
+            ):
+                path.write_text(
+                    "\n".join([json.dumps({**header, field: wrong}), *lines[1:]]) + "\n",
+                    encoding="utf-8",
+                )
+                with self.assertRaises(near_dupes.SeenIndexUnreadable) as caught:
+                    near_dupes.read_seen_index(path)
+                self.assertIn(field, str(caught.exception))
+        finally:
+            path.unlink()
+
+    def test_a_document_line_may_not_smuggle_a_field(self) -> None:
+        path, header, body = self._artifact([words(120)])
+        lines = body.splitlines()
+        row = json.loads(lines[1])
+        try:
+            path.write_text(
+                "\n".join([lines[0], json.dumps({**row, "text": "acordo coletivo"})])
+                + "\n",
+                encoding="utf-8",
+            )
+            with self.assertRaises(near_dupes.SeenIndexUnreadable) as caught:
+                near_dupes.read_seen_index(path)
+            self.assertIn("could carry text", str(caught.exception))
+        finally:
+            path.unlink()
+
+    def test_a_truncated_index_is_refused_instead_of_screening_less(self) -> None:
+        path, header, body = self._artifact([words(120), words(120, prefix="outro")])
+        lines = body.splitlines()
+        try:
+            path.write_text("\n".join(lines[:2]) + "\n", encoding="utf-8")
+            with self.assertRaises(near_dupes.SeenIndexUnreadable) as caught:
+                near_dupes.read_seen_index(path)
+            self.assertIn("truncated", str(caught.exception))
+        finally:
+            path.unlink()
+
+    def test_a_shingle_blob_of_the_wrong_width_is_refused(self) -> None:
+        path, header, body = self._artifact([words(120)])
+        lines = body.splitlines()
+        row = json.loads(lines[1])
+        raw = base64.b64decode(row["shingles"], validate=True)
+        try:
+            path.write_text(
+                "\n".join(
+                    [
+                        lines[0],
+                        json.dumps(
+                            {
+                                **row,
+                                "shingles": base64.b64encode(raw[:-1]).decode("ascii"),
+                            }
+                        ),
+                    ]
+                )
+                + "\n",
+                encoding="utf-8",
+            )
+            with self.assertRaises(near_dupes.SeenIndexUnreadable) as caught:
+                near_dupes.read_seen_index(path)
+            self.assertIn(near_dupes.SEEN_SHINGLE_ENCODING, str(caught.exception))
+        finally:
+            path.unlink()
+
+    def test_the_header_counts_what_it_indexed(self) -> None:
+        texts = [words(120), words(120, prefix="outro"), words(90, prefix="terceiro")]
+        path, header, _body = self._artifact(texts)
+        try:
+            index, read_header = near_dupes.read_seen_index(path)
+        finally:
+            path.unlink()
+        self.assertEqual(header["documents"], len(texts))
+        self.assertEqual(read_header, header)
+        self.assertEqual(len(index), len(texts))
+        self.assertEqual(index.shingle_keys(), header["shingleKeys"])
+        self.assertEqual(header["source"]["lines"], len(texts))
+
+    def test_two_identical_seen_texts_keep_two_documents(self) -> None:
+        # The exact-content half is a SET and the shingle half is a LIST: collapsing the
+        # two identical texts into one document would make the two halves disagree about
+        # how many documents the index covers, which `SeenIndex` refuses outright.
+        text = words(120)
+        index = near_dupes.build_seen_index([text, text])
+        self.assertEqual(len(index), 2)
+        self.assertEqual(len(index.content_hashes), 1)
+
+    def test_the_index_keys_are_the_keys_the_shingles_hash_to(self) -> None:
+        # `indexed_keys_from` has to select exactly what `indexed_keys` selects, or the
+        # artifact proposes a different candidate set from the text-fed screen.
+        for size in [50, 64, 100, 200, 1000]:
+            shingles = {f"shingle {n} de muitas palavras" for n in range(size)}
+            self.assertEqual(
+                near_dupes.indexed_keys(shingles),
+                near_dupes.indexed_keys_from(near_dupes.shingle_keys_of(shingles)),
+            )
 
 
 class ContractDescriptionTests(unittest.TestCase):

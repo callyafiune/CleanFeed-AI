@@ -112,8 +112,10 @@ consumo de 25/07 com `decision: reject`. A tabela de FPR por registro existe por
 
 1. `records.jsonl` **não tem campo de partição** — dá os textos e não diz onde cada um caiu;
 2. logo, excluir **todos os 10.000** textos antigos é superconjunto de excluir os expostos;
-3. `drop_seen(docs, seen_texts)` já existe. Aponte `seen_texts` para os textos do corpus antigo e rode
-   na extração nova. Sai o que casar por hash exato **ou** Jaccard ≥ 0,82 sobre shingles de 5 tokens;
+3. `drop_seen_against(docs, index)` já existe, e o índice vem de `near_dupes.py build-seen-index` —
+   ninguém lê o corpus morto para isso, porque parte daquelas 10.000 linhas esteve em partição cega e o
+   artefato carrega só digests e chaves de shingle. Sai o que casar por hash exato **ou** Jaccard ≥ 0,82
+   sobre chaves de shingles de 5 tokens;
 4. ledger e keyring do repo novo nascem **legitimamente** vazios — o atual já está em 0 bytes.
 
 **O que isso NÃO conserta, e precisa estar dito no dia zero:** os mesmos três dumps continuam sendo os

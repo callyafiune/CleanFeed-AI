@@ -3103,3 +3103,222 @@ emendar o piso ou o teto é decisão sobre a UNIÃO do split e sobre a pré-insc
 contra o piso pré-inscrito; a prática citável é a de Lachin (decidir o tamanho antes) e a de Cochran
 (contar conglomerados e não linhas). O que é deste projeto é fazer as duas valerem no programa que monta o
 corpus.
+
+### L7 — a reserva OOD é POLÍTICA DECLARADA por nome, e a família indecidida para a corrida
+
+A reserva de gerador não visto passa a ser declarada em duas listas de papéis
+(`OOD_RESERVED_FAMILIES`, `CORE_GENERATOR_FAMILIES` em `assemble_corpus.py`), comparadas por **igualdade
+exata** sobre `groups.generatorFamily`, e não deduzida de prefixo de nome (`f.startswith("gemini-3")`, o
+predicado que estava lá) nem de lane. Reservada significa que nenhuma linha da família chega a partição de
+que o treino é tirado: ela é assentada inteira no bloco cego. Uma família geradora que **nenhuma das duas
+listas nomeia** para a corrida (`UndeclaredGeneratorFamily`).
+
+Por que nem prefixo nem lane, medido: `gpt-5.6-luna` chega pela lane `codex` e `gpt-oss-120b-medium` só é
+alcançável pelo `agy`, que é o harness do Google — a fronteira de provedor **cruza** a de lane, então
+fatiar por lane não é fatiar por provedor. E prefixo é pior que errado, é silencioso: uma família
+reservada renomeada pelo provedor deixa de casar o prefixo, é classificada como core e entra no treino sem
+que nada reporte. Sob igualdade exata a mesma renomeação cai fora das duas listas e a corrida para — a
+assimetria de L1 aplicada ao eixo do gerador.
+
+- **Saltzer & Schroeder, 1975 — The Protection of Information in Computer Systems** (Proc. IEEE 63(9)),
+  § I.A.3 (*fail-safe defaults*). [link](https://doi.org/10.1109/PROC.1975.9939)
+  _Âncora:_ a decisão parte da negação e o caso não enumerado é recusado, nunca aceito por semelhança de
+  nome. _Onde no projeto:_ `assemble_corpus.generator_family_roles`. _Fato citado:_ o mecanismo de
+  proteção default nega, e a permissão é a exceção explicitamente enumerada.
+- **Wang et al., 2024 — M4: Multi-generator, Multi-domain, and Multi-lingual Black-Box Machine-Generated
+  Text Detection** (EACL 2024, Vol. 1, pp. 1369–1407).
+  [link](https://ar5iv.labs.arxiv.org/html/2305.14902)
+  _Âncora:_ o protocolo de gerador não visto exige que o gerador de avaliação esteja **ausente** do
+  treino, e é a queda fora da distribuição que a reserva mede. _Onde no projeto:_ a reserva OOD do slate.
+  _Fato citado:_ avaliação cruzada por gerador com geradores mantidos fora do treino, e a degradação
+  medida nessa condição.
+- **Macko et al., 2023 — MULTITuDE** (EMNLP 2023 Main, pp. 9960–9987).
+  [link](https://aclanthology.org/2023.emnlp-main.616/)
+  _Âncora:_ reserva por gerador reportada em fatia própria, nunca agregada aos estratos vistos.
+  _Onde no projeto:_ a fatia de gerador não visto do bloco cego. _Fato citado:_ o benchmark reporta
+  desempenho por gerador, com geradores de teste distintos dos de treino.
+- **Gebru et al., 2021 — Datasheets for Datasets** (CACM 64(12)). [link](https://doi.org/10.1145/3458723)
+  _Âncora:_ "quais famílias o treino contém" é linha do datasheet do artefato, não detalhe de
+  implementação do coletor. _Fato citado:_ a composição e os critérios de inclusão fazem parte da
+  documentação que acompanha o dataset.
+
+**Divergência declarada do slate D3** (`docs/superpowers/plans/2026-07-26-detector-v3-rebuild-implementation.md`,
+tabela de D3, plano **DORMENTE**): a tabela põe `gpt-oss-120b-medium` em **core** e manda não "consertar" a
+linha. Aqui ela é **reservada**, e a precedência é a declarada em ESTADO.md — o código medido vence, o
+ESTADO vence qualquer outro documento, e § 3.3 diz "famílias OpenAI ficam reservadas ao teste de gerador
+não visto (OOD); nenhuma entra em treino", sem exceção por lane. O próprio remédio de D1 na medição de
+conformidade fala em "toda família OpenAI (gpt-*)". Custo de reversão: mover uma entrada entre dois dicts.
+Custo hoje: **zero medido** — a família aparece só nos pools de mistura, cujas linhas são todas recusadas
+por `MissingRecipe`/`MissingMaterialBatch`.
+
+**Sem precedente encontrado (2026-08-05)** para o par "papel declarado por nome + família indecidida para
+a corrida" como mecanismo de código. A literatura fixa o protocolo (gerador ausente do treino) e não a
+forma de impor a lista.
+
+### L8 — o bloco cego carrega os DOIS papéis, e reserva vazia recusa em vez de substituir
+
+Duas recusas novas, da mesma família de erro:
+
+`assert_the_blind_block_holds_both_roles` exige que as linhas reservadas de cada classe sejam
+**estritamente menos** que o bloco de teste daquela classe. A release publica duas hipóteses sobre o mesmo
+bloco cego — recall no limiar, cuja população são positivos de famílias que o treino contém, e a fatia de
+gerador não visto, cuja população é a reserva —, então uma reserva igual ao bloco deixa a primeira sem
+população nenhuma. Quanto de cada papel o bloco carrega é **cota de coleta**, e o montador não escolhe
+quais linhas reservadas descartar para abrir espaço. Medido: a lane `codex` tem 1.402 linhas frescas de
+`gpt-5.6-luna` e a cota ratificada de 4.000 `ai` deixa bloco de teste de 800.
+
+`declared_held_out_families` recusa (`HeldOutReserveEmpty`) quando nenhuma família pode ser declarada, em
+vez de devolver um nome. O fallback que estava lá — `sorted(held_out) or ["gemini-3_5-flash-lite"]` —
+reinstalava justamente uma das duas famílias cuja alegação de held-out havia sido **retirada por falta de
+prova** (`HELD_OUT_INELIGIBLE`), o que torna a reserva uma alegação falsa em vez de ausente. A escolha
+entre "vazio legal" e "recusa explícita" é decidida pelo lado selado e não por gosto:
+`parseDatasetManifest` recusa por nome uma lista vazia, então não existe estado vazio a que cair.
+
+- **Simmons, Nelson & Simonsohn, 2011 — False-Positive Psychology** (Psychological Science 22(11)).
+  [link](https://doi.org/10.1177/0956797611417632)
+  _Âncora:_ substituir em silêncio a população de uma hipótese é grau de liberdade exercido depois do
+  desenho, que é o que quebra a garantia. _Fato citado:_ flexibilidade não declarada na coleta e na
+  análise infla a taxa de falso positivo muito acima do nominal.
+- **Ioannidis, 2005 — Why Most Published Research Findings Are False** (PLoS Medicine 2(8)).
+  [link](https://doi.org/10.1371/journal.pmed.0020124)
+  _Âncora:_ poder insuficiente por população esvaziada não aparece como falha, aparece como resultado.
+  _Fato citado:_ o valor preditivo de um achado depende do poder do desenho, e desenhos sub-dimensionados
+  produzem achados majoritariamente falsos.
+- **Nosek, Ebersole, DeHaven & Mellor, 2018 — The preregistration revolution** (PNAS 115(11)).
+  [link](https://doi.org/10.1073/pnas.1708274114)
+  _Âncora:_ a composição pretendida é registrada antes; alcançá-la ou não é resultado a declarar, não algo
+  a preencher. _Fato citado:_ a pré-registro separa predição de postdição e o desvio tem de ser reportado.
+
+**Sem precedente encontrado (2026-08-05)** para "a composição do bloco cego tem de conter as duas
+populações que a família de hipóteses nomeia" como recusa de montagem. É a aritmética de poder (L6, § K14)
+aplicada à composição por papel de gerador.
+
+### L9 — o conjunto de vistos é um ARTEFATO de digests, e a poda é global
+
+O conjunto de vistos passa a ser os **10.000 registros do corpus morto** — todas as cinco partições — e a
+poda é **global**: o candidato que casa sai do corpus, não fica barrado apenas das partições cegas. É
+superconjunto da graduação de exposição de ESTADO.md § 3.4, que readmitiria a linha casada em `train`,
+`dev` e `cal-A`; as ~1.600 linhas recuperáveis são abdicadas de propósito, e o que se compra é que "nada
+deste corpus foi visto" seja **uma** comparação e não um argumento por partição.
+
+Parte daquelas 10.000 linhas esteve em partição cega, então nada na montagem abre o corpus morto. O que a
+montagem lê é um artefato construído uma vez (`near_dupes.py build-seen-index`) que carrega, por
+documento, o digest do conteúdo tokenizado e as **chaves de 8 bytes de blake2b dos shingles de 5 tokens** —
+nenhum token do material.
+
+**O contrato declara a comparação que roda, e a largura da chave faz parte dele.** A frase é: hash exato
+mais Jaccard ≥ 0,82 sobre shingles de 5 tokens **comparados como chaves**. A ressalva é carga, não
+ornamento: dois shingles distintos com a mesma chave são um elemento só para a tela. A versão anterior
+desta seção afirmava que "colisão só pode ACRESCENTAR à interseção, logo pode descartar um registro a mais
+e nunca manter uma duplicata", e isso é **falso por aritmética**: colisão entre dois shingles que os dois
+documentos COMPARTILHAM tira um elemento da interseção e um da união ao mesmo tempo, e 82/100 = 0,82 vira
+81/99 = 0,8181 sob barra de 0,82 — a colisão MANTÉM a quase-duplicata. Sob crc32 o par era construtível por
+busca de segundos (`aa7275 bb7275 cc7275 dd7275 ee7275` e `aa47144 bb47144 cc47144 dd47144 ee47144` colidem
+em 232429220), e um par montado em torno dele media 0,82 sobre cadeias e sobrevivia à tela. A chave passou
+a 8 bytes de blake2b: o número esperado de pares em colisão sobre as 3.323.576 chaves do artefato real é
+`n²/2⁶⁵ ≈ 3e-7`, e é esse resíduo que a frase declara em vez de alegar ausência. O par está pinado como
+fixture (`test_a_pair_at_the_bar_is_dropped_even_where_crc32_conflates_two_shingles`), com a expectativa
+calculada no teste sobre as CADEIAS — duas implementações por chave concordando entre si não dizem nada
+sobre nenhuma delas honrar a frase que publicam.
+
+O artefato tem vocabulário FECHADO em cabeçalho e em linha de documento, e a razão é que um campo livre é
+onde alguém põe "só uma amostra para saber de que corpus veio" — e a amostra É o material. Ele vive em
+`benchmark/data/` (nunca no Git, nunca em pacote de evidência) e é **estritamente menos exposto** que o
+arquivo de que deriva, não incondicionalmente opaco: chave de 64 bits de um 5-grama não é texto e não se
+inverte sozinha, mas um dicionário de 5-gramas de pt-BR poderia testar candidatos contra ela. Declarado
+em vez de escondido. A ordem ascendente das chaves é conferida na LEITURA: o subconjunto garantido é a
+fatia inicial daquela ordem, então uma linha fora de ordem indexaria subconjunto arbitrário e o limite de
+alcance deixaria de valer — em silêncio, porque todo o resto do contrato continua batendo.
+
+Uma montagem de release **recusa** sem o artefato (`SeenIndexMissing`), recusa um artefato que cubra menos
+de 10.000 documentos (`SeenIndexIncomplete`) e recusa um construído sobre **outro arquivo**
+(`SeenIndexOfAnotherCorpus`). A terceira é a que faltava: contagem de documentos não identifica material,
+e um índice construído por engano sobre os próprios pools frescos (13.880 candidatos em disco) satisfaz
+`documents ≥ 10.000` — a montagem seguiria e imprimiria como contaminação o resultado de comparar os pools
+contra si mesmos. O digest do corpus morto é CONSTANTE conferida (`DEAD_CORPUS_SHA256`) contra
+`header.source.sha256`, e não prosa em comentário: medição que nada compara é folclore. O modo de falha
+substituído era pular a poda em silêncio: a guarda anterior era um teste de veracidade sobre a lista de
+textos vistos, então um insumo ausente produzia um corpus que não passara por tela nenhuma e não dizia
+nada a respeito.
+
+- **Broder, 1997 — On the resemblance and containment of documents** (SEQUENCES 1997, pp. 21–29).
+  [link](https://doi.org/10.1109/SEQUEN.1997.666900)
+  _Âncora:_ a resemblance é estimada sobre **assinaturas** de conjuntos de shingles, e não sobre o texto —
+  é o que permite que a tela viaje como artefato de chaves. _Onde no projeto:_ `near_dupes.SeenIndex`.
+  _Fato citado:_ resemblance/containment definidos sobre conjuntos de shingles e estimados por assinaturas
+  de permutações min-wise.
+- **Lee, Ippolito, Nystrom, Zhang, Eck, Callison-Burch & Carlini, 2022 — Deduplicating Training Data Makes
+  Language Models Better** (ACL 2022, pp. 8424–8445).
+  [link](https://aclanthology.org/2022.acl-long.577/)
+  _Âncora:_ a sobreposição treino↔avaliação é medida por n-gramas antes de qualquer número ser publicado,
+  e o erro que ela causa é sempre na direção otimista. _Fato citado:_ deduplicação exata e aproximada de
+  corpora por sequências de n-gramas, com efeito medido sobre a avaliação.
+- **Dodge, Sap, Marasović, Agnew, Ilharco, Groeneveld, Mitchell & Gardner, 2021 — Documenting Large
+  Webtext Corpora: A Case Study on the Colossal Clean Crawled Corpus** (EMNLP 2021, pp. 1286–1305).
+  [link](https://aclanthology.org/2021.emnlp-main.98/)
+  _Âncora:_ a contaminação de benchmark é medida e **publicada como número**, não presumida ausente.
+  _Onde no projeto:_ a linha `vazamento vs corpus morto` impressa em toda montagem. _Fato citado:_
+  medição de sobreposição entre o corpus de treino e conjuntos de avaliação por correspondência de
+  n-gramas, reportada por benchmark.
+- **Michel et al., 2011 — Quantitative Analysis of Culture Using Millions of Digitized Books** (Science
+  331(6014), pp. 176–182). [link](https://doi.org/10.1126/science.1199644)
+  _Âncora:_ o precedente de distribuir um corpus como **contagens derivadas de n-gramas** quando o texto
+  não pode circular; é a mesma troca que este artefato faz, uma ordem de grandeza menor.
+  _Fato citado:_ o corpus foi disponibilizado como n-gramas e suas contagens, e não como o texto dos
+  livros.
+
+**Sem precedente encontrado (2026-08-05)** para a combinação exata — artefato de digests + chaves de
+shingle usado para podar um corpus NOVO contra um corpus ABANDONADO cujas partições cegas não podem ser
+abertas por quem monta. Os componentes são citáveis (shingles de Broder, deduplicação de Lee, contaminação
+de Dodge, n-gramas em vez de texto de Michel); a restrição de leitura é do processo deste projeto.
+
+### L10 — a LARGURA da chave é parte do contrato, e o terceiro papel do slate
+
+Duas correções da rodada de fechamento de L2, ambas com a mesma forma: uma frase publicada que o código
+não sustentava.
+
+**A largura da chave.** O § L9 acima já carrega a aritmética. O que entra aqui é a escolha de desenho: das
+três saídas possíveis — declarar a tela mais fraca, bifurcar entre caminho de texto e caminho de artefato,
+ou alargar a chave —, a escolhida foi alargar E declarar o resíduo. Bifurcar reintroduziria dois
+algoritmos onde `drop_seen(docs, textos) = drop_seen_against(docs, build_seen_index(textos))` mantém um, e
+deixaria o caminho que a release roda com a tela mais fraca. Declarar sem alargar manteria um par
+construtível em segundos atravessando a barra. Uma tela por chaves nunca é ABSOLUTA sobre shingles — a
+única forma de ser seria guardar os shingles, isto é, guardar o texto —, então o honesto é dizer a largura
+e o número.
+
+- **Manku, Jain & Das Sarma, 2007 — Detecting Near-Duplicates for Web Crawling** (WWW 2007, pp. 141–150).
+  [link](https://doi.org/10.1145/1242572.1242592)
+  _Âncora:_ a impressão digital de 64 bits é a largura de referência para detecção de quase-duplicata em
+  escala de bilhões de documentos; 3,3 milhões de chaves está seis ordens de grandeza abaixo do regime em
+  que essa largura é considerada suficiente. _Onde no projeto:_ `near_dupes.shingle_key`. _Fato citado:_
+  simhash de 64 bits sobre 8 bilhões de documentos, com a colisão tratada como resíduo quantificado e não
+  como impossibilidade.
+- **Aumasson, Neves, Wilcox-O'Hearn & Winnerlein, 2013 — BLAKE2: simpler, smaller, fast as MD5** (ACNS
+  2013). [link](https://doi.org/10.1007/978-3-642-38980-1_8)
+  _Âncora:_ digest de tamanho parametrizável com resistência a colisão declarada, mais rápido que MD5 —
+  é o que permite trocar crc32 por 8 bytes sem pagar em tempo de montagem (medido: 5 s → 8 s sobre 10.000
+  documentos). _Fato citado:_ BLAKE2b admite `digest_size` arbitrário até 64 bytes e as propriedades de
+  segurança são declaradas em função dele.
+
+**O terceiro papel.** `EXCLUDED_GENERATOR_FAMILIES`: família cuja PROVENIÊNCIA a linha não registra não
+recebe papel que permita uso — as linhas saem do corpus, contadas, com a razão declarada por família. Não
+é o mesmo que `HELD_OUT_INELIGIBLE`, que retira a ALEGAÇÃO e mantém as linhas como IA comum: ali o
+provedor é conhecido (Google) e só a resolução do alias é que não é; aqui o provedor é desconhecido, e
+`madras_synthetic_corpus_gptoss5` nomeia justamente o reservado. Core treinaria numa linha possivelmente
+OpenAI e destruiria a alegação de provedor ausente; reservar publicaria gerador não visto sem saber o
+provedor. Medido: 1.185 linhas em nove famílias, todas sob o piso de 200, entregues por
+`ai_reserved.jsonl` — que o censo da unidade havia omitido. `POOL_GENERATOR_FAMILIES` é o censo medido e
+`assert_slate_roles_are_consistent` o confere nos DOIS sentidos, porque a lista tinha sido escrita a
+partir do slate de geração e lida como se fosse a partir dos pools.
+
+- **Gebru, Morgenstern, Vecchione, Vaughan, Wallach, Daumé III & Crawford, 2021 — Datasheets for Datasets**
+  (Communications of the ACM 64(12), pp. 86–92). [link](https://doi.org/10.1145/3458723)
+  _Âncora:_ a proveniência de cada parcela é item de documentação obrigatório, e "não se sabe" é uma
+  resposta a registrar em vez de um espaço a preencher. _Onde no projeto:_ a razão por família em
+  `EXCLUDED_GENERATOR_FAMILIES`. _Fato citado:_ o datasheet exige composição, fonte e processo de coleta
+  de cada subconjunto, com as lacunas declaradas.
+
+**Sem precedente encontrado (2026-08-05)** para "família geradora de proveniência indeterminada é excluída
+do corpus por declaração, em vez de entrar como IA genérica". A literatura de contaminação trata do
+vazamento treino↔teste; excluir por não se poder atribuir o PROVEDOR é consequência da alegação de gerador
+não visto deste release, e não uma prática encontrada.

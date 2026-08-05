@@ -17,6 +17,7 @@ import sys
 import tempfile
 import unittest
 import zipfile
+from collections import Counter
 from pathlib import Path
 
 from common import (
@@ -4730,3 +4731,905 @@ class StampedCorpusSplittabilityTest(unittest.TestCase):
         )
         declarado = fonte.split("export const CLASS_TOLERANCE = ", 1)[1].split(";", 1)[0]
         self.assertEqual(CLASS_TOLERANCE, float(declarado))
+
+
+class SlateRoleTests(unittest.TestCase):
+    """The slate decides each generated family by NAME, and refuses what it cannot decide.
+
+    The role is what says whether the training set may contain a family. A prefix or a
+    lane cannot carry it: the two OpenAI families of the reserve arrive on different lanes
+    (`codex` and `agy`), so the provider boundary crosses the lane boundary, and a
+    provider rename slides past a prefix in silence.
+    """
+
+    def test_the_roles_partition_the_families_the_slate_knows(self) -> None:
+        import assemble_corpus
+
+        assemble_corpus.assert_slate_roles_are_consistent()
+        lists = (
+            set(assemble_corpus.OOD_RESERVED_FAMILIES),
+            set(assemble_corpus.CORE_GENERATOR_FAMILIES),
+            set(assemble_corpus.EXCLUDED_GENERATOR_FAMILIES),
+        )
+        for left in range(len(lists)):
+            for right in range(left + 1, len(lists)):
+                self.assertEqual(lists[left] & lists[right], set())
+        # Every declared name is a canonical family token, so exact equality against
+        # `groups.generatorFamily` can match at all.
+        for family in set().union(*lists):
+            self.assertEqual(assemble_corpus.generator_family(family), family)
+
+    def test_every_family_the_pools_deliver_has_exactly_one_role(self) -> None:
+        import assemble_corpus
+
+        # The coverage the comment on CORE_GENERATOR_FAMILIES used to CLAIM. Measured over
+        # `load_ai` + `load_mixed` on 2026-08-05 and carried as POOL_GENERATOR_FAMILIES,
+        # because the pool files are not in Git and a test cannot read them.
+        roles = assemble_corpus.slate_roles()
+        self.assertEqual(set(roles), set(assemble_corpus.POOL_GENERATOR_FAMILIES))
+        self.assertEqual(
+            sorted(
+                family
+                for family, role in roles.items()
+                if role == assemble_corpus.EXCLUDED_ROLE
+            ),
+            sorted(assemble_corpus.EXCLUDED_GENERATOR_FAMILIES),
+        )
+        # And the nine excluded ones are the pool's own, not a list invented here.
+        self.assertEqual(
+            sum(
+                assemble_corpus.POOL_GENERATOR_FAMILIES[family]
+                for family in assemble_corpus.EXCLUDED_GENERATOR_FAMILIES
+            ),
+            1185,
+        )
+
+    def test_a_pool_family_with_no_role_refuses_before_the_pools_are_read(self) -> None:
+        import assemble_corpus
+
+        # The family this unit exists to decide: `madras_synthetic_corpus_gptoss5` names
+        # gpt-oss, the reserved provider. Classified by DEFAULT it would be trainable.
+        family = "madras_synthetic_corpus_gptoss5"
+        saved = dict(assemble_corpus.EXCLUDED_GENERATOR_FAMILIES)
+        try:
+            del assemble_corpus.EXCLUDED_GENERATOR_FAMILIES[family]
+            with self.assertRaises(assemble_corpus.SlateContradiction) as caught:
+                assemble_corpus.assert_slate_roles_are_consistent()
+        finally:
+            assemble_corpus.EXCLUDED_GENERATOR_FAMILIES.clear()
+            assemble_corpus.EXCLUDED_GENERATOR_FAMILIES.update(saved)
+        message = str(caught.exception)
+        self.assertIn(family, message)
+        self.assertIn("POOL_GENERATOR_FAMILIES", message)
+        self.assertIn(assemble_corpus.EXCLUDED_ROLE, message)
+
+    def test_a_role_over_a_family_the_pools_never_deliver_is_refused(self) -> None:
+        import assemble_corpus
+
+        # The other direction, and the one that produced the false comment: a list written
+        # from the generation slate reads as a list written from the pools.
+        saved = dict(assemble_corpus.OOD_RESERVED_FAMILIES)
+        try:
+            assemble_corpus.OOD_RESERVED_FAMILIES["gpt-9_9-inexistente"] = "lane futura"
+            with self.assertRaises(assemble_corpus.SlateContradiction) as caught:
+                assemble_corpus.assert_slate_roles_are_consistent()
+        finally:
+            assemble_corpus.OOD_RESERVED_FAMILIES.clear()
+            assemble_corpus.OOD_RESERVED_FAMILIES.update(saved)
+        message = str(caught.exception)
+        self.assertIn("gpt-9_9-inexistente", message)
+        self.assertIn("re-measure POOL_GENERATOR_FAMILIES", message)
+
+    def test_an_excluded_family_leaves_the_corpus_counted_by_family(self) -> None:
+        import assemble_corpus
+
+        excluded = sorted(assemble_corpus.EXCLUDED_GENERATOR_FAMILIES)[0]
+        records = [
+            self._generated("gpt-5_6-luna"),
+            self._generated(excluded),
+            self._generated(excluded, label="mixed"),
+            {"id": "h1", "label": "human", "groups": {}},
+        ]
+        roles = assemble_corpus.generator_family_roles(records)
+        self.assertEqual(roles[excluded], assemble_corpus.EXCLUDED_ROLE)
+        kept, dropped = assemble_corpus.drop_excluded_families(records, roles)
+        self.assertEqual(dropped, {excluded: 2})
+        # The human row stays: the exclusion is a family verdict over generated rows.
+        self.assertEqual([r["id"] for r in kept], ["rec_gpt-5_6-luna_ai", "h1"])
+
+    def test_a_family_in_both_roles_refuses_before_the_pools_are_read(self) -> None:
+        import assemble_corpus
+
+        family = sorted(assemble_corpus.CORE_GENERATOR_FAMILIES)[0]
+        saved = dict(assemble_corpus.OOD_RESERVED_FAMILIES)
+        try:
+            assemble_corpus.OOD_RESERVED_FAMILIES[family] = "conflito de fixture"
+            with self.assertRaises(assemble_corpus.SlateContradiction) as caught:
+                assemble_corpus.assert_slate_roles_are_consistent()
+        finally:
+            assemble_corpus.OOD_RESERVED_FAMILIES.clear()
+            assemble_corpus.OOD_RESERVED_FAMILIES.update(saved)
+        message = str(caught.exception)
+        self.assertIn(family, message)
+        self.assertIn(assemble_corpus.OOD_RESERVED_ROLE, message)
+        self.assertIn(assemble_corpus.CORE_ROLE, message)
+
+    def test_reserving_a_family_whose_claim_was_withdrawn_is_refused(self) -> None:
+        import assemble_corpus
+
+        # A name of neither list, so this is the WITHDRAWAL that refuses and not the
+        # both-roles clash: the two real withdrawn families are core today, and a core
+        # family reserved would be caught one check earlier.
+        family = "gemini-9_9-retirada"
+        self.assertNotIn(family, assemble_corpus.CORE_GENERATOR_FAMILIES)
+        saved = dict(assemble_corpus.OOD_RESERVED_FAMILIES)
+        try:
+            assemble_corpus.OOD_RESERVED_FAMILIES[family] = "reserva de fixture"
+            assemble_corpus.HELD_OUT_INELIGIBLE.add(family)
+            with self.assertRaises(assemble_corpus.SlateContradiction) as caught:
+                assemble_corpus.assert_slate_roles_are_consistent()
+        finally:
+            assemble_corpus.HELD_OUT_INELIGIBLE.discard(family)
+            assemble_corpus.OOD_RESERVED_FAMILIES.clear()
+            assemble_corpus.OOD_RESERVED_FAMILIES.update(saved)
+        self.assertIn(family, str(caught.exception))
+        self.assertIn("HELD_OUT_INELIGIBLE", str(caught.exception))
+
+    def test_every_withdrawn_family_the_slate_names_is_core_and_not_reserved(self) -> None:
+        import assemble_corpus
+
+        # The withdrawal is a claim that was taken back, and the two families it names stay
+        # in the corpus as ordinary trainable ones — never absent (a deleted name comes
+        # back) and never reserved (that is the claim itself).
+        self.assertTrue(
+            assemble_corpus.HELD_OUT_INELIGIBLE
+            <= assemble_corpus.CORE_GENERATOR_FAMILIES
+        )
+
+    def test_a_dotted_spelling_in_the_slate_is_refused_as_unmatchable(self) -> None:
+        import assemble_corpus
+
+        saved = dict(assemble_corpus.OOD_RESERVED_FAMILIES)
+        try:
+            assemble_corpus.OOD_RESERVED_FAMILIES["gpt-5.7-luna"] = "grafia do provedor"
+            with self.assertRaises(assemble_corpus.SlateContradiction) as caught:
+                assemble_corpus.assert_slate_roles_are_consistent()
+        finally:
+            assemble_corpus.OOD_RESERVED_FAMILIES.clear()
+            assemble_corpus.OOD_RESERVED_FAMILIES.update(saved)
+        self.assertIn("gpt-5.7-luna", str(caught.exception))
+        self.assertIn("gpt-5_7-luna", str(caught.exception))
+
+    def _generated(self, family: str, label: str = "ai") -> dict:
+        from group_axes import known
+
+        return {
+            "id": f"rec_{family}_{label}",
+            "label": label,
+            "groups": {"generatorFamily": known(family)},
+        }
+
+    def test_every_generated_family_of_the_corpus_gets_its_declared_role(self) -> None:
+        import assemble_corpus
+
+        records = [
+            self._generated("gpt-5_6-luna"),
+            self._generated("gemini-3_5-flash-lite"),
+            self._generated("gemini-3_1-flash-lite", label="mixed"),
+            {"id": "h1", "label": "human", "groups": {}},
+        ]
+        self.assertEqual(
+            assemble_corpus.generator_family_roles(records),
+            {
+                "gpt-5_6-luna": assemble_corpus.OOD_RESERVED_ROLE,
+                "gemini-3_5-flash-lite": assemble_corpus.CORE_ROLE,
+                "gemini-3_1-flash-lite": assemble_corpus.CORE_ROLE,
+            },
+        )
+
+    def test_a_family_the_slate_does_not_name_stops_the_run(self) -> None:
+        import assemble_corpus
+
+        # The failure the reserve exists to prevent: the provider renames the reserved
+        # family, so a prefix rule reads it as core and the training set gets it.
+        renamed = "gpt-5_7-luna"
+        self.assertNotIn(renamed, assemble_corpus.OOD_RESERVED_FAMILIES)
+        self.assertNotIn(renamed, assemble_corpus.CORE_GENERATOR_FAMILIES)
+        self.assertTrue(renamed.startswith("gpt-"))
+        with self.assertRaises(assemble_corpus.UndeclaredGeneratorFamily) as caught:
+            assemble_corpus.generator_family_roles([self._generated(renamed)])
+        message = str(caught.exception)
+        self.assertIn(renamed, message)
+        self.assertIn(assemble_corpus.OOD_RESERVED_ROLE, message)
+        self.assertIn(assemble_corpus.CORE_ROLE, message)
+
+    def test_the_role_reads_the_canonical_axis_and_not_the_provider_label(self) -> None:
+        import assemble_corpus
+        from group_axes import known
+
+        # `generation.family` carries the dotted provider label and never equals a slate
+        # entry; the role has to come off `groups.generatorFamily`.
+        record = {
+            "id": "rec_dotted",
+            "label": "ai",
+            "generation": {"family": "gpt-5.6-luna"},
+            "groups": {"generatorFamily": known("gpt-5_6-luna")},
+        }
+        self.assertEqual(
+            assemble_corpus.generator_family_roles([record]),
+            {"gpt-5_6-luna": assemble_corpus.OOD_RESERVED_ROLE},
+        )
+
+
+class BlindBlockCompositionTests(unittest.TestCase):
+    """The reserve is seated in `test` and never fills it.
+
+    The blind block carries two hypotheses at once — recall over positives the training
+    set contains, and the unseen-generator slice over the reserve — so a reserve equal to
+    the block leaves the first with no population.
+    """
+
+    def _per_family(self, spec: dict[str, dict[str, int]]) -> dict:
+        from collections import Counter
+
+        return {family: Counter(rows) for family, rows in spec.items()}
+
+    def test_reserved_rows_are_counted_per_class(self) -> None:
+        import assemble_corpus
+
+        per_family = self._per_family(
+            {
+                "gpt-5_6-luna": {"ai": 240, "mixed": 30},
+                "gpt-oss-120b-medium": {"mixed": 60},
+                "gemini-3_5-flash-lite": {"ai": 900},
+            }
+        )
+        self.assertEqual(
+            assemble_corpus.reserved_rows_per_class(
+                per_family, {"gpt-5_6-luna", "gpt-oss-120b-medium"}
+            ),
+            {"ai": 240, "mixed": 90},
+        )
+
+    def test_a_reserve_that_fits_with_room_beside_it_is_accepted(self) -> None:
+        import assemble_corpus
+
+        assemble_corpus.assert_the_blind_block_holds_both_roles(
+            {"ai": 400, "mixed": 90}, {"ai": 800, "mixed": 400, "human": 1400}
+        )
+        # The boundary is STRICT: exactly filling the block is refused, because the recall
+        # hypothesis then has no core positive in `test`.
+        assemble_corpus.assert_the_blind_block_holds_both_roles({"ai": 799}, {"ai": 800})
+        with self.assertRaises(assemble_corpus.ReserveFillsTheBlindBlock):
+            assemble_corpus.assert_the_blind_block_holds_both_roles(
+                {"ai": 800}, {"ai": 800}
+            )
+
+    def test_a_reserve_larger_than_the_block_names_the_class_and_both_numbers(
+        self,
+    ) -> None:
+        import assemble_corpus
+
+        # Measured on the pools: the codex lane holds 1.402 fresh `gpt-5.6-luna` lines
+        # while the ratified ai quota of 4.000 leaves a test block of 800.
+        with self.assertRaises(assemble_corpus.ReserveFillsTheBlindBlock) as caught:
+            assemble_corpus.assert_the_blind_block_holds_both_roles(
+                {"ai": 1402}, {"ai": 800}
+            )
+        message = str(caught.exception)
+        self.assertIn("'ai'", message)
+        self.assertIn("1402", message)
+        self.assertIn("800", message)
+
+    def test_the_mixed_class_is_checked_too_because_a_mixer_is_a_generator(self) -> None:
+        import assemble_corpus
+
+        with self.assertRaises(assemble_corpus.ReserveFillsTheBlindBlock) as caught:
+            assemble_corpus.assert_the_blind_block_holds_both_roles(
+                {"ai": 10, "mixed": 714}, {"ai": 800, "mixed": 400}
+            )
+        self.assertIn("'mixed'", str(caught.exception))
+        self.assertIn("714", str(caught.exception))
+
+    def _generated_line(self, rec_id: str, family: str) -> dict:
+        from group_axes import (
+            NO_DERIVATION,
+            NO_HUMAN_AUTHOR,
+            NO_MATERIAL_ACQUIRED,
+            NOT_EXTRACTED,
+            axis_token,
+            known,
+            not_applicable,
+        )
+
+        # One component per line: every union axis of SPLIT_GROUP_KEYS is per-record, so
+        # the geometry preflight `assign_partitions` runs first has nothing to refuse and
+        # the block arithmetic is what is under test.
+        return {
+            "id": rec_id,
+            "schemaVersion": 4,
+            "label": "ai",
+            "groups": {
+                "author": not_applicable(NO_HUMAN_AUTHOR),
+                "source": not_applicable("texto gerado"),
+                "domainSource": known(axis_token("ai_codex")),
+                "humanSeed": known(f"seed_{rec_id}"),
+                "promptTemplate": known(f"pt_{rec_id}"),
+                "generatorFamily": known(family),
+                "generatorVersion": known(f"gv_{rec_id}"),
+                "sourceMaterialBatch": not_applicable(NO_MATERIAL_ACQUIRED),
+                "generationBatch": known(f"gb_{rec_id}"),
+                "extractionRun": not_applicable(NOT_EXTRACTED),
+                "nearDuplicate": known(f"nd_{rec_id}"),
+                "derivationRoot": not_applicable(NO_DERIVATION),
+            },
+        }
+
+    def test_a_reserve_that_overflows_the_block_refuses_at_stamping_too(self) -> None:
+        import assemble_corpus
+
+        # The second half of the same rule, at the place where the two numbers are real
+        # instead of predicted. `main` cannot reach it — `assert_the_blind_block_holds_both
+        # _roles` runs the same arithmetic with a strict comparison first — but
+        # `assign_partitions` is callable on its own, and it used to PRINT and carry on,
+        # stamping every reserved row into a block that cannot hold them and leaving the
+        # splitter to refuse a corpus one step later.
+        reserved = "gpt-5_6-luna"
+        records = [
+            self._generated_line(f"rec_core_{index:02d}", "gemini-3_5-flash-lite")
+            for index in range(15)
+        ] + [
+            self._generated_line(f"rec_res_{index:02d}", reserved) for index in range(5)
+        ]
+        # 20 ai lines: 9/1/2/4 rounded, so `test` is the remainder of 4 and the 5 reserved
+        # rows do not fit.
+        with self.assertRaises(assemble_corpus.ReserveFillsTheBlindBlock) as caught:
+            assemble_corpus.assign_partitions(records, {reserved})
+        message = str(caught.exception)
+        self.assertIn("5 reserved rows", message)
+        self.assertIn("holds 4", message)
+        self.assertNotIn("rec_res_00", assemble_corpus.PARTITION_OF)
+
+    def test_a_thin_reserve_is_named_with_the_floor_validate_enforces(self) -> None:
+        import assemble_corpus
+
+        floor = assemble_corpus.HELD_OUT_MINIMUM
+        thin = assemble_corpus.reserved_families_below_the_recall_floor(
+            {"gpt-5_6-luna": floor - 1, "gpt-oss-120b-medium": floor},
+            {"gpt-5_6-luna", "gpt-oss-120b-medium"},
+        )
+        self.assertEqual(thin, {"gpt-5_6-luna": floor - 1})
+
+    def test_the_floor_counts_lines_and_not_the_sealed_eligible_population(self) -> None:
+        import assemble_corpus
+        from group_axes import known, unknown
+
+        # WHICH population, pinned: the lab counts every ai/mixed LINE of the family.
+        # `sealDataset` counts `positiveRows.filter(countsTowardHeldOutFloor)`, which on a
+        # v4 corpus is the ELIGIBLE rows, so the sealed floor is the stricter of the two
+        # and the lab's count is an upper bound. The row below is one the sealed side would
+        # NOT count — `harnessVersion` left `unknown`, which is the state every CLI-lane row
+        # of today's pools is in — and it counts here.
+        records = [
+            {
+                "id": "rec_inelegivel",
+                "label": "ai",
+                "groups": {
+                    "generatorFamily": known("gpt-5_6-luna"),
+                    "harnessVersion": unknown("the run did not capture the binary version"),
+                },
+            },
+            {
+                "id": "rec_elegivel",
+                "label": "mixed",
+                "groups": {"generatorFamily": known("gpt-5_6-luna")},
+            },
+            {"id": "h1", "label": "human", "groups": {}},
+        ]
+        per_family = assemble_corpus.positive_rows_per_family(records)
+        self.assertEqual(per_family, {"gpt-5_6-luna": Counter({"ai": 1, "mixed": 1})})
+        positives = {f: sum(c.values()) for f, c in per_family.items()}
+        self.assertEqual(positives, {"gpt-5_6-luna": 2})
+        # Eligibility is not consulted here, and it cannot be: at this point in the run
+        # `generationBatch` is `unknown` on every generated row (it is derived after
+        # partitioning), so an eligibility count would return zero for every family.
+        self.assertEqual(
+            assemble_corpus.reserved_families_below_the_recall_floor(
+                positives, {"gpt-5_6-luna"}, minimum=2
+            ),
+            {},
+        )
+
+
+class HeldOutDeclarationTests(unittest.TestCase):
+    """An empty reserve is a refusal, never a family name.
+
+    `parseDatasetManifest` refuses a manifest whose `heldOutGeneratorFamilies` is empty, so
+    there is no legal empty state to fall back to — and the one thing that must never fill
+    the gap is a name, because every withdrawn candidate was withdrawn for a reason that
+    still holds.
+    """
+
+    def test_the_seated_reserve_is_what_the_governance_declares(self) -> None:
+        import assemble_corpus
+
+        self.assertEqual(
+            assemble_corpus.declared_held_out_families(
+                {"gpt-oss-120b-medium", "gpt-5_6-luna"}, {}
+            ),
+            ["gpt-5_6-luna", "gpt-oss-120b-medium"],
+        )
+
+    def test_an_empty_reserve_refuses_and_carries_every_withdrawal_reason(self) -> None:
+        import assemble_corpus
+
+        withdrawn = {
+            "gpt-5_6-luna": "37 positivos, abaixo do piso de 200",
+            "gpt-oss-120b-medium": "nenhuma linha sobreviveu a lane de mistura",
+        }
+        with self.assertRaises(assemble_corpus.HeldOutReserveEmpty) as caught:
+            assemble_corpus.declared_held_out_families(set(), withdrawn)
+        message = str(caught.exception)
+        for family, reason in withdrawn.items():
+            self.assertIn(family, message)
+            self.assertIn(reason, message)
+        self.assertIn("empty list", message)
+
+    def test_an_empty_reserve_with_no_candidate_at_all_still_refuses(self) -> None:
+        import assemble_corpus
+
+        with self.assertRaises(assemble_corpus.HeldOutReserveEmpty) as caught:
+            assemble_corpus.declared_held_out_families(set(), {})
+        self.assertIn("reserve reached the corpus at all", str(caught.exception))
+
+    def test_the_governance_block_of_the_run_calls_the_declaration(self) -> None:
+        source = (Path(__file__).resolve().parent / "assemble_corpus.py").read_text(
+            encoding="utf-8"
+        )
+        # The refusal only exists if the run uses it; a literal beside `held_out` would
+        # reinstate the withdrawn claim without touching the function above.
+        self.assertIn(
+            "declared_held_out_families(held_out, withdrawn)",
+            source,
+        )
+
+
+class SeenSetIndexTests(unittest.TestCase):
+    """The global prune reads an artifact, and a release refuses without one."""
+
+    def _header(self, **overrides) -> dict:
+        import assemble_corpus
+
+        return {
+            "documents": assemble_corpus.DEAD_CORPUS_DOCUMENTS,
+            "source": {
+                "path": "records.jsonl",
+                "sha256": assemble_corpus.DEAD_CORPUS_SHA256,
+                "lines": assemble_corpus.DEAD_CORPUS_DOCUMENTS,
+            },
+            **overrides,
+        }
+
+    def test_a_partial_index_is_refused_against_the_dead_corpus_size(self) -> None:
+        import assemble_corpus
+
+        documents = assemble_corpus.DEAD_CORPUS_DOCUMENTS
+        assemble_corpus.assert_the_seen_index_covers_the_dead_corpus(self._header())
+        with self.assertRaises(assemble_corpus.SeenIndexIncomplete) as caught:
+            assemble_corpus.assert_the_seen_index_covers_the_dead_corpus(
+                self._header(
+                    documents=documents - 1,
+                    source={
+                        "path": "parcial.jsonl",
+                        "sha256": assemble_corpus.DEAD_CORPUS_SHA256,
+                    },
+                )
+            )
+        message = str(caught.exception)
+        self.assertIn(str(documents - 1), message)
+        self.assertIn(str(documents), message)
+        self.assertIn("parcial.jsonl", message)
+
+    def test_an_index_built_over_another_file_is_refused_by_digest(self) -> None:
+        import assemble_corpus
+
+        # The count does not identify the material. An index built by mistake over the
+        # fresh pools (13.880 candidate rows on disk) satisfies `documents >= 10.000`, and
+        # the run would then print its own pools compared against themselves as the
+        # contamination number.
+        other = "f" * 64
+        with self.assertRaises(assemble_corpus.SeenIndexOfAnotherCorpus) as caught:
+            assemble_corpus.assert_the_seen_index_covers_the_dead_corpus(
+                self._header(
+                    documents=13_880,
+                    source={"path": "candidates/pools.jsonl", "sha256": other},
+                )
+            )
+        message = str(caught.exception)
+        self.assertIn(other, message)
+        self.assertIn(assemble_corpus.DEAD_CORPUS_SHA256, message)
+        self.assertIn("candidates/pools.jsonl", message)
+
+    def test_an_index_that_declares_no_source_digest_is_refused(self) -> None:
+        import assemble_corpus
+
+        with self.assertRaises(assemble_corpus.SeenIndexOfAnotherCorpus) as caught:
+            assemble_corpus.assert_the_seen_index_covers_the_dead_corpus(
+                self._header(source={"path": "sem-digest.jsonl"})
+            )
+        self.assertIn(assemble_corpus.DEAD_CORPUS_SHA256, str(caught.exception))
+
+    def test_the_dead_corpus_size_and_digest_are_the_measured_ones(self) -> None:
+        import assemble_corpus
+
+        # The dead corpus is a frozen artifact of the reproved run: 10.000 record-lines
+        # over all five partitions, which is what the global prune is declared over. The
+        # digest is `sha256sum benchmark/data/corpus-build/dataset/records.jsonl`, and it
+        # is a constant here rather than prose in a comment because a measurement nothing
+        # compares against is folklore.
+        self.assertEqual(assemble_corpus.DEAD_CORPUS_DOCUMENTS, 10_000)
+        self.assertEqual(
+            assemble_corpus.DEAD_CORPUS_SHA256,
+            "595739107e895cfc7b09409f29c13b998d195e921f1ca7eec1e5c8406772116a",
+        )
+
+
+class _AssemblyStdout(io.StringIO):
+    # `main` calls sys.stdout.reconfigure to force utf-8, and io.StringIO has no such
+    # method: a bare StringIO under redirect_stdout kills the run before it starts.
+    def reconfigure(self, **kwargs) -> None:
+        return None
+
+
+class AssemblyRunTests(unittest.TestCase):
+    """`main()` end to end, over a smoke corpus that populates all FIVE partitions.
+
+    The sizes are derived, not picked. `--sample 100` asks for 40 human, 40 ai and 20
+    mixed lines, and 40 is a class size whose four rounded blocks and remainder all land
+    inside `CLASS_TOLERANCE` (0.45/0.05/0.10/0.20 of 40 are whole numbers and `test` is the
+    remainder); at 12 or 15 they are not, and the stamped-corpus guard refuses before the
+    run reaches anything under test.
+
+    Every generated row carries its OWN `version` and template digest because both are
+    union axes (`SPLIT_GROUP_KEYS`): rows sharing either are one component, and one
+    component per class fails the geometry guard. Each human row carries its own origin
+    document for the same reason. The mixed pool rows are deliberately unwritable — they
+    record no mixing template — which is the state of the pairs on disk today, so the mixed
+    class comes out empty and its shortfall is reported.
+    """
+
+    RESERVED_FAMILY = "gpt-5.6-luna"
+    CORE_FAMILY = "gemini-3.5-flash-lite"
+    LANE_OF = {"agy": "agy", "codex": "codex", "gemini": "gemini-api"}
+
+    def _prose(self, tag: str) -> str:
+        # Disjoint token sets per row, so neither the near-duplicate prune nor the global
+        # seen prune collapses two fixture rows into one another.
+        return " ".join(f"{tag}palavra{n}" for n in range(60))
+
+    def _human(self, domain_source: str, index: int) -> dict:
+        from group_axes import NO_AUTHOR_READ, known, not_applicable
+
+        return {
+            "candidateId": f"cand_{domain_source}_{index:04d}",
+            "text": self._prose(f"h{domain_source}{index}"),
+            "wordCount": 60,
+            "domainSource": domain_source,
+            "meta": {
+                "dateField": "teiHeader/publicationStmt/date",
+                "observedValue": "2019-05-04",
+                "sourceMaterialBatch": "smb_fixture_v1",
+                "groupAxes": {
+                    "source": known(f"doc_{domain_source}_{index:04d}"),
+                    "author": not_applicable(NO_AUTHOR_READ),
+                },
+            },
+        }
+
+    def _ai(self, provider: str, family: str, index: int) -> dict:
+        import hashlib
+
+        digest = hashlib.sha256(f"{family}:{index}".encode("utf-8")).hexdigest()
+        meta = {
+            "provider": provider,
+            "family": family,
+            "model": family,
+            "version": f"{family}-build-{index:04d}",
+            "recipe": "original",
+            "generationLane": self.LANE_OF[provider],
+            "promptId": f"original_ausente_{index:04d}",
+            "promptSha256": digest,
+            "promptTemplateDigest": digest,
+            "pairedWith": f"ausente_{index:04d}",
+            "harnessVersion": "1.0.0",
+        }
+        if self.LANE_OF[provider] == "codex":
+            # `codex` offers no `not-supported` effort source, so a row of that lane
+            # recording no level is unwritable at all — a real blocker of the lane.
+            meta["effortLevel"] = "high"
+            meta["effortSource"] = "flag"
+        return {
+            "candidateId": f"cand_ai_{index:04d}",
+            "text": self._prose(f"a{index}"),
+            "wordCount": 60,
+            "meta": meta,
+        }
+
+    def _mixed(self, index: int) -> dict:
+        return {
+            "parentId": f"pai_ausente_{index:04d}",
+            "parentFamily": "carolina_judicial_branch",
+            "text": self._prose(f"m{index}"),
+            "provider": "gemini",
+            "model": "gemini-3.1-flash-lite",
+            "mixture": {"spans": [{"start": 0, "end": 10, "origin": "ai"}]},
+        }
+
+    def _write(self, path: Path, rows: list[dict]) -> None:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        with path.open("w", encoding="utf-8", newline="\n") as handle:
+            for row in rows:
+                handle.write(json.dumps(row, ensure_ascii=False) + "\n")
+
+    def _pools(
+        self,
+        tmp: Path,
+        *,
+        reserved_rows: int = 6,
+        reserved_family: str | None = None,
+        excluded_rows: int = 0,
+        excluded_family: str = "madras:synthetic_corpusqwn",
+    ) -> dict:
+        """The four pool files, and the planted line a seen set may already hold."""
+        cand = tmp / "candidates"
+        family = reserved_family or self.RESERVED_FAMILY
+        # 11 encyclopedic rows against a quota of 10, with the planted one FIRST: it is
+        # selected unless the global prune removes it.
+        wiki = [self._human("ptwiki_lead", index) for index in range(11)]
+        self._write(cand / "wikipedia_fresh.jsonl", wiki)
+        carolina = [
+            self._human(source, index)
+            for source in (
+                "carolina_judicial_branch",
+                "carolina_social_media",
+                "carolina_university_domains",
+            )
+            for index in range(10)
+        ]
+        self._write(cand / "carolina_fresh.jsonl", carolina)
+        core = [
+            self._ai("gemini", self.CORE_FAMILY, index)
+            for index in range(40 - reserved_rows - excluded_rows)
+        ]
+        self._write(cand / "ai_fresh_gemini.jsonl", core)
+        reserved = [
+            self._ai("codex", family, 1000 + index) for index in range(reserved_rows)
+        ]
+        self._write(cand / "ai_fresh_codex.jsonl", reserved)
+        if excluded_rows:
+            # `ai_reserved.jsonl` is the pool the role lists did not cover, and it is read
+            # LAST — so these rows are inside the quota only because the core count above
+            # makes room for them. With the metadata the re-extraction will give them they
+            # are writable rows, which is the state in which the exclusion is what removes
+            # them rather than `UnmappableLane`.
+            self._write(
+                cand / "ai_reserved.jsonl",
+                [
+                    self._ai("gemini", excluded_family, 2000 + index)
+                    for index in range(excluded_rows)
+                ],
+            )
+        self._write(
+            cand / "mixed_candidates.jsonl", [self._mixed(index) for index in range(20)]
+        )
+        return {"plantedId": wiki[0]["candidateId"], "plantedText": wiki[0]["text"]}
+
+    def _main(
+        self, tmp: Path, *, seen_texts: list[str] | None, sample: str | None = "100"
+    ) -> None:
+        import assemble_corpus
+        import near_dupes
+
+        seen_path = tmp / "seen-index.jsonl"
+        if seen_texts is not None:
+            near_dupes.write_seen_index(
+                near_dupes.build_seen_index(seen_texts),
+                seen_path,
+                {"path": "fixture", "sha256": "0" * 64, "lines": len(seen_texts)},
+            )
+        buffer = _AssemblyStdout()
+        saved_argv, saved_dataset = sys.argv, assemble_corpus.DATASET
+        try:
+            sys.argv = [
+                "assemble_corpus.py",
+                "--out-dir",
+                str(tmp / "out"),
+                "--candidates-dir",
+                str(tmp / "candidates"),
+                "--seen-index",
+                str(seen_path),
+                *(("--sample", sample) if sample else ()),
+            ]
+            # `benchmark/data/dataset/reserved.jsonl` is read by module constant, so a run
+            # that did not redirect it would assemble the real reserved pool as well.
+            assemble_corpus.DATASET = tmp / "dataset"
+            assemble_corpus.PARTITION_OF.clear()
+            with contextlib.redirect_stdout(buffer):
+                assemble_corpus.main()
+        finally:
+            sys.argv, assemble_corpus.DATASET = saved_argv, saved_dataset
+            self.stdout = buffer.getvalue()
+
+    def _outputs(self, tmp: Path) -> tuple[list[dict], dict]:
+        out = tmp / "out"
+        records = [
+            json.loads(line)
+            for line in (out / "records.jsonl").read_text(encoding="utf-8").splitlines()
+            if line.strip()
+        ]
+        governance = json.loads(
+            (out / "governance-inputs.json").read_text(encoding="utf-8")
+        )
+        return records, governance
+
+    def test_the_run_seats_the_reserve_in_test_and_declares_only_it(self) -> None:
+        import assemble_corpus
+        from group_axes import identity_of
+
+        with tempfile.TemporaryDirectory() as raw:
+            tmp = Path(raw)
+            self._pools(tmp)
+            self._main(tmp, seen_texts=[])
+            records, governance = self._outputs(tmp)
+            partitions = dict(assemble_corpus.PARTITION_OF)
+
+        self.assertEqual(
+            sorted(set(partitions.values())),
+            ["cal-A", "cal-B", "dev", "test", "train"],
+        )
+        self.assertEqual(len(records), 80)
+        counts: dict[str, int] = {}
+        for record in records:
+            counts[record["label"]] = counts.get(record["label"], 0) + 1
+        self.assertEqual(counts, {"human": 40, "ai": 40})
+
+        # The declaration is the slate's reserve and nothing else.
+        reserved = assemble_corpus.generator_family(self.RESERVED_FAMILY)
+        self.assertEqual(governance["heldOutGeneratorFamilies"], [reserved])
+        # Every line of it realizes in the blind block, which is what "reserved from
+        # training" means operationally.
+        seated = [
+            r
+            for r in records
+            if identity_of(r["groups"].get("generatorFamily")) == reserved
+        ]
+        self.assertEqual(len(seated), 6)
+        self.assertEqual({partitions[r["id"]] for r in seated}, {"test"})
+        # The core family is NOT reserved: it reaches train, which is what makes the
+        # reserve a distinction rather than a label.
+        core = assemble_corpus.generator_family(self.CORE_FAMILY)
+        core_blocks = {
+            partitions[r["id"]]
+            for r in records
+            if identity_of(r["groups"].get("generatorFamily")) == core
+        }
+        self.assertIn("train", core_blocks)
+        self.assertIn("test", core_blocks)
+        self.assertIn(f"'{reserved}': 'ood-reserved'", self.stdout)
+        self.assertIn(f"'{core}': 'core'", self.stdout)
+
+    def test_a_line_of_the_dead_corpus_does_not_survive_the_global_prune(self) -> None:
+        with tempfile.TemporaryDirectory() as raw:
+            tmp = Path(raw)
+            planted = self._pools(tmp)
+            self._main(tmp, seen_texts=[planted["plantedText"]])
+            records, _governance = self._outputs(tmp)
+
+        self.assertNotIn(planted["plantedId"], {r["id"] for r in records})
+        # The quota is still met out of the rest of the cell's pool, so the absence is the
+        # prune and not a short pool.
+        self.assertEqual(
+            sum(1 for r in records if r.get("humanSourceType") == "ptwiki"), 10
+        )
+        self.assertIn("vazamento vs corpus morto", self.stdout)
+        self.assertIn("'dropped': 1", self.stdout)
+        self.assertIn("'dropped_exact_content': 1", self.stdout)
+
+    def test_the_same_line_survives_when_the_seen_set_does_not_hold_it(self) -> None:
+        # The counter-test that makes the one above about the PRUNE and not about pool
+        # ordering: same pools, same quota, empty seen set.
+        with tempfile.TemporaryDirectory() as raw:
+            tmp = Path(raw)
+            planted = self._pools(tmp)
+            self._main(tmp, seen_texts=[])
+            records, _governance = self._outputs(tmp)
+        self.assertIn(planted["plantedId"], {r["id"] for r in records})
+
+    def test_a_reserve_the_pools_do_not_carry_refuses_the_assembly(self) -> None:
+        import assemble_corpus
+
+        with tempfile.TemporaryDirectory() as raw:
+            tmp = Path(raw)
+            self._pools(tmp, reserved_rows=0)
+            with self.assertRaises(assemble_corpus.HeldOutReserveEmpty) as caught:
+                self._main(tmp, seen_texts=[])
+            # No family was substituted: the run wrote no governance at all.
+            self.assertFalse((tmp / "out" / "governance-inputs.json").exists())
+        message = str(caught.exception)
+        self.assertIn("empty list", message)
+        self.assertIn("no unseen-generator claim", message)
+
+    def test_a_renamed_openai_family_stops_the_run_instead_of_reaching_train(
+        self,
+    ) -> None:
+        import assemble_corpus
+
+        # The rename the reserve exists against: same provider, same lane, a name the
+        # slate does not carry. Under a `gpt-*` prefix rule this family would be classed
+        # core and its six lines would land in train.
+        with tempfile.TemporaryDirectory() as raw:
+            tmp = Path(raw)
+            self._pools(tmp, reserved_family="gpt-5.7-luna")
+            with self.assertRaises(assemble_corpus.UndeclaredGeneratorFamily) as caught:
+                self._main(tmp, seen_texts=[])
+            self.assertFalse((tmp / "out" / "records.jsonl").exists())
+        self.assertIn("gpt-5_7-luna", str(caught.exception))
+
+    def test_an_excluded_family_is_dropped_and_counted_instead_of_trained_on(
+        self,
+    ) -> None:
+        import assemble_corpus
+        from group_axes import identity_of
+
+        # Four writable rows of a family whose row records no provider. Under a default —
+        # or under the two-role slate that preceded this — they are trainable rows of a
+        # possible OpenAI generation.
+        with tempfile.TemporaryDirectory() as raw:
+            tmp = Path(raw)
+            self._pools(tmp, excluded_rows=4)
+            self._main(tmp, seen_texts=[])
+            records, governance = self._outputs(tmp)
+            partitions = dict(assemble_corpus.PARTITION_OF)
+
+        excluded = assemble_corpus.generator_family("madras:synthetic_corpusqwn")
+        self.assertIn(excluded, assemble_corpus.EXCLUDED_GENERATOR_FAMILIES)
+        families = {identity_of(r["groups"].get("generatorFamily")) for r in records}
+        self.assertNotIn(excluded, families)
+        # The four lines are GONE, not moved to the blind block: 40 human + 36 ai.
+        self.assertEqual(len(records), 76)
+        self.assertEqual(sum(1 for r in records if r["label"] == "ai"), 36)
+        self.assertEqual(sorted(set(partitions.values())),
+                         ["cal-A", "cal-B", "dev", "test", "train"])
+        # Counted, by family, with the reason the slate gives.
+        self.assertIn("familias excluidas pelo slate", self.stdout)
+        self.assertIn(f"'{excluded}': 4", self.stdout)
+        self.assertIn("records no provider", self.stdout)
+        # And the declaration is untouched by the drop.
+        self.assertEqual(
+            governance["heldOutGeneratorFamilies"],
+            [assemble_corpus.generator_family(self.RESERVED_FAMILY)],
+        )
+
+    def test_a_release_assembly_refuses_without_the_seen_set_artifact(self) -> None:
+        import assemble_corpus
+
+        with tempfile.TemporaryDirectory() as raw:
+            tmp = Path(raw)
+            self._pools(tmp)
+            with self.assertRaises(assemble_corpus.SeenIndexMissing) as caught:
+                self._main(tmp, seen_texts=None, sample=None)
+        message = str(caught.exception)
+        self.assertIn("build-seen-index", message)
+        self.assertIn("no seen-set artifact", message)
+
+    def test_a_smoke_without_the_artifact_says_so_instead_of_claiming_a_clean_pool(
+        self,
+    ) -> None:
+        with tempfile.TemporaryDirectory() as raw:
+            tmp = Path(raw)
+            self._pools(tmp)
+            self._main(tmp, seen_texts=None)
+            records, _governance = self._outputs(tmp)
+        self.assertEqual(len(records), 80)
+        self.assertIn("sem indice de vistos", self.stdout)
+        self.assertNotIn("vazamento vs corpus morto", self.stdout)

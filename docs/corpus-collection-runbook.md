@@ -49,11 +49,12 @@ recusar atalhos:
   o campo de data que ancora cada fonte está em
   [corpus-sources.md](corpus-sources.md), e o que a decisão fecha em
   [limitations.md](limitations.md).
-- **O corpus não repete o que treinou o detector, sob contrato explícito.** Nenhum
-  registro pode ser quase-duplicata de nada em
-  `benchmark/data/dataset/{train,dev}.jsonl`. O contrato verificado é **hash exato
-  + Jaccard ≥ 0,82 sobre shingles de 5 tokens** (`near_dupes.drop_seen()`), e é só
-  isso: **não é independência semântica**. Um registro pode tratar do mesmo assunto,
+- **O corpus não repete o corpus morto, sob contrato explícito.** Nenhum registro pode
+  ser quase-duplicata de nada nos **10.000 registros** de
+  `benchmark/data/corpus-build/dataset/records.jsonl`, e a poda é **global** — o
+  candidato que casa sai do corpus, não só das partições cegas. O contrato verificado é
+  **hash exato + Jaccard ≥ 0,82 sobre shingles de 5 tokens** (`near_dupes.drop_seen()`),
+  e é só isso: **não é independência semântica**. Um registro pode tratar do mesmo assunto,
   citar a mesma fonte ou parafrasear um texto de treino e passar folgado pelo limiar.
   Ao declarar o invariante, declare o contrato — dizer "independente" sem qualificar
   é alegar mais do que se mediu. Contaminação aqui não quebra o pipeline — ela
@@ -80,7 +81,34 @@ O `sealDataset` só produz um audit se a composição bater **exatamente**:
 | Revisores por registro | **≥ 2 distintos**; adjudicador (se `adjudicated`) independente dos dois | `DATASET_REVIEW_INVALID` |
 | Licenças | toda `provenance.licenseId` presente no inventário do manifest | `DATASET_LICENSE_INVALID` |
 
-### 1.1 Contrato contra o conjunto de treino (verificação obrigatória)
+### 1.1 Contrato contra o material já exposto (verificação obrigatória)
+
+> **O conjunto de vistos são os 10.000 registros do corpus morto, e a poda é GLOBAL.**
+> Esta seção foi escrita quando o conjunto de vistos era `train.jsonl` + `dev.jsonl`
+> (36.971 textos) do dataset antigo; os números medidos daquele índice permanecem porque
+> são a evidência do custo do índice, e o que mudou é o QUE ele indexa. O corpus morto é
+> superconjunto da graduação de exposição de ESTADO.md § 3.4 — que readmitiria a linha
+> casada em `train`, `dev` e `cal-A` —, e as ~1.600 linhas recuperáveis são abdicadas de
+> propósito para que "nada deste corpus foi visto" seja uma comparação só.
+>
+> **Ninguém lê o corpus morto para isso.** Parte das 10.000 linhas esteve em partição
+> cega, então a montagem lê um ARTEFATO que carrega apenas digest de conteúdo e chaves de
+> shingle — nenhum token do material —, construído uma vez por
+> `near_dupes.py build-seen-index`. Medido: 10.000 documentos, 3.323.576 chaves,
+> 36,4 MB, ~8 s; sha256 do corpus morto
+> `595739107e895cfc7b09409f29c13b998d195e921f1ca7eec1e5c8406772116a`, que é CONSTANTE
+> conferida (`DEAD_CORPUS_SHA256`) contra o cabeçalho do artefato e não prosa em
+> comentário. Uma montagem de release **recusa** sem o artefato, recusa um artefato que
+> cubra menos de 10.000 documentos e recusa um construído sobre outro arquivo — contagem
+> de documentos sozinha é satisfeita por qualquer arquivo com 10.000 linhas, os pools
+> frescos inclusive. Pular a poda em silêncio, ou telar contra o corpus errado, é o modo
+> de falha que a recusa substitui.
+>
+> A tela compara CHAVES de 8 bytes de blake2b dos shingles, e o contrato declara isso:
+> colisão de chave entre dois shingles que os dois documentos compartilham BAIXA o Jaccard
+> medido (82/100 vira 81/99) e mantém uma quase-duplicata que a barra nomeia. Sob crc32 o
+> par era construtível por busca em segundos; a 64 bits o esperado sobre as 3,3 M chaves do
+> artefato é ~3e-7, declarado em vez de alegado ausente.
 
 O corpus selado mede um detector já treinado. Se um registro do corpus também
 estiver no treino, o modelo foi otimizado justamente naquele texto: ele acerta
@@ -102,11 +130,12 @@ a sobreposição por hash exato era **zero** enquanto três registros estavam em
 jaccard **0,931**, **0,897** e **0,855** — todos acima da barra de recusa de 0,82
 usada no resto do pipeline.
 
-**Como é imposto.** `near_dupes.drop_seen()` indexa `train.jsonl` + `dev.jsonl` e
-descarta candidatos com jaccard ≥ 0,82 sob o mesmo contrato do
+**Como é imposto.** `near_dupes.drop_seen_against()` lê o artefato do conjunto de vistos
+e descarta candidatos com jaccard ≥ 0,82 sob o mesmo contrato do
 `minhash-lsh-jaccard-v1` (shingles de 5 tokens, confirmação exata).
 `assemble_corpus.py` chama essa poda **antes da seleção** e imprime, em toda
-execução:
+execução (o exemplo abaixo é da era `train+dev`, e o rótulo hoje é
+`vazamento vs corpus morto`):
 
 ```
 vazamento vs train+dev: {'seen_texts': 36971, 'checked': 21506, 'dropped': 3,
@@ -179,7 +208,48 @@ falsa tranquilidade que não guardar. O conserto durável é registrar um digest
 conjunto de treino no metadado do modelo, para a checagem passar a ser *amarrada*
 em vez de *assumida*.
 
-### 1.2 A alegação de held-out exige versão fixada, nunca alias
+### 1.2 A reserva é política do slate, por nome — e a alegação exige versão fixada
+
+**Quem é held-out não se deduz, se declara.** `OOD_RESERVED_FAMILIES`,
+`CORE_GENERATOR_FAMILIES` e `EXCLUDED_GENERATOR_FAMILIES` (`assemble_corpus.py`) dizem o
+papel de cada família, e a comparação é por **igualdade exata** sobre
+`groups.generatorFamily`. As reservadas são as
+famílias OpenAI (ESTADO.md § 3.3), e nem lane nem prefixo podem decidir isso: medido,
+`gpt-5.6-luna` chega pela lane `codex` enquanto `gpt-oss-120b-medium` só é alcançável pelo
+`agy`, que é o harness do Google — a fronteira de provedor **cruza** a de lane. Prefixo é
+pior que errado, é silencioso: família reservada renomeada pelo provedor deixa de casar, é
+lida como core e entra no treino sem nada reportar. Sob igualdade exata ela cai em nenhuma
+das três listas e a corrida **para** (`UndeclaredGeneratorFamily`).
+
+**Provedor indeterminado é o terceiro papel, e as linhas saem.** Medido em disco:
+`ai_reserved.jsonl` entrega 1.185 linhas em nove famílias `madras_*` cuja linha registra o
+nome de um corpus e nenhum provedor — `openrouter*` é roteador entre provedores,
+`victory_*` não diz nada, `gptoss5` nomeia o provedor reservado. Nenhum dos outros dois
+papéis pode tomá-las (core treinaria numa linha possivelmente OpenAI; reservar publicaria
+gerador não visto sem saber o provedor, e as nove estão sob o piso de 200), então elas
+deixam o corpus contadas por família. A cobertura é conferida: `POOL_GENERATOR_FAMILIES` é
+o censo medido dos pools, e `assert_slate_roles_are_consistent` recusa família do pool sem
+papel **e** papel sobre família que o pool não entrega.
+
+Três recusas acompanham a política:
+
+- **a reserva não pode encher o bloco cego.** Ele carrega duas hipóteses ao mesmo tempo —
+  recall no limiar, sobre positivos de famílias que o treino contém, e a fatia de gerador
+  não visto —, então reserva igual ao bloco deixa a primeira sem população. Medido: a lane
+  `codex` tem 1.402 linhas frescas e a cota ratificada de 4.000 `ai` deixa bloco de teste
+  de 800, logo a reserva **tem** de ser dimensionada na coleta;
+- **reserva vazia recusa a montagem.** `heldOutGeneratorFamilies` vazio não é estado que
+  `parseDatasetManifest` aceite, e substituir por um nome reinstalaria a alegação que a
+  corrida retirou. Reserva magra (< 200 positivos) tem as linhas DESCARTADAS e contadas:
+  declarar é recusado por `validate` e treinar é proibido, então sobra uma saída só. O
+  piso do lab conta LINHAS e o selado conta linhas ELEGÍVEIS (`countsTowardHeldOutFloor`),
+  então o lab é limite superior e o selado é o mais estrito — declarado onde é contado,
+  porque no ponto da corrida em que o piso roda `generationBatch` ainda é `unknown` em toda
+  linha gerada e uma contagem por elegibilidade daria zero para toda família;
+- **reserva que não cabe recusa também no carimbo.** `assign_partitions` imprimia e seguia
+  adiante; agora recusa, no lugar em que os dois números são reais em vez de previstos.
+
+**A alegação de held-out exige versão fixada, nunca alias.**
 
 `heldOutGeneratorFamilies` afirma que aquele gerador **nunca foi visto no treino**.
 Um alias de modelo (`*-latest`, `*-preview` sem versão, "stable") destrói essa
@@ -204,14 +274,20 @@ Regras que evitam a repetição:
 1. **Gerar dados de treino sempre com versão fixada.** Um alias no treino
    contamina toda alegação de held-out feita depois, retroativamente e sem
    possibilidade de reparo.
-2. **Preferir canal e família distintos** para o held-out. As duas famílias que
-   sobreviveram (`gemini-3.5-flash-low`, `gemini-3.6-flash-low`) vêm do
-   Antigravity e não têm contraparte alguma no treino — é isso que as torna
-   defensáveis.
+2. **Preferir canal e família distintos** para o held-out. As duas famílias
+   `gemini-3.5-flash-low` e `gemini-3.6-flash-low` vinham do Antigravity e não tinham
+   contraparte alguma no treino, e era isso que as tornava defensáveis à época — sob a
+   reserva por slate elas são **core**, e a alegação de gerador não visto passa a repousar
+   num provedor inteiro ausente do treino, que é a mais forte disponível.
 3. **Menos famílias defensáveis vale mais que mais famílias duvidosas.** Retirar
    as duas liberou massa do bloco de teste e permitiu declarar uma segunda
    família limpa: o corpus terminou com 2 alegações sustentáveis em vez de 3
    frágeis.
+4. **Um alias nunca é reserva.** `gemini-flash-lite-latest` é declarado **core** por ser
+   alias: o nome não registra qual modelo respondeu, então ele não pode carregar alegação
+   de reserva nenhuma, e as duas famílias que ele contaminou seguem em
+   `HELD_OUT_INELIGIBLE` — reservar uma delas é recusado pelo próprio slate
+   (`SlateContradiction`).
 
 ### Bloqueio temporal (para o split cego 45/5/10/20/20)
 

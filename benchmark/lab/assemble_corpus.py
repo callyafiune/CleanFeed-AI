@@ -69,6 +69,7 @@ import re
 import sys
 import unicodedata
 from collections import Counter
+from collections.abc import Iterable
 from pathlib import Path
 
 import group_axes
@@ -310,6 +311,143 @@ HELD_OUT_MINIMUM = 200
 # They stay in the corpus as ordinary AI families — no record is discarded, only
 # the claim is withdrawn.
 HELD_OUT_INELIGIBLE = {"gemini-3_5-flash-lite", "gemini-3_1-flash-lite"}
+# The generation slate's roles, NAMED, and compared by exact equality.
+#
+# `ood-reserved` is the unseen-generator test: no line of a reserved family may reach a
+# partition the training set is drawn from, so a reserved family is seated whole in the
+# blind block or its lines leave the corpus. ESTADO.md § 3.3 fixes which families those
+# are — the OpenAI ones — and neither a lane nor a name prefix can decide it:
+# `gpt-5.6-luna` arrives through `codex` while `gpt-oss-120b-medium` is reachable only
+# through `agy`, the Google harness, so the provider boundary crosses the lane boundary.
+# A prefix rule is worse than wrong, it is silent: a reserved family renamed by the
+# provider stops matching, reads as core, and enters training with nothing reporting it.
+# Under exact equality a rename lands in NEITHER list and stops the run
+# (`UndeclaredGeneratorFamily`), which is the same asymmetry `UndecidedDomainSource`
+# applies to sources — a decided exclusion is silent, an undecided one halts.
+#
+# The spellings are canonical (`generator_family` fixed points), because that is the form
+# `groups.generatorFamily` carries; the dotted provider spelling would never match.
+OOD_RESERVED_ROLE = "ood-reserved"
+CORE_ROLE = "core"
+EXCLUDED_ROLE = "excluded"
+OOD_RESERVED_FAMILIES = {
+    "gpt-5_6-luna": (
+        "OpenAI, reached through the frozen `codex` lane; the unseen-generator claim of "
+        "this release is an entire provider absent from training"
+    ),
+    "gpt-oss-120b-medium": (
+        "OpenAI open weights, reachable only through the `agy` harness; a provider "
+        "reserve that admits this family into training is not a provider reserve"
+    ),
+}
+# TRAINABLE BY DECLARATION: the family appears in all five partitions and supports no
+# unseen-generator claim. The list is not derived from the pools and does not claim to be
+# — it is the families whose PROVENANCE the rows record and whose provider is not the
+# reserved one; `POOL_GENERATOR_FAMILIES` is what turns "the three roles cover the pools"
+# into a guard instead of a sentence.
+# `gemini-flash-lite-latest` is an ALIAS and is core for that reason — the alias does not
+# record which model answered, so it can never carry a reserve claim, and the two
+# families the alias contaminated stay in `HELD_OUT_INELIGIBLE`.
+CORE_GENERATOR_FAMILIES = frozenset(
+    {
+        "claude-fable-5",
+        "claude-sonnet-4-6",
+        "gemini-3-flash-preview",
+        "gemini-3_1-flash-lite",
+        "gemini-3_5-flash",
+        "gemini-3_5-flash-lite",
+        "gemini-3_5-flash-low",
+        "gemini-3_5-flash-medium",
+        "gemini-3_6-flash",
+        "gemini-3_6-flash-low",
+        "gemini-flash-lite-latest",
+        "gemma-4-26b-a4b-it",
+    }
+)
+_ROUTED_PROVENANCE = (
+    "generated through a router that dispatches to many providers, and the row records "
+    "which corpus it came from and not which provider answered"
+)
+_UNRECORDED_PROVENANCE = (
+    "a third-party synthetic corpus whose row records no provider and whose name says "
+    "nothing about one"
+)
+# THE THIRD ROLE, and it exists because the pools carry a third case. `ai_reserved.jsonl`
+# delivers 1.185 rows in nine families whose row records a corpus name and no provider:
+# `madras_synthetic_corpus_openrouter*` came through a ROUTER that dispatches to many
+# providers, `madras_victory_*` names nothing at all, and `madras_synthetic_corpus_gptoss5`
+# names gpt-oss, which is the reserved provider.
+#
+# Neither of the other two roles can take them, and that is the whole argument:
+#
+#   * core is trainable, and training on a row that may have come from the reserved
+#     provider destroys the only unseen-generator claim this release makes (ESTADO.md
+#     § 3.3), which is exactly the silence the declaration-by-name exists against;
+#   * reserving them would publish "a generator absent from training" for a generator
+#     whose provider nobody can name — the same over-claim `HELD_OUT_INELIGIBLE` withdrew
+#     — and every one of the nine is under `HELD_OUT_MINIMUM` besides.
+#
+# So the lines leave the corpus and are COUNTED. Provenance is a judgment about the world
+# and is not derivable from the text (the same reason `HELD_OUT_INELIGIBLE` is a list):
+# the day a row records its provider, the entry moves to whichever of the two other roles
+# that provider names, and the cost of the move is one line here.
+EXCLUDED_GENERATOR_FAMILIES = {
+    "madras_synthetic_corpus_gptoss5": (
+        "the name says gpt-oss, i.e. the reserved provider, and the row records no "
+        "provider to confirm it either way"
+    ),
+    "madras_synthetic_corpus_openrouter": _ROUTED_PROVENANCE,
+    "madras_synthetic_corpus_openrouter2": _ROUTED_PROVENANCE,
+    "madras_synthetic_corpus_openrouter23": _ROUTED_PROVENANCE,
+    "madras_synthetic_corpus_openrouter3": _ROUTED_PROVENANCE,
+    "madras_synthetic_corpus_openrouter55": _ROUTED_PROVENANCE,
+    "madras_synthetic_corpusqwn": (
+        "a third-party synthetic corpus whose row records no provider; the name suggests "
+        "Qwen and a name is not a provenance record"
+    ),
+    "madras_victory_1": _UNRECORDED_PROVENANCE,
+    "madras_victory_2": _UNRECORDED_PROVENANCE,
+}
+# The generator families the DECLARED pool files deliver, measured 2026-08-05 over
+# `load_ai` (4.048 rows) and `load_mixed` (2.135 rows), canonicalized by
+# `generator_family`. It is a measurement and it is here to be compared: every family in
+# it must have exactly one role, and every role must name a family the pools deliver
+# (`assert_slate_roles_are_consistent`). Re-measure after any change to the pools:
+#
+#   py -3.13 -c "import assemble_corpus as a, collections; \
+#     print(collections.Counter(a.generator_family(str((r.get('meta') or {}).get('family') \
+#     or r.get('model'))) for r in a.load_ai() + a.load_mixed()))"
+#
+# The counts are the rows on disk and not the rows that survive: measured today, 2.878 of
+# the 4.048 ai rows and every one of the 2.135 mixed rows die earlier on absent metadata
+# (`UnmappableLane`, `MissingRecipe`), so no excluded row reaches the role pass at all.
+# Re-extraction is what revives them, which is exactly why the roles have to cover the
+# pool BEFORE that and not when a family first survives.
+POOL_GENERATOR_FAMILIES = {
+    "claude-fable-5": 76,
+    "claude-sonnet-4-6": 177,
+    "gemini-3-flash-preview": 9,
+    "gemini-3_1-flash-lite": 970,
+    "gemini-3_5-flash": 4,
+    "gemini-3_5-flash-lite": 500,
+    "gemini-3_5-flash-low": 320,
+    "gemini-3_5-flash-medium": 99,
+    "gemini-3_6-flash": 19,
+    "gemini-3_6-flash-low": 449,
+    "gemini-flash-lite-latest": 98,
+    "gemma-4-26b-a4b-it": 66,
+    "gpt-5_6-luna": 1760,
+    "gpt-oss-120b-medium": 451,
+    "madras_synthetic_corpus_gptoss5": 88,
+    "madras_synthetic_corpus_openrouter": 133,
+    "madras_synthetic_corpus_openrouter2": 153,
+    "madras_synthetic_corpus_openrouter23": 147,
+    "madras_synthetic_corpus_openrouter3": 145,
+    "madras_synthetic_corpus_openrouter55": 147,
+    "madras_synthetic_corpusqwn": 150,
+    "madras_victory_1": 125,
+    "madras_victory_2": 97,
+}
 # No provider on these channels exposes a seed, so every declared batch records the
 # same reason for its absence.
 #
@@ -1410,6 +1548,347 @@ def thin_held_out_families(
     return {f: written[f] for f in sorted(held_out) if written[f] < minimum}
 
 
+# --- the reserve: which families the training set may contain ------------------
+
+
+class SlateContradiction(RuntimeError):
+    """The slate's own declarations disagree, so no corpus built from it can be right."""
+
+
+class UndeclaredGeneratorFamily(RuntimeError):
+    """A generated family no role of the slate names.
+
+    Stops the run instead of being counted as a drop, like `UndecidedDomainSource`: the
+    three lists ARE the decision, so a name outside all of them is undecided, and the case
+    that makes it matter is a reserved family renamed by its provider. Classifying it by
+    anything other than the declaration — a prefix, a lane, a default — puts an OpenAI
+    family in `train` and reports nothing.
+    """
+
+
+class ReserveFillsTheBlindBlock(RuntimeError):
+    """The reserved rows of one class do not leave room for a core positive in `test`.
+
+    The blind block carries TWO hypotheses at once: recall at the published threshold,
+    measured over positives of families the training set contains, and the unseen-
+    generator slice, measured over the reserve. A reserve that fills the block leaves the
+    first with no population, and the assembler must not choose which reserved lines to
+    discard to make room — how much of each role the block holds is a collection quota.
+    """
+
+
+class HeldOutReserveEmpty(RuntimeError):
+    """No family can be declared held-out, and no family may be substituted for one."""
+
+
+def slate_roles() -> dict[str, str]:
+    """family -> role, over the three declared lists. The only place they are joined."""
+    return {
+        **{family: OOD_RESERVED_ROLE for family in OOD_RESERVED_FAMILIES},
+        **{family: CORE_ROLE for family in CORE_GENERATOR_FAMILIES},
+        **{family: EXCLUDED_ROLE for family in EXCLUDED_GENERATOR_FAMILIES},
+    }
+
+
+def assert_slate_roles_are_consistent() -> None:
+    """The slate decides each family once, in the spelling the records carry.
+
+    Five ways the lists can be written so that nothing they say can hold, all of
+    them silent at assembly time: a family in two roles (the corpus would be seated by
+    whichever lookup runs first), a reserved family whose held-out claim was already
+    withdrawn (`HELD_OUT_INELIGIBLE` — declaring it measures a generator the training set
+    saw), a name that is not a `generator_family` fixed point (the dotted provider
+    spelling never equals `groups.generatorFamily`, so the role never applies), a family
+    the pools deliver and no role names, and a role naming a family the pools do not
+    deliver.
+
+    The last two are what make the coverage a guard. A pool family with no role is a
+    decision nobody took, and it surfaces only if and when a row of it survives its
+    metadata — which is to say after the re-extraction, under pressure to unblock. A role
+    naming an absent family is the reverse: it reads as coverage the pools never had, and
+    it is how a list written from the slate came to look like a list written from the
+    pools.
+    """
+    roles: dict[str, list[str]] = {}
+    for role, names in (
+        (OOD_RESERVED_ROLE, OOD_RESERVED_FAMILIES),
+        (CORE_ROLE, CORE_GENERATOR_FAMILIES),
+        (EXCLUDED_ROLE, EXCLUDED_GENERATOR_FAMILIES),
+    ):
+        for family in names:
+            roles.setdefault(family, []).append(role)
+    doubled = {f: sorted(r) for f, r in sorted(roles.items()) if len(r) > 1}
+    if doubled:
+        raise SlateContradiction(
+            f"the slate declares {doubled}: one family cannot hold two roles, and which "
+            "one applies would be decided by whichever lookup runs first"
+        )
+    withdrawn = sorted(set(OOD_RESERVED_FAMILIES) & HELD_OUT_INELIGIBLE)
+    if withdrawn:
+        raise SlateContradiction(
+            f"the slate reserves {withdrawn}, whose held-out claim was withdrawn as "
+            "unprovable (HELD_OUT_INELIGIBLE): reserving it would publish an unseen-"
+            "generator result for a generator the training set may well have seen"
+        )
+    for family in sorted(roles):
+        canonical = generator_family(family)
+        if canonical != family:
+            raise SlateContradiction(
+                f"the slate names {family!r}, whose canonical form is {canonical!r}: "
+                "groups.generatorFamily carries the canonical spelling, so this role "
+                "would never match any record"
+            )
+    unroled = sorted(set(POOL_GENERATOR_FAMILIES) - set(roles))
+    if unroled:
+        raise SlateContradiction(
+            f"POOL_GENERATOR_FAMILIES delivers {unroled} and no role of the slate names "
+            f"them. Declare each one {OOD_RESERVED_ROLE}, {CORE_ROLE} or {EXCLUDED_ROLE}: "
+            "a family with no role is a decision that gets taken by whoever is "
+            "unblocking a run"
+        )
+    unpooled = sorted(set(roles) - set(POOL_GENERATOR_FAMILIES))
+    if unpooled:
+        raise SlateContradiction(
+            f"the slate names {unpooled} and the measured pool census does not deliver "
+            "them. Either the pools changed — re-measure POOL_GENERATOR_FAMILIES — or the "
+            "role is coverage of nothing, which is how the lists came to look derived "
+            "from the pools when they were written from the generation slate"
+        )
+
+
+def slate_role_of(family: str, record_id: str) -> str:
+    """The declared role of one canonical family, or a refusal in place of a default."""
+    role = slate_roles().get(family)
+    if role is not None:
+        return role
+    raise UndeclaredGeneratorFamily(
+        f"the record {record_id!r} was generated by the family {family!r}, which "
+        f"the slate declares neither {OOD_RESERVED_ROLE} "
+        f"({', '.join(sorted(OOD_RESERVED_FAMILIES))}) nor {CORE_ROLE} "
+        f"({', '.join(sorted(CORE_GENERATOR_FAMILIES))}) nor {EXCLUDED_ROLE} "
+        f"({', '.join(sorted(EXCLUDED_GENERATOR_FAMILIES))}). Declare it in one of "
+        "the three before assembling: a family classified by anything but the "
+        "declaration is how a renamed reserved family enters training in silence"
+    )
+
+
+def generator_family_roles(records: list[dict]) -> dict[str, str]:
+    """Every generated family in the corpus -> its declared role.
+
+    Reads `groups.generatorFamily`, the canonical axis, and not `generation.family`: the
+    latter carries the provider's dotted label, which never equals a slate entry, so a
+    role looked up through it silently applies to nothing.
+    """
+    roles: dict[str, str] = {}
+    for rec in records:
+        if rec.get("label") not in ("ai", "mixed"):
+            continue
+        family = group_axes.identity_of((rec.get("groups") or {}).get("generatorFamily"))
+        if family is None:
+            continue
+        roles[family] = slate_role_of(family, str(rec["id"]))
+    return roles
+
+
+def drop_excluded_families(
+    records: list[dict], roles: dict[str, str]
+) -> tuple[list[dict], dict[str, int]]:
+    """(records the slate admits, rows dropped per excluded family).
+
+    Separate from the role pass because the count is the output: these rows were selected
+    against the class quota and left the corpus for a reason no re-extraction repairs, so
+    the number is what a regeneration has to replace.
+    """
+    excluded = {family for family, role in roles.items() if role == EXCLUDED_ROLE}
+    if not excluded:
+        return records, {}
+    dropped: Counter = Counter()
+    kept: list[dict] = []
+    for rec in records:
+        family = group_axes.identity_of((rec.get("groups") or {}).get("generatorFamily"))
+        if family in excluded:
+            dropped[family] += 1
+        else:
+            kept.append(rec)
+    return kept, dict(sorted(dropped.items()))
+
+
+def reserved_rows_per_class(
+    per_family: dict[str, Counter], reserved: Iterable[str]
+) -> dict[str, int]:
+    """Reserved rows per record class, which is the unit the blind block is sized in."""
+    rows: Counter = Counter()
+    for family in reserved:
+        rows.update(per_family[family])
+    return dict(rows)
+
+
+def assert_the_blind_block_holds_both_roles(
+    reserved_rows: dict[str, int], test_capacity: dict[str, int]
+) -> None:
+    """The reserve fits in `test` AND leaves at least one core positive beside it."""
+    for label in sorted(reserved_rows):
+        capacity = test_capacity.get(label, 0)
+        if reserved_rows[label] >= capacity:
+            raise ReserveFillsTheBlindBlock(
+                f"the class {label!r} carries {reserved_rows[label]} reserved rows and "
+                f"its test block holds {capacity}: the reserve has to be strictly "
+                "smaller, or the blind block publishes an unseen-generator slice with no "
+                "core positive to read recall on. Generate fewer reserved lines or more "
+                "core ones — the assembler will not pick which reserved lines to discard"
+            )
+
+
+def positive_rows_per_family(records: list[dict]) -> dict[str, Counter]:
+    """family -> {label: rows}, over the ai/mixed LINES of the corpus.
+
+    The population the reserve floor and the blind-block arithmetic are both read from,
+    named once so the two cannot count different things. It counts LINES: see
+    `reserved_families_below_the_recall_floor` for why it is not the sealed side's
+    eligible-rows population, and for the direction the difference errs in.
+    """
+    per_family: dict[str, Counter] = {}
+    for rec in records:
+        family = group_axes.identity_of((rec.get("groups") or {}).get("generatorFamily"))
+        if family and rec["label"] in ("ai", "mixed"):
+            per_family.setdefault(family, Counter())[rec["label"]] += 1
+    return per_family
+
+
+def reserved_families_below_the_recall_floor(
+    positives: dict[str, int], reserved: Iterable[str], minimum: int = HELD_OUT_MINIMUM
+) -> dict[str, int]:
+    """Reserved families too thin to be DECLARED, whose lines therefore leave the corpus.
+
+    `validate` refuses a declared held-out family with fewer than `minimum` positives
+    (DATASET_COVERAGE_INVALID), and a reserved family may not enter training, so a thin
+    reserve has exactly one admissible outcome: its lines are dropped and counted. The
+    count is what a regeneration has to close.
+
+    WHICH POPULATION IS COUNTED, because it is not the same one `validate` counts. Here it
+    is every ai/mixed LINE of the family. The sealed floor counts `positiveRows.filter(
+    countsTowardHeldOutFloor)` (benchmark/dataset-manifest.ts), which on a v4 corpus is the
+    ELIGIBLE rows — no axis left `unknown` — so the sealed side is the stricter of the two
+    and this one is an upper bound. A family with 260 lines of which 180 are eligible
+    passes here and is refused by `sealDataset`.
+
+    The lab does not mirror eligibility, and the reason is a measured one rather than a
+    preference: at this point in the run `groups.generationBatch` is `unknown` on every
+    generated row by construction — `assign_generation_batches` fills it after
+    partitioning, because `generatedAt` is part of the batch key — so an eligibility count
+    taken here returns zero for every family. Mirroring it would mean a second, partial
+    copy of the sealed rule (eligibility minus the axes not yet filled), which is the
+    "two spellings that never meet" defect the sealed module is itself annotated for.
+    `harnessVersion` is the axis that makes the two counts genuinely differ on today's
+    pools: the CLI lanes never captured it, so those rows are ineligible at seal time.
+    """
+    return {
+        family: positives[family]
+        for family in sorted(reserved)
+        if positives[family] < minimum
+    }
+
+
+def declared_held_out_families(
+    seated: Iterable[str], withdrawn: dict[str, str]
+) -> list[str]:
+    """`heldOutGeneratorFamilies` for the governance, or a refusal in its place.
+
+    `parseDatasetManifest` (benchmark/dataset-manifest.ts) refuses a manifest whose list
+    is empty, so "no reserve" is not a state the governance can express — and the one
+    thing that must never fill the gap is a family name, because every candidate the run
+    withdrew was withdrawn for a reason that still holds. The refusal carries those
+    reasons: they are what has to be acted on.
+    """
+    families = sorted(seated)
+    if families:
+        return families
+    detail = (
+        "; ".join(f"{family}: {reason}" for family, reason in sorted(withdrawn.items()))
+        or "no generated family of the slate's reserve reached the corpus at all"
+    )
+    raise HeldOutReserveEmpty(
+        "no generator family can be declared held-out, and the sealed manifest refuses "
+        f"an empty list, so this corpus supports no unseen-generator claim ({detail}). "
+        "Regenerate the reserved lane or amend the slate; naming a family here would "
+        "reinstate a claim this run withdrew"
+    )
+
+
+# --- the seen set: the dead corpus, as an artifact nobody has to read -----------
+#
+# The screen is against the WHOLE dead corpus — all 10.000 record-lines, every partition —
+# and the prune is GLOBAL: a candidate that matches leaves the corpus rather than being
+# barred from the blind partitions. That is a superset of the graduated exposure rule
+# (ESTADO.md § 3.4), which would readmit a matching line into `train`, `dev` and `cal-A`;
+# the ~1.600 recoverable lines are given up so that "nothing in this corpus was seen" is
+# one comparison instead of a per-partition argument.
+#
+# The assembler reads the ARTIFACT and never the corpus: part of those 10.000 lines sat in
+# a blind partition, and the artifact carries only digests and shingle keys
+# (near_dupes.SeenIndex). Build it with
+#   py -3.13 near_dupes.py build-seen-index --records <dead corpus> --out <artifact>
+SEEN_INDEX_PATH = (
+    Path(__file__).resolve().parent.parent / "data" / "seen-index.v2.jsonl"
+)
+# The dead corpus is a frozen artifact of the reproved run: this many record-lines, and
+# these bytes. Both are conferred against the artifact's header, and the digest is the
+# half that says WHICH corpus was screened — a count alone is satisfied by any file with
+# enough lines, including the fresh candidate pools (13.880 rows on disk today), and an
+# index built over those would let the run print its contamination number having
+# compared the pools against themselves. The digest lives here as a CONSTANT rather than
+# as prose in a comment for the same reason: a measurement nothing compares is folklore.
+DEAD_CORPUS_DOCUMENTS = 10_000
+DEAD_CORPUS_SHA256 = "595739107e895cfc7b09409f29c13b998d195e921f1ca7eec1e5c8406772116a"
+
+
+class SeenIndexMissing(RuntimeError):
+    """No seen-set artifact, so the global prune cannot run.
+
+    A release assembly REFUSES rather than skipping the prune: a corpus assembled with no
+    screen at all is indistinguishable, from its own artifacts, from one that passed the
+    screen, so the absence has to stop the run instead of being absorbed by it.
+    """
+
+
+class SeenIndexIncomplete(RuntimeError):
+    """The artifact covers fewer documents than the dead corpus has."""
+
+
+class SeenIndexOfAnotherCorpus(RuntimeError):
+    """The artifact was built over a file that is not the dead corpus.
+
+    Same failure mode as `SeenIndexMissing` and indistinguishable from a clean run by the
+    artifacts either produces: the screen ran, reported, and answered about the wrong
+    material.
+    """
+
+
+def assert_the_seen_index_covers_the_dead_corpus(
+    header: dict,
+    documents: int = DEAD_CORPUS_DOCUMENTS,
+    digest: str = DEAD_CORPUS_SHA256,
+) -> None:
+    source = header.get("source") or {}
+    covered = int(header.get("documents") or 0)
+    if covered < documents:
+        raise SeenIndexIncomplete(
+            f"the seen-set artifact covers {covered} documents and the dead corpus has "
+            f"{documents} (built from {source.get('path')!r}). The prune is declared over "
+            "the whole dead corpus, so a partial index leaves part of it unscreened while "
+            "the run reports a clean pool"
+        )
+    built_over = str(source.get("sha256") or "")
+    if built_over != digest:
+        raise SeenIndexOfAnotherCorpus(
+            f"the seen-set artifact was built over sha256 {built_over!r} "
+            f"({source.get('path')!r}) and the dead corpus is {digest!r}. The count of "
+            "documents does not identify the material: rebuild the artifact from the "
+            "dead corpus, or the run screens the pools against the wrong file and "
+            "publishes the number as contamination"
+        )
+
+
 class UnsplittableCorpus(RuntimeError):
     """A stamped corpus the connected splitter cannot honor."""
 
@@ -1916,10 +2395,18 @@ def assign_partitions(records: list[dict], held_out: set[str]) -> None:
         ]
         forced_ids = {id(r) for r in forced}
         rest = [r for r in recs if id(r) not in forced_ids]
+        # REFUSES where it used to print and carry on. The overflow is unreachable from
+        # `main`, which runs `assert_the_blind_block_holds_both_roles` over the same
+        # arithmetic and a strict comparison first; the refusal lives here anyway because
+        # this is where the two numbers are real rather than predicted, and stamping every
+        # reserved row into a block that cannot hold them produces a corpus the splitter
+        # refuses one step later — with nothing but a printed line to say why.
         if len(forced) > n_test:
-            print(
-                f"!! {label}: {len(forced)} registros held-out nao cabem no bloco "
-                f"de teste ({n_test}) — split recusaria por fracao de classe"
+            raise ReserveFillsTheBlindBlock(
+                f"the class {label!r} carries {len(forced)} reserved rows and its test "
+                f"block holds {n_test}: every reserved row is seated in `test`, so a "
+                "reserve larger than the block cannot be stamped at all. Generate fewer "
+                "reserved lines or more core ones"
             )
         for r in forced:
             stamp_block(r, "test")
@@ -2411,8 +2898,19 @@ def main() -> None:
         "Aponte para uma re-extração fresca; NÃO sobrescreva "
         "benchmark/data/corpus-build, que é a evidência da execução reprovada",
     )
+    parser.add_argument(
+        "--seen-index",
+        type=Path,
+        default=SEEN_INDEX_PATH,
+        help="artefato do conjunto de vistos (hashes + shingles do corpus morto). "
+        "Construa com `near_dupes.py build-seen-index`; uma montagem de release "
+        "RECUSA sem ele",
+    )
     args = parser.parse_args()
     sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+    # The slate before the pools: two contradictory role lists cannot produce a right
+    # corpus, and the contradiction is cheap to hear now and expensive after an assembly.
+    assert_slate_roles_are_consistent()
 
     counts = (
         {"human": round(args.sample * 0.4), "ai": round(args.sample * 0.4),
@@ -2452,26 +2950,34 @@ def main() -> None:
     print(f"near-dup prune: {nd_stats}")
     print(f"pools (near-dup): human={len(humans)} ai={len(ai)} mixed={len(mixed)}")
 
-    # Prune what the detector has already SEEN, under a stated contract: exact
-    # tokenized content plus Jaccard >= 0.82 over 5-token shingles, against
-    # train+dev. That contract is NOT independence between corpus and training set
-    # — paraphrase and shared subject matter pass it — and no report may call it
-    # that (R7). What it does catch is the overlap pruning WITHIN the corpus cannot
-    # see: the human pools re-extract the same upstream sources the training set
-    # came from, so a revisited page reappears with small edits and reads as fresh
-    # here while the detector has effectively already seen it.
-    seen_texts: list[str] = []
-    for split in ("train", "dev"):
-        seen_texts.extend(r["text"] for r in read_jsonl(DATASET / f"{split}.jsonl"))
-    if seen_texts:
-        contaminated, seen_stats = near_dupes.drop_seen(
-            [(key(r), r["text"]) for r in humans + ai + mixed], seen_texts
+    # Prune what the dead corpus already contains, under a stated contract: exact
+    # tokenized content plus Jaccard >= 0.82 over 5-token shingles. That contract is NOT
+    # independence between the two corpora — paraphrase and shared subject matter pass it
+    # — and no report may call it that (R7). What it does catch is the overlap pruning
+    # WITHIN the corpus cannot see: the human pools re-extract the same upstream sources
+    # the dead corpus was built from, so a revisited page reappears with small edits and
+    # reads as fresh here while its content has already been exposed.
+    if args.seen_index.exists():
+        index, seen_header = near_dupes.read_seen_index(args.seen_index)
+        if not args.sample:
+            assert_the_seen_index_covers_the_dead_corpus(seen_header)
+        contaminated, seen_stats = near_dupes.drop_seen_against(
+            [(key(r), r["text"]) for r in humans + ai + mixed], index
         )
         if contaminated:
             humans = [r for r in humans if key(r) not in contaminated]
             ai = [r for r in ai if key(r) not in contaminated]
             mixed = [r for r in mixed if key(r) not in contaminated]
-        print(f"vazamento vs train+dev: {seen_stats}")
+        print(f"vazamento vs corpus morto: {seen_stats}")
+    elif not args.sample:
+        raise SeenIndexMissing(
+            f"no seen-set artifact at {args.seen_index}. Build it first:\n"
+            "  py -3.13 near_dupes.py build-seen-index "
+            "--records ../data/corpus-build/dataset/records.jsonl "
+            f"--out {args.seen_index}"
+        )
+    else:
+        print(f"!! sem indice de vistos em {args.seen_index}: fumaca sem poda global")
 
     renamed = enforce_unique_keys(
         [(ai, "candidateId"), (mixed, "parentId"), (humans, "candidateId")]
@@ -2562,24 +3068,22 @@ def main() -> None:
     tagged = tag_hard_negatives(records, max(1, counts["human"] // 200))
     print(f"hard-negatives etiquetados por familia: {tagged}")
 
-    # Held-out candidates: the gemini-3.x generators. validate enforces >= 200
-    # positives per DECLARED held-out family (DATASET_COVERAGE_INVALID), so a
-    # thin family must NOT be declared — it stays an ordinary AI family instead
-    # of making the whole release corpus unvalidatable.
-    # Declaring a held-out family is squeezed from two sides. validate demands
-    # >= 200 positives per DECLARED family, while the split demands every record
-    # of one sit after the test cut — so a family only fits if its records fit
-    # in what is left of each class's test block, or the class fraction blows
-    # past classTolerance and the split refuses the corpus. Mixing models count
-    # as generators, so gemini-3.x reaches the mixed class in bulk: declaring
-    # every eligible family needed 1170 of mixed's 1000 test slots.
-    # Declare richest-in-AI-mass first (that mass is what a generalization claim
-    # rests on) and stop when the next family would not fit.
-    per_family: dict[str, Counter] = {}
-    for r in records:
-        family = group_axes.identity_of(r["groups"].get("generatorFamily"))
-        if family and r["label"] in ("ai", "mixed"):
-            per_family.setdefault(family, Counter())[r["label"]] += 1
+    # The reserve, from the slate and not from a name predicate. Every generated family
+    # is classified by DECLARATION — a family no role names stops the run here — and the
+    # reserved ones are the held-out set: they are seated whole in the blind block, and
+    # the split refuses any of their lines that realizes anywhere else. The excluded ones
+    # leave here, BEFORE the per-family counts, so no later arithmetic is computed over
+    # rows the corpus will not contain.
+    roles = generator_family_roles(records)
+    records, excluded_rows = drop_excluded_families(records, roles)
+    if excluded_rows:
+        print(
+            "!! familias excluidas pelo slate — as linhas SAEM do corpus "
+            f"({sum(excluded_rows.values())} no total): {excluded_rows}"
+        )
+        for family in excluded_rows:
+            print(f"   {family}: {EXCLUDED_GENERATOR_FAMILIES[family]}")
+    per_family = positive_rows_per_family(records)
     positives = {f: sum(c.values()) for f, c in per_family.items()}
     class_size = Counter(r["label"] for r in records)
     # The SAME arithmetic `assign_partitions` uses, so the two cannot disagree about how
@@ -2591,39 +3095,43 @@ def main() -> None:
         for lab, n in class_size.items()
     }
 
-    eligible = sorted(
-        (
-            f
-            for f in per_family
-            if f.startswith("gemini-3") and f not in HELD_OUT_INELIGIBLE
-        ),
-        key=lambda f: (-per_family[f]["ai"], -positives[f], f),
+    reserved = {f for f, role in roles.items() if role == OOD_RESERVED_ROLE}
+    print(f"papeis do slate: {dict(sorted(roles.items()))}")
+    withdrawn: dict[str, str] = {}
+    if not args.sample:
+        # Release only, for the reason the origin-document floor is release only: a smoke
+        # collects a fraction of the quota by construction, so every family of a smoke is
+        # under a floor written for a sealed corpus.
+        thin = reserved_families_below_the_recall_floor(positives, reserved)
+        if thin:
+            print(
+                f"!! reserva magra (<{HELD_OUT_MINIMUM} positivos, validate exige) — as "
+                f"linhas SAEM do corpus: {thin}"
+            )
+            for family, count in thin.items():
+                withdrawn[family] = (
+                    f"{count} positivos, abaixo do piso de {HELD_OUT_MINIMUM} que "
+                    "validate exige por familia declarada"
+                )
+            records = [
+                r
+                for r in records
+                if group_axes.identity_of(r["groups"].get("generatorFamily"))
+                not in thin
+            ]
+            reserved -= set(thin)
+            for family in thin:
+                per_family.pop(family, None)
+                positives.pop(family, None)
+            class_size = Counter(r["label"] for r in records)
+            test_capacity = {
+                lab: n - sum(round(n * CLASS_FRACTIONS[b]) for b in CLASS_FRACTIONS)
+                for lab, n in class_size.items()
+            }
+    assert_the_blind_block_holds_both_roles(
+        reserved_rows_per_class(per_family, reserved), test_capacity
     )
-    withheld = {
-        f: positives[f] for f in per_family if f in HELD_OUT_INELIGIBLE
-    }
-    if withheld:
-        print(f"!! nao declaradas held-out (vistas no treino via alias): {withheld}")
-    below_floor = {f: positives[f] for f in eligible if positives[f] < HELD_OUT_MINIMUM}
-    held_out: set[str] = set()
-    used: Counter = Counter()
-    declined: dict[str, dict] = {}
-    for family in eligible:
-        if positives[family] < HELD_OUT_MINIMUM:
-            continue
-        need = per_family[family]
-        if all(used[lab] + need[lab] <= test_capacity.get(lab, 0) for lab in need):
-            held_out.add(family)
-            used.update(need)
-        else:
-            declined[family] = dict(need)
-    if below_floor:
-        print(
-            f"!! nao declaradas held-out (<{HELD_OUT_MINIMUM} positivos, "
-            f"validate exige): {below_floor}"
-        )
-    if declined:
-        print(f"!! nao declaradas held-out (bloco de teste cheio): {declined}")
+    held_out = set(reserved)
     assign_partitions(records, held_out)
     # AFTER partitioning: generatedAt is part of the batch key, so batches can
     # only be derived once each record knows its temporal block.
@@ -2650,7 +3158,7 @@ def main() -> None:
             {"sourceId": sid, "sourceType": sources[sid][0], "licenseId": sources[sid][1]}
             for sid in sorted(used_sources)
         ],
-        "heldOutGeneratorFamilies": sorted(held_out) or ["gemini-3_5-flash-lite"],
+        "heldOutGeneratorFamilies": declared_held_out_families(held_out, withdrawn),
         "generationBatches": batches,
         "licenses": [
             {"id": "cc-by-sa-4.0", "name": "CC BY-SA 4.0",
@@ -2737,7 +3245,7 @@ def main() -> None:
     short = {k: counts[k] - realized[k] for k in counts if realized[k] < counts[k]}
     if short:
         print("!! FALTAM (pool esgotado):", short)
-    print("held-out families:", sorted(held_out))
+    print("held-out families (reserva OOD do slate):", sorted(held_out))
     thin = thin_held_out_families(records, held_out)
     if thin:
         print(f"!! held-out families magras (<{HELD_OUT_MINIMUM}):", thin)

@@ -85,6 +85,94 @@ duas repetem uma comparação que o gate de composição só faria no fim:
   tiradas dela (`hard_negative_demand_per_cell`). Três das seis vêm da célula de
   rede social, e as demandas somam porque uma linha não carrega duas famílias.
 
+### A reserva OOD é política do slate, por nome
+
+`OOD_RESERVED_FAMILIES`, `CORE_GENERATOR_FAMILIES` e
+`EXCLUDED_GENERATOR_FAMILIES` (em `assemble_corpus.py`) declaram o papel de cada
+família geradora, e a comparação é por **igualdade exata** sobre
+`groups.generatorFamily`. Reservada significa: nenhuma linha da
+família chega a partição de que o treino é tirado — ela é assentada inteira no
+bloco cego, e a auditoria do split recusa qualquer linha dela que realize em
+outro lugar. As reservadas são as famílias OpenAI (ESTADO.md § 3.3).
+
+Nem lane nem prefixo decidem isso, e a razão é medida: `gpt-5.6-luna` chega pela
+lane `codex` e `gpt-oss-120b-medium` só é alcançável pelo `agy`, que é o harness
+do Google — a fronteira de provedor cruza a fronteira de lane. Prefixo é pior que
+errado, é silencioso: uma família reservada renomeada pelo provedor deixa de
+casar, é lida como core e entra no treino sem nada reportar. Sob igualdade exata
+ela cai em **nenhuma** das três listas e a corrida para
+(`UndeclaredGeneratorFamily`) — a mesma assimetria de `UndecidedDomainSource`.
+
+O terceiro papel existe porque os pools carregam um terceiro caso:
+`ai_reserved.jsonl` entrega 1.185 linhas em nove famílias `madras_*` cuja linha
+registra o nome de um corpus e nenhum provedor (`openrouter` é ROTEADOR, e
+`gptoss5` nomeia justamente o provedor reservado). Core não pode tomá-las — treinar
+numa linha possivelmente OpenAI destrói a única alegação de gerador não visto do
+release —, reservar tampouco — seria publicar "gerador ausente do treino" para um
+gerador cujo provedor ninguém nomeia, e todas as nove estão sob o piso de 200. Então
+as linhas SAEM do corpus, contadas por família e com a razão declarada. No dia em
+que a linha registrar provedor, a entrada muda de lista.
+
+A cobertura é GUARDA e não alegação: `POOL_GENERATOR_FAMILIES` é o censo medido das
+famílias que `load_ai` + `load_mixed` entregam, e
+`assert_slate_roles_are_consistent` recusa nos dois sentidos — família do pool sem
+papel, e papel sobre família que o pool não entrega.
+
+Três consequências que o montador impõe:
+
+- a reserva tem de caber no bloco cego **e deixar lugar ao lado**
+  (`assert_the_blind_block_holds_both_roles`): o bloco cego carrega duas
+  hipóteses ao mesmo tempo — recall no limiar, medido sobre positivos de famílias
+  que o treino contém, e a fatia de gerador não visto —, então reserva igual ao
+  bloco deixa a primeira sem população. Quanto de cada papel o bloco carrega é
+  cota de coleta, e o montador não escolhe quais linhas reservadas descartar;
+- reserva vazia **recusa** a montagem (`HeldOutReserveEmpty`).
+  `heldOutGeneratorFamilies` vazio não é estado que o manifesto selado expresse,
+  e substituir por um nome reinstalaria uma alegação que a corrida retirou;
+- reserva que não CABE no bloco recusa também no carimbo
+  (`assign_partitions`), onde os dois números são reais em vez de previstos. Ali
+  se imprimia e seguia adiante — carimbando toda linha reservada num bloco que não
+  as comporta e deixando o splitter recusar um passo depois.
+
+### O conjunto de vistos é artefato, e a poda é global
+
+A poda é contra os **10.000 registros do corpus morto** — todas as partições — e é
+GLOBAL: candidato que casa sai do corpus, não só das partições cegas. É
+superconjunto da graduação de exposição (ESTADO.md § 3.4), que readmitiria a linha
+em `train`, `dev` e `cal-A`; as ~1.600 linhas recuperáveis são abdicadas para que
+"nada deste corpus foi visto" seja uma comparação só.
+
+Parte daquelas 10.000 linhas esteve em partição cega, então o montador **não** lê
+o corpus morto: lê um artefato que carrega só digests e chaves de shingle.
+
+```bash
+py -3.13 near_dupes.py build-seen-index \
+  --records ../data/corpus-build/dataset/records.jsonl \
+  --out ../data/seen-index.v2.jsonl
+```
+
+Medido: 10.000 documentos, 3.323.576 chaves de shingle, 36,4 MB, ~8 s.
+`assemble_corpus.py --seen-index` aponta para ele por default; uma montagem de
+release **recusa** sem o artefato (`SeenIndexMissing`) e recusa um artefato que
+cubra menos de 10.000 documentos (`SeenIndexIncomplete`) ou que tenha sido
+construído sobre outro arquivo (`SeenIndexOfAnotherCorpus`: o cabeçalho declara o
+sha256 do que indexou, e a contagem de documentos sozinha é satisfeita por
+qualquer arquivo grande o bastante, incluindo os próprios pools) — pular a poda em
+silêncio, ou telar contra o corpus errado, é o modo de falha que isso substitui. O artefato vive em
+`benchmark/data/` (nunca no Git, nunca em pacote de evidência) e é estritamente
+menos exposto que o material de que deriva, não incondicionalmente opaco: chave
+de 64 bits de um 5-grama não é texto e não se inverte sozinha, mas um dicionário
+de 5-gramas de pt-BR poderia testar candidatos contra ela.
+
+A comparação é sobre CHAVES de 8 bytes de blake2b e o contrato diz isso: duas
+chaves iguais são um elemento só para a tela, e colisão entre dois shingles que os
+dois documentos compartilham tira um elemento da interseção E um da união, o que
+BAIXA o Jaccard medido (82/100 = 0,82 vira 81/99 = 0,818, sob barra de 0,82). Sob
+crc32 isso era construtível por busca em segundos e um par exatamente na barra
+sobrevivia; a 64 bits o número esperado de pares em colisão sobre as 3.323.576
+chaves do artefato real é ~3e-7, e é esse resíduo que a frase declara em vez de
+alegar ausência.
+
 ## Classe IA — `generate_ai.py` (pareada por tópico)
 
 Gera a contraparte IA de candidatos humanos amostrados deterministicamente:
