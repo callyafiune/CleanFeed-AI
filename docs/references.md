@@ -2159,6 +2159,238 @@ integridade e, por fim, texto e modelo.
   especificidade inversa de termo/documento — a metade "IDF" da ponderação TF-IDF; no projeto, AUC
   0,772 no controle de palavras funcionais contra 0,474 do TF-IDF lexical completo.
 
+### Sondas diagnósticas: validação adversarial, estilometria e viés medido (W3)
+
+- **Lopez-Paz & Oquab, 2017 — Revisiting Classifier Two-Sample Tests** (ICLR 2017).
+  [link](https://openreview.net/forum?id=SJkXfE5xx)
+  _Âncora:_ a sonda 1 inteira. O desempenho de um classificador treinado para distinguir duas
+  amostras **é** a estatística de um teste de duas amostras, e "no nível do acaso" é a hipótese
+  nula desse teste — não uma expectativa informal. _Onde no projeto:_
+  `benchmark/lab/diagnostic_probes.py` (`probe_partitions`,
+  `assert_partitions_are_exchangeable`, `PARTITION_PREDICTABILITY_AUC_FLOOR`);
+  `test_diagnostic_probes.py::PartitionProbeTests`. _Fato citado:_ formaliza o C2ST — treinar um
+  classificador para separar duas amostras e usar sua acurácia de teste como estatística, com a
+  nula em 1/2.
+- **Ben-David, Blitzer, Crammer, Kulesza, Pereira & Vaughan, 2010 — A theory of learning from
+  different domains** (Machine Learning 79(1-2):151–175).
+  [link](https://doi.org/10.1007/s10994-009-5152-4)
+  _Âncora:_ o que a AUC da sonda 1 estima, e por que ela recusa a montagem em vez de descrevê-la:
+  a divergência entre duas distribuições limita o erro de transferir de uma para a outra, e o
+  estimador empírico dessa divergência é exatamente um classificador de domínio. Uma partição
+  `dev` que um classificador nomeia é uma `dev` cujo número não limita nada sobre `train`. _Onde no
+  projeto:_ `diagnostic_probes.probe_partitions`; o parágrafo "THE THREE OPEN PARTITIONS" do módulo.
+  _Fato citado:_ limite de erro em adaptação de domínio em função da H-divergência entre as duas
+  distribuições, estimada empiricamente por um discriminador entre as duas amostras.
+- **Rabanser, Günnemann & Lipton, 2019 — Failing Loudly: An Empirical Study of Methods for
+  Detecting Dataset Shift** (NeurIPS 2019). [link](https://arxiv.org/abs/1810.11953)
+  _Âncora:_ escolher o classificador de domínio como detector de deslocamento em vez de um teste
+  univariado por feature, e ler o resultado como teste de hipótese com p-valor. _Onde no projeto:_
+  `diagnostic_probes.auc_p_value`; `PARTITION_PREDICTABILITY_SIGNIFICANCE`. _Fato citado:_ compara
+  empiricamente famílias de detectores de deslocamento de dados, incluindo o classificador de
+  domínio, e reporta cada um como teste estatístico com p-valor.
+- **Bamber, 1975 — The area above the ordinal dominance graph and the area below the receiver
+  operating characteristic graph** (Journal of Mathematical Psychology 12(4):387–415).
+  [link](https://doi.org/10.1016/0022-2496%2875%2990001-2)
+  _Âncora:_ a AUC deste módulo é calculada como estatística de postos, e não pela regra do
+  trapézio, porque o p-valor precisa do **mesmo** U. _Onde no projeto:_
+  `diagnostic_probes.rank_auc` (empates por posto médio, conferido contra `roc_auc_score`).
+  _Fato citado:_ identidade entre a área sob a curva ROC e P(X > Y) + ½P(X = Y), isto é, a
+  estatística de Mann-Whitney normalizada.
+- **Mann & Whitney, 1947 — On a Test of Whether one of Two Random Variables is Stochastically
+  Larger than the Other** (Annals of Mathematical Statistics 18(1):50–60).
+  [link](https://doi.org/10.1214/aoms/1177730491)
+  _Âncora:_ a nula que a sonda 1 usa — média `n1·n2/2` e variância `n1·n2·(n1+n2+1)/12` —, e a
+  declaração de que **não** corrigir empates encolhe a variância na direção que recusa MENOS.
+  _Onde no projeto:_ `diagnostic_probes.auc_p_value`;
+  `test_the_null_p_value_is_one_sided_and_uncorrected_for_ties`. _Fato citado:_ distribuição de U
+  sob a hipótese de igualdade das duas distribuições, com média e variância explícitas.
+- **Hanley & McNeil, 1982 — The meaning and use of the area under a receiver operating
+  characteristic (ROC) curve** (Radiology 143(1):29–36).
+  [link](https://doi.org/10.1148/radiology.143.1.7063747)
+  _Âncora:_ a leitura da AUC como probabilidade de ordenação correta de um par, que é o que
+  sustenta reportar uma AUC por partição em um-contra-resto em vez de acurácia — a acurácia de uma
+  partição que é 45 % de três é enganosa por prevalência, a AUC não. _Onde no projeto:_ a escolha
+  de AUC OvR em `probe_partitions` e `probe_lanes`. _Fato citado:_ interpretação da AUC como a
+  probabilidade de o classificador ordenar corretamente um par positivo/negativo escolhido ao azar.
+- **Ojala & Garriga, 2010 — Permutation Tests for Studying Classifier Performance** (JMLR
+  11:1833–1863). [link](https://www.jmlr.org/papers/v11/ojala10a.html)
+  _Âncora:_ a alternativa **declarada e não implementada**. O p-valor por permutação não precisa do
+  argumento de que as dobras não carregam informação de rótulo sob a nula; custa o número de
+  permutações vezes o custo do ajuste, para uma camada que só precisa separar "no acaso" de "não".
+  _Onde no projeto:_ o docstring de `diagnostic_probes.auc_p_value`. _Fato citado:_ define dois
+  testes de permutação para desempenho de classificador e mostra que o teste analítico assume
+  independência que validação cruzada não garante.
+- **Forman & Scholz, 2010 — Apples-to-Apples in Cross-Validation Studies: Pitfalls in Classifier
+  Performance Measurement** (SIGKDD Explorations 12(1):49–57).
+  [link](https://doi.org/10.1145/1882471.1882479)
+  _Âncora:_ a correção de que a AUC **agrupada** das predições fora de dobra e a AUC de um modelo
+  único **não são a mesma quantidade**. A primeira redação desta unidade alegava que a AUC ajustada
+  da sonda 2 coincide com o rank AUC da contagem crua "porque uma logística de uma feature é
+  monótona nela"; a monotonia vale DENTRO de uma dobra, e a AUC publicada agrupa as predições de
+  cinco modelos com cinco interceptos, cuja união não é monótona. _Onde no projeto:_ o docstring de
+  `diagnostic_probes.probe_length`, `coefficientPerFold`;
+  `test_the_two_auc_columns_are_different_quantities_and_diverge` e
+  `test_a_perfectly_separated_fixture_makes_the_two_columns_degenerate`. _Fato citado:_ distingue
+  explicitamente as duas maneiras de compor uma métrica sob validação cruzada — agrupar as predições
+  de todas as dobras num só cálculo contra calcular por dobra e mediar — e mostra que as duas dão
+  números diferentes, tratando a escolha como parte do protocolo e não como detalhe.
+- **Airola, Pahikkala, Waegeman, De Baets & Salakoski, 2011 — An experimental comparison of
+  cross-validation techniques for estimating the area under the ROC curve** (Computational
+  Statistics & Data Analysis 55(4):1828–1844). [link](https://doi.org/10.1016/j.csda.2010.11.018)
+  _Âncora:_ a razão de a divergência entre as duas colunas **não** ser diagnóstico de ajuste
+  falhado, que é o que o docstring anterior mandava o leitor caçar. _Onde no projeto:_ o mesmo
+  docstring, e a declaração de que divergência com um sinal só é ruído de amostragem enquanto
+  divergência com dois sinais são dobras que discordam. _Fato citado:_ compara empiricamente os
+  estimadores de AUC por validação cruzada, incluindo o agrupado ("pooling") e o mediado, e mede a
+  diferença de viés e variância entre eles em amostras pequenas.
+- **Gebru, Morgenstern, Vecchione, Vaughan, Wallach, Daumé III & Crawford, 2021 — Datasheets for
+  Datasets** (Communications of the ACM 64(12):86–92). [link](https://doi.org/10.1145/3458723)
+  _Âncora:_ o campo `inputs.rowsPerFile` no relatório das sondas. A receita registrada em prosa
+  (`--pools`) lia 67.934 linhas e não as 9.707 em moldura, e um relatório que não nomeia sua entrada
+  é indistinguível de um rodado fora da moldura para quem só tem o artefato. _Onde no projeto:_
+  `diagnostic_probes.input_provenance`, `IN_FRAME_POOLS`, `--in-frame-pools`;
+  `test_the_report_names_the_material_it_was_computed_over`. _Fato citado:_ o datasheet exige
+  declarar de qual versão/instantâneo a porção usada veio, registrada por quem a coletou — aqui
+  transposto de "o dataset declara sua procedência" para "o RELATÓRIO declara a procedência do
+  material que produziu cada taxa".
+- **McCarthy & Jarvis, 2010 — MTLD, vocd-D, and HD-D: A validation study of sophisticated
+  approaches to lexical diversity assessment** (Behavior Research Methods 42(2):381–392).
+  [link](https://doi.org/10.3758/BRM.42.2.381)
+  _Âncora:_ publicar TTR **e** MTLD, e não só TTR: a TTR é dependente do comprimento, e comprimento
+  é justamente o que a sonda 2 diz que pode diferir entre as classes. _Onde no projeto:_
+  `diagnostic_probes.mtld` (limiar 0,72, contagem de fatores bidirecional), `MTLD_THRESHOLD`;
+  `test_mtld_survives_a_length_difference_that_ttr_does_not`. _Fato citado:_ MTLD como número médio
+  de palavras até a TFF cair a 0,72, calculado nos dois sentidos, com validação de invariância a
+  comprimento contra TTR, vocd-D e HD-D.
+- **Flesch, 1948 — A new readability yardstick** (Journal of Applied Psychology 32(3):221–233).
+  [link](https://doi.org/10.1037/h0057532)
+  _Âncora:_ a forma do índice de legibilidade que a sonda 4 usa — constante menos um termo por
+  palavras/frase menos um termo por sílabas/palavra. _Onde no projeto:_
+  `diagnostic_probes.flesch_pt`. _Fato citado:_ define o Reading Ease como
+  `206.835 − 1.015·(palavras/frases) − 84.6·(sílabas/palavras)`, com os coeficientes do inglês.
+- **Martins, Ghiraldelo, Nunes & Oliveira Jr., 1996 — Readability formulas applied to textbooks in
+  Brazilian Portuguese** (Notas do ICMSC-USP, N.º 28, São Carlos).
+  _Âncora:_ os coeficientes **pt-BR** do índice — a constante 248,835 em lugar de 206,835 —, e a
+  razão de não usar os do inglês: a palavra portuguesa carrega mais sílabas que a inglesa, então a
+  constante inglesa lê todo texto em português como mais difícil do que é. _Onde no projeto:_
+  `diagnostic_probes.flesch_pt` (docstring e literais). _Fato citado:_ adaptação do Flesch Reading
+  Ease ao português do Brasil, com a constante recalibrada para 248,835.
+  _Ressalva de verificação:_ nota técnica sem DOI e **sem link estável conferido nesta sessão**; a
+  fórmula do inglês está ancorada em Flesch (1948), acima, e o que esta entrada sustenta é
+  exclusivamente a troca de constante.
+- **Mosteller & Wallace, 1963 — Inference in an Authorship Problem** (Journal of the American
+  Statistical Association 58(302):275–309).
+  [link](https://doi.org/10.1080/01621459.1963.10500849)
+  _Âncora:_ palavra funcional como marcador de estilo — por que `FUNCTION_WORDS` é uma lista
+  **gramatical fechada** e não um corte de frequência, e por que a estilometria não precisa do
+  vocabulário de conteúdo (que é tópico, não autoria). _Onde no projeto:_
+  `diagnostic_probes.FUNCTION_WORDS`, `function_word_rate`. _Fato citado:_ atribuição de autoria
+  dos Federalist Papers a partir das taxas de palavras funcionais, escolhidas exatamente por serem
+  independentes do assunto.
+- **Stamatatos, 2009 — A survey of modern authorship attribution methods** (JASIST
+  60(3):538–556). [link](https://doi.org/10.1002/asi.21001)
+  _Âncora:_ o inventário de features baratas e robustas que a sonda 4 implementa (comprimento de
+  frase e de palavra, diversidade lexical, pontuação, palavras funcionais, legibilidade) e a
+  fronteira que ela **não** cruza na v1: nada de POS tagging, que exigiria tagger e download que um
+  diagnóstico não paga. _Onde no projeto:_ `diagnostic_probes.STYLOMETRIC_FEATURES` (19 features).
+  _Fato citado:_ taxonomia de features de atribuição de autoria — lexicais, de caractere,
+  sintáticas, semânticas e específicas de aplicação — com o custo de extração de cada nível.
+- **Stamatatos, 2013 — On the Robustness of Authorship Attribution Based on Character N-gram
+  Features** (Journal of Law and Policy 21(2):421–439).
+  [link](https://brooklynworks.brooklaw.edu/jlp/vol21/iss2/8/)
+  _Âncora:_ a melhoria de D19 — acrescentar n-grama de **caractere** (3-6) ao baseline como
+  vetorização paralela. A razão não é desempenho: n-grama de caractere captura idiossincrasia
+  ortográfica e tipográfica, que é exactamente o que a W2 mediu nas lanes e o que n-grama de palavra
+  atravessa sem ver. _Onde no projeto:_ `benchmark/lab/baseline_tfidf.py` (`char_pipeline`,
+  `CHAR_NGRAMS`, `analyzer="char"`); `test_diagnostic_probes.py::CharacterNgramBaselineTests`.
+  _Fato citado:_ n-gramas de caractere capturam informação lexical, sintática e **ortográfica** ao
+  mesmo tempo, e são a representação mais robusta a ruído e a texto curto em atribuição de autoria.
+- **Sapkota, Bethard, Montes-y-Gómez & Solorio, 2015 — Not All Character N-grams Are Created
+  Equal: A Study in Authorship Attribution** (NAACL-HLT 2015).
+  [link](https://aclanthology.org/N15-1010/)
+  _Âncora:_ `analyzer="char"` e **não** `char_wb`. O `char_wb` do sklearn confina os n-gramas ao
+  interior das palavras, e as marcas que a W2 mediu — `** ` entre palavras, espaço antes de quebra,
+  ` | ` de tabela — vivem **atravessando** a fronteira. _Onde no projeto:_ `baseline_tfidf`
+  (docstring e `char_pipeline`); `test_the_character_analyzer_crosses_word_boundaries`. _Fato
+  citado:_ decompõe n-gramas de caractere em categorias (prefixo, sufixo, palavra inteira,
+  multi-palavra, pontuação, ...) e mede que as de **pontuação e fronteira** carregam parte
+  substancial do sinal de autoria.
+- **Rudin, 2019 — Stop explaining black box machine learning models for high stakes decisions and
+  use interpretable models instead** (Nature Machine Intelligence 1:206–215).
+  [link](https://doi.org/10.1038/s42256-019-0048-x)
+  _Âncora:_ por que a sonda 4 é **regressão logística com coeficientes publicados** e não floresta
+  nem boosting com importância. A pergunta é "em que sinal o modelo se apoia, e em que direção", e
+  um ranking de importância não diz direção. _Onde no projeto:_
+  `diagnostic_probes.fit_on_feature_matrix` (docstring), `probe_stylometry` (`coefficients`
+  ordenados por módulo). _Fato citado:_ para decisões de alto risco, um modelo interpretável por
+  construção é preferível a explicação post-hoc de caixa-preta, que pode discordar do modelo que
+  explica.
+- **Fisher, Rudin & Dominici, 2019 — All Models are Wrong, but Many are Useful: Learning a
+  Variable's Importance by Studying an Entire Class of Prediction Models** (JMLR 20(177):1–81).
+  [link](https://www.jmlr.org/papers/v20/18-760.html)
+  _Âncora:_ importância por permutação **ao lado** dos coeficientes, como leitura de robustez —
+  necessária aqui porque as features estão correlacionadas (taxa de hapax e TTR medem o mesmo eixo)
+  e a colinearidade divide um coeficiente entre dois sinais opostos. _Onde no projeto:_
+  `probe_stylometry(permutation_repeats=...)`, campo `permutationImportance`. _Fato citado:_
+  formaliza a dependência de modelo por permutação como perda esperada sob quebra da associação
+  entre a variável e o alvo.
+- **Baayen, 2001 — Word Frequency Distributions** (Kluwer, Text, Speech and Language Technology
+  18). [link](https://doi.org/10.1007/978-94-010-0844-0)
+  _Âncora:_ hapax legomena **dentro do documento** como proxy de raridade, no lugar de uma lista de
+  frequência de referência — que é um download que este diagnóstico não paga. _Onde no projeto:_
+  `diagnostic_probes.hapax_rate` (com `long_word_rate` publicado ao lado, para que os dois
+  discordem visivelmente quando um deles estiver sendo dirigido por outra coisa). _Fato citado:_
+  trata a contagem de hapax legomena como estatística central da distribuição de frequência de um
+  texto e da sua taxa de crescimento de vocabulário.
+- **Liang, Yuksekgonul, Mao, Wu & Zou, 2023 — GPT detectors are biased against non-native English
+  writers** (Patterns 4(7):100779). [link](https://doi.org/10.1016/j.patter.2023.100779)
+  _Âncora:_ a taxa de erro ortográfico é **sonda de viés e nunca feature de modelo**. Erro
+  ortográfico correlaciona com escrita não nativa e vocabulário limitado, que são as populações cuja
+  taxa de falso positivo este projeto se comprometeu a vigiar: medir para saber protege, alimentar o
+  modelo constrói o viés dentro dele, onde nenhuma fatia o encontra depois. _Onde no projeto:_
+  `diagnostic_probes.SPELLING_BIAS_MEASURES`, `spelling_error_rate`,
+  `assert_no_bias_measure_reaches_the_features` (recusa por nome **e** por callable, chamada dentro
+  de `feature_row` e `feature_matrix`);
+  `test_diagnostic_probes.py::SpellingBiasIsolationTests`. _Fato citado:_ detectores de GPT
+  classificam erroneamente texto de escritores não nativos como gerado, com o viés atribuído a
+  marcadores de proficiência e registro — não de autoria.
+- **Dugan, Ippolito, Kirubarajan, Shi & Callison-Burch, 2023 — Real or Fake Text?: Investigating
+  Human Ability to Detect Boundaries Between Human-Written and Machine-Generated Text** (AAAI
+  2023). [link](https://arxiv.org/abs/2212.12672)
+  _Âncora:_ a dispersão entre janelas como sinal **natural** de autoria mista, e por isso publicada
+  como diagnóstico e não como escore: um documento escrito metade por pessoa carrega janelas dos
+  dois lados do corte. _Onde no projeto:_ `diagnostic_probes.window_dispersion`,
+  `probe_window_dispersion`; o papel `diagnostic-curve-only` da linha mista abaixo de 50 %
+  (`mixedBelowHalfAiRole` na pré-inscrição). _Fato citado:_ formula a detecção de FRONTEIRA em texto
+  parcialmente gerado como tarefa própria, com material humano-máquina concatenado por prefixo.
+- **Wang, Li, Ren, Jiang, Zhang & Qiu, 2023 — SeqXGPT: Sentence-Level AI-Generated Text
+  Detection** (EMNLP 2023). [link](https://aclanthology.org/2023.emnlp-main.73/)
+  _Âncora:_ escore por trecho agregado em documento é a arquitetura da área, e a **variação** entre
+  os trechos é a quantidade que a agregação joga fora. O módulo espelha a regra de janelamento
+  selada (`contentTokens`/`overlapTokens`/`maxWindows` LIDOS de
+  `models/cleanfeed-ptbr-v1/cleanfeed-model.json`) para que a dispersão seja de janelas reais.
+  _Onde no projeto:_ `diagnostic_probes.content_windows` e `distributed_indices` (espelhos de
+  `src/inference/chunker.ts`), `sealed_window_plan`;
+  `test_diagnostic_probes.py::WindowDispersionTests`. _Fato citado:_ detecção em nível de sentença
+  com escores por sentença dentro de um documento, mostrando que documentos mistos exibem escores
+  heterogêneos entre sentenças.
+
+**Sem precedente encontrado (2026-08-05)**, três vezes, e as três são de governança e não de método:
+
+1. **usar o C2ST como gate de MONTAGEM de corpus, com recusa nomeando partição e métrica.** A
+   literatura usa o classificador de domínio para diagnosticar deslocamento e para reponderar
+   (Ben-David, Rabanser); nenhuma das fontes o coloca como condição de aceitação de um corpus antes
+   do treino, com um piso de efeito **e** um nível de significância congelados em código;
+2. **manter uma medida de viés em registro separado que o caminho de escore RECUSA a ler.** Liang et
+   al. mostram o viés; a prática da área é documentá-lo. Não se encontrou precedente para a
+   construção — dois registros, uma guarda que compara nome e callable, e a chamada dessa guarda
+   dentro da função que constrói a matriz de features, para que ligar a feature reprove antes de
+   qualquer ajuste;
+3. **declarar que uma sonda diagnóstica não pode ter veredito, e impor isso pela FORMA do
+   relatório.** O relatório das sondas 2, 3 e 4 não tem campo de veredito, então nenhum chamador
+   pode lê-lo como recusa; é a mesma disciplina que `artifact_gate` aplica ao omitir o
+   identificador da linha, aplicada à camada `diagnostic` de `benchmark/gates.ts`.
+
 ## Metodologia importada — sem precedente na detecção de MGT, com ancestral em outra área
 
 Cada item abaixo é uma prática que a auditoria de 2026-07-31 **não encontrou** na literatura de
@@ -3971,3 +4203,15 @@ num documento tem exatamente a validade do instante em que foi lido, e um coment
 O que se transfere é o princípio: declaração que decide algo tem de ser executável. **Sem precedente
 encontrado (2026-08-05)** para o caso específico — um teste que lê o documento de estado do projeto e
 reprova quando o número medido nele discorda da medição da árvore.
+
+**Extensão da mesma regra, na revisão da W3 (2026-08-05).** A contagem de referências publicada em § 5.6
+envelheceu uma **terceira** vez: 322, depois 349, contra 410 medidos na árvore ao encontrar o achado — e 413
+depois das três referências que esta própria revisão acrescentou. Passou a ser lida pelo
+mesmo mecanismo (`benchmark/tests/estado-counts.test.ts`), e a unidade acrescentou um achado que a regra
+de N7 não previa: **declarar a regra de contagem não basta se a regra admite duas implementações
+honestas.** "`[link]` seguido de URL entre parênteses" rende 372 aplicada por linha e 410 aplicada ao
+arquivo inteiro, porque 38 rótulos de link atravessam a quebra de ~100 colunas. A regra registrada é agora
+a ocorrência da junta `](` seguida de URL, contada no arquivo inteiro — a junta não pode atravessar quebra
+sem deixar de ser link —, e o teste afirma a diferença entre as duas contagens com a fixture do rótulo
+quebrado, para que ninguém "conserte" o contador de volta. Nenhuma referência nova: é N7 aplicada a outro
+número, mais a observação de que a regra precisa ser executável e não só declarada.

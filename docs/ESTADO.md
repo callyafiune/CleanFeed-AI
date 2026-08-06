@@ -23,8 +23,8 @@
 | item | valor |
 |---|---|
 | branch | `cleanfeed-mvp` |
-| suíte | 169 arquivos / 2.771 testes (vitest) + 361 testes e 31 subtests (pytest, lab). Verde em rodada limpa; sob contenção de I/O, dois arquivos de caminho selado batem no timeout de 20 s — dívida de § 7, não de política |
-| dos quais, o avaliador | 1.762 — 1.401 em 43 arquivos de `benchmark/tests`, 361 no lab |
+| suíte | 170 arquivos / 2.773 testes (vitest) + 417 testes e 78 subtests (pytest, lab). Verde em rodada limpa; sob contenção de I/O, dois arquivos de caminho selado batem no timeout de 20 s — dívida de § 7, não de política |
+| dos quais, o avaliador | 1.820 — 1.403 em 44 arquivos de `benchmark/tests`, 417 no lab |
 | typecheck | limpo |
 | lint | 13 problemas (11 erros, 2 avisos) |
 | tags de release | 0 |
@@ -116,6 +116,10 @@ de abrir o arquivo — o módulo fica na árvore, declarado, pela mesma convenç
 | F0-6 | Stack Overflow bloqueado **por nome**, não apagado | AG |
 | A3 | `drop_seen()` = hash exato + Jaccard ≥ 0,82 sobre shingles de 5 tokens, descrito só como isso | OP |
 | | a poda é **global** contra o corpus morto, sem restrição por partição: o insumo é um artefato de digests e chaves de shingle (`seen-index.v2.jsonl`), conferido contra a contagem **e** o digest do corpus indexado. Artefato ausente, parcial ou de outro corpus **recusa** a montagem de release | AG |
+| | **sondas diagnósticas** (`benchmark/lab/diagnostic_probes.py`): quatro, e **só a primeira decide** — prever a partição entre `train`, `dev` e `cal-A` (validação adversarial / C2ST) **recusa a MONTAGEM** por duas razões nomeadas, `partition-predictable` (AUC um-contra-resto ≥ 0,60 **e** p < 0,01, os dois congelados em código e nenhum deles fração do alpha familiar) e `text-shared-across-partitions`. As outras três — classe por comprimento, lane dentro de `ai`, estilometria com coeficientes publicados — mais o viés ortográfico e a dispersão entre janelas são **diagnóstico que não decide**, e o relatório delas **não tem campo de veredito** | AG |
+| | `cal-B` e `test` **nunca** alcançam sonda: `BLIND_PARTITIONS` é espelho pinado de `cluster-exposure-ledger.ts`, `OPEN_PARTITIONS` é derivada de `BLOCK_TIME` menos as cegas, e o relatório publica **um** contador agregado do que foi posto de lado — nunca detalhamento por partição cega, nunca id. Alargar `OPEN_PARTITIONS` reprova dentro da sonda | código |
+| | a **taxa de erro ortográfico** é sonda de VIÉS e nunca feature: registro separado (`SPELLING_BIAS_MEASURES`), e `assert_no_bias_measure_reaches_the_features` compara nome **e** callable de dentro de `feature_row`/`feature_matrix` — ligar a feature recusa antes de qualquer `fit` | código |
+| D19 | o baseline (`benchmark/lab/baseline_tfidf.py`) roda **duas** vetorizações em paralelo, palavra (1,2) e caractere (3,6) com `analyzer="char"`, num registro que impede rodar uma sem a outra. O papel é **detector de vazamento**: desempenho alto continua significando artefato de fonte | AG |
 | A4 | gate antiartefato **pré-treino**, em código (`benchmark/lab/artifact_gate.py`): **dez** detecções — eco de prompt, recusa, metaconversa, assinatura de harness, espaço anômalo, encoding, caractere invisível, Markdown, cabeçalho, frase-padrão de prompt —, teto de contaminação em `Fraction(2, 100)`, comparado **por família geradora** e nunca com o agregado do conjunto gerado, relatório escrito **antes** do veredito e sem nomear linha | OP |
 | | a fração do teto é **por LINHA**: uma linha com duas detecções é UMA linha contaminada com as duas razões nomeadas, e a soma por detecção pode exceder a contagem de contaminadas | código |
 | | o gate acusa o que `contracts/text-normalization.ts` **remove** antes da tokenização: o que ele mede é contaminação da lane, não a entrada do modelo. A tabela de sondas cobre os **27** code points do contrato, afirmado por **igualdade de conjuntos** contra o literal do lado TypeScript: um code point acrescentado lá sem sonda aqui deixa o teste vermelho | código |
@@ -349,7 +353,53 @@ A unidade é a página, o piso de 300 é trivial, e o dump de 1,96 GB é a reser
 | ledger de exposição real | **0 bytes** — nenhum evento real foi escrito |
 | holdout-ledger real | 2.638 bytes — o consumo de 2026-07-25, `decision: reject` |
 | memória da exposição por linha | `benchmark/data/corpus-build/out/split/split-artifact.json` — pertença de `test`, só o operador lê |
-| referências | 322 links em 18 seções de `references.md`, com 50 declarações de "sem precedente" |
+| referências | **413** marcadores de link em **18** seções de nível `##` de `references.md`, e **41** declarações literais de "Sem precedente encontrado" (mais 13 menções em outra forma). A regra é a ocorrência da junta `](` seguida de URL, contada **no arquivo inteiro e não por linha**: `references.md` quebra a ~100 colunas e 38 rótulos de link atravessam a quebra, então um regex `\[rótulo\]\(url\)` aplicado por linha devolve 375. Agora **lido por teste nomeado** (`estado-counts.test.ts`) — os valores anteriores (322 / 50, depois 349) envelheceram em silêncio exatamente porque nenhum teste os lia |
+
+### 5.7 Sondas diagnósticas sobre os pools em moldura (W3)
+
+Medido em 2026-08-05 por
+
+```
+py -3.13 diagnostic_probes.py --pools ../data/candidates --in-frame-pools \
+  --permutation-repeats 5 --out /tmp/probes.json
+```
+
+sobre **9.707** linhas de pool em moldura: 5.000 humanas de `wikipedia_fresh.jsonl`, 2.572 `ai` das **três**
+lanes com material fresco, 2.135 mistas. `--in-frame-pools` é `IN_FRAME_POOLS`, os **9** arquivos da célula
+publicada, e não é detalhe de conveniência: `--pools` sem restrição lê os 67.934 registros do diretório
+inteiro, inclusive `ptso*` (bloqueado por nome, F0-6), `carolina*`/`b2w*` fora de moldura e a família OpenAI
+reservada ao OOD. O relatório agora carrega `inputs.rowsPerFile`, então a qualificação "em moldura" é
+verificável a partir do artefato e não só da prosa.
+
+A **sonda 1 não rodou**: exige corpus com partições carimbadas, e o único que existe em disco é o morto —
+derivar partição dele é ler pertença de bloco cego. Ela é exercitada por fixture e sua primeira corrida
+real é a montagem da Fase 3.
+
+**A quarta lane congelada não tem material gerado fresco.** As lanes medidas são `codex` (1.402 linhas),
+`gemini-api` (751) e `agy` (419); de `fable` só existe `lane_parents_fable.jsonl`, com 60 pais humanos.
+Isso é fato de Fase 3 e não erro de contagem: a leitura de que D13/W2 varreu as quatro lanes é falsa.
+
+| sonda | quantidade | valor |
+|---|---|---|
+| comprimento (**diagnóstico**) | AUC fora de dobra | **0,5009**, e ao lado o rank AUC da contagem crua **0,5017**. As duas **não são a mesma quantidade e não têm de coincidir**: a primeira agrupa as predições fora de dobra de 5 modelos com 5 interceptos, e uma união de mapas monótonos não é monótona. Aqui diferem 8,6e-4 com os 5 coeficientes de mesmo sinal, que é ruído de amostragem; onde as dobras discordam de sinal a agrupada cai do outro lado do acaso, e há teste nomeado sobre a fixture que faz isso |
+| comprimento | mediana de palavras | humano **102** · `ai` **90** |
+| comprimento | fração `ai` por decil pooled | 0,21 · 0,59 · 0,40 · 0,29 · 0,28 · 0,23 · 0,20 · 0,15 · 0,43 · 0,57 — **AUC no acaso não é distribuição igual**: a gerada é bimodal DENTRO da faixa humana, e nenhuma domina estocasticamente a outra |
+| lane dentro de `ai` (**diagnóstico**) | AUC macro um-contra-resto | **0,9713** sobre **três** lanes — `codex` 0,9911 (1.402 linhas) · `agy` 0,9696 (419) · `gemini-api` 0,9533 (751). Território de D13/W2: lane que um classificador nomeia entrega o rótulo de graça |
+| estilometria (**diagnóstico**) | AUC fora de dobra, 19 features | **0,9853** sobre 7.572 linhas (5.000 humanas + 2.572 `ai`), seed 42 |
+| estilometria | os seis maiores coeficientes | `hapax-rate` **+3,564** · `type-token-ratio` −3,273 · `parenthesis-rate` **−3,108** · `flesch-pt` −2,155 · `sentence-length-mean` −2,054 · `mtld` +1,988 |
+| estilometria | importância por permutação (5 repetições) | `hapax-rate` **+0,191** de queda de AUC, depois `parenthesis-rate` +0,070 e `flesch-pt` +0,062 |
+| viés ortográfico (**nunca feature**) | média POR DOCUMENTO dos acertos por 100 palavras | humano **0,00581** · `ai` **0,00083** — o lado humano carrega ~**7,0×** a taxa, então a feature seria proxy de "humano" e motor de falso positivo na população vigiada. A agregação está nomeada porque as duas dão números diferentes: agrupando acertos e palavras dos dois lados (37 acertos em 705.526 palavras humanas contra 2 em 402.068 geradas) a razão é 10,5×. O valor humano caiu de 0,00624 ao sair `ate` e `quiz` da lista de formas — as duas são palavra correta de pt-BR e inflavam justamente o lado humano |
+| dispersão entre janelas (**diagnóstico**) | amplitude média do escore por janela, **sobre os documentos de mais de uma janela** | `mixed` **0,622** (n=66) · `human` 0,147 (n=78) · `ai` 0,185 (**n=4**). A manchete de 4× é `mixed` contra `human`; o valor de `ai` é média sobre **quatro** documentos e não sustenta leitura nenhuma |
+| dispersão | documentos com UMA só janela | **9.559 de 9.707** (2.069/2.135 mistos · 4.922/5.000 humanos · 2.568/2.572 `ai`): a 510 tokens de janela o escore de documento **é** o de uma janela para a grande maioria das linhas |
+
+O achado que não é sobre autoria: depois da diversidade lexical, o sinal mais carregado do modelo barato é
+`parenthesis-rate` — a lede da Wikipédia pt é cheia de parênteses e o gerado não é. AUC 0,985 apoiada em
+dispersão de vocabulário e na convenção parentética da fonte é **artefato de fonte** no sentido exato de
+D19.
+
+Nenhuma destas taxas é reproduzível de um checkout: os pools são gitignored (§ 7). A diferença em relação à
+dívida que a W2 abriu é que o **medidor** agora está no repositório, com a invocação exata registrada acima
+e a procedência do material dentro do próprio relatório.
 
 ---
 
@@ -388,7 +438,19 @@ A unidade é a página, o piso de 300 é trivial, e o dump de 1,96 GB é a reser
 - **qualquer leitura de "gasto" sem a graduação de § 3.4** — inclusive afirmações anteriores, no registro
   e em memórias de sessão, de que o `ptbr-generic-v1` "não pode mais ser usado" ou de que o material
   estaria "descegado" por conhecimento de estrato;
-- as **~1.600 linhas humanas recuperáveis** do corpus morto: são abdicadas de propósito pela poda global.
+- as **~1.600 linhas humanas recuperáveis** do corpus morto: são abdicadas de propósito pela poda global;
+- a leitura de que a **sonda 1 detecta duplicata** entre partições: um texto presente em `train` e em `dev`
+  é **invisível** ao classificador de partição — as mesmas features carregam dois rótulos opostos e o par
+  não move a AUC —, e há teste que o afirma. Duplicata é pega pela segunda razão da sonda
+  (`text-shared-across-partitions`, texto normalizado exato) e quase-duplicata é de `near_dupes`, de
+  `split.ts` e de `assert_components_can_fill_five_partitions`;
+- a leitura de que a **AUC de comprimento no acaso** significa distribuições iguais: medido, AUC 0,5009 com
+  a fração `ai` por decil oscilando entre 0,15 e 0,59 (§ 5.7). Uma AUC monótona no acaso diz que nenhuma das
+  duas domina estocasticamente a outra, não que têm a mesma forma;
+- a leitura de que uma **AUC de palavra abaixo do acaso** no baseline significa "nenhum artefato": sobre
+  fixture pareada por tópico — que é o desenho do piloto — ela cai a 0,019 porque o modelo prevê o rótulo da
+  gêmea que viu na dobra anterior. É memorização do par, e há teste que o afirma;
+- a leitura de que as sondas 2, 3 e 4 podem **recusar** algo: o relatório delas não tem campo de veredito.
 
 ---
 
@@ -411,7 +473,10 @@ A unidade é a página, o piso de 300 é trivial, e o dump de 1,96 GB é a reser
 | `train_detector.py` não confere o relatório do gate antiartefato; hoje o único caminho até um `train.jsonl` passa pela montagem | segundo produtor de corpus |
 | `make_mixed.emit` escreve `text: edited` **sem** `common.normalize_text`, enquanto todo pool escrito por `CandidateWriter.offer` normaliza: 8,67 % dos vãos mistos carregam corrida de espaço e 5,29 % espaço terminal, contra 0 em 11.000 linhas ptwiki e 0 em 19.673 `ai`. O gate acusa corretamente (é rótulo de graça), mas o remédio verdadeiro é o escritor, e regenerar a lane não conserta escritor | Fase 3, quando existir pool misto novo |
 | **train/serving skew de normalização, medido**: `contracts/text-normalization.ts` roda só na **inferência**; `train_detector.py` e `build_dataset.py` não normalizam. Então os invisíveis chegam ao treino (0,59 % das linhas humanas em moldura os carregam) e **não** chegam ao serviço, e o texto que ajusta o limiar não é o texto que o runtime pontua | unidade que tocar treino ou limiar, ou a Fase 5 |
-| as taxas por sonda do gate (§ 5.4 e L12b) foram medidas por **script de sonda que não está no repo**: os pools são `benchmark/data/*`, gitignored, então nenhuma das taxas é reproduzível de um checkout. A regra de calibração está imposta por fixture e as duas recusas por teste nomeado — o que falta é o **medidor** | unidade que voltar ao gate, ou a Fase 3 quando os pools forem reconstruídos |
+| as taxas por sonda do gate (§ 5.4 e L12b) foram medidas por **script de sonda que não está no repo**: os pools são `benchmark/data/*`, gitignored, então nenhuma das taxas é reproduzível de um checkout. A regra de calibração está imposta por fixture e as duas recusas por teste nomeado — o que falta é o **medidor**. As taxas de § 5.7 têm o medidor no repositório (`diagnostic_probes.py --pools … --in-frame-pools`, com a invocação exata em § 5.7 e a procedência por arquivo dentro do próprio relatório) e a mesma dívida de material | unidade que voltar ao gate, ou a Fase 3 quando os pools forem reconstruídos |
+| a **sonda 1 não é imposta por consumidor**: ela recusa pelo código de saída do próprio comando, e `assemble_corpus.main()` não a chama — o montador é stdlib-only e uma validação cruzada de 5 dobras rodaria em cada fixture de montagem, a maioria com menos linhas por partição do que há dobras. Mesma forma da dívida do relatório do gate antiartefato, e mesmo dono | segundo produtor de corpus, ou a Fase 3 quando existir corpus carimbado |
+| a **dispersão entre janelas é quase vacuosa neste material**: 9.559 de 9.707 documentos varridos têm uma única janela a 510 tokens (§ 5.7), e a mediana de ~100 palavras fica muito abaixo de uma janela também em subtokens WordPiece (~350-400 palavras). O sinal existe e separa 4× onde há mais de uma janela; o que não existe é população | Fase 5, ou unidade que tocar agregação |
+| a dispersão do lab lateia tokens de **espaço** onde o runtime lateia **WordPiece**: a regra é a selada (`contentTokens`/`overlapTokens`/`maxWindows` lidos do manifesto), a unidade é mais grosseira, então as fronteiras não são as do runtime. Declarado, e a sonda não decide | D24 (chunker em `contracts/`), quando existir um tokenizador no lab |
 | README do benchmark está **3 subcomandos atrás** do CLI | unidade que reescrever o README |
 | linhagem admite pai `notApplicable` numa linha `ai` sem recusa — a pergunta de desenho está aberta | unidade que tocar linhagem ou E3 |
 | registro-linha congelado em `cal-B` não tem a proteção do de `test` | antes da v2.0, ou antes de um segundo corpus sobrepor um split vivo |

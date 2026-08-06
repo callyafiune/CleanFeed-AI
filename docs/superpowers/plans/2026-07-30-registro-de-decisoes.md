@@ -4685,3 +4685,354 @@ as escreve, e exige `clear`. A fixture **contém o excluído**, que é o que faz
 que não está no repositório, porque os pools são gitignored, e nenhuma das ~50 é reproduzível de um
 checkout (§ 7 do ESTADO). Cada número desta unidade foi remedido por sonda própria antes da emenda — união
 89/11.000 = 0,809 %, e com o NBSP nu 240/11.000 = 2,182 %, idênticos ao publicado.
+## As sondas diagnósticas (W3) e o baseline como detector de vazamento (D19) — 2026-08-05
+
+**Status:** `EM-VIGOR`. Nenhuma decisão desta unidade é da lista de nunca-delegado. A política selada não
+foi tocada, `m` continua 4, nada foi publicado, nenhuma partição cega foi lida. O que é do agente — os
+dois números que fazem a sonda 1 recusar, o recorte de cada sonda, a unidade de token da dispersão e a
+escolha de `analyzer="char"` — está abaixo com razão e custo de reversão.
+
+### O que a emenda da moldura fez com o roteiro das sondas
+
+Com quatro células, a sonda que valia era "prever de qual célula o texto veio": um detector que aprende a
+célula publica uma FPR por célula que é, na verdade, um classificador de célula. A moldura publicada tem
+**uma** célula (`ptwiki`), então essa sonda não tem alvo — e o risco mudou de lugar. Com fonte única, o que
+ameaça a medição não é o detector aprender a célula; é ele aprender **comprimento**, **tópico** ou a
+assinatura tipográfica de uma **lane**. As quatro sondas implementadas são esses riscos, e a quarta é a
+razão pela qual o projeto passa a poder dizer em que sinal o modelo se apoia.
+
+### A camada de governança: só a sonda 1 recusa, e a forma do relatório impõe isso
+
+`benchmark/gates.ts` já distingue gate `certifying` de gate `diagnostic`. As sondas 2, 3 e 4, o viés
+ortográfico, a dispersão entre janelas e o baseline são **diagnóstico publicado que não decide**: não
+entram na família primária, não gastam alpha e não viram hipótese. A imposição não é uma convenção de
+leitura — é a **forma** do relatório: o dicionário que as sondas 2, 3 e 4 devolvem **não tem campo de
+veredito**, então nenhum chamador sob prazo pode lê-lo como recusa. É a mesma disciplina que
+`artifact_gate` aplica ao omitir o identificador da linha, aplicada aqui.
+
+A sonda 1 recusa, e recusa a **MONTAGEM** — antes de qualquer treino. Ela usa dois números congelados em
+código e não na pré-inscrição, pela razão que `artifact_gate` escreve sobre o próprio teto:
+`preregistration-v4.json` está selada e não tem campo para regra de aceitação de montagem, e criar um seria
+mudança de política e não leitura dela.
+
+| número | valor | por que dois e não um |
+|---|---:|---|
+| `PARTITION_PREDICTABILITY_AUC_FLOOR` | 0,60 | o EFEITO. A 10.000 linhas uma AUC de 0,52 é significante e não pode importar |
+| `PARTITION_PREDICTABILITY_SIGNIFICANCE` | 0,01 | o RUÍDO. A 60 linhas uma AUC de 0,75 é uma dobra com sorte |
+
+**Nenhum dos dois é fração do alpha familiar**, e o teste o afirma lendo o próprio fonte: o módulo não
+contém `perHypothesisAlpha`, `familyAlpha` nem `primaryFamily` em nenhuma forma. Uma sonda ligada ao alpha
+familiar mudaria `m`, e `m` é do operador. Custo de reversão dos dois números: uma linha cada, e a suíte
+reprova nomeando o teste.
+
+### O que a sonda 1 é, e o que ela NÃO vê
+
+É um **classifier two-sample test** (Lopez-Paz & Oquab, 2017) sobre `train`, `dev` e `cal-A` — AUC
+um-contra-resto fora de dobra por partição, com p-valor de Mann-Whitney sob permutabilidade. O que ela
+mede é permutabilidade das três partições abertas, e o que uma AUC alta significa é que o número que `dev`
+reporta não estima nada que `train` tenha ajustado (Ben-David et al., 2010).
+
+**A refutação do roteiro, e ela é medida.** O roteiro pedia "fixture com vazamento plantado entre train e
+dev → a sonda 1 recusa". Um texto presente nas DUAS partições é **invisível** a um classificador de
+partição por construção: as mesmas features carregam dois rótulos opostos, então o par duplicado não move
+a AUC em nenhuma direção. Está afirmado por teste
+(`test_a_text_duplicated_across_partitions_is_invisible_to_the_auc`: macro AUC abaixo do piso, e a razão
+`partition-predictable` ausente). Duas consequências:
+
+1. a sonda 1 carrega **duas** razões de recusa, não uma: `partition-predictable` (a AUC) e
+   `text-shared-across-partitions` (sobreposição por texto normalizado exato entre duas das três abertas).
+   A segunda é o que responde ao vazamento que o roteiro descreve, e ela nomeia o par de partições;
+2. a versão profunda dessa checagem — quase-duplicata como componente conexo, Jaccard ≥ 0,82 — **não** foi
+   duplicada aqui: é de `near_dupes`, de `benchmark/split.ts` e de
+   `assemble_corpus.assert_components_can_fill_five_partitions`. Redecidir o limiar aqui daria ao corpus
+   dois limiares.
+
+O "vazamento" que a AUC vê é o outro: `dev` sorteada de material que `train` não tem. A fixture que o
+prova planta um marcador que só `dev` carrega, e a recusa nomeia a partição, a AUC, o p-valor, o `n` e o
+piso — asserido pelos **valores** e não só pelas palavras, porque uma recusa que nomeia a métrica sem o
+número deixa o operador escolhendo entre re-dividir e re-coletar sem base.
+
+### Cegueira: a sonda seleciona, conta e nunca nomeia
+
+`BLIND_PARTITIONS` é espelho de `benchmark/cluster-exposure-ledger.ts` (`cal-B`, `test`), pinado por teste
+contra o fonte TypeScript; `OPEN_PARTITIONS` é **derivada** de `assemble_corpus.BLOCK_TIME` menos as cegas,
+para que uma sexta partição criada lá não fique sem sonda em silêncio. A partição de uma linha é lida do
+`createdAt` — `assemble_corpus` mantém a partição como mapa lateral e não como campo do registro, e uma
+segunda cópia poderia discordar do carimbo.
+
+O relatório publica os abertos e **um** contador agregado do que foi posto de lado como cego: com as cinco
+frações congeladas, o total é aritmética que qualquer um faz do tamanho do corpus, enquanto um detalhamento
+por partição cega **diria quais linhas estão em qual bloco**. Dois testes serializam e conferem: um o
+relatório da sonda 1, outro o relatório INTEIRO de `_probe_all`, exigindo que nenhuma das duas grafias cegas
+apareça e que as três abertas apareçam — sem a segunda metade a asserção passaria sobre um relatório que não
+nomeia partição nenhuma. O segundo teste também fixa o conjunto de chaves de `_probe_all`, porque a hora em
+que essa asserção envelhece é a hora em que um CAMPO NOVO entra no relatório e ninguém relê a asserção
+antiga; foi o que aconteceu ao entrar `inputs`. E `_assert_no_blind_partition_reached` roda **dentro** da
+sonda: alargar `OPEN_PARTITIONS` reprova em vez de treinar sobre um bloco não gasto.
+
+### A taxa de erro ortográfico: sonda de viés, nunca feature — e a guarda que impõe
+
+Erro ortográfico correlaciona com escrita não nativa e vocabulário limitado, que são as populações cuja
+taxa de falso positivo este projeto se comprometeu a vigiar (Liang et al., 2023). Medir para saber protege;
+alimentar o modelo constrói o viés **dentro** dele, onde nenhuma fatia o encontra depois. A construção:
+
+- dois registros — `STYLOMETRIC_FEATURES` (19 features) e `SPELLING_BIAS_MEASURES` (1 medida);
+- `assert_no_bias_measure_reaches_the_features` compara **nome** e **callable**, porque nenhuma das duas
+  checagens implica a outra: registrar a mesma função com outro nome derrota a de nome, e um wrapper de uma
+  linha com o mesmo nome derrota a de identidade;
+- a guarda é chamada dentro de `feature_row` e `feature_matrix`, isto é, no **caminho de escore** e não
+  apenas num teste: quem chegou à matriz está a um `fit` de um escore.
+
+**Medido nos pools em moldura:** 0,00581 acerto por 100 palavras na classe humana contra 0,00083 na `ai`. A
+direção é a que importa: o lado **humano** carrega ~7,0× a taxa do gerado, então a feature seria proxy de
+"humano" e portanto motor de falso positivo exactamente na população vigiada. **A agregação está nomeada**
+porque as duas dão números diferentes: o valor publicado é a média POR DOCUMENTO da taxa por 100 palavras
+(é o que `probe_stylometry` emite, via `statistics.fmean`), e agrupando acertos e palavras dos dois lados —
+37 acertos em 705.526 palavras humanas contra 2 em 402.068 geradas — a razão é 10,5×. Publicar "acertos por
+100 palavras" sem dizer qual das duas é um número que não reproduz.
+
+O valor absoluto é minúsculo porque a lede da Wikipédia pt é texto editado — o que a sonda mede na v1 é a
+lista fechada de formas declarada em `PT_BR_SPELLING_SHAPES`, e **não** um corretor. `esta`, `publico`,
+`pos` e `so` estão deliberadamente FORA da lista: cada um também é palavra correta, e contá-los inventaria
+erro.
+
+**E `ate` e `quiz` estavam DENTRO, contra o comentário logo acima delas** ("formas sem homógrafo não
+acentuado"): `ate` é subjuntivo/imperativo de *atar* ("ate o sapato") e `quiz` é estrangeirismo corrente
+("um quiz"). O teste que guardava isso iterava as seis palavras que o autor já havia excluído, então passava
+verde com as duas na lista — a mesma vacuidade de fixture da sonda 2, e prova por mutação não a encontra
+porque o defeito está no dado do teste. Remediado: as duas saíram, o teste passou a DERIVAR os candidatos
+casando cada forma contra um vocabulário de palavras corretas de pt-BR (uma forma correta acrescentada em
+qualquer posição da lista agora reprova), e a taxa humana caiu de 0,00624 para 0,00581 — 2 dos 39 acertos
+eram esses. A exclusão custa as duas formas mais comuns de todas (`até`, `quis`) e é paga de qualquer jeito,
+porque o erro que ela evita cai no lado **humano**, que é o lado de que a leitura de ~7× depende. `quizer`
+fica: não é palavra.
+
+A grosseria corta num sentido só e está declarada: um documento só-ASCII lê como maximamente errado, que é
+a segunda razão pela qual o número não pode alcançar escore nenhum.
+
+### Estilometria: 19 features, coeficientes publicados, e o achado
+
+Regressão logística sobre features padronizadas, e **não** floresta nem boosting: legibilidade é a entrega,
+e um ranking de importância não diz DIREÇÃO (Rudin, 2019). Importância por permutação fica ao lado, como
+leitura de robustez, porque as features são correlacionadas — taxa de hapax e TTR medem o mesmo eixo — e a
+colinearidade parte um sinal em dois coeficientes de sinais opostos (Fisher, Rudin & Dominici, 2019).
+
+Medido sobre 7.572 linhas em moldura dos pools (5.000 humanas ptwiki + 2.572 `ai` das **três** lanes com
+material fresco — `codex`, `gemini-api`, `agy`), AUC fora de dobra **0,9853**, seed 42 pinada e coeficientes
+idênticos byte a byte em re-execução:
+
+| feature | coeficiente | importância por permutação (queda de AUC) |
+|---|---:|---:|
+| `hapax-rate` | **+3,564** | **+0,191** |
+| `type-token-ratio` | −3,273 | +0,051 |
+| `parenthesis-rate` | **−3,108** | **+0,070** |
+| `flesch-pt` | −2,155 | +0,062 |
+| `sentence-length-mean` | −2,054 | +0,042 |
+| `mtld` | +1,988 | +0,053 |
+
+**O achado, e é sobre a fonte e não sobre autoria:** o sinal mais legível e mais carregado depois da
+diversidade lexical é `parenthesis-rate`, **negativo** para `ai` — a lede da Wikipédia pt é cheia de
+parênteses (datas, nomes alternativos, transliteração) e o gerado não é. Um modelo barato chega a AUC 0,985
+apoiando-se em dispersão de vocabulário e na convenção parentética da Wikipédia. Isso é artefato de fonte
+no sentido exacto do D19: alto desempenho aqui não é qualidade.
+
+`cal-A` fica **fora** da sonda 4 embora não seja cega: com `dev` a 5 % e `cal-A` a 10 %, é **dois terços**
+(10/15) da população que ajusta o limiar provisório — `benchmark/commands/fit.ts` diz que a população são os
+negativos humanos de `dev` + `cal-A` —, ou 600 linhas sob a moldura de uma célula (dívida de § 7 do ESTADO),
+e um diagnóstico não tem por que ser a razão de alguém tê-la olhado.
+
+### Comprimento: AUC no acaso, e a tabela por faixa dizendo outra coisa
+
+Medido nos pools em moldura: AUC **0,5009**, e ao lado o rank AUC da contagem crua **0,5017**. Mediana 102
+palavras no humano contra 90 na `ai`.
+
+**As duas colunas não são a mesma quantidade, e a versão anterior deste parágrafo alegava que coincidiam
+"porque uma logística de uma feature é monótona nela — afirmado por teste".** A monotonia vale DENTRO de uma
+dobra; a AUC publicada agrupa as predições fora de dobra de cinco modelos, cada um com seu intercepto e seu
+coeficiente, e uma união de cinco mapas monótonos não é monótona. O teste que "afirmava" a coincidência
+rodava sobre uma fixture perfeitamente separada onde as duas AUCs são exatamente `1,0`, então nenhuma mutação
+da sonda podia avermelhá-lo — e a própria medição publicada (diferença 8,6e-4) reprovaria a tolerância que
+ele exigia (`places=6`). Remediado nos dois lados: o teste passou a rodar sobre a fixture de comprimentos
+sobrepostos, onde as dobras discordam de SINAL e a AUC agrupada cai **abaixo** do acaso enquanto a crua está
+acima, asserindo que as duas DIVERGEM; e a fixture degenerada ficou com teste próprio que declara a
+degeneração em vez de a esconder. `coefficientPerFold` é publicado para que o caso seja legível: divergência
+com um sinal só é ruído de amostragem, divergência com dois sinais são dobras que discordam.
+
+**E a AUC no acaso NÃO significa distribuições iguais.** A tabela por decil pooled mostra a fração `ai`
+oscilando 0,21 → 0,59 → 0,40 → 0,29 → 0,28 → 0,23 → 0,20 → 0,15 → 0,43 → 0,57: a distribuição gerada é
+bimodal DENTRO da faixa humana, então nenhuma domina estocasticamente a outra e a AUC monótona não vê a
+diferença de forma. É por isso que as duas quantidades são publicadas juntas, e é a razão de
+`_band_lower_bounds` usar limites INFERIORES deduplicados em vez de uma lista de arestas: num corpus bimodal
+metade dos decis cai em cada modo, e deduplicar arestas colapsaria os dois modos numa única faixa que
+contém tudo.
+
+### Lane: 0,9713 de AUC macro — a assinatura de gerador é quase perfeita
+
+Medido sobre 2.572 linhas `ai`: `codex` 0,9911 (1.402 linhas) · `agy` 0,9696 (419) · `gemini-api` 0,9533
+(751), macro **0,9713**. É o número mais alto desta unidade e é território de D13/W2: uma lane que um
+classificador nomeia pelo texto entrega o rótulo de graça, e o remédio de A4 é **regenerar a lane**, não
+filtrar o que a sonda achou. A sonda aponta e não decide — mas o que ela aponta é que as três lanes medidas
+são distinguíveis quase perfeitamente entre si.
+
+**São TRÊS lanes, e a contagem importa mais que a palavra.** A primeira redação desta unidade escreveu
+"quatro lanes frescas" no ESTADO e aqui, ao lado de uma tabela que enumerava três. Não existe
+`ai_fresh_fable.jsonl` em `benchmark/data/candidates`: de `fable` só há `lane_parents_fable.jsonl`, 60 pais
+humanos. A quarta lane congelada **não tem material gerado fresco nenhum**, e a leitura de que D13/W2 varreu
+as quatro é falsa. O parágrafo escondia um fato de Fase 3 em vez de o expor, e é por isso que a correção não
+é só numérica.
+
+### Dispersão entre janelas: de graça, real, e quase vazia neste material
+
+O escore de documento já vem de agregação sobre janelas, então a dispersão é a quantidade que a agregação
+joga fora. O módulo espelha a regra de janelamento **selada** — `contentTokens` 510, `overlapTokens` 64,
+`maxWindows` 8, LIDOS de `models/cleanfeed-ptbr-v1/cleanfeed-model.json` — e a seleção
+`round(i·(total−1)/(limit−1))` de `src/inference/chunker.ts`, com `floor(x + 0,5)` porque o `round` do
+Python arredonda a meia para PAR e o do JavaScript para cima (witness pinado: 6 candidatos em 3 vagas dá
+`[0, 3, 5]` e não `[0, 2, 5]`).
+
+**Divergência técnica declarada:** o runtime lateia tokens WordPiece; o lab lateia tokens de espaço, porque
+um tokenizador WordPiece é download de modelo e um diagnóstico não paga um. A REGRA é a selada; a UNIDADE é
+mais grosseira, então as fronteiras não são as do runtime. É diagnóstico, não decide, e a comparação é
+entre documentos medidos do mesmo jeito.
+
+Medido com o escore da estilometria por janela, **sobre os documentos que têm mais de uma janela**: `mixed`
+**0,622** de amplitude média (n=66) contra `human` 0,147 (n=78) e `ai` 0,185 (**n=4**) — 4× de separação
+entre `mixed` e `human`, que é o sinal natural de autoria mista que a literatura de detecção de fronteira
+descreve. **O `n` entra na mesma linha do valor** porque o de `ai` é média sobre QUATRO documentos, publicado
+antes ao lado de médias sobre 66 e 78 sem nada que o distinguisse: a manchete de 4× sobrevive, o 0,185 não é
+medição de nada. **E o achado que limita a sonda:** a 510 tokens de janela, **9.559 dos 9.707**
+documentos varridos têm UMA única janela (2.069 dos 2.135 mistos, 4.922 das 5.000 humanas, 2.568 dos 2.572
+`ai`), e uma janela tem amplitude zero por aritmética e não por concordância. Com a mediana em ~100
+palavras, o escore de documento **é** o escore de uma janela para a grande maioria das linhas, e a dispersão
+não está disponível como sinal para elas. Isso vale para o runtime também: 510 subtokens WordPiece são
+~350-400 palavras em pt-BR, ainda muito acima da mediana. Entra como dívida.
+
+### D19: o baseline ganha n-grama de CARACTERE, e a razão não é desempenho
+
+`baseline_tfidf.py` usava só n-grama de palavra (1,2). Agora roda **duas** vetorizações em paralelo e
+reporta as duas lado a lado — palavra (1,2) e caractere (3,6) —, num dicionário `VECTORIZATIONS` para que
+um chamador não possa rodar uma sem a outra: reportar só a AUC de palavra é a leitura que D19 existe para
+impedir. O papel deste baseline na Fase 4 é ser **detector de vazamento**, e n-grama de palavra atravessa
+sem ver exactamente os artefatos tipográficos que a W2 caça — `**`, linha de cabeçalho, NBSP, mojibake não
+são palavras.
+
+`analyzer="char"` e **não** `char_wb`: o `char_wb` do sklearn confina os n-gramas ao interior das palavras,
+e as marcas medidas vivem ATRAVESSANDO a fronteira (`** `, ` | `, espaço antes de quebra). Confinar
+compraria de volta o ponto cego que o n-grama de caractere entrou para fechar. Custo de reversão: uma
+string, e `CharacterNgramBaselineTests` reprova.
+
+**A prova é a metade sem ruído.** Sobre uma fixture cujo único sinal é tipográfico, o analisador de palavra
+produz **o mesmo fluxo de tokens** para o texto marcado e para o texto limpo — `**palavra**` e `palavra`
+dão o mesmo token —, afirmado por igualdade de listas; o de caractere adquire `** ` e ` **`, que são
+justamente os n-gramas de fronteira. A AUC vem depois, como consequência: palavra abaixo de 0,65 e
+caractere acima de 0,95.
+
+**E um achado medido sobre o próprio baseline:** numa fixture PAREADA por tópico — cada linha gerada é a
+gêmea marcada de uma humana, que é o desenho do piloto — a AUC de palavra cai a **0,019**, muito abaixo do
+acaso. As gêmeas são o mesmo ponto no espaço de palavras com rótulos opostos, então fora de dobra o modelo
+prevê o rótulo da gêmea que viu. Ler uma AUC de palavra abaixo do acaso como "nenhum artefato aqui" é o
+erro, e há teste que o afirma.
+
+### Onde a sonda 1 é imposta, e a dívida que isso abre
+
+A sonda 1 **não** roda dentro de `assemble_corpus.main()`, e a decisão é deliberada: o montador é
+stdlib-only e determinístico, e uma validação cruzada de 5 dobras dentro dele rodaria em cada uma das
+fixtures de montagem, a maioria com menos linhas por partição do que há dobras. A imposição é o código de
+saída do comando próprio, que é passo do runbook — **a mesma forma da dívida já registrada** de que
+`train_detector.py` não confere o relatório do gate antiartefato. Entra em § 7 com o mesmo dono.
+
+E há uma segunda dívida herdada: as taxas desta unidade foram medidas sobre os pools de
+`benchmark/data/candidates`, que são gitignored, então nenhuma é reproduzível de um checkout. A diferença
+em relação à dívida que a W2 abriu é que **o medidor agora está no repositório** — `diagnostic_probes.py`
+com `--pools`, `--pool-file` e `--in-frame-pools` — e o que falta é o material.
+
+### A receita registrada não produzia o número, e por que registrar prosa não bastava
+
+A primeira redação registrou a medição como `diagnostic_probes.py --pools`, em três lugares. **Isso lê 67.934
+linhas e não 9.707**: `--pools` sem restrição varre o diretório inteiro, arrastando `ptso.jsonl` +
+`ptso_fresh.jsonl` (18.000 linhas do material que o projeto **bloqueia por nome**, F0-6, e que este adaptador
+rotularia `human`), `carolina*` (11.600 fora de moldura), `ai_openai` + `ai_public_madras` (14.004, incluindo
+a família reservada ao OOD) e `wikipedia.jsonl`, o dump pré-moldura. A seleção de 9 arquivos que de fato dá
+9.707 não estava registrada em lugar nenhum — o exemplo do README passava 2 dos 9 —, então o número era
+irreproduzível mesmo por quem tinha o material.
+
+O remédio é **duplo, e nenhuma das metades fecha sozinha**:
+
+1. a seleção virou constante no código, `IN_FRAME_POOLS` com a flag `--in-frame-pools`, e não argumento que
+   o operador redigita. Cada nome ausente está ausente por uma razão que o plano declara, e um teste afirma
+   as ausências (`ptso*`, `carolina*`, `b2w*`, `ai_openai`, `ai_public_madras`, e `wikipedia.jsonl` por nome
+   exato, porque é prefixo de `wikipedia_fresh.jsonl`). Receita em prosa envelhece em silêncio; constante
+   sob teste, não;
+2. o relatório passou a carregar `inputs.rowsPerFile` — arquivo por arquivo, com contagem. "Em moldura" é
+   uma alegação sobre a ENTRADA, e sem esse campo um relatório rodado fora da moldura é indistinguível de
+   um rodado dentro dela para quem só tem o artefato. Um total agregado não serve: uma dúzia de seleções
+   diferentes produz o mesmo total.
+
+Cada linha de pool carrega agora o arquivo de onde veio (`poolFile`), que é o que permite (2). Custo de
+reversão: uma chave no dicionário da linha e a função `input_provenance`; `PoolAdapterTests` reprova, e o
+teste que morde de verdade é o que confere que `names` SELECIONA — ignorar o argumento não falha alto, apenas
+publica a estilometria de uma população que a alegação não nomeia.
+
+### A contagem de referências entra sob teste, porque foi a terceira vez que envelheceu
+
+O ESTADO publicava **349** marcadores de link em `references.md` "sob qualquer regra reproduzível". Ao
+encontrar o achado a árvore tinha **410** (391 em `HEAD`, e a W3 acrescentara 19); nenhuma regra alternativa
+chega a 349 — URLs únicas 289, pares (rótulo, URL) únicos 348, linhas com link 372. Todo o resto da frase
+confere: 18 seções `##`, 41 declarações literais, 13 em outra forma. **Só o número que a frase existia para
+remediar estava errado**, e errado do mesmo modo que a emenda da moldura já pagou duas vezes: medido antes do
+último conserto, publicado depois.
+
+E o conserto reproduziu a armadilha em miniatura: esta própria revisão acrescentou 3 referências (Forman &
+Scholz, Airola et al., Gebru et al.), levando a contagem de 410 para **413**, que é o valor publicado. Contar
+antes de terminar de editar é o modo de falha, não um descuido de quem contou — é a razão de a contagem ir
+para debaixo de teste em vez de para uma nota mais cuidadosa.
+
+Duas coisas foram consertadas, não uma. A primeira é o valor. A segunda é a **regra**: "`[link]` seguido de
+URL entre parênteses" parece exata e não é, porque `references.md` quebra a ~100 colunas e **38 rótulos de
+link atravessam a quebra de linha** — `[O'Brien & Fleming,\n1977]` mais `(https://…)` na linha seguinte. Um
+regex `\[rótulo\]\(url\)`
+aplicado por linha devolve 372 e um aplicado ao arquivo inteiro devolve 410, e as duas são leituras honestas
+da mesma frase. A regra registrada agora é a ocorrência da junta `](` seguida de URL, contada no arquivo
+inteiro: a junta não pode atravessar quebra, porque uma quebra entre `]` e `(` deixa de ser link markdown.
+
+E a contagem passou a ser **lida por teste nomeado** (`benchmark/tests/estado-counts.test.ts`), pela razão
+que a própria frase do ESTADO dava para o envelhecimento — "nenhum teste os lê". É a mesma disciplina que o
+`evaluatorDigest` já tinha: prosa não reconta. O teste também afirma a diferença entre as duas contagens,
+com a fixture do rótulo quebrado, para que a próxima pessoa não "conserte" o contador de volta para 372.
+
+### Duas correções de alegação que não mudam comportamento
+
+`PartitionProbeNeedsAnAssembledCorpus` **saiu**: era classe de exceção com docstring de contrato ("*deriving
+one here would produce a probe that passes over a partitioning no corpus has*") que nunca era levantada — o
+caminho de pool levanta `CorpusIsNotStamped`, e é isso que `PoolAdapterTests` afirma. Exceção nomeada que
+documenta uma recusa que nunca dispara é alegação em código de produção, e apagá-la não muda nada além de
+tirar a alegação.
+
+O **pino do laterio** pinava duas expressões e não o algoritmo: `test_the_tiling_mirrors_build_content_windows`
+afirmava que `"plan.contentTokens - plan.overlapTokens"` e `"Math.min(start + plan.contentTokens,
+totalTokenCount)"` ocorrem em `chunker.ts`, mas a **condição de parada** (`if (end === totalTokenCount)
+break;`) não estava pinada de nenhum lado. Nem por substring, nem por valor: o caso `content + 1` termina
+pela guarda do laço (`start < total`) com ou sem o break, então não é witness. O witness precisa de um total
+em que uma janela termina exactamente E o próximo início ainda está dentro do documento — `2·step + 1`, ou
+`13` com `content` 10 e `overlap` 4, onde sem o break aparece uma terceira janela `(2, 12, 13)` de um token
+aninhada na segunda. Agora estão pinados os dois: a substring da parada e o valor.
+
+### O que a bateria de mutação pegou
+
+30 mutações, cinco passos cada, `sha256(diagnostic_probes.py) = 7f4a0a71…` e
+`sha256(baseline_tfidf.py) = 893a0539…` idênticos nos dois extremos. **Três mutações passaram SILENCIOSAS
+na primeira rodada** e as três viraram asserção:
+
+1. redigir o VALOR da AUC da mensagem de recusa passava, porque o teste afirmava a palavra
+   "one-vs-rest AUC" e não o número. Agora afirma AUC, p-valor, `n` e o piso, todos por valor;
+2. trocar `floor(x + 0,5)` por `round(x)` passava, porque o caso pinado era `4 em 3` — cujo meio é 1,5, e o
+   arredondamento bancário do Python manda 1,5 para 2 igual ao JavaScript. O witness verdadeiro é uma meia
+   com piso PAR: 2,5 vai para 2 no Python e para 3 no JavaScript, e `6 em 3` cai exactamente lá;
+3. transformar os limites inferiores das faixas em lista de arestas passava contra a fixture bimodal, onde
+   as duas derivações concordam. A fixture que separa é a de comprimentos sobrepostos, com 10 faixas.
+
+E **duas mutações eram vermelho FALSO**: registrar a medida de viés dentro do literal de
+`STYLOMETRIC_FEATURES` dá `NameError`, porque o registro é definido ANTES de `spelling_error_rate` — o
+vermelho vinha da importação e não da guarda. Refeitas como atribuição depois da definição, que é a forma
+realista da mudança, a guarda dispara e `probe_stylometry` recusa **antes de qualquer ajuste**, nos dois
+casos (por nome e por callable).

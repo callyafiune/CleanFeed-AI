@@ -299,6 +299,81 @@ para regeneração. A única detecção que dispara é `markdown-formatting`. N�
 com a poda global ligada nenhum registro gerado chega ao gate —, mas é o veredito que vale no dia
 em que a classe gerada voltar a existir.
 
+### As sondas diagnósticas, e a única que recusa
+
+`diagnostic_probes.py` responde "o que este detector pode aprender EM VEZ de autoria". Quatro sondas,
+TF-IDF/regressão logística em CPU, sem torch:
+
+| sonda                  | o que mede                                                     | decide?                     |
+| ---------------------- | -------------------------------------------------------------- | --------------------------- |
+| 1 · `probe_partitions` | prever `train` × `dev` × `cal-A` (validação adversarial, C2ST) | **SIM — recusa a MONTAGEM** |
+| 2 · `probe_length`     | prever a classe **só** pela contagem de palavras               | não                         |
+| 3 · `probe_lanes`      | prever a lane dentro da classe `ai`                            | não                         |
+| 4 · `probe_stylometry` | 19 features baratas, e os **coeficientes**                     | não                         |
+
+Mais duas quantidades publicadas ao lado: `spelling_error_rate` (sonda de **viés**, nunca feature) e
+`probe_window_dispersion` (amplitude do escore entre janelas, o sinal natural de autoria mista).
+
+A sonda 1 recusa por duas razões nomeadas — `partition-predictable` (AUC um-contra-resto ≥ 0,60 **e**
+p < 0,01) e `text-shared-across-partitions` — e as duas são necessárias, porque um texto presente em
+`train` e em `dev` é invisível a um classificador de partição: as mesmas features carregam dois rótulos
+opostos. `cal-B` e `test` nunca alcançam sonda; o relatório publica **um** contador agregado do que foi
+posto de lado, e alargar `OPEN_PARTITIONS` reprova dentro da sonda.
+
+```bash
+# sobre um corpus MONTADO (partições carimbadas): a sonda 1 roda e o exit != 0 recusa
+py -3.13 diagnostic_probes.py --records ../data/<out>/records.jsonl \
+  --out ../data/<out>/diagnostic-probes.json
+
+# sobre os pools (não há partição: a sonda 1 não roda). ESTA é a invocação que reproduz as
+# taxas de ESTADO § 5.7: --in-frame-pools são os 9 arquivos de IN_FRAME_POOLS, a célula publicada
+py -3.13 diagnostic_probes.py --pools ../data/candidates --in-frame-pools \
+  --permutation-repeats 5 --out /tmp/probes.json
+
+# --pool-file escolhe à mão, para quem quer outro recorte
+py -3.13 diagnostic_probes.py --pools ../data/candidates \
+  --pool-file wikipedia_fresh.jsonl --pool-file ai_fresh_agy.jsonl \
+  --out /tmp/probes.json
+```
+
+**`--pools` sem restrição não é o que mediu § 5.7:** lê o diretório inteiro, 67.934 linhas, inclusive
+`ptso*` (bloqueado por nome, F0-6, e que este adaptador rotularia `human`), `carolina*`/`b2w*` fora de
+moldura e a família OpenAI reservada ao OOD. O relatório carrega `inputs.rowsPerFile` justamente para que
+"em moldura" seja verificável a partir do artefato.
+
+A recusa **não** é imposta por consumidor: `assemble_corpus.main()` não chama a sonda (o montador é
+stdlib-only e a validação cruzada rodaria em toda fixture de montagem). É passo de runbook, com a mesma
+forma da dívida do relatório do gate antiartefato.
+
+Medido em 2026-08-05 sobre 9.707 linhas de pool em moldura (ESTADO § 5.7): comprimento AUC **0,5009** e
+ainda assim fração `ai` por decil entre 0,15 e 0,59 — AUC no acaso **não** é distribuição igual; lane AUC
+macro **0,9713** sobre **três** lanes (`fable` não tem material gerado fresco); estilometria AUC **0,9853**
+com `hapax-rate` e `parenthesis-rate` carregando o sinal; erro ortográfico 0,00581 no humano contra 0,00083
+no gerado; dispersão `mixed` 0,622 (n=66) contra 0,147 no humano (n=78).
+
+As duas colunas de AUC da sonda 2 — a ajustada e a do rank da contagem crua — **não são a mesma quantidade**:
+a primeira agrupa predições fora de dobra de cinco modelos, e uma união de mapas monótonos não é monótona.
+
+### O baseline é DETECTOR DE VAZAMENTO, e por isso vê caractere
+
+`baseline_tfidf.py` roda **duas** vetorizações em paralelo e reporta as duas: palavra (1,2) e caractere
+(3,6), com `analyzer="char"`. A segunda não entrou por desempenho — o papel do baseline na Fase 4 é ser
+detector de vazamento (D19), e n-grama de palavra atravessa sem ver os artefatos tipográficos que o gate
+antiartefato caça: `**palavra**` e `palavra` dão o **mesmo** token. `char_wb` está fora de propósito, porque
+confina os n-gramas ao interior das palavras e as marcas medidas vivem atravessando a fronteira (`** `,
+`|`, espaço antes de quebra).
+
+Desempenho alto aqui continua significando **artefato de fonte** e não qualidade, e as duas colunas dizem
+qual: palavra alta com caractere baixo é lexical ou de tópico, caractere alto com palavra baixa é
+tipográfico. Cuidado com uma leitura medida: sobre material **pareado por tópico** — que é o desenho do
+piloto — a AUC de palavra cai a 0,019, abaixo do acaso, porque fora de dobra o modelo prevê o rótulo da
+gêmea que viu. Abaixo do acaso não é "nenhum artefato".
+
+```bash
+py -3.13 baseline_tfidf.py --ai ../data/candidates/ai_fresh_*.jsonl \
+  --humans ../data/candidates/wikipedia_fresh.jsonl
+```
+
 ## Classe IA — `generate_ai.py` (pareada por tópico)
 
 Gera a contraparte IA de candidatos humanos amostrados deterministicamente:
