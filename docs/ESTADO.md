@@ -512,7 +512,8 @@ e a procedência do material dentro do próprio relatório.
 6. `superpowers/plans/2026-07-30-registro-de-decisoes.md` — a **razão** de cada decisão; procure a seção;
 7. `corpus-collection-runbook.md` — a ordem dos comandos da coleta e da montagem;
 8. `detector-rebuild-assessment.md` — os oito defeitos de 25/07;
-9. `references.md` — as referências, ancoradas por decisão.
+9. `references.md` — as referências, ancoradas por decisão;
+10. `glossario.md` — os termos, com a área de origem de cada um e onde ele morde aqui.
 
 Superado como estado: `superpowers/plans/2026-07-30-estado-do-projeto.md` — permanece como razão das três
 decisões de 2026-07-30. Dormente, consulta e não execução:
