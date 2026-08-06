@@ -26,8 +26,8 @@ const REPO_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "../..");
  * COUNTED ON THE WHOLE FILE AND NOT PER LINE, which is the trap that produced the
  * wrong published value. `references.md` is wrapped at about 100 columns and 38 of its
  * link labels break across a line, so the `[label](url)` shape does not occur on any
- * single line for those; a per-line regex silently reports 372 instead of 410. The
- * joint cannot break, because a newline between `]` and `(` would stop it being a
+ * single line for those; a per-line regex silently undercounts by one for each of them.
+ * The joint cannot break, because a newline between `]` and `(` would stop it being a
  * markdown link at all.
  */
 function countLinkMarkers(markdown: string): number {

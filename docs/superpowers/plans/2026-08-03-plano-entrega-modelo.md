@@ -47,7 +47,7 @@ não repete o detalhe.
 | G0.1 | ratificar `domainSource` como estrato (`sourceMaterialBatch` carrega dependência) | ratificar — é a decisão de 2026-08-01, medida | Fase 1 (eixos) |
 | G0.2 | manchete: pior estrato **ou** por estrato | **por estrato** — cobertura deixa de ser punida, e melhorias futuras acrescentam linha sem degradar a manchete (§ 3.2 do ESTADO) | Fase 1 (m, α) |
 | G0.3 | teto pretendido: **1,45 %** (1.500 linhas/célula ⇒ 6.000 humanas) ou **0,55 %** (4.000/célula ⇒ 16.000) | **1,45 %** — 6.000 humanas cabiam no material com folga sob quatro células. **Superado pela emenda da moldura de 2026-08-05:** com uma célula, os 0,55 % custam 4.000 linhas e não 16.000, e é esse o valor vigente | Fase 2 (alvos) |
-| B1 | parecer jurídico da posição (a) ou risco assumido por escrito | — (pessoal) | **só a Fase 7** |
+| B1 | parecer jurídico da posição (a) ou risco assumido por escrito — **ramo escolhido em 2026-08-05: risco assumido por escrito**; falta a assinatura | — (pessoal) | **só a Fase 7** |
 
 As Fases 1–6 correm com G0.1–G0.3 decididas; B1 só trava a publicação.
 
@@ -177,7 +177,13 @@ alegação"; espec do pipeline de documento) + `LICENSE` (`cleanfeed-weights-nc-
 **D23** (o model card e a tabela nascem aqui), **D27** (arquivos legais pré-Fase-0 nos bundles servidos
 corrigidos). A extensão **não** entra no pacote.
 
-## Fase 7 — publicação (dias + prazo externo de B1)
+## Fase 7 — publicação (dias)
+
+**Não há mais prazo externo.** Ele existia só no ramo do parecer jurídico de B1, e o operador escolheu o
+outro em 2026-08-05: risco assumido por escrito. Sem terceiro, sem gasto acima do envelope de A6, e a
+duração da fase deixa de depender da agenda de alguém de fora. O que falta é a **assinatura**, que é do
+operador e espera o pacote da Fase 6 — aprovar antes assinaria pacote com os arquivos legais que D27
+conserta lá.
 
 `license-review.json` → `approved` (assinatura de B1, do operador) · HF **gated** para pesos + GitHub
 para código e evidência (B4) · varredura repo-wide de alegações · **push e botões de publicação são do
@@ -202,7 +208,7 @@ operador**.
 | 4 | 3–5 dias | 3 |
 | 5 | ~1 semana | 4 |
 | 6 | 2–3 dias | 5 |
-| 7 | dias + B1 externo | 6, B1 |
+| 7 | dias | 6, a assinatura de B1 (interna: o ramo é risco assumido por escrito) |
 | **total** | **~4–6 semanas de engenharia** | |
 
 ## Mapa divergência → fase

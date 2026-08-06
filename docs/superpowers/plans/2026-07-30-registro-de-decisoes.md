@@ -5036,3 +5036,135 @@ E **duas mutações eram vermelho FALSO**: registrar a medida de viés dentro do
 vermelho vinha da importação e não da guarda. Refeitas como atribuição depois da definição, que é a forma
 realista da mudança, a guarda dispara e `probe_stylometry` recusa **antes de qualquer ajuste**, nos dois
 casos (por nome e por callable).
+
+---
+
+## As duas ratificações do operador de 2026-08-05: a barreira de `cal-B` e o ramo de B1
+
+As duas foram dadas **depois** de o commit de docs da Fase 2 ter o contrato fixado, então viveram fora do
+Git até esta entrada. Nenhuma das duas move uma linha de código: a primeira ratifica política já
+implementada e medida como conforme, a segunda escolhe entre dois ramos de uma decisão que continua **sem
+assinatura**.
+
+### A barreira de `cal-B` — RATIFICADA
+
+**Quem:** o operador, em 2026-08-05. **O que:** cluster exposto é barrado das **duas** partições cegas,
+`test` e `cal-B`, e não só do `test`. A linha passa de `AG · ratificar` para `OP` no ESTADO § 3.3, e o item
+sai da lista de abertas do § 4.
+
+**Custo zero nesta release, e o custo é medido e não estimado.** O ledger de exposição real tem **0 bytes**
+— nenhum evento foi escrito — e o corpus novo não reaproveita material do morto, porque `drop_seen` é
+global (as ~1.600 linhas humanas recuperáveis são abdicadas de propósito). Não existe, hoje, cluster
+exposto para barrar. A barreira já estava implementada e medida como **conforme** (C16): a ratificação não
+muda uma linha de código nem um byte de artefato. Ela morde na **próxima** release.
+
+**Por que a HORA importa, e a razão está no próprio módulo.** `BLIND_PARTITIONS` é política **de oferta**, e
+está escrito no comentário imediatamente acima da constante, em `benchmark/cluster-exposure-ledger.ts`:
+"*OFFER-TIME policy only. It decides what a request may claim now and never reinterprets events already on
+disk: a record already recorded against `cal-B` keeps the meaning it had when it was written.*" Com o ledger vazio, a regra
+ratificada agora se aplica **uniformemente a toda a história** do ledger. Ratificada depois do primeiro
+evento, o mesmo arquivo append-only ficaria governado por **duas** regras, e dizer qual vale para qual
+linha exigiria datar cada evento contra a data da política — arqueologia sobre o artefato que existe
+justamente para dispensá-la. Fixar regra de cegueira **antes** de qualquer resultado é também o que § 3.4
+exige: depois de ver resultados, ela proíbe.
+
+**Alternativas recusadas.**
+
+| alternativa | por que não |
+|---|---|
+| relaxar para só o `test` | mataria a opção conformal da v2, cuja população a pré-inscrição selada fixa em `cal-b-humans` (`conformal.population`, pinada por `literal()`). Uma `cal-B` que admite cluster exposto não é bloco cego, e a v2 teria de despinar política selada para usá-la |
+| barrar das **cinco** partições | contradiz a graduação de § 3.4, que é imposta por código: exposição de nível de cluster **não** invalida material para `train`, `dev` e `cal-A`. Alargada a todas, a barreira fecha o corpus sem comprar cegueira em lugar nenhum — é desligamento e não controle, e o comentário de `BLIND_PARTITIONS` diz que a assimetria **é** o controle |
+
+**Custo de reversão:** trivial no documento — uma célula de coluna e uma linha de lista — enquanto o ledger
+está vazio; **alto depois do primeiro evento**, e é exatamente essa assimetria que torna barato ratificar
+hoje.
+
+**Referências obrigatórias:** `docs/references.md` § 2.2j (o **instante** da ratificação: regra de oferta
+fixada com o ledger vazio, com Nosek et al. 2018 e Haber & Stornetta 1991, e "sem precedente" declarado para
+o caso específico), § 2.1 (pré-registro das frações e dos gates), § 1.1 (cegueira informacional) e
+§ "Integridade, custódia e falha fechada" (o encadeamento que torna a ordem dos eventos verificável).
+
+### B1 — o RAMO escolhido: risco assumido por escrito
+
+**Quem:** o operador, em 2026-08-05. **O que:** dos dois ramos de B1 — parecer jurídico da posição (a), ou
+risco assumido por escrito — está escolhido o **segundo**. Isto **não é a assinatura**, e B1 **não sai** da
+lista de abertas do ESTADO § 4: a assinatura, com nome, data e a razão de assumir em vez de consultar, é do
+operador.
+
+**A razão é de custo, não de mérito jurídico.** O ramo do parecer tinha **duas** dimensões de custo e o
+plano precificava só uma: prazo de terceiro — a Fase 7 era a única fase cuja duração dependia de agenda
+externa, e "prazo externo de B1" estava escrito no cabeçalho dela e na tabela de estimativa — **e**
+desembolso acima do envelope de A6, que é R$60/mês e já é ocupado pelo Colab. O dinheiro não estava escrito
+em lugar nenhum. O ramo do risco escrito não tem nenhuma das duas dimensões, e as duas menções ao prazo
+externo saem do plano nesta entrada.
+
+**O que a escolha NÃO resolve, e tem de ficar dito.** `license-review.json` continua `status: "pending"`,
+com `reviewer` e `reviewedAt` em `null`. Os três esperam o **pacote da Fase 6**, e a razão é material:
+`models/cleanfeed-ptbr-v1/` é o layout **antigo**, e D27 — bundles servidos declarando MIT como licença dos
+**pesos** — só é consertado lá. Aprovar antes seria assinar um pacote com arquivos legais **sabidamente**
+errados, o que é pior que não assinar. Duas dívidas de § 7 mudam de vencimento por causa disso, e nenhuma
+delas é nova: a dos bundles servidos passa a vencer na Fase 6 com a assinatura pendurada nela, e a do
+`non-commercial` sem licença que o imponha passa a vencer na **assinatura** em vez de no ramo.
+
+**A minuta não entra no Git.** Existe uma minuta da declaração, redigida para o operador revisar, na área
+de trabalho e fora do repositório. Ela entra em `docs/` **quando ele devolver o texto assinado**; a razão
+de assumir em vez de consultar é dele e não é redigida aqui. Commitar minuta não assinada como se fosse a
+declaração produziria exatamente o artefato que a posição (a) precisa não ter: uma alegação de risco aceito
+que ninguém aceitou.
+
+**Onde esta unidade divergiu do que lhe foi pedido, e por quê.** O roteiro mandava a nota do ramo entrar na
+linha `F0-4` do ESTADO § 3.6; ela entrou como linha **`B1` própria, com `quem = OP`**. `F0-4` está marcada
+`AG`, que o cabeçalho do ESTADO define como "agente, ratificável", e o ramo de B1 não é nenhuma das duas
+coisas: não foi decidido pelo agente e não é reversível por ele. Pendurar a escolha do operador numa linha
+`AG` publicaria autoria falsa e ofereceria ao operador ratificar o que ele mesmo decidiu, e R4 proíbe as
+duas. `F0-4` ficou com a razão do `pending`, que **é** do agente. **Custo de reversão:** apagar a linha
+`B1` de § 3.6 e mover a nota para `F0-4`.
+
+### O que esta unidade NÃO fez, de propósito
+
+- **não** mexeu em `license-review.json` — nem `status`, nem `reviewer`, nem `reviewedAt`;
+- **não** redigiu a razão do operador, nem commitou a minuta;
+- **não** tocou código de produção. Fora de `docs/` mudou um **comentário** em
+  `benchmark/tests/estado-counts.test.ts`, que republicava em prosa os absolutos de § 5.6 já envelhecidos
+  (dizia que o regex por linha devolve 372 contra 410, quando o medido é 377 contra 415) e agora expressa o
+  mesmo fato pela relação — um a menos por rótulo quebrado —, que não envelhece. O arquivo **não** é membro
+  de `EVALUATOR_FILES`, então o `evaluatorDigest` não se move: segue
+  `18b8465f9071c35b8efa0cfc24f96d231229452715d5177b5b99ce3a06342ba6` sobre 52 arquivos, e a suíte confere
+  isso lendo o valor publicado em § 5.6 contra a árvore viva;
+- **não** consertou o byte NUL de `benchmark/near-duplicates.ts`: segue na fila com commit próprio, porque
+  o conserto **move** o `evaluatorDigest`;
+- **não** fechou a rodada 13 do cross-review do E2 — o crédito do codex volta em 8 de agosto, e rodada do
+  Fable não fecha dívida de codex.
+
+### O que a revisão adversarial pegou, e o que ela leu errado
+
+Nenhum achado tocou política; todos eram documento descrevendo estado que o arquivo não tinha.
+
+1. **§ 6 descrevia um arquivo que não existe.** A entrada nova do backbone afirmava que as duas seções
+   retratadas do registro estão marcadas "no próprio cabeçalho"; só **uma** está. A do teto de 340 000 000
+   tem o bloco `RETRATADO` imediatamente abaixo do cabeçalho; a que congelava `backbone` com valores de
+   XLM-R o tem 31 linhas **dentro** da seção, junto do parágrafo que o afirmava — e retrata esse parágrafo,
+   não a seção. A frase passou a dizer isso.
+2. **A divergência contra o roteiro vivia fora do Git**, num relatório sob `.codex-reviews/`, que o
+   `.gitignore` exclui. Está registrada acima, com razão e custo de reversão.
+3. **`references.md` § 2.2j era subseção órfã**: nada apontava para ela, e a entrada que ela ancora não a
+   citava. A linha de referências obrigatórias da ratificação de `cal-B` fecha a remissão nas duas direções,
+   que é o que a regra do projeto pede.
+4. **O par de § 5.6 estava escrito duas vezes com valores diferentes**, e o segundo lugar era o comentário
+   da guarda que existe para impedir exatamente esse envelhecimento (acima, no item do comentário).
+
+E um **terceiro** modo de falha da suíte, que § 7 não tinha: `calibration-profile-contract.test.ts` varre
+`benchmark/` com `readdir(recursive: true)` e não trata erro, então a chamada morre como `ENOENT … scandir`
+se um subdiretório desaparecer no meio da caminhada. Medido em árvore sintética **fora** do repositório
+(4 000 subdiretórios, um removido durante a varredura): controle sem erro em árvore estável, e a primeira
+tentativa com remoção concorrente devolveu `ENOENT: no such file or directory, scandir '…/d003998'`. Não é
+timeout nem disputa por disco, que são os dois modos que § 7 já nomeava. **Quem** cria o diretório
+transitório sob `benchmark/` não foi medido — nenhum arquivo rastreado escreve o path que a revisão
+observou —, então a dívida nomeia o mecanismo e não a causa.
+
+**Um achado foi refutado em parte.** A revisão leu "só a Fase 3 depende dela", em `F0-4`, como
+circularidade contra o sequenciamento novo: a Fase 3 exigindo uma assinatura que só pode existir depois da
+Fase 6. Não é. "Fase 3" ali é a numeração do plano **antigo**, em que a Fase 3 **era** a publicação dos
+pesos, e a lista de ABERTAS diz isso com todas as letras ("B1, que bloqueia somente a Fase 3 (publicação de
+pesos) — as Fases 0 a 2 correm sem ela"). No roteiro vigente a publicação é a Fase 7. Não há dependência
+circular; há numeração envelhecida em três frases, e é ela que § 6 passa a indexar.

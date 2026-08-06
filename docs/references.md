@@ -826,6 +826,34 @@ foi lido, neste projeto, como "um bloco indivisível" sobre linhas que o partici
 pôr em lados opostos do corte — e um eixo ausente do relatório é um eixo que ninguém a jusante pode
 conferir.
 
+### 2.2j Ratificar a regra de elegibilidade do bloco cego ANTES do primeiro evento (2026-08-05)
+
+As fontes já estão aqui: o pré-registro das frações e dos gates é § 2.1, a cegueira informacional é § 1.1,
+e o ledger encadeado é § "Integridade, custódia e falha fechada". O que esta subseção acrescenta é a âncora
+do **INSTANTE**: o que foi ratificado não é qual partição barra cluster exposto — isso já estava
+implementado e medido —, e sim que a regra fosse fixada enquanto o ledger que ela governa está **vazio**.
+
+A regra é **de oferta**: decide o que uma requisição pode reivindicar agora e não reinterpreta evento já
+gravado. Com zero eventos em disco ela se aplica uniformemente a toda a história do artefato; ratificada
+depois do primeiro evento, o mesmo arquivo append-only fica governado por **duas** regras, e nenhuma
+inspeção do artefato diz qual vale para qual linha sem datar cada evento contra a data da política.
+
+- **Nosek, Ebersole, DeHaven & Mellor, 2018 — The preregistration revolution** (PNAS
+  115(11):2600–2606). [link](https://doi.org/10.1073/pnas.1708274114)
+  _Âncora:_ a assimetria entre predição e postdição — regra escrita antes do dado é desenho, escrita depois
+  é descrição do que se viu. Aqui o "dado" é o evento de exposição, não a medida.
+- **Haber & Stornetta, 1991 — How to Time-Stamp a Digital Document** (Journal of Cryptology
+  3:99–111). [link](https://doi.org/10.1007/BF00196791)
+  _Âncora:_ o encadeamento existe para tornar a ordem dos eventos verificável sem confiar em quem os
+  escreveu; política que muda no meio da cadeia devolve ao leitor exatamente a pergunta que a cadeia
+  responde.
+
+**A transferência, e o que não se transfere:** nenhuma das duas fontes trata de elegibilidade de partição
+cega. O que se transfere é a forma do argumento — regra fixada antes do primeiro dado, sobre um registro
+cuja ordem é verificável. **Sem precedente encontrado (2026-08-05)** para o caso específico: escolher o
+instante da ratificação de uma regra de admissão a bloco cego pelo estado do ledger de exposição (zero
+eventos), para que a política não parta a história do próprio ledger em dois regimes.
+
 ### 2.3 Olhares repetidos nos dados e sequências sem teto
 
 - **Pocock, 1977 — Group sequential methods in the design and analysis of clinical trials**

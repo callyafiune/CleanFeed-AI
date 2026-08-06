@@ -130,7 +130,7 @@ de abrir o arquivo — o módulo fica na árvore, declarado, pela mesma convenç
 | | famílias OpenAI ficam **reservadas ao teste de gerador não visto** (OOD): a reserva é política nomeada do slate (`OOD_RESERVED_FAMILIES`), não prefixo, e todo papel de família geradora é **declarado** — `core`, `ood-reserved` ou `excluded` —, com censo dos pools conferido por guarda. Reserva vazia **recusa** a montagem | AG |
 | | `--provider` recusa na **argparse**, com as quatro lanes congeladas como `choices`: nenhuma chamada de provedor fora do slate é gasta | AG |
 | | partições cegas = `test` e `cal-B`, privadas e byte-intocadas até a v2.0 | OP |
-| | cluster exposto é barrado das **duas** partições cegas | AG · ratificar |
+| | cluster exposto é barrado das **duas** partições cegas | OP |
 | | o vocabulário de partições do código é `train / dev / cal-A / cal-B / test` | código |
 | | só bases públicas; sem coleta autorizada individual | OP |
 | | `ptbr-generic-v1` está morto como dataset | OP |
@@ -183,7 +183,8 @@ O que "corpus inutilizado" significa — a semântica é **graduada**, nunca tud
 | F0-1 | licença dos pesos: `cleanfeed-weights-nc-1.0`, família OpenRAIL-M | AG |
 | F0-2 | restrição comercial só nos pesos; código MIT | AG |
 | F0-3 | documentação e evidência sob CC BY 4.0 | AG |
-| F0-4 | `license-review.json` está `pending` | AG |
+| F0-4 | `license-review.json` está `pending`: `status`, `reviewer` e `reviewedAt` são do operador e esperam o **pacote da Fase 6**, porque `models/cleanfeed-ptbr-v1/` é o layout antigo e os arquivos legais dos bundles servidos (§ 7) são consertados lá — aprovar antes assinaria pacote com arquivo legal sabidamente errado | AG |
+| B1 | o **ramo** está escolhido: **risco assumido por escrito**, não parecer jurídico. Isso **não** é a assinatura, que continua aberta (§ 4) — e é o ramo que retira o prazo de terceiro e o gasto acima do envelope de A6 do caminho até a publicação | OP |
 | B2 | pesos sob NC + proibição de uso disciplinar, acadêmico, empregatício e decisório | OP |
 | B4 | GitHub para código e evidência; Hugging Face **gated** para pesos | AG · ratificar |
 
@@ -222,8 +223,7 @@ O que "corpus inutilizado" significa — a semântica é **graduada**, nunca tud
 
 | decisão | trava |
 |---|---|
-| **B1** — parecer jurídico da posição (a), ou risco assumido por escrito | publicação de pesos (Fase 7); `license-review.json` → `approved` |
-| ratificar a **barreira de `cal-B`** (cluster exposto barrado das duas cegas, § 3.3) | a montagem do corpus novo (Fase 3) |
+| **B1** — o **ramo** está escolhido: **risco assumido por escrito**, não parecer jurídico. Falta a **assinatura** — nome, data e a razão de assumir em vez de consultar —, que é do operador e espera o pacote da Fase 6 | publicação de pesos (Fase 7); `license-review.json` → `approved` |
 | **`consume-holdout`** — o botão irreversível da medição | Fase 5 |
 | re-rodar ou não o codex nas unidades do caminho selado revisadas **só pelo Fable** | no retorno do crédito do codex |
 
@@ -353,7 +353,7 @@ A unidade é a página, o piso de 300 é trivial, e o dump de 1,96 GB é a reser
 | ledger de exposição real | **0 bytes** — nenhum evento real foi escrito |
 | holdout-ledger real | 2.638 bytes — o consumo de 2026-07-25, `decision: reject` |
 | memória da exposição por linha | `benchmark/data/corpus-build/out/split/split-artifact.json` — pertença de `test`, só o operador lê |
-| referências | **413** marcadores de link em **18** seções de nível `##` de `references.md`, e **41** declarações literais de "Sem precedente encontrado" (mais 13 menções em outra forma). A regra é a ocorrência da junta `](` seguida de URL, contada **no arquivo inteiro e não por linha**: `references.md` quebra a ~100 colunas e 38 rótulos de link atravessam a quebra, então um regex `\[rótulo\]\(url\)` aplicado por linha devolve 375. Agora **lido por teste nomeado** (`estado-counts.test.ts`) — os valores anteriores (322 / 50, depois 349) envelheceram em silêncio exatamente porque nenhum teste os lia |
+| referências | **415** marcadores de link em **18** seções de nível `##` de `references.md`, e **42** declarações literais de "Sem precedente encontrado" (mais 13 menções em outra forma). A regra é a ocorrência da junta `](` seguida de URL, contada **no arquivo inteiro e não por linha**: `references.md` quebra a ~100 colunas e 38 rótulos de link atravessam a quebra, então um regex `\[rótulo\]\(url\)` aplicado por linha devolve 377. Agora **lido por teste nomeado** (`estado-counts.test.ts`) — os valores anteriores (322 / 50, depois 349) envelheceram em silêncio exatamente porque nenhum teste os lia |
 
 ### 5.7 Sondas diagnósticas sobre os pools em moldura (W3)
 
@@ -421,6 +421,12 @@ e a procedência do material dentro do próprio relatório.
   `RELEASE_CORPUS_POLICY.counts.human` é **4.000**, o alvo;
 - a leitura de que reduzir a moldura **afrouxa** o teto publicado: ele **estreitou**, de 1,63 % para
   0,55 %, porque `m` caiu e o orçamento de coleta concentrou numa célula (§ 5.2);
+- o backbone **`xlm-roberta-base`** e o teto de export int8 de **340 000 000** bytes, com a justificativa
+  circular que os acompanhava (o teto foi elevado para acomodar o backbone e a elevação virou razão de
+  escolhê-lo): o selado é `neuralmind/bert-base-portuguese-cased` com teto de **130 000 000** ancorado em
+  export medido (§ 3.5), e o parser recusa os dois valores antigos nomeando o path. As duas seções do
+  registro que os afirmavam estão marcadas **RETRATADO**: a do teto logo abaixo do cabeçalho, a do
+  backbone no corpo da seção, junto do parágrafo que o afirmava;
 - os **3,656 %** agregados de contaminação lidos como veredito do gate, ou como lane a regenerar: o teto de
   2 % é por família, e o agregado do conjunto gerado não é quantidade que o gate compare;
 - o gate antiartefato com **quatro** detecções (L12 do registro): as quatro seguem em vigor, o **número**
@@ -435,6 +441,10 @@ e a procedência do material dentro do próprio relatório.
 - `blindReserveCompleteAttempts` lido como reserva **executada** na v1;
 - regra condicional 6 (codex indisponível → selado espera);
 - bloco C inteiro, exceto `C4`;
+- de `B1` no registro — a lista de ABERTAS e a linha `F0-4` —, a **numeração de fases**: "bloqueia somente
+  a Fase 3", "as Fases 0 a 2 correm sem ela" e "só a Fase 3 depende dela" são do plano antigo, em que a
+  Fase 3 **era** a publicação dos pesos. No roteiro vigente a publicação é a **Fase 7**, e a assinatura
+  espera o pacote da Fase 6 (§ 3.6, § 4);
 - **qualquer leitura de "gasto" sem a graduação de § 3.4** — inclusive afirmações anteriores, no registro
   e em memórias de sessão, de que o `ptbr-generic-v1` "não pode mais ser usado" ou de que o material
   estaria "descegado" por conhecimento de estrato;
@@ -465,7 +475,7 @@ e a procedência do material dentro do próprio relatório.
 | o lado **selado** não impõe a reserva OOD: `sealDataset` confere positivos por família declarada, não que as reservadas estejam fora do treino | Fase 3, item 3 |
 | o lado **selado** não confere licença registro↔fonte: `auditRecords` junta `sourceId` e ignora a licença | Fase 3, item 1 |
 | fonte sob **duas** licenças recusa a montagem, e o remédio (dividir a fonte por licença, ou licença por registro no esquema selado) é decisão de esquema. Deixou de ser urgente: a Carolina, que era a fonte alcançável, saiu da moldura | quando uma fonte **em moldura** declarar duas licenças |
-| a moldura de uma célula deixa **`non-commercial` sem licença que o imponha**: as obrigações medidas são `attribution` + `share-alike`, e o regime NC passa a apoiar-se só em `commercialUse: false` | B1 (é a posição (a), e é do operador) |
+| a moldura de uma célula deixa **`non-commercial` sem licença que o imponha**: as obrigações medidas são `attribution` + `share-alike`, e o regime NC passa a apoiar-se só em `commercialUse: false` | a **assinatura** de B1 — o ramo já está escolhido (risco assumido por escrito), e é nela que o operador declara o que assume |
 | três das seis famílias hard-negative (`repetitive`, `non-native`, `motivational`) são de texto curto informal e passam a ser procuradas em lede de Wikipédia, onde são mais raras; a demanda por célula é 6 × `tag_per` numa célula só | Fase 3, item 1 — se a marcação não encher, é escassez de material e não erro de coleta |
 | a reserva OOD não foi **dimensionada**: com os pools de hoje ela encheria o bloco cego e seria recusada | Fase 3, item 2 |
 | `generatorVersion` na união do split colapsa a classe gerada por versão | Fase 3 |
@@ -482,10 +492,11 @@ e a procedência do material dentro do próprio relatório.
 | registro-linha congelado em `cal-B` não tem a proteção do de `test` | antes da v2.0, ou antes de um segundo corpus sobrepor um split vivo |
 | `worker-protocol` admite `sourceLock: undefined`; a revalidação morre como `TypeError` sem código | — |
 | F0-9 — duas telas antigas com over-claim de autoria humana | — |
-| bundles servidos (`public/`, `dist*`) carregam arquivos legais pré-Fase-0 (MIT como licença dos pesos) | antes de empacotar qualquer release |
+| bundles servidos (`public/`, `dist*`) carregam arquivos legais pré-Fase-0 (MIT como licença dos pesos) | Fase 6 — e a **assinatura** de B1 espera por ela: aprovar `license-review.json` antes assinaria pacote com arquivos legais sabidamente errados |
 | o denominador da cota por células **DECLARADAS** é indistinguível do por células **PRESENTES** enquanto a moldura tem uma célula: com `len(QUOTA_CELLS) == 1` declarado ≡ presente, e nenhum corpus separa as duas escolhas. A escolha está escrita em `balanced_humans` e pinada na lista da moldura, não medida | a segunda célula |
 | a população que ajusta o limiar provisório caiu de **1.050** para **600** linhas com a emenda da moldura (`dev` 5 % + `cal-A` 10 % sobre 4.000): o corte passa a ser o 30.º maior de 600 em vez do 53.º de 1.050. Nenhum piso pré-inscrito guarda essa população — `powerFloors` só cobre negativos de FPR, positivos de recall e unidades de amostragem | unidade que tocar `threshold`, ou a Fase 5 |
 | timeouts de 20 s sob contenção de I/O em **caminho selado**: `consume-holdout.test.ts` e `digests.test.ts` (`observeEvaluatorFiles`) reprovam em rodada cheia e passam isolados. Não é defeito de política; é a suíte competindo por disco | rodada própria |
+| a varredura recursiva de `benchmark/` em `calibration-profile-contract.test.ts` — a que proíbe import de `src/` em módulo de benchmark — morre como `ENOENT … scandir` se um subdiretório desaparecer no meio da caminhada: `readdir(recursive: true)` não tolera árvore que muda embaixo dele, e a chamada não trata o erro. É um terceiro modo de falha, distinto dos dois timeouts acima: não é timeout nem disputa por disco | unidade que tocar a varredura |
 
 ---
 
