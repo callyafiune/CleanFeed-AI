@@ -30,7 +30,13 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 from common import CandidateWriter
-from generate_ai import load_humans, already_paired, select_pairs, recipe_for
+from generate_ai import (
+    load_humans,
+    already_paired,
+    select_pairs,
+    recipe_for,
+    target_word_count,
+)
 
 LICENSE_ID = "geracao-propria-v1"
 SEED_NULL_REASON = (
@@ -86,10 +92,16 @@ def chunk_pairs(
 
 
 def chunk_prompt(recipe: str, rows: list[dict]) -> str:
+    # `targetWords` is the seed's OWN word count, through the same function the REST
+    # lane uses: the length distribution of the generated class has to match the human
+    # one in EVERY lane, or the word count becomes a proxy for the lane, and
+    # `generationLane` is a grouping axis. A clamp here would leave the codex lane — the
+    # OpenAI families, reserved for the unseen-generator test — with a truncated copy of
+    # the human distribution while the other lanes carry the whole of it.
     items = [
         {
             "pairedWith": row["candidateId"],
-            "targetWords": max(60, min(int(row["wordCount"]), 300)),
+            "targetWords": target_word_count(int(row["wordCount"])),
             "reference": row["text"][:1200],
         }
         for row in rows

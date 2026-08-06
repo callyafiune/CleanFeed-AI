@@ -1730,6 +1730,83 @@ describe("Bonferroni simultaneous bounds", () => {
     expect(multiplicity.covers).toBe(true);
   });
 
+  // X1 — the length bands are a DIAGNOSTIC, so `m` is blind to how many there are.
+  //
+  // The mandatory inventory is derived from `multiplicity.primaryFamily` and the bands
+  // are not in it, so every per-band FPR gate is published and none of them certifies.
+  // The second half is the one that matters: adding a band adds a published gate and
+  // leaves `m`, the per-hypothesis alpha and the inventory exactly where they were. If
+  // a band ever moved `m`, the wiring would be wrong.
+  it("keeps every length band out of m, and adding a band moves neither m nor the alpha", () => {
+    const bandKeys = PREREGISTRATION_V4.lengthBands.bands.map(
+      (band) => band.key,
+    );
+    const bandSlice = (key: string): SliceResult =>
+      slice({
+        axis: "lengthBucket",
+        key,
+        negatives: 400,
+        positives: 400,
+        fprGateEligible: true,
+        warningFprUpper: 0.02,
+        actionFprUpper: 0.01,
+      });
+    const withBands = evaluateReleaseGates({
+      integrity: integrity(),
+      calibrationScoreBasis: CERTIFYING_SCORE_BASIS,
+      resampling: plan(),
+      metrics: metrics(),
+      slices: summary(bandKeys.map(bandSlice)),
+    });
+    // Every band is a published gate...
+    for (const key of bandKeys) {
+      const gate = gateById(
+        withBands.gates,
+        `warning.fpr.slice.lengthBucket.${key}`,
+      );
+      expect(gate.role).toBe("diagnostic");
+      expect(gate.hypothesis ?? null).toBeNull();
+      expect(withBands.multiplicity.gateIds).not.toContain(gate.id);
+    }
+    // ...and none of them is in the inventory, which is still the four of the family.
+    expect(withBands.multiplicity.observed).toBe(4);
+    expect(withBands.multiplicity.observed).toBe(
+      PREREGISTRATION_V4.multiplicity.primaryFamilySize,
+    );
+    expect([...withBands.multiplicity.hypotheses].sort()).toEqual(
+      [...PREREGISTRATION_V4.multiplicity.primaryFamily].sort(),
+    );
+    expect(withBands.multiplicity.missingHypotheses).toEqual([]);
+    expect(withBands.multiplicity.covers).toBe(true);
+
+    // A FIFTH band, which is what "acrescentar faixa" means at the gate layer.
+    const withOneMore = evaluateReleaseGates({
+      integrity: integrity(),
+      calibrationScoreBasis: CERTIFYING_SCORE_BASIS,
+      resampling: plan(),
+      metrics: metrics(),
+      slices: summary([...bandKeys, "600_PLUS"].map(bandSlice)),
+    });
+    expect(withOneMore.multiplicity.observed).toBe(
+      withBands.multiplicity.observed,
+    );
+    expect(withOneMore.multiplicity.gateIds).toEqual(
+      withBands.multiplicity.gateIds,
+    );
+    expect(withOneMore.multiplicity.familyAlpha).toBe(
+      withBands.multiplicity.familyAlpha,
+    );
+    expect(withOneMore.multiplicity.declared).toBe(
+      withBands.multiplicity.declared,
+    );
+    // One more PUBLISHED gate, zero more counted.
+    expect(withOneMore.gates.length).toBe(withBands.gates.length + 2);
+    expect(
+      gateById(withOneMore.gates, "warning.fpr.slice.lengthBucket.600_PLUS")
+        .role,
+    ).toBe("diagnostic");
+  });
+
   it("keeps an under-powered cell of the family inside m and fails it, instead of shrinking the divisor", () => {
     const starved = CERTIFYING_CELLS[0];
     const report = evaluateReleaseGates({

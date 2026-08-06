@@ -398,6 +398,23 @@ function minimalMetrics(): EvaluationMetrics {
       unit: "character-offset",
       byGenerationMode: [],
     },
+    // The FPR by pre-registered length band, diagnostic. Every band is present with
+    // a zero count: this fixture holds no human negatives with a word count, and a
+    // band that vanished when empty is the defect the block exists to prevent.
+    lengthBands: {
+      role: "diagnostic",
+      gates: false,
+      spendsAlpha: false,
+      bands: PREREGISTRATION_V4.lengthBands.bands.map((band) => ({
+        key: band.key,
+        minimumWords: band.minimumWords,
+        maximumWords: band.maximumWords,
+        humanNegatives: 0,
+        decidedNegatives: 0,
+        falsePositives: 0,
+        falsePositiveRate: null,
+      })),
+    },
     // The A6 role-named blocks. This fixture never reads them; it only has to be
     // structurally complete, so the release block mirrors the empty matrix and
     // every conditional block carries its error-rate companion.

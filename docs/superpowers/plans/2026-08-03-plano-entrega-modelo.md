@@ -141,7 +141,17 @@ harness — família >2 % contaminada regenera a lane, A4).
    1.955.910.144 bytes —, e `build_governance.ts` passa a escrever manifesto **v2** com `materialBatches`.
    Sem isso a auditoria bloqueia toda linha humana v4, e é isso que ela deve fazer;
 2. geração IA pelas 4 lanes; famílias OpenAI **não entram** (reserva OOD); todo registro nasce
-   `automated/unreviewed`; PII amostral; gate antiartefato roda **antes** do treino;
+   `automated/unreviewed`; PII amostral; gate antiartefato roda **antes** do treino. **A
+   distribuição de comprimento do gerado tem de CASAR a humana medida**, e o casamento é por par:
+   `generate_ai.target_word_count` pede ao modelo o comprimento da própria semente humana, sem
+   clamp, e recusa semente fora da janela do extrator em vez de prendê-la na faixa. O critério de
+   reprovação é a sonda de comprimento (`diagnostic_probes.probe_length`), lida na **tabela de
+   faixas e nos extremos** e não na AUC: medido em 2026-08-06, o clamp `max(60, min(n, 350))` que
+   o gerador usava deixa a AUC em 0,504 — invisível — enquanto produz uma faixa de 50-59 palavras
+   que nenhuma linha gerada alcança e um máximo pedido preso em 350 contra 1.774 do lado humano. O
+   casamento vale nas **quatro** lanes e até o fim do transporte: `codex_batch` pede pela mesma
+   função, o orçamento de saída da lane REST escala com o alvo e resposta cortada
+   (`finishReason` fora de `STOP`) é recusada em vez de aceita como inteira;
 3. montagem com preflight; **congelamento do split** via ledger (barreira das duas cegas em vigor);
    atestado de composição E3 contra o piso por célula;
 4. `test` e `cal-B` nascem e permanecem byte-intocados.
@@ -174,6 +184,14 @@ de fonte), gate de não degeneração em `dev + cal-A` com valores **não public
 **D22**: layout de release agnóstico — ONNX + tokenizer + manifesto + recibo F6 + **tabela de FPR por
 célula com a moldura declarada** + model card (frase R7-correta; moldura; "fora da moldura não há
 alegação"; espec do pipeline de documento) + `LICENSE` (`cleanfeed-weights-nc-1.0`) + NOTICE.
+
+O model card **publica a distribuição de comprimento da população medida** — os percentis de
+palavras da célula (p25/p50/p75/p90 e o máximo) mais a **tabela de FPR por faixa pré-inscrita**,
+com o `n` de cada faixa ao lado do teto que aquele `n` implica. Sem ela quem lê o teto não sabe
+**sobre que texto** ele vale: a manchete é um número sobre a célula inteira, cuja mediana é de ~120
+palavras, e quem analisa 600 recebe um modelo que a medição descreveu com ~119 linhas e teto de
+3,62 %. As faixas são diagnóstico — não decidem, não gastam alpha — e é justamente por isso que a
+sua ausência do card não seria detectada por nenhum gate.
 **D23** (o model card e a tabela nascem aqui), **D27** (arquivos legais pré-Fase-0 nos bundles servidos
 corrigidos). A extensão **não** entra no pacote.
 

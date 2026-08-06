@@ -6,16 +6,22 @@ Run: py -3.13 -m pytest test_diagnostic_probes.py -q
 from __future__ import annotations
 
 import json
+import os
 import random
 import re
+import sys
+import tempfile
 import unittest
 from pathlib import Path
+from unittest import mock
 
 import numpy as np
 
 import assemble_corpus
 import baseline_tfidf
+import codex_batch
 import diagnostic_probes as probes
+import generate_ai
 
 LAB = Path(__file__).resolve().parent
 BENCHMARK = LAB.parent
@@ -394,6 +400,364 @@ class LengthProbeTests(unittest.TestCase):
         report = probes.probe_length(rows)
         self.assertEqual(report["rows"], 60)
         self.assertNotIn("mixed", report["counts"])
+
+
+class MatchedGenerationLengthTests(unittest.TestCase):
+    """The length asked of the generated class, held against the probe that reproves it.
+
+    `generate_ai.target_word_count` and `probes.probe_length` are two halves of one rule:
+    the generated length distribution has to MATCH the measured human one, and the probe
+    that predicts the class from the word count alone is the criterion. These tests wire
+    the two together, so a clamp or a constant reintroduced in the generator is red here
+    and not only in a future run of the slate.
+    """
+
+    # The MEASURED shape of the human class: quantiles of the word count over the 25 036
+    # admissible lead sections of the ptwiki-20220301 dump (measured 2026-08-06, mirroring
+    # the extractor's own `lead_section`/`normalize_text`/`word_count`/`pii_hits` and its
+    # 50/5 000 window). Long-tailed on purpose — the tail is what a clamp destroys.
+    MEASURED_QUANTILES = (
+        (0.00, 50),
+        (0.10, 56),
+        (0.25, 72),
+        (0.50, 120),
+        (0.75, 221),
+        (0.90, 362),
+        (1.00, 1774),
+    )
+
+    def _human_word_counts(self, rows: int) -> list[int]:
+        """`rows` counts drawn off the measured quantiles by linear interpolation."""
+        counts: list[int] = []
+        for index in range(rows):
+            fraction = index / (rows - 1)
+            for position in range(1, len(self.MEASURED_QUANTILES)):
+                low_q, low_words = self.MEASURED_QUANTILES[position - 1]
+                high_q, high_words = self.MEASURED_QUANTILES[position]
+                if fraction <= high_q:
+                    span = high_q - low_q
+                    weight = 0.0 if span == 0 else (fraction - low_q) / span
+                    counts.append(round(low_words + weight * (high_words - low_words)))
+                    break
+        return counts
+
+    def _paired_corpus(self, target: "callable[[int], int]") -> list[dict]:
+        rows: list[dict] = []
+        for index, words in enumerate(self._human_word_counts(80)):
+            rows.append(_record(f"h{index}", "train", "human", words=words, seed=index))
+            rows.append(
+                _record(
+                    f"a{index}",
+                    "train",
+                    "ai",
+                    words=target(words),
+                    seed=5_000 + index,
+                )
+            )
+        return rows
+
+    def test_the_fixture_carries_the_word_count_it_declares(self) -> None:
+        """Otherwise the whole file measures the text builder and not the target."""
+        for words in (50, 56, 120, 362, 1774):
+            self.assertEqual(probes.common.word_count(_text(1, words)), words)
+
+    def test_the_target_is_the_seed_length_across_the_measured_distribution(
+        self,
+    ) -> None:
+        for words in self._human_word_counts(80):
+            self.assertEqual(generate_ai.target_word_count(words), words)
+
+    def test_a_seed_outside_the_extractor_window_is_refused_and_never_clamped(
+        self,
+    ) -> None:
+        for words in (0, 49, 5_001):
+            with self.assertRaises(generate_ai.SeedLengthOutOfWindow) as caught:
+                generate_ai.target_word_count(words)
+            self.assertIn("fora da janela", str(caught.exception))
+
+    def test_the_matched_target_leaves_every_band_of_the_length_probe_at_chance(
+        self,
+    ) -> None:
+        """THE criterion, and it is the BAND table rather than the AUC.
+
+        With the target equal to the seed's count the two word-count multisets are
+        identical, so the raw rank AUC is exactly 0.5 (every pair is a tie) and every
+        decile of the pooled distribution holds as many generated lines as human ones.
+        The pooled out-of-fold AUC is deliberately NOT pinned: over an all-ties feature it
+        is decided by tie-breaking inside five folds and not by the feature, so a value
+        pinned here would be a fixture artifact.
+        """
+        report = probes.probe_length(self._paired_corpus(generate_ai.target_word_count))
+        # Arithmetic on word counts, no estimator in it: safe to pin by value.
+        self.assertEqual(report["rawWordCountAuc"], 0.5)
+        # One band per decile of the pooled counts. Pinned against the constant so the
+        # band count of the report cannot drift away from the reporting choice in
+        # silence — over these 160 spread-out counts no two decile bounds collide.
+        self.assertEqual(len(report["bands"]), probes.LENGTH_PROBE_DECILES)
+        self.assertEqual(
+            report["wordCountMedian"]["human"], report["wordCountMedian"]["ai"]
+        )
+        for band in report["bands"]:
+            self.assertEqual(
+                band["aiShare"],
+                0.5,
+                f"band {band['band']} ({band['wordsFrom']}-{band['wordsBelow']}) "
+                "does not hold as many generated lines as human ones",
+            )
+        # Still a diagnostic: it reports the artifact and refuses nothing.
+        self.assertFalse(report["decides"])
+        self.assertNotIn("verdict", report)
+
+    def test_a_clamped_target_is_invisible_to_the_auc_and_visible_in_the_bands(
+        self,
+    ) -> None:
+        """The measurement that decided the shape of this guard, kept as a test.
+
+        The generator used to ask for `max(60, min(count, 350))`. MEASURED over the human
+        distribution above, that clamp leaves the rank AUC at 0.504 — it is invisible to
+        a monotone AUC, because clamping the low tail UP and the high tail DOWN produces
+        two rank inversions that cancel. So an AUC at chance is not evidence that the two
+        length distributions agree, which is why the criterion is the band table and the
+        extremes.
+
+        What the clamp does produce is a band no generated line can reach: 50-59 words is
+        HUMAN with certainty (`aiShare` 0.0), a free label for a seventh of the fixture.
+        And it caps the generated maximum at the clamp while the human class keeps its
+        tail out to 1 774 words.
+        """
+        clamped = probes.probe_length(
+            self._paired_corpus(lambda words: max(60, min(words, 350)))
+        )
+        self.assertLess(
+            abs(clamped["rawWordCountAuc"] - 0.5),
+            0.01,
+            "the two-sided clamp is invisible to the AUC, which is the finding",
+        )
+        shares = [band["aiShare"] for band in clamped["bands"]]
+        self.assertEqual(shares[0], 0.0, "the lowest band holds no generated line")
+        self.assertGreater(shares[1], 0.7, "the clamped lines pile into the next band")
+        # The upper clamp does not show up as a class-pure band here — 350 lands on a band
+        # edge — so it is checked where it does show: the generated maximum.
+        counts = [
+            (row["label"], probes.common.word_count(row["text"]))
+            for row in self._paired_corpus(lambda words: max(60, min(words, 350)))
+        ]
+        human_max = max(count for label, count in counts if label == "human")
+        ai_max = max(count for label, count in counts if label == "ai")
+        self.assertEqual(ai_max, 350)
+        self.assertGreater(human_max, ai_max)
+
+    def test_the_matched_target_keeps_the_extremes_of_both_classes_together(
+        self,
+    ) -> None:
+        """The other half of the criterion: the tails, which the band table averages."""
+        counts = [
+            (row["label"], probes.common.word_count(row["text"]))
+            for row in self._paired_corpus(generate_ai.target_word_count)
+        ]
+        human = sorted(count for label, count in counts if label == "human")
+        generated = sorted(count for label, count in counts if label == "ai")
+        self.assertEqual(human, generated)
+        self.assertEqual(human[0], 50)
+        self.assertEqual(human[-1], 1774)
+
+
+class GeneratedLengthReachesTheProviderTests(unittest.TestCase):
+    """The paired length where it is SPENT: the two lanes' call sites and the transport.
+
+    `target_word_count` returning the seed's own count proves nothing about what runs — a
+    guard only guards where it is called. MEASURED: with the tests above alone, putting
+    the old clamp back on the line inside `main()` left all six of them green. So these
+    drive `main()` of the REST lane, `chunk_prompt` of the codex lane, and the transport
+    that has to carry a length budget wide enough for the tail.
+    """
+
+    def _humans(self, counts: list[int]) -> list[dict]:
+        return [
+            {
+                "candidateId": f"src_h_{index:04d}",
+                "text": _text(index, words),
+                "wordCount": words,
+                "domainSource": "ptwiki",
+            }
+            for index, words in enumerate(counts)
+        ]
+
+    def _drive_rest_lane(
+        self, counts: list[int]
+    ) -> tuple[list[dict], list[str], list[dict]]:
+        """Runs `generate_ai.main()` over `counts`, capturing every REST payload."""
+        payloads: list[dict] = []
+        answers: list[str] = []
+
+        def fake_http_json(url: str, payload: dict, headers: dict) -> dict:
+            payloads.append(payload)
+            prompt = payload["contents"][0]["parts"][0]["text"]
+            asked = int(re.search(r"aproximadamente (\d+) palavras", prompt).group(1))
+            answer = _text(9_000 + asked, asked)
+            answers.append(answer)
+            return {
+                "candidates": [
+                    {
+                        "content": {"parts": [{"text": answer}]},
+                        "finishReason": "STOP",
+                    }
+                ]
+            }
+
+        with tempfile.TemporaryDirectory() as raw:
+            tmp = Path(raw)
+            humans = tmp / "humans.jsonl"
+            humans.write_bytes(
+                "".join(
+                    json.dumps(row, ensure_ascii=False) + "\n"
+                    for row in self._humans(counts)
+                ).encode("utf-8")
+            )
+            output = tmp / "ai_gemini.jsonl"
+            argv = [
+                "generate_ai.py",
+                "--provider", "gemini",
+                "--humans", str(humans),
+                "--output", str(output),
+                "--per-provider", str(len(counts)),
+                "--sleep", "0",
+            ]
+            with mock.patch.object(sys, "argv", argv):
+                with mock.patch.dict(os.environ, {"GEMINI_API_KEY": "chave-de-teste"}):
+                    with mock.patch.object(generate_ai, "http_json", fake_http_json):
+                        generate_ai.main()
+            written = [
+                json.loads(line)
+                for line in output.read_text(encoding="utf-8").splitlines()
+                if line.strip()
+            ]
+        return payloads, answers, written
+
+    def test_main_asks_the_provider_for_the_seed_length_of_every_pair(self) -> None:
+        """The CALL SITE, driven: the prompt that leaves `main()` carries the seed's count."""
+        counts = [50, 56, 72, 120, 221, 362, 1774]
+        payloads, answers, written = self._drive_rest_lane(counts)
+        self.assertEqual(len(payloads), len(counts))
+        rows = {row["candidateId"]: row for row in self._humans(counts)}
+        asked: list[int] = []
+        for payload in payloads:
+            prompt = payload["contents"][0]["parts"][0]["text"]
+            words = int(
+                re.search(r"aproximadamente (\d+) palavras", prompt).group(1)
+            )
+            asked.append(words)
+            seeds = [
+                row for row in rows.values() if row["text"][:6000] in prompt
+            ]
+            self.assertEqual(len(seeds), 1, "the prompt must carry exactly one seed")
+            self.assertEqual(
+                words,
+                seeds[0]["wordCount"],
+                "the prompt asked for a length that is not its own seed's",
+            )
+        self.assertEqual(sorted(asked), sorted(counts))
+        # And the pipeline kept what the provider returned, at the length it returned:
+        # the written `wordCount` is measured on the answer, not copied from the target.
+        self.assertEqual(len(written), len(counts))
+        self.assertEqual(
+            sorted(row["wordCount"] for row in written),
+            sorted(probes.common.word_count(answer) for answer in answers),
+        )
+
+    def test_main_aborts_on_a_seed_the_extractor_window_would_have_refused(
+        self,
+    ) -> None:
+        with self.assertRaises(generate_ai.SeedLengthOutOfWindow):
+            self._drive_rest_lane([20])
+
+    def test_the_rest_budget_scales_with_the_target_and_never_caps_the_tail(
+        self,
+    ) -> None:
+        """A fixed budget is a clamp on the far side of the transport."""
+        seen: dict[str, dict] = {}
+
+        def fake_http_json(url: str, payload: dict, headers: dict) -> dict:
+            seen["payload"] = payload
+            return {
+                "candidates": [
+                    {"content": {"parts": [{"text": "texto"}]}, "finishReason": "STOP"}
+                ]
+            }
+
+        with mock.patch.object(generate_ai, "http_json", fake_http_json):
+            text = generate_ai.call_provider(
+                "gemini", "m", "prompt", None, {"gemini": "k"}, 1774
+            )
+        self.assertEqual(text, "texto")
+        budget = seen["payload"]["generationConfig"]["maxOutputTokens"]
+        self.assertEqual(budget, generate_ai.max_output_tokens(1774))
+        # More tokens than the words asked for, and strictly increasing in the target:
+        # every count of the measured distribution gets a budget of its own.
+        previous = 0
+        for words in (50, 56, 72, 120, 221, 362, 1774, generate_ai.MAXIMUM_WORDS):
+            current = generate_ai.max_output_tokens(words)
+            self.assertGreater(current, words)
+            self.assertGreater(current, previous)
+            previous = current
+        # The constant that used to sit here could not hold the tail of the human class.
+        self.assertGreater(generate_ai.max_output_tokens(1774), 1024)
+
+    def test_a_cut_short_rest_answer_is_refused_naming_the_reason(self) -> None:
+        for finish in ("MAX_TOKENS", "SAFETY", "RECITATION"):
+            with self.subTest(finishReason=finish):
+
+                def fake_http_json(url: str, payload: dict, headers: dict) -> dict:
+                    return {
+                        "candidates": [
+                            {
+                                "content": {"parts": [{"text": "metade de um texto"}]},
+                                "finishReason": finish,
+                            }
+                        ]
+                    }
+
+                with mock.patch.object(generate_ai, "http_json", fake_http_json):
+                    with self.assertRaises(generate_ai.GenerationRefused) as caught:
+                        generate_ai.call_provider(
+                            "gemini", "m", "prompt", None, {"gemini": "k"}, 800
+                        )
+                message = str(caught.exception)
+                self.assertIn(finish, message)
+                self.assertIn("cortado", message)
+
+    def test_a_finished_rest_answer_is_accepted_with_or_without_a_reason(self) -> None:
+        for finish in ("STOP", "FINISH_REASON_STOP", None):
+            with self.subTest(finishReason=finish):
+                candidate: dict = {"content": {"parts": [{"text": "texto inteiro"}]}}
+                if finish is not None:
+                    candidate["finishReason"] = finish
+
+                def fake_http_json(url: str, payload: dict, headers: dict) -> dict:
+                    return {"candidates": [candidate]}
+
+                with mock.patch.object(generate_ai, "http_json", fake_http_json):
+                    self.assertEqual(
+                        generate_ai.call_provider(
+                            "gemini", "m", "prompt", None, {"gemini": "k"}, 800
+                        ),
+                        "texto inteiro",
+                    )
+
+    def test_the_codex_lane_asks_for_the_seed_length_and_refuses_a_clamp(self) -> None:
+        """The other driver: `codex_batch` builds its own prompt and had its own clamp.
+
+        `generationLane` is a grouping axis, so a clamp in one lane makes the word count a
+        proxy for that lane — and the codex lane is the one carrying the OpenAI families
+        reserved for the unseen-generator test.
+        """
+        counts = [50, 72, 120, 300, 350, 1774]
+        prompt = codex_batch.chunk_prompt("original", self._humans(counts))
+        items = json.loads(prompt.split("ITENS:\n", 1)[1])
+        self.assertEqual([item["targetWords"] for item in items], counts)
+        # The same window as the REST lane, from the same function.
+        with self.assertRaises(generate_ai.SeedLengthOutOfWindow):
+            codex_batch.chunk_prompt("original", self._humans([20]))
 
 
 class LaneProbeTests(unittest.TestCase):

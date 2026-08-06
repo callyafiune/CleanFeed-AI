@@ -487,17 +487,28 @@ def assert_partitions_are_exchangeable(report: dict) -> None:
 # not fixed bounds: fixed bounds chosen for one corpus describe the next one by accident,
 # and the quantity that matters is where in the realized distribution the classes stop
 # overlapping.
-LENGTH_BANDS = 10
+#
+# DECILES in the name because "length band" now names three different partitions in this
+# repository, and only one of them is pre-registered: the four `lengthBands` of
+# benchmark/preregistration-v4.json (round edges, frozen, what the FPR table is published
+# over), these deciles of whatever was measured, and the three runtime profile buckets of
+# the served bundle. These are the only ones derived FROM the data, which is admissible
+# precisely because this probe decides nothing.
+LENGTH_PROBE_DECILES = 10
 
 
 def probe_length(rows: Iterable[dict]) -> dict:
     """AUC of a logistic regression whose only feature is the word count.
 
     RULE OF DOMAIN. The human lines come from the lead sections of Wikipedia, whose
-    length is reasonably uniform, while the length of a generated line is chosen by the
-    prompt. The two distributions coinciding is therefore a property the GENERATION has
+    measured length is LONG-TAILED (p25 = 72, p50 = 120, p75 = 221, p90 = 362, max 1 774
+    words over 25 036 admissible pages), while the length of a generated line is chosen by
+    the prompt. The two distributions coinciding is therefore a property the GENERATION has
     to produce, not a fact about the material — so a high AUC here is a finding about the
-    generation slate and not about the corpus being hard.
+    generation slate and not about the corpus being hard. And the tail is why the BAND
+    table below is the criterion rather than the AUC: a clamp at both ends of a long tail
+    produces two rank inversions that cancel, so it is invisible to a monotone AUC and
+    plain in a band that no generated line reaches.
 
     The `mixed` class is excluded and the exclusion is named: mixture is graduated, the
     policy gives the mixed line below 50 % the `diagnostic-curve-only` role, and a binary
@@ -545,7 +556,7 @@ def probe_length(rows: Iterable[dict]) -> dict:
         for offset, row in enumerate(test_index):
             out_of_fold[row] = float(predicted[offset])
 
-    lower = _band_lower_bounds(counts, LENGTH_BANDS)
+    lower = _band_lower_bounds(counts, LENGTH_PROBE_DECILES)
     upper = lower[1:] + [max(counts) + 1]
     bands: list[dict] = []
     for index, (low, high) in enumerate(zip(lower, upper)):

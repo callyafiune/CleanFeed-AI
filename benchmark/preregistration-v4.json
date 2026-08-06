@@ -167,6 +167,42 @@
     "pooledClaimAllowed": false,
     "underPoweredRole": "supplementary-diagnostic"
   },
+  "lengthBands": {
+    "bands": [
+      {
+        "diagnosticCeilingAtExpectedLines": 0.018243,
+        "expectedBlindBlockLines": 238,
+        "key": "50_79",
+        "maximumWords": 79,
+        "minimumWords": 50
+      },
+      {
+        "diagnosticCeilingAtExpectedLines": 0.018168,
+        "expectedBlindBlockLines": 239,
+        "key": "80_149",
+        "maximumWords": 149,
+        "minimumWords": 80
+      },
+      {
+        "diagnosticCeilingAtExpectedLines": 0.021251,
+        "expectedBlindBlockLines": 204,
+        "key": "150_299",
+        "maximumWords": 299,
+        "minimumWords": 150
+      },
+      {
+        "diagnosticCeilingAtExpectedLines": 0.036154,
+        "expectedBlindBlockLines": 119,
+        "key": "300_PLUS",
+        "maximumWords": null,
+        "minimumWords": 300
+      }
+    ],
+    "decides": false,
+    "measuredPopulation": "ptwiki-20220301-lead-sections",
+    "role": "diagnostic",
+    "spendsAlpha": false
+  },
   "localization": {
     "authorizesVisualAction": false,
     "metricsRole": "diagnostic",

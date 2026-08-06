@@ -14,7 +14,7 @@
 > `código` = imposto por código medido. Um valor que a pré-inscrição vigente congela e algum módulo lê
 > é `código`, qualquer que tenha sido a política que o escreveu primeiro.
 
-**Última reescrita:** 2026-08-05
+**Última reescrita:** 2026-08-06
 
 ---
 
@@ -23,13 +23,13 @@
 | item | valor |
 |---|---|
 | branch | `cleanfeed-mvp` |
-| suíte | 170 arquivos / 2.773 testes (vitest) + 417 testes e 78 subtests (pytest, lab). Verde em rodada limpa; sob contenção de I/O, dois arquivos de caminho selado batem no timeout de 20 s — dívida de § 7, não de política |
-| dos quais, o avaliador | 1.820 — 1.403 em 44 arquivos de `benchmark/tests`, 417 no lab |
+| suíte | 170 arquivos / 2.805 testes (vitest) + 429 testes e 84 subtests (pytest, lab). Verde em rodada limpa; sob contenção de I/O, dois arquivos de caminho selado batem no timeout de 20 s — dívida de § 7, não de política |
+| dos quais, o avaliador | 1.864 — 1.435 em 44 arquivos de `benchmark/tests`, 429 no lab |
 | typecheck | limpo |
 | lint | 13 problemas (11 erros, 2 avisos) |
 | tags de release | 0 |
 | `issuedAt` no descritor | `null` (`models/cleanfeed-ptbr-v1/release.json`, com `gateDecision: "pending"` e `profileDigests: []`) |
-| verificador de links de docs | 200 links relativos em 34 arquivos, todos resolvem |
+| verificador de links de docs | 205 links relativos em 35 arquivos, todos resolvem |
 
 ---
 
@@ -80,6 +80,9 @@ de abrir o arquivo — o módulo fica na árvore, declarado, pela mesma convenç
 | | coleta: alvo de **4.000** linhas humanas na célula, piso de **1.500**, total de **4.000**, **1** linha por documento de origem (`collection`) | OP |
 | | teto sob zero eventos: `1 − perHypothesisAlpha^(1/n)`, em **dois** pontos declarados. No piso de **300** linhas do bloco cego vale **1,4501 %** (`ceilingAtAdoptedFloor`) — é o critério de recusa, o pior teto que ainda sela. No bloco cego de **800** linhas que o alvo de coleta implica (`blindBlockLinesAtCollectionTarget`, derivado de 4.000 × 0,20) vale **0,5463 %** (`ceilingAtCollectionTarget`) — é a expectativa, o número que o model card imprime. Célula abaixo do piso **reprova antes da selagem** (`unitsBelowFloorFailBeforeSealing: true`) | código |
 | | o inventário obrigatório de gates é **derivado** de `multiplicity.primaryFamily`, não escrito à mão: hipótese sem gate reprova | código |
+| | **faixas de comprimento pré-inscritas** (`lengthBands`), quatro, conteúdo e ordem congelados: `[50,79]` · `[80,149]` · `[150,299]` · `[300,+∞)`. São **DIAGNÓSTICO** — `role: "diagnostic"`, `decides: false`, `spendsAlpha: false` —, então **não** são hipótese, não gastam alpha e não movem `m`, que continua **4**. Não são o pior estrato e não competem com a manchete: a manchete é **um** teto sobre a célula inteira. A primeira faixa começa exatamente em `wordFloor.abstainBelow` (50) e o parser recusa qualquer outro valor, porque a medição abstém abaixo disso; as faixas particionam de 50 ao infinito sem lacuna e sem sobreposição, e a última não tem limite superior. Cada faixa declara o `n` que o alvo de coleta lhe reserva no bloco cego (`expectedBlindBlockLines`, somando os 800) e o teto que esse `n` implica (`diagnosticCeilingAtExpectedLines`): **238 / 239 / 204 / 119** linhas, tetos **1,82 % / 1,82 % / 2,13 % / 3,62 %** — faixa larga declarada como larga | código |
+| | `sizeBucket` (`benchmark/metrics.ts`) **deriva** dessas faixas e devolve *nenhuma faixa* abaixo do piso de abstenção, então nenhuma tabela chaveada por faixa nomeia população que a medição não mede. A derivação é `lengthBandKeyOf(bands, wordCount)`, que recebe a lista de faixas por parâmetro — é o que permite provar que ela **lê** as arestas em vez de repeti-las em literal, exercitando-a contra uma lista que não é a embarcada | código |
+| | "faixa de comprimento" nomeia **quatro** partições, e nenhuma é a outra: as **quatro pré-inscritas** (acima); os **decis** da sonda de comprimento (`LENGTH_PROBE_DECILES`, derivados do dado — admissível porque a sonda não decide); as **três bandas de perfil do runtime** (`profileBands`, `50-79`/`80-199`/`200-plus`); e `lengthBucket` de `benchmark/split-audit.ts`, que corta em `short`/`medium`/`long` sob o **mesmo nome de eixo** (§ 7). Mais a grafia antiga `80_99`/`100_149`, que sobrevive só no caminho **embutido não calibrado** de `src/inference/calibration.ts`, declarado lá como não sendo o perfil científico. `RUNTIME_BUCKET_CONSTITUENTS` é o único lugar em que a faixa pré-inscrita e a banda de runtime se encontram, e a cobertura é **imposta**: faixa pré-inscrita fora do mapa, ou gate de ação de faixa que o mapa não conhece, **recusa a publicação** (`LENGTH_BAND_UNMAPPED`) — filtrar a chave desconhecida era fail-**open** | código |
 | | frações de partição **45 / 5 / 10 / 20 / 20** (`train`/`dev`/`cal-A`/`cal-B`/`test`): campo `preRegistration.partitionFractions` da pré-inscrição vigente, de onde `split-audit.ts` deriva `PARTITION_TARGETS` | código |
 | | unidade do inventário de poder = **componentes conexos** (`powerInventoryUnit`) | código |
 
@@ -170,6 +173,8 @@ O que "corpus inutilizado" significa — a semântica é **graduada**, nunca tud
 | calibrador probabilístico e conformal ficam **reservados à v2** (`calibrator.reservedFor`, `conformal.reservedFor`) | código |
 | probe adversarial de FPR: **v2** | OP |
 | datasheet = **seção do model card**, não artefato separado | OP |
+| o relatório publica **FPR por faixa de comprimento** (`## FPR por faixa de comprimento (diagnóstico)`), uma linha por faixa **pré-inscrita** com negativos humanos, decididos, falsos positivos, FPR, o `n` esperado e o teto naquele `n`. A tabela é construída da lista congelada e não dos dados, então **faixa vazia aparece como vazia**; faixa sem linha decidida publica FPR `null` e nunca 0. A razão: texto curto provavelmente LISONJEIA o FPR — pouco sinal, mais hesitação, menos disparo —, então um teto honesto sobre a célula pode não TRANSFERIR para quem analisa 600 palavras | código |
+| a distribuição de comprimento do texto **gerado** casa a humana **medida**, por par: `generate_ai.target_word_count` pede o comprimento da própria semente humana, sem clamp, e recusa semente fora da janela do extrator (`SeedLengthOutOfWindow`) abortando a lane — semente fora da janela é fato do arquivo, não do item. As **duas** drivers de geração pedem pela mesma função (`codex_batch.chunk_prompt` chama `target_word_count`), porque `generationLane` é eixo de agrupamento e uma lane clampada faria do comprimento um proxy da lane. O pareamento vale até o fim do transporte: o orçamento de saída da lane REST **escala com o alvo** (`max_output_tokens`, 2,0 tokens por palavra mais margem — orçamento fixo é clamp do outro lado do transporte) e resposta com `finishReason` diferente de `STOP` é **recusada**, como `GEMINI_INCOMPLETE` já fazia na lane CLI. A guarda é medida em `main()` dirigido, não só na função. O critério de reprovação é a sonda de comprimento lida na **tabela de faixas e nos extremos**, nunca na AUC dela | código |
 | reserva dedicada de segunda tentativa: **fora do escopo da v1** — o valor congelado `2` permanece (F0-8), a divergência é declarada | OP |
 | gate interno de não degeneração em `dev + cal-A`; **valores observados não publicados** (R8) | OP |
 | a v1 publica somente **commitments agregados** (`datasetDigest`, `splitDigest`, instante, contagens não reconstruíveis); seed, assignments e hashes por registro só saem **depois** da medição v2 | OP |
@@ -270,6 +275,41 @@ ptwiki `1784753446707`, carolina `1784752441472`.
 Dos dois, só `smb_ptwiki-20220301` é lote de material **em moldura**; o da Carolina permanece medido e
 declarado, com a fonte em `OUT_OF_FRAME_HUMAN_SOURCES`.
 
+### 5.1b A população da célula, medida no dump (2026-08-06)
+
+Medido sobre `ptwiki-20220301-pages-articles.xml.bz2`, espelhando as funções **reais** do lab
+(`lead_section`, `normalize_text`, `word_count`, `pii_hits`, `MINIMUM_WORDS=50`,
+`MAXIMUM_WORDS=5000`) sobre as primeiras **60.000** páginas.
+
+| quantidade | valor |
+|---|---:|
+| fora do namespace principal | 3.765 |
+| redirects | 10.125 |
+| artigos | 46.110 |
+| lead curto (< 50 palavras) | 21.066 |
+| lead longo (> 5.000 palavras) | 1 |
+| derrubados por PII (4 email · 3 handle · 1 cnpj) | 7 |
+| **admissíveis** | **25.036** — 54,3 % dos artigos |
+| páginas a ler para 4.000 admissíveis | ~7.366, contra ~1,1 milhão de artigos no dump |
+
+Palavras dos admissíveis: **p10=56 · p25=72 · p50=120 · p75=221 · p90=362 · máx=1.774**. Só **40 %**
+têm ≥150 palavras e só **15 %** têm ≥300 — é esta assimetria que a tabela de faixas publica em vez de
+diluir. A coleta **não** filtra por comprimento: a população é "lead sections da Wikipédia pt", em
+distribuição natural.
+
+As quatro faixas pré-inscritas sobre esta mesma medição, com o `n` que o alvo de coleta lhes reserva no
+bloco cego de 800 linhas (apropriação por maior resto, somando 800) e o teto `1 − α^(1/n)` de cada:
+
+| faixa | admissíveis | fração | `n` a n=800 | teto diagnóstico |
+|---|---:|---:|---:|---:|
+| [50,79] | 7.452 | 29,77 % | 238 | 1,82 % |
+| [80,149] | 7.462 | 29,81 % | 239 | 1,82 % |
+| [150,299] | 6.395 | 25,54 % | 204 | 2,13 % |
+| [300,+∞) | 3.727 | 14,89 % | 119 | **3,62 %** |
+
+O corte 100 dos buckets antigos saiu: [80,99] tem 11,25 % da população, o que a n=800 daria faixa de
+**90** linhas e teto de **4,75 %** — pior poder que a mais larga da tabela vigente.
+
 ### 5.2 Aritmética da cota
 
 `1 − perHypothesisAlpha^(1/n)`, `perHypothesisAlpha` = 0,0125 (α = 0,05 sobre `m=4`). A coluna "linhas
@@ -349,11 +389,11 @@ A unidade é a página, o piso de 300 é trivial, e o dump de 1,96 GB é a reser
 |---|---|
 | componentes independentes na célula, hoje | 1 — sem documento de origem conhecido, toda linha da célula cai no balde único de origem irrecuperável |
 | guardas de integridade do pacote | 11 exercitadas, 0 sem teste |
-| `evaluatorDigest` da árvore | `18b8465f9071c35b8efa0cfc24f96d231229452715d5177b5b99ce3a06342ba6` — 52 arquivos, recomputado pela função de produção e **lido por teste nomeado** (`digests.test.ts`, "is published in the ESTADO at the value the LIVE tree hashes to"), então este número não pode envelhecer em silêncio. Moveu de `9c68b884…` com a emenda do backbone, e mover é barato enquanto `issuedAt` é nulo |
+| `evaluatorDigest` da árvore | `71674ff2a11730f90adbf590613e991fdcfb3cee5bdb7b450b929573a0d79480` — 52 arquivos, recomputado pela função de produção e **lido por teste nomeado** (`digests.test.ts`, "is published in the ESTADO at the value the LIVE tree hashes to"), então este número não pode envelhecer em silêncio. Moveu de `18b8465f…` com as faixas de comprimento pré-inscritas e a cobertura imposta do mapa de bandas, e mover é barato enquanto `issuedAt` é nulo |
 | ledger de exposição real | **0 bytes** — nenhum evento real foi escrito |
 | holdout-ledger real | 2.638 bytes — o consumo de 2026-07-25, `decision: reject` |
 | memória da exposição por linha | `benchmark/data/corpus-build/out/split/split-artifact.json` — pertença de `test`, só o operador lê |
-| referências | **415** marcadores de link em **18** seções de nível `##` de `references.md`, e **42** declarações literais de "Sem precedente encontrado" (mais 13 menções em outra forma). A regra é a ocorrência da junta `](` seguida de URL, contada **no arquivo inteiro e não por linha**: `references.md` quebra a ~100 colunas e 38 rótulos de link atravessam a quebra, então um regex `\[rótulo\]\(url\)` aplicado por linha devolve 377. Agora **lido por teste nomeado** (`estado-counts.test.ts`) — os valores anteriores (322 / 50, depois 349) envelheceram em silêncio exatamente porque nenhum teste os lia |
+| referências | **420** marcadores de link em **18** seções de nível `##` de `references.md`, e **45** declarações literais de "Sem precedente encontrado" (mais 13 menções em outra forma). A regra é a ocorrência da junta `](` seguida de URL, contada **no arquivo inteiro e não por linha**: `references.md` quebra a ~100 colunas e 38 rótulos de link atravessam a quebra, então um regex `\[rótulo\]\(url\)` aplicado por linha devolve 382. Agora **lido por teste nomeado** (`estado-counts.test.ts`) — os valores anteriores (322 / 50, depois 349) envelheceram em silêncio exatamente porque nenhum teste os lia |
 
 ### 5.7 Sondas diagnósticas sobre os pools em moldura (W3)
 
@@ -391,6 +431,27 @@ Isso é fato de Fase 3 e não erro de contagem: a leitura de que D13/W2 varreu a
 | viés ortográfico (**nunca feature**) | média POR DOCUMENTO dos acertos por 100 palavras | humano **0,00581** · `ai` **0,00083** — o lado humano carrega ~**7,0×** a taxa, então a feature seria proxy de "humano" e motor de falso positivo na população vigiada. A agregação está nomeada porque as duas dão números diferentes: agrupando acertos e palavras dos dois lados (37 acertos em 705.526 palavras humanas contra 2 em 402.068 geradas) a razão é 10,5×. O valor humano caiu de 0,00624 ao sair `ate` e `quiz` da lista de formas — as duas são palavra correta de pt-BR e inflavam justamente o lado humano |
 | dispersão entre janelas (**diagnóstico**) | amplitude média do escore por janela, **sobre os documentos de mais de uma janela** | `mixed` **0,622** (n=66) · `human` 0,147 (n=78) · `ai` 0,185 (**n=4**). A manchete de 4× é `mixed` contra `human`; o valor de `ai` é média sobre **quatro** documentos e não sustenta leitura nenhuma |
 | dispersão | documentos com UMA só janela | **9.559 de 9.707** (2.069/2.135 mistos · 4.922/5.000 humanos · 2.568/2.572 `ai`): a 510 tokens de janela o escore de documento **é** o de uma janela para a grande maioria das linhas |
+
+### 5.7b O clamp de comprimento da geração, e a cegueira da AUC (2026-08-06)
+
+Medido sobre a distribuição humana de § 5.1b, com 80 pares. A última coluna é o **comprimento
+pedido** — propriedade do alvo e do fixture que o sintetiza, **não** do gerador, que não rodou; o que
+o gerador entrega é guardado pela recusa de truncagem de § 3.5:
+
+| alvo de comprimento pedido ao gerador | AUC de posto | faixa 50-59 | máximo pedido |
+|---|---:|---|---:|
+| o da própria semente (vigente) | **0,5000** exato | `aiShare` 0,500 | 1.774, igual ao humano |
+| `max(60, min(n, 350))` (o que havia) | 0,5040 | `aiShare` **0,000** | **350** contra 1.774 |
+
+O orçamento de saída da lane REST era `1024` tokens **constante**: a ~1,4-1,7 tokens por palavra de
+prosa pt-BR isso corta por volta de 600 a 700 palavras, contra p90 = 362 e máximo 1.774 da população
+medida — clamp do outro lado do transporte, e a truncagem entrava em silêncio porque `finishReason`
+não era lido. Hoje o orçamento é `⌈2,0 × alvo⌉ + 256` e `finishReason` fora de `STOP` recusa o item.
+
+O clamp é **invisível** a uma AUC monótona: ele prende a cauda curta para cima e a longa para baixo, e
+as duas inversões de posto se cancelam. O que ele produz é uma faixa que nenhuma linha gerada alcança —
+50 a 59 palavras é humano com certeza, rótulo de graça — e um máximo gerado preso no clamp. **Logo o
+critério de reprovação da geração é a tabela de faixas da sonda e os extremos, não a AUC dela.**
 
 O achado que não é sobre autoria: depois da diversidade lexical, o sinal mais carregado do modelo barato é
 `parenthesis-rate` — a lede da Wikipédia pt é cheia de parênteses e o gerado não é. AUC 0,985 apoiada em
@@ -460,7 +521,34 @@ e a procedência do material dentro do próprio relatório.
 - a leitura de que uma **AUC de palavra abaixo do acaso** no baseline significa "nenhum artefato": sobre
   fixture pareada por tópico — que é o desenho do piloto — ela cai a 0,019 porque o modelo prevê o rótulo da
   gêmea que viu na dobra anterior. É memorização do par, e há teste que o afirma;
-- a leitura de que as sondas 2, 3 e 4 podem **recusar** algo: o relatório delas não tem campo de veredito.
+- a leitura de que as sondas 2, 3 e 4 podem **recusar** algo: o relatório delas não tem campo de veredito;
+- os buckets de comprimento **`0_49`, `80_99` e `100_149`** de `sizeBucket`: eram constante em código,
+  isto é, corte que alguém pode mover depois de ver o resultado, e `0_49` nomeava população que a medição
+  **abstém**. As faixas vigentes são as **quatro** pré-inscritas de § 3.1, e `sizeBucket` deriva delas;
+- a leitura de que a faixa de comprimento é **manchete, pior estrato ou hipótese**: ela é diagnóstico,
+  não gasta alpha, e `m` continua 4 com as faixas presentes e continua 4 se uma faixa for acrescentada;
+- a leitura de que **AUC de comprimento no acaso** prova que as duas distribuições casam: medido, um
+  clamp bilateral deixa a AUC em 0,504 e ainda assim produz faixa de `aiShare` 0,0 (§ 5.7b). O
+  mecanismo tem nome — truncamento nas duas caudas, cujas inversões de posto se cancelam — e é distinto
+  da bimodalidade que o item anterior descreve;
+- a leitura de que `generate_ai.py` pedia um comprimento **constante**: ele já pedia o da própria
+  semente humana; o defeito era o **clamp** `max(60, min(n, 350))` em volta dele;
+- a leitura de que o clamp de comprimento saiu de **um** lugar: eram **três** — a linha de
+  `generate_ai.main()`, o `max(60, min(n, 300))` de `codex_batch.chunk_prompt` (a lane `codex`, a das
+  famílias OpenAI) e o `MAX_OUTPUT_TOKENS = 1024` da lane REST, que é clamp do outro lado do
+  transporte e não estava escrito em palavras;
+- a leitura de que faixa **fora** de `RUNTIME_BUCKET_CONSTITUENTS` é a direção fail-closed: medido,
+  era fail-**open** — o gate da faixa desconhecida era filtrado, então a reprovação dela não capava
+  nada e `200-plus` seguia autorizando `hide`. Hoje a cobertura é imposta e a publicação recusa;
+- a leitura de que a sobreposição `150_299` **capa** `80-199` e `200-plus` quando reprova: sob a regra
+  de decisão vigente um gate de ação que reprova — inclusive o inelegível — entra em `failedAction` e
+  capa o release inteiro em `indicator-only`, onde todo bucket já é `indicator`. Com `pass`, todo gate
+  de ação presente passou, e o que a agregação por bucket decide é **presença de evidência**;
+- a leitura de que a asserção `reads its edges from the pre-registered bands` prova a derivação por si:
+  contra UMA lista de faixas, arestas em literal respondem igual a arestas lidas. Só a exercitação de
+  `lengthBandKeyOf` contra uma lista **que não é a embarcada** separa as duas;
+- a leitura de que o `máximo gerado 1.774` de § 5.7b é propriedade do **gerador**: é do alvo e do
+  fixture que o sintetiza — nenhuma linha foi gerada nesta medição.
 
 ---
 
@@ -487,6 +575,9 @@ e a procedência do material dentro do próprio relatório.
 | a **sonda 1 não é imposta por consumidor**: ela recusa pelo código de saída do próprio comando, e `assemble_corpus.main()` não a chama — o montador é stdlib-only e uma validação cruzada de 5 dobras rodaria em cada fixture de montagem, a maioria com menos linhas por partição do que há dobras. Mesma forma da dívida do relatório do gate antiartefato, e mesmo dono | segundo produtor de corpus, ou a Fase 3 quando existir corpus carimbado |
 | a **dispersão entre janelas é quase vacuosa neste material**: 9.559 de 9.707 documentos varridos têm uma única janela a 510 tokens (§ 5.7), e a mediana de ~100 palavras fica muito abaixo de uma janela também em subtokens WordPiece (~350-400 palavras). O sinal existe e separa 4× onde há mais de uma janela; o que não existe é população | Fase 5, ou unidade que tocar agregação |
 | a dispersão do lab lateia tokens de **espaço** onde o runtime lateia **WordPiece**: a regra é a selada (`contentTokens`/`overlapTokens`/`maxWindows` lidos do manifesto), a unidade é mais grosseira, então as fronteiras não são as do runtime. Declarado, e a sonda não decide | D24 (chunker em `contracts/`), quando existir um tokenizador no lab |
+| as **frações por faixa** de § 5.1b, que apropriam 238/239/204/119, vêm de varredura de 60.000 páginas do dump por script que **não está na árvore**, e o dump (1,96 GB) vive fora do repositório: commitar o medidor moveria a dívida de "sem medidor" para "medidor que nenhum checkout roda", que é a linha acima. O parser confere o que a política impõe — a soma contra `blindBlockLinesAtCollectionTarget` e cada teto contra `1 − α^(1/n)` da própria faixa —, **nunca** a fração | unidade que reconstruir os pools, ou a Fase 3 |
+| `benchmark/split-audit.ts` tem o **seu** `lengthBucket` (`short`/`medium`/`long`, cortes em 100 e 300) sob o mesmo nome de eixo que a faixa pré-inscrita, e não deriva da pré-inscrição: são tabelas com trabalhos diferentes (exposição de cluster contra taxa publicada) e nenhum número as compara, mas o **nome** colide dentro do próprio benchmark | unidade que tocar o audit do split |
+| a agregação por bucket de `profile-artifact.ts` só distingue **presença** de evidência: com `pass` todo gate de ação presente passou, porque um que reprove capa o release em `indicator-only`. A sobreposição `150_299` fica como resposta conservadora para uma regra de decisão que não capa globalmente, e hoje nenhuma entrada a exercita | unidade que mexer na regra de decisão dos gates |
 | README do benchmark está **3 subcomandos atrás** do CLI | unidade que reescrever o README |
 | linhagem admite pai `notApplicable` numa linha `ai` sem recusa — a pergunta de desenho está aberta | unidade que tocar linhagem ou E3 |
 | registro-linha congelado em `cal-B` não tem a proteção do de `test` | antes da v2.0, ou antes de um segundo corpus sobrepor um split vivo |

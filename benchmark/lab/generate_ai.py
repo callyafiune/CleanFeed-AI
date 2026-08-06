@@ -1,11 +1,14 @@
 """Generates the AI class, TOPIC-PAIRED with the human candidates.
 
 For each deterministically-sampled human candidate, asks a provider model to
-write an ORIGINAL pt-BR text on the same subject with a similar length. Topic
+write an ORIGINAL pt-BR text on the same subject and at the SAME LENGTH. Topic
 pairing prevents the classic corpus artifact where a classifier learns
-"topic/era" instead of authorship; asking for an original text (never a
-rewrite) avoids near-dup collisions with the human parent. The model's default
-style IS the signal we want to detect, so the prompt applies no style tricks.
+"topic/era" instead of authorship; length pairing prevents the same artifact in
+the word count, which is the cheapest feature a detector can find
+(`target_word_count`, checked by `probe_length` in diagnostic_probes.py); asking
+for an original text (never a rewrite) avoids near-dup collisions with the human
+parent. The model's default style IS the signal we want to detect, so the prompt
+applies no style tricks.
 
 Every output carries the FULL generation recipe the closed schema requires
 (provider/family/model/temperature/seed or seedNullReason/promptId/
@@ -34,6 +37,7 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
+import math
 import os
 import re
 import shlex
@@ -45,7 +49,7 @@ import urllib.request
 from datetime import datetime, timezone
 from pathlib import Path
 
-from common import CandidateWriter, keep_sample
+from common import MAXIMUM_WORDS, MINIMUM_WORDS, CandidateWriter, keep_sample
 
 LICENSE_ID = "geracao-propria-v1"
 
@@ -368,6 +372,48 @@ RECIPES: dict[str, dict] = {
 }
 
 
+class SeedLengthOutOfWindow(RuntimeError):
+    """A human seed whose length the extractor's own window would have refused."""
+
+
+def target_word_count(human_word_count: int) -> int:
+    """The length asked of the generated line: the length of the human line it is paired with.
+
+    RULE OF DOMAIN, and it is the reason this is a function and not a number in the
+    prompt. The detector must not be able to read the class off the word count. The
+    human class is the lead sections of Wikipedia pt, whose measured distribution is
+    long-tailed (p25 = 72, p50 = 120, p75 = 221, max 1 774 words over 25 036 admissible
+    pages), so ANY constant or clamped target makes the generated class a truncated copy
+    of it: no generated twin below the lower clamp, none above the upper one, and the
+    count alone then separates the classes at both tails. `probe_length` in
+    diagnostic_probes.py — predict the class from the word count alone — is the criterion
+    this function is written against, and a clamp reintroduced here is what turns that
+    probe's AUC away from chance.
+
+    Pairing per seed rather than drawing from the distribution: the seeds ARE the
+    distribution, so matching each one is the distribution match, and it survives a
+    change in the human material without a second place to update.
+
+    Refuses a seed outside the extractor's admissible window instead of clamping it into
+    range. A seed of 20 or 9 000 words did not come out of the rules the measurement
+    describes, and generating against it would put a length in the AI class that the
+    human class cannot hold.
+
+    Unlike `GenerationRefused`, this ABORTS the lane instead of skipping the item: the
+    seeds come from an extractor that enforces the same window, so a row outside it says
+    the input file is not extractor output — a fact about the whole file. Skipping would
+    drop precisely the tail this function exists to preserve and report success.
+    """
+    if not MINIMUM_WORDS <= human_word_count <= MAXIMUM_WORDS:
+        raise SeedLengthOutOfWindow(
+            f"a semente humana tem {human_word_count} palavras, fora da janela "
+            f"admissivel [{MINIMUM_WORDS}, {MAXIMUM_WORDS}] do extrator: gerar contra "
+            "ela poe na classe IA um comprimento que a classe humana nao tem, e o "
+            "comprimento sozinho passa a separar as classes"
+        )
+    return int(human_word_count)
+
+
 def recipe_for(provider: str, candidate_id: str) -> str:
     """Deterministic recipe assignment honoring the weight mix (buckets of 10)."""
     digest = hashlib.sha256(f"recipe:{provider}:{candidate_id}".encode()).digest()
@@ -404,8 +450,36 @@ DEFAULT_MODELS = {
 SEEDED_PROVIDERS: set[str] = set()
 SEED_NULL_REASON = "provider API does not expose a sampling seed"
 TEMPERATURE = 0.8
-MAX_OUTPUT_TOKENS = 1024
+# Output budget of the REST lane, per generation. A token covers a FRACTION of a word of
+# pt-BR prose, so these two turn a word target into a token ceiling; 2.0 is above the
+# ~1.4-1.7 tokens per word this kind of prose costs, and the margin absorbs punctuation
+# and the rare long word. Ceiling and not target: a model that stops on its own spends
+# nothing extra.
+OUTPUT_TOKENS_PER_WORD = 2.0
+OUTPUT_TOKEN_MARGIN = 256
+# The `finishReason` values that mean the model STOPPED, as opposed to being cut off.
+# Anything else — MAX_TOKENS, SAFETY, RECITATION — is a partial answer.
+COMPLETE_FINISH_REASONS = {"STOP", "FINISH_REASON_STOP"}
 RETRIABLE = {429, 500, 502, 503, 529}
+
+
+def max_output_tokens(target_words: int) -> int:
+    """The output ceiling of one REST generation, scaled to the length being asked for.
+
+    RULE OF DOMAIN, and it is why this is a function and not a constant. A FIXED token
+    budget is a length clamp on the far side of the transport: the 1 024 that used to sit
+    here stopped the answer at roughly 600 words of pt-BR, while the human class this
+    generation is paired against runs to 1 774 words (p90 = 362). The paired target would
+    be honoured in the prompt and truncated in the response, which is the same defect
+    `GEMINI_INCOMPLETE` exists to prevent on the CLI lane — and it would put a ceiling in
+    the AI class that the human class does not have, so the count alone separates them at
+    the tail.
+
+    A budget the provider's own output limit cannot hold is NOT silently clamped here:
+    the request either errors or comes back with a truncating `finishReason`, and
+    `call_provider` refuses the item rather than accepting a cut text.
+    """
+    return math.ceil(target_words * OUTPUT_TOKENS_PER_WORD) + OUTPUT_TOKEN_MARGIN
 
 
 def http_json(url: str, payload: dict, headers: dict[str, str]) -> dict:
@@ -424,7 +498,12 @@ class GenerationRefused(Exception):
 
 
 def call_provider(
-    provider: str, model: str, prompt: str, seed: int | None, keys: dict[str, str]
+    provider: str,
+    model: str,
+    prompt: str,
+    seed: int | None,
+    keys: dict[str, str],
+    target_words: int,
 ) -> str:
     # The transports of the two out-of-slate API surfaces are GONE from this function,
     # and the names are not: a caller that asks for one gets the reason, where before it
@@ -444,7 +523,7 @@ def call_provider(
                 "contents": [{"parts": [{"text": prompt}]}],
                 "generationConfig": {
                     "temperature": TEMPERATURE,
-                    "maxOutputTokens": MAX_OUTPUT_TOKENS,
+                    "maxOutputTokens": max_output_tokens(target_words),
                 },
             },
             {},
@@ -458,6 +537,20 @@ def call_provider(
             # Safety block / empty candidate: promptFeedback carries the reason.
             raise GenerationRefused(
                 f"gemini sem conteudo: {str(data.get('promptFeedback') or data)[:160]}"
+            )
+        # Read AFTER the text so an empty candidate still reports promptFeedback, which
+        # names the cause. A reason other than STOP means the answer was CUT SHORT and
+        # the text on hand is a fragment: MAX_TOKENS is truncation, SAFETY and RECITATION
+        # are partial answers. An ABSENT reason is not a failure — the field is optional
+        # on a normal stop — but a present one that is not STOP is, on the same ground as
+        # `GEMINI_INCOMPLETE` on the CLI lane: a partial answer accepted as a whole one is
+        # a scientific defect, not a glitch.
+        finish = str(candidates[0].get("finishReason") or "")
+        if finish and finish.upper() not in COMPLETE_FINISH_REASONS:
+            raise GenerationRefused(
+                f"gemini interrompeu a resposta ({finish}) com {len(text)} caracteres "
+                f"para um alvo de {target_words} palavras: texto cortado nao entra no "
+                "corpus"
             )
         return text
     if provider == "agy":
@@ -815,13 +908,15 @@ def main() -> None:
     live = list(models)
     cursor = {"i": 0}
 
-    def generate(prompt: str, seed: int | None) -> tuple[str, str] | None:
+    def generate(
+        prompt: str, seed: int | None, target_words: int
+    ) -> tuple[str, str] | None:
         walls = 0  # 429s consecutivos; zera ao primeiro sucesso (via return)
         while live:
             active = live[cursor["i"] % len(live)]
             try:
                 return call_with_retries(
-                    call_provider, provider, active, prompt, seed, keys
+                    call_provider, provider, active, prompt, seed, keys, target_words
                 ), active
             except urllib.error.HTTPError as error:
                 if error.code == 404:
@@ -858,7 +953,7 @@ def main() -> None:
     try:
         for index, row in enumerate(pairs, start=1):
             recipe = recipe_for(provider, row["candidateId"])
-            target_words = max(60, min(int(row["wordCount"]), 350))
+            target_words = target_word_count(int(row["wordCount"]))
             prompt = RECIPES[recipe]["template"].format(
                 words=target_words, reference=row["text"][:6000]
             )
@@ -870,7 +965,7 @@ def main() -> None:
                 else None
             )
             try:
-                result = generate(prompt, seed)
+                result = generate(prompt, seed, target_words)
             except GenerationRefused as refused:
                 print(f"  item {row['candidateId']} recusado (pulado): {refused}")
                 continue

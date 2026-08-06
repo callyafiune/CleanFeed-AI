@@ -45,6 +45,7 @@ import type {
   EvaluationMetrics,
   FrozenThresholdMetrics,
   LabelBasisSlice,
+  LengthBandDiagnostics,
   MetricEstimate,
   ResolutionBreakdown,
   ResolutionSlice,
@@ -73,6 +74,16 @@ export type SplitStrategy = typeof SPLIT_STRATEGY;
 // misreading R7 forbids. One constant per label makes that impossible.
 const SIMULTANEOUS_FPR_COLUMN = "FPR (limite simultâneo)";
 const DESCRIPTIVE_FPR_COLUMN = "FPR (UCB95 descritivo)";
+
+// The pre-registered bands, for the two columns that state the DESIGNED power of a
+// band beside the realised one, and the blind block those shares add up to. The block
+// size is INTERPOLATED into the column label for the same reason the two labels above
+// are constants: a collection target moved in the policy would move every cell and
+// leave a hand-typed "n=800" in the header describing the old one.
+const LENGTH_BANDS = PREREGISTRATION_V4.lengthBands.bands;
+const BLIND_BLOCK_LINES =
+  PREREGISTRATION_V4.preRegistration.zeroEventCeiling
+    .blindBlockLinesAtCollectionTarget;
 
 /** Coded, fail-closed error raised when the active identity diverges from the frozen seal. */
 export class ReportGovernanceError extends Error {
@@ -723,6 +734,8 @@ export function renderReportMarkdown(report: BenchmarkReport): string {
     }
   }
 
+  lines.push(...lengthBandSection(report.metrics.lengthBands));
+
   const labelBasis = report.metrics.labelBasis;
   lines.push("## Bases de rótulo humano");
   lines.push("");
@@ -955,6 +968,64 @@ function frozenThresholdTable(
     ),
   );
   return lines.join("\n");
+}
+
+/**
+ * FPR by pre-registered length band, as a DIAGNOSTIC that decides nothing.
+ *
+ * The table carries three numbers a reader cannot get from the rate alone: the
+ * realised `n` of the band, the `n` the pre-registration EXPECTED there, and the
+ * zero-event ceiling that expected `n` implies. Without them a band with a fifth of
+ * the block's lines reads as if it had the headline's precision, and the top band —
+ * the one whose rate is least likely to transfer — is exactly the widest.
+ */
+function lengthBandSection(
+  diagnostic: LengthBandDiagnostics | undefined,
+): string[] {
+  const lines: string[] = [];
+  lines.push("## FPR por faixa de comprimento (diagnóstico)");
+  lines.push("");
+  lines.push(
+    "Faixas **pré-inscritas** (`lengthBands`), publicadas como **diagnóstico**: " +
+      "não decidem, não gastam alpha e não movem `m`. A manchete continua **um** " +
+      "teto sobre a célula inteira. A razão de a tabela existir: texto curto " +
+      "provavelmente LISONJEIA o FPR — com pouco texto o modelo tem pouco sinal, " +
+      "hesita e dispara menos —, então uma taxa baixa na faixa curta pode ser " +
+      "incerteza e não competência, e quem lê 600 palavras recebe um modelo mais " +
+      "confiante. O `n` esperado e o teto que ele implica vão em colunas próprias " +
+      "para que faixa larga seja lida como larga.",
+  );
+  lines.push("");
+  if (diagnostic === undefined) {
+    lines.push("_Sem bloco de faixas de comprimento._");
+    lines.push("");
+    return lines;
+  }
+  lines.push(
+    `- Papel: ${diagnostic.role} · decide gate: ${diagnostic.gates ? "sim" : "não"} · ` +
+      `gasta alpha: ${diagnostic.spendsAlpha ? "sim" : "não"}`,
+  );
+  lines.push("");
+  lines.push(
+    "| Faixa (palavras) | Negativos humanos | Decididos | Falsos positivos | FPR | " +
+      `n esperado a n=${BLIND_BLOCK_LINES} | Teto diagnóstico nesse n |`,
+  );
+  lines.push("| --- | --- | --- | --- | --- | --- | --- |");
+  for (const band of diagnostic.bands ?? []) {
+    const pinned = LENGTH_BANDS.find((row) => row.key === band.key);
+    const range =
+      band.maximumWords === null
+        ? `${band.minimumWords}+`
+        : `${band.minimumWords}–${band.maximumWords}`;
+    lines.push(
+      `| ${range} | ${band.humanNegatives} | ${band.decidedNegatives} | ` +
+        `${band.falsePositives} | ${band.falsePositiveRate === null ? "n/a (faixa vazia)" : fmt(band.falsePositiveRate)} | ` +
+        `${pinned === undefined ? "n/a" : pinned.expectedBlindBlockLines} | ` +
+        `${pinned === undefined ? "n/a" : fmt(pinned.diagnosticCeilingAtExpectedLines)} |`,
+    );
+  }
+  lines.push("");
+  return lines;
 }
 
 function resolutionSections(

@@ -264,6 +264,23 @@ function fullMetrics(
       unit: "character-offset",
       byGenerationMode: [],
     },
+    // The FPR by pre-registered length band, diagnostic. Every band is present with
+    // a zero count: this fixture holds no human negatives with a word count, and a
+    // band that vanished when empty is the defect the block exists to prevent.
+    lengthBands: {
+      role: "diagnostic",
+      gates: false,
+      spendsAlpha: false,
+      bands: PREREGISTRATION_V4.lengthBands.bands.map((band) => ({
+        key: band.key,
+        minimumWords: band.minimumWords,
+        maximumWords: band.maximumWords,
+        humanNegatives: 0,
+        decidedNegatives: 0,
+        falsePositives: 0,
+        falsePositiveRate: null,
+      })),
+    },
     ...a6Blocks(
       families(warning),
       visualAction === null ? null : families(visualAction),
@@ -595,6 +612,13 @@ function report(
   };
 }
 
+// The length bands the fixtures below carry gates for. They are the PRE-REGISTERED
+// keys, and they are read off the policy rather than retyped: a fixture keyed by a
+// band the pre-registration no longer names produces a gate report that reaches no
+// runtime bucket, which is how the middle bucket silently lost its `hide` ceiling once.
+const MIDDLE_BAND = PREREGISTRATION_V4.lengthBands.bands[1].key;
+const TOP_BAND = PREREGISTRATION_V4.lengthBands.bands[3].key;
+
 function makeInput(
   decision: ReleaseDecision,
   thresholds: {
@@ -606,8 +630,8 @@ function makeInput(
 ): ModelPublicationInput {
   const metrics = overallMetrics(options.withVisual);
   const slices = [
-    lengthSlice("80_99", 400, 250, options.withVisual),
-    lengthSlice("300_PLUS", 350, 220, options.withVisual),
+    lengthSlice(MIDDLE_BAND, 400, 250, options.withVisual),
+    lengthSlice(TOP_BAND, 350, 220, options.withVisual),
   ];
   return {
     frozen: frozen(thresholds),
@@ -624,7 +648,7 @@ function makeInput(
 }
 
 // PASS: warning + action gates pass; the 80-199 and 200-plus runtime buckets get
-// a `hide` ceiling because their constituent length slices passed the action
+// a `hide` ceiling because their constituent length bands passed the action
 // gate. The short 50-79 bucket is always capped to `indicator`.
 export const passInput: ModelPublicationInput = makeInput(
   "pass",
@@ -632,8 +656,46 @@ export const passInput: ModelPublicationInput = makeInput(
   {
     withVisual: true,
     actionSliceGates: [
-      actionSliceGate("80_99", true),
-      actionSliceGate("300_PLUS", true),
+      actionSliceGate(MIDDLE_BAND, true),
+      actionSliceGate(TOP_BAND, true),
+    ],
+  },
+);
+
+/**
+ * PASS in which one runtime bucket has NO action gate for any of its constituent bands.
+ *
+ * Reachable, and the only shape that separates presence from verdict: with `pass` every
+ * action gate that exists passed (a failing or under-powered one lands in `failedAction`
+ * and caps the whole release at `indicator-only`), so what the aggregation actually
+ * decides per bucket is whether any evidence for it exists at all. A band the corpus
+ * never filled produces no slice and therefore no gate, and a bucket with no evidence
+ * must authorize nothing.
+ */
+export const passWithoutMiddleBandGateInput: ModelPublicationInput = makeInput(
+  "pass",
+  { warningDocument: 0.7, warningLocalized: 0.65, visualDocument: 0.85 },
+  { withVisual: true, actionSliceGates: [actionSliceGate(TOP_BAND, true)] },
+);
+
+/**
+ * PASS carrying an action gate for a length band no runtime bucket names — a band added
+ * to the pre-registration, measured, gated, and never mapped.
+ *
+ * The gate PASSES, because that is the shape `pass` admits and the shape that used to
+ * publish: before the coverage guard the unmapped band was filtered out of every
+ * bucket's evidence, so its verdict reached no profile and `200-plus` went on
+ * authorizing `hide` over a table nobody had aggregated.
+ */
+export const unmappedBandGateInput: ModelPublicationInput = makeInput(
+  "pass",
+  { warningDocument: 0.7, warningLocalized: 0.65, visualDocument: 0.85 },
+  {
+    withVisual: true,
+    actionSliceGates: [
+      actionSliceGate(MIDDLE_BAND, true),
+      actionSliceGate(TOP_BAND, true),
+      actionSliceGate("600_PLUS", true),
     ],
   },
 );
@@ -646,8 +708,8 @@ export const indicatorInput: ModelPublicationInput = makeInput(
   {
     withVisual: true,
     actionSliceGates: [
-      actionSliceGate("80_99", false),
-      actionSliceGate("300_PLUS", false),
+      actionSliceGate(MIDDLE_BAND, false),
+      actionSliceGate(TOP_BAND, false),
     ],
   },
 );
@@ -672,8 +734,8 @@ export function publicationInputFor(gates: GateReport): ModelPublicationInput {
       gates.decision,
       metrics,
       [
-        lengthSlice("80_99", 400, 250, true),
-        lengthSlice("300_PLUS", 350, 220, true),
+        lengthSlice(MIDDLE_BAND, 400, 250, true),
+        lengthSlice(TOP_BAND, 350, 220, true),
       ],
       gates,
     ),
@@ -704,8 +766,8 @@ export const neverThresholdInput: ModelPublicationInput = makeInput(
   {
     withVisual: true,
     actionSliceGates: [
-      actionSliceGate("80_99", true),
-      actionSliceGate("300_PLUS", true),
+      actionSliceGate(MIDDLE_BAND, true),
+      actionSliceGate(TOP_BAND, true),
     ],
   },
 );

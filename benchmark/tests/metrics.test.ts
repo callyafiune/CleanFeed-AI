@@ -9,6 +9,7 @@ import {
   computeSegmentedMetrics,
   ece15,
   eceEqualMass,
+  lengthBandKeyOf,
   logLoss,
   mixedFractionBucket,
   predictiveValues,
@@ -23,6 +24,7 @@ import {
   type Prediction,
 } from "../metrics.ts";
 import { PREREGISTRATION_V4 } from "../preregistration-v4.ts";
+import type { LengthBandRow } from "../preregistration-v4.ts";
 import { ResamplingUnitError } from "../bootstrap.ts";
 import type { BenchmarkRecord } from "../schema.ts";
 
@@ -2472,16 +2474,272 @@ describe("computeBinaryMetrics", () => {
 
 describe("sizeBucket", () => {
   it.each([
-    [10, "0_49"],
     [50, "50_79"],
     [79, "50_79"],
-    [80, "80_99"],
-    [100, "100_149"],
+    [80, "80_149"],
+    [100, "80_149"],
+    [149, "80_149"],
     [150, "150_299"],
     [299, "150_299"],
     [300, "300_PLUS"],
+    [5000, "300_PLUS"],
   ] as const)("maps %i words to %s", (words, bucket) => {
     expect(sizeBucket(words)).toBe(bucket);
+  });
+
+  // A row the measurement abstains on belongs to no band, so it appears in no table
+  // keyed by band. The pre-registration refuses a first band below the abstain floor,
+  // and this is the runtime half of the same rule.
+  it.each([0, 1, 49] as const)(
+    "gives %i words no band at all, because the first band starts at the abstain floor",
+    (words) => {
+      expect(sizeBucket(words)).toBeUndefined();
+    },
+  );
+
+  // The edges are NOT literals here: they are read back off the frozen policy, so a
+  // band edge moved in the JSON and not here cannot leave this pin green.
+  it("reads its edges from the pre-registered bands and nowhere else", () => {
+    const bands = PREREGISTRATION_V4.lengthBands.bands;
+    expect(bands.map((band) => band.key)).toEqual([
+      "50_79",
+      "80_149",
+      "150_299",
+      "300_PLUS",
+    ]);
+    for (const band of bands) {
+      expect(sizeBucket(band.minimumWords)).toBe(band.key);
+      if (band.maximumWords !== null) {
+        expect(sizeBucket(band.maximumWords)).toBe(band.key);
+        expect(sizeBucket(band.maximumWords + 1)).not.toBe(band.key);
+      }
+    }
+    expect(sizeBucket(bands[0].minimumWords - 1)).toBeUndefined();
+    // And the wiring: `sizeBucket` is the shipped bands applied to the same derivation
+    // exercised below, at every edge and one word either side of it.
+    for (const band of bands) {
+      for (const words of [
+        band.minimumWords - 1,
+        band.minimumWords,
+        band.minimumWords + 1,
+      ]) {
+        expect(sizeBucket(words)).toBe(lengthBandKeyOf(bands, words));
+      }
+    }
+  });
+
+  // The assertion above cannot, on its own, tell a function that READS the policy from
+  // one whose edges happen to be the same literals — against one band list the two
+  // agree everywhere. So the derivation is exercised against a band list that is NOT the
+  // shipped one, where a literal implementation answers 89 with the wrong band.
+  it("follows the edges of a band list that is not the shipped one", () => {
+    const moved: LengthBandRow[] = [
+      {
+        key: "50_89",
+        minimumWords: 50,
+        maximumWords: 89,
+        expectedBlindBlockLines: 400,
+        diagnosticCeilingAtExpectedLines: 0.010_9,
+      },
+      {
+        key: "90_PLUS",
+        minimumWords: 90,
+        maximumWords: null,
+        expectedBlindBlockLines: 400,
+        diagnosticCeilingAtExpectedLines: 0.010_9,
+      },
+    ];
+    expect(lengthBandKeyOf(moved, 49)).toBeUndefined();
+    expect(lengthBandKeyOf(moved, 50)).toBe("50_89");
+    // 89 is inside the shipped 80_149 and inside this list's FIRST band: the one word
+    // count that separates reading the edges from copying them.
+    expect(lengthBandKeyOf(moved, 89)).toBe("50_89");
+    expect(sizeBucket(89)).toBe("80_149");
+    expect(lengthBandKeyOf(moved, 90)).toBe("90_PLUS");
+    expect(lengthBandKeyOf(moved, 5000)).toBe("90_PLUS");
+    // A floor of its own, too: the abstain edge is the list's, not a constant.
+    const raised = moved.map((band) =>
+      band.key === "50_89" ? { ...band, minimumWords: 60 } : band,
+    );
+    expect(lengthBandKeyOf(raised, 59)).toBeUndefined();
+    expect(lengthBandKeyOf(raised, 60)).toBe("50_89");
+  });
+});
+
+// --- FPR by pre-registered length band (X1) ---------------------------------
+//
+// The reason the block exists: short text probably FLATTERS the rate, so a single
+// ceiling over the whole cell can be honest and still not TRANSFER to the reader who
+// scores 600 words. These tests hold the two properties that make the table readable —
+// the n of every band is published, and a band with no rows is published as empty
+// rather than dropped.
+describe("lengthBands diagnostic", () => {
+  const bandKeys = PREREGISTRATION_V4.lengthBands.bands.map((band) => band.key);
+
+  it("publishes one row per pre-registered band, in the pre-registered order", () => {
+    const metrics = computeEvaluationMetrics(SEPARABLE, OPTIONS);
+    expect(metrics.lengthBands.role).toBe("diagnostic");
+    expect(metrics.lengthBands.gates).toBe(false);
+    expect(metrics.lengthBands.spendsAlpha).toBe(false);
+    expect(metrics.lengthBands.bands.map((band) => band.key)).toEqual(bandKeys);
+  });
+
+  // A band the corpus never filled is exactly where a vanished row misleads: the
+  // reader cannot tell "no false positives here" from "nothing was measured here".
+  it("publishes an empty band as empty instead of dropping it", () => {
+    const metrics = computeEvaluationMetrics(SEPARABLE, OPTIONS);
+    // Every SEPARABLE row is 120 words, so three of the four bands hold nothing. The
+    // EMPTY ones are named here rather than filtered out of the assertion: a loop over
+    // the published rows that skips the filled band asserts nothing at all once the
+    // empty rows are dropped, so it would pass on exactly the defect it is about.
+    const emptyKeys = bandKeys.filter((key) => key !== "80_149");
+    expect(emptyKeys).toHaveLength(3);
+    const byKey = new Map(
+      metrics.lengthBands.bands.map((band) => [band.key, band]),
+    );
+    expect([...byKey.keys()]).toEqual(bandKeys);
+    for (const key of emptyKeys) {
+      const band = byKey.get(key);
+      expect(band, `band ${key} disappeared from the table`).toBeDefined();
+      expect(band?.humanNegatives).toBe(0);
+      expect(band?.decidedNegatives).toBe(0);
+      expect(band?.falsePositives).toBe(0);
+      // NULL, never 0: zero of zero is not a rate, and publishing it as one turns an
+      // unmeasured band into a perfect one.
+      expect(band?.falsePositiveRate).toBeNull();
+    }
+    expect(byKey.get("80_149")?.humanNegatives).toBeGreaterThan(0);
+  });
+
+  it("counts the human negatives, the decided subset and the false positives of each band", () => {
+    const items = [
+      // 50_79: two negatives, one of them warned.
+      item({
+        author: "s1",
+        label: "human",
+        wordCount: 60,
+        documentScore: 0.9,
+        warned: true,
+      }),
+      item({
+        author: "s2",
+        label: "human",
+        wordCount: 79,
+        documentScore: 0.1,
+        warned: false,
+      }),
+      // 80_149: two negatives, one errored, so it is in the band and in no decision.
+      item({
+        author: "m1",
+        label: "human",
+        wordCount: 80,
+        documentScore: 0.1,
+        warned: false,
+      }),
+      item({ author: "m2", label: "human", wordCount: 149, status: "error" }),
+      // 300_PLUS: one negative, not warned.
+      item({
+        author: "l1",
+        label: "human",
+        wordCount: 900,
+        documentScore: 0.1,
+        warned: false,
+      }),
+      // An AI positive is not a negative and never enters the denominator.
+      item({
+        author: "p1",
+        label: "ai",
+        wordCount: 60,
+        documentScore: 0.9,
+        warned: true,
+      }),
+    ];
+    const bands = computeEvaluationMetrics(items, OPTIONS).lengthBands.bands;
+    const byKey = new Map(bands.map((band) => [band.key, band]));
+    expect(byKey.get("50_79")).toMatchObject({
+      humanNegatives: 2,
+      decidedNegatives: 2,
+      falsePositives: 1,
+      falsePositiveRate: 0.5,
+    });
+    // The errored row stays in `humanNegatives` and leaves the FPR denominator: it is
+    // neither an accusation nor a correct clearance.
+    expect(byKey.get("80_149")).toMatchObject({
+      humanNegatives: 2,
+      decidedNegatives: 1,
+      falsePositives: 0,
+      falsePositiveRate: 0,
+    });
+    expect(byKey.get("150_299")).toMatchObject({
+      humanNegatives: 0,
+      falsePositiveRate: null,
+    });
+    expect(byKey.get("300_PLUS")).toMatchObject({
+      humanNegatives: 1,
+      decidedNegatives: 1,
+      falsePositives: 0,
+    });
+  });
+
+  // The whole point of the table: a rate that is low in the short band and high in the
+  // long one is a rate that does not transfer, and the aggregate hides it.
+  it("separates a rate the aggregate averages away", () => {
+    const items = [
+      ...Array.from({ length: 10 }, (_, index) =>
+        item({
+          author: `s${index}`,
+          label: "human",
+          wordCount: 60,
+          documentScore: 0.1,
+          warned: false,
+        }),
+      ),
+      ...Array.from({ length: 10 }, (_, index) =>
+        item({
+          author: `l${index}`,
+          label: "human",
+          wordCount: 900,
+          documentScore: 0.9,
+          warned: true,
+        }),
+      ),
+    ];
+    const metrics = computeEvaluationMetrics(items, OPTIONS);
+    const byKey = new Map(
+      metrics.lengthBands.bands.map((band) => [band.key, band]),
+    );
+    expect(metrics.warning.endToEnd.falsePositiveRate.value).toBeCloseTo(
+      0.5,
+      6,
+    );
+    expect(byKey.get("50_79")?.falsePositiveRate).toBe(0);
+    expect(byKey.get("300_PLUS")?.falsePositiveRate).toBe(1);
+  });
+
+  // A row under the abstain floor is not eligible, so it reaches no band. The floor is
+  // the pre-registration's, and the band table may not name a population under it.
+  it("leaves a row below the abstain floor out of every band", () => {
+    const items = [
+      item({
+        author: "tiny",
+        label: "human",
+        wordCount: 10,
+        documentScore: 0.9,
+        warned: true,
+      }),
+      item({
+        author: "ok",
+        label: "human",
+        wordCount: 60,
+        documentScore: 0.1,
+        warned: false,
+      }),
+    ];
+    const bands = computeEvaluationMetrics(items, OPTIONS).lengthBands.bands;
+    expect(bands.reduce((total, band) => total + band.humanNegatives, 0)).toBe(
+      1,
+    );
+    expect(bands.find((band) => band.key === "50_79")?.humanNegatives).toBe(1);
   });
 });
 

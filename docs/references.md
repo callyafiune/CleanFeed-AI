@@ -1170,6 +1170,96 @@ eventos), para que a política não parta a história do próprio ledger em dois
   o subtítulo "Naming and Formalizing LOGO" e **não** menciona LOGO em nenhum ponto do texto
   acessado; a formalização do termo deve ser citada a partir da versão arXiv 2604.13692, acima.
 
+### 4.2b Faixa de comprimento PRÉ-INSCRITA como fatia diagnóstica, e o pareamento de comprimento (X1, 2026-08-06)
+
+Duas decisões, uma âncora cada, e a segunda tem uma medição que refuta o instrumento óbvio.
+
+**(1) Publicar o FPR por faixa de comprimento, com as faixas congeladas ANTES de medir.** A razão
+é que texto curto provavelmente lisonjeia o FPR — pouco sinal, mais hesitação, menos disparo —,
+então um teto honesto sobre a célula inteira pode não **transferir** para quem analisa 600
+palavras. Publicar por faixa é o que torna visível o número que transfere.
+
+- **Zhu, Ren, Cao, Lin, Fang & Li, 2025 — Reliably Bounding False Positives (MCP)** (ACL 2025,
+  pp. 12298–12319). [link](https://aclanthology.org/2025.acl-long.601/)
+  _Âncora:_ **há precedente** para cotar FPR por faixa de comprimento na própria área de detecção
+  de MGT — a fatia por comprimento não é invenção local. O que este projeto acrescenta é o
+  **papel**: lá o binning por comprimento entra na construção da cota, aqui a faixa é diagnóstico
+  declarado que não gasta alpha e não move `m`. _Onde no projeto:_
+  `benchmark/preregistration-v4.json` (`lengthBands`); `benchmark/metrics.ts`
+  (`lengthBandDiagnostics`); `benchmark/report.ts` (§ "FPR por faixa de comprimento"). _Fato
+  citado:_ cota de FPR com calibração só-humana e binning por faixa de comprimento.
+- **Hugging Face team — RoBERTa OpenAI Detector, model card**
+  [link](https://huggingface.co/openai-community/roberta-base-openai-detector)
+  _Âncora:_ o precedente de **publicar** FPR por faixa de comprimento num model card, que é o
+  destino desta tabela na Fase 6. _Onde no projeto:_ plano § Fase 6 (conteúdo do model card).
+  _Fato citado:_ card com limitações preenchidas, escrito pela equipe do HF.
+- **ICH Expert Working Group, 1998 — ICH E9, § 5.7 (*subgroups, interactions and covariates*)**
+  [link](https://database.ich.org/sites/default/files/E9_Guideline.pdf)
+  _Âncora:_ por que as faixas entram na pré-inscrição **agora**, antes de qualquer medição, mesmo
+  sendo diagnóstico: uma análise de subgrupo pré-especificada é interpretável e uma escolhida
+  depois de ver o resultado não é, **independentemente** de gastar ou não alpha. _Onde no
+  projeto:_ `benchmark/preregistration-v4.ts` (o docblock de `lengthBands`). _Fato citado:_
+  análises de subgrupo devem ser pré-especificadas no protocolo; as post-hoc valem como
+  exploratórias e não sustentam conclusão.
+- **Rothwell, 2005 — Subgroup analysis in randomised controlled trials** (The Lancet
+  365(9454):176–186). [link](https://doi.org/10.1016/S0140-6736(05)17709-5)
+  _Âncora:_ a razão de a tabela publicar o `n` **esperado** de cada faixa e o teto que ele implica
+  ao lado do `n` realizado: reportar subgrupo exige poder por subgrupo, e a faixa longa fica com
+  ~119 das 800 linhas do bloco cego (teto de 3,62 % contra 0,55 % da manchete). _Onde no projeto:_
+  `lengthBands.bands[].expectedBlindBlockLines` e `.diagnosticCeilingAtExpectedLines`. _Fato
+  citado:_ o risco de ler subgrupo sem poder adequado.
+
+Os cortes escolhidos são **redondos** — 50, 80, 150, 300 — e não os percentis medidos (p25 = 72,
+p50 = 120, p75 = 221). Sem precedente encontrado para a escolha entre as duas: a literatura
+acima usa binning por comprimento sem se pronunciar sobre a origem das arestas. A razão local
+está registrada — aresta derivada de percentil é função de UMA amostra e deixa de ser
+restatável — e é decisão declarada, não prática citada.
+
+**(2) Pedir ao gerador o comprimento do PRÓPRIO par humano, sem clamp.** Se o gerado sai com
+200–400 palavras contra humano de mediana 120, o comprimento sozinho separa as classes e o
+detector aprende a régua.
+
+- **Sarvazyan et al., 2023 — Overview of AuTexTification at IberLEF 2023** (arXiv 2309.11285).
+  [link](https://arxiv.org/abs/2309.11285)
+  _Âncora:_ remover viés de comprimento entre as classes é prática estabelecida no desenho de
+  benchmark de MGT — lá por truncamento ao mínimo dos dois textos, aqui pedindo ao gerador o
+  comprimento do par. _Onde no projeto:_ `benchmark/lab/generate_ai.py`
+  (`target_word_count`). _Fato citado:_ pareamento por prefixo comum e truncamento ao mínimo dos
+  dois textos, removendo viés de comprimento.
+
+**A medição que refuta o instrumento óbvio, e ela é nossa (2026-08-06).** Sobre a distribuição
+humana medida, o clamp `max(60, min(n, 350))` que o gerador usava deixa a **AUC de comprimento em
+0,504** — praticamente no acaso. Ele é invisível a uma AUC monótona porque prende a cauda curta
+para CIMA e a longa para BAIXO, e as duas inversões de posto se cancelam. O que o clamp produz é
+uma faixa que nenhuma linha gerada alcança (50–59 palavras: `aiShare` 0,0, rótulo de graça) e um
+máximo gerado preso em 350 contra 1 774 do lado humano. **Conclusão registrada:** o critério de
+reprovação da geração é a **tabela de faixas** da sonda e os extremos, não a AUC dela. Sem
+precedente encontrado: a literatura acima trata do viés de comprimento, não da cegueira de uma
+AUC monótona a truncamento bilateral. _Onde no projeto:_
+`test_diagnostic_probes.py::MatchedGenerationLengthTests`.
+
+**(3) O pareamento de comprimento tem de valer até o fim do transporte, e em TODA lane.** Pedir o
+comprimento certo no prompt não basta: um **orçamento de saída fixo** é um clamp do outro lado do
+transporte — 1 024 tokens não codificam 1 774 palavras de prosa pt-BR —, e uma resposta cortada
+aceita como inteira põe na classe IA um teto que a classe humana não tem. Então o orçamento escala
+com o alvo (`max_output_tokens`), uma resposta com `finishReason` diferente de `STOP` é **recusada**
+na lane REST como já era na lane CLI, e as duas drivers de geração pedem o comprimento pela **mesma**
+função (`codex_batch.chunk_prompt` chama `generate_ai.target_word_count`).
+**Sem precedente encontrado**: a literatura de desenho de benchmark de MGT trata do viés de
+comprimento entre as classes, e não do orçamento de tokens do provedor como fonte dele — a razão
+local é aritmética (tokens por palavra) e está registrada. _Onde no projeto:_ `benchmark/lab/generate_ai.py`
+(`max_output_tokens`, `COMPLETE_FINISH_REASONS`), `benchmark/lab/codex_batch.py`.
+
+**(4) Agregar uma fatia diagnóstica de comprimento no teto de ação do bundle servido.**
+`RUNTIME_BUCKET_CONSTITUENTS` é o único lugar em que a faixa pré-inscrita e a banda de perfil do
+runtime se encontram, e a cobertura das faixas passou a ser **imposta**: faixa pré-inscrita fora do
+mapa, ou gate de ação de faixa que o mapa não conhece, **recusa a publicação**
+(`LENGTH_BAND_UNMAPPED`) em vez de ser filtrada. Filtrar é fail-OPEN — a faixa não mapeada não capa
+nada enquanto as mapeadas seguem autorizando `hide`. **Sem precedente encontrado**: a literatura
+acima publica taxa por faixa e não autoriza ação de produto por faixa, então a direção fail-closed
+aqui é decisão declarada. _Onde no projeto:_ `benchmark/profile-artifact.ts`
+(`assertLengthBandsAreMapped`).
+
 ### 4.3 Cobertura multilíngue e o que existe (ou não) em português
 
 - **Wang et al., 2024 — M4: Multi-generator, Multi-domain, and Multi-lingual Black-Box

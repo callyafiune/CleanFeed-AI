@@ -43,6 +43,12 @@
 //     vocabularies: the remaining numeric thresholds, seeds, replicate counts and
 //     tolerances (validated for type, integrality and domain), and
 //     `predictiveValuePrevalences` (distinct values in (0, 1)).
+//   * `lengthBands`, pinned on its keys AND refused unless the bands partition the
+//     measured population: they start at the abstain floor, they neither overlap nor
+//     leave a gap, the top one is unbounded and their shares sum to the blind block.
+//     The bands are a DIAGNOSTIC and are frozen here for the same reason the
+//     hypotheses are — a slice chosen after seeing the result is post-hoc even when it
+//     spends no alpha.
 //
 // Standalone benchmark module: MUST NOT import from the extension bundle (src/).
 // Node-side by construction — it reads its own JSON once, at module load, with
@@ -152,6 +158,27 @@ export interface ResamplingEstimandExtension {
 }
 
 export type LabelBasisValue = "date-cutoff" | "observed-process";
+
+/**
+ * One pre-registered length band of the FPR diagnostic.
+ *
+ * `maximumWords` is `null` on the LAST band and only there: the top band runs to
+ * infinity, because a corpus of lead sections has no pre-registrable maximum and a
+ * band with an upper edge would leave the longest documents unnamed.
+ *
+ * `expectedBlindBlockLines` is the band's share of the blind block the collection
+ * target implies, and `diagnosticCeilingAtExpectedLines` is the zero-event ceiling
+ * at that share. They travel WITH the band because a band's `n` is a fraction of the
+ * headline's: reading a band ceiling as if it had the headline's precision is the
+ * misreading the whole block exists to prevent.
+ */
+export interface LengthBandRow {
+  readonly key: string;
+  readonly minimumWords: number;
+  readonly maximumWords: number | null;
+  readonly expectedBlindBlockLines: number;
+  readonly diagnosticCeilingAtExpectedLines: number;
+}
 
 /**
  * HOW the human/AI mixture of a `mixed` record came about, and therefore which
@@ -446,6 +473,36 @@ export interface PreregistrationV4 {
     readonly appliesToLabel: "human";
     readonly pooledClaimAllowed: false;
     readonly underPoweredRole: "supplementary-diagnostic";
+  };
+  /**
+   * The length bands the FPR is published over, and nothing else: they are a
+   * DIAGNOSTIC that decides nothing and holds no share of `alpha_família`.
+   *
+   * WHY THE BAND TABLE EXISTS. Short text probably FLATTERS the FPR. With little
+   * text the model has little signal, hesitates and fires less, so the measured rate
+   * is low by uncertainty rather than by competence — and a reader who scores 600
+   * words gets a more confident model whose rate the measurement never estimated.
+   * The number would not be false; it would not TRANSFER, which is the hardest kind
+   * of misleading number to notice. Publishing the rate per band is what makes the
+   * number that transfers visible.
+   *
+   * WHY THE BANDS ARE PRE-REGISTERED. A diagnostic slice chosen AFTER seeing the
+   * result is post-hoc even when it spends no alpha: whoever picks the cut afterwards
+   * picks the cut that tells the story they want. So the edges are frozen here, and
+   * that is legitimate precisely because nothing has been measured yet.
+   *
+   * The first band starts at `wordFloor.abstainBelow` and the parser refuses any
+   * other value: the measurement ABSTAINS below that count, so a band starting lower
+   * would name a population the measurement never measures, and a band starting
+   * higher would leave the shortest measured rows in no band at all.
+   */
+  readonly lengthBands: {
+    readonly bands: readonly LengthBandRow[];
+    readonly decides: false;
+    /** The population the band shares were measured over, named not paraphrased. */
+    readonly measuredPopulation: string;
+    readonly role: "diagnostic";
+    readonly spendsAlpha: false;
   };
   readonly localization: {
     readonly authorizesVisualAction: false;
@@ -1189,6 +1246,154 @@ function zeroEventCeiling(
   });
 }
 
+const LENGTH_BAND_KEYS = [
+  "diagnosticCeilingAtExpectedLines",
+  "expectedBlindBlockLines",
+  "key",
+  "maximumWords",
+  "minimumWords",
+] as const;
+
+/**
+ * The pre-registered length bands, refused unless they PARTITION the measured
+ * population: they start exactly at the abstain floor, they leave no gap and no
+ * overlap between neighbours, and the last one runs to infinity.
+ *
+ * A band table that is not a partition is worse than no table. A gap hides rows in no
+ * published band; an overlap counts the same row twice, so the shares no longer sum
+ * to the block and a reader adding the bands up gets a number larger than the
+ * denominator; a first band below the floor names a population the measurement
+ * abstains on; a bounded top band leaves the longest documents — the ones whose rate
+ * is least likely to transfer — out of every published row.
+ *
+ * The bands may not become hypotheses: a band inside `multiplicity.primaryFamily`
+ * would move `m`, and with it the per-hypothesis alpha and every ceiling derived from
+ * it, so the diagnostic would silently re-price the headline. That rule is NOT checked
+ * here — `primaryFamily` and the band keys are both pinned to shipped literals, so no
+ * admissible policy can make them collide and a comparison would be a branch no input
+ * reaches. It is pinned by test against the two literals instead, where editing either
+ * one breaks it.
+ */
+function lengthBands(
+  value: unknown,
+  perHypothesisAlpha: number,
+  wordFloorAbstainBelow: number,
+  blindBlockLines: number,
+): PreregistrationV4["lengthBands"] {
+  const path = "lengthBands";
+  const block = object(value, path, [
+    "bands",
+    "decides",
+    "measuredPopulation",
+    "role",
+    "spendsAlpha",
+  ]);
+  const raw = block.bands;
+  if (!Array.isArray(raw) || raw.length === 0) {
+    throw new PreregistrationV4Error(
+      at(path, "bands"),
+      "must be a non-empty array",
+    );
+  }
+  const bands: LengthBandRow[] = raw.map((entry, index) => {
+    const rowPath = `${path}.bands[${index}]`;
+    const row = object(entry, rowPath, LENGTH_BAND_KEYS);
+    const minimumWords = integer(row, rowPath, "minimumWords", 1);
+    const last = index === raw.length - 1;
+    // `null` is the top band's upper edge and only the top band's: a middle band
+    // without one would swallow every band after it, and a bounded top band would
+    // stop the table from covering the population.
+    const maximumWords = last
+      ? (literalNull(row, rowPath, "maximumWords") as null)
+      : integer(row, rowPath, "maximumWords", minimumWords);
+    const expectedBlindBlockLines = integer(
+      row,
+      rowPath,
+      "expectedBlindBlockLines",
+      1,
+    );
+    const declaredCeiling = proportion(
+      row,
+      rowPath,
+      "diagnosticCeilingAtExpectedLines",
+    );
+    const derivedCeiling =
+      1 - perHypothesisAlpha ** (1 / expectedBlindBlockLines);
+    if (Math.abs(declaredCeiling - derivedCeiling) > DERIVED_TOLERANCE) {
+      throw new PreregistrationV4Error(
+        at(rowPath, "diagnosticCeilingAtExpectedLines"),
+        `is ${declaredCeiling} but 1 - ${perHypothesisAlpha}^(1/${expectedBlindBlockLines}) is ${derivedCeiling}`,
+      );
+    }
+    return Object.freeze({
+      key: text(row, rowPath, "key"),
+      minimumWords,
+      maximumWords,
+      expectedBlindBlockLines,
+      diagnosticCeilingAtExpectedLines: declaredCeiling,
+    });
+  });
+
+  const keys = bands.map((band) => band.key);
+  const sameKeys =
+    keys.length === FROZEN_LENGTH_BAND_KEYS.length &&
+    keys.every((key, index) => key === FROZEN_LENGTH_BAND_KEYS[index]);
+  if (!sameKeys) {
+    throw new PreregistrationV4Error(
+      at(path, "bands"),
+      `names ${JSON.stringify(keys)} but the bands are frozen at ${JSON.stringify(FROZEN_LENGTH_BAND_KEYS)} (exact content and order)`,
+    );
+  }
+  if (bands[0].minimumWords !== wordFloorAbstainBelow) {
+    throw new PreregistrationV4Error(
+      `${path}.bands[0].minimumWords`,
+      `is ${bands[0].minimumWords} but wordFloor.abstainBelow is ${wordFloorAbstainBelow}: the first band starts exactly at the abstain floor, because a band below it names a population the measurement abstains on and a band above it leaves the shortest measured rows in no band`,
+    );
+  }
+  for (let index = 1; index < bands.length; index += 1) {
+    const previous = bands[index - 1];
+    const expected = (previous.maximumWords as number) + 1;
+    if (bands[index].minimumWords !== expected) {
+      throw new PreregistrationV4Error(
+        `${path}.bands[${index}].minimumWords`,
+        `is ${bands[index].minimumWords} but the band before it ends at ${previous.maximumWords}, so it must be ${expected}: the bands partition the population and may neither overlap nor leave a gap`,
+      );
+    }
+  }
+  const declaredLines = bands.reduce(
+    (total, band) => total + band.expectedBlindBlockLines,
+    0,
+  );
+  if (declaredLines !== blindBlockLines) {
+    throw new PreregistrationV4Error(
+      at(path, "bands"),
+      `expects ${declaredLines} blind-block lines across the bands but preRegistration.zeroEventCeiling.blindBlockLinesAtCollectionTarget is ${blindBlockLines}: the shares of a partition sum to the block`,
+    );
+  }
+  return Object.freeze({
+    bands: Object.freeze(bands),
+    decides: literal(block, path, "decides", false),
+    measuredPopulation: text(block, path, "measuredPopulation"),
+    role: literal(block, path, "role", "diagnostic"),
+    spendsAlpha: literal(block, path, "spendsAlpha", false),
+  });
+}
+
+/** The top band's `maximumWords`: absent bound written as `null`, never omitted. */
+function literalNull(
+  record: Record<string, unknown>,
+  path: string,
+  key: string,
+): null {
+  if (record[key] !== null) {
+    throw new PreregistrationV4Error(
+      at(path, key),
+      "must be null on the last band: the top band runs to infinity",
+    );
+  }
+  return null;
+}
+
 /**
  * The five partition fractions, pinned to their exact values AND refused unless they
  * sum to one.
@@ -1511,7 +1716,33 @@ const FROZEN_HARD_NEGATIVE_FAMILIES = [
   "non-native",
   "repetitive",
 ] as const;
+// The RUNTIME calibration profile bands, which are a different table from
+// `lengthBands` and stay separate: these name the profiles the served bundle carries
+// (contracts/calibration-profile.ts, `LengthBucketV1`), and the v1 freezes no
+// per-band threshold at all. `FROZEN_LENGTH_BAND_KEYS` names the bands the FPR
+// DIAGNOSTIC is published over.
 const FROZEN_PROFILE_BANDS = ["50-79", "80-199", "200-plus"] as const;
+// The four bands the FPR diagnostic is published over, content AND order.
+//
+// The edges are ROUND — 50, 80, 150, 300 — and not the measured percentiles of the
+// population (p25 = 72, p50 = 120, p75 = 221 over 25 036 admissible lead sections of
+// the ptwiki dump). Quartile edges would buy near-equal `n` per band (≈200 each,
+// ceiling ≈2.2 % each) at the price of edges that are a function of one 60 000-page
+// sample: draw the sample again and p25 moves, so the band definition would be a
+// measured quantity rather than a decision, and no reader could restate it. Round
+// edges cost the top band its power — it holds ~15 % of the population — and that
+// cost is DECLARED per band instead of hidden in an average.
+//
+// 100 is deliberately NOT an edge, unlike the unregistered buckets these replace:
+// [80, 99] holds 11.25 % of the population, so at the collection target it would be
+// a band of 90 lines whose diagnostic ceiling is 4.75 % — a published band with less
+// power than the widest one here.
+const FROZEN_LENGTH_BAND_KEYS = [
+  "50_79",
+  "80_149",
+  "150_299",
+  "300_PLUS",
+] as const;
 // ONE snapshot. `b2w-reviews01` and `carolina` are not in the frame — product review
 // and the three single-institution Carolina typologies are outside the declared cell —
 // and `pt-stackoverflow` is refused BY NAME in `blockedSnapshots` rather than deleted,
@@ -1731,6 +1962,7 @@ const POLICY_KEYS = [
   "infersAuthorship",
   "integralPositive",
   "labelBasis",
+  "lengthBands",
   "localization",
   "materialAssistance",
   "mixedBelowHalfAiRole",
@@ -2137,6 +2369,48 @@ export function parsePreregistrationV4(value: unknown): PreregistrationV4 {
       ["calA", "calB", "dev", "test", "train"],
     ),
   );
+  // Hoisted out of the policy literal because the length bands read all three: the
+  // abstain floor is where the first band starts, the blind block is what the band
+  // shares sum to, and the family is the list a band may not join. `lengthBands`
+  // sorts BEFORE `preRegistration` and `wordFloor` in the literal, so leaving them
+  // inline would read them before they were validated.
+  const abstainBelow = integer(wordFloor, "wordFloor", "abstainBelow", 1);
+  const primaryFamily = frozenList(
+    multiplicity,
+    "multiplicity",
+    "primaryFamily",
+    FROZEN_PRIMARY_FAMILY,
+  );
+  const parsedZeroEventCeiling = zeroEventCeiling(
+    object(
+      preRegistration.zeroEventCeiling,
+      "preRegistration.zeroEventCeiling",
+      [
+        "adoptedFloorPerCell",
+        "blindBlockLinesAtCollectionTarget",
+        "ceilingAtAdoptedFloor",
+        "ceilingAtCollectionTarget",
+        "formula",
+        "unitsBelowFloorFailBeforeSealing",
+      ],
+    ),
+    derivedAlpha(multiplicity),
+    // The floor is ONE decision written in THREE places, so all three are joined
+    // here. `powerFloors.samplingUnits` is where a power gate reads it,
+    // `powerFloors.criticalFprHumanNegatives` is the denominator the ceiling's `n`
+    // actually is, and `adoptedFloorPerCell` is what the ceiling is computed from.
+    // A policy in which they disagree publishes a quota for an n it does not
+    // require, or a ceiling tighter than its denominator supports.
+    samplingUnits,
+    frozenNumber(
+      powerFloors,
+      "powerFloors",
+      "criticalFprHumanNegatives",
+      FROZEN_FLOOR_PER_CELL,
+    ),
+    parsedCollection.humanLinesPerCellTarget,
+    parsedPartitionFractions.test,
+  );
   const parsedThreshold = threshold(root.threshold, warningFprBudget);
   if (parsedThreshold.basis !== scoreBasis) {
     throw new PreregistrationV4Error(
@@ -2291,6 +2565,12 @@ export function parsePreregistrationV4(value: unknown): PreregistrationV4 {
         "supplementary-diagnostic",
       ),
     },
+    lengthBands: lengthBands(
+      root.lengthBands,
+      derivedAlpha(multiplicity),
+      abstainBelow,
+      parsedZeroEventCeiling.blindBlockLinesAtCollectionTarget,
+    ),
     localization: {
       authorizesVisualAction: literal(
         localization,
@@ -2374,12 +2654,7 @@ export function parsePreregistrationV4(value: unknown): PreregistrationV4 {
       familyAlpha: proportion(multiplicity, "multiplicity", "familyAlpha"),
       frozenAt: literal(multiplicity, "multiplicity", "frozenAt", "G0.2"),
       perHypothesisAlpha: derivedAlpha(multiplicity),
-      primaryFamily: frozenList(
-        multiplicity,
-        "multiplicity",
-        "primaryFamily",
-        FROZEN_PRIMARY_FAMILY,
-      ),
+      primaryFamily,
       primaryFamilySize: frozenNumber(
         multiplicity,
         "multiplicity",
@@ -2484,36 +2759,7 @@ export function parsePreregistrationV4(value: unknown): PreregistrationV4 {
           true,
         ),
       },
-      zeroEventCeiling: zeroEventCeiling(
-        object(
-          preRegistration.zeroEventCeiling,
-          "preRegistration.zeroEventCeiling",
-          [
-            "adoptedFloorPerCell",
-            "blindBlockLinesAtCollectionTarget",
-            "ceilingAtAdoptedFloor",
-            "ceilingAtCollectionTarget",
-            "formula",
-            "unitsBelowFloorFailBeforeSealing",
-          ],
-        ),
-        derivedAlpha(multiplicity),
-        // The floor is ONE decision written in THREE places, so all three are joined
-        // here. `powerFloors.samplingUnits` is where a power gate reads it,
-        // `powerFloors.criticalFprHumanNegatives` is the denominator the ceiling's `n`
-        // actually is, and `adoptedFloorPerCell` is what the ceiling is computed from.
-        // A policy in which they disagree publishes a quota for an n it does not
-        // require, or a ceiling tighter than its denominator supports.
-        samplingUnits,
-        frozenNumber(
-          powerFloors,
-          "powerFloors",
-          "criticalFprHumanNegatives",
-          FROZEN_FLOOR_PER_CELL,
-        ),
-        parsedCollection.humanLinesPerCellTarget,
-        parsedPartitionFractions.test,
-      ),
+      zeroEventCeiling: parsedZeroEventCeiling,
     },
     productTarget: literal(
       root,
@@ -2609,7 +2855,7 @@ export function parsePreregistrationV4(value: unknown): PreregistrationV4 {
     },
     uncoveredCoreStrata: uncoveredCoreStrata(root),
     wordFloor: {
-      abstainBelow: integer(wordFloor, "wordFloor", "abstainBelow", 1),
+      abstainBelow,
     },
   };
 

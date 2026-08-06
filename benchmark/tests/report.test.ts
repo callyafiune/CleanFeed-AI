@@ -644,6 +644,51 @@ function metrics(): EvaluationMetrics {
         },
       ],
     },
+    // FPR per PRE-REGISTERED band. Two bands hold rows and two hold none, so the
+    // rendered table has to show the empty ones as empty rather than skip them.
+    lengthBands: {
+      role: "diagnostic",
+      gates: false,
+      spendsAlpha: false,
+      bands: [
+        {
+          key: "50_79",
+          minimumWords: 50,
+          maximumWords: 79,
+          humanNegatives: 4,
+          decidedNegatives: 3,
+          falsePositives: 1,
+          falsePositiveRate: 1 / 3,
+        },
+        {
+          key: "80_149",
+          minimumWords: 80,
+          maximumWords: 149,
+          humanNegatives: 0,
+          decidedNegatives: 0,
+          falsePositives: 0,
+          falsePositiveRate: null,
+        },
+        {
+          key: "150_299",
+          minimumWords: 150,
+          maximumWords: 299,
+          humanNegatives: 0,
+          decidedNegatives: 0,
+          falsePositives: 0,
+          falsePositiveRate: null,
+        },
+        {
+          key: "300_PLUS",
+          minimumWords: 300,
+          maximumWords: null,
+          humanNegatives: 2,
+          decidedNegatives: 2,
+          falsePositives: 2,
+          falsePositiveRate: 1,
+        },
+      ],
+    },
   } as unknown as EvaluationMetrics;
 }
 
@@ -1032,6 +1077,33 @@ describe("renderReportMarkdown", () => {
       "- Concentradas no bloco cego sem reserva declarada (diagnóstico, não " +
         "reserva e não gate): `gemini-3_5-flash-medium`",
     );
+  });
+
+  // X1 — the published band table, and the two properties that make it readable.
+  it("publishes the FPR of every pre-registered band with its own n, and an empty band as empty", async () => {
+    const md = renderReportMarkdown(await buildBenchmarkReport(baseInput()));
+    expect(md).toContain("## FPR por faixa de comprimento (diagnóstico)");
+    expect(md).toContain(
+      "- Papel: diagnostic · decide gate: não · gasta alpha: não",
+    );
+    // The block the shares add up to is in the HEADER, and it is the policy's number
+    // rather than a literal beside cells that come from the policy.
+    expect(md).toContain(
+      `| n esperado a n=${PREREGISTRATION_V4.preRegistration.zeroEventCeiling.blindBlockLinesAtCollectionTarget} |`,
+    );
+    // The n of the band, not only its rate: a rate without its denominator is what
+    // lets a band of 119 lines read like the headline's 800.
+    expect(md).toContain("| 50–79 | 4 | 3 | 1 | 0.3333 | 238 | 0.0182 |");
+    // The empty bands are PRESENT and say so, instead of vanishing from the table.
+    expect(md).toContain(
+      "| 80–149 | 0 | 0 | 0 | n/a (faixa vazia) | 239 | 0.0182 |",
+    );
+    expect(md).toContain(
+      "| 150–299 | 0 | 0 | 0 | n/a (faixa vazia) | 204 | 0.0213 |",
+    );
+    // The top band is unbounded, and its expected n and ceiling are its OWN: 119
+    // lines and 3.62 %, not the headline's 800 and 0.55 %.
+    expect(md).toContain("| 300+ | 2 | 2 | 2 | 1 | 119 | 0.0362 |");
   });
 
   it("says plainly when nothing was reserved, instead of printing an empty list", async () => {

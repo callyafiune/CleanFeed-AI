@@ -5168,3 +5168,269 @@ Fase 6. Não é. "Fase 3" ali é a numeração do plano **antigo**, em que a Fas
 pesos, e a lista de ABERTAS diz isso com todas as letras ("B1, que bloqueia somente a Fase 3 (publicação de
 pesos) — as Fases 0 a 2 correm sem ela"). No roteiro vigente a publicação é a Fase 7. Não há dependência
 circular; há numeração envelhecida em três frases, e é ela que § 6 passa a indexar.
+
+## As faixas de comprimento pré-inscritas e a geração casada (X1) — DECIDIDA PELO OPERADOR em 2026-08-06
+
+**A razão, e ela é o coração desta unidade.** Texto curto provavelmente **lisonjeia** o FPR. Em 120 palavras
+o modelo tem pouco sinal, hesita e dispara menos, então a taxa medida fica baixa por **incerteza** e não por
+competência. Um usuário analisando 600 palavras recebe um modelo mais confiante, que dispara mais, com um FPR
+que a medição nunca estimou. O número não seria falso; ele não **transferiria** — e essa é a forma mais
+difícil de detectar de número enganoso. Publicar o FPR por faixa é o que torna visível o número que
+transfere.
+
+**A decisão do operador.** Coleta em **distribuição natural**, sem filtro de comprimento: a população fica
+"lead sections da Wikipédia pt", natural e fácil de declarar. A manchete continua **um** teto sobre a célula
+inteira (0,55 % a n=800). E publica-se o **FPR por faixa de comprimento como diagnóstico que não decide** —
+a camada que o `gates.ts` já tem para "todo o resto vira diagnóstico publicado sem decidir".
+
+**Alternativas recusadas, com a razão.** (i) Coletar **estratificado por faixa**: a população deixaria de ser
+natural e viraria "sorteadas por faixa", e filtrar por comprimento enviesa para artigo grande, isto é, para
+tópico majoritário. (ii) Subir o **piso de coleta para 150 palavras**: perderia metade da população, que é
+uso real, e deixaria dois números para a mesma ideia — abstenção em 50 e coleta em 150.
+
+### A medição que abriu isto (2026-08-06, dump `ptwiki-20220301`)
+
+Espelhando as funções **reais** do lab (`lead_section`, `normalize_text`, `word_count`, `pii_hits`,
+`MINIMUM_WORDS=50`, `MAXIMUM_WORDS=5000`) sobre 60.000 páginas do dump, e **reconferida por esta unidade**
+antes de qualquer escrita:
+
+| quantidade | valor |
+|---|---:|
+| páginas lidas | 60.000 |
+| fora do namespace principal | 3.765 |
+| redirects | 10.125 |
+| artigos | 46.110 |
+| lead curto (< 50 palavras) | 21.066 |
+| lead longo (> 5.000) | 1 |
+| derrubados por PII (4 email, 3 handle, 1 cnpj) | 7 |
+| **admissíveis** | **25.036** — 54,3 % dos artigos |
+| páginas a ler para 4.000 admissíveis | ~7.366 (o dump tem ~1,1 milhão de artigos) |
+
+Distribuição de palavras dos admissíveis: **p10=56 · p25=72 · p50=120 · p75=221 · p90=362 · max=1.774**.
+Só **40 %** têm ≥150 palavras e só **15 %** têm ≥300.
+
+### Os cortes, e por que redondos e não percentis
+
+As faixas pré-inscritas são **[50,79] · [80,149] · [150,299] · [300,+∞)**, e as contagens por faixa são
+medidas, não interpoladas:
+
+| faixa | admissíveis | fração | `n` esperado a n=800 | teto diagnóstico nesse `n` |
+|---|---:|---:|---:|---:|
+| [50,79] | 7.452 | 29,77 % | 238 | 1,82 % |
+| [80,149] | 7.462 | 29,81 % | 239 | 1,82 % |
+| [150,299] | 6.395 | 25,54 % | 204 | 2,13 % |
+| [300,+∞) | 3.727 | 14,89 % | 119 | **3,62 %** |
+
+Os `n` esperados somam exatamente **800** (as frações × 800 dão 238,12 / 238,44 / 204,35 / 119,09, e a
+apropriação é por **maior resto**, que é o único ponto em que a aritmética escolhe: o resto de uma linha vai
+para a maior parte fracionária, que é a de [80,149]). O parser confere a soma contra
+`blindBlockLinesAtCollectionTarget` e cada teto contra `1 − α^(1/n)` da **própria** faixa.
+
+**Cortes redondos, e a alternativa recusada.** Os percentis medidos dariam quartis quase equilibrados —
+[50,71] n≈195 · [72,119] n≈203 · [120,220] n≈202 · [221,+∞) n≈200, teto ≈2,2 % em todas —, isto é, um pior
+teto de 2,22 % contra 3,62 %. Recusado assim mesmo: **uma aresta derivada de percentil é função de UMA
+amostra**. Sorteie outras 60.000 páginas e p25 sai de 72; a definição da faixa passaria a ser uma quantidade
+medida e não uma decisão, ninguém conseguiria restatá-la ("de 72 a 119 palavras"), e o pré-registro deixaria
+de ser independente do dado num nível acima. O preço de arestas redondas é a faixa longa ficar larga, e ele
+é **declarado por faixa** em vez de diluído numa média: `expectedBlindBlockLines` e
+`diagnosticCeilingAtExpectedLines` viajam com a faixa, e o relatório imprime as duas colunas ao lado do `n`
+realizado. **Faixa larga declarada como larga.**
+
+O corte **100** saiu de propósito. Era aresta dos buckets não registrados que estas faixas substituem, e
+[80,99] tem 11,25 % da população: a n=800 seria uma faixa de **90** linhas com teto de **4,75 %** — pior
+poder que a faixa mais larga da tabela nova.
+
+### Por que as faixas tinham de ser pré-inscritas
+
+Fatia diagnóstica escolhida **depois** de ver o resultado é post-hoc mesmo quando não gasta alpha: quem
+escolhe o corte depois escolhe o corte que conta a história que quer. É a regra de § 5.7 do ICH E9 para
+subgrupo, e ela não depende de o subgrupo consumir alpha. As faixas entram na pré-inscrição selada **agora**,
+antes de qualquer medição, e isso é legítimo precisamente porque nada foi medido ainda.
+
+### O que o código já tinha, e o que estava errado nele
+
+A medição encontrou o oposto de uma lacuna: o benchmark **já** fatiava FPR por comprimento. `sizeBucket`
+(`benchmark/metrics.ts`) cortava em `0_49 / 50_79 / 80_99 / 100_149 / 150_299 / 300_PLUS`, a fatia
+`lengthBucket` está em `FPR_AXES` e produz gate diagnóstico por bucket. Dois defeitos, e o primeiro é
+exatamente o que esta unidade existe para não cometer:
+
+1. **as arestas eram constante em código** — isto é, um corte que alguém pode mover depois de ver o
+   resultado, que é a definição de post-hoc;
+2. **a primeira faixa começava em 0**, nomeando uma população que a medição **abstém**
+   (`wordFloor.abstainBelow` é 50). A fatia era publicada com denominador sobre linhas cuja taxa não foi
+   medida.
+
+Por isso as faixas não entraram como vocabulário novo: `sizeBucket` passa a **derivar** da pré-inscrição e
+devolve `undefined` abaixo do piso, então toda tabela chaveada por faixa deixa de nomear população não
+medida. Um segundo vocabulário para a mesma ideia é exatamente o que a decisão do operador recusou em
+"abstenção 50 e coleta 150", e valeria igual aqui.
+
+`RUNTIME_BUCKET_CONSTITUENTS` (`benchmark/profile-artifact.ts`) mapeia as faixas nas **três** bandas de
+runtime do bundle (`profileBands`, `50-79 / 80-199 / 200-plus`) e continua sendo o único lugar em que os dois
+vocabulários se encontram — são tabelas com trabalhos diferentes: a faixa é sobre que população se publica
+uma taxa, a banda de runtime é qual perfil o bundle carrega.
+
+### A fiação, e a prova de que a faixa não move `m`
+
+O bloco novo é `lengthBands` em `benchmark/preregistration-v4.{json,ts}`, com `role: "diagnostic"`,
+`decides: false` e `spendsAlpha: false`. O parser recusa: primeira faixa fora do piso de abstenção (nas duas
+direções), sobreposição, lacuna, faixa não-última sem limite superior, faixa última **com** limite superior,
+soma das cotas diferente do bloco cego, teto que a própria cota não produz, chave renomeada ou reordenada, e
+qualquer um dos três campos de papel alterado.
+
+O inventário obrigatório de gates continua **4** com as faixas presentes e continua 4 quando uma faixa é
+acrescentada: ele deriva de `multiplicity.primaryFamily`, e nenhuma faixa está lá. O teste nomeado constrói
+os gates com uma fatia por faixa, confirma que cada um é `diagnostic` sem hipótese, acrescenta uma **quinta**
+faixa e mede que `observed`, `gateIds`, `familyAlpha` e `declared` não se movem — enquanto o número de gates
+**publicados** cresce em dois. Se acrescentar faixa movesse `m`, a fiação estaria errada.
+
+O relatório publica `## FPR por faixa de comprimento (diagnóstico)` com uma linha por faixa
+**pré-inscrita** — negativos humanos, decididos, falsos positivos, FPR, `n` esperado e teto naquele `n` —,
+construída a partir da lista congelada e não dos dados, então **faixa vazia aparece como vazia** em vez de
+desaparecer. Faixa sem linha decidida publica FPR `null`, nunca 0: zero de zero não é taxa, e publicá-la como
+taxa transforma faixa não medida em faixa perfeita.
+
+### A geração casada, e o item 3 do roteiro estava errado sobre o código
+
+O roteiro pedia trocar uma **constante** de comprimento no prompt por sorteio da distribuição humana. O
+código não tinha constante: `generate_ai.py` já pedia o comprimento da **própria semente humana** —
+`target_words = max(60, min(int(row["wordCount"]), 350))`. O pareamento já existia, e é mais forte que
+sortear da distribuição: pareando cada semente, a distribuição casa por construção e sobrevive a uma troca
+do material humano sem um segundo lugar a atualizar. **O defeito era o clamp**, e só ele: seguindo a
+distribuição medida, ~13 % das sementes ficam abaixo de 60 palavras e são infladas para 60, e ~11 % ficam
+acima de 350 e são truncadas para 350. A classe gerada era a humana **truncada nas duas caudas**.
+
+`target_word_count` passa a ser função nomeada, devolve o comprimento da semente sem clamp, e **recusa**
+semente fora da janela do extrator (`SeedLengthOutOfWindow`) em vez de prendê-la na faixa — semente de 20 ou
+de 9.000 palavras não saiu das regras que a medição descreve, e gerar contra ela põe na classe IA um
+comprimento que a classe humana não tem.
+
+**E aqui a medição refutou o instrumento óbvio.** Sobre a distribuição humana medida, o clamp deixa a **AUC
+de comprimento em 0,504** — praticamente no acaso. Ele é **invisível** a uma AUC monótona porque prende a
+cauda curta para cima e a longa para baixo, e as duas inversões de posto se cancelam. O que o clamp produz e
+a AUC não vê:
+
+| fixture | AUC de posto | primeira faixa (50-59) | máximo gerado |
+|---|---:|---|---:|
+| casado (comprimento da semente) | **0,5000** exato | `aiShare` 0,500 | 1.774 = humano |
+| clamp `max(60, min(n, 350))` | 0,5040 | `aiShare` **0,000** — nenhuma linha gerada | **350** contra 1.774 |
+
+Uma faixa de `aiShare` 0,0 é rótulo de graça: 50 a 59 palavras é **humano com certeza**, um sétimo do
+fixture. **Consequência registrada, e ela corrige a leitura do roteiro:** o critério de reprovação da
+geração é a **tabela de faixas da sonda e os extremos**, não a AUC dela. Isto reforça o item de § 6 do
+ESTADO que já recusava ler "AUC no acaso" como "distribuições iguais" — agora com um mecanismo nomeado,
+truncamento bilateral, e não só com a bimodalidade.
+
+### Divergências desta unidade contra o que lhe foi pedido
+
+1. **Item 3 do roteiro: "em vez de usar constante".** Refutado pelo código — não havia constante, havia
+   clamp sobre a contagem da semente. O conserto é remover o clamp, não trocar o mecanismo por sorteio.
+   **Custo de reversão:** nenhum; a mudança é uma linha e a função nomeada.
+2. **A guarda "faixa não pode ser hipótese" NÃO ficou no parser.** `multiplicity.primaryFamily` é
+   `frozenList` e as chaves das faixas também são congeladas, então nenhuma política admissível faz as duas
+   colidirem: uma comparação ali seria ramo que nenhuma entrada alcança — a forma nº 1 de não morder, e o
+   próprio `preregistration-v4.ts` já recusa esse padrão em dois lugares. A regra está imposta por **teste
+   sobre os dois literais**, onde mexer em qualquer um dos dois fica vermelho. **Custo de reversão:**
+   reintroduzir o laço em `lengthBands` e o parâmetro `primaryFamily`.
+3. **`sizeBucket` mudou de vocabulário**, o que o roteiro não pediu: `0_49` saiu e `80_99`+`100_149`
+   colapsaram em `80_149`. Sem isso o release publicaria **duas** tabelas de FPR por comprimento com cortes
+   diferentes, que é a mesma objeção de "dois números para a mesma ideia" que derrubou o piso de 150.
+   **Custo de reversão:** restaurar os seis buckets literais em `metrics.ts`, o mapa de
+   `RUNTIME_BUCKET_CONSTITUENTS` e a tabela de pins em `metrics.test.ts`.
+4. **`zeroEventCeiling`, `wordFloor.abstainBelow` e `primaryFamily` foram hasteados** para fora do literal
+   da política, porque `lengthBands` ordena antes de `preRegistration` e de `wordFloor` e leria os três
+   antes de validados. A ordem entre eles é deliberada: `primaryFamily` primeiro, para que a política de
+   `m=7` continue sendo recusada em `multiplicity.primaryFamily` e não no teto derivado dela. **Custo de
+   reversão:** devolver as três expressões ao literal.
+
+
+### O que a revisão cruzada pegou em X1, e o que ela refutou (2026-08-06)
+
+Duas rodadas adversariais sobre a implementação, seis achados bloqueantes entre elas. **Três eram um
+mesmo defeito visto de dois lados, e ele é o achado desta unidade**: a mudança de vocabulário de
+`sizeBucket` deixou a fixture do caminho de publicação órfã em `80_99`, e o bucket de runtime
+`80-199` caiu de `actionCeiling: "hide"` para `"indicator"` no bundle publicado **sem um único teste
+vermelho** — porque a única asserção de teto lia `profiles.profiles[0]` e `BUILD_ORDER` põe
+`200-plus` primeiro. Medido nas duas árvores com a MESMA fixture: HEAD `daa154a` devolve
+`200-plus → hide · 80-199 → hide · 50-79 → indicator`, a árvore da implementação devolvia
+`80-199 → indicator`. O conserto tem três partes, e a terceira é a que impede a repetição:
+
+1. a fixture passa a ler as chaves de faixa **da própria pré-inscrição**
+   (`PREREGISTRATION_V4.lengthBands.bands[1].key`), não de literais que envelhecem em silêncio;
+2. um teste nomeado assere o teto de **cada um dos três** buckets publicados, e não do primeiro;
+3. `RUNTIME_BUCKET_CONSTITUENTS` deixa de ser mapa por confiança: `assertLengthBandsAreMapped`
+   **recusa a publicação** (`LENGTH_BAND_UNMAPPED`) quando uma faixa pré-inscrita não está no mapa
+   ou quando o relatório traz gate de ação de faixa que o mapa não conhece. O comentário afirmava
+   que faixa fora do mapa "autoriza nada, que é a direção fail-closed"; **medido, era fail-OPEN** —
+   o filtro descartava o gate da faixa desconhecida, então a reprovação dela não capava nada e
+   `200-plus` seguia autorizando `hide`. **Custo de reversão:** remover a chamada em
+   `buildModelPublication` e o mapa volta a ser confiança.
+
+**O clamp de comprimento saiu de mais dois lugares, e um deles era do outro lado do transporte.**
+
+- `codex_batch.py` continuava pedindo `max(60, min(wordCount, 300))`. Não é código morto: é a lane
+  `codex`, a das famílias OpenAI reservadas ao teste de gerador não visto, e `generationLane` é eixo
+  de agrupamento — com uma lane clampada e as outras não, o comprimento passa a ser **proxy da
+  lane**. Agora as duas drivers pedem pela mesma função.
+- `MAX_OUTPUT_TOKENS = 1024`, constante, na lane REST `gemini`. Um token cobre uma fração de palavra
+  de prosa pt-BR (~1,4–1,7 tokens por palavra), então 1 024 tokens cortam por volta de 600–700
+  palavras — contra p90 = 362 e máximo 1 774 da distribuição humana que esta mesma unidade mediu. E
+  a truncagem entrava **em silêncio**: a única recusa do caminho REST era texto vazio, `finishReason`
+  não era lido, e `common.py` só confere a janela [50, 5 000]. O orçamento passa a escalar com o alvo
+  (`max_output_tokens`, 2,0 tokens por palavra mais margem fixa) e `finishReason` diferente de `STOP`
+  **recusa o item**, exatamente como `GEMINI_INCOMPLETE` já fazia na lane CLI. **Custo de reversão:**
+  devolver a constante e apagar a leitura de `finishReason`; o parâmetro `target_words` de
+  `call_provider` volta a ser dispensável.
+
+**A guarda de comprimento não mordia onde RODA, e isso estava certo.** Nenhum teste dirigia
+`generate_ai.main()`: medido pela revisão, devolver o clamp **na linha de `main()`** deixava os seis
+testes novos verdes, porque todos afirmavam sobre `target_word_count`. Agora `main()` é dirigido com
+o transporte substituído (`GeneratedLengthReachesTheProviderTests`), e o teste confere, para cada
+par, que o prompt que sai pediu o comprimento da **própria semente** e que o orçamento de saída é o
+que o alvo implica. A regra é a que `test_backbone_policy.py` já escrevia: uma guarda só guarda onde
+é chamada.
+
+**Dois achados foram refutados com medição, e a refutação muda o comentário do código.**
+
+1. **"O straddle `150_299` capa os dois buckets se reprovar."** Não hoje. Um gate de ação de fatia
+   que reprova — inclusive o **inelegível**, cujo braço reprova de propósito — entra em
+   `failedAction`, e `failedAction.length > 0` capa o release inteiro em `indicator-only`, onde todo
+   bucket já é `indicator`. Logo, com `pass`, todo gate de ação presente passou, e o que a agregação
+   decide por bucket é **presença de evidência**: bucket cujas faixas constituintes não produziram
+   gate nenhum autoriza nada. A mutação "tirar `150_299` de `200-plus`" **sobrevive por construção
+   da política**, não por teste fraco, e o comentário do mapa passa a dizer isso — a sobreposição
+   fica como resposta conservadora se a regra de decisão deixar de capar globalmente.
+2. **"O pin `reads its edges from the pre-registered bands` não prova a derivação."** Estava certo, e
+   o conserto não é outro pin sobre a política vigente: contra UMA lista de faixas, uma implementação
+   com arestas em literal responde igual a uma que as lê, e nenhuma asserção separa as duas. A
+   derivação foi extraída em `lengthBandKeyOf(bands, wordCount)` e é exercitada contra uma lista de
+   faixas **que não é a embarcada** ([50,89] · [90,+∞)), onde 89 é a palavra que separa ler as arestas
+   de copiá-las. **Custo de reversão:** reinlinhar a função em `sizeBucket` e perder a única
+   asserção que distingue as duas implementações.
+
+**Três consequências que a revisão pediu para declarar, e elas ficam declaradas.**
+
+- **O inventário do TIER DE AÇÃO encolheu**: aposentar `0_49` e fundir `80_99`+`100_149` remove três
+  gates de ação de comprimento que podiam reprovar (`action.fpr.slice.lengthBucket.{0_49,80_99,100_149}`
+  aparecem em `failedAction` no artefato medido em árvore). Não move decisão hoje — `common.py` recusa
+  linha com menos de 50 palavras, então `0_49` não se materializa, e no alvo de coleta nenhuma faixa
+  alcança o piso de 300 negativos, logo todo gate de ação de comprimento reprova nas duas versões.
+  Fica declarado porque o custo de reversão registrado citava só `metrics.ts`, o mapa e os pins.
+- **"Faixa de comprimento" nomeia QUATRO partições neste repositório**, e o registro dizia duas: as
+  quatro pré-inscritas; os decis da sonda (`LENGTH_PROBE_DECILES`, renomeado nesta rodada justamente
+  por isso, e derivados do dado porque a sonda não decide); as três bandas de perfil do runtime; e
+  `lengthBucket` de `benchmark/split-audit.ts`, que corta em `short/medium/long` sob o **mesmo nome de
+  eixo** dentro do próprio benchmark. Mais a grafia antiga (`80_99`, `100_149`) que sobrevive no
+  caminho **embutido não calibrado** de `src/inference/calibration.ts`, declarado lá como "NOT the
+  scientific calibration profile". Nenhuma das quatro é a outra, e § 3.1 do ESTADO passa a dizer isso.
+- **A fração por faixa não é restatável a partir do repositório.** As frações que apropriam
+  238/239/204/119 vêm de uma varredura de 60 000 páginas do dump por script que não está na árvore, e
+  o dump tem 1,96 GB fora do repositório: commitar o medidor moveria a dívida de "sem medidor" para
+  "medidor que nenhum checkout roda", que é a dívida que § 7 já carrega para as taxas de § 5.4. O que
+  o parser confere é o que a política **impõe** — a soma contra `blindBlockLinesAtCollectionTarget` e
+  cada teto contra `1 − α^(1/n)` da própria faixa —, nunca a fração. Fica em § 7 com esse nome.
+
+**E uma correção de prosa que era uma alegação falsa:** a linha "máximo gerado 1 774, igual ao humano"
+de § 5.7b do ESTADO é propriedade do **fixture** (que sintetiza o texto a partir do alvo), não do
+gerador — o gerador não rodou. A coluna passa a se chamar pelo que é, **comprimento pedido**, e o que
+o gerador entrega ganhou a guarda de truncagem acima.

@@ -14,7 +14,10 @@ exato que o produziu por cinco coordenadas:
 - `modelVersion`
 - `platform`
 - `language`
-- `lengthBucket` (`50_79`, `80_99`, `100_149`, `150_299`, `300_PLUS`)
+- `lengthBucket` (`50_79`, `80_99`, `100_149`, `150_299`, `300_PLUS`) — as bandas do caminho
+  **embutido não calibrado**, que não são as faixas da medição: as pré-inscritas são quatro
+  (`50_79`, `80_149`, `150_299`, `300_PLUS`, em `benchmark/preregistration-v4.json`) e as do bundle
+  servido são três (`50-79`, `80-199`, `200-plus`)
 
 O `CalibrationRegistry` (`src/inference/calibration-registry.ts`) indexa os
 perfis por essas coordenadas:

@@ -7,7 +7,9 @@ import {
   indicatorInput,
   neverThresholdInput,
   passInput,
+  passWithoutMiddleBandGateInput,
   rejectInput,
+  unmappedBandGateInput,
 } from "./profile-artifact.fixtures.ts";
 
 describe("calibration profile artifact", () => {
@@ -30,6 +32,63 @@ describe("calibration profile artifact", () => {
       profiles.profiles.map((item) => item.profileDigest),
     );
     expect(release.rolloutState).toBe("indicator");
+  });
+
+  // X1 — the ceiling of EVERY one of the three published buckets, not just the first.
+  //
+  // The suite used to assert `profiles.profiles[0]` alone, and BUILD_ORDER puts
+  // `200-plus` first: measured, the length-band vocabulary change moved `80-199` from
+  // `hide` to `indicator` in the published bundle with 2 801 tests green. One assertion
+  // per bucket is what makes that visible.
+  it("publishes the ceiling of each of the three buckets, and only 50-79 is unconditional", async () => {
+    const publication = await buildModelPublication(passInput);
+    const ceilings = new Map(
+      publication.profiles.profiles.map((profile) => [
+        profile.lengthBucket,
+        profile.actionCeiling,
+      ]),
+    );
+    expect([...ceilings.keys()]).toEqual(["200-plus", "80-199", "50-79"]);
+    expect(ceilings.get("200-plus")).toBe("hide");
+    expect(ceilings.get("80-199")).toBe("hide");
+    expect(ceilings.get("50-79")).toBe("indicator");
+    const middle = publication.profiles.profiles.find(
+      (profile) => profile.lengthBucket === "80-199",
+    );
+    expect(middle?.thresholds.documentAction).toBe(0.85);
+  });
+
+  // No evidence, no authorization: the bucket whose constituent bands produced no action
+  // gate keeps `indicator` while the bucket that has one keeps `hide`.
+  it("caps a bucket whose constituent bands produced no action gate", async () => {
+    const publication = await buildModelPublication(
+      passWithoutMiddleBandGateInput,
+    );
+    const ceilings = new Map(
+      publication.profiles.profiles.map((profile) => [
+        profile.lengthBucket,
+        profile.actionCeiling,
+      ]),
+    );
+    expect(ceilings.get("80-199")).toBe("indicator");
+    expect(ceilings.get("200-plus")).toBe("hide");
+    const middle = publication.profiles.profiles.find(
+      (profile) => profile.lengthBucket === "80-199",
+    );
+    expect(middle?.thresholds.documentAction).toBe(1);
+  });
+
+  // The fail-closed direction, and it is the one the aggregation used to get wrong: a
+  // band outside RUNTIME_BUCKET_CONSTITUENTS was FILTERED OUT of every bucket's
+  // evidence, so it authorized nothing and capped nothing while the mapped buckets went
+  // on publishing `hide`.
+  it("refuses to publish while a length band belongs to no runtime bucket", async () => {
+    await expect(
+      buildModelPublication(unmappedBandGateInput),
+    ).rejects.toMatchObject({ code: "LENGTH_BAND_UNMAPPED" });
+    await expect(buildModelPublication(unmappedBandGateInput)).rejects.toThrow(
+      /600_PLUS/u,
+    );
   });
 
   it("publishes indicator-only without a visual threshold", async () => {

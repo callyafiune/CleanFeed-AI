@@ -709,7 +709,7 @@ class FrozenLaneEntryTests(unittest.TestCase):
         # longer holds a transport that could produce a row the corpus cannot accept.
         for provider in ("openai", "anthropic"):
             with self.assertRaises(ValueError) as caught:
-                generate_ai.call_provider(provider, "m", "prompt", None, {})
+                generate_ai.call_provider(provider, "m", "prompt", None, {}, 120)
             self.assertIn("outside the frozen slate", str(caught.exception))
         self.assertIn("reserved for the unseen-generator test", str(
             generate_ai.OUT_OF_SLATE_PROVIDERS["openai"]

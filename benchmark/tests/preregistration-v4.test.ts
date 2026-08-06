@@ -410,6 +410,111 @@ describe("preregistration-v4.json", () => {
     expect(RELEASE_CORPUS_POLICY.counts.mixed).toBe(2000);
   });
 
+  // --- the pre-registered length bands (X1) --------------------------------
+  //
+  // The bands are a DIAGNOSTIC and they are frozen anyway: a slice chosen after seeing
+  // the result is post-hoc even when it spends no alpha, so the edges are pinned here
+  // and the pin is legitimate precisely because nothing has been measured yet.
+  it("carries the four length bands verbatim, content and order", () => {
+    const bands = PREREGISTRATION_V4.lengthBands;
+    expect(bands.role).toBe("diagnostic");
+    expect(bands.decides).toBe(false);
+    expect(bands.spendsAlpha).toBe(false);
+    expect(bands.measuredPopulation).toBe("ptwiki-20220301-lead-sections");
+    expect(
+      bands.bands.map((band) => [
+        band.key,
+        band.minimumWords,
+        band.maximumWords,
+        band.expectedBlindBlockLines,
+        band.diagnosticCeilingAtExpectedLines,
+      ]),
+    ).toEqual([
+      ["50_79", 50, 79, 238, 0.018243],
+      ["80_149", 80, 149, 239, 0.018168],
+      ["150_299", 150, 299, 204, 0.021251],
+      ["300_PLUS", 300, null, 119, 0.036154],
+    ]);
+  });
+
+  it("starts the first band at the abstain floor and runs the last one to infinity", () => {
+    const bands = PREREGISTRATION_V4.lengthBands.bands;
+    expect(bands[0].minimumWords).toBe(
+      PREREGISTRATION_V4.wordFloor.abstainBelow,
+    );
+    expect(bands[bands.length - 1].maximumWords).toBeNull();
+    for (const band of bands.slice(0, -1)) {
+      expect(band.maximumWords).not.toBeNull();
+    }
+  });
+
+  // The bands cover the measured population and cover it once. A gap hides rows in no
+  // published band; an overlap makes the shares sum past the denominator.
+  it("partitions the population from the abstain floor to infinity", () => {
+    const bands = PREREGISTRATION_V4.lengthBands.bands;
+    for (let index = 1; index < bands.length; index += 1) {
+      expect(bands[index].minimumWords).toBe(
+        (bands[index - 1].maximumWords as number) + 1,
+      );
+    }
+  });
+
+  // The shares are the band's slice of the blind block the collection target implies,
+  // and each band's ceiling is the zero-event ceiling at its own share — NOT at the
+  // headline's 800. This is what stops the widest band being read as if it had the
+  // headline's precision.
+  it("apportions the blind block across the bands and derives each band's ceiling from its own share", () => {
+    const policy = PREREGISTRATION_V4;
+    const bands = policy.lengthBands.bands;
+    const alpha = policy.multiplicity.perHypothesisAlpha;
+    expect(
+      bands.reduce((total, band) => total + band.expectedBlindBlockLines, 0),
+    ).toBe(
+      policy.preRegistration.zeroEventCeiling.blindBlockLinesAtCollectionTarget,
+    );
+    for (const band of bands) {
+      expect(band.diagnosticCeilingAtExpectedLines).toBeCloseTo(
+        1 - alpha ** (1 / band.expectedBlindBlockLines),
+        6,
+      );
+      // Every band is WIDER than the headline, because every band's n is a fraction of
+      // the headline's. A band that came out tighter would mean the shares no longer
+      // add up to the block.
+      expect(band.diagnosticCeilingAtExpectedLines).toBeGreaterThan(
+        policy.preRegistration.zeroEventCeiling.ceilingAtCollectionTarget,
+      );
+    }
+  });
+
+  // The bands may not become hypotheses. Both lists are pinned to shipped literals, so
+  // this is checked against the literals rather than by a parser branch no admissible
+  // policy reaches: moving either list breaks it here.
+  it("keeps every band out of the certifying family, in both spellings", () => {
+    const family = PREREGISTRATION_V4.multiplicity.primaryFamily;
+    for (const band of PREREGISTRATION_V4.lengthBands.bands) {
+      expect(family).not.toContain(band.key);
+      expect(family).not.toContain(`fpr-${band.key}`);
+    }
+    // And the diagnostic cannot re-price the headline: `m` is the family's length and
+    // the bands are not in it, so the count is what it was before the bands existed.
+    expect(family.length).toBe(4);
+    expect(PREREGISTRATION_V4.multiplicity.primaryFamilySize).toBe(4);
+    expect(PREREGISTRATION_V4.multiplicity.perHypothesisAlpha).toBe(0.0125);
+  });
+
+  // The RUNTIME profile bands are a different table with a different job, and this is
+  // the assertion that keeps them from being confused: they do not share a vocabulary.
+  it("keeps the runtime profile bands as a separate vocabulary from the diagnostic bands", () => {
+    expect(PREREGISTRATION_V4.profileBands).toEqual([
+      "50-79",
+      "80-199",
+      "200-plus",
+    ]);
+    for (const band of PREREGISTRATION_V4.lengthBands.bands) {
+      expect(PREREGISTRATION_V4.profileBands).not.toContain(band.key);
+    }
+  });
+
   it("is deeply frozen so no consumer can mutate the pre-registration at runtime", () => {
     expect(Object.isFrozen(PREREGISTRATION_V4)).toBe(true);
     expect(Object.isFrozen(PREREGISTRATION_V4.fprBudgets)).toBe(true);
@@ -1185,6 +1290,124 @@ describe("parsePreregistrationV4 fails closed", () => {
     expect((thrown as Error).message).toMatch(
       /standard deviation of roughly 15 lines/u,
     );
+  });
+
+  // --- the pre-registered length bands (X1) --------------------------------
+
+  function bandsOf(policy: Record<string, unknown>): Record<string, unknown>[] {
+    return block(policy, "lengthBands").bands as Record<string, unknown>[];
+  }
+
+  function refusal(policy: Record<string, unknown>): PreregistrationV4Error {
+    let thrown: unknown = null;
+    try {
+      parsePreregistrationV4(policy);
+    } catch (error) {
+      thrown = error;
+    }
+    expect(thrown).toBeInstanceOf(PreregistrationV4Error);
+    return thrown as PreregistrationV4Error;
+  }
+
+  // The rule that is NOT optional: a band starting under the abstain floor names a
+  // population the measurement never measures, so its rate is about nobody.
+  it("refuses a first band below the abstain floor", () => {
+    const policy = validPolicyObject();
+    const bands = bandsOf(policy);
+    bands[0].minimumWords = 1;
+    expect(refusal(policy).path).toBe("lengthBands.bands[0].minimumWords");
+  });
+
+  // And above it, for the mirror reason: the rows between 50 and the first band would
+  // be measured and named by no band.
+  it("refuses a first band above the abstain floor", () => {
+    const policy = validPolicyObject();
+    const bands = bandsOf(policy);
+    bands[0].minimumWords = 60;
+    expect(refusal(policy).path).toBe("lengthBands.bands[0].minimumWords");
+  });
+
+  it("refuses bands that overlap", () => {
+    const policy = validPolicyObject();
+    const bands = bandsOf(policy);
+    bands[1].minimumWords = 70;
+    expect(refusal(policy).path).toBe("lengthBands.bands[1].minimumWords");
+  });
+
+  it("refuses bands that leave a gap", () => {
+    const policy = validPolicyObject();
+    const bands = bandsOf(policy);
+    bands[2].minimumWords = 160;
+    expect(refusal(policy).path).toBe("lengthBands.bands[2].minimumWords");
+  });
+
+  // A bounded top band leaves the longest documents — the ones whose rate is least
+  // likely to transfer — in no published row at all.
+  it("refuses a bounded top band", () => {
+    const policy = validPolicyObject();
+    const bands = bandsOf(policy);
+    bands[3].maximumWords = 5000;
+    expect(refusal(policy).path).toBe("lengthBands.bands[3].maximumWords");
+  });
+
+  it("refuses an unbounded band that is not the last one", () => {
+    const policy = validPolicyObject();
+    const bands = bandsOf(policy);
+    bands[1].maximumWords = null;
+    expect(refusal(policy).path).toBe("lengthBands.bands[1].maximumWords");
+  });
+
+  // The shares are a partition of the blind block, so they sum to it. A share moved
+  // without the others would publish a band ceiling for an n the block cannot hold.
+  it("refuses band shares that do not sum to the blind block", () => {
+    const policy = validPolicyObject();
+    const bands = bandsOf(policy);
+    // The band's OWN ceiling is moved with its share, so the per-band derivation still
+    // holds and the sum is the only rule left to catch this.
+    bands[0].expectedBlindBlockLines = 200;
+    bands[0].diagnosticCeilingAtExpectedLines = 0.021672;
+    expect(refusal(policy).path).toBe("lengthBands.bands");
+  });
+
+  it("refuses a band ceiling that its own share does not produce", () => {
+    const policy = validPolicyObject();
+    const bands = bandsOf(policy);
+    // The HEADLINE ceiling, on a band that holds a fraction of the headline's lines:
+    // the exact misreading the per-band ceiling exists to make impossible.
+    bands[3].diagnosticCeilingAtExpectedLines = 0.005463;
+    expect(refusal(policy).path).toBe(
+      "lengthBands.bands[3].diagnosticCeilingAtExpectedLines",
+    );
+  });
+
+  it("refuses a renamed or reordered band", () => {
+    const renamed = validPolicyObject();
+    bandsOf(renamed)[1].key = "80_99";
+    expect(refusal(renamed).path).toBe("lengthBands.bands");
+
+    const reordered = validPolicyObject();
+    const bands = bandsOf(reordered);
+    reordered.lengthBands = {
+      ...block(reordered, "lengthBands"),
+      bands: [bands[1], bands[0], bands[2], bands[3]],
+    };
+    expect(refusal(reordered).path).toBe("lengthBands.bands");
+  });
+
+  // The role fields are the whole content of "diagnostic": a policy that flipped one
+  // of them would publish the same table as a certifying claim.
+  it("refuses a band block that claims to decide or to spend alpha", () => {
+    const decides = validPolicyObject();
+    block(decides, "lengthBands").decides = true;
+    expect(refusal(decides).path).toBe("lengthBands.decides");
+
+    const spends = validPolicyObject();
+    block(spends, "lengthBands").spendsAlpha = true;
+    expect(refusal(spends).path).toBe("lengthBands.spendsAlpha");
+
+    const certifying = validPolicyObject();
+    block(certifying, "lengthBands").role = "certifying";
+    expect(refusal(certifying).path).toBe("lengthBands.role");
   });
 });
 

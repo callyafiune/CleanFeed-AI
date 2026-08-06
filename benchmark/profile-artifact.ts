@@ -12,7 +12,7 @@
 // The three §6.5 decision branches map as:
 //   - pass          -> three profiles, rolloutState "indicator"; the 80-199 and
 //                      200-plus buckets take a "hide" ceiling only where their
-//                      constituent length slices passed the visual-action gate.
+//                      constituent length bands passed the visual-action gate.
 //   - indicator-only -> three profiles, every ceiling "indicator" and
 //                      documentAction disabled (1), rolloutState "indicator".
 //   - reject        -> NO profiles (empty file), rolloutState "bundle-verified";
@@ -45,6 +45,7 @@ import type { FrozenCalibrationArtifact } from "./calibration-pipeline.ts";
 import type { GateReport, ReleaseDecision } from "./gates.ts";
 import { wilsonOneSided } from "./intervals.ts";
 import type { DecisionFamilies, MetricEstimate } from "./metrics.ts";
+import { PREREGISTRATION_V4 } from "./preregistration-v4.ts";
 import type { BenchmarkReport } from "./report.ts";
 
 // v1 policy: calibration profiles are published for the single "generic"
@@ -77,18 +78,38 @@ const EVIDENCE_POLICY: RuntimeCalibrationProfileV1["evidencePolicy"] = {
 // is last; the release's profileDigests preserve this order.
 const BUILD_ORDER: readonly LengthBucketV1[] = ["200-plus", "80-199", "50-79"];
 
-// Conservative aggregation of the five scientific length slices into the three
-// runtime buckets: a runtime bucket is authorized for `hide` only when every
-// scientific length slice whose word range overlaps it passed the action gate.
-// 150_299 straddles 80-199 and 200-plus and therefore caps both if it fails.
+// Conservative aggregation of the PRE-REGISTERED length bands
+// (`lengthBands` in benchmark/preregistration-v4.json) into the three runtime
+// buckets: a runtime bucket is authorized for `hide` only when every band whose word
+// range overlaps it passed the action gate. 150_299 belongs to both 80-199 and
+// 200-plus because its word range straddles them.
+//
+// What that rule DECIDES today is narrower than it reads, and the difference is
+// measured: an action slice gate that fails — including one that is under-powered,
+// whose ineligible arm fails on purpose — lands in `failedAction` and caps the whole
+// release at `indicator-only`, where every bucket is `indicator` anyway. So with a
+// `pass` every action gate present has passed, and the per-bucket question reduces to
+// whether any constituent band produced a gate at all. The overlap survives as the
+// conservative answer if the decision rule ever stops capping globally.
+//
+// The two tables are separate vocabularies on purpose — the bands are what the
+// evaluation publishes a rate over, the runtime buckets are which profile the served
+// bundle loads — and this map is the only place they meet. Coverage of the bands is
+// therefore ENFORCED and not assumed (`assertLengthBandsAreMapped`): an unmapped band
+// is read by no bucket, so its FAILURE would cap nothing while the other buckets keep
+// authorizing `hide` over a length range nobody consulted.
 const RUNTIME_BUCKET_CONSTITUENTS: Record<
   LengthBucketV1,
   ReadonlySet<string>
 > = {
   "50-79": new Set(["50_79"]),
-  "80-199": new Set(["80_99", "100_149", "150_299"]),
+  "80-199": new Set(["80_149", "150_299"]),
   "200-plus": new Set(["150_299", "300_PLUS"]),
 };
+
+const MAPPED_LENGTH_BANDS: ReadonlySet<string> = new Set(
+  Object.values(RUNTIME_BUCKET_CONSTITUENTS).flatMap((keys) => [...keys]),
+);
 
 export interface ModelPublicationInput {
   frozen: FrozenCalibrationArtifact;
@@ -437,6 +458,46 @@ function buildGateEvidence(
   };
 }
 
+/**
+ * Refuses to publish while a length band is outside `RUNTIME_BUCKET_CONSTITUENTS`,
+ * from either side: a band the pre-registration publishes a rate over, or a band the
+ * gate report carries an action gate for.
+ *
+ * `bucketAuthorizesAction` reads ONLY the gates of its own constituents, so an unmapped
+ * band is silently dropped from every bucket's evidence — its failure caps nothing, and
+ * the buckets that do have constituents go on authorizing `hide`. Filtering an unknown
+ * key out is the fail-OPEN direction; refusing is the closed one, because the honest
+ * answer to "which profile covers 80-199 now" is that the map no longer knows.
+ */
+function assertLengthBandsAreMapped(gates: GateReport): void {
+  for (const band of PREREGISTRATION_V4.lengthBands.bands) {
+    if (!MAPPED_LENGTH_BANDS.has(band.key)) {
+      fail(
+        "LENGTH_BAND_UNMAPPED",
+        `the pre-registered length band ${band.key} overlaps no runtime bucket: ` +
+          "RUNTIME_BUCKET_CONSTITUENTS must cover every band, or the band's action " +
+          "gate caps nothing while the other buckets keep authorizing hide",
+      );
+    }
+  }
+  for (const gate of gates.gates) {
+    if (
+      gate.tier === "action" &&
+      gate.scope === "slice" &&
+      gate.slice !== undefined &&
+      gate.slice.axis === "lengthBucket" &&
+      !MAPPED_LENGTH_BANDS.has(gate.slice.key)
+    ) {
+      fail(
+        "LENGTH_BAND_UNMAPPED",
+        `the report carries an action gate for the length band ${gate.slice.key}, ` +
+          "which belongs to no runtime bucket: its verdict would reach no published " +
+          "profile",
+      );
+    }
+  }
+}
+
 function bucketAuthorizesAction(
   bucket: LengthBucketV1,
   gates: GateReport,
@@ -555,6 +616,7 @@ export async function buildModelPublication(
     input.report,
     releaseTemplate,
   );
+  assertLengthBandsAreMapped(input.report.gates);
   const decision = input.report.gates.decision;
 
   const issuedAt = input.issuedAt;

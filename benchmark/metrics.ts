@@ -72,6 +72,7 @@ import {
 import { PREREGISTRATION_V4 } from "./preregistration-v4.ts";
 import type {
   GenerationMode,
+  LengthBandRow,
   PublishedBoundRule,
   ResamplingClassRow,
   ResamplingLevelRow,
@@ -282,13 +283,50 @@ export function countWords(text: string): number {
   return trimmed === "" ? 0 : trimmed.split(/\s+/).length;
 }
 
-export function sizeBucket(wordCount: number): string {
-  if (wordCount < 50) return "0_49";
-  if (wordCount < 80) return "50_79";
-  if (wordCount < 100) return "80_99";
-  if (wordCount < 150) return "100_149";
-  if (wordCount < 300) return "150_299";
-  return "300_PLUS";
+/**
+ * The pre-registered length band of a word count, or `undefined` below the floor the
+ * bands start at.
+ *
+ * The edges are NOT a constant here. They are `lengthBands` in
+ * benchmark/preregistration-v4.json, because this function keys every published
+ * length table — the FPR slices, the calibration slices and the resolution tables —
+ * and a slice whose cuts live in code is a cut somebody can move after seeing the
+ * result. It is the same value the diagnostic band block is built over, so the two
+ * cannot name different bands for the same population.
+ *
+ * `undefined` and not a below-floor bucket: the measurement ABSTAINS under
+ * `wordFloor.abstainBelow`, so a row below it has no band, and a table keyed by band
+ * never names a population no rate was measured over. Reachable, not defensive — a
+ * caller may raise or lower `EvaluationOptions.minimumEligibleWords`, and the
+ * calibration population is every binary row rather than the eligible subset.
+ */
+export function sizeBucket(wordCount: number): string | undefined {
+  return lengthBandKeyOf(LENGTH_BANDS, wordCount);
+}
+
+/**
+ * The band of `bands` a word count falls in, or `undefined` below the first band's
+ * floor. `bands` must be a partition from that floor to infinity — what
+ * `parsePreregistrationV4` refuses a policy for not being.
+ *
+ * The band list is a PARAMETER and not read from the policy inside, so the derivation
+ * can be exercised against a band list that is not the shipped one. Against the shipped
+ * list alone an implementation whose edges are literals answers exactly like one that
+ * reads them, so no assertion can tell the two apart — and "reads its edges from the
+ * pre-registration" is the property that has to be provable.
+ */
+export function lengthBandKeyOf(
+  bands: readonly LengthBandRow[],
+  wordCount: number,
+): string | undefined {
+  if (wordCount < bands[0].minimumWords) return undefined;
+  // The top band is unbounded (the pre-registration parser refuses a policy where it
+  // is not), so folding forward over the lower edges always lands on a band.
+  let band = bands[0];
+  for (const candidate of bands) {
+    if (candidate.minimumWords <= wordCount) band = candidate;
+  }
+  return band.key;
 }
 
 // ROC-AUC by trapezoidal integration over the (FPR, TPR) curve. Undefined when
@@ -1087,6 +1125,55 @@ export interface ResolutionSlice {
   errorRate: MetricEstimate;
 }
 
+/**
+ * One pre-registered length band's false-positive counts, published whatever its
+ * size.
+ *
+ * `humanNegatives` counts every eligible human negative that fell in the band, and
+ * `decidedNegatives` the subset that got a decision — the FPR denominator. The two
+ * are published apart because they come apart: a row whose inference failed stays in
+ * the band and is neither an accusation nor a correct clearance.
+ */
+export interface LengthBandFprSlice {
+  key: string;
+  minimumWords: number;
+  /** `null` on the top band, which runs to infinity. */
+  maximumWords: number | null;
+  humanNegatives: number;
+  decidedNegatives: number;
+  falsePositives: number;
+  /**
+   * FP over the decided negatives, or `null` when the band decided nothing. Never 0
+   * in that case: zero of zero is not a rate, and reading it as one is how an empty
+   * band gets published as a perfect one.
+   */
+  falsePositiveRate: number | null;
+}
+
+/**
+ * The FPR by pre-registered length band, and the reason the release publishes it.
+ *
+ * Short text probably FLATTERS the rate: with little text the model has little
+ * signal, hesitates and fires less, so a low measured rate can be uncertainty rather
+ * than competence — and a reader who scores 600 words gets a more confident model
+ * whose rate the headline never estimated. The headline stays ONE ceiling over the
+ * whole cell; this table is what makes the number that TRANSFERS visible.
+ *
+ * It decides nothing: `gates: false` and `spendsAlpha: false`, so `m` and the
+ * per-hypothesis alpha are untouched by how many bands there are. Adding a band adds
+ * a published row and nothing else.
+ *
+ * One entry per PRE-REGISTERED band, in the pre-registered order, present even when
+ * the band is empty — a band built from the data alone would vanish exactly when its
+ * absence is the finding.
+ */
+export interface LengthBandDiagnostics {
+  role: "diagnostic";
+  gates: false;
+  spendsAlpha: false;
+  bands: LengthBandFprSlice[];
+}
+
 // The four required breakdown axes. Keys are sorted by unicode codepoint, like
 // every other keyed collection the report seals.
 export interface ResolutionBreakdown {
@@ -1147,6 +1234,8 @@ export interface EvaluationMetrics {
   binaryPopulationErrorRate: MetricEstimate;
   // Coverage and error rate per source, class, length band and platform.
   resolution: ResolutionBreakdown;
+  // FPR per pre-registered length band, diagnostic, one row per band even when empty.
+  lengthBands: LengthBandDiagnostics;
   simulatedPrecision: Record<
     "prevalence01" | "prevalence05" | "prevalence10",
     number
@@ -1268,6 +1357,10 @@ const PILOT_REPLICATES = PREREGISTRATION_V4.bootstrapReplicates.pilot;
 const RESAMPLING_TABLE = PREREGISTRATION_V4.resampling;
 const DEFAULT_MINIMUM_ELIGIBLE_WORDS =
   PREREGISTRATION_V4.wordFloor.abstainBelow;
+// The pre-registered length bands, which feed `sizeBucket` — declared earlier in the
+// file: `const` at module scope is initialised in source order, and nothing calls
+// `sizeBucket` during module evaluation.
+const LENGTH_BANDS = PREREGISTRATION_V4.lengthBands.bands;
 const MATERIAL_ASSISTANCE_AI_FRACTION =
   PREREGISTRATION_V4.materialAssistance.minimumAiFraction;
 // The ONE cohort the material-assistance target is defined over. `ecological` is
@@ -2769,6 +2862,7 @@ export function computeEvaluationMetrics(
     decisionPopulationErrorRate,
     binaryPopulationErrorRate,
     resolution: resolutionBreakdown(eligible, bonferroni),
+    lengthBands: lengthBandDiagnostics(eligible),
     simulatedPrecision: {
       prevalence01: simulatedPrecisionAt(warning, prevalences.prevalence01),
       prevalence05: simulatedPrecisionAt(warning, prevalences.prevalence05),
@@ -2984,11 +3078,16 @@ function calibrationDiagnostics(
 // slice that looks well calibrated because its hard rows failed becomes visible.
 function calibrationSlices(
   binaryPopulation: readonly EvaluationItem[],
-  keyOf: (record: BenchmarkRecord) => string,
+  // `undefined` means the row belongs to no slice of this axis and is left out of the
+  // table, which is what a length band under the abstain floor is: a row no band
+  // names. The axis then reports fewer rows than the population, and the aggregate
+  // block beside it already publishes that population's own size.
+  keyOf: (record: BenchmarkRecord) => string | undefined,
 ): CalibrationSliceMetrics[] {
   const buckets = new Map<string, EvaluationItem[]>();
   for (const item of binaryPopulation) {
     const key = keyOf(item.record);
+    if (key === undefined) continue;
     const bucket = buckets.get(key);
     if (bucket === undefined) buckets.set(key, [item]);
     else bucket.push(item);
@@ -3520,13 +3619,59 @@ function unresampledRateNote(value: number): string {
 // record label, so a coverage hole in one corpus or one class is visible instead
 // of averaged away.
 const RESOLUTION_AXES: ReadonlyArray<
-  readonly [keyof ResolutionBreakdown, (record: BenchmarkRecord) => string]
+  readonly [
+    keyof ResolutionBreakdown,
+    (record: BenchmarkRecord) => string | undefined,
+  ]
 > = [
   ["bySource", (record) => record.provenance.sourceId],
   ["byClass", (record) => record.label],
   ["byLengthBucket", (record) => sizeBucket(record.wordCount)],
   ["byPlatform", (record) => record.platform],
 ];
+
+/**
+ * The FPR of every PRE-REGISTERED band, built by walking the frozen band list rather
+ * than the data: a band with no rows is published with `humanNegatives: 0` instead of
+ * disappearing from the table.
+ *
+ * The warning decision, not the visual-action one: the warning tier is the only one
+ * the v1 publishes an operating point for (`rollout.maximumStage: "indicator"`), and
+ * a band table split across two thresholds would invite the reader to compare rows
+ * that no single decision produced.
+ */
+function lengthBandDiagnostics(
+  eligible: readonly EvaluationItem[],
+): LengthBandDiagnostics {
+  const bands: LengthBandFprSlice[] = LENGTH_BANDS.map((band) => ({
+    key: band.key,
+    minimumWords: band.minimumWords,
+    maximumWords: band.maximumWords,
+    humanNegatives: 0,
+    decidedNegatives: 0,
+    falsePositives: 0,
+    falsePositiveRate: null,
+  }));
+  const rowOf = new Map(bands.map((row) => [row.key, row]));
+  for (const item of eligible) {
+    if (!isHumanNegative(item.record)) continue;
+    const key = sizeBucket(item.record.wordCount);
+    if (key === undefined) continue;
+    const row = rowOf.get(key);
+    if (row === undefined) continue;
+    row.humanNegatives += 1;
+    if (!isScoredItem(item)) continue;
+    row.decidedNegatives += 1;
+    if (item.warned) row.falsePositives += 1;
+  }
+  for (const row of bands) {
+    row.falsePositiveRate =
+      row.decidedNegatives === 0
+        ? null
+        : row.falsePositives / row.decidedNegatives;
+  }
+  return { role: "diagnostic", gates: false, spendsAlpha: false, bands };
+}
 
 function resolutionBreakdown(
   eligible: readonly EvaluationItem[],
@@ -3541,12 +3686,14 @@ function resolutionBreakdown(
 
 function resolutionSlices(
   eligible: readonly EvaluationItem[],
-  keyOf: (record: BenchmarkRecord) => string,
+  // Same contract as `calibrationSlices`: no key, no row in this axis's table.
+  keyOf: (record: BenchmarkRecord) => string | undefined,
   bonferroni: MultiplicityDeclaration | null,
 ): ResolutionSlice[] {
   const buckets = new Map<string, EvaluationItem[]>();
   for (const item of eligible) {
     const key = keyOf(item.record);
+    if (key === undefined) continue;
     const bucket = buckets.get(key);
     if (bucket === undefined) buckets.set(key, [item]);
     else bucket.push(item);
