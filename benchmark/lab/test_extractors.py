@@ -1471,6 +1471,117 @@ class MaterialBatchProducerTests(unittest.TestCase):
         self.assertIn("--snapshot-version", str(caught.exception))
         self.assertIn("groups.sourceMaterialBatch", str(caught.exception))
 
+    def test_the_wikipedia_command_line_refuses_a_run_without_the_flag(self) -> None:
+        # Driven as a subprocess because the unit test above proves the FUNCTION: with
+        # `required=True` dropped, argparse passes `None` and the run dies on
+        # `None.strip()` instead of naming the flag, and the unit test stays green
+        # because it never goes through argparse.
+        import subprocess
+        import sys
+
+        script = Path(__file__).with_name("extract_wikipedia.py")
+        with tempfile.TemporaryDirectory() as raw:
+            output = Path(raw) / "wikipedia.jsonl"
+            dump = Path(raw) / "ptwiki.xml.bz2"
+            dump.write_bytes(bz2.compress(b"<mediawiki/>"))
+            proc = subprocess.run(
+                [
+                    sys.executable,
+                    str(script),
+                    "--input",
+                    str(dump),
+                    "--output",
+                    str(output),
+                ],
+                capture_output=True,
+                text=True,
+            )
+            # Nothing opened and nothing written: argparse exits before `main` builds
+            # the writer, which is what creates the output file.
+            self.assertFalse(output.exists())
+        self.assertEqual(proc.returncode, 2, proc.stderr)
+        self.assertIn("--snapshot-version", proc.stderr)
+
+    @staticmethod
+    def _declared_material_batch_literals() -> list[str]:
+        """The top-level object literals of `DECLARED_MATERIAL_BATCHES`, as source slices.
+
+        Reading TypeScript as text is the only cross-language route a stdlib test has, and
+        the trap is that a LAYOUT-shaped regex is fail-open: a batch whose fields are
+        written in another order, or with a comment between them, matches nothing and the
+        caller's loop never sees it. So the array literal is split on brace depth — one
+        slice per object, comments and field order irrelevant — and the caller checks that
+        every slice yielded its three keys.
+        """
+        source = (
+            Path(__file__)
+            .with_name("build_governance.ts")
+            .read_text(encoding="utf-8")
+        )
+        # From the first `{` after the declaration, NOT from the first `[`: the annotation
+        # `readonly SourceMaterialBatchV1[]` puts an empty pair of brackets between the name
+        # and the array literal, and walking from there ends the scan before it starts.
+        opened = source.index("{", source.index("DECLARED_MATERIAL_BATCHES"))
+        literals: list[str] = []
+        current: list[str] = []
+        depth = 0
+        for char in source[opened:]:
+            if char == "{":
+                depth += 1
+            if depth > 0:
+                current.append(char)
+            if char == "}":
+                depth -= 1
+                if depth == 0:
+                    literals.append("".join(current))
+                    current = []
+            elif depth == 0 and char == "]":
+                break
+        return literals
+
+    def test_the_declared_inventory_names_the_batch_the_extractor_stamps(self) -> None:
+        """The reviewed manifest's inventory and the extractor's stamp are one id.
+
+        `build_governance.ts` DECLARES the acquisition (version, window, evidence) and
+        `extract_wikipedia` STAMPS a batch id derived from `--snapshot-version`; the two
+        are written in different languages and compared by nothing at runtime, so a
+        drifted spelling blocks every human row with SOURCE_REFERENCE_MISSING after a
+        full extraction.
+
+        The invariant asserted is per batch and not per source, so READMITTING a source
+        (another dump, another corpus) stays green as long as its id derives from its own
+        `materialVersion` — the drift this catches is the derivation, not the roster.
+        """
+        from group_axes import material_batch_id
+
+        literals = self._declared_material_batch_literals()
+        self.assertTrue(literals, "no declared material batch found to compare")
+        for literal in literals:
+            fields = dict(
+                re.findall(
+                    r'\b(batchId|sourceId|materialVersion)\s*:\s*"([^"]+)"', literal
+                )
+            )
+            self.assertEqual(
+                sorted(fields),
+                ["batchId", "materialVersion", "sourceId"],
+                f"a declared batch is missing a field this test compares: {sorted(fields)}",
+            )
+            self.assertEqual(
+                fields["batchId"], material_batch_id(fields["materialVersion"])
+            )
+        wikipedia = [
+            literal
+            for literal in literals
+            if f'sourceId: "{extract_wikipedia.SOURCE_ID}"' in literal
+        ]
+        self.assertEqual(
+            len(wikipedia),
+            1,
+            "exactly one declared acquisition names the Wikipedia source: the cell has "
+            "one dump, and two entries for it would make the row's batch ambiguous",
+        )
+
     def test_carolina_gives_every_typology_of_one_download_one_batch(self) -> None:
         import extract_carolina
 

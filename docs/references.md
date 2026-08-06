@@ -770,6 +770,40 @@ de 2.2h:
   chamada), e o custo de NÃO fiar é o medido pela revisão: a propriedade existiria numa função e em
   nenhum pipeline.
 
+#### 2.2h-ter O PRODUTOR do inventário: declarado no writer, e recusa antes de escrever (Fase 3, item 1, 2026-08-06)
+
+O consumidor do inventário existia desde o Commit A (`auditCorpusSources` cruza
+`groups.sourceMaterialBatch` contra `materialBatches`); o **produtor** não. `build_governance.ts` passa a
+escrever manifesto **v2** com um lote declarado, e a declaração vive no writer em vez de vir dos pools.
+
+- **Âncora de quem declara:** dos cinco campos de um lote, três — `materialVersion`, `acquisitionWindow`
+  e `evidence` — são fatos de um evento de aquisição que **nenhum código deste repositório observou**, e
+  não são recuperáveis dos pools. Quem coletou declara; um pipeline que os sintetizasse publicaria
+  proveniência que ninguém adquiriu. _Fonte:_ **Gebru et al., 2021 — Datasheets for Datasets**
+  (Communications of the ACM 64(12):86–92). [link](https://doi.org/10.1145/3458723) _Fato citado:_ o
+  datasheet é preenchido pela equipe que **coletou** a porção, e declara quando/como foi coletada e a
+  versão do instantâneo — não é derivado do artefato processado.
+- **Âncora da janela pontual e da evidência de terceiro:** uma aquisição instantânea é
+  `startedAt === endedAt`, e o que a torna conferível é o par digest + tamanho do arquivo mais o
+  endereço público do instantâneo. O `mtime` do arquivo em disco é **evidência**, não declaração: nada
+  nele distingue "baixado então" de "copiado então", e é por isso que a janela foi ratificada em vez de
+  computada. _Fonte:_ **W3C PROV-DM, 2013 — The PROV Data Model** (W3C Recommendation).
+  [link](https://www.w3.org/TR/prov-dm/) _Fato citado:_ o modelo trata a atribuição temporal de uma
+  `Activity` como asserção de um `Agent`, distinta de qualquer traço que a entidade carregue.
+- **O que a decisão explora:** a declaração fica em código versionado e revisado, e não num JSON de
+  `benchmark/data/` (gitignored) nem num campo de `governance-inputs.json`. As duas alternativas seriam
+  forjáveis pelo próprio passo que consome o inventário, e o digest do manifesto cobriria a forja.
+  _Onde no projeto:_ `benchmark/lab/build_governance.ts` (`DECLARED_MATERIAL_BATCHES`),
+  `benchmark/tests/build-governance.test.ts`.
+
+**Sem precedente encontrado (2026-08-06)** para a direção da recusa: **o PRODUTOR recusar escrever um
+inventário vazio, em vez de escrevê-lo e deixar o consumidor bloquear linha por linha**. A literatura de
+proveniência descreve o que documentar e quem documenta, e a de integridade descreve como cobrir a
+declaração por digest; não foi encontrada prática de fail-closed no escritor. A razão é medida no próprio
+projeto: um manifesto v2 com `materialBatches: []` é válido para o parser, tem digest correto e faz
+`auditCorpusSources` bloquear **toda** linha humana com `SOURCE_REFERENCE_MISSING` — o operador recebe
+4.000 recusas idênticas em vez de uma frase sobre o inventário, e o arquivo escrito parece revisado.
+
 ### 2.2i Eixo REPORTADO contra eixo de UNIÃO: a lista de conectividade v4 (Commit B da Fase 1, 2026-08-04)
 
 `GROUP_KEYS` (`benchmark/split.ts`) passa a nomear sete eixos — `author`, `source`,
@@ -1259,6 +1293,63 @@ nada enquanto as mapeadas seguem autorizando `hide`. **Sem precedente encontrado
 acima publica taxa por faixa e não autoriza ação de produto por faixa, então a direção fail-closed
 aqui é decisão declarada. _Onde no projeto:_ `benchmark/profile-artifact.ts`
 (`assertLengthBandsAreMapped`).
+
+#### 4.2b-bis Um PREFIXO do dump não é amostra da população (Fase 3, item 1, 2026-08-06)
+
+As frações que a pré-inscrição congelou por faixa (238/239/204/119 linhas do bloco cego) foram derivadas
+de uma varredura das **primeiras 60.000 páginas** do dump. A extração real, com a amostragem
+determinística de 1 em 40 sobre 394.414 artigos, realiza **271/269/192/68** — e a faixa `[300,+∞)` cai de
+14,89 % para 8,53 % da população, o que muda o teto diagnóstico dela de 3,62 % para 6,24 %.
+
+- **Âncora do desenho:** um dump do MediaWiki é ordenado por `page_id`, que é ordem de **criação**, e
+  artigo antigo é artigo maduro — lede mais longa, mais seções, mais parênteses. Um prefixo é uma amostra
+  de conveniência correlacionada com a própria variável medida; a amostragem sistemática por hash estável
+  da chave natural (`common.keep_sample`) não é. _Fonte:_ **Cochran, 1977 — Sampling Techniques** (3ª ed.,
+  Wiley), cap. 8 sobre amostragem sistemática. [link](https://archive.org/details/samplingtechniques_202006)
+  _Fato citado:_ a amostragem sistemática só é equivalente à aleatória simples quando a ordem do quadro é
+  independente da variável de interesse; ordem correlacionada com a variável enviesa a estimativa.
+- **O que a decisão explora:** a estimativa da população é lida do POOL que a coleta realmente escreveu,
+  não de uma varredura auxiliar — o pool é o que o corpus contém, e a varredura auxiliar mediu outra coisa.
+  _Onde no projeto:_ `wikipedia_fresh.stats.json` e `ESTADO.md` § 5.1b.
+
+**Sem precedente encontrado (2026-08-06)** para a consequência de governança: **uma faixa DIAGNÓSTICA
+congelada cuja fração a população refuta, num regime em que o parser confere a aritmética interna e nunca
+a fração**. A literatura de pré-registro trata de mudar hipótese depois de ver resultado; aqui não há
+resultado — há estrutura da população —, e a distinção é a de § 3.4 do ESTADO. A escolha registrada é
+medir, publicar a divergência e deixar a emenda para a unidade que a possui, porque corrigir a política
+move `evaluatorDigest` e a faixa não decide nada.
+
+#### 4.2b-ter As duas convenções que decidem número publicado: o quantil e o rateio da cadeira (Fase 3, item 1, 2026-08-06)
+
+Dois valores de § 5.1b do ESTADO não são determinados pela regra que os acompanhava, e a revisão cruzada
+os pegou. O `p90 = 282` das 4.000 linhas do corpo: medido, os vizinhos do índice 3.600 são
+`[280, 281, 281, 281, 282, 282, 282]`, então `w[⌊q·n⌋]` dá **282**, o *nearest-rank* dá **281** e a
+interpolação linear dá **281,1** — e só p90 depende da escolha, porque os outros quatro quantis coincidem
+nas três. E o `n` que cada faixa recebe do bloco cego de 800: as parcelas exatas são 271,0 / 269,4 / 191,4
+/ 68,2, os pisos somam 799 e sobra **uma** cadeira, com **empate** de resto (0,4) entre `[80,149]` e
+`[150,299]`.
+
+- **Âncora do quantil:** não existe "o" quantil amostral — existe uma família de definições que discordam
+  em amostras finitas, e publicar um percentil sem nomear a definição é publicar um número que outro
+  software não reproduz. _Fonte:_ **Hyndman & Fan, 1996 — Sample Quantiles in Statistical Packages** (The
+  American Statistician 50(4):361–365). [link](https://doi.org/10.1080/00031305.1996.10473566) _Fato
+  citado:_ o artigo enumera **nove** definições em uso nos pacotes estatísticos e mostra que elas dão
+  valores diferentes para o mesmo `q` e a mesma amostra.
+- **Âncora do rateio:** distribuir 800 linhas em quatro faixas por proporção é o problema de
+  apportionment, e o método do **maior resto** (quota de Hare) só é uma regra completa com um critério de
+  desempate declarado. _Fonte:_ **Pukelsheim, 2014 — Proportional Representation: Apportionment Methods and
+  Their Applications** (Springer). [link](https://doi.org/10.1007/978-3-319-03856-8) _Fato citado:_ os
+  métodos de quota exigem regra de desempate explícita, e o resultado depende dela quando dois restos
+  coincidem.
+- **O que a decisão escolhe:** a cadeira que sobra vai para a faixa de **maior limite inferior** — a de
+  menor população e, portanto, de **pior poder** —, porque é a faixa cujo teto diagnóstico o model card
+  publicaria mais alto e um `n` a mais só o aperta. Empatar em favor da faixa larga seria escolher o número
+  mais bonito. _Onde no projeto:_ `docs/ESTADO.md` § 5.1b.
+
+**Sem precedente encontrado (2026-08-06)** para o desempate por **pior poder** num rateio de bloco cego
+diagnóstico: a literatura de apportionment discute neutralidade e paradoxos de população, não "desempate a
+favor do estrato cuja estimativa é mais frágil". A escolha é declarada, e é conservadora na direção que
+importa aqui — a de não afrouxar o teto que o relatório imprime.
 
 ### 4.3 Cobertura multilíngue e o que existe (ou não) em português
 

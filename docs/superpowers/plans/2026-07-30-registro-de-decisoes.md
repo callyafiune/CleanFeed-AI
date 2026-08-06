@@ -5620,3 +5620,369 @@ outro mecanismo que o sugerido, e está nas divergências abaixo.
    fechada". Medido: a varredura custa **441 ms** e lê 574 arquivos / 9.265.278 bytes numa passada, num
    arquivo cujos vizinhos já custam 1.544 ms e 1.374 ms em chamadas a `git check-attr`. **Custo de
    reversão:** apagar um `describe` de 35 linhas e devolver a linha ao § 7.
+
+## Fase 3, item 1 — o inventário de material e a extração da célula (2026-08-06)
+
+O consumidor do cruzamento `groups.sourceMaterialBatch` → inventário existia desde o Commit A da Fase 1.
+O **produtor** não. Esta unidade o escreve, roda a extração da célula pelo runbook e mede o número que
+nenhuma unidade anterior havia medido: a perda que a poda global contra o corpus morto cobra da coleta.
+
+### As três medições que valem
+
+**1. A perda pela poda global é 0,049 %, e a leitura que importa não é ela.** As 4.100 linhas frescas do
+pool são teladas por `near_dupes.drop_seen_against` contra o artefato do corpus morto (10.000 documentos,
+3.323.576 chaves de shingle, `sha256` do corpus indexado conferido no cabeçalho — nenhum token do
+material cego é lido). Resultado: **2** linhas derrubadas, **0** por hash exato de conteúdo tokenizado e
+**2** por Jaccard ≥ 0,82. O plano limitava a perda por cima sem medi-la, raciocinando que a fatia de
+Wikipédia das ~1.600 linhas humanas do corpus morto é pequena contra uma piscina de ~1,1 milhão de
+artigos; o limite estava certo. **O que a medição acrescenta é o `highest_similarity_kept`: 0,81.** Uma
+linha fica um centésimo abaixo da barra de recusa. É o comportamento esperado de reextrair a mesma fonte
+— a mesma página noutra revisão volta com edições pequenas —, e é exatamente o caso que o runbook manda
+investigar antes de selar. Não é folga: é a barra decidindo no limite, e é a razão de a coleta pedir
+4.100 para uma cota de 4.000. Sobre a união que o montador real tela (4.613 candidatos, incluindo 514
+humanas do pool reservado) os números são 6 derrubadas, 0 por hash exato, maior mantida 0,81.
+
+**2. A célula tem 4.000 unidades independentes, não 1.** O § 5.6 do ESTADO publicava **1** componente
+por célula, porque o pool de 24/07 não carregava `groupAxes` e toda linha caía no balde único de origem
+irrecuperável. A extração nova emite `groups.source = ptwiki_page_<page_id>`, e o corpo estampado de
+4.000 linhas tem **4.000 componentes conexos, todos de tamanho 1** — o piso pré-inscrito de 300
+`samplingUnits` fica 13,3× folgado, `assert_cells_can_meet_the_origin_document_floor` passa com 4.097
+documentos de origem distintos **no pool**, `preflight-viability` passa nos dois escopos com a declaração
+de que passar é necessário e não suficiente, e `auditCorpusSources` devolve `status=ready` com **zero**
+motivos de bloqueio. A dívida do inventário de material fecha aqui, e fecha medida.
+
+As duas contagens de documento de origem são de objetos diferentes e não devem ser somadas nem
+confundidas: **4.097** é do POOL, na barreira que antecede a seleção, e conta só origem `known` (as 4.100
+frescas menos as 3 que as duas podas tiraram, com as 510 reservadas sobreviventes fora da conta porque não
+nomeiam origem); **4.000** é do CORPO, uma linha por documento, que é o teto pré-inscrito de
+`maximumLinesPerOriginDocument` realizado com igualdade. Ler a barreira como resultado é a mesma classe de
+erro que deixou "1 unidade por célula" viver por semanas.
+
+**3. As frações por faixa que a pré-inscrição congelou estão erradas, e a faixa larga é a que dói.** Os
+valores `expectedBlindBlockLines` 238/239/204/119 vieram de uma varredura das primeiras **60.000
+páginas** do dump. A extração real — amostragem determinística de 1 em 40 sobre **394.414** artigos —
+realiza **271/269/192/68**, e a faixa `[300,+∞)` cai de 14,89 % para **8,53 %** da população: o teto
+diagnóstico dela passa de **3,62 %** para **6,24 %**. A causa é medida e tem nome: um dump do MediaWiki é
+ordenado por `page_id`, que é ordem de criação, e artigo antigo é artigo maduro com lede longa — um
+prefixo é amostra de conveniência correlacionada com a própria variável medida (referências § 4.2b-bis).
+A admissão cai de 54,3 % para 41,3 %, a mediana de 120 para 106 palavras, e o máximo sobe de 1.774 para
+2.256.
+
+O parser da pré-inscrição confere a **soma** das quatro parcelas contra
+`blindBlockLinesAtCollectionTarget` e cada teto contra `1 − α^(1/n)` do próprio `n`, e **nunca** a
+fração. Os quatro valores congelados são portanto internamente consistentes e externamente errados, e
+nenhum gate os pega. A consequência concreta é da Fase 6: o model card imprimiria 3,62 % para uma faixa
+que a população realiza com 68 linhas.
+
+**Por que esta unidade não corrigiu a política.** Corrigir `preregistration-v4.json` move
+`evaluatorDigest` (a política está em `EVALUATOR_FILES`), o que obriga as duas lentes seguintes a
+reverificar o digest de uma unidade cujo escopo era outro, e é emenda de pré-inscrição — legítima aqui,
+porque o que se viu é a **estrutura da população** e não resultado (ESTADO § 3.4), mas de outro dono. A
+faixa é diagnóstica: `role: "diagnostic"`, `decides: false`, `spendsAlpha: false`, e `m` continua 4. Então
+a decisão é medir, publicar a divergência com a causa e registrar o dono — a unidade que emendar a
+pré-inscrição, **antes** da Fase 6. **Custo de reversão da escolha:** nenhum; corrigir a política depois
+é o mesmo trabalho que corrigi-la agora, mais o digest.
+
+### O produtor do inventário, e por que ele recusa antes de escrever
+
+`benchmark/lab/build_governance.ts` escrevia `schemaVersion: 1` em dois lugares e não emitia
+`materialBatches`. Agora escreve **v2** e nada mais, com o lote declarado em
+`DECLARED_MATERIAL_BATCHES`:
+
+| campo | valor | como foi obtido |
+|---|---|---|
+| `batchId` | `smb_ptwiki-20220301` | **rodando** `group_axes.material_batch_id("ptwiki-20220301")` |
+| `sourceId` | `src_wikipedia_pt` | `extract_wikipedia.SOURCE_ID`, declarado no manifesto |
+| `materialVersion` | `ptwiki-20220301` | o nome do arquivo em disco |
+| `acquisitionWindow` | `startedAt = endedAt = 1784753446707` | **ratificado pelo operador em 2026-08-04**; reconferido contra o `mtime` do arquivo |
+| `evidence` | sha256 `70c9ec4f…`, 1.955.910.144 bytes, a URL do diretório do dump | **recomputados** sobre `snapshots/ptwiki-20220301-pages-articles.xml.bz2` |
+
+A declaração vive no **writer**, em código versionado, e não em `governance-inputs.json` nem num JSON de
+`benchmark/data/`. As duas alternativas seriam forjáveis pelo próprio passo que consome o inventário, e o
+`sourceManifestDigest` cobriria a forja — que é o oposto do que a cobertura por digest existe para dar.
+Três dos cinco campos são fatos de um download que nenhum código deste repositório observou; sintetizá-los
+seria a proveniência inventada que R4 proíbe.
+
+Duas recusas, e as duas disparam **antes do primeiro byte escrito** (`writeGovernance` valida e só depois
+faz `mkdir`):
+
+- `MATERIAL_BATCHES_EMPTY` — inventário vazio. É estado que o esquema **expressa**: o manifesto seria
+  válido, com digest correto, e faria `auditCorpusSources` bloquear **toda** linha humana com
+  `SOURCE_REFERENCE_MISSING`. O operador receberia 4.000 recusas idênticas em vez de uma frase sobre o
+  inventário, e o arquivo escrito pareceria revisado. **Sem precedente encontrado** para a direção
+  (referências § 2.2h-ter): a literatura descreve o que documentar e como cobrir a declaração por digest,
+  não fail-closed no escritor;
+- `MATERIAL_BATCH_SOURCE_UNDECLARED` — lote cuja `sourceId` o manifesto não declara, nomeando o lote, a
+  fonte e as fontes que existem. É a forma real da falha: as `sources` do manifesto são **projetadas dos
+  registros**, então um corpus sem linha humana projeta nenhuma fonte e o lote ptwiki resolve contra nada.
+
+A lista de lotes chega a `reviewedSourceManifestBodyOf` **por parâmetro** e não é lida direto da
+constante. Não é conveniência de teste: contra UMA lista embarcada, um writer que salta as duas checagens
+responde igual a um que as roda, e só a exercitação contra uma lista que não é a embarcada separa os dois
+— a mesma razão pela qual `lengthBandKeyOf` recebe as faixas por parâmetro.
+
+**O lote da Carolina não deixou vestígio no código.** Procurado por nome (`smb_carolina*`,
+`carolina-2_0-bea`): as únicas ocorrências são o `--snapshot-version carolina-v2.0` de
+`extract_carolina.py` — o extrator que `CarolinaOutOfFrame` recusa antes de abrir o arquivo — e fixtures.
+Não havia inventário declarado para remover. Fica registrada uma discordância de grafia entre documentos:
+o ESTADO § 5.1 chama o lote de `smb_carolina-2_0-bea` e o extrator derivaria `smb_carolina-v2_0` de
+`carolina-v2.0`. Custo zero — a fonte está fora da moldura — e o nome correto é o que o extrator deriva.
+
+### O que a montagem de release faz, e por que a recusa é o gate funcionando
+
+`assemble_corpus.py --candidates-dir ../data/candidates-f3` roda até a governança e para em
+**`HeldOutReserveEmpty`**: nenhuma família pode ser declarada held-out e o manifesto selado recusa lista
+vazia. **A causa sobre este pool é que `candidates-f3` não tem classe gerada nenhuma** — `load_ai` e
+`load_mixed` devolvem 0, e a mesma corrida avisa que a mista está 2.000 linhas abaixo da cota. Sobre o
+pool de 24/07 a recusa é a mesma com outra causa: lá existem geradas e é a poda global que não deixa
+nenhuma sobreviver; e sem a poda global a montagem constrói 1.170 geradas e o gate antiartefato manda a
+lane `gemini-api` para regeneração (ESTADO § 5.4). Três saídas, três recusas, todas corretas: a classe
+gerada é o **item 2** da Fase 3.
+
+Antes de parar, a corrida real mede o que interessa a este item: 4.097 documentos de origem distintos no
+POOL — a contagem que a barreira do piso de poder lê, não a do corpo estampado, que é 4.000 com uma linha
+por documento —, o piso de documentos de origem **passando**, e `tag_hard_negatives` etiquetando 20 linhas em cada
+uma das **seis** famílias — o que fecha a dívida "três das seis famílias hard-negative são de texto curto
+informal e podem não encher". Não era escassez. Fica no lugar dela a alegação que a etiqueta **não** faz:
+`hardNegativeFamily` é atribuída por pertença de célula, não por leitura de estilo, e ler estilo é ato de
+revisão humana que a v1 não faz (R4).
+
+Para dar à auditoria e ao preflight um corpo estampado, a classe humana foi montada por um **arnês** que
+chama as mesmas funções do montador na mesma ordem (`load_humans`, `prune`, `drop_seen_against`,
+`assert_cells_can_meet_the_origin_document_floor`, `balanced_humans`, `human_record`,
+`tag_hard_negatives`, `assign_partitions`, `assert_stamped_corpus_is_splittable`). O arnês não está na
+árvore, e é a mesma dívida de material das taxas de § 5.4 e § 5.7: os pools são gitignored.
+
+### Uma descoberta de ordem no runbook
+
+`preflight-viability` lê `records.jsonl` por `parseBenchmarkDataset`, que **exige**
+`normalizedTextSha256`; `assemble_corpus` omite o campo de propósito, porque o `ingest` o recomputa e
+preenche. Então o preflight só corre sobre o diretório **ingerido** — que é onde o runbook o coloca, entre
+os passos 2 e 3 —, e nunca sobre a saída crua do montador. Nesta unidade o campo foi **escrito** por um
+script de fora da árvore chamando a função de produção `corpusContentDigest`, que é a mesma que o `ingest`
+recomputa; o `ingest` não rodou, porque `sealDataset` compara a composição por igualdade exata e a classe
+gerada não existe. Conferir depois os 4.000 valores contra essa mesma função **não** é medição de digest
+correto — é a função respondendo sobre o que ela própria escreveu —, e por isso a linha saiu do ESTADO.
+
+### Divergências desta unidade contra o que lhe foi pedido
+
+1. **A extração pediu 4.100 linhas e não 4.000.** O alvo pré-inscrito de coleta é 4.000 e continua sendo;
+   4.100 é o **pool**, e a cota trunca em 4.000 (`balanced_humans`). A razão é **medida, e o contrafactual
+   também**: são **três** as linhas frescas que as podas derrubam — posição **245** pela poda intra-pool,
+   **369** e **1.084** pela poda global, em contagem 1-indexada —, e as três estão dentro das primeiras
+   4.000. A amostragem é determinística sobre a chave da página e a leitura do dump é sequencial, então as
+   primeiras 4.000 linhas do pool são exatamente o que `--limit 4000` teria escrito — uma extração de 4.000
+   exatas entregaria **3.997**, e a composição de release, que `sealDataset` compara por igualdade
+   **exata**, ficaria **três** linhas curta. E isso é execução, não aritmética sobre a taxa de perda: o
+   pipeline completo (`dedup` → `prune` → `drop_seen_against`) foi rodado nos dois cenários e devolve 4.097
+   frescas sobre as 4.100 e 3.997 sobre as primeiras 4.000. **Custo de reversão:** rodar a extração de novo
+   com `--limit 4000` e aceitar um corpus que não sela.
+2. **Não usei `--exclude`.** A extração de 24/07 passava `_exclude_ids.txt` para ser disjunta por ID do
+   que já havia sido usado. Aqui isso destruiria a própria medição pedida: excluir por id as linhas que a
+   poda global pegaria faz a perda medida ser zero por construção. A poda global é a tela declarada, e
+   medi-la exige que ela tenha o que pegar. **Custo de reversão:** um flag.
+3. **A dívida "o lado selado não confere licença registro↔fonte" tinha esta unidade como dono e foi
+   re-datada em vez de fechada.** Medido: `source_licenses` projeta a `licenseId` da entrada A PARTIR dos
+   registros e recusa fonte com duas licenças (`SourceCarriesTwoLicenses`), então o desacordo
+   registro↔fonte não é construtível pelo produtor que existe. O dono passa a ser o segundo produtor de
+   corpus, que é quem o constrói. **Custo de reversão:** nenhum código foi tocado.
+4. **Dois dos cinco testes que a unidade pedia já existiam, e foram conferidos em vez de duplicados.**
+   O cruzamento registro↔inventário nas duas direções, nomeando o `recordId`, está em
+   `benchmark/tests/corpus-source-audit.test.ts` ("passes a row whose batch the inventory declares…" e
+   "blocks a row whose batch the inventory does not declare"), com dois casos a mais que a unidade não
+   pediu (lote de geração no eixo de material; lote declarado para outra fonte). A limpeza do artefato de
+   vistos está em `benchmark/lab/test_near_dupes.py::SeenIndexArtifactTests::test_the_artifact_carries_no_clear_text`,
+   que afirma sobre os BYTES do arquivo. Acrescentar um terceiro par diria a mesma coisa em outro arquivo.
+   Além dos testes, o artefato **real** em disco foi varrido: 10.000 linhas, zero fora da forma fechada
+   (campo do conjunto declarado, digest em hex de 64, blob base64 de chaves inteiras de 8 bytes).
+5. **A extração já recusava rodar sem `--snapshot-version`, e o que faltava era a recusa da linha de
+   comando.** `required=True` estava lá e `extract()` recusa por `material_batch_id("")`; o teste que
+   existia exercita a FUNÇÃO, e com `required=True` removido ele fica verde enquanto a corrida passa a
+   morrer num `AttributeError` sobre `None`. O teste novo dirige o script como subprocesso, pela mesma
+   razão registrada no teste gêmeo da Carolina.
+
+### A releitura da unidade, depois da queda de rede (2026-08-06)
+
+A unidade caiu por rede (ENOTFOUND) depois da Parte A e foi retomada. O inventário que a retomada recebeu
+dizia que a extração nunca havia rodado; o **disco dizia o contrário** — `benchmark/data/candidates-f3/` e
+`benchmark/data/corpus-build-f3/` existiam, com as Partes B e C já executadas e os documentos já escritos.
+Vale a regra da precedência: código e artefato medidos vencem o inventário. Cada número que estes
+documentos publicam para a Fase 3, item 1 foi **re-executado** nesta releitura, pelas funções de produção
+chamadas direto sobre os artefatos em disco, e a montagem real foi re-rodada até a recusa.
+
+**Reproduziu exatamente, sem uma casa de diferença:** a extração (394.414 varridos, 231.441 fora da
+janela, 39 por PII, 4.100 escritos); a poda global (4.100 teladas, 0 por hash exato, 2 por Jaccard, maior
+mantida 0,81, 25.151 pares, 174 buckets); a união do montador real (4.614 pós-dedup, 4.613, 6 derrubadas);
+os quantis do corpo (56 / 70 / 106 / 176 / 282 pela convenção `w[⌊q·n⌋]`, máximo 2.256); as quatro faixas por `lengthBandKeyOf`
+(1.355 / 1.347 / 957 / 341, e 271 / 269 / 192 / 68 a n=800, tetos 1,60 / 1,62 / 2,26 / 6,24 %); o
+`[80,99]` (519 linhas, n=104, teto 4,13 %); os 4.000 componentes de tamanho 1; os 20 × 6 hard-negatives;
+`auditCorpusSources` em `ready` com 0 motivos; `preflight-viability` passando nos dois escopos; o
+`sourceManifestDigest` `dfcd17cd…` recomputado pela função de produção; a recusa `HeldOutReserveEmpty`; e
+as três evidências do lote declarado, recomputadas sobre o arquivo de 1,96 GB (1.955.910.144 bytes, sha256
+`70c9ec4f…`, mtime 1784753446707). Acrescentou uma medição que faltava: o artefato de vistos **real**
+(36.425.322 bytes) tem 10.000 linhas com zero desvio da forma fechada.
+
+**Três correções, e as três são da mesma família — número certo, objeto errado:**
+
+1. **Os 4.097 documentos de origem estavam publicados como propriedade do CORPO ESTAMPADO**, dentro da
+   tabela que descreve o corpo. São do POOL, na barreira que antecede a seleção. Medido: o corpo de 4.000
+   linhas tem **4.000** documentos de origem distintos, com no máximo **1** linha por documento — o teto de
+   `maximumLinesPerOriginDocument` realizado com igualdade. Não era erro de aritmética (4.097 está certo
+   para o que `origin_documents_per_cell` conta, que é só origem `known` sobre as 4.607 sobreviventes), e é
+   por isso que nenhum teste o pegaria.
+2. **A causa da recusa `HeldOutReserveEmpty` estava atribuída à poda global.** Medido sobre
+   `candidates-f3`: `load_ai` e `load_mixed` devolvem **0** — não existe classe gerada para a poda
+   derrubar, e a mesma corrida avisa que a mista está 2.000 linhas abaixo da cota. A causa "a poda global
+   não deixa nenhuma gerada sobreviver" é verdadeira, mas do pool de 24/07. Duas recusas com a mesma
+   exceção e causas diferentes, e só uma delas é desta corrida.
+3. **A decomposição da união dizia "4.100 frescas mais 514 reservadas".** Medido: `load_humans` devolve
+   **4.680** (4.100 + **580**), e a dedup exata derruba **66**, todas reservadas — o corpus morto de que o
+   pool reservado vem foi construído da mesma Wikipédia, a linha fresca entra primeiro e a cópia reservada
+   sai. O 514 é pós-dedup e estava certo; o que faltava era dizer de onde os 66 saem.
+
+**Uma fronteira que o parcial cruzou, registrada em vez de escondida.** O arnês da corrida de 2026-08-06
+foi até `assign_partitions`, então o corpo em disco carregava o `BLOCK_TIME` de cada partição em
+`createdAt`/`provenance.collectedAt`, e esta unidade tinha por limite "não congelar o split nem criar
+`test`/`cal-B`". A releitura publicou isso como "carimbo de timestamp, não partição" — leitura que a
+revisão cruzada **refutou pelo código**, e o fechamento da unidade corrigiu. Ver a seção do fechamento.
+
+**Números da árvore que a releitura moveu, porque a suíte mediu diferente do que o ESTADO dizia:** a
+releitura mediu **171 arquivos / 2.815 testes** (vitest) e **431 testes + 84 subtests** (pytest), com o
+avaliador em **1.875** (1.444 em 45 arquivos de `benchmark/tests`, 431 no lab) — o fechamento acrescentou
+um teste de subprocesso e os vigentes estão no ESTADO § 1. E o **lint caiu de 13 para 12
+problemas**: os 10 erros que ficam estão **todos** sob `.cache/chrome-for-testing/`, um Chrome baixado que
+`.gitignore` cobre e nenhum commit carrega. A releitura atribuiu a queda ao cache; **a revisão cruzada
+refutou a atribuição** e ela está corrigida no fechamento.
+
+### O fechamento da unidade: o que as duas lentes pegaram, e as duas leituras que o código refutou (2026-08-06)
+
+Duas revisões adversariais leram o parcial inteiro — uma contra o contrato da unidade, uma contra os
+invioláveis. Nenhuma das duas foi refutada; as duas encontraram a mesma família de defeito que esta sessão
+já pagou três vezes, **valor copiado onde o contrato manda medir**, e desta vez em prosa em vez de em
+número: as contagens estavam certas e as **causas** eram sintetizadas.
+
+**1. A causa da queda do lint estava inventada, e a refutação já estava no mesmo documento.** A releitura
+publicou que o lint caiu de 13 para 12 problemas "sem que nenhuma linha do repositório mudasse", atribuindo
+a queda à versão do Chrome no cache. Medido rodando o ESLint sobre a versão anterior do arquivo: o 11.º
+erro era o `dirname` importado sem uso em `build_governance.ts:14`, que **esta unidade apagou** — 11 = 1 do
+repositório + 10 do cache. O registro da entrada 13 já dizia exatamente isso, e a releitura não o leu. O
+ESTADO agora publica a propriedade que vale — **nenhum erro de lint em caminho rastreado** — e a atribuição
+errada entrou em § 6 por nome. **Custo de reversão:** nenhum; nenhuma linha de código depende disso.
+
+**2. O contrafactual da margem de coleta era 3.997 e não 3.998, e o próprio ESTADO se contradizia.** A
+releitura converteu o contrafactual de estimativa em medição, mas mediu só a poda global: as duas linhas
+que ela derruba estão nas posições 369 e 1.084. Falta a **terceira**, que a poda **intra-pool** derruba na
+posição 245 — e a mesma seção do ESTADO dizia "4.097 é 4.100 menos as **3** frescas que as duas podas
+tiraram", que não coexiste com "duas dentro das primeiras 4.000". Rodei o pipeline completo (`dedup` →
+`prune` → `drop_seen_against`) nos dois cenários: sobre as 4.100 sobrevivem **4.097** frescas, sobre as
+primeiras 4.000 sobrevivem **3.997**. A conclusão não muda — a margem é necessária —, e o número que a
+sustenta agora é de execução. As posições também estavam publicadas 0-indexadas sem dizer, e agora são
+1-indexadas por escrito.
+
+**3. A leitura de que o corpo local "não tinha partição" é falsa, e o corpo foi apagado.** O parcial
+publicou que os carimbos de bloco eram "timestamp em dado gitignored, não split congelado", e que
+`test`/`cal-B` só passariam a existir no item 3. O código refuta a primeira metade:
+`assemble_corpus.stamp_block` escreve o `BLOCK_TIME` da partição em `createdAt`, e
+`diagnostic_probes.partition_of` devolve a partição **desse campo**, porque a pertença é fato derivado e de
+propósito não é campo do registro. Um corpo estampado **tem** pertença de bloco, inclusive nas duas cegas.
+
+O que a revisão não viu, e que decide o remédio, é que a colisão é **estrutural**: `schema.ts` exige
+`createdAt` numérico em todo registro e o **único** escritor desse campo é `stamp_block`. Logo um corpo que
+passe `parseBenchmarkDataset` — o que `preflight-viability` exige — carrega carimbo por construção, e
+"medir o corpo estampado" e "não criar `test`/`cal-B`" são objetivos que o esquema torna incompatíveis. Não
+foi descuido do arnês: era a única forma de a auditoria e o preflight terem corpo para ler.
+
+**A decisão:** medir e então **apagar**. `benchmark/data/corpus-build-f3/records.jsonl` e
+`cluster-report.json` (cuja chave de fatia é `partição/classe`) saíram do disco; ficaram os dois arquivos
+de governança e a evidência de rótulo, que não carregam pertença de bloco. O ESTADO publica o **agregado**
+de 1.600 linhas postas de lado — a regra que § 3.3 impõe e que `open_partition_rows` executa — e não mais
+uma contagem por partição cega, uma linha para cada, que a própria § 3.3 proíbe. **Custo de reversão:**
+re-montar, cerca
+de três minutos; o pool ficou em disco, e os números de pool seguem reproduzíveis dele. **O que se perde:**
+os números do corpo deixam de ser reproduzíveis sem re-montar, que é a dívida de § 7 que já os cobria.
+**O que se ganha:** nenhuma medição futura sobre aquele diretório toca uma linha que o próprio código
+chama de `test`.
+
+**4. O runbook ensinava o manifesto que a auditoria bloqueia.** O § 3.3 descreve o manifesto de fontes na
+v1, sem `materialBatches`, e é a seção que alguém abre para escrever o arquivo. Medido, escrevendo o
+manifesto nessa forma pelas funções de produção e rodando a auditoria sobre o corpo real: `status=blocked`
+com **4.000** `SOURCE_REFERENCE_MISSING`, um por linha humana, contra `ready` com 0 motivos pelo manifesto
+v2 do produtor. É literalmente o cenário que a dívida do Commit A descrevia. O § 3.3 ganhou o callout de
+v2 na forma do que o § 2 já tinha para o registro v4, e o runbook ganhou o **passo 3.3b**, que é o comando
+`build_governance.ts` entre a montagem e o `ingest` — antes não havia nenhuma ocorrência de
+`build_governance` no runbook, e o passo de `ingest` recebia `--sources` como arquivo de mão. A reescrita
+campo a campo entra como dívida de § 7. E o comentário de `corpus-source-audit.ts` que dizia que o
+inventário "is still owed … See Fase 3" foi corrigido, o que move o `evaluatorDigest` para
+`a79a9ee6cf…` — barato enquanto `issuedAt` é nulo.
+
+**5. Duas guardas novas ganharam prova, e uma delas era fail-open.** O teste que cruza o lote declarado
+com o id que o extrator deriva raspava o TypeScript com um regex de **layout** — `batchId` → `sourceId` →
+`materialVersion` em linhas adjacentes. Medido: contra um texto com três lotes ele casa **um**; um lote com
+os campos em outra ordem, ou com um comentário entre eles, fica invisível, inclusive um com
+`materialVersion` errada. Agora o literal do array é fatiado por profundidade de chave, cada objeto entrega
+seus três campos **por nome** e o teste exige que os três estejam lá, então um campo renomeado fica
+vermelho em vez de desaparecer. A asserção de `sourceId` deixou de ser "todo lote é o da Wikipédia" — que
+ficaria vermelha numa readmissão legítima — e passou a ser "exatamente um lote nomeia a fonte da
+Wikipédia", com a derivação `batchId == material_batch_id(materialVersion)` exigida de **todos**.
+
+A segunda: a entrada de linha de comando de `build_governance.ts` passou a ser um predicado sobre
+`argv[1]`, e **nenhum** teste a exercitava — mutá-la para `if (false)` deixava a bateria inteira verde
+enquanto o comando documentado saía com código 0 sem escrever nada. Um teste novo dirige o script como
+subprocesso e afirma os dois arquivos escritos mais o digest impresso, que é a mesma razão pela qual o
+teste de subprocesso do extrator existe.
+
+**6. Três correções de comentário e de prosa, todas da forma "a frase promete o que o código não faz".**
+A docstring de `writeGovernance` dizia "Writes both governance files, or neither" com duas escritas não
+atômicas: uma falha de I/O na segunda deixa manifesto revisado sem template. O título passou a ser o que o
+código garante — nenhuma recusa deixa arquivo atrás — e a não atomicidade está escrita ao lado. O escritor
+emite `heldOutGeneratorFamilies: []` sem recusar, contra o princípio que o seu próprio comentário declara;
+a razão está agora no comentário, e é que este writer também corre sobre o intermediário **só humano**,
+onde não há família gerada para reservar, e é `validateDatasetManifest` que recusa a lista vazia no selo. E
+o ESTADO publicava a recusa de inventário vazio como recusa do produtor de hoje: ela **não é alcançável**
+pelo `main()` atual, que passa uma constante de um elemento, e guarda um produtor que **derive** a lista —
+que é exatamente por que a lista chega por parâmetro.
+
+**7. Duas convenções que decidiam número publicado e não estavam escritas.** O `p90 = 282` só sai da
+convenção `w[⌊q·n⌋]`: medido, os vizinhos do índice 3.600 são `[280, 281, 281, 281, 282, 282, 282]`, o
+*nearest-rank* dá 281 e a interpolação linear 281,1 — e os outros quatro quantis coincidem nas três
+convenções, então só p90 dependia. E o `n` por faixa a n=800: as parcelas exatas são 271,0 / 269,4 / 191,4
+/ 68,2, os pisos somam 799, sobra **uma** cadeira e há **empate** de resto (0,4) entre `[80,149]` e
+`[150,299]`. "Maior resto" sozinho não escolhe; o desempate publicado dá a cadeira à faixa de maior limite
+inferior, que é a de pior poder. As duas estão escritas em § 5.1b e ancoradas em § 4.2b-ter de
+`references.md`.
+
+### O que NÃO foi aplicado, com a razão
+
+1. **`749.166 chaves distintas` no artefato de vistos.** A revisão está certa: o número é
+   `len(SeenIndex.postings)`, o índice invertido **amostrado em 1/16**, e as chaves distintas de todos os
+   documentos são 2.838.602. Mas a alegação nunca saiu do relatório interno da unidade (gitignored):
+   `grep` de `749166` em `docs/`, `benchmark/`, `src/` e `contracts/` não devolve nada, e o que o ESTADO
+   publica — 10.000 documentos, **3.323.576** chaves de shingle — é `shingle_keys()`, que está certo e foi
+   reconferido contra o cabeçalho do artefato. Não há documento rastreado a corrigir.
+2. **Tornar as duas escritas de `writeGovernance` atômicas** (temporário + rename). A não atomicidade está
+   agora declarada; torná-la atômica é mudança de comportamento sem consumidor que a exija — o `ingest`
+   recebe os dois caminhos e falha alto se um faltar. Fica para a unidade que tocar o escritor.
+3. **As frações por faixa da pré-inscrição** (238/239/204/119 contra 271/269/192/68) seguem erradas e
+   seguem no lugar: corrigi-las move `evaluatorDigest` **e** é emenda de pré-inscrição, de outro dono, com
+   prazo em § 7 — antes da Fase 6, que é onde o model card imprime a tabela.
+
+### As sete provas por mutação do fechamento, rodadas por último sobre os bytes finais
+
+Linha de base dos quatro arquivos mutáveis, e o valor a que os quatro voltaram, conferido:
+`build_governance.ts` `434d7579…` (10.713 bytes) · `test_extractors.py` `e5ebface…` (349.929) ·
+`extract_wikipedia.py` `71a7b2db…` (9.051) · `build-governance.test.ts` `0675f3c6…` (6.600).
+
+| # | mutação | vermelho em | sha256 sob a mutação |
+|---|---|---|---|
+| M1 | `if (materialBatches.length === 0)` → `if (false && …)` | `refuses to write an empty material inventory, and leaves no file behind` (1 de 6) | `885d74e3…` |
+| M2 | `if (!declaredSourceIds.has(batch.sourceId))` → `if (false && …)` | `refuses a batch whose sourceId the manifest does not declare…` **e** `refuses the declared inventory itself when the corpus declares no source at all` (2 de 6) | `230865841…` |
+| M3 | `--snapshot-version` com `required=False` na argparse | `test_the_wikipedia_command_line_refuses_a_run_without_the_flag`, e a falha é a que o comentário prevê: quebra em `assertFalse(output.exists())` com `True is not false` — sem o flag obrigatório a corrida ABRE o material e CRIA a saída antes de morrer | `66a4287d…` |
+| M4 | `batchId: "smb_ptwiki-20220301"` → `"smb_ptwiki-2022-03-01"` | `test_the_declared_inventory_names_the_batch_the_extractor_stamps`, nomeando as duas grafias | `085bc6e0…` |
+| M5 | um **segundo** lote, com comentário entre `batchId` e `sourceId` e `materialVersion` errada | o mesmo teste, agora acusando `'smb_ptwiki-20220301' != 'smb_ptwiki-WRONG-VERSION'` — é a prova de que o parse novo VÊ o lote que o regex de layout não via. Do lado TS, 3 de 6 reprovam | `ab19cbbe…` |
+| M6 | `if (argv[1] !== undefined && argv[1] === fileURLToPath(…))` → `if (false)` | `writes both files and prints the digest of the manifest it wrote`. Sob a mutação, o comando documentado **sai com código 0 e escreve 0 arquivos**, e a bateria inteira reprova em **exatamente um** teste — o novo: 1 de 2.816 no vitest, 431 + 84 verdes no pytest. É a medição de que antes dele não havia cobertura nenhuma | `b81b8931…` |
+| M7 | trocar a **ordem** das duas escritas em `writeGovernance` | **nada.** 6 de 6 verdes e typecheck limpo, com o arquivo do mesmo tamanho (10.713 bytes) e sha256 diferente (`5f70ddb0…`). É a medição que sustenta a reescrita da docstring: a atomicidade que a frase prometia não é afirmada por teste nenhum, e não passou a ser | `5f70ddb0…` |
+
+M1 e M2 já constavam do parcial e foram **re-rodadas** aqui, porque a prova vale sobre os bytes finais e o
+arquivo mudou depois delas. M7 é a única cujo resultado esperado é verde: a mutação existe para medir a
+ausência de cobertura, não para exercitá-la, e o remédio escolhido foi corrigir a frase e não o código —
+com a razão em "O que NÃO foi aplicado".

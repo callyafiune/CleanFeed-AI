@@ -410,6 +410,20 @@ LF-normalizados para o hash.
 
 ### 3.3 `private/source-manifest.json` — [ReviewedSourceManifestV1](../benchmark/source-manifest.ts)
 
+> **O esquema vigente é o v2**, e o corpo desta seção descreve o v1. O v2 acrescenta
+> `materialBatches`, que é **obrigatória** e entra na projeção do `sourceManifestDigest`
+> sem condição: um lote declara `batchId`, `sourceId`, `materialVersion`,
+> `acquisitionWindow` e `evidence` não vazia. O v1 abaixo continua parseável, e não
+> serve: medido, um corpus v4 auditado contra um manifesto sem `materialBatches` sai
+> `blocked` com **um `SOURCE_REFERENCE_MISSING` por linha humana** (4.000 de 4.000 no
+> corpo da célula). **Não escreva este arquivo à mão** — o passo 3.3b abaixo o emite com o
+> digest correto. A autoridade é
+> [benchmark/source-manifest.ts](../benchmark/source-manifest.ts), nunca esta seção; a
+> reescrita do campo-a-campo é dívida declarada.
+>
+> No exemplo abaixo, `src_carolina` **saiu da moldura amostral** (ESTADO § 2): ele
+> permanece aqui como forma de uma segunda fonte licenciada, não como fonte a declarar.
+
 Inventário fechado das fontes autorizadas. **Nenhuma URL, nome, handle ou recibo
 bruto** — só tokens opacos e digests.
 
@@ -496,6 +510,29 @@ errado, não o guarda.
 ```
 
 Toda `provenance.sourceId` de um registro precisa existir aqui (`SOURCE_ENTRY_ABSENT`).
+
+### 3.3b Quem emite os dois arquivos de governança — entre a montagem e o `ingest`
+
+`assemble_corpus.py` escreve `governance-inputs.json` no diretório da montagem; o
+manifesto revisado e o template do dataset-manifest saem de
+
+```
+node benchmark/lab/build_governance.ts <build-dir>/governance-inputs.json <build-dir>
+```
+
+que escreve `<build-dir>/private/source-manifest.json` (v2, com o self-digest calculado
+pela função de produção) e `<build-dir>/manifest-template.json`, e imprime o digest. Rode-o
+**antes** do `ingest`, e passe o arquivo que ele escreveu em `--sources`.
+
+Os lotes de material são **declarados no próprio writer**
+([`DECLARED_MATERIAL_BATCHES`](../benchmark/lab/build_governance.ts)) e nunca derivados dos
+pools: `materialVersion`, `acquisitionWindow` e `evidence` são fatos de um download que
+nenhum código deste repositório observou. Uma aquisição nova é uma entrada nova ali, no
+mesmo commit que a extração — e o `batchId` tem de ser exatamente o que
+`group_axes.material_batch_id(materialVersion)` deriva, porque é esse o id que o extrator
+estampa em cada linha. Duas recusas antes do primeiro byte: inventário vazio
+(`MATERIAL_BATCHES_EMPTY`) e lote cuja `sourceId` o manifesto não declara
+(`MATERIAL_BATCH_SOURCE_UNDECLARED`).
 
 ### 3.4 Template do dataset-manifest (`--dataset-manifest-template`)
 

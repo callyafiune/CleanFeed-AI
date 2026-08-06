@@ -23,13 +23,13 @@
 | item | valor |
 |---|---|
 | branch | `cleanfeed-mvp` |
-| suíte | 170 arquivos / 2.809 testes (vitest) + 429 testes e 84 subtests (pytest, lab). Verde em rodada limpa; sob contenção de I/O, dois arquivos de caminho selado batem no timeout de 20 s — dívida de § 7, não de política |
-| dos quais, o avaliador | 1.868 — 1.439 em 44 arquivos de `benchmark/tests`, 429 no lab |
+| suíte | 171 arquivos / 2.816 testes (vitest) + 431 testes e 84 subtests (pytest, lab). Verde em rodada limpa; sob contenção de I/O, dois arquivos de caminho selado batem no timeout de 20 s — dívida de § 7, não de política |
+| dos quais, o avaliador | 1.876 — 1.445 em 45 arquivos de `benchmark/tests`, 431 no lab |
 | typecheck | limpo |
-| lint | 13 problemas (11 erros, 2 avisos) |
+| lint | 12 problemas (10 erros, 2 avisos), e **nenhum erro em caminho rastreado**: os 10 estão todos sob `.cache/chrome-for-testing/` — um Chrome baixado, que `.gitignore` cobre e nenhum commit carrega —, então esse número é propriedade do cache e se move quando a versão do browser se move. Os 2 avisos são de `src/`, em `react-refresh/only-export-components` |
 | tags de release | 0 |
 | `issuedAt` no descritor | `null` (`models/cleanfeed-ptbr-v1/release.json`, com `gateDecision: "pending"` e `profileDigests: []`) |
-| verificador de links de docs | 205 links relativos em 35 arquivos, todos resolvem |
+| verificador de links de docs | 207 links relativos em 35 arquivos, todos resolvem |
 
 ---
 
@@ -109,6 +109,7 @@ de abrir o arquivo — o módulo fica na árvore, declarado, pela mesma convenç
 | | identidade do dataset: `dataset.id` = **`cleanfeed-ptbr-cells-v1`**, `intendedDomain` = **`scoped-cells`**. `ptbr-generic-v1` é **recusado por nome** (`dataset.refusedIds`, código `DATASET_ID_ABANDONED`), não apagado | OP |
 | | composição de release comparada por **igualdade exata** em `sealDataset`: `human` **4.000** (1 célula × o alvo de 4.000), `ai` **4.000**, `mixed` **2.000** — total 10.000 (`RELEASE_CORPUS_POLICY.counts`) | OP |
 | | manifesto de fontes na **v2**: `materialBatches` é obrigatório e entra na projeção do `sourceManifestDigest` sem condição. Um lote declara `batchId`, `sourceId`, `materialVersion`, `acquisitionWindow` e `evidence` não vazia | código |
+| | o **produtor** do inventário é `benchmark/lab/build_governance.ts`, que escreve v2 e nada mais. Os lotes são **DECLARADOS** ali (`DECLARED_MATERIAL_BATCHES`) e nunca derivados dos pools, porque `materialVersion`, `acquisitionWindow` e `evidence` são fatos de um download que nenhum código deste repositório observou. Duas recusas, antes do primeiro byte escrito: inventário **vazio** (`MATERIAL_BATCHES_EMPTY`) e lote cuja `sourceId` o manifesto não declara (`MATERIAL_BATCH_SOURCE_UNDECLARED`). A dos lotes vazios **não é alcançável pelo `main()` de hoje**, que passa uma constante de um elemento: ela guarda um produtor que **derive** a lista, e é por isso que a lista chega por parâmetro em vez de ser lida da constante — contra a constante embarcada, um escritor que pulasse as duas conferências responderia igual a um que as roda | código |
 | | **gate de composição** (`benchmark/composition-gate.ts`): três quantidades por célula, só em `test` — linhas de negativo humano elegíveis, unidades de amostragem, e linhas por documento de origem. A recusa nomeia célula, contagem e piso | código |
 | | **preflight de viabilidade** (`benchmark/viability-preflight.ts`, `preflight-viability`): condições necessárias antes do split, comparadas **por classe** e também sobre o corpus inteiro — passar não prova que o corpus é divisível | código |
 | | rótulo `human` = corte de data **pré-ChatGPT** (`< 2022-11-30`), por campo do documento — nunca por declaração. Na Wikipédia o campo é `revision/timestamp` do dump, e o `pages-articles` carrega só a revisão corrente: dump recente derruba tudo em vez de admitir texto recente, que é a direção fail-closed | OP |
@@ -272,43 +273,63 @@ Versão da Carolina, medida no header TEI dos **46** arquivos das três tipologi
 zero divergência. Janela de aquisição pontual (`startedAt === endedAt`), ancorada no mtime dos arquivos:
 ptwiki `1784753446707`, carolina `1784752441472`.
 
-Dos dois, só `smb_ptwiki-20220301` é lote de material **em moldura**; o da Carolina permanece medido e
-declarado, com a fonte em `OUT_OF_FRAME_HUMAN_SOURCES`.
+Dos dois, só `smb_ptwiki-20220301` é lote de material **em moldura**, e é o único que tem produtor: ele
+está em `DECLARED_MATERIAL_BATCHES` e `group_axes.material_batch_id("ptwiki-20220301")` deriva a mesma
+grafia. O da Carolina permanece medido e declarado, com a fonte em `OUT_OF_FRAME_HUMAN_SOURCES`, e o nome
+`smb_carolina-2_0-bea` acima é **de documento e de nenhum código**: `extract_carolina.py` derivaria
+`smb_carolina-v2_0` do seu `--snapshot-version carolina-v2.0`. Custo zero enquanto a fonte está fora da
+moldura, e a grafia que vale numa readmissão é a que o extrator deriva.
 
-### 5.1b A população da célula, medida no dump (2026-08-06)
+### 5.1b A população da célula, medida na EXTRAÇÃO REAL (2026-08-06)
 
-Medido sobre `ptwiki-20220301-pages-articles.xml.bz2`, espelhando as funções **reais** do lab
-(`lead_section`, `normalize_text`, `word_count`, `pii_hits`, `MINIMUM_WORDS=50`,
-`MAXIMUM_WORDS=5000`) sobre as primeiras **60.000** páginas.
+Medido por `extract_wikipedia.py --limit 4100 --sample-rate 40 --snapshot-version ptwiki-20220301`
+sobre `ptwiki-20220301-pages-articles.xml.bz2`, lido até o extrator encher a cota. É a corrida do
+runbook, não uma varredura espelhada: os números saem de `wikipedia_fresh.stats.json`.
 
 | quantidade | valor |
 |---|---:|
-| fora do namespace principal | 3.765 |
-| redirects | 10.125 |
-| artigos | 46.110 |
-| lead curto (< 50 palavras) | 21.066 |
-| lead longo (> 5.000 palavras) | 1 |
-| derrubados por PII (4 email · 3 handle · 1 cnpj) | 7 |
-| **admissíveis** | **25.036** — 54,3 % dos artigos |
-| páginas a ler para 4.000 admissíveis | ~7.366, contra ~1,1 milhão de artigos no dump |
+| artigos oferecidos ao filtro (`scanned`) | 394.414 |
+| derrubados pela janela de palavras (`< 50` ou `> 5.000`) | 231.441 |
+| derrubados por PII (13 email · 9 handle · 8 cnpj · 12 phone) | 39 |
+| derrubados pelo corte de data | **0** — o dump é de 2022-03-01, inteiro pré-ChatGPT |
+| **admissíveis antes da amostragem** | **162.934** — 41,3 % dos artigos |
+| tirados pela amostragem determinística de 1 em 40 | 158.834 |
+| **escritos no pool** | **4.100** (cota de 4.000 mais 100 de margem) |
 
-Palavras dos admissíveis: **p10=56 · p25=72 · p50=120 · p75=221 · p90=362 · máx=1.774**. Só **40 %**
-têm ≥150 palavras e só **15 %** têm ≥300 — é esta assimetria que a tabela de faixas publica em vez de
-diluir. A coleta **não** filtra por comprimento: a população é "lead sections da Wikipédia pt", em
-distribuição natural.
+Palavras das 4.000 linhas do corpo: **p10=56 · p25=70 · p50=106 · p75=176 · p90=282 · máx=2.256**, média
+144,9 e mínimo 50. O quantil é o elemento de **índice `⌊q·n⌋`** da lista ordenada 0-indexada, e a
+convenção está escrita porque **só p90 depende dela**: medido, `w[3600] = 282`, o *nearest-rank* dá **281**
+e a interpolação linear **281,1** — os outros quatro valores coincidem nas três convenções. Apenas **32 %**
+têm ≥150 palavras e **8,5 %** têm ≥300. A coleta **não** filtra por comprimento: a população é "lead
+sections da Wikipédia pt", em distribuição natural.
 
-As quatro faixas pré-inscritas sobre esta mesma medição, com o `n` que o alvo de coleta lhes reserva no
-bloco cego de 800 linhas (apropriação por maior resto, somando 800) e o teto `1 − α^(1/n)` de cada:
+As quatro faixas pré-inscritas sobre o corpo de 4.000, por `lengthBandKeyOf` (a função de produção,
+recebendo as faixas por parâmetro), com o `n` que o bloco cego de 800 linhas lhes reserva por maior
+resto e o teto `1 − α^(1/n)` desse `n`. As parcelas exatas são **271,0 / 269,4 / 191,4 / 68,2**: os pisos
+somam 799, sobra **uma** cadeira e os restos de `[80,149]` e `[150,299]` **empatam** em 0,4 — "maior resto"
+sozinho não escolhe, e o desempate publicado dá a cadeira à faixa de **maior limite inferior**, que é a de
+pior poder. A última coluna é o que a pré-inscrição **congelou**, e as duas não coincidem:
 
-| faixa | admissíveis | fração | `n` a n=800 | teto diagnóstico |
-|---|---:|---:|---:|---:|
-| [50,79] | 7.452 | 29,77 % | 238 | 1,82 % |
-| [80,149] | 7.462 | 29,81 % | 239 | 1,82 % |
-| [150,299] | 6.395 | 25,54 % | 204 | 2,13 % |
-| [300,+∞) | 3.727 | 14,89 % | 119 | **3,62 %** |
+| faixa | linhas | fração | `n` a n=800 | teto medido | pré-inscrito `n` / teto |
+|---|---:|---:|---:|---:|---:|
+| [50,79] | 1.355 | 33,88 % | 271 | 1,60 % | 238 / 1,82 % |
+| [80,149] | 1.347 | 33,67 % | 269 | 1,62 % | 239 / 1,82 % |
+| [150,299] | 957 | 23,93 % | 192 | 2,26 % | 204 / 2,13 % |
+| [300,+∞) | 341 | 8,53 % | **68** | **6,24 %** | 119 / 3,62 % |
 
-O corte 100 dos buckets antigos saiu: [80,99] tem 11,25 % da população, o que a n=800 daria faixa de
-**90** linhas e teto de **4,75 %** — pior poder que a mais larga da tabela vigente.
+**A faixa larga é mais estreita do que a pré-inscrição diz**, e a divergência é da POPULAÇÃO e não da
+aritmética: 8,53 % de linhas com ≥300 palavras contra os 14,89 % que a política congelou. Os valores
+congelados vieram de uma varredura das primeiras **60.000 páginas** do dump (46.110 artigos, 54,3 % de
+admissão, p50=120, p90=362, máx=1.774) — um prefixo enviesado para artigo maduro e lede longa. A
+amostra de 1 em 40 sobre 394.414 artigos derruba a admissão para 41,3 % e a mediana para 106. O parser
+confere a soma contra `blindBlockLinesAtCollectionTarget` e cada teto contra o próprio `n`, **nunca** a
+fração, então os quatro valores congelados são internamente consistentes e externamente errados
+(dívida de § 7). Consequência concreta: o model card da Fase 6 imprimiria **3,62 %** para uma faixa que
+a população realiza com 68 linhas e teto de **6,24 %**.
+
+O corte 100 dos buckets antigos continua fora: sobre esta medição [80,99] tem **519** linhas, 12,97 % do
+corpo, o que a n=800 daria faixa de **104** linhas (103,8 arredondado, leitura isolada e não parte do
+rateio das quatro) e teto de **4,13 %** — pior poder que qualquer faixa da tabela vigente exceto a última.
 
 ### 5.2 Aritmética da cota
 
@@ -361,6 +382,124 @@ abre depois da emenda da moldura é só `wikipedia_fresh.jsonl` (5.000 linhas) m
 | espaço anômalo, e de onde vem | 0 de 11.000 linhas ptwiki e 0 de 19.673 `ai`, contra 185 de 2.135 vãos mistos (8,67 % corrida de espaço) e 113 (5,29 % espaço terminal): `make_mixed.emit` escreve `text: edited` cru, e todo pool escrito por `CandidateWriter.offer` passou por `common.normalize_text` |
 | linhas mistas escrevíveis hoje | **0** — as 2.135 recusam, 1.898 em `MissingRecipe` (a linha não carrega o digest do template de mistura) e 237 em `UnmappableLane` (provedor fora das quatro lanes congeladas) |
 
+A linha "documentos de origem conhecidos na célula" acima descreve o pool de 24/07, que § 5.4b substitui:
+a extração de 2026-08-06 escreve `groupAxes` e o piso passa.
+
+### 5.4b A célula extraída, a poda global medida e o corpo estampado (2026-08-06)
+
+Pool novo em `benchmark/data/candidates-f3/wikipedia_fresh.jsonl` (4.100 linhas, § 5.1b). O corpo humano
+que a auditoria e o preflight leram foi montado em `benchmark/data/corpus-build-f3` e **está retirado de
+lá**: em `benchmark/data/` sobram só os dois arquivos de governança e a evidência de rótulo, que não
+carregam pertença de bloco. A razão está abaixo, no parágrafo do carimbo. Tudo isso é gitignored por
+desenho; o que o Git guarda é esta medição e o código que a produz.
+
+**A perda pela poda global, que ninguém havia medido.** As linhas frescas são teladas contra o artefato
+do corpus morto (10.000 documentos, 3.323.576 chaves de shingle, `sha256`
+`595739107e895cfc7b09409f29c13b998d195e921f1ca7eec1e5c8406772116a` conferido no cabeçalho), por
+`near_dupes.drop_seen_against` — nenhum token do material morto é lido:
+
+| quantidade | valor |
+|---|---:|
+| linhas frescas teladas | 4.100 |
+| casam por **hash exato** de conteúdo tokenizado | **0** |
+| casam por **Jaccard ≥ 0,82** sobre chaves de shingle de 5 tokens | **2** |
+| perda total | **2** — 0,049 % |
+| sobrevivem | 4.098, contra a cota de 4.000 |
+| **maior similaridade MANTIDA** | **0,81** |
+| pares candidatos avaliados · buckets acima do teto antigo | 25.151 · 174 |
+
+A perda esperada era irrelevante e é: 0,049 %, contra o limite superior que o plano derivava da fatia de
+Wikipédia das ~1.600 linhas humanas do corpus morto. **O 0,81 é a leitura que importa** e é o que o
+runbook manda olhar: uma linha fica um centésimo abaixo da barra de recusa, que é o comportamento
+esperado de reextrair a mesma fonte — a mesma página noutra revisão volta com edições pequenas. Não é
+folga; é a barra funcionando no limite, e é a razão de a margem de coleta existir.
+
+**A margem de coleta não é folga contábil, e isso está medido:** as **três** linhas frescas que as podas
+derrubam estão nas posições **245** (poda intra-pool), **369** e **1.084** (poda global) do pool, em
+contagem **1-indexada**, e as três **dentro** das primeiras 4.000. Como a amostragem é determinística sobre
+a chave da página e a leitura é sequencial, as primeiras 4.000 linhas do pool são exatamente o que
+`--limit 4000` teria escrito — então uma extração de 4.000 exatas entregaria **3.997** frescas e a
+composição de release, que `sealDataset` compara por igualdade **exata**, ficaria **três** linhas curta. O
+contrafactual foi rodado, não derivado da taxa de perda: o pipeline completo (`dedup` → `prune` →
+`drop_seen_against`) sobre as 4.100 deixa **4.097** frescas e sobre as primeiras 4.000 deixa **3.997**.
+Contar só as duas da poda global é a leitura que esquece a poda intra-pool (§ 6).
+
+**O artefato de vistos não carrega texto claro, afirmado sobre os bytes do arquivo real** (36.425.322
+bytes, e não sobre uma fixture): 10.000 linhas de documento, **0** com campo fora do conjunto fechado
+(`content`, `shingles`), **0** com `content` que não seja hex de 64, **0** com caractere fora do alfabeto
+base64 em `shingles`, e as chaves das linhas somam **3.323.576**, o que o cabeçalho declara. A
+proveniência do cabeçalho tem só `lines`, `path` e `sha256`. A limpeza também é imposta por teste sobre um
+artefato construído (`test_the_artifact_carries_no_clear_text`), e a varredura acima é a mesma afirmação
+sobre o artefato que a montagem realmente usa.
+
+**A união que o montador real tela**, medida rodando `assemble_corpus.py --candidates-dir
+../data/candidates-f3`, que é onde os dois números do pool reservado se separam. `load_humans` devolve
+**4.680** linhas — as 4.100 frescas mais **580** do pool reservado —, e a dedup exata por conteúdo
+tokenizado derruba **66**, todas reservadas: o corpus morto de que o pool reservado vem foi construído da
+mesma Wikipédia, a linha fresca entra primeiro e é a cópia reservada que sai. Daí os **4.614** (4.100 +
+514), **4.613** depois da poda intra-pool (a linha derrubada é fresca) e **4.607** depois da poda global
+(**6** derrubadas — 2 frescas, 4 reservadas —, **0** por hash exato, maior mantida **0,81**). As 514 do
+pool reservado não carregam licença de documento nem eixo de origem, e a seleção por cota não chega a
+elas: `balanced_humans` escolhe 4.000, todas frescas.
+
+**O pool, na barreira que o piso de poder impõe antes da seleção:**
+
+| quantidade | valor |
+|---|---:|
+| documentos de origem distintos **no pool** (`origin_documents_per_cell` sobre as 4.607 sobreviventes) | **4.097**, contra o piso de 300 (`samplingUnits`) |
+| `assert_cells_can_meet_the_origin_document_floor` | passa |
+
+Os 4.097 são a contagem do POOL, não do corpo: a função só conta origem `known`, então as 510 linhas
+reservadas que sobrevivem não entram, e 4.097 é exatamente 4.100 menos as 3 frescas que as duas podas
+tiraram. Confundir esta contagem com a do corpo estampado é ler a barreira como se fosse o resultado.
+
+**O corpo estampado, pelas funções reais do montador:**
+
+| quantidade | valor |
+|---|---:|
+| linhas selecionadas | 4.000 de uma cota de 4.000, **todas** frescas |
+| documentos de origem distintos **no corpo** (`groups.source`) | **4.000**, com **1** linha por documento no máximo — o teto pré-inscrito de `maximumLinesPerOriginDocument` realizado com igualdade |
+| registros recusados por `UnwritableInV3` | **0** |
+| **componentes conexos por célula** | **4.000**, todos de tamanho 1 — contados pela `connected_components` do lab (sete eixos de valor compartilhado) e, independentemente, pelo `preflight-viability` sobre os `CONNECTIVITY_AXES` do TypeScript, que somam a linhagem de pai. Os dois chegam a 4.000 |
+| famílias hard-negative etiquetadas | 20 linhas em cada uma das **seis** |
+| `auditCorpusSources` (via `audit_sources.ts`) | `status=ready`, **0** motivos de bloqueio sobre 4.000 registros e 1 fonte. Contra um manifesto na forma **v1** — `schemaVersion: 1`, sem `materialBatches`, que é a forma que o § 3.3 do runbook ensina — o mesmo corpo devolve `status=blocked` com **4.000** `SOURCE_REFERENCE_MISSING`, um por linha humana: é o cenário exato que este item fecha, e é a dívida do runbook em § 7 |
+| `preflight-viability` | **passa** nos dois escopos (corpo e classe `human`): maior e menor componente com 1 linha (0,03 %) contra `train` 45 % e `dev` 5 %, e imprime que passar é necessário e não suficiente |
+| `sourceManifestDigest` do manifesto v2 escrito | `dfcd17cd01128f4c3b09eb9d89d19043a761d21ea712c107a2959560989cb812`, recomputado pela função de produção sobre o corpo do arquivo |
+
+**Um corpo v4 não existe em disco sem carimbo de bloco, e é por isso que este foi retirado.** `schema.ts`
+exige `createdAt` numérico em todo registro, e o **único** escritor desse campo é
+`assemble_corpus.stamp_block`, que escreve o `BLOCK_TIME` da partição; `diagnostic_probes.partition_of`
+lê exatamente esse campo e devolve a partição, porque a pertença é fato **derivado** e nunca campo do
+registro. Logo um corpo que passe `parseBenchmarkDataset` — o que `preflight-viability` exige — carrega
+pertença de bloco por construção: **medir o corpo estampado e não criar `test`/`cal-B` são objetivos
+incompatíveis por desenho do esquema**, e não uma escolha do arnês.
+
+O corpo montado em 2026-08-06 carregava, medido, **2.400** linhas nas três partições abertas e **1.600
+postas de lado** nas duas cegas — o agregado que `open_partition_rows` publica, sem detalhamento por
+partição cega. **Ele foi apagado de `benchmark/data/`** (com o `cluster-report.json`, cuja chave de fatia é
+`partição/classe`), e o que fica é esta medição. Nenhum split foi congelado: o comando `split` não rodou,
+não existe `split-artifact.json`, nada foi selado, nenhum evento entrou no ledger de exposição e nenhuma
+partição cega **selada** foi lida. **Congelar o split é o item 3** da Fase 3, e é lá que a pertença de
+bloco passa a ser um compromisso em vez de um carimbo descartável.
+
+A montagem de **release** não completa nesta unidade, e a recusa é o gate funcionando:
+`assemble_corpus.py` chega até a governança e para em **`HeldOutReserveEmpty`** — nenhuma família pode
+ser declarada held-out e o manifesto selado recusa lista vazia. **A causa, sobre este pool, é que
+`candidates-f3` não tem classe gerada nenhuma**: `load_ai` e `load_mixed` devolvem 0, e a mesma corrida
+avisa que a classe mista está 2.000 linhas abaixo da cota. A classe gerada é o **item 2** da Fase 3. Sobre
+o pool de 24/07 a recusa é a mesma com outra causa — lá existem linhas geradas e é a poda global que não
+deixa nenhuma sobreviver (§ 5.4) —, e sem a poda global a montagem constrói 1.170 geradas e o gate
+antiartefato manda a lane `gemini-api` para regeneração: três saídas, três recusas, todas corretas.
+
+O corpo que a auditoria e o preflight leram foi montado por um arnês que chama as **mesmas** funções do
+montador na mesma ordem (`load_humans`, `prune`, `drop_seen_against`,
+`assert_cells_can_meet_the_origin_document_floor`, `balanced_humans`, `human_record`,
+`tag_hard_negatives`, `assign_partitions`, `assert_stamped_corpus_is_splittable`), sobre a classe humana
+só. O arnês não está na árvore, e essa é a mesma dívida de material das taxas de § 5.4 e § 5.7 — com a
+diferença de que cada número desta seção foi reproduzido em 2026-08-06 pelas funções de produção
+chamadas direto, sobre os artefatos em disco, e a montagem real foi re-rodada até a recusa. Os números de
+**pool** seguem reproduzíveis do que ficou em disco; os do **corpo** exigem re-montar, e é a dívida de § 7.
+
 ### 5.5 Proveniência das tipologias da Carolina — a medição que tirou três células da moldura
 
 Medido em 2026-08-05 sobre `snapshots/archive.zip`, **por header de documento** (nunca corpo). É esta
@@ -387,14 +526,14 @@ A unidade é a página, o piso de 300 é trivial, e o dump de 1,96 GB é a reser
 
 | fato | valor |
 |---|---|
-| componentes independentes na célula, hoje | 1 — sem documento de origem conhecido, toda linha da célula cai no balde único de origem irrecuperável |
+| componentes independentes na célula, hoje | **4.000**, todos de tamanho 1, sobre o corpo estampado de 2026-08-06 (§ 5.4b) — a unidade é a PÁGINA (`groups.source = ptwiki_page_<page_id>`) e o piso de 300 fica 13,3× folgado. Era 1 enquanto o pool de 24/07 não carregava `groupAxes` |
 | guardas de integridade do pacote | 11 exercitadas, 0 sem teste |
-| `evaluatorDigest` da árvore | `46a51915db4d2c1188161d9c76e7b4bdfc1b60670fea65f0ed77c9e03061e895` — 52 arquivos, recomputado pela função de produção e **lido por teste nomeado** (`digests.test.ts`, "is published in the ESTADO at the value the LIVE tree hashes to"), então este número não pode envelhecer em silêncio. Mover é barato enquanto `issuedAt` é nulo |
+| `evaluatorDigest` da árvore | `a79a9ee6cf454172af5a85334c8e3f66d462d29245257b032ef1106d536c7f33` — 52 arquivos, recomputado pela função de produção e **lido por teste nomeado** (`digests.test.ts`, "is published in the ESTADO at the value the LIVE tree hashes to"), então este número não pode envelhecer em silêncio. Mover é barato enquanto `issuedAt` é nulo |
 | byte de controle cru em caminho rastreado | **zero**, e imposto por dois testes nomeados, com escopos diferentes de propósito. `digests.test.ts` ("carry no raw control byte, so no code-search tool can skip an evaluator file") varre os **52** de `EVALUATOR_FILES` e **não isenta nada**, porque os bytes desses arquivos são a identidade do avaliador. `tests/unit/repo/line-endings.test.ts` ("leaves no raw control byte in a tracked path the repo calls text") varre **todo** caminho de `git ls-files`, isentando só extensão que `.gitattributes` declara `binary` — nenhuma rastreada hoje, então na prática é a árvore inteira. Os dois recusam controle C0 fora de LF, TAB e CR e apontam `arquivo:linha:coluna` mais o offset de byte. A isenção **não** é a classificação `i/-text` do git: ela é causada pelo byte cru, e filtrar por ela pularia justamente o infrator |
 | ledger de exposição real | **0 bytes** — nenhum evento real foi escrito |
 | holdout-ledger real | 2.638 bytes — o consumo de 2026-07-25, `decision: reject` |
 | memória da exposição por linha | `benchmark/data/corpus-build/out/split/split-artifact.json` — pertença de `test`, só o operador lê |
-| referências | **425** marcadores de link em **18** seções de nível `##` de `references.md`, e **45** declarações literais de "Sem precedente encontrado" (mais 13 menções em outra forma). A regra é a ocorrência da junta `](` seguida de URL, contada **no arquivo inteiro e não por linha**: `references.md` quebra a ~100 colunas e 38 rótulos de link atravessam a quebra, então um regex `\[rótulo\]\(url\)` aplicado por linha devolve 386. Agora **lido por teste nomeado** (`estado-counts.test.ts`) — os valores anteriores (322 / 50, depois 349) envelheceram em silêncio exatamente porque nenhum teste os lia |
+| referências | **430** marcadores de link em **18** seções de nível `##` de `references.md`, e **48** declarações literais de "Sem precedente encontrado". A regra é a ocorrência da junta `](` seguida de URL, contada **no arquivo inteiro e não por linha**: `references.md` quebra a ~100 colunas e 38 rótulos de link atravessam a quebra, então um regex `\[rótulo\]\(url\)` aplicado por linha devolve 390. Agora **lido por teste nomeado** (`estado-counts.test.ts`) — os valores anteriores (322 / 50, depois 349) envelheceram em silêncio exatamente porque nenhum teste os lia |
 
 ### 5.7 Sondas diagnósticas sobre os pools em moldura (W3)
 
@@ -549,7 +688,53 @@ e a procedência do material dentro do próprio relatório.
   contra UMA lista de faixas, arestas em literal respondem igual a arestas lidas. Só a exercitação de
   `lengthBandKeyOf` contra uma lista **que não é a embarcada** separa as duas;
 - a leitura de que o `máximo gerado 1.774` de § 5.7b é propriedade do **gerador**: é do alvo e do
-  fixture que o sintetiza — nenhuma linha foi gerada nesta medição.
+  fixture que o sintetiza — nenhuma linha foi gerada nesta medição;
+- a **varredura das primeiras 60.000 páginas** do dump como descrição da população da célula:
+  54,3 % de admissão, p50=120, p90=362, máx=1.774 e as frações 29,77/29,81/25,54/14,89 %. A extração
+  real de 2026-08-06 lê 394.414 artigos com amostragem de 1 em 40 e mede 41,3 % de admissão, p50=106,
+  p90=282, máx=2.256 e 33,88/33,67/23,93/8,53 % (§ 5.1b). A causa é medida: as primeiras páginas de um
+  dump são os artigos mais maduros, com lede mais longa, e um prefixo não é amostra. Os valores antigos
+  seguem na pré-inscrição como valores **congelados** — é a dívida de § 7 —, mas não descrevem a
+  população;
+- a expectativa de que a **poda global** contra o corpus morto custaria caro, ou a de que ela custaria
+  nada: medido, 2 de 4.100 linhas (0,049 %), **0** por hash exato e **2** por Jaccard — com a maior
+  similaridade MANTIDA em **0,81**, um centésimo abaixo da barra;
+- a leitura de que o inventário de material continua sendo dívida, ou de que um corpus v4 sai `blocked`
+  por `SOURCE_REFERENCE_MISSING`: medido em 2026-08-06, `auditCorpusSources` devolve `ready` com **0**
+  motivos sobre os 4.000 registros humanos (§ 5.4b);
+- os **4.097** documentos de origem lidos como contagem do **corpo estampado**: são do POOL, na barreira
+  que `assert_cells_can_meet_the_origin_document_floor` impõe antes da seleção, e a função só conta origem
+  `known` (4.100 frescas menos as 3 que as podas tiraram). O corpo de 4.000 linhas tem **4.000**
+  documentos de origem distintos, uma linha por documento (§ 5.4b). Publicar 4.097 como propriedade do
+  corpo é a mesma classe de erro que deixou "1 unidade por célula" viver: contagem certa, objeto errado;
+- a afirmação de que o corpo local de 2026-08-06 **não tinha partição**: ela é refutada pelo próprio
+  código. `stamp_block` escreve `BLOCK_TIME` em `createdAt` e `diagnostic_probes.partition_of` devolve a
+  partição a partir desse campo, então um corpo estampado **tem** pertença de bloco, inclusive nas duas
+  cegas. O que não existia era **split congelado** — sem comando `split`, sem `split-artifact.json`, sem
+  selo e sem evento de ledger —, e as duas coisas não são a mesma. O corpo foi apagado de
+  `benchmark/data/` por isso (§ 5.4b);
+- a contagem **por partição cega**, uma linha para `cal-B` e uma para `test`, como número publicável — e o
+  ESTADO a publicava: § 3.3 admite **um** agregado do que foi posto de lado e nada mais, que é a regra que
+  `open_partition_rows` impõe e a razão que a docstring dela escreve. O agregado é 1.600 de 4.000;
+- a conferência dos 4.000 `normalizedTextSha256` contra `corpusContentDigest` lida como prova de que o
+  digest do corpo está certo: `assemble_corpus` **omite** o campo de propósito (o `ingest` o recomputa e
+  preenche), e quem o escreveu naquele corpo foi um script de fora da árvore chamando `corpusContentDigest`
+  — a mesma função contra a qual seria comparado. Comparar um campo com a função que o escreveu só pode dar
+  4.000 de 4.000, e o que isso exclui é corrupção do arquivo, não digest errado;
+- o contrafactual de que uma extração de **4.000 exatas** entregaria **3.998**: são **3.997**. A conta que
+  dá 3.998 esquece a linha que a poda **intra-pool** derruba, na posição 245 — as três posições (245, 369,
+  1.084, 1-indexadas) estão dentro das primeiras 4.000, e o pipeline completo rodado sobre elas devolve
+  3.997 (§ 5.4b);
+- a leitura de que a montagem sobre `candidates-f3` para em `HeldOutReserveEmpty` **por causa da poda
+  global**: medido, `load_ai` e `load_mixed` devolvem 0 sobre esse diretório — não há classe gerada para
+  a poda derrubar. A causa "a poda global não deixa nenhuma gerada sobreviver" é do pool de 24/07
+  (§ 5.4), e as duas recusas são corretas por razões diferentes;
+- a leitura de que os **12 problemas de lint** são dívida de código do projeto: os 10 erros estão todos
+  sob `.cache/chrome-for-testing/`, um Chrome baixado que nenhum commit carrega (§ 1);
+- a atribuição da queda do lint de **13 para 12** ao movimento do cache do Chrome: medido, o 11.º erro era
+  do **repositório** — o `dirname` importado sem uso em `build_governance.ts:14`, que a Fase 3 item 1
+  apagou. Rodar o ESLint sobre a versão anterior desse arquivo acusa esse 1 erro sozinho, então 11 = 1 do
+  repositório + 10 do cache. A contagem publicada estava certa e a **causa** era sintetizada.
 
 ---
 
@@ -557,27 +742,28 @@ e a procedência do material dentro do próprio relatório.
 
 | dívida | vence |
 |---|---|
-| **inventário de material**: `build_governance.ts` escreve manifesto v1 sem `materialBatches`, então todo corpus v4 sai `blocked` com `SOURCE_REFERENCE_MISSING` por linha humana | Fase 3, item 1 — entrada declarada pelo operador para **um** lote (`smb_ptwiki-20220301`), e o manifesto passa a v2 |
 | nenhum vínculo F6 prova em que corpus os pesos atuais foram treinados | antes de publicar pesos |
 | rodada 13 do cross-review do E2 | crédito do codex, 8 de agosto |
 | o lado **selado** não impõe a reserva OOD: `sealDataset` confere positivos por família declarada, não que as reservadas estejam fora do treino | Fase 3, item 3 |
-| o lado **selado** não confere licença registro↔fonte: `auditRecords` junta `sourceId` e ignora a licença | Fase 3, item 1 |
+| o lado **selado** não confere licença registro↔fonte: `auditRecords` junta `sourceId` e ignora a licença. **Custo zero por este produtor, medido**: `source_licenses` projeta a `licenseId` da entrada A PARTIR dos registros e recusa fonte com duas licenças (`SourceCarriesTwoLicenses`), então o desacordo registro↔fonte não é construtível pelo caminho que existe. Um segundo produtor o constrói | segundo produtor de corpus |
 | fonte sob **duas** licenças recusa a montagem, e o remédio (dividir a fonte por licença, ou licença por registro no esquema selado) é decisão de esquema. Deixou de ser urgente: a Carolina, que era a fonte alcançável, saiu da moldura | quando uma fonte **em moldura** declarar duas licenças |
 | a moldura de uma célula deixa **`non-commercial` sem licença que o imponha**: as obrigações medidas são `attribution` + `share-alike`, e o regime NC passa a apoiar-se só em `commercialUse: false` | a **assinatura** de B1 — o ramo já está escolhido (risco assumido por escrito), e é nela que o operador declara o que assume |
-| três das seis famílias hard-negative (`repetitive`, `non-native`, `motivational`) são de texto curto informal e passam a ser procuradas em lede de Wikipédia, onde são mais raras; a demanda por célula é 6 × `tag_per` numa célula só | Fase 3, item 1 — se a marcação não encher, é escassez de material e não erro de coleta |
+| `hardNegativeFamily` é atribuída por **pertença de célula**, não por leitura de estilo: `tag_hard_negatives` etiqueta as primeiras `tag_per` linhas ainda sem etiqueta da célula de que a família é lida. A cobertura que o selo exige está satisfeita (20 linhas em cada uma das seis, § 5.4b), e o que a etiqueta **não** afirma é que a linha exibe o estilo — ler estilo é ato de revisão humana, que a v1 não faz (R4) | unidade que introduzir revisão humana por registro, ou a v2 |
 | a reserva OOD não foi **dimensionada**: com os pools de hoje ela encheria o bloco cego e seria recusada | Fase 3, item 2 |
 | `generatorVersion` na união do split colapsa a classe gerada por versão | Fase 3 |
 | `cc-by-4.0` e `public-domain` sem termos revisados em `CORPUS_LICENSE_REGISTRY` — custo zero hoje, medido | quando um documento em moldura declarar uma delas |
 | `train_detector.py` não confere o relatório do gate antiartefato; hoje o único caminho até um `train.jsonl` passa pela montagem | segundo produtor de corpus |
 | `make_mixed.emit` escreve `text: edited` **sem** `common.normalize_text`, enquanto todo pool escrito por `CandidateWriter.offer` normaliza: 8,67 % dos vãos mistos carregam corrida de espaço e 5,29 % espaço terminal, contra 0 em 11.000 linhas ptwiki e 0 em 19.673 `ai`. O gate acusa corretamente (é rótulo de graça), mas o remédio verdadeiro é o escritor, e regenerar a lane não conserta escritor | Fase 3, quando existir pool misto novo |
 | **train/serving skew de normalização, medido**: `contracts/text-normalization.ts` roda só na **inferência**; `train_detector.py` e `build_dataset.py` não normalizam. Então os invisíveis chegam ao treino (0,59 % das linhas humanas em moldura os carregam) e **não** chegam ao serviço, e o texto que ajusta o limiar não é o texto que o runtime pontua | unidade que tocar treino ou limiar, ou a Fase 5 |
-| as taxas por sonda do gate (§ 5.4 e L12b) foram medidas por **script de sonda que não está no repo**: os pools são `benchmark/data/*`, gitignored, então nenhuma das taxas é reproduzível de um checkout. A regra de calibração está imposta por fixture e as duas recusas por teste nomeado — o que falta é o **medidor**. As taxas de § 5.7 têm o medidor no repositório (`diagnostic_probes.py --pools … --in-frame-pools`, com a invocação exata em § 5.7 e a procedência por arquivo dentro do próprio relatório) e a mesma dívida de material | unidade que voltar ao gate, ou a Fase 3 quando os pools forem reconstruídos |
+| as taxas por sonda do gate (§ 5.4 e L12b) foram medidas por **script de sonda que não está no repo**: os pools são `benchmark/data/*`, gitignored, então nenhuma das taxas é reproduzível de um checkout. A regra de calibração está imposta por fixture e as duas recusas por teste nomeado — o que falta é o **medidor**. As taxas de § 5.7 têm o medidor no repositório (`diagnostic_probes.py --pools … --in-frame-pools`, com a invocação exata em § 5.7 e a procedência por arquivo dentro do próprio relatório) e a mesma dívida de material | unidade que voltar ao gate |
+| os números **de pool** de § 5.4b saem de código que está na árvore — `extract_wikipedia.py` para a extração, e `assemble_corpus.py --candidates-dir` para a união, a poda global, os 4.097 documentos de origem, as seis famílias hard-negative e a recusa `HeldOutReserveEmpty`. Os números **do corpo estampado** (componentes, faixas, digests, auditoria, preflight) precisam de um arnês que monte a classe humana **só** e pare antes da selagem, e é ele que não está na árvore: o montador completo não chega ao corpo escrito enquanto a classe gerada não existir. Não é a dívida da linha acima — aqui o medidor é o próprio montador, e o que falta é um modo de parada | Fase 3, item 2 (quando a classe gerada existir, o montador completo produz o corpo), ou unidade que dê a `assemble_corpus.py` um modo "classe humana só" |
 | a **sonda 1 não é imposta por consumidor**: ela recusa pelo código de saída do próprio comando, e `assemble_corpus.main()` não a chama — o montador é stdlib-only e uma validação cruzada de 5 dobras rodaria em cada fixture de montagem, a maioria com menos linhas por partição do que há dobras. Mesma forma da dívida do relatório do gate antiartefato, e mesmo dono | segundo produtor de corpus, ou a Fase 3 quando existir corpus carimbado |
 | a **dispersão entre janelas é quase vacuosa neste material**: 9.559 de 9.707 documentos varridos têm uma única janela a 510 tokens (§ 5.7), e a mediana de ~100 palavras fica muito abaixo de uma janela também em subtokens WordPiece (~350-400 palavras). O sinal existe e separa 4× onde há mais de uma janela; o que não existe é população | Fase 5, ou unidade que tocar agregação |
 | a dispersão do lab lateia tokens de **espaço** onde o runtime lateia **WordPiece**: a regra é a selada (`contentTokens`/`overlapTokens`/`maxWindows` lidos do manifesto), a unidade é mais grosseira, então as fronteiras não são as do runtime. Declarado, e a sonda não decide | D24 (chunker em `contracts/`), quando existir um tokenizador no lab |
-| as **frações por faixa** de § 5.1b, que apropriam 238/239/204/119, vêm de varredura de 60.000 páginas do dump por script que **não está na árvore**, e o dump (1,96 GB) vive fora do repositório: commitar o medidor moveria a dívida de "sem medidor" para "medidor que nenhum checkout roda", que é a linha acima. O parser confere o que a política impõe — a soma contra `blindBlockLinesAtCollectionTarget` e cada teto contra `1 − α^(1/n)` da própria faixa —, **nunca** a fração | unidade que reconstruir os pools, ou a Fase 3 |
+| as **frações por faixa congeladas na pré-inscrição estão ERRADAS, medido** (§ 5.1b): `expectedBlindBlockLines` apropria 238/239/204/119 a partir de uma varredura das primeiras 60.000 páginas do dump, e a extração real de 394.414 artigos realiza **271/269/192/68**. A faixa `[300,+∞)` é a que dói: 8,53 % da população contra os 14,89 % congelados, teto de **6,24 %** contra os **3,62 %** que a política publica e que o model card imprimiria. As faixas são **diagnóstico** — não decidem, não gastam alpha, `m` continua 4 —, e o parser confere a soma contra `blindBlockLinesAtCollectionTarget` e cada teto contra `1 − α^(1/n)` do próprio `n`, **nunca** a fração: os quatro valores são internamente consistentes e externamente errados. Corrigi-los move `evaluatorDigest` (a política está em `EVALUATOR_FILES`) e é emenda de pré-inscrição sobre a ESTRUTURA da população, legítima enquanto nenhum resultado foi visto (§ 3.4) | unidade que emendar a pré-inscrição, **antes** da Fase 6 — o model card é onde a tabela é publicada |
 | `benchmark/split-audit.ts` tem o **seu** `lengthBucket` (`short`/`medium`/`long`, cortes em 100 e 300) sob o mesmo nome de eixo que a faixa pré-inscrita, e não deriva da pré-inscrição: são tabelas com trabalhos diferentes (exposição de cluster contra taxa publicada) e nenhum número as compara, mas o **nome** colide dentro do próprio benchmark | unidade que tocar o audit do split |
 | a agregação por bucket de `profile-artifact.ts` só distingue **presença** de evidência: com `pass` todo gate de ação presente passou, porque um que reprove capa o release em `indicator-only`. A sobreposição `150_299` fica como resposta conservadora para uma regra de decisão que não capa globalmente, e hoje nenhuma entrada a exercita | unidade que mexer na regra de decisão dos gates |
+| o § 3.3 do **runbook** descreve o manifesto de fontes campo a campo na **v1**, sem `materialBatches`, e o exemplo nomeia `src_carolina`, que saiu da moldura. O callout de v2 e o passo `build_governance.ts` estão lá, então quem seguir a ordem dos comandos não produz mais o manifesto que a auditoria bloqueia — o que falta é reescrever o corpo campo a campo, como o § 2 ainda deve para o v4. A consequência de seguir o corpo velho está **medida**: `status=blocked` com 4.000 `SOURCE_REFERENCE_MISSING` (§ 5.4b) | unidade que reescrever o campo-a-campo do runbook |
 | README do benchmark está **3 subcomandos atrás** do CLI | unidade que reescrever o README |
 | linhagem admite pai `notApplicable` numa linha `ai` sem recusa — a pergunta de desenho está aberta | unidade que tocar linhagem ou E3 |
 | registro-linha congelado em `cal-B` não tem a proteção do de `test` | antes da v2.0, ou antes de um segundo corpus sobrepor um split vivo |

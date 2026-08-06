@@ -331,10 +331,11 @@ const MATERIAL_BATCH_DEFECT_CODE: Record<
 // because a v4 corpus whose acquisitions are undeclared is not ready to seal —
 // reporting `blocked` is the truthful answer, not an inconvenience.
 //
-// The manifest that DECLARES the inventory is still owed: `materialVersion`, the
-// acquisition window and the evidence are facts no code in this repository holds, and
-// synthesising them would be the fabricated provenance R4 forbids. See Fase 3 of
-// docs/superpowers/plans/2026-08-03-plano-entrega-modelo.md.
+// The manifest that DECLARES the inventory is written by `benchmark/lab/build_governance.ts`,
+// where the acquisitions are a constant of reviewed code rather than something derived from
+// the pools: `materialVersion`, the acquisition window and the evidence are facts no code in
+// this repository observed, and synthesising them from the records would be the fabricated
+// provenance R4 forbids.
 function auditMaterialBatches(
   records: readonly BenchmarkRecord[],
   sourceManifest: ReviewedSourceManifest,

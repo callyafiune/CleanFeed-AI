@@ -112,9 +112,16 @@ declarado. Isso é o gate funcionando, não um defeito a contornar: dos cinco ca
 `SourceMaterialBatchV1` exige, três — `materialVersion`, `acquisitionWindow` e `evidence` — são fatos
 que **nenhum código deste repositório detém** (quando o dump foi baixado, qual o digest do arquivo), e
 sintetizá-los em `build_governance.ts` seria a proveniência inventada que R4 proíbe. O inventário
-entra na Fase 3 com **entrada declarada pelo operador** por lote de aquisição — **um** lote,
+entra na Fase 3 com **uma entrada declarada por lote de aquisição** — **um** lote,
 `smb_ptwiki-20220301`, desde a emenda da moldura —, e `build_governance.ts` passa a escrever manifesto
 **v2** no mesmo item.
+
+O item 1 substituiu **quem declara**: em vez de entrada do operador, uma constante de código revisado
+(`DECLARED_MATERIAL_BATCHES`), escrita pelo agente e conferida por teste. A razão é a anti-forja — a
+alternativa (campo de `governance-inputs.json`, em `benchmark/data/`, gitignored) seria preenchível pelo
+próprio passo que consome o inventário, e o digest do manifesto cobriria a forja. Os **valores** foram
+recomputados contra o arquivo de 1,96 GB, e a **declaração** vai à ratificação do operador junto do
+pacote da Fase 6, com o resto da governança.
 
 ## Fase 2 — alinhamento do lab (2–4 dias)
 
@@ -133,13 +140,29 @@ harness — família >2 % contaminada regenera a lane, A4).
 > Wikipédia pt, dump 2022-03-01. As três tipologias da Carolina saíram — instituição única, zero autor
 > declarado — e o lote `smb_carolina-2_0-bea` deixa de ser necessário para esta fase.
 
-1. extração de **uma** célula (Wikipédia pt), com corte de data, licença por documento e `drop_seen`
-   global. **Inclui o inventário de material** (dívida do Commit A): o operador declara **um** lote de
-   aquisição — `smb_ptwiki-20220301`, `materialVersion` `ptwiki-20220301`, `sourceId`
-   `src_wikipedia_pt`, janela pontual `startedAt = endedAt = 1784753446707` (ratificada em 2026-08-04),
-   `evidence` com sha256 `70c9ec4f700205ab586ab86dd21a5fe62fc543a5341770c84a28c343225f8b52` e
-   1.955.910.144 bytes —, e `build_governance.ts` passa a escrever manifesto **v2** com `materialBatches`.
-   Sem isso a auditoria bloqueia toda linha humana v4, e é isso que ela deve fazer;
+1. **FEITO em 2026-08-06.** Extração de **uma** célula (Wikipédia pt), com corte de data, licença por
+   documento e `drop_seen` global, mais o inventário de material (dívida do Commit A): o lote declarado é
+   `smb_ptwiki-20220301`, `materialVersion` `ptwiki-20220301`, `sourceId` `src_wikipedia_pt`, janela
+   pontual `startedAt = endedAt = 1784753446707` (ratificada em 2026-08-04), `evidence` com sha256
+   `70c9ec4f700205ab586ab86dd21a5fe62fc543a5341770c84a28c343225f8b52` e 1.955.910.144 bytes — os três
+   reconferidos contra o arquivo em disco nesta unidade. `build_governance.ts` escreve manifesto **v2**
+   com `materialBatches` e **recusa** inventário vazio ou lote que não resolve, antes de escrever.
+   Medido, e **re-executado depois da queda de rede** que interrompeu a unidade (ESTADO § 5.1b e § 5.4b):
+   394.414 artigos lidos → 4.100 linhas no pool; **perda pela poda global de 2 linhas (0,049 %)**, 0 por
+   hash exato e 2 por Jaccard, com a maior similaridade **mantida** em 0,81 — um centésimo abaixo da barra,
+   que é a leitura que importa; **4.000 componentes conexos** de tamanho 1 no corpo, contra o piso de 300
+   (e **4.097** documentos de origem no POOL, que é outra contagem, na barreira que antecede a seleção);
+   `auditCorpusSources` devolve `ready` com 0 motivos sobre 4.000 registros, contra `blocked` com 4.000
+   `SOURCE_REFERENCE_MISSING` se o manifesto for escrito na forma v1 do runbook; `preflight-viability` passa
+   nos dois escopos com a declaração de que passar é necessário e não suficiente. Contando a poda
+   **intra-pool** junto da global, uma extração de 4.000 exatas entregaria **3.997** — a margem de coleta é
+   necessária, medido. Dois achados que sobram: a fração da faixa `[300,+∞)` que a pré-inscrição congelou
+   está errada (8,53 % medido contra 14,89 % congelado, teto de 6,24 % contra 3,62 %) — dívida de quem
+   emendar a pré-inscrição, **antes** da Fase 6 —, e a montagem de release para em `HeldOutReserveEmpty`
+   porque `candidates-f3` não tem classe gerada nenhuma, que é o item 2. **Nenhum split foi congelado:** o
+   comando `split` não rodou, nada foi selado, e o corpo humano que a auditoria leu — que por exigência de
+   `schema.ts` carrega carimbo de bloco, porque `createdAt` é obrigatório e só `stamp_block` o escreve —
+   **foi apagado** de `benchmark/data/` ao fim da unidade. Congelar o split é o item 3;
 2. geração IA pelas 4 lanes; famílias OpenAI **não entram** (reserva OOD); todo registro nasce
    `automated/unreviewed`; PII amostral; gate antiartefato roda **antes** do treino. **A
    distribuição de comprimento do gerado tem de CASAR a humana medida**, e o casamento é por par:
