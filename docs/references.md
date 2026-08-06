@@ -2002,6 +2002,75 @@ integridade e, por fim, texto e modelo.
   citado:_ hashing sensível à localidade particiona o espaço em bandas para achar vizinhos
   aproximados sem comparação O(n²).
 
+### Chave composta: codificação injetiva e delimitador escrito como escape
+
+Duas chaves deste repositório juntam campos numa string e depois usam a string como identidade: a chave
+de par de candidatos e a chave de permutação do MinHash em `near-duplicates.ts`, e as chaves de nível de
+`bootstrap.ts`. A exigência é a mesma nas duas — a junção tem de ser **injetiva** — e o mecanismo
+escolhido é um delimitador que o alfabeto das partes não contém, não um prefixo de comprimento.
+
+- **Kelsey, Chang & Perlner, 2016 — NIST SP 800-185: SHA-3 Derived Functions: cSHAKE, KMAC, TupleHash,
+  and ParallelHash** (NIST Special Publication 800-185).
+  [link](https://doi.org/10.6028/NIST.SP.800-185)
+  _Âncora:_ a exigência de que hashear uma **tupla** de strings seja inequívoco — concatenar partes de
+  comprimento variável colide, e é por isso que existe uma função dedicada a isso. _Onde no projeto:_
+  `benchmark/near-duplicates.ts` (`KEY_FIELD_SEPARATOR`, na chave de par e na chave de permutação);
+  `benchmark/bootstrap.ts` (`KEY_FIELD_SEPARATOR`, `KEY_PAIR_SEPARATOR`). _Fato citado:_ "TupleHash is a
+  variable-length hash function designed to hash tuples of input strings unambiguously". _Divergência de
+  mecanismo, declarada:_ a SP 800-185 obtém a injetividade por **codificação de comprimento**
+  (`encode_string`); aqui ela vem de **delimitador reservado**, que só é válido porque o alfabeto das
+  partes exclui o delimitador.
+- **IEEE / The Open Group, 2017 — Base Definitions § 3.170 "Filename" e § 3.271 "Pathname",
+  POSIX.1-2017** (The Open Group Base Specifications Issue 7).
+  [link](https://pubs.opengroup.org/onlinepubs/9699919799/basedefs/V1_chap03.html)
+  _Âncora:_ o precedente de escolher **U+0000** como delimitador de campo: é o byte que o payload não
+  pode conter, que é a condição para o delimitador não ser forjável dentro de uma parte. _Onde no
+  projeto:_ `KEY_FIELD_SEPARATOR` nos dois módulos acima. _Fato citado:_ um filename "shall not contain
+  the <NUL> or <slash> characters", e no contexto de um pathname cada filename é seguido por `<slash>` ou
+  `<NUL>` — o NUL é terminador e nunca conteúdo. _Ressalva:_ o análogo é do domínio de pathnames, e um id
+  de registro deste corpus é string JSON, onde U+0000 é representável. O que sustenta a escolha aqui é o
+  **alfabeto medido** das partes — id de registro e shingle de 5 tokens de letra/número —, não uma
+  proibição de formato.
+- **Boucher & Anderson, 2021 — Trojan Source: Invisible Vulnerabilities** (arXiv 2111.00169; publicado
+  depois no 32nd USENIX Security Symposium, 2023). [link](https://arxiv.org/abs/2111.00169)
+  _Âncora:_ a outra metade da regra — escrito como **escape**, nunca como byte cru: um code point sem
+  representação visual faz o fonte que a revisão humana lê divergir do fonte que a máquina executa.
+  _Onde no projeto:_ o comentário de `KEY_FIELD_SEPARATOR` nos dois módulos, e o teste `carry no raw
+  control byte, so no code-search tool can skip an evaluator file`. _Fato citado:_ tokens logicamente
+  codificados em ordem diferente da exibida tornam a vulnerabilidade invisível ao revisor, e a defesa
+  recomendada é de nível de compilador — recusar o code point no fonte, em vez de confiar na revisão.
+  _Divergência declarada:_ o ataque do paper é reordenação bidi; aqui o code point não reordena nada, ele
+  é **sem glifo**. A classe é a mesma — o fonte exibido não é o fonte real —, o mecanismo não.
+- **ripgrep — GUIDE.md, seção "Binary data"** (documentação do projeto, BurntSushi/ripgrep).
+  [link](https://github.com/BurntSushi/ripgrep/blob/master/GUIDE.md)
+  _Âncora:_ o custo medido de um byte NUL cru num fonte — a busca de código deixa de ver o arquivo.
+  _Onde no projeto:_ `benchmark/near-duplicates.ts`. _Fato citado:_ "a file is considered 'binary' if and
+  only if it contains a `NUL` byte somewhere in its contents", e o modo padrão "is to attempt to remove
+  binary files from a search completely"; a filtragem vale para arquivo descoberto por travessia
+  recursiva de diretório, não para arquivo passado diretamente. _Medido neste repositório (2026-08-06):_
+  com o byte cru presente, busca recursiva por `clusterNearDuplicates` sob `benchmark/` devolvia
+  `corpus-import.ts` e o arquivo de teste e **omitia o módulo que define a função**, enquanto `git grep` o
+  listava. E `git diff` troca o diff inteiro por "Binary files … differ" quando o NUL cai nos primeiros
+  8000 bytes, medido com dois pares de arquivos que diferem só na posição do byte — o arquivo escapava
+  disso por acidente de offset (11.283 de 13.822).
+- **Git — gitattributes(5), o atributo `text` e a decisão texto/binário** (documentação do projeto Git).
+  [link](https://git-scm.com/docs/gitattributes)
+  _Âncora:_ por que a varredura de byte de controle cru da árvore **não** pode isentar pelo que o git
+  classifica como binário. _Onde no projeto:_ `tests/unit/repo/line-endings.test.ts`, teste "leaves no raw
+  control byte in a tracked path the repo calls text". _Fato citado:_ 'When `text` is set to "auto", Git
+  decides by itself whether the file is text or binary'; um caminho cujo atributo `diff` não está
+  especificado "first gets its contents inspected, and if it looks like text … Otherwise it would generate
+  `Binary files differ`"; e o git "usually guesses correctly whether a blob contains text or binary data by
+  examining the beginning of the contents". _O que a documentação não fixa, e foi medido aqui (2026-08-06):_
+  que são **duas** classificações com janelas diferentes. A do `diff` olha o começo do conteúdo — com o NUL
+  no offset 3 o `git diff` imprime "Binary files … differ" e nenhuma linha, com o NUL no offset 20.003 diffa
+  como texto. A da conversão, que é a coluna `i/` de `git ls-files --eol`, não usa janela: medido num índice
+  temporário sobre o HEAD, os dois arquivos com byte cru saem `i/-text`, inclusive o que tinha o NUL no
+  offset 11.283 **de** 13.822 e cujo diff era de texto. _Consequência de desenho:_ a classificação é
+  **causada** pelo byte procurado, então a isenção da varredura é a extensão declarada `binary` em
+  `.gitattributes` (nenhuma rastreada hoje) e nunca `i/-text` — filtrar por ela é o que fez os quatro
+  guardas de EOL do mesmo arquivo pularem os dois infratores sem ficar vermelhos.
+
 ### Cluster como átomo: componente conexo e validação cruzada
 
 - **Tarjan, 1975 — Efficiency of a Good But Not Linear Set Union Algorithm** (Journal of the ACM

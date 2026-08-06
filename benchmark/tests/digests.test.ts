@@ -347,6 +347,63 @@ describe("computeEvaluatorDigest", () => {
   });
 });
 
+/**
+ * `line:column` for a byte offset, because `path:number` is read as a line number by
+ * every editor and CI annotator, and a byte offset put there points nowhere. The
+ * column counts BYTES, which is the same as characters only on an ASCII line, so the
+ * caller keeps the exact offset in the message as well.
+ */
+function lineAndColumn(bytes: Buffer, offset: number): string {
+  let line = 1;
+  let lineStart = 0;
+  for (let index = 0; index < offset; index += 1) {
+    if (bytes[index] === 0x0a) {
+      line += 1;
+      lineStart = index + 1;
+    }
+  }
+  return `${line}:${offset - lineStart + 1}`;
+}
+
+describe("the bytes EVALUATOR_FILES hashes", () => {
+  it("carry no raw control byte, so no code-search tool can skip an evaluator file", async () => {
+    // A raw 0x00 makes grep and ripgrep classify a source file as binary and skip it
+    // whole, and makes `git diff` print "Binary files differ" instead of the change
+    // once the byte sits inside the first 8000 bytes. Both hide a file whose BYTES are
+    // the evaluator's identity, and neither is visible in review — which is why the
+    // control characters these modules key composite fields on are written as escapes
+    // (`benchmark/bootstrap.ts`, `benchmark/near-duplicates.ts`,
+    // `benchmark/split-audit.ts`).
+    //
+    // The tracked-tree counterpart is in `tests/unit/repo/line-endings.test.ts`. This
+    // one stays because it exempts NOTHING: the tree-wide sweep lets through whatever
+    // extension `.gitattributes` declares binary, and no member of this list may be
+    // skipped for any reason — their bytes are what the evaluator's identity is.
+    //
+    // CR is excluded on purpose: line endings are owned by the working-tree EOL check,
+    // and failing here for a checkout setting would be a different defect wearing this
+    // test's name.
+    const offenders: string[] = [];
+    for (const relativePath of EVALUATOR_FILES) {
+      const bytes = await readFile(resolve(REPO_ROOT, relativePath));
+      for (const [offset, byte] of bytes.entries()) {
+        const invisible =
+          (byte < 0x20 && byte !== 0x0a && byte !== 0x09 && byte !== 0x0d) ||
+          byte === 0x7f;
+        if (invisible) {
+          offenders.push(
+            `${relativePath}:${lineAndColumn(bytes, offset)} carries 0x${byte
+              .toString(16)
+              .padStart(2, "0")} at byte offset ${offset}`,
+          );
+          break;
+        }
+      }
+    }
+    expect(offenders).toEqual([]);
+  });
+});
+
 describe("observeEvaluatorFiles", () => {
   it("covers the whole inventory in lexicographic order without touching the aggregate", async () => {
     const root = await makeRoot();

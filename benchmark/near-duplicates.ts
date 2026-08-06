@@ -236,9 +236,27 @@ function shingleSet(tokens: readonly string[], size: number): Set<string> {
   return shingles;
 }
 
+// Separator for the two id/shingle keys below. The join has to be INJECTIVE:
+// without a separator the id pairs ("a","bc") and ("ab","c") key alike, one of the
+// two distinct candidate pairs is dropped as already seen, and a real
+// near-duplicate never reaches the Jaccard confirmation. A schema-validated id is a
+// `[A-Za-z0-9_-]` token (`benchmark/schema.ts`) and a shingle is letter/number
+// tokens joined by single spaces, but this module validates neither — any
+// `{ id, text }` is structurally assignable — so the separator has to be a code
+// point no caller would spell inside an id.
+//
+// U+0000 is FROZEN, not merely safe: it sits inside the permutation key
+// `minHashSignature` hashes, so every signature already recorded in the
+// cluster-exposure ledger was produced with it and has to keep comparing equal
+// against a corpus built years later. Written as an ESCAPE and never as a literal
+// byte: a literal control byte makes this file "binary" to grep and ripgrep, which
+// then skip it whole, and makes `git diff` report "Binary files differ" instead of
+// the change once the byte lands inside the first 8000 bytes.
+const KEY_FIELD_SEPARATOR = "\u0000";
+
 // For permutation i, the record's value is the minimum FNV-1a-32 bit hash of
-// `${seed + i}\0${shingle}` over all shingles. Seeding by (seed + i) gives 128
-// independent-yet-reproducible permutations.
+// (seed + i), the separator and the shingle, over all shingles. Seeding by
+// (seed + i) gives 128 independent-yet-reproducible permutations.
 function minHashSignature(
   shingles: ReadonlySet<string>,
   options: NearDuplicateOptions,
@@ -246,7 +264,9 @@ function minHashSignature(
   const signature = new Array<number>(options.permutations).fill(0xffffffff);
   for (const shingle of shingles) {
     for (let i = 0; i < options.permutations; i += 1) {
-      const hash = fnv1a32(`${options.seed + i}\0${shingle}`);
+      const hash = fnv1a32(
+        `${options.seed + i}${KEY_FIELD_SEPARATOR}${shingle}`,
+      );
       if (hash < signature[i]) signature[i] = hash;
     }
   }
@@ -254,8 +274,11 @@ function minHashSignature(
 }
 
 // LSH: split each signature into `bands` contiguous bands of equal width and
-// bucket records by `bandIndex:hex:hex:hex:hex`. Records sharing any band bucket
-// become a candidate pair, deduplicated by their ordered id key.
+// bucket records by `bandIndex:hex:hex:hex:hex`. ":" carries that join instead of
+// the reserved separator, and stays injective, because every part is a decimal or
+// hexadecimal number and the field count per band is fixed. Records sharing any
+// band bucket become a candidate pair, deduplicated by their ordered id key —
+// which is built from ids and does need the reserved separator.
 function collectCandidatePairs(
   prepared: readonly Prepared[],
   options: NearDuplicateOptions,
@@ -288,7 +311,7 @@ function collectCandidatePairs(
       for (let j = i + 1; j < ids.length; j += 1) {
         const [left, right] =
           ids[i] < ids[j] ? [ids[i], ids[j]] : [ids[j], ids[i]];
-        const pairKey = `${left} ${right}`;
+        const pairKey = `${left}${KEY_FIELD_SEPARATOR}${right}`;
         if (!pairs.has(pairKey)) pairs.set(pairKey, [left, right]);
       }
     }

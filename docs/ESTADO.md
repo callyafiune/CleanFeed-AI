@@ -23,8 +23,8 @@
 | item | valor |
 |---|---|
 | branch | `cleanfeed-mvp` |
-| suíte | 170 arquivos / 2.805 testes (vitest) + 429 testes e 84 subtests (pytest, lab). Verde em rodada limpa; sob contenção de I/O, dois arquivos de caminho selado batem no timeout de 20 s — dívida de § 7, não de política |
-| dos quais, o avaliador | 1.864 — 1.435 em 44 arquivos de `benchmark/tests`, 429 no lab |
+| suíte | 170 arquivos / 2.809 testes (vitest) + 429 testes e 84 subtests (pytest, lab). Verde em rodada limpa; sob contenção de I/O, dois arquivos de caminho selado batem no timeout de 20 s — dívida de § 7, não de política |
+| dos quais, o avaliador | 1.868 — 1.439 em 44 arquivos de `benchmark/tests`, 429 no lab |
 | typecheck | limpo |
 | lint | 13 problemas (11 erros, 2 avisos) |
 | tags de release | 0 |
@@ -389,11 +389,12 @@ A unidade é a página, o piso de 300 é trivial, e o dump de 1,96 GB é a reser
 |---|---|
 | componentes independentes na célula, hoje | 1 — sem documento de origem conhecido, toda linha da célula cai no balde único de origem irrecuperável |
 | guardas de integridade do pacote | 11 exercitadas, 0 sem teste |
-| `evaluatorDigest` da árvore | `71674ff2a11730f90adbf590613e991fdcfb3cee5bdb7b450b929573a0d79480` — 52 arquivos, recomputado pela função de produção e **lido por teste nomeado** (`digests.test.ts`, "is published in the ESTADO at the value the LIVE tree hashes to"), então este número não pode envelhecer em silêncio. Moveu de `18b8465f…` com as faixas de comprimento pré-inscritas e a cobertura imposta do mapa de bandas, e mover é barato enquanto `issuedAt` é nulo |
+| `evaluatorDigest` da árvore | `46a51915db4d2c1188161d9c76e7b4bdfc1b60670fea65f0ed77c9e03061e895` — 52 arquivos, recomputado pela função de produção e **lido por teste nomeado** (`digests.test.ts`, "is published in the ESTADO at the value the LIVE tree hashes to"), então este número não pode envelhecer em silêncio. Mover é barato enquanto `issuedAt` é nulo |
+| byte de controle cru em caminho rastreado | **zero**, e imposto por dois testes nomeados, com escopos diferentes de propósito. `digests.test.ts` ("carry no raw control byte, so no code-search tool can skip an evaluator file") varre os **52** de `EVALUATOR_FILES` e **não isenta nada**, porque os bytes desses arquivos são a identidade do avaliador. `tests/unit/repo/line-endings.test.ts` ("leaves no raw control byte in a tracked path the repo calls text") varre **todo** caminho de `git ls-files`, isentando só extensão que `.gitattributes` declara `binary` — nenhuma rastreada hoje, então na prática é a árvore inteira. Os dois recusam controle C0 fora de LF, TAB e CR e apontam `arquivo:linha:coluna` mais o offset de byte. A isenção **não** é a classificação `i/-text` do git: ela é causada pelo byte cru, e filtrar por ela pularia justamente o infrator |
 | ledger de exposição real | **0 bytes** — nenhum evento real foi escrito |
 | holdout-ledger real | 2.638 bytes — o consumo de 2026-07-25, `decision: reject` |
 | memória da exposição por linha | `benchmark/data/corpus-build/out/split/split-artifact.json` — pertença de `test`, só o operador lê |
-| referências | **420** marcadores de link em **18** seções de nível `##` de `references.md`, e **45** declarações literais de "Sem precedente encontrado" (mais 13 menções em outra forma). A regra é a ocorrência da junta `](` seguida de URL, contada **no arquivo inteiro e não por linha**: `references.md` quebra a ~100 colunas e 38 rótulos de link atravessam a quebra, então um regex `\[rótulo\]\(url\)` aplicado por linha devolve 382. Agora **lido por teste nomeado** (`estado-counts.test.ts`) — os valores anteriores (322 / 50, depois 349) envelheceram em silêncio exatamente porque nenhum teste os lia |
+| referências | **425** marcadores de link em **18** seções de nível `##` de `references.md`, e **45** declarações literais de "Sem precedente encontrado" (mais 13 menções em outra forma). A regra é a ocorrência da junta `](` seguida de URL, contada **no arquivo inteiro e não por linha**: `references.md` quebra a ~100 colunas e 38 rótulos de link atravessam a quebra, então um regex `\[rótulo\]\(url\)` aplicado por linha devolve 386. Agora **lido por teste nomeado** (`estado-counts.test.ts`) — os valores anteriores (322 / 50, depois 349) envelheceram em silêncio exatamente porque nenhum teste os lia |
 
 ### 5.7 Sondas diagnósticas sobre os pools em moldura (W3)
 
@@ -556,7 +557,6 @@ e a procedência do material dentro do próprio relatório.
 
 | dívida | vence |
 |---|---|
-| byte NUL literal em arquivo de `EVALUATOR_FILES` (`near-duplicates.ts`) | commit próprio — o conserto move o `evaluatorDigest` |
 | **inventário de material**: `build_governance.ts` escreve manifesto v1 sem `materialBatches`, então todo corpus v4 sai `blocked` com `SOURCE_REFERENCE_MISSING` por linha humana | Fase 3, item 1 — entrada declarada pelo operador para **um** lote (`smb_ptwiki-20220301`), e o manifesto passa a v2 |
 | nenhum vínculo F6 prova em que corpus os pesos atuais foram treinados | antes de publicar pesos |
 | rodada 13 do cross-review do E2 | crédito do codex, 8 de agosto |

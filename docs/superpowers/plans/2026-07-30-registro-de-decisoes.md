@@ -5434,3 +5434,189 @@ que o alvo implica. A regra é a que `test_backbone_policy.py` já escrevia: uma
 de § 5.7b do ESTADO é propriedade do **fixture** (que sintetiza o texto a partir do alvo), não do
 gerador — o gerador não rodou. A coluna passa a se chamar pelo que é, **comprimento pedido**, e o que
 o gerador entrega ganhou a guarda de truncagem acima.
+
+## A dívida do byte NUL: o separador era SIGNIFICATIVO, e o defeito era a grafia (X2) — 2026-08-06
+
+**O que o ESTADO registrava, e o que a medição achou.** A célula de uma linha do § 7 do ESTADO dizia "byte
+NUL literal em arquivo de `EVALUATOR_FILES` (`near-duplicates.ts`)" e não dizia o que o byte fazia — mas o
+**achado 12 desta mesma folha** (linhas 586-595) já dizia: nomeava o sítio (`` `${left}\x00${right}` ``, "num
+separador de chave composta"), o offset **11.283**, o segundo arquivo com o offset dele, e a regra já escrita
+em `benchmark/split-audit.ts`. Quem lê só o ESTADO não sabia; o registro sabia. Medido antes de qualquer
+conserto, sobre `near-duplicates.ts` em `4fe8fdb` (sha256 `bb469c7c…`, 13.822 bytes): **um** byte 0x00, no
+offset **11.283**, dentro de `` `${left}<0x00>${right}` `` — a chave que **deduplica os pares candidatos**
+em `collectCandidatePairs`. Não é comentário e não é byte espúrio de arquivo: é **conteúdo de uma chave de
+dedup**. E o arquivo já escrevia o **mesmo code point** como escape `\0` na chave de permutação de
+`minHashSignature`, doze linhas acima — isto é, carregava **duas grafias do mesmo separador**, uma visível
+e uma invisível.
+
+**Logo o conserto não é apagar, e essa era a bifurcação da unidade.** O separador é o que torna a junção
+**injetiva**: sem ele os ids `("a","bc")` e `("ab","c")` produzem a MESMA chave `abc`, o segundo par é
+descartado por `pairs.has(pairKey)` como já visto, e um par de quase-duplicatas real **nunca chega à
+confirmação por Jaccard** — os dois membros ficam livres para atravessar o corte
+`train`/`dev`/`cal-A`/`cal-B`/`test`, que é exatamente o vazamento que o módulo existe para impedir.
+Apagar o byte seria a regressão; escrevê-lo como escape é o conserto. Está medido, não argumentado: com o
+separador removido, `candidatePairCount` cai de 2 para 1 no corpo de quatro linhas que a guarda usa.
+
+**A grafia certa já existia no repositório, em outro membro da mesma lista.**
+`benchmark/bootstrap.ts:328-335` declara a regra inteira — "They are written as ESCAPES and never as
+literal bytes: a literal control byte makes this file 'binary' to grep and ripgrep, which then report a
+match without ever showing the line" — e define `KEY_FIELD_SEPARATOR` e `KEY_PAIR_SEPARATOR` como escapes
+de U+0000 e U+0001. `benchmark/split-audit.ts:423-425` escreve a mesma regra para U+001F ("Written as an
+escape, never as a literal control byte"). `near-duplicates.ts` era o **único violador dentro de
+`EVALUATOR_FILES`** — o outro byte cru da árvore, em `import-export.test.ts`, não é separador de chave e
+está abaixo —, e por isso o conserto adota o **mesmo nome** e a mesma grafia nos dois sítios de chave do
+módulo, em vez de inventar um terceiro vocabulário.
+
+**O custo do byte cru, medido em 2026-08-06 e não estimado.** Duas ferramentas, dois efeitos:
+
+- **a busca de código não via o arquivo.** ripgrep considera binário "if and only if it contains a `NUL`
+  byte somewhere in its contents" e o modo padrão "is to attempt to remove binary files from a search
+  completely". Medido: busca recursiva por `clusterNearDuplicates` sob `benchmark/` devolvia
+  `corpus-import.ts` e `tests/near-duplicates.test.ts` e **omitia o módulo que define a função**; `git
+  grep` pelo mesmo termo o listava. O módulo que decide o que é quase-duplicata estava invisível à busca
+  de código do repositório;
+- **`git diff` escapava por acidente de offset.** O heurístico do git olha os primeiros 8000 bytes.
+  Medido primeiro com dois pares de arquivos idênticos exceto na posição do byte: no offset 3, `git diff`
+  imprime "Binary files … differ" e **nenhuma linha**; no offset 20.003, diffa como texto. E depois medido
+  **dentro deste próprio commit**, que carrega os dois casos e é o experimento natural: `git diff HEAD
+  --stat` devolve `benchmark/near-duplicates.ts | 35 +++++++++++++++++++++++++------` (NUL no offset 11.283
+  de 13.822, **fora** da janela) e `tests/unit/storage/import-export.test.ts | Bin 6119 -> 6124 bytes` (NUL
+  no offset 5.071, **dentro** dela). Mesmo defeito, mesmo commit, e do segundo arquivo o diff **não mostra
+  uma linha** —
+  encurtar o cabeçalho de `near-duplicates.ts`, ou o byte subir, e toda mudança num membro de
+  `EVALUATOR_FILES` passaria a ser invisível assim.
+
+**A prova de que a semântica não mudou.** Os dois módulos — o de `4fe8fdb` e o consertado — foram
+importados no MESMO processo e comparados sobre o mesmo corpo de entrada: 3 conjuntos de opções
+(`NEAR_DUPLICATE_V1_OPTIONS`, `seed: 20260726`, `bands: 16`) × 2 ordens de entrada, mais 7 impressões
+digitais, **13 saídas serializadas, 0 divergências**, digest `b2b1abf6…` nos dois lados. É a comparação
+antes/depois que a unidade pediu, e ela é vacuosa por construção — o code point é o mesmo —, o que é
+justamente por que o defeito sobreviveu a uma suíte de 2.805 testes.
+
+**As três guardas, e a dívida existia porque não havia nenhuma.** Cada mutação mata um teste nomeado
+diferente. Rodadas **por último**, sobre os bytes finais (base `near-duplicates.ts` sha256 `d65e3d32…`,
+`import-export.test.ts` `a9de254a…`), e cada uma restaurada byte a byte com conferência de sha256:
+
+| mutação | teste que fica vermelho | o que fica verde |
+|---|---|---|
+| separador removido da chave de par (`044c7069…`) | `keeps two candidate pairs whose ids concatenate to the same string` (expected 1 to be 2) e `reproduces the frozen v1 clustering byte for byte, cluster ids included` | os outros **seis** testes do módulo |
+| escape reescrito como byte 0x00 cru (`f2273b7b…`) | `carry no raw control byte, so no code-search tool can skip an evaluator file` **e** `leaves no raw control byte in a tracked path the repo calls text`, os dois com `benchmark/near-duplicates.ts:255:30 carries 0x00 at byte offset 10446`; de tabela, `is published in the ESTADO at the value the LIVE tree hashes to` | **todo** teste de comportamento, os 8 do módulo inclusive |
+| separador trocado de U+0000 para U+0001 (`e88b0238…`) | `reproduces the frozen MinHash signature, whose permutation key is joined the same way` | a chave de par e o agrupamento congelado, 7 de 8 |
+| byte cru num arquivo **fora** de `EVALUATOR_FILES` (`import-export.test.ts`, `f3fe5c1e…`) | só `leaves no raw control byte in a tracked path the repo calls text`, com `tests/unit/storage/import-export.test.ts:167:26 carries 0x00 at byte offset 5071` | `digests.test.ts` **inteiro** |
+
+A segunda linha é o achado: **nenhum teste de comportamento pode pegar a grafia**, porque o code point é o
+mesmo. Uma dívida de byte invisível só é fechável por uma guarda que leia **bytes**, e as duas que existem
+agora recusam controle C0 fora de LF, TAB e CR apontando `arquivo:linha:coluna` mais o offset. CR fica de
+fora de propósito: o fim de linha é da disciplina de EOL da árvore, e falhar aqui por configuração de
+checkout seria um defeito diferente usando o nome deste teste. A quarta linha é a que separa as duas
+guardas: um infrator fora da lista fechada deixa `digests.test.ts` inteiramente verde, e é por isso que a
+varredura da árvore não é redundância dela.
+
+**Um segundo byte cru, fora da lista fechada — que o achado 12 já tinha nomeado.** O outro é
+`tests/unit/storage/import-export.test.ts:167`, o `repeat(MAX_IMPORT_BYTES + 1)` que só precisa exceder o
+teto de 5 MiB; a linha 588 desta folha já dava o caminho e o offset **5.071**, e a varredura de
+`git ls-files` desta unidade confirmou que ele continuava lá. Reescrito como escape do MESMO code point —
+string idêntica, zero mudança de comportamento. Não está em `EVALUATOR_FILES`, então não move o
+`evaluatorDigest`.
+
+**E a guarda passou a ser da árvore, não da lista.** Publicar "na árvore inteira também é zero" com uma
+guarda que só varre 52 dos 574 arquivos rastreados seria republicar o defeito de origem: número medido uma
+vez, que nada relê. `tests/unit/repo/line-endings.test.ts` — o arquivo que já lia a árvore real por
+`git ls-files` e já parseava as extensões `binary` de `.gitattributes` — ganhou
+`leaves no raw control byte in a tracked path the repo calls text`. A isenção é a extensão **declarada**
+binária, nunca a classificação `i/-text` do próprio git: essa classificação é **causada** pelo byte
+procurado, então filtrar por ela pularia exatamente o infrator.
+
+E isso está medido, não deduzido — com um índice temporário (`GIT_INDEX_FILE` + `read-tree HEAD`, que não
+toca o índice real), `git ls-files --eol` no HEAD devolve `i/-text` para **os dois** arquivos, e a medição
+corrige de passagem uma frase que esta entrada dizia com o mecanismo errado: são **duas** classificações com
+janelas diferentes. A do `diff` olha os primeiros 8000 bytes — é por ela que `near-duplicates.ts` diffava
+como texto e `import-export.test.ts` saía como `Bin`. A da conversão/EOL não usa janela nenhuma: o NUL de
+`near-duplicates.ts`, no offset 11.283 **de** 13.822, já bastava para `i/-text`. Consequência: os quatro
+guardas de EOL, que filtram `i/-text` por linha de código, pularam **os dois** arquivos — o de 17 de julho
+(`6dff262`) e o membro de `EVALUATOR_FILES` — e nenhum deles ficou vermelho por isso. Uma guarda que se
+protege com a classificação que o defeito produz não protege nada. Nenhuma extensão declarada binária é
+rastreada hoje, então a varredura cobre os 574 arquivos e o número deixa de precisar ser publicado como
+memória.
+
+**O `evaluatorDigest` moveu, e mover era o propósito do commit isolado:**
+`71674ff2a11730f90adbf590613e991fdcfb3cee5bdb7b450b929573a0d79480` →
+`46a51915db4d2c1188161d9c76e7b4bdfc1b60670fea65f0ed77c9e03061e895`, 52 arquivos, recomputado **por último**
+sobre os bytes finais — inclusive depois de o comentário do separador ser reescrito pelo achado 1 da
+revisão, que mexe em bytes de um membro da lista e por isso move o digest outra vez. Barato hoje: `issuedAt`
+é nulo, 0 tags de release, nenhum `fit` selado.
+
+**Custo de reversão.** Devolver o byte cru é uma substituição de um code point em `near-duplicates.ts`, mais
+apagar as **duas** guardas de bytes (`digests.test.ts` e `line-endings.test.ts`) e republicar o digest
+antigo — os três testes de comportamento desta unidade ficariam verdes com o byte cru no lugar do escape, e
+é essa exata insensibilidade que justifica guarda que lê bytes. Reverter a **injetividade** (voltar a
+`${left}${right}`) custa dois testes nomeados, e é o que não deve ser revertido.
+
+### O que a revisão pegou, e o que mudou por causa dela
+
+A revisão cruzada devolveu `pass` com cinco achados menores. Os cinco foram aplicados; um foi aplicado por
+outro mecanismo que o sugerido, e está nas divergências abaixo.
+
+1. **A razão escrita no código de produção era refutada pelo alfabeto medido do próprio repositório.** O
+   comentário do separador afirmava que "a record id and a shingle may both contain any printable
+   character". As duas metades são falsas contra o código: `benchmark/schema.ts:298` define
+   `PSEUDONYM = /^[A-Za-z0-9_-]+$/` e recusa todo id que não case, e `normalizeTokens` + `shingleSet` fazem
+   de um shingle apenas tokens de letra/número unidos por **um** espaço. A frase tinha vindo de
+   `bootstrap.ts`, onde é verdadeira (nome de eixo e id de grupo são livres) — e `references.md`, no mesmo
+   commit, já escrevia a versão medida. Ou seja: o commit publicava **duas justificativas incompatíveis** e
+   a falsa era a que vivia no código. Consertado com o que está medido, mais a restrição que de fato
+   congela U+0000 e que o comentário não dizia: o separador está **dentro da chave de permutação**, logo
+   dentro de toda assinatura já gravada no cluster-exposure ledger, que tem de comparar igual anos depois.
+   E o comentário passa a dizer que o módulo **não valida** id nenhum — `NearDuplicateInput` aceita
+   qualquer `{ id, text }` —, então o alfabeto do esquema é do chamador e não daqui.
+2. **A mensagem da guarda emitia `caminho:offsetDeByte` na convenção universal `caminho:linha`.** Um
+   `near-duplicates.ts:9940` — offset de byte num arquivo que tinha 385 linhas — manda o editor, o anotador
+   de CI e o humano para lugar nenhum. Agora emite `caminho:linha:coluna` e mantém o offset exato
+   **rotulado** no fim da mensagem, porque a coluna conta bytes e só coincide com caractere em linha ASCII.
+   Medido nas mutações: `benchmark/near-duplicates.ts:255:30 carries 0x00 at byte offset 10446` e
+   `tests/unit/storage/import-export.test.ts:167:26 carries 0x00 at byte offset 5071`.
+3. **O comentário lia como exaustivo sobre "the composite keys below" e o módulo tem três chaves
+   compostas.** A terceira é o balde de banda LSH, que junta por `:` e não usa a constante. Não é defeito
+   de corretude — decimal e hexadecimal não contêm `:` e a aridade por banda é fixa —, mas era uma segunda
+   convenção indocumentada sob um comentário que se apresentava como a regra. O comentário passou a nomear
+   as duas chaves de id/shingle, e o balde de banda ganhou a linha que diz por que `:` basta ali.
+4. **Quatro frases desta entrada afirmavam como fato o que esta mesma folha refuta 4.850 linhas acima.**
+   Corrigidas: a dívida cega era a célula do § 7 do ESTADO e **não** o registro (o achado 12 já tinha
+   sítio, offset e o segundo arquivo); "único violador" passou a "único violador dentro de
+   `EVALUATOR_FILES`"; `split-audit.ts:423-425` entrou junto de `bootstrap.ts` como quem já tinha escrito a
+   regra; e o histograma do `--stat`, citado com quatro barras de cada lado, passou a ser o real.
+5. **O ESTADO publicava um número medido que nenhum teste relê** (574 arquivos rastreados), três linhas
+   acima da linha que registra a lição de que número não lido envelhece em silêncio. Aplicado por outro
+   mecanismo — veja a divergência 4.
+
+### Divergências desta unidade contra o que lhe foi pedido
+
+1. **Não ficou um literal solto no sítio do byte cru: ficou a constante nomeada `KEY_FIELD_SEPARATOR`, e o
+   segundo sítio de chave do módulo mudou junto.** O pedido admitia o escape ou `String.fromCharCode(0)`
+   no sítio do byte. A constante põe a restrição técnica em **um** lugar e alinha o módulo com
+   `bootstrap.ts`, que já tinha a mesma constante com o mesmo nome; deixar `\0` no sítio da permutação
+   manteria duas grafias do mesmo separador no mesmo arquivo, que é metade do defeito original. A saída é
+   byte-idêntica nos dois sítios, provado pelo A/B acima. **Custo de reversão:** reinlinhar o literal nos
+   dois sítios e apagar oito linhas de comentário.
+2. **Um arquivo fora de `EVALUATOR_FILES` foi tocado** (`tests/unit/storage/import-export.test.ts`), o que
+   a unidade não pediu. A razão é que o ESTADO passa a publicar "na árvore inteira também é zero", e
+   publicar isso com um byte cru na árvore seria a alegação falsa que N7 existe para impedir. **Custo de
+   reversão:** uma substituição de code point; não move digest nenhum.
+3. **A guarda de bytes ficou em `digests.test.ts`, que § 7 já registra como sensível a contenção de
+   I/O.** A alternativa era pô-la num arquivo barato, mas o inventário que ela varre é declarado ali e é
+   ali que um revisor procura. Medido: o arquivo roda em ~3 s isolado com a guarda dentro, e a varredura
+   acrescenta **uma** passada de leitura sobre 52 arquivos, contra as dezenas de árvores temporárias de 52
+   arquivos que os outros testes do mesmo arquivo escrevem. **Custo de reversão:** mover o `describe` para
+   `near-duplicates.test.ts` e perder a cobertura dos outros 51 membros.
+4. **O achado 5 da revisão foi aplicado pelo mecanismo oposto ao sugerido, e isso fecha uma dívida do § 7
+   que tinha outro dono.** A sugestão era pinar **574** num teste, como `estado-counts.test.ts` faz com as
+   contagens de `references.md`. Recusada: uma asserção sobre a contagem de arquivos rastreados fica
+   vermelha em **todo** commit que acrescenta arquivo, cobra o pedágio de cada unidade seguinte e treina
+   quem passa por ali a atualizar o número sem reler o que ele afirma — que é o modo de falha da própria
+   lição. O que a linha do ESTADO afirma de útil não é o 574: é o **zero**. Então a varredura passou a ser
+   da árvore (`tests/unit/repo/line-endings.test.ts`), o escopo passa a ser derivado de `git ls-files` a
+   cada rodada, e o número saiu da prosa. Efeito colateral que a unidade não pediu: a linha "a guarda cobre
+   os 52 e não a árvore" sai do § 7, cujo dono era "unidade que precisar da varredura fora da lista
+   fechada". Medido: a varredura custa **441 ms** e lê 574 arquivos / 9.265.278 bytes numa passada, num
+   arquivo cujos vizinhos já custam 1.544 ms e 1.374 ms em chamadas a `git check-attr`. **Custo de
+   reversão:** apagar um `describe` de 35 linhas e devolver a linha ao § 7.

@@ -1,5 +1,6 @@
-// Guards the repository's end-of-line contract, which is a tooling invariant and
-// not a style preference.
+// Guards the repository's end-of-line contract and the rest of the byte-level
+// hygiene of a tracked path, which are tooling invariants and not style
+// preferences.
 //
 // `core.autocrlf=true` (the Git for Windows default) checks text files out as
 // CRLF while the blob stays LF. When a tool then rewrites such a file in LF, the
@@ -105,6 +106,24 @@ function extensionOf(path: string): string {
   const dot = path.lastIndexOf(".");
   const slash = path.lastIndexOf("/");
   return dot > slash ? path.slice(dot).toLowerCase() : "";
+}
+
+/**
+ * `line:column` for a byte offset, because `path:number` is read as a line number by
+ * every editor and CI annotator, and a byte offset put there points nowhere. The
+ * column counts BYTES, which equals characters only on an ASCII line, so the caller
+ * keeps the exact offset in the message as well.
+ */
+function lineAndColumn(bytes: Buffer, offset: number): string {
+  let line = 1;
+  let lineStart = 0;
+  for (let index = 0; index < offset; index += 1) {
+    if (bytes[index] === 0x0a) {
+      line += 1;
+      lineStart = index + 1;
+    }
+  }
+  return `${line}:${offset - lineStart + 1}`;
 }
 
 /** Byte-exact CRLF -> LF rewrite, the transform a normalizing tool applies. */
@@ -233,5 +252,47 @@ describe("repository end-of-line contract", () => {
     } finally {
       writeFileSync(absolute, original);
     }
+  });
+});
+
+describe("repository control-byte contract", () => {
+  it("leaves no raw control byte in a tracked path the repo calls text", () => {
+    // An invisible byte changes what tools see without changing what review reads: a
+    // NUL inside the first 8000 bytes makes git classify the blob as binary, so
+    // `git diff` prints "Binary files differ" instead of the change, and ripgrep drops
+    // the file from a recursive search altogether. Where such a code point IS the
+    // value of something — the composite-key separators of `benchmark/bootstrap.ts`,
+    // `benchmark/near-duplicates.ts` and `benchmark/split-audit.ts` — this repository
+    // writes it as an escape, and this is what holds that to the whole tracked tree.
+    //
+    // The exemption is the DECLARED binary extensions, never git's own `i/-text`
+    // classification: that classification is CAUSED by the raw byte, so filtering on
+    // it would skip exactly the paths being looked for — which is what the `i/-text`
+    // filter in the tests above did. And unlike the diff heuristic it has no window:
+    // a NUL anywhere in the blob flips `i/`, whatever its offset. CR is excluded
+    // because line endings are owned by the tests above.
+    const binary = new Set(declaredBinaryExtensions());
+    const paths = listEol()
+      .map((entry) => entry.path)
+      .filter((path) => !binary.has(extensionOf(path)));
+    expect(paths.length).toBeGreaterThan(100);
+
+    const offenders: string[] = [];
+    for (const path of paths) {
+      const bytes = readFileSync(join(repoRoot, ...path.split("/")));
+      for (const [offset, byte] of bytes.entries()) {
+        const invisible =
+          (byte < 0x20 && byte !== 0x0a && byte !== 0x09 && byte !== 0x0d) ||
+          byte === 0x7f;
+        if (!invisible) continue;
+        offenders.push(
+          `${path}:${lineAndColumn(bytes, offset)} carries 0x${byte
+            .toString(16)
+            .padStart(2, "0")} at byte offset ${offset}`,
+        );
+        break;
+      }
+    }
+    expect(offenders).toEqual([]);
   });
 });
