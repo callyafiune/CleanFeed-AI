@@ -36,6 +36,9 @@ interface RecordFields {
   sourceId?: string;
   humanSourceType?: string;
   hardNegativeFamily?: string;
+  // Set only when a fixture asks for it: the topic axis has to be absent from the
+  // fixtures that predate it, or every count in this file would move.
+  topic?: string;
   transformationKind?: string;
   severity?: string;
   generatorFamily?: string;
@@ -70,6 +73,9 @@ function record(fields: RecordFields): BenchmarkRecord {
   }
   if (fields.hardNegativeFamily !== undefined) {
     base.hardNegativeFamily = fields.hardNegativeFamily;
+  }
+  if (fields.topic !== undefined) {
+    base.topic = fields.topic;
   }
   if (fields.aiFraction !== undefined) {
     base.mixture = {
@@ -586,9 +592,10 @@ function slice(
   warningFpr: number,
   warningRecall: number,
   visual: { fpr: number; recall: number } | null,
+  axis: SliceAxis = "domain",
 ): SliceResult {
   return {
-    axis: "domain",
+    axis,
     key,
     sampleSize: 2,
     positives: 1,
@@ -627,5 +634,140 @@ describe("summarizeSlices", () => {
     expect(summary.worst.actionFpr?.key).toBe("s2");
     // s3 has no visual block, so the only eligible visual recall is s2.
     expect(summary.worst.actionRecall?.key).toBe("s2");
+  });
+});
+
+// --- the topic axis: sliced and reported, never gated -----------------------
+//
+// `topic` has been a REQUIRED field of every record since schema v2 and nothing read it.
+// These four tests are what keep the axis a diagnostic: one for its presence, one for the
+// empty cell, one for the published macro average, one for the worst-slice search.
+
+function topicFixture(): EvaluationItem[] {
+  const items: EvaluationItem[] = [];
+  // A dense topic, well past the FPR floor: it is the row that would become a gate if the
+  // axis were ever added to FPR_AXES.
+  for (let i = 0; i < FPR_FLOOR + 10; i += 1) {
+    items.push(
+      item({
+        author: `dense_h_${i}`,
+        label: "human",
+        topic: "geografia",
+        // Every fixture row false-positives, so the topic FPR is 1.0 — the largest value
+        // an FPR can take, which is what makes the macro-average and worst-slice
+        // assertions below unambiguous.
+        warned: true,
+        documentScore: 0.9,
+      }),
+    );
+  }
+  for (let i = 0; i < RECALL_FLOOR + 10; i += 1) {
+    items.push(
+      item({
+        author: `dense_a_${i}`,
+        label: "ai",
+        topic: "geografia",
+      }),
+    );
+  }
+  // A topic with POSITIVES ONLY: its FPR cell has no population at all.
+  for (let i = 0; i < 4; i += 1) {
+    items.push(item({ author: `ai_only_${i}`, label: "ai", topic: "quimica" }));
+  }
+  // A topic with NEGATIVES ONLY: its recall cell has no population at all.
+  for (let i = 0; i < 4; i += 1) {
+    items.push(
+      item({ author: `human_only_${i}`, label: "human", topic: "botanica" }),
+    );
+  }
+  return items;
+}
+
+describe("the topic slice axis", () => {
+  it("slices on topic and refuses to make any topic slice gate-eligible", () => {
+    const slices = buildSlices(topicFixture(), SEED);
+    const topics = slices.filter((entry) => entry.axis === "topic");
+    expect(topics.map((entry) => entry.key)).toEqual([
+      "botanica",
+      "geografia",
+      "quimica",
+    ]);
+
+    const dense = find(slices, "topic", "geografia");
+    // Past BOTH floors, so nothing but the axis itself keeps it out of the gates.
+    expect(dense?.negatives).toBeGreaterThanOrEqual(FPR_FLOOR);
+    expect(dense?.positives).toBeGreaterThanOrEqual(RECALL_FLOOR);
+    expect(dense?.fprGateEligible).toBe(false);
+    expect(dense?.recallGateEligible).toBe(false);
+    // The rates ARE measured and published — the axis is a diagnostic, not a hole.
+    expect(dense?.metrics.warning.endToEnd.falsePositiveRate.value).toBeCloseTo(
+      1,
+      10,
+    );
+    expect(dense?.metrics.warning.endToEnd.recall.value).toBeCloseTo(1, 10);
+  });
+
+  it("keeps a topic whose measured population is empty on one side", () => {
+    const slices = buildSlices(topicFixture(), SEED);
+    const aiOnly = find(slices, "topic", "quimica");
+    const humanOnly = find(slices, "topic", "botanica");
+    // Present, not dropped: the row exists so a reader sees the topic and its emptiness.
+    expect(aiOnly).toBeDefined();
+    expect(humanOnly).toBeDefined();
+    expect(aiOnly?.sampleSize).toBe(4);
+    expect(humanOnly?.sampleSize).toBe(4);
+    // The empty side is empty, and the count is what report.ts prints `n/a` off.
+    expect(aiOnly?.negatives).toBe(0);
+    expect(humanOnly?.positives).toBe(0);
+    // And the RATE production computes over that empty side, so the report fixture prints a
+    // cell the real body can produce: `proportionEstimate` returns NaN on a zero total,
+    // which is the second of the two terms report.ts reads.
+    expect(
+      Number.isFinite(aiOnly?.metrics.warning.endToEnd.falsePositiveRate.value),
+    ).toBe(false);
+    expect(
+      Number.isFinite(humanOnly?.metrics.warning.endToEnd.recall.value),
+    ).toBe(false);
+  });
+
+  it("leaves the published macro average unmoved by the topic axis", () => {
+    const all = buildSlices(topicFixture(), SEED);
+    const withoutTopic = all.filter((entry) => entry.axis !== "topic");
+    expect(all.length).toBeGreaterThan(withoutTopic.length);
+    const summarized = summarizeSlices(all);
+    const withoutSummarized = summarizeSlices(withoutTopic);
+    // The dense topic FPR is 1.0, so a macro average that included it could not agree
+    // with one that did not — the equality is only reachable by excluding the axis.
+    expect(summarized.macro.warningFpr).toBe(
+      withoutSummarized.macro.warningFpr,
+    );
+    expect(summarized.macro.warningRecall).toBe(
+      withoutSummarized.macro.warningRecall,
+    );
+    expect(summarized.macro.actionFpr).toBe(withoutSummarized.macro.actionFpr);
+    expect(summarized.macro.actionRecall).toBe(
+      withoutSummarized.macro.actionRecall,
+    );
+  });
+
+  it("never reports a topic slice as the worst case", () => {
+    // Forced eligible, which `buildSlices` never does: this asserts the SECOND barrier,
+    // so a topic slice that arrived eligible from anywhere still cannot be the headline.
+    const summarized = summarizeSlices([
+      slice("corp", true, true, 0.02, 0.8, { fpr: 0.01, recall: 0.7 }),
+      slice(
+        "geografia",
+        true,
+        true,
+        0.99,
+        0.01,
+        { fpr: 0.98, recall: 0.02 },
+        "topic",
+      ),
+    ]);
+    expect(summarized.worst.warningFpr?.key).toBe("corp");
+    expect(summarized.worst.warningRecall?.key).toBe("corp");
+    expect(summarized.worst.actionFpr?.key).toBe("corp");
+    expect(summarized.worst.actionRecall?.key).toBe("corp");
   });
 });

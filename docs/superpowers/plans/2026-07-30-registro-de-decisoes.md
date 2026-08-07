@@ -5986,3 +5986,227 @@ M1 e M2 já constavam do parcial e foram **re-rodadas** aqui, porque a prova val
 arquivo mudou depois delas. M7 é a única cujo resultado esperado é verde: a mutação existe para medir a
 ausência de cobertura, não para exercitá-la, e o remédio escolhido foi corrigir a frase e não o código —
 com a razão em "O que NÃO foi aplicado".
+
+---
+
+## As quatro sondas de dependência de tema (2026-08-07)
+
+Quatro instrumentos que medem se o veredito lê **assunto** ou lê **estrutura**, mais a leitura do resultado
+da família reservada. **Nenhum decide gate e nenhum gasta alpha.** Estado vigente em ESTADO § 3.3 e § 5.8;
+referências em `references.md` § O.
+
+### De onde veio, e a separação entre o estabelecido e o especulado
+
+Eu (o agente principal) levantei que o detector poderia aprender **implausibilidade de co-ocorrência** como
+atalho: texto cuja combinação de entidades é improvável seria lido como IA. Perseguindo o argumento com o
+operador, ele ficou **mais fraco** do que eu o enunciei, e a honestidade sobre isso é parte do contrato
+desta unidade. A separação, nestes termos:
+
+- **ESTABELECIDO.** O pré-treino MLM do BERTimbau tem como OBJETIVO prever token por contexto, logo as
+  representações codificam estatística de co-ocorrência. Isso é arquitetura, não especulação.
+- **ESPECULADO — meu, e eu afirmei como se soubesse.** Que a representação AGRUPADA que a cabeça de
+  classificação lê exponha essa implausibilidade de forma utilizável. Existe método padrão para medir
+  surpresa com MLM — pseudo-perplexidade, Salazar et al. 2020 — e o nosso classificador **não a calcula**.
+- **SOBREVIVE.** O pareamento controla o ASSUNTO, não a CORREÇÃO. A linha de IA inventa entidade que a seção
+  humana não tem, então dentro de um par de tópico idêntico o erro factual ainda diferencia.
+- **DISSOLVE-SE EM GRANDE PARTE.** As famílias de treino são modelos de fronteira, que raramente confabulam
+  em prosa enciclopédica curta sobre tópico conhecido: o gradiente é fino no treino. A confabulação pesada
+  vive no modelo pequeno RESERVADO, que é só teste — reservado não ensina, apenas infla a leitura.
+
+**O objetivo dos instrumentos era DECIDIR se a hipótese valia, não confirmá-la.** Ela não valeu, e a
+medição que a refuta está em ESTADO § 5.8: contra o artefato antigo, mascarar toda entidade, data e numeral
+**não** move o veredito, e mascarar uma quantidade igual de palavras comuns move o escore 4,7× mais.
+
+### Decisão 1 — o mascaramento tem TRÊS braços, e o terceiro é o que o torna legível
+
+Decidido: `original`, `entity-masked` e `placebo-masked`, com o placebo casando a contagem de vãos **e** o
+multiconjunto de comprimentos de vão. Razão: `[MASK]` é um token que a cabeça ajustada nunca viu depois do
+fine-tuning, então inserir quinze deles move o escore qualquer que seja o que substituíram — um único braço
+não distingue "as entidades carregavam o escore" de "marcadores movem o escore". A quantidade lida é o
+**excesso** do braço de entidades sobre o placebo. **Custo de reversão:** baixo — remover o braço placebo é
+uma linha, e o preço é que o instrumento deixa de decidir qualquer coisa; o teste
+`test_the_placebo_matches_span_count_and_run_lengths` reprova.
+
+### Decisão 2 — heurística de entidade em vez de tagger, com a recall declarada
+
+Decidido: o achador de entidades é heurístico — maiúscula em meio de frase, siglas, numerais, datas — e
+stdlib puro. **Medido antes de decidir, sobre `ner_pilot.py`, que está na árvore:** o caminho `screen` dele
+exige `transformers` + `torch` e baixa dois checkpoints do HF; a própria docstring declara que só `tally` e
+as funções puras são stdlib. O interpretador em que a suíte do lab roda (`py -3.13`) **não tem
+`transformers`**, então uma transformação de mascaramento construída sobre ele ficaria fora da bateria que
+roda a cada mudança, e um diagnóstico ganharia um download de modelo. O que o piloto oferece acima de um
+tagger — janelamento por offsets, dedup de vão, mapeamento fail-closed de rótulo — pressupõe o tagger.
+
+A heurística **sub-mascara** e isso é declarado, não escondido: um capital que só abre frase é
+indistinguível de substantivo próprio por caixa. É recuperado quando a mesma forma aparece capitalizada no
+meio de outra frase do mesmo documento (`proper_forms`), e não é recuperado quando não aparece — há teste
+para as duas direções. Sub-mascarar só pode empurrar o veredito para `survives`, então `collapses` é o
+veredito forte e `survives` viaja com a fração de palavras efetivamente mascarada ao lado.
+**Custo de reversão:** baixo enquanto ninguém publicar um número sobre a recall do achador; alto depois.
+
+### Decisão 3 — o critério de colapso, e o piso medido que ele tem de superar
+
+Decidido: colapso quando, na classe `ai`, `excesso de queda média ≥ 0,10` **ou** `excesso de taxa de virada
+de veredito ≥ 0,20`. Os dois números são declarados e sem precedente. O piso que eles têm de superar é
+**medido**: o relatório de paridade do export int8 que ancora o teto de bytes aceita `maxAbsDelta`
+**0,008950** e **zero** viradas em 120 amostras, então 0,10 é onze vezes o maior delta que o gate de
+paridade tolera e não pode ser confundido com quantização. O veredito lê a classe `ai` porque a hipótese é
+sobre texto gerado; um movimento na classe humana é a direção do falso positivo e é **reportado ao lado**,
+nunca decidido. **Custo de reversão:** baixo — os dois números são constantes lidas por teste de fronteira
+(`test_the_verdict_reads_collapse_exactly_at_each_threshold`), e mover qualquer um deixa a bateria vermelha.
+
+### Decisão 4 — `topic` é eixo de FATIA, e explicitamente NÃO de união
+
+Decidido: `topic` entra em `SliceAxis`, `AXIS_ORDER` e nos extratores de `benchmark/slices.ts`, e entra em
+`DIAGNOSTIC_AXES`. **Conferido antes de mexer**, e as três coisas eram verdade: `benchmark/schema.ts:98` e
+`:1741` declaram `topic: string` obrigatório em v2 e v3, `topic` não está entre os 14 eixos de agrupamento,
+e não aparecia em `benchmark/slices.ts`.
+
+`topic` **não** entra em `GROUP_KEYS`, e a razão tem duas partes. Primeira: tópico não é campo observado
+como `source` — ele seria derivado de uma escolha de agrupamento, e congelar um eixo de UNIÃO que depende de
+um *clustering* põe uma decisão de modelagem dentro da política selada. Segunda: conglomerado temático é
+grande, o que traz de volta a degenerescência de poucos blocos grandes que a emenda da moldura acabou de
+resolver.
+
+**O achado que a implementação produziu, e que não estava no roteiro:** a inelegibilidade a gate **não
+bastava**. `summarizeSlices` macro-averageia TODAS as fatias, elegíveis ou não, e a média macro é publicada
+no relatório — então um eixo diagnóstico moveria um número publicado. São **duas** barreiras e nenhuma
+implica a outra: `buildSlices` nunca marca uma fatia diagnóstica como elegível, e `summarizeSlices` tira as
+diagnósticas da média macro **e** da busca do pior caso, o que vale mesmo para uma fatia que chegue elegível
+de outro lugar. Há teste para cada barreira, mais um em `gates.test.ts` com uma fatia de tópico forçada a
+elegível e FPR de 0,99: o inventário continua 4, nenhum gate de tópico é construído e a decisão é `pass`.
+**Custo de reversão:** médio — remover o eixo move `evaluatorDigest` de novo (`slices.ts` e `report.ts` são
+membros de `EVALUATOR_FILES`), e é barato só enquanto `issuedAt` é nulo.
+
+### Decisão 5 — o piso barato ESTENDE o baseline de D19, e é publicado DECOMPOSTO em dois ramos
+
+Decidido: `baseline_tfidf.VECTORIZATIONS` passa a ter **cinco** entradas — palavra (1,2), caractere (3,6),
+`funcionais`, `estilometria` e `funcionais+estilometria` —, no mesmo registro que impede rodar uma sem as
+outras. `funcionais` é um TF-IDF com `vocabulary=` fixado na lista fechada de palavras funcionais que a sonda
+estilométrica já mantém (`diagnostic_probes.FUNCTION_WORDS`, **lida** e não copiada); `estilometria` são as 19
+features da W3 (`probes.feature_matrix`, que recusa antes de qualquer `fit` se uma medida de viés estiver
+registrada como feature); a terceira é a união. Precedente: Mosteller & Wallace (1963) atribuíram os
+*Federalist Papers* disputados usando só palavras funcionais, precisamente porque são independentes de tema.
+
+**A decisão anterior publicava a união como "cego a tema", e a medição refutou isso.** Medido sobre 253 pares
+(§ 5.8): a união chega a **0,9767** e `estilometria` **sozinha** a **0,9712** — 98,8 % da separação acima do
+acaso da união —; o ramo de funcionais acrescenta 0,0055 de AUC. Sete das 19 features são funções das palavras
+de conteúdo e `_stylometry_matrix` recebe o texto **inteiro**, então "conteúdo estruturalmente barrado" era
+falso da união. O ramo genuinamente cego a tema é `funcionais`, com **0,9313** — logo **abaixo** de palavra
+(0,9327) e de caractere (0,9319), não acima. `THEME_BLIND_VECTORIZATIONS` nomeia em código qual dos cinco
+números limita a fração temática, e a asserção do registro recusa um rótulo que não aponte para uma
+vetorização existente. A união continua publicada, com o papel de **piso barato** do critério da Decisão 6,
+onde ser cega a tema nunca foi exigência.
+
+Duas correções de instrumento vieram da mesma medição. (1) O `token_pattern` default do sklearn descarta todo
+token de um caractere, então `a`, `e`, `o`, `à` e `é` — as três palavras mais frequentes do pt-BR e o material
+que Mosteller & Wallace contam — estavam no vocabulário com massa **zero permanente**; custo medido 0,041 de
+AUC (0,8944 em vez de 0,9313), e nenhum teste podia notar porque a fixture não tinha palavra funcional nenhuma
+(matriz de zeros 40×120). (2) A guarda de "nenhuma palavra de conteúdo" era uma **lista negra** de 42 palavras
+medidas: medido, `brasil` declarado funcional passava pelas duas guardas — a pós-`fit` porque compara o
+ajustado contra a lista já contaminada — e chegava ao vocabulário. Substituída por **igualdade de conjuntos**
+contra as 120 palavras enumeradas por classe gramatical fechada em `DECLARED_FUNCTION_WORD_CLASSES`, que
+recusa admissão e remoção. As 42 palavras ficam para **nomear a falha** na mensagem de erro.
+`POST_FIT_GUARDS` tem as mesmas chaves de `VECTORIZATIONS`, então uma sexta vetorização não chega sem decisão
+sobre a sua conferência. **Custo de reversão:** baixo.
+
+O que sobra medido, e é bastante: um linear que lê **só 120 palavras funcionais** separa este material com AUC
+0,93, empatando com as duas vetorizações que leem conteúdo. No enquadramento de D19 continua a não ser boa
+notícia — é artefato de fonte —, mas o limite publicável é o de `funcionais`, não o da união.
+
+### Decisão 6 — o critério de aceitação da família reservada, e o fail-open que a medição achou
+
+Decidido: `lift(família) = (AUC_piso − 0,5) / (AUC_detector − 0,5)`, a fração da separação acima do acaso
+que um baseline burro já alcança; a reservada mede FACILIDADE quando o excesso de `lift` dela sobre as
+*core* alcança `0,10`. Adimensional de propósito, para ser comparável entre famílias.
+
+**A primeira versão do critério era fail-open, e a corrida de smoke o mostrou.** Medido sobre os pais
+pareados: piso barato 0,9830 contra detector 0,9898 põe o `lift` das *core* em **0,9861** e o excesso em
+**0,0070** — não podia ser outro número. Uma margem de 0,10 é irresolúvel se as *core* não deixam pelo menos
+0,10 de `lift` sem reclamar, e um excesso pequeno **por construção** lido como aceitação é exatamente a
+direção que publica um número OOD como generalização. Acrescentado: `folga = 0,10` e um **terceiro
+veredito**, `no-headroom`, que `assert_reserved_family_measures_generalization` **recusa** do mesmo modo que
+recusa `measures-easiness`. Ordem dos vereditos pinada: facilidade primeiro, abstenção depois, aceitação por
+último — uma corrida sem folga E com excesso acima da margem mediu facilidade, e reportá-la como abstenção
+perderia o achado. Quarto número: `piso de separação = 0,51`, abaixo do qual o detector está no acaso e a
+razão não tem denominador — a função **recusa** em vez de devolver um `lift` enorme.
+
+**Custo de reversão:** baixo hoje, alto depois da Fase 5 — este é o número pelo qual a fatia OOD é publicada
+como generalização ou como limite otimista, e afrouxá-lo depois de ver o resultado é a classe de decisão que
+§ 3.4 do ESTADO proíbe.
+
+### Decisão 7 — o smoke roda em `python` 3.11, e a razão é medida
+
+Decidido: os testes das quatro sondas são stdlib/numpy/sklearn e rodam onde a bateria do lab roda
+(`py -3.13`); a **pontuação** contra o artefato antigo roda em `python` 3.11. Razão medida: `onnxruntime`
+está ausente do `py -3.13` e presente no 3.11 (1.27.0), junto de `transformers` 5.14.1 — e
+`score_pilot_local.py`, que já existia, é o scorer. Declarado como dívida em § 7: a corrida de smoke não é
+reproduzível de um `py -3.13` limpo.
+
+### O que NÃO foi aplicado, e por quê
+
+1. **`topic` em `GROUP_KEYS`** — decisão 4 acima; é eixo de relato, nunca de união selada.
+2. **Corrigir as frações por faixa da pré-inscrição** (238/239/204/119 contra 271/269/192/68) — segue de
+   outro dono, com prazo em § 7 do ESTADO: antes da Fase 6.
+3. **Um tagger de NER no lab** — `spacy`/`stanza` estão fora por política desta unidade, e `ner_pilot.py`
+   exige `transformers` + `torch` e dois downloads. A heurística basta e a sua recall é declarada.
+4. **Dar um `topic` real ao extrator** — `assemble_corpus` escreve `"topic": "geral"` constante, então a
+   fatia existe com uma chave. Mudar isso é mexer no extrator e no montador, que é outra unidade; a dívida
+   está em § 7.
+5. **Calcular pseudo-perplexidade** (Salazar et al. 2020) para medir surpresa de MLM diretamente — seria o
+   instrumento correto para a hipótese como enunciada, exige o backbone MLM carregado e um passe por token,
+   e o mascaramento com braço placebo respondeu à pergunta por três ordens de grandeza menos custo.
+
+### Decisão 8 — os quatro achados bloqueantes da revisão, aplicados; e o que a revisão errou
+
+Decidido depois da revisão adversarial da unidade das sondas: **quatro** achados bloqueantes procedem e foram
+consertados, um quinto procede e foi consertado, e um menor foi **refutado com medição**. O que segue é o
+registro do que mudou e da razão, porque cada item move um número publicado.
+
+**(1) O piso "cego a tema" não era cego a tema.** Aplicado — Decisão 5 acima reescrita, § O3 de
+`references.md` reescrito, ESTADO § 5.8 e § 6 reescritos. Medido: `estilometria` sozinha reclama 98,8 % da
+separação acima do acaso da união, e o ramo genuinamente cego (0,9313) fica **abaixo** de palavra e de
+caractere. O erro era fail-open para a pergunta da própria unidade: publicava-se como limite superior da
+fração temática um número que features sensíveis a conteúdo carregavam.
+
+**(2) Cinco das 120 palavras funcionais nunca eram contadas.** Aplicado — `token_pattern` fixado em
+`(?u)\b\w+\b`, fixture trocada por prosa pt-BR real (a anterior produzia matriz de zeros 40×120, e sobre
+zeros toda guarda de vocabulário passa), e teste novo afirmando que **toda** entrada da lista é alcançável
+pelo analisador e que `a`, `e`, `o`, `à`, `é` carregam massa positiva. Custo medido do defeito: 0,041 de AUC.
+
+**(3) A guarda de conteúdo era lista negra.** Aplicado — igualdade de conjuntos contra
+`DECLARED_FUNCTION_WORD_CLASSES`, 120 palavras sob sete classes gramaticais fechadas, verificada como
+**partição** (a soma das classes é o tamanho do conjunto, então uma palavra sob duas classes reprova). Medido
+antes do conserto: `brasil` declarado funcional chegava ao vocabulário ajustado.
+
+**(4) O critério da família reservada media o arquivo `--humans` inteiro.** Aplicado —
+`assert_every_human_row_is_a_paired_parent` recusa a chamada, e `main()` passa os pais pareados. Também
+`main()` passou a **filtrar** as linhas `ai` pelos pais presentes, o que era a causa de a tabela publicada não
+ser reprodutível pela invocação documentada (2.319 das 2.572 linhas frescas não pareiam com
+`wikipedia_fresh.jsonl`). Os comandos exatos entraram em ESTADO § 5.8.
+
+**(5) A falta do placebo era declarada publicada e não era.** Aplicado — `read_masking` publica
+`placeboShortfallWords`, `placeboShortfallRecords` e `maxPlaceboShortfallWords` por classe, `--masking` deixou
+de ser opcional, e um registro pontuado sem entrada de mascaramento **recusa**. Medido: a classe humana tem 47
+palavras de falta em 5 das 60 linhas. A direção do viés está escrita: falta do placebo **superestima** o
+excesso, e o excesso aponta para `collapses`, que neste instrumento é o alarme e não a dispensa.
+
+**Menor aplicado:** o corte de 512 tokens faz dos três braços três janelas diferentes em 9 das 240 linhas (6
+`ai`, 3 humanas, medidas com o tokenizador do próprio snapshot); `--max-length 512` fixado no runbook e a
+contagem registrada em § 5.8. E o teto de ruído passou de `assertAlmostEqual` para `assertEqual`, porque sete
+casas decimais deixavam o valor derivar a partir da oitava.
+
+**Menor REFUTADO, com medição.** A revisão afirmou que `report.ts:1080` mede um caminho que o corpo real não
+produz — que uma fatia sem negativos devolve FPR **não-finito** e portanto o primeiro termo (`negatives === 0`)
+seria inútil. Medido: `metrics.ts` carrega **as duas** convenções para denominador zero —
+`proportionEstimate` (linha 3733) devolve `NaN` e `ratio` (linha 489) devolve `0` — e a fatia usa a primeira,
+o que confirma a metade factual da observação e **refuta** a conclusão: com as duas convenções vivas no mesmo
+arquivo, uma fatia sem negativos chegando com `0` finito está a um refactor de distância, e imprimir `0` ali é
+publicar tópico perfeito. Os **dois** termos ficam. O que a revisão apontou de real é a fixture: ela fixava
+`0` para a célula vazia, que não é o que a produção produz. Corrigido — a célula vazia passa a `NaN`
+(a forma real, agora afirmada contra `buildSlices` em `slices.test.ts`) e uma linha **nova** com `0` finito e
+zero negativos pina o termo defensivo. Cada termo tem agora a sua própria linha vermelha.
+
+**Menor aceito sem conserto:** a sonda de tópico continua sem material (`topic` é constante `"geral"`), então
+das quatro exigências do contrato esta fica formalmente **descumprida** — dito com essas palavras em § 5.8 e
+com dívida em § 7. Corrigir exige mexer no extrator e no montador, que é outra unidade.

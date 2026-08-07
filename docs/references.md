@@ -4493,3 +4493,203 @@ a ocorrência da junta `](` seguida de URL, contada no arquivo inteiro — a jun
 sem deixar de ser link —, e o teste afirma a diferença entre as duas contagens com a fixture do rótulo
 quebrado, para que ninguém "conserte" o contador de volta. Nenhuma referência nova: é N7 aplicada a outro
 número, mais a observação de que a regra precisa ser executável e não só declarada.
+
+---
+
+## § O — as quatro sondas de dependência de tema (2026-08-07)
+
+Nível 1, 2 e 3 da hierarquia. Cobre os quatro instrumentos que medem se o veredito do detector lê
+**assunto** ou lê **estrutura**, e a leitura do resultado da família geradora reservada. Nenhum dos quatro
+é hipótese da família certificadora: não decidem gate e não gastam alpha (ESTADO § 3.1), e há guarda que
+recusa se algum deles entrar em `multiplicity.primaryFamily`.
+
+### O1 — o que está ESTABELECIDO sobre co-ocorrência, e o que foi ESPECULADO
+
+A hipótese que originou a unidade: o detector poderia aprender **implausibilidade de co-ocorrência** como
+atalho — texto cuja combinação de entidades é improvável seria lido como IA. Perseguindo o argumento, ele
+ficou mais fraco do que foi enunciado, e a separação entre o estabelecido e o especulado é parte do
+registro (registro § "As quatro sondas de dependência de tema").
+
+- **Devlin et al., *BERT*, NAACL 2019** — o objetivo de pré-treino é prever o token mascarado a partir do
+  contexto, então as representações codificam estatística de co-ocorrência **por construção**. Isto é
+  arquitetura, não especulação. [link](https://doi.org/10.18653/v1/N19-1423)
+- **Salazar et al., *Masked Language Model Scoring*, ACL 2020** — o método padrão para ler SURPRESA de um
+  MLM é a **pseudo-perplexidade**: mascarar cada token por vez e somar as log-verossimilhanças
+  condicionais. É o instrumento que mediria implausibilidade de co-ocorrência, e o classificador deste
+  projeto **não o calcula** — a cabeça lê uma representação agrupada. Que a representação agrupada exponha
+  essa surpresa de forma utilizável pela cabeça é a parte ESPECULADA, e nenhuma das duas fontes acima a
+  sustenta. [link](https://doi.org/10.18653/v1/2020.acl-main.240)
+- **Ji et al., *Survey of Hallucination in Natural Language Generation*, ACM CSUR 55(12), 2023** — a
+  confabulação factual concentra-se em modelos menores e em domínios de cauda longa; prosa enciclopédica
+  curta sobre tópico conhecido é o caso fácil. É por isso que o gradiente é fino nas famílias de treino,
+  que são modelos de fronteira, e grosso na família reservada, que é um modelo pequeno.
+  [link](https://doi.org/10.1145/3571730)
+
+**O que sobrevive da hipótese:** o pareamento da geração controla o **assunto** (a linha de IA responde ao
+título da seção humana), não a **correção**. Dentro de um par de tópico idêntico, uma entidade inventada
+ainda diferencia. **O que se dissolve:** que isso seja um atalho aprendível no treino — as famílias de
+treino raramente confabulam neste gênero, e a confabulação pesada vive na família reservada, que é só
+teste e portanto não ensina nada ao modelo; ela apenas infla a leitura do resultado OOD, que é o assunto
+de O4.
+
+### O2 — mascaramento de entidades: perturbação de entrada como ablação sem retreino
+
+A decisão: a política sela a receita de treino e proíbe ablação; ela não diz nada sobre a **entrada**.
+Substituir as entidades nomeadas, datas e numerais por um marcador e re-pontuar com **os mesmos pesos**
+responde "o escore é carregado pelas entidades?" sem tocar no treino.
+
+- **Ribeiro et al., *Why Should I Trust You?* (LIME), KDD 2016** — explicação por perturbação da entrada
+  e re-inferência, com o modelo fixo: é a família de método à qual o mascaramento pertence.
+  [link](https://doi.org/10.1145/2939672.2939778)
+- **Kaushik, Hovy & Lipton, *Learning the Difference that Makes a Difference with
+  Counterfactually-Augmented Data*, ICLR 2020** — intervir no texto e medir a mudança de predição é o modo
+  de separar o sinal causal do artefato correlacionado. [link](https://openreview.net/forum?id=Sklgs0NFvr)
+- **Sinha et al., *UnNatural Language Inference*, ACL 2021** — o controle importa: modelos mantêm o
+  veredito sob perturbações que deveriam destruí-lo, então uma perturbação sem braço de controle não
+  distingue "o sinal sobreviveu" de "o modelo é insensível a qualquer perturbação".
+  [link](https://doi.org/10.18653/v1/2021.acl-long.569)
+- **Ribeiro et al., *Beyond Accuracy: Behavioral Testing of NLP Models with CheckList*, ACL 2020** — teste
+  de invariância: uma perturbação que **não deveria** mudar a saída é uma asserção, e é exatamente a forma
+  do braço placebo. [link](https://doi.org/10.18653/v1/2020.acl-main.442)
+
+**A transferência, e o que ela obriga:** LIME perturba para explicar UMA predição; aqui a perturbação é
+sistemática e a quantidade lida é a **diferença de duas perturbações** — o braço de entidades contra um
+braço **placebo** que remove a mesma quantidade de palavras comuns minúsculas, com a mesma contagem de
+vãos e o mesmo multiconjunto de comprimentos de vão. Sem o placebo, um deslocamento de escore é atribuível
+ao marcador `[MASK]`, que a cabeça ajustada nunca viu, e não à identidade das entidades.
+**Sem precedente encontrado (2026-08-07)** para o braço placebo casado por comprimento de vão em
+detecção de texto gerado, nem para o critério de colapso: `excesso de queda média >= 0,10` **ou**
+`excesso de taxa de virada de veredito >= 0,20`, medidos na classe `ai`. Os dois números são declarados, e
+o piso que eles têm de superar é medido — o relatório de paridade do export int8 que ancora o teto de
+bytes aceita `maxAbsDelta` 0,008950 e **zero** viradas em 120 amostras, então 0,10 é onze vezes o maior
+delta que o gate de paridade tolera e não pode ser quantização.
+
+**A recall do achador de entidades é declarada, não assumida.** O achador é heurístico (maiúscula em meio
+de frase, siglas, numerais, datas), e um capital que só abre frase é indistinguível de substantivo próprio
+por caixa — recuperado quando a mesma forma aparece capitalizada no meio de outra frase do mesmo
+documento, e não recuperado quando não aparece. Isso é um **sub-mascaramento**, e sub-mascarar só pode
+empurrar o veredito para `survives`: o veredito `collapses` é o forte, e o `survives` é limitado pela
+fração de palavras efetivamente mascarada, que o relatório publica ao lado dele.
+
+### O3 — o piso cego a tema são as palavras funcionais, e SÓ elas
+
+A decisão: um modelo deliberadamente incapaz de ler assunto — TF-IDF sobre **somente palavras funcionais**,
+uma classe gramatical fechada — estabelece o **piso** do sinal independente de tema. A diferença até o modelo
+grande é o **máximo** que poderia ser temático. Não prova que a diferença é temática: limita.
+
+**A primeira versão desta entrada estava errada, e a medição é a correção.** Escreveu-se que o piso era
+"estilometria mais TF-IDF de somente palavras funcionais, com palavras de conteúdo estruturalmente barradas".
+Medido sobre 253 pares pareados por tópico (docs/ESTADO.md § 5.8): a **união** dos dois ramos chega a 0,9767
+e o ramo **estilométrico sozinho** a 0,9712, ou 98,8 % da separação acima do acaso da união; sete das 19
+features de `probes.STYLOMETRIC_FEATURES` são funções das palavras de conteúdo (`type-token-ratio`, `mtld`,
+`trigram-repetition`, `hapax-rate`, `long-word-rate`, `word-length-mean`, `flesch-pt`) e a matriz
+estilométrica recebe o texto **inteiro**. "Estruturalmente barradas" era falso da união. O piso que este
+verbete decide é o ramo `funcionais` e nada mais, com **0,9313** medido — logo **abaixo** de palavra (0,9327)
+e de caractere (0,9319), e não acima delas. A união continua publicada, sob o nome
+`funcionais+estilometria` e com o papel de **piso barato** do verbete O4, onde ser cega a tema nunca foi
+exigência: o que aquele critério quer é o máximo que um modelo burro alcança.
+
+- **Mosteller & Wallace, *Inference in an Authorship Problem*, JASA 58(302), 1963** — atribuíram os
+  *Federalist Papers* disputados usando **só palavras funcionais**, precisamente porque palavras
+  funcionais são independentes de tema. É o precedente canônico de "estrutura vale, conteúdo não vale".
+  [link](https://doi.org/10.1080/01621459.1963.10500849)
+- **Burrows, *Delta: a Measure of Stylistic Difference and a Guide to Likely Authorship*, LLC 17(3),
+  2002** — a prática moderna de atribuição usa as palavras **mais frequentes** (largamente funcionais)
+  como espaço de atributos, pela mesma razão. [link](https://doi.org/10.1093/llc/17.3.267)
+- **Kestemont, *Function Words in Authorship Attribution: From Black Magic to Theory?*, CLfL 2014** — a
+  justificativa linguística explícita: palavras funcionais são de alta frequência, de escolha inconsciente
+  e **independentes de tópico**. [link](https://aclanthology.org/W14-0908/)
+- **Stamatatos, *A Survey of Modern Authorship Attribution Methods*, JASIST 60(3), 2009, § 2.2** — a
+  taxonomia dos atributos e a razão de os lexicais de função e os de caractere serem preferidos aos de
+  conteúdo quando o tema varia entre as classes. [link](https://doi.org/10.1002/asi.21001)
+
+**A lista de palavras funcionais do português: sem fonte citável.** **Sem precedente encontrado
+(2026-08-07)** para uma lista de palavras funcionais de pt-BR publicada e citável que sirva de referência.
+A lista usada é a que a sonda estilométrica já mantinha (`diagnostic_probes.FUNCTION_WORDS`, lida e não
+copiada), e o critério está escrito: é uma **classe gramatical fechada** — artigos, preposições,
+contrações, conjunções, pronomes, auxiliares de alta frequência e cinco advérbios — e **não** um corte de
+frequência, porque um corte de frequência precisa de um corpus de referência que esta bancada não baixa. O
+critério deixou de ser só uma frase: as 120 palavras estão enumeradas **sob a classe que admite cada uma** em
+`baseline_tfidf.DECLARED_FUNCTION_WORD_CLASSES`, e a guarda é **igualdade de conjuntos** contra esse
+inventário.
+
+A igualdade de conjuntos substituiu uma lista negra, e a razão é medida. A guarda anterior comparava a lista
+de funcionais contra 42 palavras de conteúdo medidas no domínio, e só contra elas: medido, `brasil` declarado
+funcional passava pela guarda de construção **e** pela guarda pós-`fit` — esta última porque compara o modelo
+ajustado contra a mesma lista já contaminada — e chegava ao vocabulário. Não existe teste computável de
+"conteúdo"; existe inventário de classe fechada, e é isso que a guarda afirma agora, nas duas direções
+(admissão e **remoção**: uma lista que perdeu `a`, `e` e `o` é outra medição sob o mesmo nome). As 42 palavras
+de conteúdo continuam no módulo, com o papel de **nomear a falha** na mensagem de erro. A segunda guarda
+segue recusando um modelo **ajustado** cujos atributos não sejam subconjunto da lista fechada — a forma exata
+que um `vocabulary=` removido assume.
+
+**A armadilha do `token_pattern`, medida.** O default do sklearn é `(?u)\b\w\w+\b` e descarta todo token
+de menos de dois caracteres. Cinco entradas da lista fechada têm um caractere — `a`, `e`, `o`, `à`, `é` —, ou
+seja as três palavras mais frequentes do português e exactamente o material que Mosteller & Wallace contam:
+sob o default elas ficavam no vocabulário com massa **zero permanente**, e nenhum teste podia notar porque a
+única fixture do instrumento não tinha palavra funcional nenhuma (matriz de zeros 40×120). Custo medido do
+default: o ramo lia 0,8944 em vez de 0,9313, 0,041 de AUC perdidos em silêncio. `token_pattern` fixado em
+`(?u)\b\w+\b`, e um teste afirma que **toda** entrada da lista é alcançável pelo analisador e que as cinco
+de um caractere carregam massa positiva num texto que as contém.
+
+Unigrama e não bigrama: um bigrama de palavras funcionais exigiria o produto cruzado da lista fechada como
+vocabulário explícito, e o desenho de Mosteller & Wallace conta palavras funcionais isoladas.
+
+### O4 — a família reservada pode ser FÁCIL, e o critério de aceitação lê um número
+
+A decisão: a família reservada ao teste de gerador não visto é um modelo pequeno de pesos abertos, e há
+medição própria mostrando que ele escreve prosa fluente e **factualmente errada**. Isso não invalida o
+rótulo — torna a fatia OOD **mais fácil** que as famílias de treino, e uma fatia mais fácil infla o número
+de generalização na direção lisonjeira. O instrumento é o piso **barato** (`funcionais+estilometria`,
+o mais forte dos baselines burros e cego a nada) rodado contra a reservada e contra as *core*, comparado
+com o modelo grande sobre os mesmos textos e sempre contra os **pais pareados** do lado humano.
+
+- **Torralba & Efros, *Unbiased Look at Dataset Bias*, CVPR 2011** — desempenho alto que não transfere é
+  propriedade do conjunto e não do modelo; medir um baseline burro no mesmo conjunto é como se lê isso.
+  [link](https://doi.org/10.1109/CVPR.2011.5995347)
+- **Gururangan et al., *Annotation Artifacts in Natural Language Inference Data*, NAACL 2018** — um modelo
+  que vê **só** parte da entrada e ainda acerta mede artefato do conjunto; é o mesmo raciocínio do
+  baseline lexical contra a fatia reservada. [link](https://doi.org/10.18653/v1/N18-2017)
+- **Poliak et al., *Hypothesis Only Baselines in Natural Language Inference*, SEM 2018** — a prática de
+  publicar o baseline degenerado ao lado do resultado, para que o leitor saiba quanto do número é
+  facilidade. [link](https://doi.org/10.18653/v1/S18-2023)
+- **Mitchell et al., *Model Cards for Model Reporting*, FAT\* 2019** — a exigência de declarar as
+  condições em que o número vale; é onde o "limite otimista" da fatia reservada é publicado.
+  [link](https://doi.org/10.1145/3287560.3287596)
+
+**A transferência e os três números declarados.** A literatura publica o baseline degenerado ao lado do
+resultado; aqui o baseline degenerado é o piso **barato** e a quantidade é adimensional de propósito:
+`lift(família) = (AUC_piso − 0,5) / (AUC_detector − 0,5)`, a fração da separação acima do acaso que um
+modelo burro já alcança. **Sem precedente encontrado (2026-08-07)** para essa razão como critério de
+aceitação de família reservada, nem para os três números que a governam:
+
+- `margem = 0,10` — a reservada mede FACILIDADE quando o excesso de *lift* dela sobre as *core* alcança um
+  décimo da escala;
+- `folga = 0,10` — se as *core* já entregam mais de 90 % do *lift* ao piso, o excesso é pequeno **por
+  construção** e a comparação não resolve nada. O terceiro veredito é **abstenção**, e a asserção de
+  aceitação recusa a abstenção exatamente como recusa a facilidade: uma comparação irresolúvel lida como
+  aceitação é o fail-open que esta regra fecha. A necessidade dela é **medida** — sobre os pools do piloto
+  o piso barato chegou a 0,9830 nas *core*, contra detector de 0,9898, o que
+  põe o *lift* das *core* em 0,9861 e o excesso em 0,0070: não poderia ter sido outro número;
+- `piso de separação = 0,51` — abaixo dele o detector está no acaso na família e a razão não tem
+  denominador; a função **recusa** em vez de devolver um *lift* enorme, que seria fail-open.
+
+### O5 — `topic` como eixo de FATIA e nunca de UNIÃO
+
+A decisão: `topic` é campo obrigatório de todo registro desde o esquema v2 e nada o lia. Ele passa a ser
+eixo de **fatia** — FPR e recall por tópico, como diagnóstico — e **não** entra em `GROUP_KEYS`.
+
+- **Sagawa et al., *Distributionally Robust Neural Networks for Group Shifts*, ICLR 2020** — a taxa média
+  esconde o pior grupo; reportar por grupo é a condição de saber se a taxa transfere.
+  [link](https://openreview.net/forum?id=ryxGuJrFvS)
+- **Barocas, Guo et al., *Designing Disaggregated Evaluations of AI Systems*, AIES 2021** — a avaliação
+  desagregada é uma decisão de desenho com custos, entre eles a multiplicidade que ela cria: por isso o
+  eixo é diagnóstico e não gate. [link](https://doi.org/10.1145/3461702.3462610)
+- Kish, *Survey Sampling*, 1965, cap. 5 (já citado em § N1) — a razão de `topic` NÃO ser eixo de união:
+  conglomerado temático é grande, e unir por ele traz de volta a degenerescência de poucos blocos grandes
+  que a emenda da moldura resolveu.
+
+**Sem precedente encontrado (2026-08-07)** para a regra propriamente dita — que um eixo derivável de uma
+escolha de agrupamento pode ser eixo de **relato** mas não de **união selada**, porque congelar um eixo de
+união que depende de um *clustering* põe uma decisão de modelagem dentro da política. É decisão de
+engenharia ancorada em Kish (custo estatístico) e em Barocas & Guo (o custo de desagregar).

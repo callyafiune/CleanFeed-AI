@@ -55,7 +55,7 @@ import {
   type PredictionManifestV1,
 } from "./prediction-schema.ts";
 import { PREREGISTRATION_V4 } from "./preregistration-v4.ts";
-import type { SliceSummary } from "./slices.ts";
+import type { SliceResult, SliceSummary } from "./slices.ts";
 import type { SplitAudit } from "./split-audit.ts";
 
 export const SPLIT_STRATEGY = "blocked-group-time-v2" as const;
@@ -735,6 +735,7 @@ export function renderReportMarkdown(report: BenchmarkReport): string {
   }
 
   lines.push(...lengthBandSection(report.metrics.lengthBands));
+  lines.push(...topicSection(report.slices.slices));
 
   const labelBasis = report.metrics.labelBasis;
   lines.push("## Bases de rótulo humano");
@@ -1022,6 +1023,63 @@ function lengthBandSection(
         `${band.falsePositives} | ${band.falsePositiveRate === null ? "n/a (faixa vazia)" : fmt(band.falsePositiveRate)} | ` +
         `${pinned === undefined ? "n/a" : pinned.expectedBlindBlockLines} | ` +
         `${pinned === undefined ? "n/a" : fmt(pinned.diagnosticCeilingAtExpectedLines)} |`,
+    );
+  }
+  lines.push("");
+  return lines;
+}
+
+/**
+ * FPR and recall by `topic`, as a DIAGNOSTIC that decides nothing.
+ *
+ * The `topic` field has been REQUIRED on every record since schema v2 and nothing read
+ * it. What it answers is whether a published rate is a property of the cell or of the
+ * topics the cell happens to be dense in: a rate that holds on the dense topics and
+ * collapses on the thin ones is a rate that does not transfer to a reader whose text is
+ * about something else.
+ *
+ * EVERY topic slice gets a row, including one whose measured population is empty — the
+ * table is built from the slices and a slice is never dropped for being thin. A topic with
+ * no decided negative publishes `n/a (fatia vazia)` and NEVER `0`: a rate of zero over
+ * nothing decided reads as a perfect topic, which is the flattering direction and the same
+ * mistake the length-band table above exists to avoid.
+ *
+ * `topic` is not a `GROUP_KEYS` axis and not an FPR or recall gate axis: it is sliced,
+ * reported, and excluded from the macro average (benchmark/slices.ts).
+ */
+function topicSection(slices: readonly SliceResult[]): string[] {
+  const lines: string[] = [];
+  lines.push("## FPR e recall por tópico (diagnóstico)");
+  lines.push("");
+  lines.push(
+    "O campo `topic` é obrigatório em todo registro desde o esquema v2. Esta tabela é " +
+      "**diagnóstico**: não decide gate, não gasta alpha, não entra na média macro e " +
+      "`topic` **não** é eixo de união do split. A razão de ela existir: um teto que " +
+      "vale nos tópicos densos e desaba nos ralos é um teto que não transfere para quem " +
+      "escreve sobre outro assunto. Fatia sem negativo decidido publica `n/a` e nunca " +
+      "`0`.",
+  );
+  lines.push("");
+  const topics = slices.filter((slice) => slice.axis === "topic");
+  if (topics.length === 0) {
+    lines.push("_Sem fatia de tópico._");
+    lines.push("");
+    return lines;
+  }
+  lines.push(
+    "| Tópico | Amostra | Negativos humanos | Positivos | FPR (fim-a-fim) | " +
+      "Recall (fim-a-fim) | Decide gate |",
+  );
+  lines.push("| --- | --- | --- | --- | --- | --- | --- |");
+  for (const slice of topics) {
+    const fpr = slice.metrics.warning.endToEnd.falsePositiveRate.value;
+    const recall = slice.metrics.warning.endToEnd.recall.value;
+    lines.push(
+      `| ${slice.key} | ${slice.sampleSize} | ${slice.negatives} | ` +
+        `${slice.positives} | ` +
+        `${slice.negatives === 0 || !Number.isFinite(fpr) ? "n/a (fatia vazia)" : fmt(fpr)} | ` +
+        `${slice.positives === 0 || !Number.isFinite(recall) ? "n/a (fatia vazia)" : fmt(recall)} | ` +
+        `${slice.fprGateEligible || slice.recallGateEligible ? "sim" : "não"} |`,
     );
   }
   lines.push("");

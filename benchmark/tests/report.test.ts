@@ -17,7 +17,7 @@ import {
   type BenchmarkReportInput,
   type GovernanceSeal,
 } from "../report.ts";
-import type { SliceSummary } from "../slices.ts";
+import type { SliceResult, SliceSummary } from "../slices.ts";
 import { PREREGISTRATION_V4 } from "../preregistration-v4.ts";
 import { standInClusterReport, type SplitAudit } from "../split-audit.ts";
 import { V3_GROUP_AXES } from "../schema.ts";
@@ -705,12 +705,45 @@ function slices(): SliceSummary {
   };
 }
 
+// A topic slice, with the two class counts the diagnostic table reads and nothing else:
+// the section prints `n/a` off the COUNTS, so a fixture that only set the rates could not
+// tell the empty cell from a cell whose rate is genuinely zero.
+function topicSlice(
+  key: string,
+  negatives: number,
+  positives: number,
+  falsePositiveRate: number,
+  recall: number,
+): SliceResult {
+  return {
+    axis: "topic",
+    key,
+    sampleSize: negatives + positives,
+    negatives,
+    positives,
+    fprGateEligible: false,
+    recallGateEligible: false,
+    fprNegativeFloor: PREREGISTRATION_V4.powerFloors.criticalFprHumanNegatives,
+    recallPositiveFloor: PREREGISTRATION_V4.powerFloors.criticalRecallPositives,
+    metrics: {
+      warning: {
+        endToEnd: {
+          falsePositiveRate: { value: falsePositiveRate },
+          recall: { value: recall },
+        },
+      },
+      visualAction: null,
+    } as unknown as EvaluationMetrics,
+  };
+}
+
 interface InputOverrides {
   frozen?: GovernanceSeal;
   observed?: GovernanceSeal;
   gates?: GateReport;
   testShard?: string;
   metrics?: EvaluationMetrics;
+  slices?: SliceSummary;
 }
 
 function baseInput(overrides: InputOverrides = {}): BenchmarkReportInput {
@@ -733,7 +766,7 @@ function baseInput(overrides: InputOverrides = {}): BenchmarkReportInput {
       test: manifest("test", SESSION, overrides.testShard ?? "test-shard"),
     },
     metrics: overrides.metrics ?? metrics(),
-    slices: slices(),
+    slices: overrides.slices ?? slices(),
     gates: overrides.gates ?? gateReport(),
   };
 }
@@ -1077,6 +1110,54 @@ describe("renderReportMarkdown", () => {
       "- Concentradas no bloco cego sem reserva declarada (diagnóstico, não " +
         "reserva e não gate): `gemini-3_5-flash-medium`",
     );
+  });
+
+  it("publishes FPR and recall by topic, an empty cell as empty, and no topic gate", async () => {
+    const md = renderReportMarkdown(
+      await buildBenchmarkReport(
+        baseInput({
+          slices: {
+            ...slices(),
+            slices: [
+              topicSlice("geografia", 400, 400, 0.0125, 0.94),
+              // Positives only, and the rate is `NaN` because that is what `buildSlices`
+              // PRODUCES over an empty side: `proportionEstimate` returns NaN on a zero
+              // total (asserted against the real body in slices.test.ts, "keeps a topic
+              // whose measured population is empty on one side").
+              topicSlice("quimica", 0, 12, Number.NaN, 0.5),
+              // Negatives only: the recall cell has no population at all.
+              topicSlice("botanica", 12, 0, 0, Number.NaN),
+              // The DEFENSIVE shape, and the reason the count is read beside the rate:
+              // `metrics.ts` carries both conventions for a vanished denominator —
+              // `proportionEstimate` gives NaN, and `ratio` gives 0 — so a slice with no
+              // negatives arriving with a finite 0 is one refactor away and must still
+              // print `n/a` rather than a perfect topic.
+              topicSlice("fisica", 0, 8, 0, 0.25),
+            ],
+          },
+        }),
+      ),
+    );
+    const topic = section(md, "FPR e recall por tópico");
+    expect(md).toContain("## FPR e recall por tópico (diagnóstico)");
+    expect(topic).toContain(
+      "| geografia | 800 | 400 | 400 | 0.0125 | 0.9400 | não |",
+    );
+    // The empty cells say `n/a` and never `0`: a rate of zero over nothing decided reads
+    // as a perfect topic, which is the flattering direction.
+    expect(topic).toContain(
+      "| quimica | 12 | 0 | 12 | n/a (fatia vazia) | 0.5000 | não |",
+    );
+    expect(topic).toContain(
+      "| fisica | 8 | 0 | 8 | n/a (fatia vazia) | 0.2500 | não |",
+    );
+    // A GENUINE zero over 12 decided negatives, printed as a rate — the row beside it
+    // shows the difference the `n/a` exists to keep visible.
+    expect(topic).toContain(
+      "| botanica | 12 | 12 | 0 | 0 | n/a (fatia vazia) | não |",
+    );
+    // The thin topics are PRESENT rather than dropped, and none of them gates.
+    expect(topic).not.toContain("| sim |");
   });
 
   // X1 — the published band table, and the two properties that make it readable.

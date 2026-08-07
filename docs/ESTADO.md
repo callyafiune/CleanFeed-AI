@@ -14,7 +14,7 @@
 > `código` = imposto por código medido. Um valor que a pré-inscrição vigente congela e algum módulo lê
 > é `código`, qualquer que tenha sido a política que o escreveu primeiro.
 
-**Última reescrita:** 2026-08-06
+**Última reescrita:** 2026-08-07
 
 ---
 
@@ -23,8 +23,8 @@
 | item | valor |
 |---|---|
 | branch | `cleanfeed-mvp` |
-| suíte | 171 arquivos / 2.816 testes (vitest) + 431 testes e 84 subtests (pytest, lab). Verde em rodada limpa; sob contenção de I/O, dois arquivos de caminho selado batem no timeout de 20 s — dívida de § 7, não de política |
-| dos quais, o avaliador | 1.876 — 1.445 em 45 arquivos de `benchmark/tests`, 431 no lab |
+| suíte | 171 arquivos / 2.822 testes (vitest) + 462 testes e 84 subtests (pytest, lab). Verde em rodada limpa; sob contenção de I/O, dois arquivos de caminho selado batem no timeout de 20 s — dívida de § 7, não de política |
+| dos quais, o avaliador | 1.913 — 1.451 em 45 arquivos de `benchmark/tests`, 462 no lab |
 | typecheck | limpo |
 | lint | 12 problemas (10 erros, 2 avisos), e **nenhum erro em caminho rastreado**: os 10 estão todos sob `.cache/chrome-for-testing/` — um Chrome baixado, que `.gitignore` cobre e nenhum commit carrega —, então esse número é propriedade do cache e se move quando a versão do browser se move. Os 2 avisos são de `src/`, em `react-refresh/only-export-components` |
 | tags de release | 0 |
@@ -123,7 +123,11 @@ de abrir o arquivo — o módulo fica na árvore, declarado, pela mesma convenç
 | | **sondas diagnósticas** (`benchmark/lab/diagnostic_probes.py`): quatro, e **só a primeira decide** — prever a partição entre `train`, `dev` e `cal-A` (validação adversarial / C2ST) **recusa a MONTAGEM** por duas razões nomeadas, `partition-predictable` (AUC um-contra-resto ≥ 0,60 **e** p < 0,01, os dois congelados em código e nenhum deles fração do alpha familiar) e `text-shared-across-partitions`. As outras três — classe por comprimento, lane dentro de `ai`, estilometria com coeficientes publicados — mais o viés ortográfico e a dispersão entre janelas são **diagnóstico que não decide**, e o relatório delas **não tem campo de veredito** | AG |
 | | `cal-B` e `test` **nunca** alcançam sonda: `BLIND_PARTITIONS` é espelho pinado de `cluster-exposure-ledger.ts`, `OPEN_PARTITIONS` é derivada de `BLOCK_TIME` menos as cegas, e o relatório publica **um** contador agregado do que foi posto de lado — nunca detalhamento por partição cega, nunca id. Alargar `OPEN_PARTITIONS` reprova dentro da sonda | código |
 | | a **taxa de erro ortográfico** é sonda de VIÉS e nunca feature: registro separado (`SPELLING_BIAS_MEASURES`), e `assert_no_bias_measure_reaches_the_features` compara nome **e** callable de dentro de `feature_row`/`feature_matrix` — ligar a feature recusa antes de qualquer `fit` | código |
-| D19 | o baseline (`benchmark/lab/baseline_tfidf.py`) roda **duas** vetorizações em paralelo, palavra (1,2) e caractere (3,6) com `analyzer="char"`, num registro que impede rodar uma sem a outra. O papel é **detector de vazamento**: desempenho alto continua significando artefato de fonte | AG |
+| D19 | o baseline (`benchmark/lab/baseline_tfidf.py`) roda **cinco** vetorizações em paralelo, num registro que impede rodar uma sem as outras: palavra (1,2), caractere (3,6) com `analyzer="char"`, **`funcionais`** (TF-IDF de somente as 120 palavras funcionais da classe fechada — o **único** piso cego a tema, e `THEME_BLIND_VECTORIZATIONS` o nomeia em código), **`estilometria`** (as 19 features da W3, que **não** é cega a tema: 7 delas leem palavras de conteúdo) e a **união** das duas. O papel é **detector de vazamento**: desempenho alto continua significando artefato de fonte. `POST_FIT_GUARDS` tem as mesmas chaves de `VECTORIZATIONS`, então uma sexta vetorização não chega sem decisão sobre a sua conferência pós-`fit` | AG |
+| | **as quatro sondas de dependência de tema** (mascaramento de entidades, fatia por `topic`, piso barato decomposto, facilidade da reservada) são **DIAGNÓSTICO**: `role`/`decides`/`spendsAlpha` declarados, nenhuma é membro de `multiplicity.primaryFamily` e `entity_masking.assert_theme_probes_decide_no_hypothesis` lê a política selada e recusa nas **duas** direções — sonda promovida a hipótese, e família que deixou de ter quatro membros. O inventário obrigatório continua **4** | código |
+| | **mascaramento de entidades** (`benchmark/lab/entity_masking.py`): perturbação em tempo de inferência, **três braços** — `original`, `entity-masked` e `placebo-masked`. O placebo casa a contagem de vãos **e** o multiconjunto de comprimentos de vão, e existe porque `[MASK]` é token que a cabeça ajustada nunca viu: sem ele um deslocamento de escore é atribuível ao marcador. A quantidade lida é o **excesso** do braço de entidades sobre o placebo, na classe `ai`; o critério de colapso é `excesso de queda média ≥ 0,10` **ou** `excesso de virada de veredito ≥ 0,20`. O achador de entidades é heurístico e **sub-mascara** (capital que só abre frase sobrevive quando a forma não é evidenciada no meio de outra frase), então `collapses` é o veredito forte e `survives` vem acompanhado da fração de palavras mascarada | AG |
+| | **`topic` é eixo de FATIA e nunca de UNIÃO**: entra em `SliceAxis`, `AXIS_ORDER` e nos extratores de `benchmark/slices.ts`, e em `DIAGNOSTIC_AXES` — logo **não** está em `FPR_AXES` nem em `RECALL_AXES`, nenhuma fatia de tópico é elegível a gate, `benchmark/gates.ts` não constrói `warning.fpr.slice.topic.*`, e `summarizeSlices` a tira da média macro **e** da busca do pior caso (duas barreiras, porque a elegibilidade sozinha só cobre a segunda). O relatório publica `## FPR e recall por tópico (diagnóstico)`, uma linha por fatia, com `n/a (fatia vazia)` onde a população medida de um lado é zero — nunca `0`. `topic` **não** entra em `GROUP_KEYS`: eixo de união derivado de um *clustering* põe decisão de modelagem dentro da política selada, e conglomerado temático é grande | código |
+| | **critério de aceitação da família reservada**, lido de um número: `lift(família) = (AUC_piso − 0,5) / (AUC_detector − 0,5)`, com `margem` 0,10, `folga` 0,10 e `piso de separação` 0,51. Três vereditos, e **dois** recusam — `measures-easiness` (a reservada é mais fácil para o baseline burro que as *core*) e `no-headroom` (o piso já reclama mais de 90 % do *lift* nas *core*, então o excesso é pequeno por construção e a comparação não resolve). Abstenção lida como aceitação era o fail-open, e a necessidade da regra é **medida** (§ 5.8) | AG |
 | A4 | gate antiartefato **pré-treino**, em código (`benchmark/lab/artifact_gate.py`): **dez** detecções — eco de prompt, recusa, metaconversa, assinatura de harness, espaço anômalo, encoding, caractere invisível, Markdown, cabeçalho, frase-padrão de prompt —, teto de contaminação em `Fraction(2, 100)`, comparado **por família geradora** e nunca com o agregado do conjunto gerado, relatório escrito **antes** do veredito e sem nomear linha | OP |
 | | a fração do teto é **por LINHA**: uma linha com duas detecções é UMA linha contaminada com as duas razões nomeadas, e a soma por detecção pode exceder a contagem de contaminadas | código |
 | | o gate acusa o que `contracts/text-normalization.ts` **remove** antes da tokenização: o que ele mede é contaminação da lane, não a entrada do modelo. A tabela de sondas cobre os **27** code points do contrato, afirmado por **igualdade de conjuntos** contra o literal do lado TypeScript: um code point acrescentado lá sem sonda aqui deixa o teste vermelho | código |
@@ -528,12 +532,12 @@ A unidade é a página, o piso de 300 é trivial, e o dump de 1,96 GB é a reser
 |---|---|
 | componentes independentes na célula, hoje | **4.000**, todos de tamanho 1, sobre o corpo estampado de 2026-08-06 (§ 5.4b) — a unidade é a PÁGINA (`groups.source = ptwiki_page_<page_id>`) e o piso de 300 fica 13,3× folgado. Era 1 enquanto o pool de 24/07 não carregava `groupAxes` |
 | guardas de integridade do pacote | 11 exercitadas, 0 sem teste |
-| `evaluatorDigest` da árvore | `a79a9ee6cf454172af5a85334c8e3f66d462d29245257b032ef1106d536c7f33` — 52 arquivos, recomputado pela função de produção e **lido por teste nomeado** (`digests.test.ts`, "is published in the ESTADO at the value the LIVE tree hashes to"), então este número não pode envelhecer em silêncio. Mover é barato enquanto `issuedAt` é nulo |
+| `evaluatorDigest` da árvore | `fe723fb352f4404017f7265801edca445e8819e70d4d7265461ff73992eaa133` — 52 arquivos, recomputado pela função de produção e **lido por teste nomeado** (`digests.test.ts`, "is published in the ESTADO at the value the LIVE tree hashes to"), então este número não pode envelhecer em silêncio. Mover é barato enquanto `issuedAt` é nulo |
 | byte de controle cru em caminho rastreado | **zero**, e imposto por dois testes nomeados, com escopos diferentes de propósito. `digests.test.ts` ("carry no raw control byte, so no code-search tool can skip an evaluator file") varre os **52** de `EVALUATOR_FILES` e **não isenta nada**, porque os bytes desses arquivos são a identidade do avaliador. `tests/unit/repo/line-endings.test.ts` ("leaves no raw control byte in a tracked path the repo calls text") varre **todo** caminho de `git ls-files`, isentando só extensão que `.gitattributes` declara `binary` — nenhuma rastreada hoje, então na prática é a árvore inteira. Os dois recusam controle C0 fora de LF, TAB e CR e apontam `arquivo:linha:coluna` mais o offset de byte. A isenção **não** é a classificação `i/-text` do git: ela é causada pelo byte cru, e filtrar por ela pularia justamente o infrator |
 | ledger de exposição real | **0 bytes** — nenhum evento real foi escrito |
 | holdout-ledger real | 2.638 bytes — o consumo de 2026-07-25, `decision: reject` |
 | memória da exposição por linha | `benchmark/data/corpus-build/out/split/split-artifact.json` — pertença de `test`, só o operador lê |
-| referências | **430** marcadores de link em **18** seções de nível `##` de `references.md`, e **48** declarações literais de "Sem precedente encontrado". A regra é a ocorrência da junta `](` seguida de URL, contada **no arquivo inteiro e não por linha**: `references.md` quebra a ~100 colunas e 38 rótulos de link atravessam a quebra, então um regex `\[rótulo\]\(url\)` aplicado por linha devolve 390. Agora **lido por teste nomeado** (`estado-counts.test.ts`) — os valores anteriores (322 / 50, depois 349) envelheceram em silêncio exatamente porque nenhum teste os lia |
+| referências | **447** marcadores de link em **19** seções de nível `##` de `references.md`, e **52** declarações literais de "Sem precedente encontrado". A regra é a ocorrência da junta `](` seguida de URL, contada **no arquivo inteiro e não por linha**: `references.md` quebra a ~100 colunas e 38 rótulos de link atravessam a quebra, então um regex `\[rótulo\]\(url\)` aplicado por linha devolve 390. Agora **lido por teste nomeado** (`estado-counts.test.ts`) — os valores anteriores (322 / 50, depois 349) envelheceram em silêncio exatamente porque nenhum teste os lia |
 
 ### 5.7 Sondas diagnósticas sobre os pools em moldura (W3)
 
@@ -602,10 +606,187 @@ Nenhuma destas taxas é reproduzível de um checkout: os pools são gitignored (
 dívida que a W2 abriu é que o **medidor** agora está no repositório, com a invocação exata registrada acima
 e a procedência do material dentro do próprio relatório.
 
+### 5.8 As quatro sondas de tema, exercitadas contra o artefato ANTIGO (2026-08-07)
+
+**Não é medição do modelo do produto.** Não existe modelo novo nem corpus selado: o treino é a Fase 4 e a
+medição certificadora é a Fase 5. O que estas linhas medem é que os **instrumentos rodam e discriminam**,
+exercitados contra o export int8 que existe fora do repositório
+(`snapshots/cleanfeed-ptbr-v1/onnx/model_int8.onnx`, 109.681.931 bytes, BERTimbau `vocab_size` 29.794) e
+contra os pools de `benchmark/data/candidates*`. O artefato antigo foi treinado no corpus **morto**, num
+domínio misto, e seus escores são **saturados** — média 0,00070 no humano ptwiki contra 0,89572 nas linhas
+`ai` —, então nenhuma leitura abaixo transfere para o modelo da Fase 4. `onnxruntime` não existe no
+interpretador do lab (`py -3.13`); a pontuação roda em `python` 3.11, que o tem.
+
+**Os comandos exatos, porque sem eles a tabela não é reprodutível.** A primeira versão desta seção publicou
+uma tabela que a invocação documentada do módulo não produzia — `main()` tomava as linhas `ai` inteiras
+contra apenas os pais pareados, e o pareamento do lado `ai` tinha sido feito à mão fora da árvore. Corrigido:
+`main()` **filtra** as linhas `ai` pelos pais presentes em `--humans` e imprime quantas caíram.
+
+```
+py -3.13 baseline_tfidf.py --ai ../data/candidates/ai_fresh_*.jsonl \
+  --humans ../data/candidates/wikipedia_fresh.jsonl \
+  --reserved-family gpt-5_6-luna --detector-scores <scores.jsonl>
+# dataset: 253 ai + 253 human (topic-paired; 2319 ai row(s) without a parent in --humans dropped)
+
+py -3.13 entity_masking.py sample --humans ../data/candidates-f3/wikipedia_fresh.jsonl \
+  --ai ../data/candidates/ai_fresh_{codex,gemini,gemini_multi}.jsonl --per-pool 60 --out <sample.jsonl>
+py -3.13 entity_masking.py arms --rows <sample.jsonl> --out-dir <dir>
+python score_pilot_local.py --model-dir <snapshot> --dataset <dir>/<braço>.jsonl \
+  --output <dir>/scores_<braço>.jsonl --max-length 512
+py -3.13 entity_masking.py read --scores <dir>/scores_*.jsonl --rows <sample.jsonl> \
+  --masking <dir>/masking.json --out <report.json>
+```
+
+**Mascaramento de entidades.** 60 linhas humanas de `candidates-f3/wikipedia_fresh.jsonl` mais 180 linhas
+`ai` das três lanes frescas que pareiam com ptwiki, 240 linhas × 3 braços = 720 passagens, semente
+`theme-entity-masking-20260807`. Limiar de decisão 0,5 — o argmax da cabeça de dois logitos, **não** o corte
+`provisional-v1`, que nenhum artefato deste repositório carrega.
+
+| classe | n | palavras mascaradas | falta do placebo | escore original | `entity-masked` | `placebo-masked` | queda entidade | queda placebo | **excesso** | excesso de virada |
+|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|
+| `ai` | 180 | **5,32 %** | 0 palavras / 0 linhas | 0,89572 | 0,90338 | 0,85935 | −0,00766 | +0,03637 | **−0,04403** | −0,01667 |
+| `human` | 60 | **23,17 %** | **47 palavras / 5 linhas** (máx. 23) | 0,00070 | 0,00407 | 0,00552 | −0,00337 | −0,00482 | **+0,00145** | 0,0 |
+
+Veredito **`survives`**, e a leitura que decide é a da linha **humana**, não a da `ai`: a classe `ai` destes
+pools tem 5,32 % de palavras mascaradas — as linhas geradas em disco falam de produto, saúde e educação e
+quase não carregam entidade nomeada —, então um `survives` lido nela é um `survives` sobre texto que quase
+não foi perturbado, que é exactamente o que a coluna de fração existe para tornar visível. Na classe humana
+o mascaramento **morde** (23,17 % das palavras) e o excesso sobre o placebo é **+0,00145**, um sexto do teto
+de ruído medido do próprio pipeline (`maxAbsDelta` 0,008950 do relatório de paridade). E a direção do
+placebo é a que carrega o argumento: mascarar palavras comuns minúsculas move o escore `ai` **4,7×** mais
+(+0,03637) que mascarar toda entidade, data e numeral (−0,00766, que é uma **subida**). Neste artefato a
+identidade das entidades vale menos que arredondamento int8.
+
+**A coluna de falta do placebo, e por que ela está publicada.** `mask_placebo` calculava `shortfall` desde o
+início e `read_masking` **não o lia**, embora o docstring dissesse "publicado em vez de silenciosamente
+absorvido". Medido: a classe **humana** — a que o veredito reporta ao lado e a que a leitura designa como
+decisiva — tem 47 palavras de falta em 5 das 60 linhas, uma delas 23 palavras contra 23 vãos de entidade. A
+direção do viés está escrita no código: falta do placebo significa que o placebo removeu **menos** que o
+braço de entidades, logo a queda do placebo está subestimada e o **excesso está superestimado** — o viés
+aponta para `collapses`, que neste instrumento é o alarme e não a dispensa. O `+0,00145` da linha humana é,
+se algo, generoso com a hipótese. `--masking` deixou de ser opcional e `read_masking` **recusa** um registro
+pontuado sem entrada de mascaramento.
+
+**A janela de 512 tokens é a mesma para os três braços em 231 das 240 linhas.** Medida com o tokenizador do
+próprio snapshot: no braço original, 6 das 180 linhas `ai` e 3 das 60 humanas passam de 512 tokens
+(médias 281,2 e 182,8; máximos 692 e 857). Como o mascaramento **encurta** (médias 270,4 e 157,4), nessas 9
+linhas a janela do braço mascarado cobre mais documento que a do original e o delta não é "o mesmo texto
+menos as entidades". `--max-length 512` está fixado no runbook e a contagem registrada aqui; corrigir de
+verdade exige janelar por documento, que é outra unidade.
+
+**O piso barato, decomposto — e o erro que a decomposição desfaz.** 253 linhas `ai` pareadas com ptwiki (108
+da família reservada `gpt-5_6-luna`, 145 das *core* `gemini-3_5-flash-lite` e `gemini-3_1-flash-lite`) contra
+os 253 pais humanos, 5 dobras estratificadas, semente 42:
+
+| vetorização | AUC média | desvio entre dobras | lê conteúdo? |
+|---|---:|---:|---|
+| palavra (1,2) | 0,9327 | 0,0247 | sim |
+| caractere (3,6) | 0,9319 | 0,0156 | sim |
+| **`funcionais`** (lista fechada de 120 palavras) | **0,9313** | **0,0139** | **não — é o único piso cego a tema** |
+| `estilometria` (19 features da W3) | 0,9712 | 0,0211 | sim, 7 das 19 |
+| `funcionais+estilometria` (piso barato) | 0,9767 | 0,0179 | sim, pela estilometria |
+
+**A leitura anterior desta tabela estava errada e a correção é o achado.** Publicou-se `cego-a-tema` 0,9749
+"superando palavra e caractere, com as palavras de conteúdo estruturalmente barradas". Medido: o número era
+da **união**, e `estilometria` sozinha reclama **98,8 %** da separação acima do acaso da união
+((0,9712 − 0,5)/(0,9767 − 0,5)); o ramo de palavras funcionais acrescenta 0,0055 de AUC. Sete das 19 features
+de `probes.STYLOMETRIC_FEATURES` são funções das palavras de conteúdo (`type-token-ratio`, `mtld`,
+`trigram-repetition`, `hapax-rate`, `long-word-rate`, `word-length-mean`, `flesch-pt`) e `_stylometry_matrix`
+recebe o texto **inteiro**, então "estruturalmente barradas" era falso. O piso genuinamente cego a tema é
+`funcionais`, com **0,9313** — logo **abaixo** de palavra (0,9327) e de caractere (0,9319), não acima. E não
+é "a mesma conclusão de § 5.7b por outro caminho": é o **mesmo** caminho, as mesmas features a que § 5.7b
+atribuiu a AUC 0,985.
+
+O que sobra medido, e é bastante: um modelo linear que lê **só 120 palavras funcionais** separa este material
+com AUC 0,93, empatando com as duas vetorizações que leem conteúdo. No enquadramento de D19 continua a não
+ser boa notícia — é artefato de fonte —, mas o limite que se pode publicar é o de `funcionais`, e a diferença
+até o modelo grande é o máximo que poderia ser temático **por esse número**, não pelo da união.
+
+Duas correções de instrumento vieram com a medição. O `token_pattern` default do sklearn é
+`(?u)\b\w\w+\b` e descarta todo token de um caractere, então `a`, `e`, `o`, `à` e `é` estavam no
+vocabulário com massa **zero permanente** — as três palavras mais frequentes do pt-BR, e exactamente o
+material que Mosteller & Wallace contam. Custo medido: o ramo lia 0,8944 em vez de 0,9313. E a guarda de
+"nenhuma palavra de conteúdo" era uma **lista negra** de 42 itens: medido, `brasil` declarado funcional
+passava pelas duas guardas e chegava ao vocabulário ajustado. Substituída por igualdade de conjuntos contra
+um inventário de 120 palavras enumerado **por classe gramatical fechada** em `baseline_tfidf`, que recusa na
+construção qualquer palavra — de conteúdo ou não — e também qualquer **remoção**.
+
+**A facilidade da família reservada, e o fail-open que a medição encontrou.** Detector = o artefato antigo
+sobre os mesmos 506 textos, AUC de posto. O piso é o **barato** (`funcionais+estilometria`), porque a
+comparação quer o **máximo** que um modelo burro alcança: usar o ramo mais fraco subestimaria o `lift` e
+leria facilidade como generalização.
+
+| fatia | AUC do piso barato | AUC do detector | `lift` |
+|---|---:|---:|---:|
+| reservada (`gpt-5_6-luna`, n=108) | 0,95449 | 0,95766 | **0,99307** |
+| *core* (gemini, n=145) | 0,98299 | 0,98981 | **0,98608** |
+
+Excesso de `lift` **0,00699** contra margem de 0,10. A primeira versão do critério leria isso como
+`measures-generalization` — e estaria **errada por construção**: com o piso reclamando 98,6 % da separação
+do detector nas *core*, o excesso não podia ser outro número. A regra de **folga** nasceu desta medição, o
+veredito publicado é **`no-headroom`**, e `assert_reserved_family_measures_generalization` **recusa**.
+O lado humano são os **253 pais pareados** e não o pool inteiro: o bloco recebia
+`list(humans_by_id.values())` enquanto as AUCs publicadas usavam os pais, então o único controle de tópico do
+desenho desaparecia no instrumento que decide como o número OOD é publicado — um piso medido contra humanos
+de outros tópicos sobe, o `lift` das *core* sobe com ele e o veredito se move por uma causa que não é a
+declarada. `assert_every_human_row_is_a_paired_parent` agora **recusa** essa chamada.
+Uma ressalva que não se apaga: `gpt-5_6-luna` é modelo de fronteira, e a família que a v1 vai reservar é o
+modelo pequeno de pesos abertos `gpt-oss-120b-medium`, que **não tem material fresco** — a comparação real
+é da Fase 3 item 2.
+
+**A fatia por tópico não tem material, e a exigência do contrato fica descumprida.** `assemble_corpus`
+escreve `"topic": "geral"` constante em todo registro, então um corpo montado hoje produz **uma** fatia de
+tópico com todas as linhas. Das quatro sondas, esta é a única que **nunca** viu um registro real: toda a
+evidência é fixture. O eixo, a tabela e as duas barreiras estão medidos por teste (fatia densa acima dos dois
+pisos e ainda inelegível; fatia com população vazia de um lado publicando `n/a`, com o valor não-finito que
+`buildSlices` de facto produz; média macro e pior caso intocados; nenhum gate de tópico com `m` em 4), e o
+que falta é `topic` deixar de ser constante — dívida de § 7.
+
 ---
 
 ## 6. NÃO APLICAR — aparecem no registro e não valem
 
+- a **implausibilidade de co-ocorrência como atalho aprendido** lida como fato: o que está ESTABELECIDO é
+  que o pré-treino MLM do BERTimbau tem como objetivo prever token por contexto, logo as representações
+  codificam estatística de co-ocorrência — isso é arquitetura. O que foi ESPECULADO, e afirmado como se
+  fosse sabido, é que a representação **agrupada** que a cabeça de classificação lê exponha essa
+  implausibilidade de forma utilizável: existe método padrão para ler surpresa de um MLM
+  (pseudo-perplexidade, Salazar et al. 2020) e este classificador **não a calcula**. Do argumento
+  **sobrevive** que o pareamento controla o ASSUNTO e não a CORREÇÃO — dentro de um par de tópico idêntico
+  uma entidade inventada ainda diferencia — e **dissolve-se em grande parte** o resto: as famílias de treino
+  são modelos de fronteira, que raramente confabulam em prosa enciclopédica curta sobre tópico conhecido, e
+  a confabulação pesada vive na família RESERVADA, que é só teste e portanto não ensina nada ao modelo —
+  apenas infla a leitura do OOD. Medido em 2026-08-07 contra o artefato antigo (§ 5.8): mascarar toda
+  entidade, data e numeral **não** move o veredito, e mascarar palavras comuns move o escore 4,7× mais;
+- a leitura de que o `survives` do mascaramento vem da classe **`ai`** dos pools de hoje: nela só 5,32 % das
+  palavras foram mascaradas, porque as linhas geradas em disco falam de produto e saúde e quase não carregam
+  entidade nomeada. A leitura que decide é a da classe **humana**, com 23,17 % das palavras mascaradas e
+  excesso de +0,00145 sobre o placebo — que a falta de 47 palavras no placebo dessa classe torna, se algo,
+  generoso com a hipótese (§ 5.8);
+- a leitura de que um braço de mascaramento **sozinho** mede algo: `[MASK]` é token que a cabeça ajustada
+  nunca viu, então inserir quinze deles move o escore qualquer que seja o que substituíram. A quantidade é o
+  **excesso** sobre o braço placebo, casado por contagem de vãos e por multiconjunto de comprimentos de vão;
+- a leitura de que o excesso de `lift` da família reservada perto de zero **aceita** a fatia OOD: medido,
+  com o piso barato reclamando 98,6 % da separação do detector nas famílias *core*, o excesso não podia
+  ser outro número. É abstenção (`no-headroom`) e a asserção de aceitação **recusa** — abstenção lida como
+  aceitação era o fail-open que a regra de folga fechou (§ 5.8);
+- a leitura de que o piso `funcionais+estilometria` é **cego a tema**, publicada como
+  "`cego-a-tema` 0,9749 supera palavra e caractere, com as palavras de conteúdo estruturalmente barradas":
+  medido, `estilometria` sozinha reclama 98,8 % da separação acima do acaso da união, 7 das suas 19 features
+  são funções das palavras de conteúdo e `_stylometry_matrix` recebe o texto inteiro. O piso genuinamente
+  cego a tema é `funcionais`, com **0,9313** — logo **abaixo** de palavra (0,9327) e de caractere (0,9319).
+  Nem é "a mesma conclusão de § 5.7b por outro caminho": é o mesmo caminho e as mesmas features (§ 5.8);
+- a leitura de que uma lista negra de palavras de conteúdo medidas prova "nenhuma palavra de conteúdo":
+  medido, `brasil` declarado funcional passava pelas duas guardas e chegava ao vocabulário ajustado, porque a
+  segunda guarda compara o ajustado contra a lista **já contaminada**. Só igualdade de conjuntos contra um
+  inventário declarado por classe gramatical fecha isso (§ 5.8);
+- a leitura de que `topic` pode entrar em `GROUP_KEYS` porque agora é eixo de fatia: são coisas separadas.
+  Eixo de união derivado de um *clustering* põe uma decisão de modelagem dentro da política selada, e
+  conglomerado temático é grande, o que traz de volta a degenerescência de poucos blocos grandes que a
+  emenda da moldura resolveu;
+- a leitura de que a inelegibilidade a gate sozinha mantém uma fatia diagnóstica fora dos números
+  publicados: a **média macro** de `summarizeSlices` percorria TODAS as fatias, elegíveis ou não, e é
+  publicada no relatório. São duas barreiras e nenhuma implica a outra;
 - a **pré-inscrição v3 inteira** (`benchmark/rebuild-v3-policy.{json,ts}`, marcada em
   `.ABANDONADA.md`): está em árvore, é importada por **nenhum** módulo de produção e por nenhum membro
   de `EVALUATOR_FILES`. Os valores que a pré-inscrição vigente reafirma estão em § 3, com o rótulo da
@@ -743,6 +924,12 @@ e a procedência do material dentro do próprio relatório.
 | dívida | vence |
 |---|---|
 | nenhum vínculo F6 prova em que corpus os pesos atuais foram treinados | antes de publicar pesos |
+| `assemble_corpus` escreve **`topic: "geral"`** constante em todo registro, então a fatia por tópico existe, é lida e tem **uma** chave: o eixo, a tabela e as duas barreiras estão medidos por teste, e o que falta é material. Enquanto `topic` for constante a sonda não pode responder se a taxa desaba nos tópicos ralos, que é a pergunta pela qual ela existe | unidade que der um tópico ao extrator, ou a Fase 3 item 2 |
+| a família reservada que a v1 vai usar (`gpt-oss-120b-medium`, pesos abertos) **não tem material fresco**, então o critério de facilidade foi exercitado contra `gpt-5_6-luna`, que é modelo de fronteira. A comparação que o critério existe para decidir só é possível quando a reservada real tiver linhas | Fase 3, item 2 |
+| a pontuação das sondas de tema exige `onnxruntime`, que **não existe** no interpretador do lab (`py -3.13`); ela roda em `python` 3.11. Os testes das sondas são stdlib/numpy/sklearn e rodam onde a suíte roda, mas a corrida de smoke não é reproduzível de um `py -3.13` limpo | unidade que unificar o ambiente do lab, ou a Fase 5 |
+| o corte de **512 tokens** do pontuador faz dos três braços do mascaramento três janelas diferentes em **9 das 240 linhas** (6 `ai`, 3 humanas, medidas com o tokenizador do snapshot): o mascaramento encurta, então a janela do braço mascarado cobre mais documento que a do original e nessas linhas o delta não é "o mesmo texto menos as entidades". `--max-length 512` está fixado no runbook e a contagem publicada em § 5.8; corrigir de verdade exige janelar por documento | unidade que levar o janelamento selado ao lab |
+| o piso **cego a tema** é `funcionais` (0,9313) e **não** a união (0,9767): a união é o piso barato do critério O4 e não limita fração temática nenhuma. Enquanto a estilometria contiver medidas de diversidade lexical, nenhum número que a inclua pode ser publicado como limite superior do temático | permanente — é regra de leitura, não dívida de material |
+| o achador de entidades do mascaramento **sub-mascara** por desenho: um capital que só abre frase sobrevive quando a forma não é evidenciada no meio de outra frase do mesmo documento. Sub-mascarar empurra o veredito para `survives`, então a fração de palavras mascarada viaja junto do veredito — e um `survives` sobre fração baixa não é resposta | unidade que introduzir um tagger no lab (hoje `ner_pilot.py` exige `transformers` + `torch` e dois downloads) |
 | rodada 13 do cross-review do E2 | crédito do codex, 8 de agosto |
 | o lado **selado** não impõe a reserva OOD: `sealDataset` confere positivos por família declarada, não que as reservadas estejam fora do treino | Fase 3, item 3 |
 | o lado **selado** não confere licença registro↔fonte: `auditRecords` junta `sourceId` e ignora a licença. **Custo zero por este produtor, medido**: `source_licenses` projeta a `licenseId` da entrada A PARTIR dos registros e recusa fonte com duas licenças (`SourceCarriesTwoLicenses`), então o desacordo registro↔fonte não é construtível pelo caminho que existe. Um segundo produtor o constrói | segundo produtor de corpus |

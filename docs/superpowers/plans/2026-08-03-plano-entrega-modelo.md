@@ -215,6 +215,30 @@ com o `n` de cada faixa ao lado do teto que aquele `n` implica. Sem ela quem lê
 palavras, e quem analisa 600 recebe um modelo que a medição descreveu com ~119 linhas e teto de
 3,62 %. As faixas são diagnóstico — não decidem, não gastam alpha — e é justamente por isso que a
 sua ausência do card não seria detectada por nenhum gate.
+### Três exigências do model card que vêm das sondas de tema (2026-08-07)
+
+Registradas aqui porque nenhum gate as detecta: as quatro sondas são diagnóstico e a sua ausência do card
+passa em silêncio.
+
+1. **A família reservada é factualmente mais frágil que as de treino, logo o resultado nela é LIMITE
+   OTIMISTA** — e com os **exemplos medidos**, não como ressalva genérica. Num probe de três linhas o modelo
+   pequeno de pesos abertos escreveu "Tratado de Tordesilhas sob mediação da Coroa Francesa" e "maior maré
+   quando a Lua está em quadratura" (quadratura é quando a maré é mais **fraca**). Isso não invalida o
+   rótulo: torna a fatia OOD mais **fácil** que as famílias de treino, e o número dela é um teto sobre a
+   generalização e não uma medida dela. O critério que decide se o número sai como generalização ou como
+   limite otimista é o de `baseline_tfidf.read_ood_easiness`, e ele **recusa por padrão** — tanto quando a
+   reservada é mais fácil quanto quando a comparação não resolve (ESTADO § 3.3, § 5.8).
+2. **A razão TÉCNICA da proibição de uso acadêmico**, ao lado da ética que já existe. Seção inicial de
+   Wikipédia é, **por política editorial**, resumo de conhecimento ESTABELECIDO: é o texto humano de menor
+   novidade possível. A classe humana do corpus não consegue representar escrita acadêmica original, então o
+   modelo não tem base para ela. A proibição deixa de ser cautela e passa a ser **consequência do desenho** —
+   e é a formulação que o card imprime.
+3. **A distribuição de comprimento da população medida**, com `p50 = 106` palavras da extração real de
+   2026-08-06 (ESTADO § 5.1b) — não o `p50 = 120` da varredura de prefixo que a pré-inscrição congelou —,
+   sem a qual quem lê o teto não sabe sobre que texto ele vale. É o mesmo item que o parágrafo acima exige, e
+   está repetido aqui de propósito: a dívida das frações por faixa (§ 7 do ESTADO) vence **antes** desta
+   fase, e o card imprime a tabela corrigida ou declara a divergência.
+
 **D23** (o model card e a tabela nascem aqui), **D27** (arquivos legais pré-Fase-0 nos bundles servidos
 corrigidos). A extensão **não** entra no pacote.
 

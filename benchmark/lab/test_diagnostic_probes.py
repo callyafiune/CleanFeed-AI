@@ -1361,12 +1361,25 @@ class CharacterNgramBaselineTests(unittest.TestCase):
         self.assertLess(word, 0.2, f"word AUC {word:.4f} did not invert")
         self.assertGreater(char, 0.95, f"char AUC {char:.4f} did not separate")
 
-    def test_both_vectorizations_are_registered_so_neither_can_run_alone(self) -> None:
+    def test_every_vectorization_is_registered_so_none_can_run_alone(self) -> None:
+        # Five: word alone is the D19 reading this registry exists to prevent; word plus char
+        # without the function-word branch is the reading that cannot tell separation from
+        # subject matter; and the UNION without its two branches is the reading that credits
+        # function words with a separation the stylometric branch carries.
         self.assertEqual(
-            list(baseline_tfidf.VECTORIZATIONS), ["word(1,2)", "char(3,6)"]
+            list(baseline_tfidf.VECTORIZATIONS),
+            [
+                "word(1,2)",
+                "char(3,6)",
+                "funcionais",
+                "estilometria",
+                "funcionais+estilometria",
+            ],
         )
         self.assertEqual(baseline_tfidf.WORD_NGRAMS, (1, 2))
         self.assertEqual(baseline_tfidf.CHAR_NGRAMS, (3, 6))
+        self.assertEqual(baseline_tfidf.FUNCTION_WORD_NGRAMS, (1, 1))
+        self.assertEqual(baseline_tfidf.FUNCTION_WORD_TOKEN_PATTERN, r"(?u)\b\w+\b")
 
     def test_the_character_analyzer_crosses_word_boundaries(self) -> None:
         """`char_wb` would confine the n-grams inside words, where the marks are not."""

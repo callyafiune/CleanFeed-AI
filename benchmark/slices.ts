@@ -42,7 +42,8 @@ export type SliceAxis =
   | "generatorExposure"
   | "transformation"
   | "severity"
-  | "mixedFraction";
+  | "mixedFraction"
+  | "topic";
 
 export interface SliceResult {
   axis: SliceAxis;
@@ -140,7 +141,36 @@ const AXIS_ORDER: readonly SliceAxis[] = [
   "transformation",
   "severity",
   "mixedFraction",
+  "topic",
 ];
+
+// DIAGNOSTIC AXES: sliced and reported, never gated and never macro-averaged.
+//
+// `topic` is here and in NEITHER `FPR_AXES` nor `RECALL_AXES`, and the absence is the
+// whole design. Three consequences follow from it and each is deliberate:
+//
+//   1. `fprGateEligible` and `recallGateEligible` are false on every topic slice, so
+//      benchmark/gates.ts never builds a `warning.fpr.slice.topic.*` gate and the
+//      mandatory inventory stays the four members of `multiplicity.primaryFamily`. A
+//      topic ceiling would be a hypothesis, and a fifth hypothesis divides the family
+//      alpha by five and loosens every published ceiling;
+//   2. `summarizeSlices` drops them from the worst-slice search AND from the macro
+//      average, both of which are PUBLISHED numbers (benchmark/report.ts). Eligibility
+//      alone would already keep them out of the first, and that is not enough: the two
+//      barriers answer different questions, and a slice that arrived eligible from
+//      anywhere else must still not become the headline;
+//   3. `slices` itself keeps every axis, so the diagnostic table has its rows.
+//
+// The reason topic stays out of `GROUP_KEYS` is a different one and lives in
+// benchmark/schema.ts: a union axis that depends on a clustering choice puts a modelling
+// decision inside the sealed policy, and thematic clusters are large enough to bring back
+// the degeneracy of few big blocks.
+const DIAGNOSTIC_AXES: ReadonlySet<SliceAxis> = new Set(["topic"]);
+
+/** Whether an axis is reported-only: no gate, no macro average, no worst-slice. */
+export function isDiagnosticSliceAxis(axis: SliceAxis): boolean {
+  return DIAGNOSTIC_AXES.has(axis);
+}
 
 // Which axes can gate an FPR budget (they need human negatives) and which can
 // gate a recall floor (they need positives). Mirrors benchmark/split-audit.ts,
@@ -201,6 +231,13 @@ export function buildSlices(
     // nothing. A mixed record with no `mixture` yields no key at all (the schema
     // refuses it) rather than a fraction of zero.
     mixedFraction: (record) => mixedSegmentOf(record)?.key,
+    // `topic` is a REQUIRED non-empty string on every record of every schema version
+    // (benchmark/schema.ts refuses `""` at parse), so this extractor never returns
+    // `undefined` and no record is silently outside the axis. The field has existed in
+    // the record since v2 and nothing read it: FPR and recall by topic is the reading
+    // that says whether a rate is a property of the cell or of the topics the cell
+    // happens to be dense in.
+    topic: (record) => record.topic,
   };
 
   const results: SliceResult[] = [];
@@ -261,30 +298,38 @@ export function buildSlices(
 }
 
 export function summarizeSlices(slices: readonly SliceResult[]): SliceSummary {
-  const withVisual = slices.filter(
+  // A diagnostic axis is filtered out of BOTH published readings before anything else,
+  // and `slices` still carries every axis for the report. The two barriers are separate on
+  // purpose: `buildSlices` never marks a diagnostic slice gate-eligible, and this one holds
+  // even for a slice that arrives eligible from somewhere else — the macro average and the
+  // worst slice are published numbers, and a diagnostic axis must move neither.
+  const decidable = slices.filter(
+    (slice) => !isDiagnosticSliceAxis(slice.axis),
+  );
+  const withVisual = decidable.filter(
     (slice) => slice.metrics.visualAction !== null,
   );
 
   const worst: SliceSummary["worst"] = {};
   const worstWarningFpr = worstBy(
-    slices.filter((slice) => slice.fprGateEligible),
+    decidable.filter((slice) => slice.fprGateEligible),
     (slice) => slice.metrics.warning.endToEnd.falsePositiveRate.value,
     "max",
   );
   const worstWarningRecall = worstBy(
-    slices.filter((slice) => slice.recallGateEligible),
+    decidable.filter((slice) => slice.recallGateEligible),
     (slice) => slice.metrics.warning.endToEnd.recall.value,
     "min",
   );
   const worstActionFpr = worstBy(
-    slices.filter(
+    decidable.filter(
       (slice) => slice.fprGateEligible && slice.metrics.visualAction !== null,
     ),
     (slice) => actionFprValue(slice),
     "max",
   );
   const worstActionRecall = worstBy(
-    slices.filter(
+    decidable.filter(
       (slice) =>
         slice.recallGateEligible && slice.metrics.visualAction !== null,
     ),
@@ -301,12 +346,12 @@ export function summarizeSlices(slices: readonly SliceResult[]): SliceSummary {
     slices: [...slices],
     macro: {
       warningFpr: meanFinite(
-        slices.map(
+        decidable.map(
           (slice) => slice.metrics.warning.endToEnd.falsePositiveRate.value,
         ),
       ),
       warningRecall: meanFinite(
-        slices.map((slice) => slice.metrics.warning.endToEnd.recall.value),
+        decidable.map((slice) => slice.metrics.warning.endToEnd.recall.value),
       ),
       actionFpr:
         withVisual.length === 0

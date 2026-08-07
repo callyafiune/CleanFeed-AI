@@ -2153,6 +2153,45 @@ describe("the mandatory inventory is derived from policy.primaryFamily", () => {
     }
   });
 
+  it("a topic slice at full power adds no hypothesis and no gate", () => {
+    // Forced gate-eligible, which `buildSlices` never does for a diagnostic axis: this
+    // exercises the SECOND barrier — gates.ts keeps its own `FPR_AXES`, and a topic slice
+    // that arrived eligible must still build no gate. The FPR is catastrophic on purpose,
+    // so a gate built from it could not pass unnoticed.
+    const report = evaluateReleaseGates({
+      ...passingEvidence,
+      metrics: metrics({
+        declaredM: PREREGISTRATION_V4.multiplicity.primaryFamilySize,
+      }),
+      slices: bareSummary([
+        ...certifyingCellSlices(),
+        slice({
+          axis: "topic",
+          key: "geografia",
+          negatives: 4_000,
+          positives: 4_000,
+          fprGateEligible: true,
+          recallGateEligible: true,
+          warningFprUpper: 0.99,
+          actionFprUpper: 0.99,
+        }),
+      ]),
+    });
+    expect(report.multiplicity.observed).toBe(
+      PREREGISTRATION_V4.multiplicity.primaryFamilySize,
+    );
+    expect(report.multiplicity.unexpectedHypotheses).toEqual([]);
+    expect(report.multiplicity.missingHypotheses).toEqual([]);
+    expect(report.multiplicity.covers).toBe(true);
+    expect(report.decision).toBe("pass");
+    expect(report.gates.filter((gate) => gate.slice?.axis === "topic")).toEqual(
+      [],
+    );
+    expect(report.gates.map((gate) => gate.id)).not.toContain(
+      "warning.fpr.slice.topic.geografia",
+    );
+  });
+
   it("refuses a fifth hypothesis even under a divisor large enough to cover the count", () => {
     // A larger `m` is conservative and is accepted — it only widens every bound — but
     // it buys no membership: the family has its frozen members whatever the divisor is,
