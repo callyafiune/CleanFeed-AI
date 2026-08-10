@@ -4257,6 +4257,10 @@ Três sítios já diziam que o selado era o BERTimbau, e um dizia o contrário:
   bake-off";
 - `benchmark/lab/train_detector.py:54` tinha o BERTimbau como **default** do `--model`; o
   `xlm-roberta-base` aparecia na linha 13, dentro de um **exemplo** de bake-off no docstring;
+- `benchmark/rebuild-v3-policy.json:3` congelava `neuralmind/bert-base-portuguese-cased`, com o teto de
+  109 681 931 na linha 183 — a terceira testemunha, que a contagem afirmava e a lista não enumerava (achado
+  M4 do `consolidado-w1`, fechado em 2026-08-10). É o mesmo arquivo que o parse fechado da unidade R2 passou a
+  recusar como política selada, por outro motivo: ele declara `policyVersion: rebuild-v3-policy-v1`;
 - `benchmark/preregistration-v4.json` congelava `xlm-roberta-base`.
 
 A divergência **D17** leu a linha de exemplo e pinou o XLM-R; o Commit C o congelou e **elevou** o teto de
@@ -6351,3 +6355,332 @@ contados; as três ratificações que afirmavam 7.000 linhas humanas ganharam ma
 4.000 da emenda da moldura (marca e não reescrita: o registro é histórico, e o que envelheceu foi a vigência,
 não a decisão); e `assemble_corpus.lane_rows()` deixou de levantar `KeyError` cru no import — `PolicyLanesUnreadable`
 nomeia o arquivo e o bloco, com dois casos de pytest.
+## R2 — o passo do OPERADOR: paridade não é validade, e o export publica por último (2026-08-10)
+
+Unidade R2, decidida ao consertar os quatro bloqueantes de Fase 4 da cross-review consolidada
+(`.codex-reviews/consolidado-w1-backbone.md`, achados A1 a A4). **Os quatro procedem; nenhum foi
+refutado.** O que segue é a razão de cada escolha, mais o que a conferência do T5 achou e o que esta
+unidade deliberadamente não fez.
+
+O eixo comum dos quatro: eles se realizam num passo que **nenhum teste desta suíte executa** — o operador
+num Colab, com torch, onnxruntime e um checkpoint de ~440 MB. Um defeito ali não reprova nada; ele produz
+um ZIP. Por isso a forma do conserto foi, nos quatro casos, mover a decisão para uma função **pura ou
+injetada** que a suíte possa dirigir, em vez de acrescentar mais uma asserção sobre o código-fonte de
+`main()`.
+
+### Decisão 1 — variância de escore nula é RECUSA, e o piso é a própria tolerância do gate
+
+`build_parity_report` passa a publicar `torchScoreIqr`/`onnxScoreIqr` (o intervalo interquartil) e
+`torchScoreRange`/`onnxScoreRange` (a amplitude, informativa), e a marcar `degenerate` quando o menor dos
+dois **intervalos interquartis** não supera `PARITY_MEAN_DELTA_TOLERANCE` (0,02) — o mesmo número contra o
+qual os deltas são comparados. `degenerate` reprova o gate.
+
+**A estatística é interquartil, e não amplitude, porque a segunda lente mediu a amplitude sendo derrubada por
+um único documento:** 119 escores em 0,5 e um em 0,9 dão amplitude 0,4, `meanAbsDelta` 0, zero inversões e
+`pass: true` — o detector é constante em 119 de 120 casos e o piso não o via. `max − min` é uma estatística
+que um outlier move sozinho; o interquartil não. O preço é que o interquartil depende da COMPOSIÇÃO da
+amostra, e é por isso que a amostra passou a ser sorteada balanceada (abaixo).
+
+**A amostra de paridade é balanceada entre as duas classes, espaçada pelo arquivo inteiro.** A primeira lente
+mediu o que o piso fazia sobre a amostra que o runbook mandava usar: `dev.jsonl` é **agrupado** — 4 118
+linhas, `label` 0 nas posições 0 a 2 639 e `label` 1 nas 2 640 a 4 117 —, e `--parity-samples 120` tomava as
+120 **primeiras**, isto é, 120 documentos humanos. Sobre uma classe só, o escore de um detector confiante é
+tão achatado quanto o de um constante, então o piso recusaria o export legítimo como `ESCORE DEGENERADO` — e,
+pela decisão 3, essa recusa já teria apagado a publicação anterior. A amostra passa a ser metade de cada
+classe (contagens iguais por construção, espaçadas dentro de cada classe), `label` ausente ou fora de
+`{0,1}` é recusado nomeando a linha, arquivo de uma classe só é recusado nomeando `label`, e
+`parity_report.json` publica `sampleLabelCounts`. Contagens **iguais** é o que dispensa escolher uma fração
+mínima de minoria: qualquer fração seria número novo que alguém pode mover.
+
+**Por que o piso é a tolerância e não um número novo.** A afirmação que o gate faz é "os deltas ficam abaixo
+de 0,02". Sobre uma faixa de escore mais estreita que 0,02 essa desigualdade é verdadeira **por
+construção**, qualquer que seja a quantização — então o piso natural é exatamente a tolerância: abaixo dele
+a frase não fala de quantização. Qualquer outro valor seria constante escolhida à parte, isto é, número que
+alguém pode mover depois de ver o resultado, que é a classe de coisa que esta pré-inscrição existe para
+impedir.
+
+**A percepção que organiza o conserto**, escrita como restrição técnica em `export_onnx.py` ao lado do
+cálculo: paridade é verificação de **autoconsistência**, não de validade, e um modelo degenerado a
+**maximiza**. Não é que a paridade seja fraca contra a cabeça não treinada — ela é *perfeita* nela.
+
+**Medido, e é a primeira vez** (ESTADO § 5.9): cabeça de duas classes zerada devolve logitos exatamente
+`[0,0]` para 8 textos distintos, `P(ai)` = 0,5 com **um** valor distinto, `meanAbsDelta` 0, `maxAbsDelta` 0,
+zero inversões — veredito antigo `pass: true`. As duas lentes sustentaram o achado por fluxo estático; a
+metade dinâmica estava declarada como não executada por ninguém, e agora está executada.
+
+**O limite honesto:** o lado ONNX não rodou (o módulo `onnx` não existe em nenhum dos dois interpretadores
+desta máquina), então a igualdade dos dois lados segue sustentada por eles lerem os mesmos pesos. Dívida
+escrita em § 7.
+
+### Decisão 2 — a cabeça é lida em três lugares, e nenhum deles prova treino
+
+Três exigências novas, todas no caminho barato (antes do `import torch`), menos a terceira:
+
+1. `architectures == ["BertForSequenceClassification"]` — um checkpoint base declara `BertForMaskedLM`;
+2. contrato binário de labels: `num_labels`/`id2label` declaram **dois**, `id2label` é um **mapa** (tipo
+   conferido: um array ou string estourava `AttributeError` em vez de recusar por nome) e o mapa é
+   exatamente `{0: human, 1: ai}`;
+3. ausência de `classifier.*` **e de `bert.pooler.*`** em `missing_keys`/`mismatched_keys` do carregamento.
+
+**Por que a ordem dos labels e não só a contagem.** O índice 1 é P(ai) em todo o caminho a jusante — gate de
+paridade, manifesto do runtime, e `scripts/package-own-model.mjs`, que **estampa** `{0: human, 1: ai}` no
+config servido. Um checkpoint que nomeasse as classes ao contrário não seria pego a jusante: seria
+**sobrescrito** por uma afirmação que os pesos contradizem.
+
+**O par anônimo `LABEL_0`/`LABEL_1` é RECUSADO, e essa é uma correção do primeiro fechamento desta unidade.**
+Ele havia sido admitido com o argumento de "não reprovar o checkpoint legítimo", porque é o que `num_labels=2`
+deixa sozinho. A segunda lente notou que o argumento se anulou na mesma unidade: `train_detector.py` passou a
+gravar `id2label`/`label2id` nomeados, então o único checkpoint que chega com o par anônimo é um que o
+produtor **selado** não escreveu — e nenhum checkpoint existe ainda, logo aceitar o par não protegia
+artefato nenhum. Uma forma legal em vez de duas, e a mensagem de recusa nomeia `train_detector.py` como o
+remédio.
+
+**O pooler entra na guarda porque ele está no caminho da cabeça.**
+`BertForSequenceClassification` alimenta o classificador com `bert.pooler.dense`; um pooler construído ao azar
+entrega entrada aleatória a uma cabeça treinada, e o resultado é o mesmo ruído uma camada antes — igualmente
+invisível para a paridade, que compara os dois lados sobre os **mesmos** pesos inventados.
+
+**Por que ler `missing_keys` e não confiar no config.** Medido em `transformers` 5.14.1 (§ 5.9):
+`AutoModelForSequenceClassification.from_pretrained` sobre um checkpoint sem os tensores da cabeça
+**carrega**, constrói o classificador ao azar e imprime um `LOAD REPORT` com `MISSING` e a nota *"Consider
+training on your downstream task"*. O próprio repositório já documentava a armadilha do lado da pontuação
+(`score_pilot_local.py`) e nenhuma guarda a lia. A guarda **exige** que o carregador reporte as duas listas:
+um dicionário sem elas é recusado, porque um relatório ausente faria a guarda aprovar tudo.
+
+**O que continua não provado, dito com essas palavras:** nada disso prova que a cabeça foi **treinada**. A
+prova é o recibo F6 ligando corpus, split, política, seed e hash dos pesos ao checkpoint, e ela não existe —
+é a primeira linha de § 7, e o que esta unidade acrescentou lá é a **metade local** do recibo.
+
+### Decisão 3 — staging, todas as guardas, promoção; e a saída anterior morre no COMEÇO
+
+`publish_only_after_every_guard(out, build_into_staging)` monta o bundle inteiro em `<out>.staging`, roda
+teto, tokenizer, vocabulário, forma do grafo e paridade lá, zipa em `<archive>.staging.zip`, e só então
+promove os dois com `Path.replace`. Qualquer exceção apaga staging e o ZIP de staging.
+
+**A ordem antiga não era "quase certa": ela publicava o artefato e conferia depois.**
+`staging.replace(int8_path)` acontecia assim que o teto aceitava — quatro guardas depois disso —, e o ZIP
+nascia por último. Cada recusa a jusante deixava um estado diferente no caminho canônico, e o pior deles é o
+da **segunda corrida**: `zipfile.ZipFile(…, "w")` só trunca se a execução chegar até ele, então uma recusa
+preservava o ZIP **aprovado** da corrida A ao lado do diretório rejeitado da corrida B, sem nada em nenhum
+dos dois que dissesse de qual corrida veio.
+
+**Por que apagar a publicação anterior no começo, e não no fim.** Apagar no fim é o que a promoção faz
+naturalmente; a decisão aqui é apagar **antes**, para que o estado após uma recusa seja *vazio* em vez de
+*antigo*. O consumidor é humano: o operador baixa o ZIP do diretório de saída. Preferir não ter nada a ter um
+artefato aprovado que se apresenta como produto de uma corrida que reprovou é a direção fail-closed, e o
+custo — reexportar — é determinístico. A remoção é **impressa**.
+
+**A guarda que o próprio conserto exigiu, e que o primeiro fechamento errou.** Apagar `--out` é perigoso se
+`--out` apontar para outra coisa, e a primeira versão do predicado aceitava um diretório que carregasse
+**qualquer um** dos sete arquivos de bundle. As duas lentes mediram a consequência, independentemente:
+`save_pretrained` deixa `config.json`, `vocab.txt`, `tokenizer.json`, `tokenizer_config.json` e
+`special_tokens_map.json` — cinco dos sete nomes —, então `--out bertimbau/best` era reconhecido como
+publicação anterior e `shutil.rmtree` levava os pesos treinados, ~440 MB de GPU, **antes** de qualquer
+guarda. O caminho era novo: o código anterior fazia `mkdir(exist_ok=True)` e nunca apagava.
+
+O predicado passou a ser estreito nos três lados:
+
+- só é removido o diretório que carregue os **dois** marcadores que este exportador escreve
+  (`onnx/model_int8.onnx` **e** `parity_report.json`) — a promoção é atômica, então um bundle publicado sempre
+  os tem — ou um diretório vazio, que o operador pode ter criado;
+- diretório que carregue arquivo de checkpoint (`model.safetensors`, `pytorch_model.bin`, `training_args.bin`,
+  `optimizer.pt`, `scheduler.pt`, `trainer_state.json`) é recusado **nomeando o arquivo**, antes de qualquer
+  outra leitura;
+- `--out` igual ao `--checkpoint`, contido nele ou contendo-o é recusado antes de qualquer remoção — o
+  predicado sozinho não bastaria, porque `--out bertimbau` (o pai de `best/`) não carrega arquivo de
+  checkpoint algum.
+
+Os dois caminhos derivados também deixaram de ser apagados sem conferência, que era o resíduo que a primeira
+lente apontou: `<out>.staging` é reconhecido por qualquer membro de bundle **ou** pelo diretório de scratch
+`_fp32` (uma corrida que morreu no meio deixa bundle parcial, então exigir os marcadores impediria a
+retomada) e recusa arquivo de checkpoint do mesmo jeito; e um arquivo no caminho do ZIP que não seja ZIP
+(`zipfile.is_zipfile`) é recusado em vez de apagado.
+
+### Decisão 4 — um leitor, um parse, e o recibo diz qual arquivo governou
+
+`benchmark/lab/sealed_policy.py` é novo e é o **único** leitor da pré-inscrição do lado Python; os dois
+scripts do Colab o importam. Ele resolve o path (checkout, depois a cópia ao lado do script), **parseia** e
+devolve `SealedPolicy` com os quatro valores tipados, o `sha256` do arquivo lido e `origin`.
+
+**O achado, na sua forma exata:** `json.loads` não é parse. Todo objeto JSON o satisfaz — e
+`benchmark/rebuild-v3-policy.json` está na árvore, tem `backbone` e `onnxMaximumInt8Bytes`, e era aceito
+como política selada. O parser pina `policyVersion` e recusa nomeando **campo e path**, incluindo o caso do
+booleano onde se espera inteiro (`isinstance(True, int)` é verdadeiro em Python, então `backboneBakeOff:
+true` leria como a seed 1).
+
+**Por que virou módulo, contra o instinto de manter cada script autocontido.** O upload do Colab é plano, e
+um script autocontido é um arquivo a menos para o operador esquecer. Mas a duplicação era do **resolvedor de
+autoridade** — as duas cópias decidiam qual arquivo é a política selada —, e duas cópias de uma decisão
+dessas é exatamente a segunda autoridade que este projeto passa o tempo removendo. O preço é um terceiro
+arquivo no upload e uma falha nova possível (`ModuleNotFoundError`), que é **alta** e imediata, não silenciosa.
+O README foi corrigido nos dois passos.
+
+**Nomear os campos não é identidade: o digest é PINADO.** Esta é a cláusula do A4 que o primeiro fechamento
+não pagou — o consolidado dizia "exigir o arquivo e **afirmar o digest**, não aceitar qualquer um", e o
+conserto tinha entrado com `policyVersion` pinado e o digest apenas **gravado** no recibo. As duas lentes
+mediram a mesma brecha: uma cópia plana com a versão selada, `seeds.publishableCheckpoint: 42` e teto
+340 000 000 era **aceita** pelos dois scripts, e a guarda de seed voltava a comparar 42 com 42. Registrar a
+divergência num recibo que vive **dentro** do artefato que a corrida divergente produziu não é uma guarda.
+
+`SEALED_POLICY_SHA256` passa a ser literal em `sealed_policy.py`, e o leitor recusa nomeando path, digest
+medido e digest esperado. Medido de ponta a ponta num diretório plano isolado: a cópia híbrida é recusada, e
+um `json.dumps` da própria política (11 956 bytes contra os 11 742 rastreados) também — uma política recolada
+num editor de texto tem outros bytes.
+
+**Por que o digest e não os valores.** Pinar os valores seria reintroduzir a segunda autoridade que este
+módulo existe para remover; um digest não é legível como backbone, seed ou teto, então ele afirma **qual
+arquivo** sem afirmar o que ele diz. `policyVersion` não serve para isso: ele **não se move** quando a
+pré-inscrição é emendada (quatro emendas até aqui, a última três commits atrás), logo não separa uma emenda da
+outra.
+
+**O custo, declarado:** emendar `benchmark/preregistration-v4.json` obriga a reescrever o literal no mesmo
+commit. O teste do lab compara os dois e reprova até que isso aconteça — é o mesmo pino triplo da Decisão 5,
+e a alternativa era um pino que se ajusta sozinho, que não é pino.
+
+**O espelho do argparse saiu.** `--model` e `--seed` tinham default lido do objeto de política que as guardas
+conferem, então, quando o operador não passava nada, a guarda comparava um valor consigo mesmo. Agora o
+default é `None`: ausente, o valor é **delegado** e a corrida imprime `DELEGADO … (nao conferido)`; presente,
+é conferido. `build_parser()` foi extraído para que o teste observe os defaults em vez de ler o código-fonte.
+
+**Registrar a divergência** continua sendo a segunda metade: os dois recibos (`metrics.json` do treino,
+`parity_report.json` do export) gravam `policyVersion`, `policyPath`, `policySha256` e `policyOrigin`; o
+treino grava também a **seed**, que faltava. `policyOrigin` tem três estados (`tracked`,
+`beside-the-script`, `explicit-path`) porque o booleano anterior mentia por omissão: ele dizia `false` também
+para um path passado explicitamente e para uma cópia "um nível acima" fora de checkout. O marcador diz
+**onde** o arquivo estava; quem diz **o quê** ele continha é o digest. O campo `values`, que ninguém lia, saiu.
+
+### Decisão 5 — oito campos, o vocabulário como ARQUIVO, e o pino vindo da testemunha
+
+`BACKBONE_CONFIG_SHAPE` passa a declarar oito campos por backbone (os quatro anteriores mais
+`intermediate_size`, `num_attention_heads`, `max_position_embeddings`, `type_vocab_size`), e um teste de
+**totalidade** recusa entrada que não declare todos — uma entrada parcial faria a comparação pular campo em
+silêncio.
+
+**O que o remédio anterior não fechou.** A W1 acrescentou `vocab_size`, `hidden_size` e
+`num_hidden_layers` a pedido da primeira lente, e o codex mediu o resíduo: um BERT 12×768 de vocabulário
+29 794 com `intermediate_size: 16` satisfaz os quatro, exporta limpo, emite as três entradas, escreve
+`vocab.txt`, fica **mais** abaixo do teto por ter encoder menor, passa a paridade contra os próprios pesos —
+e a função **devolvia** o nome do backbone selado como se tivesse verificado identidade.
+
+**O vocabulário é conferido no arquivo.** `config.json` é editável à mão; `vocab.txt` é o material. Um
+fine-tune do BERT cased inglês com o campo corrigido passa por toda comparação de número e não passa pela
+contagem de linhas. A conferência roda **duas** vezes: no checkpoint (antes do `import torch`) e no bundle
+montado (depois de o tokenizer salvar).
+
+**O pino do teste deixou de ser circular.** Ele era `BACKBONE_CONFIG_SHAPE[SEALED_BACKBONE]`, derivado do
+dicionário que deveria verificar. Agora são três asserções: o literal de oito campos; a testemunha
+`public/models/cleanfeed-ptbr-v1/config.json` conferida por `sha256` quando ela está no checkout; e — a que
+**sempre** roda — que os dois descritores rastreados (`source-lock.json`, `cleanfeed-model.json`) ainda
+declaram aquele `sha256` para `config.json` e para `vocab.txt`. Um repack move os descritores, o teste
+reprova, e a forma tem de ser rederivada da testemunha nova em vez de ficar sendo o que o dicionário diz.
+
+### O T5 conferido: o procedimento documentado não funcionava, e a causa era desta unidade
+
+Rodado como está escrito, num diretório plano isolado, com `python` 3.11: **`ModuleNotFoundError: No module
+named 'sealed_policy'`** na primeira linha do script. A causa é a Decisão 4 — o módulo novo é um arquivo novo
+no upload — e o README dos dois passos foi corrigido para subir três arquivos. Um procedimento que só
+funciona para quem sabe o que ele não diz não está documentado.
+
+Duas observações da mesma corrida, ambas medidas:
+
+- com o módulo ao lado, o resolvedor achou a política **um nível acima** e não a cópia ao lado, porque havia
+  uma cópia solta no diretório pai do isolamento. Ela era byte-idêntica à rastreada, então a corrida não
+  divergiu — mas é o mecanismo exato que o recibo passou a registrar: fora de um checkout, "um nível acima"
+  não é o arquivo rastreado, é o que estiver lá. Num diretório pai limpo, a cópia plana é usada e a corrida
+  imprime `(copia AO LADO do script — layout plano do Colab)`;
+- o fallback sem `optimum` chama `torch.onnx.export` com a API do exportador TorchScript, que em `torch` ≥ 2.9
+  deixou de ser o default (medido: `DeprecationWarning` em 2.13.0, e o ensaio de § 5.9 precisou de
+  `dynamo=False` explícito). O caminho documentado instala `optimum`, então o fallback não roda lá; fixar o
+  `kwarg` quebraria `torch` antigo, que não o aceita. Dívida escrita em § 7, sem conserto às cegas.
+
+### Extras aplicados, declarados como extras
+
+- **M2 do `consolidado-w1`** (menor, "vence agora"): a porcentagem de folga do teto não dizia o
+  denominador. Agora diz, nos dois sítios: 18,5 % **sobre o medido** (130 000 000 = 1,1852 × 109 681 931),
+  com a leitura errada nomeada ao lado (15,63 % se o denominador for o teto).
+- `--eval` ausente, vazio, ou `--parity-samples` abaixo de 2 passam a recusar **antes** dos imports pesados,
+  nomeando a flag. A razão publicada no primeiro fechamento era falsa e a primeira lente a mediu: amostra
+  vazia **nunca** passou — `np.mean([])` é `nan`, `nan < 0,02` é falso, e `np.max([])` **estoura**. O que a
+  guarda muda é o momento: a recusa acontece antes dos imports em vez de estourar depois de o int8 já ter sido
+  escrito.
+- a verificação de `vocab.txt` no bundle passou de "existe" para "existe e tem 29 794 entradas".
+
+### O que esta unidade NÃO fez
+
+- **não** mexeu na pré-inscrição selada: nenhum campo novo foi selado, então `evaluatorDigest` não se move e
+  nenhum `fit` é invalidado. A forma de oito campos vive no lab, que está fora de `EVALUATOR_FILES`;
+- **não** produziu recibo F6 nem hash de pesos: a metade que liga corpus, split e pesos continua devendo,
+  agora com a metade local escrita;
+- **não** rodou export real: nenhum artefato ONNX foi produzido nesta unidade, aqui ou fora daqui;
+- **não** tocou o M1 do `consolidado-w1` (o pino de 109 681 931 que reprovaria o export legítimo da Fase 6):
+  é achado de Fase 6 e move um teste de `preregistration-v4.test.ts`, fora do contrato desta unidade.
+
+### O fechamento de R2: nove bloqueantes das duas lentes, nenhum refutado (2026-08-10)
+
+As duas lentes devolveram `block` com **nove** bloqueantes distintos (três em comum, contados uma vez) e onze
+menores. Todos foram medidos antes de consertar, e **nenhum** foi refutado. O tema é único e é o mesmo do
+contrato: as guardas estavam **certas como funções** e frouxas onde rodam.
+
+**Os quatro que mudaram uma decisão desta unidade** estão reescritos acima, no lugar da decisão que
+substituem, e não como adendo: o piso passa a ser interquartil sobre amostra balanceada (Decisão 1), o par
+anônimo de labels é recusado e o pooler entra na guarda (Decisão 2), o predicado de remoção fica estreito nos
+três lados (Decisão 3), e o digest da política é afirmado em vez de gravado (Decisão 4).
+
+**Os três que eram de LIGAÇÃO, e o conserto que os fecha de uma vez.** A segunda lente mediu, sobre os bytes
+finais, que comentar a chamada de `assert_the_head_came_from_the_checkpoint`, fazer a lambda montar em
+`args.out` em vez do staging recebido, ou comentar a asserção de forma do tokenizer deixavam a suíte **verde**
+— porque o único teste dessas ligações era `assertIn` sobre o **texto** de `main()`, e uma linha comentada
+contém o texto. Uma asserção que não distingue uma chamada de um comentário não é uma asserção.
+
+O conserto: `main(argv=None, build_backend=torch_onnx_backend)` recebe a fábrica do backend, o backend real
+saiu para `torch_onnx_backend(args)`, e as duas guardas que leem o **modelo carregado** passaram para o fluxo
+(`build_bundle_into_staging`), atrás de dois métodos novos do protocolo — `loading_info()` e
+`tokenizer_inputs()`. Agora oito testes dirigem `main()` de ponta a ponta com o `FakeBackend`: publicação
+bem-sucedida, cabeça inventada, tokenizer de duas entradas, detector degenerado, `--out` no checkpoint,
+`--eval` de uma classe, `--eval` ausente e checkpoint de outra arquitetura. A asserção textual que sobrou é
+declarada como cinto e não como prova.
+
+Efeito colateral bom: a asserção de tokenizer deixou de rodar 120 vezes (uma por documento) e passou a rodar
+uma vez, sobre um texto de sonda, antes do export.
+
+**Os menores aplicados:** o tipo de `id2label` conferido (era `AttributeError`), o comentário e a mensagem que
+atribuíam `meanAbsDelta 0` à cabeça **aleatória** corrigidos para separar zerada (delta exatamente 0) de
+aleatória (amplitude medida 0,00358), a alegação falsa sobre amostra vazia trocada pelo fato medido, os dois
+caminhos derivados (`<out>.staging`, o ZIP de staging) deixando de ser apagados sem conferência, o marcador de
+origem da política com três estados, o campo `values` removido, e o M4 do `consolidado-w1` fechado — a
+terceira testemunha (`rebuild-v3-policy.json`) agora está na lista que a contagem afirmava.
+
+**O menor que NÃO foi aplicado, com a razão:** o M3 do `consolidado-w1` — nenhum teste semântico amarra
+vocabulário real + três entradas do grafo + três entradas alimentadas em `src/inference/onnx-classifier.ts` —
+continua aberto. Ele exige um artefato ONNX real (`onnxruntime` não existe no interpretador do lab) e
+atravessa a fronteira TS↔Python, que é outra unidade; a metade que se podia pagar aqui está paga (a forma do
+grafo é observada no artefato, e a contagem de linhas do vocabulário é conferida no checkpoint e no bundle).
+Dono: a unidade que rodar o export real, ou a Fase 4 na primeira corrida do operador. Está na dívida de § 7
+junto do lado ONNX da degenerescência.
+
+### A bateria de mutação do fechamento: 36 + 2, rodada por último sobre os bytes finais
+
+Cinco passos por mutação (base verde → mutação → vermelho no **teste nomeado** → restauração → `sha256`
+conferido), a suíte do lab verde nas duas pontas (118 testes + 31 subtests, contra 85 + 25 antes), e
+`sha256` inicial igual ao final nos três arquivos de produção mutados: `export_onnx.py`
+`40527204fa44b8c5ba406a6396e1b19bc99a4c577f3a798b7c4b0b6a6da2f228`, `sealed_policy.py`
+`c1cead33c16f68d519b8e22cd682a906acea416e65aebd32470ec6bec49664de`, `train_detector.py`
+`c147a82e1f9453500e024f5b63df2a541d5ef433e4bae886df78f2100f603ac7`.
+
+As **onze** mutações que as duas lentes pediram por nome estão todas vermelhas: a guarda da cabeça comentada
+(N01), a asserção do tokenizer comentada (N02), a lambda montando em `args.out` (N03b), a estatística do piso
+voltando a ser amplitude (N05), a amostra de uma classe voltando a ser aceita (N09), o diretório com pesos de
+treino voltando a ser apagado (N16), `--out` igual ao checkpoint deixando de ser recusado (N19), o staging
+alheio voltando a ser apagado (N21), o digest da política deixando de ser afirmado (N29), `id2label` de tipo
+errado voltando a estourar (N26), o pooler saindo do conjunto que não pode ser inventado (N25). As demais
+cobrem o resto do diff: quantil, veredito, sorteio, marcadores, anúncio da remoção, ZIP, origem da política,
+espelho do argparse.
+
+**Honestidade da bateria:** duas mutações da primeira passada não morderam por **erro de alvo meu**, não por
+lacuna de guarda, e o diagnóstico é medido. N03 apontava para o teste da cabeça inventada, cuja recusa
+acontece no **primeiro** passo do fluxo — montar em `args.out` não deixa nada lá porque nada foi escrito
+ainda; contra a recusa a jusante (detector degenerado, que escreve o bundle inteiro antes de reprovar) fica
+vermelha. N18 pedia alargar a lista de marcadores, que sob `all(...)` é mutação de **estriteza** e não de
+frouxura: ela recusa a publicação anterior legítima, então quem a pega é a corrida que publica **duas** vezes
+— e aí fica vermelha. A frouxura equivalente é `all` → `any`, que é N17 e morde. O adendo com N03b e N18b
+rodou **depois**, sobre os mesmos bytes finais, com `sha256` conferido.

@@ -4813,5 +4813,192 @@ exatamente 1,0 em ponto flutuante. Logo o gatilho "desabilitado" disparava.
   residual é nomeado por código: `PROFILE_CUT_AT_DISABLED_SENTINEL` recusa um corte medido cujo valor seja
   1, porque servi-lo entregaria um gatilho que nunca dispara.
   [link](https://www.infoq.com/presentations/Null-References-The-Billion-Dollar-Mistake-Tony-Hoare/)
+## § Q — o export publica só depois de todas as guardas, e paridade não é validade (2026-08-10)
 
+Unidade R2. Cinco decisões metodológicas sobre o passo do **operador** (Colab, Fase 4): o que um artefato
+tem de provar sobre si mesmo antes de ser publicado, e o que nenhuma dessas provas alcança.
 
+### Q1 — variância de escore nula RECUSA a paridade, em vez de a aprovar
+
+A decisão: o gate de paridade passa a recusar quando a dispersão do escore sobre a amostra **não supera a
+própria tolerância** dos deltas (0,02). A dispersão é o **intervalo interquartil**, a amostra é sorteada com
+metade de cada classe, e o relatório publica os dois interquartis, as duas amplitudes e a composição da
+amostra.
+
+A razão é medida (ESTADO § 5.9): um checkpoint da forma selada com cabeça de duas classes **zerada**
+devolve logitos exatamente `[0,0]` para todo texto, os dois lados calculam `P(ai) = 0,5`,
+`meanAbsDelta = 0`, `maxAbsDelta = 0`, zero inversões — e o veredito anterior era `pass: true`. A leitura
+que organiza o conserto: **paridade é verificação de autoconsistência, não de validade, e um modelo
+degenerado a MAXIMIZA**. "Os deltas ficam abaixo de 0,02" só fala de quantização quando os escores variam
+mais que 0,02; abaixo disso todo modelo constante satisfaz a desigualdade.
+
+- **Chen, Cheung & Yiu, _Metamorphic Testing: A New Approach for Generating Next Test Cases_,
+  HKUST-CS98-01 (1998)** — a paridade fp32↔int8 é exatamente uma **relação metamórfica**: mesma entrada,
+  duas implementações, saída que deve coincidir. O que a literatura de teste metamórfico registra e que
+  aqui morde: uma relação de igualdade entre duas execuções é satisfeita **trivialmente** por qualquer
+  função constante, então a relação sozinha não distingue implementação correta de implementação vazia.
+  [link](https://arxiv.org/abs/2002.12543)
+- **Segura, Fraser, Sánchez & Ruiz-Cortés, _A Survey on Metamorphic Testing_, IEEE TSE 42(9), 2016** — a
+  sistematização do mesmo ponto: a força de uma relação metamórfica depende de ela ser **violável** pelo
+  defeito que se quer pegar. Uma relação que o defeito satisfaz melhor que o comportamento correto é um
+  teste com o sinal invertido. [link](https://doi.org/10.1109/TSE.2016.2532875)
+- **Adebayo, Gilmer, Muelly, Goodfellow, Hardt & Kim, _Sanity Checks for Saliency Maps_, NeurIPS 2018** —
+  o precedente mais próximo em ML, e é um precedente de **método**: a maneira de descobrir que uma
+  verificação não verifica nada é rodá-la contra um modelo de **pesos aleatórios** e ver se ela passa. Foi
+  literalmente o que esta unidade fez com a paridade, e é o ensaio que ESTADO § 5.9 registra.
+  [link](https://arxiv.org/abs/1810.03292)
+
+- **Rousseeuw & Croux, _Alternatives to the Median Absolute Deviation_, JASA 88(424):1273–1283, 1993** — por
+  que a estatística do piso é interquartil e não amplitude. A amplitude tem ponto de ruptura **zero**: uma
+  observação a move sozinha. Medido aqui (ESTADO § 5.9b): 119 escores em 0,5 e um em 0,9 dão amplitude 0,4 e
+  passavam pelo piso com `meanAbsDelta` 0 — um detector constante em 119 de 120 casos.
+  [link](https://doi.org/10.1080/01621459.1993.10476408)
+- **Fawcett, _An introduction to ROC analysis_, Pattern Recognition Letters 27(8), 2006** — por que a
+  composição da amostra é parte da decisão e não detalhe de amostragem: uma estatística resumo sobre escores
+  de classificador só é legível contra a distribuição de classes da amostra que a produziu. Medido:
+  `dev.jsonl` é agrupado e as 120 primeiras linhas são de uma classe, sobre a qual um detector confiante é tão
+  achatado quanto um constante. [link](https://doi.org/10.1016/j.patrec.2005.10.010)
+
+**Sem precedente encontrado** para a forma exata do conserto — um **piso de dispersão de escore** ancorado
+na própria tolerância do gate, de modo que a afirmação "os deltas são pequenos" não possa ser satisfeita
+por uma faixa de escore menor que os deltas admitidos. A ancoragem existe para não introduzir constante
+nova: qualquer piso escolhido à parte seria número que alguém pode mover depois de ver o resultado. Pela
+mesma razão a amostra é **exatamente** metade de cada classe: qualquer fração mínima de minoria seria a
+constante nova entrando pela porta da amostragem.
+
+### Q2 — a cabeça de classificação é LIDA do artefato, e nada disso prova treino
+
+A decisão: o export exige `architectures == ["BertForSequenceClassification"]`, contrato binário de labels
+(`num_labels`/`id2label`, na ordem selada `{0: human, 1: ai}`) e **ausência de `classifier.*`** em
+`missing_keys`/`mismatched_keys` do carregamento.
+
+A armadilha de biblioteca que isso fecha está medida (ESTADO § 5.9) e o próprio repositório já a
+documentava em `benchmark/lab/score_pilot_local.py`:
+`AutoModelForSequenceClassification.from_pretrained` **carrega** um checkpoint sem cabeça, constrói o
+classificador ao azar e apenas **avisa** — em `transformers` 5.14.1 o aviso é um `LOAD REPORT` com
+`MISSING` e a nota "Consider training on your downstream task".
+
+- **Torres-Arias, Awan, Cappos et al., _in-toto: Providing farm-to-table guarantees for bits and bytes_,
+  USENIX Security 2019** — a razão de o conserto não bastar: garantir uma etapa da cadeia não garante a
+  cadeia. Só um **recibo** que ligue cada passo (corpus → split → política → seed → hash dos pesos)
+  sustenta a afirmação "estes pesos foram treinados neste corpus"; guardas locais sobre o artefato final
+  não a alcançam por construção.
+  [link](https://www.usenix.org/conference/usenixsecurity19/presentation/torres-arias)
+- **Mitchell et al., _Model Cards for Model Reporting_, FAT\* 2019** — o artefato publicado tem de declarar
+  **em que** foi treinado e avaliado; um pacote cuja proveniência de treino não é verificável não é
+  reportável nos termos do próprio model card.
+  [link](https://doi.org/10.1145/3287560.3287596)
+- **Sculley et al., _Hidden Technical Debt in Machine Learning Systems_, NIPS 2015** — a classe de falha:
+  as duas metades continuam devolvendo números, então a divergência é silenciosa.
+  [link](https://papers.nips.cc/paper/2015/hash/86df7dcfd896fcaf2674f757a2463eba-Abstract.html)
+
+**Sem precedente encontrado** para ler `missing_keys`/`mismatched_keys` do carregador como **guarda de
+publicação**. É uso de um diagnóstico de biblioteca como condição de aceitação do artefato, e a dívida que
+ele não paga fica escrita: a prova completa é o recibo F6 (ESTADO § 7, primeira linha).
+
+### Q3 — nada é escrito no caminho canônico antes de todas as guardas aceitarem
+
+A decisão: o bundle inteiro é montado em `<out>.staging`, todas as guardas rodam lá, e diretório e ZIP são
+**promovidos** depois; a publicação anterior é removida no começo da corrida.
+
+Medido antes do conserto: teto reprovado deixava `out/onnx/` vazio; `vocab.txt` ausente deixava
+`model_int8.onnx` e artefatos parciais; grafo ou tokenizer reprovados deixavam ONNX e bundle no caminho
+final; paridade reprovada deixava `parity_report.json` com `pass: false`. E numa segunda corrida sobre a
+mesma saída, **qualquer** recusa preservava o ZIP aprovado da corrida anterior ao lado do diretório
+rejeitado — porque `zipfile.ZipFile(..., "w")` só trunca se a execução chegar até ele.
+
+- **Pillai, Chidambaram, Alagappan, Al-Kiswany, Arpaci-Dusseau & Arpaci-Dusseau, _All File Systems Are Not
+  Created Equal: On the Complexity of Crafting Crash-Consistent Applications_, OSDI 2014** — o precedente
+  de forma: a aplicação que escreve no lugar final e conserta depois deixa estados intermediários
+  observáveis por quem lê; a disciplina que funciona é escrever fora e **renomear**, porque a troca é o
+  único passo que o leitor não vê pela metade.
+  [link](https://www.usenix.org/conference/osdi14/technical-sessions/presentation/pillai)
+- **Saltzer & Schroeder, 1975 — The Protection of Information in Computer Systems**, princípio de
+  _fail-safe defaults_ — o estado sem artefato é o estado seguro. Apagar a publicação anterior no começo é
+  a direção fail-**closed**: preferir não ter nada a ter um ZIP aprovado que se apresenta como produto de
+  uma corrida que reprovou. [link](https://doi.org/10.1109/PROC.1975.9939)
+
+- **Saltzer & Schroeder, 1975**, princípio de _least privilege_ — a segunda metade da mesma decisão, e a que a
+  revisão obrigou a escrever: apagar no começo é fail-closed **só** se o que pode ser apagado for estreito. A
+  primeira versão reconhecia como publicação anterior qualquer diretório com **um** dos sete arquivos do
+  bundle, e cinco desses nomes são o que `save_pretrained` deixa num checkpoint — medido, `--out
+  bertimbau/best` apagava os pesos treinados antes de qualquer guarda, num caminho destrutivo que o código
+  anterior não tinha. O privilégio de remover passou a exigir os **dois** marcadores que só este exportador
+  escreve, e arquivo de checkpoint recusa a remoção nomeando o arquivo. [link](https://doi.org/10.1109/PROC.1975.9939)
+
+**Sem precedente encontrado** para a leitura de que **preservar** a saída anterior é o risco, e não a
+proteção. Ela é consequência de o consumidor ser humano: o operador baixa o ZIP do diretório de saída, e um
+ZIP que sobrevive a uma recusa não carrega nada que diga de qual corrida veio. O custo — perder um artefato
+aprovado ao rodar de novo — está declarado no README e é o lado barato: reexportar é determinístico. **Sem
+precedente encontrado**, também, para o predicado de remoção ser escrito sobre os arquivos que o **próprio
+produtor** escreve em vez de sobre os que ele espera encontrar: é o que separa "isto é uma publicação minha
+anterior" de "isto tem a forma do que eu produzo".
+
+### Q4 — a política selada passa por um parser fechado no lab, e o recibo diz qual arquivo governou
+
+A decisão: `benchmark/lab/sealed_policy.py` é o **único** leitor da pré-inscrição do lado Python; ele pina
+`policyVersion`, pina o **`sha256` do arquivo**, exige os quatro valores que o lab consome (`backbone`,
+`backboneBakeOff`, `seeds.publishableCheckpoint`, `onnxMaximumInt8Bytes`), recusa nomeando campo, path e
+digest, e devolve de qual dos três caminhos o arquivo veio. Os dois recibos (`metrics.json`,
+`parity_report.json`) gravam path, digest e origem.
+
+`json.loads` **não é parse**: todo objeto JSON o satisfaz. Medido: `benchmark/rebuild-v3-policy.json` está
+na árvore, tem `backbone` e `onnxMaximumInt8Bytes`, e era aceito como política selada pelo leitor anterior.
+
+- **Alexis King, _Parse, Don't Validate_ (2019)** — a informação sobre o dado é obtida ao **atravessá-lo**:
+  o leitor devolve os quatro valores tipados ou recusa, e não existe caminho em que um consumidor leia um
+  campo que ninguém conferiu.
+  [link](https://lexi-lambda.github.io/blog/2019/11/05/parse-don-t-validate/)
+- **Nosek, Ebersole, DeHaven & Mellor, 2018 — The preregistration revolution** (PNAS 115(11)) — por que a
+  identidade do arquivo é a questão e não só a sua forma: uma pré-inscrição vale pelo compromisso feito
+  **antes**, então um artefato produzido sob uma cópia editada à mão é um artefato sem pré-inscrição, e o
+  recibo é o que torna essa diferença observável depois.
+  [link](https://doi.org/10.1073/pnas.1708274114)
+- **Torres-Arias et al., in-toto, 2019** (citado em Q2) — registrar **qual** política governou o passo é o
+  elo mínimo da cadeia que o passo do operador pode produzir sozinho.
+
+- **Merkle, 1988** (citado em Q5) — a razão de o digest ser o que identifica o arquivo e não a versão que ele
+  declara. Medido: `policyVersion` **não se move** quando a pré-inscrição é emendada (quatro emendas até
+  aqui), então uma cópia com a versão selada, `seeds.publishableCheckpoint: 42` e teto 340 000 000 satisfazia
+  toda conferência de campo e era aceita pelos dois scripts — a guarda de seed comparando 42 com 42.
+  [link](https://doi.org/10.1007/3-540-48184-2_32)
+
+**Sem precedente encontrado** para o marcador de origem da política (`policyOrigin`): declarar, dentro do
+artefato, de qual dos três caminhos a autoridade que o governou foi lida. É consequência de o Colab não ter
+checkout — o fallback é necessário, e a alternativa a registrá-lo é não saber. O marcador tem **três** estados
+porque o booleano anterior mentia por omissão: ele dizia `false` tanto para o arquivo rastreado quanto para um
+path passado à mão e para uma cópia "um nível acima" fora de checkout (medido nas duas conferências do T5).
+O marcador diz **onde**; quem diz **o quê** é o digest.
+
+**Sem precedente encontrado** para a regra de manutenção que o pino cria: emendar a pré-inscrição obriga a
+reescrever o literal do digest no mesmo commit, e um teste do lab compara os dois e reprova até que isso
+aconteça. É deliberado — um pino que se ajustasse sozinho ao arquivo que verifica não seria pino, e é o mesmo
+raciocínio do pino triplo da forma do backbone (Q5).
+
+### Q5 — a forma comparada vem da testemunha rastreada, e o vocabulário é o ARQUIVO
+
+A decisão: `BACKBONE_CONFIG_SHAPE` passa a comparar **oito** campos de `config.json` — a forma completa que
+a testemunha declara — e o export confere o **arquivo** `vocab.txt`, no checkpoint e no bundle, contra o
+`vocab_size` selado. O pino do lado do teste deixa de ser derivado do próprio dicionário: ele é a
+testemunha `public/models/cleanfeed-ptbr-v1/config.json`, cujo `sha256` os dois descritores rastreados
+declaram.
+
+Medido pela revisão: os quatro campos anteriores (`model_type`, `vocab_size`, `hidden_size`,
+`num_hidden_layers`) **não identificam** o modelo — um BERT 12×768 de vocabulário 29 794 com
+`intermediate_size: 16` os satisfaz, exporta limpo, emite as três entradas, escreve `vocab.txt`, fica
+**mais** abaixo do teto por ter encoder menor e concorda consigo mesmo na paridade.
+
+- **Souza, Nogueira & Lotufo, _BERTimbau_, BRACIS 2020** — a quantidade que separa: vocabulário WordPiece
+  de **29 794**, contra 28 996 do BERT cased inglês da mesma forma 12×768. É por isso que o vocabulário é
+  a testemunha, e é por isso que ele é conferido no arquivo e não no campo que fala dele.
+  [link](https://doi.org/10.1007/978-3-030-61377-8_28)
+- **Merkle, 1988 — A digital signature based on a conventional encryption function** (CRYPTO '87, LNCS
+  293:369–378) — a cobertura por digest é o que faz uma declaração ser **verificável** em vez de afirmada:
+  a testemunha não está no Git, mas o `sha256` dela está, em `source-lock.json` e `cleanfeed-model.json`.
+  Um repack move os dois descritores, e o teste que os lê obriga a rederivar a forma.
+  [link](https://doi.org/10.1007/3-540-48184-2_32)
+
+**Sem precedente encontrado** para comparar a **contagem de linhas do vocabulário** contra o tamanho selado
+como guarda de export. A razão é a assimetria entre os dois lados: `config.json` é editável à mão e
+`vocab.txt` é o material — um fine-tune de outro BERT com o campo corrigido passa por toda comparação de
+número e não passa por esta.

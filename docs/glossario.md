@@ -189,8 +189,13 @@ e n-grama de **caractere** é o que pega artefato tipográfico que n-grama de pa
 mais duro.
 
 **ONNX**, **opset**, **quantização INT8**, **paridade fp32→int8** — empacotar o modelo para rodar fora do
-framework de treino, com pesos de 8 bits, provando que o veredito não muda. Aqui o teto de bytes está
-ancorado num export medido (109.681.931 bytes, teto 130.000.000 com 18,5 % de folga declarada).
+framework de treino, com pesos de 8 bits, mostrando que o veredito não muda **entre as duas execuções**.
+Aqui a leitura vem com a ressalva medida: paridade é verificação de **autoconsistência** e um modelo
+degenerado a maximiza — cabeça não treinada dá delta zero e paridade perfeita (ESTADO § 5.9) —, então o
+gate também exige que o **intervalo interquartil** do escore supere a tolerância dos deltas, sobre uma
+amostra sorteada com metade de cada classe. A amplitude (`max − min`) não serve: um documento em 120 a
+move (ESTADO § 5.9b). O teto de bytes está ancorado num export medido (109.681.931 bytes, teto
+130.000.000, com 18,5 % de folga sobre o **medido**).
 
 **Model card** (Mitchell et al. 2019) e **datasheet / data card** (Gebru et al. 2018) — os dois artefatos
 de governança que **são** nativos de ML. Aqui o datasheet é **seção** do model card, não artefato

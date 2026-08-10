@@ -10,8 +10,9 @@ Usage (one base model, one seed — both frozen by the pre-registration):
   python train_detector.py --train ../data/dataset/train.jsonl \
     --dev ../data/dataset/dev.jsonl --outdir ../data/checkpoints/bertimbau
 
-On Colab, upload benchmark/preregistration-v4.json next to this script: the backbone and
-the seed are READ from it, and without it the script refuses before the argparse.
+On Colab, upload sealed_policy.py AND benchmark/preregistration-v4.json next to this
+script: the backbone and the seed are READ and PARSED from the policy, and without it the
+script refuses before the argparse.
 
 Deps (Colab): pip install torch transformers scikit-learn
 """
@@ -23,35 +24,15 @@ import json
 import random
 from pathlib import Path
 
-# The frozen pre-registration, READ and never retyped: the backbone and the
-# publishable-checkpoint seed are policy, and a copy on this side would be a second
-# authority able to disagree with the sealed one. It has to be the LIVE file — its
-# bytes are in EVALUATOR_FILES, so a value read from anywhere else is a value the
-# evaluator digest does not watch.
-POLICY_PATH = Path(__file__).resolve().parent.parent / "preregistration-v4.json"
+from sealed_policy import POLICY_PATH, SealedPolicy, announce, policy_receipt
+from sealed_policy import read_sealed_policy as sealed_policy
 
-# A Colab upload lands in one flat directory, so the sealed file can only sit BESIDE the
-# script there. The checkout path above is tried first: inside the repository it is the
-# tracked file whose bytes `EVALUATOR_FILES` watches, and a stray copy next to the script
-# must never shadow it.
-COLAB_POLICY_PATH = Path(__file__).resolve().parent / "preregistration-v4.json"
-
-
-def sealed_policy_path(policy_path: Path = POLICY_PATH) -> Path:
-    if policy_path.is_file():
-        return policy_path
-    if policy_path == POLICY_PATH and COLAB_POLICY_PATH.is_file():
-        return COLAB_POLICY_PATH
-    raise ValueError(
-        f"the sealed pre-registration is not at {policy_path} nor at "
-        f"{COLAB_POLICY_PATH}: upload benchmark/preregistration-v4.json next to this "
-        "script (the backbone and the seed are policy and are not retyped here, so "
-        "there is nothing to fall back to)"
-    )
-
-
-def sealed_policy(policy_path: Path = POLICY_PATH) -> dict:
-    return json.loads(sealed_policy_path(policy_path).read_text(encoding="utf-8"))
+# The label contract the runtime reads and `scripts/package-own-model.mjs` stamps into the
+# served config: index 1 is P(ai) everywhere downstream. Written into the checkpoint here
+# so the exported config declares the order instead of leaving `num_labels=2`'s anonymous
+# `LABEL_0`/`LABEL_1` for the packaging step to overwrite with a claim.
+ID_TO_LABEL = {0: "human", 1: "ai"}
+LABEL_TO_ID = {"human": 0, "ai": 1}
 
 
 def assert_model_is_the_sealed_backbone(
@@ -65,8 +46,8 @@ def assert_model_is_the_sealed_backbone(
     is the selection the pre-registration exists to forbid.
     """
     policy = sealed_policy(policy_path)
-    sealed = str(policy["backbone"])
-    if bool(policy["backboneBakeOff"]):
+    sealed = policy.backbone
+    if policy.backbone_bake_off:
         raise ValueError(
             "backboneBakeOff is true in the sealed pre-registration: this script "
             "refuses one base model at a time and cannot arbitrate a bake-off"
@@ -81,6 +62,33 @@ def assert_model_is_the_sealed_backbone(
     return sealed
 
 
+def the_sealed_backbone_or_refuse(
+    requested: str | None, policy_path: Path = POLICY_PATH
+) -> str:
+    """`--model` absent DELEGATES to the policy; `--model` present is compared against it.
+
+    The argparse default cannot be read out of the policy object: a default taken from the
+    same object the guard reads makes the guard compare a value against itself, and the run
+    then reports "the sealed backbone" for whatever that file happened to declare.
+    """
+    if requested is None:
+        sealed = sealed_policy(policy_path).backbone
+        print(f"--model ausente: DELEGADO ao backbone selado {sealed} (nao conferido)")
+        return sealed
+    return assert_model_is_the_sealed_backbone(requested, policy_path)
+
+
+def the_publishable_seed_or_refuse(
+    requested: int | None, policy_path: Path = POLICY_PATH
+) -> int:
+    """`--seed` absent delegates to the policy; `--seed` present is compared against it."""
+    if requested is None:
+        sealed = sealed_policy(policy_path).publishable_checkpoint_seed
+        print(f"--seed ausente: DELEGADO a seed selada {sealed} (nao conferida)")
+        return sealed
+    return assert_seed_is_the_publishable_one(requested, policy_path)
+
+
 def assert_seed_is_the_publishable_one(
     seed: int, policy_path: Path = POLICY_PATH
 ) -> int:
@@ -90,7 +98,7 @@ def assert_seed_is_the_publishable_one(
     on the dev metric with no correction for it. A retry after a technical failure
     reruns THIS seed.
     """
-    sealed = int(sealed_policy(policy_path)["seeds"]["publishableCheckpoint"])
+    sealed = sealed_policy(policy_path).publishable_checkpoint_seed
     if seed != sealed:
         raise ValueError(
             f"--seed {seed} is not the pre-registered publishable-checkpoint seed "
@@ -98,6 +106,26 @@ def assert_seed_is_the_publishable_one(
             "seed is a second draw, and the release publishes one"
         )
     return sealed
+
+
+def training_receipt(
+    model: str, seed: int, epoch: int, metrics: dict, policy: SealedPolicy
+) -> dict:
+    """What `metrics.json` records about the run, beyond the dev numbers.
+
+    The seed and the identity of the policy file are facts about the RUN, and without them
+    a receipt produced under a hand-edited copy of the policy — which the flat Colab
+    layout admits by design — is indistinguishable from one produced under the tracked
+    file. This is not the F6 receipt: it does not tie the weights to the dataset or to
+    the split.
+    """
+    return {
+        "model": model,
+        "seed": seed,
+        "epoch": epoch,
+        **metrics,
+        **policy_receipt(policy),
+    }
 
 
 def read_jsonl(path: Path) -> list[dict]:
@@ -124,29 +152,32 @@ def fpr_at_recall(labels, scores, min_recall: float = 0.6) -> tuple[float, float
     return best
 
 
-def main() -> None:
-    policy = sealed_policy()
+def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--train", required=True, type=Path)
     parser.add_argument("--dev", required=True, type=Path)
-    parser.add_argument("--model", default=policy["backbone"])
+    parser.add_argument("--model", default=None)
     parser.add_argument("--outdir", required=True, type=Path)
     parser.add_argument("--epochs", type=int, default=3)
     parser.add_argument("--batch", type=int, default=16)
     parser.add_argument("--lr", type=float, default=2e-5)
     parser.add_argument("--max-length", type=int, default=512)
-    parser.add_argument(
-        "--seed", type=int, default=int(policy["seeds"]["publishableCheckpoint"])
-    )
+    parser.add_argument("--seed", type=int, default=None)
     parser.add_argument(
         "--smoke",
         action="store_true",
         help="tiny CPU run (400 train / 200 dev, 1 epoch, max-length 128) to "
         "validate the pipeline before Colab",
     )
-    args = parser.parse_args()
-    assert_model_is_the_sealed_backbone(args.model)
-    assert_seed_is_the_publishable_one(args.seed)
+    return parser
+
+
+def main() -> None:
+    policy = sealed_policy()
+    args = build_parser().parse_args()
+    print(announce(policy))
+    model = the_sealed_backbone_or_refuse(args.model)
+    seed = the_publishable_seed_or_refuse(args.seed)
 
     import numpy as np
     import torch
@@ -158,25 +189,25 @@ def main() -> None:
         get_linear_schedule_with_warmup,
     )
 
-    random.seed(args.seed)
-    np.random.seed(args.seed)
-    torch.manual_seed(args.seed)
+    random.seed(seed)
+    np.random.seed(seed)
+    torch.manual_seed(seed)
 
     train_rows = read_jsonl(args.train)
     dev_rows = read_jsonl(args.dev)
     if args.smoke:
-        random.Random(args.seed).shuffle(train_rows)
-        random.Random(args.seed + 1).shuffle(dev_rows)
+        random.Random(seed).shuffle(train_rows)
+        random.Random(seed + 1).shuffle(dev_rows)
         train_rows = train_rows[:400]
         dev_rows = dev_rows[:200]
         args.epochs = 1
         args.max_length = 128
-    print(f"train={len(train_rows)} dev={len(dev_rows)} model={args.model}")
+    print(f"train={len(train_rows)} dev={len(dev_rows)} model={model}")
 
     device = "cuda" if torch.cuda.is_available() else "cpu"
-    tokenizer = AutoTokenizer.from_pretrained(args.model)
+    tokenizer = AutoTokenizer.from_pretrained(model)
     model = AutoModelForSequenceClassification.from_pretrained(
-        args.model, num_labels=2
+        model, num_labels=2, id2label=ID_TO_LABEL, label2id=LABEL_TO_ID
     ).to(device)
 
     class Rows(Dataset):
@@ -264,7 +295,10 @@ def main() -> None:
             model.save_pretrained(args.outdir / "best")
             tokenizer.save_pretrained(args.outdir / "best")
             (args.outdir / "metrics.json").write_text(
-                json.dumps({"model": args.model, "epoch": epoch, **metrics}, indent=2)
+                json.dumps(
+                    training_receipt(model, seed, epoch, metrics, policy),
+                    indent=2,
+                )
                 + "\n",
                 encoding="utf-8",
             )

@@ -188,7 +188,14 @@ não há forma nova a acomodar; `export_onnx` passou a recusar checkpoint que di
 em vocabulário** — `model_type` sozinho é `"bert"` para todo BERT —, grafo cujas entradas não sejam
 exatamente as três e artefato acima do teto de bytes: export com a forma errada é pior que nenhum, porque
 passa pelo gate de paridade e entrega artefato que não é o medido), **D26** (prova de paridade fp32→int8 **persistida** como
-artefato), **D19** (baseline TF-IDF rodado como detector de vazamento: desempenho alto demais = artefato
+artefato — e, desde R2, a paridade **recusa** dispersão de escore nula, porque uma cabeça não treinada dá
+delta zero e paridade perfeita: ESTADO § 5.9. A dispersão é o intervalo interquartil sobre uma amostra
+sorteada com metade de cada classe — a amplitude cede a um outlier e a amostra do runbook era de uma classe
+só, as duas coisas medidas em § 5.9b. A forma comparada tem oito campos, o vocabulário é conferido no
+arquivo, a cabeça é lida em `architectures`/labels/`missing_keys` (com o pooler), o bundle é montado em
+staging e só promovido depois de todas as guardas, `--out` só é apagado se for uma publicação deste
+exportador, a política é aceita por `sha256` e não por versão, e os dois recibos gravam seed e identidade da
+política — nada disso prova treino, que é o que o manifesto F6 desta mesma fase tem de fazer), **D19** (baseline TF-IDF rodado como detector de vazamento: desempenho alto demais = artefato
 de fonte), gate de não degeneração em `dev + cal-A` com valores **não publicados** (R8).
 
 ## Fase 5 — medição certificadora no modelo (~1 semana)

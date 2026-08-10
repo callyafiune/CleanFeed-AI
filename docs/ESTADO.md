@@ -23,8 +23,8 @@
 | item | valor |
 |---|---|
 | branch | `cleanfeed-mvp` |
-| suíte | 171 arquivos / 2.865 testes (vitest) + 479 testes e 84 subtests (pytest, lab). Verde em rodada limpa e SOZINHA; com uma segunda corrida de vitest concorrente, dois a quatro arquivos de caminho selado batem no timeout de 20 s — dívida de § 7, não de política |
-| dos quais, o avaliador | 1.968 — 1.489 em 45 arquivos de `benchmark/tests`, 479 no lab |
+| suíte | 171 arquivos / 2.865 testes (vitest) + 531 testes e 109 subtests (pytest, lab). Verde em rodada limpa e SOZINHA; com uma segunda corrida de vitest concorrente, dois a quatro arquivos de caminho selado batem no timeout de 20 s — dívida de § 7, não de política |
+| dos quais, o avaliador | 2.020 — 1.489 em 45 arquivos de `benchmark/tests`, 531 no lab |
 | typecheck | limpo |
 | lint | 12 problemas (10 erros, 2 avisos), e **nenhum erro em caminho rastreado**: os 10 estão todos sob `.cache/chrome-for-testing/` — um Chrome baixado, que `.gitignore` cobre e nenhum commit carrega —, então esse número é propriedade do cache e se move quando a versão do browser se move. Os 2 avisos são de `src/`, em `react-refresh/only-export-components` |
 | tags de release | 0 |
@@ -173,8 +173,15 @@ O que "corpus inutilizado" significa — a semântica é **graduada**, nunca tud
 | opt-in **desligado por padrão**; disclosure persistente em cada resultado; nenhum rótulo de autoria nem confiança numérica | OP |
 | proibição de uso disciplinar, acadêmico, empregatício ou decisório; não iniciar acusação formal com base no sinal; revisão humana não salva sinal não validado — exige evidência independente do processo | OP |
 | os pesos viajam com a mesma política de uso — a copy da extensão não acompanha pesos extraídos | OP |
-| backbone **`neuralmind/bert-base-portuguese-cased`** (BERTimbau base), `backboneBakeOff: false` — a escolha é por literatura e pela forma do pipeline, **não** por comparação de qualidade sobre os nossos dados, e nenhuma vantagem de detecção foi medida. `train_detector.py` recusa `--model` e `--seed` divergentes **em `main()`**; `export_onnx.py` recusa checkpoint que divirja em `model_type`, `vocab_size` (29 794), `hidden_size` ou `num_hidden_layers`, e grafo cujas entradas não sejam exatamente `input_ids`/`attention_mask`/`token_type_ids` | código |
-| teto de export int8 **130 000 000** bytes (`onnxMaximumInt8Bytes`) — **teto, não alvo**, ancorado num export int8 real desta arquitetura de **109 681 931** bytes (fora do repositório, com `parity_report.json`: 120 amostras, `meanAbsDelta` 0,000595, 0 inversões; o mesmo número rastreado com `sha256` em `models/cleanfeed-ptbr-v1/source-lock.json` e `cleanfeed-model.json`, onde um teste o confere contra o teto), com **18,5 % de folga declarada** para opset (o artefato ancorante é opset 18; o fallback do exportador emite 14), configuração de quantização e forma da cabeça. `export_onnx.py` quantiza em staging e só publica o artefato se o teto aceitar | código |
+| backbone **`neuralmind/bert-base-portuguese-cased`** (BERTimbau base), `backboneBakeOff: false` — a escolha é por literatura e pela forma do pipeline, **não** por comparação de qualidade sobre os nossos dados, e nenhuma vantagem de detecção foi medida. `train_detector.py` recusa `--model` e `--seed` divergentes **em `main()`**; `export_onnx.py` recusa checkpoint que divirja em qualquer um dos **oito** campos da forma selada (`model_type`, `vocab_size` 29 794, `hidden_size`, `num_hidden_layers`, `intermediate_size`, `num_attention_heads`, `max_position_embeddings`, `type_vocab_size`) e grafo cujas entradas não sejam exatamente `input_ids`/`attention_mask`/`token_type_ids`. Os **quatro primeiros não identificam** o modelo — um BERT 12×768 de vocabulário 29 794 com `intermediate_size: 16` passa por eles, exporta limpo e fica mais abaixo do teto —, e a forma de oito campos é transcrita da **testemunha** `public/models/cleanfeed-ptbr-v1/config.json`, cujo `sha256` os dois descritores rastreados declaram. O `vocab_size` é conferido no **arquivo**: `vocab.txt` tem de ter 29 794 entradas no checkpoint e no bundle | código |
+| **a cabeça de classificação é lida do artefato, e nada disso prova treino**: o export exige `architectures == ["BertForSequenceClassification"]`, `id2label` **exatamente** na ordem selada (`{0: human, 1: ai}`, que `train_detector.py` grava e `scripts/package-own-model.mjs` estampa — o par anônimo `LABEL_0`/`LABEL_1` é recusado porque o produtor selado não o escreve) e **ausência de `classifier.*` e de `bert.pooler.*`** em `missing_keys`/`mismatched_keys` do carregamento — `AutoModelForSequenceClassification` carrega um checkpoint sem cabeça, constrói o classificador ao AZAR e apenas avisa, e o pooler alimenta o classificador, então inventá-lo entrega entrada aleatória a uma cabeça treinada. A prova de que a cabeça foi TREINADA é o recibo F6 ligando corpus, split, política, seed e hash dos pesos, e ela não existe (§ 7) | código |
+| a leitura da pré-inscrição no lab passa por **um** parser fechado (`benchmark/lab/sealed_policy.py`, importado pelos dois scripts do Colab): pina `policyVersion`, pina o **`sha256` do arquivo** (`SEALED_POLICY_SHA256`), exige os quatro valores que o lab consome e recusa nomeando campo, path e digest. `json.loads` não é parse — `rebuild-v3-policy.json` está na árvore, tem `backbone` e teto, e era aceito. Nomear os campos também não é identidade: medido, uma cópia com a versão selada, `seeds.publishableCheckpoint: 42` e teto 340 000 000 era **aceita** e a guarda de seed comparava 42 com 42. `policyVersion` não se move quando a pré-inscrição é emendada, então emendá-la obriga a reescrever o literal no mesmo commit — um teste do lab compara os dois. `--model`/`--seed` deixaram de ter default tirado da política: ausentes são DELEGADOS e impressos como tal, presentes são conferidos. Cada corrida imprime e **grava no recibo** (`metrics.json`, `parity_report.json`) path, `sha256` e `policyOrigin` (`tracked`/`beside-the-script`/`explicit-path` — o marcador diz onde, o digest diz o quê) | código |
+| teto de export int8 **130 000 000** bytes (`onnxMaximumInt8Bytes`) — **teto, não alvo**, ancorado num export int8 real desta arquitetura de **109 681 931** bytes (fora do repositório, com `parity_report.json`: 120 amostras, `meanAbsDelta` 0,000595, 0 inversões; o mesmo número rastreado com `sha256` em `models/cleanfeed-ptbr-v1/source-lock.json` e `cleanfeed-model.json`, onde um teste o confere contra o teto), com **18,5 % de folga declarada sobre o MEDIDO** (não sobre o teto: 130 000 000 é 1,1852 × 109 681 931; lido com o teto como denominador dá 15,63 %) para opset (o artefato ancorante é opset 18; o fallback do exportador emite 14), configuração de quantização e forma da cabeça | código |
+| **nada é escrito no caminho canônico antes de todas as guardas aceitarem**: `export_onnx.py` monta o bundle inteiro em `<out>.staging`, roda teto, vocabulário, forma do grafo, tokenizer e paridade lá, e só então promove diretório **e** ZIP. A publicação anterior (diretório e ZIP) é removida no começo da corrida e a remoção é impressa — `zipfile.ZipFile(…, "w")` só trunca se a execução chegar até ele, então uma recusa deixava o ZIP aprovado da corrida A ao lado do diretório rejeitado da corrida B | código |
+| **o que pode ser apagado é estreito, e a largura era caminho destrutivo NOVO**: só diretório com os **dois** marcadores deste exportador (`onnx/model_int8.onnx` **e** `parity_report.json`) ou vazio é removido; diretório com arquivo de checkpoint (`model.safetensors`, `pytorch_model.bin`, `training_args.bin`, `optimizer.pt`, `scheduler.pt`, `trainer_state.json`) é recusado nomeando o arquivo; `--out` igual, dentro ou contendo `--checkpoint` recusa antes de qualquer remoção; `<out>.staging` é reconhecido por membro de bundle ou pelo scratch `_fp32`; arquivo no caminho do ZIP que não seja ZIP recusa. Medido: um `save_pretrained` deixa cinco dos sete nomes do bundle, então `--out bertimbau/best` era reconhecido como publicação anterior e apagava os pesos treinados — e o código anterior nunca apagava `--out` | código |
+| **as guardas do carregamento rodam onde o fluxo passa, não dentro da metade torch**: `main(argv, build_backend)` recebe a fábrica do backend, e `loading_info()`/`tokenizer_inputs()` entram pelo protocolo, então oito testes dirigem `main()` com um backend falso. Medido antes: comentar a guarda da cabeça, montar em `args.out` em vez do staging, ou comentar a asserção do tokenizer deixavam a suíte **verde** — o único teste dessas ligações era `assertIn` sobre o texto de `main()`, e linha comentada contém o texto | código |
+| **paridade é verificação de autoconsistência, não de validade, e um modelo degenerado a MAXIMIZA**: o gate recusa quando o **intervalo interquartil** do escore sobre a amostra não supera a própria tolerância dos deltas (0,02), e o relatório publica os dois interquartis mais as duas amplitudes. Medido (§ 5.9): cabeça de duas classes zerada devolve logito `[0,0]` para todo texto, `P(ai)` exatamente 0,5, `meanAbsDelta` 0, zero inversões — e o veredito era `pass: true`. A estatística é interquartil porque **um** documento em 120 derrubava a amplitude: 119 escores em 0,5 e um em 0,9 dão amplitude 0,4 e passavam | código |
+| **a amostra de paridade é BALANCEADA entre as duas classes**, espaçada pelo arquivo inteiro, e `parity_report.json` publica `sampleLabelCounts`. Medido: `dev.jsonl` é agrupado (4 118 linhas — `label` 0 nas posições 0 a 2 639, `label` 1 nas 2 640 a 4 117), então as 120 **primeiras**, que era o default do runbook, são de uma classe só — e sobre uma classe o escore de um detector confiante é tão achatado quanto o de um constante, logo o piso recusaria o export legítimo. Arquivo de uma classe só, linha sem `label` e `label` fora de `{0,1}` recusam nomeando a linha | código |
 | treino: **cross-entropy + seed `712019` pré-fixadas, sem ablação** (adamw, 3 épocas, lr 2 × 10⁻⁵, 16 documentos por batch, warmup 0,06, weight decay 0,01); segunda corrida só como retry técnico, nunca seleção | OP |
 | **sem calibrador probabilístico na v1** (`threshold.probabilisticCalibrator: "none"`): o corte publicado é o **limiar provisório `provisional-v1`** — quantil 0,95 superior de `document-raw-score` sobre os negativos humanos de `dev` + `cal-A` —, versionado, jamais descrito como "conservador", "alta confiança" ou probabilidade. Ele **DECIDE**: `buildEvaluationItem` compara `documentRawScore >=` esse limiar, `documentScore` é o escore cru sem transformação e `metrics.release.thresholdSource` é `preregistered-provisional-threshold`. `evaluate` **parseia** `provisional-threshold.json` (parser de forma fechado, recusa nomeando o path) e o confere contra os **sete** digests de governança — todos tirados do **selo** (`frozen.predictionManifestDigests` e não os manifestos recomputados, que é o que torna a ligação transitiva) — e a mesma conferência roda em `consume-holdout` **antes da lease**, no trecho de pré-exposição: corte truncado recusa sem nenhum evento no ledger, sem marcador e sem shard | OP |
 | o gate de calibração mede **ECE-15 sobre o mesmo `document-raw-score`**, em bins de massa igual, com limite superior simultâneo por bootstrap e `eceMax` 0,05 — e agora é o escore que o caminho certificador realmente produz, então `score-basis-mismatch` deixou de ser inevitável: um corpo conforme alcança veredito nessa hipótese. Antes o gate reprovava **por construção** em toda corrida certificadora | código |
@@ -541,7 +548,7 @@ A unidade é a página, o piso de 300 é trivial, e o dump de 1,96 GB é a reser
 | ledger de exposição real | **0 bytes** — nenhum evento real foi escrito |
 | holdout-ledger real | 2.638 bytes — o consumo de 2026-07-25, `decision: reject` |
 | memória da exposição por linha | `benchmark/data/corpus-build/out/split/split-artifact.json` — pertença de `test`, só o operador lê |
-| referências | **459** marcadores de link em **20** seções de nível `##` de `references.md`, e **53** declarações literais de "Sem precedente encontrado". A regra é a ocorrência da junta `](` seguida de URL, contada **no arquivo inteiro e não por linha**: `references.md` quebra a ~100 colunas e 38 rótulos de link atravessam a quebra, então um regex `\[rótulo\]\(url\)` aplicado por linha devolve 418. Agora **lido por teste nomeado** (`estado-counts.test.ts`) — os valores anteriores (322 / 50, depois 349) envelheceram em silêncio exatamente porque nenhum teste os lia |
+| referências | **475** marcadores de link em **21** seções de nível `##` de `references.md`, e **59** declarações literais de "Sem precedente encontrado". A regra é a ocorrência da junta `](` seguida de URL, contada **no arquivo inteiro e não por linha**: `references.md` quebra a ~100 colunas e 38 rótulos de link atravessam a quebra, então um regex `\[rótulo\]\(url\)` aplicado por linha devolve 437. Agora **lido por teste nomeado** (`estado-counts.test.ts`) — os valores anteriores (322 / 50, depois 349) envelheceram em silêncio exatamente porque nenhum teste os lia |
 
 ### 5.7 Sondas diagnósticas sobre os pools em moldura (W3)
 
@@ -746,6 +753,44 @@ pisos e ainda inelegível; fatia com população vazia de um lado publicando `n/
 `buildSlices` de facto produz; média macro e pior caso intocados; nenhum gate de tópico com `m` em 4), e o
 que falta é `topic` deixar de ser constante — dívida de § 7.
 
+### 5.9 A cabeça não treinada, medida — o que a paridade aprovava (2026-08-10)
+
+**Não é medição do modelo do produto.** É o ensaio de uma guarda contra o cenário que a cross-review
+descreveu e que **ninguém havia executado**: um checkpoint da forma selada com cabeça de duas classes não
+treinada. Rodado em `python` 3.11 (`torch` 2.13.0+cpu, `transformers` 5.14.1), sobre um `BertConfig` da forma
+selada inteira (29 794 / 768 / 12 / 3072 / 12 / 512 / 2) inicializado ao azar e salvo com
+`save_pretrained`, e sobre 8 textos em pt-BR. O lado **ONNX não foi executado**: `torch.onnx.export` exige o
+módulo `onnx`, ausente neste interpretador — mesma fronteira que o veredito do codex declarou (§ 7).
+
+| ensaio | o que as guardas fazem | o que o modelo devolve |
+|---|---|---|
+| **cabeça ZERADA** (`classifier.weight` e `.bias` em zero, salvos no checkpoint) | forma de 8 campos: **passa** · arquitetura e labels: **passam** · `missing_keys`/`mismatched_keys`: **vazios**, a cabeça está no arquivo | logitos **exatamente `[0,0]`** nos 8 textos, **um** valor distinto de `P(ai)` = **0,5**. `meanAbsDelta` 0, `maxAbsDelta` 0, 0 inversões → veredito ANTIGO **`pass: true`**; veredito novo `degenerate: true`, **`pass: false`** |
+| **cabeça AUSENTE** (os dois tensores removidos do `model.safetensors`) | forma, arquitetura e labels: **passam** · `missing_keys` = `["classifier.bias", "classifier.weight"]` → **recusa** | a cabeça vem ao azar e os escores variam **0,00358** (0,5266 a 0,5302): a guarda de degenerescência **também** o pega, e as duas são independentes |
+
+Duas leituras que a medição fixa. A primeira: o cenário do ZIP com detector constante e relatório de
+paridade perfeito é **real**, não hipotético — todas as guardas estáticas passam e só a dispersão do escore
+o separa de um export legítimo. A segunda: `transformers` 5.14.1 relata a cabeça inventada em
+`missing_keys` e apenas **avisa** (`LOAD REPORT` com `MISSING` e a nota *"Consider training on your
+downstream task"*), que é a armadilha de biblioteca que `score_pilot_local.py` já documentava do lado da
+pontuação e que nenhuma guarda lia.
+
+### 5.9b Onde a própria guarda estava frouxa, medido pelas duas lentes (2026-08-10)
+
+Quatro medições sobre a guarda nova, não sobre o modelo. As três primeiras são a razão de a Decisão 1 e a
+Decisão 3 do registro terem sido **reescritas** no mesmo dia.
+
+| medição | número | consequência |
+|---|---|---|
+| **um outlier derruba a amplitude**: 119 escores em 0,5 e um em 0,9, os dois lados idênticos | amplitude 0,4 · `meanAbsDelta` 0 · 0 inversões · `degenerate: false` · **`pass: true`** | a estatística do piso passou a ser o **intervalo interquartil** (0 nessa amostra). Também mede: 0,5201 (amplitude 0,0201) e 0,53 passavam |
+| **`dev.jsonl` é agrupado** (o arquivo que o runbook manda usar, com o default `--parity-samples 120`) | 4 118 linhas · `label` 0 nas 2 640 primeiras, `label` 1 nas 1 478 seguintes · primeiras 120 = `Counter({0: 120})` | amostra de **uma classe**: o piso recusaria o export legítimo. A amostra passou a ser balanceada e espaçada (medido: 60/60 com espaçamento pelo arquivo inteiro) |
+| **`--out` apontado para o checkpoint apagava os pesos**: um `save_pretrained` com `config.json`, `model.safetensors`, `tokenizer.json`, `training_args.bin`, `vocab.txt` | o predicado antigo dizia "é bundle" · `clear_previous_publication` removeu o diretório · `checkpoint exists after: False` | remoção passou a exigir os **dois** marcadores do exportador, arquivo de checkpoint recusa nomeado, e `--out`↔`--checkpoint` sobrepostos recusam antes de tudo |
+| **a cópia híbrida da política era aceita** (versão selada, `seeds.publishableCheckpoint: 42`, teto 340 000 000) | `HYBRID ACCEPTED … seed= 42 ceiling= 340000000` · `assert_seed_is_the_publishable_one(42, hybrid) -> 42` | `SEALED_POLICY_SHA256` pinado; recusa medida de ponta a ponta num diretório plano, nomeando path e os dois digests |
+
+Uma quinta, sobre a força das ligações e não sobre valores: comentar a chamada de
+`assert_the_head_came_from_the_checkpoint`, trocar o staging por `args.out` na lambda, ou comentar a asserção
+de forma do tokenizer deixavam a suíte em **85 passed / 25 subtests** — verde. O teste dessas ligações era
+`assertIn` sobre o **texto** de `main()`, e uma linha comentada contém o texto.
+
 ---
 
 ## 6. NÃO APLICAR — aparecem no registro e não valem
@@ -914,6 +959,35 @@ que falta é `topic` deixar de ser constante — dívida de § 7.
   global**: medido, `load_ai` e `load_mixed` devolvem 0 sobre esse diretório — não há classe gerada para
   a poda derrubar. A causa "a poda global não deixa nenhuma gerada sobreviver" é do pool de 24/07
   (§ 5.4), e as duas recusas são corretas por razões diferentes;
+- a leitura de que o **relatório de paridade** com `meanAbsDelta` pequeno e zero inversões é evidência de
+  export fiel: medido (§ 5.9), paridade é verificação de AUTOCONSISTÊNCIA e um modelo degenerado a
+  **maximiza** — cabeça zerada dá `meanAbsDelta` 0, `maxAbsDelta` 0, zero inversões e `pass: true`. O
+  relatório só fala de quantização quando o **intervalo interquartil** do escore supera a tolerância dos
+  deltas, sobre amostra que atravessa as duas classes;
+- a leitura de que a **amplitude** (`max − min`) do escore serve de piso de degenerescência: medido (§ 5.9b),
+  119 escores em 0,5 e um em 0,9 dão amplitude 0,4 e passavam com `meanAbsDelta` 0 — um documento em 120 move
+  a amplitude e não move o interquartil;
+- a leitura de que **amostra vazia passava por construção** — publicada em três sítios por esta empreitada e
+  falsa: medido, `np.mean([])` é `nan`, `nan < 0,02` é falso, e `np.max([])` **estoura**. O valor da guarda é
+  recusar antes dos imports, nomeando a flag, em vez de estourar depois de o int8 já existir;
+- a leitura de que pinar `policyVersion` identifica a política selada: medido (§ 5.9b), uma cópia com a versão
+  selada, seed 42 e teto 340 000 000 era aceita pelos dois scripts. `policyVersion` **não se move** quando a
+  pré-inscrição é emendada; quem identifica o arquivo é o `sha256` pinado;
+- a leitura de que `policyOrigin: tracked` (antes `policyBesideTheScript: false`) diz que a política veio do
+  arquivo **rastreado**: ele diz apenas qual dos caminhos resolveu, e fora de um checkout "um nível acima" é o
+  que estiver lá — medido duas vezes, nas duas corridas de conferência do T5. Quem diz o que o arquivo continha
+  é o digest;
+- a leitura de que as **guardas do export** provam que a cabeça foi treinada: nenhuma delas alcança isso.
+  Elas recusam a cabeça ausente, a não binária, a de ordem invertida, o pooler inventado, o vocabulário de
+  outro BERT, o grafo de duas entradas, a amostra de uma classe e o escore constante. A prova é o recibo F6
+  (§ 7, primeira linha);
+- a leitura de que os quatro campos `model_type`/`vocab_size`/`hidden_size`/`num_hidden_layers`
+  **identificam** o backbone: um BERT 12×768 de vocabulário 29 794 com `intermediate_size: 16` satisfaz os
+  quatro, exporta limpo, emite as três entradas e fica MAIS abaixo do teto. A forma comparada tem oito
+  campos, transcritos da testemunha rastreada por digest (§ 3.5);
+- a leitura de que `json.loads` sobre `preregistration-v4.json` é ler a política selada: todo objeto JSON o
+  satisfaz, e `benchmark/rebuild-v3-policy.json` — que está na árvore e declara o backbone descartado e o
+  teto de 109 681 931 — era aceito. O leitor pina `policyVersion` e recusa nomeando campo e path;
 - a leitura de que os **12 problemas de lint** são dívida de código do projeto: os 10 erros estão todos
   sob `.cache/chrome-for-testing/`, um Chrome baixado que nenhum commit carrega (§ 1);
 - a atribuição da queda do lint de **13 para 12** ao movimento do cache do Chrome: medido, o 11.º erro era
@@ -927,7 +1001,12 @@ que falta é `topic` deixar de ser constante — dívida de § 7.
 
 | dívida | vence |
 |---|---|
-| nenhum vínculo F6 prova em que corpus os pesos atuais foram treinados | antes de publicar pesos |
+| nenhum vínculo F6 prova em que corpus os pesos atuais foram treinados. O que existe agora é a **metade local**: os dois recibos do lab gravam seed, path e `sha256` da política, backbone, `sha256` do `config.json` do checkpoint, bytes do int8 e contagem do vocabulário — nada que ligue os pesos ao corpus, ao split ou ao relatório do gate antiartefato | antes de publicar pesos |
+| o lado **ONNX** da degenerescência não foi executado por ninguém: `torch.onnx.export` exige o módulo `onnx`, que não existe no `python` 3.11 desta máquina nem no `py -3.13` do lab, então § 5.9 mede o lado torch (logito `[0,0]`, `P(ai)` 0,5) e a paridade dos dois lados fica sustentada por eles lerem os **mesmos** pesos. A guarda de dispersão é medida por fixture; o export real é a Fase 4 | Fase 4, na primeira corrida do operador |
+| nenhum teste **semântico** amarra as três pontas do artefato servido: vocabulário real, as três entradas do grafo emitido e as três que `src/inference/onnx-classifier.ts` alimenta (achado M3 do `consolidado-w1`, não fechado em R2). O que existe é cada ponta sozinha — a forma do grafo é **observada** no artefato, a contagem de linhas do vocabulário é conferida no checkpoint e no bundle, e o runtime tem os próprios testes. Fechar exige artefato ONNX real (`onnxruntime` não existe no interpretador do lab) e atravessa a fronteira TS↔Python | unidade que rodar o export real, ou a Fase 4 na primeira corrida do operador |
+| o piso de degenerescência depende da **composição** da amostra, e a composição é garantida por construção (metade de cada classe) e não por medição do arquivo real de treino: a suíte mede o sorteio sobre fixture agrupada, e o teste que o mede sobre `benchmark/data/dataset/dev.jsonl` **pula** quando o arquivo não está no checkout (é gitignored) | unidade que rodar o export real |
+| o fallback sem `optimum` de `export_onnx.py` chama `torch.onnx.export` com `input_names`/`dynamic_axes`, que é a API do exportador **TorchScript**; em `torch` ≥ 2.9 o exportador default passou a ser o baseado em `torch.export` e a chamada emite `DeprecationWarning` (medido em 2.13.0). O ensaio de § 5.9 precisou de `dynamo=False` explícito para tomar o caminho legado. O caminho documentado no runbook instala `optimum`, então o fallback não roda lá — e fixar o `kwarg` quebraria `torch` antigo, que não o aceita | unidade que tocar o export, ou a Fase 4 se o operador rodar sem `optimum` |
+| o teste que confere a forma selada contra a **testemunha** (`public/models/cleanfeed-ptbr-v1/config.json`) é o único do arquivo que **pula** quando o bundle não está no checkout — o bundle é gitignored. O que sempre roda é o pino literal de oito campos mais a asserção de que os dois descritores rastreados ainda declaram o `sha256` daquela testemunha: um repack move os descritores e obriga a rederivar a forma | unidade que rastrear a testemunha, ou a Fase 6 |
 | `assemble_corpus` escreve **`topic: "geral"`** constante em todo registro, então a fatia por tópico existe, é lida e tem **uma** chave: o eixo, a tabela e as duas barreiras estão medidos por teste, e o que falta é material. Enquanto `topic` for constante a sonda não pode responder se a taxa desaba nos tópicos ralos, que é a pergunta pela qual ela existe | unidade que der um tópico ao extrator, ou a Fase 3 item 2 |
 | a família reservada que a v1 vai usar (`gpt-oss-120b-medium`, pesos abertos) **não tem material fresco**, então o critério de facilidade foi exercitado contra `gpt-5_6-luna`, que é modelo de fronteira. A comparação que o critério existe para decidir só é possível quando a reservada real tiver linhas | Fase 3, item 2 |
 | a pontuação das sondas de tema exige `onnxruntime`, que **não existe** no interpretador do lab (`py -3.13`); ela roda em `python` 3.11. Os testes das sondas são stdlib/numpy/sklearn e rodam onde a suíte roda, mas a corrida de smoke não é reproduzível de um `py -3.13` limpo | unidade que unificar o ambiente do lab, ou a Fase 5 |

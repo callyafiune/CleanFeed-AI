@@ -447,11 +447,40 @@ Um backbone e uma seed, os dois congelados pela pré-inscrição
 `--seed` divergente — não há bake-off na v3, e um segundo checkpoint seria elegível ao
 mesmo gate de export e à mesma medição certificadora.
 
-**A pré-inscrição selada sobe com o script.** O upload do Colab cai num diretório plano, e
-o script procura `preregistration-v4.json` um nível acima (layout do checkout) **e** ao seu
-lado (layout do Colab); sem o arquivo, recusa com o path nomeado antes do argparse. Não há
-default embarcado para cair: um espelho no lab seria autoridade que o `evaluatorDigest` não
-vigia.
+**A pré-inscrição selada sobe com o script, e o leitor dela também.** O upload do Colab cai
+num diretório plano, então **dois** arquivos sobem junto de cada script: `sealed_policy.py`
+(o leitor) e `preregistration-v4.json` (a política). Sem o leitor, o script morre em
+`ModuleNotFoundError: No module named 'sealed_policy'` na primeira linha — os dois scripts
+o **importam**, porque duas cópias do resolvedor podiam discordar sobre qual arquivo é
+autoridade. Sem a política, recusa com o path nomeado antes do argparse.
+
+O leitor procura `preregistration-v4.json` um nível acima (layout do checkout) **e** ao seu
+lado (layout do Colab), e **parseia**: `json.loads` não é parse — todo objeto JSON o
+satisfaz, inclusive `rebuild-v3-policy.json`, que está na árvore e declara o backbone
+descartado e o teto de 109 681 931. O parser pina `policyVersion`, exige os quatro valores
+que o lab lê e recusa nomeando campo e path. Não há default embarcado para cair: um espelho
+no lab seria autoridade que o `evaluatorDigest` não vigia.
+
+**Nomear os campos não é identidade, então os BYTES são conferidos.** `policyVersion` não
+se move quando a pré-inscrição é emendada, logo ele não separa uma emenda da outra: uma
+cópia com a versão selada, `seeds.publishableCheckpoint: 42` e teto 340 000 000 passava por
+todas as conferências de campo, e a guarda de seed comparava 42 com 42. O leitor pina o
+`sha256` do arquivo (`SEALED_POLICY_SHA256`) e recusa nomeando path, digest medido e digest
+esperado. Suba o arquivo **como arquivo** — uma cópia recolada num editor de texto tem
+outros bytes e é recusada (o próprio `json.dumps` da política dá 11 956 bytes contra os
+11 742 rastreados).
+
+Emendar a pré-inscrição passa a exigir reescrever esse literal no mesmo commit: o teste do
+lab compara os dois e reprova até que alguém o faça.
+
+`--model` e `--seed` **não têm default tirado da política**: ausentes, são DELEGADOS e a
+corrida imprime `DELEGADO … (nao conferido)`; presentes, são comparados e recusados. Um
+default lido do mesmo objeto que a guarda lê faria a guarda comparar um valor consigo mesmo.
+
+Cada corrida **imprime** o path e o `sha256` da política que leu, e escreve os dois no
+recibo (`metrics.json` no treino, `parity_report.json` no export), com `policyOrigin`
+dizendo de onde o arquivo veio — `tracked`, `beside-the-script` ou `explicit-path`. O
+marcador diz **onde**; quem diz **o quê** é o digest.
 
 O smoke local (CPU) valida o script; o treino real roda num Colab T4 grátis:
 
@@ -459,7 +488,7 @@ O smoke local (CPU) valida o script; o treino real roda num Colab T4 grátis:
 # na sua máquina: empacotar o dataset final (após as lanes fecharem)
 tar -czf dataset.tgz -C ../data/dataset train.jsonl dev.jsonl
 
-# no Colab (Runtime > T4 GPU): subir dataset.tgz, train_detector.py E
+# no Colab (Runtime > T4 GPU): subir dataset.tgz, train_detector.py, sealed_policy.py E
 # ../preregistration-v4.json (a política selada), então
 !pip -q install torch transformers scikit-learn
 !tar -xzf dataset.tgz
@@ -467,24 +496,85 @@ tar -czf dataset.tgz -C ../data/dataset train.jsonl dev.jsonl
 # baixar: bertimbau/best/ + metrics.json
 ```
 
-`metrics.json` (AUC dev + FPR@recall>=0,6) é diagnóstico da corrida, não critério de
-escolha entre modelos: o checkpoint `best/` segue para o T5.
+`metrics.json` (AUC dev + FPR@recall>=0,6, mais seed e identidade da política) é
+diagnóstico da corrida, não critério de escolha entre modelos: o checkpoint `best/` segue
+para o T5. O treino grava `id2label = {0: human, 1: ai}` no checkpoint — o índice 1 é
+P(ai) em todo o caminho a jusante, e `scripts/package-own-model.mjs` estampa esse mesmo
+contrato no config servido.
+
+`metrics.json` **não** é o recibo F6: ele não liga os pesos ao corpus nem ao split.
 
 ## T5 — export ONNX int8 no Colab
 
 ```bash
-# no Colab: subir bertimbau/best/, dev.jsonl, export_onnx.py E
+# no Colab: subir bertimbau/best/, dev.jsonl, export_onnx.py, sealed_policy.py E
 # ../preregistration-v4.json, então
 !pip -q install optimum onnx onnxruntime
 !python export_onnx.py --checkpoint bertimbau/best --eval dev.jsonl --out cleanfeed-ptbr-v1
 # baixar: cleanfeed-ptbr-v1-artifacts.zip (~110 MB)
 ```
 
-Quatro recusas, todas nomeando o valor selado: política que sele backbone de outra **forma**
-(o grafo emitido tem `input_ids`, `attention_mask`, `token_type_ids` e `vocab.txt`);
-checkpoint cujo `config.json` divirja em `model_type`, `vocab_size`, `hidden_size` ou
-`num_hidden_layers` — `model_type` sozinho é `"bert"` para todo BERT, e um fine-tune de
-outro BERT passaria pela paridade e caberia no teto; grafo cujas entradas não sejam
-exatamente as três (a paridade não pega, porque compara o grafo com os mesmos pesos torch);
-e artefato acima de `onnxMaximumInt8Bytes`, que fica em staging e é apagado sem chegar ao
-diretório de onde o empacotamento lê.
+**Nada é escrito em `--out` antes de todas as guardas aceitarem.** O bundle inteiro é
+montado em `<out>.staging`, as guardas rodam lá, e só então o diretório e o ZIP são
+promovidos. A publicação anterior (diretório **e** ZIP) é removida no começo da corrida, e
+a remoção é impressa: `zipfile.ZipFile(..., "w")` só trunca se a execução chegar até ele,
+então uma recusa na segunda corrida deixaria o ZIP aprovado da corrida A ao lado do
+diretório rejeitado da corrida B.
+
+**`--out` é apagado, então o que pode ser apagado é estreito.** Só um diretório que carregue
+os **dois** marcadores que este exportador escreve (`onnx/model_int8.onnx` e
+`parity_report.json`) — ou um diretório vazio — é removido. Qualquer outro é recusado, e um
+que carregue arquivo de checkpoint (`model.safetensors`, `pytorch_model.bin`,
+`training_args.bin`, `optimizer.pt`, `scheduler.pt`, `trainer_state.json`) é recusado
+nomeando o arquivo: `save_pretrained` deixa `config.json`, `vocab.txt`, `tokenizer.json`,
+`tokenizer_config.json` e `special_tokens_map.json`, que são cinco dos sete nomes do bundle,
+e `--out bertimbau/best` foi medido apagando os pesos treinados. `--out` igual ao
+`--checkpoint`, dentro dele ou contendo-o é recusado antes de qualquer remoção. Um arquivo
+no caminho do ZIP que não seja ZIP também é recusado.
+
+As recusas, todas nomeando o valor selado:
+
+- política que sele backbone de outra **forma** (o grafo emitido tem `input_ids`,
+  `attention_mask`, `token_type_ids` e `vocab.txt`);
+- checkpoint cujo `config.json` divirja em qualquer um dos **oito** campos da forma selada
+  (`model_type`, `vocab_size`, `hidden_size`, `num_hidden_layers`, `intermediate_size`,
+  `num_attention_heads`, `max_position_embeddings`, `type_vocab_size`) — os quatro
+  primeiros **não identificam** o modelo: `model_type` é `"bert"` para todo BERT, e um BERT
+  12×768 de vocabulário 29 794 com `intermediate_size: 16` passaria por eles, exportaria
+  limpo, caberia no teto e concordaria consigo mesmo na paridade;
+- checkpoint que não declare **cabeça de classificação binária**: `architectures` tem de
+  ser `["BertForSequenceClassification"]` e `id2label` tem de ser exatamente
+  `{0: human, 1: ai}` — `train_detector.py` grava essa ordem, então nem a invertida nem o
+  par anônimo `LABEL_0`/`LABEL_1` vêm do produtor selado.
+  `AutoModelForSequenceClassification` **carrega** um checkpoint base, constrói o
+  classificador ao AZAR e apenas avisa;
+- carga que tenha **inventado** a cabeça ou o pooler sob ela: `classifier.*` ou
+  `bert.pooler.*` em `missing_keys`/`mismatched_keys` recusa — o pooler alimenta o
+  classificador, então um pooler ao azar entrega entrada aleatória a uma cabeça treinada;
+- vocabulário que não seja o selado, medido no **arquivo** e não no campo: `vocab.txt` tem
+  de ter exactamente 29 794 entradas, no checkpoint e no bundle;
+- grafo cujas entradas não sejam exatamente as três (a paridade não pega, porque compara o
+  grafo com os mesmos pesos torch);
+- artefato acima de `onnxMaximumInt8Bytes`, que fica em staging e é apagado sem chegar ao
+  diretório de onde o empacotamento lê;
+- **escore degenerado**: paridade cujo **intervalo interquartil** do escore não supera a
+  própria tolerância de 0,02. Paridade é verificação de AUTOCONSISTÊNCIA, não de validade, e
+  um modelo com cabeça não treinada a MAXIMIZA — cabeça zerada devolve o mesmo logito para
+  todo texto, os dois lados calculam P(ai) = 0,5, `meanAbsDelta` é exatamente 0 e o veredito
+  era `pass: true`. A estatística é interquartil e não amplitude porque **um** documento em
+  120 derrubava o piso: 119 escores em 0,5 e um em 0,9 dão amplitude 0,4 e passavam;
+- **amostra de uma classe só**: `--eval` cujo arquivo não tenha as duas etiquetas é
+  recusado nomeando `label`, e a amostra é sorteada **balanceada** (metade de cada classe,
+  espaçada pelo arquivo inteiro em vez das primeiras `--parity-samples` linhas). `dev.jsonl`
+  é AGRUPADO — medido: as 4 118 linhas são 2 640 de `label` 0 e depois 1 478 de `label` 1 —,
+  então as primeiras 120 eram todas humanas, e sobre uma classe só o escore de um detector
+  confiante é tão achatado quanto o de um constante: o piso de degenerescência recusaria o
+  export legítimo. `parity_report.json` publica `sampleLabelCounts`;
+- `--eval` ausente ou vazio, e `--parity-samples` abaixo de 2 (a amostra balanceada precisa
+  de uma linha de cada classe). Amostra vazia nunca "passou por construção": `np.mean([])` é
+  `nan`, `nan < 0,02` é falso e `np.max([])` **estoura** — o que a guarda muda é recusar
+  antes dos imports, nomeando a flag, em vez de estourar depois de o int8 já existir.
+
+Nenhuma dessas recusas prova que a cabeça foi **treinada** — a prova é o recibo F6, ligando
+corpus, split, política, seed e hash dos pesos ao checkpoint, e ela não existe ainda
+(dívida do ESTADO § 7).
