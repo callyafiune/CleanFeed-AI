@@ -1,6 +1,6 @@
 import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 
 import { afterEach, describe, expect, it } from "vitest";
 
@@ -267,6 +267,41 @@ describe("buildEvidenceBundle", () => {
     });
   }
 
+  // The cut the release DECIDED on, in the PUBLIC bundle. A reader holding only these
+  // seven files could not check the decision against the pre-registration it claims to
+  // follow: the report names a threshold source and the profiles carry the number, but
+  // neither published the population the quantile was taken over nor the digest of the
+  // sealed artifact.
+  it("publishes the pre-registered cut in the fit summary, as a closed projection", async () => {
+    const { input } = await bundleInputFor("pass");
+    const bundle = await buildEvidenceBundle(input);
+    const fit = JSON.parse(
+      (
+        bundle.files.find((f) => f.name === "fit-summary.json") as {
+          content: string;
+        }
+      ).content,
+    );
+    const cut = input.fitReport.provisionalThreshold;
+    expect(fit.provisionalThreshold).toEqual({
+      thresholdVersion: cut.thresholdVersion,
+      thresholdBasis: cut.thresholdBasis,
+      threshold: cut.threshold,
+      fitPartitions: [...cut.fitPartitions],
+      quantile: cut.preRegistration.quantile,
+      side: cut.preRegistration.side,
+      probabilisticCalibrator: cut.preRegistration.probabilisticCalibrator,
+      population: { ...cut.population },
+      artifactDigest: cut.artifactDigest,
+    });
+    // `toEqual` above is what makes the projection CLOSED, and this is the half of it
+    // that matters: the sealed artifact carries the seven governance digests and the
+    // public file publishes NONE of them, because a `digests` block copied wholesale is
+    // how a projection stops being one.
+    expect(fit.provisionalThreshold).not.toHaveProperty("digests");
+    expect(fit.provisionalThreshold).not.toHaveProperty("seed");
+  });
+
   it("keeps the safe predictionManifestDigests in the fit summary", async () => {
     const { input } = await bundleInputFor("pass");
     const bundle = await buildEvidenceBundle(input);
@@ -494,6 +529,115 @@ describe("the reject fixture's gate report", () => {
     for (const gate of report.gates) {
       expect(family, gate.id).toContain(gate.hypothesis);
     }
+  });
+});
+
+// The publication side of the pre-registered cut, on a REAL run of the command.
+//
+// `assertServedCutIsTheMeasuredCut` only compares dataset, split and evaluator, so
+// auditoria, readiness and the two prediction manifests are bound by this call alone —
+// which is what makes the happy path an insufficient exercise: removing the validation,
+// or reading the file with a cast, left the whole suite green. The cut is mutated on disk
+// at the moment the scenario is about to publish, which is the only point where every
+// other input is already self-consistent.
+describe("publish-profile — the cut it refuses to serve", () => {
+  async function publishWithMutatedCut(
+    mutate: (cut: Record<string, unknown>) => Record<string, unknown>,
+  ): Promise<unknown> {
+    const root = await newRoot("cf-publish-profile-cut-");
+    let thrown: unknown;
+    await buildRejectScenario(root, async (options) => {
+      const cutPath = join(
+        dirname(options.frozenCalibrationPath),
+        "provisional-threshold.json",
+      );
+      const sealed = JSON.parse(await readFile(cutPath, "utf8")) as Record<
+        string,
+        unknown
+      >;
+      // RE-SEALED over the edit, always: otherwise every case would be refused by the
+      // self-digest comparison and no other guard would ever be reached. An attacker
+      // holding the file can recompute that digest, which is why the guards under test
+      // exist at all.
+      const edited = { ...mutate(sealed) };
+      delete edited.artifactDigest;
+      await writeFile(
+        cutPath,
+        `${JSON.stringify(
+          { ...edited, artifactDigest: await canonicalSha256(edited) },
+          null,
+          2,
+        )}\n`,
+        "utf8",
+      );
+      thrown = await runPublishProfile(options).then(
+        () => null,
+        (error: unknown) => error,
+      );
+      return "not published";
+    });
+    return thrown;
+  }
+
+  it("refuses a cut bound to another readiness report or another fit's manifests", async () => {
+    for (const field of [
+      "datasetAuditDigest",
+      "sourceReadinessDigest",
+      "developmentManifestDigest",
+      "calibrationManifestDigest",
+    ] as const) {
+      const thrown = await publishWithMutatedCut((cut) => ({
+        ...cut,
+        digests: {
+          ...(cut.digests as Record<string, unknown>),
+          [field]: "7".repeat(64),
+        },
+      }));
+      expect(thrown, field).toMatchObject({
+        code: "THRESHOLD_GOVERNANCE_MISMATCH",
+      });
+      expect((thrown as Error).message, field).toContain(field);
+    }
+  });
+
+  // `fit-report.json` is read with a cast (a declared debt), and the public projection
+  // dereferences its cut block. A fit report written before the cut existed would reach a
+  // bare `TypeError` in the middle of assembling the bundle; the block is parsed instead.
+  it("refuses a fit report whose cut block is missing, before projecting it", async () => {
+    const root = await newRoot("cf-publish-evidence-nocut-");
+    const s = await buildRejectScenario(root, runPublishProfile);
+    const fitReport = JSON.parse(
+      await readFile(s.fitReportPath, "utf8"),
+    ) as Record<string, unknown>;
+    delete fitReport.provisionalThreshold;
+    await writeFile(
+      s.fitReportPath,
+      `${JSON.stringify(fitReport, null, 2)}\n`,
+      "utf8",
+    );
+    await expect(
+      runPublishEvidence({
+        sourceReadinessPath: s.sourceReadinessPath,
+        datasetAuditPath: s.datasetAuditPath,
+        splitArtifactPath: s.splitArtifactPath,
+        frozenCalibrationPath: s.frozenCalibrationPath,
+        fitReportPath: s.fitReportPath,
+        reportPath: s.reportPath,
+        ledgerPath: s.ledgerPath,
+        consumptionId: s.consumptionId,
+        modelDirectory: s.modelDir,
+        outputDirectory: s.outputDir,
+      }),
+    ).rejects.toMatchObject({ code: "FIT_REPORT_CUT_MALFORMED" });
+  });
+
+  it("refuses a cut whose bytes are not a sealed artifact, naming the path", async () => {
+    const thrown = await publishWithMutatedCut((cut) => ({
+      schemaVersion: cut.schemaVersion,
+      artifactDigest: cut.artifactDigest,
+    }));
+    expect(thrown).toMatchObject({ code: "THRESHOLD_ARTIFACT_MALFORMED" });
+    expect((thrown as Error).message).toContain("$");
   });
 });
 

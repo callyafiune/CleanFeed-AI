@@ -361,7 +361,7 @@ export async function runFit(options: FitOptions): Promise<string> {
   );
   await writeJsonAtomic(
     join(options.outputDirectory, "fit-report.json"),
-    buildFitReport(preflight, artifactFields),
+    buildFitReport(preflight, artifactFields, provisionalThreshold),
   );
   await writeJsonAtomic(
     join(options.outputDirectory, "development-prediction-manifest.json"),

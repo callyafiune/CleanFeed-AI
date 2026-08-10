@@ -18,7 +18,6 @@ import { fileURLToPath } from "node:url";
 import { dirname, join, resolve } from "node:path";
 
 import {
-  applyFrozenCalibration,
   validateFrozenCalibrationArtifact,
   type FrozenCalibrationArtifact,
 } from "../calibration-pipeline.ts";
@@ -39,7 +38,7 @@ import {
   type EvaluationItem,
   type EvaluationOptions,
 } from "../metrics.ts";
-import { PREREGISTRATION_V4 } from "../preregistration-v4.ts";
+import { PREREGISTRATION_V4, type ScoreBasis } from "../preregistration-v4.ts";
 import {
   computePredictionManifestDigest,
   parsePredictionManifest,
@@ -47,8 +46,10 @@ import {
   type StrictPredictionV2,
 } from "../prediction-schema.ts";
 import {
+  parseProvisionalThresholdArtifact,
   validateProvisionalThresholdArtifact,
   type ProvisionalThresholdArtifact,
+  type ThresholdDigests,
 } from "../provisional-threshold.ts";
 import {
   buildBenchmarkReport,
@@ -123,19 +124,100 @@ export function certifyingEvaluationOptions(
   };
 }
 
+/** One prediction row beside the evaluation item it produced. */
+interface EvaluatedRow {
+  readonly prediction: StrictPredictionV2;
+  readonly item: EvaluationItem;
+}
+
 /**
- * Which score the calibration statistic of this command is measured over.
+ * Which score the calibration statistic of this run was measured over — MEASURED from
+ * the numbers, never declared beside them.
  *
- * It is a fact about {@link buildEvaluationItem}, not a preference: it applies the
- * frozen calibrator to every raw score, and no serialized calibrator kind is the
- * identity (contracts/calibration-profile.ts admits `platt`, `beta` and `isotonic`),
- * so `documentScore` is the CALIBRATED score. The pre-registered global calibration
- * hypothesis is about `document-raw-score` — the score the frozen cut cuts — so the
- * ECE gate refuses this basis, and it is the refusal that keeps the mismatch out of a
- * certified claim.
+ * The answer is the cut's own basis only when every scored item's `documentScore` is
+ * the very number its row carries, byte for byte. Any transform anywhere in that
+ * mapping makes the answer `document-calibrated-score`, which benchmark/gates.ts
+ * refuses against `calibrationGate.scoreBasis` instead of publishing an ECE over a
+ * scale the pre-registered hypothesis is not about.
+ *
+ * Derived and not restated because a declaration cannot detect its own author: a
+ * constant reading `document-raw-score` — whether hand-written or read off the policy
+ * — keeps reading it after a caller puts a calibrator back inside
+ * {@link buildEvaluationItem}, and the gate that exists to catch exactly that would
+ * then compare the hypothesis against itself and agree.
  */
-const MEASURED_CALIBRATION_SCORE_BASIS: MeasuredScoreBasis =
-  "document-calibrated-score";
+export function measuredCalibrationScoreBasis(
+  cut: CertifyingCut,
+  rows: readonly EvaluatedRow[],
+): MeasuredScoreBasis {
+  const untransformed = rows.every(
+    ({ prediction, item }) =>
+      item.status !== "scored" ||
+      item.documentScore === prediction.documentRawScore,
+  );
+  return untransformed ? cut.basis : "document-calibrated-score";
+}
+
+/**
+ * The cut a certifying measurement applies — the ONE cut the v1 pre-inscribes.
+ *
+ * `documentThreshold` is the frozen `provisional-v1` quantile of `document-raw-score`
+ * over the human negatives of `dev` + `cal-A`. No calibrator stands between the score
+ * and this comparison, and that is the whole point: the number compared here is the
+ * number a served profile compares (benchmark/profile-artifact.ts publishes the same
+ * threshold behind an `identity` calibrator), so the MEASURED cut and the DELIVERED
+ * cut cannot drift apart.
+ *
+ * `visualDocumentThreshold` is `null` and not "unset": the pre-registration declares
+ * one cut on one basis, and pins `rollout.maximumStage: "indicator"` with
+ * `actionsPromoted: false` through `literal()`, so there is no pre-registered action
+ * cut for this measurement to apply. The consequence is deliberate and visible at the
+ * gate report — `action.available` fails and the decision caps at `indicator-only`,
+ * which is exactly the ceiling the policy declares.
+ */
+export interface CertifyingCut {
+  readonly basis: ScoreBasis;
+  readonly documentThreshold: number;
+  readonly visualDocumentThreshold: number | null;
+}
+
+/**
+ * The SEVEN governance digests a pre-registered cut has to be bound to, taken from the
+ * frozen calibration alone.
+ *
+ * All seven come off the seal — including the two prediction-manifest digests, which
+ * are NOT recomputed from the manifests on disk. That is the difference between a
+ * transitive binding and a self-consistent one: the frozen artifact's own
+ * `artifactDigest` covers these values, so a manifest replaced on disk with the cut
+ * re-frozen over the replacement fails here, whereas a comparison against recomputed
+ * bytes would agree with both halves of the swap. It also makes the whole check
+ * available before any file other than the frozen artifact has been read, which is what
+ * lets the orchestrator run it ahead of the one-way holdout lease.
+ */
+export function thresholdBinding(
+  frozen: FrozenCalibrationArtifact,
+): ThresholdDigests {
+  return {
+    datasetDigest: frozen.datasetDigest,
+    datasetAuditDigest: frozen.datasetAuditDigest,
+    splitDigest: frozen.splitDigest,
+    evaluatorDigest: frozen.evaluatorDigest,
+    sourceReadinessDigest: frozen.sourceReadinessDigest,
+    developmentManifestDigest: frozen.predictionManifestDigests.development,
+    calibrationManifestDigest: frozen.predictionManifestDigests.calibration,
+  };
+}
+
+/** Reads the certifying cut off a validated provisional-threshold artifact. */
+export function certifyingCutFrom(
+  artifact: ProvisionalThresholdArtifact,
+): CertifyingCut {
+  return {
+    basis: artifact.thresholdBasis,
+    documentThreshold: artifact.threshold,
+    visualDocumentThreshold: null,
+  };
+}
 
 /** The injected evaluator tree, or the repository this code was loaded from. */
 export function resolveEvaluatorRoot(root: string | undefined): string {
@@ -199,10 +281,33 @@ export async function runEvaluate(options: EvaluateOptions): Promise<string> {
   )) as SplitArtifact;
   await validateSplitArtifact(artifact, manifest, records);
 
+  const fitDirectory = dirname(options.frozenCalibrationPath);
+  // The pre-registered cut of the v1, read from the same fit directory and REQUIRED —
+  // and it is what DECIDES below. `threshold.probabilisticCalibrator: "none"` is not a
+  // claim about a file nobody reads: a fit that never froze the cut, or froze it under
+  // a different policy, over a different split, over another readiness report or over
+  // another pair of dev/cal-A prediction manifests, cannot reach a certifying
+  // measurement.
+  //
+  // BEFORE the two manifests and BEFORE the test predictions, and that order is the
+  // guard: the cut is parsed, digest-checked and bound to all SEVEN governance digests
+  // from bytes the frozen artifact already sealed, while nothing of the blind block has
+  // been read in this process. The orchestrator repeats this check ahead of the lease
+  // (benchmark/commands/consume-holdout.ts); here it also covers a standalone
+  // `evaluate`, and a malformed cut used to reach a bare `TypeError` at this point,
+  // after the shards were open, on a lease that is one-way at `started`.
+  const provisionalThreshold = parseProvisionalThresholdArtifact(
+    await readJsonFile(join(fitDirectory, "provisional-threshold.json")),
+  );
+  validateProvisionalThresholdArtifact(
+    provisionalThreshold,
+    thresholdBinding(frozen),
+  );
+  const cut = certifyingCutFrom(provisionalThreshold);
+
   // The two prediction manifests the fit consumed live next to the frozen
   // calibration; they re-enter the report so its three manifest digests match
   // the sealed run.
-  const fitDirectory = dirname(options.frozenCalibrationPath);
   const developmentManifest = parsePredictionManifest(
     await readJsonFile(
       join(fitDirectory, "development-prediction-manifest.json"),
@@ -213,25 +318,15 @@ export async function runEvaluate(options: EvaluateOptions): Promise<string> {
       join(fitDirectory, "calibration-prediction-manifest.json"),
     ),
   );
-
-  // The pre-registered cut of the v1, read from the same fit directory and REQUIRED.
-  // It is what `threshold.probabilisticCalibrator: "none"` refers to, and reading it
-  // here is what stops that field from being a claim nothing checks: a fit that never
-  // froze the cut, or froze it under a different policy or over a different split,
-  // cannot reach a certifying measurement.
-  //
-  // What this does NOT yet do is decide: `buildEvaluationItem` cuts on the calibrated
-  // score, and the report says so (`thresholdSource`). While that holds, the score the
-  // ECE is measured over is not the pre-registered basis and the global calibration
-  // gate refuses — see `MEASURED_CALIBRATION_SCORE_BASIS`.
-  const provisionalThreshold = (await readJsonFile(
-    join(fitDirectory, "provisional-threshold.json"),
-  )) as ProvisionalThresholdArtifact;
-  validateProvisionalThresholdArtifact(provisionalThreshold, {
-    datasetDigest: frozen.datasetDigest,
-    splitDigest: frozen.splitDigest,
-    evaluatorDigest: frozen.evaluatorDigest,
-  });
+  // RECOMPUTED from the manifests on disk, and evidence rather than a refusal: they
+  // feed `integrity.predictionManifestDigestsMatch` below, which lands a divergence as
+  // a PUBLISHED reject on a `completed` lease. The cut is bound to the SEALED values
+  // instead (see {@link thresholdBinding}) — a manifest swapped on disk with the cut
+  // re-frozen over it satisfies a recomputed comparison and is caught only by the seal.
+  const developmentManifestDigest =
+    await computePredictionManifestDigest(developmentManifest);
+  const calibrationManifestDigest =
+    await computePredictionManifestDigest(calibrationManifest);
 
   const { manifest: testManifest, predictions } = await readPredictionArtifact(
     options.testPredictionsDirectory,
@@ -273,7 +368,7 @@ export async function runEvaluate(options: EvaluateOptions): Promise<string> {
     identity,
   );
 
-  const items = predictions.map((prediction) => {
+  const rows: EvaluatedRow[] = predictions.map((prediction) => {
     const record = recordsById.get(prediction.id);
     if (record === undefined) {
       throw new CommandError(
@@ -281,11 +376,16 @@ export async function runEvaluate(options: EvaluateOptions): Promise<string> {
         `prediction ${prediction.id} has no matching record`,
       );
     }
-    return buildEvaluationItem(frozen, record, prediction);
+    return { prediction, item: buildEvaluationItem(cut, record, prediction) };
   });
+  const items = rows.map((row) => row.item);
   void labels;
 
-  const visualActionAvailable = frozen.thresholds.visualDocument !== null;
+  // From the CUT and not from the frozen calibration: the frozen artifact's visual
+  // threshold lives on the calibrated scale and this measurement no longer has a
+  // calibrated scale. The v1 pre-inscribes no action cut, so the action tier reaches the
+  // gate report as unavailable rather than as a cut nobody declared.
+  const visualActionAvailable = cut.visualDocumentThreshold !== null;
   const certifyingOptions = certifyingEvaluationOptions(
     options.bootstrapSeed,
     visualActionAvailable,
@@ -317,10 +417,6 @@ export async function runEvaluate(options: EvaluateOptions): Promise<string> {
   const evaluatorDigest = await computeEvaluatorDigest(evaluatorRoot).catch(
     () => null,
   );
-  const developmentManifestDigest =
-    await computePredictionManifestDigest(developmentManifest);
-  const calibrationManifestDigest =
-    await computePredictionManifestDigest(calibrationManifest);
 
   const integrity: IntegrityEvidence = {
     scientificUse:
@@ -355,7 +451,7 @@ export async function runEvaluate(options: EvaluateOptions): Promise<string> {
     metrics,
     slices,
     resampling: metrics.resampling,
-    calibrationScoreBasis: MEASURED_CALIBRATION_SCORE_BASIS,
+    calibrationScoreBasis: measuredCalibrationScoreBasis(cut, rows),
   });
 
   const frozenSeal = frozenGovernanceSeal(frozen, options.consumptionId);
@@ -426,10 +522,7 @@ export async function runEvaluate(options: EvaluateOptions): Promise<string> {
   return (
     "Holdout session concluded; " +
     `decision=${report.releaseDecision}; reportDigest=${report.reportDigest}. ` +
-    // Named on the same line as the decision because the two are not the same cut yet:
-    // the decision above came from the frozen calibration, and this is the cut the
-    // pre-registration froze. A reader who sees only the decision cannot tell.
-    `Pre-registered cut: ${provisionalThreshold.threshold} on ` +
+    `Decided on the pre-registered cut ${provisionalThreshold.threshold} over ` +
     `${provisionalThreshold.thresholdBasis} (${provisionalThreshold.thresholdVersion}).`
   );
 }
@@ -439,20 +532,27 @@ export async function runEvaluate(options: EvaluateOptions): Promise<string> {
  *
  * This is the site of the defect A3 removes. It used to read
  * `prediction.documentRawScore ?? 0`, so a `status: "error"` row — whose scores
- * are null BY SCHEMA — was calibrated from 0, the most human raw score there is,
+ * are null BY SCHEMA — was scored from 0, the most human raw score there is,
  * and then counted as a true negative. There is now nowhere to put a substituted
- * score: only the `scored` branch of `EvaluationItem` carries one, and the
- * calibration is applied ONLY on that branch (R5).
+ * score: only the `scored` branch of `EvaluationItem` carries one, and the cut is
+ * applied ONLY on that branch (R5).
  *
  * A `scored` row whose scores are somehow null fails closed with a coded error
  * instead of being coerced — the row parser already forbids that combination, so
  * reaching it means the artifact was written by something other than the parser.
  *
+ * `documentScore` is the raw document score with nothing applied to it. The row's
+ * `localizedRawScore` is still REQUIRED to be present on a `scored` row — a scored
+ * document with half its scores missing is a malformed artifact, whichever half the
+ * cut reads — but it decides nothing: the v1 pre-inscribes one cut on one basis, and
+ * a second path that could raise the warning would put the delivered decision above
+ * the measured one.
+ *
  * Exported because `runEvaluate` needs a real holdout session to run and this
  * mapping must be testable on its own.
  */
 export function buildEvaluationItem(
-  frozen: FrozenCalibrationArtifact,
+  cut: CertifyingCut,
   record: BenchmarkRecord,
   prediction: StrictPredictionV2,
 ): EvaluationItem {
@@ -477,16 +577,18 @@ export function buildEvaluationItem(
       `prediction ${prediction.id} declares status "scored" with a null raw score`,
     );
   }
-  const applied = applyFrozenCalibration(frozen, {
-    documentRawScore: prediction.documentRawScore,
-    localizedRawScore: prediction.localizedRawScore,
-  });
+  const documentScore = prediction.documentRawScore;
   return {
     record,
     status: "scored",
-    documentScore: applied.documentScore,
-    warned: applied.warning,
-    visualActioned: applied.visualAction,
+    documentScore,
+    // `>=` and not `>`: `runtimeComparator: "score-ge-next-up-quantile"`, and the draw
+    // AT the cut is one of the accusations — which is also the comparator
+    // `population.atOrAboveThreshold` is counted with.
+    warned: documentScore >= cut.documentThreshold,
+    visualActioned:
+      cut.visualDocumentThreshold !== null &&
+      documentScore >= cut.visualDocumentThreshold,
     ...telemetry,
   };
 }

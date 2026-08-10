@@ -536,16 +536,31 @@ export function renderReportMarkdown(report: BenchmarkReport): string {
   lines.push("");
 
   const release = report.metrics.release;
-  lines.push("## Métrica de release (limiar congelado)");
+  lines.push("## Métrica de release (corte pré-inscrito)");
   lines.push("");
   if (release === undefined) {
     lines.push("_Sem bloco de release._");
   } else {
     lines.push(
-      "Recall e FPR **no limiar congelado**, família fim-a-fim: esta é a métrica " +
+      "Recall e FPR **no corte pré-inscrito**, família fim-a-fim: esta é a métrica " +
         "de release. Cada número condicional vem com a taxa de erro da mesma " +
         "população ao lado, porque a família condicional é sensível a falha " +
         "seletiva.",
+    );
+    lines.push("");
+    // Which cut produced these decisions, printed from the metrics block instead of
+    // asserted in prose: the v1 decides on the pre-registered quantile of the RAW
+    // document score, and a section headed "limiar congelado" said otherwise for as long
+    // as the two were different cuts.
+    lines.push(
+      `Origem do corte: \`${release.thresholdSource}\` — o quantil ` +
+        `${PREREGISTRATION_V4.threshold.quantile} ${PREREGISTRATION_V4.threshold.side} de ` +
+        `\`${PREREGISTRATION_V4.threshold.basis}\` sobre ` +
+        `${PREREGISTRATION_V4.threshold.population} de ` +
+        `${PREREGISTRATION_V4.threshold.quantilePartitions.join(" + ")}, sob ` +
+        `\`probabilisticCalibrator: "${PREREGISTRATION_V4.threshold.probabilisticCalibrator}"\`. ` +
+        "Nenhum calibrador probabilístico participa da decisão desta versão, e o valor " +
+        "com o digest do artefato sai no bundle de evidência (`fit-summary.json`).",
     );
     lines.push("");
     // Where the certified bound comes from, said in the section a reader reaches

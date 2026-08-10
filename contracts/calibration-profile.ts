@@ -15,6 +15,16 @@ const MINIMUM_CRITICAL_RECALL_SAMPLE = 200;
 export type LengthBucketV1 = "50-79" | "80-199" | "200-plus";
 
 export type SerializedCalibratorV1 =
+  /**
+   * The score passes through unchanged (clamped to [0,1]). It is the only kind a
+   * release whose policy sets `threshold.probabilisticCalibrator: "none"` may
+   * publish: with it, the number the runtime compares against
+   * `thresholds.documentIndicator` IS the raw document score the pre-registration
+   * cuts, so the delivered cut and the measured cut are the same cut. There is no
+   * other way to say that in this union — a platt with slope 1 and intercept 0 is a
+   * sigmoid, not a pass-through.
+   */
+  | { kind: "identity" }
   | { kind: "platt"; slope: number; intercept: number }
   | { kind: "beta"; alpha: number; beta: number; intercept: number }
   | {
@@ -23,6 +33,11 @@ export type SerializedCalibratorV1 =
       clamp: true;
       knots: Array<{ rawScore: number; calibratedScore: number }>;
     };
+
+/** The one pass-through value, so no producer hand-writes the shape. */
+export const IDENTITY_CALIBRATOR: SerializedCalibratorV1 = Object.freeze({
+  kind: "identity",
+});
 
 export interface ProportionGateEvidenceV1 {
   estimate: number;
@@ -184,6 +199,15 @@ function parseCalibrator(
       "CALIBRATOR_INVALID",
       `${where} calibrator must be an object with a kind`,
     );
+  }
+  if (value.kind === "identity") {
+    if (!hasExactKeys(value, ["kind"])) {
+      fail(
+        "CALIBRATOR_INVALID",
+        `${where} identity calibrator carries a parameter: the pass-through has none`,
+      );
+    }
+    return value as unknown as SerializedCalibratorV1;
   }
   if (value.kind === "platt") {
     if (
@@ -631,6 +655,31 @@ export async function computeCalibrationSetDigest(
   return canonicalSha256(sortedUnique);
 }
 
+/**
+ * The value this contract encodes DISABLED with, in `thresholds`.
+ *
+ * `parseProfile` requires `documentAction === 1` of every indicator-only release, so
+ * the encoding is the contract's own and not a producer's convention. What it needs to
+ * be a real off switch is {@link thresholdFires}: a plain `score >= 1` fires at exactly
+ * 1, and exactly 1 is REACHABLE input — the localized score is the maximum over chunk
+ * softmaxes, and a saturated softmax is 1.0 in floating point, not 0.999…
+ */
+export const DISABLED_THRESHOLD = 1;
+
+/**
+ * Whether a served threshold fires on this score.
+ *
+ * The comparison is `>=` because the draw AT the cut is one of the accusations
+ * (`runtimeComparator: "score-ge-next-up-quantile"`), and {@link DISABLED_THRESHOLD}
+ * fires on nothing at all: a trigger the release never measured must not be raisable by
+ * a saturated score. A cut whose measured value IS 1 therefore cannot be published —
+ * benchmark/profile-artifact.ts refuses it rather than serving a number this function
+ * cannot tell from off.
+ */
+export function thresholdFires(score: number, threshold: number): boolean {
+  return threshold < DISABLED_THRESHOLD && score >= threshold;
+}
+
 function sigmoid(logit: number): number {
   if (logit >= 0) {
     return 1 / (1 + Math.exp(-logit));
@@ -644,15 +693,18 @@ function clampUnit(value: number): number {
 }
 
 /**
- * Applies a serialized calibrator to a raw score in [0,1]. Isotonic uses linear
- * interpolation between the strictly-increasing knots and clamps at the
- * extremes — never a step function.
+ * Applies a serialized calibrator to a raw score in [0,1]. `identity` returns the
+ * clamped raw score; isotonic uses linear interpolation between the
+ * strictly-increasing knots and clamps at the extremes — never a step function.
  */
 export function applyCalibrator(
   calibrator: SerializedCalibratorV1,
   rawScore: number,
 ): number {
   const raw = clampUnit(rawScore);
+  if (calibrator.kind === "identity") {
+    return raw;
+  }
   if (calibrator.kind === "platt") {
     return clampUnit(sigmoid(calibrator.slope * raw + calibrator.intercept));
   }

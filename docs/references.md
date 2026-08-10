@@ -4693,3 +4693,125 @@ eixo de **fatia** — FPR e recall por tópico, como diagnóstico — e **não**
 escolha de agrupamento pode ser eixo de **relato** mas não de **união selada**, porque congelar um eixo de
 união que depende de um *clustering* põe uma decisão de modelagem dentro da política. É decisão de
 engenharia ancorada em Kish (custo estatístico) e em Barocas & Guo (o custo de desagregar).
+
+---
+
+## § P — o corte pré-inscrito DECIDE, e o perfil servido carrega o mesmo corte (2026-08-10)
+
+Unidade R1. Três decisões metodológicas, todas sobre a mesma pergunta: **qual número é cortado** numa
+versão que declarou não ter calibrador probabilístico.
+
+### P1 — quantil unilateral de escore CRU como corte publicado, sem calibração probabilística
+
+A decisão: o corte da v1 é o quantil 0,95 superior de `document-raw-score` sobre os negativos humanos de
+`dev` + `cal-A` (`provisional-v1`), e é ele que **decide** a medição certificadora. Nenhum calibrador
+participa: `MEASURED_CALIBRATION_SCORE_BASIS` passa a ser lido de `calibrationGate.scoreBasis`, e o
+ECE-15 do gate global mede a mesma quantidade que o corte corta.
+
+- **Lei, Robins, Wasserman, *Distribution-Free Prediction Sets*, JASA 2013** — o limiar por estatística de
+  ordem sobre uma amostra de troca (aqui, os negativos humanos reservados ao ajuste) controla a taxa do
+  lado escolhido **sem** modelo de probabilidade: a garantia é de cobertura marginal e não exige que o
+  escore seja probabilidade. É o precedente exato de cortar sobre escore cru.
+  [link](https://doi.org/10.1080/01621459.2012.751873)
+- **Vovk, Gammerman, Shafer, *Algorithmic Learning in a Random World*, 2005, cap. 2** — a mesma leitura na
+  forma conformal: o escore é um *nonconformity measure* qualquer, monotônico ou não calibrado, e o quantil
+  empírico é o que carrega a garantia. Justifica por que a ausência de calibrador **não** enfraquece o
+  corte. [link](https://doi.org/10.1007/b106715)
+- **Guo, Pleiss, Sun, Weinberger, *On Calibration of Modern Neural Networks*, ICML 2017** — a direção
+  contrária, e é por isso que ela entra: um softmax de rede moderna é tipicamente **mal calibrado**, então
+  chamar o escore cru de probabilidade seria falso. Limitar o ECE dele é medir o desvio, não conferir-lhe
+  semântica probabilística — o que é exatamente o que o gate faz e o que a política proíbe descrever de
+  outro modo. [link](https://proceedings.mlr.press/v70/guo17a.html)
+- **Kull, Silva Filho, Flach, *Beta calibration*, AISTATS 2017** e **Zadrozny & Elkan, *Transforming
+  classifier scores into accurate multiclass probability estimates*, KDD 2002** — as duas famílias que o
+  `fit` continua ajustando e **selando como diagnóstico** reservado à v2 (`calibrator.reservedFor`). Ficam
+  citadas aqui para registrar que a decisão é de **não usá-las na decisão**, não de descartá-las.
+  [link](https://proceedings.mlr.press/v54/kull17a.html) ·
+  [link](https://doi.org/10.1145/775047.775151)
+
+### P2 — a identidade é um kind EXPLÍCITO do contrato, e não um calibrador parametrizado para não fazer nada
+
+A decisão: `SerializedCalibratorV1` ganha `{ kind: "identity" }`, e é ele que um release sob
+`threshold.probabilisticCalibrator: "none"` publica. A união admitia `platt`, `beta` e `isotonic`, e
+**nenhum** dos três é a identidade: um platt de inclinação 1 e intercepto 0 é uma sigmoide, não uma
+passagem direta. Um isotônico de dois nós `(0,0)`–`(1,1)` seria numericamente a identidade e foi recusado
+como forma de dizê-lo — semântica embutida em parâmetros é a que ninguém encontra ao reler.
+
+**Sem precedente na literatura (2026-08-10)** para esta escolha: é decisão de desenho de contrato, e a
+razão é medível em vez de estética. Sem um kind próprio, a única maneira de o perfil servido cortar o
+escore cru seria confiar em que ninguém publicaria outro calibrador, e
+`assertServedCutIsTheMeasuredCut` não teria o que afirmar por igualdade. O precedente **de forma** é a
+prática de tipos-soma fechados com um caso neutro nomeado (a *null object* de Woolf, *Pattern Languages of
+Program Design 3*, 1997, cap. 1), aplicada a um artefato serializado em vez de a um objeto.
+
+### P3 — o corte MEDIDO e o corte ENTREGUE mudam no mesmo commit, e a igualdade é imposta
+
+A decisão: `profile-artifact.ts` publica `documentIndicator` = limiar pré-inscrito atrás de calibradores
+`identity`, e `assertServedCutIsTheMeasuredCut` **recusa** um perfil cujo calibrador não seja a identidade
+ou cujo limiar não seja o medido. `localizedIndicator` e `documentAction` ficam desabilitados em 1: a v1
+pré-inscreve **um** corte sobre **uma** base, e um gatilho servido que a medição não contou entrega decisão
+acima da medida.
+
+- **Sculley et al., *Hidden Technical Debt in Machine Learning Systems*, NIPS 2015** — nomeia
+  `training/serving skew` como dívida estrutural e não como bug: o consumidor que aplica uma
+  transformação que o avaliador não aplicou produz divergência **silenciosa**, porque as duas metades
+  continuam devolvendo números. É a razão de as duas metades mudarem no mesmo commit e de a igualdade ser
+  afirmada por guarda em vez de por convenção.
+  [link](https://papers.nips.cc/paper/2015/hash/86df7dcfd896fcaf2674f757a2463eba-Abstract.html)
+- **Breck, Cai, Nielsen, Salib, Sculley, *The ML Test Score*, IEEE BigData 2017**, teste
+  *Infra 3* — "training and serving features compute the same values": aqui na forma mais estreita
+  possível, que é o limiar e o transformador do escore.
+  [link](https://doi.org/10.1109/BigData.2017.8258038)
+- **Gebru et al., *Datasheets for Datasets*, CACM 2021** e **Mitchell et al., *Model Cards*, FAT* 2019** —
+  o corte com valor, base, quantil, população e digest passa a sair no `fit-summary.json` do bundle
+  público, porque um pacote que nomeia a *origem* do limiar e não o limiar não é verificável contra a
+  política que declara seguir. [link](https://doi.org/10.1145/3458723) ·
+  [link](https://doi.org/10.1145/3287560.3287596)
+
+**Sem precedente encontrado** para a leitura de que **meia troca é pior que nenhuma** — escore cru sob corte
+calibrado, ou corte cru sob perfil calibrado, sendo estritamente pior que manter as duas pontas calibradas.
+É consequência direta de Sculley et al. aplicada a este pipeline: os dois estados inconsistentes falham em
+silêncio, e o estado consistente-mas-errado falha no gate.
+
+### P4 — a base sobre a qual a estatística foi medida é DERIVADA dos números, não declarada ao lado deles
+
+A decisão (2026-08-10, ao consertar a cross-review de R1): `measuredCalibrationScoreBasis(cut, rows)`
+devolve a base do corte apenas quando **todo** item pontuado carrega `documentScore ===
+prediction.documentRawScore`, e `document-calibrated-score` caso contrário. A versão anterior desta
+unidade declarava a base numa constante lida da própria política que o gate compara contra ela — o que
+tornou `score-basis-mismatch` uma tautologia `X === X`.
+
+- **Sculley et al., 2015** (citado em P3) — a mesma dívida vista pelo outro lado: o *metadado
+  autodeclarado* é o que permite ao pipeline afirmar uma propriedade que ele não tem. Um campo de
+  proveniência preenchido por quem produziu o número não é evidência sobre o número.
+- **Breck et al., 2017**, teste *Monitor 2* — "training/serving skew não é detectável por um monitor que lê
+  a mesma fonte que o produtor": o detector precisa de uma segunda origem, e aqui a segunda origem são os
+  próprios escores comparados byte a byte.
+
+**Sem precedente na literatura (2026-08-10)** para a formulação exata: derivar o rótulo de proveniência de
+uma estatística a partir de uma verificação de igualdade sobre a amostra que a produziu. O precedente **de
+forma** é *parse, don't validate* (Alexis King, 2019) — a informação sobre o dado é obtida ao atravessá-lo,
+não afirmada sobre ele. [link](https://lexi-lambda.github.io/blog/2019/11/05/parse-don-t-validate/)
+
+### P5 — "desligado" é uma comparação, não uma convenção sobre um valor
+
+A decisão: `thresholdFires(score, threshold)` = `threshold < 1 && score >= threshold`, e o contrato exporta
+`DISABLED_THRESHOLD = 1`. O contrato já codificava desligado com 1 (`parseProfile` exige
+`documentAction === 1` de toda release `indicator-only`), mas o runtime comparava `score >= 1` — e 1,0 é
+**entrada alcançável**: o escore localizado é o máximo sobre softmaxes de janela, e um softmax saturado é
+exatamente 1,0 em ponto flutuante. Logo o gatilho "desabilitado" disparava.
+
+- **Goldberg, *What Every Computer Scientist Should Know About Floating-Point Arithmetic*, ACM Computing
+  Surveys 1991** — a razão de o caso não ser hipotético: a saturação de uma exponencial normalizada atinge
+  o extremo do intervalo exatamente, e não "quase". Um raciocínio que trate 1,0 como inalcançável está
+  errado sobre a aritmética, não sobre a probabilidade.
+  [link](https://doi.org/10.1145/103162.103163)
+- **Hoare, *Null References: The Billion Dollar Mistake*, QCon 2009** — a leitura clássica de por que um
+  valor do domínio usado como sentinela custa: o consumidor tem de saber da convenção para não a violar. A
+  decisão aqui é a mais barata das duas saídas — honrar a convenção **no comparador**, que é um sítio, em
+  vez de introduzir uma segunda codificação (`null`) enquanto a primeira segue pinada no parser — e o custo
+  residual é nomeado por código: `PROFILE_CUT_AT_DISABLED_SENTINEL` recusa um corte medido cujo valor seja
+  1, porque servi-lo entregaria um gatilho que nunca dispara.
+  [link](https://www.infoq.com/presentations/Null-References-The-Billion-Dollar-Mistake-Tony-Hoare/)
+
+

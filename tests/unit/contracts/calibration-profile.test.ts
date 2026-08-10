@@ -289,6 +289,31 @@ describe("parseCalibrationProfilesFileV1", () => {
       parseCalibrationProfilesFileV1(await file(base)),
     ).rejects.toMatchObject({ code: "CALIBRATOR_INVALID" });
   });
+
+  // The pass-through, which is what a release under
+  // `threshold.probabilisticCalibrator: "none"` publishes: the number the runtime
+  // compares against `documentIndicator` is then the raw document score the
+  // pre-registration cuts, so the served cut and the measured cut are one cut.
+  it("accepts the identity calibrator on both paths", async () => {
+    const base = baseProfile();
+    base.calibrators.document = { kind: "identity" };
+    base.calibrators.localized = { kind: "identity" };
+    const parsed = await parseCalibrationProfilesFileV1(await file(base));
+    expect(parsed.profiles[0].calibrators.document).toEqual({
+      kind: "identity",
+    });
+  });
+
+  it("rejects an identity calibrator carrying a parameter", async () => {
+    const base = baseProfile();
+    base.calibrators.document = {
+      kind: "identity",
+      slope: 2,
+    } as unknown as SerializedCalibratorV1;
+    await expect(
+      parseCalibrationProfilesFileV1(await file(base)),
+    ).rejects.toMatchObject({ code: "CALIBRATOR_INVALID" });
+  });
 });
 
 describe("computeCalibrationProfileDigest", () => {
@@ -324,6 +349,21 @@ describe("computeCalibrationSetDigest", () => {
 });
 
 describe("applyCalibrator", () => {
+  // The identity returns the score itself, clamped. Nothing else in this union does:
+  // a platt with slope 1 and intercept 0 is a sigmoid, so there was no way to say
+  // "no calibrator" before this kind existed.
+  it("returns the raw score itself for the identity, clamped to [0,1]", () => {
+    const identity: SerializedCalibratorV1 = { kind: "identity" };
+    for (const raw of [0, 0.137, 0.5, 0.999, 1]) {
+      expect(applyCalibrator(identity, raw)).toBe(raw);
+    }
+    expect(applyCalibrator(identity, -0.5)).toBe(0);
+    expect(applyCalibrator(identity, 1.5)).toBe(1);
+    expect(
+      applyCalibrator({ kind: "platt", slope: 1, intercept: 0 }, 0.4),
+    ).not.toBe(0.4);
+  });
+
   const isotonic: SerializedCalibratorV1 = {
     kind: "isotonic",
     interpolation: "linear",

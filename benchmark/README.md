@@ -105,7 +105,7 @@ revisores legais não distintos ou um `sourceManifestDigest` divergente são
 falhas duras. O `corpus-source-audit.ts` é o **único produtor** do
 `CorpusSourceReadinessReport` da Fase 2 (`auditCorpusSources` +
 `assertCorpusSourcesReady`): ele consome — sem redefinir — o contrato puro de
-`contracts/source-readiness.ts` e emite apenas os nove códigos de bloqueio; a
+`contracts/source-readiness.ts` e emite apenas os onze códigos de bloqueio; a
 saída é determinística (permutar registros produz bytes idênticos) e nunca
 carrega texto, URL, prompt, grupo de autor, recibo de consentimento ou hash de
 conteúdo. O `sourceManifestDigest` é o auto-digest canônico do manifesto

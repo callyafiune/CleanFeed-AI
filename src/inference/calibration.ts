@@ -1,6 +1,7 @@
 import type { ProfileLookup } from "@/inference/calibration-registry";
 import {
   applyCalibrator,
+  thresholdFires,
   type LengthBucketV1,
   type SerializedCalibratorV1,
 } from "../../contracts/calibration-profile";
@@ -241,12 +242,16 @@ export function decideWithProfile(
     aggregation.localizedRawScore,
   );
 
-  // (4) Canonical trigger order: document before localized.
+  // (4) Canonical trigger order: document before localized. Through
+  // `thresholdFires`, because a threshold of 1 is the contract's DISABLED encoding and
+  // a bare `>=` fires on a saturated score: the v1 serves a document cut and no
+  // localized cut, and a localized trigger it raised would be an accusation over a path
+  // whose false-positive rate the release never estimated.
   const triggers: DecisionTrigger[] = [];
-  if (documentScore >= profile.thresholds.documentIndicator) {
+  if (thresholdFires(documentScore, profile.thresholds.documentIndicator)) {
     triggers.push("document");
   }
-  if (localizedScore >= profile.thresholds.localizedIndicator) {
+  if (thresholdFires(localizedScore, profile.thresholds.localizedIndicator)) {
     triggers.push("localized");
   }
 
@@ -288,7 +293,7 @@ export function decideWithProfile(
   const actionAuthorized =
     !forceIndicator &&
     documentTrigger &&
-    documentScore >= profile.thresholds.documentAction &&
+    thresholdFires(documentScore, profile.thresholds.documentAction) &&
     evidence.quality === "sufficient" &&
     profile.gateEvidence.decision === "pass" &&
     profile.actionCeiling === "hide" &&

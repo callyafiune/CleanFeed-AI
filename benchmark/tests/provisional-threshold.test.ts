@@ -6,6 +6,7 @@ import { sha256BytesHex } from "../digests.ts";
 import { PREREGISTRATION_V4 } from "../preregistration-v4.ts";
 import {
   freezeProvisionalThreshold,
+  parseProvisionalThresholdArtifact,
   ProvisionalThresholdError,
   validateProvisionalThresholdArtifact,
   type ProvisionalThresholdArtifact,
@@ -347,11 +348,7 @@ describe("re-reading the sealed provisional threshold", () => {
     });
   }
 
-  const BOUND_TO = {
-    datasetDigest: DIGESTS.datasetDigest,
-    splitDigest: DIGESTS.splitDigest,
-    evaluatorDigest: DIGESTS.evaluatorDigest,
-  } as const;
+  const BOUND_TO = DIGESTS;
 
   it("accepts the artifact the freeze produced", () => {
     expect(() =>
@@ -418,12 +415,26 @@ describe("re-reading the sealed provisional threshold", () => {
     ).toThrow(/fitted over \[dev\]/u);
   });
 
-  it("refuses a cut bound to a different split than the run consuming it", () => {
+  // ALL SEVEN, one case per field, because the freeze seals seven and the reader used
+  // to compare three. The four it skipped were the audit, the readiness report and the
+  // two dev/cal-A prediction manifests — so a cut whose quantile was taken over the
+  // predictions of ANOTHER fit was accepted as belonging to this run, with the split and
+  // the policy checked and the population unchecked. Removing a key from
+  // `THRESHOLD_DIGEST_KEYS` leaves exactly one of these red, naming the field.
+  it.each([
+    "datasetDigest",
+    "datasetAuditDigest",
+    "splitDigest",
+    "evaluatorDigest",
+    "sourceReadinessDigest",
+    "developmentManifestDigest",
+    "calibrationManifestDigest",
+  ] as const)("refuses a cut bound to a different %s", (key) => {
     let thrown: unknown = null;
     try {
       validateProvisionalThresholdArtifact(sealed(), {
         ...BOUND_TO,
-        splitDigest: "7".repeat(64),
+        [key]: "7".repeat(64),
       });
     } catch (error) {
       thrown = error;
@@ -432,16 +443,120 @@ describe("re-reading the sealed provisional threshold", () => {
     expect((thrown as ProvisionalThresholdError).code).toBe(
       "THRESHOLD_GOVERNANCE_MISMATCH",
     );
-    expect((thrown as Error).message).toMatch(/splitDigest/u);
+    expect((thrown as Error).message).toContain(key);
+    expect((thrown as Error).message).toContain("7".repeat(64));
+  });
+});
+
+// ---------------------------------------------------------------------------
+// The shape parser. `evaluate` used to read this file with a cast, so a v1 artifact
+// re-labelled `schemaVersion: 2` went through unread and a TRUNCATED one died as a bare
+// `TypeError` — uncoded, after the blind block was scored, on a one-way lease.
+// ---------------------------------------------------------------------------
+
+describe("parseProvisionalThresholdArtifact", () => {
+  function bytes(): Record<string, unknown> {
+    return JSON.parse(JSON.stringify(freeze(population()))) as Record<
+      string,
+      unknown
+    >;
+  }
+
+  function refusal(value: unknown): ProvisionalThresholdError {
+    let thrown: unknown = null;
+    try {
+      parseProvisionalThresholdArtifact(value);
+    } catch (error) {
+      thrown = error;
+    }
+    expect(thrown).toBeInstanceOf(ProvisionalThresholdError);
+    expect((thrown as ProvisionalThresholdError).code).toBe(
+      "THRESHOLD_ARTIFACT_MALFORMED",
+    );
+    return thrown as ProvisionalThresholdError;
+  }
+
+  it("round-trips the sealed artifact and keeps its digest closing", () => {
+    const parsed = parseProvisionalThresholdArtifact(bytes());
+    const frozen = freeze(population());
+    expect(parsed).toEqual(frozen);
+    expect(() =>
+      validateProvisionalThresholdArtifact(parsed, DIGESTS),
+    ).not.toThrow();
   });
 
-  it("refuses a cut bound to a different evaluator", () => {
-    expect(() =>
-      validateProvisionalThresholdArtifact(sealed(), {
-        ...BOUND_TO,
-        evaluatorDigest: "8".repeat(64),
-      }),
-    ).toThrow(/evaluatorDigest/u);
+  it("refuses a version number the reader does not know, naming the field", () => {
+    // The forgery the version number did NOT stop: v1 content, v2 label. The digest
+    // still closes over the edit, so only a parser catches it.
+    const redated = { ...bytes(), schemaVersion: 2 };
+    const resealed = {
+      ...withoutArtifactDigest(redated),
+      artifactDigest: canonicalSha256Hex(withoutArtifactDigest(redated)),
+    };
+    const error = refusal(resealed);
+    expect(error.message).toContain("$.schemaVersion");
+    expect(error.message).toContain("must be 1");
+  });
+
+  it("refuses a truncated artifact naming the missing block instead of crashing", () => {
+    const truncated = { schemaVersion: 1, artifactDigest: "a".repeat(64) };
+    const error = refusal(truncated);
+    expect(error.message).toContain("$ must carry exactly");
+    expect(error.message).toContain("preRegistration");
+  });
+
+  it.each([
+    ["$.digests", "digests"],
+    ["$.preRegistration", "preRegistration"],
+    ["$.preRegistration.multiplicity", "preRegistration"],
+    ["$.population", "population"],
+  ] as const)("refuses %s when the block is not an object", (path, key) => {
+    const broken = bytes();
+    if (key === "preRegistration" && path.endsWith("multiplicity")) {
+      (broken.preRegistration as Record<string, unknown>).multiplicity = 7;
+    } else {
+      broken[key] = 7;
+    }
+    expect(refusal(broken).message).toContain(`${path} must be a plain object`);
+  });
+
+  it("refuses an extra key anywhere in the sealed shape", () => {
+    const extra = bytes();
+    (extra.digests as Record<string, unknown>).surpriseDigest = "z".repeat(64);
+    expect(refusal(extra).message).toContain("$.digests must carry exactly");
+  });
+
+  it("refuses a digest that is not 64 lowercase hex characters", () => {
+    const broken = bytes();
+    (broken.digests as Record<string, unknown>).evaluatorDigest = "NOTAHASH";
+    expect(refusal(broken).message).toContain(
+      "$.digests.evaluatorDigest must be 64 lowercase hex",
+    );
+  });
+
+  it("refuses a threshold outside [0,1] and a negative population count", () => {
+    const high = bytes();
+    high.threshold = 1.5;
+    expect(refusal(high).message).toContain("$.threshold must lie in [0,1]");
+
+    const negative = bytes();
+    (negative.population as Record<string, unknown>).humanNegatives = -1;
+    expect(refusal(negative).message).toContain(
+      "$.population.humanNegatives must be a non-negative safe integer",
+    );
+  });
+
+  it("refuses a score basis the pre-registration does not name", () => {
+    const broken = bytes();
+    broken.thresholdBasis = "document-calibrated-score";
+    expect(refusal(broken).message).toContain("$.thresholdBasis");
+
+    const nested = bytes();
+    (nested.preRegistration as Record<string, unknown>).calibrationScoreBasis =
+      "document-calibrated-score";
+    expect(refusal(nested).message).toContain(
+      "$.preRegistration.calibrationScoreBasis",
+    );
   });
 });
 

@@ -2061,6 +2061,23 @@ describe("the ECE gate refuses a score basis that is not the pre-registered one"
     );
     expect(gate.evidence).toBe("present");
   });
+
+  // The refusal was INEVITABLE, which is a different defect from the refusal being
+  // wrong: `benchmark/commands/evaluate.ts` declared `document-calibrated-score` as the
+  // only basis it could produce, so every certifying run reproved on this hypothesis by
+  // construction and no measurement could pass. A conforming body now reaches a verdict.
+  it("decides the calibration hypothesis on its number once the bases agree", () => {
+    const report = evaluateReleaseGates(passingEvidence);
+    const gate = gateById(report.gates, "warning.calibration-ece");
+    expect(gate.observed).not.toBeNull();
+    expect(gate.passed).toBe(true);
+    expect(report.failedCertifying).toEqual([]);
+    expect(
+      report.gates.filter(
+        (candidate) => candidate.evidence === "score-basis-mismatch",
+      ),
+    ).toEqual([]);
+  });
 });
 
 // ===========================================================================

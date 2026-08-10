@@ -34,6 +34,7 @@ import {
   type PredictionManifestV1,
 } from "../prediction-schema.ts";
 import { buildModelPublication } from "../profile-artifact.ts";
+import { freezeProvisionalThreshold } from "../provisional-threshold.ts";
 import {
   buildBenchmarkReport,
   type BenchmarkReport,
@@ -266,6 +267,29 @@ async function lightSplitArtifact(
 function lightFitReport(frozen: FrozenCalibrationArtifact): FitReport {
   return {
     schemaVersion: 1,
+    // The cut the release decided on, frozen over the SAME governance digests: the
+    // sanitizer projects its value, population and digest into the published
+    // fit-summary.json, so a hand-written stub would publish a cut that closes over
+    // nothing.
+    provisionalThreshold: freezeProvisionalThreshold({
+      samples: Array.from({ length: 100 }, (_unused, index) => ({
+        id: `fit_${String(index).padStart(3, "0")}`,
+        label: "human",
+        partition: PREREGISTRATION_V4.threshold.quantilePartitions[index % 2]!,
+        documentRawScore: index / 200,
+      })),
+      testIds: [],
+      seed: PREREGISTRATION_V4.seeds.split,
+      digests: {
+        datasetDigest: frozen.datasetDigest,
+        datasetAuditDigest: frozen.datasetAuditDigest,
+        splitDigest: frozen.splitDigest,
+        evaluatorDigest: frozen.evaluatorDigest,
+        sourceReadinessDigest: frozen.sourceReadinessDigest,
+        developmentManifestDigest: frozen.predictionManifestDigests.development,
+        calibrationManifestDigest: frozen.predictionManifestDigests.calibration,
+      },
+    }),
     preflight: {
       status: "ready",
       datasetDigest: frozen.datasetDigest,
@@ -420,7 +444,7 @@ function minimalMetrics(): EvaluationMetrics {
     // every conditional block carries its error-rate companion.
     release: {
       role: "release",
-      thresholdSource: "frozen-calibration-threshold",
+      thresholdSource: "preregistered-provisional-threshold",
       warning: {
         role: "release",
         decision: "warning",
@@ -965,6 +989,13 @@ export async function buildRejectScenario(
   await writeJson(sourceReadinessPath, sourceReadiness);
   await writeJson(splitArtifactPath, splitArtifact);
   await writeJson(fitReportPath, fitReport);
+  // The pre-registered cut lives beside the frozen calibration, and `publish-profile`
+  // REQUIRES it: the served profile carries this threshold, so a publication without it
+  // could only serve a cut the evidence never measured.
+  await writeJson(
+    join(root, "out", "provisional-threshold.json"),
+    fitReport.provisionalThreshold,
+  );
 
   // publish-profile writes the two model-metadata files (Phase 2 owns them).
   await runPublishProfile({

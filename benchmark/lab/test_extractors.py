@@ -2095,6 +2095,40 @@ def frozen_policy() -> dict:
     return json.loads(assemble_corpus.POLICY_PATH.read_text(encoding="utf-8"))
 
 
+class PolicyLaneReadTests(unittest.TestCase):
+    """The lane table is read at IMPORT time, so how it fails is part of the module.
+
+    A bare `KeyError('generationLanes')` surfaces as a crash of whoever imported the
+    module — inside a test function here, and inside the assembly run on the operator's
+    machine — with nothing saying which file was expected to hold what.
+    """
+
+    def test_a_policy_without_lanes_names_the_file_and_the_block(self) -> None:
+        import assemble_corpus
+
+        with tempfile.TemporaryDirectory() as tmp:
+            sem_lanes = Path(tmp) / "preregistration-v4.json"
+            sem_lanes.write_text(
+                json.dumps({"policyVersion": "x"}), encoding="utf-8"
+            )
+            original = assemble_corpus.POLICY_PATH
+            assemble_corpus.POLICY_PATH = sem_lanes
+            try:
+                with self.assertRaises(assemble_corpus.PolicyLanesUnreadable) as caught:
+                    assemble_corpus.lane_rows()
+            finally:
+                assemble_corpus.POLICY_PATH = original
+            self.assertIn("generationLanes", str(caught.exception))
+            self.assertIn(str(sem_lanes), str(caught.exception))
+
+    def test_the_live_policy_still_yields_the_frozen_lanes(self) -> None:
+        import assemble_corpus
+
+        lanes = assemble_corpus.lane_rows()
+        self.assertEqual(lanes, frozen_policy()["generationLanes"])
+        self.assertTrue(lanes)
+
+
 class DeclaredFrameTests(unittest.TestCase):
     """D0 — the ONE cell of the frame is what the lab collects, and the rest is
     NAMED as outside rather than deleted.

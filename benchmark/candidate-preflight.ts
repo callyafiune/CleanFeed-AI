@@ -50,6 +50,7 @@ import {
   RELEASE_CHROME_VERSION,
   type PredictionManifestV1,
 } from "./prediction-schema.ts";
+import type { ProvisionalThresholdArtifact } from "./provisional-threshold.ts";
 import type { SplitArtifact } from "./split-artifact.ts";
 import { FIT_PARTITIONS, type Partition } from "./split.ts";
 
@@ -125,6 +126,14 @@ export interface FitReport {
   thresholds: FrozenCalibrationArtifact["thresholds"];
   thresholdEvidence: FrozenCalibrationArtifact["thresholdEvidence"];
   selectionEvidence: FrozenCalibrationArtifact["selectionEvidence"];
+  /**
+   * The pre-registered cut this fit froze, whole. It is the cut the release DECIDES on,
+   * and the fit report is the only carrier that reaches the published evidence set — the
+   * report and the profiles name a threshold source but no value, digest or population,
+   * so without this the public bundle could not be checked against the policy it claims
+   * to follow. It holds counts only; there is no per-record field to sanitize.
+   */
+  provisionalThreshold: ProvisionalThresholdArtifact;
 }
 
 /** Coded, fail-closed error thrown by the frozen-vs-preflight cross-check. */
@@ -514,9 +523,11 @@ export function verifyFrozenAgainstPreflight(
 export function buildFitReport(
   preflight: CandidatePreflightReport,
   frozen: FrozenCalibrationArtifact,
+  provisionalThreshold: ProvisionalThresholdArtifact,
 ): FitReport {
   return {
     schemaVersion: 1,
+    provisionalThreshold,
     preflight,
     calibrationArtifactDigest: frozen.artifactDigest,
     fitSeed: frozen.fitSeed,

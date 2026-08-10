@@ -4,7 +4,7 @@
 // bundle (src/); it consumes only the pure Phase 1/2 contracts and the local
 // benchmark schema.
 //
-// This audit is the SOLE producer of the nine corpus source blocking codes; it
+// This audit is the SOLE producer of the eleven corpus source blocking codes; it
 // imports (never redeclares) the contract, its parser and its digest helper. It
 // adds ONLY source authorization, consent/license evidence and collection/
 // generation protocol coverage: record schema, class quotas, annotation /

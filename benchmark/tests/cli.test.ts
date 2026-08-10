@@ -768,6 +768,11 @@ function predictionManifest(
 
 // A real provisional-threshold artifact, frozen by the shipped function so its digest
 // and its restated pre-registration are the ones `evaluate` cross-checks.
+//
+// The scores are HALVED (`index / (count * 2)`, cut 0.475) because this cut now DECIDES:
+// `writeTestPredictions` scores the blind block between 0.4 and 0.8, and a cut at 0.95
+// would put every row below it, making every positive a false negative and every rate a
+// constant. The scenario would then be measuring the fixture instead of the pipeline.
 async function provisionalThresholdFixture(
   datasetDigest: string,
   splitDigest: string,
@@ -781,7 +786,7 @@ async function provisionalThresholdFixture(
       id: `fit_${String(index).padStart(3, "0")}`,
       label: "human",
       partition: partitions[index % partitions.length],
-      documentRawScore: index / count,
+      documentRawScore: index / (count * 2),
     })),
     testIds: [],
     seed: PREREGISTRATION_V4.seeds.split,
@@ -1226,6 +1231,14 @@ describe("benchmark CLI holdout consumption via evaluate", () => {
     );
     expect(report.reportDigest).toMatch(/^[0-9a-f]{64}$/u);
     expect(report.holdoutConsumptionId).toBe(session.consumptionId);
+    // The pre-registered cut DECIDED: the mock scores the block at 0.4 … 0.8 against a
+    // 0.475 cut, so the confusion matrix has to hold accusations on both sides. Without
+    // this, a cut placed above every prediction leaves recall 0 and FPR 0 and every
+    // structural assertion below still passes — the scenario would stop reading the
+    // decision it exists to exercise.
+    const decided = report.metrics.warning.endToEnd;
+    expect(decided.truePositives + decided.falsePositives).toBeGreaterThan(0);
+    expect(decided.trueNegatives + decided.falseNegatives).toBeGreaterThan(0);
     // The ai-recall design of the frozen table, as MEASURED over this corpus. Two
     // things are stated rather than left for a reader to infer, because a clustered
     // interval that is secretly an i.i.d. one is the defect C4 exists to remove:

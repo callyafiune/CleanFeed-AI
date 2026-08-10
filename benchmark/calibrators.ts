@@ -22,7 +22,16 @@ import type { SerializedCalibratorV1 } from "../contracts/calibration-profile.ts
 // with THIS.
 export { applyCalibrator } from "../contracts/calibration-profile.ts";
 
-export type CalibratorKind = SerializedCalibratorV1["kind"];
+/**
+ * The kinds this module can FIT, which is the contract's union minus `identity`.
+ * The pass-through has no parameters to estimate, so it is published rather than
+ * fitted; widening this alias to the whole union would make `fitCalibrator`
+ * fall through to isotonic for it, which is the fail-open direction.
+ */
+export type CalibratorKind = Exclude<
+  SerializedCalibratorV1["kind"],
+  "identity"
+>;
 
 export interface CalibrationSample {
   rawScore: number;

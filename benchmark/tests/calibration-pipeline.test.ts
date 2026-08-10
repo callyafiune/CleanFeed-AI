@@ -1,7 +1,6 @@
 import { describe, expect, it } from "vitest";
 
 import {
-  applyFrozenCalibration,
   CalibrationPipelineError,
   fitFrozenCalibration,
   readThresholdEvidence,
@@ -444,24 +443,6 @@ describe("fitFrozenCalibration", () => {
     },
     FIT_TIMEOUT_MS,
   );
-
-  it("applies the frozen calibration into warning and visual booleans", () => {
-    const result = spikeResult;
-    const applied = applyFrozenCalibration(result, {
-      documentRawScore: 0.9,
-      localizedRawScore: 0.1,
-    });
-    expect(applied.warnedByDocument).toBe(true);
-    expect(applied.warning).toBe(true);
-    expect(applied.visualAction).toBe(true);
-
-    const quiet = applyFrozenCalibration(result, {
-      documentRawScore: 0.05,
-      localizedRawScore: 0.05,
-    });
-    expect(quiet.warning).toBe(false);
-    expect(quiet.visualAction).toBe(false);
-  });
 });
 
 describe("fitFrozenCalibration governance guards", () => {

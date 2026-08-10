@@ -3027,6 +3027,11 @@ do eixo grosso.
 desvio ~15 — o gate reprovaria metade das montagens honestas por sorteio. A coleta mira **~1.750 por
 célula (~7.000 total)**; o piso derivado de 1.500 permanece como mínimo, e o gate de 300 fica inalterado.
 
+> **SUPERADO em `b0f975d`** (emenda da moldura, ratificada mais abaixo neste registro): a moldura
+> publicada ficou com UMA célula, e `RELEASE_CORPUS_POLICY.counts.human` passou de 7.000 para **4.000**,
+> com bloco cego de 800. Os números de 7.000/1.750 por célula acima são o que foi decidido nesta data e
+> **não** são o que está em vigor. O que vale hoje é o que o código mede.
+
 O contrato completo da unidade (16 itens, 6 commits A–F, 15 testes com a mutação que cada um pega, e a
 tabela de ratificação da política) está persistido em
 `.codex-reviews/fase1-preinscricao-desenho-fable.md` (área de trabalho, fora do Git, mesma convenção do
@@ -3348,7 +3353,9 @@ razão e o custo de reversão.
 | `intendedDomain` | **`scoped-cells`** (sai `generic`) | manter `generic` | consequência direta do id: "genérico" nomeia uma população sem moldura amostral, e é exatamente a alegação que a Etapa 0 recusou. Um manifesto que se declara genérico contradiz a tabela por célula que a release publica |
 | `ptbr-generic-v1` | **recusado POR NOME** em `ingest`/`corpus-import` | apagar o id | um identificador que sai por deleção não deixa rastro: quem passasse o id velho construiria o corpus de uma alegação que ninguém faz mais, e construiria **com sucesso**. Vive em `dataset.refusedIds`, com a razão, e o código `DATASET_ID_ABANDONED` diagnostica |
 
-Counts humanos: `RELEASE_CORPUS_POLICY.counts.human` e `collection.humanLinesTotal` exigem **7.000**, que
+Counts humanos (**SUPERADO em `b0f975d`**: a moldura de uma célula levou os dois a **4.000**; o
+raciocínio abaixo sobre alvo × piso continua valendo, os números não):
+`RELEASE_CORPUS_POLICY.counts.human` e `collection.humanLinesTotal` exigem **7.000**, que
 são 4 células × o **ALVO** de 1.750 (G0.3-bis). O piso de 1.500/célula é o número do **gate**, não o da
 composição: `sealDataset` compara a composição por igualdade **exata**, então escrever o total derivado
 do piso (6.000) recusaria justamente todo corpus que carrega a margem de coleta — o comentário em
@@ -3402,7 +3409,7 @@ número exige emenda da política selada, com a medição na mão.
 | C-11 | `metrics.ts` lê a **união** dos eixos de todas as versões (`ALL_GROUP_AXES`), e um eixo que a **versão do registro** não declara consulta a grafia antiga do mesmo fato (`generationBatch` → `collectionBatch`), restrito a linha **não humana** | v4 partiu `collectionBatch` em três, e numa linha **gerada** aquele eixo já guardava o lote de geração (`gb_*`) — o mesmo fato que `generationBatch` nomeia agora. Numa linha **humana** ele guardava a execução de extração, que é outro fato, então o alias para aí; nenhuma linha da tabela congelada lê o nível de lote sobre população humana, logo a restrição não custa nada. Sem isso, todo corpus v2/v3 em disco fica **imensurável** para `ai-recall` por uma renomeação de esquema, não por fato faltante | apagar o mapa de um item |
 | C-12 | o par morto (`rebuild-v3-policy.json`/`.ts`) **permanece no `.prettierignore`** | deixou de ser hasheado, mas a aposta mudou de lugar em vez de desaparecer: uma pré-inscrição abandonada **reformatada** é indistinguível de uma **editada** | remover a entrada |
 | C-13 | `assemble_corpus.py` e o runbook passam a escrever o id novo | um produtor que ainda escrevesse `ptbr-generic-v1` construiria um corpus que o importador recusa. O remapeamento das **fontes humanas** do lab (B2W/PT.SO/legislativo fora de `load_humans`) segue sendo D0, da Fase 2 | uma linha em cada |
-| C-14 | `collection.humanLinesTotal` e `RELEASE_CORPUS_POLICY.counts.human` passam a **7.000** — quatro células vezes o ALVO de 1.750 —, e o parser deriva o total do alvo, exigindo `alvo > piso` | `sealDataset` compara a composição por **igualdade exata**, então um total derivado do piso (4 x 1.500 = 6.000) recusaria justamente todo corpus que carrega a margem que G0.3-bis criou. Medido: 1.750/célula dá ~350 em `test` com sd ≈ 16,7, três desvios acima do piso de 300; no piso, a média em `test` **é** 300 e metade dos sorteios reprova. O piso segue sendo o número do gate; este é o número da coleta. O alvo passa a ser **lido por código** em vez de decorativo | editar o JSON, o pin do parser e o literal do `RELEASE_CORPUS_POLICY` — os três juntos, o teste amarra |
+| C-14 | (**SUPERADO em `b0f975d`: 4.000**, uma célula) `collection.humanLinesTotal` e `RELEASE_CORPUS_POLICY.counts.human` passam a **7.000** — quatro células vezes o ALVO de 1.750 —, e o parser deriva o total do alvo, exigindo `alvo > piso` | `sealDataset` compara a composição por **igualdade exata**, então um total derivado do piso (4 x 1.500 = 6.000) recusaria justamente todo corpus que carrega a margem que G0.3-bis criou. Medido: 1.750/célula dá ~350 em `test` com sd ≈ 16,7, três desvios acima do piso de 300; no piso, a média em `test` **é** 300 e metade dos sorteios reprova. O piso segue sendo o número do gate; este é o número da coleta. O alvo passa a ser **lido por código** em vez de decorativo | editar o JSON, o pin do parser e o literal do `RELEASE_CORPUS_POLICY` — os três juntos, o teste amarra |
 | C-15 | o lado **Python** deixa de ler `rebuild-v3-policy.json`: `assemble_corpus.POLICY_PATH` aponta para `preregistration-v4.json` | achado do cross-review, e era o furo mais grave da troca "atômica": o par morto saiu de `EVALUATOR_FILES` neste commit, então um byte alterado nele **já não move** o `evaluatorDigest` — e continuava decidindo `generation.decoding` de toda linha gerada. Medido: os dois blocos `generationLanes` são idênticos (`json.load(a)['generationLanes'] == json.load(b)['generationLanes']` → `True`), logo é troca de autoridade sem troca de valor. A frase do `.ABANDONADA.md` que dizia "nenhum módulo de produção o importa" era falsa e foi corrigida | uma linha, mas ela reabre o furo |
 | C-16 | `OUT_OF_FRAME_HUMAN_SOURCES` ganha **consumidor de produção**: `auditCorpusSources` recusa por nome, com o código novo `SOURCE_OUT_OF_DECLARED_FRAME` (o décimo primeiro) | é literalmente o mesmo defeito que criou `SOURCE_BLOCKED_BY_ACCESS_TERMS`: uma lista declarativa sem consumidor reproduz o silêncio que manter o registro devia evitar. E era pior aqui, porque tirar `src_b2w` do inventário estocado **desligou** a checagem de eixo declarado para as linhas dele (`auditDeclaredAxes` salta um `sourceId` que não conhece). Código próprio e não o de A1: "fora da moldura" e "recusada por termo de acesso" são fatos diferentes | remover o bloco do audit; o código fica no contrato |
 | C-17 | o caminho certificador (`evaluate`) passa a **ler e conferir** `provisional-threshold.json`: digest recomputado, restatement da pré-inscrição cruzado com `PREREGISTRATION_V4` e digests de governança cruzados com o artefato congelado | o cross-review mediu que o limiar provisório era **write-only** — `grep` devolvia só `fit.ts` (escrita) e `digests.ts` (hash) —, e um campo selado que ninguém lê é alegação e não garantia. Agora um `fit` que não congelou o corte, ou que o congelou sob outra política ou sobre outro split, **não alcança** a medição certificadora. O que isto ainda NÃO faz está abaixo, em "o que este commit não fez" | remover a leitura de `evaluate` |
@@ -6210,3 +6217,137 @@ zero negativos pina o termo defensivo. Cada termo tem agora a sua própria linha
 **Menor aceito sem conserto:** a sonda de tópico continua sem material (`topic` é constante `"geral"`), então
 das quatro exigências do contrato esta fica formalmente **descumprida** — dito com essas palavras em § 5.8 e
 com dívida em § 7. Corrigir exige mexer no extrator e no montador, que é outra unidade.
+
+### Decisão 9 — a dívida do corte ficou ÓRFÃ entre o Commit C e o Commit D, e R1 a pagou
+
+Decidido em 2026-08-10, ao consertar os achados da cross-review de dez unidades. A unidade é R1; o que
+segue é a razão, porque o item move o `evaluatorDigest` e invalida todo `fit` anterior.
+
+**O que estava errado.** A pré-inscrição selada fixa `threshold.basis` e `calibrationGate.scoreBasis` em
+`document-raw-score`, e o operador decidiu (ESTADO § 3.5) **sem calibrador probabilístico na v1**. O código
+decidia sobre o escore **calibrado**: `buildEvaluationItem` aplicava `applyFrozenCalibration`, o relatório
+estampava `thresholdSource: "frozen-calibration-threshold"`, e `profile-artifact.ts` publicava o perfil de
+runtime a partir de `frozen.calibrators`. Duas autoridades apontavam para o mesmo lado e o código estava do
+outro.
+
+**Por que ficou órfã, que é o ponto do registro.** A dívida TINHA dono declarado: a linha 85 do plano de
+entrega afirma, no Commit D, que ele "inclui a metade que o Commit C não fechou" e **nomeia os quatro
+arquivos** que mudariam juntos. Medido: `git show --name-only 1aa5751` não toca nenhum dos quatro. O que D
+entregou foi a **detecção** — `gates.ts` emite `score-basis-mismatch` quando as duas bases divergem — e as
+duas divergiam SEMPRE, então o gate de calibração global reprovava **por construção** em toda corrida
+certificadora. Isto é: o Commit D instalou o alarme correto sobre um defeito que não consertou, e o plano
+declarou o defeito consertado. Custo de a afirmação falsa ficar de pé: **17 commits**, ao fim dos quais o
+raio de alcance havia crescido dos seis arquivos da linha 85 para dez.
+
+**A lição operacional, e é o motivo de isto ser decisão e não nota:** um dono declarado no plano não é um
+dono. A detecção de uma divergência é entregável separado do conserto dela, e um commit que entrega só a
+detecção deve dizer isso na linha do plano — porque a alternativa, medida aqui, é um alarme perpétuo lido
+como conserto por qualquer um que releia o plano em vez de rodar o gate.
+
+**O que R1 mudou, nos dois lados no mesmo commit.** Metade sozinha é pior que o estado anterior — escore cru
+sob corte calibrado, ou corte cru sob perfil de runtime calibrado, faz o corte MEDIDO e o corte ENTREGUE
+divergirem em silêncio —, então:
+
+- o lado **medido**: `buildEvaluationItem` recebe o corte pré-inscrito e compara `documentRawScore >=`
+  limiar; `documentScore` é o escore cru sem transformação, logo o ECE-15 passa a ser a estatística da
+  própria hipótese; a base medida é **derivada dos números** por `measuredCalibrationScoreBasis`, que
+  devolve `cut.basis` só quando todo item pontuado carrega o escore da própria linha byte a byte
+  (ver Decisão 10, achado 1); e `metrics.ts` estampa
+  `thresholdSource: "preregistered-provisional-threshold"`;
+- o lado **entregue**: `contracts/calibration-profile.ts` ganha o kind `identity` (a união admitia `platt`,
+  `beta` e `isotonic`, e nenhum é a identidade — um platt de inclinação 1 é uma sigmoide), e
+  `profile-artifact.ts` publica `documentIndicator` = limiar pré-inscrito atrás de calibrador `identity`,
+  com `assertServedCutIsTheMeasuredCut` recusando qualquer perfil que sirva outro corte ou outro calibrador;
+- a **ação visual sai da v1**, e isso é a política falando: a pré-inscrição declara **um** corte sobre
+  **uma** base e pina `rollout.maximumStage: "indicator"` com `actionsPromoted: false` por `literal()`.
+  Não existe corte de ação pré-inscrito para a medição aplicar, então `action.available` reprova e a
+  decisão teta em `indicator-only` — que é exatamente o teto declarado. O limiar visual do artefato
+  congelado vive numa escala que esta medição não tem mais, e lê-lo seria comparar número de uma escala
+  com escore de outra;
+- o **calibrador continua sendo ajustado e selado**, como diagnóstico que não decide: `calibrator.reservedFor`
+  o reserva à v2 e a evidência de seleção é insumo dessa v2, congelado antes do bloco cego. Apagá-lo
+  destruiria material e não é o que as duas autoridades pedem — o que elas pedem é que ele não participe da
+  **decisão**, e agora nenhum consumidor o lê para decidir.
+
+**Os outros quatro achados da mesma unidade.** (a) O congelamento sela **sete** digests e o leitor comparava
+**três**: `THRESHOLD_DIGEST_KEYS` passa a ser derivada de um `Record<keyof ThresholdDigests, true>`, então a
+lista é total por tipo e um caso vermelho por campo a mede. Os quatro que faltavam eram auditoria, readiness
+e os **dois manifestos de predição** — isto é, um corte cujo quantil saiu das predições de OUTRO fit era
+aceito como pertencente a esta corrida, com política e split conferidos e população não. (b) A leitura era
+`as ProvisionalThresholdArtifact`, cast puro: agora é `parseProvisionalThresholdArtifact`, parser de forma
+fechado que recusa nomeando o path do campo, e um artefato v1 redigerido como `schemaVersion: 2` deixa de
+atravessar. (c) A conferência acontece **antes da lease**, no trecho de pré-exposição de
+`consume-holdout.ts`, ao lado da confirmação de identidade do avaliador — e não só antes das predições de
+`test` dentro de `evaluate`. A distinção é o achado: no fluxo certificador o `evaluate` roda DEPOIS de
+`beginHoldoutConsumption` ter escrito `started` e depois de o bloco cego ter sido pontuado, então "antes das
+predições" ali não protegia bloco nenhum (ver Decisão 10, achado 2). Provado nos dois níveis: com o corte
+truncado, `runConsumeHoldout` recusa sem NENHUM evento no ledger, sem marcador e sem diretório de shards; e
+dentro de `evaluate` a ordem contra as predições segue afirmada pelo par
+`FILE_MISSING` × `THRESHOLD_ARTIFACT_MALFORMED` contra um diretório inexistente. (d) A evidência pública
+omitia o corte: `FitReport` passa a carregar o artefato inteiro (só contagens) e `fit-summary.json` projeta
+valor, base, quantil, partições, população e `artifactDigest`. A **projeção** não move o `evaluatorDigest`
+(nem `evidence-sanitizer.ts` nem `publish-evidence.ts` são membros de `EVALUATOR_FILES`), mas **levar o corte
+até lá move**: o carregador é `candidate-preflight.ts` e o produtor é `commands/fit.ts`, e os dois SÃO
+membros. Uma unidade futura que queira só (d) precisa saber disso.
+
+### Decisão 10 — a revisão de R1 devolveu três bloqueantes, e os três eram meia-verdade da própria unidade
+
+Decidido em 2026-08-10, sobre os relatórios `.codex-reviews/R1-review-contrato.md` e
+`R1-review-mutacao.md`. Nenhum foi refutado; cada um apontava uma metade entregue com a outra metade
+declarada em comentário. Fica registrado porque a forma do erro repete a Decisão 9 numa escala menor: **a
+frase que descreve a guarda foi escrita antes de a guarda existir**, e passou.
+
+**Achado 1 — o detector virou tautologia no commit que dizia torná-lo significativo.** A base MEDIDA passou a
+ser LIDA de `PREREGISTRATION_V4.calibrationGate.scoreBasis`, que é o MESMO campo contra o qual
+`benchmark/gates.ts:891` a compara. Medido pela lente: `ScoreBasis` tem um membro, pinado por `literal()`,
+logo o ramo de recusa não tinha estado alcançável em política nenhuma — e o comentário afirmava o contrário
+do que o código fazia. Consertado **derivando a base dos números**: `measuredCalibrationScoreBasis(cut, rows)`
+devolve `cut.basis` apenas quando todo item pontuado tem `documentScore === prediction.documentRawScore`, e
+`document-calibrated-score` no primeiro passo representável de diferença. Agora a declaração é um fato sobre
+o mapeamento que rodou, e recalibrar dentro de `buildEvaluationItem` faz `warning.calibration-ece` reprovar
+com `score-basis-mismatch` — que é a mutação M-A da lente, exigida e executada. Ganho secundário:
+`cut.basis` deixa de ser campo morto (era o nono achado, menor, da outra lente).
+
+**Achado 2 — a ordem certa contra o objeto errado.** Ver Decisão 9, item (c), reescrito. A conferência do
+corte migrou para o trecho de pré-exposição de `consume-holdout.ts`, entre a identidade do avaliador e
+`beginHoldoutConsumption`. Duas alegações falsas foram apagadas: um comentário em `evaluate.ts` e o próprio
+item (c) deste registro.
+
+**Achado 3 — meia igualdade no caminho localizado, e o encoding que ninguém honrava.** O perfil servia
+`localizedIndicator = 1` chamando isso de "desabilitado", e o runtime comparava `localizedScore >= 1`. Um
+escore localizado é o **máximo** sobre softmaxes de janela e um softmax saturado é exatamente 1,0 em ponto
+flutuante: `1 >= 1` dispara. Logo o runtime podia levantar um gatilho localizado — `LOCALIZED_SIGNAL`,
+apresentação ao usuário — num caminho cujo FPR a medição não estimou. `documentAction = 1` tinha o mesmo
+defeito, e a asimetria era NOVA nesta empreitada (`calibration-pipeline.ts` computava a união dos dois
+caminhos). Decidido: **o 1 passa a ser um desligado verificável**, não uma convenção. `contracts/calibration-profile.ts`
+exporta `DISABLED_THRESHOLD` e `thresholdFires(score, threshold)`, que é `threshold < 1 && score >= threshold`,
+e `src/inference/calibration.ts` compara pelos três limiares através dele. A colisão que isso cria — um corte
+MEDIDO cujo valor seja 1 — é recusada na publicação por `PROFILE_CUT_AT_DISABLED_SENTINEL`, porque o parser do
+artefato admite `threshold: 1` e servir esse número entregaria um gatilho que nunca dispara enquanto a medição
+contou como aviso todo sorteio em 1. E `assertServedCutIsTheMeasuredCut` passa a conferir também
+`localizedIndicator` e `documentAction`, que era a barreira que o ESTADO § 3.5 nomeava e o código não tinha.
+
+**Por que o encoding e não um `null` no contrato.** O contrato JÁ codifica desligado com 1: `parseProfile`
+exige `documentAction === 1` de toda release `indicator-only`. Trocar por `null` seria introduzir uma segunda
+convenção para dizer a mesma coisa, com a primeira ainda pinada no parser; honrar a que existe é o conserto
+menor e o que mantém uma única leitura. O custo é a colisão, e ela é fechada por código com nome próprio.
+
+**Os menores aplicados sem discussão:** a fixture de `cli.test.ts` tinha o mesmo defeito que a gêmea de
+`consume-holdout.test.ts` (corte 0,95 acima de TODAS as predições, matriz de decisão constante) e recebeu a
+mesma correção mais uma asserção sensível à matriz; a allowlist do segundo cenário fim-a-fim parou de aceitar
+`score-basis-mismatch`; `publish-evidence.ts` passou a parsear o bloco do corte antes de projetá-lo, porque o
+cast que o terceiro achado condenou ganhara um dereference novo; o corte passou a ser amarrado aos digests de
+manifesto **selados** (`frozen.predictionManifestDigests`) em vez dos recomputados, o que é o que torna a
+ligação transitiva e disponível antes da lease; e `applyFrozenCalibration` foi **removida** — não tinha
+chamador de produção e decidia por limiar calibrado, que é literalmente a religação silenciosa que o ESTADO
+§ 7 registrava como risco residual. O risco fecha por deleção e a linha de § 7 diz isso.
+
+**Os quatro achados do consolidado-c que o contrato de R1 não nomeava e a lente cobrou** (M2–M5) entram
+neste commit, todos medidos: o comentário de tolerância citava `0,0163372175`, teto do α retirado — o teto em
+vigor é `1 - 0,0125^(1/300) = 0,0145005943`, armazenado `0,014501`, a 4,06e-7 do valor, dentro do 1e-6;
+"nove códigos de bloqueio" virou **onze** nos três sítios (`benchmark/README.md`,
+`contracts/source-readiness.ts`, `benchmark/corpus-source-audit.ts`) contra a lista que tem onze membros
+contados; as três ratificações que afirmavam 7.000 linhas humanas ganharam marca de **SUPERADO** apontando os
+4.000 da emenda da moldura (marca e não reescrita: o registro é histórico, e o que envelheceu foi a vigência,
+não a decisão); e `assemble_corpus.lane_rows()` deixou de levantar `KeyError` cru no import — `PolicyLanesUnreadable`
+nomeia o arquivo e o bloco, com dois casos de pytest.

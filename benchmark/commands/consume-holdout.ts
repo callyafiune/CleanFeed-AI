@@ -2,7 +2,8 @@
 // holdout lease exactly once and issues an auditable release decision.
 //
 // The lease is irreversible. This command confirms the evaluator's own bytes
-// against the frozen declaration BEFORE anything else, opens the Phase 2
+// against the frozen declaration and the pre-registered cut against the frozen
+// seal BEFORE anything else, opens the Phase 2
 // append-only ledger session EXACTLY ONCE (after confirming
 // `--confirm-split-digest` against the frozen `SplitArtifact.splitDigest`),
 // browser-scores the sealed test partition under that active consumption through
@@ -72,6 +73,10 @@ import {
   createPredictionShardStore,
   PredictionShardError,
 } from "../prediction-shards.ts";
+import {
+  parseProvisionalThresholdArtifact,
+  validateProvisionalThresholdArtifact,
+} from "../provisional-threshold.ts";
 import { parseBenchmarkDataset } from "../schema.ts";
 import {
   validateSplitArtifact,
@@ -81,6 +86,7 @@ import {
   assertEvaluatorIdentity,
   resolveEvaluatorRoot,
   runEvaluate,
+  thresholdBinding,
 } from "./evaluate.ts";
 import {
   CommandError,
@@ -169,6 +175,25 @@ export async function runConsumeHoldout(
     frozen.evaluatorDigest,
   );
   const preExposureFiles = await observeEvaluatorFiles(evaluatorRoot);
+  // The pre-registered cut, parsed and bound to the frozen seal HERE — before the
+  // ledger, before the marker, before a single blind-block byte. `evaluate` reads the
+  // same file and repeats the same two checks, but it runs after the block has been
+  // scored: on this path a truncated or foreign cut would otherwise be discovered with
+  // the lease already `started`, which spends the block to learn that a JSON file is
+  // malformed. Nothing of the corpus has been read at this point either, so a refusal
+  // here costs the run and nothing else. All seven digests come off `frozen`, which is
+  // what makes the check possible this early.
+  validateProvisionalThresholdArtifact(
+    parseProvisionalThresholdArtifact(
+      await readJsonFile(
+        join(
+          dirname(options.frozenCalibrationPath),
+          "provisional-threshold.json",
+        ),
+      ),
+    ),
+    thresholdBinding(frozen),
+  );
 
   const manifest = validateDatasetManifest(
     await readJsonFile(join(options.datasetDirectory, "manifest.json")),

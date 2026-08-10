@@ -5,7 +5,7 @@
 // "Closed" means the parser validates every object against an exact key set with
 // no coercion: any unknown key, malformed digest, out-of-order or duplicated
 // blocking reason, or a `reportDigest` that no longer matches the recomputed
-// self-digest is a hard failure. The contract is the single source of the nine
+// self-digest is a hard failure. The contract is the single source of the eleven
 // blocking codes and of the report shape; Phase 3 imports and produces, never
 // redeclares. A code ADDED here is refused by an older parser, which is fail-closed in
 // the right direction: a report naming a reason the reader has no vocabulary for must

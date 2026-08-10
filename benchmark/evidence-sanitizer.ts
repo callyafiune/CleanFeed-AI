@@ -256,8 +256,26 @@ function splitSummary(input: EvidenceInput): unknown {
 function fitSummary(input: EvidenceInput): unknown {
   const frozen = input.frozenCalibration;
   const preflight = input.fitReport.preflight;
+  const cut = input.fitReport.provisionalThreshold;
   return {
     schemaVersion: 1,
+    // The cut the release DECIDED on, as a closed projection: which score, which
+    // quantile, the value, the population it was taken over and the digest of the sealed
+    // artifact. The benchmark report names a threshold SOURCE and the profiles carry the
+    // number, but neither published the population or the artifact digest, so a reader
+    // holding the public bundle could not check the cut against the pre-registration it
+    // claims to follow. Counts only — the sample itself never leaves the fit.
+    provisionalThreshold: {
+      thresholdVersion: cut.thresholdVersion,
+      thresholdBasis: cut.thresholdBasis,
+      threshold: cut.threshold,
+      fitPartitions: [...cut.fitPartitions],
+      quantile: cut.preRegistration.quantile,
+      side: cut.preRegistration.side,
+      probabilisticCalibrator: cut.preRegistration.probabilisticCalibrator,
+      population: { ...cut.population },
+      artifactDigest: cut.artifactDigest,
+    },
     fitSeed: frozen.fitSeed,
     partitionsUsed: [...frozen.partitionsUsed],
     model: { ...frozen.model },

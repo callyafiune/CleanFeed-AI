@@ -23,6 +23,13 @@ import { sha256BytesHex } from "./digests.ts";
 import { PREREGISTRATION_V4 } from "./preregistration-v4.ts";
 import type { ScoreBasis } from "./preregistration-v4.ts";
 
+/**
+ * The one score this artifact may ever be about, read from the sealed policy rather
+ * than restated: `threshold.basis` and `calibrationGate.scoreBasis` are the same
+ * field of the same pre-registration, and the parser below pins both to it.
+ */
+const BASIS: ScoreBasis = PREREGISTRATION_V4.threshold.basis;
+
 /** Coded, fail-closed error of the provisional threshold freeze. */
 export class ProvisionalThresholdError extends Error {
   readonly code: string;
@@ -65,6 +72,28 @@ export interface ThresholdDigests {
   readonly developmentManifestDigest: string;
   readonly calibrationManifestDigest: string;
 }
+
+/**
+ * Every field of {@link ThresholdDigests}, as a value the comparison loop can walk.
+ *
+ * The `Record<keyof ThresholdDigests, true>` is what makes the list TOTAL: dropping a
+ * key stops the file compiling, and a key added to the interface without a member here
+ * does too. A hand-written array would have admitted the defect this replaces — the
+ * freeze sealed seven digests and the reader compared three, so a cut derived from the
+ * dev/cal-A predictions of ANOTHER fit, or under another readiness report, was accepted
+ * as belonging to this run.
+ */
+const THRESHOLD_DIGEST_KEYS = Object.keys({
+  datasetDigest: true,
+  datasetAuditDigest: true,
+  splitDigest: true,
+  evaluatorDigest: true,
+  sourceReadinessDigest: true,
+  developmentManifestDigest: true,
+  calibrationManifestDigest: true,
+} satisfies Record<keyof ThresholdDigests, true>) as ReadonlyArray<
+  keyof ThresholdDigests
+>;
 
 export interface FreezeProvisionalThresholdInput {
   readonly samples: readonly ThresholdSample[];
@@ -266,10 +295,7 @@ export function freezeProvisionalThreshold(
  */
 export function validateProvisionalThresholdArtifact(
   artifact: ProvisionalThresholdArtifact,
-  boundTo: Pick<
-    ThresholdDigests,
-    "datasetDigest" | "splitDigest" | "evaluatorDigest"
-  >,
+  boundTo: ThresholdDigests,
 ): void {
   const policy = PREREGISTRATION_V4;
   const { artifactDigest, ...withoutDigest } = artifact;
@@ -341,11 +367,7 @@ export function validateProvisionalThresholdArtifact(
       `the frozen threshold was fitted over [${artifact.fitPartitions.join(", ")}] while the pre-registration names [${policy.threshold.quantilePartitions.join(", ")}]`,
     );
   }
-  for (const key of [
-    "datasetDigest",
-    "splitDigest",
-    "evaluatorDigest",
-  ] as const) {
+  for (const key of THRESHOLD_DIGEST_KEYS) {
     if (artifact.digests[key] !== boundTo[key]) {
       throw new ProvisionalThresholdError(
         "THRESHOLD_GOVERNANCE_MISMATCH",
@@ -353,4 +375,266 @@ export function validateProvisionalThresholdArtifact(
       );
     }
   }
+}
+
+const SHA256_HEX = /^[a-f0-9]{64}$/u;
+
+/** Refuses with the JSON path of the field that is wrong. */
+function malformed(path: string, why: string): never {
+  throw new ProvisionalThresholdError(
+    "THRESHOLD_ARTIFACT_MALFORMED",
+    `provisional-threshold.json: ${path} ${why}`,
+  );
+}
+
+function objectAt(value: unknown, path: string): Record<string, unknown> {
+  if (
+    typeof value !== "object" ||
+    value === null ||
+    Array.isArray(value) ||
+    Object.getPrototypeOf(value) !== Object.prototype
+  ) {
+    malformed(path, "must be a plain object");
+  }
+  return value as Record<string, unknown>;
+}
+
+function closedKeys(
+  value: Record<string, unknown>,
+  path: string,
+  expected: readonly string[],
+): void {
+  const found = Object.keys(value).sort();
+  const wanted = [...expected].sort();
+  if (found.join(",") !== wanted.join(",")) {
+    malformed(
+      path,
+      `must carry exactly [${wanted.join(", ")}] and carries [${found.join(", ")}]`,
+    );
+  }
+}
+
+function stringAt(value: Record<string, unknown>, path: string, key: string) {
+  const found = value[key];
+  if (typeof found !== "string" || found.length === 0) {
+    malformed(`${path}.${key}`, "must be a non-empty string");
+  }
+  return found;
+}
+
+function literalAt<T extends string | number>(
+  value: Record<string, unknown>,
+  path: string,
+  key: string,
+  expected: T,
+): T {
+  if (value[key] !== expected) {
+    malformed(
+      `${path}.${key}`,
+      `must be ${JSON.stringify(expected)} and is ${JSON.stringify(value[key])}`,
+    );
+  }
+  return expected;
+}
+
+function unitAt(
+  value: Record<string, unknown>,
+  path: string,
+  key: string,
+): number {
+  const found = value[key];
+  if (typeof found !== "number" || !Number.isFinite(found)) {
+    malformed(`${path}.${key}`, "must be a finite number");
+  }
+  if (found < 0 || found > 1) {
+    malformed(`${path}.${key}`, `must lie in [0,1] and is ${String(found)}`);
+  }
+  return found;
+}
+
+function countAt(
+  value: Record<string, unknown>,
+  path: string,
+  key: string,
+): number {
+  const found = value[key];
+  if (typeof found !== "number" || !Number.isSafeInteger(found) || found < 0) {
+    malformed(`${path}.${key}`, "must be a non-negative safe integer");
+  }
+  return found as number;
+}
+
+function sha256At(
+  value: Record<string, unknown>,
+  path: string,
+  key: string,
+): string {
+  const found = stringAt(value, path, key);
+  if (!SHA256_HEX.test(found)) {
+    malformed(`${path}.${key}`, "must be 64 lowercase hex characters");
+  }
+  return found;
+}
+
+/**
+ * Parses the bytes of a `provisional-threshold.json` into the sealed shape, or refuses
+ * naming the path of the field that is wrong.
+ *
+ * This exists because a cast is not a parser and `schemaVersion` is not a guard. The
+ * certifying path used to read this file with `as ProvisionalThresholdArtifact`, so a
+ * v1 artifact re-labelled `schemaVersion: 2` went through unread, and a TRUNCATED one
+ * reached {@link validateProvisionalThresholdArtifact} and died there as a bare
+ * `TypeError` — an uncoded crash, at a point in `evaluate` where the blind block has
+ * already been scored and the lease is `started`, which is one-way.
+ *
+ * The shape is CLOSED on every object: an unexpected key is a refusal, because the one
+ * thing a reader of a sealed cut may not do is ignore a field somebody added.
+ */
+export function parseProvisionalThresholdArtifact(
+  value: unknown,
+): ProvisionalThresholdArtifact {
+  const root = objectAt(value, "$");
+  closedKeys(root, "$", [
+    "schemaVersion",
+    "thresholdVersion",
+    "thresholdBasis",
+    "threshold",
+    "fitPartitions",
+    "seed",
+    "digests",
+    "preRegistration",
+    "population",
+    "artifactDigest",
+  ]);
+  literalAt(root, "$", "schemaVersion", 1);
+  const thresholdBasis = stringAt(root, "$", "thresholdBasis");
+  if (thresholdBasis !== BASIS) {
+    malformed(
+      "$.thresholdBasis",
+      `must be ${JSON.stringify(BASIS)} and is ${JSON.stringify(thresholdBasis)}`,
+    );
+  }
+  const fitPartitions = root.fitPartitions;
+  if (
+    !Array.isArray(fitPartitions) ||
+    fitPartitions.length === 0 ||
+    fitPartitions.some(
+      (entry) => typeof entry !== "string" || entry.length === 0,
+    )
+  ) {
+    malformed(
+      "$.fitPartitions",
+      "must be a non-empty array of partition names",
+    );
+  }
+
+  const digests = objectAt(root.digests, "$.digests");
+  closedKeys(digests, "$.digests", THRESHOLD_DIGEST_KEYS);
+  const parsedDigests = Object.fromEntries(
+    THRESHOLD_DIGEST_KEYS.map((key) => [
+      key,
+      sha256At(digests, "$.digests", key),
+    ]),
+  ) as unknown as ThresholdDigests;
+
+  const preRegistration = objectAt(root.preRegistration, "$.preRegistration");
+  closedKeys(preRegistration, "$.preRegistration", [
+    "policyVersion",
+    "calibrationScoreBasis",
+    "fprBudgetPerCell",
+    "multiplicity",
+    "probabilisticCalibrator",
+    "quantile",
+    "side",
+  ]);
+  const calibrationScoreBasis = stringAt(
+    preRegistration,
+    "$.preRegistration",
+    "calibrationScoreBasis",
+  );
+  if (calibrationScoreBasis !== BASIS) {
+    malformed(
+      "$.preRegistration.calibrationScoreBasis",
+      `must be ${JSON.stringify(BASIS)} and is ${JSON.stringify(calibrationScoreBasis)}`,
+    );
+  }
+  const multiplicity = objectAt(
+    preRegistration.multiplicity,
+    "$.preRegistration.multiplicity",
+  );
+  closedKeys(multiplicity, "$.preRegistration.multiplicity", [
+    "correction",
+    "familyAlpha",
+    "perHypothesisAlpha",
+    "primaryFamilySize",
+  ]);
+
+  const population = objectAt(root.population, "$.population");
+  closedKeys(population, "$.population", [
+    "humanNegatives",
+    "atOrAboveThreshold",
+  ]);
+
+  return {
+    schemaVersion: 1,
+    thresholdVersion: stringAt(root, "$", "thresholdVersion"),
+    thresholdBasis: BASIS,
+    threshold: unitAt(root, "$", "threshold"),
+    fitPartitions: [...(fitPartitions as readonly string[])],
+    seed: countAt(root, "$", "seed"),
+    digests: parsedDigests,
+    preRegistration: {
+      policyVersion: stringAt(
+        preRegistration,
+        "$.preRegistration",
+        "policyVersion",
+      ),
+      calibrationScoreBasis: BASIS,
+      fprBudgetPerCell: unitAt(
+        preRegistration,
+        "$.preRegistration",
+        "fprBudgetPerCell",
+      ),
+      multiplicity: {
+        correction: literalAt(
+          multiplicity,
+          "$.preRegistration.multiplicity",
+          "correction",
+          "bonferroni",
+        ),
+        familyAlpha: unitAt(
+          multiplicity,
+          "$.preRegistration.multiplicity",
+          "familyAlpha",
+        ),
+        perHypothesisAlpha: unitAt(
+          multiplicity,
+          "$.preRegistration.multiplicity",
+          "perHypothesisAlpha",
+        ),
+        primaryFamilySize: countAt(
+          multiplicity,
+          "$.preRegistration.multiplicity",
+          "primaryFamilySize",
+        ),
+      },
+      probabilisticCalibrator: literalAt(
+        preRegistration,
+        "$.preRegistration",
+        "probabilisticCalibrator",
+        "none",
+      ),
+      quantile: unitAt(preRegistration, "$.preRegistration", "quantile"),
+      side: literalAt(preRegistration, "$.preRegistration", "side", "upper"),
+    },
+    population: {
+      humanNegatives: countAt(population, "$.population", "humanNegatives"),
+      atOrAboveThreshold: countAt(
+        population,
+        "$.population",
+        "atOrAboveThreshold",
+      ),
+    },
+    artifactDigest: sha256At(root, "$", "artifactDigest"),
+  };
 }

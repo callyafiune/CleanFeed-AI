@@ -555,15 +555,6 @@ export interface FrozenCalibrationResult extends FrozenCalibrationArtifact {
   };
 }
 
-export interface AppliedCalibration {
-  documentScore: number;
-  localizedScore: number;
-  warnedByDocument: boolean;
-  warnedByLocalized: boolean;
-  warning: boolean;
-  visualAction: boolean;
-}
-
 /** Coded, fail-closed error thrown by the frozen-calibration fit. */
 export class CalibrationPipelineError extends Error {
   constructor(message: string) {
@@ -1221,39 +1212,6 @@ export function fitFrozenCalibration(
       document: documentSelection.stratification,
       localized: localizedSelection.stratification,
     },
-  };
-}
-
-/**
- * Applies a frozen calibration to a pair of raw scores. The warning is the
- * UNION of the two calibrated paths; the visual action consults ONLY the
- * document path and only when a visual threshold was frozen.
- */
-export function applyFrozenCalibration(
-  artifact: FrozenCalibrationArtifact,
-  rawScores: { documentRawScore: number; localizedRawScore: number },
-): AppliedCalibration {
-  const documentScore = applyCalibrator(
-    artifact.calibrators.document,
-    rawScores.documentRawScore,
-  );
-  const localizedScore = applyCalibrator(
-    artifact.calibrators.localized,
-    rawScores.localizedRawScore,
-  );
-  const warnedByDocument = documentScore >= artifact.thresholds.warningDocument;
-  const warnedByLocalized =
-    localizedScore >= artifact.thresholds.warningLocalized;
-  const visualAction =
-    artifact.thresholds.visualDocument !== null &&
-    documentScore >= artifact.thresholds.visualDocument;
-  return {
-    documentScore,
-    localizedScore,
-    warnedByDocument,
-    warnedByLocalized,
-    warning: warnedByDocument || warnedByLocalized,
-    visualAction,
   };
 }
 

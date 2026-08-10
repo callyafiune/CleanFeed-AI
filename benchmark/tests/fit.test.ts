@@ -750,8 +750,20 @@ describe("runFit prediction completeness (fail closed)", () => {
           artifact as unknown as ProvisionalThresholdArtifact,
           {
             datasetDigest: frozen.datasetDigest,
+            datasetAuditDigest: frozen.datasetAuditDigest,
             splitDigest: frozen.splitDigest,
             evaluatorDigest: frozen.evaluatorDigest,
+            sourceReadinessDigest: frozen.sourceReadinessDigest,
+            developmentManifestDigest: (
+              frozen.predictionManifestDigests as unknown as {
+                development: string;
+              }
+            ).development,
+            calibrationManifestDigest: (
+              frozen.predictionManifestDigests as unknown as {
+                calibration: string;
+              }
+            ).calibration,
           },
         ),
       ).not.toThrow();

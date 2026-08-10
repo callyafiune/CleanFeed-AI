@@ -30,6 +30,8 @@ import { resolve } from "node:path";
 
 import {
   computeCalibrationProfileDigest,
+  DISABLED_THRESHOLD,
+  IDENTITY_CALIBRATOR,
   parseCalibrationProfilesFileV1,
   type CalibrationProfilesFileV1,
   type LengthBucketV1,
@@ -46,6 +48,7 @@ import type { GateReport, ReleaseDecision } from "./gates.ts";
 import { wilsonOneSided } from "./intervals.ts";
 import type { DecisionFamilies, MetricEstimate } from "./metrics.ts";
 import { PREREGISTRATION_V4 } from "./preregistration-v4.ts";
+import type { ProvisionalThresholdArtifact } from "./provisional-threshold.ts";
 import type { BenchmarkReport } from "./report.ts";
 
 // v1 policy: calibration profiles are published for the single "generic"
@@ -113,6 +116,12 @@ const MAPPED_LENGTH_BANDS: ReadonlySet<string> = new Set(
 
 export interface ModelPublicationInput {
   frozen: FrozenCalibrationArtifact;
+  /**
+   * The sealed `provisional-threshold.json` of the same fit. It is REQUIRED, and it is
+   * the cut the published profiles carry: the measurement decided on it, so a profile
+   * built from anything else would serve a cut the evidence never measured.
+   */
+  provisionalThreshold: ProvisionalThresholdArtifact;
   report: BenchmarkReport;
   /** Explicit issuance timestamp; expiry is exactly this + 180 days. */
   issuedAt: string;
@@ -498,6 +507,98 @@ function assertLengthBandsAreMapped(gates: GateReport): void {
   }
 }
 
+/**
+ * Refuses a publication whose SERVED cut is not the cut the evidence was MEASURED on.
+ *
+ * Three separate claims, checked separately because they fail for different reasons:
+ * the artifact must be bound to this run's dataset/split/evaluator; the cut must be over
+ * the pre-registered basis under `probabilisticCalibrator: "none"`; and every profile
+ * must carry pass-through calibrators with that exact threshold. Without this the two
+ * halves can drift with nothing failing — a raw score compared against a calibrated cut
+ * is still a number, and it is the silent kind of wrong.
+ */
+function assertServedCutIsTheMeasuredCut(
+  profiles: readonly RuntimeCalibrationProfileV1[],
+  provisionalThreshold: ProvisionalThresholdArtifact,
+  identity: PublicationIdentity,
+): void {
+  if (
+    provisionalThreshold.digests.datasetDigest !== identity.datasetDigest ||
+    provisionalThreshold.digests.splitDigest !== identity.splitDigest ||
+    provisionalThreshold.digests.evaluatorDigest !== identity.evaluatorDigest
+  ) {
+    fail(
+      "PROVISIONAL_THRESHOLD_FOREIGN",
+      "the provisional threshold is bound to another dataset, split or evaluator than " +
+        "the report being published",
+    );
+  }
+  if (
+    provisionalThreshold.thresholdBasis !==
+      PREREGISTRATION_V4.threshold.basis ||
+    provisionalThreshold.preRegistration.probabilisticCalibrator !==
+      PREREGISTRATION_V4.threshold.probabilisticCalibrator
+  ) {
+    fail(
+      "PROVISIONAL_THRESHOLD_BASIS_DIVERGENT",
+      `the provisional threshold is over ${provisionalThreshold.thresholdBasis} under ` +
+        `calibrator ${provisionalThreshold.preRegistration.probabilisticCalibrator}, and the ` +
+        `pre-registration names ${PREREGISTRATION_V4.threshold.basis} under ` +
+        `${PREREGISTRATION_V4.threshold.probabilisticCalibrator}`,
+    );
+  }
+  const expected = toRuntimeThreshold(provisionalThreshold.threshold);
+  // A cut whose value IS the disabled sentinel cannot be served: `thresholdFires` reads
+  // 1 as off, so publishing it would deliver a document trigger that never fires while
+  // the measurement counted every draw at 1 as a warning — the same served-below-measured
+  // drift as its mirror, and unreachable input is not why it is refused (the artifact
+  // parser admits `threshold: 1`).
+  if (expected >= DISABLED_THRESHOLD) {
+    fail(
+      "PROFILE_CUT_AT_DISABLED_SENTINEL",
+      `the measured cut is ${expected}, which is the contract's disabled encoding: a ` +
+        "served profile cannot tell that cut from a trigger that is switched off",
+    );
+  }
+  for (const profile of profiles) {
+    if (
+      profile.calibrators.document.kind !== "identity" ||
+      profile.calibrators.localized.kind !== "identity"
+    ) {
+      fail(
+        "PROFILE_CALIBRATOR_NOT_IDENTITY",
+        `profile ${profile.profileId} publishes a ` +
+          `${profile.calibrators.document.kind}/${profile.calibrators.localized.kind} ` +
+          "calibrator while the release measured the raw score: the served cut would be " +
+          "applied to a number the evidence never cut",
+      );
+    }
+    if (profile.thresholds.documentIndicator !== expected) {
+      fail(
+        "PROFILE_CUT_DIVERGES_FROM_MEASUREMENT",
+        `profile ${profile.profileId} serves documentIndicator ` +
+          `${profile.thresholds.documentIndicator} while the measured cut is ${expected}`,
+      );
+    }
+    // The other two thresholds are the same claim as `documentIndicator` and not a
+    // formality: the measurement applied ONE cut on the document score, so a served
+    // localized or action threshold below the disabled sentinel would fire on a path
+    // whose false-positive rate no gate of this release estimated.
+    if (
+      profile.thresholds.localizedIndicator !== DISABLED_THRESHOLD ||
+      profile.thresholds.documentAction !== DISABLED_THRESHOLD
+    ) {
+      fail(
+        "PROFILE_CUT_DIVERGES_FROM_MEASUREMENT",
+        `profile ${profile.profileId} serves localizedIndicator ` +
+          `${profile.thresholds.localizedIndicator} and documentAction ` +
+          `${profile.thresholds.documentAction} while the measurement applied neither: ` +
+          `both have to be the disabled ${DISABLED_THRESHOLD}`,
+      );
+    }
+  }
+}
+
 function bucketAuthorizesAction(
   bucket: LengthBucketV1,
   gates: GateReport,
@@ -531,24 +632,28 @@ async function buildProfile(
   bucket: LengthBucketV1,
   decision: "indicator-only" | "pass",
   identity: PublicationIdentity,
-  frozen: FrozenCalibrationArtifact,
+  provisionalThreshold: ProvisionalThresholdArtifact,
   gateEvidence: RuntimeCalibrationProfileV1["gateEvidence"],
   gates: GateReport,
   issuedAt: string,
   expiresAt: string,
 ): Promise<RuntimeCalibrationProfileV1> {
   const actionCeiling = ceilingFor(bucket, decision, gates);
-  const documentIndicator = toRuntimeThreshold(
-    frozen.thresholds.warningDocument,
-  );
-  const localizedIndicator = toRuntimeThreshold(
-    frozen.thresholds.warningLocalized,
-  );
-  const actionBase =
-    frozen.thresholds.visualDocument === null
-      ? 1
-      : toRuntimeThreshold(frozen.thresholds.visualDocument);
-  const documentAction = actionCeiling === "hide" ? actionBase : 1;
+  // The ONE cut, on the ONE basis, behind an identity calibrator — the same three
+  // facts `benchmark/commands/evaluate.ts` measured on. The frozen calibration's own
+  // thresholds are NOT read here and must not be: they live on a calibrated scale this
+  // release does not serve, and publishing them behind a pass-through would hand the
+  // runtime a number from one scale to compare against scores from another.
+  const documentIndicator = toRuntimeThreshold(provisionalThreshold.threshold);
+  // Disabled, by the contract's own encoding, and the runtime honours it through
+  // `thresholdFires`: the v1 pre-inscribes no localized cut, and a served localized
+  // trigger would raise warnings the measurement never counted.
+  const localizedIndicator = DISABLED_THRESHOLD;
+  // Disabled unconditionally, and not by a branch on `actionCeiling`: the v1
+  // pre-inscribes NO action cut, so there is no number a `hide` ceiling could publish
+  // here. `actionCeiling` still travels on the profile — it is what a Phase 4 promotion
+  // moves — but it cannot open a threshold that was never measured.
+  const documentAction = DISABLED_THRESHOLD;
 
   const profile: RuntimeCalibrationProfileV1 = {
     schemaVersion: 1,
@@ -568,8 +673,8 @@ async function buildProfile(
     issuedAt,
     expiresAt,
     calibrators: {
-      document: frozen.calibrators.document,
-      localized: frozen.calibrators.localized,
+      document: IDENTITY_CALIBRATOR,
+      localized: IDENTITY_CALIBRATOR,
     },
     thresholds: { documentIndicator, localizedIndicator, documentAction },
     evidencePolicy: EVIDENCE_POLICY,
@@ -631,7 +736,7 @@ export async function buildModelPublication(
           bucket,
           decision,
           identity,
-          input.frozen,
+          input.provisionalThreshold,
           gateEvidence,
           input.report.gates,
           issuedAt,
@@ -640,6 +745,11 @@ export async function buildModelPublication(
       ),
     );
   }
+  assertServedCutIsTheMeasuredCut(
+    profileList,
+    input.provisionalThreshold,
+    identity,
+  );
 
   const profileDigests = profileList.map((profile) => profile.profileDigest);
   const calibrationSetDigest =

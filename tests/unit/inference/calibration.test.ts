@@ -10,9 +10,10 @@ import {
   type DecideWithProfileInput,
 } from "@/inference/calibration";
 import type { ProfileLookup } from "@/inference/calibration-registry";
-import type {
-  RuntimeCalibrationProfileV1,
-  SerializedCalibratorV1,
+import {
+  DISABLED_THRESHOLD,
+  type RuntimeCalibrationProfileV1,
+  type SerializedCalibratorV1,
 } from "../../../contracts/calibration-profile";
 import type {
   AggregationResultV2,
@@ -340,6 +341,51 @@ describe("decideWithProfile", () => {
       expect(outcome.presentationAllowed).toBe(false);
     },
   );
+
+  // The v1 profile this release publishes: the document cut is the pre-registered
+  // quantile, and BOTH other thresholds are the contract's disabled 1. A saturated score
+  // is exactly 1 and not 0.999… — the localized score is a max over chunk softmaxes — so
+  // a bare `score >= threshold` fired the localized trigger and authorized the action on
+  // a path the measurement never counted. It has to fire on nothing.
+  it("never fires a disabled threshold, not even at a saturated score of 1", () => {
+    const { outcome } = decideWithProfile(
+      decideInput({
+        lookup: foundLookup({
+          thresholds: {
+            documentIndicator: 0.475,
+            localizedIndicator: DISABLED_THRESHOLD,
+            documentAction: DISABLED_THRESHOLD,
+          },
+        }),
+        aggregation: agg(0.1, 1),
+      }),
+    );
+    expect(outcome.triggers).toEqual([]);
+    expect(outcome.reasonCodes).not.toContain("LOCALIZED_SIGNAL");
+    expect(outcome.status).toBe("probably_human");
+    expect(outcome.presentationAllowed).toBe(false);
+  });
+
+  // The other half of the same encoding: a document score of exactly 1 fires the
+  // indicator it was measured against and STILL authorizes no action, because the action
+  // threshold is off rather than merely high.
+  it("keeps a saturated document score at the indicator ceiling", () => {
+    const { outcome } = decideWithProfile(
+      decideInput({
+        lookup: foundLookup({
+          thresholds: {
+            documentIndicator: 0.475,
+            localizedIndicator: DISABLED_THRESHOLD,
+            documentAction: DISABLED_THRESHOLD,
+          },
+        }),
+        aggregation: agg(1, 1),
+      }),
+    );
+    expect(outcome.triggers).toEqual(["document"]);
+    expect(outcome.actionCeiling).toBe("indicator");
+    expect(outcome.status).toBe("possibly_ai");
+  });
 });
 
 describe("decideWithProfile applied-profile binding", () => {

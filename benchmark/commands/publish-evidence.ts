@@ -29,6 +29,7 @@ import {
   EVIDENCE_FILE_NAMES,
   type EvidenceInput,
 } from "../evidence-sanitizer.ts";
+import { parseProvisionalThresholdArtifact } from "../provisional-threshold.ts";
 import type { BenchmarkReport } from "../report.ts";
 import {
   assertSplitArtifactSelfConsistent,
@@ -54,6 +55,32 @@ interface LedgerEvent {
   consumptionId: string;
   status: "started" | "completed" | "failed";
   reportDigest: string | null;
+}
+
+/**
+ * Re-parses the ONE block of `fit-report.json` the public projection dereferences.
+ *
+ * The file itself is still read through a cast, which is a declared debt: what this
+ * closes is the consequence of the cast at the only place it is followed by a
+ * dereference. A fit report written by a `fit` that froze no cut — or one whose cut block
+ * was edited — would otherwise reach a bare `TypeError` in the middle of assembling the
+ * public bundle, and the artifact's own closed parser already names the offending path.
+ */
+function withParsedCut(fitReport: FitReport, path: string): FitReport {
+  try {
+    return {
+      ...fitReport,
+      provisionalThreshold: parseProvisionalThresholdArtifact(
+        fitReport.provisionalThreshold,
+      ),
+    };
+  } catch (error) {
+    throw new CommandError(
+      "FIT_REPORT_CUT_MALFORMED",
+      `${path}: $.provisionalThreshold is not a sealed provisional-threshold artifact — ` +
+        `${error instanceof Error ? error.message : String(error)}`,
+    );
+  }
 }
 
 function requireEqual(label: string, actual: string, expected: string): void {
@@ -157,7 +184,10 @@ export async function runPublishEvidence(
         "composition attestation",
     );
   }
-  const fitReport = (await readJsonFile(options.fitReportPath)) as FitReport;
+  const fitReport = withParsedCut(
+    (await readJsonFile(options.fitReportPath)) as FitReport,
+    options.fitReportPath,
+  );
 
   const release = await parseModelReleaseDescriptorV1(
     await readJsonFile(join(options.modelDirectory, "release.json")),

@@ -1,6 +1,9 @@
 import { describe, expect, it } from "vitest";
 
-import { parseCalibrationProfilesFileV1 } from "../../contracts/calibration-profile.ts";
+import {
+  DISABLED_THRESHOLD,
+  parseCalibrationProfilesFileV1,
+} from "../../contracts/calibration-profile.ts";
 import { parseModelReleaseDescriptorV1 } from "../../contracts/model-release.ts";
 import { buildModelPublication } from "../profile-artifact.ts";
 import {
@@ -52,10 +55,48 @@ describe("calibration profile artifact", () => {
     expect(ceilings.get("200-plus")).toBe("hide");
     expect(ceilings.get("80-199")).toBe("hide");
     expect(ceilings.get("50-79")).toBe("indicator");
+    // `hide` as a CEILING and 1 as the served action threshold are not in tension: the
+    // v1 pre-inscribes no action cut, so a bucket the gates would authorize still gets
+    // no number to fire on. The ceiling is what a Phase 4 promotion moves; the threshold
+    // is what the measurement supports today.
     const middle = publication.profiles.profiles.find(
       (profile) => profile.lengthBucket === "80-199",
     );
-    expect(middle?.thresholds.documentAction).toBe(0.85);
+    expect(middle?.thresholds.documentAction).toBe(1);
+  });
+
+  // The whole point of the unit: the SERVED cut is the MEASURED cut. The profile carries
+  // pass-through calibrators, so the number the runtime compares is the raw document
+  // score `evaluate` cut, and the threshold is the frozen `provisional-v1` quantile.
+  it("serves the pre-registered cut behind pass-through calibrators", async () => {
+    const publication = await buildModelPublication(passInput);
+    expect(publication.profiles.profiles.length).toBe(3);
+    for (const profile of publication.profiles.profiles) {
+      expect(profile.calibrators.document).toEqual({ kind: "identity" });
+      expect(profile.calibrators.localized).toEqual({ kind: "identity" });
+      expect(profile.thresholds.documentIndicator).toBe(
+        passInput.provisionalThreshold.threshold,
+      );
+      // The localized path and the action path are BOTH disabled, at the contract's own
+      // sentinel: the v1 pre-inscribes one cut, and either of them below 1 would fire on
+      // a path whose false-positive rate no gate of this release estimated.
+      // `thresholdFires` is what makes the 1 an off switch rather than a very high cut,
+      // and `assertServedCutIsTheMeasuredCut` refuses any profile that leaves it.
+      expect(profile.thresholds.localizedIndicator).toBe(DISABLED_THRESHOLD);
+      expect(profile.thresholds.documentAction).toBe(DISABLED_THRESHOLD);
+    }
+  });
+
+  // The frozen calibration's own thresholds live on a calibrated scale this release does
+  // not serve. Publishing them behind a pass-through would hand the runtime a number
+  // from one scale to compare against scores from another — silently.
+  it("never serves the frozen calibration's calibrated thresholds", async () => {
+    const publication = await buildModelPublication(passInput);
+    const served = publication.profiles.profiles.map(
+      (profile) => profile.thresholds.documentIndicator,
+    );
+    expect(served).not.toContain(passInput.frozen.thresholds.warningDocument);
+    expect(new Set(served).size).toBe(1);
   });
 
   // No evidence, no authorization: the bucket whose constituent bands produced no action
@@ -132,7 +173,9 @@ describe("calibration profile artifact", () => {
         expect(threshold).toBeLessThanOrEqual(1);
         expect(threshold).not.toBe(2);
       }
-      // The localized warning path never fired (sentinel) → disabled at 1.
+      // Disabled at 1 unconditionally now, and not because the frozen fit sealed the
+      // sentinel: the v1 pre-inscribes no localized cut at all, so the sentinel no
+      // longer reaches a published threshold by any route.
       expect(localizedIndicator).toBe(1);
     }
   });
@@ -172,6 +215,76 @@ describe("profile artifact — recusas de identidade, data e evidencia", () => {
     await expect(
       buildModelPublication({ ...passInput, issuedAt: "ontem de manha" }),
     ).rejects.toMatchObject({ code: "ISSUED_AT_INVALID" });
+  });
+
+  // The guard that makes "served cut == measured cut" an assertion instead of a habit.
+  // `buildModelPublication` never validates the threshold artifact's own seal, so a
+  // foreign or drifted cut reaches this check with its bytes intact — which is exactly
+  // the case that has to be refused, because publishing it would serve a number the
+  // evidence never measured.
+  it("refuses a cut bound to another dataset, split or evaluator", async () => {
+    for (const campo of [
+      "datasetDigest",
+      "splitDigest",
+      "evaluatorDigest",
+    ] as const) {
+      await expect(
+        buildModelPublication({
+          ...passInput,
+          provisionalThreshold: {
+            ...passInput.provisionalThreshold,
+            digests: {
+              ...passInput.provisionalThreshold.digests,
+              [campo]: "9".repeat(64),
+            },
+          },
+        }),
+      ).rejects.toMatchObject({ code: "PROVISIONAL_THRESHOLD_FOREIGN" });
+    }
+  });
+
+  it("refuses a cut frozen over another basis or under a calibrator", async () => {
+    await expect(
+      buildModelPublication({
+        ...passInput,
+        provisionalThreshold: {
+          ...passInput.provisionalThreshold,
+          thresholdBasis:
+            "document-calibrated-score" as unknown as typeof passInput.provisionalThreshold.thresholdBasis,
+        },
+      }),
+    ).rejects.toMatchObject({ code: "PROVISIONAL_THRESHOLD_BASIS_DIVERGENT" });
+
+    await expect(
+      buildModelPublication({
+        ...passInput,
+        provisionalThreshold: {
+          ...passInput.provisionalThreshold,
+          preRegistration: {
+            ...passInput.provisionalThreshold.preRegistration,
+            probabilisticCalibrator:
+              "platt" as unknown as typeof passInput.provisionalThreshold.preRegistration.probabilisticCalibrator,
+          },
+        },
+      }),
+    ).rejects.toMatchObject({ code: "PROVISIONAL_THRESHOLD_BASIS_DIVERGENT" });
+  });
+
+  // The collision the disabled encoding creates, and the reason it is refused rather than
+  // clamped: `thresholdFires` reads 1 as OFF, so a measured cut whose value IS 1 would be
+  // served as a document trigger that never fires while the measurement counted every
+  // draw at 1 as a warning. The artifact parser admits `threshold: 1`, so this is
+  // reachable input and not a theoretical edge.
+  it("refuses to serve a measured cut that sits on the disabled sentinel", async () => {
+    await expect(
+      buildModelPublication({
+        ...passInput,
+        provisionalThreshold: {
+          ...passInput.provisionalThreshold,
+          threshold: 1,
+        },
+      }),
+    ).rejects.toMatchObject({ code: "PROFILE_CUT_AT_DISABLED_SENTINEL" });
   });
 
   it("refuses gate evidence with a non-finite ECE-15", async () => {

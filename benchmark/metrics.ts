@@ -767,7 +767,13 @@ export interface FrozenThresholdMetrics {
 
 export interface ReleaseMetrics {
   role: "release";
-  thresholdSource: "frozen-calibration-threshold";
+  /**
+   * Which cut produced the decisions these matrices count. `provisional-v1` is the ONE
+   * pre-registered cut of the v1 — a one-sided quantile of `document-raw-score` — and
+   * naming the frozen calibration here while the items were cut on the raw score would
+   * be the report asserting a threshold nobody applied.
+   */
+  thresholdSource: "preregistered-provisional-threshold";
   warning: FrozenThresholdMetrics;
   visualAction: FrozenThresholdMetrics | null;
 }
@@ -2803,7 +2809,7 @@ export function computeEvaluationMetrics(
     actionAuthorization,
     release: {
       role: "release",
-      thresholdSource: "frozen-calibration-threshold",
+      thresholdSource: "preregistered-provisional-threshold",
       warning: frozenThresholdMetrics(
         "warning",
         warning,

@@ -309,6 +309,11 @@ function predictionManifest(
 // A real provisional-threshold artifact over the same governance digests the frozen
 // calibration binds to. Frozen by the shipped function, so the digest, the restated
 // pre-registration and the fit partitions are exactly the ones `evaluate` cross-checks.
+//
+// The fit population runs 0.000 .. 0.495, so the 0.95 upper quantile is 0.475 — the cut
+// this scenario's mock scorer straddles: a `LOW` row scores 0.2 and a `HIGH` row 0.8.
+// The cut DECIDES now, so a population that put it above 0.8 would make every positive a
+// false negative and turn every recall gate into a breached budget.
 function provisionalThresholdFixture(digests: {
   datasetDigest: string;
   splitDigest: string;
@@ -323,7 +328,7 @@ function provisionalThresholdFixture(digests: {
       id: `fit_${String(index).padStart(3, "0")}`,
       label: "human",
       partition: partitions[index % partitions.length],
-      documentRawScore: index / count,
+      documentRawScore: index / (count * 2),
     })),
     testIds: [],
     seed: PREREGISTRATION_V4.seeds.split,
@@ -819,6 +824,16 @@ async function rejectionCode(promise: Promise<unknown>): Promise<string> {
   throw new Error("expected the call to reject");
 }
 
+// The whole message, for the refusals whose VALUE is the field path they name.
+async function rejectionMessage(promise: Promise<unknown>): Promise<string> {
+  try {
+    await promise;
+  } catch (error) {
+    return error instanceof Error ? error.message : String(error);
+  }
+  throw new Error("expected the call to reject");
+}
+
 const ACTIVE_SESSION_FILE = "active-session.json";
 const RECEIPT_FILE = "pre-exposure-check.json";
 const INCIDENT_FILE = "holdout-exposure-incident.json";
@@ -875,6 +890,64 @@ describe("consume-holdout one-way lease", () => {
     expect(readLedgerEvents(scenario.ledgerPath)).toEqual([]);
     expect(
       existsSync(join(scenario.workDirectory, "active-session.json")),
+    ).toBe(false);
+    expect(page.createCalls).toBe(0);
+    expect(page.scoreCalls).toBe(0);
+  });
+
+  it("refuses a malformed pre-registered cut before the lease exists", async () => {
+    // The ordering that matters is against the LEASE, not against the shard reads: the
+    // cut used to be parsed inside `evaluate`, which runs after `beginHoldoutConsumption`
+    // has written `started` and after the whole blind block has been scored. A truncated
+    // JSON file would therefore have cost the block. The check now sits in the
+    // pre-exposure stretch, beside the evaluator identity confirmation.
+    const root = await newRoot();
+    const scenario = await buildScenario(root, {
+      scientificUse: "release",
+      visualDocument: 0.8,
+      realEvaluator: false,
+      testNegatives: 4,
+      testPositives: 4,
+      negativeTag: "LOW",
+    });
+    const cutPath = join(
+      dirname(scenario.options.frozenCalibrationPath),
+      "provisional-threshold.json",
+    );
+    const sealed = JSON.parse(await readFile(cutPath, "utf8")) as Record<
+      string,
+      unknown
+    >;
+    // Truncated and re-labelled with the ORIGINAL digest: only a shape parser refuses
+    // this, because the digest comparison never gets to run.
+    await writeFile(
+      cutPath,
+      `${JSON.stringify(
+        {
+          schemaVersion: sealed.schemaVersion,
+          artifactDigest: sealed.artifactDigest,
+        },
+        null,
+        2,
+      )}\n`,
+    );
+
+    const page = stubPage(scenario.status);
+    await expect(
+      runConsumeHoldout(
+        scenario.options,
+        holdoutDeps(scenario, page.createTestPage),
+      ),
+    ).rejects.toThrow(/THRESHOLD_ARTIFACT_MALFORMED/u);
+
+    // Nothing was spent: no ledger event, no session marker, no shard directory, no
+    // scorer. The ledger file itself exists because genesis precedes the command.
+    expect(readLedgerEvents(scenario.ledgerPath)).toEqual([]);
+    expect(
+      existsSync(join(scenario.workDirectory, "active-session.json")),
+    ).toBe(false);
+    expect(
+      existsSync(join(scenario.workDirectory, "predictions", "test")),
     ).toBe(false);
     expect(page.createCalls).toBe(0);
     expect(page.scoreCalls).toBe(0);
@@ -1121,30 +1194,41 @@ describe("consume-holdout one-way lease", () => {
       // No integrity gate failed, and no substantive statistic failed either:
       // every failure names missing evidence, never a breached budget.
       expect(gates.failedIntegrity).toEqual([]);
-      expect(gates.failedAction).not.toContain("action.available");
-      // The label basis of every human negative is `unknown` until C1 puts the
-      // field in the closed schema, so the action tier's label-basis cell is
-      // supplementary-diagnostic and cannot authorize visual action. That is the
-      // one failure here that is about power rather than about missing evidence.
-      expect(gates.failedAction).toContain("action.fpr.labelBasis.unknown");
+      // The action tier IS unavailable, and that is the pre-registration speaking: the
+      // v1 declares one cut on one basis and pins `maximumStage: "indicator"`, so there
+      // is no action cut for the measurement to apply. It used to be available because
+      // the run read the frozen calibration's calibrated visual threshold, which is a
+      // number on a scale this measurement no longer has.
+      expect(gates.failedAction).toEqual(["action.available"]);
+      // And it is the ONLY action failure: with no action cut there is no action
+      // matrix, so `actionIntervalSpecs` builds nothing and the tier holds one gate. The
+      // label-basis cell that used to fail here for want of power is not "fixed" — it is
+      // not measured, because nothing in the action tier is.
       // EVERY warning failure — diagnostic ones included — names missing evidence and
       // not a breached budget. The loop is over the whole tier and not over
       // `failedCertifying`, because narrowing it to the certifying layer would stop
-      // constraining the diagnostics this run publishes. The one exception is named:
-      // the ECE is measured over the calibrated score while the pre-registration is
-      // about `document-raw-score`, and the gate refuses the basis rather than
-      // certifying a statistic about another quantity.
+      // constraining the diagnostics this run publishes.
       for (const id of gates.failedWarning) {
         const gate = gates.gates.find((candidate) => candidate.id === id);
         expect(gate?.evidence).toMatch(
-          /missing-resampling-plan|missing-simultaneous-interval|insufficient-resampling-effort|score-basis-mismatch/u,
+          /missing-resampling-plan|missing-simultaneous-interval|insufficient-resampling-effort/u,
         );
       }
+      // And `score-basis-mismatch` is GONE from the whole report. It used to be
+      // unavoidable — the ECE was measured over the calibrated score while the sealed
+      // hypothesis is about `document-raw-score` — so the global calibration gate
+      // refused by construction and no certifying run could pass. The refusal was
+      // correct; what was wrong was the cut.
       const ece = gates.gates.find(
         (candidate) => candidate.id === "warning.calibration-ece",
       );
       expect(ece?.role).toBe("certifying");
-      expect(ece?.evidence).toBe("score-basis-mismatch");
+      expect(ece?.evidence).not.toBe("score-basis-mismatch");
+      expect(
+        gates.gates.filter(
+          (candidate) => candidate.evidence === "score-basis-mismatch",
+        ),
+      ).toEqual([]);
       // And every certifying failure is a warning-tier one: the family has no member
       // in the action tier, so nothing certifying can fail with the ceiling of another
       // tier.
@@ -1255,15 +1339,18 @@ describe("consume-holdout one-way lease", () => {
       expect(message).toBe("HOLDOUT_COMPLETED decision=reject");
       expect(gates.failedAction).toContain("action.available");
       expect(gates.failedIntegrity).toEqual([]);
-      // Every CERTIFYING failure is a missing-evidence or refused-basis failure, not a
-      // breached budget. The diagnostics are not: at 60 human negatives the pooled
+      // Every CERTIFYING failure is a MISSING-EVIDENCE failure, not a breached budget
+      // and no longer a refused basis: the measurement cuts the same score the
+      // hypothesis is about, so `score-basis-mismatch` is off this allowlist and its
+      // twin scenario above asserts the value is absent from the whole report. The
+      // diagnostics are not missing-evidence failures: at 60 human negatives the pooled
       // FPR's simultaneous upper bound is above the 5% budget with zero false positives
       // in it, which is a published diagnostic — and it rejects all the same, because a
       // gate that certifies nothing still describes the population the release acts on.
       for (const id of gates.failedCertifying) {
         const gate = gates.gates.find((candidate) => candidate.id === id);
         expect(gate?.evidence).toMatch(
-          /missing-resampling-plan|missing-simultaneous-interval|insufficient-resampling-effort|score-basis-mismatch/u,
+          /missing-resampling-plan|missing-simultaneous-interval|insufficient-resampling-effort/u,
         );
       }
       const pooled = gates.gates.find(
@@ -2275,9 +2362,138 @@ describe("evaluate — guardas do artefato de predicao", () => {
         const resto = semDigest({ ...artifact, preRegistration });
         return { ...resto, artifactDigest: canonicalSha256Sync(resto) };
       });
+      // The SHAPE parser is now the first reader, so this arrives as a malformed field
+      // naming its own path rather than as policy drift. Both are refusals; the parser's
+      // is the one that also survives a truncated file.
+      expect(
+        await rejectionCode(runEvaluate(opcoes(scenario, predicoes))),
+      ).toBe("THRESHOLD_ARTIFACT_MALFORMED");
+    },
+    TIMEOUT_MS,
+  );
+
+  it(
+    "refuses a pre-registered cut frozen under another policy version",
+    async () => {
+      // A field the shape parser cannot pin — any non-empty string is a valid
+      // `policyVersion` — so this is the drift cross-check itself, still reachable
+      // behind the parser.
+      const scenario = await buildScenario(await raiz(), SPEC);
+      const predicoes = await escrevePredicoes(scenario);
+      await comLimiar(scenario, (artifact) => {
+        const preRegistration = {
+          ...(artifact.preRegistration as Record<string, unknown>),
+          policyVersion: "preregistration-v3-v9",
+        };
+        const resto = semDigest({ ...artifact, preRegistration });
+        return { ...resto, artifactDigest: canonicalSha256Sync(resto) };
+      });
       expect(
         await rejectionCode(runEvaluate(opcoes(scenario, predicoes))),
       ).toBe("THRESHOLD_PREREGISTRATION_DRIFT");
+    },
+    TIMEOUT_MS,
+  );
+
+  it(
+    "refuses a cut bound to a manifest that was swapped on disk and re-frozen over",
+    async () => {
+      // The two authorities the cut could be bound to are NOT the same: the frozen
+      // artifact SEALS `predictionManifestDigests`, and `evaluate` also RECOMPUTES them
+      // from the manifests in the fit directory. Binding the cut to the recomputed pair
+      // lets a coordinated swap through — replace the dev manifest, re-freeze the cut over
+      // its new digest, and a recomputed comparison agrees with both halves. The seal is
+      // covered by the frozen artifact's own `artifactDigest`, so it is the authority.
+      //
+      // Measured as a refusal that lands BEFORE any test byte: the run is aimed at a
+      // predictions directory that does not exist, and the refusal is still the
+      // governance one and not `FILE_MISSING`.
+      const scenario = await buildScenario(await raiz(), SPEC);
+      const fitDir = dirname(scenario.options.frozenCalibrationPath);
+      const manifestPath = join(fitDir, "development-prediction-manifest.json");
+      const original = JSON.parse(
+        await readFile(manifestPath, "utf8"),
+      ) as PredictionManifestV1;
+      const swapped: PredictionManifestV1 = {
+        ...original,
+        createdAt: "2026-07-20T00:00:00.000Z",
+      };
+      await writeFile(
+        manifestPath,
+        `${JSON.stringify(swapped, null, 2)}\n`,
+        "utf8",
+      );
+      const swappedDigest = await computePredictionManifestDigest(swapped);
+      await comLimiar(scenario, (artifact) => {
+        const digests = {
+          ...(artifact.digests as Record<string, unknown>),
+          developmentManifestDigest: swappedDigest,
+        };
+        const resto = semDigest({ ...artifact, digests });
+        return { ...resto, artifactDigest: canonicalSha256Sync(resto) };
+      });
+
+      const inexistente = join(scenario.workDirectory, "predicoes-ausentes");
+      const erro = await rejectionMessage(
+        runEvaluate(opcoes(scenario, inexistente)),
+      );
+      expect(erro).toContain("THRESHOLD_GOVERNANCE_MISMATCH");
+      expect(erro).toContain("developmentManifestDigest");
+    },
+    TIMEOUT_MS,
+  );
+
+  it(
+    "refuses a truncated cut BEFORE it reads a single test prediction",
+    async () => {
+      // The order is the guard, not the refusal. A truncated artifact used to reach
+      // `validateProvisionalThresholdArtifact` and die there as a bare `TypeError`
+      // (`[...undefined]` over `fitPartitions`) — uncoded, at a point where the blind
+      // block had already been scored and the lease is one-way at `started`.
+      //
+      // Order is asserted by aiming the run at a predictions directory that does not
+      // exist: if the command read predictions first it would refuse for THAT, and the
+      // pair of expectations below is what tells the two apart.
+      const scenario = await buildScenario(await raiz(), SPEC);
+      const inexistente = join(
+        scenario.workDirectory,
+        "predicoes-que-nao-existem",
+      );
+
+      const intacto = await rejectionCode(
+        runEvaluate(opcoes(scenario, inexistente)),
+      );
+      expect(intacto).toBe("FILE_MISSING");
+
+      await comLimiar(scenario, (artifact) => ({
+        schemaVersion: artifact.schemaVersion,
+        artifactDigest: artifact.artifactDigest,
+      }));
+      const truncado = await rejectionCode(
+        runEvaluate(opcoes(scenario, inexistente)),
+      );
+      expect(truncado).toBe("THRESHOLD_ARTIFACT_MALFORMED");
+      expect(truncado).not.toBe(intacto);
+    },
+    TIMEOUT_MS,
+  );
+
+  it(
+    "refuses a cut whose schemaVersion the reader does not know",
+    async () => {
+      // v1 content, v2 label, re-digested so the digest closes over the edit: the version
+      // number guarded nothing while the reader was a cast.
+      const scenario = await buildScenario(await raiz(), SPEC);
+      const predicoes = await escrevePredicoes(scenario);
+      await comLimiar(scenario, (artifact) => {
+        const resto = semDigest({ ...artifact, schemaVersion: 2 });
+        return { ...resto, artifactDigest: canonicalSha256Sync(resto) };
+      });
+      const erro = await rejectionMessage(
+        runEvaluate(opcoes(scenario, predicoes)),
+      );
+      expect(erro).toContain("THRESHOLD_ARTIFACT_MALFORMED");
+      expect(erro).toContain("$.schemaVersion");
     },
     TIMEOUT_MS,
   );

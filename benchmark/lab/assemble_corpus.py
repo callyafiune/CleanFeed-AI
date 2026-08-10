@@ -879,11 +879,30 @@ PROVIDER_LANE = {
 }
 
 
+class PolicyLanesUnreadable(RuntimeError):
+    """The sealed pre-registration carries no readable `generationLanes` block.
+
+    Translated instead of letting the index raise: this runs at IMPORT time, so a bare
+    `KeyError('generationLanes')` surfaces as a collection-time crash of whatever imported
+    this module — a stack with no statement of which file was expected to hold what. The
+    block is the single authority over what each lane accepts, and a run without it must
+    say so.
+    """
+
+
 # The frozen lane rows, read from the policy above rather than retyped: it is the single
 # source of truth for what each lane accepts, and a copy here would be a second
 # authority that can disagree with the schema.
 def lane_rows() -> dict[str, dict]:
-    return json.loads(POLICY_PATH.read_text(encoding="utf-8"))["generationLanes"]
+    policy = json.loads(POLICY_PATH.read_text(encoding="utf-8"))
+    lanes = policy.get("generationLanes")
+    if not isinstance(lanes, dict) or not lanes:
+        raise PolicyLanesUnreadable(
+            f"{POLICY_PATH} carries no non-empty `generationLanes` object; "
+            "every generated row's decoding is frozen there and nothing here may "
+            "substitute for it"
+        )
+    return lanes
 
 
 LANE_ROWS = lane_rows()

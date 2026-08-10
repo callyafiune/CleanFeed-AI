@@ -33,6 +33,10 @@ import { PREREGISTRATION_V4 } from "../preregistration-v4.ts";
 import type { BenchmarkReport } from "../report.ts";
 import type { SliceResult, SliceSummary } from "../slices.ts";
 import type { ModelPublicationInput } from "../profile-artifact.ts";
+import {
+  freezeProvisionalThreshold,
+  type ProvisionalThresholdArtifact,
+} from "../provisional-threshold.ts";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const MODEL_DIR = resolve(HERE, "../../models/cleanfeed-ptbr-v1");
@@ -166,7 +170,7 @@ function a6Blocks(
   return {
     release: {
       role: "release",
-      thresholdSource: "frozen-calibration-threshold",
+      thresholdSource: "preregistered-provisional-threshold",
       warning: frozen("warning", warning),
       visualAction:
         visualAction === null ? null : frozen("visual-action", visualAction),
@@ -612,6 +616,36 @@ function report(
   };
 }
 
+/**
+ * The pre-registered cut every publication fixture is built over, frozen by the shipped
+ * function and bound to the SAME dataset/split/evaluator digests the frozen calibration
+ * carries — `assertServedCutIsTheMeasuredCut` refuses a foreign one, and a hand-written
+ * artifact would not close its own digest.
+ *
+ * The scores are 0.000 .. 0.495, so the 0.95 upper quantile is 0.475: a cut that sits
+ * between the fixtures' negatives and their positives.
+ */
+export const PROVISIONAL_THRESHOLD: ProvisionalThresholdArtifact =
+  freezeProvisionalThreshold({
+    samples: Array.from({ length: 100 }, (_unused, index) => ({
+      id: `fit_${String(index).padStart(3, "0")}`,
+      label: "human",
+      partition: PREREGISTRATION_V4.threshold.quantilePartitions[index % 2],
+      documentRawScore: index / 200,
+    })),
+    testIds: [],
+    seed: PREREGISTRATION_V4.seeds.split,
+    digests: {
+      datasetDigest: DATASET_DIGEST,
+      datasetAuditDigest: "3".repeat(64),
+      splitDigest: SPLIT_DIGEST,
+      evaluatorDigest: EVALUATOR_DIGEST,
+      sourceReadinessDigest: "4".repeat(64),
+      developmentManifestDigest: "1".repeat(64),
+      calibrationManifestDigest: "2".repeat(64),
+    },
+  });
+
 // The length bands the fixtures below carry gates for. They are the PRE-REGISTERED
 // keys, and they are read off the policy rather than retyped: a fixture keyed by a
 // band the pre-registration no longer names produces a gate report that reaches no
@@ -635,6 +669,7 @@ function makeInput(
   ];
   return {
     frozen: frozen(thresholds),
+    provisionalThreshold: PROVISIONAL_THRESHOLD,
     report: report(
       decision,
       metrics,
@@ -730,6 +765,7 @@ export function publicationInputFor(gates: GateReport): ModelPublicationInput {
       warningLocalized: 0.65,
       visualDocument: 0.85,
     }),
+    provisionalThreshold: PROVISIONAL_THRESHOLD,
     report: report(
       gates.decision,
       metrics,

@@ -34,6 +34,8 @@ import {
   RELEASE_CHROME_VERSION,
   type PredictionManifestV1,
 } from "../prediction-schema.ts";
+import { PREREGISTRATION_V4 } from "../preregistration-v4.ts";
+import { freezeProvisionalThreshold } from "../provisional-threshold.ts";
 import type { SplitArtifact } from "../split-artifact.ts";
 import { asGeneratorFamily } from "../generator-family.ts";
 import type { ScoringPartition } from "../split.ts";
@@ -557,12 +559,37 @@ describe("buildFitReport", () => {
   it("carries the ready preflight, calibration digest and thresholds with no test metric", async () => {
     const report = runCandidatePreflight(await baseInput());
     const frozen = await buildFrozen();
-    const fitReport = buildFitReport(report, frozen);
+    const cut = freezeProvisionalThreshold({
+      samples: Array.from({ length: 100 }, (_unused, index) => ({
+        id: `fit_${String(index).padStart(3, "0")}`,
+        label: "human",
+        partition: PREREGISTRATION_V4.threshold.quantilePartitions[index % 2]!,
+        documentRawScore: index / 200,
+      })),
+      testIds: [],
+      seed: PREREGISTRATION_V4.seeds.split,
+      digests: {
+        datasetDigest: frozen.datasetDigest,
+        datasetAuditDigest: frozen.datasetAuditDigest,
+        splitDigest: frozen.splitDigest,
+        evaluatorDigest: frozen.evaluatorDigest,
+        sourceReadinessDigest: frozen.sourceReadinessDigest,
+        developmentManifestDigest: frozen.predictionManifestDigests.development,
+        calibrationManifestDigest: frozen.predictionManifestDigests.calibration,
+      },
+    });
+    const fitReport = buildFitReport(report, frozen, cut);
 
     expect(fitReport.preflight.status).toBe("ready");
     expect(fitReport.calibrationArtifactDigest).toBe(frozen.artifactDigest);
     expect(fitReport.partitionsUsed).toEqual(["dev", "cal-A"]);
     expect(fitReport.thresholds).toEqual(frozen.thresholds);
+    // The cut the release DECIDES on travels in the fit report, because the fit report
+    // is the only carrier that reaches the published evidence set.
+    expect(fitReport.provisionalThreshold.threshold).toBe(cut.threshold);
+    expect(fitReport.provisionalThreshold.artifactDigest).toBe(
+      cut.artifactDigest,
+    );
 
     // No key anywhere in the fit report names the blocked test or the holdout.
     const forbidden = /test|holdout|consumption/i;

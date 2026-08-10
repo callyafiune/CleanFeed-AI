@@ -1104,10 +1104,10 @@ function uncoveredCoreStrata(root: Record<string, unknown>): readonly string[] {
 //
 // 1e-6 and not 5e-7. Rounding to six decimals moves a value by at most 5e-7, so a
 // tolerance OF 5e-7 is exactly the boundary: the ceiling at n = 300 is
-// 0.0163372175 stored as 0.016337, which is 2.18e-7 away, but a future frozen n
-// whose true value sits near the half-ulp would be rejected for how it was rounded
-// rather than for being wrong. A gate that fails on presentation teaches the next
-// author to widen it under pressure.
+// 0.0145005943 stored as 0.014501, which is 4.06e-7 away — already inside the
+// boundary — and a future frozen n whose true value sits nearer the half-ulp would be
+// rejected for how it was rounded rather than for being wrong. A gate that fails on
+// presentation teaches the next author to widen it under pressure.
 const DERIVED_TOLERANCE = 1e-6;
 
 /**

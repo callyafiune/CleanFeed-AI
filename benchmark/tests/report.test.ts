@@ -284,7 +284,7 @@ function metrics(): EvaluationMetrics {
     visualAction: null,
     release: {
       role: "release",
-      thresholdSource: "frozen-calibration-threshold",
+      thresholdSource: "preregistered-provisional-threshold",
       warning: {
         role: "release",
         decision: "warning",
@@ -1267,9 +1267,14 @@ describe("renderReportMarkdown publishes the A6 evidence with its roles named", 
     expect(separability).toMatch(/0\.4213/u);
     // The section says out loud that it decides nothing.
     expect(separability).toMatch(/não decide|nunca decide/u);
-    // And the release section carries recall and FPR at the frozen threshold.
+    // And the release section carries recall and FPR at the PRE-REGISTERED cut, naming
+    // the source of that cut: the section was headed "limiar congelado" while the items
+    // were cut on the calibrated score, which is the divergence this unit closed.
     const release = section(markdown, "Métrica de release");
-    expect(release).toMatch(/limiar congelado/u);
+    expect(release).toMatch(/corte pré-inscrito/u);
+    expect(release).toMatch(/Origem do corte/u);
+    expect(release).toMatch(/document-raw-score/u);
+    expect(release).toMatch(/probabilisticCalibrator: "none"/u);
     expect(release).toMatch(/Recall/u);
     expect(release).toMatch(/FPR/u);
     expect(release).not.toMatch(/AUROC/u);
