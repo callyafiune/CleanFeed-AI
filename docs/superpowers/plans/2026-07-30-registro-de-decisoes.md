@@ -6684,3 +6684,144 @@ vermelha. N18 pedia alargar a lista de marcadores, que sob `all(...)` é mutaç�
 frouxura: ela recusa a publicação anterior legítima, então quem a pega é a corrida que publica **duas** vezes
 — e aí fica vermelha. A frouxura equivalente é `all` → `any`, que é N17 e morde. O adendo com N03b e N18b
 rodou **depois**, sobre os mesmos bytes finais, com `sha256` conferido.
+
+---
+
+## A auditoria de 2026-08-10: oito dos dez consolidados nunca foram processados
+
+Levantamento feito a pedido do operador ("havia correções após a validação do codex e do Fable; veja se
+ainda falta algo"). **Somente leitura**: nenhum arquivo do repositório foi editado, nenhuma suíte rodou,
+nenhuma partição cega foi tocada. Treze agentes — dez auditores, um por relatório, e três refutadores —,
+622 leituras de arquivo, achado por achado contra o HEAD `23e26cb`.
+
+**O fato estrutural, e é ele que responde à pergunta.** A cross-review de dez unidades de 2026-08-09
+devolveu dez relatórios. Desde então entraram **dois** commits de conserto: `f5bb548` (R1), que pagou o
+`consolidado-c`, e `23e26cb` (R2), que pagou o `consolidado-w1`. **Os outros oito relatórios nunca foram
+processados** — não foram consertados, não foram refutados e não foram declarados como dívida com dono.
+`git diff --name-only 9894492..HEAD` não contém a maioria dos arquivos que eles citam, e a auditoria
+confirmou por leitura que o mecanismo de cada achado está intacto, com os identificadores nos mesmos
+sítios e os números de linha deslocados onde o código andou.
+
+**O placar, depois da refutação adversarial.** Dos 30 bloqueantes que a primeira passada declarou abertos,
+**7 foram refutados** e **23 confirmados**. Os menores abertos somam **31**, e eles **não** passaram pela
+refutação — o número é da primeira passada e vale como estimativa, não como veredito.
+
+### Os 7 refutados, e por que nenhum deve ser consertado
+
+| achado | por que cai |
+|---|---|
+| `parent-disagreement` vacuosa (consolidado-a #2, na leitura de um segundo auditor) | `assertDerivedParentsResolve` **não** é ramo morto: `benchmark/commands/split.ts:116` a chama antes de `createBlockedSplit`, e `benchmark/split.ts:481-485` contradiz a premissa de que o pai da linha mista nunca está no array |
+| `generatorVersion` colapsa a classe gerada (consolidado-b #2) | já é dívida com dono em `ESTADO.md` § 7 — o que **não** está declarado é o co-causador `promptTemplate`, e isso ficou na fila |
+| `lengthBucket` de `slices.ts` decide (sondas-tema B5) | `benchmark/slices.ts:288` lido contra `preregistration-v4.json:245` e `gates.ts:849-850`: a fatia não é elegível a gate |
+| a barreira de cluster nomeia partição do vocabulário antigo (emenda-moldura B5) | `registro-de-decisoes.md:4189` já traz a decisão, com a razão escrita |
+| a exclusão de `generatorFamily` da união (emenda-moldura B3, primeira leitura) | `benchmark/split.ts:173-184` contra `registro-de-decisoes.md:2417-2438` e `ESTADO.md` § 3.4: a exclusão é a política, não um descuido |
+| `corpus-sources.md` publica fonte fora da moldura (emenda-moldura B4) | `docs/corpus-sources.md:602-604` já a declara fora |
+| o mascaramento de entidades promovido a hipótese (sondas-tema B3) | `ESTADO.md` § 3.1 (AG) e `entity_masking.py:87` declaram as quatro sondas como diagnóstico |
+
+### Os 9 que mordem AGORA — comando que o operador roda na Fase 3 ou 4
+
+Cada um foi lido nos sítios que o mecanismo ocupa, e nenhum tinha linha em § 7 nem no registro:
+
+1. **`validate` sela e sai 0 sobre corpus bloqueado.** `benchmark/commands/validate.ts:121-130` grava
+   `source-readiness.json` e devolve `Dataset sealed: …` sem ler `readiness.status`; a face que recusa
+   (`assertMaterialBatchesResolve`, `benchmark/schema.ts:3851`) segue sem chamador de produção, com
+   docstring afirmando o contrário. A mitigação existe a jusante (`candidate-preflight.ts:294`,
+   `commands/fit.ts:291`), então nenhuma calibração congela sobre corpus bloqueado — o dano é o comando
+   de selagem publicar sucesso.
+2. **`groups: {}` atravessa o ledger inteiro.** `cluster-exposure-ledger.ts:534-539` só exige objeto não
+   nulo; `buildEventRecords` (:1892-1893) itera as entradas e sai com `groupDigests` vazio;
+   `validateEventShape` confere presença de chave e não completude; `exposureInputsFromRecords` (:2505),
+   o único que derivaria os eixos dos registros, não tem chamador de produção. Exposição registrada sem
+   eixo é barreira de cluster que não barra.
+3. **`extractionRun` continua sendo o nome do arquivo de pool.** `assemble_corpus.py:2676` estampa
+   `extraction_{fname}` por `setdefault`, sob comentário que afirma "the pool FILE is the run", então a
+   recusa nova `MissingExtractionRun` (:1361-1366) **nunca morde no caminho de pool** e o valor inventado
+   chega ao registro selado com estado `known`. O item 6 de `2026-08-02-lotes-e-unidade-de-dependencia.md`
+   segue vencido.
+4. **A guarda de viabilidade recusa o corpo que os próprios construtores montam.**
+   `assert_components_can_fill_five_partitions` é a primeira instrução de `assign_partitions`
+   (`assemble_corpus.py:2591`) e a fração é **por classe** (:2288-2318), enquanto `promptTemplate` (:1104)
+   e `generatorVersion` (:1106) unem a classe gerada num componente que lê 1,0000 — `UnsplittableCorpus`
+   aborta antes de qualquer carimbo, com `records.jsonl` não escrito. Tirar só `generatorVersion` deixa o
+   maior componente em 54,79 %, acima de 45 % + 2 pp: **continua recusado**, e `promptTemplate` não está
+   declarado em dívida nenhuma.
+5. **`requiredHumanSourceTypes` exige presença, não pertença.** `dataset-manifest.ts:915-921` reprova só
+   quando a contagem da célula é zero, `:894-896` não conta a ausência e `humanSourceType` é opcional no
+   esquema (`schema.ts:2245-2250`): uma linha humana sem célula passa o gate da moldura.
+6. **O manifesto de fontes promete não carregar URL e o produtor grava uma.**
+   `build_governance.ts:75-79` põe `https://dumps.wikimedia.org/…` em `evidence`, contra a promessa de
+   `source-manifest.ts:23-31` ("carries NO source URL, name, handle or raw consent receipt"), repetida no
+   runbook:427-428. Nenhuma guarda confere.
+7. **O gate de composição não deixa recibo.** `auditReleaseComposition` tem um único sítio
+   (`commands/split.ts:169`, dentro de `scientificUse === "release"`), o veredito só alimenta a mensagem
+   de erro, e nenhuma das 14 chaves de `SEALED_ARTIFACT_KEYS` (`split-artifact.ts:103-118`) o carrega:
+   **passar não deixa prova**.
+8. **O piso barato compara as duas AUCs contra o mesmo vetor humano inteiro.**
+   `baseline_tfidf.py:717-726` monta `reserved` (108) e `core` (145) contra as **mesmas** 253 humanas, sem
+   `class_weight`, e `read_ood_easiness` lê uma contra a outra — o pareamento vale para a união, não dentro
+   de cada família.
+9. **A junção parcial da sonda passa silenciosa.** `baseline_tfidf.py:740-747` só recusa população
+   **vazia**; 20 de 253 humanas casadas rodam a AUC enquanto `block["rows"]` (:707-716), montado antes de
+   o arquivo de escores ser lido, continua publicando 108/145/253 do pool.
+
+### Os 14 que mordem antes de PUBLICAR — Fase 6 ou 7
+
+Nenhum deles muda o comportamento de um comando de hoje; todos entram num artefato ou num número que a
+Fase 6 imprime. Agrupados pela forma do defeito:
+
+- **prosa selada que descreve moldura de quatro células**, viva em cinco sítios (`split-audit.ts:93`,
+  `preregistration-v4.ts:390`, `assemble_corpus.py:2121`, `references.md:822` e `:846`,
+  `cross-validation.ts:31`) enquanto `preregistration-v4.json:266-268` declara uma. `split.ts:176-181` já
+  foi reescrito e mostra a leitura certa;
+- **aritmética publicada de `m=7` apresentada como custo vigente**: os "16.000 linhas humanas" de
+  `registro:4091` e `plano-entrega-modelo.md:49` são de α = 0,05/7; sob `m=4` o teto de 0,55 % pede 897
+  linhas em `test`, não 800;
+- **duas errata de número**: `references.md:4631` e `registro:6114`/`:6186` dizem "0,041 de AUC" onde
+  0,9313 − 0,8944 = **0,0369**; e `ESTADO.md` § 7 dizia "53.º maior de 1.050" onde o código
+  (`provisional-threshold.ts:243-244`, `ceil(q·n)` zero-based) dá **52** — a prosa publicava o número da
+  convenção que o comentário do próprio código recusa por nome. O "30.º de 600" está certo, e a linha de
+  § 7 foi corrigida nesta unidade porque errata de um número não precisa de unidade própria;
+- **duas grafias do mesmo conceito, uma delas pinada no selado**: `independentUnit:
+  "origin-document-components"` (`preregistration-v4.json:48`, pinada por `literal()` em
+  `preregistration-v4.ts:1549-1553`) contra `powerInventoryUnit: "connected-components"` (:261); e
+  `reportedAxes` (política) contra `REPORTED_GROUP_AXES` (auditoria), hoje **coincidentes em valor** — o
+  que falta é a costura de igualdade, e o risco é a deriva futura entrar num artefato selado;
+- **quatro guardas cujo alcance é menor que a alegação que fazem**: `digests.test.ts:344` usa `toContain`
+  sem âncora de seção (passa hoje só porque o digest ocorre uma vez em `ESTADO.md`, e um bloco "Histórico"
+  com o valor novo satisfaria a asserção com a linha viva estagnada);
+  `dataset-manifest.test.ts:1434-1453` varre `benchmark/*.ts` e `benchmark/commands/*.ts` e por
+  construção **não** vê `benchmark/tests/**` nem `benchmark/lab/*.py`, e não lê o número do bloco cego que
+  derivou junto (`split-audit.ts:119-120`); `source-manifest.test.ts:830-839` proíbe o `sourceId` entre
+  backticks e não o **nome** publicado, então um bullet "Corpus Carolina — CC BY-NC-SA" passa; e o
+  fatiador de `test_extractors.py:1526-1539` conta profundidade de chave sem noção de string ou
+  comentário, com docstring afirmando que "comments and field order irrelevant" — o dano hoje é zero
+  (`build_governance.ts:65-81` declara um lote sem chave dentro de string), e o fail-open real é o lote que
+  nunca chega a ser fatia e desaparece sem ninguém contar quantos objetos a fonte declara;
+- **`BenchmarkReport` sem parser**: três `as BenchmarkReport` sobrevivem (`publish-evidence.ts:152`,
+  `publish-profile.ts:40`, `verify-evidence.ts:35`), e `verify-evidence.ts:53` decide o ramo lendo o
+  objeto castado;
+- **dois defeitos de medição no lab**: `entity_masking.py:551` usa `labels.get(row_id) == wanted`, e id sem
+  rótulo sai das **duas** classes sem ninguém contar (`:536-546` fecha a igualdade só entre os três braços);
+  e `baseline_tfidf.py:590-618` deixa o lado `ai` dependente da **ordem dos argumentos** — o único `sorted`
+  do caminho é o dos pais (:605), então a AUC publicada muda se a ordem dos arquivos de pool mudar;
+- **a alegação das "quarenta mutações" do Commit A** não tem portador rastreado: o único arquivo que a
+  carrega está sob `.gitignore:63`. O padrão de bateria registrada **existe e foi cumprido duas vezes**
+  (`registro:6661` e `:5031`), o que torna a lacuna deste commit visível por contraste.
+
+### Custo de reversão e o que esta unidade NÃO fez
+
+Zero em código: nada foi consertado, e a única edição fora deste registro é a fila em `ESTADO.md` § 7 mais
+a errata do ordinal do quantil. A fila não é documento novo de plano (§ 3.7 proíbe) — é dívida no arquivo
+de estado. Os 31 menores abertos **não** foram refutados um a um e ficam declarados como estimativa; a
+refutação deles é da unidade que abrir cada relatório.
+
+A cota do codex também foi sondada nesta unidade e **não voltou**: a mensagem de 2026-08-10 diz
+`try again at Aug 16th, 2026 6:51 PM`, contra os 8 de agosto que a medição anterior imprimia. A data que a
+mensagem publica é móvel, então a etapa 3 continua sendo do Fable, e rodada do Fable não fecha dívida de
+codex.
+
+**A leitura de método que a auditoria produziu, e vale como regra:** um relatório de cross-review não é
+uma dívida registrada. Oito relatórios com veredito `block` ficaram nove dias na árvore sem que nenhuma
+linha de § 7 os mencionasse, e a única razão pela qual isso foi descoberto é o operador ter perguntado.
+**Fechar uma rodada de revisão inclui escrever, no arquivo de estado, o que ela achou e não se consertou —
+com dono e vencimento.** Sem isso, `block` viaja como se fosse `pass`.
