@@ -26,13 +26,23 @@
 // carries NO source URL, name, handle or raw consent receipt; a consent source
 // binds its receipt solely through a `consentReceiptDigest`.
 //
-// "Closed" means every object is validated against an exact key set: any unknown
-// field (in particular a smuggled `sourceUrl`, `authorName`, `handle` or raw
-// `consentReceipt`), a licensed source without a `licenseId`, a consent source
-// without a `consentReceiptDigest`, an incomplete generation recipe, non-distinct
-// legal reviewers, a seed that is neither present nor explicitly waived, or a
-// `sourceManifestDigest` that no longer matches the recomputed self-digest is a
-// hard failure. There is no coercion and no last-write-wins.
+// "Closed" means every object is validated against an exact key set, and that is
+// the KEY axis of the promise above: any unknown field (in particular a smuggled
+// `sourceUrl`, `authorName`, `handle` or raw `consentReceipt`), a licensed source
+// without a `licenseId`, a consent source without a `consentReceiptDigest`, an
+// incomplete generation recipe, non-distinct legal reviewers, a seed that is
+// neither present nor explicitly waived, or a `sourceManifestDigest` that no
+// longer matches the recomputed self-digest is a hard failure. There is no
+// coercion and no last-write-wins.
+//
+// The key axis decides which fields may exist and says nothing about the VALUE of
+// a legitimate field, and the promise above is a promise about values as well:
+// `assertNoSourceLocator` is that half. It sweeps every string leaf of the hashed
+// projection (`reviewedSourceManifestProjection`) for a source locator or a
+// contactable identity, and admits a material batch's `evidence` only in the two
+// forms a third party can recompute — `<alg>:<hex>` or `<file> (<n> bytes)`. Both
+// halves run before the self-digest is compared, so a leaked locator is never
+// reported as a stale digest, whose remedy would make the leak permanent.
 //
 // `sourceManifestDigest` is the canonical self-digest of the manifest body (its
 // own digest field excluded), NOT the raw file SHA. The raw SHA lives on
@@ -250,6 +260,14 @@ export interface SourceMaterialBatchV1 {
    * O que torna os quatro campos acima verificáveis por terceiro. Não pode ser vazia: um lote sem
    * evidência é uma declaração sobre a qual ninguém pode discordar, que é exatamente o que a
    * governança deste projeto recusa em toda parte.
+   *
+   * Cada item é uma de DUAS formas, e nenhuma outra: `<alg>:<hex minúsculo>`, o digest do
+   * conteúdo, ou `<nome> (<n> bytes)`, o arquivo em mão com o seu tamanho. É a FORMA que se
+   * recomputa de quem tem os bytes — que o arquivo nomeado exista continua sendo obrigação da
+   * revisão humana. Localizador que não caiba em nenhuma das duas formas é recusado aqui
+   * mesmo (`assertNoSourceLocator`), porque a versão concreta já vive em `materialVersion`;
+   * localizador VESTIDO de nome de arquivo (`dumps.wikimedia.org (10 bytes)`) permanece
+   * resíduo, declarado em `SOURCE_LOCATOR_MARKS` e fixado como aceito por teste.
    */
   evidence: string[];
 }
@@ -2372,11 +2390,18 @@ function validateMaterialBatch(
   };
 }
 
-/** SHA-256 (hex) of the canonical bytes of the manifest without its digest. */
-export async function computeReviewedSourceManifestDigest(
+/**
+ * A projeção do corpo que o self-digest hasheia — o objeto inteiro, e nada além dele.
+ *
+ * Existe como função porque DOIS lados a consomem: o digest e a varredura de localizador. Com o
+ * objeto escrito à mão nos dois, um campo novo entraria no digest sem entrar na varredura, e o
+ * alcance da promessa passaria a ser alegação. Sendo o mesmo objeto, é fato: uma chave que entra
+ * aqui nasce varrida, e uma chave que não entra aqui já é forjável por razão independente.
+ */
+export function reviewedSourceManifestProjection(
   body: ReviewedSourceManifestBody,
-): Promise<string> {
-  return canonicalSha256({
+): Record<string, unknown> {
+  return {
     schemaVersion: body.schemaVersion,
     sources: body.sources,
     generationBatches: body.generationBatches,
@@ -2390,6 +2415,166 @@ export async function computeReviewedSourceManifestDigest(
       : body.materialBatches === undefined
         ? {}
         : { materialBatches: body.materialBatches }),
+  };
+}
+
+/** SHA-256 (hex) of the canonical bytes of the manifest without its digest. */
+export async function computeReviewedSourceManifestDigest(
+  body: ReviewedSourceManifestBody,
+): Promise<string> {
+  return canonicalSha256(reviewedSourceManifestProjection(body));
+}
+
+/**
+ * As cinco marcas de LOCALIZADOR ou de identidade contactável, cada uma com o seu diagnóstico.
+ *
+ * `authority`: por RFC 3986 §3.2 o `//` É a declaração de um componente de autoridade, então uma
+ * regra sobre ele alcança `https://`, `ftp://`, `s3://`, `file://` e o relativo-de-esquema
+ * `//host/path` sem lista de esquemas para manter em dia.
+ * `host-path`: o mesmo localizador com o esquema arrancado, que é a evasão imediata da primeira
+ * regra. Exige rótulo PONTUADO antes da barra, e é por isso que uma barra única de coordenada de
+ * modelo (`meta-llama/Llama-3.1-8B`) não é localizador.
+ * `handle` e `email` exigem que o `@` não seja precedido de letra/dígito/`_` e que o último rótulo
+ * seja ALFABÉTICO, respectivamente: neste domínio `@` também é vocabulário de versão
+ * (`gemini-cli@0.1.5`) e de rótulo de campo (`Posts.xml@CreationDate`), e uma regra sobre `@` cru
+ * recusaria dado real.
+ *
+ * O que estas regras NÃO decidem, declarado aqui em vez de silenciado, e ACEITO por medição em
+ * "documenta o resíduo que a guarda NÃO decide":
+ *
+ * 1. HOST NU, sem esquema e sem barra (`dumps.wikimedia.org`), e nome próprio cru ("João Silva"):
+ *    indistinguíveis por FORMA de um nome de módulo (`common.py`) ou de prosa. Em `evidence` a
+ *    whitelist de forma (`EVIDENCE_FORMS`) fecha a GRAFIA NUA — um host solto não é nenhuma das
+ *    duas formas — e não a CLASSE: vestido de nome de arquivo, `dumps.wikimedia.org (10 bytes)` é
+ *    evidência válida, como `JoaoSilva (100 bytes)` é. Separar host de nome de arquivo por forma
+ *    pediria uma lista de TLD, que leria como completude sendo subconjunto. Nas outras folhas
+ *    livres o resíduo é inteiro, e em todas ele permanece obrigação de revisão humana.
+ * 2. ESQUEMA com autoridade malformada ou escapada: `https:/dumps.wikimedia.org` (barra única) e
+ *    `https:%2F%2Fdumps.wikimedia.org%2Fptwiki` passam, porque nenhum tem `//` nem rótulo pontuado
+ *    antes de uma barra. A regra que os pegaria é a do componente de ESQUEMA (RFC 3986 §3.1), e
+ *    ela colidiria com `sha256:<hex>`, que é a grafia da evidência deste próprio módulo.
+ */
+const SOURCE_LOCATOR_MARKS: readonly (readonly [string, RegExp])[] = [
+  ["authority", /\/\//u],
+  ["www", /(?<![A-Za-z0-9])www\./iu],
+  ["host-path", /[A-Za-z0-9-]+(?:\.[A-Za-z0-9-]+)+\//u],
+  ["handle", /(?<![A-Za-z0-9_])@[A-Za-z0-9._-]{2,}/u],
+  [
+    "email",
+    /[A-Za-z0-9._%+-]+@[A-Za-z0-9-]+(?:\.[A-Za-z0-9-]+)*\.[A-Za-z]{2,}/u,
+  ],
+];
+
+/**
+ * As duas formas de evidência que um terceiro recomputa, ANCORADAS.
+ *
+ * A ancoragem é carga e não estilo, nas DUAS formas e nas duas pontas: sem `$` um item como
+ * `"sha256:70c9… (baixado de dumps.wikimedia.org)"` casa pelo prefixo, e sem `^` um item como
+ * `"baixado de ptwiki.xml.bz2 (100 bytes)"` casa pelo sufixo. Em qualquer das quatro faltas a
+ * whitelist decide apenas que o item CONTÉM uma das formas, e conter é o que a prosa com um digest
+ * colado dentro já faz.
+ *
+ * A família de algoritmos é ABERTA (`[a-z0-9]+:`) e o hex é minúsculo, como `lowercaseSha256` já
+ * exige no resto do módulo: um md5 ou blake3 futuro não deve obrigar a editar este arquivo, e um
+ * digest em maiúscula não é a grafia que o módulo escreve.
+ */
+const EVIDENCE_FORMS: readonly RegExp[] = [
+  /^[a-z0-9]+:[a-f0-9]{32,128}$/u,
+  /^[A-Za-z0-9][A-Za-z0-9._-]* \([1-9][0-9]* bytes\)$/u,
+];
+
+function locatorMarkIn(value: string): string | null {
+  for (const [mark, pattern] of SOURCE_LOCATOR_MARKS) {
+    if (pattern.test(value)) return mark;
+  }
+  return null;
+}
+
+function assertLeavesCarryNoLocator(value: unknown, where: string): void {
+  if (typeof value === "string") {
+    const mark = locatorMarkIn(value);
+    if (mark !== null) {
+      fail(
+        "SOURCE_MANIFEST_SOURCE_LOCATOR",
+        `${where} carries a source locator (${mark}): ${value} — this manifest names its ` +
+          "sources only by pseudonymised tokens and digests, and a locator is neither",
+      );
+    }
+    return;
+  }
+  if (Array.isArray(value)) {
+    value.forEach((element, index) =>
+      assertLeavesCarryNoLocator(element, `${where}[${index}]`),
+    );
+    return;
+  }
+  if (value !== null && typeof value === "object") {
+    for (const [key, child] of Object.entries(
+      value as Record<string, unknown>,
+    )) {
+      assertLeavesCarryNoLocator(child, `${where}.${key}`);
+    }
+  }
+}
+
+/**
+ * O eixo de VALOR da promessa do cabeçalho, imposto sobre a projeção INTEIRA.
+ *
+ * UMA operação e não duas, chamada em dois lugares e nunca em quatro: a varredura de localizador e
+ * a whitelist de forma da evidência se compõem — a varredura tem dentes onde a forma é livre, e a
+ * whitelist recusa a GRAFIA NUA do host, que a varredura não decide; a CLASSE não, e o resíduo está
+ * declarado em `SOURCE_LOCATOR_MARKS` — e um chamador que recebesse duas funções chamaria uma e
+ * esqueceria a outra.
+ *
+ * A varredura é RECURSIVA sobre a projeção e não uma chamada por campo, porque assim uma folha de
+ * string nova nasce coberta; com uma chamada por campo, nasceria descoberta.
+ *
+ * O espelho de forma é `assertSanitized` (benchmark/evidence-sanitizer.ts) — varredura recursiva,
+ * recusa por FORMA do valor, rótulo de caminho `$.a.b[0]` e erro codificado. Das TRÊS condições de
+ * falha dele, duas NÃO são espelhadas e a decisão é esta: `FORBIDDEN_PATH` e `FORBIDDEN_ID_ARRAY`
+ * guardam artefato PÚBLICO contra caminho de saída de execução e contra lista de ids de registro
+ * disfarçada, e a promessa daqui é sobre LOCALIZADOR DA FONTE em um arquivo que nunca é publicado —
+ * então `materialVersion: "private/source-manifest.json"` e uma `evidence` de 500 digests são
+ * VÁLIDAS aqui (medido em "o espelho decide o que esta guarda não decide"): comprimento não diz
+ * nada sobre localizador, e caminho de saída não é fonte. `FORBIDDEN_KEY` não é duplicada porque
+ * `assertExactObject` já torna `url`/`author`/`text` inexpressáveis, uma segunda lista de chaves
+ * criaria uma segunda autoridade sobre o conjunto de chaves, e `consentReceiptDigest` — que o
+ * sanitizer proíbe — é chave LEGÍTIMA neste esquema.
+ *
+ * @throws SOURCE_MANIFEST_SOURCE_LOCATOR se qualquer folha de string da projeção carrega
+ *   localizador ou identidade contactável.
+ * @throws SOURCE_MANIFEST_EVIDENCE_NOT_VERIFIABLE se um item de `evidence` não é uma das duas
+ *   formas recomputáveis.
+ */
+export function assertNoSourceLocator(body: ReviewedSourceManifestBody): void {
+  const projection = reviewedSourceManifestProjection(body);
+  assertLeavesCarryNoLocator(projection, "$");
+
+  const materialBatches = projection.materialBatches;
+  if (!Array.isArray(materialBatches)) return;
+  materialBatches.forEach((batch, index) => {
+    const where = `$.materialBatches[${index}].evidence`;
+    const evidence = isPlainObject(batch) ? batch.evidence : undefined;
+    if (!Array.isArray(evidence)) {
+      fail(
+        "SOURCE_MANIFEST_EVIDENCE_NOT_VERIFIABLE",
+        `${where} must list the evidence of the acquisition`,
+      );
+    }
+    evidence.forEach((item: unknown, position: number) => {
+      if (
+        typeof item === "string" &&
+        EVIDENCE_FORMS.some((form) => form.test(item))
+      ) {
+        return;
+      }
+      fail(
+        "SOURCE_MANIFEST_EVIDENCE_NOT_VERIFIABLE",
+        `${where}[${position}] is not verifiable: ${String(item)} — evidence is either ` +
+          "`<alg>:<lowercase hex>` (the digest of the content) or `<name> (<n> bytes)` (the " +
+          "file in hand and its size), and a claim nobody can recompute is not evidence",
+      );
+    });
   });
 }
 
@@ -2517,6 +2702,11 @@ export async function parseReviewedSourceManifest(
           generationBatches,
           ...(materialBatches === undefined ? {} : { materialBatches }),
         };
+  // ANTES da conferência do self-digest, e a ordem é carga: um manifesto com localizador e digest
+  // velho diagnosticado como "o digest não bate" convida o operador a RECOMPUTAR o digest, remédio
+  // que torna o localizador permanente e abençoado por um self-digest válido. A recusa do corpo vem
+  // antes da certificação do corpo.
+  assertNoSourceLocator(body);
   const expected = await computeReviewedSourceManifestDigest(body);
   if (expected !== sourceManifestDigest) {
     fail(

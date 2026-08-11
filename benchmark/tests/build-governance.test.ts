@@ -164,6 +164,32 @@ describe("the governance writer refuses an inventory a v4 corpus cannot resolve 
     expect(await exists(join(root, "manifest-template.json"))).toBe(false);
   });
 
+  it("o escritor recusa lote cuja evidência nomeia a URL do dump, e não deixa arquivo atrás", async () => {
+    // O caminho de ESCRITA tem recusa PRÓPRIA: um manifesto recusado na leitura já foi escrito em
+    // disco, e o inventário declarado aqui é a mesma coisa que o produtor grava. `governance-inputs`
+    // vem do lado Python, então a recusa precisa acontecer antes do primeiro `mkdir`.
+    const comUrl = {
+      ...DECLARED_MATERIAL_BATCHES[0],
+      evidence: [
+        ...(DECLARED_MATERIAL_BATCHES[0]?.evidence ?? []),
+        "https://dumps.wikimedia.org/ptwiki/20220301/",
+      ],
+    };
+    await expect(
+      writeGovernance(inputs(), root, [comUrl]),
+    ).rejects.toMatchObject({ code: "SOURCE_MANIFEST_SOURCE_LOCATOR" });
+    expect(await exists(join(root, "private", "source-manifest.json"))).toBe(
+      false,
+    );
+    expect(await exists(join(root, "manifest-template.json"))).toBe(false);
+
+    // E o inventário DECLARADO passa por essa mesma recusa: o localizador nunca foi carga, porque
+    // `materialVersion` já nomeia o dump e o digest é o que um terceiro recomputa.
+    await expect(
+      writeGovernance(inputs(), root, DECLARED_MATERIAL_BATCHES),
+    ).resolves.toMatchObject({ sources: 2 });
+  });
+
   it("refuses the declared inventory itself when the corpus declares no source at all", () => {
     // The real shape of the failure: a corpus with no human row projects no
     // `src_wikipedia_pt` entry, and then the ptwiki batch resolves against nothing.

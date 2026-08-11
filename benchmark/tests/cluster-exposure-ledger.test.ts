@@ -18,6 +18,7 @@ import {
 } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
+import { stdout } from "node:process";
 import { fileURLToPath } from "node:url";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
@@ -25,6 +26,10 @@ import { canonicalJson } from "../../contracts/canonical-json.ts";
 import { runCli } from "../cli.ts";
 import { sha256BytesHex } from "../digests.ts";
 import {
+  ALL_GROUP_AXES,
+  V3_GROUP_AXES,
+  V4_GROUP_AXES,
+  recordGroupAxes,
   validateBenchmarkRecordV3,
   validateBenchmarkRecordV4,
   type BenchmarkRecord,
@@ -43,6 +48,7 @@ import {
   CLUSTER_EXPOSURE_LEDGER_FILE,
   ClusterLedgerError,
   EXPOSURE_IDENTITY_AXES,
+  LEDGER_AXIS_VOCABULARIES,
   LEDGER_PARTITIONS,
   backupClusterLedger,
   clusterAssignments,
@@ -99,6 +105,38 @@ function paths(): ClusterLedgerPaths {
   };
 }
 
+/**
+ * A groups map that ANSWERS a whole version tuple: the identities the caller names,
+ * and `null` — the spelling of "this row has no identity here" — on every other axis
+ * the version declares.
+ *
+ * ONE operation, and deliberately: the ledger accepts only a total map, and eight
+ * fixtures completed by hand would be eight copies of the vocabulary, drifting apart
+ * the moment the schema adds an axis. The vocabulary is read from `../schema.ts` for
+ * the same reason the guard reads it.
+ *
+ * An identity naming an axis the vocabulary does not declare THROWS here rather than
+ * being dropped: a fixture that means to exercise `collectionBatch` under the v4
+ * tuple is a mistake in the fixture, and silently ignoring it would make the test
+ * pass for the wrong reason.
+ */
+function answers(
+  identities: Record<string, string | undefined>,
+  vocabulary: readonly string[] = V3_GROUP_AXES,
+): Record<string, string | null> {
+  const stray = Object.keys(identities).filter(
+    (axis) => !vocabulary.includes(axis),
+  );
+  if (stray.length > 0) {
+    throw new Error(
+      `the fixture names [${stray.join(", ")}], which this ${vocabulary.length}-axis vocabulary does not declare`,
+    );
+  }
+  const groups: Record<string, string | null> = {};
+  for (const axis of vocabulary) groups[axis] = identities[axis] ?? null;
+  return groups;
+}
+
 interface RecordSpec {
   id: string;
   text?: string;
@@ -112,13 +150,13 @@ function record(spec: RecordSpec): ExposureRecordInput {
     id: spec.id,
     text: spec.text ?? BASE_TEXT,
     partition: spec.partition ?? "dev",
-    groups: {
+    groups: answers({
       author: spec.author ?? "person_0123456789abcdef",
       source: spec.source ?? "th_ptso_140233",
       domainSource: "ds_ptso_qa",
       collectionBatch: "cb_ptso_20260727",
       nearDuplicate: `nd_${spec.id}`,
-    },
+    }),
   };
 }
 
@@ -137,6 +175,132 @@ function request(overrides: Partial<ExposureRequest> = {}): ExposureRequest {
 
 async function init(): Promise<void> {
   await initClusterLedger(paths(), { createdAt: "2026-07-28T09:00:00.000Z" });
+}
+
+/** The chain digest, recomputed over the same key set the module hashes. */
+function chainDigestOf(event: Record<string, unknown>): string {
+  const hashed = { ...event };
+  delete hashed.eventDigest;
+  return sha256BytesHex(new TextEncoder().encode(canonicalJson(hashed)));
+}
+
+function recordsOf(event: Record<string, unknown>): Record<string, unknown>[] {
+  return event.records as Record<string, unknown>[];
+}
+
+/**
+ * Rewrites the ledger from `edit` and leaves it CONSISTENT: the hash chain is
+ * re-closed and the keyring re-attested, so every eligibility path accepts the file
+ * and what the test measures is the edit and not a divergence.
+ *
+ * It is the only way to put a record shape on disk that today's writer cannot
+ * produce, and two of those matter here: a LEGACY record, written before a request
+ * had to answer a whole axis tuple, and a record whose persisted form is broken. The
+ * writer can no longer make either, so a test that forged neither would be pinning
+ * the reader against the writer's current output alone.
+ */
+async function rewriteLedger(
+  edit: (events: Record<string, unknown>[]) => void,
+): Promise<void> {
+  const events = (await readFile(paths().ledgerPath, "utf8"))
+    .split("\n")
+    .filter((line) => line !== "")
+    .map((line) => JSON.parse(line) as Record<string, unknown>);
+  edit(events);
+  let previous: string | null = null;
+  for (const event of events) {
+    event.previousEventDigest = previous;
+    event.eventDigest = chainDigestOf(event);
+    previous = event.eventDigest as string;
+  }
+  await writeFile(
+    paths().ledgerPath,
+    `${events.map((event) => JSON.stringify(event)).join("\n")}\n`,
+    "utf8",
+  );
+  const keyring = JSON.parse(
+    await readFile(paths().keyringPath, "utf8"),
+  ) as Record<string, unknown>;
+  await writeFile(
+    paths().keyringPath,
+    `${JSON.stringify(
+      {
+        ...keyring,
+        ledgerWitness: {
+          ...(keyring.ledgerWitness as Record<string, unknown>),
+          eventCount: events.length,
+          lastEventDigest: previous,
+        },
+      },
+      null,
+      2,
+    )}\n`,
+    "utf8",
+  );
+}
+
+/** Exactly the axes the writer used to persist: the ones that carried an id. */
+const LEGACY_AXES = [
+  "author",
+  "source",
+  "domainSource",
+  "collectionBatch",
+  "nearDuplicate",
+];
+
+/**
+ * One event's record trimmed back to the shape the old writer produced: the axes it
+ * had an identity on, and silence about the rest. It reaches disk through
+ * `rewriteLedger` because the writer answers a whole tuple now and can no longer
+ * produce it.
+ */
+function trimToLegacy(event: Record<string, unknown>): void {
+  const digests = recordsOf(event)[0].groupDigests as Record<string, unknown>;
+  for (const axis of Object.keys(digests)) {
+    if (!LEGACY_AXES.includes(axis)) delete digests[axis];
+  }
+}
+
+/**
+ * Drives the real CLI over the fixture and returns the bytes it WROTE.
+ *
+ * Going through `runCli` rather than the command function is what proves the
+ * subcommand, its closed action set and its flags are wired, not merely present.
+ * Capturing `stdout` is what makes the printed answer assertable, and the printed
+ * answer is the whole of what an operator gets: a sentence the command composes and
+ * nothing prints is a sentence nobody reads.
+ *
+ * `stdout.write` is restored in a `finally` — a leaked stub silences every later
+ * test's output.
+ */
+async function clusterLedgerCli(
+  action: string,
+  ...flags: string[]
+): Promise<string> {
+  const written: string[] = [];
+  const write = stdout.write.bind(stdout);
+  (stdout as unknown as { write: (chunk: string) => boolean }).write = (
+    chunk: string,
+  ) => {
+    written.push(chunk);
+    return true;
+  };
+  try {
+    await runCli([
+      "cluster-ledger",
+      action,
+      "--ledger",
+      paths().ledgerPath,
+      "--keyring",
+      paths().keyringPath,
+      "--backup-root",
+      paths().backupRoot,
+      ...flags,
+    ]);
+  } finally {
+    (stdout as unknown as { write: typeof write }).write = write;
+  }
+  return written.join("");
 }
 
 describe("cluster-exposure ledger — keyring and initialisation", () => {
@@ -251,11 +415,11 @@ describe("acceptance 1b — cal-B is blind too, and the asymmetry survives", () 
       id,
       text: CHILD_TEXT,
       partition,
-      groups: {
+      groups: answers({
         humanSeed,
         promptTemplate: `pt_${id}`,
         generatorFamily: "gemini-3_5-flash-medium",
-      },
+      }),
     };
   }
 
@@ -518,7 +682,10 @@ describe("acceptance 2 — swapping a keyVersion without migration fails", () =>
             id: "fresh",
             text: FAR_TEXT,
             partition: "test",
-            groups: { source: "th_new_1", author: "person_fedcba9876543210" },
+            groups: answers({
+              source: "th_new_1",
+              author: "person_fedcba9876543210",
+            }),
           },
         ],
       }),
@@ -554,10 +721,10 @@ describe("acceptance 3 — a historical near-duplicate is barred even under a ne
             text: NEAR_TEXT,
             partition: "test",
             // A different sampling unit too, so only the CONTENT can catch it.
-            groups: {
+            groups: answers({
               source: "th_other_77",
               author: "person_aaaabbbbccccdddd",
-            },
+            }),
           },
         ],
       }),
@@ -574,10 +741,10 @@ describe("acceptance 3 — a historical near-duplicate is barred even under a ne
             id: "unrelated",
             text: FAR_TEXT,
             partition: "test",
-            groups: {
+            groups: answers({
               source: "th_other_78",
               author: "person_aaaabbbbcccceeee",
-            },
+            }),
           },
         ],
       }),
@@ -731,12 +898,13 @@ describe("acceptance 9 — a LINEAGE edge is caught from both of its ends", () =
       partition,
       // Generated text has no human author and no thread (R6: those axes are
       // `notApplicable`, never a synthetic identity), so the lineage axes are the
-      // only thing that can tie it to anything.
-      groups: {
+      // only thing that can tie it to anything — and `null` is how the map says so
+      // while still answering the whole tuple.
+      groups: answers({
         ...lineage,
         promptTemplate: `pt_${id}`,
         generatorFamily: "gemini-3_5-flash-medium",
-      },
+      }),
     };
   }
 
@@ -891,11 +1059,11 @@ describe("acceptance 9 — a LINEAGE edge is caught from both of its ends", () =
             id: longParent,
             text: SEED_TEXT,
             partition: "dev",
-            groups: {
+            groups: answers({
               author: "person_0123456789abcdef",
               source: "th_long_parent",
               nearDuplicate: longParent,
-            },
+            }),
           },
         ],
       }),
@@ -1171,14 +1339,12 @@ describe("the identity boundary the ledger enforces itself", () => {
   it("records every declared axis even though it compares four", async () => {
     await init();
     const decision = await preflightExposure(paths(), request());
+    // The whole tuple the request answered, and not the subset that carried an
+    // identity: the module's promise is that widening EXPOSURE_IDENTITY_AXES later
+    // needs no re-derivation of history, and that is only true if every axis the
+    // record answered is in the event.
     expect(Object.keys(decision.event.records[0].groupDigests).sort()).toEqual(
-      [
-        "author",
-        "collectionBatch",
-        "domainSource",
-        "nearDuplicate",
-        "source",
-      ].sort(),
+      [...V3_GROUP_AXES].sort(),
     );
   });
 });
@@ -2189,22 +2355,7 @@ describe("the state a mutation commits stays restorable", () => {
 });
 
 describe("acceptance 8 — driven through the real CLI on a temporary fixture", () => {
-  // `runCli` is the parser and dispatcher the operator actually invokes. Driving
-  // it (rather than the command function) is what proves the subcommand, its
-  // closed action set and its flags are wired, not merely present.
-  function cli(action: string, ...flags: string[]): Promise<void> {
-    return runCli([
-      "cluster-ledger",
-      action,
-      "--ledger",
-      paths().ledgerPath,
-      "--keyring",
-      paths().keyringPath,
-      "--backup-root",
-      paths().backupRoot,
-      ...flags,
-    ]);
-  }
+  const cli = clusterLedgerCli;
 
   it("initialises once, verifies, preflights without writing, records, backs up and restores", async () => {
     await cli("init", "--occurred-at", "2026-07-28T09:00:00.000Z");
@@ -2372,14 +2523,16 @@ describe("exposureInputsFromRecords — R6's three states at the boundary", () =
     // `known` -> the identity itself.
     expect(inputs[0].groups.author).toBe("au_1");
     expect(inputs[1].groups.humanSeed).toBe("h_a1");
-    // `notApplicable` -> the axis is ABSENT, never a synthetic per-row id: a
-    // generated row has no human author, and inventing one would mint a cluster.
-    expect(inputs[1].groups.author).toBeUndefined();
-    expect(inputs[0].groups.humanSeed).toBeUndefined();
-    // `unknown` -> also absent. It means "this row joins no other here"; the
+    // `notApplicable` -> `null`, never a synthetic per-row id: a generated row has
+    // no human author, and inventing one would mint a cluster. `null` and not an
+    // absent key, because the axis was ANSWERED — the record does declare it, and
+    // what it declares is that there is nothing here.
+    expect(inputs[1].groups.author).toBeNull();
+    expect(inputs[0].groups.humanSeed).toBeNull();
+    // `unknown` -> also `null`. It means "this row joins no other here"; the
     // ELIGIBILITY consequence of `unknown` belongs to selection, not to the
     // ledger's index.
-    expect(inputs[2].groups.author).toBeUndefined();
+    expect(inputs[2].groups.author).toBeNull();
 
     // The text travels so the fingerprint can be computed, and nothing else does.
     expect(Object.keys(inputs[0]).sort()).toEqual([
@@ -2388,6 +2541,61 @@ describe("exposureInputsFromRecords — R6's three states at the boundary", () =
       "partition",
       "text",
     ]);
+  });
+
+  it("answers every axis of the record version, with null where the axis is not known", async () => {
+    // TOTAL over the tuple the record's own version declares, and that is the whole
+    // adapter's contract now: emitting only the `known` axes produced exactly the
+    // partial map the ledger refuses, so the one sanctioned way of building a request
+    // from a corpus could not build an acceptable one.
+    await init();
+    const human = humanRow("h_a1", {
+      author: "person_0123456789abcdef",
+      source: "th_1",
+    });
+    const v4 = validateBenchmarkRecordV4(
+      withAxis(v4Human(), "author", known("person_0123456789abcdef")),
+    );
+
+    const [fromV3] = exposureInputsFromRecords([human], () => "dev");
+    expect(Object.keys(fromV3.groups).sort()).toEqual(
+      [...V3_GROUP_AXES].sort(),
+    );
+    const [fromV4] = exposureInputsFromRecords([v4], () => "dev");
+    expect(Object.keys(fromV4.groups).sort()).toEqual(
+      [...V4_GROUP_AXES].sort(),
+    );
+
+    // `null` where the record says nothing is there: a human row has no seed, and the
+    // generation it seeded has no human author.
+    expect(fromV3.groups.humanSeed).toBeNull();
+    const [fromGenerated] = exposureInputsFromRecords(
+      [generatedRow("g_a1", "h_a1")],
+      () => "train",
+    );
+    expect(fromGenerated.groups.author).toBeNull();
+  });
+
+  it("produces inputs the ledger accepts", async () => {
+    // The adapter and the guard are one path: a map the adapter emits has to be a map
+    // the writer takes, on BOTH record versions, or the corpus -> request path is
+    // broken for the version nobody tested.
+    await init();
+    for (const row of [
+      humanRow("h_a1", { author: "person_0123456789abcdef", source: "th_1" }),
+      validateBenchmarkRecordV4(
+        withAxis(v4Human(), "author", known("person_0123456789abcdef")),
+      ),
+    ]) {
+      const decision = await preflightExposure(
+        paths(),
+        request({ records: exposureInputsFromRecords([row], () => "dev") }),
+      );
+      expect(decision.eligible, row.id).toBe(true);
+      expect(
+        Object.keys(decision.event.records[0].groupDigests).sort(),
+      ).toEqual([...recordGroupAxes(row)].sort());
+    }
   });
 
   it("produces inputs the ledger accepts and indexes as one lineage", async () => {
@@ -2438,9 +2646,13 @@ describe("the exposure ledger reads a v4 record by the axes v4 declares", () => 
     );
     expect(inputs[0].groups.sourceMaterialBatch).toBe("smb_ptwiki_20220301");
     expect(inputs[0].groups.extractionRun).toBe("er_ptwiki_20260727");
-    // `generationBatch` is `notApplicable` on a human row, so it is ABSENT rather
-    // than a synthetic id — the same rule the three-states test above pins.
-    expect(inputs[0].groups.generationBatch).toBeUndefined();
+    // `generationBatch` is `notApplicable` on a human row, so it is answered `null`
+    // rather than with a synthetic id — the same rule the three-states test above
+    // pins.
+    expect(inputs[0].groups.generationBatch).toBeNull();
+    // `collectionBatch` is the axis v4 RETIRED, so it is ABSENT and not `null`: a v4
+    // record does not declare it at all, and answering it would put a key in the
+    // event that no version's tuple has.
     expect(inputs[0].groups.collectionBatch).toBeUndefined();
   });
 
@@ -2455,23 +2667,26 @@ describe("the exposure ledger reads a v4 record by the axes v4 declares", () => 
       paths(),
       request({ records: exposureInputsFromRecords([row], () => "dev") }),
     );
-    expect(Object.keys(decision.event.records[0].groupDigests).sort()).toEqual(
-      [
-        "author",
-        "domainSource",
-        "extractionRun",
-        "nearDuplicate",
-        "source",
-        "sourceMaterialBatch",
-      ].sort(),
-    );
+    const digests = decision.event.records[0].groupDigests;
+    // The v4 TUPLE, whole: the three axes v4 introduced included, `collectionBatch`
+    // excluded because v4 retired it.
+    expect(Object.keys(digests).sort()).toEqual([...V4_GROUP_AXES].sort());
+    expect(digests.sourceMaterialBatch.length).toBeGreaterThan(0);
+    expect(digests.extractionRun.length).toBeGreaterThan(0);
+    // Answered without an identity, and that is what the empty list records.
+    expect(digests.generationBatch).toEqual([]);
   });
 
-  it("accepts a stored event naming an axis only v4 declares", async () => {
+  it("writes an event that answers the v4 tuple, and only a version's tuple", async () => {
     await init();
-    // The loader's vocabulary is the UNION and not one version's tuple: a ledger
-    // outlives a schema bump, so an event written from a v4 corpus and read back
-    // after — or before — must not be a `CLUSTER_LEDGER_AXIS_UNKNOWN`.
+    // The WRITER's half. It closes against ONE version, so a map of the three v4-only
+    // axes alone is refused here and the loader's tolerance for it has to be shown on
+    // a stored event instead (the test below).
+    const v4Only = {
+      sourceMaterialBatch: "smb_ptwiki_20220301",
+      generationBatch: "gb_agy_20260724",
+      extractionRun: "er_ptwiki_20260727",
+    };
     const decision = await preflightExposure(
       paths(),
       request({
@@ -2480,20 +2695,659 @@ describe("the exposure ledger reads a v4 record by the axes v4 declares", () => 
             id: "r_v4",
             text: BASE_TEXT,
             partition: "dev",
-            groups: {
-              sourceMaterialBatch: "smb_ptwiki_20220301",
-              generationBatch: "gb_agy_20260724",
-              extractionRun: "er_ptwiki_20260727",
-            },
+            groups: answers(v4Only, V4_GROUP_AXES),
           },
         ],
       }),
     );
-    expect(Object.keys(decision.event.records[0].groupDigests).sort()).toEqual([
+    expect(Object.keys(decision.event.records[0].groupDigests).sort()).toEqual(
+      [...V4_GROUP_AXES].sort(),
+    );
+
+    await expect(
+      preflightExposure(
+        paths(),
+        request({
+          records: [
+            {
+              id: "r_v4_partial",
+              text: BASE_TEXT,
+              partition: "dev",
+              groups: v4Only,
+            },
+          ],
+        }),
+      ),
+    ).rejects.toMatchObject({ code: "CLUSTER_LEDGER_GROUPS_INCOMPLETE" });
+  });
+
+  it("accepts a stored event naming an axis only v4 declares", async () => {
+    await init();
+    // The LOADER's half, and it has to be shown on a line already on disk: the
+    // loader's vocabulary is the UNION and not one version's tuple, because a ledger
+    // outlives a schema bump — an event written from a v4 corpus and read back after,
+    // or before, must not be a `CLUSTER_LEDGER_AXIS_UNKNOWN`. The line is forged
+    // rather than written, since the writer now answers one whole tuple and could
+    // never produce this partial shape again.
+    await recordPilotExposure(
+      paths(),
+      request({ eventType: "pilot-exposure" }),
+    );
+    await rewriteLedger((events) => {
+      const record = recordsOf(events[0])[0];
+      const digests = record.groupDigests as Record<string, unknown>;
+      const kept = digests.source;
+      for (const axis of Object.keys(digests)) delete digests[axis];
+      digests.sourceMaterialBatch = kept;
+      digests.generationBatch = [];
+      digests.extractionRun = [];
+    });
+
+    const events = await readClusterLedger(paths().ledgerPath);
+    expect(Object.keys(events[0].records[0].groupDigests).sort()).toEqual([
       "extractionRun",
       "generationBatch",
       "sourceMaterialBatch",
     ]);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// A `groups` map that answers NOTHING used to be accepted, and the exposure it
+// recorded compared nothing: `{}` is an object and is not null, which was the only
+// thing asked of it. Everything below pins the criterion that replaced that check —
+// the map answers exactly the axes ONE version declares — and pins it on both paths,
+// because the parser guards a hand-written file and the library path guards the code.
+// ---------------------------------------------------------------------------
+
+describe("a groups map answers one version's axis tuple, or it is refused", () => {
+  function caught(action: () => unknown): ClusterLedgerError {
+    try {
+      action();
+    } catch (error) {
+      return error as ClusterLedgerError;
+    }
+    throw new Error("expected the call to throw");
+  }
+
+  /** A request as it arrives from a FILE, with its one record's groups replaced. */
+  function rawRequestWithGroups(groups: unknown): unknown {
+    const raw = JSON.parse(JSON.stringify(request())) as {
+      records: Record<string, unknown>[];
+    };
+    raw.records[0].groups = groups;
+    return raw;
+  }
+
+  function inputWithGroups(
+    groups: Record<string, string | null>,
+  ): ExposureRequest {
+    return request({
+      records: [{ id: "r1", text: BASE_TEXT, partition: "dev", groups }],
+    });
+  }
+
+  it("refuses a request whose groups answers fewer axes than one version declares", () => {
+    const failure = caught(() =>
+      parseExposureRequest(rawRequestWithGroups({})),
+    );
+    expect(failure.code).toBe("CLUSTER_LEDGER_GROUPS_INCOMPLETE");
+    // The diagnosis NAMES the axes, because "incomplete" alone leaves an operator
+    // guessing which vocabulary the file was supposed to answer.
+    for (const axis of ["author", "humanSeed", "nearDuplicate"]) {
+      expect(failure.message).toContain(axis);
+    }
+  });
+
+  it("refuses a groups map that is an array, which typeof calls an object", () => {
+    // `typeof [] === "object"` and an array is not null, so the old check passed it
+    // and `Object.entries` of it iterated nothing: the same empty map by another
+    // spelling.
+    const failure = caught(() =>
+      parseExposureRequest(rawRequestWithGroups([])),
+    );
+    expect(failure.code).toBe("CLUSTER_LEDGER_REQUEST_INVALID");
+  });
+
+  it("refuses an empty groups map on the library path too, not only in the parser", async () => {
+    // E2's freeze path builds an `ExposureRecordInput` in code and never sees the JSON
+    // parser, so a guard living only in the parser guards the hand-written file and
+    // leaves the real writer open.
+    await init();
+    await expect(
+      preflightExposure(paths(), inputWithGroups({})),
+    ).rejects.toMatchObject({ code: "CLUSTER_LEDGER_GROUPS_INCOMPLETE" });
+  });
+
+  it("refuses a groups map that answers only some of its version axes", async () => {
+    // The PARTIAL map is the same defect in a size that is easy to miss, and it is
+    // what "the map is not empty" leaves alive.
+    await init();
+    const partial = { author: "person_0123456789abcdef", source: "th_1" };
+    await expect(
+      preflightExposure(paths(), inputWithGroups(partial)),
+    ).rejects.toMatchObject({ code: "CLUSTER_LEDGER_GROUPS_INCOMPLETE" });
+    expect(
+      caught(() => parseExposureRequest(rawRequestWithGroups(partial))).code,
+    ).toBe("CLUSTER_LEDGER_GROUPS_INCOMPLETE");
+  });
+
+  it("refuses a groups map that mixes v3-only and v4-only axes", async () => {
+    // A chimera no version declares: `collectionBatch` is v3's, `generationBatch` is
+    // one of the three axes v4 replaced it with. Accepting the UNION would accept
+    // this, and an event that answers a set no version has cannot be re-derived from
+    // any corpus.
+    await init();
+    await expect(
+      preflightExposure(
+        paths(),
+        inputWithGroups({
+          ...answers({
+            author: "person_0123456789abcdef",
+            source: "th_1",
+            collectionBatch: "cb_1",
+          }),
+          generationBatch: "gb_1",
+        }),
+      ),
+    ).rejects.toMatchObject({ code: "CLUSTER_LEDGER_GROUPS_INCOMPLETE" });
+  });
+
+  it("accepts a total map over each version tuple, and only those", async () => {
+    await init();
+    const identities = { author: "person_0123456789abcdef", source: "th_1" };
+    for (const vocabulary of [V3_GROUP_AXES, V4_GROUP_AXES]) {
+      const decision = await preflightExposure(
+        paths(),
+        inputWithGroups(answers(identities, vocabulary)),
+      );
+      expect(
+        Object.keys(decision.event.records[0].groupDigests).sort(),
+        `the ${vocabulary.length}-axis tuple`,
+      ).toEqual([...vocabulary].sort());
+    }
+    // And the UNION of the two is not a tuple any version declares, so the map that
+    // answers all fifteen axes is refused just like the map that answers five.
+    await expect(
+      preflightExposure(
+        paths(),
+        inputWithGroups(answers(identities, ALL_GROUP_AXES)),
+      ),
+    ).rejects.toMatchObject({ code: "CLUSTER_LEDGER_GROUPS_INCOMPLETE" });
+  });
+
+  it("the vocabularies the ledger accepts are exactly the tuples recordGroupAxes returns", () => {
+    // THE pin of the mirror. The ledger must not carry its own list of axis names:
+    // `recordGroupAxes` is the authority on what a record version declares, and a
+    // second list here would go on accepting a set the schema had already changed.
+    const tupleKey = (axes: readonly string[]): string =>
+      [...axes].sort().join(",");
+    // `recordGroupAxes` dispatches on this one field and reads nothing else, so a
+    // stub is the whole record it needs — and v2 has no fixture builder, because the
+    // schema does not mint v2 records any more while the ledger still reads corpora
+    // that were.
+    const declared = new Set(
+      [2, 3, 4].map((schemaVersion) =>
+        tupleKey(
+          recordGroupAxes({ schemaVersion } as unknown as BenchmarkRecord),
+        ),
+      ),
+    );
+    // EQUALITY of the two sets, and not containment in one direction: a vocabulary
+    // here that no record version declares is the second authority this pin exists to
+    // forbid, and a subset of the union satisfies "every axis is a declared axis"
+    // while being a tuple no corpus can ever answer.
+    expect(LEDGER_AXIS_VOCABULARIES.map(tupleKey).sort()).toEqual(
+      [...declared].sort(),
+    );
+    // And the union of what the WRITER accepts is exactly what the READER accepts,
+    // so no axis can be storable-but-unwritable or the other way round.
+    expect([...new Set(LEDGER_AXIS_VOCABULARIES.flat())].sort()).toEqual(
+      [...ALL_GROUP_AXES].sort(),
+    );
+  });
+
+  it("records every axis the request answered, with an empty digest list where there was no identity", async () => {
+    await init();
+    const decision = await preflightExposure(paths(), request());
+    const digests = decision.event.records[0].groupDigests;
+    expect(Object.keys(digests).sort()).toEqual([...V3_GROUP_AXES].sort());
+    // The axis with an identity carries one digest per key version...
+    expect(digests.author).toHaveLength(1);
+    // ...and the axis answered `null` carries the EMPTY list, which is the marker
+    // that the event asked about it. Written only in the event, never as a new
+    // record field: `validateEventShape` requires every key of RECORD_KEYS, so a new
+    // field would refuse retroactively every event already on disk.
+    expect(digests.humanSeed).toEqual([]);
+    expect(digests.derivationRoot).toEqual([]);
+  });
+
+  it("a null identity is an answer the parsed request keeps, never a skip", async () => {
+    // The parser used to `continue` past a `null`, so a file that answered explicitly
+    // was reduced to the silence of an absent key — and the record it produced was
+    // then partial for exactly the axes it had taken the trouble to answer.
+    await init();
+    const parsed = parseExposureRequest(JSON.parse(JSON.stringify(request())));
+    expect(Object.keys(parsed.records[0].groups).sort()).toEqual(
+      [...V3_GROUP_AXES].sort(),
+    );
+    expect(parsed.records[0].groups.humanSeed).toBeNull();
+    // And end to end: what the parser produced is what the writer accepts.
+    const decision = await preflightExposure(paths(), parsed);
+    expect(decision.eligible).toBe(true);
+  });
+
+  it("names null as the spelling of no identity when a value is neither", () => {
+    const failure = caught(() =>
+      parseExposureRequest(
+        rawRequestWithGroups({ ...answers({ source: "th_1" }), author: 42 }),
+      ),
+    );
+    expect(failure.code).toBe("CLUSTER_LEDGER_REQUEST_INVALID");
+    expect(failure.message).toContain("null");
+  });
+});
+
+describe("the ledger publishes the coverage of the history it compares", () => {
+  it("verify counts a legacy record that answered only some axes, not only an empty one", async () => {
+    // Measuring by emptiness (`Object.keys(groupDigests).length === 0`) would report
+    // zero here, and this record is the common case: the old writer persisted the
+    // axes that carried an identity and said nothing about the rest.
+    await init();
+    const { event } = await recordPilotExposure(
+      paths(),
+      request({ eventType: "pilot-exposure" }),
+    );
+    await rewriteLedger((events) => trimToLegacy(events[0]));
+
+    const stored = await readClusterLedger(paths().ledgerPath);
+    expect(Object.keys(stored[0].records[0].groupDigests)).toHaveLength(5);
+
+    const verified = await verifyClusterLedger(paths());
+    expect(verified.axisCoverage.underAskedRecords).toBe(1);
+    expect(verified.axisCoverage.underAskedEventIds).toEqual([event.eventId]);
+  });
+
+  it("verify reports an under-asked legacy event and does NOT refuse it", async () => {
+    // The decision the report rests on: the ledger is append-only and has no
+    // amendment, so failing closed here would take the blind partitions off the
+    // board with no repair — permanently, for every future offer. `verify` therefore
+    // passes, the count is published, and every offer still gets decided.
+    await init();
+    await recordPilotExposure(
+      paths(),
+      request({ eventType: "pilot-exposure" }),
+    );
+    await rewriteLedger((events) => trimToLegacy(events[0]));
+
+    const verified = await verifyClusterLedger(paths());
+    expect(verified.eventCount).toBe(1);
+    expect(verified.axisCoverage.underAskedRecords).toBeGreaterThan(0);
+
+    // The barrier still bars what the legacy event DID record...
+    const exposed = await preflightExposure(
+      paths(),
+      request({
+        datasetDigest: DATASET_B,
+        splitDigest: SPLIT_B,
+        records: [
+          record({ id: "r1-renamed", text: FAR_TEXT, partition: "test" }),
+        ],
+      }),
+    );
+    expect(exposed.refusals.map((refusal) => refusal.reason)).toContain(
+      "cluster-exposed-previously",
+    );
+    // ...and it still admits a cluster the history never saw, which is what makes
+    // this a report and not a shutdown.
+    const fresh = await preflightExposure(
+      paths(),
+      request({
+        datasetDigest: DATASET_B,
+        splitDigest: SPLIT_B,
+        records: [
+          record({
+            id: "r-fresh",
+            text: FAR_TEXT,
+            author: "person_1111222233334444",
+            source: "th_fresh",
+            partition: "test",
+          }),
+        ],
+      }),
+    );
+    expect(fresh.refusals).toEqual([]);
+    expect(fresh.eligible).toBe(true);
+    // The offer decision publishes the same gap, so an operator who runs preflight
+    // and never runs verify still sees it.
+    expect(fresh.axisCoverage.underAskedRecords).toBe(1);
+  });
+
+  it("tells an axis answered with no identity from an axis a legacy event never asked about", async () => {
+    // The two states an absent key and an empty list used to share. The first event
+    // is written by today's writer and answers all twelve axes, seven of them with
+    // the empty list; the second is trimmed to the five the old writer would have
+    // persisted. Collapse the two readings and the full event counts as under-asked
+    // too, which is how "measured" turns back into "invisible".
+    await init();
+    const { event: complete } = await recordPilotExposure(
+      paths(),
+      request({ eventType: "pilot-exposure" }),
+    );
+    const { event: legacy } = await commitSplitFreeze(
+      paths(),
+      request({
+        runId: "run-2",
+        records: [
+          record({
+            id: "r2",
+            text: FAR_TEXT,
+            author: "person_5555666677778888",
+            source: "th_2",
+          }),
+        ],
+      }),
+    );
+    await rewriteLedger((events) => trimToLegacy(events[1]));
+
+    const stored = await readClusterLedger(paths().ledgerPath);
+    const answeredWithoutIdentity = Object.entries(
+      stored[0].records[0].groupDigests,
+    ).filter(([, digests]) => digests.length === 0);
+    expect(answeredWithoutIdentity).toHaveLength(7);
+
+    const verified = await verifyClusterLedger(paths());
+    expect(verified.axisCoverage.underAskedRecords).toBe(1);
+    expect(verified.axisCoverage.underAskedEventIds).toEqual([legacy.eventId]);
+    expect(verified.axisCoverage.underAskedEventIds).not.toContain(
+      complete.eventId,
+    );
+  });
+});
+
+describe("the answer the operator reads carries the coverage behind it", () => {
+  // The measurement reaches a human only as the last sentence of the CLI's answer,
+  // and an answer that drops it reads exactly like an answer whose history had
+  // answered every axis — the silence this measurement exists to break, arriving one
+  // layer above the ledger. The four actions that rest on the history are therefore
+  // driven end to end, both of `preflight`'s answers included, and what they PRINT is
+  // what is asserted.
+
+  /** The reading of a history that answered every axis of some version. */
+  const FULL_TUPLE_NOTE =
+    "Every recorded record-line answers a full axis tuple.";
+
+  function expectShortfall(
+    answer: string,
+    records: number,
+    eventId: string,
+  ): void {
+    expect(answer).toContain(
+      `${records} recorded record-line(s) answer no version's full axis tuple`,
+    );
+    // The EVENTS, because a count alone leaves an operator with nowhere to look.
+    expect(answer).toContain(eventId);
+    // And the clean reading is gone rather than accompanied: an answer carrying both
+    // sentences reads as a full comparison with a footnote.
+    expect(answer).not.toContain(FULL_TUPLE_NOTE);
+  }
+
+  async function requestFile(
+    name: string,
+    body: ExposureRequest,
+  ): Promise<string> {
+    const path = join(root, name);
+    await writeFile(path, JSON.stringify(body, null, 2), "utf8");
+    return path;
+  }
+
+  /**
+   * A history of one event whose record-line answers only the legacy axes, and the
+   * id of that event — which is what every answer below has to name.
+   */
+  async function underAskedHistory(): Promise<string> {
+    await init();
+    const { event } = await recordPilotExposure(
+      paths(),
+      request({ eventType: "pilot-exposure" }),
+    );
+    await rewriteLedger((events) => trimToLegacy(events[0]));
+    return event.eventId;
+  }
+
+  it("verify says the history answered every axis when it did, and names the shortfall when it did not", async () => {
+    await init();
+    const { event } = await recordPilotExposure(
+      paths(),
+      request({ eventType: "pilot-exposure" }),
+    );
+    expect(await clusterLedgerCli("verify")).toContain(FULL_TUPLE_NOTE);
+
+    await rewriteLedger((events) => trimToLegacy(events[0]));
+    const verified = await clusterLedgerCli("verify");
+    // The chain still closes and the keyring still attests, so every other word of
+    // this answer is the same as above: the shortfall is the only thing that keeps it
+    // from being read as "every axis was compared".
+    expect(verified).toContain("Cluster-exposure ledger verified: 1 event(s)");
+    expectShortfall(verified, 1, event.eventId);
+  });
+
+  it("preflight carries it whether the offer is eligible or REFUSED", async () => {
+    const legacyEventId = await underAskedHistory();
+
+    const eligible = await clusterLedgerCli(
+      "preflight",
+      "--request",
+      await requestFile(
+        "fresh.json",
+        request({
+          records: [
+            record({
+              id: "r-fresh",
+              text: FAR_TEXT,
+              author: "person_1111222233334444",
+              source: "th_fresh",
+            }),
+          ],
+        }),
+      ),
+    );
+    expect(eligible).toContain("Preflight: eligible.");
+    expectShortfall(eligible, 1, legacyEventId);
+
+    const refused = await clusterLedgerCli(
+      "preflight",
+      "--request",
+      await requestFile(
+        "burned.json",
+        request({
+          records: [record({ id: "r1-renamed", partition: "cal-B" })],
+        }),
+      ),
+    );
+    expect(refused).toContain("Preflight: REFUSED");
+    expectShortfall(refused, 1, legacyEventId);
+  });
+
+  it("record-pilot and commit-split carry the coverage of the history they were decided against", async () => {
+    const legacyEventId = await underAskedHistory();
+
+    const pilot = await clusterLedgerCli(
+      "record-pilot",
+      "--request",
+      await requestFile(
+        "pilot.json",
+        request({
+          eventType: "pilot-exposure",
+          runId: "run-pilot-2",
+          records: [
+            record({
+              id: "p2",
+              text: FAR_TEXT,
+              author: "person_1111222233334444",
+              source: "th_p2",
+            }),
+          ],
+        }),
+      ),
+    );
+    expect(pilot).toContain("Pilot exposure recorded");
+    expectShortfall(pilot, 1, legacyEventId);
+
+    const staged = join(root, "split-artifact.staged.json");
+    await writeFile(staged, '{"splitDigest":"staged"}\n', "utf8");
+    const committed = await clusterLedgerCli(
+      "commit-split",
+      "--request",
+      await requestFile(
+        "freeze.json",
+        request({
+          runId: "run-freeze",
+          records: [
+            record({
+              id: "f1",
+              text: words("kappa", 200),
+              author: "person_2222333344445555",
+              source: "th_f1",
+            }),
+          ],
+        }),
+      ),
+      "--staged-split",
+      staged,
+      "--split-out",
+      join(root, "split-artifact.json"),
+    );
+    expect(committed).toContain("Split freeze committed");
+    // The events the write was decided against, and not the event it just wrote: the
+    // decision was taken over the history as it stood, which is what the number
+    // qualifies.
+    expectShortfall(committed, 1, legacyEventId);
+  });
+});
+
+describe("the persisted record is read back in the form the writer wrote", () => {
+  // Presence of the five record keys was all `validateEventShape` checked, and
+  // presence is not form: a `groupDigests` that is the string "banana", a
+  // `fingerprint` that is a label and a `recordDigest` that is not a digest were all
+  // accepted, and a digest this module cannot read matches nothing — so the exposure
+  // the event records stops blocking without ever failing. The forgeries go in
+  // through `readClusterLedger`, which is the API the defect crosses.
+  let pristineLedger: string;
+  let pristineKeyring: string;
+
+  beforeEach(async () => {
+    await init();
+    await recordPilotExposure(
+      paths(),
+      request({ eventType: "pilot-exposure" }),
+    );
+    pristineLedger = await readFile(paths().ledgerPath, "utf8");
+    pristineKeyring = await readFile(paths().keyringPath, "utf8");
+  });
+
+  /**
+   * Applies one edit to the stored record and reads the ledger back, returning
+   * whatever came out. The chain and the attestation are re-closed by
+   * `rewriteLedger`, so nothing here can be refused for having diverged.
+   */
+  async function forgeAndRead(
+    edit: (record: Record<string, unknown>) => void,
+  ): Promise<unknown> {
+    await writeFile(paths().ledgerPath, pristineLedger, "utf8");
+    await writeFile(paths().keyringPath, pristineKeyring, "utf8");
+    await rewriteLedger((events) => edit(recordsOf(events[0])[0]));
+    return readClusterLedger(paths().ledgerPath).catch(
+      (error: unknown) => error,
+    );
+  }
+
+  function expectRefused(outcome: unknown, spelling: string): void {
+    expect(outcome, spelling).toBeInstanceOf(ClusterLedgerError);
+    expect((outcome as ClusterLedgerError).code, spelling).toBe(
+      "CLUSTER_LEDGER_EVENT_INVALID",
+    );
+  }
+
+  /** A digest this module CAN read, so a forgery carries only the defect it names. */
+  const READABLE_DIGEST = "0".repeat(64);
+
+  it("refuses a persisted record whose groupDigests is not a map of axis to keyed digests", async () => {
+    // The control: the forging machinery leaves a READABLE ledger, so a refusal below
+    // is the edit and never the forgery.
+    const control = await forgeAndRead(() => {});
+    expect(Array.isArray(control)).toBe(true);
+
+    // ONE defect per forgery. A line carrying an undeclared axis AND an unreadable
+    // digest is refused by either check alone, so either could be dropped and the
+    // refusal would still arrive from the other one — which is why every defect below
+    // the axis name is spelled under `author`, an axis every version declares.
+    const spellings: [string, (record: Record<string, unknown>) => void][] = [
+      ["a string", (record) => void (record.groupDigests = "banana")],
+      ["an array", (record) => void (record.groupDigests = [])],
+      [
+        "an axis no version declares, under a digest this module can read",
+        (record) =>
+          void (record.groupDigests = {
+            naoExiste: [{ keyVersion: "v1", digest: READABLE_DIGEST }],
+          }),
+      ],
+      [
+        "a declared axis carrying a digest that is not hex",
+        (record) =>
+          void (record.groupDigests = {
+            author: [{ keyVersion: "v1", digest: "nao-e-hex" }],
+          }),
+      ],
+      [
+        "a pair declaring a third field",
+        (record) =>
+          void (record.groupDigests = {
+            author: [
+              {
+                keyVersion: "v1",
+                digest: READABLE_DIGEST,
+                algorithm: "sha256",
+              },
+            ],
+          }),
+      ],
+      [
+        "a pair whose keyVersion is empty",
+        (record) =>
+          void (record.groupDigests = {
+            author: [{ keyVersion: "", digest: READABLE_DIGEST }],
+          }),
+      ],
+      [
+        "an axis whose value is not an array",
+        (record) => void (record.groupDigests = { author: "x" }),
+      ],
+    ];
+    for (const [spelling, edit] of spellings) {
+      expectRefused(await forgeAndRead(edit), spelling);
+    }
+  });
+
+  it("refuses a persisted record whose fingerprint, lineageDigests or recordDigest is not the shape buildEventRecords writes", async () => {
+    const spellings: [string, (record: Record<string, unknown>) => void][] = [
+      ["fingerprint is a string", (record) => void (record.fingerprint = "x")],
+      [
+        // The index's own comment ASSERTS that this is refused here — a record that
+        // lacks its lineage identity would let the seed half of every lineage walk
+        // through — and until now only the key's PRESENCE was checked.
+        "lineageDigests is a string",
+        (record) => void (record.lineageDigests = "x"),
+      ],
+      ["recordDigest is a label", (record) => void (record.recordDigest = "x")],
+      [
+        "lineageDigests is the empty array",
+        (record) => void (record.lineageDigests = []),
+      ],
+    ];
+    for (const [spelling, edit] of spellings) {
+      expectRefused(await forgeAndRead(edit), spelling);
+    }
   });
 });
 

@@ -6866,3 +6866,90 @@ uma dívida registrada. Oito relatórios com veredito `block` ficaram nove dias 
 linha de § 7 os mencionasse, e a única razão pela qual isso foi descoberto é o operador ter perguntado.
 **Fechar uma rodada de revisão inclui escrever, no arquivo de estado, o que ela achou e não se consertou —
 com dono e vencimento.** Sem isso, `block` viaja como se fosse `pass`.
+
+---
+
+## A onda A1: quatro dos nove que mordiam agora, e as duas rodadas que a revisão exigiu (2026-08-11)
+
+Primeira onda de conserto da fila que a auditoria de 2026-08-10 levantou. **Quatro unidades, escolhidas
+por PROPRIEDADE DE ARQUIVO DISJUNTA** para poderem correr ao mesmo tempo sem se invalidarem — a lição
+registrada de que agentes em paralelo mutando a mesma árvore destroem a verificação que se pediu. Cada
+unidade recebeu a tríade completa: desenho antes do código, implementação contra o contrato,
+cross-review adversarial.
+
+| unidade | defeito | veredito |
+|---|---|---|
+| U1 | `validate` selava e saía 0 sobre corpus `blocked` | `pass` na 1.ª rodada |
+| U2 | `groups: {}` atravessava parse, evento e atestado do ledger | `pass` na 2.ª |
+| U6 | o manifesto prometia não carregar URL e o produtor gravava uma | `pass` na 3.ª |
+| U8 | o piso barato comparava as duas AUCs contra o mesmo vetor humano, e a junção parcial passava silenciosa | `pass` na 3.ª |
+
+### O que a revisão adversarial pegou, e por que ela é o passo que decide
+
+**Três das quatro voltaram `block` na primeira rodada**, e nenhum dos três bloqueantes era erro de
+mecanismo: os três eram **guardas certas que não mordiam onde rodam**, ou comentários prometendo mais do
+que o código impõe. É a mesma família que este registro já nomeou três vezes.
+
+- **U2** — a metade CLI da guarda não tinha teste nenhum, nem textual: o revisor apagou dois dos quatro
+  sítios de `axisCoverageNote` e a suíte deu **99 passed**. O conserto fez o teste dirigir `runCli` e
+  afirmar a string impressa; as duas mutações do revisor ficaram vermelhas em teste nomeado.
+- **U6** — o comentário da guarda nova afirmava que a whitelist de forma fechava a CLASSE de localizador
+  em `evidence`, e o revisor mediu pela API pública que `dumps.wikimedia.org (10 bytes)` é **aceito**. A
+  prosa passou a dizer o que de fato está fechado, e cada resíduo declarado ficou **fixado por teste como
+  aceito** — para que a próxima pessoa não releia a declaração como promessa. Na terceira rodada a mesma
+  espécie apareceu num **terceiro** sítio (o doc do próprio campo `evidence`), e é a que esta unidade
+  fechou por último.
+- **U8** — a guarda G3 não estava fixada em nenhuma das duas pontas: o revisor a matou apagando o sítio de
+  chamada (**57 passed**) e trocando `set(...) == set(...)` por `len(...) == len(...)` (**57 passed**),
+  que é literalmente a condição-suficiente-deduzida-do-critério. Consertada, a segunda reconferência
+  achou que o sítio de chamada estava fixado só para **metade** do que faz: restringir o laço a
+  `("reserved",)` deixava a suíte verde, e a fatia `core` — que é o denominador de `excessLift` — ficava
+  sem observação. O teste passou a ser parametrizado sobre as duas fatias.
+
+### O que isto ensina sobre a bateria de mutação
+
+A bateria não é cerimônia: **em três de quatro unidades ela foi o único instrumento que separou "guarda
+escrita" de "guarda que morde"**, e nas duas reconferências ela pegou meia-cobertura que a leitura do diff
+não pegaria. O padrão que se repete é sempre o mesmo — o implementador testa a guarda **chamando-a
+direto**, e o defeito vive na LIGAÇÃO entre ela e o fluxo. Um teste que chama a guarda direto prova o
+critério e nada sobre o sítio; o que prende o sítio é um teste que atravessa a API pública.
+
+Uma nota de honestidade sobre a segunda reconferência de U8: a mutação que sobreviveu (`for name in
+populations:` → `for name in ("reserved",):`) **não** é mutante equivalente, e o revisor provou em vez de
+alegar — com a mutação aplicada, um `core` lido sobre duas populações diferentes publica `excessLift`
+−0,5 e veredito `no-headroom` com todas as contagens de acordo.
+
+### Integração, e o que ela custou
+
+Feita com a árvore quieta, depois de as quatro unidades fecharem.
+
+- **`evaluatorDigest` moveu**, como tinha de mover: cinco dos arquivos tocados são membros de
+  `EVALUATOR_FILES`. `d69f62bc…` → `c04d7b94a9f71a6a32ba9a76fba921c10d4c1faf7c58de1d9d0f610ee4248062`.
+  Durante a onda o `digests.test.ts` ficou vermelho de propósito e as unidades foram instruídas a não o
+  tocar — republicar o digest é ato de integração, e uma unidade que o "consertasse" estaria escondendo o
+  que ela mesma moveu.
+- **Uma regressão real, em arquivo que nenhuma unidade podia tocar**: a guarda nova de U6 derrubou 5
+  testes de `corpus-source-audit.test.ts`, cujas fixtures usavam
+  `https://exemplo.invalido/…sha256` **como evidência**. A guarda está certa e a fixture era ilegítima
+  sob o contrato novo: as duas entradas passaram a ser um digest e um arquivo com bytes. O implementador de
+  U6 declarou essa consequência e o revisor a mediu — foi declarada, não descoberta na integração, e é a
+  diferença entre dívida e surpresa.
+- **Um comentário falsificado por reordenamento**, também fora da propriedade: `benchmark/lab/audit_sources.ts`
+  dizia que `validate` roda a auditoria "only AFTER sealDataset", que era o defeito que U1 consertou. O
+  WHY da ferramenta standalone continua válido — ler os códigos de governança de um build **incompleto**
+  —, e é isso que o comentário diz agora.
+
+**Medido na integração, com a árvore quieta e em rodada ÚNICA:** vitest **172 arquivos / 2.929 testes**,
+verde; pytest do lab **577 testes / 117 subtests**, verde; `tsc` limpo nos três projetos; `prettier`
+limpo; lint nos mesmos **12** pré-existentes (10 sob `.cache/chrome-for-testing/`, 2 avisos de
+`react-refresh` em `src/`). A suíte cresceu 64 testes no vitest e 46 no pytest.
+
+**Custo de reversão:** cada unidade é um conjunto de arquivos disjunto, e reverter uma não move as outras;
+o digest volta ao valor anterior recomputando. As referências entraram como § R de `references.md`, no
+mesmo commit, com as quatro âncoras (Saltzer & Schroeder 1975 para as duas recusas fail-closed, *Parse,
+Don't Validate* para a totalidade do eixo, RFC 3986 § 3.2 para o critério de localizador, Stuart 2010 para
+o pareamento como propriedade da análise).
+
+**A dívida de codex permanece nas quatro.** A etapa 3 foi do Fable, e rodada do Fable não fecha dívida de
+codex — a janela de cota está fechada até 16 de agosto, e a decisão de em que gastá-la é do operador
+(§ 4 do ESTADO).

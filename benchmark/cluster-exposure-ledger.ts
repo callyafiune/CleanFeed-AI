@@ -77,6 +77,8 @@ import {
 } from "./near-duplicates.ts";
 import {
   ALL_GROUP_AXES,
+  V3_GROUP_AXES,
+  V4_GROUP_AXES,
   groupAxisIdentity,
   recordGroupAxes,
   type BenchmarkRecord,
@@ -89,6 +91,113 @@ import { connectedComponentRoots } from "./split.ts";
 // against is the union: an event naming an axis of the OTHER version is a real
 // event, not a typo, and refusing it would make history unreadable.
 const LEDGER_AXIS_NAMES: readonly string[] = ALL_GROUP_AXES;
+
+/**
+ * The axis tuples a record version DECLARES, and therefore the only complete
+ * answers a request may give.
+ *
+ * Read from the schema instead of spelled out here, and that is the whole point:
+ * `recordGroupAxes` is what picks between these two per record, so a second list
+ * of axis names in this file would be a second authority — this module would go on
+ * accepting a set the schema had already changed.
+ *
+ * WRITING closes against ONE tuple; READING stays open to the union
+ * ({@link LEDGER_AXIS_NAMES}) for the reason stated there, because the history
+ * holds events written from corpora of more than one version.
+ */
+export const LEDGER_AXIS_VOCABULARIES: readonly (readonly string[])[] = [
+  V3_GROUP_AXES,
+  V4_GROUP_AXES,
+];
+
+/**
+ * The tuple a key set answers IN FULL, or `undefined` when it answers none of
+ * them.
+ *
+ * THE operation that decides "this map closes against a version". The parser, the
+ * library path and the coverage measurement all ask it here, so one list cannot grow
+ * three readings.
+ */
+function vocabularyAnsweredBy(
+  axes: readonly string[],
+): readonly string[] | undefined {
+  const answered = new Set(axes);
+  return LEDGER_AXIS_VOCABULARIES.find(
+    (vocabulary) =>
+      vocabulary.length === answered.size &&
+      vocabulary.every((axis) => answered.has(axis)),
+  );
+}
+
+/**
+ * Refuses a `groups` map that does not ANSWER one version's axis tuple.
+ *
+ * The criterion is TOTALITY over a declared vocabulary, and `null` is one of the
+ * two ways of answering: it says "this row has no identity on this axis", which is
+ * what a generated row says about `author`. An ABSENT key says nothing at all, and
+ * an exposure recorded over axes nobody answered is an exposure that cannot be
+ * compared later — the empty map is only the largest instance of that, and the
+ * partial map is the same defect in a size that is easy to miss.
+ *
+ * ORDER. An axis name outside the union is refused BEFORE an incomplete answer: an
+ * invented name is a typo whose diagnosis is the name itself, and judging
+ * completeness first would report it as a missing axis instead. It mirrors the
+ * schema's own order, where `assertClosedObject` runs before the per-axis loop.
+ */
+function assertAnsweredAxes(locus: string, groups: unknown): void {
+  if (typeof groups !== "object" || groups === null || Array.isArray(groups)) {
+    fail(
+      "CLUSTER_LEDGER_REQUEST_INVALID",
+      `${locus}.groups must be an object of axis -> pseudonym or null; received ` +
+        `${JSON.stringify(groups) ?? "undefined"}. An array is not one — it answers ` +
+        "no axis, and `typeof` calls it an object",
+    );
+  }
+  const answered = Object.entries(groups as Record<string, unknown>);
+  for (const [axis] of answered) {
+    if (!LEDGER_AXIS_NAMES.includes(axis)) {
+      fail(
+        "CLUSTER_LEDGER_AXIS_UNKNOWN",
+        `${locus} names the grouping axis "${axis}", which the schema does not ` +
+          `declare (${LEDGER_AXIS_NAMES.join(", ")})`,
+      );
+    }
+  }
+  for (const [axis, identity] of answered) {
+    if (identity === null) continue;
+    if (typeof identity !== "string") {
+      fail(
+        "CLUSTER_LEDGER_REQUEST_INVALID",
+        `${locus}.groups.${axis} is ${JSON.stringify(identity) ?? "undefined"}, ` +
+          "which is neither a pseudonym nor null. `null` is how a record states it " +
+          "has no identity on an axis; an absent or undefined value states nothing",
+      );
+    }
+    assertLedgerIdentity(axis, identity);
+  }
+  const offered = new Set(answered.map(([axis]) => axis));
+  if (vocabularyAnsweredBy([...offered]) === undefined) {
+    // The vocabularies are described by their SIZE and not by a version number:
+    // naming a version would guess which one the caller meant, and the caller who
+    // answered a chimera of both meant neither.
+    const shortfalls = LEDGER_AXIS_VOCABULARIES.map((vocabulary) => {
+      const missing = vocabulary.filter((axis) => !offered.has(axis));
+      const surplus = [...offered].filter((axis) => !vocabulary.includes(axis));
+      return (
+        `against the ${vocabulary.length}-axis tuple it is missing ` +
+        `[${missing.join(", ") || "nothing"}] and it adds ` +
+        `[${surplus.join(", ") || "nothing"}]`
+      );
+    });
+    fail(
+      "CLUSTER_LEDGER_GROUPS_INCOMPLETE",
+      `${locus}.groups answers ${offered.size} axis/axes, which is the tuple of no ` +
+        `record version: ${shortfalls.join("; ")}. Answer every axis of one ` +
+        "version, with null where the row has no identity: an axis left out is an " +
+        "axis the exposure event never records and the barrier can never compare",
+    );
+  }
+}
 
 /** The canonical file names. The DATA is one artifact for the whole project. */
 export const CLUSTER_EXPOSURE_LEDGER_FILE = "cluster-exposure-ledger.v1.jsonl";
@@ -342,7 +451,14 @@ export interface ClusterDigest {
 export interface ClusterExposureRecord {
   recordDigest: string;
   partition: LedgerPartition;
-  /** axis -> one digest per key version present when the event was written. */
+  /**
+   * axis -> one digest per key version present when the event was written, and the
+   * EMPTY list for an axis the record answered with no identity.
+   *
+   * So the key set is the tuple the request answered, and an event whose key set
+   * closes against no version's tuple was written before answering one was
+   * required. {@link axisDigestsOf} is where that difference is read.
+   */
   groupDigests: Record<string, ClusterDigest[]>;
   /**
    * The digests a CHILD of this record-line would present when it names this row
@@ -403,10 +519,15 @@ export interface ExposureRecordInput {
   text: string;
   partition: LedgerPartition;
   /**
-   * axis -> the ALREADY PSEUDONYMISED identity, or absent/undefined when the axis
-   * is `notApplicable` or `unknown` (both mean "this row joins no other here").
+   * axis -> the ALREADY PSEUDONYMISED identity, or `null` when the row has no
+   * identity there (`notApplicable` and `unknown` collapse into that one answer,
+   * for the reason `groupAxisIdentity` documents: a consumer that GROUPS treats
+   * them alike, and eligibility is a different question).
+   *
+   * TOTAL over one version's tuple. An absent key is not an answer, and a map that
+   * answers only some axes is refused — see {@link assertAnsweredAxes}.
    */
-  groups: Record<string, string | undefined>;
+  groups: Record<string, string | null>;
 }
 
 export interface ExposureRequest {
@@ -434,11 +555,34 @@ export interface ExposureRefusal {
   detail: string;
 }
 
+/**
+ * What the history does NOT say about the axes it recorded.
+ *
+ * Reported rather than refused, and the reason is the ledger's own shape: it is
+ * append-only with no amendment operation, so a refusal here would be a permanent
+ * shutdown of the blind partitions instead of a repair. See {@link axisCoverageOf}.
+ */
+export interface LedgerAxisCoverage {
+  /**
+   * Persisted record-lines whose answered axes are the tuple of no record version:
+   * the barrier compared only the axes those records happen to carry.
+   */
+  underAskedRecords: number;
+  /** The events those record-lines live in, in ledger order, one entry per event. */
+  underAskedEventIds: string[];
+}
+
 export interface ExposureDecision {
   eligible: boolean;
   refusals: ExposureRefusal[];
   /** The event that WOULD be appended, digest included. Preflight writes nothing. */
   event: ClusterExposureEvent;
+  /**
+   * The coverage of the HISTORY this decision was taken against, so an operator
+   * reading "eligible" also reads how much of the ledger could not be compared on
+   * every axis. It never changes the verdict.
+   */
+  axisCoverage: LedgerAxisCoverage;
 }
 
 const SHA256_HEX = /^[0-9a-f]{64}$/;
@@ -531,27 +675,18 @@ export function parseExposureRequest(value: unknown): ExposureRequest {
         `records[${index}].partition must be one of ${LEDGER_PARTITIONS.join(", ")}`,
       );
     }
-    if (typeof row.groups !== "object" || row.groups === null) {
-      fail(
-        "CLUSTER_LEDGER_REQUEST_INVALID",
-        `records[${index}].groups must be an object of axis -> pseudonym`,
-      );
-    }
+    assertAnsweredAxes(`records[${index}]`, row.groups);
     // `Object.create(null)`, not `{}`: the axis names come from a parsed file, and
     // assigning to `__proto__` on a plain object replaces the prototype instead of
-    // creating a key — so an unknown axis would VANISH here, before the allowlist below
-    // could refuse it.
-    const groups = Object.create(null) as Record<string, string | undefined>;
+    // creating a key — so an axis name would VANISH here, after the guard above had
+    // counted it.
+    const groups = Object.create(null) as Record<string, string | null>;
     for (const [axis, identity] of Object.entries(
-      row.groups as Record<string, unknown>,
+      row.groups as Record<string, string | null>,
     )) {
-      if (identity === null || identity === undefined) continue;
-      if (typeof identity !== "string") {
-        fail(
-          "CLUSTER_LEDGER_REQUEST_INVALID",
-          `records[${index}].groups.${axis} must be a pseudonym string`,
-        );
-      }
+      // `null` is COPIED and never skipped: it is the row's answer that it has no
+      // identity on this axis, and dropping it here would leave the request
+      // answering fewer axes than the file did.
       groups[axis] = identity;
     }
     return {
@@ -597,6 +732,13 @@ export interface ClusterLedgerVerification {
    * They are reported so an operator sees that a run died mid-write.
    */
   strayTempFiles: string[];
+  /**
+   * How many recorded record-lines answer no version's full axis tuple. Reported
+   * INSIDE the success value on purpose: a green `verify` used to be read as "the
+   * barrier compared every axis", which it cannot promise for a record written
+   * before answering a whole tuple was required.
+   */
+  axisCoverage: LedgerAxisCoverage;
 }
 
 export interface BackupReceipt {
@@ -623,6 +765,13 @@ export interface BackupReceipt {
 export interface ClusterExposureCommit {
   event: ClusterExposureEvent;
   restorePoint: BackupReceipt;
+  /**
+   * The coverage of the history this mutation was decided against, forwarded from
+   * the same decision, so the command that WRITES reports it as `verify` does. The
+   * event just appended answers a full tuple by construction, so it never adds to
+   * the count.
+   */
+  axisCoverage: LedgerAxisCoverage;
 }
 
 export interface RestoreOutcome {
@@ -1006,6 +1155,167 @@ function sha256Text(text: string): string {
   return sha256BytesHex(new TextEncoder().encode(text));
 }
 
+/**
+ * The persisted form of one keyed digest list, exactly as `buildEventRecords`
+ * writes it.
+ *
+ * An EMPTY list is legitimate under an AXIS and is not refused there: it is how a
+ * record states it answered that axis with no identity. It is refused for
+ * `lineageDigests`, whose comment at the index already ASSERTS that this function
+ * rejects it — the code only checked that the field was present, so an event
+ * carrying `lineageDigests: []` reached the index and its row's own lineage
+ * identity was compared against nothing.
+ */
+function assertKeyedDigestList(
+  line: number,
+  field: string,
+  value: unknown,
+  allowEmpty: boolean,
+): void {
+  const invalid: (why: string) => never = (why) =>
+    fail(
+      "CLUSTER_LEDGER_EVENT_INVALID",
+      `ledger line ${line} carries a record whose ${field} ${why}. ` +
+        "A digest this module cannot read matches nothing, so the exposure it " +
+        "records stops blocking without ever failing",
+    );
+  if (!Array.isArray(value)) {
+    invalid(
+      `is not an array (received ${JSON.stringify(value) ?? "undefined"})`,
+    );
+  }
+  if (!allowEmpty && value.length === 0) {
+    invalid("is an empty array");
+  }
+  for (const entry of value as unknown[]) {
+    if (typeof entry !== "object" || entry === null || Array.isArray(entry)) {
+      invalid(
+        `carries ${JSON.stringify(entry) ?? "undefined"} where a {keyVersion, digest} pair belongs`,
+      );
+    }
+    const pair = entry as Record<string, unknown>;
+    const fields = Object.keys(pair).sort().join(",");
+    if (fields !== "digest,keyVersion") {
+      invalid(`carries a pair declaring the fields [${fields}]`);
+    }
+    if (typeof pair.keyVersion !== "string" || pair.keyVersion === "") {
+      invalid("carries a pair whose keyVersion is not a non-empty string");
+    }
+    if (typeof pair.digest !== "string" || !SHA256_HEX.test(pair.digest)) {
+      invalid(
+        `carries the digest ${JSON.stringify(pair.digest) ?? "undefined"}, which is not ` +
+          "a lowercase 64-character SHA-256 digest",
+      );
+    }
+  }
+}
+
+/**
+ * The FORM of one persisted record: the shape `buildEventRecords` has always
+ * written, checked at last on the way back in.
+ *
+ * Presence of the five keys was all this used to verify, and presence is not form:
+ * `groupDigests: "banana"`, a `fingerprint` that is a string and a `recordDigest`
+ * that is a label were all accepted, written into an append-only artifact, and
+ * would have verified forever. A record whose digests cannot be read is a record
+ * whose exposure silently stops blocking, which is the failure this ledger exists
+ * to prevent, arriving through the reader instead of the writer.
+ *
+ * COMPLETENESS OF AXIS COVERAGE IS DELIBERATELY NOT CHECKED. A record that answers
+ * fewer axes than a version declares is a record written before the request had to
+ * answer a whole tuple; the ledger is append-only and has no amendment, so refusing
+ * it here would make the history unreadable and take the blind partitions off the
+ * board with no repair. It is MEASURED instead — see {@link axisCoverageOf}.
+ */
+function assertPersistedRecordShape(
+  line: number,
+  record: Record<string, unknown>,
+): void {
+  const invalid: (why: string) => never = (why) =>
+    fail(
+      "CLUSTER_LEDGER_EVENT_INVALID",
+      `ledger line ${line} carries a record whose ${why}`,
+    );
+  if (
+    typeof record.recordDigest !== "string" ||
+    !SHA256_HEX.test(record.recordDigest)
+  ) {
+    invalid(
+      `recordDigest is ${JSON.stringify(record.recordDigest) ?? "undefined"} and not a ` +
+        "lowercase 64-character SHA-256 digest",
+    );
+  }
+  const groupDigests = record.groupDigests;
+  if (
+    typeof groupDigests !== "object" ||
+    groupDigests === null ||
+    Array.isArray(groupDigests)
+  ) {
+    invalid(
+      `groupDigests is ${JSON.stringify(groupDigests) ?? "undefined"} and not a map of ` +
+        "axis -> keyed digests",
+    );
+  }
+  for (const [axis, digests] of Object.entries(
+    groupDigests as Record<string, unknown>,
+  )) {
+    // The UNION and not one version's tuple: a stored event naming an axis only the
+    // other version declares is a real event of a real corpus, and refusing it would
+    // make history unreadable ({@link LEDGER_AXIS_NAMES}).
+    if (!LEDGER_AXIS_NAMES.includes(axis)) {
+      invalid(
+        `groupDigests names the axis "${axis}", which no record version declares ` +
+          `(${LEDGER_AXIS_NAMES.join(", ")})`,
+      );
+    }
+    assertKeyedDigestList(line, `groupDigests.${axis}`, digests, true);
+  }
+  assertKeyedDigestList(line, "lineageDigests", record.lineageDigests, false);
+  const fingerprint = record.fingerprint;
+  if (
+    typeof fingerprint !== "object" ||
+    fingerprint === null ||
+    Array.isArray(fingerprint)
+  ) {
+    invalid(
+      `fingerprint is ${JSON.stringify(fingerprint) ?? "undefined"} and not ` +
+        "{contentSha256, signature}",
+    );
+  }
+  const fields = Object.keys(fingerprint as object)
+    .sort()
+    .join(",");
+  if (fields !== "contentSha256,signature") {
+    invalid(
+      `fingerprint declares the fields [${fields}] and not exactly contentSha256 ` +
+        "and signature",
+    );
+  }
+  const { contentSha256, signature } = fingerprint as {
+    contentSha256: unknown;
+    signature: unknown;
+  };
+  if (typeof contentSha256 !== "string" || !SHA256_HEX.test(contentSha256)) {
+    invalid(
+      `fingerprint.contentSha256 is ${JSON.stringify(contentSha256) ?? "undefined"} and ` +
+        "not a lowercase 64-character SHA-256 digest: it is the exact-match half of " +
+        "the R7 screen, and a value that is not a digest matches nothing",
+    );
+  }
+  if (
+    signature !== null &&
+    (!Array.isArray(signature) ||
+      (signature as unknown[]).some(
+        (value) => typeof value !== "number" || !Number.isFinite(value),
+      ))
+  ) {
+    invalid(
+      "fingerprint.signature is neither null nor an array of numbers: the " +
+        "near-duplicate screen compares it position by position",
+    );
+  }
+}
+
 function validateEventShape(
   value: unknown,
   line: number,
@@ -1086,6 +1396,7 @@ function validateEventShape(
           `which is not one of ${LEDGER_PARTITIONS.join(", ")}`,
       );
     }
+    assertPersistedRecordShape(line, record);
   }
   const event = object as unknown as ClusterExposureEvent;
   const recomputed = computeEventDigest(event);
@@ -1774,6 +2085,7 @@ export async function verifyClusterLedger(
     referencedKeyVersions: [...referenced].sort(),
     lastEventDigest: events.at(-1)?.eventDigest ?? null,
     strayTempFiles: await strayTempFiles(paths),
+    axisCoverage: axisCoverageOf(events),
   };
 }
 
@@ -1800,6 +2112,68 @@ interface ExposureIndex {
   history: HistoryEntry[];
 }
 
+/**
+ * The digests one persisted record carries on one axis, or `undefined` when the
+ * record does not ANSWER that axis at all.
+ *
+ * THE only place this module reads an absence out of `groupDigests`, and the two
+ * answers are deliberately different values:
+ *
+ *   * an EMPTY list means the record answered the axis and had no identity on it —
+ *     a generated row and `author`;
+ *   * an ABSENT key means this event never asked, because it was written before a
+ *     request had to answer a whole tuple.
+ *
+ * Reading an absent key as an empty list is what made an unasked axis
+ * indistinguishable from an axis with no cluster, so a `verify` that passed was
+ * taken as evidence that the barrier had compared axes the event never recorded.
+ *
+ * The OFFER verdict still treats the two alike, and that is a decision and not an
+ * oversight: neither can match a digest, and refusing every offer against an
+ * under-specified history would close the blind partitions permanently, since the
+ * ledger is append-only and has no amendment operation. The gap is published
+ * instead — {@link axisCoverageOf}.
+ */
+function axisDigestsOf(
+  record: ClusterExposureRecord,
+  axis: string,
+): readonly ClusterDigest[] | undefined {
+  return Object.hasOwn(record.groupDigests, axis)
+    ? record.groupDigests[axis]
+    : undefined;
+}
+
+/**
+ * How much of the history was recorded without stating which axes it answered.
+ *
+ * A MEASUREMENT and not a guard, by the decision written on {@link axisDigestsOf}.
+ * What it buys is that a green `verify` stops implying the barrier knew what to
+ * ask: the count, and the events the under-asked records live in, are reported by
+ * `verify` and by every offer decision.
+ *
+ * Events are listed once each, so the report is bounded by the height of the ledger
+ * and never by the number of record-lines a freeze wrote.
+ */
+function axisCoverageOf(
+  events: readonly ClusterExposureEvent[],
+): LedgerAxisCoverage {
+  let underAskedRecords = 0;
+  const underAskedEventIds: string[] = [];
+  for (const event of events) {
+    let underAskedHere = false;
+    for (const record of event.records) {
+      const answered = LEDGER_AXIS_NAMES.filter(
+        (axis) => axisDigestsOf(record, axis) !== undefined,
+      );
+      if (vocabularyAnsweredBy(answered) !== undefined) continue;
+      underAskedRecords += 1;
+      underAskedHere = true;
+    }
+    if (underAskedHere) underAskedEventIds.push(event.eventId);
+  }
+  return { underAskedRecords, underAskedEventIds };
+}
+
 function buildIndex(events: readonly ClusterExposureEvent[]): ExposureIndex {
   const index: ExposureIndex = {
     clusterDigests: new Set(),
@@ -1811,7 +2185,9 @@ function buildIndex(events: readonly ClusterExposureEvent[]): ExposureIndex {
     for (const record of event.records) {
       const inTest = record.partition === "test";
       for (const axis of EXPOSURE_IDENTITY_AXES) {
-        for (const digest of record.groupDigests[axis] ?? []) {
+        const digests = axisDigestsOf(record, axis);
+        if (digests === undefined) continue;
+        for (const digest of digests) {
           index.clusterDigests.add(digest.digest);
         }
       }
@@ -1889,22 +2265,21 @@ function buildEventRecords(
           "not a partition: it generates no exposure event and enters only as reserveManifestDigest",
       );
     }
+    // Checked here and not only in `parseExposureRequest`, for the reason
+    // `buildEvent` gives about the digests: a library caller (E2's freeze path)
+    // never goes through the JSON parser, so a guard living in the parser alone
+    // guards the hand-written file and not the code.
+    assertAnsweredAxes(`record ${input.id}`, input.groups);
+    // EVERY answered axis is written, and an axis answered without an identity is
+    // written as an empty digest list. That is what makes the stored event state
+    // which axes it asked about, so a later reader can tell "no identity here" from
+    // "this event never asked" ({@link axisDigestsOf}).
     const groupDigests: Record<string, ClusterDigest[]> = {};
     for (const [axis, identity] of Object.entries(input.groups)) {
-      if (!LEDGER_AXIS_NAMES.includes(axis)) {
-        fail(
-          "CLUSTER_LEDGER_AXIS_UNKNOWN",
-          `record ${input.id} names the grouping axis "${axis}", which the schema ` +
-            `does not declare (${LEDGER_AXIS_NAMES.join(", ")})`,
-        );
-      }
-      if (identity === undefined) continue;
-      assertLedgerIdentity(axis, identity);
-      groupDigests[axis] = identityDigests(
-        keyring,
-        macDomainOf(axis),
-        identity,
-      );
+      groupDigests[axis] =
+        identity === null
+          ? []
+          : identityDigests(keyring, macDomainOf(axis), identity);
     }
     const fingerprint = nearDuplicateFingerprint(input.text);
     return {
@@ -1995,11 +2370,13 @@ function collectRefusals(
     // A sampling unit exposed in ANY previous partition cannot enter a partition
     // that stays sealed until v2.0. Any digest in common counts, so a key rotation
     // cannot mint a "new" cluster.
-    const exposedAxes: string[] = EXPOSURE_IDENTITY_AXES.filter((axis) =>
-      (record.groupDigests[axis] ?? []).some((digest) =>
-        index.clusterDigests.has(digest.digest),
-      ),
-    );
+    const exposedAxes: string[] = EXPOSURE_IDENTITY_AXES.filter((axis) => {
+      const digests = axisDigestsOf(record, axis);
+      return (
+        digests !== undefined &&
+        digests.some((digest) => index.clusterDigests.has(digest.digest))
+      );
+    });
     // The other end of a lineage edge: this row's own id was already named as the
     // seed or the derivation root of something exposed, so the child is in history
     // even though the parent row never was.
@@ -2066,7 +2443,12 @@ async function decide(
     request.records,
   );
   return {
-    decision: { eligible: refusals.length === 0, refusals, event },
+    decision: {
+      eligible: refusals.length === 0,
+      refusals,
+      event,
+      axisCoverage: axisCoverageOf(events),
+    },
     events,
     keyring,
     keyringRaw: raw,
@@ -2430,7 +2812,7 @@ async function appendEvent(
           "committed pair has no restore point",
       );
     }
-    return { event, restorePoint };
+    return { event, restorePoint, axisCoverage: decision.axisCoverage };
   });
 }
 
@@ -2501,16 +2883,26 @@ export function clusterAssignments(
  * Turns real records into exposure inputs, reading each axis through the single
  * accessor so `notApplicable` and `unknown` arrive as "no identity here" rather
  * than as an invented one (R6).
+ *
+ * The map is TOTAL over the tuple the record's own version declares, with `null`
+ * where there is no identity: that is the answer the ledger requires, and it is
+ * what makes the event record which axes were asked about rather than which ones
+ * happened to be filled. Reading the tuple off `recordGroupAxes` is why a v4 record
+ * does not report `collectionBatch` unknown and a v3 record does not report the
+ * three axes v4 introduced.
+ *
+ * It still has NO production caller: the corpus -> request path is E2's, and
+ * wiring it needs the CLI to read a dataset and a split artifact. This function
+ * exists so that whoever wires it gets total coverage without deciding it again.
  */
 export function exposureInputsFromRecords(
   records: readonly BenchmarkRecord[],
   partitionOf: (record: BenchmarkRecord) => LedgerPartition,
 ): ExposureRecordInput[] {
   return records.map((record) => {
-    const groups: Record<string, string | undefined> = {};
+    const groups: Record<string, string | null> = {};
     for (const axis of recordGroupAxes(record)) {
-      const identity = groupAxisIdentity(record, axis);
-      if (identity !== undefined) groups[axis] = identity;
+      groups[axis] = groupAxisIdentity(record, axis) ?? null;
     }
     return {
       id: record.id,

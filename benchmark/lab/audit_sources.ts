@@ -1,10 +1,10 @@
 // Runs the corpus source governance audit on a build directory, standalone.
 //
-// WHY: `validate` runs this audit, but only AFTER sealDataset has enforced the
-// exact class quotas — so while the corpus is still being filled, the nine
-// governance blocking codes stay invisible behind a composition error. This lets
-// them be found and fixed against an incomplete build instead of surfacing at
-// the very end, when the only remaining task is supposed to be sealing.
+// WHY: `validate` runs this audit and refuses on a blocked corpus, but it needs a
+// build that already parses as a dataset. This reads the governance blocking codes
+// off an INCOMPLETE build — one whose class counts are still being filled — so they
+// can be found and fixed before the sealing run, instead of at the very end when
+// the only remaining task is supposed to be sealing.
 //
 // Reports status and blocking reasons grouped by code. Read-only: it writes
 // nothing and consumes only the build's records + reviewed source manifest.

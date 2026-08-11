@@ -958,7 +958,10 @@ describe("the recomputed manifest digest covers the declared material inventory"
       startedAt: 1_717_200_000_000,
       endedAt: 1_717_286_400_000,
     },
-    evidence: ["https://exemplo.invalido/dump-2024-06-01.sha256"],
+    evidence: [
+      `sha256:${"5c".repeat(32)}`,
+      "dump-2024-06-01.xml.bz2 (4096 bytes)",
+    ],
   };
 
   it("accepts a v1 manifest that declares material batches", async () => {
@@ -1017,7 +1020,10 @@ describe("a record's material batch is crossed against the reviewed inventory", 
       startedAt: 1_717_200_000_000,
       endedAt: 1_717_286_400_000,
     },
-    evidence: ["https://exemplo.invalido/ptwiki-20220301.sha256"],
+    evidence: [
+      `sha256:${"7a".repeat(32)}`,
+      "ptwiki-20220301-pages-articles.xml.bz2 (8192 bytes)",
+    ],
   };
 
   /** A v4 human row naming `batchId` as its acquisition event. */

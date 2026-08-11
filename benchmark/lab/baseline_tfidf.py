@@ -70,6 +70,7 @@ from __future__ import annotations
 
 import argparse
 import json
+from dataclasses import dataclass
 from pathlib import Path
 
 import numpy as np
@@ -407,8 +408,8 @@ def cross_validated_aucs(
 #
 # The instrument is the CHEAP FLOOR (`funcionais+estilometria`, the strongest of the dumb
 # baselines here and blind to nothing) run against the reserved family and against the core
-# families, and compared with the large model on the same texts. The quantity is
-# dimensionless on purpose:
+# families, and compared with the large model over THE SAME ROWS OF THAT SLICE. The quantity
+# is dimensionless on purpose:
 #
 #     lift(family) = (AUC_floor(family) − 0.5) / (AUC_detector(family) − 0.5)
 #
@@ -452,6 +453,64 @@ class ReservedFamilyIsUnreadable(RuntimeError):
 
 class ReservedFamilyMeasuresEasiness(RuntimeError):
     """The reserved family is easier for the dumb baseline than the training families."""
+
+
+@dataclass(frozen=True)
+class SlicePopulation:
+    """One slice of the comparison: its `ai` rows, and the SET of parents those rows name.
+
+    `(id, text)` pairs and not two parallel lists: both instruments publish the ids they
+    read, and an id that did not travel with its text cannot be audited against them.
+
+    The human side is a SET — a parent named by two `ai` rows is one negative and not two,
+    because it is one document and duplicating it weights that subject twice.
+    """
+
+    name: str
+    ai: tuple[tuple[str, str], ...]
+    human: tuple[tuple[str, str], ...]
+
+    @property
+    def declared_ids(self) -> tuple[str, ...]:
+        return tuple(row_id for row_id, _ in (*self.ai, *self.human))
+
+
+@dataclass(frozen=True)
+class SliceReading:
+    """One instrument's AUC on one slice, and the ids it actually read.
+
+    The ids travel with the number so `assert_both_instruments_read_one_population` can
+    compare what the two readings consumed instead of trusting that one operation built it.
+    """
+
+    auc: float
+    ids: tuple[str, ...]
+
+
+def _slice_population(
+    name: str, rows: list[dict], humans_by_id: dict[str, dict]
+) -> SlicePopulation:
+    """THE one operation that builds a slice's population, for both instruments.
+
+    The human side is derived from `meta.pairedWith` of THESE rows: topic pairing is this
+    design's only topic control, and a slice measured against the other slice's parents is
+    measured against humans of other subjects in a proportion that depends on the slice
+    sizes — `1 - n_slice/n_human` — so the bias differs BETWEEN the slices whose numbers are
+    then read against each other.
+    """
+    if not rows:
+        raise ReservedFamilyIsUnreadable(
+            f"the {name!r} slice carries no ai row, so it has no population to read and no "
+            "AUC exists over it"
+        )
+    parents = sorted(
+        {str((row.get("meta") or {}).get("pairedWith", "")) for row in rows}
+    )
+    return SlicePopulation(
+        name=name,
+        ai=tuple((str(row["candidateId"]), str(row["text"])) for row in rows),
+        human=tuple((parent, str(humans_by_id[parent]["text"])) for parent in parents),
+    )
 
 
 def baseline_lift(floor_auc: float, detector_auc: float) -> float:
@@ -544,15 +603,24 @@ def assert_reserved_family_measures_generalization(report: dict) -> None:
         )
 
 
-def cheap_floor_auc(texts: list[str], labels: list[int]) -> float:
-    """Mean out-of-fold AUC of the cheap floor over one class pair."""
+def cheap_floor_auc(population: SlicePopulation) -> SliceReading:
+    """Mean out-of-fold AUC of the cheap floor over one slice, and the ids it read.
+
+    No class weighting on the estimator, deliberately: rank AUC is insensitive to class
+    prevalence, so weighting moves this number by a thousandth while leaving the off-topic
+    share of the negatives — the thing that does move it — exactly where it was.
+    """
+    labelled = [(row_id, text, 1) for row_id, text in population.ai]
+    labelled += [(row_id, text, 0) for row_id, text in population.human]
     aucs = cross_validated_aucs(
-        np.array(texts, dtype=object),
-        np.array(labels),
+        np.array([text for _, text, _ in labelled], dtype=object),
+        np.array([label for _, _, label in labelled]),
         cheap_floor_pipeline,
         after_fit=assert_no_content_word_reaches_the_vocabulary,
     )
-    return float(np.mean(aucs))
+    return SliceReading(
+        float(np.mean(aucs)), tuple(row_id for row_id, _, _ in labelled)
+    )
 
 
 def detector_auc(scores: list[float], is_ai: list[bool]) -> float:
@@ -579,7 +647,8 @@ def main() -> None:
         type=Path,
         default=None,
         help="scored rows from score_pilot_local.py, for the detector side of the "
-        "easiness comparison",
+        "easiness comparison; it must cover every id of both slices, so a file scored "
+        "over another pool refuses instead of publishing an AUC over the intersection",
     )
     parser.add_argument("--out", type=Path, default=None)
     args = parser.parse_args()
@@ -662,7 +731,12 @@ def main() -> None:
 def assert_every_human_row_is_a_paired_parent(
     ai_rows: list[dict], human_rows: list[dict]
 ) -> None:
-    """Refuses when the human side carries a row that parents no AI row of this comparison."""
+    """Refuses when the human side carries a row that parents no AI row of this comparison.
+
+    A contract of `_easiness_block` as an API and NOT a gate on the pilot run: `main` builds
+    the human side out of the `meta.pairedWith` of the rows it kept, so no stranger can reach
+    this from there and only another caller makes it fire.
+    """
     parents = {
         str((row.get("meta") or {}).get("pairedWith", "")) for row in ai_rows
     }
@@ -681,74 +755,236 @@ def assert_every_human_row_is_a_paired_parent(
         )
 
 
+def assert_every_ai_row_has_its_parent_in_the_human_side(
+    ai_rows: list[dict], human_rows: list[dict]
+) -> None:
+    """Refuses when an `ai` row of this comparison names no parent among the human rows.
+
+    The complementary direction of `assert_every_human_row_is_a_paired_parent`: that one
+    refuses a human row that parents nothing, this one refuses an `ai` row whose parent is
+    missing. Each slice's negative side IS the set of parents its own `ai` rows name, so an
+    absent parent shrinks one slice's negatives and leaves the other's alone, and the two
+    floors are then read against each other.
+
+    Also a contract of `_easiness_block` as an API and NOT a gate on the pilot run: `main`
+    keeps only the `ai` rows whose parent is in `--humans`, so no orphan can reach this from
+    there and only another caller makes it fire.
+    """
+    parents = {str(row["candidateId"]) for row in human_rows}
+    orphans = sorted(
+        str(row["candidateId"])
+        for row in ai_rows
+        if str((row.get("meta") or {}).get("pairedWith", "")) not in parents
+    )
+    if orphans:
+        raise ReservedFamilyIsUnreadable(
+            f"{len(orphans)} of {len(ai_rows)} ai row(s) on the easiness comparison name a "
+            f"`meta.pairedWith` absent from the human rows received, first ten "
+            f"{orphans[:10]}. The negative side of a slice is the set of parents its own ai "
+            "rows name, so a missing parent shrinks one slice's negatives and not the "
+            "other's, and the two floors are then read against each other"
+        )
+
+
+def assert_the_scored_file_covers_the_declared_population(
+    populations: dict[str, SlicePopulation],
+    scored: dict[str, float],
+    path: Path | None,
+) -> None:
+    """Refuses when the scored file misses ONE id of any slice's declared population.
+
+    Total coverage, not a minimum share: the join is either over the population the block
+    publishes or over an intersection nobody declared, and there is no share of a population
+    at which a published count stops being wrong. Extra rows in the file are TOLERATED — a
+    scoring run may cover a whole corpus — so only the declared ids are looked up.
+    """
+    gaps: list[str] = []
+    for name, population in populations.items():
+        for side, rows in (("ai", population.ai), ("human", population.human)):
+            declared = [row_id for row_id, _ in rows]
+            absent = [row_id for row_id in declared if row_id not in scored]
+            if absent:
+                gaps.append(
+                    f"slice {name!r} side {side!r} joined "
+                    f"{len(declared) - len(absent)}/{len(declared)}, {len(absent)} absent, "
+                    f"first ten {absent[:10]}"
+                )
+    if gaps:
+        raise ReservedFamilyIsUnreadable(
+            f"the scored file {path} does not cover the declared population — "
+            f"{'; '.join(gaps)}. A partial join computes the AUC over an intersection while "
+            "the block publishes the declared counts, so the number beside the verdict is "
+            "not the number the verdict was read from"
+        )
+
+
+def assert_both_instruments_read_one_population(
+    slice_name: str, floor_ids: tuple[str, ...], detector_ids: tuple[str, ...]
+) -> None:
+    """Refuses when the cheap floor and the detector did not read the same ids of a slice.
+
+    Refuses instead of intersecting: `lift` is the share of the detector's above-chance
+    separation that the floor reaches, and a ratio between two AUCs measured over different
+    populations is a share of nothing.
+
+    The criterion is the SET of ids and never their count: two readings of the same size can
+    be two different populations — one id of the other slice standing where one of this
+    slice's should be — and the lift is then a ratio between AUCs over different populations
+    while every count still agrees. The FIRST TEN ids read only by one instrument travel in
+    the message, because equal sizes leave nothing else to read.
+    """
+    floor_population = set(floor_ids)
+    detector_population = set(detector_ids)
+    if floor_population == detector_population:
+        return
+    sizes = {"cheapFloor": len(floor_ids), "detector": len(detector_ids)}
+    floor_only = sorted(floor_population - detector_population)
+    detector_only = sorted(detector_population - floor_population)
+    raise ReservedFamilyIsUnreadable(
+        f"the two instruments do not read the same ids on the {slice_name!r} slice — "
+        f"sizes {sizes}, first ten read only by the cheap floor {floor_only[:10]}, first "
+        f"ten read only by the detector {detector_only[:10]}; a lift computed from AUCs "
+        "over different populations is a share of nothing"
+    )
+
+
+def _published_rows(populations: dict[str, SlicePopulation]) -> dict:
+    """THE one operation that turns populations into published counts, for both readers."""
+    return {
+        name: {"ai": len(population.ai), "human": len(population.human)}
+        for name, population in populations.items()
+    }
+
+
+def assert_the_published_counts_are_the_populations_read(
+    block: dict, populations: dict[str, SlicePopulation]
+) -> None:
+    """Refuses when the published counts are not the per-slice populations that were read.
+
+    Self-consistency, and declared as such: `rows` is derived from the same objects the
+    readings consumed, so what this refuses is the SHAPE. A flat `rows` carrying one `human`
+    count is the POOL's population published beside a verdict computed over the slices'.
+    """
+    rows = block.get("rows")
+    expected = _published_rows(populations)
+    if rows != expected:
+        raise ReservedFamilyIsUnreadable(
+            f"the published row counts are not the populations read: {rows} against "
+            f"{expected}. A flat `rows` with a single `human` entry is the POOL's "
+            "population standing beside numbers computed over the slices'"
+        )
+    scores = block.get("detectorScores")
+    if scores is None:
+        if "detectorAuc" in block:
+            raise ReservedFamilyIsUnreadable(
+                "a detector AUC is published with no `detectorScores` counts beside it, so "
+                "how much of the declared population the join covered is unreadable"
+            )
+        return
+    declared = sum(len(population.declared_ids) for population in populations.values())
+    if scores.get("rowsJoined") != declared:
+        raise ReservedFamilyIsUnreadable(
+            f"the join published {scores.get('rowsJoined')} row(s) against {declared} "
+            "declared: coverage of the declared population is total or the run refuses, so "
+            "these are one number"
+        )
+
+
+def _detector_reading(
+    population: SlicePopulation, scored: dict[str, float]
+) -> SliceReading:
+    """The detector's AUC over a slice's declared population, and the ids it read.
+
+    Direct indexing and no membership filter: total coverage is asserted before this runs,
+    so a `KeyError` here means the assertion was bypassed rather than a row the file happens
+    not to carry.
+
+    The ids come out of the rows this actually looked up rather than off the population, so a
+    filter put back here reports the smaller number it read instead of the declared one.
+    """
+    read = [(row_id, scored[row_id], True) for row_id, _ in population.ai]
+    read += [(row_id, scored[row_id], False) for row_id, _ in population.human]
+    return SliceReading(
+        detector_auc(
+            [value for _, value, _ in read], [flag for _, _, flag in read]
+        ),
+        tuple(row_id for row_id, _, _ in read),
+    )
+
+
 def _easiness_block(
     ai_rows: list[dict],
     human_rows: list[dict],
     reserved_family: str,
     detector_scores: Path | None,
 ) -> dict:
-    """The cheap floor on the reserved slice and on the core slice, side by side.
+    """The cheap floor and the detector on the reserved slice and on the core slice.
 
-    The HUMAN side is the same rows in both comparisons on purpose: two floors measured
-    against two different human populations differ for reasons that have nothing to do
-    with the generator. And it must be the PAIRED PARENTS, which
-    `assert_every_human_row_is_a_paired_parent` refuses without: this is the one instrument
-    that decides how the OOD number is published, and a floor measured against humans of
-    other subjects rises for a reason that is not the generator, which raises the core lift
-    and flips the verdict to `no-headroom` on a cause other than the declared one.
+    Each slice is ONE population — its `ai` rows and the set of parents those rows name —
+    and both instruments read it. The human side of a slice is never the union of both
+    slices' parents: the off-topic share of such a negative side is `1 - n_slice/n_human`,
+    which differs between two slices of different sizes, so the smaller slice's floor is
+    inflated more and the two floors are read against each other. Measured over the pilot
+    pools (108 reserved, 145 core, parents disjoint and 1:1 within each slice): 57,3 %
+    off-topic negatives for the reserved slice against 42,7 % for the core one, the smaller
+    slice's floor inflated 8,8x more, and an excess lift moved by 0,0445 of the 0,10 margin
+    — sign included.
     """
     reserved = [row for row in ai_rows if _family_of(row) == reserved_family]
     core = [row for row in ai_rows if _family_of(row) != reserved_family]
     assert_every_human_row_is_a_paired_parent(ai_rows, human_rows)
-    human_texts = [str(row["text"]) for row in human_rows]
+    assert_every_ai_row_has_its_parent_in_the_human_side(ai_rows, human_rows)
     if not reserved:
         raise ReservedFamilyIsUnreadable(
             f"no pool row carries the reserved family {reserved_family!r}; the families "
             f"present are {sorted({_family_of(row) for row in ai_rows})}"
         )
 
+    humans_by_id = {str(row["candidateId"]): row for row in human_rows}
+    populations = {
+        "reserved": _slice_population("reserved", reserved, humans_by_id),
+        "core": _slice_population("core", core, humans_by_id),
+    }
+    floor = {
+        name: cheap_floor_auc(population) for name, population in populations.items()
+    }
+
     block: dict = {
         "reservedFamily": reserved_family,
-        "rows": {
-            "reserved": len(reserved),
-            "core": len(core),
-            "human": len(human_texts),
-        },
-        "cheapFloorAuc": {
-            "reserved": cheap_floor_auc(
-                [str(row["text"]) for row in reserved] + human_texts,
-                [1] * len(reserved) + [0] * len(human_texts),
-            ),
-            "core": cheap_floor_auc(
-                [str(row["text"]) for row in core] + human_texts,
-                [1] * len(core) + [0] * len(human_texts),
-            ),
-        },
+        "cheapFloorAuc": {name: reading.auc for name, reading in floor.items()},
     }
     if detector_scores is None:
+        block["rows"] = _published_rows(populations)
         block["reading"] = (
             "sem lado do detector: passe --detector-scores para completar a comparação "
             "de facilidade"
         )
+        assert_the_published_counts_are_the_populations_read(block, populations)
         return block
 
-    scored = {str(row["id"]): float(row["score"]) for row in read_jsonl(detector_scores)}
-    human_ids = [str(row["candidateId"]) for row in human_rows]
+    scored_rows = read_jsonl(detector_scores)
+    # An id repeated in the file keeps its LAST score, in silence: rows the declared
+    # population does not name are tolerated by design, so `rowsInFile` above `rowsJoined` is
+    # the ordinary case and no count published here tells a duplicate apart from a file that
+    # covers a wider corpus.
+    scored = {str(row["id"]): float(row["score"]) for row in scored_rows}
+    assert_the_scored_file_covers_the_declared_population(
+        populations, scored, detector_scores
+    )
+    detector = {
+        name: _detector_reading(population, scored)
+        for name, population in populations.items()
+    }
+    for name in populations:
+        assert_both_instruments_read_one_population(
+            name, floor[name].ids, detector[name].ids
+        )
 
-    def detector_side(rows: list[dict]) -> float:
-        ids = [str(row["candidateId"]) for row in rows]
-        pairs = [(scored[i], True) for i in ids if i in scored]
-        pairs += [(scored[i], False) for i in human_ids if i in scored]
-        if not pairs:
-            raise ReservedFamilyIsUnreadable(
-                "no scored row joins the pool rows: the detector side of the comparison "
-                "would be computed over an empty population"
-            )
-        return detector_auc([value for value, _ in pairs], [flag for _, flag in pairs])
-
-    block["detectorAuc"] = {
-        "reserved": detector_side(reserved),
-        "core": detector_side(core),
+    block["detectorAuc"] = {name: reading.auc for name, reading in detector.items()}
+    block["rows"] = _published_rows(populations)
+    block["detectorScores"] = {
+        "rowsInFile": len(scored_rows),
+        "rowsJoined": sum(len(reading.ids) for reading in detector.values()),
     }
     easiness = read_ood_easiness(
         block["cheapFloorAuc"]["reserved"],
@@ -757,6 +993,7 @@ def _easiness_block(
         block["detectorAuc"]["core"],
     )
     block.update(easiness)
+    assert_the_published_counts_are_the_populations_read(block, populations)
     return block
 
 

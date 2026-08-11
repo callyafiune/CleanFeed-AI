@@ -26,6 +26,7 @@ import {
   restoreClusterLedger,
   verifyClusterLedger,
   type ClusterLedgerPaths,
+  type LedgerAxisCoverage,
 } from "../cluster-exposure-ledger.ts";
 import { CommandError, readJsonFile } from "./io.ts";
 
@@ -73,6 +74,27 @@ function require_(
   return value;
 }
 
+/**
+ * What the history does not say about the axes it recorded, said in every answer
+ * that rests on it.
+ *
+ * A record-line written before a request had to answer a whole axis tuple was
+ * compared only on the axes it happened to carry, and neither the ledger nor this
+ * command refuses it (there is no amendment operation, so refusing would be a
+ * permanent shutdown). Printing it is what keeps a green answer from being read as
+ * "every axis was compared".
+ */
+function axisCoverageNote(coverage: LedgerAxisCoverage): string {
+  if (coverage.underAskedRecords === 0) {
+    return "Every recorded record-line answers a full axis tuple.";
+  }
+  return (
+    `${coverage.underAskedRecords} recorded record-line(s) answer no version's full ` +
+    `axis tuple, in event(s) ${coverage.underAskedEventIds.join(", ")}: those were ` +
+    "compared only on the axes they carry."
+  );
+}
+
 export async function runClusterLedger(
   options: ClusterLedgerOptions,
 ): Promise<string> {
@@ -96,7 +118,8 @@ export async function runClusterLedger(
         `chain closed at ${verified.lastEventDigest ?? "(empty)"}, ` +
         `matching the ${verified.attestedEventCount} the keyring attests, ` +
         `keys ${verified.keyVersions.join(", ")}, ` +
-        `${verified.strayTempFiles.length} interrupted write(s) left on disk.`
+        `${verified.strayTempFiles.length} interrupted write(s) left on disk. ` +
+        axisCoverageNote(verified.axisCoverage)
       );
     }
     case "preflight": {
@@ -107,7 +130,8 @@ export async function runClusterLedger(
       if (decision.eligible) {
         return (
           `Preflight: eligible. ${decision.event.records.length} record-line(s) ` +
-          `would be exposed as ${decision.event.eventType}. Nothing was written.`
+          `would be exposed as ${decision.event.eventType}. Nothing was written. ` +
+          axisCoverageNote(decision.axisCoverage)
         );
       }
       return (
@@ -117,18 +141,23 @@ export async function runClusterLedger(
             (refusal) =>
               `${refusal.recordId} -> ${refusal.partition}: ${refusal.reason}`,
           )
-          .join("; ")}. Nothing was written.`
+          .join("; ")}. Nothing was written. ` +
+        axisCoverageNote(decision.axisCoverage)
       );
     }
     case "record-pilot": {
       const request = parseExposureRequest(
         await readJsonFile(require_(options.requestPath, "request", action)),
       );
-      const { event, restorePoint } = await recordPilotExposure(paths, request);
+      const { event, restorePoint, axisCoverage } = await recordPilotExposure(
+        paths,
+        request,
+      );
       return (
         `Pilot exposure recorded: ${event.records.length} record-line(s), ` +
         `event ${event.eventId}, digest ${event.eventDigest}. ` +
-        `Restore this state from ${restorePoint.directory}.`
+        `Restore this state from ${restorePoint.directory}. ` +
+        axisCoverageNote(axisCoverage)
       );
     }
     case "commit-split": {
@@ -137,7 +166,7 @@ export async function runClusterLedger(
       );
       const staged = require_(options.stagedSplitPath, "staged-split", action);
       const target = require_(options.splitOutPath, "split-out", action);
-      const { event, restorePoint } = await commitSplitFreeze(
+      const { event, restorePoint, axisCoverage } = await commitSplitFreeze(
         paths,
         request,
         async () => {
@@ -150,7 +179,8 @@ export async function runClusterLedger(
         `Split freeze committed: ${event.records.length} record-line(s) across the ` +
         `five active partitions, reserve manifest ` +
         `${event.reserveManifestDigest ?? "(none)"}, event ${event.eventId}. ` +
-        `Restore this state from ${restorePoint.directory}.`
+        `Restore this state from ${restorePoint.directory}. ` +
+        axisCoverageNote(axisCoverage)
       );
     }
     case "backup": {

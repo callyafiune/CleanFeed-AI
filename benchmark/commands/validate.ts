@@ -4,17 +4,21 @@
 // real file bytes and confirms them against the manifest BEFORE sealing — a
 // missing or swapped file ends the command. The two private paths are resolved
 // EXCLUSIVELY from the DatasetManifest (no CLI flag can substitute another source
-// manifest or ledger). Only then does `sealDataset` run, producing the
-// self-digested dataset-audit.json, and `auditCorpusSources` runs over the same
-// records and reviewed source manifest to produce source-readiness.json. There is
-// no second sealing implementation: `sealDataset` and the split remain the sole
-// scientific seal/split contracts.
+// manifest or ledger). Then `auditCorpusSources` runs over the same records and
+// reviewed source manifest, source-readiness.json is written, and a corpus whose
+// governance readiness is not `ready` ends the command — so `sealDataset` runs, and
+// the self-digested dataset-audit.json is minted, only over an authorized corpus.
+// There is no second sealing implementation: `sealDataset` and the split remain the
+// sole scientific seal/split contracts.
 //
 // Standalone benchmark module: MUST NOT import from the extension bundle (src/).
 
 import { join } from "node:path";
 
-import { auditCorpusSources } from "../corpus-source-audit.ts";
+import {
+  assertCorpusSourcesReady,
+  auditCorpusSources,
+} from "../corpus-source-audit.ts";
 import {
   RELEASE_CORPUS_POLICY,
   type CorpusPolicy,
@@ -104,6 +108,34 @@ export async function runValidate(options: ValidateOptions): Promise<string> {
       "a release corpus is sealed against the frozen release composition; an explicit corpus policy is accepted only for scientificUse: infrastructure-only",
     );
   }
+  // Governance readiness is the authoritative Phase 2 audit over the same
+  // records and reviewed source manifest, not a hand-rolled summary.
+  const sourceManifest = await parseReviewedSourceManifest(
+    await readJsonFile(sourceManifestPath),
+  );
+  const readiness = await auditCorpusSources({ records, sourceManifest });
+  // Written BEFORE the refusal below, blocked corpus included: the report is the only
+  // carrier of the blocking codes, the offending recordId/sourceId and the reportDigest,
+  // so refusing without it on disk leaves the operator with nothing to correct.
+  await writeJsonAtomic(
+    join(outputDirectory, "source-readiness.json"),
+    readiness,
+  );
+  // The readiness criterion is not re-spelled here: the module that decides it owns the
+  // comparison, and its message projects only the DEDUPLICATED codes, so no record
+  // identifier reaches the command's output. This stands before `sealDataset` and not
+  // merely before the return because `runSplit` admits a corpus on dataset-audit.json
+  // alone and never reads a readiness report — for a blocked corpus that file must not
+  // exist at all.
+  try {
+    assertCorpusSourcesReady(readiness);
+  } catch (error) {
+    throw new CommandError(
+      "SOURCE_READINESS_BLOCKED",
+      error instanceof Error ? error.message : String(error),
+    );
+  }
+
   const audit = await sealDataset(
     manifest,
     records,
@@ -112,17 +144,6 @@ export async function runValidate(options: ValidateOptions): Promise<string> {
   );
 
   await writeJsonAtomic(join(outputDirectory, "dataset-audit.json"), audit);
-
-  // Governance readiness is the authoritative Phase 2 audit over the same
-  // records and reviewed source manifest, not a hand-rolled summary.
-  const sourceManifest = await parseReviewedSourceManifest(
-    await readJsonFile(sourceManifestPath),
-  );
-  const readiness = await auditCorpusSources({ records, sourceManifest });
-  await writeJsonAtomic(
-    join(outputDirectory, "source-readiness.json"),
-    readiness,
-  );
 
   return (
     `Dataset sealed: ${audit.recordCount} records ` +

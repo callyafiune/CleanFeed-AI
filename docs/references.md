@@ -5002,3 +5002,81 @@ Medido pela revisão: os quatro campos anteriores (`model_type`, `vocab_size`, `
 como guarda de export. A razão é a assimetria entre os dois lados: `config.json` é editável à mão e
 `vocab.txt` é o material — um fine-tune de outro BERT com o campo corrigido passa por toda comparação de
 número e não passa por esta.
+
+---
+
+## § R — a onda A1 da fila de correções: recusar antes de selar, eixo por totalidade, promessa com guarda (2026-08-11)
+
+Quatro unidades, quatro decisões metodológicas. As referências abaixo foram levantadas por quem
+implementou cada unidade e conferidas na integração; onde não há precedente na detecção de MGT, a
+declaração está escrita como tal.
+
+### R.1 — a recusa vem ANTES da selagem, e o artefato é a permissão (U1, `validate`)
+
+**Saltzer, J. H. & Schroeder, M. D. (1975). "The Protection of Information in Computer Systems."
+*Proceedings of the IEEE* 63(9), 1278–1308** — princípio de *fail-safe defaults*: "base access
+decisions on permission rather than exclusion".
+[link](https://www.cs.virginia.edu/~evans/cs551/saltzer/)
+
+**Âncora.** `runValidate` passou a auditar a governança, gravar a evidência e **recusar** antes de
+`sealDataset`. Sair 1 não bastaria: `runSplit` recebe `--dataset-audit` e nunca
+`--source-readiness`, então a **existência** de `dataset-audit.json` é a permissão de fato — e um
+corpus bloqueado não pode cunhá-la. O que muda ao trazer o princípio para cá: a permissão da etapa
+seguinte é um artefato em disco, não um código de saída que ninguém lê.
+
+**Precedente interno**, que complementa e não substitui: `benchmark/commands/fit.ts` levanta
+`CANDIDATE_PREFLIGHT_BLOCKED` quando o preflight não está `ready`. A casa já havia decidido que
+readiness bloqueada é recusa, não relatório.
+
+### R.2 — o eixo é aceito por TOTALIDADE da resposta, não por "não vazio" (U2, ledger de exposição)
+
+**King, A. (2019). *Parse, Don't Validate.*** — a fronteira devolve um tipo que já carrega a
+garantia, em vez de devolver o mesmo tipo permissivo que recebeu.
+[link](https://lexi-lambda.github.io/blog/2019/11/05/parse-don-t-validate/)
+
+**Âncora.** `parseExposureRequest` e `buildEventRecords` passaram a recusar `groups` cujo conjunto
+de chaves não seja **exatamente** uma das tuplas que uma versão de registro declara
+(`V3_GROUP_AXES` ou `V4_GROUP_AXES`, lidas de `schema.ts` — zero literal de nome de eixo no
+ledger). "Não vazio" foi recusado como conserto por ser condição suficiente deduzida do critério,
+que é a família de defeito registrada nesta casa. O que muda ao trazer o ensaio para cá: o
+consumidor a jusante é um arquivo **append-only**, e a leitura errada — "nenhum eixo" no lugar de
+"eixo não perguntado" — não é reparável depois de escrita, então a distinção tem de ser feita na
+fronteira ou nunca.
+
+### R.3 — `//` é o componente AUTHORITY, e a promessa sem recusa não é promessa (U6, manifesto)
+
+**RFC 3986 — *Uniform Resource Identifier (URI): Generic Syntax*, § 3.2 "Authority"**: "The
+authority component is preceded by a double slash".
+[link](https://www.rfc-editor.org/rfc/rfc3986#section-3.2)
+
+Mais **Saltzer & Schroeder (1975)**, o mesmo princípio de R.1, aplicado ao lado que faz a promessa.
+
+**Âncora.** A guarda recusa `//` porque `//` **é** a declaração de um componente de autoridade —
+um host de onde os bytes podem ser buscados —, e não porque casa com `https`. Por isso alcança
+`ftp://`, `s3://`, `file://` e o relativo-de-esquema `//host/path` sem manter lista de esquemas.
+Uma regra de **esquema** (§ 3.1 da mesma RFC) colidiria com a grafia `sha256:<hex>` da própria
+evidência, e essa omissão está declarada em `SOURCE_LOCATOR_MARKS` em vez de silenciada. O conserto
+foi no **lado da promessa** e não só no produtor: o manifesto prometia ausência de URL e admitia
+qualquer string, isto é, permitia por omissão — e havia cinco localizadores escritos por três
+autores dentro da projeção hasheada.
+
+**Resíduo declarado, e fixado como aceito por teste:** localizador **vestido de nome de arquivo**
+(`dumps.wikimedia.org (10 bytes)`) passa, porque a whitelist de forma fecha a grafia e não a
+classe. Quem lê a prosa não deve lê-la como promessa mais forte que o mecanismo.
+
+### R.4 — o pareamento é propriedade da ANÁLISE, e a subanálise por fatia tem de preservá-lo (U8, piso barato)
+
+**Stuart, E. A. (2010). "Matching Methods for Causal Inference: A Review and a Look Forward."
+*Statistical Science* 25(1), 1–21.** [link](https://doi.org/10.1214/09-STS313)
+
+**Âncora.** O pareamento por tópico é o único controle de confundimento deste desenho, e Stuart é
+explícita no ponto que a unidade conserta: o conjunto pareado pertence à análise, não só à
+amostragem — uma análise que o quebra reintroduz o confundidor, **em quantidade diferente em cada
+subgrupo**. Era exatamente o caso: as 108 linhas da família reservada e as 145 *core* eram
+comparadas contra os **mesmos** 253 pais, dos quais mais da metade é pai da outra fatia. Medido na
+árvore em 2026-08-11: os conjuntos de pais das duas fatias são **disjuntos**, o pareamento é 1:1
+dentro de cada fatia, e a fração fora de tópico do lado humano era **57,3 %** para a reservada
+contra **42,7 %** para as *core* — assimetria por construção, com movimento medido de **−0,02277**
+no piso da reservada contra **−0,00259** no das *core* ao corrigir. Nenhum número novo foi
+introduzido: o conserto é o critério "a fatia lê os pais dela", e a junção parcial passou a recusar
+por cobertura da população declarada em vez de por população vazia.

@@ -639,6 +639,275 @@ class ReservedFamilyAcceptanceIsReadOffANumber(unittest.TestCase):
             baseline.read_ood_easiness(0.9, 0.505, 0.7, 0.95)
 
 
+class OneSlicePopulationForBothInstruments(unittest.TestCase):
+    """A slice is one population, both instruments read it, and the block publishes it.
+
+    The two floors are read AGAINST EACH OTHER by `read_ood_easiness`, so a negative side
+    shared between the slices makes each floor carry a different share of off-topic
+    negatives — `1 - n_slice/n_human` — and the comparison measures the slice sizes too.
+    """
+
+    def test_each_slice_reads_only_the_parents_of_its_own_rows(self) -> None:
+        ai_rows, parents = _paired_fixture()
+        self.assertEqual(len(parents), 9)
+        block, floors = _block(ai_rows, parents)
+        self.assertEqual(block["rows"]["reserved"], {"ai": 4, "human": 4})
+        self.assertEqual(block["rows"]["core"], {"ai": 5, "human": 5})
+        # Not the counts alone: the negatives of a slice ARE its own parents, so no id of the
+        # other slice's parents may stand among them.
+        reserved_negatives = {row_id for row_id, _ in floors["reserved"].human}
+        core_negatives = {row_id for row_id, _ in floors["core"].human}
+        self.assertEqual(reserved_negatives, {f"hum_res_{index}" for index in range(4)})
+        self.assertEqual(core_negatives, {f"hum_core_{index}" for index in range(5)})
+        self.assertEqual(reserved_negatives & core_negatives, set())
+
+    def test_a_parent_shared_by_two_rows_enters_the_negative_side_once(self) -> None:
+        # Measured on the pilot pools: rows per parent is exactly 1,000 in both slices, so
+        # this is the contract for material that pairs two rows to one parent — a parent
+        # entered twice weights its subject twice on one side of one slice.
+        ai_rows, parents = _paired_fixture(shared_parent=True)
+        self.assertEqual(len(parents), 8)
+        block, floors = _block(ai_rows, parents)
+        self.assertEqual(block["rows"]["reserved"], {"ai": 4, "human": 3})
+        negatives = [row_id for row_id, _ in floors["reserved"].human]
+        self.assertEqual(len(negatives), len(set(negatives)))
+
+    def test_the_published_counts_are_the_populations_the_aucs_read(self) -> None:
+        ai_rows, parents = _paired_fixture()
+        ai_ids, human_ids = _ids_of(ai_rows, parents)
+        block, _ = _block(ai_rows, parents, _scored_file(ai_ids, human_ids))
+        self.assertEqual(
+            block["rows"],
+            {"reserved": {"ai": 4, "human": 4}, "core": {"ai": 5, "human": 5}},
+        )
+        # A flat `rows` with one `human` entry is the POOL's population, and 9 is the number
+        # it publishes for both slices while each AUC reads 4 or 5.
+        self.assertNotIn("human", block["rows"])
+        published = [
+            count for counts in block["rows"].values() for count in counts.values()
+        ]
+        self.assertNotIn(9, published)
+        self.assertEqual(block["detectorScores"]["rowsJoined"], 4 + 4 + 5 + 5)
+        self.assertEqual(block["detectorScores"]["rowsInFile"], 18)
+
+    def test_the_floor_and_the_detector_read_one_population_per_slice(self) -> None:
+        ai_rows, parents = _paired_fixture()
+        ai_ids, human_ids = _ids_of(ai_rows, parents)
+        block, _ = _block(ai_rows, parents, _scored_file(ai_ids, human_ids))
+        # 18 of 18 declared: neither instrument read the union of both slices' parents,
+        # which would have joined 4+9 and 5+9.
+        self.assertEqual(block["detectorScores"]["rowsJoined"], 18)
+        # The guard compares the ids the two readings PUBLISH, so a side that widened by one
+        # id of the other slice refuses, and a permutation of the same ids does not.
+        with self.assertRaises(baseline.ReservedFamilyIsUnreadable) as caught:
+            baseline.assert_both_instruments_read_one_population(
+                "reserved",
+                ("ai_res_0", "hum_res_0"),
+                ("ai_res_0", "hum_res_0", "hum_core_0"),
+            )
+        self.assertIn("'cheapFloor': 2", str(caught.exception))
+        self.assertIn("'detector': 3", str(caught.exception))
+        # The mirrored direction: the detector read FEWER ids than the floor, the shape a
+        # tolerant membership filter produces. A subset either way is not one population.
+        with self.assertRaises(baseline.ReservedFamilyIsUnreadable) as caught:
+            baseline.assert_both_instruments_read_one_population(
+                "reserved",
+                ("ai_res_0", "ai_res_1", "hum_res_0", "hum_res_1"),
+                ("ai_res_0", "hum_res_0", "hum_res_1"),
+            )
+        self.assertIn("'cheapFloor': 4", str(caught.exception))
+        self.assertIn("'detector': 3", str(caught.exception))
+        self.assertIn("ai_res_1", str(caught.exception))
+        baseline.assert_both_instruments_read_one_population(
+            "reserved", ("ai_res_0", "hum_res_0"), ("hum_res_0", "ai_res_0")
+        )
+
+    def test_the_criterion_is_the_ids_and_not_the_count(self) -> None:
+        # Same COUNT, one id swapped for the other slice's: the sizes agree and the two AUCs
+        # are over different populations. A criterion read off the counts passes this.
+        with self.assertRaises(baseline.ReservedFamilyIsUnreadable) as caught:
+            baseline.assert_both_instruments_read_one_population(
+                "reserved",
+                ("ai_res_0", "hum_res_0"),
+                ("ai_res_0", "hum_core_0"),
+            )
+        message = str(caught.exception)
+        self.assertIn("'cheapFloor': 2", message)
+        self.assertIn("'detector': 2", message)
+        self.assertIn("hum_res_0", message)
+        self.assertIn("hum_core_0", message)
+
+    def test_the_block_refuses_when_the_two_readings_diverge_at_equal_counts(self) -> None:
+        # The divergence born INSIDE one reading. The coverage guard reads the scored FILE
+        # against the declared ids and this file covers all 18 of them, so it stays green
+        # here: what carries the divergence is the ids the two readings published.
+        #
+        # Both slices are driven, and `core` is not decoration: the verdict is
+        # `reservedLift - coreLift`, so a core read over two populations moves the published
+        # number exactly as a reserved one does.
+        for slice_name, swapped, intruder in (
+            ("reserved", "hum_res_3", "hum_core_0"),
+            ("core", "hum_core_4", "hum_res_0"),
+        ):
+            with self.subTest(slice=slice_name):
+                ai_rows, parents = _paired_fixture()
+                ai_ids, human_ids = _ids_of(ai_rows, parents)
+                scores = _scored_file(ai_ids, human_ids)
+                saved = baseline._detector_reading
+
+                def read_one_parent_of_the_other_slice(population, scored):
+                    reading = saved(population, scored)
+                    if population.name != slice_name:
+                        return reading
+                    return baseline.SliceReading(
+                        reading.auc,
+                        tuple(
+                            intruder if row_id == swapped else row_id
+                            for row_id in reading.ids
+                        ),
+                    )
+
+                try:
+                    baseline._detector_reading = read_one_parent_of_the_other_slice
+                    with self.assertRaises(baseline.ReservedFamilyIsUnreadable) as caught:
+                        _block(ai_rows, parents, scores)
+                finally:
+                    baseline._detector_reading = saved
+                message = str(caught.exception)
+                self.assertIn(f"'{slice_name}'", message)
+                self.assertIn(swapped, message)
+                self.assertIn(intruder, message)
+                # Nothing in the counts carries this divergence.
+                size = 8 if slice_name == "reserved" else 10
+                self.assertIn(f"'cheapFloor': {size}", message)
+                self.assertIn(f"'detector': {size}", message)
+
+    def test_a_partial_join_refuses_instead_of_running_the_auc(self) -> None:
+        ai_rows, parents = _paired_fixture()
+        ai_ids, human_ids = _ids_of(ai_rows, parents)
+        scores = _scored_file(ai_ids, human_ids, omit=("ai_res_3", "hum_res_3"))
+        # The truncated population is NOT empty and carries both classes, so an emptiness
+        # guard does not fire and the rank AUC returns a number over it: coverage of the
+        # declared population is the only thing that can refuse this join.
+        self.assertIsInstance(
+            baseline.detector_auc(
+                [0.9, 0.9, 0.9, 0.1, 0.1, 0.1], [True, True, True, False, False, False]
+            ),
+            float,
+        )
+        with self.assertRaises(baseline.ReservedFamilyIsUnreadable) as caught:
+            _block(ai_rows, parents, scores)
+        message = str(caught.exception)
+        self.assertIn("3/4", message)
+        self.assertIn("ai_res_3", message)
+        self.assertIn("hum_res_3", message)
+
+    def test_a_join_missing_one_row_refuses(self) -> None:
+        ai_rows, parents = _paired_fixture()
+        ai_ids, human_ids = _ids_of(ai_rows, parents)
+        # 17 of the 18 declared ids, and 7 of the reserved slice's 8 — 87,5 % joined, and it
+        # refuses. There is no minimum-share constant in the module, and this is why: the
+        # criterion is coverage of the declared population, which needs no number.
+        with self.assertRaises(baseline.ReservedFamilyIsUnreadable) as caught:
+            _block(ai_rows, parents, _scored_file(ai_ids, human_ids, omit=("hum_res_2",)))
+        message = str(caught.exception)
+        self.assertIn("hum_res_2", message)
+        self.assertIn("3/4", message)
+        block, _ = _block(ai_rows, parents, _scored_file(ai_ids, human_ids))
+        self.assertEqual(block["detectorScores"]["rowsJoined"], 18)
+
+    def test_rows_the_declared_population_does_not_name_are_tolerated(self) -> None:
+        # A scoring run may cover a whole corpus; only the declared ids are looked up.
+        ai_rows, parents = _paired_fixture()
+        ai_ids, human_ids = _ids_of(ai_rows, parents)
+        scores = _scored_file(ai_ids, human_ids, extra=("de_outro_pool_1", "de_outro_pool_2"))
+        block, _ = _block(ai_rows, parents, scores)
+        self.assertEqual(block["detectorScores"]["rowsInFile"], 20)
+        self.assertEqual(block["detectorScores"]["rowsJoined"], 18)
+
+    def test_an_ai_row_whose_parent_is_absent_refuses(self) -> None:
+        ai_rows, parents = _paired_fixture()
+        orphaned = [row for row in parents if row["candidateId"] != "hum_res_3"]
+        # Every remaining human row still parents an ai row, so the complementary guard has
+        # nothing to say and only the new direction can refuse.
+        baseline.assert_every_human_row_is_a_paired_parent(ai_rows, orphaned)
+        saved = baseline.cheap_floor_auc
+
+        def refuse_to_fit(population):
+            raise AssertionError("the floor fitted before the guards refused")
+
+        try:
+            baseline.cheap_floor_auc = refuse_to_fit
+            with self.assertRaises(baseline.ReservedFamilyIsUnreadable) as caught:
+                baseline._easiness_block(ai_rows, orphaned, _RESERVED_FAMILY, None)
+        finally:
+            baseline.cheap_floor_auc = saved
+        self.assertIn("ai_res_3", str(caught.exception))
+        self.assertIn("pairedWith", str(caught.exception))
+
+    def test_the_two_pairing_guards_refuse_opposite_directions(self) -> None:
+        ai_rows = [
+            {"candidateId": "ai_1", "text": "um texto", "meta": {"pairedWith": "hum_1"}}
+        ]
+        parents = [{"candidateId": "hum_1", "text": "outro texto"}]
+        baseline.assert_every_ai_row_has_its_parent_in_the_human_side(ai_rows, parents)
+        baseline.assert_every_human_row_is_a_paired_parent(ai_rows, parents)
+        with self.assertRaises(baseline.ReservedFamilyIsUnreadable) as caught:
+            baseline.assert_every_ai_row_has_its_parent_in_the_human_side(ai_rows, [])
+        self.assertIn("ai_1", str(caught.exception))
+        # A stranger among the humans is the OTHER failure: neither guard covers the other,
+        # because one shrinks a slice's negatives and the other widens them.
+        strangers = [*parents, {"candidateId": "hum_9", "text": "de outro tópico"}]
+        baseline.assert_every_ai_row_has_its_parent_in_the_human_side(ai_rows, strangers)
+        with self.assertRaises(baseline.ReservedFamilyIsUnreadable):
+            baseline.assert_every_human_row_is_a_paired_parent(ai_rows, strangers)
+
+    def test_the_flat_row_counts_of_the_pool_refuse(self) -> None:
+        ai_rows, parents = _paired_fixture()
+        populations = _populations_of(ai_rows, parents)
+        per_slice = {"reserved": {"ai": 4, "human": 4}, "core": {"ai": 5, "human": 5}}
+        baseline.assert_the_published_counts_are_the_populations_read(
+            {"rows": per_slice}, populations
+        )
+        with self.assertRaises(baseline.ReservedFamilyIsUnreadable) as caught:
+            baseline.assert_the_published_counts_are_the_populations_read(
+                {"rows": {"reserved": 4, "core": 5, "human": 9}}, populations
+            )
+        self.assertIn("not the populations read", str(caught.exception))
+        with self.assertRaises(baseline.ReservedFamilyIsUnreadable) as caught:
+            baseline.assert_the_published_counts_are_the_populations_read(
+                {
+                    "rows": per_slice,
+                    "detectorAuc": {"reserved": 0.9, "core": 0.9},
+                    "detectorScores": {"rowsInFile": 40, "rowsJoined": 12},
+                },
+                populations,
+            )
+        self.assertIn("against 18 declared", str(caught.exception))
+        # A detector AUC published with no join counts beside it is unreadable as well.
+        with self.assertRaises(baseline.ReservedFamilyIsUnreadable):
+            baseline.assert_the_published_counts_are_the_populations_read(
+                {"rows": per_slice, "detectorAuc": {"reserved": 0.9, "core": 0.9}},
+                populations,
+            )
+
+
+class TheCheapFloorWeighsNoClass(unittest.TestCase):
+    def test_the_cheap_floor_carries_no_class_weight(self) -> None:
+        # The class-imbalance reading was MEASURED and does not hold: with the positives
+        # nested (the 108 a subset of the 145) against the same 253 negatives the mean AUC
+        # moves +0,00014, and `class_weight="balanced"` moves it −0,00101 — rank AUC is
+        # insensitive to prevalence. The off-topic share of the negatives is what moves the
+        # number, so a weight added here would shift the five published AUCs for nothing.
+        self.assertIsNone(baseline.cheap_floor_pipeline()[-1].class_weight)
+        for label, factory in baseline.VECTORIZATIONS.items():
+            self.assertIsNone(factory()[-1].class_weight, label)
+        # The COUNT, and not one estimator: a weight added to any factory of this module
+        # moves a published AUC, and five factories is five places to add it.
+        source = Path(baseline.__file__).read_text(encoding="utf-8")
+        self.assertEqual(source.count("class_weight="), 0)
+
+
 # --- none of the four is a hypothesis --------------------------------------
 
 
@@ -725,6 +994,134 @@ def _pilot_fixture() -> tuple[np.ndarray, np.ndarray]:
         texts.append(body + ".")
         labels.append(index % 2)
     return np.array(texts, dtype=object), np.array(labels)
+
+
+# Two canonical generator families, and the fixture keeps their parents DISJOINT because the
+# pilot's are: `generator_family` maps these spellings to themselves.
+_RESERVED_FAMILY = "gpt-5_6-luna"
+_CORE_FAMILY = "gemini-3_5-flash-lite"
+
+
+def _clauses(seed: str, joined: bool) -> str:
+    """pt-BR prose from the fixture clauses; `joined` is the structure the floor can read."""
+    rng = random.Random(seed)
+    picked = [rng.choice(_FIXTURE_CLAUSES) for _ in range(6)]
+    if joined:
+        return ". ".join(
+            " e ".join(picked[start : start + 3]) for start in (0, 3)
+        ) + "."
+    return ". ".join(picked) + "."
+
+
+def _paired_fixture(
+    reserved: int = 4, core: int = 5, shared_parent: bool = False
+) -> tuple[list[dict], list[dict]]:
+    """(ai rows, parent rows) in the pilot's measured shape: 1:1 inside each slice, parents
+    DISJOINT between the slices — so a slice that reads the other's parents shows up as a
+    count and as an id. `shared_parent` points the reserved slice's second row at the first
+    one's parent, the one shape that separates a SET of parents from one entry per ai row.
+    """
+    ai_rows: list[dict] = []
+    for family, tag, count in (
+        (_RESERVED_FAMILY, "res", reserved),
+        (_CORE_FAMILY, "core", core),
+    ):
+        for index in range(count):
+            parent = 0 if (shared_parent and tag == "res" and index == 1) else index
+            ai_rows.append(
+                {
+                    "candidateId": f"ai_{tag}_{index}",
+                    "text": _clauses(f"ai_{tag}_{index}", joined=True),
+                    "meta": {"pairedWith": f"hum_{tag}_{parent}", "family": family},
+                }
+            )
+    parents = [
+        {"candidateId": parent_id, "text": _clauses(parent_id, joined=False)}
+        for parent_id in sorted({row["meta"]["pairedWith"] for row in ai_rows})
+    ]
+    return ai_rows, parents
+
+
+def _ids_of(ai_rows: list[dict], parents: list[dict]) -> tuple[list[str], list[str]]:
+    return (
+        [row["candidateId"] for row in ai_rows],
+        [row["candidateId"] for row in parents],
+    )
+
+
+def _populations_of(ai_rows: list[dict], parents: list[dict]) -> dict:
+    humans_by_id = {row["candidateId"]: row for row in parents}
+    return {
+        name: baseline._slice_population(
+            name,
+            [
+                row
+                for row in ai_rows
+                if (row["meta"]["family"] == _RESERVED_FAMILY) == (name == "reserved")
+            ],
+            humans_by_id,
+        )
+        for name in ("reserved", "core")
+    }
+
+
+def _scored_file(
+    ai_ids, human_ids, omit: tuple[str, ...] = (), extra: tuple[str, ...] = ()
+) -> Path:
+    """A `score_pilot_local.py`-shaped file: one object per line, id/class/family/score."""
+    omitted = set(omit)
+    rows = [
+        {"id": row_id, "class": "ai", "family": "?", "score": 0.90}
+        for row_id in ai_ids
+        if row_id not in omitted
+    ]
+    rows += [
+        {"id": row_id, "class": "human", "family": "?", "score": 0.10}
+        for row_id in human_ids
+        if row_id not in omitted
+    ]
+    rows += [
+        {"id": row_id, "class": "ai", "family": "?", "score": 0.50} for row_id in extra
+    ]
+    handle = tempfile.NamedTemporaryFile(
+        "w", suffix=".jsonl", delete=False, encoding="utf-8", newline="\n"
+    )
+    with handle:
+        for row in rows:
+            handle.write(json.dumps(row) + "\n")
+    return Path(handle.name)
+
+
+def _block(
+    ai_rows: list[dict],
+    parents: list[dict],
+    detector_scores: Path | None = None,
+    reserved_family: str = _RESERVED_FAMILY,
+) -> tuple[dict, dict]:
+    """`_easiness_block` over the fixture, plus the populations the cheap floor received.
+
+    TWO folds: `StratifiedKFold` refuses more splits than the smaller class has members, and
+    a slice here holds four or three rows a side. `cross_validated_aucs` reads
+    `BASELINE_FOLDS` at call time, so the module attribute is the whole mechanism.
+    """
+    seen: dict[str, object] = {}
+    saved_folds = baseline.BASELINE_FOLDS
+    saved_floor = baseline.cheap_floor_auc
+
+    def watched(population):
+        seen[population.name] = population
+        return saved_floor(population)
+
+    try:
+        baseline.BASELINE_FOLDS = 2
+        baseline.cheap_floor_auc = watched
+        block = baseline._easiness_block(
+            ai_rows, parents, reserved_family, detector_scores
+        )
+    finally:
+        baseline.BASELINE_FOLDS = saved_folds
+        baseline.cheap_floor_auc = saved_floor
+    return block, seen
 
 
 def _written(policy: dict) -> Path:

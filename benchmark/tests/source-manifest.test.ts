@@ -4,6 +4,7 @@ import { fileURLToPath } from "node:url";
 
 import { describe, expect, it } from "vitest";
 
+import { canonicalSha256 } from "../../contracts/canonical-json.ts";
 import { EVALUATOR_FILES } from "../digests.ts";
 import {
   PREREGISTRATION_V4,
@@ -28,6 +29,7 @@ import {
   assertV3HumanInventoryAdmissible,
   batchNamespaceOf,
   computeReviewedSourceManifestDigest,
+  reviewedSourceManifestProjection,
   corpusLicenseTerms,
   determinedHumanAcquisition,
   humanLabelOverclaimIn,
@@ -2073,7 +2075,7 @@ describe("inventário de lotes de material", () => {
       startedAt: 1_717_200_000_000,
       endedAt: 1_717_286_400_000,
     },
-    evidence: ["https://exemplo.invalido/dump-2024-06-01.sha256"],
+    evidence: [`sha256:${"b".repeat(64)}`],
   };
 
   function comLote(overrides: Record<string, unknown> = {}): ManifestBody {
@@ -2182,7 +2184,7 @@ describe("inventário revisado v2", () => {
       startedAt: 1_717_200_000_000,
       endedAt: 1_717_286_400_000,
     },
-    evidence: ["https://exemplo.invalido/dump-2024-06-01.sha256"],
+    evidence: [`sha256:${"b".repeat(64)}`],
   };
 
   function corpoV2(materialBatches: unknown[] = [lote]): ManifestBody {
@@ -2310,5 +2312,433 @@ describe("inventário revisado v2", () => {
     expect(namespace.generation.has("batch_gen")).toBe(true);
     // Só ids opacos atravessam: a entrada do manifesto não sai daqui.
     expect(namespace.material.get("smb_licenciado_2024")).not.toBe(lote);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// O eixo de VALOR da promessa do cabeçalho.
+//
+// O eixo de CHAVE tem prova própria acima ("rejects an unknown top-level key" e "rejects an entry
+// that carries a source URL, name or handle"): as duas mutam CHAVE, e `assertExactObject` torna
+// `sourceUrl`/`authorName`/`handle` inexpressáveis. Nenhuma delas diz nada sobre o VALOR de uma
+// chave legítima, que é o que estes testes prendem — a promessa é sobre o arquivo inteiro, e o
+// arquivo é a projeção hasheada mais o seu próprio digest.
+// ---------------------------------------------------------------------------
+
+describe("o manifesto não carrega localizador da fonte em nenhuma folha", () => {
+  const DIGEST_REAL =
+    "sha256:70c9ec4f700205ab586ab86dd21a5fe62fc543a5341770c84a28c343225f8b52";
+  const ARQUIVO_REAL =
+    "ptwiki-20220301-pages-articles.xml.bz2 (1955910144 bytes)";
+  const URL_DO_DUMP = "https://dumps.wikimedia.org/ptwiki/20220301/";
+
+  const loteVerificavel = {
+    batchId: "smb_ptwiki-20220301",
+    sourceId: "src_licensed",
+    materialVersion: "ptwiki-20220301",
+    acquisitionWindow: {
+      startedAt: 1_784_753_446_707,
+      endedAt: 1_784_753_446_707,
+    },
+    evidence: [DIGEST_REAL, ARQUIVO_REAL],
+  };
+
+  function corpoV2(lote: Record<string, unknown> = {}): ManifestBody {
+    return {
+      ...validBody,
+      schemaVersion: 2,
+      materialBatches: [{ ...loteVerificavel, ...lote }],
+    } as unknown as ManifestBody;
+  }
+
+  const comEvidencia = (...evidence: unknown[]): ManifestBody =>
+    corpoV2({ evidence });
+
+  it("recusa um manifesto v2 selado cuja evidência carrega a URL do dump", async () => {
+    // Selado com o digest CORRETO de propósito: a recusa não pode ser confundida com integridade,
+    // e um manifesto com URL cujo digest bate é exatamente o estado que o produtor produzia.
+    const selado = await sealManifest(comEvidencia(DIGEST_REAL, URL_DO_DUMP));
+    await expect(parseReviewedSourceManifest(selado)).rejects.toMatchObject({
+      code: "SOURCE_MANIFEST_SOURCE_LOCATOR",
+      message: expect.stringContaining("$.materialBatches[0].evidence[1]"),
+    });
+  });
+
+  it("nomeia o localizador, não o digest, quando os dois podem disparar", async () => {
+    // Diagnosticar isto como "o digest não bate" convida a RECOMPUTAR o digest, remédio que sela a
+    // URL dentro de um manifesto com self-digest válido.
+    await expect(
+      parseReviewedSourceManifest({
+        ...comEvidencia(DIGEST_REAL, URL_DO_DUMP),
+        sourceManifestDigest: "0".repeat(64),
+      }),
+    ).rejects.toMatchObject({ code: "SOURCE_MANIFEST_SOURCE_LOCATOR" });
+  });
+
+  // Uma folha por linha, todas pela API pública: a varredura é sobre a projeção INTEIRA, e não
+  // sobre o campo onde o defeito foi visto.
+  const folhasLivres: readonly {
+    readonly folha: string;
+    readonly corpo: ManifestBody;
+  }[] = [
+    {
+      folha: "$.sources[0].licenseId",
+      corpo: {
+        ...validBody,
+        sources: [
+          { ...licensedSource, licenseId: URL_DO_DUMP },
+          generatedSource,
+        ],
+      },
+    },
+    {
+      folha: "$.generationBatches[0].provider",
+      corpo: {
+        ...validBody,
+        generationBatches: [{ ...batch, provider: URL_DO_DUMP }],
+      },
+    },
+    {
+      folha: "$.generationBatches[0].family",
+      corpo: {
+        ...validBody,
+        generationBatches: [{ ...batch, family: URL_DO_DUMP }],
+      },
+    },
+    {
+      folha: "$.generationBatches[0].model",
+      corpo: {
+        ...validBody,
+        generationBatches: [{ ...batch, model: URL_DO_DUMP }],
+      },
+    },
+    {
+      folha: "$.generationBatches[0].version",
+      corpo: {
+        ...validBody,
+        generationBatches: [{ ...batch, version: URL_DO_DUMP }],
+      },
+    },
+    {
+      folha: "$.generationBatches[0].temperatureNullReason",
+      corpo: {
+        ...validBody,
+        generationBatches: [
+          { ...batch, temperature: null, temperatureNullReason: URL_DO_DUMP },
+        ],
+      },
+    },
+    {
+      folha: "$.generationBatches[0].seed",
+      corpo: {
+        ...validBody,
+        generationBatches: [{ ...batch, seed: URL_DO_DUMP }],
+      },
+    },
+    {
+      folha: "$.generationBatches[0].seedNullReason",
+      corpo: {
+        ...validBody,
+        generationBatches: [
+          { ...batch, seed: null, seedNullReason: URL_DO_DUMP },
+        ],
+      },
+    },
+    {
+      folha: "$.materialBatches[0].materialVersion",
+      corpo: corpoV2({ materialVersion: URL_DO_DUMP }),
+    },
+  ];
+
+  for (const { folha, corpo } of folhasLivres) {
+    it(`recusa localizador em cada folha livre da projeção: ${folha}`, async () => {
+      const selado = await sealManifest(corpo);
+      await expect(parseReviewedSourceManifest(selado)).rejects.toMatchObject({
+        code: "SOURCE_MANIFEST_SOURCE_LOCATOR",
+        message: expect.stringContaining(folha),
+      });
+    });
+  }
+
+  it("recusa esquema declarado por `//`, inclusive o que não é http e o relativo-de-esquema", async () => {
+    // Por RFC 3986 §3.2 o `//` É a declaração de autoridade, e é essa a regra — não uma lista de
+    // esquemas. Nenhuma das duas strings abaixo é vista por um padrão de URL ancorado em `https?://`
+    // ou `www.`, e nenhuma tem rótulo pontuado antes da barra, então só esta regra as decide.
+    for (const valor of ["s3://bucket/ptwiki", "//dumps/ptwiki"]) {
+      const selado = await sealManifest(corpoV2({ materialVersion: valor }));
+      await expect(parseReviewedSourceManifest(selado)).rejects.toMatchObject({
+        code: "SOURCE_MANIFEST_SOURCE_LOCATOR",
+        message: expect.stringContaining("(authority)"),
+      });
+    }
+  });
+
+  it("recusa host anunciado por `www.`, sem esquema nenhum", async () => {
+    const selado = await sealManifest(
+      corpoV2({ materialVersion: "www.dumps.wikimedia.org" }),
+    );
+    await expect(parseReviewedSourceManifest(selado)).rejects.toMatchObject({
+      code: "SOURCE_MANIFEST_SOURCE_LOCATOR",
+      message: expect.stringContaining("(www)"),
+    });
+  });
+
+  // O mesmo localizador sem o `//`, que é a evasão imediata da regra de autoridade. O mínimo da
+  // regra é UM rótulo pontuado antes da barra: `exemplo.com/dump` é localizador real, e exigir dois
+  // rótulos o deixaria passar.
+  for (const valor of [
+    "dumps.wikimedia.org/ptwiki/20220301/",
+    "exemplo.com/dump",
+  ]) {
+    it(`recusa o localizador com o esquema arrancado: ${valor}`, async () => {
+      const selado = await sealManifest(corpoV2({ materialVersion: valor }));
+      await expect(parseReviewedSourceManifest(selado)).rejects.toMatchObject({
+        code: "SOURCE_MANIFEST_SOURCE_LOCATOR",
+        message: expect.stringContaining("(host-path)"),
+      });
+    });
+  }
+
+  it("recusa identidade contactável: handle e e-mail", async () => {
+    const comHandle = await sealManifest({
+      ...validBody,
+      generationBatches: [
+        { ...batch, seed: null, seedNullReason: "@jane_doe" },
+      ],
+    });
+    await expect(parseReviewedSourceManifest(comHandle)).rejects.toMatchObject({
+      code: "SOURCE_MANIFEST_SOURCE_LOCATOR",
+      message: expect.stringContaining("(handle)"),
+    });
+    const comEmail = await sealManifest({
+      ...validBody,
+      generationBatches: [
+        {
+          ...batch,
+          seed: null,
+          seedNullReason: "pedido a joao.silva@exemplo.com.br",
+        },
+      ],
+    });
+    await expect(parseReviewedSourceManifest(comEmail)).rejects.toMatchObject({
+      code: "SOURCE_MANIFEST_SOURCE_LOCATOR",
+      message: expect.stringContaining("(email)"),
+    });
+    // O ccTLD de duas letras é o caso real num corpus pt-BR, e é ele que prende o mínimo do
+    // último rótulo: sob `{3,}` este endereço escapa e `.com.br` continua casando.
+    const comEmailBr = await sealManifest({
+      ...validBody,
+      generationBatches: [
+        { ...batch, seed: null, seedNullReason: "contato: maria@ufmg.br" },
+      ],
+    });
+    await expect(parseReviewedSourceManifest(comEmailBr)).rejects.toMatchObject(
+      {
+        code: "SOURCE_MANIFEST_SOURCE_LOCATOR",
+        message: expect.stringContaining("(email)"),
+      },
+    );
+  });
+
+  it("aceita digest de outra família de algoritmo, porque a família é aberta", async () => {
+    const blake3 = `blake3:${"a1b2c3d4".repeat(8)}`;
+    const selado = await sealManifest(comEvidencia(blake3, ARQUIVO_REAL));
+    await expect(parseReviewedSourceManifest(selado)).resolves.toMatchObject({
+      materialBatches: [{ evidence: [blake3, ARQUIVO_REAL] }],
+    });
+  });
+
+  it("aceita a evidência real do lote ptwiki, com ponto, espaço e parêntese", async () => {
+    const selado = await sealManifest(comEvidencia(DIGEST_REAL, ARQUIVO_REAL));
+    await expect(parseReviewedSourceManifest(selado)).resolves.toMatchObject({
+      materialBatches: [{ evidence: [DIGEST_REAL, ARQUIVO_REAL] }],
+    });
+  });
+
+  it("aceita rótulo de campo e versão com `@`, e modelo com uma barra", async () => {
+    // Os três são vocabulário real desta árvore. Uma regra sobre `@` cru ou sobre `/` recusaria
+    // dado legítimo, que é o que torna a guarda um instrumento cego.
+    const selado = await sealManifest({
+      ...validBody,
+      generationBatches: [
+        {
+          ...batch,
+          provider: "gemini-cli@0.1.5",
+          model: "meta-llama/Llama-3.1-8B",
+          seed: null,
+          seedNullReason: "o corte é comparado contra Posts.xml@CreationDate",
+        },
+      ],
+    });
+    await expect(parseReviewedSourceManifest(selado)).resolves.toMatchObject({
+      generationBatches: [{ provider: "gemini-cli@0.1.5" }],
+    });
+  });
+
+  it("recusa a GRAFIA NUA do host como evidência, que a varredura de localizador não decide", async () => {
+    // `dumps.wikimedia.org` solto é indistinguível por forma de `common.py`, então é a whitelist de
+    // forma e não a blacklist que o recusa — e ela recusa a grafia nua, não a classe: o mesmo host
+    // vestido de nome de arquivo é aceito, e isso está tabelado no resíduo abaixo.
+    const selado = await sealManifest(comEvidencia("dumps.wikimedia.org"));
+    await expect(parseReviewedSourceManifest(selado)).rejects.toMatchObject({
+      code: "SOURCE_MANIFEST_EVIDENCE_NOT_VERIFIABLE",
+      message: expect.stringContaining("$.materialBatches[0].evidence[0]"),
+    });
+  });
+
+  it("recusa alegação em prosa como evidência, que nenhum terceiro recomputa", async () => {
+    const selado = await sealManifest(
+      comEvidencia("baixado do site oficial em marco de 2022"),
+    );
+    await expect(parseReviewedSourceManifest(selado)).rejects.toMatchObject({
+      code: "SOURCE_MANIFEST_EVIDENCE_NOT_VERIFIABLE",
+    });
+  });
+
+  // As quatro âncoras das DUAS formas, uma por linha: cada item abaixo CONTÉM uma das formas e
+  // passaria se a âncora daquela ponta saísse do padrão, e aí a whitelist decidiria só "contém",
+  // que é o que a prosa com um digest colado dentro já satisfaz. Nenhum tem barra nem `//`, então
+  // é a whitelist que os decide, e não a varredura de localizador.
+  const semAncora: readonly (readonly [string, string])[] = [
+    ["prefixo antes do digest", `evidência anexa ${DIGEST_REAL}`],
+    [
+      "sufixo depois do digest",
+      `${DIGEST_REAL} (baixado de dumps.wikimedia.org)`,
+    ],
+    ["prefixo antes do nome de arquivo", `baixado de ${ARQUIVO_REAL}`],
+    [
+      "sufixo depois da contagem de bytes",
+      `${ARQUIVO_REAL} baixado de dumps.wikimedia.org`,
+    ],
+  ];
+
+  for (const [ponta, item] of semAncora) {
+    it(`exige a forma exata, não a presença dela dentro de uma frase: ${ponta}`, async () => {
+      const selado = await sealManifest(comEvidencia(item));
+      await expect(parseReviewedSourceManifest(selado)).rejects.toMatchObject({
+        code: "SOURCE_MANIFEST_EVIDENCE_NOT_VERIFIABLE",
+      });
+    });
+  }
+
+  it("exige digest em minúscula, como `lowercaseSha256` já exige no resto do módulo", async () => {
+    const selado = await sealManifest(comEvidencia(DIGEST_REAL.toUpperCase()));
+    await expect(parseReviewedSourceManifest(selado)).rejects.toMatchObject({
+      code: "SOURCE_MANIFEST_EVIDENCE_NOT_VERIFIABLE",
+    });
+  });
+
+  // O resíduo que `SOURCE_LOCATOR_MARKS` declara e NÃO decide, ACEITO por medição: em `evidence` a
+  // whitelist de forma fecha a GRAFIA NUA do host, nunca a classe, e um host escrito como nome de
+  // arquivo é evidência válida. Está tabelado aqui para que a declaração não seja relida como
+  // promessa — e para que estreitar a forma um dia seja uma decisão, e não um efeito colateral.
+  const residuoAceito: readonly (readonly [string, ManifestBody])[] = [
+    [
+      "host vestido de nome de arquivo",
+      comEvidencia("dumps.wikimedia.org (10 bytes)"),
+    ],
+    [
+      "nome próprio vestido de nome de arquivo",
+      comEvidencia("JoaoSilva (100 bytes)"),
+    ],
+    [
+      "host nu em folha livre que não é `evidence`",
+      corpoV2({ materialVersion: "dumps.wikimedia.org" }),
+    ],
+    [
+      "nome próprio cru em folha livre",
+      corpoV2({ materialVersion: "João Silva" }),
+    ],
+    [
+      "esquema com barra única",
+      corpoV2({ materialVersion: "https:/dumps.wikimedia.org" }),
+    ],
+    [
+      "autoridade percent-encoded",
+      corpoV2({ materialVersion: "https:%2F%2Fdumps.wikimedia.org%2Fptwiki" }),
+    ],
+  ];
+
+  for (const [caso, corpo] of residuoAceito) {
+    it(`documenta o resíduo que a guarda NÃO decide, ACEITO: ${caso}`, async () => {
+      const selado = await sealManifest(corpo);
+      await expect(parseReviewedSourceManifest(selado)).resolves.toMatchObject({
+        schemaVersion: 2,
+      });
+    });
+  }
+
+  // E as duas condições do módulo espelhado (`assertSanitized`) que esta guarda decide NÃO impor:
+  // caminho de saída de execução e lista longa de escalares são promessa do artefato PÚBLICO, e o
+  // manifesto revisado nunca é publicado.
+  const foraDaPromessa: readonly (readonly [string, ManifestBody])[] = [
+    [
+      "caminho de saída em folha livre",
+      corpoV2({ materialVersion: "private/source-manifest.json" }),
+    ],
+    [
+      "evidência de 500 digests",
+      comEvidencia(
+        ...Array.from(
+          { length: 500 },
+          (_, indice) => `sha256:${indice.toString(16).padStart(64, "0")}`,
+        ),
+      ),
+    ],
+  ];
+
+  for (const [caso, corpo] of foraDaPromessa) {
+    it(`o espelho decide o que esta guarda não decide, ACEITO: ${caso}`, async () => {
+      const selado = await sealManifest(corpo);
+      await expect(parseReviewedSourceManifest(selado)).resolves.toMatchObject({
+        schemaVersion: 2,
+      });
+    });
+  }
+
+  it("a projeção varrida é a projeção hasheada", async () => {
+    // O alcance da promessa é FATO ESTRUTURAL e não alegação: o digest é o hash desta projeção, e
+    // é esta projeção que a guarda varre. Um campo acrescentado só ao objeto do digest, ou uma
+    // projeção reconstruída à mão em um dos dois lados, cai aqui.
+    const corpo = corpoV2();
+    expect(await computeReviewedSourceManifestDigest(corpo)).toBe(
+      await canonicalSha256(reviewedSourceManifestProjection(corpo)),
+    );
+    // As DUAS metades da condicional v1/v2: um v1 sem lote não hasheia a chave.
+    expect(await computeReviewedSourceManifestDigest(validBody)).toBe(
+      await canonicalSha256(reviewedSourceManifestProjection(validBody)),
+    );
+    expect(
+      Object.keys(reviewedSourceManifestProjection(validBody)),
+    ).not.toContain("materialBatches");
+
+    // E toda folha do ARQUIVO está na projeção ou é o próprio digest: as chaves de um manifesto v2
+    // que o parser ACEITA, menos `sourceManifestDigest`, são as chaves da projeção.
+    const selado = await sealManifest(corpo);
+    await expect(parseReviewedSourceManifest(selado)).resolves.toMatchObject({
+      schemaVersion: 2,
+    });
+    expect(Object.keys(reviewedSourceManifestProjection(corpo)).sort()).toEqual(
+      Object.keys(selado)
+        .filter((key) => key !== "sourceManifestDigest")
+        .sort(),
+    );
+  });
+
+  it("credita cada eixo da promessa à guarda que o impõe, no cabeçalho do módulo", async () => {
+    // O cabeçalho tem de creditar cada eixo à guarda que o impõe: o conjunto de chaves fechado
+    // prova o eixo de CHAVE e nada sobre o valor de um campo legítimo, e um cabeçalho que credite a
+    // promessa inteira ao conjunto de chaves é uma promessa sem mecanismo.
+    const source = await readFile(
+      resolve(HERE, "../source-manifest.ts"),
+      "utf8",
+    );
+    const lines = source.split(/\r?\n/u);
+    const firstCodeLine = lines.findIndex((line) => !line.startsWith("//"));
+    expect(firstCodeLine).toBeGreaterThan(0);
+    const header = lines.slice(0, firstCodeLine).join("\n");
+    expect(header).toMatch(/KEY axis/u);
+    expect(header).toMatch(/VALUE/u);
+    expect(header).toMatch(/assertNoSourceLocator/u);
   });
 });

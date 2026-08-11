@@ -20,6 +20,7 @@ import {
 } from "../generator-family.ts";
 import { PREREGISTRATION_V4 } from "../preregistration-v4.ts";
 import {
+  assertNoSourceLocator,
   computeReviewedSourceManifestDigest,
   type ReviewedSourceManifestV2,
   type SourceMaterialBatchV1,
@@ -72,10 +73,12 @@ export const DECLARED_MATERIAL_BATCHES: readonly SourceMaterialBatchV1[] = [
     // "downloaded then" from "copied then" — so the window is ratified rather than
     // computed, and a future acquisition declares its own.
     acquisitionWindow: { startedAt: 1784753446707, endedAt: 1784753446707 },
+    // O digest do conteúdo e o arquivo com o seu tamanho: as duas formas que um terceiro
+    // recomputa. Um localizador da fonte não entra — o dump concreto já está nomeado em
+    // `materialVersion`, e o manifesto revisado não carrega URL.
     evidence: [
       "sha256:70c9ec4f700205ab586ab86dd21a5fe62fc543a5341770c84a28c343225f8b52",
       "ptwiki-20220301-pages-articles.xml.bz2 (1955910144 bytes)",
-      "https://dumps.wikimedia.org/ptwiki/20220301/",
     ],
   },
 ];
@@ -140,12 +143,21 @@ export function reviewedSourceManifestBodyOf(
     }
   }
 
-  return {
+  const body: ReviewedSourceManifestBodyV2 = {
     schemaVersion: 2,
     sources: sources as ReviewedSourceManifestBodyV2["sources"],
     generationBatches: inputs.generationBatches ?? [],
     materialBatches: [...materialBatches],
   };
+  // A mesma operação que o parser chama, sobre o mesmo corpo, e aqui ela roda ANTES do primeiro
+  // `mkdir`: o que o parser recusa, o escritor não escreve. Importa porque `governance-inputs.json`
+  // vem do lado Python — um `licenseId` ou um `model` com URL vindo de lá é recusado na escrita, e
+  // não dois passos depois, num arquivo que ninguém editou à mão.
+  //
+  // O erro do módulo do manifesto PROPAGA em vez de ser reembrulhado em `GovernanceInputError`: a
+  // recusa é do manifesto, e um segundo código para uma condição só produziria duas semânticas.
+  assertNoSourceLocator(body);
+  return body;
 }
 
 export function datasetManifestTemplateOf(
