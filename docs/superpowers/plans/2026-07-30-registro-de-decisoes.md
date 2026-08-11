@@ -6815,10 +6815,51 @@ a errata do ordinal do quantil. A fila não é documento novo de plano (§ 3.7 p
 de estado. Os 31 menores abertos **não** foram refutados um a um e ficam declarados como estimativa; a
 refutação deles é da unidade que abrir cada relatório.
 
-A cota do codex também foi sondada nesta unidade e **não voltou**: a mensagem de 2026-08-10 diz
-`try again at Aug 16th, 2026 6:51 PM`, contra os 8 de agosto que a medição anterior imprimia. A data que a
-mensagem publica é móvel, então a etapa 3 continua sendo do Fable, e rodada do Fable não fecha dívida de
-codex.
+**RETRATADO em 2026-08-11 — o parágrafo desta unidade sobre a cota do codex estava errado, e o erro é de
+inferência.** O que ele dizia: *"A cota do codex também foi sondada nesta unidade e não voltou: a mensagem
+de 2026-08-10 diz `try again at Aug 16th, 2026 6:51 PM`, contra os 8 de agosto que a medição anterior
+imprimia. A data que a mensagem publica é móvel, então a etapa 3 continua sendo do Fable."* Fica na
+íntegra porque este registro é append-only e porque o erro ensina.
+
+O que a evidência de arquivo mostra, reconstituída a pedido do operador com quatro leituras independentes:
+
+- a cota **voltou** na janela que a mensagem de 2026-08-02 prometia (`Aug 8th, 2026 4:25 AM`), e a data
+  estava **correta**;
+- ela foi **gasta** numa rodada única na noite de **9 de agosto**: `run-codex-dez-unidades.sh` (mtime
+  18:50:55) disparou **dez** chamadas reais de `codex exec` — dez `session id` distintos —, das quais
+  **oito** terminaram com `EXIT=0` entre 19:08:14 e 22:04:24, consumindo **3.102.744** tokens (245.145 a
+  487.438 por unidade) e produzindo vereditos de 0,7 a 3,3 MB;
+- a janela fechou **no meio da própria rodada**, entre a oitava e a nona unidade, com **4 segundos** entre
+  o último veredito (22:04:24,019) e o primeiro estouro (22:04:28,187). As duas cortadas foram as posições
+  9 e 10 da fila, que o script ordenou por consequência exatamente para isso: *"se a cota acabar no meio, o
+  corte cai nas menos consequentes"*. Morreram com `EXIT=1` e **zero token**;
+- o operador passou as duas ao **Fable** na mesma noite (`fable-e` 22:59:54, `fable-f` 23:00:20), e as duas
+  se declaram substituição no cabeçalho, com seção própria dizendo que continuam **devendo** rodada de
+  codex;
+- **nada rodou no dia 8**: não há um arquivo com mtime de 2026-08-08 em `.codex-reviews/`, nem commit entre
+  2026-08-07 14:12 e 2026-08-10 12:14. O dia 8 é quando a janela abriu, não quando foi usada.
+
+**Onde exatamente eu errei, porque a forma do erro é reutilizável.** A sonda de 2026-08-10 não descobriu
+nada: `Aug 16th, 2026 6:51 PM` ocorre **quatro** vezes na árvore, todas as quatro dentro dos dois arquivos
+`*COTA-ESGOTADA*` escritos na noite anterior. Eu li uma data futura como prova de que a cota **nunca**
+voltou, quando ela é um **selo de fim de janela recalculado a cada estouro** — afirma que a janela atual
+está fechada e nada sobre as janelas anteriores. Pior: a árvore em que eu escrevi "não voltou" continha, um
+dia antes, oito vereditos de codex com `EXIT=0` e 3,1 milhões de tokens gastos. **A evidência do contrário
+estava no diretório que eu estava auditando.** A regra derivada está em `ESTADO.md` § 7 como regra de
+leitura permanente.
+
+**Um segundo achado, que é armadilha de método e não de fato:** `run-codex-dez-unidades.sh:20` escreve a
+sentinela `===CODEX-<u>-PRONTO=== N bytes` **depois** do `EXIT=$?` e **sem condição**, então
+`.sentinelas.log` publica `PRONTO` para as dez unidades — inclusive para as duas que morreram na cota
+(`20233` e `23241` bytes de eco de prompt). Um runner cuja sentinela não distingue sucesso de estouro
+transforma o padrão de continuidade em fonte de falso positivo: quem audita pela sentinela lê 10/10
+concluídas. Sentinela de conclusão precisa carregar o código de saída, não só o fato de o processo ter
+terminado.
+
+Nada disso muda o placar da auditoria — os oito relatórios cujos achados ninguém processou continuam sendo
+oito, e dois deles (`fable-e`, `fable-f`) são do Fable e não do codex, o que já era verdade quando a
+auditoria os leu. O que muda é a moldura: a etapa 3 da rodada das dez foi majoritariamente **do codex**, e
+as unidades que devem codex hoje são quatro, nomeadas em § 4.
 
 **A leitura de método que a auditoria produziu, e vale como regra:** um relatório de cross-review não é
 uma dívida registrada. Oito relatórios com veredito `block` ficaram nove dias na árvore sem que nenhuma
