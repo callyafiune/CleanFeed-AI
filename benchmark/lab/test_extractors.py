@@ -56,6 +56,14 @@ def document_license_of(domain_source: str) -> str:
 WIKI_SNAPSHOT_VERSION = "ptwiki-20220301"
 CAROLINA_SNAPSHOT_VERSION = "carolina-v2.0"
 
+# A run id in the SHAPE the extractors emit — module, material version, digest of the
+# extractor's own bytes. A literal and never the real digest of the file on disk: the
+# digest covers `extract_wikipedia.py` itself, so an expectation computed here would move
+# with every edit of that module. A fixture only stands in for what some extractor
+# stamped, and the assembler cannot tell one token from another anyway
+# (`test_the_assembler_cannot_tell_a_hand_written_run_from_a_derived_one`).
+FIXTURE_EXTRACTION_RUN = "er_extract_wikipedia_ptwiki-20220301_0f1e2d3c4b5a"
+
 # The two person-carrying sources fail closed without a cluster-exposure keyring
 # (pseudonymize.require_keyring), so every extractor test that reaches them has to
 # supply one. A FIXTURE secret, deliberately not the operator's: the pseudonyms it
@@ -1673,6 +1681,335 @@ class MaterialBatchProducerTests(unittest.TestCase):
         )
 
 
+class ExtractionRunProducerTests(unittest.TestCase):
+    """The EXTRACTOR is where `extractionRun` comes from, and nowhere else.
+
+    The axis names the execution that OPENED the material, so only that execution can name
+    itself. The layer that reads a pool afterwards knows a FILE NAME, and a file is not an
+    execution: `CandidateWriter` takes `append=True`/`start_sequence`, so one pool file can
+    hold the lines of more than one run. `assemble_corpus.human_record` refuses a human
+    candidate that names no run, and that refusal only means something if something
+    asserts the PRODUCER — otherwise the id is whatever the last layer to touch the row
+    made up, which is the defect this class exists to keep out.
+    """
+
+    @staticmethod
+    def _expected_run_id(module_name: str, snapshot_version: str) -> str:
+        """The formula, recomputed here from the module on disk.
+
+        RECOMPUTED and never pinned as a literal, because of what the id is: the digest
+        covers the extractor's own bytes, so every edit of that module moves it and a hex
+        constant here would be a test that breaks on a comment. It is also the mirror
+        between the two copies of the formula — `group_axes.py` belongs to another unit, so
+        each extractor carries its own expression, and this is what makes them drift into a
+        failure instead of into two spellings.
+        """
+        import hashlib
+
+        from group_axes import axis_token
+
+        module = Path(__file__).with_name(f"{module_name}.py")
+        digest = hashlib.sha256(module.read_bytes()).hexdigest()[:12]
+        return f"er_{module_name}_{axis_token(snapshot_version)}_{digest}"
+
+    @staticmethod
+    def _two_page_dump(path: Path) -> None:
+        """A dump with TWO articles, which is the minimum this axis can be measured on.
+
+        The stamp lives inside the `iterparse` loop, so a one-page fixture cannot tell a
+        stamp written for every page from one written for the first page it saw.
+        """
+        pages = "".join(
+            "<page><title>T</title><ns>0</ns>"
+            f"<id>{page_id}</id><revision>"
+            "<timestamp>2021-05-01T00:00:00Z</timestamp>"
+            f"<text>{PROSE_60}</text>"
+            "</revision></page>"
+            for page_id in (4101, 4102)
+        )
+        path.write_bytes(
+            bz2.compress(
+                (
+                    '<mediawiki xmlns="http://www.mediawiki.org/xml/export-0.10/">'
+                    f"{pages}</mediawiki>"
+                ).encode("utf-8")
+            )
+        )
+
+    def _wikipedia_rows(self, tmp: Path, name: str = "wiki") -> list[dict]:
+        path = tmp / "ptwiki.xml.bz2"
+        if not path.exists():
+            self._two_page_dump(path)
+        rows, _ = run_writer(
+            tmp,
+            name,
+            lambda w: extract_wikipedia.extract(
+                path, w, snapshot_version=WIKI_SNAPSHOT_VERSION
+            ),
+        )
+        return rows
+
+    def test_wikipedia_names_the_run_that_wrote_every_candidate(self) -> None:
+        with tempfile.TemporaryDirectory() as raw:
+            rows = self._wikipedia_rows(Path(raw))
+        # BOTH pages, not just the first: the assertion is over every line the run wrote,
+        # which is the only form that says anything about the loop.
+        self.assertEqual(len(rows), 2)
+        expected = self._expected_run_id("extract_wikipedia", WIKI_SNAPSHOT_VERSION)
+        self.assertEqual(
+            [r["meta"]["extractionRun"] for r in rows], [expected, expected]
+        )
+        # ...and the two lines really are two different candidates, so the equality above
+        # is a statement about a loop and not about one row counted twice.
+        self.assertEqual(len({r["candidateId"] for r in rows}), 2)
+
+    def test_carolina_names_the_run_on_every_typology_of_one_download(self) -> None:
+        import extract_carolina
+
+        # TWO <TEI> documents per member and TWO members, so the fixture crosses both
+        # levels of the nested loop: a stamp restricted to the first document of a member,
+        # or to the first typology of the package, leaves fewer than four stamped lines.
+        tei = (
+            '<teiCorpus xmlns="http://www.tei-c.org/ns/1.0">'
+            + 2
+            * (
+                "<TEI><teiHeader><fileDesc><publicationStmt>"
+                '<date type="Download">2021-05-21</date>'
+                "<availability><licence>CC BY-NC-SA 4.0</licence></availability>"
+                "</publicationStmt></fileDesc></teiHeader>"
+                f"<text><body><p>{PROSE_60}</p></body></text></TEI>"
+            )
+            + "</teiCorpus>"
+        )
+        with tempfile.TemporaryDirectory() as raw:
+            path = Path(raw) / "archive.zip"
+            with zipfile.ZipFile(path, "w") as archive:
+                archive.writestr("Corpus/university domains/uni.xml", tei)
+                archive.writestr("Corpus/social media/soc.xml", tei)
+            with readmitted_typologies("university_domains", "social_media"):
+                rows, _ = run_writer(
+                    Path(raw),
+                    "carolina",
+                    lambda w: extract_carolina.extract(
+                        path,
+                        w,
+                        snapshot_version=CAROLINA_SNAPSHOT_VERSION,
+                        typologies=("university_domains", "social_media"),
+                    ),
+                )
+        self.assertEqual(len(rows), 4)
+        self.assertEqual(len({r["domainSource"] for r in rows}), 2)
+        self.assertEqual(len({r["candidateId"] for r in rows}), 4)
+        # ONE run over the four lines: the typologies partition a single execution over a
+        # single download, exactly as they partition a single acquisition event.
+        expected = self._expected_run_id("extract_carolina", CAROLINA_SNAPSHOT_VERSION)
+        self.assertEqual({r["meta"]["extractionRun"] for r in rows}, {expected})
+
+    def test_the_run_names_the_material_version_its_batch_names(self) -> None:
+        """An execution cannot name itself without naming the material it read.
+
+        Not a second emptiness check — `group_axes.material_batch_id` already refuses a run
+        whose acquisition has no name, and a second authority over the same fact is how two
+        spellings of one rule start disagreeing. What is asserted is the RELATION on the
+        emitted line: the version inside the batch id is inside the run id of the same row.
+        """
+        import extract_carolina
+
+        tei = (
+            '<teiCorpus xmlns="http://www.tei-c.org/ns/1.0">'
+            "<TEI><teiHeader><fileDesc><publicationStmt>"
+            '<date type="Download">2021-05-21</date>'
+            "<availability><licence>CC BY-NC-SA 4.0</licence></availability>"
+            "</publicationStmt></fileDesc></teiHeader>"
+            f"<text><body><p>{PROSE_60}</p></body></text></TEI>"
+            "</teiCorpus>"
+        )
+        with tempfile.TemporaryDirectory() as raw:
+            tmp = Path(raw)
+            emitted = list(self._wikipedia_rows(tmp))
+            path = tmp / "archive.zip"
+            with zipfile.ZipFile(path, "w") as archive:
+                archive.writestr("Corpus/social media/soc.xml", tei)
+            with readmitted_typologies("social_media"):
+                carolina, _ = run_writer(
+                    tmp,
+                    "carolina",
+                    lambda w: extract_carolina.extract(
+                        path,
+                        w,
+                        snapshot_version=CAROLINA_SNAPSHOT_VERSION,
+                        typologies=("social_media",),
+                    ),
+                )
+            emitted += carolina
+        self.assertEqual(len(emitted), 3)
+        for row in emitted:
+            with self.subTest(candidate=row["candidateId"]):
+                version = row["meta"]["sourceMaterialBatch"].removeprefix("smb_")
+                self.assertTrue(version)
+                self.assertIn(version, row["meta"]["extractionRun"])
+        # The two versions are DIFFERENT strings, so the loop above is not one fixture
+        # measured twice: `carolina-v2.0` also exercises the tokenisation, since the
+        # material version is not a pseudonym until `axis_token` runs over it.
+        self.assertEqual(
+            {r["meta"]["sourceMaterialBatch"] for r in emitted},
+            {"smb_ptwiki-20220301", "smb_carolina-v2_0"},
+        )
+
+    def test_the_pool_file_name_is_not_the_run(self) -> None:
+        """The criterion in POSITIVE form: one execution, two output names, one run id.
+
+        The defect this replaces read the run off the pool file (`extraction_{fname}`), so
+        it is the assertion that any route back to the file name fails — the id derived
+        from `writer.output`, from the source id, from the stem plus a prefix.
+        """
+        with tempfile.TemporaryDirectory() as raw:
+            tmp = Path(raw)
+            first = self._wikipedia_rows(tmp, "wikipedia_fresh")
+            second = self._wikipedia_rows(tmp, "outro_nome_de_pool")
+        self.assertEqual(
+            first[0]["meta"]["extractionRun"], second[0]["meta"]["extractionRun"]
+        )
+        for name in ("wikipedia_fresh", "outro_nome_de_pool"):
+            self.assertNotIn(name, first[0]["meta"]["extractionRun"])
+        # ...and the two runs really did write different pools, so the equality is about
+        # the id and not about one file read twice.
+        self.assertNotEqual(
+            first[0]["candidateId"], second[0]["candidateId"]
+        )
+
+    def test_two_runs_over_one_dump_with_different_limits_share_the_run_id(self) -> None:
+        """DECLARED RESIDUE, fixed as accepted: the SELECTION parameters are not in the id.
+
+        `--limit`, `--sample-rate` and `--exclude` live in `CandidateWriter` and decide
+        which lines a run emits, not which module read which material, so two invocations
+        differing only there carry one run id. The axis is diagnostic and the row already
+        travels with the writer's own stats file; what would be dishonest is a comment
+        claiming the id separates two such invocations.
+        """
+        ids: list[str] = []
+        counts: list[int] = []
+        with tempfile.TemporaryDirectory() as raw:
+            tmp = Path(raw)
+            self._two_page_dump(tmp / "ptwiki.xml.bz2")
+            for tag, limit in (("um", 1), ("dois", 100)):
+                output = tmp / f"{tag}.jsonl"
+                writer = CandidateWriter(
+                    output, source_id=f"src_{tag}", limit=limit, sample_rate=1
+                )
+                try:
+                    extract_wikipedia.extract(
+                        tmp / "ptwiki.xml.bz2",
+                        writer,
+                        snapshot_version=WIKI_SNAPSHOT_VERSION,
+                    )
+                finally:
+                    writer.close()
+                rows = [
+                    json.loads(line)
+                    for line in output.read_text(encoding="utf-8").splitlines()
+                ]
+                counts.append(len(rows))
+                ids.append(rows[0]["meta"]["extractionRun"])
+        # The limits really did select differently — otherwise the equality below holds
+        # because the two runs are the same run.
+        self.assertEqual(counts, [1, 2])
+        self.assertEqual(ids[0], ids[1])
+
+    def test_the_run_id_digests_the_extractor_module_and_not_its_imports(self) -> None:
+        """DECLARED RESIDUE, fixed as accepted: the digest covers ONE file.
+
+        The id names WHICH extraction module read WHICH version of the material. It does
+        not cover `common.py` or `group_axes.py`, so a change in the shared filter pipeline
+        leaves both extractors' ids unmoved — which is why no comment may say the id names
+        "the code that ran". The two digests are recomputed here rather than described.
+        """
+        import hashlib
+
+        with tempfile.TemporaryDirectory() as raw:
+            rows = self._wikipedia_rows(Path(raw))
+        run = rows[0]["meta"]["extractionRun"]
+        lab = Path(__file__).resolve().parent
+        own = hashlib.sha256(
+            (lab / "extract_wikipedia.py").read_bytes()
+        ).hexdigest()[:12]
+        self.assertIn(own, run)
+        for imported in ("common.py", "group_axes.py"):
+            other = hashlib.sha256((lab / imported).read_bytes()).hexdigest()[:12]
+            self.assertNotIn(other, run, imported)
+
+    def test_the_run_id_survives_the_assembler_that_consumes_it(self) -> None:
+        """The producer's spelling is a pseudonym the sealed schema accepts.
+
+        The mould is `test_the_batch_id_survives_the_assembler_that_consumes_it`: the two
+        halves are written in different languages and compared by nobody at runtime, so a
+        run id the axis validator refuses would only show up after a full assembly run.
+        Asserted over the FORMULA for both extractors, and the tests above pin each
+        extractor's emitted value to the formula, so the emitted value is covered too.
+        """
+        from group_axes import known
+
+        for module_name, version in (
+            ("extract_wikipedia", WIKI_SNAPSHOT_VERSION),
+            ("extract_carolina", CAROLINA_SNAPSHOT_VERSION),
+        ):
+            with self.subTest(module=module_name):
+                run = self._expected_run_id(module_name, version)
+                self.assertEqual(known(run), {"state": "known", "id": run})
+
+    def test_an_unstamped_out_of_frame_extractor_is_refused_and_not_silently_admitted(
+        self,
+    ) -> None:
+        """`extract_stackexchange` and `extract_b2w` name no run, and their rows leave.
+
+        Neither module belongs to this unit, so neither stamps, and their pools are
+        inexpressible in v4. The measured cost is zero: both sources are already out of the
+        declared frame (`A1_BLOCKED_DOMAIN_SOURCES` / `OUT_OF_FRAME_DOMAIN_SOURCES`) and
+        `load_humans` opens neither pool file. What this pins is both halves — the emitted
+        row really carries no run, and the row really leaves BY NAME rather than being
+        admitted with something invented. Which refusal fires first is stated instead of
+        implied: today it is the frame, and the run guard is what would catch these rows if
+        an amendment ever readmitted the source
+        (`test_a_row_naming_no_extraction_run_leaves_the_corpus`).
+        """
+        import extract_stackexchange
+        from assemble_corpus import OutOfFrameDomainSource, human_record
+
+        body = "&lt;p&gt;" + PROSE_60 + "&lt;/p&gt;"
+        posts_xml = (
+            '<?xml version="1.0" encoding="utf-8"?>\n<posts>\n'
+            f'  <row Id="1" PostTypeId="1" CreationDate="2014-05-01T10:00:00.000" '
+            f'Body="{body}" />\n'
+            "</posts>\n"
+        )
+        csv_text = (
+            "submission_date,review_title,review_text,product_id\n"
+            f'2018-03-01 10:00:00,Bom,"{PROSE_60}",p1\n'
+        )
+        with tempfile.TemporaryDirectory() as raw:
+            tmp = Path(raw)
+            posts = tmp / "Posts.xml"
+            posts.write_text(posts_xml, encoding="utf-8")
+            reviews = tmp / "b2w.csv"
+            reviews.write_text(csv_text, encoding="utf-8")
+            ptso, _ = run_writer(
+                tmp,
+                "ptso",
+                lambda w: extract_stackexchange.extract(
+                    posts, w, keyring=FIXTURE_KEYRING
+                ),
+            )
+            b2w, _ = run_writer(
+                tmp, "b2w", lambda w: extract_b2w(reviews, w, keyring=FIXTURE_KEYRING)
+            )
+        for rows in (ptso, b2w):
+            with self.subTest(source=rows[0]["domainSource"]):
+                self.assertEqual(len(rows), 1)
+                self.assertNotIn("extractionRun", rows[0]["meta"])
+                with self.assertRaises(OutOfFrameDomainSource):
+                    human_record(rows[0], rows[0]["domainSource"], None)
+
+
 class CandidateIdStabilityTests(unittest.TestCase):
     """The re-extraction must not renumber the corpus."""
 
@@ -1888,9 +2225,11 @@ class AssemblerRealGroupTests(unittest.TestCase):
                     "author": not_applicable(NO_SINGLE_AUTHOR),
                 },
                 # The acquisition event and the extraction run, which v4 holds apart:
-                # re-reading one dump produces a second run and no second material.
+                # re-reading one dump produces a second run and no second material. Both
+                # come from the EXTRACTOR — no layer downstream stamps either — so a
+                # fixture without them is a fixture of a row the assembler refuses.
                 "sourceMaterialBatch": "smb_ptwiki-20220301",
-                "extractionRun": "extraction_wikipedia_fresh",
+                "extractionRun": FIXTURE_EXTRACTION_RUN,
             },
         }
 
@@ -1997,21 +2336,106 @@ class AssemblerRealGroupTests(unittest.TestCase):
 
         candidate = self._human_candidate("src_wiki_aaa", "ptwiki_page_9042")
         del candidate["meta"]["extractionRun"]
-        # Diagnostic axis, non-negotiable state: the run is our own execution, so a gap
-        # is a defect in a pipeline we control. The loader is the layer that knows it —
-        # the pool FILE is the run — and deriving it from the stratum would merge rows
-        # written by different executions into one invented run, destroying the only
-        # handle that traces a defect back to the execution that produced it.
+        # Diagnostic axis, non-negotiable state: `AXIS_STATE_RULE.extractionRun` admits
+        # only `known` on a human row, so there is no eligibility-priced escape and the
+        # row leaves. Only the execution that OPENED the material can name itself: a
+        # value derived from the stratum, or from the pool file the reader happened to
+        # open, merges lines written by different executions into one run that never ran.
         with self.assertRaises(MissingExtractionRun) as caught:
             human_record(candidate, "ptwiki", None)
         self.assertIn("extractionRun", str(caught.exception))
+        self.assertIn("src_wiki_aaa", str(caught.exception))
 
-    def test_the_loader_stamps_the_run_and_never_the_acquisition(self) -> None:
+    def test_the_assembler_cannot_tell_a_hand_written_run_from_a_derived_one(
+        self,
+    ) -> None:
+        """DECLARED RESIDUE, fixed as accepted: this builder checks EXISTENCE, not origin.
+
+        A pool line edited by hand to carry any token — including the invented
+        `extraction_<pool file>` this unit removed — builds a record with that token. What
+        the guard closes is that no layer of OURS derives one and that the extractor's id is
+        recomputable by a third party; it does NOT close "only an extractor can have written
+        this". Nothing resolves the axis against the reviewed manifest — it is a frozen
+        DIAGNOSTIC axis, with no analogue of `assertMaterialBatchesResolve` — so there is no
+        authority here to check a value against.
+
+        Refusing by prefix (`er_`) or denylisting the old spelling was rejected on purpose:
+        it would close one SPELLING while reading as closing the class.
+        """
+        from assemble_corpus import human_record
+
+        candidate = self._human_candidate("src_wiki_aaa", "ptwiki_page_9042")
+        candidate["meta"]["extractionRun"] = "extraction_wikipedia_fresh"
+        record = human_record(candidate, "ptwiki", None)
+        self.assertEqual(
+            record["groups"]["extractionRun"],
+            {"state": "known", "id": "extraction_wikipedia_fresh"},
+        )
+
+    def test_no_layer_of_ours_derives_an_extraction_run(self) -> None:
+        source = (Path(__file__).resolve().parent / "assemble_corpus.py").read_text(
+            encoding="utf-8"
+        )
+        # The other half of the assertion over the loader's ROWS: that one is immune to the
+        # spelling, and this one is against reintroduction under a DIFFERENT name. Searched
+        # as literals, in the pattern this file already uses for the minted per-record
+        # tokens — a derived run is not a value this module may hold in any spelling.
+        for derived in ('f"extraction_{', '"extraction_reserved"'):
+            self.assertNotIn(derived, source)
+
+    def test_a_reserved_row_invents_no_run_and_still_leaves_on_its_licence(self) -> None:
+        """DECLARED RESIDUE, fixed as accepted: the reserved pool leaves on its LICENCE.
+
+        `human_record` checks the document licence before the acquisition event and before
+        the run, so the reserved rows — which predate every extractor and carry none of the
+        three — are removed by `MissingDocumentLicense` and never by `MissingExtractionRun`.
+        The run guard is not what empties that pool, and no message may suggest it is.
+
+        What the loader used to write on these rows was `extraction_reserved`: a name for an
+        execution that never ran, on a row that cannot be written anyway.
+        """
+        import assemble_corpus
+        from assemble_corpus import MissingDocumentLicense, human_record, load_humans
+
+        with tempfile.TemporaryDirectory() as raw:
+            tmp = Path(raw)
+            (tmp / "candidates").mkdir()
+            (tmp / "dataset").mkdir()
+            (tmp / "dataset" / "reserved.jsonl").write_text(
+                json.dumps(
+                    {
+                        "id": "res_0001",
+                        "text": PROSE_60,
+                        "label": 0,
+                        "family": "ptwiki_lead",
+                    }
+                )
+                + "\n",
+                encoding="utf-8",
+            )
+            saved = assemble_corpus.DATASET
+            try:
+                # Read by module constant, so a test that did not redirect it would load
+                # the real reserved pool instead of this one row.
+                assemble_corpus.DATASET = tmp / "dataset"
+                rows = [
+                    r
+                    for r in load_humans(tmp / "candidates")
+                    if r["candidateId"] == "res_0001"
+                ]
+            finally:
+                assemble_corpus.DATASET = saved
+        self.assertEqual(len(rows), 1)
+        self.assertNotIn("extractionRun", rows[0]["meta"])
+        with self.assertRaises(MissingDocumentLicense):
+            human_record(rows[0], "ptwiki", None)
+
+    def test_the_loader_stamps_neither_the_run_nor_the_acquisition(self) -> None:
         from assemble_corpus import load_humans
 
         # Asserted over the ROWS the loader returns, not over its source text: a stamp
-        # written under a computed key (`"source" + "MaterialBatch"`, a module constant,
-        # a helper called from here) is the same defect and reads nothing like the
+        # written under a computed key (`"extraction" + "Run"`, a module constant, a
+        # helper called from here) is the same defect and reads nothing like the
         # literal spelling.
         with tempfile.TemporaryDirectory() as raw:
             cand = Path(raw)
@@ -2032,12 +2456,16 @@ class AssemblerRealGroupTests(unittest.TestCase):
                 r for r in load_humans(cand) if r["candidateId"] == "ptwiki_0001"
             ]
         self.assertEqual(len(rows), 1)
-        meta = rows[0]["meta"]
-        # The loader knows WHICH FILE it opened, so it can name the run.
-        self.assertEqual(meta["extractionRun"], "extraction_wikipedia_fresh")
-        # It does NOT know the acquisition event. A stamp here would invent one lot per
-        # pool file — the same invented cluster the per-record token was, one level up —
-        # and it would resolve against no declared `materialBatches` entry.
+        meta = rows[0].get("meta") or {}
+        # The loader knows WHICH FILE it opened, and a file is not an execution: the writer
+        # appends, so one pool file can hold the lines of more than one run. Only the
+        # execution that opened the material can name itself, so an unstamped line leaves
+        # the loader unstamped and `human_record` refuses it — the count of what has to be
+        # re-extracted is the honest outcome, and a name for the file is not.
+        self.assertNotIn("extractionRun", meta)
+        # It does not know the acquisition event either. A stamp here would invent one lot
+        # per pool file — the same invented cluster the per-record token was, one level up
+        # — and it would resolve against no declared `materialBatches` entry.
         self.assertNotIn("sourceMaterialBatch", meta)
 
     def test_a_human_record_states_all_fourteen_axes(self) -> None:
@@ -2072,7 +2500,7 @@ class AssemblerRealGroupTests(unittest.TestCase):
         )
         self.assertEqual(
             record["groups"]["extractionRun"],
-            {"state": "known", "id": "extraction_wikipedia_fresh"},
+            {"state": "known", "id": FIXTURE_EXTRACTION_RUN},
         )
 
     def test_an_unknown_axis_is_carried_and_never_synthesized(self) -> None:
@@ -2153,7 +2581,7 @@ class DeclaredFrameTests(unittest.TestCase):
                 "observedValue": "2021-05-21T00:00:00+00:00",
                 "snapshot": "ptwiki",
                 "sourceMaterialBatch": "smb_ptwiki-20220301",
-                "extractionRun": "extraction_wikipedia_fresh",
+                "extractionRun": FIXTURE_EXTRACTION_RUN,
                 "groupAxes": {
                     "source": known("ptwiki_page_1"),
                     "author": not_applicable(NO_SINGLE_AUTHOR),
@@ -2346,11 +2774,13 @@ class DeclaredFrameTests(unittest.TestCase):
             [r["candidateId"] for r in loaded if r["candidateId"] in planted],
             ["src_wiki_in"],
         )
-        # The run stamp is the loader's own record of WHICH FILE it opened, so this holds
-        # over every row it returns, planted or not.
+        # The loader adds no run of its own, so the only run any returned row names is the
+        # one its fixture already carried — and the reserved rows, whose `meta` the loader
+        # BUILDS, name none at all. Held over every row it returns, planted or not, because
+        # that is the form a claim about the loader takes.
         self.assertEqual(
-            {r["meta"]["extractionRun"] for r in loaded}
-            - {"extraction_wikipedia_fresh", "extraction_reserved"},
+            {(r.get("meta") or {}).get("extractionRun") for r in loaded}
+            - {FIXTURE_EXTRACTION_RUN, None},
             set(),
         )
 
@@ -2696,7 +3126,7 @@ class PowerFloorFeasibilityTests(unittest.TestCase):
                 "domainSource": source,
                 "meta": {
                     "sourceMaterialBatch": "smb_ptwiki-20220301",
-                    "extractionRun": "extraction_wikipedia_fresh",
+                    "extractionRun": FIXTURE_EXTRACTION_RUN,
                     "groupAxes": {
                         "source": known(f"{source}_document_{document:05d}"),
                         "author": not_applicable(NO_SINGLE_AUTHOR),
@@ -3613,12 +4043,12 @@ class GenerationBatchAxisTests(unittest.TestCase):
             "src_wiki_aaa", "ptwiki_page_9042"
         )
         record = human_record(candidate, "ptwiki", None)
-        # The EXTRACTION run that wrote the row — shared by every candidate of one pool
-        # file, `known` from the start and never touched by `assign_generation_batches`
-        # — and the ACQUISITION event it was read out of, which is a different fact.
+        # The EXTRACTION run that wrote the row — stamped by the extractor, `known` from
+        # the start and never touched by `assign_generation_batches` — and the ACQUISITION
+        # event it was read out of, which is a different fact.
         self.assertEqual(
             record["groups"]["extractionRun"],
-            {"state": "known", "id": "extraction_wikipedia_fresh"},
+            {"state": "known", "id": FIXTURE_EXTRACTION_RUN},
         )
         self.assertEqual(
             record["groups"]["sourceMaterialBatch"],
@@ -5657,7 +6087,10 @@ class AssemblyRunTests(unittest.TestCase):
             "meta": {
                 "dateField": "teiHeader/publicationStmt/date",
                 "observedValue": "2019-05-04",
+                # Both batch axes come from the EXTRACTOR, so a pool fixture carries both
+                # or its rows are unwritable — nothing downstream fills either in.
                 "sourceMaterialBatch": "smb_fixture_v1",
+                "extractionRun": FIXTURE_EXTRACTION_RUN,
                 "groupAxes": {
                     "source": known(f"doc_{domain_source}_{index:04d}"),
                     "author": not_applicable(NO_SINGLE_AUTHOR),
@@ -5832,6 +6265,41 @@ class AssemblyRunTests(unittest.TestCase):
             (out / "governance-inputs.json").read_text(encoding="utf-8")
         )
         return records, governance
+
+    def test_a_pool_the_extractor_never_stamped_is_counted_out_by_the_run(self) -> None:
+        """THE CALL SITE: the run guard bites from `main()`, not only from a direct call.
+
+        Before this unit the guard was unreachable through `main()` — the loader stamped
+        every pool line before `human_record` could look, so the refusal existed and had
+        zero bite, which is the defect the finding named. Asserting the guard by calling it
+        directly proves the criterion and nothing about the site.
+
+        The whole human class comes out empty here, so the run dies later at a gate that
+        needs a class to split. The count is printed before any of that, and `_main` keeps
+        the stdout in its `finally`, so the assertion holds through the late abort.
+        """
+        with tempfile.TemporaryDirectory() as raw:
+            tmp = Path(raw)
+            self._pools(tmp)
+            pool = tmp / "candidates" / "wikipedia_fresh.jsonl"
+            unstamped = []
+            for line in pool.read_text(encoding="utf-8").splitlines():
+                row = json.loads(line)
+                # The pool every other test of this class uses IS stamped, because the
+                # extractor names the run now. Stripping it is what turns this fixture into
+                # a legacy pool, and this assertion is what keeps the strip meaningful: an
+                # already-unstamped fixture would make the test pass over nothing.
+                self.assertIn("extractionRun", row["meta"])
+                del row["meta"]["extractionRun"]
+                unstamped.append(row)
+            self.assertEqual(len(unstamped), 41)
+            self._write(pool, unstamped)
+            with contextlib.suppress(Exception):
+                self._main(tmp, seen_texts=[])
+        # 40 and not 41: the class quota selects 40 of the 41 rows, and every selected one
+        # leaves as a COUNTED drop — the same vocabulary `MissingMaterialBatch` uses for
+        # legacy pools, and never an abort.
+        self.assertIn("MissingExtractionRun: 40", self.stdout)
 
     def test_the_run_seats_the_reserve_in_test_and_declares_only_it(self) -> None:
         import assemble_corpus
@@ -6186,7 +6654,7 @@ class DocumentLicenseTests(unittest.TestCase):
                 "observedValue": "2019-05-04",
                 "snapshot": "carolina" if source.startswith("carolina") else "ptwiki",
                 "sourceMaterialBatch": "smb_ptwiki-20220301",
-                "extractionRun": "extraction_wikipedia_fresh",
+                "extractionRun": FIXTURE_EXTRACTION_RUN,
                 "groupAxes": {
                     "source": known(f"doc_{source}"),
                     "author": not_applicable(NO_SINGLE_AUTHOR),

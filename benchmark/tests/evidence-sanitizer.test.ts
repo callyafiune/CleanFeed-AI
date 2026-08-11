@@ -798,6 +798,9 @@ describe("publish-evidence end-to-end (reject run)", () => {
       await readFile(s.splitArtifactPath, "utf8"),
     ) as SplitArtifact;
     artifact.compositionAttestation = null;
+    // O recibo cai com o atestado: os dois derivam de `scientificUse: "release"` e o par é
+    // conferido antes, então deixar o recibo de pé provaria a guarda do PAR e não esta.
+    artifact.compositionReceipt = null;
     artifact.splitDigest = await canonicalSha256(withoutSplitDigest(artifact));
     await writeFile(s.splitArtifactPath, JSON.stringify(artifact), "utf8");
     await expect(runPublishEvidence(publishOptions(s))).rejects.toMatchObject({

@@ -24,6 +24,13 @@ import {
   type FrozenCalibrationArtifact,
 } from "../calibration-pipeline.ts";
 import { PREREGISTRATION_V4 } from "../preregistration-v4.ts";
+import {
+  COMPOSITION_GATE_PARTITION,
+  compositionBoundsOf,
+  compositionBreachesOf,
+  type CellComposition,
+  type CompositionReport,
+} from "../composition-gate.ts";
 import { emptyLabelBasisPublication } from "../dataset-manifest.ts";
 import { standInClusterReport } from "../split-audit.ts";
 import { V3_GROUP_AXES } from "../schema.ts";
@@ -160,6 +167,32 @@ function splitFixtureAssignments(): SplitAssignment[] {
   return rows;
 }
 
+// The receipt a `release` seal carries. These fixtures publish a HYPOTHETICAL corpus — the
+// assignments are stubs and no records travel with them — so the cell row is authored, but
+// the floors and the verdict are DERIVED by the production functions: a receipt whose
+// verdict were typed here would agree with a changed policy and nobody would notice.
+function passingCompositionReceipt(): CompositionReport {
+  const bounds = compositionBoundsOf();
+  const cells: readonly CellComposition[] =
+    PREREGISTRATION_V4.preRegistration.quotaAxis.cells.map((cell) => ({
+      cell,
+      humanNegativeLines: bounds.lineFloor,
+      ineligibleLines: 0,
+      independentUnits: bounds.unitFloor,
+      originDocuments: bounds.lineFloor,
+      linesWithoutOriginDocument: 0,
+      linesInBusiestOriginDocument: bounds.maximumLinesPerOriginDocument,
+    }));
+  const breaches = compositionBreachesOf(cells, bounds);
+  return {
+    partition: COMPOSITION_GATE_PARTITION,
+    cells,
+    ...bounds,
+    breaches,
+    passed: breaches.length === 0,
+  };
+}
+
 async function lightSplitArtifact(
   report: BenchmarkReport,
 ): Promise<SplitArtifact> {
@@ -172,6 +205,7 @@ async function lightSplitArtifact(
     algorithmDigest: "",
     seed: PREREGISTRATION_V4.seeds.split,
     compositionAttestation: hex("composition-attestation"),
+    compositionReceipt: passingCompositionReceipt(),
     policy: {
       fractions: {
         train: 0.45,
@@ -732,6 +766,7 @@ export async function buildRejectScenario(
     algorithmDigest: "",
     seed: PREREGISTRATION_V4.seeds.split,
     compositionAttestation: hex("composition-attestation"),
+    compositionReceipt: passingCompositionReceipt(),
     policy: {
       fractions: {
         train: 0.45,

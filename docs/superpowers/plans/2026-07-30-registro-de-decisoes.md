@@ -6953,3 +6953,89 @@ o pareamento como propriedade da análise).
 **A dívida de codex permanece nas quatro.** A etapa 3 foi do Fable, e rodada do Fable não fecha dívida de
 codex — a janela de cota está fechada até 16 de agosto, e a decisão de em que gastá-la é do operador
 (§ 4 do ESTADO).
+
+---
+
+## A onda A2: as três passaram na primeira rodada, e o que mudou foi o mandato (2026-08-11)
+
+Segunda onda da mesma fila, mesma forma: três unidades de propriedade de arquivo disjunta, correndo em
+paralelo, cada uma pela tríade desenho → implementação → cross-review adversarial.
+
+| unidade | defeito | veredito |
+|---|---|---|
+| U3 | `extractionRun` era o nome do arquivo de pool, e o `setdefault` do loader fazia a recusa nunca morder | `pass` na 1.ª rodada |
+| U5 | `requiredHumanSourceTypes` exigia PRESENÇA de uma linha da célula, não pertença de todas | `pass` na 1.ª |
+| U7 | o gate de composição não deixava recibo: passar não produzia prova | `pass` na 1.ª |
+
+**Três de três na primeira rodada, contra uma de quatro em A1.** A diferença não está nas unidades — está
+no mandato: as lições que A1 pagou com duas rodadas extra entraram escritas no prompt de A2. Em concreto,
+os implementadores foram instruídos de antemão que (i) o comentário não pode prometer mais do que o
+mecanismo impõe, com o exemplo medido da whitelist que fechava uma grafia e a prosa dizia classe; (ii) um
+teste que chama a guarda direto prova o critério e **nada** sobre o sítio de chamada; (iii) se o sítio é um
+laço, o teste tem de exercitar todos os casos, porque restringir o laço a um deixou uma suíte verde. Os
+três revisores atacaram exatamente essas formas e não acharam nenhuma.
+
+O que isso sugere, e vale como método: **a revisão adversarial não é só o filtro, é a fonte do próximo
+mandato.** Uma rodada de `block` que produz apenas um conserto foi mal aproveitada; a mesma rodada, lida
+como uma lista de famílias de defeito para o prompt seguinte, muda o rendimento da onda inteira.
+
+### As três decisões de desenho, e por que cada uma é a que é
+
+**U3 — quem carimba, e com quê.** O eixo passou a ser derivado no extrator, no mesmo `writer.offer` que já
+escreve o lote, como `er_<módulo>_<versão do material>_<sha256 dos bytes do módulo>`. Não há relógio no
+valor, por decisão de recomputabilidade — o id é reproduzível de quem tem o módulo e a versão —, e o preço
+está declarado: **duas execuções sobre o mesmo dump com `--limit` diferentes compartilham o id**, o que é
+fixado por teste em vez de silenciado. O que o valor nomeia é o módulo e a versão do material, e nada mais
+largo; o vocabulário do plano de 2026-08-02 pedia "o que rodou, quando, com que código", e o *quando* é a
+única palavra que o eixo entregue abandona.
+
+Pool que o extrator não carimbou é **contado fora**, não abortado — a simetria com `MissingMaterialBatch`,
+que é a decisão já vigente para queda de linha por eixo ausente.
+
+**U5 — gate e não esquema.** A alternativa era tornar `humanSourceType` obrigatório no esquema da linha
+humana. Foi recusada com medição: `assemble_corpus.py` já escreve a célula em **toda** linha humana
+(inclusive as seis famílias de hard negative, que `HN_REGISTER` aponta para `ptwiki`), então o critério do
+gate é satisfazível pelo material de 2026-08-06 **sem** mudar esquema — e a rota do esquema transformaria
+86 literais `label: "human"` do próprio bench em erro de parse sem ganhar nada. A recusa nomeia cada grafia
+observada fora da moldura, em ordem, e diz quantas deixou de listar.
+
+**U7 — o recibo dentro do artefato selado.** A alternativa era arquivo ao lado. Foi recusada pela ligação:
+o valor de um recibo é ser **transitivamente ligado** ao que ele atesta, e um arquivo vizinho é atestado de
+nada. `compositionReceipt` virou chave obrigatória de `SplitArtifact` (`null` fora de `release`), o critério
+dos três limites é **chamado** e não copiado — `compositionBoundsOf` lê cada limite do seu próprio campo da
+política —, e `validateSplitArtifact` **reconta** o recibo a partir dos registros e das atribuições,
+comparando por digest canônico. Mais o par: atestado e recibo caem juntos, porque os dois derivam de
+`scientificUse: "release"` e um sem o outro descreve um corpus que é release e não é.
+
+### Os minores que ficaram, com dono
+
+Nenhum bloqueante sobrou; os revisores devolveram nove minores, todos declarados. Os que valem registro:
+
+- o sítio de `commands/split.ts` está preso à **recusa**, não a ler o recibo **selado**: trocar
+  `artifact.compositionReceipt` por uma recontagem local deixa a suíte verde. O revisor mediu e não
+  bloqueou porque a propriedade **não é observável por construção** — as duas formas chamam a mesma função
+  sobre o mesmo objeto —, e o que sobra é prosa afirmando um desenho que nenhum teste sustenta;
+- `COMPOSITION_RECEIPT_ABSENT` é inalcançável em produção e, ao contrário do irmão
+  `SPLIT_ARTIFACT_COMPOSITION_RECEIPT_UNEXPECTED`, não está declarado como tal;
+- uma cláusula aritmética de boa-formação (`linesInBusiestOriginDocument <= humanNegativeLines`) não tem
+  teste e não aparece na prosa que enumera as outras quatro;
+- o comentário de `extraction_run_id` diz "nobody can reuse one run's name for another run", e o mecanismo
+  permite exatamente isso; o que ele impõe é "nobody can hand-pick a run's name";
+- o comentário do braço de release de `sealDataset` atribui ao `runSplit` uma proteção que ele não impõe: o
+  audit liga-se aos BYTES dos registros, nunca à *release-ness* do selo.
+
+### Integração
+
+- **`evaluatorDigest`**: `c04d7b94…` → `fdb42887ade3715d10470c778282a76e5bc44e6fb0210b13dd5635b863f551fb`.
+- **A chave nova quebrou duas fixtures de publicação**, declarado por U7 e fora da sua propriedade:
+  `evidence.fixtures.ts` monta `SplitArtifact` à mão. O conserto **não** foi digitar um recibo: os dois
+  sítios passaram a chamar um helper que autora a linha da célula e **deriva** os limites e o veredito das
+  funções de produção (`compositionBoundsOf`, `compositionBreachesOf`) — um veredito digitado ali
+  concordaria com uma política mudada e ninguém notaria. E o teste que anula o atestado passou a anular o
+  recibo junto, porque o par é conferido antes e ele provaria a guarda vizinha.
+- Medido em rodada ÚNICA, árvore quieta: vitest **172 arquivos / 2.975 testes** verde; pytest do lab
+  **589 testes / 124 subtests** verde; `tsc` limpo; `prettier` limpo; lint nos mesmos **12**
+  pré-existentes; `docs:check` 207/207.
+
+**A dívida de codex permanece nas três**, como nas quatro de A1: a etapa 3 foi do Fable, e a janela de cota
+está fechada até 16 de agosto.

@@ -1,5 +1,23 @@
+import { mkdtemp, mkdir, readdir, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+
 import { describe, expect, it } from "vitest";
 
+import {
+  COMPOSITION_BOUNDS_NOT_MET,
+  COMPOSITION_GATE_PARTITION,
+  compositionBoundsOf,
+  compositionBreachesOf,
+  type CellComposition,
+  type CompositionReport,
+} from "../composition-gate.ts";
+import {
+  computeDatasetAuditDigest,
+  emptyLabelBasisPublication,
+  type DatasetAudit,
+} from "../dataset-manifest.ts";
+import { runSplit } from "../commands/split.ts";
 import {
   assertSplitArtifactSelfConsistent,
   buildSplitArtifact,
@@ -24,10 +42,11 @@ import {
   type Partition,
 } from "../split.ts";
 import type { DatasetManifest } from "../dataset-manifest.ts";
-import type {
-  BenchmarkLabel,
-  BenchmarkRecord,
-  TransformationKind,
+import {
+  groupAxisIdentity,
+  type BenchmarkLabel,
+  type BenchmarkRecord,
+  type TransformationKind,
 } from "../schema.ts";
 import {
   asGeneratorFamily,
@@ -36,6 +55,8 @@ import {
 } from "../generator-family.ts";
 
 const SHA = "a".repeat(64);
+/** The quota cells the frozen frame declares, read from the policy and never written out. */
+const DECLARED_CELLS = PREREGISTRATION_V4.preRegistration.quotaAxis.cells;
 
 const MANIFEST: DatasetManifest = {
   schemaVersion: 1,
@@ -280,6 +301,122 @@ function buildReleaseDataset(): BenchmarkRecord[] {
   return records;
 }
 
+/**
+ * Release-scale corpus OF THE DECLARED QUOTA CELL, and the three differences from
+ * {@link buildReleaseDataset} are exactly what the composition gate counts: every human
+ * negative carries `humanSourceType` = the declared cell, and `source`, `domainSource` and
+ * `collectionBatch` are per RECORD-LINE instead of per slot.
+ *
+ * The second half is not cosmetic: `source` IS the origin document, so 105 human lines sharing
+ * one `source` are one document against a cap of one line per document AND one connected
+ * component against a floor counted in components. A separate builder rather than a parameter
+ * on the other one, because `RELEASE_SPLIT` and `RELEASE_AUDIT` are derived from it and dozens
+ * of cases in this file are written against those.
+ */
+function buildPtwikiReleaseDataset(): BenchmarkRecord[] {
+  const records: BenchmarkRecord[] = [];
+  const SLOTS = 100;
+  const perHuman = 105;
+  const perAi = 15;
+  const perMixed = 10;
+  // 40 is BELOW the pre-registered word floor, so a third of the human lines are ones the
+  // measurement abstains on: the receipt has to publish them apart from the counted ones.
+  const lengths = [40, 180, 520];
+  const aiKinds: TransformationKind[] = [
+    "paraphrase",
+    "back-translation",
+    "expand",
+  ];
+
+  for (let slot = 1; slot <= SLOTS; slot += 1) {
+    for (let i = 0; i < perHuman; i += 1) {
+      records.push(
+        rec({
+          id: `h_${slot}_${i}`,
+          label: "human",
+          createdAt: slot,
+          domain: i % 2 === 0 ? "corporate" : "linkedin",
+          wordCount: lengths[i % 3],
+          humanSourceType: DECLARED_CELLS[0],
+          hardNegativeFamily: i % 2 === 0 ? "hn-legal" : "hn-marketing",
+          author: `auth_h_${slot}_${i}`,
+          source: `src_h_${slot}_${i}`,
+          domainSource: `ds_h_${slot}_${i}`,
+          collectionBatch: `cb_h_${slot}_${i}`,
+          nearDuplicate: `nd_h_${slot}_${i}`,
+          derivationRoot: `h_${slot}_${i}`,
+        }),
+      );
+    }
+    for (let i = 0; i < perAi; i += 1) {
+      records.push(
+        rec({
+          id: `a_${slot}_${i}`,
+          label: "ai",
+          createdAt: slot,
+          domain: i % 2 === 0 ? "corporate" : "linkedin",
+          wordCount: [50, 200, 480][i % 3],
+          transformationKind: aiKinds[i % 3],
+          family: "family-seen",
+          author: `auth_a_${slot}_${i}`,
+          source: `src_a_${slot}_${i}`,
+          domainSource: `ds_a_${slot}_${i}`,
+          collectionBatch: `cb_a_${slot}_${i}`,
+          nearDuplicate: `nd_a_${slot}_${i}`,
+          derivationRoot: `a_${slot}_${i}`,
+          generatorVersion: `gv_seen_${slot}`,
+          promptTemplate: `pt_a_${slot}`,
+        }),
+      );
+    }
+    for (let i = 0; i < perMixed; i += 1) {
+      records.push(
+        rec({
+          id: `m_${slot}_${i}`,
+          label: "mixed",
+          createdAt: slot,
+          domain: i % 2 === 0 ? "corporate" : "linkedin",
+          wordCount: [60, 220, 500][i % 3],
+          transformationKind: "human-ai-mix",
+          family: "family-seen",
+          aiFraction: i % 2 === 0 ? 0.7 : 0.4,
+          author: `auth_m_${slot}_${i}`,
+          source: `src_m_${slot}_${i}`,
+          domainSource: `ds_m_${slot}_${i}`,
+          collectionBatch: `cb_m_${slot}_${i}`,
+          nearDuplicate: `nd_m_${slot}_${i}`,
+          derivationRoot: `m_${slot}_${i}`,
+          promptTemplate: `pt_m_${slot}`,
+        }),
+      );
+    }
+  }
+  for (let slot = 96; slot <= SLOTS; slot += 1) {
+    for (let i = 0; i < 4; i += 1) {
+      records.push(
+        rec({
+          id: `u_${slot}_${i}`,
+          label: "ai",
+          createdAt: slot,
+          domain: "linkedin",
+          wordCount: 300,
+          transformationKind: "paraphrase",
+          family: "family-unseen",
+          author: `auth_u_${slot}_${i}`,
+          source: `src_u_${slot}_${i}`,
+          domainSource: `ds_u_${slot}_${i}`,
+          collectionBatch: `cb_u_${slot}_${i}`,
+          nearDuplicate: `nd_u_${slot}_${i}`,
+          derivationRoot: `u_${slot}_${i}`,
+          generatorVersion: `gv_unseen_${slot}`,
+          promptTemplate: `pt_u_${slot}`,
+        }),
+      );
+    }
+  }
+  return records;
+}
+
 // Human-light corpus: only 100 human records, so the blocked test can never reach
 // the 2000-negative floor and the audit fails while every partition stays
 // non-empty (so cutoffs remain finite and the artifact still builds).
@@ -312,6 +449,217 @@ const RELEASE_AUDIT = auditBlockedSplit(
   AUDIT_POLICY,
   POLICY.heldOutGeneratorFamilies,
 );
+
+const PTWIKI_DATASET = buildPtwikiReleaseDataset();
+const PTWIKI_SPLIT = createBlockedSplit(PTWIKI_DATASET, POLICY);
+const PTWIKI_AUDIT = auditBlockedSplit(
+  PTWIKI_DATASET,
+  PTWIKI_SPLIT,
+  AUDIT_POLICY,
+  POLICY.heldOutGeneratorFamilies,
+);
+const PTWIKI_MANIFEST: DatasetManifest = {
+  ...MANIFEST,
+  scientificUse: "release",
+};
+
+/**
+ * The counts the FIXTURE puts in the blind block, derived from the records rather than from
+ * the gate: a human line is counted when it clears the pre-registered word floor, and every
+ * human line of this corpus carries its own `source`, so each counted line is one origin
+ * document and one component.
+ */
+function ptwikiBlindBlockCounts(): {
+  eligible: number;
+  ineligible: number;
+} {
+  const humans = PTWIKI_SPLIT.test.filter((record) => record.label === "human");
+  const floor = PREREGISTRATION_V4.wordFloor.abstainBelow;
+  return {
+    eligible: humans.filter((record) => record.wordCount >= floor).length,
+    ineligible: humans.filter((record) => record.wordCount < floor).length,
+  };
+}
+
+/**
+ * A corpus of 300 singletons whose blocked split PASSES the leakage audit, so the only thing
+ * left that can refuse it is the composition of its blind block — where the declared quota cell
+ * holds nothing, because every human line carries another `humanSourceType`.
+ *
+ * Small on purpose: the site test writes it to disk and re-parses it through the command's own
+ * parsers, and what it has to exercise is the refusal, not the scale.
+ */
+function buildShortReleaseDataset(): BenchmarkRecord[] {
+  // Human and ai only. A `mixed` record is refused by `parseBenchmarkDataset` unless its
+  // `derivationRoot` names a PARENT record-line, and `assertDerivedParentsResolve` then demands
+  // that parent be in the corpus — which unions the pair into one component and is a different
+  // fixture's subject. A class with no record-line publishes zeros the audit skips as vacuous.
+  return Array.from({ length: 300 }, (_, index) => {
+    const label: BenchmarkLabel = index % 2 === 0 ? "human" : "ai";
+    // A normalized-text digest PER RECORD, unlike the in-memory fixtures: this corpus is
+    // written out and re-read through `parseBenchmarkDataset`, which refuses a repeated one as
+    // a duplicated record-line.
+    const normalizedTextSha256 = index.toString(16).padStart(64, "0");
+    // The reserve has to be POPULATED and it has to land in `test`: a declared held-out family
+    // with no record-line is not honored, and the command refuses that disagreement before it
+    // reaches the composition of the blind block.
+    const family =
+      label === "human"
+        ? undefined
+        : index >= 294
+          ? "family-unseen"
+          : "acme_family";
+    return {
+      ...rec({
+        id: `s_${String(index).padStart(3, "0")}`,
+        label,
+        createdAt: index + 1,
+        domain: "corporate",
+        wordCount: 180,
+        humanSourceType: label === "human" ? "employee-post" : undefined,
+        transformationKind: label === "human" ? "none" : "paraphrase",
+        family,
+        author: `auth_${index}`,
+        source: `src_${index}`,
+        domainSource: `ds_${index}`,
+        collectionBatch: `cb_${index}`,
+        nearDuplicate: `nd_${index}`,
+        derivationRoot: `s_${String(index).padStart(3, "0")}`,
+        promptTemplate: label === "human" ? undefined : `tpl_${index}`,
+      }),
+      normalizedTextSha256,
+    };
+  });
+}
+
+/**
+ * The three inputs `runSplit` opens, in a temporary directory OUTSIDE the repository.
+ *
+ * The dataset audit is minted with the contract's own digest function rather than written by
+ * hand, because `parseDatasetAudit` recomputes it and a hand-kept copy would refuse for the
+ * wrong reason. The file digests are the manifest's own: the command compares the two copies
+ * to each other and re-hashes no file, so they identify the pair and not the bytes.
+ */
+async function writeSplitInputs(
+  manifest: DatasetManifest,
+  records: readonly BenchmarkRecord[],
+): Promise<{
+  datasetDirectory: string;
+  datasetAuditPath: string;
+  outputDirectory: string;
+}> {
+  const root = await mkdtemp(join(tmpdir(), "cleanfeed-split-site-"));
+  const datasetDirectory = join(root, "dataset");
+  await mkdir(datasetDirectory, { recursive: true });
+  await writeFile(
+    join(datasetDirectory, "manifest.json"),
+    JSON.stringify(manifest),
+    "utf8",
+  );
+  await writeFile(
+    join(datasetDirectory, "records.jsonl"),
+    `${records.map((record) => JSON.stringify(record)).join("\n")}\n`,
+    "utf8",
+  );
+
+  const counts: Record<BenchmarkLabel, number> = { human: 0, ai: 0, mixed: 0 };
+  const sourceTypes: Record<string, number> = {};
+  const hardNegativeFamilies: Record<string, number> = {};
+  const generatorFamilies: Record<string, number> = {};
+  for (const record of records) {
+    counts[record.label] += 1;
+    for (const [tally, key] of [
+      [sourceTypes, record.humanSourceType],
+      [hardNegativeFamilies, record.hardNegativeFamily],
+      // Read through the accessor: on a v4 record the axis is a three-valued object, and only
+      // a `known` state carries an identity a tally can key by.
+      [generatorFamilies, groupAxisIdentity(record, "generatorFamily")],
+    ] as const) {
+      if (key === undefined) continue;
+      tally[key] = (tally[key] ?? 0) + 1;
+    }
+  }
+  const auditInput: Omit<DatasetAudit, "auditDigest"> = {
+    datasetId: manifest.datasetId,
+    scientificUse: manifest.scientificUse,
+    releaseEligible: manifest.scientificUse === "release",
+    recordCount: records.length,
+    counts,
+    sourceTypes,
+    hardNegativeFamilies,
+    generatorFamilies,
+    labelBasisCounts: emptyLabelBasisPublication(),
+    licenses: manifest.licenses.map((license) => license.id).sort(),
+    recordsSha256: manifest.recordsSha256,
+    reviewLedgerSha256: manifest.reviewLedgerSha256,
+    sourceManifestSha256: manifest.sourceManifestSha256,
+    sealed: true,
+  };
+  const datasetAuditPath = join(root, "dataset-audit.json");
+  await writeFile(
+    datasetAuditPath,
+    JSON.stringify({
+      ...auditInput,
+      auditDigest: await computeDatasetAuditDigest(auditInput),
+    }),
+    "utf8",
+  );
+  return {
+    datasetDirectory,
+    datasetAuditPath,
+    outputDirectory: join(root, "out"),
+  };
+}
+
+/**
+ * A receipt every dataset-free guard ACCEPTS: the declared cells, the frozen bounds, and the
+ * breach list the CRITERION produces over those rows.
+ *
+ * Built by calling the criterion instead of writing a list down, so a case about some OTHER
+ * refusal cannot pass merely because the receipt was malformed or incoherent.
+ */
+function coherentReceiptOf(
+  cells: readonly CellComposition[],
+): CompositionReport {
+  const bounds = compositionBoundsOf(PREREGISTRATION_V4);
+  const breaches = compositionBreachesOf(cells, bounds);
+  return {
+    partition: COMPOSITION_GATE_PARTITION,
+    cells,
+    lineFloor: bounds.lineFloor,
+    unitFloor: bounds.unitFloor,
+    maximumLinesPerOriginDocument: bounds.maximumLinesPerOriginDocument,
+    breaches,
+    passed: breaches.length === 0,
+  };
+}
+
+/** One row per declared cell, every quantity at zero. */
+function emptyDeclaredCells(): CellComposition[] {
+  return DECLARED_CELLS.map((cell) => ({
+    cell,
+    humanNegativeLines: 0,
+    ineligibleLines: 0,
+    independentUnits: 0,
+    originDocuments: 0,
+    linesWithoutOriginDocument: 0,
+    linesInBusiestOriginDocument: 0,
+  }));
+}
+
+let ptwikiArtifact: SplitArtifact | undefined;
+// Built ONCE: `computeDatasetDigest` walks the whole corpus, and every forgery below works on
+// a structured clone of the same honest seal.
+async function buildPtwikiRelease(): Promise<SplitArtifact> {
+  ptwikiArtifact ??= await buildSplitArtifact({
+    manifest: PTWIKI_MANIFEST,
+    records: PTWIKI_DATASET,
+    split: PTWIKI_SPLIT,
+    policy: POLICY,
+    audit: PTWIKI_AUDIT,
+  });
+  return ptwikiArtifact;
+}
 
 const HEX64 = /^[0-9a-f]{64}$/;
 
@@ -1047,8 +1395,12 @@ describe("validateSplitArtifact reproduces the sealed audit", () => {
   it("refuses an attestation on a corpus that is not release", async () => {
     // Publicar inventario de composicao para corpus que nao e release afirma algo que ninguem
     // tem direito de afirmar sobre ele.
+    //
+    // O par atestado/recibo e falsificado INTEIRO: os dois vem do mesmo `scientificUse`, e um
+    // atestado sozinho e recusado antes como despareado — o que provaria a outra guarda.
     const forged = await resealed((artifact) => {
       artifact.compositionAttestation = "c".repeat(64);
+      artifact.compositionReceipt = coherentReceiptOf(emptyDeclaredCells());
     });
     expect(await codeOfFull(forged)).toBe(
       "SPLIT_ARTIFACT_COMPOSITION_ATTESTATION_UNEXPECTED",
@@ -1310,5 +1662,461 @@ describe("assertSplitArtifactSelfConsistent covers what needs no dataset", () =>
 
   it("accepts the honest artifact, so the refusals above are about the forgery", async () => {
     expect(await codeOfPartial(await buildRelease())).toBe("ACCEPTED");
+  });
+});
+
+// --- o recibo do gate de composicao entra no ARTEFATO SELADO -----------------------
+//
+// O gate media as tres quantidades por celula de cota e o veredito era descartado: passar nao
+// deixava prova. O recibo agora e DERIVADO pelo construtor, fica DENTRO da projecao que
+// `splitDigest` sela — logo atestado por tudo que ja compara esse digest — e e RECONTADO do
+// corpus na validacao, o que um arquivo irmao nunca poderia ser.
+describe("o recibo do gate de composicao", () => {
+  const LINE_FLOOR = PREREGISTRATION_V4.powerFloors.criticalFprHumanNegatives;
+  const UNIT_FLOOR = PREREGISTRATION_V4.powerFloors.samplingUnits;
+  const LINE_CAP = PREREGISTRATION_V4.collection.maximumLinesPerOriginDocument;
+
+  async function codeOfPartial(artifact: SplitArtifact): Promise<string> {
+    try {
+      await assertSplitArtifactSelfConsistent(artifact);
+    } catch (error) {
+      return (error as SplitArtifactError).code;
+    }
+    return "ACCEPTED";
+  }
+
+  async function codeOfFull(artifact: SplitArtifact): Promise<string> {
+    try {
+      await validateSplitArtifact(artifact, PTWIKI_MANIFEST, PTWIKI_DATASET);
+    } catch (error) {
+      return (error as SplitArtifactError).code;
+    }
+    return "ACCEPTED";
+  }
+
+  // Re-sela a falsificacao, entao o artefato continua auto-consistente e nenhum caso abaixo
+  // passa porque um digest deixou de fechar.
+  async function resealedPtwiki(
+    mutate: (artifact: SplitArtifact) => void,
+  ): Promise<SplitArtifact> {
+    const artifact = structuredClone(
+      await buildPtwikiRelease(),
+    ) as SplitArtifact;
+    mutate(artifact);
+    artifact.splitDigest = await canonicalSha256(withoutSplitDigest(artifact));
+    return artifact;
+  }
+
+  /** Troca a linha de celula e recomputa as brechas pelo criterio, e so isso. */
+  async function resealedCell(row: CellComposition): Promise<SplitArtifact> {
+    return resealedPtwiki((artifact) => {
+      artifact.compositionReceipt = coherentReceiptOf([row]);
+    });
+  }
+
+  /** O recibo do artefato, sem `?.` espalhado pelos casos. */
+  function receiptOf(artifact: SplitArtifact): CompositionReport {
+    const receipt = artifact.compositionReceipt;
+    if (receipt === null) throw new Error("o artefato nao carrega recibo");
+    return receipt;
+  }
+
+  /** A linha de celula do recibo, como objeto mutavel de uma falsificacao. */
+  function cellRowOf(artifact: SplitArtifact): Record<string, unknown> {
+    return receiptOf(artifact).cells[0] as unknown as Record<string, unknown>;
+  }
+
+  let shortRelease: SplitArtifact | undefined;
+  // Um artefato release cujo recibo REPROVOU: `RELEASE_DATASET` carrega outros
+  // `humanSourceType`, entao a celula declarada nao tem linha nenhuma.
+  async function buildShortRelease(): Promise<SplitArtifact> {
+    shortRelease ??= await buildSplitArtifact({
+      manifest: PTWIKI_MANIFEST,
+      records: RELEASE_DATASET,
+      split: RELEASE_SPLIT,
+      policy: POLICY,
+      audit: RELEASE_AUDIT,
+    });
+    return shortRelease;
+  }
+
+  async function resealedShort(
+    mutate: (artifact: SplitArtifact) => void,
+  ): Promise<SplitArtifact> {
+    const artifact = structuredClone(
+      await buildShortRelease(),
+    ) as SplitArtifact;
+    mutate(artifact);
+    artifact.splitDigest = await canonicalSha256(withoutSplitDigest(artifact));
+    return artifact;
+  }
+
+  it("um artefato release carrega o recibo com as tres quantidades da celula declarada", async () => {
+    const artifact = await buildPtwikiRelease();
+    const receipt = receiptOf(artifact);
+    const { eligible, ineligible } = ptwikiBlindBlockCounts();
+    // Nao vacuo nas duas direcoes: o bloco cego tem folga larga sobre o piso E tem linhas que a
+    // medicao abstem, que e o campo que diz POR QUE uma celula coletada no piso fica curta.
+    expect(eligible).toBeGreaterThan(LINE_FLOOR);
+    expect(ineligible).toBeGreaterThan(0);
+
+    expect(receipt.partition).toBe("test");
+    expect(receipt.cells.map((row) => row.cell)).toEqual([...DECLARED_CELLS]);
+    // Cada linha contada traz seu proprio `source` e nenhum outro eixo que a cole a outra:
+    // uma linha, um documento de origem, um componente.
+    expect(receipt.cells[0]).toEqual({
+      cell: DECLARED_CELLS[0],
+      humanNegativeLines: eligible,
+      ineligibleLines: ineligible,
+      independentUnits: eligible,
+      originDocuments: eligible,
+      linesWithoutOriginDocument: 0,
+      linesInBusiestOriginDocument: 1,
+    });
+    expect(receipt.lineFloor).toBe(LINE_FLOOR);
+    expect(receipt.unitFloor).toBe(UNIT_FLOOR);
+    expect(receipt.maximumLinesPerOriginDocument).toBe(LINE_CAP);
+    expect(receipt.breaches).toEqual([]);
+    expect(receipt.passed).toBe(true);
+
+    await expect(assertSplitArtifactSelfConsistent(artifact)).resolves.toBe(
+      artifact,
+    );
+  });
+
+  it("um artefato infrastructure-only nao carrega recibo", async () => {
+    expect(MANIFEST.scientificUse).toBe("infrastructure-only");
+    const artifact = await buildRelease();
+    expect(artifact.compositionReceipt).toBeNull();
+    expect(artifact.compositionAttestation).toBeNull();
+  });
+
+  it("mutar uma contagem do recibo quebra o selo", async () => {
+    const artifact = structuredClone(
+      await buildPtwikiRelease(),
+    ) as SplitArtifact;
+    const row = cellRowOf(artifact);
+    // Uma linha a mais, SEM re-selar: aritmeticamente coerente e ainda muito acima dos dois
+    // pisos, entao nenhuma guarda de forma tem o que dizer e o que recusa e o selo. E a prova
+    // de que o recibo esta DENTRO da projecao de `withoutSplitDigest`.
+    row.humanNegativeLines = (row.humanNegativeLines as number) + 1;
+    expect(await codeOfPartial(artifact)).toBe(
+      "SPLIT_ARTIFACT_SPLIT_DIGEST_MISMATCH",
+    );
+  });
+
+  it("a via de publicacao recusa artefato com atestado presente e recibo nulo", async () => {
+    const forged = await resealedPtwiki((artifact) => {
+      artifact.compositionReceipt = null;
+    });
+    expect(forged.compositionAttestation).not.toBeNull();
+    // `assertSplitArtifactSelfConsistent` e a via que `publish-evidence` alcanca, e ela sozinha
+    // e que tem de recusar: composta com a recusa de release-sem-atestado que ja existe la,
+    // release passa a exigir recibo sem uma linha mudar naquele comando.
+    expect(await codeOfPartial(forged)).toBe(
+      "SPLIT_ARTIFACT_COMPOSITION_RECEIPT_UNPAIRED",
+    );
+  });
+
+  it("a via de publicacao ACEITA um recibo reprovado e coerente, e e o comando que recusa", async () => {
+    const artifact = await buildShortRelease();
+    const receipt = receiptOf(artifact);
+    expect(receipt.passed).toBe(false);
+    // Dois limites por celula vazia: os dois pisos, e nenhum cap de documento a romper.
+    expect(receipt.breaches).toHaveLength(DECLARED_CELLS.length * 2);
+    // RESIDUO fixado por teste, para que ninguem leia a guarda como mais forte do que ela e: a
+    // guarda sem dataset NAO exige `passed`. Quem impede o congelamento e
+    // `benchmark/commands/split.ts`, a unica via que escreve artefato em disco — fixado pelo
+    // caso do sitio abaixo.
+    expect(await codeOfPartial(artifact)).toBe("ACCEPTED");
+  });
+
+  it("runSplit recusa o corpus release curto, e nao escreve o diretorio de saida", async () => {
+    const inputs = await writeSplitInputs(
+      PTWIKI_MANIFEST,
+      buildShortReleaseDataset(),
+    );
+    const refusal = await runSplit({
+      ...inputs,
+      seed: PREREGISTRATION_V4.seeds.split,
+    }).then(
+      () => null,
+      (error: unknown) => error as { code?: string; message: string },
+    );
+
+    // O codigo separa esta recusa das outras do comando: a auditoria de vazamento PASSA neste
+    // corpus, entao o que refuta e a composicao do bloco cego.
+    expect(refusal?.code).toBe(COMPOSITION_BOUNDS_NOT_MET);
+    expect(refusal?.message).toContain(`cell "${DECLARED_CELLS[0]}" holds 0`);
+    expect(refusal?.message).toContain(`floor of ${LINE_FLOOR}`);
+    // "falha de restricao nao escreve OUTPUT", literal: o diretorio nao chega a existir.
+    await expect(readdir(inputs.outputDirectory)).rejects.toMatchObject({
+      code: "ENOENT",
+    });
+  });
+
+  it("recusa o artefato da forma antiga nomeando a chave ausente", async () => {
+    // `schemaVersion` fica 4 e NAO distingue as duas formas — residuo aceito. O que recusa um
+    // artefato selado antes desta chave e a checagem de conjunto, que roda antes da versao e
+    // nomeia o que falta; nao ha aceitacao silenciosa nem via de re-selagem.
+    const stale = JSON.parse(
+      JSON.stringify(await buildPtwikiRelease()),
+    ) as Record<string, unknown>;
+    delete stale.compositionReceipt;
+    expect(stale.schemaVersion).toBe(4);
+    const failure = await assertSplitArtifactSelfConsistent(
+      stale as unknown as SplitArtifact,
+    ).catch((error: unknown) => error);
+    expect((failure as SplitArtifactError).code).toBe(
+      "SPLIT_ARTIFACT_UNKNOWN_FIELD",
+    );
+    expect((failure as Error).message).toMatch(/absent compositionReceipt/u);
+  });
+
+  it("recusa chave desconhecida dentro do recibo, que re-selar torna invisivel", async () => {
+    // O digest COBRE a chave a mais, e e por isso que ele nao a recusa: re-selar restaura o
+    // digest sobre o recibo inchado. So a checagem de conjunto separa o recibo do gate de um
+    // recibo com um numero ao lado que nada le.
+    const forged = await resealedPtwiki((artifact) => {
+      (
+        receiptOf(artifact) as unknown as Record<string, unknown>
+      ).ineligibleUnits = 12;
+    });
+    expect(await codeOfPartial(forged)).toBe(
+      "SPLIT_ARTIFACT_COMPOSITION_RECEIPT_MALFORMED",
+    );
+  });
+
+  it("recusa contagem desconhecida numa linha de celula", async () => {
+    const forged = await resealedPtwiki((artifact) => {
+      cellRowOf(artifact).linesInQuietestOriginDocument = 1;
+    });
+    expect(await codeOfPartial(forged)).toBe(
+      "SPLIT_ARTIFACT_COMPOSITION_RECEIPT_MALFORMED",
+    );
+  });
+
+  it("recusa __proto__ numa linha de celula de arquivo parseado", async () => {
+    // Num literal `__proto__` troca o prototipo em vez de criar chave, entao esta falsificacao
+    // existe so em JSON parseado — que e exatamente como todo comando carrega o artefato.
+    // `key in allowed` a teria chamado permitida, porque `in` sobe a cadeia de prototipos.
+    const honest = await buildPtwikiRelease();
+    const smuggled = JSON.parse(
+      JSON.stringify(honest).replace(
+        '"cells":[{',
+        `"cells":[{"__proto__":{"cell":"${DECLARED_CELLS[0]}"},`,
+      ),
+    ) as SplitArtifact;
+    expect(await codeOfPartial(smuggled)).toBe(
+      "SPLIT_ARTIFACT_COMPOSITION_RECEIPT_MALFORMED",
+    );
+  });
+
+  it("recusa a contagem que e string como MALFORMED, e nao como incoerencia", async () => {
+    // `"300" < 300` e `false` por coercao relacional: uma contagem que e string limpa um piso em
+    // silencio E a lista de brechas recomputada concorda com a selada, porque os dois lados
+    // coagem igual. Por isso a checagem de inteiro vem ANTES da recomputacao.
+    const clearsTheFloor = await resealedPtwiki((artifact) => {
+      cellRowOf(artifact).independentUnits = String(UNIT_FLOOR);
+    });
+    expect(await codeOfPartial(clearsTheFloor)).toBe(
+      "SPLIT_ARTIFACT_COMPOSITION_RECEIPT_MALFORMED",
+    );
+
+    // A MESMA falsificacao com "0": aqui a comparacao coerciva PRODUZ uma brecha que a lista
+    // selada nao tem, entao a ordem invertida recusaria por INCOERENCIA — e a contagem que e
+    // string teria passado por checada.
+    const coercedIntoBreach = await resealedPtwiki((artifact) => {
+      cellRowOf(artifact).independentUnits = "0";
+    });
+    expect(await codeOfPartial(coercedIntoBreach)).toBe(
+      "SPLIT_ARTIFACT_COMPOSITION_RECEIPT_MALFORMED",
+    );
+  });
+
+  it("recusa contagem fracionaria e contagem negativa", async () => {
+    // `ineligibleLines` nao entra em comparacao de piso nem em relacao aritmetica, entao uma
+    // checagem de "numero finito" aceitaria as duas e o artefato seria ACEITO: o que as recusa
+    // e serem contagens, e uma contagem e inteiro >= 0.
+    for (const value of [2.5, -1]) {
+      const forged = await resealedPtwiki((artifact) => {
+        cellRowOf(artifact).ineligibleLines = value;
+      });
+      expect(await codeOfPartial(forged), String(value)).toBe(
+        "SPLIT_ARTIFACT_COMPOSITION_RECEIPT_MALFORMED",
+      );
+    }
+  });
+
+  it("recusa recibo cujo piso foi baixado ate as contagens que ele tem", async () => {
+    const lines = 12;
+    const forged = await resealedPtwiki((artifact) => {
+      artifact.compositionReceipt = {
+        partition: COMPOSITION_GATE_PARTITION,
+        cells: DECLARED_CELLS.map((cell) => ({
+          cell,
+          humanNegativeLines: lines,
+          ineligibleLines: 0,
+          independentUnits: lines,
+          originDocuments: lines,
+          linesWithoutOriginDocument: 0,
+          linesInBusiestOriginDocument: LINE_CAP,
+        })),
+        lineFloor: lines,
+        unitFloor: lines,
+        maximumLinesPerOriginDocument: LINE_CAP,
+        breaches: [],
+        passed: true,
+      };
+    });
+    // Internamente PERFEITO: 12 >= 12 nos dois pisos, brechas vazias e veredito de acordo com a
+    // lista. So um limite lido de FORA do arquivo separa isto de um recibo honesto.
+    expect(await codeOfPartial(forged)).toBe(
+      "SPLIT_ARTIFACT_COMPOSITION_RECEIPT_NOT_PREREGISTERED",
+    );
+  });
+
+  it("recusa recibo que nomeia celula que o frame nao declara", async () => {
+    const undeclared = "encyclopedic";
+    expect([...DECLARED_CELLS]).not.toContain(undeclared);
+    const forged = await resealedCell({
+      cell: undeclared,
+      humanNegativeLines: LINE_FLOOR,
+      ineligibleLines: 0,
+      independentUnits: UNIT_FLOOR,
+      originDocuments: LINE_FLOOR,
+      linesWithoutOriginDocument: 0,
+      linesInBusiestOriginDocument: LINE_CAP,
+    });
+    expect(await codeOfPartial(forged)).toBe(
+      "SPLIT_ARTIFACT_COMPOSITION_RECEIPT_NOT_PREREGISTERED",
+    );
+  });
+
+  it("recusa recibo sem a celula declarada", async () => {
+    const forged = await resealedPtwiki((artifact) => {
+      artifact.compositionReceipt = coherentReceiptOf([]);
+    });
+    // Zero celula e zero brecha: sem a lista externa, um recibo vazio passa por aprovado.
+    expect(receiptOf(forged).passed).toBe(true);
+    expect(await codeOfPartial(forged)).toBe(
+      "SPLIT_ARTIFACT_COMPOSITION_RECEIPT_NOT_PREREGISTERED",
+    );
+  });
+
+  it("recusa recibo sobre particao que nao e o bloco cego", async () => {
+    const forged = await resealedPtwiki((artifact) => {
+      (receiptOf(artifact) as unknown as Record<string, unknown>).partition =
+        "cal-B";
+    });
+    expect(await codeOfPartial(forged)).toBe(
+      "SPLIT_ARTIFACT_COMPOSITION_RECEIPT_NOT_PREREGISTERED",
+    );
+  });
+
+  it("recusa recibo cuja lista de brechas foi esvaziada", async () => {
+    const forged = await resealedShort((artifact) => {
+      const receipt = receiptOf(artifact) as unknown as Record<string, unknown>;
+      receipt.breaches = [];
+      receipt.passed = true;
+    });
+    // `passed === (breaches.length === 0)` ACEITA isto: a lista esta vazia e o veredito concorda
+    // com ela. So a recomputacao pelo criterio recusa.
+    expect(await codeOfPartial(forged)).toBe(
+      "SPLIT_ARTIFACT_COMPOSITION_RECEIPT_INCOHERENT",
+    );
+  });
+
+  it("recusa veredito virado para aprovado sobre brechas que continuam la", async () => {
+    const forged = await resealedShort((artifact) => {
+      (receiptOf(artifact) as unknown as Record<string, unknown>).passed = true;
+    });
+    // As brechas corretas continuam publicadas, entao a recomputacao sozinha nao pega nada: o
+    // que recusa e a equivalencia entre o veredito e a lista.
+    expect(receiptOf(forged).breaches.length).toBeGreaterThan(0);
+    expect(await codeOfPartial(forged)).toBe(
+      "SPLIT_ARTIFACT_COMPOSITION_RECEIPT_INCOHERENT",
+    );
+  });
+
+  it("recusa linhas de origem irrecuperavel escondidas atras de um documento mais cheio de 1", async () => {
+    // A falsificacao que SUPERESTIMA poder: 300 linhas que ninguem pode mostrar vindas de
+    // documentos distintos, publicadas com `linesInBusiestOriginDocument` de 1, limpam o cap e
+    // os dois pisos. O balde irrecuperavel E um dos baldes, e `busiest` e o maximo sobre eles.
+    const forged = await resealedCell({
+      cell: DECLARED_CELLS[0],
+      humanNegativeLines: LINE_FLOOR,
+      ineligibleLines: 0,
+      independentUnits: UNIT_FLOOR,
+      originDocuments: 0,
+      linesWithoutOriginDocument: LINE_FLOOR,
+      linesInBusiestOriginDocument: LINE_CAP,
+    });
+    expect(await codeOfPartial(forged)).toBe(
+      "SPLIT_ARTIFACT_COMPOSITION_RECEIPT_MALFORMED",
+    );
+  });
+
+  it("recusa linhas espalhadas por documento nenhum", async () => {
+    const forged = await resealedCell({
+      cell: DECLARED_CELLS[0],
+      humanNegativeLines: LINE_FLOOR,
+      ineligibleLines: 0,
+      independentUnits: UNIT_FLOOR,
+      originDocuments: 0,
+      linesWithoutOriginDocument: 0,
+      linesInBusiestOriginDocument: 0,
+    });
+    expect(await codeOfPartial(forged)).toBe(
+      "SPLIT_ARTIFACT_COMPOSITION_RECEIPT_MALFORMED",
+    );
+  });
+
+  it("recusa mais unidades independentes que linhas", async () => {
+    const forged = await resealedCell({
+      cell: DECLARED_CELLS[0],
+      humanNegativeLines: LINE_FLOOR,
+      ineligibleLines: 0,
+      independentUnits: LINE_FLOOR + 1,
+      originDocuments: LINE_FLOOR,
+      linesWithoutOriginDocument: 0,
+      linesInBusiestOriginDocument: LINE_CAP,
+    });
+    expect(await codeOfPartial(forged)).toBe(
+      "SPLIT_ARTIFACT_COMPOSITION_RECEIPT_MALFORMED",
+    );
+  });
+
+  it("recusa mais documentos de origem que as linhas que eles contribuiram", async () => {
+    const forged = await resealedCell({
+      cell: DECLARED_CELLS[0],
+      humanNegativeLines: LINE_FLOOR,
+      ineligibleLines: 0,
+      independentUnits: UNIT_FLOOR,
+      originDocuments: LINE_FLOOR + 1,
+      linesWithoutOriginDocument: 0,
+      linesInBusiestOriginDocument: LINE_CAP,
+    });
+    expect(await codeOfPartial(forged)).toBe(
+      "SPLIT_ARTIFACT_COMPOSITION_RECEIPT_MALFORMED",
+    );
+  });
+
+  it("recusa recibo internamente perfeito que o corpus nao produz", async () => {
+    const forged = await resealedPtwiki((artifact) => {
+      const row = cellRowOf(artifact);
+      row.humanNegativeLines = (row.humanNegativeLines as number) + 1;
+    });
+    // Uma linha a mais mantem tudo coerente: aritmetica, limites congelados, celula declarada,
+    // brechas recomputadas e veredito. Nenhuma guarda sem dataset pode recusa-lo — e essa
+    // aceitacao e o que faz da recontagem a unica coisa que decide quem foi CONTADO.
+    expect(await codeOfPartial(forged)).toBe("ACCEPTED");
+    expect(await codeOfFull(forged)).toBe(
+      "SPLIT_ARTIFACT_COMPOSITION_RECEIPT_MISMATCH",
+    );
+  });
+
+  it("aceita o artefato honesto, para que as recusas acima sejam sobre a falsificacao", async () => {
+    expect(await codeOfFull(await buildPtwikiRelease())).toBe("ACCEPTED");
   });
 });

@@ -21,7 +21,7 @@ import { join } from "node:path";
 
 import {
   COMPOSITION_BOUNDS_NOT_MET,
-  auditReleaseComposition,
+  COMPOSITION_RECEIPT_ABSENT,
   describeCompositionBreaches,
 } from "../composition-gate.ts";
 import {
@@ -155,27 +155,6 @@ export async function runSplit(options: SplitOptions): Promise<string> {
     );
   }
 
-  // A release seal needs the blind block to carry the power the pre-registration
-  // promised, per quota cell, in all three quantities: the FPR denominator in
-  // record-lines, the independent sampling units behind it, and the cap of one line per
-  // origin document that makes the first two the same draws. The artifact RECORDS its
-  // composition (`compositionAttestation`), and recording an inventory is not judging
-  // it — so the comparison happens here, over the assignment in memory, and a corpus
-  // outside any bound never reaches the artifact.
-  //
-  // After the leakage audit and before any output: a corpus that leaks has a worse
-  // problem than a short cell, and the composition verdict would only bury it.
-  if (manifest.scientificUse === "release") {
-    const composition = auditReleaseComposition(split);
-    if (!composition.passed) {
-      throw new CommandError(
-        COMPOSITION_BOUNDS_NOT_MET,
-        "a release corpus cannot be frozen outside the pre-registered composition " +
-          `bounds: ${describeCompositionBreaches(composition)}`,
-      );
-    }
-  }
-
   const artifact = await buildSplitArtifact({
     manifest,
     records,
@@ -183,6 +162,35 @@ export async function runSplit(options: SplitOptions): Promise<string> {
     policy,
     audit: splitAudit,
   });
+
+  // A release seal needs the blind block to carry the power the pre-registration
+  // promised, per quota cell, in all three quantities: the FPR denominator in
+  // record-lines, the independent sampling units behind it, and the cap of one line per
+  // origin document that makes the first two the same draws. The artifact RECORDS that
+  // verdict (`compositionReceipt`), and recording is not judging — so the refusal is
+  // here, reading the SEALED receipt, which makes what refuses the freeze and what a
+  // downstream reader can recompute the same numbers.
+  //
+  // After the leakage audit and before any output: a corpus that leaks has a worse
+  // problem than a short cell, and the composition verdict would only bury it; a corpus
+  // outside any bound leaves no partition file behind.
+  if (manifest.scientificUse === "release") {
+    const receipt = artifact.compositionReceipt;
+    if (receipt === null) {
+      throw new CommandError(
+        COMPOSITION_RECEIPT_ABSENT,
+        "a release corpus cannot be frozen without the composition receipt: the three " +
+          "quantities per quota cell were never counted, so no bound was compared",
+      );
+    }
+    if (!receipt.passed) {
+      throw new CommandError(
+        COMPOSITION_BOUNDS_NOT_MET,
+        "a release corpus cannot be frozen outside the pre-registered composition " +
+          `bounds: ${describeCompositionBreaches(receipt)}`,
+      );
+    }
+  }
 
   // The exact-equality invariant, at the one place where all four sets exist at
   // once: what the manifest RESERVED, what the splitter actually MARKED, what the

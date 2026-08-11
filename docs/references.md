@@ -5080,3 +5080,62 @@ contra **42,7 %** para as *core* — assimetria por construção, com movimento 
 no piso da reservada contra **−0,00259** no das *core* ao corrigir. Nenhum número novo foi
 introduzido: o conserto é o critério "a fatia lê os pais dela", e a junção parcial passou a recusar
 por cobertura da população declarada em vez de por população vazia.
+
+---
+
+## § S — a onda A2: o eixo é derivado de quem observou, a pertença é do selo, e o recibo é do artefato (2026-08-11)
+
+Três unidades, três decisões metodológicas. As referências foram levantadas por quem implementou e
+conferidas na integração.
+
+### S.1 — o identificador da execução é derivado do que a produziu, não atribuído (U3, `extractionRun`)
+
+**Reprodutibilidade por derivação de conteúdo** — a mesma família de argumento que este arquivo já ancora
+para os digests de governança: um identificador que alguém pode escolher à mão não distingue duas execuções,
+e um identificador derivado do conteúdo distingue exatamente o que o conteúdo distingue.
+[link](https://doi.org/10.1145/3186266) — Collberg & Proebsting, "Repeatability in Computer Systems
+Research", *Communications of the ACM* 59(3), 2016, § "the weak link": o que não é derivável do artefato
+não é verificável por terceiro.
+
+**Âncora.** `er_<módulo>_<versão do material>_<sha256 dos bytes do módulo>` é derivado no extrator, no sítio
+de emissão da linha. **Sem relógio**, por decisão: o id tem de ser recomputável de quem tem o módulo e a
+versão do material. O preço está declarado e fixado por teste — duas execuções sobre o mesmo dump com
+`--limit` diferentes **compartilham** o id, então o que ele nomeia é o módulo e a versão do material, e nada
+mais largo. O vocabulário de `2026-08-02-lotes-e-unidade-de-dependencia.md` pede "o que rodou, quando, com
+que código", e o *quando* é a única palavra que este eixo abandona: **sem precedente encontrado** para
+carimbar tempo num eixo de agrupamento sem perder recomputabilidade, e a escolha é declarada em vez de
+resolvida.
+
+### S.2 — pertença, não presença: o gate cobre o denominador da alegação (U5)
+
+**Sem precedente encontrado** na literatura de detecção de MGT para esta guarda específica; o argumento é
+aritmético e interno. A alegação da v1 é publicada como **tabela por célula**, e o denominador de cada linha
+é a célula: uma linha humana que não declara célula não pertence a nenhuma, logo nenhum teto publicado a
+cobre. Um gate que se satisfaz com **uma** linha da célula (presença) admite um corpus em que 3.999 das
+4.000 linhas humanas estão fora de toda linha da tabela.
+
+**Âncora.** Em corpus `release`, `sealDataset` passou a recusar quando qualquer linha humana declara
+`humanSourceType` fora de `requiredHumanSourceTypes`, nomeando cada grafia observada em ordem e dizendo
+quantas deixou de listar. A rota escolhida é o **gate** e não o **esquema**, e a razão é medida:
+`assemble_corpus.py` já escreve a célula em toda linha humana, então o critério é satisfazível pelo material
+de 2026-08-06 sem mudança de esquema.
+
+### S.3 — passar tem de deixar prova, e a prova viaja com o que ela atesta (U7, recibo do gate)
+
+**Saltzer & Schroeder (1975)**, *fail-safe defaults*, já ancorado em § R.1 e § R.3, mais o princípio de
+**evidência transitivamente ligada** que este projeto aplica em toda parte (o selo carrega os digests de
+governança em vez de apontar para eles).
+[link](https://www.cs.virginia.edu/~evans/cs551/saltzer/)
+
+**Âncora.** O gate de composição media três quantidades por célula e **descartava o veredito**: passar não
+produzia prova, e a Fase 5 lê o artefato selado, não o log do comando. `compositionReceipt` passou a ser
+chave obrigatória de `SplitArtifact` (`null` fora de `release`), com três propriedades que o tornam prova e
+não decoração: o critério dos três limites é **chamado** e não copiado (`compositionBoundsOf` lê cada limite
+do seu próprio campo da política, e dois deles carregam o mesmo número no arquivo congelado, então um leitor
+que tomasse um pelo outro seria indistinguível ali e errado sob qualquer outra política);
+`validateSplitArtifact` **reconta** o recibo a partir dos registros e das atribuições e compara por digest
+canônico; e atestado e recibo são conferidos **como par**, porque os dois derivam de
+`scientificUse: "release"` e um sem o outro descreve um corpus que é release e não é.
+
+A alternativa recusada — arquivo ao lado do artefato — falha no princípio: um recibo que não viaja dentro do
+que ele atesta é atestado de nada.

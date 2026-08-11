@@ -71,6 +71,13 @@ export const COMPOSITION_GATE_PARTITION = "test" as const satisfies Partition;
 export const COMPOSITION_BOUNDS_NOT_MET = "COMPOSITION_BOUNDS_NOT_MET";
 
 /**
+ * The coded refusal a release seal whose artifact carries no composition receipt
+ * produces. A missing receipt is not a passing one: the three quantities were never
+ * counted, so nothing was compared against the pre-registered bounds.
+ */
+export const COMPOSITION_RECEIPT_ABSENT = "COMPOSITION_RECEIPT_ABSENT";
+
+/**
  * The union axis that IS the origin document. `satisfies GroupKey` on purpose: the
  * per-document cap only bounds the correlation the splitter also unions on, so an axis
  * the splitter ignores could not be the one this cap is about.
@@ -126,6 +133,85 @@ export interface CompositionReport {
   readonly passed: boolean;
 }
 
+/**
+ * The three pre-registered numbers a cell is compared AGAINST, apart from the cells
+ * themselves.
+ *
+ * They travel together because the verdict is their conjunction, and separately from the
+ * counting because the same comparison has to decide a partition held in memory and a
+ * receipt read back out of a sealed file.
+ */
+export interface CompositionBounds {
+  readonly lineFloor: number;
+  readonly unitFloor: number;
+  readonly maximumLinesPerOriginDocument: number;
+}
+
+/**
+ * The bounds, each read from ITS OWN field of the policy. Two of them carry the same
+ * number in the frozen file, so a reader that took one for the other would be
+ * indistinguishable there and wrong under any other policy.
+ */
+export function compositionBoundsOf(
+  policy: PreregistrationV4 = PREREGISTRATION_V4,
+): CompositionBounds {
+  return {
+    lineFloor: policy.powerFloors.criticalFprHumanNegatives,
+    unitFloor: policy.powerFloors.samplingUnits,
+    maximumLinesPerOriginDocument:
+      policy.collection.maximumLinesPerOriginDocument,
+  };
+}
+
+/**
+ * THE criterion: which cells miss which bound, one breach per cell and quantity.
+ *
+ * INCLUSIVE on both floors: the pre-registration adopts 300 as the floor, so a cell
+ * holding exactly 300 satisfies it. Every count is an integer, so `>=` needs no
+ * tolerance — the float epsilon the class fractions carry has no business here.
+ *
+ * Takes counted CELLS rather than a split, so the gate and any later reader of a sealed
+ * verdict compare against one spelling of the three limits instead of two that can drift.
+ */
+export function compositionBreachesOf(
+  cells: readonly CellComposition[],
+  bounds: CompositionBounds,
+): CompositionBoundBreach[] {
+  const breaches: CompositionBoundBreach[] = [];
+  for (const row of cells) {
+    if (row.humanNegativeLines < bounds.lineFloor) {
+      breaches.push({
+        cell: row.cell,
+        quantity: "human-negative-record-lines",
+        measured: row.humanNegativeLines,
+        bound: bounds.lineFloor,
+        direction: "minimum",
+      });
+    }
+    if (row.independentUnits < bounds.unitFloor) {
+      breaches.push({
+        cell: row.cell,
+        quantity: "independent-sampling-units",
+        measured: row.independentUnits,
+        bound: bounds.unitFloor,
+        direction: "minimum",
+      });
+    }
+    if (
+      row.linesInBusiestOriginDocument > bounds.maximumLinesPerOriginDocument
+    ) {
+      breaches.push({
+        cell: row.cell,
+        quantity: "record-lines-per-origin-document",
+        measured: row.linesInBusiestOriginDocument,
+        bound: bounds.maximumLinesPerOriginDocument,
+        direction: "maximum",
+      });
+    }
+  }
+  return breaches;
+}
+
 interface CellTally {
   lines: number;
   ineligibleLines: number;
@@ -154,9 +240,7 @@ export function auditReleaseComposition(
   policy: PreregistrationV4 = PREREGISTRATION_V4,
 ): CompositionReport {
   const declaredCells = policy.preRegistration.quotaAxis.cells;
-  const lineFloor = policy.powerFloors.criticalFprHumanNegatives;
-  const unitFloor = policy.powerFloors.samplingUnits;
-  const lineCap = policy.collection.maximumLinesPerOriginDocument;
+  const bounds = compositionBoundsOf(policy);
   const wordFloor = policy.wordFloor.abstainBelow;
 
   const corpus: BenchmarkRecord[] = [];
@@ -228,46 +312,14 @@ export function auditReleaseComposition(
     };
   });
 
-  // INCLUSIVE on both floors: the pre-registration adopts 300 as the floor, so a cell
-  // holding exactly 300 satisfies it. Every count is an integer, so `>=` needs no
-  // tolerance — the float epsilon the class fractions carry has no business here.
-  const breaches: CompositionBoundBreach[] = [];
-  for (const row of cells) {
-    if (row.humanNegativeLines < lineFloor) {
-      breaches.push({
-        cell: row.cell,
-        quantity: "human-negative-record-lines",
-        measured: row.humanNegativeLines,
-        bound: lineFloor,
-        direction: "minimum",
-      });
-    }
-    if (row.independentUnits < unitFloor) {
-      breaches.push({
-        cell: row.cell,
-        quantity: "independent-sampling-units",
-        measured: row.independentUnits,
-        bound: unitFloor,
-        direction: "minimum",
-      });
-    }
-    if (row.linesInBusiestOriginDocument > lineCap) {
-      breaches.push({
-        cell: row.cell,
-        quantity: "record-lines-per-origin-document",
-        measured: row.linesInBusiestOriginDocument,
-        bound: lineCap,
-        direction: "maximum",
-      });
-    }
-  }
+  const breaches = compositionBreachesOf(cells, bounds);
 
   return {
     partition: COMPOSITION_GATE_PARTITION,
     cells,
-    lineFloor,
-    unitFloor,
-    maximumLinesPerOriginDocument: lineCap,
+    lineFloor: bounds.lineFloor,
+    unitFloor: bounds.unitFloor,
+    maximumLinesPerOriginDocument: bounds.maximumLinesPerOriginDocument,
     breaches,
     passed: breaches.length === 0,
   };

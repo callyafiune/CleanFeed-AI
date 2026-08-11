@@ -10,7 +10,10 @@ import { describe, expect, it } from "vitest";
 
 import {
   auditReleaseComposition,
+  compositionBoundsOf,
+  compositionBreachesOf,
   describeCompositionBreaches,
+  type CellComposition,
 } from "../composition-gate.ts";
 import { CELL_FPR_AXIS } from "../gates.ts";
 import {
@@ -644,6 +647,148 @@ describe("composition gate — the three bounds per quota cell in test", () => {
     );
     // Two bounds per empty cell: both floors, and no per-document cap to break.
     expect(report.breaches).toHaveLength(CELLS.length * 2);
+    expect(report.passed).toBe(false);
+  });
+});
+
+// O CRITERIO, extraido: `compositionBreachesOf` e a unica grafia dos tres limites, e
+// `compositionBoundsOf` a unica leitura deles. O gate chama as duas, e a guarda sem dataset do
+// artefato selado (benchmark/split-artifact.ts) chama as MESMAS — nenhum espelho por copia.
+describe("o criterio dos tres limites, sobre as celulas contadas", () => {
+  const BOUNDS = compositionBoundsOf(PREREGISTRATION_V4);
+
+  /** Uma celula contada NO piso em todas as tres quantidades. */
+  function countedCell(
+    cell: string,
+    overrides: Partial<CellComposition> = {},
+  ): CellComposition {
+    return {
+      cell,
+      humanNegativeLines: LINE_FLOOR,
+      ineligibleLines: 0,
+      independentUnits: UNIT_FLOOR,
+      originDocuments: LINE_FLOOR,
+      linesWithoutOriginDocument: 0,
+      linesInBusiestOriginDocument: LINE_CAP,
+      ...overrides,
+    };
+  }
+
+  it("le os tres limites, cada um do SEU campo da politica", () => {
+    expect(compositionBoundsOf(PREREGISTRATION_V4)).toEqual({
+      lineFloor: LINE_FLOOR,
+      unitFloor: UNIT_FLOOR,
+      maximumLinesPerOriginDocument: LINE_CAP,
+    });
+    // Dois dos tres numeros congelados coincidem, entao so uma politica com valores distintos
+    // separa "lido do proprio campo" de "lido do vizinho".
+    const distinct: PreregistrationV4 = {
+      ...PREREGISTRATION_V4,
+      powerFloors: {
+        ...PREREGISTRATION_V4.powerFloors,
+        criticalFprHumanNegatives: 7,
+        samplingUnits: 11,
+      },
+      collection: {
+        ...PREREGISTRATION_V4.collection,
+        maximumLinesPerOriginDocument: 3,
+      },
+    };
+    expect(compositionBoundsOf(distinct)).toEqual({
+      lineFloor: 7,
+      unitFloor: 11,
+      maximumLinesPerOriginDocument: 3,
+    });
+  });
+
+  it("nomeia a celula curta onde ela estiver, e nao so a primeira", () => {
+    const cells = [
+      countedCell("alpha"),
+      countedCell("beta"),
+      countedCell("omega", { humanNegativeLines: LINE_FLOOR - 1 }),
+    ];
+    expect(compositionBreachesOf(cells, BOUNDS)).toEqual([
+      {
+        cell: "omega",
+        quantity: "human-negative-record-lines",
+        measured: LINE_FLOOR - 1,
+        bound: LINE_FLOOR,
+        direction: "minimum",
+      },
+    ]);
+  });
+
+  it("as tres quantidades, uma brecha cada, no mesmo corpo", () => {
+    // Duas linhas de um documento so: abaixo dos dois pisos E acima do cap, de uma vez.
+    const cells = [
+      countedCell("alpha", {
+        humanNegativeLines: 2,
+        independentUnits: 1,
+        originDocuments: 1,
+        linesInBusiestOriginDocument: 2,
+      }),
+    ];
+    expect(compositionBreachesOf(cells, BOUNDS)).toEqual([
+      {
+        cell: "alpha",
+        quantity: "human-negative-record-lines",
+        measured: 2,
+        bound: LINE_FLOOR,
+        direction: "minimum",
+      },
+      {
+        cell: "alpha",
+        quantity: "independent-sampling-units",
+        measured: 1,
+        bound: UNIT_FLOOR,
+        direction: "minimum",
+      },
+      {
+        cell: "alpha",
+        quantity: "record-lines-per-origin-document",
+        measured: 2,
+        bound: LINE_CAP,
+        direction: "maximum",
+      },
+    ]);
+  });
+
+  it("conta e compara TODAS as celulas declaradas, com a curta em ultimo lugar", () => {
+    // Politica hipotetica de TRES celulas: o frame congelado declara uma so, entao sobre um
+    // corpus real nada distingue um laco de um lookup na primeira.
+    const threeCells: PreregistrationV4 = {
+      ...PREREGISTRATION_V4,
+      preRegistration: {
+        ...PREREGISTRATION_V4.preRegistration,
+        quotaAxis: {
+          ...PREREGISTRATION_V4.preRegistration.quotaAxis,
+          cells: ["alpha", "beta", "omega"],
+        },
+      },
+    };
+    const report = auditReleaseComposition(
+      splitWith([
+        ...cellRows("alpha", LINE_FLOOR, "t"),
+        ...cellRows("beta", LINE_FLOOR, "t"),
+        ...cellRows("omega", LINE_FLOOR - 1, "t"),
+        aiPositive("a_test_0"),
+      ]),
+      threeCells,
+    );
+
+    expect(report.cells.map((row) => row.cell)).toEqual([
+      "alpha",
+      "beta",
+      "omega",
+    ]);
+    // Uma celula curta em ULTIMO lugar, e as duas primeiras no piso: um criterio que so olhasse
+    // a primeira celula devolveria `passed` sobre este bloco.
+    expect(
+      report.breaches.map((breach) => `${breach.cell}:${breach.quantity}`),
+    ).toEqual([
+      "omega:human-negative-record-lines",
+      "omega:independent-sampling-units",
+    ]);
     expect(report.passed).toBe(false);
   });
 });

@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 
 import {
   computeDatasetAuditDigest,
+  DatasetManifestError,
   emptyLabelBasisPublication,
   parseDatasetAudit,
   RELEASE_CORPUS_POLICY,
@@ -13,6 +14,7 @@ import {
 } from "../dataset-manifest.ts";
 import {
   recordEligibility,
+  validateBenchmarkRecord,
   validateBenchmarkRecordV3,
   validateBenchmarkRecordV4,
   type BenchmarkRecord,
@@ -1452,5 +1454,495 @@ describe("the ratified composition is not written twice with two values", () => 
     // Non-vacuous: if the prose is reworded so no pattern matches, this fails instead of
     // passing over an empty sweep.
     expect(found).toBeGreaterThanOrEqual(2);
+  });
+});
+
+// THE FRAME IS A PARTITION, not a checklist of cells that hold at least one row.
+//
+// The release claim is published as one row per declared quota cell, and the
+// denominator of each row IS the cell. A human row that declares no cell of the
+// frame is in no row of that table: the split audit, the slices and the composition
+// gate all drop it without a word, so no published ceiling covers it and no
+// `fpr-<cell>` hypothesis is ever raised about it. Coverage read as presence lets ONE
+// row in a cell stand for four thousand.
+//
+// Two guards, in cause-then-consequence order: every human row declares a cell of
+// the frame, and every cell of the frame holds a human row. Neither subsumes the
+// other — all rows in cell A leaves cell B empty, one row in each cell leaves the
+// rest with nothing — and both are priced only on a `release` corpus.
+describe("the declared frame partitions the human class of a release corpus", () => {
+  const HELD_OUT = asGeneratorFamily("gemini-3_5-flash-medium");
+
+  const frameLicenses = [
+    {
+      id: "cc-by-sa-4.0",
+      name: "Creative Commons Attribution-ShareAlike 4.0",
+      source: "https://creativecommons.org/licenses/by-sa/4.0/",
+      evaluationUseApproved: true as const,
+      redistribution: "not-published" as const,
+      notice: "Atribuição e share-alike obrigatórios.",
+    },
+    {
+      id: "autoria-propria-v1",
+      name: "Autoria própria do operador",
+      source: "declaração do operador",
+      evaluationUseApproved: true as const,
+      redistribution: "not-published" as const,
+      notice: "Gerado pelo próprio operador para avaliação interna.",
+    },
+    ...validManifest.licenses,
+  ];
+
+  const frameReleaseManifest: DatasetManifest = {
+    ...validManifest,
+    scientificUse: "release",
+    heldOutGeneratorFamilies: [HELD_OUT],
+    licenses: frameLicenses,
+  };
+
+  const frameInfraManifest: DatasetManifest = {
+    ...validManifest,
+    heldOutGeneratorFamilies: [HELD_OUT],
+    licenses: frameLicenses,
+  };
+
+  // `undefined` is the row that declares NO cell; a string is the cell it declares,
+  // inside the frame or outside it. The two are different populations of the same
+  // guard, so one builder produces both.
+  function v3HumanRow(n: number, cell: string | undefined): BenchmarkRecord {
+    const raw = withReview(v3Human(), humanReviewed("human"));
+    raw.id = `h_ptwk_${n.toString().padStart(4, "0")}`;
+    raw.normalizedTextSha256 = (0x1_00_00 + n).toString(16).padStart(64, "0");
+    if (cell === undefined) delete raw.humanSourceType;
+    else raw.humanSourceType = cell;
+    return validateBenchmarkRecordV3(raw);
+  }
+
+  function v3AiRow(n: number, cell?: string): BenchmarkRecord {
+    const raw = withReview(v3Ai(), humanReviewed("ai"));
+    raw.id = `a_agy_${n.toString().padStart(4, "0")}`;
+    raw.normalizedTextSha256 = n.toString(16).padStart(64, "0");
+    if (cell !== undefined) raw.humanSourceType = cell;
+    return validateBenchmarkRecordV3(raw);
+  }
+
+  function v3MixedRow(): BenchmarkRecord {
+    return validateBenchmarkRecordV3(
+      withReview(v3Mixed(), humanReviewed("mixed")),
+    );
+  }
+
+  // 200 positives of the reserved family is the held-out floor, so a corpus meant to
+  // SEAL has to carry them; every corpus in this block is built to seal so that a
+  // refusal is attributable to the frame and to nothing else.
+  const AI_ROWS = 200;
+
+  function frameCorpus(
+    humanCells: ReadonlyArray<string | undefined>,
+    options: { aiCell?: string; withMixed?: boolean } = {},
+  ): BenchmarkRecord[] {
+    const records: BenchmarkRecord[] = humanCells.map((cell, index) =>
+      v3HumanRow(index + 1, cell),
+    );
+    for (let n = 1; n <= AI_ROWS; n += 1) {
+      records.push(v3AiRow(n, n === 1 ? options.aiCell : undefined));
+    }
+    if (options.withMixed === true) records.push(v3MixedRow());
+    return records;
+  }
+
+  function framePolicy(
+    humanCount: number,
+    cells: readonly string[],
+    options: { mixed?: number } = {},
+  ) {
+    return {
+      counts: { human: humanCount, ai: AI_ROWS, mixed: options.mixed ?? 0 },
+      requiredHumanSourceTypes: cells,
+      requiredHardNegativeFamilies: [],
+    };
+  }
+
+  it("seals a release corpus whose every human row declares a declared cell", async () => {
+    const audit = await sealDataset(
+      frameReleaseManifest,
+      frameCorpus(["encyclopedic", "encyclopedic", "encyclopedic"]),
+      framePolicy(3, ["encyclopedic"]),
+      validFileDigests,
+    );
+    expect(audit.releaseEligible).toBe(true);
+    expect(audit.sourceTypes).toEqual({ encyclopedic: 3 });
+  });
+
+  it("refuses a release corpus whose human rows declare no quota cell", async () => {
+    await expect(
+      sealDataset(
+        frameReleaseManifest,
+        frameCorpus(["encyclopedic", undefined, undefined]),
+        framePolicy(3, ["encyclopedic"]),
+        validFileDigests,
+      ),
+    ).rejects.toThrow(
+      /requires every human row to declare one of its quota cells: 2 of 3 human rows declare none \(2 \(none declared\)\), first h_ptwk_0002; declared cells: encyclopedic\./u,
+    );
+  });
+
+  it("does not mint an audit for a corpus it refuses", async () => {
+    // The refusal has to REPLACE the audit, not annotate it: a `sealed: true` object
+    // is admitted downstream by `runSplit` on its own, so a guard that resolved with a
+    // warning would be a guard that seals.
+    const settled: unknown = await sealDataset(
+      frameReleaseManifest,
+      frameCorpus(["encyclopedic", undefined, undefined]),
+      framePolicy(3, ["encyclopedic"]),
+      validFileDigests,
+    ).then(
+      (audit) => audit,
+      (error: unknown) => error,
+    );
+    expect(settled).toBeInstanceOf(DatasetManifestError);
+    expect((settled as DatasetManifestError).code).toBe(
+      "DATASET_COVERAGE_INVALID",
+    );
+    expect(settled).not.toHaveProperty("sealed");
+  });
+
+  it("counts every human row outside the frame, not the first", async () => {
+    await expect(
+      sealDataset(
+        frameReleaseManifest,
+        frameCorpus(["encyclopedic", undefined, undefined]),
+        framePolicy(3, ["encyclopedic"]),
+        validFileDigests,
+      ),
+    ).rejects.toThrow(/2 of 3 human rows declare none/u);
+  });
+
+  it("names every observed spelling outside the frame, in order", async () => {
+    // Both populations and TWO spellings inside the second one, because a breakdown
+    // truncated to its first entry is indistinguishable from a whole one when only a
+    // single spelling is offending. The row that declares nothing comes first, being
+    // the coarser failure, and the declared spellings follow sorted.
+    await expect(
+      sealDataset(
+        frameReleaseManifest,
+        frameCorpus(["ptwiki", undefined, "institutional", "encyclopedic"]),
+        framePolicy(4, ["ptwiki"]),
+        validFileDigests,
+      ),
+    ).rejects.toThrow(
+      /3 of 4 human rows declare none \(1 \(none declared\), 1 encyclopedic, 1 institutional\), first h_ptwk_0002/u,
+    );
+  });
+
+  it("does not offer a frame amendment when every offending row is merely missing the field", async () => {
+    const settled: unknown = await sealDataset(
+      frameReleaseManifest,
+      frameCorpus(["encyclopedic", undefined, undefined]),
+      framePolicy(3, ["encyclopedic"]),
+      validFileDigests,
+    ).then(
+      (audit) => audit,
+      (error: unknown) => error,
+    );
+    const message = (settled as Error).message;
+    expect(message).toMatch(
+      /receives the cell of the material it was drawn from/u,
+    );
+    // A corpus whose rows merely omit the field has no cell to amend the frame WITH,
+    // so offering the amendment would send an operator to the wrong file.
+    expect(message).not.toMatch(/the frame is amended/u);
+  });
+
+  it("names both acts when both populations are present", async () => {
+    const settled: unknown = await sealDataset(
+      frameReleaseManifest,
+      frameCorpus(["ptwiki", undefined, "encyclopedic"]),
+      framePolicy(3, ["ptwiki"]),
+      validFileDigests,
+    ).then(
+      (audit) => audit,
+      (error: unknown) => error,
+    );
+    const message = (settled as Error).message;
+    expect(message).toMatch(
+      /receives the cell of the material it was drawn from/u,
+    );
+    expect(message).toMatch(/the frame is amended to declare that cell/u);
+  });
+
+  it("bounds the spelling breakdown and says how many it left out", async () => {
+    const five = ["cell_a", "cell_b", "cell_c", "cell_d", "cell_e"];
+    const atLimit: unknown = await sealDataset(
+      frameReleaseManifest,
+      frameCorpus(five),
+      framePolicy(five.length, ["ptwiki"]),
+      validFileDigests,
+    ).then(
+      (audit) => audit,
+      (error: unknown) => error,
+    );
+    // At the limit the breakdown is whole and says nothing about omissions.
+    expect((atLimit as Error).message).toMatch(
+      /5 of 5 human rows declare none \(1 cell_a, 1 cell_b, 1 cell_c, 1 cell_d, 1 cell_e\), first/u,
+    );
+    expect((atLimit as Error).message).not.toMatch(/more spellings/u);
+
+    const overLimit: unknown = await sealDataset(
+      frameReleaseManifest,
+      frameCorpus([...five, "cell_f"]),
+      framePolicy(five.length + 1, ["ptwiki"]),
+      validFileDigests,
+    ).then(
+      (audit) => audit,
+      (error: unknown) => error,
+    );
+    // One past the limit the sentence truncates AND says so. A breakdown that
+    // truncated in silence would be worse than no breakdown: it is the only text an
+    // operator reads, and it would report five offending spellings out of six.
+    expect((overLimit as Error).message).toMatch(
+      /6 of 6 human rows declare none \(1 cell_a, 1 cell_b, 1 cell_c, 1 cell_d, 1 cell_e, \+1 more spellings\), first/u,
+    );
+    expect((overLimit as Error).message).not.toMatch(/cell_f/u);
+  });
+
+  it("refuses a release corpus whose SECOND declared cell holds no human row", async () => {
+    // Every declared cell, not the first one: a policy with two cells and every human
+    // row in the first is a corpus whose second published row has an empty
+    // denominator, and membership alone says nothing about it.
+    await expect(
+      sealDataset(
+        frameReleaseManifest,
+        frameCorpus(["encyclopedic", "encyclopedic"]),
+        framePolicy(2, ["encyclopedic", "institutional"]),
+        validFileDigests,
+      ),
+    ).rejects.toThrow(
+      /release corpus is missing required human source type "institutional"/u,
+    );
+    // The same corpus with one row moved into the second cell seals, so the empty
+    // cell is the whole of the cost.
+    const audit = await sealDataset(
+      frameReleaseManifest,
+      frameCorpus(["encyclopedic", "institutional"]),
+      framePolicy(2, ["encyclopedic", "institutional"]),
+      validFileDigests,
+    );
+    expect(audit.releaseEligible).toBe(true);
+  });
+
+  it("names the rows outside the frame before the empty cell, when both hold", async () => {
+    // Both guards fire on this corpus. The one that speaks is membership, because the
+    // rows that declare no cell are WHY both cells are empty; the empty cell alone
+    // would send an operator looking for material to collect.
+    const settled: unknown = await sealDataset(
+      frameReleaseManifest,
+      frameCorpus([undefined, undefined]),
+      framePolicy(2, ["encyclopedic", "institutional"]),
+      validFileDigests,
+    ).then(
+      (audit) => audit,
+      (error: unknown) => error,
+    );
+    expect((settled as Error).message).toMatch(
+      /requires every human row to declare one of its quota cells: 2 of 2/u,
+    );
+    expect((settled as Error).message).not.toMatch(
+      /missing required human source type/u,
+    );
+  });
+
+  it("refuses a release corpus whose only row in a declared cell is generated", async () => {
+    // The cell's denominator is the HUMAN class. A generated row may carry a
+    // `humanSourceType` — the schema allows it and the published table counts it —
+    // and it can produce no false positive, so it fills no cell of the FPR table.
+    await expect(
+      sealDataset(
+        frameReleaseManifest,
+        frameCorpus(["encyclopedic", "encyclopedic"], {
+          aiCell: "institutional",
+        }),
+        framePolicy(2, ["encyclopedic", "institutional"]),
+        validFileDigests,
+      ),
+    ).rejects.toThrow(
+      /release corpus is missing required human source type "institutional"/u,
+    );
+  });
+
+  it("seals a release corpus whose ai and mixed rows declare no quota cell", async () => {
+    // The guard is about the human class only. Widening it to every record would
+    // refuse every corpus this project can build: no generated row carries a cell.
+    const audit = await sealDataset(
+      frameReleaseManifest,
+      frameCorpus(["encyclopedic", "encyclopedic", "encyclopedic"], {
+        withMixed: true,
+      }),
+      framePolicy(3, ["encyclopedic"], { mixed: 1 }),
+      validFileDigests,
+    );
+    expect(audit.releaseEligible).toBe(true);
+    expect(audit.counts).toEqual({ human: 3, ai: AI_ROWS, mixed: 1 });
+  });
+
+  it("refuses a v2 release corpus whose human rows declare no quota cell", async () => {
+    function v2HumanRow(n: number, cell: string | undefined): BenchmarkRecord {
+      const raw: Record<string, unknown> = { ...human };
+      raw.id = `human-${n.toString().padStart(4, "0")}`;
+      raw.normalizedTextSha256 = (0x2_00_00 + n).toString(16).padStart(64, "0");
+      if (cell === undefined) delete raw.humanSourceType;
+      else raw.humanSourceType = cell;
+      return validateBenchmarkRecord(raw);
+    }
+    const v2Policy = {
+      counts: { human: 3, ai: 0, mixed: 0 },
+      requiredHumanSourceTypes: ["encyclopedic"],
+      requiredHardNegativeFamilies: [],
+    };
+    // The shape of the corpus on disk: `schemaVersion: 2`, and the field present on
+    // some rows. There is no version exemption here — a v2 row CAN declare a cell, so
+    // the criterion is satisfiable by v2 and skipping it would leave the only corpus
+    // this project holds unjudged.
+    await expect(
+      sealDataset(
+        frameReleaseManifest,
+        [
+          v2HumanRow(1, "encyclopedic"),
+          v2HumanRow(2, undefined),
+          v2HumanRow(3, undefined),
+        ],
+        v2Policy,
+        validFileDigests,
+      ),
+    ).rejects.toThrow(
+      /requires every human row to declare one of its quota cells: 2 of 3 human rows declare none/u,
+    );
+    // With the cell on every row the SAME corpus gets past membership and is refused
+    // for the next thing wrong with it — the reserved family it stocks with nothing —
+    // so the cell is the only thing this fixture changed.
+    await expect(
+      sealDataset(
+        frameReleaseManifest,
+        [
+          v2HumanRow(1, "encyclopedic"),
+          v2HumanRow(2, "encyclopedic"),
+          v2HumanRow(3, "encyclopedic"),
+        ],
+        v2Policy,
+        validFileDigests,
+      ),
+    ).rejects.toThrow(/held-out generator family/u);
+  });
+
+  it("requires a cell of a human row the axis eligibility calls ineligible", async () => {
+    // More strict than the composition gate's admission, deliberately. The gate drops
+    // an ineligible row from the per-cell FLOOR; the seal still demands the row
+    // declare its cell, because a row with no cell is outside the published table
+    // whether it was going to be counted in it or not.
+    const ineligible = validateBenchmarkRecordV4(
+      withAxis(
+        (() => {
+          const raw = withReview(v4Human(), humanReviewed("human"));
+          delete raw.humanSourceType;
+          return raw;
+        })(),
+        "author",
+        unknownAxis("HMAC keyring unavailable"),
+      ),
+    );
+    expect(recordEligibility(ineligible).eligible).toBe(false);
+    const records: BenchmarkRecord[] = [ineligible];
+    for (let n = 1; n <= AI_ROWS; n += 1) {
+      const raw = withReview(v4Ai(), humanReviewed("ai"));
+      raw.id = `a_agy_${n.toString().padStart(4, "0")}`;
+      raw.normalizedTextSha256 = n.toString(16).padStart(64, "0");
+      records.push(validateBenchmarkRecordV4(raw));
+    }
+    await expect(
+      sealDataset(
+        frameReleaseManifest,
+        records,
+        framePolicy(1, ["encyclopedic"]),
+        validFileDigests,
+      ),
+    ).rejects.toThrow(
+      /requires every human row to declare one of its quota cells: 1 of 1 human rows declare none/u,
+    );
+  });
+
+  it("seals an infrastructure-only corpus whose human rows declare no quota cell", async () => {
+    // The frame belongs to a RELEASE claim. An infrastructure corpus publishes no
+    // per-cell table, and pinning it to the frame would make the pipeline
+    // unexercisable — which is also why two fixture corpora elsewhere in the bench
+    // seal human rows the release frame would refuse.
+    const audit = await sealDataset(
+      frameInfraManifest,
+      frameCorpus([undefined, "blog"]),
+      framePolicy(2, ["encyclopedic"]),
+      validFileDigests,
+    );
+    expect(audit.releaseEligible).toBe(false);
+    expect(audit.sealed).toBe(true);
+  });
+
+  it("publishes no cell key for a human row that declares none", async () => {
+    // The PUBLISHED table is unmoved by the guard above. Its keys are inside
+    // `auditDigest`, and a default key for a row that declares nothing would rename
+    // absence into a cell — a number every reader of the audit would then count.
+    const audit = await sealDataset(
+      frameInfraManifest,
+      frameCorpus([undefined, "encyclopedic"], { aiCell: "institutional" }),
+      framePolicy(2, ["encyclopedic"]),
+      validFileDigests,
+    );
+    expect(audit.sourceTypes).toEqual({
+      encyclopedic: 1,
+      // A generated row that carries the field still counts here: this table is over
+      // every record that declares one, and it is NOT the cell denominator.
+      institutional: 1,
+    });
+    expect(Object.keys(audit.sourceTypes)).not.toContain("unknown");
+    const { auditDigest, ...withoutDigest } = audit;
+    expect(await computeDatasetAuditDigest(withoutDigest)).toBe(auditDigest);
+  });
+
+  it("the only production caller hands sealDataset the frozen policy and the manifest's own scientificUse", async () => {
+    // The release ARM of `sealDataset` is reached by no test of `runValidate` — doing
+    // so needs a 4.000/4.000/2.000 corpus with a receipt on every row — so what the
+    // outermost site passes is pinned by its bytes instead. `benchmark/commands/validate.ts`
+    // is read, never written, by this file.
+    const { readFile } = await import("node:fs/promises");
+    const { resolve, dirname } = await import("node:path");
+    const { fileURLToPath } = await import("node:url");
+    const callerPath = resolve(
+      dirname(fileURLToPath(import.meta.url)),
+      "..",
+      "commands",
+      "validate.ts",
+    );
+    const body = await readFile(callerPath, "utf8");
+    const calls = [...body.matchAll(/\bsealDataset\(([^)]*)\)/gu)];
+    expect(calls).toHaveLength(1);
+    const args = calls[0]![1]
+      .split(",")
+      .map((argument) => argument.trim())
+      .filter((argument) => argument.length > 0);
+    expect(args).toEqual([
+      "manifest",
+      "records",
+      "options.corpusPolicy ?? RELEASE_CORPUS_POLICY",
+      "observed",
+    ]);
+    // A release corpus cannot be handed anything else: the command refuses an explicit
+    // policy for `scientificUse: "release"` before it seals.
+    expect(body).toMatch(/CORPUS_POLICY_OVERRIDE_FORBIDDEN/u);
+    // And the caller declares no frame of its own, so the vocabulary the guard reads
+    // is the frozen one for every release corpus.
+    expect(body).not.toMatch(/requiredHumanSourceTypes/u);
+    // It reads the manifest's own use and hands the manifest itself through, so the
+    // release arm is entered on the corpus's own declaration rather than on a flag the
+    // command computes.
+    expect(body).toMatch(/manifest\.scientificUse === "release"/u);
+    expect(body).not.toMatch(/scientificUse\s*[:=]\s*"release"/u);
   });
 });

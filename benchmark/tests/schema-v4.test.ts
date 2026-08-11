@@ -581,4 +581,33 @@ describe("the dataset-level guards reach a v4 record", () => {
       /resolves to no record in the dataset/u,
     );
   });
+
+  it("accepts a human row that declares no quota cell, and one that declares a cell outside the frame", () => {
+    // `humanSourceType` is a FREE, OPTIONAL string at the record schema, and it stays
+    // one. The quota frame is a property of a corpus policy
+    // (`CorpusPolicy.requiredHumanSourceTypes`), and this validator sees one record
+    // and no policy — so a mandatory field here could impose the PRESENCE of a
+    // spelling and never MEMBERSHIP in a list, which is the actual criterion. A row
+    // declaring `blog` four thousand times would satisfy a mandatory field and be
+    // exactly as uncovered by the published per-cell table as a row declaring nothing.
+    const withoutCell = v4Human();
+    delete withoutCell.humanSourceType;
+    expect(
+      validateBenchmarkRecordV4(withoutCell).humanSourceType,
+    ).toBeUndefined();
+
+    const outsideFrame = validateBenchmarkRecordV4({
+      ...v4Human(),
+      humanSourceType: "blog",
+    });
+    expect(outsideFrame.humanSourceType).toBe("blog");
+    // What refuses either row is `sealDataset`, and only for `scientificUse:
+    // "release"` (benchmark/tests/dataset-manifest.test.ts, "the declared frame
+    // partitions the human class of a release corpus"). An empty string is still
+    // refused, because that is the schema's own rule about non-empty strings and not
+    // a rule about the frame.
+    expect(() =>
+      validateBenchmarkRecordV4({ ...v4Human(), humanSourceType: "" }),
+    ).toThrow(/humanSourceType/u);
+  });
 });

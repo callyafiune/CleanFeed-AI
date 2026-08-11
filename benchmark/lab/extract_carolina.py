@@ -34,6 +34,7 @@ Usage (refuses, by design):
 from __future__ import annotations
 
 import argparse
+import hashlib
 import re
 import xml.etree.ElementTree as ET
 import zipfile
@@ -214,6 +215,31 @@ def parse_document(element: ET.Element) -> tuple[str | None, str | None, str]:
     return license_key, download_date, "\n\n".join(paragraphs)
 
 
+def extraction_run_id(snapshot_version: str) -> str:
+    """The execution that reads the material, named so a third party can recompute it.
+
+    DERIVED and not declared: which extraction module ran, over which version of the
+    material, plus the digest of this module's own bytes. Nobody types it, so nobody can
+    reuse one run's name for another run — different code or different material yields a
+    different id, and anyone with the file on disk gets the same value.
+
+    What it names is the MODULE and the material version, and nothing wider. The digest
+    covers this file only, not `common` or `group_axes`; and two invocations differing only
+    in the writer's selection parameters (`--limit`, `--sample-rate`, `--exclude`) share
+    the id. The emptiness of `snapshot_version` is not checked here on purpose:
+    `group_axes.material_batch_id` already refuses it by name, and a second authority over
+    one fact is how two spellings of a rule start disagreeing.
+
+    DUPLICATED, and the copy has to agree: `extract_wikipedia` carries the same expression,
+    whose natural home is `group_axes` beside `material_batch_id`.
+    `test_extractors.ExtractionRunProducerTests` recomputes the formula and pins both, so a
+    drift between them is a failure rather than two spellings.
+    """
+    module = Path(__file__).resolve()
+    digest = hashlib.sha256(module.read_bytes()).hexdigest()[:12]
+    return f"er_{module.stem}_{group_axes.axis_token(snapshot_version)}_{digest}"
+
+
 def extract(
     input_path: Path,
     writer: CandidateWriter,
@@ -267,6 +293,7 @@ def extract(
             f"{admissible_typologies()})"
         )
     material_batch = group_axes.material_batch_id(snapshot_version)
+    extraction_run = extraction_run_id(snapshot_version)
     with zipfile.ZipFile(str(input_path)) as archive:
         members: list[tuple[zipfile.ZipInfo, str]] = []
         for info in archive.infolist():
@@ -329,6 +356,16 @@ def extract(
                                 # than deriving one from the stratum, so this is the
                                 # only place the value can come from.
                                 "sourceMaterialBatch": material_batch,
+                                # The EXECUTION that wrote this line, which is a
+                                # different fact from the acquisition above:
+                                # re-reading one download is processing, not
+                                # acquisition. Stamped per line and here, because
+                                # only the execution that opened the material can
+                                # name itself — a later layer knows the pool FILE,
+                                # and one file can hold the lines of more than one
+                                # run (the writer appends). One execution over the
+                                # package, so every typology it feeds shares it.
+                                "extractionRun": extraction_run,
                                 "groupAxes": {
                                     # The MEMBER FILE. One member holds many TEI
                                     # documents from one crawl of one domain, so they

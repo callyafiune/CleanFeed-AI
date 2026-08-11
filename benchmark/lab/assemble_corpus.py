@@ -777,12 +777,23 @@ class MissingMaterialBatch(UnwritableInV3):
 class MissingExtractionRun(UnwritableInV3):
     """A human row that does not name the extraction RUN that wrote it.
 
-    Diagnostic axis, non-negotiable state: `known` on every human row. The run is our
-    own execution, so a gap there is a defect in a pipeline we control, and the loader
-    is the layer that knows it — the pool FILE is the run, and only the reader knows
-    which file it opened. Deriving the run from the stratum instead would merge rows
-    written by different executions into one invented run and destroy the only handle
-    that traces a defect back to the execution that produced it.
+    Diagnostic axis, non-negotiable state: `AXIS_STATE_RULE.extractionRun` admits only
+    `known` on a human row, so there is no eligibility-priced escape here — the row is
+    inexpressible and leaves the corpus, counted like every other unwritable line.
+
+    Only the execution that OPENED the material can name itself, so the extractor stamps
+    it per line and no layer of ours derives one. The pool FILE is not the run:
+    `CandidateWriter` takes `append=True`/`start_sequence`, so one file can hold the lines
+    of more than one execution, and a value keyed on its name would merge them into a run
+    that never ran — destroying the one handle that traces a defect back to the execution
+    that produced it. Deriving it from the stratum instead does the same thing, one level
+    coarser.
+
+    What this refusal does NOT establish: that the value came from an extractor. Nothing
+    resolves a run id against the reviewed manifest — it is a frozen diagnostic axis, with
+    no analogue of `assertMaterialBatchesResolve` — so a pool edited by hand passes. The
+    extractor's id is DERIVED from its own bytes and the material version, which makes it
+    recomputable by a third party; that is the whole of the guarantee.
     """
 
 
@@ -1361,9 +1372,12 @@ def human_record(
     extraction_run = str(meta.get("extractionRun") or "")
     if not extraction_run:
         raise MissingExtractionRun(
-            f"human candidate {rec_id!r} names no extractionRun. The pool FILE is the run "
-            "and the loader stamps it; deriving one from the stratum would merge rows "
-            "written by different executions into one invented run"
+            f"human candidate {rec_id!r} names no extractionRun, so the execution that "
+            "read its material is not recoverable from the row. Only the execution that "
+            "opened the material can name itself, and no layer here derives one — not from "
+            "the stratum, and not from the name of the pool file this row was read out of. "
+            "Re-extract the pool with the extractor whose source id this candidate id "
+            "already carries (benchmark/lab/extract_*.py --snapshot-version <version>)"
         )
     # AFTER every refusal, so a dropped candidate contributes no entry: the index is
     # the evidence for rows that exist, and a registration listed there for a row the
@@ -1445,9 +1459,12 @@ def human_record(
             "generationBatch": group_axes.not_applicable(
                 group_axes.NOT_A_GENERATED_ROW
             ),
-            # The EXTRACTION RUN that wrote the row: a real execution shared by every
-            # candidate of one pool file, not a per-record token. Diagnostic — it names
-            # no dependence, and it exists so a defect traces back to the run.
+            # The EXTRACTION RUN that wrote the row, as the EXTRACTOR named it: which
+            # extraction module read which version of the material. Diagnostic — it names
+            # no dependence, and it exists so a defect traces back to the execution.
+            # CARRIED and never derived: this builder cannot tell a token an extractor
+            # computed from one somebody typed into the pool, and what it imposes is that
+            # a value exists and that no layer of ours invented it.
             "extractionRun": group_axes.known(
                 group_axes.axis_token(extraction_run)
             ),
@@ -2666,14 +2683,12 @@ def load_humans(cand: Path = CAND) -> list[dict]:
     for fname in ("wikipedia_fresh",):
         for r in read_jsonl(cand / f"{fname}.jsonl"):
             if r["domainSource"] in REGISTER:
-                # The EXTRACTION RUN this row came out of: a real execution shared by
-                # every candidate of one pool file. Stamped by the loader rather than the
-                # extractor because the pool FILE is the run, and only the reader knows
-                # which file it opened. `sourceMaterialBatch` is deliberately NOT stamped
-                # here — the loader knows the file, not the acquisition event, and only
-                # the extractor that opened the material can name it.
-                meta = r.setdefault("meta", {})
-                meta.setdefault("extractionRun", f"extraction_{fname}")
+                # NOTHING is stamped here, and the absence is the point. This loader knows
+                # which FILE it opened, and a file is not an execution: `CandidateWriter`
+                # takes `append=True`/`start_sequence`, so one pool file can hold the lines
+                # of more than one run. Both batch axes — the acquisition event and the
+                # execution that read it — come from the extractor that opened the
+                # material, and `human_record` refuses a line carrying neither, counted.
                 rows.append(r)
     # reserved-clean humans (never trained, not mixed parents) reuse the same
     # candidate shape; their family field is the domainSource.
@@ -2691,15 +2706,16 @@ def load_humans(cand: Path = CAND) -> list[dict]:
                         "text": r["text"],
                         "wordCount": len(r["text"].split()),
                         "domainSource": fam,
-                        # No identity meta and no licence: these rows predate the
-                        # extractors that emit either, so their author/source axes are
-                        # `unknown`, they carry no date evidence, they name no acquisition
-                        # event and no document licence. `human_record` refuses them
-                        # (MissingDocumentLicense is the first of the four to fire) and
-                        # main() counts them — a v2 corpus could take them and a sealed
-                        # one cannot, which is a real cost of the reserved pool and not
-                        # something to fill in by hand.
-                        "meta": {"extractionRun": "extraction_reserved"},
+                        # EMPTY, and every gap in it is a fact about these rows: they
+                        # predate the extractors that emit identity, so their author/source
+                        # axes are `unknown`, they carry no date evidence, and they name no
+                        # acquisition event, no extraction run and no document licence.
+                        # `human_record` refuses them (MissingDocumentLicense is the first
+                        # of the four to fire) and main() counts them — a v2 corpus could
+                        # take them and a sealed one cannot, which is a real cost of the
+                        # reserved pool and not something to fill in by hand. Naming a run
+                        # for them here would be a name for an execution that never ran.
+                        "meta": {},
                     }
                 )
     return rows

@@ -32,6 +32,7 @@ import {
   generatorFamilyOf,
   type GeneratorFamily,
 } from "./generator-family.ts";
+import { isHumanNegative } from "./metrics.ts";
 import { PREREGISTRATION_V4 } from "./preregistration-v4.ts";
 import {
   ALL_GROUP_AXES,
@@ -668,6 +669,94 @@ function reviewClaimShortfall(
 }
 
 /**
+ * One human row that no declared quota cell covers, with the cell it declared.
+ *
+ * `spelling: undefined` is a row that declares no cell at all; a string is a cell
+ * the declared frame does not name. The two are separate POPULATIONS and not one
+ * "bad row" count, because the act that answers them differs: the first is a row
+ * missing a value, the second is a frame missing a cell.
+ */
+type OutOfFrameHumanRow = { id: string; spelling: string | undefined };
+
+/** The breakdown's key for the rows that declare no cell at all. */
+const NO_CELL_DECLARED = "(none declared)";
+
+/**
+ * How many distinct spellings the refusal names before it counts the rest.
+ *
+ * A bound is required rather than tidy: the offending spellings are an OPEN set —
+ * `humanSourceType` is free string in every schema version, so 4.000 human rows can
+ * carry 4.000 distinct values — unlike the four closed reasons of
+ * {@link REVIEW_SHORTFALL_ACTION}. Named once so the guard and the "+k more"
+ * suffix cannot disagree about the number.
+ */
+const OUT_OF_FRAME_SPELLING_LIMIT = 5;
+
+/**
+ * The act that answers each way a human row falls outside the frame, one sentence
+ * per population, each ENDING WITH A PERIOD because
+ * {@link cellMembershipShortfall} concatenates the acts of the populations PRESENT
+ * and two acts without a terminator read as one run-on sentence.
+ *
+ * Only the populations present are printed: a corpus whose rows merely omit the
+ * field must not be told to amend its frame, which names no cell those rows could
+ * be moved to.
+ */
+const OUT_OF_FRAME_ACTION = {
+  absent:
+    "A human row that declares no quota cell belongs to no published cell, so it either receives the cell of the material it was drawn from or leaves the release.",
+  spelled:
+    "A human row whose declared cell is outside the frame is covered by no published ceiling, so either the frame is amended to declare that cell or the row leaves the release.",
+} as const;
+
+/**
+ * The membership refusal: how many human rows of how many, the breakdown by
+ * observed spelling, the first row's id, the declared cells, and the act of each
+ * population present.
+ *
+ * The id is the parsed `id`, which `pseudonym` has already established as an opaque
+ * token, and the spellings are cell vocabulary. Nothing else of a row may enter this
+ * sentence — it is written to a command's error output.
+ */
+function cellMembershipShortfall(
+  offenders: readonly [OutOfFrameHumanRow, ...OutOfFrameHumanRow[]],
+  humanLines: number,
+  declaredCells: readonly string[],
+): string {
+  let absent = 0;
+  const bySpelling = new Map<string, number>();
+  for (const offender of offenders) {
+    if (offender.spelling === undefined) {
+      absent += 1;
+      continue;
+    }
+    bySpelling.set(
+      offender.spelling,
+      (bySpelling.get(offender.spelling) ?? 0) + 1,
+    );
+  }
+  // The rows that declare nothing come first and the declared spellings follow in
+  // one fixed order, so the sentence does not depend on row order.
+  const entries = [
+    ...(absent > 0 ? [`${absent} ${NO_CELL_DECLARED}`] : []),
+    ...[...bySpelling.keys()]
+      .sort((a, b) => (a < b ? -1 : a > b ? 1 : 0))
+      .map((spelling) => `${bySpelling.get(spelling)} ${spelling}`),
+  ];
+  const shown = entries.slice(0, OUT_OF_FRAME_SPELLING_LIMIT);
+  const omitted = entries.length - shown.length;
+  const breakdown =
+    omitted > 0
+      ? `${shown.join(", ")}, +${omitted} more spellings`
+      : shown.join(", ");
+  const actions = [
+    ...(absent > 0 ? [OUT_OF_FRAME_ACTION.absent] : []),
+    ...(bySpelling.size > 0 ? [OUT_OF_FRAME_ACTION.spelled] : []),
+  ].join(" ");
+  return `a release corpus requires every human row to declare one of its quota cells: ${offenders.length} of ${humanLines} human rows declare none (${breakdown}), first ${offenders[0].id}; declared cells: ${declaredCells.join(", ")}. ${actions}`;
+}
+
+/**
  * Counts the label-basis evidence of a corpus, as numbers.
  *
  * Every basis the frozen policy allows gets a row even when it is zero, so a basis
@@ -820,6 +909,17 @@ export async function sealDataset(
   // failed. Collected rather than thrown on, because "how many records support the
   // claim" is a question about the CORPUS and is decided once the loop is done.
   const unsustained: UnsustainedReview[] = [];
+  // The quota-cell tally of the HUMAN class, and the human rows no declared cell
+  // covers. Private to the seal: `sourceTypes` above is the PUBLISHED table and
+  // counts every record that carries the field, which is a different population —
+  // the schema lets a generated row carry a `humanSourceType`, and one such row
+  // makes a cell with zero human rows look covered.
+  const humanCells: Record<string, number> = {};
+  const outOfFrameHumanRows: OutOfFrameHumanRow[] = [];
+  // The denominator of the membership refusal, counted over the same predicate the
+  // guard judges rather than read off `counts.human`, so the sentence cannot report
+  // a fraction of a population it did not measure.
+  let humanLines = 0;
 
   for (const raw of records) {
     const record = validateBenchmarkRecord(raw);
@@ -891,8 +991,29 @@ export async function sealDataset(
     }
 
     counts[record.label] += 1;
+    // The PUBLISHED table, over every record that carries the field whatever its
+    // label. The `!== undefined` protection decides which keys exist, and the keys
+    // are inside `auditDigest`: a row that declares no cell mints no key here, so a
+    // default value would rename absence into a cell every reader of the audit
+    // would count.
     if (record.humanSourceType !== undefined) {
       increment(sourceTypes, record.humanSourceType);
+    }
+    // The membership of the human class in the declared frame, collected for every
+    // record of every schema version and priced only on a release corpus below.
+    // `isHumanNegative` is imported and not re-spelled as `label === "human"`: the
+    // composition gate that counts the per-cell denominators reads its rows through
+    // the same predicate, and a second spelling here could disagree with it.
+    if (isHumanNegative(record)) {
+      humanLines += 1;
+      const cell = record.humanSourceType;
+      if (cell !== undefined) increment(humanCells, cell);
+      if (
+        cell === undefined ||
+        !policy.requiredHumanSourceTypes.includes(cell)
+      ) {
+        outOfFrameHumanRows.push({ id: record.id, spelling: cell });
+      }
     }
     if (record.hardNegativeFamily !== undefined) {
       increment(hardNegativeFamilies, record.hardNegativeFamily);
@@ -913,8 +1034,40 @@ export async function sealDataset(
 
   const releaseEligible = m.scientificUse === "release";
   if (releaseEligible) {
+    // THE FRAME IS A PARTITION OF THE HUMAN CLASS, and these two guards are its two
+    // halves. The release claim is published as a table with one row per declared
+    // cell, and the denominator of each row is that cell — so a human row that
+    // declares no cell of the frame is described by no row of the table, and every
+    // ceiling the table publishes is silent about it.
+    //
+    // Membership first and presence second, because the order is cause before
+    // consequence: rows that declare no cell are why a cell can hold none.
+    //
+    // What this does NOT reach: the row is still ACCEPTED by every schema version,
+    // which keeps `humanSourceType` free string and optional — the frame is a
+    // property of a corpus policy, not of a record. So an `infrastructure-only`
+    // corpus still seals with such rows, and downstream the split audit, the slices
+    // and the composition gate still drop them without a word. A release corpus is
+    // out of that silence only because `runSplit` admits a corpus on
+    // `dataset-audit.json`, which is this function's output, and that is the whole
+    // of the claim.
+    const [firstOutOfFrame, ...restOutOfFrame] = outOfFrameHumanRows;
+    if (firstOutOfFrame !== undefined) {
+      fail(
+        "DATASET_COVERAGE_INVALID",
+        cellMembershipShortfall(
+          [firstOutOfFrame, ...restOutOfFrame],
+          humanLines,
+          policy.requiredHumanSourceTypes,
+        ),
+      );
+    }
+    // The vocabulary is the POLICY's, never `PREREGISTRATION_V4`'s cell list: an
+    // `infrastructure-only` corpus is legitimately sealed against another
+    // composition, and the agreement between the frozen frame and the release policy
+    // is held by test in benchmark/tests/preregistration-v4.test.ts.
     for (const sourceType of policy.requiredHumanSourceTypes) {
-      if ((sourceTypes[sourceType] ?? 0) === 0) {
+      if ((humanCells[sourceType] ?? 0) === 0) {
         fail(
           "DATASET_COVERAGE_INVALID",
           `release corpus is missing required human source type "${sourceType}"`,

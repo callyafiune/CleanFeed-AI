@@ -13,6 +13,14 @@
 // the only seed is the one recorded in the split policy.
 
 import { canonicalSha256 } from "../contracts/canonical-json.ts";
+import {
+  COMPOSITION_GATE_PARTITION,
+  auditReleaseComposition,
+  compositionBoundsOf,
+  compositionBreachesOf,
+  type CellComposition,
+  type CompositionReport,
+} from "./composition-gate.ts";
 import { computeDatasetDigest } from "./digests.ts";
 import {
   GeneratorFamilyError,
@@ -76,6 +84,23 @@ export interface SplitArtifact {
    * (see the pre-registered floor); this field fixes what was actually composed.
    */
   compositionAttestation: string | null;
+  /**
+   * The composition gate's VERDICT over the blind block, or `null` for a corpus that is not
+   * `scientificUse: "release"`.
+   *
+   * DERIVED, never supplied: the three quantities the pre-registered bounds are written in
+   * — eligible human-negative record-lines, independent sampling units, and lines per origin
+   * document — are counted per quota cell out of the partition this artifact seals, so no
+   * caller can hand a receipt in and no number in it can be chosen.
+   *
+   * It RECORDS and does not JUDGE: a receipt whose `passed` is false is sealed as faithfully
+   * as one that passes, and refusing to freeze such a corpus belongs to
+   * benchmark/commands/split.ts, the one path that writes an artifact to disk. What sealing
+   * buys is the LINK: the numbers a release was accepted against sit inside the
+   * `splitDigest` projection, so everything that already compares that digest attests them
+   * too, and they can be recomputed from the corpus rather than believed.
+   */
+  compositionReceipt: CompositionReport | null;
   cutoffs: SplitAudit["cutoffs"];
   counts: Record<Partition, number>;
   heldOutGeneratorFamilies: GeneratorFamily[];
@@ -111,6 +136,7 @@ const SEALED_ARTIFACT_KEYS: Record<keyof SplitArtifact, true> = {
   assignmentsDigest: true,
   splitDigest: true,
   compositionAttestation: true,
+  compositionReceipt: true,
   cutoffs: true,
   counts: true,
   heldOutGeneratorFamilies: true,
@@ -137,6 +163,35 @@ const AUDIT_CLASS_LABELS: Record<BenchmarkLabel, true> = {
   human: true,
   ai: true,
   mixed: true,
+};
+
+/**
+ * The exact keys a sealed composition receipt and each of its per-cell rows may carry, keyed
+ * by the GATE's own types so a quantity added there and not listed here is a COMPILE error.
+ *
+ * The runtime need is different from the root's: `splitDigest` hashes the receipt WHOLE, so a
+ * key added inside it IS covered — and re-sealing restores that agreement, which is what a
+ * forger does. What the key set buys is that a number nothing reads cannot sit beside the ones
+ * a release was accepted against and be taken for one of them.
+ */
+const COMPOSITION_RECEIPT_KEYS: Record<keyof CompositionReport, true> = {
+  partition: true,
+  cells: true,
+  lineFloor: true,
+  unitFloor: true,
+  maximumLinesPerOriginDocument: true,
+  breaches: true,
+  passed: true,
+};
+
+const CELL_COMPOSITION_KEYS: Record<keyof CellComposition, true> = {
+  cell: true,
+  humanNegativeLines: true,
+  ineligibleLines: true,
+  independentUnits: true,
+  originDocuments: true,
+  linesWithoutOriginDocument: true,
+  linesInBusiestOriginDocument: true,
 };
 
 /**
@@ -301,6 +356,13 @@ export async function buildSplitArtifact(
     manifest.scientificUse === "release"
       ? await compositionAttestationOf(records, assignments)
       : null;
+  // The gate runs ONCE for a release, here, and its verdict is sealed instead of logged: the
+  // three quantities per quota cell are counted off the partition being sealed, so the
+  // receipt cannot describe another one.
+  const compositionReceipt =
+    manifest.scientificUse === "release"
+      ? auditReleaseComposition(split)
+      : null;
   const algorithmDigest = await canonicalSha256({
     algorithm: ALGORITHM,
     policy,
@@ -325,6 +387,7 @@ export async function buildSplitArtifact(
     seed: policy.seed,
     policy,
     compositionAttestation,
+    compositionReceipt,
     assignments,
     assignmentsDigest,
     splitDigest: "",
@@ -432,6 +495,36 @@ export async function validateSplitArtifact(
   )) {
     byPartition[assignment.partition].push(
       recordById.get(assignment.id) as BenchmarkRecord,
+    );
+  }
+
+  // The RECEIPT, recounted from the partition the assignments describe. Every dataset-free
+  // guard proves the receipt is internally coherent, which a re-sealed forgery is by
+  // construction; none of them can decide WHO was counted — whether those record-lines are
+  // human negatives, whether they clear the word floor, whether their origin documents are
+  // distinct. This function is the one entry point that has the records, so it is the only
+  // place that can, and it compares by canonical digest rather than by reference.
+  if (manifest.scientificUse === "release") {
+    const recountedReceipt = auditReleaseComposition(byPartition);
+    if (
+      (await canonicalSha256(artifact.compositionReceipt)) !==
+      (await canonicalSha256(recountedReceipt))
+    ) {
+      throw new SplitArtifactError(
+        "SPLIT_ARTIFACT_COMPOSITION_RECEIPT_MISMATCH",
+        "compositionReceipt does not match the composition the dataset and the assignments " +
+          "produce",
+      );
+    }
+  } else if (artifact.compositionReceipt !== null) {
+    // UNREACHABLE from here, and named rather than dropped so that a lock which moves fails
+    // by name instead of obscurely: a receipt without an attestation is already refused as
+    // UNPAIRED by the dataset-independent guard, and a non-release artifact carrying BOTH is
+    // refused as an unexpected ATTESTATION above. This is the second lock, which is why a
+    // mutation audit finds no test that reaches it.
+    throw new SplitArtifactError(
+      "SPLIT_ARTIFACT_COMPOSITION_RECEIPT_UNEXPECTED",
+      `a ${manifest.scientificUse} corpus must not carry a composition receipt`,
     );
   }
   // The RESERVE, against the manifest this validator was handed — not against the copy
@@ -685,6 +778,9 @@ async function assertDatasetIndependentInvariants(
     AUDIT_CLASS_LABELS,
     "SPLIT_ARTIFACT_UNKNOWN_CLASS_LABEL",
   );
+  if (artifact.compositionReceipt !== null) {
+    assertCompositionReceiptShape(artifact.compositionReceipt);
+  }
 
   if (artifact.schemaVersion !== SCHEMA_VERSION) {
     throw new SplitArtifactError(
@@ -845,6 +941,23 @@ async function assertDatasetIndependentInvariants(
       "compositionAttestation must be null or a lowercase 64-character sha256",
     );
   }
+
+  // The two composition fields stand or fall TOGETHER: both are derived from
+  // `scientificUse: "release"` and from nothing else, so one present without the other
+  // describes a corpus that is release and is not. It is also what makes the PUBLICATION
+  // path demand a receipt without a line changing in benchmark/commands/publish-evidence.ts:
+  // that command already refuses a release whose attestation is null, so release implies
+  // attestation and attestation implies receipt.
+  const receipt: CompositionReport | null = artifact.compositionReceipt;
+  if ((attestation === null) !== (receipt === null)) {
+    throw new SplitArtifactError(
+      "SPLIT_ARTIFACT_COMPOSITION_RECEIPT_UNPAIRED",
+      `compositionAttestation is ${attestation === null ? "null" : "present"} while ` +
+        `compositionReceipt is ${receipt === null ? "null" : "present"}: both are derived ` +
+        "from the same corpus and cannot disagree",
+    );
+  }
+  if (receipt !== null) await assertCompositionReceiptCoherent(receipt);
 
   // The pre-registered seed HERE, not only in the full validator: the publication path
   // reaches this guard alone, and an arbitrary seed sealed into an artifact is decidable
@@ -1073,6 +1186,215 @@ async function assertDatasetIndependentInvariants(
 }
 
 /**
+ * The receipt's SHAPE: an object carrying exactly the gate's keys, whose `cells` is an array
+ * of rows carrying exactly the gate's per-cell keys and whose `breaches` is an array.
+ *
+ * Runs before any count under those keys is read, for the reason the root key check exists: a
+ * digest computed over an enumerated projection agrees with itself whatever else the parsed
+ * object carries, so an unknown key beside the counts rides along uninspected.
+ */
+function assertCompositionReceiptShape(receipt: unknown): void {
+  const code = "SPLIT_ARTIFACT_COMPOSITION_RECEIPT_MALFORMED";
+  if (
+    typeof receipt !== "object" ||
+    receipt === null ||
+    Array.isArray(receipt)
+  ) {
+    throw new SplitArtifactError(
+      code,
+      `compositionReceipt must be null or an object, received ${Array.isArray(receipt) ? "array" : typeof receipt}`,
+    );
+  }
+  assertExactKeys(
+    "compositionReceipt",
+    receipt,
+    COMPOSITION_RECEIPT_KEYS,
+    code,
+  );
+  const { cells, breaches } = receipt as { cells: unknown; breaches: unknown };
+  for (const [field, value] of [
+    ["cells", cells],
+    ["breaches", breaches],
+  ] as const) {
+    if (!Array.isArray(value)) {
+      throw new SplitArtifactError(
+        code,
+        `compositionReceipt.${field} must be an array, received ${typeof value}`,
+      );
+    }
+  }
+  for (const [index, row] of (cells as unknown[]).entries()) {
+    if (typeof row !== "object" || row === null || Array.isArray(row)) {
+      throw new SplitArtifactError(
+        code,
+        `compositionReceipt.cells[${index}] must be an object, received ${Array.isArray(row) ? "array" : typeof row}`,
+      );
+    }
+    assertExactKeys(
+      `compositionReceipt.cells[${index}]`,
+      row,
+      CELL_COMPOSITION_KEYS,
+      code,
+    );
+  }
+}
+
+/**
+ * Everything about a sealed receipt that is decidable WITHOUT the dataset: the counts are
+ * counts, their arithmetic is one a tally can have, the bounds and the cell list are the
+ * pre-registered ones, and the breach list and the verdict follow from the cells.
+ *
+ * What it cannot decide, and does not claim: WHO was counted. Whether those record-lines are
+ * human negatives, whether they clear the word floor, whether their origin documents are
+ * distinct — only a recompute against the corpus decides that, and it lives in
+ * {@link validateSplitArtifact}. It also does not require `passed`: recording a verdict is
+ * not imposing it, and the refusal to freeze a short corpus belongs to the command that
+ * writes the artifact.
+ */
+async function assertCompositionReceiptCoherent(
+  receipt: CompositionReport,
+): Promise<void> {
+  const malformed = "SPLIT_ARTIFACT_COMPOSITION_RECEIPT_MALFORMED";
+  // Derived from the key vocabulary rather than written out: every key but `cell` IS one of
+  // the counts, so a quantity added to the contract is type-checked here by construction
+  // instead of being silently skipped.
+  const countedQuantities = (
+    Object.keys(CELL_COMPOSITION_KEYS) as Array<keyof CellComposition>
+  ).filter((key) => key !== "cell");
+
+  for (const [index, row] of receipt.cells.entries()) {
+    const where = `compositionReceipt.cells[${index}]`;
+    assertNonEmptyString(`${where}.cell`, row.cell, malformed);
+    const counts = row as unknown as Record<string, unknown>;
+    for (const quantity of countedQuantities) {
+      const value = counts[quantity];
+      // `Number.isInteger`, NOT `assertFiniteNumber`, and the difference is the whole point:
+      // relational comparison COERCES, so `"300" < 300` is `false` and a count that is the
+      // string "300" clears a floor in silence — while the recomputed breach list agrees with
+      // the sealed one, because both sides coerce identically. A fraction is refused for the
+      // same reason a count of 2.5 lines is not a count.
+      if (!Number.isInteger(value) || (value as number) < 0) {
+        throw new SplitArtifactError(
+          malformed,
+          `${where}.${quantity} must be an integer >= 0, received ${JSON.stringify(value)}`,
+        );
+      }
+    }
+
+    // WELL-FORMATION, which is neither the criterion nor an anti-forgery device: it is the
+    // shape every tally the gate can produce has. Each counted line sits in exactly one
+    // bucket — an origin document, or the ONE bucket holding the lines whose origin was not
+    // recovered — so the lines cannot be fewer than the documents plus that bucket; units are
+    // components OF those lines; and the busiest bucket is the maximum over the buckets, the
+    // unrecoverable one included, so it bounds that bucket from above and is at least one
+    // whenever any line was counted. What this refuses is the direction that OVER-states
+    // power: 300 lines of unrecoverable origin published behind a busiest document of one.
+    for (const [holds, description] of [
+      [
+        row.humanNegativeLines >=
+          row.originDocuments + row.linesWithoutOriginDocument,
+        `humanNegativeLines ${row.humanNegativeLines} is fewer than originDocuments ` +
+          `${row.originDocuments} plus linesWithoutOriginDocument ${row.linesWithoutOriginDocument}`,
+      ],
+      [
+        row.independentUnits <= row.humanNegativeLines,
+        `independentUnits ${row.independentUnits} exceeds humanNegativeLines ${row.humanNegativeLines}`,
+      ],
+      [
+        row.linesInBusiestOriginDocument <= row.humanNegativeLines,
+        `linesInBusiestOriginDocument ${row.linesInBusiestOriginDocument} exceeds ` +
+          `humanNegativeLines ${row.humanNegativeLines}`,
+      ],
+      [
+        row.linesWithoutOriginDocument <= row.linesInBusiestOriginDocument,
+        `linesWithoutOriginDocument ${row.linesWithoutOriginDocument} exceeds the busiest ` +
+          `origin document's ${row.linesInBusiestOriginDocument}, and that bucket is one of them`,
+      ],
+      [
+        row.humanNegativeLines === 0 || row.linesInBusiestOriginDocument >= 1,
+        `humanNegativeLines ${row.humanNegativeLines} were counted into no origin document bucket`,
+      ],
+    ] as const) {
+      if (!holds) {
+        throw new SplitArtifactError(
+          malformed,
+          `${where} (${row.cell}): ${description}`,
+        );
+      }
+    }
+  }
+
+  // The AUTHORITY OUTSIDE the file. Everything above proves the receipt agrees with itself,
+  // which a re-sealed forgery does by construction: lower both floors to whatever the cells
+  // happen to hold, re-derive an empty breach list, re-seal, and an internally perfect receipt
+  // publishes a verdict measured against a bound nobody pre-registered. So the three limits
+  // are compared against the frozen pre-registration and NEVER against the receipt's own
+  // numbers, and the cell list against the declared quota axis — in ORDER, because the rows
+  // are the pre-registered cells and a receipt naming other ones measured other cells.
+  const notPreRegistered =
+    "SPLIT_ARTIFACT_COMPOSITION_RECEIPT_NOT_PREREGISTERED";
+  if (receipt.partition !== COMPOSITION_GATE_PARTITION) {
+    throw new SplitArtifactError(
+      notPreRegistered,
+      `compositionReceipt.partition is "${String(receipt.partition)}", not the blind block ` +
+        `"${COMPOSITION_GATE_PARTITION}" the pre-registered bounds are about`,
+    );
+  }
+  const declaredCells = PREREGISTRATION_V4.preRegistration.quotaAxis.cells;
+  const sealedCells = receipt.cells.map((row) => row.cell);
+  if (
+    sealedCells.length !== declaredCells.length ||
+    sealedCells.some((cell, index) => cell !== declaredCells[index])
+  ) {
+    throw new SplitArtifactError(
+      notPreRegistered,
+      `compositionReceipt names cells [${sealedCells.join(", ")}] and the pre-registered ` +
+        `quota axis declares [${declaredCells.join(", ")}]`,
+    );
+  }
+  const bounds = compositionBoundsOf();
+  for (const [field, sealed, preRegistered] of [
+    ["lineFloor", receipt.lineFloor, bounds.lineFloor],
+    ["unitFloor", receipt.unitFloor, bounds.unitFloor],
+    [
+      "maximumLinesPerOriginDocument",
+      receipt.maximumLinesPerOriginDocument,
+      bounds.maximumLinesPerOriginDocument,
+    ],
+  ] as const) {
+    if (sealed !== preRegistered) {
+      throw new SplitArtifactError(
+        notPreRegistered,
+        `compositionReceipt.${field} is ${String(sealed)}, not the pre-registered ${preRegistered}`,
+      );
+    }
+  }
+
+  // The breach list RECOMPUTED by the criterion itself — called, never copied, so the three
+  // limits have one spelling — and the verdict against the list it publishes. Two distinct
+  // refusals: the digest catches a list that was emptied over cells that still miss a bound,
+  // the equivalence catches a verdict flipped over breaches that are still there.
+  const incoherent = "SPLIT_ARTIFACT_COMPOSITION_RECEIPT_INCOHERENT";
+  const recomputed = compositionBreachesOf(receipt.cells, bounds);
+  if (
+    (await canonicalSha256(receipt.breaches)) !==
+    (await canonicalSha256(recomputed))
+  ) {
+    throw new SplitArtifactError(
+      incoherent,
+      `compositionReceipt publishes ${receipt.breaches.length} breach(es) where the ` +
+        `pre-registered bounds produce ${recomputed.length} over the same cells`,
+    );
+  }
+  if (receipt.passed !== (receipt.breaches.length === 0)) {
+    throw new SplitArtifactError(
+      incoherent,
+      `compositionReceipt.passed is ${String(receipt.passed)} over ${receipt.breaches.length} breach(es)`,
+    );
+  }
+}
+
+/**
  * The audit's OBSERVED per-partition boundaries, published verbatim.
  *
  * They are deliberately not turned back into the four cut timestamps the search
@@ -1112,6 +1434,7 @@ export function withoutSplitDigest(
     seed: artifact.seed,
     policy: artifact.policy,
     compositionAttestation: artifact.compositionAttestation,
+    compositionReceipt: artifact.compositionReceipt,
     assignments: artifact.assignments,
     assignmentsDigest: artifact.assignmentsDigest,
     cutoffs: artifact.cutoffs,
