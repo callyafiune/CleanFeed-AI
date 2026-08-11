@@ -5139,3 +5139,83 @@ canônico; e atestado e recibo são conferidos **como par**, porque os dois deri
 
 A alternativa recusada — arquivo ao lado do artefato — falha no princípio: um recibo que não viaja dentro do
 que ele atesta é atestado de nada.
+
+---
+
+## § T — U4: a união modela material, o aparelho é reportado, e o carimbo é por componente (2026-08-11)
+
+A emenda que tirou `promptTemplate` e `generatorVersion` da lista de união. Quatro decisões metodológicas,
+levantadas por quem desenhou e implementou e conferidas na integração.
+
+### T.1 — tirar um eixo da união e passar a REPORTÁ-LO
+
+**Decisão.** Os dois eixos de receita saem de `GROUP_KEYS` e viram REPORTADOS; a dependência de prompt passa
+a ser carregada pela **tabela de reamostragem congelada**, não pela partição.
+
+- **Kaufman, Rosset, Perlich & Stitelman (2012). "Leakage in Data Mining: Formulation, Detection, and
+  Avoidance." *ACM TKDD* 6(4).** [link](https://doi.org/10.1145/2382577.2382579) — a formulação de vazamento
+  por variável de agrupamento, e a razão de o corte ter de ser feito na unidade de amostragem e não na linha.
+- **Roberts et al. (2017). "Cross-validation strategies for data with temporal, spatial, hierarchical, or
+  phylogenetic structure." *Ecography* 40(8), 913–929.** [link](https://doi.org/10.1111/ecog.02881) —
+  blocagem por estrutura de dependência, escolhendo o bloco pela unidade de amostragem. É a referência que
+  sustenta a distinção **MATERIAL × APARELHO** adotada aqui: um eixo que nomeia o aparelho que fez a linha
+  não é a unidade que a amostragem sorteia.
+- **Gorman & Bedrick (2019). "We Need to Talk about Standard Splits." *ACL 2019*, 2786–2791.**
+  [link](https://doi.org/10.18653/v1/P19-1267) — o custo de um desenho de partição escolhido sem medir o
+  efeito dele sobre a conclusão.
+
+**O que elas NÃO autorizam:** a troca em si. Reportar em vez de unir é decisão desta casa, e o precedente
+interno é G0.1-bis (`domainSource` e `sourceMaterialBatch`).
+
+### T.2 — alargar o intervalo não corrige o viés da estimativa pontual
+
+**Decisão.** O contrato declara **como perda**, por escrito, que a tabela de reamostragem cobre o
+INTERVALO e que a média continua enviesada para cima — e que o conserto é o slate de geração, não a lista
+de eixos.
+
+- **Field & Welsh (2007). "Bootstrapping clustered data." *JRSS-B* 69(3), 369–390.**
+  [link](https://doi.org/10.1111/j.1467-9868.2007.00593.x) — o bootstrap por cluster estima a variância sob
+  dependência; ele não remove viés de seleção da amostra.
+
+**O que ela NÃO cobre:** a magnitude do viés neste corpus, que **não foi medida**.
+
+### T.3 — preencher os cinco blocos por COMPONENTE é bin packing, e o guloso é heurística
+
+**Decisão.** `_plano_de_blocos` percorre os componentes por tamanho decrescente e escolhe o bloco de maior
+déficit contra o alvo, sob teto da tolerância; quando nada cabe, **recusa em vez de fatiar** o componente.
+
+- **Johnson (1974). "Fast algorithms for bin packing." *JCSS* 8(3), 272–314.**
+  [link](https://doi.org/10.1016/S0022-0000(74)80026-7) — first-fit/best-fit decreasing e os limites de
+  garantia do guloso.
+- **Coffman, Garey & Johnson (1997). "Approximation algorithms for bin packing: a survey."** — por que
+  nenhuma ordem de lista torna o guloso exato, que é exatamente a razão de a guarda enunciar o critério
+  ("o componente inteiro numa partição") e não uma ordenação.
+
+**O que elas NÃO cobrem:** o desempate (maior déficit, empate pela ordem temporal) é desta casa; a
+literatura só diz que alguma heurística é necessária e que ela não é exata.
+
+### T.4 — a insuficiência de uma condição de ORDENAÇÃO deduzida do critério
+
+**Decisão.** A emenda "ordenar a lista para que irmãs de componente fiquem contíguas" é **rejeitada como
+remédio**. Medido: num corpo de trinta componentes de duas linhas cuja fronteira de `train` cai em índice
+ímpar, qualquer fatiamento por posição corta um componente — aritmética, não amostragem.
+
+**Sem precedente encontrado** para "condição de ordenação suficiente deduzida de um critério de
+particionamento é insuficiente". O argumento é aritmético e está fixado por teste. É a mesma família das
+mortes registradas nesta casa: a guarda enuncia o critério, nunca uma condição suficiente deduzida dele.
+
+### T.5 — o fecho do PAR, e a razão falsa que ele substitui
+
+**Decisão, e ela é uma retratação dentro da própria unidade.** A primeira justificativa escrita para excluir
+`generatorVersion` dizia que ele carrega a identidade de `generatorFamily`. **Medido e falso:** cinco
+identidades contra uma, coincidindo em **0 de 1170** linhas — version REFINA family, então unir por version
+é estritamente mais fraco que unir pela família. O que compra a exclusão é o **fecho transitivo do par**:
+sozinho, `generatorVersion` produz 5 componentes com o maior em 42,14 % e **cabe**; `promptTemplate` produz 4
+com o maior em 54,79 % e não cabe; os dois juntos produzem **um** componente de 100 %.
+
+**Sem precedente encontrado** — a decisão metodológica aqui não é sobre estatística, é sobre a forma lógica
+de uma alegação publicada em comentário de arquivo selado: uma condição necessária cuja recíproca é refutada
+por contraexemplo nomeado, com o resíduo declarado, tratada como objeto de verificação por teste. O
+adjacente que existe (Parnas 1972 sobre ocultação de informação, Meyer 1992 sobre projeto por contrato) trata
+de especificação de interface, não de auditabilidade de justificativa. A regra derivada é da casa: **uma
+alegação rotulada "medido" tem de ter a medição presa por teste, ou não é medida — é memória.**

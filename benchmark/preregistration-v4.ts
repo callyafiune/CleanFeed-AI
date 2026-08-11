@@ -1766,14 +1766,22 @@ const FROZEN_GENERATION_MODES = ["mechanistic", "ecological"] as const;
 const FROZEN_SPLIT_UNION_AXES = [
   "author",
   "source",
-  "generatorVersion",
-  "promptTemplate",
   "generationBatch",
   "nearDuplicate",
   "derivationRoot",
 ] as const;
 const FROZEN_DIAGNOSTIC_AXES = ["extractionRun"] as const;
-const FROZEN_REPORTED_AXES = ["domainSource", "sourceMaterialBatch"] as const;
+// The mirror of `REPORTED_GROUP_AXES` in benchmark/split-audit.ts: the MATERIAL pair,
+// then the APPARATUS pair. Every entry must be absent from `FROZEN_SPLIT_UNION_AXES` —
+// an axis published with `connectivity.sharedValue: false` that the splitter grouped by
+// would be a false independence claim in the sealed artifact — and a test holds the
+// disjointness against the splitter's own list.
+const FROZEN_REPORTED_AXES = [
+  "domainSource",
+  "sourceMaterialBatch",
+  "generatorVersion",
+  "promptTemplate",
+] as const;
 const FROZEN_THRESHOLD_PARTITIONS = ["dev", "cal-A"] as const;
 // Refused BY NAME rather than deleted: the 2024 access terms of the Stack Exchange
 // dump exclude LLM-training projects, and that is a legal condition that could be

@@ -30,7 +30,10 @@ import {
 import { PARTITION_TARGETS } from "../split-audit.ts";
 import {
   CLASS_TOLERANCE,
+  GROUP_KEYS,
+  PARENT_LINKAGE_AXES,
   SplitConstraintError,
+  atMostWithinTolerance,
   connectedComponentRoots,
   createBlockedSplit,
   type BlockedSplitPolicy,
@@ -51,6 +54,7 @@ import {
   buildCatalogueCorpus,
   componentHistogram,
   declaredHistogram,
+  histogramUnderAxes,
   loadCatalogue,
   measuredClassLines,
   type ViabilityCase,
@@ -194,6 +198,7 @@ describe("o catálogo compartilhado descreve a geometria que declara", () => {
       "misto-com-degenerescencia-humana",
       "corpo-grosso-classes-finas",
       "bordas-inclusivas-47-e-7",
+      "forma-medida-da-classe-gerada",
     ]);
   });
 
@@ -601,8 +606,12 @@ describe("o que o splitter faz com os mesmos corpos", () => {
     expect(aprovados).toEqual([
       "lote-unico-por-celula",
       "bordas-inclusivas-47-e-7",
+      "forma-medida-da-classe-gerada",
     ]);
-    expect(aceitos).toEqual(["lote-unico-por-celula"]);
+    expect(aceitos).toEqual([
+      "lote-unico-por-celula",
+      "forma-medida-da-classe-gerada",
+    ]);
   });
 });
 
@@ -620,5 +629,133 @@ describe("o materializador do catálogo produz registro v4 válido", () => {
           .schemaVersion,
       ).toBe(4);
     }
+  });
+});
+
+describe("a forma medida da classe gerada, e o que os eixos de receita fariam com ela", () => {
+  // O caso que descreve o que o montador PRODUZ: 1170 linhas ai de uma célula, quatro
+  // identidades de `promptTemplate` em corridas de 641/231/213/85 e cinco de
+  // `generatorVersion` em 493/320/256/99/2. Os fixtures que dão um template por linha
+  // provam viabilidade sobre uma classe gerada que ninguém tem, e foi por eles que a
+  // inviabilidade atravessou verde.
+  const CASO = caseNamed("forma-medida-da-classe-gerada");
+
+  it("realiza as corridas de receita que declara, e cada linha é seu componente", () => {
+    const records = corpusOf(CASO);
+    expect(records).toHaveLength(1170);
+    const recipe = CASO.generatedRecipe;
+    expect(recipe).toBeDefined();
+    for (const [axis, runs] of [
+      ["promptTemplate", recipe!.promptTemplateRuns],
+      ["generatorVersion", recipe!.generatorVersionRuns],
+    ] as const) {
+      const lines = new Map<string, number>();
+      for (const record of records) {
+        const identity = groupAxisIdentity(record, axis);
+        expect(identity, `${axis} em ${record.id}`).toBeDefined();
+        lines.set(identity as string, (lines.get(identity as string) ?? 0) + 1);
+      }
+      expect(
+        [...lines.values()].sort((a, b) => b - a),
+        axis,
+      ).toEqual([...runs].sort((a, b) => b - a));
+    }
+    // E sob a união do splitter as corridas não unem nada: 1170 componentes.
+    expect(componentHistogram(records)).toEqual(
+      Array.from({ length: 1170 }, () => 1),
+    );
+    expect(auditPartitionViability(records).passed).toBe(true);
+  });
+
+  it("mede que generatorVersion sozinho CABE, então a exclusão dele é o FECHO DO PAR", () => {
+    // Esta medição existe para impedir uma razão falsa de voltar. O comentário de
+    // `GROUP_KEYS` já afirmou que `generatorVersion` carrega a identidade de
+    // `generatorFamily` — e a medição o refuta em 0 de 1170 linhas: version REFINA family
+    // (cinco identidades contra uma), logo unir por version é estritamente mais FRACO que
+    // unir pela família, e o argumento da família não alcança este eixo.
+    const records = corpusOf(CASO);
+    const leg = CASO.expected.recipeUnioned?.generatorVersionOnly;
+    expect(leg).toBeDefined();
+    const histogram = histogramUnderAxes(
+      records,
+      [...GROUP_KEYS, ...(leg!.axes as readonly GroupAxis[])],
+      [...PARENT_LINKAGE_AXES],
+    );
+    expect(histogram).toEqual([...leg!.histogram].sort((a, b) => a - b));
+    expect(histogram.length).toBe(leg!.components);
+    // CABE nas duas condições — é isto que torna o par, e não este eixo, a razão.
+    expect(
+      atMostWithinTolerance(
+        Math.max(...histogram) / records.length,
+        0.45,
+        CLASS_TOLERANCE,
+      ),
+    ).toBe(true);
+    expect(
+      atMostWithinTolerance(
+        Math.min(...histogram) / records.length,
+        0.05,
+        CLASS_TOLERANCE,
+      ),
+    ).toBe(true);
+    expect(leg!.breaches).toEqual([]);
+    // E o fato que a prosa afirmava: as duas identidades não coincidem em linha alguma.
+    const versoes = new Set(
+      records.map((row) => JSON.stringify(row.groups.generatorVersion)),
+    );
+    const familias = new Set(
+      records.map((row) => JSON.stringify(row.groups.generatorFamily)),
+    );
+    expect(versoes.size).toBe(5);
+    expect(familias.size).toBe(1);
+    expect(
+      records.filter(
+        (row) =>
+          JSON.stringify(row.groups.generatorVersion) ===
+          JSON.stringify(row.groups.generatorFamily),
+      ),
+    ).toEqual([]);
+  });
+
+  it("colapsa quando os eixos de receita entram na união, e recusa pelo MAIOR componente", () => {
+    const records = corpusOf(CASO);
+    const declared = CASO.expected.recipeUnioned;
+    expect(declared).toBeDefined();
+    for (const leg of [
+      declared!.promptTemplateOnly,
+      declared!.bothRecipeAxes,
+    ]) {
+      const histogram = histogramUnderAxes(
+        records,
+        [...GROUP_KEYS, ...(leg.axes as readonly GroupAxis[])],
+        [...PARENT_LINKAGE_AXES],
+      );
+      expect(histogram, leg.axes.join("+")).toEqual(
+        [...leg.histogram].sort((a, b) => a - b),
+      );
+      expect(histogram.length, leg.axes.join("+")).toBe(leg.components);
+      // A recusa que essa geometria produz, pela condição e pelo escopo que o catálogo
+      // declara — e o lado Python afirma os MESMOS pares sobre o MESMO corpo.
+      const largest = Math.max(...histogram);
+      const smallest = Math.min(...histogram);
+      expect(
+        atMostWithinTolerance(largest / records.length, 0.45, CLASS_TOLERANCE),
+        leg.axes.join("+"),
+      ).toBe(false);
+      expect(
+        atMostWithinTolerance(smallest / records.length, 0.05, CLASS_TOLERANCE),
+        leg.axes.join("+"),
+      ).toBe(false);
+      expect(new Set(leg.breaches.map((breach) => breach.scope))).toEqual(
+        new Set([CORPUS_SCOPE, "ai"]),
+      );
+      expect(new Set(leg.breaches.map((breach) => breach.kind))).toEqual(
+        new Set(CATALOGUE.expectedBreachVocabulary),
+      );
+    }
+    // O número que decide: 641 de 1170 é 54,79 % da classe, acima de 45 % + 2 pp.
+    expect(
+      Math.max(...declared!.promptTemplateOnly.histogram) / records.length,
+    ).toBeCloseTo(0.547863, 6);
   });
 });

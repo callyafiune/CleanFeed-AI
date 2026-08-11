@@ -456,8 +456,9 @@ describe("clusterRootsOf", () => {
   });
 
   it("refuses the generation batch left unknown, because it is a v4 union axis too", () => {
-    // `CLUSTER_ATOM_AXES` is `CONNECTIVITY_AXES`, so the seventh union axis v4
-    // introduced has to make the atom unknowable exactly like the other six. Written
+    // `CLUSTER_ATOM_AXES` is `CONNECTIVITY_AXES`: six names, the five value axes plus
+    // the linkage-only `humanSeed`. `generationBatch` is the one v4 added to them, so it
+    // has to make the atom unknowable exactly like the other five. Written
     // over `mixed-ecological` because that is the ONE cohort the state table lets write
     // `unknown` on this axis: on an `ai` row it is a validator error, so a fixture there
     // would be refused a stage earlier and would measure the validator instead.

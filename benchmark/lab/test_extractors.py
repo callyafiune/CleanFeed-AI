@@ -5835,11 +5835,12 @@ class BlindBlockCompositionTests(unittest.TestCase):
         import assemble_corpus
 
         # The second half of the same rule, at the place where the two numbers are real
-        # instead of predicted. `main` cannot reach it — `assert_the_blind_block_holds_both
-        # _roles` runs the same arithmetic with a strict comparison first — but
-        # `assign_partitions` is callable on its own, and it used to PRINT and carry on,
-        # stamping every reserved row into a block that cannot hold them and leaving the
-        # splitter to refuse a corpus one step later.
+        # instead of predicted. The two are NOT the same arithmetic:
+        # `assert_the_blind_block_holds_both_roles` compares reserved LINES and this one
+        # compares the CLOSURE of the reserved components, so the refusal here is reachable
+        # from `main` as well (the corpus that separates them is in
+        # `ComponenteDeMaisDeUmaLinhaTests`). On this corpus every component is one line, so
+        # closure and lines coincide and what is measured is the block arithmetic alone.
         reserved = "gpt-5_6-luna"
         records = [
             self._generated_line(f"rec_core_{index:02d}", "gemini-3_5-flash-lite")
@@ -5852,7 +5853,7 @@ class BlindBlockCompositionTests(unittest.TestCase):
         with self.assertRaises(assemble_corpus.ReserveFillsTheBlindBlock) as caught:
             assemble_corpus.assign_partitions(records, {reserved})
         message = str(caught.exception)
-        self.assertIn("5 reserved rows", message)
+        self.assertIn("seats 5 line(s)", message)
         self.assertIn("holds 4", message)
         self.assertNotIn("rec_res_00", assemble_corpus.PARTITION_OF)
 
@@ -5905,6 +5906,791 @@ class BlindBlockCompositionTests(unittest.TestCase):
             ),
             {},
         )
+
+
+class GeneratorVersionIsTheFamilyTests(unittest.TestCase):
+    """`generatorVersion` carries the identity `generatorFamily` carries, em TODA linha.
+
+    E o resíduo que o comentário de `SPLIT_GROUP_KEYS` — e o de `GROUP_KEYS` em
+    benchmark/split.ts — afirma quando diz que unir por `generatorVersion` é unir pela
+    família sob outro nome. Hoje a igualdade é acidente de `version = str(meta.get("version")
+    or family_raw)` mais pools que gravam `version` igual a `family`: aqui ela passa a ser
+    exigência, e um pool que gravar `gemini-3.5-flash-lite-002` fica vermelho.
+
+    O laço percorre TODA linha que o construtor emite, e não uma amostra, porque o sítio é um
+    laço: uma amostra provaria a igualdade nas linhas sorteadas e nada sobre a classe.
+
+    Este teste NÃO justifica a saída do eixo da união — isso é o critério da lista, medido em
+    test_connectivity_feasibility.py. Ele fixa o resíduo que o comentário afirma.
+    """
+
+    @classmethod
+    def setUpClass(cls) -> None:
+        import assemble_corpus
+
+        # A MESMA sequência de main(): dedup por texto contra um `seen` compartilhado, e só
+        # então `enforce_unique_keys`. Sem os 295 renomeios os ids colidem entre lanes, e
+        # `nearDuplicate` — que é o id da linha — deixaria de ter uma identidade por linha.
+        seen: set[str] = set()
+        cls.humans = assemble_corpus.dedup(
+            assemble_corpus.load_humans(), lambda r: r["text"], seen
+        )
+        cls.ai_pool = assemble_corpus.dedup(
+            assemble_corpus.load_ai(), lambda r: r["text"], seen
+        )
+        cls.mixed_pool = assemble_corpus.dedup(
+            assemble_corpus.load_mixed(), lambda r: r["text"], seen
+        )
+        assemble_corpus.enforce_unique_keys(
+            [
+                (cls.ai_pool, "candidateId"),
+                (cls.mixed_pool, "parentId"),
+                (cls.humans, "candidateId"),
+            ]
+        )
+
+    @staticmethod
+    def _build(pool: list[dict], builder) -> list[dict]:
+        built = []
+        for cand in pool:
+            try:
+                built.append(builder(cand))
+            except Exception:  # noqa: BLE001  — a recusa é do seletor, não deste teste
+                continue
+        return built
+
+    def test_every_built_ai_line_carries_the_family_as_its_version(self) -> None:
+        import assemble_corpus
+        from group_axes import identity_of
+
+        built = self._build(self.ai_pool, assemble_corpus.ai_record)
+        # Falha fechada na vacuidade E no tamanho: um pool que passe a construir outra
+        # quantidade muda os números que os comentários de `GROUP_KEYS` publicam, e eles têm
+        # de ser reescritos junto.
+        self.assertEqual(len(built), 1170)
+        # O laço percorre TODA linha e o veredito é a LISTA de divergências, não uma asserção
+        # por registro: com um `subTest` por linha esta medição levou quase três minutos para
+        # relatar a mesma coisa, e um teste caro é um teste que alguém desliga.
+        divergentes = [
+            (
+                rec["id"],
+                identity_of(rec["groups"]["generatorVersion"]),
+                identity_of(rec["groups"]["generatorFamily"]),
+            )
+            for rec in built
+            if identity_of(rec["groups"]["generatorVersion"])
+            != identity_of(rec["groups"]["generatorFamily"])
+        ]
+        self.assertEqual(
+            divergentes[:5],
+            [],
+            f"{len(divergentes)} de {len(built)} linhas gravam uma `version` que não é a "
+            "família: a saída de `generatorVersion` da união deixa de estar justificada",
+        )
+        # E não é vácuo por a família ser única: são cinco identidades.
+        self.assertEqual(
+            len({identity_of(r["groups"]["generatorFamily"]) for r in built}), 5
+        )
+
+    def test_the_shared_catalogue_declares_the_shape_the_pools_produce(self) -> None:
+        """As corridas de receita do caso compartilhado SÃO as medidas nos pools.
+
+        Sem este elo o caso `forma-medida-da-classe-gerada` é um número escrito à mão: os dois
+        lados da fronteira concordariam sobre um corpo que os pools não produzem, que é
+        exactamente o defeito do fixture de um template por linha. É também o que fixa os
+        números que o comentário de `SPLIT_GROUP_KEYS` publica — 4 identidades de template com
+        a maior valendo 641, 5 de versão — porque o dia em que os pools mudarem, o caso e o
+        comentário têm de ser reescritos juntos.
+        """
+        import assemble_corpus
+        from group_axes import identity_of
+
+        catalogo = json.loads(
+            (
+                Path(__file__).resolve().parent.parent
+                / "tests"
+                / "fixtures"
+                / "viability-agreement.json"
+            ).read_text(encoding="utf-8")
+        )
+        caso = next(
+            c
+            for c in catalogo["cases"]
+            if c["name"] == "forma-medida-da-classe-gerada"
+        )
+        built = self._build(self.ai_pool, assemble_corpus.ai_record)
+        self.assertEqual(caso["expected"]["recordLines"], len(built))
+        for eixo, chave in (
+            ("promptTemplate", "promptTemplateRuns"),
+            ("generatorVersion", "generatorVersionRuns"),
+        ):
+            with self.subTest(eixo=eixo):
+                medido = Counter(
+                    identity_of(rec["groups"][eixo]) for rec in built
+                )
+                self.assertEqual(
+                    sorted(medido.values(), reverse=True),
+                    sorted(caso["generatedRecipe"][chave], reverse=True),
+                )
+
+    def test_the_two_inert_axes_are_measured_and_not_asserted(self) -> None:
+        """As duas entradas da lista de união que entram por INÉRCIA, sobre o corpo real.
+
+        `nearDuplicate` tem uma identidade por linha depois da poda, e `generationBatch` está
+        `unknown` em toda linha gerada até `assign_generation_batches`. São os dois números que
+        o comentário do critério publica, e sem esta medição eles são prosa.
+        """
+        import assemble_corpus
+        from group_axes import UNKNOWN, identity_of, state_of
+
+        built = self._build(self.ai_pool, assemble_corpus.ai_record)
+        self.assertEqual(
+            len({identity_of(r["groups"]["nearDuplicate"]) for r in built}), len(built)
+        )
+        self.assertEqual(
+            sum(
+                1
+                for r in built
+                if state_of(r["groups"]["generationBatch"]) == UNKNOWN
+            ),
+            len(built),
+        )
+
+    def test_the_mixed_class_builds_nothing_today_and_the_count_says_so(self) -> None:
+        """A mesma exigência sobre `mixed_record`, e o estado que ela encontra.
+
+        A classe mista constrói ZERO das 2135 candidatas oferecidas, então o laço abaixo roda
+        vazio. A contagem é afirmada para que o dia em que ela voltar a construir fique
+        VERMELHO aqui, em vez de a igualdade passar por vacuidade sobre a classe inteira.
+        """
+        import assemble_corpus
+        from group_axes import identity_of
+
+        built = self._build(self.mixed_pool, assemble_corpus.mixed_record)
+        self.assertEqual(len(self.mixed_pool), 2135)
+        self.assertEqual(len(built), 0)
+        self.assertEqual(
+            [
+                rec["id"]
+                for rec in built
+                if identity_of(rec["groups"]["generatorVersion"])
+                != identity_of(rec["groups"]["generatorFamily"])
+            ],
+            [],
+        )
+
+
+class ComponentStampingTests(unittest.TestCase):
+    """O CARIMBADOR, chamado como PRODUTOR, sobre a forma medida da classe gerada.
+
+    Os três testes de travessia deste arquivo chamam `assert_stamped_corpus_is_splittable`
+    sobre corpo montado à mão: eles provam o critério e nada sobre o sítio. Aqui quem roda é
+    `assign_partitions`, e o que se afirma é que o corpo que ela PRODUZ não tem componente
+    atravessando bloco — sob mais de uma ordem da lista de entrada, porque uma ordem só prova
+    a ordem de hoje.
+    """
+
+    LINHAS = 1170
+    PARES_DE_DERIVACAO = 20
+    IDENTIDADES_DE_SEMENTE = 1046
+    GRUPOS_DE_SEMENTE_COM_MAIS_DE_UMA_LINHA = 116
+
+    def forma_medida(self) -> list[dict]:
+        """1170 linhas ai, 1046 identidades de `humanSeed` (116 com mais de uma linha) e 20
+        grupos de `derivationRoot` espalhados — a forma que os pools produzem em HEAD.
+
+        `humanSeed` nomeia semente AUSENTE, que é o estado medido do corpo mono-classe: 0 das
+        1046 identidades resolve para linha do corpo, então a linhagem de pai não une nada e os
+        20 grupos de derivação são a única fonte de componente com mais de uma linha.
+        """
+        from group_axes import (
+            NOT_EXTRACTED,
+            NO_DERIVATION,
+            NO_HUMAN_AUTHOR,
+            NO_MATERIAL_ACQUIRED,
+            known,
+            not_applicable,
+            unknown,
+        )
+
+        # 116 grupos cobrindo 240 linhas (108 de duas e 8 de três) mais 930 solitárias dá
+        # 1046 identidades sobre 1170 linhas, que é a distribuição medida.
+        sementes: list[str] = []
+        for grupo in range(108):
+            sementes += [f"seed_par_{grupo}"] * 2
+        for grupo in range(8):
+            sementes += [f"seed_trio_{grupo}"] * 3
+        sementes += [f"seed_so_{i}" for i in range(930)]
+        if len(sementes) != self.LINHAS:
+            raise AssertionError("a forma medida não fecha em 1170 linhas")
+
+        registros = []
+        for indice, semente in enumerate(sementes):
+            registros.append(
+                {
+                    "id": f"a_{indice:05d}",
+                    "schemaVersion": 4,
+                    "label": "ai",
+                    "provenance": {},
+                    "generation": {},
+                    "groups": {
+                        "author": not_applicable(NO_HUMAN_AUTHOR),
+                        "source": not_applicable("texto gerado"),
+                        "domainSource": known("ai_gemini"),
+                        "humanSeed": known(semente),
+                        "promptTemplate": known("pt_original"),
+                        "generatorFamily": known("gemini-3_5-flash-lite"),
+                        "generatorVersion": known("gemini-3_5-flash-lite"),
+                        "sourceMaterialBatch": not_applicable(NO_MATERIAL_ACQUIRED),
+                        "generationBatch": unknown("derivado depois de particionar"),
+                        "extractionRun": not_applicable(NOT_EXTRACTED),
+                        "nearDuplicate": known(f"nd_{indice}"),
+                        "derivationRoot": not_applicable(NO_DERIVATION),
+                    },
+                }
+            )
+        passo = self.LINHAS // self.PARES_DE_DERIVACAO
+        for par in range(self.PARES_DE_DERIVACAO):
+            raiz = known(f"dr_{par}")
+            registros[par * passo]["groups"]["derivationRoot"] = raiz
+            registros[par * passo + 1]["groups"]["derivationRoot"] = raiz
+        return registros
+
+    def corpo_pequeno(self) -> list[dict]:
+        """A mesma classe de forma, pequena o bastante para TODA rotação ser afordável.
+
+        Sessenta linhas em seis pares de derivação e quarenta e oito solitárias: 54
+        componentes, o maior valendo 3,3 % e o menor 1,7 %, então as duas condições do
+        preflight passam e o que sobra a medir é o carimbo.
+        """
+        registros = self.forma_medida()[:60]
+        from group_axes import NO_DERIVATION, known, not_applicable
+
+        for indice, rec in enumerate(registros):
+            rec["groups"]["humanSeed"] = known(f"seed_so_{indice}")
+            rec["groups"]["derivationRoot"] = not_applicable(NO_DERIVATION)
+        for par in range(6):
+            raiz = known(f"dr_{par}")
+            registros[par * 10]["groups"]["derivationRoot"] = raiz
+            registros[par * 10 + 1]["groups"]["derivationRoot"] = raiz
+        return registros
+
+    def corpo_de_pares_puros(self) -> list[dict]:
+        """Sessenta linhas em TRINTA pares, e a razão é aritmética e não amostragem.
+
+        `train` mede round(60 × 0,45) = 27 linhas, que é ÍMPAR, e todo componente aqui tem
+        duas linhas. Logo QUALQUER carimbo que fatie a lista por posição — em qualquer ordem,
+        contígua ou embaralhada, com ou sem rotação — corta um componente na fronteira de
+        `train`: é prova, não sorte. Um corpo de componentes de tamanhos variados deixa a
+        fronteira cair entre componentes por acaso, e uma emenda que ordena a lista para pôr
+        irmãs lado a lado passa por acidente do fixture.
+
+        O plano por componente passa aqui porque o alvo ímpar é inalcançável mas a TOLERÂNCIA
+        não: 28/2/6/12/12 está a 1,67 pontos de 27/3/6/12/12, dentro dos dois do contrato.
+        """
+        from group_axes import known
+
+        registros = self.forma_medida()[:60]
+        for indice, rec in enumerate(registros):
+            rec["groups"]["humanSeed"] = known(f"seed_so_{indice}")
+            rec["groups"]["derivationRoot"] = known(f"dr_par_{indice // 2}")
+        return registros
+
+    def _mede(self, registros: list[dict]) -> dict[str, int]:
+        import assemble_corpus
+
+        assemble_corpus.PARTITION_OF.clear()
+        try:
+            assemble_corpus.assign_partitions(registros, set())
+            atravessando = [
+                raiz
+                for raiz, blocos in assemble_corpus._blocos_por_componente(
+                    registros
+                ).items()
+                if len(blocos) > 1
+            ]
+            self.assertEqual(atravessando, [])
+            # Em seguida, e não em vez de: a guarda do corpo estampado tem de passar sobre o
+            # corpo que este carimbador produziu.
+            assemble_corpus.assert_stamped_corpus_is_splittable(registros, set())
+            return Counter(
+                assemble_corpus.PARTITION_OF[r["id"]] for r in registros
+            )
+        finally:
+            assemble_corpus.PARTITION_OF.clear()
+
+    def test_the_measured_shape_is_the_shape_this_test_stamps(self) -> None:
+        import assemble_corpus
+        from group_axes import identity_of
+
+        registros = self.forma_medida()
+        self.assertEqual(len(registros), self.LINHAS)
+        sementes = Counter(
+            identity_of(r["groups"]["humanSeed"]) for r in registros
+        )
+        self.assertEqual(len(sementes), self.IDENTIDADES_DE_SEMENTE)
+        self.assertEqual(
+            sum(1 for n in sementes.values() if n > 1),
+            self.GRUPOS_DE_SEMENTE_COM_MAIS_DE_UMA_LINHA,
+        )
+        derivacoes = {
+            identity_of(r["groups"]["derivationRoot"])
+            for r in registros
+            if identity_of(r["groups"]["derivationRoot"]) is not None
+        }
+        self.assertEqual(len(derivacoes), self.PARES_DE_DERIVACAO)
+        # A semente não resolve para linha do corpo, então o componente com mais de uma linha
+        # vem só da derivação: 1130 solitárias mais 20 pares.
+        tamanhos = Counter(assemble_corpus.connected_components(registros).values())
+        self.assertEqual(len(tamanhos), 1150)
+        self.assertEqual(max(tamanhos.values()), 2)
+
+    def test_no_component_straddles_under_any_of_several_orders(self) -> None:
+        """A forma medida, sob rotações, invertida e embaralhada.
+
+        As frações realizadas são as mesmas em TODA ordem, e é isso que separa "o plano é o
+        critério" de "o plano é a ordem em que os pools foram concatenados".
+        """
+        import random
+
+        registros = self.forma_medida()
+        esperado = self._mede(list(registros))
+        self.assertEqual(
+            {b: esperado[b] for b in ("train", "dev", "cal-A", "cal-B", "test")},
+            {"train": 526, "dev": 58, "cal-A": 117, "cal-B": 234, "test": 235},
+        )
+        ordens: list[tuple[str, list[dict]]] = [
+            ("invertida", list(reversed(registros)))
+        ]
+        for rotacao in (1, 2, 43, 293, 526, 527, 585, 936, 1169):
+            ordens.append(
+                (f"rotacao {rotacao}", registros[rotacao:] + registros[:rotacao])
+            )
+        for semente in (1, 2, 3):
+            embaralhada = list(registros)
+            random.Random(semente).shuffle(embaralhada)
+            ordens.append((f"embaralhada {semente}", embaralhada))
+        for nome, ordem in ordens:
+            with self.subTest(ordem=nome):
+                self.assertEqual(self._mede(ordem), esperado)
+
+    def test_no_component_straddles_under_EVERY_rotation_of_a_small_corpus(self) -> None:
+        """TODAS as rotações, e não uma amostra delas.
+
+        Uma amostra de rotações prova o critério nas rotações sorteadas: para um carimbo por
+        POSIÇÃO existe sempre uma rotação que põe uma fronteira de bloco DENTRO de um
+        componente — basta rodar a lista até que a fronteira caia entre as duas linhas dele —,
+        e só o conjunto completo garante encontrá-la. Por isso o corpo aqui é pequeno: sessenta
+        rotações são afordáveis e a garantia é exaustiva.
+        """
+        registros = self.corpo_pequeno()
+        esperado = self._mede(list(registros))
+        for rotacao in range(1, len(registros)):
+            with self.subTest(rotacao=rotacao):
+                self.assertEqual(
+                    self._mede(registros[rotacao:] + registros[:rotacao]), esperado
+                )
+
+    def test_a_corpus_where_a_positional_stamp_MUST_cut_a_component(self) -> None:
+        """O corpo em que o critério não pode ser satisfeito por ordenação alguma.
+
+        Trinta componentes de duas linhas e uma fronteira de bloco em índice ímpar: fatiar a
+        lista por posição corta um componente qualquer que seja a ordem, então uma emenda que
+        só reordena a lista para pôr irmãs lado a lado é INSUFICIENTE por aritmética. Sem este
+        corpo, uma emenda de ordenação passa por acidente da distribuição de tamanhos do
+        fixture — foi medido passando.
+
+        O plano por componente realiza 28/2/6/12/12, que é o alvo ímpar arredondado para
+        dentro da tolerância, e nenhum componente atravessa.
+        """
+        import assemble_corpus
+
+        registros = self.corpo_de_pares_puros()
+        tamanhos = Counter(assemble_corpus.connected_components(registros).values())
+        self.assertEqual(len(tamanhos), 30)
+        self.assertEqual(set(tamanhos.values()), {2})
+        # A fronteira de `train` é ÍMPAR: é o fato de que a insuficiência é aritmética.
+        self.assertEqual(round(len(registros) * assemble_corpus.CLASS_FRACTIONS["train"]) % 2, 1)
+        realizado = self._mede(list(registros))
+        self.assertEqual(
+            {b: realizado[b] for b in ("train", "dev", "cal-A", "cal-B", "test")},
+            {"train": 28, "dev": 2, "cal-A": 6, "cal-B": 12, "test": 12},
+        )
+        for rotacao in range(1, len(registros)):
+            with self.subTest(rotacao=rotacao):
+                self.assertEqual(
+                    self._mede(registros[rotacao:] + registros[:rotacao]), realizado
+                )
+
+
+class ComponenteDeMaisDeUmaLinhaTests(unittest.TestCase):
+    """Os dois laços de `_plano_de_blocos` que decidem por COMPONENTE e não por linha.
+
+      * o TETO por classe: um componente é colocado somente quando cabe em TODA classe que
+        ele carrega, porque um componente de classe MISTA consome dos dois tetos do MESMO
+        bloco. Trocar "toda classe" por "alguma classe" transborda um teto em vez de recusar;
+      * a RESERVA: basta UMA linha de família reservada para o componente INTEIRO ser
+        assentado em `test`. Exigir a família em todas as linhas manda o componente misto ao
+        passeio guloso, e o corpo passa a ser RECUSADO em vez de montado.
+
+    Nenhum dos dois laços é exercitado por um corpo de uma classe por componente nem por
+    reserva de uma linha por componente — com um caso só as duas trocas não mudam resultado
+    algum. Os fixtures daqui são as duas formas que faltavam: componente de classe mista, que
+    é o que a linhagem produz assim que a classe humana entra no corpo, e componente
+    reservado de mais de uma linha, que é o que a linhagem produz assim que uma geração
+    reservada tem irmã de núcleo.
+
+    A ARITMÉTICA é escolhida e não sorteada: 20 e 40 linhas por classe são os totais em que
+    `int(n × (fração + 0,02))` coincide com `round(n × fração)`, ou seja em que o teto da
+    tolerância É o alvo. Com folga zero em todo bloco, o plano só tem uma realização e a
+    recusa é aritmética em vez de depender da ordem em que o passeio guloso encheu os blocos.
+    """
+
+    RESERVADA = "gpt-5_6-luna"
+    NUCLEO = "gemini-3_5-flash-lite"
+
+    def _gerada(
+        self,
+        rec_id: str,
+        familia: str | None = None,
+        derivacao: str | None = None,
+        semente: str | None = None,
+    ) -> dict:
+        from group_axes import (
+            NOT_EXTRACTED,
+            NO_DERIVATION,
+            NO_HUMAN_AUTHOR,
+            NO_MATERIAL_ACQUIRED,
+            known,
+            not_applicable,
+            unknown,
+        )
+
+        return {
+            "id": rec_id,
+            "schemaVersion": 4,
+            "label": "ai",
+            "provenance": {},
+            "generation": {},
+            "groups": {
+                "author": not_applicable(NO_HUMAN_AUTHOR),
+                "source": not_applicable("texto gerado"),
+                "domainSource": known("ai_gemini"),
+                # `humanSeed` é LINHAGEM DE PAI: só une quando a linha nomeada está no
+                # conjunto. Um id de semente que não existe une nada, e é assim que uma
+                # gerada fica solitária sem precisar de `notApplicable`.
+                "humanSeed": known(semente or f"seed_{rec_id}"),
+                "promptTemplate": known(f"pt_{rec_id}"),
+                "generatorFamily": known(familia or self.NUCLEO),
+                "generatorVersion": known(familia or self.NUCLEO),
+                "sourceMaterialBatch": not_applicable(NO_MATERIAL_ACQUIRED),
+                "generationBatch": unknown("derivado depois de particionar"),
+                "extractionRun": not_applicable(NOT_EXTRACTED),
+                "nearDuplicate": known(f"nd_{rec_id}"),
+                "derivationRoot": (
+                    known(derivacao) if derivacao else not_applicable(NO_DERIVATION)
+                ),
+            },
+        }
+
+    def _humana(self, rec_id: str, autor: str | None = None) -> dict:
+        from group_axes import NO_DERIVATION, known, not_applicable
+
+        return {
+            "id": rec_id,
+            "schemaVersion": 4,
+            "label": "human",
+            "provenance": {},
+            "generation": {},
+            "groups": {
+                "author": known(autor or f"au_{rec_id}"),
+                "source": known(f"th_{rec_id}"),
+                "domainSource": known("ptwiki_lead"),
+                "humanSeed": not_applicable("linha humana não é semeada"),
+                "promptTemplate": not_applicable("linha humana"),
+                "generatorFamily": not_applicable("linha humana"),
+                "generatorVersion": not_applicable("linha humana"),
+                "sourceMaterialBatch": known("smb_ptwiki_1"),
+                "generationBatch": not_applicable("linha humana"),
+                "extractionRun": known("er_ptwiki_1"),
+                "nearDuplicate": known(f"nd_{rec_id}"),
+                "derivationRoot": not_applicable(NO_DERIVATION),
+            },
+        }
+
+    def _humanas(self, pares: int) -> list[dict]:
+        """Uma tripla e `pares` pares de autor: 3 + 2 × pares linhas, nenhuma solitária.
+
+        Sem solitária de propósito: o componente misto tem DUAS linhas, e o passeio ordena por
+        tamanho decrescente, então uma solitária humana seria considerada DEPOIS dele e o
+        resíduo de capacidade que a recusa depende deixaria de existir.
+        """
+        registros = [self._humana(f"h_tri_{i}", autor="au_tri") for i in range(3)]
+        for par in range(pares):
+            registros.append(self._humana(f"h_par_{par:02d}_a", autor=f"au_par_{par:02d}"))
+            registros.append(self._humana(f"h_par_{par:02d}_b", autor=f"au_par_{par:02d}"))
+        return registros
+
+    def _geradas(self, pares: int) -> list[dict]:
+        registros = [self._gerada(f"a_tri_{i}", derivacao="dr_tri") for i in range(3)]
+        for par in range(pares):
+            registros.append(self._gerada(f"a_par_{par:02d}_a", derivacao=f"dr_par_{par:02d}"))
+            registros.append(self._gerada(f"a_par_{par:02d}_b", derivacao=f"dr_par_{par:02d}"))
+        return registros
+
+    def _par_misto(self) -> list[dict]:
+        """Uma humana e a geração que a semeia: UM componente com uma linha de cada classe.
+
+        Os ids começam por `z_` porque o desempate do passeio é a RAIZ, e a raiz de um
+        componente de linhagem é o id do FILHO: com `z_` o par misto é o último componente de
+        duas linhas a ser considerado, que é onde os dois tetos já estão apertados.
+        """
+        return [
+            self._humana("z_misto_humana"),
+            self._gerada("z_misto_gerada", semente="z_misto_humana"),
+        ]
+
+    def _mede(self, registros: list[dict], reservadas: set[str]) -> dict[str, Counter]:
+        import assemble_corpus
+
+        assemble_corpus.PARTITION_OF.clear()
+        try:
+            assemble_corpus.assign_partitions(registros, reservadas)
+            por_bloco: dict[str, Counter] = {}
+            for rec in registros:
+                bloco = assemble_corpus.PARTITION_OF[rec["id"]]
+                por_bloco.setdefault(bloco, Counter())[rec["label"]] += 1
+            return por_bloco
+        finally:
+            assemble_corpus.PARTITION_OF.clear()
+
+    def test_o_teto_do_bloco_e_conferido_em_TODA_classe_do_componente(self) -> None:
+        """O corpo em que o componente misto cabe por UMA classe e não cabe pela outra.
+
+        40 humanas e 20 geradas, tetos iguais aos alvos nos dois totais. Ao chegar a vez do par
+        misto, `train` tem 1 vaga humana e 0 geradas e `dev` tem 0 humanas e 1 gerada — os
+        outros três blocos estão cheios nas duas classes. Não há bloco que receba UMA linha de
+        cada, então a resposta certa é RECUSAR: conferir "alguma classe" acharia `train` e
+        `dev` cabíveis e transbordaria um teto, e a recusa que o operador receberia seria a de
+        fração por classe, uma etapa depois e sem nomear o componente.
+        """
+        import assemble_corpus
+
+        assemble_corpus.PARTITION_OF.clear()
+        registros = self._humanas(18) + self._geradas(8) + self._par_misto()
+        classes = Counter(rec["label"] for rec in registros)
+        self.assertEqual(classes, Counter({"human": 40, "ai": 20}))
+        # O componente misto EXISTE e carrega as duas classes — sem esta medição o teste
+        # passaria sobre um corpo em que a linhagem não uniu nada.
+        raizes = assemble_corpus.connected_components(registros)
+        por_componente: dict[str, Counter] = {}
+        for rec in registros:
+            por_componente.setdefault(raizes[rec["id"]], Counter())[rec["label"]] += 1
+        mistos = [raiz for raiz, c in por_componente.items() if len(c) > 1]
+        self.assertEqual(mistos, ["z_misto_gerada"])
+        self.assertEqual(por_componente["z_misto_gerada"], Counter({"human": 1, "ai": 1}))
+
+        with self.assertRaises(assemble_corpus.UnsplittableCorpus) as caught:
+            assemble_corpus.assign_partitions(registros, set())
+        message = str(caught.exception)
+        # A recusa é a do TETO e nomeia o componente e as duas classes dele. A outra recusa
+        # possível — "fração por classe" — chega uma etapa depois, de um corpo já estampado, e
+        # é exatamente o que se recebe quando o teto é conferido por classe alguma.
+        self.assertIn("nao cabe inteiro em bloco algum sem passar do teto", message)
+        self.assertIn("z_misto_gerada", message)
+        self.assertIn("'human': 1", message)
+        self.assertIn("'ai': 1", message)
+        self.assertNotIn("fracao", message)
+        # Nada foi estampado: a recusa é do PLANO, antes do carimbo.
+        self.assertNotIn("z_misto_gerada", assemble_corpus.PARTITION_OF)
+
+    def test_um_componente_de_classe_mista_consome_dos_DOIS_tetos_do_mesmo_bloco(
+        self,
+    ) -> None:
+        """A outra metade da promessa: quando cabe, ele cabe INTEIRO e conta nas duas classes.
+
+        40 de cada classe, e o único bloco com vaga nas duas quando chega a vez do par misto é
+        `train`. As duas linhas caem lá juntas e as duas classes realizam 18/2/4/8/8 exato.
+        """
+        import assemble_corpus
+
+        registros = self._humanas(18) + self._geradas(18) + self._par_misto()
+        self.assertEqual(
+            Counter(rec["label"] for rec in registros), Counter({"human": 40, "ai": 40})
+        )
+        por_bloco = self._mede(registros, set())
+        self.assertEqual(
+            {bloco: dict(c) for bloco, c in sorted(por_bloco.items())},
+            {
+                "cal-A": {"human": 4, "ai": 4},
+                "cal-B": {"human": 8, "ai": 8},
+                "dev": {"human": 2, "ai": 2},
+                "test": {"human": 8, "ai": 8},
+                "train": {"human": 18, "ai": 18},
+            },
+        )
+
+        # As duas linhas do componente misto no MESMO bloco, e é `train` que as recebeu — o
+        # bloco cuja vaga humana e cuja vaga gerada eram as duas últimas.
+        assemble_corpus.PARTITION_OF.clear()
+        try:
+            assemble_corpus.assign_partitions(registros, set())
+            self.assertEqual(assemble_corpus.PARTITION_OF["z_misto_humana"], "train")
+            self.assertEqual(assemble_corpus.PARTITION_OF["z_misto_gerada"], "train")
+        finally:
+            assemble_corpus.PARTITION_OF.clear()
+
+    def test_UMA_linha_reservada_assenta_o_componente_inteiro_em_test(self) -> None:
+        """A reserva é pelo COMPONENTE, e uma linha de núcleo ligada a ela vai com ele.
+
+        O componente tem duas geradas com a mesma `derivationRoot`, uma da família reservada e
+        outra do núcleo. Se a detecção exigisse a família em TODA linha, este componente iria
+        ao passeio guloso — a raiz dele é a primeira da ordem, então cairia em `train` — e o
+        corpo passaria a ser RECUSADO pela precedência da reserva em vez de montado.
+        """
+        import assemble_corpus
+
+        misto = [
+            self._gerada("a_00_res_a", familia=self.RESERVADA, derivacao="dr_reserva"),
+            self._gerada("a_00_res_b", familia=self.NUCLEO, derivacao="dr_reserva"),
+        ]
+        # `[3:]` derruba a tripla: aqui todo componente tem DUAS linhas, porque é o tamanho
+        # uniforme que faz a ordem do passeio depender só da raiz.
+        registros = misto + self._geradas(19)[3:]
+        # 40 geradas em 20 componentes de duas linhas cada.
+        self.assertEqual(len(registros), 40)
+        raizes = assemble_corpus.connected_components(registros)
+        self.assertEqual(len(set(raizes.values())), 20)
+        self.assertEqual(raizes["a_00_res_a"], raizes["a_00_res_b"])
+        # UMA das duas linhas é reservada, e é isso que o laço tem de bastar para ver.
+        from group_axes import identity_of
+
+        familias = [
+            identity_of(rec["groups"]["generatorFamily"])
+            for rec in registros
+            if raizes[rec["id"]] == raizes["a_00_res_a"]
+        ]
+        self.assertEqual(sorted(familias), sorted([self.NUCLEO, self.RESERVADA]))
+
+        por_bloco = self._mede(registros, {self.RESERVADA})
+        self.assertEqual(
+            {bloco: dict(c) for bloco, c in sorted(por_bloco.items())},
+            {
+                "cal-A": {"ai": 4},
+                "cal-B": {"ai": 8},
+                "dev": {"ai": 2},
+                "test": {"ai": 8},
+                "train": {"ai": 18},
+            },
+        )
+        # As DUAS ordens do par, porque o laço percorre `membros[raiz]` na ordem de
+        # `records` e a linhagem não garante que a linha reservada venha primeiro. Ler só a
+        # primeira posição basta quando ela é a reservada, e é por isso que a ordem
+        # invertida é a que prende o laço: com `membros[raiz][:1]` o corpo é RECUSADO.
+        for rotulo, par in (
+            ("reservada primeiro", misto),
+            ("reservada por último", list(reversed(misto))),
+        ):
+            with self.subTest(ordem=rotulo):
+                corpo = par + self._geradas(19)[3:]
+                assemble_corpus.PARTITION_OF.clear()
+                try:
+                    assemble_corpus.assign_partitions(corpo, {self.RESERVADA})
+                    self.assertEqual(
+                        assemble_corpus.PARTITION_OF["a_00_res_a"], "test"
+                    )
+                    # A LINHA DE NÚCLEO também, e é ela que separa "reserva por componente"
+                    # de "reserva por linha": pela linha ela ficaria fora de `test`.
+                    self.assertEqual(
+                        assemble_corpus.PARTITION_OF["a_00_res_b"], "test"
+                    )
+                finally:
+                    assemble_corpus.PARTITION_OF.clear()
+
+    def test_o_FECHO_do_componente_reservado_transborda_um_bloco_que_as_linhas_cabem(
+        self,
+    ) -> None:
+        """As duas aritméticas da reserva são DIFERENTES, e a de `main` é a mais frouxa.
+
+        `assert_the_blind_block_holds_both_roles` compara linhas cuja `generatorFamily` está
+        na reserva; `_plano_de_blocos` compara o FECHO dos componentes reservados. Fecho ≥
+        linhas, então existe corpo aprovado pela primeira e recusado pela segunda — este: UMA
+        linha reservada e vinte de núcleo no mesmo componente, 21 sobre um bloco cego de 20.
+        É por isso que a recusa local não é inalcançável de `main`, e é por isso que a
+        mensagem dela fala de linhas ASSENTADAS e não de linhas reservadas.
+        """
+        import assemble_corpus
+
+        assemble_corpus.PARTITION_OF.clear()
+        registros = [
+            self._gerada("a_res_00", familia=self.RESERVADA, derivacao="dr_reserva")
+        ]
+        registros += [
+            self._gerada(f"a_nucleo_{i:02d}", derivacao="dr_reserva") for i in range(20)
+        ]
+        registros += [self._gerada(f"a_so_{i:02d}") for i in range(79)]
+        self.assertEqual(len(registros), 100)
+
+        # A aritmética de `main` APROVA: uma linha reservada contra um bloco cego de 20.
+        por_familia = assemble_corpus.positive_rows_per_family(registros)
+        linhas = assemble_corpus.reserved_rows_per_class(por_familia, {self.RESERVADA})
+        self.assertEqual(linhas, {"ai": 1})
+        assemble_corpus.assert_the_blind_block_holds_both_roles(linhas, {"ai": 20})
+
+        # E o plano RECUSA, porque o que é assentado é o fecho de 21.
+        with self.assertRaises(assemble_corpus.ReserveFillsTheBlindBlock) as caught:
+            assemble_corpus.assign_partitions(registros, {self.RESERVADA})
+        message = str(caught.exception)
+        self.assertIn("seats 21 line(s)", message)
+        self.assertIn("holds 20", message)
+        # A ação prescrita nomeia a linhagem, porque 20 das 21 linhas NÃO são da reserva e
+        # "gerar menos linhas reservadas" não conserta este corpo.
+        self.assertIn("joined to them by lineage", message)
+        self.assertNotIn("a_res_00", assemble_corpus.PARTITION_OF)
+
+    def test_a_guarda_do_componente_roda_ANTES_da_guarda_da_fracao(self) -> None:
+        """A ordem das duas guardas de `assign_partitions`, pinada por comportamento.
+
+        `_plano_de_blocos` não produz travessia, então a única forma de um corpo falhar as
+        DUAS guardas é substituir o planejador. Num corpo assim a ordem decide o diagnóstico
+        que o operador recebe: a guarda de componente nomeia o componente e os dois blocos, e
+        a de fração só sabe dizer "fração por classe" sobre um corpo já estampado.
+        """
+        from unittest import mock
+
+        import assemble_corpus
+
+        registros = self._humanas(18) + self._geradas(18) + self._par_misto()
+
+        def plano_que_atravessa(records: list[dict], held_out: set[str]) -> dict[str, str]:
+            del held_out
+            # Tudo em `train` menos UMA linha do componente misto: o componente atravessa E
+            # as cinco frações ficam fora da tolerância.
+            return {
+                rec["id"]: ("dev" if rec["id"] == "z_misto_humana" else "train")
+                for rec in records
+            }
+
+        assemble_corpus.PARTITION_OF.clear()
+        try:
+            with mock.patch.object(
+                assemble_corpus, "_plano_de_blocos", plano_que_atravessa
+            ):
+                with self.assertRaises(assemble_corpus.UnsplittableCorpus) as caught:
+                    assemble_corpus.assign_partitions(registros, set())
+            message = str(caught.exception)
+            self.assertIn("foi carimbado em mais de um bloco", message)
+            self.assertIn("z_misto_gerada", message)
+            self.assertIn("dev", message)
+            self.assertNotIn("fracao", message)
+
+            # Não vácuo: o MESMO corpo estampado falha a outra guarda também, e é isso que faz
+            # da ordem uma decisão em vez de um acidente.
+            with self.assertRaises(assemble_corpus.UnsplittableCorpus) as segunda:
+                assemble_corpus.assert_stamped_corpus_is_splittable(registros, set())
+            self.assertIn("fracao", str(segunda.exception))
+        finally:
+            assemble_corpus.PARTITION_OF.clear()
 
 
 class HeldOutDeclarationTests(unittest.TestCase):

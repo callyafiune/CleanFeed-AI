@@ -28,6 +28,7 @@ import {
   ALL_GROUP_AXES,
   V3_GROUP_AXES,
   V4_GROUP_AXES,
+  groupAxisIdentity,
   validateBenchmarkRecordV3,
   validateBenchmarkRecordV4,
   type BenchmarkLabel,
@@ -39,6 +40,7 @@ import {
   known,
   unknownAxis,
   v3Ai,
+  v4Ai,
   v4Human,
   v4MixedEcological,
   withAxis,
@@ -1330,6 +1332,28 @@ function v4CellRow(id: string, createdAt: number): BenchmarkRecord {
   return validateBenchmarkRecordV4(raw) as unknown as BenchmarkRecord;
 }
 
+/**
+ * A generated row of ONE recipe, as the assembler emits it: `promptTemplate` and
+ * `generatorVersion` shared with every other row of the recipe, everything else per row.
+ *
+ * It is the other half of the reported inventory. The material pair is `known` only on a
+ * human row and the apparatus pair only on a generated one, so measuring all four needs
+ * both classes; and the shared identity is what makes the inventory non-vacuous, because
+ * an axis with one identity per row would report `largest: 1` whether the splitter
+ * unioned on it or not.
+ */
+function v4RecipeRow(id: string, createdAt: number): BenchmarkRecord {
+  let raw: Record<string, unknown> = { ...v4Ai(), id, createdAt };
+  raw = withAxis(raw, "promptTemplate", known("pt_original_um_so"));
+  raw = withAxis(raw, "generatorVersion", known("gemini-3_5-flash-lite"));
+  raw = withAxis(raw, "nearDuplicate", known(`nd_${id}`));
+  raw = withAxis(raw, "generationBatch", known(`gb_agy_${id}`));
+  // Parent linkage to a row absent from every record set here, so the lineage relation
+  // unions nothing and each generated line is its own component.
+  raw = withAxis(raw, "humanSeed", known(`h_absent_${id}`));
+  return validateBenchmarkRecordV4(raw) as unknown as BenchmarkRecord;
+}
+
 describe("an axis the splitter does not union on", () => {
   it("stays out of the splitter's union list, and says so per axis", () => {
     // The CONTENT, restated, before anything iterates it. Every other assertion in
@@ -1338,9 +1362,16 @@ describe("an axis the splitter does not union on", () => {
     // `sourceMaterialBatch` would silently drop the dependence axis from the
     // inventory the composition gate reads. Equality and not `length`: a length check
     // accepts one axis swapped for another.
+    //
+    // Four names: the MATERIAL pair, then the APPARATUS pair. The loop below is what
+    // makes adding a name here a decision rather than a note — it refuses any of them
+    // in `GROUP_KEYS` and requires the artifact to publish both connectivity flags
+    // false, so an axis cannot be reported as ungrouped and grouped by at once.
     expect([...REPORTED_GROUP_AXES]).toEqual([
       "domainSource",
       "sourceMaterialBatch",
+      "generatorVersion",
+      "promptTemplate",
     ]);
 
     for (const axis of REPORTED_GROUP_AXES) {
@@ -1357,18 +1388,36 @@ describe("an axis the splitter does not union on", () => {
   });
 
   it("is published as an inventory per partition, and crossing a cut is not leakage", () => {
-    // One row per partition, ALL FIVE populated. `auditClusters` creates a `bySlice`
-    // bucket only for a partition that holds a record, so a fixture leaving `cal-A` and
-    // `cal-B` empty pins their ABSENCE from the inventory — and those two are the blind
-    // partitions whose inventory the composition gate is the one that will read.
-    const rows = [
+    // One HUMAN and one GENERATED row per partition, ALL FIVE populated. `auditClusters`
+    // creates a `bySlice` bucket only for a partition that holds a record, so a fixture
+    // leaving `cal-A` and `cal-B` empty pins their ABSENCE from the inventory — and those
+    // two are the blind partitions whose inventory the composition gate is the one that
+    // will read.
+    //
+    // BOTH classes, because the four reported axes are mutually exclusive by schema rule:
+    // the material pair is `known` only on a human row and `notApplicable` on a generated
+    // one, and the apparatus pair the other way round. A human-only fixture would leave
+    // `promptTemplate` and `generatorVersion` `notApplicable` on every line and the loop
+    // below would measure an absence.
+    const humans = [
       v4CellRow("h_train", 1),
       v4CellRow("h_dev", 2),
       v4CellRow("h_cal_a", 3),
       v4CellRow("h_cal_b", 4),
       v4CellRow("h_test", 5),
     ];
-    const [train, dev, calA, calB, test] = rows as [
+    const generated = ["train", "dev", "cal_a", "cal_b", "test"].map(
+      (slot, index) => v4RecipeRow(`a_${slot}`, index + 1),
+    );
+    const rows = [...humans, ...generated];
+    const [train, dev, calA, calB, test] = humans as [
+      BenchmarkRecord,
+      BenchmarkRecord,
+      BenchmarkRecord,
+      BenchmarkRecord,
+      BenchmarkRecord,
+    ];
+    const [aTrain, aDev, aCalA, aCalB, aTest] = generated as [
       BenchmarkRecord,
       BenchmarkRecord,
       BenchmarkRecord,
@@ -1378,11 +1427,11 @@ describe("an axis the splitter does not union on", () => {
     const audit = auditBlockedSplit(
       rows,
       {
-        train: [train],
-        dev: [dev],
-        "cal-A": [calA],
-        "cal-B": [calB],
-        test: [test],
+        train: [train, aTrain],
+        dev: [dev, aDev],
+        "cal-A": [calA, aCalA],
+        "cal-B": [calB, aCalB],
+        test: [test, aTest],
       },
       AUDIT_POLICY,
       NO_RESERVATION,
@@ -1423,24 +1472,48 @@ describe("an axis the splitter does not union on", () => {
     for (const axis of REPORTED_GROUP_AXES) {
       const report = audit.clusters.axes.find((row) => row.axis === axis);
       expect(report, axis).toBeDefined();
-      // ONE identity over the five record-lines — the cell as an acquisition really
-      // offers it — so the inventory is a measurement and not a tautology.
+      // MEASURED off the fixture rather than restated, because the four axes do not have
+      // one profile: the material pair and the apparatus pair are carried by different
+      // classes, and `domainSource` is carried by both. A hand-written 5 would make three
+      // of them pass and one pass by accident. What is asserted is the shape that makes
+      // the inventory a measurement — every identity spanning ALL FIVE partitions, so an
+      // axis reported here really does bind lines the splitter did not keep together.
+      const identityOf = (row: BenchmarkRecord): string | undefined =>
+        groupAxisIdentity(row, axis);
+      const carrying = rows.filter((row) => identityOf(row) !== undefined);
+      const identities = new Set(
+        carrying.map((row) => identityOf(row) as string),
+      );
+      const linesOf = (identity: string): BenchmarkRecord[] =>
+        carrying.filter((row) => identityOf(row) === identity);
+      const largest = Math.max(
+        ...[...identities].map((identity) => linesOf(identity).length),
+      );
+      // Non-vacuous in the one way that matters: every identity of this axis covers one
+      // line per partition, which is exactly the spread a union would have collapsed.
+      expect(largest, axis).toBe(PARTITIONS.length);
+      for (const identity of identities) {
+        expect(linesOf(identity), `${axis} ${identity}`).toHaveLength(
+          PARTITIONS.length,
+        );
+      }
       expect(report!.states, axis).toEqual({
-        known: 5,
-        notApplicable: 0,
+        known: carrying.length,
+        notApplicable: rows.length - carrying.length,
         unknown: 0,
       });
       expect(report!.overall, axis).toEqual({
-        groups: 1,
-        largest: 5,
+        groups: identities.size,
+        largest,
         singletons: 0,
-        recordLines: 5,
+        recordLines: carrying.length,
       });
       expect(report!.connectivity.sharedValue, axis).toBe(false);
       // The inventory the composition gate will read: how many distinct acquisition
-      // events and strata each partition holds. All five keys, the two BLIND ones
-      // included — a partition dropped from `sliceKeysOf` or from `AUDITED_PARTITIONS`
-      // vanishes from this list silently otherwise.
+      // events, strata, generator versions and prompt templates each partition holds.
+      // All five keys, the two BLIND ones included — a partition dropped from
+      // `sliceKeysOf` or from `AUDITED_PARTITIONS` vanishes from this list silently
+      // otherwise.
       const perPartition = report!.bySlice.filter(
         (row) => row.slice === "partition",
       );
@@ -1449,21 +1522,25 @@ describe("an axis the splitter does not union on", () => {
         axis,
       ).toEqual(["cal-A", "cal-B", "dev", "test", "train"]);
       for (const row of perPartition) {
+        // One line per identity in every partition, so the per-partition count is the
+        // number of identities the axis carries and every one of them is a singleton.
         expect(row.count, `${axis} ${row.key}`).toEqual({
-          groups: 1,
+          groups: identities.size,
           largest: 1,
-          singletons: 1,
-          recordLines: 1,
+          singletons: identities.size,
+          recordLines: identities.size,
         });
       }
     }
 
     // The identity spans all five partitions and that is NOT leakage: the splitter
     // does not union on it, so nothing was kept together and nothing crossed a cluster
-    // boundary. A union on either axis would make this list non-empty — and would make
-    // the cell one component, which the roots below refuse.
+    // boundary. A union on any of the four would make this list non-empty — and would
+    // make the cell (or the whole recipe) one component, which the roots below refuse.
     expect(audit.leakages).toEqual([]);
-    expect(new Set(connectedComponentRoots(rows).values()).size).toBe(5);
+    expect(new Set(connectedComponentRoots(rows).values()).size).toBe(
+      rows.length,
+    );
   });
 
   it("fails the audit when a source declares the acquisition event and a row leaves it unknown", () => {

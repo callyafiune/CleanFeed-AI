@@ -11,10 +11,12 @@
 //      exists, so an axis nobody recovered cannot support the split.
 //
 // The axes the splitter does NOT union on are still REPORTED here, per partition, and
-// `REPORTED_GROUP_AXES` names the two whose dependence is carried that way on purpose.
-// An inventory is what a coarse axis can honestly support: unioning on it would put a
-// whole quota cell in one partition (see `GROUP_KEYS` in benchmark/split.ts), while an
-// axis absent from this report is an axis nobody downstream can gate on.
+// `REPORTED_GROUP_AXES` names the four whose dependence is carried that way on purpose.
+// An inventory is what such an axis can honestly support: unioning on a coarse one
+// would put a whole quota cell in one partition, and unioning on a recipe one collapses
+// the generated class into a block no partition can receive (see `GROUP_KEYS` in
+// benchmark/split.ts, which states the criterion). An axis absent from this report is
+// an axis nobody downstream can gate on.
 //
 // The sampling floors are NOT failures. `minimumTestHumanNegatives` counts
 // aggregate record-lines while a power claim needs sampling units, so it is
@@ -84,28 +86,106 @@ export const DECLARED_GROUP_AXES: ReadonlyMap<string, readonly GroupAxis[]> =
   );
 
 /**
- * The axes the splitter refuses to UNION on and this audit therefore has to
- * REPORT — an inventory per partition, never a cluster the split rests on.
+ * FOUR of the axes the splitter refuses to union on: the ones this audit takes NAMED
+ * reporting responsibility for — an inventory per partition, never a cluster the split
+ * rests on.
  *
- * Both name a real dependence and neither can carry it through the partitioning.
- * There is one acquisition event per source and one stratum per quota cell, so
- * unioning on either would make a whole cell a single indivisible component: the
- * human partition fractions become multiples of ~25%, `dev`'s 0.05 is unreachable,
- * and a unit floor counted in components reads 1 per cell forever (the argument is
- * written out at `GROUP_KEYS` in benchmark/split.ts, which is where the exclusion is
- * enforced). What remains available is an inventory — how many distinct strata and
- * acquisition events each partition holds — and that is what the cluster report
- * publishes for them, with `connectivity.sharedValue: false` stating outright that
- * the splitter did not group by them.
+ * It is not the set of axes the report covers, and reading it that way states something
+ * false. The per-partition inventory is built by `reportedAxesOf` from every axis the
+ * RECORDS declare, so it also carries `generatorFamily`, `generationLane`,
+ * `harnessVersion` and `extractionRun` — axes this list does not name and nothing else
+ * in the tree names either. {@link groupAxisRole} is where that residue is declared
+ * instead of implied.
+ *
+ * All four name a real dependence and none of them can carry it through the
+ * partitioning, for two different arithmetics.
+ *
+ * `domainSource` and `sourceMaterialBatch` are the MATERIAL pair. There is one
+ * acquisition event per source and one stratum per quota cell, so unioning on either
+ * would make a whole cell a single indivisible component: the human partition
+ * fractions become multiples of ~25%, `dev`'s 0.05 is unreachable, and a unit floor
+ * counted in components reads 1 per cell forever.
+ *
+ * `generatorVersion` and `promptTemplate` are the APPARATUS pair, and they identify a
+ * recipe rather than a sampling unit — `EXPOSURE_IDENTITY_AXES`
+ * (benchmark/cluster-exposure-ledger.ts) excludes the recipe axes by name, which is a
+ * gate saying so in code. Measured on the assembled corpus, `promptTemplate` alone puts
+ * 641 of 1170 generated lines (54.79% of the class) in one component, above the largest
+ * target plus tolerance; `generatorVersion` alone puts 493 (42.1%), which fits. What
+ * does not fit is the PAIR: together they close transitively and the class becomes one
+ * component of 100%. `generatorVersion` does NOT carry the identity `generatorFamily`
+ * carries — five identities against one, agreeing on 0 of the 1170 lines — so the
+ * family argument does not reach it and the closure is the whole of the reason.
+ *
+ * The argument for both pairs is written out at `GROUP_KEYS` in benchmark/split.ts,
+ * which states the criterion and is where the exclusion is enforced. What remains
+ * available here is an inventory — how many distinct strata, acquisition events,
+ * generator versions and prompt templates each partition holds — and that is what the
+ * cluster report publishes for them, with `connectivity.sharedValue: false` stating
+ * outright that the splitter did not group by them.
  *
  * This list may never intersect `GROUP_KEYS`. It is not a second vocabulary the audit
- * enforces on the splitter; it is the pair whose REPORTED standing the audit is
+ * enforces on the splitter; it is the set whose REPORTED standing the audit is
  * responsible for, and a test pins the disjointness against the splitter's own list.
  */
 export const REPORTED_GROUP_AXES = [
   "domainSource",
   "sourceMaterialBatch",
+  "generatorVersion",
+  "promptTemplate",
 ] as const satisfies readonly GroupAxis[];
+
+/**
+ * The five standings an axis can have, in the order {@link groupAxisRole} decides them.
+ *
+ * `inventoryOnly` is the RESIDUE and is a named absence, not a role anybody designed:
+ * it is what is left when the four lists have spoken. It exists so the residue is
+ * declared and pinned by test rather than discovered by a reader who applies the union
+ * criterion to an axis nothing names.
+ */
+export const GROUP_AXIS_ROLES = [
+  "unionByValue",
+  "parentLinkage",
+  "namedReported",
+  "diagnostic",
+  "inventoryOnly",
+] as const;
+
+export type GroupAxisRole = (typeof GROUP_AXIS_ROLES)[number];
+
+/**
+ * What standing one axis has, TOTAL over every axis any record version declares and
+ * derived from the four lists that decide it — never from the union criterion, which is
+ * a necessary condition on `GROUP_KEYS` and decides nothing on its own (the argument is
+ * written at `GROUP_KEYS` in benchmark/split.ts).
+ *
+ * The order of the four tests is a PRECEDENCE and not a partition of the lists, because
+ * the lists overlap by design: `derivationRoot` is in `GROUP_KEYS` and in
+ * `PARENT_LINKAGE_AXES`, carrying both relations. It answers `unionByValue`, the
+ * stronger one, and a caller that needs the pair reads {@link axisConnectivity}, which
+ * is what publishes both flags. Nothing else overlaps, and a test pins that.
+ *
+ * `inventoryOnly` is not a synonym for "carries no dependence". `generatorFamily` is
+ * there and DOES carry one; what the tree does about it is narrower than grouping —
+ * only the reserved families are constrained, and only to being test-only — so calling
+ * it reported or diagnostic would name a responsibility nobody took.
+ */
+export function groupAxisRole(axis: GroupAxis): GroupAxisRole {
+  const connectivity = axisConnectivity(axis);
+  if (connectivity.sharedValue) return "unionByValue";
+  if (connectivity.parentLinkage) return "parentLinkage";
+  if ((REPORTED_GROUP_AXES as readonly string[]).includes(axis)) {
+    return "namedReported";
+  }
+  if (
+    (
+      PREREGISTRATION_V4.connectivity.diagnosticAxes as readonly string[]
+    ).includes(axis)
+  ) {
+    return "diagnostic";
+  }
+  return "inventoryOnly";
+}
 
 export interface SplitAuditPolicy {
   /**
@@ -595,7 +675,7 @@ export function auditBlockedSplit(
  * Derived from the records and never pinned to one version's tuple. A v4 corpus read
  * against the v3 tuple publishes `collectionBatch` with `states.unknown = N` — an axis
  * nobody declared, reported as broken rather than as absent — and OMITS the three axes
- * v4 introduced, including both members of {@link REPORTED_GROUP_AXES} that only v4
+ * v4 introduced, including the two members of {@link REPORTED_GROUP_AXES} that only v4
  * names. A mixed-version corpus carries the union, because each record answers for its
  * own version.
  */

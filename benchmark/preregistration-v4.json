@@ -48,13 +48,13 @@
     "independentUnit": "origin-document-components",
     "reportedAxes": [
       "domainSource",
-      "sourceMaterialBatch"
+      "sourceMaterialBatch",
+      "generatorVersion",
+      "promptTemplate"
     ],
     "splitUnionAxes": [
       "author",
       "source",
-      "generatorVersion",
-      "promptTemplate",
       "generationBatch",
       "nearDuplicate",
       "derivationRoot"

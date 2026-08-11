@@ -1,12 +1,21 @@
 import { describe, expect, it } from "vitest";
 
-import { auditBlockedSplit, type SplitAuditPolicy } from "../split-audit.ts";
+import {
+  auditBlockedSplit,
+  GROUP_AXIS_ROLES,
+  groupAxisRole,
+  REPORTED_GROUP_AXES,
+  type GroupAxisRole,
+  type SplitAuditPolicy,
+} from "../split-audit.ts";
+import { PREREGISTRATION_V4 } from "../preregistration-v4.ts";
 import {
   axisConnectivity,
   connectedComponentRoots,
   CONNECTIVITY_AXES,
   createBlockedSplit,
   GROUP_KEYS,
+  INERT_UNION_AXES,
   PARENT_LINKAGE_AXES,
   PARTITIONS,
   SplitConstraintError,
@@ -16,11 +25,14 @@ import {
   CLASS_TOLERANCE_EPSILON,
 } from "../split.ts";
 import {
+  ALL_GROUP_AXES,
   groupAxisIdentity,
+  V4_GROUP_AXES,
   validateBenchmarkRecordV4,
   type BenchmarkLabel,
   type BenchmarkRecord,
   type TransformationKind,
+  type V4GroupAxis,
 } from "../schema.ts";
 import { known, v4Ai, v4Human, withAxis } from "./helpers/v3-record-fixture.ts";
 import {
@@ -28,6 +40,15 @@ import {
   generatorFamilyOf,
   normalizeGeneratorFamily,
 } from "../generator-family.ts";
+import { EXPOSURE_IDENTITY_AXES } from "../cluster-exposure-ledger.ts";
+import {
+  buildCatalogueCorpus,
+  componentsUnderAxes,
+  loadCatalogue,
+  type ViabilityCase,
+} from "./helpers/viability-catalogue.ts";
+
+const CATALOGUE = await loadCatalogue();
 
 // The blocked split is exercised through the public API only (no lower-level
 // hooks), so every fixture is a full, self-consistent dataset that the temporal
@@ -293,15 +314,14 @@ const RELEASE_AUDIT_POLICY: SplitAuditPolicy = {
 // than imported: a list read off `GROUP_KEYS` cannot fail when `GROUP_KEYS` moves, and
 // that failure is the whole reason this list exists.
 //
-// `generationBatch` is the seventh union axis and is v4-only — a v2 `groups` block has
+// `generationBatch` is the fifth union axis and is v4-only — a v2 `groups` block has
 // no such key — so its cohesion is exercised on v4 fixtures further down.
-// `domainSource` is absent because the splitter no longer unions on it, and the same
-// v4 fixtures prove it.
+// `domainSource`, `promptTemplate` and `generatorVersion` are absent because the
+// splitter does not union on them, and the v4 fixtures prove it: the first would
+// collapse a quota cell, and the other two the whole generated class.
 const GROUP_AXES = [
   "author",
   "source",
-  "generatorVersion",
-  "promptTemplate",
   "nearDuplicate",
   "derivationRoot",
 ] as const;
@@ -715,7 +735,7 @@ describe("the coarse axes carry dependence without unioning", () => {
   });
 });
 
-// --- the seventh union axis, through the splitter and not only the components -
+// --- generationBatch, the one v4 added, through the splitter and not only the components -
 
 /**
  * A hundred temporal slots, one human and one generated row each, all v4 and all
@@ -777,7 +797,7 @@ const V4_BATCH_POLICY: BlockedSplitPolicy = {
 };
 
 describe("the generation batch, taken through the splitter", () => {
-  it("keeps one batch inside a single partition, so the seventh union axis binds", () => {
+  it("keeps one batch inside a single partition, so the batch axis binds", () => {
     const { records, sharedBatch } = v4CorpusSharingOneBatch();
     const split = createBlockedSplit(records, V4_BATCH_POLICY);
     const partitions: Array<[Partition, BenchmarkRecord[]]> = [
@@ -838,7 +858,23 @@ describe("the connectivity axis lists", () => {
       CONNECTIVITY_AXES.filter((axis) => axis === "derivationRoot").length,
     ).toBe(1);
 
-    // It is the union of the two relations, and nothing else is in it.
+    // The CONTENT and the ORDER, as literals. Comparing the list against
+    // `new Set([...GROUP_KEYS, ...PARENT_LINKAGE_AXES])` is the derivation itself and is
+    // therefore a tautology: it holds for a list of six, of five, and of one, so nothing
+    // pins the SIZE. Six names — the five value axes and the linkage-only `humanSeed` —
+    // and this is the list `CLUSTER_ATOM_AXES` (benchmark/cross-validation.ts) reads, so
+    // a name lost here silently stops making the fold atom unknowable.
+    expect([...CONNECTIVITY_AXES]).toEqual([
+      "author",
+      "source",
+      "generationBatch",
+      "nearDuplicate",
+      "derivationRoot",
+      "humanSeed",
+    ]);
+
+    // And still the union of the two relations, which is what keeps the literal above
+    // from becoming a third authority.
     expect([...CONNECTIVITY_AXES].sort()).toEqual(
       [...new Set([...GROUP_KEYS, ...PARENT_LINKAGE_AXES])].sort(),
     );
@@ -925,5 +961,368 @@ describe("F1-4 — the refusal is wired ahead of the splitter", () => {
       sharedValue: false,
       parentLinkage: true,
     });
+  });
+});
+
+// --- o CRITÉRIO da lista de união ------------------------------------------
+
+describe("a lista de união tem critério, e o critério é verificável eixo por eixo", () => {
+  // TODO eixo de `GROUP_KEYS` identifica MATERIAL — é membro de `EXPOSURE_IDENTITY_AXES`,
+  // a lista que o ledger EXECUTA para decidir que a mesma unidade de amostragem
+  // reapareceu — ou a união por ele é INERTE sobre o corpo montado. É condição
+  // NECESSÁRIA, e a recíproca é FALSA: `humanSeed` cumpre a primeira perna e é de
+  // LINHAGEM, `extractionRun` cumpre a segunda e é DIAGNÓSTICO. Os dois têm teste
+  // próprio abaixo, porque um "se e somente se" aqui concluiria que `humanSeed` deve
+  // entrar na lista de união — a mudança que o contrato recusou.
+  //
+  // A segunda perna é medição e não argumento, e a forma dela é: apagar a identidade do
+  // eixo em toda linha não muda o número de componentes.
+  //
+  // A lista de material é IMPORTADA de benchmark/cluster-exposure-ledger.ts e nunca
+  // restatada: uma cópia deixaria o ledger passar a comparar um eixo que o splitter não
+  // une, com os dois lados verdes sobre listas diferentes.
+  const CORPO = buildCatalogueCorpus(
+    CATALOGUE.cases.find(
+      (entry) => entry.name === "forma-medida-da-classe-gerada",
+    ) as ViabilityCase,
+    CATALOGUE.generatedStratum,
+  );
+
+  /** O mesmo corpo com a identidade de um eixo apagada em toda linha. */
+  function semOEixo(
+    records: readonly BenchmarkRecord[],
+    axis: string,
+  ): BenchmarkRecord[] {
+    return records.map((record) => {
+      const groups = { ...(record.groups as Record<string, unknown>) };
+      // `unknown` e não a remoção da chave: `groupAxisIdentity` lê os dois como "esta
+      // linha não se une a ninguém aqui", e manter a chave mantém o registro na forma
+      // que o esquema declara.
+      groups[axis] = { state: "unknown", reason: "medição de inércia" };
+      return { ...record, groups } as unknown as BenchmarkRecord;
+    });
+  }
+
+  function componentes(records: readonly BenchmarkRecord[]): number {
+    return new Set(connectedComponentRoots(records).values()).size;
+  }
+
+  it("admite cada eixo por MATERIAL ou por INÉRCIA, e o laço percorre todos", () => {
+    const porInercia: string[] = [];
+    const porMaterial: string[] = [];
+    for (const axis of GROUP_KEYS) {
+      if ((EXPOSURE_IDENTITY_AXES as readonly string[]).includes(axis)) {
+        porMaterial.push(axis);
+        continue;
+      }
+      porInercia.push(axis);
+      expect(componentes(semOEixo(CORPO, axis)), axis).toBe(componentes(CORPO));
+    }
+    // Não vácuo nas DUAS pernas: cada uma tem entrada, e um laço que caísse todo numa
+    // delas deixaria a outra sem medição alguma.
+    expect(porMaterial).toEqual(["author", "source", "derivationRoot"]);
+    // E a perna de inércia é a LISTA publicada, não uma constante deste teste: quem lê
+    // `INERT_UNION_AXES` fica sabendo qual eixo entrou por medição, e um eixo posto na
+    // união sem nenhuma das duas justificações cai aqui em vez de chegar com um parágrafo.
+    expect(porInercia).toEqual([...INERT_UNION_AXES]);
+    for (const axis of INERT_UNION_AXES) {
+      expect(GROUP_KEYS as readonly string[], axis).toContain(axis);
+      expect(EXPOSURE_IDENTITY_AXES as readonly string[], axis).not.toContain(
+        axis,
+      );
+    }
+  });
+
+  it("mede a inércia de verdade: um eixo que colapsa a classe NÃO passa nela", () => {
+    // O contraste que faz da perna de inércia uma medição. Sem ele qualquer eixo
+    // passaria, inclusive um que põe 54,79 % da classe gerada num componente.
+    const base = componentes(CORPO);
+    for (const axis of ["promptTemplate", "generatorVersion"] as const) {
+      const comOEixo = new Set(
+        componentsUnderAxes(
+          CORPO,
+          [...GROUP_KEYS, axis],
+          [...PARENT_LINKAGE_AXES],
+        ).values(),
+      ).size;
+      expect(comOEixo, axis).not.toBe(base);
+    }
+  });
+
+  it("não deixa nenhum eixo de material fora das duas relações", () => {
+    // A recíproca. Sem ela a lista poderia PERDER um eixo de material e ficar verde:
+    // o ledger continuaria barrando pela reaparição de uma unidade que o splitter
+    // espalhou por duas partições.
+    const relacoes = new Set<string>([...GROUP_KEYS, ...PARENT_LINKAGE_AXES]);
+    for (const axis of EXPOSURE_IDENTITY_AXES) {
+      expect(relacoes, axis).toContain(axis);
+    }
+  });
+
+  it("torna `humanSeed` como eixo de VALOR inerte quando a semente resolve", () => {
+    // O que o comentário de `AxisConnectivity` afirma, medido. Com a linha da semente
+    // PRESENTE — o único estado que `assertDerivedParentsResolve` admite no caminho de
+    // comando — a linhagem de pai já une as duas gerações através dela, então acrescentar
+    // a relação de VALOR não muda componente algum. Sem esta medição a frase é argumento.
+    let seedRaw: Record<string, unknown> = {
+      ...v4Human(),
+      id: "h_seed",
+      createdAt: 1,
+    };
+    seedRaw = withAxis(seedRaw, "author", known("au_hmac_seed"));
+    seedRaw = withAxis(seedRaw, "source", known("th_doc_seed"));
+    seedRaw = withAxis(seedRaw, "nearDuplicate", known("nd_seed"));
+    const seed = validateBenchmarkRecordV4(
+      seedRaw,
+    ) as unknown as BenchmarkRecord;
+    const siblings = [1, 2, 3].map((index) => {
+      let raw: Record<string, unknown> = {
+        ...v4Ai(),
+        id: `a_sibling_${index}`,
+        createdAt: index + 1,
+      };
+      raw = withAxis(raw, "promptTemplate", known(`pt_${index}`));
+      raw = withAxis(raw, "generatorVersion", known(`gv_${index}`));
+      raw = withAxis(raw, "generationBatch", known(`gb_${index}`));
+      raw = withAxis(raw, "nearDuplicate", known(`nd_${index}`));
+      raw = withAxis(raw, "humanSeed", known("h_seed"));
+      return validateBenchmarkRecordV4(raw) as unknown as BenchmarkRecord;
+    });
+    const records = [seed, ...siblings];
+    // Não vácuo: as três irmãs realmente compartilham a semente, e ela ESTÁ no conjunto.
+    expect(
+      new Set(siblings.map((row) => groupAxisIdentity(row, "humanSeed"))),
+    ).toEqual(new Set(["h_seed"]));
+    expect(records.map((row) => row.id)).toContain("h_seed");
+
+    const semValor = componentsUnderAxes(
+      records,
+      [...GROUP_KEYS],
+      [...PARENT_LINKAGE_AXES],
+    );
+    const comValor = componentsUnderAxes(
+      records,
+      [...GROUP_KEYS, "humanSeed"],
+      [...PARENT_LINKAGE_AXES],
+    );
+    expect([...comValor]).toEqual([...semValor]);
+    // E o componente é UM: semente e gerações caem juntas, que é o que a linhagem compra.
+    expect(new Set(semValor.values()).size).toBe(1);
+
+    // A contraparte, que é o que a frase NÃO afirma: com a semente AUSENTE as duas
+    // relações divergem, e é por isso que a medição vale só no caminho de comando.
+    const ausente = componentsUnderAxes(
+      siblings,
+      [...GROUP_KEYS],
+      [...PARENT_LINKAGE_AXES],
+    );
+    const ausenteComValor = componentsUnderAxes(
+      siblings,
+      [...GROUP_KEYS, "humanSeed"],
+      [...PARENT_LINKAGE_AXES],
+    );
+    expect(new Set(ausente.values()).size).toBe(3);
+    expect(new Set(ausenteComValor.values()).size).toBe(1);
+  });
+
+  it("faz o caminhador local reproduzir a conectividade de produção, raiz por raiz", () => {
+    // O preço de medir "e se este eixo unisse": `connectedComponentRoots` lê `GROUP_KEYS`
+    // do módulo e um const exportado não se substitui em tempo de execução, então a
+    // medição usa um caminhador local. Esta asserção é o que impede que ele seja uma
+    // segunda autoridade — entregues as listas de produção, os dois têm de dar as MESMAS
+    // raízes, e não só o mesmo número de componentes.
+    for (const entry of CATALOGUE.cases) {
+      const records = buildCatalogueCorpus(entry, CATALOGUE.generatedStratum);
+      expect(
+        [
+          ...componentsUnderAxes(
+            records,
+            [...GROUP_KEYS],
+            [...PARENT_LINKAGE_AXES],
+          ),
+        ],
+        entry.name,
+      ).toEqual([...connectedComponentRoots(records)]);
+    }
+  });
+
+  it("tem RECÍPROCA FALSA, e os dois eixos que a refutam estão nomeados", () => {
+    // `humanSeed` cumpre a perna (a) — o ledger o EXECUTA como identidade de material —
+    // e não está em `GROUP_KEYS`. Lido como bicondicional, o critério conclui que ele
+    // deve entrar, que é a mudança recusada.
+    expect(EXPOSURE_IDENTITY_AXES as readonly string[]).toContain("humanSeed");
+    expect(GROUP_KEYS as readonly string[]).not.toContain("humanSeed");
+    expect(groupAxisRole("humanSeed")).toBe("parentLinkage");
+
+    // `extractionRun` cumpre a perna (b) — MEDIDO, e é o que faz disto refutação e não
+    // observação: sobre o corpo montado a união por ele não muda componente algum,
+    // porque `notApplicable` em toda linha gerada não une nada. E ele é DIAGNÓSTICO.
+    //
+    // O ESCOPO é a classe gerada, que é o corpo que existe. Sobre um corpo com linha
+    // humana o mesmo eixo NÃO é inerte — uma extração escreve milhares de linhas com um
+    // id de execução —, e essa medição está no espelho do lab
+    // (`test_a_reciproca_do_criterio_e_FALSA_nos_dois_sentidos`). Cumprir (b) num corpo
+    // não é licença para unir, e é por isso que o critério não é bicondicional.
+    const comOEixo = new Set(
+      componentsUnderAxes(
+        CORPO,
+        [...GROUP_KEYS, "extractionRun"],
+        [...PARENT_LINKAGE_AXES],
+      ).values(),
+    ).size;
+    expect(comOEixo).toBe(componentes(CORPO));
+    expect(GROUP_KEYS as readonly string[]).not.toContain("extractionRun");
+    expect(groupAxisRole("extractionRun")).toBe("diagnostic");
+  });
+});
+
+// --- as quatro situações, e o resíduo que nenhuma delas cobre ----------------
+
+describe("toda situação de eixo é decidida por lista, e o resíduo é declarado", () => {
+  /**
+   * A situação de cada eixo v4 e a lista que a decide. RESTATADA e não derivada: uma
+   * tabela lida de `groupAxisRole` concordaria com qualquer implementação, inclusive uma
+   * que devolvesse `inventoryOnly` para os catorze.
+   *
+   * `identificaMaterial` é a perna (a) do critério da união, e está aqui para que cada
+   * linha diga POR QUE: é o que separa `humanSeed` (material, e ainda assim de linhagem)
+   * de `generationLane` (não material, e sem lista alguma).
+   */
+  const SITUACAO: Record<
+    V4GroupAxis,
+    { papel: GroupAxisRole; identificaMaterial: boolean }
+  > = {
+    author: { papel: "unionByValue", identificaMaterial: true },
+    source: { papel: "unionByValue", identificaMaterial: true },
+    derivationRoot: { papel: "unionByValue", identificaMaterial: true },
+    generationBatch: { papel: "unionByValue", identificaMaterial: false },
+    nearDuplicate: { papel: "unionByValue", identificaMaterial: false },
+    humanSeed: { papel: "parentLinkage", identificaMaterial: true },
+    domainSource: { papel: "namedReported", identificaMaterial: false },
+    sourceMaterialBatch: { papel: "namedReported", identificaMaterial: false },
+    generatorVersion: { papel: "namedReported", identificaMaterial: false },
+    promptTemplate: { papel: "namedReported", identificaMaterial: false },
+    extractionRun: { papel: "diagnostic", identificaMaterial: false },
+    generatorFamily: { papel: "inventoryOnly", identificaMaterial: false },
+    generationLane: { papel: "inventoryOnly", identificaMaterial: false },
+    harnessVersion: { papel: "inventoryOnly", identificaMaterial: false },
+  };
+
+  it("percorre os CATORZE e afirma, por eixo, a situação e a lista que a decide", () => {
+    // O laço é sobre `V4_GROUP_AXES` e não sobre as chaves da tabela: uma tabela à qual
+    // faltasse um eixo passaria percorrendo a si mesma.
+    expect(V4_GROUP_AXES).toHaveLength(14);
+    for (const axis of V4_GROUP_AXES) {
+      const esperado = SITUACAO[axis];
+      expect(esperado, axis).toBeDefined();
+      expect(groupAxisRole(axis), axis).toBe(esperado.papel);
+      expect(
+        (EXPOSURE_IDENTITY_AXES as readonly string[]).includes(axis),
+        axis,
+      ).toBe(esperado.identificaMaterial);
+
+      // O POR QUÊ, e não só o rótulo: cada situação é pertença a UMA lista e ausência
+      // das outras três. Sem esta metade, um `groupAxisRole` que ignorasse as listas e
+      // devolvesse a tabela de cor passaria.
+      const emUniao = (GROUP_KEYS as readonly string[]).includes(axis);
+      const emLinhagem = (PARENT_LINKAGE_AXES as readonly string[]).includes(
+        axis,
+      );
+      const emReportado = (REPORTED_GROUP_AXES as readonly string[]).includes(
+        axis,
+      );
+      const emDiagnostico = (
+        PREREGISTRATION_V4.connectivity.diagnosticAxes as readonly string[]
+      ).includes(axis);
+      switch (esperado.papel) {
+        case "unionByValue":
+          expect([emUniao, emReportado, emDiagnostico], axis).toEqual([
+            true,
+            false,
+            false,
+          ]);
+          // A ÚNICA sobreposição admitida, e ela é nomeada: `derivationRoot` carrega as
+          // duas relações, e o papel nomeia a mais forte. `axisConnectivity` é quem
+          // publica o par.
+          expect(emLinhagem, axis).toBe(axis === "derivationRoot");
+          break;
+        case "parentLinkage":
+          expect(
+            [emUniao, emLinhagem, emReportado, emDiagnostico],
+            axis,
+          ).toEqual([false, true, false, false]);
+          break;
+        case "namedReported":
+          expect(
+            [emUniao, emLinhagem, emReportado, emDiagnostico],
+            axis,
+          ).toEqual([false, false, true, false]);
+          break;
+        case "diagnostic":
+          expect(
+            [emUniao, emLinhagem, emReportado, emDiagnostico],
+            axis,
+          ).toEqual([false, false, false, true]);
+          break;
+        case "inventoryOnly":
+          // O RESÍDUO: nenhuma das quatro listas o nomeia. O que ele tem é o inventário
+          // por partição, e o inventário vem de `ALL_GROUP_AXES` filtrado pelo que os
+          // REGISTROS declaram — por isso ele não desaparece do artefato selado.
+          expect(
+            [emUniao, emLinhagem, emReportado, emDiagnostico],
+            axis,
+          ).toEqual([false, false, false, false]);
+          expect(ALL_GROUP_AXES as readonly string[], axis).toContain(axis);
+          break;
+      }
+    }
+  });
+
+  it("é TOTAL e EXCLUSIVA: cada eixo cai em uma situação, e as cinco têm conteúdo", () => {
+    // Total sobre o vocabulário INTEIRO e não só sobre v4: `collectionBatch` é v3-only e
+    // também é resíduo, então uma auditoria de corpo misto encontra papel para ele.
+    const porPapel = new Map<GroupAxisRole, string[]>(
+      GROUP_AXIS_ROLES.map((papel) => [papel, []]),
+    );
+    for (const axis of ALL_GROUP_AXES) {
+      porPapel.get(groupAxisRole(axis))?.push(axis);
+    }
+    expect(ALL_GROUP_AXES).toHaveLength(15);
+    // Ordenado dos dois lados: a ordem aqui é a de `ALL_GROUP_AXES` e a das listas é a
+    // delas, e o que se afirma é o CONJUNTO de cada situação.
+    const sorted = (papel: GroupAxisRole): string[] =>
+      [...(porPapel.get(papel) as string[])].sort();
+    expect(sorted("unionByValue")).toEqual([...GROUP_KEYS].sort());
+    expect(sorted("parentLinkage")).toEqual(["humanSeed"]);
+    expect(sorted("namedReported")).toEqual([...REPORTED_GROUP_AXES].sort());
+    expect(sorted("diagnostic")).toEqual(["extractionRun"]);
+    // O resíduo, ESCRITO. Enquanto ele está aqui, ninguém pode ler "todo outro eixo é
+    // reportado" da lista de união: quatro eixos desmentem a frase.
+    expect(sorted("inventoryOnly")).toEqual([
+      "collectionBatch",
+      "generationLane",
+      "generatorFamily",
+      "harnessVersion",
+    ]);
+    // Nenhuma das cinco vazia — uma situação sem entrada é uma situação que nenhum
+    // laço deste arquivo exercita.
+    for (const papel of GROUP_AXIS_ROLES) {
+      expect(porPapel.get(papel), papel).not.toHaveLength(0);
+    }
+  });
+
+  it("mantém `generatorFamily` no resíduo com o que o mecanismo faz por ele, e nada mais", () => {
+    // O resíduo não é "não carrega dependência". `generatorFamily` carrega, e o que a
+    // árvore faz é MAIS ESTREITO que agrupar: só as famílias RESERVADAS são restringidas,
+    // e só a serem de `test`. Chamá-lo reportado ou diagnóstico nomearia uma
+    // responsabilidade que ninguém assumiu.
+    expect(groupAxisRole("generatorFamily")).toBe("inventoryOnly");
+    expect(axisConnectivity("generatorFamily")).toEqual({
+      sharedValue: false,
+      parentLinkage: false,
+    });
+    expect(REPORTED_GROUP_AXES as readonly string[]).not.toContain(
+      "generatorFamily",
+    );
   });
 });

@@ -165,14 +165,111 @@ export interface BlockedSplitPolicy {
  * The connected-component axes: every axis two record-lines are unioned by when
  * they carry the SAME identity on it.
  *
+ * THE LIST HAS A CRITERION, and it is a NECESSARY condition — never a definition.
+ * Every axis here satisfies at least one of
+ *
+ *   (a) it identifies MATERIAL — it is a member of `EXPOSURE_IDENTITY_AXES`
+ *       (benchmark/cluster-exposure-ledger.ts), the list a gate already executes to
+ *       decide that the same SAMPLING UNIT reappeared — or
+ *   (b) unioning on it is INERT over the corpus MEASURED, which is a measurement and not
+ *       an argument: that corpus has the same number of components with the axis in this
+ *       list and without it. Inertness is a property of the corpus and not of the axis,
+ *       so the scope travels with the claim. The members admitted on that ground are
+ *       named in {@link INERT_UNION_AXES}, so the two legs are a list each and a test
+ *       holds this list against their union.
+ *
+ * `author`, `source` and `derivationRoot` are here by (a). `nearDuplicate` and
+ * `generationBatch` are here by (b): after pruning, `nearDuplicate` is the row's own
+ * id (1170 identities over the 1170 assembled generated lines), and `generationBatch`
+ * is `unknown` on every generated row until the assembler derives it AFTER
+ * partitioning, from a key that contains `generatedAt` — which the block stamp
+ * overwrites with the block's own time, so a batch is confined to one block and
+ * co-locates nothing across a cut. That second entry is therefore CONDITIONAL on the
+ * overwrite, and the condition is pinned by test on the assembler's side.
+ *
+ * THE CONVERSE IS FALSE, and it is not false in the abstract: two axes of this very
+ * schema refute it, so an "if and only if" here would publish a claim the tree next to
+ * it contradicts.
+ *
+ *   * `humanSeed` satisfies (a) — `EXPOSURE_IDENTITY_AXES` names it — and is NOT in
+ *     this list. It is in {@link PARENT_LINKAGE_AXES}, because its identity names
+ *     ANOTHER RECORD-LINE'S ID rather than a value two rows share: unioning it here
+ *     would be a different relation, not this one. Read as a biconditional the
+ *     criterion concludes that it belongs in this list — the exact change the contract
+ *     refused, on the exact axis this file records having published a false
+ *     independence claim about once (see {@link CONNECTIVITY_AXES}).
+ *   * `extractionRun` satisfies (b) over the corpus that exists, and vacuously: it is
+ *     `notApplicable` on all 1170 assembled generated lines, so unioning on it unions
+ *     nothing and the component count does not move. It is NOT here either, and for a
+ *     reason (b) cannot see — re-extracting one dump produces no new material, so
+ *     unioning on it would count one dependence twice. It is DIAGNOSTIC, and named as
+ *     such by `PREREGISTRATION_V4.connectivity.diagnosticAxes` rather than by this
+ *     comment. The SCOPE of that measurement is the point: over a corpus that holds
+ *     human lines the same axis is NOT inert, because one extraction writes thousands of
+ *     rows carrying one run id — measured, in the same test. Leg (b) is a property of
+ *     the corpus measured, so satisfying it is never a licence to union.
+ *
+ * So an axis's STANDING is decided by four lists and never by (a)/(b) alone. The
+ * function that reads them, total over every axis any version declares, is
+ * `groupAxisRole` (benchmark/split-audit.ts):
+ *
+ *   * UNION BY VALUE — this list. Equal identities are ALWAYS one cluster.
+ *   * PARENT LINKAGE — {@link PARENT_LINKAGE_AXES}. Unions only when the named row is
+ *     present in the same record set.
+ *   * REPORTED — `REPORTED_GROUP_AXES` (benchmark/split-audit.ts): the FOUR whose
+ *     inventory the audit takes named responsibility for.
+ *   * DIAGNOSTIC — `PREREGISTRATION_V4.connectivity.diagnosticAxes`: `extractionRun`.
+ *
+ * THE FOUR DO NOT COVER THE FOURTEEN, and the residue is declared here rather than
+ * left to be discovered: `generatorFamily`, `generationLane` and `harnessVersion` — and
+ * `collectionBatch`, which only v3 declares — are in none of the four. Nothing in the
+ * tree takes named responsibility for them; what they do get is the per-partition
+ * cluster inventory, which covers them because it is built from every axis the RECORDS
+ * declare (`reportedAxesOf`) and not from `REPORTED_GROUP_AXES`. `generatorFamily` is
+ * the one with a second mechanism, and it is narrower than a dependence claim: only the
+ * RESERVED families are constrained, and only to being test-only. A test walks all
+ * fourteen and pins which of the five standings each axis has.
+ *
  * `domain` and `groups.generatorFamily` are DELIBERATELY excluded: unioning on them
  * would collapse every LinkedIn record or a whole generator family into one
  * indivisible block. The reserved holdout family is enforced separately, as an
  * explicit test-only constraint.
  *
- * `domainSource` and `sourceMaterialBatch` are excluded for a stronger reason, and it
- * is arithmetic rather than taste. There is ONE acquisition event per source and one
- * stratum per quota cell, so either axis unions a whole cell into a single
+ * `promptTemplate` and `generatorVersion` are excluded BY THE SAME DECISION, and the
+ * arithmetic is measured rather than feared. `promptTemplate` alone has four identities
+ * over the 1170 assembled generated lines and its largest is 641, which is 54.79% of
+ * the class: above the largest target plus the tolerance, so no partition can receive
+ * it whole. `generatorVersion` alone has five, the largest 493 (42.1%), which fits —
+ * what does not fit is the pair. The two TOGETHER close transitively (a version run
+ * crosses template boundaries and a template crosses version runs) and the whole class
+ * becomes ONE component, 100% of it: that closure, and not either axis by itself, is
+ * what the exclusion buys. Neither axis identifies material —
+ * `EXPOSURE_IDENTITY_AXES` excludes the recipe axes BY NAME, for the reason written
+ * there — so they fail (a), and neither is inert, so they fail (b) too.
+ *
+ * What this comment must NOT say, because it was measured false: that
+ * `generatorVersion` carries the identity `generatorFamily` carries. Version REFINES
+ * family — five identities against one, agreeing on 0 of the 1170 lines — so unioning
+ * on version is strictly WEAKER than unioning on the family, and the family argument
+ * of the paragraph above does not reach it.
+ *
+ * WHAT THAT COSTS, stated because a reader must not take a split under this list for
+ * independence: two generated lines grown from one prompt ARE dependent, and after
+ * this exclusion the splitter no longer models that dependence. It is carried instead
+ * by the two gates that read it — the ledger's eligibility comparison and the frozen
+ * resampling table of the estimand class (`PREREGISTRATION_V4.resampling`), which
+ * resamples `ai-recall` over family -> template -> batch — so an interval published
+ * over `test` REPORTS it. A point estimate does not: a recall or FPR measured in the
+ * blind block is a measurement over prompts the training set SAW and seeds it did not,
+ * and any report that uses the word independence without that qualifier states
+ * something false.
+ *
+ * `domainSource` and `sourceMaterialBatch` fail (a), and they fail (b) OVER A CORPUS
+ * THAT HOLDS HUMAN LINES — which is the scope leg (b) is measured on, and it has to be
+ * said, because over the all-generated body both axes are `notApplicable` on every line
+ * and are therefore inert there for the same vacuous reason `extractionRun` is. The way
+ * they fail is arithmetic rather than taste. There is ONE acquisition event per source
+ * and one stratum per quota cell, so either axis unions a whole cell into a single
  * indivisible component. With the one cell the frame declares that component IS the
  * whole `human` class, so its fraction is 100% of the class, `dev`'s 0.05 target is
  * unreachable by construction, every corpus is refused with `SplitConstraintError`, and
@@ -180,13 +277,9 @@ export interface BlockedSplitPolicy {
  * the arithmetic without repairing it — four would read ~25% each, still above `dev`'s
  * target plus tolerance. Both axes still carry dependence — `sourceMaterialBatch`
  * is the declared unit of dependence BETWEEN acquisitions — and they carry it as axes
- * of REGISTRATION, MANIFEST and LEDGER, published as an inventory by the audit
- * (`REPORTED_GROUP_AXES` in benchmark/split-audit.ts). Neither may be unioned on
- * here. Dependence INSIDE a cell is carried by `author`, `source` (the origin
- * document), `nearDuplicate` and the lineage axes.
- *
- * `extractionRun` is never a union axis either: re-extracting one dump produces no
- * new material, so unioning on it would count one dependence twice. It is diagnostic.
+ * of REGISTRATION, MANIFEST and LEDGER. Neither may be unioned on here. Dependence
+ * INSIDE a cell is carried by `author`, `source` (the origin document),
+ * `nearDuplicate` and the lineage axes.
  *
  * `satisfies` ties the list to the record schema, so an axis no version declares —
  * a typo, or a renamed axis — is a compile error rather than a key that reads
@@ -195,14 +288,34 @@ export interface BlockedSplitPolicy {
 export const GROUP_KEYS = [
   "author",
   "source",
-  "generatorVersion",
-  "promptTemplate",
   "generationBatch",
   "nearDuplicate",
   "derivationRoot",
 ] as const satisfies readonly GroupAxis[];
 
 export type GroupKey = (typeof GROUP_KEYS)[number];
+
+/**
+ * The members of {@link GROUP_KEYS} admitted by MEASURED INERTNESS — leg (b) of the
+ * criterion — rather than by identifying material.
+ *
+ * A list and not a sentence, because it is what makes the criterion checkable: the test
+ * holds `GROUP_KEYS` against `EXPOSURE_IDENTITY_AXES` plus this list, so an axis added
+ * to the union list with neither justification fails there instead of arriving with a
+ * paragraph. It states which leg admitted the axis and NOTHING about the other three
+ * standings — an axis absent from both lists is not thereby reported or diagnostic.
+ *
+ * Inertness is a property of the CORPUS that was measured, not of the axis, and the two
+ * entries are not equally durable. `nearDuplicate` is inert because pruning leaves it a
+ * singleton per row; a corpus that was not pruned makes it false. `generationBatch` is
+ * inert only while the block stamp overwrites `generatedAt` — the assembler derives the
+ * batch after partitioning — so this entry is exactly as true as the test on the
+ * assembler's side, and no truer.
+ */
+export const INERT_UNION_AXES = [
+  "generationBatch",
+  "nearDuplicate",
+] as const satisfies readonly GroupKey[];
 
 // The axes `connectedComponentRoots` follows as PARENT LINKAGE — a row whose
 // value names another row's ID joins that row — rather than as a shared value.
@@ -253,7 +366,15 @@ export const CONNECTIVITY_AXES: readonly GroupAxis[] = [
  * VALUE axis — two generations grown from the same human prompt are dependent
  * whether or not the seed row was assembled — is resolved on the command path by
  * the whole-corpus lineage refusal, and remains open only for callers that
- * partition records without passing through it.
+ * partition records without passing through it. On that path the answer is also
+ * MEASURED and not only argued: with every seed RESOLVING — the only state
+ * `assertDerivedParentsResolve` admits — the components are identical with and without
+ * `humanSeed` as a value axis, because the parent linkage already unions two
+ * generations of one seed through the seed row that is present. Adding the value
+ * relation there changes no component; it only costs a co-location the block stamp
+ * would then have to honour. The measurement is pinned by test, and it says nothing
+ * about a corpus whose seeds do NOT resolve — for that corpus the two relations differ,
+ * and the command path refuses it before partitioning.
  *
  * The TYPE lives here too, with the function, and not only the values. It was once
  * an anonymous inline return here plus a hand-restated interface in

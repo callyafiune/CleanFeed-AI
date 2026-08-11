@@ -7039,3 +7039,129 @@ Nenhum bloqueante sobrou; os revisores devolveram nove minores, todos declarados
 
 **A dívida de codex permanece nas três**, como nas quatro de A1: a etapa 3 foi do Fable, e a janela de cota
 está fechada até 16 de agosto.
+
+---
+
+## U4 — a lista de união cai de sete para cinco, e o carimbo passa a ser por componente (2026-08-11)
+
+Último dos nove bloqueantes que mordiam agora, e o único que **emenda a pré-inscrição selada**. Decidido
+sob a autonomia que o operador delegou em 2026-08-11 ("implementação de todos os itens bloqueantes sem
+consulta prévia, o agente decide e registra para conferência posterior, com os três gates"). **Isto é o
+registro para essa conferência**: o que segue é suficiente para reverter sem reconstruir o raciocínio.
+
+### O defeito, e por que ele não era o que parecia
+
+`assert_components_can_fill_five_partitions` é a primeira instrução de `assign_partitions` e compara a
+fração **por classe**. Com `promptTemplate` e `generatorVersion` na união, a classe gerada colapsava num
+componente de 100 % e `UnsplittableCorpus` abortava a montagem antes de qualquer carimbo. A leitura fácil
+era "`generatorVersion` é a família sob outro nome, e unir por família já é inadmissível". **Essa leitura é
+falsa, medida:** `generatorVersion` tem **cinco** identidades contra **uma** de `generatorFamily`, e as duas
+coincidem em **0 de 1170** linhas — version REFINA family, logo unir por version é estritamente mais
+**fraco** que unir por família, e o argumento da família não alcança este eixo.
+
+Medido por mim, com os helpers do próprio catálogo, sobre `forma-medida-da-classe-gerada` (1170 linhas):
+
+| eixos na união | componentes | maior | cabe? |
+|---|---:|---|---|
+| base (os cinco de hoje) | 1.170 | 1 (0,09 %) | sim |
+| + `generatorVersion` | 5 | 493 (**42,14 %**) | **sim** |
+| + `promptTemplate` | 4 | 641 (54,79 %) | não |
+| + os dois | **1** | 1.170 (**100 %**) | não |
+
+**É o FECHO DO PAR que compra a exclusão**, e nenhum dos dois eixos sozinho: uma corrida de versão
+atravessa fronteiras de template e um template atravessa corridas de versão, então juntos eles fecham
+transitivamente sobre a classe inteira. A perna que CABE entrou no catálogo como
+`generatorVersionOnly` e é afirmada nos dois lados — ela existe para impedir a razão falsa de voltar.
+
+### O que foi decidido
+
+1. **`GROUP_KEYS` cai de sete para cinco**: `author`, `source`, `generationBatch`, `nearDuplicate`,
+   `derivationRoot`. `promptTemplate` e `generatorVersion` passam a **REPORTADOS**, que é o padrão já
+   ratificado em G0.1-bis para `domainSource` e `sourceMaterialBatch`.
+2. **A lista tem CRITÉRIO, e ele é condição NECESSÁRIA — nunca definição.** Todo eixo da união satisfaz
+   (a) identificar material (`EXPOSURE_IDENTITY_AXES`) ou (b) ser **inerte medido** sobre o corpo
+   (`INERT_UNION_AXES`, export novo, dois membros admitidos por medição). `GROUP_KEYS ⊆ (a) ∪ (b)` é
+   asserção executável, então um sexto eixo não chega com parágrafo.
+3. **A recíproca é declarada FALSA**, com os dois eixos que a refutam nomeados no próprio texto:
+   `humanSeed` cumpre (a) e está em `PARENT_LINKAGE_AXES`; `extractionRun` cumpre (b) e é diagnóstico. Ler
+   o critério como bicondicional concluiria que `humanSeed` deve entrar na união — a mudança que esta
+   unidade **rejeitou**, e sobre o exato eixo em que a casa registra ter publicado alegação falsa uma vez.
+4. **A situação de um eixo é decidida por QUATRO listas**, não pelas pernas: `groupAxisRole` é função total
+   sobre os quinze eixos, e o **resíduo** que as quatro não cobrem está escrito —
+   `generatorFamily`, `generationLane`, `harnessVersion` e o v3-only `collectionBatch`.
+5. **`assign_partitions` carimba por COMPONENTE CONEXO**, com a guarda chamada de dentro dela. Era passeio
+   por posição, que corta componente por aritmética quando a fronteira cai em índice ímpar.
+
+### Onde a dependência de prompt passa a viver, e o que perdemos
+
+**Não** no ledger: `cluster-exposure-ledger.ts` exclui os eixos de receita da comparação de elegibilidade
+**por decisão ratificada** (ESTADO § 3.4 — conhecimento de estrato, lote, receita ou semântica não invalida
+material). Ela passa a viver na **tabela de reamostragem congelada**, que é mecanismo e não promessa:
+`resampling.estimandClasses["ai-recall"]` é hierárquica em `generatorFamily → promptTemplate →
+generationBatch`, `required: true`, `fallbackToIndependentRows: false`, e `bootstrap.ts` diz por escrito que
+**não** usa `connectedComponentRoots` — um nível de reamostragem agrupa por UMA identidade de eixo, então a
+unidade do intervalo lê o EIXO e nunca a lista de união. Tirar `promptTemplate` da união não move um bit do
+intervalo publicado.
+
+**Perdemos a CO-LOCAÇÃO da receita**, e não há atenuante: 1170/1170 linhas têm o seu template em mais de
+uma partição, 182.017 pares mesmo-template caem em partições distintas e 46.193 desses são train × test.
+Uma medição no bloco cego passa a ler "sobre prompts VISTOS e sementes não vistas". O único limite medido
+sobre essa sobreposição é o crivo de quase-duplicata do próprio pipeline (maior similaridade mantida 0,461).
+
+### O que a revisão adversarial pegou, em duas rodadas
+
+**Rodada 1, três bloqueantes.** O pino do lab não fora reescrito (`SEALED_POLICY_SHA256`), e sem ele o
+Colab **recusa a política**: 41 testes vermelhos e treino/export inoperantes — paguei na integração. O
+critério publicado era um bicondicional falso. E os dois laços novos de `_plano_de_blocos` tinham um caso
+cada: trocar `all(`→`any(` no teto por classe e `any(`→`all(` na detecção de reserva deixava a suíte verde,
+porque **nenhuma fixture montava componente de classe mista nem componente reservado de mais de uma linha**.
+
+**Rodada 2, um bloqueante novo** — e é o de maior valor da unidade: a justificativa que substituiu a
+anterior afirmava, com a palavra "medido", que `generatorVersion` carrega a identidade de `generatorFamily`.
+Refutada em 0 de 1170. Os quatro sítios foram reescritos para a razão verdadeira (o fecho do par), e o fato
+ficou **preso por teste nos dois lados**. Mais três minores: o escopo da perna (b) para
+`sourceMaterialBatch` (ele é inerte sobre o corpo todo-gerado, pela mesma razão vacuosa de `extractionRun`),
+a posição no laço da reserva (`membros[raiz][:1]` sobrevivia porque em toda fixture a linha reservada era a
+primeira — a fixture passou a rodar as duas ordens), e dois "seventh union axis" sobreviventes.
+
+### O que fica para a sua ratificação
+
+- **A emenda em si.** Ela é legítima hoje por ESTADO § 3.4 (abandonar ou emendar pré-inscrição depois de ver
+  a ESTRUTURA dos grupos é legítimo; depois de ver RESULTADOS, não), e nenhum resultado foi visto:
+  `issuedAt` é nulo, 0 tags, nenhum `fit` selado. Reverter custa o retrabalho desta unidade e a recomputação
+  dos dois digests.
+- **A exceção nova que o critério revelou**: o par `(mixed, generatorVersion)`. A classe `mixed` reamostra
+  `humanSeed × promptTemplate` e não declara nível de gerador algum, então nem versão nem família é nível
+  dela. Está registrada como entrada NOMEADA com razão escrita em `EXCEPTIONS`, e a igualdade das duas
+  listas fica vermelha se alguém acrescentar exceção sem decidir. A classe mista constrói **zero** linhas
+  hoje.
+- **O resíduo do critério não tem dono nomeado na política.** Pôr `generatorFamily`, `generationLane` e
+  `harnessVersion` em `REPORTED_GROUP_AXES` seria emenda de política, e não foi feita: o resíduo está
+  declarado no comentário e fixado por teste.
+- **`domainSource` segue dívida declarada**: é REPORTADO, é `known` em 1170/1170 linhas geradas, e nenhum
+  dos dois gates o lê. Agora há assertiva que o mantém visível.
+
+### Honestidade do processo
+
+O painel de desenho tinha **três** ângulos e o terceiro **morreu** por falha de ferramenta (o agente
+estourou o limite de tentativas da saída estruturada), então a síntese escolheu entre **dois**. O ângulo
+perdido era o que perguntava se o defeito estava na COMPOSIÇÃO do material e não no eixo — se poucas
+receitas com muitas linhas cada tornam o corpus indivisível por construção. Essa pergunta **não foi
+respondida** e vale para a Fase 3 item 2: a geometria medida aqui é MONO-CLASSE (a classe humana constrói
+zero e a mista zero), então "corpus" e "ai" são a mesma comparação em tudo que se mediu, e não se sabe se a
+condição agregada recusa onde a por classe passa.
+
+### Integração
+
+`evaluatorDigest`: `fdb42887…` → `b32243258f3d7cd95b2e40b01f4732a7139c85c8cb3b1cffad8134c93151af04`.
+`SEALED_POLICY_SHA256`: `0b7eaf9a…` → `54122b273f19af37243118c330840820d3eee79c96660924c847268e5fd1d562`.
+Mais duas consequências declaradas e pagas: um `TS7053` em `preregistration-v4.test.ts` e quatro arquivos
+convertidos a CRLF por um round-trip de `read_text`/`write_text` do harness — revertidos a LF, com
+`git ls-files --eol | grep -c w/crlf` = **0** conferido, e o harness passou a operar em bytes.
+
+Medido em rodada ÚNICA, árvore quieta: vitest **172 arquivos / 2.993 testes** verde; pytest do lab
+**609 testes / 286 subtests** verde; `tsc` limpo; `prettier` limpo; lint nos mesmos **12** pré-existentes;
+`docs:check` 207/207.
+
+**A dívida de codex permanece.** A etapa 3 foi do Fable nas duas rodadas, e rodada do Fable não fecha
+dívida de codex — a janela de cota reabre em 16 de agosto, e em que gastá-la é decisão do operador (§ 4).

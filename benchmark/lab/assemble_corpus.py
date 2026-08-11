@@ -131,6 +131,14 @@ BLOCK_TIME = {
 # would let the five blocks fail to sum to the class size.
 CLASS_FRACTIONS = {"train": 0.45, "dev": 0.05, "cal-A": 0.1, "cal-B": 0.2}
 
+# As cinco frações COM NOME, na ordem temporal, e a ÚNICA escrita delas. `test` é o resto,
+# e três construções à mão de `dict(CLASS_FRACTIONS) | {"test": ...}` são três lugares onde
+# o resto pode ser derivado por arredondamento e as cinco deixarem de somar 1.
+BLOCK_FRACTIONS: dict[str, float] = {
+    **CLASS_FRACTIONS,
+    "test": round(1.0 - sum(CLASS_FRACTIONS.values()), 10),
+}
+
 # Mirrors `CLASS_TOLERANCE` in benchmark/split.ts, which is what the audit compares against.
 # Absolute, not relative to the target: two points is forty percent of `dev`'s 5%, so a `dev`
 # holding 3% or 7% of a class is legal, and a guard stricter than this refuses corpora the
@@ -2132,21 +2140,77 @@ class UnsplittableCorpus(RuntimeError):
 #     record-line's id joins that row, and only when the named row is present. Naming
 #     itself unions nothing.
 #
-# `domainSource` and `sourceMaterialBatch` are absent, and that is arithmetic rather than
-# taste: there is ONE acquisition event per source and one stratum per quota cell, so
-# either axis unions a whole cell into a single indivisible component — human partition
-# fractions in multiples of ~25%, `dev`'s 0.05 unreachable, and a unit floor counted in
-# components reading 1 per cell forever. Both stay axes of REGISTRATION, MANIFEST and
-# LEDGER, and `extractionRun` never unions at all: re-extracting one dump produces no new
-# material, so unioning on it would count one dependence twice.
+# A LISTA TEM CRITERIO, e o criterio e condicao NECESSARIA — nunca definicao. Todo eixo
+# daqui cumpre ao menos uma de
+#
+#   (a) ele identifica MATERIAL — e membro de `EXPOSURE_IDENTITY_AXES`
+#       (benchmark/cluster-exposure-ledger.ts), a lista pela qual o ledger decide que a
+#       mesma UNIDADE DE AMOSTRAGEM reapareceu —, ou
+#   (b) a uniao por ele e INERTE sobre o corpo montado, que e medicao e nao argumento: o
+#       corpo tem o mesmo numero de componentes com o eixo na lista e sem ele.
+#
+# `author`, `source` e `derivationRoot` entram por (a). `nearDuplicate` e
+# `generationBatch` entram por (b): depois da poda `nearDuplicate` e o proprio id da
+# linha (1170 identidades sobre as 1170 linhas geradas montadas), e `generationBatch`
+# fica `unknown` em toda linha gerada ate `assign_generation_batches`, cuja chave contem
+# `generatedAt` — que `stamp_block` sobrescreve com o tempo do bloco, logo o lote fica
+# confinado a um bloco e nao co-loca nada atraves do corte. Essa segunda entrada e
+# portanto CONDICIONAL ao sobrescrito, e a condicao e pinada por
+# `test_a_batch_never_straddles_two_partitions`.
+#
+# A RECIPROCA E FALSA, e dois eixos deste mesmo esquema a refutam:
+#
+#   * `humanSeed` cumpre (a) — o ledger o executa como identidade de material — e NAO
+#     esta aqui. Esta em `SPLIT_PARENT_LINKAGE_AXES`, porque a identidade dele nomeia o
+#     ID DE OUTRA LINHA e nao um valor que duas linhas compartilham. Lido como
+#     bicondicional, o criterio conclui que ele deve entrar nesta lista — a mudanca que o
+#     contrato recusou;
+#   * `extractionRun` cumpre (b) sobre o corpo que existe, e vacuamente: e `notApplicable`
+#     em toda linha gerada, entao unir por ele nao une nada e a contagem de componentes
+#     nao muda. E tambem NAO esta aqui, por uma razao que (b) nao ve: reextrair o mesmo
+#     dump nao produz material novo, entao unir por ele contaria uma dependencia duas
+#     vezes. Ele e DIAGNOSTICO, e quem o nomeia assim e `connectivity.diagnosticAxes` da
+#     pre-inscricao. O ESCOPO da medicao importa: sobre um corpo com linha HUMANA o mesmo
+#     eixo NAO e inerte, porque uma extracao escreve milhares de linhas com o mesmo id de
+#     execucao — medido em `test_a_reciproca_do_criterio_e_FALSA_nos_dois_sentidos`. A
+#     perna (b) e propriedade do corpo medido, nunca licenca para unir.
+#
+# Logo a SITUACAO de um eixo e decidida por quatro listas e nunca por (a)/(b) sozinhas:
+# uniao por valor (esta), linhagem de pai (`SPLIT_PARENT_LINKAGE_AXES`), reportado
+# (`REPORTED_GROUP_AXES`, quatro nomes) e diagnostico (`extractionRun`). AS QUATRO NAO
+# COBREM OS CATORZE: `generatorFamily`, `generationLane` e `harnessVersion` — e
+# `collectionBatch`, que so v3 declara — ficam de fora de todas, e o que eles tem e o
+# inventario por particao da auditoria. `groupAxisRole` (benchmark/split-audit.ts) e a
+# funcao total sobre os catorze, e o residuo esta declarado la.
+#
+# `promptTemplate` e `generatorVersion` NAO estao aqui, e a aritmetica e medida nas 1170
+# linhas montadas: o maior `promptTemplate` vale 641/1170 = 54,79% da classe gerada num
+# unico componente, acima do maior alvo mais a tolerancia; o maior `generatorVersion` vale
+# 493 = 42,1%, que CABE. O que nao cabe e o PAR — juntos eles fecham transitivamente (uma
+# corrida de versao atravessa fronteiras de template e um template atravessa corridas de
+# versao) e a classe inteira vira UM componente, 100% dela. `generatorVersion` NAO carrega
+# a identidade de `generatorFamily`: cinco identidades contra uma, concordando em 0 das
+# 1170 linhas, entao unir por versao e estritamente mais FRACO que unir pela familia e o
+# argumento da familia nao alcanca este eixo. O fecho do par e a razao inteira. Os dois sao
+# eixos REPORTADOS, e a dependencia de prompt passa a ser carregada pela comparacao de
+# elegibilidade do ledger e pela tabela de reamostragem congelada da pre-inscricao. O que
+# se perde e a CO-LOCACAO: duas linhas do mesmo prompt podem cair em particoes
+# diferentes, e uma medicao no bloco cego le "sobre prompts VISTOS e sementes nao vistas".
+#
+# `domainSource` e `sourceMaterialBatch` falham a perna (a), e falham a (b) SOBRE UM CORPO
+# QUE TEM LINHA HUMANA — que e o escopo em que a (b) e medida, e isso precisa ser dito:
+# sobre o corpo todo-gerado os dois sao `notApplicable` em toda linha e sao inertes la pela
+# mesma razao vacuosa que `extractionRun`. A falha e aritmetica e nao
+# gosto: ha UM evento de aquisicao por fonte e um estrato por celula de quota, entao
+# qualquer um dos dois une a celula inteira num componente indivisivel — fracoes humanas
+# em multiplos de ~25%, `dev` de 0,05 inalcancavel, e um piso contado em componentes
+# lendo 1 por celula para sempre.
 #
 # Both lists are a COPY of the ones benchmark/split.ts declares, and a copy that drifts accepts
 # an axis the splitter unions on or refuses one it ignores.
 SPLIT_GROUP_KEYS: tuple[str, ...] = (
     "author",
     "source",
-    "generatorVersion",
-    "promptTemplate",
     "generationBatch",
     "nearDuplicate",
     "derivationRoot",
@@ -2284,13 +2348,9 @@ def realized_blocks(records: list[dict]) -> dict[str, str]:
     }
 
 
-# As cinco frações-alvo do desenho de cinco partições. `CLASS_FRACTIONS` declara quatro e `test`
-# é o resto, então a lista abaixo não pode ser escrita à mão: um alvo a menos aqui aceitaria
-# corpo que o splitter recusa.
-FIVE_TARGETS: tuple[float, ...] = (
-    *CLASS_FRACTIONS.values(),
-    round(1.0 - sum(CLASS_FRACTIONS.values()), 10),
-)
+# As cinco frações-alvo do desenho de cinco partições, derivadas de `BLOCK_FRACTIONS`: um alvo
+# a menos aqui aceitaria corpo que o splitter recusa.
+FIVE_TARGETS: tuple[float, ...] = tuple(BLOCK_FRACTIONS.values())
 
 
 # O escopo agregado, ao lado de cada classe, e a ORDEM em que os dois são checados.
@@ -2363,7 +2423,9 @@ def assert_components_can_fill_five_partitions(records: list[dict]) -> None:
     |----------------------------------------|---------------------------------------------------|
     | as duas condições necessárias acima,   | se existe atribuição completa dos componentes     |
     | no corpo e em cada classe              | às cinco partições — isso é soma de subconjuntos, |
-    |                                        | e passar aqui não é garantia de viabilidade       |
+    |                                        | e passar aqui não é garantia de viabilidade. Quem |
+    |                                        | tenta a atribuição é `_plano_de_blocos`, e é lá   |
+    |                                        | que um componente sem bloco que o receba recusa   |
     | granularidade grosseira demais         | ordenação temporal, precedência de held-out e a   |
     |                                        | realização conjunta das frações por classe, que   |
     |                                        | só um corpo ESTAMPADO determina                   |
@@ -2448,8 +2510,7 @@ def assert_stamped_corpus_is_splittable(
 
     problemas: list[str] = []
 
-    targets = dict(CLASS_FRACTIONS)
-    targets["test"] = round(1.0 - sum(CLASS_FRACTIONS.values()), 10)
+    targets = BLOCK_FRACTIONS
 
     counts: dict[str, dict[str, int]] = {}
     totals: dict[str, int] = {}
@@ -2583,6 +2644,184 @@ def _blocos_por_componente(records: list[dict]) -> dict[str, set[str]]:
     return por_raiz
 
 
+def assert_no_stamped_component_straddles(records: list[dict]) -> None:
+    """CRITERIO DO CARIMBO: o componente conexo INTEIRO numa unica particao.
+
+    A condicao, literalmente: para todo registro carimbado,
+    `realized_blocks(records)[id] == PARTITION_OF[id]`. `realized_blocks` da UM bloco por
+    componente — `train`, o fallback do splitter, quando o componente atravessa —, entao um
+    componente com dois carimbos tem pelo menos um registro em que os dois lados diferem, e
+    a igualdade sobre todos os registros e exatamente "nenhum componente atravessa bloco".
+
+    O criterio NAO e "irmas contiguas na lista de entrada": contiguidade e uma condicao de
+    ORDENACAO deduzida do criterio, e ela e INSUFICIENTE por aritmetica. Num corpo em que todo
+    componente tem duas linhas e o tamanho de `train` e impar, qualquer fatiamento por posicao
+    corta um componente, seja qual for a ordem da lista — e e esse corpo que
+    `test_a_corpus_where_a_positional_stamp_MUST_cut_a_component` roda.
+    """
+    realizados = realized_blocks(records)
+    if not realizados:
+        return
+    raizes = connected_components(records)
+    for rec in records:
+        carimbado = PARTITION_OF.get(rec["id"])
+        if carimbado is None or realizados[rec["id"]] == carimbado:
+            continue
+        raiz = raizes[rec["id"]]
+        blocos = sorted(_blocos_por_componente(records)[raiz])
+        raise UnsplittableCorpus(
+            f"o componente conexo {raiz!r} foi carimbado em mais de um bloco "
+            f"({', '.join(blocos)}): {rec['id']} leva {carimbado} e o splitter poe o "
+            f"componente inteiro em {realizados[rec['id']]}. O criterio e o componente "
+            "conexo INTEIRO numa unica particao"
+        )
+
+
+def _plano_de_blocos(records: list[dict], held_out: set[str]) -> dict[str, str]:
+    """record id -> bloco, com o componente conexo INTEIRO num bloco so.
+
+    O ALVO de cada (bloco, classe) e o mesmo de sempre: quatro blocos arredondados e `test`
+    como o resto, a aritmetica que `assert_the_blind_block_holds_both_roles` roda em main().
+    O que limita a colocacao, porem, e o TETO da tolerancia e nao o alvo: os componentes sao
+    indivisiveis, entao um corpo de componentes pares nao realiza um alvo impar, e exigir o
+    alvo exato recusaria corpo que o splitter aceita — 46/4/10/20/20 em cem linhas esta a um
+    ponto de 45/5/10/20/20 e dentro dos dois pontos do contrato. O piso nao e conferido aqui:
+    a fracao por classe tem UMA autoridade, `assert_stamped_corpus_is_splittable`.
+
+    As contas sao POR CLASSE, porque e por classe que o splitter compara fracao, e um
+    componente e colocado somente quando cabe em TODA classe que ele carrega — um componente
+    que mistura humano e gerado consome dos dois tetos do mesmo bloco.
+
+    A ordem de consideracao e o TAMANHO decrescente, com desempate pela raiz, e nao a ordem
+    da lista de entrada: componente grosso e o restritivo, e uma ordem lida da lista faria o
+    plano — logo as fracoes realizadas — depender de como os pools foram concatenados. Entre
+    os blocos que cabem, ganha o de maior DEFICIT contra o alvo, com empate pela ordem
+    temporal: e o que puxa cada bloco para o alvo em vez de encher o primeiro que couber.
+
+    Colocar todos os componentes nas cinco particoes e soma de subconjuntos, e o passeio
+    guloso daqui nao a decide: um componente que nao cabe em bloco algum e recusado, com o
+    teto e o colocado de cada bloco na mensagem. Passar por
+    `assert_components_can_fill_five_partitions` e necessario e nao suficiente, e esta e
+    exatamente a recusa que o preflight declara nao decidir.
+    """
+    raizes = connected_components(records)
+    ordem: list[str] = []
+    membros: dict[str, list[dict]] = {}
+    for rec in records:
+        raiz = raizes[rec["id"]]
+        if raiz not in membros:
+            membros[raiz] = []
+            ordem.append(raiz)
+        membros[raiz].append(rec)
+
+    total_por_classe = Counter(rec["label"] for rec in records)
+    alvo: dict[str, dict[str, int]] = {
+        bloco: {
+            classe: round(n * CLASS_FRACTIONS[bloco])
+            for classe, n in total_por_classe.items()
+        }
+        for bloco in CLASS_FRACTIONS
+    }
+    alvo["test"] = {
+        classe: n - sum(alvo[bloco][classe] for bloco in CLASS_FRACTIONS)
+        for classe, n in total_por_classe.items()
+    }
+    # O teto da tolerancia, com o MESMO épsilon de `within_class_tolerance`: a borda é
+    # inclusiva, e comparar float cru recusaria a fracao que o contrato admite.
+    teto: dict[str, dict[str, int]] = {
+        bloco: {
+            classe: int(
+                n * (BLOCK_FRACTIONS[bloco] + CLASS_TOLERANCE + CLASS_TOLERANCE_EPSILON)
+            )
+            for classe, n in total_por_classe.items()
+        }
+        for bloco in BLOCK_FRACTIONS
+    }
+    colocado: dict[str, dict[str, int]] = {
+        bloco: dict.fromkeys(total_por_classe, 0) for bloco in BLOCK_FRACTIONS
+    }
+    linhas_por_classe = {
+        raiz: Counter(rec["label"] for rec in membros[raiz]) for raiz in ordem
+    }
+
+    plano: dict[str, str] = {}
+
+    def coloca(raiz: str, bloco: str) -> None:
+        for classe, n in linhas_por_classe[raiz].items():
+            colocado[bloco][classe] += n
+        for rec in membros[raiz]:
+            plano[rec["id"]] = bloco
+
+    # A reserva primeiro, e pelo COMPONENTE: uma familia reservada realiza em `test` por
+    # decisao do splitter, e o componente dela nao pode ficar metade fora. Basta UMA linha
+    # reservada para o componente inteiro ser assentado, e nao todas: a linhagem junta linha
+    # reservada com linha de nucleo no mesmo componente, e exigir a familia reservada em toda
+    # linha mandaria esse componente ao passeio guloso — `assert_stamped_corpus_is_splittable`
+    # recusaria o corpo em vez de o montar.
+    reservados = [
+        raiz
+        for raiz in ordem
+        if any(
+            group_axes.identity_of((rec.get("groups") or {}).get("generatorFamily"))
+            in held_out
+            for rec in membros[raiz]
+        )
+    ]
+    for raiz in reservados:
+        coloca(raiz, "test")
+    for classe, assentadas in colocado["test"].items():
+        if assentadas > alvo["test"][classe]:
+            # NAO e a mesma aritmetica que `assert_the_blind_block_holds_both_roles` roda em
+            # main(), e por isso esta recusa E ALCANCAVEL de lá. Aquela compara
+            # `reserved_rows_per_class`, que conta LINHAS cuja `generatorFamily` esta na
+            # reserva; esta compara o FECHO dos componentes reservados, que arrasta tambem as
+            # linhas nao reservadas ligadas a elas por linhagem. Fecho >= linhas, entao um
+            # corpo aprovado la chega aqui e pode transbordar — e e por isso que a mensagem
+            # abaixo fala de linhas ASSENTADAS e nao de linhas reservadas.
+            raise ReserveFillsTheBlindBlock(
+                f"the class {classe!r} seats {assentadas} line(s) in `test` and its test "
+                f"block holds {alvo['test'][classe]}: every reserved COMPONENT is seated "
+                "whole, so what has to fit is the closure and not the reserved lines alone. "
+                "Generate fewer reserved lines, or fewer lines joined to them by lineage"
+            )
+
+    ordem_do_bloco = {bloco: i for i, bloco in enumerate(BLOCK_FRACTIONS)}
+    pendentes = sorted(
+        (raiz for raiz in ordem if raiz not in set(reservados)),
+        key=lambda raiz: (-sum(linhas_por_classe[raiz].values()), raiz),
+    )
+    for raiz in pendentes:
+        cabem = [
+            bloco
+            for bloco in ordem_do_bloco
+            if all(
+                colocado[bloco][classe] + n <= teto[bloco][classe]
+                for classe, n in linhas_por_classe[raiz].items()
+            )
+        ]
+        if not cabem:
+            raise UnsplittableCorpus(
+                f"o componente conexo {raiz!r} tem {dict(linhas_por_classe[raiz])} e nao "
+                f"cabe inteiro em bloco algum sem passar do teto da tolerancia: colocado "
+                f"{colocado} contra teto {teto}. Atribuir os componentes as cinco "
+                "particoes e soma de subconjuntos, e a geometria do preflight nao a decide"
+            )
+        coloca(
+            raiz,
+            max(
+                cabem,
+                key=lambda bloco: (
+                    min(
+                        alvo[bloco][classe] - colocado[bloco][classe]
+                        for classe in linhas_por_classe[raiz]
+                    ),
+                    -ordem_do_bloco[bloco],
+                ),
+            ),
+        )
+    return plano
+
+
 def assign_partitions(records: list[dict], held_out: set[str]) -> None:
     """Exact 45/5/10/20/20 blocks per class, with held-out families INSIDE the test
     block rather than on top of it.
@@ -2601,62 +2840,24 @@ def assign_partitions(records: list[dict], held_out: set[str]) -> None:
     sum to the class size exactly. That also means test absorbs the rounding error of
     the other four — at 20% with a two-point tolerance there is room for it, and at
     dev's 5% there would not have been.
+
+    The blocks are filled by CONNECTED COMPONENT and never by position in the list. A
+    walk that slices the list produces a corpus its own guard below refuses: a component
+    whose lines fall on both sides of a cursor boundary lands half in one block and half
+    in another, `realized_blocks` collapses it to `train`, and the class fraction and the
+    temporal order both move. Whether the list happens to keep siblings adjacent is a
+    property of how the pools were concatenated, not of this function.
     """
     # A GEOMETRIA antes do carimbo: um corpo cujos componentes não podem realizar as cinco
     # frações não fica divisível por ser estampado, e a recusa daqui nomeia granularidade — a
     # guarda do corpo estampado, abaixo, só sabe dizer "fração por classe".
     assert_components_can_fill_five_partitions(records)
 
-    by_class: dict[str, list[dict]] = {}
+    plano = _plano_de_blocos(records, held_out)
     for rec in records:
-        by_class.setdefault(rec["label"], []).append(rec)
-    # Temporal order, and `test` last because it is the remainder.
-    blocks = ["train", "dev", "cal-A", "cal-B"]
-    for label, recs in by_class.items():
-        n = len(recs)
-        sizes = {block: round(n * CLASS_FRACTIONS[block]) for block in blocks}
-        n_test = n - sum(sizes.values())
-        forced = [
-            r
-            for r in recs
-            if group_axes.identity_of((r.get("groups") or {}).get("generatorFamily"))
-            in held_out
-        ]
-        forced_ids = {id(r) for r in forced}
-        rest = [r for r in recs if id(r) not in forced_ids]
-        # REFUSES where it used to print and carry on. The overflow is unreachable from
-        # `main`, which runs `assert_the_blind_block_holds_both_roles` over the same
-        # arithmetic and a strict comparison first; the refusal lives here anyway because
-        # this is where the two numbers are real rather than predicted, and stamping every
-        # reserved row into a block that cannot hold them produces a corpus the splitter
-        # refuses one step later — with nothing but a printed line to say why.
-        if len(forced) > n_test:
-            raise ReserveFillsTheBlindBlock(
-                f"the class {label!r} carries {len(forced)} reserved rows and its test "
-                f"block holds {n_test}: every reserved row is seated in `test`, so a "
-                "reserve larger than the block cannot be stamped at all. Generate fewer "
-                "reserved lines or more core ones"
-            )
-        for r in forced:
-            stamp_block(r, "test")
-        top_up = max(0, n_test - len(forced))
-        # One cursor walked in temporal order: test first (it is being topped up),
-        # then each earlier block in turn. Written as a walk rather than as a chain of
-        # elif thresholds because five hand-written cumulative bounds is where an
-        # off-by-one silently starves `dev`, the block with the least room to lose.
-        cursor = 0
-        for r in rest[:top_up]:
-            stamp_block(r, "test")
-        cursor = top_up
-        for block in blocks:
-            for r in rest[cursor : cursor + sizes[block]]:
-                stamp_block(r, block)
-            cursor += sizes[block]
-        # Whatever rounding left over goes to train, the largest block and the one the
-        # splitter itself uses as its fallback.
-        for r in rest[cursor:]:
-            stamp_block(r, "train")
+        stamp_block(rec, plano[rec["id"]])
 
+    assert_no_stamped_component_straddles(records)
     assert_stamped_corpus_is_splittable(records, held_out)
 
 

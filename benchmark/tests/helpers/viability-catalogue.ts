@@ -19,9 +19,11 @@ import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 
 import {
+  groupAxisIdentity,
   validateBenchmarkRecordV4,
   type BenchmarkLabel,
   type BenchmarkRecord,
+  type GroupAxis,
 } from "../../schema.ts";
 import { connectedComponentRoots } from "../../split.ts";
 import { known, v4Ai, v4Human, withAxis } from "./v3-record-fixture.ts";
@@ -54,9 +56,31 @@ export interface CatalogueBreach {
   readonly kind: string;
 }
 
+/**
+ * The prompt-template and generator-version identities a case's GENERATED lines share,
+ * as runs over the order they are materialized in.
+ *
+ * A case without this block gives every generated line its own template and version,
+ * which is the fine-grained shape no assembler produces. A case WITH it describes the
+ * measured shape: one recipe covering hundreds of lines.
+ */
+export interface GeneratedRecipe {
+  readonly promptTemplateRuns: readonly number[];
+  readonly generatorVersionRuns: readonly number[];
+}
+
+/** One geometry the RECIPE axes would produce if they were union axes. */
+export interface RecipeUnionedGeometry {
+  readonly axes: readonly string[];
+  readonly components: number;
+  readonly histogram: readonly number[];
+  readonly breaches: readonly CatalogueBreach[];
+}
+
 export interface ViabilityCase {
   readonly name: string;
   readonly cells: readonly CatalogueCell[];
+  readonly generatedRecipe?: GeneratedRecipe;
   readonly expected: {
     readonly recordLines: number;
     readonly classLines: Readonly<Partial<Record<BenchmarkLabel, number>>>;
@@ -67,6 +91,16 @@ export interface ViabilityCase {
     /** Substring of the `SplitConstraintError` message; `null` when it accepts. */
     readonly splitterRefusal: string | null;
     readonly splitSizes?: Readonly<Record<string, number>>;
+    readonly recipeUnioned?: {
+      /**
+       * The leg that FITS, and it is here to keep a false reason from coming back:
+       * `generatorVersion` alone does not breach anything, so the exclusion of the pair
+       * cannot rest on this axis's own arithmetic.
+       */
+      readonly generatorVersionOnly: RecipeUnionedGeometry;
+      readonly promptTemplateOnly: RecipeUnionedGeometry;
+      readonly bothRecipeAxes: RecipeUnionedGeometry;
+    };
   };
 }
 
@@ -103,16 +137,58 @@ export async function loadCatalogue(): Promise<ViabilityCatalogue> {
 }
 
 /**
+ * The identity of each generated line on one recipe axis, expanded from the declared
+ * runs. Fails closed when the runs do not cover the case's generated lines exactly: a
+ * short run list would leave the tail on per-line identities and quietly measure a
+ * finer shape than the case declares.
+ */
+function recipeLabels(
+  runs: readonly number[],
+  prefix: string,
+  generatedLines: number,
+  caseName: string,
+): string[] {
+  const labels: string[] = [];
+  runs.forEach((count, index) => {
+    for (let line = 0; line < count; line += 1)
+      labels.push(`${prefix}_${index}`);
+  });
+  if (labels.length !== generatedLines) {
+    throw new Error(
+      `o caso "${caseName}" declara corridas de ${prefix} somando ${labels.length} e tem ${generatedLines} linha(s) gerada(s)`,
+    );
+  }
+  return labels;
+}
+
+/** Generated lines a case declares, which is what the recipe runs must cover. */
+function generatedLineCount(testCase: ViabilityCase): number {
+  return testCase.cells.reduce(
+    (total, cell) =>
+      total +
+      cell.components.reduce(
+        (perCell, run) => perCell + run.count * (run.lines.ai ?? 0),
+        0,
+      ),
+    0,
+  );
+}
+
+/**
  * Materializes one case as v4 record-lines.
  *
  * The human lines of a component SHARE an author — `author` is a v4 union axis — and
  * the generated lines of the same component name the component's first human line in
  * `humanSeed`, the PARENT LINKAGE axis, which is how a generated row is dependent on
  * the material it was seeded from. A component with no human line seeds off an absent
- * id, so it unions nothing. Every line carries its own origin document and its own
- * near-duplicate group, and every generated line its own prompt template, generator
- * version and generation batch, so the component size is the declared number of lines
- * and nothing else glues them.
+ * id, so it unions nothing. Every line carries its own origin document, its own
+ * near-duplicate group and, when generated, its own generation batch, so the component
+ * size is the declared number of lines and nothing else glues them.
+ *
+ * `promptTemplate` and `generatorVersion` are per line TOO, unless the case declares
+ * `generatedRecipe`: then they come from the declared runs, in materialization order.
+ * Those two axes are not union axes, so a shared identity does not change a component
+ * here — it is what lets the case state the geometry the recipe axes WOULD produce.
  *
  * `createdAt` is a distinct increasing slot per line and `normalizedTextSha256` a
  * distinct digest per line, because the corpus is also handed to `createBlockedSplit`
@@ -134,6 +210,28 @@ export function buildCatalogueCorpus(
       digest: slot.toString(16).padStart(64, "0"),
     };
   };
+
+  const generatedLines = generatedLineCount(testCase);
+  const recipe = testCase.generatedRecipe;
+  const templateLabels =
+    recipe === undefined
+      ? undefined
+      : recipeLabels(
+          recipe.promptTemplateRuns,
+          "pt",
+          generatedLines,
+          testCase.name,
+        );
+  const versionLabels =
+    recipe === undefined
+      ? undefined
+      : recipeLabels(
+          recipe.generatorVersionRuns,
+          "gv",
+          generatedLines,
+          testCase.name,
+        );
+  let generatedIndex = 0;
 
   testCase.cells.forEach((cell, cellIndex) => {
     let componentIndex = 0;
@@ -173,8 +271,17 @@ export function buildCatalogueCorpus(
             createdAt,
             normalizedTextSha256: digest,
           };
-          raw = withAxis(raw, "promptTemplate", known(`pt_${tag}_${line}`));
-          raw = withAxis(raw, "generatorVersion", known(`gv_${tag}_${line}`));
+          raw = withAxis(
+            raw,
+            "promptTemplate",
+            known(templateLabels?.[generatedIndex] ?? `pt_${tag}_${line}`),
+          );
+          raw = withAxis(
+            raw,
+            "generatorVersion",
+            known(versionLabels?.[generatedIndex] ?? `gv_${tag}_${line}`),
+          );
+          generatedIndex += 1;
           raw = withAxis(raw, "generationBatch", known(`gb_${tag}_${line}`));
           raw = withAxis(raw, "nearDuplicate", known(`nd_a_${tag}_${line}`));
           raw = withAxis(raw, "domainSource", known(generatedStratum));
@@ -214,6 +321,83 @@ export function componentHistogram(
 ): number[] {
   const sizeByRoot = new Map<string, number>();
   for (const root of connectedComponentRoots(records).values()) {
+    sizeByRoot.set(root, (sizeByRoot.get(root) ?? 0) + 1);
+  }
+  return [...sizeByRoot.values()].sort((a, b) => a - b);
+}
+
+/**
+ * Connected components under an EXPLICIT axis list, so a test can measure the geometry a
+ * list the splitter does NOT use would produce.
+ *
+ * `connectedComponentRoots` reads `GROUP_KEYS` from the module, and a const export cannot
+ * be substituted at runtime, so measuring "what would happen with `promptTemplate` in the
+ * union" needs a walk that takes the list. A second walk is a divergence risk, and
+ * {@link expectWalkerMatchesProduction} is what closes it: handed the production lists,
+ * this walk must reproduce `connectedComponentRoots` root for root.
+ */
+export function componentsUnderAxes(
+  records: readonly BenchmarkRecord[],
+  valueAxes: readonly GroupAxis[],
+  linkageAxes: readonly GroupAxis[],
+): Map<string, string> {
+  const parent = new Map<string, string>();
+  for (const record of records) parent.set(record.id, record.id);
+  const find = (id: string): string => {
+    let current = id;
+    while (parent.get(current) !== current) {
+      const next = parent.get(current) as string;
+      parent.set(current, parent.get(next) as string);
+      current = parent.get(current) as string;
+    }
+    return current;
+  };
+  const union = (left: string, right: string): void => {
+    const a = find(left);
+    const b = find(right);
+    // The smaller root becomes the parent, which is what `DisjointSet` in split.ts does:
+    // a different rule gives the same PARTITION under different root names, and the pin
+    // below compares root names.
+    if (a === b) return;
+    if (a < b) parent.set(b, a);
+    else parent.set(a, b);
+  };
+  for (const axis of valueAxes) {
+    const firstByValue = new Map<string, string>();
+    for (const record of records) {
+      const value = groupAxisIdentity(record, axis);
+      if (value === undefined) continue;
+      const first = firstByValue.get(value);
+      if (first === undefined) firstByValue.set(value, record.id);
+      else union(first, record.id);
+    }
+  }
+  const ids = new Set(records.map((record) => record.id));
+  for (const record of records) {
+    for (const axis of linkageAxes) {
+      const named = groupAxisIdentity(record, axis);
+      if (named !== undefined && named !== record.id && ids.has(named)) {
+        union(record.id, named);
+      }
+    }
+  }
+  const roots = new Map<string, string>();
+  for (const record of records) roots.set(record.id, find(record.id));
+  return roots;
+}
+
+/** Component sizes ascending, under an explicit axis list. */
+export function histogramUnderAxes(
+  records: readonly BenchmarkRecord[],
+  valueAxes: readonly GroupAxis[],
+  linkageAxes: readonly GroupAxis[],
+): number[] {
+  const sizeByRoot = new Map<string, number>();
+  for (const root of componentsUnderAxes(
+    records,
+    valueAxes,
+    linkageAxes,
+  ).values()) {
     sizeByRoot.set(root, (sizeByRoot.get(root) ?? 0) + 1);
   }
   return [...sizeByRoot.values()].sort((a, b) => a - b);

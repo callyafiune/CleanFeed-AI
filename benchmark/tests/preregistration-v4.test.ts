@@ -21,6 +21,8 @@ import {
 } from "../preregistration-v4.ts";
 import { ALL_GROUP_AXES, type BenchmarkRecord } from "../schema.ts";
 import { GROUP_KEYS } from "../split.ts";
+import { EXPOSURE_IDENTITY_AXES } from "../cluster-exposure-ledger.ts";
+import { REPORTED_GROUP_AXES } from "../split-audit.ts";
 
 // The frozen pre-registration of the v1 release. This file is the only place that
 // repeats its values as literals: everywhere else in the benchmark must read them
@@ -364,6 +366,8 @@ describe("preregistration-v4.json", () => {
     expect(policy.connectivity.reportedAxes).toEqual([
       "domainSource",
       "sourceMaterialBatch",
+      "generatorVersion",
+      "promptTemplate",
     ]);
     expect(policy.connectivity.independentUnit).toBe(
       "origin-document-components",
@@ -741,8 +745,6 @@ describe("parsePreregistrationV4 fails closed", () => {
             "author",
             "source",
             "domainSource",
-            "generatorVersion",
-            "promptTemplate",
             "generationBatch",
             "nearDuplicate",
             "derivationRoot",
@@ -1210,8 +1212,6 @@ describe("parsePreregistrationV4 fails closed", () => {
     block(policy, "connectivity").splitUnionAxes = [
       "author",
       "source",
-      "generatorVersion",
-      "promptTemplate",
       "generationBatch",
       "nearDuplicate",
       "derivationRoot",
@@ -1703,5 +1703,167 @@ describe("the AI-recall batch level across schema versions", () => {
         }),
       ),
     ).toEqual({ state: "notApplicable" });
+  });
+});
+
+// --- o ELO que falta: um eixo REPORTADO tem de ser lido por algum gate -------
+
+describe("o eixo que sai da união é lido pela tabela de reamostragem congelada", () => {
+  // O CONTRATO. Tirar um eixo de `GROUP_KEYS` faz o splitter deixar de MODELAR a
+  // dependência que ele carrega; ela não desaparece. O que este teste cobra é onde ela
+  // passa a ser carregada: a classe de estimando que `resampling.estimands` mapeia aos
+  // estimandos daquela classe tem de reamostrar POR aquele eixo — ele mesmo, ou um eixo
+  // cuja identidade é igual à dele em toda linha da classe.
+  //
+  // Sem isto, apagar `groups.promptTemplate` de `estimandClasses["ai-recall"].levels`
+  // fica VERDE em toda guarda de conectividade, e o único lugar onde a dependência de
+  // prompt ainda vive desaparece sem que nada recuse.
+
+  /** Os DOIS nomes que esta emenda moveu de `GROUP_KEYS` para `REPORTED_GROUP_AXES`. */
+  const MOVED_TO_REPORTED = ["generatorVersion", "promptTemplate"] as const;
+
+  /**
+   * O eixo cuja identidade é IGUAL à do eixo movido em toda linha da classe gerada.
+   *
+   * A igualdade não é assumida aqui: ela é medida sobre TODA linha que o construtor
+   * emite, em `GeneratorVersionIsTheFamilyTests` (benchmark/lab/test_extractors.py). Esta
+   * perna vale exatamente porque aquele teste a fixa, e um pool que gravar uma `version`
+   * distinta da família fica vermelho lá antes de chegar aqui.
+   */
+  const IDENTITY_EQUAL: Readonly<Record<string, string>> = {
+    generatorVersion: "generatorFamily",
+  };
+
+  /**
+   * A classe GERADA -> os estimandos medidos sobre ela. Os nomes dos estimandos são
+   * declarados; a classe de estimando de cada um é LIDA de `resampling.estimands`, então
+   * remapear um estimando para outra classe muda o que este teste cobra.
+   */
+  const GENERATED_CLASS_ESTIMANDS: Readonly<Record<string, readonly string[]>> =
+    {
+      ai: ["action.recall", "warning.recall"],
+      mixed: ["mixed.warning.recall"],
+    };
+
+  /**
+   * Os pares (classe, eixo) que o critério NÃO cobre, cada um com a razão escrita. Uma
+   * entrada a mais aqui é uma decisão, não uma nota: ela exige editar este teste.
+   */
+  const EXCEPTIONS: Readonly<Record<string, string>> = {
+    "mixed:generatorVersion":
+      "a classe `mixed` reamostra humanSeed × promptTemplate e não declara nível de " +
+      "gerador algum, então nem generatorVersion nem generatorFamily são nível dela. A " +
+      "classe mista constrói ZERO linhas hoje, e o nível de gerador de `mixed` é a " +
+      "decisão que esta exceção nomeia — vai para ratificação, não é consertada aqui",
+  };
+
+  function declaredLevelAxes(estimands: readonly string[]): Set<string> {
+    const { estimandClasses, estimands: byEstimand } =
+      PREREGISTRATION_V4.resampling;
+    const axes = new Set<string>();
+    for (const estimand of estimands) {
+      const className = byEstimand[estimand];
+      expect(className, estimand).toBeDefined();
+      const declared =
+        estimandClasses[className as keyof typeof estimandClasses];
+      expect(declared, className).toBeDefined();
+      for (const level of declared.levels) {
+        axes.add(level.axis);
+        for (const fallback of level.fallbacks) axes.add(fallback);
+      }
+    }
+    return axes;
+  }
+
+  it("cobre cada eixo movido em cada classe gerada, ou nomeia a exceção", () => {
+    // O escopo é a TUPLA, pinada: um terceiro nome em `REPORTED_GROUP_AXES` não entra
+    // aqui de graça, porque a igualdade abaixo fica vermelha até alguém decidir por ele.
+    expect(
+      [...REPORTED_GROUP_AXES].filter((axis) =>
+        (MOVED_TO_REPORTED as readonly string[]).includes(axis),
+      ),
+    ).toEqual([...MOVED_TO_REPORTED]);
+
+    const cobertos: string[] = [];
+    const excetuados: string[] = [];
+    for (const [generatedClass, estimands] of Object.entries(
+      GENERATED_CLASS_ESTIMANDS,
+    )) {
+      const axes = declaredLevelAxes(estimands);
+      // Não vácuo: a classe declara níveis de verdade.
+      expect(axes.size, generatedClass).toBeGreaterThan(0);
+      for (const axis of MOVED_TO_REPORTED) {
+        const key = `${generatedClass}:${axis}`;
+        const partner = IDENTITY_EQUAL[axis];
+        const covered =
+          axes.has(`groups.${axis}`) ||
+          (partner !== undefined && axes.has(`groups.${partner}`));
+        if (covered) {
+          cobertos.push(key);
+          continue;
+        }
+        expect(EXCEPTIONS, key).toHaveProperty(key);
+        expect(EXCEPTIONS[key].length, key).toBeGreaterThan(80);
+        excetuados.push(key);
+      }
+    }
+    // As duas listas, por igualdade: um par que saísse de coberto para excetuado sem
+    // ninguém decidir ficaria vermelho aqui em vez de passar como exceção nova.
+    expect(cobertos).toEqual([
+      "ai:generatorVersion",
+      "ai:promptTemplate",
+      "mixed:promptTemplate",
+    ]);
+    expect(excetuados).toEqual(["mixed:generatorVersion"]);
+    // E nenhuma exceção sobrando: uma entrada que deixou de ser necessária é uma razão
+    // escrita para um par que o critério já cobre.
+    expect(Object.keys(EXCEPTIONS).sort()).toEqual([...excetuados].sort());
+  });
+
+  it("mede a perna que decide: `promptTemplate` É nível de `ai-recall`, e não um comentário", () => {
+    // A asserção sobre a qual M3 morde. Ler os níveis da política — nunca restatá-los —
+    // é o que faz apagar o nível ficar vermelho aqui em vez de verde em todo lugar.
+    const aiRecall = PREREGISTRATION_V4.resampling.estimandClasses["ai-recall"];
+    expect(aiRecall.levels.map((level) => level.axis)).toEqual([
+      "groups.generatorFamily",
+      "groups.promptTemplate",
+      "groups.generationBatch",
+    ]);
+    expect(aiRecall.unitKind).toBe("hierarchical");
+    // E a tabela é obrigatória e não cai para linhas independentes: é o que faz dela um
+    // carregador da dependência e não um enfeite do relatório.
+    expect(PREREGISTRATION_V4.resampling.required).toBe(true);
+    expect(PREREGISTRATION_V4.resampling.fallbackToIndependentRows).toBe(false);
+    expect(PREREGISTRATION_V4.resampling.publishedBound).toBe(
+      "wider-of-analytic-and-resampled",
+    );
+    // O fator de `mixed`, medido pelo mesmo caminho.
+    expect(
+      PREREGISTRATION_V4.resampling.estimandClasses.mixed.levels.map(
+        (level) => level.axis,
+      ),
+    ).toEqual(["groups.humanSeed", "groups.promptTemplate"]);
+  });
+
+  it("deixa a DÍVIDA de `domainSource` escrita, e não escondida", () => {
+    // `domainSource` é REPORTADO, é `known` em toda linha gerada, e nenhum dos dois gates
+    // que sobram o lê: não está em `EXPOSURE_IDENTITY_AXES` e não é nível de classe de
+    // estimando alguma. É dívida PRÉ-EXISTENTE que o critério revelou, ela não é
+    // consertada aqui, e esta asserção é o que a mantém visível — no dia em que alguém a
+    // ligar a um gate, ela fica vermelha e a dívida sai do registro junto.
+    expect([...REPORTED_GROUP_AXES]).toContain("domainSource");
+    expect(EXPOSURE_IDENTITY_AXES as readonly string[]).not.toContain(
+      "domainSource",
+    );
+    const todosOsNiveis = new Set<string>();
+    for (const declared of Object.values(
+      PREREGISTRATION_V4.resampling.estimandClasses,
+    )) {
+      for (const level of declared.levels) {
+        todosOsNiveis.add(level.axis);
+        for (const fallback of level.fallbacks) todosOsNiveis.add(fallback);
+      }
+    }
+    expect([...todosOsNiveis]).not.toContain("groups.domainSource");
   });
 });

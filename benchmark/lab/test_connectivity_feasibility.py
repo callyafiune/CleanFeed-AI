@@ -31,6 +31,7 @@ aquisicao —, e e essa coincidencia que faz o corpo inteiro virar um bloco indi
 from __future__ import annotations
 
 import json
+import re
 import sys
 import unittest
 from pathlib import Path
@@ -44,10 +45,38 @@ from assemble_corpus import (  # noqa: E402
     CLASS_FRACTIONS,
     FIVE_TARGETS,
     SPLIT_GROUP_KEYS,
+    SPLIT_PARENT_LINKAGE_AXES,
     UnsplittableCorpus,
     assert_components_can_fill_five_partitions,
+    assert_stamped_corpus_is_splittable,
     connected_components,
 )
+
+BENCHMARK = Path(__file__).resolve().parent.parent
+
+
+def eixos_de_identidade_de_material() -> tuple[str, ...]:
+    """`EXPOSURE_IDENTITY_AXES`, LIDO de benchmark/cluster-exposure-ledger.ts.
+
+    O criterio da lista de uniao nomeia essa lista, e um espelho retypado aqui deixaria as
+    duas divergirem em silencio: o ledger passaria a comparar um eixo de material que o
+    splitter nao une, e este teste continuaria verde sobre a copia antiga.
+    """
+    fonte = (BENCHMARK / "cluster-exposure-ledger.ts").read_text(encoding="utf-8")
+    marcador = "export const EXPOSURE_IDENTITY_AXES: readonly GroupAxis[] = ["
+    if marcador not in fonte:
+        raise RuntimeError(
+            "cluster-exposure-ledger.ts nao expoe EXPOSURE_IDENTITY_AXES: o espelho nao "
+            "pode adivinhar a autoridade"
+        )
+    corpo = fonte.split(marcador, 1)[1].split("]", 1)[0]
+    eixos = tuple(re.findall(r'"([a-zA-Z]+)"', corpo))
+    if not eixos:
+        raise RuntimeError(
+            "EXPOSURE_IDENTITY_AXES foi parseado vazio: o laco do criterio ficaria verde "
+            "sem afirmar nada"
+        )
+    return eixos
 
 # A menor particao do desenho de cinco (45/5/10/20/20).
 MENOR_PARTICAO = 0.05
@@ -105,7 +134,13 @@ def linha(rec_id: str, dominio: str, autor: str, lote: str) -> dict:
     }
 
 
-def linha_gerada(rec_id: str, semente: str, estrato: str) -> dict:
+def linha_gerada(
+    rec_id: str,
+    semente: str,
+    estrato: str,
+    template: str | None = None,
+    versao: str | None = None,
+) -> dict:
     """Uma linha GERADA v4, com os eixos que o montador preenche numa lane de geração.
 
     `humanSeed` nomeia o id de uma linha humana: e o eixo de LINHAGEM DE PAI, e ele une SOMENTE
@@ -113,9 +148,15 @@ def linha_gerada(rec_id: str, semente: str, estrato: str) -> dict:
     fica no componente do material de que foi semeada; nomeando id ausente, ela fica sozinha.
 
     `sourceMaterialBatch` e `notApplicable` porque geracao nao adquire material — a tabela de
-    estados do esquema so admite esse estado aqui —, e `promptTemplate`, `generatorVersion` e
-    `generationBatch` sao proprios de cada linha, senao duas geradas se uniriam por eixo de
-    valor e o componente deixaria de ser o declarado.
+    estados do esquema so admite esse estado aqui — e `generationBatch` e proprio de cada
+    linha, senao duas geradas se uniriam por eixo de valor e o componente deixaria de ser o
+    declarado.
+
+    `promptTemplate` e `generatorVersion` sao proprios da linha por omissao e COMPARTILHADOS
+    quando o chamador os passa. Os dois nao unem — nao estao em `SPLIT_GROUP_KEYS` —, entao
+    compartilhar identidade nao muda componente algum aqui: e o que permite descrever a forma
+    que o montador produz, em que uma receita cobre centenas de linhas, e medir a geometria
+    que os eixos de receita produziriam se estivessem na uniao.
     """
     return {
         "id": rec_id,
@@ -126,8 +167,8 @@ def linha_gerada(rec_id: str, semente: str, estrato: str) -> dict:
             "source": group_axes.not_applicable("texto gerado"),
             "domainSource": group_axes.known(group_axes.axis_token(estrato)),
             "humanSeed": group_axes.known(semente),
-            "promptTemplate": group_axes.known(f"pt_{rec_id}"),
-            "generatorVersion": group_axes.known(f"gv_{rec_id}"),
+            "promptTemplate": group_axes.known(template or f"pt_{rec_id}"),
+            "generatorVersion": group_axes.known(versao or f"gv_{rec_id}"),
             "sourceMaterialBatch": group_axes.not_applicable(
                 group_axes.NO_MATERIAL_ACQUIRED
             ),
@@ -168,19 +209,17 @@ def min_frac(registros: list[dict]) -> float:
 
 class ConectividadeSobAsChavesV4(unittest.TestCase):
     def test_a_uniao_e_exactamente_a_lista_v4(self):
-        """Guarda de estado: os dois eixos grossos estao FORA, e `generationBatch` esta dentro.
+        """Guarda de estado: os dois pares — grosso e de receita — estao FORA.
 
         Escrito como igualdade e nao como pertinencia. Uma lista de `assertIn` aceita um
-        oitavo eixo acrescentado em silencio, e e justamente acrescentar `domainSource` ou
-        `sourceMaterialBatch` que os testes abaixo mostram ser fatal.
+        sexto eixo acrescentado em silencio, e e justamente acrescentar `domainSource`,
+        `sourceMaterialBatch` ou `promptTemplate` que os testes abaixo mostram ser fatal.
         """
         self.assertEqual(
             SPLIT_GROUP_KEYS,
             (
                 "author",
                 "source",
-                "generatorVersion",
-                "promptTemplate",
                 "generationBatch",
                 "nearDuplicate",
                 "derivationRoot",
@@ -188,6 +227,12 @@ class ConectividadeSobAsChavesV4(unittest.TestCase):
         )
         self.assertNotIn("domainSource", SPLIT_GROUP_KEYS)
         self.assertNotIn("sourceMaterialBatch", SPLIT_GROUP_KEYS)
+        # O par de APARELHO: receita nao identifica unidade de amostragem, e o que os
+        # exclui e o FECHO DOS DOIS juntos (a classe inteira num componente), nao cada um
+        # sozinho — `generatorVersion` REFINA a familia e nao a repete.
+        self.assertNotIn("promptTemplate", SPLIT_GROUP_KEYS)
+        self.assertNotIn("generatorVersion", SPLIT_GROUP_KEYS)
+        self.assertNotIn("generatorFamily", SPLIT_GROUP_KEYS)
         # O eixo diagnostico nunca une: reextrair o mesmo dump nao produz material novo.
         self.assertNotIn("extractionRun", SPLIT_GROUP_KEYS)
 
@@ -337,6 +382,239 @@ class ConectividadeSobAsChavesV4(unittest.TestCase):
         self.assertEqual(len(componentes(juntas)), 1)
         separadas = [gerada("a3", "gb_agy_1"), gerada("a4", "gb_agy_2")]
         self.assertEqual(len(componentes(separadas)), 2)
+
+
+class CriterioDaListaDeUniao(unittest.TestCase):
+    """A lista de uniao tem CRITERIO, e o criterio e verificavel eixo por eixo.
+
+    TODO eixo de `SPLIT_GROUP_KEYS` identifica MATERIAL — e membro de
+    `EXPOSURE_IDENTITY_AXES`, a lista que o ledger executa para decidir que a mesma unidade
+    de amostragem reapareceu — ou a uniao por ele e INERTE sobre o corpo montado, medida como
+    "o numero de componentes com o eixo na lista e igual ao numero sem ele".
+
+    E condicao NECESSARIA, e a RECIPROCA E FALSA: `humanSeed` cumpre a primeira perna e e
+    eixo de LINHAGEM, `extractionRun` cumpre a segunda (medido abaixo) e e DIAGNOSTICO. Um
+    "se e somente se" aqui concluiria que `humanSeed` deve entrar na lista de uniao, que e a
+    mudanca que o contrato recusou, e "todo outro eixo e reportado" seria falso para
+    `generatorFamily`, `generationLane` e `harnessVersion`, que nenhuma das quatro listas
+    nomeia. A funcao total sobre os catorze eixos e `groupAxisRole`
+    (benchmark/split-audit.ts), e e la que o residuo esta declarado.
+
+    O laco percorre TODOS os eixos da lista, e nao uma amostra: um `assertIn` por eixo
+    escolhido a mao aceita em silencio o sexto que alguem acrescentar.
+    """
+
+    def setUp(self):
+        catalogo = json.loads(CATALOGO.read_text(encoding="utf-8"))
+        self.corpos = [
+            (caso["name"], _linhas_do_caso(caso, catalogo["generatedStratum"]))
+            for caso in catalogo["cases"]
+        ]
+
+    def _componentes_sob(self, registros: list[dict], chaves: tuple[str, ...]) -> int:
+        with mock.patch.object(assemble_corpus, "SPLIT_GROUP_KEYS", chaves):
+            return len(componentes(registros))
+
+    def test_todo_eixo_da_uniao_identifica_material_ou_une_nada(self):
+        material = eixos_de_identidade_de_material()
+        por_inercia: list[str] = []
+        for eixo in SPLIT_GROUP_KEYS:
+            if eixo in material:
+                continue
+            por_inercia.append(eixo)
+            sem_o_eixo = tuple(k for k in SPLIT_GROUP_KEYS if k != eixo)
+            for nome, registros in self.corpos:
+                with self.subTest(eixo=eixo, caso=nome):
+                    self.assertEqual(
+                        self._componentes_sob(registros, SPLIT_GROUP_KEYS),
+                        self._componentes_sob(registros, sem_o_eixo),
+                    )
+        # Nao vacuo nas duas pernas: a de material tem entrada e a de inercia tem entrada.
+        self.assertEqual(por_inercia, ["generationBatch", "nearDuplicate"])
+        self.assertEqual(
+            [eixo for eixo in SPLIT_GROUP_KEYS if eixo in material],
+            ["author", "source", "derivationRoot"],
+        )
+
+    def test_a_perna_de_inercia_e_uma_medicao_e_nao_uma_formalidade(self):
+        """O contraste: um eixo que NAO e inerte muda a contagem, e por isso e recusado.
+
+        Sem esta medicao a perna de inercia passaria por qualquer eixo, inclusive um que
+        colapsa a classe — e a lista voltaria a ser prosa.
+        """
+        nome, registros = next(
+            (n, r) for n, r in self.corpos if n == "forma-medida-da-classe-gerada"
+        )
+        del nome
+        base = self._componentes_sob(registros, SPLIT_GROUP_KEYS)
+        for eixo in ("promptTemplate", "generatorVersion"):
+            with self.subTest(eixo=eixo):
+                self.assertNotEqual(
+                    base, self._componentes_sob(registros, SPLIT_GROUP_KEYS + (eixo,))
+                )
+
+    def test_nenhum_eixo_de_material_fica_fora_das_duas_relacoes(self):
+        """A reciproca. Sem ela a lista poderia perder um eixo de material e ficar verde."""
+        relacoes = set(SPLIT_GROUP_KEYS) | set(SPLIT_PARENT_LINKAGE_AXES)
+        for eixo in eixos_de_identidade_de_material():
+            with self.subTest(eixo=eixo):
+                self.assertIn(eixo, relacoes)
+
+    def test_a_reciproca_do_criterio_e_FALSA_nos_dois_sentidos(self):
+        """Os dois eixos que refutam o bicondicional, um por perna.
+
+        `humanSeed` cumpre a perna de MATERIAL e nao esta na lista de uniao: a identidade dele
+        nomeia o ID DE OUTRA LINHA, entao a relacao dele e linhagem de pai e nao valor
+        compartilhado. `extractionRun` cumpre a perna de INERCIA sobre a classe gerada — e
+        MEDIDO aqui, nao argumentado, porque `notApplicable` em toda linha gerada nao une nada
+        — e tambem nao esta: reextrair o mesmo dump nao produz material novo, entao unir por
+        ele contaria uma dependencia duas vezes.
+
+        O ESCOPO da segunda medicao esta no teste, e nao e detalhe: sobre um corpo com linha
+        HUMANA o mesmo eixo NAO e inerte, porque uma extracao escreve milhares de linhas com o
+        mesmo `extractionRun`. Inercia e propriedade do CORPO medido, entao cumprir a perna (b)
+        num corpo nao e licenca para unir — que e a razao pela qual o criterio nao pode ser
+        lido como bicondicional.
+        """
+        material = eixos_de_identidade_de_material()
+        self.assertIn("humanSeed", material)
+        self.assertNotIn("humanSeed", SPLIT_GROUP_KEYS)
+        self.assertIn("humanSeed", SPLIT_PARENT_LINKAGE_AXES)
+
+        self.assertNotIn("extractionRun", material)
+        self.assertNotIn("extractionRun", SPLIT_GROUP_KEYS)
+        self.assertNotIn("extractionRun", SPLIT_PARENT_LINKAGE_AXES)
+        nome, gerado = next(
+            (n, r) for n, r in self.corpos if n == "forma-medida-da-classe-gerada"
+        )
+        del nome
+        self.assertEqual(
+            self._componentes_sob(gerado, SPLIT_GROUP_KEYS),
+            self._componentes_sob(gerado, SPLIT_GROUP_KEYS + ("extractionRun",)),
+        )
+
+        # O CONTRASTE, que e o que impede a perna (b) de virar formalidade: um corpo com
+        # linha humana muda a contagem, entao a inercia medida acima vale para a classe
+        # gerada de hoje e para nada mais.
+        com_humanas = [
+            r
+            for n, corpo in self.corpos
+            if n == "lote-unico-por-celula"
+            for r in corpo
+        ]
+        self.assertNotEqual(
+            self._componentes_sob(com_humanas, SPLIT_GROUP_KEYS),
+            self._componentes_sob(com_humanas, SPLIT_GROUP_KEYS + ("extractionRun",)),
+        )
+
+
+class OCarimboPoeOComponenteInteiroNumBloco(unittest.TestCase):
+    """A guarda do carimbo tem CHAMADOR DE PRODUCAO, e o corpo que so ela recusa.
+
+    `assign_partitions` carimba por componente, entao ela nao produz travessia — e uma
+    assercao que so chamasse a guarda provaria o critério e nada sobre o sitio. O que este
+    teste faz e substituir o PLANEJADOR pelo passeio por posicao que a emenda tirou, que e a
+    unica forma de o carimbador emitir um corpo com componente atravessando, e medir que:
+
+      * a guarda chamada de DENTRO de `assign_partitions` recusa, nomeando o componente e os
+        dois blocos;
+      * `assert_stamped_corpus_is_splittable`, sobre o MESMO corpo carimbado, NAO recusa.
+
+    A segunda metade e o que da peso a primeira: apagar a chamada da guarda deixaria este
+    corpo passar ponta a ponta, com um componente conexo em duas particoes.
+    """
+
+    def corpo_de_pares(self) -> list[dict]:
+        """Cem linhas humanas em cinquenta pares de autor: 2 % por componente.
+
+        Cem e nao quarenta porque a travessia tem de ser INVISIVEL para a guarda de fracao:
+        mover uma linha de `dev` para `train` custa 1/N a cada uma das duas, e com N = 40 isso
+        e 2,5 pontos, acima da tolerancia. Com N = 100 e um ponto, dentro dela — e e nesse
+        corpo que a travessia so aparece na guarda de componente.
+
+        `provenance` existe porque `stamp_block` escreve `collectedAt` nela, e fica SEM
+        `sourceId`: nomear uma fonte inventariada faria a guarda do corpo estampado conferir
+        os eixos que aquela fonte declara, que e outra coisa a medir aqui.
+        """
+        registros = [
+            linha(f"r{i:03d}", CELULAS[0][0], f"a_aut_{i // 2}", CELULAS[0][1])
+            for i in range(100)
+        ]
+        for rec in registros:
+            rec["provenance"] = {}
+        return registros
+
+    @staticmethod
+    def plano_por_posicao(records: list[dict], held_out: set[str]) -> dict[str, str]:
+        """O passeio POR POSICAO: fatia a lista pelos tamanhos dos blocos, na ordem temporal."""
+        del held_out
+        n = len(records)
+        tamanhos = {b: round(n * CLASS_FRACTIONS[b]) for b in CLASS_FRACTIONS}
+        plano: dict[str, str] = {}
+        cursor = 0
+        for bloco, tamanho in tamanhos.items():
+            for rec in records[cursor : cursor + tamanho]:
+                plano[rec["id"]] = bloco
+            cursor += tamanho
+        for rec in records[cursor:]:
+            plano[rec["id"]] = "test"
+        return plano
+
+    def test_a_montagem_de_verdade_chama_a_guarda_do_carimbo(self):
+        registros = self.corpo_de_pares()
+        # A fronteira de `train` cai em 45, que e impar, e os pares sao (2i, 2i+1): o par
+        # (44, 45) fica com uma linha em `train` e outra em `dev`. Nao vacuo por construcao,
+        # e a assercao seguinte mede que e exatamente UM par.
+        self.assertEqual(len(componentes(registros)), 50)
+        assemble_corpus.PARTITION_OF.clear()
+        try:
+            with mock.patch.object(
+                assemble_corpus, "_plano_de_blocos", self.plano_por_posicao
+            ):
+                with self.assertRaises(UnsplittableCorpus) as erro:
+                    assemble_corpus.assign_partitions(registros, set())
+            mensagem = str(erro.exception)
+            self.assertIn("componente conexo INTEIRO numa unica particao", mensagem)
+            self.assertIn("carimbado em mais de um bloco", mensagem)
+            self.assertIn("dev, train", mensagem)
+            # O componente NOMEADO, e a linha que leva o carimbo divergente: sem os dois o
+            # operador le que algo atravessou e nao o que atravessou.
+            self.assertIn("'r044'", mensagem)
+            self.assertIn("r045 leva dev", mensagem)
+            atravessando = [
+                raiz
+                for raiz, blocos in assemble_corpus._blocos_por_componente(
+                    registros
+                ).items()
+                if len(blocos) > 1
+            ]
+            self.assertEqual(len(atravessando), 1)
+            # E AQUI ESTA O PESO: o corpo carimbado passa por todas as outras guardas.
+            assert_stamped_corpus_is_splittable(registros, set())
+        finally:
+            assemble_corpus.PARTITION_OF.clear()
+
+    def test_o_carimbo_por_componente_nao_produz_travessia_nenhuma(self):
+        """O contraste, no MESMO corpo: com o planejador de producao, zero travessias."""
+        registros = self.corpo_de_pares()
+        assemble_corpus.PARTITION_OF.clear()
+        try:
+            assemble_corpus.assign_partitions(registros, set())
+            atravessando = [
+                raiz
+                for raiz, blocos in assemble_corpus._blocos_por_componente(
+                    registros
+                ).items()
+                if len(blocos) > 1
+            ]
+            self.assertEqual(atravessando, [])
+            realizados = assemble_corpus.realized_blocks(registros)
+            self.assertEqual(
+                {i: realizados[i] for i in realizados},
+                {i: b for i, b in assemble_corpus.PARTITION_OF.items()},
+            )
+        finally:
+            assemble_corpus.PARTITION_OF.clear()
 
 
 class PreflightDeViabilidade(unittest.TestCase):
@@ -490,6 +768,32 @@ MARCADOR_DO_ESCOPO = {
 }
 
 
+def _identidades_de_receita(
+    corridas: list[int], prefixo: str, geradas: int, nome: str
+) -> list[str]:
+    """A identidade de cada linha gerada num eixo de receita, expandida das corridas.
+
+    Falha fechada quando as corridas nao cobrem exatamente as linhas geradas do caso: uma
+    lista curta deixaria a cauda com identidade por linha e mediria, em silencio, uma forma
+    mais fina do que o caso declara.
+    """
+    rotulos = [f"{prefixo}_{i}" for i, n in enumerate(corridas) for _ in range(n)]
+    if len(rotulos) != geradas:
+        raise RuntimeError(
+            f'o caso "{nome}" declara corridas de {prefixo} somando {len(rotulos)} e tem '
+            f"{geradas} linha(s) gerada(s)"
+        )
+    return rotulos
+
+
+def _linhas_geradas_do_caso(caso: dict) -> int:
+    return sum(
+        corrida["count"] * corrida["lines"].get("ai", 0)
+        for celula in caso["cells"]
+        for corrida in celula["components"]
+    )
+
+
 def _linhas_do_caso(caso: dict, estrato_gerado: str) -> list[dict]:
     """Materializa um caso do catalogo pela regra que o proprio catalogo declara.
 
@@ -501,7 +805,27 @@ def _linhas_do_caso(caso: dict, estrato_gerado: str) -> list[dict]:
     humanas da celula e carregam UM valor por celula, que e justamente a forma que
     colapsaria a celula se um deles unisse; linha gerada carrega o estrato da lane e
     nenhum lote de material.
+
+    `generatedRecipe`, quando o caso o declara, da as identidades de `promptTemplate` e
+    `generatorVersion` por CORRIDA, na ordem em que as linhas geradas saem daqui.
     """
+    receita = caso.get("generatedRecipe")
+    geradas = _linhas_geradas_do_caso(caso)
+    templates = (
+        _identidades_de_receita(
+            receita["promptTemplateRuns"], "pt", geradas, caso["name"]
+        )
+        if receita
+        else None
+    )
+    versoes = (
+        _identidades_de_receita(
+            receita["generatorVersionRuns"], "gv", geradas, caso["name"]
+        )
+        if receita
+        else None
+    )
+    indice_gerado = 0
     registros: list[dict] = []
     for indice_celula, celula in enumerate(caso["cells"]):
         componente = 0
@@ -523,8 +847,15 @@ def _linhas_do_caso(caso: dict, estrato_gerado: str) -> list[dict]:
                         f"h_{marca}_0" if humanas else f"h_ausente_{marca}_{indice}"
                     )
                     registros.append(
-                        linha_gerada(f"a_{marca}_{indice}", semente, estrato_gerado)
+                        linha_gerada(
+                            f"a_{marca}_{indice}",
+                            semente,
+                            estrato_gerado,
+                            templates[indice_gerado] if templates else None,
+                            versoes[indice_gerado] if versoes else None,
+                        )
                     )
+                    indice_gerado += 1
                 componente += 1
     return registros
 
@@ -606,6 +937,7 @@ class ConcordanciaComOPreflightDoBenchmark(unittest.TestCase):
                 "misto-com-degenerescencia-humana",
                 "corpo-grosso-classes-finas",
                 "bordas-inclusivas-47-e-7",
+                "forma-medida-da-classe-gerada",
             ],
         )
         # Todo escopo e toda condicao que o catalogo nomeia tem traducao deste lado: um
@@ -638,6 +970,102 @@ class ConcordanciaComOPreflightDoBenchmark(unittest.TestCase):
         self.assertEqual([escopo for escopo, _, _ in escopos], ["corpus", "human", "ai"])
         # O denominador de cada escopo, medido: a classe divide pelo TOTAL DA CLASSE.
         self.assertEqual([total for _, total, _ in escopos], [40, 20, 20])
+
+    def test_a_forma_medida_colapsa_quando_os_eixos_de_receita_unem(self):
+        """A classe gerada que o montador PRODUZ, e o que os eixos de receita fariam com ela.
+
+        O caso descreve a forma medida: 1170 linhas ai com quatro identidades de
+        `promptTemplate` em corridas de 641/231/213/85 e cinco de `generatorVersion` em
+        493/320/256/99/2. Sob a uniao de cinco chaves cada linha e seu componente. Com os
+        eixos de receita na uniao o corpo colapsa, e a recusa e a do MAIOR componente — no
+        escopo do corpo e no da classe `ai`, que num corpo mono-classe e a mesma comparacao
+        sobre as mesmas linhas.
+
+        Um fixture com um template por linha faria as duas pernas passarem sobre uma classe
+        gerada que ninguem produz, e e por ai que a inviabilidade atravessou verde.
+        """
+        caso = next(
+            c
+            for c in self.catalogo["cases"]
+            if c["name"] == "forma-medida-da-classe-gerada"
+        )
+        registros = _linhas_do_caso(caso, self.catalogo["generatedStratum"])
+        # As corridas declaradas sao as MEDIDAS, e o corpo as realiza.
+        for eixo, chave in (
+            ("promptTemplate", "promptTemplateRuns"),
+            ("generatorVersion", "generatorVersionRuns"),
+        ):
+            contagem: dict[str, int] = {}
+            for rec in registros:
+                identidade = group_axes.identity_of(rec["groups"][eixo])
+                contagem[identidade] = contagem.get(identidade, 0) + 1
+            self.assertEqual(
+                sorted(contagem.values(), reverse=True),
+                sorted(caso["generatedRecipe"][chave], reverse=True),
+            )
+
+        declarado = caso["expected"]["recipeUnioned"]
+
+        # A perna que CABE, e ela esta aqui para impedir uma razao falsa de voltar: o
+        # comentario de SPLIT_GROUP_KEYS afirmou que `generatorVersion` carrega a
+        # identidade de `generatorFamily`, e a medicao o refuta em 0 das 1170 linhas.
+        # Version REFINA family, entao unir por version e estritamente mais FRACO que unir
+        # pela familia — o que compra a exclusao e o FECHO DO PAR, medido abaixo.
+        cabe = declarado["generatorVersionOnly"]
+        with mock.patch.object(
+            assemble_corpus,
+            "SPLIT_GROUP_KEYS",
+            SPLIT_GROUP_KEYS + tuple(cabe["axes"]),
+        ):
+            tamanhos = componentes(registros)
+            self.assertEqual(len(tamanhos), cabe["components"])
+            self.assertEqual(sorted(tamanhos.values()), sorted(cabe["histogram"]))
+            # Nao levanta: a guarda aceita este corpo, e e isso que torna o par a razao.
+            assert_components_can_fill_five_partitions(registros)
+        self.assertEqual(cabe["breaches"], [])
+        versoes = {
+            group_axes.identity_of(r["groups"]["generatorVersion"]) for r in registros
+        }
+        self.assertEqual(len(versoes), 5)
+        # A comparacao com `generatorFamily` fica do lado TS (viability-preflight.test.ts):
+        # este materializador emite ONZE eixos e nao inclui a familia, entao aqui a
+        # refutacao e medida pela CONTAGEM de versoes (cinco corridas, nao uma), e a
+        # coincidencia linha a linha e afirmada la, sobre o mesmo caso do catalogo.
+        self.assertNotIn("generatorFamily", registros[0]["groups"])
+
+        for perna in ("promptTemplateOnly", "bothRecipeAxes"):
+            with self.subTest(perna=perna):
+                geometria = declarado[perna]
+                chaves = SPLIT_GROUP_KEYS + tuple(geometria["axes"])
+                with mock.patch.object(
+                    assemble_corpus, "SPLIT_GROUP_KEYS", chaves
+                ):
+                    tamanhos = componentes(registros)
+                    self.assertEqual(len(tamanhos), geometria["components"])
+                    self.assertEqual(
+                        sorted(tamanhos.values()), sorted(geometria["histogram"])
+                    )
+                    escopos = {
+                        escopo: fracoes
+                        for escopo, _total, fracoes in (
+                            assemble_corpus.component_fractions_by_scope(registros)
+                        )
+                    }
+                    with self.assertRaises(UnsplittableCorpus) as erro:
+                        assert_components_can_fill_five_partitions(registros)
+                # Os DOIS escopos que o outro lado declara como recusa, medidos aqui: o
+                # corpo e a classe `ai`. A guarda estoura no primeiro, entao a mensagem
+                # nomeia o corpo, e a igualdade das duas listas de fracoes e o que diz que
+                # a classe recusaria pela MESMA condicao.
+                declaradas = {v["scope"] for v in geometria["breaches"]}
+                self.assertEqual(declaradas, {"corpus", "ai"})
+                self.assertEqual(escopos["corpus"], escopos["ai"])
+                self.assertIn("maior componente", str(erro.exception))
+                self.assertIn("do corpo", str(erro.exception))
+                self.assertEqual(
+                    {v["kind"] for v in geometria["breaches"]},
+                    set(MARCADOR_DA_RECUSA),
+                )
 
     def test_cada_caso_do_catalogo_recebe_o_veredito_declarado(self):
         for caso in self.catalogo["cases"]:

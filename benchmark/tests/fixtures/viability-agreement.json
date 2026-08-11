@@ -1,6 +1,7 @@
 {
   "purpose": "O catálogo de corpos que o preflight de viabilidade do benchmark (benchmark/viability-preflight.ts) e a guarda do assembler (benchmark/lab/assemble_corpus.py::assert_components_can_fill_five_partitions) têm de julgar IGUAL. Os dois lados leem este arquivo, materializam o corpo pela regra abaixo, conferem o histograma de componentes e as contagens por classe medidos contra os declarados, e só então comparam o veredito. Se discordarem, um dos dois está medindo outra coisa.",
-  "materialization": "Cada célula rende, para cada entrada de `components`, `count` componentes com as linhas declaradas em `lines` (por classe). As linhas HUMANAS de um componente COMPARTILHAM o autor (`author` é eixo de união v4); as linhas GERADAS do mesmo componente apontam `humanSeed` para o id da primeira linha humana do componente, que é o eixo de LINHAGEM DE PAI — é assim que uma linha gerada fica dependente do material de que foi semeada. Componente sem linha humana tem `humanSeed` nomeando registro ausente, então não une nada. Cada linha carrega seu próprio documento de origem (`source`), seu próprio grupo de quase-duplicata (`nearDuplicate`) e, quando gerada, seu próprio `promptTemplate`, `generatorVersion` e `generationBatch`. `stratum` (domainSource) e `materialBatch` (sourceMaterialBatch) valem para as linhas HUMANAS da célula e carregam UM valor por célula — é isso que o fixture de lote único prova que NÃO une; linha gerada carrega sempre `generatedStratum` e `sourceMaterialBatch` notApplicable, porque geração não adquire material. Autores, documentos e ids são prefixados pelo índice da célula, então nada gruda entre células por acidente.",
+  "materialization": "Cada célula rende, para cada entrada de `components`, `count` componentes com as linhas declaradas em `lines` (por classe). As linhas HUMANAS de um componente COMPARTILHAM o autor (`author` é eixo de união v4); as linhas GERADAS do mesmo componente apontam `humanSeed` para o id da primeira linha humana do componente, que é o eixo de LINHAGEM DE PAI — é assim que uma linha gerada fica dependente do material de que foi semeada. Componente sem linha humana tem `humanSeed` nomeando registro ausente, então não une nada. Cada linha carrega seu próprio documento de origem (`source`), seu próprio grupo de quase-duplicata (`nearDuplicate`) e, quando gerada, seu próprio `generationBatch`. `promptTemplate` e `generatorVersion` de uma linha gerada são próprios dela TAMBÉM, a menos que o caso declare `generatedRecipe`: aí as identidades vêm das CORRIDAS declaradas, na ordem em que as linhas geradas do caso são materializadas — a k-ésima linha gerada recebe a corrida em que k cai. É assim que um caso descreve a forma que o montador realmente produz, em que uma receita cobre centenas de linhas. `stratum` (domainSource) e `materialBatch` (sourceMaterialBatch) valem para as linhas HUMANAS da célula e carregam UM valor por célula — é isso que o fixture de lote único prova que NÃO une; linha gerada carrega sempre `generatedStratum` e `sourceMaterialBatch` notApplicable, porque geração não adquire material. Autores, documentos e ids são prefixados pelo índice da célula, então nada gruda entre células por acidente.",
+  "recipeUnion": "Um caso com `generatedRecipe` declara também, em `expected.recipeUnioned`, a geometria que os eixos de RECEITA produziriam se estivessem na união — a lista de sete de que a emenda saiu. Os dois lados medem essa geometria sobre o MESMO corpo. São TRÊS pernas, e a primeira existe para impedir uma razão falsa de voltar: `generatorVersionOnly` CABE (5 componentes, maior 493 = 42,14 %, nenhuma violação), logo a exclusão de `generatorVersion` não se sustenta na aritmética dele sozinho; `promptTemplateOnly` recusa pelo maior componente (641 = 54,79 %); e `bothRecipeAxes` fecha transitivamente e o corpo inteiro vira UM componente de 100 %. É o FECHO DO PAR que compra a exclusão, e é essa a medição pela qual ela é decisão e não preferência.",
   "generatedStratum": "ds_ai_agy",
   "expectedBreachVocabulary": [
     "largest-component-exceeds-largest-target",
@@ -8,8 +9,14 @@
   ],
   "extremeTargets": {
     "comment": "Os dois alvos extremos do desenho de cinco partições, afirmados pelos DOIS lados. Sem isto a concordância seria só sobre vereditos, e dois lados que derivassem alvos diferentes ainda poderiam coincidir por acidente nos corpos deste catálogo.",
-    "largest": { "partition": "train", "fraction": 0.45 },
-    "smallest": { "partition": "dev", "fraction": 0.05 },
+    "largest": {
+      "partition": "train",
+      "fraction": 0.45
+    },
+    "smallest": {
+      "partition": "dev",
+      "fraction": 0.05
+    },
     "tolerance": 0.02
   },
   "cases": [
@@ -21,30 +28,60 @@
           "cell": "ptwiki",
           "stratum": "ds_ptwiki_lead",
           "materialBatch": "smb_ptwiki_20220301",
-          "components": [{ "count": 10, "lines": { "human": 1 } }]
+          "components": [
+            {
+              "count": 10,
+              "lines": {
+                "human": 1
+              }
+            }
+          ]
         },
         {
           "cell": "carolina-judicial",
           "stratum": "ds_carolina_judicial_branch",
           "materialBatch": "smb_carolina_2_0",
-          "components": [{ "count": 10, "lines": { "human": 1 } }]
+          "components": [
+            {
+              "count": 10,
+              "lines": {
+                "human": 1
+              }
+            }
+          ]
         },
         {
           "cell": "carolina-social-media",
           "stratum": "ds_carolina_social_media",
           "materialBatch": "smb_carolina_2_0",
-          "components": [{ "count": 10, "lines": { "human": 1 } }]
+          "components": [
+            {
+              "count": 10,
+              "lines": {
+                "human": 1
+              }
+            }
+          ]
         },
         {
           "cell": "carolina-university",
           "stratum": "ds_carolina_university_domains",
           "materialBatch": "smb_carolina_2_0",
-          "components": [{ "count": 10, "lines": { "human": 1 } }]
+          "components": [
+            {
+              "count": 10,
+              "lines": {
+                "human": 1
+              }
+            }
+          ]
         }
       ],
       "expected": {
         "recordLines": 40,
-        "classLines": { "human": 40 },
+        "classLines": {
+          "human": 40
+        },
         "distinctStrata": 4,
         "distinctMaterialBatches": 2,
         "breaches": [],
@@ -67,30 +104,60 @@
           "cell": "ptwiki",
           "stratum": "ds_ptwiki_lead",
           "materialBatch": "smb_ptwiki_20220301",
-          "components": [{ "count": 1, "lines": { "human": 10 } }]
+          "components": [
+            {
+              "count": 1,
+              "lines": {
+                "human": 10
+              }
+            }
+          ]
         },
         {
           "cell": "carolina-judicial",
           "stratum": "ds_carolina_judicial_branch",
           "materialBatch": "smb_carolina_2_0",
-          "components": [{ "count": 1, "lines": { "human": 10 } }]
+          "components": [
+            {
+              "count": 1,
+              "lines": {
+                "human": 10
+              }
+            }
+          ]
         },
         {
           "cell": "carolina-social-media",
           "stratum": "ds_carolina_social_media",
           "materialBatch": "smb_carolina_2_0",
-          "components": [{ "count": 1, "lines": { "human": 10 } }]
+          "components": [
+            {
+              "count": 1,
+              "lines": {
+                "human": 10
+              }
+            }
+          ]
         },
         {
           "cell": "carolina-university",
           "stratum": "ds_carolina_university_domains",
           "materialBatch": "smb_carolina_2_0",
-          "components": [{ "count": 1, "lines": { "human": 10 } }]
+          "components": [
+            {
+              "count": 1,
+              "lines": {
+                "human": 10
+              }
+            }
+          ]
         }
       ],
       "expected": {
         "recordLines": 40,
-        "classLines": { "human": 40 },
+        "classLines": {
+          "human": 40
+        },
         "distinctStrata": 4,
         "distinctMaterialBatches": 2,
         "breaches": [
@@ -116,14 +183,26 @@
           "stratum": "ds_ptwiki_lead",
           "materialBatch": "smb_ptwiki_20220301",
           "components": [
-            { "count": 1, "lines": { "human": 60 } },
-            { "count": 40, "lines": { "human": 1 } }
+            {
+              "count": 1,
+              "lines": {
+                "human": 60
+              }
+            },
+            {
+              "count": 40,
+              "lines": {
+                "human": 1
+              }
+            }
           ]
         }
       ],
       "expected": {
         "recordLines": 100,
-        "classLines": { "human": 100 },
+        "classLines": {
+          "human": 100
+        },
         "distinctStrata": 1,
         "distinctMaterialBatches": 1,
         "breaches": [
@@ -148,12 +227,21 @@
           "cell": "ptwiki",
           "stratum": "ds_ptwiki_lead",
           "materialBatch": "smb_ptwiki_20220301",
-          "components": [{ "count": 5, "lines": { "human": 2 } }]
+          "components": [
+            {
+              "count": 5,
+              "lines": {
+                "human": 2
+              }
+            }
+          ]
         }
       ],
       "expected": {
         "recordLines": 10,
-        "classLines": { "human": 10 },
+        "classLines": {
+          "human": 10
+        },
         "distinctStrata": 1,
         "distinctMaterialBatches": 1,
         "breaches": [
@@ -178,18 +266,34 @@
           "cell": "ptwiki",
           "stratum": "ds_ptwiki_lead",
           "materialBatch": "smb_ptwiki_20220301",
-          "components": [{ "count": 1, "lines": { "human": 25 } }]
+          "components": [
+            {
+              "count": 1,
+              "lines": {
+                "human": 25
+              }
+            }
+          ]
         },
         {
           "cell": "carolina-judicial",
           "stratum": "ds_carolina_judicial_branch",
           "materialBatch": "smb_carolina_2_0",
-          "components": [{ "count": 1, "lines": { "human": 75 } }]
+          "components": [
+            {
+              "count": 1,
+              "lines": {
+                "human": 75
+              }
+            }
+          ]
         }
       ],
       "expected": {
         "recordLines": 100,
-        "classLines": { "human": 100 },
+        "classLines": {
+          "human": 100
+        },
         "distinctStrata": 2,
         "distinctMaterialBatches": 2,
         "breaches": [
@@ -222,36 +326,74 @@
           "cell": "ptwiki",
           "stratum": "ds_ptwiki_lead",
           "materialBatch": "smb_ptwiki_20220301",
-          "components": [{ "count": 1, "lines": { "human": 5 } }]
+          "components": [
+            {
+              "count": 1,
+              "lines": {
+                "human": 5
+              }
+            }
+          ]
         },
         {
           "cell": "carolina-judicial",
           "stratum": "ds_carolina_judicial_branch",
           "materialBatch": "smb_carolina_2_0",
-          "components": [{ "count": 1, "lines": { "human": 5 } }]
+          "components": [
+            {
+              "count": 1,
+              "lines": {
+                "human": 5
+              }
+            }
+          ]
         },
         {
           "cell": "carolina-social-media",
           "stratum": "ds_carolina_social_media",
           "materialBatch": "smb_carolina_2_0",
-          "components": [{ "count": 1, "lines": { "human": 5 } }]
+          "components": [
+            {
+              "count": 1,
+              "lines": {
+                "human": 5
+              }
+            }
+          ]
         },
         {
           "cell": "carolina-university",
           "stratum": "ds_carolina_university_domains",
           "materialBatch": "smb_carolina_2_0",
-          "components": [{ "count": 1, "lines": { "human": 5 } }]
+          "components": [
+            {
+              "count": 1,
+              "lines": {
+                "human": 5
+              }
+            }
+          ]
         },
         {
           "cell": "geracao-agy",
           "stratum": null,
           "materialBatch": null,
-          "components": [{ "count": 30, "lines": { "ai": 1 } }]
+          "components": [
+            {
+              "count": 30,
+              "lines": {
+                "ai": 1
+              }
+            }
+          ]
         }
       ],
       "expected": {
         "recordLines": 50,
-        "classLines": { "human": 20, "ai": 30 },
+        "classLines": {
+          "human": 20,
+          "ai": 30
+        },
         "distinctStrata": 5,
         "distinctMaterialBatches": 2,
         "breaches": [
@@ -273,15 +415,36 @@
           "stratum": "ds_ptwiki_lead",
           "materialBatch": "smb_ptwiki_20220301",
           "components": [
-            { "count": 1, "lines": { "human": 1, "ai": 3 } },
-            { "count": 1, "lines": { "human": 3, "ai": 1 } },
-            { "count": 8, "lines": { "human": 2, "ai": 2 } }
+            {
+              "count": 1,
+              "lines": {
+                "human": 1,
+                "ai": 3
+              }
+            },
+            {
+              "count": 1,
+              "lines": {
+                "human": 3,
+                "ai": 1
+              }
+            },
+            {
+              "count": 8,
+              "lines": {
+                "human": 2,
+                "ai": 2
+              }
+            }
           ]
         }
       ],
       "expected": {
         "recordLines": 40,
-        "classLines": { "human": 20, "ai": 20 },
+        "classLines": {
+          "human": 20,
+          "ai": 20
+        },
         "distinctStrata": 2,
         "distinctMaterialBatches": 1,
         "breaches": [
@@ -303,20 +466,132 @@
           "stratum": "ds_ptwiki_lead",
           "materialBatch": "smb_ptwiki_20220301",
           "components": [
-            { "count": 1, "lines": { "human": 47 } },
-            { "count": 1, "lines": { "human": 7 } },
-            { "count": 2, "lines": { "human": 23 } }
+            {
+              "count": 1,
+              "lines": {
+                "human": 47
+              }
+            },
+            {
+              "count": 1,
+              "lines": {
+                "human": 7
+              }
+            },
+            {
+              "count": 2,
+              "lines": {
+                "human": 23
+              }
+            }
           ]
         }
       ],
       "expected": {
         "recordLines": 100,
-        "classLines": { "human": 100 },
+        "classLines": {
+          "human": 100
+        },
         "distinctStrata": 1,
         "distinctMaterialBatches": 1,
         "breaches": [],
         "splitterRefuses": true,
         "splitterRefusal": "class split fractions unreachable"
+      }
+    },
+    {
+      "name": "forma-medida-da-classe-gerada",
+      "why": "A FORMA QUE O MONTADOR REALMENTE PRODUZ, e não uma classe gerada de grão fino que ninguém tem: 1170 linhas ai de uma célula, com QUATRO identidades de promptTemplate em corridas de 641/231/213/85 e CINCO de generatorVersion em 493/320/256/99/2 — medido sobre os pools em HEAD. Sob a união de cinco chaves cada linha é seu próprio componente (0,0855 % cada) e as duas condições passam. Com os eixos de receita na união o mesmo corpo colapsa: só `promptTemplate` dá quatro componentes cujo maior vale 54,79 % da classe (acima de 45 % + 2 pp) e cujo menor vale 7,27 % (acima de 5 % + 2 pp), e com `generatorVersion` também as corridas de versão atravessam as fronteiras de template e o corpo INTEIRO vira um componente de 100 %. Um fixture que dá um template por linha prova viabilidade sobre um corpus imaginário, e foi por ele que a inviabilidade atravessou verde.",
+      "generatedRecipe": {
+        "promptTemplateRuns": [641, 231, 213, 85],
+        "generatorVersionRuns": [493, 320, 256, 99, 2]
+      },
+      "cells": [
+        {
+          "cell": "geracao-agy",
+          "stratum": null,
+          "materialBatch": null,
+          "components": [
+            {
+              "count": 1170,
+              "lines": {
+                "ai": 1
+              }
+            }
+          ]
+        }
+      ],
+      "expected": {
+        "recordLines": 1170,
+        "classLines": {
+          "ai": 1170
+        },
+        "distinctStrata": 1,
+        "distinctMaterialBatches": 0,
+        "breaches": [],
+        "splitterRefuses": false,
+        "splitterRefusal": null,
+        "splitSizes": {
+          "train": 526,
+          "dev": 59,
+          "cal-A": 117,
+          "cal-B": 234,
+          "test": 234
+        },
+        "recipeUnioned": {
+          "generatorVersionOnly": {
+            "axes": ["generatorVersion"],
+            "components": 5,
+            "histogram": [2, 99, 256, 320, 493],
+            "breaches": []
+          },
+          "promptTemplateOnly": {
+            "axes": ["promptTemplate"],
+            "components": 4,
+            "histogram": [85, 213, 231, 641],
+            "breaches": [
+              {
+                "scope": "corpus",
+                "kind": "largest-component-exceeds-largest-target"
+              },
+              {
+                "scope": "corpus",
+                "kind": "smallest-component-exceeds-smallest-target"
+              },
+              {
+                "scope": "ai",
+                "kind": "largest-component-exceeds-largest-target"
+              },
+              {
+                "scope": "ai",
+                "kind": "smallest-component-exceeds-smallest-target"
+              }
+            ]
+          },
+          "bothRecipeAxes": {
+            "axes": ["promptTemplate", "generatorVersion"],
+            "components": 1,
+            "histogram": [1170],
+            "breaches": [
+              {
+                "scope": "corpus",
+                "kind": "largest-component-exceeds-largest-target"
+              },
+              {
+                "scope": "corpus",
+                "kind": "smallest-component-exceeds-smallest-target"
+              },
+              {
+                "scope": "ai",
+                "kind": "largest-component-exceeds-largest-target"
+              },
+              {
+                "scope": "ai",
+                "kind": "smallest-component-exceeds-smallest-target"
+              }
+            ]
+          }
+        }
       }
     }
   ]
