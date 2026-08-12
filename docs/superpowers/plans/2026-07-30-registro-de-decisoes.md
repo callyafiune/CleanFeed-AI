@@ -7870,3 +7870,69 @@ espelho Python —, e não é pré-requisito para gerar a classe.
 - os três `make_mixed*.py` legados — papel declarado fora da cota;
 - **não mudam, e o PR declara**: `profile-artifact.ts` e `contracts/calibration-profile.ts` (a evidência já lê
   `metrics`, não o gate), e `benchmark/rebuild-v3-policy.ts` (pré-inscrição abandonada é imutável).
+
+---
+
+## A ratificação das cinco da classe mista, e a geometria que ninguém tinha medido (2026-08-12)
+
+O operador ratificou **cinco** linhas, e o escopo foi perguntado e respondido em vez de deduzido: as duas da
+onda C (`generatorVersion` reportado, e a leitura superada do fecho do par) e as duas antigas — **B4**
+(GitHub para código e evidência, Hugging Face *gated* para pesos) e **B5** (mismatch pós-exposição é
+terminal) — **continuam pendentes**. A pergunta veio de o "então" da autorização se referir a uma verificação
+que cobria só a classe mista; estampar B4 numa conversa sobre contagem de templates seria falsear o registro
+na fonte da verdade.
+
+As cinco ratificadas: o gate `warning.mixed-recall` fora da decisão de release; os sete níveis interiores da
+curva com v0 e v8 lidos das classes puras; a alocação de 20 células de 5 por ilha; as três operações de D4
+com 100 identidades de template; e a seleção de pais.
+
+### A verificação que faltava, e o operador foi quem a pediu
+
+A pergunta dele: *"Nós iríamos verificar essa condição da quantidade com o fable?"* — e a resposta honesta
+era **não, e não foi feita**. As 100 identidades eram aritmética sobre a forma do plano; a **condição** — que
+um plano com três clusters de mistura por ilha ainda feche cada ilha em um componente e realize
+45/5/10/20/20 — nunca foi medida. A onda C mediu com **um** template de mistura por ilha, que é outra forma
+de plano, e foi precisamente uma medição desse tipo que derrubou a primeira versão da obrigação de ilha (20
+componentes → 11, maior em 60 %).
+
+Medido com as funções de produção (`connected_components`, `assert_components_can_fill_five_partitions`,
+`_plano_de_blocos`, `within_class_tolerance`), com o plano emendado construído **fora da árvore**:
+
+| plano | componentes | tamanhos | preflight | atribui | frações |
+|---|---|---|---|---|---|
+| hoje, 1 template de mistura por ilha | 20 | 500 × 20 | passa | sim | realizadas |
+| emendado, 3 clusters, pais contíguos | **20** | 500 × 20 | passa | sim | **realizadas** |
+| emendado, 3 clusters, pais intercalados | **20** | 500 × 20 | passa | sim | **realizadas** |
+
+E a contagem: **40 identidades de geração + 60 de mistura = 100**, disjuntas, **zero colisões** no namespace
+único. O plano de hoje soma 60, então a emenda acrescenta 40 — o número que é preço de prompt a escrever, e
+que não deve ser confundido com o total.
+
+### A razão que eu publiquei estava errada, e a diferença é medível
+
+Eu havia escrito que "os clusters de operação distribuem os seus pais pelas duas metades de template de
+geração da ilha, **que é o que faz a ilha fechar em um componente**". Duas medições não distinguiam a
+alegação, então rodei o caso que ela proíbe:
+
+| atribuição de pai | componentes |
+|---|---|
+| natural (pais h₀…h₉₉, as duas paridades) | **20** de 500 |
+| todas as mistas com pai de índice PAR | **40** — 200 e 300 |
+| cada cluster preso a uma paridade, os três **somados** cobrindo as duas | **40** — 230 e 270 |
+| **um** cluster alcançando as duas, os outros dois presos | **20** de 500 |
+
+Duas conclusões, e nenhuma é a que eu tinha escrito. A exigência é **real** — eu suspeitava que fosse
+decorativa, e o caso `cluster-preso` mostra que não é: cobertura só **coletiva** racha a ilha em dois. Mas o
+**critério** é *ao menos um* cluster alcançar as duas metades, e "todo cluster alcança" é **condição
+suficiente deduzida** dele — o caso de um cluster livre fecha em 20 com dois clusters presos.
+
+É a mesma família de defeito que esta sessão perseguiu inteira, cometida por mim outra vez: **a guarda
+enuncia o critério, nunca uma condição suficiente deduzida dele.** A linha do ESTADO foi corrigida para
+enunciar o critério, com os quatro casos.
+
+### O estado da evidência, dito sem atenuar
+
+Estes números são **sonda**, não teste. Vivem num arquivo do scratchpad que importa as funções de produção, e
+nada na árvore os prende. A unidade que emendar `_island()` tem de prender os quatro casos — **inclusive os
+dois que racham**, porque sem o caso vermelho a guarda volta a afirmar a condição suficiente. Enquanto isso
+não existir, "a geometria aguenta três clusters" é memória e não medição, e a dívida da § 7 diz isso.
