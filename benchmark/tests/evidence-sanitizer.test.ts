@@ -1,4 +1,11 @@
-import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import {
+  mkdir,
+  mkdtemp,
+  readdir,
+  readFile,
+  rm,
+  writeFile,
+} from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 
@@ -27,6 +34,16 @@ import {
   buildRejectScenario,
   rejectGates,
 } from "./evidence.fixtures.ts";
+import {
+  ISSUED_AT,
+  PROVISIONAL_THRESHOLD,
+} from "./profile-artifact.fixtures.ts";
+import {
+  BenchmarkReportError,
+  parseBenchmarkReport,
+  reportDigestOf,
+  type BenchmarkReport,
+} from "../report.ts";
 import { PREREGISTRATION_V4 } from "../preregistration-v4.ts";
 import type { FrozenCalibrationArtifact } from "../calibration-pipeline.ts";
 import type { ReleaseDecision } from "../gates.ts";
@@ -666,7 +683,6 @@ describe("publish-evidence end-to-end (reject run)", () => {
     const s = await scenario();
     await runPublishEvidence(publishOptions(s));
 
-    const { readdir } = await import("node:fs/promises");
     const written = (await readdir(s.outputDir)).sort();
     expect(written).toEqual([...EVIDENCE_FILE_NAMES].sort());
 
@@ -808,23 +824,39 @@ describe("publish-evidence end-to-end (reject run)", () => {
     });
   });
 
-  it("refuses a report whose datasetDigest disagrees with the frozen calibration", async () => {
-    const s = await scenario();
-    // A divergencia e injetada no RELATORIO, nao no artefato congelado: o congelado carrega
-    // `artifactDigest` proprio, e `validateFrozenCalibrationArtifact` recusa antes com
-    // `CalibrationPipelineError` — outra guarda. Re-selar o congelado nao esta disponivel aqui
-    // porque `artifactWithoutDigest` nao e exportado.
-    //
-    // Pelo relatorio o alcance existe porque a comparacao de digests roda ANTES da conferencia
-    // do ledger, que so entao notaria que o digest do relatorio deixou de ser o atestado.
-    const report = JSON.parse(await readFile(s.reportPath, "utf8")) as {
-      dataset: { digest: string };
-    };
-    report.dataset.digest = "d".repeat(64);
-    await writeFile(s.reportPath, JSON.stringify(report), "utf8");
-    await expect(runPublishEvidence(publishOptions(s))).rejects.toMatchObject({
-      code: "EVIDENCE_DIGEST_MISMATCH",
-    });
+  // O que sobrou de alcance para as DEZESSEIS comparacoes de `requireEqual`.
+  //
+  // Todo campo que elas comparam esta DENTRO da receita de `reportDigest`, entao desde que o
+  // relatorio e parseado e o selo recomputado nenhuma edicao NAO RE-SELADA do relatorio chega
+  // ate elas: a recusa vem antes, com `BENCHMARK_REPORT_DIGEST_MISMATCH` (o codigo esta preso
+  // pela matriz de forjas ao fim do arquivo, e o sitio que o emite antes destas comparacoes e
+  // `runVerifyEvidence`). O alcance que resta inclui o PAR DESCASADO — dois artefatos
+  // internamente validos, de corridas diferentes, que o operador aponta um para o outro — e e
+  // por isso que a forja aqui deixou de mexer no relatorio e passou a montar duas corridas.
+  //
+  // A ordem importa: `runVerifyEvidence` roda ANTES das comparacoes e amarra
+  // `release.evidenceDigest` a `report.reportDigest`, entao o descritor tem de ser o da corrida
+  // A. So o `--frozen-calibration` vem da corrida B, que e exatamente a forma que um erro de
+  // bandeira toma.
+  it("refuses a frozen calibration from another run, which is the reach the sixteen digest comparisons keep", async () => {
+    const a = await scenario();
+    const outraCorrida = await buildRejectScenario(
+      await newRoot("cf-publish-evidence-corrida-b-"),
+      runPublishProfile,
+      { runLabel: "outra-corrida" },
+    );
+    // Controle: a corrida B e internamente valida por si — sem isso, a recusa abaixo poderia
+    // vir de um artefato quebrado em vez do descasamento entre as duas.
+    await expect(
+      runPublishEvidence(publishOptions(outraCorrida)),
+    ).resolves.toContain("decision=reject");
+
+    await expect(
+      runPublishEvidence({
+        ...publishOptions(a),
+        frozenCalibrationPath: outraCorrida.frozenCalibrationPath,
+      }),
+    ).rejects.toMatchObject({ code: "EVIDENCE_DIGEST_MISMATCH" });
   });
 
   describe("and the published bundle re-verifies only while intact", () => {
@@ -920,75 +952,104 @@ describe("publish-evidence end-to-end (reject run)", () => {
 // o contrato do descritor amarra `calibrationSetDigest` à lista, e a recusa viria de lá.
 // ---------------------------------------------------------------------------
 
-describe("verify-evidence", () => {
-  async function mundo(decision: ReleaseDecision): Promise<{
-    opcoes: {
-      reportPath: string;
-      frozenCalibrationPath: string;
-      modelDirectory: string;
-    };
-    release: Record<string, unknown>;
-    profiles: unknown;
-    modelDir: string;
-  }> {
-    const fixture = await bundleInputFor(decision);
-    const root = await newRoot("cf-verify-evidence-");
-    const modelDir = join(root, "models", "cleanfeed-ptbr-v1");
-    await mkdir(modelDir, { recursive: true });
-    await writeFile(
-      join(modelDir, "release.json"),
-      `${JSON.stringify(fixture.release, null, 2)}\n`,
-      "utf8",
-    );
-    await writeFile(
-      join(modelDir, "calibration-profiles.json"),
-      `${JSON.stringify(fixture.profiles, null, 2)}\n`,
-      "utf8",
-    );
-    const reportPath = join(root, "report.json");
-    await writeFile(
+interface MundoDoRelatorio {
+  opcoes: {
+    reportPath: string;
+    frozenCalibrationPath: string;
+    modelDirectory: string;
+  };
+  perfilOpcoes: {
+    reportPath: string;
+    frozenCalibrationPath: string;
+    issuedAt: string;
+    modelDirectory: string;
+  };
+  release: Record<string, unknown>;
+  profiles: unknown;
+  modelDir: string;
+  reportPath: string;
+}
+
+/**
+ * O menor mundo em disco que `verify-evidence` E `publish-profile` aceitam: relatório,
+ * congelado, o corte pré-inscrito ao lado dele e os dois templates do modelo.
+ *
+ * Vive no escopo do módulo porque as duas suítes o dirigem — a das recusas de
+ * `verify-evidence` e a dos sítios de chamada do parser, que precisa de um sítio real e não de
+ * uma chamada direta ao parser. Materializar uma corrida inteira (`buildRejectScenario`) para
+ * cada forja custaria um `publish-profile` por caso.
+ */
+async function mundo(decision: ReleaseDecision): Promise<MundoDoRelatorio> {
+  const fixture = await bundleInputFor(decision);
+  const root = await newRoot("cf-verify-evidence-");
+  const modelDir = join(root, "models", "cleanfeed-ptbr-v1");
+  await mkdir(modelDir, { recursive: true });
+  await writeFile(
+    join(modelDir, "release.json"),
+    `${JSON.stringify(fixture.release, null, 2)}\n`,
+    "utf8",
+  );
+  await writeFile(
+    join(modelDir, "calibration-profiles.json"),
+    `${JSON.stringify(fixture.profiles, null, 2)}\n`,
+    "utf8",
+  );
+  const reportPath = join(root, "report.json");
+  await writeFile(
+    reportPath,
+    `${JSON.stringify(fixture.input.report, null, 2)}\n`,
+    "utf8",
+  );
+  // O artefato congelado do fixture carrega `artifactDigest` de fachada: o caminho do
+  // pacote de evidencia nunca o valida, e `runVerifyEvidence` e o primeiro consumidor que
+  // valida. Ele e RE-SELADO aqui — sem isso as sete recusas abaixo viriam todas do
+  // auto-digest, e o teste provaria a validacao do congelado em vez das guardas deste
+  // comando. (O relatorio ja chega selado: `bundleInputFor` o re-sela pelo mesmo motivo.)
+  const frozenCalibrationPath = join(root, "frozen-calibration.json");
+  const baseCongelada = {
+    ...(fixture.input.frozenCalibration as unknown as Record<string, unknown>),
+  };
+  delete baseCongelada.artifactDigest;
+  await writeFile(
+    frozenCalibrationPath,
+    `${JSON.stringify({ ...baseCongelada, artifactDigest: await canonicalSha256(baseCongelada) }, null, 2)}\n`,
+    "utf8",
+  );
+  // O corte que `publish-profile` EXIGE, ao lado do congelado. É o mesmo artefato selado que
+  // os fixtures de publicação carregam, amarrado aos mesmos sete digests de governança.
+  await writeFile(
+    join(root, "provisional-threshold.json"),
+    `${JSON.stringify(PROVISIONAL_THRESHOLD, null, 2)}\n`,
+    "utf8",
+  );
+  return {
+    opcoes: { reportPath, frozenCalibrationPath, modelDirectory: modelDir },
+    perfilOpcoes: {
       reportPath,
-      `${JSON.stringify(fixture.input.report, null, 2)}\n`,
-      "utf8",
-    );
-    // O artefato congelado do fixture carrega `artifactDigest` de fachada: o caminho do
-    // pacote de evidencia nunca o valida, e `runVerifyEvidence` e o primeiro consumidor que
-    // valida. Ele e RE-SELADO aqui — sem isso as sete recusas abaixo viriam todas do
-    // auto-digest, e o teste provaria a validacao do congelado em vez das guardas deste
-    // comando.
-    const frozenCalibrationPath = join(root, "frozen-calibration.json");
-    const baseCongelada = {
-      ...(fixture.input.frozenCalibration as unknown as Record<
-        string,
-        unknown
-      >),
-    };
-    delete baseCongelada.artifactDigest;
-    await writeFile(
       frozenCalibrationPath,
-      `${JSON.stringify({ ...baseCongelada, artifactDigest: await canonicalSha256(baseCongelada) }, null, 2)}\n`,
-      "utf8",
-    );
-    return {
-      opcoes: { reportPath, frozenCalibrationPath, modelDirectory: modelDir },
-      release: fixture.release as unknown as Record<string, unknown>,
-      profiles: fixture.profiles,
-      modelDir,
-    };
-  }
+      issuedAt: ISSUED_AT,
+      modelDirectory: modelDir,
+    },
+    release: fixture.release as unknown as Record<string, unknown>,
+    profiles: fixture.profiles,
+    modelDir,
+    reportPath,
+  };
+}
 
-  async function reescreveRelease(
-    modelDir: string,
-    release: Record<string, unknown>,
-    campos: Record<string, unknown>,
-  ): Promise<void> {
-    await writeFile(
-      join(modelDir, "release.json"),
-      `${JSON.stringify({ ...release, ...campos }, null, 2)}\n`,
-      "utf8",
-    );
-  }
+async function reescreveRelease(
+  modelDir: string,
+  release: Record<string, unknown>,
+  campos: Record<string, unknown>,
+): Promise<void> {
+  await writeFile(
+    join(modelDir, "release.json"),
+    `${JSON.stringify({ ...release, ...campos }, null, 2)}\n`,
+    "utf8",
+  );
+}
 
+describe("verify-evidence", () => {
   it("accepts a coherent reject world, which is what makes the refusals below mean anything", async () => {
     const { opcoes } = await mundo("reject");
     await expect(runVerifyEvidence(opcoes)).resolves.toContain(
@@ -1054,6 +1115,306 @@ describe("verify-evidence", () => {
     await reescreveRelease(modelDir, release, { gateDecision: "pass" });
     await expect(runVerifyEvidence(opcoes)).rejects.toMatchObject({
       code: "GATE_DECISION_MISMATCH",
+    });
+  });
+});
+
+// ---------------------------------------------------------------------------
+// `parseBenchmarkReport`: uma forja por código de recusa.
+//
+// Todo consumidor de `benchmark-report.json` entra por este parser, e cada recusa dele tem
+// CÓDIGO — é o código que os três comandos repassam e que o operador lê. Uma forja por código,
+// mais o ACEITE do relatório real: sem o aceite, um parser que recusasse tudo satisfaria a
+// matriz inteira.
+//
+// A ORDEM interna do parser dita cada forja, e é o que separa provar a guarda de provar a
+// vizinha: os conjuntos de chaves primeiro, depois campo por campo, os contêineres depois e o
+// selo RECOMPUTADO por último. Por isso as forjas de campo não precisam ser re-seladas — a
+// recusa vem antes de o selo ser olhado — e as duas que exercitam o selo dizem explicitamente
+// se re-selam.
+// ---------------------------------------------------------------------------
+
+type RelatorioBruto = Record<string, unknown>;
+
+/** O relatório selado do fixture como `readJsonFile` o entrega: passado por JSON. */
+async function relatorioBruto(): Promise<RelatorioBruto> {
+  const { input } = await bundleInputFor("reject");
+  return JSON.parse(JSON.stringify(input.report)) as RelatorioBruto;
+}
+
+function comGates(
+  relatorio: RelatorioBruto,
+  campos: Record<string, unknown>,
+): Record<string, unknown> {
+  return { ...(relatorio.gates as Record<string, unknown>), ...campos };
+}
+
+/** Re-sela a forja pela receita exportada, que é a mesma que o parser recomputa. */
+async function reSelado(relatorio: RelatorioBruto): Promise<RelatorioBruto> {
+  const forjado = { ...relatorio, reportDigest: "" };
+  forjado.reportDigest = await reportDigestOf(
+    forjado as unknown as BenchmarkReport,
+  );
+  return forjado;
+}
+
+const CAMINHO_FORJADO = "out/benchmark-report.json";
+
+interface Forja {
+  nome: string;
+  code: string;
+  forja: (
+    relatorio: RelatorioBruto,
+  ) => RelatorioBruto | Promise<RelatorioBruto>;
+}
+
+const FORJAS: readonly Forja[] = [
+  {
+    // `prediction-schema.ts` admite `webgpu` como backend de predição, então o vocabulário de
+    // lá é mais largo que o que o relatório fixa: um relatório escorado fora do backend de
+    // release é a forma que essa divergência toma.
+    nome: "um backend de escoragem que o relatório não admite",
+    code: "BENCHMARK_REPORT_MALFORMED",
+    forja: (relatorio) => ({
+      ...relatorio,
+      scoringRuntime: {
+        ...(relatorio.scoringRuntime as Record<string, unknown>),
+        backend: "webgpu",
+      },
+    }),
+  },
+  {
+    // `split` entra na receita por PROJEÇÃO (só `digest` e `strategy`), então uma chave extra
+    // aqui é invisível ao selo E chega à evidência publicada: o sanitizador copia
+    // `split.audit` inteiro.
+    nome: "uma chave estranha dentro de `$.split`",
+    code: "BENCHMARK_REPORT_UNKNOWN_FIELD",
+    forja: (relatorio) => ({
+      ...relatorio,
+      split: {
+        ...(relatorio.split as Record<string, unknown>),
+        auditoriaExtra: {},
+      },
+    }),
+  },
+  {
+    // O mesmo código cobre a falta: `notes` é lido pelo renderizador do markdown público, e um
+    // relatório sem ele chegaria lá como `TypeError`.
+    nome: "uma chave obrigatória ausente no topo",
+    code: "BENCHMARK_REPORT_UNKNOWN_FIELD",
+    forja: (relatorio) => {
+      const forjado = { ...relatorio };
+      delete forjado.notes;
+      return forjado;
+    },
+  },
+  {
+    nome: "um relatório de outra versão de esquema",
+    code: "BENCHMARK_REPORT_SCHEMA_UNSUPPORTED",
+    forja: (relatorio) => ({ ...relatorio, schemaVersion: 1 }),
+  },
+  {
+    nome: "uma estratégia de split que não é a selada",
+    code: "BENCHMARK_REPORT_STRATEGY_UNSUPPORTED",
+    forja: (relatorio) => ({
+      ...relatorio,
+      split: {
+        ...(relatorio.split as Record<string, unknown>),
+        strategy: "random-holdout-v1",
+      },
+    }),
+  },
+  {
+    // Nas DUAS cópias: um valor fora do vocabulário é o que uma decisão renomeada produz, e
+    // renomear em uma só cairia na guarda do par, que é a próxima.
+    nome: "uma decisão fora do vocabulário, nas duas cópias",
+    code: "BENCHMARK_REPORT_DECISION_UNKNOWN",
+    forja: (relatorio) => ({
+      ...relatorio,
+      releaseDecision: "aprovado",
+      gates: comGates(relatorio, { decision: "aprovado" }),
+    }),
+  },
+  {
+    // RE-SELADA, e tem de ser: as duas cópias da decisão estão na receita, então um par
+    // divergente re-selado satisfaz o digest e só a guarda do par pode falar.
+    nome: "as duas cópias da decisão em desacordo, re-seladas",
+    code: "BENCHMARK_REPORT_DECISION_DISAGREEMENT",
+    forja: (relatorio) => reSelado({ ...relatorio, releaseDecision: "pass" }),
+  },
+  {
+    // `gates.multiplicity` é projetado INTEIRO e o parser não enumera o interior dele, então um
+    // não-finito ali passa por toda a checagem de forma e só quebra na canonicalização — que é
+    // um erro sem código escapando de um parser, se não for traduzido.
+    nome: "um não-finito dentro do bloco de multiplicidade",
+    code: "BENCHMARK_REPORT_NOT_CANONICAL",
+    forja: (relatorio) => ({
+      ...relatorio,
+      gates: comGates(relatorio, {
+        multiplicity: {
+          ...((relatorio.gates as Record<string, unknown>)
+            .multiplicity as Record<string, unknown>),
+          familyAlpha: Number.NaN,
+        },
+      }),
+    }),
+  },
+  {
+    // A edição coordenada NÃO re-selada: as duas cópias da decisão viram `pass` e o digest
+    // continua o do corpo antigo. É a única edição da decisão que o selo alcança, e o teste do
+    // sítio abaixo é onde ela é cobrada onde roda.
+    nome: "a decisão editada nas duas cópias sem re-selar",
+    code: "BENCHMARK_REPORT_DIGEST_MISMATCH",
+    forja: (relatorio) => ({
+      ...relatorio,
+      releaseDecision: "pass",
+      gates: comGates(relatorio, { decision: "pass" }),
+    }),
+  },
+];
+
+describe("parseBenchmarkReport — a matriz de forjas", () => {
+  it("accepts the sealed report the fixtures publish, without which a parser that refused everything would satisfy the matrix", async () => {
+    const relatorio = await relatorioBruto();
+    const parseado = await parseBenchmarkReport(relatorio, CAMINHO_FORJADO);
+    expect(parseado.releaseDecision).toBe("reject");
+    expect(parseado.reportDigest).toBe(relatorio.reportDigest);
+  });
+
+  for (const { nome, code, forja } of FORJAS) {
+    it(`refuses ${nome} with ${code}`, async () => {
+      const forjado = await forja(await relatorioBruto());
+      const erro = await parseBenchmarkReport(forjado, CAMINHO_FORJADO).then(
+        () => null,
+        (error: unknown) => error,
+      );
+      expect(erro, nome).toBeInstanceOf(BenchmarkReportError);
+      expect((erro as BenchmarkReportError).code, nome).toBe(code);
+      // O caminho entra na mensagem: é o que diz ao operador QUAL arquivo foi recusado.
+      expect((erro as Error).message, nome).toContain(CAMINHO_FORJADO);
+    });
+  }
+
+  // A fronteira do selo, medida em vez de prometida: `reportDigestOf` é exportado e
+  // determinístico, então a MESMA edição da última forja, re-selada, é aceita. O selo é uma
+  // recomputação, não uma autoridade externa, e o que ele alcança é a edição que não passou
+  // por ela.
+  it("accepts the same coordinated edit once it is re-sealed, which is where the seal stops", async () => {
+    const relatorio = await relatorioBruto();
+    const forjado = await reSelado({
+      ...relatorio,
+      releaseDecision: "pass",
+      gates: comGates(relatorio, { decision: "pass" }),
+    });
+    await expect(
+      parseBenchmarkReport(forjado, CAMINHO_FORJADO),
+    ).resolves.toMatchObject({ releaseDecision: "pass" });
+  });
+
+  // `releaseDecision` dentro da receita, medido pelo par mínimo: dois relatórios que diferem SÓ
+  // na decisão. É o campo em que os três comandos ramificam, então um selo que não o cobrisse
+  // deixaria a decisão editável sem mover o digest.
+  it("seals releaseDecision: two reports that differ only in the decision cannot share a digest", async () => {
+    const relatorio = (await relatorioBruto()) as unknown as BenchmarkReport;
+    expect(await reportDigestOf(relatorio)).toBe(relatorio.reportDigest);
+    const outraDecisao: BenchmarkReport = {
+      ...relatorio,
+      releaseDecision: "pass",
+    };
+    expect(await reportDigestOf(outraDecisao)).not.toBe(relatorio.reportDigest);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// A guarda morde ONDE RODA.
+//
+// A matriz acima chama o parser direto: ela prova o CRITÉRIO e nada sobre os sítios de chamada.
+// Cada teste aqui derruba UM comando com um relatório em disco que só o parser daquele comando
+// recusa — sem a chamada, o mundo forjado é coerente para todas as outras guardas e o comando
+// segue adiante.
+// ---------------------------------------------------------------------------
+
+/** Reescreve o relatório em disco pela forja, que é a única via por onde um editor chega nele. */
+async function forjaRelatorioEmDisco(
+  reportPath: string,
+  forja: (relatorio: RelatorioBruto) => RelatorioBruto,
+): Promise<void> {
+  const relatorio = JSON.parse(
+    await readFile(reportPath, "utf8"),
+  ) as RelatorioBruto;
+  await writeFile(
+    reportPath,
+    `${JSON.stringify(forja(relatorio), null, 2)}\n`,
+    "utf8",
+  );
+}
+
+describe("o parser morde nos três sítios de chamada", () => {
+  it("verify-evidence refuses a decision edited in the report and in the descriptor, which its four guards accept", async () => {
+    const { opcoes, release, modelDir, reportPath } =
+      await mundo("indicator-only");
+    // O par coordenado, NÃO re-selado: a decisão nas duas cópias do relatório e o
+    // `gateDecision` do descritor. Sem o parser este mundo passa pelas quatro guardas — decisão
+    // `pass` com rollout `indicator`, um perfil publicado, e `evidenceDigest` intacto porque
+    // `reportDigest` não foi tocado — e o comando aprova a evidência.
+    await forjaRelatorioEmDisco(reportPath, (relatorio) => ({
+      ...relatorio,
+      releaseDecision: "pass",
+      gates: comGates(relatorio, { decision: "pass" }),
+    }));
+    await reescreveRelease(modelDir, release, { gateDecision: "pass" });
+    await expect(runVerifyEvidence(opcoes)).rejects.toMatchObject({
+      code: "BENCHMARK_REPORT_DIGEST_MISMATCH",
+    });
+  });
+
+  it("publish-evidence refuses a malformed report before it reads anything else", async () => {
+    const s = await buildRejectScenario(
+      await newRoot("cf-publish-evidence-parser-"),
+      runPublishProfile,
+    );
+    // DUAS forjas, e a segunda é o que dá o teste: `publish-evidence` delega a
+    // `runVerifyEvidence`, que parseia o MESMO arquivo, então um relatório forjado sozinho
+    // seria recusado com o mesmo código pela delegação e o teste não distinguiria os dois
+    // sítios. Sem o congelado — a leitura imediatamente seguinte neste comando — só a ordem
+    // decide quem fala.
+    await forjaRelatorioEmDisco(s.reportPath, (relatorio) => ({
+      ...relatorio,
+      sobra: 1,
+    }));
+    await rm(s.frozenCalibrationPath);
+    await expect(
+      runPublishEvidence({
+        sourceReadinessPath: s.sourceReadinessPath,
+        datasetAuditPath: s.datasetAuditPath,
+        splitArtifactPath: s.splitArtifactPath,
+        frozenCalibrationPath: s.frozenCalibrationPath,
+        fitReportPath: s.fitReportPath,
+        reportPath: s.reportPath,
+        ledgerPath: s.ledgerPath,
+        consumptionId: s.consumptionId,
+        modelDirectory: s.modelDir,
+        outputDirectory: s.outputDir,
+      }),
+    ).rejects.toMatchObject({ code: "BENCHMARK_REPORT_UNKNOWN_FIELD" });
+  });
+
+  it("publish-profile refuses a stray key in the report, which its builder would carry into the publication", async () => {
+    const { perfilOpcoes, reportPath } = await mundo("reject");
+    // Controle: o mundo publica como está. Sem ele a recusa abaixo poderia vir de um mundo
+    // quebrado em vez da forja.
+    await expect(runPublishProfile(perfilOpcoes)).resolves.toContain(
+      "decision=reject",
+    );
+    await forjaRelatorioEmDisco(reportPath, (relatorio) => ({
+      ...relatorio,
+      split: {
+        ...(relatorio.split as Record<string, unknown>),
+        sobra: 1,
+      },
+    }));
+    await expect(runPublishProfile(perfilOpcoes)).rejects.toMatchObject({
+      code: "BENCHMARK_REPORT_UNKNOWN_FIELD",
     });
   });
 });

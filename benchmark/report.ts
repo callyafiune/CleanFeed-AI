@@ -24,7 +24,10 @@
 // prediction-manifest digest recipe from the benchmark package. Deterministic
 // for a fixed input (the caller supplies `generatedAt`).
 
-import { canonicalSha256 } from "../contracts/canonical-json.ts";
+import {
+  canonicalSha256,
+  CanonicalJsonError,
+} from "../contracts/canonical-json.ts";
 import type {
   PublishedBoundProvenance,
   PublishedBoundSource,
@@ -52,6 +55,7 @@ import type {
 } from "./metrics.ts";
 import {
   computePredictionManifestDigest,
+  RELEASE_CHROME_VERSION,
   type PredictionManifestV1,
 } from "./prediction-schema.ts";
 import { PREREGISTRATION_V4 } from "./preregistration-v4.ts";
@@ -60,6 +64,14 @@ import type { SplitAudit } from "./split-audit.ts";
 
 export const SPLIT_STRATEGY = "blocked-group-time-v2" as const;
 export type SplitStrategy = typeof SPLIT_STRATEGY;
+
+export const REPORT_SCHEMA_VERSION = 2 as const;
+
+// The only backend a release-eligible report may declare. `prediction-schema.ts` admits
+// `webgpu` as a prediction backend, so the vocabulary there is wider than what this
+// report pins; the constant exists so the literal type below and the runtime check in
+// `parseBenchmarkReport` cannot name different backends.
+export const REPORT_SCORING_BACKEND = "wasm" as const;
 
 // The two FPR upper bounds the frozen-threshold table publishes per row. They
 // live here, once, because the release section's prose points an auditor at ONE
@@ -93,6 +105,16 @@ export class ReportGovernanceError extends Error {
   }
 }
 
+/** Coded, fail-closed error thrown by the benchmark-report contract below. */
+export class BenchmarkReportError extends Error {
+  readonly code: string;
+  constructor(code: string, message: string) {
+    super(message);
+    this.name = "BenchmarkReportError";
+    this.code = code;
+  }
+}
+
 // The full governance/session/identity fingerprint of a release evaluation. The
 // frozen copy is sealed at fit/consume time; the observed copy is recomputed at
 // evaluate time. They must match literally, field by field.
@@ -111,8 +133,8 @@ export interface GovernanceSeal {
   };
   scoringRuntime: {
     extensionBuildDigest: string;
-    backend: "wasm";
-    chromeVersion: "150.0.7871.129";
+    backend: typeof REPORT_SCORING_BACKEND;
+    chromeVersion: typeof RELEASE_CHROME_VERSION;
   };
 }
 
@@ -148,7 +170,7 @@ export interface BenchmarkReportInput {
 }
 
 export interface BenchmarkReport {
-  schemaVersion: 2;
+  schemaVersion: typeof REPORT_SCHEMA_VERSION;
   generatedAt: string;
   holdoutConsumptionId: string;
   dataset: { id: string; version: string; digest: string };
@@ -172,8 +194,8 @@ export interface BenchmarkReport {
   };
   scoringRuntime: {
     extensionBuildDigest: string;
-    backend: "wasm";
-    chromeVersion: "150.0.7871.129";
+    backend: typeof REPORT_SCORING_BACKEND;
+    chromeVersion: typeof RELEASE_CHROME_VERSION;
   };
   predictionManifestDigests: {
     development: string;
@@ -222,25 +244,8 @@ export async function buildBenchmarkReport(
   const seal = input.frozen;
   const releaseDecision = input.gates.decision;
 
-  const reportDigest = await canonicalSha256({
-    datasetAuditDigest: seal.datasetAuditDigest,
-    sourceReadinessDigest: seal.sourceReadinessDigest,
-    holdoutConsumptionId: seal.holdoutConsumptionId,
-    dataset: input.dataset,
-    splitDigest: input.split.digest,
-    splitStrategy: input.split.strategy,
-    evaluatorDigest: input.evaluatorDigest,
-    runtimeParityDigest: seal.runtimeParityDigest,
-    calibrationArtifactDigest: input.calibrationArtifactDigest,
-    model: seal.model,
-    scoringRuntime: seal.scoringRuntime,
-    predictionManifestDigests,
-    releaseDecision,
-    gates: gateFingerprint(input.gates),
-  });
-
-  return {
-    schemaVersion: 2,
+  const report: BenchmarkReport = {
+    schemaVersion: REPORT_SCHEMA_VERSION,
     generatedAt: input.generatedAt,
     holdoutConsumptionId: seal.holdoutConsumptionId,
     dataset: input.dataset,
@@ -257,9 +262,14 @@ export async function buildBenchmarkReport(
     slices: input.slices,
     gates: input.gates,
     releaseDecision,
-    reportDigest,
+    // Sealed on the next line, by the SAME projection `parseBenchmarkReport` recomputes —
+    // one recipe, two readers. The empty placeholder never escapes and never reaches the
+    // digest: `reportDigestInput` does not read this field.
+    reportDigest: "",
     notes: buildNotes(releaseDecision),
   };
+  report.reportDigest = await reportDigestOf(report);
+  return report;
 }
 
 // A stable, NaN-free projection of the gate report for the sealing digest: the
@@ -291,6 +301,445 @@ function gateFingerprint(gates: GateReport): unknown {
       passed: gate.passed,
     })),
   };
+}
+
+/**
+ * The projection `reportDigest` seals: governance, the holdout session, the three scoring
+ * executions and the gate outcomes — FOURTEEN facts.
+ *
+ * Exported because it has two readers, and they have to be the same recipe:
+ * `buildBenchmarkReport` writes the digest from it and `parseBenchmarkReport` recomputes
+ * the digest from it. A second, hand-kept copy would drift toward the permissive side —
+ * accepting a report the writer never produces — with nothing failing.
+ *
+ * `metrics` and `slices` are absent BY DESIGN: an observed statistic can be NaN, which
+ * `canonicalSha256` refuses outright, and each gate's pass/fail flag already captures every
+ * gate change the seal is about. The consequence of that exclusion is declared on
+ * {@link parseBenchmarkReport} and must not be read as covered.
+ */
+export function reportDigestInput(report: BenchmarkReport): unknown {
+  return {
+    datasetAuditDigest: report.datasetAuditDigest,
+    sourceReadinessDigest: report.sourceReadinessDigest,
+    holdoutConsumptionId: report.holdoutConsumptionId,
+    dataset: report.dataset,
+    splitDigest: report.split.digest,
+    splitStrategy: report.split.strategy,
+    evaluatorDigest: report.evaluatorDigest,
+    runtimeParityDigest: report.runtimeParityDigest,
+    calibrationArtifactDigest: report.calibrationArtifactDigest,
+    model: report.model,
+    scoringRuntime: report.scoringRuntime,
+    predictionManifestDigests: report.predictionManifestDigests,
+    releaseDecision: report.releaseDecision,
+    gates: gateFingerprint(report.gates),
+  };
+}
+
+/** The sealing digest of `report`, computed the one way this module computes it. */
+export async function reportDigestOf(report: BenchmarkReport): Promise<string> {
+  return canonicalSha256(reportDigestInput(report));
+}
+
+// The exact key sets, one per level `parseBenchmarkReport` checks. `Record<keyof T, true>`
+// rather than a hand-written list: a key added to the interface stops compiling here
+// instead of arriving unchecked, and a key removed from it leaves a `true` with nothing to
+// name. `ReleaseDecision` gets the same treatment for the same reason — an array literal
+// typed `readonly ReleaseDecision[]` is assignable while incomplete and would silently
+// admit a fourth member, and gates.ts exports the TYPE only, with no runtime list.
+const REPORT_KEYS: Record<keyof BenchmarkReport, true> = {
+  schemaVersion: true,
+  generatedAt: true,
+  holdoutConsumptionId: true,
+  dataset: true,
+  datasetAuditDigest: true,
+  sourceReadinessDigest: true,
+  split: true,
+  evaluatorDigest: true,
+  runtimeParityDigest: true,
+  model: true,
+  scoringRuntime: true,
+  predictionManifestDigests: true,
+  calibrationArtifactDigest: true,
+  metrics: true,
+  slices: true,
+  gates: true,
+  releaseDecision: true,
+  reportDigest: true,
+  notes: true,
+};
+
+const SPLIT_KEYS: Record<keyof BenchmarkReport["split"], true> = {
+  digest: true,
+  strategy: true,
+  heldOutGeneratorFamilies: true,
+  audit: true,
+};
+
+const GATE_REPORT_KEYS: Record<keyof GateReport, true> = {
+  schemaVersion: true,
+  decision: true,
+  gates: true,
+  multiplicity: true,
+  failedIntegrity: true,
+  failedWarning: true,
+  failedAction: true,
+  failedCertifying: true,
+};
+
+const RELEASE_DECISIONS: Record<ReleaseDecision, true> = {
+  pass: true,
+  "indicator-only": true,
+  reject: true,
+};
+
+type ContainerShape = "object" | "array" | "strings";
+
+/**
+ * The containers a downstream reader WALKS and that the seal does not cover.
+ *
+ * One level deep, and only the kind of container: the interior belongs to gates.ts,
+ * metrics.ts, slices.ts and split-audit.ts, and copying their shapes here would be a
+ * second definition of them that drifts toward permissive. What this closes is the bare
+ * `TypeError` in the middle of assembling the public bundle — `renderReportMarkdown` reads
+ * `slices.macro.warningFpr`, `slices.worst.warningFpr` and `notes.length` and walks
+ * `gates.gates` — which is the class `FIT_REPORT_CUT_MALFORMED` already closed for the fit
+ * report.
+ *
+ * Parent BEFORE child, and the whole list BEFORE the seal is recomputed: with `gates.gates`
+ * absent, `reportDigestInput` would raise an uncoded `TypeError` reading `.map`.
+ */
+const CONTAINER_SHAPES: ReadonlyArray<readonly [string, ContainerShape]> = [
+  ["metrics", "object"],
+  ["slices", "object"],
+  ["slices.macro", "object"],
+  ["slices.worst", "object"],
+  ["slices.slices", "array"],
+  ["notes", "strings"],
+  ["split.heldOutGeneratorFamilies", "strings"],
+  ["split.audit", "object"],
+  ["split.audit.heldOutGeneratorFamilies", "strings"],
+  ["split.audit.incidentalTestOnlyGeneratorFamilies", "strings"],
+  ["gates.gates", "array"],
+  ["gates.multiplicity", "object"],
+  ["gates.failedIntegrity", "strings"],
+  ["gates.failedWarning", "strings"],
+  ["gates.failedAction", "strings"],
+  ["gates.failedCertifying", "strings"],
+];
+
+function describeValue(value: unknown): string {
+  if (value === null) return "null";
+  if (Array.isArray(value)) return "an array";
+  return typeof value;
+}
+
+// Mirrors `isPlainObject` in contracts/canonical-json.ts, which is what the recomputation
+// below runs on: a prototype this accepted and canonicalization refused would turn a
+// coded refusal into an uncoded throw.
+function isPlainObject(value: unknown): value is Record<string, unknown> {
+  if (typeof value !== "object" || value === null || Array.isArray(value)) {
+    return false;
+  }
+  const prototype = Object.getPrototypeOf(value);
+  return prototype === Object.prototype || prototype === null;
+}
+
+function malformed(path: string, detail: string): BenchmarkReportError {
+  return new BenchmarkReportError(
+    "BENCHMARK_REPORT_MALFORMED",
+    `${path}: ${detail}`,
+  );
+}
+
+function requirePlainObject(
+  path: string,
+  where: string,
+  value: unknown,
+): Record<string, unknown> {
+  if (isPlainObject(value)) return value;
+  throw malformed(
+    path,
+    `${where} must be a plain object, received ${describeValue(value)}`,
+  );
+}
+
+function requireNonEmptyString(
+  path: string,
+  where: string,
+  value: unknown,
+): void {
+  if (typeof value === "string" && value.length > 0) return;
+  throw malformed(
+    path,
+    `${where} must be a non-empty string, received ${describeValue(value)}`,
+  );
+}
+
+function requireExactKeys(
+  path: string,
+  where: string,
+  holder: Record<string, unknown>,
+  allowed: Record<string, true>,
+): void {
+  const present = new Set(Object.keys(holder));
+  // `Object.hasOwn`, never `in`: `in` walks the prototype chain, so `__proto__` and
+  // `constructor` would read as allowed on any plain object — which is the very class of
+  // key an exact-key check exists to catch.
+  const extra = [...present]
+    .filter((key) => !Object.hasOwn(allowed, key))
+    .sort();
+  const missing = Object.keys(allowed)
+    .filter((key) => !present.has(key))
+    .sort();
+  if (extra.length === 0 && missing.length === 0) return;
+  const parts: string[] = [];
+  if (extra.length > 0) parts.push(`unknown ${extra.join(", ")}`);
+  if (missing.length > 0) parts.push(`absent ${missing.join(", ")}`);
+  throw new BenchmarkReportError(
+    "BENCHMARK_REPORT_UNKNOWN_FIELD",
+    `${path}: ${where} carries ${parts.join(" and ")}`,
+  );
+}
+
+function readPath(root: Record<string, unknown>, jsonPath: string): unknown {
+  let current: unknown = root;
+  for (const segment of jsonPath.split(".")) {
+    if (!isPlainObject(current)) return undefined;
+    current = current[segment];
+  }
+  return current;
+}
+
+/**
+ * Parses a `benchmark-report.json` payload into a {@link BenchmarkReport}, or refuses it
+ * with a code.
+ *
+ * Parse and not validate: the three commands that read this file decide a release branch on
+ * `releaseDecision` (`verify-evidence`) or on `gates.decision` (`profile-artifact`, reached
+ * through `publish-profile`) and hand the WHOLE object to two builders in other modules, so
+ * the only way to keep an unchecked report out of those readers is to make the parsed value
+ * the only one a call site can hold.
+ *
+ * WHAT IT COVERS, exactly: the SEALED SPINE, plus a recomputation of the seal. Eleven of the
+ * twelve report paths those commands dereference are inside {@link reportDigestInput} and
+ * the twelfth IS `reportDigest`, so this is not a chosen list of fields — it is what the
+ * seal covers, checked and then recomputed. Recomputing is what makes
+ * `release.evidenceDigest !== report.reportDigest` stop being a string compared against a
+ * string the same file declares.
+ *
+ * WHAT IT DOES NOT COVER, and must not be read as covering:
+ *  - `metrics`, beyond being an object. The recipe excludes it on purpose, so editing
+ *    `metrics.warning.endToEnd.recall.value` in a sealed report changes the published
+ *    `benchmark-report.json` and `benchmark-report.md` and does NOT move `reportDigest`.
+ *    The numbers the model card prints are sealed by nothing.
+ *  - `gate.bound`, `gate.observed`, `gate.descriptive`, `gate.sampleSize`,
+ *    `gate.populationSize` and `gate.reasons`: the gate fingerprint projects nine fields of
+ *    a `GateResult` and these six are outside it, published in the gate table unsealed.
+ *  - the interior of `slices`, of `metrics`, of `gates.gates[i]` and of `split.audit`.
+ *    Exact keys stop at three levels (top, `split`, `gates`).
+ *  - `generatedAt` and `gates.schemaVersion`: neither enters the recipe.
+ *  - whether `split.audit` here is the audit the split artifact carries. Nothing compares
+ *    the two, and it is this copy that gets published.
+ *
+ * A report sealed by an EARLIER build is refused rather than repaired: the recipe changed
+ * under the same `schemaVersion: 2`, so an archived report is not re-checkable here, and
+ * `BENCHMARK_REPORT_DIGEST_MISMATCH` says so instead of reading it as tampered.
+ */
+export async function parseBenchmarkReport(
+  value: unknown,
+  path: string,
+): Promise<BenchmarkReport> {
+  const root = requirePlainObject(path, "$", value);
+
+  // The key SETS first, before any digest is trusted — the reason is the one written at
+  // benchmark/split-artifact.ts:767: a digest computed over a PROJECTION agrees with itself
+  // no matter what else the parsed object carries. `split` and `gates` enter the recipe by
+  // projection (only `split.digest`/`split.strategy`, and a fingerprint of the gates), so a
+  // stray key inside either is invisible to the seal AND reaches published evidence —
+  // evidence-sanitizer.ts copies `split.audit`, `metrics`, `slices` and `gates` wholesale.
+  //
+  // `dataset`, `model`, `scoringRuntime` and `predictionManifestDigests` are deliberately
+  // NOT in this list: they enter the recipe WHOLE, so an extra key there changes the
+  // recomputed digest and is refused below.
+  for (const [where, holder, allowed] of [
+    ["$", root, REPORT_KEYS],
+    ["$.split", root.split, SPLIT_KEYS],
+    ["$.gates", root.gates, GATE_REPORT_KEYS],
+  ] as ReadonlyArray<readonly [string, unknown, Record<string, true>]>) {
+    requireExactKeys(
+      path,
+      where,
+      requirePlainObject(path, where, holder),
+      allowed,
+    );
+  }
+
+  if (root.schemaVersion !== REPORT_SCHEMA_VERSION) {
+    throw new BenchmarkReportError(
+      "BENCHMARK_REPORT_SCHEMA_UNSUPPORTED",
+      `${path}: $.schemaVersion must be ${REPORT_SCHEMA_VERSION}, received ` +
+        String(root.schemaVersion),
+    );
+  }
+
+  for (const field of [
+    "holdoutConsumptionId",
+    "datasetAuditDigest",
+    "sourceReadinessDigest",
+    "evaluatorDigest",
+    "runtimeParityDigest",
+    "calibrationArtifactDigest",
+    "reportDigest",
+  ] as const) {
+    requireNonEmptyString(path, `$.${field}`, root[field]);
+  }
+
+  const dataset = requirePlainObject(path, "$.dataset", root.dataset);
+  for (const field of ["id", "version", "digest"] as const) {
+    requireNonEmptyString(path, `$.dataset.${field}`, dataset[field]);
+  }
+
+  const split = root.split as Record<string, unknown>;
+  requireNonEmptyString(path, "$.split.digest", split.digest);
+  if (split.strategy !== SPLIT_STRATEGY) {
+    throw new BenchmarkReportError(
+      "BENCHMARK_REPORT_STRATEGY_UNSUPPORTED",
+      `${path}: $.split.strategy must be ${SPLIT_STRATEGY}, received ` +
+        String(split.strategy),
+    );
+  }
+
+  const model = requirePlainObject(path, "$.model", root.model);
+  for (const field of [
+    "id",
+    "version",
+    "bundleDigest",
+    "tokenizerDigest",
+    "aggregationVersion",
+    "contentCompositionVersion",
+  ] as const) {
+    requireNonEmptyString(path, `$.model.${field}`, model[field]);
+  }
+
+  const scoringRuntime = requirePlainObject(
+    path,
+    "$.scoringRuntime",
+    root.scoringRuntime,
+  );
+  requireNonEmptyString(
+    path,
+    "$.scoringRuntime.extensionBuildDigest",
+    scoringRuntime.extensionBuildDigest,
+  );
+  if (scoringRuntime.backend !== REPORT_SCORING_BACKEND) {
+    throw malformed(
+      path,
+      `$.scoringRuntime.backend must be ${REPORT_SCORING_BACKEND}, received ` +
+        String(scoringRuntime.backend),
+    );
+  }
+  if (scoringRuntime.chromeVersion !== RELEASE_CHROME_VERSION) {
+    throw malformed(
+      path,
+      `$.scoringRuntime.chromeVersion must be ${RELEASE_CHROME_VERSION}, received ` +
+        String(scoringRuntime.chromeVersion),
+    );
+  }
+
+  const manifestDigests = requirePlainObject(
+    path,
+    "$.predictionManifestDigests",
+    root.predictionManifestDigests,
+  );
+  for (const field of ["development", "calibration", "test"] as const) {
+    requireNonEmptyString(
+      path,
+      `$.predictionManifestDigests.${field}`,
+      manifestDigests[field],
+    );
+  }
+
+  const gates = root.gates as Record<string, unknown>;
+  for (const [where, declared] of [
+    ["$.releaseDecision", root.releaseDecision],
+    ["$.gates.decision", gates.decision],
+  ] as const) {
+    if (
+      typeof declared !== "string" ||
+      !Object.hasOwn(RELEASE_DECISIONS, declared)
+    ) {
+      throw new BenchmarkReportError(
+        "BENCHMARK_REPORT_DECISION_UNKNOWN",
+        `${path}: ${where} must be one of ${Object.keys(RELEASE_DECISIONS).join(", ")}, ` +
+          `received ${String(declared)}`,
+      );
+    }
+  }
+
+  // The two copies of the decision must agree. Read off `buildBenchmarkReport`, which
+  // derives one from the other (`const releaseDecision = input.gates.decision`): a
+  // divergent pair is inconstructible for the writer and admitted by a cast. Not subsumed
+  // by the recomputation — the recipe covers BOTH values, so a divergent pair that was
+  // re-sealed satisfies the digest.
+  if (root.releaseDecision !== gates.decision) {
+    throw new BenchmarkReportError(
+      "BENCHMARK_REPORT_DECISION_DISAGREEMENT",
+      `${path}: $.releaseDecision is ${String(root.releaseDecision)} while ` +
+        `$.gates.decision is ${String(gates.decision)}; the constructor derives one from ` +
+        "the other, so the two can only diverge by editing",
+    );
+  }
+
+  for (const [jsonPath, shape] of CONTAINER_SHAPES) {
+    const held = readPath(root, jsonPath);
+    const where = `$.${jsonPath}`;
+    if (shape === "object") {
+      requirePlainObject(path, where, held);
+      continue;
+    }
+    if (!Array.isArray(held)) {
+      throw malformed(
+        path,
+        `${where} must be an array, received ${describeValue(held)}`,
+      );
+    }
+    if (shape !== "strings") continue;
+    for (const [index, item] of held.entries()) {
+      if (typeof item !== "string") {
+        throw malformed(
+          path,
+          `${where}[${index}] must be a string, received ${describeValue(item)}`,
+        );
+      }
+    }
+  }
+
+  const report = value as BenchmarkReport;
+  let recomputed: string;
+  try {
+    recomputed = await reportDigestOf(report);
+  } catch (error) {
+    // An uncoded error escaping a parser is exactly what `FIT_REPORT_CUT_MALFORMED` exists
+    // to prevent. `canonicalize` refuses a prototype-polluting key, a non-finite number and
+    // an `undefined` property, and the blocks this parser deliberately does not enumerate
+    // (inside `gates.multiplicity`, `gates.gates[i]`, `dataset`, `model`) can carry one.
+    if (error instanceof CanonicalJsonError) {
+      throw new BenchmarkReportError(
+        "BENCHMARK_REPORT_NOT_CANONICAL",
+        `${path}: the sealed projection of this report cannot be canonicalized — ${error.message}`,
+      );
+    }
+    throw error;
+  }
+  if (recomputed !== report.reportDigest) {
+    throw new BenchmarkReportError(
+      "BENCHMARK_REPORT_DIGEST_MISMATCH",
+      `${path}: reportDigest does not seal this body (${report.reportDigest} != ` +
+        `${recomputed}); a report sealed by another build is not re-checkable here`,
+    );
+  }
+  return report;
 }
 
 function assertSealMatches(

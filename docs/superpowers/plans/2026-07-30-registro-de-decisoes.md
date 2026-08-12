@@ -7246,3 +7246,89 @@ Cada unidade é um conjunto de arquivos disjunto. W3 e W5 são reversíveis isol
 correto (os três casts saíram da produção, os oito códigos seguem a convenção da casa, e os doze caminhos
 que os comandos dereferenciam estão cobertos, inclusive `releaseDecision` por três vias) — o que faltava era
 a prova, e é ela que a integração escreveu.
+
+---
+
+## W4 — o parser de `BenchmarkReport`, e a unidade que quase passou sem guarda (2026-08-11)
+
+Sétima das catorze de pré-publicação, e a que mais ensina sobre o processo.
+
+### O defeito
+
+Três sítios faziam `(await readJsonFile(...)) as BenchmarkReport` — `publish-evidence.ts`,
+`publish-profile.ts`, `verify-evidence.ts` — e `git grep parseBenchmarkReport` devolvia zero. O que fazia
+disso bloqueante era o que vinha depois do cast: `verify-evidence.ts` lê `report.releaseDecision` do objeto
+**castado** e **decide o ramo** com ele. A dívida estava declarada em `ESTADO.md` § 7 desde a unidade R1.
+
+### O conserto
+
+`parseBenchmarkReport` em `benchmark/report.ts`, com **oito** códigos de recusa na convenção da casa, ligado
+nos três sítios — os três casts saíram da produção. Cobre os doze caminhos que os comandos dereferenciam,
+inclusive `releaseDecision` por três vias, e recomputa o selo.
+
+### O que aconteceu, e é o registro que importa
+
+**O agente de implementação morreu por erro de API** (`Connection closed mid-response`) depois de escrever o
+código e antes de escrever os testes. O código ficou na árvore, não commitado, com **49/49 verde**.
+
+Foi o **gate 3** que separou "suíte verde" de "guarda que morde". Medido em bytes, com `sha256` conferido:
+
+| mutação | antes do gate 3 |
+|---|---|
+| corpo do parser → `return value as BenchmarkReport` | **49 passed, verde** |
+| chamada removida de `verify-evidence.ts` (o sítio que decide o ramo) | **49 passed, verde** |
+| chamada removida de `publish-evidence.ts` | **49 passed, verde** |
+| chamada removida de `publish-profile.ts` | **49 passed, verde** |
+| `releaseDecision` fora de `reportDigestInput` | **49 passed, verde** |
+
+E `git grep BENCHMARK_REPORT` fora de `report.ts` devolvia **um** hit, que era um comentário: **zero testes
+nomeavam qualquer um dos oito códigos**.
+
+O único sinal automático era o lint — **sete erros de `no-unused-vars`**, e os sete eram exatamente a caixa
+de ferramentas da matriz de forjas que nunca foi escrita (`parseBenchmarkReport`, `BenchmarkReportError`,
+`reportDigestOf` importados e não usados, mais `mundo` hasteado ao escopo de módulo com `perfilOpcoes`
+acrescentado só para alimentá-la). **Dois comentários do arquivo citavam a matriz como se ela existisse.**
+
+**A regra que isto produz:** um agente que morre entre o código e o teste deixa uma unidade que passa a
+suíte e não tem guarda nenhuma — e a única pista fica num lint que sete `no-unused-vars` fazem parecer ruído.
+Antes de commitar unidade cujo agente não relatou, rode a bateria do gate 3 sobre o sítio de chamada. Suíte
+verde não é evidência.
+
+### A prova, escrita depois
+
+49 → **64** testes: a matriz de forjas (nove forjas cobrindo os oito códigos, mais o caso de **aceite**, sem
+o qual um parser que recusasse tudo satisfaria a matriz), um teste por sítio de chamada, e um que prende
+`releaseDecision` no selo. As cinco mutações acima ficaram **vermelhas em teste nomeado**.
+
+Duas forjas merecem registro, porque são o que faz duas delas morderem:
+
+- a de `verify-evidence` usa a edição **coordenada e não re-selada**: `releaseDecision` + `gates.decision` →
+  `pass` no relatório e `gateDecision: pass` no descritor. **Sem o parser esse mundo é coerente para as
+  quatro guardas e o comando APROVA**;
+- a de `publish-evidence` precisou de **duas** forjas, porque o comando delega a `runVerifyEvidence`, que
+  parseia o mesmo arquivo: uma forja só seria recusada pelo mesmo código pela delegação e não distinguiria
+  os dois sítios.
+
+### O comentário que ultrapassava o mecanismo
+
+`verify-evidence.ts` afirmava que o parser faz com que *"a coordinated edit of the decision plus the
+descriptor cannot walk past the four guards below"*. **Falso**: a receita é exportada e determinista, e
+`release.json` não sela `evidenceDigest`/`gateDecision`, então uma edição **re-selada** passa. O que o parser
+fecha é a edição **não re-selada** — que é o que o docstring do próprio parser já dizia certo. O comentário
+do sítio foi limitado a isso, e o limite ficou **preso por teste**.
+
+### Integração
+
+`evaluatorDigest`: `b3224325…` → `8f4923440043f0f9643fd1a9586bf30f2501e297472e22e30959b96950102b0d`.
+Um resíduo de formatação em `report.ts` (linha acima de 80 colunas) ficou por fora da propriedade do agente,
+que a declarou em vez de violar o escopo — pago aqui.
+
+Uma alegação do agente que **não se sustentou, e é bom registrar a refutação**: ele leu o commit `94a7e07`
+como tendo publicado um snapshot antigo de `evidence-sanitizer.test.ts`/`evidence.fixtures.ts`. Conferido: o
+commit é **anterior** à onda B1 e acrescentou 3 e 35 linhas (as edições de integração de A2), que continuam
+na árvore. Nada foi deslocado — o próprio agente já dizia isso, e a leitura de "snapshot antigo" vinha de
+comparar o commit com uma árvore que tem trabalho não commitado por cima.
+
+Medido em rodada ÚNICA, árvore quieta: vitest **172 arquivos / 3.032 testes** verde; `tsc` limpo; `prettier`
+limpo; `eslint` nos mesmos **12** pré-existentes (os sete `no-unused-vars` sumiram); `docs:check` 207/207;
+`git ls-files --eol` sem CRLF.

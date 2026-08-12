@@ -44,6 +44,7 @@ import { buildModelPublication } from "../profile-artifact.ts";
 import { freezeProvisionalThreshold } from "../provisional-threshold.ts";
 import {
   buildBenchmarkReport,
+  reportDigestOf,
   type BenchmarkReport,
   type GovernanceSeal,
 } from "../report.ts";
@@ -377,8 +378,19 @@ export async function bundleInputFor(
   decision: ReleaseDecision,
 ): Promise<BundleFixture> {
   const profileInput = profileInputFor(decision);
-  const { release, profiles } = await buildModelPublication(profileInput);
-  const report = profileInput.report;
+  // The shared publication fixtures carry a FACADE `reportDigest` — a hand-typed literal in
+  // profile-artifact.fixtures.ts — and `parseBenchmarkReport` recomputes the seal. It is
+  // RE-SEALED here, and before the publication is built, because `release.evidenceDigest` is
+  // a copy of this field. Without it every refusal these fixtures drive would come from the
+  // self-digest, and the tests would prove the parser's own arithmetic instead of the guards
+  // of the command under test. The clone is shallow on purpose: the module-level fixtures are
+  // shared with profile-artifact.test.ts and must not be mutated.
+  const report: BenchmarkReport = { ...profileInput.report, reportDigest: "" };
+  report.reportDigest = await reportDigestOf(report);
+  const { release, profiles } = await buildModelPublication({
+    ...profileInput,
+    report,
+  });
   const frozen = profileInput.frozen;
   return {
     input: {
@@ -700,6 +712,17 @@ async function writeJson(path: string, value: unknown): Promise<void> {
   await writeFile(path, `${JSON.stringify(value, null, 2)}\n`, "utf8");
 }
 
+export interface RejectScenarioOptions {
+  /**
+   * Which RUN this scenario materialises. The fixture is deterministic, so two scenarios
+   * built with the same label are byte-identical and nothing can tell them apart — a label
+   * is what makes a report from one run and a frozen calibration from another an actually
+   * mismatched pair, which is the only reach the digest comparisons of `publish-evidence`
+   * keep once the report is sealed and re-checked.
+   */
+  runLabel?: string;
+}
+
 /**
  * Materialises a self-consistent reject run under `root`: real dataset/source/
  * split/fit/report digests, an approved license review and a completed holdout
@@ -713,8 +736,9 @@ export async function buildRejectScenario(
     issuedAt: string;
     modelDirectory: string;
   }) => Promise<string>,
+  options: RejectScenarioOptions = {},
 ): Promise<RejectScenario> {
-  const datasetDigest = hex("reject-dataset");
+  const datasetDigest = hex(`${options.runLabel ?? "reject"}-dataset`);
 
   const auditBase: Omit<DatasetAudit, "auditDigest"> = {
     datasetId: "cleanfeed-ptbr-cells-v1",

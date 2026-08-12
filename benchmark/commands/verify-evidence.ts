@@ -20,7 +20,7 @@ import {
   validateFrozenCalibrationArtifact,
   type FrozenCalibrationArtifact,
 } from "../calibration-pipeline.ts";
-import type { BenchmarkReport } from "../report.ts";
+import { BenchmarkReportError, parseBenchmarkReport } from "../report.ts";
 import { CommandError, readJsonFile } from "./io.ts";
 
 export interface VerifyEvidenceOptions {
@@ -32,7 +32,23 @@ export interface VerifyEvidenceOptions {
 export async function runVerifyEvidence(
   options: VerifyEvidenceOptions,
 ): Promise<string> {
-  const report = (await readJsonFile(options.reportPath)) as BenchmarkReport;
+  // Parsed, not cast: the decision branch below reads `report.releaseDecision`, and
+  // `release.evidenceDigest` is compared to `report.reportDigest` — a string the same file
+  // declares. `parseBenchmarkReport` RECOMPUTES the seal from the body, so a coordinated edit
+  // of the decision plus the descriptor is refused here instead of walking past the four
+  // guards below — as long as the edit was not re-sealed. It is a recomputation and not an
+  // authority: the recipe is exported and deterministic, so re-sealing produces a report this
+  // parser accepts. `report.ts` cannot import `io.ts` (layer inversion), so the coded refusal
+  // is translated here with `code` and `message` intact: the CLI prints the message, the tests
+  // and the operator read the code.
+  const report = await parseBenchmarkReport(
+    await readJsonFile(options.reportPath),
+    options.reportPath,
+  ).catch((error: unknown) => {
+    throw error instanceof BenchmarkReportError
+      ? new CommandError(error.code, error.message)
+      : error;
+  });
   const frozen = (await readJsonFile(
     options.frozenCalibrationPath,
   )) as FrozenCalibrationArtifact;

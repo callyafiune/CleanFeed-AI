@@ -23,9 +23,9 @@ import {
   parseProvisionalThresholdArtifact,
   validateProvisionalThresholdArtifact,
 } from "../provisional-threshold.ts";
-import type { BenchmarkReport } from "../report.ts";
+import { BenchmarkReportError, parseBenchmarkReport } from "../report.ts";
 import { thresholdBinding } from "./evaluate.ts";
-import { readJsonFile } from "./io.ts";
+import { CommandError, readJsonFile } from "./io.ts";
 
 export interface PublishProfileOptions {
   reportPath: string;
@@ -37,7 +37,19 @@ export interface PublishProfileOptions {
 export async function runPublishProfile(
   options: PublishProfileOptions,
 ): Promise<string> {
-  const report = (await readJsonFile(options.reportPath)) as BenchmarkReport;
+  // Parsed, not cast: this command reads no field of the report itself and hands the whole
+  // object to `buildModelPublication`, which decides the publication branch on
+  // `report.gates.decision` and walks `metrics` and `slices.slices`. `report.ts` cannot
+  // import `io.ts` (layer inversion), so the coded refusal is translated here with `code`
+  // and `message` intact.
+  const report = await parseBenchmarkReport(
+    await readJsonFile(options.reportPath),
+    options.reportPath,
+  ).catch((error: unknown) => {
+    throw error instanceof BenchmarkReportError
+      ? new CommandError(error.code, error.message)
+      : error;
+  });
   const frozen = (await readJsonFile(
     options.frozenCalibrationPath,
   )) as FrozenCalibrationArtifact;

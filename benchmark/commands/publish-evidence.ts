@@ -30,7 +30,7 @@ import {
   type EvidenceInput,
 } from "../evidence-sanitizer.ts";
 import { parseProvisionalThresholdArtifact } from "../provisional-threshold.ts";
-import type { BenchmarkReport } from "../report.ts";
+import { BenchmarkReportError, parseBenchmarkReport } from "../report.ts";
 import {
   assertSplitArtifactSelfConsistent,
   type SplitArtifact,
@@ -148,8 +148,20 @@ async function findCompletedLedgerEvent(
 export async function runPublishEvidence(
   options: PublishEvidenceOptions,
 ): Promise<string> {
-  // A missing report is refused first: no report, no evidence.
-  const report = (await readJsonFile(options.reportPath)) as BenchmarkReport;
+  // A missing report is refused first: no report, no evidence. Parsed, not cast — the whole
+  // object goes to `buildEvidenceBundle`, which projects nineteen top-level keys into
+  // `benchmark-report.json` and renders `metrics`/`slices`/`gates` into
+  // `benchmark-report.md`: two of the seven published files. `report.ts` cannot import
+  // `io.ts` (layer inversion), so the coded refusal is translated here with `code` and
+  // `message` intact.
+  const report = await parseBenchmarkReport(
+    await readJsonFile(options.reportPath),
+    options.reportPath,
+  ).catch((error: unknown) => {
+    throw error instanceof BenchmarkReportError
+      ? new CommandError(error.code, error.message)
+      : error;
+  });
 
   const frozen = (await readJsonFile(
     options.frozenCalibrationPath,
