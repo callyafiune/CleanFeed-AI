@@ -46,7 +46,7 @@ não repete o detalhe.
 |---|---|---|---|
 | G0.1 | ratificar `domainSource` como estrato (`sourceMaterialBatch` carrega dependência) | ratificar — é a decisão de 2026-08-01, medida | Fase 1 (eixos) |
 | G0.2 | manchete: pior estrato **ou** por estrato | **por estrato** — cobertura deixa de ser punida, e melhorias futuras acrescentam linha sem degradar a manchete (§ 3.2 do ESTADO) | Fase 1 (m, α) |
-| G0.3 | teto pretendido: **1,45 %** (1.500 linhas/célula ⇒ 6.000 humanas) ou **0,55 %** (4.000/célula ⇒ 16.000) | **1,45 %** — 6.000 humanas cabiam no material com folga sob quatro células. **Superado pela emenda da moldura de 2026-08-05:** com uma célula, os 0,55 % custam 4.000 linhas e não 16.000, e é esse o valor vigente | Fase 2 (alvos) |
+| G0.3 | teto pretendido: **1,45 %** (1.500 linhas/célula ⇒ 6.000 humanas) ou **0,55 %** (4.000/célula ⇒ 16.000 **sob `m=4`**; a Etapa 0 decidiu sob `m=7`, onde o mesmo teto pedia 4.485/célula ⇒ **17.940** — errata de 2026-08-11) | **1,45 %** — 6.000 humanas cabiam no material com folga sob quatro células. **Superado pela emenda da moldura de 2026-08-05:** com uma célula, os 0,55 % custam 4.000 linhas e não 16.000, e é esse o valor vigente | Fase 2 (alvos) |
 | B1 | parecer jurídico da posição (a) ou risco assumido por escrito — **ramo escolhido em 2026-08-05: risco assumido por escrito**; falta a assinatura | — (pessoal) | **só a Fase 7** |
 
 As Fases 1–6 correm com G0.1–G0.3 decididas; B1 só trava a publicação.

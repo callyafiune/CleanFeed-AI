@@ -4628,7 +4628,8 @@ de menos de dois caracteres. Cinco entradas da lista fechada têm um caractere �
 seja as três palavras mais frequentes do português e exactamente o material que Mosteller & Wallace contam:
 sob o default elas ficavam no vocabulário com massa **zero permanente**, e nenhum teste podia notar porque a
 única fixture do instrumento não tinha palavra funcional nenhuma (matriz de zeros 40×120). Custo medido do
-default: o ramo lia 0,8944 em vez de 0,9313, 0,041 de AUC perdidos em silêncio. `token_pattern` fixado em
+default: o ramo lia 0,8944 em vez de 0,9313, **0,0369** de AUC perdidos em silêncio (este arquivo
+publicou 0,041 até 2026-08-11). `token_pattern` fixado em
 `(?u)\b\w+\b`, e um teste afirma que **toda** entrada da lista é alcançável pelo analisador e que as cinco
 de um caractere carregam massa positiva num texto que as contém.
 

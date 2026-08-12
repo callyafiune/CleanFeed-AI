@@ -4089,6 +4089,12 @@ A unidade é a página, o piso de 300 é trivial, e o dump de 1,96 GB é a reser
 
 Medido: `1 − 0,0125^(1/800) = 0,0054626` contra `1 − 0,007143^(1/300) = 0,0163372`. A opção de 0,55 % da
 Etapa 0 (G0.3) custava **16.000** linhas humanas a quatro células; ela agora custa **4.000** a uma.
+**Errata de 2026-08-11:** as 16.000 são a aritmética de **`m=4`** (4 × 4.000, porque 20 % de 4.000
+são as 800 linhas de `test` que dão 0,5463 %). A Etapa 0 decidiu G0.3 sob **`m=7`**, e ali o mesmo
+teto custava **17.940** (α = 0,05/7 pede n = 897 em `test`, isto é 4.485 por célula). O número
+publicado é uma **recomputação** sob a família de hoje, não o que a decisão custava quando foi
+tomada — refeito nesta unidade: sob `m=4` o primeiro `n` com teto ≤ 0,55 % é 795, e n = 800 realiza
+0,5463 %.
 
 ### O que NÃO se alega mais
 
@@ -6111,8 +6117,9 @@ onde ser cega a tema nunca foi exigência.
 
 Duas correções de instrumento vieram da mesma medição. (1) O `token_pattern` default do sklearn descarta todo
 token de um caractere, então `a`, `e`, `o`, `à` e `é` — as três palavras mais frequentes do pt-BR e o material
-que Mosteller & Wallace contam — estavam no vocabulário com massa **zero permanente**; custo medido 0,041 de
-AUC (0,8944 em vez de 0,9313), e nenhum teste podia notar porque a fixture não tinha palavra funcional nenhuma
+que Mosteller & Wallace contam — estavam no vocabulário com massa **zero permanente**; custo medido **0,0369** de
+AUC (0,8944 em vez de 0,9313 — o registro publicou 0,041 até 2026-08-11,
+e a subtração é 0,0369), e nenhum teste podia notar porque a fixture não tinha palavra funcional nenhuma
 (matriz de zeros 40×120). (2) A guarda de "nenhuma palavra de conteúdo" era uma **lista negra** de 42 palavras
 medidas: medido, `brasil` declarado funcional passava pelas duas guardas — a pós-`fit` porque compara o
 ajustado contra a lista já contaminada — e chegava ao vocabulário. Substituída por **igualdade de conjuntos**
@@ -6183,7 +6190,8 @@ fração temática um número que features sensíveis a conteúdo carregavam.
 **(2) Cinco das 120 palavras funcionais nunca eram contadas.** Aplicado — `token_pattern` fixado em
 `(?u)\b\w+\b`, fixture trocada por prosa pt-BR real (a anterior produzia matriz de zeros 40×120, e sobre
 zeros toda guarda de vocabulário passa), e teste novo afirmando que **toda** entrada da lista é alcançável
-pelo analisador e que `a`, `e`, `o`, `à`, `é` carregam massa positiva. Custo medido do defeito: 0,041 de AUC.
+pelo analisador e que `a`, `e`, `o`, `à`, `é` carregam massa positiva. Custo medido do defeito: **0,0369** de AUC (0,9313 − 0,8944; o valor 0,041 que este registro
+publicou até 2026-08-11 não é a subtração).
 
 **(3) A guarda de conteúdo era lista negra.** Aplicado — igualdade de conjuntos contra
 `DECLARED_FUNCTION_WORD_CLASSES`, 120 palavras sob sete classes gramaticais fechadas, verificada como
@@ -7332,3 +7340,42 @@ comparar o commit com uma árvore que tem trabalho não commitado por cima.
 Medido em rodada ÚNICA, árvore quieta: vitest **172 arquivos / 3.032 testes** verde; `tsc` limpo; `prettier`
 limpo; `eslint` nos mesmos **12** pré-existentes (os sete `no-unused-vars` sumiram); `docs:check` 207/207;
 `git ls-files --eol` sem CRLF.
+
+---
+
+## A alegação das "quarenta mutações" do Commit A não tem portador rastreado (2026-08-11)
+
+Achado 5 do `consolidado-a-schema-v4`, e o último dos que a auditoria de 2026-08-10 confirmou como
+bloqueante de pré-publicação. Não é defeito de código: é defeito de **prova**.
+
+**O que a mensagem de `a028c8a` afirma**, verbatim: *"Quarenta mutações rodadas com os cinco passos, todas
+vermelhas no teste nomeado (duas verdes de propósito, para medir o que a rede de compilação compra), e a
+restauração conferida byte a byte por `git diff --no-index` contra o instantâneo pré-mutação."*
+
+**O que a árvore carrega:** nada disso. O único arquivo que traria a tabela —
+`.codex-reviews/fase1-commitA-implementacao.md` — está coberto por `.gitignore:63`, e o relatório que ele
+contém registra **23** mutações (`grep -c "^| G"` → 23), não 40. O `review-mutacao.md` daquela unidade
+**propõe** 21. Nenhum arquivo rastreado diz quais 38 ficaram vermelhas nem quais 2 ficaram verdes, nem qual
+teste nomeado cada uma matou.
+
+**Não é retratação da bateria.** Não há evidência de que ela não rodou; há ausência de evidência de que
+rodou, e as duas coisas são diferentes. O que se declara aqui é que **a alegação não é verificável de um
+checkout**, e que ela permanece assim: reconstruir uma bateria de 2026-08-04 sobre bytes que quinze commits
+depois já se moveram produziria outra bateria, não aquela.
+
+**Honestidade sobre a procedência do achado**, que o próprio consolidado registrou: ele foi **dirigido pelo
+prompt** — o texto que foi ao codex já afirmava que a alegação era autocontraditória e que a tabela não
+estava no Git. O codex confirmou uma suspeita escrita em vez de descobrir uma. Isso não o torna falso; torna
+o crédito devido a quem escreveu o prompt.
+
+**A regra que isto produz, e ela é a razão de o item valer registro:** uma bateria de mutação é a prova de que
+uma guarda morde, e **prova que vive só num arquivo ignorado não é prova de um checkout**. Duas coisas
+seguem: (a) a contagem citada numa mensagem de commit tem de ser a contagem do artefato que a carrega — 40
+contra 23 é a divergência que denuncia a ausência; (b) quando a bateria for grande demais para o corpo do
+commit, o que entra nele é o **digest** do relatório mais onde ele vive, e não um número solto.
+
+Duas unidades desta mesma fila já cumprem o padrão dentro do repositório (as baterias registradas em § "A
+bateria de mutação do fechamento" e a de R1), o que é o contraste que torna a lacuna deste commit visível.
+
+**Vence:** permanece declarado. Não há dono de conserto, porque não há conserto possível — o que há é o
+registro de que a Fase 6 não pode citar aquela bateria como evidência.
