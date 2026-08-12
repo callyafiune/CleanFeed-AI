@@ -7586,3 +7586,287 @@ Medido em rodada ÚNICA, árvore quieta: vitest **172 arquivos / 3.046 testes** 
 3. **O nível de gerador da classe mista continua ABERTO.** A exceção que U4 registrou dissolveu-se; a
    pergunta não. `mixed.levels` é `humanSeed × promptTemplate` e nenhum nível de gerador aparece nela.
 4. **A decisão de deixar `generatorVersion` reportado**, com o resíduo acima.
+
+---
+
+## A classe mista da v1: o gate desarmado, e a curva construída em células (2026-08-12)
+
+Quatro decisões encadeadas, na ordem em que o operador as pediu — decidir o gate primeiro, porque produzir
+a classe é o que armava a condição de recusa. As duas primeiras foram levantadas por agentes de decisão
+(modelo Fable, somente leitura sobre a árvore); a integração, a conferência das linhas citadas e a medição
+de células são minhas. Nada disto foi implementado: o produto é a decisão, e o código é a unidade seguinte.
+
+### O que estava aberto, e por que doía
+
+`counts.mixed = 2000` é herança de um plano apagado — escrita em 2026-07-19 (commit `dc02262`) como bullet de
+invariante, **sem derivação**, e a ratificação de 2026-08-04 cobre a razão do número do `ai` com a coluna
+"alternativa recusada" vazia. Em cima dessa cota sem razão havia um gate vivo, `warning.mixed-recall ≥ 0,50`,
+e a leitura da regra de decisão de release diz o que ele faz:
+
+```
+benchmark/gates.ts:605-612
+  failedCertifying.length > 0 || failedIntegrity.length > 0 || failedWarning.length > 0
+    ? "reject"
+    : failedAction.length > 0 ? "indicator-only" : "pass"
+```
+
+O ramo lê o **tier**, não o `role`. `warning.mixed-recall` declara `role: "diagnostic"` — não sustenta
+alegação, não gasta alpha, não é membro de `multiplicity.primaryFamily` (fora de `multiplicity.gateIds`,
+preso por teste) — e ainda assim, em tier `warning`, **reprovado ele rejeita o release inteiro**.
+
+E a v1 teta em `indicator-only` por construção: a pré-inscrição declara **um** corte sobre **uma** base, então
+`evaluate` chega ao gate com `visualActionAvailable: false` e `action.available` reprova (ESTADO § 3.5).
+Logo, na v1, o efeito marginal de todo gate de aviso é binário e assimétrico: **passar não habilita nada;
+reprovar mata tudo.**
+
+Contra isso, o teto documentado da tarefa. O vencedor do PAN 2025 Voight-Kampff Subtask 2 — a única
+competição que propôs formalmente autoria mista — fez **64,46 % de recall macro com um Qwen3-4B ajustado**,
+contra 48,32 % da linha de base roberta-base; o HART mede **AUROC 0,502** (azar) e **8 % de TPR@5%FPR** para
+um classificador RoBERTa de **documento** sobre conteúdo humanizado. O nosso detector é um BERTimbau base de
+110M em WASM, de documento. O corpus morto mediu **11,6 %** de recall em misto. O
+`docs/detector-rebuild-assessment.md` § 4.5 já concluía: *"um limite de 50 % para um encoder de 110M em WASM
+não é ambicioso, é inatingível pela formulação atual"*, e nomeava este como **o único gate cujo valor ele
+recomenda mudar — e só depois de a formulação mudar**.
+
+A conjunção era insatisfazível: a cota exige exatamente 2.000 mistas por igualdade exata em `sealDataset`;
+D4 obriga os pontos ≥ 0,50 a entrarem no gate; o gate exige 0,50 em tier que rejeita; e a literatura põe o
+piso acima do teto da arquitetura. Um dos lados tinha de mover.
+
+### Decisão 1 — o gate é DESARMADO na v1, e o piso fica congelado como alvo de rearme
+
+**O gate sai da disjunção de decisão do release.** O bloco misto continua **medido e publicado** — a coorte
+`mixed.atLeastHalfAi`, `gateEvidence.overall.mixedRecall` no perfil, e a curva por nível quando D4 existir. O
+piso **0,50** permanece congelado em `materialAssistance.minimumWarningRecall`
+(`benchmark/preregistration-v4.json:221`) como **alvo de REARME**, e rearmar exige, escrito na própria
+política, **duas** condições: formulação nova (cabeça de sentença ou de token, não classificador de
+documento) **e** piso derivado de evidência com fonte.
+
+**O critério, e não é "o gate é difícil":**
+
+1. **Um gate cuja reprovação é predeterminada por evidência externa ex ante não protege nada — garante
+   recusa permanente.** E a assimetria de tier o torna indefensável: `role: "diagnostic"` já declara que ele
+   não sustenta alegação nenhuma, então reprovado ele destrói alegações **que não são dele**.
+2. **A janela de legitimidade fecha quando a primeira linha mista nascer.** Hoje é emenda estrutural sob
+   ESTADO § 3.4 — *"abandonar pré-inscrição depois de ver a estrutura dos grupos é legítimo; depois de ver
+   resultados, não"* —, ancorada em literatura **externa** e não em espiada no nosso dado. Conferido:
+   `release.json` tem `issuedAt: null`, `gateDecision: "pending"`, `profileDigests: []`, e `git tag` devolve
+   zero. Existe um `frozen-calibration.json` em disco, gitignored, de 2026-07-25: é o fit do corpus **morto**,
+   da lease já registrada como gasta. Sob a v4 não existe fit nem resultado. Depois da primeira linha
+   gerada, o mesmo ato viraria R3 — "nenhum gate é afrouxado para passar".
+
+**Por que não reancorar o VALOR hoje.** Não existe fonte honesta para um número. O PAN mede macro-recall de
+seis classes com um decoder de 4B; o HART mede documento 100 % IA humanizado; o único número interno (11,6 %)
+mede o que o assessment chama de "uma tarefa mal formulada", sobre uma população que D4 **substitui** (trechos
+de mediana 16 caracteres → operações contíguas). O próprio assessment ordena: formulação primeiro, valor
+depois. Escolher um número hoje seria a priori vestido de evidência.
+
+**Por que não trocar de tier.** `GateTier` é fechado em três valores. Mover para `action` faria uma coorte que
+"nunca autoriza ação visual" reger a promoção de ações sobre **outra** população pós-v1 — a mesma doença um
+andar acima.
+
+**Por que não remover o gate.** Apagar o piso deixaria `minimumWarningRecall` sem leitor ou sem existência: a
+primeira é prosa prometendo o que nada impõe, a segunda é afrouxamento além do necessário. O desarme guarda o
+valor congelado, o bloco publicado, e obriga um teste que afirme a não-decisão **nas duas direções** — o
+precedente da casa é `assert_theme_probes_decide_no_hypothesis`, que recusa sonda promovida a hipótese **e**
+família que deixou de ter quatro membros.
+
+**O que se perde, sem atenuar.** A v1 pode ser lançada cega a texto misto ≥ 50 % IA, e **nenhum mecanismo
+impede**. O recall esperado é da ordem de 11–20 % pela literatura e pelo corpus morto; o número viaja no
+relatório e no perfil, mas nada o lê para decidir. O produto avisará em menos da metade dos textos que a
+própria política define como positivos de aviso. A barreira contra um model card que omita a limitação passa
+a ser **texto mais teste de presença**, não gate — e esta casa considera isso mais fraco, com razão.
+
+**Custo de reversão.** Em código, barato: repor o gate na lista e reverter os testes; a evidência publicada
+não muda de forma. Em legitimidade, caro e de mão única: rearmar com 0,50 **depois** de ver resultados v4
+seria postdição. Na prática, só o caminho v2 rearma.
+
+### Decisão 2 — a curva tem nove pontos publicados, e sete deles são linhas mistas
+
+Os níveis são os de D4, congelados: 0 %, 15 %, 25 %, 40 %, **50 %**, 60 %, 75 %, 90 %, 100 %
+(plano v3 `:7499-7501`, espelhados em `MIXED_FRACTION_BUCKETS`). A classe mista realiza **v1–v7**. **v0 e v8
+não são linhas mistas**, e a razão é do mecanismo, não de gosto:
+
+- `aiFraction` 0 e 1 **são** numericamente expressáveis — `fraction()` admite `[0,1]` inclusive
+  (`benchmark/schema.ts:939`) e a soma-1 é satisfeita por 0+1. A recusa não vem do validador de campo;
+- **v0 é inselável**: uma linha 0 % IA é o texto do pai palavra por palavra, o pai é linha humana **da mesma
+  ilha**, e `parseBenchmarkDataset` recusa `normalizedTextSha256` repetido (`schema.ts:515-520`);
+- **v8 é a classe `ai` por doutrina do próprio esquema**: `mixture` é proibida fora de `mixed` porque
+  *"o bloco descreve um documento de origem dividida"* (`schema.ts:2293-2298`), e D4 manda o texto livremente
+  reescrito receber **rótulo de documento**.
+
+Os dois extremos da curva publicada são lidos das **classes puras das mesmas ilhas**: v0 = os pais (uma taxa
+de aviso sobre humano, isto é um FPR) e v8 = as linhas `ai` da ilha. Cada ponto nomeia a sua população, e
+nenhum é agregado com os outros. Isto é **emenda à leitura literal de D4** ("a curva v0–v8 montada nas três
+operações"): montada nas operações são as sete interiores.
+
+**A alocação da cota, que fecha exata em 2.000:**
+
+| nível | alvo | banda | linhas/ilha | total |
+|---|---|---|---|---|
+| v1 | 0,15 | [0,10–0,20] | 10 | 200 |
+| v2 | 0,25 | [0,20–0,30] | 15 | 300 |
+| v3 | 0,40 | [0,35–0,45] | 15 | 300 |
+| v4 | 0,50 | **[0,50–0,55]** | 15 | 300 |
+| v5 | 0,60 | [0,55–0,65] | 15 | 300 |
+| v6 | 0,75 | [0,70–0,80] | 15 | 300 |
+| v7 | 0,90 | [0,85–0,95] | 15 | 300 |
+| | | | **100** | **2.000** |
+
+A banda de v4 é fechada por baixo em 0,50 porque a coorte lida é a de fração **observada**
+`≥ minimumAiFraction` — um v4 que aterrissa em 0,48 sai da coorte. Coorte ≥ 0,50 = v4–v7 = **1.200 linhas
+(60 %)**; sub-0,50 = 800 (40 %), no papel congelado `mixedBelowHalfAiRole: "diagnostic-curve-only"`. No bloco
+cego (`test` = 20 % = 4 ilhas) a coorte ≥ 0,50 mede **240**, acima dos 200 de `criticalRecallPositives` — o
+desenho **não fecha a porta do rearme por falta de denominador**.
+
+O nível é **alvo da operação**, nunca a fração observada: a errata 13 do plano já mediu que chavear pela
+fração obtida daria uma chave por registro-linha, e obriga a pista de mistura a emitir a curva por nível
+**antes** de qualquer leitura de `byFraction` como curva. A linha grava `mixLevel` e `mixOperation`.
+
+**A opção que foi RECUSADA, e por dois motivos independentes.** Concentrar a distribuição abaixo de 0,50 para
+esvaziar o gate: (a) é escolher o material para o gate não morder, e cega a avaliação no próprio ponto de
+falha que o OpAI-Bench nomeia — nove níveis progressivos com **não-monotonicidade**, Fast-DetectGPT caindo de
+F1 65,0 em v1 para 35,2 em v4; (b) **está morta em código** — `profile-artifact.ts:352-363` constrói
+`gateEvidence.overall.mixedRecall` com `requireSampleSize(mixed.sampleSize)`, e `requireSampleSize`
+**reprova em zero** com `GATE_EVIDENCE_INCOMPLETE` (`:283-288`). Coorte vazia não passa de graça: **impede a
+publicação do perfil.**
+
+### Decisão 3 — três operações, e a partição pede IDENTIDADES, não operações
+
+**As operações são as três de D4 e nenhuma além delas** (plano `:7493-7495`): substituição de seção contígua,
+inserção de seção contígua, e concatenação de introdução humana com corpo de IA — cada uma registrando
+offsets antes/depois e hashes dos segmentos.
+
+Candidatas recusadas: *continuação* (é a concatenação com outro nome); *edição salpicada por diff* (é a pista
+legada que D4 aposentou — mediana de 16 caracteres, spans que ensinariam o oposto); *expansão de esboço*
+(colapsa em concatenação); *transferência de estilo* (é eixo de `transformation`, não de mistura).
+
+**E vinte operações distintas não existem, nem são alegadas.** O que o plano de ilhas exige não são vinte
+operações: são vinte-e-tantas **identidades disjuntas** no namespace de `groups.promptTemplate`, e identidade
+é o **digest dos bytes** do template. A diferença se paga com instanciação por ilha — prompt materialmente
+distinto por ilha × operação (gênero da seção, registro, estrutura da instrução), com o nível como
+**parâmetro preenchido**, que não muda o digest.
+
+E reduzir a cota não resolve nada: o piso de ilhas é sobre **fração**,
+`1/n ≤ menor alvo + tolerância = 0,05 + 0,02` (`FIVE_TARGETS` sobre `BLOCK_FRACTIONS`, `CLASS_TOLERANCE` de
+0,02, comparação inclusiva com epsilon) — **livre de escala**: encolher a cota encolhe a ilha, nunca o número
+de ilhas. Eu mesmo errei isto numa volta anterior e corrigi na seguinte; fica registrado porque o erro é
+atraente.
+
+**Hoje os três prompts de `make_mixed.py` não são três operações** — conferido: um alvo de fração com **dois
+corretivos de nudge retry**, com o modo de falha dependente do registro do pai (em texto informal o modelo
+reescreve tudo e `aiFraction` passa de 0,7; em texto polido devolve cópia idêntica em 0,0). E as três pistas
+declaram o **mesmo** `TEMPLATE_ID = "mix_edit_v1"`. A banda legada `MIXED_BAND = (0,05, 0,7)` **recusaria v6 e
+v7**: a pista nova não pode herdá-la.
+
+**O dimensionamento, com a conta:**
+
+- **20 ilhas** (`ISLAND_COUNT`, `assemble_corpus.py:191`), derivadas e não escolhidas: 14 recusa o preflight
+  (menor componente em 7,14 % contra 7 %), 15 passa e erra `cal-A` em 6,65 % contra 10 %, 16 e 18 passam a
+  geometria e não atribuem, e 20 realizam 45/5/10/20/20 exato nas três classes;
+- mistas por ilha: 2.000 // 20 = **100**;
+- **cinco identidades de template por ilha, 100 no total**: 2 de geração + **3 de mistura, uma por operação**.
+  O plano *como declarado hoje* pede 3N = 60 (o comentário em `assemble_corpus.py` conta só as 40 de geração;
+  o preço inteiro já era 60, porque `mixingTemplate` escreve o mesmo eixo). A razão de subir para 5N é
+  medida: com **um** template de mistura por ilha, a operação **confunde-se com a ilha**, e `dev` (1 ilha) e a
+  ilha core do bloco cego carregariam **uma operação só** — a mesma cegueira estrutural, num ponto de falha
+  nomeado, que a § 6.1 do assessment condena;
+- por ilha, **20 células de 5 linhas**: 7 níveis × 3 operações **menos v1 × inserção**. 20 × 5 = 100, exato.
+  Totais por operação: substituição 700, concatenação 700, inserção 600.
+
+**A célula excluída, medida com a função de produção.** Sonda no scratchpad importando `shingles_of` e
+`jaccard` de `benchmark/lab/near_dupes.py`, contra o contrato de poda (Jaccard ≥ 0,82 sobre shingles de 5
+tokens), com pais de 100 a 1.200 tokens e tokens todos distintos (a suposição fica declarada: texto real
+repete token, e o efeito sobre a contagem de shingles distintos não é obviamente monótono):
+
+**v1 × inserção cruza o limite em TODO comprimento de pai** — 0,848 a 0,869 —, e a poda derrubaria um dos dois
+membros do par. A ordem de prioridade da poda derruba o **pai humano**, que é o que quebraria a contagem e a
+ponte da ilha. Nenhuma outra célula se aproxima: a segunda mais alta é v2 × inserção em **0,774**, e todas as
+de substituição e concatenação ficam em 0,735 ou abaixo. Uma volta anterior da minha própria álgebra dizia
+que a exclusão dependeria do comprimento do pai (cruzando só acima de ~205 tokens, o que produziria uma
+célula **enviesada por comprimento**, pior que morta); **a medição refuta isso** — é morta em todo
+comprimento, com margem.
+
+Esses números são de **sonda**, não de teste: a unidade que escrever a pista deve prendê-los por fixture,
+senão a alegação "célula morta por medição" é memória e não medição.
+
+**O que a seleção de pais tem de obedecer:**
+
+1. **pai = linha humana do corpus, da MESMA ilha.** Pai fora do bloco funde ilhas — a onda C mediu 2
+   componentes virando 1 — porque `derivationRoot` une por valor e `humanSeed` é linhagem;
+2. **um nível por pai, um pai por linha**: `id = mix_<pai>` mais a recusa de id duplicado impõem uma mista por
+   pai, então 100 dos 200 humanos da ilha viram pais. Pilhas de versões de um mesmo pai — o desenho
+   **intra-documento** do OpAI-Bench — são **inexprimíveis** sem mudar o esquema de id, e o v0 da pilha
+   colidiria por hash. A nossa curva é **entre coortes de pais distintos**, e isso é declarado na referência;
+3. **os clusters de operação distribuem os seus pais pelas duas metades de template de geração da ilha**, que
+   é o que faz a ilha fechar em um componente;
+4. **pai com proveniência completa**: `family` na moldura e `sourceMaterialBatch` presente, senão a linha cai
+   contada; e toda linha grava o digest do próprio template;
+5. **screen de par na GERAÇÃO**, não só na montagem: cada par pai/mista passa o contrato de `near_dupes` antes
+   de a linha ser escrita — a matriz mata a célula estrutural, mas uma seção inserida que **cite** o pai pode
+   cruzar o limite mesmo em v2;
+6. **"nunca treinado" é entregue por co-locação**: `assign_partitions` carimba por componente, então pai e
+   mista aterrissam no **mesmo** bloco. Nenhum pai de mista de bloco cego é visto em treino por construção, e
+   não por manter um pool separado.
+
+### Decisão 4 — o eixo de operação: o que a decisão 3 resolve, e o que fica de dívida
+
+A pré-inscrição vigente declara, no estimando misto, `unitKind: multiway` com os níveis `groups.humanSeed` e
+`groups.promptTemplate`, o segundo com `proxyFor: "operação de edição"` e uma `proxyReason` que termina:
+*"...tem um único nível sobre as linhas mistas montadas, logo este fator é degenerado por construção até um
+eixo de operação existir"*.
+
+**A decisão 3 torna essa frase FALSA**, e isso é consequência a pagar, não a comemorar em silêncio: com três
+templates de mistura por ilha, um por operação, `groups.promptTemplate` passa a ter **três níveis por ilha**
+sobre as linhas mistas, e a reamostragem aninhada `humanSeed × promptTemplate` **isola a operação dentro da
+ilha**. O fator deixa de ser degenerado. Logo o texto selado tem de ser emendado na mesma unidade — uma
+`proxyReason` que descreve um mecanismo que deixou de existir é exatamente o comentário que promete mais do
+que o código impõe, com o sinal invertido.
+
+**O que permanece dívida da v2:** o eixo de **primeira classe**. O eixo carrega o digest do template, não a
+operação, então duas identidades da **mesma** operação numa ilha são indistinguíveis de duas operações, e
+nada no esquema recusa esse plano. Um `groups.mixOperation` (ou `mixture.operation` promovido a eixo de grupo)
+é o que faria a operação ser **lida** em vez de inferida do digest, e faria a partição por operação ser
+**imponível por mecanismo**. É mudança de eixos do esquema v4 — move `evaluatorDigest`, `V4_GROUP_AXES` e o
+espelho Python —, e não é pré-requisito para gerar a classe.
+
+### O que fica para o operador ratificar
+
+1. **A emenda da pré-inscrição**: o desarme do gate mais as duas condições de rearme escritas na política.
+   Mesma classe do que foi ratificado em 2026-08-04, e muda a regra de decisão de release.
+2. **A aceitação escrita do resíduo**: a v1 pode sair cega a misto ≥ 50 % IA, com o número publicado e nada o
+   lendo para decidir. Isso vira obrigação de `limitations.md` e do model card na Fase 6.
+3. **A curva, a alocação, as três operações e as cinco identidades por ilha** — inclusive a subida de 3N para
+   5N identidades, que é preço de prompt a escrever.
+4. **A razão da cota `mixed = 2000`**, que segue sem razão própria no registro: a ratificação de 2026-08-04
+   cobre o `ai`. Gerar a classe vai gastá-la. Ratificar a razão junto, ou mandá-la de volta.
+
+### O que a unidade seguinte muda no código, sítio por sítio
+
+- `benchmark/preregistration-v4.json` — o bloco `materialAssistance` ganha a declaração de que o piso **não
+  decide na v1** e as duas condições de rearme; a `proxyReason` do estimando misto é reescrita. `policyVersion`
+  **não** se move (é emenda), e `benchmark/lab/sealed_policy.py` tem o `SEALED_POLICY_SHA256` repinado **no
+  mesmo commit**, senão 41 testes do lab ficam vermelhos;
+- `benchmark/preregistration-v4.ts` — o parser fechado pina os campos novos por `literal()`;
+- `benchmark/gates.ts` — `mixedRecallGate` sai da lista que alimenta a disjunção e o bloco passa a ser
+  diagnóstico publicado **fora** de `gates` (precedente: diagnóstico "sem campo de veredito"); a função
+  permanece como produtora do bloco; os comentários do piso são reescritos;
+- `benchmark/tests/gates.test.ts` — os quatro sítios que pinam tier e reject passam a pinar o contrato novo
+  **nas duas direções**: o gate não decide, **e** o bloco é publicado com piso e valor, para rearme silencioso
+  ficar vermelho;
+- `benchmark/lab/assemble_corpus.py` — `_island()` passa de um slot `mixingTemplate` para três, um por
+  operação; a guarda de partição lê os campos novos **no mesmo namespace**; `_island_component` modela três
+  clusters mistos com pais nas duas metades; guarda nova exigindo digests reais disjuntos entre ilhas (hoje só
+  o **plano** é particionado);
+- `benchmark/lab/make_mixed_v3.py` e o seu teste (novos, D4) — as três operações mecânicas com offsets e
+  hashes via `originalSpanFromNormalized`; `mixLevel`/`mixOperation` por linha; bandas por nível com v4
+  fechada por baixo; recusa de alvo v0/v8 e da célula v1 × inserção; screen de par antes de escrever; um nível
+  por pai; **não herda** `MIXED_BAND` nem os prompts `mix_edit_v1`;
+- `benchmark/schema.ts` — `mixture` ganha `level` e `operation` com vocabulário fechado e coerência
+  `|aiFraction − alvo| ≤ banda`;
+- `benchmark/metrics.ts` — `mixed.byLevel` (nível × operação) ao lado de `byFraction`, e o join reverso de
+  `derivationRoot` para a fatia "pais de mista" que publica v0;
+- `benchmark/report.ts` — a linha do gate sai da tabela de decisão e entra como tabela diagnóstica com o piso
+  declarado e "não decide";
+- os três `make_mixed*.py` legados — papel declarado fora da cota;
+- **não mudam, e o PR declara**: `profile-artifact.ts` e `contracts/calibration-profile.ts` (a evidência já lê
+  `metrics`, não o gate), e `benchmark/rebuild-v3-policy.ts` (pré-inscrição abandonada é imutável).

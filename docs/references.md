@@ -1432,6 +1432,46 @@ importa aqui — a de não afrouxar o teto que o relatório imprime.
   PAN-CLEF 2025 despenca de 96,94 para 67,23 F1 no COLING 2025 (queda de 29 pontos); SHAP mostra
   que os modelos aprendem a distinguir **datasets**, não autoria.
 
+### 4.5 Cobertura progressiva de IA e autoria mista (2026-08-12)
+
+As âncoras da classe mista da v1 — a razão de a classe existir, o teto conhecido da tarefa e o comportamento
+medido de um classificador de **documento** sobre texto de origem dividida.
+
+**Estado de verificação, declarado por R7:** nenhuma das quatro URLs abaixo foi verificada em texto integral
+por quem escreveu esta subseção. Elas são transcritas de `docs/detector-rebuild-assessment.md`, que as cita
+nos mesmos lugares e com os mesmos números; a verificação de 2026-07-31 registrada no fim deste arquivo cobre
+217 URLs que **não** incluem estas. O que está afirmado aqui é o que o assessment afirma, com a origem dita.
+
+- **OpAI-Bench, 2026 — benchmark de cobertura progressiva de IA em nove versões** (arXiv 2606.06481).
+  [link](https://arxiv.org/html/2606.06481)
+  _Âncora:_ a razão de a classe mista **existir** e de a cota não se concentrar num trecho da curva. As
+  versões intermediárias são **mais difíceis que ambos os extremos**, então uma avaliação só com "humano
+  puro" e "IA pura" é estruturalmente cega ao próprio ponto de falha. _Transferência declarada:_ o OpAI-Bench
+  constrói as nove versões **do mesmo documento**; aqui a curva é **entre coortes de pais distintos**, porque
+  `id = mix_<pai>` mais a recusa de id duplicado impõem uma linha mista por pai, e o v0 de uma pilha colidiria
+  com o pai por `normalizedTextSha256`. A leitura de não-monotonicidade por nível continua possível; a leitura
+  intra-documento **não é alegada**. _Onde no projeto:_ `benchmark/lab/assemble_corpus.py` (`ISLAND_PLAN`),
+  plano v3 § D4, `benchmark/metrics.ts` (`MIXED_FRACTION_BUCKETS`). _Fato citado:_ nove níveis (v0 = 0 %,
+  v4 = 50 %, v8 = 100 %) com não-monotonicidade — Fast-DetectGPT cai de F1 65,0 em v1 para 35,2 em v4.
+- **PAN 2025, Voight-Kampff Subtask 2 — o sistema vencedor de autoria mista** (CEUR-WS Vol-4038).
+  [link](https://ceur-ws.org/Vol-4038/paper_307.pdf)
+  _Âncora:_ o **teto conhecido da tarefa**, e por isso o piso de 0,50 do gate misto não é ambicioso: é
+  inatingível pela formulação de documento. _Onde no projeto:_ `docs/detector-rebuild-assessment.md` § 4.5 e
+  § 6.1; `benchmark/gates.ts` (`mixedRecallGate`); ESTADO § 3.1. _Fato citado:_ **64,46 % de recall macro com
+  um Qwen3-4B ajustado** em seis classes, contra 48,32 % da linha de base roberta-base — na única competição
+  que propôs formalmente o problema de autoria mista.
+- **HART — detecção em níveis de conteúdo humanizado** (arXiv 2503.00258).
+  [link](https://arxiv.org/html/2503.00258)
+  _Âncora:_ o déficit é de **formulação**, não de ajuste — é o que sustenta a decisão de rearmar o gate só
+  depois de a formulação mudar, em vez de reancorar o valor hoje. _Onde no projeto:_ assessment § 6.1; ESTADO
+  § 3.1 e § 7. _Fato citado:_ **AUROC 0,502** (azar puro) e **8 % de TPR@5%FPR** para um classificador RoBERTa
+  de **documento** no nível de conteúdo de IA humanizado.
+- **Zeng et al., 2026 — concordância humana sobre coautoria no corpus CoAuthor** (arXiv 2403.03506).
+  [link](https://arxiv.org/html/2403.03506v1)
+  _Âncora:_ o teto persiste **mesmo com um detector de fronteira perfeito** — a quantidade que a classe mista
+  mede tem limite superior que não vem do modelo. _Onde no projeto:_ assessment § 6.1; a razão de a coorte
+  mista autorizar somente `indicator`. _Fato citado:_ Kappa ≤ 0,52 na atribuição de trechos no CoAuthor.
+
 ## 5. Detectores e artefatos de referência
 
 - **Mitchell, Lee, Khazatsky, Manning & Finn, 2023 — DetectGPT, código-fonte** (GitHub; ICML
@@ -5255,3 +5295,89 @@ por contraexemplo nomeado, com o resíduo declarado, tratada como objeto de veri
 adjacente que existe (Parnas 1972 sobre ocultação de informação, Meyer 1992 sobre projeto por contrato) trata
 de especificação de interface, não de auditabilidade de justificativa. A regra derivada é da casa: **uma
 alegação rotulada "medido" tem de ter a medição presa por teste, ou não é medida — é memória.**
+
+## § U — a classe mista: desarmar um gate inatingível antes de existir a população que o arma (2026-08-12)
+
+Quatro decisões metodológicas encadeadas, na ordem em que precisavam ser tomadas: primeiro o que o gate pode
+fazer com o release, depois a forma do material. As âncoras bibliográficas dos números da tarefa estão em
+§ 4.5; aqui estão as das **decisões**.
+
+### U.1 — desarmar um gate pré-inscrito quando a literatura põe o piso acima do teto da arquitetura
+
+**Decisão.** `warning.mixed-recall` sai da disjunção de decisão do release e vira diagnóstico publicado; o
+piso 0,50 fica congelado na política como **alvo de rearme**, com as duas condições de rearme (formulação nova
+e piso derivado de evidência com fonte) escritas na própria política selada.
+
+A decisão não é sobre o **valor** do piso. É sobre o que um gate reprovado pode fazer com um release cujo
+melhor veredito alcançável é `indicator-only` — nele, passar não habilita alegação nenhuma e reprovar rejeita
+tudo, inclusive alegações que o gate declaradamente não sustenta (`role: "diagnostic"`).
+
+- **Nosek, Ebersole, DeHaven & Mellor, 2018 — The preregistration revolution** (PNAS 115(11):2600–2606).
+  [link](https://doi.org/10.1073/pnas.1708274114)
+  _Âncora da legitimidade temporal, e é a mesma de § 2.2g com transferência diferente:_ desvio de
+  pré-inscrição é aceitável quando **transparente e anterior aos resultados**. Em § 2.2g abandonava-se uma
+  pré-inscrição inviável; aqui **emenda-se um gate**, datado antes de existir qualquer linha da população que
+  o arma — cota mista não gasta, `issuedAt` nulo, zero tags, nenhum `fit` sob a v4. _O que a âncora não
+  cobre, e fica dito:_ depois da primeira linha gerada o mesmo ato viraria R3 ("nenhum gate é afrouxado para
+  passar"), e é isso que faz a **ordem** ser parte da decisão e não conveniência de cronograma.
+
+**Sem precedente encontrado** para a prática específica: manter o **valor** do gate desarmado congelado na
+política como alvo de rearme, com as condições de rearme escritas na própria política selada — em vez de
+apagar o piso (que deixa a limitação sem leitor) ou de reancorá-lo num número que nenhuma fonte sustenta para
+esta formulação. O adjacente que existe trata de emendar ou abandonar uma pré-inscrição inteira, não de
+degradar o poder de decisão de **um** critério mantendo a sua medição publicada.
+
+### U.2 — a curva publica nove pontos e a classe realiza sete: os extremos são das classes puras
+
+**Decisão.** v1–v7 (15/25/40/50/60/75/90 %) são linhas `mixed`; v0 e v8 **não são**, e são lidos das classes
+`human` e `ai` **das mesmas ilhas** — v0 é uma taxa de aviso sobre humano, v8 é recall sobre `ai`. Cada ponto
+nomeia a sua população e nenhum é agregado.
+
+A razão é do mecanismo e não de desenho: `aiFraction` 0 e 1 são expressáveis pelo validador de campo, mas uma
+linha 0 % IA é o texto do pai palavra por palavra e colide com ele por `normalizedTextSha256`, e um documento
+100 % IA não tem "origem dividida" — `mixture` é proibida fora de `mixed` exatamente por isso, e D4 manda o
+texto livremente reescrito receber rótulo de documento.
+
+- A âncora da forma da curva, e da recusa a concentrá-la, é o **OpAI-Bench** (§ 4.5), com a transferência
+  intra-documento → entre-coortes declarada lá.
+
+**Sem precedente encontrado** para publicar uma curva de cobertura cujos extremos vêm de **outras classes** do
+mesmo corpus, ligadas por linhagem de pai. É consequência de dois contratos desta casa (unicidade de hash
+normalizado, e `mixture` como propriedade de bloco de origem dividida) e não de um desenho da literatura; o
+custo declarado é que os pontos v0 e v8 medem populações diferentes das sete interiores, e a tabela tem de
+dizer qual população cada ponto mede.
+
+### U.3 — a partição exige IDENTIDADES de receita, e vinte operações de edição não existem
+
+**Decisão.** As operações são as três de D4 — substituição de seção contígua, inserção de seção contígua,
+concatenação de introdução humana com corpo de IA. A obrigação de ilha é satisfeita por **identidade** de
+template (digest dos bytes), com prompt materialmente distinto por ilha × operação e o nível como parâmetro
+preenchido: cinco identidades por ilha, cem no corpus.
+
+- **Dugan, Ippolito, Kirubarajan, Shi & Callison-Burch, 2023 — Real or Fake Text?** (entrada existente neste
+  arquivo) — a âncora da **terceira** operação: a fronteira única e posicional entre prosa humana e
+  continuação de máquina é tarefa própria, e não uma paráfrase das outras duas.
+
+**Sem precedente encontrado** para derivar a viabilidade de uma célula nível × operação do **contrato de poda
+de quase-duplicata do próprio corpus**. A exclusão de v1 × inserção é aritmética do nosso mecanismo: inserir
+uma seção que leva o documento a 15 % de IA preserva o pai inteiro, e o par pai/mista mede Jaccard **0,848 a
+0,869** sobre shingles de 5 tokens contra o limite de 0,82 — medido com `shingles_of`/`jaccard` de
+`benchmark/lab/near_dupes.py` para pais de 100 a 1.200 tokens, com a suposição de tokens distintos declarada.
+A célula não é difícil: é **inalcançável**, porque a poda derrubaria o pai humano e com ele a ponte da ilha. A
+segunda célula mais próxima do limite mede 0,774. Enquanto a unidade que escrever a pista não prender esses
+números por fixture, eles são **sonda e não medição**.
+
+### U.4 — um fator de reamostragem que deixa de ser degenerado é emenda, não bônus
+
+**Decisão.** A `proxyReason` do estimando misto — que declara `groups.promptTemplate` "degenerado por
+construção até um eixo de operação existir" — é **emendada no mesmo commit** que puser três templates de
+mistura por ilha, porque a partir dali o fator tem três níveis por ilha e a reamostragem aninhada
+`humanSeed × promptTemplate` isola a operação dentro da ilha. O eixo de **primeira classe** (`mixOperation`)
+fica como dívida da v2: o eixo carrega o digest do template, não a operação, então duas identidades da mesma
+operação numa ilha são indistinguíveis de duas operações e nada no esquema recusa esse plano.
+
+**Sem precedente encontrado** — a decisão aqui não é estatística, é de auditabilidade de justificativa
+selada, e é a mesma família de § T.5: uma razão escrita numa política selada é objeto de verificação, então um
+desenho que torna a razão **falsa** obriga a emendá-la ainda que o desenho seja uma melhoria. A regra derivada
+é a da casa, com o sinal invertido: **o comentário não pode prometer mais do que o mecanismo impõe, e também
+não pode declarar uma limitação que o mecanismo deixou de ter.**
