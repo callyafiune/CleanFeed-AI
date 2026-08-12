@@ -70,6 +70,7 @@ from __future__ import annotations
 
 import argparse
 import json
+from collections import Counter
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -375,6 +376,68 @@ def assert_every_vectorization_declares_its_post_fit_guard() -> None:
         )
 
 
+class FoldsReadANonCanonicalPopulation(RuntimeError):
+    """The arrays reaching the fold splitter are not the canonical rendering of the input."""
+
+
+def _population_keys(texts, labels) -> list[tuple]:
+    """The `(label, text)` key of every row, and the key the canonical order sorts by."""
+    return [(label, text) for label, text in zip(labels, texts)]
+
+
+def _the_canonical_population(texts: np.ndarray, labels: np.ndarray):
+    """The received rows rendered in `(label, text)` order.
+
+    A TOTAL order over the multiset — two rows with equal `(label, text)` are
+    indistinguishable to the estimator — so the rendering is unique and the arrays that
+    reach the splitter are identical whatever order the caller assembled them in. Sorting by
+    id instead would leave a residue wherever one id carries two rows.
+    """
+    keys = _population_keys(texts, labels)
+    order = sorted(range(len(keys)), key=keys.__getitem__)
+    return texts[order], labels[order]
+
+
+def assert_the_folds_read_the_canonical_population(
+    texts: np.ndarray, labels: np.ndarray, received: Counter
+) -> None:
+    """Refuses when the arrays about to be split are not the canonical rendering of the input.
+
+    Two conditions, and together they are the whole claim: the rows stand in `(label, text)`
+    order, and their multiset is still the one that arrived. Read at the POINT OF USE — the
+    call stands on the line above `folds.split` and `test_theme_dependence.py` pins that
+    position — because the fail-open it closes is a canonical rendering computed into a fresh
+    variable while the splitter goes on reading the array as it came.
+
+    It affirms the FORM and claims nothing about the AUC: invariance is a property of the
+    function over every input order, and no predicate over one array can state it. The
+    permutation batteries of `test_theme_dependence.py` are what assert that.
+    """
+    keys = _population_keys(texts, labels)
+    if keys != sorted(keys):
+        first = next(
+            index for index in range(1, len(keys)) if keys[index] < keys[index - 1]
+        )
+        raise FoldsReadANonCanonicalPopulation(
+            f"the {len(keys)} row(s) handed to the fold splitter are not in `(label, text)` "
+            f"order — the row at index {first} sorts before the one at {first - 1}. "
+            "`StratifiedKFold` partitions BY POSITION, so folds read off the caller's "
+            "assembly order make every per-fold AUC a function of the order in which the "
+            "input files and rows arrived"
+        )
+    rendered = Counter(keys)
+    if rendered != received:
+        absent = received - rendered
+        invented = rendered - received
+        raise FoldsReadANonCanonicalPopulation(
+            f"the {len(keys)} row(s) handed to the fold splitter are not the population "
+            f"received — {sum(absent.values())} row(s) of the input are absent and "
+            f"{sum(invented.values())} row(s) are not from it, against "
+            f"{sum(received.values())} received. A rendering that loses or invents a row "
+            "publishes an AUC over a population the caller never handed over"
+        )
+
+
 def cross_validated_aucs(
     texts: np.ndarray, labels: np.ndarray, pipeline_factory, after_fit=None
 ) -> list[float]:
@@ -383,11 +446,28 @@ def cross_validated_aucs(
     `after_fit` runs on EVERY fold's fitted model, not once: the vocabulary is a property
     of a fit, so a check that ran on the first fold only would miss a fold that learned
     its own.
+
+    REORDERS what it is given: `StratifiedKFold` partitions by position, so the rows are
+    rendered in `(label, text)` order before they are split. The returned AUCs are per fold
+    of THAT rendering and correspond positionally to nothing in the caller's arrays.
+
+    THE one place this module hands an order to a splitter, and the rendering covers every
+    fold of it for that reason alone — a second splitter anywhere here would read the caller's
+    order with nothing rendering it, so the count is pinned by a test. It covers no other
+    module: a caller that assembles its own features and splits them itself has a site of its
+    own.
     """
+    # Counted BEFORE the rendering, and that ordering is the whole of the multiset half:
+    # counted off the RENDERED arrays the check below compares an array with itself, and a
+    # rendering that loses a row then loses the same row in every input order — invisible to
+    # any permutation battery, and every published AUC is over a population one row short.
+    received = Counter(_population_keys(texts, labels))
+    texts, labels = _the_canonical_population(texts, labels)
     aucs: list[float] = []
     folds = StratifiedKFold(
         n_splits=BASELINE_FOLDS, shuffle=True, random_state=BASELINE_SEED
     )
+    assert_the_folds_read_the_canonical_population(texts, labels, received)
     for train, test in folds.split(texts, labels):
         model = pipeline_factory().fit(texts[train], labels[train])
         if after_fit is not None:
@@ -632,6 +712,46 @@ def _family_of(row: dict) -> str:
     return assemble_corpus.generator_family(str((row.get("meta") or {}).get("family", "")))
 
 
+class InputIdCarriedTwice(RuntimeError):
+    """One `candidateId` reaches the human side twice, so a lookup keeps one of the two."""
+
+
+def assert_each_input_id_is_carried_once(
+    material: list[tuple[Path, list[dict]]]
+) -> None:
+    """Refuses when the `--humans` material carries one `candidateId` twice.
+
+    ACROSS the files and not inside each: `humans_by_id` is one dictionary over all of them,
+    so the row read LAST wins and the order of the arguments picks which text parents the ai
+    rows — the published AUC moves with it. A duplicate that straddles two files is invisible
+    to a per-file check, and that is the shape this closes.
+
+    Any repetition refuses, the byte-identical one included: the id is the key, and a rule
+    that only refused differing texts would be a rule about the texts. The material travels
+    as (path, rows) PAIRS and not as a map, so the same file named twice is two carriers.
+
+    Says nothing about the `ai` side, where nothing selects between two rows carrying one id:
+    the multiset there is the same in any order and the AUC with it, while the duplicate
+    inflates a published row count instead — a different defect, and not this one.
+    """
+    carriers: dict[str, list[str]] = {}
+    for path, rows in material:
+        for row in rows:
+            carriers.setdefault(str(row["candidateId"]), []).append(path.name)
+    repeated = sorted(
+        (row_id, files) for row_id, files in carriers.items() if len(files) > 1
+    )
+    if not repeated:
+        return
+    named = "; ".join(f"{row_id!r} carried by {files}" for row_id, files in repeated[:10])
+    raise InputIdCarriedTwice(
+        f"{len(repeated)} `candidateId`(s) of --humans are carried more than once — {named}. "
+        "The human side is looked up BY ID and keeps the row read last, so the order of the "
+        "--humans arguments chooses which text is the parent of every ai row paired to it, "
+        "and the published AUCs are a function of that order"
+    )
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--ai", required=True, nargs="+", type=Path)
@@ -657,10 +777,12 @@ def main() -> None:
     entity_masking.assert_theme_probes_decide_no_hypothesis()
 
     pool_rows = [row for path in args.ai for row in read_jsonl(path)]
+    human_material = [(path, read_jsonl(path)) for path in args.humans]
+    assert_each_input_id_is_carried_once(human_material)
     humans_by_id = {
         row["candidateId"]: row
-        for path in args.humans
-        for row in read_jsonl(path)
+        for _, rows in human_material
+        for row in rows
     }
     # Topic pairing is this design's ONLY topic control, so the AI side is filtered to the
     # rows that HAVE a parent here instead of taking the pools whole: an unpaired AI row is

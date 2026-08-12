@@ -1510,42 +1510,129 @@ class MaterialBatchProducerTests(unittest.TestCase):
         self.assertEqual(proc.returncode, 2, proc.stderr)
         self.assertIn("--snapshot-version", proc.stderr)
 
-    @staticmethod
-    def _declared_material_batch_literals() -> list[str]:
-        """The top-level object literals of `DECLARED_MATERIAL_BATCHES`, as source slices.
+    # A batch DECLARATION, as opposed to a read of one. `build_governance.ts` mentions
+    # `batchId` twice and only one is a declaration: the other is `batch.batchId` inside a
+    # template string in the refusal message, and a counter keyed on the bare name reports
+    # two declarations for one declared batch.
+    _BATCH_DECLARATION = re.compile(r'batchId\s*:\s*"')
+
+    @classmethod
+    def _declared_material_batch_literals(
+        cls, source: str | None = None
+    ) -> tuple[list[str], list[str]]:
+        """The top-level object literals of `DECLARED_MATERIAL_BATCHES`, and what went wrong.
 
         Reading TypeScript as text is the only cross-language route a stdlib test has, and
         the trap is that a LAYOUT-shaped regex is fail-open: a batch whose fields are
         written in another order, or with a comment between them, matches nothing and the
         caller's loop never sees it. So the array literal is split on brace depth — one
-        slice per object, comments and field order irrelevant — and the caller checks that
-        every slice yielded its three keys.
+        slice per object, field order irrelevant, and a comment irrelevant AS LONG AS its
+        braces are balanced.
+
+        The splitter has NO notion of a string or of a comment, and cannot have one without
+        a parser. So a `{`, `}` or `]` inside either corrupts the count: the scan can end
+        early and drop every object after it, or never close the last slice, in both cases
+        yielding well-formed slices for a source that declares more batches than it
+        returned. The problems this returns exist to make that corruption LOUD instead —
+        they are what the caller asserts on before it trusts the slices, and one of them
+        counts the declarations the source makes independently of the split.
+
+        `source` is a parameter so the caller's per-batch loop can be exercised against more
+        than the one batch production declares; the default reads the real module.
         """
-        source = (
-            Path(__file__)
-            .with_name("build_governance.ts")
-            .read_text(encoding="utf-8")
-        )
+        if source is None:
+            source = (
+                Path(__file__)
+                .with_name("build_governance.ts")
+                .read_text(encoding="utf-8")
+            )
         # From the first `{` after the declaration, NOT from the first `[`: the annotation
         # `readonly SourceMaterialBatchV1[]` puts an empty pair of brackets between the name
         # and the array literal, and walking from there ends the scan before it starts.
         opened = source.index("{", source.index("DECLARED_MATERIAL_BATCHES"))
+        tail = source[opened:]
         literals: list[str] = []
         current: list[str] = []
+        problems: list[str] = []
         depth = 0
-        for char in source[opened:]:
+        scanned = len(tail)
+        terminated = False
+        for offset, char in enumerate(tail):
             if char == "{":
                 depth += 1
             if depth > 0:
                 current.append(char)
             if char == "}":
                 depth -= 1
+                if depth < 0:
+                    problems.append(
+                        "brace depth went negative: a `}` outside any object closed one "
+                        "that was never opened"
+                    )
+                    scanned = offset + 1
+                    break
                 if depth == 0:
                     literals.append("".join(current))
                     current = []
             elif depth == 0 and char == "]":
+                scanned = offset + 1
+                terminated = True
                 break
-        return literals
+        if not terminated and not problems:
+            problems.append(
+                "the scan ran off the end without reaching the array's `]`"
+            )
+        # Never the only problem reported — termination requires depth 0, so a non-zero
+        # depth always arrives with the negative-depth or the ran-off-the-end problem. It
+        # says WHERE the scan died, and the cases below pin it there rather than leaving an
+        # invariant no mutation can kill.
+        if depth != 0 or current:
+            problems.append(
+                f"the scan ended at brace depth {depth}"
+                + (" with an object still open" if current else "")
+            )
+        region = tail[:scanned]
+        inside = len(cls._BATCH_DECLARATION.findall(region))
+        outside = len(cls._BATCH_DECLARATION.findall(source)) - inside
+        if outside:
+            problems.append(f"{outside} declared batch(es) lie outside the scan")
+        if inside != len(literals):
+            problems.append(
+                f"{inside} batch declaration(s) inside the scan against "
+                f"{len(literals)} slice(s)"
+            )
+        return literals, problems
+
+    @staticmethod
+    def _material_batch_derivation_violations(literals: list[str]) -> list[str]:
+        """Per declared batch: the three fields this comparison needs, and the derived id.
+
+        Extracted from the caller so the loop can be run over a list with more than one
+        entry — production declares exactly one batch, and against one entry no restriction
+        of the loop can be told from the loop.
+        """
+        from group_axes import material_batch_id
+
+        violations: list[str] = []
+        for literal in literals:
+            fields = dict(
+                re.findall(
+                    r'\b(batchId|sourceId|materialVersion)\s*:\s*"([^"]+)"', literal
+                )
+            )
+            if sorted(fields) != ["batchId", "materialVersion", "sourceId"]:
+                violations.append(
+                    "a declared batch is missing a field this test compares: "
+                    f"{sorted(fields)}"
+                )
+                continue
+            derived = material_batch_id(fields["materialVersion"])
+            if fields["batchId"] != derived:
+                violations.append(
+                    f'batchId "{fields["batchId"]}" is not the id '
+                    f'"{fields["materialVersion"]}" derives ({derived})'
+                )
+        return violations
 
     def test_the_declared_inventory_names_the_batch_the_extractor_stamps(self) -> None:
         """The reviewed manifest's inventory and the extractor's stamp are one id.
@@ -1560,24 +1647,10 @@ class MaterialBatchProducerTests(unittest.TestCase):
         (another dump, another corpus) stays green as long as its id derives from its own
         `materialVersion` — the drift this catches is the derivation, not the roster.
         """
-        from group_axes import material_batch_id
-
-        literals = self._declared_material_batch_literals()
+        literals, problems = self._declared_material_batch_literals()
+        self.assertEqual(problems, [], "the declaration scan does not hold together")
         self.assertTrue(literals, "no declared material batch found to compare")
-        for literal in literals:
-            fields = dict(
-                re.findall(
-                    r'\b(batchId|sourceId|materialVersion)\s*:\s*"([^"]+)"', literal
-                )
-            )
-            self.assertEqual(
-                sorted(fields),
-                ["batchId", "materialVersion", "sourceId"],
-                f"a declared batch is missing a field this test compares: {sorted(fields)}",
-            )
-            self.assertEqual(
-                fields["batchId"], material_batch_id(fields["materialVersion"])
-            )
+        self.assertEqual(self._material_batch_derivation_violations(literals), [])
         wikipedia = [
             literal
             for literal in literals
@@ -1589,6 +1662,152 @@ class MaterialBatchProducerTests(unittest.TestCase):
             "exactly one declared acquisition names the Wikipedia source: the cell has "
             "one dump, and two entries for it would make the row's batch ambiguous",
         )
+
+    @staticmethod
+    def _material_batch_source(*chunks: str) -> str:
+        """A `build_governance.ts`-shaped declaration around the given chunks.
+
+        Chunks go in verbatim so a case can place text BETWEEN two objects, which is where
+        one of the two silent losses lives: at brace depth 0, where a stray `]` ends the
+        scan instead of being swallowed by an object.
+        """
+        return (
+            "export const DECLARED_MATERIAL_BATCHES: "
+            "readonly SourceMaterialBatchV1[] = [\n" + "".join(chunks) + "];\n"
+            'const message = `batch ${batch.batchId} names "${batch.sourceId}"`;\n'
+        )
+
+    @staticmethod
+    def _clean_batch(token: str, inner: str = "") -> str:
+        return (
+            "  {"
+            + inner
+            + f'\n    batchId: "smb_{token}",'
+            + f'\n    sourceId: "src_{token}",'
+            + f'\n    materialVersion: "{token}",'
+            + "\n  },\n"
+        )
+
+    def test_the_batch_splitter_reports_the_corruption_a_comment_can_cause(self) -> None:
+        """The two silent losses, and the three shapes that stay legitimate.
+
+        Both silent cases yield well-formed slices for a source that declares two batches,
+        and every per-batch assertion the caller makes passes over them: the batch that
+        drifted is simply not among the slices. What catches them is not a stronger split —
+        brace depth cannot see a comment — but counting the declarations the source makes
+        against the ones the scan reached.
+        """
+        clean_two = self._material_batch_source(
+            self._clean_batch("b-1"), self._clean_batch("b-2")
+        )
+        literals, problems = self._declared_material_batch_literals(clean_two)
+        self.assertEqual(problems, [])
+        self.assertEqual(len(literals), 2)
+        self.assertEqual(self._material_batch_derivation_violations(literals), [])
+
+        reordered = self._material_batch_source(
+            '  {\n    materialVersion: "b-1",\n    sourceId: "src_b-1",'
+            '\n    batchId: "smb_b-1",\n  },\n'
+        )
+        literals, problems = self._declared_material_batch_literals(reordered)
+        self.assertEqual(problems, [])
+        self.assertEqual(self._material_batch_derivation_violations(literals), [])
+
+        # A comment whose braces BALANCE stays irrelevant, which is the part of the
+        # docstring's promise the mechanism really keeps.
+        commented = self._material_batch_source(
+            self._clean_batch("b-1", "\n    // shape: { startedAt, endedAt }")
+        )
+        literals, problems = self._declared_material_batch_literals(commented)
+        self.assertEqual(problems, [])
+        self.assertEqual(len(literals), 1)
+
+        # SILENT A: a `]` in a comment between the objects ends the scan at brace depth 0.
+        # The first slice is well formed and the second batch vanishes.
+        early_end = self._material_batch_source(
+            self._clean_batch("b-1"),
+            "  // shape: readonly SourceMaterialBatchV1[]\n",
+            self._clean_batch("b-2"),
+        )
+        literals, problems = self._declared_material_batch_literals(early_end)
+        self.assertEqual(len(literals), 1)
+        self.assertEqual(self._material_batch_derivation_violations(literals), [])
+        self.assertIn("1 declared batch(es) lie outside the scan", problems)
+
+        # SILENT B: an unbalanced `{` in a comment inside the LAST object. The scan never
+        # meets the array's `]`, the last slice never closes, the earlier ones pass.
+        never_closed = self._material_batch_source(
+            self._clean_batch("b-1"),
+            self._clean_batch("b-2", "\n    // the window is { startedAt"),
+        )
+        literals, problems = self._declared_material_batch_literals(never_closed)
+        self.assertEqual(len(literals), 1)
+        self.assertEqual(self._material_batch_derivation_violations(literals), [])
+        self.assertIn(
+            "the scan ran off the end without reaching the array's `]`", problems
+        )
+        self.assertIn("the scan ended at brace depth 1 with an object still open", problems)
+
+        # A `}` inside a STRING closes a slice early and drives depth negative.
+        brace_in_string = self._material_batch_source(
+            '  {\n    batchId: "smb_b-1",\n    sourceId: "src_b}1",'
+            '\n    materialVersion: "b-1",\n  },\n'
+        )
+        _, problems = self._declared_material_batch_literals(brace_in_string)
+        self.assertIn(
+            "brace depth went negative: a `}` outside any object closed one that was "
+            "never opened",
+            problems,
+        )
+        self.assertIn("the scan ended at brace depth -1", problems)
+
+        # FUSION: an unbalanced `{` in the first object's comment and a matching `}` in the
+        # second's put both objects in ONE slice. Depth returns to 0, the `]` terminates the
+        # scan, and only the declaration count notices.
+        fused = self._material_batch_source(
+            self._clean_batch("b-1", "\n    // window: { startedAt"),
+            self._clean_batch("b-2", "\n    // ... endedAt }"),
+        )
+        literals, problems = self._declared_material_batch_literals(fused)
+        self.assertEqual(len(literals), 1)
+        self.assertIn(
+            "2 batch declaration(s) inside the scan against 1 slice(s)", problems
+        )
+
+    def test_every_declared_batch_is_compared_not_only_the_first(self) -> None:
+        """One declared batch in production, so the loop needs a two-batch source.
+
+        Restricting the derivation loop to the first slice is a no-op against
+        `build_governance.ts`; against this source it is the difference between a reported
+        drift and a silent one.
+        """
+        drifted = self._material_batch_source(
+            self._clean_batch("b-1"),
+            '  {\n    batchId: "smb_DRIFTED",\n    sourceId: "src_b-2",'
+            '\n    materialVersion: "b-2",\n  },\n',
+        )
+        literals, problems = self._declared_material_batch_literals(drifted)
+        self.assertEqual(problems, [])
+        self.assertEqual(len(literals), 2)
+        self.assertEqual(
+            self._material_batch_derivation_violations(literals),
+            ['batchId "smb_DRIFTED" is not the id "b-2" derives (smb_b-2)'],
+        )
+
+    def test_the_batch_declaration_count_skips_a_property_read(self) -> None:
+        """`batch.batchId` in a template string is a read, not a declaration.
+
+        The real module carries both spellings, so a counter keyed on the bare name reports
+        one declaration too many and the invariant fails on a healthy file. The declaration
+        form is what makes the count usable at all.
+        """
+        source = (
+            Path(__file__)
+            .with_name("build_governance.ts")
+            .read_text(encoding="utf-8")
+        )
+        self.assertEqual(len(re.findall(r"batchId", source)), 2)
+        self.assertEqual(len(self._BATCH_DECLARATION.findall(source)), 1)
 
     def test_carolina_gives_every_typology_of_one_download_one_batch(self) -> None:
         import extract_carolina

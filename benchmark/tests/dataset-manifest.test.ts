@@ -1,6 +1,18 @@
 import { describe, expect, it } from "vitest";
 
 import {
+  mkdir,
+  mkdtemp,
+  readdir,
+  readFile,
+  rm,
+  writeFile,
+} from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { dirname, join, resolve } from "node:path";
+import { fileURLToPath } from "node:url";
+
+import {
   computeDatasetAuditDigest,
   DatasetManifestError,
   emptyLabelBasisPublication,
@@ -12,6 +24,7 @@ import {
   type DatasetFileDigests,
   type DatasetManifest,
 } from "../dataset-manifest.ts";
+import { PREREGISTRATION_V4 } from "../preregistration-v4.ts";
 import {
   recordEligibility,
   validateBenchmarkRecord,
@@ -1410,50 +1423,467 @@ describe("the sealed audit judges a v4 corpus by the axes v4 declares", () => {
   });
 });
 
-describe("the ratified composition is not written twice with two values", () => {
-  it("makes every evaluator file that states the human count state RELEASE_CORPUS_POLICY.counts", async () => {
-    // A comment cannot be muted, so a frozen count written in prose inside
-    // `EVALUATOR_FILES` ages in silence: its bytes decide the `evaluatorDigest` while no
-    // test reads them. Two members carried the retired composition for a whole amendment
-    // — `split-audit.ts` said 7000 human records and a 1400-line blind block, and
-    // `viability-preflight.ts` said 7.000 — with the suite green. This sweep is the read.
-    const { readdir, readFile } = await import("node:fs/promises");
-    const { resolve, dirname } = await import("node:path");
-    const { fileURLToPath } = await import("node:url");
-    const benchmarkDir = resolve(dirname(fileURLToPath(import.meta.url)), "..");
-    // Every module of the bench, not only `EVALUATOR_FILES`: the twin that states the
-    // same composition (`viability-preflight.ts`) is NOT an evaluator file, and a sweep
-    // scoped to the digest would have left exactly the copy that drifted unread.
-    const modules = [
-      ...(await readdir(benchmarkDir)).map((name) => `benchmark/${name}`),
-      ...(await readdir(resolve(benchmarkDir, "commands"))).map(
-        (name) => `benchmark/commands/${name}`,
-      ),
-    ];
-    const repoRoot = resolve(benchmarkDir, "..");
-    // Both phrasings the two files use, and a count with either separator: the point is
-    // to catch the NUMBER, so the pattern may not be stricter than the prose.
-    const patterns = [
-      /composition is ([\d_.]+) human/gu,
-      /composition \(([\d_.]+) human/gu,
-    ];
-    let found = 0;
-    for (const relativePath of modules) {
-      if (!relativePath.endsWith(".ts")) continue;
-      const body = await readFile(resolve(repoRoot, relativePath), "utf8");
-      for (const pattern of patterns) {
-        for (const match of body.matchAll(pattern)) {
-          found += 1;
-          expect(
-            Number(match[1].replaceAll(/[_.]/gu, "")),
-            `${relativePath}: ${match[0]}`,
-          ).toBe(RELEASE_CORPUS_POLICY.counts.human);
+const BENCHMARK_DIR = resolve(dirname(fileURLToPath(import.meta.url)), "..");
+const REPO_ROOT = resolve(BENCHMARK_DIR, "..");
+const OWN_RELATIVE_PATH = fileURLToPath(import.meta.url)
+  .slice(REPO_ROOT.length + 1)
+  .replaceAll("\\", "/");
+
+/**
+ * Directory names the source walk refuses to enter, each with the reason it is refused.
+ *
+ * `data` is the load-bearing one: the sealed corpus and the held-out labels live under it
+ * and no test may open them. The walk lists the children of a directory in order to skip
+ * this name, so it reads the NAME at the level above and never descends — nothing under
+ * `data/dataset/`, `data/private/` or `data/**\/test*` is opened.
+ *
+ * `node_modules` is refused because a dependency tree is not this project's source: one
+ * package installed under `benchmark/` puts thousands of `.d.ts` into the roster and a
+ * directory of its own into the closed `SOURCE_DIRECTORIES`, so both stop meaning anything.
+ *
+ * The three tool caches are belt and braces. What that is worth is not asserted here but
+ * measured by "skipping every name but `data` changes nothing the walk reads", which walks
+ * the four non-`data` names and requires the same files out: none of them holds a `.ts` or a
+ * `.py` today, and the day one does, that red says the skip stopped being belt and braces.
+ */
+const SKIPPED_DIRECTORY_NAMES: readonly string[] = [
+  "data",
+  "node_modules",
+  "__pycache__",
+  ".pytest_cache",
+  ".ruff_cache",
+];
+
+/**
+ * Every directory under `benchmark/` that holds a module, as a CLOSED set.
+ *
+ * Without the closure the fix for a sweep that missed two directories would be "added two
+ * directories" — the same blindness by construction, one level up. A new directory of
+ * modules is red here instead of invisible, and the red names it.
+ */
+const SOURCE_DIRECTORIES: readonly string[] = [
+  "benchmark",
+  "benchmark/commands",
+  "benchmark/lab",
+  "benchmark/lab/continuidade",
+  "benchmark/tests",
+  "benchmark/tests/helpers",
+];
+
+/**
+ * The modules whose prose the sweep must reach for it to be worth anything: the two that
+ * carried the retired composition. A test's prose may be legitimately reworded, so no test
+ * file is pinned here.
+ */
+const AUTHORITATIVE_PROSE_MODULES: readonly string[] = [
+  "benchmark/split-audit.ts",
+  "benchmark/viability-preflight.ts",
+];
+
+/**
+ * A line break inside a comment, as a single space.
+ *
+ * A sentence that wraps across `//` or ` * ` is one sentence to a reader and two lines to a
+ * regex — `split-audit.test.ts` breaks its sentence between the count and the word after it
+ * — so unnormalised the sweep would read every count except the ones written at the edge of
+ * the margin. Only newline-and-margin runs are rewritten, which can add a match and cannot
+ * remove one, so it is safe to do to every module.
+ *
+ * Both margins have a fixture that reads them, for different reasons. The `//` wrap is a
+ * shape the roster actually contains, so normalising changes what the sweep reads there. The
+ * ` * ` wrap is LATENT: no ratified count in the tree wraps across a JSDoc margin, so without
+ * its fixture the `\*` alternative could be dropped with every verdict and every message the
+ * roster produces unchanged.
+ */
+const COMMENT_BREAK = /\r?\n[ \t]*(?:\/\/+|\*)?[ \t]*/gu;
+
+/**
+ * Prose that states a ratified number, and the authority each number is read against.
+ *
+ * Three patterns and six numbers, because a pattern that reads ONE number out of a sentence
+ * leaves the rest of the sentence unread: the parenthetical in `viability-preflight.ts`
+ * states the ai and mixed counts in the same breath as the human one, and the blind-block
+ * sentence states both the fraction and the line count. The count that drifted alongside
+ * the human one was the blind block's, and no pattern read it.
+ *
+ * The blind-block phrase is long on purpose. Measured: a pattern keyed on "at most N of
+ * them" also matches `test_extractors.py` ("hold at most 5 of them in the blind block") and
+ * would assert 5 against 800 — a false red in a file that states nothing ratified.
+ */
+const RATIFIED_COUNT_PROSE: readonly {
+  readonly label: string;
+  readonly pattern: RegExp;
+  readonly authorities: readonly number[];
+}[] = [
+  {
+    label: "the human count",
+    pattern: /composition is ([\d_.]+) human/gu,
+    authorities: [RELEASE_CORPUS_POLICY.counts.human],
+  },
+  {
+    label: "the three class counts",
+    pattern:
+      /composition \(([\d_.]+) human \+ ([\d_.]+) ai \+ ([\d_.]+) mixed/gu,
+    authorities: [
+      RELEASE_CORPUS_POLICY.counts.human,
+      RELEASE_CORPUS_POLICY.counts.ai,
+      RELEASE_CORPUS_POLICY.counts.mixed,
+    ],
+  },
+  {
+    label: "the blind block's share and line count",
+    pattern:
+      /blind block is ([\d_.]+) ?% of it, so `test` holds at most ([\d_.]+)/gu,
+    authorities: [
+      PREREGISTRATION_V4.preRegistration.partitionFractions.test * 100,
+      PREREGISTRATION_V4.preRegistration.zeroEventCeiling
+        .blindBlockLinesAtCollectionTarget,
+    ],
+  },
+];
+
+/**
+ * Every `.ts` and `.py` under `start`, and every directory that holds one.
+ *
+ * `skip` is a parameter and not the constant so the belt-and-braces half of
+ * `SKIPPED_DIRECTORY_NAMES` can be MEASURED rather than asserted: a walk that keeps only
+ * `data` in the list has to come back with the same files.
+ */
+async function walkSources(
+  root: string,
+  start: string,
+  skip: readonly string[] = SKIPPED_DIRECTORY_NAMES,
+): Promise<{ files: string[]; directories: string[] }> {
+  const files: string[] = [];
+  const directories = new Set<string>();
+  const pending = [start];
+  while (pending.length > 0) {
+    const relative = pending.pop() as string;
+    for (const entry of await readdir(resolve(root, relative), {
+      withFileTypes: true,
+    })) {
+      if (entry.isDirectory()) {
+        if (!skip.includes(entry.name)) {
+          pending.push(`${relative}/${entry.name}`);
+        }
+        continue;
+      }
+      if (entry.name.endsWith(".ts") || entry.name.endsWith(".py")) {
+        files.push(`${relative}/${entry.name}`);
+        directories.add(relative);
+      }
+    }
+  }
+  return { files: files.sort(), directories: [...directories].sort() };
+}
+
+/** Directories holding source, in both directions against the declared set. */
+function sourceDirectoryProblems(
+  found: readonly string[],
+  declared: readonly string[],
+): string[] {
+  const declaredSet = new Set(declared);
+  const foundSet = new Set(found);
+  return [
+    ...found
+      .filter((directory) => !declaredSet.has(directory))
+      .map((directory) => `${directory} holds source and is not declared`),
+    ...declared
+      .filter((directory) => !foundSet.has(directory))
+      .map((directory) => `${directory} is declared and holds no source`),
+  ];
+}
+
+/**
+ * Every ratified number the given modules state, against its authority — plus the two ways
+ * the sweep can be worth nothing: a pattern that matches nowhere, and an authoritative
+ * module the roster no longer reaches.
+ *
+ * The floor is PER PATTERN. A single total (`found >= 2`) is satisfied by two matches of one
+ * pattern, so deleting the other two patterns keeps it green.
+ */
+function ratifiedCountProblems(
+  modules: readonly { readonly relativePath: string; readonly body: string }[],
+): string[] {
+  const problems: string[] = [];
+  const readBy = new Map<string, Set<string>>(
+    RATIFIED_COUNT_PROSE.map((prose) => [prose.label, new Set<string>()]),
+  );
+  for (const module of modules) {
+    const normalized = module.body.replaceAll(COMMENT_BREAK, " ");
+    for (const prose of RATIFIED_COUNT_PROSE) {
+      for (const match of normalized.matchAll(prose.pattern)) {
+        readBy.get(prose.label)?.add(module.relativePath);
+        const stated = match
+          .slice(1)
+          .map((group) => Number(group.replaceAll(/[_.]/gu, "")));
+        if (stated.join("/") !== prose.authorities.join("/")) {
+          problems.push(
+            `${module.relativePath} states ${prose.label} as ${stated.join("/")}, ` +
+              `against ${prose.authorities.join("/")}: ${match[0]}`,
+          );
         }
       }
     }
-    // Non-vacuous: if the prose is reworded so no pattern matches, this fails instead of
-    // passing over an empty sweep.
-    expect(found).toBeGreaterThanOrEqual(2);
+  }
+  for (const prose of RATIFIED_COUNT_PROSE) {
+    if (readBy.get(prose.label)?.size === 0) {
+      problems.push(
+        `no module states ${prose.label}: that pattern read nothing`,
+      );
+    }
+  }
+  for (const required of AUTHORITATIVE_PROSE_MODULES) {
+    if (![...readBy.values()].some((paths) => paths.has(required))) {
+      problems.push(`${required} states no ratified count: the sweep lost it`);
+    }
+  }
+  return problems;
+}
+
+describe("the ratified composition is not written twice with two values", () => {
+  it("makes every module that states a ratified count state the authority it comes from", async () => {
+    // A comment cannot be muted, so a frozen count written in prose ages in silence: inside
+    // `EVALUATOR_FILES` its bytes decide the `evaluatorDigest` while no test reads them.
+    // Two members carried the retired composition for a whole amendment — `split-audit.ts`
+    // said 7000 human records and a 1400-line blind block, and `viability-preflight.ts`
+    // said 7.000 — with the suite green. This sweep is the read.
+    //
+    // Every module of the bench, not only `EVALUATOR_FILES`: the twin that states the same
+    // composition (`viability-preflight.ts`) is NOT an evaluator file, and a sweep scoped to
+    // the digest would have left exactly the copy that drifted unread.
+    const { files } = await walkSources(REPO_ROOT, "benchmark");
+    const modules = await Promise.all(
+      files.map(async (relativePath) => ({
+        relativePath,
+        body: await readFile(resolve(REPO_ROOT, relativePath), "utf8"),
+      })),
+    );
+    expect(ratifiedCountProblems(modules)).toEqual([]);
+  });
+
+  it("walks the whole bench and holds its source directories to the declared set", async () => {
+    const { files, directories } = await walkSources(REPO_ROOT, "benchmark");
+    expect(sourceDirectoryProblems(directories, SOURCE_DIRECTORIES)).toEqual(
+      [],
+    );
+    // Containment, not a count, so another unit adding a module does not turn this red.
+    // These four say the walk descends, reads both extensions and reaches this very file —
+    // the last one derived rather than spelled, so renaming this file cannot fake it.
+    expect(files).toContain(OWN_RELATIVE_PATH);
+    expect(files).toContain("benchmark/split-audit.ts");
+    expect(files).toContain("benchmark/commands/split.ts");
+    // The 38 `.py` of the roster match no pattern today: the extension's reach is latent,
+    // and containment is the only thing that states it.
+    expect(
+      files.some(
+        (file) => file.startsWith("benchmark/lab/") && file.endsWith(".py"),
+      ),
+    ).toBe(true);
+  });
+
+  it("descends, filters by extension and skips every declared name", async () => {
+    // A fixture tree, because the properties are differences — a name skipped, a level
+    // descended — and the real tree cannot be made to hold a `data/leak.ts`.
+    const root = await mkdtemp(join(tmpdir(), "cleanfeed-walk-"));
+    try {
+      for (const relative of [
+        "bench/sub/deep",
+        "bench/data",
+        "bench/node_modules",
+        "bench/__pycache__",
+        "bench/.pytest_cache",
+        "bench/.ruff_cache",
+      ]) {
+        await mkdir(join(root, relative), { recursive: true });
+      }
+      for (const relative of [
+        "bench/a.ts",
+        "bench/d.md",
+        "bench/sub/b.ts",
+        "bench/sub/deep/c.py",
+        "bench/data/leak.ts",
+        "bench/node_modules/x.ts",
+        "bench/__pycache__/y.py",
+        "bench/.pytest_cache/z.ts",
+        "bench/.ruff_cache/w.py",
+      ]) {
+        await writeFile(join(root, relative), "// fixture\n", "utf8");
+      }
+      const { files, directories } = await walkSources(root, "bench");
+      expect(files).toEqual([
+        "bench/a.ts",
+        "bench/sub/b.ts",
+        "bench/sub/deep/c.py",
+      ]);
+      expect(directories).toEqual(["bench", "bench/sub", "bench/sub/deep"]);
+      // The `skip` argument is what it says it is, and `data` stays refused through it. A
+      // walk that ignored the argument would make "skipping every name but `data` changes
+      // nothing" a comparison of a list against itself — green whatever the caches hold.
+      expect((await walkSources(root, "bench", ["data"])).files).toEqual([
+        "bench/.pytest_cache/z.ts",
+        "bench/.ruff_cache/w.py",
+        "bench/__pycache__/y.py",
+        "bench/a.ts",
+        "bench/node_modules/x.ts",
+        "bench/sub/b.ts",
+        "bench/sub/deep/c.py",
+      ]);
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
+  it("skipping every name but `data` changes nothing the walk reads", async () => {
+    // The belt-and-braces claim of `SKIPPED_DIRECTORY_NAMES`, held against the real tree
+    // instead of remembered: `benchmark/node_modules` and the three tool caches exist here,
+    // and walking INTO them has to yield the same roster. `data` stays skipped — it is the
+    // load-bearing name and nothing under it may be opened, ever.
+    //
+    // A cache absent from a fresh clone contributes nothing, so this cannot go red for a
+    // missing directory; it goes red when one of the four starts holding a module, which is
+    // exactly the day the skip becomes load-bearing and has to be argued for. That the second
+    // walk really enters them is pinned on the fixture tree above, not here.
+    const declared = await walkSources(REPO_ROOT, "benchmark");
+    const cachesWalked = await walkSources(REPO_ROOT, "benchmark", ["data"]);
+    expect(cachesWalked.files).toEqual(declared.files);
+    expect(cachesWalked.directories).toEqual(declared.directories);
+  });
+
+  it("refuses a directory of modules the declared set does not cover", () => {
+    expect(
+      sourceDirectoryProblems(
+        ["benchmark", "benchmark/nova-camada"],
+        ["benchmark"],
+      ),
+    ).toEqual(["benchmark/nova-camada holds source and is not declared"]);
+    expect(
+      sourceDirectoryProblems(["benchmark"], ["benchmark", "benchmark/lab"]),
+    ).toEqual(["benchmark/lab is declared and holds no source"]);
+  });
+
+  // THIS FILE IS INSIDE THE SWEPT ROSTER, so every drifted count below is assembled at
+  // runtime and no matchable phrase exists in these bytes: a fixture written as one literal
+  // would be read by the live sweep as a claim this file makes, and it would be right to
+  // refuse it. Exempting the file instead is the defect these guards exist to close.
+  const DRIFTED_HUMAN = `composition is 3999${" human records"}`;
+  const DRIFTED_BLIND = `the blind block is 20% of it, so \`test\` holds at most ${"880 of them"}`;
+  const DRIFTED_TRIPLE = `at the ratified composition (4.000 human + 4.000 ai + 1.000${" mixed,"}`;
+
+  it("names the module, the count and the authority a drifted number disagrees with", () => {
+    expect(
+      ratifiedCountProblems([
+        { relativePath: "fixture.ts", body: DRIFTED_HUMAN },
+      ]),
+    ).toContain(
+      `fixture.ts states the human count as 3999, against 4000: composition is 3999${" human"}`,
+    );
+    expect(
+      ratifiedCountProblems([
+        { relativePath: "fixture.ts", body: DRIFTED_BLIND },
+      ]),
+    ).toContain(
+      "fixture.ts states the blind block's share and line count as 20/880, against 20/800: " +
+        `blind block is 20% of it, so \`test\` holds at most ${"880"}`,
+    );
+    expect(
+      ratifiedCountProblems([
+        { relativePath: "fixture.ts", body: DRIFTED_TRIPLE },
+      ]),
+    ).toContain(
+      "fixture.ts states the three class counts as 4000/4000/1000, against 4000/4000/2000: " +
+        `composition (4.000 human + 4.000 ai + 1.000${" mixed"}`,
+    );
+  });
+
+  it("reports a drift in every module swept, not only the first", () => {
+    // The live sweep cannot prove this: restricting its loop leaves it red either way while
+    // any module drifts. Two modules with the drift in the SECOND is what separates the
+    // loop from its first iteration.
+    expect(
+      ratifiedCountProblems([
+        { relativePath: "quiet.ts", body: "no ratified count here" },
+        { relativePath: "loud.ts", body: DRIFTED_HUMAN },
+      ]),
+    ).toContain(
+      `loud.ts states the human count as 3999, against 4000: composition is 3999${" human"}`,
+    );
+  });
+
+  it("reads a count whose sentence wraps across a comment break", () => {
+    const wrapped = [
+      "    // unsatisfiable by any corpus the repository can seal: the frozen composition is 3999",
+      `    // ${"human records"}, which is the shape the sweep would otherwise miss`,
+    ].join("\n");
+    expect(
+      ratifiedCountProblems([{ relativePath: "wrapped.ts", body: wrapped }]),
+    ).toContain(
+      `wrapped.ts states the human count as 3999, against 4000: composition is 3999${" human"}`,
+    );
+  });
+
+  it("reads a count whose sentence wraps across a JSDoc margin", () => {
+    // The ` * ` alternative of `COMMENT_BREAK` reaches nothing in the tree, so this fixture is
+    // the whole of its reach: without the alternative the margin's `*` survives normalisation,
+    // lands between the count and the word after it, and the pattern reads nothing at all.
+    const wrapped = [
+      "/**",
+      " * unsatisfiable by any corpus the repository can seal: the frozen composition is 3999",
+      ` * ${"human records"}, which is the shape a JSDoc margin hides`,
+      " */",
+    ].join("\n");
+    expect(
+      ratifiedCountProblems([{ relativePath: "jsdoc.ts", body: wrapped }]),
+    ).toContain(
+      `jsdoc.ts states the human count as 3999, against 4000: composition is 3999${" human"}`,
+    );
+  });
+
+  it("accepts modules whose every stated count matches its authority", () => {
+    // The ACCEPTED direction, which the live sweep above cannot pin: it is red for a real
+    // drift in `split-audit.test.ts`, so deleting the `readBy` record would only change its
+    // message. Here the same deletion is red, because both authoritative modules and all
+    // three patterns are read by this roster and by nothing else.
+    //
+    // The numbers come from the authorities the sweep itself compares against, so the fixture
+    // cannot drift; the phrases are assembled at runtime for the reason stated above the
+    // drifted ones.
+    const { human, ai, mixed } = RELEASE_CORPUS_POLICY.counts;
+    const share =
+      PREREGISTRATION_V4.preRegistration.partitionFractions.test * 100;
+    const lines =
+      PREREGISTRATION_V4.preRegistration.zeroEventCeiling
+        .blindBlockLinesAtCollectionTarget;
+    expect(
+      ratifiedCountProblems([
+        {
+          relativePath: "benchmark/split-audit.ts",
+          body:
+            `the composition is ${human} human records, and the ` +
+            `blind block is ${share}% of it, so \`test\` holds at most ${lines} lines`,
+        },
+        {
+          relativePath: "benchmark/viability-preflight.ts",
+          body: `at the ratified composition (${human} human + ${ai} ai + ${mixed} mixed) it is feasible`,
+        },
+      ]),
+    ).toEqual([]);
+  });
+
+  it("refuses a sweep that reads nothing, per pattern and per authoritative module", () => {
+    const nothing = ratifiedCountProblems([
+      { relativePath: "quiet.ts", body: "no ratified count here" },
+    ]);
+    for (const prose of RATIFIED_COUNT_PROSE) {
+      expect(nothing).toContain(
+        `no module states ${prose.label}: that pattern read nothing`,
+      );
+    }
+    for (const required of AUTHORITATIVE_PROSE_MODULES) {
+      expect(nothing).toContain(
+        `${required} states no ratified count: the sweep lost it`,
+      );
+    }
   });
 });
 

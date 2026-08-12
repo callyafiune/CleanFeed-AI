@@ -341,11 +341,159 @@ describe("computeEvaluatorDigest", () => {
     // measurement rather than a memory.
     const digest = await computeEvaluatorDigest(REPO_ROOT);
     const estado = await readFile(resolve(REPO_ROOT, "docs/ESTADO.md"), "utf8");
-    expect(estado, `docs/ESTADO.md must publish \`${digest}\``).toContain(
+    expect(
+      evaluatorDigestPublicationProblems(estado, digest),
+      "docs/ESTADO.md",
+    ).toEqual([]);
+  });
+
+  // The five below mutate the REAL bytes in memory. A synthetic ESTADO would prove the
+  // criterion and nothing about the anchor matching the real document's form — the table
+  // syntax and the row label are what the anchor keys on — and each one names an input the
+  // assertion this replaced (`estado.toContain`) accepts.
+
+  it("accepts the real ESTADO once its publication row carries the live digest", async () => {
+    const digest = await computeEvaluatorDigest(REPO_ROOT);
+    const estado = await readFile(resolve(REPO_ROOT, "docs/ESTADO.md"), "utf8");
+    expect(
+      evaluatorDigestPublicationProblems(
+        withPublishedEvaluatorDigest(estado, digest),
+        digest,
+      ),
+    ).toEqual([]);
+  });
+
+  it("refuses a stale publication row when the live value sits elsewhere in the document", async () => {
+    const digest = await computeEvaluatorDigest(REPO_ROOT);
+    const estado = await readFile(resolve(REPO_ROOT, "docs/ESTADO.md"), "utf8");
+    const stale = `${withPublishedEvaluatorDigest(estado, "0".repeat(64))}\n## Histórico\n\n- medição anterior: \`${digest}\`\n`;
+    expect(stale, "the whole-file read accepts this input").toContain(
       `\`${digest}\``,
     );
+    expect(evaluatorDigestPublicationProblems(stale, digest)).toEqual([
+      `the publication row does not carry the live digest \`${digest}\``,
+    ]);
+  });
+
+  it("refuses two publication rows carrying two values", async () => {
+    const digest = await computeEvaluatorDigest(REPO_ROOT);
+    const estado = await readFile(resolve(REPO_ROOT, "docs/ESTADO.md"), "utf8");
+    const twice = `${withPublishedEvaluatorDigest(estado, digest)}\n| \`evaluatorDigest\` da árvore | \`${"0".repeat(64)}\` |\n`;
+    expect(twice, "the whole-file read accepts this input").toContain(
+      `\`${digest}\``,
+    );
+    expect(evaluatorDigestPublicationProblems(twice, digest)).toEqual([
+      "2 rows publish the evaluator digest, not exactly 1",
+    ]);
+  });
+
+  it("refuses ONE publication row that keeps a second digest beside the live one", async () => {
+    const digest = await computeEvaluatorDigest(REPO_ROOT);
+    const estado = await readFile(resolve(REPO_ROOT, "docs/ESTADO.md"), "utf8");
+    const beside = withPublishedEvaluatorDigest(estado, digest)
+      .split(/\r?\n/u)
+      .map((line) =>
+        EVALUATOR_DIGEST_PUBLICATION_ROW.test(line)
+          ? `${line.replace(/\|\s*$/u, "")} — antes: \`${"0".repeat(64)}\` |`
+          : line,
+      )
+      .join("\n");
+    // One row, and the live digest IS on it: reading the row for containment accepts this
+    // input, and the stale hex stays printed next to the number a reader takes as measured.
+    expect(
+      beside
+        .split(/\r?\n/u)
+        .filter((line) => EVALUATOR_DIGEST_PUBLICATION_ROW.test(line)),
+      "one row",
+    ).toHaveLength(1);
+    expect(
+      beside
+        .split(/\r?\n/u)
+        .find((line) => EVALUATOR_DIGEST_PUBLICATION_ROW.test(line)),
+      "the row-containment read accepts this input",
+    ).toContain(`\`${digest}\``);
+    expect(evaluatorDigestPublicationProblems(beside, digest)).toEqual([
+      "the publication row carries 2 digest-shaped values, not exactly 1",
+    ]);
+  });
+
+  it("refuses an ESTADO with no publication row at all", async () => {
+    const digest = await computeEvaluatorDigest(REPO_ROOT);
+    const estado = await readFile(resolve(REPO_ROOT, "docs/ESTADO.md"), "utf8");
+    const deleted = estado
+      .split(/\r?\n/u)
+      .filter((line) => !EVALUATOR_DIGEST_PUBLICATION_ROW.test(line))
+      .join("\n");
+    expect(evaluatorDigestPublicationProblems(deleted, digest)).toEqual([
+      "0 rows publish the evaluator digest, not exactly 1",
+    ]);
   });
 });
+
+/**
+ * The ESTADO row that PUBLISHES the evaluator digest, anchored on the row LABEL.
+ *
+ * The label, not the enclosing section: `### 5.6 Outros` delimits a region the operator
+ * reorganises legitimately, while what a reader reads the number OFF is the table row. The
+ * `^\|` is load-bearing — the document also mentions `evaluatorDigest` inside prose cells
+ * (§ 5.1b names it while arguing that correcting the frozen bands would move it), and a
+ * pattern without the row start counts those as publications.
+ */
+const EVALUATOR_DIGEST_PUBLICATION_ROW = /^\|\s*`evaluatorDigest`/u;
+
+/**
+ * Why the published number can go stale where a whole-file `toContain` cannot see it: the
+ * digest occurring ANYWHERE satisfies containment, so a stale live row plus a `Histórico`
+ * block carrying the new value reads as published. Exactly one row publishes it, that row
+ * carries exactly one digest-shaped value, and that value is the live one.
+ *
+ * The middle condition is not decoration. Multiplicity across rows and multiplicity WITHIN
+ * one row are the same defect — a hex the operator forgot to overwrite, sitting in the
+ * document agreeing with nothing — and containment on the row is blind to the second: the
+ * live digest being present makes the row pass while the stale one is still printed beside
+ * it. Counting is what closes it, so the row is held to one value and not to containing one.
+ */
+function evaluatorDigestPublicationProblems(
+  estado: string,
+  digest: string,
+): string[] {
+  const rows = estado
+    .split(/\r?\n/u)
+    .filter((line) => EVALUATOR_DIGEST_PUBLICATION_ROW.test(line));
+  if (rows.length !== 1) {
+    return [`${rows.length} rows publish the evaluator digest, not exactly 1`];
+  }
+  const published = [...rows[0].matchAll(/`[0-9a-f]{64}`/gu)].map(
+    (match) => match[0],
+  );
+  if (published.length !== 1) {
+    return [
+      `the publication row carries ${published.length} digest-shaped values, not exactly 1`,
+    ];
+  }
+  return published[0] === `\`${digest}\``
+    ? []
+    : [`the publication row does not carry the live digest \`${digest}\``];
+}
+
+/**
+ * The real ESTADO with `digest` written into whatever the publication row publishes.
+ *
+ * The mutations need a document whose row is at a KNOWN value while every other byte stays
+ * real, and they must behave the same whether or not the tracked ESTADO happens to be up
+ * to date — republishing after an `EVALUATOR_FILES` move is the operator's integration
+ * step, not a precondition of these proofs.
+ */
+function withPublishedEvaluatorDigest(estado: string, digest: string): string {
+  return estado
+    .split(/\r?\n/u)
+    .map((line) =>
+      EVALUATOR_DIGEST_PUBLICATION_ROW.test(line)
+        ? line.replaceAll(/`[0-9a-f]{64}`/gu, `\`${digest}\``)
+        : line,
+    )
+    .join("\n");
+}
 
 /**
  * `line:column` for a byte offset, because `path:number` is read as a line number by

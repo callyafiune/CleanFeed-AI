@@ -131,6 +131,11 @@ class MaskingRecordsUnaccounted(RuntimeError):
     """A scored record has no masking record, so its share and shortfall are unknown."""
 
 
+class MaskingPopulationUnpartitioned(RuntimeError):
+    """The published classes are not a partition of the scored population: a record in
+    neither of them, a record in two or twice in one, or a class row that was never scored."""
+
+
 class ThemeProbeReachedTheFamily(RuntimeError):
     """A theme probe is a member of the sealed primary family, or `m` is not 4."""
 
@@ -516,6 +521,73 @@ def _excess(entity: float | None, placebo: float | None) -> float | None:
     return entity - placebo
 
 
+def assert_the_published_classes_partition_the_scored_population(
+    ids: Sequence[str],
+    class_rows: dict[str, list[str]],
+    labels: dict[str, str],
+) -> None:
+    """Refuses when the published classes are not a partition of the scored population.
+
+    THREE conditions, because a partition is what the published numbers need: every scored
+    record in some class, no record in two classes or twice in one, and no class row that was
+    never scored. A record in NEITHER is counted once in the top-level `records` and in no
+    mean below; a record in TWO is counted once above and weighed in two means, so the
+    classes sum past the population they are published as a partition of; a class row absent
+    from `ids` is a mean over a record the reading does not publish at all.
+
+    The criterion is read off `class_rows` — the two lists the per-class numbers are
+    computed from — and never off `labels`: a record labelled outside `("ai", "human")` is
+    present in the map and still absent from both lists, which is the same failure as a
+    record with no label at all. `labels` is read here only to name what each escaped record
+    carried. Entries of `labels` for ids that were never scored are TOLERATED, because a
+    label map wider than the score files changes no published number.
+
+    A class that is legitimately EMPTY is a partition and passes: a record set whose whole
+    population is `ai` publishes `records: 0` for the human class.
+
+    At the one call site of this module the two lists are `ids` filtered by label equality, so
+    only the coverage condition can fire there and the other two are the contract this
+    function offers any other caller.
+    """
+    scored = set(ids)
+    published: set[str] = set()
+    doubled: set[str] = set()
+    strangers: set[str] = set()
+    for rows in class_rows.values():
+        for row_id in rows:
+            if row_id in published:
+                doubled.add(row_id)
+            published.add(row_id)
+            if row_id not in scored:
+                strangers.add(row_id)
+    escaped = [row_id for row_id in ids if row_id not in published]
+    if escaped:
+        carried = {row_id: labels.get(row_id) for row_id in escaped[:10]}
+        raise MaskingPopulationUnpartitioned(
+            f"{len(escaped)} of {len(ids)} scored record(s) are absent from BOTH published "
+            f"classes, first ten with the label each carried {carried}. The report's "
+            f"top-level `records` is the scored population and the classes published under "
+            f"it are {sorted(class_rows)}: a record in neither is counted once above and in "
+            "no mean below, so the excess of the entity arm over the placebo is a mean over "
+            "a smaller population than the one the reading names"
+        )
+    if doubled:
+        raise MaskingPopulationUnpartitioned(
+            f"{len(doubled)} scored record(s) are published in more than one class or twice "
+            f"in one, first ten {sorted(doubled)[:10]}, over the classes "
+            f"{sorted(class_rows)}. `records` counts such a record ONCE and the per-class "
+            "means weigh it twice, so the two classes sum past the population they are "
+            "published as a partition of"
+        )
+    if strangers:
+        raise MaskingPopulationUnpartitioned(
+            f"{len(strangers)} published class row(s) were never scored, first ten "
+            f"{sorted(strangers)[:10]}, against {len(ids)} scored record(s). A class mean "
+            "over a record absent from the scored population is a mean over rows the "
+            "top-level `records` does not count"
+        )
+
+
 def read_masking(
     scores: dict[str, dict[str, float]],
     labels: dict[str, str],
@@ -527,6 +599,12 @@ def read_masking(
     `scores` is `{arm: {record id: p(ai)}}`. Every arm must cover the same ids: a joined
     reading over three arms with different populations is a comparison of three different
     corpora, so the mismatch RAISES instead of intersecting.
+
+    The two published classes must PARTITION the scored population as well: the per-class
+    numbers are means over the ids each class holds, so a record in neither class is counted in
+    `records` and in no mean while a record in both is counted once and weighed twice, and the
+    excess over the placebo is then read off a population that is not the one published. That
+    mismatch RAISES too.
 
     `masking` is REQUIRED and every read record must appear in it. The masked-word share and
     the placebo shortfall are the two numbers that say whether the verdict is readable at
@@ -546,9 +624,13 @@ def read_masking(
         )
 
     ids = sorted(populations[ARM_ORIGINAL])
+    class_rows = {
+        wanted: [row_id for row_id in ids if labels.get(row_id) == wanted]
+        for wanted in ("ai", "human")
+    }
+    assert_the_published_classes_partition_the_scored_population(ids, class_rows, labels)
     per_class: dict[str, dict] = {}
-    for wanted in ("ai", "human"):
-        rows = [row_id for row_id in ids if labels.get(row_id) == wanted]
+    for wanted, rows in class_rows.items():
         if not rows:
             per_class[wanted] = {"records": 0}
             continue

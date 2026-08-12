@@ -7,11 +7,14 @@ from __future__ import annotations
 
 import json
 import random
+import sys
 import tempfile
 import unittest
+from collections import Counter
 from pathlib import Path
 
 import numpy as np
+from sklearn.model_selection import StratifiedKFold
 
 import baseline_tfidf as baseline
 import diagnostic_probes as probes
@@ -277,6 +280,166 @@ class MaskingCriterionIsPinned(unittest.TestCase):
         with self.assertRaises(masking.MaskingRecordsUnaccounted) as caught:
             masking.read_masking(scores, {"a": "ai"}, {})
         self.assertIn("absent from the masking map", str(caught.exception))
+
+
+class MaskingPublishesThePopulationItCounted(unittest.TestCase):
+    """The two published classes have to cover the population the report counts.
+
+    `records` at the top is the scored population and each class number is a mean over the
+    ids that class holds, so a record in neither class is counted once above and in no mean
+    below — and the excess of the entity arm over the placebo, which is the quantity this
+    instrument publishes, is then read off a smaller population than the reading names.
+    """
+
+    def test_the_report_publishes_both_classes_and_records_equals_their_sum(self) -> None:
+        scores, labels, mapping = _partition_fixture()
+        report = masking.read_masking(scores, labels, mapping)
+        self.assertEqual(sorted(report["perClass"]), ["ai", "human"])
+        self.assertEqual(report["records"], 6)
+        self.assertEqual(
+            report["records"],
+            report["perClass"]["ai"]["records"]
+            + report["perClass"]["human"]["records"],
+        )
+
+    def test_a_scored_record_with_no_label_leaves_both_classes_and_refuses(self) -> None:
+        # `labels.get` returns `None` for a record with no label and `None` matches no class,
+        # so the row leaves BOTH. Measured without the guard: `records: 6` published beside a
+        # `perClass` summing to 5, and the verdict read off the smaller population in silence.
+        scores, labels, mapping = _partition_fixture()
+        del labels["row_0"]
+        with self.assertRaises(masking.MaskingPopulationUnpartitioned) as caught:
+            masking.read_masking(scores, labels, mapping)
+        message = str(caught.exception)
+        self.assertIn("1 of 6", message)
+        self.assertIn("'row_0': None", message)
+
+    def test_a_label_outside_the_two_classes_refuses(self) -> None:
+        # Presence in the map is NOT the criterion: `"AI"` is present, is neither class, and
+        # dropped `perClass.ai.records` from 3 to 2 with `records: 6` beside it.
+        scores, labels, mapping = _partition_fixture()
+        labels["row_1"] = "AI"
+        with self.assertRaises(masking.MaskingPopulationUnpartitioned) as caught:
+            masking.read_masking(scores, labels, mapping)
+        self.assertIn("'row_1': 'AI'", str(caught.exception))
+
+    def test_a_population_with_no_label_at_all_refuses_instead_of_publishing_survives(
+        self,
+    ) -> None:
+        # Measured with an empty label map: `records: 6`, `records: 0` in both classes and the
+        # verdict `survives` — the direction that leaves the shortcut hypothesis un-dismissed
+        # having measured nothing. So the partition is read BEFORE the empty-class branch.
+        scores, _, mapping = _partition_fixture()
+        with self.assertRaises(masking.MaskingPopulationUnpartitioned) as caught:
+            masking.read_masking(scores, {}, mapping)
+        self.assertIn("6 of 6", str(caught.exception))
+
+    def test_a_single_class_population_still_publishes_zero_for_the_other(self) -> None:
+        # A class legitimately empty IS a partition, and this is what stops the guard from
+        # growing past its criterion: the whole population in one class publishes
+        # `records: 0` for the other and refuses nothing.
+        scores, labels, mapping = _partition_fixture()
+        report = masking.read_masking(
+            scores, {row_id: "ai" for row_id in labels}, mapping
+        )
+        self.assertEqual(report["perClass"]["human"], {"records": 0})
+        self.assertEqual(report["perClass"]["ai"]["records"], 6)
+        self.assertEqual(report["records"], 6)
+
+    def test_a_labels_map_wider_than_the_scored_population_is_tolerated(self) -> None:
+        # And the criterion is not `set(labels) == set(ids)`: a label for a record no score
+        # file carries changes no published number, and refusing it would refuse the ordinary
+        # case of a label map read off a wider sample.
+        scores, labels, mapping = _partition_fixture()
+        report = masking.read_masking(scores, labels, mapping)
+        widened = masking.read_masking(
+            scores, {**labels, "nao_pontuado": "ai"}, mapping
+        )
+        self.assertEqual(widened, report)
+
+    def test_an_unlabelled_and_unaccounted_record_refuses_by_the_partition_first(
+        self,
+    ) -> None:
+        # An entry that violates BOTH readings: which exception wins is fixed here instead of
+        # inherited from the order of two lines.
+        scores = {arm: {"a": 0.9, "b": 0.9} for arm in masking.ARMS}
+        with self.assertRaises(masking.MaskingPopulationUnpartitioned):
+            masking.read_masking(scores, {"a": "ai"}, {})
+        # The other refusal stays reachable on its own case: with both records labelled, the
+        # absent masking entry is what refuses.
+        with self.assertRaises(masking.MaskingRecordsUnaccounted):
+            masking.read_masking(scores, {"a": "ai", "b": "ai"}, {})
+
+    def test_the_criterion_reads_the_published_lists_and_not_the_label_map(self) -> None:
+        # The guard called directly: it is handed the two lists that PRODUCE the numbers, so a
+        # list that dropped a record refuses even with the record's label right there in the
+        # map — the criterion, and not a deduction from the map.
+        ids = ["a", "b", "c"]
+        labels = {"a": "ai", "b": "human", "c": "human"}
+        masking.assert_the_published_classes_partition_the_scored_population(
+            ids, {"ai": ["a"], "human": ["b", "c"]}, labels
+        )
+        with self.assertRaises(masking.MaskingPopulationUnpartitioned) as caught:
+            masking.assert_the_published_classes_partition_the_scored_population(
+                ids, {"ai": ["a"], "human": ["b"]}, labels
+            )
+        self.assertIn("'c': 'human'", str(caught.exception))
+        # An empty class is a partition when the other covers the population, and entries for
+        # records that were never scored are tolerated.
+        masking.assert_the_published_classes_partition_the_scored_population(
+            ids, {"ai": ids, "human": []}, {**labels, "nao_pontuado": "ai"}
+        )
+
+    def test_a_record_published_in_two_classes_refuses(self) -> None:
+        # Coverage cannot see this one and the name of the guard promises it: the record is
+        # counted ONCE in `records` and weighed in TWO means, so the classes sum to 4 over a
+        # population of 3 and every mean below is over a different population than the count
+        # above. At the call site the two lists come from filtering by label equality, so this
+        # is the contract for any other caller.
+        ids = ["a", "b", "c"]
+        labels = {"a": "ai", "b": "human", "c": "human"}
+        with self.assertRaises(masking.MaskingPopulationUnpartitioned) as caught:
+            masking.assert_the_published_classes_partition_the_scored_population(
+                ids, {"ai": ["a", "b"], "human": ["b", "c"]}, labels
+            )
+        message = str(caught.exception)
+        self.assertIn("more than one class", message)
+        self.assertIn("'b'", message)
+
+    def test_a_record_repeated_inside_one_class_refuses_as_well(self) -> None:
+        # The same double weight without leaving the class: `ai` publishes `records: 2` over
+        # one record and its mean counts that record twice.
+        ids = ["a", "b", "c"]
+        labels = {"a": "ai", "b": "human", "c": "human"}
+        with self.assertRaises(masking.MaskingPopulationUnpartitioned) as caught:
+            masking.assert_the_published_classes_partition_the_scored_population(
+                ids, {"ai": ["a", "a"], "human": ["b", "c"]}, labels
+            )
+        self.assertIn("twice in one", str(caught.exception))
+
+    def test_a_class_row_that_was_never_scored_refuses(self) -> None:
+        # The third direction: a class list is not a subset of the scored ids, so its mean runs
+        # over a record `records` does not count. Covering the population is not enough.
+        ids = ["a", "b"]
+        with self.assertRaises(masking.MaskingPopulationUnpartitioned) as caught:
+            masking.assert_the_published_classes_partition_the_scored_population(
+                ids, {"ai": ["a"], "human": ["b", "z"]}, {"a": "ai", "b": "human"}
+            )
+        message = str(caught.exception)
+        self.assertIn("never scored", message)
+        self.assertIn("'z'", message)
+
+    def test_coverage_is_read_first_when_one_case_breaks_two_conditions(self) -> None:
+        # Which of the three messages a case that breaks two carries is fixed here instead of
+        # inherited from the order of three branches.
+        ids = ["a", "b", "c"]
+        with self.assertRaises(masking.MaskingPopulationUnpartitioned) as caught:
+            masking.assert_the_published_classes_partition_the_scored_population(
+                ids,
+                {"ai": ["a", "a"], "human": ["b"]},
+                {"a": "ai", "b": "human", "c": "human"},
+            )
+        self.assertIn("absent from BOTH published", str(caught.exception))
 
 
 # --- instrument 3: the theme-blind floor ------------------------------------
@@ -908,6 +1071,454 @@ class TheCheapFloorWeighsNoClass(unittest.TestCase):
         self.assertEqual(source.count("class_weight="), 0)
 
 
+# --- the order of the input, and the numbers it may not move ----------------
+
+
+class FoldsReadOneCanonicalPopulation(unittest.TestCase):
+    """The published AUCs may not depend on the order the caller assembled its rows in.
+
+    `StratifiedKFold` partitions BY POSITION, so two operators holding the same files in a
+    different argument order published different numbers and nothing said so. The guard
+    affirms the canonical FORM at the point of use; what states the invariance is the
+    batteries here, and each of them compares the vector of PER-FOLD AUCs rather than its
+    mean — a mean survives a fold count cut in half.
+    """
+
+    def _orders(self, count: int, total: int = 8) -> list[list[int]]:
+        rng = random.Random(4)
+        orders = [list(range(count)), list(reversed(range(count)))]
+        while len(orders) < total:
+            order = list(range(count))
+            rng.shuffle(order)
+            if order not in orders:
+                orders.append(order)
+        return orders
+
+    def test_the_permutation_fixture_moves_the_folds(self) -> None:
+        # What keeps the batteries from being vacuous. Measured on this fixture:
+        # `estilometria` and `funcionais+estilometria` read 1,000000 in both raw orders
+        # (saturated), so a battery watching only those two is green with the defect in place.
+        # This asserts the partition itself moves, which is the mechanism the batteries ride.
+        texts, labels = _pilot_fixture()
+        folds = StratifiedKFold(
+            n_splits=baseline.BASELINE_FOLDS,
+            shuffle=True,
+            random_state=baseline.BASELINE_SEED,
+        )
+
+        def partition_of(order: list[int]) -> tuple:
+            return tuple(
+                frozenset(order[position] for position in test)
+                for _, test in folds.split(texts[order], labels[order])
+            )
+
+        orders = self._orders(len(labels))
+        raw = partition_of(orders[0])
+        for order in orders[1:]:
+            self.assertNotEqual(partition_of(order), raw)
+
+    def test_the_per_fold_aucs_do_not_move_with_the_order_of_the_rows(self) -> None:
+        # Measured before the rendering: 8 distinct per-fold vectors over 8 orders of this
+        # fixture, with means from 0,675 to 0,800.
+        texts, labels = _pilot_fixture()
+        readings = {
+            tuple(
+                baseline.cross_validated_aucs(
+                    texts[order], labels[order], baseline.word_pipeline
+                )
+            )
+            for order in self._orders(len(labels))
+        }
+        self.assertEqual(len(readings), 1)
+        self.assertEqual(len(readings.pop()), baseline.BASELINE_FOLDS)
+
+    def test_the_theme_blind_floor_holds_its_per_fold_vector_too(self) -> None:
+        # The vectorization whose number `docs/ESTADO.md` reads as the theme-blind floor, and
+        # the one that carries the post-fit guard on every fold.
+        texts, labels = _pilot_fixture()
+        readings = {
+            tuple(
+                baseline.cross_validated_aucs(
+                    texts[order],
+                    labels[order],
+                    baseline.function_word_pipeline,
+                    after_fit=baseline.assert_no_content_word_reaches_the_vocabulary,
+                )
+            )
+            for order in self._orders(len(labels), total=4)
+        }
+        self.assertEqual(len(readings), 1)
+
+    def test_the_canonical_key_is_the_pair_and_not_the_text_alone(self) -> None:
+        # A fixture where 8 texts are carried under BOTH labels. Ordering by `text` alone
+        # leaves those ties in the caller's order and the folds move again; ordering by `label`
+        # alone is not a total order at all. Only the pair renders one arrangement.
+        texts, labels = _tied_text_fixture()
+        labels_of_text: dict[str, set[int]] = {}
+        for label, text in zip(labels.tolist(), texts.tolist()):
+            labels_of_text.setdefault(text, set()).add(label)
+        self.assertEqual(sum(1 for seen in labels_of_text.values() if len(seen) == 2), 8)
+        readings = {
+            tuple(
+                baseline.cross_validated_aucs(
+                    texts[order], labels[order], baseline.word_pipeline
+                )
+            )
+            for order in self._orders(len(labels))
+        }
+        self.assertEqual(len(readings), 1)
+
+    def test_the_criterion_is_the_canonical_form_of_the_population_received(self) -> None:
+        texts, labels = _pilot_fixture()
+        received = Counter(baseline._population_keys(texts, labels))
+        rendered_texts, rendered_labels = baseline._the_canonical_population(
+            texts, labels
+        )
+        baseline.assert_the_folds_read_the_canonical_population(
+            rendered_texts, rendered_labels, received
+        )
+        with self.assertRaises(baseline.FoldsReadANonCanonicalPopulation) as caught:
+            baseline.assert_the_folds_read_the_canonical_population(
+                texts, labels, received
+            )
+        self.assertIn("partitions BY POSITION", str(caught.exception))
+        # Sorted and still not the population received: the second half of the criterion is
+        # what sees a rendering that lost a row, which the order check alone cannot.
+        with self.assertRaises(baseline.FoldsReadANonCanonicalPopulation) as caught:
+            baseline.assert_the_folds_read_the_canonical_population(
+                rendered_texts[1:], rendered_labels[1:], received
+            )
+        self.assertIn("1 row(s) of the input are absent", str(caught.exception))
+
+    def test_the_guard_reads_the_arrays_the_splitter_reads(self) -> None:
+        # The SITE and not the criterion: with the rendering neutered, what reaches
+        # `folds.split` is the caller's order, and the guard inside `cross_validated_aucs` is
+        # what refuses it. This is the fail-open of rendering into a fresh variable and going
+        # on to split the array as it came.
+        texts, labels = _pilot_fixture()
+        saved = baseline._the_canonical_population
+        try:
+            baseline._the_canonical_population = lambda t, l: (t, l)
+            with self.assertRaises(baseline.FoldsReadANonCanonicalPopulation) as caught:
+                baseline.cross_validated_aucs(texts, labels, baseline.word_pipeline)
+        finally:
+            baseline._the_canonical_population = saved
+        self.assertIn("not in `(label, text)` order", str(caught.exception))
+
+    def test_the_site_reads_the_multiset_and_not_only_the_order(self) -> None:
+        # The OTHER half of the criterion, at the same site. A LACUNAR rendering — the
+        # canonical one minus a row — is still canonically ORDERED, so the order half passes
+        # it and only the multiset half can refuse: every published AUC would be computed over
+        # the input MINUS one row, and always the same row whatever order the caller assembled
+        # its input in, so the permutation batteries above are green with it in place. Two
+        # fail-opens take this shape: `received` counted off the rendered arrays instead of the
+        # received ones, which compares an array with itself, and a row lost after the
+        # rendering while the count is taken there.
+        texts, labels = _pilot_fixture()
+        saved = baseline._the_canonical_population
+
+        def lacunar(given_texts, given_labels):
+            rendered_texts, rendered_labels = saved(given_texts, given_labels)
+            return rendered_texts[1:], rendered_labels[1:]
+
+        try:
+            baseline._the_canonical_population = lacunar
+            with self.assertRaises(baseline.FoldsReadANonCanonicalPopulation) as caught:
+                baseline.cross_validated_aucs(texts, labels, baseline.word_pipeline)
+        finally:
+            baseline._the_canonical_population = saved
+        message = str(caught.exception)
+        # The multiset half names itself in the message; the order half raises another one.
+        self.assertIn("1 row(s) of the input are absent", message)
+        self.assertIn(f"against {len(labels)} received", message)
+
+    def test_the_guard_stands_on_the_line_above_the_split(self) -> None:
+        # The site as a POSITION and not only as a call: a line between the guard and the
+        # split hands the splitter arrays the guard never read, and a row dropped there is the
+        # same row in every input order — the batteries above stay green over a population one
+        # row short. One call site, and the split on the next line, is the claim.
+        lines = Path(baseline.__file__).read_text(encoding="utf-8").splitlines()
+        calls = [
+            index
+            for index, line in enumerate(lines)
+            if line.strip().startswith("assert_the_folds_read_the_canonical_population(")
+        ]
+        self.assertEqual(len(calls), 1)
+        self.assertEqual(
+            lines[calls[0] + 1].strip(),
+            "for train, test in folds.split(texts, labels):",
+        )
+
+    def test_the_module_hands_an_order_to_one_splitter_only(self) -> None:
+        # The SCOPE of the canonical rendering, as a count: it covers every fold split of
+        # `baseline_tfidf.py` because the module builds exactly one splitter and splits in
+        # exactly one place. A second one added anywhere here would read the caller's assembly
+        # order with nothing rendering it. It says nothing about the other lab modules, which
+        # assemble their own features in the order of the jsonl and split them by position.
+        source = Path(baseline.__file__).read_text(encoding="utf-8")
+        self.assertEqual(source.count("StratifiedKFold("), 1)
+        self.assertEqual(source.count("folds.split("), 1)
+
+    def test_the_reordering_leaves_the_published_ids_a_claim_about_a_set(self) -> None:
+        # The residue of rendering inside `cross_validated_aucs`, fixed here as ACCEPTED: the
+        # AUCs come back per fold of the rendering and correspond positionally to nothing in
+        # the caller's rows. What travels with the number is the SET of ids the slice declared,
+        # and `assert_both_instruments_read_one_population` compares sets — so the reordering
+        # cannot make one population read as two.
+        ai_rows, parents = _paired_fixture()
+        populations = _populations_of(ai_rows, parents)
+        saved = baseline.BASELINE_FOLDS
+        try:
+            baseline.BASELINE_FOLDS = 2
+            reading = baseline.cheap_floor_auc(populations["reserved"])
+        finally:
+            baseline.BASELINE_FOLDS = saved
+        declared = populations["reserved"].declared_ids
+        self.assertEqual(reading.ids, declared)
+        baseline.assert_both_instruments_read_one_population(
+            "reserved", reading.ids, tuple(reversed(declared))
+        )
+
+    def test_the_easiness_block_does_not_move_with_the_order_of_the_ai_rows(self) -> None:
+        ai_rows, parents = _paired_fixture()
+        blocks = {
+            json.dumps(
+                _block([ai_rows[position] for position in order], parents)[0],
+                sort_keys=True,
+            )
+            for order in self._orders(len(ai_rows), total=5)
+        }
+        self.assertEqual(len(blocks), 1)
+
+
+class TheReportDoesNotMoveWithTheOrderOfTheArguments(unittest.TestCase):
+    """End to end, over `main`: the same files in another order publish the same report.
+
+    Measured before the rendering, over 5 orders of `--ai`: 2 distinct reports, with
+    `char(3,6)` at 0,555556 against 0,777778 and `oodEasiness` turning from
+    `measures-easiness` to `no-headroom` — an excess lift of 0,111111 against 0,000000, more
+    than the whole 0,10 margin.
+    """
+
+    def test_the_argument_order_moves_the_folds_of_the_pool(self) -> None:
+        # The battery below is vacuous unless the argument order really moves the partition.
+        # Measured: with ONE family per file the slices' internal order does not move and the
+        # easiness block reads the same in both orders — the defect travels through the pool's
+        # `X`/`y` — so both families are in BOTH files of this fixture.
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            ai_files, humans, _ = _order_fixture(root)
+            partitions = {
+                _pool_partition([ai_files[position] for position in order], humans)
+                for order in ((0, 1, 2), (1, 0, 2))
+            }
+            self.assertEqual(len(partitions), 2)
+
+    def test_the_published_report_does_not_move_with_the_order_of_the_ai_arguments(
+        self,
+    ) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            ai_files, humans, scores = _order_fixture(root)
+            reports: list[str] = []
+            for index, order in enumerate(((0, 1, 2), (1, 0, 2), (2, 1, 0), (1, 2, 0))):
+                out = root / f"report_{index}.json"
+                _run_main(
+                    [
+                        "--ai",
+                        *[str(ai_files[position]) for position in order],
+                        "--humans",
+                        str(humans),
+                        "--reserved-family",
+                        _RESERVED_FAMILY,
+                        "--detector-scores",
+                        str(scores),
+                        "--out",
+                        str(out),
+                    ]
+                )
+                reports.append(out.read_text(encoding="utf-8"))
+            # The WHOLE report and not one vectorization: two of the five saturate at
+            # 1,000000 on material this small, so a comparison narrowed to them is green with
+            # the defect in place.
+            self.assertEqual(len(set(reports)), 1)
+            report = json.loads(reports[0])
+            self.assertEqual(sorted(report["aucs"]), sorted(baseline.VECTORIZATIONS))
+            self.assertIn("verdict", report["oodEasiness"])
+            for label, reading in report["aucs"].items():
+                self.assertEqual(len(reading["perFold"]), 2, label)
+
+    def test_the_same_human_id_in_two_files_refuses_instead_of_letting_the_order_pick(
+        self,
+    ) -> None:
+        # The SITE of the id check, in `main`. Measured with the canonical rendering ACTIVE:
+        # swapping these two `--humans` arguments moved `word(1,2)` from 0,333333 to 0,305556
+        # and `char(3,6)` from 0,486111 to 0,430556, because the parent's TEXT is whichever
+        # file was read last.
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            ai_files, humans, scores = _order_fixture(root)
+            twin = root / "humans_twin.jsonl"
+            first = json.loads(humans.read_text(encoding="utf-8").splitlines()[0])
+            _write_jsonl(twin, [{**first, "text": _clauses("outro", joined=True)}])
+            with self.assertRaises(baseline.InputIdCarriedTwice) as caught:
+                _run_main(
+                    [
+                        "--ai",
+                        str(ai_files[0]),
+                        "--humans",
+                        str(humans),
+                        str(twin),
+                        "--reserved-family",
+                        _RESERVED_FAMILY,
+                    ]
+                )
+        message = str(caught.exception)
+        self.assertIn(first["candidateId"], message)
+        self.assertIn(humans.name, message)
+        self.assertIn(twin.name, message)
+
+
+class EachInputIdIsCarriedOnce(unittest.TestCase):
+    def test_a_duplicate_that_straddles_two_files_is_invisible_to_a_per_file_check(
+        self,
+    ) -> None:
+        material = [
+            (
+                Path("humans_a.jsonl"),
+                [
+                    {"candidateId": "hum_0", "text": "o museu da vila é antigo"},
+                    {"candidateId": "hum_1", "text": "as serras do campo são altas"},
+                ],
+            ),
+            (Path("humans_b.jsonl"), [{"candidateId": "hum_0", "text": "outro texto"}]),
+        ]
+        # Each file on its own carries distinct ids: a check run per file sees nothing, and
+        # the duplicate that decides which text parents the ai rows straddles the two.
+        for _, rows in material:
+            ids = [row["candidateId"] for row in rows]
+            self.assertEqual(len(ids), len(set(ids)))
+        with self.assertRaises(baseline.InputIdCarriedTwice) as caught:
+            baseline.assert_each_input_id_is_carried_once(material)
+        message = str(caught.exception)
+        self.assertIn("'hum_0'", message)
+        self.assertIn("humans_a.jsonl", message)
+        self.assertIn("humans_b.jsonl", message)
+        self.assertIn("order of the", message)
+
+    def test_an_exact_duplicate_human_id_refuses_too(self) -> None:
+        # The id is the key. Refusing only when the two texts DIFFER would be a rule about the
+        # texts, and the identical duplicate still doubles the human side the block publishes.
+        row = {"candidateId": "hum_0", "text": "o museu da vila é antigo"}
+        with self.assertRaises(baseline.InputIdCarriedTwice):
+            baseline.assert_each_input_id_is_carried_once(
+                [(Path("humans_a.jsonl"), [row]), (Path("humans_b.jsonl"), [dict(row)])]
+            )
+
+    def test_a_duplicate_inside_one_file_refuses_as_well(self) -> None:
+        with self.assertRaises(baseline.InputIdCarriedTwice):
+            baseline.assert_each_input_id_is_carried_once(
+                [
+                    (
+                        Path("humans_a.jsonl"),
+                        [{"candidateId": "hum_0"}, {"candidateId": "hum_0"}],
+                    )
+                ]
+            )
+
+    def test_the_same_file_named_twice_carries_every_id_twice(self) -> None:
+        # The material travels as PAIRS and not as a map keyed by path, so naming one file
+        # twice is two carriers rather than one entry that overwrote itself.
+        rows = [{"candidateId": "hum_0", "text": "o museu da vila é antigo"}]
+        with self.assertRaises(baseline.InputIdCarriedTwice):
+            baseline.assert_each_input_id_is_carried_once(
+                [(Path("humans_a.jsonl"), rows), (Path("humans_a.jsonl"), list(rows))]
+            )
+
+    def test_distinct_ids_across_files_are_accepted(self) -> None:
+        # The tolerance, and it is what the documented invocation needs: measured on
+        # `wikipedia_fresh.jsonl`, 5.000 rows carrying 5.000 distinct ids.
+        baseline.assert_each_input_id_is_carried_once(
+            [
+                (Path("humans_a.jsonl"), [{"candidateId": "hum_0", "text": "a."}]),
+                (Path("humans_b.jsonl"), [{"candidateId": "hum_1", "text": "b."}]),
+            ]
+        )
+
+
+class ADuplicateOnTheAiSideInflatesACountAndMovesNoAuc(unittest.TestCase):
+    """The residue the id check declares on the `ai` side, fixed here as ACCEPTED.
+
+    Nothing selects between two `ai` rows carrying one id: the multiset the folds read is the
+    same in any order and every AUC with it. What the repetition moves is a published COUNT,
+    and the two guards that could have seen it are silent BY CRITERION — one compares SETS of
+    ids, the other sums the same repeated declarations on both sides of its equality. The
+    consequence is a row counted twice in the published populations, and it is asserted rather
+    than left to be discovered.
+    """
+
+    def _doubled(self) -> tuple[list[dict], list[dict]]:
+        ai_rows, parents = _paired_fixture()
+        return [*ai_rows, dict(ai_rows[0], text=_clauses("twin", joined=False))], parents
+
+    def test_the_block_counts_the_repeated_row_twice_and_refuses_nothing(self) -> None:
+        ai_rows, parents = self._doubled()
+        ai_ids, human_ids = _ids_of(ai_rows, parents)
+        self.assertEqual(len(ai_ids) - len(set(ai_ids)), 1)
+        scores = _scored_file(ai_ids, human_ids)
+        blocks: set[str] = set()
+        seen: dict = {}
+        for order in ([*range(len(ai_rows))], [*reversed(range(len(ai_rows)))]):
+            # Returning at all is the silence: `_easiness_block` runs both the two-instrument
+            # check and the published-count check before it returns.
+            block, seen = _block(
+                [ai_rows[position] for position in order], parents, scores
+            )
+            blocks.add(json.dumps(block, sort_keys=True))
+        self.assertEqual(len(blocks), 1)
+        block = json.loads(blocks.pop())
+        reserved = seen["reserved"]
+        self.assertEqual(block["rows"]["reserved"]["ai"], len(reserved.ai))
+        self.assertEqual(
+            len({row_id for row_id, _ in reserved.ai}), len(reserved.ai) - 1
+        )
+        # The join count carries the repetition on BOTH sides of an equality that holds, which
+        # is why the check is self-consistent and says nothing.
+        declared = sum(len(population.declared_ids) for population in seen.values())
+        self.assertEqual(block["detectorScores"]["rowsJoined"], declared)
+        self.assertEqual(len(set(ai_ids) | set(human_ids)), declared - 1)
+
+    def test_main_publishes_the_repeated_ai_row_twice(self) -> None:
+        # `assert_each_input_id_is_carried_once` reads the `--humans` material and only it, so
+        # a pool file carrying one `candidateId` twice runs through to a published report — and
+        # the reserved slice publishes five ai rows against the four parents they name.
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            ai_files, humans, scores = _order_fixture(root)
+            twin = root / "ai_twin.jsonl"
+            first = json.loads(ai_files[0].read_text(encoding="utf-8").splitlines()[0])
+            self.assertEqual(first["meta"]["family"], _RESERVED_FAMILY)
+            _write_jsonl(twin, [{**first, "text": _clauses("twin", joined=False)}])
+            out = root / "report.json"
+            _run_main(
+                [
+                    "--ai",
+                    *[str(path) for path in ai_files],
+                    str(twin),
+                    "--humans",
+                    str(humans),
+                    "--reserved-family",
+                    _RESERVED_FAMILY,
+                    "--detector-scores",
+                    str(scores),
+                    "--out",
+                    str(out),
+                ]
+            )
+            report = json.loads(out.read_text(encoding="utf-8"))
+        self.assertEqual(report["oodEasiness"]["rows"]["reserved"], {"ai": 5, "human": 4})
+
+
 # --- none of the four is a hypothesis --------------------------------------
 
 
@@ -959,6 +1570,34 @@ class NoThemeProbeReachesThePrimaryFamily(unittest.TestCase):
 
 
 # --- fixtures --------------------------------------------------------------
+
+
+def _partition_fixture(count: int = 6) -> tuple[dict, dict, dict]:
+    """`(scores, labels, masking)` of a small three-arm reading, classes alternating.
+
+    Every record is present in the masking map and in all three arms, so the only thing a
+    test has to move is one label — and the entity arm scores below the original in every
+    row, which is what makes the excess a number the report would have published.
+    """
+    rows = [
+        {
+            "id": f"row_{index}",
+            "text": (
+                f"A cidade de Évora tem {160 + index} mil habitantes e fica em Portugal. "
+                "O museu da vila abriu em 12 de março de 1998 pelo Instituto Nacional."
+            ),
+            "label": index % 2,
+        }
+        for index in range(count)
+    ]
+    built = masking.arm_rows(rows)
+    scores = {
+        masking.ARM_ORIGINAL: {row["id"]: 0.9 for row in rows},
+        masking.ARM_ENTITY: {row["id"]: 0.5 for row in rows},
+        masking.ARM_PLACEBO: {row["id"]: 0.9 for row in rows},
+    }
+    labels = {row["id"]: ("ai" if row["label"] == 1 else "human") for row in rows}
+    return scores, labels, built["_masking"]
 
 
 # pt-BR prose and NOT a bag of content words. The earlier fixture was ten nouns drawn at
@@ -1122,6 +1761,131 @@ def _block(
         baseline.BASELINE_FOLDS = saved_folds
         baseline.cheap_floor_auc = saved_floor
     return block, seen
+
+
+def _tied_text_fixture() -> tuple[np.ndarray, np.ndarray]:
+    """A population where 8 texts are carried under BOTH labels.
+
+    The shape that separates the `(label, text)` key from the text alone: ordered by text, a
+    tied pair keeps the caller's order — Python's sort is stable — and the folds move again on
+    material the plain battery cannot tell apart.
+    """
+    texts: list[str] = []
+    labels: list[int] = []
+    for index in range(8):
+        shared = _clauses(f"shared_{index}", joined=index % 2 == 0)
+        texts += [shared, shared]
+        labels += [0, 1]
+    for index in range(8):
+        texts.append(_clauses(f"only_{index}", joined=True))
+        labels.append(index % 2)
+    return np.array(texts, dtype=object), np.array(labels)
+
+
+def _write_jsonl(path: Path, rows: list[dict]) -> None:
+    with path.open("w", encoding="utf-8", newline="\n") as handle:
+        for row in rows:
+            handle.write(json.dumps(row, ensure_ascii=False) + "\n")
+
+
+def _order_fixture(root: Path) -> tuple[list[Path], Path, Path]:
+    """Three `--ai` files (one of them EMPTY), one `--humans` file, and a scored file.
+
+    BOTH generator families live in BOTH non-empty files on purpose: with one family per file
+    the rows of each slice keep their relative order whatever the argument order, so the
+    easiness block reads the same in both and only the pool's `X`/`y` moves — a fixture split
+    by family is green with the defect in place. The empty file is in the list because a pool
+    file that contributes no row is the ordinary case of a glob.
+    """
+    ai_rows = [
+        {
+            "candidateId": f"ai_{tag}_{index}",
+            "text": _clauses(f"ai_{tag}_{index}", joined=True),
+            "meta": {"pairedWith": f"hum_{tag}_{index}", "family": family},
+        }
+        for family, tag, count in (
+            (_RESERVED_FAMILY, "res", 4),
+            (_CORE_FAMILY, "core", 5),
+        )
+        for index in range(count)
+    ]
+    by_id = {row["candidateId"]: row for row in ai_rows}
+    files = [root / "ai_a.jsonl", root / "ai_b.jsonl", root / "ai_empty.jsonl"]
+    _write_jsonl(
+        files[0],
+        [
+            by_id[row_id]
+            for row_id in ("ai_res_0", "ai_core_0", "ai_res_1", "ai_core_1", "ai_core_2")
+        ],
+    )
+    _write_jsonl(
+        files[1],
+        [by_id[row_id] for row_id in ("ai_core_3", "ai_res_2", "ai_core_4", "ai_res_3")],
+    )
+    _write_jsonl(files[2], [])
+    parents = [
+        {
+            "candidateId": row["meta"]["pairedWith"],
+            "text": _clauses(row["meta"]["pairedWith"], joined=False),
+        }
+        for row in ai_rows
+    ]
+    humans = root / "humans.jsonl"
+    _write_jsonl(humans, parents)
+    scores = root / "detector_scores.jsonl"
+    _write_jsonl(
+        scores,
+        [
+            {"id": row["candidateId"], "class": "ai", "family": "?", "score": 0.90}
+            for row in ai_rows
+        ]
+        + [
+            {"id": row["candidateId"], "class": "human", "family": "?", "score": 0.10}
+            for row in parents
+        ],
+    )
+    return files, humans, scores
+
+
+def _pool_partition(ai_files: list[Path], humans: Path) -> tuple:
+    """The fold partition `main` reads off these arguments, as ids.
+
+    `main`'s assembly up to the split, repeated here so the fixture's power to move the
+    partition is measured instead of assumed.
+    """
+    humans_by_id = {row["candidateId"]: row for row in baseline.read_jsonl(humans)}
+    pool_rows = [row for path in ai_files for row in baseline.read_jsonl(path)]
+    ai_rows = [
+        row
+        for row in pool_rows
+        if (row.get("meta") or {}).get("pairedWith") in humans_by_id
+    ]
+    ids = [row["candidateId"] for row in ai_rows]
+    ids += sorted({row["meta"]["pairedWith"] for row in ai_rows})
+    labels = np.array([1] * len(ai_rows) + [0] * (len(ids) - len(ai_rows)))
+    folds = StratifiedKFold(n_splits=2, shuffle=True, random_state=baseline.BASELINE_SEED)
+    return tuple(
+        frozenset(ids[position] for position in test)
+        for _, test in folds.split(np.array(ids, dtype=object), labels)
+    )
+
+
+def _run_main(argv: list[str], folds: int = 2) -> None:
+    """`main()` over an argv, with the fold count the fixture's small slices allow.
+
+    TWO folds: `StratifiedKFold` refuses more splits than the smaller class has members, and a
+    slice here holds four or five rows a side. `cross_validated_aucs` reads `BASELINE_FOLDS`
+    at call time, so the module attribute is the whole mechanism.
+    """
+    saved_argv = sys.argv
+    saved_folds = baseline.BASELINE_FOLDS
+    try:
+        sys.argv = ["baseline_tfidf.py", *argv]
+        baseline.BASELINE_FOLDS = folds
+        baseline.main()
+    finally:
+        sys.argv = saved_argv
+        baseline.BASELINE_FOLDS = saved_folds
 
 
 def _written(policy: dict) -> Path:

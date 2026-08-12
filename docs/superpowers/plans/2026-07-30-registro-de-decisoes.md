@@ -7165,3 +7165,84 @@ Medido em rodada ÚNICA, árvore quieta: vitest **172 arquivos / 2.993 testes** 
 
 **A dívida de codex permanece.** A etapa 3 foi do Fable nas duas rodadas, e rodada do Fable não fecha
 dívida de codex — a janela de cota reabre em 16 de agosto, e em que gastá-la é decisão do operador (§ 4).
+
+---
+
+## A onda B1: três das catorze de pré-publicação, e um agente que morreu no meio (2026-08-11)
+
+Primeira sub-onda da fila "morde antes de PUBLICAR". Três unidades de propriedade disjunta pela tríade.
+Nenhuma muda o comportamento de um comando de hoje; todas entram num artefato ou num número que a Fase 6
+imprime — e isso **não abaixou a barra**, porque uma guarda que promete alcance que não tem é o defeito.
+
+| unidade | defeito | veredito |
+|---|---|---|
+| W3 | quatro guardas cujo alcance era menor que a alegação que fazem | `pass` na 2.ª rodada |
+| W4 | `BenchmarkReport` chegava por cast e decidia ramo | ver abaixo |
+| W5 | rótulo ausente saía das duas classes; a AUC mudava com a ordem dos argumentos | `pass` na 2.ª rodada |
+
+### O que W3 consertou, e o defeito real que ela achou de passagem
+
+As quatro varreduras ganharam alcance **medido**: a de `digests.test.ts` passou a ancorar na LINHA de
+publicação (e a contar multiplicidade, porque uma única linha carregando o digest vivo **e** um hex velho
+era aceita); a de `dataset-manifest.test.ts` passou de 49 para **141** arquivos (103 `.ts` + 38 `.py`) e
+passou a ler também o número do bloco cego, que derivou junto; a de `source-manifest.test.ts` passou a
+proibir o **nome publicado** e não só o token entre backticks; e o docstring do fatiador deixou de prometer
+que "comments and field order irrelevant".
+
+**E a varredura alargada encontrou uma deriva real**: `split-audit.test.ts:625` afirmava que o bloco cego
+comporta no máximo **880** linhas, onde a autoridade congelada (`blindBlockLinesAtCollectionTarget`) diz
+**800** — 20 % de 4.000, e não 22 %. Corrigido nesta integração, em arquivo que nenhuma unidade podia tocar.
+É o melhor argumento a favor da unidade: a guarda cujo alcance foi consertado achou um defeito no primeiro
+lugar novo em que passou a olhar.
+
+### O que W5 consertou, e a mutação que ela mesma descobriu
+
+`entity_masking.py` passou a **impor partição** em vez de só cobertura, porque as duas condições que
+faltavam correspondem a defeitos reais de número publicado: um registro em duas classes é contado uma vez em
+`records` e pesado em duas médias, e uma linha de classe fora dos ids pontuados é média sobre registro que
+`records` não conta.
+
+`baseline_tfidf.py` passou a **renderizar a população canonicamente** antes de entregá-la ao `StratifiedKFold`
+— era a ordem dos argumentos que decidia as dobras, então dois operadores com os mesmos arquivos em ordem
+diferente publicavam números diferentes, e nada avisava.
+
+A reconferência achou o bloqueante que importa: a guarda tem **duas** condições (ordem e multiconjunto) e o
+sítio fixava **uma**. Capturar `received` depois da renderização tornava a segunda metade tautologia e a
+suíte ficava verde; combinada com a perda de uma linha, **toda AUC publicada passava a ser calculada sobre a
+população recebida menos uma linha, sempre a mesma em qualquer ordem** — logo invisível a qualquer bateria de
+permutação. Fechado por um teste de sítio com renderização **lacunar**.
+
+E o conserto descobriu uma terceira, que ninguém havia pedido: nada impunha o que acontece **entre** a guarda
+e o `folds.split`. Uma linha inserida ali entrega ao splitter arrays que a guarda nunca leu. Fechada fixando
+a posição por teste.
+
+### W4 — o agente morreu no meio, e o gate 3 revelou o que faltava
+
+O implementador de W4 **morreu por erro de API** (`Connection closed mid-response`) depois de escrever o
+código e antes de escrever os testes. O código estava na árvore, não commitado, com 49/49 verde — e foi
+exatamente por isso que ele quase passou.
+
+A cross-review que faltava mediu, em bytes com `sha256` conferido, que **o mecanismo não mordia**: trocar o
+corpo inteiro do parser por `return value as BenchmarkReport` deixava 49/49 verde; remover a chamada de cada
+um dos três sítios, um por vez, deixava 49/49 verde; tirar `releaseDecision` — o campo que **decide o ramo** —
+do selo deixava 49/49 verde. E `git grep BENCHMARK_REPORT` fora de `report.ts` devolvia **um** hit, que era um
+comentário: **zero testes nomeavam qualquer um dos oito códigos de recusa**.
+
+O sinal estava no lint: **sete erros de `no-unused-vars`** em `evidence-sanitizer.test.ts`, e os sete eram
+exatamente a caixa de ferramentas da matriz de forjas que nunca foi escrita — `parseBenchmarkReport`,
+`BenchmarkReportError`, `reportDigestOf` importados e não usados, mais `mundo` hasteado ao escopo de módulo
+com `perfilOpcoes` acrescentado só para alimentá-la. Dois comentários do arquivo **citavam a matriz como se
+ela existisse**.
+
+**A leitura de método, e é a mais importante desta onda:** um agente que morre depois de escrever o código e
+antes de escrever os testes deixa uma unidade que **passa a suíte e não tem guarda nenhuma**. Suíte verde não
+é evidência de que a guarda morde; foi o gate 3 que separou as duas coisas, e ele existe precisamente para
+isso. O lint vermelho foi o único sinal automático, e ele é fraco: sete `no-unused-vars` são fáceis de ler
+como ruído.
+
+### Custo de reversão
+
+Cada unidade é um conjunto de arquivos disjunto. W3 e W5 são reversíveis isoladamente. W4 tem o parser
+correto (os três casts saíram da produção, os oito códigos seguem a convenção da casa, e os doze caminhos
+que os comandos dereferenciam estão cobertos, inclusive `releaseDecision` por três vias) — o que faltava era
+a prova, e é ela que a integração escreveu.

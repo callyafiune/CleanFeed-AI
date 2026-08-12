@@ -816,28 +816,22 @@ describe("licence policy agreement across manifest, review and NOTICE", () => {
 
   it("the NOTICE's training-data list names every stocked source and no out-of-frame or blocked one", async () => {
     const notice = await readFile(resolve(MODEL_DIR, "NOTICE.md"), "utf8");
-    // Only the BULLET LIST under the heading, not the whole section: the prose below it
-    // names the excluded bases on purpose, saying they are out. Reading the section
-    // whole would make the assertion pass or fail on that sentence instead of on the
-    // list a consumer reads as this model's provenance.
-    const section = notice
-      .split(/\r?\n/u)
-      .slice(notice.split(/\r?\n/u).indexOf("## Dados de treino") + 1);
-    const end = section.findIndex((line) => line.startsWith("## "));
-    const bullets = section
-      .slice(0, end === -1 ? section.length : end)
-      .filter((line) => line.startsWith("- "));
-    expect(bullets.length).toBeGreaterThan(0);
-    const list = bullets.join("\n");
-    for (const entry of V3_HUMAN_SOURCE_INVENTORY) {
-      expect(list, entry.sourceId).toContain(`\`${entry.sourceId}\``);
-    }
-    for (const entry of [
-      ...OUT_OF_FRAME_HUMAN_SOURCES,
-      ...A1_BLOCKED_HUMAN_SOURCES,
-    ]) {
-      expect(list, entry.sourceId).not.toContain(`\`${entry.sourceId}\``);
-    }
+    const bullets = trainingDataBullets(notice);
+    expect(
+      trainingDataBulletProblems(
+        bullets,
+        trainingDataRoster(),
+        nameableLicenseIds(),
+      ),
+      "models/cleanfeed-ptbr-v1/NOTICE.md",
+    ).toEqual([]);
+    expect(
+      excludedSourceMentionProblems(bullets, [
+        ...OUT_OF_FRAME_HUMAN_SOURCES,
+        ...A1_BLOCKED_HUMAN_SOURCES,
+      ]),
+      "models/cleanfeed-ptbr-v1/NOTICE.md",
+    ).toEqual([]);
   });
 
   it("the NOTICE lists every registered licence with exactly its obligations", async () => {
@@ -878,6 +872,279 @@ describe("licence policy agreement across manifest, review and NOTICE", () => {
       .split(/\r?\n/u)
       .find((line) => line.includes("cc-by-nc-nd-4.0"));
     expect(ndLine).toMatch(/ND/u);
+  });
+});
+
+/**
+ * The BULLET LIST under `## Dados de treino`, and nothing else in the section: the prose
+ * below it names the excluded bases on purpose, saying they are out, so reading the section
+ * whole would decide the verdict on that sentence instead of on the list a consumer reads
+ * as this model's provenance.
+ */
+function trainingDataBullets(notice: string): string[] {
+  const lines = notice.split(/\r?\n/u);
+  const section = lines.slice(lines.indexOf("## Dados de treino") + 1);
+  const end = section.findIndex((line) => line.startsWith("## "));
+  return section
+    .slice(0, end === -1 ? section.length : end)
+    .filter((line) => line.startsWith("- "));
+}
+
+/**
+ * The keys the training-data bullets are accounted for BY — one per bullet, by the
+ * convention the NOTICE states above the list ("cada fonte humana nomeada pelo id que o
+ * manifesto de fontes usa").
+ *
+ * `odc-by-1.0` and `geracao-propria-v1` are literals rather than reads because both are
+ * LICENCE ids and neither is a source id: the module this suite reads source ids from
+ * (`V3_HUMAN_SOURCE_INVENTORY`) has no entry for either row. `odc-by-1.0` sits in
+ * `CORPUS_LICENSE_REGISTRY` as a licence and not as the thing the row is about, and
+ * `geracao-propria-v1` is declared in `benchmark/lab/*.py`, which vitest does not import. A
+ * rename therefore has to move both sides, the same cost `source-manifest.ts` already argues
+ * for the `sourceId`s.
+ */
+function trainingDataRoster(): string[] {
+  return [
+    ...V3_HUMAN_SOURCE_INVENTORY.map((entry) => entry.sourceId),
+    "odc-by-1.0",
+    "geracao-propria-v1",
+  ];
+}
+
+/**
+ * The licence ids a bullet may carry beside its source id without being accounted for by
+ * them.
+ *
+ * EVERY inventory entry's licence and not the first's, because `trainingDataRoster` maps
+ * every entry: read from one, a second source would be accounted for by its `sourceId` while
+ * the licence written next to it became a key no roster key accounts for. A registration
+ * whose `licenseId` is `null` has no public licence at all (which `humanSourceAdmissibility`
+ * refuses), so it contributes no nameable key.
+ */
+function nameableLicenseIds(): string[] {
+  return V3_HUMAN_SOURCE_INVENTORY.map((entry) => entry.licenseId).filter(
+    (licenseId): licenseId is string => licenseId !== null,
+  );
+}
+
+/**
+ * Whether the bullet list is CLOSED against the roster: as many bullets as keys, each key
+ * naming exactly one bullet, each bullet accounted for by exactly one key, and no other
+ * backticked key inside the bullets.
+ *
+ * Closure and not a blocklist of names, because the spellings a bullet could use for an
+ * excluded base are an infinite set — `- Corpus Carolina — CC BY-NC-SA 4.0` names one while
+ * containing no `sourceId` at all, and the token blocklist accepts it. What a reader counts
+ * is bullets, so bullets are what is counted.
+ *
+ * `alsoNameable` are keys a bullet may carry WITHOUT being accounted for by them (the
+ * licence beside the source id); they enter the `accounted` set of the FOURTH check — the
+ * one that reads every backticked token — without entering the count.
+ */
+function trainingDataBulletProblems(
+  bullets: readonly string[],
+  rosterKeys: readonly string[],
+  alsoNameable: readonly string[],
+): string[] {
+  const problems: string[] = [];
+  if (bullets.length !== rosterKeys.length) {
+    problems.push(
+      `${bullets.length} bullets against a roster of ${rosterKeys.length}`,
+    );
+  }
+  for (const key of rosterKeys) {
+    const naming = bullets.filter((bullet) => bullet.includes(`\`${key}\``));
+    if (naming.length !== 1) {
+      problems.push(`\`${key}\` is named by ${naming.length} bullets, not 1`);
+    }
+  }
+  for (const bullet of bullets) {
+    const keys = rosterKeys.filter((key) => bullet.includes(`\`${key}\``));
+    if (keys.length !== 1) {
+      problems.push(
+        `a bullet is accounted for by ${keys.length} roster keys, not 1: ${bullet}`,
+      );
+    }
+  }
+  const accounted = new Set([...rosterKeys, ...alsoNameable]);
+  for (const bullet of bullets) {
+    for (const match of bullet.matchAll(/`([^`]+)`/gu)) {
+      if (!accounted.has(match[1])) {
+        problems.push(
+          `a bullet names \`${match[1]}\`, which no roster key accounts for`,
+        );
+      }
+    }
+  }
+  return problems;
+}
+
+/**
+ * The excluded ids the list names by TOKEN.
+ *
+ * REDUNDANT TODAY, and redundant by construction of the roster rather than by luck: no
+ * excluded `sourceId` is a roster key or a nameable licence, so an excluded id written
+ * between backticks is a key nothing accounts for and the closure's fourth check already has
+ * it. "Refuses every excluded id appended to a bullet that stays accounted for" reads both
+ * verdicts over every excluded id, which is where the redundancy is held rather than assumed.
+ *
+ * Kept as the second line for the state that ends the redundancy: an excluded id that enters
+ * the roster or the nameable licences — the shape a re-admission written on one side only
+ * produces — is accounted for, the closure goes silent, and this is then the only read that
+ * sees it. "Refuses an excluded id the roster itself accounts for" is that input.
+ */
+function excludedSourceMentionProblems(
+  bullets: readonly string[],
+  excluded: readonly { readonly sourceId: string }[],
+): string[] {
+  const list = bullets.join("\n");
+  return excluded
+    .filter((entry) => list.includes(`\`${entry.sourceId}\``))
+    .map((entry) => `the training-data list names \`${entry.sourceId}\``);
+}
+
+describe("the NOTICE's training-data list is closed against the roster", () => {
+  // Every refusal below mutates the REAL NOTICE in memory. A synthetic document would
+  // prove the criterion and nothing about the guard finding the real bullets — the
+  // heading spelling, the `- ` syntax and the section boundary are what it keys on. Each
+  // case also records what the token blocklist alone does with the same input.
+  const realBullets = async (): Promise<string[]> =>
+    trainingDataBullets(
+      await readFile(resolve(MODEL_DIR, "NOTICE.md"), "utf8"),
+    );
+  const excluded = (): { readonly sourceId: string }[] => [
+    ...OUT_OF_FRAME_HUMAN_SOURCES,
+    ...A1_BLOCKED_HUMAN_SOURCES,
+  ];
+  const closureOf = (bullets: readonly string[]): string[] =>
+    trainingDataBulletProblems(
+      bullets,
+      trainingDataRoster(),
+      nameableLicenseIds(),
+    );
+
+  it("accepts the real NOTICE unmutated", async () => {
+    const bullets = await realBullets();
+    expect(bullets.length).toBe(trainingDataRoster().length);
+    expect(closureOf(bullets)).toEqual([]);
+    expect(excludedSourceMentionProblems(bullets, excluded())).toEqual([]);
+  });
+
+  it("refuses an excluded base added under its published NAME, which carries no token", async () => {
+    const bullets = [
+      ...(await realBullets()),
+      "- Corpus Carolina — CC BY-NC-SA 4.0",
+    ];
+    expect(closureOf(bullets)).toContain("4 bullets against a roster of 3");
+    // The blocklist this replaced accepts it: the name is not the id.
+    expect(excludedSourceMentionProblems(bullets, excluded())).toEqual([]);
+  });
+
+  it("refuses an excluded base added under a licence id from the registry", async () => {
+    const bullets = [
+      ...(await realBullets()),
+      "- Corpus Carolina — `cc-by-nc-sa-4.0`",
+    ];
+    expect(closureOf(bullets)).toEqual(
+      expect.arrayContaining([
+        "4 bullets against a roster of 3",
+        "a bullet names `cc-by-nc-sa-4.0`, which no roster key accounts for",
+      ]),
+    );
+    expect(excludedSourceMentionProblems(bullets, excluded())).toEqual([]);
+  });
+
+  it("refuses a stocked source SWAPPED for an excluded one, count intact", async () => {
+    const bullets = (await realBullets()).map((bullet) =>
+      bullet.includes("`src_wikipedia_pt`")
+        ? "- Corpus Carolina — judiciário, domínio universitário e rede social"
+        : bullet,
+    );
+    expect(bullets.length).toBe(trainingDataRoster().length);
+    expect(closureOf(bullets)).toContain(
+      "`src_wikipedia_pt` is named by 0 bullets, not 1",
+    );
+  });
+
+  it("refuses every excluded id appended to a bullet that stays accounted for", async () => {
+    // ALL THREE, because this is the measurement behind "the blocklist is redundant today":
+    // for each excluded id the closure ALSO refuses it, since no excluded id is a roster key
+    // or a nameable licence and the fourth check reads every backticked token. One id would
+    // show it for one id.
+    const base = await realBullets();
+    for (const entry of excluded()) {
+      const bullets = base.map((bullet) =>
+        bullet.includes("`src_wikipedia_pt`")
+          ? `${bullet} — sem \`${entry.sourceId}\``
+          : bullet,
+      );
+      expect(bullets.length).toBe(trainingDataRoster().length);
+      expect(closureOf(bullets), entry.sourceId).toContain(
+        `a bullet names \`${entry.sourceId}\`, which no roster key accounts for`,
+      );
+      expect(
+        excludedSourceMentionProblems(bullets, excluded()),
+        entry.sourceId,
+      ).toEqual([`the training-data list names \`${entry.sourceId}\``]);
+    }
+  });
+
+  it("refuses an excluded id the roster itself accounts for, which the closure cannot see", () => {
+    // The one input where the blocklist is not redundant, and the reason it stays: the
+    // excluded id IS a roster key, so its bullet is accounted for, the count matches and no
+    // backticked token is unaccounted — the closure has nothing to say. That is the shape of
+    // a re-admission written into `V3_HUMAN_SOURCE_INVENTORY` without being taken out of the
+    // excluded lists, which is one edit and not two.
+    const readmitted = excluded()[0].sourceId;
+    const bullets = [`- fonte readmitida — \`${readmitted}\``];
+    expect(trainingDataBulletProblems(bullets, [readmitted], [])).toEqual([]);
+    expect(excludedSourceMentionProblems(bullets, excluded())).toEqual([
+      `the training-data list names \`${readmitted}\``,
+    ]);
+  });
+
+  it("refuses a bullet accounted for by no roster key while the count still matches", () => {
+    // The count and the per-key check can BOTH pass while one bullet carries two keys and
+    // another carries none — a merged line plus a name-only bullet makes exactly that shape,
+    // and it is the shape that puts an unaccounted base in the list. Two bullets, so
+    // restricting this loop to one case is red as well.
+    expect(
+      trainingDataBulletProblems(
+        ["- duas — `k_one`, `k_two`", "- Corpus Carolina — CC BY-NC-SA 4.0"],
+        ["k_one", "k_two"],
+        [],
+      ),
+    ).toEqual([
+      "a bullet is accounted for by 2 roster keys, not 1: - duas — `k_one`, `k_two`",
+      "a bullet is accounted for by 0 roster keys, not 1: - Corpus Carolina — CC BY-NC-SA 4.0",
+    ]);
+  });
+
+  it("reports every excluded id the list names, not only the first", () => {
+    // Over the real NOTICE none of the three tokens appears, so restricting the loop to
+    // one entry stays green there. This fixture is what makes the restriction red.
+    const roster = excluded();
+    expect(roster.length).toBeGreaterThan(1);
+    const bullets = roster.map(
+      (entry, index) => `- fonte ${index} — \`${entry.sourceId}\``,
+    );
+    expect(excludedSourceMentionProblems(bullets, roster)).toEqual(
+      roster.map(
+        (entry) => `the training-data list names \`${entry.sourceId}\``,
+      ),
+    );
+  });
+
+  it("reports every roster key the list fails to name, not only the first", () => {
+    // `V3_HUMAN_SOURCE_INVENTORY` holds ONE entry, so restricting the roster loop is a
+    // no-op against production. A two-key roster is what makes it red.
+    const bullets = ["- primeira — `k_one`"];
+    expect(trainingDataBulletProblems(bullets, ["k_one", "k_two"], [])).toEqual(
+      [
+        "1 bullets against a roster of 2",
+        "`k_two` is named by 0 bullets, not 1",
+      ],
+    );
   });
 });
 

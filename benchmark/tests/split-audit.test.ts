@@ -622,7 +622,7 @@ describe("auditBlockedSplit", () => {
 
     // The count is PUBLISHED and the split still freezes. As a failure it would be
     // unsatisfiable by any corpus the repository can seal: the frozen composition is 4000
-    // human records and the blind block is 20% of it, so `test` holds at most 880 against
+    // human records and the blind block is 20% of it, so `test` holds at most 800 against
     // a threshold of 2000. It would also put a power gate inside the audit, which this
     // module's contract forbids. The sufficiency comparison lives outside it, against the
     // pre-registered floor, and counts independent clusters per quota cell.
