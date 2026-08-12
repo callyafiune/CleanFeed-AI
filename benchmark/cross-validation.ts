@@ -28,10 +28,21 @@
 //     `sourceMaterialBatch` (the acquisition event) are not union axes: one value of
 //     either covers a whole quota cell, so unioning on them would make the cell a
 //     single indivisible atom and leave nothing to cross-validate. Both therefore
-//     span every fold freely. They carry dependence BETWEEN cells, and the audit
-//     publishes them as an inventory per partition; what makes rows inside one cell
-//     dependent — `author`, `source`, `nearDuplicate`, the generation axes and
-//     lineage — is in the list above.
+//     span every fold — TRIVIALLY, and that qualifier is the whole of it. This frame
+//     declares one quota cell and one stocked snapshot, so across the `human` class
+//     each of the two carries exactly ONE identity, and on every generated row both
+//     are `notApplicable`. An axis with one identity crosses every cut whatever the
+//     folds do, so their crossing reports nothing about the fold construction and may
+//     not be cited as though it did.
+//     The dependence they are REGISTERED to carry is the one BETWEEN acquisitions
+//     (`PREREGISTRATION_V4.connectivity.dependencyAxis`, published with
+//     `splitUnionsOnDependencyAxis: false`), and under this frame that relation has no
+//     live pair to hold between — one snapshot, one acquisition event. Readmitting a
+//     second cell or a second snapshot is what activates it, and until then the
+//     registration is what carries it and not the folds. The audit publishes both axes
+//     as an inventory per partition. What makes rows inside one cell dependent —
+//     `author`, `source`, `nearDuplicate`, the generation axes and lineage — is in the
+//     list above, and under this frame that is the leg carrying the weight.
 //   * The lineage half of that sentence has a CONDITION, and it is stated because
 //     the fold construction is not evidence of sampling independence (R7):
 //     `humanSeed` and `derivationRoot` are PARENT LINKAGE, so they union a row with

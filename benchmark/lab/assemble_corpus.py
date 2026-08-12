@@ -2202,9 +2202,20 @@ class UnsplittableCorpus(RuntimeError):
 # sobre o corpo todo-gerado os dois sao `notApplicable` em toda linha e sao inertes la pela
 # mesma razao vacuosa que `extractionRun`. A falha e aritmetica e nao
 # gosto: ha UM evento de aquisicao por fonte e um estrato por celula de quota, entao
-# qualquer um dos dois une a celula inteira num componente indivisivel — fracoes humanas
-# em multiplos de ~25%, `dev` de 0,05 inalcancavel, e um piso contado em componentes
-# lendo 1 por celula para sempre.
+# qualquer um dos dois une a celula inteira num componente indivisivel. A moldura declara
+# UMA celula, entao esse componente E a classe `human` inteira: fracao de 100% dela, `dev`
+# de 0,05 inalcancavel, a recusa saindo pelo ramo do MAIOR componente, e um piso contado em
+# componentes lendo 1 por celula para sempre.
+#
+# A aritmetica de quatro celulas — fracoes humanas em multiplos de ~25% — e CONTRAFACTUAL:
+# moldura nenhuma declara quatro. Ela fica porque E o argumento, nao um exemplo dele: mais
+# celulas suavizam as fracoes sem reparar nenhuma, entao os dois eixos ficam fora da uniao em
+# qualquer moldura. O RAMO da recusa muda com n, porem. Com n celulas a fracao e 1/n: em
+# n = 2 ela ainda excede o maior alvo mais a tolerancia (0,47) e a recusa e a do maior; de
+# n = 3 a n = 14 ela cabe no maior e excede o menor alvo mais a tolerancia (0,07), entao a
+# recusa passa a ser a do MENOR componente; em n = 15 (6,67%) este preflight nao recusa mais.
+# Nao recusar NAO e viabilidade: `assert_components_can_fill_five_partitions` decide duas
+# condicoes NECESSARIAS e declara que a atribuicao completa e soma de subconjuntos.
 #
 # Both lists are a COPY of the ones benchmark/split.ts declares, and a copy that drifts accepts
 # an axis the splitter unions on or refuses one it ignores.

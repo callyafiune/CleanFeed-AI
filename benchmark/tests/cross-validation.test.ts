@@ -388,6 +388,49 @@ describe("selectCandidateSummary", () => {
 });
 
 describe("clusterRootsOf", () => {
+  // The module header names the relation `domainSource` and `sourceMaterialBatch` are
+  // REGISTERED to carry — the one between acquisitions — instead of a cell-to-cell one,
+  // which under a one-cell frame has no pair to hold between. The retired phrasing is
+  // avoided here on purpose: the sweep in benchmark/tests/split-audit.test.ts refuses it in
+  // ANY casing, and prose that quotes it to reject it would be reported as a site. A named
+  // field is
+  // read here so that sentence cannot go stale while the suite stays green: a frame
+  // that renamed its dependency axis, or that unioned on it, would leave the header
+  // describing a registration the policy no longer makes.
+  it("names the registered dependence the header defers to, read from the policy", () => {
+    expect(PREREGISTRATION_V4.connectivity.dependencyAxis).toBe(
+      "sourceMaterialBatch",
+    );
+    expect(PREREGISTRATION_V4.connectivity.splitUnionsOnDependencyAxis).toBe(
+      false,
+    );
+    // And the axis is absent from the union list, which is what makes "they span every
+    // fold" true rather than merely asserted: an axis the splitter grouped by could not
+    // span a fold at all.
+    expect(
+      PREREGISTRATION_V4.connectivity.splitUnionAxes as readonly string[],
+    ).not.toContain(PREREGISTRATION_V4.connectivity.dependencyAxis);
+  });
+
+  it("reads the TWO premises the header rests on: one quota cell and one stocked snapshot", () => {
+    // The header says "This frame declares one quota cell and one stocked snapshot", and
+    // everything it concludes from that — one identity per axis across `human`, a registered
+    // relation with no live pair, readmission as what activates it — is false the moment
+    // either count moves. Neither premise was read by anything, so the paragraph could have
+    // gone stale with the whole suite green.
+    //
+    // The reach, stated rather than overclaimed: these are DOCUMENTATION pins, not the
+    // discriminating guard. An incomplete amendment never reaches them — the parser refuses a
+    // frame whose json and frozen literals disagree, and measured, a two-cell json plus a
+    // two-cell `FROZEN_QUOTA_AXIS_CELLS` still fails to import because other frozen literals
+    // of the same block reject it first. What these two assertions buy is that a COMPLETE
+    // amendment, one that satisfied every literal, still cannot land without this paragraph
+    // being read: the sentence is handed to whoever moved the frame instead of surviving as
+    // prose about a frame that is gone.
+    expect(PREREGISTRATION_V4.preRegistration.quotaAxis.cells).toHaveLength(1);
+    expect(PREREGISTRATION_V4.humanSources.snapshots).toHaveLength(1);
+  });
+
   it("atomises by the CONNECTED COMPONENT of two axes, not by either axis alone", () => {
     // On `isolatedChain` the ONLY relation between row 0 and row 2 is the two-hop
     // chain: author joins 0-1, source joins 1-2, and every other axis is per-row.

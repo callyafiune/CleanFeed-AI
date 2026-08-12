@@ -369,9 +369,35 @@ describe("preregistration-v4.json", () => {
       "generatorVersion",
       "promptTemplate",
     ]);
-    expect(policy.connectivity.independentUnit).toBe(
-      "origin-document-components",
+    // The SAME value `preRegistration.powerInventoryUnit` is asserted to hold above,
+    // and one constant stands behind both `literal` calls in the parser, so a policy
+    // outside this spelling is refused at PARSE and never reaches an assertion.
+    expect(policy.connectivity.independentUnit).toBe("connected-components");
+  });
+
+  // The mirror the parser cannot hold either, and for the same reason as the union
+  // axes below: benchmark/split-audit.ts imports `PREREGISTRATION_V4`, so importing
+  // `REPORTED_GROUP_AXES` back into the parser would be a cycle. `frozenList` pins
+  // this field against a literal in the parser's OWN file, which is a pin and not a
+  // mirror — it cannot see the audit's list move.
+  //
+  // Both sides are READ, neither retyped. The two typed anchors that already exist
+  // (the restatement above and the one in split-audit.test.ts) leave exactly one leg
+  // uncovered between them: one side moving TOGETHER WITH its own anchor keeps both
+  // green. This is that leg.
+  //
+  // The consequence, which is not what is asserted: `groupAxisRole` in
+  // benchmark/split-audit.ts would call `namedReported` a different set from the one
+  // the sealed artifact publishes with `connectivity.sharedValue: false`.
+  it("declares exactly the reported axes the audit takes responsibility for", () => {
+    // Non-vacuity FIRST: two empty lists satisfy the equality by executing nothing,
+    // the shape split-audit.test.ts already names in writing.
+    expect(PREREGISTRATION_V4.connectivity.reportedAxes.length).toBeGreaterThan(
+      0,
     );
+    expect([...PREREGISTRATION_V4.connectivity.reportedAxes]).toEqual([
+      ...REPORTED_GROUP_AXES,
+    ]);
   });
 
   // The mirror the parser cannot hold: the splitter READS this file, so importing

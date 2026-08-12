@@ -45,7 +45,7 @@
     "diagnosticAxes": [
       "extractionRun"
     ],
-    "independentUnit": "origin-document-components",
+    "independentUnit": "connected-components",
     "reportedAxes": [
       "domainSource",
       "sourceMaterialBatch",

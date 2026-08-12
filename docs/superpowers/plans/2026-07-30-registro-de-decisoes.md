@@ -7379,3 +7379,99 @@ bateria de mutação do fechamento" e a de R1), o que é o contraste que torna a
 
 **Vence:** permanece declarado. Não há dono de conserto, porque não há conserto possível — o que há é o
 registro de que a Fase 6 não pode citar aquela bateria como evidência.
+
+---
+
+## A onda B2: as três últimas de pré-publicação, e a prosa que descrevia um mundo que não existe (2026-08-12)
+
+Fecha a fila que a auditoria de 2026-08-10 levantou. Três defeitos numa unidade só, porque compartilham
+`preregistration-v4.{json,ts}` e `split-audit.ts`.
+
+### (1) A aritmética de quatro células é CONTRAFACTUAL, e agora diz que é
+
+Quatro sítios de prosa selada descreviam frações humanas "em múltiplos de ~25 %" — a aritmética de uma
+moldura de **quatro** células — enquanto a moldura declara **uma**. O conserto não foi apagar: a aritmética
+de quatro células é o argumento pelo qual `domainSource` e `sourceMaterialBatch` ficam fora da união sob
+**qualquer** moldura, e apagá-la apagaria a razão. Ela ficou **rotulada como contrafactual**, e o desenho
+mediu duas coisas que nenhum dos sítios dizia:
+
+- **o ramo da recusa se move com a contagem.** Com n células a fração é 1/n, que a partir de **n = 3** cai
+  sob 0,47 e a recusa passa a ser a do **MENOR** componente, não a do maior;
+- **"mais células só suavizam sem reparar" tem limite**: em **n = 15** (6,67 %, sob 0,07) o preflight **para
+  de recusar**.
+
+E parar de recusar **não é viabilidade** — o preflight decide duas condições necessárias e declara que não
+decide a atribuição completa, que é soma de subconjuntos. Essa distinção teve de ser corrigida **dentro da
+própria unidade**: a revisão pegou o resíduo declarado afirmando que a frase do modelo "é FALSA a partir de
+15 células", quando o medido é "o preflight para de recusar" — a mesma inferência que a unidade proíbe em
+três sítios. Reescrito: o resíduo é o **limite ausente**, não uma alegação refutada.
+
+**`cross-validation.ts` era caso separado, e estava simplesmente ERRADO.** "They carry dependence BETWEEN
+cells" não é contrafactual: com uma célula não existe par de células entre as quais uma relação valha. A
+relação que esses dois eixos estão **registrados** a carregar tem outro nome —
+`connectivity.dependencyAxis`, a dependência **entre aquisições** — e sob esta moldura ela também não tem
+par vivo (um snapshot, um evento de aquisição). A prosa nova diz isso, e a revisão cobrou o que faltava: as
+**duas premissas** da frase (uma célula, um snapshot) não eram lidas por nada, então o parágrafo podia
+envelhecer com a suíte verde. Agora são lidas — e o alcance está declarado em vez de exagerado: são pinos de
+**documentação**, não a guarda discriminante, porque uma emenda incompleta é recusada antes pelos literais
+congelados do parser (medido: json de duas células mais `FROZEN_QUOTA_AXIS_CELLS` de duas ainda falha ao
+importar).
+
+### (2) A unidade de independência passa a ter UMA grafia
+
+`connectivity.independentUnit: "origin-document-components"` e
+`preRegistration.powerInventoryUnit: "connected-components"` nomeavam a mesma grandeza no mesmo arquivo
+selado, a primeira pinada por `literal()`. **Unificado em `connected-components`**, e a razão é medida:
+componentes e documentos de origem **divergem**. Em `composition-gate.test.ts`, `independentUnits` é **1**
+contra `originDocuments` **2** — o componente fecha sobre os cinco eixos de `GROUP_KEYS`, então qualificá-lo
+por um deles convida a ler a unidade como **uma por documento**, que **sobredeclara poder** na direção que
+`composition-gate.ts` recusa por escrito.
+
+Costurar as duas grafias como sinônimas foi **descartado por medição**, não por gosto: uma asserção
+declarando-as a mesma unidade deixaria viva a grafia que sobredeclara.
+
+### (3) A costura de igualdade que faltava
+
+`reportedAxes` (política) e `REPORTED_GROUP_AXES` (auditoria) não podiam ser comparados por import — o
+`split-audit.ts` importa a política, então o caminho inverso é ciclo. O selado era pinado contra o literal do
+**próprio** arquivo, e as duas listas tinham **duas âncoras e nenhuma costura**: acrescentar um eixo a uma e
+atualizar só a âncora dela deixava as duas divergentes com a suíte inteira verde. Medido nesta unidade que
+continua sendo **costura ausente** e não divergência viva — as duas coincidem hoje, agora com quatro nomes
+depois de U4. O modelo do conserto é a costura que já existia para `splitUnionAxes` ↔ `GROUP_KEYS`.
+
+### O que a revisão pegou, e é a lição desta onda
+
+Três bloqueantes, e os três eram **a unidade cometendo o defeito que ela veio consertar**:
+
+1. a guarda que refuta a grafia retirada **não tinha controle positivo sobre o próprio padrão** — a
+   não-vacuidade oferecida exercitava um RegExp **diferente**, então um typo a desarmaria em silêncio e o
+   `toEqual([])` ficaria vacuamente verde para sempre. E o padrão era **sensível a caixa** sobre uma grafia,
+   deixando a mesma alegação falsa passar em minúscula;
+2. a prosa mais dependente de moldura da unidade tinha **as duas premissas sem leitor**;
+3. o resíduo declarado **deduzia** "a frase é falsa" de "o preflight para de recusar".
+
+Ao fechar (1), a guarda insensível a caixa **achou um sítio real**: um comentário de
+`cross-validation.test.ts` que citava a grafia retirada justamente para rejeitá-la. É a armadilha clássica —
+a varredura que proíbe uma frase pega o texto que explica por que ela é proibida. O remédio foi a menção
+deixar de usar a grafia exata, com a razão escrita ao lado, em vez de uma exceção na varredura: exceção é
+buraco em que qualquer sítio futuro se esconde.
+
+### Integração
+
+`evaluatorDigest`: `8f492344…` → `d4a294f780f86bfdb42ec767ee6bc93d89cb534c09bac9e0cc72fa18ce2a0ebc`.
+`SEALED_POLICY_SHA256`: `54122b27…` → `1b392d3b9cb731c562448eadeab398be4308de820f248a4c9a2e454347a61ae8`
+— o pino do lab, que a unidade declarou em vez de tocar, e sem o qual `test_backbone_policy.py` iria a 41
+falhas.
+
+Mais três emendas de `references.md` que a unidade propôs e não podia aplicar, e que **a bibliografia devia
+ao código**: § 2.2i dizia que `GROUP_KEYS` nomeia **sete** eixos (são **cinco** desde U4); a aritmética de
+~25 % era afirmada como fato do presente e agora é rotulada contrafactual com a tabela n → veredito; e
+entrou § 2.2j sobre a unidade de independência com uma só grafia, com a divergência 1 contra 2 medida e um
+"sem precedente" declarado para a decisão de nomenclatura.
+
+Medido em rodada ÚNICA, árvore quieta: vitest **172 arquivos / 3.039 testes** verde; pytest do lab
+**646 testes / 292 subtests** verde; `tsc` limpo; `prettier` limpo; lint nos mesmos **12** pré-existentes;
+`docs:check` 207/207; `git ls-files --eol` sem CRLF.
+
+**Com esta onda, as 23 bloqueantes que a auditoria confirmou estão pagas.** Todas devem rodada de codex: a
+etapa 3 foi do Fable em todas, e rodada do Fable não fecha dívida de codex.

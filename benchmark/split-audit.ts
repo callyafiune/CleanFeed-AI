@@ -102,9 +102,22 @@ export const DECLARED_GROUP_AXES: ReadonlyMap<string, readonly GroupAxis[]> =
  *
  * `domainSource` and `sourceMaterialBatch` are the MATERIAL pair. There is one
  * acquisition event per source and one stratum per quota cell, so unioning on either
- * would make a whole cell a single indivisible component: the human partition
- * fractions become multiples of ~25%, `dev`'s 0.05 is unreachable, and a unit floor
- * counted in components reads 1 per cell forever.
+ * would make a whole cell a single indivisible component. The frame declares ONE cell
+ * (`PREREGISTRATION_V4.preRegistration.quotaAxis.cells`), so that component IS the
+ * whole `human` class: its fraction is 100% of the class, `dev`'s 0.05 is
+ * unreachable, the preflight refuses on its LARGEST-component branch, and a unit
+ * floor counted in components reads 1 per cell forever.
+ *
+ * Human partition fractions in multiples of ~25% is the FOUR-cell arithmetic, and it
+ * is COUNTERFACTUAL — no frame declares four cells. It stays rather than being
+ * deleted because it is the reason these two axes are excluded under ANY frame and
+ * not only this one: more cells soften the fractions without repairing any. The
+ * refusing branch moves with the count, though. With n cells each fraction is 1/n,
+ * which falls UNDER the largest target plus tolerance (0.47) from n = 3 on, so from
+ * there the refusal is the SMALLEST component's and not the largest one's; it stops
+ * at n = 15 (6.67%, under the smallest target plus tolerance of 0.07). Not being
+ * refused is not feasibility: the preflight decides two NECESSARY conditions, and the
+ * complete assignment is subset sum, which it declares it does not decide.
  *
  * `generatorVersion` and `promptTemplate` are the APPARATUS pair, and they identify a
  * recipe rather than a sampling unit — `EXPOSURE_IDENTITY_AXES`

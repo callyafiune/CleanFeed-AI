@@ -1,3 +1,7 @@
+import { readdir, readFile } from "node:fs/promises";
+import { dirname, resolve } from "node:path";
+import { fileURLToPath } from "node:url";
+
 import { describe, expect, it } from "vitest";
 
 import {
@@ -2169,5 +2173,317 @@ describe("the temporal chain excludes train, and that is load-bearing", () => {
       audit.reasons.some((reason) => /strictly newer/.test(reason)),
       audit.reasons.join(" | "),
     ).toBe(true);
+  });
+});
+
+// ── The prose of the one-cell frame, swept over the whole bench ────────────────────
+
+const BENCHMARK_DIR = resolve(dirname(fileURLToPath(import.meta.url)), "..");
+const REPO_ROOT = resolve(BENCHMARK_DIR, "..");
+
+/**
+ * Directory names the sweep refuses to enter.
+ *
+ * `data` is skipped BY NAME and that is the load-bearing one: the sealed corpus and the
+ * held-out labels live under it and no test may open them. The walk lists the children of
+ * a directory in order to skip this name, so it reads the NAME one level above and never
+ * descends. It holds no `.ts` and no `.py`, so skipping it does not move the reach below.
+ *
+ * The other four are not this project's source. One dependency tree installed under
+ * `benchmark/` puts thousands of `.d.ts` into the roster, and a reach fixed at a number
+ * stops meaning anything the moment that happens.
+ *
+ * DUPLICATION, declared: benchmark/tests/dataset-manifest.test.ts walks the same tree with
+ * the same exclusions for a different set of patterns. Two walkers with two exclusion
+ * lists can drift into measuring different sets — one concept spelled twice, which is the
+ * defect this same unit repairs for the unit of independence. Folding this roster of
+ * patterns into that file's `RATIFIED_COUNT_PROSE` is what removes the second walker.
+ */
+const SWEPT_SKIPPED_DIRECTORIES: readonly string[] = [
+  "data",
+  "node_modules",
+  "__pycache__",
+  ".pytest_cache",
+  ".ruff_cache",
+];
+
+/**
+ * The reach of the sweep, as a NUMBER and split by extension.
+ *
+ * Fixed rather than held by containment because the failure being guarded against is a
+ * walker that stops reaching files: a sweep whose verdict is "no module states the retired
+ * phrasing" is satisfied by reaching no modules at all, and every leg below inherits that
+ * hole. Split by extension because losing one extension halves the sweep in silence — the
+ * `.py` site of the four-cell arithmetic is under benchmark/lab, and a walk that kept only
+ * `.ts` would still report 103 files and read none of it.
+ *
+ * A new module under `benchmark/` turns this red. That is the intended price: the number
+ * moving is then a decision someone writes down.
+ */
+const SWEPT_REACH = { total: 141, typescript: 103, python: 38 } as const;
+
+/** A line break inside a comment, as a single space. */
+const COMMENT_BREAK = /\r?\n[ \t]*(?:\/\/+|\*)?[ \t]*/gu;
+
+/**
+ * The four-cell arithmetic, and the two phrasings of the dependence relation.
+ *
+ * Every pattern here is assembled or shaped so that it does NOT match its own source. A
+ * sweep written inside a file it sweeps would otherwise report that file as a site of the
+ * prose it is checking, permanently, and the only fixes available would be to exempt this
+ * file — a hole any future site could hide in — or to stop naming what is matched.
+ */
+const QUARTER_ARITHMETIC = /~\s?25\s?%/u;
+// Case-INSENSITIVE, and that is the whole of the reach: the claim this refuses is false in
+// any casing, so a pattern anchored on one spelling would let the same sentence in
+// lower case through. `i` cannot make it match its own source either — the parts are joined
+// at runtime, so the phrase never appears as prose in this file.
+const RETIRED_CELL_DEPENDENCE = new RegExp(
+  ["BETWEEN", "cells"].join(" "),
+  "iu",
+);
+const REGISTERED_ACQUISITION_DEPENDENCE = new RegExp(
+  ["BETWEEN", "acquisitions"].join(" "),
+  "u",
+);
+
+/**
+ * The sites that carry the four-cell arithmetic, as a CLOSED set.
+ *
+ * Closed in both directions on purpose. A module that starts stating the arithmetic and is
+ * not here is unmarked prose nobody reads; a module here that STOPS stating it has had the
+ * counterfactual deleted, and deleting it removes the reason `domainSource` and
+ * `sourceMaterialBatch` are excluded from the union under any frame — the argument is that
+ * more cells soften the fractions without repairing them, and it cannot be made without
+ * the arithmetic it is about.
+ */
+const QUARTER_ARITHMETIC_SITES: readonly string[] = [
+  "benchmark/lab/assemble_corpus.py",
+  "benchmark/preregistration-v4.ts",
+  "benchmark/split-audit.ts",
+  "benchmark/split.ts",
+];
+
+/**
+ * The site of the arithmetic that is the MODEL, held by its sentence instead of by a token.
+ *
+ * benchmark/split.ts already reads the one-cell frame correctly and the other three sites
+ * follow it. Requiring the label of it would leave its sentence free to be rewritten
+ * around the label; pinning the sentence means a rewrite has to be decided rather than
+ * derived, so a site nobody may edit does not become a site nobody reads.
+ *
+ * RESIDUE, unfixed and held by this very phrase: that sentence states that more cells only
+ * soften the arithmetic without repairing it, with NO upper bound, and what is MEASURED is
+ * narrower than "false" — from 15 cells on the preflight stops REFUSING (1/15 is 6.67 %,
+ * under the smallest target plus tolerance). Whether it is then REPAIRED is a different
+ * question and this suite does not answer it: not being refused is not feasibility, because
+ * the preflight decides two NECESSARY conditions and the complete assignment is subset sum,
+ * which it declares it does not decide. So the residue is the missing BOUND, not a refuted
+ * claim. The other three sites carry that bound; this one states the sentence unqualified.
+ */
+const MODEL_SITE = "benchmark/split.ts";
+const MODEL_SENTENCE =
+  "More cells only soften the arithmetic without repairing it — four would read ~" +
+  "25% each, still above `dev`'s target plus tolerance.";
+
+/** The label the three following sites must carry, per language. */
+const COUNTERFACTUAL_LABEL = /counterfactual/iu;
+const COUNTERFACTUAL_LABEL_PY = /contrafactual/iu;
+
+/** Every `.ts` and `.py` under `start`, with the skipped names never descended into. */
+async function walkSwept(
+  root: string,
+  start: string,
+  skip: readonly string[] = SWEPT_SKIPPED_DIRECTORIES,
+): Promise<string[]> {
+  const files: string[] = [];
+  const pending = [start];
+  while (pending.length > 0) {
+    const relative = pending.pop() as string;
+    for (const entry of await readdir(resolve(root, relative), {
+      withFileTypes: true,
+    })) {
+      if (entry.isDirectory()) {
+        if (!skip.includes(entry.name)) {
+          pending.push(`${relative}/${entry.name}`);
+        }
+        continue;
+      }
+      if (entry.name.endsWith(".ts") || entry.name.endsWith(".py")) {
+        files.push(`${relative}/${entry.name}`);
+      }
+    }
+  }
+  return files.sort();
+}
+
+/**
+ * The maximal runs of consecutive comment lines in a body, each normalised to one line.
+ *
+ * The RUN and not the file is the unit the label is required in: a label anywhere in a
+ * 2000-line module would satisfy a file-level check while the paragraph stating the
+ * arithmetic stayed unmarked. A run is MAXIMAL so that a paragraph break inside one
+ * comment block — a bare `*` or `#` line, itself a comment line — does not split the
+ * marking away from the sentence it marks.
+ *
+ * Normalising the margin is what lets a sentence be matched at all: prose that wraps
+ * across `//` or ` * ` is one sentence to a reader and several lines to a pattern.
+ */
+function commentRuns(body: string): string[] {
+  const runs: string[] = [];
+  let current: string[] = [];
+  const flush = (): void => {
+    if (current.length > 0) {
+      runs.push(current.join("\n").replaceAll(COMMENT_BREAK, " "));
+      current = [];
+    }
+  };
+  for (const line of body.split(/\r?\n/u)) {
+    const trimmed = line.trimStart();
+    if (
+      trimmed.startsWith("//") ||
+      trimmed.startsWith("#") ||
+      trimmed.startsWith("/*") ||
+      trimmed.startsWith("*")
+    ) {
+      current.push(line);
+      continue;
+    }
+    flush();
+  }
+  flush();
+  return runs;
+}
+
+async function sweptModules(): Promise<
+  { relativePath: string; body: string; runs: string[] }[]
+> {
+  const files = await walkSwept(REPO_ROOT, "benchmark");
+  return Promise.all(
+    files.map(async (relativePath) => {
+      const body = await readFile(resolve(REPO_ROOT, relativePath), "utf8");
+      return { relativePath, body, runs: commentRuns(body) };
+    }),
+  );
+}
+
+describe("the frame has ONE cell, and the prose says which arithmetic is counterfactual", () => {
+  it("pins the frame at one quota cell, and names the prose to re-read if it moves", () => {
+    const cells = PREREGISTRATION_V4.preRegistration.quotaAxis.cells;
+    // Read from the sealed policy, never restated. Distinct from the length assertion in
+    // benchmark/tests/preregistration-v4.test.ts, whose subject is the resampling table:
+    // the subject HERE is the prose. A comment cannot be tested, so what keeps the label
+    // true on the day a second cell is declared is that whoever declares it is handed
+    // this list of sites to re-decide.
+    expect(
+      cells.length,
+      `the frame now declares ${cells.length} quota cell(s) [${cells.join(", ")}], so ` +
+        "prose calling the four-cell arithmetic counterfactual has stopped being true. " +
+        `Re-read and re-decide all four sites: ${QUARTER_ARITHMETIC_SITES.join(", ")}.`,
+    ).toBe(1);
+  });
+
+  it("reaches every module of the bench, both extensions, and skips data by name", async () => {
+    const files = await walkSwept(REPO_ROOT, "benchmark");
+    expect({
+      total: files.length,
+      typescript: files.filter((file) => file.endsWith(".ts")).length,
+      python: files.filter((file) => file.endsWith(".py")).length,
+    }).toEqual(SWEPT_REACH);
+    // Descent and both extensions: this very file is reached, so a walk that read only the
+    // top level is red here rather than quietly narrower.
+    expect(files).toContain("benchmark/tests/split-audit.test.ts");
+    expect(files).toContain("benchmark/commands/split.ts");
+    expect(files).toContain("benchmark/lab/assemble_corpus.py");
+    // `data` is skipped by NAME, and nothing under it is opened.
+    expect(files.some((file) => file.startsWith("benchmark/data/"))).toBe(
+      false,
+    );
+  });
+
+  it("holds the four-cell arithmetic to a closed set of sites, and labels it at each", async () => {
+    const modules = await sweptModules();
+    const problems: string[] = [];
+    const stating: string[] = [];
+    for (const { relativePath, body, runs } of modules) {
+      const matchingRuns = runs.filter((run) => QUARTER_ARITHMETIC.test(run));
+      const statesIt = QUARTER_ARITHMETIC.test(
+        body.replaceAll(COMMENT_BREAK, " "),
+      );
+      if (statesIt) {
+        stating.push(relativePath);
+      }
+      if (statesIt && matchingRuns.length === 0) {
+        // Outside comment prose there is nowhere a reader would find the label.
+        problems.push(
+          `${relativePath} states the four-cell arithmetic outside comment prose`,
+        );
+      }
+      if (relativePath === MODEL_SITE) {
+        // The model is held by its SENTENCE, so it cannot be reworded in silence.
+        if (!matchingRuns.some((run) => run.includes(MODEL_SENTENCE))) {
+          problems.push(
+            `${MODEL_SITE} no longer states the model sentence verbatim, so the three ` +
+              "sites that follow it have to be re-decided with it",
+          );
+        }
+        continue;
+      }
+      const label = relativePath.endsWith(".py")
+        ? COUNTERFACTUAL_LABEL_PY
+        : COUNTERFACTUAL_LABEL;
+      for (const run of matchingRuns) {
+        if (!label.test(run)) {
+          problems.push(
+            `${relativePath} states the four-cell arithmetic in prose that does not label ` +
+              `it /${label.source}/: no frame declares four cells, so unlabelled it reads ` +
+              "as a description of the present instead of the argument it is",
+          );
+        }
+      }
+    }
+    expect(problems).toEqual([]);
+    // Both directions. The closed set is what makes DELETING the arithmetic red, and
+    // deleting it is the tempting repair: it is the argument for excluding the material
+    // pair under ANY frame, not an illustration of the one-cell case.
+    expect(stating).toEqual([...QUARTER_ARITHMETIC_SITES]);
+  });
+
+  it("holds the retired cell-to-cell dependence at zero sites, and the registered one at its own", async () => {
+    const modules = await sweptModules();
+    const retired = modules
+      .filter(({ runs }) =>
+        runs.some((run) => RETIRED_CELL_DEPENDENCE.test(run)),
+      )
+      .map(({ relativePath }) => relativePath);
+    // Zero. Under a one-cell frame there is no pair of cells for a relation to hold
+    // between, so that phrasing is not a counterfactual to be labelled — it is false, and
+    // the remedy is absence rather than a label.
+    expect(retired).toEqual([]);
+    // NON-VACUITY of THIS pattern, and it has to be this one: a typo in
+    // `RETIRED_CELL_DEPENDENCE` matches nothing, and the emptiness above then passes on its
+    // own, forever. Confronting the sibling pattern would not catch that — it is a different
+    // RegExp object. The phrase is assembled rather than written so this control cannot
+    // itself become a site of the prose the sweep refuses.
+    const retiredPhrase = ["BETWEEN", "cells"].join(" ");
+    expect(
+      RETIRED_CELL_DEPENDENCE.test(`they carry dependence ${retiredPhrase}`),
+    ).toBe(true);
+    // And in lower case, which is the escape the one-spelling anchor left open.
+    expect(
+      RETIRED_CELL_DEPENDENCE.test(
+        `they carry dependence ${retiredPhrase.toLowerCase()}`,
+      ),
+    ).toBe(true);
+    // NON-VACUITY of the SWEEP itself, in the opposite direction: the relation these two
+    // axes ARE registered to carry is the one between acquisitions, and the two sealed sites
+    // naming it are what show the sweep can still see this shape of sentence in a real file.
+    const registered = modules
+      .filter(({ runs }) =>
+        runs.some((run) => REGISTERED_ACQUISITION_DEPENDENCE.test(run)),
+      )
+      .map(({ relativePath }) => relativePath);
+    expect(registered).toContain("benchmark/split.ts");
+    expect(registered).toContain("benchmark/preregistration-v4.ts");
   });
 });

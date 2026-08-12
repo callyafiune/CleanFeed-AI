@@ -710,6 +710,96 @@ class PreflightDeViabilidade(unittest.TestCase):
         self.assertIn("maior componente", str(erro.exception))
         self.assertNotIn("MENOR componente", str(erro.exception))
 
+    def test_o_RAMO_da_recusa_por_numero_de_celulas_CONTRAFACTUAL(self):
+        """A aritmetica de n celulas MEDIDA, e ela e CONTRAFACTUAL de ponta a ponta.
+
+        Este corpo descreve material que ninguem tem, e o cabecalho deste arquivo proibe usar
+        um corpo assim para PROVAR VIABILIDADE. Nao e o que se faz aqui, e a diferenca e a
+        pergunta: nao se pergunta se um corpo de n celulas e viavel, e sim QUAL DOS DOIS RAMOS
+        do preflight recusa quando a fracao por componente e 1/n. Nada nesta medicao afirma
+        que material de n celulas exista, seja adquirivel ou seja divisivel. Por isso ele nao
+        usa `corpo_de_lote_unico()` e nao tira linha alguma de `CELULAS`: as linhas sao
+        sinteticas e as celulas sao inventadas. `len(CELULAS)` entra so como NUMERO — o n da
+        moldura de hoje, derivado do register do montador em vez de digitado.
+
+        E passar aqui nao seria viabilidade nem se o corpo fosse real: o docstring de
+        `assert_components_can_fill_five_partitions` declara que as duas condicoes sao
+        NECESSARIAS e que a atribuicao completa e soma de subconjuntos, que ele nao decide.
+
+        A prosa que esta medicao sustenta e a dos quatro sitios que marcam a aritmetica de
+        quatro celulas como contrafactual: com n celulas o RAMO da recusa muda, e "mais
+        celulas so suavizam sem reparar" tem um LIMITE. Os dois limites sao LIDOS de
+        `assemble_corpus` — quem os define —, nunca de uma tabela digitada aqui: relaxar
+        `CLASS_TOLERANCE` ou mover um alvo de `FIVE_TARGETS` faz o ramo esperado e a mensagem
+        levantada discordarem, e a discordancia e o vermelho.
+
+        Vinte linhas por celula, cada uma no seu documento e com o seu autor, entao o unico
+        eixo que une e o `domainSource` devolvido a uniao pelo mock — o mesmo mock das duas
+        direcoes acima — e a fracao de cada componente e exatamente 1/n.
+        """
+        limite_max = (
+            max(FIVE_TARGETS)
+            + assemble_corpus.CLASS_TOLERANCE
+            + assemble_corpus.CLASS_TOLERANCE_EPSILON
+        )
+        limite_min = (
+            min(FIVE_TARGETS)
+            + assemble_corpus.CLASS_TOLERANCE
+            + assemble_corpus.CLASS_TOLERANCE_EPSILON
+        )
+        # O n da moldura de hoje primeiro, e depois a virada do ramo (3), a aritmetica de
+        # quatro celulas, a ultima que recusa (14) e a fronteira em que o preflight para de
+        # recusar (15). Sem o ultimo caso o limite volta a ser afirmacao em vez de medicao.
+        roster = (len(CELULAS), 2, 3, 4, 14, 15)
+        ramos: list[str | None] = []
+        for n in roster:
+            with self.subTest(celulas=n):
+                registros = [
+                    linha(f"c{c}_r{i}", f"cf_cel_{c}", f"a_cf_{c}_{i}", f"smb_cf_{c}")
+                    for c in range(n)
+                    for i in range(20)
+                ]
+                with mock.patch.object(
+                    assemble_corpus,
+                    "SPLIT_GROUP_KEYS",
+                    SPLIT_GROUP_KEYS + ("domainSource",),
+                ):
+                    quantos, maior = maior_componente(registros)
+                    # O corpo E o que a aritmetica descreve, antes de qualquer veredito.
+                    self.assertEqual(quantos, n)
+                    self.assertAlmostEqual(maior, 1 / n, places=9)
+                    self.assertAlmostEqual(min_frac(registros), 1 / n, places=9)
+
+                    esperado = (
+                        "maior"
+                        if 1 / n > limite_max
+                        else "menor"
+                        if 1 / n > limite_min
+                        else None
+                    )
+                    ramos.append(esperado)
+                    if esperado is None:
+                        # Nao recusar NAO e viabilidade: as duas condicoes sao necessarias e
+                        # a atribuicao completa e soma de subconjuntos.
+                        assert_components_can_fill_five_partitions(registros)
+                        continue
+                    with self.assertRaises(UnsplittableCorpus) as erro:
+                        assert_components_can_fill_five_partitions(registros)
+                    mensagem = str(erro.exception)
+                    if esperado == "maior":
+                        self.assertIn("maior componente", mensagem)
+                        self.assertNotIn("MENOR componente", mensagem)
+                    else:
+                        self.assertIn("MENOR componente", mensagem)
+                        self.assertNotIn("maior componente", mensagem)
+
+        # O roster exercita os TRES ramos, e nao dois deles varias vezes.
+        self.assertEqual(set(ramos), {"maior", "menor", None})
+        # E EXATAMENTE um n do roster escapa da recusa. Tirar o caso da fronteira deixa esta
+        # contagem em zero, e "mais celulas so suavizam sem reparar" volta a ser afirmacao
+        # sem limite medido.
+        self.assertEqual(sum(1 for ramo in ramos if ramo is None), 1)
+
     def test_recusa_corpo_vazio(self):
         with self.assertRaises(UnsplittableCorpus) as erro:
             assert_components_can_fill_five_partitions([])

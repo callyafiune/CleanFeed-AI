@@ -384,11 +384,27 @@ export interface PreregistrationV4 {
    * on. The two are not the same list, and that is the whole content of the block.
    *
    * `dependencyAxis` is the declared unit of dependence BETWEEN acquisitions, and it
-   * is deliberately NOT a union axis (`splitUnionsOnDependencyAxis: false`): there
-   * is one acquisition event per source and one stratum per quota cell, so unioning
-   * on either would make each cell a single indivisible component, every human
-   * partition fraction a multiple of ~25 %, and a floor counted in independent units
-   * read 1 per cell forever.
+   * is deliberately NOT a union axis (`splitUnionsOnDependencyAxis: false`): there is
+   * one acquisition event per source and one stratum per quota cell, so unioning on
+   * either would make each cell a single indivisible component. THIS frame declares
+   * ONE cell (`preRegistration.quotaAxis.cells`), so that component is the whole
+   * `human` class — its fraction is 100 % of the class, `dev`'s 0.05 is unreachable by
+   * construction, the preflight refuses on its LARGEST-component branch, and a floor
+   * counted in independent units reads 1 per cell forever.
+   *
+   * The four-cell arithmetic is COUNTERFACTUAL: no frame declares four cells. It is
+   * kept because it IS the argument rather than an illustration of it — more cells
+   * soften the fractions without repairing any, so these two axes stay out of the
+   * union under every frame and not merely this one. The refusing BRANCH moves with n,
+   * though. With n cells each fraction is 1/n: at n = 2 it still exceeds the largest
+   * target plus tolerance (0.47) and the refusal is the largest component's; from
+   * n = 3 to n = 14 it fits the largest and exceeds the smallest target plus tolerance
+   * (0.07), so the refusal becomes the SMALLEST component's — four cells read ~25 %
+   * each, inside that band; at n = 15 (6.67 %) this preflight stops refusing at all.
+   * Not refusing is NOT feasibility:
+   * `assert_components_can_fill_five_partitions` (benchmark/lab/assemble_corpus.py)
+   * decides two NECESSARY conditions and declares that the complete assignment is
+   * subset sum, which it does not decide.
    *
    * `splitUnionAxes` mirrors `GROUP_KEYS` in benchmark/split.ts. It is not imported
    * from there — the splitter reads this file, and importing back would be a cycle —
@@ -398,7 +414,7 @@ export interface PreregistrationV4 {
     readonly dependencyAxis: "sourceMaterialBatch";
     /** Re-extracting one dump produces no new material, so it unions nothing. */
     readonly diagnosticAxes: readonly string[];
-    readonly independentUnit: "origin-document-components";
+    readonly independentUnit: typeof FROZEN_INDEPENDENT_UNIT;
     readonly reportedAxes: readonly string[];
     readonly splitUnionAxes: readonly string[];
     readonly splitUnionsOnDependencyAxis: false;
@@ -607,7 +623,7 @@ export interface PreregistrationV4 {
      * objective is recorded rather than silently resolved.
      */
     readonly plannedCertifyingMeasurements: 1;
-    readonly powerInventoryUnit: "connected-components";
+    readonly powerInventoryUnit: typeof FROZEN_INDEPENDENT_UNIT;
     /**
      * 95 % one-sided, FAMILY-WISE over the four primary hypotheses of ONE version.
      *
@@ -1550,7 +1566,7 @@ function connectivity(value: unknown): PreregistrationV4["connectivity"] {
       block,
       path,
       "independentUnit",
-      "origin-document-components",
+      FROZEN_INDEPENDENT_UNIT,
     ),
     reportedAxes: frozenList(block, path, "reportedAxes", FROZEN_REPORTED_AXES),
     splitUnionAxes,
@@ -1771,11 +1787,38 @@ const FROZEN_SPLIT_UNION_AXES = [
   "derivationRoot",
 ] as const;
 const FROZEN_DIAGNOSTIC_AXES = ["extractionRun"] as const;
+// The unit of independence, behind BOTH fields that name it: `connectivity.independentUnit`
+// (the unit the connectivity block declares and the release publishes) and
+// `preRegistration.powerInventoryUnit` (the unit the power inventory is COUNTED in, cited by
+// name as the floor's quantity at benchmark/composition-gate.ts). Two different subjects, one
+// value, and the coincidence is the point of the floor: the floor is counted in the unit
+// independence is claimed over.
+//
+// Shared by both `literal` calls rather than compared afterwards, and both interface fields
+// are typed `typeof` this constant: no policy can make them disagree and no runtime check is
+// needed, for the reason `FROZEN_HUMAN_CORE_STRATA` states: a comparison no input can fail
+// reads as a defence without being one.
+//
+// RESIDUE: a later frame that wanted the power inventory counted in a COARSER unit than
+// independence is claimed over would have to SPLIT this constant, and splitting it is a
+// decision the partition forces someone to write down rather than drift into.
+//
+// The unit is NOT one per origin document: the component closes over all five of
+// `GROUP_KEYS` — `author`,
+// `generationBatch`, `nearDuplicate` and `derivationRoot` as well as `source` — so naming the
+// unit after one of them would invite reading it as ONE PER DOCUMENT, which over-states power
+// in the direction benchmark/composition-gate.ts refuses in writing. Origin documents are a
+// THIRD quantity and not this unit: the gate publishes both, and they diverge — measured at
+// "reads a component that spans two partitions as ONE unit inside the blind block" in
+// benchmark/tests/composition-gate.test.ts, where `independentUnits` is 1 against
+// `originDocuments` 2.
+const FROZEN_INDEPENDENT_UNIT = "connected-components" as const;
 // The mirror of `REPORTED_GROUP_AXES` in benchmark/split-audit.ts: the MATERIAL pair,
 // then the APPARATUS pair. Every entry must be absent from `FROZEN_SPLIT_UNION_AXES` —
 // an axis published with `connectivity.sharedValue: false` that the splitter grouped by
 // would be a false independence claim in the sealed artifact — and a test holds the
-// disjointness against the splitter's own list.
+// disjointness against the splitter's own list, plus the EQUALITY against
+// `REPORTED_GROUP_AXES` itself.
 const FROZEN_REPORTED_AXES = [
   "domainSource",
   "sourceMaterialBatch",
@@ -2737,7 +2780,7 @@ export function parsePreregistrationV4(value: unknown): PreregistrationV4 {
         preRegistration,
         "preRegistration",
         "powerInventoryUnit",
-        "connected-components",
+        FROZEN_INDEPENDENT_UNIT,
       ),
       crossVersionAdjustment: literal(
         preRegistration,

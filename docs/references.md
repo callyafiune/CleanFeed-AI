@@ -806,8 +806,13 @@ projeto: um manifesto v2 com `materialBatches: []` é válido para o parser, tem
 
 ### 2.2i Eixo REPORTADO contra eixo de UNIÃO: a lista de conectividade v4 (Commit B da Fase 1, 2026-08-04)
 
-`GROUP_KEYS` (`benchmark/split.ts`) passa a nomear sete eixos — `author`, `source`,
+`GROUP_KEYS` (`benchmark/split.ts`) passava a nomear sete eixos — `author`, `source`,
 `generatorVersion`, `promptTemplate`, `generationBatch`, `nearDuplicate`, `derivationRoot`.
+**Emenda de 2026-08-11 (unidade U4):** são **cinco**. `generatorVersion` e `promptTemplate`
+saíram e viraram **reportados**, porque o fecho transitivo dos dois juntos colapsa a classe
+gerada num componente de 100 % — medido: `promptTemplate` sozinho dá 54,79 % e recusa,
+`generatorVersion` sozinho dá 42,14 % e **cabe**, e o par dá 100 %. A lista passou a ter
+critério (condição necessária, recíproca declarada falsa) e o resíduo está escrito.
 `domainSource` sai, `sourceMaterialBatch` não entra, `extractionRun` nunca entra. Os dois primeiros
 viram eixos **reportados**: a auditoria publica o inventário deles por partição
 (`REPORTED_GROUP_AXES` em `benchmark/split-audit.ts`) e nenhum é usado para unir componente.
@@ -818,9 +823,15 @@ estratificação), § 2.2h (um eixo por fato) e as entradas de inferência clust
 - **Âncora do número de unidades, não de linhas:** o inventário real é **um evento de aquisição por
   fonte** — um download do dump da Wikipédia, um download do pacote da Carolina, cujas tipologias são
   partições daquele download e não aquisições separadas. Unir por qualquer dos dois eixos grossos faz
-  cada célula de cota virar **um** componente indivisível: as frações humanas por partição passam a ser
-  múltiplos de ~25 %, o alvo de `dev` (0,05) fica inalcançável por construção, e um piso contado em
-  **unidades independentes** lê 1 por célula para sempre. _Fonte:_ **Cameron & Miller, 2015**
+  cada célula de cota virar **um** componente indivisível. Com a moldura de UMA célula esse componente
+  **é a classe `human` inteira** — fração de 100 %, `dev` inalcançável, e o preflight recusa pelo ramo
+  do MAIOR componente. As frações em múltiplos de ~25 % são a aritmética de **quatro** células e são
+  **CONTRAFACTUAIS**: nenhuma moldura declara quatro. Elas ficam porque são a razão de os dois eixos
+  serem excluídos sob QUALQUER moldura, e o ramo da recusa se move com a contagem — com n células a
+  fração é 1/n, que a partir de n = 3 fica sob 0,47 e a recusa passa a ser a do MENOR componente,
+  até n = 15 (6,67 %), onde o preflight **para de recusar**. Parar de recusar não é viabilidade: o
+  preflight decide duas condições **necessárias** e declara que não decide a atribuição completa, que
+  é soma de subconjuntos. E um piso contado em **unidades independentes** lê 1 por célula para sempre. _Fonte:_ **Cameron & Miller, 2015**
   (§ 4.1). [link](https://doi.org/10.3368/jhr.50.2.317) _Fato citado:_ a unidade de inferência é o
   cluster inteiro, e é o **número de clusters** — não o número de linhas — que governa o que se pode
   afirmar. _Fonte:_ **Kish, 1965** (§ 4.1).
@@ -859,6 +870,30 @@ O motivo de fazer assim é medido: um eixo com uma contagem alta ao lado de nenh
 foi lido, neste projeto, como "um bloco indivisível" sobre linhas que o particionador havia acabado de
 pôr em lados opostos do corte — e um eixo ausente do relatório é um eixo que ninguém a jusante pode
 conferir.
+
+### 2.2j A unidade de independência tem UMA grafia, e ela não é "um por documento" (2026-08-11)
+
+A pré-inscrição declarava a mesma grandeza com **duas** grafias no mesmo arquivo selado —
+`connectivity.independentUnit: "origin-document-components"` e
+`preRegistration.powerInventoryUnit: "connected-components"` —, a primeira pinada por `literal()`. A
+emenda unifica em **`connected-components`**, e a razão é medida e não estética.
+
+O componente fecha sobre os **cinco** eixos de `GROUP_KEYS` (`author`, `source`, `generationBatch`,
+`nearDuplicate`, `derivationRoot`), então qualificá-lo por um deles convida a ler a unidade como **uma
+por documento de origem** — e documentos de origem são uma **terceira** grandeza, não esta. O gate de
+composição publica as duas e elas **divergem**: medido em `benchmark/tests/composition-gate.test.ts`
+("reads a component that spans two partitions as ONE unit inside the blind block"),
+`independentUnits` é **1** contra `originDocuments` **2**, com contraprova sem a ponte devolvendo 2.
+Ler "origin-document" como um-por-documento **sobredeclara poder**, na direção que
+`benchmark/composition-gate.ts` recusa por escrito.
+
+**Sem precedente encontrado** para a decisão de nomenclatura em si; o que a literatura sustenta é a
+grandeza. _Fonte:_ **Cameron & Miller, 2015** (§ 4.1).
+[link](https://doi.org/10.3368/jhr.50.2.317) _Fato citado:_ a unidade de inferência é o cluster
+inteiro, e o que governa a alegação é o **número de clusters**. A frase ratificada em `ESTADO.md` § 3.3
+— "componentes conexos por documento de origem, com ≤ 1 linha por documento por célula" — descreve a
+unidade **mais** a restrição de coleta que a torna quase um-por-documento **no material de hoje**; a
+grafia do campo nomeia só a primeira metade, que é o que o piso conta.
 
 ### 2.2j Ratificar a regra de elegibilidade do bloco cego ANTES do primeiro evento (2026-08-05)
 
