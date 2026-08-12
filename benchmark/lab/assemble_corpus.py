@@ -156,6 +156,80 @@ def within_class_tolerance(fracao: float, alvo: float) -> bool:
     """`|fracao - alvo| <= CLASS_TOLERANCE`, com a borda INCLUIDA."""
     return abs(fracao - alvo) <= CLASS_TOLERANCE + CLASS_TOLERANCE_EPSILON
 
+
+# --- O PLANO DE ILHAS da classe gerada --------------------------------------------------
+#
+# Com `promptTemplate` na uniao, um componente da classe gerada e o fecho transitivo sobre
+# os templates. Um slate que roda model x effort sobre os MESMOS prompts funde a classe
+# inteira num componente, e `UnsplittableCorpus` recusa — depois de a cota estar gasta. O
+# plano existe para a recusa vir ANTES, e mora no arquivo que ja e dono da aritmetica das
+# cinco fracoes porque e a mesma aritmetica que decide a granularidade.
+#
+# A ILHA NAO E UM CONJUNTO DE TEMPLATES: e um BLOCO DE MATERIAL HUMANO, e toda linha gerada
+# ou mista semeada nesse bloco pertence a ela. TRES coisas sao particionadas pelo MESMO
+# bloco, e medido, nenhuma das tres e dispensavel — um corpo em que cada template pertence
+# a uma corrida mas os pais mistos estao espalhados colapsa de 20 componentes para 1, porque
+# `derivationRoot` e uniao POR VALOR e `humanSeed` e linhagem, entao uma linha mista cujo pai
+# humano semeia uma linha ai de OUTRA ilha funde as duas:
+#   (i)   os templates de geracao da classe ai;
+#   (ii)  o bloco de sementes humanas que a corrida empareja;
+#   (iii) o template de mistura e os pais das linhas mistas da ilha.
+#
+# `generatorVersion` NAO e um dos eixos, e a razao e medida: ele nao esta na uniao (o
+# argumento esta no comentario de `SPLIT_GROUP_KEYS`), e nem poderia ser particionado aqui —
+# a identidade de versao de uma linha e o id do modelo, entao vinte ilhas pediriam vinte ids
+# distintos, e os pools montados carregam cinco. O que se perde e a CO-LOCACAO de versao: duas linhas da mesma versao de gerador
+# podem cair em particoes diferentes, e a perna de novidade de gerador e a reserva OOD por
+# familia (`OOD_RESERVED_FAMILIES`), que e outro mecanismo.
+#
+# ILHAS = 20 e uma escolha DERIVADA e nao um gosto, e o que a deriva esta em
+# `assert_island_plan_realizes_the_five_fractions`: 15 ilhas atribuem e erram `cal-A` em
+# 6,65 % contra 10 %, 16 e 18 passam a geometria e nao atribuem, e 20 realizam
+# 45/5/10/20/20 exactamente nas TRES classes. Os totais por classe sao os de
+# `RELEASE_CORPUS_POLICY.counts` (benchmark/dataset-manifest.ts) e a igualdade e pinada por
+# teste, porque este arquivo nao le arquivo nenhum no import — `generate_ai` importa daqui.
+ISLAND_COUNT = 20
+ISLAND_PLAN_CLASS_LINES: dict[str, int] = {"human": 4000, "ai": 4000, "mixed": 2000}
+# As ilhas cuja `generatorFamily` a moldura RESERVA. Tres, e nao quatro, e o limite e do
+# PLANO e nao da guarda: `_plano_de_blocos` assenta todo componente reservado INTEIRO em
+# `test`, cujo alvo e o resto (800 linhas ai, 800 humanas, 400 mistas), entao QUATRO ilhas de
+# 200 cabem exactamente e deixam o bloco cego INTEIRAMENTE de reserva — sem populacao para a
+# hipotese de recall sobre familia VISTA, que o mesmo bloco carrega. `ReserveFillsTheBlindBlock`
+# so recusa acima do alvo, entao nao impoe isto: quem impoe e
+# `assert_island_plan_leaves_core_in_the_blind_block`, e o residuo e que a guarda existente
+# aprovaria quatro.
+RESERVED_ISLANDS: tuple[str, ...] = ("ilha_17", "ilha_18", "ilha_19")
+
+
+def _island(indice: int) -> dict:
+    """Uma ilha do plano: o nome, os templates, o bloco de semente e o template de mistura.
+
+    `templates` e `mixingTemplate` sao SLOTS e nao receitas do slate de hoje: o slate e
+    decisao de coleta do operador e este arquivo nao a toma. O que a guarda impoe e a FORMA —
+    template em uma ilha so — e `generate_ai.island_plan` recusa uma ilha cujos templates o
+    slate nao serve, o que hoje e toda ilha (`RECIPES` declara quatro nomes e o plano pede
+    quarenta). Essa recusa E o ponto: a cota nao pode ser gasta sob um slate que o plano nao
+    cumpre.
+    """
+    return {
+        "island": f"ilha_{indice:02d}",
+        "templates": (f"pt-ilha-{indice:02d}-a", f"pt-ilha-{indice:02d}-b"),
+        "mixingTemplate": f"mix-ilha-{indice:02d}",
+        "seedBlock": indice,
+        "lines": {
+            classe: total // ISLAND_COUNT
+            for classe, total in ISLAND_PLAN_CLASS_LINES.items()
+        },
+        "reserved": f"ilha_{indice:02d}" in RESERVED_ISLANDS,
+    }
+
+
+ISLAND_PLAN: tuple[dict, ...] = tuple(_island(i) for i in range(ISLAND_COUNT))
+
+
+class IslandPlanRefused(RuntimeError):
+    """Um plano de ilhas que a geracao nao pode rodar. Levantado ANTES de gastar cota."""
+
 # domainSource (candidate) -> humanSourceType, which IS the quota cell: the population
 # the release publishes one FPR ceiling for, over its own denominator of human
 # negatives. ONE cell, one material — encyclopedic text, Wikipedia pt.
@@ -2134,8 +2208,10 @@ class UnsplittableCorpus(RuntimeError):
 # They are DIFFERENT relations and the distinction is the whole point:
 #
 #   * SHARED VALUE (`GROUP_KEYS`): two record-lines carrying the same identity here are
-#     always one component. `generatorFamily` is deliberately NOT in this list — unioning
-#     on it would collapse a whole family into one indivisible block.
+#     always one component. `generatorFamily` is NOT in this list, e nem `generatorVersion`,
+#     que carrega a identidade dela em toda linha montada (medido, 1170/1170,
+#     `GeneratorVersionIsTheFamilyTests`) — entao a familia de gerador e de facto DIVISIVEL
+#     aqui, e o que a constrange e a reserva OOD, que e outro mecanismo.
 #   * PARENT LINKAGE (`PARENT_LINKAGE_AXES`): a record-line whose identity NAMES ANOTHER
 #     record-line's id joins that row, and only when the named row is present. Naming
 #     itself unions nothing.
@@ -2147,18 +2223,31 @@ class UnsplittableCorpus(RuntimeError):
 #       (benchmark/cluster-exposure-ledger.ts), a lista pela qual o ledger decide que a
 #       mesma UNIDADE DE AMOSTRAGEM reapareceu —, ou
 #   (b) a uniao por ele e INERTE sobre o corpo montado, que e medicao e nao argumento: o
-#       corpo tem o mesmo numero de componentes com o eixo na lista e sem ele.
+#       corpo tem o mesmo numero de componentes com o eixo na lista e sem ele, ou
+#   (c) o eixo modela uma dependencia que um membro da FAMILIA CERTIFICADORA e medido
+#       sobre, e unir por ele e VIAVEL porque o corpo e CONSTRUIDO para que seja.
+#
+# AS TRES PERNAS NAO SAO SIMETRICAS. (a) e uma lista que outro gate ja executa; (b) e uma
+# medicao sobre um corpo, e o ESCOPO viaja com a alegacao; (c) e uma RESTRICAO DE COLETA,
+# a unica que pode ser cumprida hoje e falsificada amanha por uma corrida de geracao que
+# ignorou o plano — e e por isso que a verificacao dela morde ANTES da geracao
+# (`island_plan`, o `type=` de `--island` em generate_ai.py) e outra vez aqui.
 #
 # `author`, `source` e `derivationRoot` entram por (a). `nearDuplicate` e
 # `generationBatch` entram por (b): depois da poda `nearDuplicate` e o proprio id da
-# linha (1170 identidades sobre as 1170 linhas geradas montadas), e `generationBatch`
-# fica `unknown` em toda linha gerada ate `assign_generation_batches`, cuja chave contem
-# `generatedAt` — que `stamp_block` sobrescreve com o tempo do bloco, logo o lote fica
-# confinado a um bloco e nao co-loca nada atraves do corte. Essa segunda entrada e
-# portanto CONDICIONAL ao sobrescrito, e a condicao e pinada por
-# `test_a_batch_never_straddles_two_partitions`.
+# linha (1170 identidades sobre as 1170 linhas geradas montadas), e o lote esta CONTIDO
+# no template SOB A FORMA QUE O MONTADOR PRODUZ. A contencao NAO e incondicional, e a
+# excecao e alcancavel: a identidade de `promptTemplate` e `{recipe}_{digest[:16]}` e o nome
+# da receita NAO esta na chave do lote, entao duas linhas do mesmo digest com `recipe`
+# diferente caem em UM lote e em DUAS identidades de template — e sobre esse corpo o lote
+# NAO e inerte. O fundamento que vale e o de sempre: `stamp_block` sobrescreve `generatedAt`,
+# e e `test_a_batch_never_straddles_two_partitions` que o prende.
 #
-# A RECIPROCA E FALSA, e dois eixos deste mesmo esquema a refutam:
+# `promptTemplate` e o UNICO que entra por (c): o recall que o release certifica reamostra
+# por familia -> template -> lote, entao o splitter tem de MODELAR a dependencia de prompt
+# ou o recall e medido sobre prompts que o treino viu.
+#
+# A RECIPROCA E FALSA, e quatro eixos deste mesmo esquema a refutam:
 #
 #   * `humanSeed` cumpre (a) — o ledger o executa como identidade de material — e NAO
 #     esta aqui. Esta em `SPLIT_PARENT_LINKAGE_AXES`, porque a identidade dele nomeia o
@@ -2173,29 +2262,52 @@ class UnsplittableCorpus(RuntimeError):
 #     pre-inscricao. O ESCOPO da medicao importa: sobre um corpo com linha HUMANA o mesmo
 #     eixo NAO e inerte, porque uma extracao escreve milhares de linhas com o mesmo id de
 #     execucao — medido em `test_a_reciproca_do_criterio_e_FALSA_nos_dois_sentidos`. A
-#     perna (b) e propriedade do corpo medido, nunca licenca para unir.
+#     perna (b) e propriedade do corpo medido, nunca licenca para unir;
+#   * `generatorFamily` cumpre (c) — e o nivel de TOPO de `ai-recall` — e NAO esta aqui,
+#     por uma razao que (c) nao ve: ele e `inventoryOnly`, e o que a arvore faz por ele e
+#     mais estreito que agrupar (so as familias RESERVADAS sao constrangidas, e so a serem
+#     de `test`);
+#   * `generatorVersion` cumpre (c) na forma mais forte disponivel — a identidade dele E a
+#     da familia em 1170 de 1170 linhas montadas, entao ele carrega o nivel de topo da
+#     arvore de reamostragem — e NAO esta aqui, por uma razao que (c) tambem nao ve: se a
+#     obrigacao pode ser IMPOSTA em sitio algum. Duas medicoes dizem que nao pode e que nao
+#     e preciso. A identidade de versao que uma corrida grava e o ID DO MODELO — o mesmo
+#     teste recusa toda linha montada em que `version` difere de `family` —, entao espalhar
+#     a versao pelas 20 ilhas de um plano conforme pediria 20 ids de modelo distintos, e os
+#     pools montados carregam CINCO identidades de versao nas 1170 linhas geradas; e unir por
+#     ela nao e o que a granularidade precisa,
+#     porque sozinha sobre os pools ela deixa 5 componentes com o maior em 493 linhas
+#     (42,14 % da classe), que CABE. Ele e `namedReported`, e o RESIDUO fica declarado: a
+#     CO-LOCACAO de versao nao e modelada, duas linhas da mesma versao podem cair em
+#     particoes diferentes, e a perna de novidade de gerador e a reserva OOD por familia
+#     (`OOD_RESERVED_FAMILIES`), que constrange as familias reservadas a serem de `test`.
 #
-# Logo a SITUACAO de um eixo e decidida por quatro listas e nunca por (a)/(b) sozinhas:
+# Logo a SITUACAO de um eixo e decidida por quatro listas e nunca por (a)/(b)/(c) sozinhas:
 # uniao por valor (esta), linhagem de pai (`SPLIT_PARENT_LINKAGE_AXES`), reportado
-# (`REPORTED_GROUP_AXES`, quatro nomes) e diagnostico (`extractionRun`). AS QUATRO NAO
+# (`REPORTED_GROUP_AXES`, tres nomes) e diagnostico (`extractionRun`). AS QUATRO NAO
 # COBREM OS CATORZE: `generatorFamily`, `generationLane` e `harnessVersion` — e
 # `collectionBatch`, que so v3 declara — ficam de fora de todas, e o que eles tem e o
 # inventario por particao da auditoria. `groupAxisRole` (benchmark/split-audit.ts) e a
 # funcao total sobre os catorze, e o residuo esta declarado la.
 #
-# `promptTemplate` e `generatorVersion` NAO estao aqui, e a aritmetica e medida nas 1170
-# linhas montadas: o maior `promptTemplate` vale 641/1170 = 54,79% da classe gerada num
-# unico componente, acima do maior alvo mais a tolerancia; o maior `generatorVersion` vale
-# 493 = 42,1%, que CABE. O que nao cabe e o PAR — juntos eles fecham transitivamente (uma
-# corrida de versao atravessa fronteiras de template e um template atravessa corridas de
-# versao) e a classe inteira vira UM componente, 100% dela. `generatorVersion` NAO carrega
-# a identidade de `generatorFamily`: cinco identidades contra uma, concordando em 0 das
-# 1170 linhas, entao unir por versao e estritamente mais FRACO que unir pela familia e o
-# argumento da familia nao alcanca este eixo. O fecho do par e a razao inteira. Os dois sao
-# eixos REPORTADOS, e a dependencia de prompt passa a ser carregada pela comparacao de
-# elegibilidade do ledger e pela tabela de reamostragem congelada da pre-inscricao. O que
-# se perde e a CO-LOCACAO: duas linhas do mesmo prompt podem cair em particoes
-# diferentes, e uma medicao no bloco cego le "sobre prompts VISTOS e sementes nao vistas".
+# O QUE A PERNA (c) CUSTA, e o preco e pago na COLETA e nao no relato. A aritmetica e
+# medida nas 1170 linhas montadas: o maior `promptTemplate` vale 641/1170 = 54,79% da
+# classe gerada num unico componente, acima do maior alvo mais a tolerancia. Essa recusa nao
+# e argumento para excluir o eixo — e o TAMANHO da obrigacao que (c) impoe, e e ele que fixa
+# a granularidade de um corpo conforme. Uma classe gerada produzida como aqueles pools foram
+# produzidos e RECUSADA por `assert_components_can_fill_five_partitions`, pelo ramo do maior
+# componente, e o corpo tem de ser CONSTRUIDO em ILHAS: cada bloco de material humano leva os
+# seus templates, as suas sementes e os pais das suas linhas mistas, de modo que o grafo de
+# templates seja um conjunto de ilhas desconexas. `ISLAND_PLAN` declara essa geometria e
+# `island_plan` a recusa antes da cota.
+#
+# E O PRECO EM TEMPLATES, na unidade em que o operador paga: nenhuma identidade de template
+# em duas ilhas, entao um plano de N ilhas pede N templates DISTINTOS no minimo. O preflight
+# recusa menos de 15 ilhas (um componente de um plano de 14 vale 7,14 % do corpo contra o
+# teto de 7 % de `dev`), entao o piso de qualquer plano conforme e 15 templates; `ISLAND_PLAN`
+# declara 20 ilhas de dois templates cada e pede 40. Escrever prompt e o eixo barato — e e por
+# isso que esta lista leva o template e nao a versao, cujo particionamento custaria um modelo
+# por ilha.
 #
 # `domainSource` e `sourceMaterialBatch` falham a perna (a), e falham a (b) SOBRE UM CORPO
 # QUE TEM LINHA HUMANA — que e o escopo em que a (b) e medida, e isso precisa ser dito:
@@ -2222,6 +2334,7 @@ class UnsplittableCorpus(RuntimeError):
 SPLIT_GROUP_KEYS: tuple[str, ...] = (
     "author",
     "source",
+    "promptTemplate",
     "generationBatch",
     "nearDuplicate",
     "derivationRoot",
@@ -2831,6 +2944,264 @@ def _plano_de_blocos(records: list[dict], held_out: set[str]) -> dict[str, str]:
             ),
         )
     return plano
+
+
+def _island_component(ilha: dict) -> list[dict]:
+    """As linhas de UMA ilha, com os eixos que decidem conectividade e nada mais.
+
+    Sinteticas por decisao: o que a perna de geometria julga e se COMPONENTES daquele
+    tamanho realizam as cinco fracoes, e um componente e um numero de linhas por classe.
+    Construir texto, licenca e proveniencia mediria o validador.
+
+    As tres classes ficam num componente SO, e as ARESTAS que o fecham sao estas — nao o
+    `author`, que e proprio de cada humana (medido: 200 identidades em 200 linhas humanas):
+
+      * cada gerada nomeia UMA humana em `humanSeed` (linhagem de pai), e a cobertura de
+        toda humana depende de `lines["ai"] == lines["human"]`, porque o indice e tomado
+        modulo o numero de humanas. Com menos geradas que humanas as humanas nao nomeadas
+        ficam SOZINHAS: medido, 100 geradas sobre 200 humanas dao 101 componentes;
+      * as geradas agrupam-se por `promptTemplate`, entao dois templates sao DOIS grupos, e
+        a ponte entre eles sao as mistas: todas partilham `mixingTemplate` e cada uma nomeia
+        uma humana em `derivationRoot`, que e uniao POR VALOR. Sem linha mista a ilha mede 2
+        componentes, um por template — medido —, e com uma mista so ainda mede 2, porque uma
+        mista alcanca a humana de um grupo apenas.
+
+    Dar pai de outra ilha a uma linha mista funde as duas — medido, 2 componentes viram 1 —
+    e e essa a razao de (iii).
+    """
+    # Os ids e as identidades levam o prefixo `plano_`, e nao e cosmetica: estas linhas nao
+    # sao registros do corpus e nao podem ser confundidas com eles. O sweep
+    # `test_no_module_mints_a_per_record_group_token` proibe neste modulo as cinco grafias com
+    # que o bloco fabricado de v2 cunhava identidade POR REGISTRO, e a proibicao vale — o que
+    # se constroi aqui e a GEOMETRIA de um plano, nao linha de material.
+    nome = ilha["island"]
+    humanas = [f"plano_h_{nome}_{i:04d}" for i in range(ilha["lines"]["human"])]
+    if not humanas:
+        raise IslandPlanRefused(
+            f"a ilha {nome!r} declara zero linha humana: sem bloco de material humano nao "
+            "ha ilha, porque e o bloco que particiona os tres eixos"
+        )
+    registros: list[dict] = []
+    for rid in humanas:
+        registros.append(
+            {
+                "id": rid,
+                "schemaVersion": 4,
+                "label": "human",
+                "groups": {
+                    "author": group_axes.known(f"plano_au_{rid}"),
+                    "source": group_axes.known(f"plano_th_{rid}"),
+                    "promptTemplate": group_axes.not_applicable("linha humana"),
+                    "generationBatch": group_axes.not_applicable(
+                        group_axes.NOT_A_GENERATED_ROW
+                    ),
+                    "nearDuplicate": group_axes.known(f"plano_dup_{rid}"),
+                    "derivationRoot": group_axes.not_applicable("texto extraido"),
+                },
+            }
+        )
+    templates = tuple(ilha["templates"]) or (nome,)
+    for i in range(ilha["lines"]["ai"]):
+        rid = f"plano_a_{nome}_{i:04d}"
+        registros.append(
+            {
+                "id": rid,
+                "schemaVersion": 4,
+                "label": "ai",
+                "groups": {
+                    "author": group_axes.not_applicable(group_axes.NO_HUMAN_AUTHOR),
+                    "source": group_axes.not_applicable("texto gerado"),
+                    "humanSeed": group_axes.known(humanas[i % len(humanas)]),
+                    "promptTemplate": group_axes.known(templates[i % len(templates)]),
+                    "generationBatch": group_axes.known(f"plano_gb_{rid}"),
+                    "nearDuplicate": group_axes.known(f"plano_dup_{rid}"),
+                    "derivationRoot": group_axes.not_applicable(
+                        group_axes.NO_DERIVATION
+                    ),
+                },
+            }
+        )
+    for i in range(ilha["lines"]["mixed"]):
+        rid = f"plano_m_{nome}_{i:04d}"
+        registros.append(
+            {
+                "id": rid,
+                "schemaVersion": 4,
+                "label": "mixed",
+                "groups": {
+                    "author": group_axes.unknown("coautoria"),
+                    "source": group_axes.known(f"plano_th_{rid}"),
+                    "humanSeed": group_axes.known(humanas[i % len(humanas)]),
+                    "promptTemplate": group_axes.known(ilha["mixingTemplate"]),
+                    "generationBatch": group_axes.known(f"plano_gb_{rid}"),
+                    "nearDuplicate": group_axes.known(f"plano_dup_{rid}"),
+                    "derivationRoot": group_axes.known(humanas[i % len(humanas)]),
+                },
+            }
+        )
+    return registros
+
+
+def assert_island_plan_is_a_partition(plan: tuple[dict, ...]) -> None:
+    """O plano PARTICIONA os eixos de REGISTRO: cada valor numa ilha so, e todo bucket coberto.
+
+    Disjuncao E cobertura, porque particao e as duas. A disjuncao percorre TODOS os valores
+    de TODAS as ilhas — um passeio com saida antecipada aprovaria um plano cuja primeira
+    ilha e limpa e cuja ultima reusa um template. A cobertura e sobre `seedBlock`: se os
+    blocos declarados nao sao exactamente os buckets que `island_of_seed` pode produzir, ha
+    candidato humano que nao pertence a ilha alguma, e a linha gerada dele nao tem ilha.
+
+    O eixo e o de REGISTRO e nao o campo do plano, e a diferenca morde: `templates` e
+    `mixingTemplate` sao campos distintos do plano que escrevem o MESMO eixo
+    `groups.promptTemplate` — o de geracao nas linhas `ai`, o de mistura nas mistas. Um
+    namespace por campo aprovaria um plano cujo `mixingTemplate` e o `templates` de outra
+    ilha, e o corpo colapsaria com as pernas todas verdes; medido, 19 componentes onde o plano
+    declara 20. Por isso os dois campos partilham UM namespace, e o dono nomeia o campo de
+    onde o valor veio, para a mensagem continuar diagnostica.
+
+    As pernas e a cobertura sao independentes, e cada uma tem fixture que colide aquela perna
+    e so aquela — sem isso a perna pode sair do laco e a suite fica verde. Note que uma
+    colisao de `seedBlock` tambem quebra a cobertura: e a MENSAGEM que separa as duas, e e por
+    ela que as fixtures afirmam.
+    """
+    if not plan:
+        raise IslandPlanRefused(
+            "plano vazio: sem ilha declarada nao ha o que recusar nem o que gerar"
+        )
+    # Um eixo de REGISTRO por entrada, e os campos do plano que o escrevem. `promptTemplate`
+    # recebe DOIS campos, porque as linhas `ai` e as mistas escrevem o mesmo eixo.
+    eixos: tuple[tuple[str, tuple[str, ...]], ...] = (
+        ("promptTemplate (template de geracao e de mistura)", ("templates", "mixingTemplate")),
+        ("seedBlock (bloco de semente humana)", ("seedBlock",)),
+    )
+    for rotulo, campos in eixos:
+        donos: dict[object, list[str]] = {}
+        for ilha in plan:
+            for campo in campos:
+                bruto = ilha[campo]
+                valores = tuple(bruto) if campo == "templates" else (bruto,)
+                for valor in valores:
+                    donos.setdefault(valor, []).append(f"{ilha['island']}/{campo}")
+        if not all(len(ilhas) == 1 for ilhas in donos.values()):
+            colisoes = {
+                valor: ilhas for valor, ilhas in donos.items() if len(ilhas) > 1
+            }
+            raise IslandPlanRefused(
+                f"o plano nao particiona o eixo de registro {rotulo!r}: {colisoes}. Duas "
+                "ilhas que partilham um valor sao UMA ilha no grafo, e o corpo colapsa "
+                "depois de a cota estar gasta. O campo esta no nome de cada dono, porque "
+                "`templates` e `mixingTemplate` escrevem este mesmo eixo"
+            )
+    blocos = sorted(ilha["seedBlock"] for ilha in plan)
+    if blocos != list(range(len(plan))):
+        raise IslandPlanRefused(
+            f"os blocos de semente do plano sao {blocos} e `island_of_seed` produz "
+            f"{list(range(len(plan)))}: ha candidato humano sem ilha, e a linha gerada "
+            "dele nao pode pertencer a nenhuma"
+        )
+
+
+def assert_island_plan_realizes_the_five_fractions(plan: tuple[dict, ...]) -> None:
+    """A GEOMETRIA do plano, julgada pelas funcoes de PRODUCAO e nao por um numero.
+
+    Tres autoridades, e nenhuma das tres e dispensavel — medido sobre a classe ai de 4000
+    linhas: 12 e 14 ilhas sao recusadas pelo preflight (o MENOR componente vale 8,33 % e
+    7,14 % contra 7 %); 16 ilhas de 250 e 18 de ~222 PASSAM o preflight e `_plano_de_blocos`
+    nao as atribui ("nao cabe inteiro em bloco algum"); 15 ilhas de ~266 passam as duas e
+    realizam `cal-A` em 6,65 % contra um alvo de 10 %, fora da tolerancia. Uma guarda que
+    comparasse "entre 15 e 20 ilhas de 200 a 270 linhas" aprovaria os tres.
+    """
+    registros = [linha for ilha in plan for linha in _island_component(ilha)]
+    try:
+        assert_components_can_fill_five_partitions(registros)
+        plano = _plano_de_blocos(registros, set())
+    except (UnsplittableCorpus, ReserveFillsTheBlindBlock) as recusa:
+        raise IslandPlanRefused(
+            f"a geometria do plano ({len(plan)} ilha(s), "
+            f"{ISLAND_PLAN_CLASS_LINES}) nao realiza as cinco particoes: {recusa}"
+        ) from None
+    total = Counter(rec["label"] for rec in registros)
+    realizado: Counter = Counter()
+    for rec in registros:
+        realizado[(plano[rec["id"]], rec["label"])] += 1
+    fora = [
+        (bloco, classe, realizado[(bloco, classe)] / total[classe], alvo)
+        for bloco, alvo in BLOCK_FRACTIONS.items()
+        for classe in sorted(total)
+        if not within_class_tolerance(realizado[(bloco, classe)] / total[classe], alvo)
+    ]
+    if fora:
+        raise IslandPlanRefused(
+            f"a geometria do plano atribui, mas as fracoes realizadas ficam fora da "
+            f"tolerancia de {CLASS_TOLERANCE}: "
+            + "; ".join(
+                f"{bloco}/{classe} realiza {f:.4f} contra alvo {alvo}"
+                for bloco, classe, f, alvo in fora
+            )
+        )
+
+
+def assert_island_plan_leaves_core_in_the_blind_block(plan: tuple[dict, ...]) -> None:
+    """A reserva deixa lugar em `test` para ao menos UMA ilha de nucleo, em toda classe.
+
+    O CRITERIO, e nao uma contagem de ilhas deduzida dele: `_plano_de_blocos` assenta todo
+    componente reservado INTEIRO em `test`, cujo alvo e o RESTO depois dos quatro blocos
+    arredondados. `ReserveFillsTheBlindBlock` recusa somente acima desse alvo, entao uma
+    reserva que o preenche EXACTAMENTE passa por ela e deixa o bloco cego inteiramente de
+    reserva — e o bloco cego carrega DUAS hipoteses, o recall sobre familia vista e a fatia
+    de gerador nao visto. Sem populacao de nucleo a segunda existe e a primeira nao.
+    """
+    reservadas = [ilha for ilha in plan if ilha["reserved"]]
+    nucleo = [ilha for ilha in plan if not ilha["reserved"]]
+    if not nucleo:
+        raise IslandPlanRefused(
+            "o plano reserva TODAS as ilhas: o bloco cego nao teria linha de nucleo, e o "
+            "recall sobre familia vista nao tem populacao"
+        )
+    for classe, total in ISLAND_PLAN_CLASS_LINES.items():
+        alvo_test = total - sum(
+            round(total * CLASS_FRACTIONS[bloco]) for bloco in CLASS_FRACTIONS
+        )
+        assentado = sum(ilha["lines"][classe] for ilha in reservadas)
+        menor_nucleo = min(ilha["lines"][classe] for ilha in nucleo)
+        if assentado + menor_nucleo > alvo_test:
+            raise IslandPlanRefused(
+                f"a reserva assenta {assentado} linha(s) de {classe!r} em `test`, cujo "
+                f"alvo e {alvo_test}, e a menor ilha de nucleo tem {menor_nucleo}: nao "
+                "sobra lugar para uma ilha de nucleo no bloco cego"
+            )
+
+
+def island_of_seed(plan: tuple[dict, ...], candidate_id: str) -> dict:
+    """A ilha a que uma semente humana pertence, por bucket determinista do id.
+
+    O bloco de sementes e DERIVADO e nao enumerado: 4000 ids nao cabem numa constante, e um
+    plano que os enumerasse envelheceria a cada re-extracao. O bucket e funcao do id
+    sozinho, entao duas ilhas nunca partilham uma semente — que e a condicao sem a qual o
+    particionamento de templates e decorativo: medido nos pools em HEAD, 116 de 1046
+    sementes sao emparelhadas por linhas de MAIS DE UMA corrida de versao, e so essas
+    arestas fundem as cinco corridas numa ilha.
+    """
+    digest = hashlib.sha256(f"island-seed:{candidate_id}".encode("utf-8")).digest()
+    bucket = int.from_bytes(digest[:8], "big") % len(plan)
+    for ilha in plan:
+        if ilha["seedBlock"] == bucket:
+            return ilha
+    raise IslandPlanRefused(
+        f"o plano nao declara bloco de semente {bucket}: o candidato {candidate_id!r} "
+        "nao pertence a ilha alguma"
+    )
+
+
+def island_named(plan: tuple[dict, ...], name: str) -> dict:
+    """A ilha que o nome nomeia, ou uma recusa que lista as admissiveis."""
+    for ilha in plan:
+        if ilha["island"] == name:
+            return ilha
+    raise IslandPlanRefused(
+        f"ilha {name!r} nao esta no plano. Ilhas declaradas: "
+        + ", ".join(ilha["island"] for ilha in plan)
+    )
 
 
 def assign_partitions(records: list[dict], held_out: set[str]) -> None:

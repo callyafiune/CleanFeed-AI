@@ -175,19 +175,32 @@ export interface BlockedSplitPolicy {
  *       an argument: that corpus has the same number of components with the axis in this
  *       list and without it. Inertness is a property of the corpus and not of the axis,
  *       so the scope travels with the claim. The members admitted on that ground are
- *       named in {@link INERT_UNION_AXES}, so the two legs are a list each and a test
- *       holds this list against their union.
+ *       named in {@link INERT_UNION_AXES}, so the legs are a list each and a test
+ *       holds this list against their union — or
+ *   (c) the axis models a dependence a member of the CERTIFYING FAMILY is measured over,
+ *       and unioning on it is viable because THE CORPUS IS BUILT SO THAT IT IS. The
+ *       members admitted on that ground are named in {@link IMPOSED_UNION_AXES}.
+ *
+ * THE THREE LEGS ARE NOT SYMMETRIC, and flattening them into one bullet list would hide
+ * the only difference that matters downstream. (a) is a list another gate already
+ * executes. (b) is a measurement over a corpus, so the SCOPE travels with the claim.
+ * (c) is a COLLECTION RESTRICTION: it is the one leg that can be satisfied today and
+ * falsified tomorrow by a generation run that ignored the plan, which is why its
+ * verification has to bite BEFORE the generation (`island_plan`, the `--island` type in
+ * benchmark/lab/generate_ai.py) and again at assembly (`assign_partitions`). Membership
+ * by (c) is not a property discovered of a corpus; it is an obligation imposed on one.
  *
  * `author`, `source` and `derivationRoot` are here by (a). `nearDuplicate` and
  * `generationBatch` are here by (b): after pruning, `nearDuplicate` is the row's own
- * id (1170 identities over the 1170 assembled generated lines), and `generationBatch`
- * is `unknown` on every generated row until the assembler derives it AFTER
- * partitioning, from a key that contains `generatedAt` — which the block stamp
- * overwrites with the block's own time, so a batch is confined to one block and
- * co-locates nothing across a cut. That second entry is therefore CONDITIONAL on the
- * overwrite, and the condition is pinned by test on the assembler's side.
+ * id (1170 identities over the 1170 assembled generated lines), and a generation batch
+ * is CONTAINED in a prompt template — the batch key holds `promptTemplateDigest` and
+ * the template identity is that digest, so two rows of one batch are already unioned by
+ * `promptTemplate`, which is in this list. `promptTemplate` is the ONE member here by
+ * (c): the recall the release certifies is resampled over family -> template -> batch
+ * (`PREREGISTRATION_V4.resampling`), so the splitter has to model the prompt dependence
+ * or the recall is measured over prompts the training set saw.
  *
- * THE CONVERSE IS FALSE, and it is not false in the abstract: two axes of this very
+ * THE CONVERSE IS FALSE, and it is not false in the abstract: four axes of this very
  * schema refute it, so an "if and only if" here would publish a claim the tree next to
  * it contradicts.
  *
@@ -208,15 +221,43 @@ export interface BlockedSplitPolicy {
  *     human lines the same axis is NOT inert, because one extraction writes thousands of
  *     rows carrying one run id — measured, in the same test. Leg (b) is a property of
  *     the corpus measured, so satisfying it is never a licence to union.
+ *   * `generatorFamily` satisfies (c) — it is the TOP level of the `ai-recall` row — and
+ *     is NOT in this list. It is not here for a reason (c) cannot see: it is
+ *     `inventoryOnly`, and what the tree does about it is narrower than grouping (only
+ *     the RESERVED families are constrained, and only to being test-only).
+ *   * `generatorVersion` satisfies (c) in the STRONGEST available form and is NOT in
+ *     this list either: measured over the assembled pools,
+ *     `identity_of(groups.generatorVersion) === identity_of(groups.generatorFamily)` on
+ *     1170 of 1170 lines (`GeneratorVersionIsTheFamilyTests`,
+ *     benchmark/lab/test_extractors.py), so it carries the identity of the resampling
+ *     tree's top level. It is `namedReported` instead, and the reason is what (c) is
+ *     silent about — whether the obligation can be IMPOSED anywhere. Two measurements
+ *     say it cannot and need not. (1) The version identity of a row is the MODEL ID: the
+ *     same test refuses every assembled line whose `version` differs from its `family`,
+ *     so partitioning the version across N islands demands N distinct model ids, and the
+ *     assembled pools carry FIVE distinct version identities over their 1170 generated
+ *     lines (measured, same test) against the 20 islands a conforming plan needs. (2) Unioning on it is not what the granularity
+ *     needs anyway — alone over those pools it leaves five components whose largest is
+ *     493 lines, 42.14% of the class, which FITS under the largest target plus the
+ *     tolerance. What does not fit is `promptTemplate`, and the pair together is what
+ *     closes the class into one component.
  *
- * So an axis's STANDING is decided by four lists and never by (a)/(b) alone. The
+ *     THE RESIDUE, declared rather than left to be discovered: version CO-LOCATION is
+ *     not modelled. Two rows of one generator version may land in different partitions,
+ *     so no report may call a partition of this corpus independent in the generator. The
+ *     generator-novelty leg is carried by a DIFFERENT mechanism — the OOD reserve by
+ *     family (`OOD_RESERVED_FAMILIES`, benchmark/lab/assemble_corpus.py), which
+ *     constrains the reserved families to being test-only — and by the per-partition
+ *     inventory the audit publishes for this axis.
+ *
+ * So an axis's STANDING is decided by four lists and never by (a)/(b)/(c) alone. The
  * function that reads them, total over every axis any version declares, is
  * `groupAxisRole` (benchmark/split-audit.ts):
  *
  *   * UNION BY VALUE — this list. Equal identities are ALWAYS one cluster.
  *   * PARENT LINKAGE — {@link PARENT_LINKAGE_AXES}. Unions only when the named row is
  *     present in the same record set.
- *   * REPORTED — `REPORTED_GROUP_AXES` (benchmark/split-audit.ts): the FOUR whose
+ *   * REPORTED — `REPORTED_GROUP_AXES` (benchmark/split-audit.ts): the THREE whose
  *     inventory the audit takes named responsibility for.
  *   * DIAGNOSTIC — `PREREGISTRATION_V4.connectivity.diagnosticAxes`: `extractionRun`.
  *
@@ -230,39 +271,38 @@ export interface BlockedSplitPolicy {
  * RESERVED families are constrained, and only to being test-only. A test walks all
  * fourteen and pins which of the five standings each axis has.
  *
- * `domain` and `groups.generatorFamily` are DELIBERATELY excluded: unioning on them
- * would collapse every LinkedIn record or a whole generator family into one
- * indivisible block. The reserved holdout family is enforced separately, as an
- * explicit test-only constraint.
+ * `domain` is DELIBERATELY excluded: unioning on it would collapse every LinkedIn
+ * record into one indivisible block. `groups.generatorFamily` is excluded too, and the
+ * exclusion is not softened by anything in this list: with `generatorVersion` reported
+ * rather than unioned, NO member of this list carries the family's identity, so a
+ * generator family is genuinely divisible here and the reserved holdout families are
+ * enforced separately, as an explicit test-only constraint.
  *
- * `promptTemplate` and `generatorVersion` are excluded BY THE SAME DECISION, and the
- * arithmetic is measured rather than feared. `promptTemplate` alone has four identities
- * over the 1170 assembled generated lines and its largest is 641, which is 54.79% of
- * the class: above the largest target plus the tolerance, so no partition can receive
- * it whole. `generatorVersion` alone has five, the largest 493 (42.1%), which fits —
- * what does not fit is the pair. The two TOGETHER close transitively (a version run
- * crosses template boundaries and a template crosses version runs) and the whole class
- * becomes ONE component, 100% of it: that closure, and not either axis by itself, is
- * what the exclusion buys. Neither axis identifies material —
- * `EXPOSURE_IDENTITY_AXES` excludes the recipe axes BY NAME, for the reason written
- * there — so they fail (a), and neither is inert, so they fail (b) too.
+ * WHAT LEG (c) COSTS, and the price is paid in COLLECTION rather than in reporting. The
+ * arithmetic is measured, on the assembled pools: `promptTemplate` alone has four
+ * identities over the 1170 generated lines and its largest is 641, which is 54.79% of
+ * the class — above the largest target plus the tolerance, so no partition can receive
+ * it whole. That refusal is not an argument for excluding the axis — it is the SIZE of
+ * the obligation (c) imposes, and it is what fixes the granularity a conforming corpus
+ * needs. So a generated class produced the way those pools were produced is REFUSED, by
+ * `assert_components_can_fill_five_partitions` on its largest-component branch, and the
+ * corpus has to be BUILT in islands instead: each block of human material carries its
+ * own generation templates, its own seeds and its own mixing parents, so the graph over
+ * templates is a set of disconnected islands. The two cases of the shared catalogue
+ * state both halves — `forma-medida-da-classe-gerada` is the refusal and
+ * `ilhas-de-receita-que-passam` is the geometry that passes — and both sides of the
+ * language boundary assert them. Those cases also measure the sub-relation this list
+ * does NOT take: over the very pools where `bothRecipeAxes` closes the class into one
+ * component, `generatorVersionOnly` leaves five and its largest FITS. That is the
+ * measurement that says posting the version here was never what the granularity needed.
  *
- * What this comment must NOT say, because it was measured false: that
- * `generatorVersion` carries the identity `generatorFamily` carries. Version REFINES
- * family — five identities against one, agreeing on 0 of the 1170 lines — so unioning
- * on version is strictly WEAKER than unioning on the family, and the family argument
- * of the paragraph above does not reach it.
- *
- * WHAT THAT COSTS, stated because a reader must not take a split under this list for
- * independence: two generated lines grown from one prompt ARE dependent, and after
- * this exclusion the splitter no longer models that dependence. It is carried instead
- * by the two gates that read it — the ledger's eligibility comparison and the frozen
- * resampling table of the estimand class (`PREREGISTRATION_V4.resampling`), which
- * resamples `ai-recall` over family -> template -> batch — so an interval published
- * over `test` REPORTS it. A point estimate does not: a recall or FPR measured in the
- * blind block is a measurement over prompts the training set SAW and seeds it did not,
- * and any report that uses the word independence without that qualifier states
- * something false.
+ * WHAT THE ISLAND PLAN COSTS IN TEMPLATES, said in the unit the operator pays in: no
+ * template identity may appear in two islands, so a plan of N islands demands N DISTINCT
+ * prompt templates at the very least. The preflight refuses fewer than 15 islands (a
+ * component of a 14-island plan is 7.14% of the corpus against `dev`'s 7% ceiling), so
+ * the floor for any conforming plan is 15 templates; `ISLAND_PLAN` declares 20 islands
+ * of two templates each and therefore asks for 40. Writing prompts is the cheap axis,
+ * which is why this list holds the template and not the version.
  *
  * `domainSource` and `sourceMaterialBatch` fail (a), and they fail (b) OVER A CORPUS
  * THAT HOLDS HUMAN LINES — which is the scope leg (b) is measured on, and it has to be
@@ -288,6 +328,7 @@ export interface BlockedSplitPolicy {
 export const GROUP_KEYS = [
   "author",
   "source",
+  "promptTemplate",
   "generationBatch",
   "nearDuplicate",
   "derivationRoot",
@@ -306,15 +347,45 @@ export type GroupKey = (typeof GROUP_KEYS)[number];
  * standings — an axis absent from both lists is not thereby reported or diagnostic.
  *
  * Inertness is a property of the CORPUS that was measured, not of the axis, and the two
- * entries are not equally durable. `nearDuplicate` is inert because pruning leaves it a
- * singleton per row; a corpus that was not pruned makes it false. `generationBatch` is
- * inert only while the block stamp overwrites `generatedAt` — the assembler derives the
- * batch after partitioning — so this entry is exactly as true as the test on the
- * assembler's side, and no truer.
+ * entries do not rest on the same fact. `nearDuplicate` is inert because pruning leaves
+ * it a singleton per row; a corpus that was not pruned makes it false.
+ * `generationBatch` is inert because `stamp_block` overwrites `generatedAt`, which is the
+ * fact the assembler's `test_a_batch_never_straddles_two_partitions` pins. Containment in
+ * `promptTemplate` is the tempting stronger story and it is NOT unconditional: the batch key
+ * holds `promptTemplateDigest`, but the `promptTemplate` identity is `{recipe}_{digest}`, and
+ * the recipe NAME is not in the key — two rows sharing a digest under different recipes take
+ * ONE batch and TWO template identities, and over that corpus the axis is not inert.
  */
 export const INERT_UNION_AXES = [
   "generationBatch",
   "nearDuplicate",
+] as const satisfies readonly GroupKey[];
+
+/**
+ * The members of {@link GROUP_KEYS} admitted by IMPOSED VIABILITY — leg (c) of the
+ * criterion — rather than by identifying material or by measured inertness.
+ *
+ * A list and not a paragraph, for the same reason {@link INERT_UNION_AXES} is: it is
+ * what lets a test classify EVERY axis of the union list into exactly one leg, so an
+ * axis added with no justification fails there instead of arriving with prose.
+ *
+ * ONE name, and the list is a list so that the second one has to be argued for rather
+ * than appended. `promptTemplate` is the axis the recall depends on whose viability is a
+ * COLLECTION FACT: measured on the assembled pools it puts 641 of 1170 generated lines
+ * (54.79% of the class) in one component, which no partition can receive; measured on a
+ * corpus built in islands it leaves one component per island. Both measurements are in
+ * the shared catalogue, asserted from both sides.
+ *
+ * `generatorVersion` is NOT here, and its absence is the point of the list being
+ * checkable: it satisfies (c) as strongly as this member does — its identity IS the
+ * resampling tree's top level on every assembled line — and it is `namedReported`
+ * anyway, because no site can impose the version partition and the granularity does not
+ * need it. The argument, with both measurements, is at {@link GROUP_KEYS}. A second name
+ * here without an island plan that realises the five fractions for it is what the
+ * classification test refuses.
+ */
+export const IMPOSED_UNION_AXES = [
+  "promptTemplate",
 ] as const satisfies readonly GroupKey[];
 
 // The axes `connectedComponentRoots` follows as PARENT LINKAGE — a row whose

@@ -22,10 +22,20 @@ parser: `agy`, `codex` and `gemini_cli` authenticate through the operator's own 
 printed or stored: GEMINI_API_KEY (or GOOGLE_API_KEY). The OpenAI and Anthropic API
 surfaces are named in `OUT_OF_SLATE_PROVIDERS` with the reason each is outside.
 
+`--island` is refused at the same boundary and for the same reason. With `promptTemplate`
+back in the splitter's union list, a generated class whose template graph is CONNECTED is
+one component the five partitions cannot receive, and `assign_partitions` refuses it —
+after the quota is gone. So the plan of islands (`ISLAND_PLAN`,
+benchmark/lab/assemble_corpus.py) is validated by the argparse `type=` before the seeds
+file is opened, before the lane lock and before the first provider call, and the run
+generates for ONE island: its templates and its block of human seeds. It does NOT
+partition the generator version — that identity is the model id, and it is reported by
+the audit rather than unioned by the splitter (see `GROUP_KEYS`, benchmark/split.ts).
+
 Stdlib only (urllib against the one REST API).
 
 Usage (pilot):
-  python benchmark/lab/generate_ai.py --provider agy \
+  python benchmark/lab/generate_ai.py --provider agy --island ilha_00 \
     --humans ../data/candidates/carolina.jsonl \
     --output ../data/candidates/ai_agy.jsonl --per-provider 60
   (idem para --provider codex | gemini | gemini_cli; --dry-run mostra o plano sem
@@ -50,6 +60,21 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 from common import MAXIMUM_WORDS, MINIMUM_WORDS, CandidateWriter, keep_sample
+
+
+def assembler():
+    """`assemble_corpus`, importado TARDE, e o motivo e um CICLO real e nao zelo.
+
+    `assemble_corpus` importa `artifact_gate`, que importa ESTE modulo e le
+    `generate_ai.RECIPES` durante o proprio import. Um `import assemble_corpus` no topo
+    daqui fecha o ciclo, e o erro sai de `artifact_gate` com um `AttributeError` sobre
+    `RECIPES` — a milhas de onde o import foi escrito. Importar dentro da funcao e o que
+    mantem o plano de ilhas no arquivo que ja e dono da aritmetica das cinco fracoes sem
+    inverter a dependencia entre montador e gerador.
+    """
+    import assemble_corpus
+
+    return assemble_corpus
 
 LICENSE_ID = "geracao-propria-v1"
 
@@ -208,6 +233,56 @@ def frozen_lane(value: str) -> str:
         f"provider {value!r} is outside the frozen slate: {reason}. "
         f"Admissible lanes: {admissible}"
     )
+
+
+def island_plan(value: str) -> dict:
+    """`--island`'s type: an island of a plan that PASSES, or a refusal on the way in.
+
+    Same boundary as `frozen_lane`, and the same reason: `assign_partitions` already
+    refuses a corpus whose generated class is one component, but it refuses at ASSEMBLY,
+    which is after every provider call has been paid for. Here nothing has been opened
+    yet — argparse exits 2 before `main` reaches the seeds file, the lane lock or the
+    first generation.
+
+    THE CRITERION, stated rather than a sufficient condition deduced from it:
+      1. the declared plan is a PARTITION — no generation template, no block of human seeds
+         and no mixing template in two islands, and every seed bucket covered;
+      2. the plan's GEOMETRY is accepted by `assert_components_can_fill_five_partitions`,
+         assigned by `_plano_de_blocos` and realises fractions inside
+         `within_class_tolerance` — the three PRODUCTION functions called, never a number
+         compared;
+      3. the reserve leaves room in the blind block for a core island;
+      4. `--island` names an island of the plan, and the SLATE serves its templates.
+
+    Leg 4 is the one that refuses today, and the refusal is the decision it names: the plan
+    asks for two templates per island over twenty islands and `RECIPES` declares four
+    names, so the slate has to grow before the ai class can be generated at all. That is
+    the collection decision the operator owns; what this function owns is that the quota
+    cannot be spent while the slate does not meet the plan.
+    """
+    lab = assembler()
+    try:
+        lab.assert_island_plan_is_a_partition(lab.ISLAND_PLAN)
+        lab.assert_island_plan_realizes_the_five_fractions(lab.ISLAND_PLAN)
+        lab.assert_island_plan_leaves_core_in_the_blind_block(lab.ISLAND_PLAN)
+        island = lab.island_named(lab.ISLAND_PLAN, value)
+    except lab.IslandPlanRefused as refused:
+        raise argparse.ArgumentTypeError(str(refused)) from None
+    if not island["templates"]:
+        raise argparse.ArgumentTypeError(
+            f"a ilha {value!r} declara zero template: uma corrida sem template nao escreve "
+            "linha alguma, e a conferencia contra o slate passaria por vacuidade"
+        )
+    unserved = [name for name in island["templates"] if name not in RECIPES]
+    if unserved:
+        raise argparse.ArgumentTypeError(
+            f"a ilha {value!r} pede os templates {tuple(island['templates'])} e o slate "
+            f"declara {tuple(sorted(RECIPES))}: os que faltam sao {tuple(unserved)}. "
+            "Cresca `RECIPES` ate cobrir o plano, ou emende o plano — gerar sob um slate "
+            "que o plano nao cumpre produz uma classe que a montagem recusa depois de a "
+            "cota estar gasta"
+        )
+    return island
 
 
 # argv that asks each CLI lane for its own version. `agy` is a single executable;
@@ -414,6 +489,30 @@ def target_word_count(human_word_count: int) -> int:
     return int(human_word_count)
 
 
+def _weighted_recipe(names: tuple[str, ...], salt: str) -> str:
+    """Deterministic pick among `names`, honouring their declared weight mix.
+
+    The weights are the V2 plan's mix and they are a DESIGN decision, so restricting the
+    candidate set to one island must not silently flatten them: the bucket is taken modulo
+    the weight sum OF THE NAMES OFFERED, which keeps the ratio between whichever of them
+    the island carries.
+    """
+    if not names:
+        raise ValueError(
+            f"nenhum template oferecido para {salt!r}: uma ilha sem template nao pode "
+            "gerar linha alguma"
+        )
+    total = sum(RECIPES[name]["weight"] for name in names)
+    digest = hashlib.sha256(f"recipe:{salt}".encode()).digest()
+    bucket = int.from_bytes(digest[:4], "big") % total
+    cursor = 0
+    for name in names:
+        cursor += RECIPES[name]["weight"]
+        if bucket < cursor:
+            return name
+    return names[-1]
+
+
 def recipe_for(provider: str, candidate_id: str) -> str:
     """Deterministic recipe assignment honoring the weight mix (buckets of 10)."""
     digest = hashlib.sha256(f"recipe:{provider}:{candidate_id}".encode()).digest()
@@ -424,6 +523,28 @@ def recipe_for(provider: str, candidate_id: str) -> str:
         if bucket < cursor:
             return name
     return "original"
+
+
+def recipe_for_island(island: dict, candidate_id: str) -> str:
+    """The template of ONE line, and it is a template OF THIS ISLAND — imposed, not promised.
+
+    Two refusals rather than a comment. The seed is checked against the island's own block
+    first: a candidate the plan puts in another island cannot be paired here at all, and
+    without that check the template partition is decorative — measured on the pools in HEAD,
+    116 of the 1046 seeds are paired by lines of MORE THAN ONE generation run, and those
+    edges alone fuse the five runs into one component. The fusing relation is `humanSeed`
+    LINEAGE, so it bites whatever the runs are named by. Then the pick is restricted to the
+    island's templates, so the identity written on the row cannot come from outside it.
+    """
+    lab = assembler()
+    dono = lab.island_of_seed(lab.ISLAND_PLAN, candidate_id)
+    if dono["island"] != island["island"]:
+        raise lab.IslandPlanRefused(
+            f"a semente {candidate_id!r} pertence ao bloco da ilha {dono['island']!r} e a "
+            f"corrida e da ilha {island['island']!r}: emparelhar as duas funde as ilhas "
+            "pelo pai humano, e o particionamento de templates fica decorativo"
+        )
+    return _weighted_recipe(tuple(island["templates"]), f"{island['island']}:{candidate_id}")
 
 
 def template_digest(recipe: str) -> str:
@@ -783,8 +904,19 @@ def already_paired(output: Path) -> set[str]:
     return done
 
 
-def select_pairs(humans: list[dict], provider: str, count: int, done: set[str]) -> list[dict]:
-    """Deterministic provider-specific sample of human topic seeds."""
+def select_pairs(
+    humans: list[dict], provider: str, count: int, done: set[str], island: dict
+) -> list[dict]:
+    """Deterministic provider-specific sample of the seeds OF ONE ISLAND.
+
+    `island` is required and not defaulted. The sampling salt is per PROVIDER and `done` is
+    per output file, so nothing here ever confined a lane to a block of seeds: measured on
+    the pools in HEAD, 116 of the 1046 seeds are paired by lines of more than one generation
+    run, and a union-find over the runs with only those `humanSeed` edges fuses the five into
+    ONE component. A parameter with a default would let a caller keep the old behaviour and
+    the partition of templates would go back to being decorative.
+    """
+    lab = assembler()
     selected: list[dict] = []
     for rate in (3, 2, 1):  # widen deterministically until count is met
         for row in humans:
@@ -792,6 +924,8 @@ def select_pairs(humans: list[dict], provider: str, count: int, done: set[str]) 
                 return selected
             cid = row["candidateId"]
             if cid in done or any(s["candidateId"] == cid for s in selected):
+                continue
+            if lab.island_of_seed(lab.ISLAND_PLAN, cid)["island"] != island["island"]:
                 continue
             if keep_sample(f"{provider}:{cid}", rate):
                 selected.append(row)
@@ -806,6 +940,18 @@ def main() -> None:
         type=frozen_lane,
         choices=sorted(PROVIDER_LANE),
         metavar="{" + ",".join(sorted(PROVIDER_LANE)) + "}",
+    )
+    # REQUIRED, and the `type=` is where the plan is judged. A default would make a run
+    # that forgot the flag generate for whichever island the default names, which is the
+    # one thing the plan exists to prevent: two lanes writing into one island draw from the
+    # same two prompt templates and their rows are ONE component.
+    parser.add_argument(
+        "--island",
+        required=True,
+        type=island_plan,
+        metavar="{"
+        + ",".join(ilha["island"] for ilha in assembler().ISLAND_PLAN[:2])
+        + ",...}",
     )
     parser.add_argument("--humans", required=True, nargs="+", type=Path)
     parser.add_argument("--output", required=True, type=Path)
@@ -859,16 +1005,23 @@ def main() -> None:
         or os.environ.get("GOOGLE_API_KEY", ""),
     }
 
+    island = args.island
     humans = load_humans(args.humans)
     done = already_paired(args.output)
-    pairs = select_pairs(humans, provider, args.per_provider, done)
+    pairs = select_pairs(humans, provider, args.per_provider, done, island)
     print(
-        f"{provider}/{model}: {len(pairs)} a gerar "
+        f"{provider}/{model} @ {island['island']}: {len(pairs)} a gerar "
         f"(humans={len(humans)}, resume-skip={len(done)})"
     )
     if args.dry_run:
-        for row in pairs[:5]:
-            print(f"  seed-topic {row['candidateId']} ({row['wordCount']} palavras)")
+        # TODAS as linhas propostas, e nao uma amostra: o que se le aqui e o template de
+        # cada linha que a corrida escreveria, e uma amostra provaria a ilha nas cinco
+        # sorteadas e nada sobre a corrida.
+        for row in pairs:
+            print(
+                f"  seed-topic {row['candidateId']} ({row['wordCount']} palavras) "
+                f"receita={recipe_for_island(island, row['candidateId'])}"
+            )
         return
     # CLI channels authenticate via the user's login, not an env key.
     if provider not in CLI_PROVIDERS and not keys[provider]:
@@ -952,7 +1105,7 @@ def main() -> None:
 
     try:
         for index, row in enumerate(pairs, start=1):
-            recipe = recipe_for(provider, row["candidateId"])
+            recipe = recipe_for_island(island, row["candidateId"])
             target_words = target_word_count(int(row["wordCount"]))
             prompt = RECIPES[recipe]["template"].format(
                 words=target_words, reference=row["text"][:6000]
@@ -1041,7 +1194,14 @@ def main() -> None:
                     "model": batch_family,
                     "version": batch_family,
                     "models": models,
-                    "recipes": {name: template_digest(name) for name in RECIPES},
+                    "island": island["island"],
+                    "islandSeedBlock": island["seedBlock"],
+                    # Só as receitas DESTA ilha. Declarar todas as `RECIPES` fazia o lote
+                    # nomear receita que a corrida não usou, e um lote que declara um
+                    # template ausente das suas linhas descreve outra corrida.
+                    "recipes": {
+                        name: template_digest(name) for name in island["templates"]
+                    },
                     # The lane, the harness and the declared effort, so the batch
                     # record says what the rows say. `harnessVersion` is null rather
                     # than a placeholder when the capture failed: a batch that names a

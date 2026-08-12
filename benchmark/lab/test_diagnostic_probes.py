@@ -572,16 +572,54 @@ class GeneratedLengthReachesTheProviderTests(unittest.TestCase):
     that has to carry a length budget wide enough for the tail.
     """
 
+    # A ilha que a lane gera, e o slate de teste que a serve. O driver passou a gerar para UMA
+    # ilha do plano — `--island`, recusado no `type=` do argparse antes de qualquer chamada —,
+    # então uma semente fora do bloco dessa ilha é recusada por `recipe_for_island` e um
+    # template fora dela nunca é proposto. As sementes deste fixture são escolhidas DENTRO do
+    # bloco, e a ilha recebe nomes de `RECIPES` porque o que se mede aqui é o COMPRIMENTO que
+    # chega ao provedor, não a decisão de coleta que faz o slate crescer.
+    ILHA = "ilha_00"
+
+    def _plano_de_teste(self) -> tuple[dict, ...]:
+        import assemble_corpus
+        import generate_ai
+
+        receitas = tuple(sorted(generate_ai.RECIPES))[:2]
+        return tuple(
+            dict(ilha, templates=receitas) if ilha["island"] == self.ILHA else ilha
+            for ilha in assemble_corpus.ISLAND_PLAN
+        )
+
     def _humans(self, counts: list[int]) -> list[dict]:
-        return [
-            {
-                "candidateId": f"src_h_{index:04d}",
-                "text": _text(index, words),
-                "wordCount": words,
-                "domainSource": "ptwiki",
-            }
-            for index, words in enumerate(counts)
-        ]
+        """Uma semente por comprimento, todas do bloco de `ILHA`.
+
+        O índice não é o do enumerate: é o próximo id cujo bucket é o da ilha. Sem isto a
+        maioria das sementes cairia noutras ilhas e a lane geraria menos linhas do que
+        `counts` tem, medindo cobertura em vez de comprimento.
+        """
+        import assemble_corpus
+
+        plano = self._plano_de_teste()
+        rows: list[dict] = []
+        indice = 0
+        for words in counts:
+            while True:
+                candidato = f"src_h_{indice:04d}"
+                indice += 1
+                if (
+                    assemble_corpus.island_of_seed(plano, candidato)["island"]
+                    == self.ILHA
+                ):
+                    break
+            rows.append(
+                {
+                    "candidateId": candidato,
+                    "text": _text(indice, words),
+                    "wordCount": words,
+                    "domainSource": "ptwiki",
+                }
+            )
+        return rows
 
     def _drive_rest_lane(
         self, counts: list[int]
@@ -618,15 +656,25 @@ class GeneratedLengthReachesTheProviderTests(unittest.TestCase):
             argv = [
                 "generate_ai.py",
                 "--provider", "gemini",
+                "--island", self.ILHA,
                 "--humans", str(humans),
                 "--output", str(output),
                 "--per-provider", str(len(counts)),
                 "--sleep", "0",
             ]
+            import assemble_corpus
+
             with mock.patch.object(sys, "argv", argv):
-                with mock.patch.dict(os.environ, {"GEMINI_API_KEY": "chave-de-teste"}):
-                    with mock.patch.object(generate_ai, "http_json", fake_http_json):
-                        generate_ai.main()
+                with mock.patch.object(
+                    assemble_corpus, "ISLAND_PLAN", self._plano_de_teste()
+                ):
+                    with mock.patch.dict(
+                        os.environ, {"GEMINI_API_KEY": "chave-de-teste"}
+                    ):
+                        with mock.patch.object(
+                            generate_ai, "http_json", fake_http_json
+                        ):
+                            generate_ai.main()
             written = [
                 json.loads(line)
                 for line in output.read_text(encoding="utf-8").splitlines()

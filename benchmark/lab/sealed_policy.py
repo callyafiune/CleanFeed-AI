@@ -52,7 +52,7 @@ SEALED_POLICY_VERSION = "preregistration-v4-v1"
 # the two fails until it does. That failure is the point: an amendment reaches the Colab
 # steps only when someone writes it here.
 SEALED_POLICY_SHA256 = (
-    "1b392d3b9cb731c562448eadeab398be4308de820f248a4c9a2e454347a61ae8"
+    "d08c5f64ccf099775f423f2244a2cac1d07d30b34ba400a79664f05c40790538"
 )
 
 # Where the file that governed the run was read from. `tracked` is the checkout; the other

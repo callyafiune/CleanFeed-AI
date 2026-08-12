@@ -1,7 +1,7 @@
 {
   "purpose": "O catálogo de corpos que o preflight de viabilidade do benchmark (benchmark/viability-preflight.ts) e a guarda do assembler (benchmark/lab/assemble_corpus.py::assert_components_can_fill_five_partitions) têm de julgar IGUAL. Os dois lados leem este arquivo, materializam o corpo pela regra abaixo, conferem o histograma de componentes e as contagens por classe medidos contra os declarados, e só então comparam o veredito. Se discordarem, um dos dois está medindo outra coisa.",
-  "materialization": "Cada célula rende, para cada entrada de `components`, `count` componentes com as linhas declaradas em `lines` (por classe). As linhas HUMANAS de um componente COMPARTILHAM o autor (`author` é eixo de união v4); as linhas GERADAS do mesmo componente apontam `humanSeed` para o id da primeira linha humana do componente, que é o eixo de LINHAGEM DE PAI — é assim que uma linha gerada fica dependente do material de que foi semeada. Componente sem linha humana tem `humanSeed` nomeando registro ausente, então não une nada. Cada linha carrega seu próprio documento de origem (`source`), seu próprio grupo de quase-duplicata (`nearDuplicate`) e, quando gerada, seu próprio `generationBatch`. `promptTemplate` e `generatorVersion` de uma linha gerada são próprios dela TAMBÉM, a menos que o caso declare `generatedRecipe`: aí as identidades vêm das CORRIDAS declaradas, na ordem em que as linhas geradas do caso são materializadas — a k-ésima linha gerada recebe a corrida em que k cai. É assim que um caso descreve a forma que o montador realmente produz, em que uma receita cobre centenas de linhas. `stratum` (domainSource) e `materialBatch` (sourceMaterialBatch) valem para as linhas HUMANAS da célula e carregam UM valor por célula — é isso que o fixture de lote único prova que NÃO une; linha gerada carrega sempre `generatedStratum` e `sourceMaterialBatch` notApplicable, porque geração não adquire material. Autores, documentos e ids são prefixados pelo índice da célula, então nada gruda entre células por acidente.",
-  "recipeUnion": "Um caso com `generatedRecipe` declara também, em `expected.recipeUnioned`, a geometria que os eixos de RECEITA produziriam se estivessem na união — a lista de sete de que a emenda saiu. Os dois lados medem essa geometria sobre o MESMO corpo. São TRÊS pernas, e a primeira existe para impedir uma razão falsa de voltar: `generatorVersionOnly` CABE (5 componentes, maior 493 = 42,14 %, nenhuma violação), logo a exclusão de `generatorVersion` não se sustenta na aritmética dele sozinho; `promptTemplateOnly` recusa pelo maior componente (641 = 54,79 %); e `bothRecipeAxes` fecha transitivamente e o corpo inteiro vira UM componente de 100 %. É o FECHO DO PAR que compra a exclusão, e é essa a medição pela qual ela é decisão e não preferência.",
+  "materialization": "Cada célula rende, para cada entrada de `components`, `count` componentes com as linhas declaradas em `lines` (por classe). As linhas HUMANAS de um componente COMPARTILHAM o autor (`author` é eixo de união v4); as linhas GERADAS do mesmo componente apontam `humanSeed` para o id da primeira linha humana do componente, que é o eixo de LINHAGEM DE PAI — é assim que uma linha gerada fica dependente do material de que foi semeada. Componente sem linha humana tem `humanSeed` nomeando registro ausente, então não une nada. Cada linha carrega seu próprio documento de origem (`source`), seu próprio grupo de quase-duplicata (`nearDuplicate`) e, quando gerada, seu próprio `generationBatch`. `promptTemplate` e `generatorVersion` de uma linha gerada são próprios dela TAMBÉM, a menos que o caso declare `generatedRecipe`: aí as identidades vêm das CORRIDAS declaradas, na ordem em que as linhas geradas do caso são materializadas — a k-ésima linha gerada recebe a corrida em que k cai. Dos dois, SÓ `promptTemplate` está na união: uma corrida de TEMPLATE declarada une as linhas dela, e uma corrida de VERSÃO não une nada sob a união de produção — `generatorVersion` é `namedReported`, e a corrida existe para as sub-relações de `recipeUnioned` serem medidas sobre o MESMO corpo. É assim que um caso descreve, com a mesma declaração, a forma que os pools produzem (um template cobrindo 641 das 1170 linhas, componente que partição alguma recebe) e a geometria de ILHAS que a Fase 3 item 2 tem de produzir. `stratum` (domainSource) e `materialBatch` (sourceMaterialBatch) valem para as linhas HUMANAS da célula e carregam UM valor por célula — é isso que o fixture de lote único prova que NÃO une; linha gerada carrega sempre `generatedStratum` e `sourceMaterialBatch` notApplicable, porque geração não adquire material. Autores, documentos e ids são prefixados pelo índice da célula, então nada gruda entre células por acidente.",
+  "recipeUnion": "Um caso com `generatedRecipe` declara também, em `expected.recipeUnioned`, as SUB-RELAÇÕES da união de produção: cada perna é medida sobre a lista de união MENOS os eixos IMPOSTOS, mais os eixos que a perna nomeia, então `promptTemplateOnly` é exactamente o que a produção faz, `generatorVersionOnly` é a perna que a produção NÃO toma e `bothRecipeAxes` é o CONTRAFACTUAL de unir as duas. Os três lados medem sobre o MESMO corpo. O valor evidencial delas mudou DUAS vezes, e o estado é este: `generatorVersionOnly` CABE sobre a forma medida dos pools (5 componentes, maior 493 = 42,14 %), e é essa medição que diz que pôr a VERSÃO na união nunca foi o que a granularidade pedia — o que não cabe é o template, e `promptTemplateOnly` recusa pelo maior componente (641 = 54,79 %), que é a RECUSA da produção; `bothRecipeAxes` fecha transitivamente num componente de 100 %, e o que ele mede é o tamanho da obrigação que se teria comprado, não o que o splitter faz. Sobre a geometria de ilhas as três cabem, e o que fecha a costura é `promptTemplateOnly` ter de igualar, raiz por raiz, o passeio de produção: sem isso o catálogo poderia afirmar uma geometria que o splitter não produz. Um caso com `generatedRecipe` afirma ainda que o mapa template -> versão é uma FUNÇÃO: não por o plano de ilhas pedir isso (não pede — versão saiu da união), mas porque é o que faz `bothRecipeAxes` medir as corridas de versão em vez de um fecho mais grosso que ninguém declarou.",
   "generatedStratum": "ds_ai_agy",
   "expectedBreachVocabulary": [
     "largest-component-exceeds-largest-target",
@@ -501,7 +501,7 @@
     },
     {
       "name": "forma-medida-da-classe-gerada",
-      "why": "A FORMA QUE O MONTADOR REALMENTE PRODUZ, e não uma classe gerada de grão fino que ninguém tem: 1170 linhas ai de uma célula, com QUATRO identidades de promptTemplate em corridas de 641/231/213/85 e CINCO de generatorVersion em 493/320/256/99/2 — medido sobre os pools em HEAD. Sob a união de cinco chaves cada linha é seu próprio componente (0,0855 % cada) e as duas condições passam. Com os eixos de receita na união o mesmo corpo colapsa: só `promptTemplate` dá quatro componentes cujo maior vale 54,79 % da classe (acima de 45 % + 2 pp) e cujo menor vale 7,27 % (acima de 5 % + 2 pp), e com `generatorVersion` também as corridas de versão atravessam as fronteiras de template e o corpo INTEIRO vira um componente de 100 %. Um fixture que dá um template por linha prova viabilidade sobre um corpus imaginário, e foi por ele que a inviabilidade atravessou verde.",
+      "why": "A FORMA QUE OS POOLS PRODUZEM, e o corpo que a emenda de 2026-08-12 passou a RECUSAR: 1170 linhas ai de uma célula, com QUATRO identidades de promptTemplate em corridas de 641/231/213/85 e CINCO de generatorVersion em 493/320/256/99/2 — medido sobre os pools em HEAD. Com `promptTemplate` na união e `generatorVersion` fora dela, a produção vê QUATRO componentes — um por template — e o maior vale 641/1170 = 54,79 %, acima do maior alvo mais a tolerância, então `assert_components_can_fill_five_partitions` recusa pelo ramo do MAIOR. O menor, 85 = 7,26 %, também excede o menor alvo mais a tolerância, e é por isso que há duas violações por escopo e não uma. Unir também a versão fecharia o corpo INTEIRO num componente de 100 %, e isso está medido na perna `bothRecipeAxes` — como contrafactual, e não como o que o splitter faz. Isso não é defeito: é a guarda funcionando sobre uma classe gerada que ninguém deve produzir. Num corpo mono-classe as frações do escopo `corpus` e do escopo `ai` são a MESMA lista, então as quatro violações são dois pares do mesmo fato, e é por isso que as quatro estão declaradas. O caso que passa é `ilhas-de-receita-que-passam`, e os dois juntos são as duas metades da perna (c) do critério da união.",
       "generatedRecipe": {
         "promptTemplateRuns": [641, 231, 213, 85],
         "generatorVersionRuns": [493, 320, 256, 99, 2]
@@ -513,9 +513,27 @@
           "materialBatch": null,
           "components": [
             {
-              "count": 1170,
+              "count": 1,
               "lines": {
-                "ai": 1
+                "ai": 641
+              }
+            },
+            {
+              "count": 1,
+              "lines": {
+                "ai": 231
+              }
+            },
+            {
+              "count": 1,
+              "lines": {
+                "ai": 213
+              }
+            },
+            {
+              "count": 1,
+              "lines": {
+                "ai": 85
               }
             }
           ]
@@ -528,16 +546,26 @@
         },
         "distinctStrata": 1,
         "distinctMaterialBatches": 0,
-        "breaches": [],
-        "splitterRefuses": false,
-        "splitterRefusal": null,
-        "splitSizes": {
-          "train": 526,
-          "dev": 59,
-          "cal-A": 117,
-          "cal-B": 234,
-          "test": 234
-        },
+        "breaches": [
+          {
+            "scope": "corpus",
+            "kind": "largest-component-exceeds-largest-target"
+          },
+          {
+            "scope": "corpus",
+            "kind": "smallest-component-exceeds-smallest-target"
+          },
+          {
+            "scope": "ai",
+            "kind": "largest-component-exceeds-largest-target"
+          },
+          {
+            "scope": "ai",
+            "kind": "smallest-component-exceeds-smallest-target"
+          }
+        ],
+        "splitterRefuses": true,
+        "splitterRefusal": "class split fractions unreachable",
         "recipeUnioned": {
           "generatorVersionOnly": {
             "axes": ["generatorVersion"],
@@ -590,6 +618,84 @@
                 "kind": "smallest-component-exceeds-smallest-target"
               }
             ]
+          }
+        }
+      }
+    },
+    {
+      "name": "ilhas-de-receita-que-passam",
+      "why": "A GEOMETRIA QUE A FASE 3 ITEM 2 TEM DE PRODUZIR, e o par do caso anterior: 20 ilhas de 20 linhas ai, cada ilha com DOIS templates seus e uma identidade de generatorVersion sua. Sob a união de produção o componente é o TEMPLATE, então o corpo mede 40 componentes de 10 — nenhum acima de 47 % e nenhum acima do menor alvo mais a tolerância, que é a condição que o preflight decide —, e o splitter realiza 45/5/10/20/20 exactamente. As fronteiras dos templates continuam a refinar as das corridas de versão, então o mapa template -> versão é uma FUNÇÃO e a perna contrafactual `bothRecipeAxes` mede as 20 corridas; num corpo de release são as linhas MISTAS que voltam a juntar os templates de uma ilha num componente só, e esse mecanismo é pinado no lab e não aqui. A escala é um DÉCIMO do release (400 linhas contra 4000) e isso não é dissimulação: a guarda compara FRAÇÕES, e as realizadas aqui são as mesmas que 20 ilhas de 200 realizam no release. A aritmética em LINHAS — 1880 de teto, 280 de piso, 800 no bloco cego — é pinada noutro sítio, derivada de FIVE_TARGETS/CLASS_TOLERANCE e de RELEASE_CORPUS_POLICY.counts e não deste fixture.",
+      "generatedRecipe": {
+        "promptTemplateRuns": [
+          10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10,
+          10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10,
+          10, 10, 10, 10, 10, 10
+        ],
+        "generatorVersionRuns": [
+          20, 20, 20, 20, 20, 20, 20, 20, 20, 20, 20, 20, 20, 20, 20, 20, 20,
+          20, 20, 20
+        ]
+      },
+      "cells": [
+        {
+          "cell": "geracao-agy",
+          "stratum": null,
+          "materialBatch": null,
+          "components": [
+            {
+              "count": 40,
+              "lines": {
+                "ai": 10
+              }
+            }
+          ]
+        }
+      ],
+      "expected": {
+        "recordLines": 400,
+        "classLines": {
+          "ai": 400
+        },
+        "distinctStrata": 1,
+        "distinctMaterialBatches": 0,
+        "breaches": [],
+        "splitterRefuses": false,
+        "splitterRefusal": null,
+        "splitSizes": {
+          "train": 180,
+          "dev": 20,
+          "cal-A": 40,
+          "cal-B": 80,
+          "test": 80
+        },
+        "recipeUnioned": {
+          "generatorVersionOnly": {
+            "axes": ["generatorVersion"],
+            "components": 20,
+            "histogram": [
+              20, 20, 20, 20, 20, 20, 20, 20, 20, 20, 20, 20, 20, 20, 20, 20,
+              20, 20, 20, 20
+            ],
+            "breaches": []
+          },
+          "promptTemplateOnly": {
+            "axes": ["promptTemplate"],
+            "components": 40,
+            "histogram": [
+              10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10,
+              10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10,
+              10, 10, 10, 10, 10, 10, 10, 10
+            ],
+            "breaches": []
+          },
+          "bothRecipeAxes": {
+            "axes": ["promptTemplate", "generatorVersion"],
+            "components": 20,
+            "histogram": [
+              20, 20, 20, 20, 20, 20, 20, 20, 20, 20, 20, 20, 20, 20, 20, 20,
+              20, 20, 20, 20
+            ],
+            "breaches": []
           }
         }
       }

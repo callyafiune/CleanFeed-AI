@@ -7475,3 +7475,114 @@ Medido em rodada ÚNICA, árvore quieta: vitest **172 arquivos / 3.039 testes** 
 
 **Com esta onda, as 23 bloqueantes que a auditoria confirmou estão pagas.** Todas devem rodada de codex: a
 etapa 3 foi do Fable em todas, e rodada do Fable não fecha dívida de codex.
+
+---
+
+## A onda C: os prompts voltam a ser retidos, e o corpus passa a ter de ser construído em ilhas (2026-08-12)
+
+**Decisão do OPERADOR**, tomada depois de ler o troco medido. Reverte parte de U4.
+
+### A pergunta que ele respondeu
+
+Com os eixos de receita fora da união, medido sobre o caso de referência de 1.170 linhas:
+**1.170/1.170** linhas têm o seu template em mais de uma partição, e **46.193** pares mesmo-template caem
+em train × test. O teto de FPR quase não é afetado (negativos humanos não carregam eixo de receita), mas o
+**recall** — um dos quatro membros da família certificadora — passava a ser medido sobre prompts já vistos,
+com erro de direção conhecida (otimista) e **magnitude que o próprio corpus não permite dimensionar**: medir
+quanto o prompt memorizado inflou exigiria prompts retidos.
+
+O que tornou a reversão barata: **a classe gerada ainda não existe**. A restrição é paga no desenho do
+slate, antes de gastar cota, e não em regeneração.
+
+### A decisão de desenho que o agente tomou dentro dela, e vai a ratificação
+
+**Só `promptTemplate` voltou à união. `generatorVersion` ficou REPORTADO.** Não é o que o operador pediu ao
+pé da letra, e a razão é medida:
+
+- o eixo de versão da ilha **não era imposto em sítio algum onde a corrida roda**. A guarda particionava um
+  *slot* que nem `generate_ai` nem `codex_batch` leem, e duas ilhas com o mesmo `--model` gravavam a mesma
+  identidade — medido. As duas se fundiam, e o colapso apareceria na montagem, **depois da cota**;
+- e não havia como consertar escrevendo o slot: `GeneratorVersionIsTheFamilyTests` recusa qualquer linha
+  `ai` em que `version` e `family` divirjam (1.170/1.170), e `family` vem do id do modelo. **20 ilhas
+  exigiriam 20 modelos distintos**, contra as cinco identidades do slate;
+- e a versão **não é o que quebra o corpus**: sozinha ela dá 5 componentes com o maior em **42,14 %**, que
+  cabe. Quem quebra é `promptTemplate` (54,79 %), e o par (100 %).
+
+**O que se perde, declarado e FIXADO por teste:** a co-locação de versão não é modelada — duas linhas da
+mesma versão podem cair em partições diferentes, e nenhum relatório pode chamar uma partição deste corpus de
+independente **no gerador**. A perna de novidade de gerador é a **reserva OOD por família**, que é outro
+mecanismo.
+
+### A descoberta de desenho: a ilha não é um conjunto de templates
+
+Medido: um corpo em que cada template pertence a uma corrida — satisfazendo a restrição como ela foi
+enunciada — colapsa de 20 componentes para **11, com o maior em 60 %**, e é recusado. A ponte é a classe
+**mista**: `derivationRoot` é eixo de união por valor, então uma linha mista cujo pai humano é a semente de
+uma linha `ai` de **outra** ilha funde as duas.
+
+**A ilha é um bloco de MATERIAL HUMANO**, e toda linha gerada ou mista semeada nesse bloco pertence a ela.
+Com os pais mistos dentro do bloco da ilha, os mesmos 10.000 registros dão 20 componentes de 500 e realizam
+**45/5/10/20/20 exato nas três classes**.
+
+### A guarda que recusa antes da cota
+
+Na fronteira do `argparse` do driver (`type=island_plan`), pelo precedente de `--provider`/`frozen_lane` —
+antes do arquivo de sementes, antes do `.lock`, antes da primeira chamada de provedor. O revisor removeu a
+chamada e três testes ficaram vermelhos, então o sítio está preso.
+
+A aritmética é **derivada** de `FIVE_TARGETS`, `CLASS_TOLERANCE` e `RELEASE_CORPUS_POLICY.counts`, nunca
+digitada: teto por classe 1.880 linhas (`ai`/`human`) e 940 (`mixed`), ao menos uma ilha ≤ 280, e **≥ 15
+ilhas uniformes**. Medido nas duas bordas: 14 ilhas são recusadas pelo preflight (o menor componente vale
+**7,14 %** contra 7 %), 15 passam o preflight e erram `cal-A` em **6,6667 %** contra 10 %, 16 e 18 passam o
+preflight e `_plano_de_blocos` não as atribui, e **20 de 200 realizam 45/5/10/20/20 exato**.
+
+### O que a revisão pegou, em duas rodadas
+
+A reversão foi **cirúrgica** — conferido um por um que sobreviveram o carimbo por componente conexo com a
+guarda chamada de dentro, o teto por classe, a detecção de reserva pelo componente, as fixtures de
+componente misto e de reserva nas duas ordens, o critério com recíproca declarada falsa, `groupAxisRole`
+total, `independentUnit: "connected-components"`, a costura dos eixos reportados e a rotulação contrafactual
+dos ~25 %.
+
+Oito bloqueantes ao longo das duas rodadas, e o mais instrutivo é o último, que **eu mesmo causei ao
+consertar**: a guarda de partição conferia disjunção **por CAMPO**, e dois dos seus três campos escrevem o
+**mesmo eixo de registro** (`groups.promptTemplate` — o de geração nas linhas `ai`, o de mistura nas
+mistas). Um plano cujo `mixingTemplate` fosse o `templates` de outra ilha passava as três pernas e o corpo
+colapsava: medido, **19 componentes onde o plano declara 20**. Os dois campos passaram a partilhar um
+namespace, e o dono nomeia o campo de onde o valor veio.
+
+E ao provar isso por mutação a minha **própria asserção sobreviveu**: eu afirmava que a mensagem cita
+`templates` e `mixingTemplate`, e a prosa **estática** da recusa cita os dois nomes — a asserção era
+satisfeita pelo texto e não pela carga. Passou a afirmar o par `ilha/campo`. É a mesma família de defeito que
+esta sessão inteira perseguiu, cometida por mim no penúltimo passo.
+
+Também caiu, e por medição: o fundamento novo de `generationBatch` como inerte por **contenção da chave**,
+declarado incondicional, é **falso num caso alcançável** — a identidade de `promptTemplate` é
+`{recipe}_{digest[:16]}` e o nome da receita não está na chave do lote, então duas linhas do mesmo digest com
+`recipe` diferente tomam **um** lote e **duas** identidades de template. O fundamento voltou a ser o
+verdadeiro: `stamp_block` sobrescreve `generatedAt`, e é `test_a_batch_never_straddles_two_partitions` que o
+prende.
+
+### Integração
+
+`evaluatorDigest`: `d4a294f7…` → `0d278f872b829d413b0aa69e63ede695621e3a39e6612ed37919e9e68357295c` —
+**calculado por mim**, porque o valor que a entrega declarou (`6f77d84c…`) estava errado, e publicar um
+digest declarado sem recomputá-lo é a forma de pôr no ESTADO um número que concorda com nada.
+`SEALED_POLICY_SHA256`: → `d08c5f64ccf099775f423f2244a2cac1d07d30b34ba400a79664f05c40790538`.
+
+Medido em rodada ÚNICA, árvore quieta: vitest **172 arquivos / 3.046 testes** verde; pytest do lab
+**668 testes / 437 subtests** verde; `tsc` limpo; `prettier` limpo; `git ls-files --eol` sem CRLF.
+
+### O que fica para o operador
+
+1. **O SLATE.** `island_plan` recusa **toda** ilha hoje: o plano declara 40 identidades de template e
+   `RECIPES` declara 4. Ou `RECIPES` cresce até cobrir o plano, ou o plano é emendado para menos templates
+   por ilha — mínimo **15 ilhas, um template cada**. Isto é a guarda funcionando antes da cota, não um
+   defeito, e nenhuma linha pode ser gerada até a decisão.
+2. **A guarda pré-cota da classe MISTA não existe.** Os três `make_mixed*.py` ficaram fora da propriedade
+   das unidades, e hoje usam um template único de mistura. Medido: template único leva o corpo de 20
+   componentes a **um de 100 %**, e pais mistos espalhados também. A cota mista ainda não foi gasta, então a
+   janela está aberta — é a próxima unidade.
+3. **O nível de gerador da classe mista continua ABERTO.** A exceção que U4 registrou dissolveu-se; a
+   pergunta não. `mixed.levels` é `humanSeed × promptTemplate` e nenhum nível de gerador aparece nela.
+4. **A decisão de deixar `generatorVersion` reportado**, com o resíduo acima.

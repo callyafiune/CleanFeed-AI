@@ -25,7 +25,11 @@ import {
   type BenchmarkRecord,
   type GroupAxis,
 } from "../../schema.ts";
-import { connectedComponentRoots } from "../../split.ts";
+import {
+  connectedComponentRoots,
+  GROUP_KEYS,
+  IMPOSED_UNION_AXES,
+} from "../../split.ts";
 import { known, v4Ai, v4Human, withAxis } from "./v3-record-fixture.ts";
 
 const AQUI = dirname(fileURLToPath(import.meta.url));
@@ -69,7 +73,20 @@ export interface GeneratedRecipe {
   readonly generatorVersionRuns: readonly number[];
 }
 
-/** One geometry the RECIPE axes would produce if they were union axes. */
+/**
+ * The union list MINUS the IMPOSED axes: the base each `recipeUnioned` leg is measured on.
+ *
+ * DERIVED and never retyped, so the base cannot drift from the production list. Adding a
+ * leg's axes back to this base is what makes `promptTemplateOnly` the PRODUCTION geometry,
+ * `generatorVersionOnly` the relation production does NOT take, and `bothRecipeAxes` the
+ * counterfactual of taking both; measuring a leg as `[...GROUP_KEYS, axis]` would be a
+ * no-op for the template and every leg would report the same histogram.
+ */
+export const RECIPE_UNION_BASE_AXES: readonly GroupAxis[] = GROUP_KEYS.filter(
+  (axis) => !(IMPOSED_UNION_AXES as readonly string[]).includes(axis),
+);
+
+/** One geometry a SUB-RELATION of the production union produces over a case's corpus. */
 export interface RecipeUnionedGeometry {
   readonly axes: readonly string[];
   readonly components: number;
@@ -93,12 +110,15 @@ export interface ViabilityCase {
     readonly splitSizes?: Readonly<Record<string, number>>;
     readonly recipeUnioned?: {
       /**
-       * The leg that FITS, and it is here to keep a false reason from coming back:
-       * `generatorVersion` alone does not breach anything, so the exclusion of the pair
-       * cannot rest on this axis's own arithmetic.
+       * The leg the splitter does NOT take, and the measurement that says it never needed
+       * to: on the shape the pools produce it FITS — five runs, the largest 42.14%, no
+       * breach — so unioning on the version would not have bought the granularity. What
+       * does not fit is the template, which is the axis production does union on.
        */
       readonly generatorVersionOnly: RecipeUnionedGeometry;
+      /** The PRODUCTION geometry: the base plus the one imposed axis. */
       readonly promptTemplateOnly: RecipeUnionedGeometry;
+      /** The COUNTERFACTUAL: the closure unioning on both would have produced. */
       readonly bothRecipeAxes: RecipeUnionedGeometry;
     };
   };
@@ -186,9 +206,14 @@ function generatedLineCount(testCase: ViabilityCase): number {
  * size is the declared number of lines and nothing else glues them.
  *
  * `promptTemplate` and `generatorVersion` are per line TOO, unless the case declares
- * `generatedRecipe`: then they come from the declared runs, in materialization order.
- * Those two axes are not union axes, so a shared identity does not change a component
- * here — it is what lets the case state the geometry the recipe axes WOULD produce.
+ * `generatedRecipe`: then they come from the declared runs, in materialization order. Only
+ * the TEMPLATE is a union axis, so a declared template run really does union its lines —
+ * which is why a case with `generatedRecipe` must declare its components at the size the
+ * TEMPLATE runs produce, not one component per line and not one per version run. A version
+ * run unions nothing here; it is what the `recipeUnioned` sub-relations are measured over.
+ * Two run lists over the same materialization order yield a PARTITION exactly when the
+ * boundaries of one refine the boundaries of the other, and {@link templateToVersionMap} is
+ * what makes a case assert that instead of inheriting it by coincidence.
  *
  * `createdAt` is a distinct increasing slot per line and `normalizedTextSha256` a
  * distinct digest per line, because the corpus is also handed to `createBlockedSplit`
@@ -301,6 +326,44 @@ export function buildCatalogueCorpus(
   return records;
 }
 
+/**
+ * The template -> version map a case's declared runs produce, or `undefined` for a case
+ * that declares no runs.
+ *
+ * What it makes checkable is the DECLARATION and not the island plan: the plan partitions
+ * templates, seed blocks and mixing templates, and NOT the version, so nothing downstream
+ * asks a template to sit inside one version run. What does ask is the counterfactual leg —
+ * a case whose run boundaries straddle each other makes `bothRecipeAxes` close over a
+ * coarser set than the declared version runs, so the leg would report a geometry no
+ * declaration in the case names. The function property is what keeps that leg readable.
+ */
+export function templateToVersionMap(
+  testCase: ViabilityCase,
+): Map<string, Set<string>> | undefined {
+  const recipe = testCase.generatedRecipe;
+  if (recipe === undefined) return undefined;
+  const generatedLines = generatedLineCount(testCase);
+  const templates = recipeLabels(
+    recipe.promptTemplateRuns,
+    "pt",
+    generatedLines,
+    testCase.name,
+  );
+  const versions = recipeLabels(
+    recipe.generatorVersionRuns,
+    "gv",
+    generatedLines,
+    testCase.name,
+  );
+  const map = new Map<string, Set<string>>();
+  templates.forEach((template, index) => {
+    const seen = map.get(template) ?? new Set<string>();
+    seen.add(versions[index] as string);
+    map.set(template, seen);
+  });
+  return map;
+}
+
 /** The declared component sizes of a case, ascending — what the histogram must match. */
 export function declaredHistogram(testCase: ViabilityCase): number[] {
   return testCase.cells
@@ -328,11 +391,12 @@ export function componentHistogram(
 
 /**
  * Connected components under an EXPLICIT axis list, so a test can measure the geometry a
- * list the splitter does NOT use would produce.
+ * SUB-RELATION of the production union produces — or the geometry a list the splitter does
+ * NOT use would produce.
  *
  * `connectedComponentRoots` reads `GROUP_KEYS` from the module, and a const export cannot
- * be substituted at runtime, so measuring "what would happen with `promptTemplate` in the
- * union" needs a walk that takes the list. A second walk is a divergence risk, and
+ * be substituted at runtime, so measuring "what would happen with only `promptTemplate` of
+ * the pair" needs a walk that takes the list. A second walk is a divergence risk, and
  * {@link expectWalkerMatchesProduction} is what closes it: handed the production lists,
  * this walk must reproduce `connectedComponentRoots` root for root.
  */

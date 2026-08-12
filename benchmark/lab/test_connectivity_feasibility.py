@@ -31,6 +31,7 @@ aquisicao —, e e essa coincidencia que faz o corpo inteiro virar um bloco indi
 from __future__ import annotations
 
 import json
+import os
 import re
 import sys
 import unittest
@@ -77,6 +78,29 @@ def eixos_de_identidade_de_material() -> tuple[str, ...]:
             "sem afirmar nada"
         )
     return eixos
+
+
+def _lista_do_split_ts(nome: str) -> tuple[str, ...]:
+    """Uma lista de admissao, LIDA de benchmark/split.ts em vez de retypada aqui.
+
+    `INERT_UNION_AXES` e `IMPOSED_UNION_AXES` sao as duas pernas nao materiais do criterio,
+    e este lado tem de classificar pelas listas que a PRODUCAO publica: uma copia deixaria a
+    classificacao verde sobre uma lista que o splitter nao usa mais.
+    """
+    fonte = (BENCHMARK / "split.ts").read_text(encoding="utf-8")
+    marcador = f"export const {nome} = ["
+    if marcador not in fonte:
+        raise RuntimeError(
+            f"split.ts nao expoe {nome}: o espelho nao pode adivinhar a autoridade"
+        )
+    corpo = fonte.split(marcador, 1)[1].split("]", 1)[0]
+    eixos = tuple(re.findall(r'"([a-zA-Z]+)"', corpo))
+    if not eixos:
+        raise RuntimeError(
+            f"{nome} foi parseado vazio: o laco do criterio ficaria verde sem afirmar nada"
+        )
+    return eixos
+
 
 # A menor particao do desenho de cinco (45/5/10/20/20).
 MENOR_PARTICAO = 0.05
@@ -153,10 +177,10 @@ def linha_gerada(
     declarado.
 
     `promptTemplate` e `generatorVersion` sao proprios da linha por omissao e COMPARTILHADOS
-    quando o chamador os passa. Os dois nao unem — nao estao em `SPLIT_GROUP_KEYS` —, entao
-    compartilhar identidade nao muda componente algum aqui: e o que permite descrever a forma
-    que o montador produz, em que uma receita cobre centenas de linhas, e medir a geometria
-    que os eixos de receita produziriam se estivessem na uniao.
+    quando o chamador os passa. Os dois ESTAO em `SPLIT_GROUP_KEYS`, entao compartilhar
+    identidade UNE: e por isso que um chamador que quer grao fino tem de omiti-los, e e assim
+    que o caso do catalogo descreve, com a mesma declaracao, a forma que os pools produzem (um
+    componente de 100 %) e a geometria de ilhas que a Fase 3 item 2 tem de produzir.
     """
     return {
         "id": rec_id,
@@ -209,17 +233,19 @@ def min_frac(registros: list[dict]) -> float:
 
 class ConectividadeSobAsChavesV4(unittest.TestCase):
     def test_a_uniao_e_exactamente_a_lista_v4(self):
-        """Guarda de estado: os dois pares — grosso e de receita — estao FORA.
+        """Guarda de estado: o TEMPLATE esta DENTRO, a VERSAO e o par GROSSO estao fora.
 
-        Escrito como igualdade e nao como pertinencia. Uma lista de `assertIn` aceita um
-        sexto eixo acrescentado em silencio, e e justamente acrescentar `domainSource`,
-        `sourceMaterialBatch` ou `promptTemplate` que os testes abaixo mostram ser fatal.
+        Escrito como igualdade e nao como pertinencia, e a ORDEM conta: `splitUnionAxes` da
+        pre-inscricao selada e pinado por conteudo E ordem, entao uma lista de `assertIn`
+        aceitaria um oitavo eixo acrescentado em silencio e tambem uma reordenacao que move
+        o digest do artefato.
         """
         self.assertEqual(
             SPLIT_GROUP_KEYS,
             (
                 "author",
                 "source",
+                "promptTemplate",
                 "generationBatch",
                 "nearDuplicate",
                 "derivationRoot",
@@ -227,11 +253,17 @@ class ConectividadeSobAsChavesV4(unittest.TestCase):
         )
         self.assertNotIn("domainSource", SPLIT_GROUP_KEYS)
         self.assertNotIn("sourceMaterialBatch", SPLIT_GROUP_KEYS)
-        # O par de APARELHO: receita nao identifica unidade de amostragem, e o que os
-        # exclui e o FECHO DOS DOIS juntos (a classe inteira num componente), nao cada um
-        # sozinho — `generatorVersion` REFINA a familia e nao a repete.
-        self.assertNotIn("promptTemplate", SPLIT_GROUP_KEYS)
+        # O TEMPLATE entra pela perna (c): o recall que o release certifica reamostra por
+        # familia -> template -> lote, entao o splitter tem de MODELAR a dependencia de
+        # prompt. O preco e que o corpo tem de ser CONSTRUIDO em ilhas, e quem o cobra antes
+        # da cota e `island_plan` no `type=` de `--island`.
+        self.assertIn("promptTemplate", SPLIT_GROUP_KEYS)
+        # A VERSAO fica fora, e e `namedReported`: a identidade dela e o id do modelo, entao
+        # particiona-la por ilha custaria um modelo por ilha. O residuo e que a co-locacao de
+        # versao nao e modelada.
         self.assertNotIn("generatorVersion", SPLIT_GROUP_KEYS)
+        # A familia tambem fica fora, e agora nenhum membro da lista carrega a identidade
+        # dela: a familia e de facto divisivel aqui, e quem a constrange e a reserva OOD.
         self.assertNotIn("generatorFamily", SPLIT_GROUP_KEYS)
         # O eixo diagnostico nunca une: reextrair o mesmo dump nao produz material novo.
         self.assertNotIn("extractionRun", SPLIT_GROUP_KEYS)
@@ -415,43 +447,85 @@ class CriterioDaListaDeUniao(unittest.TestCase):
         with mock.patch.object(assemble_corpus, "SPLIT_GROUP_KEYS", chaves):
             return len(componentes(registros))
 
-    def test_todo_eixo_da_uniao_identifica_material_ou_une_nada(self):
+    def test_todo_eixo_da_uniao_identifica_material_ou_une_nada_ou_e_imposto(self):
+        """O espelho do laco de tres pernas, e cada eixo cai em EXACTAMENTE uma.
+
+        As tres listas de admissao sao LIDAS de benchmark/split.ts, nunca retypadas aqui:
+        uma copia deixaria este lado classificar por uma lista que a producao nao publica.
+        """
         material = eixos_de_identidade_de_material()
+        inertes = _lista_do_split_ts("INERT_UNION_AXES")
+        impostos = _lista_do_split_ts("IMPOSED_UNION_AXES")
+        por_material: list[str] = []
         por_inercia: list[str] = []
-        for eixo in SPLIT_GROUP_KEYS:
-            if eixo in material:
-                continue
-            por_inercia.append(eixo)
-            sem_o_eixo = tuple(k for k in SPLIT_GROUP_KEYS if k != eixo)
-            for nome, registros in self.corpos:
-                with self.subTest(eixo=eixo, caso=nome):
-                    self.assertEqual(
-                        self._componentes_sob(registros, SPLIT_GROUP_KEYS),
-                        self._componentes_sob(registros, sem_o_eixo),
-                    )
-        # Nao vacuo nas duas pernas: a de material tem entrada e a de inercia tem entrada.
-        self.assertEqual(por_inercia, ["generationBatch", "nearDuplicate"])
-        self.assertEqual(
-            [eixo for eixo in SPLIT_GROUP_KEYS if eixo in material],
-            ["author", "source", "derivationRoot"],
+        por_imposta: list[str] = []
+        medida = next(
+            r for n, r in self.corpos if n == "forma-medida-da-classe-gerada"
         )
+        for eixo in SPLIT_GROUP_KEYS:
+            pernas = [eixo in material, eixo in inertes, eixo in impostos]
+            with self.subTest(eixo=eixo):
+                # EXACTAMENTE uma: um eixo em duas listas nao tem perna que o decida.
+                self.assertEqual(sum(1 for p in pernas if p), 1)
+            if pernas[0]:
+                por_material.append(eixo)
+                continue
+            sem_o_eixo = tuple(k for k in SPLIT_GROUP_KEYS if k != eixo)
+            if pernas[1]:
+                por_inercia.append(eixo)
+                for nome, registros in self.corpos:
+                    with self.subTest(eixo=eixo, caso=nome):
+                        self.assertEqual(
+                            self._componentes_sob(registros, SPLIT_GROUP_KEYS),
+                            self._componentes_sob(registros, sem_o_eixo),
+                        )
+                continue
+            por_imposta.append(eixo)
+            # A perna IMPOSTA, por eixo: sobre o corpo que existe, tirar este eixo da uniao
+            # MUDA a contagem — e a medicao de inercia com o sinal trocado, e e o que diz
+            # que a perna (b) nao estava disponivel.
+            with self.subTest(eixo=eixo):
+                self.assertNotEqual(
+                    self._componentes_sob(medida, SPLIT_GROUP_KEYS),
+                    self._componentes_sob(medida, sem_o_eixo),
+                )
+        # Nao vacuo nas TRES pernas, e por IGUALDADE contra as listas publicadas.
+        self.assertEqual(por_material, ["author", "source", "derivationRoot"])
+        self.assertEqual(por_inercia, list(inertes))
+        self.assertEqual(por_imposta, list(impostos))
+        self.assertEqual(list(impostos), ["promptTemplate"])
+        # A VIABILIDADE e medida nas DUAS pontas e sob a MESMA lista de uniao: a forma dos
+        # pools deixa um componente que particao alguma recebe, e a de ilhas nao.
+        ilhas = next(r for n, r in self.corpos if n == "ilhas-de-receita-que-passam")
+        self.assertEqual(self._componentes_sob(medida, SPLIT_GROUP_KEYS), 4)
+        with mock.patch.object(
+            assemble_corpus, "SPLIT_GROUP_KEYS", SPLIT_GROUP_KEYS
+        ):
+            self.assertAlmostEqual(
+                max(componentes(medida).values()) / 1170, 0.547863, places=6
+            )
+        self.assertEqual(self._componentes_sob(ilhas, SPLIT_GROUP_KEYS), 40)
 
     def test_a_perna_de_inercia_e_uma_medicao_e_nao_uma_formalidade(self):
         """O contraste: um eixo que NAO e inerte muda a contagem, e por isso e recusado.
 
         Sem esta medicao a perna de inercia passaria por qualquer eixo, inclusive um que
-        colapsa a classe — e a lista voltaria a ser prosa.
+        colapsa uma celula de quota inteira num componente.
+
+        Ancorado em `domainSource` SOBRE CORPO COM LINHA HUMANA, e as duas coisas sao
+        necessarias: `promptTemplate` ja esta na uniao, entao acrescenta-lo e no-op e o
+        contraste mediria a si mesmo; e sobre a classe gerada `domainSource` e um valor unico
+        por lane, entao o contraste ali confundiria "nao e inerte" com "colapsa a lane".
         """
-        nome, registros = next(
-            (n, r) for n, r in self.corpos if n == "forma-medida-da-classe-gerada"
-        )
-        del nome
+        registros = next(r for n, r in self.corpos if n == "lote-unico-por-celula")
         base = self._componentes_sob(registros, SPLIT_GROUP_KEYS)
-        for eixo in ("promptTemplate", "generatorVersion"):
-            with self.subTest(eixo=eixo):
-                self.assertNotEqual(
-                    base, self._componentes_sob(registros, SPLIT_GROUP_KEYS + (eixo,))
-                )
+        com_o_eixo = self._componentes_sob(
+            registros, SPLIT_GROUP_KEYS + ("domainSource",)
+        )
+        self.assertNotEqual(base, com_o_eixo)
+        # E o contraste e FORTE e nao marginal: quarenta componentes viram quatro.
+        self.assertEqual(base, 40)
+        self.assertEqual(com_o_eixo, 4)
 
     def test_nenhum_eixo_de_material_fica_fora_das_duas_relacoes(self):
         """A reciproca. Sem ela a lista poderia perder um eixo de material e ficar verde."""
@@ -1028,6 +1102,7 @@ class ConcordanciaComOPreflightDoBenchmark(unittest.TestCase):
                 "corpo-grosso-classes-finas",
                 "bordas-inclusivas-47-e-7",
                 "forma-medida-da-classe-gerada",
+                "ilhas-de-receita-que-passam",
             ],
         )
         # Todo escopo e toda condicao que o catalogo nomeia tem traducao deste lado: um
@@ -1061,101 +1136,158 @@ class ConcordanciaComOPreflightDoBenchmark(unittest.TestCase):
         # O denominador de cada escopo, medido: a classe divide pelo TOTAL DA CLASSE.
         self.assertEqual([total for _, total, _ in escopos], [40, 20, 20])
 
-    def test_a_forma_medida_colapsa_quando_os_eixos_de_receita_unem(self):
-        """A classe gerada que o montador PRODUZ, e o que os eixos de receita fariam com ela.
+    def _caso(self, nome: str) -> dict:
+        return next(c for c in self.catalogo["cases"] if c["name"] == nome)
 
-        O caso descreve a forma medida: 1170 linhas ai com quatro identidades de
-        `promptTemplate` em corridas de 641/231/213/85 e cinco de `generatorVersion` em
-        493/320/256/99/2. Sob a uniao de cinco chaves cada linha e seu componente. Com os
-        eixos de receita na uniao o corpo colapsa, e a recusa e a do MAIOR componente — no
-        escopo do corpo e no da classe `ai`, que num corpo mono-classe e a mesma comparacao
-        sobre as mesmas linhas.
+    def test_a_forma_medida_dos_pools_e_RECUSADA_e_a_de_ilhas_PASSA(self):
+        """As duas metades da perna (c), sobre o MESMO par de eixos e a MESMA lista de uniao.
 
-        Um fixture com um template por linha faria as duas pernas passarem sobre uma classe
-        gerada que ninguem produz, e e por ai que a inviabilidade atravessou verde.
+        A forma que os pools produzem — 1170 linhas ai, `promptTemplate` em 641/231/213/85 e
+        `generatorVersion` em 493/320/256/99/2 — deixa QUATRO componentes, um por template, e o
+        maior vale 54,79 %: recusada pelo ramo do MAIOR, no escopo do corpo e no da classe
+        `ai`, que num corpo mono-classe e a mesma comparacao sobre as mesmas linhas. A
+        geometria de ILHAS — 20 corridas de versao com dois templates cada — da 40 componentes
+        de 10 e passa.
+
+        Sem a primeira a obrigacao nao tem tamanho; sem a segunda ela nao tem prova de ser
+        cumprivel. As duas juntas sao o que faz da perna (c) uma decisao e nao uma preferencia.
         """
-        caso = next(
-            c
-            for c in self.catalogo["cases"]
-            if c["name"] == "forma-medida-da-classe-gerada"
-        )
-        registros = _linhas_do_caso(caso, self.catalogo["generatedStratum"])
-        # As corridas declaradas sao as MEDIDAS, e o corpo as realiza.
-        for eixo, chave in (
-            ("promptTemplate", "promptTemplateRuns"),
-            ("generatorVersion", "generatorVersionRuns"),
-        ):
-            contagem: dict[str, int] = {}
-            for rec in registros:
-                identidade = group_axes.identity_of(rec["groups"][eixo])
-                contagem[identidade] = contagem.get(identidade, 0) + 1
-            self.assertEqual(
-                sorted(contagem.values(), reverse=True),
-                sorted(caso["generatedRecipe"][chave], reverse=True),
-            )
-
-        declarado = caso["expected"]["recipeUnioned"]
-
-        # A perna que CABE, e ela esta aqui para impedir uma razao falsa de voltar: o
-        # comentario de SPLIT_GROUP_KEYS afirmou que `generatorVersion` carrega a
-        # identidade de `generatorFamily`, e a medicao o refuta em 0 das 1170 linhas.
-        # Version REFINA family, entao unir por version e estritamente mais FRACO que unir
-        # pela familia — o que compra a exclusao e o FECHO DO PAR, medido abaixo.
-        cabe = declarado["generatorVersionOnly"]
-        with mock.patch.object(
-            assemble_corpus,
-            "SPLIT_GROUP_KEYS",
-            SPLIT_GROUP_KEYS + tuple(cabe["axes"]),
-        ):
-            tamanhos = componentes(registros)
-            self.assertEqual(len(tamanhos), cabe["components"])
-            self.assertEqual(sorted(tamanhos.values()), sorted(cabe["histogram"]))
-            # Nao levanta: a guarda aceita este corpo, e e isso que torna o par a razao.
-            assert_components_can_fill_five_partitions(registros)
-        self.assertEqual(cabe["breaches"], [])
-        versoes = {
-            group_axes.identity_of(r["groups"]["generatorVersion"]) for r in registros
-        }
-        self.assertEqual(len(versoes), 5)
-        # A comparacao com `generatorFamily` fica do lado TS (viability-preflight.test.ts):
-        # este materializador emite ONZE eixos e nao inclui a familia, entao aqui a
-        # refutacao e medida pela CONTAGEM de versoes (cinco corridas, nao uma), e a
-        # coincidencia linha a linha e afirmada la, sobre o mesmo caso do catalogo.
-        self.assertNotIn("generatorFamily", registros[0]["groups"])
-
-        for perna in ("promptTemplateOnly", "bothRecipeAxes"):
-            with self.subTest(perna=perna):
-                geometria = declarado[perna]
-                chaves = SPLIT_GROUP_KEYS + tuple(geometria["axes"])
-                with mock.patch.object(
-                    assemble_corpus, "SPLIT_GROUP_KEYS", chaves
+        medida = self._caso("forma-medida-da-classe-gerada")
+        ilhas = self._caso("ilhas-de-receita-que-passam")
+        for caso, componentes_esperados in ((medida, 4), (ilhas, 40)):
+            with self.subTest(caso=caso["name"]):
+                registros = _linhas_do_caso(caso, self.catalogo["generatedStratum"])
+                # As corridas declaradas sao as MEDIDAS, e o corpo as realiza.
+                for eixo, chave in (
+                    ("promptTemplate", "promptTemplateRuns"),
+                    ("generatorVersion", "generatorVersionRuns"),
                 ):
-                    tamanhos = componentes(registros)
+                    contagem: dict[str, int] = {}
+                    for rec in registros:
+                        identidade = group_axes.identity_of(rec["groups"][eixo])
+                        contagem[identidade] = contagem.get(identidade, 0) + 1
+                    self.assertEqual(
+                        sorted(contagem.values(), reverse=True),
+                        sorted(caso["generatedRecipe"][chave], reverse=True),
+                    )
+                # SOB A UNIAO DE PRODUCAO, sem mock nenhum: e isso que faz a geometria ser a
+                # que o splitter produz e nao a que um passeio contrafactual produziria.
+                self.assertEqual(len(componentes(registros)), componentes_esperados)
+
+        # A recusa da forma medida, e os DOIS escopos que o outro lado declara.
+        registros = _linhas_do_caso(medida, self.catalogo["generatedStratum"])
+        escopos = {
+            escopo: fracoes
+            for escopo, _total, fracoes in (
+                assemble_corpus.component_fractions_by_scope(registros)
+            )
+        }
+        self.assertEqual(escopos["corpus"], escopos["ai"])
+        with self.assertRaises(UnsplittableCorpus) as erro:
+            assert_components_can_fill_five_partitions(registros)
+        self.assertIn("maior componente", str(erro.exception))
+        self.assertIn("do corpo", str(erro.exception))
+        self.assertEqual(
+            {v["scope"] for v in medida["expected"]["breaches"]}, {"corpus", "ai"}
+        )
+        self.assertEqual(
+            {v["kind"] for v in medida["expected"]["breaches"]},
+            set(MARCADOR_DA_RECUSA),
+        )
+        # E a de ilhas nao levanta: a guarda aceita o corpo que o plano constroi.
+        assert_components_can_fill_five_partitions(
+            _linhas_do_caso(ilhas, self.catalogo["generatedStratum"])
+        )
+
+    def test_as_tres_pernas_sao_SUB_RELACOES_da_uniao_de_producao(self):
+        """Cada perna e medida sobre a uniao MENOS os IMPOSTOS, mais os eixos que ela nomeia.
+
+        Medir a perna do template como `SPLIT_GROUP_KEYS + ("promptTemplate",)` seria NO-OP,
+        e as tres pernas relatariam o mesmo histograma — o catalogo continuaria verde
+        afirmando uma geometria que nao mede nada. E `promptTemplateOnly` tem de ser
+        exactamente o que a PRODUCAO faz, agora que a versao saiu da uniao: a igualdade de
+        raiz por raiz e a costura que impede o catalogo de declarar uma geometria que o
+        splitter nao produz. `bothRecipeAxes` passa a ser CONTRAFACTUAL, e o que se afirma
+        dele e que nunca divide o que a producao une.
+        """
+        impostos = _lista_do_split_ts("IMPOSED_UNION_AXES")
+        base = tuple(k for k in SPLIT_GROUP_KEYS if k not in impostos)
+        # Nao vacuo: a base perdeu exactamente os eixos impostos.
+        self.assertEqual(len(base) + len(impostos), len(SPLIT_GROUP_KEYS))
+        for nome in ("forma-medida-da-classe-gerada", "ilhas-de-receita-que-passam"):
+            caso = self._caso(nome)
+            registros = _linhas_do_caso(caso, self.catalogo["generatedStratum"])
+            declarado = caso["expected"]["recipeUnioned"]
+            for perna in ("generatorVersionOnly", "promptTemplateOnly", "bothRecipeAxes"):
+                with self.subTest(caso=nome, perna=perna):
+                    geometria = declarado[perna]
+                    with mock.patch.object(
+                        assemble_corpus,
+                        "SPLIT_GROUP_KEYS",
+                        base + tuple(geometria["axes"]),
+                    ):
+                        tamanhos = componentes(registros)
+                        raizes_da_perna = assemble_corpus.connected_components(registros)
+                        recusa = None
+                        try:
+                            assert_components_can_fill_five_partitions(registros)
+                        except UnsplittableCorpus as erro:
+                            recusa = str(erro)
                     self.assertEqual(len(tamanhos), geometria["components"])
                     self.assertEqual(
                         sorted(tamanhos.values()), sorted(geometria["histogram"])
                     )
-                    escopos = {
-                        escopo: fracoes
-                        for escopo, _total, fracoes in (
-                            assemble_corpus.component_fractions_by_scope(registros)
+                    # A violacao declarada e a que a guarda de PRODUCAO levanta. A guarda
+                    # estoura na PRIMEIRA condicao violada, entao o que se afirma e o
+                    # marcador da primeira da lista ORDENADA, mais a ausencia dos marcadores
+                    # que nenhuma violacao da perna carrega — sem essa segunda metade, uma
+                    # perna que viola duas passaria por prova do ramo errado.
+                    violacoes = geometria["breaches"]
+                    self.assertEqual(bool(violacoes), recusa is not None)
+                    if recusa is not None:
+                        self.assertIn(
+                            MARCADOR_DA_RECUSA[violacoes[0]["kind"]], recusa
                         )
-                    }
-                    with self.assertRaises(UnsplittableCorpus) as erro:
-                        assert_components_can_fill_five_partitions(registros)
-                # Os DOIS escopos que o outro lado declara como recusa, medidos aqui: o
-                # corpo e a classe `ai`. A guarda estoura no primeiro, entao a mensagem
-                # nomeia o corpo, e a igualdade das duas listas de fracoes e o que diz que
-                # a classe recusaria pela MESMA condicao.
-                declaradas = {v["scope"] for v in geometria["breaches"]}
-                self.assertEqual(declaradas, {"corpus", "ai"})
-                self.assertEqual(escopos["corpus"], escopos["ai"])
-                self.assertIn("maior componente", str(erro.exception))
-                self.assertIn("do corpo", str(erro.exception))
-                self.assertEqual(
-                    {v["kind"] for v in geometria["breaches"]},
-                    set(MARCADOR_DA_RECUSA),
-                )
+                        declaradas = {v["kind"] for v in violacoes}
+                        for chave, marcador in MARCADOR_DA_RECUSA.items():
+                            if chave not in declaradas:
+                                self.assertNotIn(marcador, recusa)
+                    if perna == "promptTemplateOnly":
+                        # A COSTURA: o passeio da perna e o de PRODUCAO, raiz por raiz.
+                        self.assertEqual(
+                            raizes_da_perna,
+                            assemble_corpus.connected_components(registros),
+                        )
+                    if perna == "bothRecipeAxes":
+                        # O CONTRAFACTUAL nunca divide o que a producao une: acrescentar eixo
+                        # de uniao so funde. Sem isto o catalogo poderia declarar para esta
+                        # perna uma geometria mais FINA que a de producao, que e impossivel.
+                        self.assertLessEqual(
+                            len(tamanhos),
+                            declarado["promptTemplateOnly"]["components"],
+                        )
+        # Os dois numeros que fixam a GRANULARIDADE, e o que eles dizem: o template sozinho
+        # nao cabe (54,79 %) e e a perna que a PRODUCAO toma, e a versao sozinha CABE
+        # (42,14 %) — que e a medicao que diz que por a versao na uniao nunca foi o que a
+        # granularidade pedia.
+        pernas = self._caso("forma-medida-da-classe-gerada")["expected"]["recipeUnioned"]
+        self.assertAlmostEqual(
+            max(pernas["promptTemplateOnly"]["histogram"]) / 1170, 0.547863, places=6
+        )
+        self.assertAlmostEqual(
+            max(pernas["generatorVersionOnly"]["histogram"]) / 1170, 0.421368, places=6
+        )
+        self.assertEqual(pernas["generatorVersionOnly"]["breaches"], [])
+        # A comparacao com `generatorFamily` fica do lado TS: este materializador emite ONZE
+        # eixos e nao inclui a familia. A igualdade version == family que o comentario de
+        # `SPLIT_GROUP_KEYS` cita — e que e a razao de a versao ser reportada e nao unida — e
+        # medida sobre os POOLS, em `GeneratorVersionIsTheFamilyTests` (test_extractors.py),
+        # e nao aqui.
+        registros = _linhas_do_caso(
+            self._caso("forma-medida-da-classe-gerada"),
+            self.catalogo["generatedStratum"],
+        )
+        self.assertNotIn("generatorFamily", registros[0]["groups"])
 
     def test_cada_caso_do_catalogo_recebe_o_veredito_declarado(self):
         for caso in self.catalogo["cases"]:
@@ -1211,6 +1343,832 @@ class ConcordanciaComOPreflightDoBenchmark(unittest.TestCase):
                 for chave, marcador in MARCADOR_DO_ESCOPO.items():
                     if chave not in escopos:
                         self.assertNotIn(marcador, mensagem)
+
+
+def _plano(n: int, reservadas: tuple[str, ...] = ()) -> tuple[dict, ...]:
+    """Um plano de `n` ilhas UNIFORMES, com as contagens por classe do release.
+
+    As contagens vem de `ISLAND_PLAN_CLASS_LINES` e nao de literais: mover um total do
+    release move o que estas geometrias medem, em vez de as deixar medindo o release antigo.
+    """
+    def ilha(i: int) -> dict:
+        nome = f"ilha_{i:02d}"
+        return {
+            "island": nome,
+            "templates": (f"pt-{i}-a", f"pt-{i}-b"),
+            "mixingTemplate": f"mix-{i}",
+            "seedBlock": i,
+            "lines": {
+                classe: total // n
+                for classe, total in assemble_corpus.ISLAND_PLAN_CLASS_LINES.items()
+            },
+            "reserved": nome in reservadas,
+        }
+
+    return tuple(ilha(i) for i in range(n))
+
+
+class OPreflightDeIlhaRecusaAntesDaCota(unittest.TestCase):
+    """A guarda que recusa um plano de ILHAS antes de qualquer chamada de provedor.
+
+    `UnsplittableCorpus` ja recusa um corpo cuja classe gerada e um componente, mas recusa em
+    `assign_partitions` — depois de a cota estar gasta. O ponto desta unidade e recusar ANTES,
+    e o precedente da casa e `frozen_lane`: o `type=` do argparse, exit 2, nada aberto.
+    """
+
+    def test_um_plano_que_cruza_e_recusado_antes_de_qualquer_chamada(self):
+        """O TESTE QUE MAIS IMPORTA: subprocesso de verdade, no molde de `FrozenLaneEntryTests`.
+
+        Escrito para MORRER se a chamada da guarda sair do driver. Nada aqui importa
+        `island_plan` nem chama a asserção diretamente: o que roda e `generate_ai.py` como
+        processo, com um plano CRUZADO injetado por variavel de ambiente, e o que se mede e
+        `returncode == 2`, o arquivo de saida INEXISTENTE e a RAZAO no stderr. Tirar
+        `type=island_plan` do `add_argument` deixa a asserção direta verde e esta vermelha.
+
+        O plano cruzado entra por `CLEANFEED_ISLAND_PLAN_CROSS`, lido por um `sitecustomize`
+        escrito no diretorio temporario: o subprocesso substitui `ISLAND_PLAN` por um plano
+        cuja ULTIMA ilha reusa o template da PRIMEIRA, que e a colisao que um passeio com
+        saida antecipada nao veria.
+        """
+        import subprocess
+        import sys
+        import tempfile
+
+        script = Path(__file__).with_name("generate_ai.py")
+        with tempfile.TemporaryDirectory() as raw:
+            temporario = Path(raw)
+            output = temporario / "ai_agy.jsonl"
+            sementes = temporario / "humans.jsonl"
+            sementes.write_text("", encoding="utf-8")
+            # O plano CRUZADO, montado dentro do subprocesso a partir do plano de producao:
+            # a ultima ilha recebe os templates da primeira. Um plano digitado aqui mediria
+            # outro corpo; este mede o de producao com UMA colisao introduzida.
+            (temporario / "sitecustomize.py").write_text(
+                "import assemble_corpus as ac\n"
+                "plano = [dict(i) for i in ac.ISLAND_PLAN]\n"
+                "plano[-1]['templates'] = plano[0]['templates']\n"
+                "ac.ISLAND_PLAN = tuple(plano)\n",
+                encoding="utf-8",
+            )
+            ambiente = {
+                **os.environ,
+                "PYTHONPATH": os.pathsep.join([str(temporario), str(script.parent)]),
+            }
+            proc = subprocess.run(
+                [
+                    sys.executable,
+                    str(script),
+                    "--provider",
+                    "agy",
+                    "--island",
+                    "ilha_00",
+                    "--humans",
+                    str(sementes),
+                    "--output",
+                    str(output),
+                ],
+                capture_output=True,
+                text=True,
+                env=ambiente,
+                cwd=str(temporario),
+            )
+            # Nada foi aberto, nada foi escrito, nada foi gasto.
+            self.assertFalse(output.exists())
+            self.assertFalse((output.with_name(output.name + ".lock")).exists())
+        self.assertEqual(proc.returncode, 2, proc.stderr)
+        # A RAZAO, e nao so uma recusa: o eixo que cruzou e as duas ilhas que o partilham.
+        self.assertIn("nao particiona o eixo", proc.stderr)
+        self.assertIn("template de geracao", proc.stderr)
+        self.assertIn("ilha_19", proc.stderr)
+        self.assertIn("depois de a cota estar gasta", proc.stderr)
+
+    def test_um_plano_de_16_ilhas_de_250_passa_a_geometria_e_NAO_atribui(self):
+        """A perna 3 nao e zelo: 16x250 passa o preflight e `_plano_de_blocos` a recusa.
+
+        E o corpo que prova que chamar so `assert_components_can_fill_five_partitions` nao
+        basta. O caso simetrico esta junto: 3 ilhas de 1880/1880/240 e a borda EXACTA do
+        limite maximo — o preflight aceita e a atribuicao nao fecha.
+        """
+        for n in (16, 18):
+            with self.subTest(ilhas=n):
+                plano = _plano(n)
+                # A geometria PASSA a primeira autoridade, medida e nao suposta.
+                registros = [
+                    linha
+                    for ilha in plano
+                    for linha in assemble_corpus._island_component(ilha)
+                ]
+                assert_components_can_fill_five_partitions(registros)
+                # E a segunda a recusa.
+                with self.assertRaises(assemble_corpus.IslandPlanRefused) as erro:
+                    assemble_corpus.assert_island_plan_realizes_the_five_fractions(plano)
+                self.assertIn("nao cabe inteiro em bloco algum", str(erro.exception))
+
+        # A BORDA: tres ilhas em 1880/1880/240 satisfazem as duas condicoes extremas do
+        # preflight e ainda assim nao ha atribuicao — que e o que o docstring do preflight
+        # declara nao decidir.
+        borda = tuple(
+            {
+                "island": f"ilha_{i}",
+                "templates": (f"pt-{i}",),
+                "mixingTemplate": f"mix-{i}",
+                "seedBlock": i,
+                "lines": {"human": n, "ai": n, "mixed": n // 2},
+                "reserved": False,
+            }
+            for i, n in enumerate((1880, 1880, 240))
+        )
+        registros = [
+            linha for ilha in borda for linha in assemble_corpus._island_component(ilha)
+        ]
+        assert_components_can_fill_five_partitions(registros)
+        with self.assertRaises(assemble_corpus.IslandPlanRefused) as erro:
+            assemble_corpus.assert_island_plan_realizes_the_five_fractions(borda)
+        self.assertIn("nao cabe inteiro em bloco algum", str(erro.exception))
+
+    def test_um_plano_de_15_ilhas_atribui_e_erra_cal_A(self):
+        """A terceira autoridade: 15 ilhas atribuem e realizam `cal-A` fora da tolerancia.
+
+        Medido: 6,65 % contra um alvo de 10 %. Sem a conferencia das fracoes REALIZADAS este
+        plano passaria as duas primeiras pernas, e o corpo montado seria recusado por
+        `assert_stamped_corpus_is_splittable` — depois da cota.
+        """
+        plano = _plano(15)
+        registros = [
+            linha for ilha in plano for linha in assemble_corpus._island_component(ilha)
+        ]
+        # As duas primeiras autoridades PASSAM, medidas.
+        assert_components_can_fill_five_partitions(registros)
+        assemble_corpus._plano_de_blocos(registros, set())
+        with self.assertRaises(assemble_corpus.IslandPlanRefused) as erro:
+            assemble_corpus.assert_island_plan_realizes_the_five_fractions(plano)
+        self.assertIn("fora da tolerancia", str(erro.exception))
+        self.assertIn("cal-A", str(erro.exception))
+
+    def test_o_plano_de_producao_passa_as_tres_pernas_e_realiza_as_cinco_fracoes(self):
+        """O contraste que da peso aos tres acima: 20 ilhas passam, e realizam EXACTO.
+
+        E a nao vacuidade da guarda inteira: uma guarda que recusasse tudo tambem passaria
+        nos tres testes de recusa.
+        """
+        plano = assemble_corpus.ISLAND_PLAN
+        assemble_corpus.assert_island_plan_is_a_partition(plano)
+        assemble_corpus.assert_island_plan_realizes_the_five_fractions(plano)
+        assemble_corpus.assert_island_plan_leaves_core_in_the_blind_block(plano)
+        self.assertEqual(len(plano), 20)
+        registros = [
+            linha for ilha in plano for linha in assemble_corpus._island_component(ilha)
+        ]
+        # 20 componentes, um por ilha, e as fracoes EXACTAS nas TRES classes.
+        self.assertEqual(len(componentes(registros)), 20)
+        atribuido = assemble_corpus._plano_de_blocos(registros, set())
+        total: dict[str, int] = {}
+        por_bloco: dict[tuple[str, str], int] = {}
+        for rec in registros:
+            total[rec["label"]] = total.get(rec["label"], 0) + 1
+            chave = (atribuido[rec["id"]], rec["label"])
+            por_bloco[chave] = por_bloco.get(chave, 0) + 1
+        for bloco, alvo in assemble_corpus.BLOCK_FRACTIONS.items():
+            for classe in sorted(total):
+                with self.subTest(bloco=bloco, classe=classe):
+                    self.assertAlmostEqual(
+                        por_bloco[(bloco, classe)] / total[classe], alvo, places=10
+                    )
+
+    def test_o_plano_NAO_particiona_a_versao_e_o_residuo_esta_MEDIDO(self):
+        """O que a decisao de 2026-08-12 PERDE, medido em vez de prometido.
+
+        `generatorVersion` nao esta na uniao e nao e eixo do plano: ilha alguma declara uma
+        identidade de versao e `_island_component` nao emite o eixo. O RESIDUO e que a
+        CO-LOCACAO de versao nao e modelada, e a forma medida disso e esta: duas linhas
+        geradas de ilhas diferentes com a MESMA identidade de versao ficam em componentes
+        diferentes, logo podem cair em particoes diferentes. A perna de novidade de gerador e
+        a reserva OOD por familia, que e outro mecanismo e tem lista propria.
+        """
+        for ilha in assemble_corpus.ISLAND_PLAN:
+            with self.subTest(ilha=ilha["island"]):
+                self.assertNotIn("generatorVersion", ilha)
+        linhas = assemble_corpus._island_component(assemble_corpus.ISLAND_PLAN[0])
+        self.assertNotIn("generatorVersion", linhas[0]["groups"])
+        self.assertNotIn("generatorVersion", SPLIT_GROUP_KEYS)
+        duas = [
+            linha
+            for ilha in assemble_corpus.ISLAND_PLAN[:2]
+            for linha in assemble_corpus._island_component(ilha)
+        ]
+        # Nao vacuo: a identidade e a MESMA nas linhas geradas das duas ilhas, e ha linha
+        # gerada nas duas. Se a versao voltasse a unir, os dois componentes viravam um.
+        geradas = 0
+        for linha in duas:
+            if linha["label"] != "human":
+                linha["groups"]["generatorVersion"] = group_axes.known("gv-unica")
+                geradas += 1
+        self.assertEqual(geradas, 600)
+        self.assertEqual(len(componentes(duas)), 2)
+        self.assertTrue(assemble_corpus.OOD_RESERVED_FAMILIES)
+
+    def test_as_ARESTAS_que_fecham_a_ilha_sao_as_que_o_docstring_declara(self):
+        """As quatro medicoes que o docstring de `_island_component` rotula "medido".
+
+        Sao quatro fatos independentes, e nenhum deles e o que a prosa dizia antes (que as
+        humanas partilham `author`):
+
+          1. as humanas NAO partilham autor — 200 identidades em 200 linhas;
+          2. a cobertura por `humanSeed` depende de `lines["ai"] == lines["human"]`: com metade
+             das geradas, as humanas nao nomeadas ficam solitarias;
+          3. as geradas agrupam-se por `promptTemplate`, entao DOIS templates sao dois grupos,
+             e e a linha MISTA que os liga — e uma mista so nao basta, porque alcanca a humana
+             de um grupo apenas;
+          4. dar pai de OUTRA ilha a uma mista funde as duas.
+        """
+        def ilha(**mudanca: object) -> dict:
+            base = {
+                "island": "ilha_00",
+                "templates": ("pt-a", "pt-b"),
+                "mixingTemplate": "mix-0",
+                "seedBlock": 0,
+                "lines": {"human": 200, "ai": 200, "mixed": 100},
+                "reserved": False,
+            }
+            base.update(mudanca)
+            return base
+
+        cheia = assemble_corpus._island_component(ilha())
+        autores = {
+            group_axes.identity_of(rec["groups"]["author"])
+            for rec in cheia
+            if rec["label"] == "human"
+        }
+        self.assertEqual(len(autores), 200)
+        self.assertEqual(len(componentes(cheia)), 1)
+
+        # (2) A COBERTURA: 100 geradas sobre 200 humanas deixam 100 humanas solitarias.
+        meia = assemble_corpus._island_component(
+            ilha(lines={"human": 200, "ai": 100, "mixed": 100})
+        )
+        tamanhos = componentes(meia)
+        self.assertEqual(len(tamanhos), 101)
+        self.assertEqual(sorted(tamanhos.values())[-1], 300)
+        self.assertEqual(sorted(tamanhos.values())[:100], [1] * 100)
+
+        # (3) A PONTE das mistas, e o limiar dela.
+        for mistas, esperado in ((0, 2), (1, 2), (2, 1)):
+            with self.subTest(mistas=mistas):
+                self.assertEqual(
+                    len(
+                        componentes(
+                            assemble_corpus._island_component(
+                                ilha(lines={"human": 200, "ai": 200, "mixed": mistas})
+                            )
+                        )
+                    ),
+                    esperado,
+                )
+        # E com UM template so nao ha ponte a fazer: um grupo, um componente.
+        self.assertEqual(
+            len(
+                componentes(
+                    assemble_corpus._island_component(
+                        ilha(
+                            templates=("pt-a",),
+                            lines={"human": 200, "ai": 200, "mixed": 0},
+                        )
+                    )
+                )
+            ),
+            1,
+        )
+
+        # (4) O PAI DE FORA funde as duas ilhas — a razao de (iii).
+        duas = [
+            linha
+            for i in assemble_corpus.ISLAND_PLAN[:2]
+            for linha in assemble_corpus._island_component(i)
+        ]
+        self.assertEqual(len(componentes(duas)), 2)
+        alheia = next(
+            rec for rec in duas if rec["label"] == "human" and "ilha_01" in rec["id"]
+        )
+        mista = next(rec for rec in duas if rec["id"].startswith("plano_m_ilha_00"))
+        mista["groups"]["derivationRoot"] = group_axes.known(alheia["id"])
+        self.assertEqual(len(componentes(duas)), 1)
+
+    def test_a_conferencia_de_particao_percorre_TODAS_as_ilhas_nas_DUAS_ordens(self):
+        """O LACO, exercitado nas TRES pernas e em todos os casos.
+
+        Duas coisas de uma vez. Uma colisao por PERNA, e so aquela perna: uma perna apagada do
+        laco deixa a sua fixture vermelha, e sem uma fixture por perna duas das tres podiam
+        sair e a suite ficava verde. E a colisao esta na ULTIMA ilha e na PRIMEIRA: uma saida
+        antecipada aprovaria a primeira ordem e um passeio que so olha a ultima aprovaria a
+        segunda.
+
+        O que se afirma e a MENSAGEM e nao a recusa, e para `seedBlock` isso e o que separa as
+        duas coisas: colidir um bloco tambem quebra a COBERTURA, entao uma perna de bloco
+        apagada do laco continuaria a recusar — pela mensagem errada.
+        """
+        base = list(_plano(20))
+        # O rotulo afirmado e o do EIXO DE REGISTRO, e o CAMPO vem no nome do dono: os dois
+        # campos de template escrevem `groups.promptTemplate`, entao uma colisao entre eles
+        # tem de ser vista, e e por isso que a mensagem carrega `ilha/campo`.
+        for rotulo, campo, valor_de in (
+            ("promptTemplate", "templates", lambda i: base[i]["templates"]),
+            ("seedBlock", "seedBlock", lambda i: base[i]["seedBlock"]),
+            ("promptTemplate", "mixingTemplate", lambda i: base[i]["mixingTemplate"]),
+        ):
+            colide_na_ultima = list(base)
+            colide_na_ultima[-1] = dict(base[-1], **{campo: valor_de(0)})
+            colide_na_primeira = list(base)
+            colide_na_primeira[0] = dict(base[0], **{campo: valor_de(-1)})
+            for ordem, plano in (
+                ("colisao na ULTIMA", colide_na_ultima),
+                ("colisao na PRIMEIRA", colide_na_primeira),
+            ):
+                with self.subTest(perna=f"{rotulo}/{campo}", ordem=ordem):
+                    with self.assertRaises(assemble_corpus.IslandPlanRefused) as erro:
+                        assemble_corpus.assert_island_plan_is_a_partition(tuple(plano))
+                    mensagem = str(erro.exception)
+                    self.assertIn(rotulo, mensagem)
+                    # O DONO com o campo, e nao o campo solto: a prosa estatica da recusa cita
+                    # `templates` e `mixingTemplate`, entao afirmar o campo sozinho passaria
+                    # sem o dono carregar coisa alguma.
+                    self.assertIn(f"/{campo}", mensagem)
+
+    def test_o_mixingTemplate_de_uma_ilha_nao_pode_ser_o_template_de_geracao_de_outra(self):
+        """A colisao CRUZADA entre os dois campos que escrevem o MESMO eixo de registro.
+
+        `_island_component` escreve `groups.promptTemplate` = template de geracao nas linhas
+        `ai` e = `mixingTemplate` nas mistas. Um namespace POR CAMPO aprovava um plano cujo
+        `mixingTemplate` e o `templates` de outra ilha, e o corpo colapsava com as pernas todas
+        verdes — medido, 19 componentes onde o plano declara 20. Nenhuma das outras fixturas
+        alcanca este caso: cada uma colide um campo consigo mesmo.
+        """
+        base = list(_plano(20))
+        cruzado = list(base)
+        cruzado[-1] = dict(base[-1], mixingTemplate=base[0]["templates"][0])
+        with self.assertRaises(assemble_corpus.IslandPlanRefused) as erro:
+            assemble_corpus.assert_island_plan_is_a_partition(tuple(cruzado))
+        mensagem = str(erro.exception)
+        self.assertIn("promptTemplate", mensagem)
+        # Os DOIS DONOS nomeados com o campo de onde o valor veio, que e o que torna a
+        # mensagem diagnostica. Afirmar so "templates" e "mixingTemplate" seria satisfeito
+        # pela PROSA ESTATICA da recusa, que cita os dois nomes de campo — a carga e o par
+        # `ilha/campo`, e e por ele que se afirma.
+        self.assertIn("ilha_19/mixingTemplate", mensagem)
+        self.assertIn("ilha_00/templates", mensagem)
+        # E o corpo que o plano cruzado monta tem MENOS componentes do que ilhas: e a
+        # consequencia que a guarda existe para impedir, medida em vez de afirmada.
+        registros = [
+            linha for ilha in cruzado for linha in assemble_corpus._island_component(ilha)
+        ]
+        raizes = assemble_corpus.connected_components(registros)
+        self.assertEqual(len(set(raizes.values())), len(cruzado) - 1)
+
+    def test_a_particao_confere_COBERTURA_e_nao_so_disjuncao(self):
+        """A quarta perna: blocos DISJUNTOS que nao cobrem os buckets de `island_of_seed`.
+
+        Nenhuma perna do laco colide aqui — os vinte blocos sao distintos —, e o plano ainda
+        e recusado, porque `island_of_seed` produz os buckets 0..19 e o plano declara 0..18 e
+        20. O candidato humano do bucket 19 nao pertence a ilha alguma, e a linha gerada dele
+        nao tem ilha.
+        """
+        plano = list(_plano(20))
+        plano[-1] = dict(plano[-1], seedBlock=20)
+        with self.assertRaises(assemble_corpus.IslandPlanRefused) as erro:
+            assemble_corpus.assert_island_plan_is_a_partition(tuple(plano))
+        # A mensagem da COBERTURA, e nao a de uma colisao: e o que fica vermelho se esta
+        # conferencia sair e uma perna de disjuncao passar a responder por ela.
+        self.assertIn("os blocos de semente do plano sao", str(erro.exception))
+        self.assertIn("ha candidato humano sem ilha", str(erro.exception))
+        self.assertNotIn("nao particiona o eixo", str(erro.exception))
+
+    def test_a_reserva_deixa_lugar_para_uma_ilha_de_nucleo_no_bloco_cego(self):
+        """TRES ilhas reservadas passam, QUATRO nao — e a guarda existente aprovaria quatro.
+
+        `ReserveFillsTheBlindBlock` recusa somente ACIMA do alvo de `test`, entao quatro ilhas
+        de 200 cabem exactamente e deixam o bloco cego inteiramente de reserva. O bloco carrega
+        DUAS hipoteses, e sem populacao de nucleo a do recall sobre familia vista nao tem
+        denominador. O limite e do PLANO, e e este teste que o fixa.
+        """
+        nomes = tuple(f"ilha_{i:02d}" for i in range(20))
+        assemble_corpus.assert_island_plan_leaves_core_in_the_blind_block(
+            _plano(20, nomes[-3:])
+        )
+        with self.assertRaises(assemble_corpus.IslandPlanRefused) as erro:
+            assemble_corpus.assert_island_plan_leaves_core_in_the_blind_block(
+                _plano(20, nomes[-4:])
+            )
+        self.assertIn("nao sobra lugar", str(erro.exception))
+
+    def test_a_reserva_e_conferida_em_TODA_classe_e_nao_so_na_ai(self):
+        """A recusa vem pela classe `human`, com `ai` e `mixed` cabendo nos seus alvos.
+
+        Em todo plano UNIFORME as tres classes sao proporcionais, entao restringir o laco de
+        `assert_island_plan_leaves_core_in_the_blind_block` a `("ai",)` e no-op — e a fixture
+        que faltava, a irma da que fixa `assert_island_plan_realizes_the_five_fractions`. Aqui
+        a ilha reservada carrega MUITA linha humana e pouca gerada, entao so a perna de
+        `human` estoura, e a mensagem e por ela que este teste afirma.
+        """
+        plano = []
+        for indice in range(20):
+            reservada = indice == 19
+            plano.append(
+                {
+                    "island": f"ilha_{indice:02d}",
+                    "templates": (f"pt-{indice:02d}-a", f"pt-{indice:02d}-b"),
+                    "seedBlock": indice,
+                    "mixingTemplate": f"mt-{indice:02d}",
+                    "reserved": reservada,
+                    # A reservada leva 1.900 humanas contra 100 nas outras: `human` estoura o
+                    # alvo de `test` e as outras duas classes ficam proporcionais e cabem.
+                    "lines": {
+                        "human": 1_900 if reservada else 100,
+                        "ai": 200,
+                        "mixed": 100,
+                    },
+                }
+            )
+        with self.assertRaises(assemble_corpus.IslandPlanRefused) as erro:
+            assemble_corpus.assert_island_plan_leaves_core_in_the_blind_block(
+                tuple(plano)
+            )
+        mensagem = str(erro.exception)
+        self.assertIn("'human'", mensagem)
+        # E NAO pelas outras duas: se a mensagem as nomeasse, o laco estaria a estourar por
+        # um plano desproporcional em tudo e a fixture nao separaria as classes.
+        self.assertNotIn("'ai'", mensagem)
+        self.assertNotIn("'mixed'", mensagem)
+
+    def test_as_fracoes_realizadas_sao_conferidas_em_TODA_classe_e_nao_so_na_ai(self):
+        """Um plano cujas fracoes de `human` saem da tolerancia enquanto `ai` e `mixed` fecham.
+
+        Em todo plano UNIFORME as tres classes sao proporcionais, entao restringir
+        `for classe in sorted(total)` a `("ai",)` e no-op: e a fixture que faltava. Aqui as
+        classes nao sao proporcionais — dezanove ilhas de 100 humanas e uma de 1, com 200 ai e
+        100 mistas em cada. A distribuicao de ilhas por bloco que faz `ai` fechar exactamente
+        (9/1/2/4/4 ilhas) manda a ilha de UMA humana para um bloco so, e `train` realiza
+        0,4214 de `human` contra o alvo de 0,45 — fora dos dois pontos.
+        """
+        plano = tuple(
+            {
+                "island": f"ilha_{i:02d}",
+                "templates": (f"pt-{i}-a", f"pt-{i}-b"),
+                "mixingTemplate": f"mix-{i}",
+                "seedBlock": i,
+                "lines": {"human": 1 if i == 19 else 100, "ai": 200, "mixed": 100},
+                "reserved": False,
+            }
+            for i in range(20)
+        )
+        with self.assertRaises(assemble_corpus.IslandPlanRefused) as erro:
+            assemble_corpus.assert_island_plan_realizes_the_five_fractions(plano)
+        # A CLASSE na mensagem: e o que fica vermelho se o laco voltar a conferir `ai` sozinha,
+        # e tambem se ele passar a conferir uma classe que aqui esta DENTRO da tolerancia.
+        self.assertIn("train/human realiza 0.4214", str(erro.exception))
+        self.assertNotIn("/ai realiza", str(erro.exception))
+        self.assertNotIn("/mixed realiza", str(erro.exception))
+        # E a outra ponta MEDIDA, sem a qual a fixture nao distingue "o laco cobre `human`" de
+        # "este plano e recusado de qualquer jeito": sobre o MESMO corpo, `ai` e `mixed`
+        # realizam as cinco fracoes DENTRO da tolerancia.
+        registros = [
+            linha for ilha in plano for linha in assemble_corpus._island_component(ilha)
+        ]
+        atribuido = assemble_corpus._plano_de_blocos(registros, set())
+        total: dict[str, int] = {}
+        realizado: dict[tuple[str, str], int] = {}
+        for rec in registros:
+            total[rec["label"]] = total.get(rec["label"], 0) + 1
+            chave = (atribuido[rec["id"]], rec["label"])
+            realizado[chave] = realizado.get(chave, 0) + 1
+        for bloco, alvo in assemble_corpus.BLOCK_FRACTIONS.items():
+            for classe in ("ai", "mixed"):
+                with self.subTest(bloco=bloco, classe=classe):
+                    self.assertTrue(
+                        assemble_corpus.within_class_tolerance(
+                            realizado.get((bloco, classe), 0) / total[classe], alvo
+                        )
+                    )
+        self.assertAlmostEqual(
+            realizado[("train", "human")] / total["human"], 0.4214, places=4
+        )
+
+    def _corpo_reservavel(self, plano: tuple[dict, ...]) -> tuple[list[dict], set[str]]:
+        """As linhas do plano com `generatorFamily`, e o `held_out` das ilhas reservadas.
+
+        `_island_component` NAO emite a familia — ela nao decide conectividade —, e
+        `_plano_de_blocos` detecta reserva SO por `identity_of(groups["generatorFamily"])`.
+        Sem esta emissao o `held_out` nao casa com linha alguma, ZERO componentes sao
+        reservados, e uma medicao da reserva estaria a medir o passeio guloso.
+
+        Uma familia por ilha, que e a condicao sem a qual o `reserved` por ilha do plano nao e
+        realizavel: uma familia partilhada por ilha reservada e ilha de nucleo arrastaria a
+        segunda para `test`.
+        """
+        registros: list[dict] = []
+        for ilha in plano:
+            familia = f"plano_gf_{ilha['island']}"
+            for linha in assemble_corpus._island_component(ilha):
+                if linha["label"] != "human":
+                    linha["groups"]["generatorFamily"] = group_axes.known(familia)
+                registros.append(linha)
+        held_out = {
+            f"plano_gf_{ilha['island']}" for ilha in plano if ilha["reserved"]
+        }
+        return registros, held_out
+
+    def test_a_guarda_de_PRODUCAO_aceita_quatro_ilhas_reservadas_e_recusa_cinco(self):
+        """O RESIDUO da guarda do plano, com a medicao PRESA em vez de afirmada.
+
+        `ReserveFillsTheBlindBlock` recusa somente ACIMA do alvo de `test`, e o alvo de `test`
+        e 800 linhas por classe gerada de 4000: quatro ilhas de 200 assentam exactamente 800 e
+        PASSAM. E por isso que o limite de tres e do PLANO e nao desta guarda, e e isso que
+        `assert_island_plan_leaves_core_in_the_blind_block` existe para impor.
+
+        A medicao so vale se a reserva morder: as linhas levam `generatorFamily` e o `held_out`
+        nao e vazio, senao nenhum componente e reservado e as tres chamadas abaixo passariam
+        por vacuidade. O que se afirma e a BORDA: aceita em quatro, recusa em cinco.
+        """
+        nomes = tuple(f"ilha_{i:02d}" for i in range(20))
+        for n in (3, 4):
+            with self.subTest(reservadas=n):
+                plano = _plano(20, nomes[-n:])
+                registros, held_out = self._corpo_reservavel(plano)
+                self.assertEqual(len(held_out), n)
+                blocos = assemble_corpus._plano_de_blocos(registros, held_out)
+                # NAO VACUO: as linhas das ilhas RESERVADAS estao TODAS em `test`, e sao
+                # 200/200/100 por ilha reservada. Contar o bloco `test` inteiro nao serviria —
+                # o passeio guloso enche o resto do alvo com ilha de nucleo.
+                assentadas: dict[str, int] = {}
+                for ilha in plano:
+                    if not ilha["reserved"]:
+                        continue
+                    for rec in registros:
+                        if f"_{ilha['island']}_" not in rec["id"]:
+                            continue
+                        self.assertEqual(blocos[rec["id"]], "test")
+                        assentadas[rec["label"]] = assentadas.get(rec["label"], 0) + 1
+                self.assertEqual(
+                    assentadas,
+                    {"human": 200 * n, "ai": 200 * n, "mixed": 100 * n},
+                )
+        # E em CINCO ela recusa. As duas pontas juntas fixam a comparacao `>`: uma guarda com
+        # `>=` recusaria quatro, e uma com `>` de um alvo maior aceitaria cinco.
+        registros, held_out = self._corpo_reservavel(_plano(20, nomes[-5:]))
+        self.assertEqual(len(held_out), 5)
+        with self.assertRaises(assemble_corpus.ReserveFillsTheBlindBlock) as erro:
+            assemble_corpus._plano_de_blocos(registros, held_out)
+        self.assertIn("seats 1000 line(s)", str(erro.exception))
+        self.assertIn("test block holds 800", str(erro.exception))
+
+    def test_o_piso_de_TEMPLATES_de_um_plano_conforme_e_15_e_o_slate_declara_4(self):
+        """O preco em TEMPLATES, que e o que o operador paga, medido nas duas pontas.
+
+        O piso de 15 nao e gosto: um plano de 14 ilhas UNIFORMES e recusado pelo preflight
+        porque o MENOR componente vale 7,14 % contra o teto de 7 % de `dev`, e 15 passa. E a
+        particao exige identidade de template em UMA ilha so, entao N ilhas pedem N templates
+        DISTINTOS no minimo — logo 15 e o piso de templates de qualquer plano conforme.
+
+        `ISLAND_PLAN` declara 20 ilhas de dois templates e pede 40; `RECIPES` declara quatro
+        nomes. Por isso `island_plan` recusa TODA ilha hoje, e essa recusa e a guarda a
+        funcionar antes da cota — nao um defeito.
+        """
+        import argparse
+
+        import generate_ai
+
+        # A ponta de BAIXO, medida: 14 recusado, 15 aceito, e pelo ramo da GRANULARIDADE.
+        with self.assertRaises(UnsplittableCorpus) as erro:
+            assert_components_can_fill_five_partitions(
+                [
+                    linha
+                    for ilha in _plano(14)
+                    for linha in assemble_corpus._island_component(ilha)
+                ]
+            )
+        self.assertIn("MENOR componente vale 0.0714", str(erro.exception))
+        assert_components_can_fill_five_partitions(
+            [
+                linha
+                for ilha in _plano(15)
+                for linha in assemble_corpus._island_component(ilha)
+            ]
+        )
+        # O piso em TEMPLATES sai da PARTICAO: nenhuma identidade em duas ilhas.
+        templates = [
+            nome
+            for ilha in assemble_corpus.ISLAND_PLAN
+            for nome in ilha["templates"]
+        ]
+        self.assertEqual(len(set(templates)), len(templates))
+        self.assertEqual(len(templates), 40)
+        # E o slate nao os serve: a ilha e recusada e a razao NOMEIA os que faltam.
+        self.assertEqual(len(generate_ai.RECIPES), 4)
+        for ilha in assemble_corpus.ISLAND_PLAN[:3]:
+            with self.subTest(ilha=ilha["island"]):
+                with self.assertRaises(argparse.ArgumentTypeError) as recusa:
+                    generate_ai.island_plan(ilha["island"])
+                self.assertIn("os que faltam sao", str(recusa.exception))
+        # E a recusa vale para TODAS as vinte, o que se mede sem pagar a geometria vinte
+        # vezes: nenhum template do plano esta no slate.
+        self.assertEqual(
+            [nome for nome in templates if nome in generate_ai.RECIPES], []
+        )
+
+    def test_o_plano_de_producao_e_o_que_a_politica_de_release_declara(self):
+        """As contagens por classe do plano SAO `RELEASE_CORPUS_POLICY.counts`, lidas do TS.
+
+        O plano nao le arquivo no import — `generate_ai` importa dele —, entao a igualdade e
+        pinada aqui: uma emenda da politica de release que mudasse os totais deixaria o plano
+        realizando fracoes de um release que ninguem publica.
+        """
+        fonte = (BENCHMARK / "dataset-manifest.ts").read_text(encoding="utf-8")
+        achado = re.search(
+            r"counts:\s*\{\s*human:\s*([\d_]+),\s*ai:\s*([\d_]+),\s*mixed:\s*([\d_]+)\s*\}",
+            fonte,
+        )
+        self.assertIsNotNone(achado)
+        declarado = {
+            classe: int(valor.replace("_", ""))
+            for classe, valor in zip(("human", "ai", "mixed"), achado.groups())
+        }
+        self.assertEqual(assemble_corpus.ISLAND_PLAN_CLASS_LINES, declarado)
+        # E o plano DIVIDE os totais exactamente: um resto silencioso poria linhas fora de
+        # ilha alguma, e a soma das ilhas deixaria de ser o release.
+        for classe, total in declarado.items():
+            with self.subTest(classe=classe):
+                self.assertEqual(
+                    sum(ilha["lines"][classe] for ilha in assemble_corpus.ISLAND_PLAN),
+                    total,
+                )
+
+    def test_duas_ilhas_nunca_partilham_uma_semente(self):
+        """O bloco de sementes e uma PARTICAO dos candidatos, e a medicao e sobre os pools.
+
+        Medido nos pools em HEAD: 1046 identidades de semente em 1170 linhas, e 116 delas sao
+        emparelhadas por linhas de MAIS DE UMA corrida de versao — e so essas arestas fundem as
+        cinco corridas numa ilha. Sob o plano, o bucket e funcao do id sozinho, entao o
+        cruzamento e ZERO por construcao. O que se afirma e a particao E a nao vacuidade: mais
+        de uma ilha recebe semente.
+        """
+        candidatos = [f"src_wiki_{i:06d}" for i in range(2000)]
+        por_ilha: dict[str, int] = {}
+        for cid in candidatos:
+            ilha = assemble_corpus.island_of_seed(assemble_corpus.ISLAND_PLAN, cid)
+            por_ilha[ilha["island"]] = por_ilha.get(ilha["island"], 0) + 1
+        # TODA ilha recebe semente: um bucket vazio seria uma corrida sem material.
+        self.assertEqual(len(por_ilha), len(assemble_corpus.ISLAND_PLAN))
+        self.assertEqual(sum(por_ilha.values()), len(candidatos))
+        # E a atribuicao e FUNCAO do id: chamada duas vezes, a mesma ilha.
+        for cid in candidatos[:50]:
+            with self.subTest(cid=cid):
+                self.assertEqual(
+                    assemble_corpus.island_of_seed(
+                        assemble_corpus.ISLAND_PLAN, cid
+                    )["island"],
+                    assemble_corpus.island_of_seed(
+                        assemble_corpus.ISLAND_PLAN, cid
+                    )["island"],
+                )
+
+    def test_nenhuma_linha_GRAVADA_leva_template_fora_da_ilha(self):
+        """G2 onde a linha NASCE: o driver rodado, e TODAS as linhas que ele escreve lidas.
+
+        `recipe_for_island` chamado diretamente prova o criterio e nada sobre o sitio: o laco
+        de `main()` podia voltar a `recipe_for(provider, ...)` e escolher entre as QUATRO
+        receitas do slate. Aqui roda `main()` com o transporte falsificado, e o que se afirma e
+        o `recipe` de CADA linha gravada — todas elas — mais o artefato de lote, que passou a
+        declarar so as receitas da ilha.
+
+        Os templates da ilha sao os dois de MENOR peso do slate (`social` 2, `humanizado` 1,
+        contra `original` 5): sob a mutacao, `recipe_for` sorteia por peso e as linhas caem em
+        `original` com probabilidade dominante, entao a mutacao morde em vez de coincidir.
+        """
+        import json as _json
+        import tempfile
+        from unittest import mock as _mock
+
+        import generate_ai
+
+        receitas = ("social", "humanizado")
+        for nome in receitas:
+            self.assertIn(nome, generate_ai.RECIPES)
+        plano = tuple(
+            dict(ilha, templates=receitas) if ilha["island"] == "ilha_00" else ilha
+            for ilha in assemble_corpus.ISLAND_PLAN
+        )
+        ilha = next(i for i in plano if i["island"] == "ilha_00")
+
+        sementes: list[dict] = []
+        indice = 0
+        while len(sementes) < 12:
+            cid = f"src_h_{indice:04d}"
+            indice += 1
+            if assemble_corpus.island_of_seed(plano, cid)["island"] == "ilha_00":
+                sementes.append(
+                    {
+                        "candidateId": cid,
+                        "text": " ".join(["palavra"] * 80),
+                        "wordCount": 80,
+                        "domainSource": "ptwiki",
+                    }
+                )
+
+        def transporte(url, payload, headers):
+            del url, headers
+            pedido = payload["contents"][0]["parts"][0]["text"]
+            del pedido
+            return {
+                "candidates": [
+                    {
+                        "content": {
+                            "parts": [{"text": " ".join(["resposta"] * 80)}]
+                        },
+                        "finishReason": "STOP",
+                    }
+                ]
+            }
+
+        with tempfile.TemporaryDirectory() as raw:
+            temporario = Path(raw)
+            arquivo = temporario / "humans.jsonl"
+            arquivo.write_text(
+                "".join(_json.dumps(row, ensure_ascii=False) + "\n" for row in sementes),
+                encoding="utf-8",
+            )
+            saida = temporario / "ai_gemini.jsonl"
+            argv = [
+                "generate_ai.py",
+                "--provider", "gemini",
+                "--island", "ilha_00",
+                "--humans", str(arquivo),
+                "--output", str(saida),
+                "--per-provider", str(len(sementes)),
+                "--sleep", "0",
+            ]
+            with _mock.patch.object(assemble_corpus, "ISLAND_PLAN", plano):
+                with _mock.patch.object(sys, "argv", argv):
+                    with _mock.patch.dict(
+                        os.environ, {"GEMINI_API_KEY": "chave-de-teste"}
+                    ):
+                        with _mock.patch.object(
+                            generate_ai, "http_json", transporte
+                        ):
+                            generate_ai.main()
+            linhas = [
+                _json.loads(linha)
+                for linha in saida.read_text(encoding="utf-8").splitlines()
+                if linha.strip()
+            ]
+            lote = _json.loads(
+                saida.with_suffix(".batch.json").read_text(encoding="utf-8")
+            )
+
+        # NAO VACUO: a corrida escreveu linha, e mais de uma.
+        self.assertGreater(len(linhas), 1)
+        digestos = {generate_ai.template_digest(nome) for nome in receitas}
+        for linha in linhas:
+            with self.subTest(linha=linha["candidateId"]):
+                self.assertIn(linha["meta"]["recipe"], receitas)
+                self.assertIn(linha["meta"]["promptTemplateDigest"], digestos)
+        # E o artefato de lote declara SO as receitas da ilha: declarar todas as `RECIPES`
+        # fazia o lote nomear receita que a corrida nao usou.
+        self.assertEqual(sorted(lote["recipes"]), sorted(receitas))
+        self.assertEqual(lote["island"], ilha["island"])
+
+    def test_nenhuma_linha_proposta_leva_template_fora_da_ilha(self):
+        """Onde a LINHA NASCE: `recipe_for_island` recusa semente de fora e template de fora.
+
+        O laco percorre TODOS os candidatos e nao uma amostra: uma amostra provaria a ilha nas
+        linhas sorteadas e nada sobre a corrida.
+        """
+        import generate_ai
+
+        plano = _plano(20)
+        # Um slate de teste cujos nomes o `RECIPES` de producao serve, porque o que se mede
+        # aqui e a RESTRICAO e nao a decisao de coleta.
+        receitas = tuple(sorted(generate_ai.RECIPES))[:2]
+        ilha = dict(plano[0], templates=receitas)
+        outra = dict(plano[1], templates=tuple(sorted(generate_ai.RECIPES))[2:4])
+        with mock.patch.object(
+            assemble_corpus, "ISLAND_PLAN", (ilha, outra) + plano[2:]
+        ):
+            propostos: set[str] = set()
+            recusados = 0
+            for i in range(600):
+                cid = f"src_wiki_{i:06d}"
+                dono = assemble_corpus.island_of_seed(
+                    assemble_corpus.ISLAND_PLAN, cid
+                )
+                if dono["island"] != ilha["island"]:
+                    with self.assertRaises(assemble_corpus.IslandPlanRefused):
+                        generate_ai.recipe_for_island(ilha, cid)
+                    recusados += 1
+                    continue
+                propostos.add(generate_ai.recipe_for_island(ilha, cid))
+            # NAO VACUO nas duas pontas: houve linha da ilha e houve semente recusada.
+            self.assertTrue(propostos)
+            self.assertGreater(recusados, 0)
+            # E todo template proposto e da ilha.
+            self.assertTrue(propostos <= set(receitas), propostos)
 
 
 if __name__ == "__main__":

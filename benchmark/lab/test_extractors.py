@@ -603,16 +603,64 @@ class GenerateAiTests(unittest.TestCase):
         ]
 
     def test_select_pairs_is_deterministic_and_resume_skips(self) -> None:
+        from unittest import mock
+
+        import assemble_corpus
+
         from generate_ai import select_pairs
 
-        first = select_pairs(self.humans(), "anthropic", 10, set())
-        second = select_pairs(self.humans(), "anthropic", 10, set())
-        self.assertEqual(
-            [r["candidateId"] for r in first], [r["candidateId"] for r in second]
-        )
-        done = {first[0]["candidateId"], first[1]["candidateId"]}
-        resumed = select_pairs(self.humans(), "anthropic", 10, done)
-        self.assertFalse(done & {r["candidateId"] for r in resumed})
+        # Um plano de UMA ilha, para o filtro de bloco de semente admitir todo candidato: o
+        # que este teste mede e o determinismo e o resume, e um plano de vinte deixaria a
+        # amostra pequena demais para o resume ter o que pular. O filtro em si e medido em
+        # `test_select_pairs_so_pega_semente_do_bloco_da_ilha`.
+        uma = (dict(assemble_corpus.ISLAND_PLAN[0], seedBlock=0),)
+        with mock.patch.object(assemble_corpus, "ISLAND_PLAN", uma):
+            first = select_pairs(self.humans(), "anthropic", 10, set(), uma[0])
+            second = select_pairs(self.humans(), "anthropic", 10, set(), uma[0])
+            self.assertEqual(
+                [r["candidateId"] for r in first], [r["candidateId"] for r in second]
+            )
+            done = {first[0]["candidateId"], first[1]["candidateId"]}
+            resumed = select_pairs(self.humans(), "anthropic", 10, done, uma[0])
+            self.assertFalse(done & {r["candidateId"] for r in resumed})
+
+    def test_select_pairs_so_pega_semente_do_bloco_da_ilha(self) -> None:
+        """G3, onde RODA: sem este filtro o particionamento de templates e decorativo.
+
+        Medido nos pools em HEAD: 1046 identidades de semente em 1170 linhas, 116 delas
+        emparelhadas por linhas de MAIS DE UMA corrida de versao — e uma uniao-find sobre as
+        versoes com so essas arestas funde as cinco corridas numa ilha. Sob o plano, o bloco e
+        funcao do id, entao duas ilhas nunca partilham uma semente.
+        """
+        import assemble_corpus
+
+        from generate_ai import select_pairs
+
+        humanos = [
+            {"candidateId": f"src_x_{i:06d}", "wordCount": 80, "text": PROSE_60,
+             "domainSource": "d"}
+            for i in range(1, 2001)
+        ]
+        plano = assemble_corpus.ISLAND_PLAN
+        escolhidos: dict[str, set[str]] = {}
+        for ilha in plano[:3]:
+            selecionados = select_pairs(humanos, "agy", 40, set(), ilha)
+            # Nao vacuo: cada ilha recebe semente do bloco dela.
+            self.assertTrue(selecionados, ilha["island"])
+            escolhidos[ilha["island"]] = {r["candidateId"] for r in selecionados}
+            for cid in escolhidos[ilha["island"]]:
+                self.assertEqual(
+                    assemble_corpus.island_of_seed(plano, cid)["island"],
+                    ilha["island"],
+                )
+        # E o cruzamento entre as ilhas e ZERO, que e a condicao que a restricao impoe.
+        nomes = list(escolhidos)
+        for i, primeira in enumerate(nomes):
+            for segunda in nomes[i + 1 :]:
+                with self.subTest(par=(primeira, segunda)):
+                    self.assertEqual(
+                        escolhidos[primeira] & escolhidos[segunda], set()
+                    )
 
     def test_recipe_assignment_is_deterministic_and_weighted(self) -> None:
         from collections import Counter
@@ -691,6 +739,68 @@ class FrozenLaneEntryTests(unittest.TestCase):
         for lane in ("agy", "codex", "gemini", "gemini_cli"):
             self.assertIn(lane, proc.stderr)
 
+    def test_the_slate_that_does_not_meet_the_island_plan_is_refused_at_the_entry(
+        self,
+    ) -> None:
+        """A mesma fronteira, para `--island`: o slate que nao cumpre o plano recusa na entrada.
+
+        E a recusa que vale HOJE, e ela nomeia a decisao do operador em vez de a esconder: o
+        plano pede dois templates por ilha em vinte ilhas e `RECIPES` declara quatro nomes,
+        entao a cota nao pode ser gasta ate o slate crescer. Subprocesso de verdade, no molde
+        de `--provider`: exit 2, saida INEXISTENTE, razao no stderr.
+        """
+        import subprocess
+        import sys
+
+        script = Path(__file__).with_name("generate_ai.py")
+        with tempfile.TemporaryDirectory() as raw:
+            output = Path(raw) / "ai_agy.jsonl"
+            proc = subprocess.run(
+                [
+                    sys.executable,
+                    str(script),
+                    "--provider",
+                    "agy",
+                    "--island",
+                    "ilha_00",
+                    "--humans",
+                    str(Path(raw) / "humans.jsonl"),
+                    "--output",
+                    str(output),
+                ],
+                capture_output=True,
+                text=True,
+            )
+            self.assertFalse(output.exists())
+            self.assertFalse(output.with_name(output.name + ".lock").exists())
+        self.assertEqual(proc.returncode, 2, proc.stderr)
+        self.assertIn("o slate declara", proc.stderr)
+        self.assertIn("depois de a cota estar gasta", proc.stderr)
+        # E uma ilha que o plano nao declara e recusada pela mesma fronteira, com a lista das
+        # admissiveis — o precedente e `frozen_lane`, que lista as quatro lanes.
+        with tempfile.TemporaryDirectory() as raw:
+            output = Path(raw) / "ai_agy.jsonl"
+            proc = subprocess.run(
+                [
+                    sys.executable,
+                    str(script),
+                    "--provider",
+                    "agy",
+                    "--island",
+                    "ilha_99",
+                    "--humans",
+                    str(Path(raw) / "humans.jsonl"),
+                    "--output",
+                    str(output),
+                ],
+                capture_output=True,
+                text=True,
+            )
+            self.assertFalse(output.exists())
+        self.assertEqual(proc.returncode, 2, proc.stderr)
+        self.assertIn("nao esta no plano", proc.stderr)
+        self.assertIn("ilha_00", proc.stderr)
+
     def test_the_admissible_lanes_are_the_frozen_ones_and_each_has_a_default(
         self,
     ) -> None:
@@ -751,20 +861,40 @@ class PublicCorpusTests(unittest.TestCase):
 
 class CodexBatchTests(unittest.TestCase):
     def test_chunks_are_single_recipe_and_bounded(self) -> None:
-        from codex_batch import chunk_pairs
-        from generate_ai import recipe_for
+        """Os chunks sao de UMA receita, e a receita e da ILHA e nao do slate inteiro.
 
+        A chave passou de provedor para ILHA porque esta lane grava `promptTemplate`, que e
+        eixo de UNIAO: um chunk montado do slate inteiro poria numa linha desta ilha um
+        template de outra, e as duas ilhas viram uma no grafo.
+        """
+        import assemble_corpus
+
+        from codex_batch import chunk_pairs
+        from generate_ai import RECIPES, recipe_for_island
+
+        ilha = dict(
+            assemble_corpus.ISLAND_PLAN[0], templates=tuple(sorted(RECIPES))[:2]
+        )
+        # Somente as sementes DO BLOCO da ilha: `recipe_for_island` recusa as outras, e essa
+        # recusa e o que faz o particionamento de templates valer alguma coisa.
         pairs = [
-            {"candidateId": f"src_x_{i:06d}", "wordCount": 100, "text": PROSE_60}
-            for i in range(97)
+            {"candidateId": cid, "wordCount": 100, "text": PROSE_60}
+            for cid in (f"src_x_{i:06d}" for i in range(2000))
+            if assemble_corpus.island_of_seed(assemble_corpus.ISLAND_PLAN, cid)["island"]
+            == ilha["island"]
         ]
-        chunks = chunk_pairs(pairs, "openai", 20)
+        # Nao vacuo: o bloco da ilha recebe sementes, e mais de um chunk sai delas.
+        self.assertGreater(len(pairs), 40)
+        chunks = chunk_pairs(pairs, ilha, 20)
         total = sum(len(rows) for _, rows in chunks)
-        self.assertEqual(total, 97)
+        self.assertEqual(total, len(pairs))
+        self.assertGreater(len(chunks), 1)
         for recipe, rows in chunks:
             self.assertLessEqual(len(rows), 20)
+            # A receita do chunk e DA ILHA, e nao uma qualquer do slate.
+            self.assertIn(recipe, ilha["templates"])
             for row in rows:
-                self.assertEqual(recipe_for("openai", row["candidateId"]), recipe)
+                self.assertEqual(recipe_for_island(ilha, row["candidateId"]), recipe)
 
 
 class BuildDatasetTests(unittest.TestCase):
@@ -6130,17 +6260,20 @@ class BlindBlockCompositionTests(unittest.TestCase):
 class GeneratorVersionIsTheFamilyTests(unittest.TestCase):
     """`generatorVersion` carries the identity `generatorFamily` carries, em TODA linha.
 
-    E o resíduo que o comentário de `SPLIT_GROUP_KEYS` — e o de `GROUP_KEYS` em
-    benchmark/split.ts — afirma quando diz que unir por `generatorVersion` é unir pela
-    família sob outro nome. Hoje a igualdade é acidente de `version = str(meta.get("version")
-    or family_raw)` mais pools que gravam `version` igual a `family`: aqui ela passa a ser
-    exigência, e um pool que gravar `gemini-3.5-flash-lite-002` fica vermelho.
+    É a medição de que o comentário de `SPLIT_GROUP_KEYS` — e o de `GROUP_KEYS` em
+    benchmark/split.ts — depende em DOIS lugares: para dizer que a versão cumpre a perna (c)
+    (a identidade dela é o nível de TOPO da árvore de reamostragem) e para dizer que
+    particioná-la por ilha custaria um ID DE MODELO por ilha, que é a razão de ela ser
+    `namedReported` em vez de unida. Hoje a igualdade é acidente de
+    `version = str(meta.get("version") or family_raw)` mais pools que gravam `version` igual a
+    `family`: aqui ela passa a ser exigência, e um pool que gravar
+    `gemini-3.5-flash-lite-002` fica vermelho.
 
     O laço percorre TODA linha que o construtor emite, e não uma amostra, porque o sítio é um
     laço: uma amostra provaria a igualdade nas linhas sorteadas e nada sobre a classe.
 
-    Este teste NÃO justifica a saída do eixo da união — isso é o critério da lista, medido em
-    test_connectivity_feasibility.py. Ele fixa o resíduo que o comentário afirma.
+    Este teste NÃO decide a situação do eixo — isso é o critério da lista, medido em
+    test_connectivity_feasibility.py. Ele fixa a igualdade de que o argumento depende.
     """
 
     @classmethod
@@ -6204,7 +6337,9 @@ class GeneratorVersionIsTheFamilyTests(unittest.TestCase):
             divergentes[:5],
             [],
             f"{len(divergentes)} de {len(built)} linhas gravam uma `version` que não é a "
-            "família: a saída de `generatorVersion` da união deixa de estar justificada",
+            "família: o argumento de que particionar a versão custa um id de modelo por ilha "
+            "— e o resíduo que `groupAxisRole` declara sobre `generatorFamily` — deixa de "
+            "estar justificado",
         )
         # E não é vácuo por a família ser única: são cinco identidades.
         self.assertEqual(
@@ -6251,6 +6386,77 @@ class GeneratorVersionIsTheFamilyTests(unittest.TestCase):
                     sorted(medido.values(), reverse=True),
                     sorted(caso["generatedRecipe"][chave], reverse=True),
                 )
+
+    def test_o_lote_e_refinamento_do_template(self) -> None:
+        """G5: a chave do lote CONTEM `promptTemplateDigest`, logo lote ⊆ template.
+
+        E o fundamento NOVO da entrada de `generationBatch` em `INERT_UNION_AXES`, e ele e
+        incondicional: nao depende mais de `stamp_block` sobrescrever `generatedAt`. Duas
+        linhas de um mesmo lote tem a MESMA identidade de `promptTemplate`, entao o lote nao
+        acrescenta classe de equivalencia alguma a uma uniao que ja contem o template.
+
+        MEDIDO e nao deduzido do comentario: o corpo abaixo tem duas linhas que diferem SO no
+        template, e a assercao e que a chave do lote as separa — tirar `promptTemplateDigest`
+        da chave as juntaria num lote cujas linhas tem templates distintos, que e exactamente
+        a contencao quebrada.
+        """
+        import assemble_corpus
+        from group_axes import identity_of
+
+        def linha(rid: str, digest: str, recipe: str) -> dict:
+            return {
+                "id": rid,
+                "schemaVersion": 4,
+                "label": "ai",
+                "provenance": {
+                    "sourceId": "src_ai_agy",
+                    "sourceKind": "controlled-generation",
+                },
+                "generation": {
+                    "provider": "agy",
+                    "family": "gemini-3_5-flash-lite",
+                    "model": "gemini-3.5-flash-lite",
+                    "version": "gemini-3.5-flash-lite",
+                    "promptTemplateDigest": digest,
+                    "decoding": {"temperature": 0.8},
+                    "effort": {"level": "medium"},
+                    "generatedAt": "2026-08-12T00:00:00+00:00",
+                    "seed": None,
+                },
+                "groups": {
+                    "promptTemplate": assemble_corpus.group_axes.known(
+                        f"{recipe}_{digest[:16]}"
+                    ),
+                },
+            }
+
+        registros = [
+            linha("ai_um", "a" * 64, "original"),
+            linha("ai_dois", "b" * 64, "parafrase"),
+        ]
+        assemble_corpus.assign_generation_batches(registros)
+        lotes = {
+            identity_of(rec["groups"]["generationBatch"]) for rec in registros
+        }
+        # A chave separa as duas linhas: dois lotes, um por template.
+        self.assertEqual(len(lotes), 2)
+        # E a CONTENCAO, dita como ela e verificavel: dentro de cada lote a identidade de
+        # `promptTemplate` e unica. Com a chave mutilada as duas cairiam num lote e este
+        # conjunto teria dois elementos.
+        por_lote: dict[str, set[str]] = {}
+        for rec in registros:
+            chave = identity_of(rec["groups"]["generationBatch"])
+            por_lote.setdefault(chave, set()).add(
+                identity_of(rec["groups"]["promptTemplate"])
+            )
+        for chave, templates in por_lote.items():
+            with self.subTest(lote=chave):
+                self.assertEqual(len(templates), 1)
+        # Nao vacuo: as duas linhas TEM templates diferentes, senao a contencao passaria por
+        # o corpo nao ter mais de um template.
+        self.assertEqual(
+            len({identity_of(r["groups"]["promptTemplate"]) for r in registros}), 2
+        )
 
     def test_the_two_inert_axes_are_measured_and_not_asserted(self) -> None:
         """As duas entradas da lista de união que entram por INÉRCIA, sobre o corpo real.
@@ -6357,9 +6563,17 @@ class ComponentStampingTests(unittest.TestCase):
                         "source": not_applicable("texto gerado"),
                         "domainSource": known("ai_gemini"),
                         "humanSeed": known(semente),
-                        "promptTemplate": known("pt_original"),
+                        # UMA identidade de TEMPLATE por LINHA, e e o template que importa:
+                        # ele e eixo de UNIAO, entao um template compartilhado poria as 1170
+                        # linhas num componente e o preflight recusaria o corpo antes de o
+                        # carimbador correr — e o SUJEITO deste fixture e o carimbador. A
+                        # versao vem por linha por simetria e nao por necessidade: ela nao esta
+                        # na uniao. A forma que este corpo descreve e a LINHAGEM dos pools
+                        # (1046 sementes, 116 com mais de uma linha, 20 pares de derivacao),
+                        # nao a receita deles.
+                        "promptTemplate": known(f"pt_linha_{indice}"),
                         "generatorFamily": known("gemini-3_5-flash-lite"),
-                        "generatorVersion": known("gemini-3_5-flash-lite"),
+                        "generatorVersion": known(f"gv_linha_{indice}"),
                         "sourceMaterialBatch": not_applicable(NO_MATERIAL_ACQUIRED),
                         "generationBatch": unknown("derivado depois de particionar"),
                         "extractionRun": not_applicable(NOT_EXTRACTED),
@@ -6601,7 +6815,21 @@ class ComponenteDeMaisDeUmaLinhaTests(unittest.TestCase):
                 "humanSeed": known(semente or f"seed_{rec_id}"),
                 "promptTemplate": known(f"pt_{rec_id}"),
                 "generatorFamily": known(familia or self.NUCLEO),
-                "generatorVersion": known(familia or self.NUCLEO),
+                # `generatorVersion` NAO e eixo de uniao — e `namedReported` —, entao o valor
+                # aqui nao move a geometria: quem decide os componentes deste fixture e
+                # `promptTemplate` (proprio de cada linha) mais a linhagem. O que o esquema
+                # exige e que ele seja `known` numa linha gerada, e a identidade escolhida e a
+                # do componente que o fixture ja usa, para o registro nao inventar um terceiro
+                # vocabulario.
+                #
+                # Version e family DIVERGEM aqui de proposito, e a divergencia e legal: a
+                # igualdade das duas e propriedade MEDIDA dos pools
+                # (`GeneratorVersionIsTheFamilyTests`), nunca regra do esquema. Nada no plano
+                # de ilhas pede o contrario — o plano particiona templates, blocos de semente
+                # e templates de mistura, e nao a versao.
+                "generatorVersion": known(
+                    f"gv_{derivacao or semente or rec_id}"
+                ),
                 "sourceMaterialBatch": not_applicable(NO_MATERIAL_ACQUIRED),
                 "generationBatch": unknown("derivado depois de particionar"),
                 "extractionRun": not_applicable(NOT_EXTRACTED),

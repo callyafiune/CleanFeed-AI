@@ -31,10 +31,12 @@ from pathlib import Path
 
 from common import CandidateWriter
 from generate_ai import (
+    assembler,
     load_humans,
     already_paired,
+    island_plan,
     select_pairs,
-    recipe_for,
+    recipe_for_island,
     target_word_count,
 )
 
@@ -78,12 +80,19 @@ COMMON_SUFFIX = (
 
 
 def chunk_pairs(
-    pairs: list[dict], provider: str, size: int
+    pairs: list[dict], island: dict, size: int
 ) -> list[tuple[str, list[dict]]]:
-    """Groups pairs by their deterministic recipe into single-recipe chunks."""
+    """Groups pairs by their deterministic recipe into single-recipe chunks.
+
+    Keyed by the ISLAND and not by the provider: this lane writes rows whose
+    `promptTemplate` is a union axis, so a chunk built from the whole slate would put a
+    template of another island on a line of this one.
+    """
     by_recipe: dict[str, list[dict]] = {}
     for row in pairs:
-        by_recipe.setdefault(recipe_for(provider, row["candidateId"]), []).append(row)
+        by_recipe.setdefault(
+            recipe_for_island(island, row["candidateId"]), []
+        ).append(row)
     chunks: list[tuple[str, list[dict]]] = []
     for recipe, rows in sorted(by_recipe.items()):
         for start in range(0, len(rows), size):
@@ -169,6 +178,17 @@ def parse_array(raw_path: Path) -> list[dict]:
 
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
+    # Espelha `--island` de generate_ai.py, com o MESMO `type=`: esta lane grava linhas com
+    # `promptTemplate`, que e eixo de uniao, e uma corrida sem ilha produz a classe que a
+    # montagem recusa depois de a cota estar gasta.
+    parser.add_argument(
+        "--island",
+        required=True,
+        type=island_plan,
+        metavar="{"
+        + ",".join(ilha["island"] for ilha in assembler().ISLAND_PLAN[:2])
+        + ",...}",
+    )
     parser.add_argument("--humans", required=True, nargs="+", type=Path)
     parser.add_argument("--output", required=True, type=Path)
     parser.add_argument("--target", type=int, default=2000)
@@ -182,11 +202,11 @@ def main() -> None:
 
     humans = load_humans(args.humans)
     done = already_paired(args.output)
-    pairs = select_pairs(humans, "openai", args.target, done)
-    chunks = chunk_pairs(pairs, "openai", args.chunk_size)[: args.max_chunks]
+    pairs = select_pairs(humans, "openai", args.target, done, args.island)
+    chunks = chunk_pairs(pairs, args.island, args.chunk_size)[: args.max_chunks]
     print(
-        f"codex lane: {sum(len(c[1]) for c in chunks)} itens em {len(chunks)} chunks "
-        f"(resume-skip={len(done)})"
+        f"codex lane @ {args.island['island']}: {sum(len(c[1]) for c in chunks)} itens em "
+        f"{len(chunks)} chunks (resume-skip={len(done)})"
     )
 
     writer = CandidateWriter(

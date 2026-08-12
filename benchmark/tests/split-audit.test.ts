@@ -1337,18 +1337,24 @@ function v4CellRow(id: string, createdAt: number): BenchmarkRecord {
 }
 
 /**
- * A generated row of ONE recipe, as the assembler emits it: `promptTemplate` and
- * `generatorVersion` shared with every other row of the recipe, everything else per row.
+ * A generated row of one generation run, as the assembler emits it: `generatorVersion`
+ * shared with every other row of the run, everything else per row.
  *
  * It is the other half of the reported inventory. The material pair is `known` only on a
- * human row and the apparatus pair only on a generated one, so measuring all four needs
+ * human row and the APPARATUS axis only on a generated one, so measuring all three needs
  * both classes; and the shared identity is what makes the inventory non-vacuous, because
  * an axis with one identity per row would report `largest: 1` whether the splitter
  * unioned on it or not.
  */
 function v4RecipeRow(id: string, createdAt: number): BenchmarkRecord {
   let raw: Record<string, unknown> = { ...v4Ai(), id, createdAt };
-  raw = withAxis(raw, "promptTemplate", known("pt_original_um_so"));
+  // The two recipe axes are treated OPPOSITELY here, and the asymmetry is the subject:
+  // `promptTemplate` is a UNION axis, so a template shared across the five partitions would
+  // make these rows one component spanning every cut — real leakage, which is what the
+  // corpus has to be built in islands to avoid — and it is per row. `generatorVersion` is
+  // REPORTED, so ONE identity spans all five partitions and unions nothing, which is what
+  // the roots assertion at the end of the inventory test measures.
+  raw = withAxis(raw, "promptTemplate", known(`pt_original_${id}`));
   raw = withAxis(raw, "generatorVersion", known("gemini-3_5-flash-lite"));
   raw = withAxis(raw, "nearDuplicate", known(`nd_${id}`));
   raw = withAxis(raw, "generationBatch", known(`gb_agy_${id}`));
@@ -1367,15 +1373,14 @@ describe("an axis the splitter does not union on", () => {
     // inventory the composition gate reads. Equality and not `length`: a length check
     // accepts one axis swapped for another.
     //
-    // Four names: the MATERIAL pair, then the APPARATUS pair. The loop below is what
-    // makes adding a name here a decision rather than a note — it refuses any of them
-    // in `GROUP_KEYS` and requires the artifact to publish both connectivity flags
-    // false, so an axis cannot be reported as ungrouped and grouped by at once.
+    // Three names: the MATERIAL pair, then the APPARATUS axis. The loop below is what makes
+    // adding a name here a decision rather than a note — it refuses any of them in
+    // `GROUP_KEYS` and requires the artifact to publish both connectivity flags false, so an
+    // axis cannot be reported as ungrouped and grouped by at once.
     expect([...REPORTED_GROUP_AXES]).toEqual([
       "domainSource",
       "sourceMaterialBatch",
       "generatorVersion",
-      "promptTemplate",
     ]);
 
     for (const axis of REPORTED_GROUP_AXES) {
@@ -1398,11 +1403,11 @@ describe("an axis the splitter does not union on", () => {
     // two are the blind partitions whose inventory the composition gate is the one that
     // will read.
     //
-    // BOTH classes, because the four reported axes are mutually exclusive by schema rule:
-    // the material pair is `known` only on a human row and `notApplicable` on a generated
-    // one, and the apparatus pair the other way round. A human-only fixture would leave
-    // `promptTemplate` and `generatorVersion` `notApplicable` on every line and the loop
-    // below would measure an absence.
+    // BOTH classes, and the generated half is NOT what the loop below measures: the two
+    // reported axes are `known` only on a human row. The generated rows are here so that
+    // `clusters.axes` covers the ai-only axes — the report is built from what the RECORDS
+    // declare, so a human-only fixture would publish twelve axes and the equality against
+    // `V4_GROUP_AXES` would be the assertion that noticed, far from its cause.
     const humans = [
       v4CellRow("h_train", 1),
       v4CellRow("h_dev", 2),
@@ -1476,9 +1481,9 @@ describe("an axis the splitter does not union on", () => {
     for (const axis of REPORTED_GROUP_AXES) {
       const report = audit.clusters.axes.find((row) => row.axis === axis);
       expect(report, axis).toBeDefined();
-      // MEASURED off the fixture rather than restated, because the four axes do not have
-      // one profile: the material pair and the apparatus pair are carried by different
-      // classes, and `domainSource` is carried by both. A hand-written 5 would make three
+      // MEASURED off the fixture rather than restated, because the three axes do not have
+      // one profile: the material pair and the apparatus axis are carried by different
+      // classes, and `domainSource` is carried by both. A hand-written 5 would make two
       // of them pass and one pass by accident. What is asserted is the shape that makes
       // the inventory a measurement — every identity spanning ALL FIVE partitions, so an
       // axis reported here really does bind lines the splitter did not keep together.
@@ -1539,8 +1544,10 @@ describe("an axis the splitter does not union on", () => {
 
     // The identity spans all five partitions and that is NOT leakage: the splitter
     // does not union on it, so nothing was kept together and nothing crossed a cluster
-    // boundary. A union on any of the four would make this list non-empty — and would
-    // make the cell (or the whole recipe) one component, which the roots below refuse.
+    // boundary. A union on any of the three would make this list non-empty — and would
+    // make the cell (or the whole generation run) one component, which the roots below
+    // refuse. For `generatorVersion` that refusal is the DECISION under test: one identity
+    // covers all five partitions and the corpus is still `rows.length` components.
     expect(audit.leakages).toEqual([]);
     expect(new Set(connectedComponentRoots(rows).values()).size).toBe(
       rows.length,

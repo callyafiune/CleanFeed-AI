@@ -1782,6 +1782,7 @@ const FROZEN_GENERATION_MODES = ["mechanistic", "ecological"] as const;
 const FROZEN_SPLIT_UNION_AXES = [
   "author",
   "source",
+  "promptTemplate",
   "generationBatch",
   "nearDuplicate",
   "derivationRoot",
@@ -1803,8 +1804,8 @@ const FROZEN_DIAGNOSTIC_AXES = ["extractionRun"] as const;
 // independence is claimed over would have to SPLIT this constant, and splitting it is a
 // decision the partition forces someone to write down rather than drift into.
 //
-// The unit is NOT one per origin document: the component closes over all five of
-// `GROUP_KEYS` — `author`,
+// The unit is NOT one per origin document: the component closes over all six of
+// `GROUP_KEYS` — `author`, `promptTemplate`,
 // `generationBatch`, `nearDuplicate` and `derivationRoot` as well as `source` — so naming the
 // unit after one of them would invite reading it as ONE PER DOCUMENT, which over-states power
 // in the direction benchmark/composition-gate.ts refuses in writing. Origin documents are a
@@ -1814,8 +1815,8 @@ const FROZEN_DIAGNOSTIC_AXES = ["extractionRun"] as const;
 // `originDocuments` 2.
 const FROZEN_INDEPENDENT_UNIT = "connected-components" as const;
 // The mirror of `REPORTED_GROUP_AXES` in benchmark/split-audit.ts: the MATERIAL pair,
-// then the APPARATUS pair. Every entry must be absent from `FROZEN_SPLIT_UNION_AXES` —
-// an axis published with `connectivity.sharedValue: false` that the splitter grouped by
+// then the APPARATUS axis. Every entry must be absent from `FROZEN_SPLIT_UNION_AXES` — an
+// axis published with `connectivity.sharedValue: false` that the splitter grouped by
 // would be a false independence claim in the sealed artifact — and a test holds the
 // disjointness against the splitter's own list, plus the EQUALITY against
 // `REPORTED_GROUP_AXES` itself.
@@ -1823,7 +1824,6 @@ const FROZEN_REPORTED_AXES = [
   "domainSource",
   "sourceMaterialBatch",
   "generatorVersion",
-  "promptTemplate",
 ] as const;
 const FROZEN_THRESHOLD_PARTITIONS = ["dev", "cal-A"] as const;
 // Refused BY NAME rather than deleted: the 2024 access terms of the Stack Exchange

@@ -19,10 +19,16 @@ import {
   PREREGISTRATION_V4_PATH,
   PreregistrationV4Error,
 } from "../preregistration-v4.ts";
-import { ALL_GROUP_AXES, type BenchmarkRecord } from "../schema.ts";
-import { GROUP_KEYS } from "../split.ts";
+import {
+  ALL_GROUP_AXES,
+  groupAxisIdentity,
+  validateBenchmarkRecordV4,
+  type BenchmarkRecord,
+} from "../schema.ts";
+import { connectedComponentRoots, GROUP_KEYS } from "../split.ts";
 import { EXPOSURE_IDENTITY_AXES } from "../cluster-exposure-ledger.ts";
 import { REPORTED_GROUP_AXES } from "../split-audit.ts";
+import { known, v4Ai, withAxis } from "./helpers/v3-record-fixture.ts";
 
 // The frozen pre-registration of the v1 release. This file is the only place that
 // repeats its values as literals: everywhere else in the benchmark must read them
@@ -367,7 +373,6 @@ describe("preregistration-v4.json", () => {
       "domainSource",
       "sourceMaterialBatch",
       "generatorVersion",
-      "promptTemplate",
     ]);
     // The SAME value `preRegistration.powerInventoryUnit` is asserted to hold above,
     // and one constant stands behind both `literal` calls in the parser, so a policy
@@ -1734,31 +1739,22 @@ describe("the AI-recall batch level across schema versions", () => {
 
 // --- o ELO que falta: um eixo REPORTADO tem de ser lido por algum gate -------
 
-describe("o eixo que sai da união é lido pela tabela de reamostragem congelada", () => {
+describe("o eixo que sai da união é carregado por outro mecanismo, e o conjunto é declarado", () => {
   // O CONTRATO. Tirar um eixo de `GROUP_KEYS` faz o splitter deixar de MODELAR a
-  // dependência que ele carrega; ela não desaparece. O que este teste cobra é onde ela
-  // passa a ser carregada: a classe de estimando que `resampling.estimands` mapeia aos
-  // estimandos daquela classe tem de reamostrar POR aquele eixo — ele mesmo, ou um eixo
-  // cuja identidade é igual à dele em toda linha da classe.
+  // dependência que ele carrega; ela não desaparece, e alguma outra coisa tem de carregá-la.
   //
-  // Sem isto, apagar `groups.promptTemplate` de `estimandClasses["ai-recall"].levels`
-  // fica VERDE em toda guarda de conectividade, e o único lugar onde a dependência de
-  // prompt ainda vive desaparece sem que nada recuse.
-
-  /** Os DOIS nomes que esta emenda moveu de `GROUP_KEYS` para `REPORTED_GROUP_AXES`. */
-  const MOVED_TO_REPORTED = ["generatorVersion", "promptTemplate"] as const;
-
-  /**
-   * O eixo cuja identidade é IGUAL à do eixo movido em toda linha da classe gerada.
-   *
-   * A igualdade não é assumida aqui: ela é medida sobre TODA linha que o construtor
-   * emite, em `GeneratorVersionIsTheFamilyTests` (benchmark/lab/test_extractors.py). Esta
-   * perna vale exatamente porque aquele teste a fixa, e um pool que gravar uma `version`
-   * distinta da família fica vermelho lá antes de chegar aqui.
-   */
-  const IDENTITY_EQUAL: Readonly<Record<string, string>> = {
-    generatorVersion: "generatorFamily",
-  };
+  // A REGRA continua verdadeira e o CONJUNTO DE INSTÂNCIAS dela mudou DUAS vezes. Da emenda
+  // de 2026-08-12 só `promptTemplate` voltou à união; `generatorVersion` ficou REPORTADO,
+  // então ele é a instância de receita e tem de ter mecanismo nomeado. Tem, e é a TABELA:
+  // o nível de TOPO de `ai-recall` é `groups.generatorFamily`, e a identidade de
+  // `generatorVersion` é medida IGUAL à da família em toda linha montada dos pools
+  // (`GeneratorVersionIsTheFamilyTests`, benchmark/lab/test_extractors.py) — logo reamostrar
+  // por família é reamostrar pela versão. As outras instâncias são o par de MATERIAL, e a
+  // tabela NÃO as carrega: nem `domainSource` nem `sourceMaterialBatch` é nível de estimando
+  // algum (a dívida está medida três testes abaixo). O que as carrega é a dependência
+  // REGISTRADA — `connectivity.dependencyAxis` com `splitUnionsOnDependencyAxis: false` mais
+  // o inventário por partição da auditoria. Dizer que a tabela as carrega seria falso.
+  const MOVED_TO_REPORTED: readonly string[] = ["generatorVersion"];
 
   /**
    * A classe GERADA -> os estimandos medidos sobre ela. Os nomes dos estimandos são
@@ -1770,18 +1766,6 @@ describe("o eixo que sai da união é lido pela tabela de reamostragem congelada
       ai: ["action.recall", "warning.recall"],
       mixed: ["mixed.warning.recall"],
     };
-
-  /**
-   * Os pares (classe, eixo) que o critério NÃO cobre, cada um com a razão escrita. Uma
-   * entrada a mais aqui é uma decisão, não uma nota: ela exige editar este teste.
-   */
-  const EXCEPTIONS: Readonly<Record<string, string>> = {
-    "mixed:generatorVersion":
-      "a classe `mixed` reamostra humanSeed × promptTemplate e não declara nível de " +
-      "gerador algum, então nem generatorVersion nem generatorFamily são nível dela. A " +
-      "classe mista constrói ZERO linhas hoje, e o nível de gerador de `mixed` é a " +
-      "decisão que esta exceção nomeia — vai para ratificação, não é consertada aqui",
-  };
 
   function declaredLevelAxes(estimands: readonly string[]): Set<string> {
     const { estimandClasses, estimands: byEstimand } =
@@ -1801,49 +1785,120 @@ describe("o eixo que sai da união é lido pela tabela de reamostragem congelada
     return axes;
   }
 
-  it("cobre cada eixo movido em cada classe gerada, ou nomeia a exceção", () => {
-    // O escopo é a TUPLA, pinada: um terceiro nome em `REPORTED_GROUP_AXES` não entra
-    // aqui de graça, porque a igualdade abaixo fica vermelha até alguém decidir por ele.
-    expect(
-      [...REPORTED_GROUP_AXES].filter((axis) =>
-        (MOVED_TO_REPORTED as readonly string[]).includes(axis),
-      ),
-    ).toEqual([...MOVED_TO_REPORTED]);
-
-    const cobertos: string[] = [];
-    const excetuados: string[] = [];
-    for (const [generatedClass, estimands] of Object.entries(
-      GENERATED_CLASS_ESTIMANDS,
-    )) {
-      const axes = declaredLevelAxes(estimands);
-      // Não vácuo: a classe declara níveis de verdade.
-      expect(axes.size, generatedClass).toBeGreaterThan(0);
-      for (const axis of MOVED_TO_REPORTED) {
-        const key = `${generatedClass}:${axis}`;
-        const partner = IDENTITY_EQUAL[axis];
-        const covered =
-          axes.has(`groups.${axis}`) ||
-          (partner !== undefined && axes.has(`groups.${partner}`));
-        if (covered) {
-          cobertos.push(key);
-          continue;
-        }
-        expect(EXCEPTIONS, key).toHaveProperty(key);
-        expect(EXCEPTIONS[key].length, key).toBeGreaterThan(80);
-        excetuados.push(key);
-      }
+  it("nomeia `generatorVersion` como o eixo de receita fora da união, e o mecanismo que o carrega", () => {
+    // A lista NÃO é vazia, e o laço abaixo é o que a mantém honesta: cada nome dela tem de
+    // estar FORA da união e DENTRO dos reportados, e a tabela tem de nomear um nível que
+    // carregue a dependência. Um eixo devolvido à união deixa isto vermelho, e o conjunto de
+    // instâncias tem de ser redecidido junto com o mecanismo.
+    expect(MOVED_TO_REPORTED).toEqual(["generatorVersion"]);
+    const doAi = declaredLevelAxes(GENERATED_CLASS_ESTIMANDS.ai);
+    for (const axis of MOVED_TO_REPORTED) {
+      expect(GROUP_KEYS as readonly string[], axis).not.toContain(axis);
+      expect(REPORTED_GROUP_AXES as readonly string[], axis).toContain(axis);
     }
-    // As duas listas, por igualdade: um par que saísse de coberto para excetuado sem
-    // ninguém decidir ficaria vermelho aqui em vez de passar como exceção nova.
-    expect(cobertos).toEqual([
-      "ai:generatorVersion",
-      "ai:promptTemplate",
-      "mixed:promptTemplate",
+    // O mecanismo, LIDO da tabela: o nível de topo de `ai-recall` é a família, e a
+    // identidade da versão é a dela — medição no lab, citada no comentário acima.
+    expect([...doAi]).toContain("groups.generatorFamily");
+    // E o CONTRASTE, sem o qual o laço passaria por a união estar vazia: `promptTemplate`
+    // ficou na união, então nada aqui o cobra.
+    expect(GROUP_KEYS as readonly string[]).toContain("promptTemplate");
+    expect(REPORTED_GROUP_AXES as readonly string[]).not.toContain(
+      "promptTemplate",
+    );
+    // E as instâncias de MATERIAL: reportadas, fora da união, carregadas pela dependência
+    // registrada e não pela tabela.
+    expect([...REPORTED_GROUP_AXES]).toEqual([
+      "domainSource",
+      "sourceMaterialBatch",
+      "generatorVersion",
     ]);
-    expect(excetuados).toEqual(["mixed:generatorVersion"]);
-    // E nenhuma exceção sobrando: uma entrada que deixou de ser necessária é uma razão
-    // escrita para um par que o critério já cobre.
-    expect(Object.keys(EXCEPTIONS).sort()).toEqual([...excetuados].sort());
+    expect(PREREGISTRATION_V4.connectivity.dependencyAxis).toBe(
+      "sourceMaterialBatch",
+    );
+    expect(PREREGISTRATION_V4.connectivity.splitUnionsOnDependencyAxis).toBe(
+      false,
+    );
+  });
+
+  it("mantém aberta a DECISÃO do nível de gerador da classe mista, que a emenda não fecha", () => {
+    // A exceção `(mixed, generatorVersion)` que a emenda de U4 registrou DISSOLVEU-SE, e
+    // dissolveu-se pelo motivo errado para quem a leia depressa: não porque a classe mista
+    // passou a declarar um nível de gerador, e sim porque o eixo deixou de ser reportado. A
+    // pergunta que a exceção nomeava continua ABERTA e vai a ratificação, então ela migra
+    // para uma asserção sobre a tabela em vez de desaparecer com a entrada.
+    const mixed = PREREGISTRATION_V4.resampling.estimandClasses.mixed;
+    expect(mixed.levels.map((level) => level.axis)).toEqual([
+      "groups.humanSeed",
+      "groups.promptTemplate",
+    ]);
+    // NENHUM nível de gerador, nem a família nem a versão, nem como fallback. A classe mista
+    // constrói ZERO linhas hoje; no dia em que construir, um intervalo de
+    // `mixed.warning.recall` é agrupado por semente e template e por mais nada, e é isso que
+    // esta asserção mantém visível.
+    const niveis = declaredLevelAxes(GENERATED_CLASS_ESTIMANDS.mixed);
+    expect([...niveis]).not.toContain("groups.generatorFamily");
+    expect([...niveis]).not.toContain("groups.generatorVersion");
+    // A classe `ai` tem os dois, e é o contraste que impede a asserção acima de passar por a
+    // tabela não nomear gerador em parte alguma.
+    const doAi = declaredLevelAxes(GENERATED_CLASS_ESTIMANDS.ai);
+    expect([...doAi]).toContain("groups.generatorFamily");
+    expect([...doAi]).toContain("groups.promptTemplate");
+  });
+
+  it("confina DOIS dos três níveis de `ai-recall`, e MEDE que o de topo não fica confinado", () => {
+    // `ai-recall` reamostra por família -> template -> lote, e o que a emenda entrega é DOIS
+    // dos três níveis confinados a uma partição — não os três. Dizer três seria inferência:
+    // com `generatorVersion` fora da união, nenhum membro dela carrega a identidade da
+    // FAMÍLIA, e o nível de topo atravessa corte. O resíduo é esse, e está medido abaixo em
+    // vez de afirmado.
+    const niveis = PREREGISTRATION_V4.resampling.estimandClasses[
+      "ai-recall"
+    ].levels.map((level) => level.axis);
+    expect(niveis).toEqual([
+      "groups.generatorFamily",
+      "groups.promptTemplate",
+      "groups.generationBatch",
+    ]);
+    // Template e lote são níveis E eixos de união: o cluster de cada um é um subconjunto de
+    // um componente, logo de uma partição.
+    for (const axis of ["promptTemplate", "generationBatch"] as const) {
+      expect(niveis, axis).toContain(`groups.${axis}`);
+      expect(GROUP_KEYS as readonly string[], axis).toContain(axis);
+    }
+    // O nível de TOPO: fora da união, e nenhum eixo que está nela o carrega — `generatorVersion`
+    // carregaria (a identidade dos dois é medida igual nos pools) e também está fora.
+    expect(GROUP_KEYS as readonly string[]).not.toContain("generatorFamily");
+    expect(GROUP_KEYS as readonly string[]).not.toContain("generatorVersion");
+    // E a MEDIÇÃO da não-confinamento, sobre linhas reais: duas linhas geradas da MESMA
+    // família e da mesma versão, distintas em todo eixo de união, são DOIS componentes. A
+    // unidade que o splitter mantém inteira é o componente, então duas linhas em dois
+    // componentes podem cair em partições diferentes: o cluster do nível de topo atravessa.
+    const daMesmaFamilia = ["a_fam_1", "a_fam_2"].map((id, index) => {
+      let raw: Record<string, unknown> = {
+        ...v4Ai(),
+        id,
+        createdAt: index + 1,
+      };
+      raw = withAxis(raw, "promptTemplate", known(`pt_${id}`));
+      raw = withAxis(raw, "generationBatch", known(`gb_${id}`));
+      raw = withAxis(raw, "nearDuplicate", known(`nd_${id}`));
+      // Semente de pai AUSENTE do conjunto, senão a linhagem — e não a família — uniria.
+      raw = withAxis(raw, "humanSeed", known(`h_ausente_${id}`));
+      return validateBenchmarkRecordV4(raw) as unknown as BenchmarkRecord;
+    });
+    // Não vácuo, e pelo acessor de PRODUÇÃO: a família E a versão são UMA identidade
+    // DEFINIDA nas duas linhas. Sem o `toBeDefined` um par de `undefined` daria um conjunto
+    // de tamanho 1 e a medição passaria por vacuidade.
+    for (const axis of ["generatorFamily", "generatorVersion"] as const) {
+      const identidades = daMesmaFamilia.map((row) =>
+        groupAxisIdentity(row, axis),
+      );
+      for (const identity of identidades) expect(identity, axis).toBeDefined();
+      expect(new Set(identidades).size, axis).toBe(1);
+    }
+    expect(new Set(connectedComponentRoots(daMesmaFamilia).values()).size).toBe(
+      2,
+    );
   });
 
   it("mede a perna que decide: `promptTemplate` É nível de `ai-recall`, e não um comentário", () => {

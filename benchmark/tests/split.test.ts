@@ -15,6 +15,7 @@ import {
   CONNECTIVITY_AXES,
   createBlockedSplit,
   GROUP_KEYS,
+  IMPOSED_UNION_AXES,
   INERT_UNION_AXES,
   PARENT_LINKAGE_AXES,
   PARTITIONS,
@@ -860,13 +861,14 @@ describe("the connectivity axis lists", () => {
 
     // The CONTENT and the ORDER, as literals. Comparing the list against
     // `new Set([...GROUP_KEYS, ...PARENT_LINKAGE_AXES])` is the derivation itself and is
-    // therefore a tautology: it holds for a list of six, of five, and of one, so nothing
-    // pins the SIZE. Six names — the five value axes and the linkage-only `humanSeed` —
+    // therefore a tautology: it holds for a list of seven, of five, and of one, so nothing
+    // pins the SIZE. Seven names — the six value axes and the linkage-only `humanSeed` —
     // and this is the list `CLUSTER_ATOM_AXES` (benchmark/cross-validation.ts) reads, so
     // a name lost here silently stops making the fold atom unknowable.
     expect([...CONNECTIVITY_AXES]).toEqual([
       "author",
       "source",
+      "promptTemplate",
       "generationBatch",
       "nearDuplicate",
       "derivationRoot",
@@ -897,8 +899,14 @@ describe("the connectivity axis lists", () => {
       sharedValue: true,
       parentLinkage: true,
     });
-    // An axis the splitter deliberately refuses to union on, and one it never saw.
+    // Two axes the splitter does not union on at all, and one it never saw. The version is
+    // the interesting one: its identity IS the family's on every assembled line, so neither
+    // flag is set for either, and the family is genuinely divisible here.
     expect(axisConnectivity("generatorFamily")).toEqual({
+      sharedValue: false,
+      parentLinkage: false,
+    });
+    expect(axisConnectivity("generatorVersion")).toEqual({
       sharedValue: false,
       parentLinkage: false,
     });
@@ -969,22 +977,37 @@ describe("F1-4 — the refusal is wired ahead of the splitter", () => {
 describe("a lista de união tem critério, e o critério é verificável eixo por eixo", () => {
   // TODO eixo de `GROUP_KEYS` identifica MATERIAL — é membro de `EXPOSURE_IDENTITY_AXES`,
   // a lista que o ledger EXECUTA para decidir que a mesma unidade de amostragem
-  // reapareceu — ou a união por ele é INERTE sobre o corpo montado. É condição
-  // NECESSÁRIA, e a recíproca é FALSA: `humanSeed` cumpre a primeira perna e é de
-  // LINHAGEM, `extractionRun` cumpre a segunda e é DIAGNÓSTICO. Os dois têm teste
-  // próprio abaixo, porque um "se e somente se" aqui concluiria que `humanSeed` deve
-  // entrar na lista de união — a mudança que o contrato recusou.
+  // reapareceu —, ou a união por ele é INERTE sobre o corpo montado, ou ele modela uma
+  // dependência da FAMÍLIA CERTIFICADORA cuja união é VIÁVEL porque o corpo é construído
+  // para ser. É condição NECESSÁRIA, e a recíproca é FALSA: `humanSeed` cumpre a primeira
+  // perna e é de LINHAGEM, `extractionRun` cumpre a segunda e é DIAGNÓSTICO,
+  // `generatorFamily` cumpre a terceira e é RESÍDUO, e `generatorVersion` cumpre a terceira
+  // na forma mais forte que existe — a identidade dele É a da família em toda linha montada —
+  // e é REPORTADO. Os quatro têm teste próprio, os três primeiros abaixo e o quarto em
+  // benchmark/tests/split-audit.test.ts, porque um "se e somente se" aqui concluiria que
+  // `humanSeed` deve entrar na lista de união — a mudança que o contrato recusou.
   //
   // A segunda perna é medição e não argumento, e a forma dela é: apagar a identidade do
-  // eixo em toda linha não muda o número de componentes.
+  // eixo em toda linha não muda o número de componentes. A TERCEIRA não é uma propriedade
+  // do corpo e sim uma OBRIGAÇÃO imposta a ele, então a forma dela é um par de medições —
+  // a forma que os pools produzem é RECUSADA e a geometria de ilhas é ACEITA, as duas sob a
+  // MESMA lista de união.
   //
   // A lista de material é IMPORTADA de benchmark/cluster-exposure-ledger.ts e nunca
   // restatada: uma cópia deixaria o ledger passar a comparar um eixo que o splitter não
   // une, com os dois lados verdes sobre listas diferentes.
+  const casoNomeado = (nome: string): ViabilityCase =>
+    CATALOGUE.cases.find((entry) => entry.name === nome) as ViabilityCase;
   const CORPO = buildCatalogueCorpus(
-    CATALOGUE.cases.find(
-      (entry) => entry.name === "forma-medida-da-classe-gerada",
-    ) as ViabilityCase,
+    casoNomeado("forma-medida-da-classe-gerada"),
+    CATALOGUE.generatedStratum,
+  );
+  const ILHAS = buildCatalogueCorpus(
+    casoNomeado("ilhas-de-receita-que-passam"),
+    CATALOGUE.generatedStratum,
+  );
+  const COM_HUMANAS = buildCatalogueCorpus(
+    casoNomeado("lote-unico-por-celula"),
     CATALOGUE.generatedStratum,
   );
 
@@ -1007,25 +1030,68 @@ describe("a lista de união tem critério, e o critério é verificável eixo po
     return new Set(connectedComponentRoots(records).values()).size;
   }
 
-  it("admite cada eixo por MATERIAL ou por INÉRCIA, e o laço percorre todos", () => {
-    const porInercia: string[] = [];
+  /** Os tamanhos dos componentes, para a ponta que precisa da FRAÇÃO e não da contagem. */
+  function tamanhos(records: readonly BenchmarkRecord[]): number[] {
+    const porRaiz = new Map<string, number>();
+    for (const raiz of connectedComponentRoots(records).values()) {
+      porRaiz.set(raiz, (porRaiz.get(raiz) ?? 0) + 1);
+    }
+    return [...porRaiz.values()];
+  }
+
+  it("admite cada eixo por MATERIAL, por INÉRCIA ou por VIABILIDADE IMPOSTA, e o laço percorre todos", () => {
     const porMaterial: string[] = [];
+    const porInercia: string[] = [];
+    const porImposta: string[] = [];
     for (const axis of GROUP_KEYS) {
-      if ((EXPOSURE_IDENTITY_AXES as readonly string[]).includes(axis)) {
+      // EXACTAMENTE UMA perna, contada antes de qualquer medição: um `any` aqui deixaria
+      // um eixo entrar por duas justificações e nenhuma delas ser a que decide.
+      const pernas = [
+        (EXPOSURE_IDENTITY_AXES as readonly string[]).includes(axis),
+        (INERT_UNION_AXES as readonly string[]).includes(axis),
+        (IMPOSED_UNION_AXES as readonly string[]).includes(axis),
+      ];
+      expect(pernas.filter(Boolean), axis).toHaveLength(1);
+      if (pernas[0]) {
         porMaterial.push(axis);
         continue;
       }
-      porInercia.push(axis);
-      expect(componentes(semOEixo(CORPO, axis)), axis).toBe(componentes(CORPO));
+      if (pernas[1]) {
+        porInercia.push(axis);
+        // A perna de INÉRCIA, medida: apagar a identidade do eixo em toda linha não muda o
+        // número de componentes.
+        expect(componentes(semOEixo(CORPO, axis)), axis).toBe(
+          componentes(CORPO),
+        );
+        continue;
+      }
+      porImposta.push(axis);
+      // A perna IMPOSTA, e o que se mede POR EIXO é que a perna (b) não estava disponível:
+      // sobre o corpo que existe, apagar a identidade deste eixo MUDA a contagem de
+      // componentes. É a medição de inércia acima com o sinal trocado, sobre o mesmo corpo.
+      expect(componentes(semOEixo(CORPO, axis)), axis).not.toBe(
+        componentes(CORPO),
+      );
     }
-    // Não vácuo nas DUAS pernas: cada uma tem entrada, e um laço que caísse todo numa
-    // delas deixaria a outra sem medição alguma.
+    // A VIABILIDADE é medida nas DUAS pontas e sob a MESMA lista de união de produção: o
+    // corpo que ignora o plano de ilhas deixa um componente de 641 das 1170 linhas, que
+    // partição alguma recebe, e o que cumpre o plano deixa um componente por template. Uma
+    // ponta só não distingue "obrigação cumprível" de "eixo que colapsa sempre".
+    if (porImposta.length > 0) {
+      expect(componentes(CORPO)).toBe(4);
+      expect(Math.max(...tamanhos(CORPO)) / 1170).toBeCloseTo(0.547863, 6);
+      expect(componentes(ILHAS)).toBe(40);
+    }
+    // Não vácuo nas TRÊS pernas: cada uma tem entrada, e um laço que caísse todo numa delas
+    // deixaria as outras sem medição alguma.
     expect(porMaterial).toEqual(["author", "source", "derivationRoot"]);
-    // E a perna de inércia é a LISTA publicada, não uma constante deste teste: quem lê
-    // `INERT_UNION_AXES` fica sabendo qual eixo entrou por medição, e um eixo posto na
-    // união sem nenhuma das duas justificações cai aqui em vez de chegar com um parágrafo.
+    // E as duas outras pernas são as LISTAS publicadas, não constantes deste teste: quem lê
+    // `INERT_UNION_AXES` e `IMPOSED_UNION_AXES` fica sabendo por que cada eixo entrou, e um
+    // eixo posto na união sem nenhuma das três cai aqui em vez de chegar com um parágrafo.
+    // Por IGUALDADE, e não por pertinência.
     expect(porInercia).toEqual([...INERT_UNION_AXES]);
-    for (const axis of INERT_UNION_AXES) {
+    expect(porImposta).toEqual([...IMPOSED_UNION_AXES]);
+    for (const axis of [...INERT_UNION_AXES, ...IMPOSED_UNION_AXES]) {
       expect(GROUP_KEYS as readonly string[], axis).toContain(axis);
       expect(EXPOSURE_IDENTITY_AXES as readonly string[], axis).not.toContain(
         axis,
@@ -1034,19 +1100,26 @@ describe("a lista de união tem critério, e o critério é verificável eixo po
   });
 
   it("mede a inércia de verdade: um eixo que colapsa a classe NÃO passa nela", () => {
-    // O contraste que faz da perna de inércia uma medição. Sem ele qualquer eixo
-    // passaria, inclusive um que põe 54,79 % da classe gerada num componente.
-    const base = componentes(CORPO);
-    for (const axis of ["promptTemplate", "generatorVersion"] as const) {
-      const comOEixo = new Set(
-        componentsUnderAxes(
-          CORPO,
-          [...GROUP_KEYS, axis],
-          [...PARENT_LINKAGE_AXES],
-        ).values(),
-      ).size;
-      expect(comOEixo, axis).not.toBe(base);
-    }
+    // O contraste que faz da perna de inércia uma medição. Sem ele qualquer eixo passaria,
+    // inclusive um que põe uma célula de quota inteira num componente.
+    //
+    // Ancorado em `domainSource` SOBRE CORPO COM LINHA HUMANA, e as duas coisas são
+    // necessárias: `promptTemplate` já está na união, então `[...GROUP_KEYS, "promptTemplate"]`
+    // é no-op e mediria a si mesmo; e sobre a classe gerada `domainSource` é um valor único
+    // por lane, então o contraste ali confundiria "não é inerte" com "colapsa a lane".
+    const base = componentes(COM_HUMANAS);
+    const comOEixo = new Set(
+      componentsUnderAxes(
+        COM_HUMANAS,
+        [...GROUP_KEYS, "domainSource"],
+        [...PARENT_LINKAGE_AXES],
+      ).values(),
+    ).size;
+    expect(comOEixo).not.toBe(base);
+    // E o contraste é FORTE e não marginal: quarenta componentes viram quatro, um por
+    // célula, que é a degenerescência que a perna de inércia tem de recusar.
+    expect(base).toBe(40);
+    expect(comOEixo).toBe(4);
   });
 
   it("não deixa nenhum eixo de material fora das duas relações", () => {
@@ -1146,7 +1219,7 @@ describe("a lista de união tem critério, e o critério é verificável eixo po
     }
   });
 
-  it("tem RECÍPROCA FALSA, e os dois eixos que a refutam estão nomeados", () => {
+  it("tem RECÍPROCA FALSA, e os TRÊS eixos que a refutam estão nomeados", () => {
     // `humanSeed` cumpre a perna (a) — o ledger o EXECUTA como identidade de material —
     // e não está em `GROUP_KEYS`. Lido como bicondicional, o critério conclui que ele
     // deve entrar, que é a mudança recusada.
@@ -1173,6 +1246,28 @@ describe("a lista de união tem critério, e o critério é verificável eixo po
     expect(comOEixo).toBe(componentes(CORPO));
     expect(GROUP_KEYS as readonly string[]).not.toContain("extractionRun");
     expect(groupAxisRole("extractionRun")).toBe("diagnostic");
+
+    // `generatorFamily` cumpre a perna (c) — é o nível de TOPO de `ai-recall`, a linha da
+    // tabela de reamostragem que o recall certificado usa — e NÃO está em `GROUP_KEYS`. É o
+    // refutador mais incómodo dos três, porque a razão de ele ficar fora é uma que (c) não
+    // vê (é `inventoryOnly`, e o que a árvore faz por ele é mais estreito que agrupar) e
+    // porque a família é DIVISÍVEL aqui: com `generatorVersion` REPORTADO em vez de unido,
+    // nenhum membro desta lista carrega a identidade dela, e o que a constrange é a reserva
+    // OOD e não o splitter. A identidade dos dois é MEDIDA igual em toda linha montada dos
+    // pools (`GeneratorVersionIsTheFamilyTests`, no espelho do lab), então particionar a
+    // versão custaria um id de modelo por ilha — que é a razão de ela não estar na lista. O
+    // resíduo está escrito no comentário de `GROUP_KEYS`, e esta asserção é o que o mantém
+    // preso.
+    expect(
+      PREREGISTRATION_V4.resampling.estimandClasses["ai-recall"].levels.map(
+        (level) => level.axis,
+      ),
+    ).toContain("groups.generatorFamily");
+    expect(GROUP_KEYS as readonly string[]).not.toContain("generatorFamily");
+    expect(IMPOSED_UNION_AXES as readonly string[]).not.toContain(
+      "generatorFamily",
+    );
+    expect(groupAxisRole("generatorFamily")).toBe("inventoryOnly");
   });
 });
 
@@ -1198,10 +1293,10 @@ describe("toda situação de eixo é decidida por lista, e o resíduo é declara
     generationBatch: { papel: "unionByValue", identificaMaterial: false },
     nearDuplicate: { papel: "unionByValue", identificaMaterial: false },
     humanSeed: { papel: "parentLinkage", identificaMaterial: true },
+    generatorVersion: { papel: "namedReported", identificaMaterial: false },
+    promptTemplate: { papel: "unionByValue", identificaMaterial: false },
     domainSource: { papel: "namedReported", identificaMaterial: false },
     sourceMaterialBatch: { papel: "namedReported", identificaMaterial: false },
-    generatorVersion: { papel: "namedReported", identificaMaterial: false },
-    promptTemplate: { papel: "namedReported", identificaMaterial: false },
     extractionRun: { papel: "diagnostic", identificaMaterial: false },
     generatorFamily: { papel: "inventoryOnly", identificaMaterial: false },
     generationLane: { papel: "inventoryOnly", identificaMaterial: false },

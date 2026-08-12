@@ -30,7 +30,6 @@ import {
 import { PARTITION_TARGETS } from "../split-audit.ts";
 import {
   CLASS_TOLERANCE,
-  GROUP_KEYS,
   PARENT_LINKAGE_AXES,
   SplitConstraintError,
   atMostWithinTolerance,
@@ -51,12 +50,15 @@ import {
   type ViabilityReport,
 } from "../viability-preflight.ts";
 import {
+  RECIPE_UNION_BASE_AXES,
   buildCatalogueCorpus,
   componentHistogram,
+  componentsUnderAxes,
   declaredHistogram,
   histogramUnderAxes,
   loadCatalogue,
   measuredClassLines,
+  templateToVersionMap,
   type ViabilityCase,
 } from "./helpers/viability-catalogue.ts";
 
@@ -199,6 +201,7 @@ describe("o catálogo compartilhado descreve a geometria que declara", () => {
       "corpo-grosso-classes-finas",
       "bordas-inclusivas-47-e-7",
       "forma-medida-da-classe-gerada",
+      "ilhas-de-receita-que-passam",
     ]);
   });
 
@@ -606,11 +609,11 @@ describe("o que o splitter faz com os mesmos corpos", () => {
     expect(aprovados).toEqual([
       "lote-unico-por-celula",
       "bordas-inclusivas-47-e-7",
-      "forma-medida-da-classe-gerada",
+      "ilhas-de-receita-que-passam",
     ]);
     expect(aceitos).toEqual([
       "lote-unico-por-celula",
-      "forma-medida-da-classe-gerada",
+      "ilhas-de-receita-que-passam",
     ]);
   });
 });
@@ -632,130 +635,225 @@ describe("o materializador do catálogo produz registro v4 válido", () => {
   });
 });
 
-describe("a forma medida da classe gerada, e o que os eixos de receita fariam com ela", () => {
-  // O caso que descreve o que o montador PRODUZ: 1170 linhas ai de uma célula, quatro
-  // identidades de `promptTemplate` em corridas de 641/231/213/85 e cinco de
-  // `generatorVersion` em 493/320/256/99/2. Os fixtures que dão um template por linha
-  // provam viabilidade sobre uma classe gerada que ninguém tem, e foi por eles que a
-  // inviabilidade atravessou verde.
-  const CASO = caseNamed("forma-medida-da-classe-gerada");
+describe("a forma medida dos pools é RECUSADA, e a geometria de ilhas PASSA", () => {
+  // As duas metades da perna (c) do critério da união, sobre o MESMO par de eixos: o que os
+  // pools produzem é um componente de 100 % que o preflight recusa, e o que a Fase 3 item 2
+  // tem de produzir são vinte ilhas desconexas que ele aprova. É a perna (c) ser uma
+  // OBRIGAÇÃO imposta ao corpo e não uma propriedade descoberta dele que faz os dois casos
+  // serem necessários: sem o primeiro a obrigação não tem tamanho, sem o segundo ela não
+  // tem prova de ser cumprível.
+  const MEDIDA = caseNamed("forma-medida-da-classe-gerada");
+  const ILHAS = caseNamed("ilhas-de-receita-que-passam");
 
-  it("realiza as corridas de receita que declara, e cada linha é seu componente", () => {
-    const records = corpusOf(CASO);
-    expect(records).toHaveLength(1170);
-    const recipe = CASO.generatedRecipe;
-    expect(recipe).toBeDefined();
-    for (const [axis, runs] of [
-      ["promptTemplate", recipe!.promptTemplateRuns],
-      ["generatorVersion", recipe!.generatorVersionRuns],
-    ] as const) {
-      const lines = new Map<string, number>();
-      for (const record of records) {
-        const identity = groupAxisIdentity(record, axis);
-        expect(identity, `${axis} em ${record.id}`).toBeDefined();
-        lines.set(identity as string, (lines.get(identity as string) ?? 0) + 1);
-      }
-      expect(
-        [...lines.values()].sort((a, b) => b - a),
-        axis,
-      ).toEqual([...runs].sort((a, b) => b - a));
-    }
-    // E sob a união do splitter as corridas não unem nada: 1170 componentes.
-    expect(componentHistogram(records)).toEqual(
-      Array.from({ length: 1170 }, () => 1),
-    );
-    expect(auditPartitionViability(records).passed).toBe(true);
-  });
-
-  it("mede que generatorVersion sozinho CABE, então a exclusão dele é o FECHO DO PAR", () => {
-    // Esta medição existe para impedir uma razão falsa de voltar. O comentário de
-    // `GROUP_KEYS` já afirmou que `generatorVersion` carrega a identidade de
-    // `generatorFamily` — e a medição o refuta em 0 de 1170 linhas: version REFINA family
-    // (cinco identidades contra uma), logo unir por version é estritamente mais FRACO que
-    // unir pela família, e o argumento da família não alcança este eixo.
-    const records = corpusOf(CASO);
-    const leg = CASO.expected.recipeUnioned?.generatorVersionOnly;
-    expect(leg).toBeDefined();
-    const histogram = histogramUnderAxes(
+  /** Uma perna, medida sobre a base de produção MENOS o par mais os eixos que ela nomeia. */
+  function legHistogram(
+    records: readonly BenchmarkRecord[],
+    leg: { axes: readonly string[] },
+  ): number[] {
+    return histogramUnderAxes(
       records,
-      [...GROUP_KEYS, ...(leg!.axes as readonly GroupAxis[])],
+      [...RECIPE_UNION_BASE_AXES, ...(leg.axes as readonly GroupAxis[])],
       [...PARENT_LINKAGE_AXES],
     );
-    expect(histogram).toEqual([...leg!.histogram].sort((a, b) => a - b));
-    expect(histogram.length).toBe(leg!.components);
-    // CABE nas duas condições — é isto que torna o par, e não este eixo, a razão.
-    expect(
-      atMostWithinTolerance(
-        Math.max(...histogram) / records.length,
-        0.45,
-        CLASS_TOLERANCE,
-      ),
-    ).toBe(true);
-    expect(
-      atMostWithinTolerance(
-        Math.min(...histogram) / records.length,
-        0.05,
-        CLASS_TOLERANCE,
-      ),
-    ).toBe(true);
-    expect(leg!.breaches).toEqual([]);
-    // E o fato que a prosa afirmava: as duas identidades não coincidem em linha alguma.
-    const versoes = new Set(
-      records.map((row) => JSON.stringify(row.groups.generatorVersion)),
-    );
-    const familias = new Set(
-      records.map((row) => JSON.stringify(row.groups.generatorFamily)),
-    );
-    expect(versoes.size).toBe(5);
-    expect(familias.size).toBe(1);
-    expect(
-      records.filter(
-        (row) =>
-          JSON.stringify(row.groups.generatorVersion) ===
-          JSON.stringify(row.groups.generatorFamily),
-      ),
-    ).toEqual([]);
+  }
+
+  it("realiza as corridas de receita que declara, nos dois casos", () => {
+    for (const testCase of [MEDIDA, ILHAS]) {
+      const records = corpusOf(testCase);
+      const recipe = testCase.generatedRecipe;
+      expect(recipe, testCase.name).toBeDefined();
+      for (const [axis, runs] of [
+        ["promptTemplate", recipe!.promptTemplateRuns],
+        ["generatorVersion", recipe!.generatorVersionRuns],
+      ] as const) {
+        const lines = new Map<string, number>();
+        for (const record of records) {
+          const identity = groupAxisIdentity(record, axis);
+          expect(identity, `${axis} em ${record.id}`).toBeDefined();
+          lines.set(
+            identity as string,
+            (lines.get(identity as string) ?? 0) + 1,
+          );
+        }
+        expect(
+          [...lines.values()].sort((a, b) => b - a),
+          `${testCase.name} ${axis}`,
+        ).toEqual([...runs].sort((a, b) => b - a));
+      }
+    }
   });
 
-  it("colapsa quando os eixos de receita entram na união, e recusa pelo MAIOR componente", () => {
-    const records = corpusOf(CASO);
-    const declared = CASO.expected.recipeUnioned;
-    expect(declared).toBeDefined();
-    for (const leg of [
-      declared!.promptTemplateOnly,
-      declared!.bothRecipeAxes,
-    ]) {
-      const histogram = histogramUnderAxes(
-        records,
-        [...GROUP_KEYS, ...(leg.axes as readonly GroupAxis[])],
-        [...PARENT_LINKAGE_AXES],
-      );
-      expect(histogram, leg.axes.join("+")).toEqual(
-        [...leg.histogram].sort((a, b) => a - b),
-      );
-      expect(histogram.length, leg.axes.join("+")).toBe(leg.components);
-      // A recusa que essa geometria produz, pela condição e pelo escopo que o catálogo
-      // declara — e o lado Python afirma os MESMOS pares sobre o MESMO corpo.
-      const largest = Math.max(...histogram);
-      const smallest = Math.min(...histogram);
-      expect(
-        atMostWithinTolerance(largest / records.length, 0.45, CLASS_TOLERANCE),
-        leg.axes.join("+"),
-      ).toBe(false);
-      expect(
-        atMostWithinTolerance(smallest / records.length, 0.05, CLASS_TOLERANCE),
-        leg.axes.join("+"),
-      ).toBe(false);
-      expect(new Set(leg.breaches.map((breach) => breach.scope))).toEqual(
-        new Set([CORPUS_SCOPE, "ai"]),
-      );
-      expect(new Set(leg.breaches.map((breach) => breach.kind))).toEqual(
-        new Set(CATALOGUE.expectedBreachVocabulary),
+  it("deixa a forma medida em QUATRO componentes de template, e recusa pelo MAIOR", () => {
+    const records = corpusOf(MEDIDA);
+    // Sob a união de PRODUÇÃO — não sob uma lista contrafactual: a corrida de TEMPLATE une
+    // e a de versão não, então o corpo mede um componente por template e o maior vale
+    // 641/1170 = 54,79 %, que partição alguma recebe. Unir também a versão fecharia tudo num
+    // componente de 100 %, e isso está na perna contrafactual `bothRecipeAxes`.
+    expect(componentHistogram(records)).toEqual([85, 213, 231, 641]);
+    const report = auditPartitionViability(records);
+    expect(report.passed).toBe(false);
+    expect(breachPairs(report)).toEqual(MEDIDA.expected.breaches);
+    expect(report.breaches[0].kind).toBe(
+      "largest-component-exceeds-largest-target",
+    );
+    expect(report.breaches[0].scope).toBe(CORPUS_SCOPE);
+    // Num corpo mono-classe as frações dos dois escopos são a MESMA lista, e é por isso que
+    // as quatro violações são dois pares do mesmo fato.
+    expect(
+      viabilityScope(report, CORPUS_SCOPE).largestComponent?.fraction,
+    ).toBe(viabilityScope(report, "ai").largestComponent?.fraction);
+    expect(() => createBlockedSplit(records, SPLIT_POLICY)).toThrow(
+      /class split fractions unreachable/u,
+    );
+  });
+
+  it("deixa as ilhas desconexas, e o splitter realiza 45/5/10/20/20 exacto", () => {
+    const records = corpusOf(ILHAS);
+    expect(records).toHaveLength(400);
+    // Quarenta componentes de dez linhas SOB A UNIÃO DE PRODUÇÃO — um por TEMPLATE, porque a
+    // versão não une: é o que a perna (c) exige do corpo, e é medido e não declarado. As duas
+    // corridas de template de uma ilha ficam separadas aqui porque este materializador não
+    // emite linha mista; num corpo de release são elas que voltam a juntar a ilha, e esse
+    // mecanismo é medido no lab.
+    expect(componentHistogram(records)).toEqual(
+      Array.from({ length: 40 }, () => 10),
+    );
+    expect(auditPartitionViability(records).passed).toBe(true);
+    const split = createBlockedSplit(records, SPLIT_POLICY);
+    for (const [partition, size] of Object.entries(
+      ILHAS.expected.splitSizes ?? {},
+    )) {
+      expect(split[partition as keyof typeof split], partition).toHaveLength(
+        size,
       );
     }
-    // O número que decide: 641 de 1170 é 54,79 % da classe, acima de 45 % + 2 pp.
+    // As FRAÇÕES, que é o que a escala de um décimo preserva: as mesmas que 20 ilhas de 200
+    // realizam sobre a classe de 4000 linhas do release.
+    for (const [partition, target] of Object.entries(PARTITION_TARGETS)) {
+      expect(
+        split[partition as keyof typeof split].length / records.length,
+        partition,
+      ).toBeCloseTo(target, 10);
+    }
+  });
+
+  it("mede as três pernas como SUB-RELAÇÕES da união de produção, nos dois casos", () => {
+    for (const testCase of [MEDIDA, ILHAS]) {
+      const records = corpusOf(testCase);
+      const declared = testCase.expected.recipeUnioned;
+      expect(declared, testCase.name).toBeDefined();
+      for (const leg of [
+        declared!.generatorVersionOnly,
+        declared!.promptTemplateOnly,
+        declared!.bothRecipeAxes,
+      ]) {
+        const rotulo = `${testCase.name} ${leg.axes.join("+")}`;
+        const histogram = legHistogram(records, leg);
+        expect(histogram, rotulo).toEqual(
+          [...leg.histogram].sort((a, b) => a - b),
+        );
+        expect(histogram.length, rotulo).toBe(leg.components);
+        // A violação declarada é a que a aritmética produz, membro a membro.
+        const breached = new Set(leg.breaches.map((breach) => breach.kind));
+        expect(
+          breached.has("largest-component-exceeds-largest-target"),
+          rotulo,
+        ).toBe(
+          !atMostWithinTolerance(
+            Math.max(...histogram) / records.length,
+            0.45,
+            CLASS_TOLERANCE,
+          ),
+        );
+        expect(
+          breached.has("smallest-component-exceeds-smallest-target"),
+          rotulo,
+        ).toBe(
+          !atMostWithinTolerance(
+            Math.min(...histogram) / records.length,
+            0.05,
+            CLASS_TOLERANCE,
+          ),
+        );
+        for (const breach of leg.breaches) {
+          expect([CORPUS_SCOPE, "ai"], rotulo).toContain(breach.scope);
+          expect(CATALOGUE.expectedBreachVocabulary, rotulo).toContain(
+            breach.kind,
+          );
+        }
+      }
+      // A COSTURA, e ela é o que impede o catálogo de afirmar uma geometria que o splitter
+      // não produz: `promptTemplateOnly` é a união de PRODUÇÃO agora que a versão saiu dela,
+      // então o passeio local tem de reproduzir `connectedComponentRoots` RAIZ POR RAIZ e não
+      // só o histograma. E `bothRecipeAxes` tem de ser ESTRITAMENTE mais grosso ou igual —
+      // acrescentar eixo de união nunca divide —, o que é o que o mantém sendo o
+      // contrafactual e não uma segunda autoridade sobre o mesmo corpo.
+      expect(
+        [
+          ...componentsUnderAxes(
+            records,
+            [
+              ...RECIPE_UNION_BASE_AXES,
+              ...(declared!.promptTemplateOnly.axes as readonly GroupAxis[]),
+            ],
+            [...PARENT_LINKAGE_AXES],
+          ),
+        ],
+        testCase.name,
+      ).toEqual([...connectedComponentRoots(records)]);
+      expect(
+        declared!.bothRecipeAxes.components,
+        testCase.name,
+      ).toBeLessThanOrEqual(declared!.promptTemplateOnly.components);
+    }
+    // Os dois números que fixam a GRANULARIDADE: 641 de 1170 é 54,79 %, e é a perna que a
+    // PRODUÇÃO toma — o template não cabe —, enquanto 493 é 42,14 % e CABE, que é o que diz
+    // que pôr a versão na união nunca foi o que a granularidade pedia.
+    const legs = MEDIDA.expected.recipeUnioned;
+    expect(Math.max(...legs!.promptTemplateOnly.histogram) / 1170).toBeCloseTo(
+      0.547863,
+      6,
+    );
     expect(
-      Math.max(...declared!.promptTemplateOnly.histogram) / records.length,
-    ).toBeCloseTo(0.547863, 6);
+      Math.max(...legs!.generatorVersionOnly.histogram) / 1170,
+    ).toBeCloseTo(0.421368, 6);
+    expect(legs!.generatorVersionOnly.breaches).toEqual([]);
+  });
+
+  it("liga ILHA a mapa template -> versão FUNÇÃO, e mede a equivalência nos dois casos", () => {
+    // A forma checkável da restrição de ilha, e a razão de ser uma EQUIVALÊNCIA em vez de
+    // uma exigência: um template que atravessa duas corridas de versão é uma PONTE entre
+    // duas ilhas, e um corpo com ponte tem menos componentes do que corridas. Então
+    //
+    //   o mapa é uma função  <=>  componentes sob o par == número de corridas de versão
+    //
+    // e as duas metades são medidas em cada caso, o que fecha a porta que M14 abre: um caso
+    // com fronteiras DESALINHADAS que se declarasse ilhas teria de declarar
+    // `bothRecipeAxes.components` igual ao número de corridas, e a ponte já o baixou.
+    const comCorridas = CATALOGUE.cases.filter(
+      (entry) => entry.generatedRecipe !== undefined,
+    );
+    expect(comCorridas.map((entry) => entry.name)).toEqual([
+      "forma-medida-da-classe-gerada",
+      "ilhas-de-receita-que-passam",
+    ]);
+    const funcoes: string[] = [];
+    for (const testCase of comCorridas) {
+      const map = templateToVersionMap(testCase) as Map<string, Set<string>>;
+      expect(map, testCase.name).toBeDefined();
+      const straddling = [...map].filter(
+        ([, versions]) => versions.size > 1,
+      ).length;
+      const runs = testCase.generatedRecipe!.generatorVersionRuns.length;
+      const components = legHistogram(
+        corpusOf(testCase),
+        testCase.expected.recipeUnioned!.bothRecipeAxes,
+      ).length;
+      expect(straddling === 0, testCase.name).toBe(components === runs);
+      if (straddling === 0) funcoes.push(testCase.name);
+    }
+    // NÃO VÁCUO NAS DUAS PONTAS: exactamente um caso é ilha e exactamente um não é. Um laço
+    // que caísse todo num lado mediria a equivalência numa direção só.
+    expect(funcoes).toEqual(["ilhas-de-receita-que-passam"]);
   });
 });
