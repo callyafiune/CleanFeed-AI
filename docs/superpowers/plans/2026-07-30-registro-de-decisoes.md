@@ -7936,3 +7936,110 @@ Estes números são **sonda**, não teste. Vivem num arquivo do scratchpad que i
 nada na árvore os prende. A unidade que emendar `_island()` tem de prender os quatro casos — **inclusive os
 dois que racham**, porque sem o caso vermelho a guarda volta a afirmar a condição suficiente. Enquanto isso
 não existir, "a geometria aguenta três clusters" é memória e não medição, e a dívida da § 7 diz isso.
+
+---
+
+## A unidade do desarme: o gate misto deixa de ser gate, e a forma foi medida contra a alternativa (2026-08-12)
+
+Primeira unidade de mecanismo depois da ratificação das cinco. Três portões, uma rodada de `block` com cinco
+bloqueantes, e um sexto que só apareceu na re-revisão — este o mais instrutivo, porque é a família que a
+sessão inteira perseguiu.
+
+### A forma, e por que a alternativa cai
+
+Duas formas produziam o mesmo veredito, e a escolha foi medida com sonda fora da árvore.
+
+**Escolhida:** o bloco sai de `pointWarningGates`, o id **deixa de existir** como `GateResult`, e a função
+vira produtora de um bloco **sem campo de veredito** publicado ao lado dos gates — molde de
+`metrics.lengthBands`. A não-decisão e as duas condições de rearme moram na política:
+`materialAssistance.decides: false` por `literal`, `rearmRequires` por `frozenList`.
+
+**Recusada:** dar a `GateTier` um quarto valor que não decide. Funciona — medido, 0,30 devolve
+`indicator-only` em vez de `reject` — e cai por três medições:
+
+1. **não existe leitor fail-closed de `tier`.** `failedIds` filtra por igualdade; `profile-artifact.ts`
+   filtra `tier === "action"` e o próprio arquivo escreve que *"filtering an unknown key out is the fail-OPEN
+   direction"*; `parseBenchmarkReport` **nunca lê `tier`** e declara o interior de `gates.gates[i]` fora de
+   cobertura. Nenhum `Record<GateTier, true>` existe na árvore;
+2. **o quarto valor é um interruptor silencioso para hipótese certificadora** — e este é achado próprio, hoje
+   dívida da § 7: alargando `IntervalGateSpec.tier` e dando o tier novo a `warning.recall.overall`, o gate
+   **desaparece** de `gates` (24 → 23) enquanto `multiplicity.gateIds` continua nomeando a hipótese e
+   `covers` continua `true`. A causa é estrutural: `hypotheses` e `certifyingIds` são montados de
+   `intervalSpecs` **antes** da partição por tier, que não é exaustiva;
+3. **colisão de vocabulário:** `role: "diagnostic"` já existe, e o relatório imprimiria
+   `- [diagnostic] [diagnostic] warning.mixed-recall` numa seção filtrada por `!gate.passed` — publicando um
+   gate "reprovou" num release `indicator-only`, com campo de veredito e sem nada dizendo que não decide.
+
+E o suposto ganho não se sustentava: rearmar por tier é um token, re-inserir na lista é uma linha. Empate — e
+a (b) paga o empate com o interruptor de (2).
+
+**O que ficou selado sem campo novo no relatório:** o piso já viaja no `evaluatorDigest`, porque
+`preregistration-v4.json` é membro de `EVALUATOR_FILES` e o digest é um dos catorze fatos de
+`reportDigestInput`. O `required` de um `GateResult` está **fora** do fingerprint de nove campos — ou seja, o
+piso de antes, dentro do gate, era **insellado**. A forma escolhida melhora isso.
+
+### Os cinco bloqueantes, e um é meu
+
+1. **O resíduo "executável" não era executável.** O teste que existia para tornar executável a frase "a v1
+   pode sair cega a texto misto" montava o relatório com a coorte a `warningRecall: 0,3` e depois chamava uma
+   fixture que **reconstruía** a entrada de `overallMetrics(true)`, cuja coorte está a 0,7 — **acima** do
+   piso. O objeto sob teste nunca via a coorte sub-piso, e uma recusa de piso inserida em
+   `profile-artifact.ts` **sobrevivia verde**. Fechado carregando a coorte explicitamente até o publicador
+   **e** até o parser de runtime.
+2. **`evaluatorDigest` moveu e a árvore ficou com teste nomeado vermelho** sem a unidade declarar. A linha é
+   de quem integra, mas o silêncio é o defeito.
+3. **`metrics.ts` nomeava um gate que a emenda apagou** ("resolved over the cohort *its gate reads*"), na
+   mesma frase que carrega a alegação de nível único.
+4. **Um teste declarava o resíduo fechado por uma guarda que ninguém escreveu** — "três digests de template
+   de mistura disjuntos por ilha". Medido: a montagem dá **um** por ilha.
+5. **A emenda da `proxyReason` selada, e o erro é do MEU mandato.** Eu mandei incluí-la; a linha 1038 do
+   ESTADO, que eu mesmo escrevi no dia anterior, agenda essa emenda para o **mesmo commit** dos três
+   templates por ilha. Pior que fora de escopo: era **permissiva** — apagava do documento selado uma
+   declaração **ainda verdadeira** (a montagem entrega um por ilha, medido `20 20`), isto é, prosa que **para
+   de declarar** uma limitação que o mecanismo ainda tem. Revertida byte a byte, conferida contra
+   `git show HEAD:`, e ela viaja com a unidade B.
+
+### O sexto, que a re-revisão achou e eu fechei
+
+**A guarda da não-decisão afirmava uma condição suficiente, não o critério.** O critério ratificado é que
+**nenhuma** propriedade da coorte de assistência material move `report.decision`. O teste provava algo mais
+fraco: numa única evidência-base, com `sampleSize` fixo em 100 e todo o resto passando, variar
+`warningRecall` entre 0,8 e 0,3 não muda a decisão. Duas mutações sobreviviam verdes:
+
+- um termo de reject que só dispara com `failedAction` **não vazio** — invisível numa fixture onde tudo passa;
+- um termo que dispara em coorte **vazia** — invisível a `sampleSize: 100`.
+
+Substituído por uma **matriz**: seis estados de coorte (não medida, recall zero, vinte pontos abaixo,
+exatamente no piso, acima, perfeita numa linha) × três vizinhanças, uma por veredito alcançável (`pass`,
+`indicator-only`, `reject`). Dentro de cada vizinhança, o veredito **e as quatro listas de falha** são
+invariantes. As duas mutações ficam vermelhas, e a de recolocar o bloco na lista continua vermelha.
+
+É a terceira vez nesta sessão que a mesma família aparece — e a segunda em que eu a cometo.
+
+### As medições de fechamento
+
+- Bateria do critério: **3/3 vermelhas**, restaurações byte-idênticas.
+- Bateria do parser selado: **6/6 vermelhas** — ausência de `decides`, `decides: true`, ausência de
+  `rearmRequires`, **ordem trocada**, condição a menos e condição alienígena. Conferido que o vermelho é da
+  recusa nomeada do parser (`PREREGISTRATION_V4_INVALID: materialAssistance.decides is frozen at false`) e
+  não de sintaxe: a remoção leva a vírgula da linha anterior.
+- Política: `sha256` `e2a52278…` casando com o pino de `sealed_policy.py`; `policyVersion` **não** se moveu;
+  `proxyReason` e `proxyFor` idênticos a `HEAD`.
+- `evaluatorDigest`: `0d278f87…` → `1bd5f072213defea6abb5678ee00531514f8542ec2fed30d47738c51e1c57b71`,
+  recomputado por mim pela função de produção. As contagens de `references.md` não se moveram (492/25/67).
+- Prosa: varridas e vazias as frases de mecanismo morto — `its gate reads`, `GATED denominator`,
+  `SEVEN certifying`, `What did change`, `three disjoint mixture-template`. O `mixedRecallGate` sobrevive só
+  onde descreve o **v3 abandonado** e no registro; a citação do PAN 2025 em `references.md` passou a apontar
+  o símbolo que existe.
+
+### O que NÃO foi feito, de propósito
+
+A guarda que fecharia o interruptor do quarto tier — todo spec que declara hipótese tem de aparecer nos gates
+emitidos. É código novo **depois** da revisão, logo código não revisado, e vale mais como unidade própria com
+os três portões do que como emenda contrabandeada no fim desta. Está na § 7 com a medição.
+
+E a emenda de plano da unidade B, cujo contrato já existe: três templates de mistura por ilha em dicionário
+chaveado pela operação, o vocabulário nascendo no lab, as nove asserções com os **dois casos que racham** a
+ilha, e a perna 5 de `island_plan` que eu decidi acrescentar — digests de templates servidos distintos dois a
+dois, porque a identidade gravada prefixa o **nome** da receita e cem nomes servidos por cem cópias do mesmo
+prompt passam todas as guardas de hoje.

@@ -39,6 +39,7 @@ import {
   assertGeneratorFamiliesEqual,
   type GeneratorFamily,
 } from "./generator-family.ts";
+import { mixedRecallDiagnostics } from "./gates.ts";
 import type { GateReport, ReleaseDecision } from "./gates.ts";
 import { boundProvenanceOf } from "./metrics.ts";
 import type {
@@ -50,6 +51,7 @@ import type {
   LabelBasisSlice,
   LengthBandDiagnostics,
   MetricEstimate,
+  MixedRecallBlock,
   ResolutionBreakdown,
   ResolutionSlice,
 } from "./metrics.ts";
@@ -59,6 +61,7 @@ import {
   type PredictionManifestV1,
 } from "./prediction-schema.ts";
 import { PREREGISTRATION_V4 } from "./preregistration-v4.ts";
+import type { PreregistrationV4 } from "./preregistration-v4.ts";
 import type { SliceResult, SliceSummary } from "./slices.ts";
 import type { SplitAudit } from "./split-audit.ts";
 
@@ -533,9 +536,13 @@ function readPath(root: Record<string, unknown>, jsonPath: string): unknown {
  *    `metrics.warning.endToEnd.recall.value` in a sealed report changes the published
  *    `benchmark-report.json` and `benchmark-report.md` and does NOT move `reportDigest`.
  *    The numbers the model card prints are sealed by nothing.
- *  - `gate.bound`, `gate.observed`, `gate.descriptive`, `gate.sampleSize`,
- *    `gate.populationSize` and `gate.reasons`: the gate fingerprint projects nine fields of
- *    a `GateResult` and these six are outside it, published in the gate table unsealed.
+ *  - `gate.estimand`, `gate.observed`, `gate.bound`, `gate.operator`, `gate.required`,
+ *    `gate.sampleSize`, `gate.populationSize`, `gate.descriptive`, `gate.simultaneous` and
+ *    `gate.reasons`: a `GateResult` has NINETEEN fields, the gate fingerprint projects nine,
+ *    and these are the other ten — published in the gate table and sealed by nothing. The
+ *    threshold a gate decided against is among them, which is why a floor that must stay
+ *    fixed is frozen in the pre-registration (an `EVALUATOR_FILES` member, therefore inside
+ *    `evaluatorDigest`) and not in the gate that reads it.
  *  - the interior of `slices`, of `metrics`, of `gates.gates[i]` and of `split.audit`.
  *    Exact keys stop at three levels (top, `split`, `gates`).
  *  - `generatedAt` and `gates.schemaVersion`: neither enters the recipe.
@@ -1199,6 +1206,12 @@ export function renderReportMarkdown(report: BenchmarkReport): string {
   }
 
   lines.push(...lengthBandSection(report.metrics.lengthBands));
+  lines.push(
+    ...mixedRecallSection(
+      report.metrics.mixed?.atLeastHalfAi,
+      PREREGISTRATION_V4.materialAssistance,
+    ),
+  );
   lines.push(...topicSection(report.slices.slices));
 
   const labelBasis = report.metrics.labelBasis;
@@ -1488,6 +1501,75 @@ function lengthBandSection(
         `${pinned === undefined ? "n/a" : pinned.expectedBlindBlockLines} | ` +
         `${pinned === undefined ? "n/a" : fmt(pinned.diagnosticCeilingAtExpectedLines)} |`,
     );
+  }
+  lines.push("");
+  return lines;
+}
+
+/**
+ * Warning recall over the material-assistance cohort, as a DIAGNOSTIC that decides
+ * nothing.
+ *
+ * The floor is printed BESIDE the observed recall and no cell says passed or failed:
+ * the pre-registration freezes `materialAssistance.decides` at false, so nothing in
+ * §6.5 compares the two, and a verdict column here would be a comparison made on the
+ * reader's behalf that no mechanism made.
+ *
+ * `material` arrives BY PARAMETER, and the three sealed values this section prints that
+ * a caller can vary — the AI fraction, the recall floor and both rearm conditions — are
+ * spelled nowhere in this function. That is what lets a test drive the section with a
+ * block that is not the embedded one and watch each of them move, which a section that
+ * retyped them as prose could not survive. The cohort NAME is not among the three: its
+ * literal type admits one value, so nothing can vary it and no test can tell a read of
+ * it from a retyped copy.
+ */
+export function mixedRecallSection(
+  mixed: MixedRecallBlock | undefined,
+  material: PreregistrationV4["materialAssistance"],
+): string[] {
+  const lines: string[] = [];
+  lines.push("## Recall de assistência material (diagnóstico)");
+  lines.push("");
+  lines.push(
+    `Linhas mistas da coorte \`${material.generationMode}\` com fração de IA ` +
+      `>= ${material.minimumAiFraction}, publicadas como **diagnóstico**: não ` +
+      "decidem o release, não gastam alpha e não movem `m`. O piso continua " +
+      "**congelado** na pré-inscrição como **alvo de rearme**, e a v1 pode sair " +
+      "cega a texto misto sem que nada aqui a impeça — o que esta seção garante é " +
+      "que o número seja publicado, não que ele seja alto.",
+  );
+  lines.push("");
+  if (mixed === undefined) {
+    lines.push("_Sem bloco de recall de assistência material._");
+    lines.push("");
+    return lines;
+  }
+  const block = mixedRecallDiagnostics(mixed, material.minimumWarningRecall);
+  lines.push(
+    `- Papel: ${block.role} · decide release: ${block.decides ? "sim" : "não"} · ` +
+      `gasta alpha: ${block.spendsAlpha ? "sim" : "não"}`,
+  );
+  lines.push("");
+  lines.push(
+    "| Coorte | n (linhas mistas) | Recall de aviso | lower95 (descritivo) | Piso (alvo de rearme) |",
+  );
+  lines.push("| --- | --- | --- | --- | --- |");
+  // The empty cohort prints as an ABSENCE in both statistic cells. `fmt` would render
+  // either `null` as "n/a", which a reader cannot tell from a finite number that
+  // failed to serialize, so the emptiness is named where it is printed.
+  const unmeasured = "n/a (coorte vazia)";
+  lines.push(
+    `| ${block.generationMode} | ${block.sampleSize} | ` +
+      `${block.observed === null ? unmeasured : fmt(block.observed)} | ` +
+      `${block.lower95 === null ? unmeasured : fmt(block.lower95)} | ` +
+      `${fmt(block.floor)} |`,
+  );
+  lines.push("");
+  lines.push(
+    "Rearmar o piso exige as duas condições, escritas na própria política:",
+  );
+  for (const condition of material.rearmRequires) {
+    lines.push(`- \`${condition}\``);
   }
   lines.push("");
   return lines;

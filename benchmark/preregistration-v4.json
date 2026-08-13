@@ -212,13 +212,18 @@
   "materialAssistance": {
     "authorizes": "warning-only",
     "cohortsAggregated": false,
+    "decides": false,
     "generationMode": "mechanistic",
     "generationModes": [
       "mechanistic",
       "ecological"
     ],
     "minimumAiFraction": 0.5,
-    "minimumWarningRecall": 0.5
+    "minimumWarningRecall": 0.5,
+    "rearmRequires": [
+      "sentence-or-token-head-formulation",
+      "floor-derived-from-sourced-evidence"
+    ]
   },
   "mixedBelowHalfAiRole": "diagnostic-curve-only",
   "multiplicity": {

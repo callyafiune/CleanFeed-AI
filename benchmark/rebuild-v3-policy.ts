@@ -372,7 +372,8 @@ export interface RebuildV3Policy {
     // The closed vocabulary the schema validates a mixture against.
     readonly generationModes: readonly GenerationMode[];
     readonly minimumAiFraction: number;
-    // The floor of the `warning.mixed-recall` gate. It is a row of the frozen
+    // The floor of the v3 `warning.mixed-recall` gate — a gate this abandoned
+    // pre-registration had and the v1 does not. It is a row of the frozen
     // three-target table (B2), so it lives here and not as a constant in
     // benchmark/gates.ts.
     readonly minimumWarningRecall: number;

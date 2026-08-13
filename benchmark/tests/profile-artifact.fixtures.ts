@@ -27,6 +27,7 @@ import {
   type DecisionMetrics,
   type EvaluationMetrics,
   type MetricEstimate,
+  type MixedRecallBlock,
 } from "../metrics.ts";
 import type { GateReport, GateResult, ReleaseDecision } from "../gates.ts";
 import { PREREGISTRATION_V4 } from "../preregistration-v4.ts";
@@ -756,9 +757,21 @@ export const indicatorInput: ModelPublicationInput = makeInput(
  * Every fixture above takes `decision` as an argument, so none of them can observe the
  * gate policy changing its mind about which failures publish: that link is only
  * exercised by feeding `buildModelPublication` the output of `evaluateReleaseGates`.
+ *
+ * `mixed` REPLACES the material-assistance cohort of the metrics this function builds.
+ * It exists because the metrics are rebuilt here rather than carried off `gates`: a
+ * caller that measured a cohort while evaluating the gates has to hand that same cohort
+ * over, or the publisher reads {@link fullMetrics}'s cohort and not the caller's.
  */
-export function publicationInputFor(gates: GateReport): ModelPublicationInput {
-  const metrics = overallMetrics(true);
+export function publicationInputFor(
+  gates: GateReport,
+  mixed?: MixedRecallBlock,
+): ModelPublicationInput {
+  const built = overallMetrics(true);
+  const metrics: EvaluationMetrics =
+    mixed === undefined
+      ? built
+      : { ...built, mixed: { ...built.mixed, atLeastHalfAi: mixed } };
   return {
     frozen: frozen({
       warningDocument: 0.7,

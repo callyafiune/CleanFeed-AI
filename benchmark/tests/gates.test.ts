@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 
 import {
   evaluateReleaseGates,
+  mixedRecallDiagnostics,
   type GateInput,
   type GateResult,
   type IntegrityEvidence,
@@ -814,10 +815,6 @@ describe("gate thresholds match the §6.5 table", () => {
     expect(PREREGISTRATION_V4.calibrationGate.eceBound).toBe(
       "bootstrap-simultaneous-upper",
     );
-    expect(gateById(report.gates, "warning.mixed-recall")).toMatchObject({
-      operator: ">=",
-      required: 0.5,
-    });
   });
 
   it("reports the denominator of the statistic it decided, not a wider population", () => {
@@ -1038,30 +1035,156 @@ describe("warning tier teeth", () => {
     expect(report.decision).toBe("pass");
   });
 
-  it("rejects on mixed >=50% AI warning-recall below 50%, reporting the IC without substituting the point gate", () => {
-    const report = evaluateReleaseGates({
-      integrity: integrity(),
-      calibrationScoreBasis: CERTIFYING_SCORE_BASIS,
-      resampling: plan(),
-      metrics: metrics({
+  it("keeps the release decision independent of EVERY property of the material-assistance cohort", () => {
+    // The ratified criterion is that NO property of the cohort is an argument of the
+    // decision. The weaker claim — one property, at one sample size, in one surrounding
+    // state, changes nothing — leaves two rearms green: a reject term that fires only
+    // when `failedAction` is non-empty, and one that fires on an empty cohort. Neither
+    // is observable from a fixture where everything else passes at sampleSize 100, so
+    // the matrix IS the guard.
+    const COHORTS = [
+      {
+        name: "unmeasured",
+        mixed: {
+          sampleSize: 0,
+          warningRecall: Number.NaN,
+          warningRecallLower95: Number.NaN,
+        },
+      },
+      {
+        name: "no recall at all",
+        mixed: { sampleSize: 100, warningRecall: 0, warningRecallLower95: 0 },
+      },
+      {
+        name: "twenty points under the floor",
         mixed: {
           sampleSize: 100,
           warningRecall: 0.3,
           warningRecallLower95: 0.2,
         },
-      }),
-      slices: summary([passingSlice()]),
-    });
-    // Material-assistance recall is not one of the seven hypotheses: it authorizes a
-    // warning and certifies no bound. It still blocks — the cohort it describes is one
-    // the release would act on.
-    expect(report.decision).toBe("reject");
-    expect(report.failedCertifying).toEqual([]);
-    const gate = gateById(report.gates, "warning.mixed-recall");
-    expect(gate.bound).toBe("point");
-    expect(gate.role).toBe("diagnostic");
-    expect(gate.passed).toBe(false);
-    expect(gate.reasons[0]).toMatch(/lower95/u);
+      },
+      {
+        name: "exactly at the floor",
+        mixed: {
+          sampleSize: 100,
+          warningRecall: 0.5,
+          warningRecallLower95: 0.4,
+        },
+      },
+      {
+        name: "clearing the floor",
+        mixed: {
+          sampleSize: 100,
+          warningRecall: 0.8,
+          warningRecallLower95: 0.72,
+        },
+      },
+      {
+        name: "perfect on a single row",
+        mixed: { sampleSize: 1, warningRecall: 1, warningRecallLower95: 0 },
+      },
+    ];
+    // One surrounding state per reachable verdict, because a term keyed on another
+    // failure list is only observable where that list is non-empty.
+    const SURROUNDINGS = [
+      {
+        name: "everything else passing",
+        expected: "pass",
+        slices: () => summary([passingSlice()]),
+      },
+      {
+        name: "an action ceiling breached",
+        expected: "indicator-only",
+        slices: () =>
+          summary([
+            slice({
+              axis: "temporalCohort",
+              key: "cohort-3",
+              negatives: 400,
+              fprGateEligible: true,
+              warningFprUpper: 0.03,
+              actionFprUpper: 0.04,
+            }),
+          ]),
+      },
+      {
+        name: "a warning ceiling breached",
+        expected: "reject",
+        slices: () =>
+          summary([
+            slice({
+              axis: "hardNegativeFamily",
+              key: "citation-heavy",
+              negatives: 500,
+              fprGateEligible: true,
+              warningFprUpper: 0.09,
+              actionFprUpper: 0.01,
+            }),
+          ]),
+      },
+    ];
+    for (const surrounding of SURROUNDINGS) {
+      const reports = COHORTS.map((cohort) => ({
+        name: cohort.name,
+        report: evaluateReleaseGates({
+          integrity: integrity(),
+          calibrationScoreBasis: CERTIFYING_SCORE_BASIS,
+          resampling: plan(),
+          metrics: metrics({ mixed: cohort.mixed }),
+          slices: surrounding.slices(),
+        }),
+      }));
+      const baseline = reports.at(0);
+      if (baseline === undefined)
+        throw new Error("no cohort to compare against");
+      for (const { name, report } of reports) {
+        const where = `${surrounding.name} / ${name}`;
+        expect(report.decision, where).toBe(surrounding.expected);
+        // The four lists too, so a cohort that pushes an id into one of them without
+        // moving the verdict is caught as well.
+        expect(report.failedIntegrity, where).toEqual(
+          baseline.report.failedIntegrity,
+        );
+        expect(report.failedWarning, where).toEqual(
+          baseline.report.failedWarning,
+        );
+        expect(report.failedAction, where).toEqual(
+          baseline.report.failedAction,
+        );
+        expect(report.failedCertifying, where).toEqual(
+          baseline.report.failedCertifying,
+        );
+        // Absent from the gates and not merely from the lists: this is what makes
+        // putting the block back into `pointWarningGates` an edit someone sees.
+        expect(
+          report.gates.map((gate) => gate.id),
+          where,
+        ).not.toContain("warning.mixed-recall");
+      }
+    }
+  });
+
+  it("gives no gate a tier outside the three the §6.5 branch reads", () => {
+    // A fourth tier value would be the silent disarm: `failedIds` filters by equality
+    // and `profile-artifact.ts` filters `tier === "action"`, so an unknown tier drops
+    // out of every list without a single reader refusing it. Nothing here is
+    // fail-closed; this assertion is what keeps the hole from being used.
+    const report = evaluateReleaseGates(passingEvidence);
+    for (const gate of report.gates) {
+      expect(["integrity", "warning", "action"]).toContain(gate.tier);
+    }
+  });
+
+  it("freezes the non-decision and both rearm conditions in the policy, by value", () => {
+    expect(PREREGISTRATION_V4.materialAssistance.decides).toBe(false);
+    expect([...PREREGISTRATION_V4.materialAssistance.rearmRequires]).toEqual([
+      "sentence-or-token-head-formulation",
+      "floor-derived-from-sourced-evidence",
+    ]);
+    // The floor is frozen, not removed: it is the target a rearm is measured against.
+    expect(PREREGISTRATION_V4.materialAssistance.minimumWarningRecall).toBe(
+      0.5,
+    );
   });
 });
 
@@ -1706,11 +1829,10 @@ describe("Bonferroni simultaneous bounds", () => {
     expect(multiplicity.observed).toBe(
       PREREGISTRATION_V4.multiplicity.primaryFamilySize,
     );
-    // Neither the point gates (no interval to correct), nor the pooled FPR, nor the
+    // Neither the point gate (no interval to correct), nor the pooled FPR, nor the
     // label bases, nor any action gate: none of them is a hypothesis of this version.
     for (const id of [
       "warning.coverage",
-      "warning.mixed-recall",
       "warning.fpr.overall",
       "warning.fpr.labelBasis.date-cutoff",
       "action.fpr.overall",
@@ -1719,6 +1841,13 @@ describe("Bonferroni simultaneous bounds", () => {
       expect(multiplicity.gateIds).not.toContain(id);
       expect(gateById(report.gates, id).role).toBe("diagnostic");
     }
+    // The material-assistance recall is not in the inventory either, and the reason is
+    // one step stronger than diagnostic: it is not a gate at all. Kept out of the loop
+    // above precisely because `gateById` would throw instead of asserting.
+    expect(multiplicity.gateIds).not.toContain("warning.mixed-recall");
+    expect(report.gates.map((gate) => gate.id)).not.toContain(
+      "warning.mixed-recall",
+    );
     const intervalGates = report.gates.filter(
       (gate) =>
         gate.bound === "simultaneous-upper" ||
@@ -2529,38 +2658,172 @@ describe("integrity tier teeth", () => {
 // B2 — the frozen three-target table, at the gate boundary.
 // ===========================================================================
 
-describe("the mixed-recall gate reads the frozen policy (B2)", () => {
-  it("takes its floor from the policy, not from a local constant", () => {
-    const floor = PREREGISTRATION_V4.materialAssistance.minimumWarningRecall;
-    expect(floor).toBe(0.5);
-    const report = evaluateReleaseGates({
-      integrity: integrity(),
-      calibrationScoreBasis: CERTIFYING_SCORE_BASIS,
-      resampling: plan(),
-      metrics: metrics(),
-      slices: summary([passingSlice()]),
-    });
-    const gate = gateById(report.gates, "warning.mixed-recall");
-    expect(gate.required).toBe(floor);
-    expect(gate.tier).toBe("warning");
+describe("the material-assistance block is published without deciding (B2)", () => {
+  const cohort = (
+    sampleSize: number,
+    warningRecall: number,
+    warningRecallLower95: number,
+  ) => ({
+    generationMode: "mechanistic" as const,
+    sampleSize,
+    warningRecall,
+    warningRecallLower95,
   });
 
-  it("fails when the mechanistic cohort misses the floor", () => {
+  it("carries the floor it was GIVEN, so the number travels instead of being restated", () => {
+    // 0.42 is not the frozen floor and is not a value anywhere in the production
+    // path: a producer that read the policy itself, or that hard-coded 0.5, fails
+    // here. `expect(floor).toBe(policyFloor)` with the policy floor as the input is
+    // satisfied by a literal 0.5 in the source and proves nothing.
+    expect(mixedRecallDiagnostics(cohort(200, 0.49, 0.42), 0.42).floor).toBe(
+      0.42,
+    );
+    expect(mixedRecallDiagnostics(cohort(200, 0.49, 0.42), 0.5).floor).toBe(
+      0.5,
+    );
+  });
+
+  it("publishes the observed recall, the interval and the cohort, and NO verdict field", () => {
+    const block = mixedRecallDiagnostics(cohort(200, 0.49, 0.42), 0.5);
+    expect([...Object.keys(block)].sort()).toEqual([
+      "decides",
+      "floor",
+      "generationMode",
+      "lower95",
+      "observed",
+      "role",
+      "sampleSize",
+      "spendsAlpha",
+    ]);
+    // Named separately from the key list above, because these two are the ones that
+    // turn the block back into a gate the moment either returns.
+    expect(Object.keys(block)).not.toContain("passed");
+    expect(Object.keys(block)).not.toContain("tier");
+    expect(block).toMatchObject({
+      role: "diagnostic",
+      decides: false,
+      spendsAlpha: false,
+      generationMode: "mechanistic",
+      observed: 0.49,
+      lower95: 0.42,
+      sampleSize: 200,
+    });
+  });
+
+  it("publishes neither a recall nor its bound for an empty cohort, instead of a zero it never measured", () => {
+    // A LOWER BOUND of zero beside an absent point estimate reads as a measured floor
+    // of zero, so both fields go null on the same condition. The input hands a finite
+    // 0 as the bound precisely so a producer that passed it through fails here.
+    const empty = mixedRecallDiagnostics(cohort(0, Number.NaN, 0), 0.5);
+    expect(empty.observed).toBeNull();
+    expect(empty.lower95).toBeNull();
+    expect(empty.sampleSize).toBe(0);
+    // The contrast, so the assertions above are a difference and not a constant: one
+    // measured row publishes both numbers, zero included.
+    const measured = mixedRecallDiagnostics(cohort(1, 0, 0), 0.5);
+    expect(measured.observed).toBe(0);
+    expect(measured.lower95).toBe(0);
+  });
+});
+
+describe("the v1 may ship blind to mixed text — ACCEPTED RESIDUE, executable", () => {
+  // Not a claim about what SHOULD happen: this is the residue the operator ratified,
+  // written so nobody rediscovers it by reading the model card. After this, the only
+  // barrier against a release that hides the limitation is TEXT — `limitations.md`
+  // and the model card of Phase 6 — and text is not a gate.
+  //
+  // TWENTY POINTS under the frozen floor, and the number is derived from the policy
+  // rather than typed, so a rearm that raises the floor raises this cohort with it.
+  const FLOOR = PREREGISTRATION_V4.materialAssistance.minimumWarningRecall;
+  const subFloor = {
+    generationMode: "mechanistic" as const,
+    sampleSize: 100,
+    warningRecall: FLOOR - 0.2,
+    warningRecallLower95: FLOOR - 0.3,
+  };
+
+  it("decides pass on a gate report whose material-assistance cohort misses the floor by twenty points", () => {
     const report = evaluateReleaseGates({
       integrity: integrity(),
       calibrationScoreBasis: CERTIFYING_SCORE_BASIS,
       resampling: plan(),
-      metrics: metrics({
-        mixed: {
-          sampleSize: 200,
-          warningRecall: 0.49,
-          warningRecallLower95: 0.42,
-        },
-      }),
+      metrics: metrics({ mixed: subFloor }),
       slices: summary([passingSlice()]),
     });
-    expect(gateById(report.gates, "warning.mixed-recall").passed).toBe(false);
-    expect(report.decision).toBe("reject");
+    expect(subFloor.warningRecall).toBeLessThan(FLOOR);
+    expect(report.decision).toBe("pass");
+  });
+
+  it("publishes the profile set AND re-parses it at the runtime loader carrying that same sub-floor cohort", async () => {
+    const report = evaluateReleaseGates({
+      integrity: integrity(),
+      calibrationScoreBasis: CERTIFYING_SCORE_BASIS,
+      resampling: plan(),
+      metrics: metrics({ mixed: subFloor }),
+      slices: summary([passingSlice()]),
+    });
+    // The cohort is handed to `publicationInputFor` EXPLICITLY. It rebuilds the metrics
+    // from its own fixture and reads only `gates.decision` off the report, so a cohort
+    // left off this argument would be silently replaced by the fixture's above-floor
+    // one and nothing below would be about 0.30 at all.
+    const input = publicationInputFor(report, subFloor);
+    expect(input.report.metrics.mixed.atLeastHalfAi.warningRecall).toBe(
+      subFloor.warningRecall,
+    );
+
+    const published = await buildModelPublication(input);
+    expect(published.profiles.profiles.length).toBeGreaterThan(0);
+    expect(published.release.rolloutState).toBe("indicator");
+    // `buildModelPublication` re-parses its own output through the parser the runtime
+    // uses at load, so these are the PARSED profiles: the sub-floor recall crossed the
+    // publisher and the loader untouched, and every published band carries it.
+    for (const profile of published.profiles.profiles) {
+      expect(profile.gateEvidence.overall.mixedRecall.estimate).toBe(
+        subFloor.warningRecall,
+      );
+      expect(profile.gateEvidence.overall.mixedRecall.sampleSize).toBe(
+        subFloor.sampleSize,
+      );
+    }
+  });
+});
+
+describe("an empty mixed cohort still blocks the profile it would be published in", () => {
+  it("refuses the publication for sampleSize 0, so disarming the gate cannot be followed by emptying the cohort", async () => {
+    const passed = evaluateReleaseGates(passingEvidence);
+    expect(passed.decision).toBe("pass");
+    const input = publicationInputFor(passed);
+    const emptied = {
+      ...input,
+      report: {
+        ...input.report,
+        metrics: {
+          ...input.report.metrics,
+          mixed: {
+            ...input.report.metrics.mixed,
+            atLeastHalfAi: {
+              ...input.report.metrics.mixed.atLeastHalfAi,
+              sampleSize: 0,
+            },
+          },
+        },
+      },
+    };
+    await expect(buildModelPublication(emptied)).rejects.toMatchObject({
+      code: "GATE_EVIDENCE_INCOMPLETE",
+    });
+
+    // And the same input with the cohort intact publishes, carrying the evidence off
+    // `metrics.mixed.atLeastHalfAi` — which is why `profile-artifact.ts` needed no
+    // edit: it never read the gate.
+    const published = await buildModelPublication(input);
+    const evidence = published.profiles.profiles[0]?.gateEvidence.overall;
+    expect(evidence?.mixedRecall.estimate).toBe(
+      input.report.metrics.mixed.atLeastHalfAi.warningRecall,
+    );
+    expect(evidence?.mixedRecall.sampleSize).toBe(
+      input.report.metrics.mixed.atLeastHalfAi.sampleSize,
+    );
   });
 });
 

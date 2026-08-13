@@ -956,9 +956,9 @@ export interface MixedFractionSegment {
   warning: DecisionMetrics;
 }
 
-// The gated material-assistance recall triple: warned over every mixed row of ONE
-// cohort at or above the frozen AI fraction. END-TO-END in the status sense — an
-// undecided row is a miss — and never pooled across cohorts.
+// The material-assistance recall triple: warned over every mixed row of ONE cohort at
+// or above the frozen AI fraction. END-TO-END in the status sense — an undecided row
+// is a miss — and never pooled across cohorts.
 export interface MixedRecallBlock {
   generationMode: GenerationMode;
   sampleSize: number;
@@ -1256,13 +1256,13 @@ export interface EvaluationMetrics {
   // produces a span at all.
   localization: LocalizationDiagnostics;
   mixed: {
-    // The GATED block: the mechanistic cohort at or above the frozen AI fraction,
-    // and it carries the cohort name so the gate's population is readable off the
+    // The PUBLISHED block: the mechanistic cohort at or above the frozen AI
+    // fraction, and it carries the cohort name so its population is readable off the
     // artifact instead of inferred from the field name.
     atLeastHalfAi: MixedRecallBlock;
-    // Every cohort, separately, including the mechanistic one. The gated block
+    // Every cohort, separately, including the mechanistic one. The published block
     // above is the mechanistic entry of this list, projected under the name the
-    // gate reads; nothing here is a cross-cohort total.
+    // report and the profile read; nothing here is a cross-cohort total.
     byGenerationMode: MixedCohort[];
     // A FOUR-BAND AGGREGATION of the frozen v0-v8 coverage curve, not the curve:
     // `MIXED_FRACTION_BUCKETS` says which levels each band pools and why B2 cannot
@@ -2751,8 +2751,8 @@ export function computeEvaluationMetrics(
     });
   }
 
-  // The MIXED row of the frozen table, resolved over the cohort its gate reads
-  // (mechanistic, at or above the frozen AI fraction). It is resolved and NOT
+  // The MIXED row of the frozen table, resolved over the cohort the published block
+  // describes (mechanistic, at or above the frozen AI fraction). It is resolved and NOT
   // resampled, on purpose: the crossed pair is `human parent × edit operation` and
   // no axis of the v3 schema records the edit operation, so the second factor is a
   // declared PROXY (`groups.promptTemplate`, see the policy row) that measured one
@@ -2878,15 +2878,17 @@ export function computeEvaluationMetrics(
     memory: memoryMetricsAll(items),
     // The mixed blocks run over ALL items, not over `eligible`. The eligible
     // restriction A3 introduced belongs to the two decision families and stops
-    // there: `mixed.atLeastHalfAi` feeds its own approved gate, and shrinking a
-    // gated population is a loosening (R3) — an ineligible mixed row that got no
-    // decision would leave the denominator instead of counting as a miss, and at
-    // sampleSize 0 gates.ts turns the mixed-recall gate into an unconditional
-    // pass. Errored and abstained rows are excluded from the NUMERATOR only,
-    // inside mixedAtLeastHalfAi / decisionMetrics.
+    // there: `mixed.atLeastHalfAi` is the published material-assistance block, read
+    // by the report and by `gateEvidence.overall.mixedRecall` of the profile, and
+    // shrinking the population behind a published number is a loosening (R3) — an
+    // ineligible mixed row that got no decision would leave the denominator instead
+    // of counting as a miss, and at sampleSize 0 there is no measurement at all
+    // (benchmark/profile-artifact.ts refuses to publish a profile then). Errored and
+    // abstained rows are excluded from the NUMERATOR only, inside
+    // mixedAtLeastHalfAi / decisionMetrics.
     //
     // `isEligible` is TWO conditions, and running over all items re-admits both
-    // kinds of row, each counting as a miss against MIXED_WARNING_RECALL_MIN:
+    // kinds of row, each counting as a miss against the frozen recall floor:
     //   * the WORD FLOOR — a mixed row under `minimumEligibleWords`, which policy
     //     tells the runtime to abstain on;
     //   * the LANGUAGE axis — a mixed row whose `language !== "pt-BR"`, i.e. out
@@ -2894,7 +2896,7 @@ export function computeEvaluationMetrics(
     // Both directions are conservative (a larger denominator, same numerator), so
     // R3 is satisfied either way, but they are two separate populations and only
     // one of them is a measurement question. Charging an out-of-scope-language row
-    // to a pt-BR detector's gate is the §4.1 unsatisfiable-gate pattern; A3 does
+    // to a pt-BR detector's recall is the §4.1 unsatisfiable-gate pattern; A3 does
     // not decide it, and neither restriction may be reintroduced without measured
     // evidence written into the plan (A6/G2, plan item 7).
     localization: localizationDiagnostics(items),
@@ -2905,8 +2907,9 @@ export function computeEvaluationMetrics(
       // report ordering.
       byGenerationMode: sortedGenerationModes().map((mode) => ({
         generationMode: mode,
-        // The mechanistic cohort is what the approved gate reads; the other one
-        // is a separate cohort and carries no gate of its own.
+        // The mechanistic cohort is the one the frozen policy names, and the one
+        // projected as `atLeastHalfAi` above; every other cohort is a separate
+        // population that no projection of this module names.
         role: mode === MATERIAL_ASSISTANCE_MODE ? "release" : "diagnostic",
         aggregated: false as const,
         sampleSize: items.filter(
@@ -3571,10 +3574,11 @@ function rateEstimates(
  * This is the ONE place a `ResamplingUnitError` is caught, and the reason it is
  * safe here is exactly the reason it is not safe anywhere else: no interval is
  * published from this design. `mixed.atLeastHalfAi` carries an analytic lower bound
- * and its gate reads the point, so an unresolvable unit cannot produce a number
- * that looks valid — the failure mode the rest of this module refuses to allow. It
- * would, however, take down the whole evaluation over a declaration nothing gates,
- * and it does so for a corpus that CANNOT satisfy it: a v2 record has no
+ * and nothing compares it to anything — `materialAssistance.decides` is frozen false
+ * — so an unresolvable unit cannot produce a number that looks valid, which is the
+ * failure mode the rest of this module refuses to allow. It would, however, take down
+ * the whole evaluation over a declaration nothing gates, and it does so for a corpus
+ * that CANNOT satisfy it: a v2 record has no
  * `groups.humanSeed` axis at all, so the crossed pair is unresolvable there by
  * construction rather than by omission. The plan then carries the reason instead of
  * a bare `measured: null`.
@@ -4279,7 +4283,7 @@ function observedAiSpans(record: BenchmarkRecord): SpanInterval[] {
 // The population is deliberately not eligibility-filtered — the R3 reason is
 // written above the `mixed:` block in `computeEvaluationMetrics`; do not add an
 // `isEligible` filter here without reading it.
-// ONE cohort at a time: the caller names the generation mode, and the frozen gate
+// ONE cohort at a time: the caller names the generation mode, and the frozen policy
 // asks for `mechanistic`. Pooling the cohorts here would report a coauthorship
 // distribution we manufactured as if it had been observed
 // (`materialAssistance.cohortsAggregated: false`).
@@ -4288,7 +4292,7 @@ function mixedAtLeastHalfAi(
   generationMode: GenerationMode,
 ): MixedRecallBlock {
   // One narrowing of `mixture` for both fields (`mixedCohortOf`), so the fraction
-  // of this GATED denominator can never arrive as a default. This is the third
+  // behind this denominator can never arrive as a default. This is the third
   // instance of that read; the other two are in `mixedByFraction` and
   // `actionAuthorizationMetrics`.
   const strong = items.filter((item) => {
@@ -4318,7 +4322,7 @@ function mixedAtLeastHalfAi(
 }
 
 // FOUR BANDS, NOT THE v0-v8 CURVE. The frozen diagnostic beside the
-// `warning.mixed-recall` gate is the nine-level coverage curve (0%, 15%, 25%, 40%,
+// material-assistance recall is the nine-level coverage curve (0%, 15%, 25%, 40%,
 // 50%, 60%, 75%, 90%, 100% — D4 in the plan), and these bands POOL it: v0 with v1
 // into `0_24`, v2 with v3 into `25_49`, v4 with v5 into `50_74`, and v6/v7/v8 into
 // `75_100`. So nothing that keys off these bands — `mixed.byFraction`, the

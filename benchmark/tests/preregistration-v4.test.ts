@@ -596,6 +596,32 @@ describe("parsePreregistrationV4 fails closed", () => {
     expect(() => parsePreregistrationV4({})).toThrow(PreregistrationV4Error);
   });
 
+  it("refuses the material-assistance non-decision flipped, or either rearm condition dropped", () => {
+    // Rearming the floor means editing the sealed policy, and this is what makes that
+    // edit expensive: the literal refuses `true`, and the frozen list refuses a
+    // rearm that names one condition instead of both — or names both out of order.
+    const rearmed = validPolicyObject();
+    block(rearmed, "materialAssistance").decides = true;
+    expect(() => parsePreregistrationV4(rearmed)).toThrow(
+      /materialAssistance\.decides/u,
+    );
+
+    for (const tampered of [
+      ["sentence-or-token-head-formulation"],
+      ["floor-derived-from-sourced-evidence"],
+      [
+        "floor-derived-from-sourced-evidence",
+        "sentence-or-token-head-formulation",
+      ],
+    ]) {
+      const policy = validPolicyObject();
+      block(policy, "materialAssistance").rearmRequires = tampered;
+      expect(() => parsePreregistrationV4(policy)).toThrow(
+        /materialAssistance\.rearmRequires/u,
+      );
+    }
+  });
+
   it("rejects an unknown key instead of ignoring it", () => {
     const extra = { ...validPolicyObject(), warningFprBudget: 0.07 };
     expect(() => parsePreregistrationV4(extra)).toThrow(/warningFprBudget/u);

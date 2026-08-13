@@ -256,9 +256,11 @@ class ClosedPolicyParse(unittest.TestCase):
             self.assertIn("byte for byte", message)
 
     def test_it_refuses_a_reserialized_copy_of_the_sealed_values(self) -> None:
-        # Measured: `json.dumps(json.loads(sealed), indent=2)` is 11 956 bytes against the
-        # tracked 11 742, so a policy retyped or reformatted on the way to Colab carries the
-        # sealed values and different bytes.
+        # Measured, and the two numbers are NOT the same expression: the reserialization
+        # `json.dumps(json.loads(sealed), indent=2)` is 12 089 bytes, while the file
+        # `write_policy` puts on disk is 12 090 — it appends the trailing newline. Both
+        # stand against the tracked 11 876, so a policy retyped or reformatted on the way
+        # to Colab carries the sealed values and different bytes.
         with tempfile.TemporaryDirectory() as tmp:
             path = write_policy(Path(tmp))
             self.assertEqual(

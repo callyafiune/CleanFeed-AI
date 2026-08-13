@@ -1457,7 +1457,7 @@ nos mesmos lugares e com os mesmos números; a verificação de 2026-07-31 regis
   [link](https://ceur-ws.org/Vol-4038/paper_307.pdf)
   _Âncora:_ o **teto conhecido da tarefa**, e por isso o piso de 0,50 do gate misto não é ambicioso: é
   inatingível pela formulação de documento. _Onde no projeto:_ `docs/detector-rebuild-assessment.md` § 4.5 e
-  § 6.1; `benchmark/gates.ts` (`mixedRecallGate`); ESTADO § 3.1. _Fato citado:_ **64,46 % de recall macro com
+  § 6.1; `benchmark/gates.ts` (`mixedRecallDiagnostics`, o bloco sem veredito que substituiu o gate no desarme de 2026-08-12) e `materialAssistance.rearmRequires` na pré-inscrição; ESTADO § 3.1. _Fato citado:_ **64,46 % de recall macro com
   um Qwen3-4B ajustado** em seis classes, contra 48,32 % da linha de base roberta-base — na única competição
   que propôs formalmente o problema de autoria mista.
 - **HART — detecção em níveis de conteúdo humanizado** (arXiv 2503.00258).

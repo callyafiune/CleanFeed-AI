@@ -734,14 +734,14 @@ describe("computeEvaluationMetrics", () => {
     expect(metrics.mixed.atLeastHalfAi.warningRecallLower95).toBeLessThan(0.5);
   });
 
-  it("keeps the mixed gate population over every mixed row, eligible or not", () => {
+  it("keeps the mixed published population over every mixed row, eligible or not", () => {
     // R3 pin. The two DECISION families are restricted to the eligible set;
-    // `metrics.mixed` is a separate gated block and its population is NOT ours
-    // to shrink. Restricting it to eligible rows would move a gated number in
+    // `metrics.mixed` is a separate published block and its population is NOT ours
+    // to shrink. Restricting it to eligible rows would move a published number in
     // the favorable direction (an ineligible mixed row that got no decision
     // would leave the denominator instead of counting as a miss) and, at
-    // sampleSize 0, gates.ts turns the mixed-recall gate into an unconditional
-    // pass. So the row below stays in, and stays a miss.
+    // sampleSize 0, there is no measurement to publish at all. So the row below
+    // stays in, and stays a miss.
     const fixture = [
       item({
         author: "m1",
@@ -1823,7 +1823,7 @@ describe("the three product targets (B2)", () => {
         a?.endToEnd.falsePositiveRate.value,
       );
     }
-    // The gated mixed-recall block has the same denominator before and after.
+    // The published mixed-recall block has the same denominator before and after.
     expect(after.mixed.atLeastHalfAi.sampleSize).toBe(
       before.mixed.atLeastHalfAi.sampleSize,
     );
@@ -2391,7 +2391,7 @@ describe("span localization metrics are diagnostic (B2)", () => {
   });
 
   // Requisito 2 of the B2 brief asks for the v0-v8 curve as the diagnostic beside
-  // the `warning.mixed-recall` gate. `mixed.byFraction` is NOT that curve: it is a
+  // the material-assistance recall. `mixed.byFraction` is NOT that curve: it is a
   // four-band aggregation of it, and this test pins WHICH levels it pools so the
   // shortfall is executable rather than a sentence someone can delete. D4 owns
   // the per-level curve (it owns the mixing lane that would write the level).

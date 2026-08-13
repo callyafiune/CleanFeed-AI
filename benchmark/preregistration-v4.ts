@@ -533,12 +533,25 @@ export interface PreregistrationV4 {
     // Frozen false: `mechanistic` and `ecological` are separate slices wherever both
     // occur and are never added together.
     readonly cohortsAggregated: false;
+    // Frozen false: no release decision reads this cohort's warning recall. The
+    // statistic is measured and published — the mixed block of the report and
+    // `gateEvidence.overall.mixedRecall` of the profile — and `minimumWarningRecall`
+    // below is the REARM TARGET rather than a threshold anything compares against
+    // today. Freezing the false here is what makes rearming cost an edit in the
+    // sealed policy: the digest in benchmark/lab/sealed_policy.py moves with it.
+    readonly decides: false;
     // The cohort THIS project produces.
     readonly generationMode: "mechanistic";
     // The closed vocabulary the schema validates a mixture against.
     readonly generationModes: readonly GenerationMode[];
     readonly minimumAiFraction: number;
     readonly minimumWarningRecall: number;
+    // BOTH conditions that a rearm requires, in the frozen order. A document-level
+    // classifier cannot be held to a recall floor over a text that is half human by
+    // construction — the formulation has to become a sentence or token head first —
+    // and a floor nobody derived from a sourced measurement is a number, not
+    // evidence.
+    readonly rearmRequires: readonly string[];
   };
   readonly mixedBelowHalfAiRole: "diagnostic-curve-only";
   readonly multiplicity: {
@@ -1777,6 +1790,13 @@ const FROZEN_ROLLOUT_STAGES = [
 // `ecological` would let a future observed-process sample be pooled into the
 // mechanistic cohort by omission.
 const FROZEN_GENERATION_MODES = ["mechanistic", "ecological"] as const;
+
+// The two conditions a rearm of the material-assistance recall floor requires, both
+// of them, in the order the policy freezes.
+const REARM_CONDITIONS = [
+  "sentence-or-token-head-formulation",
+  "floor-derived-from-sourced-evidence",
+] as const;
 // The mirror of `GROUP_KEYS` in benchmark/split.ts, held by test rather than by
 // import (the splitter reads this file).
 const FROZEN_SPLIT_UNION_AXES = [
@@ -2290,10 +2310,12 @@ export function parsePreregistrationV4(value: unknown): PreregistrationV4 {
     [
       "authorizes",
       "cohortsAggregated",
+      "decides",
       "generationMode",
       "generationModes",
       "minimumAiFraction",
       "minimumWarningRecall",
+      "rearmRequires",
     ],
   );
   const multiplicity = object(root.multiplicity, "multiplicity", [
@@ -2661,6 +2683,12 @@ export function parsePreregistrationV4(value: unknown): PreregistrationV4 {
         "cohortsAggregated",
         false,
       ),
+      decides: literal(
+        materialAssistance,
+        "materialAssistance",
+        "decides",
+        false,
+      ),
       generationMode: literal(
         materialAssistance,
         "materialAssistance",
@@ -2682,6 +2710,12 @@ export function parsePreregistrationV4(value: unknown): PreregistrationV4 {
         materialAssistance,
         "materialAssistance",
         "minimumWarningRecall",
+      ),
+      rearmRequires: frozenList(
+        materialAssistance,
+        "materialAssistance",
+        "rearmRequires",
+        REARM_CONDITIONS,
       ),
     },
     mixedBelowHalfAiRole: literal(

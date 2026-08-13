@@ -25,6 +25,12 @@
 // pre-registered level and it backs no published claim about the population. It still
 // BLOCKS, and by its tier, exactly as before the roles existed.
 //
+// A statistic that decides NOTHING is not a gate of any tier here — it is a BLOCK
+// with no verdict field, published beside the gates ({@link mixedRecallDiagnostics},
+// `metrics.lengthBands`). The distinction is mechanical and not editorial: the tier is
+// what the §6.5 disjunction below reads, so anything that has one decides, and the way
+// to stop deciding is to stop being a gate.
+//
 // The three §6.5 decision branches, unchanged by the roles:
 //   - a failed CERTIFYING, INTEGRITY or WARNING gate  => reject (stylometric stays)
 //   - every one of those passes and an ACTION gate fails => indicator-only
@@ -124,19 +130,22 @@
 //     pre-registered basis beside it.
 //
 // Frozen numbers come from benchmark/preregistration-v4.json through
-// benchmark/preregistration-v4.ts: the FPR budgets, the ECE ceiling, the family
-// alpha, the material-assistance recall floor and the WARNING recall floor — the
-// last one is `recall-at-threshold`, a member of `multiplicity.primaryFamily`, so
-// its number is a certifying value and not a §6.5 threshold this file may set. What
-// remains as named constants below is only what no row of that table names: the
-// action recall floor, coverage and the inference error ceiling.
+// benchmark/preregistration-v4.ts: the FPR budgets, the ECE ceiling, the family alpha
+// and the WARNING recall floor — the last one is `recall-at-threshold`, a member of
+// `multiplicity.primaryFamily`, so its number is a certifying value and not a §6.5
+// threshold this file may set. What remains as named constants below is only what no
+// row of that table names: the action recall floor, coverage and the inference error
+// ceiling. The material-assistance recall floor is a row of the table too, and it is
+// not a constant here at all: `materialAssistance.decides` is frozen false, so the
+// number is published beside the gates and compared by nothing.
 //
 // WHICH POPULATION AUTHORIZES WHAT (B2). The frozen three-target table gives each
-// target its own ceiling, and two of the three consequences are enforced here:
-// `warning.mixed-recall` reads ONE cohort (mechanistic material assistance at or
-// above the frozen AI fraction) and `action.recall.overall` reads the INTEGRAL
-// positives only, so a material-assistance cohort can raise a warning recall but
-// can never raise the recall that lifts `actionCeiling`.
+// target its own ceiling, and ONE of the three consequences is enforced here:
+// `action.recall.overall` reads the INTEGRAL positives only, so a material-assistance
+// cohort can never raise the recall that lifts `actionCeiling`. The other — that the
+// cohort's own recall authorizes a warning and nothing more — is enforced by no
+// threshold: {@link mixedRecallDiagnostics} publishes the cohort's recall beside its
+// floor and decides nothing.
 //
 // Mixed below the fraction floor is a positive of NO gate and a negative of NO
 // gate — which is the frozen decision's exact wording, and is NOT the same claim
@@ -163,7 +172,11 @@ import type {
   MetricEstimate,
 } from "./metrics.ts";
 import { PREREGISTRATION_V4 } from "./preregistration-v4.ts";
-import type { EceGateBound, ScoreBasis } from "./preregistration-v4.ts";
+import type {
+  EceGateBound,
+  GenerationMode,
+  ScoreBasis,
+} from "./preregistration-v4.ts";
 import type { SliceAxis, SliceResult, SliceSummary } from "./slices.ts";
 
 export type ReleaseDecision = "pass" | "indicator-only" | "reject";
@@ -366,23 +379,18 @@ const MAX_ERROR_RATE = 0.01;
 
 // Frozen pre-registration.
 //
-// The recall floor is one of the SEVEN certifying hypotheses ("recall-at-threshold"
-// in `multiplicity.primaryFamily`), so its number is a pre-registered value and not
-// a §6.5 threshold this file may set. The VALUE is unchanged at 0.60 — R3 forbids
-// loosening a limit, and nothing here was loosened.
+// The recall floor is one of the FOUR certifying hypotheses ("recall-at-threshold"
+// in `multiplicity.primaryFamily`, whose size is `primaryFamilySize`), so its number
+// is a pre-registered value and not a §6.5 threshold this file may set. R3 forbids
+// loosening a limit, and no value below is looser than the frozen one it reads.
 const WARNING_RECALL_MIN = PREREGISTRATION_V4.recallFloor;
 const WARNING_FPR_MAX = PREREGISTRATION_V4.fprBudgets.warning;
 const ACTION_FPR_MAX = PREREGISTRATION_V4.fprBudgets.visualAction;
 const ECE_MAX = PREREGISTRATION_V4.calibrationGate.eceMax;
-// The material-assistance recall floor and the cohort it is measured over. B2
-// made both rows of the frozen table: the FORMULATION changed (the denominator is
-// now the `mechanistic` cohort at or above `aiFraction >= 0.50`, per assessment
-// §4.5), so the number moved out of this file and into the policy. The VALUE is
-// unchanged at 0.50 — R3 forbids loosening a limit, and nothing here was loosened.
-const MIXED_WARNING_RECALL_MIN =
-  PREREGISTRATION_V4.materialAssistance.minimumWarningRecall;
-const MATERIAL_ASSISTANCE_MODE =
-  PREREGISTRATION_V4.materialAssistance.generationMode;
+// The material-assistance recall floor is deliberately NOT a constant of this file.
+// `materialAssistance.decides` is frozen false, so no threshold of §6.5 compares
+// anything against it; the number reaches {@link mixedRecallDiagnostics} as an
+// argument, from the policy, at the one call site that publishes the block.
 // The frozen contract NAMES the bound the ECE gate reads, and the gate derives its
 // direction from that name instead of restating it. The switch is exhaustive: a
 // different declared bound stops compiling here rather than drifting away from the
@@ -770,12 +778,12 @@ function errorRateGate(value: number): GateResult {
 
 // --- warning ---------------------------------------------------------------
 
-// The two approved POINT gates of the warning tier. They read no interval, so
-// there is no interval to correct for multiplicity and no resampling unit to
-// declare; both facts are recorded as `evidence: "not-applicable"` rather than
-// left to inference. Neither is a member of the primary family — coverage and
-// material-assistance recall are not hypotheses the version certifies — so both are
-// published diagnostic and cap the decision without rejecting it.
+// The one approved POINT gate of the warning tier. It reads no interval, so there is
+// no interval to correct for multiplicity and no resampling unit to declare; both
+// facts are recorded as `evidence: "not-applicable"` rather than left to inference.
+// Coverage is not a member of the primary family — it is not a hypothesis the version
+// certifies — so it is published diagnostic, and it REJECTS all the same: the warning
+// tier is a term of the §6.5 disjunction whatever a gate's role says.
 function pointWarningGates(metrics: EvaluationMetrics): GateResult[] {
   return [
     pointGate(
@@ -786,7 +794,6 @@ function pointWarningGates(metrics: EvaluationMetrics): GateResult[] {
       COVERAGE_MIN,
       "coverage without abstention",
     ),
-    mixedRecallGate(metrics.mixed.atLeastHalfAi),
   ];
 }
 
@@ -944,37 +951,54 @@ function labelBasisSpec(
   };
 }
 
-// The material-assistance gate. Its population is ONE cohort — the mechanistic
-// one — at or above the frozen AI fraction, and the block it reads names that
-// cohort itself, so a pooled figure could not reach this gate even if some future
-// caller built one.
-function mixedRecallGate(
+/**
+ * The material-assistance recall of ONE cohort, published beside the gates.
+ *
+ * NO VERDICT FIELD, and the absence is the shape: a block carrying `passed` or a
+ * `tier` is a gate whatever its `role` says, and some reader eventually compares it.
+ * `floor` travels so that what the recall MISSES is readable without a comparison
+ * having been made on the reader's behalf.
+ *
+ * The population is one cohort — the mechanistic one — at or above the frozen AI
+ * fraction, and `generationMode` is copied off the MEASUREMENT rather than restated
+ * from the policy, so the block names the cohort it describes instead of leaving a
+ * reader to infer that from the field name.
+ */
+export interface MixedRecallDiagnostics {
+  role: "diagnostic";
+  decides: false;
+  spendsAlpha: false;
+  generationMode: GenerationMode;
+  floor: number;
+  // `observed` and `lower95` go NULL TOGETHER on an empty cohort: an unmeasured recall
+  // is not a recall of zero, and `lower95` bounds that same unmeasured recall, so a 0
+  // published there would read as a measured floor of zero.
+  observed: number | null;
+  lower95: number | null;
+  sampleSize: number;
+}
+
+/**
+ * The floor arrives as an ARGUMENT and is never read here.
+ *
+ * It is a row of the frozen three-target table, so the policy is the only place it
+ * may come from; a local read would let this file and the table disagree with
+ * nothing failing.
+ */
+export function mixedRecallDiagnostics(
   mixed: EvaluationMetrics["mixed"]["atLeastHalfAi"],
-): GateResult {
-  const eligible = mixed.sampleSize > 0;
-  const observed = eligible ? finiteOrNull(mixed.warningRecall) : null;
-  const passed =
-    !eligible || (observed !== null && observed >= MIXED_WARNING_RECALL_MIN);
+  floor: number,
+): MixedRecallDiagnostics {
+  const measured = mixed.sampleSize > 0;
   return {
-    id: "warning.mixed-recall",
-    tier: "warning",
     role: "diagnostic",
-    scope: "overall",
-    evidence: "not-applicable",
-    observed,
-    bound: "point",
-    operator: ">=",
-    required: MIXED_WARNING_RECALL_MIN,
+    decides: false,
+    spendsAlpha: false,
+    generationMode: mixed.generationMode,
+    floor,
+    observed: measured ? finiteOrNull(mixed.warningRecall) : null,
+    lower95: measured ? finiteOrNull(mixed.warningRecallLower95) : null,
     sampleSize: mixed.sampleSize,
-    eligible,
-    passed,
-    // The mixed interval is reported for context but never substitutes the
-    // approved point gate.
-    reasons: passed
-      ? []
-      : [
-          `${MATERIAL_ASSISTANCE_MODE} mixed >=${PREREGISTRATION_V4.materialAssistance.minimumAiFraction} AI warning recall ${show(observed)} is below ${MIXED_WARNING_RECALL_MIN} (lower95 ${mixed.warningRecallLower95} reported, not gating)`,
-        ],
   };
 }
 

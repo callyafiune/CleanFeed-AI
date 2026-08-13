@@ -12,6 +12,7 @@ import {
 } from "../prediction-schema.ts";
 import {
   buildBenchmarkReport,
+  mixedRecallSection,
   renderReportMarkdown,
   ReportGovernanceError,
   type BenchmarkReportInput,
@@ -588,6 +589,17 @@ function metrics(): EvaluationMetrics {
       m: 8,
       perGateAlpha: 0.00625,
       z: 2.4977,
+    },
+    // Only the material-assistance triple of `mixed`: the diagnostic section reads
+    // that one block and the cast covers the cohort lists no section of this file
+    // renders.
+    mixed: {
+      atLeastHalfAi: {
+        generationMode: "mechanistic",
+        sampleSize: 100,
+        warningRecall: 0.3,
+        warningRecallLower95: 0.2,
+      },
     },
     coverage: { value: 0.75, method: "point" },
     abstentionRate: { value: 0.125, method: "point" },
@@ -1185,6 +1197,143 @@ describe("renderReportMarkdown", () => {
     // The top band is unbounded, and its expected n and ceiling are its OWN: 119
     // lines and 3.62 %, not the headline's 800 and 0.55 %.
     expect(md).toContain("| 300+ | 2 | 2 | 2 | 1 | 119 | 0.0362 |");
+  });
+
+  it("publishes the material-assistance recall beside its floor, with no verdict cell", async () => {
+    const base = metrics();
+    const mixedRow = async (warningRecall: number): Promise<string> => {
+      const markdown = renderReportMarkdown(
+        await buildBenchmarkReport(
+          baseInput({
+            metrics: {
+              ...base,
+              mixed: {
+                ...base.mixed,
+                atLeastHalfAi: {
+                  ...base.mixed.atLeastHalfAi,
+                  warningRecall,
+                  warningRecallLower95: warningRecall - 0.1,
+                },
+              },
+            },
+          }),
+        ),
+      );
+      const table = section(markdown, "Recall de assistência material");
+      const row = table
+        .split("\n")
+        .find((line) => line.startsWith("| mechanistic |"));
+      if (row === undefined) throw new Error("no cohort row in the section");
+      return row;
+    };
+
+    // The FLOOR is the policy's number reaching the published row, and the OBSERVED
+    // recall moves with the measurement: the two runs differ in one cell and agree in
+    // the other. A `toContain("0.5")` would be satisfied by the AI-fraction sentence
+    // in the section's own prose.
+    const floor = PREREGISTRATION_V4.materialAssistance.minimumWarningRecall;
+    expect(await mixedRow(0.3)).toBe(
+      `| mechanistic | 100 | 0.3000 | 0.2000 | ${floor.toFixed(4)} |`,
+    );
+    expect(await mixedRow(0.8)).toBe(
+      `| mechanistic | 100 | 0.8000 | 0.7000 | ${floor.toFixed(4)} |`,
+    );
+
+    const markdown = renderReportMarkdown(
+      await buildBenchmarkReport(baseInput()),
+    );
+    const table = section(markdown, "Recall de assistência material");
+    expect(table).toContain(
+      "- Papel: diagnostic · decide release: não · gasta alpha: não",
+    );
+    // No verdict cell anywhere in the section: the gate table prints these two words
+    // and this section must not.
+    expect(table).not.toContain("passou");
+    expect(table).not.toContain("reprovou");
+    // Both rearm conditions appear. This is a PRESENCE check and nothing more — a
+    // section that typed the two strings satisfies it, which is why the sealed values
+    // are driven out of the section by the test below and not by this loop.
+    for (const condition of PREREGISTRATION_V4.materialAssistance
+      .rearmRequires) {
+      expect(table).toContain(`- \`${condition}\``);
+    }
+  });
+
+  it("prints the floor, the AI fraction and both rearm conditions off the policy it is GIVEN, not off values typed into the section", async () => {
+    // The section is driven with a material-assistance block that is NOT the embedded
+    // one — the same discipline `lengthBandKeyOf` is proved under. Every sealed value
+    // the section prints is absent from this policy, so a section that retyped 0.5, the
+    // 0.5 AI fraction or either condition name goes red on the `standIn` run and stays
+    // green on the `sealed` one.
+    const standIn = {
+      ...PREREGISTRATION_V4.materialAssistance,
+      minimumAiFraction: 0.62,
+      minimumWarningRecall: 0.42,
+      rearmRequires: ["condicao-de-teste-a", "condicao-de-teste-b"] as const,
+    };
+    const cohort = {
+      generationMode: "mechanistic" as const,
+      sampleSize: 100,
+      warningRecall: 0.3,
+      warningRecallLower95: 0.2,
+    };
+
+    const rendered = mixedRecallSection(cohort, standIn).join("\n");
+    expect(rendered).toContain(
+      "| mechanistic | 100 | 0.3000 | 0.2000 | 0.4200 |",
+    );
+    expect(rendered).toContain(">= 0.62");
+    expect(rendered).toContain("- `condicao-de-teste-a`");
+    expect(rendered).toContain("- `condicao-de-teste-b`");
+    // And the sealed values are nowhere in the output when the sealed policy is not
+    // the one handed over: that is the half a presence check cannot see.
+    const sealed = PREREGISTRATION_V4.materialAssistance;
+    expect(rendered).not.toContain(sealed.minimumWarningRecall.toFixed(4));
+    for (const condition of sealed.rearmRequires) {
+      expect(rendered).not.toContain(condition);
+    }
+
+    // The embedded policy is what `renderReportMarkdown` hands over, so the same
+    // section renders the sealed numbers on the real path.
+    const md = renderReportMarkdown(await buildBenchmarkReport(baseInput()));
+    const table = section(md, "Recall de assistência material");
+    expect(table).toContain(`>= ${sealed.minimumAiFraction}`);
+    expect(table).toContain(`| ${sealed.minimumWarningRecall.toFixed(4)} |`);
+    for (const condition of sealed.rearmRequires) {
+      expect(table).toContain(`- \`${condition}\``);
+    }
+  });
+
+  it("prints an empty cohort as an absence in BOTH statistic cells, where the row is rendered", async () => {
+    // The producer returns `null` for an unmeasured recall and for its bound; this is
+    // the assertion at the RENDER site, because a renderer that printed `fmt(null)`
+    // would put a bare "n/a" — indistinguishable from a number that failed to
+    // serialize — or, worse, a 0 that reads as a measured floor of zero.
+    const base = metrics();
+    const md = renderReportMarkdown(
+      await buildBenchmarkReport(
+        baseInput({
+          metrics: {
+            ...base,
+            mixed: {
+              ...base.mixed,
+              atLeastHalfAi: {
+                ...base.mixed.atLeastHalfAi,
+                sampleSize: 0,
+                warningRecall: Number.NaN,
+                warningRecallLower95: 0,
+              },
+            },
+          },
+        }),
+      ),
+    );
+    const table = section(md, "Recall de assistência material");
+    expect(table).toContain(
+      "| mechanistic | 0 | n/a (coorte vazia) | n/a (coorte vazia) |",
+    );
+    // The zero the producer was handed does not reach the page in either cell.
+    expect(table).not.toContain("| 0.0000 |");
   });
 
   it("says plainly when nothing was reserved, instead of printing an empty list", async () => {
