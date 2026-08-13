@@ -8043,3 +8043,88 @@ chaveado pela operação, o vocabulário nascendo no lab, as nove asserções co
 ilha, e a perna 5 de `island_plan` que eu decidi acrescentar — digests de templates servidos distintos dois a
 dois, porque a identidade gravada prefixa o **nome** da receita e cem nomes servidos por cem cópias do mesmo
 prompt passam todas as guardas de hoje.
+
+---
+
+## Marca d'água de texto: o Claude fica no núcleo, e a condição é a janela única (2026-08-12)
+
+Decisão do **OPERADOR**, contra a minha recomendação, e ele estava certo. Fica registrado com a retratação
+porque o erro de raciocínio é reutilizável.
+
+### O que apareceu, e o que foi medido de fora
+
+A Anthropic publicou que marca conteúdo gerado: *"Watermarking will be applied at the model level, which
+means it will be present no matter which Claude product or surface the text comes from"*, com o Claude
+Platform (API) e o Claude Code listados, sobre **todo** texto gerado; modelos novos a partir de **2 de agosto
+de 2026** já saem marcados e os existentes estão em *"transition period in progress"*. O detector para
+terceiros é prometido e **não existe** — "forthcoming technical documentation".
+
+E a peça que decide o outro lado: **o Gemini pela API NÃO é marcado.** Resposta de engenheiro do Google no
+fórum de desenvolvedores, **5 de agosto de 2026**, a uma pergunta que citava `gemini-3.1-flash-lite`:
+*"Generated text from the API is NOT SynthID-watermarked. There is no machine-readable provenance signal"*, e
+*"native text watermarking is not planned at the moment"*. O SynthID de texto roda nas superfícies de consumo,
+não no `generateContent`.
+
+Consequência para o slate, lida de `DEFAULT_MODELS`: a lane `agy` é **`claude-sonnet-4-6`** — marcada, ou a
+caminho disso, sem data e sem sinal observável. As lanes `gemini` e `gemini_cli` são API, logo limpas. A
+família reservada ao OOD é OpenAI (`gpt-5.6-luna`), que não embarcou marca.
+
+### As duas propostas minhas que caíram, e por quê
+
+**1. Gravar presença de marca como eixo por linha — RETIRADA pelo operador antes de eu escrevê-la.** Ele
+observou que os esquemas conhecidos são de **chave secreta**: green list / red list (Kirchenbauer et al.,
+2023) semeia por hash do contexto e detecta por teste z sobre a contagem de verdes; o SynthID-Text usa
+*tournament sampling* com g-funções. Construções diferentes, mesma propriedade — **sem a chave não há
+detecção**. Logo o eixo valeria `unknown` em toda linha Claude, para sempre. Um fator cujo único nível é
+`unknown` é o degenerado por construção que esta mesma sessão acabou de reverter da `proxyReason`: eu teria
+escrito o mesmo defeito com o sinal invertido.
+
+E a consequência que ele nomeou e eu não tinha: **não podemos auditar o nosso próprio corpus**, nem hoje nem
+quando o detector sair — um detector responde "isto é saída do Claude", que para a nossa lane já se sabe.
+Ressalva a registrar: indetectável **como marca** não é invisível para um aprendiz. A perturbação está nas
+estatísticas de token de qualquer forma, então um classificador pode aprender a consequência sem nomear a
+causa. É a combinação ruim: auditável por ninguém, aprendível pelo modelo.
+
+**2. Tirar o Claude do núcleo — RECUSADA, e a recusa é correta.** Eu invoquei "viés que ninguém pode medir não
+pode estar no núcleo". Três razões derrubam isso:
+
+- **o princípio se vira contra o proponente**: "o classificador vai aprender a marca" também não é alegação
+  medida, é hipótese. Eu pesei um risco não quantificável contra um custo quantificável — monocultura de
+  provedor no núcleo — e escolhi errado;
+- **a consequência já é medida**: a reserva OOD por família existe para detectar que o detector aprendeu algo
+  específico de gerador. Marca d'água é sinal específico de gerador. Se o detector estiver montado nela, o
+  recall na família reservada cai. O aparelho não nomeia a causa e mede o dano;
+- **e o núcleo misto é mais forte que o puro**, que é o argumento do operador: com Gemini sem marca e Claude
+  com marca no mesmo núcleo, a marca **não pode ser a história inteira** do desempenho, porque o detector tem
+  de funcionar na metade que não tem marca nenhuma.
+
+**3. O experimento de separabilidade antes-e-depois — RETIRADO por mim.** Comparar a AUC de lane de `agy`
+antes e depois do rollout, usando as 419 linhas do corpus morto como referência diagnóstica, deixa de valer a
+cota: com a lane gerada numa janela só não há antes-e-depois, e a reserva OOD já mede a consequência.
+
+### A condição de desenho que a decisão impõe
+
+O que sobra da preocupação não é a **presença** da marca — é a **variação dela dentro da família**. O
+`claude-sonnet-4-6` está no meio da transição declarada, então linhas geradas em momentos diferentes podem
+diferir, e aí `generatedAt` vira proxy de presença de marca: um eixo **oculto** que nenhum eixo declarado
+absorve.
+
+**A lane `agy` é gerada dentro de UMA janela**, e a janela é registrada. Assim a marca — presente ou ausente,
+e não há como saber qual — fica **constante dentro da família**, e perturbação constante dentro da família é
+indistinguível da impressão digital da própria família: o corpus já a nomeia (`generatorFamily`), já a mede (a
+sonda de lane, `agy` em AUC 0,9696 um-contra-resto) e já a guarda (a reserva OOD).
+
+### O resíduo, declarado
+
+O núcleo inclui um provedor que marca a saída em **nível de modelo**; a força, o esquema e a robustez a
+paráfrase são **desconhecidos** e não verificáveis por terceiros; nenhuma medição nossa pode isolar a
+contribuição da marca para o recall; e a perna de gerador não visto é o mecanismo que faria isso aparecer.
+Vence na Fase 6, em `limitations.md` e no model card.
+
+### O que isto NÃO muda
+
+A manchete. O teto de FPR é alegação sobre a classe **humana**, e marca d'água é instrumento de um lado só —
+pode dizer "isto é saída do Claude", nunca "isto é humano". Ausência de marca não é evidência de autoria
+humana. E a composição que eu havia imaginado — checar a marca primeiro e usar o detector no resíduo — **não
+está disponível para nós** enquanto a verificação depender de chave do provedor, o que também é a razão de o
+detector estatístico continuar sendo a única coisa que roda sem chave, sem rede e sem permissão de ninguém.
