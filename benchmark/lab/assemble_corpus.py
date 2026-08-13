@@ -200,11 +200,74 @@ ISLAND_PLAN_CLASS_LINES: dict[str, int] = {"human": 4000, "ai": 4000, "mixed": 2
 # aprovaria quatro.
 RESERVED_ISLANDS: tuple[str, ...] = ("ilha_17", "ilha_18", "ilha_19")
 
+# As tres operacoes de mistura, e a ORDEM importa: as fronteiras dos clusters de
+# `_island_component` derivam dela. Grafia ASCII, como as identidades do resto do plano.
+MIX_OPERATIONS: tuple[str, ...] = ("substituicao", "insercao", "concatenacao")
+
+# Os sete niveis INTERIORES da curva de cobertura de IA, em pontos percentuais de
+# `aiFraction` alvo. Os extremos nao sao linhas mistas: 0 % e o texto do pai palavra por
+# palavra e colide com ele por `normalizedTextSha256`, e um documento integralmente de IA
+# nao tem origem dividida — `mixture` e proibida fora de `mixed` por esse motivo.
+MIX_LEVELS: tuple[int, ...] = (15, 25, 40, 50, 60, 75, 90)
+
+# A celula que sai, e a razao e VIES DE COMPRIMENTO e nao impossibilidade: inserir uma
+# secao que leve o documento ao nivel mais baixo preserva o pai inteiro, e o par pai/mista
+# fica perto do limite de poda de `near_dupes` (0,82 sobre shingles de 5 TOKENS) — de que
+# lado depende do comprimento do pai. Medido: cruza o limite a partir de ~223 tokens e fica
+# abaixo dele em pai curto. Logo a celula existiria so em documento pequeno, e a operacao
+# viraria proxy do comprimento, que e eixo de fatia diagnostica declarado — pior que celula
+# vazia, porque ninguem le o vies. Acima da fronteira a poda derruba o pai humano (a
+# prioridade e ai > mixed > human) e com ele a ponte da ilha. A celula seguinte da mesma
+# operacao nao chega perto em comprimento algum: 0,745 no maximo.
+MIX_CELL_EXCLUDED: tuple[tuple[str, int], ...] = (("insercao", 15),)
+
+
+def mix_cells() -> tuple[tuple[str, int], ...]:
+    """As celulas operacao x nivel que uma ilha compra, sem as inalcancaveis.
+
+    Ordem OPERACAO-maior, e ela e o contrato: as fronteiras dos clusters de
+    `_island_component` derivam desta sequencia.
+    """
+    return tuple(
+        (operacao, nivel)
+        for operacao in MIX_OPERATIONS
+        for nivel in MIX_LEVELS
+        if (operacao, nivel) not in MIX_CELL_EXCLUDED
+    )
+
+
+def mix_lines_by_operation(mistas: int) -> dict[str, int]:
+    """Linhas por operacao numa ilha, DERIVADAS das celulas e nunca digitadas.
+
+    A aritmetica e a autoridade e a funcao e TOTAL sobre qualquer cota de ilha: as linhas
+    dividem-se igualmente entre as celulas e o resto vai para as primeiras, na ordem de
+    `mix_cells`, para a soma fechar exactamente com a cota. Digitar 35/30/35 poria a
+    alocacao em dois lugares que podem divergir sem nada reprovar — e amarraria a funcao ao
+    plano de 20 ilhas, que e uma escolha derivada e nao um dado.
+
+    No plano de producao (20 ilhas, 100 mistas por ilha) isto realiza 20 celulas de 5
+    linhas e 35/30/35 por operacao, e esses numeros estao pinados por teste.
+    """
+    celulas = mix_cells()
+    por_operacao = dict.fromkeys(MIX_OPERATIONS, 0)
+    for indice, (operacao, _) in enumerate(celulas):
+        por_operacao[operacao] += mistas // len(celulas) + (
+            1 if indice < mistas % len(celulas) else 0
+        )
+    return por_operacao
+
 
 def _island(indice: int) -> dict:
-    """Uma ilha do plano: o nome, os templates, o bloco de semente e o template de mistura.
+    """Uma ilha do plano: o nome, os templates, o bloco de semente e os de mistura.
 
-    `templates` e `mixingTemplate` sao SLOTS e nao receitas do slate de hoje: o slate e
+    Os templates de mistura sao um por OPERACAO, chaveados por ela. Um slot unico por ilha
+    confundiria a operacao com a ilha: `dev` recebe uma ilha so, e a ilha de nucleo do bloco
+    cego tambem, entao as duas carregariam UMA operacao — cegueira estrutural no ponto de
+    falha que a curva existe para medir. E a chave e a operacao, nao a posicao, porque duas
+    identidades da mesma operacao ficam assim IRREPRESENTAVEIS, e o dono de uma colisao
+    consegue nomear a operacao na recusa.
+
+    `templates` e `mixingTemplates` sao SLOTS e nao receitas do slate de hoje: o slate e
     decisao de coleta do operador e este arquivo nao a toma. O que a guarda impoe e a FORMA —
     template em uma ilha so — e `generate_ai.island_plan` recusa uma ilha cujos templates o
     slate nao serve, o que hoje e toda ilha (`RECIPES` declara quatro nomes e o plano pede
@@ -214,7 +277,10 @@ def _island(indice: int) -> dict:
     return {
         "island": f"ilha_{indice:02d}",
         "templates": (f"pt-ilha-{indice:02d}-a", f"pt-ilha-{indice:02d}-b"),
-        "mixingTemplate": f"mix-ilha-{indice:02d}",
+        "mixingTemplates": {
+            operacao: f"mix-{operacao}-ilha-{indice:02d}"
+            for operacao in MIX_OPERATIONS
+        },
         "seedBlock": indice,
         "lines": {
             classe: total // ISLAND_COUNT
@@ -2961,10 +3027,18 @@ def _island_component(ilha: dict) -> list[dict]:
         modulo o numero de humanas. Com menos geradas que humanas as humanas nao nomeadas
         ficam SOZINHAS: medido, 100 geradas sobre 200 humanas dao 101 componentes;
       * as geradas agrupam-se por `promptTemplate`, entao dois templates sao DOIS grupos, e
-        a ponte entre eles sao as mistas: todas partilham `mixingTemplate` e cada uma nomeia
-        uma humana em `derivationRoot`, que e uniao POR VALOR. Sem linha mista a ilha mede 2
-        componentes, um por template — medido —, e com uma mista so ainda mede 2, porque uma
-        mista alcanca a humana de um grupo apenas.
+        a ponte entre eles sao as mistas, que nomeiam uma humana em `derivationRoot` — uniao
+        POR VALOR. Sem linha mista a ilha mede 2 componentes, um por template — medido —, e
+        com uma mista so ainda mede 2, porque uma mista alcanca a humana de um grupo apenas.
+
+    As mistas partilham `promptTemplate` DENTRO do cluster de operacao, nao ao longo da
+    ilha: sao tres clusters, um por template de mistura. O CRITERIO que fecha a ilha em um
+    componente e **ao menos um** cluster alcancar as duas metades de template de geracao;
+    construir todos alcancando e condicao SUFICIENTE deduzida dele, e a distincao e medida
+    (as fixtures que a prendem estao em `test_connectivity_feasibility.py`): tres clusters
+    cobrindo as duas metades SOMADOS mas nenhum individualmente racham a ilha em 2, e um
+    cluster livre com os outros dois presos a uma paridade fecha em 1. A paridade importa
+    porque as linhas `ai` alternam template pelo indice do pai.
 
     Dar pai de outra ilha a uma linha mista funde as duas — medido, 2 componentes viram 1 —
     e e essa a razao de (iii).
@@ -3021,7 +3095,16 @@ def _island_component(ilha: dict) -> list[dict]:
                 },
             }
         )
-    for i in range(ilha["lines"]["mixed"]):
+    # Os clusters sao CONTIGUOS pelo indice, com as fronteiras derivadas das linhas por
+    # operacao: `i % len(MIX_OPERATIONS)` daria 34/33/33, que nao e a alocacao que o plano
+    # compra. O pai da mista `i` continua sendo `humanas[i % len(humanas)]` — pai da MESMA
+    # ilha, um nivel por pai —, e blocos contiguos de indice dao as duas paridades a todo
+    # cluster, com margem sobre o criterio de "ao menos um".
+    mistas = ilha["lines"]["mixed"]
+    operacao_de: list[str] = []
+    for operacao, quantas in mix_lines_by_operation(mistas).items():
+        operacao_de.extend([operacao] * quantas)
+    for i in range(mistas):
         rid = f"plano_m_{nome}_{i:04d}"
         registros.append(
             {
@@ -3032,7 +3115,9 @@ def _island_component(ilha: dict) -> list[dict]:
                     "author": group_axes.unknown("coautoria"),
                     "source": group_axes.known(f"plano_th_{rid}"),
                     "humanSeed": group_axes.known(humanas[i % len(humanas)]),
-                    "promptTemplate": group_axes.known(ilha["mixingTemplate"]),
+                    "promptTemplate": group_axes.known(
+                        ilha["mixingTemplates"][operacao_de[i]]
+                    ),
                     "generationBatch": group_axes.known(f"plano_gb_{rid}"),
                     "nearDuplicate": group_axes.known(f"plano_dup_{rid}"),
                     "derivationRoot": group_axes.known(humanas[i % len(humanas)]),
@@ -3052,9 +3137,9 @@ def assert_island_plan_is_a_partition(plan: tuple[dict, ...]) -> None:
     candidato humano que nao pertence a ilha alguma, e a linha gerada dele nao tem ilha.
 
     O eixo e o de REGISTRO e nao o campo do plano, e a diferenca morde: `templates` e
-    `mixingTemplate` sao campos distintos do plano que escrevem o MESMO eixo
+    `mixingTemplates` sao campos distintos do plano que escrevem o MESMO eixo
     `groups.promptTemplate` — o de geracao nas linhas `ai`, o de mistura nas mistas. Um
-    namespace por campo aprovaria um plano cujo `mixingTemplate` e o `templates` de outra
+    namespace por campo aprovaria um plano cujo `mixingTemplates` traz o `templates` de outra
     ilha, e o corpo colapsaria com as pernas todas verdes; medido, 19 componentes onde o plano
     declara 20. Por isso os dois campos partilham UM namespace, e o dono nomeia o campo de
     onde o valor veio, para a mensagem continuar diagnostica.
@@ -3068,10 +3153,27 @@ def assert_island_plan_is_a_partition(plan: tuple[dict, ...]) -> None:
         raise IslandPlanRefused(
             "plano vazio: sem ilha declarada nao ha o que recusar nem o que gerar"
         )
+    # O VOCABULARIO antes do passeio, porque a disjuncao so significa algo se as chaves
+    # forem as operacoes: chave a mais nao tem celula no plano, chave a menos deixa a ilha
+    # sem cluster para aquela operacao, e uma grafia acentuada contrabandearia duas
+    # identidades da mesma operacao sob nomes diferentes. Uma igualdade recusa as tres.
+    operacoes = tuple(sorted(MIX_OPERATIONS))
+    for ilha in plan:
+        declaradas = tuple(sorted(ilha["mixingTemplates"]))
+        if declaradas != operacoes:
+            raise IslandPlanRefused(
+                f"a ilha {ilha['island']!r} declara templates de mistura para {declaradas} "
+                f"e as operacoes sao {operacoes}: sem uma chave por operacao a ilha carrega "
+                "menos operacoes do que a curva compra, ou compra celula que o plano nao "
+                "declara — e as duas so aparecem na montagem, depois de a cota estar gasta"
+            )
     # Um eixo de REGISTRO por entrada, e os campos do plano que o escrevem. `promptTemplate`
     # recebe DOIS campos, porque as linhas `ai` e as mistas escrevem o mesmo eixo.
     eixos: tuple[tuple[str, tuple[str, ...]], ...] = (
-        ("promptTemplate (template de geracao e de mistura)", ("templates", "mixingTemplate")),
+        (
+            "promptTemplate (template de geracao e de mistura)",
+            ("templates", "mixingTemplates"),
+        ),
         ("seedBlock (bloco de semente humana)", ("seedBlock",)),
     )
     for rotulo, campos in eixos:
@@ -3079,9 +3181,19 @@ def assert_island_plan_is_a_partition(plan: tuple[dict, ...]) -> None:
         for ilha in plan:
             for campo in campos:
                 bruto = ilha[campo]
-                valores = tuple(bruto) if campo == "templates" else (bruto,)
-                for valor in valores:
-                    donos.setdefault(valor, []).append(f"{ilha['island']}/{campo}")
+                # O dono nomeia a OPERACAO e nao so o campo: `ilha_19/mixingTemplates` nao
+                # diz qual dos tres slots colidiu, e a mensagem deixa de ser diagnostica.
+                if campo == "mixingTemplates":
+                    pares = tuple(
+                        (f"{campo}[{operacao}]", valor)
+                        for operacao, valor in bruto.items()
+                    )
+                elif campo == "templates":
+                    pares = tuple((campo, valor) for valor in bruto)
+                else:
+                    pares = ((campo, bruto),)
+                for nome, valor in pares:
+                    donos.setdefault(valor, []).append(f"{ilha['island']}/{nome}")
         if not all(len(ilhas) == 1 for ilhas in donos.values()):
             colisoes = {
                 valor: ilhas for valor, ilhas in donos.items() if len(ilhas) > 1
@@ -3090,7 +3202,7 @@ def assert_island_plan_is_a_partition(plan: tuple[dict, ...]) -> None:
                 f"o plano nao particiona o eixo de registro {rotulo!r}: {colisoes}. Duas "
                 "ilhas que partilham um valor sao UMA ilha no grafo, e o corpo colapsa "
                 "depois de a cota estar gasta. O campo esta no nome de cada dono, porque "
-                "`templates` e `mixingTemplate` escrevem este mesmo eixo"
+                "`templates` e `mixingTemplates` escrevem este mesmo eixo"
             )
     blocos = sorted(ilha["seedBlock"] for ilha in plan)
     if blocos != list(range(len(plan))):
@@ -3112,6 +3224,19 @@ def assert_island_plan_realizes_the_five_fractions(plan: tuple[dict, ...]) -> No
     comparasse "entre 15 e 20 ilhas de 200 a 270 linhas" aprovaria os tres.
     """
     registros = [linha for ilha in plan for linha in _island_component(ilha)]
+    # UMA ilha e UM componente conexo, e este e o criterio do proprio conceito — nao uma
+    # condicao deduzida dele. Sem esta perna a guarda julga as fracoes de um corpo cujas
+    # ilhas podem ter-se fundido, e o colapso aparece na montagem, depois da cota. Medido:
+    # tres clusters de mistura cobrindo as duas metades de template somados mas nenhum
+    # individualmente dao 40 componentes onde o plano declara 20.
+    ilhas_medidas = len(set(connected_components(registros).values()))
+    if ilhas_medidas != len(plan):
+        raise IslandPlanRefused(
+            f"o plano declara {len(plan)} ilha(s) e o corpo modelado fecha em "
+            f"{ilhas_medidas} componente(s) conexo(s): uma ilha que se funde com outra nao "
+            "particiona eixo algum, e as fracoes realizadas por um corpo desses nao dizem "
+            "nada sobre o plano"
+        )
     try:
         assert_components_can_fill_five_partitions(registros)
         plano = _plano_de_blocos(registros, set())

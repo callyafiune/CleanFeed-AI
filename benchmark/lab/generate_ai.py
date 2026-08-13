@@ -282,6 +282,25 @@ def island_plan(value: str) -> dict:
             "que o plano nao cumpre produz uma classe que a montagem recusa depois de a "
             "cota estar gasta"
         )
+    # A particao de ilha e sobre IDENTIDADE de template, e a identidade gravada e
+    # `{recipe}_{digest[:16]}` — com o NOME no prefixo, porque um digest sozinho e ilegivel
+    # num relatorio de cluster. O efeito colateral: dois nomes servindo bytes IDENTICOS
+    # produzem identidades distintas, o grafo continua particionado, e a independencia de
+    # template que o split modela fica FALSA. Escrever cem prompts copiando e ajustando e a
+    # forma natural de escrever cem prompts, e nada mais acusaria.
+    por_digesto: dict[str, list[str]] = {}
+    for nome in sorted(RECIPES):
+        por_digesto.setdefault(template_digest(nome), []).append(nome)
+    repetidos = {
+        digesto[:16]: nomes for digesto, nomes in por_digesto.items() if len(nomes) > 1
+    }
+    if repetidos:
+        raise argparse.ArgumentTypeError(
+            f"o slate serve receitas de bytes identicos: {repetidos}. A particao de ilha "
+            "ficaria NOMINAL — identidades distintas sobre o mesmo prompt —, e o recall "
+            "voltaria a ser medido sobre prompts ja vistos, que e o que a obrigacao de ilha "
+            "existe para impedir"
+        )
     return island
 
 

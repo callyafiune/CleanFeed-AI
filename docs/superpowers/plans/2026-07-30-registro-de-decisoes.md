@@ -8128,3 +8128,103 @@ pode dizer "isto é saída do Claude", nunca "isto é humano". Ausência de marc
 humana. E a composição que eu havia imaginado — checar a marca primeiro e usar o detector no resíduo — **não
 está disponível para nós** enquanto a verificação depender de chave do provedor, o que também é a razão de o
 detector estatístico continuar sendo a única coisa que roda sem chave, sem rede e sem permissão de ninguém.
+
+---
+
+## A unidade B: três slots de mistura por ilha, e a retratação de um número que eu publiquei (2026-08-12)
+
+O plano passa a hospedar o desenho ratificado, e a unidade contém um erro meu de medição que ela mesma
+descobriu ao tentar prender o número por teste. A retratação vem primeiro, porque é a parte que importa.
+
+### A retratação: `shingles_of` recebe LISTA de tokens
+
+Publiquei que a célula v1 × inserção é **inalcançável em todo comprimento de pai**, com Jaccard de
+**0,848 a 0,869** — no ESTADO, neste registro e em duas mensagens de commit. Está errado. A sonda que
+produziu esses números fazia
+
+```python
+jaccard(shingles_of(" ".join(pai)), shingles_of(" ".join(filho)))
+```
+
+e `shingles_of` recebe **lista de tokens**, não texto. Passando a string, ela fatiou **caracteres**: o que eu
+medi foram 5-gramas de caractere, que é outra quantidade.
+
+Medido com a API correta, sobre pais de 100 a 1.200 tokens:
+
+| nível | 100 | 150 | 200 | 300 | 600 | 1200 |
+|---|---|---|---|---|---|---|
+| v1 (15 %) × inserção | 0,780 | 0,807 | 0,817 | **0,827** | **0,839** | **0,844** |
+| v2 (25 %) × inserção | 0,692 | 0,710 | 0,719 | 0,730 | 0,740 | 0,745 |
+
+A célula cruza o limite de 0,82 **a partir de ~223 tokens de pai** e fica **abaixo** dele em pai curto. Isto
+é: a álgebra que eu havia feito antes — fronteira em torno de 205 tokens — estava **certa**, e a medição com
+que eu a declarei refutada é que estava quebrada. Eu preferi a sonda à álgebra porque a sonda importava
+funções de produção, e essa preferência é normalmente correta; o que ela não cobre é passar o **tipo errado**
+para a função certa. O número sai parecendo medido.
+
+**A consequência muda a razão, não a decisão.** A célula continua fora, e o motivo é melhor: ela seria
+alcançável **só para pai curto**, logo existiria apenas em documento pequeno, e a **operação viraria proxy do
+comprimento** — que é eixo de fatia diagnóstica declarado, com as faixas pré-inscritas indo de 50 palavras a
+300 e mais. Célula enviesada por comprimento é pior que célula vazia, porque ninguém lê o viés. E agora está
+**presa por teste nos dois lados da fronteira**, mais a fronteira dentro de uma faixa afirmada.
+
+### O que a unidade entregou
+
+**A forma:** `_island()` declara `mixingTemplates` como **dicionário chaveado pela operação**. O critério da
+escolha é o que a guarda precisa: duas identidades da mesma operação ficam **irrepresentáveis** pela estrutura,
+o dono de uma colisão nomeia `ilha_19/mixingTemplates[concatenacao]` — tupla posicional diria só
+`ilha_19/mixingTemplates`, e a mensagem deixaria de apontar o conserto —, e o vocabulário fica comparável a
+uma constante em vez de virar grafia de campo.
+
+**O vocabulário:** `MIX_OPERATIONS` nasce no lab, junto das constantes do plano, e a guarda de partição o
+confere por **uma igualdade** antes do passeio: chave alienígena, chave faltante e a grafia acentuada
+(`inserção`) caem todas nela. `schema.ts` **não** entra — o eixo de primeira classe segue dívida da v2.
+
+**A alocação é derivada, e a função é total.** `mix_cells()` dá sete níveis × três operações menos a excluída
+= 20 células; `mix_lines_by_operation(mistas)` divide igualmente e distribui o resto pelas primeiras células.
+No plano de produção realiza 35/30/35, e isso está pinado — mas a função responde para qualquer cota, porque
+20 ilhas é escolha **derivada** e não um dado. A primeira versão que eu escrevi **recusava** cota diferente de
+100, e nove testes de geometria ficaram vermelhos: as fixtures variam o número de ilhas de propósito, e
+`2000 // 15` são 133 mistas por ilha. Foi a suíte que apontou que a rigidez era minha.
+
+**O invariante de ilha:** `assert_island_plan_realizes_the_five_fractions` passou a exigir
+`len(componentes) == len(plan)` antes de julgar frações. É o critério do próprio conceito de ilha — não uma
+condição deduzida dele —, e sem ele a guarda julgava as frações de um corpo cujas ilhas podiam ter-se fundido.
+
+**A perna 5, que eu acrescentei ao contrato:** `island_plan` recusa um slate que sirva receitas de **bytes
+idênticos**. A identidade gravada é `{recipe}_{digest[:16]}`, com o **nome** no prefixo, então cem nomes
+servindo cem cópias do mesmo prompt produzem cem identidades distintas: o grafo continua particionado, a
+partição fica **nominal**, e o recall volta a ser medido sobre prompts já vistos — que é exactamente o que a
+obrigação de ilha existe para impedir. Nada guardava isso: a perna 4 confere **nomes** contra `RECIPES`, e o
+teste que computava digests só afirmava que cada linha leva um digest da própria ilha.
+
+### As asserções, e as duas que sustentam o critério
+
+Dez testes novos. O critério é **ao menos um** cluster de operação alcançar as duas metades de template de
+geração, e três asserções o separam da condição suficiente:
+
+| caso | componentes |
+|---|---|
+| natural | **20** de 500 |
+| **VERMELHO** — pais de uma paridade só | **40** (2 por ilha) |
+| **VERMELHO** — os três clusters cobrindo as duas paridades **somados**, nenhum individualmente | **40** |
+| **VERDE de fronteira** — um cluster livre, os outros dois presos | **20** de 500 |
+
+Sem o verde de fronteira, os dois vermelhos e o caso natural seriam todos consistentes com o enunciado errado
+— e é o enunciado errado que eu escrevi na linha 113 do ESTADO anteontem.
+
+### A bateria
+
+Sete mutações, sete vermelhas, restaurações byte-idênticas: regressão ao slot único, perna de vocabulário
+removida, invariante de ilha removido, dono que para de nomear a operação, clusters em *round-robin*
+(34/33/33 em vez de 35/30/35), pais de uma paridade, e perna 5 removida.
+
+Medido em rodada única: pytest do lab **679 testes / 450 subtests** verde; vitest **172 arquivos / 3.056**
+verde; `evaluatorDigest` **inalterado** (`1bd5f072…`) porque os arquivos do lab não são do avaliador; sem
+CRLF.
+
+### O que fica
+
+O slate continua não cumprindo o plano — `RECIPES` declara 4 identidades contra 100 —, e agora com a perna 5
+a exigir que as 100 sejam de **bytes** distintos, não só de nomes distintos. É trabalho de agente, e a cota
+que ele vai gastar é chave do operador.

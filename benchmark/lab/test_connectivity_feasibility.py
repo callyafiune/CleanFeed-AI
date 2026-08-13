@@ -1345,6 +1345,18 @@ class ConcordanciaComOPreflightDoBenchmark(unittest.TestCase):
                         self.assertNotIn(marcador, mensagem)
 
 
+def _mistura(sufixo: object) -> dict[str, str]:
+    """Os tres slots de mistura de uma ilha de fixture, um por operacao.
+
+    DERIVADO de `MIX_OPERATIONS` e nao digitado: acrescentar uma operacao ao plano tem de
+    quebrar as fixtures que declaram menos, em vez de passar por elas.
+    """
+    return {
+        operacao: f"mix-{operacao}-{sufixo}"
+        for operacao in assemble_corpus.MIX_OPERATIONS
+    }
+
+
 def _plano(n: int, reservadas: tuple[str, ...] = ()) -> tuple[dict, ...]:
     """Um plano de `n` ilhas UNIFORMES, com as contagens por classe do release.
 
@@ -1356,7 +1368,7 @@ def _plano(n: int, reservadas: tuple[str, ...] = ()) -> tuple[dict, ...]:
         return {
             "island": nome,
             "templates": (f"pt-{i}-a", f"pt-{i}-b"),
-            "mixingTemplate": f"mix-{i}",
+            "mixingTemplates": _mistura(i),
             "seedBlock": i,
             "lines": {
                 classe: total // n
@@ -1471,7 +1483,7 @@ class OPreflightDeIlhaRecusaAntesDaCota(unittest.TestCase):
             {
                 "island": f"ilha_{i}",
                 "templates": (f"pt-{i}",),
-                "mixingTemplate": f"mix-{i}",
+                "mixingTemplates": _mistura(i),
                 "seedBlock": i,
                 "lines": {"human": n, "ai": n, "mixed": n // 2},
                 "reserved": False,
@@ -1585,7 +1597,7 @@ class OPreflightDeIlhaRecusaAntesDaCota(unittest.TestCase):
             base = {
                 "island": "ilha_00",
                 "templates": ("pt-a", "pt-b"),
-                "mixingTemplate": "mix-0",
+                "mixingTemplates": _mistura(0),
                 "seedBlock": 0,
                 "lines": {"human": 200, "ai": 200, "mixed": 100},
                 "reserved": False,
@@ -1673,7 +1685,11 @@ class OPreflightDeIlhaRecusaAntesDaCota(unittest.TestCase):
         for rotulo, campo, valor_de in (
             ("promptTemplate", "templates", lambda i: base[i]["templates"]),
             ("seedBlock", "seedBlock", lambda i: base[i]["seedBlock"]),
-            ("promptTemplate", "mixingTemplate", lambda i: base[i]["mixingTemplate"]),
+            (
+                "promptTemplate",
+                "mixingTemplates",
+                lambda i: base[i]["mixingTemplates"],
+            ),
         ):
             colide_na_ultima = list(base)
             colide_na_ultima[-1] = dict(base[-1], **{campo: valor_de(0)})
@@ -1689,31 +1705,36 @@ class OPreflightDeIlhaRecusaAntesDaCota(unittest.TestCase):
                     mensagem = str(erro.exception)
                     self.assertIn(rotulo, mensagem)
                     # O DONO com o campo, e nao o campo solto: a prosa estatica da recusa cita
-                    # `templates` e `mixingTemplate`, entao afirmar o campo sozinho passaria
+                    # `templates` e `mixingTemplates`, entao afirmar o campo sozinho passaria
                     # sem o dono carregar coisa alguma.
                     self.assertIn(f"/{campo}", mensagem)
 
-    def test_o_mixingTemplate_de_uma_ilha_nao_pode_ser_o_template_de_geracao_de_outra(self):
+    def test_um_slot_de_mistura_nao_pode_ser_o_template_de_geracao_de_outra_ilha(self):
         """A colisao CRUZADA entre os dois campos que escrevem o MESMO eixo de registro.
 
         `_island_component` escreve `groups.promptTemplate` = template de geracao nas linhas
-        `ai` e = `mixingTemplate` nas mistas. Um namespace POR CAMPO aprovava um plano cujo
-        `mixingTemplate` e o `templates` de outra ilha, e o corpo colapsava com as pernas todas
+        `ai` e = o slot da operacao nas mistas. Um namespace POR CAMPO aprovava um plano cujo
+        slot de mistura e o `templates` de outra ilha, e o corpo colapsava com as pernas todas
         verdes — medido, 19 componentes onde o plano declara 20. Nenhuma das outras fixturas
         alcanca este caso: cada uma colide um campo consigo mesmo.
         """
         base = list(_plano(20))
         cruzado = list(base)
-        cruzado[-1] = dict(base[-1], mixingTemplate=base[0]["templates"][0])
+        # UM slot de UMA operacao, e nao o dicionario inteiro: e o caso minimo, e e ele que
+        # obriga o dono a nomear a operacao para a mensagem continuar diagnostica.
+        mistura = dict(base[-1]["mixingTemplates"])
+        mistura["concatenacao"] = base[0]["templates"][0]
+        cruzado[-1] = dict(base[-1], mixingTemplates=mistura)
         with self.assertRaises(assemble_corpus.IslandPlanRefused) as erro:
             assemble_corpus.assert_island_plan_is_a_partition(tuple(cruzado))
         mensagem = str(erro.exception)
         self.assertIn("promptTemplate", mensagem)
         # Os DOIS DONOS nomeados com o campo de onde o valor veio, que e o que torna a
-        # mensagem diagnostica. Afirmar so "templates" e "mixingTemplate" seria satisfeito
+        # mensagem diagnostica. Afirmar so "templates" e "mixingTemplates" seria satisfeito
         # pela PROSA ESTATICA da recusa, que cita os dois nomes de campo — a carga e o par
-        # `ilha/campo`, e e por ele que se afirma.
-        self.assertIn("ilha_19/mixingTemplate", mensagem)
+        # `ilha/campo`, com a OPERACAO dentro dele: sem ela o dono nao diz qual dos tres
+        # slots colidiu, e a recusa deixa de apontar o conserto.
+        self.assertIn("ilha_19/mixingTemplates[concatenacao]", mensagem)
         self.assertIn("ilha_00/templates", mensagem)
         # E o corpo que o plano cruzado monta tem MENOS componentes do que ilhas: e a
         # consequencia que a guarda existe para impedir, medida em vez de afirmada.
@@ -1776,7 +1797,7 @@ class OPreflightDeIlhaRecusaAntesDaCota(unittest.TestCase):
                     "island": f"ilha_{indice:02d}",
                     "templates": (f"pt-{indice:02d}-a", f"pt-{indice:02d}-b"),
                     "seedBlock": indice,
-                    "mixingTemplate": f"mt-{indice:02d}",
+                    "mixingTemplates": _mistura(f"mt-{indice:02d}"),
                     "reserved": reservada,
                     # A reservada leva 1.900 humanas contra 100 nas outras: `human` estoura o
                     # alvo de `test` e as outras duas classes ficam proporcionais e cabem.
@@ -1812,7 +1833,7 @@ class OPreflightDeIlhaRecusaAntesDaCota(unittest.TestCase):
             {
                 "island": f"ilha_{i:02d}",
                 "templates": (f"pt-{i}-a", f"pt-{i}-b"),
-                "mixingTemplate": f"mix-{i}",
+                "mixingTemplates": _mistura(i),
                 "seedBlock": i,
                 "lines": {"human": 1 if i == 19 else 100, "ai": 200, "mixed": 100},
                 "reserved": False,
@@ -2169,6 +2190,301 @@ class OPreflightDeIlhaRecusaAntesDaCota(unittest.TestCase):
             self.assertGreater(recusados, 0)
             # E todo template proposto e da ilha.
             self.assertTrue(propostos <= set(receitas), propostos)
+
+
+class OsTresClustersDeMisturaPorIlha(unittest.TestCase):
+    """A forma de tres slots de mistura, e o CRITERIO que fecha a ilha num componente.
+
+    O criterio e **ao menos um** cluster de operacao alcancar as duas metades de template de
+    geracao da ilha. Construir todos alcancando e condicao SUFICIENTE deduzida dele, e a
+    diferenca e observavel: sem os dois casos VERMELHOS abaixo, um enunciado da condicao
+    suficiente passaria por verdadeiro, porque o caso natural satisfaz as duas leituras.
+
+    A paridade e o que faz a atribuicao de pai importar: as linhas `ai` alternam entre os dois
+    templates de geracao pelo indice do pai, entao um cluster preso a uma paridade alcanca uma
+    metade so.
+    """
+
+    def _mistas_com_pais(self, ilha: dict, pai_de) -> list[dict]:
+        """A ilha com o pai de cada mista reescrito por `pai_de(indice, humanas)`.
+
+        Pos-edicao em vez de fixture propria de proposito: o corpo continua sendo o que
+        `_island_component` produz, entao o que muda entre os casos e SO a atribuicao de pai.
+        """
+        registros = assemble_corpus._island_component(ilha)
+        humanas = [rec["id"] for rec in registros if rec["label"] == "human"]
+        mistas = [rec for rec in registros if rec["label"] == "mixed"]
+        for indice, rec in enumerate(mistas):
+            pai = pai_de(indice, humanas)
+            rec["groups"]["humanSeed"] = group_axes.known(pai)
+            rec["groups"]["derivationRoot"] = group_axes.known(pai)
+        return registros
+
+    def _operacao_de(self, ilha: dict) -> list[str]:
+        sequencia: list[str] = []
+        por_operacao = assemble_corpus.mix_lines_by_operation(ilha["lines"]["mixed"])
+        for operacao, quantas in por_operacao.items():
+            sequencia.extend([operacao] * quantas)
+        return sequencia
+
+    def test_a_alocacao_por_operacao_e_DERIVADA_e_a_funcao_e_total(self):
+        """A aritmetica e a autoridade, e ela fecha em toda cota — nao so na de producao."""
+        self.assertEqual(len(assemble_corpus.mix_cells()), 20)
+        self.assertEqual(
+            assemble_corpus.mix_lines_by_operation(100),
+            {"substituicao": 35, "insercao": 30, "concatenacao": 35},
+        )
+        # TOTAL: a soma fecha com a cota em qualquer tamanho de ilha, porque o plano de 20
+        # ilhas e escolha derivada e nao um dado — 15 ilhas dao 133 mistas por ilha.
+        for mistas in (0, 1, 2, 100, 125, 133, 940):
+            with self.subTest(mistas=mistas):
+                self.assertEqual(
+                    sum(assemble_corpus.mix_lines_by_operation(mistas).values()), mistas
+                )
+
+    def test_as_mistas_de_uma_ilha_carregam_UMA_identidade_por_operacao(self):
+        """Tres identidades, com a multiplicidade da alocacao, casadas pelo slot da ilha."""
+        ilha = assemble_corpus.ISLAND_PLAN[0]
+        registros = assemble_corpus._island_component(ilha)
+        contagem: dict[str, int] = {}
+        for rec in registros:
+            if rec["label"] != "mixed":
+                continue
+            identidade = group_axes.identity_of(rec["groups"]["promptTemplate"])
+            contagem[identidade] = contagem.get(identidade, 0) + 1
+        esperado = {
+            ilha["mixingTemplates"][operacao]: quantas
+            for operacao, quantas in assemble_corpus.mix_lines_by_operation(
+                ilha["lines"]["mixed"]
+            ).items()
+        }
+        self.assertEqual(contagem, esperado)
+        self.assertEqual(len(contagem), len(assemble_corpus.MIX_OPERATIONS))
+
+    def test_o_plano_de_producao_fecha_cada_ilha_em_UM_componente(self):
+        registros = [
+            linha
+            for ilha in assemble_corpus.ISLAND_PLAN
+            for linha in assemble_corpus._island_component(ilha)
+        ]
+        tamanhos = componentes(registros)
+        self.assertEqual(len(tamanhos), len(assemble_corpus.ISLAND_PLAN))
+        self.assertEqual(set(tamanhos.values()), {500})
+
+    def test_VERMELHO_pais_de_UMA_PARIDADE_racham_a_ilha(self):
+        """O caso que prende a ponte de paridade: sem ela a ilha nao fecha.
+
+        Fica vermelho — isto e, volta a UM componente — se alguma aresta NOVA passar a fechar
+        a ilha por outro caminho: um eixo de uniao que `_island_component` emita partilhado
+        pela ilha inteira, ou mistas unidas por `source`/`generationBatch`.
+        """
+        registros = self._mistas_com_pais(
+            assemble_corpus.ISLAND_PLAN[0],
+            lambda indice, humanas: humanas[(2 * indice) % len(humanas)],
+        )
+        self.assertEqual(len(componentes(registros)), 2)
+
+    def test_VERMELHO_cobertura_so_COLETIVA_dos_tres_clusters_racha_a_ilha(self):
+        """Os tres clusters SOMADOS cobrem as duas paridades, e nenhum individualmente.
+
+        E o caso que refuta a condicao suficiente enunciada como criterio: se bastasse os
+        clusters cobrirem as duas metades EM CONJUNTO, este corpo fecharia em um componente.
+        Ele mede dois.
+        """
+        ilha = assemble_corpus.ISLAND_PLAN[0]
+        operacoes = self._operacao_de(ilha)
+        presa = assemble_corpus.MIX_OPERATIONS[1]
+
+        def pai_de(indice: int, humanas: list[str]) -> str:
+            paridade = 1 if operacoes[indice] == presa else 0
+            return humanas[(2 * indice + paridade) % len(humanas)]
+
+        registros = self._mistas_com_pais(ilha, pai_de)
+        self.assertEqual(len(componentes(registros)), 2)
+
+    def test_VERDE_de_fronteira_UM_cluster_livre_basta(self):
+        """A assercao que DISTINGUE o criterio da condicao suficiente.
+
+        Um cluster com pais naturais — as duas paridades — e os outros dois presos cada um a
+        uma paridade. Se o criterio fosse "todo cluster alcanca as duas metades", este corpo
+        rachava; ele fecha em um. Sem esta assercao, as duas vermelhas acima e o caso natural
+        seriam todos consistentes com o enunciado errado.
+        """
+        ilha = assemble_corpus.ISLAND_PLAN[0]
+        operacoes = self._operacao_de(ilha)
+        livre = assemble_corpus.MIX_OPERATIONS[0]
+
+        def pai_de(indice: int, humanas: list[str]) -> str:
+            if operacoes[indice] == livre:
+                return humanas[indice % len(humanas)]
+            paridade = 1 if operacoes[indice] == assemble_corpus.MIX_OPERATIONS[1] else 0
+            return humanas[(2 * indice + paridade) % len(humanas)]
+
+        registros = self._mistas_com_pais(ilha, pai_de)
+        self.assertEqual(len(componentes(registros)), 1)
+
+    def test_a_guarda_das_cinco_fracoes_RECUSA_um_corpo_cujas_ilhas_se_fundem(self):
+        """O RAMO da perna nova, contrafactual: o plano de producao nao o alcanca.
+
+        A guarda julga as fracoes de um corpo modelado. Sem o invariante de ilha ela julgaria
+        um corpo cujas ilhas se fundiram, e o colapso apareceria na montagem, depois da cota.
+        """
+        original = assemble_corpus._island_component
+
+        def parido_por_paridade(ilha: dict) -> list[dict]:
+            registros = original(ilha)
+            humanas = [rec["id"] for rec in registros if rec["label"] == "human"]
+            for indice, rec in enumerate(
+                [r for r in registros if r["label"] == "mixed"]
+            ):
+                pai = humanas[(2 * indice) % len(humanas)]
+                rec["groups"]["humanSeed"] = group_axes.known(pai)
+                rec["groups"]["derivationRoot"] = group_axes.known(pai)
+            return registros
+
+        with mock.patch.object(
+            assemble_corpus, "_island_component", parido_por_paridade
+        ):
+            with self.assertRaises(assemble_corpus.IslandPlanRefused) as erro:
+                assemble_corpus.assert_island_plan_realizes_the_five_fractions(
+                    assemble_corpus.ISLAND_PLAN
+                )
+        mensagem = str(erro.exception)
+        # Os DOIS numeros, porque a mensagem tem de dizer o esperado e o medido.
+        self.assertIn(f"{len(assemble_corpus.ISLAND_PLAN)} ilha(s)", mensagem)
+        self.assertIn(f"{2 * len(assemble_corpus.ISLAND_PLAN)} componente(s)", mensagem)
+        # E o plano intocado PASSA, para a perna nao ser vacuamente satisfeita.
+        assemble_corpus.assert_island_plan_realizes_the_five_fractions(
+            assemble_corpus.ISLAND_PLAN
+        )
+
+    def test_o_vocabulario_de_operacao_e_FECHADO_nas_tres_direcoes(self):
+        """Chave alienigena, chave faltante e grafia acentuada, recusadas por UMA igualdade."""
+        base = list(_plano(20))
+        bons = base[0]["mixingTemplates"]
+        for rotulo, mistura in (
+            ("alienigena", dict(bons, parafrase_total="mix-x")),
+            ("faltante", {k: v for k, v in bons.items() if k != "insercao"}),
+            (
+                "acentuada",
+                {
+                    ("inserção" if k == "insercao" else k): v
+                    for k, v in bons.items()
+                },
+            ),
+        ):
+            with self.subTest(caso=rotulo):
+                plano = list(base)
+                plano[0] = dict(base[0], mixingTemplates=mistura)
+                with self.assertRaises(assemble_corpus.IslandPlanRefused) as erro:
+                    assemble_corpus.assert_island_plan_is_a_partition(tuple(plano))
+                mensagem = str(erro.exception)
+                # A ILHA e as CHAVES, porque a recusa tem de apontar onde consertar.
+                self.assertIn("ilha_00", mensagem)
+                self.assertIn("substituicao", mensagem)
+
+    def test_o_plano_declara_CEM_identidades_de_template_todas_distintas(self):
+        """Cinco por ilha no namespace unico: duas de geracao e uma por operacao."""
+        geracao = [t for ilha in assemble_corpus.ISLAND_PLAN for t in ilha["templates"]]
+        mistura = [
+            t
+            for ilha in assemble_corpus.ISLAND_PLAN
+            for t in ilha["mixingTemplates"].values()
+        ]
+        todas = geracao + mistura
+        self.assertEqual(len(geracao), 2 * len(assemble_corpus.ISLAND_PLAN))
+        self.assertEqual(
+            len(mistura),
+            len(assemble_corpus.MIX_OPERATIONS) * len(assemble_corpus.ISLAND_PLAN),
+        )
+        self.assertEqual(len(todas), 100)
+        # DISTINTAS, e no mesmo namespace: os dois campos escrevem `groups.promptTemplate`.
+        self.assertEqual(len(set(todas)), len(todas))
+
+    def test_a_celula_EXCLUIDA_e_alcancavel_SO_em_pai_curto_e_por_isso_sai(self):
+        """A razao de `MIX_CELL_EXCLUDED`, medida com as funcoes de PRODUCAO de `near_dupes`.
+
+        Inserir uma secao que leve o documento ao nivel mais baixo preserva o pai INTEIRO, e o
+        par pai/mista fica perto do limite de poda — de que lado depende do COMPRIMENTO do pai.
+        Medido: cruza o limite a partir de cerca de 223 tokens e fica abaixo dele em pai curto.
+
+        E e por isso que a celula sai, e a razao NAO e "inalcancavel": ela seria alcancavel so
+        para pai curto, entao a celula existiria apenas em documentos pequenos e a OPERACAO
+        viraria proxy de COMPRIMENTO — que e eixo de fatia diagnostica declarado. Uma celula
+        enviesada por comprimento e pior que uma celula vazia, porque ninguem le o vies.
+
+        Tokens todos distintos, e a suposicao fica dita: texto real repete token, e o efeito
+        sobre a contagem de shingles distintos nao e obviamente monotono. `shingles_of` recebe
+        LISTA de tokens — passar a string junta mede 5-gramas de CARACTERE, que e outra
+        quantidade, e foi o erro que produziu os numeros que este pino corrige.
+        """
+        import near_dupes
+
+        def par(fracao: float, tokens: int) -> float:
+            pai = [f"p{i}" for i in range(tokens)]
+            enxerto = round(tokens * fracao / (1.0 - fracao))
+            meio = tokens // 2
+            filho = pai[:meio] + [f"z{i}" for i in range(enxerto)] + pai[meio:]
+            return near_dupes.jaccard(
+                near_dupes.shingles_of(pai), near_dupes.shingles_of(filho)
+            )
+
+        (operacao, nivel), = assemble_corpus.MIX_CELL_EXCLUDED
+        self.assertEqual(operacao, "insercao")
+        self.assertEqual(nivel, min(assemble_corpus.MIX_LEVELS))
+        fracao = nivel / 100
+
+        # OS DOIS LADOS, que e o que torna a razao "enviesada por comprimento" verificavel:
+        # pai curto sobrevive a poda, pai longo e podado.
+        self.assertLess(par(fracao, 100), near_dupes.JACCARD_THRESHOLD)
+        self.assertGreaterEqual(par(fracao, 1200), near_dupes.JACCARD_THRESHOLD)
+
+        # E a FRONTEIRA fica dentro da faixa de comprimento que o corpus mede, o que e o que
+        # faz o vies morder: as faixas pre-inscritas vao de 50 palavras a 300 e mais.
+        fronteira = next(
+            tokens
+            for tokens in range(100, 1201)
+            if par(fracao, tokens) >= near_dupes.JACCARD_THRESHOLD
+        )
+        self.assertGreater(fronteira, 200)
+        self.assertLess(fronteira, 260)
+
+        # A celula SEGUINTE da mesma operacao nao chega perto em comprimento algum: o corte e
+        # naquela celula e nao na operacao inteira.
+        seguinte = sorted(assemble_corpus.MIX_LEVELS)[1] / 100
+        for tokens in (100, 223, 1200):
+            with self.subTest(borda=tokens, celula="seguinte"):
+                self.assertLess(par(seguinte, tokens), near_dupes.JACCARD_THRESHOLD)
+
+    def test_o_slate_com_receitas_de_BYTES_IDENTICOS_e_recusado_antes_da_cota(self):
+        """A particao de ilha e sobre identidade, e a identidade prefixa o NOME da receita.
+
+        Dois nomes servindo o mesmo texto produzem identidades distintas, o grafo continua
+        particionado, e a independencia de template que o split modela fica falsa. Cem prompts
+        escritos por copia-e-ajuste passariam todas as outras pernas.
+        """
+        import argparse
+
+        import generate_ai
+
+        ilha = assemble_corpus.ISLAND_PLAN[0]
+        mesmo_texto = generate_ai.RECIPES["original"]["template"]
+        gemeas = {
+            nome: {"weight": 1, "template": mesmo_texto} for nome in ilha["templates"]
+        }
+        with mock.patch.object(generate_ai, "RECIPES", gemeas):
+            with self.assertRaises(argparse.ArgumentTypeError) as erro:
+                generate_ai.island_plan(ilha["island"])
+        mensagem = str(erro.exception)
+        self.assertIn("bytes identicos", mensagem)
+        # Os NOMES que colidem, porque a recusa tem de dizer quais reescrever.
+        for nome in ilha["templates"]:
+            self.assertIn(nome, mensagem)
+        # E o slate de hoje PASSA a perna, para ela nao ser vacuamente satisfeita.
+        distintos = {
+            generate_ai.template_digest(nome) for nome in generate_ai.RECIPES
+        }
+        self.assertEqual(len(distintos), len(generate_ai.RECIPES))
 
 
 if __name__ == "__main__":
