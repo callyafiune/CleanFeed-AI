@@ -1,4 +1,4 @@
-import { mkdtemp, mkdir, readdir, writeFile } from "node:fs/promises";
+import { mkdtemp, mkdir, readFile, readdir, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -530,6 +530,74 @@ function buildShortReleaseDataset(): BenchmarkRecord[] {
       normalizedTextSha256,
     };
   });
+}
+
+/**
+ * Um split montado a mao com duas fracoes de classe EXATAMENTE na borda da tolerancia:
+ * `human` `dev` em 3 % contra alvo 5 %, e `ai` `cal-A` em 8 % contra alvo 10 %. Nas duas o
+ * float cru recusa por um bit, entao e o epsilon do comparador que as admite.
+ *
+ * Montado a mao e nao pelo splitter porque a borda exata nao e um resultado que se possa
+ * PEDIR a ele: os cortes caem onde o grid os deixa cair. Cada linha carrega os proprios
+ * eixos — nada atravessa particao — e os blocos de tempo sao disjuntos e ordenados, entao a
+ * fracao de classe e a unica coisa que este corpo pode reprovar. A familia reservada e
+ * povoada dentro de `test`, como um artefato de verdade a carrega.
+ */
+function bordaSplit(): {
+  records: BenchmarkRecord[];
+  split: DatasetSplit<BenchmarkRecord>;
+} {
+  const records: BenchmarkRecord[] = [];
+  const split: DatasetSplit<BenchmarkRecord> = {
+    train: [],
+    dev: [],
+    "cal-A": [],
+    "cal-B": [],
+    test: [],
+  };
+  const janela: Record<Partition, number> = {
+    train: 1_000,
+    dev: 2_000,
+    "cal-A": 3_000,
+    "cal-B": 4_000,
+    test: 5_000,
+  };
+  const porClasse: Record<"human" | "ai", Record<Partition, number>> = {
+    human: { train: 45, dev: 3, "cal-A": 10, "cal-B": 20, test: 22 },
+    ai: { train: 45, dev: 5, "cal-A": 8, "cal-B": 20, test: 22 },
+  };
+  for (const label of ["human", "ai"] as const) {
+    for (const partition of PARTITIONS) {
+      for (let i = 0; i < porClasse[label][partition]; i += 1) {
+        const id = `b_${label}_${partition}_${i}`;
+        const row = rec({
+          id,
+          label,
+          createdAt: janela[partition] + (label === "human" ? 0 : 100) + i,
+          domain: "corporate",
+          wordCount: 180,
+          humanSourceType: label === "human" ? DECLARED_CELLS[0] : undefined,
+          transformationKind: label === "human" ? "none" : "paraphrase",
+          family:
+            label === "ai" && partition === "test" && i < 6
+              ? "family-unseen"
+              : label === "ai"
+                ? "family-seen"
+                : undefined,
+          author: `au_${id}`,
+          source: `sr_${id}`,
+          domainSource: `ds_${id}`,
+          collectionBatch: `cb_${id}`,
+          nearDuplicate: `nd_${id}`,
+          derivationRoot: id,
+          promptTemplate: label === "human" ? undefined : `pt_${id}`,
+        });
+        records.push(row);
+        split[partition].push(row);
+      }
+    }
+  }
+  return { records, split };
 }
 
 /**
@@ -1784,6 +1852,39 @@ describe("o recibo do gate de composicao", () => {
     );
   });
 
+  it("aceita o artefato cujas fracoes publicadas estao na borda inclusiva", async () => {
+    // A comparacao do ARTEFATO, que e a segunda que decide publicacao e a que nenhuma
+    // fixture de borda alcancava: `human` `dev` em 3 % contra alvo 5 % e `ai` `cal-A` em 8 %
+    // contra 10 %. Nas duas o float CRU recusaria por um bit, entao o que as faz passar e o
+    // epsilon do comparador — e um artefato coerente na borda nao pode ser recusado como
+    // incoerente.
+    const { records, split } = bordaSplit();
+    const audit = auditBlockedSplit(records, split, AUDIT_POLICY, [
+      asGeneratorFamily("family-unseen"),
+    ]);
+    expect(audit.passed).toBe(true);
+    for (const [label, partition, target] of [
+      ["human", "dev", 0.05],
+      ["ai", "cal-A", 0.1],
+    ] as const) {
+      expect(
+        Math.abs(audit.classFractions[label][partition] - target),
+        `${label} ${partition} esta na borda`,
+      ).toBeGreaterThan(0.02);
+    }
+
+    const artifact = await buildSplitArtifact({
+      manifest: MANIFEST,
+      records,
+      split,
+      policy: POLICY,
+      audit,
+    });
+    await expect(assertSplitArtifactSelfConsistent(artifact)).resolves.toBe(
+      artifact,
+    );
+  });
+
   it("um artefato infrastructure-only nao carrega recibo", async () => {
     expect(MANIFEST.scientificUse).toBe("infrastructure-only");
     const artifact = await buildRelease();
@@ -1831,6 +1932,50 @@ describe("o recibo do gate de composicao", () => {
     expect(await codeOfPartial(artifact)).toBe("ACCEPTED");
   });
 
+  it("runSplit CONGELA o corpus release cuja composicao passa, e o recibo em disco diz passed", async () => {
+    // O caminho positivo do condicional de release, que so o ramo negativo prendia: com os
+    // dois casos de composicao curta esperando recusa, recusar TODO corpus release ficava
+    // verde. Aqui o mesmo par manifesto/corpus cujo recibo selado ja e afirmado `passed`
+    // atravessa o COMANDO inteiro, e o que se le e o artefato em disco.
+    // Duas correcoes que o caminho de DISCO exige e o fixture em memoria nao: um digest de
+    // texto por linha, porque `parseBenchmarkDataset` le digest repetido como linha
+    // duplicada; e a linha `mixed` apontando `derivationRoot` para o humano do slot, porque
+    // o parser exige que a mista nomeie um PAI e o fixture a deixa apontando para si mesma.
+    // A segunda une cada mista ao humano de que ela deriva, o que e a co-locacao que o
+    // esquema pede — e nenhum humano passa a dividir componente com outro humano, entao a
+    // celula declarada segue com uma unidade por linha contada.
+    const inputs = await writeSplitInputs(
+      PTWIKI_MANIFEST,
+      PTWIKI_DATASET.map((record, index) => {
+        const escrito = structuredClone(record);
+        escrito.normalizedTextSha256 = index.toString(16).padStart(64, "0");
+        if (escrito.label === "mixed") {
+          (escrito.groups as Record<string, unknown>).derivationRoot =
+            `h_${escrito.createdAt}_0`;
+        }
+        return escrito;
+      }),
+    );
+    await expect(
+      runSplit({ ...inputs, seed: PREREGISTRATION_V4.seeds.split }),
+    ).resolves.toContain("Split frozen");
+
+    const frozen = JSON.parse(
+      await readFile(
+        join(inputs.outputDirectory, "split-artifact.json"),
+        "utf8",
+      ),
+    ) as SplitArtifact;
+    const receipt = frozen.compositionReceipt;
+    expect(receipt?.passed).toBe(true);
+    expect(receipt?.breaches).toEqual([]);
+    // Nao vacuo: a celula declarada carrega o piso de linhas, entao o `true` e do gate
+    // tendo contado e comparado, e nao de uma celula vazia que nada compara.
+    expect(receipt?.cells[0]?.humanNegativeLines).toBeGreaterThanOrEqual(
+      LINE_FLOOR,
+    );
+  });
+
   it("runSplit recusa o corpus release curto, e nao escreve o diretorio de saida", async () => {
     const inputs = await writeSplitInputs(
       PTWIKI_MANIFEST,
@@ -1853,6 +1998,96 @@ describe("o recibo do gate de composicao", () => {
     await expect(readdir(inputs.outputDirectory)).rejects.toMatchObject({
       code: "ENOENT",
     });
+  });
+
+  // A guarda e uma DISJUNCAO de tres digests, e a tabela e o que impede duas delas de ficarem
+  // sem prova: com um caso so, dois dos tres comparados podem ser apagados sem cor mudar. O
+  // `datasetId` fica INTACTO de proposito — e o que separa esta recusa da guarda vizinha, que
+  // carrega o mesmo codigo e responde por dataset trocado.
+  it.each([
+    ["recordsSha256"],
+    ["reviewLedgerSha256"],
+    ["sourceManifestSha256"],
+  ])(
+    "runSplit recusa a auditoria de dataset cujo %s divergiu do manifesto",
+    async (campo) => {
+      // A forja tem de ser COMPETENTE: adulterar o digest e RECOMPUTAR `auditDigest`, senao
+      // `parseDatasetAudit` recusa antes pelo auto-digest e o caso mediria coerencia interna
+      // em vez do vinculo ao dataset.
+      const inputs = await writeSplitInputs(
+        PTWIKI_MANIFEST,
+        buildShortReleaseDataset(),
+      );
+      const bruto = JSON.parse(
+        await readFile(inputs.datasetAuditPath, "utf8"),
+      ) as Record<string, unknown>;
+      delete bruto.auditDigest;
+      const adulterado = { ...bruto, [campo]: "e".repeat(64) };
+      expect(adulterado.datasetId).toBe(PTWIKI_MANIFEST.datasetId);
+      await writeFile(
+        inputs.datasetAuditPath,
+        JSON.stringify({
+          ...adulterado,
+          auditDigest: await computeDatasetAuditDigest(adulterado as never),
+        }),
+        "utf8",
+      );
+
+      await expect(
+        runSplit({ ...inputs, seed: PREREGISTRATION_V4.seeds.split }),
+      ).rejects.toMatchObject({
+        code: "DATASET_AUDIT_MISMATCH",
+        message: expect.stringContaining(
+          "file digests diverge",
+        ) as unknown as string,
+      });
+    },
+  );
+
+  it("recusa por VAZAMENTO o corpus release que vaza E e curto, que e o que fixa a ordem", async () => {
+    // A precedencia que o comando afirma: a auditoria de vazamento decide ANTES da
+    // composicao. Nenhum outro corpus desta arvore e as duas coisas ao mesmo tempo — o
+    // vazado e `infrastructure-only` e os curtos passam na auditoria —, entao sem este caso
+    // mover o bloco de vazamento para depois do bloco de release nao muda cor nenhuma.
+    const records = buildShortReleaseDataset();
+    // UM componente atravessando o ultimo corte: uma linha do bloco de `test` declara o
+    // DOCUMENTO DE ORIGEM da mais antiga, entao as duas sao um componente, ele cai em `train`
+    // por ser o fallback, e texto do periodo de `test` fica no treino. A linha escolhida NAO
+    // e da familia reservada: uma reservada com pai antigo faz o splitter recusar antes, por
+    // elegibilidade temporal, e a recusa medida aqui seria outra.
+    const anchor = records[0] as BenchmarkRecord;
+    const straddling = records[292] as BenchmarkRecord;
+    expect(groupAxisIdentity(straddling, "generatorFamily")).toBeUndefined();
+    // Lido pelo ACESSOR e nao pelo bloco: num registro v4 o eixo e objeto de tres estados, e
+    // so o estado `known` carrega identidade que duas linhas podem compartilhar.
+    const documento = groupAxisIdentity(anchor, "source");
+    expect(documento).toBeDefined();
+    const leaking = records.map((record) => {
+      if (record.id !== straddling.id) return record;
+      const unido = structuredClone(record);
+      (unido.groups as Record<string, unknown>).source = documento;
+      return unido;
+    });
+
+    const refusal = await runSplit({
+      ...(await writeSplitInputs(PTWIKI_MANIFEST, leaking)),
+      seed: PREREGISTRATION_V4.seeds.split,
+    }).then(
+      () => null,
+      (error: unknown) => error as { code?: string; message: string },
+    );
+    expect(refusal?.code).toBe("SPLIT_AUDIT_FAILED");
+
+    // Nao vacuo, e e o que faz deste caso uma prova de ORDEM: o MESMO corpus sem a linha
+    // unida chega a composicao e e recusado por ela.
+    const semVazamento = await runSplit({
+      ...(await writeSplitInputs(PTWIKI_MANIFEST, records)),
+      seed: PREREGISTRATION_V4.seeds.split,
+    }).then(
+      () => null,
+      (error: unknown) => error as { code?: string },
+    );
+    expect(semVazamento?.code).toBe(COMPOSITION_BOUNDS_NOT_MET);
   });
 
   it("recusa o artefato da forma antiga nomeando a chave ausente", async () => {

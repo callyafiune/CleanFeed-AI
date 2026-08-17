@@ -12,12 +12,14 @@
 //   * EVERY COMPONENT FITS SOMEWHERE — a component whose share of a scope exceeds the
 //     largest target plus the tolerance has no partition that can receive it whole.
 //     This is the loose one: it only ever refuses a scope dominated by one block.
-//   * EVERY PARTITION CAN BE FILLED — every target exceeds the tolerance, so every
-//     partition must hold a NON-ZERO share of every scope, and any set of components
-//     realising the SMALLEST target includes at least one component carrying that
-//     scope. What binds is therefore the smallest NON-ZERO contribution to the scope,
-//     not the largest, and the refusal is about GRANULARITY: growing the corpus while
-//     keeping the number of components fixed changes no fraction.
+//   * EVERY PARTITION CAN BE FILLED — under a policy whose every target EXCEEDS the
+//     tolerance, which is a PREMISE this module imposes and does not assume
+//     (`auditPartitionViability` refuses to decide without it), every partition must hold
+//     a NON-ZERO share of every scope, and any set of components realising the SMALLEST
+//     target includes at least one component carrying that scope. What binds is therefore
+//     the smallest NON-ZERO contribution to the scope, not the largest, and the refusal is
+//     about GRANULARITY: growing the corpus while keeping the number of components fixed
+//     changes no fraction.
 //
 // THE WHOLE CORPUS IS A SCOPE TOO, and it is neither decoration nor a duplicate of the
 // per-class scopes:
@@ -303,6 +305,22 @@ export function auditPartitionViability(
   const targets = partitionTargets(policy);
   const largestTarget = extremeTarget(targets, "largest");
   const smallestTarget = extremeTarget(targets, "smallest");
+
+  // The PREMISE of the second condition, read off the policy that arrived and imposed
+  // rather than assumed. The condition is necessary only while every target exceeds the
+  // tolerance: at or below it, ZERO is a share within tolerance of that target, so a
+  // partition may legally hold none of a scope and "every non-empty subset realising the
+  // smallest target includes a component of the scope" stops being a necessary condition —
+  // this module would refuse a corpus the splitter accepts. Refusing to DECIDE is the
+  // fail-closed answer, because deciding correctly in that band means deciding subset-sum
+  // with an empty part, which is exactly what this module does not do.
+  if (smallestTarget.fraction <= CLASS_TOLERANCE) {
+    throw new Error(
+      "this preflight only decides under a policy whose smallest partition target " +
+        `exceeds the class tolerance: ${smallestTarget.partition} carries ` +
+        `${smallestTarget.fraction} against a tolerance of ${CLASS_TOLERANCE}`,
+    );
+  }
 
   const rootById = connectedComponentRoots(records);
   const corpusLines = new Map<string, number>();

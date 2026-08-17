@@ -1039,8 +1039,8 @@ describe("ingest -> validate -> split integration (10k)", () => {
   }
 
   it("refuses a corpus the splitter accepts and the audit does not", async () => {
-    // A ÚNICA guarda de `commands/split.ts` que ficou sem teste, e a razão de ter ficado é
-    // que ela exige exatamente esta combinação: splitter com SUCESSO e auditoria reprovando.
+    // A guarda mais cara de alcançar de `commands/split.ts`, porque exige exatamente esta
+    // combinação: splitter com SUCESSO e auditoria reprovando.
     // Um componente que atravessa o último corte cai em `train` levando tempo da banda de
     // teste; proporção e conectividade seguem satisfeitas, então o splitter não vê nada.
     const root = await scratch();

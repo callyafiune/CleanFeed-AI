@@ -1708,18 +1708,18 @@ describe("the reservation the partitions honor", () => {
     records: BenchmarkRecord[];
     split: DatasetSplit<BenchmarkRecord>;
   } {
-    const development = [ai("dev_seen", 1, "family-seen")];
-    const calibration = [ai("cal_seen", 2, "family-seen")];
+    const trainRows = [ai("dev_seen", 1, "family-seen")];
+    const devRows = [ai("cal_seen", 2, "family-seen")];
     const test = [
       ai("tst_seen", 3, "family-seen"),
       ai("tst_reserved", 4, "family-reserved"),
       ai("tst_incidental", 5, "family-incidental"),
     ];
     return {
-      records: [...development, ...calibration, ...test],
+      records: [...trainRows, ...devRows, ...test],
       split: {
-        train: development,
-        dev: calibration,
+        train: trainRows,
+        dev: devRows,
         "cal-A": [],
         "cal-B": [],
         test,
@@ -1818,7 +1818,7 @@ describe("the reservation the partitions honor", () => {
   it("withdraws a declared family whose record-line is assigned to no partition", () => {
     const { records, split } = corpus();
     // Present in the record set, absent from every partition of this fixture. It must not
-    // pass for "absent from development and calibration": the predicate is
+    // pass for "absent from `train` and `dev`": the predicate is
     // measured over the whole record set exactly so this row withdraws the
     // reservation instead of reading as harmless here. (split-artifact.ts refuses
     // the incomplete assignment separately; the reservation is not the place that
@@ -1856,7 +1856,7 @@ describe("the reservation the partitions honor", () => {
     const { records, split } = partlyViolatedCorpus();
     const audit = auditBlockedSplit(records, split, AUDIT_POLICY, [RESERVED]);
 
-    // Withdrawn — one record-line sits in `development` — and yet the axis still
+    // Withdrawn — one record-line sits in `train` — and yet the axis still
     // has to publish the `unseen` row, because keying it on the honored subset
     // would relabel the violated reservation as `seen` and erase from
     // `criticalSliceSamples` (sealed into split-artifact.json) the very
@@ -1988,6 +1988,99 @@ describe("the five-partition audit has teeth on the mutations fractions miss", (
         0.02,
       );
     }
+  });
+});
+
+// --- a borda inclusiva onde a AUDITORIA compara -------------------------------
+//
+// O epsilon vive nos helpers de `split.ts`, e um teste que chame o helper nao ve a
+// comparacao da auditoria voltar a float cru. Este corpo poe duas celulas de classe
+// EXATAMENTE na borda que o contrato admite e as leva pelo caminho que decide publicacao.
+describe("a auditoria aceita a borda inclusiva da tolerancia", () => {
+  /**
+   * Um split montado a mao com duas fracoes exatamente na borda: `human` `dev` em 3 % contra
+   * alvo 5 %, e `ai` `cal-A` em 8 % contra alvo 10 %. Cada linha carrega os proprios eixos,
+   * entao nenhum grupo atravessa particao, e os blocos de tempo sao disjuntos e ordenados —
+   * o que deixa a fracao de classe como a unica coisa que este corpo pode reprovar.
+   */
+  function bordaSplit(): {
+    records: BenchmarkRecord[];
+    split: DatasetSplit<BenchmarkRecord>;
+  } {
+    const records: BenchmarkRecord[] = [];
+    const split: DatasetSplit<BenchmarkRecord> = {
+      train: [],
+      dev: [],
+      "cal-A": [],
+      "cal-B": [],
+      test: [],
+    };
+    // Blocos de tempo por PARTICAO e nao por classe, porque a auditoria compara `test`
+    // contra as outras quatro e ordena as tres do meio entre si.
+    const janela: Record<Partition, number> = {
+      train: 1_000,
+      dev: 2_000,
+      "cal-A": 3_000,
+      "cal-B": 4_000,
+      test: 5_000,
+    };
+    const porClasse: Record<"human" | "ai", Record<Partition, number>> = {
+      human: { train: 45, dev: 3, "cal-A": 10, "cal-B": 20, test: 22 },
+      ai: { train: 45, dev: 5, "cal-A": 8, "cal-B": 20, test: 22 },
+    };
+    for (const label of ["human", "ai"] as const) {
+      for (const partition of PARTITIONS) {
+        for (let i = 0; i < porClasse[label][partition]; i += 1) {
+          const id = `${label}_${partition}_${i}`;
+          const row = rec({
+            id,
+            label,
+            createdAt: janela[partition] + (label === "human" ? 0 : 100) + i,
+            domain: "corporate",
+            wordCount: 180,
+            humanSourceType: label === "human" ? "employee-post" : undefined,
+            transformationKind: label === "human" ? "none" : "paraphrase",
+            family: label === "human" ? undefined : "family-seen",
+            author: `au_${id}`,
+            source: `sr_${id}`,
+            domainSource: `ds_${id}`,
+            collectionBatch: `cb_${id}`,
+            nearDuplicate: `nd_${id}`,
+            derivationRoot: id,
+            promptTemplate: label === "human" ? undefined : `pt_${id}`,
+          });
+          records.push(row);
+          split[partition].push(row);
+        }
+      }
+    }
+    return { records, split };
+  }
+
+  it("aceita 3 % de uma classe em dev e 8 % em cal-A, que e onde o float cru recusa", () => {
+    const { records, split } = bordaSplit();
+    const audit = auditBlockedSplit(
+      records,
+      split,
+      AUDIT_POLICY,
+      NO_RESERVATION,
+    );
+
+    // NAO VACUO, e e a metade que separa este caso de um corpo qualquer: nas duas celulas o
+    // float CRU recusaria, porque a distancia calculada excede a tolerancia por um bit.
+    for (const [label, partition, target] of [
+      ["human", "dev", 0.05],
+      ["ai", "cal-A", 0.1],
+    ] as const) {
+      const fraction = audit.classFractions[label][partition];
+      expect(
+        Math.abs(fraction - target),
+        `${label} ${partition} esta na borda`,
+      ).toBeGreaterThan(0.02);
+    }
+
+    expect(audit.reasons).toEqual([]);
+    expect(audit.passed).toBe(true);
   });
 });
 

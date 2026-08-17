@@ -204,6 +204,38 @@ def linha_gerada(
     }
 
 
+def linha_mista(rec_id: str, pai: str, dominio: str, autor: str, lote: str) -> dict:
+    """Uma linha MISTA v4: o texto do pai com trechos gerados.
+
+    Ela COMPARTILHA o autor do pai e o nomeia nos DOIS eixos de linhagem, porque nao e
+    unidade de amostragem nova — e o que faz pai e mistas serem um componente so, e nao um
+    por linha. O documento de origem, a quase-duplicata, o template e o lote de GERACAO sao
+    proprios dela; o lote de MATERIAL e o estrato sao os do pai, porque a aquisicao que a
+    sustenta e a dele, e e por isso que ela nao acrescenta estrato nem lote ao censo.
+
+    `extractionRun` e `notApplicable`: o texto misto nao saiu de uma corrida de extracao
+    nossa, e a tabela de estados do esquema so admite esse estado aqui.
+    """
+    return {
+        "id": rec_id,
+        "schemaVersion": 4,
+        "label": "mixed",
+        "groups": {
+            "author": group_axes.known(autor),
+            "source": group_axes.known(f"th_doc_{rec_id}"),
+            "domainSource": group_axes.known(group_axes.axis_token(dominio)),
+            "sourceMaterialBatch": group_axes.known(group_axes.axis_token(lote)),
+            "humanSeed": group_axes.known(pai),
+            "promptTemplate": group_axes.known(f"pt_{rec_id}"),
+            "generatorVersion": group_axes.known(f"gv_{rec_id}"),
+            "generationBatch": group_axes.known(f"gb_{rec_id}"),
+            "extractionRun": group_axes.not_applicable(group_axes.NOT_EXTRACTED),
+            "nearDuplicate": group_axes.known(f"nd_{rec_id}"),
+            "derivationRoot": group_axes.known(pai),
+        },
+    }
+
+
 def corpo_de_lote_unico() -> list[dict]:
     """As celulas da moldura, um evento de aquisicao por fonte, cada linha em seu documento."""
     return [
@@ -1020,6 +1052,21 @@ def _linhas_do_caso(caso: dict, estrato_gerado: str) -> list[dict]:
                         )
                     )
                     indice_gerado += 1
+                for indice in range(corrida["lines"].get("mixed", 0)):
+                    if not humanas:
+                        raise RuntimeError(
+                            f'o caso "{caso["name"]}" declara linha mista em componente sem '
+                            "linha humana: a mista nao teria pai a nomear"
+                        )
+                    registros.append(
+                        linha_mista(
+                            f"m_{marca}_{indice}",
+                            f"h_{marca}_0",
+                            celula["stratum"],
+                            f"au_hmac_{marca}",
+                            celula["materialBatch"],
+                        )
+                    )
                 componente += 1
     return registros
 
@@ -1034,6 +1081,41 @@ def _classes(registros: list[dict]) -> dict[str, int]:
     for rec in registros:
         contagem[rec["label"]] = contagem.get(rec["label"], 0) + 1
     return contagem
+
+
+def _chave_conjunta(linhas: dict) -> str:
+    """A composicao de UM componente por classe, canonica.
+
+    TODA classe aparece com a sua contagem, e nao so as que o componente tem: senao
+    `human=1` e `human=1,mixed=0` seriam duas grafias do mesmo componente e os dois lados
+    poderiam discordar por omissao. A ordem e lida de `LABEL_REPORT_ORDER` do montador, e nao
+    retypada, pela mesma razao que o resto do espelho a le.
+    """
+    return ",".join(
+        f"{classe}={linhas.get(classe, 0)}"
+        for classe in assemble_corpus.LABEL_REPORT_ORDER
+    )
+
+
+def _conjunto_declarado(caso: dict) -> list[str]:
+    """Linhas por componente E por classe, DECLARADAS: o conjunto de que `_histograma` e
+    `_classes` sao as duas marginais."""
+    return sorted(
+        _chave_conjunta(corrida["lines"])
+        for celula in caso["cells"]
+        for corrida in celula["components"]
+        for _ in range(corrida["count"])
+    )
+
+
+def _conjunto_medido(registros: list[dict]) -> list[str]:
+    """O mesmo conjunto, MEDIDO pela conectividade do montador."""
+    raizes = connected_components(registros)
+    por_raiz: dict[str, dict[str, int]] = {}
+    for rec in registros:
+        contagem = por_raiz.setdefault(raizes[rec["id"]], {})
+        contagem[rec["label"]] = contagem.get(rec["label"], 0) + 1
+    return sorted(_chave_conjunta(contagem) for contagem in por_raiz.values())
 
 
 def _identidades(registros: list[dict], eixo: str) -> set[str]:
@@ -1103,6 +1185,7 @@ class ConcordanciaComOPreflightDoBenchmark(unittest.TestCase):
                 "bordas-inclusivas-47-e-7",
                 "forma-medida-da-classe-gerada",
                 "ilhas-de-receita-que-passam",
+                "misto-com-degenerescencia-mista",
             ],
         )
         # Todo escopo e toda condicao que o catalogo nomeia tem traducao deste lado: um
@@ -1296,18 +1379,23 @@ class ConcordanciaComOPreflightDoBenchmark(unittest.TestCase):
                 esperado = caso["expected"]
                 self.assertEqual(len(registros), esperado["recordLines"])
 
-                # O histograma e as contagens por classe MEDIDOS contra os DECLARADOS,
-                # antes de qualquer veredito: um materializador que divergiu do outro lado
-                # produz outro histograma e fica vermelho aqui, em vez de concordar sobre
-                # um corpo que nao e o mesmo.
+                # As TRES conferencias MEDIDAS contra as DECLARADAS, antes de qualquer
+                # veredito: um materializador que divergiu do outro lado fica vermelho aqui,
+                # em vez de concordar sobre um corpo que nao e o mesmo. As duas primeiras sao
+                # MARGINAIS e um corpo divergido pode acertar as duas — trocar um componente
+                # 1H+3A e um 3H+1A por dois 2H+2A preserva os dez tamanhos e os dois totais.
+                # A terceira e o CONJUNTO, e e ela que separa esses dois corpos.
                 declarado = sorted(
-                    corrida["lines"].get("human", 0) + corrida["lines"].get("ai", 0)
+                    corrida["lines"].get("human", 0)
+                    + corrida["lines"].get("ai", 0)
+                    + corrida["lines"].get("mixed", 0)
                     for celula in caso["cells"]
                     for corrida in celula["components"]
                     for _ in range(corrida["count"])
                 )
                 self.assertEqual(_histograma(registros), declarado)
                 self.assertEqual(_classes(registros), esperado["classLines"])
+                self.assertEqual(_conjunto_medido(registros), _conjunto_declarado(caso))
 
                 # Nao vacuo: os dois eixos grossos realmente carregam UM valor por
                 # celula e ainda assim nao unem. Linha gerada nao carrega lote de

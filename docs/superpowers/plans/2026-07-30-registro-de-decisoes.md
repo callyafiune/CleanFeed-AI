@@ -8455,3 +8455,141 @@ tinha — era a linha do digest, que é de quem integra, mas a alegação de ver
 A onda 2 — Commit E, Commit F e E2 — com quatro bloqueantes menos graves e os menores restantes, todos
 verificados e com remédio nomeado. E as cinco unidades continuam devendo o **fechamento** do que ficou
 aberto, não uma revisão nova: o codex já as julgou.
+
+## A onda 2: os quinze achados de Commit E, Commit F e E2, e as duas vezes que a medição corrigiu o remédio (2026-08-17)
+
+Fechei os quinze do mandato — três bloqueantes e doze menores, todos levantados por cross-review
+independente e medidos por mutação antes de mim. HEAD na abertura era `1363fdc`, o mesmo da geração do
+mandato, e os sete sha256 de produção que ele registra bateram byte por byte: a árvore que consertei é a
+que foi medida.
+
+### As duas vezes em que a medição corrigiu o remédio escrito
+
+**Achado 3 — uma das duas contagens que o remédio pedia não tem mutante, e saiu.** O remédio nomeava duas:
+contar `sourceId` em qualquer grafia de chave, e contar as ENTRADAS do array. Implementei as duas e rodei a
+bateria: **estreitar a contagem de chaves de volta à grafia nua deixou os dez casos VERDES**, porque a
+contagem de entradas pega tudo o que ela pegaria — toda entrada não lida vale uma abertura de `{` a mais.
+Guarda sem mutante não é defesa; é decoração que se lê como defesa. Então a contagem de chaves saiu, ficou
+só a de entradas, e a grafia larga sobrevive **apenas na mensagem**, para nomear a fonte omitida — e essa tem
+mutante (estreitá-la derruba a asserção do nome). Contra a contagem exata de origem (`sourceId:` mais valor
+entre aspas duplas), os seis casos novos ficam vermelhos. É a regra "mutação que sobrevive verde é achado"
+aplicada ao meu próprio conserto.
+
+O resíduo ficou escrito no código e **fixado por teste**: contar aberturas de `{` conta objeto ANINHADO como
+entrada, então uma entrada bem formada que carregue um deles é RECUSADA em vez de lida. Fail-fechado e
+declarado, não um parse correto.
+
+**Achado 10 — o parêntese do remédio está invertido, e o código decide.** O remédio dizia "para train: share
+acima do teto; para as do meio e test: share abaixo do piso". A região em que as duas formas DISCORDAM com a
+correta aceitando é a oposta: a poda de `train` é um teto (`atMost`), então o que a inversão para piso recusa
+é banda **abaixo** de alvo menos tolerância; as outras quatro são pisos, e o que a inversão para teto recusa
+é banda **acima** de alvo mais tolerância. Construí os cinco corpos nessa faixa e a matriz 5x5 saiu
+**diagonal**: cada prova morre sob a inversão do seu sítio e sobrevive às outras quatro. As cinco invertidas
+de uma vez — a mutação que o mandato mediu sobrevivendo 31/31 — agora derrubam as cinco.
+
+A folga que essas provas exigem entre a banda e o realizado vem do **componente que atravessa um corte**: ele
+cai inteiro em `train`, então `train` recebe massa que a banda dele não conta e as bandas do meio perdem
+massa que a banda delas conta. No sítio de `test` a folga é outra: a reserva entra na quantidade comparada
+duas vezes por desenho, e 3 % de reserva põem a quantidade em 23 % com `test` realizando 20 % exatos. E o que
+faz a colocação ser ÚNICA é um instante por BLOCO, não por linha: com um instante por linha o grid tem
+duzentos candidatos e a colocação passa a ser a que ele preferir — errei isso na primeira tentativa, e os
+quatro primeiros corpos foram aceitos com colocação diferente da desenhada.
+
+### O que decidi em cada um dos outros treze
+
+**Achado 1 (bloqueante).** O caminho positivo do condicional de release não tinha entrada: os dois casos que
+dirigem `runSplit` com corpus release esperavam recusa, então `if (true)` — recusar TODO corpus release —
+sobrevivia verde. O caso novo leva o par manifesto/corpus cujo recibo selado já é afirmado `passed` pelo
+COMANDO inteiro e lê o recibo de volta **do arquivo**. Duas correções que só o caminho de disco exige, e que
+o fixture em memória não: digest de texto por linha (o parser lê digest repetido como linha duplicada) e a
+linha mista apontando `derivationRoot` para o humano do slot, porque o fixture a deixa apontando para si
+mesma e o parser exige um PAI.
+
+**Achado 2 (bloqueante).** As duas conferências que os dois lados faziam são MARGINAIS — tamanhos e totais
+por classe — e um materializador divergido acerta as duas: trocar um componente 1H+3A e um 3H+1A por dois
+2H+2A preserva os dez tamanhos e os dois totais. Acrescentei a terceira, o CONJUNTO (linhas por componente E
+por classe), nos dois lados, e a chave canônica escreve TODA classe com a contagem dela — `human=1` e
+`human=1,mixed=0` seriam duas grafias do mesmo componente e os dois lados poderiam discordar por omissão. A
+mutação exata do mandato (x2/x2/x6 contra a declaração x1/x1/x8), que sobrevivia 54/54, derruba um teste em
+cada lado. E as três frases que alegavam o contrário foram enfraquecidas para o que se afere.
+
+**Achado 4.** O cap é NECESSÁRIO e não suficiente, e a diferença está medida no baseline verde: uma célula
+pode satisfazer o cap a uma linha por documento, ter exatamente o piso de linhas e ainda carregar menos
+unidades que linhas, porque a coautoria une linhas que documentos distintos não uniram. A frase nova nomeia o
+teste que a afere e não promete o invariante que aquele caso refuta.
+
+**Achado 5.** A frase invertida saiu, e a substituta **não** adota "over-count units" — um skip não pode
+sobrecontar. Ela nomeia o que o skip faz de verdade: a linha já foi contada em linhas, então ela ficaria fora
+do conjunto de unidades E do balde do documento, e o máximo por documento poderia ler abaixo do verdadeiro
+(zero, no caso em que toda linha da célula salta). Essa é a direção que sobredeclara poder, e é a que a frase
+antiga nem nomeava.
+
+**Achado 6.** A ordem entre a auditoria de vazamento e a composição não estava presa: nenhum corpus da
+árvore era vazado E curto ao mesmo tempo. O caso novo une uma linha do bloco de `test` ao documento de origem
+da mais antiga — o componente atravessa e cai em `train`, levando tempo da banda de teste — e o mesmo corpus
+SEM a união é recusado pela composição, que é o que faz dele prova de ORDEM. A linha escolhida não é da
+família reservada de propósito: uma reservada com pai antigo faz o splitter recusar antes, por elegibilidade
+temporal, e a recusa medida seria outra.
+
+**Achado 7.** O preflight passa a **recusar decidir** quando o menor alvo não excede a tolerância, porque
+nessa faixa o zero é share legal e a condição do menor componente deixa de ser necessária. A premissa do
+cabeçalho, que era afirmada como fato, passou a ser premissa imposta. Não espelhei a guarda no lab: a guarda
+de lá não recebe política por parâmetro, então a situação não é expressável naquele lado — fica registrado
+como resíduo, não como esquecimento. E não afirmei em comentário que o splitter aceita o corpo que o
+preflight recusaria: isso exigiria política de mão com `as unknown as` para contornar os tipos literais, e o
+que o teste afere é a aritmética que sustenta a premissa (`|0 - 0,01| <= 0,02` verdadeiro, `|0 - 0,05| <=
+0,02` falso).
+
+**Achado 8.** O escopo `mixed` do preflight não era construído por corpo algum do catálogo: saltar a classe
+`mixed` na produção sobrevivia 54/54. O caso novo — quatro componentes de um pai humano com cinco mistas
+cada, mais 26 humanos avulsos — é o único em que o escopo `mixed` decide: no corpo e na classe `human` tudo
+cabe. Ele exercita os DOIS lados, e as duas mutações (o escopo apagado no TS e no lab) ficam vermelhas. Ele
+também mede que a mistura **não racha a ilha do pai**: pai e cinco mistas são um componente de seis, porque a
+mista compartilha o autor dele e o nomeia nos dois eixos de linhagem.
+
+**Achado 9.** `viabilityScope` com escopo ausente passa a ter asserção, e ela pina a MENSAGEM nomeando o
+escopo pedido, porque `scopeDenominator` usa essa função como denominador do relato: sob o mutante ela
+devolveria a contagem do CORPO sob o nome de uma classe.
+
+**Achado 11.** `development`/`calibration` viraram `trainRows`/`devRows`, e os dois comentários passaram a
+descrever as partições que a fixture realmente atribui. Não varri cego: `split-artifact.test.ts` usa o
+vocabulário antigo DE PROPÓSITO, num caso que o recusa.
+
+**Achado 12.** A oração falsa saiu. A forma que a sentença condenava (comparar contra o mais novo dos quatro)
+é EQUIVALENTE às quatro comparações; o que não seria é a CADEIA vizinho-a-vizinho, e `train` é por quê — ele
+é o fallback e pode ser mais novo que `cal-B` por desenho. O que o laço compra é o rótulo e a não-vacuidade
+por partição, e é isso que a frase nova diz.
+
+**Achado 13.** A narrativa de processo saiu, e o bloco para na frase que enuncia a propriedade.
+
+**Achado 14.** O sítio dos três digests ganhou tabela — a guarda é uma disjunção, e com um caso só dois dos
+três comparados podem ser apagados sem cor mudar. O `datasetId` fica intacto de propósito: é o que separa
+essa recusa da vizinha, que carrega o mesmo código. Medido: a tabela fica vermelha sob `void new` no sítio
+dos digests e verde sob o do dataset trocado. O outro sobrevivente é INALCANÇÁVEL, e agora está declarado no
+código nomeando o lock de outro módulo que o torna inalcançável — no molde que `split-artifact.ts` já usa. E
+a sentença de unicidade falsa saiu de `corpus-import.test.ts`: depois desta onda toda guarda ALCANÇÁVEL de
+`commands/split.ts` tem teste.
+
+**Achado 15.** As duas bordas inclusivas onde a guarda RODA, não no helper. Os dois mutantes reproduzem os
+sha256 que o mandato registrou (`277c5519…` na auditoria, `03767f86…` no artefato) e agora ficam vermelhos
+onde sobreviviam verdes. A não-vacuidade é a metade que importa: nas duas células o float CRU recusaria, por
+um bit, então o que as faz passar é o epsilon do comparador.
+
+### Medições de fechamento
+
+vitest **172 arquivos / 3.097 testes** verde em rodada única; pytest do lab **708 / 488 subtests**; `tsc`
+limpo; prettier limpo; lint nos mesmos **12** pré-existentes (10 em `.cache/`, 2 avisos em `src/`);
+`docs:check` 207/207; `git ls-files --eol | grep w/crlf` vazio. `evaluatorDigest` `8e6dac13…` →
+`dac12c932ad1ae56ec6823c153b8d18ff7a66ac877fbb23ef6f92cd89595781e`, recomputado pela função de produção
+depois das minhas edições e republicado na § 5.6.
+
+A § 1 do ESTADO tinha **duas** contagens envelhecidas, e não uma: a linha do avaliador dizia "1.489 em 45
+arquivos, 531 no lab" quando a medição dá **1.720 em 46** e **708**. O 531 era o TOTAL do lab de 10/08, que a
+linha de cima já tinha atualizado para 705 sem que esta seguisse. Prosa não reconta: as duas foram reescritas
+pelo que a rodada de hoje mediu.
+
+### O que fica na fila
+
+Nada da onda 2. As cinco unidades antigas continuam devendo o fechamento do que a onda anterior deixou aberto
+na § 7 — o recibo de `consume-holdout` chaveado pela consumação —, e isso é unidade própria, não revisão
+nova.

@@ -166,7 +166,10 @@ export async function runSplit(options: SplitOptions): Promise<string> {
   // A release seal needs the blind block to carry the power the pre-registration
   // promised, per quota cell, in all three quantities: the FPR denominator in
   // record-lines, the independent sampling units behind it, and the cap of one line per
-  // origin document that makes the first two the same draws. The artifact RECORDS that
+  // origin document, WITHOUT WHICH the first two could describe fewer draws than lines.
+  // The cap is necessary and not sufficient — a cell at one line per document can still
+  // hold fewer units than lines — so the three are compared separately, never derived
+  // from one another. The artifact RECORDS that
   // verdict (`compositionReceipt`), and recording is not judging — so the refusal is
   // here, reading the SEALED receipt, which makes what refuses the freeze and what a
   // downstream reader can recompute the same numbers.
@@ -177,6 +180,13 @@ export async function runSplit(options: SplitOptions): Promise<string> {
   if (manifest.scientificUse === "release") {
     const receipt = artifact.compositionReceipt;
     if (receipt === null) {
+      // UNREACHABLE from here, and named rather than dropped so that a lock which moves
+      // fails by name instead of obscurely: `buildSplitArtifact` derives the receipt from
+      // the SAME `scientificUse` this branch just tested — `scientificUse === "release" ?
+      // auditReleaseComposition(split) : null` in benchmark/split-artifact.ts — so an
+      // artifact built here for a release always carries one. That lock is why a mutation
+      // audit finds no test that reaches this refusal, and it is a lock in ANOTHER module,
+      // which is precisely why the check stays.
       throw new CommandError(
         COMPOSITION_RECEIPT_ABSENT,
         "a release corpus cannot be frozen without the composition receipt: the three " +

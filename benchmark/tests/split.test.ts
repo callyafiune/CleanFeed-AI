@@ -408,11 +408,236 @@ describe("the inclusive boundary holds through the real search, not just the hel
   });
 });
 
+// As cinco podas da busca são de UM LADO SÓ, e o lado é este — uma prova por sítio.
+//
+// A poda de `train` é um TETO sobre a share da banda e as outras quatro são PISOS, e nenhuma
+// das duas famílias tem prova de DIREÇÃO: inverter as cinco de uma vez deixa a bateria verde.
+// O que separa as direções é uma share de banda que caia estritamente dentro da metade certa
+// e estritamente fora da invertida, e a folga entre banda e realizado que isso exige vem do
+// COMPONENTE QUE ATRAVESSA um corte: ele cai em `train` inteiro, então `train` recebe massa
+// que a banda dele não conta e as bandas do meio perdem massa que a banda delas conta. Cada
+// corpo abaixo põe UMA share nessa faixa e as outras quatro dentro das duas metades, que é o
+// que faz cada caso morrer só sob a inversão do seu próprio sítio.
+describe("cada poda da busca é de um lado só, e o lado é este", () => {
+  /**
+   * Cinco blocos temporais com uma linha por componente, mais UM componente que atravessa
+   * dois blocos. `porBloco` conta TODAS as linhas datadas em cada bloco, incluindo as do
+   * atravessador — é a share da banda que as podas leem, e ela conta a linha atravessadora.
+   */
+  function corpusDeBlocos(
+    porBloco: readonly number[],
+    atravessador?: {
+      deBloco: number;
+      paraBloco: number;
+      linhas: readonly [number, number];
+    },
+  ): BenchmarkRecord[] {
+    const registros: BenchmarkRecord[] = [];
+    const noBloco = (bloco: number): number => {
+      if (atravessador === undefined) return 0;
+      if (bloco === atravessador.deBloco) return atravessador.linhas[0];
+      if (bloco === atravessador.paraBloco) return atravessador.linhas[1];
+      return 0;
+    };
+    let indice = 0;
+    porBloco.forEach((quantas, bloco) => {
+      const avulsas = quantas - noBloco(bloco);
+      for (let i = 0; i < avulsas; i += 1) {
+        registros.push(umaLinha(`p${bloco}_${i}`, bloco, `pa_${indice}`));
+        indice += 1;
+      }
+    });
+    if (atravessador !== undefined) {
+      // UM autor para todas as linhas do atravessador: `author` é eixo de união, então elas
+      // são um componente só, e um componente cujo intervalo de tempo cruza um corte não
+      // cabe inteiro em banda alguma do meio — o splitter o deixa em `train`, que é o
+      // fallback.
+      for (const [posicao, bloco] of [
+        atravessador.deBloco,
+        atravessador.paraBloco,
+      ].entries()) {
+        for (let i = 0; i < atravessador.linhas[posicao as 0 | 1]; i += 1) {
+          registros.push(umaLinha(`x${bloco}_${i}`, bloco, "pa_atravessador"));
+        }
+      }
+    }
+    return registros;
+  }
+
+  /**
+   * UM instante por bloco, e é o que faz a colocação ser única: os cortes só podem cair nas
+   * fronteiras dos cinco blocos, então existe uma só quádrupla crescente cujo último corte
+   * não zera a banda de `test`. Um instante por LINHA daria duzentos candidatos e a
+   * colocação passaria a ser a que o grid preferir.
+   */
+  function umaLinha(
+    id: string,
+    bloco: number,
+    author: string,
+  ): BenchmarkRecord {
+    return rec({
+      id,
+      label: "human",
+      createdAt: (bloco + 1) * 1_000,
+      domain: "corporate",
+      wordCount: 180,
+      humanSourceType: "employee-post",
+      author,
+      source: `ps_${id}`,
+      domainSource: `pds_${id}`,
+      collectionBatch: `pcb_${id}`,
+      nearDuplicate: `pnd_${id}`,
+      derivationRoot: id,
+    });
+  }
+
+  /** As shares de banda que as cinco podas comparam, lidas do CORPO e não do split. */
+  function sharesDeBanda(records: readonly BenchmarkRecord[]): number[] {
+    const porBloco = new Map<number, number>();
+    for (const row of records) {
+      const bloco = Math.floor(row.createdAt / 1_000);
+      porBloco.set(bloco, (porBloco.get(bloco) ?? 0) + 1);
+    }
+    return [...porBloco.keys()]
+      .sort((a, b) => a - b)
+      .map((bloco) => (porBloco.get(bloco) as number) / records.length);
+  }
+
+  const tamanhos = (
+    split: ReturnType<typeof createBlockedSplit>,
+  ): Record<Partition, number> => ({
+    train: split.train.length,
+    dev: split.dev.length,
+    "cal-A": split["cal-A"].length,
+    "cal-B": split["cal-B"].length,
+    test: split.test.length,
+  });
+
+  it("train: aceita a banda ABAIXO do piso do teto, que a inversão para piso recusa", () => {
+    // Banda de `train` em 41 %: dentro do teto de 47 % e FORA de um piso de 43 %. O
+    // atravessador leva seis linhas do meio para `train`, que realiza 44 %.
+    const records = corpusDeBlocos([82, 12, 22, 42, 42], {
+      deBloco: 1,
+      paraBloco: 2,
+      linhas: [3, 3],
+    });
+    expect(records).toHaveLength(200);
+    expect(sharesDeBanda(records)).toEqual([0.41, 0.06, 0.11, 0.21, 0.21]);
+    expect(tamanhos(createBlockedSplit(records, POLICY))).toEqual({
+      train: 88,
+      dev: 9,
+      "cal-A": 19,
+      "cal-B": 42,
+      test: 42,
+    });
+  });
+
+  it("dev: aceita a banda ACIMA do teto do piso, que a inversão para teto recusa", () => {
+    // Banda de `dev` em 8 %: acima do piso de 3 % e FORA de um teto de 7 %. O atravessador
+    // tira três linhas dela, e `dev` realiza 6,5 %.
+    const records = corpusDeBlocos([88, 16, 20, 38, 38], {
+      deBloco: 1,
+      paraBloco: 2,
+      linhas: [3, 1],
+    });
+    expect(sharesDeBanda(records)).toEqual([0.44, 0.08, 0.1, 0.19, 0.19]);
+    expect(tamanhos(createBlockedSplit(records, POLICY))).toEqual({
+      train: 92,
+      dev: 13,
+      "cal-A": 19,
+      "cal-B": 38,
+      test: 38,
+    });
+  });
+
+  it("cal-A: aceita a banda ACIMA do teto do piso, que a inversão para teto recusa", () => {
+    const records = corpusDeBlocos([88, 10, 26, 38, 38], {
+      deBloco: 2,
+      paraBloco: 3,
+      linhas: [4, 1],
+    });
+    expect(sharesDeBanda(records)).toEqual([0.44, 0.05, 0.13, 0.19, 0.19]);
+    expect(tamanhos(createBlockedSplit(records, POLICY))).toEqual({
+      train: 93,
+      dev: 10,
+      "cal-A": 22,
+      "cal-B": 37,
+      test: 38,
+    });
+  });
+
+  it("cal-B: aceita a banda ACIMA do teto do piso, que a inversão para teto recusa", () => {
+    const records = corpusDeBlocos([88, 10, 18, 46, 38], {
+      deBloco: 3,
+      paraBloco: 4,
+      linhas: [4, 1],
+    });
+    expect(sharesDeBanda(records)).toEqual([0.44, 0.05, 0.09, 0.23, 0.19]);
+    expect(tamanhos(createBlockedSplit(records, POLICY))).toEqual({
+      train: 93,
+      dev: 10,
+      "cal-A": 18,
+      "cal-B": 42,
+      test: 37,
+    });
+  });
+
+  it("test: aceita a quantidade ACIMA do teto do piso, que a inversão para teto recusa", () => {
+    // A quantidade que a poda de `test` compara é `1 - share(calBCut) + heldOutShare`, e a
+    // reserva entra nela DUAS vezes por desenho: as componentes reservadas já estão depois
+    // do último corte, e a soma as conta de novo. Com 3 % reservados a quantidade vale 23 % —
+    // acima do piso de 18 % e fora de um teto de 22 % — enquanto `test` realiza 20 % exatos.
+    // Sem reserva não há atravessador aqui: as cinco bandas são as cinco frações.
+    const records: BenchmarkRecord[] = [];
+    const porBloco = [45, 5, 10, 20, 20];
+    porBloco.forEach((quantas, bloco) => {
+      for (let i = 0; i < quantas; i += 1) {
+        records.push(umaLinha(`r${bloco}_${i}`, bloco, `ra_${bloco}_${i}`));
+        const id = `g${bloco}_${i}`;
+        records.push(
+          rec({
+            id,
+            label: "ai",
+            createdAt: (bloco + 1) * 1_000,
+            domain: "corporate",
+            wordCount: 180,
+            transformationKind: "paraphrase",
+            // Seis linhas da família RESERVADA, e só no bloco de `test`: uma reservada
+            // antes do último corte faz o splitter recusar por elegibilidade temporal.
+            family: bloco === 4 && i < 6 ? "family-unseen" : "family-seen",
+            author: `ga_${bloco}_${i}`,
+            source: `gs_${id}`,
+            domainSource: `gds_${id}`,
+            collectionBatch: `gcb_${id}`,
+            nearDuplicate: `gnd_${id}`,
+            derivationRoot: id,
+            generatorVersion: `ggv_${id}`,
+            promptTemplate: `gpt_${id}`,
+          }),
+        );
+      }
+    });
+    expect(records).toHaveLength(200);
+    expect(sharesDeBanda(records)).toEqual([0.45, 0.05, 0.1, 0.2, 0.2]);
+    const reservadas = records.filter(
+      (row) => generatorFamilyOf(row) === "family-unseen",
+    );
+    expect(reservadas).toHaveLength(6);
+    expect(reservadas.length / records.length).toBe(0.03);
+    expect(tamanhos(createBlockedSplit(records, POLICY))).toEqual({
+      train: 90,
+      dev: 10,
+      "cal-A": 20,
+      "cal-B": 40,
+      test: 40,
+    });
+  });
+});
+
 describe("class tolerance is inclusive at the boundary", () => {
   // 3% and 7% of a class in `dev` are LEGAL by the frozen contract, and binary floats do not
   // represent the boundary: `Math.abs(0.03 - 0.05)` is 0.020000000000000004, strictly greater
-  // than 0.02. Comparing raw floats refuses exactly the two values the contract admits, which
-  // is what the cross-review measured across four independent comparisons.
+  // than 0.02. Comparing raw floats refuses exactly the two values the contract admits.
   it("accepts exactly 3% and 7% against a 5% target", () => {
     expect(withinClassTolerance(0.03, 0.05)).toBe(true);
     expect(withinClassTolerance(0.07, 0.05)).toBe(true);
@@ -542,8 +767,12 @@ describe("createBlockedSplit", () => {
   it("keeps the blocked test strictly newer than every other partition", () => {
     const split = createBlockedSplit(DATASET, POLICY);
     const earliestTest = Math.min(...split.test.map((row) => row.createdAt));
-    // Against each partition individually. Comparing only against the newest of the
-    // four would let test overlap a partition that is not its immediate neighbour.
+    // Against each partition individually, and what the loop buys is the LABEL plus the
+    // non-vacuity check per partition: `x > max(a,b,c,d)` is the same predicate as the
+    // four comparisons, so the four are written out to name which partition `test`
+    // reaches into. The form that would NOT be equivalent is a CHAIN of
+    // neighbour-to-neighbour comparisons, and `train` is why: it is the fallback for
+    // every straddling component, so it can be newer than `cal-B` by design.
     for (const partition of PARTITIONS) {
       if (partition === "test") continue;
       const rows = split[partition];

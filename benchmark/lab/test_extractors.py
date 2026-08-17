@@ -5780,8 +5780,11 @@ class StampedCorpusSplittabilityTest(unittest.TestCase):
         """Uma entrada malformada nao pode devolver mapa MENOR em silencio.
 
         A regex salta sobre a entrada quebrada, entao "pelo menos uma reconhecida" aceita um
-        mapa incompleto — e mapa com fonte a menos deixa de recusar linha que a auditoria
-        recusa. O que transforma isso em falha e contar os `sourceId` do corpo.
+        mapa incompleto. O dano nao e leniencia sobre as linhas da fonte omitida — essas o
+        consumidor recusa por nome ("fonte nao inventariada") —, e sim o espelho responder
+        outra pergunta que a auditoria: a fonte esta no inventario, o espelhado a aceita e
+        aqui ela deixa de existir. O que transforma isso em falha e contar as chaves
+        `sourceId` do corpo e as entradas do array.
         """
         from assemble_corpus import declared_group_axes
 
@@ -5795,6 +5798,95 @@ class StampedCorpusSplittabilityTest(unittest.TestCase):
             declared_group_axes(corpo)
         self.assertIn("parse parcial", str(ctx.exception))
         self.assertIn("src_quebrado", str(ctx.exception))
+
+    def test_the_authority_fails_closed_on_a_spelling_it_cannot_read(self):
+        """Tres grafias que TypeScript aceita e a extracao nao le: duas de chave, uma de valor.
+
+        A entrada assim escrita sai do mapa em silencio, e contar `sourceId` COMO A EXTRACAO O
+        LE — chave nua e valor entre aspas duplas — nao pega nenhuma das tres, porque a
+        contagem some junto com ela. Quem as pega e a contagem de ENTRADAS, que nao depende de
+        grafia alguma. O NOME na mensagem, esse sim, e colhido por uma varredura que aceita as
+        tres.
+        """
+        from assemble_corpus import declared_group_axes
+
+        for grafia, entrada in (
+            ("aspas", '{ "sourceId": "src_omitida", declaredGroupAxes: ["author"] }'),
+            (
+                "apostrofos",
+                "{ sourceId: 'src_omitida', declaredGroupAxes: [\"author\"] }",
+            ),
+            ("espaco", '{ sourceId : "src_omitida", declaredGroupAxes: ["author"] }'),
+        ):
+            with self.subTest(grafia=grafia):
+                corpo = (
+                    "export const V3_HUMAN_SOURCE_INVENTORY = [\n"
+                    '  { sourceId: "src_ok", declaredGroupAxes: ["source"] },\n'
+                    f"  {entrada},\n"
+                    "];\n"
+                )
+                with self.assertRaises(RuntimeError) as ctx:
+                    declared_group_axes(corpo)
+                self.assertIn("parse parcial", str(ctx.exception))
+                self.assertIn("src_omitida", str(ctx.exception))
+
+    def test_the_authority_fails_closed_on_a_MISPAIRED_entry(self):
+        """Eixos de OUTRA entrada, que e a unica direcao genuinamente fail-ABERTA.
+
+        Com a chave de eixos de uma entrada corrompida, o passeio minimo do `.*?` atravessa a
+        entrada seguinte e da a PRIMEIRA os eixos da SEGUNDA. Nao ha excecao e nao ha
+        contagem divergente de `sourceId`: a fonte fica no mapa com a lista errada, e a
+        checagem do eixo que ela perdeu deixa de morder.
+
+        Duas formas, e cada uma e pega por uma contagem diferente: com a entrada seguinte
+        entre aspas sobra uma CHAVE que o mapa nao tem; com uma entrada que nao nomeia fonte
+        alguma as chaves batem, e o que sobra e uma ENTRADA.
+        """
+        from assemble_corpus import declared_group_axes
+
+        for forma, seguinte, esperado in (
+            (
+                "chave entre aspas",
+                '  { "sourceId": "src_B", declaredGroupAxes: ["source"] },\n',
+                "src_B",
+            ),
+            (
+                "entrada sem fonte",
+                '  { snapshot: "outra", declaredGroupAxes: ["source"] },\n',
+                "2 entrada(s)",
+            ),
+        ):
+            with self.subTest(forma=forma):
+                corpo = (
+                    "export const V3_HUMAN_SOURCE_INVENTORY = [\n"
+                    '  { sourceId: "src_A", declaredGroupAxesERRADO: ["author"] },\n'
+                    f"{seguinte}"
+                    "];\n"
+                )
+                with self.assertRaises(RuntimeError) as ctx:
+                    declared_group_axes(corpo)
+                self.assertIn("parse parcial", str(ctx.exception))
+                self.assertIn(esperado, str(ctx.exception))
+
+    def test_the_authority_REFUSES_a_nested_object_instead_of_parsing_it(self):
+        """O limite declarado da contagem de entradas, fixado como recusa.
+
+        Contar aberturas de `{` conta objeto ANINHADO como entrada, entao uma entrada bem
+        formada que carregue um deles e RECUSADA em vez de lida. E a direcao fail-fechada, e
+        sem este caso a ressalva escrita no codigo seria promessa sem medicao.
+        """
+        from assemble_corpus import declared_group_axes
+
+        corpo = (
+            "export const V3_HUMAN_SOURCE_INVENTORY = [\n"
+            '  { sourceId: "src_ok", extra: { profundidade: 1 },\n'
+            '    declaredGroupAxes: ["source"] },\n'
+            "];\n"
+        )
+        with self.assertRaises(RuntimeError) as ctx:
+            declared_group_axes(corpo)
+        self.assertIn("parse parcial", str(ctx.exception))
+        self.assertIn("2 entrada(s)", str(ctx.exception))
 
     def test_the_authority_fails_closed_on_a_duplicate_source(self):
         from assemble_corpus import declared_group_axes

@@ -17,11 +17,17 @@
 //     and one unit, and no correction applied afterwards recovers the information
 //     that was never sampled.
 //   * RECORD-LINES PER ORIGIN DOCUMENT — at most
-//     `collection.maximumLinesPerOriginDocument`. It is the rule that makes a floor
-//     counted in LINES also a floor counted in draws: without it a cell can hold 600
+//     `collection.maximumLinesPerOriginDocument`. It is the rule WITHOUT WHICH a floor
+//     counted in LINES could be met by far fewer draws: without it a cell can hold 600
 //     lines over 300 documents, clear both floors, and still publish a ceiling at
 //     n = 600 over 300 independent draws. The floors alone cannot catch that — 300
-//     documents ARE 300 components — so the cap is its own comparison.
+//     documents ARE 300 components — so the cap is its own comparison. NECESSARY and
+//     not sufficient, and the difference is measured: a cell can satisfy the cap at one
+//     line per document, hold exactly the line floor, and still carry fewer units than
+//     lines, because co-authorship unions rows that separate documents did not
+//     ("refuses on units when the lines reach the floor and the documents do not", in
+//     benchmark/tests/composition-gate.test.ts). So the unit floor is not implied by
+//     the other two and is compared on its own.
 //
 // A row whose `source` axis is not `known` has no recoverable origin document, and all
 // such rows of a cell share ONE bucket: two lines that cannot be shown to come from
@@ -279,9 +285,11 @@ export function auditReleaseComposition(
     if (root === undefined) {
       // Unreachable: the connectivity map covers every row of the corpus it was
       // handed, and that corpus is the union of the five partitions. It throws rather
-      // than skipping because `Map.get` is typed partial and a silent skip would
-      // under-count units, which is the one direction that reads as more power than
-      // the corpus has.
+      // than skipping because the row was ALREADY counted in lines: a skip would leave
+      // it absent from the unit set AND from its origin-document bucket, so the three
+      // quantities would describe different row sets and the per-document maximum could
+      // read below the true one — a cell whose every line skipped here reports a
+      // maximum of zero, which is the direction that over-states power.
       throw new Error(
         `record ${record.id} of partition ${COMPOSITION_GATE_PARTITION} has no ` +
           "connected component: the connectivity map was derived from the union of " +

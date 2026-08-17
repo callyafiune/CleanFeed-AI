@@ -35,6 +35,7 @@ import {
   atMostWithinTolerance,
   connectedComponentRoots,
   createBlockedSplit,
+  withinClassTolerance,
   type BlockedSplitPolicy,
 } from "../split.ts";
 import {
@@ -55,9 +56,11 @@ import {
   componentHistogram,
   componentsUnderAxes,
   declaredHistogram,
+  declaredJointHistogram,
   histogramUnderAxes,
   loadCatalogue,
   measuredClassLines,
+  measuredJointHistogram,
   templateToVersionMap,
   type ViabilityCase,
 } from "./helpers/viability-catalogue.ts";
@@ -202,6 +205,7 @@ describe("o catálogo compartilhado descreve a geometria que declara", () => {
       "bordas-inclusivas-47-e-7",
       "forma-medida-da-classe-gerada",
       "ilhas-de-receita-que-passam",
+      "misto-com-degenerescencia-mista",
     ]);
   });
 
@@ -211,11 +215,18 @@ describe("o catálogo compartilhado descreve a geometria que declara", () => {
       const records = corpusOf(testCase);
       expect(records).toHaveLength(testCase.expected.recordLines);
 
-      // O histograma e as contagens por classe MEDIDOS contra os DECLARADOS. É o que
-      // impede que um materializador que divergiu do outro lado passe: os dois leem a
-      // mesma declaração e cada um afirma que produziu exatamente ela.
+      // As TRÊS conferências MEDIDAS contra as DECLARADAS. É o que impede que um
+      // materializador que divergiu do outro lado passe: os dois leem a mesma declaração e
+      // cada um afirma que produziu exatamente ela. As duas primeiras são MARGINAIS — uma
+      // sobre tamanhos, outra sobre totais por classe — e um corpo divergido pode acertar as
+      // duas: trocar um componente 1H+3A e um 3H+1A por dois 2H+2A preserva os dez tamanhos
+      // e os dois totais. A terceira é o CONJUNTO, linhas por componente e por classe, e é
+      // ela que separa esses dois corpos.
       expect(componentHistogram(records)).toEqual(declaredHistogram(testCase));
       expect(measuredClassLines(records)).toEqual(testCase.expected.classLines);
+      expect(measuredJointHistogram(records)).toEqual(
+        declaredJointHistogram(testCase),
+      );
 
       // Não vácuo: o estrato e o lote realmente carregam UM valor por célula — é por
       // isso que uni-los colapsaria a célula — e ainda assim não unem nada. Linha
@@ -369,6 +380,49 @@ describe("preflight de viabilidade — as condições necessárias", () => {
       code: PARTITION_VIABILITY_NOT_MET,
       message: expect.stringContaining('da classe "human"'),
     });
+  });
+
+  it("recusa a degenerescência da classe MISTA, que só o escopo `mixed` vê", () => {
+    // O terceiro escopo, e o único corpo do catálogo que o exercita: quatro componentes de
+    // um pai humano com cinco mistas cada. No corpo e na classe `human` tudo cabe, então
+    // deixar de construir o escopo `mixed` aprova este corpo — foi medido verde.
+    const testCase = caseNamed("misto-com-degenerescencia-mista");
+    const records = corpusOf(testCase);
+    const report = auditPartitionViability(records);
+
+    expect(report.scopes.map((inventory) => inventory.scope)).toEqual([
+      CORPUS_SCOPE,
+      "human",
+      "mixed",
+    ]);
+    // O inventário do escopo, e não só o veredito: o denominador é o TOTAL DA CLASSE, e é
+    // ele que `scopeDenominator` publica na recusa.
+    const misto = viabilityScope(report, "mixed");
+    expect(misto.recordLines).toBe(20);
+    expect(misto.components).toBe(4);
+    expect(misto.smallestComponent?.recordLines).toBe(5);
+    expect(misto.smallestComponent?.fraction).toBeCloseTo(0.25, 10);
+
+    // A mistura NÃO racha a ilha do pai: pai + cinco mistas são um componente de seis.
+    expect(componentHistogram(records)).toEqual([
+      ...Array.from({ length: 26 }, () => 1),
+      6,
+      6,
+      6,
+      6,
+    ]);
+    expect(breachPairs(report)).toEqual(testCase.expected.breaches);
+    expect(report.breaches[0].scope).toBe("mixed");
+    expectRootDescribesItsComponent(records, report.breaches[0]);
+    for (const scope of [CORPUS_SCOPE, "human"] as const) {
+      expect(
+        report.breaches.filter((breach) => breach.scope === scope),
+        scope,
+      ).toEqual([]);
+    }
+    const message = describeViabilityBreaches(report);
+    expect(message).toContain('5 de 20 linha(s) da classe "mixed"');
+    expect(message).not.toContain("do corpo");
   });
 
   it("recusa pelo CORPO o que nenhuma classe recusa", () => {
@@ -527,6 +581,56 @@ describe("preflight de viabilidade — as condições necessárias", () => {
     expect(relaxed.largestTarget.partition).toBe("train");
     expect(relaxed.smallestTarget.partition).toBe("train");
     expect(relaxed.passed).toBe(true);
+  });
+
+  it("recusa DECIDIR sob política cujo menor alvo não excede a tolerância", () => {
+    // A condição do MENOR componente é necessária só enquanto todo alvo excede a
+    // tolerância. Com `dev` em 1 % o zero passa a ser share legal daquela partição, então
+    // ela pode não receber nada de um escopo e "todo subconjunto não vazio que realiza o
+    // menor alvo inclui um componente do escopo" deixa de ser condição necessária — este
+    // módulo recusaria corpo que o splitter aceita. Decidir ali é soma de subconjuntos com
+    // parte vazia, que ele não decide, então ele levanta em vez de responder.
+    const records = corpusOf(caseNamed("bordas-inclusivas-47-e-7"));
+    // Sob a política vigente ele DECIDE, e aprova. É o mesmo corpo, e é o que separa
+    // "recusa de decidir" de "recusa do corpo".
+    expect(auditPartitionViability(records).passed).toBe(true);
+
+    const devUmPorCento: PreregistrationV4 = {
+      ...PREREGISTRATION_V4,
+      preRegistration: {
+        ...PREREGISTRATION_V4.preRegistration,
+        partitionFractions: {
+          train: 0.46,
+          dev: 0.01,
+          calA: 0.12,
+          calB: 0.2,
+          test: 0.21,
+        },
+      },
+    };
+    expect(() => auditPartitionViability(records, devUmPorCento)).toThrow(
+      /smallest partition target/u,
+    );
+    // A aritmética de que a premissa depende, medida e não suposta: nessa faixa o zero
+    // cabe na tolerância do alvo, e sob a política vigente não cabe.
+    expect(withinClassTolerance(0, 0.01, CLASS_TOLERANCE)).toBe(true);
+    expect(withinClassTolerance(0, 0.05, CLASS_TOLERANCE)).toBe(false);
+  });
+
+  it("levanta ao pedir escopo que o relatório não carrega, e a mensagem nomeia o escopo", () => {
+    // `scopeDenominator` usa esta função como DENOMINADOR do relato, então devolver o
+    // primeiro escopo em lugar do pedido publicaria a contagem do CORPO sob o nome de uma
+    // classe. Não vácuo: o corpo é mono-classe, então `mixed` genuinamente não está lá.
+    const report = auditPartitionViability(
+      corpusOf(caseNamed("lote-unico-por-celula")),
+    );
+    expect(report.scopes.map((inventory) => inventory.scope)).toEqual([
+      CORPUS_SCOPE,
+      "human",
+    ]);
+    expect(() => viabilityScope(report, "mixed")).toThrow(
+      /carries no scope "mixed"/u,
+    );
   });
 
   it("dá o mesmo veredito, e o mesmo componente nomeado, sob outra ordem de linhas", () => {

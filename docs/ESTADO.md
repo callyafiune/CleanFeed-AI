@@ -14,7 +14,7 @@
 > `código` = imposto por código medido. Um valor que a pré-inscrição vigente congela e algum módulo lê
 > é `código`, qualquer que tenha sido a política que o escreveu primeiro.
 
-**Última reescrita:** 2026-08-10
+**Última reescrita:** 2026-08-17
 
 ---
 
@@ -23,8 +23,8 @@
 | item | valor |
 |---|---|
 | branch | `cleanfeed-mvp` |
-| suíte | 172 arquivos / 3.079 testes (vitest) + 705 testes e 480 subtests (pytest, lab). Verde em rodada limpa e SOZINHA; com uma segunda corrida de vitest concorrente, dois a quatro arquivos de caminho selado batem no timeout de 20 s — dívida de § 7, não de política |
-| dos quais, o avaliador | 2.020 — 1.489 em 45 arquivos de `benchmark/tests`, 531 no lab |
+| suíte | 172 arquivos / 3.097 testes (vitest) + 708 testes e 488 subtests (pytest, lab). Verde em rodada limpa e SOZINHA; com uma segunda corrida de vitest concorrente, dois a quatro arquivos de caminho selado batem no timeout de 20 s — dívida de § 7, não de política |
+| dos quais, o avaliador | 2.428 — 1.720 em 46 arquivos de `benchmark/tests`, 708 no lab |
 | typecheck | limpo |
 | lint | 12 problemas (10 erros, 2 avisos), e **nenhum erro em caminho rastreado**: os 10 estão todos sob `.cache/chrome-for-testing/` — um Chrome baixado, que `.gitignore` cobre e nenhum commit carrega —, então esse número é propriedade do cache e se move quando a versão do browser se move. Os 2 avisos são de `src/`, em `react-refresh/only-export-components` |
 | tags de release | 0 |
@@ -567,7 +567,7 @@ A unidade é a página, o piso de 300 é trivial, e o dump de 1,96 GB é a reser
 |---|---|
 | componentes independentes na célula, hoje | **4.000**, todos de tamanho 1, sobre o corpo estampado de 2026-08-06 (§ 5.4b) — a unidade é a PÁGINA (`groups.source = ptwiki_page_<page_id>`) e o piso de 300 fica 13,3× folgado. Era 1 enquanto o pool de 24/07 não carregava `groupAxes` |
 | guardas de integridade do pacote | 11 exercitadas, 0 sem teste |
-| `evaluatorDigest` da árvore | `8e6dac1363454120693b22a2213da0699ac4b4c4a63869756543d51b6b732a1e` — 52 arquivos, recomputado pela função de produção e **lido por teste nomeado** (`digests.test.ts`, "is published in the ESTADO at the value the LIVE tree hashes to"), então este número não pode envelhecer em silêncio. Mover é barato enquanto `issuedAt` é nulo |
+| `evaluatorDigest` da árvore | `dac12c932ad1ae56ec6823c153b8d18ff7a66ac877fbb23ef6f92cd89595781e` — 52 arquivos, recomputado pela função de produção e **lido por teste nomeado** (`digests.test.ts`, "is published in the ESTADO at the value the LIVE tree hashes to"), então este número não pode envelhecer em silêncio. Mover é barato enquanto `issuedAt` é nulo |
 | byte de controle cru em caminho rastreado | **zero**, e imposto por dois testes nomeados, com escopos diferentes de propósito. `digests.test.ts` ("carry no raw control byte, so no code-search tool can skip an evaluator file") varre os **52** de `EVALUATOR_FILES` e **não isenta nada**, porque os bytes desses arquivos são a identidade do avaliador. `tests/unit/repo/line-endings.test.ts` ("leaves no raw control byte in a tracked path the repo calls text") varre **todo** caminho de `git ls-files`, isentando só extensão que `.gitattributes` declara `binary` — nenhuma rastreada hoje, então na prática é a árvore inteira. Os dois recusam controle C0 fora de LF, TAB e CR e apontam `arquivo:linha:coluna` mais o offset de byte. A isenção **não** é a classificação `i/-text` do git: ela é causada pelo byte cru, e filtrar por ela pularia justamente o infrator |
 | ledger de exposição real | **0 bytes** — nenhum evento real foi escrito |
 | holdout-ledger real | 2.638 bytes — o consumo de 2026-07-25, `decision: reject` |

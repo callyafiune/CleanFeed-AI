@@ -1,6 +1,6 @@
 {
-  "purpose": "O catálogo de corpos que o preflight de viabilidade do benchmark (benchmark/viability-preflight.ts) e a guarda do assembler (benchmark/lab/assemble_corpus.py::assert_components_can_fill_five_partitions) têm de julgar IGUAL. Os dois lados leem este arquivo, materializam o corpo pela regra abaixo, conferem o histograma de componentes e as contagens por classe medidos contra os declarados, e só então comparam o veredito. Se discordarem, um dos dois está medindo outra coisa.",
-  "materialization": "Cada célula rende, para cada entrada de `components`, `count` componentes com as linhas declaradas em `lines` (por classe). As linhas HUMANAS de um componente COMPARTILHAM o autor (`author` é eixo de união v4); as linhas GERADAS do mesmo componente apontam `humanSeed` para o id da primeira linha humana do componente, que é o eixo de LINHAGEM DE PAI — é assim que uma linha gerada fica dependente do material de que foi semeada. Componente sem linha humana tem `humanSeed` nomeando registro ausente, então não une nada. Cada linha carrega seu próprio documento de origem (`source`), seu próprio grupo de quase-duplicata (`nearDuplicate`) e, quando gerada, seu próprio `generationBatch`. `promptTemplate` e `generatorVersion` de uma linha gerada são próprios dela TAMBÉM, a menos que o caso declare `generatedRecipe`: aí as identidades vêm das CORRIDAS declaradas, na ordem em que as linhas geradas do caso são materializadas — a k-ésima linha gerada recebe a corrida em que k cai. Dos dois, SÓ `promptTemplate` está na união: uma corrida de TEMPLATE declarada une as linhas dela, e uma corrida de VERSÃO não une nada sob a união de produção — `generatorVersion` é `namedReported`, e a corrida existe para as sub-relações de `recipeUnioned` serem medidas sobre o MESMO corpo. É assim que um caso descreve, com a mesma declaração, a forma que os pools produzem (um template cobrindo 641 das 1170 linhas, componente que partição alguma recebe) e a geometria de ILHAS que a Fase 3 item 2 tem de produzir. `stratum` (domainSource) e `materialBatch` (sourceMaterialBatch) valem para as linhas HUMANAS da célula e carregam UM valor por célula — é isso que o fixture de lote único prova que NÃO une; linha gerada carrega sempre `generatedStratum` e `sourceMaterialBatch` notApplicable, porque geração não adquire material. Autores, documentos e ids são prefixados pelo índice da célula, então nada gruda entre células por acidente.",
+  "purpose": "O catálogo de corpos que o preflight de viabilidade do benchmark (benchmark/viability-preflight.ts) e a guarda do assembler (benchmark/lab/assemble_corpus.py::assert_components_can_fill_five_partitions) têm de julgar IGUAL. Os dois lados leem este arquivo, materializam o corpo pela regra abaixo, conferem TRÊS coisas medidas contra as declaradas — o histograma de tamanhos de componente, as contagens por classe do corpo inteiro, e as linhas por componente E por classe — e só então comparam o veredito. As duas primeiras são MARGINAIS e um materializador que divergiu pode acertar as duas: trocar dois componentes 1H+3A e 3H+1A por dois 2H+2A preserva tamanho e totais e muda o corpo. A terceira é o que fecha essa porta. Se discordarem, um dos dois está medindo outra coisa.",
+  "materialization": "Cada célula rende, para cada entrada de `components`, `count` componentes com as linhas declaradas em `lines` (por classe). As linhas HUMANAS de um componente COMPARTILHAM o autor (`author` é eixo de união v4); as linhas GERADAS do mesmo componente apontam `humanSeed` para o id da primeira linha humana do componente, que é o eixo de LINHAGEM DE PAI — é assim que uma linha gerada fica dependente do material de que foi semeada. Uma linha MISTA é o texto do pai com trechos gerados: ela compartilha o autor do pai, nomeia-o em `humanSeed` e em `derivationRoot`, e carrega o estrato e o lote de material DELE, porque a aquisição que a sustenta é a do pai; componente que declara linha mista sem linha humana é recusado pelos dois materializadores, porque a mista não teria pai a nomear. Componente sem linha humana tem `humanSeed` nomeando registro ausente, então não une nada. Cada linha carrega seu próprio documento de origem (`source`), seu próprio grupo de quase-duplicata (`nearDuplicate`) e, quando gerada, seu próprio `generationBatch`. `promptTemplate` e `generatorVersion` de uma linha gerada são próprios dela TAMBÉM, a menos que o caso declare `generatedRecipe`: aí as identidades vêm das CORRIDAS declaradas, na ordem em que as linhas geradas do caso são materializadas — a k-ésima linha gerada recebe a corrida em que k cai. Dos dois, SÓ `promptTemplate` está na união: uma corrida de TEMPLATE declarada une as linhas dela, e uma corrida de VERSÃO não une nada sob a união de produção — `generatorVersion` é `namedReported`, e a corrida existe para as sub-relações de `recipeUnioned` serem medidas sobre o MESMO corpo. É assim que um caso descreve, com a mesma declaração, a forma que os pools produzem (um template cobrindo 641 das 1170 linhas, componente que partição alguma recebe) e a geometria de ILHAS que a Fase 3 item 2 tem de produzir. `stratum` (domainSource) e `materialBatch` (sourceMaterialBatch) valem para as linhas HUMANAS da célula e carregam UM valor por célula — é isso que o fixture de lote único prova que NÃO une; linha gerada carrega sempre `generatedStratum` e `sourceMaterialBatch` notApplicable, porque geração não adquire material. Autores, documentos e ids são prefixados pelo índice da célula, então nada gruda entre células por acidente.",
   "recipeUnion": "Um caso com `generatedRecipe` declara também, em `expected.recipeUnioned`, as SUB-RELAÇÕES da união de produção: cada perna é medida sobre a lista de união MENOS os eixos IMPOSTOS, mais os eixos que a perna nomeia, então `promptTemplateOnly` é exactamente o que a produção faz, `generatorVersionOnly` é a perna que a produção NÃO toma e `bothRecipeAxes` é o CONTRAFACTUAL de unir as duas. Os três lados medem sobre o MESMO corpo. O valor evidencial delas mudou DUAS vezes, e o estado é este: `generatorVersionOnly` CABE sobre a forma medida dos pools (5 componentes, maior 493 = 42,14 %), e é essa medição que diz que pôr a VERSÃO na união nunca foi o que a granularidade pedia — o que não cabe é o template, e `promptTemplateOnly` recusa pelo maior componente (641 = 54,79 %), que é a RECUSA da produção; `bothRecipeAxes` fecha transitivamente num componente de 100 %, e o que ele mede é o tamanho da obrigação que se teria comprado, não o que o splitter faz. Sobre a geometria de ilhas as três cabem, e o que fecha a costura é `promptTemplateOnly` ter de igualar, raiz por raiz, o passeio de produção: sem isso o catálogo poderia afirmar uma geometria que o splitter não produz. Um caso com `generatedRecipe` afirma ainda que o mapa template -> versão é uma FUNÇÃO: não por o plano de ilhas pedir isso (não pede — versão saiu da união), mas porque é o que faz `bothRecipeAxes` medir as corridas de versão em vez de um fecho mais grosso que ninguém declarou.",
   "generatedStratum": "ds_ai_agy",
   "expectedBreachVocabulary": [
@@ -698,6 +698,49 @@
             "breaches": []
           }
         }
+      }
+    },
+    {
+      "name": "misto-com-degenerescencia-mista",
+      "why": "A CLASSE MISTA degenerada, e o único corpo do catálogo em que o escopo `mixed` decide. Quatro componentes de um pai humano com cinco linhas mistas cada, mais 26 humanos avulsos: no corpo o maior componente vale 12 % e o menor 2 %, e na classe `human` todo componente vale 3,33 % — nem o agregado nem a metade humana recusam. A classe `mixed` tem quatro componentes de 25 % dela, e é ela que recusa, pelo ramo do MENOR. Sem um caso assim nenhum corpo do catálogo declara linha mista, o escopo `mixed` do preflight não é construído por corpo algum, e apagar a construção dele fica verde — medido. É também o corpo que prova que a mistura NÃO racha a ilha do pai: a mista compartilha o autor dele e o nomeia nos dois eixos de linhagem, então pai e mistas são um componente e não seis.",
+      "cells": [
+        {
+          "cell": "ptwiki",
+          "stratum": "ds_ptwiki_lead",
+          "materialBatch": "smb_ptwiki_20220301",
+          "components": [
+            {
+              "count": 4,
+              "lines": {
+                "human": 1,
+                "mixed": 5
+              }
+            },
+            {
+              "count": 26,
+              "lines": {
+                "human": 1
+              }
+            }
+          ]
+        }
+      ],
+      "expected": {
+        "recordLines": 50,
+        "classLines": {
+          "human": 30,
+          "mixed": 20
+        },
+        "distinctStrata": 1,
+        "distinctMaterialBatches": 1,
+        "breaches": [
+          {
+            "scope": "mixed",
+            "kind": "smallest-component-exceeds-smallest-target"
+          }
+        ],
+        "splitterRefuses": true,
+        "splitterRefusal": "class split fractions unreachable"
       }
     }
   ]

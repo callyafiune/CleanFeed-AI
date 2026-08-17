@@ -9,10 +9,13 @@
 // corpo, e o corpo é a geometria.
 //
 // A REGRA DE MATERIALIZAÇÃO está escrita no próprio JSON e implementada duas vezes, uma
-// por lado. Uma segunda escrita de uma regra é sempre um risco de divergência, e o que
-// o fecha é cada lado conferir o histograma de componentes e as contagens por classe
-// MEDIDOS contra os DECLARADOS antes de comparar veredito: um materializador que
-// divergiu produz outro histograma e fica vermelho no próprio lado.
+// por lado. Uma segunda escrita de uma regra é sempre um risco de divergência, e o que o
+// fecha é cada lado conferir TRÊS coisas medidas contra as declaradas, antes de comparar
+// veredito: o histograma de TAMANHOS de componente, as contagens por CLASSE do corpo, e as
+// linhas por componente E por classe. Um materializador que divergiu em qualquer uma das
+// três fica vermelho no próprio lado — as duas primeiras são MARGINAIS e, sozinhas, um
+// corpo divergido pode acertá-las (trocar 1H+3A e 3H+1A por dois 2H+2A preserva tamanho e
+// totais), que é a porta que a terceira fecha.
 
 import { readFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
@@ -30,7 +33,13 @@ import {
   GROUP_KEYS,
   IMPOSED_UNION_AXES,
 } from "../../split.ts";
-import { known, v4Ai, v4Human, withAxis } from "./v3-record-fixture.ts";
+import {
+  known,
+  v4Ai,
+  v4Human,
+  v4Mixed,
+  withAxis,
+} from "./v3-record-fixture.ts";
 
 const AQUI = dirname(fileURLToPath(import.meta.url));
 
@@ -319,6 +328,52 @@ export function buildCatalogueCorpus(
             validateBenchmarkRecordV4(raw) as unknown as BenchmarkRecord,
           );
         }
+        const mixedLines = run.lines.mixed ?? 0;
+        for (let line = 0; line < mixedLines; line += 1) {
+          const { createdAt, digest } = nextSlot();
+          if (humanLines === 0) {
+            throw new Error(
+              `o caso "${testCase.name}" declara linha mista em componente sem linha humana: a mista não teria pai a nomear`,
+            );
+          }
+          if (cell.stratum === null || cell.materialBatch === null) {
+            throw new Error(
+              `a célula "${cell.cell}" declara linha mista sem estrato ou sem lote de material`,
+            );
+          }
+          let raw: Record<string, unknown> = {
+            ...v4Mixed(),
+            id: `m_${tag}_${line}`,
+            createdAt,
+            normalizedTextSha256: digest,
+          };
+          // O AUTOR do pai, e o pai nomeado nos dois eixos de linhagem: uma mista é o texto
+          // dele com trechos gerados, então ela não é unidade de amostragem nova. É o que
+          // faz pai + mistas serem UM componente em vez de um por linha.
+          raw = withAxis(raw, "author", known(`au_hmac_${tag}`));
+          raw = withAxis(raw, "humanSeed", known(`h_${tag}_0`));
+          raw = withAxis(raw, "derivationRoot", known(`h_${tag}_0`));
+          raw = withAxis(raw, "source", known(`th_doc_mix_${tag}_${line}`));
+          raw = withAxis(raw, "nearDuplicate", known(`nd_mix_${tag}_${line}`));
+          raw = withAxis(raw, "promptTemplate", known(`pt_mix_${tag}_${line}`));
+          raw = withAxis(
+            raw,
+            "generatorVersion",
+            known(`gv_mix_${tag}_${line}`),
+          );
+          raw = withAxis(
+            raw,
+            "generationBatch",
+            known(`gb_mix_${tag}_${line}`),
+          );
+          // O estrato e o lote de MATERIAL são os do pai: a aquisição que sustenta a mista
+          // é a dele, e é por isso que ela não acrescenta estrato nem lote ao censo.
+          raw = withAxis(raw, "domainSource", known(cell.stratum));
+          raw = withAxis(raw, "sourceMaterialBatch", known(cell.materialBatch));
+          records.push(
+            validateBenchmarkRecordV4(raw) as unknown as BenchmarkRecord,
+          );
+        }
         componentIndex += 1;
       }
     }
@@ -371,11 +426,72 @@ export function declaredHistogram(testCase: ViabilityCase): number[] {
       cell.components.flatMap((run) =>
         Array.from(
           { length: run.count },
-          () => (run.lines.human ?? 0) + (run.lines.ai ?? 0),
+          () =>
+            (run.lines.human ?? 0) +
+            (run.lines.ai ?? 0) +
+            (run.lines.mixed ?? 0),
         ),
       ),
     )
     .sort((a, b) => a - b);
+}
+
+/**
+ * The label order the joint key is written in, as a `Record<BenchmarkLabel, number>` so a
+ * label added to the schema is a compile error rather than a class silently left out of the
+ * comparison. Same idiom as `LABEL_REPORT_ORDER` in benchmark/viability-preflight.ts.
+ */
+const JOINT_KEY_ORDER: Record<BenchmarkLabel, number> = {
+  human: 0,
+  ai: 1,
+  mixed: 2,
+};
+
+/**
+ * One component's class composition as a canonical string, EVERY label present with its
+ * count — never only the labels the component holds, because "human=1" and
+ * "human=1,mixed=0" would then be different spellings of one component and the two sides
+ * could disagree by omission.
+ */
+function jointKey(
+  lines: Readonly<Partial<Record<BenchmarkLabel, number>>>,
+): string {
+  return (Object.entries(JOINT_KEY_ORDER) as [BenchmarkLabel, number][])
+    .sort(([, a], [, b]) => a - b)
+    .map(([label]) => `${label}=${lines[label] ?? 0}`)
+    .join(",");
+}
+
+/**
+ * The DECLARED lines per component and per class, one key per component, ascending.
+ *
+ * The joint distribution, where {@link declaredHistogram} and {@link measuredClassLines} are
+ * its two MARGINALS: a materializer that moved lines between components of equal size, or
+ * between classes inside a component, agrees with both marginals and disagrees here.
+ */
+export function declaredJointHistogram(testCase: ViabilityCase): string[] {
+  return testCase.cells
+    .flatMap((cell) =>
+      cell.components.flatMap((run) =>
+        Array.from({ length: run.count }, () => jointKey(run.lines)),
+      ),
+    )
+    .sort();
+}
+
+/** The MEASURED lines per component and per class, by the splitter's own connectivity. */
+export function measuredJointHistogram(
+  records: readonly BenchmarkRecord[],
+): string[] {
+  const roots = connectedComponentRoots(records);
+  const byRoot = new Map<string, Partial<Record<BenchmarkLabel, number>>>();
+  for (const record of records) {
+    const root = roots.get(record.id) as string;
+    const tally = byRoot.get(root) ?? {};
+    tally[record.label] = (tally[record.label] ?? 0) + 1;
+    byRoot.set(root, tally);
+  }
+  return [...byRoot.values()].map(jointKey).sort();
 }
 
 /** Component sizes in ascending order, by the splitter's own connectivity. */

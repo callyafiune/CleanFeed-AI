@@ -2499,16 +2499,31 @@ def declared_group_axes(corpo_injetado: str | None = None) -> dict[str, tuple[st
             )
         por_fonte[source_id] = tuple(re.findall(r'"([a-zA-Z]+)"', eixos))
 
-    # CONSUMO COMPLETO, nao "pelo menos uma". Uma entrada malformada faz a regex saltar
-    # sobre ela e o mapa volta MENOR, silenciosamente — e um mapa com fonte a menos deixa
-    # de recusar linha que a auditoria recusa. Contar os `sourceId` do corpo e exigir
-    # igualdade e o que transforma parse parcial em falha.
-    declarados = re.findall(r'sourceId:\s*"([^"]+)"', corpo)
-    if len(declarados) != len(por_fonte):
-        faltando = sorted(set(declarados) - set(por_fonte))
+    # CONSUMO COMPLETO, nao "pelo menos uma". Uma entrada malformada faz a regex saltar sobre
+    # ela e o mapa volta MENOR, silenciosamente.
+    #
+    # A contagem que impede isso e das ENTRADAS do array — as aberturas de `{` — e nao dos
+    # `sourceId` que a extracao le, porque ela precisa ser mais larga que a extracao para
+    # poder recusa-la: cada entrada NAO ANINHADA vale uma abertura, entao toda entrada que a
+    # extracao deixou de ler faz a contagem divergir, qualquer que seja a razao — grafia de
+    # chave que ela nao le (`"sourceId":`, `'sourceId'`, `sourceId :`, todas TypeScript
+    # valido), chave de eixos corrompida, ou entrada que nao nomeia fonte alguma. Contar os
+    # `sourceId` da grafia nua nao alcanca as duas ultimas: no MAU-PAREAMENTO o `.*?` da
+    # extracao atravessa a entrada seguinte e atribui a PRIMEIRA os eixos da SEGUNDA, com um
+    # `sourceId` por par extraido e nenhuma divergencia para notar.
+    #
+    # O que se garante e isto e nada mais largo: uma entrada que a extracao nao leu faz a
+    # funcao levantar. NAO se garante um parse completo como AST — uma entrada com objeto
+    # ANINHADO conta duas aberturas e e RECUSADA, que e a direcao fail-fechada e nao uma
+    # leitura correta dela. Os nomes da mensagem sao colhidos em qualquer grafia de chave, e
+    # so para a mensagem: a decisao e da contagem.
+    entradas = corpo.count("{")
+    if entradas != len(por_fonte):
+        nomeados = re.findall(r'["\']?sourceId["\']?\s*:\s*["\']([^"\']+)["\']', corpo)
+        faltando = sorted(set(nomeados) - set(por_fonte))
         raise RuntimeError(
-            f"inventario tem {len(declarados)} sourceId e o espelho extraiu "
-            f"{len(por_fonte)}: parse parcial, faltando {faltando}"
+            f"inventario tem {entradas} entrada(s) e o espelho extraiu {len(por_fonte)}: "
+            f"parse parcial, faltando {faltando}"
         )
     if not por_fonte:
         raise RuntimeError("nenhuma fonte extraida do inventario: parse falhou fechado")
